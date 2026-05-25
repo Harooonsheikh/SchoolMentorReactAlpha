@@ -1,0 +1,84 @@
+/* ═══════════════════════════════════════
+   SCHOOL MENTOR — DESIGN TOKENS
+═══════════════════════════════════════ */
+:root {
+  /* Brand */
+  --brand-primary:   #1E3A8A;
+  --brand-dark:      #1E40AF;
+  --brand-deeper:    #1D4ED8;
+  --brand-light:     #DBEAFE;
+  --brand-mid:       #2563EB;
+  --brand-navy:      #172554;
+
+  /* Backgrounds */
+  --bg-base:    #F0F4FF;
+  --bg-card:    #FFFFFF;
+  --bg-muted:   #EFF6FF;
+  --bg-sidebar: #FFFFFF;
+
+  /* Text */
+  --text-primary:   #0F172A;
+  --text-secondary: #1E3A5F;
+  --text-muted:     #64748B;
+
+  /* Semantic */
+  --success: #16A34A;
+  --warning: #D97706;
+  --error:   #DC2626;
+  --info:    #0284C7;
+
+  /* Borders */
+  --border-light: #BFDBFE;
+  --border-med:   #93C5FD;
+  --border-focus: #1E3A8A;
+
+  /* Shadows */
+  --shadow-xs: 0 1px 2px rgba(0,0,0,.06);
+  --shadow-sm: 0 2px 6px rgba(30,58,138,.18), 0 1px 2px rgba(0,0,0,.05);
+  --shadow-md: 0 4px 14px rgba(30,58,138,.20), 0 2px 4px rgba(0,0,0,.06);
+  --shadow-lg: 0 10px 30px rgba(30,58,138,.22), 0 4px 8px rgba(0,0,0,.07);
+  --shadow-xl: 0 20px 50px rgba(30,58,138,.20), 0 8px 16px rgba(0,0,0,.08);
+
+  /* Radii */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+  --radius-full: 9999px;
+
+  /* Typography */
+  --font-display: 'Instrument Serif', serif;
+  --font-body:    'Plus Jakarta Sans', sans-serif;
+
+  /* Transitions */
+  --tr: all .2s cubic-bezier(.4,0,.2,1);
+
+  /* Topbar */
+  --topbar-bg:   rgba(255,255,255,.98);
+  --input-bg:    #FFFFFF;
+}
+
+/* ── DARK MODE ── */
+[data-theme="dark"] {
+  --bg-base:    #0A0F1E;
+  --bg-card:    #0F1A35;
+  --bg-muted:   #162040;
+  --bg-sidebar: #0A0F1E;
+
+  --text-primary:   #93C5FD;
+  --text-secondary: #93C5FD;
+  --text-muted:     #60A5FA;
+
+  --border-light: #1E3055;
+  --border-med:   #2A4070;
+  --border-focus: #1E40AF;
+
+  --shadow-xs: 0 1px 2px rgba(0,0,0,.4);
+  --shadow-sm: 0 1px 4px rgba(0,0,0,.4);
+  --shadow-md: 0 4px 14px rgba(0,0,0,.4);
+  --shadow-lg: 0 10px 30px rgba(0,0,0,.5);
+  --shadow-xl: 0 20px 50px rgba(0,0,0,.6);
+
+  --topbar-bg: rgba(11,31,36,.98);
+  --input-bg:  #162040;
+}
