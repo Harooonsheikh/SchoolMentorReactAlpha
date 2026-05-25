@@ -278,17 +278,74 @@ const totalPosts = (deptsData || []).reduce(
     showToast('Designation added', 'success');
   };
 
-  const handleDeleteDesig = (deptId, idx) => {
-    setDeptsData(prev => prev.map(d => d.id === deptId ? { ...d, designations: d.designations.filter((_, i) => i !== idx) } : d));
-    showToast('Designation removed', 'info');
+  const handleDeleteDesig = async(deptId, idx) => {
+     try {
+          const res = await fetch(
+          buildUrl(`/api/LaunchSetup/delete-designation/${deptId}`),
+          {
+            method: 'DELETE',
+            headers: {
+              Accept: '*/*'
+            }
+          }
+        );
+          const json     = await res.json();
+    
+        if (!res.ok) {
+          showToast(json?.message || 'Delete failed', 'error');
+          return;
+        }
+          getDeparmentdata()
+          showToast('Designation removed', 'info');
+
+    
+      } catch (err) {
+        console.error(err);
+        showToast('Could not delete Designation', 'error');
+      }
   };
 
-  const handleDeleteDept = (id) => {
-    const dept = deptsData.find(d => d.id === id);
-    setDeptsData(prev => prev.filter(d => d.id !== id));
-    if (expandedId === id) setExpandedId(null);
-    setDeleteTarget(null);
-    showToast(`"${dept?.name}" deleted`, 'info');
+  const handleDeleteDept = async(id) => {
+    console.log(id)
+     try {
+          const res = await fetch(
+          buildUrl(`/api/LaunchSetup/delete-department/${id}`),
+          {
+            method: 'DELETE',
+            headers: {
+              Accept: '*/*'
+            }
+          }
+        );
+          const json     = await res.json();
+    
+        if (!res.ok) {
+      if (
+        json?.message?.includes('REFERENCE constraint') ||
+        json?.message?.includes('FK_AHM_Department_Designations_Department')
+      ) {
+        showToast(
+          'Cannot delete department because it contains designations or related data.',
+          'error'
+        );
+                  setDeleteTarget(null);
+
+      } else {
+        showToast(json?.message || 'Delete failed', 'error');
+                  setDeleteTarget(null);
+
+      }
+
+      return;
+    }
+          getDeparmentdata()
+                  showToast(`"${deleteTarget?.departmentName}" deleted`, 'info');
+          setDeleteTarget(null);
+      } catch (err) {
+        console.error(err);
+                  setDeleteTarget(null);
+        showToast('Could not delete department', 'error');
+      }
   };
 
   return (
@@ -436,45 +493,64 @@ const totalPosts = (deptsData || []).reduce(
                       </button>
                     </div>
                     <div className="desig-list">
-                      {!dept.designations.length ? (
-                        <div className="empty-mini"><i className="fas fa-id-badge"></i>No designations yet</div>
-                      ) : dept.designations.map((d, di) => (
-                        <div key={di} className="desig-item">
-                          <div>
-                            <div className="desig-name">{d.designationName}</div>
-                            {d.qual && <span className="desig-qual">{d.qual}</span>}
-                            {d.job && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2, fontStyle: 'italic' }}>{d.job}</div>}
-                          </div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <span className="desig-num">#{String(di + 1).padStart(2, '0')}</span>
-                            <button className="btn-icon btn-ghost btn-sm" title="Edit designation" onClick={() => handleEditDesig(dept.id, di)}>
-                              <i className="fas fa-pen"></i>
-                            </button>
-                            {/* <button className="btn btn-icon btn-danger btn-sm" onClick={() => handleDeleteDesig(dept.id, di)}>
-                              <i className="fas fa-times"></i>
-                            </button> */}
-                            <button
-    onClick={() => handleDeleteDesig(dept.id, di)}
-    title="Delete department"
-    style={{
-      width: 38,
-      height: 38,
-      display: 'inline-flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      background: 'rgba(239,68,68,.1)',
-      color: '#ef4444',
-      border: 'none',
-      borderRadius: 10,
-      cursor: 'pointer',
-      fontSize: 14,
-    }}
-  >
-    <i className="fas fa-trash"></i>
-  </button>
-                          </div>
-                        </div>
-                      ))}
+                     <div className="desig-list">
+ <div className="desig-list">
+  {!dept.designations.length ? (
+    <div className="empty-mini"><i className="fas fa-id-badge"></i>No designations yet</div>
+  ) : dept.designations.map((d, di) => (
+    <div key={di} className="desig-item">
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-muted)', marginTop: 1 }}>{di + 1}.</span>
+        <div>
+          <div className="desig-name">{d.designationName}</div>
+          {d.qual && <span className="desig-qual">{d.qual}</span>}
+          {d.job && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2, fontStyle: 'italic' }}>{d.job}</div>}
+        </div>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <button
+          onClick={() => handleEditDesig(dept.id, di)}
+          title="Edit designation"
+          style={{
+            width: 38,
+            height: 38,
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: 'rgba(30,58,138,.08)',
+            color: 'var(--brand-primary)',
+            border: 'none',
+            borderRadius: 10,
+            cursor: 'pointer',
+            fontSize: 14,
+          }}
+        >
+          <i className="fas fa-pen"></i>
+        </button>
+        <button
+          onClick={() => handleDeleteDesig(dept.id, di)}
+          title="Delete designation"
+          style={{
+            width: 38,
+            height: 38,
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: 'rgba(239,68,68,.1)',
+            color: '#ef4444',
+            border: 'none',
+            borderRadius: 10,
+            cursor: 'pointer',
+            fontSize: 14,
+          }}
+        >
+          <i className="fas fa-trash"></i>
+        </button>
+      </div>
+    </div>
+  ))}
+</div>
+</div>
                     </div>
                   </div>
                 )}
@@ -531,7 +607,7 @@ const totalPosts = (deptsData || []).reduce(
             </div>
             <div className="modal-body">
               <p style={{ fontSize: 13.5, color: 'var(--text-secondary)', lineHeight: 1.7, marginBottom: 20 }}>
-                Delete <strong>"{deleteTarget.name}"</strong>? This will also remove all {deleteTarget.designations.length} designations.
+                Are you sure you want to delete <strong>"{deleteTarget.departmentName}"</strong>?
               </p>
               <div className="modal-footer">
                 <button className="btn btn-secondary btn-md" onClick={() => setDeleteTarget(null)}>Cancel</button>

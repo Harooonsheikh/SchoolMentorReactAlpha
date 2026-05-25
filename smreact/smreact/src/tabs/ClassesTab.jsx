@@ -719,9 +719,18 @@ export default function ClassesTab({ classesData, setClassesData, schoolInfo, sh
       const json     = await res.json();
 
     if (!res.ok) {
-      showToast(json?.message || 'Delete failed', 'error');
-      return;
+        if (
+        json?.message?.includes('REFERENCE constraint') ||
+        json?.message?.includes('FK_GradeSubjects_SectionID')
+      ) {
+        showToast(
+          'Cannot delete Class because it contains Sections or related data.',
+          'error'
+        );
+                  setDeleteTarget(null);
+                  return;
     }
+  }
       setDeleteTarget(null);
       getclassesdata()
 
