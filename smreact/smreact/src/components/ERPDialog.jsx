@@ -16,7 +16,7 @@ export default function ERPDialog({ open, onClose }) {
           </div>
           <div className="erp-dialog-hint">
             <i className="fas fa-info-circle" style={{ color: '#3B82F6', fontSize: 14, flexShrink: 0 }}></i>
-            Complete School → Classes → Subjects → Departments → Staff → Students → Timetable to unlock.
+            Complete School → Classes → Subjects → Departments → Staff → Students to unlock.
           </div>
         </div>
         <div className="erp-dialog-footer">

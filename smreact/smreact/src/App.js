@@ -24,12 +24,15 @@ function AppShell({ user, onLogout }) {
   const [erpOpen, setErpOpen] = useState(false);
   const [successState, setSuccessState] = useState({ open: false, title: '', msg: '', detail: '' });
   const [errorState, setErrorState] = useState({ open: false, fields: [] });
+  const [launchSetup, setLaunchSetup] = useState(null);
 
   const showSuccess = (title, msg, detail = '') => {
     setSuccessState({ open: true, title, msg, detail });
   };
 
   useEffect(() => {
+    const launchSetup = sessionStorage.getItem('launchSetup');
+setLaunchSetup(launchSetup)
     const schoolName = state.schoolInfo?.name?.trim();
     if (schoolName) {
       document.title = 'School Mentor - Launch Setup';
@@ -94,7 +97,7 @@ function AppShell({ user, onLogout }) {
                 <button className="erp-launch-btn" onClick={() => setErpOpen(true)}>
                   <div className="erp-btn-icon"><i className="fas fa-th-large"></i></div>
                   <span>ERP</span>
-                  <i className="fas fa-lock" style={{ fontSize: 11, opacity: .7 }}></i>
+                  {Number(launchSetup) !== 1 && <i className="fas fa-lock" style={{ fontSize: 11, opacity: .7 }}></i>}
                 </button>
               </div>
             </div>

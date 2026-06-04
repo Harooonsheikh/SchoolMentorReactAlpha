@@ -55,6 +55,9 @@ export default function LoginScreen({ onLogin, onSignup }) {
     if (data?.token) {
       sessionStorage.setItem("token", data.token);
     }
+    if (data?.launchSetup) {
+      sessionStorage.setItem("launchSetup", data.launchSetup);
+    }
     onLogin(data);
 
   } catch (err) {
