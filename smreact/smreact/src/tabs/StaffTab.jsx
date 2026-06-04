@@ -27,9 +27,9 @@ function StaffModal({ open, staff, deptsData, onClose, onSave, setDeptsData, sho
         // map API field names → the keys the dropdowns/inputs use
         dept:          staff.departmentID  ?? staff.dept ?? '',
         designation:   staff.designationID ?? staff.designation ?? '',
-        country:       staff.countryID     ?? staff.country ?? '',
-        province:      staff.provinceID    ?? staff.province ?? '',
-        city:          staff.cityID        ?? staff.city ?? '',
+        country:       staff.countryID     ?? staff.country ?? 4,
+        province:      staff.provinceID    ?? staff.province ?? 13,
+        city:          staff.cityID        ?? staff.city ?? 20,
         qualification: staff.qualificationID ?? staff.qualification ?? '',
         joiningDate:   dateOnly(staff.dateOfJoining ?? staff.joiningDate),
         dateOfBirth:   dateOnly(staff.dateOfBirth),
@@ -169,7 +169,7 @@ function StaffModal({ open, staff, deptsData, onClose, onSave, setDeptsData, sho
         fd.append('Address',             form.address ?? '');
         fd.append('Phone',               form.phone ?? '');
         fd.append('BranchID',            BranchID);
-        fd.append('DateOfBirth',         form.dateOfBirth ?? '');
+        fd.append('DateOfBirth',         form.dateOfBirth ?? now);
         fd.append('DateOfJoining',       form.joiningDate ?? '');
         fd.append('experience', form.experience == null || form.experience === '' ? 0 : form.experience);
         fd.append(
@@ -225,7 +225,7 @@ fd.append(
         const res  = await fetch(buildUrl('/api/LaunchSetup/save-employee'), { method: 'POST', headers: { Accept: '*/*' }, body: fd });
         const data = await res.json();
 
-        if (res.ok) {
+        if (res.status == 200) {
           const newId = data?.data[0].id ?? data?.id ?? data?.data[0].ID ?? data?.ID;
           if (newId) setForm(prev => ({ ...prev, id: newId }));
           showToast('Employee saved successfully', 'success');
@@ -246,7 +246,8 @@ fd.append(
          try {
           const branchID = sessionStorage.getItem('branchID');
         const userID = sessionStorage.getItem('UserID') || 0;
-    
+            const now = new Date().toISOString();
+
         const payload = {
   id: form.id,
   cnic: form.cnic,
@@ -255,19 +256,19 @@ fd.append(
   fatherName: form.fatherName,
   gender: form.gender,
   maritalStatus: form.maritalStatus,
-  countryID: form.country,
-  provinceID: form.province,
-  cityID: form.city,
+  countryID: !form.country || Number(form.country) === 0 ? 4 : Number(form.country),
+provinceID: !form.province || Number(form.province) === 0 ? 13 : Number(form.province),
+cityID: !form.city || Number(form.city) === 0 ? 20 : Number(form.city),
   address: form.address,
   phone: form.phone ?? '',
   branchID: branchID,
-  dateOfBirth: form.dateOfBirth,
+  dateOfBirth: form.dateOfBirth ? form.dateOfBirth : now,
   dateOfJoining: form.joiningDate || new Date().toISOString(),
   experience: form.experience,
   bloodGroup: form.bloodGroup,
   departmentID: form.dept,
   designationID: form.designation,
-  qualificationID: form.qualification,
+  qualificationID: form.qualification ? form.qualification : 0,
   empImage: form.empImage ?? '',
   basicSalary: Number(form.basicSalary) || 0,
   medicalAllowanace: Number(form.medicalAllowanace) || 0,
@@ -316,7 +317,8 @@ console.log(payload)
          try {
           const branchID = sessionStorage.getItem('branchID');
         const userID = sessionStorage.getItem('UserID') || 0;
-    
+                const now = new Date().toISOString();
+
         const payload = {
   id: form.id,
   cnic: form.cnic,
@@ -325,20 +327,26 @@ console.log(payload)
   fatherName: form.fatherName,
   gender: form.gender,
   maritalStatus: form.maritalStatus,
-  countryID: form.country,
-  provinceID: form.province,
-  cityID: form.city,
+  countryID: !form.country || Number(form.country) === 0 ? 4 : Number(form.country),
+provinceID: !form.province || Number(form.province) === 0 ? 13 : Number(form.province),
+cityID: !form.city || Number(form.city) === 0 ? 20 : Number(form.city),
   address: form.address,
   phone: form.phone ?? '',
   branchID: branchID,
-  dateOfBirth: form.dateOfBirth,
+dateOfBirth:
+  !form.dateOfBirth || form.dateOfBirth.trim?.() === ''
+    ? now
+    : form.dateOfBirth,
   dateOfJoining: form.joiningDate || new Date().toISOString(),
   experience: form.experience,
   bloodGroup: form.bloodGroup,
   departmentID: form.dept,
   designationID: form.designation,
-  qualificationID: form.qualification,
-  empImage: form.empImage ?? '',
+qualificationID:
+  !form.qualification || Number(form.qualification) === 0
+    ? null
+    : Number(form.qualification),
+      empImage: form.empImage ?? '',
   basicSalary: Number(form.basicSalary) || 0,
   medicalAllowanace: Number(form.medicalAllowanace) || 0,
   rentAllowance: Number(form.rentAllowance) || 0,

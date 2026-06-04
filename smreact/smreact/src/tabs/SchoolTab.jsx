@@ -261,7 +261,7 @@ export default function SchoolTab({ schoolInfo, setSchoolInfo, onSave, onSaveDra
               setBranchSession(String(d.SessionID));
       handleChange('academicSession', d.SessionName);
     }
-    } catch { showToast('Could not load branch data', 'error'); }
+    } catch { console.log('Could not load branch data'); }
   }
 
   // ── Effects ───────────────────────────────────────────────────────────────

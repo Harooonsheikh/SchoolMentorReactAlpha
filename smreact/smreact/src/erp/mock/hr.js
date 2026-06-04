@@ -1,0 +1,459 @@
+/* ═══════════════════════════════════════════════════════════════════
+   Human Resource — seed data
+   Ported from ~/Desktop/ERP-HTML/Human Resource .html
+
+   The first two exports (mockHrStats, mockStaff) are LEGACY shapes used
+   by the Dashboard cards — kept untouched so the dashboard keeps
+   rendering. Everything below is HR-module-specific seed.
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ─── Legacy shapes (consumed by Dashboard) ─── */
+export const mockHrStats = {
+  totalStaff: 87,
+  teachingStaff: 62,
+  onLeaveToday: 4,
+  openPositions: 3,
+};
+export const mockStaff = [
+  { name: 'Mr. Faisal Ahmed',  desig: 'Principal',   dept: 'Administration', joined: 'Jan 2018', statusType: 'green',  status: 'Active'   },
+  { name: 'Ms. Nadia Iqbal',   desig: 'Sr. Teacher', dept: 'Science',        joined: 'Mar 2020', statusType: 'green',  status: 'Active'   },
+  { name: 'Mr. Bilal Hussain', desig: 'Teacher',     dept: 'Mathematics',    joined: 'Aug 2022', statusType: 'orange', status: 'On Leave' },
+  { name: 'Ms. Amna Farooq',   desig: 'Accountant',  dept: 'Accounts',       joined: 'Jun 2021', statusType: 'green',  status: 'Active'   },
+];
+
+/* ═══════════════════════════════════════════════════════════════════
+   HR Module seed
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* Departments — top-level grouping for employees */
+export const mockHrDepts = [
+  { id: 1, name: 'Administration',   desc: 'School administration and management' },
+  { id: 2, name: 'Academics',        desc: 'Teaching and curriculum' },
+  { id: 3, name: 'Security',         desc: 'Campus security and safety' },
+  { id: 4, name: 'Quality Control',  desc: 'Quality assurance and audits' },
+];
+
+/* Designations — roles within each department (dId → mockHrDepts.id) */
+export const mockHrDesigs = [
+  { id: 1, dId: 1, name: 'Principal',        qual: 'MSc',    desc: 'Head of institution' },
+  { id: 2, dId: 1, name: 'Vice Principal',   qual: 'MSc',    desc: 'Deputy head' },
+  { id: 3, dId: 1, name: 'Accountant',       qual: 'B.Com',  desc: 'Financial accounts' },
+  { id: 4, dId: 2, name: 'Teacher English',  qual: 'BA',     desc: 'English teacher' },
+  { id: 5, dId: 2, name: 'Teacher SST',      qual: 'BEd',    desc: 'Social studies teacher' },
+  { id: 6, dId: 2, name: 'Teacher Science',  qual: 'BSc',    desc: 'Science teacher' },
+  { id: 7, dId: 3, name: 'Security Guard',   qual: 'Matric', desc: 'Campus guard' },
+  { id: 8, dId: 4, name: 'QA Officer',       qual: 'MBA',    desc: 'Quality auditor' },
+];
+
+/* Helpers used to keep employee records compact in the seed.
+   These shape defaults match the HTML reference; the UI may overwrite
+   any field. defaultSalaryHeads / defaultLeaves are exported too so
+   later steps (Add/Edit Employee modal) can reuse them. */
+export function hrDefaultSalaryHeads() {
+  return [
+    { name: 'House Allowance',     amount: 0, type: 'allow'  },
+    { name: 'Transport Allowance', amount: 0, type: 'allow'  },
+    { name: 'Medical Allowance',   amount: 0, type: 'allow'  },
+    { name: 'Income Tax',          amount: 0, type: 'deduct' },
+  ];
+}
+export function hrDefaultLeaves() {
+  return {
+    annual: 20, casual: 10, sick: 8, maternity: 0, balance: 20,
+    policy: 'Standard', deductEn: true, absentDed: 100, unpaidDed: 1000,
+  };
+}
+export function hrDefaultFinancial() {
+  return {
+    salaryAdvance: 0, loanBalance: 0,
+    securityDepositApplicable: false, securityDeposit: 0, securityDepositReturned: 0,
+    otherRecoveries: 0,
+    finalSettlement: 'pending',     // pending | completed
+    clearanceStatus: 'pending',     // pending | cleared
+  };
+}
+
+/* Task assignment seed — used by Step 4 (Task Assignment modal). Each
+   record models one ongoing responsibility for a staff member. */
+export function hrDefaultTasks() { return []; }
+export const HR_TASK_TYPES = [
+  { id: 'subject',  label: 'Subject Teaching',     icon: 'fa-book-open' },
+  { id: 'section',  label: 'Section Coordination', icon: 'fa-people-group' },
+  { id: 'admin',    label: 'Administrative',       icon: 'fa-clipboard-check' },
+  { id: 'custom',   label: 'Custom Task',          icon: 'fa-pen-ruler' },
+];
+export const HR_TASK_STATUSES = ['Ongoing', 'On Hold', 'Completed'];
+
+/* ─── Letter templates (Step 7) ───────────────────────────────────
+   Each template carries:
+     • id, label, icon, tone (for the picker card)
+     • desc — one-liner shown on the picker
+     • subject — appears in the rendered letter heading
+     • body — \\n-separated paragraphs with {{placeholders}}
+     • fields — extra inputs the issuer fills in (beyond the
+       per-employee placeholders that come from the emp record).
+
+   Placeholders supported across all templates:
+     {{name}} {{eid}} {{designation}} {{department}} {{join}}
+     {{cnic}} {{address}} {{salary}} {{date}}
+   Plus any field key defined in `fields`. */
+export const HR_LETTER_TEMPLATES = [
+  {
+    id:      'appointment',
+    label:   'Appointment Letter',
+    icon:    'fa-handshake',
+    tone:    'blue',
+    desc:    'Formal offer of appointment with role, salary and effective date.',
+    subject: 'Letter of Appointment',
+    fields: [
+      { key: 'effectiveDate', label: 'Effective Date',    type: 'date', required: true },
+      { key: 'probation',     label: 'Probation Period',  type: 'text', default: '3 months' },
+      { key: 'reportTo',      label: 'Reporting Manager', type: 'text' },
+    ],
+    body:
+`Dear {{name}},
+
+We are pleased to offer you the position of {{designation}} in the {{department}} department, effective from {{effectiveDate}}.
+
+Your basic salary for this role is PKR {{salary}} per month, subject to applicable allowances and deductions as per the school's salary policy. You will be on probation for {{probation}} from the effective date.
+
+You will report directly to {{reportTo}}. Please review and acknowledge the terms of this letter by returning a signed copy to the HR department.
+
+We look forward to a long and rewarding association with you.`,
+  },
+  {
+    id:      'experience',
+    label:   'Experience Letter',
+    icon:    'fa-medal',
+    tone:    'green',
+    desc:    'Confirms tenure and contribution for an outgoing employee.',
+    subject: 'Experience Letter',
+    fields: [
+      { key: 'fromDate',  label: 'Service From', type: 'date', required: true },
+      { key: 'toDate',    label: 'Service To',   type: 'date', required: true },
+      { key: 'remarks',   label: 'Closing Remarks (optional)', type: 'textarea',
+        default: 'During the tenure, the employee was sincere, hardworking and showed excellent commitment to the school.' },
+    ],
+    body:
+`To Whom It May Concern,
+
+This is to certify that {{name}} (EID: {{eid}}) was employed at School Mentor Academy as {{designation}} in the {{department}} department from {{fromDate}} to {{toDate}}.
+
+{{remarks}}
+
+We wish them the very best in their future endeavours.`,
+  },
+  {
+    id:      'service',
+    label:   'Service Certificate',
+    icon:    'fa-certificate',
+    tone:    'indigo',
+    desc:    'Certifies ongoing employment for visa, bank or formal use.',
+    subject: 'Service Certificate',
+    fields: [
+      { key: 'purpose', label: 'Purpose / Addressed To', type: 'text', default: 'Whom It May Concern' },
+    ],
+    body:
+`To {{purpose}},
+
+This is to certify that {{name}}, bearing CNIC {{cnic}}, is currently serving at School Mentor Academy as {{designation}} in the {{department}} department since {{join}}.
+
+This certificate has been issued at the request of the employee for record purposes and does not commit the school to anything beyond a confirmation of current employment.`,
+  },
+  {
+    id:      'promotion',
+    label:   'Promotion Letter',
+    icon:    'fa-arrow-up-right-dots',
+    tone:    'green',
+    desc:    'Confirms promotion to a new designation with revised compensation.',
+    subject: 'Letter of Promotion',
+    fields: [
+      { key: 'newDesignation', label: 'New Designation',  type: 'text', required: true },
+      { key: 'newSalary',      label: 'New Basic Salary', type: 'number', required: true },
+      { key: 'effectiveDate',  label: 'Effective Date',   type: 'date', required: true },
+    ],
+    body:
+`Dear {{name}},
+
+We are pleased to inform you that, in recognition of your contribution and performance, you are hereby promoted from {{designation}} to {{newDesignation}}, effective {{effectiveDate}}.
+
+Your revised basic salary will be PKR {{newSalary}} per month, with allowances and deductions to be applied as per the salary policy.
+
+We expect that you will continue to display the same dedication in your new role.
+
+Warm congratulations on your promotion.`,
+  },
+  {
+    id:      'increment',
+    label:   'Salary Increment',
+    icon:    'fa-chart-line',
+    tone:    'green',
+    desc:    'Communicates an annual or merit-based salary increase.',
+    subject: 'Salary Increment Letter',
+    fields: [
+      { key: 'newSalary',     label: 'Revised Basic Salary', type: 'number', required: true },
+      { key: 'effectiveDate', label: 'Effective Date',       type: 'date', required: true },
+      { key: 'reason',        label: 'Reason / Context',     type: 'text', default: 'Annual review' },
+    ],
+    body:
+`Dear {{name}},
+
+Following the {{reason}}, we are pleased to revise your basic salary from PKR {{salary}} to PKR {{newSalary}} per month, effective {{effectiveDate}}.
+
+This decision reflects your sustained performance and commitment to the school. The revised compensation will be reflected in the next payroll cycle.
+
+We thank you for your continued contribution.`,
+  },
+  {
+    id:      'warning',
+    label:   'Warning Letter',
+    icon:    'fa-triangle-exclamation',
+    tone:    'orange',
+    desc:    'Formal record of disciplinary concern with corrective ask.',
+    subject: 'Letter of Warning',
+    fields: [
+      { key: 'incidentDate', label: 'Incident Date', type: 'date', required: true },
+      { key: 'reason',       label: 'Reason / Subject', type: 'text', required: true },
+      { key: 'expectation',  label: 'Corrective Expectation', type: 'textarea', required: true,
+        default: 'We expect immediate improvement and full adherence to school policy going forward.' },
+    ],
+    body:
+`Dear {{name}},
+
+This letter is being issued to formally record the following concern observed on {{incidentDate}}: {{reason}}.
+
+{{expectation}}
+
+Please treat this as a formal warning. A repeat of the above may attract stricter disciplinary action as per the school's HR policy. You are encouraged to discuss any clarification with the HR department within seven (7) days.`,
+  },
+  {
+    id:      'termination',
+    label:   'Termination Letter',
+    icon:    'fa-user-slash',
+    tone:    'red',
+    desc:    'Formal end-of-service letter with last working day and reason.',
+    subject: 'Termination of Service',
+    fields: [
+      { key: 'lastDay', label: 'Last Working Day', type: 'date', required: true },
+      { key: 'reason',  label: 'Reason',           type: 'text', required: true },
+    ],
+    body:
+`Dear {{name}},
+
+With reference to your service as {{designation}} in the {{department}} department, we regret to inform you that your employment with School Mentor Academy stands terminated effective {{lastDay}}.
+
+Reason: {{reason}}
+
+You are requested to complete all handover, clearance and exit formalities on or before the last working day. Final settlement of dues, if any, will be processed by the HR / Accounts department in line with the school's policy.`,
+  },
+];
+export function hrDefaultLetters() { return []; }
+export const mockHrNextLetterId = 1;
+
+/* ─── Employees (full shape) ───
+   `dId`  → mockHrDepts.id
+   `desId`→ mockHrDesigs.id
+   `status` → 'Active' | 'Inactive'
+   `photo` is a base64 data-URL (empty string = use initials placeholder).
+
+   The seed mirrors the HTML reference so the on-screen layout looks
+   real. Inactive employees keep `inactiveDate`, `inactiveReason`, and
+   `inactiveNotes` so the Inactive sub-tab has something to render. */
+export const mockHrEmployees = [
+  {
+    id: 1, eid: 'EMP-001',
+    firstName: 'Dr. Islahudin', lastName: '', fn: 'MKA',
+    cnic: '35101-1234567-1', dob: '2003-05-12', gender: 'Male',
+    marital: 'Single', phone: '03119456045', email: 'islahudin@school.com',
+    blood: 'A+', emergency: '03001234567',
+    address: 'Sector G-9, Islamabad', nationality: 'Pakistani',
+    dId: 1, desId: 1, join: '2025-04-29', type: 'Permanent', status: 'Active',
+    manager: 'Mr. Ahmed Khan', qual: 'MSc Education', exp: '10 yrs',
+    shift: '8:00 AM – 2:00 PM',
+    country: 'Pakistan', province: 'ICT', city: 'Islamabad',
+    role: 'Overall school administration & academic leadership',
+    basicSalary: 80000, payMethod: 'Bank Transfer',
+    bankName: 'HBL', bankAcc: 'PK00HABB0012345678',
+    salaryHeads: [
+      { name: 'House Allowance',     amount: 15000, type: 'allow'  },
+      { name: 'Transport Allowance', amount:  5000, type: 'allow'  },
+      { name: 'Medical Allowance',   amount:  3000, type: 'allow'  },
+      { name: 'Income Tax',          amount:  4000, type: 'deduct' },
+    ],
+    leaves: { annual: 25, casual: 10, sick: 8, maternity: 0, balance: 23, policy: 'Senior Staff', deductEn: true, absentDed: 200, unpaidDed: 1500 },
+    financial: { salaryAdvance: 0, loanBalance: 0, securityDepositApplicable: true, securityDeposit: 50000, securityDepositReturned: 0, otherRecoveries: 0, finalSettlement: 'pending', clearanceStatus: 'pending' },
+    tasks: [
+      { id: 1, type: 'admin',   title: 'School Administration Oversight', cls: '',        section: '',  subject: '',         start: '2025-04-29', end: '', status: 'Ongoing', notes: 'Top-level academic & operational oversight' },
+      { id: 2, type: 'custom',  title: 'PTM Coordination',                cls: '',        section: '',  subject: '',         start: '2025-09-01', end: '', status: 'Ongoing', notes: 'Quarterly parent–teacher meetings' },
+    ],
+    photo: '',
+  },
+  {
+    id: 2, eid: 'EMP-002',
+    firstName: 'Alpha', lastName: '', fn: '',
+    cnic: '', dob: '', gender: 'Male', marital: 'Single',
+    phone: '03001234500', email: 'alpha@school.com',
+    blood: 'A+', emergency: '',
+    address: '', nationality: 'Pakistani',
+    dId: 1, desId: 1, join: '2024-08-15', type: 'Permanent', status: 'Active',
+    manager: '', qual: 'MBA', exp: '5 yrs', shift: '',
+    country: 'Pakistan', province: '', city: '',
+    role: '',
+    basicSalary: 60000, payMethod: 'Bank Transfer',
+    bankName: '', bankAcc: '',
+    salaryHeads: hrDefaultSalaryHeads(),
+    leaves: hrDefaultLeaves(),
+    financial: hrDefaultFinancial(),
+    photo: '',
+  },
+  {
+    id: 3, eid: 'EMP-003',
+    firstName: 'Gamma', lastName: '', fn: '',
+    cnic: '', dob: '', gender: 'Male', marital: 'Single',
+    phone: '03001234501', email: '',
+    blood: 'B+', emergency: '',
+    address: '', nationality: 'Pakistani',
+    dId: 1, desId: 2, join: '2024-03-01', type: 'Permanent', status: 'Active',
+    manager: '', qual: 'MSc', exp: '8 yrs', shift: '',
+    country: 'Pakistan', province: '', city: '',
+    role: '',
+    basicSalary: 55000, payMethod: 'Bank Transfer',
+    bankName: '', bankAcc: '',
+    salaryHeads: hrDefaultSalaryHeads(),
+    leaves: hrDefaultLeaves(),
+    financial: hrDefaultFinancial(),
+    photo: '',
+  },
+  {
+    id: 4, eid: 'EMP-004',
+    firstName: 'Pi', lastName: '', fn: '',
+    cnic: '', dob: '', gender: 'Male', marital: 'Single',
+    phone: '03001234502', email: '',
+    blood: 'O+', emergency: '',
+    address: '', nationality: 'Pakistani',
+    dId: 2, desId: 4, join: '2023-09-01', type: 'Permanent', status: 'Active',
+    manager: '', qual: 'BA', exp: '3 yrs', shift: '',
+    country: 'Pakistan', province: '', city: '',
+    role: '',
+    basicSalary: 40000, payMethod: 'Bank Transfer',
+    bankName: '', bankAcc: '',
+    salaryHeads: hrDefaultSalaryHeads(),
+    leaves: hrDefaultLeaves(),
+    financial: hrDefaultFinancial(),
+    tasks: [
+      { id: 1, type: 'subject', title: 'English – Grade 7',        cls: 'Grade 7', section: 'A',  subject: 'English',   start: '2024-08-01', end: '', status: 'Ongoing',   notes: '' },
+      { id: 2, type: 'subject', title: 'English – Grade 8',        cls: 'Grade 8', section: 'B',  subject: 'English',   start: '2024-08-01', end: '', status: 'Ongoing',   notes: '' },
+      { id: 3, type: 'section', title: 'Class Teacher – 7A',       cls: 'Grade 7', section: 'A',  subject: '',          start: '2024-08-01', end: '', status: 'Ongoing',   notes: 'Class coordination & attendance' },
+    ],
+    photo: '',
+  },
+  {
+    id: 5, eid: 'EMP-005',
+    firstName: 'Xi', lastName: '', fn: '',
+    cnic: '', dob: '', gender: 'Male', marital: 'Single',
+    phone: '03001234503', email: '',
+    blood: 'A+', emergency: '',
+    address: '', nationality: 'Pakistani',
+    dId: 2, desId: 5, join: '2024-01-10', type: 'Contractual', status: 'Active',
+    manager: '', qual: 'BEd', exp: '2 yrs', shift: '',
+    country: 'Pakistan', province: '', city: '',
+    role: '',
+    basicSalary: 38000, payMethod: 'Bank Transfer',
+    bankName: '', bankAcc: '',
+    salaryHeads: hrDefaultSalaryHeads(),
+    leaves: hrDefaultLeaves(),
+    financial: hrDefaultFinancial(),
+    photo: '',
+  },
+  {
+    id: 6, eid: 'EMP-006',
+    firstName: 'Mr. Tariq', lastName: 'Mahmood', fn: 'Abdul Rahman',
+    cnic: '35202-7891234-5', dob: '1985-07-20', gender: 'Male',
+    marital: 'Married', phone: '03001112233', email: 'tariq@school.com',
+    blood: 'O+', emergency: '03009998877',
+    address: 'F-10, Islamabad', nationality: 'Pakistani',
+    dId: 2, desId: 6, join: '2023-01-15', type: 'Permanent',
+    status: 'Inactive',
+    inactiveDate: '2025-12-10',
+    inactiveReason: 'Resignation',
+    inactiveNotes: 'Pursuing higher studies abroad. Cleared handover with new staff.',
+    manager: 'Dr. Islahudin', qual: 'MSc Physics', exp: '8 yrs',
+    shift: '8:00 AM – 2:00 PM',
+    country: 'Pakistan', province: 'ICT', city: 'Islamabad',
+    role: 'Senior Science Teacher',
+    basicSalary: 55000, payMethod: 'Bank Transfer',
+    bankName: 'UBL', bankAcc: 'PK11UNIL0098765432',
+    salaryHeads: hrDefaultSalaryHeads(),
+    leaves: hrDefaultLeaves(),
+    financial: { salaryAdvance: 25000, loanBalance: 10000, securityDepositApplicable: true, securityDeposit: 50000, securityDepositReturned: 0, otherRecoveries: 0, finalSettlement: 'pending', clearanceStatus: 'pending' },
+    letters: [
+      {
+        id: 1,
+        type: 'experience',
+        subject: 'Experience Letter',
+        date: '2025-12-12',
+        fields: {
+          fromDate: '2023-01-15',
+          toDate:   '2025-12-10',
+          remarks:  'During his tenure, Mr. Tariq was a dedicated science teacher who built a strong physics programme for grades 9 and 10.',
+        },
+      },
+    ],
+    photo: '',
+  },
+];
+
+/* Counters for newly added rows (services hand these to the UI so we
+   never collide with seed IDs). */
+export const mockHrNextDeptId  = 5;
+export const mockHrNextDesigId = 9;
+export const mockHrNextEmpId   = 7;
+
+/* ═══════════════════════════════════════════════════════════════════
+   Payroll seed (Step 5 — Financials tab)
+
+   Each run captures a single month. Rows store a frozen snapshot of
+   the employee's compensation at the time of generation so the
+   payslip remains faithful even if the employee's basic / heads
+   change later.
+   ═══════════════════════════════════════════════════════════════════ */
+function payrollRowFor(emp, overrides = {}) {
+  const allowTotal  = (emp.salaryHeads || []).filter(h => h.type === 'allow').reduce((s, h) => s + (Number(h.amount) || 0), 0);
+  const deductTotal = (emp.salaryHeads || []).filter(h => h.type === 'deduct').reduce((s, h) => s + (Number(h.amount) || 0), 0);
+  const basic = Number(emp.basicSalary) || 0;
+  return {
+    empId:   emp.id,
+    eid:     emp.eid,
+    name:    `${emp.firstName || ''} ${emp.lastName || ''}`.trim() || emp.eid,
+    dId:     emp.dId,
+    desId:   emp.desId,
+    photo:   emp.photo,
+    basic,
+    allow:   allowTotal,
+    deduct:  deductTotal,
+    net:     basic + allowTotal - deductTotal,
+    heads:   (emp.salaryHeads || []).map(h => ({ ...h })),
+    status:  'pending',
+    paidOn:  '',
+    payMethod: emp.payMethod || 'Bank Transfer',
+    notes:   '',
+    ...overrides,
+  };
+}
+
+/* April 2026 run — fully paid, two months back. */
+const _aprRows = mockHrEmployees
+  .filter(e => e.status === 'Active')
+  .map(e => payrollRowFor(e, { status: 'paid', paidOn: '2026-05-01' }));
+
+/* May 2026 run — partially paid (50/50 split). */
+const _mayActive = mockHrEmployees.filter(e => e.status === 'Active');
+const _mayRows = _mayActive.map((e, idx) => payrollRowFor(e, idx < Math.ceil(_mayActive.length / 2)
+  ? { status: 'paid', paidOn: '2026-06-01' }
+  : { status: 'pending' }));
+
+export const mockHrPayroll = [
+  { id: 1, period: '2026-04', generatedAt: '2026-04-28', rows: _aprRows },
+  { id: 2, period: '2026-05', generatedAt: '2026-05-29', rows: _mayRows },
+];
+export const mockHrNextPayrollId = 3;

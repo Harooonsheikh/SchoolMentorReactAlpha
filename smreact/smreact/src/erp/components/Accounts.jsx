@@ -1,0 +1,8072 @@
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import Tooltip from './Tooltip';
+import TutorialModal from './TutorialModal';
+import * as accountsService from '../services/accountsService';
+import useAsync from '../hooks/useAsync';
+
+/* ═══════════════════════════════════════════════════════════════════
+   ACCOUNTS MODULE — shell + 4 main tabs.
+   Ported from ~/Desktop/ERP-HTML/Accounts Module .html
+
+   Step 1 (done): page header + 4 main tabs with Coming Soon bodies.
+   Step 2 (this turn): Chart of Accounts — overview banner with live
+   stats, how-to steps strip, account-type rows table with per-type
+   expand-to-heads, Add / Edit Head modal, delete confirmation.
+   Subsequent steps: Transactions, Account Books, Reports.
+   ═══════════════════════════════════════════════════════════════════ */
+
+const ACC_TABS = [
+  { id: 'coa',     icon: 'fa-sitemap',       label: 'Chart of Accounts' },
+  { id: 'txn',     icon: 'fa-right-left',    label: 'Transactions' },
+  { id: 'books',   icon: 'fa-book-open',     label: 'Account Books' },
+  { id: 'reports', icon: 'fa-chart-column',  label: 'Reports' },
+];
+
+export default function Accounts({ toast }) {
+  const [tab, setTab] = useState('coa');
+  const [tutorialOpen, setTutorialOpen] = useState(false);
+  const activeMeta = ACC_TABS.find(t => t.id === tab);
+
+  return (
+    <>
+      <style>{ACC_CSS}</style>
+
+      {/* Page header — module title, brand-gradient icon, Tutorial CTA */}
+      <div className="page-header">
+        <div className="page-title-row">
+          <div className="page-title-icon" style={{ background: 'linear-gradient(135deg,#1E3A8A,#1E40AF)' }}>
+            <i className="fa-solid fa-landmark"></i>
+          </div>
+          <div>
+            <div className="page-title">Accounts</div>
+            <div className="page-sub">Chart of accounts, daily transactions, account books &amp; financial reports</div>
+          </div>
+        </div>
+        <Tooltip text="Play a short tutorial for the Accounts module">
+          <button
+            className="tutorial-btn page-tutorial-btn"
+            onClick={() => setTutorialOpen(true)}
+          >
+            <div className="play-dot"><i className="fa-solid fa-play" style={{ fontSize: 8 }}></i></div>
+            <span className="tutorial-label">Tutorial</span>
+          </button>
+        </Tooltip>
+      </div>
+
+      <div className="fee-subtabs">
+        {ACC_TABS.map(t => (
+          <Tooltip key={t.id} text={t.label}>
+            <button
+              className={`fee-subtab${tab === t.id ? ' active' : ''}`}
+              onClick={() => setTab(t.id)}
+            >
+              <i className={`fa-solid ${t.icon}`}></i> {t.label}
+            </button>
+          </Tooltip>
+        ))}
+      </div>
+
+      {tab === 'coa' ? (
+        <ChartOfAccounts toast={toast} />
+      ) : tab === 'txn' ? (
+        <Transactions toast={toast} />
+      ) : tab === 'books' ? (
+        <AccountBooks toast={toast} />
+      ) : tab === 'reports' ? (
+        <Reports toast={toast} />
+      ) : (
+        <AccComingSoon label={activeMeta?.label || 'This screen'} icon={activeMeta?.icon || 'fa-hammer'} />
+      )}
+
+      <TutorialModal
+        open={tutorialOpen}
+        moduleKey="accounts"
+        onClose={() => setTutorialOpen(false)}
+        toast={toast}
+      />
+    </>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   CHART OF ACCOUNTS — two top-level types (Expenses, Revenue), each
+   with a nested list of account heads. Per-row Add Heads CTA + expand
+   chevron reveal the heads table; row actions edit / delete each
+   head, with a hero-style confirm for destructive ops.
+   ═══════════════════════════════════════════════════════════════════ */
+function ChartOfAccounts({ toast }) {
+  const { data: serverTypes = [], setData: setServerTypes } = useAsync(accountsService.getAccTypes, []);
+  const { data: serverNextNo = 222 } = useAsync(accountsService.getAccNextHeadNo, 222);
+
+  /* Local mutable mirror — service returns clones so we can edit
+     in-place without affecting the seed for the next caller. */
+  const [types, setTypes] = useState(null);
+  useEffect(() => { if (serverTypes.length && types == null) setTypes(serverTypes); }, [serverTypes, types]);
+  const list = types || [];
+
+  const [nextNo, setNextNo] = useState(null);
+  useEffect(() => { if (nextNo == null && serverNextNo) setNextNo(serverNextNo); }, [serverNextNo, nextNo]);
+
+  const [openKey, setOpenKey] = useState(null);
+  const [edit, setEdit]       = useState(null); // { typeKey, mode:'add'|'edit', head? }
+  const [confirm, setConfirm] = useState(null);
+
+  const totalTypes  = list.length;
+  const expCount    = list.find(t => t.key === 'exp')?.heads.length || 0;
+  const revCount    = list.find(t => t.key === 'rev')?.heads.length || 0;
+
+  const openAdd  = (typeKey) => setEdit({ typeKey, mode: 'add' });
+  const openEdit = (typeKey, head) => setEdit({ typeKey, mode: 'edit', head });
+
+  const handleSave = async ({ name, desc }) => {
+    if (!edit) return;
+    const { typeKey, mode, head } = edit;
+    if (mode === 'add') {
+      const no = nextNo;
+      setNextNo(prev => (prev || 222) + 1);
+      setTypes(prev => prev.map(t => t.key === typeKey
+        ? { ...t, heads: [...t.heads, { no, name, desc }] }
+        : t));
+      setServerTypes(list.map(t => t.key === typeKey
+        ? { ...t, heads: [...t.heads, { no, name, desc }] }
+        : t));
+      await accountsService.saveAccHead({ typeKey, no, name, desc }).catch(() => {});
+      toast('Account head added', 'success');
+    } else {
+      setTypes(prev => prev.map(t => t.key === typeKey
+        ? { ...t, heads: t.heads.map(h => h.no === head.no ? { ...h, name, desc } : h) }
+        : t));
+      await accountsService.saveAccHead({ typeKey, no: head.no, name, desc }).catch(() => {});
+      toast('Account head updated', 'success');
+    }
+    setEdit(null);
+  };
+
+  const requestDelete = (typeKey, head) => {
+    const typeName = list.find(t => t.key === typeKey)?.name || '';
+    setConfirm({
+      title:   'Delete account head?',
+      message: <span><strong>{head.name}</strong> (#{head.no}) will be removed from {typeName}.</span>,
+      hint:    'This action cannot be undone. Transactions already recorded under this head will keep their data.',
+      onConfirm: async () => {
+        setTypes(prev => prev.map(t => t.key === typeKey
+          ? { ...t, heads: t.heads.filter(h => h.no !== head.no) }
+          : t));
+        await accountsService.deleteAccHead({ typeKey, no: head.no }).catch(() => {});
+        toast('Account head deleted', 'success');
+      },
+    });
+  };
+
+  return (
+    <>
+      {/* Overview banner */}
+      <div className="acc-overview">
+        <div className="acc-overview-main">
+          <div className="acc-overview-icon"><i className="fa-solid fa-sitemap"></i></div>
+          <div className="acc-overview-text">
+            <div className="acc-overview-title">Chart of Accounts</div>
+            <div className="acc-overview-sub">
+              Organise your finances under two top-level types — <strong>Expenses</strong> and <strong>Revenue</strong>.
+              Add account heads under each type, then expand any type to edit or remove its heads.
+            </div>
+          </div>
+        </div>
+        <div className="acc-overview-stats">
+          <Tooltip text={`${totalTypes} top-level account type${totalTypes === 1 ? '' : 's'}`}>
+            <div className="acc-ov-stat">
+              <div className="acc-ov-stat-ic all"><i className="fa-solid fa-layer-group"></i></div>
+              <div>
+                <div className="acc-ov-stat-val">{totalTypes}</div>
+                <div className="acc-ov-stat-lbl">Account Types</div>
+              </div>
+            </div>
+          </Tooltip>
+          <Tooltip text={`${expCount} head${expCount === 1 ? '' : 's'} under Expenses`}>
+            <div className="acc-ov-stat">
+              <div className="acc-ov-stat-ic exp"><i className="fa-solid fa-arrow-trend-down"></i></div>
+              <div>
+                <div className="acc-ov-stat-val">{expCount}</div>
+                <div className="acc-ov-stat-lbl">Expense Heads</div>
+              </div>
+            </div>
+          </Tooltip>
+          <Tooltip text={`${revCount} head${revCount === 1 ? '' : 's'} under Revenue`}>
+            <div className="acc-ov-stat">
+              <div className="acc-ov-stat-ic rev"><i className="fa-solid fa-arrow-trend-up"></i></div>
+              <div>
+                <div className="acc-ov-stat-val">{revCount}</div>
+                <div className="acc-ov-stat-lbl">Revenue Heads</div>
+              </div>
+            </div>
+          </Tooltip>
+        </div>
+      </div>
+
+      {/* How-to steps strip */}
+      <div className="acc-steps">
+        <div className="acc-step">
+          <div className="acc-step-no">1</div>
+          <div>
+            <div className="acc-step-title"><i className="fa-solid fa-folder-plus"></i> Add Heads</div>
+            <div className="acc-step-desc">Create chart-of-account heads under a type.</div>
+          </div>
+        </div>
+        <div className="acc-step">
+          <div className="acc-step-no">2</div>
+          <div>
+            <div className="acc-step-title"><i className="fa-solid fa-chevron-down"></i> Expand</div>
+            <div className="acc-step-desc">Open a type to view all its account heads.</div>
+          </div>
+        </div>
+        <div className="acc-step">
+          <div className="acc-step-no">3</div>
+          <div>
+            <div className="acc-step-title"><i className="fa-solid fa-right-left"></i> Record</div>
+            <div className="acc-step-desc">Use heads when posting transactions.</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Type rows */}
+      <div className="fee-section">
+        <div className="fee-table-head acc-coa-row">
+          <div className="fee-th">S. No.</div>
+          <div className="fee-th">Account Type</div>
+          <div className="fee-th fee-center">Total Heads</div>
+          <div className="fee-th fee-center">Action</div>
+          <div className="fee-th fee-center">Details</div>
+        </div>
+
+        {list.length === 0 ? (
+          <div className="fee-empty">Loading account types…</div>
+        ) : list.map((t, i) => {
+          const isOpen = openKey === t.key;
+          return (
+            <div key={t.key} className="fee-rowwrap">
+              <div
+                className={`fee-row acc-coa-row${isOpen ? ' open' : ''}`}
+                onClick={() => setOpenKey(isOpen ? null : t.key)}
+              >
+                <div className="fee-td" data-label="S. No."><span className="fee-row-icon">{i + 1}</span></div>
+                <div className="fee-td fee-name" data-label="Type">
+                  <span className={`acc-type-ic ${t.cls}`}><i className={`fa-solid ${t.icon}`}></i></span>
+                  <span className="acc-type-name">{t.name}</span>
+                </div>
+                <div className="fee-td fee-center" data-label="Total Heads">
+                  <span className="fee-tag">{t.heads.length}</span>
+                </div>
+                <div className="fee-td fee-center" data-label="Action" onClick={e => e.stopPropagation()}>
+                  <Tooltip text={`Add a new head under ${t.name}`}>
+                    <button className="acc-addheads" onClick={() => openAdd(t.key)}>
+                      <i className="fa-solid fa-plus"></i> Add Heads
+                    </button>
+                  </Tooltip>
+                </div>
+                <div className="fee-td fee-center" data-label="Details">
+                  <Tooltip text={isOpen ? `Hide ${t.name} heads` : `Show ${t.name} heads`}>
+                    <span className={`fee-chevbtn${isOpen ? ' open' : ''}`}>
+                      <i className="fa-solid fa-chevron-down fee-chev"></i>
+                    </span>
+                  </Tooltip>
+                </div>
+              </div>
+
+              <div className={`fee-detail${isOpen ? ' open' : ''}`}>
+                <div className="fee-detail-inner">
+                  <div className="fee-detail-title">
+                    <i className="fa-solid fa-list-ul"></i> {t.name} — Account Heads
+                  </div>
+
+                  {t.heads.length === 0 ? (
+                    <div className="acc-heads-empty">
+                      <i className="fa-solid fa-folder-open"></i>
+                      No account heads yet. Click <strong>Add Heads</strong> to create one.
+                    </div>
+                  ) : (
+                    <div className="acc-heads-wrap">
+                      <table className="acc-heads-tbl">
+                        <thead>
+                          <tr>
+                            <th>Chart of Account No</th>
+                            <th>Head Name</th>
+                            <th>Description</th>
+                            <th className="r">Action</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {t.heads.map(h => (
+                            <tr key={h.no} id={`acchd-${t.key}-${h.no}`}>
+                              <td data-label="COA No"><span className="acc-head-no">{h.no}</span></td>
+                              <td className="acc-head-name" data-label="Head Name">{h.name}</td>
+                              <td className="acc-head-desc" data-label="Description">{h.desc || '—'}</td>
+                              <td className="r" data-label="Action">
+                                <div className="acc-heads-actions">
+                                  <Tooltip text={`Edit ${h.name}`}>
+                                    <button className="fee-iconbtn" onClick={() => openEdit(t.key, h)}>
+                                      <i className="fa-solid fa-pen"></i>
+                                    </button>
+                                  </Tooltip>
+                                  <Tooltip text={`Delete ${h.name}`}>
+                                    <button className="fee-iconbtn danger" onClick={() => requestDelete(t.key, h)}>
+                                      <i className="fa-solid fa-trash-can"></i>
+                                    </button>
+                                  </Tooltip>
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <AccHeadModal
+        cfg={edit}
+        types={list}
+        onClose={() => setEdit(null)}
+        onSave={handleSave}
+        toast={toast}
+      />
+
+      <AccConfirmDialog cfg={confirm} onClose={() => setConfirm(null)} />
+    </>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   ADD / EDIT HEAD MODAL — head name (required) + optional description.
+   ═══════════════════════════════════════════════════════════════════ */
+function AccHeadModal({ cfg, types, onClose, onSave, toast }) {
+  const [name, setName] = useState('');
+  const [desc, setDesc] = useState('');
+
+  useEffect(() => {
+    if (!cfg) return;
+    if (cfg.mode === 'edit' && cfg.head) {
+      setName(cfg.head.name || '');
+      setDesc(cfg.head.desc || '');
+    } else {
+      setName(''); setDesc('');
+    }
+  }, [cfg]);
+
+  useEffect(() => {
+    if (!cfg) return undefined;
+    const onKey = e => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    document.body.style.overflow = 'hidden';
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.body.style.overflow = '';
+    };
+  }, [cfg, onClose]);
+
+  if (!cfg) return null;
+
+  const typeMeta = types.find(t => t.key === cfg.typeKey);
+  const isEdit   = cfg.mode === 'edit';
+
+  const handleSubmit = () => {
+    const n = name.trim();
+    if (!n) { toast('Please enter a head name', 'error'); return; }
+    onSave({ name: n, desc: desc.trim() });
+  };
+
+  return createPortal(
+    <div className="fee-overlay open" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="fee-modal">
+        <div className="fee-modal-head">
+          <div className="fee-modal-head-title">
+            <div className="fee-modal-head-icon"><i className="fa-solid fa-folder-plus"></i></div>
+            <div>
+              <div className="fee-modal-title">
+                {isEdit ? 'Edit Chart of Account in ' : 'Add Chart of Account in '}
+                <em>{typeMeta?.name}</em>
+              </div>
+              <div className="fee-modal-sub">
+                {isEdit ? `Account No. ${cfg.head?.no}` : 'Create a new account head under this type'}
+              </div>
+            </div>
+          </div>
+          <Tooltip text="Close">
+            <button className="fee-modal-close" onClick={onClose} aria-label="Close">
+              <i className="fa-solid fa-xmark"></i>
+            </button>
+          </Tooltip>
+        </div>
+
+        <div className="fee-modal-body">
+          <div className="fee-info">
+            <i className="fa-solid fa-circle-info"></i>
+            <span>Heads defined here appear in the transactions dropdown when recording entries for this account type.</span>
+          </div>
+          <div className="acc-form-grid">
+            <div className="fee-field-stack">
+              <label className="fee-label">Head Name</label>
+              <input
+                className="fee-input"
+                value={name}
+                onChange={e => setName(e.target.value)}
+                placeholder="Enter Name here"
+                autoFocus
+              />
+            </div>
+            <div className="fee-field-stack" style={{ marginBottom: 0 }}>
+              <label className="fee-label">Account Description</label>
+              <textarea
+                className="fee-input fee-textarea"
+                value={desc}
+                onChange={e => setDesc(e.target.value)}
+                rows={3}
+                placeholder="Short description of this account head"
+              />
+            </div>
+          </div>
+        </div>
+
+        <div className="fee-modal-foot">
+          <Tooltip text="Discard changes and close">
+            <button className="fee-btn fee-btn-ghost" onClick={onClose}>Cancel</button>
+          </Tooltip>
+          <Tooltip text={isEdit ? 'Save changes to this head' : 'Add this head to the chart of accounts'}>
+            <button className="fee-btn fee-btn-primary" onClick={handleSubmit}>
+              <i className="fa-solid fa-floppy-disk"></i> {isEdit ? 'Save Changes' : 'Save'}
+            </button>
+          </Tooltip>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   ACC CONFIRM DIALOG — same hero pattern as Fee module's confirm
+   (animated ring → icon → title → message → hint → 1:1.4 footer).
+   Kept module-local so Accounts.jsx doesn't depend on Fee internals.
+   ═══════════════════════════════════════════════════════════════════ */
+function AccConfirmDialog({ cfg, onClose }) {
+  useEffect(() => {
+    if (!cfg) return undefined;
+    const onKey = e => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    document.body.style.overflow = 'hidden';
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.body.style.overflow = '';
+    };
+  }, [cfg, onClose]);
+
+  if (!cfg) return null;
+
+  const style = cfg.confirmStyle || 'danger';
+  const defaultIcons = {
+    danger:  { icon: 'fa-trash',        bg: 'rgba(220,38,38,.1)',  color: '#DC2626' },
+    primary: { icon: 'fa-circle-check', bg: 'rgba(30,58,138,.1)',  color: '#1E40AF' },
+  };
+  const fallback = defaultIcons[style] || defaultIcons.danger;
+  const {
+    title, message, hint,
+    confirmLabel = style === 'danger' ? 'Yes, Delete' : 'Yes, Confirm',
+    icon = fallback.icon,
+    iconBg = fallback.bg,
+    iconColor = fallback.color,
+    onConfirm,
+  } = cfg;
+
+  const handle = () => {
+    if (typeof onConfirm === 'function') onConfirm();
+    onClose();
+  };
+  const isString = typeof message === 'string';
+
+  return createPortal(
+    <div className="acc-confirm-overlay open" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="acc-confirm-dialog">
+        <div
+          className="acc-confirm-glow"
+          style={{ background: style === 'danger' ? 'linear-gradient(90deg,#EF4444,#DC2626)' : 'linear-gradient(90deg,#1D4ED8,#1E3A8A)' }}
+        />
+        <div className={`acc-confirm-hero acc-confirm-hero--${style}`}>
+          <div className={`acc-confirm-ring acc-confirm-ring--${style}`}>
+            <div className="acc-confirm-icon-wrap" style={{ background: iconBg, color: iconColor }}>
+              <i className={`fa-solid ${icon}`}></i>
+            </div>
+          </div>
+        </div>
+        <div className="acc-confirm-body">
+          <div className="acc-confirm-title">{title}</div>
+          {isString
+            ? <div className="acc-confirm-msg" dangerouslySetInnerHTML={{ __html: message }} />
+            : <div className="acc-confirm-msg">{message}</div>}
+          {hint && (
+            <div className={`acc-confirm-hint acc-confirm-hint--${style}`}>
+              <i className="fa-solid fa-triangle-exclamation"></i>
+              <span>{hint}</span>
+            </div>
+          )}
+        </div>
+        <div className="acc-confirm-footer">
+          <button className="acc-confirm-btn acc-confirm-btn--cancel" onClick={onClose}>Cancel</button>
+          <button
+            className={`acc-confirm-btn acc-confirm-btn--confirm${style === 'primary' ? ' primary-style' : ''}`}
+            onClick={handle}
+          >
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   TRANSACTIONS — Revenues / Expenditures segment, month-keyed audit
+   table with expand-to-detail panels, KPI strip, search, and a
+   New / Edit Entry modal that auto-stamps the audit trail. Each row
+   has Edit / Delete (confirm) / Download Voucher actions.
+   ═══════════════════════════════════════════════════════════════════ */
+
+const fmtMoney = (n) => `Rs. ${(Number(n) || 0).toLocaleString('en-PK')}`;
+const MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+const accFmtDate = (iso) => {
+  if (!iso) return '—';
+  const p = String(iso).slice(0, 10).split('-');
+  if (p.length !== 3) return iso;
+  return `${p[2]}-${MONTHS_SHORT[Number(p[1]) - 1] || p[1]}-${p[0].slice(2)}`;
+};
+const accFmtTime = (iso) => {
+  if (!iso || iso.length < 13) return '—';
+  const t = iso.slice(11, 16);
+  const [h, m] = t.split(':').map(Number);
+  const period = h >= 12 ? 'PM' : 'AM';
+  const h12 = ((h + 11) % 12) + 1;
+  return `${String(h12).padStart(2, '0')}:${String(m || 0).padStart(2, '0')} ${period}`;
+};
+const accFmtStamp = (iso) => {
+  if (!iso) return '—';
+  return `${accFmtDate(iso)} · ${accFmtTime(iso)}`;
+};
+const nowISO = () => new Date().toISOString().slice(0, 19);
+
+function Transactions({ toast }) {
+  const { data: typesData = [] }   = useAsync(accountsService.getAccTypes, []);
+  const { data: serverTxns = { rev: [], exp: [] } } = useAsync(accountsService.getAccTxns, { rev: [], exp: [] });
+  const { data: users = [] }       = useAsync(accountsService.getAccUsers, []);
+  const { data: currentUser = '' } = useAsync(accountsService.getAccCurrentUser, '');
+  const { data: school = {} }      = useAsync(accountsService.getAccSchool, {});
+
+  const [txns, setTxns] = useState(null);
+  useEffect(() => { if (txns == null && serverTxns && (serverTxns.rev.length || serverTxns.exp.length)) setTxns(serverTxns); }, [serverTxns, txns]);
+  const list = useMemo(() => txns || { rev: [], exp: [] }, [txns]);
+
+  const [seg, setSeg]           = useState('rev'); // 'rev' | 'exp'
+  const [month, setMonth]       = useState('2026-05');
+  const [search, setSearch]     = useState('');
+  const [searchOpen, setSearchOpen] = useState(false);
+  const searchAnchorRef         = useRef(null);
+  const [openRow, setOpenRow]   = useState(null);
+  const [entry, setEntry]       = useState(null);   // { mode:'add'|'edit', txn? }
+  const [confirm, setConfirm]   = useState(null);
+  const [slip, setSlip]         = useState(null);
+  const [dlReport, setDlReport] = useState(null);
+
+  const segLabel  = seg === 'rev' ? 'Revenue'      : 'Expenditure';
+  const segLabelP = seg === 'rev' ? 'Revenues'     : 'Expenditures';
+
+  /* The table always shows the full month list — search is dropdown-only. */
+  const monthList = useMemo(
+    () => (list[seg] || []).filter(x => x.month === month),
+    [list, seg, month],
+  );
+
+  /* Smart-search matches — typeahead dropdown over the current month list. */
+  const matches = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return [];
+    return monthList.filter(x =>
+      (x.head || '').toLowerCase().includes(q) ||
+      (x.detail || '').toLowerCase().includes(q) ||
+      String(x.amount || '').includes(q) ||
+      (x.date || '').includes(q) ||
+      String(x.headNo || '').includes(q)
+    ).slice(0, 8);
+  }, [search, monthList]);
+
+  /* Close dropdown when clicking outside the anchor */
+  useEffect(() => {
+    if (!searchOpen) return undefined;
+    const onDown = (e) => {
+      if (searchAnchorRef.current && !searchAnchorRef.current.contains(e.target)) setSearchOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('touchstart', onDown);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('touchstart', onDown);
+    };
+  }, [searchOpen]);
+  /* Escape closes it too */
+  useEffect(() => {
+    if (!searchOpen) return undefined;
+    const onKey = (e) => { if (e.key === 'Escape') setSearchOpen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [searchOpen]);
+
+  const clearSearch = () => { setSearch(''); setSearchOpen(false); };
+
+  /* Jump to a transaction row: close search, scroll into view, flash. */
+  const jumpToTxn = (x) => {
+    setOpenRow(x.id);
+    clearSearch();
+    toast('Jumped to transaction', 'info');
+    setTimeout(() => {
+      const tr = document.getElementById(`acctxn-${x.id}`);
+      if (tr) {
+        tr.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        tr.classList.add('flash');
+        setTimeout(() => tr.classList.remove('flash'), 1700);
+      }
+    }, 350);
+  };
+
+  const totalAmt = monthList.reduce((a, x) => a + Number(x.amount || 0), 0);
+  const avgAmt   = monthList.length ? Math.round(totalAmt / monthList.length) : 0;
+  const heads    = new Set(monthList.map(x => x.headNo)).size;
+
+  /* New / Edit */
+  const openNew  = () => setEntry({ mode: 'add'  });
+  const openEdit = (x) => setEntry({ mode: 'edit', txn: x });
+
+  const handleSaveEntry = async (form) => {
+    const tType = typesData.find(t => t.key === seg);
+    const head  = tType?.heads.find(h => h.no === Number(form.headNo));
+    const baseMonth = String(form.date || '').slice(0, 7);
+    if (entry.mode === 'edit') {
+      setTxns(prev => ({
+        ...prev,
+        [seg]: prev[seg].map(x => x.id === entry.txn.id ? {
+          ...x,
+          headNo:    Number(form.headNo),
+          head:      head?.name || x.head,
+          date:      form.date,
+          month:     baseMonth,
+          detail:    form.detail,
+          amount:    Number(form.amount) || 0,
+          chqNo:     form.chqNo,
+          chqDate:   form.chqDate,
+          createdBy: form.enteredBy || x.createdBy,
+          updatedBy: currentUser || form.enteredBy,
+          updatedAt: nowISO(),
+        } : x),
+      }));
+      toast('Entry updated', 'success');
+    } else {
+      const id = `${seg}_${Date.now()}`;
+      setTxns(prev => ({
+        ...prev,
+        [seg]: [
+          ...prev[seg],
+          {
+            id, headNo: Number(form.headNo), head: head?.name || '',
+            date: form.date, month: baseMonth, detail: form.detail,
+            amount: Number(form.amount) || 0, chqNo: form.chqNo, chqDate: form.chqDate,
+            createdBy: form.enteredBy || currentUser, createdAt: nowISO(),
+            updatedBy: null, updatedAt: null,
+          },
+        ],
+      }));
+      toast('Entry added', 'success');
+      setMonth(baseMonth);
+    }
+    accountsService.saveAccTxn({ seg, ...form }).catch(() => {});
+    setEntry(null);
+  };
+
+  const requestDelete = (x) => {
+    setConfirm({
+      title:   'Delete this transaction?',
+      message: <span>The {seg === 'rev' ? 'revenue' : 'expenditure'} entry of <strong>{fmtMoney(x.amount)}</strong> dated {accFmtDate(x.date)} will be permanently removed.</span>,
+      hint:    'This action cannot be undone.',
+      onConfirm: async () => {
+        setTxns(prev => ({ ...prev, [seg]: prev[seg].filter(r => r.id !== x.id) }));
+        await accountsService.deleteAccTxn({ seg, id: x.id }).catch(() => {});
+        toast('Transaction deleted', 'success');
+      },
+    });
+  };
+
+  const fetchData  = () => toast(`Loaded ${month} ${segLabelP.toLowerCase()}`, 'info');
+  const resetFilters = () => { setMonth('2026-05'); setSearch(''); toast('Filters reset', 'info'); };
+
+  return (
+    <>
+      {/* Segment pill toggle */}
+      <div className="fee-seg">
+        <Tooltip text="Inflows / amounts received">
+          <button className={`fee-seg-btn${seg === 'rev' ? ' active' : ''}`} onClick={() => { setSeg('rev'); setOpenRow(null); }}>
+            <i className="fa-solid fa-arrow-down-long"></i> Revenues
+          </button>
+        </Tooltip>
+        <Tooltip text="Outflows / amounts paid">
+          <button className={`fee-seg-btn${seg === 'exp' ? ' active' : ''}`} onClick={() => { setSeg('exp'); setOpenRow(null); }}>
+            <i className="fa-solid fa-arrow-up-long"></i> Expenditures
+          </button>
+        </Tooltip>
+      </div>
+
+      {/* Filters */}
+      <div className="fee-section fee-section--overflow">
+        <div className="fee-section-body">
+          <div className="fee-filters">
+            <div className="fee-field">
+              <span className="fee-label">Select Month</span>
+              <input className="fee-input" type="month" value={month} onChange={e => setMonth(e.target.value)} style={{ minWidth: 190 }} />
+            </div>
+            <Tooltip text="Reload entries for the selected month">
+              <button className="fee-btn fee-btn-primary" onClick={fetchData}>
+                <i className="fa-solid fa-filter"></i> Fetch
+              </button>
+            </Tooltip>
+            <Tooltip text={`Record a new ${segLabel.toLowerCase()} entry`}>
+              <button
+                className="fee-btn fee-btn-primary acc-newentry-btn"
+                onClick={openNew}
+                style={{ background: 'linear-gradient(135deg,#16A34A,#15803D)', boxShadow: '0 4px 14px rgba(22,163,74,.28)' }}
+              >
+                <i className="fa-solid fa-plus"></i> New Entry
+              </button>
+            </Tooltip>
+            <Tooltip text="Reset filters to default">
+              <button className="fee-btn fee-btn-ghost" onClick={resetFilters}>
+                <i className="fa-solid fa-rotate-left"></i> Reset
+              </button>
+            </Tooltip>
+          </div>
+
+          <div className="fee-searchrow" style={{ marginTop: 14 }}>
+            <div className="fee-field" style={{ width: '100%' }}>
+              <span className="fee-label">Search Transactions</span>
+              <div className="fee-search-anchor" ref={searchAnchorRef}>
+                <div className="fee-search-box">
+                  <i className="fa-solid fa-magnifying-glass"></i>
+                  <input
+                    value={search}
+                    onChange={e => { setSearch(e.target.value); setSearchOpen(true); }}
+                    onFocus={() => setSearchOpen(true)}
+                    placeholder="Search by Head, Head No, Details, Amount or Date"
+                    autoComplete="off"
+                  />
+                  {search && (
+                    <Tooltip text="Clear search">
+                      <button type="button" className="fee-search-clear" onClick={clearSearch} aria-label="Clear search">
+                        <i className="fa-solid fa-xmark"></i>
+                      </button>
+                    </Tooltip>
+                  )}
+                </div>
+                <div className={`fee-search-results${searchOpen && search ? ' open' : ''}`}>
+                  {matches.length === 0 ? (
+                    <div className="fee-sr-empty">No {segLabel.toLowerCase()} entries match "<b>{search}</b>"</div>
+                  ) : matches.map(x => (
+                    <button
+                      type="button"
+                      key={x.id}
+                      className="fee-sr-item"
+                      onClick={() => jumpToTxn(x)}
+                    >
+                      <div className="fee-sr-av" style={{
+                        background: seg === 'rev'
+                          ? 'linear-gradient(135deg,#DCFCE7,#F0FDF4)'
+                          : 'linear-gradient(135deg,#FEE2E2,#FEF2F2)',
+                        color: seg === 'rev' ? '#16A34A' : '#DC2626',
+                      }}>
+                        <i className={`fa-solid ${seg === 'rev' ? 'fa-arrow-down-long' : 'fa-arrow-up-long'}`}></i>
+                      </div>
+                      <div className="fee-sr-main">
+                        <div className="fee-sr-name">
+                          {x.head}
+                          <span className="fee-sr-amt">{fmtMoney(x.amount)}</span>
+                        </div>
+                        <div className="fee-sr-meta">
+                          <span><b>Head No:</b> {x.headNo}</span>
+                          <span><b>Date:</b> {accFmtDate(x.date)}</span>
+                          <span><b>By:</b> {x.createdBy || '—'}</span>
+                        </div>
+                        {x.detail && (
+                          <div className="fee-sr-detail">{x.detail}</div>
+                        )}
+                      </div>
+                      <div className="fee-sr-go"><i className="fa-solid fa-arrow-right"></i></div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="fee-hint">
+                <i className="fa-solid fa-circle-info"></i>
+                <span>Search any {segLabel.toLowerCase()} entry by head, details, amount or date, then click a result to jump to the row.</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* KPI strip */}
+      <div className="fee-kpis">
+        <div className={`fee-kpi ${seg === 'rev' ? 'k-green' : 'k-red'}`}>
+          <div className="fee-kpi-top">
+            <span className="fee-kpi-label">Total {segLabel}</span>
+            <span className="fee-kpi-ic"><i className={`fa-solid ${seg === 'rev' ? 'fa-arrow-down' : 'fa-arrow-up'}`}></i></span>
+          </div>
+          <div className="fee-kpi-val">{fmtMoney(totalAmt)}</div>
+          <div className="fee-kpi-meta">{monthList.length} entries this month</div>
+        </div>
+        <div className="fee-kpi k-blue">
+          <div className="fee-kpi-top">
+            <span className="fee-kpi-label">Total Entries</span>
+            <span className="fee-kpi-ic"><i className="fa-solid fa-list-check"></i></span>
+          </div>
+          <div className="fee-kpi-val">{monthList.length}</div>
+          <div className="fee-kpi-meta">across {heads} account {heads === 1 ? 'head' : 'heads'}</div>
+        </div>
+        <div className="fee-kpi k-amber">
+          <div className="fee-kpi-top">
+            <span className="fee-kpi-label">Average Entry</span>
+            <span className="fee-kpi-ic"><i className="fa-solid fa-calculator"></i></span>
+          </div>
+          <div className="fee-kpi-val">{fmtMoney(avgAmt)}</div>
+          <div className="fee-kpi-meta">mean {seg === 'rev' ? 'inflow' : 'outflow'} value</div>
+        </div>
+      </div>
+
+      {/* Section header */}
+      <div className="fee-section">
+        <div className="fee-section-header">
+          <div className="fee-section-title">
+            <div className="fee-section-icon">
+              <i className={`fa-solid ${seg === 'rev' ? 'fa-arrow-down-long' : 'fa-arrow-up-long'}`}></i>
+            </div>
+            <div>
+              <div className="fee-section-name">{segLabel} Entries</div>
+              <div className="fee-section-sub">All recorded {seg === 'rev' ? 'inflows' : 'outflows'} for the selected month</div>
+            </div>
+          </div>
+          <div className="acc-sec-actions">
+            <span className="fee-chip fee-chip-active">
+              <i className="fa-solid fa-list"></i> {monthList.length} {monthList.length === 1 ? 'entry' : 'entries'}
+            </span>
+            <Tooltip text="Download the full audit report (PDF / Excel / CSV)">
+              <button className="fee-btn fee-btn-ghost acc-dlreport-btn" onClick={() => setDlReport({ which: segLabel, list: monthList, seg })}>
+                <i className="fa-solid fa-file-export"></i> Download Report
+              </button>
+            </Tooltip>
+          </div>
+        </div>
+
+        {/* Transactions table */}
+        <div className="acc-txn-tablewrap">
+          <table className="acc-txn-table">
+            <thead>
+              <tr>
+                <th style={{ width: 30 }}></th>
+                <th>Head No</th>
+                <th>Head Name</th>
+                <th>Date</th>
+                <th>{seg === 'rev' ? 'Revenue Details' : 'Expense Details'}</th>
+                <th className="r">Amount</th>
+                <th className="c">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {monthList.length === 0 ? (
+                <tr><td colSpan="7">
+                  <div className="acc-txn-empty">
+                    <i className="fa-solid fa-inbox"></i>
+                    No {segLabel.toLowerCase()} entries for this month.<br/>
+                    Use <strong>New Entry</strong> to record one.
+                  </div>
+                </td></tr>
+              ) : monthList.map(x => {
+                const isOpen = openRow === x.id;
+                return (
+                  <React.Fragment key={x.id}>
+                    <tr id={`acctxn-${x.id}`} className={`acc-txn-tr${isOpen ? ' open' : ''}`} onClick={() => setOpenRow(isOpen ? null : x.id)}>
+                      <td className="c">
+                        <Tooltip text={isOpen ? 'Hide audit details' : 'Show audit details'}>
+                          <button className="acc-txn-expand" onClick={e => { e.stopPropagation(); setOpenRow(isOpen ? null : x.id); }}>
+                            <i className="fa-solid fa-chevron-down"></i>
+                          </button>
+                        </Tooltip>
+                      </td>
+                      <td><span className="acc-txn-headno">{x.headNo}</span></td>
+                      <td className="acc-txn-headname">{x.head}</td>
+                      <td><span className="acc-txn-date">{accFmtDate(x.date)}</span></td>
+                      <td>
+                        <div className="acc-txn-detail">{x.detail}</div>
+                        <div className="acc-txn-meta">
+                          <span><i className="fa-solid fa-user-pen"></i> {x.createdBy || '—'}</span>
+                          <span><i className="fa-regular fa-calendar"></i> {accFmtDate(x.createdAt ? x.createdAt.slice(0, 10) : x.date)}</span>
+                          <span><i className="fa-regular fa-clock"></i> {accFmtTime(x.createdAt)}</span>
+                          {x.updatedAt && <span className="acc-meta-upd"><i className="fa-solid fa-pen-to-square"></i> edited</span>}
+                        </div>
+                      </td>
+                      <td className="r"><span className="acc-txn-amt">{fmtMoney(x.amount)}</span></td>
+                      <td className="c" onClick={e => e.stopPropagation()}>
+                        <div className="acc-txn-actions">
+                          <Tooltip text="Delete entry">
+                            <button className="fee-iconbtn danger" onClick={() => requestDelete(x)}>
+                              <i className="fa-solid fa-trash-can"></i>
+                            </button>
+                          </Tooltip>
+                          <Tooltip text="Edit entry">
+                            <button className="fee-iconbtn" onClick={() => openEdit(x)}>
+                              <i className="fa-solid fa-pen"></i>
+                            </button>
+                          </Tooltip>
+                          <Tooltip text="Download voucher">
+                            <button className="fee-iconbtn acc-dl" onClick={() => setSlip({ txn: x, seg, school })}>
+                              <i className="fa-solid fa-download"></i>
+                            </button>
+                          </Tooltip>
+                        </div>
+                      </td>
+                    </tr>
+                    <tr className={`acc-txn-detailrow${isOpen ? ' open' : ''}`}>
+                      <td colSpan="7">
+                        <div className="acc-txn-detailpanel">
+                          <AccAuditPanel x={x} isRev={seg === 'rev'} />
+                        </div>
+                      </td>
+                    </tr>
+                  </React.Fragment>
+                );
+              })}
+            </tbody>
+            {monthList.length > 0 && (
+              <tfoot>
+                <tr>
+                  <td colSpan="5" className="acc-txn-totlbl">Total:</td>
+                  <td className="r">{fmtMoney(totalAmt)}</td>
+                  <td></td>
+                </tr>
+              </tfoot>
+            )}
+          </table>
+        </div>
+      </div>
+
+      <AccEntryModal
+        cfg={entry}
+        seg={seg}
+        heads={(typesData.find(t => t.key === seg) || {}).heads || []}
+        users={users}
+        currentUser={currentUser}
+        defaultMonth={month}
+        onClose={() => setEntry(null)}
+        onSave={handleSaveEntry}
+        toast={toast}
+      />
+
+      <AccConfirmDialog cfg={confirm} onClose={() => setConfirm(null)} />
+
+      <AccVoucherModal cfg={slip} onClose={() => setSlip(null)} toast={toast} />
+
+      <AccDownloadReportModal cfg={dlReport} onClose={() => setDlReport(null)} toast={toast} school={school} segLabel={segLabel} month={month} />
+    </>
+  );
+}
+
+/* ─── Audit detail panel rendered inside an expanded txn row ─── */
+function AccAuditPanel({ x, isRev }) {
+  return (
+    <div className="acc-audit">
+      <div className="acc-audit-col">
+        <div className="acc-audit-h"><i className="fa-solid fa-circle-info"></i> Transaction Details</div>
+        <div className="acc-audit-kv"><span className="k">Account Head</span><span className="v">{x.head} <small>(No. {x.headNo})</small></span></div>
+        <div className="acc-audit-kv"><span className="k">{isRev ? 'Revenue' : 'Expense'} Date</span><span className="v">{accFmtDate(x.date)}</span></div>
+        <div className="acc-audit-kv"><span className="k">{isRev ? 'Revenue' : 'Expense'} Details</span><span className="v">{x.detail || '—'}</span></div>
+        {x.chqNo  && <div className="acc-audit-kv"><span className="k">Cheque / Slip No.</span><span className="v">{x.chqNo}</span></div>}
+        {x.chqDate && <div className="acc-audit-kv"><span className="k">Cheque Date</span><span className="v">{accFmtDate(x.chqDate)}</span></div>}
+        <div className="acc-audit-kv"><span className="k">Amount</span><span className="v acc-audit-amt">{fmtMoney(x.amount)}</span></div>
+      </div>
+      <div className="acc-audit-col">
+        <div className="acc-audit-h"><i className="fa-solid fa-shield-halved"></i> Audit Trail</div>
+        <div className="acc-audit-trail">
+          <div className="acc-audit-badge created">
+            <div className="acc-audit-badge-ic"><i className="fa-solid fa-user-pen"></i></div>
+            <div>
+              <div className="acc-audit-badge-lbl">Created / Entered By</div>
+              <div className="acc-audit-badge-val">{x.createdBy || '—'}</div>
+            </div>
+          </div>
+          <div className="acc-audit-row">
+            <span><i className="fa-regular fa-calendar"></i> Entry Date</span>
+            <b>{accFmtDate(x.createdAt ? x.createdAt.slice(0, 10) : x.date)}</b>
+          </div>
+          <div className="acc-audit-row">
+            <span><i className="fa-regular fa-clock"></i> Entry Time</span>
+            <b>{accFmtTime(x.createdAt)}</b>
+          </div>
+          {x.updatedBy ? (
+            <>
+              <div className="acc-audit-badge updated">
+                <div className="acc-audit-badge-ic"><i className="fa-solid fa-pen-to-square"></i></div>
+                <div>
+                  <div className="acc-audit-badge-lbl">Last Updated By</div>
+                  <div className="acc-audit-badge-val">{x.updatedBy}</div>
+                </div>
+              </div>
+              <div className="acc-audit-row">
+                <span><i className="fa-regular fa-clock"></i> Last Updated</span>
+                <b>{accFmtStamp(x.updatedAt)}</b>
+              </div>
+            </>
+          ) : (
+            <div className="acc-audit-noupd">
+              <i className="fa-solid fa-circle-check"></i> No edits since creation
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   NEW / EDIT ENTRY MODAL — captures all fields and auto-stamps the
+   audit trail (createdBy / createdAt for new, updatedBy / updatedAt
+   for edits) inside Transactions' save handler.
+   ═══════════════════════════════════════════════════════════════════ */
+function AccEntryModal({ cfg, seg, heads, users, currentUser, defaultMonth, onClose, onSave, toast }) {
+  const isRev = seg === 'rev';
+  const [date, setDate]       = useState('');
+  const [headNo, setHeadNo]   = useState('');
+  const [detail, setDetail]   = useState('');
+  const [amount, setAmount]   = useState('');
+  const [chqDate, setChqDate] = useState('');
+  const [chqNo, setChqNo]     = useState('');
+  const [enteredBy, setEnteredBy] = useState(currentUser || '');
+
+  useEffect(() => {
+    if (!cfg) return;
+    if (cfg.mode === 'edit' && cfg.txn) {
+      const x = cfg.txn;
+      setDate(x.date);
+      setHeadNo(String(x.headNo));
+      setDetail(x.detail || '');
+      setAmount(String(x.amount || ''));
+      setChqDate(x.chqDate || '');
+      setChqNo(x.chqNo || '');
+      setEnteredBy(x.createdBy || currentUser);
+    } else {
+      const today = new Date();
+      const day = String(today.getDate()).padStart(2, '0');
+      setDate(`${defaultMonth || '2026-05'}-${day}`);
+      setHeadNo(heads[0]?.no ? String(heads[0].no) : '');
+      setDetail(''); setAmount(''); setChqDate(''); setChqNo('');
+      setEnteredBy(currentUser || '');
+    }
+  }, [cfg, heads, currentUser, defaultMonth]);
+
+  useEffect(() => {
+    if (!cfg) return undefined;
+    const onKey = e => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    document.body.style.overflow = 'hidden';
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.body.style.overflow = '';
+    };
+  }, [cfg, onClose]);
+
+  if (!cfg) return null;
+
+  const handleSubmit = () => {
+    if (!headNo) { toast('Please select an account head', 'error'); return; }
+    if (!date)   { toast('Please select a date', 'error'); return; }
+    if (!Number(amount)) { toast('Please enter an amount', 'error'); return; }
+    onSave({ headNo, date, detail: detail.trim(), amount, chqNo: chqNo.trim(), chqDate, enteredBy });
+  };
+
+  const isEdit = cfg.mode === 'edit';
+  const auditNote = isEdit && cfg.txn ? (
+    <div className="acc-audit-note" style={{ display: 'flex' }}>
+      <i className="fa-solid fa-shield-halved"></i>
+      <div>
+        <b>Created by {cfg.txn.createdBy || '—'}</b> on {accFmtStamp(cfg.txn.createdAt)}.
+        {cfg.txn.updatedBy && <> Last updated by <b>{cfg.txn.updatedBy}</b> on {accFmtStamp(cfg.txn.updatedAt)}.</>}
+        {' '}Saving will record <b>{currentUser}</b> as the last editor now.
+      </div>
+    </div>
+  ) : null;
+
+  return createPortal(
+    <div className="fee-overlay open" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="fee-modal lg">
+        <div className="fee-modal-head">
+          <div className="fee-modal-head-title">
+            <div className="fee-modal-head-icon">
+              <i className={`fa-solid ${isEdit ? 'fa-pen-to-square' : 'fa-file-circle-plus'}`}></i>
+            </div>
+            <div>
+              <div className="fee-modal-title">
+                {isEdit ? 'Edit Entry in ' : 'Add New Entry in '}
+                <em>{isRev ? 'Revenue' : 'Expense'}</em>
+              </div>
+              <div className="fee-modal-sub">
+                {isEdit ? `Head No. ${cfg.txn?.headNo}` : 'Record a transaction against an account head'}
+              </div>
+            </div>
+          </div>
+          <Tooltip text="Close">
+            <button className="fee-modal-close" onClick={onClose} aria-label="Close">
+              <i className="fa-solid fa-xmark"></i>
+            </button>
+          </Tooltip>
+        </div>
+
+        <div className="fee-modal-body">
+          <div className="fee-field" style={{ maxWidth: 280, margin: '0 auto 18px' }}>
+            <span className="fee-label" style={{ textAlign: 'center', display: 'block' }}>Select Date</span>
+            <input className="fee-input" type="date" value={date} onChange={e => setDate(e.target.value)} style={{ textAlign: 'center' }} />
+          </div>
+
+          <div className="acc-entry-grid">
+            <div className="fee-field">
+              <span className="fee-label">Select Head</span>
+              <div className="fee-select-wrap">
+                <select className="fee-select" value={headNo} onChange={e => setHeadNo(e.target.value)}>
+                  <option value="">— Pick a head —</option>
+                  {heads.map(h => <option key={h.no} value={h.no}>{h.no} — {h.name}</option>)}
+                </select>
+                <i className="fa-solid fa-chevron-down"></i>
+              </div>
+            </div>
+            <div className="fee-field">
+              <span className="fee-label">{isRev ? 'Revenue Details' : 'Expenditure Details'}</span>
+              <input className="fee-input" value={detail} onChange={e => setDetail(e.target.value)} placeholder="Enter Details Here" />
+            </div>
+            <div className="fee-field">
+              <span className="fee-label">Amount</span>
+              <input className="fee-input" type="number" value={amount} onChange={e => setAmount(e.target.value)} placeholder="Enter Amount Here" />
+            </div>
+          </div>
+
+          <div className="acc-entry-grid" style={{ marginTop: 16 }}>
+            <div className="fee-field">
+              <span className="fee-label">Cheque Date</span>
+              <input className="fee-input" type="date" value={chqDate} onChange={e => setChqDate(e.target.value)} />
+            </div>
+            <div className="fee-field">
+              <span className="fee-label">Cheque No</span>
+              <input className="fee-input" value={chqNo} onChange={e => setChqNo(e.target.value)} placeholder="Enter Slip Number Here" />
+            </div>
+            <div className="fee-field">
+              <span className="fee-label">Entered By</span>
+              <div className="fee-select-wrap">
+                <select className="fee-select" value={enteredBy} onChange={e => setEnteredBy(e.target.value)}>
+                  {users.map(u => <option key={u}>{u}</option>)}
+                </select>
+                <i className="fa-solid fa-chevron-down"></i>
+              </div>
+            </div>
+          </div>
+
+          {auditNote}
+        </div>
+
+        <div className="fee-modal-foot">
+          <Tooltip text="Discard changes and close">
+            <button className="fee-btn fee-btn-ghost" onClick={onClose}>Cancel</button>
+          </Tooltip>
+          <Tooltip text={isEdit ? 'Save changes (logs you as the editor)' : 'Add this transaction to the ledger'}>
+            <button className="fee-btn fee-btn-primary" onClick={handleSubmit}>
+              <i className="fa-solid fa-floppy-disk"></i> {isEdit ? 'Save Changes' : 'Save'}
+            </button>
+          </Tooltip>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   VOUCHER MODAL — preview a printable transaction voucher and emit a
+   pop-up print window on Download / Print.
+   ═══════════════════════════════════════════════════════════════════ */
+function AccVoucherModal({ cfg, onClose, toast }) {
+  /* Local style choice — Colorful keeps the brand-blue logo & colored
+     revenue/expense band; Colorless flattens both for low-ink printing. */
+  const [style, setStyle] = useState('color'); // 'color' | 'bw'
+
+  useEffect(() => {
+    if (!cfg) return undefined;
+    setStyle('color');
+    const onKey = e => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    document.body.style.overflow = 'hidden';
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.body.style.overflow = '';
+    };
+  }, [cfg, onClose]);
+
+  if (!cfg) return null;
+  const { txn: x, seg, school } = cfg;
+  const isRev = seg === 'rev';
+  const isBW  = style === 'bw';
+
+  const slipHtml = buildVoucherHTML(x, seg, school);
+  /* Wrap the slip so the override CSS can scope by .acc-slip-bw. */
+  const wrappedSlip = isBW ? `<div class="acc-slip-bw">${slipHtml}</div>` : slipHtml;
+
+  const doPrint = () => {
+    const w = window.open('', '_blank', 'width=520,height=720');
+    if (!w) { toast('Please allow pop-ups to download the voucher', 'error'); return; }
+    w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Transaction Voucher — ${x.id}</title><style>${VOUCHER_PRINT_CSS}</style></head><body>${wrappedSlip}</body></html>`);
+    w.document.close();
+    w.onload = () => { try { w.focus(); w.print(); } catch (e) { /* ignore */ } };
+    toast(`Voucher ready (${isBW ? 'Colorless' : 'Colorful'}) — Save as PDF.`, 'success');
+  };
+
+  const onStyleKey = (e) => {
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowUp')   { e.preventDefault(); setStyle('color'); }
+    else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); setStyle('bw'); }
+  };
+
+  return createPortal(
+    <div
+      className="fee-overlay open"
+      onClick={e => { if (e.target === e.currentTarget) onClose(); }}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="acc-voucher-title"
+    >
+      <div className="fee-modal">
+        <div className="fee-modal-head">
+          <div className="fee-modal-head-title">
+            <div className="fee-modal-head-icon"><i className="fa-solid fa-receipt"></i></div>
+            <div>
+              <div className="fee-modal-title" id="acc-voucher-title">Transaction Voucher</div>
+              <div className="fee-modal-sub">{isRev ? 'Revenue' : 'Expenditure'} voucher — {accFmtDate(x.date)}</div>
+            </div>
+          </div>
+          <Tooltip text="Close">
+            <button className="fee-modal-close" onClick={onClose} aria-label="Close voucher dialog">
+              <i className="fa-solid fa-xmark"></i>
+            </button>
+          </Tooltip>
+        </div>
+        <div className="fee-modal-body">
+          <div
+            className="inv-rep-style-seg"
+            role="radiogroup"
+            aria-label="Voucher style"
+            style={{ marginBottom: 14 }}
+          >
+            <button
+              type="button"
+              className={`inv-rep-style-btn${style === 'color' ? ' on' : ''}`}
+              onClick={() => setStyle('color')}
+              role="radio"
+              aria-checked={style === 'color'}
+              tabIndex={style === 'color' ? 0 : -1}
+              onKeyDown={onStyleKey}
+            >
+              <i className="fa-solid fa-palette" aria-hidden="true"></i> Colorful
+            </button>
+            <button
+              type="button"
+              className={`inv-rep-style-btn${style === 'bw' ? ' on' : ''}`}
+              onClick={() => setStyle('bw')}
+              role="radio"
+              aria-checked={style === 'bw'}
+              tabIndex={style === 'bw' ? 0 : -1}
+              onKeyDown={onStyleKey}
+            >
+              <i className="fa-solid fa-circle-half-stroke" aria-hidden="true"></i> Colorless
+            </button>
+          </div>
+          <div dangerouslySetInnerHTML={{ __html: `<style>${VOUCHER_PREVIEW_CSS}</style>${wrappedSlip}` }} />
+        </div>
+        <div className="fee-modal-foot">
+          <Tooltip text="Close preview">
+            <button className="fee-btn fee-btn-ghost" onClick={onClose}>Close</button>
+          </Tooltip>
+          <Tooltip text={`Open print window — ${isBW ? 'Colorless' : 'Colorful'}`}>
+            <button className="fee-btn fee-btn-primary" onClick={doPrint}>
+              <i className="fa-solid fa-download"></i> Download / Print
+            </button>
+          </Tooltip>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+const VOUCHER_PREVIEW_CSS = `
+.acc-slip { background:#fff; color:#111; border:1px solid #ddd; border-radius:10px; padding:22px; font-family:'Plus Jakarta Sans',sans-serif; max-width:440px; margin:0 auto; }
+.acc-slip-head { display:flex; align-items:center; gap:12px; border-bottom:1.5px solid #111; padding-bottom:12px; margin-bottom:14px; }
+.acc-slip-logo { width:46px; height:46px; border-radius:12px; background:linear-gradient(135deg,#1E3A8A,#1E40AF); color:#fff; display:flex; align-items:center; justify-content:center; font-size:20px; font-weight:800; flex-shrink:0; }
+.acc-slip-school { font-size:16px; font-weight:800; color:#111; }
+.acc-slip-tag { font-size:10.5px; color:#555; letter-spacing:1px; text-transform:uppercase; margin-top:2px; }
+.acc-slip-band { display:inline-flex; align-items:center; gap:7px; padding:5px 13px; border-radius:999px; font-size:11px; font-weight:800; margin-bottom:14px; }
+.acc-slip-band.rev { background:rgba(22,163,74,.12); color:#15803D; border:1px solid rgba(22,163,74,.3); }
+.acc-slip-band.exp { background:rgba(220,38,38,.1);  color:#B91C1C; border:1px solid rgba(220,38,38,.28); }
+.acc-slip-kv { display:grid; grid-template-columns:auto 1fr; gap:8px 14px; font-size:12.5px; margin-bottom:14px; }
+.acc-slip-kv .k { color:#666; font-weight:600; }
+.acc-slip-kv .v { text-align:right; font-weight:700; color:#111; }
+.acc-slip-net { display:flex; justify-content:space-between; align-items:center; background:#111; color:#fff; padding:10px 14px; border-radius:6px; font-weight:800; font-size:14px; }
+.acc-slip-sig { display:flex; justify-content:space-between; margin-top:24px; font-size:10.5px; color:#333; }
+.acc-slip-sig span { border-top:1px solid #777; padding-top:4px; width:42%; text-align:center; }
+.acc-slip-audit { margin-top:14px; border-top:1px dashed #bbb; padding-top:12px; }
+.acc-slip-audit-h { font-size:10.5px; font-weight:800; letter-spacing:.5px; text-transform:uppercase; color:#1E3A8A; margin-bottom:8px; display:flex; align-items:center; gap:7px; }
+.acc-slip-audit-kv { display:flex; justify-content:space-between; gap:12px; font-size:11.5px; padding:3px 0; color:#444; }
+.acc-slip-audit-kv b { color:#111; font-weight:700; }
+
+/* Colorless voucher — flattens gradient logo, colored bands, and the
+   dark net-box to printable dark-on-white with light gray borders. */
+.acc-slip-bw .acc-slip-logo { background:#FFFFFF !important; color:#111 !important; border:1px solid #111; }
+.acc-slip-bw .acc-slip-band.rev,
+.acc-slip-bw .acc-slip-band.exp { background:transparent !important; color:#111 !important; border-color:#9CA3AF !important; }
+.acc-slip-bw .acc-slip-net { background:#FFFFFF !important; color:#111 !important; border:1.5px solid #111; }
+.acc-slip-bw .acc-slip-audit-h { color:#111 !important; }
+`;
+const VOUCHER_PRINT_CSS = `
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Plus Jakarta Sans','Segoe UI',sans-serif;background:#fff;padding:18px;color:#111}
+${VOUCHER_PREVIEW_CSS}
+@page{size:A5;margin:10mm}
+@media print{ body{padding:0} -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+`;
+
+function buildVoucherHTML(x, seg, school) {
+  const isRev = seg === 'rev';
+  const escH = (s) => String(s ?? '').replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+  return `
+<div class="acc-slip" id="accSlipDoc">
+  <div class="acc-slip-head">
+    <div class="acc-slip-logo">${escH(school?.monogram || 'OS')}</div>
+    <div>
+      <div class="acc-slip-school">${escH(school?.name || 'School')}</div>
+      <div class="acc-slip-tag">Transaction Voucher</div>
+    </div>
+  </div>
+  <span class="acc-slip-band ${isRev ? 'rev' : 'exp'}">
+    <i class="fa-solid ${isRev ? 'fa-arrow-down-long' : 'fa-arrow-up-long'}"></i> ${isRev ? 'Revenue / Inflow' : 'Expenditure / Outflow'}
+  </span>
+  <div class="acc-slip-kv">
+    <span class="k">Voucher No.</span><span class="v">${escH(String(x.id).toUpperCase())}</span>
+    <span class="k">Account Head</span><span class="v">${escH(x.head)} (No. ${x.headNo})</span>
+    <span class="k">Date</span><span class="v">${accFmtDate(x.date)}</span>
+    ${x.chqNo  ? `<span class="k">Cheque / Slip No.</span><span class="v">${escH(x.chqNo)}</span>` : ''}
+    ${x.chqDate ? `<span class="k">Cheque Date</span><span class="v">${accFmtDate(x.chqDate)}</span>` : ''}
+    <span class="k">Details</span><span class="v" style="font-weight:600;text-align:right">${escH(x.detail) || '—'}</span>
+  </div>
+  <div class="acc-slip-net">
+    <span>${isRev ? 'Amount Received' : 'Amount Paid'}</span>
+    <span>${fmtMoney(x.amount)}</span>
+  </div>
+  <div class="acc-slip-audit">
+    <div class="acc-slip-audit-h"><i class="fa-solid fa-shield-halved"></i> Audit Trail</div>
+    <div class="acc-slip-audit-kv"><span>Created / Entered By</span><b>${escH(x.createdBy || '—')}</b></div>
+    <div class="acc-slip-audit-kv"><span>Entry Timestamp</span><b>${accFmtStamp(x.createdAt)}</b></div>
+    ${x.updatedBy ? `
+      <div class="acc-slip-audit-kv"><span>Last Updated By</span><b>${escH(x.updatedBy)}</b></div>
+      <div class="acc-slip-audit-kv"><span>Last Updated</span><b>${accFmtStamp(x.updatedAt)}</b></div>
+    ` : ''}
+  </div>
+  <div class="acc-slip-sig">
+    <span>Prepared By</span>
+    <span>Authorised Signature</span>
+  </div>
+</div>`;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   DOWNLOAD REPORT MODAL — pick PDF / Excel / CSV. Exports the full
+   audit trail (Head, Date, Details, Amount, Created By, Entry
+   Timestamp, Updated By, Last Updated).
+   ═══════════════════════════════════════════════════════════════════ */
+function AccDownloadReportModal({ cfg, onClose, toast, school, segLabel, month }) {
+  const [fmt, setFmt] = useState('pdf');
+  const [style, setStyle] = useState('color'); // 'color' | 'bw'
+
+  useEffect(() => { if (cfg) { setFmt('pdf'); setStyle('color'); } }, [cfg]);
+  useEffect(() => {
+    if (!cfg) return undefined;
+    const onKey = e => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    document.body.style.overflow = 'hidden';
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.body.style.overflow = '';
+    };
+  }, [cfg, onClose]);
+
+  /* Keyboard nav for the two ARIA radio-groups (matches Modules 2–7). */
+  const onStyleKey = (e) => {
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowUp')   { e.preventDefault(); setStyle('color'); }
+    else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); setStyle('bw'); }
+  };
+
+  if (!cfg) return null;
+
+  const total   = cfg.list.reduce((a, x) => a + Number(x.amount || 0), 0);
+  const heads   = new Set(cfg.list.map(x => x.headNo)).size;
+  const isMulti = !!cfg.kind; // routed from Reports tab when set
+  const isBW    = style === 'bw';
+
+  const handleDownload = () => {
+    if (fmt === 'pdf') {
+      const html = isMulti
+        ? buildAccReportHTML(cfg, school, isBW)
+        : buildTxnReportHTML(cfg.list, cfg.seg, school, segLabel, month, isBW);
+      const w = window.open('', '_blank');
+      if (!w) { toast('Please allow pop-ups to download the report', 'error'); return; }
+      w.document.write(html); w.document.close();
+      w.onload = () => { try { w.focus(); w.print(); } catch (e) { /* ignore */ } };
+    } else if (fmt === 'csv' || fmt === 'excel') {
+      const csv = isMulti ? buildAccReportCSV(cfg) : buildTxnCSV(cfg.list);
+      const blob = new Blob([csv], { type: fmt === 'csv' ? 'text/csv;charset=utf-8' : 'application/vnd.ms-excel' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const slug = (segLabel || 'Report').replace(/[^A-Za-z0-9]+/g, '-');
+      a.download = `${slug}-${month || new Date().toISOString().slice(0,10)}.${fmt === 'csv' ? 'csv' : 'xls'}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+    toast(`${cfg.which} report (${fmt.toUpperCase()}) ready.`, 'success');
+    onClose();
+  };
+
+  return createPortal(
+    <div
+      className="fee-overlay open"
+      onClick={e => { if (e.target === e.currentTarget) onClose(); }}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="acc-dl-title"
+    >
+      <div className="fee-modal">
+        <div className="fee-modal-head">
+          <div className="fee-modal-head-title">
+            <div className="fee-modal-head-icon"><i className="fa-solid fa-file-export"></i></div>
+            <div>
+              <div className="fee-modal-title" id="acc-dl-title">Download <em>{cfg.which}</em> Report</div>
+              <div className="fee-modal-sub">Export the complete entries report with full audit trail</div>
+            </div>
+          </div>
+          <Tooltip text="Close">
+            <button className="fee-modal-close" onClick={onClose} aria-label="Close download dialog">
+              <i className="fa-solid fa-xmark"></i>
+            </button>
+          </Tooltip>
+        </div>
+        <div className="fee-modal-body">
+          <div className="fee-info">
+            <i className="fa-solid fa-circle-info"></i>
+            {isMulti
+              ? <span>The exported <strong>{cfg.which}</strong> is laid out on A4 with school header, KPI strip, complete data tables and a closing summary callout — ready to print or share.</span>
+              : <span>The exported report includes Head, Date, Details, Amount and the full audit trail — <strong>Created By</strong>, <strong>Entry Timestamp</strong>, <strong>Updated By</strong> and <strong>Last Updated</strong>.</span>}
+          </div>
+          <div className="fee-dl-label" id="acc-dl-style-lbl">Report Style</div>
+          <div className="fee-dl-grid" role="radiogroup" aria-labelledby="acc-dl-style-lbl">
+            <button
+              type="button"
+              className={`fee-dl-card${style === 'color' ? ' sel' : ''}`}
+              onClick={() => setStyle('color')}
+              role="radio"
+              aria-checked={style === 'color'}
+              tabIndex={style === 'color' ? 0 : -1}
+              onKeyDown={onStyleKey}
+            >
+              <div className="fee-dl-prev fee-dl-prev--color" aria-hidden="true">
+                <span className="fee-dl-orb"></span>
+                <span className="fee-dl-line lg"></span>
+                <span className="fee-dl-line md"></span>
+                <div className="fee-dl-pills">
+                  <span className="fee-dl-pill blue"></span>
+                  <span className="fee-dl-pill amber"></span>
+                </div>
+              </div>
+              <div className="fee-dl-meta">
+                <div className="fee-dl-name"><i className="fa-solid fa-palette" style={{ color: '#1E3A8A', marginRight: 6 }} aria-hidden="true"></i>Colorful Report</div>
+                <div className="fee-dl-desc">Brand-colour header, KPI tints &amp; summary cards</div>
+              </div>
+            </button>
+            <button
+              type="button"
+              className={`fee-dl-card${style === 'bw' ? ' sel' : ''}`}
+              onClick={() => setStyle('bw')}
+              role="radio"
+              aria-checked={style === 'bw'}
+              tabIndex={style === 'bw' ? 0 : -1}
+              onKeyDown={onStyleKey}
+            >
+              <div className="fee-dl-prev fee-dl-prev--bw" aria-hidden="true">
+                <span className="fee-dl-orb bw"></span>
+                <span className="fee-dl-line lg bw"></span>
+                <span className="fee-dl-line md bw"></span>
+                <div className="fee-dl-pills">
+                  <span className="fee-dl-pill bw"></span>
+                  <span className="fee-dl-pill bw"></span>
+                </div>
+              </div>
+              <div className="fee-dl-meta">
+                <div className="fee-dl-name"><i className="fa-solid fa-circle-half-stroke" style={{ color: '#374151', marginRight: 6 }} aria-hidden="true"></i>Colorless Report</div>
+                <div className="fee-dl-desc">Low-ink layout — white bg, light borders only</div>
+              </div>
+            </button>
+          </div>
+          <div className="fee-dl-label" style={{ marginTop: 14 }} id="acc-dl-fmt-lbl">Choose Format</div>
+          <div className="fee-dl-fmt-grid" role="radiogroup" aria-labelledby="acc-dl-fmt-lbl">
+            <button type="button" className={`fee-dl-fmt${fmt === 'pdf' ? ' sel' : ''}`} onClick={() => setFmt('pdf')} role="radio" aria-checked={fmt === 'pdf'} tabIndex={fmt === 'pdf' ? 0 : -1}>
+              <div className="fee-dl-fmt-ic" style={{ background: 'rgba(220,38,38,.1)', color: '#DC2626' }} aria-hidden="true"><i className="fa-solid fa-file-pdf"></i></div>
+              <div><div className="fee-dl-fmt-name">PDF Document</div><div className="fee-dl-desc">Printable A4 audit report</div></div>
+            </button>
+            <button type="button" className={`fee-dl-fmt${fmt === 'excel' ? ' sel' : ''}`} onClick={() => setFmt('excel')} role="radio" aria-checked={fmt === 'excel'} tabIndex={fmt === 'excel' ? 0 : -1}>
+              <div className="fee-dl-fmt-ic" style={{ background: 'rgba(22,163,74,.1)', color: '#16A34A' }} aria-hidden="true"><i className="fa-solid fa-file-excel"></i></div>
+              <div><div className="fee-dl-fmt-name">Excel Workbook</div><div className="fee-dl-desc">.xls spreadsheet</div></div>
+            </button>
+            <button type="button" className={`fee-dl-fmt${fmt === 'csv' ? ' sel' : ''}`} onClick={() => setFmt('csv')} role="radio" aria-checked={fmt === 'csv'} tabIndex={fmt === 'csv' ? 0 : -1}>
+              <div className="fee-dl-fmt-ic" style={{ background: 'rgba(30,58,138,.1)', color: '#1E3A8A' }} aria-hidden="true"><i className="fa-solid fa-file-csv"></i></div>
+              <div><div className="fee-dl-fmt-name">CSV File</div><div className="fee-dl-desc">Comma-separated data</div></div>
+            </button>
+          </div>
+          <div className="acc-rep-summary">
+            <div className="acc-rep-sumrow">
+              <span><i className="fa-solid fa-file-lines"></i> {cfg.which}</span>
+              <span><i className="fa-solid fa-list"></i> {cfg.list.length} {cfg.list.length === 1 ? 'row' : 'rows'}</span>
+              {!isMulti && <span><i className="fa-solid fa-layer-group"></i> {heads} {heads === 1 ? 'head' : 'heads'}</span>}
+              {!isMulti && <span><i className="fa-solid fa-coins"></i> Total {fmtMoney(total)}</span>}
+              {isMulti && <span><i className="fa-solid fa-calendar-days"></i> {new Date().toLocaleDateString('en-GB')}</span>}
+            </div>
+          </div>
+        </div>
+        <div className="fee-modal-foot">
+          <Tooltip text="Discard and close">
+            <button className="fee-btn fee-btn-ghost" onClick={onClose}>Cancel</button>
+          </Tooltip>
+          <Tooltip text={`Generate the ${fmt.toUpperCase()} report`}>
+            <button className="fee-btn fee-btn-primary" onClick={handleDownload}>
+              <i className="fa-solid fa-download"></i> Download Report
+            </button>
+          </Tooltip>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+function buildTxnReportHTML(list, seg, school, segLabel, month, isBW = false) {
+  const escH = (s) => String(s ?? '').replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+  const today = new Date().toLocaleDateString('en-GB');
+  const total = list.reduce((a, x) => a + Number(x.amount || 0), 0);
+  /* Coordinated palettes: Colorful = brand blue, Colorless = paper-white
+     with dark text and thin gray borders (no colored bands, no row
+     striping, no gradient header). */
+  const brand    = isBW ? '#0F172A' : '#1E3A8A';
+  const accent   = isBW ? '#0F172A' : '#1E40AF';
+  const bandBg   = isBW ? '#FFFFFF' : 'linear-gradient(135deg,#1E3A8A,#1E40AF)';
+  const bandFg   = isBW ? '#0F172A' : '#FFFFFF';
+  const bandBdr  = isBW ? '1.5px solid #0F172A' : 'none';
+  const thBg     = isBW ? '#FFFFFF' : '#1E3A8A';
+  const thFg     = isBW ? '#0F172A' : '#FFFFFF';
+  const thBdr    = isBW ? 'border-bottom:1.5px solid #0F172A;' : '';
+  const tdAlt    = isBW ? 'transparent' : 'rgba(30,58,138,.025)';
+  const tfBg     = isBW ? '#FFFFFF' : '#EAF0FA';
+  const trs = list.map((x, i) => `
+    <tr>
+      <td>${i + 1}</td>
+      <td><b>${x.headNo}</b><br/><small>${escH(x.head)}</small></td>
+      <td>${accFmtDate(x.date)}</td>
+      <td>${escH(x.detail) || '—'}</td>
+      <td class="r"><b>${fmtMoney(x.amount).replace('Rs.', 'Rs')}</b></td>
+      <td>${escH(x.createdBy || '—')}<br/><small>${accFmtStamp(x.createdAt)}</small></td>
+      <td>${x.updatedBy ? `${escH(x.updatedBy)}<br/><small>${accFmtStamp(x.updatedAt)}</small>` : '<span class="muted">—</span>'}</td>
+    </tr>`).join('');
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${segLabel} Report — ${escH(month)}</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif;color:#111;background:#fff;font-size:10px;padding:14mm;}
+.head{display:flex;align-items:center;gap:12px;border-bottom:${isBW ? '1.5px' : '2px'} solid ${brand};padding-bottom:10px;margin-bottom:12px;}
+.school{font-size:16px;font-weight:800;color:${brand};}
+.title{font-size:12px;font-weight:700;color:${accent};margin-top:3px;}
+.meta{margin-left:auto;font-size:9.5px;color:#64748B;text-align:right;line-height:1.55;}
+.band{background:${bandBg};color:${bandFg};border:${bandBdr};padding:7px 12px;border-radius:6px;font-weight:800;margin-bottom:10px;font-size:11.5px;}
+table{width:100%;border-collapse:collapse;font-size:9.5px;table-layout:fixed;}
+col.c-sn      { width:5%; }
+col.c-head    { width:18%; }
+col.c-date    { width:9%; }
+col.c-detail  { width:30%; }
+col.c-amount  { width:10%; }
+col.c-created { width:14%; }
+col.c-updated { width:14%; }
+th{background:${thBg};color:${thFg};${thBdr}padding:6px 7px;text-align:left;font-size:9px;font-weight:800;letter-spacing:.3px;text-transform:uppercase;}
+th.r{text-align:right;}
+td{padding:6px 7px;border-bottom:1px solid #e5e9f2;vertical-align:top;word-wrap:break-word;overflow-wrap:break-word;}
+td.r{text-align:right;font-variant-numeric:tabular-nums;}
+td b{font-weight:800;}
+small{color:#64748B;font-size:8.5px;display:block;margin-top:1px;line-height:1.35;}
+.muted{color:#94A3B8;}
+tfoot td{background:${tfBg};font-weight:800;border-top:${isBW ? '1.5px' : '2px'} solid ${brand};padding:8px 7px;font-size:10px;}
+tbody tr:nth-child(even) td{background:${tdAlt};}
+@page{size:A4 portrait;margin:12mm;}
+@media print{ -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+</style></head><body>
+<div class="head">
+  <div>
+    <div class="school">${escH(school?.name || 'School')}</div>
+    <div class="title">${segLabel} Audit Report — ${escH(month)}</div>
+  </div>
+  <div class="meta">Generated: ${today}<br/>Entries: ${list.length}<br/>Total: ${fmtMoney(total)}${isBW ? '<br/><b>Colorless Print</b>' : ''}</div>
+</div>
+<div class="band">${segLabel} Entries · ${escH(month)}</div>
+<table>
+  <colgroup>
+    <col class="c-sn"/><col class="c-head"/><col class="c-date"/><col class="c-detail"/><col class="c-amount"/><col class="c-created"/><col class="c-updated"/>
+  </colgroup>
+  <thead>
+    <tr><th>#</th><th>Head</th><th>Date</th><th>Details</th><th class="r">Amount</th><th>Created By</th><th>Last Updated</th></tr>
+  </thead>
+  <tbody>${trs || '<tr><td colspan="7" style="text-align:center;color:#94A3B8;padding:18px">No entries.</td></tr>'}</tbody>
+  ${list.length > 0 ? `<tfoot><tr><td colspan="4" style="text-align:right">Total</td><td class="r">${fmtMoney(total)}</td><td colspan="2"></td></tr></tfoot>` : ''}
+</table>
+</body></html>`;
+}
+
+function buildTxnCSV(list) {
+  const escC = (s) => `"${String(s ?? '').replace(/"/g, '""')}"`;
+  const header = ['#', 'HeadNo', 'Head', 'Date', 'Details', 'Amount', 'ChequeNo', 'ChequeDate', 'CreatedBy', 'CreatedAt', 'UpdatedBy', 'UpdatedAt'];
+  const rows = list.map((x, i) => [
+    i + 1, x.headNo, x.head, x.date, x.detail || '', x.amount,
+    x.chqNo || '', x.chqDate || '', x.createdBy || '', x.createdAt || '',
+    x.updatedBy || '', x.updatedAt || '',
+  ]);
+  return [header.join(','), ...rows.map(r => r.map(escC).join(','))].join('\n');
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   buildAccReportHTML — unified A4-shaped PDF builder for every
+   reports-tab report type (revenue / expense / pl / cash / books /
+   headwise / overview). Each kind routes to its own body sub-builder,
+   sharing the same shell, header, KPI strip and footer.
+   ═══════════════════════════════════════════════════════════════════ */
+
+function buildAccReportHTML(cfg, school, isBW = false) {
+  const escH = (s) => String(s ?? '').replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+  const today = new Date().toLocaleDateString('en-GB');
+  const fmtPK = (n) => `Rs. ${(Number(n) || 0).toLocaleString('en-PK')}`;
+  const list  = cfg.list || [];
+
+  /* ─── Per-kind metadata: brand color, title, subtitle ─── */
+  const META = {
+    revenue:  { color: '#16A34A', dark: '#15803D', title: 'Revenue Report',           sub: 'Inflows with full audit trail' },
+    expense:  { color: '#DC2626', dark: '#B91C1C', title: 'Expense Report',           sub: 'Outflows with full audit trail' },
+    pl:       { color: '#1E40AF', dark: '#1E3A8A', title: 'Profit & Loss Statement',  sub: 'Revenue − Expense across selected months' },
+    cash:     { color: '#0E7490', dark: '#155E75', title: 'Cash In Hand Statement',   sub: 'P/L sum + cash-flagged book balances' },
+    books:    { color: '#6D28D9', dark: '#5B21B6', title: 'Account Books Summary',    sub: 'Running balances across every book' },
+    headwise: { color: '#D97706', dark: '#B45309', title: 'Head-wise Summary',        sub: 'Totals grouped by account head' },
+    overview: { color: '#1E40AF', dark: '#1E3A8A', title: 'Financial Overview',       sub: 'Consolidated revenue / expense / books dashboard' },
+  };
+  const meta = META[cfg.kind] || META.revenue;
+
+  /* ─── KPI cards (vary per report) ─── */
+  let kpis = '';
+  if (cfg.kind === 'revenue' || cfg.kind === 'expense') {
+    const isRev = cfg.kind === 'revenue';
+    const tot = list.reduce((a, r) => a + Number(r.amount || 0), 0);
+    const avg = list.length ? Math.round(tot / list.length) : 0;
+    const edited = list.filter(r => r.updatedAt).length;
+    const headSet = new Set(list.map(r => r.headNo)).size;
+    kpis = `
+      <div class="kpi a"><div class="l">Total ${isRev ? 'Revenue' : 'Expense'}</div><div class="v">${fmtPK(tot)}</div><div class="m">${list.length} entries</div></div>
+      <div class="kpi b"><div class="l">Heads Touched</div><div class="v">${headSet}</div><div class="m">distinct account heads</div></div>
+      <div class="kpi c"><div class="l">Average Entry</div><div class="v">${fmtPK(avg)}</div><div class="m">mean value</div></div>
+      <div class="kpi d"><div class="l">Edited Entries</div><div class="v">${edited}</div><div class="m">have update record</div></div>`;
+  } else if (cfg.kind === 'pl') {
+    const totR = list.reduce((a, r) => a + r.revenue, 0);
+    const totE = list.reduce((a, r) => a + r.expense, 0);
+    const totP = totR - totE;
+    kpis = `
+      <div class="kpi a"><div class="l">Total Revenue</div><div class="v" style="color:#15803D">${fmtPK(totR)}</div><div class="m">${list.length} month(s)</div></div>
+      <div class="kpi b"><div class="l">Total Expense</div><div class="v" style="color:#B91C1C">${fmtPK(totE)}</div><div class="m">over period</div></div>
+      <div class="kpi c"><div class="l">Net Profit / Loss</div><div class="v" style="color:${totP >= 0 ? '#15803D' : '#B91C1C'}">${fmtPK(totP)}</div><div class="m">${totP >= 0 ? 'surplus' : 'deficit'}</div></div>
+      <div class="kpi d"><div class="l">Months Covered</div><div class="v">${list.length}</div><div class="m">in selected range</div></div>`;
+  } else if (cfg.kind === 'cash') {
+    const pl    = list[0]?.amount || 0;
+    const tot   = list.reduce((a, r) => a + Number(r.amount || 0), 0);
+    const cBks  = tot - pl;
+    kpis = `
+      <div class="kpi a"><div class="l">Profit / Loss</div><div class="v">${fmtPK(pl)}</div><div class="m">sum of P/L</div></div>
+      <div class="kpi b"><div class="l">Cash-flagged Books</div><div class="v">${fmtPK(cBks)}</div><div class="m">${Math.max(0, list.length - 1)} book(s)</div></div>
+      <div class="kpi c"><div class="l">Cash In Hand</div><div class="v" style="color:${tot >= 0 ? '#15803D' : '#B91C1C'}">${fmtPK(tot)}</div><div class="m">available cash</div></div>`;
+  } else if (cfg.kind === 'books') {
+    const totBal  = list.reduce((a, r) => a + r.balance, 0);
+    const totRec  = list.reduce((a, r) => a + r.received, 0);
+    const totRet  = list.reduce((a, r) => a + r.returned, 0);
+    const inCash  = list.filter(r => r.inCash === 'Yes').length;
+    kpis = `
+      <div class="kpi a"><div class="l">Total Books</div><div class="v">${list.length}</div><div class="m">${inCash} in cash</div></div>
+      <div class="kpi b"><div class="l">Total Received</div><div class="v" style="color:#15803D">${fmtPK(totRec)}</div><div class="m">opening + further</div></div>
+      <div class="kpi c"><div class="l">Total Returned</div><div class="v" style="color:#B91C1C">${fmtPK(totRet)}</div><div class="m">repaid / paid back</div></div>
+      <div class="kpi d"><div class="l">Net Balance</div><div class="v" style="color:${meta.dark}">${fmtPK(totBal)}</div><div class="m">across all books</div></div>`;
+  } else if (cfg.kind === 'headwise') {
+    const totR = list.filter(r => r.type === 'Revenue').reduce((a, r) => a + r.total, 0);
+    const totE = list.filter(r => r.type === 'Expenditure').reduce((a, r) => a + r.total, 0);
+    const revH = list.filter(r => r.type === 'Revenue').length;
+    const expH = list.filter(r => r.type === 'Expenditure').length;
+    kpis = `
+      <div class="kpi a"><div class="l">Revenue Heads</div><div class="v" style="color:#15803D">${fmtPK(totR)}</div><div class="m">${revH} active head(s)</div></div>
+      <div class="kpi b"><div class="l">Expense Heads</div><div class="v" style="color:#B91C1C">${fmtPK(totE)}</div><div class="m">${expH} active head(s)</div></div>
+      <div class="kpi c"><div class="l">Net Result</div><div class="v" style="color:${(totR - totE) >= 0 ? '#15803D' : '#B91C1C'}">${fmtPK(totR - totE)}</div><div class="m">revenue − expense</div></div>
+      <div class="kpi d"><div class="l">Active Heads</div><div class="v">${list.length}</div><div class="m">with transactions</div></div>`;
+  } else if (cfg.kind === 'overview') {
+    const totR = list.reduce((a, r) => a + r.revenue, 0);
+    const totE = list.reduce((a, r) => a + r.expense, 0);
+    const totP = totR - totE;
+    const cBooks = (cfg.books || []).filter(b => b.includeInCash).reduce((a, b) => a + bookCalc(b).balance, 0);
+    kpis = `
+      <div class="kpi a"><div class="l">Total Revenue</div><div class="v" style="color:#15803D">${fmtPK(totR)}</div><div class="m">period</div></div>
+      <div class="kpi b"><div class="l">Total Expense</div><div class="v" style="color:#B91C1C">${fmtPK(totE)}</div><div class="m">period</div></div>
+      <div class="kpi c"><div class="l">Net Profit / Loss</div><div class="v" style="color:${totP >= 0 ? '#15803D' : '#B91C1C'}">${fmtPK(totP)}</div><div class="m">${totP >= 0 ? 'surplus' : 'deficit'}</div></div>
+      <div class="kpi d"><div class="l">Cash In Hand</div><div class="v" style="color:${meta.dark}">${fmtPK(totP + cBooks)}</div><div class="m">P/L + cash books</div></div>`;
+  }
+
+  /* ─── Body table / panels (vary per report) ─── */
+  let body = '';
+  if (cfg.kind === 'revenue' || cfg.kind === 'expense') {
+    const isRev = cfg.kind === 'revenue';
+    const tot = list.reduce((a, r) => a + Number(r.amount || 0), 0);
+    const rows = list.map((r, i) => `
+      <tr>
+        <td>${i + 1}</td>
+        <td><span class="tag ${isRev ? 'rev' : 'exp'}">${isRev ? 'Revenue' : 'Expenditure'}</span></td>
+        <td><b>${escH(r.head)}</b><div class="sub">No. ${r.headNo}</div></td>
+        <td>${escH(accFmtDate(r.date))}</td>
+        <td class="detail">${escH(r.detail || '')}</td>
+        <td class="r"><b>${fmtPK(r.amount)}</b></td>
+        <td>${escH(r.createdBy || '—')}<div class="sub">${r.createdAt ? escH(accFmtStamp(r.createdAt)) : ''}</div></td>
+        <td>${r.updatedBy ? `${escH(r.updatedBy)}<div class="sub">${escH(accFmtStamp(r.updatedAt))}</div>` : '<span class="dim">—</span>'}</td>
+      </tr>`).join('');
+    body = `
+      <div class="sec-band" style="background:linear-gradient(135deg,${meta.color},${meta.dark})">
+        <span>${isRev ? 'Revenue' : 'Expense'} Entries</span>
+        <small>${list.length} entr${list.length === 1 ? 'y' : 'ies'}</small>
+      </div>
+      <table class="t">
+        <thead>
+          <tr>
+            <th style="width:24px">#</th>
+            <th>Type</th>
+            <th>Head</th>
+            <th>Date</th>
+            <th>Details</th>
+            <th class="r">Amount</th>
+            <th>Created By</th>
+            <th>Updated By</th>
+          </tr>
+        </thead>
+        <tbody>${rows || '<tr><td colspan="8" class="empty">No entries.</td></tr>'}</tbody>
+        <tfoot>
+          <tr><td colspan="5" class="totlbl">Total ${isRev ? 'Revenue' : 'Expense'}</td><td class="r totval">${fmtPK(tot)}</td><td colspan="2"></td></tr>
+        </tfoot>
+      </table>`;
+  } else if (cfg.kind === 'pl') {
+    const totR = list.reduce((a, r) => a + r.revenue, 0);
+    const totE = list.reduce((a, r) => a + r.expense, 0);
+    const totP = totR - totE;
+    const rows = list.map(r => `
+      <tr>
+        <td>${r.sr}</td>
+        <td><b>${escH(r.month)}</b></td>
+        <td class="r">${fmtPK(r.revenue)}</td>
+        <td class="r">${fmtPK(r.expense)}</td>
+        <td class="r"><b style="color:${r.pl >= 0 ? '#15803D' : '#B91C1C'}">${fmtPK(r.pl)}</b></td>
+      </tr>`).join('');
+    body = `
+      <div class="sec-band" style="background:linear-gradient(135deg,${meta.color},${meta.dark})">
+        <span>Monthly Profit / Loss Breakdown</span>
+        <small>${list.length} month(s)</small>
+      </div>
+      <table class="t">
+        <thead><tr><th style="width:30px">Sr</th><th>Month</th><th class="r">Revenue</th><th class="r">Expense</th><th class="r">Profit / Loss</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="5" class="empty">No data.</td></tr>'}</tbody>
+        <tfoot>
+          <tr>
+            <td colspan="2" class="totlbl">Period Total</td>
+            <td class="r totval">${fmtPK(totR)}</td>
+            <td class="r totval">${fmtPK(totE)}</td>
+            <td class="r totval" style="color:${totP >= 0 ? '#15803D' : '#B91C1C'}">${fmtPK(totP)}</td>
+          </tr>
+        </tfoot>
+      </table>
+      <div class="callout">
+        <b>${totP >= 0 ? '✓ Profit' : '⚠ Loss'} of ${fmtPK(Math.abs(totP))}</b> over the selected period.
+        Account-book balances are intentionally excluded — they represent loans / liabilities, not revenue or cost.
+      </div>`;
+  } else if (cfg.kind === 'cash') {
+    const tot = list.reduce((a, r) => a + Number(r.amount || 0), 0);
+    const rows = list.map(r => {
+      const isPL = r.type === 'P&L';
+      return `
+        <tr>
+          <td>
+            <div class="cih-src">
+              <div class="cih-ic" style="background:linear-gradient(135deg,${isPL ? '#1E3A8A,#2563EB' : '#7C3AED,#6D28D9'})">${isPL ? 'P/L' : 'BK'}</div>
+              <div>
+                <b>${escH(r.source)}</b>
+                <div class="sub">${escH(r.type)}</div>
+              </div>
+            </div>
+          </td>
+          <td class="r"><b style="color:${r.amount < 0 ? '#B91C1C' : '#15803D'}">${fmtPK(r.amount)}</b></td>
+        </tr>`;
+    }).join('');
+    body = `
+      <div class="sec-band" style="background:linear-gradient(135deg,${meta.color},${meta.dark})">
+        <span>Cash In Hand Composition</span>
+        <small>${list.length} source(s)</small>
+      </div>
+      <table class="t">
+        <thead><tr><th>Source</th><th class="r">Amount</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="2" class="empty">No data.</td></tr>'}</tbody>
+        <tfoot>
+          <tr>
+            <td class="totlbl">Total Cash In Hand</td>
+            <td class="r totval" style="color:${tot < 0 ? '#B91C1C' : '#15803D'};font-size:14px">${fmtPK(tot)}</td>
+          </tr>
+        </tfoot>
+      </table>
+      <div class="callout">
+        <b>Cash In Hand = P/L + cash-flagged book balances.</b>
+        Only books with the "include in cash" flag are counted here — other books represent loans or liabilities tracked separately.
+      </div>`;
+  } else if (cfg.kind === 'books') {
+    const rows = list.map(r => `
+      <tr>
+        <td><b>${escH(r.book)}</b></td>
+        <td>${escH(r.party)}</td>
+        <td><span class="tag loan">${escH(r.type)}</span></td>
+        <td class="r">${fmtPK(r.opening)}</td>
+        <td class="r">${fmtPK(r.received)}</td>
+        <td class="r">${fmtPK(r.returned)}</td>
+        <td class="r"><b>${fmtPK(r.balance)}</b></td>
+        <td class="c">${r.inCash === 'Yes' ? '<span class="yes">✓ Yes</span>' : '<span class="dim">No</span>'}</td>
+        <td class="c"><span class="status ${r.status}">${escH(r.status)}</span></td>
+      </tr>`).join('');
+    const tot = list.reduce((a, r) => a + r.balance, 0);
+    body = `
+      <div class="sec-band" style="background:linear-gradient(135deg,${meta.color},${meta.dark})">
+        <span>Account Books Summary</span>
+        <small>${list.length} book(s)</small>
+      </div>
+      <table class="t">
+        <thead>
+          <tr>
+            <th>Book</th><th>Party</th><th>Type</th>
+            <th class="r">Opening</th><th class="r">Received</th><th class="r">Returned</th>
+            <th class="r">Balance</th><th class="c">In Cash</th><th class="c">Status</th>
+          </tr>
+        </thead>
+        <tbody>${rows || '<tr><td colspan="9" class="empty">No books.</td></tr>'}</tbody>
+        <tfoot>
+          <tr>
+            <td colspan="6" class="totlbl">Net Balance Across All Books</td>
+            <td class="r totval">${fmtPK(tot)}</td>
+            <td colspan="2"></td>
+          </tr>
+        </tfoot>
+      </table>`;
+  } else if (cfg.kind === 'headwise') {
+    const rows = list.map(r => `
+      <tr>
+        <td><span class="tag ${r.type === 'Revenue' ? 'rev' : 'exp'}">${r.type}</span></td>
+        <td>${r.headNo}</td>
+        <td><b>${escH(r.head)}</b></td>
+        <td class="c">${r.count}</td>
+        <td class="r"><b>${fmtPK(r.total)}</b></td>
+      </tr>`).join('');
+    const tot = list.reduce((a, r) => a + r.total, 0);
+    body = `
+      <div class="sec-band" style="background:linear-gradient(135deg,${meta.color},${meta.dark})">
+        <span>Head-wise Totals</span>
+        <small>${list.length} head(s)</small>
+      </div>
+      <table class="t">
+        <thead><tr><th>Type</th><th>Head No</th><th>Head Name</th><th class="c">Entries</th><th class="r">Total Amount</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="5" class="empty">No data.</td></tr>'}</tbody>
+        <tfoot>
+          <tr><td colspan="3" class="totlbl">Aggregate</td><td class="c totval">${list.reduce((a, r) => a + r.count, 0)}</td><td class="r totval">${fmtPK(tot)}</td></tr>
+        </tfoot>
+      </table>`;
+  } else if (cfg.kind === 'overview') {
+    const monthRows = list.map(r => `
+      <tr>
+        <td>${r.sr}</td>
+        <td><b>${escH(r.month)}</b></td>
+        <td class="r">${fmtPK(r.revenue)}</td>
+        <td class="r">${fmtPK(r.expense)}</td>
+        <td class="r"><b style="color:${r.pl >= 0 ? '#15803D' : '#B91C1C'}">${fmtPK(r.pl)}</b></td>
+      </tr>`).join('');
+    const totR = list.reduce((a, r) => a + r.revenue, 0);
+    const totE = list.reduce((a, r) => a + r.expense, 0);
+    const totP = totR - totE;
+    const books = cfg.books || [];
+    const bookRows = books.map(b => {
+      const c = bookCalc(b);
+      return `
+        <tr>
+          <td><b>${escH(b.name)}</b>${b.includeInCash ? ' <span class="cashtag">CASH</span>' : ''}</td>
+          <td>${escH(b.party || '—')}</td>
+          <td><span class="tag loan">${escH(b.type)}</span></td>
+          <td class="r"><b>${fmtPK(c.balance)}</b></td>
+        </tr>`;
+    }).join('');
+    const totBal = books.reduce((a, b) => a + bookCalc(b).balance, 0);
+    const cashBal = books.filter(b => b.includeInCash).reduce((a, b) => a + bookCalc(b).balance, 0);
+    body = `
+      <div class="sec-band" style="background:linear-gradient(135deg,${meta.color},${meta.dark})">
+        <span>Monthly Revenue / Expense Trend</span>
+        <small>${list.length} month(s)</small>
+      </div>
+      <table class="t">
+        <thead><tr><th style="width:30px">Sr</th><th>Month</th><th class="r">Revenue</th><th class="r">Expense</th><th class="r">Profit / Loss</th></tr></thead>
+        <tbody>${monthRows || '<tr><td colspan="5" class="empty">No data.</td></tr>'}</tbody>
+        <tfoot>
+          <tr>
+            <td colspan="2" class="totlbl">Period Total</td>
+            <td class="r totval">${fmtPK(totR)}</td>
+            <td class="r totval">${fmtPK(totE)}</td>
+            <td class="r totval" style="color:${totP >= 0 ? '#15803D' : '#B91C1C'}">${fmtPK(totP)}</td>
+          </tr>
+        </tfoot>
+      </table>
+
+      <div class="sec-band" style="background:linear-gradient(135deg,#7C3AED,#6D28D9);margin-top:14px">
+        <span>Account Books Exposure</span>
+        <small>${books.length} book(s)</small>
+      </div>
+      <table class="t">
+        <thead><tr><th>Book</th><th>Party</th><th>Type</th><th class="r">Current Balance</th></tr></thead>
+        <tbody>${bookRows || '<tr><td colspan="4" class="empty">No books.</td></tr>'}</tbody>
+        <tfoot>
+          <tr><td colspan="3" class="totlbl">Net Exposure</td><td class="r totval">${fmtPK(totBal)}</td></tr>
+        </tfoot>
+      </table>
+
+      <div class="callout">
+        <b>${totP >= 0 ? '✓ Surplus' : '⚠ Deficit'} ${fmtPK(Math.abs(totP))}</b> from operations, ${fmtPK(cashBal)} cash-flagged book balances, ${fmtPK(totP + cashBal)} <b>final Cash In Hand</b>.
+        Total book exposure across all books: ${fmtPK(totBal)}.
+      </div>`;
+  }
+
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escH(meta.title)}</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif;color:#111;font-size:10.5px;line-height:1.5;}
+body{background:#F1F3F8;padding:18px 0;}
+.page{width:210mm;min-height:297mm;margin:0 auto;padding:14mm;background:#fff;box-shadow:0 10px 30px rgba(15,23,42,.12);box-sizing:border-box;}
+
+.head{display:flex;align-items:center;gap:14px;border-bottom:2px solid ${meta.color};padding-bottom:10px;margin-bottom:14px;}
+.logo{width:48px;height:48px;border-radius:14px;background:linear-gradient(135deg,${meta.color},${meta.dark});color:#fff;font-size:20px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+.school{font-size:17px;font-weight:800;color:#0F172A;}
+.title{font-size:12px;font-weight:700;color:${meta.dark};margin-top:3px;}
+.meta{margin-left:auto;font-size:9.5px;color:#64748B;text-align:right;line-height:1.55;}
+
+.report-card{margin-bottom:12px;padding:13px 16px;border-radius:10px;border:1.5px solid #E5E7EB;background:linear-gradient(135deg,${meta.color}0F,transparent 60%);}
+.report-card-name{font-size:15px;font-weight:800;color:#0F172A;letter-spacing:-.01em;}
+.report-card-sub{font-size:11px;color:#475569;margin-top:3px;line-height:1.55;}
+
+.kpi-row{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px;}
+.kpi{border:1px solid #E5E7EB;border-radius:8px;padding:9px 11px;background:#F8FAFF;position:relative;overflow:hidden;}
+.kpi::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;}
+.kpi.a::before{background:linear-gradient(180deg,${meta.color},${meta.dark});}
+.kpi.b::before{background:linear-gradient(180deg,#2563EB,#1E40AF);}
+.kpi.c::before{background:linear-gradient(180deg,#D97706,#B45309);}
+.kpi.d::before{background:linear-gradient(180deg,#7C3AED,#6D28D9);}
+.kpi .l{font-size:9px;font-weight:700;color:#64748B;text-transform:uppercase;letter-spacing:.3px;}
+.kpi .v{font-size:14px;font-weight:800;color:#0F172A;margin-top:2px;font-variant-numeric:tabular-nums;}
+.kpi .m{font-size:9px;color:#64748B;margin-top:1px;}
+
+.sec-band{color:#fff;padding:8px 14px;border-radius:6px;font-weight:800;margin-bottom:10px;font-size:12px;display:flex;justify-content:space-between;align-items:center;}
+.sec-band small{font-weight:700;opacity:.85;font-size:10px;}
+
+.t{width:100%;border-collapse:separate;border-spacing:0;border:1px solid #E5E7EB;border-radius:8px;overflow:hidden;font-size:10.5px;margin-bottom:10px;}
+.t thead th{background:#F8FAFF;border-bottom:1.5px solid #E5E7EB;padding:8px 10px;text-align:left;font-weight:800;color:#1E3A8A;font-size:10px;text-transform:uppercase;letter-spacing:.3px;}
+.t thead th.r{text-align:right;} .t thead th.c{text-align:center;}
+.t tbody td{padding:7px 10px;border-bottom:1px solid #F1F3F8;vertical-align:top;}
+.t tbody tr:nth-child(even) td{background:#FBFCFF;}
+.t tbody tr:last-child td{border-bottom:0;}
+.t td.r{text-align:right;font-variant-numeric:tabular-nums;}
+.t td.c{text-align:center;}
+.t tfoot td{padding:9px 10px;background:#F1F3F8;font-weight:800;border-top:1.5px solid #CBD5E1;}
+.t tfoot td.totlbl{color:#1E3A8A;text-transform:uppercase;font-size:10px;letter-spacing:.3px;}
+.t tfoot td.totval{font-size:12px;color:#0F172A;}
+.t td.detail{font-size:10px;color:#475569;line-height:1.5;max-width:200px;}
+.t td .sub{font-size:9.5px;color:#94A3B8;margin-top:1px;}
+.t td .dim{color:#94A3B8;}
+.t td.empty{text-align:center;padding:24px;color:#94A3B8;font-style:italic;}
+
+.tag{display:inline-block;padding:2px 9px;border-radius:999px;font-size:9.5px;font-weight:800;letter-spacing:.3px;text-transform:uppercase;border:1px solid;}
+.tag.rev{background:rgba(22,163,74,.10);color:#15803D;border-color:rgba(22,163,74,.28);}
+.tag.exp{background:rgba(220,38,38,.08);color:#B91C1C;border-color:rgba(220,38,38,.22);}
+.tag.loan{background:rgba(124,58,237,.10);color:#6D28D9;border-color:rgba(124,58,237,.25);}
+.yes{color:#15803D;font-weight:800;}
+.status{display:inline-block;padding:2px 9px;border-radius:999px;font-size:9.5px;font-weight:800;letter-spacing:.3px;text-transform:uppercase;border:1px solid;}
+.status.active{background:rgba(22,163,74,.12);color:#15803D;border-color:rgba(22,163,74,.25);}
+.status.settled{background:rgba(30,58,138,.08);color:#1E40AF;border-color:rgba(30,58,138,.22);}
+.status.closed{background:rgba(220,38,38,.08);color:#B91C1C;border-color:rgba(220,38,38,.2);}
+.cashtag{display:inline-block;padding:1px 6px;border-radius:4px;font-size:8px;font-weight:800;background:rgba(8,145,178,.12);color:#0E7490;letter-spacing:.4px;}
+
+.cih-src{display:flex;align-items:center;gap:10px;}
+.cih-ic{width:32px;height:32px;border-radius:9px;color:#fff;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:800;letter-spacing:.3px;flex-shrink:0;}
+
+.callout{padding:10px 13px;border-radius:8px;background:linear-gradient(135deg,${meta.color}0F,transparent 60%);border:1px solid ${meta.color}40;color:#1F2937;font-size:11px;margin-top:10px;line-height:1.6;}
+.callout b{color:${meta.dark};}
+
+.footer{margin-top:14px;padding-top:8px;border-top:1px solid #e5e9f2;text-align:center;font-size:9px;color:#94A3B8;}
+@page{size:A4 portrait;margin:0;}
+@media print{
+  body{background:#fff;padding:0;}
+  .page{width:auto;min-height:auto;margin:0;padding:14mm;box-shadow:none;}
+  .t tr{page-break-inside:avoid;}
+  -webkit-print-color-adjust:exact;
+  print-color-adjust:exact;
+}
+/* Colorless Report — strips gradients / colored backgrounds / colored
+   tag fills to dark-on-white with light gray borders. Only activates
+   when .acc-bw is present on the body. */
+.acc-bw .head{border-bottom-color:#0F172A !important;border-bottom-width:1.5px !important;}
+.acc-bw .logo{background:#FFFFFF !important;color:#0F172A !important;border:1px solid #0F172A !important;}
+.acc-bw .title{color:#0F172A !important;}
+.acc-bw .report-card{background:#FFFFFF !important;border-color:#D1D5DB !important;}
+.acc-bw .report-card-name{color:#0F172A !important;}
+.acc-bw .kpi{background:#FFFFFF !important;border-color:#D1D5DB !important;}
+.acc-bw .kpi::before{background:#0F172A !important;}
+.acc-bw .kpi .v[style*="color"]{color:#0F172A !important;}
+.acc-bw .sec-band{background:#FFFFFF !important;color:#0F172A !important;border:1.5px solid #0F172A;}
+.acc-bw .t thead th{background:#FFFFFF !important;color:#0F172A !important;border-bottom-color:#0F172A !important;}
+.acc-bw .t tbody tr:nth-child(even) td{background:transparent !important;}
+.acc-bw .t tfoot td{background:#FFFFFF !important;border-top-color:#0F172A !important;}
+.acc-bw .t tfoot td.totlbl{color:#0F172A !important;}
+.acc-bw .tag, .acc-bw .status{background:transparent !important;color:#0F172A !important;border-color:#9CA3AF !important;}
+.acc-bw .yes{color:#0F172A !important;}
+.acc-bw .cashtag{background:transparent !important;color:#374151 !important;border:1px solid #9CA3AF !important;}
+.acc-bw .cih-ic{background:#FFFFFF !important;color:#0F172A !important;border:1px solid #0F172A !important;}
+.acc-bw .callout{background:#FFFFFF !important;border-color:#D1D5DB !important;color:#0F172A !important;}
+.acc-bw .callout b{color:#0F172A !important;}
+</style></head><body${isBW ? ' class="acc-bw"' : ''}>
+<div class="page">
+
+<div class="head">
+  <div class="logo">${escH(school?.monogram || 'OS')}</div>
+  <div>
+    <div class="school">${escH(school?.name || 'School')}</div>
+    <div class="title">${escH(meta.title)}</div>
+  </div>
+  <div class="meta">Generated: ${today}<br/>By: ${escH(school?.generatedBy || 'Accounts')}<br/>Records: ${list.length}</div>
+</div>
+
+<div class="report-card">
+  <div class="report-card-name">${escH(meta.title)}</div>
+  <div class="report-card-sub">${escH(meta.sub)}</div>
+</div>
+
+<div class="kpi-row">${kpis}</div>
+
+${body}
+
+<div class="footer">Computer generated report — ${escH(school?.name || 'School')} · ${escH(meta.title)} · ${today}</div>
+
+</div><!-- /.page -->
+</body></html>`;
+}
+
+function buildAccReportCSV(cfg) {
+  const escC = (s) => `"${String(s ?? '').replace(/"/g, '""')}"`;
+  const list = cfg.list || [];
+
+  if (cfg.kind === 'revenue' || cfg.kind === 'expense') {
+    const header = ['#', 'Type', 'HeadNo', 'Head', 'Date', 'Details', 'Amount', 'CreatedBy', 'CreatedAt', 'UpdatedBy', 'UpdatedAt'];
+    const type = cfg.kind === 'revenue' ? 'Revenue' : 'Expenditure';
+    const rows = list.map((x, i) => [
+      i + 1, type, x.headNo, x.head, x.date, x.detail || '', x.amount,
+      x.createdBy || '', x.createdAt || '', x.updatedBy || '', x.updatedAt || '',
+    ]);
+    return [header.join(','), ...rows.map(r => r.map(escC).join(','))].join('\n');
+  }
+  if (cfg.kind === 'pl' || cfg.kind === 'overview') {
+    const header = ['Sr', 'Month', 'Revenue', 'Expense', 'ProfitLoss'];
+    const rows = list.map(r => [r.sr, r.month, r.revenue, r.expense, r.pl]);
+    return [header.join(','), ...rows.map(r => r.map(escC).join(','))].join('\n');
+  }
+  if (cfg.kind === 'cash') {
+    const header = ['Source', 'Type', 'Amount'];
+    const rows = list.map(r => [r.source, r.type, r.amount]);
+    return [header.join(','), ...rows.map(r => r.map(escC).join(','))].join('\n');
+  }
+  if (cfg.kind === 'books') {
+    const header = ['Book', 'Party', 'Type', 'Opening', 'Received', 'Returned', 'Balance', 'InCash', 'Status'];
+    const rows = list.map(r => [r.book, r.party, r.type, r.opening, r.received, r.returned, r.balance, r.inCash, r.status]);
+    return [header.join(','), ...rows.map(r => r.map(escC).join(','))].join('\n');
+  }
+  if (cfg.kind === 'headwise') {
+    const header = ['Type', 'HeadNo', 'Head', 'Entries', 'TotalAmount'];
+    const rows = list.map(r => [r.type, r.headNo, r.head, r.count, r.total]);
+    return [header.join(','), ...rows.map(r => r.map(escC).join(','))].join('\n');
+  }
+  return '';
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   ACCOUNT BOOKS — running ledger with any party (supplier / vendor /
+   owner / investor / contractor). Two view modes:
+     • List   — explainer banner, stats, search/filter, card grid
+     • Detail — topbar, summary cards, cash strip, ledger timeline,
+                Add Transaction
+   Plus a Books Help modal, Book Edit modal, Book Txn modal, and
+   delete confirmation dialogs.
+   ═══════════════════════════════════════════════════════════════════ */
+
+function bookCalc(b) {
+  let received = 0, returned = 0, adjust = 0;
+  const sorted = [...b.txns].sort((a, c) => (a.date < c.date ? -1 : a.date > c.date ? 1 : ((a.at || '') < (c.at || '') ? -1 : 1)));
+  let bal = Number(b.opening || 0);
+  const withBal = sorted.map(t => {
+    const amt = Number(t.amount || 0);
+    if (t.type === 'received')     { received += amt; bal += amt; }
+    else if (t.type === 'returned'){ returned += amt; bal -= amt; }
+    else                            { adjust += amt; bal += amt; }
+    return { ...t, runningBalance: bal };
+  });
+  const totalIn = Number(b.opening || 0) + received;
+  return {
+    received, returned, adjust,
+    balance: Math.max(0, bal),
+    totalIn, returnedAll: returned, withBal,
+    lastDate: sorted.length ? sorted[sorted.length - 1].date : b.openDate,
+  };
+}
+
+function AccountBooks({ toast }) {
+  const { data: serverBooks = [] } = useAsync(accountsService.getAccBooks, []);
+  const { data: users = [] }       = useAsync(accountsService.getAccUsers, []);
+  const { data: currentUser = '' } = useAsync(accountsService.getAccCurrentUser, '');
+  const { data: school = {} }      = useAsync(accountsService.getAccSchool, {});
+
+  const [books, setBooks] = useState(null);
+  useEffect(() => { if (serverBooks.length && books == null) setBooks(serverBooks); }, [serverBooks, books]);
+  const list = useMemo(() => books || [], [books]);
+
+  const [currentBookId, setCurrentBookId] = useState(null);
+  const [search, setSearch]               = useState('');
+  const [status, setStatus]               = useState('all');
+  const [editBook, setEditBook]           = useState(null); // { mode:'add'|'edit', book? }
+  const [editTxn, setEditTxn]             = useState(null); // { mode:'add'|'edit', txn? }
+  const [confirm, setConfirm]             = useState(null);
+  const [helpOpen, setHelpOpen]           = useState(false);
+  const [ledgerSearch, setLedgerSearch]   = useState('');
+  const [ledgerFilter, setLedgerFilter]   = useState('all');
+  const [ledgerSort, setLedgerSort]       = useState('desc');
+  /* Report style — applies to the per-book Ledger Report PDF download.
+     Local state because the picker only matters for this surface. */
+  const [bookStyle, setBookStyle]         = useState('color'); // 'color' | 'bw'
+
+  /* Aggregate stats for the books-list explainer banner */
+  let totBooks = list.length, totPayable = 0, totReceivable = 0, totCash = 0;
+  list.forEach(b => {
+    const c = bookCalc(b);
+    if (b.type === 'payable') totPayable += c.balance; else totReceivable += c.balance;
+    if (b.includeInCash) totCash += c.balance;
+  });
+
+  const filteredBooks = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return list.filter(b => {
+      if (status !== 'all' && b.status !== status) return false;
+      if (q && !`${b.name} ${b.party || ''} ${b.desc || ''}`.toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }, [list, search, status]);
+
+  const currentBook = list.find(b => b.id === currentBookId) || null;
+
+  /* Save / delete handlers */
+  const handleSaveBook = (form) => {
+    if (editBook.mode === 'edit') {
+      setBooks(prev => prev.map(b => b.id === editBook.book.id ? { ...b, ...form } : b));
+      toast('Book updated', 'success');
+    } else {
+      const id = `bk_${Date.now()}`;
+      const newBook = {
+        id, ...form, status: 'active',
+        createdBy: currentUser || 'System',
+        txns: [],
+      };
+      setBooks(prev => [...prev, newBook]);
+      toast('Account book created', 'success');
+    }
+    accountsService.saveAccBook(form).catch(() => {});
+    setEditBook(null);
+  };
+
+  const handleSaveBookTxn = (form) => {
+    if (!currentBookId) return;
+    if (editTxn.mode === 'edit') {
+      setBooks(prev => prev.map(b => b.id === currentBookId
+        ? { ...b, txns: b.txns.map(t => t.id === editTxn.txn.id ? { ...t, ...form } : t) }
+        : b));
+      toast('Transaction updated', 'success');
+    } else {
+      const newTxn = { id: `bt_${Date.now()}`, ...form, at: nowISO(), attachments: form.attachments || [] };
+      setBooks(prev => prev.map(b => b.id === currentBookId ? { ...b, txns: [...b.txns, newTxn] } : b));
+      toast('Transaction added', 'success');
+    }
+    accountsService.saveAccBookTxn({ bookId: currentBookId, ...form }).catch(() => {});
+    setEditTxn(null);
+  };
+
+  const requestDeleteBook = (b) => {
+    setConfirm({
+      title:   'Delete this account book?',
+      message: <span><strong>{b.name}</strong> and all <strong>{b.txns.length}</strong> ledger entries will be permanently removed.</span>,
+      hint:    'This action cannot be undone.',
+      onConfirm: async () => {
+        setBooks(prev => prev.filter(x => x.id !== b.id));
+        await accountsService.deleteAccBook({ bookId: b.id }).catch(() => {});
+        setCurrentBookId(null);
+        toast('Account book deleted', 'success');
+      },
+    });
+  };
+
+  const requestDeleteTxn = (t) => {
+    setConfirm({
+      title:   'Delete this ledger entry?',
+      message: <span>The <strong>{t.type}</strong> entry of <strong>{fmtMoney(Math.abs(t.amount))}</strong> on {accFmtDate(t.date)} will be permanently removed.</span>,
+      hint:    'The running balance will be re-calculated automatically.',
+      onConfirm: async () => {
+        setBooks(prev => prev.map(b => b.id === currentBookId
+          ? { ...b, txns: b.txns.filter(x => x.id !== t.id) }
+          : b));
+        await accountsService.deleteAccBookTxn({ bookId: currentBookId, txnId: t.id }).catch(() => {});
+        toast('Ledger entry deleted', 'success');
+      },
+    });
+  };
+
+  /* Generate the per-book A4 ledger report — opens a print window with
+     embedded attachment images so receipts print alongside each entry.
+     Reads the local bookStyle ('color' / 'bw') so the user-picked
+     Colorful / Colorless choice is honoured. */
+  const downloadBookReport = (b) => {
+    const isBW = bookStyle === 'bw';
+    const html = buildBookReportHTML({ book: b, school, isBW });
+    const w = window.open('', '_blank');
+    if (!w) { toast('Please allow pop-ups to download the report', 'error'); return; }
+    w.document.write(html);
+    w.document.close();
+    w.onload = () => { try { w.focus(); w.print(); } catch (e) { /* ignore */ } };
+    toast(`${b.name} ledger report ready (${isBW ? 'Colorless' : 'Colorful'}) — Save as PDF.`, 'success');
+  };
+
+  return (
+    <>
+      {!currentBook ? (
+        /* ── LIST VIEW ── */
+        <>
+          <div className="acc-overview acc-books-explainer">
+            <div className="acc-overview-main">
+              <div className="acc-overview-icon" style={{ background: 'linear-gradient(135deg,#7C3AED,#6D28D9)' }}>
+                <i className="fa-solid fa-book-open"></i>
+              </div>
+              <div className="acc-overview-text">
+                <div className="acc-overview-title">
+                  Account Books <span className="acc-books-tagchip">Supplier, Vendor &amp; Party Ledgers</span>
+                </div>
+                <div className="acc-overview-sub">
+                  A running account with any party the school owes or is owed — <strong>suppliers, vendors, contractors, service providers, owners or investors</strong>. Track uniforms, books or stationery bought on credit, loans, advances and contributions. Each book keeps a running balance with full history.{' '}
+                  <button className="acc-link-btn" onClick={() => setHelpOpen(true)}>
+                    <i className="fa-solid fa-circle-question"></i> How does this work?
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div className="acc-overview-stats">
+              <div className="acc-ov-stat">
+                <div className="acc-ov-stat-ic" style={{ background: 'linear-gradient(135deg,#7C3AED,#6D28D9)' }}><i className="fa-solid fa-book"></i></div>
+                <div>
+                  <div className="acc-ov-stat-val">{totBooks}</div>
+                  <div className="acc-ov-stat-lbl">Total Books</div>
+                </div>
+              </div>
+              <div className="acc-ov-stat">
+                <div className="acc-ov-stat-ic" style={{ background: 'linear-gradient(135deg,#DC2626,#B91C1C)' }}><i className="fa-solid fa-arrow-up"></i></div>
+                <div>
+                  <div className="acc-ov-stat-val">{fmtMoney(totPayable)}</div>
+                  <div className="acc-ov-stat-lbl">Net Payable</div>
+                </div>
+              </div>
+              <div className="acc-ov-stat">
+                <div className="acc-ov-stat-ic" style={{ background: 'linear-gradient(135deg,#0891B2,#0E7490)' }}><i className="fa-solid fa-wallet"></i></div>
+                <div>
+                  <div className="acc-ov-stat-val">{fmtMoney(totCash)}</div>
+                  <div className="acc-ov-stat-lbl">In Cash Hand</div>
+                </div>
+              </div>
+              <div className="acc-ov-stat">
+                <div className="acc-ov-stat-ic" style={{ background: 'linear-gradient(135deg,#16A34A,#15803D)' }}><i className="fa-solid fa-arrow-down"></i></div>
+                <div>
+                  <div className="acc-ov-stat-val">{fmtMoney(totReceivable)}</div>
+                  <div className="acc-ov-stat-lbl">Net Receivable</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="fee-section">
+            <div className="fee-section-body">
+              <div className="fee-filters">
+                <div className="fee-field" style={{ flex: 1, minWidth: 240 }}>
+                  <span className="fee-label">Search Books</span>
+                  <div className="fee-search-box">
+                    <i className="fa-solid fa-magnifying-glass"></i>
+                    <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by book name, party or description" />
+                    {search && (
+                      <Tooltip text="Clear search">
+                        <button className="fee-search-clear" onClick={() => setSearch('')} aria-label="Clear search">
+                          <i className="fa-solid fa-xmark"></i>
+                        </button>
+                      </Tooltip>
+                    )}
+                  </div>
+                </div>
+                <div className="fee-field">
+                  <span className="fee-label">Status</span>
+                  <div className="fee-select-wrap">
+                    <select className="fee-select" value={status} onChange={e => setStatus(e.target.value)}>
+                      <option value="all">All Books</option>
+                      <option value="active">Active</option>
+                      <option value="settled">Settled</option>
+                      <option value="closed">Closed</option>
+                    </select>
+                    <i className="fa-solid fa-chevron-down"></i>
+                  </div>
+                </div>
+                <div
+                  className="fee-field"
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 10, flexShrink: 0 }}
+                >
+                  <span className="fee-label" id="acc-book-style-lbl">Ledger Style</span>
+                  <div className="inv-rep-style-seg" role="radiogroup" aria-labelledby="acc-book-style-lbl">
+                    <button
+                      type="button"
+                      className={`inv-rep-style-btn${bookStyle === 'color' ? ' on' : ''}`}
+                      onClick={() => setBookStyle('color')}
+                      role="radio"
+                      aria-checked={bookStyle === 'color'}
+                      tabIndex={bookStyle === 'color' ? 0 : -1}
+                      onKeyDown={(e) => {
+                        if (e.key === 'ArrowLeft' || e.key === 'ArrowUp')   { e.preventDefault(); setBookStyle('color'); }
+                        else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); setBookStyle('bw'); }
+                      }}
+                    >
+                      <i className="fa-solid fa-palette" aria-hidden="true"></i> Colorful
+                    </button>
+                    <button
+                      type="button"
+                      className={`inv-rep-style-btn${bookStyle === 'bw' ? ' on' : ''}`}
+                      onClick={() => setBookStyle('bw')}
+                      role="radio"
+                      aria-checked={bookStyle === 'bw'}
+                      tabIndex={bookStyle === 'bw' ? 0 : -1}
+                      onKeyDown={(e) => {
+                        if (e.key === 'ArrowLeft' || e.key === 'ArrowUp')   { e.preventDefault(); setBookStyle('color'); }
+                        else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); setBookStyle('bw'); }
+                      }}
+                    >
+                      <i className="fa-solid fa-circle-half-stroke" aria-hidden="true"></i> Colorless
+                    </button>
+                  </div>
+                </div>
+                <Tooltip text="Open a new running account with a party">
+                  <button className="fee-btn fee-btn-primary" onClick={() => setEditBook({ mode: 'add' })}>
+                    <i className="fa-solid fa-plus"></i> Add New Account Book
+                  </button>
+                </Tooltip>
+              </div>
+            </div>
+          </div>
+
+          {filteredBooks.length === 0 ? (
+            <div className="acc-ledger-empty">
+              <i className="fa-solid fa-book-open"></i>
+              No account books found.<br/>
+              Use <strong>Add New Account Book</strong> to create one.
+            </div>
+          ) : (
+            <div className="acc-books-grid">
+              {filteredBooks.map(b => {
+                const c = bookCalc(b);
+                return (
+                  <button type="button" key={b.id} className="acc-book-card" onClick={() => setCurrentBookId(b.id)}>
+                    <div className="acc-book-card-top">
+                      <div className="acc-book-card-ic"><i className="fa-solid fa-book-bookmark"></i></div>
+                      <div className="acc-book-card-tt">
+                        <div className="acc-book-card-name">{b.name}</div>
+                        <div className="acc-book-card-party">
+                          <i className="fa-solid fa-user"></i> {b.party || '—'} · {b.type === 'payable' ? 'Payable' : 'Receivable'}
+                        </div>
+                      </div>
+                      <span className={`acc-book-status ${b.status}`}>{b.status}</span>
+                    </div>
+                    <div className="acc-book-card-body">
+                      <div className="acc-book-bal-row">
+                        <div>
+                          <div className="acc-book-bal-lbl">{b.type === 'payable' ? 'Remaining Payable' : 'Remaining Receivable'}</div>
+                          <div className="acc-book-bal-val">{fmtMoney(c.balance)}</div>
+                        </div>
+                      </div>
+                      <div className="acc-book-card-mini">
+                        <div className="acc-book-mini">
+                          <div className="acc-book-mini-l">Total In</div>
+                          <div className="acc-book-mini-v in">{fmtMoney(c.totalIn)}</div>
+                        </div>
+                        <div className="acc-book-mini">
+                          <div className="acc-book-mini-l">Returned</div>
+                          <div className="acc-book-mini-v out">{fmtMoney(c.returnedAll)}</div>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="acc-book-card-foot">
+                      <span className="acc-book-card-meta"><i className="fa-regular fa-clock"></i> {accFmtDate(c.lastDate)}</span>
+                      <div className="acc-book-card-foot-r">
+                        {b.includeInCash
+                          ? <span className="acc-book-cashtag"><i className="fa-solid fa-wallet"></i> In Cash</span>
+                          : <span className="acc-book-card-meta">{b.txns.length} txns</span>}
+                        <Tooltip text={`Download ${b.name} A4 ledger report`}>
+                          <span
+                            role="button"
+                            tabIndex={0}
+                            className="acc-book-card-dl"
+                            onClick={e => { e.stopPropagation(); downloadBookReport(b); }}
+                            onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); downloadBookReport(b); } }}
+                          >
+                            <i className="fa-solid fa-file-arrow-down"></i>
+                          </span>
+                        </Tooltip>
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </>
+      ) : (
+        /* ── DETAIL VIEW ── */
+        <BookDetail
+          book={currentBook}
+          users={users}
+          ledgerSearch={ledgerSearch} setLedgerSearch={setLedgerSearch}
+          ledgerFilter={ledgerFilter} setLedgerFilter={setLedgerFilter}
+          ledgerSort={ledgerSort}     setLedgerSort={setLedgerSort}
+          onBack={() => setCurrentBookId(null)}
+          onEditBook={() => setEditBook({ mode: 'edit', book: currentBook })}
+          onDeleteBook={() => requestDeleteBook(currentBook)}
+          onDownloadReport={() => downloadBookReport(currentBook)}
+          onAddTxn={() => setEditTxn({ mode: 'add' })}
+          onEditTxn={(t) => setEditTxn({ mode: 'edit', txn: t })}
+          onDeleteTxn={requestDeleteTxn}
+          toast={toast}
+        />
+      )}
+
+      <BookEditModal cfg={editBook} users={users} currentUser={currentUser} onClose={() => setEditBook(null)} onSave={handleSaveBook} toast={toast} />
+      <BookTxnModal  cfg={editTxn}  users={users} currentUser={currentUser} book={currentBook} onClose={() => setEditTxn(null)} onSave={handleSaveBookTxn} toast={toast} />
+      <AccConfirmDialog cfg={confirm} onClose={() => setConfirm(null)} />
+      <BooksHelpModal open={helpOpen} onClose={() => setHelpOpen(false)} />
+    </>
+  );
+}
+
+/* ─── Book detail view ─── */
+function BookDetail({
+  book, users, ledgerSearch, setLedgerSearch, ledgerFilter, setLedgerFilter,
+  ledgerSort, setLedgerSort, onBack, onEditBook, onDeleteBook, onDownloadReport,
+  onAddTxn, onEditTxn, onDeleteTxn,
+}) {
+  const [openLedgerId, setOpenLedgerId] = useState(null);
+  const c = bookCalc(book);
+  const q = ledgerSearch.trim().toLowerCase();
+  let rows = [...c.withBal];
+  if (ledgerFilter !== 'all') rows = rows.filter(t => t.type === ledgerFilter);
+  if (q) rows = rows.filter(t => `${t.notes || ''} ${t.enteredBy || ''} ${t.amount}`.toLowerCase().includes(q));
+  rows.sort((a, b2) => ledgerSort === 'asc' ? (a.date < b2.date ? -1 : 1) : (a.date > b2.date ? -1 : 1));
+
+  const TLABEL = { received: 'Received', returned: 'Returned', adjustment: 'Adjustment' };
+  const SIGN   = { received: '+', returned: '−', adjustment: '' };
+
+  return (
+    <>
+      <div className="acc-book-topbar">
+        <Tooltip text="Back to all books">
+          <button className="fee-btn fee-btn-ghost" onClick={onBack}>
+            <i className="fa-solid fa-arrow-left"></i> All Books
+          </button>
+        </Tooltip>
+        <div className="acc-book-topbar-title">{book.name}</div>
+        <div className="acc-book-topbar-actions">
+          <span className={`acc-book-status ${book.status}`}>{book.status}</span>
+          <Tooltip text="Download a detailed A4 PDF ledger report (includes attachment images)">
+            <button className="fee-btn fee-btn-primary acc-btn-download" onClick={onDownloadReport}>
+              <i className="fa-solid fa-file-arrow-down"></i> Ledger Report
+            </button>
+          </Tooltip>
+          <Tooltip text="Edit book details">
+            <button className="fee-btn fee-btn-ghost" onClick={onEditBook}>
+              <i className="fa-solid fa-pen"></i> Edit Book
+            </button>
+          </Tooltip>
+          <Tooltip text="Delete this book and all ledger entries">
+            <button className="fee-btn fee-btn-ghost acc-btn-danger" onClick={onDeleteBook}>
+              <i className="fa-solid fa-trash-can"></i> Delete Book
+            </button>
+          </Tooltip>
+        </div>
+      </div>
+
+      <div className="acc-book-summary">
+        <div className="acc-bsum b-opening">
+          <div className="acc-bsum-top"><span className="acc-bsum-lbl">Opening Amount</span><span className="acc-bsum-ic"><i className="fa-solid fa-flag"></i></span></div>
+          <div className="acc-bsum-val">{fmtMoney(book.opening)}</div>
+          <div className="acc-bsum-meta">{accFmtDate(book.openDate)}</div>
+        </div>
+        <div className="acc-bsum b-balance">
+          <div className="acc-bsum-top"><span className="acc-bsum-lbl">Current Balance</span><span className="acc-bsum-ic"><i className="fa-solid fa-scale-balanced"></i></span></div>
+          <div className="acc-bsum-val">{fmtMoney(c.balance)}</div>
+          <div className="acc-bsum-meta">{book.type === 'payable' ? 'payable to party' : 'receivable'}</div>
+        </div>
+        <div className="acc-bsum b-in">
+          <div className="acc-bsum-top"><span className="acc-bsum-lbl">Total Received</span><span className="acc-bsum-ic"><i className="fa-solid fa-arrow-down"></i></span></div>
+          <div className="acc-bsum-val">{fmtMoney(c.totalIn)}</div>
+          <div className="acc-bsum-meta">opening + further</div>
+        </div>
+        <div className="acc-bsum b-out">
+          <div className="acc-bsum-top"><span className="acc-bsum-lbl">Total Returned</span><span className="acc-bsum-ic"><i className="fa-solid fa-arrow-up"></i></span></div>
+          <div className="acc-bsum-val">{fmtMoney(c.returnedAll)}</div>
+          <div className="acc-bsum-meta">paid back</div>
+        </div>
+        <div className="acc-bsum b-cash">
+          <div className="acc-bsum-top"><span className="acc-bsum-lbl">Cash In Hand</span><span className="acc-bsum-ic"><i className="fa-solid fa-wallet"></i></span></div>
+          <div className="acc-bsum-val sm">{book.includeInCash ? 'Included' : 'Excluded'}</div>
+          <div className="acc-bsum-meta">{book.includeInCash ? 'affects cash only' : 'not in cash calc'}</div>
+        </div>
+        <div className="acc-bsum b-date">
+          <div className="acc-bsum-top"><span className="acc-bsum-lbl">Last Transaction</span><span className="acc-bsum-ic"><i className="fa-regular fa-clock"></i></span></div>
+          <div className="acc-bsum-val sm">{accFmtDate(c.lastDate)}</div>
+          <div className="acc-bsum-meta">{book.txns.length} entries</div>
+        </div>
+      </div>
+
+      <div className={`acc-cash-strip ${book.includeInCash ? 'on' : 'off'}`}>
+        <div className="acc-cash-strip-ic"><i className="fa-solid fa-wallet"></i></div>
+        <div className="acc-cash-strip-txt">
+          <div className="acc-cash-strip-t">{book.includeInCash ? 'Included in Cash In Hand' : 'Not included in Cash In Hand'}</div>
+          <div className="acc-cash-strip-d">
+            {book.includeInCash
+              ? 'This book\'s balance is added to Cash In Hand only — it does not affect Profit & Loss.'
+              : 'Enable this in the book settings if the school physically holds this cash.'}
+          </div>
+        </div>
+        <Tooltip text="Edit the book to toggle">
+          <button className="fee-btn fee-btn-ghost" onClick={onEditBook}>
+            <i className="fa-solid fa-pen"></i> Edit Book
+          </button>
+        </Tooltip>
+      </div>
+
+      <div className="acc-ledger-toolbar">
+        <div className="acc-ledger-toolbar-l">
+          <div className="fee-search-box" style={{ maxWidth: 280 }}>
+            <i className="fa-solid fa-magnifying-glass"></i>
+            <input value={ledgerSearch} onChange={e => setLedgerSearch(e.target.value)} placeholder="Search transactions" />
+          </div>
+          <div className="fee-select-wrap">
+            <select className="fee-select" value={ledgerFilter} onChange={e => setLedgerFilter(e.target.value)} style={{ minWidth: 148 }}>
+              <option value="all">All Types</option>
+              <option value="received">Received</option>
+              <option value="returned">Returned</option>
+              <option value="adjustment">Adjustment</option>
+            </select>
+            <i className="fa-solid fa-chevron-down"></i>
+          </div>
+          <div className="fee-select-wrap">
+            <select className="fee-select" value={ledgerSort} onChange={e => setLedgerSort(e.target.value)} style={{ minWidth: 140 }}>
+              <option value="desc">Newest First</option>
+              <option value="asc">Oldest First</option>
+            </select>
+            <i className="fa-solid fa-chevron-down"></i>
+          </div>
+        </div>
+        <Tooltip text="Record a new ledger entry">
+          <button className="fee-btn fee-btn-primary" onClick={onAddTxn}>
+            <i className="fa-solid fa-plus"></i> Add Transaction
+          </button>
+        </Tooltip>
+      </div>
+
+      <div className="fee-section">
+        <div className="fee-section-header">
+          <div className="fee-section-title">
+            <div className="fee-section-icon"><i className="fa-solid fa-timeline"></i></div>
+            <div>
+              <div className="fee-section-name">Transaction Ledger</div>
+              <div className="fee-section-sub">{book.txns.length} transactions · current balance {fmtMoney(c.balance)}</div>
+            </div>
+          </div>
+          <span className="fee-chip fee-chip-active"><i className="fa-solid fa-list"></i> {rows.length}</span>
+        </div>
+        <div className="acc-ledger">
+          {rows.length === 0 ? (
+            <div className="acc-ledger-empty">
+              <i className="fa-solid fa-inbox"></i>
+              No transactions yet.<br/>
+              Use <strong>Add Transaction</strong> to record a movement.
+            </div>
+          ) : rows.map(t => {
+            const isOpen = openLedgerId === t.id;
+            const toggle = () => setOpenLedgerId(isOpen ? null : t.id);
+            const atStamp = accFmtStamp(t.at || `${t.date}T00:00:00`);
+            return (
+              <div key={t.id} className="acc-ledger-item">
+                <div className={`acc-ledger-dot ${t.type}`}>
+                  <i className={`fa-solid ${t.type === 'received' ? 'fa-arrow-down' : t.type === 'returned' ? 'fa-arrow-up' : 'fa-sliders'}`}></i>
+                </div>
+                <div className={`acc-ledger-card${isOpen ? ' open' : ''}`}>
+                  <div className="acc-ledger-main" onClick={toggle}>
+                    <span className={`acc-ledger-typetag ${t.type}`}>{TLABEL[t.type]}</span>
+                    <div className="acc-ledger-info">
+                      <div className="acc-ledger-notes">{t.notes || '—'}</div>
+                      <div className="acc-ledger-sub">
+                        <span><i className="fa-regular fa-calendar"></i> {accFmtDate(t.date)}</span>
+                        <span><i className="fa-solid fa-user-pen"></i> {t.enteredBy || '—'}</span>
+                        {t.attachments && t.attachments.length > 0 && (
+                          <span><i className="fa-solid fa-paperclip"></i> {t.attachments.length} file{t.attachments.length > 1 ? 's' : ''}</span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="acc-ledger-amt">
+                      <div className={`acc-ledger-amt-v ${t.type}`}>
+                        {SIGN[t.type]}{fmtMoney(Math.abs(t.amount))}
+                      </div>
+                      <div className="acc-ledger-amt-bal">Bal: {fmtMoney(t.runningBalance)}</div>
+                    </div>
+                    <Tooltip text={isOpen ? 'Hide details' : 'Show details'}>
+                      <button
+                        type="button"
+                        className="acc-ledger-chev"
+                        onClick={e => { e.stopPropagation(); toggle(); }}
+                      >
+                        <i className="fa-solid fa-chevron-down"></i>
+                      </button>
+                    </Tooltip>
+                  </div>
+                  <div className="acc-ledger-expand">
+                    <div className="acc-ledger-expand-in">
+                      <div className="acc-ledger-kv">
+                        <span className="k">Type</span>          <span className="v">{TLABEL[t.type]}</span>
+                        <span className="k">Amount</span>        <span className="v">{fmtMoney(t.amount)}</span>
+                        <span className="k">Date &amp; Time</span><span className="v">{atStamp}</span>
+                        <span className="k">Entered By</span>    <span className="v">{t.enteredBy || '—'}</span>
+                        <span className="k">Balance After</span> <span className="v">{fmtMoney(t.runningBalance)}</span>
+                        <span className="k">Notes</span>         <span className="v">{t.notes || '—'}</span>
+                      </div>
+
+                      {t.attachments && t.attachments.length > 0 ? (
+                        <>
+                          <div className="acc-ledger-attachhead">
+                            <i className="fa-solid fa-paperclip"></i> Attachments
+                          </div>
+                          <div className="acc-attach-thumbs">
+                            {t.attachments.map((a, i) => (
+                              <div key={i} className="acc-attach-thumb">
+                                <div className={`acc-attach-thumb-ic ${a.kind || 'img'}`}>
+                                  <i className={`fa-solid ${a.kind === 'pdf' ? 'fa-file-pdf' : 'fa-image'}`}></i>
+                                </div>
+                                <div>
+                                  <div className="acc-attach-thumb-nm">{a.name}</div>
+                                  <div className="acc-attach-thumb-sz">{a.size}</div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </>
+                      ) : (
+                        <div className="acc-ledger-attachhead">
+                          <i className="fa-solid fa-paperclip"></i> No attachments
+                        </div>
+                      )}
+
+                      <div className="acc-ledger-actions-row">
+                        <Tooltip text="Edit this ledger entry">
+                          <button className="fee-btn fee-btn-ghost" onClick={() => onEditTxn(t)}>
+                            <i className="fa-solid fa-pen"></i> Edit
+                          </button>
+                        </Tooltip>
+                        <Tooltip text="Delete this ledger entry">
+                          <button className="fee-btn fee-btn-ghost acc-ledger-del" onClick={() => onDeleteTxn(t)}>
+                            <i className="fa-solid fa-trash-can"></i> Delete
+                          </button>
+                        </Tooltip>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   A4 PDF builder for one Account Book — emits a print-window HTML
+   document with:
+   • School-branded header + book identity card
+   • 6-card summary strip (opening, balance, in/out, status, cash flag)
+   • Description block
+   • Full transaction ledger with running balance
+   • Embedded attachment images (data-URL <img>) per entry
+   • PDF attachments shown as labeled placeholder cards
+   ═══════════════════════════════════════════════════════════════════ */
+function buildBookReportHTML({ book, school, isBW = false }) {
+  const escH = (s) => String(s ?? '').replace(/[&<>"']/g, m => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]));
+  const c = bookCalc(book);
+  const sorted = [...c.withBal].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  const today = new Date().toLocaleDateString('en-GB');
+  const TLABEL = { received: 'Received', returned: 'Returned', adjustment: 'Adjustment' };
+  const SIGN   = { received: '+', returned: '−', adjustment: '' };
+  const COLORS = {
+    received:   { fg: '#16A34A', bg: 'rgba(22,163,74,.10)',  bd: 'rgba(22,163,74,.28)' },
+    returned:   { fg: '#DC2626', bg: 'rgba(220,38,38,.08)',  bd: 'rgba(220,38,38,.22)' },
+    adjustment: { fg: '#2563EB', bg: 'rgba(37,99,235,.10)',  bd: 'rgba(37,99,235,.25)' },
+  };
+
+  /* One ledger entry block (with embedded attachments). Each entry is
+     a self-contained card with header / detail / attachment grid. */
+  const entryBlock = (t, i) => {
+    const col = COLORS[t.type] || COLORS.received;
+    const atts = Array.isArray(t.attachments) ? t.attachments : [];
+    const images = atts.filter(a => a.kind === 'img' && a.data);
+    const pdfs   = atts.filter(a => a.kind === 'pdf');
+    const stamp  = t.at
+      ? `${t.date} · ${new Date(t.at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: true })}`
+      : t.date;
+    return `
+    <div class="entry">
+      <div class="entry-head">
+        <div class="entry-no">${i + 1}</div>
+        <div class="entry-head-main">
+          <span class="entry-tag" style="background:${col.bg};color:${col.fg};border-color:${col.bd}">${TLABEL[t.type] || t.type}</span>
+          <div class="entry-notes">${escH(t.notes) || '—'}</div>
+        </div>
+        <div class="entry-amt-block">
+          <div class="entry-amt" style="color:${col.fg}">${SIGN[t.type]}Rs. ${(Math.abs(t.amount)).toLocaleString('en-PK')}</div>
+          <div class="entry-bal">Running Bal Rs. ${(t.runningBalance).toLocaleString('en-PK')}</div>
+        </div>
+      </div>
+      <div class="entry-meta">
+        <span><b>Date &amp; Time:</b> ${escH(stamp)}</span>
+        <span><b>Entered By:</b> ${escH(t.enteredBy || '—')}</span>
+        ${atts.length ? `<span><b>Attachments:</b> ${atts.length} file${atts.length > 1 ? 's' : ''}</span>` : ''}
+      </div>
+      ${images.length > 0 ? `
+        <div class="entry-attach-h"><i>📎</i> Attached Receipts &amp; Documents</div>
+        <div class="entry-attach-grid">
+          ${images.map(a => `
+            <div class="attach-card">
+              <div class="attach-card-imgwrap">
+                <img src="${a.data}" alt="${escH(a.name)}" />
+              </div>
+              <div class="attach-card-foot">
+                <div class="attach-card-nm">${escH(a.name)}</div>
+                <div class="attach-card-sz">${escH(a.size)}</div>
+              </div>
+            </div>
+          `).join('')}
+        </div>` : ''}
+      ${pdfs.length > 0 ? `
+        ${images.length === 0 ? '<div class="entry-attach-h"><i>📎</i> Attached Documents</div>' : ''}
+        <div class="entry-pdf-grid">
+          ${pdfs.map(a => `
+            <div class="pdf-card">
+              <div class="pdf-card-ic">PDF</div>
+              <div>
+                <div class="pdf-card-nm">${escH(a.name)}</div>
+                <div class="pdf-card-sz">${escH(a.size)} · attached PDF document</div>
+              </div>
+            </div>
+          `).join('')}
+        </div>` : ''}
+    </div>`;
+  };
+
+  const STATUS_COLORS = {
+    active:  { fg: '#15803D', bg: 'rgba(22,163,74,.12)',  bd: 'rgba(22,163,74,.25)' },
+    settled: { fg: '#1E40AF', bg: 'rgba(30,58,138,.08)',  bd: 'rgba(30,58,138,.22)' },
+    closed:  { fg: '#B91C1C', bg: 'rgba(220,38,38,.08)',  bd: 'rgba(220,38,38,.2)' },
+  };
+  const stat = STATUS_COLORS[book.status] || STATUS_COLORS.active;
+
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escH(book.name)} — Ledger Report</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif;color:#111;font-size:10.5px;line-height:1.5;}
+body{background:#F1F3F8;padding:18px 0;}
+.page{width:210mm;min-height:297mm;margin:0 auto;padding:14mm;background:#fff;box-shadow:0 10px 30px rgba(15,23,42,.12);box-sizing:border-box;}
+.head{display:flex;align-items:center;gap:14px;border-bottom:2px solid #7C3AED;padding-bottom:10px;margin-bottom:14px;}
+.logo{width:48px;height:48px;border-radius:14px;background:linear-gradient(135deg,#7C3AED,#6D28D9);color:#fff;font-size:20px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+.school{font-size:17px;font-weight:800;color:#1E3A8A;}
+.title{font-size:12px;font-weight:700;color:#6D28D9;margin-top:3px;}
+.meta{margin-left:auto;font-size:9.5px;color:#64748B;text-align:right;line-height:1.55;}
+
+.book-card{margin-bottom:12px;padding:14px 16px;border-radius:10px;border:1.5px solid #E5E7EB;background:linear-gradient(135deg,rgba(124,58,237,.04),transparent 60%);}
+.book-card-head{display:flex;align-items:center;gap:12px;margin-bottom:8px;}
+.book-card-ic{width:38px;height:38px;border-radius:11px;background:linear-gradient(135deg,#7C3AED,#6D28D9);color:#fff;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:800;flex-shrink:0;}
+.book-card-name{font-size:16px;font-weight:800;color:#0F172A;letter-spacing:-.01em;}
+.book-card-party{font-size:11.5px;color:#64748B;margin-top:2px;}
+.status-pill{display:inline-block;padding:3px 12px;border-radius:999px;font-size:10px;font-weight:800;letter-spacing:.3px;text-transform:uppercase;border:1px solid;background:${stat.bg};color:${stat.fg};border-color:${stat.bd};margin-left:auto;}
+.book-card-desc{font-size:11px;color:#475569;line-height:1.6;margin-top:6px;padding-top:8px;border-top:1px dashed #cbd5e1;}
+
+.kpi-row{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px;}
+.kpi{border:1px solid #E5E7EB;border-radius:8px;padding:8px 10px;background:#F8FAFF;position:relative;overflow:hidden;}
+.kpi::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;}
+.kpi.opening::before{background:linear-gradient(180deg,#2563EB,#1E40AF);}
+.kpi.balance::before{background:linear-gradient(180deg,#7C3AED,#6D28D9);}
+.kpi.received::before{background:linear-gradient(180deg,#16A34A,#15803D);}
+.kpi.returned::before{background:linear-gradient(180deg,#DC2626,#B91C1C);}
+.kpi.cash::before{background:linear-gradient(180deg,#0891B2,#0E7490);}
+.kpi.date::before{background:linear-gradient(180deg,#D97706,#B45309);}
+.kpi .l{font-size:9px;font-weight:700;color:#64748B;text-transform:uppercase;letter-spacing:.3px;}
+.kpi .v{font-size:14px;font-weight:800;color:#0F172A;margin-top:2px;font-variant-numeric:tabular-nums;}
+.kpi .v.green{color:#15803D;} .kpi .v.red{color:#B91C1C;} .kpi .v.purple{color:#6D28D9;}
+.kpi .m{font-size:9px;color:#64748B;margin-top:1px;}
+
+.cash-info{padding:9px 12px;border-radius:8px;background:rgba(8,145,178,.06);border:1px solid rgba(8,145,178,.25);color:#0E7490;font-size:11px;margin-bottom:14px;font-weight:600;}
+.cash-info b{color:#0E7490;}
+
+.sec-band{background:linear-gradient(135deg,#7C3AED,#6D28D9);color:#fff;padding:8px 14px;border-radius:6px;font-weight:800;margin-bottom:10px;font-size:12px;display:flex;justify-content:space-between;align-items:center;}
+.sec-band small{font-weight:700;opacity:.85;font-size:10px;}
+
+.entry{border:1px solid #E5E7EB;border-radius:10px;padding:11px 14px;margin-bottom:10px;background:#fff;page-break-inside:avoid;}
+.entry-head{display:flex;align-items:flex-start;gap:11px;}
+.entry-no{width:24px;height:24px;border-radius:7px;background:linear-gradient(135deg,#1E3A8A,#1E40AF);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:11px;flex-shrink:0;}
+.entry-head-main{flex:1;min-width:0;}
+.entry-tag{display:inline-block;padding:2px 9px;border-radius:999px;font-size:9.5px;font-weight:800;letter-spacing:.3px;text-transform:uppercase;border:1px solid;}
+.entry-notes{font-size:12px;font-weight:700;color:#0F172A;margin-top:5px;line-height:1.55;}
+.entry-amt-block{text-align:right;flex-shrink:0;white-space:nowrap;}
+.entry-amt{font-size:14px;font-weight:800;font-variant-numeric:tabular-nums;}
+.entry-bal{font-size:10px;color:#64748B;margin-top:2px;}
+.entry-meta{display:flex;flex-wrap:wrap;gap:4px 16px;font-size:10.5px;color:#475569;margin-top:8px;padding-top:7px;border-top:1px dashed #e2e8f0;}
+.entry-meta b{color:#1E3A8A;font-weight:700;margin-right:3px;}
+
+.entry-attach-h{margin-top:11px;font-size:10px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;color:#6D28D9;display:flex;align-items:center;gap:6px;}
+.entry-attach-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:9px;margin-top:7px;}
+.attach-card{border:1px solid #E5E7EB;border-radius:8px;background:#fafafa;overflow:hidden;page-break-inside:avoid;}
+.attach-card-imgwrap{width:100%;background:#f5f5f5;padding:6px;display:flex;align-items:center;justify-content:center;}
+.attach-card-imgwrap img{max-width:100%;max-height:220px;height:auto;border-radius:4px;display:block;}
+.attach-card-foot{padding:6px 9px;border-top:1px solid #eee;}
+.attach-card-nm{font-size:10.5px;font-weight:700;color:#0F172A;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.attach-card-sz{font-size:9px;color:#64748B;margin-top:1px;}
+.entry-pdf-grid{display:flex;flex-wrap:wrap;gap:8px;margin-top:7px;}
+.pdf-card{display:flex;align-items:center;gap:9px;padding:8px 11px;border:1px dashed #B91C1C;border-radius:8px;background:rgba(220,38,38,.04);}
+.pdf-card-ic{width:34px;height:34px;border-radius:7px;background:linear-gradient(135deg,#DC2626,#B91C1C);color:#fff;font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+.pdf-card-nm{font-size:11px;font-weight:700;color:#0F172A;}
+.pdf-card-sz{font-size:9.5px;color:#64748B;margin-top:1px;}
+
+.footer{margin-top:14px;padding-top:8px;border-top:1px solid #e5e9f2;text-align:center;font-size:9px;color:#94A3B8;}
+@page{size:A4 portrait;margin:0;}
+@media print{
+  body{background:#fff;padding:0;}
+  .page{width:auto;min-height:auto;margin:0;padding:14mm;box-shadow:none;}
+  .entry{page-break-inside:avoid;}
+  .attach-card{page-break-inside:avoid;}
+  -webkit-print-color-adjust:exact;
+  print-color-adjust:exact;
+}
+/* Colorless Report — strips gradients / colored backgrounds / colored
+   tag fills to dark-on-white with light gray borders. Activates only
+   when .acc-bw is present on the body. */
+.acc-bw .head{border-bottom-color:#0F172A !important;border-bottom-width:1.5px !important;}
+.acc-bw .logo{background:#FFFFFF !important;color:#0F172A !important;border:1px solid #0F172A !important;}
+.acc-bw .title{color:#0F172A !important;}
+.acc-bw .summary-card{background:#FFFFFF !important;border-color:#D1D5DB !important;}
+.acc-bw .summary-card .v[style*="color"]{color:#0F172A !important;}
+.acc-bw .summary-stat-ic{background:#FFFFFF !important;color:#0F172A !important;border:1px solid #0F172A !important;}
+.acc-bw .stat-pill{background:transparent !important;color:#0F172A !important;border-color:#9CA3AF !important;}
+.acc-bw .entry{background:#FFFFFF !important;border-color:#D1D5DB !important;}
+.acc-bw .entry-tag{background:transparent !important;color:#0F172A !important;border-color:#9CA3AF !important;}
+.acc-bw .entry-amt[style*="color"]{color:#0F172A !important;}
+.acc-bw .pdf-card{background:transparent !important;border-color:#9CA3AF !important;}
+.acc-bw .pdf-card-ic{background:#0F172A !important;}
+.acc-bw .attach-card{border-color:#D1D5DB !important;}
+.acc-bw .sec-band{background:#FFFFFF !important;color:#0F172A !important;border:1.5px solid #0F172A !important;}
+</style></head><body${isBW ? ' class="acc-bw"' : ''}>
+<div class="page">
+
+<div class="head">
+  <div class="logo">${escH(school?.monogram || 'OS')}</div>
+  <div>
+    <div class="school">${escH(school?.name || 'School')}</div>
+    <div class="title">Account Book Ledger Report</div>
+  </div>
+  <div class="meta">Generated: ${today}<br/>Period: ${escH(book.openDate)} → ${accFmtDate(c.lastDate)}<br/>Entries: ${book.txns.length}</div>
+</div>
+
+<div class="book-card">
+  <div class="book-card-head">
+    <div class="book-card-ic">📒</div>
+    <div style="flex:1;min-width:0">
+      <div class="book-card-name">${escH(book.name)}</div>
+      <div class="book-card-party">${escH(book.party || '—')} · ${book.type === 'payable' ? 'Payable (school owes party)' : 'Receivable (party owes school)'}</div>
+    </div>
+    <span class="status-pill">${escH(book.status || 'active')}</span>
+  </div>
+  ${book.desc ? `<div class="book-card-desc">${escH(book.desc)}</div>` : ''}
+</div>
+
+<div class="kpi-row">
+  <div class="kpi opening">
+    <div class="l">Opening Amount</div>
+    <div class="v">Rs. ${(book.opening || 0).toLocaleString('en-PK')}</div>
+    <div class="m">${escH(book.openDate)} · by ${escH(book.createdBy || '—')}</div>
+  </div>
+  <div class="kpi balance">
+    <div class="l">Current Balance</div>
+    <div class="v purple">Rs. ${c.balance.toLocaleString('en-PK')}</div>
+    <div class="m">${book.type === 'payable' ? 'payable to party' : 'receivable'}</div>
+  </div>
+  <div class="kpi received">
+    <div class="l">Total Received</div>
+    <div class="v green">Rs. ${c.totalIn.toLocaleString('en-PK')}</div>
+    <div class="m">opening + further</div>
+  </div>
+  <div class="kpi returned">
+    <div class="l">Total Returned</div>
+    <div class="v red">Rs. ${c.returnedAll.toLocaleString('en-PK')}</div>
+    <div class="m">paid back</div>
+  </div>
+  <div class="kpi cash">
+    <div class="l">Cash In Hand</div>
+    <div class="v">${book.includeInCash ? 'Included' : 'Excluded'}</div>
+    <div class="m">${book.includeInCash ? 'affects cash only' : 'not in cash calc'}</div>
+  </div>
+  <div class="kpi date">
+    <div class="l">Last Transaction</div>
+    <div class="v">${accFmtDate(c.lastDate)}</div>
+    <div class="m">${book.txns.length} entries total</div>
+  </div>
+</div>
+
+${book.includeInCash ? `<div class="cash-info">💰 <b>Cash In Hand flag is ON.</b> This book's balance is included in the school's Cash In Hand calculation only — it does not affect Profit &amp; Loss or appear as revenue.</div>` : ''}
+
+<div class="sec-band">
+  <span>Transaction Ledger</span>
+  <small>${sorted.length} entries · sorted oldest → newest</small>
+</div>
+
+${sorted.length === 0
+  ? '<div style="text-align:center;color:#94A3B8;padding:30px;border:1px dashed #cbd5e1;border-radius:8px">No transactions recorded yet.</div>'
+  : sorted.map(entryBlock).join('')}
+
+<div class="footer">Computer generated report — ${escH(school?.name || 'School')} · ${escH(book.name)} · ${today}</div>
+
+</div><!-- /.page -->
+</body></html>`;
+}
+
+/* ─── Book Edit Modal (Create / Edit Account Book) ─── */
+function BookEditModal({ cfg, users, currentUser, onClose, onSave, toast }) {
+  const [name, setName]               = useState('');
+  const [party, setParty]             = useState('');
+  const [desc, setDesc]               = useState('');
+  const [type, setType]               = useState('payable');
+  const [opening, setOpening]         = useState('');
+  const [openDate, setOpenDate]       = useState('');
+  const [openedBy, setOpenedBy]       = useState('');
+  const [includeInCash, setInclude]   = useState(false);
+
+  useEffect(() => {
+    if (!cfg) return;
+    if (cfg.mode === 'edit' && cfg.book) {
+      const b = cfg.book;
+      setName(b.name); setParty(b.party || ''); setDesc(b.desc || '');
+      setType(b.type); setOpening(String(b.opening || 0));
+      setOpenDate(b.openDate); setOpenedBy(b.createdBy || currentUser);
+      setInclude(!!b.includeInCash);
+    } else {
+      setName(''); setParty(''); setDesc('');
+      setType('payable'); setOpening('');
+      setOpenDate(new Date().toISOString().slice(0, 10));
+      setOpenedBy(currentUser); setInclude(false);
+    }
+  }, [cfg, currentUser]);
+
+  useEffect(() => {
+    if (!cfg) return undefined;
+    const onKey = e => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    document.body.style.overflow = 'hidden';
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.body.style.overflow = '';
+    };
+  }, [cfg, onClose]);
+
+  if (!cfg) return null;
+  const isEdit = cfg.mode === 'edit';
+
+  const handle = () => {
+    if (!name.trim()) { toast('Book title is required', 'error'); return; }
+    if (!openDate)    { toast('Opening date is required', 'error'); return; }
+    if (opening === '' || Number.isNaN(Number(opening))) { toast('Opening amount is required', 'error'); return; }
+    onSave({
+      name: name.trim(), party: party.trim(), desc: desc.trim(),
+      type, opening: Number(opening), openDate, createdBy: openedBy, includeInCash,
+    });
+  };
+
+  return createPortal(
+    <div className="fee-overlay open" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="fee-modal">
+        <div className="fee-modal-head">
+          <div className="fee-modal-head-title">
+            <div className="fee-modal-head-icon" style={{ background: 'linear-gradient(135deg,#7C3AED,#6D28D9)' }}>
+              <i className={`fa-solid ${isEdit ? 'fa-pen-to-square' : 'fa-book-medical'}`}></i>
+            </div>
+            <div>
+              <div className="fee-modal-title">{isEdit ? 'Edit Account Book' : 'Create Account Book'}</div>
+              <div className="fee-modal-sub">Open a running account for a supplier, vendor, owner or any party</div>
+            </div>
+          </div>
+          <Tooltip text="Close">
+            <button className="fee-modal-close" onClick={onClose} aria-label="Close">
+              <i className="fa-solid fa-xmark"></i>
+            </button>
+          </Tooltip>
+        </div>
+        <div className="fee-modal-body">
+          <div className="fee-info acc-info-purple">
+            <i className="fa-solid fa-circle-info"></i>
+            <span>An Account Book is a running ledger with one party — a <strong>supplier, vendor, contractor, service provider, owner or investor</strong>. The opening amount is the starting balance the school owes (payable) or is owed (receivable).</span>
+          </div>
+          <div className="acc-form-grid">
+            <div className="fee-field-stack">
+              <label className="fee-label">Book Title <span className="acc-req">*</span></label>
+              <input className="fee-input" value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Crescent Uniforms — Supplier" autoFocus />
+            </div>
+            <div className="fee-field-stack">
+              <label className="fee-label">Party / Counterparty</label>
+              <input className="fee-input" value={party} onChange={e => setParty(e.target.value)} placeholder="Supplier, vendor or person name" />
+            </div>
+          </div>
+          <div className="fee-field-stack" style={{ marginTop: 4 }}>
+            <label className="fee-label">Description</label>
+            <textarea className="fee-input fee-textarea" value={desc} onChange={e => setDesc(e.target.value)} rows={3} placeholder="e.g. Uniform supplier — purchases on credit, paid in installments" />
+          </div>
+          <div className="acc-form-grid">
+            <div className="fee-field-stack">
+              <label className="fee-label">Book Type</label>
+              <div className="fee-select-wrap">
+                <select className="fee-select" value={type} onChange={e => setType(e.target.value)}>
+                  <option value="payable">Payable — the school owes this party</option>
+                  <option value="receivable">Receivable — this party owes the school</option>
+                </select>
+                <i className="fa-solid fa-chevron-down"></i>
+              </div>
+            </div>
+            <div className="fee-field-stack">
+              <label className="fee-label">Opening Date <span className="acc-req">*</span></label>
+              <input className="fee-input" type="date" value={openDate} onChange={e => setOpenDate(e.target.value)} />
+            </div>
+          </div>
+          <div className="acc-form-grid">
+            <div className="fee-field-stack">
+              <label className="fee-label">Opening Amount <span className="acc-req">*</span></label>
+              <input className="fee-input" type="number" value={opening} onChange={e => setOpening(e.target.value)} placeholder="e.g. 0 if starting fresh" />
+            </div>
+            <div className="fee-field-stack">
+              <label className="fee-label">Opened By</label>
+              <div className="fee-select-wrap">
+                <select className="fee-select" value={openedBy} onChange={e => setOpenedBy(e.target.value)}>
+                  {users.map(u => <option key={u}>{u}</option>)}
+                </select>
+                <i className="fa-solid fa-chevron-down"></i>
+              </div>
+            </div>
+          </div>
+
+          <button type="button" className="acc-cash-toggle" onClick={() => setInclude(v => !v)}>
+            <div className={`acc-cash-toggle-sw${includeInCash ? ' on' : ''}`}><span /></div>
+            <div className="acc-cash-toggle-text">
+              <div className="acc-cash-toggle-title"><i className="fa-solid fa-wallet"></i> Include in Cash In Hand</div>
+              <div className="acc-cash-toggle-desc">
+                Turn on if the school physically holds this cash.{' '}
+                <strong>This only affects Cash In Hand calculations — it will not impact Profit &amp; Loss or appear as revenue.</strong>
+              </div>
+            </div>
+          </button>
+        </div>
+        <div className="fee-modal-foot">
+          <button className="fee-btn fee-btn-ghost" onClick={onClose}>Cancel</button>
+          <button className="fee-btn fee-btn-primary" onClick={handle}>
+            <i className="fa-solid fa-floppy-disk"></i> {isEdit ? 'Save Changes' : 'Create Book'}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+/* ─── Book Txn Modal (Add / Edit ledger entry) ─── */
+function BookTxnModal({ cfg, users, currentUser, book, onClose, onSave, toast }) {
+  const [type, setType]           = useState('received');
+  const [date, setDate]           = useState('');
+  const [amount, setAmount]       = useState('');
+  const [notes, setNotes]         = useState('');
+  const [enteredBy, setEnteredBy] = useState('');
+  const [attachments, setAttachments] = useState([]);
+  const fileInputRef              = useRef(null);
+  const [dragOver, setDragOver]   = useState(false);
+
+  useEffect(() => {
+    if (!cfg) return;
+    if (cfg.mode === 'edit' && cfg.txn) {
+      const t = cfg.txn;
+      setType(t.type); setDate(t.date);
+      setAmount(String(Math.abs(t.amount))); setNotes(t.notes || '');
+      setEnteredBy(t.enteredBy || currentUser);
+      setAttachments(Array.isArray(t.attachments) ? [...t.attachments] : []);
+    } else {
+      setType('received');
+      setDate(new Date().toISOString().slice(0, 10));
+      setAmount(''); setNotes(''); setEnteredBy(currentUser);
+      setAttachments([]);
+    }
+  }, [cfg, currentUser]);
+
+  useEffect(() => {
+    if (!cfg) return undefined;
+    const onKey = e => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    document.body.style.overflow = 'hidden';
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.body.style.overflow = '';
+    };
+  }, [cfg, onClose]);
+
+  if (!cfg) return null;
+  const isEdit = cfg.mode === 'edit';
+
+  /* Live preview of balance after this txn */
+  const c = book ? bookCalc(book) : { balance: 0 };
+  const amt = Number(amount) || 0;
+  const newBal = c.balance + (type === 'received' ? amt : type === 'returned' ? -amt : amt);
+
+  const handle = () => {
+    if (!date)   { toast('Date is required', 'error'); return; }
+    if (!amt)    { toast('Amount is required', 'error'); return; }
+    onSave({ type, date, amount: type === 'adjustment' ? Number(amount) : amt, notes: notes.trim(), enteredBy, attachments });
+  };
+
+  /* Read selected files as { name, size, kind, data:dataURL }. Caps total
+     count at 8, single-file size at 5 MB; rejects anything outside
+     image/* and application/pdf. */
+  const ingestFiles = (files) => {
+    const arr = Array.from(files || []);
+    if (!arr.length) return;
+    if (attachments.length + arr.length > 8) {
+      toast('Max 8 attachments per transaction', 'warning');
+      return;
+    }
+    arr.forEach(file => {
+      const isImg = (file.type || '').startsWith('image/');
+      const isPdf = (file.type || '') === 'application/pdf' || /\.pdf$/i.test(file.name);
+      if (!isImg && !isPdf) {
+        toast(`Skipped "${file.name}" — only images and PDFs supported`, 'warning');
+        return;
+      }
+      if (file.size > 5 * 1024 * 1024) {
+        toast(`Skipped "${file.name}" — exceeds 5 MB limit`, 'warning');
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        const att = {
+          name: file.name,
+          size: file.size < 1024 * 1024
+            ? `${Math.max(1, Math.round(file.size / 1024))} KB`
+            : `${(file.size / (1024 * 1024)).toFixed(1)} MB`,
+          kind: isImg ? 'img' : 'pdf',
+          data: reader.result,
+        };
+        setAttachments(prev => [...prev, att]);
+      };
+      reader.onerror = () => toast(`Failed to read "${file.name}"`, 'error');
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const onFileSelect = (e) => {
+    ingestFiles(e.target.files);
+    /* reset the input so the same file can be re-picked */
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+  const onDrop = (e) => {
+    e.preventDefault();
+    setDragOver(false);
+    ingestFiles(e.dataTransfer.files);
+  };
+  const removeAttachment = (i) => {
+    setAttachments(prev => prev.filter((_, idx) => idx !== i));
+  };
+
+  return createPortal(
+    <div className="fee-overlay open" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="fee-modal lg">
+        <div className="fee-modal-head">
+          <div className="fee-modal-head-title">
+            <div className="fee-modal-head-icon" style={{ background: 'linear-gradient(135deg,#7C3AED,#6D28D9)' }}>
+              <i className="fa-solid fa-money-bill-transfer"></i>
+            </div>
+            <div>
+              <div className="fee-modal-title">{isEdit ? 'Edit Transaction' : 'Add Transaction'}</div>
+              <div className="fee-modal-sub">Record a movement on this account book</div>
+            </div>
+          </div>
+          <Tooltip text="Close">
+            <button className="fee-modal-close" onClick={onClose} aria-label="Close">
+              <i className="fa-solid fa-xmark"></i>
+            </button>
+          </Tooltip>
+        </div>
+        <div className="fee-modal-body">
+          <div className="acc-txntype-seg">
+            <button type="button" className={`acc-txntype${type === 'received' ? ' active' : ''}`} onClick={() => setType('received')}>
+              <i className="fa-solid fa-arrow-down"></i>
+              <span><b>Received / Purchased</b><small>Credit purchase, loan or contribution — balance owed goes up</small></span>
+            </button>
+            <button type="button" className={`acc-txntype${type === 'returned' ? ' active' : ''}`} onClick={() => setType('returned')}>
+              <i className="fa-solid fa-arrow-up"></i>
+              <span><b>Paid / Returned</b><small>Payment made to the party — balance goes down</small></span>
+            </button>
+            <button type="button" className={`acc-txntype${type === 'adjustment' ? ' active' : ''}`} onClick={() => setType('adjustment')}>
+              <i className="fa-solid fa-sliders"></i>
+              <span><b>Adjustment</b><small>Discount / write-off / correction</small></span>
+            </button>
+          </div>
+
+          <div className="acc-entry-grid acc-entry-grid--2" style={{ marginTop: 18 }}>
+            <div className="fee-field-stack">
+              <label className="fee-label">Date <span className="acc-req">*</span></label>
+              <input className="fee-input" type="date" value={date} onChange={e => setDate(e.target.value)} />
+            </div>
+            <div className="fee-field-stack">
+              <label className="fee-label">Amount <span className="acc-req">*</span></label>
+              <input className="fee-input" type="number" value={amount} onChange={e => setAmount(e.target.value)} placeholder="Enter amount" />
+            </div>
+          </div>
+          <div className="acc-entry-grid acc-entry-grid--2">
+            <div className="fee-field-stack">
+              <label className="fee-label">Notes / Description</label>
+              <input className="fee-input" value={notes} onChange={e => setNotes(e.target.value)} placeholder="e.g. Part payment to supplier — cheque #44120" />
+            </div>
+            <div className="fee-field-stack">
+              <label className="fee-label">Entered By</label>
+              <div className="fee-select-wrap">
+                <select className="fee-select" value={enteredBy} onChange={e => setEnteredBy(e.target.value)}>
+                  {users.map(u => <option key={u}>{u}</option>)}
+                </select>
+                <i className="fa-solid fa-chevron-down"></i>
+              </div>
+            </div>
+          </div>
+
+          {/* Attachment uploader */}
+          <div
+            className={`acc-attach-zone${dragOver ? ' drag' : ''}`}
+            onClick={() => fileInputRef.current?.click()}
+            onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={onDrop}
+            role="button"
+            tabIndex={0}
+            onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInputRef.current?.click(); } }}
+          >
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept="image/*,.pdf,application/pdf"
+              style={{ display: 'none' }}
+              onChange={onFileSelect}
+            />
+            <i className="fa-solid fa-cloud-arrow-up"></i>
+            <div className="acc-attach-zone-t">Attach receipts, cheque images or payment proofs</div>
+            <div className="acc-attach-zone-s">Click or drag &amp; drop — images &amp; PDFs (max 5 MB each, up to 8 files)</div>
+          </div>
+          {attachments.length > 0 && (
+            <div className="acc-attach-list">
+              {attachments.map((a, i) => (
+                <div key={i} className="acc-attach-chip">
+                  <div className={`acc-attach-chip-ic ${a.kind || 'img'}`}>
+                    <i className={`fa-solid ${a.kind === 'pdf' ? 'fa-file-pdf' : 'fa-image'}`}></i>
+                  </div>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div className="acc-attach-chip-nm" title={a.name}>{a.name}</div>
+                    <div className="acc-attach-chip-sz">{a.size}</div>
+                  </div>
+                  <Tooltip text="Remove attachment">
+                    <button type="button" className="acc-attach-chip-x" onClick={e => { e.stopPropagation(); removeAttachment(i); }}>
+                      <i className="fa-solid fa-xmark"></i>
+                    </button>
+                  </Tooltip>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {book && amt > 0 && !isEdit && (
+            <div className="acc-book-runpreview">
+              <div className="acc-book-runpreview-row">
+                <span>Current Balance</span>
+                <b>{fmtMoney(c.balance)}</b>
+              </div>
+              <div className="acc-book-runpreview-row">
+                <span>This Entry</span>
+                <b className={type === 'received' ? 'in' : type === 'returned' ? 'out' : 'adj'}>
+                  {type === 'returned' ? '−' : type === 'adjustment' && amt < 0 ? '−' : '+'}{fmtMoney(Math.abs(amt))}
+                </b>
+              </div>
+              <div className="acc-book-runpreview-row total">
+                <span>Balance After</span>
+                <b>{fmtMoney(Math.max(0, newBal))}</b>
+              </div>
+            </div>
+          )}
+        </div>
+        <div className="fee-modal-foot">
+          <button className="fee-btn fee-btn-ghost" onClick={onClose}>Cancel</button>
+          <button className="fee-btn fee-btn-primary" onClick={handle}>
+            <i className="fa-solid fa-floppy-disk"></i> {isEdit ? 'Save Changes' : 'Save Transaction'}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+/* ─── Books Help Modal ─── */
+function BooksHelpModal({ open, onClose }) {
+  useEffect(() => {
+    if (!open) return undefined;
+    const onKey = e => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    document.body.style.overflow = 'hidden';
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.body.style.overflow = '';
+    };
+  }, [open, onClose]);
+  if (!open) return null;
+  return createPortal(
+    <div className="fee-overlay open" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="fee-modal">
+        <div className="fee-modal-head">
+          <div className="fee-modal-head-title">
+            <div className="fee-modal-head-icon" style={{ background: 'linear-gradient(135deg,#7C3AED,#6D28D9)' }}>
+              <i className="fa-solid fa-circle-question"></i>
+            </div>
+            <div>
+              <div className="fee-modal-title">How Account Books work</div>
+              <div className="fee-modal-sub">Running ledgers with any party</div>
+            </div>
+          </div>
+          <Tooltip text="Close">
+            <button className="fee-modal-close" onClick={onClose} aria-label="Close help dialog">
+              <i className="fa-solid fa-xmark"></i>
+            </button>
+          </Tooltip>
+        </div>
+        <div className="fee-modal-body">
+          <div className="fee-info acc-info-purple">
+            <i className="fa-solid fa-circle-info"></i>
+            <span>An Account Book is a <strong>running balance ledger</strong> with one party — supplier, vendor, contractor, owner or investor. It tracks money owed in both directions plus all individual movements.</span>
+          </div>
+          <div className="acc-help-steps">
+            <div className="acc-help-step"><div className="acc-help-step-no">1</div><div><b>Create a Book</b><div>Pick a party (supplier, owner, etc.), choose Payable vs Receivable, and enter the opening balance.</div></div></div>
+            <div className="acc-help-step"><div className="acc-help-step-no">2</div><div><b>Add Transactions</b><div>Each movement is one of: <em>Received / Purchased</em> (balance goes up), <em>Paid / Returned</em> (balance goes down), or <em>Adjustment</em> (discount / correction).</div></div></div>
+            <div className="acc-help-step"><div className="acc-help-step-no">3</div><div><b>Optional Cash-in-Hand</b><div>Toggle "Include in Cash In Hand" for cash the school physically holds. <strong>This only affects Cash In Hand</strong> — never Revenue or Profit &amp; Loss.</div></div></div>
+            <div className="acc-help-step"><div className="acc-help-step-no">4</div><div><b>Download Ledger Reports</b><div>Generate audit-aware A4 reports per book from the detail view.</div></div></div>
+          </div>
+        </div>
+        <div className="fee-modal-foot">
+          <button className="fee-btn fee-btn-primary" onClick={onClose}>Got it</button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   REPORTS — 7 report types under a single chip nav. Each report has
+   its own controls + KPI strip + body, sharing audit-aware data from
+   the Transactions and Account Books mocks.
+
+     1. Revenue Report          — head + date-range + audit table
+     2. Expense Report          — same shape as Revenue
+     3. Profit & Loss           — monthly / custom-range
+     4. Cash In Hand            — P/L + cash-flagged book balances
+     5. Account Books           — running balances per book
+     6. Head-wise Summary       — grouped by account head
+     7. Financial Overview      — dashboard: monthly P/L + book exposure
+   ═══════════════════════════════════════════════════════════════════ */
+
+const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+
+const REPORT_TYPES = [
+  { id: 'revenue',  ic: 'fa-arrow-trend-up',   label: 'Revenue Report' },
+  { id: 'expense',  ic: 'fa-arrow-trend-down', label: 'Expense Report' },
+  { id: 'pl',       ic: 'fa-scale-balanced',   label: 'Profit & Loss' },
+  { id: 'cash',     ic: 'fa-wallet',           label: 'Cash In Hand' },
+  { id: 'books',    ic: 'fa-book-open',        label: 'Account Books' },
+  { id: 'headwise', ic: 'fa-layer-group',      label: 'Head-wise Summary' },
+  { id: 'overview', ic: 'fa-chart-pie',        label: 'Financial Overview' },
+];
+
+function repMonthsBetween(fromM, toM) {
+  const out = [];
+  let [fy, fm] = fromM.split('-').map(Number);
+  const [ty, tm] = toM.split('-').map(Number);
+  while (fy < ty || (fy === ty && fm <= tm)) {
+    out.push(`${fy}-${String(fm).padStart(2, '0')}`);
+    fm += 1;
+    if (fm > 12) { fm = 1; fy += 1; }
+    if (out.length > 60) break;
+  }
+  return out;
+}
+
+function Reports({ toast }) {
+  const { data: types = [] }      = useAsync(accountsService.getAccTypes, []);
+  const { data: txnData = { rev: [], exp: [] } } = useAsync(accountsService.getAccTxns, { rev: [], exp: [] });
+  const { data: books = [] }      = useAsync(accountsService.getAccBooks, []);
+  const { data: school = {} }     = useAsync(accountsService.getAccSchool, {});
+
+  const [repType, setRepType] = useState('revenue');
+  const [plMode, setPlMode]   = useState('monthly');
+
+  /* Per-report filter state */
+  const today      = new Date().toISOString().slice(0, 10);
+  const startMonth = '2026-05';
+  const [head, setHead]       = useState('all');
+  const [fromDate, setFromDate] = useState('2026-01-01');
+  const [toDate, setToDate]     = useState(today);
+  const [plMonth, setPlMonth]   = useState(startMonth);
+  const [plFrom, setPlFrom]     = useState('2026-01');
+  const [plTo, setPlTo]         = useState(startMonth);
+  const [cashDate, setCashDate] = useState(today);
+  const [dlReport, setDlReport] = useState(null); // download modal cfg
+
+  /* Reset head when switching seg */
+  useEffect(() => {
+    setHead('all');
+    if (repType === 'overview') setPlMode('custom');
+  }, [repType]);
+
+  const segOf = (id) => (id === 'revenue' ? 'rev' : id === 'expense' ? 'exp' : null);
+
+  const headsFor = (seg) => (types.find(t => t.key === seg)?.heads || []);
+
+  /* Build the actual rows for the active report. */
+  const rows = useMemo(() => {
+    if (repType === 'revenue' || repType === 'expense') {
+      const seg = segOf(repType);
+      return (txnData[seg] || [])
+        .filter(x => (!fromDate || x.date >= fromDate)
+                  && (!toDate   || x.date <= toDate)
+                  && (head === 'all' || String(x.headNo) === String(head)))
+        .sort((a, b) => (a.date < b.date ? -1 : 1));
+    }
+    if (repType === 'pl') {
+      const months = plMode === 'monthly'
+        ? [plMonth]
+        : repMonthsBetween(plFrom, plTo);
+      return months.map((m, i) => {
+        const rev = (txnData.rev || []).filter(x => x.month === m).reduce((a, x) => a + Number(x.amount || 0), 0);
+        const exp = (txnData.exp || []).filter(x => x.month === m).reduce((a, x) => a + Number(x.amount || 0), 0);
+        const [yy, mm] = m.split('-');
+        return { sr: i + 1, month: `${MONTH_NAMES[Number(mm) - 1]} ${yy}`, monthKey: m, revenue: rev, expense: exp, pl: rev - exp };
+      });
+    }
+    if (repType === 'cash') {
+      const revSum = (txnData.rev || []).filter(x => x.date <= cashDate).reduce((a, x) => a + Number(x.amount || 0), 0);
+      const expSum = (txnData.exp || []).filter(x => x.date <= cashDate).reduce((a, x) => a + Number(x.amount || 0), 0);
+      const out = [{ source: 'Sum of Profit / Loss', type: 'P&L', amount: revSum - expSum }];
+      (books || []).filter(b => b.includeInCash).forEach(b => {
+        out.push({ source: `Sum of ${b.name}`, type: 'Account Book', amount: bookCalc(b).balance });
+      });
+      return out;
+    }
+    if (repType === 'books') {
+      return (books || []).map(b => {
+        const c = bookCalc(b);
+        return {
+          book: b.name, party: b.party || '—', type: b.type,
+          opening: b.opening, received: c.received, returned: c.returnedAll,
+          balance: c.balance, inCash: b.includeInCash ? 'Yes' : 'No',
+          status: b.status,
+        };
+      });
+    }
+    if (repType === 'headwise') {
+      const map = {};
+      ['rev', 'exp'].forEach(seg => {
+        (txnData[seg] || []).filter(x => (!fromDate || x.date >= fromDate) && (!toDate || x.date <= toDate)).forEach(x => {
+          const k = `${seg}-${x.headNo}`;
+          if (!map[k]) map[k] = { type: seg === 'rev' ? 'Revenue' : 'Expenditure', headNo: x.headNo, head: x.head, count: 0, total: 0 };
+          map[k].count += 1;
+          map[k].total += Number(x.amount || 0);
+        });
+      });
+      return Object.values(map).sort((a, b) => b.total - a.total);
+    }
+    if (repType === 'overview') {
+      const months = repMonthsBetween(plFrom, plTo);
+      return months.map((m, i) => {
+        const rev = (txnData.rev || []).filter(x => x.month === m).reduce((a, x) => a + Number(x.amount || 0), 0);
+        const exp = (txnData.exp || []).filter(x => x.month === m).reduce((a, x) => a + Number(x.amount || 0), 0);
+        const [yy, mm] = m.split('-');
+        return { sr: i + 1, month: `${MONTH_NAMES[Number(mm) - 1]} ${yy}`, monthKey: m, revenue: rev, expense: exp, pl: rev - exp };
+      });
+    }
+    return [];
+  }, [repType, txnData, books, head, fromDate, toDate, plMode, plMonth, plFrom, plTo, cashDate]);
+
+  /* Build the "Download Report" payload + open the picker. */
+  const openDownload = () => {
+    const meta = REPORT_TYPES.find(r => r.id === repType);
+    setDlReport({
+      which: meta?.label || 'Report',
+      kind:  repType,
+      list:  rows,
+      books,
+    });
+  };
+
+  return (
+    <>
+      {/* Type chips */}
+      <div className="acc-rep-types">
+        {REPORT_TYPES.map(r => (
+          <Tooltip key={r.id} text={r.label}>
+            <button
+              type="button"
+              className={`acc-rep-type${repType === r.id ? ' active' : ''}`}
+              onClick={() => setRepType(r.id)}
+            >
+              <i className={`fa-solid ${r.ic}`}></i> {r.label}
+            </button>
+          </Tooltip>
+        ))}
+      </div>
+
+      {/* Dynamic controls */}
+      <div className="fee-section">
+        <div className="fee-section-body">
+          <div className="fee-filters">
+            {(repType === 'revenue' || repType === 'expense') && (
+              <>
+                <div className="fee-field">
+                  <span className="fee-label">Select Head</span>
+                  <div className="fee-select-wrap">
+                    <select className="fee-select" value={head} onChange={e => setHead(e.target.value)} style={{ minWidth: 220 }}>
+                      <option value="all">All Heads</option>
+                      {headsFor(segOf(repType)).map(h => (
+                        <option key={h.no} value={h.no}>{h.name} (No. {h.no})</option>
+                      ))}
+                    </select>
+                    <i className="fa-solid fa-chevron-down"></i>
+                  </div>
+                </div>
+                <div className="fee-field">
+                  <span className="fee-label">From Date</span>
+                  <input className="fee-input" type="date" value={fromDate} onChange={e => setFromDate(e.target.value)} />
+                </div>
+                <div className="fee-field">
+                  <span className="fee-label">To Date</span>
+                  <input className="fee-input" type="date" value={toDate} onChange={e => setToDate(e.target.value)} />
+                </div>
+              </>
+            )}
+
+            {repType === 'pl' && (
+              <>
+                <div className="acc-rep-subtypes">
+                  <button type="button" className={`acc-rep-subtype${plMode === 'monthly' ? ' active' : ''}`} onClick={() => setPlMode('monthly')}>
+                    Monthly P/L
+                  </button>
+                  <button type="button" className={`acc-rep-subtype${plMode === 'custom' ? ' active' : ''}`} onClick={() => setPlMode('custom')}>
+                    Custom Range
+                  </button>
+                </div>
+                {plMode === 'monthly' ? (
+                  <div className="fee-field">
+                    <span className="fee-label">Select Month</span>
+                    <input className="fee-input" type="month" value={plMonth} onChange={e => setPlMonth(e.target.value)} />
+                  </div>
+                ) : (
+                  <>
+                    <div className="fee-field">
+                      <span className="fee-label">From Month</span>
+                      <input className="fee-input" type="month" value={plFrom} onChange={e => setPlFrom(e.target.value)} />
+                    </div>
+                    <div className="fee-field">
+                      <span className="fee-label">To Month</span>
+                      <input className="fee-input" type="month" value={plTo} onChange={e => setPlTo(e.target.value)} />
+                    </div>
+                  </>
+                )}
+              </>
+            )}
+
+            {repType === 'cash' && (
+              <div className="fee-field">
+                <span className="fee-label">As of Date</span>
+                <input className="fee-input" type="date" value={cashDate} onChange={e => setCashDate(e.target.value)} />
+              </div>
+            )}
+
+            {repType === 'books' && (
+              <div className="fee-field">
+                <span className="fee-label">Scope</span>
+                <div className="fee-select-wrap">
+                  <select className="fee-select" disabled value="all">
+                    <option value="all">All Account Books</option>
+                  </select>
+                  <i className="fa-solid fa-chevron-down"></i>
+                </div>
+              </div>
+            )}
+
+            {repType === 'headwise' && (
+              <>
+                <div className="fee-field">
+                  <span className="fee-label">From Date</span>
+                  <input className="fee-input" type="date" value={fromDate} onChange={e => setFromDate(e.target.value)} />
+                </div>
+                <div className="fee-field">
+                  <span className="fee-label">To Date</span>
+                  <input className="fee-input" type="date" value={toDate} onChange={e => setToDate(e.target.value)} />
+                </div>
+              </>
+            )}
+
+            {repType === 'overview' && (
+              <>
+                <div className="fee-field">
+                  <span className="fee-label">From Month</span>
+                  <input className="fee-input" type="month" value={plFrom} onChange={e => setPlFrom(e.target.value)} />
+                </div>
+                <div className="fee-field">
+                  <span className="fee-label">To Month</span>
+                  <input className="fee-input" type="month" value={plTo} onChange={e => setPlTo(e.target.value)} />
+                </div>
+              </>
+            )}
+
+            <Tooltip text="Reload report data with the current filters">
+              <button type="button" className="fee-btn fee-btn-primary">
+                <i className="fa-solid fa-rotate"></i> Load Report
+              </button>
+            </Tooltip>
+            <Tooltip text="Download the report as PDF / Excel / CSV">
+              <button type="button" className="fee-btn fee-btn-ghost acc-dlreport-btn" onClick={openDownload}>
+                <i className="fa-solid fa-file-export"></i> Download Report
+              </button>
+            </Tooltip>
+          </div>
+
+          <div className="acc-rep-hint">
+            {repType === 'revenue' || repType === 'expense' ? (
+              <><i className="fa-solid fa-shield-halved"></i> Includes full audit trail — created by, entry timestamp, updated by &amp; last updated.</>
+            ) : repType === 'pl' ? (
+              <><i className="fa-solid fa-circle-info"></i> Profit / Loss = Revenue − Expense. Account book balances are excluded — they are not income or cost.</>
+            ) : repType === 'cash' ? (
+              <><i className="fa-solid fa-wallet"></i> Cash In Hand = total Profit / Loss + balances of account books marked <strong>"include in cash"</strong>.</>
+            ) : repType === 'books' ? (
+              <><i className="fa-solid fa-book-open"></i> Summary of every account book with opening, received, returned and running balance.</>
+            ) : repType === 'headwise' ? (
+              <><i className="fa-solid fa-layer-group"></i> Totals grouped by each account head across revenue and expenditure.</>
+            ) : (
+              <><i className="fa-solid fa-chart-pie"></i> A consolidated dashboard of revenue, expense, profit trend and account-book exposure.</>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <ReportKpiStrip repType={repType} rows={rows} books={books} plMode={plMode} cashDate={cashDate} />
+
+      <ReportBody
+        repType={repType}
+        rows={rows}
+        books={books}
+        plMode={plMode}
+        onDownload={openDownload}
+      />
+
+      <AccDownloadReportModal
+        cfg={dlReport}
+        onClose={() => setDlReport(null)}
+        toast={toast}
+        school={school}
+        segLabel={dlReport?.which}
+        month={fromDate}
+      />
+    </>
+  );
+}
+
+/* ─── KPI strip (varies per report) ─── */
+function ReportKpiStrip({ repType, rows, books, plMode, cashDate }) {
+  if (repType === 'revenue' || repType === 'expense') {
+    const isRev = repType === 'revenue';
+    const tot = rows.reduce((a, r) => a + Number(r.amount || 0), 0);
+    const avg = rows.length ? Math.round(tot / rows.length) : 0;
+    const edited = rows.filter(r => r.updatedAt).length;
+    return (
+      <div className="fee-kpis">
+        <Kpi cls={isRev ? 'k-green' : 'k-red'} ic={isRev ? 'fa-arrow-down' : 'fa-arrow-up'} label={`Total ${isRev ? 'Revenue' : 'Expense'}`} val={fmtMoney(tot)} meta={`${rows.length} entries`} />
+        <Kpi cls="k-blue"  ic="fa-list-check"     label="Total Entries"  val={rows.length} meta="in selected range" />
+        <Kpi cls="k-amber" ic="fa-calculator"     label="Average Entry"  val={fmtMoney(avg)} meta="mean value" />
+        <Kpi cls="k-amber" ic="fa-pen-to-square"  label="Edited Entries" val={edited} meta="have update record" />
+      </div>
+    );
+  }
+  if (repType === 'pl') {
+    const totR = rows.reduce((a, r) => a + r.revenue, 0);
+    const totE = rows.reduce((a, r) => a + r.expense, 0);
+    const totP = rows.reduce((a, r) => a + r.pl, 0);
+    return (
+      <div className="fee-kpis">
+        <Kpi cls="k-green" ic="fa-arrow-down" label="Total Revenue" val={fmtMoney(totR)} meta={`${rows.length} month(s)`} />
+        <Kpi cls="k-red"   ic="fa-arrow-up"   label="Total Expense" val={fmtMoney(totE)} meta="over period" />
+        <Kpi cls={totP >= 0 ? 'k-blue' : 'k-amber'} ic="fa-scale-balanced" label="Net Profit / Loss" val={fmtMoney(totP)} meta={totP >= 0 ? 'surplus' : 'deficit'} />
+        <Kpi cls="k-blue"  ic="fa-calendar" label="Months" val={rows.length} meta={plMode === 'monthly' ? 'single month' : 'custom range'} />
+      </div>
+    );
+  }
+  if (repType === 'cash') {
+    const pl    = rows[0]?.amount || 0;
+    const total = rows.reduce((a, r) => a + Number(r.amount || 0), 0);
+    const cashBooks = total - pl;
+    return (
+      <div className="fee-kpis">
+        <Kpi cls="k-blue"  ic="fa-scale-balanced" label="Profit / Loss"    val={fmtMoney(pl)} meta={`as of ${cashDate}`} />
+        <Kpi cls="k-green" ic="fa-book"           label="Cash-flagged Books" val={fmtMoney(cashBooks)} meta={`${Math.max(0, rows.length - 1)} book(s)`} />
+        <Kpi cls={total >= 0 ? 'k-green' : 'k-red'} ic="fa-wallet" label="Cash In Hand" val={fmtMoney(total)} meta="available cash" />
+      </div>
+    );
+  }
+  if (repType === 'books') {
+    const totBal = rows.reduce((a, r) => a + r.balance, 0);
+    const totCash = rows.filter(r => r.inCash === 'Yes').reduce((a, r) => a + r.balance, 0);
+    return (
+      <div className="fee-kpis">
+        <Kpi cls="k-blue"  ic="fa-book"            label="Total Books"      val={rows.length} meta="all account books" />
+        <Kpi cls="k-amber" ic="fa-scale-balanced"  label="Net Balance"      val={fmtMoney(totBal)} meta="across all books" />
+        <Kpi cls="k-green" ic="fa-wallet"          label="In Cash In Hand"  val={fmtMoney(totCash)} meta="flagged books" />
+      </div>
+    );
+  }
+  if (repType === 'headwise') {
+    const totRev = rows.filter(r => r.type === 'Revenue').reduce((a, r) => a + r.total, 0);
+    const totExp = rows.filter(r => r.type === 'Expenditure').reduce((a, r) => a + r.total, 0);
+    return (
+      <div className="fee-kpis">
+        <Kpi cls="k-green" ic="fa-arrow-down"   label="Revenue Heads" val={fmtMoney(totRev)} meta={`${rows.filter(r => r.type === 'Revenue').length} heads`} />
+        <Kpi cls="k-red"   ic="fa-arrow-up"     label="Expense Heads" val={fmtMoney(totExp)} meta={`${rows.filter(r => r.type === 'Expenditure').length} heads`} />
+        <Kpi cls="k-blue"  ic="fa-layer-group"  label="Active Heads"  val={rows.length} meta="with transactions" />
+      </div>
+    );
+  }
+  if (repType === 'overview') {
+    const totR = rows.reduce((a, r) => a + r.revenue, 0);
+    const totE = rows.reduce((a, r) => a + r.expense, 0);
+    const totP = totR - totE;
+    const cashBooks = (books || []).filter(b => b.includeInCash).reduce((a, b) => a + bookCalc(b).balance, 0);
+    return (
+      <div className="fee-kpis">
+        <Kpi cls="k-green" ic="fa-arrow-down" label="Total Revenue" val={fmtMoney(totR)} meta="period" />
+        <Kpi cls="k-red"   ic="fa-arrow-up"   label="Total Expense" val={fmtMoney(totE)} meta="period" />
+        <Kpi cls={totP >= 0 ? 'k-blue' : 'k-amber'} ic="fa-scale-balanced" label="Net Profit / Loss" val={fmtMoney(totP)} meta={totP >= 0 ? 'surplus' : 'deficit'} />
+        <Kpi cls="k-blue"  ic="fa-wallet" label="Cash In Hand" val={fmtMoney(totP + cashBooks)} meta="P/L + cash books" />
+      </div>
+    );
+  }
+  return null;
+}
+
+function Kpi({ cls, ic, label, val, meta }) {
+  return (
+    <div className={`fee-kpi ${cls}`}>
+      <div className="fee-kpi-top">
+        <span className="fee-kpi-label">{label}</span>
+        <span className="fee-kpi-ic"><i className={`fa-solid ${ic}`}></i></span>
+      </div>
+      <div className="fee-kpi-val">{val}</div>
+      <div className="fee-kpi-meta">{meta}</div>
+    </div>
+  );
+}
+
+/* ─── Report body (varies per report) ─── */
+function ReportBody({ repType, rows, books, plMode, onDownload }) {
+  if (rows.length === 0 && repType !== 'overview') {
+    return (
+      <div className="fee-section">
+        <div className="fee-section-body">
+          <div className="acc-txn-empty">
+            <i className="fa-solid fa-inbox"></i>
+            No data for this report.<br/>
+            Adjust the filters above.
+          </div>
+        </div>
+      </div>
+    );
+  }
+  if (repType === 'revenue' || repType === 'expense') {
+    const isRev = repType === 'revenue';
+    const tot = rows.reduce((a, r) => a + Number(r.amount || 0), 0);
+    return (
+      <div className="fee-section">
+        <RepSectionHeader name={`${isRev ? 'Revenue' : 'Expense'} Report`} sub="audit-tracked entries" count={rows.length} onDownload={onDownload} />
+        <div className="acc-txn-tablewrap">
+          <table className="acc-txn-table acc-rep-table">
+            <thead>
+              <tr>
+                <th>Type</th>
+                <th>Head</th>
+                <th>Date</th>
+                <th>Details</th>
+                <th className="r">Amount</th>
+                <th>Created By</th>
+                <th>Entry Timestamp</th>
+                <th>Updated By</th>
+                <th>Last Updated</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(r => (
+                <tr key={r.id}>
+                  <td>
+                    <span className={`acc-rep-tag ${isRev ? 'rev' : 'exp'}`}>
+                      <i className={`fa-solid ${isRev ? 'fa-arrow-down-long' : 'fa-arrow-up-long'}`}></i> {isRev ? 'Revenue' : 'Expenditure'}
+                    </span>
+                  </td>
+                  <td className="acc-txn-headname">
+                    {r.head}
+                    <div className="acc-rep-subno">No. {r.headNo}</div>
+                  </td>
+                  <td><span className="acc-txn-date">{accFmtDate(r.date)}</span></td>
+                  <td><div className="acc-txn-detail">{r.detail}</div></td>
+                  <td className="r"><span className="acc-txn-amt">{fmtMoney(r.amount)}</span></td>
+                  <td><span className="acc-rep-user"><i className="fa-solid fa-user-pen"></i> {r.createdBy || '—'}</span></td>
+                  <td><span className="acc-rep-stamp">{r.createdAt ? accFmtStamp(r.createdAt) : '—'}</span></td>
+                  <td>{r.updatedBy ? <span className="acc-rep-user upd"><i className="fa-solid fa-pen-to-square"></i> {r.updatedBy}</span> : <span className="acc-rep-dash">—</span>}</td>
+                  <td><span className="acc-rep-stamp">{r.updatedAt ? accFmtStamp(r.updatedAt) : <span className="acc-rep-dash">—</span>}</span></td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr>
+                <td colSpan="4" className="acc-txn-totlbl">Total:</td>
+                <td className="r">{fmtMoney(tot)}</td>
+                <td colSpan="4"></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </div>
+    );
+  }
+  if (repType === 'pl') {
+    const totR = rows.reduce((a, r) => a + r.revenue, 0);
+    const totE = rows.reduce((a, r) => a + r.expense, 0);
+    const totP = rows.reduce((a, r) => a + r.pl, 0);
+    return (
+      <div className="fee-section">
+        <RepSectionHeader name="Profit & Loss" sub={plMode === 'monthly' ? 'monthly statement' : 'custom range'} count={rows.length} onDownload={onDownload} />
+        <div className="acc-txn-tablewrap">
+          <table className="acc-txn-table">
+            <thead>
+              <tr><th>Sr</th><th>Month</th><th className="r">Revenue</th><th className="r">Expense</th><th className="r">Profit / Loss</th></tr>
+            </thead>
+            <tbody>
+              {rows.map(r => (
+                <tr key={r.sr}>
+                  <td>{r.sr}</td>
+                  <td className="acc-txn-headname">{r.month}</td>
+                  <td className="r">{fmtMoney(r.revenue)}</td>
+                  <td className="r">{fmtMoney(r.expense)}</td>
+                  <td className="r"><span className={r.pl >= 0 ? 'acc-pl-profit' : 'acc-pl-loss'}>{fmtMoney(r.pl)}</span></td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr>
+                <td colSpan="2" className="acc-txn-totlbl">Total:</td>
+                <td className="r">{fmtMoney(totR)}</td>
+                <td className="r">{fmtMoney(totE)}</td>
+                <td className="r"><span className={totP >= 0 ? 'acc-pl-profit' : 'acc-pl-loss'}>{fmtMoney(totP)}</span></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </div>
+    );
+  }
+  if (repType === 'cash') {
+    const total = rows.reduce((a, r) => a + Number(r.amount || 0), 0);
+    return (
+      <div className="acc-cih">
+        {rows.map((r, i) => (
+          <div key={i} className="acc-cih-row">
+            <div className="acc-cih-row-l">
+              <div className="acc-cih-row-ic" style={{
+                background: r.type === 'P&L'
+                  ? 'linear-gradient(135deg,#1E3A8A,#2563EB)'
+                  : 'linear-gradient(135deg,#7C3AED,#6D28D9)',
+              }}>
+                <i className={`fa-solid ${r.type === 'P&L' ? 'fa-scale-balanced' : 'fa-book-bookmark'}`}></i>
+              </div>
+              <div>
+                <div className="acc-cih-row-nm">{r.source}</div>
+                <div className="acc-cih-row-sub">{r.type}</div>
+              </div>
+            </div>
+            <span className={`acc-cih-pill${r.amount < 0 ? ' neg' : ''}`}>
+              {fmtMoney(r.amount)} <i className={`fa-solid fa-arrow-${r.amount < 0 ? 'down' : 'up'}`}></i>
+            </span>
+          </div>
+        ))}
+        <div className="acc-cih-total">
+          <div className="acc-cih-total-lbl">Cash in Hand</div>
+          <span className={`acc-cih-pill lg${total < 0 ? ' neg' : ''}`}>
+            {fmtMoney(total)} <i className={`fa-solid fa-arrow-${total < 0 ? 'down' : 'up'}`}></i>
+          </span>
+        </div>
+      </div>
+    );
+  }
+  if (repType === 'books') {
+    return (
+      <div className="fee-section">
+        <RepSectionHeader name="Account Books Summary" sub="loans & running balances" count={rows.length} onDownload={onDownload} />
+        <div className="acc-txn-tablewrap">
+          <table className="acc-txn-table">
+            <thead>
+              <tr>
+                <th>Book</th>
+                <th>Party</th>
+                <th>Type</th>
+                <th className="r">Opening</th>
+                <th className="r">Received</th>
+                <th className="r">Returned</th>
+                <th className="r">Balance</th>
+                <th className="c">In Cash</th>
+                <th className="c">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={i}>
+                  <td className="acc-txn-headname">{r.book}</td>
+                  <td>{r.party}</td>
+                  <td><span className="acc-rep-tag loan">{r.type}</span></td>
+                  <td className="r">{fmtMoney(r.opening)}</td>
+                  <td className="r">{fmtMoney(r.received)}</td>
+                  <td className="r">{fmtMoney(r.returned)}</td>
+                  <td className="r"><span className="acc-txn-amt">{fmtMoney(r.balance)}</span></td>
+                  <td className="c">
+                    {r.inCash === 'Yes'
+                      ? <span className="acc-book-cashtag"><i className="fa-solid fa-check"></i> Yes</span>
+                      : <span className="acc-rep-dash">No</span>}
+                  </td>
+                  <td className="c"><span className={`acc-book-status ${r.status}`}>{r.status}</span></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  }
+  if (repType === 'headwise') {
+    return (
+      <div className="fee-section">
+        <RepSectionHeader name="Head-wise Summary" sub="grouped by account head" count={rows.length} onDownload={onDownload} />
+        <div className="acc-txn-tablewrap">
+          <table className="acc-txn-table">
+            <thead>
+              <tr><th>Type</th><th>Head No</th><th>Head Name</th><th className="c">Entries</th><th className="r">Total Amount</th></tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={i}>
+                  <td><span className={`acc-rep-tag ${r.type === 'Revenue' ? 'rev' : 'exp'}`}>{r.type}</span></td>
+                  <td>{r.headNo}</td>
+                  <td className="acc-txn-headname">{r.head}</td>
+                  <td className="c">{r.count}</td>
+                  <td className="r"><span className="acc-txn-amt">{fmtMoney(r.total)}</span></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  }
+  if (repType === 'overview') {
+    const cashBooks = (books || []).filter(b => b.includeInCash).reduce((a, b) => a + bookCalc(b).balance, 0);
+    const booksBal = (books || []).reduce((a, b) => a + bookCalc(b).balance, 0);
+    const monthRows = rows.length > 0 ? rows : [];
+    return (
+      <div className="acc-ov-grid">
+        <div className="acc-ov-panel">
+          <div className="acc-ov-panel-h"><i className="fa-solid fa-chart-column"></i> Revenue vs Expense by Month</div>
+          {monthRows.length === 0 ? (
+            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>No data for selected range.</div>
+          ) : (
+            <div className="acc-ov-bars">
+              {(() => {
+                const maxV = Math.max(...monthRows.map(r => Math.max(r.revenue, r.expense)), 1);
+                return monthRows.map((r) => (
+                  <div key={r.monthKey} className="acc-ov-bar-row">
+                    <div className="acc-ov-bar-top">
+                      <span className="l">{r.month}</span>
+                      <span className="v" style={{ color: r.pl >= 0 ? '#15803D' : '#B91C1C' }}>{fmtMoney(r.pl)}</span>
+                    </div>
+                    <div className="acc-ov-bar-pair">
+                      <div className="acc-ov-bar rev" style={{ width: `${(r.revenue / maxV) * 100}%` }}>
+                        <span>R</span>
+                      </div>
+                      <div className="acc-ov-bar exp" style={{ width: `${(r.expense / maxV) * 100}%` }}>
+                        <span>E</span>
+                      </div>
+                    </div>
+                  </div>
+                ));
+              })()}
+            </div>
+          )}
+        </div>
+        <div className="acc-ov-panel">
+          <div className="acc-ov-panel-h"><i className="fa-solid fa-book-open"></i> Account Books Exposure</div>
+          {(books || []).length === 0 ? (
+            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>No account books yet.</div>
+          ) : (
+            <div className="acc-ov-bars">
+              {(() => {
+                const maxB = Math.max(...books.map(b => bookCalc(b).balance), 1);
+                return books.map(b => {
+                  const bal = bookCalc(b).balance;
+                  return (
+                    <div key={b.id} className="acc-ov-bar-row">
+                      <div className="acc-ov-bar-top">
+                        <span className="l">
+                          {b.name}
+                          {b.includeInCash && <i className="fa-solid fa-wallet" style={{ color: '#0891B2', fontSize: 10, marginLeft: 5 }}></i>}
+                        </span>
+                        <span className="v">{fmtMoney(bal)}</span>
+                      </div>
+                      <div className="acc-ov-bar-single">
+                        <div className={`acc-ov-bar ${b.type}`} style={{ width: `${(bal / maxB) * 100}%` }} />
+                      </div>
+                    </div>
+                  );
+                });
+              })()}
+            </div>
+          )}
+          <div className="acc-ov-callout">
+            <div className="acc-ov-callout-ic"><i className="fa-solid fa-wallet"></i></div>
+            <div>
+              <div className="acc-ov-callout-t">{fmtMoney(cashBooks)} in Cash In Hand</div>
+              <div className="acc-ov-callout-d">From books flagged "include in cash". Total net exposure across all books: {fmtMoney(booksBal)}.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+  return null;
+}
+
+function RepSectionHeader({ name, sub, count, onDownload }) {
+  return (
+    <div className="fee-section-header">
+      <div className="fee-section-title">
+        <div className="fee-section-icon"><i className="fa-solid fa-table-list"></i></div>
+        <div>
+          <div className="fee-section-name">{name}</div>
+          <div className="fee-section-sub">{sub}</div>
+        </div>
+      </div>
+      <div className="acc-sec-actions">
+        <span className="fee-chip fee-chip-active">
+          <i className="fa-solid fa-list"></i> {count} {count === 1 ? 'row' : 'rows'}
+        </span>
+        <Tooltip text="Download this report">
+          <button type="button" className="fee-btn fee-btn-ghost acc-dlreport-btn" onClick={onDownload}>
+            <i className="fa-solid fa-file-export"></i> Download Report
+          </button>
+        </Tooltip>
+      </div>
+    </div>
+  );
+}
+
+/* ─── Coming Soon placeholder used for every not-yet-built screen ──── */
+function AccComingSoon({ label, icon }) {
+  return (
+    <div className="acc-coming-soon">
+      <div className="acc-cs-icon">
+        <i className={`fa-solid ${icon}`}></i>
+      </div>
+      <div className="acc-cs-title">{label}</div>
+      <div className="acc-cs-sub">
+        This screen will be built in the next steps. Click any other tab to navigate.
+      </div>
+      <div className="acc-cs-badge">
+        <i className="fa-solid fa-screwdriver-wrench"></i> Under Development
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Per-module CSS — scoped to Accounts UI. Mirrors the HTML reference
+   exactly. Shared visual primitives (.fee-subtabs, .fee-section, etc.)
+   come from the Fee module's stylesheet which is already loaded.
+   ═══════════════════════════════════════════════════════════════════ */
+const ACC_CSS = `
+/* ═══════════════════════════════════════════════════════════════════
+   SHARED PRIMITIVES — these .fee-* classes live inside Fee.jsx's
+   scoped <style> block. We duplicate them here so Accounts looks
+   identical when Fee is unmounted (each module ships its own CSS).
+   When/if we extract a shared stylesheet, this block can be removed.
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* Sub-tabs (top nav) */
+.fee-subtabs {
+  display: flex;
+  gap: 6px;
+  background: var(--bg-card);
+  border: 1.5px solid var(--border-light);
+  border-radius: 16px;
+  padding: 5px;
+  margin-bottom: 18px;
+  box-shadow: 0 1px 2px rgba(15,23,42,.04);
+  overflow-x: auto;
+  flex-wrap: nowrap;
+  -webkit-overflow-scrolling: touch;
+}
+.fee-subtab {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 11px 18px;
+  border-radius: 12px;
+  border: none;
+  background: transparent;
+  font-family: var(--font-body);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all .2s ease;
+  white-space: nowrap;
+  flex: 1;
+}
+.fee-subtab:hover:not(.active) { background: var(--bg-muted); color: var(--text-primary); }
+.fee-subtab.active {
+  background: linear-gradient(135deg, #1E3A8A 0%, #1E40AF 60%, #2563EB 100%);
+  color: #fff;
+  box-shadow: 0 6px 20px rgba(30,58,138,.4), inset 0 1px 0 rgba(255,255,255,.2);
+}
+.fee-subtab i { font-size: 12px; }
+
+/* Section card */
+.fee-section {
+  background: var(--bg-card);
+  border: 1.5px solid var(--border-light);
+  border-radius: 16px;
+  box-shadow: 0 1px 2px rgba(15,23,42,.04);
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+.fee-section--overflow { overflow: visible; }
+.fee-section + .fee-section { margin-top: 0; }
+.fee-section-body { padding: 18px 20px; }
+.fee-empty {
+  padding: 28px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+/* Table head + rows */
+.fee-table-head {
+  display: grid;
+  background: #EFF6FF;
+  border-bottom: 1.5px solid #BFDBFE;
+  padding: 0 18px;
+}
+.fee-th {
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: .5px;
+  text-transform: uppercase;
+  color: #1E3A5F;
+  padding: 12px 6px;
+  display: flex;
+  align-items: center;
+}
+.fee-center { justify-content: center; text-align: center; }
+.fee-right  { text-align: right; }
+
+.fee-rowwrap { border-bottom: 1px solid var(--border-light); }
+.fee-rowwrap:last-child { border-bottom: none; }
+.fee-row {
+  display: grid;
+  padding: 0 18px;
+  cursor: pointer;
+  transition: background .15s ease;
+  background: var(--bg-card);
+  align-items: center;
+  min-height: 58px;
+}
+.fee-row:hover { background: var(--bg-muted); }
+.fee-row.open { background: var(--bg-muted); }
+.fee-td {
+  padding: 12px 6px;
+  font-size: 12.5px;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+}
+.fee-td.fee-name { font-weight: 700; }
+.fee-row-icon {
+  width: 28px; height: 28px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, rgba(30,58,138,.12), rgba(37,99,235,.06));
+  color: #1E40AF;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 11.5px; font-weight: 800;
+}
+.fee-tag {
+  display: inline-block;
+  background: rgba(124,58,237,.1);
+  color: #6D28D9;
+  border: 1px solid rgba(124,58,237,.25);
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.fee-chevbtn {
+  width: 32px; height: 32px;
+  border-radius: 8px;
+  border: none;
+  background: var(--bg-muted);
+  color: var(--text-muted);
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: all .2s ease;
+  cursor: pointer;
+}
+.fee-chevbtn:hover { background: #1E3A8A; color: #fff; }
+.fee-chevbtn.open  { background: #1E3A8A; color: #fff; }
+.fee-chev { transition: transform .25s ease; font-size: 11px; }
+.fee-chevbtn.open .fee-chev { transform: rotate(180deg); }
+
+/* Action buttons */
+.fee-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border: 1.5px solid transparent;
+  border-radius: 10px;
+  font-family: var(--font-body);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all .2s ease;
+  white-space: nowrap;
+}
+.fee-btn-primary {
+  background: linear-gradient(135deg, #1E3A8A, #1E40AF);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(30,58,138,.28);
+}
+.fee-btn-primary:hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(30,58,138,.38); }
+.fee-btn-ghost {
+  background: var(--bg-card);
+  border-color: var(--border-light);
+  color: var(--text-secondary);
+}
+.fee-btn-ghost:hover { background: var(--bg-muted); border-color: var(--border-med); color: var(--text-primary); }
+
+.fee-iconbtn {
+  width: 32px; height: 32px;
+  border: 1.5px solid var(--border-light);
+  border-radius: 8px;
+  background: var(--bg-card);
+  color: var(--text-muted);
+  display: inline-flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  transition: all .2s ease;
+}
+.fee-iconbtn:hover { color: #1E3A8A; border-color: #1E3A8A; }
+.fee-iconbtn.danger { color: #DC2626; border-color: rgba(220,38,38,.3); background: rgba(220,38,38,.06); }
+.fee-iconbtn.danger:hover { background: #DC2626; color: #fff; border-color: #DC2626; }
+
+/* Detail panel (animated expand) */
+.fee-detail {
+  max-height: 0;
+  overflow: hidden;
+  background: var(--bg-muted);
+  border-top: 1px solid transparent;
+  transition: max-height .3s ease, border-color .3s ease;
+}
+.fee-detail.open {
+  max-height: 1600px;
+  border-top-color: var(--border-light);
+}
+.fee-detail-inner { padding: 16px 18px; }
+.fee-detail-title {
+  font-size: 12.5px;
+  font-weight: 800;
+  color: var(--text-secondary);
+  margin-bottom: 10px;
+  text-transform: uppercase;
+  letter-spacing: .4px;
+}
+.fee-detail-title i { color: #1E3A8A; margin-right: 6px; }
+
+/* Info banner */
+.fee-info {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  background: #EFF6FF;
+  border: 1px solid #BFDBFE;
+  border-radius: 10px;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.55;
+}
+.fee-info i { color: #1E3A8A; flex-shrink: 0; margin-top: 1px; font-size: 13px; }
+
+/* Form bits */
+.fee-field-stack { margin-bottom: 14px; }
+.fee-field-stack:last-child { margin-bottom: 0; }
+.fee-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .4px;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+.fee-input {
+  width: 100%;
+  border: 1.5px solid var(--border-light);
+  border-radius: 8px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  padding: 9px 12px;
+  font-family: var(--font-body);
+  font-size: 12.5px;
+  outline: none;
+  transition: border-color .15s ease, box-shadow .15s ease;
+  box-sizing: border-box;
+}
+.fee-input:focus { border-color: #1E3A8A; box-shadow: 0 0 0 3px rgba(30,58,138,.1); }
+.fee-input::placeholder { color: var(--text-muted); }
+.fee-textarea {
+  min-height: 90px;
+  resize: vertical;
+  padding: 10px 12px;
+  line-height: 1.55;
+}
+
+/* Modal overlay + frame */
+.fee-overlay {
+  position: fixed; inset: 0;
+  z-index: 9000;
+  background: rgba(15,23,42,.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .18s ease;
+}
+.fee-overlay.open { opacity: 1; pointer-events: auto; animation: feeOverIn .15s ease; }
+@keyframes feeOverIn { from { opacity: 0; } to { opacity: 1; } }
+
+.fee-modal {
+  background: var(--bg-card);
+  border: 1.5px solid var(--border-light);
+  border-radius: 16px;
+  width: 100%;
+  max-width: 760px;
+  max-height: calc(100vh - 40px);
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 20px 60px rgba(15,23,42,.25);
+  overflow: hidden;
+  animation: feeModIn .2s cubic-bezier(.4,0,.2,1);
+}
+.fee-modal.lg { max-width: 900px; }
+.fee-modal.sm { max-width: 520px; }
+@keyframes feeModIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+@media (max-width: 640px) {
+  .fee-overlay { padding: 8px; }
+  .fee-modal,
+  .fee-modal.lg,
+  .fee-modal.sm { max-width: 96vw; }
+}
+
+.fee-modal-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border-light);
+  background: linear-gradient(135deg, rgba(30,58,138,.04), transparent);
+}
+.fee-modal-head-title { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; }
+.fee-modal-head-icon {
+  width: 38px; height: 38px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #1E3A8A, #1E40AF);
+  color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 15px;
+  flex-shrink: 0;
+}
+.fee-modal-title { font-size: 15px; font-weight: 800; color: var(--text-primary); }
+.fee-modal-title em { font-style: normal; color: #1E3A8A; }
+.fee-modal-sub { font-size: 11.5px; color: var(--text-muted); margin-top: 2px; }
+.fee-modal-close {
+  width: 32px; height: 32px;
+  border: none;
+  background: var(--bg-muted);
+  color: var(--text-muted);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all .2s ease;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.fee-modal-close:hover { background: rgba(220,38,38,.1); color: #DC2626; }
+
+.fee-modal-body { flex: 1; overflow-y: auto; padding: 18px 20px; }
+.fee-modal-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 14px 20px;
+  border-top: 1px solid var(--border-light);
+  background: var(--bg-muted);
+}
+
+/* Dark mode for shared primitives */
+[data-theme="dark"] .fee-subtabs { background: var(--bg-card); border-color: var(--border-light); }
+[data-theme="dark"] .fee-subtab { color: var(--text-muted); }
+[data-theme="dark"] .fee-subtab:hover:not(.active) { background: var(--bg-muted); color: var(--text-primary); }
+[data-theme="dark"] .fee-section { background: var(--bg-card); border-color: var(--border-light); }
+[data-theme="dark"] .fee-table-head { background: var(--bg-muted); border-bottom-color: var(--border-light); }
+[data-theme="dark"] .fee-th { color: var(--text-muted); }
+[data-theme="dark"] .fee-row { background: var(--bg-card); }
+[data-theme="dark"] .fee-row:hover,
+[data-theme="dark"] .fee-row.open { background: var(--bg-muted); }
+[data-theme="dark"] .fee-rowwrap { border-bottom-color: var(--border-light); }
+[data-theme="dark"] .fee-td { color: var(--text-primary); }
+[data-theme="dark"] .fee-row-icon { background: rgba(59,130,246,.15); color: #93C5FD; }
+[data-theme="dark"] .fee-tag { background: rgba(124,58,237,.18); color: #C4B5FD; border-color: rgba(124,58,237,.35); }
+[data-theme="dark"] .fee-chevbtn { background: var(--bg-muted); color: var(--text-muted); }
+[data-theme="dark"] .fee-chevbtn:hover,
+[data-theme="dark"] .fee-chevbtn.open { background: #3B82F6; color: #fff; }
+[data-theme="dark"] .fee-iconbtn { background: var(--bg-muted); border-color: var(--border-light); color: var(--text-muted); }
+[data-theme="dark"] .fee-iconbtn:hover { color: #3B82F6; border-color: #3B82F6; background: var(--bg-card); }
+[data-theme="dark"] .fee-iconbtn.danger { background: rgba(220,38,38,.12); border-color: rgba(220,38,38,.3); color: #FCA5A5; }
+[data-theme="dark"] .fee-iconbtn.danger:hover { background: #DC2626; color: #fff; }
+[data-theme="dark"] .fee-detail { background: var(--bg-muted); }
+[data-theme="dark"] .fee-detail.open { border-top-color: var(--border-light); }
+[data-theme="dark"] .fee-detail-title { color: var(--text-secondary); }
+[data-theme="dark"] .fee-detail-title i { color: #93C5FD; }
+[data-theme="dark"] .fee-info { background: rgba(59,130,246,.08); border-color: rgba(59,130,246,.2); color: #BFD2F8; }
+[data-theme="dark"] .fee-info i { color: #60A5FA; }
+[data-theme="dark"] .fee-input { background: var(--input-bg, var(--bg-card)); border-color: var(--border-light); color: var(--text-primary); }
+[data-theme="dark"] .fee-input:focus { border-color: #3B82F6; box-shadow: 0 0 0 3px rgba(59,130,246,.15); }
+[data-theme="dark"] .fee-input::placeholder { color: var(--text-muted); }
+[data-theme="dark"] .fee-label { color: var(--text-secondary); }
+[data-theme="dark"] .fee-overlay { background: rgba(0,0,0,.65); }
+[data-theme="dark"] .fee-modal { background: var(--bg-card); border-color: var(--border-light); }
+[data-theme="dark"] .fee-modal-head { background: linear-gradient(135deg, rgba(59,130,246,.08), transparent); border-bottom-color: var(--border-light); }
+[data-theme="dark"] .fee-modal-title { color: var(--text-primary); }
+[data-theme="dark"] .fee-modal-sub { color: var(--text-muted); }
+[data-theme="dark"] .fee-modal-close { background: var(--bg-muted); color: var(--text-muted); }
+[data-theme="dark"] .fee-modal-close:hover { background: rgba(220,38,38,.18); color: #FCA5A5; }
+[data-theme="dark"] .fee-modal-body { color: var(--text-primary); }
+[data-theme="dark"] .fee-modal-foot { background: var(--bg-muted); border-top-color: var(--border-light); }
+[data-theme="dark"] .fee-empty { color: var(--text-muted); }
+[data-theme="dark"] .fee-btn-ghost { background: var(--bg-muted); border-color: var(--border-light); color: var(--text-secondary); }
+[data-theme="dark"] .fee-btn-ghost:hover { background: var(--bg-card); border-color: var(--border-med); color: var(--text-primary); }
+[data-theme="dark"] .fee-btn-primary { background: linear-gradient(135deg, #1E3A8A, #2563EB); }
+
+/* ═══════════════════════════════════════════════════════════════════
+   ACCOUNTS-SPECIFIC STYLES — module-only visuals (overview banner,
+   step strip, COA rows, heads table, head modal, confirm dialog).
+   ═══════════════════════════════════════════════════════════════════ */
+
+.acc-coming-soon {
+  background: var(--bg-card);
+  border: 1.5px solid var(--border-light);
+  border-radius: 16px;
+  box-shadow: var(--shadow-sm);
+  padding: 60px 28px;
+  text-align: center;
+  margin-top: 18px;
+}
+.acc-cs-icon {
+  width: 88px; height: 88px;
+  border-radius: 22px;
+  background: linear-gradient(135deg, rgba(30,58,138,.10), rgba(37,99,235,.04));
+  color: #1E3A8A;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 32px;
+  margin: 0 auto 18px;
+}
+.acc-cs-title {
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -.02em;
+  color: var(--text-primary);
+  margin-bottom: 6px;
+}
+.acc-cs-sub {
+  font-size: 13.5px;
+  color: var(--text-muted);
+  line-height: 1.55;
+  max-width: 480px;
+  margin: 0 auto 18px;
+}
+.acc-cs-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 14px;
+  border-radius: 999px;
+  background: rgba(217,119,6,.10);
+  color: #D97706;
+  border: 1px solid rgba(217,119,6,.25);
+  font-size: 11.5px;
+  font-weight: 800;
+  letter-spacing: .3px;
+}
+
+/* ── Polished overview banner ── */
+.acc-overview {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  flex-wrap: wrap;
+  padding: 18px 22px;
+  margin-bottom: 14px;
+  border: 1.5px solid var(--border-light);
+  border-radius: 16px;
+  background: linear-gradient(135deg, rgba(30,58,138,.06), rgba(37,99,235,.03) 55%, transparent);
+  box-shadow: var(--shadow-sm);
+  position: relative;
+  overflow: hidden;
+}
+.acc-overview::after {
+  content: '';
+  position: absolute;
+  top: -40px; right: -30px;
+  width: 150px; height: 150px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(30,58,138,.08), transparent 70%);
+  pointer-events: none;
+}
+.acc-overview-main {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  flex: 1;
+  min-width: 260px;
+  position: relative;
+  z-index: 1;
+}
+.acc-overview-icon {
+  width: 48px; height: 48px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #1E3A8A, #1E40AF);
+  color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 20px;
+  flex-shrink: 0;
+  box-shadow: 0 6px 18px rgba(30,58,138,.35);
+}
+.acc-overview-title {
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--text-primary);
+  letter-spacing: -.01em;
+}
+.acc-overview-sub {
+  font-size: 12.5px;
+  color: var(--text-muted);
+  margin-top: 3px;
+  line-height: 1.6;
+  max-width: 560px;
+}
+.acc-overview-sub strong { color: var(--text-secondary); font-weight: 700; }
+.acc-overview-stats {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  position: relative;
+  z-index: 1;
+}
+.acc-ov-stat {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 14px;
+  border-radius: 10px;
+  background: var(--bg-card);
+  border: 1.5px solid var(--border-light);
+  box-shadow: 0 1px 2px rgba(15,23,42,.04);
+  transition: all .2s ease;
+}
+.acc-ov-stat:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(15,23,42,.08);
+  border-color: var(--border-med);
+}
+.acc-ov-stat-ic {
+  width: 32px; height: 32px;
+  border-radius: 9px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px;
+  color: #fff;
+  flex-shrink: 0;
+}
+.acc-ov-stat-ic.exp { background: linear-gradient(135deg, #DC2626, #B91C1C); }
+.acc-ov-stat-ic.rev { background: linear-gradient(135deg, #16A34A, #15803D); }
+.acc-ov-stat-ic.all { background: linear-gradient(135deg, #1E3A8A, #2563EB); }
+.acc-ov-stat-val {
+  font-size: 17px;
+  font-weight: 800;
+  color: var(--text-primary);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.acc-ov-stat-lbl {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: .3px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-top: 3px;
+}
+
+/* ── How-to steps strip ── */
+.acc-steps {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-bottom: 18px;
+}
+.acc-step {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 16px;
+  border: 1.5px solid var(--border-light);
+  border-radius: 12px;
+  background: var(--bg-card);
+  box-shadow: 0 1px 2px rgba(15,23,42,.04);
+  transition: all .2s ease;
+}
+.acc-step:hover {
+  border-color: var(--border-med);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(15,23,42,.08);
+}
+.acc-step-no {
+  width: 30px; height: 30px;
+  border-radius: 9px;
+  background: linear-gradient(135deg, #DBEAFE, #EEF4FF);
+  color: #1E3A8A;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 800;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+.acc-step-title {
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.acc-step-title i { color: #1E3A8A; font-size: 11.5px; }
+.acc-step-desc { font-size: 11px; color: var(--text-muted); margin-top: 2px; line-height: 1.4; }
+
+/* ── COA type rows ── */
+.acc-coa-row { grid-template-columns: 90px 1fr 130px 150px 90px; }
+.acc-type-ic {
+  width: 30px; height: 30px;
+  border-radius: 9px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px; color: #fff;
+  flex-shrink: 0;
+}
+.acc-type-ic.exp { background: linear-gradient(135deg, #DC2626, #B91C1C); }
+.acc-type-ic.rev { background: linear-gradient(135deg, #16A34A, #15803D); }
+.acc-type-name {
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--text-primary);
+  letter-spacing: -.01em;
+  margin-left: 10px;
+}
+
+/* "Add Heads" CTA on each row */
+.acc-addheads {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 16px;
+  height: 36px;
+  border-radius: 10px;
+  border: none;
+  background: linear-gradient(135deg, #1E3A8A, #1E40AF);
+  color: #fff;
+  font-family: var(--font-body);
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all .2s ease;
+  white-space: nowrap;
+  box-shadow: 0 3px 10px rgba(30,58,138,.25);
+}
+.acc-addheads:hover { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(30,58,138,.35); }
+
+/* ── Heads table inside expanded type row ── */
+.acc-heads-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border: 1px solid var(--border-light);
+  border-radius: 12px;
+  background: var(--bg-card);
+}
+.acc-heads-tbl {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+  min-width: 560px;
+}
+.acc-heads-tbl thead th {
+  padding: 11px 14px;
+  text-align: left;
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: .5px;
+  text-transform: uppercase;
+  color: #fff;
+  background: linear-gradient(135deg, #1E3A8A, #1E40AF);
+  white-space: nowrap;
+}
+.acc-heads-tbl thead th.r { text-align: right; }
+.acc-heads-tbl thead th.c { text-align: center; }
+.acc-heads-tbl td {
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--border-light);
+  color: var(--text-primary);
+  vertical-align: middle;
+}
+.acc-heads-tbl tbody tr:last-child td { border-bottom: none; }
+.acc-heads-tbl tbody tr:hover td { background: rgba(30,58,138,.03); }
+.acc-heads-tbl td.r { text-align: right; }
+
+.acc-head-no {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px; height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(30,64,175,.08);
+  border: 1px solid rgba(30,64,175,.18);
+  font-weight: 800;
+  font-size: 11.5px;
+  color: #1E40AF;
+  font-variant-numeric: tabular-nums;
+}
+.acc-head-name { font-weight: 700; color: var(--text-primary); }
+.acc-head-desc { color: var(--text-muted); }
+.acc-heads-actions { display: inline-flex; gap: 7px; }
+
+.acc-heads-empty {
+  padding: 28px 18px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
+.acc-heads-empty i {
+  display: block;
+  font-size: 22px;
+  color: var(--border-med);
+  margin-bottom: 8px;
+}
+.acc-heads-empty strong { color: var(--text-secondary); font-weight: 700; }
+
+/* ── Head modal form grid ── */
+.acc-form-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 14px;
+  margin-top: 6px;
+}
+
+/* ─── Hero confirm dialog (Acc-flavored copy of Fee's hero confirm) ──── */
+.acc-confirm-overlay {
+  position: fixed; inset: 0;
+  z-index: 9999;
+  background: rgba(10,22,40,.55);
+  backdrop-filter: blur(8px);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+.acc-confirm-overlay.open { display: flex; }
+.acc-confirm-dialog {
+  position: relative;
+  background: var(--bg-card);
+  border: 1px solid var(--border-light);
+  border-radius: 24px;
+  width: 100%;
+  max-width: 380px;
+  box-shadow: 0 30px 80px rgba(0,0,0,.2), 0 8px 24px rgba(0,0,0,.1);
+  animation: accConfirmIn .32s cubic-bezier(.34,1.3,.64,1) both;
+  overflow: hidden;
+}
+@keyframes accConfirmIn {
+  from { opacity: 0; transform: scale(.88) translateY(20px); }
+  to   { opacity: 1; transform: none; }
+}
+.acc-confirm-glow {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  border-radius: 24px 24px 0 0;
+}
+.acc-confirm-hero {
+  display: flex; flex-direction: column; align-items: center;
+  padding: 32px 28px 10px;
+}
+.acc-confirm-hero--danger  { background: linear-gradient(180deg, rgba(220,38,38,.03), transparent); }
+.acc-confirm-hero--primary { background: linear-gradient(180deg, rgba(30,58,138,.04), transparent); }
+.acc-confirm-ring {
+  position: relative;
+  width: 80px; height: 80px;
+  display: flex; align-items: center; justify-content: center;
+}
+.acc-confirm-ring::before {
+  content: '';
+  position: absolute; inset: 0;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  animation: accConfirmRing 3s linear infinite;
+  opacity: .4;
+}
+.acc-confirm-ring--danger::before  { border-top-color: #EF4444; border-right-color: #EF4444; }
+.acc-confirm-ring--primary::before { border-top-color: #2563EB; border-right-color: #2563EB; }
+@keyframes accConfirmRing { to { transform: rotate(360deg); } }
+.acc-confirm-icon-wrap {
+  width: 60px; height: 60px;
+  border-radius: 18px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 24px;
+  position: relative; z-index: 1;
+  box-shadow: 0 8px 24px rgba(220,38,38,.18);
+  transition: all .3s ease;
+}
+.acc-confirm-hero--primary .acc-confirm-icon-wrap { box-shadow: 0 8px 24px rgba(30,58,138,.2); }
+.acc-confirm-body { padding: 16px 28px 8px; text-align: center; }
+.acc-confirm-title {
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--text-primary);
+  margin-bottom: 10px;
+  letter-spacing: -.02em;
+}
+.acc-confirm-msg {
+  font-size: 13.5px;
+  color: var(--text-muted);
+  line-height: 1.75;
+  margin-bottom: 14px;
+}
+.acc-confirm-msg strong { color: var(--text-primary); font-weight: 700; }
+.acc-confirm-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  text-align: left;
+  padding: 11px 14px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+.acc-confirm-hint--danger {
+  background: rgba(220,38,38,.05);
+  border: 1px solid rgba(220,38,38,.15);
+  color: #991B1B;
+}
+.acc-confirm-hint--danger i { color: #DC2626; font-size: 13px; flex-shrink: 0; margin-top: 1px; }
+.acc-confirm-hint--primary {
+  background: rgba(30,58,138,.05);
+  border: 1px solid rgba(30,58,138,.15);
+  color: #1E3A5F;
+}
+.acc-confirm-hint--primary i { color: #1E40AF; font-size: 13px; flex-shrink: 0; margin-top: 1px; }
+.acc-confirm-footer {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr;
+  gap: 10px;
+  padding: 20px 28px 28px;
+}
+.acc-confirm-btn {
+  display: flex; align-items: center; justify-content: center;
+  gap: 8px;
+  height: 46px;
+  border-radius: 12px;
+  border: none;
+  cursor: pointer;
+  font-family: var(--font-body);
+  font-size: 14px;
+  font-weight: 700;
+  transition: all .2s cubic-bezier(.4,0,.2,1);
+  letter-spacing: .01em;
+}
+.acc-confirm-btn--cancel {
+  background: var(--bg-muted);
+  border: 1.5px solid var(--border-light);
+  color: var(--text-muted);
+}
+.acc-confirm-btn--cancel:hover {
+  background: var(--bg-card);
+  color: var(--text-primary);
+  border-color: var(--border-med);
+}
+.acc-confirm-btn--confirm {
+  background: linear-gradient(135deg, #EF4444, #DC2626);
+  color: #fff;
+  box-shadow: 0 4px 14px rgba(220,38,38,.35), inset 0 1px 0 rgba(255,255,255,.2);
+}
+.acc-confirm-btn--confirm:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(220,38,38,.5);
+}
+.acc-confirm-btn--confirm.primary-style {
+  background: linear-gradient(135deg, #1D4ED8, #1E3A8A);
+  box-shadow: 0 4px 14px rgba(30,58,138,.35), inset 0 1px 0 rgba(255,255,255,.2);
+}
+.acc-confirm-btn--confirm.primary-style:hover {
+  box-shadow: 0 8px 24px rgba(30,58,138,.5);
+}
+.acc-confirm-btn:active { transform: scale(.97) translateY(0) !important; }
+
+/* ── Dark mode ── */
+[data-theme="dark"] .acc-coming-soon {
+  background: var(--bg-card);
+  border-color: var(--border-light);
+}
+[data-theme="dark"] .acc-cs-icon {
+  background: linear-gradient(135deg, rgba(59,130,246,.18), rgba(37,99,235,.08));
+  color: #93C5FD;
+}
+[data-theme="dark"] .acc-cs-title { color: var(--text-primary); }
+[data-theme="dark"] .acc-cs-sub   { color: var(--text-muted); }
+
+[data-theme="dark"] .acc-overview {
+  background: linear-gradient(135deg, rgba(59,130,246,.10), rgba(37,99,235,.04) 55%, transparent);
+  border-color: var(--border-light);
+}
+[data-theme="dark"] .acc-overview::after {
+  background: radial-gradient(circle, rgba(59,130,246,.10), transparent 70%);
+}
+[data-theme="dark"] .acc-overview-title,
+[data-theme="dark"] .acc-ov-stat-val { color: var(--text-primary); }
+[data-theme="dark"] .acc-overview-sub { color: var(--text-muted); }
+[data-theme="dark"] .acc-overview-sub strong { color: var(--text-secondary); }
+[data-theme="dark"] .acc-ov-stat,
+[data-theme="dark"] .acc-step {
+  background: var(--bg-card);
+  border-color: var(--border-light);
+}
+[data-theme="dark"] .acc-step-title { color: var(--text-primary); }
+[data-theme="dark"] .acc-step-title i { color: #93C5FD; }
+[data-theme="dark"] .acc-step-no {
+  background: rgba(59,130,246,.16);
+  color: #93C5FD;
+}
+[data-theme="dark"] .acc-step-desc,
+[data-theme="dark"] .acc-ov-stat-lbl { color: var(--text-muted); }
+
+[data-theme="dark"] .acc-type-name { color: var(--text-primary); }
+[data-theme="dark"] .acc-heads-wrap {
+  background: var(--bg-card);
+  border-color: var(--border-light);
+}
+[data-theme="dark"] .acc-heads-tbl td {
+  color: var(--text-primary);
+  border-bottom-color: var(--border-light);
+}
+[data-theme="dark"] .acc-heads-tbl tbody tr:hover td { background: rgba(59,130,246,.06); }
+[data-theme="dark"] .acc-head-no {
+  background: rgba(59,130,246,.18);
+  border-color: rgba(59,130,246,.3);
+  color: #93C5FD;
+}
+[data-theme="dark"] .acc-head-name { color: var(--text-primary); }
+[data-theme="dark"] .acc-head-desc { color: var(--text-muted); }
+[data-theme="dark"] .acc-heads-empty { color: var(--text-muted); }
+[data-theme="dark"] .acc-heads-empty strong { color: var(--text-secondary); }
+
+/* Confirm dialog — dark */
+[data-theme="dark"] .acc-confirm-overlay { background: rgba(0,0,0,.65); }
+[data-theme="dark"] .acc-confirm-dialog {
+  background: var(--bg-card);
+  border-color: var(--border-light);
+  box-shadow: 0 30px 80px rgba(0,0,0,.55), 0 8px 24px rgba(0,0,0,.4);
+}
+[data-theme="dark"] .acc-confirm-hero--danger  { background: linear-gradient(180deg, rgba(239,68,68,.10), transparent); }
+[data-theme="dark"] .acc-confirm-hero--primary { background: linear-gradient(180deg, rgba(59,130,246,.10), transparent); }
+[data-theme="dark"] .acc-confirm-title { color: var(--text-primary); }
+[data-theme="dark"] .acc-confirm-msg   { color: var(--text-secondary); }
+[data-theme="dark"] .acc-confirm-msg strong { color: var(--text-primary); }
+[data-theme="dark"] .acc-confirm-hint--danger {
+  background: rgba(239,68,68,.10);
+  border-color: rgba(239,68,68,.3);
+  color: #FCA5A5;
+}
+[data-theme="dark"] .acc-confirm-hint--danger i { color: #FCA5A5; }
+[data-theme="dark"] .acc-confirm-hint--primary {
+  background: rgba(59,130,246,.10);
+  border-color: rgba(59,130,246,.3);
+  color: #BFD2F8;
+}
+[data-theme="dark"] .acc-confirm-hint--primary i { color: #93C5FD; }
+[data-theme="dark"] .acc-confirm-btn--cancel {
+  background: var(--bg-muted);
+  border-color: var(--border-light);
+  color: var(--text-secondary);
+}
+[data-theme="dark"] .acc-confirm-btn--cancel:hover {
+  background: var(--bg-card);
+  color: var(--text-primary);
+  border-color: var(--border-med);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   TRANSACTIONS-SPECIFIC STYLES — pill segment, filters, search box,
+   KPI strip, section header actions, audit-detail table.
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* Pill segment toggle (Revenues / Expenditures) */
+.fee-seg {
+  display: flex;
+  width: 100%;
+  background: var(--bg-card);
+  border: 1.5px solid var(--border-light);
+  border-radius: 999px;
+  padding: 5px;
+  margin-bottom: 18px;
+  box-shadow: 0 1px 2px rgba(15,23,42,.04);
+}
+.fee-seg-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 10px 16px;
+  border: none;
+  background: transparent;
+  border-radius: 999px;
+  font-family: var(--font-body);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all .2s ease;
+  white-space: nowrap;
+}
+.fee-seg-btn:hover:not(.active) { color: var(--text-primary); }
+.fee-seg-btn.active {
+  background: linear-gradient(135deg, #1E3A8A, #1E40AF);
+  color: #fff;
+  box-shadow: 0 4px 12px rgba(30,58,138,.3);
+}
+.fee-seg-btn i { font-size: 12px; }
+
+/* Filters row */
+.fee-filters {
+  display: flex;
+  gap: 14px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+.fee-field {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 0 0 auto;
+}
+
+.fee-select-wrap { position: relative; }
+.fee-select {
+  width: 100%;
+  appearance: none;
+  -webkit-appearance: none;
+  border: 1.5px solid var(--border-light);
+  border-radius: 8px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  padding: 9px 32px 9px 12px;
+  font-family: var(--font-body);
+  font-size: 12.5px;
+  outline: none;
+  cursor: pointer;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+.fee-select:focus { border-color: #1E3A8A; box-shadow: 0 0 0 3px rgba(30,58,138,.1); }
+.fee-select-wrap > i.fa-chevron-down {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 11px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+/* Search box */
+.fee-searchrow { width: 100%; }
+.fee-search-box {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 42px;
+  border: 1.5px solid var(--border-light);
+  border-radius: 10px;
+  padding: 0 12px;
+  background: var(--bg-card);
+  transition: all .2s ease;
+}
+.fee-search-box:focus-within {
+  border-color: #1E3A8A;
+  box-shadow: 0 0 0 3px rgba(30,58,138,.08);
+}
+.fee-search-box > i { color: var(--text-muted); font-size: 13px; }
+.fee-search-box input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-family: var(--font-body);
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+.fee-search-box input::placeholder { color: var(--text-muted); }
+.fee-search-clear {
+  width: 24px; height: 24px;
+  border-radius: 7px;
+  border: none;
+  background: var(--bg-muted);
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  transition: all .2s ease;
+  flex-shrink: 0;
+}
+.fee-search-clear:hover { background: rgba(220,38,38,.1); color: #DC2626; }
+
+.fee-hint {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 8px;
+  font-size: 11.5px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+.fee-hint i { color: #1E3A8A; font-size: 11px; flex-shrink: 0; }
+
+/* Smart-search dropdown (mirrors Fee module's design) */
+.fee-search-anchor { position: relative; width: 100%; }
+.fee-search-results {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0; right: 0;
+  background: var(--bg-card);
+  border: 1.5px solid var(--border-light);
+  border-radius: 10px;
+  box-shadow: 0 20px 40px rgba(15,23,42,.12), 0 4px 12px rgba(15,23,42,.06);
+  z-index: 9000;
+  max-height: 380px;
+  overflow-y: auto;
+  display: none;
+  padding: 6px;
+}
+.fee-search-results.open { display: block; animation: accSrFade .2s ease; }
+@keyframes accSrFade { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+.fee-sr-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 12px;
+  border-radius: 10px;
+  cursor: pointer;
+  background: transparent;
+  border: none;
+  width: 100%;
+  text-align: left;
+  font-family: var(--font-body);
+  transition: all .15s ease;
+}
+.fee-sr-item:hover { background: var(--bg-muted); }
+.fee-sr-av {
+  width: 38px; height: 38px;
+  border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+.fee-sr-main { flex: 1; min-width: 0; }
+.fee-sr-name {
+  font-size: 13.5px;
+  font-weight: 800;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: space-between;
+}
+.fee-sr-amt {
+  font-size: 13px;
+  font-weight: 800;
+  color: #1E3A8A;
+  font-variant-numeric: tabular-nums;
+}
+.fee-sr-meta {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+.fee-sr-meta b { color: var(--text-secondary); font-weight: 700; }
+.fee-sr-detail {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin-top: 4px;
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fee-sr-go {
+  width: 30px; height: 30px;
+  border-radius: 8px;
+  background: #DBEAFE;
+  color: #1E3A8A;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.fee-sr-empty {
+  padding: 18px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
+.fee-sr-empty b { color: var(--text-primary); font-weight: 700; }
+
+[data-theme="dark"] .fee-search-results {
+  background: var(--bg-card);
+  border-color: var(--border-light);
+  box-shadow: 0 20px 40px rgba(0,0,0,.55), 0 4px 12px rgba(0,0,0,.3);
+}
+[data-theme="dark"] .fee-sr-item:hover { background: var(--bg-muted); }
+[data-theme="dark"] .fee-sr-name { color: var(--text-primary); }
+[data-theme="dark"] .fee-sr-amt  { color: #93C5FD; }
+[data-theme="dark"] .fee-sr-meta,
+[data-theme="dark"] .fee-sr-detail,
+[data-theme="dark"] .fee-sr-empty { color: var(--text-muted); }
+[data-theme="dark"] .fee-sr-meta b { color: var(--text-secondary); }
+[data-theme="dark"] .fee-sr-empty b { color: var(--text-primary); }
+[data-theme="dark"] .fee-sr-go { background: rgba(59,130,246,.15); color: #93C5FD; }
+
+/* KPI strip */
+.fee-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+  margin-bottom: 16px;
+}
+.fee-kpi {
+  background: var(--bg-card);
+  border: 1.5px solid var(--border-light);
+  border-radius: 16px;
+  padding: 16px 18px;
+  box-shadow: 0 1px 2px rgba(15,23,42,.04);
+  position: relative;
+  overflow: hidden;
+  transition: transform .2s ease, box-shadow .2s ease, border-color .2s ease;
+}
+.fee-kpi:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 22px rgba(15,23,42,.08);
+  border-color: var(--border-med);
+}
+.fee-kpi::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 4px;
+}
+.fee-kpi.k-blue::before  { background: linear-gradient(180deg, #1E3A8A, #2563EB); }
+.fee-kpi.k-green::before { background: linear-gradient(180deg, #16A34A, #22C55E); }
+.fee-kpi.k-amber::before { background: linear-gradient(180deg, #D97706, #F59E0B); }
+.fee-kpi.k-red::before   { background: linear-gradient(180deg, #DC2626, #EF4444); }
+.fee-kpi-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.fee-kpi-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .4px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.fee-kpi-ic {
+  width: 30px; height: 30px;
+  border-radius: 9px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px;
+}
+.k-blue  .fee-kpi-ic { background: rgba(30,58,138,.1); color: #1E3A8A; }
+.k-green .fee-kpi-ic { background: rgba(22,163,74,.1); color: #16A34A; }
+.k-amber .fee-kpi-ic { background: rgba(217,119,6,.1); color: #D97706; }
+.k-red   .fee-kpi-ic { background: rgba(220,38,38,.1); color: #DC2626; }
+.fee-kpi-val {
+  font-size: 22px;
+  font-weight: 800;
+  color: var(--text-primary);
+  margin-top: 10px;
+  letter-spacing: -.02em;
+  font-variant-numeric: tabular-nums;
+}
+.fee-kpi-meta { font-size: 11px; color: var(--text-muted); margin-top: 3px; }
+
+/* Section header used at the top of the transactions table card */
+.fee-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border-light);
+  background: linear-gradient(135deg, rgba(30,58,138,.03), transparent);
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.fee-section-title { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.fee-section-icon {
+  width: 36px; height: 36px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #1E3A8A, #1E40AF);
+  color: #fff;
+  font-size: 14px;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.fee-section-name { font-size: 14px; font-weight: 800; color: var(--text-primary); letter-spacing: -.01em; }
+.fee-section-sub  { font-size: 11.5px; color: var(--text-muted); margin-top: 1px; }
+.acc-sec-actions  { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.acc-dlreport-btn {
+  gap: 7px;
+  background: linear-gradient(135deg, #DC2626, #B91C1C) !important;
+  color: #fff !important;
+  border-color: transparent !important;
+  box-shadow: 0 6px 16px rgba(220,38,38,.28) !important;
+}
+.acc-dlreport-btn i { font-size: 12px; color: #fff !important; }
+.acc-dlreport-btn:hover {
+  background: linear-gradient(135deg, #B91C1C, #991B1B) !important;
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgba(220,38,38,.36) !important;
+}
+[data-theme="dark"] .acc-dlreport-btn {
+  background: linear-gradient(135deg, #DC2626, #991B1B) !important;
+  box-shadow: 0 6px 18px rgba(220,38,38,.42) !important;
+}
+
+.fee-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+}
+.fee-chip-active {
+  background: rgba(22,163,74,.12);
+  color: #16A34A;
+  border: 1px solid rgba(22,163,74,.28);
+}
+
+/* Transactions table */
+.acc-txn-tablewrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  background: var(--bg-card);
+}
+.acc-txn-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  min-width: 880px;
+}
+.acc-txn-table thead th {
+  padding: 14px 16px;
+  text-align: left;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .4px;
+  text-transform: uppercase;
+  color: #fff;
+  background: linear-gradient(135deg, #1E3A8A 0%, #1E40AF 60%, #2563EB 100%);
+  white-space: nowrap;
+  position: sticky;
+  top: 0;
+}
+.acc-txn-table thead th.r { text-align: right; }
+.acc-txn-table thead th.c { text-align: center; }
+.acc-txn-table tbody td {
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--border-light);
+  color: var(--text-secondary);
+  vertical-align: middle;
+  background: rgba(30,58,138,.018);
+}
+.acc-txn-table tbody tr:nth-child(even) td { background: rgba(30,58,138,.045); }
+.acc-txn-table tbody tr:hover td { background: rgba(30,58,138,.08); }
+.acc-txn-table tbody tr.flash td { animation: feeFlash 1.6s ease; }
+@keyframes feeFlash { 0%, 100% { background: rgba(30,58,138,.045); } 50% { background: rgba(22,163,74,.16); } }
+.acc-txn-table td.r { text-align: right; }
+.acc-txn-table td.c { text-align: center; }
+.acc-txn-headno {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 40px; height: 26px;
+  padding: 0 9px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.85);
+  border: 1px solid var(--border-med);
+  font-weight: 800;
+  font-size: 12px;
+  color: #1E40AF;
+  font-variant-numeric: tabular-nums;
+}
+.acc-txn-headname { font-weight: 800; color: var(--text-primary); }
+.acc-txn-date { font-weight: 700; color: var(--text-primary); white-space: nowrap; }
+.acc-txn-detail { color: var(--text-secondary); line-height: 1.5; font-size: 12.5px; max-width: 340px; }
+.acc-txn-amt { font-weight: 800; color: var(--text-primary); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.acc-txn-actions { display: inline-flex; gap: 7px; white-space: nowrap; }
+
+.acc-txn-table tfoot td {
+  padding: 15px 16px;
+  background: linear-gradient(135deg, #14532D, #166534);
+  color: #fff;
+  font-weight: 800;
+  font-size: 14px;
+  border: none;
+}
+.acc-txn-table tfoot td.r { text-align: right; }
+.acc-txn-table tfoot .acc-txn-totlbl { text-align: right; letter-spacing: .3px; }
+.acc-txn-empty {
+  padding: 40px 20px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.acc-txn-empty i {
+  font-size: 30px;
+  color: var(--border-med);
+  display: block;
+  margin-bottom: 12px;
+}
+
+/* Row meta line + expand button */
+.acc-txn-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 14px;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+.acc-txn-meta span { display: inline-flex; align-items: center; gap: 5px; }
+.acc-txn-meta i    { font-size: 10.5px; color: #2563EB; opacity: .85; }
+.acc-txn-meta .acc-meta-upd { color: #D97706; }
+.acc-txn-meta .acc-meta-upd i { color: #D97706; }
+.acc-txn-expand {
+  width: 26px; height: 26px;
+  border-radius: 7px;
+  border: 1.5px solid var(--border-light);
+  background: var(--bg-card);
+  color: var(--text-muted);
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 10px;
+  cursor: pointer;
+  transition: all .2s ease;
+}
+.acc-txn-expand:hover { border-color: #1E3A8A; color: #1E3A8A; }
+.acc-txn-expand i { transition: transform .25s ease; }
+.acc-txn-tr.open .acc-txn-expand {
+  border-color: #1E3A8A;
+  color: #1E3A8A;
+  background: var(--bg-muted);
+}
+.acc-txn-tr.open .acc-txn-expand i { transform: rotate(180deg); }
+
+.acc-txn-detailrow > td {
+  padding: 0 !important;
+  border-bottom: 1px solid var(--border-light) !important;
+  background: transparent !important;
+}
+.acc-txn-detailpanel {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height .35s cubic-bezier(.4,0,.2,1);
+  background: var(--bg-muted);
+}
+.acc-txn-detailrow.open .acc-txn-detailpanel { max-height: 600px; }
+
+/* Audit detail panel */
+.acc-audit {
+  display: grid;
+  grid-template-columns: 1.3fr 1fr;
+  gap: 0;
+}
+.acc-audit-col { padding: 16px 20px; }
+.acc-audit-col + .acc-audit-col { border-left: 1px solid var(--border-light); }
+.acc-audit-h {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .5px;
+  text-transform: uppercase;
+  color: #1E3A8A;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.acc-audit-h i { font-size: 12px; }
+.acc-audit-kv {
+  display: grid;
+  grid-template-columns: 130px 1fr;
+  gap: 8px 12px;
+  font-size: 12.5px;
+  margin-bottom: 8px;
+  align-items: start;
+}
+.acc-audit-kv .k { color: var(--text-muted); font-weight: 600; }
+.acc-audit-kv .v { color: var(--text-primary); font-weight: 700; }
+.acc-audit-kv .v small { color: var(--text-muted); font-weight: 600; }
+.acc-audit-amt { color: #1E3A8A !important; font-weight: 800 !important; font-variant-numeric: tabular-nums; }
+.acc-audit-trail { display: flex; flex-direction: column; gap: 9px; }
+.acc-audit-badge {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border-light);
+  background: var(--bg-card);
+}
+.acc-audit-badge.created { border-color: rgba(22,163,74,.25); background: rgba(22,163,74,.05); }
+.acc-audit-badge.updated { border-color: rgba(217,119,6,.28); background: rgba(217,119,6,.05); }
+.acc-audit-badge-ic {
+  width: 32px; height: 32px;
+  border-radius: 9px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px;
+  color: #fff;
+  flex-shrink: 0;
+}
+.acc-audit-badge.created .acc-audit-badge-ic { background: linear-gradient(135deg, #16A34A, #15803D); }
+.acc-audit-badge.updated .acc-audit-badge-ic { background: linear-gradient(135deg, #D97706, #B45309); }
+.acc-audit-badge-lbl {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .3px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.acc-audit-badge-val { font-size: 13.5px; font-weight: 800; color: var(--text-primary); margin-top: 1px; }
+.acc-audit-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12.5px;
+  padding: 2px 4px;
+}
+.acc-audit-row span {
+  color: var(--text-muted);
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.acc-audit-row span i { color: #2563EB; font-size: 11px; }
+.acc-audit-row b { color: var(--text-primary); font-weight: 700; }
+.acc-audit-noupd {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #16A34A;
+  background: rgba(22,163,74,.08);
+  border: 1px solid rgba(22,163,74,.2);
+  border-radius: 10px;
+  padding: 7px 11px;
+}
+
+/* Entry modal */
+.acc-entry-grid {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr 1fr;
+  gap: 16px;
+  align-items: end;
+}
+.acc-audit-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 16px;
+  padding: 11px 14px;
+  border-radius: 10px;
+  background: rgba(30,58,138,.05);
+  border: 1px solid rgba(30,58,138,.18);
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.55;
+}
+.acc-audit-note > i { color: #1E3A8A; margin-top: 2px; flex-shrink: 0; }
+.acc-audit-note b { color: var(--text-primary); font-weight: 700; }
+
+/* Download icon button (brand-tinted) */
+.fee-iconbtn.acc-dl { color: #1E3A8A; }
+.fee-iconbtn.acc-dl:hover {
+  border-color: #1E3A8A;
+  color: #fff;
+  background: linear-gradient(135deg, #1E3A8A, #1E40AF);
+}
+
+/* Download report modal (format cards) */
+.fee-dl-label {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .6px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin: 14px 0 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.fee-dl-label::after { content: ''; flex: 1; height: 1px; background: var(--border-light); }
+.fee-dl-fmt-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+.fee-dl-fmt {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  border: 1.5px solid var(--border-light);
+  border-radius: 12px;
+  padding: 12px 14px;
+  cursor: pointer;
+  transition: all .2s ease;
+  background: var(--bg-card);
+  font-family: var(--font-body);
+  text-align: left;
+}
+.fee-dl-fmt:hover { border-color: var(--border-med); transform: translateY(-2px); box-shadow: 0 8px 24px rgba(15,23,42,.10); }
+.fee-dl-fmt.sel { border-color: #1E3A8A; box-shadow: 0 0 0 3px rgba(30,58,138,.12); }
+.fee-dl-fmt-ic {
+  width: 38px; height: 38px;
+  border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 17px;
+  flex-shrink: 0;
+}
+.fee-dl-fmt-name { font-size: 13.5px; font-weight: 800; color: var(--text-primary); }
+.fee-dl-desc { font-size: 11px; color: var(--text-muted); margin-top: 1px; }
+
+/* ── Theme picker (Colorful / Colorless) — shared with Fee module ── */
+.fee-dl-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.fee-dl-card {
+  border: 1.5px solid var(--border-light);
+  border-radius: 12px;
+  padding: 12px;
+  cursor: pointer;
+  transition: all .2s ease;
+  background: var(--bg-card);
+  font-family: var(--font-body);
+  text-align: left;
+  width: 100%;
+}
+.fee-dl-card:hover { border-color: var(--border-med); transform: translateY(-2px); box-shadow: 0 8px 24px rgba(15,23,42,.10); }
+.fee-dl-card.sel { border-color: #1E3A8A; box-shadow: 0 0 0 3px rgba(30,58,138,.12); transform: translateY(-2px); }
+.fee-dl-card:focus-visible { outline: none; border-color: #1E40AF; box-shadow: 0 0 0 3px rgba(30,64,175,.22); }
+[data-theme="dark"] .fee-dl-card:focus-visible { border-color: #3B82F6; box-shadow: 0 0 0 3px rgba(59,130,246,.32); }
+.fee-dl-prev {
+  height: 70px;
+  border-radius: 8px;
+  padding: 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  position: relative;
+  overflow: hidden;
+  margin-bottom: 10px;
+}
+.fee-dl-prev--color { background: linear-gradient(145deg, #1E3A8A 0%, #1E40AF 55%, #1D4ED8 100%); }
+.fee-dl-prev--bw    { background: #FFFFFF; border-bottom: 1px solid #E5E7EB; }
+[data-theme="dark"] .fee-dl-prev--bw { background: #F8FAFC; border-bottom-color: #CBD5E1; }
+.fee-dl-orb {
+  position: absolute;
+  top: -14px; right: -14px;
+  width: 46px; height: 46px;
+  border-radius: 50%;
+  background: rgba(255,255,255,.12);
+}
+.fee-dl-orb.bw { background: rgba(15,23,42,.06); }
+.fee-dl-line { height: 6px; border-radius: 3px; }
+.fee-dl-line.lg { width: 70%; background: rgba(255,255,255,.75); }
+.fee-dl-line.md { width: 52%; height: 5px; background: rgba(255,255,255,.5); }
+.fee-dl-line.bw.lg { background: #1F2937; }
+.fee-dl-line.bw.md { background: #9CA3AF; }
+[data-theme="dark"] .fee-dl-line.bw.lg { background: #1F2937; }
+[data-theme="dark"] .fee-dl-line.bw.md { background: #94A3B8; }
+.fee-dl-pills { display: flex; gap: 6px; margin-top: auto; }
+.fee-dl-pill { height: 6px; width: 22px; border-radius: 3px; }
+.fee-dl-pill.blue  { background: #60A5FA; }
+.fee-dl-pill.amber { background: #FBBF24; }
+.fee-dl-pill.bw    { background: transparent; border: 1px solid #9CA3AF; }
+[data-theme="dark"] .fee-dl-pill.bw { border-color: #94A3B8; }
+.fee-dl-meta .fee-dl-name { font-size: 13px; font-weight: 800; color: var(--text-primary); display: flex; align-items: center; }
+.fee-dl-meta .fee-dl-desc { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+@media (max-width: 520px) {
+  .fee-dl-grid { grid-template-columns: 1fr; gap: 8px; }
+}
+
+.acc-rep-summary { margin-top: 16px; }
+.acc-rep-sumrow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 22px;
+  padding: 13px 16px;
+  border-radius: 10px;
+  background: var(--bg-muted);
+  border: 1px solid var(--border-light);
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+.acc-rep-sumrow span { display: inline-flex; align-items: center; gap: 8px; }
+.acc-rep-sumrow i    { color: #1E3A8A; }
+
+/* Dark mode for new chunks */
+[data-theme="dark"] .fee-seg { background: var(--bg-card); border-color: var(--border-light); }
+[data-theme="dark"] .fee-seg-btn { color: var(--text-muted); }
+[data-theme="dark"] .fee-select {
+  background: var(--input-bg, var(--bg-card));
+  border-color: var(--border-light);
+  color: var(--text-primary);
+}
+[data-theme="dark"] .fee-select-wrap > i.fa-chevron-down { color: var(--text-muted); }
+[data-theme="dark"] .fee-search-box {
+  background: var(--input-bg, var(--bg-card));
+  border-color: var(--border-light);
+}
+[data-theme="dark"] .fee-search-box input { color: var(--text-primary); }
+[data-theme="dark"] .fee-search-clear { background: var(--bg-muted); color: var(--text-muted); }
+[data-theme="dark"] .fee-hint { color: var(--text-muted); }
+[data-theme="dark"] .fee-hint i { color: #93C5FD; }
+[data-theme="dark"] .fee-kpi { background: var(--bg-card); border-color: var(--border-light); }
+[data-theme="dark"] .fee-kpi-val { color: var(--text-primary); }
+[data-theme="dark"] .fee-kpi-meta,
+[data-theme="dark"] .fee-kpi-label { color: var(--text-muted); }
+[data-theme="dark"] .fee-section-header { background: linear-gradient(135deg, rgba(59,130,246,.06), transparent); border-bottom-color: var(--border-light); }
+[data-theme="dark"] .fee-section-name { color: var(--text-primary); }
+[data-theme="dark"] .fee-section-sub  { color: var(--text-muted); }
+[data-theme="dark"] .acc-txn-tablewrap { background: var(--bg-card); border-color: var(--border-light); }
+[data-theme="dark"] .acc-txn-table tbody td {
+  border-color: var(--border-light);
+  color: #B8C8E8;
+  background: transparent;
+}
+[data-theme="dark"] .acc-txn-table tbody tr:nth-child(even) td { background: rgba(59,130,246,.05); }
+[data-theme="dark"] .acc-txn-table tbody tr:hover td { background: rgba(59,130,246,.09); }
+[data-theme="dark"] .acc-txn-headname,
+[data-theme="dark"] .acc-txn-date,
+[data-theme="dark"] .acc-txn-amt { color: var(--text-primary); }
+[data-theme="dark"] .acc-txn-headno {
+  background: rgba(59,130,246,.14);
+  border-color: rgba(59,130,246,.3);
+  color: #93C5FD;
+}
+[data-theme="dark"] .acc-txn-detail { color: var(--text-secondary); }
+[data-theme="dark"] .acc-txn-meta { color: var(--text-muted); }
+[data-theme="dark"] .acc-txn-meta i { color: #93C5FD; }
+[data-theme="dark"] .acc-txn-expand {
+  background: var(--bg-card);
+  border-color: var(--border-light);
+  color: var(--text-muted);
+}
+[data-theme="dark"] .acc-txn-expand:hover,
+[data-theme="dark"] .acc-txn-tr.open .acc-txn-expand { border-color: #3B82F6; color: #93C5FD; background: var(--bg-muted); }
+[data-theme="dark"] .acc-txn-detailpanel { background: var(--bg-muted); }
+[data-theme="dark"] .acc-audit-col + .acc-audit-col { border-left-color: var(--border-light); }
+[data-theme="dark"] .acc-audit-h { color: #93C5FD; }
+[data-theme="dark"] .acc-audit-kv .k { color: var(--text-muted); }
+[data-theme="dark"] .acc-audit-kv .v { color: var(--text-primary); }
+[data-theme="dark"] .acc-audit-amt { color: #93C5FD !important; }
+[data-theme="dark"] .acc-audit-badge { background: var(--bg-card); border-color: var(--border-light); }
+[data-theme="dark"] .acc-audit-badge-val { color: var(--text-primary); }
+[data-theme="dark"] .acc-audit-row b { color: var(--text-primary); }
+[data-theme="dark"] .acc-audit-row span { color: var(--text-muted); }
+[data-theme="dark"] .acc-audit-row span i { color: #93C5FD; }
+[data-theme="dark"] .acc-audit-noupd {
+  color: #86EFAC;
+  background: rgba(22,163,74,.12);
+  border-color: rgba(22,163,74,.28);
+}
+[data-theme="dark"] .acc-audit-note {
+  background: rgba(59,130,246,.10);
+  border-color: rgba(59,130,246,.25);
+  color: var(--text-secondary);
+}
+[data-theme="dark"] .acc-audit-note > i { color: #93C5FD; }
+[data-theme="dark"] .fee-dl-fmt { background: var(--bg-card); border-color: var(--border-light); }
+[data-theme="dark"] .fee-dl-fmt:hover { border-color: var(--border-med); }
+[data-theme="dark"] .fee-dl-fmt.sel { border-color: #3B82F6; box-shadow: 0 0 0 3px rgba(59,130,246,.18); }
+[data-theme="dark"] .fee-dl-fmt-name { color: var(--text-primary); }
+[data-theme="dark"] .fee-dl-desc { color: var(--text-muted); }
+[data-theme="dark"] .acc-rep-sumrow { background: var(--bg-muted); border-color: var(--border-light); color: var(--text-secondary); }
+[data-theme="dark"] .acc-rep-sumrow i { color: #93C5FD; }
+[data-theme="dark"] .fee-chip-active { background: rgba(22,163,74,.18); color: #86EFAC; border-color: rgba(22,163,74,.32); }
+
+/* ═══════════════════════════════════════════════════════════════════
+   ACCOUNT BOOKS — Explainer banner, cards grid, detail view, ledger,
+   modals.
+   ═══════════════════════════════════════════════════════════════════ */
+
+.acc-books-explainer { background: linear-gradient(135deg, rgba(124,58,237,.07), rgba(109,40,217,.03) 55%, transparent); }
+.acc-books-explainer::after { background: radial-gradient(circle, rgba(124,58,237,.08), transparent 70%); }
+.acc-books-tagchip {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: rgba(124,58,237,.10);
+  border: 1px solid rgba(124,58,237,.25);
+  color: #6D28D9;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .2px;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+.acc-link-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  margin-left: 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(124,58,237,.3);
+  background: rgba(124,58,237,.08);
+  color: #6D28D9;
+  font-family: var(--font-body);
+  font-size: 11.5px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all .2s ease;
+}
+.acc-link-btn:hover { background: #7C3AED; color: #fff; border-color: #7C3AED; }
+.acc-info-purple {
+  background: rgba(124,58,237,.06);
+  border-color: rgba(124,58,237,.22);
+  color: var(--text-secondary);
+}
+.acc-info-purple i { color: #7C3AED; }
+.acc-req { color: #DC2626; font-weight: 800; }
+
+/* Books grid + cards */
+.acc-books-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+  gap: 14px;
+  margin-top: 4px;
+}
+.acc-book-card {
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+  border: 1.5px solid var(--border-light);
+  border-radius: 16px;
+  background: var(--bg-card);
+  padding: 16px;
+  cursor: pointer;
+  transition: all .25s ease;
+  font-family: var(--font-body);
+  box-shadow: 0 1px 2px rgba(15,23,42,.04);
+}
+.acc-book-card:hover {
+  transform: translateY(-3px);
+  border-color: #7C3AED;
+  box-shadow: 0 14px 30px rgba(124,58,237,.18);
+}
+.acc-book-card-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+.acc-book-card-ic {
+  width: 40px; height: 40px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #7C3AED, #6D28D9);
+  color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 16px;
+  flex-shrink: 0;
+}
+.acc-book-card-tt { flex: 1; min-width: 0; }
+.acc-book-card-name {
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--text-primary);
+  letter-spacing: -.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.acc-book-card-party {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin-top: 3px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.acc-book-card-party i { font-size: 10px; color: #7C3AED; }
+.acc-book-status {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: .3px;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+.acc-book-status.active   { background: rgba(22,163,74,.12);  color: #16A34A; border: 1px solid rgba(22,163,74,.25); }
+.acc-book-status.settled  { background: rgba(30,58,138,.08);  color: #1E40AF; border: 1px solid rgba(30,58,138,.22); }
+.acc-book-status.closed   { background: rgba(220,38,38,.08);  color: #B91C1C; border: 1px solid rgba(220,38,38,.2); }
+.acc-book-card-body {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--border-light);
+}
+.acc-book-bal-row { display: flex; justify-content: space-between; align-items: end; }
+.acc-book-bal-lbl {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: .3px;
+  font-weight: 800;
+  color: var(--text-muted);
+}
+.acc-book-bal-val {
+  font-size: 22px;
+  font-weight: 800;
+  color: var(--text-primary);
+  letter-spacing: -.02em;
+  margin-top: 3px;
+  font-variant-numeric: tabular-nums;
+}
+.acc-book-card-mini {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 12px;
+}
+.acc-book-mini {
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--bg-muted);
+}
+.acc-book-mini-l { font-size: 10.5px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: .3px; }
+.acc-book-mini-v { font-size: 13px; font-weight: 800; margin-top: 2px; font-variant-numeric: tabular-nums; }
+.acc-book-mini-v.in  { color: #16A34A; }
+.acc-book-mini-v.out { color: #DC2626; }
+.acc-book-card-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border-light);
+}
+.acc-book-card-foot-r {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.acc-book-card-meta { font-size: 11px; color: var(--text-muted); display: inline-flex; align-items: center; gap: 5px; }
+.acc-book-card-meta i { font-size: 10px; color: #7C3AED; }
+.acc-book-cashtag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: rgba(8,145,178,.10);
+  color: #0E7490;
+  border: 1px solid rgba(8,145,178,.25);
+  font-size: 10.5px;
+  font-weight: 800;
+}
+/* Per-card download trigger (lives inside the outer <button>, so we
+   render it as a role="button" <span> to avoid nested <button>s). */
+.acc-book-card-dl {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: rgba(124,58,237,.10);
+  color: #6D28D9;
+  border: 1px solid rgba(124,58,237,.22);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all .2s ease;
+}
+.acc-book-card-dl:hover,
+.acc-book-card-dl:focus-visible {
+  background: linear-gradient(135deg, #7C3AED, #6D28D9);
+  color: #fff;
+  border-color: transparent;
+  transform: translateY(-1px);
+  outline: none;
+  box-shadow: 0 6px 14px rgba(124,58,237,.30);
+}
+
+/* Topbar Ledger Report button — purple gradient to match the module */
+.acc-btn-download.fee-btn-primary {
+  background: linear-gradient(135deg, #7C3AED, #6D28D9);
+  box-shadow: 0 2px 8px rgba(124,58,237,.32);
+}
+.acc-btn-download.fee-btn-primary:hover {
+  box-shadow: 0 6px 16px rgba(124,58,237,.45);
+}
+
+[data-theme="dark"] .acc-book-card-dl {
+  background: rgba(124,58,237,.16);
+  border-color: rgba(124,58,237,.35);
+  color: #C4B5FD;
+}
+[data-theme="dark"] .acc-book-card-dl:hover {
+  background: linear-gradient(135deg, #8B5CF6, #7C3AED);
+  color: #fff;
+}
+
+/* Detail topbar */
+.acc-book-topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 12px 16px;
+  border: 1.5px solid var(--border-light);
+  border-radius: 14px;
+  background: var(--bg-card);
+  margin-bottom: 14px;
+  box-shadow: var(--shadow-sm);
+}
+.acc-book-topbar-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--text-primary);
+  letter-spacing: -.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.acc-book-topbar-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.acc-btn-danger { color: #DC2626; border-color: rgba(220,38,38,.3) !important; }
+.acc-btn-danger:hover { background: rgba(220,38,38,.06); color: #B91C1C; }
+
+/* Detail summary cards */
+.acc-book-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.acc-bsum {
+  border: 1.5px solid var(--border-light);
+  border-radius: 14px;
+  background: var(--bg-card);
+  padding: 13px 16px;
+  box-shadow: 0 1px 2px rgba(15,23,42,.04);
+  position: relative;
+  overflow: hidden;
+}
+.acc-bsum::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 4px;
+}
+.acc-bsum.b-opening::before { background: linear-gradient(180deg, #2563EB, #1E40AF); }
+.acc-bsum.b-balance::before { background: linear-gradient(180deg, #7C3AED, #6D28D9); }
+.acc-bsum.b-in::before      { background: linear-gradient(180deg, #16A34A, #15803D); }
+.acc-bsum.b-out::before     { background: linear-gradient(180deg, #DC2626, #B91C1C); }
+.acc-bsum.b-cash::before    { background: linear-gradient(180deg, #0891B2, #0E7490); }
+.acc-bsum.b-date::before    { background: linear-gradient(180deg, #D97706, #B45309); }
+.acc-bsum-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.acc-bsum-lbl {
+  font-size: 10.5px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .3px;
+  color: var(--text-muted);
+}
+.acc-bsum-ic { color: #7C3AED; font-size: 13px; }
+.acc-bsum.b-balance .acc-bsum-ic { color: #7C3AED; }
+.acc-bsum.b-in .acc-bsum-ic      { color: #16A34A; }
+.acc-bsum.b-out .acc-bsum-ic     { color: #DC2626; }
+.acc-bsum.b-opening .acc-bsum-ic { color: #1E40AF; }
+.acc-bsum.b-cash .acc-bsum-ic    { color: #0E7490; }
+.acc-bsum.b-date .acc-bsum-ic    { color: #B45309; }
+.acc-bsum-val {
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--text-primary);
+  margin-top: 8px;
+  letter-spacing: -.02em;
+  font-variant-numeric: tabular-nums;
+}
+.acc-bsum-val.sm { font-size: 14px; }
+.acc-bsum-meta { font-size: 10.5px; color: var(--text-muted); margin-top: 2px; }
+
+/* Cash strip */
+.acc-cash-strip {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 13px 18px;
+  border-radius: 14px;
+  margin-bottom: 16px;
+  border: 1.5px solid var(--border-light);
+}
+.acc-cash-strip.on  { background: linear-gradient(135deg, rgba(8,145,178,.07), transparent); border-color: rgba(8,145,178,.25); }
+.acc-cash-strip.off { background: var(--bg-card); }
+.acc-cash-strip-ic {
+  width: 38px; height: 38px;
+  border-radius: 11px;
+  background: linear-gradient(135deg, #0891B2, #0E7490);
+  color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 15px;
+  flex-shrink: 0;
+}
+.acc-cash-strip.off .acc-cash-strip-ic { background: var(--bg-muted); color: var(--text-muted); }
+.acc-cash-strip-txt { flex: 1; min-width: 0; }
+.acc-cash-strip-t { font-size: 13.5px; font-weight: 800; color: var(--text-primary); }
+.acc-cash-strip-d { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+
+/* Ledger toolbar */
+.acc-ledger-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.acc-ledger-toolbar-l {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  flex: 1;
+  min-width: 0;
+}
+
+/* Transaction Ledger — timeline-style (matches HTML reference exactly) */
+.acc-ledger {
+  display: flex;
+  flex-direction: column;
+  padding: 8px 0;
+}
+.acc-ledger-item {
+  position: relative;
+  padding: 0 18px 0 64px;
+}
+.acc-ledger-item::before {
+  content: '';
+  position: absolute;
+  left: 31px;
+  top: 0; bottom: 0;
+  width: 2px;
+  background: var(--border-light);
+}
+.acc-ledger-item:first-child::before { top: 22px; }
+.acc-ledger-item:last-child::before  { bottom: auto; height: 22px; }
+
+.acc-ledger-dot {
+  position: absolute;
+  left: 21px;
+  top: 18px;
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 9px;
+  color: #fff;
+  z-index: 1;
+  box-shadow: 0 0 0 4px var(--bg-card);
+}
+.acc-ledger-dot.received   { background: #16A34A; }
+.acc-ledger-dot.returned   { background: #DC2626; }
+.acc-ledger-dot.adjustment { background: #2563EB; }
+
+.acc-ledger-card {
+  margin: 8px 0;
+  border: 1.5px solid var(--border-light);
+  border-radius: 12px;
+  background: var(--bg-card);
+  transition: all .2s ease;
+  overflow: hidden;
+}
+.acc-ledger-card:hover {
+  border-color: var(--border-med);
+  box-shadow: 0 1px 2px rgba(15,23,42,.04);
+}
+.acc-ledger-card.open {
+  border-color: #1E3A8A;
+  box-shadow: 0 8px 24px rgba(30,58,138,.12);
+}
+.acc-ledger-main {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 13px 16px;
+  cursor: pointer;
+}
+
+.acc-ledger-typetag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: .3px;
+  text-transform: uppercase;
+  padding: 3px 9px;
+  border-radius: 999px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.acc-ledger-typetag.received   { background: rgba(22,163,74,.1);  color: #16A34A; border: 1px solid rgba(22,163,74,.22); }
+.acc-ledger-typetag.returned   { background: rgba(220,38,38,.08); color: #DC2626; border: 1px solid rgba(220,38,38,.2); }
+.acc-ledger-typetag.adjustment { background: rgba(37,99,235,.1);  color: #2563EB; border: 1px solid rgba(37,99,235,.22); }
+
+.acc-ledger-info { flex: 1; min-width: 0; }
+.acc-ledger-notes {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+.acc-ledger-sub {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 3px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 13px;
+}
+.acc-ledger-sub span { display: inline-flex; align-items: center; gap: 5px; }
+.acc-ledger-sub i    { font-size: 10px; color: #2563EB; opacity: .85; }
+
+.acc-ledger-amt { text-align: right; white-space: nowrap; flex-shrink: 0; }
+.acc-ledger-amt-v {
+  font-size: 15.5px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.acc-ledger-amt-v.received   { color: #16A34A; }
+.acc-ledger-amt-v.returned   { color: #DC2626; }
+.acc-ledger-amt-v.adjustment { color: #2563EB; }
+.acc-ledger-amt-bal {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  margin-top: 3px;
+}
+
+.acc-ledger-chev {
+  width: 26px; height: 26px;
+  border-radius: 7px;
+  border: 1.5px solid var(--border-light);
+  background: var(--bg-card);
+  color: var(--text-muted);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 10px;
+  transition: all .2s ease;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.acc-ledger-chev:hover { color: #1E3A8A; border-color: #1E3A8A; }
+.acc-ledger-card.open .acc-ledger-chev {
+  transform: rotate(180deg);
+  border-color: #1E3A8A;
+  color: #1E3A8A;
+  background: var(--bg-muted);
+}
+
+.acc-ledger-expand {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height .35s cubic-bezier(.4,0,.2,1);
+  background: var(--bg-muted);
+}
+.acc-ledger-card.open .acc-ledger-expand { max-height: 600px; }
+.acc-ledger-expand-in {
+  padding: 14px 16px;
+  border-top: 1px solid var(--border-light);
+}
+.acc-ledger-kv {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 16px;
+  font-size: 12px;
+  margin-bottom: 12px;
+}
+.acc-ledger-kv .k { color: var(--text-muted); font-weight: 600; }
+.acc-ledger-kv .v { color: var(--text-primary); font-weight: 700; }
+.acc-ledger-attachhead {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .4px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 9px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.acc-ledger-attachhead i { color: #2563EB; }
+.acc-attach-thumbs { display: flex; flex-wrap: wrap; gap: 9px; }
+.acc-attach-thumb {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 11px;
+  border: 1.5px solid var(--border-light);
+  border-radius: 10px;
+  background: var(--bg-card);
+  cursor: pointer;
+  transition: all .2s ease;
+}
+.acc-attach-thumb:hover { border-color: #1E3A8A; box-shadow: 0 1px 2px rgba(15,23,42,.04); }
+.acc-attach-thumb-ic {
+  width: 34px; height: 34px;
+  border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 14px;
+  color: #fff;
+  flex-shrink: 0;
+}
+.acc-attach-thumb-ic.img { background: linear-gradient(135deg, #16A34A, #15803D); }
+.acc-attach-thumb-ic.pdf { background: linear-gradient(135deg, #DC2626, #B91C1C); }
+.acc-attach-thumb-nm {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-primary);
+  max-width: 160px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.acc-attach-thumb-sz { font-size: 10.5px; color: var(--text-muted); }
+
+/* Attachment uploader (Book Txn modal) */
+.acc-attach-zone {
+  border: 2px dashed var(--border-med);
+  border-radius: 12px;
+  padding: 22px 18px;
+  text-align: center;
+  cursor: pointer;
+  transition: all .2s ease;
+  margin-top: 18px;
+  background: var(--bg-muted);
+  font-family: var(--font-body);
+}
+.acc-attach-zone:hover,
+.acc-attach-zone:focus-visible {
+  border-color: #7C3AED;
+  background: rgba(124,58,237,.04);
+  outline: none;
+}
+.acc-attach-zone.drag {
+  border-color: #7C3AED;
+  background: rgba(124,58,237,.08);
+  transform: scale(1.005);
+}
+.acc-attach-zone > i {
+  font-size: 26px;
+  color: #7C3AED;
+  margin-bottom: 9px;
+  display: block;
+}
+.acc-attach-zone-t {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+.acc-attach-zone-s {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin-top: 3px;
+}
+
+.acc-attach-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
+}
+.acc-attach-chip {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 12px;
+  border: 1.5px solid var(--border-light);
+  border-radius: 10px;
+  background: var(--bg-card);
+  max-width: 280px;
+  transition: all .2s ease;
+}
+.acc-attach-chip:hover { border-color: #7C3AED; box-shadow: 0 4px 12px rgba(124,58,237,.10); }
+.acc-attach-chip-ic {
+  width: 30px; height: 30px;
+  border-radius: 7px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px;
+  color: #fff;
+  flex-shrink: 0;
+}
+.acc-attach-chip-ic.img { background: linear-gradient(135deg, #16A34A, #15803D); }
+.acc-attach-chip-ic.pdf { background: linear-gradient(135deg, #DC2626, #B91C1C); }
+.acc-attach-chip-nm {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.acc-attach-chip-sz {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  margin-top: 1px;
+}
+.acc-attach-chip-x {
+  width: 22px; height: 22px;
+  border-radius: 6px;
+  border: none;
+  background: rgba(220,38,38,.10);
+  color: #DC2626;
+  cursor: pointer;
+  font-size: 10px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all .15s ease;
+}
+.acc-attach-chip-x:hover { background: rgba(220,38,38,.22); }
+
+[data-theme="dark"] .acc-attach-zone {
+  background: var(--bg-muted);
+  border-color: var(--border-med);
+}
+[data-theme="dark"] .acc-attach-zone:hover,
+[data-theme="dark"] .acc-attach-zone.drag {
+  border-color: #A78BFA;
+  background: rgba(124,58,237,.10);
+}
+[data-theme="dark"] .acc-attach-zone > i { color: #C4B5FD; }
+[data-theme="dark"] .acc-attach-zone-t { color: var(--text-primary); }
+[data-theme="dark"] .acc-attach-zone-s { color: var(--text-muted); }
+[data-theme="dark"] .acc-attach-chip {
+  background: var(--bg-card);
+  border-color: var(--border-light);
+}
+[data-theme="dark"] .acc-attach-chip:hover { border-color: #A78BFA; }
+[data-theme="dark"] .acc-attach-chip-nm { color: var(--text-primary); }
+[data-theme="dark"] .acc-attach-chip-sz { color: var(--text-muted); }
+
+.acc-ledger-actions-row {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 13px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border-light);
+}
+.acc-ledger-del { color: #DC2626; }
+.acc-ledger-del:hover { background: rgba(220,38,38,.06); color: #B91C1C; border-color: rgba(220,38,38,.3) !important; }
+
+.acc-ledger-empty {
+  padding: 38px 20px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+  background: var(--bg-card);
+  border: 1.5px dashed var(--border-light);
+  border-radius: 12px;
+  margin: 8px 18px;
+}
+.acc-ledger-empty i { font-size: 28px; color: var(--border-med); display: block; margin-bottom: 10px; }
+
+/* Cash-in-hand toggle in modal */
+.acc-cash-toggle {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  margin-top: 16px;
+  border: 1.5px solid var(--border-light);
+  border-radius: 12px;
+  background: var(--bg-muted);
+  cursor: pointer;
+  transition: all .2s ease;
+  text-align: left;
+  width: 100%;
+  font-family: var(--font-body);
+}
+.acc-cash-toggle:hover { border-color: #7C3AED; }
+.acc-cash-toggle-sw {
+  width: 46px; height: 26px;
+  border-radius: 999px;
+  background: var(--border-light);
+  position: relative;
+  transition: background .25s ease;
+  flex-shrink: 0;
+}
+.acc-cash-toggle-sw > span {
+  position: absolute;
+  top: 3px; left: 3px;
+  width: 20px; height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform .25s ease;
+  box-shadow: 0 2px 4px rgba(0,0,0,.15);
+}
+.acc-cash-toggle-sw.on { background: linear-gradient(135deg, #0891B2, #0E7490); }
+.acc-cash-toggle-sw.on > span { transform: translateX(20px); }
+.acc-cash-toggle-text { flex: 1; min-width: 0; }
+.acc-cash-toggle-title { font-size: 13px; font-weight: 800; color: var(--text-primary); display: flex; align-items: center; gap: 7px; }
+.acc-cash-toggle-title i { color: #0E7490; }
+.acc-cash-toggle-desc { font-size: 11.5px; color: var(--text-muted); margin-top: 3px; line-height: 1.55; }
+
+/* Book Txn type segment */
+.acc-txntype-seg {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+.acc-txntype {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1.5px solid var(--border-light);
+  border-radius: 12px;
+  background: var(--bg-card);
+  cursor: pointer;
+  text-align: left;
+  font-family: var(--font-body);
+  transition: all .2s ease;
+}
+.acc-txntype:hover { border-color: var(--border-med); transform: translateY(-2px); box-shadow: 0 6px 16px rgba(15,23,42,.08); }
+.acc-txntype.active { border-color: #7C3AED; box-shadow: 0 0 0 3px rgba(124,58,237,.12); background: linear-gradient(135deg, rgba(124,58,237,.05), transparent); }
+.acc-txntype > i {
+  width: 38px; height: 38px;
+  border-radius: 10px;
+  background: var(--bg-muted);
+  color: var(--text-muted);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+.acc-txntype:nth-child(1).active > i { background: rgba(22,163,74,.14); color: #16A34A; }
+.acc-txntype:nth-child(2).active > i { background: rgba(220,38,38,.10); color: #DC2626; }
+.acc-txntype:nth-child(3).active > i { background: rgba(217,119,6,.12); color: #B45309; }
+.acc-txntype > span { display: flex; flex-direction: column; min-width: 0; }
+.acc-txntype b { font-size: 13px; font-weight: 800; color: var(--text-primary); }
+.acc-txntype small { font-size: 11px; color: var(--text-muted); margin-top: 2px; line-height: 1.5; }
+
+/* Running balance preview inside Txn modal */
+.acc-book-runpreview {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(124,58,237,.05), transparent);
+  border: 1px solid rgba(124,58,237,.22);
+}
+.acc-book-runpreview-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12.5px;
+  padding: 3px 0;
+}
+.acc-book-runpreview-row span { color: var(--text-muted); font-weight: 700; }
+.acc-book-runpreview-row b { font-weight: 800; font-variant-numeric: tabular-nums; }
+.acc-book-runpreview-row b.in  { color: #16A34A; }
+.acc-book-runpreview-row b.out { color: #DC2626; }
+.acc-book-runpreview-row b.adj { color: #B45309; }
+.acc-book-runpreview-row.total {
+  padding-top: 8px;
+  margin-top: 4px;
+  border-top: 1px dashed rgba(124,58,237,.3);
+  font-size: 14px;
+}
+.acc-book-runpreview-row.total b { color: #6D28D9; font-size: 16px; }
+
+/* Books help modal steps */
+.acc-help-steps { display: flex; flex-direction: column; gap: 12px; margin-top: 6px; }
+.acc-help-step { display: flex; gap: 12px; padding: 12px 14px; border: 1.5px solid var(--border-light); border-radius: 12px; background: var(--bg-card); }
+.acc-help-step-no {
+  width: 30px; height: 30px;
+  border-radius: 9px;
+  background: linear-gradient(135deg, #7C3AED, #6D28D9);
+  color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 800;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+.acc-help-step b { font-size: 13.5px; font-weight: 800; color: var(--text-primary); display: block; }
+.acc-help-step > div:last-child > div { font-size: 12px; color: var(--text-muted); margin-top: 3px; line-height: 1.55; }
+
+/* Dark mode */
+[data-theme="dark"] .acc-books-explainer { background: linear-gradient(135deg, rgba(124,58,237,.10), rgba(109,40,217,.05) 55%, transparent); }
+[data-theme="dark"] .acc-book-card,
+[data-theme="dark"] .acc-bsum,
+[data-theme="dark"] .acc-book-topbar,
+[data-theme="dark"] .acc-cash-strip.off,
+[data-theme="dark"] .acc-ledger-card,
+[data-theme="dark"] .acc-attach-thumb,
+[data-theme="dark"] .acc-help-step,
+[data-theme="dark"] .acc-txntype {
+  background: var(--bg-card);
+  border-color: var(--border-light);
+}
+[data-theme="dark"] .acc-book-card-name,
+[data-theme="dark"] .acc-book-bal-val,
+[data-theme="dark"] .acc-book-topbar-title,
+[data-theme="dark"] .acc-bsum-val,
+[data-theme="dark"] .acc-cash-strip-t,
+[data-theme="dark"] .acc-ledger-notes,
+[data-theme="dark"] .acc-ledger-kv .v,
+[data-theme="dark"] .acc-attach-thumb-nm,
+[data-theme="dark"] .acc-txntype b,
+[data-theme="dark"] .acc-help-step b { color: var(--text-primary); }
+[data-theme="dark"] .acc-book-card-party,
+[data-theme="dark"] .acc-book-card-meta,
+[data-theme="dark"] .acc-book-mini-l,
+[data-theme="dark"] .acc-bsum-lbl,
+[data-theme="dark"] .acc-bsum-meta,
+[data-theme="dark"] .acc-cash-strip-d,
+[data-theme="dark"] .acc-ledger-sub,
+[data-theme="dark"] .acc-ledger-amt-bal,
+[data-theme="dark"] .acc-ledger-kv .k,
+[data-theme="dark"] .acc-ledger-attachhead,
+[data-theme="dark"] .acc-attach-thumb-sz,
+[data-theme="dark"] .acc-txntype small,
+[data-theme="dark"] .acc-cash-toggle-desc { color: var(--text-muted); }
+[data-theme="dark"] .acc-book-mini { background: var(--bg-muted); }
+[data-theme="dark"] .acc-cash-strip.on { background: linear-gradient(135deg, rgba(8,145,178,.10), transparent); border-color: rgba(8,145,178,.32); }
+[data-theme="dark"] .acc-ledger-item::before { background: var(--border-light); }
+[data-theme="dark"] .acc-ledger-dot { box-shadow: 0 0 0 4px var(--bg-card); }
+[data-theme="dark"] .acc-ledger-card:hover { border-color: var(--border-med); }
+[data-theme="dark"] .acc-ledger-card.open { border-color: #3B82F6; box-shadow: 0 8px 24px rgba(59,130,246,.18); }
+[data-theme="dark"] .acc-ledger-expand { background: var(--bg-muted); }
+[data-theme="dark"] .acc-ledger-expand-in { border-top-color: var(--border-light); }
+[data-theme="dark"] .acc-ledger-chev { background: var(--bg-card); border-color: var(--border-light); color: var(--text-muted); }
+[data-theme="dark"] .acc-ledger-chev:hover,
+[data-theme="dark"] .acc-ledger-card.open .acc-ledger-chev { color: #93C5FD; border-color: #3B82F6; background: var(--bg-muted); }
+[data-theme="dark"] .acc-attach-thumb:hover { border-color: #3B82F6; }
+[data-theme="dark"] .acc-cash-toggle { background: var(--bg-muted); border-color: var(--border-light); }
+[data-theme="dark"] .acc-cash-toggle:hover { border-color: #A78BFA; }
+[data-theme="dark"] .acc-book-card:hover { border-color: #A78BFA; box-shadow: 0 14px 30px rgba(124,58,237,.28); }
+[data-theme="dark"] .acc-info-purple { background: rgba(124,58,237,.12); border-color: rgba(124,58,237,.32); color: var(--text-secondary); }
+[data-theme="dark"] .acc-info-purple i { color: #C4B5FD; }
+[data-theme="dark"] .acc-link-btn { background: rgba(124,58,237,.16); border-color: rgba(124,58,237,.4); color: #C4B5FD; }
+[data-theme="dark"] .acc-link-btn:hover { background: #8B5CF6; color: #fff; }
+[data-theme="dark"] .acc-books-tagchip { background: rgba(124,58,237,.18); border-color: rgba(124,58,237,.35); color: #C4B5FD; }
+[data-theme="dark"] .acc-txntype.active { border-color: #A78BFA; box-shadow: 0 0 0 3px rgba(124,58,237,.20); }
+[data-theme="dark"] .acc-book-runpreview { background: linear-gradient(135deg, rgba(124,58,237,.10), transparent); border-color: rgba(124,58,237,.32); }
+[data-theme="dark"] .acc-book-runpreview-row b.total,
+[data-theme="dark"] .acc-book-runpreview-row.total b { color: #C4B5FD; }
+[data-theme="dark"] .acc-ledger-empty { background: var(--bg-card); border-color: var(--border-light); color: var(--text-muted); }
+
+/* ═══════════════════════════════════════════════════════════════════
+   REPORTS — type chips, sub-types, hint banner, report tags,
+   CIH layout, overview panels with mini-bars.
+   ═══════════════════════════════════════════════════════════════════ */
+
+.acc-rep-types {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+  margin-bottom: 16px;
+}
+.acc-rep-type {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border: 1.5px solid var(--border-light);
+  border-radius: 10px;
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-family: var(--font-body);
+  font-weight: 700;
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: all .2s ease;
+}
+.acc-rep-type:hover {
+  transform: translateY(-2px);
+  border-color: var(--border-med);
+  box-shadow: 0 6px 16px rgba(15,23,42,.08);
+}
+.acc-rep-type i {
+  font-size: 12px;
+  color: var(--text-muted);
+  transition: all .2s ease;
+}
+.acc-rep-type.active {
+  background: linear-gradient(135deg, #1E3A8A, #1E40AF);
+  color: #fff;
+  border-color: transparent;
+  box-shadow: 0 6px 18px rgba(30,58,138,.32);
+}
+.acc-rep-type.active i { color: #fff; }
+
+/* P/L sub-type toggle */
+.acc-rep-subtypes {
+  display: inline-flex;
+  background: var(--bg-muted);
+  border: 1.5px solid var(--border-light);
+  border-radius: 10px;
+  padding: 4px;
+  gap: 3px;
+  align-self: flex-end;
+}
+.acc-rep-subtype {
+  padding: 8px 14px;
+  border: none;
+  background: transparent;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all .15s ease;
+  white-space: nowrap;
+  font-family: var(--font-body);
+}
+.acc-rep-subtype:hover:not(.active) { color: var(--text-primary); }
+.acc-rep-subtype.active {
+  background: linear-gradient(135deg, #1E3A8A, #1E40AF);
+  color: #fff;
+  box-shadow: 0 2px 6px rgba(30,58,138,.3);
+}
+
+/* Hint line below filters */
+.acc-rep-hint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 9px 14px;
+  border-radius: 10px;
+  background: rgba(30,58,138,.04);
+  border: 1px solid rgba(30,58,138,.16);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.acc-rep-hint i { color: #1E3A8A; font-size: 13px; }
+.acc-rep-hint strong { color: var(--text-primary); }
+
+/* Tags + audit cells inside report tables */
+.acc-rep-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+  letter-spacing: .2px;
+}
+.acc-rep-tag.rev  { background: rgba(22,163,74,.10); color: #16A34A; border: 1px solid rgba(22,163,74,.25); }
+.acc-rep-tag.exp  { background: rgba(220,38,38,.08); color: #DC2626; border: 1px solid rgba(220,38,38,.22); }
+.acc-rep-tag.loan { background: rgba(124,58,237,.10); color: #6D28D9; border: 1px solid rgba(124,58,237,.25); }
+.acc-rep-tag i { font-size: 9.5px; }
+.acc-rep-subno  { font-size: 10.5px; color: var(--text-muted); font-weight: 600; margin-top: 2px; }
+.acc-rep-user   { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--text-secondary); font-weight: 700; white-space: nowrap; }
+.acc-rep-user i { color: #2563EB; font-size: 10px; }
+.acc-rep-user.upd   { color: #D97706; }
+.acc-rep-user.upd i { color: #D97706; }
+.acc-rep-stamp { font-size: 11px; color: var(--text-muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.acc-rep-dash  { color: var(--text-muted); opacity: .6; }
+
+/* P/L profit / loss cells */
+.acc-pl-profit { color: #16A34A; font-weight: 800; }
+.acc-pl-loss   { color: #DC2626; font-weight: 800; }
+
+/* Cash In Hand layout */
+.acc-cih {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--bg-card);
+  border: 1.5px solid var(--border-light);
+  border-radius: 16px;
+  padding: 16px;
+  box-shadow: 0 1px 2px rgba(15,23,42,.04);
+}
+.acc-cih-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--bg-muted);
+  border: 1px solid var(--border-light);
+  transition: all .2s ease;
+}
+.acc-cih-row:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(15,23,42,.06); }
+.acc-cih-row-l { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.acc-cih-row-ic {
+  width: 38px; height: 38px;
+  border-radius: 11px;
+  color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 15px;
+  flex-shrink: 0;
+}
+.acc-cih-row-nm {
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--text-primary);
+  letter-spacing: -.01em;
+}
+.acc-cih-row-sub {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-weight: 600;
+  margin-top: 2px;
+}
+.acc-cih-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: rgba(22,163,74,.12);
+  color: #15803D;
+  border: 1px solid rgba(22,163,74,.28);
+  font-size: 13px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.acc-cih-pill.neg {
+  background: rgba(220,38,38,.10);
+  color: #B91C1C;
+  border-color: rgba(220,38,38,.28);
+}
+.acc-cih-pill.lg {
+  padding: 9px 18px;
+  font-size: 16px;
+}
+.acc-cih-pill i { font-size: 10px; }
+.acc-cih-total {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px 18px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(30,58,138,.06), rgba(37,99,235,.03));
+  border: 1.5px solid rgba(30,58,138,.18);
+  margin-top: 4px;
+}
+.acc-cih-total-lbl {
+  font-size: 13.5px;
+  font-weight: 800;
+  color: var(--text-primary);
+  letter-spacing: -.01em;
+}
+
+/* Financial Overview dashboard */
+.acc-ov-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  gap: 14px;
+}
+.acc-ov-panel {
+  background: var(--bg-card);
+  border: 1.5px solid var(--border-light);
+  border-radius: 16px;
+  padding: 16px 18px;
+  box-shadow: 0 1px 2px rgba(15,23,42,.04);
+}
+.acc-ov-panel-h {
+  font-size: 12.5px;
+  font-weight: 800;
+  letter-spacing: .3px;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  margin-bottom: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 10px;
+  border-bottom: 1px dashed var(--border-light);
+}
+.acc-ov-panel-h i { color: #1E3A8A; }
+.acc-ov-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.acc-ov-bar-row {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.acc-ov-bar-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+}
+.acc-ov-bar-top .l {
+  color: var(--text-primary);
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 70%;
+}
+.acc-ov-bar-top .v {
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.acc-ov-bar-pair {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.acc-ov-bar-single { display: flex; }
+.acc-ov-bar {
+  height: 10px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 6px;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: .3px;
+  min-width: 18px;
+}
+.acc-ov-bar.rev,
+.acc-ov-bar.receivable { background: linear-gradient(90deg, #16A34A, #22C55E); }
+.acc-ov-bar.exp,
+.acc-ov-bar.payable    { background: linear-gradient(90deg, #DC2626, #EF4444); }
+.acc-ov-callout {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: rgba(8,145,178,.07);
+  border: 1px solid rgba(8,145,178,.25);
+}
+.acc-ov-callout-ic {
+  width: 32px; height: 32px;
+  border-radius: 9px;
+  background: linear-gradient(135deg, #0891B2, #0E7490);
+  color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+.acc-ov-callout-t {
+  font-size: 12.5px;
+  font-weight: 800;
+  color: var(--text-primary);
+}
+.acc-ov-callout-d {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  line-height: 1.55;
+}
+
+/* Dark mode */
+[data-theme="dark"] .acc-rep-type {
+  background: var(--bg-card);
+  border-color: var(--border-light);
+  color: var(--text-muted);
+}
+[data-theme="dark"] .acc-rep-type i { color: var(--text-muted); }
+[data-theme="dark"] .acc-rep-type.active {
+  background: linear-gradient(135deg, #1E3A8A, #2563EB);
+  color: #fff;
+}
+[data-theme="dark"] .acc-rep-type.active i { color: #fff; }
+[data-theme="dark"] .acc-rep-subtypes { background: var(--bg-muted); border-color: var(--border-light); }
+[data-theme="dark"] .acc-rep-subtype { color: var(--text-muted); }
+[data-theme="dark"] .acc-rep-hint {
+  background: rgba(59,130,246,.08);
+  border-color: rgba(59,130,246,.22);
+  color: var(--text-secondary);
+}
+[data-theme="dark"] .acc-rep-hint i { color: #93C5FD; }
+[data-theme="dark"] .acc-rep-hint strong { color: var(--text-primary); }
+[data-theme="dark"] .acc-rep-stamp,
+[data-theme="dark"] .acc-rep-subno,
+[data-theme="dark"] .acc-rep-dash { color: var(--text-muted); }
+[data-theme="dark"] .acc-rep-user { color: var(--text-secondary); }
+[data-theme="dark"] .acc-rep-user i { color: #93C5FD; }
+[data-theme="dark"] .acc-cih,
+[data-theme="dark"] .acc-ov-panel {
+  background: var(--bg-card);
+  border-color: var(--border-light);
+}
+[data-theme="dark"] .acc-cih-row { background: var(--bg-muted); border-color: var(--border-light); }
+[data-theme="dark"] .acc-cih-row-nm,
+[data-theme="dark"] .acc-cih-total-lbl,
+[data-theme="dark"] .acc-ov-panel-h,
+[data-theme="dark"] .acc-ov-bar-top .l,
+[data-theme="dark"] .acc-ov-bar-top .v,
+[data-theme="dark"] .acc-ov-callout-t { color: var(--text-primary); }
+[data-theme="dark"] .acc-cih-row-sub,
+[data-theme="dark"] .acc-ov-callout-d { color: var(--text-muted); }
+[data-theme="dark"] .acc-cih-pill { background: rgba(22,163,74,.18); color: #86EFAC; border-color: rgba(22,163,74,.32); }
+[data-theme="dark"] .acc-cih-pill.neg { background: rgba(220,38,38,.18); color: #FCA5A5; border-color: rgba(220,38,38,.32); }
+[data-theme="dark"] .acc-cih-total {
+  background: linear-gradient(135deg, rgba(59,130,246,.10), rgba(37,99,235,.04));
+  border-color: rgba(59,130,246,.32);
+}
+[data-theme="dark"] .acc-ov-callout {
+  background: rgba(8,145,178,.12);
+  border-color: rgba(8,145,178,.32);
+}
+[data-theme="dark"] .acc-pl-profit { color: #86EFAC; }
+[data-theme="dark"] .acc-pl-loss { color: #FCA5A5; }
+
+/* Compact Colorful/Colorless segmented toggle (reused from Inventory pattern) */
+.inv-rep-style-seg {
+  display: inline-flex;
+  background: var(--bg-muted);
+  border: 1px solid var(--border-light);
+  border-radius: 10px;
+  padding: 3px;
+  gap: 3px;
+}
+.inv-rep-style-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 7px 12px;
+  border: none;
+  background: transparent;
+  border-radius: 7px;
+  cursor: pointer;
+  font-family: var(--font-body);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  transition: all .18s ease;
+}
+.inv-rep-style-btn i { font-size: 10px; }
+.inv-rep-style-btn:hover { color: var(--brand-primary, #1E40AF); }
+.inv-rep-style-btn.on {
+  background: var(--bg-card);
+  color: var(--brand-primary, #1E40AF);
+  box-shadow: 0 1px 3px rgba(15,23,42,.10);
+}
+.inv-rep-style-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(30,64,175,.22);
+}
+[data-theme="dark"] .inv-rep-style-seg { background: var(--bg-muted); border-color: var(--border-light); }
+[data-theme="dark"] .inv-rep-style-btn.on { background: var(--bg-card); color: #93C5FD; }
+[data-theme="dark"] .inv-rep-style-btn:focus-visible { box-shadow: 0 0 0 3px rgba(59,130,246,.32); }
+
+/* ═══════════════════════════════════════════════════════════════════
+   MOBILE RESPONSIVE — internal screen layouts (≤ 600px)
+   COA, Transactions (day book), Books, Reports tabs.
+   ═══════════════════════════════════════════════════════════════════ */
+@media (max-width: 600px) {
+  /* Page header — stack vertically */
+  .page-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    padding: 12px 14px;
+  }
+  .page-header .page-title { font-size: 17px; line-height: 1.2; }
+  .page-header .page-sub   { font-size: 11.5px; line-height: 1.35; }
+  .page-tutorial-btn { align-self: flex-start; }
+
+  /* Accounts sub-tabs (COA / Transactions / Books / Reports) — horizontal scroll */
+  .fee-subtabs {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    padding: 4px;
+    gap: 4px;
+    border-radius: 12px;
+  }
+  .fee-subtabs::-webkit-scrollbar { display: none; }
+  .fee-subtab {
+    flex: 0 0 auto;
+    white-space: nowrap;
+    padding: 10px 14px;
+    font-size: 12.5px;
+    border-radius: 10px;
+  }
+
+  /* Overview banner — stack icon/text + stats column */
+  .acc-overview {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 14px;
+    padding: 14px;
+    border-radius: 14px;
+  }
+  .acc-overview-main { gap: 12px; }
+  .acc-overview-icon { width: 44px; height: 44px; font-size: 18px; border-radius: 12px; }
+  .acc-overview-title { font-size: 15px; }
+  .acc-overview-sub { font-size: 11.5px; }
+  .acc-overview-stats { flex-wrap: wrap; gap: 8px; }
+  .acc-ov-stat { flex: 1 1 calc(50% - 4px); min-width: 0; padding: 9px 11px; }
+  .acc-ov-stat-val { font-size: 18px; }
+
+  /* Section cards — reduce padding */
+  .fee-section { border-radius: 12px; margin-bottom: 12px; }
+  .fee-section-body { padding: 14px; }
+  .fee-section-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    padding: 12px 14px;
+  }
+  .acc-sec-actions { width: 100%; flex-wrap: wrap; gap: 8px; }
+  .acc-sec-actions > * { flex: 1 1 auto; min-width: 0; }
+
+  /* Filter / toolbar rows — stack and full-width children */
+  .fee-filters {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+  .fee-filters .fee-field,
+  .fee-filters > * { width: 100%; min-width: 0; flex: 1 1 auto; }
+  .fee-filters .fee-btn { width: 100%; justify-content: center; }
+  .fee-select, .fee-search-box { width: 100%; }
+
+  /* ─── Transactions table → compact mobile card list ───
+     Converts the desktop <table> (7 cols, min-width 880px) into a flex-wrap
+     2-line card per row. Drops horizontal scroll on the wrapper. */
+  .acc-txn-tablewrap {
+    overflow-x: visible !important;
+    border-radius: 12px;
+    background: transparent !important;
+  }
+  .acc-txn-table {
+    min-width: 0 !important;
+    width: 100% !important;
+    display: block !important;
+    border-collapse: separate !important;
+    font-size: 12.5px !important;
+  }
+  .acc-txn-table thead { display: none !important; }
+  .acc-txn-table tbody { display: block !important; }
+
+  /* Each row → flex card; uses transparent border so rows still visually separate */
+  .acc-txn-table tbody tr.acc-txn-tr {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    align-items: center !important;
+    column-gap: 8px !important;
+    row-gap: 6px !important;
+    padding: 10px 12px !important;
+    border-bottom: 1px solid var(--border-light) !important;
+  }
+  .acc-txn-table tbody tr.acc-txn-tr td {
+    display: block !important;
+    padding: 0 !important;
+    border: none !important;
+    background: transparent !important;
+    vertical-align: baseline !important;
+  }
+  /* Even-row tint moved to the <tr> itself since <td> bg is cleared */
+  .acc-txn-table tbody tr.acc-txn-tr:nth-child(even) { background: rgba(30,58,138,.045); }
+
+  /* Row 1: chev · HeadNo · HeadName ......... Amount */
+  .acc-txn-table tbody tr.acc-txn-tr > td:nth-of-type(1) { order: 1; flex: 0 0 auto; }
+  .acc-txn-table tbody tr.acc-txn-tr > td:nth-of-type(2) { order: 2; flex: 0 0 auto; }
+  .acc-txn-table tbody tr.acc-txn-tr > td:nth-of-type(3) {
+    order: 3; flex: 1 1 auto;
+    min-width: 0 !important;
+    font-weight: 800;
+  }
+  .acc-txn-table tbody tr.acc-txn-tr > td:nth-of-type(6) {
+    order: 4; flex: 0 0 auto;
+    margin-left: auto !important;
+    text-align: right !important;
+  }
+
+  /* Wrap break between Row 1 (orders 1–4) and Row 2 (orders 5+) */
+  .acc-txn-table tbody tr.acc-txn-tr::after {
+    content: "";
+    flex: 1 1 100%;
+    height: 0;
+    order: 4.5;
+  }
+
+  /* Row 2: Date · Detail (grows) ......... Actions */
+  .acc-txn-table tbody tr.acc-txn-tr > td:nth-of-type(4) {
+    order: 5; flex: 0 0 auto;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+  .acc-txn-table tbody tr.acc-txn-tr > td:nth-of-type(5) {
+    order: 6; flex: 1 1 auto;
+    min-width: 0 !important;
+    font-size: 11.5px;
+  }
+  .acc-txn-table tbody tr.acc-txn-tr > td:nth-of-type(5) .acc-txn-detail {
+    max-width: none !important;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 11.5px;
+  }
+  .acc-txn-table tbody tr.acc-txn-tr > td:nth-of-type(5) .acc-txn-meta { display: none !important; }
+  .acc-txn-table tbody tr.acc-txn-tr > td:nth-of-type(7) {
+    order: 7; flex: 0 0 auto;
+    margin-left: auto !important;
+    text-align: right !important;
+  }
+  .acc-txn-table tbody tr.acc-txn-tr > td:nth-of-type(7) .acc-txn-actions { gap: 5px; }
+
+  /* Detail-expansion row (audit panel) — keep as block, span full width */
+  .acc-txn-table tbody tr.acc-txn-detailrow { display: block !important; }
+  .acc-txn-table tbody tr.acc-txn-detailrow td {
+    display: block !important;
+    padding: 0 !important;
+    border: none !important;
+    background: transparent !important;
+  }
+
+  /* ─── Expanded transaction Audit Panel — single column on mobile ───
+     Desktop renders Transaction Details and Audit Trail side-by-side
+     (1.3fr · 1fr grid). On mobile, stack vertically: Transaction Details
+     first, Audit Trail below. */
+  .acc-txn-detailrow.open .acc-txn-detailpanel {
+    max-height: none !important;     /* let stacked content grow naturally */
+  }
+  .acc-audit {
+    grid-template-columns: 1fr !important;
+    gap: 0 !important;
+  }
+  .acc-audit-col { padding: 12px 14px !important; }
+  /* Replace the left-side divider with a top-side divider in stack mode */
+  .acc-audit-col + .acc-audit-col {
+    border-left: none !important;
+    border-top: 1px solid var(--border-light) !important;
+  }
+  .acc-audit-h { font-size: 10.5px; margin-bottom: 10px; }
+
+  /* Key/Value pairs — tighter label column, value wraps cleanly */
+  .acc-audit-kv {
+    grid-template-columns: 110px 1fr !important;
+    gap: 4px 10px !important;
+    font-size: 12px !important;
+    margin-bottom: 7px !important;
+  }
+  .acc-audit-kv .v {
+    word-break: normal !important;
+    overflow-wrap: break-word !important;
+    min-width: 0;
+  }
+
+  /* Audit trail — badges + rows kept readable */
+  .acc-audit-trail { gap: 8px !important; }
+  .acc-audit-badge { padding: 8px 10px !important; gap: 9px !important; }
+  .acc-audit-badge-ic { width: 28px !important; height: 28px !important; font-size: 12px !important; }
+  .acc-audit-badge-lbl { font-size: 9.5px !important; }
+  .acc-audit-badge-val {
+    font-size: 12.5px !important;
+    word-break: break-word !important;
+    overflow-wrap: break-word !important;
+  }
+  .acc-audit-row {
+    font-size: 12px !important;
+    flex-wrap: wrap !important;
+    row-gap: 2px !important;
+  }
+  .acc-audit-row span { min-width: 0; }
+  .acc-audit-noupd { font-size: 11px !important; }
+
+  /* Ultra-narrow phones — collapse kv into stacked label/value */
+  @media (max-width: 380px) {
+    .acc-audit-kv {
+      grid-template-columns: 1fr !important;
+      gap: 1px 0 !important;
+    }
+    .acc-audit-kv .k { font-size: 10.5px; text-transform: uppercase; letter-spacing: .3px; }
+  }
+
+  /* Tfoot total row — single flex line */
+  .acc-txn-table tfoot { display: block !important; }
+  .acc-txn-table tfoot tr {
+    display: flex !important;
+    justify-content: space-between !important;
+    align-items: center !important;
+    padding: 12px 14px !important;
+    background: linear-gradient(135deg, #14532D, #166534);
+    color: #fff;
+  }
+  .acc-txn-table tfoot tr td {
+    display: block !important;
+    padding: 0 !important;
+    border: none !important;
+    color: #fff !important;
+    background: transparent !important;
+  }
+  .acc-txn-table tfoot tr td:empty { display: none !important; }
+  .acc-txn-table tfoot tr td.acc-txn-totlbl { text-align: left !important; flex: 0 0 auto; }
+  .acc-txn-table tfoot tr td.r { flex: 0 0 auto; }
+
+  /* Chart of Accounts heads table — horizontal scroll */
+  .acc-heads-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .acc-heads-tbl { min-width: 720px; }
+  .acc-addheads { width: 100%; justify-content: center; }
+
+  /* Books grid — single col */
+  .acc-books-grid { grid-template-columns: 1fr; gap: 10px; }
+  .acc-book-card { padding: 14px; border-radius: 14px; }
+  .acc-book-card-mini { grid-template-columns: 1fr 1fr; gap: 8px; }
+  .acc-book-card-foot {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+  .acc-book-card-foot-r { width: 100%; justify-content: space-between; }
+
+  /* Books detail summary cards — 1 col on narrow, 2 col otherwise */
+  .acc-book-summary {
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .acc-bsum { padding: 11px 13px; }
+  .acc-bsum-val { font-size: 16px; }
+  .acc-book-topbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+  .acc-book-topbar-actions { width: 100%; flex-wrap: wrap; }
+  .acc-book-topbar-actions > * { flex: 1 1 auto; }
+
+  /* Ledger toolbar — stack */
+  .acc-ledger-toolbar { flex-direction: column; align-items: stretch; gap: 10px; }
+  .acc-ledger-toolbar-l { width: 100%; flex-wrap: wrap; }
+
+  /* ─── Transaction Ledger card → compact 2-line mobile layout ───
+     Row 1: [Status]            [Amount + Bal]            [⌄]
+     Row 2: Description (wraps naturally) · date · user · attachments
+     Narrows the timeline rail, reflows the card, fixes word-by-word breaks. */
+
+  /* Tighter timeline rail (64px → 44px) so the card has more breathing room */
+  .acc-ledger-item {
+    padding: 0 12px 0 44px !important;
+  }
+  .acc-ledger-item::before { left: 22px !important; }
+  .acc-ledger-dot {
+    left: 13px !important;
+    top: 16px !important;
+    width: 20px !important; height: 20px !important;
+    font-size: 8px !important;
+  }
+
+  /* Card itself */
+  .acc-ledger-card {
+    border-radius: 10px;
+    margin: 6px 0 !important;
+  }
+
+  /* Main row → flex-wrap; cancel desktop padding/gap */
+  .acc-ledger-main {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    align-items: center !important;
+    column-gap: 8px !important;
+    row-gap: 8px !important;
+    padding: 10px 12px !important;
+  }
+
+  /* Row 1 placement */
+  .acc-ledger-main > .acc-ledger-typetag {
+    order: 1 !important;
+    flex: 0 0 auto !important;
+    font-size: 10px !important;
+    padding: 2px 8px !important;
+  }
+  .acc-ledger-main > .acc-ledger-amt {
+    order: 2 !important;
+    flex: 0 0 auto !important;
+    margin-left: auto !important;
+    text-align: right !important;
+  }
+  .acc-ledger-amt-v   { font-size: 14px !important; }
+  .acc-ledger-amt-bal { font-size: 10px !important; margin-top: 2px !important; }
+  .acc-ledger-main > .acc-ledger-chev {
+    order: 3 !important;
+    flex: 0 0 auto !important;
+    width: 28px !important; height: 28px !important;
+  }
+
+  /* Row 2 — description + sub meta line take the full width below */
+  .acc-ledger-main > .acc-ledger-info {
+    order: 4 !important;
+    flex: 1 1 100% !important;
+    min-width: 0 !important;
+    width: 100% !important;
+  }
+  /* No word-by-word breaks — wrap on word boundaries; only break if truly
+     necessary (single oversized token). */
+  .acc-ledger-notes {
+    font-size: 12.5px !important;
+    line-height: 1.4 !important;
+    word-break: normal !important;
+    overflow-wrap: break-word !important;
+    hyphens: none !important;
+  }
+  .acc-ledger-sub {
+    font-size: 10.5px !important;
+    margin-top: 4px !important;
+    gap: 3px 10px !important;
+  }
+  .acc-ledger-sub span { min-width: 0; }
+
+  /* Expanded detail — give it room to grow on mobile (stacked content
+     would be taller than 600px when attachments are present). */
+  .acc-ledger-card.open .acc-ledger-expand { max-height: none !important; }
+  .acc-ledger-expand-in { padding: 12px 14px !important; }
+  .acc-ledger-kv {
+    grid-template-columns: 105px 1fr !important;
+    gap: 4px 10px !important;
+    font-size: 11.5px !important;
+  }
+  .acc-ledger-kv .v {
+    word-break: normal !important;
+    overflow-wrap: break-word !important;
+    min-width: 0;
+  }
+  .acc-ledger-actions-row { flex-wrap: wrap; gap: 6px; }
+  .acc-ledger-actions-row .fee-btn { flex: 1 1 auto; justify-content: center; }
+  .acc-attach-thumb-nm { max-width: 140px; }
+
+  /* Ultra-narrow phones — stack kv labels above values for readability */
+  @media (max-width: 380px) {
+    .acc-ledger-kv {
+      grid-template-columns: 1fr !important;
+      gap: 1px 0 !important;
+    }
+    .acc-ledger-kv .k {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: .3px;
+    }
+  }
+
+  /* Cash strip */
+  .acc-cash-strip {
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 11px 13px;
+  }
+
+  /* Form grid */
+  .acc-form-grid { grid-template-columns: 1fr !important; gap: 12px; }
+
+  /* ─── Chart of Accounts row → compact 2-line card ───
+     Replaces the older "1fr stacks everything" rule.
+     Row 1: [#]  [icon] Account Type   [Heads tag]    [⌄]
+     Row 2: [────── Add Heads ──────] */
+  .fee-row.acc-coa-row {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    align-items: center !important;
+    column-gap: 8px !important;
+    row-gap: 8px !important;
+    padding: 10px 12px !important;
+    grid-template-columns: none !important;
+    min-height: 0 !important;
+  }
+  .fee-table-head.acc-coa-row { display: none !important; }
+  .fee-row.acc-coa-row > .fee-td::before { content: none !important; }
+  .fee-row.acc-coa-row > .fee-td { padding: 0 !important; min-width: 0; }
+
+  .fee-row.acc-coa-row > .fee-td:nth-of-type(1) { order: 1; flex: 0 0 auto; }
+  .fee-row.acc-coa-row > .fee-td:nth-of-type(2) {
+    order: 2; flex: 1 1 auto; min-width: 0;
+    font-weight: 700; font-size: 13px;
+    justify-content: flex-start !important;
+    gap: 8px !important;
+  }
+  .fee-row.acc-coa-row > .fee-td:nth-of-type(3) {
+    order: 3; flex: 0 0 auto;
+    justify-content: center !important;
+  }
+  .fee-row.acc-coa-row > .fee-td:nth-of-type(5) {
+    order: 4; flex: 0 0 auto;
+    margin-left: auto !important;
+    justify-content: flex-end !important;
+  }
+
+  /* Wrap break before Add Heads CTA */
+  .fee-row.acc-coa-row::after {
+    content: ""; flex: 1 1 100%; height: 0; order: 4.5;
+  }
+  .fee-row.acc-coa-row > .fee-td:nth-of-type(4) {
+    order: 5; flex: 1 1 100% !important;
+    justify-content: stretch !important;
+  }
+  .fee-row.acc-coa-row > .fee-td:nth-of-type(4) .acc-addheads {
+    width: 100% !important;
+    justify-content: center !important;
+    padding: 9px 12px !important;
+    font-size: 12px !important;
+  }
+
+  /* Reports summary */
+  .acc-rep-sumrow { gap: 8px 12px; padding: 10px 12px; font-size: 11.5px; flex-wrap: wrap; }
+  .acc-rep-summary { margin-top: 12px; }
+
+  /* Style toggle (Colorful/B&W) — stack */
+  .inv-rep-style-seg { width: 100%; }
+  .inv-rep-style-btn { flex: 1; justify-content: center; }
+
+  /* Modal foot */
+  .fee-modal-foot { flex-wrap: wrap; gap: 8px; padding: 12px 14px; }
+  .fee-modal-foot .fee-btn { flex: 1 1 auto; justify-content: center; }
+  .fee-modal-head { padding: 12px 14px; }
+  .fee-modal-body { padding: 14px; }
+
+  /* ═══════════════════════════════════════════════════════════════════
+     ADD TRANSACTION modal (.BookTxnModal) — mobile fitting
+     The modal already clamps to 96vw via the 640px rule. The internal
+     bits still spill: the 3-col Transaction Type segment and the 3-col
+     entry grid don't fit. Fix here, no JSX touched.
+     ═══════════════════════════════════════════════════════════════════ */
+
+  /* Modal box itself — fit viewport, body scrolls vertically only */
+  .fee-overlay { padding: 6px !important; }
+  .fee-modal,
+  .fee-modal.lg,
+  .fee-modal.sm {
+    max-width: 100% !important;
+    width: 100% !important;
+    max-height: calc(100dvh - 12px) !important;
+    border-radius: 14px;
+  }
+  .fee-modal-body {
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    padding: 14px 14px !important;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Transaction Type cards (.acc-txntype-seg) — horizontal scroll strip */
+  .acc-txntype-seg {
+    display: flex !important;
+    grid-template-columns: none !important;
+    flex-wrap: nowrap !important;
+    overflow-x: auto !important;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    gap: 8px !important;
+    padding-bottom: 4px;
+    margin: 0 -2px;
+    scroll-snap-type: x mandatory;
+  }
+  .acc-txntype-seg::-webkit-scrollbar { display: none; }
+  .acc-txntype {
+    flex: 0 0 75% !important;     /* one card visible + edge of next as hint */
+    min-width: 0;
+    padding: 10px 12px !important;
+    gap: 10px !important;
+    scroll-snap-align: start;
+  }
+  .acc-txntype > i {
+    width: 32px !important; height: 32px !important;
+    font-size: 12px !important;
+  }
+  .acc-txntype b { font-size: 12.5px !important; }
+  .acc-txntype small {
+    font-size: 10.5px !important;
+    line-height: 1.4 !important;
+    word-break: normal !important;
+    overflow-wrap: break-word !important;
+  }
+
+  /* Form grid (.acc-entry-grid + .acc-entry-grid--2) — stack to 1 col */
+  .acc-entry-grid,
+  .acc-entry-grid.acc-entry-grid--2 {
+    grid-template-columns: 1fr !important;
+    gap: 12px !important;
+    align-items: stretch !important;
+  }
+  .fee-field-stack {
+    margin-bottom: 0 !important;   /* gap on parent does the spacing */
+    min-width: 0 !important;
+  }
+  .fee-input,
+  .fee-select { width: 100% !important; box-sizing: border-box; }
+
+  /* Upload zone — keep full-width, tighten padding & font */
+  .acc-attach-zone {
+    padding: 18px 14px !important;
+    margin-top: 14px !important;
+  }
+  .acc-attach-zone > i { font-size: 22px !important; margin-bottom: 7px !important; }
+  .acc-attach-zone-t { font-size: 12px !important; line-height: 1.35; }
+  .acc-attach-zone-s { font-size: 10.5px !important; line-height: 1.4; }
+
+  /* Attachment chips list — single column so file names don't get crushed */
+  .acc-attach-list { display: flex !important; flex-direction: column !important; gap: 8px !important; }
+  .acc-attach-chip { padding: 8px 10px !important; gap: 10px !important; }
+  .acc-attach-chip-ic { width: 32px !important; height: 32px !important; font-size: 13px !important; }
+  .acc-attach-chip-nm {
+    font-size: 12px !important;
+    max-width: none !important;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .acc-attach-chip-sz { font-size: 10px !important; }
+
+  /* Running-balance preview — keep readable, full width */
+  .acc-book-runpreview { padding: 12px 14px !important; margin-top: 14px !important; }
+  .acc-book-runpreview-row { font-size: 12.5px !important; }
+
+  /* Footer — Cancel + Save Transaction full width, side by side */
+  .fee-modal-foot {
+    flex-direction: row !important;
+    flex-wrap: nowrap !important;
+    gap: 8px !important;
+    padding: 12px 14px !important;
+    background: var(--bg-muted);
+  }
+  .fee-modal-foot .fee-btn {
+    flex: 1 1 0 !important;
+    min-width: 0 !important;
+    justify-content: center !important;
+    padding: 10px 12px !important;
+    font-size: 12.5px !important;
+  }
+
+  /* Modal header — keep tight on mobile */
+  .fee-modal-head {
+    padding: 12px 14px !important;
+    gap: 10px !important;
+  }
+  .fee-modal-head-icon {
+    width: 36px !important; height: 36px !important;
+    font-size: 14px !important;
+  }
+  .fee-modal-title { font-size: 14px !important; }
+  .fee-modal-sub { font-size: 11px !important; }
+
+  /* ═══════════════════════════════════════════════════════════════════
+     REPORTS — convert every report table row into a compact mobile card.
+     The Transactions tab already gets its own .acc-txn-tr rules above; the
+     same .acc-txn-table is reused by 4 reports (Revenue/Expense via
+     .acc-rep-table, plus P&L, Books, Headwise via :has() content
+     selectors). Cash In Hand and Financial Overview are already card-/
+     panel-based — only minor padding tweaks needed.
+     ═══════════════════════════════════════════════════════════════════ */
+
+  /* Generic: any plain <tr> in .acc-txn-table tbody (not Transactions
+     .acc-txn-tr, not the expansion .acc-txn-detailrow) becomes a card. */
+  .acc-txn-table tbody tr:not(.acc-txn-tr):not(.acc-txn-detailrow) {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    align-items: center !important;
+    column-gap: 8px !important;
+    row-gap: 6px !important;
+    padding: 10px 12px !important;
+    border-bottom: 1px solid var(--border-light) !important;
+  }
+  .acc-txn-table tbody tr:not(.acc-txn-tr):not(.acc-txn-detailrow) > td {
+    display: block !important;
+    padding: 0 !important;
+    border: none !important;
+    background: transparent !important;
+    text-align: left !important;
+    vertical-align: baseline !important;
+    word-break: normal !important;
+    overflow-wrap: break-word !important;
+  }
+  .acc-txn-table tbody tr:not(.acc-txn-tr):not(.acc-txn-detailrow):nth-child(even) {
+    background: rgba(30,58,138,.045);
+  }
+
+  /* ── Revenue / Expense Report (.acc-rep-table) — 9 cells →
+     Row 1: [Type tag]  Head Name                          Date
+     Row 2: No. X (from headname subno)                    Amount
+     Row 3: Details (full width, wraps naturally)
+     Row 4: Created By · Entry timestamp
+     Row 5: Updated By · Last updated (if present) */
+  .acc-rep-table tbody tr > td:nth-of-type(1) { order: 1; flex: 0 0 auto; }       /* Type */
+  .acc-rep-table tbody tr > td:nth-of-type(2) {                                   /* Head + subno */
+    order: 2; flex: 1 1 auto; min-width: 0;
+    font-weight: 700;
+  }
+  .acc-rep-table tbody tr > td:nth-of-type(3) {                                   /* Date */
+    order: 3; flex: 0 0 auto;
+    margin-left: auto !important;
+    font-size: 11px; color: var(--text-muted);
+  }
+  /* Row 2 wrap break */
+  .acc-rep-table tbody tr::after { content: ""; flex: 1 1 100%; height: 0; order: 3.5; }
+  .acc-rep-table tbody tr > td:nth-of-type(5) {                                   /* Amount */
+    order: 4; flex: 0 0 auto;
+    margin-left: auto !important;
+    text-align: right !important;
+  }
+  .acc-rep-table tbody tr > td:nth-of-type(4) {                                   /* Detail */
+    order: 5; flex: 1 1 100% !important;
+    font-size: 12px;
+    color: var(--text-secondary);
+  }
+  .acc-rep-table tbody tr > td:nth-of-type(4) .acc-txn-detail {
+    max-width: none !important;
+    line-height: 1.4;
+  }
+  /* Audit rows */
+  .acc-rep-table tbody tr > td:nth-of-type(6) { order: 6; flex: 0 0 auto; font-size: 11px; }
+  .acc-rep-table tbody tr > td:nth-of-type(7) {
+    order: 7; flex: 1 1 auto;
+    text-align: right !important;
+    font-size: 11px; color: var(--text-muted);
+  }
+  .acc-rep-table tbody tr > td:nth-of-type(8) {
+    order: 8; flex: 0 0 auto; font-size: 11px;
+  }
+  .acc-rep-table tbody tr > td:nth-of-type(9) {
+    order: 9; flex: 1 1 auto;
+    text-align: right !important;
+    font-size: 11px; color: var(--text-muted);
+  }
+
+  /* ── Profit & Loss (5 cols: Sr, Month, Revenue, Expense, P/L) ──
+     Differentiated by the presence of .acc-pl-profit / .acc-pl-loss spans. */
+  .acc-txn-table:has(.acc-pl-profit) tbody tr > td:nth-of-type(1),
+  .acc-txn-table:has(.acc-pl-loss)   tbody tr > td:nth-of-type(1) {
+    order: 1; flex: 0 0 auto;
+    font-size: 11px; color: var(--text-muted);
+    font-weight: 700;
+  }
+  .acc-txn-table:has(.acc-pl-profit) tbody tr > td:nth-of-type(2),
+  .acc-txn-table:has(.acc-pl-loss)   tbody tr > td:nth-of-type(2) {
+    order: 2; flex: 1 1 auto;
+    font-weight: 800;
+  }
+  .acc-txn-table:has(.acc-pl-profit) tbody tr > td:nth-of-type(5),
+  .acc-txn-table:has(.acc-pl-loss)   tbody tr > td:nth-of-type(5) {
+    order: 3; flex: 0 0 auto;
+    margin-left: auto !important;
+    text-align: right !important;
+    font-weight: 800;
+  }
+  .acc-txn-table:has(.acc-pl-profit) tbody tr::after,
+  .acc-txn-table:has(.acc-pl-loss)   tbody tr::after {
+    content: ""; flex: 1 1 100%; height: 0; order: 3.5;
+  }
+  .acc-txn-table:has(.acc-pl-profit) tbody tr > td:nth-of-type(3),
+  .acc-txn-table:has(.acc-pl-loss)   tbody tr > td:nth-of-type(3) {
+    order: 4; flex: 1 1 auto;
+    text-align: left !important;
+    font-size: 12px;
+  }
+  .acc-txn-table:has(.acc-pl-profit) tbody tr > td:nth-of-type(3)::before,
+  .acc-txn-table:has(.acc-pl-loss)   tbody tr > td:nth-of-type(3)::before {
+    content: "Revenue: "; color: var(--text-muted); font-weight: 600; font-size: 11px;
+  }
+  .acc-txn-table:has(.acc-pl-profit) tbody tr > td:nth-of-type(4),
+  .acc-txn-table:has(.acc-pl-loss)   tbody tr > td:nth-of-type(4) {
+    order: 5; flex: 1 1 auto;
+    text-align: right !important;
+    font-size: 12px;
+  }
+  .acc-txn-table:has(.acc-pl-profit) tbody tr > td:nth-of-type(4)::before,
+  .acc-txn-table:has(.acc-pl-loss)   tbody tr > td:nth-of-type(4)::before {
+    content: "Expense: "; color: var(--text-muted); font-weight: 600; font-size: 11px;
+  }
+
+  /* ── Account Books Summary (9 cols: Book, Party, Type, Opening, Received,
+        Returned, Balance, In Cash, Status) — has .acc-book-status. */
+  .acc-txn-table:has(.acc-book-status) tbody tr > td:nth-of-type(3) {   /* Type tag */
+    order: 1; flex: 0 0 auto;
+  }
+  .acc-txn-table:has(.acc-book-status) tbody tr > td:nth-of-type(1) {   /* Book name */
+    order: 2; flex: 1 1 auto; min-width: 0;
+    font-weight: 800;
+  }
+  .acc-txn-table:has(.acc-book-status) tbody tr > td:nth-of-type(7) {   /* Balance */
+    order: 3; flex: 0 0 auto;
+    margin-left: auto !important;
+    text-align: right !important;
+  }
+  .acc-txn-table:has(.acc-book-status) tbody tr::after {
+    content: ""; flex: 1 1 100%; height: 0; order: 3.5;
+  }
+  .acc-txn-table:has(.acc-book-status) tbody tr > td:nth-of-type(2) {   /* Party */
+    order: 4; flex: 1 1 100% !important;
+    font-size: 11.5px; color: var(--text-muted);
+  }
+  .acc-txn-table:has(.acc-book-status) tbody tr > td:nth-of-type(2)::before {
+    content: "Party: "; font-weight: 700;
+  }
+  .acc-txn-table:has(.acc-book-status) tbody tr > td:nth-of-type(4),
+  .acc-txn-table:has(.acc-book-status) tbody tr > td:nth-of-type(5),
+  .acc-txn-table:has(.acc-book-status) tbody tr > td:nth-of-type(6) {
+    flex: 1 1 auto;
+    font-size: 11px;
+  }
+  .acc-txn-table:has(.acc-book-status) tbody tr > td:nth-of-type(4) { order: 5; }
+  .acc-txn-table:has(.acc-book-status) tbody tr > td:nth-of-type(5) { order: 6; }
+  .acc-txn-table:has(.acc-book-status) tbody tr > td:nth-of-type(6) { order: 7; }
+  .acc-txn-table:has(.acc-book-status) tbody tr > td:nth-of-type(4)::before { content: "Opening: "; color: var(--text-muted); }
+  .acc-txn-table:has(.acc-book-status) tbody tr > td:nth-of-type(5)::before { content: "In: ";     color: #15803D; font-weight: 700; }
+  .acc-txn-table:has(.acc-book-status) tbody tr > td:nth-of-type(6)::before { content: "Out: ";    color: #B91C1C; font-weight: 700; }
+  .acc-txn-table:has(.acc-book-status) tbody tr > td:nth-of-type(8) {   /* In Cash */
+    order: 8; flex: 0 0 auto; font-size: 11px;
+  }
+  .acc-txn-table:has(.acc-book-status) tbody tr > td:nth-of-type(9) {   /* Status */
+    order: 9; flex: 0 0 auto;
+    margin-left: auto !important;
+  }
+
+  /* ── Head-wise Summary (5 cols: Type, Head No, Head Name, Entries, Total)
+        — uses .acc-rep-tag.rev / .acc-rep-tag.exp without .acc-rep-subno.
+        Targeted via :has(.acc-rep-tag.rev), :has(.acc-rep-tag.exp) AND
+        :not(:has(.acc-rep-subno)) to distinguish from Revenue/Expense. */
+  .acc-txn-table:not(.acc-rep-table):has(.acc-rep-tag.rev) tbody tr > td:nth-of-type(1),
+  .acc-txn-table:not(.acc-rep-table):has(.acc-rep-tag.exp) tbody tr > td:nth-of-type(1) {
+    order: 1; flex: 0 0 auto;
+  }
+  .acc-txn-table:not(.acc-rep-table):has(.acc-rep-tag.rev) tbody tr > td:nth-of-type(3),
+  .acc-txn-table:not(.acc-rep-table):has(.acc-rep-tag.exp) tbody tr > td:nth-of-type(3) {
+    order: 2; flex: 1 1 auto; min-width: 0;
+    font-weight: 800;
+  }
+  .acc-txn-table:not(.acc-rep-table):has(.acc-rep-tag.rev) tbody tr > td:nth-of-type(5),
+  .acc-txn-table:not(.acc-rep-table):has(.acc-rep-tag.exp) tbody tr > td:nth-of-type(5) {
+    order: 3; flex: 0 0 auto;
+    margin-left: auto !important;
+    text-align: right !important;
+  }
+  .acc-txn-table:not(.acc-rep-table):has(.acc-rep-tag.rev) tbody tr::after,
+  .acc-txn-table:not(.acc-rep-table):has(.acc-rep-tag.exp) tbody tr::after {
+    content: ""; flex: 1 1 100%; height: 0; order: 3.5;
+  }
+  .acc-txn-table:not(.acc-rep-table):has(.acc-rep-tag.rev) tbody tr > td:nth-of-type(2),
+  .acc-txn-table:not(.acc-rep-table):has(.acc-rep-tag.exp) tbody tr > td:nth-of-type(2) {
+    order: 4; flex: 0 0 auto;
+    font-size: 11px; color: var(--text-muted);
+  }
+  .acc-txn-table:not(.acc-rep-table):has(.acc-rep-tag.rev) tbody tr > td:nth-of-type(2)::before,
+  .acc-txn-table:not(.acc-rep-table):has(.acc-rep-tag.exp) tbody tr > td:nth-of-type(2)::before {
+    content: "No. ";
+  }
+  .acc-txn-table:not(.acc-rep-table):has(.acc-rep-tag.rev) tbody tr > td:nth-of-type(4),
+  .acc-txn-table:not(.acc-rep-table):has(.acc-rep-tag.exp) tbody tr > td:nth-of-type(4) {
+    order: 5; flex: 1 1 auto;
+    font-size: 11px; color: var(--text-muted);
+    text-align: right !important;
+  }
+  .acc-txn-table:not(.acc-rep-table):has(.acc-rep-tag.rev) tbody tr > td:nth-of-type(4)::before,
+  .acc-txn-table:not(.acc-rep-table):has(.acc-rep-tag.exp) tbody tr > td:nth-of-type(4)::before {
+    content: "Entries: ";
+  }
+
+  /* ── Cash In Hand (.acc-cih) — already card-based; tighten only ── */
+  .acc-cih-row { padding: 11px 13px; gap: 10px; }
+  .acc-cih-row-ic { width: 34px; height: 34px; font-size: 13px; }
+  .acc-cih-row-nm { font-size: 12.5px; }
+  .acc-cih-row-sub { font-size: 10.5px; }
+  .acc-cih-pill { padding: 5px 11px; font-size: 12px; }
+  .acc-cih-pill.lg { padding: 8px 14px; font-size: 14px; }
+  .acc-cih-total { padding: 12px 14px; }
+  .acc-cih-total-lbl { font-size: 12.5px; }
+
+  /* ── Financial Overview (.acc-ov-grid) — fix 360px minmax overflow ── */
+  .acc-ov-grid {
+    grid-template-columns: 1fr !important;
+    gap: 10px;
+  }
+  .acc-ov-panel { padding: 14px; border-radius: 12px; }
+  .acc-ov-panel-h { font-size: 11.5px; padding-bottom: 8px; margin-bottom: 12px; }
+
+@media (max-width: 480px) {
+  .acc-ov-stat { flex: 1 1 100%; }
+  .acc-book-summary { grid-template-columns: 1fr; }
+  .acc-book-card-mini { grid-template-columns: 1fr; }
+  .fee-section-body { padding: 12px; }
+  .fee-subtab { padding: 9px 12px; font-size: 12px; }
+}
+`;

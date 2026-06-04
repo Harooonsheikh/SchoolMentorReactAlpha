@@ -1,7 +1,13 @@
 import React from 'react';
+import { openERP } from '../utils/erp';
 
-export default function ERPDialog({ open, onClose }) {
+export default function ERPDialog({ open, onClose, showToast, onOpenErp }) {
   if (!open) return null;
+
+  const handleRemindLater = () => {
+    // launchSetup === 1 → switch to the ERP screen, otherwise toast "not allowed"
+    if (!openERP(showToast, onOpenErp)) onClose();
+  };
   return (
     <div className={`erp-dialog-overlay ${open ? 'open' : ''}`} onClick={e => e.target === e.currentTarget && onClose()}>
       <div className="erp-dialog">
@@ -23,7 +29,7 @@ export default function ERPDialog({ open, onClose }) {
           <button className="erp-dlg-btn erp-dlg-btn--primary" onClick={onClose}>
             <i className="fas fa-arrow-left"></i> Continue Setup
           </button>
-          <button className="erp-dlg-btn erp-dlg-btn--ghost" onClick={onClose}>
+          <button className="erp-dlg-btn erp-dlg-btn--ghost" onClick={handleRemindLater}>
             Remind me later
           </button>
         </div>

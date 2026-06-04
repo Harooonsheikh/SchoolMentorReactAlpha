@@ -1,0 +1,3661 @@
+import React, { useEffect, useMemo, useState } from 'react';
+import LessonPlans from './LessonPlans';
+import Tooltip from './Tooltip';
+import TutorialModal from './TutorialModal';
+import * as academicsService from '../services/academicsService';
+import useAsync from '../hooks/useAsync';
+
+/* ═══════════════════════════════════════════════════════════════════
+   DATA — extracted from
+   ~/Desktop/ERP-html/Complete Academics and Examination.html
+   ═══════════════════════════════════════════════════════════════════ */
+const CLASSES = [
+  { id: 1, name: 'class 1A', subjects: [
+    { name: 'Urdu',           book: '',                 icon: 'fa-font',                 color: 'subj-blue' },
+    { name: 'Urdu',           book: 'Afaq Urdu',        icon: 'fa-book',                 color: 'subj-teal' },
+    { name: 'Social Studies', book: 'Afaq SST',         icon: 'fa-globe',                color: 'subj-amber' },
+    { name: 'Science',        book: 'Oxford Science',   icon: 'fa-flask',                color: 'subj-green' },
+    { name: 'English',        book: 'Cambridge English',icon: 'fa-spell-check',          color: 'subj-purple' },
+    { name: 'Math',           book: 'Oxford Math',      icon: 'fa-square-root-variable', color: 'subj-rose' },
+  ]},
+  { id: 2, name: 'II-Pre', subjects: [
+    { name: 'Urdu',    book: 'Afaq Urdu',        icon: 'fa-book',                 color: 'subj-teal' },
+    { name: 'English', book: 'Cambridge English',icon: 'fa-spell-check',          color: 'subj-purple' },
+    { name: 'Math',    book: 'Oxford Math',      icon: 'fa-square-root-variable', color: 'subj-rose' },
+    { name: 'Science', book: 'Oxford Science',   icon: 'fa-flask',                color: 'subj-green' },
+  ]},
+  { id: 3, name: 'III-Pre', subjects: [
+    { name: 'Urdu',           book: '',                 icon: 'fa-font',                 color: 'subj-blue' },
+    { name: 'Urdu',           book: 'Afaq Urdu',        icon: 'fa-book',                 color: 'subj-teal' },
+    { name: 'Social Studies', book: 'Afaq SST',         icon: 'fa-globe',                color: 'subj-amber' },
+    { name: 'Science',        book: 'Oxford Science',   icon: 'fa-flask',                color: 'subj-green' },
+    { name: 'English',        book: 'Cambridge English',icon: 'fa-spell-check',          color: 'subj-purple' },
+    { name: 'Math',           book: 'Oxford Math',      icon: 'fa-square-root-variable', color: 'subj-rose' },
+  ]},
+  { id: 4, name: '11', subjects: [
+    { name: 'Biology',   book: 'Oxford Bio',     icon: 'fa-dna',  color: 'subj-green' },
+    { name: 'Chemistry', book: 'Afaq Chem',      icon: 'fa-atom', color: 'subj-amber' },
+    { name: 'Physics',   book: 'Oxford Physics', icon: 'fa-bolt', color: 'subj-blue' },
+  ]},
+  { id: 5, name: 'I', subjects: [
+    { name: 'Urdu',    book: 'Afaq Urdu', icon: 'fa-book',        color: 'subj-teal' },
+    { name: 'English', book: 'Cambridge', icon: 'fa-spell-check', color: 'subj-purple' },
+  ]},
+  { id: 6, name: 'II', subjects: [
+    { name: 'Math',    book: 'Oxford Math', icon: 'fa-square-root-variable', color: 'subj-rose' },
+    { name: 'Science', book: 'Oxford Sci',  icon: 'fa-flask',                color: 'subj-green' },
+  ]},
+  { id: 7, name: 'III', subjects: [
+    { name: 'Urdu', book: 'Afaq Urdu', icon: 'fa-book', color: 'subj-teal' },
+  ]},
+];
+
+/* Terms, term metadata, and activity events now load via academicsService
+   (src/services/academicsService.js). CRUD stays in-memory until backend wires
+   the matching endpoints. */
+
+
+const MONTHS_FULL  = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+const MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const DAYS_SHORT   = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
+const STATUS_META = {
+  upcoming:  { bg: 'rgba(30,58,138,.08)',  color: '#1E40AF', label: 'Upcoming',  icon: 'fa-clock' },
+  ongoing:   { bg: 'rgba(217,119,6,.08)',  color: '#D97706', label: 'Ongoing',   icon: 'fa-spinner' },
+  completed: { bg: 'rgba(22,163,74,.08)',  color: '#16A34A', label: 'Completed', icon: 'fa-circle-check' },
+};
+
+const parseEventDate = str => {
+  if (!str || str === 'TBD') return null;
+  const d = new Date(str);
+  return isNaN(d) ? null : d;
+};
+
+/* ═══════════════════════════════════════════════════════════════════
+   MAIN ACADEMICS SHELL
+   ═══════════════════════════════════════════════════════════════════ */
+export default function Academics({ l1, setL1, l2, setL2, l3, setL3, toast }) {
+  const { data: terms = [],    setData: setTerms }    = useAsync(academicsService.getTerms,      []);
+  const { data: termData = [], setData: setTermData } = useAsync(academicsService.getTermData,   []);
+  const { data: events = [],   setData: setEvents }   = useAsync(academicsService.getActivities, []);
+
+  const [reportPicker, setReportPicker] = useState({ open: false, name: '', format: 'pdf' });
+  const [confirmCfg, setConfirmCfg] = useState(null);
+  const [calEditOpen, setCalEditOpen] = useState(false);
+  const [tutorialOpen, setTutorialOpen] = useState(false);
+  const [activityModal, setActivityModal] = useState({ open: false, editing: null });
+
+  const openReport = (name, format = 'pdf') =>
+    setReportPicker({ open: true, name, format });
+  const closeReport = () => setReportPicker(r => ({ ...r, open: false }));
+
+  const openConfirm = cfg => setConfirmCfg(cfg);
+  const closeConfirm = () => setConfirmCfg(null);
+
+  /* Keep the academic-calendar TERMS list in sync with the term-settings table */
+  const syncTermsToCalendar = nextTermData => {
+    setTerms(prevTerms => {
+      const byName = new Map(prevTerms.map(t => [t.label, t]));
+      return nextTermData.map(td => byName.get(td.name) || { label: td.name || 'Unnamed', entries: [] });
+    });
+  };
+
+  return (
+    <>
+      <style>{ACADEMICS_CSS}</style>
+
+      <div className="page-header">
+        <div className="page-title-row">
+          <div className="page-title-icon"><i className="fa-solid fa-book-open-reader"></i></div>
+          <div>
+            <div className="page-title">Academics</div>
+            <div className="page-sub">Manage scheme of studies, textbooks, calendars &amp; lesson plans</div>
+          </div>
+        </div>
+        <Tooltip text="Play a short tutorial for the Academics module">
+          <button
+            className="tutorial-btn page-tutorial-btn"
+            onClick={() => setTutorialOpen(true)}
+          >
+            <div className="play-dot"><i className="fa-solid fa-play" style={{ fontSize: 8 }}></i></div>
+            <span className="tutorial-label">Tutorial</span>
+          </button>
+        </Tooltip>
+      </div>
+
+      {/* ─── LEVEL 1 TABS ─── */}
+      <div className="l1-tabs">
+        <button className={`l1-tab${l1 === 'sos' ? ' active' : ''}`} onClick={() => setL1('sos')}>
+          <div className="l1-tab-icon"><i className="fa-solid fa-book"></i></div>
+          Scheme of Studies
+        </button>
+        <button className={`l1-tab${l1 === 'lp' ? ' active' : ''}`} onClick={() => setL1('lp')}>
+          <div className="l1-tab-icon"><i className="fa-solid fa-chalkboard-user"></i></div>
+          Lesson Plans
+        </button>
+      </div>
+
+      {l1 === 'sos' ? (
+        <>
+          {/* ─── LEVEL 2 TABS ─── */}
+          <div className="l2-tabs" style={{ gridTemplateColumns: '1fr 1fr 1fr' }}>
+            <button className={`l2-tab${l2 === 'tb' ? ' active' : ''}`} onClick={() => setL2('tb')}>
+              <div className="l2-tab-dot"></div>
+              <i className="fa-solid fa-book-bookmark" style={{ fontSize: 13 }}></i> Textbooks
+            </button>
+            <button className={`l2-tab${l2 === 'terms' ? ' active' : ''}`} onClick={() => setL2('terms')}>
+              <div className="l2-tab-dot"></div>
+              <i className="fa-solid fa-list-ol" style={{ fontSize: 13 }}></i> Terms Setting
+            </button>
+            <button className={`l2-tab${l2 === 'cal' ? ' active' : ''}`} onClick={() => setL2('cal')}>
+              <div className="l2-tab-dot"></div>
+              <i className="fa-solid fa-calendar-days" style={{ fontSize: 13 }}></i> Calendar
+            </button>
+          </div>
+
+          {l2 === 'tb' && (
+            <TextBooks onReport={openReport} toast={toast} />
+          )}
+
+          {l2 === 'terms' && (
+            <TermSettings
+              termData={termData}
+              setTermData={td => { setTermData(td); syncTermsToCalendar(td); }}
+              openConfirm={openConfirm}
+              toast={toast}
+            />
+          )}
+
+          {l2 === 'cal' && (
+            <>
+              {/* ─── LEVEL 3 TABS ─── */}
+              <div className="l3-tabs">
+                <button className={`l3-tab${l3 === 'ac' ? ' active' : ''}`} onClick={() => setL3('ac')}>
+                  <div className="l3-tab-icon"><i className="fa-solid fa-calendar-check"></i></div>
+                  <div className="l3-tab-text">
+                    <div className="l3-tab-name">Academic Calendar</div>
+                    <div className="l3-tab-desc">Key dates &amp; term schedule</div>
+                  </div>
+                </button>
+                <button className={`l3-tab${l3 === 'act' ? ' active' : ''}`} onClick={() => setL3('act')}>
+                  <div className="l3-tab-icon"><i className="fa-solid fa-calendar-plus"></i></div>
+                  <div className="l3-tab-text">
+                    <div className="l3-tab-name">Activity Calendar</div>
+                    <div className="l3-tab-desc">Events &amp; school activities</div>
+                  </div>
+                </button>
+              </div>
+
+              {l3 === 'ac' && (
+                <AcademicCalendar
+                  terms={terms}
+                  onReport={openReport}
+                  onEdit={() => setCalEditOpen(true)}
+                />
+              )}
+              {l3 === 'act' && (
+                <ActivityCalendar
+                  events={events}
+                  setEvents={setEvents}
+                  onReport={openReport}
+                  onAdd={() => setActivityModal({ open: true, editing: null })}
+                  onEdit={ev => setActivityModal({ open: true, editing: ev })}
+                  openConfirm={openConfirm}
+                  toast={toast}
+                />
+              )}
+            </>
+          )}
+        </>
+      ) : (
+        <LessonPlans toast={toast} openConfirm={openConfirm} />
+      )}
+
+      {/* ─── MODALS ─── */}
+      <ReportPicker
+        open={reportPicker.open}
+        name={reportPicker.name}
+        initialFormat={reportPicker.format}
+        onClose={closeReport}
+        onGenerate={(style, fmt) => {
+          closeReport();
+          generateReportWindow(reportPicker.name, style, fmt, { events, terms });
+        }}
+      />
+
+      <CalEditModal
+        open={calEditOpen}
+        terms={terms}
+        onClose={() => setCalEditOpen(false)}
+        onSave={next => { setTerms(next); setCalEditOpen(false); toast('Academic calendar saved!', 'success'); }}
+      />
+
+      <ActivityModal
+        open={activityModal.open}
+        editing={activityModal.editing}
+        onClose={() => setActivityModal({ open: false, editing: null })}
+        onSave={ev => {
+          if (activityModal.editing) {
+            setEvents(prev => prev.map(p => p.id === ev.id ? ev : p));
+            toast(`"${ev.name}" updated`, 'success');
+          } else {
+            setEvents(prev => [ev, ...prev]);
+            toast(`"${ev.name}" added!`, 'success');
+          }
+          setActivityModal({ open: false, editing: null });
+        }}
+      />
+
+      <ConfirmDialog cfg={confirmCfg} onClose={closeConfirm} />
+
+      <TutorialModal
+        open={tutorialOpen}
+        moduleKey="academics"
+        onClose={() => setTutorialOpen(false)}
+        toast={toast}
+      />
+    </>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   REPORT PICKER MODAL
+   ═══════════════════════════════════════════════════════════════════ */
+function ReportPicker({ open, name, initialFormat, onClose, onGenerate }) {
+  const [style, setStyle] = useState('color');
+  const [format, setFormat] = useState('pdf');
+
+  useEffect(() => {
+    if (open) {
+      setStyle('color');
+      setFormat(initialFormat || 'pdf');
+    }
+  }, [open, initialFormat]);
+
+  const downloadLabel = `Download ${style === 'color' ? 'Colorful' : 'Colorless'} ${format === 'pdf' ? 'PDF' : 'Word'}`;
+
+  /* Keyboard support: arrow-key + space/enter to pick a report style.
+     Lets the picker work for radio-style options without losing the
+     clickable card affordance. */
+  const onStyleKey = (e, value) => {
+    if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); setStyle(value); }
+    else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); setStyle('color'); }
+    else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); setStyle('bw'); }
+  };
+
+  return (
+    <div
+      className={`report-picker-overlay${open ? ' open' : ''}`}
+      onClick={e => { if (e.target === e.currentTarget) onClose(); }}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="rp-title"
+    >
+      <div className="report-picker">
+        <div className="rp-header">
+          <div className="rp-header-left">
+            <div className="rp-header-icon"><i className="fa-solid fa-print"></i></div>
+            <div>
+              <div className="rp-title" id="rp-title">Download Report</div>
+              <div className="rp-sub">{name} — Choose style and format</div>
+            </div>
+          </div>
+          <Tooltip text="Close"><button className="rp-close" onClick={onClose} aria-label="Close download dialog"><i className="fa-solid fa-xmark"></i></button></Tooltip>
+        </div>
+        <div className="rp-body">
+          <div className="rp-section-label" id="rp-style-label">Report Style</div>
+          <div className="rp-options" role="radiogroup" aria-labelledby="rp-style-label">
+            <div
+              className={`rp-option${style === 'color' ? ' selected' : ''}`}
+              onClick={() => setStyle('color')}
+              role="radio"
+              aria-checked={style === 'color'}
+              tabIndex={style === 'color' ? 0 : -1}
+              onKeyDown={e => onStyleKey(e, 'color')}
+            >
+              <div className="rp-check" aria-hidden="true"><i className="fa-solid fa-check"></i></div>
+              <div className="rp-preview" aria-hidden="true">
+                <div className="rp-preview-color">
+                  <div className="rp-mock-header"></div>
+                  <div className="rp-mock-line" style={{ width: '65%', height: 5 }}></div>
+                  <div className="rp-mock-line" style={{ width: '50%', height: 5 }}></div>
+                  <div className="rp-mock-chips">
+                    <div className="rp-mock-chip" style={{ background: 'rgba(255,255,255,.85)' }}></div>
+                    <div className="rp-mock-chip" style={{ background: '#FCD34D' }}></div>
+                    <div className="rp-mock-chip" style={{ background: '#FCA5A5' }}></div>
+                  </div>
+                </div>
+              </div>
+              <div className="rp-option-text">
+                <div className="rp-option-name">
+                  <i className="fa-solid fa-palette" style={{ color: '#1E40AF', marginRight: 6, fontSize: 12 }}></i>Colorful Report
+                </div>
+                <div className="rp-option-desc">Full brand palette, summary cards, colored headers &amp; icons</div>
+              </div>
+            </div>
+            <div
+              className={`rp-option${style === 'bw' ? ' selected' : ''}`}
+              onClick={() => setStyle('bw')}
+              role="radio"
+              aria-checked={style === 'bw'}
+              tabIndex={style === 'bw' ? 0 : -1}
+              onKeyDown={e => onStyleKey(e, 'bw')}
+            >
+              <div className="rp-check" aria-hidden="true"><i className="fa-solid fa-check"></i></div>
+              <div className="rp-preview" aria-hidden="true">
+                <div className="rp-preview-bw">
+                  <div className="rp-mock-header-bw"></div>
+                  <div className="rp-mock-line-bw" style={{ width: '65%', height: 5 }}></div>
+                  <div className="rp-mock-line-bw" style={{ width: '50%', height: 5 }}></div>
+                  <div className="rp-mock-chips-bw">
+                    <div className="rp-mock-chip-bw"></div>
+                    <div className="rp-mock-chip-bw"></div>
+                    <div className="rp-mock-chip-bw"></div>
+                  </div>
+                </div>
+              </div>
+              <div className="rp-option-text">
+                <div className="rp-option-name">
+                  <i className="fa-solid fa-circle-half-stroke" style={{ color: 'var(--text-muted)', marginRight: 6, fontSize: 12 }}></i>Colorless Report
+                </div>
+                <div className="rp-option-desc">Low-ink layout — white background, light borders, no colored blocks</div>
+              </div>
+            </div>
+          </div>
+
+          <div className="rp-section-label">File Format</div>
+          <div className="rp-format-row">
+            <button
+              className={`rp-format-pill${format === 'pdf' ? ' selected-pdf' : ''}`}
+              onClick={() => setFormat('pdf')}
+            >
+              <div className="rp-format-icon"><i className="fa-solid fa-file-pdf"></i></div>
+              <div>
+                <div className="rp-format-name">PDF</div>
+                <div className="rp-format-desc">Best for sharing</div>
+              </div>
+            </button>
+            <button
+              className={`rp-format-pill${format === 'word' ? ' selected-word' : ''}`}
+              onClick={() => setFormat('word')}
+            >
+              <div className="rp-format-icon"><i className="fa-brands fa-microsoft"></i></div>
+              <div>
+                <div className="rp-format-name">Word (.docx)</div>
+                <div className="rp-format-desc">Best for editing</div>
+              </div>
+            </button>
+          </div>
+        </div>
+        <div className="rp-footer">
+          <Tooltip text="Cancel and close">
+            <button className="rp-btn cancel" onClick={onClose}>Cancel</button>
+          </Tooltip>
+          <Tooltip text="Generate and download the selected report">
+            <button className="rp-btn go" onClick={() => onGenerate(style, format)}>
+              <i className="fa-solid fa-download"></i>
+              <span>{downloadLabel}</span>
+            </button>
+          </Tooltip>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   CONFIRM DIALOG
+   ═══════════════════════════════════════════════════════════════════ */
+function ConfirmDialog({ cfg, onClose }) {
+  if (!cfg) return null;
+  const {
+    title, message, hint,
+    confirmLabel = 'Confirm', confirmStyle = 'danger',
+    icon = 'fa-trash', iconBg = 'rgba(220,38,38,.1)', iconColor = '#DC2626',
+    onConfirm,
+  } = cfg;
+  return (
+    <div className="confirm-overlay open" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="confirm-dialog">
+        <div className="confirm-glow" style={confirmStyle === 'danger'
+          ? { background: 'linear-gradient(90deg,#EF4444,#DC2626,#EF4444)' }
+          : { background: 'linear-gradient(90deg,#1E3A8A,#1E40AF,#1E3A8A)' }} />
+        <div className="confirm-hero">
+          <div className="confirm-ring">
+            <div className="confirm-icon-wrap" style={{ background: iconBg, color: iconColor }}>
+              <i className={`fa-solid ${icon}`}></i>
+            </div>
+          </div>
+        </div>
+        <div className="confirm-body">
+          <div className="confirm-title">{title}</div>
+          <div className="confirm-msg" dangerouslySetInnerHTML={{ __html: message }} />
+          {hint && (
+            <div className="confirm-hint">
+              <i className="fa-solid fa-triangle-exclamation"></i>
+              <span>{hint}</span>
+            </div>
+          )}
+        </div>
+        <div className="confirm-footer">
+          <button className="confirm-btn confirm-btn--cancel" onClick={onClose}>Cancel</button>
+          <button
+            className={`confirm-btn confirm-btn--confirm${confirmStyle === 'primary' ? ' primary-style' : ''}`}
+            onClick={() => { onConfirm && onConfirm(); onClose(); }}
+          >
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   CAL EDIT MODAL — edit Academic Calendar key-date entries per term
+   ═══════════════════════════════════════════════════════════════════ */
+function CalEditModal({ open, terms, onClose, onSave }) {
+  const [draft, setDraft] = useState([]);
+
+  useEffect(() => {
+    if (open) setDraft(terms.map(t => ({ label: t.label, entries: t.entries.map(e => ({ ...e })) })));
+  }, [open, terms]);
+
+  const updateEntry = (ti, ei, key, value) => {
+    setDraft(prev => prev.map((t, idx) =>
+      idx !== ti ? t : { ...t, entries: t.entries.map((e, j) => j === ei ? { ...e, [key]: value } : e) }
+    ));
+  };
+  const addEntry = ti => {
+    setDraft(prev => prev.map((t, idx) =>
+      idx !== ti ? t : { ...t, entries: [...t.entries, { heading: '', date: '' }] }
+    ));
+  };
+  const removeEntry = (ti, ei) => {
+    setDraft(prev => prev.map((t, idx) =>
+      idx !== ti ? t : { ...t, entries: t.entries.filter((_, j) => j !== ei) }
+    ));
+  };
+
+  return (
+    <div
+      className={`modal-overlay${open ? ' open' : ''}`}
+      onClick={e => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="modal modal-md" style={{ maxWidth: 680 }}>
+        <div className="modal-header">
+          <div>
+            <div className="modal-title">
+              <i className="fa-solid fa-calendar-pen" style={{ marginRight: 8 }}></i>
+              Update Academic Calendar
+            </div>
+            <div className="modal-sub">Edit key dates for each term</div>
+          </div>
+          <Tooltip text="Close"><button className="modal-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark"></i></button></Tooltip>
+        </div>
+        <div className="modal-body">
+          <div style={{
+            background: 'linear-gradient(135deg,#1E3A8A,#1E40AF)', color: '#fff',
+            borderRadius: 'var(--radius-md)', padding: '11px 16px', textAlign: 'center',
+            fontSize: 14, fontWeight: 700, marginBottom: 20, letterSpacing: '.01em',
+          }}>
+            <i className="fa-solid fa-calendar-check" style={{ marginRight: 8 }}></i>Key Dates
+          </div>
+
+          {draft.map((term, ti) => (
+            <div key={ti} className="cal-modal-section">
+              <div className="cal-modal-term">{term.label}</div>
+              <div style={{
+                background: 'var(--bg-muted)',
+                borderRadius: 'var(--radius-sm) var(--radius-sm) 0 0',
+                padding: '8px 10px',
+              }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: 8 }}>
+                  <div style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.5px' }}>Heading/Event</div>
+                  <div style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.5px' }}>Date/Details</div>
+                  <div style={{ width: 70 }}></div>
+                </div>
+              </div>
+              <div style={{
+                border: '1px solid var(--border-light)', borderTop: 'none',
+                borderRadius: '0 0 var(--radius-sm) var(--radius-sm)', padding: '0 10px',
+              }}>
+                {term.entries.length === 0 ? (
+                  <div className="no-data" style={{ padding: '12px 0' }}>No data</div>
+                ) : term.entries.map((e, ei) => (
+                  <div key={ei} className="cal-entry-row">
+                    <input
+                      className="cal-entry-input"
+                      value={e.heading}
+                      placeholder="Heading/Event"
+                      onChange={ev => updateEntry(ti, ei, 'heading', ev.target.value)}
+                    />
+                    <input
+                      className="cal-entry-input"
+                      value={e.date}
+                      placeholder="Date/Details"
+                      onChange={ev => updateEntry(ti, ei, 'date', ev.target.value)}
+                    />
+                    <Tooltip text="Remove this entry">
+                      <button className="remove-btn" onClick={() => removeEntry(ti, ei)}>
+                        <i className="fa-solid fa-xmark"></i> Remove
+                      </button>
+                    </Tooltip>
+                  </div>
+                ))}
+              </div>
+              <Tooltip text="Add another entry to this term">
+                <button className="add-more-btn" onClick={() => addEntry(ti)}>
+                  <i className="fa-solid fa-plus"></i> Add More
+                </button>
+              </Tooltip>
+            </div>
+          ))}
+        </div>
+        <div className="modal-footer">
+          <Tooltip text="Discard changes and close">
+            <button className="btn btn-secondary" onClick={onClose}>Close</button>
+          </Tooltip>
+          <Tooltip text="Save the academic calendar key dates">
+            <button className="btn btn-primary" onClick={() => onSave(draft)}>
+              <i className="fa-solid fa-check"></i> Save
+            </button>
+          </Tooltip>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   ACTIVITY MODAL — add / edit a single activity
+   ═══════════════════════════════════════════════════════════════════ */
+function ActivityModal({ open, editing, onClose, onSave }) {
+  const [name, setName] = useState('');
+  const [start, setStart] = useState('');
+  const [end, setEnd] = useState('');
+  const [purpose, setPurpose] = useState('');
+  const [development, setDevelopment] = useState('');
+  const [resource, setResource] = useState('');
+
+  useEffect(() => {
+    if (!open) return;
+    setName(editing?.name || '');
+    setPurpose(editing?.purpose || '');
+    setDevelopment(editing?.development || '');
+    setResource(editing?.resource || '');
+    setStart('');
+    setEnd('');
+  }, [open, editing]);
+
+  const fmt = d => d ? new Date(d).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : 'TBD';
+  const colors = ['#1E40AF', '#16A34A', '#D97706', '#7C3AED', '#1E40AF', '#E11D48'];
+
+  const submit = () => {
+    if (!name.trim()) return;
+    onSave({
+      id: editing ? editing.id : Date.now(),
+      name: name.trim(),
+      start: start ? fmt(start) : (editing?.start || 'TBD'),
+      end:   end   ? fmt(end)   : (editing?.end   || 'TBD'),
+      color: editing?.color || colors[Math.floor(Math.random() * colors.length)],
+      status: editing?.status || 'upcoming',
+      purpose, development, resource,
+    });
+  };
+
+  return (
+    <div
+      className={`modal-overlay${open ? ' open' : ''}`}
+      onClick={e => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="modal modal-sm">
+        <div className="modal-header">
+          <div>
+            <div className="modal-title">
+              <i className={`fa-solid ${editing ? 'fa-pen' : 'fa-calendar-plus'}`} style={{ marginRight: 8 }}></i>
+              {editing ? 'Edit Activity' : 'Add new activity'}
+            </div>
+          </div>
+          <Tooltip text="Close"><button className="modal-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark"></i></button></Tooltip>
+        </div>
+        <div className="modal-body">
+          <div className="form-group">
+            <label className="form-label">Name <span className="req-star">*</span></label>
+            <input className="form-input" value={name} onChange={e => setName(e.target.value)} placeholder="Enter name" />
+          </div>
+          <div className="form-row" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+            <div className="form-group">
+              <label className="form-label">Start at <span className="req-star">*</span></label>
+              <input className="form-input" type="date" value={start} onChange={e => setStart(e.target.value)} />
+            </div>
+            <div className="form-group">
+              <label className="form-label">End at <span className="req-star">*</span></label>
+              <input className="form-input" type="date" value={end} onChange={e => setEnd(e.target.value)} />
+            </div>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Activity purpose</label>
+            <textarea className="form-input" style={{ height: 'auto', padding: 12, minHeight: 70, resize: 'vertical' }} value={purpose} onChange={e => setPurpose(e.target.value)} placeholder="Describe the purpose of this activity..." />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Activity development</label>
+            <textarea className="form-input" style={{ height: 'auto', padding: 12, minHeight: 70, resize: 'vertical' }} value={development} onChange={e => setDevelopment(e.target.value)} placeholder="How will the activity be developed?" />
+          </div>
+          <div className="form-group" style={{ marginBottom: 0 }}>
+            <label className="form-label">Resource material</label>
+            <textarea className="form-input" style={{ height: 'auto', padding: 12, minHeight: 70, resize: 'vertical' }} value={resource} onChange={e => setResource(e.target.value)} placeholder="List any resources or materials needed..." />
+          </div>
+        </div>
+        <div className="modal-footer">
+          <Tooltip text="Discard changes and close">
+            <button className="btn btn-secondary" onClick={onClose}>Close</button>
+          </Tooltip>
+          <Tooltip text="Save the activity">
+            <button className="btn btn-primary" onClick={submit}>
+              <i className="fa-solid fa-check"></i> Save
+            </button>
+          </Tooltip>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   REPORT GENERATOR (opens print-ready HTML in a new window)
+   ═══════════════════════════════════════════════════════════════════ */
+function generateReportWindow(name, style, format, ctx) {
+  const isColor = style === 'color';
+  /* ── Two coordinated palettes ──
+     • Colorful: brand blue header, light-blue table headers, alt-row stripes, status chips.
+     • Colorless: white header, dark-gray text, no row fills, status chips become bordered text
+       pills. No emoji icons in body headings. This is the dedicated low-ink layout. */
+  const headerBg     = isColor ? '#1E3A8A' : '#FFFFFF';
+  const headerFg     = isColor ? '#FFFFFF' : '#111111';
+  const headerSubFg  = isColor ? 'rgba(255,255,255,.75)' : '#4B5563';
+  const headerKick   = isColor ? 'rgba(255,255,255,.55)' : '#6B7280';
+  const headerDivCol = isColor ? 'rgba(255,255,255,.2)'  : '#E5E7EB';
+  const chipBg       = isColor ? 'rgba(255,255,255,.14)' : 'transparent';
+  const chipBorder   = isColor ? 'transparent' : '#D1D5DB';
+  const accent       = isColor ? '#1E40AF' : '#374151';
+  const textD        = isColor ? '#0F172A' : '#111111';
+  const textM        = isColor ? '#64748B' : '#4B5563';
+  const border       = isColor ? '#BFDBFE' : '#D1D5DB';
+  const tableHeadBg  = isColor ? '#EFF6FF' : '#FFFFFF';
+  const tableHeadFg  = textD;
+  const rowAltBg     = isColor ? '#F8FAFF' : '#FFFFFF';      // no alternating fill in colorless
+  const rowBaseBg    = '#FFFFFF';
+  const sectionAccent = isColor ? `border-left:3px solid ${accent};padding-left:10px` : `border-bottom:1px solid ${border};padding:0 0 6px`;
+  const styleLabel    = isColor ? 'Colorful' : 'Colorless';
+  /* Drop emoji icons in colorless to save ink and avoid font-substitution glyphs. */
+  const ico = (emoji) => isColor ? `${emoji} ` : '';
+
+  const isCls      = CLASSES.find(c => c.name === name);
+  const isAcademic = name.includes('Academic');
+  const isActivity = name.includes('Activity');
+
+  /* Status pill — colored fill in Colorful; bordered text-only pill in Colorless. */
+  const statusPill = (s) => {
+    const label = s[0].toUpperCase() + s.slice(1);
+    if (isColor) {
+      const bg = s === 'completed' ? 'rgba(22,163,74,.1)' : s === 'ongoing' ? 'rgba(217,119,6,.1)' : 'rgba(30,58,138,.1)';
+      const fg = s === 'completed' ? '#16A34A'           : s === 'ongoing' ? '#D97706'           : '#1E40AF';
+      return `<span style="background:${bg};color:${fg};padding:2px 8px;border-radius:99px;font-size:11px;font-weight:700">${label}</span>`;
+    }
+    return `<span style="border:1px solid ${border};color:${textD};padding:2px 8px;border-radius:99px;font-size:11px;font-weight:700">${label}</span>`;
+  };
+
+  let body = '';
+  if (isCls) {
+    body = `<h2 style="font-size:16px;font-weight:700;color:${textD};margin:0 0 16px;border-bottom:${isColor ? '2px' : '1px'} solid ${border};padding-bottom:8px">${ico('📚')}Subjects &amp; Textbooks — ${name}</h2>
+    <table style="width:100%;border-collapse:collapse;font-size:13px">
+      <thead><tr style="background:${tableHeadBg}">
+        <th style="padding:10px 12px;text-align:left;border:1px solid ${border};font-weight:700;color:${tableHeadFg}">#</th>
+        <th style="padding:10px 12px;text-align:left;border:1px solid ${border};font-weight:700;color:${tableHeadFg}">Subject</th>
+        <th style="padding:10px 12px;text-align:left;border:1px solid ${border};font-weight:700;color:${tableHeadFg}">Textbook</th>
+      </tr></thead>
+      <tbody>${isCls.subjects.map((s, i) => `
+        <tr style="background:${i % 2 === 0 ? rowBaseBg : rowAltBg}">
+          <td style="padding:9px 12px;border:1px solid ${border};color:${textM}">${i + 1}</td>
+          <td style="padding:9px 12px;border:1px solid ${border};color:${textD};font-weight:600">${s.name}</td>
+          <td style="padding:9px 12px;border:1px solid ${border};color:${textM}">${s.book || '—'}</td>
+        </tr>`).join('')}
+      </tbody></table>`;
+  } else if (isAcademic) {
+    body = ctx.terms.map(t => `<div style="margin-bottom:20px">
+      <h3 style="font-size:13px;font-weight:700;color:${isColor ? accent : textD};${sectionAccent};margin:0 0 10px">${t.label}</h3>
+      ${t.entries.length === 0
+        ? `<p style="color:${textM};font-size:12px;font-style:italic">No dates added</p>`
+        : `<table style="width:100%;border-collapse:collapse;font-size:12.5px">
+            <thead><tr style="background:${tableHeadBg}">
+              <th style="padding:8px 12px;border:1px solid ${border};text-align:left;color:${tableHeadFg}">Heading/Event</th>
+              <th style="padding:8px 12px;border:1px solid ${border};text-align:left;color:${tableHeadFg}">Date/Details</th>
+            </tr></thead>
+            <tbody>${t.entries.map((e, i) => `
+              <tr style="background:${i % 2 === 0 ? rowBaseBg : rowAltBg}">
+                <td style="padding:8px 12px;border:1px solid ${border};color:${textD};font-weight:600">${e.heading}</td>
+                <td style="padding:8px 12px;border:1px solid ${border};color:${textM}">${e.date}</td>
+              </tr>`).join('')}
+            </tbody></table>`}
+    </div>`).join('');
+  } else if (isActivity) {
+    body = `<h2 style="font-size:16px;font-weight:700;color:${textD};margin:0 0 16px;border-bottom:${isColor ? '2px' : '1px'} solid ${border};padding-bottom:8px">${ico('🗓')}Scheduled Activities</h2>
+    <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+      <thead><tr style="background:${tableHeadBg}">
+        <th style="padding:9px 12px;border:1px solid ${border};text-align:left;color:${tableHeadFg}">#</th>
+        <th style="padding:9px 12px;border:1px solid ${border};text-align:left;color:${tableHeadFg}">Activity</th>
+        <th style="padding:9px 12px;border:1px solid ${border};text-align:left;color:${tableHeadFg}">Start</th>
+        <th style="padding:9px 12px;border:1px solid ${border};text-align:left;color:${tableHeadFg}">End</th>
+        <th style="padding:9px 12px;border:1px solid ${border};text-align:left;color:${tableHeadFg}">Status</th>
+      </tr></thead>
+      <tbody>${ctx.events.map((ev, i) => `
+        <tr style="background:${i % 2 === 0 ? rowBaseBg : rowAltBg}">
+          <td style="padding:9px 12px;border:1px solid ${border};color:${textM}">${i + 1}</td>
+          <td style="padding:9px 12px;border:1px solid ${border};color:${textD};font-weight:600">${ev.name}</td>
+          <td style="padding:9px 12px;border:1px solid ${border};color:${textM}">${ev.start}</td>
+          <td style="padding:9px 12px;border:1px solid ${border};color:${textM}">${ev.end}</td>
+          <td style="padding:9px 12px;border:1px solid ${border}">${statusPill(ev.status)}</td>
+        </tr>`).join('')}
+      </tbody></table>`;
+  } else {
+    const ev = ctx.events.find(e => e.name === name);
+    if (ev) {
+      body = `<div style="background:${isColor ? '#EFF6FF' : '#FFFFFF'};border:1px solid ${border};border-radius:8px;padding:16px;margin-bottom:20px">
+        <div style="font-size:11px;color:${textM};text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Activity</div>
+        <div style="font-size:18px;font-weight:800;color:${textD}">${ev.name}</div>
+      </div>
+      <table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:20px">
+        <tr><td style="padding:10px 12px;border:1px solid ${border};font-weight:700;color:${textD};width:35%">Start Date</td><td style="padding:10px 12px;border:1px solid ${border};color:${textM}">${ev.start}</td></tr>
+        <tr style="background:${rowAltBg}"><td style="padding:10px 12px;border:1px solid ${border};font-weight:700;color:${textD}">End Date</td><td style="padding:10px 12px;border:1px solid ${border};color:${textM}">${ev.end}</td></tr>
+        <tr><td style="padding:10px 12px;border:1px solid ${border};font-weight:700;color:${textD}">Status</td><td style="padding:10px 12px;border:1px solid ${border};color:${textM}">${ev.status}</td></tr>
+      </table>
+      ${ev.purpose ? `<h3 style="font-size:13px;font-weight:700;color:${textD};margin:0 0 8px">Purpose</h3><p style="font-size:13px;color:${textM};line-height:1.7;margin:0 0 16px">${ev.purpose}</p>` : ''}
+      ${ev.development ? `<h3 style="font-size:13px;font-weight:700;color:${textD};margin:0 0 8px">Development</h3><p style="font-size:13px;color:${textM};line-height:1.7;margin:0 0 16px">${ev.development}</p>` : ''}
+      ${ev.resource ? `<h3 style="font-size:13px;font-weight:700;color:${textD};margin:0 0 8px">Resources</h3><p style="font-size:13px;color:${textM};line-height:1.7;margin:0">${ev.resource}</p>` : ''}`;
+    }
+  }
+
+  /* Logo: monochrome dark-gray glyph in colorless to keep the school identity
+     while avoiding gradients & accent fills. */
+  const uid = Date.now();
+  const logoSvg = isColor
+    ? `<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <defs><linearGradient id="lg${uid}" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse"><stop stop-color="#1a237e"/><stop offset="1" stop-color="#283593"/></linearGradient></defs>
+        <rect width="64" height="64" rx="16" fill="url(#lg${uid})"/>
+        <path d="M32 18C25.5 18 18 20.2 18 20.2L18 46C18 46 25.5 43.8 32 43.8C38.5 43.8 46 46 46 46L46 20.2C46 20.2 38.5 18 32 18Z" fill="rgba(255,255,255,0.15)" stroke="rgba(255,255,255,0.5)" stroke-width="1.2"/>
+        <path d="M32 18L32 43.8" stroke="rgba(255,255,255,0.5)" stroke-width="1.2"/>
+        <path d="M23 17L26 11L32 15L38 11L41 17" stroke="#FCD34D" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+        <text x="32" y="38" text-anchor="middle" font-family="Arial,sans-serif" font-size="14" font-weight="900" fill="rgba(255,255,255,0.9)">OX</text>
+      </svg>`
+    : `<svg width="56" height="56" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="1" y="1" width="62" height="62" rx="12" fill="#FFFFFF" stroke="#1F2937" stroke-width="1.5"/>
+        <path d="M32 18C25.5 18 18 20.2 18 20.2L18 46C18 46 25.5 43.8 32 43.8C38.5 43.8 46 46 46 46L46 20.2C46 20.2 38.5 18 32 18Z" fill="none" stroke="#1F2937" stroke-width="1.3"/>
+        <path d="M32 18L32 43.8" stroke="#1F2937" stroke-width="1.3"/>
+        <text x="32" y="36" text-anchor="middle" font-family="Arial,sans-serif" font-size="11" font-weight="800" fill="#1F2937">OX</text>
+      </svg>`;
+
+  const schoolName = 'The Oxford System, Lahore Campus';
+  /* Header markup — Colorful retains the decorative shapes; Colorless renders a
+     clean printable header with no large fills. */
+  const headerBlock = isColor
+    ? `<div style="background:${headerBg};padding:24px 32px 28px;color:${headerFg};position:relative;overflow:hidden">
+        <div style="position:absolute;top:-30px;right:-30px;width:140px;height:140px;border-radius:50%;background:rgba(255,255,255,.06)"></div>
+        <div style="position:absolute;bottom:-20px;left:120px;width:80px;height:80px;border-radius:50%;background:rgba(14,165,233,.15)"></div>
+        <div style="display:flex;align-items:center;gap:18px;position:relative;z-index:2">
+          <div style="width:64px;height:64px;border-radius:16px;overflow:hidden;flex-shrink:0;box-shadow:0 4px 18px rgba(0,0,0,.35),0 0 0 2px rgba(255,255,255,.15)">${logoSvg}</div>
+          <div>
+            <div style="font-size:9px;letter-spacing:2.5px;text-transform:uppercase;color:${headerKick};font-weight:700;margin-bottom:3px">School Mentor ERP</div>
+            <div style="font-size:20px;font-weight:800;color:${headerFg};letter-spacing:-.02em;line-height:1.2;text-shadow:0 1px 4px rgba(0,0,0,.2)">${schoolName}</div>
+          </div>
+        </div>
+        <div style="height:1px;background:${headerDivCol};margin:18px 0 16px;position:relative;z-index:2"></div>
+        <div style="font-size:22px;font-weight:800;letter-spacing:-.02em;margin-bottom:4px">${name}</div>
+        <div style="font-size:13px;color:${headerSubFg};margin-bottom:16px">Academic Year 2026–2027 · ${styleLabel} Report</div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <div style="background:${chipBg};border:1px solid ${chipBorder};padding:6px 14px;border-radius:20px;font-size:11.5px"><strong>Generated:</strong> ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}</div>
+          <div style="background:${chipBg};border:1px solid ${chipBorder};padding:6px 14px;border-radius:20px;font-size:11.5px"><strong>Format:</strong> ${format.toUpperCase()}</div>
+        </div>
+      </div>`
+    : `<div style="background:${headerBg};padding:22px 32px 22px;color:${headerFg};border-bottom:1px solid ${border}">
+        <div style="display:flex;align-items:center;gap:16px">
+          <div style="width:56px;height:56px;flex-shrink:0">${logoSvg}</div>
+          <div>
+            <div style="font-size:9px;letter-spacing:2.5px;text-transform:uppercase;color:${headerKick};font-weight:700;margin-bottom:3px">School Mentor ERP</div>
+            <div style="font-size:19px;font-weight:800;color:${headerFg};letter-spacing:-.02em;line-height:1.2">${schoolName}</div>
+          </div>
+        </div>
+        <div style="height:1px;background:${headerDivCol};margin:16px 0 14px"></div>
+        <div style="font-size:21px;font-weight:800;letter-spacing:-.02em;margin-bottom:3px;color:${headerFg}">${name}</div>
+        <div style="font-size:12.5px;color:${headerSubFg};margin-bottom:14px">Academic Year 2026–2027 · ${styleLabel} Report (low-ink)</div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <div style="background:${chipBg};border:1px solid ${chipBorder};padding:5px 12px;border-radius:20px;font-size:11px;color:${textD}"><strong>Generated:</strong> ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}</div>
+          <div style="background:${chipBg};border:1px solid ${chipBorder};padding:5px 12px;border-radius:20px;font-size:11px;color:${textD}"><strong>Format:</strong> ${format.toUpperCase()}</div>
+        </div>
+      </div>`;
+
+  /* Print/Close buttons — kept legible in both styles; Colorless avoids large filled blocks. */
+  const printBtnStyle = isColor
+    ? `background:${headerBg};color:#fff;border:none;padding:12px 28px;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;margin-right:10px`
+    : `background:#FFFFFF;color:#111;border:1.5px solid #111;padding:11px 26px;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;margin-right:10px`;
+  const closeBtnStyle = `background:transparent;border:1.5px solid #CBD5E1;color:#64748B;padding:12px 24px;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer`;
+  const toolbarBg     = isColor ? '#F8FAFC' : '#FFFFFF';
+
+  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${name} — Report</title>
+    <style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:'Segoe UI',Arial,sans-serif;background:#fff;color:${textD};font-size:13px}.page{width:210mm;margin:0 auto}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}.no-print{display:none}@page{size:A4;margin:15mm}}</style>
+  </head><body><div class="page">
+    ${headerBlock}
+    <div style="padding:28px 32px">${body}</div>
+    <div style="border-top:1px solid ${border};padding:14px 32px;display:flex;justify-content:space-between;align-items:center;font-size:11px;color:${textM}">
+      <span>${schoolName}</span><span>School Mentor ERP © 2026</span><span>Page 1 of 1</span>
+    </div>
+    <div class="no-print" style="text-align:center;padding:22px;background:${toolbarBg};border-top:1px solid #E2E8F0">
+      <button onclick="window.print()" style="${printBtnStyle}">${isColor ? '🖨 ' : ''}Print / Save as PDF</button>
+      <button onclick="window.close()" style="${closeBtnStyle}">Close</button>
+    </div>
+  </div></body></html>`;
+
+  const w = window.open('', '_blank', 'width=900,height=700');
+  if (w) { w.document.write(html); w.document.close(); }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   ACTIVITY CALENDAR PANEL — stats, calendar views, events panel
+   ═══════════════════════════════════════════════════════════════════ */
+function ActivityCalendar({ events, setEvents, onReport, onAdd, onEdit, openConfirm, toast }) {
+  const today = useMemo(() => new Date(), []);
+  const [calYear,  setCalYear]  = useState(2026);
+  const [calMonth, setCalMonth] = useState(4);
+  const [view, setView] = useState('Month');
+  const [search, setSearch] = useState('');
+  const [filter, setFilter] = useState('all');
+
+  /* 3-dot dropdown — uses fixed positioning so it can never clip behind other cards */
+  const [dropdown, setDropdown] = useState({ id: null, x: 0, y: 0 });
+  const closeDropdown = () => setDropdown({ id: null, x: 0, y: 0 });
+
+  useEffect(() => {
+    if (dropdown.id == null) return;
+    const h = () => closeDropdown();
+    window.addEventListener('click', h);
+    window.addEventListener('scroll', h, true);
+    window.addEventListener('resize', h);
+    return () => {
+      window.removeEventListener('click', h);
+      window.removeEventListener('scroll', h, true);
+      window.removeEventListener('resize', h);
+    };
+  }, [dropdown.id]);
+
+  const openMenu = (e, ev) => {
+    e.stopPropagation();
+    const r = e.currentTarget.getBoundingClientRect();
+    setDropdown({
+      id: dropdown.id === ev.id ? null : ev.id,
+      x: r.right - 150,
+      y: r.bottom + 4,
+    });
+  };
+
+  /* Stats */
+  const stats = useMemo(() => {
+    const now = new Date();
+    const ms = new Date(now.getFullYear(), now.getMonth(), 1);
+    const me = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59);
+    return {
+      total:     events.length,
+      upcoming:  events.filter(e => e.status === 'upcoming').length,
+      thisMonth: events.filter(e => {
+        const s = new Date(e.start), en = new Date(e.end);
+        return !isNaN(s) && !isNaN(en) && s <= me && en >= ms;
+      }).length,
+      completed: events.filter(e => e.status === 'completed').length,
+    };
+  }, [events]);
+
+  /* Filtered + searched event list */
+  const filteredEvents = useMemo(() => {
+    const q = search.toLowerCase();
+    return events.filter(ev => {
+      const mf = filter === 'all' || ev.status === filter;
+      const ms = !q || ev.name.toLowerCase().includes(q) || ev.start.toLowerCase().includes(q);
+      return mf && ms;
+    });
+  }, [events, search, filter]);
+
+  /* Events on a given day */
+  const eventsOnDay = (y, m, d) => {
+    const date = new Date(y, m, d, 12, 0, 0);
+    return events.filter(ev => {
+      const s = parseEventDate(ev.start);
+      const e = parseEventDate(ev.end);
+      if (!s || !e) return false;
+      s.setHours(0, 0, 0, 0);
+      e.setHours(23, 59, 59, 0);
+      return date >= s && date <= e;
+    });
+  };
+
+  /* Build month grid (42 cells) */
+  const monthCells = useMemo(() => {
+    const firstDay = new Date(calYear, calMonth, 1).getDay();
+    const dim  = new Date(calYear, calMonth + 1, 0).getDate();
+    const prev = new Date(calYear, calMonth, 0).getDate();
+    const cells = [];
+    for (let i = firstDay - 1; i >= 0; i--) {
+      const y = calMonth === 0 ? calYear - 1 : calYear;
+      const m = calMonth === 0 ? 11 : calMonth - 1;
+      cells.push({ day: prev - i, other: true, y, m });
+    }
+    for (let d = 1; d <= dim; d++) cells.push({ day: d, other: false, y: calYear, m: calMonth });
+    const rem = 42 - firstDay - dim;
+    for (let d = 1; d <= rem; d++) {
+      const y = calMonth === 11 ? calYear + 1 : calYear;
+      const m = calMonth === 11 ? 0 : calMonth + 1;
+      cells.push({ day: d, other: true, y, m });
+    }
+    return cells;
+  }, [calYear, calMonth]);
+
+  const prevMonth = () => {
+    if (calMonth === 0) { setCalMonth(11); setCalYear(y => y - 1); }
+    else setCalMonth(m => m - 1);
+  };
+  const nextMonth = () => {
+    if (calMonth === 11) { setCalMonth(0); setCalYear(y => y + 1); }
+    else setCalMonth(m => m + 1);
+  };
+
+  const handleDelete = ev => {
+    closeDropdown();
+    openConfirm({
+      title: 'Delete Activity?',
+      message: `"<strong>${ev.name}</strong>" will be permanently removed. This cannot be undone.`,
+      hint: `${ev.start} — ${ev.end}`,
+      confirmLabel: 'Yes, Delete',
+      confirmStyle: 'danger',
+      icon: 'fa-trash',
+      iconBg: 'rgba(220,38,38,.1)',
+      iconColor: '#DC2626',
+      onConfirm: () => {
+        setEvents(events.filter(e => e.id !== ev.id));
+        toast(`"${ev.name}" deleted`, 'success');
+      },
+    });
+  };
+
+  return (
+    <>
+      {/* ─── Stats ─── */}
+      <div className="act-stats-strip">
+        <div className="act-stat-card" style={{ '--accent': '#1E40AF' }}>
+          <div className="act-stat-icon" style={{ background: 'rgba(30,64,175,.1)', color: '#1E40AF' }}>
+            <i className="fa-solid fa-calendar-days"></i>
+          </div>
+          <div>
+            <div className="act-stat-val">{stats.total}</div>
+            <div className="act-stat-lbl">Total Activities</div>
+          </div>
+        </div>
+        <div className="act-stat-card" style={{ '--accent': '#16A34A' }}>
+          <div className="act-stat-icon" style={{ background: 'rgba(22,163,74,.1)', color: '#16A34A' }}>
+            <i className="fa-solid fa-circle-check"></i>
+          </div>
+          <div>
+            <div className="act-stat-val">{stats.upcoming}</div>
+            <div className="act-stat-lbl">Upcoming</div>
+          </div>
+        </div>
+        <div className="act-stat-card" style={{ '--accent': '#D97706' }}>
+          <div className="act-stat-icon" style={{ background: 'rgba(217,119,6,.1)', color: '#D97706' }}>
+            <i className="fa-solid fa-clock"></i>
+          </div>
+          <div>
+            <div className="act-stat-val">{stats.thisMonth}</div>
+            <div className="act-stat-lbl">This Month</div>
+          </div>
+        </div>
+        <div className="act-stat-card" style={{ '--accent': '#7C3AED' }}>
+          <div className="act-stat-icon" style={{ background: 'rgba(124,58,237,.1)', color: '#7C3AED' }}>
+            <i className="fa-solid fa-flag"></i>
+          </div>
+          <div>
+            <div className="act-stat-val">{stats.completed}</div>
+            <div className="act-stat-lbl">Completed</div>
+          </div>
+        </div>
+      </div>
+
+      {/* ─── Main layout ─── */}
+      <div className="activity-layout-v2">
+        {/* LEFT: Calendar card */}
+        <div className="act-cal-card">
+          <div className="act-cal-header">
+            <div className="act-cal-header-left">
+              <div className="act-cal-nav">
+                <Tooltip text="Previous month">
+                  <button className="act-nav-btn" onClick={prevMonth} aria-label="Previous month"><i className="fa-solid fa-chevron-left"></i></button>
+                </Tooltip>
+                <div className="act-cal-month-wrap">
+                  <div className="act-cal-month">{MONTHS_FULL[calMonth]} {calYear}</div>
+                  <div className="act-cal-month-sub">Academic Year 2026–27</div>
+                </div>
+                <Tooltip text="Next month">
+                  <button className="act-nav-btn" onClick={nextMonth} aria-label="Next month"><i className="fa-solid fa-chevron-right"></i></button>
+                </Tooltip>
+              </div>
+            </div>
+            <div className="act-cal-header-right">
+              <div className="act-view-pills">
+                {['Month','Week','Day','List','Year'].map(v => (
+                  <Tooltip key={v} text={`Switch to ${v} view`}>
+                    <button
+                      className={`act-view-pill${view === v ? ' active' : ''}`}
+                      onClick={() => setView(v)}
+                    >
+                      {v}
+                    </button>
+                  </Tooltip>
+                ))}
+              </div>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <Tooltip text="Download Activity Calendar as PDF">
+                  <button
+                    className="act-icon-btn act-icon-btn--pdf"
+                    onClick={() => onReport('Activity Calendar', 'pdf')}
+                  >
+                    <i className="fa-solid fa-file-pdf"></i>
+                  </button>
+                </Tooltip>
+                <Tooltip text="Download Activity Calendar as Word">
+                  <button
+                    className="act-icon-btn act-icon-btn--word"
+                    onClick={() => onReport('Activity Calendar', 'word')}
+                  >
+                    <i className="fa-brands fa-microsoft"></i>
+                  </button>
+                </Tooltip>
+              </div>
+            </div>
+          </div>
+
+          {view === 'Month' ? (
+            <>
+              <div className="act-dow-row">
+                {DAYS_SHORT.map(d => <div key={d} className="act-dow">{d}</div>)}
+              </div>
+              <div className="act-days-grid">
+                {monthCells.map((c, i) => {
+                  const evs = c.other ? [] : eventsOnDay(c.y, c.m, c.day);
+                  const isToday = !c.other
+                    && c.y === today.getFullYear()
+                    && c.m === today.getMonth()
+                    && c.day === today.getDate();
+                  const hasEvs = evs.length > 0;
+                  const MAX = 2;
+                  const extra = evs.length - MAX;
+                  const cellBg = hasEvs && !c.other ? `${evs[0].color}11` : undefined;
+                  return (
+                    <div
+                      key={i}
+                      className={`act-day-full${c.other ? ' other-month' : ''}${isToday ? ' today' : ''}${hasEvs && !c.other ? ' has-acts' : ''}`}
+                      style={{ background: cellBg }}
+                      onClick={() => toast(`${MONTHS_FULL[c.m]} ${c.day}, ${c.y}`, 'info')}
+                    >
+                      <div className={`act-day-num${isToday ? ' today-num' : ''}`}>{c.day}</div>
+                      <div className="cal-day-events">
+                        {evs.slice(0, MAX).map((ev, j) => (
+                          <div
+                            key={j}
+                            className="cal-event-chip"
+                            style={{ background: ev.color + '28', borderLeft: `2.5px solid ${ev.color}`, color: ev.color }}
+                            title={`${ev.name}: ${ev.start} — ${ev.end}`}
+                            onClick={e => { e.stopPropagation(); toast(ev.name, 'info'); }}
+                          >
+                            {ev.name}
+                          </div>
+                        ))}
+                        {extra > 0 && <div className="cal-event-more-chip">+{extra} more</div>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="act-legend">
+                <div className="act-legend-item"><div className="act-legend-dot" style={{ background: '#1E40AF' }}></div>Scheduled</div>
+                <div className="act-legend-item"><div className="act-legend-dot" style={{ background: '#16A34A' }}></div>Completed</div>
+                <div className="act-legend-item"><div className="act-legend-dot" style={{ background: '#D97706' }}></div>Ongoing</div>
+                <div className="act-legend-item"><div className="act-legend-dot today-dot"></div>Today</div>
+              </div>
+            </>
+          ) : view === 'Week' ? (
+            <WeekView events={events} />
+          ) : view === 'Day' ? (
+            <DayView events={events} />
+          ) : view === 'List' ? (
+            <ListView events={events} onReport={onReport} onEdit={onEdit} />
+          ) : (
+            <YearView
+              events={events}
+              calYear={calYear}
+              setCalYear={setCalYear}
+              setCalMonth={setCalMonth}
+              setView={setView}
+            />
+          )}
+        </div>
+
+        {/* RIGHT: Events panel */}
+        <div className="act-events-panel">
+          <div className="act-events-header">
+            <div>
+              <div className="act-events-title">Activities</div>
+              <div className="act-events-sub">{events.length} activities scheduled</div>
+            </div>
+            <Tooltip text="Schedule a new activity on the calendar">
+              <button className="act-add-btn" onClick={onAdd}>
+                <i className="fa-solid fa-plus"></i> Add Activity
+              </button>
+            </Tooltip>
+          </div>
+          <div className="act-search-row">
+            <div className="act-search-box">
+              <i className="fa-solid fa-magnifying-glass"></i>
+              <input
+                type="text"
+                placeholder="Search activities..."
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+              />
+            </div>
+            <Tooltip text="Cycle activity filter (All → Upcoming → Ongoing → Completed)">
+              <button
+                className={`act-filter-btn${filter !== 'all' ? ' on' : ''}`}
+                onClick={() => {
+                  const FILTERS = ['all', 'upcoming', 'ongoing', 'completed'];
+                  setFilter(FILTERS[(FILTERS.indexOf(filter) + 1) % FILTERS.length]);
+                }}
+              >
+                <i className="fa-solid fa-sliders"></i>
+                <span>{filter[0].toUpperCase() + filter.slice(1)}</span>
+              </button>
+            </Tooltip>
+          </div>
+          <div className="act-events-list">
+            {filteredEvents.length === 0 ? (
+              <div className="act-empty">
+                <div className="act-empty-icon"><i className="fa-solid fa-calendar-xmark"></i></div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 4 }}>No activities found</div>
+                <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>Try adjusting the filter or search</div>
+              </div>
+            ) : filteredEvents.map(ev => {
+              const st = STATUS_META[ev.status] || STATUS_META.upcoming;
+              return (
+                <div key={ev.id} className="act-event-item">
+                  <div className="act-event-strip" style={{ background: ev.color }}></div>
+                  <div className="act-event-body">
+                    <div className="act-event-name">{ev.name}</div>
+                    <div className="act-event-dates">
+                      <i className="fa-solid fa-calendar"></i>{ev.start} — {ev.end}
+                    </div>
+                    <div className="act-event-badge" style={{ background: st.bg, color: st.color }}>
+                      <i className={`fa-solid ${st.icon}`} style={{ fontSize: 9 }}></i> {st.label}
+                    </div>
+                  </div>
+                  <Tooltip text="More actions (edit, report, delete)">
+                    <button
+                      className="act-event-more"
+                      onClick={e => openMenu(e, ev)}
+                    >
+                      <i className="fa-solid fa-ellipsis-vertical"></i>
+                    </button>
+                  </Tooltip>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      {/* Dropdown menu — position:fixed via top-level overlay so it never hides behind other cards */}
+      {dropdown.id != null && (() => {
+        const ev = events.find(e => e.id === dropdown.id);
+        if (!ev) return null;
+        return (
+          <div
+            className="dropdown-menu fixed"
+            style={{ position: 'fixed', top: dropdown.y, left: dropdown.x, zIndex: 9000 }}
+            onClick={e => e.stopPropagation()}
+          >
+            <button className="dropdown-item" onClick={() => { onEdit(ev); closeDropdown(); }}>
+              <i className="fa-solid fa-pen"></i> Edit
+            </button>
+            <button className="dropdown-item" onClick={() => { onReport(ev.name, 'pdf'); closeDropdown(); }}>
+              <i className="fa-solid fa-file-pdf"></i> PDF Report
+            </button>
+            <button className="dropdown-item" onClick={() => { onReport(ev.name, 'word'); closeDropdown(); }}>
+              <i className="fa-brands fa-microsoft"></i> Word Report
+            </button>
+            <button className="dropdown-item delete" onClick={() => handleDelete(ev)}>
+              <i className="fa-solid fa-trash"></i> Delete
+            </button>
+          </div>
+        );
+      })()}
+    </>
+  );
+}
+
+/* ─── Activity-calendar non-month views ─── */
+function WeekView({ events }) {
+  const today = new Date();
+  const startOfWeek = new Date(today);
+  startOfWeek.setDate(today.getDate() - today.getDay());
+  return (
+    <div style={{ padding: '12px 16px 16px' }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '.6px', textTransform: 'uppercase', marginBottom: 10 }}>
+        Week of {MONTHS_FULL[startOfWeek.getMonth()]} {startOfWeek.getDate()}, {startOfWeek.getFullYear()}
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: 8 }}>
+        {Array.from({ length: 7 }).map((_, d) => {
+          const day = new Date(startOfWeek); day.setDate(startOfWeek.getDate() + d);
+          const isToday = day.toDateString() === today.toDateString();
+          const dayEvs = events.filter(ev => {
+            const s = new Date(ev.start), e = new Date(ev.end);
+            if (isNaN(s) || isNaN(e)) return false;
+            s.setHours(0); e.setHours(23, 59);
+            return day >= s && day <= e;
+          });
+          return (
+            <div key={d} style={{
+              border: `1.5px solid ${isToday ? 'var(--brand-primary)' : 'var(--border-light)'}`,
+              borderRadius: 12, overflow: 'hidden',
+              background: isToday ? 'rgba(30,58,138,.04)' : 'var(--bg-card)',
+            }}>
+              <div style={{
+                padding: '7px 8px', textAlign: 'center',
+                background: isToday ? 'linear-gradient(135deg,#1E3A8A,#1E40AF)' : 'var(--bg-muted)',
+                borderBottom: `1px solid ${isToday ? 'transparent' : 'var(--border-light)'}`,
+              }}>
+                <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '.8px', textTransform: 'uppercase', color: isToday ? 'rgba(255,255,255,.8)' : 'var(--text-muted)' }}>
+                  {DAYS_SHORT[d]}
+                </div>
+                <div style={{ fontSize: 18, fontWeight: 800, color: isToday ? '#fff' : 'var(--text-primary)', lineHeight: 1.2, marginTop: 2 }}>
+                  {day.getDate()}
+                </div>
+              </div>
+              <div style={{ padding: 6, minHeight: 80 }}>
+                {dayEvs.length === 0
+                  ? <div style={{ fontSize: 9, color: 'var(--border-med)', textAlign: 'center', paddingTop: 12 }}>—</div>
+                  : dayEvs.map((ev, j) => (
+                    <div key={j} title={ev.name} style={{
+                      background: ev.color + '18', borderLeft: `3px solid ${ev.color}`, borderRadius: 5,
+                      padding: '3px 6px', marginBottom: 4, fontSize: 10.5, fontWeight: 600,
+                      color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                    }}>{ev.name}</div>
+                  ))
+                }
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function DayView({ events }) {
+  const today = new Date();
+  const todayLabel = today.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+  const todayEvs = events.filter(ev => {
+    const s = new Date(ev.start), e = new Date(ev.end);
+    if (isNaN(s) || isNaN(e)) return false;
+    const t = new Date(today);
+    s.setHours(0); e.setHours(23, 59); t.setHours(12);
+    return t >= s && t <= e;
+  });
+  const hours = [7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18];
+  return (
+    <div style={{ padding: '14px 16px 16px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+        <div style={{ width: 8, height: 8, borderRadius: '50%', background: 'linear-gradient(135deg,#1E3A8A,#1E40AF)' }}></div>
+        <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>{todayLabel}</div>
+      </div>
+      {todayEvs.length > 0 ? (
+        <div style={{ marginBottom: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {todayEvs.map(ev => (
+            <div key={ev.id} style={{
+              background: ev.color + '10', border: `1.5px solid ${ev.color}40`, borderRadius: 12,
+              padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 10,
+            }}>
+              <div style={{ width: 10, height: 10, borderRadius: '50%', background: ev.color, flexShrink: 0 }}></div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{ev.name}</div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{ev.start} — {ev.end}</div>
+              </div>
+              <span style={{
+                background: STATUS_META[ev.status]?.bg, color: STATUS_META[ev.status]?.color,
+                padding: '3px 9px', borderRadius: 99, fontSize: 10, fontWeight: 700, whiteSpace: 'nowrap',
+              }}>{ev.status}</span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div style={{ textAlign: 'center', padding: '20px 0 16px' }}>
+          <i className="fa-solid fa-calendar-check" style={{ fontSize: 28, color: 'var(--border-light)', display: 'block', marginBottom: 8 }}></i>
+          <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>No activities today</div>
+        </div>
+      )}
+      <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: '.8px', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 8 }}>
+        Schedule
+      </div>
+      <div style={{ border: '1px solid var(--border-light)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
+        {hours.map((h, i) => {
+          const label = h === 12 ? '12:00 PM' : h < 12 ? `${h}:00 AM` : `${h - 12}:00 PM`;
+          return (
+            <div key={h} style={{
+              display: 'grid', gridTemplateColumns: '80px 1fr',
+              borderTop: i === 0 ? 'none' : '1px solid var(--border-light)', minHeight: 40,
+            }}>
+              <div style={{
+                padding: 10, fontSize: 10.5, color: 'var(--text-muted)', fontWeight: 600,
+                borderRight: '1px solid var(--border-light)', display: 'flex', alignItems: 'center',
+              }}>{label}</div>
+              <div style={{ padding: '4px 8px' }}></div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function ListView({ events, onReport, onEdit }) {
+  const sorted = [...events].sort((a, b) => new Date(a.start) - new Date(b.start));
+  if (sorted.length === 0) {
+    return (
+      <div style={{ textAlign: 'center', padding: 40, color: 'var(--text-muted)' }}>
+        <i className="fa-solid fa-calendar-xmark" style={{ fontSize: 28, opacity: .3, display: 'block', marginBottom: 10 }}></i>
+        No activities
+      </div>
+    );
+  }
+  return (
+    <div style={{ padding: '12px 16px 16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+      {sorted.map(ev => {
+        const st = STATUS_META[ev.status] || STATUS_META.upcoming;
+        return (
+          <div key={ev.id} style={{
+            background: 'var(--bg-card)', border: '1.5px solid var(--border-light)',
+            borderRadius: 14, padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer',
+          }}>
+            <div style={{
+              width: 44, height: 44, borderRadius: 11, background: ev.color + '18',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, flexShrink: 0,
+            }}>
+              <i className="fa-solid fa-calendar-star" style={{ color: ev.color }}></i>
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{ev.name}</div>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2, display: 'flex', alignItems: 'center', gap: 5 }}>
+                <i className="fa-solid fa-calendar" style={{ fontSize: 9 }}></i>
+                <span>{ev.start} — {ev.end}</span>
+              </div>
+              <div style={{ marginTop: 5 }}>
+                <span style={{
+                  background: st.bg, color: st.color, padding: '2px 8px', borderRadius: 99,
+                  fontSize: 10.5, fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: 4,
+                }}>
+                  <i className={`fa-solid ${st.icon}`} style={{ fontSize: 9 }}></i>{st.label}
+                </span>
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 4 }}>
+              <Tooltip text={`Download PDF report for ${ev.name}`}>
+                <button
+                  onClick={() => onReport(ev.name, 'pdf')}
+                  style={{
+                    width: 26, height: 26, borderRadius: 7,
+                    border: '1px solid rgba(220,38,38,.2)', background: 'rgba(220,38,38,.06)',
+                    color: '#DC2626', cursor: 'pointer', fontSize: 10,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}
+                ><i className="fa-solid fa-file-pdf"></i></button>
+              </Tooltip>
+              <Tooltip text={`Edit ${ev.name}`}>
+                <button
+                  onClick={() => onEdit(ev)}
+                  style={{
+                    width: 26, height: 26, borderRadius: 7,
+                    border: '1px solid var(--border-light)', background: 'var(--bg-muted)',
+                    color: 'var(--text-muted)', cursor: 'pointer', fontSize: 10,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}
+                ><i className="fa-solid fa-pen"></i></button>
+              </Tooltip>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function YearView({ events, calYear, setCalYear, setCalMonth, setView }) {
+  const today = new Date();
+  const eventsInMonth = mi => events.filter(ev => {
+    const s = new Date(ev.start), e = new Date(ev.end);
+    if (isNaN(s) || isNaN(e)) return false;
+    const ms = new Date(calYear, mi, 1), me = new Date(calYear, mi + 1, 0, 23, 59);
+    return s <= me && e >= ms;
+  });
+
+  return (
+    <div style={{ padding: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+        <div style={{ fontSize: 22, fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-.02em' }}>
+          <i className="fa-solid fa-calendar-days" style={{ color: 'var(--brand-primary)', marginRight: 8, fontSize: 18 }}></i>
+          {calYear}
+        </div>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <Tooltip text="Previous year">
+            <button
+              onClick={() => setCalYear(y => y - 1)}
+              style={{ width: 30, height: 30, borderRadius: 8, border: '1.5px solid var(--border-light)', background: 'var(--bg-muted)', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+            ><i className="fa-solid fa-chevron-left"></i></button>
+          </Tooltip>
+          <Tooltip text="Next year">
+            <button
+              onClick={() => setCalYear(y => y + 1)}
+              style={{ width: 30, height: 30, borderRadius: 8, border: '1.5px solid var(--border-light)', background: 'var(--bg-muted)', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+            ><i className="fa-solid fa-chevron-right"></i></button>
+          </Tooltip>
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 10 }}>
+        {MONTHS_FULL.map((mon, mi) => {
+          const evs = eventsInMonth(mi);
+          const isNow = mi === today.getMonth() && calYear === today.getFullYear();
+          const topColor = evs.length > 0 ? evs[0].color : null;
+          const firstDay = new Date(calYear, mi, 1).getDay();
+          const dim = new Date(calYear, mi + 1, 0).getDate();
+          const todayDay = isNow ? today.getDate() : -1;
+          const cells = [];
+          for (let pad = 0; pad < firstDay; pad++) cells.push(null);
+          for (let d = 1; d <= dim; d++) {
+            const dt = new Date(calYear, mi, d, 12);
+            const matchingEv = evs.find(ev => {
+              const s = new Date(ev.start), e = new Date(ev.end);
+              s.setHours(0); e.setHours(23);
+              return dt >= s && dt <= e;
+            });
+            cells.push({ d, hasE: !!matchingEv, evColor: matchingEv?.color, isT: d === todayDay });
+          }
+          return (
+            <div
+              key={mi}
+              onClick={() => { setCalMonth(mi); setView('Month'); }}
+              style={{
+                border: `1.5px solid ${isNow ? 'var(--brand-primary)' : evs.length ? topColor + '50' : 'var(--border-light)'}`,
+                borderRadius: 12, overflow: 'hidden',
+                background: evs.length ? topColor + '06' : 'var(--bg-card)',
+                cursor: 'pointer', transition: 'all .2s ease',
+              }}
+            >
+              <div style={{
+                padding: '8px 10px',
+                background: isNow ? 'linear-gradient(135deg,#1E3A8A,#1E40AF)'
+                  : evs.length ? topColor + '20' : 'var(--bg-muted)',
+                borderBottom: `1px solid ${isNow ? 'transparent' : evs.length ? topColor + '30' : 'var(--border-light)'}`,
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              }}>
+                <div style={{ fontSize: 12, fontWeight: 800, color: isNow ? '#fff' : evs.length ? topColor : 'var(--text-primary)' }}>{mon}</div>
+                {evs.length > 0 && (
+                  <div style={{
+                    background: isNow ? 'rgba(255,255,255,.2)' : topColor + '22',
+                    color: isNow ? '#fff' : topColor,
+                    padding: '1px 6px', borderRadius: 99, fontSize: 9, fontWeight: 800,
+                  }}>{evs.length}</div>
+                )}
+              </div>
+              <div style={{ padding: 6, display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: 1 }}>
+                {cells.map((c, k) => c == null ? <div key={k}></div> : (
+                  <div key={k} style={{
+                    width: 18, height: 18, borderRadius: 3,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: 8.5, fontWeight: c.isT ? 800 : 500,
+                    background: c.isT ? 'linear-gradient(135deg,#1E3A8A,#1E40AF)'
+                      : c.hasE ? c.evColor + '20' : 'transparent',
+                    color: c.isT ? '#fff' : c.hasE ? c.evColor : 'var(--text-secondary)',
+                  }}>{c.d}</div>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   ACADEMIC CALENDAR PANEL — term sections with key-date cards
+   ═══════════════════════════════════════════════════════════════════ */
+function AcademicCalendar({ terms, onReport, onEdit }) {
+  return (
+    <div className="section-card">
+      <div className="cal-header">
+        <div>
+          <div className="cal-header-title">
+            <i className="fa-solid fa-calendar-check" style={{ color: 'var(--brand-primary)', marginRight: 8 }}></i>
+            Key Dates
+          </div>
+          <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 2 }}>
+            Academic year important dates by term
+          </div>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'row', gap: 8, alignItems: 'center', flexWrap: 'nowrap' }}>
+          <Tooltip text="Download the academic calendar as PDF">
+            <button className="export-btn pdf" onClick={() => onReport('Academic Calendar', 'pdf')}>
+              <i className="fa-solid fa-file-pdf"></i> PDF
+            </button>
+          </Tooltip>
+          <Tooltip text="Download the academic calendar as Word">
+            <button className="export-btn word" onClick={() => onReport('Academic Calendar', 'word')}>
+              <i className="fa-brands fa-microsoft"></i> Word
+            </button>
+          </Tooltip>
+          <Tooltip text="Edit the academic calendar key dates">
+            <button className="cal-edit-btn" onClick={onEdit}>
+              <i className="fa-solid fa-pen"></i> Edit
+            </button>
+          </Tooltip>
+        </div>
+      </div>
+
+      <div>
+        {terms.map((term, i) => (
+          <div key={i} className="term-section">
+            <div className="term-label"><i className="fa-solid fa-bookmark"></i>{term.label}</div>
+            {term.entries.length === 0 ? (
+              <div className="no-data" style={{ padding: 16, textAlign: 'center', color: 'var(--text-muted)', fontSize: 12.5, fontStyle: 'italic' }}>
+                No dates added
+              </div>
+            ) : (
+              <div className="key-dates-grid">
+                {term.entries.map((e, ei) => (
+                  <div key={ei} className="key-date-card">
+                    <div className="kd-icon"><i className="fa-solid fa-calendar-day"></i></div>
+                    <div>
+                      <div className="kd-heading">{e.heading}</div>
+                      <div className="kd-date">{e.date}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   TERM SETTINGS PANEL — stat strip + Session/Terms sub-tabs
+   ═══════════════════════════════════════════════════════════════════ */
+function TermSettings({ termData, setTermData, openConfirm, toast }) {
+  const [sub, setSub] = useState('term');
+
+  const [year,   setYear]   = useState('2026–2027');
+  const [start,  setStart]  = useState('2026-01-01');
+  const [end,    setEnd]    = useState('2026-12-31');
+  const [system, setSystem] = useState('Annual System');
+  const [medium, setMedium] = useState('English');
+
+  const updateRow = (id, key, val) =>
+    setTermData(termData.map(t => t.id === id ? { ...t, [key]: val } : t));
+
+  const saveTerm = id => {
+    const t = termData.find(x => x.id === id);
+    if (!t) return;
+    if (!t.name || !t.name.trim()) { toast('Term name cannot be empty', 'error'); return; }
+    toast(`"${t.name}" saved successfully`, 'success');
+  };
+
+  const deleteTerm = id => {
+    const t = termData.find(x => x.id === id);
+    if (!t) return;
+    openConfirm({
+      title: 'Delete Term?',
+      message: `Term "<strong>${t.name || 'this term'}</strong>" will be permanently removed. Linked calendar entries will be affected.`,
+      hint: 'Academic Calendar and Examination records linked to this term may be impacted.',
+      confirmLabel: 'Yes, Delete',
+      confirmStyle: 'danger',
+      icon: 'fa-trash',
+      iconBg: 'rgba(220,38,38,.1)',
+      iconColor: '#DC2626',
+      onConfirm: () => {
+        setTermData(termData.filter(x => x.id !== id));
+        toast('Term deleted', 'success');
+      },
+    });
+  };
+
+  const addTerm = () => {
+    setTermData([...termData, { id: Date.now(), name: '', start: '', end: '' }]);
+  };
+
+  const sessionStartDisplay = useMemo(() => {
+    const d = new Date(start);
+    return isNaN(d) ? 'Jan 1' : `${MONTHS_SHORT[d.getMonth()]} ${d.getDate()}`;
+  }, [start]);
+  const sessionEndDisplay = useMemo(() => {
+    const d = new Date(end);
+    return isNaN(d) ? 'Dec 31' : `${MONTHS_SHORT[d.getMonth()]} ${d.getDate()}`;
+  }, [end]);
+  const academicYearLabel = useMemo(() => year.split('–')[0] || '2026', [year]);
+
+  return (
+    <>
+      {/* Stat strip */}
+      <div className="ts-stat-strip">
+        <div className="ts-stat">
+          <div className="ts-stat-icon" style={{ background: 'rgba(30,58,138,.1)', color: '#1E40AF' }}>
+            <i className="fa-solid fa-layer-group"></i>
+          </div>
+          <div>
+            <div className="ts-stat-val">{termData.length}</div>
+            <div className="ts-stat-lbl">Total Terms</div>
+          </div>
+          <div className="ts-stat-bar" style={{ background: 'linear-gradient(90deg,#1E40AF,#1E3A8A)' }}></div>
+        </div>
+        <div className="ts-stat">
+          <div className="ts-stat-icon" style={{ background: 'rgba(22,163,74,.1)', color: '#16A34A' }}>
+            <i className="fa-solid fa-calendar-check"></i>
+          </div>
+          <div>
+            <div className="ts-stat-val">{academicYearLabel}</div>
+            <div className="ts-stat-lbl">Academic Year</div>
+          </div>
+          <div className="ts-stat-bar" style={{ background: 'linear-gradient(90deg,#16A34A,#15803D)' }}></div>
+        </div>
+        <div className="ts-stat">
+          <div className="ts-stat-icon" style={{ background: 'rgba(217,119,6,.1)', color: '#D97706' }}>
+            <i className="fa-solid fa-calendar-day"></i>
+          </div>
+          <div>
+            <div className="ts-stat-val">{sessionStartDisplay}</div>
+            <div className="ts-stat-lbl">Session Start</div>
+          </div>
+          <div className="ts-stat-bar" style={{ background: 'linear-gradient(90deg,#D97706,#B45309)' }}></div>
+        </div>
+        <div className="ts-stat">
+          <div className="ts-stat-icon" style={{ background: 'rgba(220,38,38,.08)', color: '#DC2626' }}>
+            <i className="fa-solid fa-calendar-xmark"></i>
+          </div>
+          <div>
+            <div className="ts-stat-val">{sessionEndDisplay}</div>
+            <div className="ts-stat-lbl">Session End</div>
+          </div>
+          <div className="ts-stat-bar" style={{ background: 'linear-gradient(90deg,#DC2626,#B91C1C)' }}></div>
+        </div>
+      </div>
+
+      {/* Main card */}
+      <div className="section-card" style={{ overflow: 'visible' }}>
+        <div className="ts-card-header">
+          <div className="ts-card-header-left">
+            <div className="ts-header-icon"><i className="fa-solid fa-sliders"></i></div>
+            <div>
+              <div className="ts-card-title">Academic Structure</div>
+              <div className="ts-card-sub">Configure session &amp; terms — drives all calendars, exams and fee records</div>
+            </div>
+          </div>
+          <div className="ts-subtab-row">
+            <button className={`ts-subtab${sub === 'session' ? ' active' : ''}`} onClick={() => setSub('session')}>
+              <i className="fa-solid fa-gear"></i><span>Session</span>
+            </button>
+            <button className={`ts-subtab${sub === 'term' ? ' active' : ''}`} onClick={() => setSub('term')}>
+              <i className="fa-solid fa-list-ol"></i><span>Terms</span>
+            </button>
+          </div>
+        </div>
+
+        {sub === 'session' ? (
+          <div className="ts-section-body">
+            <div className="ts-info-strip">
+              <i className="fa-solid fa-circle-info" style={{ flexShrink: 0, marginTop: 2 }}></i>
+              <span>Session settings define the overall academic year. All term dates must fall within this session period.</span>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: 18, marginTop: 20 }}>
+              <div className="ts-field-group" style={{ gridColumn: '1 / -1' }}>
+                <label className="ts-label">Academic Year <span style={{ color: 'var(--error)' }}>*</span></label>
+                <div className="ts-input-wrap" style={{ maxWidth: 280 }}>
+                  <i className="fa-solid fa-graduation-cap ts-input-icon"></i>
+                  <input className="ts-input" value={year} onChange={e => setYear(e.target.value)} placeholder="e.g. 2026–2027" />
+                </div>
+              </div>
+              <div className="ts-field-group">
+                <label className="ts-label">Session Start Date</label>
+                <div className="ts-input-wrap">
+                  <i className="fa-solid fa-calendar-day ts-input-icon"></i>
+                  <input className="ts-input" type="date" value={start} onChange={e => setStart(e.target.value)} />
+                </div>
+                <div className="ts-hint"><i className="fa-solid fa-info-circle"></i> First day of the academic session</div>
+              </div>
+              <div className="ts-field-group">
+                <label className="ts-label">Session End Date</label>
+                <div className="ts-input-wrap">
+                  <i className="fa-solid fa-calendar-check ts-input-icon"></i>
+                  <input className="ts-input" type="date" value={end} onChange={e => setEnd(e.target.value)} />
+                </div>
+                <div className="ts-hint"><i className="fa-solid fa-info-circle"></i> Last day of the academic session</div>
+              </div>
+              <div className="ts-field-group">
+                <label className="ts-label">School System</label>
+                <div className="ts-input-wrap">
+                  <i className="fa-solid fa-school ts-input-icon"></i>
+                  <select className="ts-input ts-select" value={system} onChange={e => setSystem(e.target.value)}>
+                    <option>Annual System</option>
+                    <option>Semester System</option>
+                    <option>Trimester System</option>
+                    <option>Quarter System</option>
+                  </select>
+                </div>
+              </div>
+              <div className="ts-field-group">
+                <label className="ts-label">Medium of Instruction</label>
+                <div className="ts-input-wrap">
+                  <i className="fa-solid fa-language ts-input-icon"></i>
+                  <select className="ts-input ts-select" value={medium} onChange={e => setMedium(e.target.value)}>
+                    <option>English</option>
+                    <option>Urdu</option>
+                    <option>Bilingual</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 10, marginTop: 24, paddingTop: 18, borderTop: '1px solid var(--border-light)' }}>
+              <Tooltip text="Save session settings">
+                <button className="ts-btn-primary" onClick={() => toast('Session settings saved successfully!', 'success')}>
+                  <i className="fa-solid fa-check"></i> Save Session
+                </button>
+              </Tooltip>
+              <Tooltip text="Reset to defaults">
+                <button className="ts-btn-ghost" onClick={() => toast('Reset to defaults', 'info')}>
+                  <i className="fa-solid fa-rotate-left"></i> Reset
+                </button>
+              </Tooltip>
+            </div>
+          </div>
+        ) : (
+          <div className="ts-section-body">
+            <div className="ts-info-strip warn">
+              <i className="fa-solid fa-triangle-exclamation" style={{ color: '#D97706', flexShrink: 0, marginTop: 2 }}></i>
+              <span>Terms defined here drive <strong>Academic Calendar</strong>, <strong>Examinations</strong> and <strong>Fee Records</strong>. Deleting a term affects all linked data.</span>
+            </div>
+
+            <div className="ts-table" style={{ marginTop: 16 }}>
+              <div className="ts-table-head">
+                <div className="ts-th" style={{ width: 52 }}>#</div>
+                <div className="ts-th" style={{ flex: 1 }}>Term Name</div>
+                <div className="ts-th" style={{ width: 155 }}>Start Date</div>
+                <div className="ts-th" style={{ width: 155 }}>End Date</div>
+                <div className="ts-th" style={{ width: 96, textAlign: 'center' }}>Actions</div>
+              </div>
+              {termData.length === 0 ? (
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '48px 20px', textAlign: 'center' }}>
+                  <div style={{
+                    width: 64, height: 64, borderRadius: 18,
+                    background: 'linear-gradient(135deg,rgba(30,58,138,.08),rgba(30,64,175,.05))',
+                    color: 'var(--brand-primary)', fontSize: 26,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 14,
+                  }}>
+                    <i className="fa-solid fa-list-ol"></i>
+                  </div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 5 }}>No terms yet</div>
+                  <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>Click "Add new term" below to get started.</div>
+                </div>
+              ) : termData.map((term, i) => {
+                const isNew = !term.name;
+                return (
+                  <div key={term.id} className="ts-row">
+                    <div className="ts-num">
+                      <div className="ts-num-badge">{i + 1}</div>
+                    </div>
+                    <div className="ts-cell flex1">
+                      <input
+                        className={`ts-term-input${isNew ? ' new' : ''}`}
+                        value={term.name}
+                        placeholder="Enter term name"
+                        onChange={e => updateRow(term.id, 'name', e.target.value)}
+                      />
+                    </div>
+                    <div className="ts-cell w160">
+                      <input
+                        className="ts-term-input"
+                        type="date"
+                        value={term.start}
+                        onChange={e => updateRow(term.id, 'start', e.target.value)}
+                      />
+                    </div>
+                    <div className="ts-cell w160">
+                      <input
+                        className="ts-term-input"
+                        type="date"
+                        value={term.end}
+                        onChange={e => updateRow(term.id, 'end', e.target.value)}
+                      />
+                    </div>
+                    <div className="ts-cell w100">
+                      <div className="ts-actions">
+                        <Tooltip text="Save term changes">
+                          <button className="ts-act-btn save" onClick={() => saveTerm(term.id)}>
+                            <i className="fa-solid fa-check"></i>
+                          </button>
+                        </Tooltip>
+                        <Tooltip text="Delete term">
+                          <button className="ts-act-btn del" onClick={() => deleteTerm(term.id)}>
+                            <i className="fa-solid fa-xmark"></i>
+                          </button>
+                        </Tooltip>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <Tooltip text="Add another academic term">
+              <button className="ts-add-row-btn" onClick={addTerm}>
+                <div className="ts-add-icon"><i className="fa-solid fa-plus"></i></div>
+                <span>Add new term</span>
+                <span className="ts-add-hint">Click to add another academic term</span>
+              </button>
+            </Tooltip>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   TEXT BOOKS PANEL — class rows with expand/collapse
+   ═══════════════════════════════════════════════════════════════════ */
+function TextBooks({ onReport, toast }) {
+  const [openId, setOpenId] = useState(null);
+
+  return (
+    <div className="section-card">
+      <div className="table-head">
+        <div className="th">S. No.</div>
+        <div className="th">Class</div>
+        <div className="th">Report</div>
+        <div className="th" style={{ textAlign: 'right' }}>Details</div>
+      </div>
+
+      {CLASSES.map((cls, i) => {
+        const isOpen = openId === cls.id;
+        return (
+          <div key={cls.id} className="class-row-wrap">
+            <div
+              className={`class-row${isOpen ? ' open' : ''}`}
+              onClick={() => setOpenId(isOpen ? null : cls.id)}
+            >
+              <div className="td sno">
+                <span className="sno-hash">#</span> {i + 1}
+              </div>
+              <div className="td cls-name">
+                <div className="cls-icon"><i className="fa-solid fa-code"></i></div>
+                {cls.name}
+              </div>
+              <div className="td inline-export" onClick={e => e.stopPropagation()}>
+                <Tooltip text={`Download textbook list for ${cls.name} as PDF`}>
+                  <button className="export-btn pdf" onClick={() => onReport(cls.name, 'pdf')}>
+                    <i className="fa-solid fa-file-pdf"></i> PDF
+                  </button>
+                </Tooltip>
+                <Tooltip text={`Download textbook list for ${cls.name} as Word`}>
+                  <button className="export-btn word" onClick={() => onReport(cls.name, 'word')}>
+                    <i className="fa-brands fa-microsoft"></i> Word
+                  </button>
+                </Tooltip>
+              </div>
+              <div className="td" style={{ justifyContent: 'flex-end', paddingLeft: 0 }}>
+                <Tooltip text={isOpen ? 'Hide textbook details' : 'Show textbook details'}>
+                  <button className={`expand-btn${isOpen ? ' open' : ''}`} aria-label={isOpen ? 'Hide textbook details' : 'Show textbook details'}>
+                    <i className="fa-solid fa-chevron-down"></i>
+                  </button>
+                </Tooltip>
+              </div>
+            </div>
+            <div className={`class-detail${isOpen ? ' open' : ''}`}>
+              <div className="detail-inner">
+                <div className="subject-grid">
+                  {cls.subjects.map((s, j) => (
+                    <div
+                      key={j}
+                      className="subject-card"
+                      onClick={e => { e.stopPropagation(); toast(`${s.name} — ${s.book || 'No textbook'}`, 'info'); }}
+                    >
+                      <div className={`subj-icon ${s.color}`}><i className={`fa-solid ${s.icon}`}></i></div>
+                      <div>
+                        <div className="subj-name">{s.name}</div>
+                        <div className="subj-book">
+                          {s.book || <span style={{ opacity: .5, fontStyle: 'italic' }}>No textbook</span>}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════
+   ACADEMICS CSS — extracted from the HTML prototype
+   ═══════════════════════════════════════════════════════════════════ */
+const ACADEMICS_CSS = `
+/* ── Page header tutorial button (uses existing .tutorial-btn from App.js CSS) ── */
+.page-tutorial-btn { flex-shrink: 0; }
+
+/* ── L1 TABS ── */
+.l1-tabs {
+  display:grid; grid-template-columns:1fr 1fr;
+  background:var(--bg-muted);
+  border:1.5px solid var(--border-light);
+  border-radius:var(--radius-lg);
+  padding:4px; margin-bottom:20px;
+  box-shadow:var(--shadow-sm); gap:4px;
+}
+.l1-tab {
+  padding:10px 18px; text-align:center; cursor:pointer;
+  font-size:13px; font-weight:700; transition:all .25s cubic-bezier(.4,0,.2,1);
+  background:transparent; color:var(--text-muted);
+  border:none; font-family:var(--font-body);
+  border-radius:var(--radius-md);
+  display:flex; align-items:center; justify-content:center; gap:8px;
+  position:relative; overflow:hidden;
+}
+.l1-tab:hover:not(.active) {
+  background:var(--bg-card); color:var(--brand-primary);
+  box-shadow:var(--shadow-xs);
+}
+.l1-tab.active {
+  background:linear-gradient(135deg,#1E3A8A 0%,#1E40AF 60%,#2563EB 100%);
+  color:#fff;
+  box-shadow:0 6px 20px rgba(30,58,138,.4), inset 0 1px 0 rgba(255,255,255,.2);
+}
+.l1-tab-icon {
+  width:22px; height:22px; border-radius:6px;
+  display:flex; align-items:center; justify-content:center;
+  font-size:11px; transition:all .25s ease; flex-shrink:0;
+}
+.l1-tab.active .l1-tab-icon { background:rgba(255,255,255,.18); color:#fff; }
+.l1-tab:hover:not(.active) .l1-tab-icon { background:rgba(30,58,138,.08); color:var(--brand-primary); }
+.l1-tab:not(.active):not(:hover) .l1-tab-icon { background:rgba(0,0,0,.05); color:var(--text-muted); }
+
+/* ── L2 TABS ── */
+.l2-tabs {
+  display:flex; background:var(--bg-card);
+  border:1.5px solid var(--border-light);
+  border-radius:var(--radius-lg);
+  overflow:hidden; margin-bottom:20px;
+  box-shadow:var(--shadow-sm);
+}
+.l2-tab {
+  flex:1; padding:12px 18px; text-align:center; cursor:pointer;
+  font-size:13px; font-weight:600; transition:all .2s ease;
+  background:transparent; color:var(--text-muted);
+  border:none; font-family:var(--font-body);
+  display:flex; align-items:center; justify-content:center; gap:8px;
+  position:relative;
+}
+.l2-tab::after {
+  content:''; position:absolute; bottom:0; left:12%; right:12%; height:3px;
+  border-radius:3px 3px 0 0; background:var(--brand-primary);
+  transform:scaleX(0); transition:transform .25s cubic-bezier(.4,0,.2,1);
+}
+.l2-tab:not(:last-child) { border-right:1.5px solid var(--border-light); }
+.l2-tab:hover:not(.active) { background:var(--bg-muted); color:var(--brand-primary); }
+.l2-tab.active {
+  color:var(--brand-primary); font-weight:800;
+  background:linear-gradient(180deg,transparent,rgba(30,58,138,.04));
+}
+.l2-tab.active::after { transform:scaleX(1); }
+.l2-tab-dot {
+  width:7px; height:7px; border-radius:50%;
+  background:var(--brand-primary); opacity:0;
+  transition:opacity .2s ease; flex-shrink:0;
+}
+.l2-tab.active .l2-tab-dot { opacity:1; animation:pulse-dot 2s infinite; }
+@keyframes pulse-dot { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.5;transform:scale(1.3)} }
+
+/* ── L3 TABS ── */
+.l3-tabs { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:20px; }
+.l3-tab {
+  padding:14px 20px; cursor:pointer;
+  font-size:13px; font-weight:600; transition:all .22s cubic-bezier(.4,0,.2,1);
+  background:var(--bg-card); color:var(--text-muted);
+  border:2px solid var(--border-light); font-family:var(--font-body);
+  border-radius:var(--radius-lg);
+  display:flex; align-items:center; gap:12px;
+  box-shadow:var(--shadow-xs); text-align:left;
+}
+.l3-tab:hover:not(.active) {
+  border-color:var(--border-med); background:var(--bg-muted);
+  color:var(--brand-primary); transform:translateY(-1px);
+  box-shadow:var(--shadow-sm);
+}
+.l3-tab.active {
+  background:linear-gradient(135deg,#1E3A8A,#1E40AF);
+  border-color:transparent; color:#fff;
+  box-shadow:0 6px 20px rgba(30,58,138,.35), inset 0 1px 0 rgba(255,255,255,.15);
+  transform:translateY(-1px);
+}
+.l3-tab-icon {
+  width:36px; height:36px; border-radius:10px;
+  display:flex; align-items:center; justify-content:center;
+  font-size:15px; flex-shrink:0; transition:all .22s ease;
+}
+.l3-tab.active .l3-tab-icon { background:rgba(255,255,255,.18); color:#fff; }
+.l3-tab:hover:not(.active) .l3-tab-icon { background:rgba(30,58,138,.08); color:var(--brand-primary); }
+.l3-tab:not(.active):not(:hover) .l3-tab-icon { background:var(--bg-muted); color:var(--text-muted); }
+.l3-tab-text { text-align:left; }
+.l3-tab-name { font-size:13px; font-weight:700; line-height:1.2; }
+.l3-tab-desc { font-size:10.5px; margin-top:2px; opacity:.7; line-height:1.2; }
+.l3-tab.active .l3-tab-desc { opacity:.75; }
+
+/* ── Section card ── */
+.section-card {
+  background:var(--bg-card); border-radius:var(--radius-lg);
+  border:1px solid var(--border-light); box-shadow:var(--shadow-sm);
+  overflow:hidden; animation:fadeSlide .25s ease both;
+}
+@keyframes fadeSlide { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:none; } }
+
+/* ── Classes table (Text Books) ── */
+.table-head {
+  display:grid; grid-template-columns:80px 1fr auto 60px;
+  background:var(--bg-muted); border-bottom:1px solid var(--border-light);
+  padding:0 20px;
+}
+.th {
+  padding:11px 10px; font-size:10.5px; font-weight:700;
+  color:var(--text-muted); letter-spacing:.6px; text-transform:uppercase;
+}
+.class-row-wrap { border-bottom:1px solid var(--border-light); }
+.class-row-wrap:last-child { border-bottom:none; }
+.class-row {
+  display:grid; grid-template-columns:80px 1fr auto 60px;
+  padding:0 20px; cursor:pointer; align-items:center;
+  transition:var(--tr); min-height:60px;
+}
+.class-row:hover { background:rgba(30,58,138,.04); }
+.class-row.open  { background:var(--bg-muted); }
+.td { padding:12px 10px; font-size:13px; color:var(--text-secondary); display:flex; align-items:center; }
+.td.sno { color:var(--text-muted); font-weight:600; gap:4px; }
+.sno-hash { color:var(--brand-primary); font-size:10px; opacity:.5; }
+.td.cls-name { font-weight:700; color:var(--text-primary); gap:8px; }
+.cls-icon { width:28px;height:28px;border-radius:7px;background:linear-gradient(135deg,#DBEAFE,#BFDBFE);color:#1E40AF;display:flex;align-items:center;justify-content:center;font-size:11px;flex-shrink:0; }
+.expand-btn {
+  width:30px;height:30px;border-radius:8px;
+  border:1.5px solid var(--border-light);
+  background:var(--bg-card);color:var(--text-muted);
+  display:flex;align-items:center;justify-content:center;
+  cursor:pointer;font-size:11px;transition:var(--tr);margin-left:auto;
+}
+.expand-btn:hover { border-color:var(--brand-primary);color:var(--brand-primary); }
+.expand-btn.open { transform:rotate(180deg);border-color:var(--brand-primary);color:var(--brand-primary);background:rgba(30,58,138,.05); }
+
+.class-detail {
+  background:linear-gradient(135deg,rgba(30,58,138,.02),rgba(30,58,138,.04));
+  border-top:1px solid var(--border-light);
+  max-height:0; overflow:hidden;
+  transition:max-height .4s cubic-bezier(.4,0,.2,1), padding .3s ease;
+}
+.class-detail.open { max-height:600px; overflow:visible; }
+.detail-inner { padding:16px 20px 20px; }
+
+.inline-export { display:flex; gap:6px; align-items:center; }
+.export-btn {
+  display:flex;align-items:center;gap:5px;
+  padding:6px 11px; border-radius:var(--radius-full);
+  font-family:var(--font-body);font-size:11px;font-weight:700;
+  cursor:pointer; border:none; transition:var(--tr); white-space:nowrap;
+}
+.export-btn.pdf  { background:linear-gradient(135deg,#EF4444,#DC2626);color:#fff;box-shadow:0 2px 8px rgba(239,68,68,.3); }
+.export-btn.word { background:linear-gradient(135deg,#2563EB,#1E40AF);color:#fff;box-shadow:0 2px 8px rgba(37,99,235,.3); }
+.export-btn:hover { transform:translateY(-1px); filter:brightness(1.08); }
+.export-btn:active { transform:scale(.96); }
+
+.subject-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:10px; }
+.subject-card {
+  background:var(--bg-card); border:1.5px solid var(--border-light);
+  border-radius:var(--radius-md); padding:12px 14px;
+  display:flex; align-items:center; gap:11px;
+  transition:var(--tr); cursor:pointer;
+}
+.subject-card:hover { border-color:var(--border-med); box-shadow:var(--shadow-sm); transform:translateY(-1px); }
+.subj-icon { width:34px;height:34px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0; }
+.subj-name { font-size:13px;font-weight:700;color:var(--text-primary); }
+.subj-book { font-size:11px;color:var(--text-muted);margin-top:2px; }
+.subj-blue   { background:rgba(30,58,138,.08);color:#1E40AF; }
+.subj-teal   { background:rgba(37,99,235,.1);color:#1E40AF; }
+.subj-green  { background:rgba(22,163,74,.1);color:#16A34A; }
+.subj-amber  { background:rgba(245,158,11,.1);color:#D97706; }
+.subj-purple { background:rgba(124,58,237,.1);color:#7C3AED; }
+.subj-rose   { background:rgba(244,63,94,.1);color:#E11D48; }
+
+[data-theme="dark"] .class-row:hover { background:rgba(59,130,246,.06); }
+[data-theme="dark"] .class-row.open  { background:var(--bg-muted); }
+[data-theme="dark"] .class-row-wrap  { border-color:var(--border-light); }
+[data-theme="dark"] .cls-icon        { background:rgba(59,130,246,.15); color:#3B82F6; }
+[data-theme="dark"] .td.cls-name     { color:#E2E8F8; }
+[data-theme="dark"] .expand-btn      { border-color:var(--border-light); background:var(--bg-muted); color:var(--text-muted); }
+[data-theme="dark"] .expand-btn:hover { border-color:#3B82F6; color:#3B82F6; }
+[data-theme="dark"] .class-detail    { background:linear-gradient(135deg,rgba(14,22,40,.6),rgba(19,31,56,.4)); border-color:var(--border-light); }
+[data-theme="dark"] .subject-card    { background:var(--bg-card); border-color:var(--border-light); }
+[data-theme="dark"] .subject-card:hover { border-color:var(--border-med); }
+[data-theme="dark"] .subj-name       { color:#E2E8F8; }
+[data-theme="dark"] .subj-book       { color:var(--text-muted); }
+[data-theme="dark"] .table-head      { background:var(--bg-muted); border-color:var(--border-light); }
+[data-theme="dark"] .th              { color:var(--text-muted); }
+
+/* ── Term Settings ── */
+.ts-stat-strip { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin-bottom:18px; }
+.ts-stat {
+  background:var(--bg-card); border-radius:var(--radius-lg);
+  border:1px solid var(--border-light); padding:16px 18px;
+  display:flex; align-items:center; gap:13px;
+  box-shadow:var(--shadow-sm); position:relative; overflow:hidden;
+  transition:var(--tr);
+}
+.ts-stat:hover { box-shadow:var(--shadow-md); transform:translateY(-1px); }
+.ts-stat-bar { position:absolute; left:0; top:0; bottom:0; width:4px; border-radius:0 3px 3px 0; }
+.ts-stat-icon {
+  width:40px; height:40px; border-radius:11px;
+  display:flex; align-items:center; justify-content:center;
+  font-size:17px; flex-shrink:0;
+}
+.ts-stat-val { font-size:22px; font-weight:800; color:var(--text-primary); letter-spacing:-.02em; line-height:1; }
+.ts-stat-lbl { font-size:11px; color:var(--text-muted); margin-top:3px; }
+
+.ts-card-header {
+  display:flex; align-items:center; justify-content:space-between;
+  padding:20px 24px 18px; border-bottom:1px solid var(--border-light);
+  background:linear-gradient(135deg,rgba(30,58,138,.03),transparent);
+  flex-wrap:wrap; gap:14px;
+}
+.ts-card-header-left { display:flex; align-items:center; gap:14px; }
+.ts-header-icon {
+  width:44px; height:44px; border-radius:13px; flex-shrink:0;
+  background:linear-gradient(135deg,#1E3A8A,#1E40AF);
+  color:#fff; font-size:18px;
+  display:flex; align-items:center; justify-content:center;
+  box-shadow:0 6px 18px rgba(30,58,138,.3);
+}
+.ts-card-title { font-size:16px; font-weight:800; color:var(--text-primary); letter-spacing:-.01em; }
+.ts-card-sub   { font-size:11.5px; color:var(--text-muted); margin-top:2px; max-width:400px; }
+
+.ts-subtab-row {
+  display:flex; gap:4px;
+  background:var(--bg-muted); border:1.5px solid var(--border-light);
+  border-radius:var(--radius-full); padding:4px;
+}
+.ts-subtab {
+  display:flex; align-items:center; gap:7px;
+  padding:8px 16px; border-radius:var(--radius-full);
+  border:none; background:transparent;
+  font-family:var(--font-body); font-size:12.5px; font-weight:600;
+  color:var(--text-muted); cursor:pointer; transition:var(--tr);
+  white-space:nowrap;
+}
+.ts-subtab:hover:not(.active) { background:var(--bg-card); color:var(--text-primary); }
+.ts-subtab.active {
+  background:linear-gradient(135deg,#1E3A8A,#1E40AF);
+  color:#fff; box-shadow:0 3px 10px rgba(30,58,138,.3);
+}
+.ts-subtab i { font-size:11px; }
+
+.ts-section-body { padding:22px 24px 28px; }
+.ts-info-strip {
+  display:flex; align-items:flex-start; gap:10px;
+  padding:12px 14px; border-radius:var(--radius-md);
+  background:rgba(30,58,138,.05); border:1px solid rgba(30,58,138,.15);
+  font-size:12.5px; color:#334155; line-height:1.7;
+  font-weight:500; word-break:break-word; overflow-wrap:break-word;
+}
+.ts-info-strip strong { color:var(--brand-primary); font-weight:700; }
+.ts-info-strip.warn {
+  background:rgba(217,119,6,.06); border-color:rgba(217,119,6,.2); color:#78350F;
+}
+.ts-info-strip.warn strong { color:#92400E; }
+.ts-info-strip i { font-size:13px; flex-shrink:0; margin-top:3px; }
+
+.ts-field-group { display:flex; flex-direction:column; gap:6px; }
+.ts-label { font-size:12px; font-weight:700; color:var(--text-secondary); letter-spacing:.2px; }
+.ts-input-wrap { position:relative; }
+.ts-input-icon {
+  position:absolute; left:13px; top:50%; transform:translateY(-50%);
+  color:var(--text-muted); font-size:12px; pointer-events:none;
+}
+.ts-input {
+  width:100%; height:44px;
+  border:1.5px solid var(--border-light); border-radius:var(--radius-md);
+  padding:0 14px 0 38px;
+  font-family:var(--font-body); font-size:13px; color:var(--text-primary);
+  background:var(--input-bg); outline:none; transition:var(--tr);
+}
+.ts-input:focus { border-color:var(--brand-primary); box-shadow:0 0 0 3px rgba(30,58,138,.09); }
+.ts-select { cursor:pointer; appearance:none; }
+.ts-hint { font-size:10.5px; color:var(--text-muted); display:flex; align-items:center; gap:5px; }
+.ts-hint i { font-size:10px; color:var(--info); }
+
+.ts-btn-primary {
+  display:inline-flex; align-items:center; gap:8px;
+  padding:0 22px; height:42px; border-radius:var(--radius-md);
+  border:none; cursor:pointer; font-family:var(--font-body);
+  font-size:13px; font-weight:700; transition:var(--tr);
+  background:linear-gradient(135deg,#1E40AF,#1E3A8A);
+  color:#fff; box-shadow:0 4px 14px rgba(30,58,138,.28);
+}
+.ts-btn-primary:hover { transform:translateY(-1px); box-shadow:0 8px 20px rgba(30,58,138,.38); }
+.ts-btn-ghost {
+  display:inline-flex; align-items:center; gap:8px;
+  padding:0 18px; height:42px; border-radius:var(--radius-md);
+  border:1.5px solid var(--border-light); cursor:pointer;
+  font-family:var(--font-body); font-size:13px; font-weight:600;
+  background:transparent; color:var(--text-muted); transition:var(--tr);
+}
+.ts-btn-ghost:hover { background:var(--bg-muted); color:var(--text-primary); }
+
+.ts-table { border:1.5px solid var(--border-light); border-radius:var(--radius-lg); overflow:hidden; }
+.ts-table-head {
+  display:flex; align-items:center;
+  background:var(--bg-muted); padding:0 18px;
+  border-bottom:1px solid var(--border-light);
+}
+.ts-th {
+  padding:12px 10px; font-size:10px; font-weight:800;
+  color:var(--text-muted); letter-spacing:1px; text-transform:uppercase;
+  flex-shrink:0;
+}
+.ts-row {
+  display:flex; align-items:center; flex-wrap:nowrap;
+  padding:12px 18px; border-bottom:1px solid var(--border-light);
+  background:var(--bg-card); transition:background .15s ease; gap:10px;
+  min-width:0;
+}
+.ts-row:last-child { border-bottom:none; }
+.ts-row:hover { background:rgba(30,58,138,.018); }
+.ts-num { width:52px; flex-shrink:0; display:flex; align-items:center; }
+.ts-num-badge {
+  width:34px; height:34px; border-radius:10px;
+  background:linear-gradient(135deg,#EFF6FF,#DBEAFE);
+  color:var(--brand-primary); font-size:13px; font-weight:800;
+  display:flex; align-items:center; justify-content:center;
+  border:1px solid #BFDBFE;
+}
+.ts-cell { padding:0 5px; flex-shrink:0; min-width:0; }
+.ts-cell.flex1 { flex:1; padding:0 5px; min-width:0; }
+.ts-cell.w160  { width:155px; flex-shrink:0; }
+.ts-cell.w100  { width:96px; flex-shrink:0; }
+
+.ts-term-input {
+  width:100%; height:40px;
+  border:1.5px solid var(--border-light); border-radius:var(--radius-md);
+  padding:0 12px; font-family:var(--font-body); font-size:13.5px;
+  color:var(--text-primary); background:var(--input-bg);
+  outline:none; transition:var(--tr); min-width:0;
+}
+.ts-term-input:hover { border-color:var(--border-med); }
+.ts-term-input:focus { border-color:var(--brand-primary); box-shadow:0 0 0 3px rgba(30,58,138,.08); }
+.ts-term-input[type="date"] { cursor:pointer; font-size:13px; padding:0 10px; }
+.ts-term-input.new { border-color:rgba(30,58,138,.3); background:rgba(30,58,138,.03); }
+
+.ts-actions { display:flex; gap:7px; align-items:center; flex-shrink:0; justify-content:center; }
+.ts-act-btn {
+  width:34px; height:34px; border-radius:50%; border:none;
+  display:flex; align-items:center; justify-content:center;
+  cursor:pointer; font-size:14px; transition:var(--tr); flex-shrink:0;
+  position:relative;
+}
+.ts-act-btn.save {
+  background:rgba(22,163,74,.1); color:#16A34A;
+  border:2px solid rgba(22,163,74,.25);
+}
+.ts-act-btn.save:hover { background:#16A34A; color:#fff; transform:scale(1.1); box-shadow:0 3px 10px rgba(22,163,74,.35); }
+.ts-act-btn.del {
+  background:rgba(220,38,38,.08); color:#DC2626;
+  border:2px solid rgba(220,38,38,.25);
+}
+.ts-act-btn.del:hover { background:#DC2626; color:#fff; transform:scale(1.1); box-shadow:0 3px 10px rgba(220,38,38,.3); }
+
+.ts-add-row-btn {
+  display:flex; align-items:center; gap:14px;
+  width:100%; margin-top:14px; padding:16px 20px;
+  border:2px dashed var(--border-med); border-radius:var(--radius-lg);
+  background:transparent; cursor:pointer; transition:var(--tr);
+  font-family:var(--font-body);
+}
+.ts-add-row-btn:hover { border-color:var(--brand-primary); background:rgba(30,58,138,.03); border-style:solid; }
+.ts-add-icon {
+  width:36px; height:36px; border-radius:10px; flex-shrink:0;
+  background:linear-gradient(135deg,#1E3A8A,#1E40AF);
+  color:#fff; font-size:14px;
+  display:flex; align-items:center; justify-content:center;
+  box-shadow:0 3px 10px rgba(30,58,138,.3);
+  transition:transform .2s ease;
+}
+.ts-add-row-btn:hover .ts-add-icon { transform:rotate(90deg); }
+.ts-add-row-btn > span:first-of-type { font-size:14px; font-weight:700; color:var(--brand-primary); }
+.ts-add-hint { font-size:11px; color:var(--text-muted); margin-left:auto; font-style:italic; }
+
+[data-theme="dark"] .ts-stat { background:var(--bg-card); border-color:var(--border-light); }
+[data-theme="dark"] .ts-stat-val { color:#E2E8F8; }
+[data-theme="dark"] .ts-card-header { background:linear-gradient(135deg,rgba(59,130,246,.04),transparent); border-color:var(--border-light); }
+[data-theme="dark"] .ts-card-title { color:#E2E8F8; }
+[data-theme="dark"] .ts-card-sub { color:var(--text-muted); }
+[data-theme="dark"] .ts-subtab-row { background:var(--bg-muted); border-color:var(--border-light); }
+[data-theme="dark"] .ts-subtab { color:var(--text-muted); }
+[data-theme="dark"] .ts-subtab:hover:not(.active) { background:var(--bg-card); color:#E2E8F8; }
+[data-theme="dark"] .ts-info-strip { background:rgba(59,130,246,.08); border-color:rgba(59,130,246,.2); color:#93C5FD; }
+[data-theme="dark"] .ts-info-strip strong { color:#60A5FA; }
+[data-theme="dark"] .ts-input { background:var(--input-bg); border-color:var(--border-light); color:#E2E8F8; }
+[data-theme="dark"] .ts-input:focus { border-color:#3B82F6; box-shadow:0 0 0 3px rgba(59,130,246,.12); }
+[data-theme="dark"] .ts-table { border-color:var(--border-light); }
+[data-theme="dark"] .ts-table-head { background:var(--bg-muted); border-color:var(--border-light); }
+[data-theme="dark"] .ts-th { color:#4A6080; }
+[data-theme="dark"] .ts-row { background:var(--bg-card); border-color:var(--border-light); }
+[data-theme="dark"] .ts-row:hover { background:rgba(59,130,246,.05); }
+[data-theme="dark"] .ts-num-badge { background:rgba(59,130,246,.15); color:#3B82F6; border-color:transparent; }
+[data-theme="dark"] .ts-term-input { background:var(--input-bg); border-color:var(--border-light); color:#E2E8F8; }
+[data-theme="dark"] .ts-add-row-btn { border-color:var(--border-med); color:#3B82F6; }
+[data-theme="dark"] .ts-add-row-btn:hover { background:rgba(59,130,246,.1); border-color:#3B82F6; }
+[data-theme="dark"] .ts-label { color:#93C5FD; }
+[data-theme="dark"] .ts-btn-ghost { border-color:var(--border-light); color:var(--text-muted); }
+[data-theme="dark"] .ts-btn-ghost:hover { background:var(--bg-muted); color:#E2E8F8; }
+
+/* ── Academic Calendar ── */
+.cal-header { display:flex; align-items:center; justify-content:space-between; padding:16px 20px 14px; border-bottom:1px solid var(--border-light); gap:12px; flex-wrap:nowrap; }
+.cal-header-title { font-size:15px; font-weight:800; color:var(--text-primary); }
+.cal-edit-btn {
+  display:flex; align-items:center; gap:6px;
+  padding:7px 14px; border-radius:var(--radius-md);
+  border:1.5px solid var(--border-light); background:var(--bg-muted);
+  color:var(--text-secondary); font-family:var(--font-body);
+  font-size:12px; font-weight:600; cursor:pointer; transition:var(--tr);
+}
+.cal-edit-btn:hover { border-color:var(--brand-primary); color:var(--brand-primary); background:var(--brand-light); }
+
+.term-section { padding:0 20px 20px; }
+.term-label {
+  display:flex; align-items:center; gap:10px;
+  font-size:11px; font-weight:700; letter-spacing:.8px;
+  text-transform:uppercase; color:var(--text-muted);
+  padding:18px 0 10px; position:relative;
+}
+.term-label::after { content:''; flex:1; height:1px; background:var(--border-light); }
+.term-label i { color:var(--brand-primary); font-size:12px; }
+.key-dates-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:10px; }
+.key-date-card {
+  background:var(--bg-muted); border:1.5px solid var(--border-light);
+  border-radius:var(--radius-md); padding:12px 14px;
+  display:flex; align-items:flex-start; gap:10px;
+  transition:var(--tr); cursor:pointer;
+}
+.key-date-card:hover { border-color:var(--border-med); box-shadow:var(--shadow-sm); }
+.kd-icon { width:30px; height:30px; border-radius:8px; background:rgba(30,58,138,.08); color:var(--brand-primary); display:flex; align-items:center; justify-content:center; font-size:12px; flex-shrink:0; }
+.kd-heading { font-size:12.5px; font-weight:700; color:var(--text-primary); }
+.kd-date { font-size:11px; color:var(--text-muted); margin-top:2px; }
+.no-data { text-align:center; padding:14px; font-size:12px; color:var(--text-muted); opacity:.6; }
+
+/* Cal edit modal */
+.cal-modal-section { margin-bottom:24px; }
+.cal-modal-term {
+  font-size:11px; font-weight:700; letter-spacing:.8px; text-transform:uppercase;
+  color:var(--text-muted); text-align:center;
+  display:flex; align-items:center; gap:10px; margin-bottom:12px;
+}
+.cal-modal-term::before, .cal-modal-term::after { content:''; flex:1; height:1px; background:var(--border-light); }
+.cal-entry-row { display:grid; grid-template-columns:1fr 1fr auto; gap:8px; padding:8px 0; border-bottom:1px solid var(--border-light); align-items:center; }
+.cal-entry-row:last-of-type { border-bottom:none; }
+.cal-entry-input {
+  height:38px; border:1.5px solid var(--border-light); border-radius:var(--radius-sm);
+  padding:0 10px; font-family:var(--font-body); font-size:12.5px;
+  color:var(--text-primary); background:var(--input-bg); outline:none;
+  transition:var(--tr); width:100%;
+}
+.cal-entry-input:focus { border-color:var(--brand-primary); box-shadow:0 0 0 3px rgba(30,58,138,.09); }
+.remove-btn {
+  display:flex; align-items:center; gap:4px;
+  padding:5px 10px; border-radius:var(--radius-sm);
+  border:1.5px solid rgba(220,38,38,.25); background:rgba(220,38,38,.06);
+  color:var(--error); font-family:var(--font-body);
+  font-size:11.5px; font-weight:700; cursor:pointer;
+  transition:var(--tr); white-space:nowrap;
+}
+.remove-btn:hover { background:rgba(220,38,38,.12); border-color:var(--error); }
+.add-more-btn {
+  display:flex; align-items:center; gap:6px;
+  padding:6px 12px; border-radius:var(--radius-md);
+  border:1.5px dashed var(--border-med); background:transparent;
+  color:var(--brand-primary); font-family:var(--font-body);
+  font-size:12px; font-weight:700; cursor:pointer; transition:var(--tr); margin-top:10px;
+}
+.add-more-btn:hover { background:var(--brand-light); border-color:var(--brand-primary); }
+
+[data-theme="dark"] .cal-header { border-color:var(--border-light); }
+[data-theme="dark"] .cal-header-title { color:#E2E8F8; }
+[data-theme="dark"] .cal-edit-btn { background:var(--bg-muted); border-color:var(--border-light); color:var(--text-secondary); }
+[data-theme="dark"] .cal-edit-btn:hover { border-color:#3B82F6; color:#3B82F6; background:rgba(59,130,246,.1); }
+[data-theme="dark"] .term-label { color:#4A6080; }
+[data-theme="dark"] .term-label::after { background:var(--border-light); }
+[data-theme="dark"] .key-date-card { background:var(--bg-muted); border-color:var(--border-light); }
+[data-theme="dark"] .key-date-card:hover { border-color:var(--border-med); }
+[data-theme="dark"] .kd-icon { background:rgba(59,130,246,.15); color:#3B82F6; }
+[data-theme="dark"] .kd-heading { color:#E2E8F8; }
+[data-theme="dark"] .cal-entry-input { background:var(--input-bg); border-color:var(--border-light); color:#E2E8F8; }
+[data-theme="dark"] .cal-entry-input:focus { border-color:#3B82F6; }
+[data-theme="dark"] .cal-modal-term { color:#4A6080; }
+[data-theme="dark"] .cal-modal-term::before, [data-theme="dark"] .cal-modal-term::after { background:var(--border-light); }
+[data-theme="dark"] .add-more-btn { border-color:var(--border-med); color:#3B82F6; }
+[data-theme="dark"] .add-more-btn:hover { background:rgba(59,130,246,.1); border-color:#3B82F6; }
+[data-theme="dark"] .remove-btn { border-color:rgba(239,68,68,.25); background:rgba(239,68,68,.1); color:#F87171; }
+[data-theme="dark"] .no-data { color:var(--text-muted); }
+
+/* ── Activity Calendar ── */
+.act-stats-strip { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin-bottom:18px; }
+.act-stat-card {
+  background:var(--bg-card); border-radius:var(--radius-lg);
+  border:1px solid var(--border-light); padding:14px 16px;
+  display:flex; align-items:center; gap:12px;
+  box-shadow:var(--shadow-sm); transition:var(--tr);
+  position:relative; overflow:hidden;
+}
+.act-stat-card::before {
+  content:''; position:absolute; left:0; top:0; bottom:0; width:3px;
+  background:var(--accent,var(--brand-primary)); border-radius:0 2px 2px 0;
+}
+.act-stat-card:hover { box-shadow:var(--shadow-md); transform:translateY(-1px); }
+.act-stat-icon { width:38px; height:38px; border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:16px; flex-shrink:0; }
+.act-stat-val { font-size:22px; font-weight:800; color:var(--text-primary); line-height:1; letter-spacing:-.02em; }
+.act-stat-lbl { font-size:11px; color:var(--text-muted); margin-top:3px; }
+
+.activity-layout-v2 { display:grid; grid-template-columns:1fr 340px; gap:16px; align-items:start; }
+
+.act-cal-card { background:var(--bg-card); border-radius:var(--radius-xl); border:1px solid var(--border-light); box-shadow:var(--shadow-sm); overflow:hidden; }
+.act-cal-header {
+  display:flex; align-items:center; justify-content:space-between;
+  padding:18px 20px 14px; border-bottom:1px solid var(--border-light);
+  background:linear-gradient(135deg,rgba(30,58,138,.03),transparent);
+  gap:12px; flex-wrap:wrap;
+}
+.act-cal-header-left { display:flex; align-items:center; }
+.act-cal-header-right { display:flex; align-items:center; gap:10px; }
+.act-cal-nav { display:flex; align-items:center; gap:8px; }
+.act-nav-btn {
+  width:32px; height:32px; border-radius:9px;
+  border:1.5px solid var(--border-light); background:var(--bg-muted);
+  color:var(--text-muted); display:flex; align-items:center; justify-content:center;
+  cursor:pointer; font-size:11px; transition:var(--tr);
+}
+.act-nav-btn:hover { border-color:var(--brand-primary); color:var(--brand-primary); background:var(--brand-light); }
+.act-cal-month-wrap { text-align:center; min-width:130px; }
+.act-cal-month { font-size:17px; font-weight:800; color:var(--text-primary); letter-spacing:-.02em; }
+.act-cal-month-sub { font-size:10px; color:var(--text-muted); margin-top:1px; }
+
+.act-view-pills {
+  display:flex; gap:2px; background:var(--bg-muted);
+  border:1px solid var(--border-light); border-radius:var(--radius-full); padding:3px;
+}
+.act-view-pill {
+  padding:5px 12px; border-radius:var(--radius-full);
+  border:none; background:transparent;
+  font-family:var(--font-body); font-size:11.5px; font-weight:600;
+  color:var(--text-muted); cursor:pointer; transition:var(--tr);
+}
+.act-view-pill:hover:not(.active) { color:var(--text-primary); }
+.act-view-pill.active { background:linear-gradient(135deg,#1E3A8A,#1E40AF); color:#fff; box-shadow:0 2px 8px rgba(30,58,138,.3); }
+
+.act-icon-btn {
+  width:32px; height:32px; border-radius:9px;
+  border:1.5px solid var(--border-light); background:var(--bg-muted);
+  color:var(--text-muted); display:flex; align-items:center; justify-content:center;
+  cursor:pointer; font-size:13px; transition:var(--tr);
+}
+.act-icon-btn:hover { border-color:var(--brand-primary); color:var(--brand-primary); background:var(--brand-light); }
+.act-icon-btn--pdf  { background:rgba(220,38,38,.07); border-color:rgba(220,38,38,.25); color:#DC2626; }
+.act-icon-btn--pdf:hover { background:rgba(220,38,38,.14); border-color:#DC2626; color:#DC2626; }
+.act-icon-btn--word { background:rgba(30,64,175,.07); border-color:rgba(30,64,175,.25); color:#1E40AF; }
+.act-icon-btn--word:hover { background:rgba(30,64,175,.14); border-color:#1E40AF; color:#1E40AF; }
+
+.act-dow-row { display:grid; grid-template-columns:repeat(7,1fr); padding:10px 10px 6px; gap:2px; }
+.act-dow { text-align:center; font-size:10px; font-weight:800; color:var(--text-muted); letter-spacing:.8px; text-transform:uppercase; padding:6px 0; }
+.act-days-grid { display:grid; grid-template-columns:repeat(7,1fr); gap:2px; padding:0 10px 10px; }
+
+.act-day-full {
+  min-height:88px; border-radius:8px; cursor:pointer;
+  padding:6px 5px 4px; transition:var(--tr);
+  border:1.5px solid transparent;
+  display:flex; flex-direction:column; gap:3px; position:relative;
+}
+.act-day-full:hover:not(.other-month) { background:var(--bg-muted); border-color:var(--border-light); }
+.act-day-full.other-month { opacity:.35; cursor:default; }
+.act-day-full.today { background:rgba(30,58,138,.04); border-color:var(--brand-primary); }
+.act-day-num {
+  font-size:12.5px; font-weight:600; color:var(--text-secondary);
+  width:26px; height:26px; border-radius:50%;
+  display:flex; align-items:center; justify-content:center;
+  flex-shrink:0; transition:var(--tr); align-self:flex-start;
+}
+.act-day-full.other-month .act-day-num { color:var(--text-muted); }
+.act-day-num.today-num {
+  background:linear-gradient(135deg,#1E3A8A,#1E40AF);
+  color:#fff; font-weight:800; box-shadow:0 3px 10px rgba(30,58,138,.4);
+}
+.cal-day-events { display:flex; flex-direction:column; gap:2px; flex:1; }
+.cal-event-chip {
+  font-size:10px; font-weight:700;
+  padding:2px 5px; border-radius:3px;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  cursor:pointer; transition:var(--tr); line-height:1.4;
+}
+.cal-event-chip:hover { filter:brightness(.92); }
+.cal-event-more-chip {
+  font-size:9.5px; font-weight:700;
+  color:var(--text-muted); background:var(--bg-muted);
+  padding:1px 5px; border-radius:3px; border:none;
+}
+.act-day-full.has-acts { border-color:rgba(30,58,138,.12); }
+.act-day-full.has-acts:hover { border-color:var(--border-med); filter:brightness(.97); }
+
+.act-legend {
+  display:flex; align-items:center; gap:16px; justify-content:center;
+  padding:10px 16px 16px; border-top:1px solid var(--border-light); flex-wrap:wrap;
+}
+.act-legend-item { display:flex; align-items:center; gap:5px; font-size:10.5px; color:var(--text-muted); font-weight:600; }
+.act-legend-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+.today-dot { background:linear-gradient(135deg,#1E3A8A,#1E40AF); box-shadow:0 1px 4px rgba(30,58,138,.4); }
+
+.act-events-panel {
+  background:var(--bg-card); border-radius:var(--radius-xl);
+  border:1px solid var(--border-light); box-shadow:var(--shadow-sm);
+  display:flex; flex-direction:column; max-height:600px; overflow:hidden;
+}
+.act-events-header {
+  padding:16px 16px 12px; border-bottom:1px solid var(--border-light);
+  display:flex; align-items:flex-start; justify-content:space-between;
+  gap:10px; flex-shrink:0;
+  background:linear-gradient(135deg,rgba(30,58,138,.03),transparent);
+}
+.act-events-title { font-size:14px; font-weight:800; color:var(--text-primary); }
+.act-events-sub { font-size:11px; color:var(--text-muted); margin-top:2px; }
+.act-add-btn {
+  display:flex; align-items:center; gap:6px;
+  padding:8px 14px; border-radius:var(--radius-full);
+  border:none; background:linear-gradient(135deg,#1E3A8A,#1E40AF);
+  color:#fff; font-family:var(--font-body); font-size:12px; font-weight:700;
+  cursor:pointer; box-shadow:0 3px 10px rgba(30,58,138,.3);
+  transition:var(--tr); white-space:nowrap; flex-shrink:0;
+}
+.act-add-btn:hover { transform:translateY(-1px); box-shadow:0 6px 18px rgba(30,58,138,.4); }
+
+.act-search-row { display:flex; gap:8px; padding:12px 14px 8px; flex-shrink:0; border-bottom:1px solid var(--border-light); }
+.act-search-box {
+  flex:1; display:flex; align-items:center; gap:7px;
+  border:1.5px solid var(--border-light); border-radius:var(--radius-full);
+  padding:0 12px; height:34px; background:var(--bg-muted); transition:var(--tr);
+}
+.act-search-box:focus-within { border-color:var(--brand-primary); background:var(--input-bg); box-shadow:0 0 0 3px rgba(30,58,138,.09); }
+.act-search-box i { color:var(--text-muted); font-size:11px; flex-shrink:0; }
+.act-search-box input {
+  border:none; background:transparent; outline:none;
+  font-family:var(--font-body); font-size:12.5px;
+  color:var(--text-primary); width:100%;
+}
+.act-search-box input::placeholder { color:var(--text-muted); }
+.act-filter-btn {
+  display:flex; align-items:center; gap:5px;
+  padding:0 12px; height:34px; border-radius:var(--radius-full);
+  border:1.5px solid var(--border-light); background:var(--bg-muted);
+  color:var(--text-muted); font-family:var(--font-body);
+  font-size:11.5px; font-weight:700; cursor:pointer;
+  transition:var(--tr); white-space:nowrap;
+}
+.act-filter-btn:hover, .act-filter-btn.on { border-color:var(--brand-primary); color:var(--brand-primary); background:var(--brand-light); }
+
+.act-events-list { flex:1; overflow-y:auto; }
+.act-event-item {
+  padding:12px 14px; display:flex; align-items:flex-start; gap:10px;
+  transition:var(--tr); position:relative; cursor:pointer;
+  border-bottom:1px solid var(--border-light);
+  animation:fadeSlide .2s ease both;
+}
+.act-event-item:last-child { border-bottom:none; }
+.act-event-item:hover { background:var(--bg-muted); }
+.act-event-strip { width:4px; border-radius:2px; flex-shrink:0; align-self:stretch; min-height:40px; }
+.act-event-body { flex:1; min-width:0; }
+.act-event-name { font-size:13px; font-weight:700; color:var(--text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.act-event-dates { font-size:11px; color:var(--text-muted); margin-top:3px; display:flex; align-items:center; gap:5px; }
+.act-event-dates i { font-size:9px; color:var(--border-med); }
+.act-event-badge { display:inline-flex; align-items:center; gap:4px; padding:2px 8px; border-radius:var(--radius-full); font-size:10px; font-weight:700; margin-top:5px; }
+.act-event-more {
+  width:26px; height:26px; border-radius:7px;
+  border:none; background:transparent; color:var(--text-muted);
+  cursor:pointer; display:flex; align-items:center; justify-content:center;
+  font-size:11px; transition:var(--tr); flex-shrink:0;
+}
+.act-event-more:hover { background:var(--bg-muted); color:var(--text-primary); }
+.act-empty { display:flex; flex-direction:column; align-items:center; padding:40px 20px; text-align:center; }
+.act-empty-icon {
+  width:60px; height:60px; border-radius:16px;
+  background:linear-gradient(135deg,rgba(30,58,138,.08),rgba(14,165,233,.08));
+  display:flex; align-items:center; justify-content:center;
+  font-size:24px; color:var(--brand-primary); margin-bottom:12px;
+}
+
+/* Dropdown */
+.dropdown-menu {
+  background:var(--bg-card); border:1px solid var(--border-light);
+  border-radius:var(--radius-md); box-shadow:var(--shadow-lg);
+  min-width:160px; overflow:hidden;
+  animation:fadeSlide .15s ease both;
+}
+.dropdown-menu.fixed { position:fixed; z-index:9000; }
+.dropdown-item {
+  display:flex; align-items:center; gap:9px; padding:9px 14px;
+  font-family:var(--font-body); font-size:12.5px; font-weight:600;
+  color:var(--text-primary); cursor:pointer; border:none; background:transparent;
+  width:100%; text-align:left; transition:var(--tr);
+}
+.dropdown-item:hover { background:var(--bg-muted); }
+.dropdown-item.delete:hover { background:rgba(220,38,38,.06); color:var(--error); }
+.dropdown-item i { font-size:11px; color:var(--text-muted); width:14px; }
+.dropdown-item.delete i { color:var(--error); }
+
+[data-theme="dark"] .act-stat-card { background:var(--bg-card); border-color:var(--border-light); }
+[data-theme="dark"] .act-stat-val { color:#E2E8F8; }
+[data-theme="dark"] .act-cal-card { background:var(--bg-card); border-color:var(--border-light); }
+[data-theme="dark"] .act-cal-header { background:linear-gradient(135deg,rgba(59,130,246,.04),transparent); border-color:var(--border-light); }
+[data-theme="dark"] .act-nav-btn { background:var(--bg-muted); border-color:var(--border-light); color:var(--text-muted); }
+[data-theme="dark"] .act-nav-btn:hover { background:rgba(59,130,246,.15); color:#3B82F6; border-color:#3B82F6; }
+[data-theme="dark"] .act-cal-month { color:#E2E8F8; }
+[data-theme="dark"] .act-view-pills { background:var(--bg-muted); border-color:var(--border-light); }
+[data-theme="dark"] .act-view-pill { color:var(--text-muted); }
+[data-theme="dark"] .act-view-pill:hover:not(.active) { color:#93C5FD; }
+[data-theme="dark"] .act-view-pill.active { background:linear-gradient(135deg,#1E3A8A,#1E40AF); color:#fff; }
+[data-theme="dark"] .act-icon-btn { background:var(--bg-muted); border-color:var(--border-light); color:var(--text-muted); }
+[data-theme="dark"] .act-icon-btn:hover { background:rgba(59,130,246,.15); color:#3B82F6; border-color:#3B82F6; }
+[data-theme="dark"] .act-icon-btn--pdf  { background:rgba(220,38,38,.1); border-color:rgba(220,38,38,.25); color:#F87171; }
+[data-theme="dark"] .act-icon-btn--word { background:rgba(59,130,246,.1); border-color:rgba(59,130,246,.25); color:#60A5FA; }
+[data-theme="dark"] .act-dow { color:#4A6080; }
+[data-theme="dark"] .act-day-full:hover:not(.other-month) { background:rgba(59,130,246,.08); }
+[data-theme="dark"] .act-day-full.today { background:linear-gradient(135deg,#1E3A8A,#1E40AF); box-shadow:0 4px 14px rgba(30,58,138,.5); }
+[data-theme="dark"] .act-day-num { color:#B8C8E8; }
+[data-theme="dark"] .act-day-full.other-month .act-day-num { color:#2A3E60; }
+[data-theme="dark"] .act-legend { border-color:var(--border-light); }
+[data-theme="dark"] .act-legend-item { color:var(--text-muted); }
+[data-theme="dark"] .act-events-panel { background:var(--bg-card); border-color:var(--border-light); }
+[data-theme="dark"] .act-events-header { background:linear-gradient(135deg,rgba(59,130,246,.04),transparent); border-color:var(--border-light); }
+[data-theme="dark"] .act-events-title { color:#E2E8F8; }
+[data-theme="dark"] .act-events-sub { color:var(--text-muted); }
+[data-theme="dark"] .act-search-box { background:var(--bg-muted); border-color:var(--border-light); }
+[data-theme="dark"] .act-search-box:focus-within { background:var(--input-bg); border-color:#3B82F6; }
+[data-theme="dark"] .act-search-box input { color:#E2E8F8; }
+[data-theme="dark"] .act-filter-btn { background:var(--bg-muted); border-color:var(--border-light); color:var(--text-muted); }
+[data-theme="dark"] .act-filter-btn:hover, [data-theme="dark"] .act-filter-btn.on { background:rgba(59,130,246,.15); border-color:#3B82F6; color:#3B82F6; }
+[data-theme="dark"] .act-event-item { border-color:var(--border-light); }
+[data-theme="dark"] .act-event-item:hover { background:rgba(59,130,246,.06); }
+[data-theme="dark"] .act-event-name { color:#E2E8F8; }
+[data-theme="dark"] .act-event-dates { color:var(--text-muted); }
+[data-theme="dark"] .act-event-more:hover { background:var(--bg-muted); color:#93C5FD; }
+[data-theme="dark"] .dropdown-menu { background:var(--bg-card); border-color:var(--border-light); box-shadow:var(--shadow-lg); }
+[data-theme="dark"] .dropdown-item { color:#E2E8F8; }
+[data-theme="dark"] .dropdown-item:hover { background:rgba(59,130,246,.08); }
+[data-theme="dark"] .dropdown-item.delete:hover { background:rgba(239,68,68,.1); color:#F87171; }
+[data-theme="dark"] .dropdown-item i { color:var(--text-muted); }
+[data-theme="dark"] .dropdown-item.delete i { color:#F87171; }
+
+/* ── Confirm Dialog ── */
+.confirm-overlay {
+  position:fixed; inset:0;
+  background:rgba(10,22,40,.55); backdrop-filter:blur(8px);
+  z-index:9999; display:none;
+  align-items:center; justify-content:center; padding:20px;
+}
+.confirm-overlay.open { display:flex; }
+.confirm-dialog {
+  background:var(--bg-card); border-radius:24px;
+  width:100%; max-width:380px;
+  border:1px solid var(--border-light);
+  box-shadow:0 30px 80px rgba(0,0,0,.2), 0 8px 24px rgba(0,0,0,.1);
+  animation:confirmIn .32s cubic-bezier(.34,1.3,.64,1) both;
+  overflow:hidden; position:relative;
+}
+@keyframes confirmIn { from{opacity:0;transform:scale(.88) translateY(20px)} to{opacity:1;transform:none} }
+.confirm-glow { position:absolute; top:0; left:0; right:0; height:3px; border-radius:24px 24px 0 0; }
+.confirm-hero {
+  display:flex; flex-direction:column; align-items:center;
+  padding:32px 28px 10px;
+  background:linear-gradient(180deg,rgba(220,38,38,.03),transparent);
+}
+.confirm-ring { position:relative; width:80px; height:80px; display:flex; align-items:center; justify-content:center; }
+.confirm-ring::before {
+  content:''; position:absolute; inset:0; border-radius:50%;
+  border:2px solid transparent; border-top-color:#EF4444; border-right-color:#EF4444;
+  animation:confirmRing 3s linear infinite; opacity:.4;
+}
+@keyframes confirmRing { to{transform:rotate(360deg)} }
+.confirm-icon-wrap {
+  width:60px; height:60px; border-radius:18px;
+  display:flex; align-items:center; justify-content:center;
+  font-size:24px; position:relative; z-index:1;
+  box-shadow:0 8px 24px rgba(220,38,38,.2);
+  transition:all .3s ease;
+}
+.confirm-body { padding:16px 28px 8px; text-align:center; }
+.confirm-title { font-size:20px; font-weight:800; color:var(--text-primary); margin-bottom:10px; letter-spacing:-.02em; }
+.confirm-msg { font-size:13.5px; color:var(--text-muted); line-height:1.75; margin-bottom:14px; }
+.confirm-msg strong { color:var(--text-primary); font-weight:700; }
+.confirm-hint {
+  display:flex; align-items:flex-start; gap:9px; text-align:left;
+  padding:11px 14px; border-radius:12px;
+  background:rgba(220,38,38,.05); border:1px solid rgba(220,38,38,.15);
+  font-size:12px; font-weight:600; color:#991B1B; line-height:1.5;
+}
+.confirm-hint i { color:#DC2626; font-size:13px; flex-shrink:0; margin-top:1px; }
+.confirm-footer { display:grid; grid-template-columns:1fr 1.4fr; gap:10px; padding:20px 28px 28px; }
+.confirm-btn {
+  display:flex; align-items:center; justify-content:center; gap:8px;
+  height:46px; border-radius:12px; border:none; cursor:pointer;
+  font-family:var(--font-body); font-size:14px; font-weight:700;
+  transition:all .2s cubic-bezier(.4,0,.2,1); letter-spacing:.01em;
+}
+.confirm-btn--cancel {
+  background:var(--bg-muted); border:1.5px solid var(--border-light);
+  color:var(--text-muted);
+}
+.confirm-btn--cancel:hover { background:var(--bg-card); color:var(--text-primary); border-color:var(--border-med); }
+.confirm-btn--confirm {
+  background:linear-gradient(135deg,#EF4444,#DC2626); color:#fff;
+  box-shadow:0 4px 14px rgba(220,38,38,.35), inset 0 1px 0 rgba(255,255,255,.2);
+}
+.confirm-btn--confirm:hover { transform:translateY(-2px); box-shadow:0 8px 24px rgba(220,38,38,.5); }
+.confirm-btn--confirm.primary-style {
+  background:linear-gradient(135deg,#1D4ED8,#1E3A8A);
+  box-shadow:0 4px 14px rgba(30,58,138,.35), inset 0 1px 0 rgba(255,255,255,.2);
+}
+.confirm-btn--confirm.primary-style:hover { box-shadow:0 8px 24px rgba(30,58,138,.5); }
+.confirm-btn:active { transform:scale(.97) translateY(0)!important; }
+
+[data-theme="dark"] .confirm-overlay { background:rgba(0,5,15,.72); }
+[data-theme="dark"] .confirm-dialog  { background:var(--bg-card); border-color:var(--border-light); }
+[data-theme="dark"] .confirm-hint    { background:rgba(220,38,38,.1); color:#FCA5A5; }
+
+/* ── Report Picker ── */
+.report-picker-overlay {
+  position:fixed; inset:0;
+  background:rgba(10,22,40,.5); backdrop-filter:blur(8px);
+  z-index:2000; display:none;
+  align-items:center; justify-content:center; padding:20px;
+}
+.report-picker-overlay.open { display:flex; }
+.report-picker {
+  background:var(--bg-card); border-radius:24px;
+  width:100%; max-width:460px;
+  border:1px solid var(--border-light);
+  box-shadow:var(--shadow-xl);
+  animation:modalIn .28s cubic-bezier(.34,1.26,.64,1) both;
+  overflow:hidden;
+}
+.rp-header {
+  display:flex; align-items:flex-start; justify-content:space-between;
+  padding:22px 24px 18px; border-bottom:1px solid var(--border-light);
+  background:linear-gradient(135deg,rgba(30,58,138,.03),transparent);
+}
+.rp-header-left { display:flex; align-items:center; gap:12px; }
+.rp-header-icon {
+  width:40px; height:40px; border-radius:11px;
+  background:linear-gradient(135deg,#DBEAFE,#BFDBFE);
+  color:#1E40AF; font-size:17px;
+  display:flex; align-items:center; justify-content:center; flex-shrink:0;
+}
+.rp-title { font-size:16px; font-weight:800; color:var(--text-primary); letter-spacing:-.01em; }
+.rp-sub { font-size:11.5px; color:var(--text-muted); margin-top:2px; }
+.rp-close {
+  width:30px; height:30px; border-radius:8px; border:none;
+  background:var(--bg-muted); color:var(--text-muted);
+  display:flex; align-items:center; justify-content:center;
+  cursor:pointer; font-size:12px; transition:var(--tr); flex-shrink:0;
+}
+.rp-close:hover { background:rgba(220,38,38,.1); color:var(--error); }
+.rp-body { padding:22px 24px 20px; }
+.rp-section-label {
+  font-size:10px; font-weight:800; letter-spacing:1.2px;
+  text-transform:uppercase; color:var(--text-muted);
+  margin-bottom:14px; display:flex; align-items:center; gap:8px;
+}
+.rp-section-label::after { content:''; flex:1; height:1px; background:var(--border-light); }
+.rp-options { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:24px; }
+.rp-option {
+  border:2px solid var(--border-light); border-radius:16px;
+  cursor:pointer; transition:all .2s cubic-bezier(.4,0,.2,1);
+  background:var(--bg-card); overflow:hidden; position:relative;
+}
+.rp-option:hover { border-color:var(--border-med); transform:translateY(-2px); box-shadow:var(--shadow-md); }
+.rp-option.selected {
+  border-color:var(--brand-primary);
+  box-shadow:0 0 0 3px rgba(30,58,138,.12), var(--shadow-md);
+  transform:translateY(-2px);
+}
+.rp-check {
+  position:absolute; top:10px; right:10px;
+  width:22px; height:22px; border-radius:50%;
+  background:linear-gradient(135deg,#1E40AF,#1E3A8A);
+  color:#fff; font-size:9px;
+  display:none; align-items:center; justify-content:center;
+  box-shadow:0 3px 8px rgba(30,58,138,.4); z-index:2;
+}
+.rp-option.selected .rp-check { display:flex; }
+.rp-preview { height:110px; position:relative; overflow:hidden; }
+.rp-preview-color {
+  width:100%; height:100%;
+  background:linear-gradient(145deg,#1E3A8A 0%,#1E40AF 45%,#2563EB 100%);
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  gap:6px; padding:14px; position:relative; overflow:hidden;
+}
+.rp-preview-color::before { content:''; position:absolute; top:-20px; right:-20px; width:80px; height:80px; border-radius:50%; background:rgba(255,255,255,.06); }
+.rp-preview-color::after  { content:''; position:absolute; bottom:-15px; left:-10px; width:60px; height:60px; border-radius:50%; background:rgba(14,165,233,.15); }
+.rp-mock-header { width:80%; height:7px; border-radius:4px; background:rgba(255,255,255,.9); position:relative; z-index:1; }
+.rp-mock-line   { border-radius:3px; background:rgba(255,255,255,.5); position:relative; z-index:1; }
+.rp-mock-chips  { display:flex; gap:5px; position:relative; z-index:1; margin-top:2px; }
+.rp-mock-chip   { width:28px; height:9px; border-radius:4px; }
+/* Colorless preview tile — looks like printed paper (white + light gray) */
+.rp-preview-bw {
+  width:100%; height:100%;
+  background:#FFFFFF;
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  gap:6px; padding:14px;
+  border-bottom:1px solid #E5E7EB;
+}
+.rp-mock-header-bw {
+  width:80%; height:7px; border-radius:2px;
+  background:#1F2937;
+}
+.rp-mock-line-bw   { border-radius:2px; background:#9CA3AF; }
+.rp-mock-chips-bw  { display:flex; gap:5px; margin-top:2px; }
+.rp-mock-chip-bw   {
+  width:28px; height:9px; border-radius:2px;
+  background:transparent; border:1px solid #9CA3AF;
+}
+.rp-option-text { padding:12px 14px; }
+.rp-option-name { font-size:13px; font-weight:800; color:var(--text-primary); margin-bottom:3px; }
+.rp-option-desc { font-size:11px; color:var(--text-muted); line-height:1.45; }
+.rp-format-row { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:6px; }
+.rp-format-pill {
+  display:flex; align-items:center; gap:10px;
+  padding:12px 14px; border-radius:12px;
+  border:2px solid var(--border-light); background:var(--bg-muted);
+  cursor:pointer; transition:var(--tr);
+  font-family:var(--font-body); text-align:left;
+}
+.rp-format-pill:hover { border-color:var(--border-med); background:var(--bg-card); }
+.rp-format-pill.selected-pdf  { border-color:#DC2626; background:rgba(220,38,38,.05); }
+.rp-format-pill.selected-word { border-color:#1E40AF; background:rgba(30,64,175,.05); }
+.rp-format-icon { width:34px; height:34px; border-radius:9px; display:flex; align-items:center; justify-content:center; font-size:16px; flex-shrink:0; }
+.rp-format-pill.selected-pdf  .rp-format-icon { background:rgba(220,38,38,.1); color:#DC2626; }
+.rp-format-pill.selected-word .rp-format-icon { background:rgba(30,64,175,.1); color:#1E40AF; }
+.rp-format-pill:not(.selected-pdf):not(.selected-word) .rp-format-icon { background:var(--bg-card); color:var(--text-muted); }
+.rp-format-name { font-size:13px; font-weight:700; color:var(--text-primary); }
+.rp-format-desc { font-size:10.5px; color:var(--text-muted); margin-top:1px; }
+.rp-format-pill.selected-pdf  .rp-format-name { color:#DC2626; }
+.rp-format-pill.selected-word .rp-format-name { color:#1E40AF; }
+.rp-footer {
+  display:grid; grid-template-columns:1fr 1.6fr; gap:10px;
+  padding:16px 24px 24px; border-top:1px solid var(--border-light);
+}
+.rp-btn {
+  display:flex; align-items:center; justify-content:center; gap:8px;
+  height:46px; border-radius:12px; border:none; cursor:pointer;
+  font-family:var(--font-body); font-size:14px; font-weight:700; transition:var(--tr);
+}
+.rp-btn.cancel {
+  background:var(--bg-muted); border:1.5px solid var(--border-light);
+  color:var(--text-muted);
+}
+.rp-btn.cancel:hover { background:var(--bg-card); color:var(--text-primary); }
+.rp-btn.go {
+  background:linear-gradient(135deg,#1D4ED8,#1E3A8A); color:#fff;
+  box-shadow:0 4px 14px rgba(30,58,138,.32), inset 0 1px 0 rgba(255,255,255,.2);
+}
+.rp-btn.go:hover { transform:translateY(-1px); box-shadow:0 8px 22px rgba(30,58,138,.45); }
+.rp-btn.go:active { transform:scale(.97); }
+
+[data-theme="dark"] .report-picker-overlay { background:rgba(0,5,15,.72); }
+[data-theme="dark"] .report-picker { background:var(--bg-card); border-color:var(--border-light); }
+[data-theme="dark"] .rp-header { background:linear-gradient(135deg,rgba(59,130,246,.04),transparent); border-color:var(--border-light); }
+[data-theme="dark"] .rp-title { color:#E2E8F8; }
+[data-theme="dark"] .rp-sub { color:var(--text-muted); }
+[data-theme="dark"] .rp-close { background:var(--bg-muted); color:var(--text-muted); }
+[data-theme="dark"] .rp-option { background:var(--bg-card); border-color:var(--border-light); }
+[data-theme="dark"] .rp-option-name { color:#E2E8F8; }
+[data-theme="dark"] .rp-format-pill { background:var(--bg-muted); border-color:var(--border-light); }
+[data-theme="dark"] .rp-format-name { color:#E2E8F8; }
+[data-theme="dark"] .rp-footer { border-color:var(--border-light); }
+[data-theme="dark"] .rp-btn.cancel { background:var(--bg-muted); border-color:var(--border-light); color:var(--text-muted); }
+/* Colorless preview keeps a paper-white look even in dark mode so the
+   user sees a faithful preview of the printed colorless report. */
+[data-theme="dark"] .rp-preview-bw { background:#F8FAFC; border-bottom-color:#CBD5E1; }
+[data-theme="dark"] .rp-mock-header-bw { background:#1F2937; }
+[data-theme="dark"] .rp-mock-line-bw { background:#94A3B8; }
+[data-theme="dark"] .rp-mock-chip-bw { border-color:#94A3B8; }
+/* Focus ring for keyboard nav on radio-style options */
+.rp-option:focus-visible {
+  outline:none;
+  box-shadow:0 0 0 3px rgba(30,58,138,.18), var(--shadow-md);
+  border-color:var(--brand-primary);
+}
+[data-theme="dark"] .rp-option:focus-visible {
+  box-shadow:0 0 0 3px rgba(59,130,246,.32), var(--shadow-md);
+  border-color:#3B82F6;
+}
+
+/* ── Responsive ── */
+@media (max-width:520px) {
+  /* Report picker — collapse style/format columns + tighten padding so the
+     picker fits comfortably on phones without horizontal scroll. */
+  .rp-options, .rp-format-row { grid-template-columns:1fr; gap:10px; }
+  .rp-footer { grid-template-columns:1fr 1fr; padding:14px 18px 18px; }
+  .rp-header { padding:18px 18px 14px; }
+  .rp-body { padding:18px 18px 16px; }
+  .rp-btn { height:42px; font-size:13px; }
+}
+@media (max-width:1100px) {
+  .activity-layout-v2 { grid-template-columns:1fr 300px; gap:12px; }
+  .act-stats-strip { gap:10px; }
+  .ts-stat-strip { gap:10px; }
+}
+@media (max-width:900px) {
+  .ts-stat-strip { grid-template-columns:1fr 1fr; }
+  .act-stats-strip { grid-template-columns:1fr 1fr; }
+  .activity-layout-v2 { grid-template-columns:1fr; }
+  .act-events-panel { max-height:400px; }
+  .key-dates-grid { grid-template-columns:1fr 1fr; }
+  .ts-table-head { display:none; }
+  .ts-row { flex-wrap:wrap; gap:6px; padding:14px 14px; }
+  .ts-num { width:100%; margin-bottom:2px; }
+  .ts-cell.flex1 { width:100%; padding:0; }
+  .ts-cell.w160 { width:calc(50% - 3px); padding:0; }
+  .ts-cell.w100 { width:100%; padding:0; margin-top:4px; }
+  .ts-actions { justify-content:flex-end; }
+}
+@media (max-width:768px) {
+  .l1-tabs { grid-template-columns:1fr 1fr; padding:3px; gap:3px; }
+  .l1-tab { padding:9px 8px; font-size:12px; gap:6px; }
+  .l1-tab-icon { width:20px; height:20px; font-size:10px; }
+  .l2-tabs { display:flex; overflow-x:auto; }
+  .l2-tab { flex:1 0 auto; min-width:120px; padding:11px 16px; font-size:12.5px; white-space:nowrap; }
+  .l3-tabs { grid-template-columns:1fr 1fr; gap:8px; }
+  .l3-tab { padding:12px; gap:8px; border-radius:var(--radius-md); }
+  .l3-tab-icon { width:32px; height:32px; font-size:13px; border-radius:8px; }
+  .l3-tab-name { font-size:12px; }
+  .l3-tab-desc { display:none; }
+  .class-row, .table-head { grid-template-columns:50px 1fr auto 50px; padding:0 12px; }
+  .td.cls-name { font-size:12px; }
+  .inline-export .export-btn span,
+  .inline-export .export-btn { font-size:10px; padding:5px 9px; }
+  .act-stats-strip, .ts-stat-strip { grid-template-columns:1fr 1fr; gap:7px; }
+  .ts-stat, .act-stat-card { padding:10px 11px; gap:8px; }
+  .ts-stat-val, .act-stat-val { font-size:17px; }
+  .ts-stat-icon, .act-stat-icon { width:30px; height:30px; font-size:13px; border-radius:8px; }
+  .act-cal-card, .act-events-panel { width:100%; border-radius:var(--radius-lg); }
+  .act-view-pill { padding:5px 7px; font-size:10.5px; }
+  .act-day-full { min-height:50px; }
+  .ts-card-header { padding:16px; flex-direction:column; align-items:flex-start; gap:12px; }
+  .key-dates-grid { grid-template-columns:1fr; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   DARK MODE — overrides for the rest of Academics' surfaces that the
+   existing dark rules above don't cover. Brand-gradient buttons keep
+   their light-mode look so the visual identity stays consistent.
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* L1 / L2 / L3 tabs that don't have dark coverage yet */
+[data-theme="dark"] .l1-tabs { background:var(--bg-card); border-color:var(--border-light); }
+[data-theme="dark"] .l1-tab { color:var(--text-muted); }
+[data-theme="dark"] .l1-tab:hover:not(.active) { background:var(--bg-muted); color:var(--text-primary); }
+[data-theme="dark"] .l1-tab-icon { background:var(--bg-muted); color:var(--text-muted); }
+[data-theme="dark"] .l2-tabs { background:var(--bg-muted); border-color:var(--border-light); }
+[data-theme="dark"] .l2-tab { color:var(--text-muted); }
+[data-theme="dark"] .l2-tab:hover:not(.active) { background:var(--bg-card); color:var(--text-primary); }
+[data-theme="dark"] .l3-tabs { background:var(--bg-muted); border-color:var(--border-light); }
+[data-theme="dark"] .l3-tab { color:var(--text-muted); }
+[data-theme="dark"] .l3-tab:hover:not(.active) { background:var(--bg-card); color:var(--text-primary); }
+[data-theme="dark"] .l3-tab-text { color:inherit; }
+
+/* Section cards (general container used across Academics) */
+[data-theme="dark"] .section-card { background:var(--bg-card); border-color:var(--border-light); }
+[data-theme="dark"] .term-section { background:var(--bg-card); border-color:var(--border-light); }
+[data-theme="dark"] .subject-grid { background:transparent; }
+[data-theme="dark"] .subj-icon { background:rgba(59,130,246,.12); color:#93C5FD; }
+
+/* Subject colour chips — soften saturation for dark mode */
+[data-theme="dark"] .subj-blue   { background:rgba(59,130,246,.18); color:#93C5FD; border-color:rgba(59,130,246,.3); }
+[data-theme="dark"] .subj-green  { background:rgba(34,197,94,.18); color:#86EFAC; border-color:rgba(34,197,94,.3); }
+[data-theme="dark"] .subj-amber  { background:rgba(217,119,6,.18); color:#FCD34D; border-color:rgba(217,119,6,.3); }
+[data-theme="dark"] .subj-rose   { background:rgba(225,29,72,.18); color:#FDA4AF; border-color:rgba(225,29,72,.3); }
+[data-theme="dark"] .subj-purple { background:rgba(124,58,237,.18); color:#C4B5FD; border-color:rgba(124,58,237,.3); }
+[data-theme="dark"] .subj-teal   { background:rgba(13,148,136,.18); color:#5EEAD4; border-color:rgba(13,148,136,.3); }
+
+/* Serial number labels */
+[data-theme="dark"] .sno { color:var(--text-muted); }
+[data-theme="dark"] .sno-hash { color:var(--text-muted); }
+
+/* Tutorial button */
+[data-theme="dark"] .tutorial-btn,
+[data-theme="dark"] .page-tutorial-btn { background:var(--bg-card); border-color:var(--border-light); color:var(--text-primary); }
+[data-theme="dark"] .tutorial-btn:hover,
+[data-theme="dark"] .page-tutorial-btn:hover { border-color:#3B82F6; color:#3B82F6; }
+
+/* ─── Activity Calendar (left panel) ─── */
+[data-theme="dark"] .activity-layout-v2 { background:transparent; }
+[data-theme="dark"] .act-cal-card { background:var(--bg-card); border-color:var(--border-light); }
+[data-theme="dark"] .act-events-panel { background:var(--bg-card); border-color:var(--border-light); }
+[data-theme="dark"] .act-cal-header-left,
+[data-theme="dark"] .act-cal-header-right { color:var(--text-primary); }
+[data-theme="dark"] .act-cal-nav { color:var(--text-primary); }
+[data-theme="dark"] .act-cal-month-wrap { color:var(--text-primary); }
+[data-theme="dark"] .act-cal-month-sub { color:var(--text-muted); }
+[data-theme="dark"] .act-nav-btn { background:var(--bg-muted); border-color:var(--border-light); color:var(--text-secondary); }
+[data-theme="dark"] .act-nav-btn:hover { background:var(--bg-card); color:#3B82F6; border-color:#3B82F6; }
+[data-theme="dark"] .act-view-pills { background:var(--bg-muted); border-color:var(--border-light); }
+[data-theme="dark"] .act-view-pill { color:var(--text-muted); }
+[data-theme="dark"] .act-view-pill.active { background:var(--bg-card); color:var(--text-primary); }
+[data-theme="dark"] .act-icon-btn { background:var(--bg-muted); border-color:var(--border-light); color:var(--text-muted); }
+[data-theme="dark"] .act-icon-btn:hover { background:var(--bg-card); border-color:var(--border-med); }
+[data-theme="dark"] .act-icon-btn--pdf:hover { color:#FCA5A5; border-color:rgba(220,38,38,.4); background:rgba(220,38,38,.1); }
+[data-theme="dark"] .act-icon-btn--word:hover { color:#93C5FD; border-color:rgba(59,130,246,.4); background:rgba(59,130,246,.1); }
+[data-theme="dark"] .act-dow-row { color:var(--text-muted); background:var(--bg-muted); border-color:var(--border-light); }
+[data-theme="dark"] .act-dow { color:var(--text-muted); }
+[data-theme="dark"] .act-days-grid { background:var(--bg-card); border-color:var(--border-light); }
+[data-theme="dark"] .act-day-full { background:var(--bg-card); border-color:var(--border-light); color:var(--text-primary); }
+[data-theme="dark"] .act-day-full:hover { background:var(--bg-muted); border-color:var(--border-med); }
+[data-theme="dark"] .act-day-num { color:var(--text-primary); }
+[data-theme="dark"] .today-num { color:#fff; }
+[data-theme="dark"] .today-dot { background:#3B82F6; }
+[data-theme="dark"] .act-day-events { color:var(--text-muted); }
+[data-theme="dark"] .cal-day-events { background:transparent; }
+[data-theme="dark"] .cal-event-chip { background:rgba(59,130,246,.18); color:#E2E8F8; border-color:rgba(59,130,246,.3); }
+[data-theme="dark"] .cal-event-more-chip { background:var(--bg-muted); color:var(--text-secondary); border-color:var(--border-light); }
+[data-theme="dark"] .act-stats-strip { background:var(--bg-card); border-color:var(--border-light); }
+[data-theme="dark"] .act-stat-card { background:var(--bg-muted); border-color:var(--border-light); }
+[data-theme="dark"] .act-stat-icon { background:rgba(59,130,246,.12); color:#93C5FD; }
+[data-theme="dark"] .act-stat-val { color:var(--text-primary); }
+[data-theme="dark"] .act-stat-lbl { color:var(--text-muted); }
+[data-theme="dark"] .act-legend-dot { border-color:var(--border-light); }
+
+/* Activity Calendar — right panel (events list) */
+[data-theme="dark"] .act-events-panel .act-events-list { background:transparent; }
+[data-theme="dark"] .act-events-list { color:var(--text-primary); }
+[data-theme="dark"] .act-add-btn { background:linear-gradient(135deg,#1E3A8A,#2563EB); color:#fff; }
+[data-theme="dark"] .act-add-btn:hover { background:linear-gradient(135deg,#1E40AF,#3B82F6); }
+[data-theme="dark"] .act-search-row { background:transparent; border-color:var(--border-light); }
+[data-theme="dark"] .act-search-box { background:var(--bg-muted); border-color:var(--border-light); }
+[data-theme="dark"] .act-search-box input { color:var(--text-primary); }
+[data-theme="dark"] .act-search-box input::placeholder { color:var(--text-muted); }
+[data-theme="dark"] .act-search-box i { color:var(--text-muted); }
+[data-theme="dark"] .act-filter-btn { background:var(--bg-muted); border-color:var(--border-light); color:var(--text-muted); }
+[data-theme="dark"] .act-filter-btn:hover,
+[data-theme="dark"] .act-filter-btn.on { background:var(--bg-card); color:#3B82F6; border-color:#3B82F6; }
+[data-theme="dark"] .act-event-item { background:var(--bg-muted); border-color:var(--border-light); }
+[data-theme="dark"] .act-event-item:hover { background:var(--bg-card); }
+[data-theme="dark"] .act-event-strip { box-shadow:inset 0 0 0 1px rgba(255,255,255,.06); }
+[data-theme="dark"] .act-event-body { color:var(--text-primary); }
+[data-theme="dark"] .act-event-name { color:var(--text-primary); }
+[data-theme="dark"] .act-event-dates { color:var(--text-muted); }
+[data-theme="dark"] .act-event-badge { border:1px solid rgba(255,255,255,.06); }
+[data-theme="dark"] .act-event-more { background:var(--bg-card); color:var(--text-muted); border-color:var(--border-light); }
+[data-theme="dark"] .act-event-more:hover { background:var(--bg-muted); color:var(--text-primary); }
+[data-theme="dark"] .act-empty { color:var(--text-muted); }
+[data-theme="dark"] .act-empty-icon { background:var(--bg-muted); color:var(--text-muted); }
+[data-theme="dark"] .dropdown-menu { background:var(--bg-card); border-color:var(--border-light); box-shadow:var(--shadow-lg); }
+[data-theme="dark"] .dropdown-item { color:var(--text-primary); }
+[data-theme="dark"] .dropdown-item:hover { background:var(--bg-muted); }
+[data-theme="dark"] .dropdown-item.delete { color:#FCA5A5; }
+[data-theme="dark"] .dropdown-item.delete:hover { background:rgba(220,38,38,.1); }
+
+/* ─── Modals (shared rp- + modal- + cal- + activity-modal + confirm-) ─── */
+[data-theme="dark"] .rp-overlay,
+[data-theme="dark"] .modal-overlay,
+[data-theme="dark"] .confirm-overlay { background:rgba(0,0,0,.6); }
+[data-theme="dark"] .rp-modal,
+[data-theme="dark"] .modal-card,
+[data-theme="dark"] .confirm-card { background:var(--bg-card); border-color:var(--border-light); box-shadow:var(--shadow-xl); }
+[data-theme="dark"] .rp-header,
+[data-theme="dark"] .modal-header { border-bottom-color:var(--border-light); background:linear-gradient(135deg,rgba(59,130,246,.06),transparent); }
+[data-theme="dark"] .rp-header-left { color:var(--text-primary); }
+[data-theme="dark"] .rp-header-icon { background:linear-gradient(135deg,#1E3A8A,#2563EB); color:#fff; }
+[data-theme="dark"] .rp-title,
+[data-theme="dark"] .modal-title { color:var(--text-primary); }
+[data-theme="dark"] .rp-sub,
+[data-theme="dark"] .modal-sub { color:var(--text-muted); }
+[data-theme="dark"] .rp-close,
+[data-theme="dark"] .modal-close { background:var(--bg-muted); color:var(--text-muted); }
+[data-theme="dark"] .rp-close:hover,
+[data-theme="dark"] .modal-close:hover { background:rgba(220,38,38,.18); color:#FCA5A5; }
+[data-theme="dark"] .rp-body,
+[data-theme="dark"] .modal-body { color:var(--text-primary); }
+[data-theme="dark"] .rp-section-label { color:var(--text-secondary); }
+[data-theme="dark"] .rp-options { background:transparent; }
+[data-theme="dark"] .rp-option,
+[data-theme="dark"] .rp-format-row { background:var(--bg-muted); border-color:var(--border-light); color:var(--text-primary); }
+[data-theme="dark"] .rp-option:hover,
+[data-theme="dark"] .rp-format-row:hover { border-color:var(--border-med); background:var(--bg-card); }
+[data-theme="dark"] .rp-option.selected,
+[data-theme="dark"] .rp-format-row.selected,
+[data-theme="dark"] .rp-format-row.selected-pdf,
+[data-theme="dark"] .rp-format-row.selected-word { background:linear-gradient(135deg,rgba(59,130,246,.18),rgba(37,99,235,.10)); border-color:#3B82F6; }
+[data-theme="dark"] .rp-option-text,
+[data-theme="dark"] .rp-option-desc { color:inherit; }
+[data-theme="dark"] .rp-option-desc { color:var(--text-muted); }
+[data-theme="dark"] .rp-format-desc { color:var(--text-muted); }
+[data-theme="dark"] .rp-format-icon { background:rgba(59,130,246,.12); color:#93C5FD; }
+[data-theme="dark"] .rp-check { background:var(--bg-card); border-color:var(--border-light); color:var(--text-muted); }
+[data-theme="dark"] .rp-option.selected .rp-check,
+[data-theme="dark"] .rp-format-row.selected .rp-check { background:#3B82F6; border-color:#3B82F6; color:#fff; }
+[data-theme="dark"] .rp-preview,
+[data-theme="dark"] .rp-preview-color,
+[data-theme="dark"] .rp-preview-bw { background:var(--bg-card); border-color:var(--border-light); }
+[data-theme="dark"] .rp-mock-header { background:linear-gradient(135deg,#1E3A8A,#2563EB); }
+[data-theme="dark"] .rp-mock-header-bw { background:#1C2E50; color:#E2E8F8; }
+[data-theme="dark"] .rp-mock-line,
+[data-theme="dark"] .rp-mock-line-bw { background:var(--border-light); }
+[data-theme="dark"] .rp-mock-chip { background:rgba(59,130,246,.18); color:#93C5FD; }
+[data-theme="dark"] .rp-mock-chip-bw { background:var(--bg-muted); color:var(--text-secondary); }
+[data-theme="dark"] .rp-footer { background:var(--bg-card); border-top-color:var(--border-light); }
+[data-theme="dark"] .rp-btn.cancel { background:var(--bg-muted); border-color:var(--border-light); color:var(--text-primary); }
+[data-theme="dark"] .rp-btn.cancel:hover { background:var(--bg-card); border-color:var(--border-med); }
+
+/* Calendar edit modal */
+[data-theme="dark"] .cal-modal-section { background:var(--bg-muted); border-color:var(--border-light); }
+[data-theme="dark"] .cal-entry-row { background:var(--bg-card); border-color:var(--border-light); }
+[data-theme="dark"] .cal-entry-input { background:var(--input-bg, var(--bg-card)); border-color:var(--border-light); color:var(--text-primary); }
+[data-theme="dark"] .cal-entry-input::placeholder { color:var(--text-muted); }
+[data-theme="dark"] .cal-entry-input:focus { border-color:#3B82F6; box-shadow:0 0 0 3px rgba(59,130,246,.15); }
+[data-theme="dark"] .remove-btn { background:rgba(220,38,38,.15); color:#FCA5A5; border-color:rgba(220,38,38,.3); }
+[data-theme="dark"] .remove-btn:hover { background:rgba(220,38,38,.25); border-color:var(--error); }
+[data-theme="dark"] .add-more-btn { background:var(--bg-muted); border-color:var(--border-light); color:var(--text-primary); }
+[data-theme="dark"] .add-more-btn:hover { border-color:#3B82F6; color:#3B82F6; }
+
+/* Confirm dialog */
+[data-theme="dark"] .confirm-body { background:var(--bg-card); }
+[data-theme="dark"] .confirm-title { color:var(--text-primary); }
+[data-theme="dark"] .confirm-message { color:var(--text-secondary); }
+[data-theme="dark"] .confirm-footer { background:var(--bg-muted); border-top-color:var(--border-light); }
+[data-theme="dark"] .confirm-btn { font-weight:700; }
+[data-theme="dark"] .confirm-btn--cancel { background:var(--bg-card); border-color:var(--border-light); color:var(--text-primary); }
+[data-theme="dark"] .confirm-btn--cancel:hover { background:var(--bg-muted); border-color:var(--border-med); }
+[data-theme="dark"] .confirm-btn--confirm { color:#fff; }
+[data-theme="dark"] .confirm-btn--confirm.primary-style { background:linear-gradient(135deg,#1E3A8A,#2563EB); }
+
+/* Form inputs across all modals */
+[data-theme="dark"] .form-input,
+[data-theme="dark"] input.form-input,
+[data-theme="dark"] textarea.form-input,
+[data-theme="dark"] select.form-input { background:var(--input-bg, var(--bg-card)); border-color:var(--border-light); color:var(--text-primary); }
+[data-theme="dark"] .form-input:focus { border-color:#3B82F6; box-shadow:0 0 0 3px rgba(59,130,246,.15); }
+[data-theme="dark"] .form-input::placeholder { color:var(--text-muted); }
+[data-theme="dark"] .form-label { color:var(--text-secondary); }
+[data-theme="dark"] .form-row { color:var(--text-primary); }
+[data-theme="dark"] .btn-primary { background:linear-gradient(135deg,#1E3A8A,#2563EB); color:#fff; }
+[data-theme="dark"] .btn-primary:hover { background:linear-gradient(135deg,#1E40AF,#3B82F6); }
+[data-theme="dark"] .btn-secondary { background:var(--bg-card); border-color:var(--border-light); color:var(--text-primary); }
+[data-theme="dark"] .btn-secondary:hover { background:var(--bg-muted); border-color:var(--border-med); }
+
+/* ─── Term Settings — remaining surfaces ─── */
+[data-theme="dark"] .ts-header-icon { background:linear-gradient(135deg,#1E3A8A,#2563EB); color:#fff; }
+[data-theme="dark"] .ts-card-header-left { color:var(--text-primary); }
+[data-theme="dark"] .ts-section-body { background:var(--bg-card); }
+[data-theme="dark"] .ts-stat-strip { background:transparent; }
+[data-theme="dark"] .ts-stat-bar { background:var(--bg-muted); border-color:var(--border-light); }
+[data-theme="dark"] .ts-stat-icon { background:rgba(59,130,246,.12); color:#93C5FD; }
+[data-theme="dark"] .ts-stat-lbl { color:var(--text-muted); }
+[data-theme="dark"] .ts-field-group { color:var(--text-primary); }
+[data-theme="dark"] .ts-input-wrap { background:var(--input-bg, var(--bg-card)); border-color:var(--border-light); }
+[data-theme="dark"] .ts-input-wrap:focus-within { border-color:#3B82F6; box-shadow:0 0 0 3px rgba(59,130,246,.15); }
+[data-theme="dark"] .ts-input,
+[data-theme="dark"] .ts-select { background:transparent; color:var(--text-primary); }
+[data-theme="dark"] .ts-input::placeholder { color:var(--text-muted); }
+[data-theme="dark"] .ts-input-icon { color:var(--text-muted); }
+[data-theme="dark"] .ts-cell { color:var(--text-primary); }
+[data-theme="dark"] .ts-actions { background:transparent; }
+[data-theme="dark"] .ts-act-btn { background:var(--bg-muted); border-color:var(--border-light); color:var(--text-muted); }
+[data-theme="dark"] .ts-act-btn.save:hover { background:var(--success); border-color:var(--success); color:#fff; }
+[data-theme="dark"] .ts-act-btn.del:hover { background:var(--error); border-color:var(--error); color:#fff; }
+[data-theme="dark"] .ts-num { color:var(--text-primary); }
+[data-theme="dark"] .ts-add-icon { background:rgba(59,130,246,.15); color:#93C5FD; }
+[data-theme="dark"] .ts-add-hint { color:var(--text-muted); }
+[data-theme="dark"] .ts-hint { color:var(--text-muted); }
+[data-theme="dark"] .ts-btn-primary { background:linear-gradient(135deg,#1E3A8A,#2563EB); color:#fff; }
+[data-theme="dark"] .ts-btn-primary:hover { background:linear-gradient(135deg,#1E40AF,#3B82F6); }
+
+/* ───────────────────────── MOBILE (≤600px) ─────────────────────────
+   Real internal screen responsiveness — not modal sizing. Stacks
+   top toolbars, makes sub-tab strips horizontally scrollable,
+   collapses multi-column grids, wraps the wide term/class tables. */
+@media (max-width:600px) {
+  /* Page header — stack title + tutorial button */
+  .page-header { padding:12px 14px; gap:10px; }
+  .page-title-row { flex-direction:column; align-items:flex-start; gap:8px; width:100%; }
+  .page-title { font-size:18px; }
+  .page-sub { font-size:11px; }
+  .page-tutorial-btn { width:100%; justify-content:center; }
+
+  /* L1 tabs — keep 2-col but shrink padding */
+  .l1-tabs { padding:3px; gap:3px; margin-bottom:14px; }
+  .l1-tab { padding:9px 6px; font-size:11.5px; gap:5px; }
+  .l1-tab-icon { width:20px; height:20px; font-size:10px; }
+
+  /* L2 sub-tab strip — horizontal scroll instead of squashing */
+  .l2-tabs { display:flex; overflow-x:auto; overflow-y:hidden; flex-wrap:nowrap; scrollbar-width:none; margin-bottom:14px; }
+  .l2-tabs::-webkit-scrollbar { display:none; }
+  .l2-tab { flex:0 0 auto; min-width:130px; padding:11px 14px; font-size:12px; white-space:nowrap; }
+  .l2-tab:not(:last-child) { border-right:1px solid var(--border-light); }
+
+  /* L3 tab grid — single column on phones */
+  .l3-tabs { grid-template-columns:1fr; gap:8px; margin-bottom:14px; }
+  .l3-tab { padding:12px 14px; gap:10px; }
+  .l3-tab-icon { width:32px; height:32px; font-size:13px; border-radius:9px; }
+  .l3-tab-name { font-size:12.5px; }
+  .l3-tab-desc { font-size:10px; }
+
+  /* Section card — tighter padding */
+  .section-card { border-radius:var(--radius-md); }
+
+  /* Class table — horizontal scroll, keep table-head visible */
+  .table-head, .class-row { grid-template-columns:48px 1fr auto 44px; padding:0 10px; }
+  .th { padding:10px 6px; font-size:10px; letter-spacing:.4px; }
+  .td { padding:11px 6px; font-size:12px; }
+  .td.cls-name { font-size:12.5px; gap:6px; }
+  .cls-icon { width:26px; height:26px; font-size:10px; }
+  .expand-btn { width:28px; height:28px; font-size:10px; }
+  .detail-inner { padding:12px 12px 14px; }
+
+  /* Inline export buttons — wrap */
+  .inline-export { flex-wrap:wrap; gap:5px; }
+  .export-btn { padding:5px 9px; font-size:10px; }
+
+  /* Subject grid — single column */
+  .subject-grid { grid-template-columns:1fr; gap:8px; }
+  .subject-card { padding:11px 12px; gap:10px; }
+
+  /* Term Settings stat strip — 2 cols */
+  .ts-stat-strip { grid-template-columns:1fr 1fr; gap:8px; margin-bottom:12px; }
+  .ts-stat { padding:12px 12px; gap:10px; }
+  .ts-stat-icon { width:34px; height:34px; font-size:14px; border-radius:9px; }
+  .ts-stat-val { font-size:17px; }
+  .ts-stat-lbl { font-size:10.5px; }
+
+  /* Term Settings card header — stack title + subtab strip */
+  .ts-card-header { flex-direction:column; align-items:stretch; padding:14px 14px 12px; gap:10px; }
+  .ts-card-header-left { gap:10px; }
+  .ts-header-icon { width:38px; height:38px; font-size:15px; border-radius:11px; }
+  .ts-card-title { font-size:14px; }
+  .ts-card-sub { font-size:11px; }
+
+  /* ts-subtab row — horizontal scroll */
+  .ts-subtab-row { overflow-x:auto; overflow-y:hidden; flex-wrap:nowrap; scrollbar-width:none; width:100%; }
+  .ts-subtab-row::-webkit-scrollbar { display:none; }
+  .ts-subtab { flex:0 0 auto; padding:7px 12px; font-size:12px; }
+
+  /* Term Settings body — reduce padding */
+  .ts-section-body { padding:14px 14px 18px; }
+  .ts-info-strip { font-size:11.5px; padding:10px 12px; }
+
+  /* Term Settings table — wrap to mobile-card style */
+  .ts-table-head { display:none; }
+  .ts-row { flex-wrap:wrap; padding:12px 12px; gap:8px; }
+  .ts-num { width:100%; margin-bottom:2px; }
+  .ts-cell.flex1 { width:100%; padding:0; }
+  .ts-cell.w160 { width:calc(50% - 4px); padding:0; }
+  .ts-cell.w100 { width:100%; padding:0; }
+  .ts-actions { width:100%; justify-content:flex-end; }
+  .ts-term-input { font-size:13px; }
+  .ts-add-row-btn { padding:13px 14px; gap:10px; flex-wrap:wrap; }
+  .ts-add-hint { width:100%; margin-left:0; text-align:left; }
+  .ts-btn-primary, .ts-btn-ghost { width:100%; justify-content:center; padding:0 14px; }
+
+  /* Term Settings field group — stack */
+  .ts-input-wrap { max-width:none !important; }
+
+  /* Academic Calendar header — stack */
+  .cal-header { flex-direction:column; align-items:stretch; padding:14px 14px 12px; gap:10px; }
+  .cal-header-title { font-size:14px; }
+  .cal-edit-btn { width:100%; justify-content:center; }
+  .term-section { padding:0 14px 14px; }
+
+  /* Key-dates grid — single column */
+  .key-dates-grid { grid-template-columns:1fr; gap:8px; }
+  .key-date-card { padding:11px 12px; gap:9px; }
+  .kd-icon { width:28px; height:28px; font-size:11px; }
+  .kd-heading { font-size:12px; }
+  .kd-date { font-size:10.5px; }
+
+  /* Cal entry modal row — stack date pickers */
+  .cal-entry-row { grid-template-columns:1fr 1fr; gap:6px; }
+  .cal-entry-row > .remove-btn { grid-column:1 / -1; justify-self:end; }
+
+  /* Activity Calendar — stack stat strip + layout */
+  .act-stats-strip { grid-template-columns:1fr 1fr; gap:8px; margin-bottom:12px; }
+  .act-stat-card { padding:11px 12px; gap:10px; }
+  .act-stat-icon { width:34px; height:34px; font-size:14px; border-radius:9px; }
+  .act-stat-val { font-size:17px; }
+  .act-stat-lbl { font-size:10.5px; }
+  .activity-layout-v2 { grid-template-columns:1fr; gap:12px; }
+
+  /* Activity calendar card header — stack month + view pills */
+  .act-cal-header { flex-direction:column; align-items:stretch; padding:14px 14px 12px; gap:10px; }
+  .act-cal-header-left, .act-cal-header-right { width:100%; }
+  .act-cal-header-right { flex-wrap:wrap; gap:8px; }
+  .act-cal-month { font-size:15px; }
+  .act-cal-month-sub { font-size:10.5px; }
+  .act-view-pills { width:100%; overflow-x:auto; flex-wrap:nowrap; scrollbar-width:none; }
+  .act-view-pills::-webkit-scrollbar { display:none; }
+  .act-view-pill { flex:0 0 auto; padding:5px 9px; font-size:10.5px; }
+  .act-day-full { min-height:46px; }
+  .act-events-panel { max-height:none; }
+
+  /* Activity event search row + add btn — stack */
+  .act-events-header { flex-direction:column; align-items:stretch; gap:10px; }
+  .act-add-btn { width:100%; justify-content:center; }
+  .act-search-row { padding:0 14px 12px; }
+
+  /* Activity legend — wrap */
+  .act-legend { flex-wrap:wrap; gap:8px; }
+
+  /* Report picker — already responsive but tighten further */
+  .rp-options, .rp-format-row { grid-template-columns:1fr; gap:8px; }
+  .rp-footer { grid-template-columns:1fr; gap:8px; padding:12px 14px 14px; }
+  .rp-header { padding:14px 14px 12px; }
+  .rp-body { padding:14px 14px 12px; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   MOBILE RESPONSIVE — Academics module (≤ 767px)
+   Pure CSS, no JSX/logic changes. Converts div-based "tables"
+   (Term Settings, Lesson Plans class list, etc.) into stacked
+   card layouts. Makes all tab strips horizontal-scroll.
+   ═══════════════════════════════════════════════════════════════════ */
+@media (max-width: 767px) {
+  /* ─── Page header / title ─── */
+  .page-header { padding: 14px 12px; }
+  .page-title-row { gap: 10px; flex-wrap: wrap; }
+  .page-title { font-size: 18px; }
+  .page-sub { font-size: 11.5px; }
+
+  /* ─── L1 main tabs (Scheme of Studies / Lesson Plans) — compact ─── */
+  .l1-tabs {
+    grid-template-columns: 1fr 1fr;
+    display: grid !important;
+    gap: 4px;
+    padding: 4px;
+    margin-bottom: 12px;
+  }
+  .l1-tab {
+    padding: 8px 12px !important;
+    min-height: unset;
+    height: auto;
+    font-size: 12.5px;
+    gap: 6px;
+  }
+  .l1-tab-icon {
+    width: 20px !important;
+    height: 20px !important;
+    font-size: 10px;
+  }
+
+  /* ─── L2 sub-tabs (Term Settings / Term Breakups / Create LP) ─── */
+  .l2-tabs {
+    grid-template-columns: none !important;
+    display: flex !important;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    flex-wrap: nowrap;
+    gap: 6px;
+  }
+  .l2-tabs::-webkit-scrollbar { display: none; }
+  .l2-tab {
+    flex: 0 0 auto;
+    min-width: 140px;
+    padding: 9px 12px;
+    font-size: 12.5px;
+  }
+
+  /* ─── L3 sub-tabs (Academic Calendar / Activity Calendar) ─── */
+  .l3-tabs {
+    grid-template-columns: 1fr !important;
+    gap: 8px;
+  }
+  .l3-tab { padding: 12px; }
+
+  /* ─── Term Settings ─── */
+  .ts-stat-strip {
+    grid-template-columns: 1fr 1fr !important;
+    gap: 8px;
+  }
+  .ts-stat { padding: 10px; }
+  .ts-stat-val { font-size: 14px; }
+  .ts-stat-lbl { font-size: 10px; }
+
+  .ts-card-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    padding: 12px 14px;
+  }
+  .ts-card-header-left { gap: 10px; }
+  .ts-card-title { font-size: 14px; }
+  .ts-card-sub { font-size: 11px; }
+
+  /* Settings sub-tab row (Session / Terms) — scroll */
+  .ts-subtab-row {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    flex-wrap: nowrap;
+  }
+  .ts-subtab-row::-webkit-scrollbar { display: none; }
+  .ts-subtab { flex: 0 0 auto; min-width: 120px; }
+
+  /* ─── Terms TABLE → CARD on mobile ─── */
+  .ts-table-head { display: none !important; }
+  .ts-row {
+    display: flex !important;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    padding: 12px 14px;
+    background: var(--bg-card);
+    border-radius: 10px;
+    margin-bottom: 10px;
+    border: 1px solid var(--border-light);
+  }
+  .ts-row > .ts-num,
+  .ts-row > .ts-cell {
+    width: 100% !important;
+    flex: none !important;
+    padding: 0 !important;
+    min-width: 0;
+  }
+  .ts-row > .ts-num::before { content: '#'; font-size: 11px; font-weight: 700; color: var(--text-muted); margin-right: 8px; text-transform: uppercase; letter-spacing: .4px; }
+  .ts-row > .ts-num { display: inline-flex; align-items: center; }
+  .ts-num-badge { margin-left: 0; }
+  /* Column labels via :nth-child for the div-grid row */
+  .ts-row > .ts-cell:nth-of-type(1)::before { content: 'Term Name'; }
+  .ts-row > .ts-cell:nth-of-type(2)::before { content: 'Start Date'; }
+  .ts-row > .ts-cell:nth-of-type(3)::before { content: 'End Date'; }
+  .ts-row > .ts-cell:nth-of-type(4)::before { content: 'Actions'; }
+  .ts-row > .ts-cell::before {
+    display: block;
+    font-size: 10.5px;
+    font-weight: 700;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: .4px;
+    margin-bottom: 5px;
+  }
+  .ts-term-input { width: 100%; }
+  .ts-actions { justify-content: flex-start; }
+
+  /* ─── Scheme of Studies → Textbooks class list — compact card layout ─── */
+  .table-head { display: none !important; }
+  .class-row-wrap {
+    background: var(--bg-card);
+    border: 1px solid var(--border-light);
+    border-radius: 10px;
+    margin-bottom: 10px;
+  }
+  .class-row {
+    display: flex !important;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    padding: 12px !important;
+    background: transparent;
+    min-height: unset !important;
+    height: auto !important;
+  }
+  .class-row.open { background: var(--bg-muted); }
+  /* # number cell — inline compact, not full-width */
+  .class-row > .td.sno {
+    width: auto !important;
+    padding: 0 !important;
+    align-self: flex-start;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+  /* Class name row — full width */
+  .class-row > .td.cls-name {
+    width: 100% !important;
+    padding: 0 !important;
+    font-size: 14px;
+    font-weight: 700;
+  }
+  /* PDF + Word buttons — side-by-side, equal width, no overflow */
+  .class-row > .td.inline-export {
+    width: 100% !important;
+    padding: 0 !important;
+    display: flex !important;
+    flex-direction: row;
+    gap: 8px;
+    justify-content: stretch;
+  }
+  .class-row > .td.inline-export > * {
+    flex: 1;
+    min-width: 0;
+  }
+  .class-row > .td.inline-export .export-btn {
+    flex: 1;
+    min-width: 0;
+    width: auto !important;
+    justify-content: center;
+  }
+  /* Chevron expand button — right-aligned, immediately after PDF/Word row */
+  .class-row > .td:last-child {
+    width: 100% !important;
+    padding: 0 !important;
+    display: flex !important;
+    justify-content: flex-end;
+    margin-top: 4px;
+  }
+  .class-row > .td:last-child .expand-btn { width: auto; }
+
+  .subject-grid {
+    grid-template-columns: 1fr 1fr !important;
+    gap: 8px;
+  }
+
+  /* ─── Academic Calendar ─── */
+  .cal-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    padding: 12px 14px;
+  }
+  .cal-header-title { font-size: 15px; }
+  .key-dates-grid {
+    grid-template-columns: 1fr !important;
+    gap: 8px;
+  }
+  .cal-entry-row {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .cal-entry-input { flex: 1 1 100%; min-width: 0; }
+
+  /* ─── Activity Calendar ─── */
+  .act-cal-header,
+  .act-events-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    padding: 12px 14px;
+  }
+  .act-cal-header-left,
+  .act-cal-header-right { width: 100%; }
+  .act-cal-header-right { flex-wrap: wrap; gap: 8px; }
+  .act-view-pills {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    flex-wrap: nowrap;
+  }
+  .act-view-pills::-webkit-scrollbar { display: none; }
+  .act-stats-strip {
+    grid-template-columns: 1fr 1fr !important;
+    gap: 8px;
+  }
+  .activity-layout-v2 {
+    grid-template-columns: 1fr !important;
+    gap: 12px;
+  }
+  .act-legend { flex-wrap: wrap; gap: 6px; }
+
+  /* ─── ConfirmDialog (canonical) ─── */
+  .confirm-dialog { max-width: 95vw !important; }
+  .confirm-footer { flex-direction: column; gap: 8px; }
+  .confirm-footer .confirm-btn { width: 100%; }
+
+  /* ─── Report picker (Colorful / Colorless) ─── */
+  .rp-overlay .rp-modal,
+  .rp-modal { max-width: 95vw !important; max-height: 90vh !important; }
+  .rp-body { padding: 12px 14px; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   TABLET RESPONSIVE — Academics module (768px – 1023px)
+   Mid-range layout for tablets — slightly compact, multi-col grids
+   keep their structure.
+   ═══════════════════════════════════════════════════════════════════ */
+@media (min-width: 768px) and (max-width: 1023px) {
+  .l2-tabs { grid-template-columns: repeat(3, 1fr); }
+  .ts-stat-strip { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  .key-dates-grid { grid-template-columns: repeat(2, 1fr); }
+  .act-stats-strip { grid-template-columns: repeat(2, 1fr); }
+  .activity-layout-v2 { grid-template-columns: 1fr; gap: 14px; }
+  .subject-grid { grid-template-columns: repeat(3, 1fr); }
+}
+`;

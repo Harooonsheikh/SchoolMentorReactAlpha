@@ -1,6 +1,7 @@
 import AuthLayout from './AuthLayout';
 import { useState } from 'react';
 import { buildUrl } from '../../utils/apiConfig';
+import { normalizePkPhone } from '../../utils/phone';
 
 export default function LoginScreen({ onLogin, onSignup }) {
   const [username, setUsername] = useState('');
@@ -22,7 +23,7 @@ export default function LoginScreen({ onLogin, onSignup }) {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        user_Name: username,
+        user_Name: normalizePkPhone(username),
         password: password,
       }),
     });
@@ -84,7 +85,7 @@ export default function LoginScreen({ onLogin, onSignup }) {
           </svg>
         </span>
         <input className="auth-input" type="text" placeholder="Enter your username"
-          value={username} onChange={e => setUsername(e.target.value)}
+          value={username} onChange={e => setUsername(normalizePkPhone(e.target.value))}
           onKeyDown={e => e.key === 'Enter' && handleLogin()} />
       </div>
 

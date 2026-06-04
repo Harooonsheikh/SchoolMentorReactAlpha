@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import AuthLayout from './AuthLayout';
 import { buildUrl } from '../../utils/apiConfig';
+import { normalizePkPhone } from '../../utils/phone';
 import { useApp } from '../../context/AppContext';
 
 
@@ -230,7 +231,7 @@ localStorage.setItem('signup_otp', otpFromServer);
       <Label text="Phone Number" />
       <InputWrap icon={ICONS.phone}>
         <input className="auth-input" type="tel" placeholder="+92 300 0000000"
-          value={data.phone} onChange={e => onChange('phone', e.target.value)}
+          value={data.phone} onChange={e => onChange('phone', normalizePkPhone(e.target.value))}
           onKeyDown={e => e.key === 'Enter' && next()} />
       </InputWrap>
       <p style={{fontSize:12,color:'#64748B',marginTop:-8,marginBottom:16}}>🇵🇰 Format: 03XX-XXXXXXX or +92-3XX-XXXXXXX</p>

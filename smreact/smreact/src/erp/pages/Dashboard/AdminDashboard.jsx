@@ -1,0 +1,2369 @@
+import React, { useMemo, useState } from 'react';
+import Tooltip from '../../components/Tooltip';
+import UniversalSearch from '../../shared/UniversalSearch';
+import {
+  AreaChart, Area, LineChart, Line, BarChart, Bar, ComposedChart,
+  XAxis, YAxis, CartesianGrid, Tooltip as RTooltip, ResponsiveContainer,
+} from 'recharts';
+import { useModules } from '../../context/ModuleContext';
+import { DASH_CSS } from './Dashboard';
+import AnnouncementsModal from './AnnouncementsModal';
+import AppPendingReportModal from './AppPendingReportModal';
+import {
+  STUDENT_STATS,
+  HR_STATS,
+  CRM_STATS,
+  EXAM_STATS,
+  ACADEMICS_STATS,
+  ATTENDANCE_STATS,
+  FEE_STATS,
+  AUDIT_STATS,
+  MODULE_COLOR,
+  SCHOOL_MENTOR_ANNOUNCEMENTS,
+  TEACHER_APP_STATUS,
+  PARENT_APP_STATUS,
+  STUDENT_ATTENDANCE_TODAY,
+  STAFF_ATTENDANCE_TODAY,
+} from './dashboardData';
+
+/* ═══════════════════════════════════════════════════════════════════
+   ADMIN DASHBOARD — refreshed layout.
+
+   AUDIT (sections before this update):
+     1. Hero greeting
+     2. Priority cards (top 3 critical)
+     3. Module tiles (KPI stat row)
+     4. Admission Funnel + HR snapshot      ← REMOVED
+     5. Academic Operations + Examinations  ← REMOVED (replaced by Lesson Plan)
+     6. Fee Collection + Accounts           ← REMOVED (replaced by Fee Analytics + Revenue)
+     7. Inventory & POS + Appraisals        ← REMOVED
+     8. Audit Log                           ← REMOVED
+
+   FINAL SECTION ORDER (per spec):
+     1. Page Header (lives in Dashboard.jsx shell — kept)
+     2. Top KPI Stat Cards row              (kept: hero + priority + tiles)
+     3. FEE ANALYTICS                       (NEW)
+     4. ACADEMICS / LESSON PLAN             (NEW)
+     5. PAPER GENERATOR                     (NEW)
+     6. ACCOUNTS / REVENUE                  (NEW)
+     7. BIRTHDAYS THIS MONTH                (NEW)
+     8. UPCOMING ACTIVITIES                 (NEW)
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ─── Mock data for the new sections (matches spec exactly) ─────── */
+
+const LP_DATA_BY_CLASS = {
+  'II-Pre': [
+    { subject: 'Math',           classwork: 1,  notebook: 1 },
+    { subject: 'English',        classwork: 1,  notebook: 1 },
+    { subject: 'Science',        classwork: 3,  notebook: 2 },
+    { subject: 'Social Studies', classwork: 13, notebook: 6 },
+    { subject: 'Urdu',           classwork: 1,  notebook: 0 },
+    { subject: 'DLL',            classwork: 1,  notebook: 1 },
+  ],
+  'I': [
+    { subject: 'Math', classwork: 8, notebook: 6 }, { subject: 'English', classwork: 9, notebook: 7 },
+    { subject: 'Science', classwork: 6, notebook: 5 }, { subject: 'Social Studies', classwork: 10, notebook: 8 },
+    { subject: 'Urdu', classwork: 7, notebook: 6 }, { subject: 'DLL', classwork: 4, notebook: 3 },
+  ],
+  'II': [
+    { subject: 'Math', classwork: 12, notebook: 10 }, { subject: 'English', classwork: 14, notebook: 11 },
+    { subject: 'Science', classwork: 9, notebook: 7 }, { subject: 'Social Studies', classwork: 15, notebook: 12 },
+    { subject: 'Urdu', classwork: 11, notebook: 9 }, { subject: 'DLL', classwork: 6, notebook: 4 },
+  ],
+  'III': [
+    { subject: 'Math', classwork: 16, notebook: 13 }, { subject: 'English', classwork: 18, notebook: 15 },
+    { subject: 'Science', classwork: 12, notebook: 10 }, { subject: 'Social Studies', classwork: 17, notebook: 14 },
+    { subject: 'Urdu', classwork: 14, notebook: 11 }, { subject: 'DLL', classwork: 8, notebook: 6 },
+  ],
+  'IV': [
+    { subject: 'Math', classwork: 18, notebook: 15 }, { subject: 'English', classwork: 19, notebook: 16 },
+    { subject: 'Science', classwork: 15, notebook: 12 }, { subject: 'Social Studies', classwork: 18, notebook: 15 },
+    { subject: 'Urdu', classwork: 16, notebook: 13 }, { subject: 'DLL', classwork: 9, notebook: 7 },
+  ],
+  'V':    [{ subject: 'Math', classwork: 19, notebook: 17 }, { subject: 'English', classwork: 20, notebook: 18 }, { subject: 'Science', classwork: 17, notebook: 14 }, { subject: 'Social Studies', classwork: 19, notebook: 17 }, { subject: 'Urdu', classwork: 17, notebook: 14 }, { subject: 'DLL', classwork: 10, notebook: 8 }],
+  'VI':   [{ subject: 'Math', classwork: 20, notebook: 18 }, { subject: 'English', classwork: 19, notebook: 16 }, { subject: 'Science', classwork: 18, notebook: 15 }, { subject: 'Social Studies', classwork: 20, notebook: 18 }, { subject: 'Urdu', classwork: 18, notebook: 16 }, { subject: 'DLL', classwork: 11, notebook: 9 }],
+  'VII':  [{ subject: 'Math', classwork: 17, notebook: 15 }, { subject: 'English', classwork: 18, notebook: 15 }, { subject: 'Science', classwork: 16, notebook: 13 }, { subject: 'Social Studies', classwork: 17, notebook: 14 }, { subject: 'Urdu', classwork: 15, notebook: 12 }, { subject: 'DLL', classwork: 10, notebook: 8 }],
+  'VIII': [{ subject: 'Math', classwork: 14, notebook: 12 }, { subject: 'English', classwork: 16, notebook: 13 }, { subject: 'Science', classwork: 13, notebook: 11 }, { subject: 'Social Studies', classwork: 15, notebook: 12 }, { subject: 'Urdu', classwork: 12, notebook: 10 }, { subject: 'DLL', classwork: 8, notebook: 6 }],
+};
+const LP_CLASSES = ['II-Pre', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII'];
+
+const PAPER_DATA_BY_CLASS = {
+  'IV': [{ subject: 'English', count: 14 }, { subject: 'Science', count: 8 }],
+  'I':  [{ subject: 'English', count: 6 },  { subject: 'Science', count: 3 }],
+  'II': [{ subject: 'English', count: 9 },  { subject: 'Science', count: 5 }],
+  'III':[{ subject: 'English', count: 11 }, { subject: 'Science', count: 6 }],
+  'V':  [{ subject: 'English', count: 12 }, { subject: 'Science', count: 9 }],
+  'VI': [{ subject: 'English', count: 10 }, { subject: 'Science', count: 7 }],
+};
+const PAPER_CLASSES = ['IV', 'I', 'II', 'III', 'V', 'VI'];
+
+const REVENUE_DATA_BY_YEAR = {
+  2026: [
+    { m: 'Jan', tuition: 0.86, admission: 0.12, transport: 0.18, other: 0.04 },
+    { m: 'Feb', tuition: 0.04, admission: 0.01, transport: 0.02, other: 0.00 },
+    { m: 'Mar', tuition: 0.03, admission: 0.00, transport: 0.02, other: 0.01 },
+    { m: 'Apr', tuition: 0.03, admission: 0.00, transport: 0.02, other: 0.00 },
+    { m: 'May', tuition: 0.02, admission: 0.00, transport: 0.01, other: 0.00 },
+    { m: 'Jun', tuition: 0.00, admission: 0.00, transport: 0.00, other: 0.00 },
+    { m: 'Jul', tuition: 0.00, admission: 0.00, transport: 0.00, other: 0.00 },
+    { m: 'Aug', tuition: 0.00, admission: 0.00, transport: 0.00, other: 0.00 },
+    { m: 'Sep', tuition: 0.00, admission: 0.00, transport: 0.00, other: 0.00 },
+    { m: 'Oct', tuition: 0.00, admission: 0.00, transport: 0.00, other: 0.00 },
+    { m: 'Nov', tuition: 0.00, admission: 0.00, transport: 0.00, other: 0.00 },
+    { m: 'Dec', tuition: 0.00, admission: 0.00, transport: 0.00, other: 0.00 },
+  ],
+  2025: [
+    { m: 'Jan', tuition: 0.78, admission: 0.10, transport: 0.16, other: 0.03 },
+    { m: 'Feb', tuition: 0.82, admission: 0.09, transport: 0.17, other: 0.04 },
+    { m: 'Mar', tuition: 0.80, admission: 0.11, transport: 0.16, other: 0.03 },
+    { m: 'Apr', tuition: 0.85, admission: 0.08, transport: 0.18, other: 0.05 },
+    { m: 'May', tuition: 0.88, admission: 0.09, transport: 0.18, other: 0.04 },
+    { m: 'Jun', tuition: 0.40, admission: 0.04, transport: 0.08, other: 0.02 },
+    { m: 'Jul', tuition: 0.10, admission: 0.02, transport: 0.03, other: 0.01 },
+    { m: 'Aug', tuition: 0.91, admission: 0.42, transport: 0.20, other: 0.06 },
+    { m: 'Sep', tuition: 0.92, admission: 0.18, transport: 0.20, other: 0.05 },
+    { m: 'Oct', tuition: 0.90, admission: 0.12, transport: 0.19, other: 0.05 },
+    { m: 'Nov', tuition: 0.88, admission: 0.10, transport: 0.19, other: 0.04 },
+    { m: 'Dec', tuition: 0.86, admission: 0.10, transport: 0.18, other: 0.04 },
+  ],
+  2024: [
+    { m: 'Jan', tuition: 0.70, admission: 0.09, transport: 0.14, other: 0.03 },
+    { m: 'Feb', tuition: 0.72, admission: 0.08, transport: 0.14, other: 0.03 },
+    { m: 'Mar', tuition: 0.71, admission: 0.10, transport: 0.14, other: 0.04 },
+    { m: 'Apr', tuition: 0.75, admission: 0.07, transport: 0.15, other: 0.04 },
+    { m: 'May', tuition: 0.78, admission: 0.08, transport: 0.16, other: 0.04 },
+    { m: 'Jun', tuition: 0.36, admission: 0.04, transport: 0.07, other: 0.02 },
+    { m: 'Jul', tuition: 0.08, admission: 0.02, transport: 0.02, other: 0.01 },
+    { m: 'Aug', tuition: 0.83, admission: 0.38, transport: 0.18, other: 0.05 },
+    { m: 'Sep', tuition: 0.84, admission: 0.16, transport: 0.18, other: 0.05 },
+    { m: 'Oct', tuition: 0.81, admission: 0.10, transport: 0.17, other: 0.04 },
+    { m: 'Nov', tuition: 0.79, admission: 0.09, transport: 0.17, other: 0.04 },
+    { m: 'Dec', tuition: 0.76, admission: 0.09, transport: 0.16, other: 0.03 },
+  ],
+};
+
+const PROFIT_LOSS_BY_YEAR = {
+  2026: [
+    { m: 'Jan', revenue: 3.20, expense: -2.80, pl:  0.80 },
+    { m: 'Feb', revenue: 1.00, expense: -0.80, pl:  0.20 },
+    { m: 'Mar', revenue: 1.05, expense: -0.78, pl:  0.27 },
+    { m: 'Apr', revenue: 1.10, expense: -0.85, pl:  0.25 },
+    { m: 'May', revenue: 1.02, expense: -0.82, pl:  0.20 },
+    { m: 'Jun', revenue: 0.95, expense: -0.80, pl:  0.15 },
+    { m: 'Jul', revenue: 0.92, expense: -0.78, pl:  0.14 },
+    { m: 'Aug', revenue: 1.08, expense: -0.86, pl:  0.22 },
+    { m: 'Sep', revenue: 1.10, expense: -0.88, pl:  0.22 },
+    { m: 'Oct', revenue: 1.06, expense: -0.84, pl:  0.22 },
+    { m: 'Nov', revenue: 1.02, expense: -0.82, pl:  0.20 },
+    { m: 'Dec', revenue: 1.00, expense: -0.80, pl:  0.20 },
+  ],
+  2025: [
+    { m: 'Jan', revenue: 2.80, expense: -2.30, pl:  0.50 }, { m: 'Feb', revenue: 2.90, expense: -2.40, pl:  0.50 },
+    { m: 'Mar', revenue: 2.85, expense: -2.35, pl:  0.50 }, { m: 'Apr', revenue: 3.00, expense: -2.45, pl:  0.55 },
+    { m: 'May', revenue: 3.10, expense: -2.50, pl:  0.60 }, { m: 'Jun', revenue: 1.40, expense: -1.20, pl:  0.20 },
+    { m: 'Jul', revenue: 0.50, expense: -0.40, pl:  0.10 }, { m: 'Aug', revenue: 3.40, expense: -2.70, pl:  0.70 },
+    { m: 'Sep', revenue: 3.20, expense: -2.55, pl:  0.65 }, { m: 'Oct', revenue: 3.05, expense: -2.45, pl:  0.60 },
+    { m: 'Nov', revenue: 3.00, expense: -2.40, pl:  0.60 }, { m: 'Dec', revenue: 2.85, expense: -2.30, pl:  0.55 },
+  ],
+  2024: [
+    { m: 'Jan', revenue: 2.40, expense: -2.00, pl:  0.40 }, { m: 'Feb', revenue: 2.45, expense: -2.05, pl:  0.40 },
+    { m: 'Mar', revenue: 2.50, expense: -2.10, pl:  0.40 }, { m: 'Apr', revenue: 2.60, expense: -2.15, pl:  0.45 },
+    { m: 'May', revenue: 2.65, expense: -2.20, pl:  0.45 }, { m: 'Jun', revenue: 1.20, expense: -1.05, pl:  0.15 },
+    { m: 'Jul', revenue: 0.40, expense: -0.35, pl:  0.05 }, { m: 'Aug', revenue: 2.95, expense: -2.35, pl:  0.60 },
+    { m: 'Sep', revenue: 2.80, expense: -2.25, pl:  0.55 }, { m: 'Oct', revenue: 2.65, expense: -2.15, pl:  0.50 },
+    { m: 'Nov', revenue: 2.60, expense: -2.10, pl:  0.50 }, { m: 'Dec', revenue: 2.50, expense: -2.05, pl:  0.45 },
+  ],
+};
+
+const STUDENT_BIRTHDAYS = [
+  { name: 'Ayaan Raza',     grade: 'Grade 2',  date: '01 May', dob: 1  },
+  { name: 'Sara Ahmed',     grade: 'Grade 5',  date: '04 May', dob: 4  },
+  { name: 'Hassan Ali',     grade: 'Grade 7',  date: '08 May', dob: 8  },
+  { name: 'Zara Khan',      grade: 'Grade 3',  date: '12 May', dob: 12 },
+  { name: 'Bilal Tariq',    grade: 'Grade 8',  date: '15 May', dob: 15 },
+  { name: 'Maha Siddiqui',  grade: 'Grade 1',  date: '18 May', dob: 18 },
+  { name: 'Usman Farooq',   grade: 'Grade 6',  date: '22 May', dob: 22 },
+  { name: 'Nadia Malik',    grade: 'Grade 4',  date: '25 May', dob: 25 },
+  { name: 'Hamza Irfan',    grade: 'Grade 9',  date: '28 May', dob: 28 },
+  { name: 'Fatima Saleem',  grade: 'Grade 10', date: '31 May', dob: 31 },
+];
+
+const TEACHER_BIRTHDAYS = [
+  { name: 'Mr. Usman Khalid',   role: 'Math Teacher',     date: '05 May', dob: 5  },
+  { name: 'Ms. Ayesha Raza',    role: 'Science Teacher',  date: '13 May', dob: 13 },
+  { name: 'Dr. Hira Noor',      role: 'English Teacher',  date: '19 May', dob: 19 },
+  { name: 'Mr. Bilal Ahmed',    role: 'HR Officer',       date: '24 May', dob: 24 },
+  { name: 'Ms. Sana Mirza',     role: 'Coordinator',      date: '30 May', dob: 30 },
+];
+
+const TODAY_DAY = 31;        /* Mock "today" — matches CURRENT_SESSION's daysLeft pivot */
+
+const ACTIVITIES = [
+  { id: 1, date: '01 Jun 2026', title: 'Final Term Exams Begin',
+    desc: 'Final term examinations start for all classes Grade 1–10.',
+    category: 'Examination',   type: 'exam',     module: 'exam',     daysAway: 1 },
+  { id: 2, date: '03 Jun 2026', title: 'PTM — All Classes',
+    desc: 'Parent-Teacher Meeting for Q3 result discussion.',
+    category: 'School Event',  type: 'event',    module: 'students', daysAway: 3 },
+  { id: 3, date: '05 Jun 2026', title: 'World Environment Day Activity',
+    desc: 'Tree plantation drive and environment awareness program.',
+    category: 'School Event',  type: 'event',    module: null,        daysAway: 5 },
+  { id: 4, date: '10 Jun 2026', title: 'Sports Day',
+    desc: 'Annual sports day with inter-house competitions.',
+    category: 'School Event',  type: 'event',    module: null,        daysAway: 10 },
+  { id: 5, date: '15 Jun 2026', title: 'Result Cards Distribution',
+    desc: 'Final term result cards distributed to parents.',
+    category: 'Examination',   type: 'exam',     module: 'exam',     daysAway: 15 },
+  { id: 6, date: '20 Jun 2026', title: 'Summer Vacation Begins',
+    desc: 'School closes for summer vacation until August 2026.',
+    category: 'Holiday',       type: 'holiday',  module: null,        daysAway: 20 },
+  { id: 7, date: '25 Jun 2026', title: 'Staff Training Day',
+    desc: 'Professional development session for all teaching staff.',
+    category: 'HR',            type: 'event',    module: 'hr',       daysAway: 25 },
+  { id: 8, date: '30 Jun 2026', title: 'Monthly Fee Deadline',
+    desc: 'Last date for submission of July 2026 fee challans.',
+    category: 'Fee',           type: 'deadline', module: 'fee',      daysAway: 30 },
+];
+
+const TYPE_COLOR = {
+  exam:     { bg: 'rgba(220, 38, 38, .12)', fg: '#DC2626' },
+  event:    { bg: 'rgba(30, 58, 138, .12)', fg: '#1E40AF' },
+  holiday:  { bg: 'rgba(22, 163, 74, .12)', fg: '#16A34A' },
+  deadline: { bg: 'rgba(217, 119, 6, .14)', fg: '#D97706' },
+};
+
+/* ─── Custom tooltip used by every Recharts chart ─────────────── */
+function ChartTooltip({ active, payload, label }) {
+  if (!active || !payload?.length) return null;
+  return (
+    <div style={{
+      background: 'var(--bg-card, #fff)',
+      border: '1px solid var(--border-light, #E2E8F0)',
+      borderRadius: 8, padding: '8px 12px', fontSize: 12,
+      boxShadow: '0 4px 12px rgba(15, 23, 42, .08)',
+    }}>
+      <div style={{ fontWeight: 700, color: 'var(--text-primary)', marginBottom: 4 }}>{label}</div>
+      {payload.map((p, i) => (
+        <div key={i} style={{ color: p.color, fontWeight: 600 }}>
+          {p.name}: {p.value}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export default function AdminDashboard({ visibility, toast, navigate = () => {}, openActivityCalendar = () => {} }) {
+  const { moduleActive, user, session } = visibility;
+  const { isActive } = useModules();      /* per-spec: explicit useModules guard for new sections */
+
+  const NAV_LABELS = {
+    students: 'Students', hr: 'Human Resource', crm: 'Admission CRM',
+    exam: 'Examination', acad: 'Academics', fee: 'Fee', accounts: 'Accounts',
+    inventory: 'Inventory', att: 'Attendance', appraisal: 'Staff Appraisals',
+    audit: 'Audit Logs', tt: 'Time Table', paper: 'Paper Generator',
+  };
+  const openModule = (target) => {
+    if (!target) return;
+    navigate(target);
+    toast(`Opening ${NAV_LABELS[target] || target.toUpperCase()}…`, 'info');
+  };
+
+  /* ─── Existing top sections (kept) ──────────────────────────── */
+  const tiles = [
+    moduleActive('students') && { key: 'students', accent: MODULE_COLOR.students, label: 'Students', icon: 'fa-user-graduate',
+      value: STUDENT_STATS.activeStudents,
+      meta: <><span className="dash-tile-meta-pill">+{STUDENT_STATS.recentAdmissions.length} this week</span><span>{STUDENT_STATS.inactiveStudents} inactive</span></>,
+      target: 'students' },
+    moduleActive('hr') && { key: 'hr', accent: MODULE_COLOR.hr, label: 'Employees', icon: 'fa-users',
+      value: HR_STATS.activeEmployees,
+      meta: <><span className="dash-tile-meta-pill">{HR_STATS.departments.length} depts</span><span>{HR_STATS.inactiveEmployees} inactive</span></>,
+      target: 'hr' },
+    moduleActive('admissions') && { key: 'crm', accent: MODULE_COLOR.admissions, label: 'Active Leads', icon: 'fa-handshake',
+      value: CRM_STATS.totalLeads,
+      meta: <><span className="dash-tile-meta-pill">{CRM_STATS.followups.today} today</span><span>{CRM_STATS.followups.overdue} overdue</span></>,
+      target: 'crm' },
+    moduleActive('examination') && { key: 'exam', accent: MODULE_COLOR.examination, label: 'Exams Scheduled', icon: 'fa-file-pen',
+      value: EXAM_STATS.totalExams,
+      meta: <><span className="dash-tile-meta-pill">{EXAM_STATS.currentTermExams} current term</span><span>{EXAM_STATS.pendingResults} results pending</span></>,
+      target: 'exam' },
+    moduleActive('academics') && { key: 'activities', accent: MODULE_COLOR.academics, label: 'Activities', icon: 'fa-calendar-days',
+      value: ACADEMICS_STATS.activities.completed + ACADEMICS_STATS.activities.ongoing + ACADEMICS_STATS.activities.upcoming,
+      meta: <><span className="dash-tile-meta-pill">{ACADEMICS_STATS.activities.upcoming} upcoming</span><span>{ACADEMICS_STATS.activities.ongoing} ongoing</span></>,
+      target: 'acad' },
+    moduleActive('fee') && { key: 'fee', accent: MODULE_COLOR.fee, label: 'Fee Collection', icon: 'fa-money-bill-wave',
+      value: <>{FEE_STATS.collectionPct}<small>%</small></>,
+      meta: <><span className="dash-tile-meta-pill">{FEE_STATS.defaulters} defaulters</span><span>PKR {(FEE_STATS.outstandingTotal / 100000).toFixed(1)}L outstanding</span></>,
+      target: 'fee' },
+    moduleActive('auditlogs') && { key: 'audit', accent: MODULE_COLOR.auditlogs, label: "Today's Activity", icon: 'fa-clipboard-list',
+      value: AUDIT_STATS.today,
+      meta: <><span className="dash-tile-meta-pill">{AUDIT_STATS.activeUsersToday} users</span><span>{AUDIT_STATS.thisWeek} this week</span></>,
+      target: 'audit' },
+  ].filter(Boolean);
+
+  /* Newest announcement surfaces in the top card; sender + count of
+     remaining new ones are computed for the pill + footer line. */
+  const latestAnnouncement = SCHOOL_MENTOR_ANNOUNCEMENTS[0];
+  const newAnnouncementCount = SCHOOL_MENTOR_ANNOUNCEMENTS.filter(a => a.status === 'new').length;
+
+  /* Greeting */
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+  const todayLabel = new Date().toLocaleDateString('en-PK', { weekday: 'long', day: 'numeric', month: 'long' });
+  const firstName = user.name.replace(/Dr\.|Mr\.|Ms\.|Mrs\./, '').trim().split(' ')[0];
+
+  /* ─── New section local state ──────────────────────────────── */
+  const [lpClass,    setLpClass]    = useState('II-Pre');
+  const [paperClass, setPaperClass] = useState('IV');
+  const [revenueYear, setRevenueYear] = useState(2026);
+  const [birthdayTab, setBirthdayTab] = useState('all');
+
+  /* Top-card modals */
+  const [showAnnouncements, setShowAnnouncements] = useState(false);
+  const [showReport,        setShowReport]        = useState(null); /* 'teachers' | 'parents' | null */
+
+  const lpData    = LP_DATA_BY_CLASS[lpClass]    || LP_DATA_BY_CLASS['II-Pre'];
+  const paperData = PAPER_DATA_BY_CLASS[paperClass] || PAPER_DATA_BY_CLASS['IV'];
+  const revenueData = REVENUE_DATA_BY_YEAR[revenueYear] || REVENUE_DATA_BY_YEAR[2026];
+  const profitData  = PROFIT_LOSS_BY_YEAR[revenueYear]  || PROFIT_LOSS_BY_YEAR[2026];
+  const lpMaxCw = useMemo(() => Math.max(...lpData.map(d => d.classwork)), [lpData]);
+  const paperTotal = useMemo(() => paperData.reduce((s, p) => s + p.count, 0), [paperData]);
+
+  const studentBdays = isActive('students') ? STUDENT_BIRTHDAYS : [];
+  const teacherBdays = isActive('hr') ? TEACHER_BIRTHDAYS : [];
+  const showStudents = birthdayTab === 'all' || birthdayTab === 'students';
+  const showTeachers = birthdayTab === 'all' || birthdayTab === 'teachers';
+
+  return (
+    <>
+      <style>{DASH_CSS}</style>
+      <style>{ADM_NEW_CSS}</style>
+
+      {/* ═════════ 0. UNIVERSAL SEARCH BAR ═════════
+            Sits at the top of the Admin / Principal Dashboard.
+            Permission predicate gates each module's results — today the
+            admin sees everything, but the prop is wired so the backend
+            can clamp it later. Module-activation gating happens inside
+            the hook via ModuleContext. */}
+      <div className="adm-uvs-row">
+        <UniversalSearch
+          onNavigate={(target, params) => {
+            navigate(target, params);
+            toast(`Opening ${NAV_LABELS[target] || target.toUpperCase()}…`, 'info');
+          }}
+          canAccess={(_moduleId) => true /* TODO: hook into User Permissions when API lands */}
+          sessionId={session?.id || null}
+          toast={toast}
+          placeholder="Search students, employees, lesson plans, exams, fees…"
+        />
+      </div>
+
+      {/* ═════════ 1. HERO GREETING (Page Header — kept) ═════════ */}
+      <div className="dash-hero">
+        <div className="dash-hero-l">
+          <div className="dash-hero-greet">
+            <span className="dash-hero-wave">👋</span>
+            {greeting}, {firstName}
+          </div>
+          <div className="dash-hero-sub">
+            <b>{todayLabel}</b> · Session {session.label}. You have{' '}
+            {moduleActive('admissions') && <><b>{CRM_STATS.followups.overdue + CRM_STATS.followups.today}</b> follow-ups</>}
+            {moduleActive('admissions') && moduleActive('academics') && ' and '}
+            {moduleActive('academics') && <><b>{ACADEMICS_STATS.lessonPlans.pending}</b> lesson plans pending</>}.
+          </div>
+        </div>
+        <div className="dash-hero-r">
+          {moduleActive('students') && (
+            <div className="dash-hero-stat">
+              <div className="dash-hero-stat-val">{STUDENT_STATS.activeStudents}</div>
+              <div className="dash-hero-stat-lbl">Active Students</div>
+            </div>
+          )}
+          {moduleActive('hr') && (
+            <div className="dash-hero-stat">
+              <div className="dash-hero-stat-val">{HR_STATS.activeEmployees}<small>/{HR_STATS.totalEmployees}</small></div>
+              <div className="dash-hero-stat-lbl">Staff Active</div>
+            </div>
+          )}
+          {moduleActive('attendance') && (
+            <div className="dash-hero-stat">
+              <div className="dash-hero-stat-val">{ATTENDANCE_STATS.todayStudentPct}<small>%</small></div>
+              <div className="dash-hero-stat-lbl">Attendance Today</div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ═════════ TOP CARDS ROW ═════════
+          1. School Mentor Announcements
+          2. Teachers Mobile App Status
+          3. Parents Mobile App Status                            */}
+      <div className="adm-top-cards">
+
+        {/* ── Card 1: Announcements ── */}
+        <div className="adm-tc adm-tc--announce">
+          <div className="adm-tc-h">
+            <div className="adm-tc-h-l">
+              <div className="adm-tc-ic adm-tc-ic--brand">
+                <i className="fa-solid fa-bullhorn" aria-hidden="true"></i>
+              </div>
+              <div>
+                <div className="adm-tc-t">School Mentor Announcements</div>
+                <div className="adm-tc-s">{latestAnnouncement.sender}</div>
+              </div>
+            </div>
+            {/* Only show pill when there are actual unread items */}
+            {newAnnouncementCount > 0 && (
+              <Tooltip text={`${newAnnouncementCount} unread message${newAnnouncementCount > 1 ? 's' : ''}`}>
+                <span className="adm-tc-pill adm-tc-pill--new">
+                  <span className="adm-tc-pill-dot" /> {newAnnouncementCount}
+                </span>
+              </Tooltip>
+            )}
+          </div>
+
+          <div className="adm-tc-body">
+            <div className="adm-tc-an-title">{latestAnnouncement.title}</div>
+            <div className="adm-tc-an-preview">{latestAnnouncement.preview}</div>
+          </div>
+
+          <div className="adm-tc-foot">
+            <span className="adm-tc-meta">
+              <i className="fa-solid fa-clock" aria-hidden="true"></i>
+              {latestAnnouncement.date} · {latestAnnouncement.time}
+            </span>
+            <Tooltip text="View all announcements">
+              <button
+                type="button"
+                className="adm-tc-btn"
+                onClick={() => setShowAnnouncements(true)}
+              >
+                View Details <i className="fa-solid fa-arrow-right" aria-hidden="true"></i>
+              </button>
+            </Tooltip>
+          </div>
+        </div>
+
+        {/* ── Card 2: Teachers Mobile App ── */}
+        <AppStatusCard
+          tone="green"
+          title="Teachers Mobile App"
+          subtitle="Adoption status"
+          icon="fa-chalkboard-user"
+          data={TEACHER_APP_STATUS}
+          ctaLabel="Download Report"
+          ctaIcon="fa-file-pdf"
+          onCta={() => setShowReport('teachers')}
+        />
+
+        {/* ── Card 3: Parents Mobile App ── */}
+        <AppStatusCard
+          tone="amber"
+          title="Parents Mobile App"
+          subtitle="Adoption status"
+          icon="fa-people-roof"
+          data={PARENT_APP_STATUS}
+          ctaLabel="Download Report"
+          ctaIcon="fa-file-pdf"
+          onCta={() => setShowReport('parents')}
+        />
+      </div>
+
+      {/* ─── Modals (rendered on demand) ─── */}
+      {showAnnouncements && (
+        <AnnouncementsModal
+          onClose={() => setShowAnnouncements(false)}
+          toast={toast}
+        />
+      )}
+      {showReport && (
+        <AppPendingReportModal
+          mode={showReport}
+          onClose={() => setShowReport(null)}
+          toast={toast}
+        />
+      )}
+
+      {tiles.length > 0 && (
+        <div className="dash-sec">
+          <div className="dash-sec-h">
+            <div className="dash-sec-title">
+              <i className="fa-solid fa-chart-simple" aria-hidden="true"></i> Live Module Snapshot
+            </div>
+            <span className="dash-sec-sub">Click any tile to open its module</span>
+          </div>
+          <div className="dash-tiles">
+            {tiles.map(t => (
+              <Tooltip key={t.key} text={`Open ${t.label}`}>
+                <div
+                  className="dash-tile"
+                  style={{ '--tile-accent': t.accent.stroke, '--tile-soft': t.accent.soft }}
+                  role="button" tabIndex={0}
+                  onClick={() => openModule(t.target)}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openModule(t.target); } }}
+                >
+                  <div className="dash-tile-row">
+                    <div className="dash-tile-ic"><i className={`fa-solid ${t.icon}`} aria-hidden="true"></i></div>
+                    <div className="dash-tile-lbl">{t.label}</div>
+                    <div className="dash-tile-arrow"><i className="fa-solid fa-arrow-up" aria-hidden="true"></i></div>
+                  </div>
+                  <div className="dash-tile-val">{t.value}</div>
+                  <div className="dash-tile-meta">{t.meta}</div>
+                </div>
+              </Tooltip>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ═════════ TODAY'S ATTENDANCE ═════════
+          ATTENDANCE INTEGRATION NOTE:
+          These cards currently display mock data sourced from
+          dashboardData.js → STUDENT_ATTENDANCE_TODAY / STAFF_ATTENDANCE_TODAY.
+
+          To connect live data:
+          1. Import attendance store/context when available
+             (e.g. useAttendance from src/services/attendanceService.js)
+          2. Replace STUDENT_ATTENDANCE_TODAY / STAFF_ATTENDANCE_TODAY
+             with data from useAttendance() hook or API response
+          3. Field names used here match the Attendance module schema
+             (constants/attendance.js · mock/attendance.js):
+             - Student class row: { cls, sec, total, present, absent,
+                                    leave, marked, teacher, markedBy,
+                                    markedFrom, markedTime }
+             - Staff row:         { name, empId, desig, dept, status,
+                                    inTime, outTime, from, marked }
+             - status values:     'present' | 'absent' | 'leave' | ''
+             - status constants:  ATTENDANCE_STATUS.{PRESENT,ABSENT,LEAVE,PENDING}
+                                  STAFF_ATTENDANCE_STATUS.{PRESENT,ABSENT,LEAVE}
+       */}
+      {moduleActive('attendance') && <AttendanceSection openModule={openModule} />}
+
+      {/* ═════════ 3. FEE ANALYTICS ═════════ */}
+      {isActive('fee') && (
+        <div className="dash-sec adm-sec">
+          <div className="dash-sec-h">
+            <div className="dash-sec-title"><i className="fa-solid fa-coins" aria-hidden="true"></i> Fee Analytics</div>
+            <button type="button" className="dash-sec-link" onClick={() => openModule('fee')}>
+              Open Fee <i className="fa-solid fa-arrow-right" aria-hidden="true"></i>
+            </button>
+          </div>
+
+          {/* ═════════ TOP ROW — 3 summary cards ═════════ */}
+          <div className="fa-top-grid">
+
+            {/* Card 1 — Current Month Fee Position (primary summary) */}
+            <div className="stat-card fee-card fa-card fc-tone--brand fa-card--primary">
+              <div className="fc-header">
+                <div className="fc-icon-chip">
+                  <i className="fa-solid fa-money-check-dollar" aria-hidden="true"></i>
+                </div>
+                <div className="fc-title">Current Month Fee Position</div>
+              </div>
+              <div className="fc-amount fa-amount--lg">PKR 3,464,162</div>
+              <div className="fc-divider" />
+              <div className="fa-meta-rows">
+                <div className="fa-meta-row">
+                  <span className="fa-meta-lbl">
+                    <i className="fa-solid fa-tag" aria-hidden="true"></i> Discount Given
+                  </span>
+                  <span className="fa-meta-val fa-meta-val--amber">PKR 183,088</span>
+                </div>
+                <div className="fa-meta-row">
+                  <span className="fa-meta-lbl">
+                    <i className="fa-solid fa-file-invoice" aria-hidden="true"></i> Challans Generated
+                  </span>
+                  <span className="fa-meta-val">
+                    <span className="fc-highlight">597</span><span className="fa-meta-div">/</span><span className="fa-meta-total">612</span>
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Card 2 — Previous Dues */}
+            <div className="stat-card fee-card fa-card fc-tone--red fc-bordered">
+              <div className="fc-header">
+                <div className="fc-icon-chip">
+                  <i className="fa-solid fa-circle-exclamation" aria-hidden="true"></i>
+                </div>
+                <div className="fc-title fc-title--red">Previous Dues</div>
+              </div>
+              <div className="fc-amount fc-amount--red fa-amount--lg">PKR 9,797,608</div>
+              <div className="fc-divider" />
+              <div className="fa-meta-rows">
+                <div className="fa-meta-row">
+                  <span className="fa-meta-lbl">
+                    <i className="fa-solid fa-users" aria-hidden="true"></i> Students with Dues
+                  </span>
+                  <span className="fa-meta-val fa-meta-val--red">38</span>
+                </div>
+                <div className="fa-meta-row fa-meta-row--muted">
+                  <i className="fa-solid fa-clock" aria-hidden="true"></i>
+                  <span>Carried from past months</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Card 3 — Total Net Receivable */}
+            <div className="stat-card fee-card fa-card fc-tone--slate fa-card--total">
+              <div className="fc-header">
+                <div className="fc-icon-chip">
+                  <i className="fa-solid fa-scale-balanced" aria-hidden="true"></i>
+                </div>
+                <div className="fc-title">Total Net Receivable</div>
+              </div>
+              <div className="fc-amount fa-amount--lg">PKR 13,261,770</div>
+              <div className="fa-formula">
+                <i className="fa-solid fa-circle-info" aria-hidden="true"></i>
+                <span>Current Month Net Receivable + Previous Dues</span>
+              </div>
+              <div className="fc-divider" />
+              <div className="fa-formula-breakdown">
+                <div>
+                  <span className="fa-bd-lbl">This Month</span>
+                  <span className="fa-bd-val">PKR 3,464,162</span>
+                </div>
+                <span className="fa-bd-op">+</span>
+                <div>
+                  <span className="fa-bd-lbl">Previous</span>
+                  <span className="fa-bd-val fa-bd-val--red">PKR 9,797,608</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* ═════════ BOTTOM ROW — 2 LARGE status cards ═════════ */}
+          <div className="fa-bottom-grid">
+
+            {/* Card 4 — Fee Received (large with progress) */}
+            <div className="stat-card fee-card fa-card fa-large fc-tone--green fc-bordered fc-tint--green">
+              <div className="fa-large-row">
+                <div className="fa-large-l">
+                  <div className="fc-header">
+                    <div className="fc-icon-chip">
+                      <i className="fa-solid fa-circle-check" aria-hidden="true"></i>
+                    </div>
+                    <div className="fc-title">Fee Received</div>
+                  </div>
+                  <div className="fc-amount fc-amount--green fa-amount--xl">PKR 4,850,000</div>
+                  <div className="fa-status-meta">
+                    <i className="fa-solid fa-user-check" aria-hidden="true"></i>
+                    <span>Students Paid:&nbsp;</span>
+                    <span className="fa-status-strong">425<span className="fa-meta-div">/</span>612</span>
+                  </div>
+                </div>
+                <div className="fa-large-r">
+                  <div className="fa-ring fa-ring--green" style={{ '--ring-pct': 69 }}>
+                    <svg viewBox="0 0 36 36" width="100%" height="100%">
+                      <circle cx="18" cy="18" r="15.9" fill="none" stroke="rgba(22,163,74,.15)" strokeWidth="3" />
+                      <circle
+                        cx="18" cy="18" r="15.9" fill="none"
+                        stroke="#16A34A" strokeWidth="3" strokeLinecap="round"
+                        strokeDasharray="100, 100"
+                        strokeDashoffset="31"
+                        transform="rotate(-90 18 18)"
+                      />
+                    </svg>
+                    <div className="fa-ring-text">
+                      <div className="fa-ring-pct">69%</div>
+                      <div className="fa-ring-lbl">Paid</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div className="fa-progress">
+                <div className="fa-progress-h">
+                  <span>Collection Progress</span>
+                  <span><b>425</b> of 612 students</span>
+                </div>
+                <div className="fa-progress-track">
+                  <div className="fa-progress-fill fa-progress-fill--green" style={{ width: '69%' }} />
+                </div>
+              </div>
+            </div>
+
+            {/* Card 5 — Pending Fee (large with progress) */}
+            <div className="stat-card fee-card fa-card fa-large fc-tone--red fc-bordered">
+              <div className="fa-large-row">
+                <div className="fa-large-l">
+                  <div className="fc-header">
+                    <div className="fc-icon-chip">
+                      <i className="fa-solid fa-hourglass-half" aria-hidden="true"></i>
+                    </div>
+                    <div className="fc-title fc-title--red">Pending Fee</div>
+                  </div>
+                  <div className="fc-amount fc-amount--red fa-amount--xl">PKR 1,250,000</div>
+                  <div className="fa-status-meta">
+                    <i className="fa-solid fa-user-clock" aria-hidden="true"></i>
+                    <span>Students Pending:&nbsp;</span>
+                    <span className="fa-status-strong fa-status-strong--red">187<span className="fa-meta-div">/</span>612</span>
+                  </div>
+                </div>
+                <div className="fa-large-r">
+                  <div className="fa-ring fa-ring--red">
+                    <svg viewBox="0 0 36 36" width="100%" height="100%">
+                      <circle cx="18" cy="18" r="15.9" fill="none" stroke="rgba(220,38,38,.15)" strokeWidth="3" />
+                      <circle
+                        cx="18" cy="18" r="15.9" fill="none"
+                        stroke="#DC2626" strokeWidth="3" strokeLinecap="round"
+                        strokeDasharray="100, 100"
+                        strokeDashoffset="69"
+                        transform="rotate(-90 18 18)"
+                      />
+                    </svg>
+                    <div className="fa-ring-text">
+                      <div className="fa-ring-pct">31%</div>
+                      <div className="fa-ring-lbl">Pending</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div className="fa-progress">
+                <div className="fa-progress-h">
+                  <span>Recovery Action Needed</span>
+                  <span><b>187</b> of 612 students</span>
+                </div>
+                <div className="fa-progress-track">
+                  <div className="fa-progress-fill fa-progress-fill--red" style={{ width: '31%' }} />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Download / Print Report link below the grid */}
+          <div className="adm-link-row">
+            <button
+              type="button"
+              className="adm-link-btn"
+              onClick={() => { openModule('fee'); toast('Fee report opening...', 'info'); }}
+            >
+              Download/Print Report <i className="fa-solid fa-arrow-right" aria-hidden="true"></i>
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="adm-divider" />
+
+      {/* ═════════ 4. LESSON PLAN ANALYTICS ═════════ */}
+      {isActive('academics') && (
+        <div className="dash-sec adm-sec">
+          <div className="dash-sec-h">
+            <div className="dash-sec-title"><i className="fa-solid fa-book-open-reader" aria-hidden="true"></i> Lesson Plan Analytics</div>
+            <select
+              className="adm-select"
+              value={lpClass}
+              onChange={(e) => setLpClass(e.target.value)}
+              aria-label="Select class"
+            >
+              {LP_CLASSES.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+
+          <div className="adm-2col">
+            <div className="adm-chart-card">
+              <ResponsiveContainer width="100%" height={200}>
+                <AreaChart data={lpData} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="lpClasswork" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#1E40AF" stopOpacity={0.25} />
+                      <stop offset="100%" stopColor="#1E40AF" stopOpacity={0} />
+                    </linearGradient>
+                    <linearGradient id="lpNotebook" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#16A34A" stopOpacity={0.22} />
+                      <stop offset="100%" stopColor="#16A34A" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid stroke="#E2E8F0" strokeDasharray="3 3" />
+                  <XAxis dataKey="subject" tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={{ stroke: '#E2E8F0' }} />
+                  <YAxis domain={[0, 20]} tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={false} />
+                  <RTooltip content={<ChartTooltip />} />
+                  <Area type="monotone" dataKey="classwork" name="Classwork" stroke="#1E40AF" strokeWidth={2.2} fill="url(#lpClasswork)" dot={{ r: 3, stroke: '#1E40AF', fill: '#fff', strokeWidth: 2 }} />
+                  <Area type="monotone" dataKey="notebook"  name="Notebook"  stroke="#16A34A" strokeWidth={2.2} fill="url(#lpNotebook)"  dot={{ r: 3, stroke: '#16A34A', fill: '#fff', strokeWidth: 2 }} />
+                </AreaChart>
+              </ResponsiveContainer>
+              <div className="adm-legend">
+                <span className="adm-legend-i"><span className="adm-legend-dot" style={{ background: '#1E40AF' }} />Classwork</span>
+                <span className="adm-legend-i"><span className="adm-legend-dot" style={{ background: '#16A34A' }} />Notebook</span>
+              </div>
+            </div>
+
+            <div className="adm-side-card">
+              <div className="adm-side-title">Subject-wise Completion</div>
+              <div className="adm-bars">
+                {lpData.map(d => {
+                  const pct = lpMaxCw > 0 ? (d.classwork / lpMaxCw) * 100 : 0;
+                  return (
+                    <div key={d.subject} className="adm-bar-row">
+                      <div className="adm-bar-lbl">{d.subject}</div>
+                      <div className="adm-bar-track">
+                        <div className="adm-bar-fill" style={{ width: `${pct}%` }} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="adm-divider" />
+
+      {/* ═════════ 5. PAPER GENERATOR ═════════ */}
+      {isActive('paper_generator') && (
+        <div className="dash-sec adm-sec">
+          <div className="dash-sec-h">
+            <div className="dash-sec-title"><i className="fa-solid fa-scroll" aria-hidden="true"></i> Question Paper Generator</div>
+            <div className="adm-h-right">
+              <span className="adm-h-meta">Total: <b>{paperTotal} Papers</b></span>
+              <select
+                className="adm-select"
+                value={paperClass}
+                onChange={(e) => setPaperClass(e.target.value)}
+                aria-label="Select class"
+              >
+                {PAPER_CLASSES.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+          </div>
+
+          <div className="adm-2col">
+            <div className="adm-side-card">
+              <div className="adm-side-tag">Recent Question Papers</div>
+              <table className="adm-table">
+                <thead>
+                  <tr><th>Subject</th><th>Total Generated Question Papers</th></tr>
+                </thead>
+                <tbody>
+                  {paperData.map(p => (
+                    <tr key={p.subject}>
+                      <td><b>{p.subject}</b></td>
+                      <td>{p.count} Question Papers</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="adm-chart-card">
+              <div className="adm-side-tag">Paper Generation Statistics</div>
+              <ResponsiveContainer width="100%" height={180}>
+                <BarChart data={paperData} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
+                  <CartesianGrid stroke="#E2E8F0" strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="subject" tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={{ stroke: '#E2E8F0' }} />
+                  <YAxis tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={false} />
+                  <RTooltip content={<ChartTooltip />} />
+                  <Bar dataKey="count" name="Papers" radius={[6, 6, 0, 0]} fill="#4169E1" />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="adm-divider" />
+
+      {/* ═════════ 6. ACCOUNTS / REVENUE ═════════ */}
+      {isActive('accounts') && (
+        <div className="dash-sec adm-sec">
+          <div className="dash-sec-h">
+            <div className="dash-sec-title"><i className="fa-solid fa-calculator" aria-hidden="true"></i> Financial Overview</div>
+            <select
+              className="adm-select"
+              value={revenueYear}
+              onChange={(e) => setRevenueYear(Number(e.target.value))}
+              aria-label="Select year"
+            >
+              <option value={2026}>2026</option>
+              <option value={2025}>2025</option>
+              <option value={2024}>2024</option>
+            </select>
+          </div>
+
+          <div className="adm-2col">
+            {/* Revenue Streams */}
+            <div className="adm-chart-card">
+              <div className="adm-card-h">
+                <div className="adm-card-h-t">Revenue Streams</div>
+                <span className="adm-card-h-meta">Total: <b>Rs.0.00</b></span>
+              </div>
+              <ResponsiveContainer width="100%" height={180}>
+                <LineChart data={revenueData} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
+                  <CartesianGrid stroke="#E2E8F0" strokeDasharray="3 3" />
+                  <XAxis dataKey="m" tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={{ stroke: '#E2E8F0' }} />
+                  <YAxis domain={[0, 1]} tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={false} />
+                  <RTooltip content={<ChartTooltip />} />
+                  <Line type="monotone" dataKey="tuition"   name="Tuition Fees"   stroke="#4169E1" strokeWidth={2.2} dot={{ r: 3, stroke: '#4169E1', fill: '#fff', strokeWidth: 2 }} />
+                  <Line type="monotone" dataKey="admission" name="Admission Fees" stroke="#3DBA8C" strokeWidth={2.2} dot={{ r: 3, stroke: '#3DBA8C', fill: '#fff', strokeWidth: 2 }} />
+                  <Line type="monotone" dataKey="transport" name="Transport Fees" stroke="#F59E0B" strokeWidth={2.2} dot={{ r: 3, stroke: '#F59E0B', fill: '#fff', strokeWidth: 2 }} />
+                  <Line type="monotone" dataKey="other"     name="Other Income"   stroke="#F87171" strokeWidth={2.2} dot={{ r: 3, stroke: '#F87171', fill: '#fff', strokeWidth: 2 }} />
+                </LineChart>
+              </ResponsiveContainer>
+              <div className="adm-legend">
+                <span className="adm-legend-i"><span className="adm-legend-dot" style={{ background: '#4169E1' }} />Tuition Fees</span>
+                <span className="adm-legend-i"><span className="adm-legend-dot" style={{ background: '#3DBA8C' }} />Admission Fees</span>
+                <span className="adm-legend-i"><span className="adm-legend-dot" style={{ background: '#F59E0B' }} />Transport Fees</span>
+                <span className="adm-legend-i"><span className="adm-legend-dot" style={{ background: '#F87171' }} />Other Income</span>
+              </div>
+            </div>
+
+            {/* Profit/Loss */}
+            <div className="adm-chart-card">
+              <div className="adm-card-h">
+                <div className="adm-card-h-t">Profit/Loss Overview <span className="adm-card-h-yr">· {revenueYear}</span></div>
+                <span className="adm-card-h-meta" style={{ color: '#16A34A', fontWeight: 800 }}>Net Profit / Loss: <b>Rs. 7.21M</b></span>
+              </div>
+              <ResponsiveContainer width="100%" height={180}>
+                <ComposedChart data={profitData} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
+                  <CartesianGrid stroke="#E2E8F0" strokeDasharray="3 3" />
+                  <XAxis dataKey="m" tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={{ stroke: '#E2E8F0' }} />
+                  <YAxis domain={[-3, 5]} tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={false} />
+                  <RTooltip content={<ChartTooltip />} />
+                  <Bar dataKey="pl"      name="Profit/Loss" fill="#3DBA8C" fillOpacity={0.6} radius={[6, 6, 0, 0]} />
+                  <Line type="monotone" dataKey="revenue" name="Revenue"   stroke="#4169E1" strokeWidth={2.2} dot={{ r: 3, stroke: '#4169E1', fill: '#fff', strokeWidth: 2 }} />
+                  <Line type="monotone" dataKey="expense" name="Expenses"  stroke="#F87171" strokeWidth={2.2} dot={{ r: 3, stroke: '#F87171', fill: '#fff', strokeWidth: 2 }} />
+                </ComposedChart>
+              </ResponsiveContainer>
+              <div className="adm-legend">
+                <span className="adm-legend-i"><span className="adm-legend-dot" style={{ background: '#4169E1' }} />Revenue</span>
+                <span className="adm-legend-i"><span className="adm-legend-dot" style={{ background: '#F87171' }} />Expenses</span>
+                <span className="adm-legend-i"><span className="adm-legend-dot" style={{ background: '#3DBA8C' }} />Profit/Loss</span>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      )}
+
+      <div className="adm-divider" />
+
+      {/* ═════════ 7. BIRTHDAYS THIS MONTH ═════════ */}
+      {(isActive('students') || isActive('hr')) && (
+        <div className="dash-sec adm-sec">
+          <div className="dash-sec-h">
+            <div className="dash-sec-title">
+              <span className="adm-h-ic adm-h-ic--cake"><i className="fa-solid fa-cake-candles" aria-hidden="true"></i></span>
+              Birthdays This Month
+            </div>
+            <div className="adm-seg" role="tablist" aria-label="Birthday filter">
+              {[
+                { id: 'students', lbl: 'Students',  hide: !isActive('students') },
+                { id: 'teachers', lbl: 'Teachers',  hide: !isActive('hr') },
+                { id: 'all',      lbl: 'All' },
+              ].filter(t => !t.hide).map(t => (
+                <button
+                  key={t.id}
+                  type="button"
+                  className={`adm-seg-btn${birthdayTab === t.id ? ' on' : ''}`}
+                  onClick={() => setBirthdayTab(t.id)}
+                  role="tab"
+                  aria-selected={birthdayTab === t.id}
+                >{t.lbl}</button>
+              ))}
+            </div>
+          </div>
+
+          <div className="adm-info-banner">
+            <i className="fa-solid fa-calendar" aria-hidden="true"></i>
+            <span>Showing birthdays for May 2026</span>
+          </div>
+
+          <div className="adm-bday-row">
+            {isActive('students') && showStudents && (
+              <div className="adm-bday-col">
+                <div className="adm-side-tag">
+                  Students
+                  <span className="adm-pill-blue">{studentBdays.length}</span>
+                </div>
+                <div className="adm-bday-list">
+                  {studentBdays.map(b => {
+                    const isToday = b.dob === TODAY_DAY;
+                    const isTomorrow = b.dob === TODAY_DAY + 1;
+                    return (
+                      <div
+                        key={b.name}
+                        className={`adm-bday-card${isToday ? ' today' : ''}`}
+                      >
+                        <div className="adm-bday-av">{initials(b.name)}</div>
+                        <div className="adm-bday-info">
+                          <div className="adm-bday-name">{b.name}</div>
+                          <div className="adm-bday-meta">{b.grade}</div>
+                        </div>
+                        {isToday ? (
+                          <span className="adm-pill-green">Today! 🎂</span>
+                        ) : isTomorrow ? (
+                          <span className="adm-pill-amber">Tomorrow</span>
+                        ) : (
+                          <span className="adm-pill-blue">{b.date}</span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {isActive('hr') && showTeachers && (
+              <div className="adm-bday-col">
+                <div className="adm-side-tag">
+                  Teachers &amp; Staff
+                  <span className="adm-pill-blue">{teacherBdays.length}</span>
+                </div>
+                <div className="adm-bday-list">
+                  {teacherBdays.map(b => {
+                    const isToday = b.dob === TODAY_DAY;
+                    const isTomorrow = b.dob === TODAY_DAY + 1;
+                    return (
+                      <div
+                        key={b.name}
+                        className={`adm-bday-card${isToday ? ' today' : ''}`}
+                      >
+                        <div className="adm-bday-av adm-bday-av--purple">{initials(b.name)}</div>
+                        <div className="adm-bday-info">
+                          <div className="adm-bday-name">{b.name}</div>
+                          <div className="adm-bday-meta">{b.role}</div>
+                        </div>
+                        {isToday ? (
+                          <span className="adm-pill-green">Today! 🎂</span>
+                        ) : isTomorrow ? (
+                          <span className="adm-pill-amber">Tomorrow</span>
+                        ) : (
+                          <span className="adm-pill-blue">{b.date}</span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      <div className="adm-divider" />
+
+      {/* ═════════ 8. UPCOMING ACTIVITIES ═════════ */}
+      <div className="dash-sec adm-sec">
+        <div className="dash-sec-h">
+          <div className="dash-sec-title">
+            <span className="adm-h-ic adm-h-ic--star"><i className="fa-solid fa-calendar-day" aria-hidden="true"></i></span>
+            Upcoming Activities
+          </div>
+          <span className="adm-h-meta">May 2026</span>
+        </div>
+        <div className="adm-info-banner">
+          <i className="fa-solid fa-circle-info" aria-hidden="true"></i>
+          <span>School events, exams, and important dates for this month.</span>
+        </div>
+
+        <div className="adm-act-grid">
+          {ACTIVITIES.map(a => {
+            const c = TYPE_COLOR[a.type] || TYPE_COLOR.event;
+            const daysLabel = a.daysAway === 1 ? 'Tomorrow' : `In ${a.daysAway} days`;
+            const daysTone = a.daysAway === 1 ? 'amber' : (a.daysAway <= 7 ? 'brand' : 'muted');
+            /* Every card now lands on Academics → Scheme of Studies →
+               Calendar → Activity Calendar via the openActivityCalendar
+               callback hoisted from App.js. */
+            const goActivityCalendar = () => {
+              openActivityCalendar();
+              toast('Opening Activity Calendar…', 'info');
+            };
+            return (
+              <Tooltip key={a.id} text="Open Academics → Activity Calendar">
+                <div
+                  className="adm-act-card clickable"
+                  style={{ '--act-bar': c.fg }}
+                  onClick={goActivityCalendar}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); goActivityCalendar(); } }}
+                >
+                  <div className="adm-act-h">
+                    <span className="adm-act-chip" style={{ background: c.bg, color: c.fg }}>
+                      <i className="fa-solid fa-calendar-day" aria-hidden="true"></i>
+                      {a.date}
+                    </span>
+                    <span className={`adm-act-days adm-act-days--${daysTone}`}>{daysLabel}</span>
+                  </div>
+                  <div className="adm-act-title">{a.title}</div>
+                  <div className="adm-act-desc">{a.desc}</div>
+                  <div className="adm-act-foot">
+                    <span className="adm-act-cat" style={{ background: c.bg, color: c.fg }}>{a.category}</span>
+                    <span className="adm-act-mod">
+                      <i className="fa-solid fa-calendar-plus" aria-hidden="true"></i>
+                      Activity Calendar
+                    </span>
+                  </div>
+                </div>
+              </Tooltip>
+            );
+          })}
+        </div>
+      </div>
+    </>
+  );
+}
+
+
+/* ─── Today's Attendance section (Student + Staff cards) ───────
+   Renders the 2-card row with the same `.fee-card` chrome used by
+   the Fee Analytics section. Field names match the Attendance
+   module schema (present / absent / leave / total / percentage). */
+function AttendanceSection({ openModule }) {
+  const todayDateLabel = new Date().toLocaleDateString('en-PK', {
+    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+  });
+  /* Status colour ladder per spec: >=90 green · >=75 amber · else red */
+  const pctColor = (p) => (p >= 90 ? '#16A34A' : p >= 75 ? '#D97706' : '#DC2626');
+  const pctTone  = (p) => (p >= 90 ? 'green'   : p >= 75 ? 'amber'   : 'red');
+
+  return (
+    <div className="dash-sec adm-sec">
+      <div className="dash-sec-h">
+        <div className="dash-sec-title">
+          <span className="adm-h-ic"><i className="fa-solid fa-clipboard-check" aria-hidden="true"></i></span>
+          Today&apos;s Attendance
+        </div>
+        <div className="adm-h-right">
+          <span className="adm-h-meta">{todayDateLabel}</span>
+          <button type="button" className="dash-sec-link" onClick={() => openModule('att')}>
+            View Full Report <i className="fa-solid fa-arrow-right" aria-hidden="true"></i>
+          </button>
+        </div>
+      </div>
+
+      <div className="att-grid">
+        {/* Student card */}
+        <AttendanceCard
+          icon="fa-user-graduate"
+          tone="brand"
+          title="Student Attendance Today"
+          data={STUDENT_ATTENDANCE_TODAY}
+          unitSingular="student"
+          unitPlural="students"
+          unitSuffix="enrolled"
+          pctColor={pctColor}
+          pctTone={pctTone}
+        />
+        {/* Staff card */}
+        <AttendanceCard
+          icon="fa-chalkboard-user"
+          tone="purple"
+          title="Staff Attendance Today"
+          data={STAFF_ATTENDANCE_TODAY}
+          unitSingular="staff member"
+          unitPlural="staff members"
+          unitSuffix=""
+          pctColor={pctColor}
+          pctTone={pctTone}
+        />
+      </div>
+    </div>
+  );
+}
+
+function AttendanceCard({ icon, tone, title, data, unitSingular, unitPlural, unitSuffix, pctColor, pctTone }) {
+  const pct = data.percentage;
+  const color = pctColor(pct);
+  return (
+    <div className={`stat-card fee-card att-card att-card--${tone}`}>
+      <div className="fc-header">
+        <div className="fc-icon-chip">
+          <i className={`fa-solid ${icon}`} aria-hidden="true"></i>
+        </div>
+        <div className="fc-title">{title}</div>
+      </div>
+
+      {/* Hero percentage in the status colour */}
+      <div className="att-pct" style={{ color }}>
+        {pct}<span className="att-pct-sym">%</span>
+        <span className={`att-pct-tag att-pct-tag--${pctTone(pct)}`}>
+          {pct >= 90 ? 'Excellent' : pct >= 75 ? 'Watch' : 'Critical'}
+        </span>
+      </div>
+
+      {/* Pills row — Present · Absent · Leave (leave only if > 0) */}
+      <div className="att-pills">
+        <span className="att-pill att-pill--green">
+          <span className="att-pill-dot" /> {data.present} Present
+        </span>
+        <span className="att-pill att-pill--red">
+          <span className="att-pill-dot" /> {data.absent} Absent
+        </span>
+        {typeof data.leave === 'number' && data.leave > 0 && (
+          <span className="att-pill att-pill--amber">
+            <span className="att-pill-dot" /> {data.leave} Leave
+          </span>
+        )}
+      </div>
+
+      {/* Progress bar — width = attendance percentage */}
+      <div className="att-bar-track">
+        <div className="att-bar-fill" style={{ width: `${pct}%` }} />
+      </div>
+
+      <div className="fc-support att-support">
+        <i className="fa-solid fa-users" aria-hidden="true"></i>
+        <span>
+          of <span className="fc-highlight">{data.total}</span>
+          {' '}{data.total === 1 ? unitSingular : unitPlural}
+          {unitSuffix ? ` ${unitSuffix}` : ''}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/* ─── Reusable App-status card (Teachers / Parents variants) ─── */
+function AppStatusCard({ tone, title, subtitle, icon, data, ctaLabel, ctaIcon = 'fa-arrow-right', onCta }) {
+  return (
+    <div className={`adm-tc adm-tc--app adm-tc--${tone}`}>
+      <div className="adm-tc-h">
+        <div className="adm-tc-h-l">
+          <div className={`adm-tc-ic adm-tc-ic--${tone}`}>
+            <i className={`fa-solid ${icon}`} aria-hidden="true"></i>
+          </div>
+          <div>
+            <div className="adm-tc-t">{title}</div>
+            <div className="adm-tc-s">{subtitle}</div>
+          </div>
+        </div>
+        <span className={`adm-tc-pill adm-tc-pill--${tone}`}>{data.pct}%</span>
+      </div>
+
+      <div className="adm-tc-body">
+        <div className="adm-tc-stats">
+          <div className="adm-tc-stat">
+            <div className="adm-tc-stat-lbl">Total</div>
+            <div className="adm-tc-stat-val">{data.total.toLocaleString('en-PK')}</div>
+          </div>
+          <div className="adm-tc-stat">
+            <div className="adm-tc-stat-lbl">Downloaded</div>
+            <div className="adm-tc-stat-val adm-tc-stat-val--green">{data.downloaded.toLocaleString('en-PK')}</div>
+          </div>
+          <div className="adm-tc-stat">
+            <div className="adm-tc-stat-lbl">Pending</div>
+            <div className="adm-tc-stat-val adm-tc-stat-val--amber">{data.pending.toLocaleString('en-PK')}</div>
+          </div>
+        </div>
+
+        <div className="adm-tc-bar">
+          <div className="adm-tc-bar-track">
+            <div
+              className={`adm-tc-bar-fill adm-tc-bar-fill--${tone}`}
+              style={{ width: `${data.pct}%` }}
+            />
+          </div>
+          <div className="adm-tc-bar-meta">
+            <span><i className="fa-solid fa-arrow-trend-up" aria-hidden="true"></i> +{data.newThisMonth} this month</span>
+            <span className="adm-tc-bar-pct">{data.pct}% adopted</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="adm-tc-foot">
+        <Tooltip text={`Open ${title} report`}>
+          <button type="button" className="adm-tc-btn adm-tc-btn--full" onClick={onCta}>
+            <i className={`fa-solid ${ctaIcon}`} aria-hidden="true"></i> {ctaLabel}
+          </button>
+        </Tooltip>
+      </div>
+    </div>
+  );
+}
+
+function initials(name) {
+  const clean = name.replace(/Dr\.|Mr\.|Ms\.|Mrs\./g, '').trim();
+  return clean.split(/\s+/).filter(Boolean).map(p => p[0]).join('').toUpperCase().slice(0, 2) || '?';
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   New-section CSS — adm-* prefix to avoid clashes with dash-*.
+   Uses the same design tokens as the rest of the dashboard.
+   ═══════════════════════════════════════════════════════════════════ */
+export const ADM_NEW_CSS = `
+.adm-sec { margin-bottom: 16px; }
+
+/* Universal Search row sits flush above the hero greeting. */
+.adm-uvs-row {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 16px;
+}
+.adm-uvs-row > * { width: 100%; max-width: 720px; }
+@media (max-width: 720px) {
+  .adm-uvs-row > * { max-width: 100%; }
+}
+
+.adm-divider {
+  height: 1px; background: var(--border-light, #E2E8F0);
+  margin: 6px 0 18px;
+}
+
+/* ─── Top cards row (Announcements + Apps) ──────────────────── */
+.adm-top-cards {
+  display: grid; gap: 14px; margin-bottom: 18px;
+  grid-template-columns: repeat(3, 1fr);
+}
+@media (max-width: 1100px) { .adm-top-cards { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 700px)  { .adm-top-cards { grid-template-columns: 1fr; } }
+
+.adm-tc {
+  position: relative; overflow: hidden;
+  display: flex; flex-direction: column;
+  padding: 16px;
+  background: var(--bg-card, #fff);
+  border: 1px solid var(--border-light, #E2E8F0);
+  border-radius: 14px;
+  transition: all .18s;
+  animation: dashRise .35s ease;
+  min-height: 200px;
+}
+.adm-tc:hover {
+  transform: translateY(-2px);
+  border-color: #CBD5E1;
+  box-shadow: 0 12px 26px rgba(15, 23, 42, .08);
+}
+[data-theme="dark"] .adm-tc { background: var(--bg-card); border-color: var(--border-light); }
+[data-theme="dark"] .adm-tc:hover { border-color: #2B3E66; box-shadow: 0 12px 26px rgba(0, 0, 0, .4); }
+[data-theme="dark"] .adm-tc-stat { background: rgba(96, 165, 250, .06); }
+[data-theme="dark"] .adm-tc-foot { border-top-color: #1C2E50; }
+.adm-tc::before {
+  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+  opacity: .92;
+}
+.adm-tc--announce::before { background: linear-gradient(90deg, #1E40AF, #2563EB, #60A5FA); }
+.adm-tc--green::before    { background: linear-gradient(90deg, #15803D, #16A34A, #22C55E); }
+.adm-tc--amber::before    { background: linear-gradient(90deg, #B45309, #D97706, #F59E0B); }
+
+/* Header row */
+.adm-tc-h {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; margin-bottom: 12px;
+}
+.adm-tc-h-l { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.adm-tc-ic {
+  width: 36px; height: 36px; border-radius: 10px; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 14px;
+}
+.adm-tc-ic--brand { background: rgba(30, 64, 175, .14); color: #1E40AF; }
+.adm-tc-ic--green { background: rgba(21, 128, 61, .14); color: #15803D; }
+.adm-tc-ic--amber { background: rgba(217, 119, 6, .14); color: #92400E; }
+.adm-tc-t {
+  font: 800 13.5px/1.2 var(--dash-font); color: var(--text-primary);
+  letter-spacing: -0.2px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.adm-tc-s {
+  font: 500 11px/1.2 var(--dash-font); color: var(--text-muted, #64748B);
+  margin-top: 3px;
+}
+
+/* Status pill */
+.adm-tc-pill {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 10px; border-radius: 999px;
+  font: 800 11px/1 var(--dash-font);
+  white-space: nowrap; flex-shrink: 0;
+}
+.adm-tc-pill--new {
+  background: rgba(220, 38, 38, .12); color: #B91C1C;
+}
+[data-theme="dark"] .adm-tc-pill--new { background: rgba(248, 113, 113, .18); color: #FCA5A5; }
+[data-theme="dark"] .adm-tc-pill--green { background: rgba(74, 222, 128, .18); color: #BBF7D0; }
+[data-theme="dark"] .adm-tc-pill--amber { background: rgba(245, 158, 11, .18); color: #FCD34D; }
+.adm-tc-pill--new .adm-tc-pill-dot {
+  width: 6px; height: 6px; border-radius: 50%; background: #DC2626;
+  animation: dashPulse 1.4s ease-in-out infinite;
+}
+@keyframes dashPulse { 0%, 100% { opacity: 1; } 50% { opacity: .4; } }
+.adm-tc-pill--green { background: rgba(21, 128, 61, .14); color: #15803D; }
+.adm-tc-pill--amber { background: rgba(217, 119, 6, .14); color: #92400E; }
+
+/* Body */
+.adm-tc-body { flex: 1; display: flex; flex-direction: column; gap: 10px; }
+
+/* Announcement body */
+.adm-tc-an-title {
+  font: 800 14px/1.3 var(--dash-font); color: var(--text-primary);
+  letter-spacing: -0.2px;
+}
+.adm-tc-an-preview {
+  font: 500 12px/1.5 var(--dash-font); color: var(--text-secondary, #475569);
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* App status body */
+.adm-tc-stats {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
+}
+.adm-tc-stat {
+  padding: 8px 10px;
+  background: var(--bg-muted, #F8FAFF);
+  border-radius: 8px;
+}
+.adm-tc-stat-lbl {
+  font: 700 9.5px/1 var(--dash-font); color: var(--text-muted, #64748B);
+  text-transform: uppercase; letter-spacing: .4px;
+}
+.adm-tc-stat-val {
+  font: 800 18px/1 var(--dash-font); color: var(--text-primary);
+  margin-top: 4px; letter-spacing: -0.3px;
+}
+.adm-tc-stat-val--green { color: #15803D; }
+.adm-tc-stat-val--amber { color: #92400E; }
+
+/* Progress bar */
+.adm-tc-bar { display: flex; flex-direction: column; gap: 5px; }
+.adm-tc-bar-track {
+  height: 7px; border-radius: 999px;
+  background: var(--bg-muted, #F1F5F9);
+  overflow: hidden;
+}
+.adm-tc-bar-fill {
+  height: 100%; border-radius: 999px;
+  transition: width .6s ease;
+}
+.adm-tc-bar-fill--green { background: linear-gradient(90deg, #15803D, #22C55E); }
+.adm-tc-bar-fill--amber { background: linear-gradient(90deg, #B45309, #F59E0B); }
+.adm-tc-bar-meta {
+  display: flex; align-items: center; justify-content: space-between;
+  font: 600 10.5px/1 var(--dash-font); color: var(--text-muted, #64748B);
+}
+.adm-tc-bar-meta i { color: #15803D; margin-right: 3px; font-size: 9px; }
+.adm-tc-bar-pct { font-weight: 800; color: var(--text-primary); }
+
+/* Footer + buttons */
+.adm-tc-foot {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--border-light, #E2E8F0);
+}
+.adm-tc-meta {
+  display: inline-flex; align-items: center; gap: 5px;
+  font: 600 11px/1 var(--dash-font); color: var(--text-muted, #64748B);
+}
+.adm-tc-meta i { font-size: 10px; }
+.adm-tc-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  height: 30px; padding: 0 12px;
+  background: linear-gradient(135deg, #1E40AF, #2563EB);
+  color: #fff; border: none; cursor: pointer;
+  border-radius: 8px;
+  font: 700 11.5px/1 var(--dash-font);
+  transition: all .18s;
+}
+.adm-tc-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 14px rgba(30, 58, 138, .28);
+}
+.adm-tc-btn i { font-size: 9px; transition: transform .2s; }
+.adm-tc-btn:hover i { transform: translateX(2px); }
+.adm-tc-btn--full { width: 100%; justify-content: center; }
+.adm-tc--green .adm-tc-btn { background: linear-gradient(135deg, #15803D, #16A34A); }
+.adm-tc--green .adm-tc-btn:hover { box-shadow: 0 6px 14px rgba(22, 163, 74, .28); }
+.adm-tc--amber .adm-tc-btn { background: linear-gradient(135deg, #B45309, #D97706); }
+.adm-tc--amber .adm-tc-btn:hover { box-shadow: 0 6px 14px rgba(217, 119, 6, .28); }
+
+@media (max-width: 700px) {
+  .adm-tc-stats { grid-template-columns: 1fr 1fr; }
+  .adm-tc-stat:last-child { grid-column: 1 / -1; }
+  .adm-tc-foot { flex-direction: column; align-items: stretch; gap: 8px; }
+}
+
+
+/* ─── Generic header helpers ─── */
+.adm-h-right { display: inline-flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.adm-h-meta  { font: 600 12.5px/1 var(--dash-font); color: var(--text-muted, #64748B); }
+.adm-h-meta b { color: var(--text-primary); font-weight: 800; }
+.adm-h-ic {
+  width: 32px; height: 32px; border-radius: 9px; display: inline-flex;
+  align-items: center; justify-content: center; font-size: 13px;
+  background: linear-gradient(135deg, #1E3A8A, #1E40AF); color: #fff;
+}
+.adm-h-ic--cake { background: linear-gradient(135deg, #6D28D9, #7C3AED); }
+.adm-h-ic--star { background: linear-gradient(135deg, #1E3A8A, #2563EB); }
+
+.adm-select {
+  height: 32px; padding: 0 28px 0 12px;
+  font: 600 12px/1 var(--dash-font); color: var(--text-primary);
+  background: var(--bg-card, #fff);
+  border: 1px solid var(--border-light, #E2E8F0);
+  border-radius: 8px;
+  appearance: none; -webkit-appearance: none; cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6' fill='none'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%2364748B' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 10px center;
+}
+
+.adm-ghost-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 32px; padding: 0 12px;
+  font: 700 11.5px/1 var(--dash-font); color: #1E40AF;
+  background: var(--bg-card, #fff);
+  border: 1px solid var(--border-light, #E2E8F0);
+  border-radius: 8px; cursor: pointer; transition: all .15s;
+}
+.adm-ghost-btn:hover { background: rgba(30, 64, 175, .06); border-color: #BFDBFE; }
+
+.adm-link-row { display: flex; justify-content: flex-end; margin-top: 12px; }
+.adm-link-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: transparent; border: none; cursor: pointer;
+  font: 700 13px/1 var(--dash-font); color: #1E40AF;
+  padding: 4px 8px; border-radius: 6px; transition: background .15s;
+}
+.adm-link-btn:hover { background: rgba(30, 64, 175, .06); }
+.adm-link-btn i { font-size: 10px; transition: transform .2s; }
+.adm-link-btn:hover i { transform: translateX(3px); }
+[data-theme="dark"] .adm-link-btn { color: #93C5FD; }
+[data-theme="dark"] .adm-link-btn:hover { background: rgba(96, 165, 250, .12); }
+
+/* ═══ Fee Analytics — 3 + 2 layout ═══ */
+.fa-top-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+  margin-bottom: 14px;
+}
+.fa-bottom-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 14px;
+  margin-bottom: 14px;
+}
+@media (max-width: 1024px) {
+  .fa-top-grid    { grid-template-columns: repeat(2, 1fr); }
+  .fa-top-grid > :last-child { grid-column: span 2; }
+  .fa-bottom-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 640px) {
+  .fa-top-grid, .fa-bottom-grid { grid-template-columns: 1fr; }
+  .fa-top-grid > :last-child { grid-column: auto; }
+}
+
+/* ─── Card chrome ─── */
+.fee-card {
+  display: flex; flex-direction: column; gap: 0;
+  padding: 18px 20px;
+  min-height: 150px;
+  position: relative; overflow: hidden;
+  background: var(--bg-card, #fff);
+  border: 1px solid var(--border-light, #E2E8F0);
+  border-radius: 14px;
+  transition: all .2s ease;
+  animation: dashRise .35s ease;
+}
+.fee-card:hover {
+  transform: translateY(-2px);
+  border-color: #CBD5E1;
+  box-shadow: 0 10px 22px rgba(15, 23, 42, .08);
+}
+/* Subtle decorative circle top-right */
+.fee-card::before {
+  content: ''; position: absolute; right: -14px; top: -14px;
+  width: 80px; height: 80px; border-radius: 50%;
+  background: rgba(15, 23, 42, .025);
+  pointer-events: none;
+}
+[data-theme="dark"] .fee-card::before { background: rgba(255, 255, 255, .04); }
+
+/* ─── Header ─── */
+.fc-header { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.fc-icon-chip {
+  width: 30px; height: 30px; border-radius: 8px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 13px; flex-shrink: 0;
+}
+.fc-title {
+  font-size: 11.5px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .5px;
+  color: var(--text-muted, #64748B);
+  line-height: 1.3;
+}
+.fc-title--red { color: #DC2626; }
+
+/* Tone-coded icon chips */
+.fc-tone--teal  .fc-icon-chip { background: rgba(0, 137, 123, .15);  color: #00897B; }
+.fc-tone--amber .fc-icon-chip { background: rgba(217, 119, 6, .15);  color: #D97706; }
+.fc-tone--slate .fc-icon-chip { background: rgba(71, 85, 105, .15);  color: #475569; }
+.fc-tone--red   .fc-icon-chip { background: rgba(220, 38, 38, .15);  color: #DC2626; }
+.fc-tone--green .fc-icon-chip { background: rgba(22, 163, 74, .15);  color: #16A34A; }
+.fc-tone--brand .fc-icon-chip { background: rgba(30, 64, 175, .14);  color: #1E40AF; }
+
+/* ─── Amount ─── */
+.fc-amount {
+  font-size: 22px; font-weight: 800;
+  color: var(--text-primary);
+  letter-spacing: -.02em;
+  line-height: 1.1;
+  margin-bottom: 8px;
+}
+.fc-amount--red   { color: #DC2626; }
+.fc-amount--green { color: #16A34A; }
+
+/* Quantity-style amount (Card 1) — split big number + small unit */
+.fc-amount--qty { display: flex; align-items: baseline; gap: 8px; }
+.fc-amount-n {
+  font-size: 26px; font-weight: 800;
+  color: var(--text-primary);
+  letter-spacing: -.02em; line-height: 1;
+}
+.fc-amount-unit {
+  font-size: 14px; font-weight: 700;
+  color: var(--text-muted, #64748B);
+}
+
+/* ─── Divider ─── */
+.fc-divider {
+  width: 100%; height: 1px;
+  background: var(--border-light, #E2E8F0);
+  margin: 8px 0;
+}
+[data-theme="dark"] .fc-divider { background: rgba(255, 255, 255, .07); }
+
+/* ─── Support row(s) ─── */
+.fc-support {
+  display: flex; align-items: center; gap: 5px;
+  font-size: 12px; font-weight: 600;
+  color: var(--text-muted, #64748B);
+  margin-top: auto;
+}
+.fc-support i { font-size: 11px; flex-shrink: 0; }
+.fc-support .fc-highlight {
+  font-weight: 800;
+  color: var(--text-secondary, #1E3A5F);
+}
+[data-theme="dark"] .fc-support .fc-highlight { color: var(--text-primary); }
+/* Stacked support rows (Card 1 has two lines) */
+.fc-support--col {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+.fc-support--col > div {
+  display: inline-flex; align-items: center; gap: 5px;
+  width: 100%;
+}
+
+/* ─── Bordered (urgency) variants ─── */
+.fc-bordered.fc-tone--red {
+  border-color: rgba(220, 38, 38, .25);
+}
+.fc-bordered.fc-tone--green {
+  border-color: rgba(22, 163, 74, .22);
+}
+
+/* ─── Subtle background tints ─── */
+.fc-tint--green {
+  background: linear-gradient(135deg, var(--bg-card, #fff) 0%, rgba(22, 163, 74, .025) 100%);
+}
+[data-theme="dark"] .fc-tint--green {
+  background: linear-gradient(135deg, #0E1628 0%, rgba(22, 163, 74, .055) 100%);
+}
+
+/* ─── Dark mode card surface ─── */
+[data-theme="dark"] .fee-card {
+  background: #0E1628;
+  border-color: #1F3158;
+}
+[data-theme="dark"] .fc-bordered.fc-tone--red   { border-color: rgba(248, 113, 113, .30); }
+[data-theme="dark"] .fc-bordered.fc-tone--green { border-color: rgba(74, 222, 128, .28); }
+
+/* ═══ Fee Analytics — new structural classes ═══ */
+
+/* Top-row card — primary (Card 1) gets a brand left accent strip */
+.fa-card { min-height: 170px; }
+.fa-card--primary {
+  background: linear-gradient(135deg, var(--bg-card, #fff) 0%, rgba(30, 64, 175, .035) 100%);
+  border-color: rgba(30, 64, 175, .22);
+}
+.fa-card--primary::after {
+  content: ''; position: absolute; top: 14px; bottom: 14px; left: 0;
+  width: 3px; border-radius: 0 3px 3px 0;
+  background: linear-gradient(180deg, #1E3A8A, #1E40AF, #2563EB);
+}
+[data-theme="dark"] .fa-card--primary {
+  background: linear-gradient(135deg, #0E1628 0%, rgba(96, 165, 250, .06) 100%);
+  border-color: rgba(96, 165, 250, .26);
+}
+
+/* Total Net Receivable — slightly elevated treatment */
+.fa-card--total .fc-amount { color: var(--text-primary); }
+
+/* Bigger amounts on top row */
+.fa-amount--lg { font-size: 24px; }
+.fa-amount--xl { font-size: 32px; letter-spacing: -.025em; }
+
+/* ─── Meta rows (Discount Given, Challans Generated, etc.) ─── */
+.fa-meta-rows {
+  display: flex; flex-direction: column; gap: 8px;
+}
+.fa-meta-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px;
+  padding: 7px 10px;
+  background: var(--bg-muted, #F8FAFF);
+  border-radius: 9px;
+  font: 600 12px/1.2 var(--dash-font);
+}
+[data-theme="dark"] .fa-meta-row { background: rgba(96, 165, 250, .05); }
+.fa-meta-row--muted {
+  background: transparent;
+  padding: 4px 0;
+  color: var(--text-muted, #64748B);
+  gap: 6px;
+  justify-content: flex-start;
+}
+.fa-meta-row--muted i { color: #64748B; font-size: 11px; }
+.fa-meta-lbl {
+  display: inline-flex; align-items: center; gap: 6px;
+  color: var(--text-muted, #64748B);
+}
+.fa-meta-lbl i { font-size: 11px; color: #1E40AF; }
+.fc-tone--red .fa-meta-lbl i { color: #B91C1C; }
+.fa-meta-val {
+  font: 800 12.5px/1 var(--dash-font);
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+.fa-meta-val--amber { color: #D97706; }
+.fa-meta-val--red   { color: #DC2626; }
+.fa-meta-div {
+  font-weight: 600;
+  color: var(--text-muted, #94A3B8);
+  margin: 0 2px;
+}
+.fa-meta-total {
+  color: var(--text-muted, #64748B);
+  font-weight: 700;
+}
+
+/* ─── Formula block (Card 3 — Total Net Receivable) ─── */
+.fa-formula {
+  display: flex; align-items: center; gap: 6px;
+  font: 500 11px/1.4 var(--dash-font);
+  color: var(--text-muted, #64748B);
+  margin-bottom: 4px;
+  font-style: italic;
+}
+.fa-formula i { font-size: 10px; color: #1E40AF; }
+.fa-formula-breakdown {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 6px;
+  padding: 8px 10px;
+  background: var(--bg-muted, #F8FAFF);
+  border-radius: 9px;
+}
+[data-theme="dark"] .fa-formula-breakdown { background: rgba(96, 165, 250, .05); }
+.fa-formula-breakdown > div {
+  display: flex; flex-direction: column; gap: 2px;
+  min-width: 0; flex: 1;
+}
+.fa-bd-lbl {
+  font: 700 9.5px/1 var(--dash-font);
+  color: var(--text-muted, #64748B);
+  text-transform: uppercase; letter-spacing: .4px;
+}
+.fa-bd-val {
+  font: 800 12px/1.1 var(--dash-font);
+  color: var(--text-primary);
+  letter-spacing: -.01em;
+}
+.fa-bd-val--red { color: #DC2626; }
+.fa-bd-op {
+  font: 800 18px/1 var(--dash-font);
+  color: var(--text-muted, #94A3B8);
+  flex-shrink: 0;
+}
+
+/* ═══ Bottom-row LARGE cards ═══ */
+.fa-large { min-height: 230px; padding: 22px 24px; }
+.fa-large-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 18px;
+}
+.fa-large-l { flex: 1; min-width: 0; }
+.fa-large-r { flex-shrink: 0; }
+
+/* Inline status meta line ("Students Paid: 425/612") */
+.fa-status-meta {
+  display: flex; align-items: center; gap: 6px;
+  margin-top: 12px;
+  font: 600 13px/1 var(--dash-font);
+  color: var(--text-muted, #64748B);
+  flex-wrap: wrap;
+}
+.fa-status-meta i { font-size: 12px; color: #16A34A; flex-shrink: 0; }
+.fc-tone--red .fa-status-meta i { color: #DC2626; }
+.fa-status-strong {
+  font: 800 14px/1 var(--dash-font);
+  color: #16A34A;
+}
+.fa-status-strong--red { color: #DC2626; }
+
+/* ─── Donut ring (right side of large cards) ─── */
+.fa-ring {
+  position: relative;
+  width: 96px; height: 96px;
+  flex-shrink: 0;
+}
+.fa-ring svg { display: block; transform-origin: center; }
+.fa-ring-text {
+  position: absolute; inset: 0;
+  text-align: center;
+}
+.fa-ring-pct {
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  font: 800 15px/1 var(--dash-font);
+  color: var(--text-primary);
+  letter-spacing: -.02em;
+}
+.fa-ring--green .fa-ring-pct { color: #16A34A; }
+.fa-ring--red   .fa-ring-pct { color: #DC2626; }
+.fa-ring-lbl {
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, 10px);
+  font: 700 9.5px/1 var(--dash-font);
+  color: var(--text-muted, #64748B);
+  text-transform: uppercase; letter-spacing: .5px;
+}
+
+/* ─── Progress bar at bottom of large card ─── */
+.fa-progress { display: flex; flex-direction: column; gap: 6px; }
+.fa-progress-h {
+  display: flex; align-items: center; justify-content: space-between;
+  font: 700 11px/1 var(--dash-font);
+  color: var(--text-muted, #64748B);
+}
+.fa-progress-h b { color: var(--text-primary); font-weight: 800; }
+.fa-progress-track {
+  height: 8px; border-radius: 999px;
+  background: var(--bg-muted, #F1F5F9);
+  overflow: hidden;
+}
+[data-theme="dark"] .fa-progress-track { background: #1C2E50; }
+.fa-progress-fill {
+  height: 100%; border-radius: 999px;
+  transition: width .6s ease;
+}
+.fa-progress-fill--green { background: linear-gradient(90deg, #15803D, #16A34A, #22C55E); }
+.fa-progress-fill--red   { background: linear-gradient(90deg, #B91C1C, #DC2626, #F87171); }
+
+/* Responsive — stack large-card row on small screens */
+@media (max-width: 760px) {
+  .fa-large-row { flex-direction: column; align-items: stretch; gap: 12px; }
+  .fa-large-r { display: flex; justify-content: center; }
+  .fa-amount--xl { font-size: 28px; }
+}
+
+/* ═══ Today's Attendance — 2-card grid ═══ */
+.att-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+  margin-bottom: 14px;
+}
+@media (max-width: 760px) { .att-grid { grid-template-columns: 1fr; } }
+
+.att-card { min-height: 220px; }
+.att-card--brand .fc-icon-chip {
+  background: rgba(30, 58, 138, .15);
+  color: #1E40AF;
+}
+.att-card--purple .fc-icon-chip {
+  background: rgba(124, 58, 237, .12);
+  color: #7C3AED;
+}
+
+/* Hero percentage — the dominant visual element of each card */
+.att-pct {
+  display: flex; align-items: baseline; gap: 10px;
+  font-size: 32px; font-weight: 800;
+  letter-spacing: -0.025em;
+  line-height: 1.1;
+  margin-bottom: 14px;
+}
+.att-pct-sym {
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  opacity: .85;
+  margin-left: -2px;
+}
+.att-pct-tag {
+  font: 800 9.5px/1 var(--dash-font);
+  text-transform: uppercase;
+  letter-spacing: .6px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  align-self: center;
+}
+.att-pct-tag--green { background: rgba(22, 163, 74, .14); color: #16A34A; }
+.att-pct-tag--amber { background: rgba(217, 119, 6, .14); color: #D97706; }
+.att-pct-tag--red   { background: rgba(220, 38, 38, .14); color: #DC2626; }
+
+/* Status pills row */
+.att-pills {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  margin-bottom: 12px;
+}
+.att-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font: 700 12px/1 var(--dash-font);
+  white-space: nowrap;
+}
+.att-pill-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  flex-shrink: 0;
+}
+.att-pill--green {
+  background: rgba(22, 163, 74, .08);
+  border: 1px solid rgba(22, 163, 74, .22);
+  color: #16A34A;
+}
+.att-pill--green .att-pill-dot { background: #16A34A; }
+.att-pill--red {
+  background: rgba(220, 38, 38, .08);
+  border: 1px solid rgba(220, 38, 38, .22);
+  color: #DC2626;
+}
+.att-pill--red .att-pill-dot { background: #DC2626; }
+.att-pill--amber {
+  background: rgba(217, 119, 6, .08);
+  border: 1px solid rgba(217, 119, 6, .22);
+  color: #D97706;
+}
+.att-pill--amber .att-pill-dot { background: #D97706; }
+
+/* Progress bar */
+.att-bar-track {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--bg-muted, #F1F5F9);
+  overflow: hidden;
+  margin-bottom: 14px;
+}
+.att-bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  background: linear-gradient(90deg, #1E3A8A 0%, #1E40AF 50%, #16A34A 100%);
+  transition: width .6s ease;
+}
+[data-theme="dark"] .att-bar-track { background: #1C2E50; }
+
+/* Support footer */
+.att-support { font-size: 12px; }
+.att-support i { font-size: 11px; color: #1E40AF; }
+[data-theme="dark"] .att-support i { color: #60A5FA; }
+
+/* Mobile tightening — wrap pills nicely without overflow */
+@media (max-width: 640px) {
+  .att-card { min-height: auto; }
+  .att-pct { font-size: 28px; }
+  .att-pct-sym { font-size: 20px; }
+}
+
+/* ─── 2-column layout for chart/side panels ─── */
+.adm-2col {
+  display: grid; gap: 14px;
+  grid-template-columns: 1fr 240px;
+}
+@media (max-width: 900px) { .adm-2col { grid-template-columns: 1fr; } }
+.adm-chart-card, .adm-side-card {
+  background: var(--bg-card, #fff);
+  border: 1px solid var(--border-light, #E2E8F0);
+  border-radius: 12px; padding: 16px;
+  animation: dashRise .35s ease;
+}
+.adm-side-card { padding: 14px 16px; }
+.adm-side-title {
+  font: 800 13px/1.2 var(--dash-font); color: var(--text-primary);
+  margin-bottom: 14px;
+}
+.adm-side-tag {
+  display: inline-flex; align-items: center; gap: 6px;
+  font: 800 10.5px/1 var(--dash-font); color: var(--text-muted, #64748B);
+  text-transform: uppercase; letter-spacing: .5px;
+  margin-bottom: 10px;
+}
+
+/* Chart legends */
+.adm-legend {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  margin-top: 8px; padding-top: 8px;
+  border-top: 1px dashed var(--border-light, #E2E8F0);
+}
+.adm-legend-i {
+  display: inline-flex; align-items: center; gap: 5px;
+  font: 700 11px/1 var(--dash-font); color: var(--text-secondary, #475569);
+}
+.adm-legend-dot { width: 10px; height: 10px; border-radius: 50%; }
+
+.adm-card-h {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; margin-bottom: 10px; flex-wrap: wrap;
+}
+.adm-card-h-t {
+  font: 800 14px/1.2 var(--dash-font); color: var(--text-primary);
+  letter-spacing: -0.2px;
+}
+.adm-card-h-yr {
+  color: var(--text-muted, #64748B); font-weight: 700; font-size: 12px;
+  margin-left: 4px;
+}
+.adm-card-h-meta { font: 700 12px/1 var(--dash-font); color: var(--text-muted, #64748B); }
+.adm-card-h-meta b { color: var(--text-primary); font-weight: 800; }
+
+/* Subject-wise completion bars */
+.adm-bars { display: flex; flex-direction: column; gap: 12px; }
+.adm-bar-row { display: flex; flex-direction: column; gap: 4px; }
+.adm-bar-lbl { font: 700 12px/1 var(--dash-font); color: var(--text-primary); }
+.adm-bar-track {
+  height: 6px; border-radius: 3px;
+  background: var(--bg-muted, #F1F5F9);
+  overflow: hidden;
+}
+.adm-bar-fill {
+  height: 100%; border-radius: 3px;
+  background: linear-gradient(90deg, #1E3A8A, #2563EB);
+  transition: width .6s ease;
+}
+
+/* ─── Paper generator table ─── */
+.adm-table {
+  width: 100%; border-collapse: collapse;
+  font: 600 12px/1.4 var(--dash-font);
+}
+.adm-table th {
+  text-align: left; padding: 8px 10px;
+  font: 800 10.5px/1 var(--dash-font); color: var(--text-muted, #64748B);
+  text-transform: uppercase; letter-spacing: .4px;
+  background: var(--bg-muted, #F8FAFF);
+  border-bottom: 1px solid var(--border-light, #E2E8F0);
+}
+.adm-table td {
+  padding: 10px;
+  border-bottom: 1px solid var(--border-light, #F1F5F9);
+  color: var(--text-primary);
+}
+
+.adm-quick-btns {
+  display: flex; gap: 10px; flex-wrap: wrap;
+}
+
+/* ─── Birthdays ─── */
+.adm-seg {
+  display: inline-flex; align-items: center; gap: 0;
+  padding: 3px; background: var(--bg-muted, #F8FAFF);
+  border: 1px solid var(--border-light, #E2E8F0); border-radius: 9px;
+}
+.adm-seg-btn {
+  height: 28px; padding: 0 12px;
+  font: 700 11px/1 var(--dash-font); color: #475569;
+  background: transparent; border: none; border-radius: 7px;
+  cursor: pointer; transition: all .15s;
+}
+.adm-seg-btn.on { background: linear-gradient(135deg, #1E40AF, #2563EB); color: #fff; }
+
+.adm-info-banner {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 12px; margin-bottom: 12px;
+  background: rgba(30, 64, 175, .06);
+  border: 1px solid rgba(30, 64, 175, .18);
+  border-radius: 10px;
+  font: 600 12px/1.3 var(--dash-font); color: var(--text-primary);
+}
+.adm-info-banner i { color: #1E40AF; font-size: 13px; }
+[data-theme="dark"] .adm-info-banner { background: rgba(96, 165, 250, .08); border-color: rgba(96, 165, 250, .22); }
+[data-theme="dark"] .adm-info-banner i { color: #93C5FD; }
+
+.adm-pill-blue, .adm-pill-green, .adm-pill-amber {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 4px 10px; border-radius: 999px;
+  font: 800 11px/1 var(--dash-font);
+  margin-left: 8px;
+}
+.adm-pill-blue   { background: rgba(30, 64, 175, .12); color: #1E40AF; }
+.adm-pill-green  { background: rgba(22, 163, 74, .14); color: #15803D; }
+.adm-pill-amber  { background: rgba(217, 119, 6, .14); color: #92400E; }
+[data-theme="dark"] .adm-pill-blue  { background: rgba(96, 165, 250, .18); color: #BFDBFE; }
+[data-theme="dark"] .adm-pill-green { background: rgba(74, 222, 128, .18); color: #BBF7D0; }
+[data-theme="dark"] .adm-pill-amber { background: rgba(245, 158, 11, .18); color: #FCD34D; }
+
+.adm-bday-row { display: grid; gap: 14px; grid-template-columns: 1fr 1fr; }
+@media (max-width: 900px) { .adm-bday-row { grid-template-columns: 1fr; } }
+.adm-bday-col { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+/* Scroll container — keeps the section compact even with many entries */
+.adm-bday-list {
+  display: flex; flex-direction: column; gap: 8px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.adm-bday-list::-webkit-scrollbar { width: 6px; }
+.adm-bday-list::-webkit-scrollbar-track { background: transparent; }
+.adm-bday-list::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, .25);
+  border-radius: 999px;
+}
+.adm-bday-list::-webkit-scrollbar-thumb:hover { background: rgba(100, 116, 139, .45); }
+.adm-bday-card {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 12px;
+  background: var(--bg-card, #fff);
+  border: 1px solid var(--border-light, #E2E8F0);
+  border-radius: 11px; transition: all .15s;
+}
+.adm-bday-card:hover { border-color: #CBD5E1; box-shadow: 0 4px 12px rgba(15,23,42,.06); }
+[data-theme="dark"] .adm-bday-card:hover { border-color: #2B3E66; box-shadow: 0 4px 12px rgba(0, 0, 0, .35); }
+[data-theme="dark"] .adm-bday-card.today { background: rgba(34, 197, 94, .08); border-left-color: #22C55E; }
+.adm-bday-card.today {
+  background: rgba(22, 163, 74, .05);
+  border-left: 3px solid #16A34A;
+}
+.adm-bday-av {
+  width: 36px; height: 36px; border-radius: 50%; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: linear-gradient(135deg, #1E40AF, #2563EB);
+  color: #fff; font: 700 12px/1 var(--dash-font);
+}
+.adm-bday-av--purple { background: linear-gradient(135deg, #6D28D9, #7C3AED); }
+.adm-bday-info { flex: 1; min-width: 0; }
+.adm-bday-name { font: 700 12.5px/1.3 var(--dash-font); color: var(--text-primary); }
+.adm-bday-meta { font: 500 11px/1.3 var(--dash-font); color: var(--text-muted, #64748B); margin-top: 2px; }
+
+/* ─── Activities ─── */
+.adm-act-grid {
+  display: grid; gap: 14px;
+  grid-template-columns: repeat(3, 1fr);
+  /* Keep the section compact — internal scroll instead of long page */
+  max-height: 460px;
+  overflow-y: auto;
+  padding: 2px 6px 4px 2px;
+}
+.adm-act-grid::-webkit-scrollbar { width: 6px; }
+.adm-act-grid::-webkit-scrollbar-track { background: transparent; }
+.adm-act-grid::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, .25);
+  border-radius: 999px;
+}
+.adm-act-grid::-webkit-scrollbar-thumb:hover { background: rgba(100, 116, 139, .45); }
+@media (max-width: 1000px) { .adm-act-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 600px)  { .adm-act-grid { grid-template-columns: 1fr; max-height: 520px; } }
+.adm-act-card {
+  position: relative; overflow: hidden;
+  padding: 16px 18px;
+  background: var(--bg-card, #fff);
+  border: 1px solid var(--border-light, #E2E8F0);
+  border-radius: 14px;
+  box-shadow: 0 2px 6px rgba(15, 23, 42, .03);
+  transition: all .18s;
+  animation: dashRise .35s ease;
+}
+.adm-act-card.clickable { cursor: pointer; }
+.adm-act-card::before {
+  content: ''; position: absolute; top: 12px; left: 6px; bottom: 12px;
+  width: 4px; border-radius: 2px;
+  background: var(--act-bar, #1E40AF);
+}
+.adm-act-card.clickable:hover {
+  transform: translateY(-2px); border-color: #CBD5E1;
+  box-shadow: 0 10px 22px rgba(15, 23, 42, .08);
+}
+[data-theme="dark"] .adm-act-card.clickable:hover { border-color: #2B3E66; box-shadow: 0 10px 22px rgba(0, 0, 0, .4); }
+.adm-act-h {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; padding-left: 12px;
+}
+.adm-act-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 10px; border-radius: 999px;
+  font: 800 11px/1 var(--dash-font);
+}
+.adm-act-chip i { font-size: 10px; }
+.adm-act-days {
+  font: 700 11px/1 var(--dash-font);
+}
+.adm-act-days--brand  { color: #1E40AF; }
+.adm-act-days--amber  { color: #D97706; font-weight: 800; }
+.adm-act-days--muted  { color: var(--text-muted, #64748B); }
+.adm-act-title {
+  font: 800 14px/1.3 var(--dash-font); color: var(--text-primary);
+  letter-spacing: -0.2px; padding-left: 12px; margin-top: 10px;
+}
+.adm-act-desc {
+  font: 500 12px/1.5 var(--dash-font); color: var(--text-muted, #64748B);
+  padding-left: 12px; margin-top: 6px;
+}
+.adm-act-foot {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; padding-left: 12px; margin-top: 12px;
+}
+.adm-act-cat {
+  padding: 3px 9px; border-radius: 999px;
+  font: 800 10px/1 var(--dash-font);
+}
+.adm-act-mod {
+  display: inline-flex; align-items: center; gap: 4px;
+  font: 700 10.5px/1 var(--dash-font); color: var(--text-muted, #64748B);
+}
+.adm-act-mod i { font-size: 9px; color: #1E40AF; }
+
+[data-theme="dark"] .adm-fee-card,
+[data-theme="dark"] .adm-chart-card,
+[data-theme="dark"] .adm-side-card,
+[data-theme="dark"] .adm-bday-card,
+[data-theme="dark"] .adm-act-card,
+[data-theme="dark"] .adm-ghost-btn { background: var(--bg-card); border-color: var(--border-light); }
+[data-theme="dark"] .adm-table th { background: rgba(96, 165, 250, .06); }
+
+/* ═════════ MOBILE RESPONSIVE — admin command center ═════════ */
+@media (max-width: 600px) {
+  /* Top cards row (Announcements / Notice Board / Reminders) — 1-col handled
+     by existing @700px rule. Tighten card chrome. */
+  .adm-tc {
+    padding: 14px;
+    min-height: 0;
+    border-radius: 12px;
+  }
+  .adm-tc-h { gap: 8px; margin-bottom: 10px; }
+  .adm-tc-h-l { gap: 8px; min-width: 0; }
+  .adm-tc-ic { width: 32px; height: 32px; font-size: 13px; border-radius: 9px; }
+  .adm-tc-t { font-size: 12.5px; }
+  .adm-tc-s { font-size: 10.5px; }
+  .adm-tc-an-title { font-size: 13px; }
+  .adm-tc-an-preview { font-size: 11.5px; -webkit-line-clamp: 2; }
+  .adm-tc-stats { grid-template-columns: 1fr 1fr; gap: 6px; }
+  .adm-tc-stat { padding: 7px 9px; }
+  .adm-tc-stat-val { font-size: 16px; }
+  .adm-tc-foot { margin-top: 10px; padding-top: 10px; }
+  .adm-tc-btn { width: 100%; justify-content: center; height: 32px; }
+
+  /* Section header rows — stack pickers / segmented controls under title */
+  .adm-h-right {
+    width: 100%;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .adm-h-meta { font-size: 11.5px; }
+  .adm-select {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 34px;
+    font-size: 11.5px;
+  }
+  .adm-ghost-btn {
+    flex: 1 1 auto;
+    justify-content: center;
+    height: 34px;
+  }
+  .adm-seg { width: 100%; }
+  .adm-seg-btn { flex: 1; }
+
+  /* KPI / 2-col layouts — 1 col */
+  .adm-2col { gap: 10px; }
+  .adm-chart-card,
+  .adm-side-card { padding: 14px; border-radius: 12px; }
+  .adm-card-h {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+  .adm-card-h-t { font-size: 13px; }
+  .adm-card-h-meta { font-size: 11.5px; }
+
+  /* Fee Analytics 3+2 grids — collapse to 1-col */
+  .fa-top-grid,
+  .fa-bottom-grid {
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+  .fee-card {
+    padding: 14px 14px;
+    min-height: 0;
+    border-radius: 12px;
+  }
+
+  /* Attendance 2-card grid */
+  .att-grid { gap: 10px; margin-bottom: 10px; }
+  .att-card { padding: 14px; }
+  .att-pct { font-size: 26px; margin-bottom: 10px; gap: 8px; }
+  .att-pct-sym { font-size: 18px; }
+  .att-pills { gap: 5px; margin-bottom: 10px; }
+  .att-pill { padding: 3px 9px; font-size: 11px; }
+
+  /* Subject-wise completion bars — paper table wrap */
+  .adm-table-wrap,
+  .adm-table-scroll {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .adm-table { min-width: 480px; }
+
+  /* Quick action button row */
+  .adm-quick-btns {
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .adm-quick-btns > * { flex: 1 1 auto; justify-content: center; }
+
+  /* Info banner */
+  .adm-info-banner {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    padding: 10px 12px;
+    font-size: 11.5px;
+  }
+
+  /* Birthday rows — handled by @900px (1 col). Tighten cards. */
+  .adm-bday-row { gap: 10px; }
+  .adm-bday-card { padding: 9px 11px; gap: 10px; }
+  .adm-bday-av { width: 32px; height: 32px; font-size: 11px; }
+  .adm-bday-name { font-size: 12px; }
+  .adm-bday-meta { font-size: 10.5px; }
+  .adm-bday-list { max-height: 280px; }
+
+  /* Activity grid — already 1 col @600. Tighten cards. */
+  .adm-act-card { padding: 14px 14px 14px 16px; }
+  .adm-act-title { font-size: 13px; padding-left: 8px; margin-top: 8px; }
+  .adm-act-desc { font-size: 11.5px; padding-left: 8px; }
+  .adm-act-h { padding-left: 8px; }
+  .adm-act-foot {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    padding-left: 8px;
+    margin-top: 10px;
+  }
+  .adm-act-chip { font-size: 10.5px; }
+
+  /* Adm-link-row → full width */
+  .adm-link-row { justify-content: stretch; }
+  .adm-link-btn { width: 100%; justify-content: center; }
+
+  /* Pills inside section headers */
+  .adm-pill-blue,
+  .adm-pill-green,
+  .adm-pill-amber {
+    margin-left: 0;
+    font-size: 10.5px;
+  }
+}
+@media (max-width: 480px) {
+  .adm-tc-stats { grid-template-columns: 1fr; }
+  .adm-tc-stat:last-child { grid-column: auto; }
+  .att-pct { font-size: 22px; }
+  .adm-card-h-t { font-size: 12.5px; }
+  .adm-bday-card { padding: 8px 10px; }
+}
+`;

@@ -442,13 +442,14 @@ export default function StudentTab({ classesData, setClassesData, studentStrengt
   const confirmDeleteStudent = async () => {
     if (!deleteStuTarget?.id) { setDeleteStuTarget(null); return; }
     setDeleting(true);
+    console.log(deleteStuTarget)
     try {
       const res = await fetch(buildUrl(`/api/LaunchSetup/delete-student/${deleteStuTarget.id}`), {
         method: 'DELETE',
         headers: { Accept: '*/*' },
       });
       if (res.ok) {
-        showToast(`"${deleteStuTarget.name}" removed`, 'success');
+        showToast(`"${deleteStuTarget.firstName}" removed`, 'success');
         getclassesdata();
       } else {
         const data = await res.json().catch(() => ({}));

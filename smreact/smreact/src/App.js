@@ -12,14 +12,15 @@ import SubjectsTab from './tabs/SubjectsTab';
 import DepartmentsTab from './tabs/DepartmentsTab';
 import StaffTab from './tabs/StaffTab';
 import StudentTab from './tabs/StudentTab';
-import TimetableTab from './tabs/TimetableTab';
 import { AppProvider } from './context/AppContext';
 import LoginScreen from './Pages/auth/LoginScreen';
 import SignupFlow from './Pages/auth/SignupFlow';
+import { isErpUnlocked } from './utils/erp';
+import ErpApp from './erp/App';
 import './styles/globals.css';
 import './styles/tokens.css';
 
-function AppShell({ user, onLogout }) {
+function AppShell({ user, onLogout, onOpenErp }) {
   const state = useAppState();
   const [erpOpen, setErpOpen] = useState(false);
   const [successState, setSuccessState] = useState({ open: false, title: '', msg: '', detail: '' });
@@ -213,7 +214,7 @@ setLaunchSetup(launchSetup)
 
       {/* Global components */}
       <ToastContainer toasts={state.toasts} />
-      <ERPDialog open={erpOpen} onClose={() => setErpOpen(false)} />
+      <ERPDialog open={erpOpen} onClose={() => setErpOpen(false)} showToast={state.showToast} onOpenErp={onOpenErp} />
       <SuccessDialog
         open={successState.open}
         title={successState.title}
@@ -231,20 +232,26 @@ setLaunchSetup(launchSetup)
 }
 
 function AuthGate() {
-  // const [screen, setScreen] = useState('login');
-  // const [user, setUser] = useState(null);
   const [user, setUser] = useState(() => {
     const savedUser = sessionStorage.getItem("user");
     return savedUser ? JSON.parse(savedUser) : null;
   });
 
+  // Decide the initial screen on load/reload:
+  //   no token            → login
+  //   token + unlocked    → erp   (unless the user deliberately stayed on setup)
+  //   token + locked      → app   (launch setup)
   const [screen, setScreen] = useState(() => {
     const token = sessionStorage.getItem("token");
-    return token ? 'app' : 'login';
+    if (!token) return 'login';
+    if (isErpUnlocked() && !sessionStorage.getItem('forceSetup')) return 'erp';
+    return 'app';
   });
 
   function handleLogin(userData) {
     setUser(userData);
+    // launchSetup === 1 → go straight to the ERP screen, otherwise launch setup.
+    if (isErpUnlocked() && !sessionStorage.getItem('forceSetup')) { setScreen('erp'); return; }
     setScreen('app');
   }
 
@@ -266,8 +273,21 @@ function AuthGate() {
     );
   }
 
+  if (screen === 'erp') {
+    return (
+      <ErpApp
+        onExitToSetup={() => { sessionStorage.setItem('forceSetup', '1'); setScreen('app'); }}
+        onLogout={() => { sessionStorage.clear(); setUser(null); setScreen('login'); }}
+      />
+    );
+  }
+
   return (
-      <AppShell user={user} onLogout={() => { setUser(null); setScreen('login'); }} />
+    <AppShell
+      user={user}
+      onLogout={() => { sessionStorage.clear(); setUser(null); setScreen('login'); }}
+      onOpenErp={() => setScreen('erp')}
+    />
   );
 }
 
