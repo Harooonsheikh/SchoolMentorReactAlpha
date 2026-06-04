@@ -173,9 +173,12 @@ function AppShell({ user, onLogout }) {
               staffData={state.staffData}
               setStaffData={state.setStaffData}
               deptsData={state.deptsData}
+              setDeptsData={state.setDeptsData}
               schoolInfo={state.schoolInfo}
               showToast={state.showToast}
               showSuccess={showSuccess}
+              classesData={state.classesData}
+              setClassesData={state.setClassesData}
             />
           )}
           {state.activeTab === 'student' && (

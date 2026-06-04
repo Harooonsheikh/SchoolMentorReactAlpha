@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { COLORS } from '../data/initialData';
 import { downloadStaffReport } from '../utils/pdfReports';
+import { buildUrl } from '../utils/apiConfig';
 
 const STAFF_PER_PAGE = 8;
 
@@ -8,21 +9,105 @@ const GENDER = ['Male', 'Female', 'Other'];
 const BLOOD_GROUPS = ['A+', 'A-', 'B+', 'B-', 'O+', 'O-', 'AB+', 'AB-'];
 const MARITAL = ['Single', 'Married', 'Divorced', 'Widowed'];
 
-function StaffModal({ open, staff, deptsData, onClose, onSave }) {
+function StaffModal({ open, staff, deptsData, onClose, onSave, setDeptsData, showToast }) {
   const [tab, setTab] = useState('personal');
   const [subTab, setSubTab] = useState('official');
   const [form, setForm] = useState({});
+   const [countryList, setCountryList]   = useState([]);
+    const [provinceList, setProvinceList] = useState([]);
+    const [cityList, setCityList]         = useState([]);
+  const [Qualification, setQualification] = useState({});
 
+  
   React.useEffect(() => {
-    if (open && staff) setForm({ ...staff });
+    if (open && staff) {
+      const dateOnly = (v) => (v ? String(v).split('T')[0] : '');
+      setForm({
+        ...staff,
+        // map API field names → the keys the dropdowns/inputs use
+        dept:          staff.departmentID  ?? staff.dept ?? '',
+        designation:   staff.designationID ?? staff.designation ?? '',
+        country:       staff.countryID     ?? staff.country ?? '',
+        province:      staff.provinceID    ?? staff.province ?? '',
+        city:          staff.cityID        ?? staff.city ?? '',
+        qualification: staff.qualificationID ?? staff.qualification ?? '',
+        joiningDate:   dateOnly(staff.dateOfJoining ?? staff.joiningDate),
+        dateOfBirth:   dateOnly(staff.dateOfBirth),
+        basicSalary:        staff.basicSalary        ?? staff.salary ?? 0,
+        medicalAllowanace:   staff.medicalAllowanace  ?? staff.medical ?? 0,
+        rentAllowance:       staff.rentAllowance      ?? staff.rent ?? 0,
+        transportAllowance:  staff.transportAllowance ?? staff.transport ?? 0,
+        isPrincipal:   staff.isPrinciple ?? staff.isPrincipal ?? false,
+        isTeacher:     staff.isTeacher ?? false,
+        isParent:      staff.isParent ?? false,
+        // show existing image (URL); keep file undefined until user picks a new one
+        profileImage:  staff.empImage ?? staff.profileImage ?? '',
+        profileImageFile: undefined,
+      });
+    }
     if (!open) { setTab('personal'); setSubTab('official'); }
   }, [open, staff]);
 
   const set = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
 
+  const getDeparmentdata = useCallback(async () => {
+    try {
+      const branchID = sessionStorage.getItem('branchID');
+      const res      = await fetch(buildUrl(`/api/LaunchSetup/get-departments-by-branch/${branchID}`), { headers: { Accept: '*/*' } });
+      const json     = await res.json();
+      const d        = json.data ?? {};
+      setDeptsData(d);
+    } catch { showToast('Could not load branch data', 'error'); }
+  }, [setDeptsData, showToast]);
+
+  async function getCountryList() {
+      try {
+        const res  = await fetch(buildUrl('/api/Setting/get-countries'), { headers: { Accept: '*/*' } });
+        const json = await res.json();
+        setCountryList(json.data ?? []);
+      } catch { showToast('Could not load countries', 'error'); }
+    }
+  
+    async function getProvinceList(countryId) {
+      try {
+        const res  = await fetch(buildUrl(`/api/Setting/get-provinces-by-country/${countryId}`), { headers: { Accept: '*/*' } });
+        const json = await res.json();
+        setProvinceList(json.data ?? []);
+      } catch { showToast('Could not load provinces', 'error'); }
+    }
+  
+    async function getCityList(provinceId) {
+      try {
+        const res  = await fetch(buildUrl(`/api/Setting/get-cities-by-province/${provinceId}`), { headers: { Accept: '*/*' } });
+        const json = await res.json();
+        setCityList(json.data ?? []);
+      } catch { showToast('Could not load cities', 'error'); }
+    }
+
+    async function getQualification() {
+          try {
+            const res  = await fetch(buildUrl(`/api/LaunchSetup/get-qualifications/0`), { headers: { Accept: '*/*' } });
+            const json = await res.json();
+            setQualification(json.data ?? []);
+            console.log(Qualification)
+          } catch { showToast('Could not load cities', 'error'); }
+        }
+
+  useEffect(() => {
+    if (open) {
+      getDeparmentdata();
+      getCountryList();
+      getQualification();
+      if (staff?.countryID ?? staff?.country)  getProvinceList(staff.countryID ?? staff.country);
+      if (staff?.provinceID ?? staff?.province) getCityList(staff.provinceID ?? staff.province);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, getDeparmentdata]);
+
   const handleImage = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    setForm(prev => ({ ...prev, profileImageFile: file }));
     const reader = new FileReader();
     reader.onload = () => set('profileImage', reader.result);
     reader.readAsDataURL(file);
@@ -30,7 +115,9 @@ function StaffModal({ open, staff, deptsData, onClose, onSave }) {
 
   if (!open) return null;
 
-  const allDesig = deptsData.flatMap(d => d.designations.map(x => x.name));
+  const deptList = Array.isArray(deptsData) ? deptsData : [];
+  const selectedDept = deptList.find(d => String(d.id) === String(form.dept));
+  const desigOptions = selectedDept?.designations ?? [];
   const isNew = !staff?.id || staff?.id === 'new';
 
   // small green "looks good" helper
@@ -44,28 +131,262 @@ function StaffModal({ open, staff, deptsData, onClose, onSave }) {
   const footerBtn = () => {
     if (tab === 'personal') {
       return (
-        <button className="btn btn-primary btn-md" onClick={() => setTab('employee')}>
+        <button className="btn btn-primary btn-md" onClick={() => [handleSave(), console.log(form)]}>
           <i className="fas fa-save"></i> Save
         </button>
       );
     }
     if (subTab === 'official') {
       return (
-        <button className="btn btn-primary btn-md" onClick={() => setSubTab('salary')}>
+        <button className="btn btn-primary btn-md" onClick={() => [handleupdateOffical(), console.log(form)]}>
           <i className="fas fa-arrow-right"></i> Save & Next
         </button>
       );
     }
     return (
-      <button className="btn btn-primary btn-md" onClick={() => { onSave(form); onClose(); }}>
+      <button className="btn btn-primary btn-md" onClick={() => [handleupdatesalary(), console.log(form), ]}>
         <i className="fas fa-save"></i> Save & Close
       </button>
     );
   };
 
+  const handleSave = async () => {
+      try {
+        const UserID = sessionStorage.getItem('UserID') || 0;
+        const BranchID = sessionStorage.getItem('branchID') || 0;
+        const now = new Date().toISOString();
+        const fd = new FormData();
+        fd.append('ID',                  form.id ?? form.ID ?? 0);
+        fd.append('CNIC',                form.cnic ?? '');
+        fd.append('FirstName',           form.firstName ?? '');
+        fd.append('LastName',            form.lastName ?? '');
+        fd.append('FatherName',          form.fatherName ?? '');
+        fd.append('Gender',              form.gender ?? '');
+        // fd.append('MaritalStatus',       form.maritalStatus ?? '');
+        fd.append('CountryID',           form.country || 0);
+        fd.append('ProvinceID',          form.province || 0);
+        fd.append('CityID',              form.city || 0);
+        fd.append('Address',             form.address ?? '');
+        fd.append('Phone',               form.phone ?? '');
+        fd.append('BranchID',            BranchID);
+        fd.append('DateOfBirth',         form.dateOfBirth ?? '');
+        fd.append('DateOfJoining',       form.joiningDate ?? '');
+        fd.append('experience', form.experience == null || form.experience === '' ? 0 : form.experience);
+        fd.append(
+  'Email',
+  form.email == null || form.email.trim() === ''
+    ? 'N/A'
+    : form.email
+);
+
+fd.append(
+  'EmpImage',
+  form.empImage == null || form.empImage.trim() === ''
+    ? 'N/A'
+    : form.empImage
+);
+
+fd.append(
+  'BloodGroup',
+  form.bloodGroup == null || form.bloodGroup.trim() === ''
+    ? 'N/A'
+    : form.bloodGroup
+);
+
+fd.append(
+  'MaritalStatus',
+  form.maritalStatus == null || form.maritalStatus.trim() === ''
+    ? 'N/A'
+    : form.maritalStatus
+);
+        fd.append('bloodGroup',          form.bloodGroup ?? '');
+        fd.append('DepartmentID',        form.dept || 0);
+        fd.append('DesignationID',       form.designation || 0);
+        fd.append('QualificationID',     form.qualification || 0);
+        fd.append('EmpImage',            form.empImage ?? '');
+        fd.append('BasicSalary',         form.basicSalary || 0);
+        fd.append('MedicalAllowanace',   form.medicalAllowanace || 0);
+        fd.append('RentAllowance',       form.rentAllowance || 0);
+        fd.append('TransportAllowance',  form.transportAllowance || 0);
+        fd.append('IsPrinciple',         form.isPrincipal ? true : false);
+        fd.append('IsTeacher',           form.isTeacher ? true : false);
+        fd.append('IsParent',            form.isParent ? true : false);
+        fd.append('Email',               form.email ?? '');
+        fd.append('CreatedAt',           now);
+        fd.append('CreatedBy',           UserID);
+        fd.append('ModifiedAt',          now);
+        fd.append('ModifiedBy',          UserID);
+        fd.append('IsActive',            true);
+        fd.append('DepartmentName',       'test');
+        fd.append('DesignationName',      'test');
+        fd.append('QualificationName',    'test');
+        if (form.profileImageFile) fd.append('EmpImageFile', form.profileImageFile);
+
+        const res  = await fetch(buildUrl('/api/LaunchSetup/save-employee'), { method: 'POST', headers: { Accept: '*/*' }, body: fd });
+        const data = await res.json();
+
+        if (res.ok) {
+          const newId = data?.data[0].id ?? data?.id ?? data?.data[0].ID ?? data?.ID;
+          if (newId) setForm(prev => ({ ...prev, id: newId }));
+          showToast('Employee saved successfully', 'success');
+           setTab('employee')
+           setSubTab('official')
+          return true;
+        }
+        showToast(data?.message || 'Save failed', 'error');
+        return false;
+      } catch (err) {
+        showToast('Network error. Please try again.', 'error');
+        console.error(err);
+        return false;
+      }
+    };
+
+    const handleupdateOffical = async() => {
+         try {
+          const branchID = sessionStorage.getItem('branchID');
+        const userID = sessionStorage.getItem('UserID') || 0;
+    
+        const payload = {
+  id: form.id,
+  cnic: form.cnic,
+  firstName: form.firstName,
+  lastName: form.lastName,
+  fatherName: form.fatherName,
+  gender: form.gender,
+  maritalStatus: form.maritalStatus,
+  countryID: form.country,
+  provinceID: form.province,
+  cityID: form.city,
+  address: form.address,
+  phone: form.phone ?? '',
+  branchID: branchID,
+  dateOfBirth: form.dateOfBirth,
+  dateOfJoining: form.joiningDate || new Date().toISOString(),
+  experience: form.experience,
+  bloodGroup: form.bloodGroup,
+  departmentID: form.dept,
+  designationID: form.designation,
+  qualificationID: form.qualification,
+  empImage: form.empImage ?? '',
+  basicSalary: Number(form.basicSalary) || 0,
+  medicalAllowanace: Number(form.medicalAllowanace) || 0,
+  rentAllowance: Number(form.rentAllowance) || 0,
+  transportAllowance: Number(form.transportAllowance) || 0,
+  isPrinciple: form.isPrincipal ? true : false,
+  isTeacher: form.isTeacher ? true : false,
+  isParent: form.isParent ? true : false,
+  email: form.email ?? '',
+  createdAt: new Date().toISOString(),
+  createdBy: userID,
+  modifiedAt: new Date().toISOString(),
+  modifiedBy: userID,
+  isActive: true,
+  departmentName: "string",
+  designationName: "string",
+  qualificationName: "string",
+};
+console.log(payload)
+        const res = await fetch(buildUrl('/api/LaunchSetup/update-employee-employment'), {
+          method: 'PUT',
+          headers: {
+            'Accept': '*/*',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(payload),
+        });
+    
+        const data = await res.json();
+    
+        if (!res.ok) {
+        showToast('Offical details Save Successfully', 'success');
+        console.log(data)
+        console.log(res.data)
+          return;
+        }
+    setSubTab('salary')
+    
+      } catch (err) {
+        console.error(err);
+        showToast('Network error. Please try again.', 'error');
+      }
+      };
+
+      const handleupdatesalary = async() => {
+         try {
+          const branchID = sessionStorage.getItem('branchID');
+        const userID = sessionStorage.getItem('UserID') || 0;
+    
+        const payload = {
+  id: form.id,
+  cnic: form.cnic,
+  firstName: form.firstName,
+  lastName: form.lastName,
+  fatherName: form.fatherName,
+  gender: form.gender,
+  maritalStatus: form.maritalStatus,
+  countryID: form.country,
+  provinceID: form.province,
+  cityID: form.city,
+  address: form.address,
+  phone: form.phone ?? '',
+  branchID: branchID,
+  dateOfBirth: form.dateOfBirth,
+  dateOfJoining: form.joiningDate || new Date().toISOString(),
+  experience: form.experience,
+  bloodGroup: form.bloodGroup,
+  departmentID: form.dept,
+  designationID: form.designation,
+  qualificationID: form.qualification,
+  empImage: form.empImage ?? '',
+  basicSalary: Number(form.basicSalary) || 0,
+  medicalAllowanace: Number(form.medicalAllowanace) || 0,
+  rentAllowance: Number(form.rentAllowance) || 0,
+  transportAllowance: Number(form.transportAllowance) || 0,
+  isPrinciple: form.isPrincipal ? true : false,
+  isTeacher: form.isTeacher ? true : false,
+  isParent: form.isParent ? true : false,
+  email: form.email ?? '',
+  createdAt: new Date().toISOString(),
+  createdBy: userID,
+  modifiedAt: new Date().toISOString(),
+  modifiedBy: userID,
+  isActive: true,
+   departmentName: "string",
+  designationName: "string",
+  qualificationName: "string",
+};
+console.log(payload)
+        const res = await fetch(buildUrl('/api/LaunchSetup/update-employee-salary'), {
+          method: 'PUT',
+          headers: {
+            'Accept': '*/*',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(payload),
+        });
+    
+        const data = await res.json();
+    
+        if (!res.ok) {
+        showToast('Offical details Save Successfully', 'success');
+        console.log(data)
+        console.log(res.data)
+          return;
+        }
+            onClose()
+    onSave(form);
+    
+      } catch (err) {
+        console.error(err);
+        showToast('Network error. Please try again.', 'error');
+      }
+      };
+
+
   return (
     <div className="modal-overlay open" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="modal modal-xl" style={{ maxHeight: '90vh' }}>
+      <div className="modal modal-lg" style={{ maxHeight: '90vh' }}>
         <div className="modal-header">
           <div>
             <div className="modal-title">Employment Details of</div>
@@ -127,7 +448,7 @@ function StaffModal({ open, staff, deptsData, onClose, onSave }) {
                   <label className="form-label">Date of Birth</label>
                   <div className="input-wrapper">
                     <i className="fas fa-calendar input-icon"></i>
-                    <input className="form-input has-icon" type="date" value={form.dob || ''} onChange={e => set('dob', e.target.value)} />
+                    <input className="form-input has-icon" type="date" value={form.dateOfBirth || ''} onChange={e => set('dateOfBirth', e.target.value)} />
                   </div>
                 </div>
                 <div className="form-group">
@@ -145,12 +466,12 @@ function StaffModal({ open, staff, deptsData, onClose, onSave }) {
                   </div>
                 </div>
                 <div className="form-group">
-                  <label className="form-label">Mobile Number <span className="req-star">*</span></label>
+                  <label className="form-label">phone Number <span className="req-star">*</span></label>
                   <div className="input-wrapper">
                     <i className="fas fa-phone input-icon"></i>
-                    <input className="form-input has-icon" value={form.mobile || ''} onChange={e => set('mobile', e.target.value)} placeholder="0300 0000000" />
+                    <input className="form-input has-icon" value={form.phone || ''} onChange={e => set('phone', e.target.value)} placeholder="0300 0000000" />
                   </div>
-                  <Good show={!!form.mobile?.trim()} text="Looks good" />
+                  <Good show={!!form.phone?.trim()} text="Looks good" />
                 </div>
                 <div className="form-group">
                   <label className="form-label">Marital Status</label>
@@ -166,6 +487,25 @@ function StaffModal({ open, staff, deptsData, onClose, onSave }) {
                     {BLOOD_GROUPS.map(b => <option key={b}>{b}</option>)}
                   </select>
                 </div>
+                <div className="form-group" style={{ marginLeft: 14 }}>
+                <label className="form-label">Role</label>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 25 , marginTop: 10}}>
+                  {['Principal', 'Teacher', 'Parent'].map(role => {
+                    const key = `is${role}`;
+                    return (
+                      <label key={role} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>
+                        <input
+                          type="checkbox"
+                          checked={!!form[key]}
+                          onChange={e => set(key, e.target.checked)}
+                          style={{ width: 16, height: 16, cursor: 'pointer', accentColor: 'var(--brand-primary)' }}
+                        />
+                        {role}
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
               </div>
 
               {/* Image upload + preview */}
@@ -189,6 +529,9 @@ function StaffModal({ open, staff, deptsData, onClose, onSave }) {
                   </div>
                 </div>
               </div>
+
+              {/* Role checkboxes */}
+              
             </>
           )}
 
@@ -204,50 +547,84 @@ function StaffModal({ open, staff, deptsData, onClose, onSave }) {
                 <div className="form-grid form-grid-2" style={{ gap: 14 }}>
                   <div className="form-group">
                     <label className="form-label">Department <span className="req-star">*</span></label>
-                    <select className="form-select" value={form.dept || ''} onChange={e => set('dept', e.target.value)}>
+                    <select className="form-select" value={form.dept || ''} onChange={e => { set('dept', e.target.value); set('designation', ''); }}>
                       <option value="">Select</option>
-                      {deptsData.map(d => <option key={d.id}>{d.name}</option>)}
+                      {deptList.map(d => <option key={d.id} value={d.id}>{d.departmentName}</option>)}
                     </select>
                     <Good show={!!form.dept} text="Department selected" />
                   </div>
                   <div className="form-group">
                     <label className="form-label">Designation <span className="req-star">*</span></label>
-                    <select className="form-select" value={form.designation || ''} onChange={e => set('designation', e.target.value)}>
+                    <select className="form-select" value={form.designation || ''} onChange={e => set('designation', e.target.value)} disabled={!form.dept}>
                       <option value="">Select</option>
-                      {allDesig.map(d => <option key={d}>{d}</option>)}
+                      {desigOptions.map(x => <option key={x.designationID} value={x.designationID}>{x.designationName}</option>)}
                     </select>
                     <Good show={!!form.designation} text="Designation selected" />
                   </div>
                   <div className="form-group">
                     <label className="form-label">Country</label>
-                    <div className="input-wrapper">
-                      <i className="fas fa-flag input-icon"></i>
-                      <input className="form-input has-icon" value={form.country || ''} onChange={e => set('country', e.target.value)} placeholder="Country" />
-                    </div>
+                    <select
+                      className="form-select"
+                      value={form.country || ''}
+                      onChange={e => {
+                        const val = e.target.value;
+                        set('country', val);
+                        set('province', '');
+                        set('city', '');
+                        setProvinceList([]);
+                        setCityList([]);
+                        if (val) getProvinceList(val);
+                      }}
+                    >
+                      <option value="">Select Country</option>
+                      {countryList.map(c => <option key={c.ID} value={c.ID}>{c.Name}</option>)}
+                    </select>
                   </div>
                   <div className="form-group">
                     <label className="form-label">Province</label>
-                    <div className="input-wrapper">
-                      <i className="fas fa-map input-icon"></i>
-                      <input className="form-input has-icon" value={form.province || ''} onChange={e => set('province', e.target.value)} placeholder="Province" />
-                    </div>
+                    <select
+                      className="form-select"
+                      value={form.province || ''}
+                      onChange={e => {
+                        const val = e.target.value;
+                        set('province', val);
+                        set('city', '');
+                        setCityList([]);
+                        if (val) getCityList(val);
+                      }}
+                      disabled={!form.country}
+                    >
+                      <option value="">Select Province</option>
+                      {provinceList.map(p => <option key={p.ID} value={p.ID}>{p.Name}</option>)}
+                    </select>
                   </div>
                   <div className="form-group">
                     <label className="form-label">City</label>
-                    <div className="input-wrapper">
-                      <i className="fas fa-city input-icon"></i>
-                      <input className="form-input has-icon" value={form.city || ''} onChange={e => set('city', e.target.value)} placeholder="City" />
-                    </div>
+                    <select
+                      className="form-select"
+                      value={form.city || ''}
+                      onChange={e => set('city', e.target.value)}
+                      disabled={!form.province}
+                    >
+                      <option value="">Select City</option>
+                      {cityList.map(c => <option key={c.ID} value={c.ID}>{c.Name}</option>)}
+                    </select>
                   </div>
                   <div className="form-group">
                     <label className="form-label">Qualification</label>
-                    <div className="input-wrapper">
-                      <i className="fas fa-graduation-cap input-icon"></i>
-                      <input className="form-input has-icon" value={form.qualification || ''} onChange={e => set('qualification', e.target.value)} placeholder="e.g. PhD, Masters" />
-                    </div>
+                    <select
+                      className="form-select"
+                      value={form.qualification || ''}
+                      onChange={e => set('qualification', e.target.value)}
+                    >
+                      <option value="">Select Qualification</option>
+                      {(Array.isArray(Qualification) ? Qualification : []).map(q => (
+                        <option key={q.qualificationID ?? q.id} value={q.qualificationID ?? q.id}>{q.qualificationName}</option>
+                      ))}
+                    </select>
                   </div>
                   <div className="form-group">
-                    <label className="form-label">Experience</label>
+                    <label className="form-label">experience</label>
                     <div className="input-wrapper">
                       <i className="fas fa-clock input-icon"></i>
                       <input className="form-input has-icon" value={form.experience || ''} onChange={e => set('experience', e.target.value)} placeholder="e.g. 5 years" />
@@ -266,10 +643,10 @@ function StaffModal({ open, staff, deptsData, onClose, onSave }) {
               {subTab === 'salary' && (
                 <div className="form-grid form-grid-2" style={{ gap: 14 }}>
                   {[
-                    ['Basic Monthly Salary', 'salary', 'fa-money-bill-wave', true],
-                    ['Medical Allowance', 'medical', 'fa-notes-medical', true],
-                    ['Rent Allowance', 'rent', 'fa-home', true],
-                    ['Transport Allowance', 'transport', 'fa-bus', true],
+                    ['Basic Monthly Salary', 'basicSalary', 'fa-money-bill-wave', true],
+                    ['Medical Allowance', 'medicalAllowanace', 'fa-notes-medical', true],
+                    ['Rent Allowance', 'rentAllowance', 'fa-home', true],
+                    ['Transport Allowance', 'transportAllowance', 'fa-bus', true],
                   ].map(([label, key, icon, req]) => (
                     <div className="form-group" key={key}>
                       <label className="form-label">{label} {req && <span className="req-star">*</span>}</label>
@@ -281,9 +658,9 @@ function StaffModal({ open, staff, deptsData, onClose, onSave }) {
                     </div>
                   ))}
                   <div style={{ gridColumn: 'span 2', padding: '12px 14px', background: 'linear-gradient(135deg,rgba(30,58,138,.06),rgba(30,64,175,.04))', border: '1px solid rgba(30,58,138,.15)', borderRadius: 'var(--radius-md)' }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: 4 }}>Total Salary Package</div>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: 4 }}>Total basicSalary Package</div>
                     <div style={{ fontSize: 20, fontWeight: 800, color: 'var(--brand-primary)' }}>
-                      PKR {((form.salary || 0) + (form.medical || 0) + (form.rent || 0) + (form.transport || 0)).toLocaleString()}
+                      PKR {((Number(form.basicSalary) || 0) + (Number(form.medicalAllowanace) || 0) + (Number(form.rentAllowance) || 0) + (Number(form.transportAllowance) || 0)).toLocaleString()}
                     </div>
                   </div>
                 </div>
@@ -301,41 +678,114 @@ function StaffModal({ open, staff, deptsData, onClose, onSave }) {
   );
 }
 
-function TaskAssignModal({ open, staff, classesData, onClose, onSave }) {
+function TaskAssignModal({ open, staff, classesData, setClassesData, onClose, onSave, showToast }) {
   const [expandedClass, setExpandedClass] = useState(null);
   const [expandedSection, setExpandedSection] = useState(null);
   const [tasks, setTasks] = useState({});
+  const [subjectsMap, setSubjectsMap] = useState({});   // { "gradeId::sectionId": [{subjectID, subjectName}] }
+  const [loadingSubjects, setLoadingSubjects] = useState({}); // { "gradeId::sectionId": true }
+
+  const getClassesData = useCallback(async () => {
+    try {
+      const branchID = sessionStorage.getItem('branchID');
+      const res      = await fetch(buildUrl(`/api/LaunchSetup/get-grades-by-branch/${branchID}`), { headers: { Accept: '*/*' } });
+      const json     = await res.json();
+      setClassesData(json.data ?? []);
+    } catch { showToast?.('Could not load classes', 'error'); }
+  }, [setClassesData, showToast]);
 
   React.useEffect(() => {
     if (open && staff) {
-      setTasks(staff.tasks || {});
+      // build checked-state from the employee's existing assignments
+      const initTasks = {};
+      (staff.assignments || []).forEach(a => {
+        const k = `${a.gradeId}::${a.sectionId}`;
+        if (!initTasks[k]) initTasks[k] = [];
+        initTasks[k].push(a.subjectId);
+      });
+      setTasks(initTasks);
       setExpandedClass(null);
       setExpandedSection(null);
+      setSubjectsMap({});
+      getClassesData();
     }
-  }, [open, staff]);
+  }, [open, staff, getClassesData]);
 
   if (!open || !staff) return null;
 
-  // ── Adjust these 3 accessors to match your data field names ──
-  const getSections = (cls) => cls.sections || [];                       // array of { sectionName }
-  const getSectionName = (sec) => sec.sectionName;                       // section label
-  const getSubjects = (cls) => (cls.subjects || []).map(x => x.name || x); // subject names array
-  // ─────────────────────────────────────────────────────────────
+  // ── Adjust these accessors to match your data field names ──
+  const getSections = (cls) => cls.sections || [];   // array of { sectionID, sectionName }
+  const getSectionName = (sec) => sec.sectionName;   // section label
+  // ───────────────────────────────────────────────────────────
 
-  const isChecked = (classId, sectionName, subject) =>
-    !!tasks?.[classId]?.[sectionName]?.includes(subject);
+  const subjKey = (gradeId, sectionId) => `${gradeId}::${sectionId}`;
 
-  const toggle = (classId, sectionName, subject) => {
+  const getSubjectsApi = async (gradeId, sectionId) => {
+    const key = subjKey(gradeId, sectionId);
+    if (subjectsMap[key] || loadingSubjects[key]) return;   // already loaded / loading
+    setLoadingSubjects(prev => ({ ...prev, [key]: true }));
+    try {
+      const res  = await fetch(buildUrl(`/api/LaunchSetup/get-subjects/${gradeId}/${sectionId}`), { headers: { Accept: '*/*' } });
+      const json = await res.json();
+      setSubjectsMap(prev => ({ ...prev, [key]: json.data ?? [] }));
+    } catch {
+      showToast?.('Could not load subjects', 'error');
+      setSubjectsMap(prev => ({ ...prev, [key]: [] }));
+    } finally {
+      setLoadingSubjects(prev => ({ ...prev, [key]: false }));
+    }
+  };
+
+  const isChecked = (gradeId, sectionId, subjectId) =>
+    !!tasks[subjKey(gradeId, sectionId)]?.includes(subjectId);
+
+  const applyToggle = (k, subjectId, checked) => {
     setTasks(prev => {
-      const cls = { ...(prev[classId] || {}) };
-      const list = new Set(cls[sectionName] || []);
-      list.has(subject) ? list.delete(subject) : list.add(subject);
-      cls[sectionName] = [...list];
-      return { ...prev, [classId]: cls };
+      const list = new Set(prev[k] || []);
+      checked ? list.add(subjectId) : list.delete(subjectId);
+      return { ...prev, [k]: [...list] };
     });
   };
 
-  const sectionKey = (cid, sname) => `${cid}::${sname}`;
+  const toggle = async (gradeId, sectionId, subj) => {
+    const subjectId = subj.subjectID;
+    const k = subjKey(gradeId, sectionId);
+    const newChecked = !tasks[k]?.includes(subjectId);
+    applyToggle(k, subjectId, newChecked);   // optimistic update
+    const now = new Date().toISOString();
+    const userID = Number(sessionStorage.getItem('UserID')) || 0;
+    const branchId = Number(sessionStorage.getItem('branchID')) || 0;
+    const payload = {
+      id: 0,
+      employeId: staff.id,
+      gradeId,
+      sectionId,
+      subjectId,
+      branchId,
+      createdBy: userID,
+      createdAt: now,
+      modifiedBy: userID,
+      modifiedAt: now,
+      isChecked: newChecked,
+      subjectName: subj.subjectName || '',
+    };
+    try {
+      const res = await fetch(buildUrl('/api/LaunchSetup/toggle-Employees_Subjects_Assignments'), {
+        method: 'POST',
+        headers: { Accept: '*/*', 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        applyToggle(k, subjectId, !newChecked);   // revert on failure
+        showToast?.('Could not update assignment', 'error');
+      }
+    } catch {
+      applyToggle(k, subjectId, !newChecked);   // revert on error
+      showToast?.('Network error. Please try again.', 'error');
+    }
+  };
+
+  const sectionKey = (cid, sid) => `${cid}::${sid}`;
 
   return (
     <div className="modal-overlay open" onClick={e => e.target === e.currentTarget && onClose()}>
@@ -351,19 +801,19 @@ function TaskAssignModal({ open, staff, classesData, onClose, onSave }) {
         </div>
 
         <div className="modal-body" style={{ overflowY: 'auto', flex: 1 }}>
-          {/* Name card */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, border: '1px solid var(--border-light)', borderRadius: 'var(--radius-md)', padding: '10px 14px', marginBottom: 14 }}>
-            <div style={{ width: 42, height: 42, borderRadius: '50%', background: 'rgba(30,58,138,.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-              <i className="fas fa-user-tie" style={{ fontSize: 18, color: 'var(--brand-primary)' }}></i>
+          {/* Name row */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14, paddingBottom: 16, marginBottom: 18, borderBottom: '1px solid var(--border-light)' }}>
+            <div style={{ width: 48, height: 48, borderRadius: '20%', background: 'rgba(30,58,138,.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, border: '2.5px solid' , borderColor: '#1e3a8a'}}>
+              <i className="fas fa-user-tie" style={{ fontSize: 20, color: 'var(--brand-primary)' }}></i>
             </div>
-            <div style={{ fontSize: 14 }}>
-              <span style={{ color: 'var(--text-secondary)' }}>Name: </span>
+            <div style={{ fontSize: 15 }}>
+              <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>Name: </span>
               <span style={{ color: 'var(--brand-primary)', fontWeight: 700 }}>{staff.firstName} {staff.lastName || ''}</span>
             </div>
           </div>
 
-          {/* Section header */}
-          <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--brand-primary)', borderBottom: '2px solid var(--brand-primary)', display: 'inline-block', paddingBottom: 6, marginBottom: 14 }}>
+          {/* Assign Subjects tab heading */}
+          <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--brand-primary)', borderBottom: '2px solid var(--brand-primary)', display: 'inline-block', paddingBottom: 8, marginBottom: 18 }}>
             Assign Subjects
           </div>
 
@@ -373,55 +823,67 @@ function TaskAssignModal({ open, staff, classesData, onClose, onSave }) {
           ) : classesData.map((cls, ci) => {
             const clsOpen = expandedClass === cls.id;
             return (
-              <div key={cls.id} style={{ border: `1px solid ${clsOpen ? 'var(--brand-primary)' : 'var(--border-light)'}`, borderRadius: 'var(--radius-md)', marginBottom: 10, overflow: 'hidden' }}>
+              <div key={cls.id} style={{ border: `1.5px solid ${clsOpen ? 'var(--brand-light)' : 'var(--border-light)'}`, borderRadius: 12, marginBottom: 12, overflow: 'hidden', background: '#fff', transition: 'border-color .15s' }}>
                 {/* Class header */}
                 <div
                   onClick={() => setExpandedClass(clsOpen ? null : cls.id)}
-                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 14px', cursor: 'pointer', background: clsOpen ? 'rgba(30,58,138,.08)' : 'var(--bg-base)' }}
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', cursor: 'pointer', background: clsOpen ? '#eff6ff' : '#eff6ff' }}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-                    <span style={{ fontSize: 13, color: clsOpen ? 'var(--brand-primary)' : 'var(--text-muted)', fontWeight: 600 }}>{ci + 1}</span>
-                    <span style={{ fontSize: 14, fontWeight: 700, color: clsOpen ? 'var(--brand-primary)' : 'var(--text-primary)' }}>{cls.name}</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 18 }}>
+                    <span style={{ fontSize: 14, color: clsOpen ? 'var(--brand-primary)' : 'var(--text-muted)', fontWeight: 600, minWidth: 14, textAlign: 'center' }}>{ci + 1}</span>
+                    <span style={{ width: 1, height: 22, background: 'var(--border-light)' }}></span>
+                    <span style={{ fontSize: 15, fontWeight: 700, color: clsOpen ? 'var(--text-primary)' : 'var(--text-primary)' }}>{cls.name}</span>
                   </div>
-                  <i className={`fas fa-chevron-${clsOpen ? 'up' : 'down'}`} style={{ fontSize: 13, color: clsOpen ? 'var(--brand-primary)' : 'var(--text-secondary)' }}></i>
+                  <i className={`fas fa-chevron-${clsOpen ? 'up' : 'down'}`} style={{ fontSize: 14, color: clsOpen ? 'var(--brand-primary)' : 'var(--text-secondary)' }}></i>
                 </div>
 
                 {/* Sections */}
                 {clsOpen && (
-                  <div style={{ padding: '10px 12px' }}>
+                  <div style={{ padding: '12px' }}>
                     {!getSections(cls).length ? (
                       <div className="empty-mini"><i className="fas fa-layer-group"></i>No sections</div>
                     ) : getSections(cls).map((sec, si) => {
                       const sname = getSectionName(sec);
-                      const secOpen = expandedSection === sectionKey(cls.id, sname);
+                      const secOpen = expandedSection === sectionKey(cls.id, si);
+                      const sKey = subjKey(cls.id, sec.sectionID);
+                      const subjects = subjectsMap[sKey] || [];
+                      const isLoading = loadingSubjects[sKey];
                       return (
-                        <div key={si} style={{ marginBottom: 8 }}>
+                        <div key={si} style={{ marginBottom: 8, paddingLeft: 14, borderLeft: '3px solid #1E3A8A' }}>
                           {/* Section header */}
                           <div
-                            onClick={() => setExpandedSection(secOpen ? null : sectionKey(cls.id, sname))}
-                            style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', border: '1px solid var(--border-light)', borderRadius: 'var(--radius-md)', padding: '10px 14px', cursor: 'pointer' }}
+                            onClick={() => {
+                              const next = secOpen ? null : sectionKey(cls.id, si);
+                              setExpandedSection(next);
+                              if (next) getSubjectsApi(cls.id, sec.sectionID);
+                            }}
+                            style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', border: `1.5px solid ${secOpen ? 'var(--brand-light)' : 'var(--border-light)'}`, borderRadius: 10, padding: '12px 16px', cursor: 'pointer', background: secOpen ? '#fff' : '#fff' }}
                           >
-                            <span style={{ fontSize: 13, fontWeight: 600 }}>{sname}</span>
-                            <i className={`fas fa-chevron-${secOpen ? 'up' : 'down'}`} style={{ fontSize: 12, color: 'var(--text-secondary)' }}></i>
+                            <span style={{ fontSize: 14, fontWeight: 700, color: secOpen ? 'var(--text-primary)' : 'var(--text-primary)' }}>{sname}</span>
+                            <i className={`fas fa-chevron-${secOpen ? 'up' : 'down'}`} style={{ fontSize: 13, color: secOpen ? 'var(--brand-primary)' : 'var(--text-secondary)' }}></i>
                           </div>
 
                           {/* Subjects checklist */}
                           {secOpen && (
-                            <div style={{ border: '1px solid var(--border-light)', borderRadius: 'var(--radius-md)', overflow: 'hidden', marginTop: 6 }}>
-                              <div style={{ display: 'grid', gridTemplateColumns: '44px 1fr 44px', padding: '8px 12px', background: 'var(--bg-subtle, #f1f5f9)', fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)' }}>
-                                <span>SN</span><span>SUBJECT</span><span style={{ textAlign: 'center' }}><i className="fas fa-check"></i></span>
+                            <div style={{ border: '1.5px solid rgba(30,58,138,.18)', borderRadius: 10, overflow: 'hidden', marginTop: 8 }}>
+                              <div style={{ display: 'grid', gridTemplateColumns: '52px 1fr 52px', padding: '11px 14px', background: '#eff6ff', fontSize: 11.5, fontWeight: 700, color: 'var(--brand-primary)', textTransform: 'uppercase', letterSpacing: '.5px' }}>
+                                <span style={{ borderRight: '1px solid rgba(30,58,138,.15)' }}>SN</span>
+                                <span style={{ paddingLeft: 12, borderRight: '1px solid rgba(30,58,138,.15)' }}>Subject</span>
+                                <span style={{ textAlign: 'center' }}><i className="fas fa-check"></i></span>
                               </div>
-                              {!getSubjects(cls).length ? (
+                              {isLoading ? (
+                                <div className="empty-mini" style={{ padding: 12 }}><i className="fas fa-spinner fa-spin"></i>Loading subjects...</div>
+                              ) : !subjects.length ? (
                                 <div className="empty-mini" style={{ padding: 12 }}><i className="fas fa-book"></i>No subjects</div>
-                              ) : getSubjects(cls).map((subj, sj) => (
-                                <div key={sj} style={{ display: 'grid', gridTemplateColumns: '44px 1fr 44px', alignItems: 'center', padding: '9px 12px', fontSize: 13, borderTop: '1px solid var(--border-light)' }}>
-                                  <span style={{ color: 'var(--text-muted)' }}>{sj + 1}</span>
-                                  <span>{subj}</span>
+                              ) : subjects.map((subj, sj) => (
+                                <div key={subj.subjectID ?? sj} style={{ display: 'grid', background: '#eff6ff', gridTemplateColumns: '52px 1fr 52px', alignItems: 'center', padding: '11px 14px', fontSize: 13.5, color: 'var(--text-primary)', borderTop: '1px solid rgba(30,58,138,.1)' }}>
+                                  <span style={{ color: 'var(--text-muted)', borderRight: '1px solid rgba(30,58,138,.1)', alignSelf: 'stretch', display: 'flex', alignItems: 'center' }}>{sj + 1}</span>
+                                  <span style={{ paddingLeft: 12, borderRight: '1px solid rgba(30,58,138,.1)', alignSelf: 'stretch', display: 'flex', alignItems: 'center' }}>{subj.subjectName}</span>
                                   <span style={{ textAlign: 'center' }}>
                                     <input
                                       type="checkbox"
-                                      checked={isChecked(cls.id, sname, subj)}
-                                      onChange={() => toggle(cls.id, sname, subj)}
+                                      checked={isChecked(cls.id, sec.sectionID, subj.subjectID)}
+                                      onChange={() => toggle(cls.id, sec.sectionID, subj)}
                                       style={{ width: 16, height: 16, cursor: 'pointer', accentColor: 'var(--brand-primary)' }}
                                     />
                                   </span>
@@ -450,7 +912,7 @@ function TaskAssignModal({ open, staff, classesData, onClose, onSave }) {
   );
 }
 
-export default function StaffTab({ staffData, setStaffData, deptsData, schoolInfo, showToast, showSuccess, classesData }) {
+export default function StaffTab({ staffData, setStaffData, deptsData, setDeptsData, schoolInfo, showToast, showSuccess, classesData, setClassesData }) {
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
   const [expandedId, setExpandedId] = useState(null);
@@ -470,23 +932,88 @@ const [taskTarget, setTaskTarget] = useState(null);
 
   const handleSave = (form) => {
     if (form.id && staffData.find(s => s.id === form.id)) {
-      setStaffData(prev => prev.map(s => s.id === form.id ? form : s));
       showToast('Employee updated', 'success');
+      getStaffdata();
     } else {
-      setStaffData(prev => [...prev, { ...form, id: Date.now(), tasks: {}, verified: false, locked: false }]);
       showSuccess('Employee Added!', `${form.firstName} has been added.`);
+      getStaffdata();
     }
   };
 
-  const handleDelete = (id) => {
+  const handleDelete = async(id) => {
     const s = staffData.find(s => s.id === id);
-    setStaffData(prev => prev.filter(x => x.id !== id));
-    if (expandedId === id) setExpandedId(null);
-    setDeleteTarget(null);
-    showToast(`"${s?.firstName}" deleted`, 'info');
+    console.log(id)
+         try {
+              const res = await fetch(
+              buildUrl(`/api/LaunchSetup/delete-employee/${id}`),
+              {
+                method: 'DELETE',
+                headers: {
+                  Accept: '*/*'
+                }
+              }
+            );
+              const json     = await res.json();
+        
+            if (!res.ok) {
+          if (
+            json?.message?.includes('REFERENCE constraint') ||
+            json?.message?.includes('FK_AHM_HR_Employees')
+          ) {
+            showToast(
+              'Cannot delete staff because it contains data.',
+              'error'
+            );
+                      setDeleteTarget(null);
+    
+          } else {
+            showToast(json?.message || 'Delete failed', 'error');
+                      setDeleteTarget(null);
+    
+          }
+    
+          return;
+        }
+              getStaffdata()
+                      showToast(`"${s?.firstName}" deleted`, 'info');
+              setDeleteTarget(null);
+          } catch (err) {
+            console.error(err);
+                      setDeleteTarget(null);
+            showToast('Could not delete staff', 'error');
+          }
   };
 
-  const newStaffTemplate = { firstName: '', lastName: '', fatherName: '', cnic: '', dob: '', gender: 'Male', maritalStatus: '', address: '', mobile: '', bloodGroup: '', dept: '', designation: '', country: 'Pakistan', province: '', city: '', qualification: '', experience: '', joiningDate: '', salary: 0, medical: 0, rent: 0, transport: 0, tasks: {}, verified: false, locked: false };
+  const newStaffTemplate = { firstName: '', lastName: '', fatherName: '', cnic: '', dateOfBirth: '', gender: 'Male', maritalStatus: '', address: '', phone: '', bloodGroup: '', dept: '', designation: '', country: '', province: '', city: '', qualification: '', experience: '', joiningDate: '', basicSalary: 0, medical: 0, rent: 0, transport: 0, tasks: {}, verified: false, locked: false };
+
+   useEffect(() => {
+      getStaffdata();
+      getClassesData();
+    }, []);
+
+    const getStaffdata = useCallback(async () => {
+              const branchID = sessionStorage.getItem('branchID');
+        try {
+          const res      = await fetch(buildUrl(`/api/LaunchSetup/get-employees-by-branch/${branchID}`), { headers: { Accept: '*/*' } });
+          const json     = await res.json();
+          const d        = json.data ?? {};
+          setStaffData(d);
+        } catch { showToast('Could not load Staff data', 'error'); }
+    }, [setStaffData]);
+
+    const getClassesData = useCallback(async () => {
+      const branchID = sessionStorage.getItem('branchID');
+      try {
+        const res  = await fetch(buildUrl(`/api/LaunchSetup/get-grades-by-branch/${branchID}`), { headers: { Accept: '*/*' } });
+        const json = await res.json();
+        setClassesData(json.data ?? []);
+      } catch { showToast('Could not load classes', 'error'); }
+    }, [setClassesData]);
+
+
+    const handleDeleteStaff = async(id) => {
+        
+      };
 
   return (
     <div className="tab-panel active">
@@ -539,11 +1066,11 @@ const [taskTarget, setTaskTarget] = useState(null);
                     </div>
                     <div>
                       <div style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: 13 }}>{s.firstName}{s.lastName ? ' ' + s.lastName : ''}</div>
-                      <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{s.mobile || ''}</div>
+                      <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{s.phone || ''}</div>
                     </div>
                   </div>
-                  <div className="td">{s.dept ? <span className="staff-dept-pill">{s.dept}</span> : <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>—</span>}</div>
-                  <div className="td">{s.designation ? <span className="staff-desig-pill">{s.designation}</span> : <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>—</span>}</div>
+                  <div className="td">{s.departmentName ? <span className="staff-dept-pill">{s.departmentName}</span> : <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>—</span>}</div>
+                  <div className="td">{s.designationName ? <span className="staff-desig-pill">{s.designationName}</span> : <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>—</span>}</div>
                   <div className="td staff-action-col">
                     <button className="btn-details-staff" onClick={e => { e.stopPropagation(); setStaffModalTarget(s); }}>
                       <i className="fas fa-edit"></i> Details
@@ -559,13 +1086,29 @@ const [taskTarget, setTaskTarget] = useState(null);
                     </button>
                   </div>
                 </div>
-                {exp && (
+                {exp && (() => {
+                  const assignments = Array.isArray(s.assignments) ? s.assignments : [];
+                  const totalPackage = (Number(s.basicSalary) || 0) + (Number(s.medicalAllowanace) || 0) + (Number(s.rentAllowance) || 0) + (Number(s.transportAllowance) || 0);
+                  const pkr = v => `PKR ${(Number(v) || 0).toLocaleString()}`;
+                  const dateOnly = v => (v ? String(v).split('T')[0] : '');
+                  // group assignments: className -> sectionName -> [subjects]
+                  const grouped = {};
+                  assignments.forEach(a => {
+                    const cn = a.className || `Grade ${a.gradeId}`;
+                    const sn = a.sectionName || '—';
+                    grouped[cn] = grouped[cn] || {};
+                    grouped[cn][sn] = grouped[cn][sn] || [];
+                    grouped[cn][sn].push(a);
+                  });
+                  return (
                   <div style={{ padding: '16px 18px', background: 'var(--bg-base)', borderTop: '1px solid var(--border-light)' }}>
+                    <div style={{ textAlign: 'center', fontSize: 16, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 16 }}>Employee Details</div>
+
                     <div className="emp-details-section">
                       <div className="emp-section-hdr"><i className="fas fa-user" style={{ marginRight: 8 }}></i>Personal Information</div>
                       <div className="emp-section-body">
                         <div className="emp-field-grid">
-                          {[['CNIC', s.cnic], ['DOB', s.dob], ['Gender', s.gender], ['Mobile', s.mobile], ['Blood Group', s.bloodGroup], ['City', s.city]].map(([lbl, val]) => (
+                          {[['First Name', s.firstName], ['Last Name', s.lastName], ['Father Name', s.fatherName], ['CNIC', s.cnic], ['Date of Birth', dateOnly(s.dateOfBirth)], ['Gender', s.gender], ['Marital Status', s.maritalStatus], ['Address', s.address], ['phone', s.phone], ['Blood Group', s.bloodGroup]].map(([lbl, val]) => (
                             <div key={lbl} className="emp-field">
                               <div className="emp-field-label">{lbl}</div>
                               <div className="emp-field-val">{val || '—'}</div>
@@ -574,21 +1117,72 @@ const [taskTarget, setTaskTarget] = useState(null);
                         </div>
                       </div>
                     </div>
+
                     <div className="emp-details-section">
-                      <div className="emp-section-hdr"><i className="fas fa-briefcase" style={{ marginRight: 8 }}></i>Employment Details</div>
+                      <div className="emp-section-hdr"><i className="fas fa-briefcase" style={{ marginRight: 8 }}></i>Official Details</div>
                       <div className="emp-section-body">
                         <div className="emp-field-grid">
-                          {[['Department', s.dept], ['Designation', s.designation], ['Qualification', s.qualification], ['Experience', s.experience], ['Joining Date', s.joiningDate], ['Total Salary', `PKR ${((s.salary || 0) + (s.medical || 0) + (s.rent || 0) + (s.transport || 0)).toLocaleString()}`]].map(([lbl, val]) => (
+                          {[['Department', s.departmentName], ['Designation', s.designationName], ['Country', s.countryName], ['Province', s.provinceName], ['City', s.cityName], ['Qualification', s.qualificationName], ['experience', s.experience], ['Date of Joining', dateOnly(s.dateOfJoining)]].map(([lbl, val]) => (
                             <div key={lbl} className="emp-field">
                               <div className="emp-field-label">{lbl}</div>
                               <div className="emp-field-val">{val || '—'}</div>
                             </div>
                           ))}
                         </div>
+                      </div>
+                    </div>
+
+                    <div className="emp-details-section">
+                      <div className="emp-section-hdr"><i className="fas fa-money-bill-wave" style={{ marginRight: 8 }}></i>Financial Details</div>
+                      <div className="emp-section-body">
+                        <div className="emp-field-grid">
+                          {[['Basic Salary', pkr(s.basicSalary)], ['Medical Allowance', pkr(s.medicalAllowanace)], ['Rent Allowance', pkr(s.rentAllowance)], ['Transport Allowance', pkr(s.transportAllowance)], ['Total Package', pkr(totalPackage)]].map(([lbl, val]) => (
+                            <div key={lbl} className="emp-field">
+                              <div className="emp-field-label">{lbl}</div>
+                              <div className="emp-field-val" style={lbl === 'Total Package' ? { color: 'var(--brand-primary)', fontWeight: 700 } : undefined}>{val}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="emp-details-section">
+                      <div className="emp-section-hdr"><i className="fas fa-tasks" style={{ marginRight: 8 }}></i>Task Assigned</div>
+                      <div className="emp-section-body">
+                        {assignments.length === 0 ? (
+                          <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>No tasks assigned yet.</div>
+                        ) : (
+                          Object.keys(grouped).map(cn => (
+                            <div key={cn} style={{ marginBottom: 12 }}>
+                              {/* Class */}
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, fontWeight: 700, color: 'var(--brand-primary)', marginBottom: 6 }}>
+                                <i className="fas fa-chalkboard"></i> {cn}
+                              </div>
+                              {/* Sections under the class */}
+                              {Object.keys(grouped[cn]).map(sn => (
+                                <div key={sn} style={{ paddingLeft: 16, marginBottom: 8, borderLeft: '2px solid rgba(30,58,138,.15)' }}>
+                                  <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 4 }}>
+                                    <i className="fas fa-layer-group" style={{ marginRight: 6, color: 'var(--text-muted)' }}></i>
+                                    Section {sn}
+                                  </div>
+                                  {/* Subjects under the section */}
+                                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, paddingLeft: 20 }}>
+                                    {grouped[cn][sn].map((a, ai) => (
+                                      <span key={ai} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: 'rgba(30,58,138,.06)', border: '1px solid rgba(30,58,138,.15)', color: 'var(--brand-primary)', fontSize: 12, fontWeight: 600, padding: '3px 10px', borderRadius: 99 }}>
+                                        <i className="fas fa-book" style={{ fontSize: 10 }}></i> {a.subjectName}
+                                      </span>
+                                    ))}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          ))
+                        )}
                       </div>
                     </div>
                   </div>
-                )}
+                  );
+                })()}
               </div>
             );
           })}
@@ -610,16 +1204,19 @@ const [taskTarget, setTaskTarget] = useState(null);
       </div>
 
       <StaffModal open={!!staffModalTarget} staff={staffModalTarget} deptsData={deptsData}
-        onClose={() => setStaffModalTarget(null)} onSave={handleSave} />
+        onClose={() => [getStaffdata(), setStaffModalTarget(null)]} onSave={handleSave} setDeptsData={setDeptsData} showToast={showToast} />
         <TaskAssignModal
   open={!!taskTarget}
   staff={taskTarget}
   classesData={classesData}
-  onClose={() => setTaskTarget(null)}
+  setClassesData={setClassesData}
+  showToast={showToast}
+  onClose={() => [getStaffdata(), setTaskTarget(null)]}
   onSave={(updated) => {
     setStaffData(prev => prev.map(s => s.id === updated.id ? updated : s));
     showToast('Task assignment saved', 'success');
     setTaskTarget(null);
+    getStaffdata();
   }}
 />
 

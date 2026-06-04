@@ -61,11 +61,42 @@ export const INITIAL_DEPARTMENTS = [
 ];
 
 export const INITIAL_STAFF = [
-  {id:1,firstName:'Dr Islahudin',lastName:'',fatherName:'MKA',cnic:'35101',dob:'2003-12-05',gender:'Male',maritalStatus:'Single',address:'',mobile:'03119456045',bloodGroup:'A+',dept:'Administration',designation:'Principal',country:'Pakistan',province:'ICT',city:'Islamabad',qualification:'PhD',experience:'10 years',joiningDate:'2025-04-29',salary:30000,medical:5000,rent:5000,transport:500,tasks:{},verified:true,locked:false},
-  {id:2,firstName:'Alpha',lastName:'',fatherName:'',cnic:'',dob:'',gender:'Male',maritalStatus:'',address:'',mobile:'',bloodGroup:'',dept:'Administration',designation:'Principal',country:'Pakistan',province:'Punjab',city:'Rawalpindi',qualification:'',experience:'',joiningDate:'',salary:0,medical:0,rent:0,transport:0,tasks:{},verified:false,locked:true},
-  {id:3,firstName:'Gamma',lastName:'',fatherName:'',cnic:'',dob:'',gender:'Male',maritalStatus:'',address:'',mobile:'',bloodGroup:'',dept:'Administration',designation:'Vice Principal',country:'',province:'',city:'',qualification:'',experience:'',joiningDate:'',salary:0,medical:0,rent:0,transport:0,tasks:{},verified:true,locked:false},
-  {id:4,firstName:'Pi',lastName:'',fatherName:'',cnic:'',dob:'',gender:'Male',maritalStatus:'',address:'',mobile:'',bloodGroup:'',dept:'Academics',designation:'Teacher English',country:'',province:'',city:'',qualification:'',experience:'',joiningDate:'',salary:0,medical:0,rent:0,transport:0,tasks:{},verified:false,locked:true},
-  {id:5,firstName:'Xi',lastName:'',fatherName:'',cnic:'',dob:'',gender:'Female',maritalStatus:'',address:'',mobile:'',bloodGroup:'',dept:'Academics',designation:'Teacher SST',country:'',province:'',city:'',qualification:'',experience:'',joiningDate:'',salary:0,medical:0,rent:0,transport:0,tasks:{},verified:false,locked:false},
+  {
+    id: 0,
+    cnic: '',
+    firstName: '',
+    lastName: '',
+    fatherName: '',
+    gender: '',
+    maritalStatus: '',
+    countryID: null,
+    provinceID: null,
+    cityID: null,
+    address: '',
+    phone: '',
+    branchID: null,
+    dateOfBirth: null,
+    dateOfJoining: null,
+    experience: '',
+    bloodGroup: '',
+    departmentID: null,
+    designationID: null,
+    qualificationID: null,
+    empImage: null,
+    basicSalary: 0,
+    medicalAllowanace: 0,
+    rentAllowance: 0,
+    transportAllowance: 0,
+    isPrinciple: false,
+    isTeacher: false,
+    isParent: false,
+    email: '',
+    createdAt: null,
+    createdBy: null,
+    modifiedAt: null,
+    modifiedBy: null,
+    isActive: true
+  }
 ];
 
 // Field names match the API response from GET /api/Registration/get-branch

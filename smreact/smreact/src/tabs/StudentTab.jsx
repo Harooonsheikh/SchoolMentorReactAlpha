@@ -4,200 +4,356 @@ import { downloadStudentReport } from '../utils/pdfReports';
 import { buildUrl } from '../utils/apiConfig';
 
 // ── Add/Edit Student Modal ────────────────────────────────────────────────────
-function StudentModal({ open, target, editIdx, classesData, onClose, onSave, manualReg }) {
+const EMPTY_STUDENT = {
+  // Registration / names
+  registrationNo: '', familyNo: '', dateOfAdmission: '', name: '', lastName: '',
+  firstNameUrdu: '', lastNameUrdu: '', fatherNameUrdu: '',
+  fatherName: '', fatherCnic: '', fatherQualification: '', fatherOccupation: '',
+  motherName: '', motherCnic: '', motherQualification: '', motherOccupation: '',
+  gender: '', dob: '', caste: '', nationality: '',
+  postalAddress: '', permanentAddress: '', mobile: '', motherMobile: '',
+  email: '', bFormNo: '', marksPercent: '', dues: '0', profilePhoto: '',
+  regNo: '', cnic: '', previousRegistrationNo: '',
+  // Previous institutional history
+  prevSchoolName: '', focalPerson: '', prevContactNo: '', prevSchoolAddress: '',
+  admissionNo: '', previousGrade: '', testOfGrade: '',
+  // Health & emergency
+  bloodGroup: '', foodDietary: '', allergies: '', conditionOfChild: '', emergencyContact: '',
+};
+
+function StudentModal({ open, target, editIdx, editStudent, classesData, onClose, onSaved, showToast, manualReg }) {
   const [formType, setFormType] = useState('quick');
-  const [form, setForm] = useState({
-    name: '', lastName: '', fatherName: '', cnic: '', dob: '', gender: '',
-    mobile: '', email: '', regNo: '', dues: '0', bloodGroup: '', address: '',
-    motherName: '', fatherCnic: '',
-  });
+  const [openSec, setOpenSec] = useState({ reg: true, history: true, health: true });
+  const [form, setForm] = useState(EMPTY_STUDENT);
   const [errors, setErrors] = useState({});
 
   const row = target ? classesData.flatMap(cls => {
     const secs = cls.sections?.length ? cls.sections : [null];
-    return secs.map(sec => ({ cls, sec, key: `${cls.id}_${sec || 'null'}` }));
+    return secs.map(sec => ({ cls, sec, key: `${cls.id}_${sec?.sectionID ?? 'null'}` }));
   }).find(r => r.key === target) : null;
 
   React.useEffect(() => {
     if (open) {
-      setFormType('quick');
       setErrors({});
-      setForm({ name: '', lastName: '', fatherName: '', cnic: '', dob: '', gender: '', mobile: '', email: '', regNo: '', dues: '0', bloodGroup: '', address: '', motherName: '', fatherCnic: '' });
+      setOpenSec({ reg: true, history: true, health: true });
+      if (editStudent) {
+        // map API student → modal form keys
+        setFormType('detail');
+        setForm({
+          ...EMPTY_STUDENT,
+          ...editStudent,
+          registrationNo: editStudent.registerNo ?? editStudent.registrationNo ?? '',
+          familyNo:       editStudent.familyNo ?? '',
+          dateOfAdmission: editStudent.dateOfAdmission && editStudent.dateOfAdmission !== 'string' ? editStudent.dateOfAdmission : '',
+          name:           editStudent.firstName ?? editStudent.name ?? '',
+          lastName:       editStudent.lastName ?? '',
+          firstNameUrdu:  editStudent.firstNameInUrdu ?? '',
+          lastNameUrdu:   editStudent.lastNameInUrdu ?? '',
+          fatherName:     editStudent.fatherName ?? '',
+          fatherCnic:     editStudent.fatherCnic ?? '',
+          fatherQualification: editStudent.fatherQualification ?? '',
+          fatherOccupation:    editStudent.fatherOccupation ?? '',
+          motherName:     editStudent.motherName ?? '',
+          motherCnic:     editStudent.motherCnic ?? '',
+          motherQualification: editStudent.motherQualification ?? '',
+          motherOccupation:    editStudent.motherOccupation ?? '',
+          gender:         editStudent.gander ?? editStudent.gender ?? '',
+          dob:            editStudent.dateOfBirth && editStudent.dateOfBirth !== 'string' ? String(editStudent.dateOfBirth).split('T')[0] : '',
+          caste:          editStudent.caste ?? '',
+          nationality:    editStudent.nationality ?? '',
+          postalAddress:  editStudent.postalAddress ?? '',
+          mobile:         editStudent.mobileNo ?? editStudent.mobile ?? '',
+          motherMobile:   editStudent.motherMobileNo ?? '',
+          email:          editStudent.email ?? '',
+          bFormNo:        editStudent.bFormNo ?? '',
+          marksPercent:   editStudent.marksAdmissionTest ?? '',
+          dues:           String(editStudent.totalPreviousDues ?? editStudent.dues ?? 0),
+          profilePhoto:   editStudent.picture && editStudent.picture !== 'string' ? editStudent.picture : '',
+          prevSchoolName: editStudent.previousSchoolName ?? '',
+          focalPerson:    editStudent.previousSchoolFocalPerson ?? '',
+          prevContactNo:  editStudent.previousSchoolContactNo ?? '',
+          prevSchoolAddress: editStudent.previousSchoolAddress ?? '',
+          admissionNo:    editStudent.previousAdmissionNo ?? '',
+          previousGrade:  editStudent.previousSchoolPreviousGrade ?? '',
+          testOfGrade:    editStudent.previousSchoolTestOfGrades ?? '',
+          bloodGroup:     editStudent.bloodGroup ?? '',
+          foodDietary:    editStudent.foodAndDietaryReg ?? '',
+          allergies:      editStudent.allergiesMajorIllness ?? '',
+          conditionOfChild: editStudent.conditionOfChild ?? '',
+          emergencyContact: editStudent.emergencyContact ?? '',
+          previousRegistrationNo: editStudent.previousRegistrationNo ?? '',
+          permanentAddress:       editStudent.permanentAddesss ?? editStudent.permanentAddress ?? '',
+        });
+      } else {
+        setFormType('quick');
+        setForm(EMPTY_STUDENT);
+      }
     }
-  }, [open, target]);
+  }, [open, target, editStudent]);
 
   const set = (k, v) => { setForm(p => ({ ...p, [k]: v })); setErrors(p => ({ ...p, [k]: '' })); };
+
+  const handleImage = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setForm(prev => ({ ...prev, pictureFile: file }));
+    const reader = new FileReader();
+    reader.onload = () => set('profilePhoto', reader.result);
+    reader.readAsDataURL(file);
+  };
 
   const validate = () => {
     const e = {};
     if (!form.name.trim()) e.name = 'Student name is required';
     if (!form.fatherName.trim()) e.fatherName = 'Father name is required';
     if (!form.mobile.trim()) e.mobile = 'Contact number is required';
-    if (!form.dob) e.dob = 'Date of birth is required';
-    if (!form.gender) e.gender = 'Gender is required';
+    if (formType === 'quick') {
+      if (!form.dob) e.dob = 'Date of birth is required';
+      if (!form.gender) e.gender = 'Gender is required';
+    } else if (!form.registrationNo.trim()) {
+      e.registrationNo = 'Registration No is required';
+    }
     if (form.dues === '' || isNaN(Number(form.dues)) || Number(form.dues) < 0) e.dues = 'Enter dues (0 if none)';
     setErrors(e);
     return Object.keys(e).length === 0;
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!validate()) return;
-    const student = {
-      name: `${form.name.trim()} ${form.lastName.trim()}`.trim(),
-      fatherName: form.fatherName, cnic: form.cnic, dob: form.dob,
-      gender: form.gender, mobile: form.mobile, email: form.email,
-      regNo: form.regNo, dues: form.dues || '0',
-      bloodGroup: form.bloodGroup, address: form.address,
-      motherName: form.motherName, fatherCnic: form.fatherCnic,
-    };
-    onSave(target, student, editIdx);
-    onClose();
+    const now = new Date().toISOString();
+    const userID = Number(sessionStorage.getItem('UserID')) || 0;
+    const fd = new FormData();
+    fd.append('ID',                          editStudent?.id ?? form.id ?? 0);
+    fd.append('GradeId',                     row.cls.id);
+    fd.append('SectionId',                   row.sec?.sectionID ?? 0);
+    fd.append('BranchId',                    Number(sessionStorage.getItem('branchID')) || 0);
+    fd.append('RegisterNo',                  form.registrationNo || form.regNo || '');
+    fd.append('PreviousRegistrationNo',      form.previousRegistrationNo || '');
+    fd.append('FamilyNo',                    form.familyNo || '');
+    fd.append('DateOfAdmission',             form.dateOfAdmission || '');
+    fd.append('FirstName',                   form.name || '');
+    fd.append('LastName',                    form.lastName || '');
+    fd.append('FirstNameInUrdu',             form.firstNameUrdu || '');
+    fd.append('LastNameInUrdu',              form.lastNameUrdu || '');
+    fd.append('FatherName',                  form.fatherName || '');
+    fd.append('FatherCnic',                  form.fatherCnic || '');
+    fd.append('FatherQualification',         form.fatherQualification || '');
+    fd.append('FatherOccupation',            form.fatherOccupation || '');
+    fd.append('MotherName',                  form.motherName || '');
+    fd.append('MotherCnic',                  form.motherCnic || '');
+    fd.append('MotherQualification',         form.motherQualification || '');
+    fd.append('MotherOccupation',            form.motherOccupation || '');
+    fd.append('Gander',                      form.gender || '');
+    fd.append('DateOfBirth',                 form.dob || '');
+    fd.append('Caste',                       form.caste || '');
+    fd.append('Nationality',                 form.nationality || '');
+    fd.append('PostalAddress',               form.postalAddress || '');
+    fd.append('PermanentAddesss',            form.permanentAddress || '');
+    fd.append('MobileNo',                    form.mobile || '');
+    fd.append('MotherMobileNo',              form.motherMobile || '');
+    fd.append('Email',                       form.email || '');
+    fd.append('BFormNo',                     form.bFormNo || '');
+    fd.append('MarksAdmissionTest',          form.marksPercent || '');
+    fd.append('TotalPreviousDues',           Number(form.dues) || 0);
+    fd.append('Picture',                     "");
+    fd.append('PreviousSchoolName',          form.prevSchoolName || '');
+    fd.append('PreviousSchoolFocalPerson',   form.focalPerson || '');
+    fd.append('PreviousSchoolContactNo',     form.prevContactNo || '');
+    fd.append('PreviousSchoolAddress',       form.prevSchoolAddress || '');
+    fd.append('PreviousAdmissionNo',         form.admissionNo || '');
+    fd.append('PreviousSchoolPreviousGrade', form.previousGrade || '');
+    fd.append('PreviousSchoolTestOfGrades',  form.testOfGrade || '');
+    fd.append('BloodGroup',                  form.bloodGroup || '');
+    fd.append('FoodAndDietaryReg',           form.foodDietary || '');
+    fd.append('AllergiesMajorIllness',       form.allergies || '');
+    fd.append('ConditionOfChild',            form.conditionOfChild || '');
+    fd.append('EmergencyContact',            form.emergencyContact || '');
+    fd.append('CreatedAt',                   now);
+    fd.append('CreatedBy',                   userID);
+    fd.append('ModifiedAt',                  now);
+    fd.append('ModifiedBy',                  userID);
+    fd.append('IsActive',                    true);
+    if (form.pictureFile) fd.append('PictureFile', form.pictureFile);
+    try {
+      const res  = await fetch(buildUrl('/api/LaunchSetup/save-student'), {
+        method: 'POST',
+        headers: { Accept: '*/*' },
+        body: fd,
+      });
+      const data = await res.json();
+      if (res.ok) {
+        showToast?.(editStudent ? 'Student updated successfully' : 'Student added successfully', 'success');
+        onSaved?.();   // refetch class/section/student list
+        onClose();
+      } else {
+        showToast?.(data?.message || 'Save failed', 'error');
+      }
+    } catch (err) {
+      console.error(err);
+      showToast?.('Network error. Please try again.', 'error');
+    }
   };
 
   if (!open || !row) return null;
 
-  const FG = ({ id, label, req, children }) => (
-    <div className="form-group">
+  // ── field helpers (plain functions so inputs don't lose focus on re-render) ──
+  const field = (label, node, { req, id, span } = {}) => (
+    <div className="form-group" style={span ? { gridColumn: `span ${span}` } : undefined}>
       <label className="form-label">{label} {req && <span className="req-star">*</span>}</label>
-      {children}
-      {errors[id] && <span className="field-msg error"><i className="fas fa-times-circle"></i> {errors[id]}</span>}
+      {node}
+      {id && errors[id] && <span className="field-msg error"><i className="fas fa-times-circle"></i> {errors[id]}</span>}
+    </div>
+  );
+  const inp = (key, ph, type = 'text') => (
+    <input className={`form-input${errors[key] ? ' error-field' : ''}`} type={type} placeholder={ph} value={form[key]} onChange={e => set(key, e.target.value)} />
+  );
+  const sel = (key, placeholder, options) => (
+    <select className={`form-select${errors[key] ? ' error-field' : ''}`} value={form[key]} onChange={e => set(key, e.target.value)}>
+      <option value="">{placeholder}</option>
+      {options.map(o => <option key={o}>{o}</option>)}
+    </select>
+  );
+  const grid = (cols, children) => (
+    <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, 1fr)`, gap: 16 }}>{children}</div>
+  );
+  const section = (key, icon, title, children) => (
+    <div style={{ border: '1px solid #cdddf5', borderRadius: 12, marginBottom: 16, overflow: 'hidden' }}>
+      <div
+        onClick={() => setOpenSec(s => ({ ...s, [key]: !s[key] }))}
+        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 18px', background: '#dbe7fb', cursor: 'pointer' }}
+      >
+        <span style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 14, fontWeight: 700, color: 'var(--brand-primary)' }}>
+          <i className={`fas ${icon}`}></i> {title}
+        </span>
+        <i className={`fas fa-chevron-${openSec[key] ? 'up' : 'down'}`} style={{ color: 'var(--brand-primary)', fontSize: 14 }}></i>
+      </div>
+      {openSec[key] && <div style={{ padding: 18 }}>{children}</div>}
     </div>
   );
 
+  const GENDER = ['Male', 'Female', 'Other'];
+  const NATIONALITY = ['Pakistani', 'Other'];
+  const BLOOD = ['A+', 'A-', 'B+', 'B-', 'O+', 'O-', 'AB+', 'AB-'];
+
   return (
     <div className="modal-overlay open" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="modal modal-xl" style={{ maxHeight: '90vh' }}>
+      <div className="modal modal-xl" style={{ maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}>
         {/* Header */}
-        <div style={{ background: 'linear-gradient(135deg,#1E3A8A,#1E40AF)', padding: '18px 24px', borderRadius: '20px 20px 0 0', flexShrink: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
-            <div>
-              <div style={{ color: '#fff', fontWeight: 800, fontSize: 16 }}>{editIdx >= 0 ? 'Update Student' : 'Add Student'}</div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 7 }}>
-                <span style={{ background: 'rgba(255,255,255,.18)', color: '#fff', fontSize: 11.5, fontWeight: 700, padding: '3px 10px', borderRadius: 99 }}>
-                  {row.cls.name}
-                </span>
-                {row.sec && <span style={{ background: 'rgba(22,163,74,.25)', color: '#4ADE80', fontSize: 11.5, fontWeight: 700, padding: '3px 10px', borderRadius: 99 }}>
-                  Section {row.sec}
-                </span>}
-              </div>
-            </div>
-            <button className="modal-close" style={{ background: 'rgba(255,255,255,.15)', color: '#fff', marginTop: 2 }} onClick={onClose}>
-              <i className="fas fa-times"></i>
-            </button>
+        <div className="modal-header">
+          <div>
+            <div className="modal-title">{editIdx >= 0 ? 'Update Student' : 'Add Student'}</div>
+            <div className="modal-subtitle">Choose form type below</div>
+            <span style={{ display: 'inline-block', marginTop: 8, background: 'rgba(30,58,138,.08)', border: '1px solid rgba(30,58,138,.15)', color: 'var(--brand-primary)', fontSize: 12, fontWeight: 700, padding: '4px 12px', borderRadius: 99 }}>
+              {row.cls.name}{row.sec ? ` · ${row.sec.sectionName}` : ''}
+            </span>
           </div>
-          {/* Form type toggle */}
-          <div style={{ display: 'flex', gap: 4, marginTop: 14, background: 'rgba(0,0,0,.2)', borderRadius: 10, padding: 4, width: 'fit-content' }}>
-            {['quick', 'detail'].map(type => (
-              <button key={type} onClick={() => setFormType(type)}
-                style={{ padding: '7px 18px', fontSize: 12.5, fontWeight: 700, border: 'none', cursor: 'pointer', fontFamily: 'var(--font-body)', transition: 'all .2s',
-                  background: formType === type ? 'var(--brand-primary)' : 'transparent',
-                  color: formType === type ? '#fff' : 'rgba(255,255,255,.7)', borderRadius: 8,
-                  boxShadow: formType === type ? '0 2px 8px rgba(30,58,138,.28)' : 'none' }}>
-                {type === 'quick' ? 'Quick Form' : 'Detailed Form'}
-              </button>
-            ))}
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+            <div style={{ display: 'flex', gap: 4, background: 'var(--bg-muted)', borderRadius: 10, padding: 4 }}>
+              {[['quick', 'Quick Form', 'fa-bolt'], ['detail', 'Detailed Form', 'fa-list']].map(([type, lbl, icon]) => (
+                <button key={type} onClick={() => setFormType(type)}
+                  style={{ padding: '8px 16px', fontSize: 12.5, fontWeight: 700, border: 'none', cursor: 'pointer', fontFamily: 'var(--font-body)', display: 'inline-flex', alignItems: 'center', gap: 6, borderRadius: 8,
+                    background: formType === type ? 'var(--brand-primary)' : 'transparent',
+                    color: formType === type ? '#fff' : 'var(--text-secondary)',
+                    boxShadow: formType === type ? '0 2px 8px rgba(30,58,138,.28)' : 'none' }}>
+                  <i className={`fas ${icon}`}></i> {lbl}
+                </button>
+              ))}
+            </div>
+            <button className="modal-close" onClick={onClose}><i className="fas fa-times"></i></button>
           </div>
         </div>
 
-        <div className="modal-body">
+        <div className="modal-body" style={{ overflowY: 'auto', flex: 1 }}>
           {formType === 'quick' ? (
             <div>
-              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--brand-primary)', marginBottom: 14, padding: '8px 12px', background: 'rgba(30,58,138,.06)', borderRadius: 8 }}>
-                <i className="fas fa-bolt" style={{ marginRight: 6 }}></i>
-                {editIdx >= 0 ? `Updating student in` : `Adding student to`} <strong>{row.cls.name}</strong>{row.sec ? ` · Section ${row.sec}` : ''}
+              <div style={{ textAlign: 'center', fontSize: 17, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 22 }}>
+                Add Student in Class <span style={{ color: 'var(--brand-primary)' }}>{row.cls.name}</span>{row.sec ? <> in <span style={{ color: 'var(--brand-primary)' }}>{row.sec.sectionName}</span></> : ''}
               </div>
-              <div className="form-grid form-grid-2" style={{ gap: 12 }}>
-                <FG id="name" label="First Name" req>
-                  <input className={`form-input${errors.name ? ' error-field' : ''}`} placeholder="First name" value={form.name} onChange={e => set('name', e.target.value)} autoFocus />
-                </FG>
-                <FG id="lastName" label="Last Name">
-                  <input className="form-input" placeholder="Last name" value={form.lastName} onChange={e => set('lastName', e.target.value)} />
-                </FG>
-                <FG id="fatherName" label="Father Name" req>
-                  <input className={`form-input${errors.fatherName ? ' error-field' : ''}`} placeholder="Father's full name" value={form.fatherName} onChange={e => set('fatherName', e.target.value)} />
-                </FG>
-                <FG id="dob" label="Date of Birth" req>
-                  <input className={`form-input${errors.dob ? ' error-field' : ''}`} type="date" value={form.dob} onChange={e => set('dob', e.target.value)} />
-                </FG>
-                <FG id="gender" label="Gender" req>
-                  <select className={`form-select${errors.gender ? ' error-field' : ''}`} value={form.gender} onChange={e => set('gender', e.target.value)}>
-                    <option value="">Select gender</option>
-                    <option>Male</option><option>Female</option><option>Other</option>
-                  </select>
-                </FG>
-                <FG id="mobile" label="Contact Number" req>
-                  <input className={`form-input${errors.mobile ? ' error-field' : ''}`} placeholder="+92 300 0000000" value={form.mobile} onChange={e => set('mobile', e.target.value)} />
-                </FG>
-                <FG id="email" label="Email (optional)">
-                  <input className="form-input" type="email" placeholder="student@email.com" value={form.email} onChange={e => set('email', e.target.value)} />
-                </FG>
-                <FG id="dues" label="Previous Dues (PKR)" req>
-                  <div className="input-wrapper">
-                    <i className="fas fa-rupee-sign input-icon"></i>
-                    <input className={`form-input has-icon${errors.dues ? ' error-field' : ''}`} type="number" min="0" placeholder="0" value={form.dues} onChange={e => set('dues', e.target.value)} />
-                  </div>
-                </FG>
-                {manualReg && (
-                  <FG id="regNo" label="Registration Number">
-                    <input className="form-input" placeholder="e.g. 245-00001" value={form.regNo} onChange={e => set('regNo', e.target.value)} />
-                  </FG>
-                )}
-                <FG id="cnic" label="B-Form / CNIC (optional)">
-                  <input className="form-input" placeholder="35201-1234567-8" value={form.cnic} onChange={e => set('cnic', e.target.value)} />
-                </FG>
-              </div>
+              {grid(3, <>
+                {field('Student First Name', inp('name', 'First Name'), { req: true, id: 'name' })}
+                {field('Last Name', inp('lastName', 'Last Name'))}
+                {field('Father Name', inp('fatherName', 'Father Name'), { req: true, id: 'fatherName' })}
+                {field('Date of Birth', inp('dob', '', 'date'), { req: true, id: 'dob' })}
+                {field('Gender', sel('gender', 'Select Gender', GENDER), { req: true, id: 'gender' })}
+                {field('Previous Registration #', inp('previousRegistrationNo', 'Please Enter Previous Reg'))}
+                {field('Contact No', inp('mobile', 'Contact number'), { req: true, id: 'mobile' })}
+                {field('Email', inp('email', 'student@email.com', 'email'))}
+                {field('Total Previous Dues', inp('dues', '0', 'number'), { req: true, id: 'dues' })}
+              </>)}
             </div>
           ) : (
             <div>
-              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--brand-primary)', marginBottom: 14, padding: '8px 12px', background: 'rgba(30,58,138,.06)', borderRadius: 8 }}>
-                <i className="fas fa-file-alt" style={{ marginRight: 6 }}></i>Detailed student profile
-              </div>
-              {/* Personal Info */}
-              <div style={{ fontWeight: 700, fontSize: 12, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 10 }}>Personal Information</div>
-              <div className="form-grid form-grid-2" style={{ gap: 12, marginBottom: 20 }}>
-                <FG id="name" label="First Name" req><input className={`form-input${errors.name ? ' error-field' : ''}`} value={form.name} onChange={e => set('name', e.target.value)} /></FG>
-                <FG id="lastName" label="Last Name"><input className="form-input" value={form.lastName} onChange={e => set('lastName', e.target.value)} /></FG>
-                <FG id="fatherName" label="Father Name" req><input className={`form-input${errors.fatherName ? ' error-field' : ''}`} value={form.fatherName} onChange={e => set('fatherName', e.target.value)} /></FG>
-                <FG id="motherName" label="Mother Name"><input className="form-input" value={form.motherName} onChange={e => set('motherName', e.target.value)} /></FG>
-                <FG id="dob" label="Date of Birth" req><input className={`form-input${errors.dob ? ' error-field' : ''}`} type="date" value={form.dob} onChange={e => set('dob', e.target.value)} /></FG>
-                <FG id="gender" label="Gender" req>
-                  <select className={`form-select${errors.gender ? ' error-field' : ''}`} value={form.gender} onChange={e => set('gender', e.target.value)}>
-                    <option value="">Select</option><option>Male</option><option>Female</option><option>Other</option>
-                  </select>
-                </FG>
-                <FG id="bloodGroup" label="Blood Group">
-                  <select className="form-select" value={form.bloodGroup} onChange={e => set('bloodGroup', e.target.value)}>
-                    <option value="">Select</option>
-                    {['A+','A-','B+','B-','O+','O-','AB+','AB-'].map(b => <option key={b}>{b}</option>)}
-                  </select>
-                </FG>
-                <FG id="cnic" label="B-Form / CNIC"><input className="form-input" placeholder="35201-1234567-8" value={form.cnic} onChange={e => set('cnic', e.target.value)} /></FG>
-                <FG id="fatherCnic" label="Father's CNIC"><input className="form-input" value={form.fatherCnic} onChange={e => set('fatherCnic', e.target.value)} /></FG>
-                <FG id="mobile" label="Contact Number" req><input className={`form-input${errors.mobile ? ' error-field' : ''}`} value={form.mobile} onChange={e => set('mobile', e.target.value)} /></FG>
-                <FG id="email" label="Email"><input className="form-input" type="email" value={form.email} onChange={e => set('email', e.target.value)} /></FG>
-                <div style={{ gridColumn: 'span 2' }}>
-                  <FG id="address" label="Address"><textarea className="form-input" rows={2} value={form.address} onChange={e => set('address', e.target.value)} style={{ resize: 'vertical' }} /></FG>
-                </div>
-              </div>
-              {/* Academic Info */}
-              <div style={{ fontWeight: 700, fontSize: 12, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 10 }}>Academic & Financial</div>
-              <div className="form-grid form-grid-2" style={{ gap: 12 }}>
-                {manualReg && <FG id="regNo" label="Registration Number"><input className="form-input" value={form.regNo} onChange={e => set('regNo', e.target.value)} /></FG>}
-                <FG id="dues" label="Previous Dues (PKR)" req>
-                  <div className="input-wrapper">
-                    <i className="fas fa-rupee-sign input-icon"></i>
-                    <input className={`form-input has-icon${errors.dues ? ' error-field' : ''}`} type="number" min="0" value={form.dues} onChange={e => set('dues', e.target.value)} />
+              {/* Student Registration Form */}
+              {section('reg', 'fa-user', 'Student Registration Form', grid(4, <>
+                {field('Registration No', inp('registrationNo', '245-42343'), { req: true, id: 'registrationNo' })}
+                {field('Previous Registration No', inp('previousRegistrationNo', 'Enter Here'))}
+                {field('Family No', inp('familyNo', 'Enter Here'))}
+                {field('Date of Admission', inp('dateOfAdmission', '', 'date'))}
+                {field('First Name', inp('name', 'Enter Here'), { req: true, id: 'name' })}
+                {field('Last Name', inp('lastName', 'Enter Here'))}
+                {field('First Name In Urdu', inp('firstNameUrdu', 'Enter Here'))}
+                {field('Last Name In Urdu', inp('lastNameUrdu', 'Enter Here'))}
+                {field('Father Name In Urdu', inp('fatherNameUrdu', 'Enter Here'))}
+                {field('Father Name', inp('fatherName', 'Enter Here'), { req: true, id: 'fatherName' })}
+                {field('Father CNIC', inp('fatherCnic', '_____/_______/_'))}
+                {field("Father's Qualification", inp('fatherQualification', 'Enter Here'))}
+                {field("Father's Occupation", inp('fatherOccupation', 'Enter Here'))}
+                {field('Mother Name', inp('motherName', 'Enter Here'))}
+                {field('Mother CNIC', inp('motherCnic', '_____/_______/_'))}
+                {field("Mother's Qualification", inp('motherQualification', 'Enter Here'))}
+                {field("Mother's Occupation", inp('motherOccupation', 'Enter Here'))}
+                {field('Gender', sel('gender', 'Select Gender', GENDER))}
+                {field('Date of Birth', inp('dob', '', 'date'))}
+                {field('Caste', inp('caste', 'Enter Here'))}
+                {field('Nationality', sel('nationality', 'Select Nationality', NATIONALITY))}
+                {field('Postal Address', inp('postalAddress', 'Enter Here'))}
+                {field('Permanent Address', inp('permanentAddress', 'Enter Here'))}
+                {field('Mobile No', inp('mobile', '+92 348 120000'), { req: true, id: 'mobile' })}
+                {field('Mother Mobile No', inp('motherMobile', '+92 348 120000'))}
+                {field('Email', inp('email', 'student@gmail.com', 'email'))}
+                {field('B-Form No (optional)', inp('bFormNo', '132465'))}
+                {field('Marks % (Admission Test)', inp('marksPercent', '132465'))}
+                {field('Total Previous Dues', inp('dues', '0', 'number'), { req: true, id: 'dues' })}
+                {field('Profile Photo', (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+                    <div style={{ width: 70, height: 70, borderRadius: 10, border: '1px dashed var(--border-light)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', background: 'var(--bg-muted)', fontSize: 11, color: 'var(--text-muted)', flexShrink: 0 }}>
+                      {form.profilePhoto ? <img src={form.profilePhoto} alt="preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <span><i className="fas fa-image"></i></span>}
+                    </div>
+                    <label className="btn btn-primary btn-sm" style={{ cursor: 'pointer' }}>
+                      <i className="fas fa-folder-open"></i> Browse
+                      <input type="file" accept="image/*" onChange={handleImage} style={{ display: 'none' }} />
+                    </label>
                   </div>
-                </FG>
-              </div>
+                ), { span: 4 })}
+              </>))}
+
+              {/* Previous Institutional History */}
+              {section('history', 'fa-clock-rotate-left', 'Previous Institutional History', grid(3, <>
+                {field('School Name', inp('prevSchoolName', 'Enter Here'))}
+                {field('Focal Person', inp('focalPerson', 'Enter Here'))}
+                {field('Contact No', inp('prevContactNo', 'Enter Here'))}
+                {field('School Address', inp('prevSchoolAddress', 'Enter Here'), { span: 3 })}
+                {field('Admission No', inp('admissionNo', 'Enter Here'))}
+                {field('Previous Grade', inp('previousGrade', 'Enter Here'))}
+                {field('Test of Grade', inp('testOfGrade', 'Enter Here'))}
+              </>))}
+
+              {/* Health & Emergency Information */}
+              {section('health', 'fa-heart-pulse', 'Health & Emergency Information', grid(4, <>
+                {field('Blood Group', sel('bloodGroup', 'Select Blood group', BLOOD))}
+                {field('Food and Dietary Req', inp('foodDietary', 'Enter Here'))}
+                {field('Allergies/Major Illness', inp('allergies', 'Enter Here'))}
+                {field('Condition of the Child', inp('conditionOfChild', 'Enter Here'))}
+                {field('Emergency Contact', inp('emergencyContact', 'Enter Here'))}
+              </>))}
             </div>
           )}
         </div>
 
         <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', padding: '14px 24px', borderTop: '1px solid var(--border-light)', background: 'var(--bg-card)', borderRadius: '0 0 20px 20px', flexShrink: 0 }}>
-          <button className="btn btn-secondary btn-md" onClick={onClose}>Cancel</button>
+          <button className="btn btn-secondary btn-md" onClick={onClose}>Close</button>
           <button className="btn btn-primary btn-md" onClick={handleSave}>
-            <i className="fas fa-save"></i> {editIdx >= 0 ? 'Update Student' : 'Add Student'}
+            <i className="fas fa-save"></i> Save Changes
           </button>
         </div>
       </div>
@@ -215,6 +371,9 @@ export default function StudentTab({ classesData, setClassesData, studentStrengt
   const [showStudentModal, setShowStudentModal] = useState(false);
   const [stuTarget, setStuTarget] = useState(null);
   const [stuEditIdx, setStuEditIdx] = useState(-1);
+  const [stuEditData, setStuEditData] = useState(null);
+  const [deleteStuTarget, setDeleteStuTarget] = useState(null);
+  const [deleting, setDeleting] = useState(false);
   const [showImport, setShowImport] = useState(null);
   const [importStep, setImportStep] = useState(1);
         const branchID = sessionStorage.getItem('branchID');
@@ -235,15 +394,28 @@ export default function StudentTab({ classesData, setClassesData, studentStrengt
   const filtered = search
     ? allRows.filter(({ cls, sec }) =>
         cls.name.toLowerCase().includes(search.toLowerCase()) ||
-        (sec && sec.toLowerCase().includes(search.toLowerCase())))
+        (sec?.sectionName && sec.sectionName.toLowerCase().includes(search.toLowerCase())))
     : allRows;
 
   const pages = Math.ceil(filtered.length / STU_PER_PAGE) || 1;
   const currentPage = Math.min(page, pages);
   const paged = filtered.slice((currentPage - 1) * STU_PER_PAGE, currentPage * STU_PER_PAGE);
 
-  const getKey = (clsId, sec) => `${clsId}_${sec || 'null'}`;
-  const getStudents = (clsId, sec) => students[getKey(clsId, sec)] || [];
+  const getKey = (clsId, sec) => `${clsId}_${sec?.sectionID ?? 'null'}`;
+  const normalizeStudent = (st) => ({
+    ...st,
+    regNo:      st.registerNo ?? st.regNo ?? '',
+    name:       st.name ?? `${st.firstName ?? ''} ${st.lastName ?? ''}`.trim(),
+    fatherName: st.fatherName ?? '',
+    dob:        st.dateOfBirth ?? st.dob ?? '',
+    mobile:     st.mobileNo ?? st.mobile ?? '',
+    dues:       st.totalPreviousDues ?? st.dues ?? 0,
+  });
+  const getStudents = (clsId, sec) => {
+    const apiList = (sec?.students || []).map(normalizeStudent);
+    const localList = students[getKey(clsId, sec)] || [];
+    return apiList.length ? apiList : localList;
+  };
   const getStrength = (clsId, sec) => {
     const stuList = getStudents(clsId, sec);
     return stuList.length > 0 ? stuList.length : (studentStrengths[getKey(clsId, sec)] || 0);
@@ -267,23 +439,40 @@ export default function StudentTab({ classesData, setClassesData, studentStrengt
     );
   };
 
-  const handleDeleteStudent = (key, idx) => {
-    const stu = (students[key] || [])[idx];
-    if (!window.confirm(`Remove "${stu?.name}"? This cannot be undone.`)) return;
-    setStudents(prev => ({ ...prev, [key]: prev[key].filter((_, i) => i !== idx) }));
-    showToast(`"${stu?.name}" removed`, 'info');
+  const confirmDeleteStudent = async () => {
+    if (!deleteStuTarget?.id) { setDeleteStuTarget(null); return; }
+    setDeleting(true);
+    try {
+      const res = await fetch(buildUrl(`/api/LaunchSetup/delete-student/${deleteStuTarget.id}`), {
+        method: 'DELETE',
+        headers: { Accept: '*/*' },
+      });
+      if (res.ok) {
+        showToast(`"${deleteStuTarget.name}" removed`, 'success');
+        getclassesdata();
+      } else {
+        const data = await res.json().catch(() => ({}));
+        showToast(data?.message || 'Delete failed', 'error');
+      }
+    } catch (err) {
+      console.error(err);
+      showToast('Network error. Please try again.', 'error');
+    } finally {
+      setDeleting(false);
+      setDeleteStuTarget(null);
+    }
   };
 
   const openAddStudent = (key) => {
-    setStuTarget(key); setStuEditIdx(-1); setShowStudentModal(true);
+    setStuTarget(key); setStuEditIdx(-1); setStuEditData(null); setShowStudentModal(true);
   };
-  const openEditStudent = (key, idx) => {
-    setStuTarget(key); setStuEditIdx(idx); setShowStudentModal(true);
+  const openEditStudent = (key, student, idx) => {
+    setStuTarget(key); setStuEditIdx(idx); setStuEditData(student); setShowStudentModal(true);
   };
 
-  const totalStudents = Object.values(students).reduce((s, list) => s + (list?.length || 0), 0) +
-    Object.entries(studentStrengths).filter(([k]) => !(students[k]?.length)).reduce((s, [, v]) => s + (v || 0), 0);
-  const totalWithStudents = Object.values(students).filter(l => l?.length > 0).length;
+  const allSections = (Array.isArray(classesData) ? classesData : []).flatMap(c => c.sections || []);
+  const totalStudents = allSections.reduce((s, sec) => s + (sec.students?.length || 0), 0);
+  const totalWithStudents = allSections.filter(sec => (sec.students?.length || 0) > 0).length;
 
 
   useEffect(() => {
@@ -293,7 +482,7 @@ export default function StudentTab({ classesData, setClassesData, studentStrengt
   const getclassesdata = useCallback(async () => {
 
       try {
-        const res      = await fetch(buildUrl(`/api/LaunchSetup/get-grades-by-branch/${branchID}`), { headers: { Accept: '*/*' } });
+        const res      = await fetch(buildUrl(`/api/LaunchSetup/get-class-section-studentlist-by-branch/${branchID}`), { headers: { Accept: '*/*' } });
         const json     = await res.json();
         const d        = json.data ?? {};
         setClassesData(d);
@@ -377,10 +566,9 @@ export default function StudentTab({ classesData, setClassesData, studentStrengt
                     {sec ? <span className="stu-section-pill">{sec.sectionName}</span>
                       : <span style={{ fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic' }}>No section</span>}
                   </div>
-                  {/* Strength input — editable, stops propagation */}
+                  {/* Strength */}
                   <div className="td" onClick={e => e.stopPropagation()}>
-                    <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--brand-primary)', marginRight: 6 }}>{strength}</span>
-                    <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>students</span>
+                    <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--text-primary)' }}>{strength}</span>
                   </div>
                   {/* Action buttons */}
                   <div className="td" style={{ gap: 6, flexWrap: 'wrap' }}>
@@ -391,16 +579,22 @@ export default function StudentTab({ classesData, setClassesData, studentStrengt
                       <i className="fas fa-user-plus"></i> Add Student
                     </button>
                     <button
-                      className="btn btn-ghost btn-sm"
                       onClick={e => { e.stopPropagation(); setShowImport({ cls, sec }); setImportStep(1); }}
-                      title="Bulk Import">
+                      title="Bulk Import"
+                      style={{ background: '#1E293B', color: '#fff', border: 'none', borderRadius: 8, padding: '7px 11px', cursor: 'pointer', fontSize: 13, display: 'inline-flex', alignItems: 'center' }}>
                       <i className="fas fa-file-import"></i>
                     </button>
                     <button
-                      className="btn btn-pdf btn-sm"
                       onClick={e => { e.stopPropagation(); showToast('Section PDF coming soon', 'info'); }}
-                      title="Download PDF" style={{ padding: '5px 9px' }}>
-                      <i className="fas fa-file-pdf"></i>
+                      title="Download PDF"
+                      style={{ background: '#DC2626', color: '#fff', border: 'none', borderRadius: 8, padding: '7px 12px', cursor: 'pointer', fontSize: 12.5, fontWeight: 700, whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                      <i className="fas fa-file-pdf"></i> PDF
+                    </button>
+                    <button
+                      onClick={e => { e.stopPropagation(); showToast('Section Excel coming soon', 'info'); }}
+                      title="Download Excel"
+                      style={{ background: '#16A34A', color: '#fff', border: 'none', borderRadius: 8, padding: '7px 12px', cursor: 'pointer', fontSize: 12.5, fontWeight: 700, whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                      <i className="fas fa-file-excel"></i> Excel
                     </button>
                   </div>
                   <div className="td" style={{ justifyContent: 'center' }}>
@@ -416,11 +610,11 @@ export default function StudentTab({ classesData, setClassesData, studentStrengt
                     <div style={{ background: 'linear-gradient(135deg,#1E40AF,#1E40AF)', borderRadius: '8px 8px 0 0', padding: '12px 18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
                       <div style={{ fontSize: 15, fontWeight: 800, color: '#fff' }}>
                         <i className="fas fa-users" style={{ marginRight: 8, opacity: .85 }}></i>
-                        Student List — {cls.name}{sec ? ` · Section ${sec}` : ''}
+                        Student List — {cls.name}{sec ? ` · Section ${sec.sectionName}` : ''}
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         <span style={{ background: 'rgba(255,255,255,.18)', color: '#fff', fontSize: 12, fontWeight: 700, padding: '3px 10px', borderRadius: 99 }}>
-                          {stuList.length} student{stuList.length !== 1 ? 's' : ''}
+                          {sec.students.length} student{sec.students.length !== 1 ? 's' : ''}
                         </span>
                         <button onClick={() => openAddStudent(key)}
                           style={{ background: 'rgba(255,255,255,.18)', border: '1.5px solid rgba(255,255,255,.35)', color: '#fff', fontSize: 12, fontWeight: 700, padding: '5px 12px', borderRadius: 8, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, transition: 'background .2s', fontFamily: 'var(--font-body)' }}>
@@ -429,14 +623,14 @@ export default function StudentTab({ classesData, setClassesData, studentStrengt
                       </div>
                     </div>
 
-                    {!stuList.length ? (
+                    {!sec.students.length ? (
                       <div style={{ textAlign: 'center', padding: '40px 20px', background: 'var(--bg-muted)', borderRadius: '0 0 8px 8px' }}>
                         <div style={{ width: 64, height: 64, borderRadius: '50%', background: 'rgba(30,58,138,.07)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 14px', fontSize: 26, color: 'var(--brand-primary)' }}>
                           <i className="fas fa-user-graduate"></i>
                         </div>
                         <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--text-primary)', marginBottom: 6 }}>No Students Enrolled Yet</div>
                         <div style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 18 }}>
-                          Add students to <strong>{cls.name}</strong>{sec ? ` – Section ${sec}` : ''}
+                          Add students to <strong>{cls.name}</strong>{sec ? ` – Section ${sec.sectionName}` : ''}
                         </div>
                         <button className="btn btn-primary btn-md" onClick={() => openAddStudent(key)}>
                           <i className="fas fa-user-plus"></i> Add First Student
@@ -453,24 +647,25 @@ export default function StudentTab({ classesData, setClassesData, studentStrengt
                             </tr>
                           </thead>
                           <tbody>
-                            {stuList.map((s, si) => {
+                            {sec.students.map((s, si) => {
                               const displayRegNo = s.regNo || `245-${String(10001 + si).slice(-4)}`;
                               const rowBg = si % 2 === 0 ? 'var(--bg-card)' : 'var(--bg-muted)';
                               const TD = 'padding:10px 12px;border-bottom:1px solid var(--border-light);font-size:13px;';
+                              const displayname = `${s.firstName} ${s.lastName}` 
                               return (
                                 <tr key={si} style={{ background: rowBg }}>
                                   <td style={{ padding: '10px 12px', borderBottom: '1px solid var(--border-light)', fontWeight: 700, color: 'var(--text-muted)', width: 40 }}>{si + 1}</td>
                                   <td style={{ padding: '10px 12px', borderBottom: '1px solid var(--border-light)', fontWeight: 600, whiteSpace: 'nowrap', fontSize: 13 }}>{displayRegNo}</td>
-                                  <td style={{ padding: '10px 12px', borderBottom: '1px solid var(--border-light)', fontWeight: 700, fontSize: 13, color: 'var(--text-primary)' }}>{s.name}</td>
+                                  <td style={{ padding: '10px 12px', borderBottom: '1px solid var(--border-light)', fontWeight: 700, fontSize: 13, color: 'var(--text-primary)' }}>{displayname}</td>
                                   <td style={{ padding: '10px 12px', borderBottom: '1px solid var(--border-light)', fontSize: 13, color: 'var(--text-secondary)' }}>{s.fatherName || '—'}</td>
-                                  <td style={{ padding: '10px 12px', borderBottom: '1px solid var(--border-light)', fontSize: 13, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{s.dob || '—'}</td>
-                                  <td style={{ padding: '10px 12px', borderBottom: '1px solid var(--border-light)', fontSize: 13, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{s.mobile || '—'}</td>
+                                  <td style={{ padding: '10px 12px', borderBottom: '1px solid var(--border-light)', fontSize: 13, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{s.dateOfBirth || '—'}</td>
+                                  <td style={{ padding: '10px 12px', borderBottom: '1px solid var(--border-light)', fontSize: 13, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{s.mobileNo || '—'}</td>
                                   <td style={{ padding: '10px 12px', borderBottom: '1px solid var(--border-light)', textAlign: 'center', whiteSpace: 'nowrap' }}>
-                                    <button onClick={() => openEditStudent(key, si)}
+                                    <button onClick={() => openEditStudent(key, s, si)}
                                       style={{ background: 'rgba(30,58,138,.08)', border: '1px solid rgba(30,58,138,.2)', color: 'var(--brand-primary)', borderRadius: 6, padding: '4px 10px', fontSize: 12, cursor: 'pointer', marginRight: 5, fontFamily: 'var(--font-body)', fontWeight: 600 }}>
                                       <i className="fas fa-pen"></i>
                                     </button>
-                                    <button onClick={() => handleDeleteStudent(key, si)}
+                                    <button onClick={() => setDeleteStuTarget(s)}
                                       style={{ background: 'rgba(220,38,38,.08)', border: '1px solid rgba(220,38,38,.2)', color: '#DC2626', borderRadius: 6, padding: '4px 10px', fontSize: 12, cursor: 'pointer', fontFamily: 'var(--font-body)', fontWeight: 600 }}>
                                       <i className="fas fa-trash"></i>
                                     </button>
@@ -479,7 +674,7 @@ export default function StudentTab({ classesData, setClassesData, studentStrengt
                               );
                             })}
                           </tbody>
-                          {stuList.reduce((s, x) => s + (Number(x.dues) || 0), 0) > 0 && (
+                          {sec.students.reduce((s, x) => s + (Number(x.dues) || 0), 0) > 0 && (
                             <tfoot>
                               <tr style={{ background: 'rgba(30,58,138,.05)', borderTop: '2px solid var(--border-light)' }}>
                                 <td colSpan={5} style={{ padding: '10px 12px', fontSize: 12.5, fontWeight: 700, color: 'var(--text-muted)' }}>Total Previous Dues</td>
@@ -518,11 +713,44 @@ export default function StudentTab({ classesData, setClassesData, studentStrengt
         open={showStudentModal}
         target={stuTarget}
         editIdx={stuEditIdx}
+        editStudent={stuEditData}
         classesData={classesData}
         manualReg={manualReg}
+        showToast={showToast}
         onClose={() => setShowStudentModal(false)}
-        onSave={handleSaveStudent}
+        onSaved={getclassesdata}
       />
+
+      {/* Delete student confirmation */}
+      {deleteStuTarget && (
+        <div className="modal-overlay open" onClick={e => e.target === e.currentTarget && !deleting && setDeleteStuTarget(null)}>
+          <div className="modal modal-sm">
+            <div className="modal-header">
+              <div>
+                <div className="modal-title">Remove Student</div>
+                <div className="modal-subtitle">This action cannot be undone</div>
+              </div>
+              <button className="modal-close" onClick={() => !deleting && setDeleteStuTarget(null)}><i className="fas fa-times"></i></button>
+            </div>
+            <div className="modal-body">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px', background: 'rgba(220,38,38,.06)', border: '1px solid rgba(220,38,38,.2)', borderRadius: 'var(--radius-md)' }}>
+                <div style={{ width: 42, height: 42, borderRadius: '50%', background: 'rgba(220,38,38,.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: '#DC2626', fontSize: 18 }}>
+                  <i className="fas fa-trash"></i>
+                </div>
+                <div style={{ fontSize: 13.5, color: 'var(--text-primary)' }}>
+                  Are you sure you want to remove <strong>{deleteStuTarget.name}</strong>?
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button className="btn btn-secondary btn-md" onClick={() => setDeleteStuTarget(null)} disabled={deleting}>Cancel</button>
+                <button className="btn btn-danger btn-md" onClick={confirmDeleteStudent} disabled={deleting}>
+                  <i className={`fas ${deleting ? 'fa-spinner fa-spin' : 'fa-trash'}`}></i> {deleting ? 'Removing...' : 'Remove'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Import Wizard */}
       {showImport && (
@@ -533,7 +761,7 @@ export default function StudentTab({ classesData, setClassesData, studentStrengt
                 <div>
                   <div style={{ color: '#fff', fontWeight: 800, fontSize: 15 }}>Bulk Import Students</div>
                   <div style={{ color: 'rgba(255,255,255,.7)', fontSize: 12, marginTop: 4 }}>
-                    {showImport.cls.name}{showImport.sec ? ` · Section ${showImport.sec}` : ''}
+                    {showImport.cls.name}{showImport.sec ? ` · Section ${showImport.sec.sectionName}` : ''}
                   </div>
                 </div>
                 <button className="modal-close" style={{ background: 'rgba(255,255,255,.15)', color: '#fff' }} onClick={() => { setShowImport(null); setImportStep(1); }}>
@@ -639,6 +867,7 @@ export default function StudentTab({ classesData, setClassesData, studentStrengt
           </div>
         </div>
       )}
+
     </div>
   );
 }

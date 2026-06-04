@@ -25,8 +25,11 @@ function AddDeptModal({ open, onClose, onAdd, getDeparmentdata }) {
     {
       designationID: 0,
       branchID: 0,
-      departmentID: 0,
+      branchDepartmentID: 0,
       designationName: "",
+       description: "",
+      qualificationID: 0,
+      qualificationName: "",
       createdBy: 0,
       modifiedBy: 0,
     }
@@ -88,14 +91,32 @@ setName('');
   );
 }
 
-function AddDesigModal({ open, dept, onClose, onAdd,  getDeparmentdata}) {
+function AddDesigModal({ open, dept, onClose, onAdd,  getDeparmentdata, showToast}) {
   const [name, setName] = useState('');
-  const [qual, setQual] = useState('');
+  const [qual, setQual] = useState({});
   const [job, setJob] = useState('');
   const [err, setErr] = useState('');
+  const [err2, setErr2] = useState('');
+  const [Qualification, setQualification] = useState({});
+
+  useEffect(() => {
+    if (open) getQualification();
+  }, [open])
+
+
+   async function getQualification() {
+      try {
+        const res  = await fetch(buildUrl(`/api/LaunchSetup/get-qualifications/0`), { headers: { Accept: '*/*' } });
+        const json = await res.json();
+        setQualification(json.data ?? []);
+        console.log(Qualification)
+      } catch { showToast('Could not load cities', 'error'); }
+    }
 
   const handleAdd = async() => {
     if (!name.trim()) { setErr('Designation name is required'); return; }
+        if (!qual.id) { setErr2('Qualification is required'); return; }
+
     try {
       const branchID = sessionStorage.getItem('branchID');
     const userID = sessionStorage.getItem('UserID') || 0;
@@ -103,8 +124,11 @@ function AddDesigModal({ open, dept, onClose, onAdd,  getDeparmentdata}) {
     const payload = {
       designationID: 0,
       branchID: branchID,
-      departmentID: dept.id,
+      branchDepartmentID: dept.id,
       designationName: name,
+      description: job,
+      qualificationID: qual.id,
+      qualificationName: qual.qualificationName,
       createdBy: Number(userID),
       modifiedBy: userID,
     };
@@ -125,9 +149,10 @@ function AddDesigModal({ open, dept, onClose, onAdd,  getDeparmentdata}) {
       return;
     }
 setName('');
-setQual('');
+setQual({});
 setJob('');
     setErr('');
+    setErr2('');
     getDeparmentdata();
     onClose();
 
@@ -135,7 +160,7 @@ setJob('');
     console.error(err);
     setErr('Network error. Please try again.');
   }
-    onAdd(dept.id, { name: name.trim(), qual: qual.trim(), job: job.trim() });
+    onAdd(dept.id, { name: name.trim(), qual: qual.qualificationName.trim(), job: job.trim() });
     setName(''); setQual(''); setJob(''); setErr(''); onClose();
   };
 
@@ -182,13 +207,23 @@ setJob('');
           <label className="form-label">Qualification Required</label>
           <div className="input-wrapper" style={{ position: 'relative' }}>
             <i className="fas fa-graduation-cap input-icon"></i>
-            <input
-              className="form-input has-icon"
-              placeholder="e.g. MSc, B.Ed, B.Com..."
-              value={qual}
-              onChange={e => setQual(e.target.value)}
-            />
+            <select
+              className={`form-select has-icon${err2 ? ' error-field' : ''}`}
+              value={qual.id ?? ''}
+              onChange={e => {
+                const list = Array.isArray(Qualification) ? Qualification : [];
+                const selected = list.find(q => String(q.id) === e.target.value);
+                setQual(selected || {});
+                setErr2('');
+              }}
+            >
+              <option value="">Select qualification</option>
+              {(Array.isArray(Qualification) ? Qualification : []).map(q => (
+                <option key={q.id} value={q.id}>{q.qualificationName}</option>
+              ))}
+            </select>
           </div>
+          {err2 && <span className="field-msg error"><i className="fas fa-times-circle"></i> {err2}</span>}
         </div>
       </div>
 
@@ -206,7 +241,11 @@ setJob('');
       </div>
 
       <div className="modal-footer">
-        <button className="btn btn-secondary btn-md" onClick={onClose}>Cancel</button>
+        <button className="btn btn-secondary btn-md" onClick={() => [setName(''),
+setQual({}),
+setJob(''),
+setErr2(''),
+    setErr(''), onClose()]}>Cancel</button>
         <button className="btn btn-primary btn-md" onClick={handleAdd}>
           <i className="fas fa-save"></i> Save
         </button>
@@ -225,8 +264,19 @@ export default function DepartmentsTab({ deptsData, setDeptsData, schoolInfo, sh
   const [deleteTarget, setDeleteTarget] = useState(null);
 
   const [editDesigTarget, setEditDesigTarget] = useState(null); // { deptId, idx }
-  const [editDesigForm, setEditDesigForm] = useState({ name: '', qual: '', job: '' });
+  const [editDesigForm, setEditDesigForm] = useState({});
+  const [Qualification, setQualification] = useState({});
 
+
+
+   async function getQualification() {
+      try {
+        const res  = await fetch(buildUrl(`/api/LaunchSetup/get-qualifications/0`), { headers: { Accept: '*/*' } });
+        const json = await res.json();
+        setQualification(json.data ?? []);
+        console.log(Qualification)
+      } catch { showToast('Could not load cities', 'error'); }
+    }
 
   useEffect(() => {
     getDeparmentdata();
@@ -247,20 +297,54 @@ export default function DepartmentsTab({ deptsData, setDeptsData, schoolInfo, sh
     const dept = deptsData.find(d => d.id === deptId);
     const d = dept?.designations[idx];
     if (!d) return;
+    getQualification();
     setEditDesigTarget({ deptId, idx });
-    setEditDesigForm({ name: d.name, qual: d.qual || '', job: d.job || '' });
+    setEditDesigForm(d);
+    console.log(editDesigForm)
   };
 
-  const saveDesigEdit = () => {
-    if (!editDesigForm.name.trim()) return;
-    setDeptsData(prev => prev.map(d => {
-      if (d.id !== editDesigTarget.deptId) return d;
-      const desigs = [...d.designations];
-      desigs[editDesigTarget.idx] = { ...editDesigForm, name: editDesigForm.name.trim() };
-      return { ...d, designations: desigs };
-    }));
-    showToast('Designation updated', 'success');
+  const saveDesigEdit = async() => {
+    if (!editDesigForm.designationName.trim()) return;
+    console.log(editDesigForm)
+    try {
+      const branchID = sessionStorage.getItem('branchID');
+    const userID = sessionStorage.getItem('UserID') || 0;
+
+    const payload = {
+      designationID: editDesigForm.designationID,
+      branchID: branchID,
+      branchDepartmentID: editDesigForm.branchDepartmentID,
+      designationName: editDesigForm.designationName,
+      description: editDesigForm.description,
+      qualificationID: editDesigForm.qualificationID,
+      qualificationName: editDesigForm.qualificationName,
+      createdBy: Number(userID),
+      modifiedBy: userID,
+    };
+    console.log(payload)
+    const res = await fetch(buildUrl('/api/LaunchSetup/save-department-designation'), {
+      method: 'POST',
+      headers: {
+        'Accept': '*/*',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const data = await res.json();
+
+    if (!res.ok) {
+      showToast(data?.message || 'Data failed', 'error');
+      return;
+    }
+setEditDesigForm({});
+    getDeparmentdata();
     setEditDesigTarget(null);
+
+  } catch (err) {
+    console.error(err);
+    showToast('Network error. Please try again.', 'error');
+  }
   };
   const filtered = search ? deptsData.filter(d => d.name.toLowerCase().includes(search.toLowerCase())) : deptsData;
   
@@ -279,9 +363,12 @@ const totalPosts = (deptsData || []).reduce(
   };
 
   const handleDeleteDesig = async(deptId, idx) => {
+const dept = deptsData.find(d => d.id === deptId);
+    const d = dept?.designations[idx];
+  console.log(d)
      try {
           const res = await fetch(
-          buildUrl(`/api/LaunchSetup/delete-designation/${deptId}`),
+          buildUrl(`/api/LaunchSetup/delete-designation/${d.designationID}`),
           {
             method: 'DELETE',
             headers: {
@@ -502,9 +589,13 @@ const totalPosts = (deptsData || []).reduce(
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
         <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-muted)', marginTop: 1 }}>{di + 1}.</span>
         <div>
-          <div className="desig-name">{d.designationName}</div>
-          {d.qual && <span className="desig-qual">{d.qual}</span>}
-          {d.job && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2, fontStyle: 'italic' }}>{d.job}</div>}
+          <div className="desig-name">
+            {d.designationName}
+            {d.qualificationName && (
+              <span style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 4 }}>- {d.qualificationName}</span>
+            )}
+          </div>
+          {d.description && <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>{d.description}</div>}
         </div>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -564,39 +655,149 @@ const totalPosts = (deptsData || []).reduce(
       </div>
 
       <AddDeptModal open={showAddDept} onClose={() => setShowAddDept(false)} onAdd={handleAddDept}  getDeparmentdata={getDeparmentdata}/>
-      <AddDesigModal open={!!desigTarget} dept={desigTarget} onClose={() => setDesigTarget(null)} onAdd={handleAddDesig} getDeparmentdata={getDeparmentdata}/>
+      <AddDesigModal open={!!desigTarget} dept={desigTarget} onClose={() => setDesigTarget(null)} onAdd={handleAddDesig} getDeparmentdata={getDeparmentdata} showToast={showToast}/>
 
       {/* Edit Designation Modal */}
       {editDesigTarget && (
-        <div className="modal-overlay open" onClick={e => e.target === e.currentTarget && setEditDesigTarget(null)}>
-          <div className="modal modal-md">
-            <div className="modal-header">
-              <div><div className="modal-title">Edit Designation</div><div className="modal-subtitle">Update designation details</div></div>
-              <button className="modal-close" onClick={() => setEditDesigTarget(null)}><i className="fas fa-times"></i></button>
+  <div
+    className="modal-overlay open"
+    onClick={e => e.target === e.currentTarget && setEditDesigTarget(null)}
+  >
+    <div className="modal modal-md">
+      <div className="modal-header">
+        <div>
+          <div className="modal-title">
+            Edit Designation in{" "}
+            <span style={{ color: "var(--brand-primary)" }}>
+              {editDesigTarget.departmentName || editDesigTarget.name}
+            </span>
+          </div>
+          <div className="modal-subtitle">
+            Update designation details
+          </div>
+        </div>
+
+        <button
+          className="modal-close"
+          onClick={() => setEditDesigTarget(null)}
+        >
+          <i className="fas fa-times"></i>
+        </button>
+      </div>
+
+      <div className="modal-body">
+        {/* Two-column row */}
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+            gap: 16,
+            marginBottom: 16,
+          }}
+        >
+          <div className="form-group">
+            <label className="form-label">
+              Designation Title <span className="req-star">*</span>
+            </label>
+
+            <div
+              className="input-wrapper"
+              style={{ position: "relative" }}
+            >
+              <i className="fas fa-id-badge input-icon"></i>
+
+              <input
+                className="form-input has-icon"
+                placeholder="e.g. Principal, Teacher, Accountant..."
+                value={editDesigForm.designationName}
+                onChange={e =>
+                  setEditDesigForm(f => ({
+                    ...f,
+                    designationName: e.target.value,
+                  }))
+                }
+                autoFocus
+              />
             </div>
-            <div className="modal-body">
-              <div className="form-grid" style={{ gap: 14 }}>
-                <div className="form-group">
-                  <label className="form-label">Designation Title <span className="req-star">*</span></label>
-                  <input className="form-input" value={editDesigForm.name} onChange={e => setEditDesigForm(f => ({ ...f, name: e.target.value }))} autoFocus />
-                </div>
-                <div className="form-group">
-                  <label className="form-label">Qualification</label>
-                  <input className="form-input" value={editDesigForm.qual} onChange={e => setEditDesigForm(f => ({ ...f, qual: e.target.value }))} />
-                </div>
-                <div className="form-group">
-                  <label className="form-label">Job Description</label>
-                  <input className="form-input" value={editDesigForm.job} onChange={e => setEditDesigForm(f => ({ ...f, job: e.target.value }))} />
-                </div>
-              </div>
-              <div className="modal-footer">
-                <button className="btn btn-secondary btn-md" onClick={() => setEditDesigTarget(null)}>Cancel</button>
-                <button className="btn btn-primary btn-md" onClick={saveDesigEdit}><i className="fas fa-save"></i> Save Changes</button>
-              </div>
+          </div>
+
+          <div className="form-group">
+            <label className="form-label">
+              Qualification Required
+            </label>
+
+            <div
+              className="input-wrapper"
+              style={{ position: "relative" }}
+            >
+              <i className="fas fa-graduation-cap input-icon"></i>
+
+              <select
+                className="form-select has-icon"
+                value={editDesigForm.qualificationID ?? ''}
+                onChange={e => {
+                  const list = Array.isArray(Qualification) ? Qualification : [];
+                  const selected = list.find(q => String(q.id) === e.target.value);
+                  setEditDesigForm(f => ({
+                    ...f,
+                    qualificationID: selected ? selected.id : '',
+                    qualificationName: selected ? selected.qualificationName : '',
+                  }));
+                }}
+              >
+                <option value="">Select qualification</option>
+                {(Array.isArray(Qualification) ? Qualification : []).map(q => (
+                  <option key={q.id} value={q.id}>{q.qualificationName}</option>
+                ))}
+              </select>
             </div>
           </div>
         </div>
-      )}
+
+        {/* Full Width Description */}
+        <div className="form-group">
+          <label className="form-label">
+            Job Description
+          </label>
+
+          <textarea
+            className="form-input"
+            placeholder="Brief description of the job role..."
+            value={editDesigForm.description}
+            onChange={e =>
+              setEditDesigForm(f => ({
+                ...f,
+                description: e.target.value,
+              }))
+            }
+            rows={3}
+            style={{
+              resize: "vertical",
+              minHeight: 80,
+              paddingTop: 10,
+            }}
+          />
+        </div>
+
+        <div className="modal-footer">
+          <button
+            className="btn btn-secondary btn-md"
+            onClick={() => setEditDesigTarget(null)}
+          >
+            Cancel
+          </button>
+
+          <button
+            className="btn btn-primary btn-md"
+            onClick={saveDesigEdit}
+          >
+            <i className="fas fa-save"></i> Save Changes
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+)}
 
       {deleteTarget && (
         <div className="modal-overlay open" onClick={e => e.target === e.currentTarget && setDeleteTarget(null)}>
