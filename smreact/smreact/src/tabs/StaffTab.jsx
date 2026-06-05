@@ -151,6 +151,10 @@ function StaffModal({ open, staff, deptsData, onClose, onSave, setDeptsData, sho
   };
 
   const handleSave = async () => {
+    if (!form.isPrincipal && !form.isTeacher && !form.isParent) {
+  showToast('Please select at least one role (Principal or Teacher).', 'error');
+  return;
+}
       try {
         const UserID = sessionStorage.getItem('UserID') || 0;
         const BranchID = sessionStorage.getItem('branchID') || 0;
@@ -498,7 +502,8 @@ console.log(payload)
                 <div className="form-group" style={{ marginLeft: 14 }}>
                 <label className="form-label">Role</label>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 25 , marginTop: 10}}>
-                  {['Principal', 'Teacher', 'Parent'].map(role => {
+                  {/* {['Principal', 'Teacher', 'Parent'].map(role => { */}
+                  {['Principal', 'Teacher'].map(role => {
                     const key = `is${role}`;
                     return (
                       <label key={role} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>
@@ -974,6 +979,17 @@ const [taskTarget, setTaskTarget] = useState(null);
             );
                       setDeleteTarget(null);
     
+          }
+          else if (
+            json?.message?.includes('Teacher role Removed') ||
+            json?.message?.includes('Owner cannot be deleted')
+          ) {
+            showToast(
+              json?.message,
+              'success'
+            );
+                      setDeleteTarget(null);
+    
           } else {
             showToast(json?.message || 'Delete failed', 'error');
                       setDeleteTarget(null);
@@ -982,9 +998,25 @@ const [taskTarget, setTaskTarget] = useState(null);
     
           return;
         }
-              getStaffdata()
-                      showToast(`"${s?.firstName}" deleted`, 'info');
+        if(res.ok){
+           if (
+            json?.message?.includes("Owner employee cannot be deleted.") ||
+            json?.message?.includes('Owner cannot be deleted')
+          ) {
+            showToast(
+              json.message,
+              'error'
+            );
+                      setDeleteTarget(null);
+    
+          }
+          else{
+          showToast(`"${s?.firstName}" deleted`, 'info');
               setDeleteTarget(null);
+        }
+        }
+              getStaffdata()
+                      
           } catch (err) {
             console.error(err);
                       setDeleteTarget(null);

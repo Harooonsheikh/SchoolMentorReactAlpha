@@ -18,7 +18,7 @@ export default function ERPDialog({ open, onClose, showToast, onOpenErp }) {
         <div className="erp-dialog-body">
           <div className="erp-dialog-title">ERP Access Locked</div>
           <div className="erp-dialog-msg">
-            The <strong>School Mentor ERP</strong> becomes available once your school setup is complete. Please finish all 7 setup steps to unlock full ERP access.
+            The <strong>School Mentor ERP</strong> becomes available once your school setup is complete. Please finish all 6 setup steps to unlock full ERP access.
           </div>
           <div className="erp-dialog-hint">
             <i className="fas fa-info-circle" style={{ color: '#3B82F6', fontSize: 14, flexShrink: 0 }}></i>

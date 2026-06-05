@@ -174,12 +174,15 @@ export default function App() {
     document.body.style.margin = '0';
     document.body.style.background = 'var(--bg-base)';
     document.body.style.color = 'var(--text-primary)';
+    // While the ERP screen is shown, the tab title reads "ERP".
+    document.title = 'School Mentor - ERP';
     // Clear the inline body styles on unmount so the setup/login screen's own
     // stylesheet (globals.css) controls the body again.
     return () => {
       document.body.style.fontFamily = '';
       document.body.style.background = '';
       document.body.style.color = '';
+      document.title = 'School Mentor';
     };
   }, []);
 

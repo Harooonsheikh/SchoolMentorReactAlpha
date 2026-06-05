@@ -576,7 +576,7 @@ setshowDeleteconfirm(false)
             {showDeleteconfirm.subjectName}
           </strong>
           {" "}? This will remove it from <strong>
-           all classes
+           this Class and this Section
           </strong> and all associated book titles will be lost.
         </p>
       </div>
@@ -822,9 +822,9 @@ export default function SubjectsTab({ classesData, setClassesData,  subjectsData
           </div>
         </div>
         <div className="toolbar-right">
-          <button className="btn btn-ghost btn-md" onClick={applyToolbarToAll}>
+          {/* <button className="btn btn-ghost btn-md" onClick={applyToolbarToAll}>
             <i className="fas fa-copy"></i> <span className="add-btn-label">Apply for All Empty Classes</span>
-          </button>
+          </button> */}
           <button className="btn btn-pdf btn-md" onClick={() => downloadSubjectsReport(classesData, subjectsData, bookLists, schoolInfo || {}, showToast)}>
             <i className="fas fa-file-pdf"></i> <span className="pdf-btn-label">Download Report</span>
           </button>
