@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import Tooltip from './Tooltip';
 import * as academicsService from '../services/academicsService';
 import useAsync from '../hooks/useAsync';
+import { buildUrl } from '../../utils/apiConfig';
 
 /* ═══════════════════════════════════════════════════════════════════
    LESSON PLANS — port from
@@ -218,7 +219,31 @@ export default function LessonPlans({ toast, openConfirm }) {
   /* Reports */
   const [reportPicker, setReportPicker] = useState(null); // { name, format }
   const openReport = (name, format = 'pdf') => setReportPicker({ name, format });
+  const [classesData, setClassesData] = useState([]);
+const getClassesData = async () => {
+  try {
+    const branchID = sessionStorage.getItem("branchID");
+    const empID = sessionStorage.getItem("employee_ID");
 
+    const res = await fetch(
+      buildUrl(`/get-classlist-sectionlist-studentlist-by-branch/${branchID}/${empID}`),
+      {
+        method: "GET",
+        headers: {
+          Accept: "*/*",
+        },
+      }
+    );
+
+    const json = await res.json();
+
+    console.log("API Response:", json);
+
+    setClassesData(json.data || []);
+  } catch (error) {
+    console.error("Error loading classes:", error);
+  }
+};
   return (
     <>
       <style>{LP_CSS}</style>
@@ -228,7 +253,10 @@ export default function LessonPlans({ toast, openConfirm }) {
         <button className={`lp-l2-tab${tab === 'session' ? ' active' : ''}`} onClick={() => setTab('session')}>
           <i className="fa-solid fa-gear"></i> Session Settings
         </button>
-        <button className={`lp-l2-tab${tab === 'breakup' ? ' active' : ''}`} onClick={() => setTab('breakup')}>
+        <button className={`lp-l2-tab${tab === 'breakup' ? ' active' : ''}`} onClick={() => {
+    setTab('breakup');
+    getClassesData(); // Call the function here
+  }}>
           <i className="fa-solid fa-layer-group"></i> Term Breakups
         </button>
         <button className={`lp-l2-tab${tab === 'create' ? ' active' : ''}`} onClick={() => setTab('create')}>
@@ -253,7 +281,7 @@ export default function LessonPlans({ toast, openConfirm }) {
 
       {tab === 'breakup' && (
         <TermBreakups
-          classes={termBreakupClasses}
+         classesData={classesData}  // Pass the fetched data
           onUpdate={c => setTbModalClass(c)}
           onReport={openReport}
           openConfirm={openConfirm}
@@ -263,6 +291,8 @@ export default function LessonPlans({ toast, openConfirm }) {
 
       {tab === 'create' && (
         <CreateLessonPlans
+                 classesData={classesData}  // Pass the fetched data
+
           clpClass={clpClass} setClpClass={setClpClass}
           clpSubject={clpSubject} setClpSubject={setClpSubject}
           clpFetched={clpFetched} setClpFetched={setClpFetched}
@@ -279,7 +309,7 @@ export default function LessonPlans({ toast, openConfirm }) {
         />
       )}
 
-      {tab === 'view' && <Submissions toast={toast} />}
+      {tab === 'view' && <Submissions toast={toast}  classesData={classesData}  />}
 
       {/* ─── modals ─── */}
       <SessionEditModal
@@ -882,23 +912,52 @@ function VacationEditModal({ open, vacations, onChange, onClose, toast, openConf
 /* ═══════════════════════════════════════════════════════════════════
    TERM BREAKUPS — class table with expand details
    ═══════════════════════════════════════════════════════════════════ */
-function TermBreakups({ classes, onUpdate, onReport, openConfirm, toast }) {
+function TermBreakups({ onUpdate, onReport, openConfirm, toast, classesData }) {
   const [openId, setOpenId] = useState(null);
+  
+  console.log("classesData in TermBreakups:", classesData);
+
+  // Create a flat list of all class-section combinations
+  const flattenedData = [];
+  classesData.forEach((classItem) => {
+    if (classItem.sections && classItem.sections.length > 0) {
+      classItem.sections.forEach((section) => {
+        flattenedData.push({
+          gradeId: classItem.id,
+          gradeName: classItem.name,
+          sectionId: section.sectionID,
+          sectionName: section.sectionName,
+        });
+      });
+    } else {
+      // Handle classes with no sections
+      flattenedData.push({
+        gradeId: classItem.id,
+        gradeName: classItem.name,
+        sectionId: null,
+        sectionName: null,
+      });
+    }
+  });
 
   return (
     <div className="section-card" style={{ overflow: 'visible' }}>
       <div className="tb-breakup-head">
         <div className="tb-bp-th" style={{ width: 90 }}>S. No.</div>
         <div className="tb-bp-th" style={{ flex: 1 }}>Class</div>
+        <div className="tb-bp-th" style={{ flex: 1 }}>Section</div>
         <div className="tb-bp-th" style={{ width: 200, textAlign: 'center' }}>Download Report</div>
         <div className="tb-bp-th" style={{ width: 120, textAlign: 'center' }}>Update</div>
         <div className="tb-bp-th" style={{ width: 60, textAlign: 'center' }}>Details</div>
       </div>
 
-      {classes.map((cls, i) => {
-        const isOpen = openId === cls;
+      {flattenedData.map((item, i) => {
+        const uniqueId = `${item.gradeId}_${item.sectionId || 'nosection'}`;
+        const isOpen = openId === uniqueId;
+        const className = item.gradeName;
+        
         return (
-          <div key={cls} className="tb-row-wrap">
+          <div key={uniqueId} className="tb-row-wrap">
             <div className="tb-row">
               <div className="tb-bp-td" style={{ width: 90 }}>
                 <span className="tb-sno">{i + 1}</span>
@@ -906,24 +965,42 @@ function TermBreakups({ classes, onUpdate, onReport, openConfirm, toast }) {
               <div className="tb-bp-td" style={{ flex: 1 }}>
                 <div className="tb-cls-name">
                   <div className="tb-cls-icon"><i className="fa-solid fa-code"></i></div>
-                  {cls}
+                  {className}
                 </div>
               </div>
+              <div className="tb-bp-td" style={{ flex: 1 }}>
+                {item.sectionName ? (
+                  <span className="section-pill" style={{ 
+                    background: 'rgba(30,58,138,.1)', 
+                    padding: '4px 12px', 
+                    borderRadius: '20px', 
+                    fontSize: '12px',
+                    fontWeight: '600',
+                    display: 'inline-block'
+                  }}>
+                    {item.sectionName}
+                  </span>
+                ) : (
+                  <span style={{ fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                    No sections
+                  </span>
+                )}
+              </div>
               <div className="tb-bp-td" style={{ width: 200, justifyContent: 'center', gap: 6 }}>
-                <Tooltip text={`Download ${cls} term breakup as PDF`}>
-                  <button className="export-btn pdf" onClick={() => onReport(`${cls} — Term Breakup`, 'pdf')}>
+                <Tooltip text={`Download term breakup for ${className} - Section ${item.sectionName || ''} as PDF`}>
+                  <button className="export-btn pdf" onClick={() => onReport(`${className} - Section ${item.sectionName || 'No Section'} — Term Breakup`, 'pdf')}>
                     <i className="fa-solid fa-file-pdf"></i> PDF
                   </button>
                 </Tooltip>
-                <Tooltip text={`Download ${cls} term breakup as Word`}>
-                  <button className="export-btn word" onClick={() => onReport(`${cls} — Term Breakup`, 'word')}>
+                <Tooltip text={`Download term breakup for ${className} - Section ${item.sectionName || ''} as Word`}>
+                  <button className="export-btn word" onClick={() => onReport(`${className} - Section ${item.sectionName || 'No Section'} — Term Breakup`, 'word')}>
                     <i className="fa-brands fa-microsoft"></i> Word
                   </button>
                 </Tooltip>
               </div>
               <div className="tb-bp-td" style={{ width: 120, justifyContent: 'center' }}>
-                <Tooltip text={`Update term breakup for ${cls}`}>
-                  <button className="tb-update-btn" onClick={() => onUpdate(cls)}>
+                <Tooltip text={`Update term breakup for ${className} - Section ${item.sectionName || ''}`}>
+                  <button className="tb-update-btn" onClick={() => onUpdate(`${className} - Section ${item.sectionName || ''}`)}>
                     <i className="fa-solid fa-pen"></i> Update
                   </button>
                 </Tooltip>
@@ -932,7 +1009,7 @@ function TermBreakups({ classes, onUpdate, onReport, openConfirm, toast }) {
                 <Tooltip text={isOpen ? 'Hide details' : 'Show details'}>
                   <button
                     className={`expand-btn${isOpen ? ' open' : ''}`}
-                    onClick={() => setOpenId(isOpen ? null : cls)}
+                    onClick={() => setOpenId(isOpen ? null : uniqueId)}
                   >
                     <i className="fa-solid fa-chevron-down"></i>
                   </button>
@@ -955,20 +1032,20 @@ function TermBreakups({ classes, onUpdate, onReport, openConfirm, toast }) {
                     </div>
                   </div>
                   <div className="tb-detail-actions">
-                    <Tooltip text={`Download ${cls} term breakup (color PDF)`}>
-                      <button className="export-btn pdf" onClick={() => onReport(`${cls} — Term Breakup`, 'pdf')}>
+                    <Tooltip text={`Download ${className} - Section ${item.sectionName || ''} term breakup (color PDF)`}>
+                      <button className="export-btn pdf" onClick={() => onReport(`${className} - Section ${item.sectionName || ''} — Term Breakup`, 'pdf')}>
                         <i className="fa-solid fa-file-pdf"></i> PDF Color
                       </button>
                     </Tooltip>
-                    <Tooltip text={`Download ${cls} term breakup as Word`}>
-                      <button className="export-btn word" onClick={() => onReport(`${cls} — Term Breakup`, 'word')}>
+                    <Tooltip text={`Download ${className} - Section ${item.sectionName || ''} term breakup as Word`}>
+                      <button className="export-btn word" onClick={() => onReport(`${className} - Section ${item.sectionName || ''} — Term Breakup`, 'word')}>
                         <i className="fa-brands fa-microsoft"></i> Word
                       </button>
                     </Tooltip>
                     <Tooltip text="Delete term breakup">
                       <button className="lp-icon-del" onClick={() => openConfirm({
                         title: 'Delete Term Breakup?',
-                        message: `Term breakup for <strong>${cls}</strong> will be permanently removed.`,
+                        message: `Term breakup for <strong>${className} - Section ${item.sectionName || ''}</strong> will be permanently removed.`,
                         hint: 'Linked lesson plans will no longer have a structure to follow.',
                         confirmLabel: 'Yes, Delete',
                         icon: 'fa-trash',
@@ -1039,7 +1116,7 @@ function TermBreakupModal({ cls, onClose, toast }) {
         {/* FIXED: header */}
         <div className="tbm-header">
           <div>
-            <div className="tbm-title">
+            <div className="tbm-title" >
               <i className="fa-solid fa-layer-group" style={{ fontSize: 14, marginRight: 8, opacity: .8 }}></i>
               Term Breakups
             </div>
@@ -1191,17 +1268,97 @@ function CreateLessonPlans({
   clpFetched, setClpFetched, clpSubtab, setClpSubtab,
   units, setUnits, nbUnits, setNbUnits,
   onManageUnits, onEditLesson, onAddQuestionType, onEditQuestionType,
-  onReport, openConfirm, toast,
+  onReport, openConfirm, toast, classesData  // Add classesData parameter
 }) {
-  const subjects = LP_SUBJECTS_BY_CLASS[clpClass] || LP_SUBJECTS_BY_CLASS.default;
+  // Extract unique class names from the API response
+  const classOptions = classesData?.map(classItem => classItem.name) || [];
+  
+  // Get subjects based on selected class
 
-  const fetch = () => {
-    if (!clpClass) { toast('Please select a class', 'error'); return; }
-    if (!clpSubject) { toast('Please select a subject', 'error'); return; }
-    setClpFetched(true);
-    toast(`Loaded plans for ${clpClass} · ${clpSubject}`, 'success');
-  };
 
+const [subjects, setSubjects] = useState([]);
+
+const fetchLessonPlans = () => {
+  if (!clpClass) {
+    toast("Please select a class", "error");
+    return;
+  }
+
+  if (!clpSubject) {
+    toast("Please select a subject", "error");
+    return;
+  }
+
+  setClpFetched(true);
+  toast(`Loaded plans for ${clpClass} · ${clpSubject}`, "success");
+};
+
+const handleClassChange = async (e) => {
+  const selectedClass = e.target.value;
+
+  setClpClass(selectedClass);
+  setClpSubject("");
+  setClpFetched(false);
+  setSubjects([]);
+
+  const selectedGrade = classesData?.find(
+    (cls) => cls.name === selectedClass
+  );
+
+  console.log("Selected grade:", selectedGrade);
+
+  if (!selectedGrade) return;
+
+  try {
+    const empID = sessionStorage.getItem("employee_ID");
+
+    let allSubjects = [];
+
+    for (const section of selectedGrade.sections || []) {
+      console.log(
+        `Fetching subjects for section: ${section.sectionName} (ID: ${section.sectionID})`
+      );
+
+      const res = await window.fetch(
+        buildUrl(
+          `/get-subjects_byEmployeeID/${selectedGrade.id}/${section.sectionID}/${empID}`
+        ),
+        {
+          method: "GET",
+          headers: {
+            Accept: "*/*",
+          },
+        }
+      );
+
+      const json = await res.json();
+
+      console.log("Subjects API Response:", json);
+
+      if (json.success && Array.isArray(json.data)) {
+        allSubjects.push(...json.data);
+      }
+    }
+
+    // Remove duplicates by subjectID
+    const uniqueSubjects = [
+  ...new Map(
+    allSubjects.map((subject) => [
+      subject.subjectName.trim().toLowerCase(),
+      subject,
+    ])
+  ).values(),
+];
+
+    console.log("Final Subjects:", uniqueSubjects);
+
+    setSubjects(uniqueSubjects);
+  } catch (error) {
+    console.error("Error fetching subjects:", error);
+    setSubjects([]);
+  }
+};
+  // Rest of your component remains the same...
   const removeUnit = u => openConfirm({
     title: 'Delete Unit?',
     message: `Unit <strong>"${u.unitName || u.unitNo}"</strong> and all its ${u.lessons?.length || u.questions?.length || 0} item(s) will be permanently removed.`,
@@ -1255,25 +1412,49 @@ function CreateLessonPlans({
             <div className="clp2-field">
               <label className="clp2-field-label"><i className="fa-solid fa-school"></i> Class</label>
               <div className="clp2-select-wrap">
-                <select className="clp2-select" value={clpClass} onChange={e => { setClpClass(e.target.value); setClpSubject(''); setClpFetched(false); }}>
-                  <option value="">Select Class</option>
-                  {LP_CLASSES.map(c => <option key={c} value={c}>{c}</option>)}
-                </select>
+<select
+  className="clp2-select"
+  value={clpClass}
+  onChange={handleClassChange}
+>
+  <option value="">Select Class</option>
+
+  {classOptions.map((className) => (
+    <option key={className} value={className}>
+      {className}
+    </option>
+  ))}
+</select>
                 <i className="fa-solid fa-chevron-down clp2-select-arrow"></i>
               </div>
             </div>
             <div className="clp2-field">
               <label className="clp2-field-label"><i className="fa-solid fa-book"></i> Subject</label>
               <div className="clp2-select-wrap">
-                <select className="clp2-select" value={clpSubject} onChange={e => { setClpSubject(e.target.value); setClpFetched(false); }}>
-                  <option value="">Select Subject</option>
-                  {subjects.map(s => <option key={s} value={s}>{s}</option>)}
-                </select>
+              <select
+  className="clp2-select"
+  value={clpSubject}
+  onChange={(e) => {
+    setClpSubject(e.target.value);
+    setClpFetched(false);
+  }}
+>
+  <option value="">Select Subject</option>
+
+  {subjects.map((subject) => (
+    <option
+      key={subject.subjectID}
+      value={subject.subjectName}
+    >
+      {subject.subjectName}
+    </option>
+  ))}
+</select>
                 <i className="fa-solid fa-chevron-down clp2-select-arrow"></i>
               </div>
             </div>
             <Tooltip text="Load lesson plans for the selected class and subject">
-              <button className="clp2-fetch-btn" onClick={fetch}>
+              <button className="clp2-fetch-btn" onClick={fetchLessonPlans}>
                 <i className="fa-solid fa-magnifying-glass"></i>
                 <span>Fetch</span>
               </button>
@@ -1352,7 +1533,6 @@ function CreateLessonPlans({
     </>
   );
 }
-
 function EmptyUnits({ label, onAdd }) {
   return (
     <div className="clp2-empty-state" style={{ background: 'transparent', border: 'none' }}>
@@ -1581,42 +1761,140 @@ function NbUnitRow({ unit, index, onReport, onDeleteUnit, onAddType, onEditType,
 /* ═══════════════════════════════════════════════════════════════════
    SUBMISSIONS — Teacher view (verbatim layout from HTML)
    ═══════════════════════════════════════════════════════════════════ */
-function Submissions({ toast }) {
-  const [role, setRole]       = useState('teacher');
-  const [cls, setCls]         = useState('');
+function Submissions({ toast, classesData = [] }) {
+  const [role, setRole] = useState('teacher');
+  const [cls, setCls] = useState('');
   const [section, setSection] = useState('');
   const [subject, setSubject] = useState('');
   const [fetched, setFetched] = useState(false);
-  const [inner, setInner]     = useState('lp'); // lp | nb
-
+  const [inner, setInner] = useState('lp'); // lp | nb
+  
+  // Add state for subjects
+  const [availableSubjects, setAvailableSubjects] = useState([]);
+  const [loadingSubjects, setLoadingSubjects] = useState(false);
+  
   const { data: lpData = [], setData: setLpData } = useAsync(academicsService.getSubLpData, []);
   const { data: nbData = [], setData: setNbData } = useAsync(academicsService.getSubNbData, []);
 
   const [lpUnitOpen, setLpUnitOpen] = useState({});
   const [nbUnitOpen, setNbUnitOpen] = useState({});
-  const [nbQOpen,    setNbQOpen]    = useState({});
+  const [nbQOpen, setNbQOpen] = useState({});
 
-  const [viewerId,      setViewerId]      = useState(null);
-  const [nbSubmitCtx,   setNbSubmitCtx]   = useState(null); // { unitId, typeId }
-  const [pdfReq,        setPdfReq]        = useState(null); // { type: 'lp'|'nb'|'nb-unit', unitId? }
+  const [viewerId, setViewerId] = useState(null);
+  const [nbSubmitCtx, setNbSubmitCtx] = useState(null);
+  const [pdfReq, setPdfReq] = useState(null);
 
   /* Analytics */
-  const lpTotal     = lpData.length;
+  const lpTotal = lpData.length;
   const lpSubmitted = lpData.filter(p => p.status === 'submitted').length;
-  const lpPending   = lpTotal - lpSubmitted;
-  const lpPct       = lpTotal ? Math.round((lpSubmitted / lpTotal) * 100) : 0;
+  const lpPending = lpTotal - lpSubmitted;
+  const lpPct = lpTotal ? Math.round((lpSubmitted / lpTotal) * 100) : 0;
 
-  const nbAllItems  = nbData.flatMap(u => u.questionTypes.flatMap(qt => qt.items));
-  const nbTotal     = nbAllItems.length;
+  const nbAllItems = nbData.flatMap(u => u.questionTypes.flatMap(qt => qt.items));
+  const nbTotal = nbAllItems.length;
   const nbSubmitted = nbAllItems.filter(i => i.status === 'submitted').length;
-  const nbPending   = nbTotal - nbSubmitted;
-  const nbPct       = nbTotal ? Math.round((nbSubmitted / nbTotal) * 100) : 0;
-  const nbUnits     = nbData.length;
-  const nbQTypes    = nbData.reduce((a, u) => a + u.questionTypes.length, 0);
+  const nbPending = nbTotal - nbSubmitted;
+  const nbPct = nbTotal ? Math.round((nbSubmitted / nbTotal) * 100) : 0;
+  const nbUnits = nbData.length;
+  const nbQTypes = nbData.reduce((a, u) => a + u.questionTypes.length, 0);
+
+  // Helper functions to process classesData
+  const getUniqueClasses = () => {
+    const uniqueClasses = new Set();
+    classesData.forEach(classItem => {
+      if (classItem.name) {
+        uniqueClasses.add(classItem.name);
+      }
+    });
+    return Array.from(uniqueClasses).sort();
+  };
+
+  const getGradeIdFromClassName = (className) => {
+    const classItem = classesData.find(c => c.name === className);
+    return classItem ? classItem.id : null;
+  };
+
+  const getSectionIdFromName = (sectionName) => {
+    const classItem = classesData.find(c => c.name === cls);
+    if (!classItem) return null;
+    const sectionItem = classItem.sections?.find(s => s.sectionName === sectionName);
+    return sectionItem ? sectionItem.sectionID : null;
+  };
+
+  const getSectionsForClass = () => {
+    const classItem = classesData.find(c => c.name === cls);
+    if (!classItem || !classItem.sections || classItem.sections.length === 0) {
+      return [];
+    }
+    return classItem.sections.map(section => ({
+      id: section.sectionID,
+      name: section.sectionName
+    }));
+  };
+
+  // Fetch subjects when class and section are selected
+  const fetchSubjects = async () => {
+    if (!cls || !section) {
+      setAvailableSubjects([]);
+      return;
+    }
+
+    const gradeId = getGradeIdFromClassName(cls);
+    const sectionId = getSectionIdFromName(section);
+
+    if (!gradeId || !sectionId) {
+      setAvailableSubjects([]);
+      return;
+    }
+
+    setLoadingSubjects(true);
+    
+    try {
+      const empID = sessionStorage.getItem("employee_ID");
+  const response = await fetch(
+         buildUrl(`/get-subjects_byEmployeeID/${gradeId}/${sectionId}/${empID}`),
+         {
+           method: "GET",
+           headers: {
+             Accept: "*/*",
+           },
+         }
+       );
+      
+      const json = await response.json();
+      
+      if (json.success && json.data) {
+        const formattedSubjects = json.data.map(subject => subject.subjectName);
+        setAvailableSubjects(formattedSubjects);
+        // Reset subject selection when subjects change
+        setSubject('');
+      } else {
+        setAvailableSubjects([]);
+        toast('No subjects found for this class and section', 'info');
+      }
+    } catch (error) {
+      console.error("Error fetching subjects:", error);
+      setAvailableSubjects([]);
+      toast('Error loading subjects. Please try again.', 'error');
+    } finally {
+      setLoadingSubjects(false);
+    }
+  };
+
+  // Fetch subjects when class or section changes
+  useEffect(() => {
+    if (cls && section) {
+      fetchSubjects();
+    } else {
+      setAvailableSubjects([]);
+      setSubject('');
+    }
+  }, [cls, section]);
 
   const fetchData = () => {
     if (!cls || !section || !subject) {
-      toast('Please select Class, Section and Subject', 'error'); return;
+      toast('Please select Class, Section and Subject', 'error'); 
+      return;
     }
     setFetched(true);
     setInner('lp');
@@ -1627,7 +1905,7 @@ function Submissions({ toast }) {
   /* Submit a single lesson plan from the viewer */
   const submitLp = id => {
     const today = new Date().toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
-    const time  = new Date().toLocaleTimeString('en-US', { hour:'numeric', minute:'2-digit' });
+    const time = new Date().toLocaleTimeString('en-US', { hour:'numeric', minute:'2-digit' });
     setLpData(prev => prev.map(p => p.id === id ? { ...p, status: 'submitted', submittedDate: today, submittedTime: time } : p));
     toast('Lesson plan submitted successfully!', 'success');
   };
@@ -1636,7 +1914,7 @@ function Submissions({ toast }) {
   const submitNbItems = (unitId, typeId, itemIds) => {
     if (!itemIds.length) return;
     const today = new Date().toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
-    const time  = new Date().toLocaleTimeString('en-US', { hour:'numeric', minute:'2-digit' });
+    const time = new Date().toLocaleTimeString('en-US', { hour:'numeric', minute:'2-digit' });
     setNbData(prev => prev.map(u => {
       if (u.unitId !== unitId) return u;
       return {
@@ -1662,11 +1940,11 @@ function Submissions({ toast }) {
       cls, section, subject,
       lpData, nbData,
     };
-    if (type === 'lp')      buildLpSubReport(ctx, isColor);
+    if (type === 'lp') buildLpSubReport(ctx, isColor);
     else if (type === 'nb') buildNbSubReport(ctx, isColor);
     else if (type === 'nb-unit') buildNbSubUnitReport(ctx, unitId, isColor);
     else if (type === 'admin-teacher') buildAdminTeacherReport(isColor);
-    else if (type === 'admin-class')   buildAdminClassReport(isColor);
+    else if (type === 'admin-class') buildAdminClassReport(isColor);
     else if (type === 'admin-subject') buildAdminSubjectReport(isColor);
     setPdfReq(null);
   };
@@ -1681,6 +1959,9 @@ function Submissions({ toast }) {
     });
     return order.map(u => ({ unit: u, unitNo: map[u][0]?.unitNo, plans: map[u] }));
   })();
+
+  const classOptions = getUniqueClasses();
+  const sectionsForClass = getSectionsForClass();
 
   return (
     <>
@@ -1718,9 +1999,17 @@ function Submissions({ toast }) {
               <div className="sub-field">
                 <label className="sub-field-label"><i className="fa-solid fa-school"></i> Class</label>
                 <div className="sub-select-wrap">
-                  <select className="sub-select" value={cls} onChange={e => { setCls(e.target.value); setSection(''); setSubject(''); }}>
+                  <select 
+                    className="sub-select" 
+                    value={cls} 
+                    onChange={e => { 
+                      setCls(e.target.value); 
+                      setSection(''); 
+                      setSubject(''); 
+                    }}
+                  >
                     <option value="">Select Class</option>
-                    {SUB_CLASSES.map(c => <option key={c} value={c}>{c.replace('-',' ')}</option>)}
+                    {classOptions.map(c => <option key={c} value={c}>{c}</option>)}
                   </select>
                   <i className="fa-solid fa-chevron-down sub-select-arrow"></i>
                 </div>
@@ -1728,9 +2017,16 @@ function Submissions({ toast }) {
               <div className="sub-field">
                 <label className="sub-field-label"><i className="fa-solid fa-users"></i> Section</label>
                 <div className="sub-select-wrap">
-                  <select className="sub-select" value={section} onChange={e => setSection(e.target.value)}>
+                  <select 
+                    className="sub-select" 
+                    value={section} 
+                    onChange={e => setSection(e.target.value)}
+                    disabled={!cls}
+                  >
                     <option value="">Select Section</option>
-                    {SUB_SECTIONS.map(s => <option key={s} value={s}>Section {s}</option>)}
+                    {sectionsForClass.map(s => (
+                      <option key={s.id} value={s.name}>Section {s.name}</option>
+                    ))}
                   </select>
                   <i className="fa-solid fa-chevron-down sub-select-arrow"></i>
                 </div>
@@ -1738,15 +2034,28 @@ function Submissions({ toast }) {
               <div className="sub-field">
                 <label className="sub-field-label"><i className="fa-solid fa-book"></i> Subject</label>
                 <div className="sub-select-wrap">
-                  <select className="sub-select" value={subject} onChange={e => setSubject(e.target.value)}>
-                    <option value="">Select Subject</option>
-                    {SUB_SUBJECTS.map(s => <option key={s} value={s}>{s}</option>)}
+                  <select 
+                    className="sub-select" 
+                    value={subject} 
+                    onChange={e => setSubject(e.target.value)}
+                    disabled={!cls || !section || loadingSubjects}
+                  >
+                    <option value="">
+                      {loadingSubjects ? 'Loading subjects...' : 'Select Subject'}
+                    </option>
+                    {availableSubjects.map(s => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
                   </select>
                   <i className="fa-solid fa-chevron-down sub-select-arrow"></i>
                 </div>
               </div>
               <Tooltip text="Load submissions for the selected filters">
-                <button className="sub-fetch-btn" onClick={fetchData}>
+                <button 
+                  className="sub-fetch-btn" 
+                  onClick={fetchData}
+                  disabled={!cls || !section || !subject || loadingSubjects}
+                >
                   <i className="fa-solid fa-magnifying-glass"></i> <span>View</span>
                 </button>
               </Tooltip>
@@ -1764,7 +2073,7 @@ function Submissions({ toast }) {
         </div>
       )}
 
-      {/* ── ADMIN OVERVIEW PANEL — verbatim from HTML subRenderAdminGrid ── */}
+      {/* ── ADMIN OVERVIEW PANEL ── */}
       {role === 'admin' && (
         <SubmissionsAdminPanel
           teachers={SUB_ADMIN_TEACHERS}
@@ -1775,7 +2084,8 @@ function Submissions({ toast }) {
         />
       )}
 
-      {/* ── MAIN AREA ── */}
+     {/* The rest of your JSX remains unchanged... */}
+       {/* ── MAIN AREA ── */}
       {role === 'teacher' && fetched && (
         <div>
           {/* Analytics strip — switches by inner tab */}
@@ -2059,14 +2369,13 @@ function Submissions({ toast }) {
         </div>
       )}
 
-      {/* ── LP VIEWER MODAL ── */}
+      {/* Modals remain the same */}
       <LpViewerModal
         plan={viewerId ? lpData.find(p => p.id === viewerId) : null}
         onClose={() => setViewerId(null)}
         onSubmit={() => { submitLp(viewerId); }}
       />
 
-      {/* ── NB SUBMIT MODAL ── */}
       <NbSubmitModal
         ctx={nbSubmitCtx}
         unit={nbSubmitCtx ? nbData.find(u => u.unitId === nbSubmitCtx.unitId) : null}
@@ -2074,7 +2383,6 @@ function Submissions({ toast }) {
         onSubmit={ids => submitNbItems(nbSubmitCtx.unitId, nbSubmitCtx.typeId, ids)}
       />
 
-      {/* ── PDF REPORT STYLE PICKER ── */}
       <SubPdfModal
         req={pdfReq}
         unit={pdfReq?.type === 'nb-unit' && pdfReq.unitId ? nbData.find(u => u.unitId === pdfReq.unitId) : null}

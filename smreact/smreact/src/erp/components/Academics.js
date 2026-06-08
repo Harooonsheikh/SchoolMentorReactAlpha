@@ -4,6 +4,7 @@ import Tooltip from './Tooltip';
 import TutorialModal from './TutorialModal';
 import * as academicsService from '../services/academicsService';
 import useAsync from '../hooks/useAsync';
+import { buildUrl } from '../../utils/apiConfig';
 
 /* ═══════════════════════════════════════════════════════════════════
    DATA — extracted from
@@ -18,6 +19,8 @@ const CLASSES = [
     { name: 'English',        book: 'Cambridge English',icon: 'fa-spell-check',          color: 'subj-purple' },
     { name: 'Math',           book: 'Oxford Math',      icon: 'fa-square-root-variable', color: 'subj-rose' },
   ]},
+
+  
   { id: 2, name: 'II-Pre', subjects: [
     { name: 'Urdu',    book: 'Afaq Urdu',        icon: 'fa-book',                 color: 'subj-teal' },
     { name: 'English', book: 'Cambridge English',icon: 'fa-spell-check',          color: 'subj-purple' },
@@ -84,8 +87,39 @@ export default function Academics({ l1, setL1, l2, setL2, l3, setL3, toast }) {
   const [calEditOpen, setCalEditOpen] = useState(false);
   const [tutorialOpen, setTutorialOpen] = useState(false);
   const [activityModal, setActivityModal] = useState({ open: false, editing: null });
+    const [classesData, setClassesData] = useState([]);
+const getClassesData = async () => {
+  try {
+    const branchID = sessionStorage.getItem("branchID");
+    const empID = sessionStorage.getItem("employee_ID");
 
-  const openReport = (name, format = 'pdf') =>
+    const res = await fetch(
+      buildUrl(`/get-classlist-sectionlist-studentlist-by-branch/${branchID}/${empID}`),
+      {
+        method: "GET",
+        headers: {
+          Accept: "*/*",
+        },
+      }
+    );
+
+    const json = await res.json();
+
+    console.log("API Response:", json);
+
+    setClassesData(json.data || []);
+  } catch (error) {
+    console.error("Error loading classes:", error);
+  }
+};
+useEffect(() => {
+  if (l2 === 'tb') {
+    getClassesData();
+  }
+}, []);
+
+
+const openReport = (name, format = 'pdf') =>
     setReportPicker({ open: true, name, format });
   const closeReport = () => setReportPicker(r => ({ ...r, open: false }));
 
@@ -139,10 +173,20 @@ export default function Academics({ l1, setL1, l2, setL2, l3, setL3, toast }) {
         <>
           {/* ─── LEVEL 2 TABS ─── */}
           <div className="l2-tabs" style={{ gridTemplateColumns: '1fr 1fr 1fr' }}>
-            <button className={`l2-tab${l2 === 'tb' ? ' active' : ''}`} onClick={() => setL2('tb')}>
-              <div className="l2-tab-dot"></div>
-              <i className="fa-solid fa-book-bookmark" style={{ fontSize: 13 }}></i> Textbooks
-            </button>
+           <button
+  className={`l2-tab${l2 === "tb" ? " active" : ""}`}
+  onClick={() => {
+    setL2("tb");
+    getClassesData();
+  }}
+>
+  <div className="l2-tab-dot"></div>
+  <i
+    className="fa-solid fa-book-bookmark"
+    style={{ fontSize: 13 }}
+  ></i>
+  Textbooks
+</button>
             <button className={`l2-tab${l2 === 'terms' ? ' active' : ''}`} onClick={() => setL2('terms')}>
               <div className="l2-tab-dot"></div>
               <i className="fa-solid fa-list-ol" style={{ fontSize: 13 }}></i> Terms Setting
@@ -154,7 +198,7 @@ export default function Academics({ l1, setL1, l2, setL2, l3, setL3, toast }) {
           </div>
 
           {l2 === 'tb' && (
-            <TextBooks onReport={openReport} toast={toast} />
+            <TextBooks onReport={openReport} toast={toast}     classesData={classesData}   />
           )}
 
           {l2 === 'terms' && (
@@ -1885,41 +1929,179 @@ function TermSettings({ termData, setTermData, openConfirm, toast }) {
 /* ═══════════════════════════════════════════════════════════════════
    TEXT BOOKS PANEL — class rows with expand/collapse
    ═══════════════════════════════════════════════════════════════════ */
-function TextBooks({ onReport, toast }) {
+function TextBooks({ onReport, toast, classesData }) {
   const [openId, setOpenId] = useState(null);
+  const [subjectsData, setSubjectsData] = useState({});
+  const [loadingSubjects, setLoadingSubjects] = useState({});
+
+  const fetchSubjects = async (gradeId, sectionId) => {
+    const key = `${gradeId}_${sectionId}`;
+    
+    if (subjectsData[key]) return;
+    
+    try {
+      setLoadingSubjects(prev => ({ ...prev, [key]: true }));
+      
+      const empID = sessionStorage.getItem("employee_ID");
+      const res = await fetch(
+        buildUrl(`/get-subjects_byEmployeeID/${gradeId}/${sectionId}/${empID}`),
+        {
+          method: "GET",
+          headers: {
+            Accept: "*/*",
+          },
+        }
+      );
+      
+      const json = await res.json();
+      
+      if (json.success && json.data) {
+        const formattedSubjects = json.data.map(subject => ({
+          name: subject.subjectName,
+          book: subject.book_Title || null,
+          color: getSubjectColor(subject.subjectName),
+          icon: getSubjectIcon(subject.subjectName)
+        }));
+        
+        setSubjectsData(prev => ({ 
+          ...prev, 
+          [key]: formattedSubjects 
+        }));
+      } else {
+        setSubjectsData(prev => ({ 
+          ...prev, 
+          [key]: [] 
+        }));
+      }
+    } catch (error) {
+      console.error("Error fetching subjects:", error);
+      setSubjectsData(prev => ({ 
+        ...prev, 
+        [key]: [] 
+      }));
+    } finally {
+      setLoadingSubjects(prev => ({ ...prev, [key]: false }));
+    }
+  };
+
+  const getSubjectColor = (subjectName) => {
+    const colors = {
+      'Math': 'subj-rose',
+      'Science': 'subj-green',
+      'English': 'subj-purple',
+      'Urdu': 'subj-teal',
+      'Islamiat': 'subj-amber',
+      'Computer': 'subj-blue',
+      'Biology': 'subj-green',
+      'Chemistry': 'subj-amber',
+      'Physics': 'subj-blue',
+      'Social Studies': 'subj-amber'
+    };
+    return colors[subjectName] || 'subj-blue';
+  };
+
+  const getSubjectIcon = (subjectName) => {
+    const icons = {
+      'Math': 'fa-square-root-variable',
+      'Science': 'fa-flask',
+      'English': 'fa-book',
+      'Urdu': 'fa-language',
+      'Islamiat': 'fa-mosque',
+      'Computer': 'fa-laptop-code',
+      'Biology': 'fa-dna',
+      'Chemistry': 'fa-atom',
+      'Physics': 'fa-bolt',
+      'Social Studies': 'fa-globe'
+    };
+    return icons[subjectName] || 'fa-graduation-cap';
+  };
+
+  // Create a flat list of all class-section combinations
+  const flattenedData = [];
+  classesData.forEach((cls) => {
+    if (cls.sections && cls.sections.length > 0) {
+      cls.sections.forEach((section) => {
+        flattenedData.push({
+          gradeId: cls.id,
+          gradeName: cls.name,
+          sectionId: section.sectionID,
+          sectionName: section.sectionName,
+          completeSubjectsDetailCount: section.completeSubjectsDetailCount,
+          totalSubjectsCount: section.totalSubjectsCount
+        });
+      });
+    } else {
+      // Handle classes with no sections
+      flattenedData.push({
+        gradeId: cls.id,
+        gradeName: cls.name,
+        sectionId: null,
+        sectionName: null,
+        completeSubjectsDetailCount: 0,
+        totalSubjectsCount: 0
+      });
+    }
+  });
 
   return (
     <div className="section-card">
       <div className="table-head">
         <div className="th">S. No.</div>
         <div className="th">Class</div>
+        <div className="th">Section</div>
         <div className="th">Report</div>
         <div className="th" style={{ textAlign: 'right' }}>Details</div>
       </div>
 
-      {CLASSES.map((cls, i) => {
-        const isOpen = openId === cls.id;
+      {flattenedData.map((item, i) => {
+        const uniqueId = `${item.gradeId}_${item.sectionId || 'nosection'}`;
+        const isOpen = openId === uniqueId;
+        const subjectsKey = `${item.gradeId}_${item.sectionId}`;
+        const subjects = subjectsData[subjectsKey] || [];
+        const isLoading = loadingSubjects[subjectsKey];
+
+        // Fetch subjects when expanded
+        if (isOpen && item.sectionId && !subjectsData[subjectsKey] && !loadingSubjects[subjectsKey]) {
+          fetchSubjects(item.gradeId, item.sectionId);
+        }
+
+        const subjectsStatus = item.totalSubjectsCount > 0 
+          ? `${item.completeSubjectsDetailCount}/${item.totalSubjectsCount} subjects`
+          : 'No subjects assigned';
+
         return (
-          <div key={cls.id} className="class-row-wrap">
+          <div key={uniqueId} className="class-row-wrap">
             <div
               className={`class-row${isOpen ? ' open' : ''}`}
-              onClick={() => setOpenId(isOpen ? null : cls.id)}
+              onClick={() => setOpenId(isOpen ? null : uniqueId)}
             >
               <div className="td sno">
                 <span className="sno-hash">#</span> {i + 1}
               </div>
               <div className="td cls-name">
                 <div className="cls-icon"><i className="fa-solid fa-code"></i></div>
-                {cls.name}
+                {item.gradeName}
               </div>
+              <div className="td">
+                {item.sectionName ? (
+                  <span className="section-pill" style={{ background: 'rgba(30,58,138,.1)', padding: '4px 10px', borderRadius: '20px', fontSize: '12px' }}>
+                    {item.sectionName}
+                  </span>
+                ) : (
+                  <span style={{ fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                    No sections
+                  </span>
+                )}
+              </div>
+         
               <div className="td inline-export" onClick={e => e.stopPropagation()}>
-                <Tooltip text={`Download textbook list for ${cls.name} as PDF`}>
-                  <button className="export-btn pdf" onClick={() => onReport(cls.name, 'pdf')}>
+                <Tooltip text={`Download textbook list for ${item.gradeName} - Section ${item.sectionName} as PDF`}>
+                  <button className="export-btn pdf" onClick={() => onReport(`${item.gradeName} - Section ${item.sectionName}`, 'pdf')}>
                     <i className="fa-solid fa-file-pdf"></i> PDF
                   </button>
                 </Tooltip>
-                <Tooltip text={`Download textbook list for ${cls.name} as Word`}>
-                  <button className="export-btn word" onClick={() => onReport(cls.name, 'word')}>
+                <Tooltip text={`Download textbook list for ${item.gradeName} - Section ${item.sectionName} as Word`}>
+                  <button className="export-btn word" onClick={() => onReport(`${item.gradeName} - Section ${item.sectionName}`, 'word')}>
                     <i className="fa-brands fa-microsoft"></i> Word
                   </button>
                 </Tooltip>
@@ -1932,25 +2114,40 @@ function TextBooks({ onReport, toast }) {
                 </Tooltip>
               </div>
             </div>
+            
             <div className={`class-detail${isOpen ? ' open' : ''}`}>
               <div className="detail-inner">
-                <div className="subject-grid">
-                  {cls.subjects.map((s, j) => (
-                    <div
-                      key={j}
-                      className="subject-card"
-                      onClick={e => { e.stopPropagation(); toast(`${s.name} — ${s.book || 'No textbook'}`, 'info'); }}
-                    >
-                      <div className={`subj-icon ${s.color}`}><i className={`fa-solid ${s.icon}`}></i></div>
-                      <div>
-                        <div className="subj-name">{s.name}</div>
-                        <div className="subj-book">
-                          {s.book || <span style={{ opacity: .5, fontStyle: 'italic' }}>No textbook</span>}
+                {isLoading ? (
+                  <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+                    <i className="fa-solid fa-spinner fa-spin"></i> Loading subjects...
+                  </div>
+                ) : subjects.length > 0 ? (
+                  <div className="subject-grid">
+                    {subjects.map((s, j) => (
+                      <div
+                        key={j}
+                        className="subject-card"
+                        onClick={e => { e.stopPropagation(); toast(`${s.name} — ${s.book || 'No textbook'}`, 'info'); }}
+                      >
+                        <div className={`subj-icon ${s.color}`}>
+                          <i className={`fa-solid ${s.icon}`}></i>
+                        </div>
+                        <div>
+                          <div className="subj-name">{s.name}</div>
+                          <div className="subj-book">
+                            {s.book || <span style={{ opacity: .5, fontStyle: 'italic' }}>No textbook</span>}
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+                    <i className="fa-regular fa-folder-open" style={{ fontSize: '40px', marginBottom: '10px', display: 'block' }}></i>
+                    <p>No subjects found for {item.gradeName} - Section {item.sectionName}</p>
+                   
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -1959,8 +2156,6 @@ function TextBooks({ onReport, toast }) {
     </div>
   );
 }
-
-
 /* ═══════════════════════════════════════════════════════════════════
    ACADEMICS CSS — extracted from the HTML prototype
    ═══════════════════════════════════════════════════════════════════ */
@@ -2085,7 +2280,8 @@ const ACADEMICS_CSS = `
 
 /* ── Classes table (Text Books) ── */
 .table-head {
-  display:grid; grid-template-columns:80px 1fr auto 60px;
+  display:grid; 
+  grid-template-columns: 80px 1.2fr 1fr 220px 80px;
   background:var(--bg-muted); border-bottom:1px solid var(--border-light);
   padding:0 20px;
 }
@@ -2096,7 +2292,8 @@ const ACADEMICS_CSS = `
 .class-row-wrap { border-bottom:1px solid var(--border-light); }
 .class-row-wrap:last-child { border-bottom:none; }
 .class-row {
-  display:grid; grid-template-columns:80px 1fr auto 60px;
+  display:grid;
+  grid-template-columns: 80px 1.2fr 1fr 220px 80px;
   padding:0 20px; cursor:pointer; align-items:center;
   transition:var(--tr); min-height:60px;
 }
