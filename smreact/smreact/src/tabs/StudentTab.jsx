@@ -502,17 +502,26 @@ export default function StudentTab({ classesData, setClassesData, studentStrengt
       </div>
 
       {/* Stats */}
-      <div className="stats-strip" style={{ marginBottom: 16 }}>
-        <div className="stat-mini">
-          <div className="stat-icon" style={{ background: 'rgba(30,58,138,.1)', color: 'var(--brand-primary)' }}><i className="fas fa-user-graduate"></i></div>
-          <div><div className="stat-val">{totalStudents}</div><div className="stat-lbl">Total Students</div></div>
-        </div>
-        <div className="stat-mini">
-          <div className="stat-icon" style={{ background: 'rgba(22,163,74,.1)', color: 'var(--success)' }}><i className="fas fa-layer-group"></i></div>
-          <div><div className="stat-val">{totalWithStudents}</div><div className="stat-lbl">Active Sections</div></div>
-        </div>
-      </div>
-
+    <div className="stats-strip" style={{ marginBottom: 16, display: 'flex', gap: '16px' }}>
+  <div className="stat-mini" style={{ flex: 1, width: '50%' }}>
+    <div className="stat-icon" style={{ background: 'rgba(30,58,138,.1)', color: 'var(--brand-primary)' }}>
+      <i className="fas fa-user-graduate"></i>
+    </div>
+    <div>
+      <div className="stat-val">{totalStudents}</div>
+      <div className="stat-lbl">Total Students</div>
+    </div>
+  </div>
+  <div className="stat-mini" style={{ flex: 1, width: '50%' }}>
+    <div className="stat-icon" style={{ background: 'rgba(22,163,74,.1)', color: 'var(--success)' }}>
+      <i className="fas fa-layer-group"></i>
+    </div>
+    <div>
+      <div className="stat-val">{totalWithStudents}</div>
+      <div className="stat-lbl">Active Sections</div>
+    </div>
+  </div>
+</div>
       {/* Toolbar */}
       <div className="classes-toolbar">
         <div className="toolbar-left">

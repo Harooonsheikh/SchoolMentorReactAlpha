@@ -12,6 +12,7 @@ import SubjectsTab from './tabs/SubjectsTab';
 import DepartmentsTab from './tabs/DepartmentsTab';
 import StaffTab from './tabs/StaffTab';
 import StudentTab from './tabs/StudentTab';
+import TutorialModal from './erp/components/TutorialModal';
 import { AppProvider } from './context/AppContext';
 import LoginScreen from './Pages/auth/LoginScreen';
 import SignupFlow from './Pages/auth/SignupFlow';
@@ -19,13 +20,14 @@ import { isErpUnlocked } from './utils/erp';
 import ErpApp from './erp/App';
 import './styles/globals.css';
 import './styles/tokens.css';
-
+import Tooltip from '../src/erp/components/Tooltip';
 function AppShell({ user, onLogout, onOpenErp }) {
   const state = useAppState();
   const [erpOpen, setErpOpen] = useState(false);
   const [successState, setSuccessState] = useState({ open: false, title: '', msg: '', detail: '' });
   const [errorState, setErrorState] = useState({ open: false, fields: [] });
   const [launchSetup, setLaunchSetup] = useState(null);
+  const [tutorialOpen, setTutorialOpen] = useState(false);
 
   const showSuccess = (title, msg, detail = '') => {
     setSuccessState({ open: true, title, msg, detail });
@@ -57,6 +59,9 @@ setLaunchSetup(launchSetup)
   };
 
   return (
+    <>
+          <style>{App_CSS}</style>
+
     <div className="app-layout">
       {/* Sidebar overlay for mobile */}
       <div className={`sidebar-overlay${state.sidebarOpen ? ' open' : ''}`} onClick={() => state.setSidebarOpen(false)} />
@@ -92,9 +97,15 @@ setLaunchSetup(launchSetup)
                 </div>
               </div>
               <div className="welcome-card-actions">
-                <button className="tutorial-btn" onClick={() => state.showToast('Opening tutorial video…', 'info')}>
-                  <div className="play-icon"><i className="fas fa-play" style={{ marginLeft: 2 }}></i></div>Watch Tutorial
-                </button>
+                <Tooltip text="Play a short tutorial for the Academics module">
+                          <button
+                            className="tutorial-btn page-tutorial-btn"
+                            onClick={() => setTutorialOpen(true)}
+                          >
+                            <div className="play-dot"><i className="fa-solid fa-play" style={{ fontSize: 8 }}></i></div>
+                            <span className="tutorial-label">Tutorial</span>
+                          </button>
+                        </Tooltip>
                 <button className="erp-launch-btn" onClick={() => setErpOpen(true)}>
                   <div className="erp-btn-icon"><i className="fas fa-th-large"></i></div>
                   <span>ERP</span>
@@ -102,6 +113,12 @@ setLaunchSetup(launchSetup)
                 </button>
               </div>
             </div>
+            <TutorialModal
+  open={tutorialOpen}
+  moduleKey="launch-setup"
+  onClose={() => setTutorialOpen(false)}
+  toast={state.showToast}
+/>
           </div>
 
           {/* Setup Tabs */}
@@ -228,8 +245,28 @@ setLaunchSetup(launchSetup)
         onClose={() => setErrorState(s => ({ ...s, open: false }))}
       />
     </div>
-  );
+     </>
+
+);
 }
+const App_CSS = `
+/* ── Page header tutorial button (uses existing .tutorial-btn from App.js CSS) ── */
+.page-tutorial-btn { flex-shrink: 0; }
+
+/* Tutorial button */
+[data-theme="dark"] .tutorial-btn,
+[data-theme="dark"] .page-tutorial-btn { background:var(--bg-card); border-color:var(--border-light); color:var(--text-primary); }
+[data-theme="dark"] .tutorial-btn:hover,
+[data-theme="dark"] .page-tutorial-btn:hover { border-color:#3B82F6; color:#3B82F6; }
+@media (max-width:600px) {
+  .page-tutorial-btn { width:100%; justify-content:center; }
+
+}
+  .tutorial-btn{display:flex;align-items:center;gap:8px;background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.28);border-radius:var(--radius-md);padding:10px 16px;color:#fff;font-size:13px;font-weight:600;cursor:pointer;transition:var(--tr);white-space:nowrap;backdrop-filter:blur(8px)}
+.tutorial-btn:hover{background:rgba(255,255,255,.2);transform:translateY(-1px);box-shadow:0 8px 24px rgba(0,0,0,.2)}
+.play-icon{width:26px;height:26px;background:linear-gradient(135deg,#1E40AF,#0EA5E9);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:9px;animation:blink-glow 2s ease-in-out infinite}
+
+`;
 
 function AuthGate() {
   const [user, setUser] = useState(() => {

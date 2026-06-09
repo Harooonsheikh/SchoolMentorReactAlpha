@@ -791,17 +791,26 @@ const getclassesdata = useCallback(async () => {
   return (
     <div className="tab-panel active">
       {/* Stats Strip */}
-      <div className="stats-strip">
-        <div className="stat-mini">
-          <div className="stat-icon" style={{ background: 'rgba(30,58,138,.1)', color: 'var(--brand-primary)' }}><i className="fas fa-chalkboard"></i></div>
-          <div><div className="stat-val">{classesData.length}</div><div className="stat-lbl">Total Classes</div></div>
-        </div>
-        <div className="stat-mini">
-          <div className="stat-icon" style={{ background: 'rgba(14,165,233,.1)', color: '#0EA5E9' }}><i className="fas fa-layer-group"></i></div>
-          <div><div className="stat-val">{avgSections}</div><div className="stat-lbl">Avg. Sections</div></div>
-        </div>
-      </div>
-
+     <div className="stats-strip" style={{ display: 'flex', gap: '16px' }}>
+  <div className="stat-mini" style={{ flex: 1, width: '50%' }}>
+    <div className="stat-icon" style={{ background: 'rgba(30,58,138,.1)', color: 'var(--brand-primary)' }}>
+      <i className="fas fa-chalkboard"></i>
+    </div>
+    <div>
+      <div className="stat-val">{classesData.length}</div>
+      <div className="stat-lbl">Total Classes</div>
+    </div>
+  </div>
+  <div className="stat-mini" style={{ flex: 1, width: '50%' }}>
+    <div className="stat-icon" style={{ background: 'rgba(14,165,233,.1)', color: '#0EA5E9' }}>
+      <i className="fas fa-layer-group"></i>
+    </div>
+    <div>
+      <div className="stat-val">{avgSections}</div>
+      <div className="stat-lbl">Avg. Sections</div>
+    </div>
+  </div>
+</div>
       {/* Toolbar */}
       <div className="classes-toolbar">
         <div className="toolbar-left">
