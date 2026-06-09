@@ -259,10 +259,10 @@ const getClassesData = async () => {
   }}>
           <i className="fa-solid fa-layer-group"></i> Term Breakups
         </button>
-        <button className={`lp-l2-tab${tab === 'create' ? ' active' : ''}`} onClick={() => setTab('create')}>
+        <button className={`lp-l2-tab${tab === 'create' ? ' active' : ''}`} onClick={() => {setTab('create'); getClassesData();}}>
           <i className="fa-solid fa-plus-circle"></i> Create Lesson Plans
         </button>
-        <button className={`lp-l2-tab${tab === 'view' ? ' active' : ''}`} onClick={() => setTab('view')}>
+        <button className={`lp-l2-tab${tab === 'view' ? ' active' : ''}`} onClick={() => {setTab('view'); getClassesData();}}>
           <i className="fa-solid fa-table-list"></i> Submissions
         </button>
       </div>
