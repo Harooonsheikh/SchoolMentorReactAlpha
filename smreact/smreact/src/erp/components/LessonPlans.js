@@ -250,7 +250,7 @@ const getClassesData = async () => {
 
       {/* ─── L2 sub-tabs ─── */}
       <div className="lp-l2-tabs">
-        <button className={`lp-l2-tab${tab === 'session' ? ' active' : ''}`} onClick={() => setTab('session')}>
+        <button className={`lp-l2-tab${tab === 'session' ? ' active' : ''}`} onClick={() =>{setTab('session'); getClassesData();}}>
           <i className="fa-solid fa-gear"></i> Session Settings
         </button>
         <button className={`lp-l2-tab${tab === 'breakup' ? ' active' : ''}`} onClick={() => {
@@ -276,6 +276,7 @@ const getClassesData = async () => {
           onEditSession={() => setSessionEditOpen(true)}
           onEditVacations={() => setVacationEditOpen(true)}
           onReport={openReport}
+          classesData={classesData}  // Pass the fetched data
         />
       )}
 
@@ -411,8 +412,31 @@ const getClassesData = async () => {
 /* ═══════════════════════════════════════════════════════════════════
    SESSION SETTINGS — 4 cards (EXACT copy of HTML's .ss-card markup)
    ═══════════════════════════════════════════════════════════════════ */
-function SessionSettings({ session, vacations, selectedClass, setSelectedClass, onEditSession, onEditVacations, onReport }) {
+function SessionSettings({ 
+  session, 
+  vacations, 
+  selectedClass, 
+  setSelectedClass, 
+  onEditSession, 
+  onEditVacations, 
+  onReport,
+  classesData = [] // Add classesData as a prop
+}) {
   const pwSubjects = PER_WEEK_BY_CLASS[selectedClass] || PER_WEEK_BY_CLASS['Class III'];
+
+  // Extract unique class names from the API response
+  const classOptions = [];
+  
+  if (classesData && classesData.length > 0) {
+    classesData.forEach(classItem => {
+      if (classItem.name) {
+        classOptions.push(classItem.name);
+      }
+    });
+  }
+
+  // If no API data, fall back to hardcoded LP_CLASSES
+  const displayClasses = classOptions.length > 0 ? classOptions : LP_CLASSES;
 
   return (
     <div className="ss-cards-grid">
@@ -600,7 +624,7 @@ function SessionSettings({ session, vacations, selectedClass, setSelectedClass, 
         </div>
       </div>
 
-      {/* ④ PER WEEK LESSON PLANS — 20 classes */}
+      {/* ④ PER WEEK LESSON PLANS — Dynamic classes */}
       <div className="ss-card ss-card--lessons">
         <div className="ss-card-orb ss-card-orb--5"></div>
 
@@ -612,7 +636,9 @@ function SessionSettings({ session, vacations, selectedClass, setSelectedClass, 
           <div style={{ flex: 1, minWidth: 0 }}>
             <div className="ss-card-hdr-title">Per week lesson plans</div>
             <div className="ss-card-hdr-sub">
-              {selectedClass ? `${selectedClass} · ${pwSubjects.length} subjects` : '20 classes · tap one to view subjects'}
+              {selectedClass 
+                ? `${selectedClass} · ${pwSubjects.length} subjects` 
+                : `${displayClasses.length} classes · tap one to view subjects`}
             </div>
           </div>
           {selectedClass && (
@@ -622,17 +648,25 @@ function SessionSettings({ session, vacations, selectedClass, setSelectedClass, 
           )}
         </div>
 
-        {/* All 20 class chips — flat, no grouping */}
+        {/* Class chips - dynamic from API */}
         <div className="lp-class-chips">
           <div className="lp-chips-label">Choose a class</div>
           <div className="lp-chips-row">
-            {LP_CLASSES.map(c => (
-              <button
-                key={c}
-                className={`lp-chip${selectedClass === c ? ' active' : ''}`}
-                onClick={() => setSelectedClass(c)}
-              >{c}</button>
-            ))}
+            {displayClasses.length > 0 ? (
+              displayClasses.map(c => (
+                <button
+                  key={c}
+                  className={`lp-chip${selectedClass === c ? ' active' : ''}`}
+                  onClick={() => setSelectedClass(c)}
+                >
+                  {c}
+                </button>
+              ))
+            ) : (
+              <div className="lp-pw-empty-text" style={{ color: 'rgba(255,255,255,.6)', padding: '20px' }}>
+                Loading classes...
+              </div>
+            )}
           </div>
         </div>
 
@@ -693,9 +727,7 @@ function SessionSettings({ session, vacations, selectedClass, setSelectedClass, 
 
     </div>
   );
-}
-
-function vacationDays(start, end) {
+}function vacationDays(start, end) {
   const s = new Date(start), e = new Date(end);
   if (isNaN(s) || isNaN(e)) return 0;
   return Math.round((e - s) / 86400000) + 1;
@@ -914,8 +946,72 @@ function VacationEditModal({ open, vacations, onChange, onClose, toast, openConf
    ═══════════════════════════════════════════════════════════════════ */
 function TermBreakups({ onUpdate, onReport, openConfirm, toast, classesData }) {
   const [openId, setOpenId] = useState(null);
+  const [subjectsData, setSubjectsData] = useState({}); // Store fetched subjects for each class-section
+  const [loadingSubjects, setLoadingSubjects] = useState({}); // Track loading state for each class-section
   
   console.log("classesData in TermBreakups:", classesData);
+
+  // Function to fetch subjects for a specific class and section
+  const fetchSubjectsForClassSection = async (gradeId, sectionId, uniqueId) => {
+    // Set loading state for this specific item
+    setLoadingSubjects(prev => ({ ...prev, [uniqueId]: true }));
+    
+    try {
+      const empID = sessionStorage.getItem("employee_ID");
+      
+      // Fetch subjects for this specific class and section
+      const res = await fetch(
+        buildUrl(`/get-subjects_byEmployeeID/${gradeId}/${sectionId}/${empID}`),
+        {
+          method: "GET",
+          headers: {
+            Accept: "*/*",
+          },
+        }
+      );
+      
+      const json = await res.json();
+      console.log(`Subjects for grade ${gradeId}, section ${sectionId}:`, json);
+      
+      if (json.success && Array.isArray(json.data)) {
+        // Store the subjects data (could be empty array)
+        setSubjectsData(prev => ({
+          ...prev,
+          [uniqueId]: json.data
+        }));
+      } else {
+        setSubjectsData(prev => ({
+          ...prev,
+          [uniqueId]: []
+        }));
+      }
+    } catch (error) {
+      console.error("Error fetching subjects:", error);
+      setSubjectsData(prev => ({
+        ...prev,
+        [uniqueId]: []
+      }));
+    } finally {
+      // Clear loading state
+      setLoadingSubjects(prev => ({ ...prev, [uniqueId]: false }));
+    }
+  };
+
+  // Handle expand/collapse
+  const handleExpand = async (uniqueId, gradeId, sectionId) => {
+    if (openId === uniqueId) {
+      // Collapse
+      setOpenId(null);
+    } else {
+      // Expand - fetch subjects if not already fetched
+      setOpenId(uniqueId);
+      
+      // Only fetch if we haven't fetched subjects for this class-section yet
+      if (!subjectsData[uniqueId]) {
+        await fetchSubjectsForClassSection(gradeId, sectionId, uniqueId);
+      }
+    }
+  };
 
   // Create a flat list of all class-section combinations
   const flattenedData = [];
@@ -955,6 +1051,8 @@ function TermBreakups({ onUpdate, onReport, openConfirm, toast, classesData }) {
         const uniqueId = `${item.gradeId}_${item.sectionId || 'nosection'}`;
         const isOpen = openId === uniqueId;
         const className = item.gradeName;
+        const subjects = subjectsData[uniqueId] || [];
+        const isLoading = loadingSubjects[uniqueId];
         
         return (
           <div key={uniqueId} className="tb-row-wrap">
@@ -1009,7 +1107,7 @@ function TermBreakups({ onUpdate, onReport, openConfirm, toast, classesData }) {
                 <Tooltip text={isOpen ? 'Hide details' : 'Show details'}>
                   <button
                     className={`expand-btn${isOpen ? ' open' : ''}`}
-                    onClick={() => setOpenId(isOpen ? null : uniqueId)}
+                    onClick={() => handleExpand(uniqueId, item.gradeId, item.sectionId)}
                   >
                     <i className="fa-solid fa-chevron-down"></i>
                   </button>
@@ -1028,7 +1126,21 @@ function TermBreakups({ onUpdate, onReport, openConfirm, toast, classesData }) {
                   <div className="tb-detail-section">
                     <div className="tb-detail-label">Subjects</div>
                     <div className="tb-detail-pills">
-                      {TERM_BREAKUP_SUBJECTS.map(s => <span key={s} className="tb-detail-pill subj">{s}</span>)}
+                      {isLoading ? (
+                        <span style={{ fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                          <i className="fa-solid fa-spinner fa-spin"></i> Loading subjects...
+                        </span>
+                      ) : subjects.length > 0 ? (
+                        subjects.map((subject) => (
+                          <span key={subject.subjectID} className="tb-detail-pill subj">
+                            {subject.subjectName}
+                          </span>
+                        ))
+                      ) : (
+                        <span style={{ fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                          No subjects assigned
+                        </span>
+                      )}
                     </div>
                   </div>
                   <div className="tb-detail-actions">
@@ -1064,7 +1176,6 @@ function TermBreakups({ onUpdate, onReport, openConfirm, toast, classesData }) {
     </div>
   );
 }
-
 /* ═══════════════════════════════════════════════════════════════════
    TERM BREAKUP UPDATE MODAL — EXACT copy of HTML's .tbm-modal popup
    ═══════════════════════════════════════════════════════════════════ */
