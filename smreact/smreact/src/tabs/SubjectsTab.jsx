@@ -4,7 +4,7 @@ import { downloadSubjectsReport } from '../utils/pdfReports';
 import { buildUrl } from '../utils/apiConfig';
 
 // ── Book List Modal (full-featured: edit subject, delete, copy-to-all) ──────
-function BookListModal({ open, cls, subjects, setSubjects, getclassesdata, bookLists, setBookLists, classesData, onClose, showToast, showSuccess }) {
+function BookListModal({ open, cls, subjects, setSubjects, getclassesdata, bookLists, setBookLists, classesData, onClose,onAddSubjectClick, showToast, showSuccess }) {
   const [localList, setLocalList] = useState({});
   const [showApplyConfirm, setShowApplyConfirm] = useState(false);
   const [showDeleteconfirm, setshowDeleteconfirm] = useState(false);
@@ -307,8 +307,11 @@ setshowDeleteconfirm(false)
 , onClose()]}>
       Close
     </button>
-    <button className="btn btn-primary btn-md" onClick={handleSave}>
+    <button className="btn btn-primary btn-md" onClick={() => onAddSubjectClick(cls)}>
       <i className="fas fa-plus"></i> Add Subject
+    </button>
+    <button className="btn btn-primary btn-md" onClick={handleSave}>
+      <i className="fas fa-edit"></i> Update
     </button>
   </div>
 </div>
@@ -609,13 +612,29 @@ setshowDeleteconfirm(false)
 }
 
 // ── Add Subject Modal ──────────────────────────────────────────────────────
-function AddSubjectModal({ open, onClose, onAdd, classesData, showToast, getclassesdata }) {
+function AddSubjectModal({ open, onClose, onAdd, classesData, showToast, getclassesdata,prefill }) {
   const [name, setName] = useState('');
   const [err2, setErr2] = useState('');
   const [err, setErr] = useState('');
   const [selected, setSelected] = useState({
 });
-
+//AddSubject modal open krny pr class name,class section prefill  kr dy ga.
+useEffect(() => {
+    if (open && prefill) {
+      setSelected({
+        classId: prefill.classID,
+        sectionId: prefill.sectionID,
+        className: prefill.className || '',
+        sectionName: prefill.sectionName || 'No Section',
+      });
+    }
+    if (!open) {
+      setSelected({});
+      setName('');
+      setErr('');
+      setErr2('');
+    }
+  }, [open, prefill]);
   const handleAdd = async() => {
      if (!selected.classId || !selected.sectionId) {
     setErr2('Select the Class and Section');
@@ -743,6 +762,8 @@ export default function SubjectsTab({ classesData, setClassesData,  subjectsData
   const [showAddSubject, setShowAddSubject] = useState(false);
   const [subjectList, setSubjectList] = useState({});
   const [expandedKey, setExpandedKey] = useState(null);
+  //AddSubjectModal kholte waqt current class set .
+  const [AddSubjectPrefill, setAddSubjectPrefill] = useState(null);
         const branchID = sessionStorage.getItem('branchID');
 
   const buildRows = () => {
@@ -789,6 +810,7 @@ export default function SubjectsTab({ classesData, setClassesData,  subjectsData
         const res      = await fetch(buildUrl(`/api/LaunchSetup/get-grades-by-branch/${branchID}`), { headers: { Accept: '*/*' } });
         const json     = await res.json();
         const d        = json.data ?? {};
+        const sorted = [...d].sort((a, b) => (a.orderBy || 0) - (b.orderBy || 0));
         setClassesData(d);
       } catch { showToast('Could not load Subjects data', 'error'); }
   }, [setClassesData]);
@@ -865,7 +887,7 @@ export default function SubjectsTab({ classesData, setClassesData,  subjectsData
             return (
               <div key={expKey} style={{ borderBottom: '1px solid var(--border-light)' }}>
                 <div className={`subj-row${exp ? ' expanded-row' : ''}`} onClick={() => setExpandedKey(exp ? null : expKey)}>
-                  <div className="td" style={{ color: 'var(--text-muted)', fontWeight: 600, fontSize: 11.5 }}>{String(i + 1).padStart(2, '0')}</div>
+                  <div className="td" style={{ color: 'var(--text-muted)', fontWeight: 600, fontSize: 11.5 }}>{cls.orderBy > 0 ? String(cls.orderBy).padStart(2, '0') : '-'}</div>
                   <div className="td">
                     <div className="class-avatar" style={{ background: clsColor, marginRight: 9 }}>{cls.name.charAt(0).toUpperCase()}</div>
                     <span style={{ fontWeight: 700, fontSize: 13 }}>{cls.name}</span>
@@ -957,11 +979,16 @@ export default function SubjectsTab({ classesData, setClassesData,  subjectsData
         bookLists={bookLists} setBookLists={setBookLists}
         classesData={classesData}
         getclassesdata={getclassesdata}
+        onAddSubjectClick={(cls) => {
+    setAddSubjectPrefill(cls);   // current class store
+    setBookListTarget(null);     // book list modal band
+    setShowAddSubject(true);     // add subject modal khol
+  }}
         onClose={() => [getclassesdata(), setBookListTarget(null), ]}
         showToast={showToast} showSuccess={showSuccess}
       />
-      <AddSubjectModal open={showAddSubject} subjects={subjectsData} showToast={showToast} getclassesdata={getclassesdata}
-      classesData={classesData} onClose={() => setShowAddSubject(false)} onAdd={handleAddSubject} />
+      <AddSubjectModal open={showAddSubject} prefill={AddSubjectPrefill} subjects={subjectsData} showToast={showToast} getclassesdata={getclassesdata}
+      classesData={classesData} onClose={() => {setShowAddSubject(false); setAddSubjectPrefill(null);}} onAdd={handleAddSubject} />
     </div>
   );
 }

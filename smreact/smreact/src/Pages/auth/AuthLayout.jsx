@@ -1,9 +1,16 @@
 import { useEffect, useState } from 'react';
 import '../../styles/auth.css';
 
+//FOR tick icon color change show in left side of login and signup page
+const TickIcon = () => (
+  <svg viewBox="0 0 24 24" width="16" height="16" fill="none">
+    <polyline points="20 6 9 17 4 12" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
+  </svg>
+);
+
 const ILLUSTRATIONS = {
   login: {
-    badge: '👋',
+    badge: '',
     title: "Pakistan's #1\nSchool OS",
     tagline: 'Trusted by 700+ schools across the nation',
     stats: [
@@ -12,14 +19,14 @@ const ILLUSTRATIONS = {
       { value: '99%',  label: 'Uptime'  },
     ],
     features: [
-      { icon: '🏫', text: 'Complete ERP system for school management' },
-      { icon: '📱', text: 'Mobile app for parents, teachers & staff'  },
-      { icon: '🤖', text: 'Mentor AI for smart school insights'        },
-      { icon: '📋', text: 'Operational manuals & teacher trainings'   },
+      { icon: <TickIcon />, text: 'Complete ERP system for school management' },
+      { icon: <TickIcon />, text: 'Mobile app for parents, teachers & staff'  },
+      { icon: <TickIcon />, text: 'Mentor AI for smart school insights'        },
+      { icon: <TickIcon />, text: 'Operational manuals & teacher trainings'   },
     ],
   },
   signup: {
-    badge: '🚀',
+    badge: '',
     title: 'Join the\nSchoolMentor\nFamily',
     tagline: 'Set up your school in under 5 minutes',
     stats: [
@@ -28,10 +35,10 @@ const ILLUSTRATIONS = {
       { value: '24/7',  label: 'Support' },
     ],
     features: [
-      { icon: '✅', text: 'No credit card required to get started'    },
-      { icon: '🔒', text: 'Bank-grade security & data encryption'     },
-      { icon: '☁️', text: 'Cloud-based, accessible from anywhere'     },
-      { icon: '🌐', text: 'Pakistan & international schools supported' },
+      { icon: <TickIcon />, text: 'No credit card required to get started'    },
+      { icon: <TickIcon />, text: 'Bank-grade security & data encryption'     },
+      { icon: <TickIcon />, text: 'Cloud-based, accessible from anywhere'     },
+      { icon: <TickIcon />, text: 'Pakistan & international schools supported' },
     ],
   },
 };

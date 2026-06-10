@@ -6,10 +6,22 @@ import { buildUrl } from '../utils/apiConfig';
 // Add Class Modal
 function AddClassModal({ open, onClose, getClassesData, onAdd }) {
   const [name, setName] = useState('');
-  const [err, setErr] = useState('');
+  const [nameErr, setNameErr] = useState('');  
+  const [sortErr, setSortErr] = useState('');
+  const [sortOrder, setSortOrder] = useState('');
+
+  // order by set api fetch
+  React.useEffect(() => {
+    if (open) {
+      setName('');
+      setSortOrder('');
+     setNameErr(''); setSortErr('');
+    }
+  }, [open]);
 
   const handleAdd = async() => {
-    if (!name.trim()) { setErr('Class name is required'); return; }
+    if (!name.trim()) { setNameErr('Class name is required'); return; }
+    if (!sortOrder) { setSortErr('Sort order is required'); return; }
     // onAdd(name.trim(), teacher.trim() || 'TBA');
      try {
       const branchID = sessionStorage.getItem('branchID');
@@ -25,6 +37,7 @@ function AddClassModal({ open, onClose, getClassesData, onAdd }) {
       modifiedBy: Number(userID),
       isActive: true,
       networkID: 0,
+      orderBy: sortOrder ? parseInt(sortOrder) : 0,
       sections: []
     };
     const res = await fetch(buildUrl('/api/LaunchSetup/save-grade'), {
@@ -39,18 +52,18 @@ function AddClassModal({ open, onClose, getClassesData, onAdd }) {
     const data = await res.json();
 
     if (!res.ok) {
-      setErr(data?.message || 'Data failed');
+      setNameErr(data?.message || 'Data failed');
       return;
     }
 setName('');
-    setErr('');
+    setNameErr(''); setSortErr('');
     onAdd(name);
     getClassesData();
     onClose();
 
   } catch (err) {
     console.error(err);
-    setErr('Network error. Please try again.');
+    setNameErr('Network error. Please try again.');
   }
   };
   
@@ -68,14 +81,34 @@ setName('');
             <label className="form-label">Class Name <span className="req-star">*</span></label>
             <div className="input-wrapper">
               <i className="fas fa-chalkboard input-icon"></i>
-              <input className={`form-input has-icon${err ? ' error-field' : ''}`} placeholder="e.g. Nursery, KG, Grade 1, Class 9..." value={name}
-                onChange={e => { setName(e.target.value); setErr(''); }}
+              <input className={`form-input has-icon${nameErr ? ' error-field' : ''}`} placeholder="e.g. Nursery, KG, Grade 1, Class 9..." value={name}
+                onChange={e => { setName(e.target.value); setNameErr(''); }}
                 onKeyDown={e => e.key === 'Enter' && handleAdd()}
                 autoFocus />
             </div>
-            {err && <span className="field-msg error"><i className="fas fa-times-circle"></i> {err}</span>}
+            {nameErr && <span className="field-msg error"><i className="fas fa-times-circle"></i> {nameErr}</span>}
             <span className="form-helper info"><i className="fas fa-info-circle"></i> The class name defines the grade</span>
           </div>
+          <div className="form-group" style={{ marginBottom: 16 }}>
+            {/* Set Sort Order */}
+  <label className="form-label">Sort Order<span className="req-star">*</span></label>
+  <div className="input-wrapper">
+    <i className="fas fa-sort-numeric-down input-icon"></i>
+    <input className={`form-input has-icon${sortErr ? ' error-field' : ''}`}
+      type="number"
+      min="0"
+      step="1"
+      placeholder="e.g. 1, 2, 3..."
+      value={sortOrder}
+      onChange={e => { setSortOrder(e.target.value); setSortErr(''); }}
+      onKeyDown={e => {
+        // e, E, +, -, . block karo taake sirf integer rahe
+        if (['e', 'E', '+', '-', '.'].includes(e.key)) e.preventDefault();
+      }} />
+  </div>
+  {sortErr && <span className="field-msg error"><i className="fas fa-times-circle"></i> {sortErr}</span>}
+  <span className="form-helper info"><i className="fas fa-info-circle"></i> Numeric value to control class ordering</span>
+</div>
           {/* <div className="form-group">
             <label className="form-label">Class Teacher <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(optional)</span></label>
             <div className="input-wrapper">
@@ -87,6 +120,120 @@ setName('');
           <div className="modal-footer">
             <button className="btn btn-secondary btn-md" onClick={onClose}>Cancel</button>
             <button className="btn btn-primary btn-md" onClick={handleAdd}><i className="fas fa-plus"></i> Add Class</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+//Edit Modal
+
+function EditClassModal({ open, cls, onClose, getClassesData, onUpdate}) {
+ const [name, setName] = useState('');
+ const [nameErr, setNameErr] = useState('');  // yeh add karo
+   const [sortErr, setSortErr] = useState('');
+  const [sortOrder, setSortOrder] = useState('');
+ 
+  React.useEffect(() => {
+    if (open && cls) {
+      setName(cls.name || '');
+      setSortOrder(cls.orderBy != null ? String(cls.orderBy) : '');
+      setSortErr('');
+    }
+  }, [open, cls]);
+const handleUpdate = async () => {
+    if (!name.trim()) { setNameErr('Class name is required'); return; }
+    if (!sortOrder) { setSortErr('Sort order is required'); return; }
+    try {
+      const branchID = sessionStorage.getItem('branchID');
+      const userID = sessionStorage.getItem('UserID') || 0;
+
+      const payload = {
+        id: cls.id,                 // existing id => update
+        name: name.trim(),
+        branchID: Number(branchID),
+        createdAt: new Date().toISOString(),
+        createdBy: Number(userID),
+        modifiedAt: new Date().toISOString(),
+        modifiedBy: Number(userID),
+        isActive: true,
+        networkID: 0,
+        orderBy: sortOrder ? parseInt(sortOrder) : 0,
+        sections: []
+      };
+
+      const res = await fetch(buildUrl('/api/LaunchSetup/save-grade'), {
+        method: 'POST',
+        headers: {
+          'Accept': '*/*',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        setNameErr(data?.message || 'Update failed');
+        return;
+      }
+
+      setNameErr('');
+      onUpdate(name.trim());
+      getClassesData();
+      onClose();
+    } catch (err) {
+      console.error(err);
+      setNameErr('Network error. Please try again.');
+    }
+  };
+
+  if (!open || !cls) return null;
+  return (
+    <div className="modal-overlay open" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="modal modal-md">
+        <div className="modal-header">
+          <div>
+            <div className="modal-title">Update Class</div>
+            <div className="modal-subtitle">Edit the class name</div>
+          </div>
+          <button className="modal-close" onClick={onClose}><i className="fas fa-times"></i></button>
+        </div>
+        <div className="modal-body">
+          <div className="form-group" style={{ marginBottom: 16 }}>
+            <label className="form-label">Class Name <span className="req-star">*</span></label>
+            <div className="input-wrapper">
+              <i className="fas fa-chalkboard input-icon"></i>
+              <input className={`form-input has-icon${nameErr ? ' error-field' : ''}`}
+                placeholder="e.g. Nursery, KG, Grade 1, Class 9..."
+                value={name}
+                onChange={e => { setName(e.target.value); setNameErr(''); }}
+                onKeyDown={e => e.key === 'Enter' && handleUpdate()}
+                autoFocus />
+            </div>
+            {nameErr && <span className="field-msg error"><i className="fas fa-times-circle"></i> {nameErr}</span>}
+          </div>
+          <div className="form-group" style={{ marginBottom: 16 }}>
+  <label className="form-label">Sort Order<span className="req-star">*</span></label>
+  <div className="input-wrapper">
+    <i className="fas fa-sort-numeric-down input-icon"></i> 
+    <input className={`form-input has-icon${sortErr ? ' error-field' : ''}`}
+      type="number"
+      min="0"
+      step="1"
+      placeholder="e.g. 1, 2, 3..."
+      value={sortOrder}
+      onChange={e => { setSortOrder(e.target.value); setSortErr(''); }}
+       />
+  </div>
+  {sortErr && <span className="field-msg error"><i className="fas fa-times-circle"></i> {sortErr}</span>}
+  <span className="form-helper info"><i className="fas fa-info-circle"></i> Numeric value to control class ordering</span>
+</div>
+          <div className="modal-footer">
+            <button className="btn btn-secondary btn-md" onClick={onClose}>Cancel</button>
+            <button className="btn btn-primary btn-md" onClick={handleUpdate}>
+              <i className="fas fa-save"></i> Update Class
+            </button>
           </div>
         </div>
       </div>
@@ -681,6 +828,7 @@ export default function ClassesTab({ classesData, setClassesData, schoolInfo, sh
   const [sectionTarget, setSectionTarget] = useState(null);
   const [feeTarget, setFeeTarget] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
+  const [editTarget, setEditTarget] = useState(null);
 
   const filtered = search ? classesData.filter(c => c.name.toLowerCase().includes(search.toLowerCase())) : classesData;
   const totalSections = classesData.reduce((s, c) => s + c.sections.length, 0);
@@ -702,6 +850,10 @@ export default function ClassesTab({ classesData, setClassesData, schoolInfo, sh
     const tot = feeHeads.reduce((s, f) => s + Number(f.amount), 0);
     showSuccess('Fee Saved!', `Fee structure for "${cls?.name}" saved.`, `<strong>Total:</strong> PKR ${tot.toLocaleString()}`);
   };
+  //Edit Success Handler
+  const handleUpdateClass = (name) => {
+  showSuccess('Class Updated!', `"${name}" has been updated.`, `<strong>Class:</strong> ${name}<br>`);
+};
 
   const handleDelete = async(id) => {
     const cls = classesData.find(c => c.id === id);
@@ -760,7 +912,17 @@ export default function ClassesTab({ classesData, setClassesData, schoolInfo, sh
       const json     = await res.json();
 
     if (!res.ok) {
-      showToast(json?.message || 'Delete failed', 'error');
+      //delete section Toster 
+      if (!res.ok) {
+  const msg = json?.message || '';
+  
+  if (msg.includes('REFERENCE constraint') || msg.includes('FK_') || msg.includes('foreign key')) {
+    showToast('Cannot delete section Because it Contain subjects or student data.', 'error');
+  } else {
+    showToast(msg || 'Delete failed', 'error');
+  }
+  return;
+}
       return;
     }
     
@@ -784,7 +946,8 @@ const getclassesdata = useCallback(async () => {
       const res      = await fetch(buildUrl(`/api/LaunchSetup/get-grades-by-branch/${branchID}`), { headers: { Accept: '*/*' } });
       const json     = await res.json();
       const d        = json.data ?? {};
-      setClassesData(d);
+      const sorted   = [...d].sort((a, b) => (a.orderBy || 0) - (b.orderBy || 0));
+      setClassesData(sorted);
     } catch { showToast('Could not load branch data', 'error'); }
 }, [setClassesData, showToast]);
 
@@ -855,7 +1018,7 @@ const getclassesdata = useCallback(async () => {
     return (
       <div key={cls.id} className="class-row-wrap">
         <div className={`class-row${exp ? ' expanded-row' : ''}`} onClick={() => setExpandedId(exp ? null : cls.id)}>
-          <div className="td"><input className="seq-input" type="number" value={i + 1} readOnly onClick={e => e.stopPropagation()} /></div>
+          <div className="td"><input className="seq-input" type="number" value={cls.orderBy > 0 ? cls.orderBy : '-'} readOnly onClick={e => e.stopPropagation()} style={{ width: "42px" }} /></div>
           <div className="td cls-name">
             <div className="class-avatar" style={{ background: col }}>{cls.name.charAt(0).toUpperCase()}</div>
             <div>
@@ -879,6 +1042,10 @@ const getclassesdata = useCallback(async () => {
           </div>
           <div className="td details-td">
             <div className="row-actions-overlay" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <button title="Update Class" onClick={e => { e.stopPropagation(); setEditTarget(cls); }}
+  style={{ width: 36, height: 36, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', borderRadius: 9, border: 'none', cursor: 'pointer', fontSize: 14, background: 'rgba(16,185,129,.1)', color: '#10b981' }}>
+  <i className="fas fa-pen"></i>
+</button>
               <button title="Manage Sections" onClick={e => { e.stopPropagation(); setSectionTarget(cls); }}
                 style={{ width: 36, height: 36, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', borderRadius: 9, border: 'none', cursor: 'pointer', fontSize: 14, background: 'rgba(30,58,138,.08)', color: 'var(--brand-primary)' }}>
                 <i className="fas fa-layer-group"></i>
@@ -974,6 +1141,14 @@ const getclassesdata = useCallback(async () => {
   showToast = {showToast}
   onSave={handleSaveFee}
   getClassesData={getclassesdata}
+/>
+{/* Edit Modal render */}
+<EditClassModal
+  open={!!editTarget}
+  cls={editTarget}
+  onClose={() => { setEditTarget(null); getclassesdata(); }}
+  getClassesData={getclassesdata}
+  onUpdate={handleUpdateClass}
 />
 
       {/* Delete Confirm */}
