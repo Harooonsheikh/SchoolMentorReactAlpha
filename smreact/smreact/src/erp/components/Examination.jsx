@@ -4,7 +4,7 @@ import Tooltip from './Tooltip';
 import TutorialModal from './TutorialModal';
 import * as examService from '../services/examService';
 import useAsync from '../hooks/useAsync';
-
+import { buildUrl } from '../../utils/apiConfig';
 /* ═══════════════════════════════════════════════════════════════════
    EXAMINATION — port of the HTML #module-exam (only Exam Setup is
    functional; other tabs show Coming Soon).
@@ -47,9 +47,22 @@ function sylClassStatus(data) {
 /* ── Helpers ── */
 function parseDDMMYYYY(s) {
   if (!s) return null;
+  
+  // If it's already a Date object
+  if (s instanceof Date) return s;
+  
+  // Handle ISO format (YYYY-MM-DD)
+  if (s.includes('-')) {
+    const [y, m, d] = s.split('T')[0].split('-');
+    return new Date(parseInt(y), parseInt(m) - 1, parseInt(d));
+  }
+  
+  // Handle DD/MM/YYYY format
   const [d, m, y] = s.split('/');
-  return new Date(+y, +m - 1, +d);
+  return new Date(parseInt(y), parseInt(m) - 1, parseInt(d));
 }
+
+
 function inputToDDMMYYYY(s) {
   if (!s) return '';
   const [y, m, d] = s.split('-');
@@ -71,10 +84,39 @@ function getExamStatus(ex) {
 }
 function calcDuration(from, to) {
   if (!from || !to) return '—';
-  const diff = Math.round((parseDDMMYYYY(to) - parseDDMMYYYY(from)) / 86400000);
-  return (diff + 1) + ' Day' + (diff + 1 !== 1 ? 's' : '');
+  
+  // Parse dates that could be in either ISO format or DD/MM/YYYY format
+  const parseDate = (dateStr) => {
+    // If it's already a Date object
+    if (dateStr instanceof Date) return dateStr;
+    
+    // Try ISO format (YYYY-MM-DD)
+    if (dateStr.includes('-')) {
+      const [y, m, d] = dateStr.split('T')[0].split('-');
+      return new Date(parseInt(y), parseInt(m) - 1, parseInt(d));
+    }
+    
+    // Try DD/MM/YYYY format
+    if (dateStr.includes('/')) {
+      const [d, m, y] = dateStr.split('/');
+      return new Date(parseInt(y), parseInt(m) - 1, parseInt(d));
+    }
+    
+    // Try creating Date directly as fallback
+    const date = new Date(dateStr);
+    return isNaN(date.getTime()) ? null : date;
+  };
+  
+  const fromDate = parseDate(from);
+  const toDate = parseDate(to);
+  
+  if (!fromDate || !toDate) return '—';
+  
+  const diff = Math.round((toDate - fromDate) / 86400000);
+  const days = diff + 1;
+  
+  return days + ' Day' + (days !== 1 ? 's' : '');
 }
-
 /* Result Setup grades / signatures / remarks now load via examService. */
 const RS_GRADE_LIST = ['A+','A','B+','B','C+','C','D','E','F'];
 const RS_COND_LIST = [
@@ -319,13 +361,12 @@ function dsTimeFromInput(t) {
 export default function Examination({ toast = () => {} }) {
   const [tutorialOpen, setTutorialOpen] = useState(false);
   const [tab, setTab]               = useState('setup'); // setup | datesheet | syllabus | results
-  const [term, setTerm]             = useState('2nd');
-  const { data: exams = [], setData: setExams } = useAsync(examService.getExams, []);
+  const [term, setTerm]             = useState('');
   const [openExamId, setOpenExamId] = useState(null);
   const [editing, setEditing]       = useState(null);     // null = closed, { id?, ... } = open
   const [confirmDel, setConfirmDel] = useState(null);     // exam to delete
   const [reportReq, setReportReq]   = useState(null);     // { scope:'all'|<examId>, name }
-
+const [exams, setExams] = useState([]);
   /* ── Date Sheet state ── */
   const [dsTerm, setDsTerm]           = useState('2nd');
   const [dsExamId, setDsExamId]       = useState(null);
@@ -395,30 +436,75 @@ export default function Examination({ toast = () => {} }) {
   const [sylEditing, setSylEditing]         = useState(null);   // { examId, classKey, className, subjects }
   const [sylConfirmDel, setSylConfirmDel]   = useState(null);   // { examId, classKey, className }
   const [sylReportReq, setSylReportReq]     = useState(null);   // { classKey, name }
+  const [sessionList, setSessionList]   = useState([]);
+  const [branchSession, setBranchSession]         = useState([]);
+const [terms, setTerms] = useState([]);
+const [filtered, setFiltered] = useState([]);
+const [selectedTermId, setSelectedTermId] = useState(null);
+const [examClasses, setExamClasses] = useState([]);
+const openAdd = () => {
+  setEditing({ name: '', classes: [], from: '', to: '', termID: selectedTermId });
+};
+  // Replace your current openEdit function with this:
+const openEdit = (exam) => {
+  console.log("Editing exam:", exam);
+  
+  // Make sure we have all the data needed for editing
+  const examToEdit = {
+    id: exam.id,
+    name: exam.name,
+    termID: exam.termID,
+    termName: exam.termName,
+    selectExam: exam.selectExam,
+    from: exam.from,
+    to: exam.to,
+    classes: exam.classes || [] // Make sure classes array exists
+  };
+  
+  setEditing(examToEdit);
+};
+async function getExamClasses(examId, termId) {
+  try {
+    const branchID = sessionStorage.getItem('branchID');
+    const empID = sessionStorage.getItem('employee_ID');
+    const token = sessionStorage.getItem('token');
 
-  const filtered = exams.filter(e => e.term === term);
+    const response = await fetch(
+      buildUrl(
+        `/api/getclassesinexam?branchID=${branchID}&selectExam=${examId}&termID=${termId}&empID=${empID}`
+      ),
+      {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/json"
+        }
+      }
+    );
 
-  const openAdd  = () => setEditing({ name: '', classes: [], from: '', to: '' });
-  const openEdit = id => {
-    const ex = exams.find(e => e.id === id);
-    if (ex) setEditing({ ...ex });
-  };
-  const saveExam = payload => {
-    if (payload.id) {
-      setExams(prev => prev.map(e => e.id === payload.id ? { ...e, ...payload } : e));
-      toast('Exam updated successfully!', 'success');
-    } else {
-      const newId = exams.length ? Math.max(...exams.map(e => e.id)) + 1 : 1;
-      setExams(prev => [...prev, { ...payload, id: newId, term }]);
-      toast('Exam added successfully!', 'success');
-    }
-    setEditing(null);
-  };
-  const deleteExam = id => {
-    setExams(prev => prev.filter(e => e.id !== id));
-    setConfirmDel(null);
-    toast('Exam deleted', 'success');
-  };
+    const data = await response.json();
+    console.log("API Response:", data); // Debug log
+    
+    // Transform the data to match your component structure
+    const transformedData = (data || []).map(item => ({
+      id: item.id,
+      classID: item.gradeID,      // Note: API returns gradeID
+      sectionID: item.sectionID,
+      sectionName: item.sectionName,
+      gradeName: item.name,        // API returns 'name' for grade name
+      className: `${item.name} - ${item.sectionName}`.trim()
+    }));
+    
+    console.log("Transformed Data:", transformedData); // Debug log
+    setExamClasses(transformedData);
+    return transformedData;
+    
+  } catch (error) {
+    console.log("Could not load exam classes", error);
+    setExamClasses([]);
+    return [];
+  }
+}
 
   /* ── Date Sheet helpers ── */
   const dsTermExams   = exams.filter(e => e.term === dsTerm);
@@ -430,10 +516,41 @@ export default function Examination({ toast = () => {} }) {
     setDsExamId(null);
     setDsOpenKey(null);
   };
-  const dsPickExam = id => {
-    setDsExamId(id);
-    setDsOpenKey(null);
-  };
+ // For Date Sheet
+const dsPickExam = async (id) => {
+  setDsExamId(id);
+  setDsOpenKey(null);
+  setExamClasses([]); // Clear previous classes while loading
+  
+  // Find the selected exam to get its selectExam ID and termID
+  const selectedExam = filtered.find(ex => ex.id === id);
+  console.log("Selected Exam:", selectedExam); // Debug log
+  
+  if (selectedExam) {
+    // Make sure we're passing the correct selectExam value
+    const selectExamId = selectedExam.selectExam;
+    const termID = selectedExam.termID;
+    console.log("Fetching classes for selectExam:", selectExamId, "termID:", termID);
+    await getExamClasses(selectExamId, termID);
+  }
+};
+const sylPickExam = async (id) => {
+  setSylExamId(id);
+  setSylOpenKey(null);
+  setExamClasses([]); // Clear previous classes while loading
+  
+  // Find the selected exam to get its selectExam ID and termID
+  const selectedExam = filtered.find(ex => ex.id === id);
+  console.log("Selected Exam:", selectedExam); // Debug log
+  
+  if (selectedExam) {
+    // Make sure we're passing the correct selectExam value
+    const selectExamId = selectedExam.selectExam;
+    const termID = selectedExam.termID;
+    console.log("Fetching classes for selectExam:", selectExamId, "termID:", termID);
+    await getExamClasses(selectExamId, termID);
+  }
+};
   const dsOpenEdit = (classKey, className) => {
     const existing = dateSheets[dsExamId]?.[classKey] || [];
     const rows = existing.length ? existing.map(r => ({ ...r })) : [{ subject:'', date:'', timeFrom:'', timeTo:'' }];
@@ -487,7 +604,6 @@ export default function Examination({ toast = () => {} }) {
   const sylExamData    = (sylExamId && syllabusData[sylExamId]) || {};
 
   const sylPickTerm = t => { setSylTerm(t); setSylExamId(null); setSylOpenKey(null); };
-  const sylPickExam = id => { setSylExamId(id); setSylOpenKey(null); };
   const sylOpenEdit = (classKey, className) => {
     const existing = syllabusData[sylExamId]?.[classKey] || [];
     const subjects = existing.length
@@ -521,7 +637,324 @@ export default function Examination({ toast = () => {} }) {
     setSylConfirmDel(null);
     toast('Syllabus deleted', 'info');
   };
+  async function getSessionList() {
+    try {
+      const res  = await fetch(buildUrl('/api/Setting/get-sessions'), { headers: { Accept: '*/*' } });
+      const json = await res.json();
+      setSessionList(json.data ?? []);
+    } catch { toast('Could not load sessions', 'error'); }
+  }
+  
+async function getSesssiondata() {
+  try {
+    const branchID = sessionStorage.getItem('branchID');
 
+    const res = await fetch(
+      buildUrl(`/api/Setting/get-branch-session/${branchID}`),
+      {
+        headers: { Accept: '*/*' }
+      }
+    );
+
+    const json = await res.json();
+    const d = json.data[0] ?? {};
+
+    if (d) {
+      setBranchSession(String(d.SessionID));
+
+      // SessionID ko sessionStorage mein save kar do
+      sessionStorage.setItem('SessionID', String(d.SessionID));
+
+      // Agar session name bhi chahiye
+      sessionStorage.setItem('SessionName', d.SessionName);
+    }
+  } catch (error) {
+    console.log('Could not load branch data', error);
+  }
+}
+
+
+async function getTerms() {
+  try {
+    const token = sessionStorage.getItem('token');
+    const branchID = Number(sessionStorage.getItem('branchID'));
+    const sessionYearID = sessionStorage.getItem('SessionID');
+
+    const response = await fetch(buildUrl('/api/termscrud'), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`
+      },
+      body: JSON.stringify({
+        id: 0,
+        branchID,
+        term: '',
+        sessionYearID,
+        action: 'get'
+      })
+    });
+
+    const data = await response.json();
+
+    // agar API array return karti hai
+    setTerms(data || []);
+  } catch (error) {
+    console.log('Could not load terms', error);
+  }
+}
+const formatDate = (dateStr) => {
+  if (!dateStr) return "—";
+  
+  let date;
+  if (dateStr.includes('-')) {
+    // ISO format
+    const [y, m, d] = dateStr.split('T')[0].split('-');
+    date = new Date(parseInt(y), parseInt(m) - 1, parseInt(d));
+  } else if (dateStr.includes('/')) {
+    // DD/MM/YYYY format
+    const [d, m, y] = dateStr.split('/');
+    date = new Date(parseInt(y), parseInt(m) - 1, parseInt(d));
+  } else {
+    date = new Date(dateStr);
+  }
+  
+  if (isNaN(date.getTime())) return "—";
+  
+  const day = String(date.getDate()).padStart(2, "0");
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const year = date.getFullYear();
+  
+  return `${day}/${month}/${year}`;
+};
+
+async function getExamsByTerm(termID) {
+  try {
+    const branchID = sessionStorage.getItem('branchID');
+    const empID = sessionStorage.getItem('employee_ID');
+    const token = sessionStorage.getItem('token');
+
+    const response = await fetch(
+      buildUrl(
+        `/api/getexamsbybranchidtermid?branchID=${branchID}&termID=${termID}&empID=${empID}`
+      ),
+      {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/json"
+        }
+      }
+    );
+
+    const data = await response.json();
+
+    const mapped = (data || []).reduce((acc, ex) => {
+      // ek exam ko uniquely identify karne ke liye examName + termID
+      const key = `${ex.examName}_${ex.termID}`;
+
+      if (!acc[key]) {
+        acc[key] = {
+          // exam-level common fields
+          name: ex.examName,
+          termID: ex.termID,
+          termName: ex.termName,
+          selectExam: ex.selectExam,
+          from: ex.dateFrom,
+          to: ex.dateTo,
+          gradeName: ex.gradeName,
+
+          // store full class objects (keyed by sectionID to avoid dupes)
+          classes: new Map()
+        };
+      }
+
+      // har class/section ka apna record id + section info store karo
+      // key sectionID rakho (yahi unique row hai class+section ke liye)
+      acc[key].classes.set(String(ex.sectionID), {
+        id: ex.id,                 // per-row id (UPDATE ke liye zaruri)
+        classID: ex.classID,
+        sectionID: ex.sectionID,
+        sectionName: ex.sectionName,
+        gradeName: ex.gradeName,
+        // display label: grade + section
+        className: `${ex.gradeName || ''}${ex.sectionName ? ' - ' + ex.sectionName : ''}`.trim()
+      });
+
+      return acc;
+    }, {});
+
+    const finalData = Object.values(mapped).map(ex => ({
+      ...ex,
+      classes: Array.from(ex.classes.values())
+    }));
+
+    setFiltered(finalData);
+    setExams(finalData);
+
+  } catch (error) {
+    console.log("Could not load exams", error);
+  }
+}
+// Parent component me onSave aise handle karo:
+
+// Update handleSaveExam function
+async function handleSaveExam({ payloads, name, from, to, classes, deletedCount }) {
+  try {
+    const token = sessionStorage.getItem('token');
+    
+    // Process insert and update operations
+    const results = await Promise.all(
+      payloads.map(p =>
+        fetch(buildUrl('/api/addexamcrud'), {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+            Accept: 'application/json'
+          },
+          body: JSON.stringify(p)
+        }).then(r => r.json())
+      )
+    );
+    
+    console.log('Exam CRUD results:', results);
+    
+    let message = 'Exam saved successfully';
+    if (deletedCount > 0) {
+      message += `, ${deletedCount} class(es) removed`;
+    }
+    toast(message, 'success');
+    
+    // Close modal
+    setEditing(null);
+    
+    // Refresh the exam list
+    if (selectedTermId) {
+      await getExamsByTerm(selectedTermId);
+    }
+  } catch (error) {
+    console.log('Could not save exam', error);
+    toast('Could not save exam', 'error');
+  }
+}
+
+// Make sure getExamsByTerm is properly defined to handle multiple classes
+async function getExamsByTerm(termID) {
+  try {
+    const branchID = sessionStorage.getItem('branchID');
+    const empID = sessionStorage.getItem('employee_ID');
+    const token = sessionStorage.getItem('token');
+
+    const response = await fetch(
+      buildUrl(
+        `/api/getexamsbybranchidtermid?branchID=${branchID}&termID=${termID}&empID=${empID}`
+      ),
+      {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/json"
+        }
+      }
+    );
+
+    const data = await response.json();
+
+    const mapped = (data || []).reduce((acc, ex) => {
+      // ek exam ko uniquely identify karne ke liye examName + termID
+      const key = `${ex.examName}_${ex.termID}`;
+
+      if (!acc[key]) {
+        acc[key] = {
+          // exam-level common fields
+          id: ex.id,
+          name: ex.examName,
+          termID: ex.termID,
+          termName: ex.termName,
+          selectExam: ex.selectExam,
+          from: ex.dateFrom,
+          to: ex.dateTo,
+          gradeName: ex.gradeName,
+
+          // store full class objects (keyed by sectionID to avoid dupes)
+          classes: new Map()
+        };
+      }
+
+      // har class/section ka apna record id + section info store karo
+      // key sectionID rakho (yahi unique row hai class+section ke liye)
+      acc[key].classes.set(String(ex.sectionID), {
+        id: ex.id,                 // per-row id (UPDATE ke liye zaruri)
+        classID: ex.classID,
+        sectionID: ex.sectionID,
+        sectionName: ex.sectionName,
+        gradeName: ex.gradeName,
+        // display label: grade + section
+        className: `${ex.gradeName || ''}${ex.sectionName ? ' - ' + ex.sectionName : ''}`.trim()
+      });
+
+      return acc;
+    }, {});
+
+    const finalData = Object.values(mapped).map(ex => ({
+      ...ex,
+      classes: Array.from(ex.classes.values())
+    }));
+
+    setFiltered(finalData);
+    setExams(finalData);
+
+  } catch (error) {
+    console.log("Could not load exams", error);
+  }
+}
+const handleDeleteExam = async (exam) => {
+  console.log("Deleting exam:", exam);
+
+  try {
+    const branchID = Number(sessionStorage.getItem("branchID"));
+    const token = sessionStorage.getItem("token");
+
+    const url = buildUrl(
+      `/api/deleteexamdata?branchID=${branchID}&id=${Number(exam.selectExam)}`
+    );
+
+    const response = await fetch(url, {
+      method: "DELETE",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "*/*",
+      },
+    });
+
+    const data = await response.json();
+
+    if (data.status || data.message) {
+      setConfirmDel(null);
+      getExamsByTerm(exam.termID);
+    } else {
+      console.log(data.message || "Delete failed");
+    }
+  } catch (error) {
+    console.error(error);
+  }
+};
+useEffect(() => {
+  getSessionList();
+  getSesssiondata();
+  getTerms();
+}, []);
+useEffect(() => {
+  if (terms && terms.length > 0 && !selectedTermId) {
+    // Select the first term by default
+    const firstTerm = terms[0];
+    setTerm(firstTerm.term);
+    setSelectedTermId(firstTerm.id);
+    // Fetch exams for the first term
+    getExamsByTerm(firstTerm.id);
+  }
+}, [terms]);
   return (
     <>
       <style>{EXAM_CSS}</style>
@@ -567,14 +1000,22 @@ export default function Examination({ toast = () => {} }) {
       {/* ── Exam Setup ── */}
       {tab === 'setup' && (
         <>
-          <div className="exam-term-chips">
-            {EXAM_TERMS.map(t => (
-              <button key={t} className={`exam-term-chip${term === t ? ' active' : ''}`} onClick={() => setTerm(t)}>
-                {t}
-              </button>
-            ))}
-          </div>
 
+<div className="exam-term-chips">
+  {terms.map((t) => (
+    <button
+      key={t.id}
+      className={`exam-term-chip${selectedTermId === t.id ? ' active' : ''}`}
+      onClick={() => {
+        setTerm(t.term);
+        setSelectedTermId(t.id);
+        getExamsByTerm(t.id);
+      }}
+    >
+      {t.term}
+    </button>
+  ))}
+</div>
           <div className="exam-action-bar">
             <Tooltip text="Create a new exam for this term">
               <button className="exam-add-btn" onClick={openAdd}>
@@ -623,7 +1064,7 @@ export default function Examination({ toast = () => {} }) {
                         <div style={{ minWidth: 0 }}>
                           <div style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: 13 }}>{ex.name}</div>
                           <div style={{ fontSize: 10.5, color: 'var(--text-muted)', marginTop: 2 }}>
-                            {ex.classes.length} Class{ex.classes.length !== 1 ? 'es' : ''} · {ex.from || '—'}
+                            {ex.classes.length} Class{ex.classes.length !== 1 ? 'es' : ''} · {formatDate(ex.to || '—')}
                           </div>
                         </div>
                       </div>
@@ -634,7 +1075,7 @@ export default function Examination({ toast = () => {} }) {
                       </div>
                       <div className="exam-td" onClick={e => e.stopPropagation()}>
                         <Tooltip text={`Edit ${ex.name}`}>
-                          <button className="exam-edit-btn" onClick={() => openEdit(ex.id)}>
+                          <button className="exam-edit-btn" onClick={() => openEdit(ex)}>
                             <i className="fa-solid fa-pen-to-square"></i> Edit
                           </button>
                         </Tooltip>
@@ -652,11 +1093,14 @@ export default function Examination({ toast = () => {} }) {
                         </Tooltip>
                       </div>
                       <div className="exam-td" style={{ justifyContent: 'flex-end', gap: 8 }} onClick={e => e.stopPropagation()}>
-                        <Tooltip text={`Delete ${ex.name}`}>
-                          <button className="exam-del-btn" onClick={() => setConfirmDel(ex)}>
-                            <i className="fa-solid fa-trash"></i>
-                          </button>
-                        </Tooltip>
+                     <Tooltip text={`Delete ${ex.name}`}>
+  <button
+    className="exam-del-btn"
+    onClick={() => setConfirmDel(ex)}
+  >
+    <i className="fa-solid fa-trash"></i>
+  </button>
+</Tooltip>
                         <Tooltip text={isOpen ? 'Hide exam details' : 'Show exam details'}>
                           <button className={`exam-expand-btn${isOpen ? ' open' : ''}`} onClick={e => { e.stopPropagation(); setOpenExamId(isOpen ? null : ex.id); }}>
                             <i className="fa-solid fa-chevron-down"></i>
@@ -683,9 +1127,13 @@ export default function Examination({ toast = () => {} }) {
                             </div>
                             <div>
                               <div className="exam-detail-label">Classes ({ex.classes.length})</div>
-                              <div className="exam-detail-val classes-list">
-                                {ex.classes.map(c => <span key={c} className="exam-class-pill">{c}</span>)}
-                              </div>
+                             <div className="exam-detail-val classes-list">
+  {ex.classes.map(c => (
+    <span key={c.classID} className="exam-class-pill">
+      {c.gradeName} - {c.sectionName}
+    </span>
+  ))}
+</div>
                             </div>
                           </div>
                         </div>
@@ -697,8 +1145,9 @@ export default function Examination({ toast = () => {} }) {
                             </div>
                             <div>
                               <div className="exam-detail-label">Duration</div>
-                              <div className="exam-detail-val">{dur}</div>
-                            </div>
+<div className="exam-detail-val">
+  {calcDuration(ex.from, ex.to)}
+</div>                            </div>
                           </div>
                           <div className="exam-detail-item">
                             <div className="exam-detail-icon" style={{ background: 'rgba(22,163,74,.1)', color: '#16A34A' }}>
@@ -706,7 +1155,7 @@ export default function Examination({ toast = () => {} }) {
                             </div>
                             <div>
                               <div className="exam-detail-label">Start Date</div>
-                              <div className="exam-detail-val">{ex.from || '—'}</div>
+                              <div className="exam-detail-val">{formatDate(ex.from)}</div>
                             </div>
                           </div>
                           <div className="exam-detail-item">
@@ -715,7 +1164,7 @@ export default function Examination({ toast = () => {} }) {
                             </div>
                             <div>
                               <div className="exam-detail-label">End Date</div>
-                              <div className="exam-detail-val">{ex.to || '—'}</div>
+                              <div className="exam-detail-val">{formatDate(ex.to)}</div>
                             </div>
                           </div>
                         </div>
@@ -730,194 +1179,211 @@ export default function Examination({ toast = () => {} }) {
       )}
 
       {/* ── Date Sheet ── */}
-      {tab === 'datesheet' && (
-        <>
-          <div className="exam-term-chips">
-            {EXAM_TERMS.map(t => (
-              <button key={t} className={`exam-term-chip${dsTerm === t ? ' active' : ''}`} onClick={() => dsPickTerm(t)}>
-                {t}
-              </button>
-            ))}
+   {tab === 'datesheet' && (
+  <>
+    <div className="exam-term-chips">
+      {terms.map(t => (
+        <button
+          key={t.id}
+          className={`exam-term-chip${selectedTermId === t.id ? ' active' : ''}`}
+          onClick={() => {
+            setTerm(t.term);
+            setSelectedTermId(t.id);
+            getExamsByTerm(t.id);
+          }}
+        >
+          {t.term}
+        </button>
+      ))}
+    </div>
+
+    {filtered.length > 0 && (
+      <div style={{ marginBottom: 16 }}>
+        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <i className="fa-solid fa-file-pen" style={{ color: 'var(--brand-primary)' }}></i> Select Exam
+          <span style={{ flex: 1, height: 1, background: 'var(--border-light)' }}></span>
+        </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          {filtered.map(ex => (
+            <button
+              key={ex.id}
+              className={`ds-exam-btn${dsExamId === ex.id ? ' active' : ''}`}
+              onClick={() => dsPickExam(ex.id)}
+            >
+              <i className="fa-solid fa-file-pen"></i> {ex.name}
+            </button>
+          ))}
+        </div>
+      </div>
+    )}
+
+    {dsCurrentExam && (
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginBottom: 14 }}>
+        <Tooltip text={`Download date sheet PDF for all classes in ${dsCurrentExam.name}`}>
+          <button className="export-btn pdf" onClick={() => setDsReportReq({ classKey: 'all', name: `All Classes — ${dsCurrentExam.name}` })}>
+            <i className="fa-solid fa-file-pdf"></i> PDF
+          </button>
+        </Tooltip>
+        <Tooltip text={`Download date sheet in Word for ${dsCurrentExam.name}`}>
+          <button className="export-btn word" onClick={() => setDsReportReq({ classKey: 'all', name: `All Classes — ${dsCurrentExam.name}` })}>
+            <i className="fa-brands fa-microsoft"></i> Word
+          </button>
+        </Tooltip>
+      </div>
+    )}
+
+    <div id="dsClassesPanel">
+      {!dsCurrentExam ? (
+        <div className="ds-empty" style={{ marginTop: 4 }}>
+          <i className="fa-solid fa-hand-pointer" style={{ display: 'block', fontSize: 22, marginBottom: 10, color: 'var(--border-med)' }}></i>
+          {filtered.length === 0 ? 'No exams in this term yet. Add one from Exam Setup.' : 'Select an exam above to view its classes'}
+        </div>
+      ) : examClasses.length === 0 ? (
+        <div className="ds-empty">No classes assigned to this exam.<br />Edit the exam in Exam Setup to assign classes.</div>
+      ) : (
+        <div className="section-card" style={{ animation: 'fadeSlide .25s ease both', overflow: 'visible' }}>
+          <div className="ds-table-head">
+            <div className="ds-th">S. No.</div>
+            <div className="ds-th">Class Name</div>
+            <div className="ds-th">Section</div>
+            <div className="ds-th">Status</div>
+            <div className="ds-th">Edit</div>
+            <div className="ds-th">Reports</div>
+            <div className="ds-th" style={{ textAlign: 'right' }}>Actions</div>
           </div>
+          {examClasses.map((cls, i) => {
+            const key = `cls_${dsExamId}_${cls.sectionID}_${i}`;
+            const dsRows = dsExamSheets[key] || [];
+            const hasDates = dsRows.length > 0;
+            const isOpen = dsOpenKey === key;
+            const className = `${cls.gradeName} - ${cls.sectionName}`;
 
-          {dsTermExams.length > 0 && (
-            <div style={{ marginBottom: 16 }}>
-              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
-                <i className="fa-solid fa-file-pen" style={{ color: 'var(--brand-primary)' }}></i> Select Exam
-                <span style={{ flex: 1, height: 1, background: 'var(--border-light)' }}></span>
-              </div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                {dsTermExams.map(ex => (
-                  <button
-                    key={ex.id}
-                    className={`ds-exam-btn${dsExamId === ex.id ? ' active' : ''}`}
-                    onClick={() => dsPickExam(ex.id)}
-                  >
-                    <i className="fa-solid fa-file-pen"></i> {ex.name}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {dsCurrentExam && (
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginBottom: 14 }}>
-              <Tooltip text={`Download date sheet PDF for all classes in ${dsCurrentExam.name}`}>
-                <button className="export-btn pdf" onClick={() => setDsReportReq({ classKey: 'all', name: `All Classes — ${dsCurrentExam.name}` })}>
-                  <i className="fa-solid fa-file-pdf"></i> PDF
-                </button>
-              </Tooltip>
-              <Tooltip text={`Download date sheet in Word for ${dsCurrentExam.name}`}>
-                <button className="export-btn word" onClick={() => setDsReportReq({ classKey: 'all', name: `All Classes — ${dsCurrentExam.name}` })}>
-                  <i className="fa-brands fa-microsoft"></i> Word
-                </button>
-              </Tooltip>
-            </div>
-          )}
-
-          <div id="dsClassesPanel">
-            {!dsCurrentExam ? (
-              <div className="ds-empty" style={{ marginTop: 4 }}>
-                <i className="fa-solid fa-hand-pointer" style={{ display: 'block', fontSize: 22, marginBottom: 10, color: 'var(--border-med)' }}></i>
-                {dsTermExams.length === 0 ? 'No exams in this term yet. Add one from Exam Setup.' : 'Select an exam above to view its classes'}
-              </div>
-            ) : !dsCurrentExam.classes || !dsCurrentExam.classes.length ? (
-              <div className="ds-empty">No classes assigned to this exam.<br />Edit the exam in Exam Setup to assign classes.</div>
-            ) : (
-              <div className="section-card" style={{ animation: 'fadeSlide .25s ease both', overflow: 'visible' }}>
-                <div className="ds-table-head">
-                  <div className="ds-th">S. No.</div>
-                  <div className="ds-th">Class Name</div>
-                  <div className="ds-th">Section</div>
-                  <div className="ds-th">Status</div>
-                  <div className="ds-th">Edit</div>
-                  <div className="ds-th">Reports</div>
-                  <div className="ds-th" style={{ textAlign: 'right' }}>Actions</div>
+            return (
+              <div key={key} className="ds-row-wrap">
+                <div className={`ds-row${isOpen ? ' open' : ''}`} onClick={() => setDsOpenKey(isOpen ? null : key)}>
+                  <div className="ds-td" style={{ color: 'var(--text-muted)', fontWeight: 600 }}>
+                    <span style={{ color: 'var(--brand-primary)', fontSize: 10 }}>#</span>&nbsp;{i + 1}
+                  </div>
+                  <div className="ds-td cls-name">
+                    <div className="ds-cls-icon"><i className="fa-solid fa-users"></i></div>
+                    <span style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: 13 }}>{className}</span>
+                  </div>
+                  <div className="ds-td" style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>{cls.sectionName}</div>
+                  <div className="ds-td">
+                    {hasDates
+                      ? <span className="ds-has-badge"><i className="fa-solid fa-circle-check"></i> {dsRows.length} Subject{dsRows.length !== 1 ? 's' : ''}</span>
+                      : <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>No date sheet</span>}
+                  </div>
+                  <div className="ds-td" onClick={e => e.stopPropagation()}>
+                    <Tooltip text={`Edit date sheet for ${className}`}>
+                      <button className="ds-edit-btn" onClick={() => dsOpenEdit(key, className)}>
+                        <i className="fa-solid fa-pen-to-square"></i> Edit
+                      </button>
+                    </Tooltip>
+                  </div>
+                  <div className="ds-td ds-actions-cell" onClick={e => e.stopPropagation()}>
+                    <Tooltip text={`Download basic date sheet PDF for ${className}`}>
+                      <button className="ds-report-btn" onClick={() => setDsReportReq({ classKey: key, name: className })}>
+                        <i className="fa-solid fa-file-pdf"></i> Basic PDF
+                      </button>
+                    </Tooltip>
+                    <Tooltip text={`Copy ${className}'s date sheet to other classes`}>
+                      <button className="ds-copy-row-btn" onClick={() => {
+                        if (!hasDates) { toast('No date sheet to copy', 'warning'); return; }
+                        setDsConfirmCopy({
+                          examId: dsExamId, sourceKey: key,
+                          count: examClasses.length - 1,
+                          examName: dsCurrentExam.name,
+                        });
+                      }}>
+                        <i className="fa-regular fa-copy"></i> Copy
+                      </button>
+                    </Tooltip>
+                  </div>
+                  <div className="ds-td ds-actions-cell" style={{ justifyContent: 'flex-end' }} onClick={e => e.stopPropagation()}>
+                    <Tooltip text={`Delete date sheet for ${className}`}>
+                      <button className="ds-del-btn" onClick={() => setDsConfirmDel({ examId: dsExamId, classKey: key, className: className })}>
+                        <i className="fa-solid fa-trash"></i>
+                      </button>
+                    </Tooltip>
+                    <Tooltip text={isOpen ? 'Hide date sheet details' : 'Show date sheet details'}>
+                      <button className={`ds-expand-btn${isOpen ? ' open' : ''}`} onClick={e => { e.stopPropagation(); setDsOpenKey(isOpen ? null : key); }}>
+                        <i className="fa-solid fa-chevron-down"></i>
+                      </button>
+                    </Tooltip>
+                  </div>
                 </div>
-                {dsCurrentExam.classes.map((cls, i) => {
-                  const key      = `cls_${dsExamId}_${i}`;
-                  const dsRows   = dsExamSheets[key] || [];
-                  const hasDates = dsRows.length > 0;
-                  const isOpen   = dsOpenKey === key;
 
-                  return (
-                    <div key={key} className="ds-row-wrap">
-                      <div className={`ds-row${isOpen ? ' open' : ''}`} onClick={() => setDsOpenKey(isOpen ? null : key)}>
-                        <div className="ds-td" style={{ color: 'var(--text-muted)', fontWeight: 600 }}>
-                          <span style={{ color: 'var(--brand-primary)', fontSize: 10 }}>#</span>&nbsp;{i + 1}
-                        </div>
-                        <div className="ds-td cls-name">
-                          <div className="ds-cls-icon"><i className="fa-solid fa-users"></i></div>
-                          <span style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: 13 }}>{cls}</span>
-                        </div>
-                        <div className="ds-td" style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>A</div>
-                        <div className="ds-td">
-                          {hasDates
-                            ? <span className="ds-has-badge"><i className="fa-solid fa-circle-check"></i> {dsRows.length} Subject{dsRows.length !== 1 ? 's' : ''}</span>
-                            : <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>No date sheet</span>}
-                        </div>
-                        <div className="ds-td" onClick={e => e.stopPropagation()}>
-                          <Tooltip text={`Edit date sheet for ${cls}`}>
-                            <button className="ds-edit-btn" onClick={() => dsOpenEdit(key, cls)}>
-                              <i className="fa-solid fa-pen-to-square"></i> Edit
-                            </button>
-                          </Tooltip>
-                        </div>
-                        <div className="ds-td ds-actions-cell" onClick={e => e.stopPropagation()}>
-                          <Tooltip text={`Download basic date sheet PDF for ${cls}`}>
-                            <button className="ds-report-btn" onClick={() => setDsReportReq({ classKey: key, name: cls })}>
-                              <i className="fa-solid fa-file-pdf"></i> Basic PDF
-                            </button>
-                          </Tooltip>
-                          <Tooltip text={`Copy ${cls}'s date sheet to other classes`}>
-                            <button className="ds-copy-row-btn" onClick={() => {
-                              if (!hasDates) { toast('No date sheet to copy', 'warning'); return; }
-                              setDsConfirmCopy({
-                                examId: dsExamId, sourceKey: key,
-                                count: dsCurrentExam.classes.length - 1,
-                                examName: dsCurrentExam.name,
-                              });
-                            }}>
-                              <i className="fa-regular fa-copy"></i> Copy
-                            </button>
-                          </Tooltip>
-                        </div>
-                        <div className="ds-td ds-actions-cell" style={{ justifyContent: 'flex-end' }} onClick={e => e.stopPropagation()}>
-                          <Tooltip text={`Delete date sheet for ${cls}`}>
-                            <button className="ds-del-btn" onClick={() => setDsConfirmDel({ examId: dsExamId, classKey: key, className: cls })}>
-                              <i className="fa-solid fa-trash"></i>
-                            </button>
-                          </Tooltip>
-                          <Tooltip text={isOpen ? 'Hide date sheet details' : 'Show date sheet details'}>
-                            <button className={`ds-expand-btn${isOpen ? ' open' : ''}`} onClick={e => { e.stopPropagation(); setDsOpenKey(isOpen ? null : key); }}>
-                              <i className="fa-solid fa-chevron-down"></i>
-                            </button>
-                          </Tooltip>
-                        </div>
-                      </div>
-
-                      <div className={`ds-detail${isOpen ? ' open' : ''}`}>
-                        <div className="ds-detail-inner">
-                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
-                            <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text-secondary)' }}>
-                              <i className="fa-solid fa-calendar-days" style={{ color: 'var(--brand-primary)', marginRight: 5 }}></i>
-                              Date Sheet — {cls}
-                            </div>
-                          </div>
-                          <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-light)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
-                            <div className="ds-subj-table-head">
-                              <div className="ds-subj-th">#</div>
-                              <div className="ds-subj-th">Subject</div>
-                              <div className="ds-subj-th">Date</div>
-                              <div className="ds-subj-th">Time From</div>
-                              <div className="ds-subj-th">Time To</div>
-                            </div>
-                            {hasDates
-                              ? dsRows.map((s, si) => (
-                                  <div key={si} className="ds-subj-row">
-                                    <div className="ds-subj-td" style={{ color: 'var(--text-muted)', fontWeight: 600 }}>
-                                      <span style={{ color: 'var(--brand-primary)', fontSize: 10 }}>#</span>&nbsp;{si + 1}
-                                    </div>
-                                    <div className="ds-subj-td name">
-                                      <div className="ds-subj-icon"><i className="fa-solid fa-book-open"></i></div>{s.subject}
-                                    </div>
-                                    <div className="ds-subj-td">{s.date || '—'}</div>
-                                    <div className="ds-subj-td">{s.timeFrom || '—'}</div>
-                                    <div className="ds-subj-td">{s.timeTo || '—'}</div>
-                                  </div>
-                                ))
-                              : <div style={{ padding: '14px 12px', fontSize: 12, color: 'var(--text-muted)' }}>No subjects yet. Click <strong>Edit</strong> to add subjects.</div>}
-                          </div>
-                        </div>
+                <div className={`ds-detail${isOpen ? ' open' : ''}`}>
+                  <div className="ds-detail-inner">
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
+                      <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text-secondary)' }}>
+                        <i className="fa-solid fa-calendar-days" style={{ color: 'var(--brand-primary)', marginRight: 5 }}></i>
+                        Date Sheet — {className}
                       </div>
                     </div>
-                  );
-                })}
+                    <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-light)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
+                      <div className="ds-subj-table-head">
+                        <div className="ds-subj-th">#</div>
+                        <div className="ds-subj-th">Subject</div>
+                        <div className="ds-subj-th">Date</div>
+                        <div className="ds-subj-th">Time From</div>
+                        <div className="ds-subj-th">Time To</div>
+                      </div>
+                      {hasDates
+                        ? dsRows.map((s, si) => (
+                            <div key={si} className="ds-subj-row">
+                              <div className="ds-subj-td" style={{ color: 'var(--text-muted)', fontWeight: 600 }}>
+                                <span style={{ color: 'var(--brand-primary)', fontSize: 10 }}>#</span>&nbsp;{si + 1}
+                              </div>
+                              <div className="ds-subj-td name">
+                                <div className="ds-subj-icon"><i className="fa-solid fa-book-open"></i></div>{s.subject}
+                              </div>
+                              <div className="ds-subj-td">{s.date || '—'}</div>
+                              <div className="ds-subj-td">{s.timeFrom || '—'}</div>
+                              <div className="ds-subj-td">{s.timeTo || '—'}</div>
+                            </div>
+                          ))
+                        : <div style={{ padding: '14px 12px', fontSize: 12, color: 'var(--text-muted)' }}>No subjects yet. Click <strong>Edit</strong> to add subjects.</div>}
+                    </div>
+                  </div>
+                </div>
               </div>
-            )}
-          </div>
-        </>
+            );
+          })}
+        </div>
       )}
-
+    </div>
+  </>
+)}
       {/* ── Syllabus ── */}
       {tab === 'syllabus' && (
         <>
           <div className="exam-term-chips">
-            {EXAM_TERMS.map(t => (
-              <button key={t} className={`exam-term-chip${sylTerm === t ? ' active' : ''}`} onClick={() => sylPickTerm(t)}>
-                {t}
-              </button>
+ {terms.map(t => (
+               <button
+          key={t.id}
+          className={`exam-term-chip${selectedTermId === t.id ? ' active' : ''}`}
+          onClick={() => {
+            setTerm(t.term);
+            setSelectedTermId(t.id);
+            getExamsByTerm(t.id);
+          }}
+        >
+          {t.term}
+        </button>
             ))}
+
           </div>
 
-          {sylTermExams.length > 0 && (
+          {filtered.length > 0 && (
             <div style={{ marginBottom: 16 }}>
               <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
                 <i className="fa-solid fa-book-open" style={{ color: 'var(--brand-primary)' }}></i> Select Exam
                 <span style={{ flex: 1, height: 1, background: 'var(--border-light)' }}></span>
               </div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                {sylTermExams.map(ex => (
+                {filtered.map(ex => (
                   <button
                     key={ex.id}
                     className={`ds-exam-btn${sylExamId === ex.id ? ' active' : ''}`}
@@ -945,126 +1411,127 @@ export default function Examination({ toast = () => {} }) {
             </div>
           )}
 
-          <div id="sylClassesPanel">
-            {!sylCurrentExam ? (
-              <div className="ds-empty" style={{ marginTop: 4 }}>
-                <i className="fa-solid fa-hand-pointer" style={{ display: 'block', fontSize: 22, marginBottom: 10, color: 'var(--border-med)' }}></i>
-                {sylTermExams.length === 0 ? 'No exams in this term yet. Add one from Exam Setup.' : 'Select an exam above to view its classes'}
+         <div id="sylClassesPanel">
+  {!sylCurrentExam ? (
+    <div className="ds-empty" style={{ marginTop: 4 }}>
+      <i className="fa-solid fa-hand-pointer" style={{ display: 'block', fontSize: 22, marginBottom: 10, color: 'var(--border-med)' }}></i>
+      {filtered.length === 0 ? 'No exams in this term yet. Add one from Exam Setup.' : 'Select an exam above to view its classes'}
+    </div>
+  ) : examClasses.length === 0 ? (
+    <div className="ds-empty">No classes assigned to this exam.<br />Edit the exam in Exam Setup to assign classes.</div>
+  ) : (
+    <div className="section-card" style={{ animation: 'fadeSlide .25s ease both', overflow: 'visible' }}>
+      <div className="syl-table-head">
+        <div className="syl-th">S. No.</div>
+        <div className="syl-th">Class Name</div>
+        <div className="syl-th">Section</div>
+        <div className="syl-th">Status</div>
+        <div className="syl-th">Edit</div>
+        <div className="syl-th">Report</div>
+        <div className="syl-th" style={{ textAlign: 'right' }}>Actions</div>
+      </div>
+
+      {examClasses.map((cls, i) => {
+        const key    = `scls_${sylExamId}_${cls.sectionID}_${i}`;
+        const data   = sylExamData[key] || [];
+        const hasSyl = data.length > 0;
+        const ovSt   = sylClassStatus(data);
+        const isOpen = sylOpenKey === key;
+        const className = `${cls.gradeName} - ${cls.sectionName}`;
+
+        return (
+          <div key={key} className="syl-row-wrap">
+            <div className={`syl-row${isOpen ? ' open' : ''}`} onClick={() => setSylOpenKey(isOpen ? null : key)}>
+              <div className="syl-td" style={{ color: 'var(--text-muted)', fontWeight: 600 }}>
+                <span style={{ color: 'var(--brand-primary)', fontSize: 10 }}>#</span>&nbsp;{i + 1}
               </div>
-            ) : !sylCurrentExam.classes || !sylCurrentExam.classes.length ? (
-              <div className="ds-empty">No classes assigned to this exam.<br />Edit the exam in Exam Setup to assign classes.</div>
-            ) : (
-              <div className="section-card" style={{ animation: 'fadeSlide .25s ease both', overflow: 'visible' }}>
-                <div className="syl-table-head">
-                  <div className="syl-th">S. No.</div>
-                  <div className="syl-th">Class Name</div>
-                  <div className="syl-th">Section</div>
-                  <div className="syl-th">Status</div>
-                  <div className="syl-th">Edit</div>
-                  <div className="syl-th">Report</div>
-                  <div className="syl-th" style={{ textAlign: 'right' }}>Actions</div>
+              <div className="syl-td cls-name">
+                <div className="syl-cls-icon"><i className="fa-solid fa-users"></i></div>
+                <span style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: 13 }}>{className}</span>
+              </div>
+              <div className="syl-td" style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>{cls.sectionName}</div>
+              <div className="syl-td">
+                <span className={`syl-status-badge ${ovSt.cls}`}>
+                  <i className={`fa-solid ${ovSt.icon}`}></i> {ovSt.label}
+                </span>
+              </div>
+              <div className="syl-td" onClick={e => e.stopPropagation()}>
+                <Tooltip text={`Edit syllabus for ${className}`}>
+                  <button className="syl-edit-btn" onClick={() => sylOpenEdit(key, className)}>
+                    <i className="fa-solid fa-pen-to-square"></i> Edit
+                  </button>
+                </Tooltip>
+              </div>
+              <div className="syl-td" onClick={e => e.stopPropagation()}>
+                <Tooltip text={`Download syllabus PDF for ${className}`}>
+                  <button className="syl-report-btn" onClick={() => setSylReportReq({ classKey: key, name: className })}>
+                    <i className="fa-solid fa-file-pdf"></i> Report
+                  </button>
+                </Tooltip>
+              </div>
+              <div className="syl-td" style={{ gap: 6, justifyContent: 'flex-end' }} onClick={e => e.stopPropagation()}>
+                <Tooltip text={`Delete syllabus for ${className}`}>
+                  <button className="syl-del-btn" onClick={() => setSylConfirmDel({ examId: sylExamId, classKey: key, className: className })}>
+                    <i className="fa-solid fa-trash"></i>
+                  </button>
+                </Tooltip>
+                <Tooltip text={isOpen ? 'Hide syllabus details' : 'Show syllabus details'}>
+                  <button className={`syl-expand-btn${isOpen ? ' open' : ''}`} onClick={e => { e.stopPropagation(); setSylOpenKey(isOpen ? null : key); }}>
+                    <i className="fa-solid fa-chevron-down"></i>
+                  </button>
+                </Tooltip>
+              </div>
+            </div>
+
+            <div className={`syl-detail${isOpen ? ' open' : ''}`}>
+              <div className="syl-detail-inner">
+                <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 10 }}>
+                  <i className="fa-solid fa-book-open" style={{ color: 'var(--brand-primary)', marginRight: 5 }}></i>
+                  Syllabus — {className}
                 </div>
-
-                {sylCurrentExam.classes.map((cls, i) => {
-                  const key    = `scls_${sylExamId}_${i}`;
-                  const data   = sylExamData[key] || [];
-                  const hasSyl = data.length > 0;
-                  const ovSt   = sylClassStatus(data);
-                  const isOpen = sylOpenKey === key;
-
-                  return (
-                    <div key={key} className="syl-row-wrap">
-                      <div className={`syl-row${isOpen ? ' open' : ''}`} onClick={() => setSylOpenKey(isOpen ? null : key)}>
-                        <div className="syl-td" style={{ color: 'var(--text-muted)', fontWeight: 600 }}>
-                          <span style={{ color: 'var(--brand-primary)', fontSize: 10 }}>#</span>&nbsp;{i + 1}
+                <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-light)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
+                  <div className="syl-subj-table-head">
+                    <div className="syl-subj-th">#</div>
+                    <div className="syl-subj-th">Subject</div>
+                    <div className="syl-subj-th">Summary</div>
+                    <div className="syl-subj-th">Status</div>
+                    <div className="syl-subj-th">Last Updated</div>
+                  </div>
+                  {hasSyl ? data.map((s, si) => {
+                    const plainAll = (s.content || '').replace(/<[^>]+>/g, '').trim();
+                    const plain    = plainAll ? plainAll.substring(0, 60) + (plainAll.length > 60 ? '…' : '') : '—';
+                    const added    = plainAll.length > 0;
+                    return (
+                      <div key={si} className="syl-subj-row">
+                        <div className="syl-subj-td" style={{ color: 'var(--text-muted)', fontWeight: 600 }}>
+                          <span style={{ color: 'var(--brand-primary)', fontSize: 10 }}>#</span>&nbsp;{si + 1}
                         </div>
-                        <div className="syl-td cls-name">
-                          <div className="syl-cls-icon"><i className="fa-solid fa-users"></i></div>
-                          <span style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: 13 }}>{cls}</span>
+                        <div className="syl-subj-td name">
+                          <div className="syl-subj-icon"><i className="fa-solid fa-book-open"></i></div>{s.subject}
                         </div>
-                        <div className="syl-td" style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>A</div>
-                        <div className="syl-td">
-                          <span className={`syl-status-badge ${ovSt.cls}`}>
-                            <i className={`fa-solid ${ovSt.icon}`}></i> {ovSt.label}
+                        <div className="syl-subj-td"><span className="syl-summary-text">{plain}</span></div>
+                        <div className="syl-subj-td">
+                          <span className={`syl-subj-status ${added ? 'completed' : 'pending'}`}>
+                            <span className="dot"></span>{added ? 'Added' : 'Not Added'}
                           </span>
                         </div>
-                        <div className="syl-td" onClick={e => e.stopPropagation()}>
-                          <Tooltip text={`Edit syllabus for ${cls}`}>
-                            <button className="syl-edit-btn" onClick={() => sylOpenEdit(key, cls)}>
-                              <i className="fa-solid fa-pen-to-square"></i> Edit
-                            </button>
-                          </Tooltip>
-                        </div>
-                        <div className="syl-td" onClick={e => e.stopPropagation()}>
-                          <Tooltip text={`Download syllabus PDF for ${cls}`}>
-                            <button className="syl-report-btn" onClick={() => setSylReportReq({ classKey: key, name: cls })}>
-                              <i className="fa-solid fa-file-pdf"></i> Report
-                            </button>
-                          </Tooltip>
-                        </div>
-                        <div className="syl-td" style={{ gap: 6, justifyContent: 'flex-end' }} onClick={e => e.stopPropagation()}>
-                          <Tooltip text={`Delete syllabus for ${cls}`}>
-                            <button className="syl-del-btn" onClick={() => setSylConfirmDel({ examId: sylExamId, classKey: key, className: cls })}>
-                              <i className="fa-solid fa-trash"></i>
-                            </button>
-                          </Tooltip>
-                          <Tooltip text={isOpen ? 'Hide syllabus details' : 'Show syllabus details'}>
-                            <button className={`syl-expand-btn${isOpen ? ' open' : ''}`} onClick={e => { e.stopPropagation(); setSylOpenKey(isOpen ? null : key); }}>
-                              <i className="fa-solid fa-chevron-down"></i>
-                            </button>
-                          </Tooltip>
-                        </div>
+                        <div className="syl-subj-td" style={{ fontSize: 11, color: 'var(--text-muted)' }}>{s.updatedAt || '—'}</div>
                       </div>
-
-                      <div className={`syl-detail${isOpen ? ' open' : ''}`}>
-                        <div className="syl-detail-inner">
-                          <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 10 }}>
-                            <i className="fa-solid fa-book-open" style={{ color: 'var(--brand-primary)', marginRight: 5 }}></i>
-                            Syllabus — {cls}
-                          </div>
-                          <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-light)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
-                            <div className="syl-subj-table-head">
-                              <div className="syl-subj-th">#</div>
-                              <div className="syl-subj-th">Subject</div>
-                              <div className="syl-subj-th">Summary</div>
-                              <div className="syl-subj-th">Status</div>
-                              <div className="syl-subj-th">Last Updated</div>
-                            </div>
-                            {hasSyl ? data.map((s, si) => {
-                              const plainAll = (s.content || '').replace(/<[^>]+>/g, '').trim();
-                              const plain    = plainAll ? plainAll.substring(0, 60) + (plainAll.length > 60 ? '…' : '') : '—';
-                              const added    = plainAll.length > 0;
-                              return (
-                                <div key={si} className="syl-subj-row">
-                                  <div className="syl-subj-td" style={{ color: 'var(--text-muted)', fontWeight: 600 }}>
-                                    <span style={{ color: 'var(--brand-primary)', fontSize: 10 }}>#</span>&nbsp;{si + 1}
-                                  </div>
-                                  <div className="syl-subj-td name">
-                                    <div className="syl-subj-icon"><i className="fa-solid fa-book-open"></i></div>{s.subject}
-                                  </div>
-                                  <div className="syl-subj-td"><span className="syl-summary-text">{plain}</span></div>
-                                  <div className="syl-subj-td">
-                                    <span className={`syl-subj-status ${added ? 'completed' : 'pending'}`}>
-                                      <span className="dot"></span>{added ? 'Added' : 'Not Added'}
-                                    </span>
-                                  </div>
-                                  <div className="syl-subj-td" style={{ fontSize: 11, color: 'var(--text-muted)' }}>{s.updatedAt || '—'}</div>
-                                </div>
-                              );
-                            }) : (
-                              <div style={{ padding: '14px 12px', fontSize: 12, color: 'var(--text-muted)' }}>
-                                No syllabus yet. Click <strong>Edit</strong> to add.
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      </div>
+                    );
+                  }) : (
+                    <div style={{ padding: '14px 12px', fontSize: 12, color: 'var(--text-muted)' }}>
+                      No syllabus yet. Click <strong>Edit</strong> to add.
                     </div>
-                  );
-                })}
+                  )}
+                </div>
               </div>
-            )}
+            </div>
           </div>
+        );
+      })}
+    </div>
+  )}
+</div>
         </>
       )}
 
@@ -2383,45 +2850,53 @@ export default function Examination({ toast = () => {} }) {
       <ExamModal
         data={editing}
         onClose={() => setEditing(null)}
-        onSave={saveExam}
+  onSave={handleSaveExam}
         toast={toast}
+          selectedTermId={selectedTermId}  // Add this line
+
       />
 
       {/* ── Delete confirm (Academics-style) ── */}
-      {confirmDel && (
-        <div className="confirm-overlay open" onClick={e => { if (e.target === e.currentTarget) setConfirmDel(null); }}>
-          <div className="confirm-dialog">
-            <div className="confirm-glow" style={{ background: 'linear-gradient(90deg,#EF4444,#DC2626,#EF4444)' }} />
-            <div className="confirm-hero">
-              <div className="confirm-ring">
-                <div className="confirm-icon-wrap" style={{ background: 'rgba(220,38,38,.1)', color: '#DC2626' }}>
-                  <i className="fa-solid fa-trash"></i>
-                </div>
-              </div>
-            </div>
-            <div className="confirm-body">
-              <div className="confirm-title">Delete Exam?</div>
-              <div
-                className="confirm-msg"
-                dangerouslySetInnerHTML={{
-                  __html: `You are about to delete <strong>${confirmDel.name}</strong> and its associated data for <strong>${confirmDel.classes.length}</strong> class${confirmDel.classes.length !== 1 ? 'es' : ''}.`,
-                }}
-              />
-              <div className="confirm-hint">
-                <i className="fa-solid fa-triangle-exclamation"></i>
-                <span>This action cannot be undone.</span>
-              </div>
-            </div>
-            <div className="confirm-footer">
-              <Tooltip text="Cancel and close"><button className="confirm-btn confirm-btn--cancel" onClick={() => setConfirmDel(null)}>Cancel</button></Tooltip>
-              <Tooltip text="Yes, Delete (confirm)"><button className="confirm-btn confirm-btn--confirm" onClick={() => deleteExam(confirmDel.id)}>
-                Yes, Delete
-              </button></Tooltip>
-            </div>
+{confirmDel && (
+  <div className="confirm-overlay open" onClick={e => { if (e.target === e.currentTarget) setConfirmDel(null); }}>
+    <div className="confirm-dialog">
+      <div className="confirm-glow" style={{ background: 'linear-gradient(90deg,#EF4444,#DC2626,#EF4444)' }} />
+      <div className="confirm-hero">
+        <div className="confirm-ring">
+          <div className="confirm-icon-wrap" style={{ background: 'rgba(220,38,38,.1)', color: '#DC2626' }}>
+            <i className="fa-solid fa-trash"></i>
           </div>
         </div>
-      )}
-
+      </div>
+      <div className="confirm-body">
+        <div className="confirm-title">Delete Exam?</div>
+        <div
+          className="confirm-msg"
+          dangerouslySetInnerHTML={{
+            __html: `You are about to delete <strong>${confirmDel.name}</strong> and its associated data for <strong>${confirmDel.classes.length}</strong> class${confirmDel.classes.length !== 1 ? 'es' : ''}.`,
+          }}
+        />
+        <div className="confirm-hint">
+          <i className="fa-solid fa-triangle-exclamation"></i>
+          <span>This action cannot be undone.</span>
+        </div>
+      </div>
+      <div className="confirm-footer">
+        <Tooltip text="Cancel and close">
+          <button className="confirm-btn confirm-btn--cancel" onClick={() => setConfirmDel(null)}>Cancel</button>
+        </Tooltip>
+        <Tooltip text="Yes, Delete (confirm)">
+          <button 
+            className="confirm-btn confirm-btn--confirm" 
+            onClick={() => handleDeleteExam(confirmDel)}
+          >
+            Yes, Delete
+          </button>
+        </Tooltip>
+      </div>
+    </div>
+  </div>
+)}
       {/* ── Report style picker (Academics-style) ── */}
       {reportReq && (
         <ExamReportPicker
@@ -3102,56 +3577,252 @@ export default function Examination({ toast = () => {} }) {
 /* ═══════════════════════════════════════════════════════════════════
    ADD / EDIT EXAM MODAL — verbatim from HTML #examModalOverlay
    ═══════════════════════════════════════════════════════════════════ */
-function ExamModal({ data, onClose, onSave, toast }) {
-  const isEdit = !!data?.id;
-  const [name, setName]   = useState('');
+function ExamModal({ data, onClose, onSave, toast, selectedTermId }) {
+  const isEdit = !!data?.id || !!(data?.classes && data.classes.some(c => c.id));
+  
+  const [name, setName] = useState('');
+  const [allClasses, setAllClasses] = useState([]);
   const [classes, setCls] = useState([]);
-  const [from, setFrom]   = useState('');
-  const [to, setTo]       = useState('');
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
   const [search, setSearch] = useState('');
   const [dropOpen, setDropOpen] = useState(false);
+  const [originalClassIds, setOriginalClassIds] = useState(new Set());
+  
   const wrapRef = useRef(null);
   const inputRef = useRef(null);
-
+  
+  // Track original classes for deletion detection
   useEffect(() => {
-    if (!data) return;
-    setName(data.name || '');
-    setCls(data.classes ? [...data.classes] : []);
-    setFrom(ddmmyyyyToInput(data.from || ''));
-    setTo(ddmmyyyyToInput(data.to || ''));
-    setSearch('');
-    setDropOpen(false);
-    setTimeout(() => inputRef.current?.focus(), 180);
+    if (data && data.classes && data.classes.length) {
+      const originalIds = new Set(data.classes.map(c => String(c.sectionID)));
+      setOriginalClassIds(originalIds);
+    } else if (data && data.id && !data.classes?.length) {
+      // If editing but no classes in data, fetch from API or use empty
+      setOriginalClassIds(new Set());
+    } else {
+      setOriginalClassIds(new Set());
+    }
   }, [data]);
-
+  
+  useEffect(() => {
+    if (data) {
+      setName(data.name || '');
+      setFrom(data.from ? data.from.split('T')[0] : '');
+      setTo(data.to ? data.to.split('T')[0] : '');
+      
+      if (data.classes && data.classes.length) {
+        setCls(data.classes);
+        const originalIds = new Set(data.classes.map(c => String(c.sectionID)));
+        setOriginalClassIds(originalIds);
+      } else {
+        setCls([]);
+        setOriginalClassIds(new Set());
+      }
+      
+      setSearch('');
+      setDropOpen(false);
+      
+      getClasses(data.classes || []);
+    }
+  }, [data]);
+  
   useEffect(() => {
     if (!dropOpen) return;
-    const close = e => { if (wrapRef.current && !wrapRef.current.contains(e.target)) setDropOpen(false); };
+    
+    const close = (e) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) {
+        setDropOpen(false);
+      }
+    };
+    
     document.addEventListener('mousedown', close);
     return () => document.removeEventListener('mousedown', close);
   }, [dropOpen]);
-
-  if (!data) return null;
-
-  const dropOptions = ALL_CLASSES.filter(c =>
-    !search || c.toLowerCase().includes(search.toLowerCase())
-  );
-
-  const removeCls = c => setCls(arr => arr.filter(x => x !== c));
-  const toggleCls = c => setCls(arr => arr.includes(c) ? arr.filter(x => x !== c) : [...arr, c]);
-
-  const submit = () => {
-    if (!name.trim()) { toast('Please enter an exam name', 'warning'); return; }
-    if (!classes.length) { toast('Please select at least one class', 'warning'); return; }
-    onSave({
-      id: data.id,
-      name: name.trim(),
+  
+  async function getClasses(preselected) {
+    try {
+      const branchID = sessionStorage.getItem('branchID');
+      const empID = sessionStorage.getItem('employee_ID');
+      const token = sessionStorage.getItem('token');
+      
+      const response = await fetch(
+        buildUrl(`/api/getclassesbybranchinexamination?branchID=${branchID}&empID=${empID}`),
+        {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: "application/json"
+          }
+        }
+      );
+      
+      const json = await response.json();
+      
+      const mapped = (json.data || json || []).map(item => ({
+        classID: item.gradeID,
+        sectionID: item.sectionID,
+        sectionName: item.sectionName || '',
+        gradeName: item.name || item.gradeName || '',
+        className: `${item.name} - ${item.sectionName}`
+      }));
+      
+      setAllClasses(mapped);
+      
+      if (preselected && preselected.length) {
+        const normalized = preselected
+          .map(pc => {
+            const sid = pc?.sectionID ?? pc?.classID ?? pc;
+            const match = mapped.find(m => String(m.sectionID) === String(sid));
+            if (match) {
+              return {
+                ...match,
+                id: pc?.id ?? 0,
+                selectExam: pc?.selectExam
+              };
+            }
+            return {
+              classID: pc?.gradeID,
+              sectionID: sid,
+              sectionName: pc?.sectionName || '',
+              gradeName: pc?.gradeName || '',
+              className: pc?.className || `${pc?.gradeName || ''} - ${pc?.sectionName || ''}`,
+              id: pc?.id ?? 0,
+              selectExam: pc?.selectExam
+            };
+          })
+          .filter(Boolean);
+        
+        setCls(normalized);
+      } else {
+        setCls([]);
+      }
+    } catch (error) {
+      console.log("Could not load classes", error);
+    }
+  }
+  
+  const removeCls = (c) =>
+    setCls(arr => arr.filter(x => String(x.sectionID) !== String(c.sectionID)));
+  
+  const toggleCls = (c) =>
+    setCls(arr =>
+      arr.some(x => String(x.sectionID) === String(c.sectionID))
+        ? arr.filter(x => String(x.sectionID) !== String(c.sectionID))
+        : [...arr, c]
+    );
+  
+  const submit = async () => {
+    if (!name.trim()) {
+      toast('Enter exam name', 'warning');
+      return;
+    }
+    if (!classes.length) {
+      toast('Select classes', 'warning');
+      return;
+    }
+    
+    const branchID = sessionStorage.getItem('branchID');
+    const token = sessionStorage.getItem('token');
+    const currentClassIds = new Set(classes.map(c => String(c.sectionID)));
+    
+    // Determine which classes were removed
+    const removedClassIds = [];
+    if (isEdit && originalClassIds.size > 0) {
+      for (const oldId of originalClassIds) {
+        if (!currentClassIds.has(oldId)) {
+          removedClassIds.push(oldId);
+        }
+      }
+    }
+    
+    // Delete removed classes
+    if (removedClassIds.length > 0) {
+      try {
+        const deletePromises = removedClassIds.map(async (sectionId) => {
+          // Find the original class object to get its ID
+          const removedClass = data.classes?.find(c => String(c.sectionID) === sectionId);
+          if (removedClass && removedClass.id) {
+            const deleteUrl = buildUrl(`/api/deletesingleaddexam?id=${removedClass.id}`);
+            const response = await fetch(deleteUrl, {
+              method: "DELETE",
+              headers: {
+                Authorization: `Bearer ${token}`,
+                Accept: "*/*"
+              }
+            });
+            return response.json();
+          }
+          return null;
+        });
+        
+        await Promise.all(deletePromises);
+        console.log(`Deleted ${removedClassIds.length} class(es)`);
+      } catch (error) {
+        console.log("Error deleting classes:", error);
+      }
+    }
+    
+    // Prepare payloads for insert and update
+    const insertPayloads = [];
+    const updatePayloads = [];
+    
+    for (const c of classes) {
+      const existingClass = data?.classes?.find(
+        existing => String(existing.sectionID) === String(c.sectionID)
+      );
+      
+      const payload = {
+        action: existingClass && existingClass.id ? "update" : "insert",
+        id: existingClass?.id || 0,
+        branchID: Number(branchID),
+        classID: String(c.classID),
+        sectionID: String(c.sectionID),
+        sectionName: '',
+        gradeName: '',
+        examName: name.trim(),
+        selectExam: String(data?.selectExam || c.selectExam || '0'),
+        termID: String(selectedTermId),
+        termName: '',
+        dateFrom: from ? new Date(from).toISOString() : '',
+        dateTo: to ? new Date(to).toISOString() : '',
+        createdOn: new Date().toISOString()
+      };
+      
+      if (existingClass && existingClass.id) {
+        updatePayloads.push(payload);
+      } else {
+        insertPayloads.push(payload);
+      }
+    }
+    
+    // Combine all payloads
+    const allPayloads = [...insertPayloads, ...updatePayloads];
+    
+    if (allPayloads.length === 0) {
+      toast('No changes to save', 'info');
+      onClose();
+      return;
+    }
+    
+    // Call onSave with all payloads
+    onSave({ 
+      payloads: allPayloads, 
+      name: name.trim(), 
+      from, 
+      to, 
       classes: [...classes],
-      from: inputToDDMMYYYY(from),
-      to:   inputToDDMMYYYY(to),
+      deletedCount: removedClassIds.length
     });
   };
-
+  
+  if (!data) return null;
+  
+  const dropOptions = allClasses.filter(c =>
+    !search ||
+    c.className.toLowerCase().includes(search.toLowerCase())
+  );
+  
   return (
     <div className="exam-modal-overlay open" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="exam-modal">
@@ -3167,16 +3838,24 @@ function ExamModal({ data, onClose, onSave, toast }) {
           </div>
           <Tooltip text="Close"><button className="exam-modal-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark"></i></button></Tooltip>
         </div>
-
+        
         <div className="exam-modal-body">
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 14 }}>
             <div className="form-group" style={{ marginBottom: 0, position: 'relative' }}>
               <label className="form-label">Select Classes <span className="req-star">*</span></label>
               <div className="exam-class-select-wrap" ref={wrapRef} onClick={() => { setDropOpen(true); inputRef.current?.focus(); }}>
                 {classes.map(c => (
-                  <span key={c} className="exam-class-tag">
-                    {c}
-                    <button className="exam-class-tag-x" onClick={e => { e.stopPropagation(); removeCls(c); }}>✕</button>
+                  <span key={c.sectionID} className="exam-class-tag">
+                    {c.className}
+                    <button
+                      className="exam-class-tag-x"
+                      onClick={e => {
+                        e.stopPropagation();
+                        removeCls(c);
+                      }}
+                    >
+                      ✕
+                    </button>
                   </span>
                 ))}
                 <input
@@ -3186,7 +3865,6 @@ function ExamModal({ data, onClose, onSave, toast }) {
                   placeholder="Search classes..."
                   value={search}
                   onChange={e => { setSearch(e.target.value); setDropOpen(true); }}
-                  onFocus={() => setDropOpen(true)}
                   autoComplete="off"
                 />
               </div>
@@ -3196,17 +3874,23 @@ function ExamModal({ data, onClose, onSave, toast }) {
                 ) : (
                   dropOptions.map(c => (
                     <div
-                      key={c}
-                      className={`exam-class-option${classes.includes(c) ? ' selected' : ''}`}
-                      onClick={e => { e.stopPropagation(); toggleCls(c); }}
+                      key={c.sectionID}
+                      className={`exam-class-option${
+                        classes.some(x => String(x.sectionID) === String(c.sectionID)) ? ' selected' : ''
+                      }`}
+                      onMouseDown={e => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        toggleCls(c);
+                      }}
                     >
-                      {c}
+                      {c.className}
                     </div>
                   ))
                 )}
               </div>
             </div>
-
+            
             <div className="form-group" style={{ marginBottom: 0 }}>
               <label className="form-label">Exam Name <span className="req-star">*</span></label>
               <div className="exam-name-field">
@@ -3215,7 +3899,7 @@ function ExamModal({ data, onClose, onSave, toast }) {
               </div>
             </div>
           </div>
-
+          
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
             <div className="form-group" style={{ marginBottom: 0 }}>
               <label className="form-label">Start Date</label>
@@ -3233,7 +3917,7 @@ function ExamModal({ data, onClose, onSave, toast }) {
             </div>
           </div>
         </div>
-
+        
         <div className="exam-modal-footer">
           <Tooltip text="Cancel and close">
             <button className="exam-cancel-btn" onClick={onClose}>
@@ -3250,7 +3934,6 @@ function ExamModal({ data, onClose, onSave, toast }) {
     </div>
   );
 }
-
 /* ═══════════════════════════════════════════════════════════════════
    REPORT STYLE PICKER — opens new tab with the chosen-style PDF
    ═══════════════════════════════════════════════════════════════════ */
