@@ -6,52 +6,7 @@ import * as academicsService from '../services/academicsService';
 import useAsync from '../hooks/useAsync';
 import { buildUrl } from '../../utils/apiConfig';
 
-/* ═══════════════════════════════════════════════════════════════════
-   DATA — extracted from
-   ~/Desktop/ERP-html/Complete Academics and Examination.html
-   ═══════════════════════════════════════════════════════════════════ */
-const CLASSES = [
-  { id: 1, name: 'class 1A', subjects: [
-    { name: 'Urdu',           book: '',                 icon: 'fa-font',                 color: 'subj-blue' },
-    { name: 'Urdu',           book: 'Afaq Urdu',        icon: 'fa-book',                 color: 'subj-teal' },
-    { name: 'Social Studies', book: 'Afaq SST',         icon: 'fa-globe',                color: 'subj-amber' },
-    { name: 'Science',        book: 'Oxford Science',   icon: 'fa-flask',                color: 'subj-green' },
-    { name: 'English',        book: 'Cambridge English',icon: 'fa-spell-check',          color: 'subj-purple' },
-    { name: 'Math',           book: 'Oxford Math',      icon: 'fa-square-root-variable', color: 'subj-rose' },
-  ]},
 
-  
-  { id: 2, name: 'II-Pre', subjects: [
-    { name: 'Urdu',    book: 'Afaq Urdu',        icon: 'fa-book',                 color: 'subj-teal' },
-    { name: 'English', book: 'Cambridge English',icon: 'fa-spell-check',          color: 'subj-purple' },
-    { name: 'Math',    book: 'Oxford Math',      icon: 'fa-square-root-variable', color: 'subj-rose' },
-    { name: 'Science', book: 'Oxford Science',   icon: 'fa-flask',                color: 'subj-green' },
-  ]},
-  { id: 3, name: 'III-Pre', subjects: [
-    { name: 'Urdu',           book: '',                 icon: 'fa-font',                 color: 'subj-blue' },
-    { name: 'Urdu',           book: 'Afaq Urdu',        icon: 'fa-book',                 color: 'subj-teal' },
-    { name: 'Social Studies', book: 'Afaq SST',         icon: 'fa-globe',                color: 'subj-amber' },
-    { name: 'Science',        book: 'Oxford Science',   icon: 'fa-flask',                color: 'subj-green' },
-    { name: 'English',        book: 'Cambridge English',icon: 'fa-spell-check',          color: 'subj-purple' },
-    { name: 'Math',           book: 'Oxford Math',      icon: 'fa-square-root-variable', color: 'subj-rose' },
-  ]},
-  { id: 4, name: '11', subjects: [
-    { name: 'Biology',   book: 'Oxford Bio',     icon: 'fa-dna',  color: 'subj-green' },
-    { name: 'Chemistry', book: 'Afaq Chem',      icon: 'fa-atom', color: 'subj-amber' },
-    { name: 'Physics',   book: 'Oxford Physics', icon: 'fa-bolt', color: 'subj-blue' },
-  ]},
-  { id: 5, name: 'I', subjects: [
-    { name: 'Urdu',    book: 'Afaq Urdu', icon: 'fa-book',        color: 'subj-teal' },
-    { name: 'English', book: 'Cambridge', icon: 'fa-spell-check', color: 'subj-purple' },
-  ]},
-  { id: 6, name: 'II', subjects: [
-    { name: 'Math',    book: 'Oxford Math', icon: 'fa-square-root-variable', color: 'subj-rose' },
-    { name: 'Science', book: 'Oxford Sci',  icon: 'fa-flask',                color: 'subj-green' },
-  ]},
-  { id: 7, name: 'III', subjects: [
-    { name: 'Urdu', book: 'Afaq Urdu', icon: 'fa-book', color: 'subj-teal' },
-  ]},
-];
 
 /* Terms, term metadata, and activity events now load via academicsService
    (src/services/academicsService.js). CRUD stays in-memory until backend wires
@@ -88,6 +43,7 @@ export default function Academics({ l1, setL1, l2, setL2, l3, setL3, toast }) {
   const [tutorialOpen, setTutorialOpen] = useState(false);
   const [activityModal, setActivityModal] = useState({ open: false, editing: null });
     const [classesData, setClassesData] = useState([]);
+
 const getClassesData = async () => {
   try {
     const branchID = sessionStorage.getItem("branchID");
@@ -112,7 +68,32 @@ const getClassesData = async () => {
     console.error("Error loading classes:", error);
   }
 };
+
+const getSessionData = async () => {
+  try {
+    const branchID = sessionStorage.getItem("branchID");
+    const empID = sessionStorage.getItem("employee_ID");
+
+    const res = await fetch(
+      buildUrl(`api/Setting/get-branch-session/${branchID}`),
+      {
+        method: "GET",
+        headers: {
+          Accept: "*/*",
+        },
+      }
+    );
+
+    const json = await res.json();
+    sessionStorage.setItem('sessionID', json.data[0].SessionID)
+  } catch (error) {
+    console.error("Error loading classes:", error);
+  }
+};
+
+
 useEffect(() => {
+  getSessionData();
   if (l2 === 'tb') {
     getClassesData();
   }
@@ -263,7 +244,7 @@ const openReport = (name, format = 'pdf') =>
         onClose={closeReport}
         onGenerate={(style, fmt) => {
           closeReport();
-          generateReportWindow(reportPicker.name, style, fmt, { events, terms });
+          generateReportWindow(reportPicker.name, style, fmt, { events, terms }, classesData);
         }}
       />
 
@@ -709,7 +690,7 @@ function ActivityModal({ open, editing, onClose, onSave }) {
 /* ═══════════════════════════════════════════════════════════════════
    REPORT GENERATOR (opens print-ready HTML in a new window)
    ═══════════════════════════════════════════════════════════════════ */
-function generateReportWindow(name, style, format, ctx) {
+function generateReportWindow(name, style, format, ctx, classesData) {
   const isColor = style === 'color';
   /* ── Two coordinated palettes ──
      • Colorful: brand blue header, light-blue table headers, alt-row stripes, status chips.
@@ -735,7 +716,7 @@ function generateReportWindow(name, style, format, ctx) {
   /* Drop emoji icons in colorless to save ink and avoid font-substitution glyphs. */
   const ico = (emoji) => isColor ? `${emoji} ` : '';
 
-  const isCls      = CLASSES.find(c => c.name === name);
+  const isCls      = classesData.find(c => c.name === name);
   const isAcademic = name.includes('Academic');
   const isActivity = name.includes('Activity');
 
@@ -1649,28 +1630,146 @@ function AcademicCalendar({ terms, onReport, onEdit }) {
 /* ═══════════════════════════════════════════════════════════════════
    TERM SETTINGS PANEL — stat strip + Session/Terms sub-tabs
    ═══════════════════════════════════════════════════════════════════ */
+/* ─── Terms CRUD backend (POST /api/termscrud, action: get|insert|update|delete) ───
+   Reads branch/session/token from sessionStorage so calls stay in sync with the
+   logged-in user. The endpoint stores only the term name + session year. */
+const termsBranchID      = () => Number(sessionStorage.getItem('branchID')) || 0;
+const termsSessionYearID = () => sessionStorage.getItem('sessionID') || '';
+
+/* Auth headers — attach the JWT from sessionStorage.token as a bearer token. */
+const termsAuthHeaders = (extra = {}) => ({
+  Accept: '*/*',
+  Authorization: `bearer ${sessionStorage.getItem('token') || ''}`,
+  ...extra,
+});
+
+async function termsCrud(payload) {
+  const res = await fetch(buildUrl('/api/termscrud'), {
+    method: 'POST',
+    headers: termsAuthHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(`termscrud ${payload.action} failed: ${res.status}`);
+  return res.json().catch(() => ({}));
+}
+
 function TermSettings({ termData, setTermData, openConfirm, toast }) {
   const [sub, setSub] = useState('term');
 
-  const [year,   setYear]   = useState('2026–2027');
+  const [sessions,  setSessions]  = useState([]);
+  const [sessionId, setSessionId] = useState(() => sessionStorage.getItem('sessionID') || '');
   const [start,  setStart]  = useState('2026-01-01');
   const [end,    setEnd]    = useState('2026-12-31');
   const [system, setSystem] = useState('Annual System');
   const [medium, setMedium] = useState('English');
 
+  /* Load the session (academic-year) dropdown. Default-selects the session whose
+     id matches sessionStorage.sessionID — the active session for the logged-in user. */
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch(buildUrl('/api/Setting/get-sessions'), { method: 'GET', headers: termsAuthHeaders() });
+        const json = await res.json();
+        setSessions(json?.data || []);
+        const stored = sessionStorage.getItem('sessionID');
+        if (stored) setSessionId(String(stored));
+      } catch (e) {
+        console.error('Error loading sessions:', e);
+      }
+    })();
+  }, []);
+
+  /* Load the session start/end dates for the current branch. */
+  useEffect(() => { loadSessionDates(); }, []);
+
+  const loadSessionDates = async () => {
+    try {
+      const res = await fetch(
+        buildUrl(`/api/getsessionsummarybybranchid?branchID=${termsBranchID()}&pageNo=1`),
+       {
+        method: 'GET',
+        headers: {
+          Accept: '*/*',
+          Authorization: `Bearer ${sessionStorage.getItem('token') || ''}`,
+        },
+      }
+      );
+      const json = await res.json();
+      const row = (json?.data || [])[0];
+      if (!row) return;
+      if (row.sessionStart) setStart(row.sessionStart.slice(0, 10));
+      if (row.sessionEnd)   setEnd(row.sessionEnd.slice(0, 10));
+    } catch (e) {
+      console.error('Error loading session dates:', e);
+    }
+  };
+
+  /* Switch the active session: persist it and reload the terms scoped to it. */
+  const changeSession = id => {
+    setSessionId(id);
+    sessionStorage.setItem('sessionID', id);
+    loadTerms();
+  };
+
+  /* Load terms from the backend on mount, replacing any seed/mock data.
+     Re-fetch whenever the session changes upstream (sessionID is written to
+     sessionStorage asynchronously by Academics.getSessionData). */
+  useEffect(() => { loadTerms(); }, []);
+
+  const loadTerms = async () => {
+    try {
+      const json = await termsCrud({
+        id: 0,
+        branchID: termsBranchID(),
+        term: 'string',
+        sessionYearID: termsSessionYearID(),
+        action: 'get',
+      });
+      const list = Array.isArray(json) ? json : (json?.data || []);
+      setTermData(list.map(t => ({
+        id: t.id,
+        name: t.term || '',
+        start: t.start || '',
+        end: t.end || '',
+      })));
+      console.log(termData)
+    } catch (e) {
+      console.error('Error loading terms:', e);
+      toast('Could not load terms', 'error');
+    }
+  };
+
   const updateRow = (id, key, val) =>
     setTermData(termData.map(t => t.id === id ? { ...t, [key]: val } : t));
 
-  const saveTerm = id => {
+  const saveTerm = async id => {
     const t = termData.find(x => x.id === id);
     if (!t) return;
     if (!t.name || !t.name.trim()) { toast('Term name cannot be empty', 'error'); return; }
-    toast(`"${t.name}" saved successfully`, 'success');
+    try {
+      await termsCrud({
+        id: t.isNew ? 0 : t.id,
+        branchID: termsBranchID(),
+        term: t.name.trim(),
+        sessionYearID: termsSessionYearID(),
+        action: t.isNew ? 'insert' : 'update',
+      });
+      toast(`"${t.name.trim()}" saved successfully`, 'success');
+      loadTerms();
+    } catch (e) {
+      console.error('Error saving term:', e);
+      toast('Could not save term', 'error');
+    }
   };
 
   const deleteTerm = id => {
     const t = termData.find(x => x.id === id);
     if (!t) return;
+    /* Unsaved rows aren't on the server yet — just drop them locally. */
+    if (t.isNew) {
+      setTermData(termData.filter(x => x.id !== id));
+      return;
+    }
     openConfirm({
       title: 'Delete Term?',
       message: `Term "<strong>${t.name || 'this term'}</strong>" will be permanently removed. Linked calendar entries will be affected.`,
@@ -1680,15 +1779,21 @@ function TermSettings({ termData, setTermData, openConfirm, toast }) {
       icon: 'fa-trash',
       iconBg: 'rgba(220,38,38,.1)',
       iconColor: '#DC2626',
-      onConfirm: () => {
-        setTermData(termData.filter(x => x.id !== id));
-        toast('Term deleted', 'success');
+      onConfirm: async () => {
+        try {
+          await termsCrud({ action: 'delete', id, branchID: 0, term: '', sessionYearID: '' });
+          toast('Term deleted', 'success');
+          loadTerms();
+        } catch (e) {
+          console.error('Error deleting term:', e);
+          toast('Could not delete term', 'error');
+        }
       },
     });
   };
 
   const addTerm = () => {
-    setTermData([...termData, { id: Date.now(), name: '', start: '', end: '' }]);
+    setTermData([...termData, { id: Date.now(), name: '', start: '', end: '', isNew: true }]);
   };
 
   const sessionStartDisplay = useMemo(() => {
@@ -1699,7 +1804,10 @@ function TermSettings({ termData, setTermData, openConfirm, toast }) {
     const d = new Date(end);
     return isNaN(d) ? 'Dec 31' : `${MONTHS_SHORT[d.getMonth()]} ${d.getDate()}`;
   }, [end]);
-  const academicYearLabel = useMemo(() => year.split('–')[0] || '2026', [year]);
+  const academicYearLabel = useMemo(() => {
+    const sel = sessions.find(s => String(s.SessionID) === String(sessionId));
+    return sel ? sel.SessionName.split(/[-–]/)[0] : '2026';
+  }, [sessions, sessionId]);
 
   return (
     <>
@@ -1778,7 +1886,11 @@ function TermSettings({ termData, setTermData, openConfirm, toast }) {
                 <label className="ts-label">Academic Year <span style={{ color: 'var(--error)' }}>*</span></label>
                 <div className="ts-input-wrap" style={{ maxWidth: 280 }}>
                   <i className="fa-solid fa-graduation-cap ts-input-icon"></i>
-                  <input className="ts-input" value={year} onChange={e => setYear(e.target.value)} placeholder="e.g. 2026–2027" />
+                  <select className="ts-input ts-select" value={sessionId} onChange={e => changeSession(e.target.value)}>
+                    {sessions.map(s => (
+                      <option key={s.SessionID} value={String(s.SessionID)}>{s.SessionName}</option>
+                    ))}
+                  </select>
                 </div>
               </div>
               <div className="ts-field-group">

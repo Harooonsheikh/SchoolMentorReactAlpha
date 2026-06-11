@@ -15,11 +15,7 @@ export const mockTerms = [
 ];
 
 export const mockTermData = [
-  { id: 1, name: '2nd',      start: '2026-01-01', end: '2026-03-31' },
-  { id: 2, name: '3rd Term', start: '2026-04-01', end: '2026-06-30' },
-  { id: 3, name: '5th Term', start: '2026-07-01', end: '2026-09-30' },
-  { id: 4, name: 'testing',  start: '2026-10-01', end: '2026-11-30' },
-  { id: 5, name: 'combined', start: '2026-12-01', end: '2026-12-31' },
+  { id: 0, term: '',  branchID: '',    sessionYearID: '', action: '' },
 ];
 
 export const mockActivities = [
