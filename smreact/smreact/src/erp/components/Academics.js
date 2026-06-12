@@ -88,6 +88,7 @@ const getSessionData = async () => {
 
     const json = await res.json();
     sessionStorage.setItem('sessionID', json.data[0].SessionID)
+    notifySessionChange();
   } catch (error) {
     console.error("Error loading classes:", error);
   }
@@ -135,6 +136,18 @@ const openReport = (name, format = 'pdf') =>
   /* Load once on mount and refresh each time the Calendar tab is opened. */
   useEffect(() => { loadCalendar(); }, []);
   useEffect(() => { if (l2 === 'cal') loadCalendar(); }, [l2]);
+
+  /* Re-run the calendar build whenever a session key changes (same-tab custom
+     event) or another tab edits sessionStorage (native 'storage' event). */
+  useEffect(() => {
+    const reload = () => loadCalendar();
+    window.addEventListener(SESSION_CHANGE_EVENT, reload);
+    window.addEventListener('storage', reload);
+    return () => {
+      window.removeEventListener(SESSION_CHANGE_EVENT, reload);
+      window.removeEventListener('storage', reload);
+    };
+  }, []);
 
   return (
     <>
@@ -1703,10 +1716,21 @@ function AcademicCalendar({ terms, onReport, onEdit }) {
    Reads branch/session/token from sessionStorage so calls stay in sync with the
    logged-in user. The endpoint stores only the term name + session year. */
 const termsBranchID      = () => Number(sessionStorage.getItem('branchID')) || 0;
- const termsSessionYearID = () =>
+/* Prefer the user-switched session (changeSessionId); fall back to the session
+   set at login (SessionID / sessionID). Sent as sessionYearID on term calls. */
+const termsSessionYearID = () =>
   sessionStorage.getItem('changeSessionId')
   || sessionStorage.getItem('SessionID')
+  || sessionStorage.getItem('sessionID')
   || '';
+
+/* sessionStorage writes don't fire the native 'storage' event in the same tab,
+   so we broadcast our own event after changing a session key. Loaders listen for
+   it (and the native cross-tab 'storage' event) to re-run their term/calendar calls. */
+const SESSION_CHANGE_EVENT = 'sm-session-change';
+const notifySessionChange = () => {
+  try { window.dispatchEvent(new Event(SESSION_CHANGE_EVENT)); } catch (e) { /* SSR/no-window */ }
+};
 
 /* Auth headers — attach the JWT from sessionStorage.token as a bearer token. */
 const termsAuthHeaders = (extra = {}) => ({
@@ -1751,18 +1775,17 @@ function TermSettings({ termData, setTermData, openConfirm, toast }) {
   const [sub, setSub] = useState('term');
 
   const [sessions,  setSessions]  = useState([]);
-  const [sessionId, setSessionId] = useState(
-    () => sessionStorage.getItem('changeSessionId')
-       || sessionStorage.getItem('SessionID')
-       || ''
-  );
+  const [sessionId, setSessionId] = useState(() => termsSessionYearID());
   const [start,  setStart]  = useState('2026-01-01');
   const [end,    setEnd]    = useState('2026-12-31');
   const [system, setSystem] = useState('Annual System');
   const [medium, setMedium] = useState('English');
-  const [summaryId, setSummaryId] = useState(null);
-  const [workingDaysPerWeek, setWorkingDaysPerWeek] = useState('');
-  const [remainingWorkingDays, setRemainingWorkingDays] = useState('');
+
+  /* Terms are only editable for the login session (SessionID/sessionID). If the user
+     switched to a different session (changeSessionId), terms become read-only:
+     Save/Delete are disabled and clicking them toasts "Method not allowed". */
+  const loginSessionId = sessionStorage.getItem('SessionID') || sessionStorage.getItem('sessionID') || '';
+  const isOtherSession = !!sessionId && !!loginSessionId && String(sessionId) !== String(loginSessionId);
 
   /* Load the session (academic-year) dropdown. Default-selects the session whose
      id matches sessionStorage.sessionID — the active session for the logged-in user. */
@@ -1772,8 +1795,7 @@ function TermSettings({ termData, setTermData, openConfirm, toast }) {
         const res = await fetch(buildUrl('/api/Setting/get-sessions'), { method: 'GET', headers: termsAuthHeaders() });
         const json = await res.json();
         setSessions(json?.data || []);
-        const stored = sessionStorage.getItem('changeSessionId')
-                    || sessionStorage.getItem('SessionID');
+        const stored = termsSessionYearID();
         if (stored) setSessionId(String(stored));
       } catch (e) {
         console.error('Error loading sessions:', e);
@@ -1796,65 +1818,39 @@ function TermSettings({ termData, setTermData, openConfirm, toast }) {
         },
       }
       );
-     const json = await res.json();
+      const json = await res.json();
       const row = (json?.data || [])[0];
-      if (!row) { setSummaryId(0); return; }
-      setSummaryId(row.id || row.ID || 0);
+      if (!row) return;
       if (row.sessionStart) setStart(row.sessionStart.slice(0, 10));
       if (row.sessionEnd)   setEnd(row.sessionEnd.slice(0, 10));
-      if (row.workingDaysPerWeek != null)  setWorkingDaysPerWeek(String(row.workingDaysPerWeek));
-      if (row.remainingWorkingDays != null) setRemainingWorkingDays(String(row.remainingWorkingDays));
     } catch (e) {
       console.error('Error loading session dates:', e);
     }
   };
-  /* Reset — re-fetch the saved session dates from the server,
-     restoring whatever was last persisted (not the hardcoded defaults). */
-  const resetSession = () => {
-    loadSessionDates();
-    toast('Reset to saved values', 'info');
-  };
 
-  /* Save Session — POST to /api/lpsessionsummarycrud. Logic is
-     id > 0  → update existing row, id == 0 → insert new row. */
-  const saveSession = async () => {
-    if (!start || !end) { toast('Please select both start and end dates', 'error'); return; }
-    if (new Date(end) < new Date(start)) { toast('End date cannot be before start date', 'error'); return; }
-    try {
-      const res = await fetch(buildUrl('/api/lpsessionsummarycrud'), {
-        method: 'POST',
-        headers: termsAuthHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({
-          id: summaryId || 0,
-          branchID: String(termsBranchID()),
-          sessionStart: new Date(start).toISOString(),
-          sessionEnd: new Date(end).toISOString(),
-          workingDaysPerWeek: workingDaysPerWeek || '',
-          remainingWorkingDays: remainingWorkingDays || '',
-          action: summaryId && summaryId > 0 ? 'update' : 'insert',
-        }),
-      });
-      if (!res.ok) throw new Error(`lpsessionsummarycrud failed: ${res.status}`);
-      toast('Session settings saved successfully!', 'success');
-      loadSessionDates(); // re-fetch so summaryId is set after an insert
-    } catch (e) {
-      console.error('Error saving session:', e);
-      toast('Could not save session', 'error');
-    }
-  };
-
- /* Save the user-chosen session separately — leave the global
-       SessionID (from login) untouched. */
-   const changeSession = id => {
+  /* Switch the active session: persist it and reload the terms scoped to it. */
+  const changeSession = id => {
     setSessionId(id);
-    /* Update changeSessionId only — never touch the capital SessionID. */
+    /* Store the user-switched session under changeSessionId (takes priority in
+       termsSessionYearID) and broadcast so all loaders re-run. */
     sessionStorage.setItem('changeSessionId', id);
-    loadTerms();
+    notifySessionChange();
   };
-  /* Load terms from the backend on mount, replacing any seed/mock data.
-     Re-fetch whenever the session changes upstream (sessionID is written to
-     sessionStorage asynchronously by Academics.getSessionData). */
+
+  /* Load terms from the backend on mount, replacing any seed/mock data. */
   useEffect(() => { loadTerms(); }, []);
+
+  /* Re-run the term/session calls whenever a session key changes (same-tab event)
+     or another tab edits sessionStorage. */
+  useEffect(() => {
+    const reload = () => { loadTerms(); loadSessionDates(); };
+    window.addEventListener(SESSION_CHANGE_EVENT, reload);
+    window.addEventListener('storage', reload);
+    return () => {
+      window.removeEventListener(SESSION_CHANGE_EVENT, reload);
+      window.removeEventListener('storage', reload);
+    };
+  }, []);
 
   const loadTerms = async () => {
     try {
@@ -1883,6 +1879,7 @@ function TermSettings({ termData, setTermData, openConfirm, toast }) {
     setTermData(termData.map(t => t.id === id ? { ...t, [key]: val } : t));
 
   const saveTerm = async id => {
+    if (isOtherSession) { toast('Method not allowed', 'error'); return; }
     const t = termData.find(x => x.id === id);
     if (!t) return;
     if (!t.name || !t.name.trim()) { toast('Term name cannot be empty', 'error'); return; }
@@ -1903,6 +1900,7 @@ function TermSettings({ termData, setTermData, openConfirm, toast }) {
   };
 
   const deleteTerm = id => {
+    if (isOtherSession) { toast('Method not allowed', 'error'); return; }
     const t = termData.find(x => x.id === id);
     if (!t) return;
     /* Unsaved rows aren't on the server yet — just drop them locally. */
@@ -2075,12 +2073,12 @@ function TermSettings({ termData, setTermData, openConfirm, toast }) {
             </div>
             <div style={{ display: 'flex', gap: 10, marginTop: 24, paddingTop: 18, borderTop: '1px solid var(--border-light)' }}>
               <Tooltip text="Save session settings">
-                <button className="ts-btn-primary" onClick={saveSession}>
+                <button className="ts-btn-primary" onClick={() => toast('Session settings saved successfully!', 'success')}>
                   <i className="fa-solid fa-check"></i> Save Session
                 </button>
               </Tooltip>
               <Tooltip text="Reset to defaults">
-                <button className="ts-btn-ghost" onClick={resetSession}>
+                <button className="ts-btn-ghost" onClick={() => toast('Reset to defaults', 'info')}>
                   <i className="fa-solid fa-rotate-left"></i> Reset
                 </button>
               </Tooltip>
@@ -2147,13 +2145,23 @@ function TermSettings({ termData, setTermData, openConfirm, toast }) {
                     </div>
                     <div className="ts-cell w100">
                       <div className="ts-actions">
-                        <Tooltip text="Save term changes">
-                          <button className="ts-act-btn save" onClick={() => saveTerm(term.id)}>
+                        <Tooltip text={isOtherSession ? 'Editing is only allowed for the current session' : 'Save term changes'}>
+                          <button
+                            className="ts-act-btn save"
+                            onClick={() => saveTerm(term.id)}
+                            aria-disabled={isOtherSession}
+                            style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                          >
                             <i className="fa-solid fa-check"></i>
                           </button>
                         </Tooltip>
-                        <Tooltip text="Delete term">
-                          <button className="ts-act-btn del" onClick={() => deleteTerm(term.id)}>
+                        <Tooltip text={isOtherSession ? 'Deleting is only allowed for the current session' : 'Delete term'}>
+                          <button
+                            className="ts-act-btn del"
+                            onClick={() => deleteTerm(term.id)}
+                            aria-disabled={isOtherSession}
+                            style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                          >
                             <i className="fa-solid fa-xmark"></i>
                           </button>
                         </Tooltip>
