@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Tooltip from './Tooltip';
 import * as academicsService from '../services/academicsService';
 import useAsync from '../hooks/useAsync';
@@ -195,6 +195,7 @@ export default function LessonPlans({ toast, openConfirm }) {
 
   const [sessionEditOpen, setSessionEditOpen] = useState(false);
   const [vacationEditOpen, setVacationEditOpen] = useState(false);
+  const [perWeekEditOpen, setPerWeekEditOpen] = useState(false);
 
   /* Term Breakup state */
   const [tbModalClass, setTbModalClass] = useState(null);
@@ -244,6 +245,12 @@ const getClassesData = async () => {
     console.error("Error loading classes:", error);
   }
 };
+
+  /* Load classes on mount so every module (Session Settings, Term Breakups,
+     Create Lesson Plans, Submissions) has the class list without needing a tab
+     click — the default 'session' tab otherwise renders before any fetch. */
+  useEffect(() => { getClassesData(); }, []);
+
   return (
     <>
       <style>{LP_CSS}</style>
@@ -275,6 +282,7 @@ const getClassesData = async () => {
           setSelectedClass={setPwSelectedClass}
           onEditSession={() => setSessionEditOpen(true)}
           onEditVacations={() => setVacationEditOpen(true)}
+          onEditPerWeek={() => setPerWeekEditOpen(true)}
           onReport={openReport}
           classesData={classesData}  // Pass the fetched data
         />
@@ -331,6 +339,13 @@ const getClassesData = async () => {
         onClose={() => setVacationEditOpen(false)}
         toast={toast}
         openConfirm={openConfirm}
+      />
+
+      <PerWeekEditModal
+        open={perWeekEditOpen}
+        classesData={classesData}
+        onClose={() => setPerWeekEditOpen(false)}
+        toast={toast}
       />
 
       <TermBreakupModal
@@ -412,13 +427,14 @@ const getClassesData = async () => {
 /* ═══════════════════════════════════════════════════════════════════
    SESSION SETTINGS — 4 cards (EXACT copy of HTML's .ss-card markup)
    ═══════════════════════════════════════════════════════════════════ */
-function SessionSettings({ 
-  session, 
-  vacations, 
-  selectedClass, 
-  setSelectedClass, 
-  onEditSession, 
-  onEditVacations, 
+function SessionSettings({
+  session,
+  vacations,
+  selectedClass,
+  setSelectedClass,
+  onEditSession,
+  onEditVacations,
+  onEditPerWeek,
   onReport,
   classesData = [] // Add classesData as a prop
 }) {
@@ -646,6 +662,11 @@ function SessionSettings({
               {selectedClass}
             </div>
           )}
+          <Tooltip text="Edit per week lesson plans">
+            <button className="ss-card-edit-btn" onClick={onEditPerWeek} aria-label="Edit per week lesson plans">
+              <i className="fa-solid fa-pen"></i>
+            </button>
+          </Tooltip>
         </div>
 
         {/* Class chips - dynamic from API */}
@@ -833,6 +854,144 @@ function SessionEditModal({ open, session, vacations, onSession, onVacations, on
           </Tooltip>
           <Tooltip text="Save session settings">
             <button className="lp-btn primary" onClick={save}>
+              <i className="fa-solid fa-check"></i> Save
+            </button>
+          </Tooltip>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   PER WEEK EDIT MODAL — pick a class (section) and set the weekly
+   lesson-plan count per subject. Subjects load from the same
+   /get-subjects_byEmployeeID endpoint used elsewhere.
+   ═══════════════════════════════════════════════════════════════════ */
+function PerWeekEditModal({ open, classesData = [], onClose, toast }) {
+  const [selectedId, setSelectedId] = useState('');
+  const [subjects, setSubjects]     = useState([]);
+  const [counts, setCounts]         = useState({}); // subjectID -> value
+  const [loading, setLoading]       = useState(false);
+
+  /* Flatten classes → one option per class/section (e.g. "II - Pre"). */
+  const options = useMemo(() => {
+    const out = [];
+    classesData.forEach(cls => {
+      if (cls.sections && cls.sections.length > 0) {
+        cls.sections.forEach(sec => out.push({
+          id: `${cls.id}_${sec.sectionID}`,
+          gradeId: cls.id,
+          sectionId: sec.sectionID,
+          label: `${cls.name}${sec.sectionName ? ' - ' + sec.sectionName : ''}`,
+        }));
+      } else {
+        out.push({ id: `${cls.id}_nosection`, gradeId: cls.id, sectionId: null, label: cls.name });
+      }
+    });
+    return out;
+  }, [classesData]);
+
+  /* Default-select the first class when the modal opens. */
+  useEffect(() => {
+    if (!open) return;
+    setSelectedId(options.length ? options[0].id : '');
+  }, [open, options]);
+
+  /* Fetch subjects for the selected class/section. */
+  useEffect(() => {
+    if (!open || !selectedId) { setSubjects([]); return; }
+    const opt = options.find(o => o.id === selectedId);
+    if (!opt || opt.sectionId == null) { setSubjects([]); setCounts({}); return; }
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const empID = sessionStorage.getItem('employee_ID');
+        const res = await fetch(
+          buildUrl(`/get-subjects_byEmployeeID/${opt.gradeId}/${opt.sectionId}/${empID}`),
+          { method: 'GET', headers: { Accept: '*/*' } },
+        );
+        const json = await res.json();
+        const list = (json.success && Array.isArray(json.data)) ? json.data : [];
+        if (!cancelled) {
+          setSubjects(list);
+          setCounts(list.reduce((acc, s) => { acc[s.subjectID] = s.perWeek ?? ''; return acc; }, {}));
+        }
+      } catch (e) {
+        console.error('Error fetching subjects:', e);
+        if (!cancelled) { setSubjects([]); setCounts({}); }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [open, selectedId, options]);
+
+  const setCount = (id, val) => setCounts(prev => ({ ...prev, [id]: val }));
+
+  const save = () => {
+    const opt = options.find(o => o.id === selectedId);
+    toast(`Per week lesson plans saved${opt ? ` for ${opt.label}` : ''}`, 'success');
+    onClose();
+  };
+
+  return (
+    <div className={`lp-overlay${open ? ' open' : ''}`} onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="lp-modal" style={{ maxWidth: 720 }}>
+        <div className="lp-modal-header">
+          <div className="lp-modal-title-row">
+            <div className="lp-modal-icon"><i className="fa-solid fa-book-open"></i></div>
+            <div>
+              <div className="lp-modal-title">Per Week No. of Lesson Plans</div>
+              <div className="lp-modal-sub">Pick a class and set the weekly count per subject</div>
+            </div>
+          </div>
+          <Tooltip text="Close"><button className="lp-modal-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark"></i></button></Tooltip>
+        </div>
+
+        <div className="lp-modal-body">
+          <div className="form-group">
+            <label className="form-label">Select class</label>
+            <select className="form-input" value={selectedId} onChange={e => setSelectedId(e.target.value)}>
+              {options.length === 0 && <option value="">No classes available</option>}
+              {options.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
+            </select>
+          </div>
+
+          <div style={{ textAlign: 'center', fontSize: 13, fontWeight: 700, color: 'var(--brand-primary, #1E40AF)', margin: '6px 0 16px' }}>
+            Per Week No. of lesson plans
+          </div>
+
+          {loading ? (
+            <div className="lp-pw-empty-text" style={{ textAlign: 'center', padding: 24 }}>Loading subjects…</div>
+          ) : subjects.length === 0 ? (
+            <div className="lp-pw-empty-text" style={{ textAlign: 'center', padding: 24 }}>No subjects found for this class.</div>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 14 }}>
+              {subjects.map(s => (
+                <div key={s.subjectID} className="form-group" style={{ marginBottom: 0 }}>
+                  <label className="form-label">{s.subjectName}</label>
+                  <input
+                    className="form-input"
+                    type="number"
+                    min={0}
+                    value={counts[s.subjectID] ?? ''}
+                    onChange={e => setCount(s.subjectID, e.target.value)}
+                    placeholder="0"
+                  />
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="lp-modal-footer">
+          <Tooltip text="Discard and close">
+            <button className="lp-btn ghost" onClick={onClose}>Close</button>
+          </Tooltip>
+          <Tooltip text="Save per week lesson plans">
+            <button className="lp-btn primary" onClick={save} disabled={loading || subjects.length === 0}>
               <i className="fa-solid fa-check"></i> Save
             </button>
           </Tooltip>
