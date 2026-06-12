@@ -1634,7 +1634,10 @@ function AcademicCalendar({ terms, onReport, onEdit }) {
    Reads branch/session/token from sessionStorage so calls stay in sync with the
    logged-in user. The endpoint stores only the term name + session year. */
 const termsBranchID      = () => Number(sessionStorage.getItem('branchID')) || 0;
-const termsSessionYearID = () => sessionStorage.getItem('sessionID') || '';
+ const termsSessionYearID = () =>
+  sessionStorage.getItem('changeSessionId')
+  || sessionStorage.getItem('SessionID')
+  || '';
 
 /* Auth headers — attach the JWT from sessionStorage.token as a bearer token. */
 const termsAuthHeaders = (extra = {}) => ({
@@ -1657,11 +1660,18 @@ function TermSettings({ termData, setTermData, openConfirm, toast }) {
   const [sub, setSub] = useState('term');
 
   const [sessions,  setSessions]  = useState([]);
-  const [sessionId, setSessionId] = useState(() => sessionStorage.getItem('sessionID') || '');
+  const [sessionId, setSessionId] = useState(
+    () => sessionStorage.getItem('changeSessionId')
+       || sessionStorage.getItem('SessionID')
+       || ''
+  );
   const [start,  setStart]  = useState('2026-01-01');
   const [end,    setEnd]    = useState('2026-12-31');
   const [system, setSystem] = useState('Annual System');
   const [medium, setMedium] = useState('English');
+  const [summaryId, setSummaryId] = useState(null);
+  const [workingDaysPerWeek, setWorkingDaysPerWeek] = useState('');
+  const [remainingWorkingDays, setRemainingWorkingDays] = useState('');
 
   /* Load the session (academic-year) dropdown. Default-selects the session whose
      id matches sessionStorage.sessionID — the active session for the logged-in user. */
@@ -1671,7 +1681,8 @@ function TermSettings({ termData, setTermData, openConfirm, toast }) {
         const res = await fetch(buildUrl('/api/Setting/get-sessions'), { method: 'GET', headers: termsAuthHeaders() });
         const json = await res.json();
         setSessions(json?.data || []);
-        const stored = sessionStorage.getItem('sessionID');
+        const stored = sessionStorage.getItem('changeSessionId')
+                    || sessionStorage.getItem('SessionID');
         if (stored) setSessionId(String(stored));
       } catch (e) {
         console.error('Error loading sessions:', e);
@@ -1694,23 +1705,61 @@ function TermSettings({ termData, setTermData, openConfirm, toast }) {
         },
       }
       );
-      const json = await res.json();
+     const json = await res.json();
       const row = (json?.data || [])[0];
-      if (!row) return;
+      if (!row) { setSummaryId(0); return; }
+      setSummaryId(row.id || row.ID || 0);
       if (row.sessionStart) setStart(row.sessionStart.slice(0, 10));
       if (row.sessionEnd)   setEnd(row.sessionEnd.slice(0, 10));
+      if (row.workingDaysPerWeek != null)  setWorkingDaysPerWeek(String(row.workingDaysPerWeek));
+      if (row.remainingWorkingDays != null) setRemainingWorkingDays(String(row.remainingWorkingDays));
     } catch (e) {
       console.error('Error loading session dates:', e);
     }
   };
-
-  /* Switch the active session: persist it and reload the terms scoped to it. */
-  const changeSession = id => {
-    setSessionId(id);
-    sessionStorage.setItem('sessionID', id);
-    loadTerms();
+  /* Reset — re-fetch the saved session dates from the server,
+     restoring whatever was last persisted (not the hardcoded defaults). */
+  const resetSession = () => {
+    loadSessionDates();
+    toast('Reset to saved values', 'info');
   };
 
+  /* Save Session — POST to /api/lpsessionsummarycrud. Logic is
+     id > 0  → update existing row, id == 0 → insert new row. */
+  const saveSession = async () => {
+    if (!start || !end) { toast('Please select both start and end dates', 'error'); return; }
+    if (new Date(end) < new Date(start)) { toast('End date cannot be before start date', 'error'); return; }
+    try {
+      const res = await fetch(buildUrl('/api/lpsessionsummarycrud'), {
+        method: 'POST',
+        headers: termsAuthHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({
+          id: summaryId || 0,
+          branchID: String(termsBranchID()),
+          sessionStart: new Date(start).toISOString(),
+          sessionEnd: new Date(end).toISOString(),
+          workingDaysPerWeek: workingDaysPerWeek || '',
+          remainingWorkingDays: remainingWorkingDays || '',
+          action: summaryId && summaryId > 0 ? 'update' : 'insert',
+        }),
+      });
+      if (!res.ok) throw new Error(`lpsessionsummarycrud failed: ${res.status}`);
+      toast('Session settings saved successfully!', 'success');
+      loadSessionDates(); // re-fetch so summaryId is set after an insert
+    } catch (e) {
+      console.error('Error saving session:', e);
+      toast('Could not save session', 'error');
+    }
+  };
+
+ /* Save the user-chosen session separately — leave the global
+       SessionID (from login) untouched. */
+   const changeSession = id => {
+    setSessionId(id);
+    /* Update changeSessionId only — never touch the capital SessionID. */
+    sessionStorage.setItem('changeSessionId', id);
+    loadTerms();
+  };
   /* Load terms from the backend on mount, replacing any seed/mock data.
      Re-fetch whenever the session changes upstream (sessionID is written to
      sessionStorage asynchronously by Academics.getSessionData). */
@@ -1935,12 +1984,12 @@ function TermSettings({ termData, setTermData, openConfirm, toast }) {
             </div>
             <div style={{ display: 'flex', gap: 10, marginTop: 24, paddingTop: 18, borderTop: '1px solid var(--border-light)' }}>
               <Tooltip text="Save session settings">
-                <button className="ts-btn-primary" onClick={() => toast('Session settings saved successfully!', 'success')}>
+                <button className="ts-btn-primary" onClick={saveSession}>
                   <i className="fa-solid fa-check"></i> Save Session
                 </button>
               </Tooltip>
               <Tooltip text="Reset to defaults">
-                <button className="ts-btn-ghost" onClick={() => toast('Reset to defaults', 'info')}>
+                <button className="ts-btn-ghost" onClick={resetSession}>
                   <i className="fa-solid fa-rotate-left"></i> Reset
                 </button>
               </Tooltip>
