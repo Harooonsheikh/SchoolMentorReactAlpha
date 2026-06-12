@@ -37,14 +37,15 @@ export default function Academics({ l1, setL1, l2, setL2, l3, setL3, toast }) {
      Start empty so the modal never opens against id-less seed data. */
   const [terms, setTerms] = useState([]);
   const { data: termData = [], setData: setTermData } = useAsync(academicsService.getTermData,   []);
-  const { data: events = [],   setData: setEvents }   = useAsync(academicsService.getActivities, []);
+  const [events, setEvents] = useState([]);
 
   const [reportPicker, setReportPicker] = useState({ open: false, name: '', format: 'pdf' });
   const [confirmCfg, setConfirmCfg] = useState(null);
   const [calEditOpen, setCalEditOpen] = useState(false);
   const [tutorialOpen, setTutorialOpen] = useState(false);
   const [activityModal, setActivityModal] = useState({ open: false, editing: null });
-    const [classesData, setClassesData] = useState([]);
+  const [classesData, setClassesData] = useState([]);
+  const [monthApiEnabled, setMonthApiEnabled] = useState(false);
 
 const getClassesData = async () => {
   try {
@@ -88,6 +89,7 @@ const getSessionData = async () => {
 
     const json = await res.json();
     sessionStorage.setItem('sessionID', json.data[0].SessionID)
+    notifySessionChange();
   } catch (error) {
     console.error("Error loading classes:", error);
   }
@@ -132,9 +134,50 @@ const openReport = (name, format = 'pdf') =>
     }
   };
 
+  /* Load activities from backend, mapped to UI shape. */
+  const loadActivities = async () => {
+    try {
+      const rows = await getActivityCalendar();
+      setEvents(rows.map(mapActivity));
+    } catch (e) {
+      console.error('Error loading activities:', e);
+    }
+  };
+
+
   /* Load once on mount and refresh each time the Calendar tab is opened. */
   useEffect(() => { loadCalendar(); }, []);
   useEffect(() => { if (l2 === 'cal') loadCalendar(); }, [l2]);
+
+  /* Re-run the calendar build whenever a session key changes (same-tab custom
+     event) or another tab edits sessionStorage (native 'storage' event). */
+  useEffect(() => {
+    const reload = () => loadCalendar();
+    window.addEventListener(SESSION_CHANGE_EVENT, reload);
+    window.addEventListener('storage', reload);
+    return () => {
+      window.removeEventListener(SESSION_CHANGE_EVENT, reload);
+      window.removeEventListener('storage', reload);
+    };
+  }, []);
+  /* Activity calendar — load on mount, on Activity tab open, and on session change. */
+  useEffect(() => {
+  if (l3 === 'act') {
+    setMonthApiEnabled(false);
+    loadActivities();
+    
+  }
+}, [l3]);
+  // useEffect(() => { if (l3 === 'act') loadActivities(); }, [l3]);
+  useEffect(() => {
+    const reload = () => loadActivities();
+    window.addEventListener(SESSION_CHANGE_EVENT, reload);
+    window.addEventListener('storage', reload);
+    return () => {
+      window.removeEventListener(SESSION_CHANGE_EVENT, reload);
+      window.removeEventListener('storage', reload);
+    };
+  }, []);
 
   return (
     <>
@@ -282,14 +325,15 @@ const openReport = (name, format = 'pdf') =>
         editing={activityModal.editing}
         onClose={() => setActivityModal({ open: false, editing: null })}
         onSave={ev => {
-          if (activityModal.editing) {
-            setEvents(prev => prev.map(p => p.id === ev.id ? ev : p));
-            toast(`"${ev.name}" updated`, 'success');
+  if (activityModal.editing) {
+    setEvents(prev => prev.map(p => p.id === ev.id ? { ...p, ...ev } : p));
+    toast(`"${ev.name}" updated`, 'success');
           } else {
             setEvents(prev => [ev, ...prev]);
             toast(`"${ev.name}" added!`, 'success');
           }
           setActivityModal({ open: false, editing: null });
+         
         }}
       />
 
@@ -671,33 +715,90 @@ function ActivityModal({ open, editing, onClose, onSave }) {
   const [purpose, setPurpose] = useState('');
   const [development, setDevelopment] = useState('');
   const [resource, setResource] = useState('');
+   const [saving, setSaving] = useState(false); // for save new activity
 
   useEffect(() => {
-    if (!open) return;
-    setName(editing?.name || '');
-    setPurpose(editing?.purpose || '');
-    setDevelopment(editing?.development || '');
-    setResource(editing?.resource || '');
-    setStart('');
-    setEnd('');
-  }, [open, editing]);
+  if (!open) return;
+
+  const toInputDate = (value) => {
+    if (!value) return '';
+    const d = new Date(value);
+    if (isNaN(d)) return '';
+    return d.toISOString().slice(0, 10);
+  };
+
+  setName(editing?.name || '');
+  setPurpose(editing?.purpose || '');
+  setDevelopment(editing?.development || '');
+  setResource(editing?.resource || '');
+  setStart(toInputDate(editing?.rawStart || editing?.start));
+  setEnd(toInputDate(editing?.rawEnd || editing?.end));
+}, [open, editing]);
 
   const fmt = d => d ? new Date(d).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : 'TBD';
   const colors = ['#1E40AF', '#16A34A', '#D97706', '#7C3AED', '#1E40AF', '#E11D48'];
 
-  const submit = () => {
-    if (!name.trim()) return;
-    onSave({
-      id: editing ? editing.id : Date.now(),
-      name: name.trim(),
-      start: start ? fmt(start) : (editing?.start || 'TBD'),
-      end:   end   ? fmt(end)   : (editing?.end   || 'TBD'),
-      color: editing?.color || colors[Math.floor(Math.random() * colors.length)],
-      status: editing?.status || 'upcoming',
-      purpose, development, resource,
-    });
-  };
+  const submit = async () => {
+  if (!name.trim()) return;
+  if (!start || !end) return;
 
+  setSaving(true);
+
+  try {
+    const startIso = new Date(start).toISOString();
+    const endIso = new Date(end).toISOString();
+
+    const payload = {
+      id: editing?.id || 0,
+      branchID: Number(sessionStorage.getItem('branchID')) || 0,
+      sessionYearID: Number(
+        sessionStorage.getItem('changeSessionId') ||
+        sessionStorage.getItem('SessionID') ||
+        sessionStorage.getItem('sessionID') || 0
+      ),
+      name: name.trim(),
+      activityPurpose: purpose || 'string',
+      activityDevelopment: development || 'string',
+      resourseMaterial: resource || 'string',
+      startAt: startIso,
+      endAt: endIso,
+      createdDate: new Date().toISOString(),
+      action: editing ? 'update' : 'insert',
+    };
+
+    const res = await fetch(buildUrl('/api/activitycalendarcrud'), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: '*/*',
+        Authorization: `bearer ${sessionStorage.getItem('token') || ''}`,
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const json = await res.json().catch(() => ({}));
+
+    if (!res.ok) throw new Error(`Failed: ${res.status}`);
+
+    onSave({
+      id: editing?.id || json?.id || json?.data?.id || Date.now(),
+      name: name.trim(),
+      start: fmt(start),
+      end: fmt(end),
+      rawStart: startIso,
+      rawEnd: endIso,
+      color: editing?.color || colors[Math.floor(Math.random() * colors.length)],
+      status: actComputeStatus(startIso, endIso),
+      purpose,
+      development,
+      resource,
+    });
+  } catch (e) {
+    console.error('Error saving activity:', e);
+  } finally {
+    setSaving(false);
+  }
+};
   return (
     <div
       className={`modal-overlay${open ? ' open' : ''}`}
@@ -958,11 +1059,31 @@ function generateReportWindow(name, style, format, ctx, classesData) {
    ═══════════════════════════════════════════════════════════════════ */
 function ActivityCalendar({ events, setEvents, onReport, onAdd, onEdit, openConfirm, toast }) {
   const today = useMemo(() => new Date(), []);
-  const [calYear,  setCalYear]  = useState(2026);
-  const [calMonth, setCalMonth] = useState(4);
+  const [calYear,  setCalYear]  = useState(today.getFullYear());
+const [calMonth, setCalMonth] = useState(today.getMonth()); // current month
   const [view, setView] = useState('Month');
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState('all');
+  const [monthApiEnabled, setMonthApiEnabled] = useState(false);
+  const [monthEvents, setMonthEvents] = useState([]);
+ const displayEvents = monthApiEnabled 
+  ? [...monthEvents, ...events.filter(ev => 
+      !monthEvents.some(me => me.id === ev.id)
+    )]
+  : events;
+  /* Jab visible month/year badle, us month ki activities backend se laao. */
+ useEffect(() => {
+  if (!monthApiEnabled) return;
+
+  (async () => {
+    try {
+      const rows = await getActivityByMonth(calMonth + 1);
+      setMonthEvents(rows.map(mapActivity));
+    } catch (e) {
+      console.error('Error loading month activities:', e);
+    }
+  })();
+}, [calMonth, calYear, monthApiEnabled]);
 
   /* 3-dot dropdown — uses fixed positioning so it can never clip behind other cards */
   const [dropdown, setDropdown] = useState({ id: null, x: 0, y: 0 });
@@ -1015,21 +1136,44 @@ function ActivityCalendar({ events, setEvents, onReport, onAdd, onEdit, openConf
       const ms = !q || ev.name.toLowerCase().includes(q) || ev.start.toLowerCase().includes(q);
       return mf && ms;
     });
+    //for showing activity name on calender
   }, [events, search, filter]);
+  const toDayKey = (value) => {
+  const d = new Date(value);
+  if (isNaN(d)) return '';
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+};
 
   /* Events on a given day */
-  const eventsOnDay = (y, m, d) => {
-    const date = new Date(y, m, d, 12, 0, 0);
-    return events.filter(ev => {
-      const s = parseEventDate(ev.start);
-      const e = parseEventDate(ev.end);
-      if (!s || !e) return false;
-      s.setHours(0, 0, 0, 0);
-      e.setHours(23, 59, 59, 0);
-      return date >= s && date <= e;
-    });
-  };
+ const eventsOnDay = (y, m, d) => {
+  console.log('eventsOnDay called:', y, m, d, 'events count:', displayEvents.length);
+  return displayEvents.filter(ev => {
+    const rawS = ev.rawStart || ev.start;
+    const rawE = ev.rawEnd || ev.end || rawS;
 
+    if (!rawS) return false;
+
+    // Extract date parts directly from ISO string (ignore time/timezone)
+    const getDateParts = (str) => {
+      const match = String(str).match(/^(\d{4})-(\d{2})-(\d{2})/);
+      if (!match) return null;
+      return { y: Number(match[1]), m: Number(match[2]) - 1, d: Number(match[3]) };
+    };
+
+    const s = getDateParts(rawS);
+    const e = getDateParts(rawE || rawS);
+    if (!s || !e) return false;
+
+    const sTime = new Date(s.y, s.m, s.d).getTime();
+    const eTime = new Date(e.y, e.m, e.d).getTime();
+    const cTime = new Date(y, m, d).getTime();
+
+    return cTime >= sTime && cTime <= eTime;
+  });
+};
   /* Build month grid (42 cells) */
   const monthCells = useMemo(() => {
     const firstDay = new Date(calYear, calMonth, 1).getDay();
@@ -1052,31 +1196,76 @@ function ActivityCalendar({ events, setEvents, onReport, onAdd, onEdit, openConf
   }, [calYear, calMonth]);
 
   const prevMonth = () => {
-    if (calMonth === 0) { setCalMonth(11); setCalYear(y => y - 1); }
-    else setCalMonth(m => m - 1);
-  };
-  const nextMonth = () => {
-    if (calMonth === 11) { setCalMonth(0); setCalYear(y => y + 1); }
-    else setCalMonth(m => m + 1);
-  };
+  setMonthApiEnabled(true);
+  if (calMonth === 0) {
+    setCalMonth(11);
+    setCalYear(y => y - 1);
+  } else {
+    setCalMonth(m => m - 1);
+  }
+};
 
+const nextMonth = () => {
+  setMonthApiEnabled(true);
+  if (calMonth === 11) {
+    setCalMonth(0);
+    setCalYear(y => y + 1);
+  } else {
+    setCalMonth(m => m + 1);
+  }
+};
   const handleDelete = ev => {
-    closeDropdown();
-    openConfirm({
-      title: 'Delete Activity?',
-      message: `"<strong>${ev.name}</strong>" will be permanently removed. This cannot be undone.`,
-      hint: `${ev.start} — ${ev.end}`,
-      confirmLabel: 'Yes, Delete',
-      confirmStyle: 'danger',
-      icon: 'fa-trash',
-      iconBg: 'rgba(220,38,38,.1)',
-      iconColor: '#DC2626',
-      onConfirm: () => {
-        setEvents(events.filter(e => e.id !== ev.id));
+  closeDropdown();
+
+  openConfirm({
+    title: 'Delete Activity?',
+    message: `"<strong>${ev.name}</strong>" will be permanently removed. This cannot be undone.`,
+    hint: `${ev.start} — ${ev.end}`,
+    confirmLabel: 'Yes, Delete',
+    confirmStyle: 'danger',
+    icon: 'fa-trash',
+    iconBg: 'rgba(220,38,38,.1)',
+    iconColor: '#DC2626',
+    onConfirm: async () => {
+      try {
+        const payload = {
+          id: ev.id,
+          branchID: Number(sessionStorage.getItem('branchID')) || 0,
+          sessionYearID: Number(
+            sessionStorage.getItem('changeSessionId') ||
+            sessionStorage.getItem('SessionID') ||
+            sessionStorage.getItem('sessionID') || 0
+          ),
+          name: ev.name || '',
+          activityPurpose: ev.purpose || 'string',
+          activityDevelopment: ev.development || 'string',
+          resourseMaterial: ev.resource || 'string',
+          startAt: ev.rawStart || '',
+          endAt: ev.rawEnd || '',
+          createdDate: new Date().toISOString(),
+          action: 'delete',
+        };
+
+        const res = await fetch(buildUrl('/api/activitycalendarcrud'), {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: '*/*',
+            Authorization: `bearer ${sessionStorage.getItem('token') || ''}`,
+          },
+          body: JSON.stringify(payload),
+        });
+
+        if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
+
+        setEvents(prev => prev.filter(e => e.id !== ev.id));
         toast(`"${ev.name}" deleted`, 'success');
-      },
-    });
-  };
+      } catch (error) {
+        console.error('Error deleting activity:', error);
+      }
+    },
+  });
+};
 
   return (
     <>
@@ -1186,7 +1375,7 @@ function ActivityCalendar({ events, setEvents, onReport, onAdd, onEdit, openConf
                     && c.m === today.getMonth()
                     && c.day === today.getDate();
                   const hasEvs = evs.length > 0;
-                  const MAX = 2;
+                  const MAX = 1;
                   const extra = evs.length - MAX;
                   const cellBg = hasEvs && !c.other ? `${evs[0].color}11` : undefined;
                   return (
@@ -1206,7 +1395,7 @@ function ActivityCalendar({ events, setEvents, onReport, onAdd, onEdit, openConf
                             title={`${ev.name}: ${ev.start} — ${ev.end}`}
                             onClick={e => { e.stopPropagation(); toast(ev.name, 'info'); }}
                           >
-                            {ev.name}
+                            {ev.name || 'Activity'}
                           </div>
                         ))}
                         {extra > 0 && <div className="cal-event-more-chip">+{extra} more</div>}
@@ -1223,20 +1412,20 @@ function ActivityCalendar({ events, setEvents, onReport, onAdd, onEdit, openConf
               </div>
             </>
           ) : view === 'Week' ? (
-            <WeekView events={events} />
-          ) : view === 'Day' ? (
-            <DayView events={events} />
-          ) : view === 'List' ? (
-            <ListView events={events} onReport={onReport} onEdit={onEdit} />
-          ) : (
-            <YearView
-              events={events}
-              calYear={calYear}
-              setCalYear={setCalYear}
-              setCalMonth={setCalMonth}
-              setView={setView}
-            />
-          )}
+  <WeekView events={displayEvents} calYear={calYear} calMonth={calMonth} />
+) : view === 'Day' ? (
+  <DayView events={displayEvents} />
+) : view === 'List' ? (
+  <ListView events={displayEvents} onReport={onReport} onEdit={onEdit} />
+) : (
+  <YearView
+    events={displayEvents}
+    calYear={calYear}
+    setCalYear={setCalYear}
+    setCalMonth={setCalMonth}
+    setView={setView}
+  />
+)}
         </div>
 
         {/* RIGHT: Events panel */}
@@ -1341,30 +1530,88 @@ function ActivityCalendar({ events, setEvents, onReport, onAdd, onEdit, openConf
 }
 
 /* ─── Activity-calendar non-month views ─── */
-function WeekView({ events }) {
+function WeekView({ events, calYear, calMonth }) {
   const today = new Date();
-  const startOfWeek = new Date(today);
-  startOfWeek.setDate(today.getDate() - today.getDay());
+  const [weekOffset, setWeekOffset] = useState(0);
+
+  // Start from first day of the selected month
+ const firstOfMonth = new Date(calYear, calMonth, 1);
+const startOfWeek = new Date(firstOfMonth);
+// Only go back to Sunday if it keeps us in same month,
+// otherwise start from the 1st
+const dayOfWeek = firstOfMonth.getDay();
+if (dayOfWeek === 0) {
+  // Already Sunday, start from 1st
+  startOfWeek.setDate(1 + (weekOffset * 7));
+} else {
+  // Start week from the 1st, not the Sunday before
+  startOfWeek.setDate(1 + (weekOffset * 7));
+}
+
+
+  const endOfWeek = new Date(startOfWeek);
+  endOfWeek.setDate(startOfWeek.getDate() + 6);
+
   return (
     <div style={{ padding: '12px 16px 16px' }}>
-      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '.6px', textTransform: 'uppercase', marginBottom: 10 }}>
-        Week of {MONTHS_FULL[startOfWeek.getMonth()]} {startOfWeek.getDate()}, {startOfWeek.getFullYear()}
+      {/* Week navigation */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+        <button
+          onClick={() => setWeekOffset(w => w - 1)}
+          style={{
+            width: 30, height: 30, borderRadius: 8,
+            border: '1.5px solid var(--border-light)',
+            background: 'var(--bg-muted)', color: 'var(--text-muted)',
+            cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center'
+          }}
+        ><i className="fa-solid fa-chevron-left" style={{ fontSize: 10 }}></i></button>
+
+        <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '.6px', textTransform: 'uppercase' }}>
+          Week of {MONTHS_FULL[startOfWeek.getMonth()]} {startOfWeek.getDate()}, {startOfWeek.getFullYear()}
+        </div>
+
+        <button
+          onClick={() => setWeekOffset(w => w + 1)}
+          style={{
+            width: 30, height: 30, borderRadius: 8,
+            border: '1.5px solid var(--border-light)',
+            background: 'var(--bg-muted)', color: 'var(--text-muted)',
+            cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center'
+          }}
+        ><i className="fa-solid fa-chevron-right" style={{ fontSize: 10 }}></i></button>
       </div>
+
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: 8 }}>
         {Array.from({ length: 7 }).map((_, d) => {
-          const day = new Date(startOfWeek); day.setDate(startOfWeek.getDate() + d);
+          const day = new Date(startOfWeek);
+          day.setDate(startOfWeek.getDate() + d);
           const isToday = day.toDateString() === today.toDateString();
+          const isCurrentMonth = day.getMonth() === calMonth && day.getFullYear() === calYear;
+
           const dayEvs = events.filter(ev => {
-            const s = new Date(ev.start), e = new Date(ev.end);
-            if (isNaN(s) || isNaN(e)) return false;
-            s.setHours(0); e.setHours(23, 59);
-            return day >= s && day <= e;
+            const rawS = ev.rawStart || ev.start;
+            const rawE = ev.rawEnd || ev.end || rawS;
+            if (!rawS) return false;
+            const getDateParts = (str) => {
+              const match = String(str).match(/^(\d{4})-(\d{2})-(\d{2})/);
+              if (!match) return null;
+              return { y: Number(match[1]), m: Number(match[2]) - 1, d: Number(match[3]) };
+            };
+            const s = getDateParts(rawS);
+            const e = getDateParts(rawE);
+            if (!s || !e) return false;
+            const sTime = new Date(s.y, s.m, s.d).getTime();
+            const eTime = new Date(e.y, e.m, e.d).getTime();
+            const cTime = new Date(day.getFullYear(), day.getMonth(), day.getDate()).getTime();
+            return cTime >= sTime && cTime <= eTime;
           });
+
           return (
             <div key={d} style={{
               border: `1.5px solid ${isToday ? 'var(--brand-primary)' : 'var(--border-light)'}`,
               borderRadius: 12, overflow: 'hidden',
-              background: isToday ? 'rgba(30,58,138,.04)' : 'var(--bg-card)',
+              background: isToday ? 'rgba(30,58,138,.04)' : isCurrentMonth ? 'var(--bg-card)' : 'var(--bg-muted)',
+              opacity: isCurrentMonth ? 1 : 0.5,
             }}>
               <div style={{
                 padding: '7px 8px', textAlign: 'center',
@@ -1397,6 +1644,7 @@ function WeekView({ events }) {
     </div>
   );
 }
+
 
 function DayView({ events }) {
   const today = new Date();
@@ -1703,10 +1951,21 @@ function AcademicCalendar({ terms, onReport, onEdit }) {
    Reads branch/session/token from sessionStorage so calls stay in sync with the
    logged-in user. The endpoint stores only the term name + session year. */
 const termsBranchID      = () => Number(sessionStorage.getItem('branchID')) || 0;
- const termsSessionYearID = () =>
+/* Prefer the user-switched session (changeSessionId); fall back to the session
+   set at login (SessionID / sessionID). Sent as sessionYearID on term calls. */
+const termsSessionYearID = () =>
   sessionStorage.getItem('changeSessionId')
   || sessionStorage.getItem('SessionID')
+  || sessionStorage.getItem('sessionID')
   || '';
+
+/* sessionStorage writes don't fire the native 'storage' event in the same tab,
+   so we broadcast our own event after changing a session key. Loaders listen for
+   it (and the native cross-tab 'storage' event) to re-run their term/calendar calls. */
+const SESSION_CHANGE_EVENT = 'sm-session-change';
+const notifySessionChange = () => {
+  try { window.dispatchEvent(new Event(SESSION_CHANGE_EVENT)); } catch (e) { /* SSR/no-window */ }
+};
 
 /* Auth headers — attach the JWT from sessionStorage.token as a bearer token. */
 const termsAuthHeaders = (extra = {}) => ({
@@ -1747,22 +2006,112 @@ async function keyDatesCrud(payload) {
   return res.json().catch(() => ({}));
 }
 
+/* ─── Activity Calendar backend */
+   
+async function getActivityCalendar() {
+  const res = await fetch(
+    buildUrl(`/api/getactivitycalendarbyid?BranchID=${termsBranchID()}&SessionYearID=${termsSessionYearID()}&pageNo=1`),
+    {
+      method: 'GET',
+      headers: termsAuthHeaders(),
+    }
+  );
+
+  const json = await res.json().catch(() => ({}));
+  console.log('getActivityCalendar response:', json);
+
+  if (!res.ok) {
+    throw new Error(`getactivitycalendarbyid failed: ${res.status}`);
+  }
+
+  return Array.isArray(json?.data) ? json.data : [];
+}
+/* API activity → UI event shape */
+const ACT_COLORS = ['#1E40AF', '#16A34A', '#D97706', '#7C3AED', '#1E40AF', '#E11D48'];
+
+const actFmtDate = str => {
+  const d = new Date(str);
+  return isNaN(d) ? (str || 'TBD')
+    : d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+};
+
+const actComputeStatus = (startAt, endAt) => {
+  const now = new Date();
+  const s = new Date(startAt), e = new Date(endAt);
+  if (!isNaN(e) && e < now) return 'completed';
+  if (!isNaN(s) && s <= now && (isNaN(e) || e >= now)) return 'ongoing';
+  return 'upcoming';
+};
+
+const mapActivity = (a, i) => {
+  const rawStart =
+    a.startAt ||
+    a.startDate ||
+    a.start ||
+    a.fromDate ||
+    a.activityDate ||
+    a.date ||
+    '';
+
+  const rawEnd =
+    a.endAt ||
+    a.endDate ||
+    a.end ||
+    a.toDate ||
+    a.activityDate ||
+    a.date ||
+    rawStart;
+    console.log('Mapping activity:', a, '→ rawStart:', rawStart, 'rawEnd:', rawEnd);
+
+  return {
+    id: a.id || a.activityID || a.activityId || Date.now() + i,
+    name: a.name || a.activityName || a.title || 'Activity',
+    start: actFmtDate(rawStart),
+    end: actFmtDate(rawEnd),
+    rawStart,
+    rawEnd,
+    color: ACT_COLORS[i % ACT_COLORS.length],
+    status: actComputeStatus(rawStart, rawEnd),
+    purpose: a.activityPurpose || '',
+    development: a.activityDevelopment || '',
+    resource: a.resourseMaterial || '',
+  };
+};
+//  Used to load activities for the visible calendar month. */
+async function getActivityByMonth(month) {
+  const res = await fetch(
+    buildUrl(`/api/getactivitycalendarbymonth?BranchID=${termsBranchID()}&month=${month}&SessionYearID=${termsSessionYearID()}&pageNo=1`),
+    {
+      method: 'GET',
+      headers: termsAuthHeaders(),
+    }
+  );
+
+  const json = await res.json().catch(() => ({}));
+  console.log('getActivityByMonth response:', json);
+
+  if (!res.ok) {
+    throw new Error(`getactivitycalendarbymonth failed: ${res.status}`);
+  }
+
+  return Array.isArray(json?.data) ? json.data : [];
+}
+
 function TermSettings({ termData, setTermData, openConfirm, toast }) {
   const [sub, setSub] = useState('term');
 
   const [sessions,  setSessions]  = useState([]);
-  const [sessionId, setSessionId] = useState(
-    () => sessionStorage.getItem('changeSessionId')
-       || sessionStorage.getItem('SessionID')
-       || ''
-  );
+  const [sessionId, setSessionId] = useState(() => termsSessionYearID());
   const [start,  setStart]  = useState('2026-01-01');
   const [end,    setEnd]    = useState('2026-12-31');
   const [system, setSystem] = useState('Annual System');
   const [medium, setMedium] = useState('English');
-  const [summaryId, setSummaryId] = useState(null);
-  const [workingDaysPerWeek, setWorkingDaysPerWeek] = useState('');
-  const [remainingWorkingDays, setRemainingWorkingDays] = useState('');
+
+  /* Terms are only editable for the login session (SessionID/sessionID). If the user
+     switched to a different session (changeSessionId), terms become read-only:
+     Save/Delete are disabled and clicking them toasts "Method not allowed". */
+  const loginSessionId = sessionStorage.getItem('SessionID') || sessionStorage.getItem('sessionID') || '';
+  const isOtherSession = !!sessionId && !!loginSessionId && String(sessionId) !== String(loginSessionId);
 
   /* Load the session (academic-year) dropdown. Default-selects the session whose
      id matches sessionStorage.sessionID — the active session for the logged-in user. */
@@ -1772,8 +2121,7 @@ function TermSettings({ termData, setTermData, openConfirm, toast }) {
         const res = await fetch(buildUrl('/api/Setting/get-sessions'), { method: 'GET', headers: termsAuthHeaders() });
         const json = await res.json();
         setSessions(json?.data || []);
-        const stored = sessionStorage.getItem('changeSessionId')
-                    || sessionStorage.getItem('SessionID');
+        const stored = termsSessionYearID();
         if (stored) setSessionId(String(stored));
       } catch (e) {
         console.error('Error loading sessions:', e);
@@ -1796,65 +2144,39 @@ function TermSettings({ termData, setTermData, openConfirm, toast }) {
         },
       }
       );
-     const json = await res.json();
+      const json = await res.json();
       const row = (json?.data || [])[0];
-      if (!row) { setSummaryId(0); return; }
-      setSummaryId(row.id || row.ID || 0);
+      if (!row) return;
       if (row.sessionStart) setStart(row.sessionStart.slice(0, 10));
       if (row.sessionEnd)   setEnd(row.sessionEnd.slice(0, 10));
-      if (row.workingDaysPerWeek != null)  setWorkingDaysPerWeek(String(row.workingDaysPerWeek));
-      if (row.remainingWorkingDays != null) setRemainingWorkingDays(String(row.remainingWorkingDays));
     } catch (e) {
       console.error('Error loading session dates:', e);
     }
   };
-  /* Reset — re-fetch the saved session dates from the server,
-     restoring whatever was last persisted (not the hardcoded defaults). */
-  const resetSession = () => {
-    loadSessionDates();
-    toast('Reset to saved values', 'info');
-  };
 
-  /* Save Session — POST to /api/lpsessionsummarycrud. Logic is
-     id > 0  → update existing row, id == 0 → insert new row. */
-  const saveSession = async () => {
-    if (!start || !end) { toast('Please select both start and end dates', 'error'); return; }
-    if (new Date(end) < new Date(start)) { toast('End date cannot be before start date', 'error'); return; }
-    try {
-      const res = await fetch(buildUrl('/api/lpsessionsummarycrud'), {
-        method: 'POST',
-        headers: termsAuthHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({
-          id: summaryId || 0,
-          branchID: String(termsBranchID()),
-          sessionStart: new Date(start).toISOString(),
-          sessionEnd: new Date(end).toISOString(),
-          workingDaysPerWeek: workingDaysPerWeek || '',
-          remainingWorkingDays: remainingWorkingDays || '',
-          action: summaryId && summaryId > 0 ? 'update' : 'insert',
-        }),
-      });
-      if (!res.ok) throw new Error(`lpsessionsummarycrud failed: ${res.status}`);
-      toast('Session settings saved successfully!', 'success');
-      loadSessionDates(); // re-fetch so summaryId is set after an insert
-    } catch (e) {
-      console.error('Error saving session:', e);
-      toast('Could not save session', 'error');
-    }
-  };
-
- /* Save the user-chosen session separately — leave the global
-       SessionID (from login) untouched. */
-   const changeSession = id => {
+  /* Switch the active session: persist it and reload the terms scoped to it. */
+  const changeSession = id => {
     setSessionId(id);
-    /* Update changeSessionId only — never touch the capital SessionID. */
+    /* Store the user-switched session under changeSessionId (takes priority in
+       termsSessionYearID) and broadcast so all loaders re-run. */
     sessionStorage.setItem('changeSessionId', id);
-    loadTerms();
+    notifySessionChange();
   };
-  /* Load terms from the backend on mount, replacing any seed/mock data.
-     Re-fetch whenever the session changes upstream (sessionID is written to
-     sessionStorage asynchronously by Academics.getSessionData). */
+
+  /* Load terms from the backend on mount, replacing any seed/mock data. */
   useEffect(() => { loadTerms(); }, []);
+
+  /* Re-run the term/session calls whenever a session key changes (same-tab event)
+     or another tab edits sessionStorage. */
+  useEffect(() => {
+    const reload = () => { loadTerms(); loadSessionDates(); };
+    window.addEventListener(SESSION_CHANGE_EVENT, reload);
+    window.addEventListener('storage', reload);
+    return () => {
+      window.removeEventListener(SESSION_CHANGE_EVENT, reload);
+      window.removeEventListener('storage', reload);
+    };
+  }, []);
 
   const loadTerms = async () => {
     try {
@@ -1883,6 +2205,7 @@ function TermSettings({ termData, setTermData, openConfirm, toast }) {
     setTermData(termData.map(t => t.id === id ? { ...t, [key]: val } : t));
 
   const saveTerm = async id => {
+    if (isOtherSession) { toast('Method not allowed', 'error'); return; }
     const t = termData.find(x => x.id === id);
     if (!t) return;
     if (!t.name || !t.name.trim()) { toast('Term name cannot be empty', 'error'); return; }
@@ -1903,6 +2226,7 @@ function TermSettings({ termData, setTermData, openConfirm, toast }) {
   };
 
   const deleteTerm = id => {
+    if (isOtherSession) { toast('Method not allowed', 'error'); return; }
     const t = termData.find(x => x.id === id);
     if (!t) return;
     /* Unsaved rows aren't on the server yet — just drop them locally. */
@@ -2075,12 +2399,12 @@ function TermSettings({ termData, setTermData, openConfirm, toast }) {
             </div>
             <div style={{ display: 'flex', gap: 10, marginTop: 24, paddingTop: 18, borderTop: '1px solid var(--border-light)' }}>
               <Tooltip text="Save session settings">
-                <button className="ts-btn-primary" onClick={saveSession}>
+                <button className="ts-btn-primary" onClick={() => toast('Session settings saved successfully!', 'success')}>
                   <i className="fa-solid fa-check"></i> Save Session
                 </button>
               </Tooltip>
               <Tooltip text="Reset to defaults">
-                <button className="ts-btn-ghost" onClick={resetSession}>
+                <button className="ts-btn-ghost" onClick={() => toast('Reset to defaults', 'info')}>
                   <i className="fa-solid fa-rotate-left"></i> Reset
                 </button>
               </Tooltip>
@@ -2147,13 +2471,23 @@ function TermSettings({ termData, setTermData, openConfirm, toast }) {
                     </div>
                     <div className="ts-cell w100">
                       <div className="ts-actions">
-                        <Tooltip text="Save term changes">
-                          <button className="ts-act-btn save" onClick={() => saveTerm(term.id)}>
+                        <Tooltip text={isOtherSession ? 'Editing is only allowed for the current session' : 'Save term changes'}>
+                          <button
+                            className="ts-act-btn save"
+                            onClick={() => saveTerm(term.id)}
+                            aria-disabled={isOtherSession}
+                            style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                          >
                             <i className="fa-solid fa-check"></i>
                           </button>
                         </Tooltip>
-                        <Tooltip text="Delete term">
-                          <button className="ts-act-btn del" onClick={() => deleteTerm(term.id)}>
+                        <Tooltip text={isOtherSession ? 'Deleting is only allowed for the current session' : 'Delete term'}>
+                          <button
+                            className="ts-act-btn del"
+                            onClick={() => deleteTerm(term.id)}
+                            aria-disabled={isOtherSession}
+                            style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                          >
                             <i className="fa-solid fa-xmark"></i>
                           </button>
                         </Tooltip>
@@ -3013,7 +3347,7 @@ const ACADEMICS_CSS = `
   background:linear-gradient(135deg,#1E3A8A,#1E40AF);
   color:#fff; font-weight:800; box-shadow:0 3px 10px rgba(30,58,138,.4);
 }
-.cal-day-events { display:flex; flex-direction:column; gap:2px; flex:1; }
+.cal-day-events { display:flex; flex-direction:column; gap:2px; flex:1; margin-top:4px; }
 .cal-event-chip {
   font-size:10px; font-weight:700;
   padding:2px 5px; border-radius:3px;
@@ -3470,7 +3804,7 @@ const ACADEMICS_CSS = `
   .ts-stat-icon, .act-stat-icon { width:30px; height:30px; font-size:13px; border-radius:8px; }
   .act-cal-card, .act-events-panel { width:100%; border-radius:var(--radius-lg); }
   .act-view-pill { padding:5px 7px; font-size:10.5px; }
-  .act-day-full { min-height:50px; }
+  .act-day-full { min-height:88px; }
   .ts-card-header { padding:16px; flex-direction:column; align-items:flex-start; gap:12px; }
   .key-dates-grid { grid-template-columns:1fr; }
 }
@@ -3823,7 +4157,7 @@ const ACADEMICS_CSS = `
   .act-view-pills { width:100%; overflow-x:auto; flex-wrap:nowrap; scrollbar-width:none; }
   .act-view-pills::-webkit-scrollbar { display:none; }
   .act-view-pill { flex:0 0 auto; padding:5px 9px; font-size:10.5px; }
-  .act-day-full { min-height:46px; }
+  .act-day-full { min-height:88px; }
   .act-events-panel { max-height:none; }
 
   /* Activity event search row + add btn — stack */
