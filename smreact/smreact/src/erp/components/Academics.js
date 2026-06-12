@@ -33,7 +33,9 @@ const parseEventDate = str => {
    MAIN ACADEMICS SHELL
    ═══════════════════════════════════════════════════════════════════ */
 export default function Academics({ l1, setL1, l2, setL2, l3, setL3, toast }) {
-  const { data: terms = [],    setData: setTerms }    = useAsync(academicsService.getTerms,      []);
+  /* Academic-calendar terms are built live from termscrud + key dates (see loadCalendar).
+     Start empty so the modal never opens against id-less seed data. */
+  const [terms, setTerms] = useState([]);
   const { data: termData = [], setData: setTermData } = useAsync(academicsService.getTermData,   []);
   const { data: events = [],   setData: setEvents }   = useAsync(academicsService.getActivities, []);
 
@@ -107,13 +109,32 @@ const openReport = (name, format = 'pdf') =>
   const openConfirm = cfg => setConfirmCfg(cfg);
   const closeConfirm = () => setConfirmCfg(null);
 
-  /* Keep the academic-calendar TERMS list in sync with the term-settings table */
-  const syncTermsToCalendar = nextTermData => {
-    setTerms(prevTerms => {
-      const byName = new Map(prevTerms.map(t => [t.label, t]));
-      return nextTermData.map(td => byName.get(td.name) || { label: td.name || 'Unnamed', entries: [] });
-    });
+  /* Build the academic-calendar TERMS list from the live backend: terms come from
+     termscrud and key dates from getkeydatesybranchid, grouped under each term by
+     the key-date's `terms` (= term id). Re-run on mount and whenever the Calendar
+     tab is opened so it reflects the latest terms & key dates. */
+  const loadCalendar = async () => {
+    try {
+      const [termsRes, keyDates] = await Promise.all([
+        termsCrud({ id: 0, branchID: termsBranchID(), term: 'string', sessionYearID: termsSessionYearID(), action: 'get' }),
+        getKeyDates(),
+      ]);
+      const termList = Array.isArray(termsRes) ? termsRes : (termsRes?.data || []);
+      setTerms(termList.map(t => ({
+        id: t.id,
+        label: t.term || 'Unnamed',
+        entries: keyDates
+          .filter(k => String(k.terms) === String(t.id))
+          .map(k => ({ id: k.id, heading: k.head || '', date: k.value || '' })),
+      })));
+    } catch (e) {
+      console.error('Error loading academic calendar:', e);
+    }
   };
+
+  /* Load once on mount and refresh each time the Calendar tab is opened. */
+  useEffect(() => { loadCalendar(); }, []);
+  useEffect(() => { if (l2 === 'cal') loadCalendar(); }, [l2]);
 
   return (
     <>
@@ -185,7 +206,7 @@ const openReport = (name, format = 'pdf') =>
           {l2 === 'terms' && (
             <TermSettings
               termData={termData}
-              setTermData={td => { setTermData(td); syncTermsToCalendar(td); }}
+              setTermData={setTermData}
               openConfirm={openConfirm}
               toast={toast}
             />
@@ -252,7 +273,8 @@ const openReport = (name, format = 'pdf') =>
         open={calEditOpen}
         terms={terms}
         onClose={() => setCalEditOpen(false)}
-        onSave={next => { setTerms(next); setCalEditOpen(false); toast('Academic calendar saved!', 'success'); }}
+        onSave={async () => { await loadCalendar(); setCalEditOpen(false); toast('Academic calendar saved!', 'success'); }}
+        onError={() => toast('Could not save key dates', 'error')}
       />
 
       <ActivityModal
@@ -479,11 +501,20 @@ function ConfirmDialog({ cfg, onClose }) {
 /* ═══════════════════════════════════════════════════════════════════
    CAL EDIT MODAL — edit Academic Calendar key-date entries per term
    ═══════════════════════════════════════════════════════════════════ */
-function CalEditModal({ open, terms, onClose, onSave }) {
+function CalEditModal({ open, terms, onClose, onSave, onError }) {
   const [draft, setDraft] = useState([]);
+  /* Snapshot of saved key dates by id → lets save() diff into insert/update/delete. */
+  const [orig, setOrig] = useState({});
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    if (open) setDraft(terms.map(t => ({ label: t.label, entries: t.entries.map(e => ({ ...e })) })));
+    if (!open) return;
+    setDraft(terms.map(t => ({ id: t.id, label: t.label, entries: t.entries.map(e => ({ ...e })) })));
+    const snap = {};
+    terms.forEach(t => t.entries.forEach(e => {
+      if (e.id) snap[e.id] = { heading: e.heading, date: e.date, termId: t.id };
+    }));
+    setOrig(snap);
   }, [open, terms]);
 
   const updateEntry = (ti, ei, key, value) => {
@@ -500,6 +531,44 @@ function CalEditModal({ open, terms, onClose, onSave }) {
     setDraft(prev => prev.map((t, idx) =>
       idx !== ti ? t : { ...t, entries: t.entries.filter((_, j) => j !== ei) }
     ));
+  };
+
+  /* Diff the draft against the original snapshot and fire one keydatescrud call
+     per change: new rows → insert, edited rows → update, removed rows → delete. */
+  const save = async () => {
+    setSaving(true);
+    try {
+      const ops = [];
+      const present = new Set();
+      draft.forEach(term => term.entries.forEach(e => {
+        if (e.id) present.add(e.id);
+        if (term.id == null) return; // skip rows whose term has no backend id
+        const head = (e.heading || '').trim();
+        const value = (e.date || '').trim();
+        if (!head && !value) return;
+        if (e.id) {
+          const o = orig[e.id];
+          if (!o || o.heading !== e.heading || o.date !== e.date) {
+            ops.push(keyDatesCrud({ id: e.id, branchID: termsBranchID(), terms: String(term.id), head, value, action: 'update' }));
+          }
+        } else {
+          ops.push(keyDatesCrud({ id: 0, branchID: termsBranchID(), terms: String(term.id), head, value, action: 'insert' }));
+        }
+      }));
+      Object.keys(orig).forEach(idStr => {
+        const id = Number(idStr);
+        if (!present.has(id)) {
+          ops.push(keyDatesCrud({ id, branchID: termsBranchID(), terms: String(orig[idStr].termId), head: '', value: '', action: 'delete' }));
+        }
+      });
+      await Promise.all(ops);
+      onSave();
+    } catch (e) {
+      console.error('Error saving key dates:', e);
+      onError && onError();
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -582,8 +651,8 @@ function CalEditModal({ open, terms, onClose, onSave }) {
             <button className="btn btn-secondary" onClick={onClose}>Close</button>
           </Tooltip>
           <Tooltip text="Save the academic calendar key dates">
-            <button className="btn btn-primary" onClick={() => onSave(draft)}>
-              <i className="fa-solid fa-check"></i> Save
+            <button className="btn btn-primary" onClick={save} disabled={saving}>
+              <i className={`fa-solid ${saving ? 'fa-spinner fa-spin' : 'fa-check'}`}></i> {saving ? 'Saving…' : 'Save'}
             </button>
           </Tooltip>
         </div>
@@ -1653,6 +1722,28 @@ async function termsCrud(payload) {
     body: JSON.stringify(payload),
   });
   if (!res.ok) throw new Error(`termscrud ${payload.action} failed: ${res.status}`);
+  return res.json().catch(() => ({}));
+}
+
+/* ─── Key Dates backend (Academic Calendar) ───
+   GET  /api/getkeydatesybranchid  → [{ id, branchID, terms, head, value }]  (terms = term id)
+   POST /api/keydatescrud          → { id, branchID, terms, head, value, action: insert|update|delete } */
+async function getKeyDates() {
+  const res = await fetch(
+    buildUrl(`/api/getkeydatesybranchid?branchID=${termsBranchID()}&pageNo=1`),
+    { method: 'GET', headers: termsAuthHeaders() },
+  );
+  const json = await res.json().catch(() => ({}));
+  return json?.data || [];
+}
+
+async function keyDatesCrud(payload) {
+  const res = await fetch(buildUrl('/api/keydatescrud'), {
+    method: 'POST',
+    headers: termsAuthHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(`keydatescrud ${payload.action} failed: ${res.status}`);
   return res.json().catch(() => ({}));
 }
 
