@@ -376,7 +376,7 @@ const [exams, setExams] = useState([]);
   const [dsConfirmDel, setDsConfirmDel] = useState(null); // { examId, classKey, className }
   const [dsConfirmCopy, setDsConfirmCopy] = useState(null); // { examId, sourceKey, count, examName }
   const [dsReportReq, setDsReportReq] = useState(null);   // { classKey:'all'|key }
-
+const [subjects, setSubjects] = useState([]);
   /* ── Result Setup state ── */
   const [rsTab, setRsTab]               = useState('resultsetup'); // resultsetup | singleassessment | combinedassessment | resulthistory
   const [rsL2, setRsL2]                 = useState('setup');       // setup | cardoptions (cardoptions = Coming Soon for now)
@@ -604,13 +604,13 @@ const sylPickExam = async (id) => {
   const sylExamData    = (sylExamId && syllabusData[sylExamId]) || {};
 
   const sylPickTerm = t => { setSylTerm(t); setSylExamId(null); setSylOpenKey(null); };
-  const sylOpenEdit = (classKey, className) => {
-    const existing = syllabusData[sylExamId]?.[classKey] || [];
-    const subjects = existing.length
-      ? existing.map(s => ({ ...s }))
-      : ALL_SUBJECTS.slice(0, 5).map(s => ({ subject: s, content: '', updatedAt: '—' }));
-    setSylEditing({ examId: sylExamId, classKey, className, subjects });
-  };
+ const sylOpenEdit = (classKey, className, classID, sectionID) => {
+  const existing = syllabusData[sylExamId]?.[classKey] || [];
+  const subjects = existing.length
+    ? existing.map(s => ({ ...s }))
+    : ALL_SUBJECTS.slice(0, 5).map(s => ({ subject: s, content: '', updatedAt: '—' }));
+  setSylEditing({ examId: sylExamId, classKey, className, classID, sectionID, subjects });
+};
   const sylSaveEdit = subjects => {
     if (!sylEditing) return;
     const today = new Date().toLocaleDateString('en-GB');
@@ -628,15 +628,29 @@ const sylPickExam = async (id) => {
     toast('Syllabus saved successfully!', 'success');
     setSylEditing(null);
   };
-  const sylRunDelete = ({ examId, classKey }) => {
-    setSyllabusData(prev => {
-      const next = { ...prev };
-      if (next[examId]) { const c = { ...next[examId] }; delete c[classKey]; next[examId] = c; }
-      return next;
-    });
-    setSylConfirmDel(null);
-    toast('Syllabus deleted', 'info');
-  };
+const sylRunDelete = async ({ examId, classKey, classID, sectionID }) => {
+  if (sylCurrentExam) {
+    const { ok } = await deleteSyllabusByAllIds(
+      classID,
+      sectionID,
+      sylCurrentExam.selectExam,
+      selectedTermId,                       // term name string (set via setTerm)
+    );
+    if (!ok) {
+      toast('Could not delete syllabus', 'error');
+      setSylConfirmDel(null);
+      return;
+    }
+  }
+  // Clear local cache so the row reflects the deletion
+  setSyllabusData(prev => {
+    const next = { ...prev };
+    if (next[examId]) { const c = { ...next[examId] }; delete c[classKey]; next[examId] = c; }
+    return next;
+  });
+  setSylConfirmDel(null);
+  toast('Syllabus deleted', 'info');
+};
   async function getSessionList() {
     try {
       const res  = await fetch(buildUrl('/api/Setting/get-sessions'), { headers: { Accept: '*/*' } });
@@ -672,8 +686,6 @@ async function getSesssiondata() {
     console.log('Could not load branch data', error);
   }
 }
-
-
 async function getTerms() {
   try {
     const token = sessionStorage.getItem('token');
@@ -697,12 +709,26 @@ async function getTerms() {
 
     const data = await response.json();
 
-    // agar API array return karti hai
-    setTerms(data || []);
+    // FIX: Ensure data is an array before setting state
+    if (Array.isArray(data)) {
+      setTerms(data);
+    } else if (data && Array.isArray(data.data)) {
+      // If API returns { data: [...] }
+      setTerms(data.data);
+    } else if (data && data.length !== undefined) {
+      // If data is array-like
+      setTerms(Array.from(data));
+    } else {
+      // Fallback to empty array
+      console.warn('Unexpected terms data format:', data);
+      setTerms([]);
+    }
   } catch (error) {
     console.log('Could not load terms', error);
+    setTerms([]); // Set empty array on error
   }
-}
+} 
+
 const formatDate = (dateStr) => {
   if (!dateStr) return "—";
   
@@ -940,6 +966,154 @@ const handleDeleteExam = async (exam) => {
     console.error(error);
   }
 };
+async function getSyllabusSubjects(gradeId, sectionID) {
+  try {
+    const branchID = sessionStorage.getItem("branchID");
+    const empID = sessionStorage.getItem("employee_ID");
+    const token = sessionStorage.getItem("token");
+
+    const response = await fetch(
+      buildUrl(`/get-subjects_byEmployeeID/${gradeId}/${sectionID}/${empID}`),
+      {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/json",
+        },
+      }
+    );
+
+    const data = await response.json();
+
+    // Handle API response with success flag and data array
+    if (data && data.success && data.data) {
+      const subjectList = data.data.map(subject => ({
+        subjectID: subject.subjectID,
+        subjectName: subject.subjectName,
+        subject: subject.subjectName,
+        content: '',
+        updatedAt: '—'
+      }));
+      setSubjects(subjectList);
+    } else if (data && Array.isArray(data)) {
+      // Fallback if API returns array directly
+      const subjectList = data.map(subject => ({
+        subjectID: subject.subjectID,
+        subjectName: subject.subjectName,
+        subject: subject.subjectName,
+        content: '',
+        updatedAt: '—'
+      }));
+      setSubjects(subjectList);
+    } else {
+      setSubjects([]);
+    }
+  } catch (err) {
+    console.error("Error fetching syllabus subjects:", err);
+    setSubjects([]);
+  }
+}
+async function getExamSyllabusBySubject(classID, sectionID, subjectID, selectExam, termName, pageNo = 1) {
+  try {
+    const branchID = sessionStorage.getItem('branchID');
+    const token = sessionStorage.getItem('token');
+
+    const params = new URLSearchParams({
+      classID: String(classID),
+      Terms: termName,
+      pageNo: String(pageNo),
+      branchID: String(branchID),
+      subjectName: String(subjectID),     // ← key bhi subjectID; agar API subjectName key chahti hai to: subjectName: String(subjectID)
+      ExamID: String(selectExam),       // ← ab selectExam (27) ja raha hai
+      sectionID: String(sectionID),
+    });
+
+    const response = await fetch(
+      buildUrl(`/api/getexamsyllabusbyclasstermsbranchsubject?${params.toString()}`),
+      { method: 'GET', headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } }
+    );
+
+    const data = await response.json();
+    return data?.data || data?.result || (Array.isArray(data) ? data : []);
+  } catch (error) {
+    console.log('Could not load subject syllabus', error);
+    return [];
+  }
+}
+const sylLoadClassSyllabus = async (key, cls) => {
+  if (!sylCurrentExam) return;
+  const rows = await getExamSyllabusByClassAndTerms(
+    cls.classID,
+    cls.sectionID,
+    sylCurrentExam.selectExam,
+    selectedTermId ,  // term name string
+    1
+  );
+  // Map API rows -> { subject, content, updatedAt } shape used by the detail table
+  const mapped = (rows || []).map(r => ({
+    subject: r.subjectDisplayName || '',
+    content: r.subjectDetails || '',
+    updatedAt: r.updatedAt || r.UpdatedOn || '—',
+  }));
+  setSyllabusData(prev => ({
+    ...prev,
+    [sylExamId]: { ...(prev[sylExamId] || {}), [key]: mapped },
+  }));
+};
+  async function getExamSyllabusByClassAndTerms(classID, sectionID, selectExam, termName, pageNo = 1) {
+  try {
+    const branchID = sessionStorage.getItem('branchID');
+    const empID = sessionStorage.getItem('employee_ID');
+    const token = sessionStorage.getItem('token');
+
+    const params = new URLSearchParams({
+      branchID: String(branchID),
+      classID: String(classID),
+      Terms: termName,
+      ExamID: String(selectExam),
+      sectionID: String(sectionID),
+      pageNo: String(pageNo),
+      empID: String(empID),
+    });
+
+    const response = await fetch(
+      buildUrl(`/api/getexamsyllabusbybranchclassandterms?${params.toString()}`),
+      { method: 'GET', headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } }
+    );
+
+    const data = await response.json();
+    return data?.data || data?.result || (Array.isArray(data) ? data : []);
+  } catch (error) {
+    console.log('Could not load class syllabus', error);
+    return [];
+  }
+}
+async function deleteSyllabusByAllIds(classID, sectionID, selectExam, termName) {
+  try {
+    const branchID = sessionStorage.getItem('branchID');
+    const token = sessionStorage.getItem('token');
+
+    const params = new URLSearchParams({
+      classID: String(classID),
+      Terms: termName,
+      branchID: String(branchID),
+      ExamID: String(selectExam),
+      sectionID: String(sectionID),
+    });
+
+    const response = await fetch(
+      buildUrl(`/api/deleteSyllabusbyALLIds?${params.toString()}`),
+      { method: 'DELETE', headers: { Authorization: `Bearer ${token}`, Accept: '*/*' } }
+    );
+
+    const data = await response.json().catch(() => ({}));
+    return { ok: response.ok, data };
+  } catch (error) {
+    console.log('Could not delete syllabus', error);
+    return { ok: false, data: null };
+  }
+}
+
 useEffect(() => {
   getSessionList();
   getSesssiondata();
@@ -1438,11 +1612,17 @@ useEffect(() => {
         const ovSt   = sylClassStatus(data);
         const isOpen = sylOpenKey === key;
         const className = `${cls.gradeName} - ${cls.sectionName}`;
-
+ console.log(examClasses,"examclases");
         return (
           <div key={key} className="syl-row-wrap">
-            <div className={`syl-row${isOpen ? ' open' : ''}`} onClick={() => setSylOpenKey(isOpen ? null : key)}>
-              <div className="syl-td" style={{ color: 'var(--text-muted)', fontWeight: 600 }}>
+<div
+  className={`syl-row${isOpen ? ' open' : ''}`}
+  onClick={() => {
+    const next = isOpen ? null : key;
+    setSylOpenKey(next);
+    if (next) sylLoadClassSyllabus(key, cls);
+  }}
+>              <div className="syl-td" style={{ color: 'var(--text-muted)', fontWeight: 600 }}>
                 <span style={{ color: 'var(--brand-primary)', fontSize: 10 }}>#</span>&nbsp;{i + 1}
               </div>
               <div className="syl-td cls-name">
@@ -1457,8 +1637,13 @@ useEffect(() => {
               </div>
               <div className="syl-td" onClick={e => e.stopPropagation()}>
                 <Tooltip text={`Edit syllabus for ${className}`}>
-                  <button className="syl-edit-btn" onClick={() => sylOpenEdit(key, className)}>
-                    <i className="fa-solid fa-pen-to-square"></i> Edit
+<button
+  className="syl-edit-btn"
+  onClick={() => {
+    getSyllabusSubjects(cls.classID , cls.sectionID);
+    sylOpenEdit(key, className, cls.classID, cls.sectionID);
+  }}
+>                    <i className="fa-solid fa-pen-to-square"></i> Edit
                   </button>
                 </Tooltip>
               </div>
@@ -1471,12 +1656,16 @@ useEffect(() => {
               </div>
               <div className="syl-td" style={{ gap: 6, justifyContent: 'flex-end' }} onClick={e => e.stopPropagation()}>
                 <Tooltip text={`Delete syllabus for ${className}`}>
-                  <button className="syl-del-btn" onClick={() => setSylConfirmDel({ examId: sylExamId, classKey: key, className: className })}>
-                    <i className="fa-solid fa-trash"></i>
+<button className="syl-del-btn" onClick={() => setSylConfirmDel({ examId: sylExamId, classKey: key, className, classID: cls.classID, sectionID: cls.sectionID })}>                    <i className="fa-solid fa-trash"></i>
                   </button>
                 </Tooltip>
                 <Tooltip text={isOpen ? 'Hide syllabus details' : 'Show syllabus details'}>
-                  <button className={`syl-expand-btn${isOpen ? ' open' : ''}`} onClick={e => { e.stopPropagation(); setSylOpenKey(isOpen ? null : key); }}>
+                  <button className={`syl-expand-btn${isOpen ? ' open' : ''}`} onClick={e => {
+  e.stopPropagation();
+  const next = isOpen ? null : key;
+  setSylOpenKey(next);
+  if (next) sylLoadClassSyllabus(key, cls);
+}}>
                     <i className="fa-solid fa-chevron-down"></i>
                   </button>
                 </Tooltip>
@@ -1495,7 +1684,6 @@ useEffect(() => {
                     <div className="syl-subj-th">Subject</div>
                     <div className="syl-subj-th">Summary</div>
                     <div className="syl-subj-th">Status</div>
-                    <div className="syl-subj-th">Last Updated</div>
                   </div>
                   {hasSyl ? data.map((s, si) => {
                     const plainAll = (s.content || '').replace(/<[^>]+>/g, '').trim();
@@ -1515,7 +1703,6 @@ useEffect(() => {
                             <span className="dot"></span>{added ? 'Added' : 'Not Added'}
                           </span>
                         </div>
-                        <div className="syl-subj-td" style={{ fontSize: 11, color: 'var(--text-muted)' }}>{s.updatedAt || '—'}</div>
                       </div>
                     );
                   }) : (
@@ -2997,15 +3184,18 @@ useEffect(() => {
       )}
 
       {/* ── Syllabus — edit modal ── */}
-      {sylEditing && (
-        <SylEditModal
-          ctx={sylEditing}
-          onClose={() => setSylEditing(null)}
-          onSave={sylSaveEdit}
-          toast={toast}
-        />
-      )}
-
+     {sylEditing && (
+  <SylEditModal
+  ctx={sylEditing}
+  onClose={() => setSylEditing(null)}
+  onSave={sylSaveEdit}
+  toast={toast}
+  subjects={subjects}
+    examId={sylCurrentExam?.selectExam} 
+  term={selectedTermId}
+  fetchSubjectSyllabus={getExamSyllabusBySubject}
+/>
+)}
       {/* ── Syllabus — delete confirm ── */}
       {sylConfirmDel && (
         <div className="confirm-overlay open" onClick={e => { if (e.target === e.currentTarget) setSylConfirmDel(null); }}>
@@ -4450,50 +4640,195 @@ ${reportHTML}
    ═══════════════════════════════════════════════════════════════════ */
 function SylRteEditor({ html, onChange, placeholder }) {
   const ref = useRef(null);
+
+  // Sync only when external html actually changes
   useEffect(() => {
-    if (ref.current && ref.current.innerHTML !== (html || '')) {
-      ref.current.innerHTML = html || '';
+    const el = ref.current;
+    if (!el) return;
+
+    // ❗ don't overwrite while user is typing
+    if (document.activeElement === el) return;
+
+    if (el.innerHTML !== (html || '')) {
+      el.innerHTML = html || '';
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [html]);
+
   return (
     <div
       ref={ref}
       className="syl-rte-editor"
       contentEditable
       suppressContentEditableWarning
-      data-placeholder={placeholder || 'Enter syllabus content here...'}
-      onInput={e => onChange(e.currentTarget.innerHTML)}
+      data-placeholder={placeholder}
+      onInput={(e) => {
+        onChange(e.currentTarget.innerHTML);
+      }}
     />
   );
 }
 
-function SylEditModal({ ctx, onClose, onSave, toast }) {
-  const [subjects, setSubjects] = useState(() => ctx.subjects.map(s => ({ ...s })));
+function SylEditModal({ ctx, onClose, onSave, toast, subjects: externalSubjects = [], examId, term, fetchSubjectSyllabus }) {
+const [localSubjects, setLocalSubjects] = useState(() => {
+    if (externalSubjects && externalSubjects.length) {
+      return externalSubjects.map(s => ({
+        subjectID: s.subjectID,                      // ← explicitly preserve
+        subjectName: s.subjectName || s.subject,
+        subject: s.subjectName || s.subject,
+        content: s.content || '',
+        updatedAt: s.updatedAt || '—',
+      }));
+    }
+    return [];
+  });
+
   const [activeIdx, setActiveIdx] = useState(0);
 
-  const cur = subjects[activeIdx] || null;
+  const loadSubjectSyllabus = async (subjectObj, idx) => {
+  if (!fetchSubjectSyllabus || !subjectObj) return;
+
+  const data = await fetchSubjectSyllabus(
+    ctx.classID,
+    ctx.sectionID,
+    subjectObj.subjectID,
+    examId,
+    term
+  );
+
+  if (data && data.length) {
+    const incoming = data[0];
+
+    setLocalSubjects(ss =>
+      ss.map((s, i) =>
+        i === idx
+          ? {
+              ...s,
+              id: incoming.id,
+              syllabusID: incoming.syllabusID,
+              content: incoming.subjectDetails || '',
+              updatedAt: incoming.updatedAt || s.updatedAt
+            }
+          : s
+      )
+    );
+  }
+};
+  const saveSubject = async (goNext = false) => {
+  if (!cur) return;
+
+  const plainText = (cur.content || '').replace(/<[^>]+>/g, '').trim();
+
+  if (!plainText) {
+    toast('Please add content first.', 'warning');
+    return;
+  }
+
+  try {
+    const token = sessionStorage.getItem('token');
+    const branchID = sessionStorage.getItem('branchID');
+const isUpdate = cur?.id > 0;
+
+const payload = {
+  id: isUpdate ? cur.id : 0,
+  syllabusID: cur?.syllabusID || 0,
+  imagePath: "string",
+  examID: examId,
+  branchID: branchID,
+  classID: String(ctx.classID),
+  className:  "",
+  sectionID: ctx.sectionID,
+  sectionName: ctx.sectionName || "",
+  terms: String(term),
+  termName: "",
+  subjectName: String(cur.subjectID),
+  subjectDisplayName: cur.subjectName,
+  subjectDetails: cur.content,
+  action: isUpdate ? "update" : "insert",
+  imagePaths: ["string"]
+};
+    const response = await fetch(
+      buildUrl('/api/examsyllabuscrud'),
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+          Accept: "application/json"
+        },
+        body: JSON.stringify(payload)
+      }
+    );
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.message || 'Failed to save syllabus');
+    }
+
+    toast('Syllabus saved successfully.', 'success');
+
+    if (goNext) {
+      const next = (activeIdx + 1) % localSubjects.length;
+      setActiveIdx(next);
+
+      if (localSubjects[next]) {
+        loadSubjectSyllabus(localSubjects[next]);
+      }
+    } else {
+      onSave(localSubjects);
+    }
+  } catch (err) {
+    console.error(err);
+    toast(err.message || 'Failed to save syllabus', 'error');
+  }
+};
+
+useEffect(() => {
+  if (localSubjects.length) {
+    loadSubjectSyllabus(localSubjects[0], 0);
+  }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [localSubjects.length]);
+  // Second useEffect — externalSubjects merge, subjectID explicitly preserve karo
+  useEffect(() => {
+    if (externalSubjects && externalSubjects.length) {
+      const existingContent = {};
+      if (ctx.subjects && ctx.subjects.length) {
+        ctx.subjects.forEach(s => {
+          existingContent[s.subjectName || s.subject] = { content: s.content, updatedAt: s.updatedAt };
+        });
+      }
+
+      const merged = externalSubjects.map(s => ({
+        subjectID: s.subjectID,                      // ← explicitly preserve
+        subjectName: s.subjectName || s.subject,
+        subject: s.subjectName || s.subject,
+        content: existingContent[s.subjectName]?.content || s.content || '',
+        updatedAt: existingContent[s.subjectName]?.updatedAt || s.updatedAt || '—',
+      }));
+      setLocalSubjects(merged);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [externalSubjects, ctx.subjects]);
+  const cur = localSubjects[activeIdx] || null;
   const plainLen = (cur?.content || '').replace(/<[^>]+>/g, '').length;
 
   const updateContent = htmlVal => {
-    setSubjects(ss => ss.map((s, i) => i === activeIdx ? { ...s, content: htmlVal } : s));
+    setLocalSubjects(ss => ss.map((s, i) => i === activeIdx ? { ...s, content: htmlVal } : s));
   };
 
   const cmd = (name, val) => {
     document.execCommand(name, false, val ?? null);
-    // sync after exec
     const node = document.querySelector(`#sylEditor_${activeIdx}`);
     if (node) updateContent(node.innerHTML);
   };
 
-  const saveAndNext = () => {
-    const next = (activeIdx + 1) % subjects.length;
-    setActiveIdx(next);
-    toast('Saved — now editing subject ' + (next + 1), 'info');
-  };
-
-  const save = () => onSave(subjects);
-
+const saveAndNext = () => {
+  saveSubject(true);
+};
+const save = () => {
+  saveSubject(false);
+};
   return (
     <div className="exam-modal-overlay open" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="exam-modal syl-edit-modal" style={{ maxWidth: 860 }}>
@@ -4502,7 +4837,7 @@ function SylEditModal({ ctx, onClose, onSave, toast }) {
             <div className="exam-modal-header-icon"><i className="fa-solid fa-book-open"></i></div>
             <div>
               <div className="exam-modal-title">Edit Syllabus</div>
-              <div className="exam-modal-sub">{ctx.className} — {subjects.length} subject{subjects.length !== 1 ? 's' : ''}</div>
+              <div className="exam-modal-sub">{ctx.className} — {localSubjects.length} subject{localSubjects.length !== 1 ? 's' : ''}</div>
             </div>
           </div>
           <Tooltip text="Close"><button className="exam-modal-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark"></i></button></Tooltip>
@@ -4511,21 +4846,28 @@ function SylEditModal({ ctx, onClose, onSave, toast }) {
         <div className="exam-modal-body" style={{ paddingTop: 18 }}>
           {/* Subject tabs */}
           <div className="syl-subj-tabs">
-            {subjects.map((s, i) => (
-              <button
-                key={s.subject + i}
-                className={`syl-subj-tab${i === activeIdx ? ' active' : ''}`}
-                onClick={() => setActiveIdx(i)}
-              >
-                {s.subject}
-              </button>
-            ))}
+         {localSubjects.map((s, i) => (
+  <button
+    key={s.subjectID || i}
+    className={`syl-subj-tab${i === activeIdx ? ' active' : ''}`}
+    onClick={() => {
+        console.log('clicked subject:', s);   // subjectID dikh raha hai ya nahi
+
+      setActiveIdx(i);
+      loadSubjectSyllabus(s, i);
+    }}
+  >
+    {s.subjectName}
+  </button>
+))}
           </div>
 
           {cur && (
             <div>
               <div style={{ marginBottom: 10 }}>
-                <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)' }}>{cur.subject} — Syllabus Content</div>
+                <div style={{ fontSize: 12, fontWeight: 700 }}>
+                  {cur.subjectName} — Syllabus Content
+                </div>
                 <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>Status is auto-calculated based on content.</div>
               </div>
 
@@ -4542,25 +4884,24 @@ function SylEditModal({ ctx, onClose, onSave, toast }) {
                     <option value="5">X-Large</option>
                   </select>
                   <div className="syl-tb-divider"></div>
-                  <Tooltip text="Bold"><button className="syl-tb-btn"      onMouseDown={e => e.preventDefault()} onClick={() => cmd('bold')}><b>B</b></button></Tooltip>
+                  <Tooltip text="Bold"><button className="syl-tb-btn" onMouseDown={e => e.preventDefault()} onClick={() => cmd('bold')}><b>B</b></button></Tooltip>
                   <Tooltip text="Underline"><button className="syl-tb-btn" onMouseDown={e => e.preventDefault()} onClick={() => cmd('underline')}><u>U</u></button></Tooltip>
-                  <Tooltip text="Italic"><button className="syl-tb-btn"    onMouseDown={e => e.preventDefault()} onClick={() => cmd('italic')}><i>I</i></button></Tooltip>
+                  <Tooltip text="Italic"><button className="syl-tb-btn" onMouseDown={e => e.preventDefault()} onClick={() => cmd('italic')}><i>I</i></button></Tooltip>
                   <div className="syl-tb-divider"></div>
-                  <Tooltip text="Bullet List"><button className="syl-tb-btn"   onMouseDown={e => e.preventDefault()} onClick={() => cmd('insertUnorderedList')}><i className="fa-solid fa-list-ul"></i></button></Tooltip>
+                  <Tooltip text="Bullet List"><button className="syl-tb-btn" onMouseDown={e => e.preventDefault()} onClick={() => cmd('insertUnorderedList')}><i className="fa-solid fa-list-ul"></i></button></Tooltip>
                   <Tooltip text="Numbered List"><button className="syl-tb-btn" onMouseDown={e => e.preventDefault()} onClick={() => cmd('insertOrderedList')}><i className="fa-solid fa-list-ol"></i></button></Tooltip>
                   <div className="syl-tb-divider"></div>
-                  <Tooltip text="Align Left"><button className="syl-tb-btn"   onMouseDown={e => e.preventDefault()} onClick={() => cmd('justifyLeft')}><i className="fa-solid fa-align-left"></i></button></Tooltip>
+                  <Tooltip text="Align Left"><button className="syl-tb-btn" onMouseDown={e => e.preventDefault()} onClick={() => cmd('justifyLeft')}><i className="fa-solid fa-align-left"></i></button></Tooltip>
                   <Tooltip text="Align Center"><button className="syl-tb-btn" onMouseDown={e => e.preventDefault()} onClick={() => cmd('justifyCenter')}><i className="fa-solid fa-align-center"></i></button></Tooltip>
-                  <Tooltip text="Align Right"><button className="syl-tb-btn"  onMouseDown={e => e.preventDefault()} onClick={() => cmd('justifyRight')}><i className="fa-solid fa-align-right"></i></button></Tooltip>
+                  <Tooltip text="Align Right"><button className="syl-tb-btn" onMouseDown={e => e.preventDefault()} onClick={() => cmd('justifyRight')}><i className="fa-solid fa-align-right"></i></button></Tooltip>
                 </div>
 
-                {/* Mount a fresh editor per active tab to seed initial HTML */}
-                <SylRteEditor
-                  key={activeIdx}
-                  html={cur.content || ''}
-                  onChange={updateContent}
-                  placeholder="Enter syllabus content here..."
-                />
+        <SylRteEditor
+  key={`${activeIdx}-${cur?.id}`}   // ✅ stable key
+  html={cur?.content || ''}
+  onChange={updateContent}
+  placeholder="Enter syllabus content here..."
+/>
                 <div id={`sylEditor_${activeIdx}`} style={{ display: 'none' }} />
                 <div className="syl-rte-char-count">Characters: {plainLen}</div>
               </div>
@@ -4575,24 +4916,32 @@ function SylEditModal({ ctx, onClose, onSave, toast }) {
             </button>
           </Tooltip>
           <Tooltip text="Save and move to the next class">
-            <button
-              className="exam-cancel-btn"
-              style={{ borderColor: '#1E40AF', color: '#1E40AF' }}
-              onClick={saveAndNext}
-            >
-              <i className="fa-solid fa-arrow-right"></i> Save &amp; Next
-            </button>
+           <button
+  className="exam-cancel-btn"
+  style={{ borderColor: '#1E40AF', color: '#1E40AF' }}
+  onClick={saveAndNext}
+>
+  <i className="fa-solid fa-arrow-right"></i>
+  Save & Next
+</button>
+
           </Tooltip>
           <Tooltip text="Save and close">
-            <button className="exam-submit-btn" onClick={save}>
-              <i className="fa-solid fa-check"></i> Save &amp; Close
-            </button>
+
+<button
+  className="exam-submit-btn"
+  onClick={save}
+>
+  <i className="fa-solid fa-check"></i>
+  Save & Close
+</button>
           </Tooltip>
         </div>
       </div>
     </div>
   );
 }
+
 
 /* ═══════════════════════════════════════════════════════════════════
    SYLLABUS — REPORT PICKER + BUILDER (A4 portrait)
