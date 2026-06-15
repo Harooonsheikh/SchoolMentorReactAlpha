@@ -89,6 +89,7 @@ const getSessionData = async () => {
 
     const json = await res.json();
     sessionStorage.setItem('sessionID', json.data[0].SessionID)
+    sessionStorage.setItem('sessionName', json.data[0].SessionName)
     notifySessionChange();
   } catch (error) {
     console.error("Error loading classes:", error);
@@ -2350,11 +2351,12 @@ function TermSettings({ termData, setTermData, openConfirm, toast }) {
                 <label className="ts-label">Academic Year <span style={{ color: 'var(--error)' }}>*</span></label>
                 <div className="ts-input-wrap" style={{ maxWidth: 280 }}>
                   <i className="fa-solid fa-graduation-cap ts-input-icon"></i>
-                  <select className="ts-input ts-select" value={sessionId} onChange={e => changeSession(e.target.value)}>
-                    {sessions.map(s => (
-                      <option key={s.SessionID} value={String(s.SessionID)}>{s.SessionName}</option>
-                    ))}
-                  </select>
+                  <input
+                    className="ts-input"
+                    value={sessionStorage.getItem('sessionName') || ''}
+                    disabled
+                    readOnly
+                  />
                 </div>
               </div>
               <div className="ts-field-group">

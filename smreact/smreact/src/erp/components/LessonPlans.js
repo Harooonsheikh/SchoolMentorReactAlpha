@@ -190,12 +190,88 @@ const LESSON_SECTIONS_UR = [
 export default function LessonPlans({ toast, openConfirm }) {
   const [tab, setTab] = useState('session'); // session | breakup | create | view
 
-  const { data: session = {},   setData: setSession }   = useAsync(academicsService.getSession,   []);
-  const { data: vacations = [], setData: setVacations } = useAsync(academicsService.getVacations, []);
+  /* Session summary + vacations load live from getsessionsummarybybranchid
+     (see loadSessionSummary). Seed sensible defaults so the cards render before
+     the fetch resolves. */
+  const [session, setSession]     = useState({ year: '', start: '', end: '', workingDaysPerWeek: 5, workingDays: 0, workingWeeks: 0, totalOnDays: 0, holidays: 0, vacationDays: 0 });
+  const [vacations, setVacations] = useState([]);
+
+  /* Persist the academic session via lpsessionsummarycrud, then reload from
+     the server. Existing summary (has id) → update, otherwise insert. */
+  const saveSession = async base => {
+    const wpw = Number(base.workingDaysPerWeek) || 0;
+    const computed = computeSession({ ...session, ...base, workingDaysPerWeek: wpw }, vacations);
+    const grossWorkingDays = computed.workingDays + computed.vacationDays; // before vacation subtraction
+    try {
+      await lpPost('/api/lpsessionsummarycrud', {
+        id: session.id || 0,
+        branchID: sessionStorage.getItem('branchID') || '',
+        sessionYearID: sessionStorage.getItem('sessionID') || sessionStorage.getItem('SessionID') || '',
+        sessionStart: lpToIso(base.start),
+        sessionEnd: lpToIso(base.end),
+        workingDaysPerWeek: String(wpw),
+        remainingWorkingDays: String(grossWorkingDays),
+        action: session.id ? 'update' : 'insert',
+      });
+      toast('Academic session saved', 'success');
+      loadSessionSummary();
+    } catch (e) {
+      console.error('Error saving session:', e);
+      toast('Could not save session', 'error');
+    }
+  };
+
+  const loadSessionSummary = async () => {
+    try {
+      const branchID  = sessionStorage.getItem('branchID');
+      /* Prefer the switched session so its record loads; fall back to login session. */
+      const sessionID = sessionStorage.getItem('changeSessionId') || sessionStorage.getItem('sessionID') || sessionStorage.getItem('SessionID') || '';
+      const token     = sessionStorage.getItem('token') || '';
+      const res = await fetch(
+        buildUrl(`/api/getsessionsummarybybranchid?branchID=${branchID}&sessionID=${sessionID}&pageNo=1`),
+        { method: 'GET', headers: { Accept: '*/*', Authorization: `bearer ${token}` } },
+      );
+      const json = await res.json();
+      const rows = json?.data || [];
+      if (!rows.length) return;
+      const fmt = d => (d ? String(d).slice(0, 10) : '');
+      const palette = ['#1E40AF', '#22C55E', '#F59E0B', '#7C3AED', '#EF4444', '#0EA5E9'];
+      const first = rows[0];
+      /* Each row repeats the session and carries one vacation detail; keep the real ones. */
+      const vacs = rows
+        .filter(r => r.vacationName && r.vacationName !== 'string' && fmt(r.vacationStart) > '0001-01-01')
+        .map((r, i) => ({
+          id: r.detailID ?? Date.now() + i,
+          name: r.vacationName,
+          start: fmt(r.vacationStart),
+          end: fmt(r.vacationEnd),
+          color: palette[i % palette.length],
+        }));
+      const base = {
+        id: first.id,
+        year: session.year,
+        start: fmt(first.sessionStart),
+        end: fmt(first.sessionEnd),
+        workingDaysPerWeek: Number(first.workingDaysPerWeek) || 0,
+      };
+      setSession(computeSession(base, vacs));
+      setVacations(vacs);
+    } catch (e) {
+      console.error('Error loading session summary:', e);
+    }
+  };
+
+  useEffect(() => { loadSessionSummary(); }, []);
 
   const [sessionEditOpen, setSessionEditOpen] = useState(false);
   const [vacationEditOpen, setVacationEditOpen] = useState(false);
   const [perWeekEditOpen, setPerWeekEditOpen] = useState(false);
+  /* Bumped after the Per Week modal saves so the view card refetches its counts. */
+  const [pwRefresh, setPwRefresh] = useState(0);
+  /* Resolved ids (branchID/classID/sectionID/subjectID) for the fetched lesson
+     plans — used by the ULP class-master CRUD (the API returns sectionID 0, so we
+     keep the real selected ids here). */
+  const [clpCtx, setClpCtx] = useState({});
 
   /* Term Breakup state */
   const [tbModalClass, setTbModalClass] = useState(null);
@@ -203,11 +279,18 @@ export default function LessonPlans({ toast, openConfirm }) {
   /* Per Week Lesson Plans selected class — lifted so report can read it */
   const [pwSelectedClass, setPwSelectedClass] = useState('');
 
-  /* Create Lesson Plans state */
+  /* Create Lesson Plans state — lifted so selections survive L2 tab changes
+     (CreateLessonPlans unmounts when you leave the Create tab). */
   const [clpClass,   setClpClass]   = useState('');
+  const [clpSection, setClpSection] = useState('');
   const [clpSubject, setClpSubject] = useState('');
+  const [clpSections, setClpSections] = useState([]);
+  const [clpSubjects, setClpSubjects] = useState([]);
   const [clpFetched, setClpFetched] = useState(false);
   const [clpSubtab,  setClpSubtab]  = useState('lesson');
+  /* Bumped when a lesson/unit modal closes so CreateLessonPlans re-fetches. */
+  const [clpRefresh, setClpRefresh] = useState(0);
+  const bumpClpRefresh = () => setClpRefresh(n => n + 1);
   const { data: units = [],   setData: setUnits }   = useAsync(academicsService.getUnits,   []);
   const { data: nbUnits = [], setData: setNbUnits } = useAsync(academicsService.getNbUnits, []);
   const { data: termBreakupClasses = [] } = useAsync(academicsService.getTermBreakupClasses, []);
@@ -285,6 +368,7 @@ const getClassesData = async () => {
           onEditPerWeek={() => setPerWeekEditOpen(true)}
           onReport={openReport}
           classesData={classesData}  // Pass the fetched data
+          pwRefresh={pwRefresh}
         />
       )}
 
@@ -304,12 +388,33 @@ const getClassesData = async () => {
 
           clpClass={clpClass} setClpClass={setClpClass}
           clpSubject={clpSubject} setClpSubject={setClpSubject}
+          clpSection={clpSection} setClpSection={setClpSection}
+          sections={clpSections} setSections={setClpSections}
+          subjects={clpSubjects} setSubjects={setClpSubjects}
           clpFetched={clpFetched} setClpFetched={setClpFetched}
           clpSubtab={clpSubtab} setClpSubtab={setClpSubtab}
+          clpRefresh={clpRefresh}
           units={units} setUnits={setUnits}
           nbUnits={nbUnits} setNbUnits={setNbUnits}
+          setClpCtx={setClpCtx}
           onManageUnits={src => setUnitMgrSource(src)}
-          onEditLesson={(unitId, lessonId, lesson, unit) => setLessonEdit({ unitId, lessonId, lesson, unit, clpClass, clpSubject })}
+          onEditLesson={async (unitId, lessonId, lesson, unit) => {
+            /* Load the lesson-plan detail for this topic so the modal opens pre-filled. */
+            let detail = null;
+            const masterId = lesson?.record?.id;
+            if (masterId && clpCtx.classID && clpCtx.subjectID) {
+              try {
+                const token = sessionStorage.getItem('token') || '';
+                const res = await fetch(
+                  buildUrl(`/api/getulpforclassdetailbytermsubjectandclass?MasterClassesID=${masterId}&classID=${clpCtx.classID}&subjectID=${clpCtx.subjectID}&pageNo=1`),
+                  { method: 'GET', headers: { Accept: '*/*', Authorization: `bearer ${sessionStorage.getItem('token') || ''}` } },
+                );
+                const json = await res.json();
+                detail = (json?.data || [])[0] || null;
+              } catch (e) { console.error('Error loading lesson detail:', e); }
+            }
+            setLessonEdit({ unitId, lessonId, lesson, unit, clpClass, clpSubject, ...clpCtx, detail });
+          }}
           onAddQuestionType={unitId => setNbAddCtx({ unitId })}
           onEditQuestionType={(unitId, qId) => setNbEdit({ unitId, qId })}
           onReport={openReport}
@@ -325,8 +430,7 @@ const getClassesData = async () => {
         open={sessionEditOpen}
         session={session}
         vacations={vacations}
-        onSession={s => setSession(s)}
-        onVacations={v => setVacations(v)}
+        onSession={saveSession}
         onClose={() => setSessionEditOpen(false)}
         toast={toast}
         openConfirm={openConfirm}
@@ -335,7 +439,9 @@ const getClassesData = async () => {
       <VacationEditModal
         open={vacationEditOpen}
         vacations={vacations}
-        onChange={v => setVacations(v)}
+        session={session}
+        sessionSummaryId={session.id}
+        onReload={loadSessionSummary}
         onClose={() => setVacationEditOpen(false)}
         toast={toast}
         openConfirm={openConfirm}
@@ -345,6 +451,7 @@ const getClassesData = async () => {
         open={perWeekEditOpen}
         classesData={classesData}
         onClose={() => setPerWeekEditOpen(false)}
+        onSaved={() => setPwRefresh(n => n + 1)}
         toast={toast}
       />
 
@@ -358,12 +465,14 @@ const getClassesData = async () => {
         open={unitMgrSource !== null}
         source={unitMgrSource}
         units={unitMgrSource === 'lesson' ? units : nbUnits}
+        clpCtx={clpCtx}
         onSave={next => {
           if (unitMgrSource === 'lesson') setUnits(next); else setNbUnits(next);
           setUnitMgrSource(null);
+          bumpClpRefresh();
           toast('Units saved', 'success');
         }}
-        onClose={() => setUnitMgrSource(null)}
+        onClose={() => { setUnitMgrSource(null); bumpClpRefresh(); }}
         openConfirm={openConfirm}
         toast={toast}
       />
@@ -378,9 +487,10 @@ const getClassesData = async () => {
             },
           ));
           setLessonEdit(null);
+          bumpClpRefresh();
           toast('Lesson plan saved', 'success');
         }}
-        onClose={() => setLessonEdit(null)}
+        onClose={() => { setLessonEdit(null); bumpClpRefresh(); }}
         toast={toast}
       />
 
@@ -430,29 +540,52 @@ const getClassesData = async () => {
 function SessionSettings({
   session,
   vacations,
-  selectedClass,
   setSelectedClass,
   onEditSession,
   onEditVacations,
   onEditPerWeek,
   onReport,
-  classesData = [] // Add classesData as a prop
+  classesData = [], // Add classesData as a prop
+  pwRefresh = 0
 }) {
-  const pwSubjects = PER_WEEK_BY_CLASS[selectedClass] || PER_WEEK_BY_CLASS['Class III'];
+  /* If the user switched to a different session (changeSessionId differs from the
+     login session), the view is read-only — disable all edit buttons. */
+  const changeSessionId = sessionStorage.getItem('changeSessionId');
+  const sessionName  = sessionStorage.getItem('sessionName ');
+  const loginSessionId  = sessionStorage.getItem('sessionID') || sessionStorage.getItem('SessionID') || '';
+  const isOtherSession  = !!changeSessionId && !!loginSessionId && String(changeSessionId) !== String(loginSessionId);
 
-  // Extract unique class names from the API response
-  const classOptions = [];
-  
-  if (classesData && classesData.length > 0) {
-    classesData.forEach(classItem => {
-      if (classItem.name) {
-        classOptions.push(classItem.name);
+  /* Per-week card: class+section options + live subjects/counts (read-only view). */
+  const pwOptions = useMemo(() => {
+    const out = [];
+    (classesData || []).forEach(cls => {
+      if (cls.sections && cls.sections.length > 0) {
+        cls.sections.forEach(sec => out.push({
+          id: `${cls.id}_${sec.sectionID}`, gradeId: cls.id, sectionId: sec.sectionID,
+          label: `${cls.name}${sec.sectionName ? ` (${sec.sectionName})` : ''}`,
+        }));
+      } else {
+        out.push({ id: `${cls.id}_nosection`, gradeId: cls.id, sectionId: null, label: cls.name });
       }
     });
-  }
+    return out;
+  }, [classesData]);
 
-  // If no API data, fall back to hardcoded LP_CLASSES
-  const displayClasses = classOptions.length > 0 ? classOptions : LP_CLASSES;
+  const [pwSelId, setPwSelId] = useState('');
+  const [pwView, setPwView]   = useState({ subjects: [], counts: {}, loading: false });
+  const pwSelLabel = (pwOptions.find(o => o.id === pwSelId) || {}).label || '';
+
+  useEffect(() => {
+    if (!pwSelId) { setPwView({ subjects: [], counts: {}, loading: false }); return; }
+    const opt = pwOptions.find(o => o.id === pwSelId);
+    if (!opt || opt.sectionId == null) { setPwView({ subjects: [], counts: {}, loading: false }); return; }
+    let cancelled = false;
+    setPwView(v => ({ ...v, loading: true }));
+    fetchPerWeekCounts(opt.gradeId, opt.sectionId)
+      .then(({ subjects, counts }) => { if (!cancelled) setPwView({ subjects, counts, loading: false }); })
+      .catch(() => { if (!cancelled) setPwView({ subjects: [], counts: {}, loading: false }); });
+    return () => { cancelled = true; };
+  }, [pwSelId, pwOptions, pwRefresh]);
 
   return (
     <div className="ss-cards-grid">
@@ -471,8 +604,10 @@ function SessionSettings({
             <div className="ss-card-hdr-title">Academic Session</div>
             <div className="ss-card-hdr-sub">{session.year}</div>
           </div>
-          <Tooltip text="Edit academic session">
-            <button className="ss-card-edit-btn" onClick={onEditSession} aria-label="Edit academic session">
+          <Tooltip text={isOtherSession ? 'Editing is only allowed for the current session' : 'Edit academic session'}>
+            <button className="ss-card-edit-btn" onClick={onEditSession} aria-label="Edit academic session"
+              disabled={isOtherSession}
+              style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
               <i className="fa-solid fa-pen"></i>
             </button>
           </Tooltip>
@@ -533,8 +668,10 @@ function SessionSettings({
             <div className="ss-card-hdr-title">Vacations</div>
             <div className="ss-card-hdr-sub">{vacations.length} scheduled breaks</div>
           </div>
-          <Tooltip text="Edit vacations">
-            <button className="ss-card-edit-btn" onClick={onEditVacations} aria-label="Edit vacations">
+          <Tooltip text={isOtherSession ? 'Editing is only allowed for the current session' : 'Edit vacations'}>
+            <button className="ss-card-edit-btn" onClick={onEditVacations} aria-label="Edit vacations"
+              disabled={isOtherSession}
+              style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
               <i className="fa-solid fa-pen"></i>
             </button>
           </Tooltip>
@@ -652,35 +789,37 @@ function SessionSettings({
           <div style={{ flex: 1, minWidth: 0 }}>
             <div className="ss-card-hdr-title">Per week lesson plans</div>
             <div className="ss-card-hdr-sub">
-              {selectedClass 
-                ? `${selectedClass} · ${pwSubjects.length} subjects` 
-                : `${displayClasses.length} classes · tap one to view subjects`}
+              {pwSelId
+                ? `${pwSelLabel} · ${pwView.subjects.length} subjects`
+                : `${pwOptions.length} classes · tap one to view subjects`}
             </div>
           </div>
-          {selectedClass && (
+          {pwSelId && (
             <div style={{ background: 'rgba(255,255,255,.2)', border: '1px solid rgba(255,255,255,.35)', color: '#fff', padding: '4px 12px', borderRadius: 99, fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap', flexShrink: 0 }}>
-              {selectedClass}
+              {pwSelLabel}
             </div>
           )}
-          <Tooltip text="Edit per week lesson plans">
-            <button className="ss-card-edit-btn" onClick={onEditPerWeek} aria-label="Edit per week lesson plans">
+          <Tooltip text={isOtherSession ? 'Editing is only allowed for the current session' : 'Edit per week lesson plans'}>
+            <button className="ss-card-edit-btn" onClick={onEditPerWeek} aria-label="Edit per week lesson plans"
+              disabled={isOtherSession}
+              style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
               <i className="fa-solid fa-pen"></i>
             </button>
           </Tooltip>
         </div>
 
-        {/* Class chips - dynamic from API */}
+        {/* Class chips - class (section) from API */}
         <div className="lp-class-chips">
           <div className="lp-chips-label">Choose a class</div>
           <div className="lp-chips-row">
-            {displayClasses.length > 0 ? (
-              displayClasses.map(c => (
+            {pwOptions.length > 0 ? (
+              pwOptions.map(o => (
                 <button
-                  key={c}
-                  className={`lp-chip${selectedClass === c ? ' active' : ''}`}
-                  onClick={() => setSelectedClass(c)}
+                  key={o.id}
+                  className={`lp-chip${pwSelId === o.id ? ' active' : ''}`}
+                  onClick={() => { setPwSelId(o.id); setSelectedClass(o.label); }}
                 >
-                  {c}
+                  {o.label}
                 </button>
               ))
             ) : (
@@ -692,12 +831,16 @@ function SessionSettings({
         </div>
 
         {/* Subject output */}
-        {selectedClass ? (
-          <div className="lp-pw-grid" style={{ gridTemplateColumns: `repeat(${Math.min(pwSubjects.length, 3)}, 1fr)` }}>
-            {pwSubjects.map((s, i) => (
-              <div key={i} className="lp-pw-cell">
-                <div className="lp-pw-cell-name">{s.s}</div>
-                <div className="lp-pw-cell-num">{s.n}</div>
+        {pwView.loading ? (
+          <div className="lp-pw-empty-text" style={{ color: 'rgba(255,255,255,.7)', padding: '20px', textAlign: 'center' }}>
+            Loading subjects…
+          </div>
+        ) : pwSelId && pwView.subjects.length > 0 ? (
+          <div className="lp-pw-grid" style={{ gridTemplateColumns: `repeat(${Math.min(pwView.subjects.length, 3)}, 1fr)` }}>
+            {pwView.subjects.map(s => (
+              <div key={s.subjectID} className="lp-pw-cell">
+                <div className="lp-pw-cell-name">{s.subjectName}</div>
+                <div className="lp-pw-cell-num">{pwView.counts[s.subjectID] || 0}</div>
                 <div className="lp-pw-cell-lbl">per week</div>
               </div>
             ))}
@@ -754,6 +897,86 @@ function SessionSettings({
   return Math.round((e - s) / 86400000) + 1;
 }
 
+/* Derive session totals from start/end, working-days-per-week and vacations.
+   A 7-day week is split into `workingDaysPerWeek` on-days and (7 - that) weekly
+   holidays. Vacation days are then subtracted from working days and added to
+   holidays. Returns the fields the cards & summary read. */
+function computeSession(base, vacations = []) {
+  const wpw = Number(base.workingDaysPerWeek) || 0;
+  const s = new Date(base.start), e = new Date(base.end);
+  let totalDays = 0, calWeeks = 0, grossWorkingDays = 0, weeklyHolidays = 0;
+  if (!isNaN(s) && !isNaN(e) && e >= s) {
+    totalDays = Math.round((e - s) / 86400000) + 1;
+    calWeeks = totalDays / 7;
+    grossWorkingDays = Math.round(calWeeks * wpw);
+    weeklyHolidays = totalDays - grossWorkingDays;
+  }
+  const vacDays = (vacations || []).reduce((sum, v) => sum + vacationDays(v.start, v.end), 0);
+  const workingDays = Math.max(0, grossWorkingDays - vacDays);
+  const workingWeeks = wpw > 0 ? workingDays / wpw : 0;
+  return {
+    ...base,
+    workingDaysPerWeek: wpw,
+    totalOnDays: totalDays,
+    workingDays,
+    workingWeeks,
+    holidays: weeklyHolidays + vacDays,
+    vacationDays: vacDays,
+  };
+}
+
+/* ─── LessonPlans session backend helpers ───
+   POST /api/lpsessionsummarycrud         → academic session (insert/update)
+   POST /api/lpsessionsummarydetailscrud  → vacations (insert/update/delete)
+   Auth = bearer token from sessionStorage. */
+const lpAuthHeaders = (extra = {}) => ({
+  Accept: '*/*',
+  Authorization: `bearer ${sessionStorage.getItem('token') || ''}`,
+  ...extra,
+});
+async function lpPost(path, payload) {
+  const res = await fetch(buildUrl(path), {
+    method: 'POST',
+    headers: lpAuthHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(`${path} ${payload.action} failed: ${res.status}`);
+  return res.json().catch(() => ({}));
+}
+const lpToIso = d => { const x = new Date(d); return isNaN(x) ? null : x.toISOString(); };
+
+/* Active session: switched session first, else the login session. */
+const lpActiveSessionId = () =>
+  sessionStorage.getItem('changeSessionId')
+  || sessionStorage.getItem('sessionID')
+  || sessionStorage.getItem('SessionID')
+  || '';
+
+/* Load a class/section's subjects (LaunchSetup) + their saved per-week counts
+   (lpcountforsubjectscrud get is per-subject). Returns { subjects, counts, ids }. */
+async function fetchPerWeekCounts(gradeId, sectionId) {
+  const subRes = await fetch(buildUrl(`/api/LaunchSetup/get-subjects/${gradeId}/${sectionId}`), { method: 'GET', headers: { Accept: '*/*' } });
+  const subJson = await subRes.json();
+  const subjects = (subJson.success && Array.isArray(subJson.data)) ? subJson.data : [];
+  const branchID  = sessionStorage.getItem('branchID') || '';
+  const sessionID = lpActiveSessionId();
+  const found = await Promise.all(subjects.map(s =>
+    lpPost('/api/lpcountforsubjectscrud', {
+      id: 0, branchID,
+      classID: String(gradeId), sectionID: String(sectionId),
+      subjectID: String(s.subjectID), sessionID, totalLectures: '0', action: 'get',
+    })
+      .then(rows => ({ subjectID: s.subjectID, row: Array.isArray(rows) ? rows[0] : null }))
+      .catch(() => ({ subjectID: s.subjectID, row: null }))
+  ));
+  const counts = {}, ids = {};
+  found.forEach(f => {
+    counts[f.subjectID] = f.row ? (f.row.totalLectures ?? '') : '';
+    ids[f.subjectID]    = f.row ? (f.row.id || 0) : 0;
+  });
+  return { subjects, counts, ids };
+}
+
 /* ═══════════════════════════════════════════════════════════════════
    SESSION EDIT MODAL — Term Setup + Per Week tabs
    ═══════════════════════════════════════════════════════════════════ */
@@ -772,21 +995,20 @@ function SessionEditModal({ open, session, vacations, onSession, onVacations, on
     }
   }, [open, session]);
 
+  /* Live recalculation as the user edits start/end/working-days-per-week.
+     Subtracts the current vacations so the preview matches the summary card. */
+  const preview = useMemo(
+    () => computeSession({ start, end, workingDaysPerWeek: wpw }, vacations),
+    [start, end, wpw, vacations],
+  );
+
   const save = () => {
-    const totalDays = Math.round((new Date(end) - new Date(start)) / 86400000) + 1;
-    const workingWeeks = totalDays / 7;
-    const workingDays = Math.round(workingWeeks * wpw);
-    onSession({
-      ...session,
-      start, end,
-      workingDaysPerWeek: wpw,
-      workingDays, workingWeeks,
-      totalOnDays: totalDays,
-    });
-    toast('Academic session updated', 'success');
+    /* Parent persists via lpsessionsummarycrud and reloads. */
+    onSession({ start, end, workingDaysPerWeek: wpw });
     onClose();
   };
 
+  const sessionName = sessionStorage.getItem('sessionName') || '';
   return (
     <div className={`lp-overlay${open ? ' open' : ''}`} onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="lp-modal" style={{ maxWidth: 600 }}>
@@ -828,12 +1050,26 @@ function SessionEditModal({ open, session, vacations, onSession, onVacations, on
                 </div>
                 <div className="form-group">
                   <label className="form-label">Academic Year</label>
-                  <input className="form-input" value={session.year} readOnly style={{ opacity: .6 }} />
+                  <input className="form-input" value={sessionName} readOnly style={{ opacity: .6 }} />
                 </div>
               </div>
-              <div className="lp-summary-strip">
+              {/* Live calculation preview */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginTop: 6 }}>
+                {[
+                  { lbl: 'Total Days',    val: preview.totalOnDays },
+                  { lbl: 'Working Days',  val: preview.workingDays },
+                  { lbl: 'Working Weeks', val: (preview.workingWeeks || 0).toFixed(2) },
+                  { lbl: 'Holidays',      val: preview.holidays },
+                ].map(c => (
+                  <div key={c.lbl} style={{ background: 'var(--bg-muted, #F1F5F9)', borderRadius: 10, padding: '10px 8px', textAlign: 'center' }}>
+                    <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--brand-primary, #1E40AF)' }}>{c.val}</div>
+                    <div style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-muted, #64748B)', textTransform: 'uppercase', letterSpacing: '.4px' }}>{c.lbl}</div>
+                  </div>
+                ))}
+              </div>
+              <div className="lp-summary-strip" style={{ marginTop: 14 }}>
                 <i className="fa-solid fa-circle-info"></i>
-                <span>Vacations are managed in the <strong>Vacations</strong> card and are subtracted from on-days automatically.</span>
+                <span>A week = <strong>{wpw}</strong> working days + <strong>{Math.max(0, 7 - (Number(wpw) || 0))}</strong> weekly holidays. Vacations ({preview.vacationDays} days) are subtracted from working days automatically.</span>
               </div>
             </>
           ) : (
@@ -865,16 +1101,18 @@ function SessionEditModal({ open, session, vacations, onSession, onVacations, on
 
 /* ═══════════════════════════════════════════════════════════════════
    PER WEEK EDIT MODAL — pick a class (section) and set the weekly
-   lesson-plan count per subject. Subjects load from the same
-   /get-subjects_byEmployeeID endpoint used elsewhere.
+   lesson-plan count per subject. Subjects load from
+   /api/LaunchSetup/get-subjects/{classId}/{sectionId}.
    ═══════════════════════════════════════════════════════════════════ */
-function PerWeekEditModal({ open, classesData = [], onClose, toast }) {
+function PerWeekEditModal({ open, classesData = [], onClose, onSaved, toast }) {
   const [selectedId, setSelectedId] = useState('');
   const [subjects, setSubjects]     = useState([]);
-  const [counts, setCounts]         = useState({}); // subjectID -> value
+  const [counts, setCounts]         = useState({}); // subjectID -> totalLectures
+  const [recordIds, setRecordIds]   = useState({}); // subjectID -> existing record id (0 = none → insert)
   const [loading, setLoading]       = useState(false);
+  const [saving, setSaving]         = useState(false);
 
-  /* Flatten classes → one option per class/section (e.g. "II - Pre"). */
+  /* Flatten classes → one option per class/section, labelled "Class (Section)". */
   const options = useMemo(() => {
     const out = [];
     classesData.forEach(cls => {
@@ -883,7 +1121,7 @@ function PerWeekEditModal({ open, classesData = [], onClose, toast }) {
           id: `${cls.id}_${sec.sectionID}`,
           gradeId: cls.id,
           sectionId: sec.sectionID,
-          label: `${cls.name}${sec.sectionName ? ' - ' + sec.sectionName : ''}`,
+          label: `${cls.name}${sec.sectionName ? ` (${sec.sectionName})` : ''}`,
         }));
       } else {
         out.push({ id: `${cls.id}_nosection`, gradeId: cls.id, sectionId: null, label: cls.name });
@@ -907,20 +1145,14 @@ function PerWeekEditModal({ open, classesData = [], onClose, toast }) {
     (async () => {
       setLoading(true);
       try {
-        const empID = sessionStorage.getItem('employee_ID');
-        const res = await fetch(
-          buildUrl(`/get-subjects_byEmployeeID/${opt.gradeId}/${opt.sectionId}/${empID}`),
-          { method: 'GET', headers: { Accept: '*/*' } },
-        );
-        const json = await res.json();
-        const list = (json.success && Array.isArray(json.data)) ? json.data : [];
-        if (!cancelled) {
-          setSubjects(list);
-          setCounts(list.reduce((acc, s) => { acc[s.subjectID] = s.perWeek ?? ''; return acc; }, {}));
-        }
+        const { subjects: list, counts: nextCounts, ids: nextIds } = await fetchPerWeekCounts(opt.gradeId, opt.sectionId);
+        if (cancelled) return;
+        setSubjects(list);
+        setCounts(nextCounts);
+        setRecordIds(nextIds);
       } catch (e) {
         console.error('Error fetching subjects:', e);
-        if (!cancelled) { setSubjects([]); setCounts({}); }
+        if (!cancelled) { setSubjects([]); setCounts({}); setRecordIds({}); }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -930,10 +1162,37 @@ function PerWeekEditModal({ open, classesData = [], onClose, toast }) {
 
   const setCount = (id, val) => setCounts(prev => ({ ...prev, [id]: val }));
 
-  const save = () => {
+  /* Save each subject's weekly count via lpcountforsubjectscrud — existing
+     record (has id) updates, otherwise inserts. */
+  const save = async () => {
     const opt = options.find(o => o.id === selectedId);
-    toast(`Per week lesson plans saved${opt ? ` for ${opt.label}` : ''}`, 'success');
-    onClose();
+    if (!opt) return;
+    setSaving(true);
+    try {
+      const branchID  = sessionStorage.getItem('branchID') || '';
+      const sessionID = lpActiveSessionId();
+      await Promise.all(subjects.map(s => {
+        const recId = recordIds[s.subjectID] || 0;
+        return lpPost('/api/lpcountforsubjectscrud', {
+          id: recId,
+          branchID,
+          classID: String(opt.gradeId),
+          sectionID: String(opt.sectionId),
+          subjectID: String(s.subjectID),
+          sessionID,
+          totalLectures: String(counts[s.subjectID] || 0),
+          action: recId ? 'update' : 'insert',
+        });
+      }));
+      toast(`Per week lesson plans saved${opt ? ` for ${opt.label}` : ''}`, 'success');
+      onSaved && onSaved();
+      onClose();
+    } catch (e) {
+      console.error('Error saving per week counts:', e);
+      toast('Could not save per week lesson plans', 'error');
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -991,8 +1250,8 @@ function PerWeekEditModal({ open, classesData = [], onClose, toast }) {
             <button className="lp-btn ghost" onClick={onClose}>Close</button>
           </Tooltip>
           <Tooltip text="Save per week lesson plans">
-            <button className="lp-btn primary" onClick={save} disabled={loading || subjects.length === 0}>
-              <i className="fa-solid fa-check"></i> Save
+            <button className="lp-btn primary" onClick={save} disabled={loading || saving || subjects.length === 0}>
+              <i className={`fa-solid ${saving ? 'fa-spinner fa-spin' : 'fa-check'}`}></i> {saving ? 'Saving…' : 'Save'}
             </button>
           </Tooltip>
         </div>
@@ -1004,11 +1263,16 @@ function PerWeekEditModal({ open, classesData = [], onClose, toast }) {
 /* ═══════════════════════════════════════════════════════════════════
    VACATION EDIT MODAL
    ═══════════════════════════════════════════════════════════════════ */
-function VacationEditModal({ open, vacations, onChange, onClose, toast, openConfirm }) {
+function VacationEditModal({ open, vacations, session = {}, sessionSummaryId, onReload, onClose, toast, openConfirm }) {
   const [draft, setDraft] = useState([]);
+  /* ids of vacations that already exist on the server (for insert/update/delete diff). */
+  const [origIds, setOrigIds] = useState(new Set());
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    if (open) setDraft(vacations.map(v => ({ ...v })));
+    if (!open) return;
+    setDraft(vacations.map(v => ({ ...v })));
+    setOrigIds(new Set(vacations.map(v => v.id)));
   }, [open, vacations]);
 
   const update = (id, key, val) =>
@@ -1031,10 +1295,52 @@ function VacationEditModal({ open, vacations, onChange, onClose, toast, openConf
     setDraft([...draft, { id: Date.now(), name: '', start: '', end: '', color: palette[draft.length % palette.length] }]);
   };
 
-  const save = () => {
-    onChange(draft);
-    toast('Vacations updated', 'success');
-    onClose();
+  /* Persist via lpsessionsummarydetailscrud: new rows insert, existing rows
+     update, removed rows delete. remainingDays/Weeks come from the recomputed
+     session totals. */
+  const save = async () => {
+    if (!sessionSummaryId) { toast('Save the academic session first', 'error'); return; }
+    setSaving(true);
+    try {
+      const computed = computeSession(session, draft);
+      const remainingDays  = String(computed.workingDays);
+      const remainingWeeks = String(Math.round(computed.workingWeeks || 0));
+      const ops = [];
+      const present = new Set();
+      draft.forEach(v => {
+        present.add(v.id);
+        if (!v.name || !v.name.trim()) return; // skip empty rows
+        const exists = origIds.has(v.id);
+        ops.push(lpPost('/api/lpsessionsummarydetailscrud', {
+          id: exists ? v.id : 0,
+          sessionSummaryID: sessionSummaryId,
+          vacationName: v.name.trim(),
+          vacationStart: lpToIso(v.start),
+          vacationEnd: lpToIso(v.end),
+          remainingDays,
+          remainingWeeks,
+          action: exists ? 'update' : 'insert',
+        }));
+      });
+      origIds.forEach(id => {
+        if (!present.has(id)) {
+          ops.push(lpPost('/api/lpsessionsummarydetailscrud', {
+            id, sessionSummaryID: sessionSummaryId,
+            vacationName: '', vacationStart: null, vacationEnd: null,
+            remainingDays, remainingWeeks, action: 'delete',
+          }));
+        }
+      });
+      await Promise.all(ops);
+      toast('Vacations updated', 'success');
+      onReload && onReload();
+      onClose();
+    } catch (e) {
+      console.error('Error saving vacations:', e);
+      toast('Could not save vacations', 'error');
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -1090,8 +1396,8 @@ function VacationEditModal({ open, vacations, onChange, onClose, toast, openConf
             <button className="lp-btn ghost" onClick={onClose}>Cancel</button>
           </Tooltip>
           <Tooltip text="Save vacations">
-            <button className="lp-btn primary" onClick={save}>
-              <i className="fa-solid fa-check"></i> Save
+            <button className="lp-btn primary" onClick={save} disabled={saving}>
+              <i className={`fa-solid ${saving ? 'fa-spinner fa-spin' : 'fa-check'}`}></i> {saving ? 'Saving…' : 'Save'}
             </button>
           </Tooltip>
         </div>
@@ -1535,8 +1841,9 @@ function TermBreakupModal({ cls, onClose, toast }) {
    ═══════════════════════════════════════════════════════════════════ */
 function CreateLessonPlans({
   clpClass, setClpClass, clpSubject, setClpSubject,
-  clpFetched, setClpFetched, clpSubtab, setClpSubtab,
-  units, setUnits, nbUnits, setNbUnits,
+  clpFetched, setClpFetched, clpSubtab, setClpSubtab, clpRefresh,
+  units, setUnits, nbUnits, setNbUnits, setClpCtx,
+  clpSection, setClpSection, sections, setSections, subjects, setSubjects,
   onManageUnits, onEditLesson, onAddQuestionType, onEditQuestionType,
   onReport, openConfirm, toast, classesData  // Add classesData parameter
 }) {
@@ -1546,98 +1853,143 @@ function CreateLessonPlans({
   // Get subjects based on selected class
 
 
-const [subjects, setSubjects] = useState([]);
-
-const fetchLessonPlans = () => {
-  if (!clpClass) {
-    toast("Please select a class", "error");
-    return;
-  }
-
-  if (!clpSubject) {
-    toast("Please select a subject", "error");
-    return;
-  }
-
-  setClpFetched(true);
-  toast(`Loaded plans for ${clpClass} · ${clpSubject}`, "success");
+/* Resolve the ids the ULP APIs need from the current selections (as strings,
+   matching the API contract). */
+const resolveCtx = () => {
+  const grade = classesData?.find(cls => cls.name === clpClass);
+  const subjectID = subjects.find(s => s.subjectName === clpSubject)?.subjectID;
+  return {
+    branchID:  sessionStorage.getItem('branchID') || '',
+    classID:   grade?.id != null ? String(grade.id) : '',
+    sectionID: clpSection != null && clpSection !== '' ? String(clpSection) : '',
+    subjectID: subjectID != null ? String(subjectID) : '',
+  };
 };
+
+const fetchLessonPlans = async (opts) => {
+  const silent = opts === true || opts?.silent === true;
+  if (!clpClass)   { if (!silent) toast("Please select a class", "error");   return; }
+  if (!clpSection) { if (!silent) toast("Please select a section", "error"); return; }
+  if (!clpSubject) { if (!silent) toast("Please select a subject", "error"); return; }
+
+  const { branchID, classID, sectionID, subjectID } = resolveCtx();
+  if (!classID || !subjectID) { if (!silent) toast("Could not resolve class/subject", "error"); return; }
+  setClpCtx({ branchID, classID, sectionID, subjectID });
+
+  try {
+    const token = sessionStorage.getItem('token') || '';
+    const res = await window.fetch(
+      buildUrl(`/api/getulpforclassesmaster?branchID=${branchID}&classID=${classID}&SectionID=${sectionID}&subjectID=${subjectID}&pageNo=1`),
+      { method: 'GET', headers: { Accept: '*/*', Authorization: `bearer ${token}` } },
+    );
+    const json = await res.json();
+    const rows = json?.data || [];
+
+    /* Group rows by unit (unitNo + unitName mapped once); each row's
+       lessonPlanTopic becomes a lesson under that unit. The raw record is kept
+       so the Edit button can pass it to the modal. */
+    const byUnit = new Map();
+    rows.forEach(r => {
+      const key = `${r.unitNo}__${r.unitName}`;
+      if (!byUnit.has(key)) {
+        byUnit.set(key, { id: key, unitNo: r.unitNo, unitName: r.unitName, lessons: [] });
+      }
+      const unit = byUnit.get(key);
+      unit.lessons.push({
+        id: r.id,
+        num: unit.lessons.length + 1,
+        topic: r.lessonPlanTopic,
+        source: 'manual',
+        record: r,
+      });
+    });
+    setUnits(Array.from(byUnit.values()));
+    setClpFetched(true);
+    if (!silent) toast(`Loaded plans for ${clpClass} · ${clpSubject}`, "success");
+  } catch (e) {
+    console.error('Error fetching lesson plans:', e);
+    if (!silent) toast('Could not load lesson plans', 'error');
+  }
+};
+
+/* Re-fetch silently after a lesson/unit modal closes (parent bumps clpRefresh)
+   so the table reflects inserts/updates/deletes made in the modal. */
+useEffect(() => {
+  if (clpRefresh && clpFetched) fetchLessonPlans({ silent: true });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [clpRefresh]);
 
 const handleClassChange = async (e) => {
   const selectedClass = e.target.value;
 
   setClpClass(selectedClass);
+    setClpSection('');
   setClpSubject("");
   setClpFetched(false);
   setSubjects([]);
+  setSections([]);
 
-  const selectedGrade = classesData?.find(
-    (cls) => cls.name === selectedClass
-  );
+    const selectedGrade = classesData?.find(cls => cls.name === selectedClass);
+  if (!selectedGrade) return;
 
-  console.log("Selected grade:", selectedGrade);
+  setSections(selectedGrade.sections || []);
+};
 
+const handleSectionChange = async (e) => {
+  const selectedSectionId = e.target.value;
+  setClpSection(selectedSectionId);
+  setClpSubject('');
+  setClpFetched(false);
+  setSubjects([]);
+
+  if (!selectedSectionId || !clpClass) return;
+
+  const selectedGrade = classesData?.find(cls => cls.name === clpClass);
   if (!selectedGrade) return;
 
   try {
-    const empID = sessionStorage.getItem("employee_ID");
-
-    let allSubjects = [];
-
-    for (const section of selectedGrade.sections || []) {
-      console.log(
-        `Fetching subjects for section: ${section.sectionName} (ID: ${section.sectionID})`
-      );
-
-      const res = await window.fetch(
-        buildUrl(
-          `/get-subjects_byEmployeeID/${selectedGrade.id}/${section.sectionID}/${empID}`
-        ),
-        {
-          method: "GET",
-          headers: {
-            Accept: "*/*",
-          },
-        }
-      );
-
-      const json = await res.json();
-
-      console.log("Subjects API Response:", json);
-
-      if (json.success && Array.isArray(json.data)) {
-        allSubjects.push(...json.data);
-      }
+    const res = await window.fetch(
+      buildUrl(`/api/LaunchSetup/get-subjects/${selectedGrade.id}/${selectedSectionId}`),
+      { method: 'GET', headers: { Accept: '*/*' } }
+    );
+    const json = await res.json();
+    if (json.success && Array.isArray(json.data)) {
+      const unique = [
+        ...new Map(
+          json.data.map(s => [s.subjectName.trim().toLowerCase(), s])
+        ).values()
+      ];
+      setSubjects(unique);
+    } else {
+      setSubjects([]);
     }
-
-    // Remove duplicates by subjectID
-    const uniqueSubjects = [
-  ...new Map(
-    allSubjects.map((subject) => [
-      subject.subjectName.trim().toLowerCase(),
-      subject,
-    ])
-  ).values(),
-];
-
-    console.log("Final Subjects:", uniqueSubjects);
-
-    setSubjects(uniqueSubjects);
   } catch (error) {
-    console.error("Error fetching subjects:", error);
+    console.error('Error fetching subjects:', error);
     setSubjects([]);
   }
 };
   // Rest of your component remains the same...
+  /* Delete one ULP class-master row (topic) by id. */
+  const deleteUlpRecord = id => lpPost('/api/ulpforclassmastercrud', {
+    id, ...resolveCtx(), unitNo: '', unitName: '', lessonPlanTopic: '', action: 'delete',
+  });
+
   const removeUnit = u => openConfirm({
     title: 'Delete Unit?',
     message: `Unit <strong>"${u.unitName || u.unitNo}"</strong> and all its ${u.lessons?.length || u.questions?.length || 0} item(s) will be permanently removed.`,
     hint: 'This cannot be undone.',
     confirmLabel: 'Yes, Delete',
     icon: 'fa-trash',
-    onConfirm: () => {
-      if (clpSubtab === 'lesson') setUnits(units.filter(x => x.id !== u.id));
-      else                         setNbUnits(nbUnits.filter(x => x.id !== u.id));
+    onConfirm: async () => {
+      if (clpSubtab === 'lesson') {
+        /* Delete every topic record under this unit, then drop it locally. */
+        const ids = (u.lessons || []).map(l => l.record?.id).filter(Boolean);
+        try { await Promise.all(ids.map(deleteUlpRecord)); }
+        catch (e) { console.error('Error deleting unit topics:', e); toast('Could not delete unit', 'error'); return; }
+        setUnits(units.filter(x => x.id !== u.id));
+      } else {
+        setNbUnits(nbUnits.filter(x => x.id !== u.id));
+      }
       toast('Unit deleted', 'success');
     },
   });
@@ -1648,7 +2000,11 @@ const handleClassChange = async (e) => {
     hint: 'This cannot be undone.',
     confirmLabel: 'Yes, Delete',
     icon: 'fa-trash',
-    onConfirm: () => {
+    onConfirm: async () => {
+      if (lesson.record?.id) {
+        try { await deleteUlpRecord(lesson.record.id); }
+        catch (e) { console.error('Error deleting lesson topic:', e); toast('Could not delete lesson', 'error'); return; }
+      }
       setUnits(units.map(u => u.id !== unitId ? u : { ...u, lessons: u.lessons.filter(l => l.id !== lesson.id) }));
       toast('Lesson deleted', 'success');
     },
@@ -1678,51 +2034,117 @@ const handleClassChange = async (e) => {
             </div>
             <div className="clp2-hero-sub">Select class and subject to manage units &amp; lessons</div>
           </div>
+          
           <div className="clp2-filter-row">
             <div className="clp2-field">
-              <label className="clp2-field-label"><i className="fa-solid fa-school"></i> Class</label>
-              <div className="clp2-select-wrap">
-<select
-  className="clp2-select"
-  value={clpClass}
-  onChange={handleClassChange}
->
-  <option value="">Select Class</option>
-
-  {classOptions.map((className) => (
-    <option key={className} value={className}>
-      {className}
-    </option>
-  ))}
-</select>
-                <i className="fa-solid fa-chevron-down clp2-select-arrow"></i>
+    {/* <label className="clp2-field-label"><i className="fa-solid fa-school"></i> Class</label> */}
+     <div className="sub-field">
+                <label className="sub-field-label"><i className="fa-solid fa-school"></i> Class</label>
+                <div className="sub-select-wrap">
+                  <select 
+                    className="sub-select" 
+                    value={clpClass} 
+                    onChange={handleClassChange}
+                  >
+                    <option value="">Select Class</option>
+                    {classOptions.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                  <i className="fa-solid fa-chevron-down sub-select-arrow"></i>
+                </div>
               </div>
-            </div>
-            <div className="clp2-field">
-              <label className="clp2-field-label"><i className="fa-solid fa-book"></i> Subject</label>
-              <div className="clp2-select-wrap">
-              <select
-  className="clp2-select"
-  value={clpSubject}
-  onChange={(e) => {
-    setClpSubject(e.target.value);
-    setClpFetched(false);
-  }}
->
-  <option value="">Select Subject</option>
+    {/* <div className="clp2-select-wrap">
+      <select className="clp2-select" value={clpClass} onChange={handleClassChange}>
+        <option value="">Select Class</option>
+        {classOptions.map(className => (
+          <option key={className} value={className}>{className}</option>
+        ))}
+      </select>
+      <i className="fa-solid fa-chevron-down clp2-select-arrow"></i>
+    </div> */}
+  </div>
 
-  {subjects.map((subject) => (
-    <option
-      key={subject.subjectID}
-      value={subject.subjectName}
-    >
-      {subject.subjectName}
-    </option>
-  ))}
-</select>
-                <i className="fa-solid fa-chevron-down clp2-select-arrow"></i>
+  {/* NEW: Section dropdown */}
+  {/* <div className="clp2-field">
+    <label className="clp2-field-label"><i className="fa-solid fa-users"></i> Section</label>
+    <div className="clp2-select-wrap">
+      <select
+        className="clp2-select"
+        value={clpSection}
+        onChange={handleSectionChange}
+        disabled={!clpClass || sections.length === 0}
+      >
+        <option value="">Select Section</option>
+        {sections.map(sec => (
+          <option key={sec.sectionID} value={sec.sectionID}>
+            Section {sec.sectionName}
+          </option>
+        ))}
+      </select>
+      <i className="fa-solid fa-chevron-down clp2-select-arrow"></i>
+    </div>
+    
+  </div> */}
+   <div className="sub-field">
+                <label className="sub-field-label"><i className="fa-solid fa-school"></i> Section</label>
+                <div className="sub-select-wrap">
+                  <select 
+                    className="sub-select" 
+                    value={clpSection} 
+                    onChange={handleSectionChange}
+                            disabled={!clpClass}
+
+                  >
+                    <option value="">Select Section</option>
+                    {sections.map(sec => (
+          <option key={sec.sectionID} value={sec.sectionID}>
+            Section {sec.sectionName}
+          </option>
+        ))}
+                  </select>
+                  <i className="fa-solid fa-chevron-down sub-select-arrow"></i>
+                </div>
               </div>
-            </div>
+
+  {/* Subject dropdown — updated onChange */}
+
+  <div className="sub-field">
+                <label className="sub-field-label"><i className="fa-solid fa-school"></i> Subject</label>
+                <div className="sub-select-wrap">
+                  <select 
+                    className="sub-select" 
+                    value={clpSubject}
+        onChange={e => { setClpSubject(e.target.value); setClpFetched(false); }}
+                            disabled={!clpSection}
+                  >
+                    <option value="">Select Subject</option>
+                    {subjects.map(subject => (
+          <option key={subject.subjectID} value={subject.subjectName}>
+            {subject.subjectName}
+          </option>
+        ))}
+                  </select>
+                  <i className="fa-solid fa-chevron-down sub-select-arrow"></i>
+                </div>
+              </div>
+  {/* <div className="clp2-field">
+    <label className="clp2-field-label"><i className="fa-solid fa-book"></i> Subject</label>
+    <div className="clp2-select-wrap">
+      <select
+        className="clp2-select"
+        value={clpSubject}
+        onChange={e => { setClpSubject(e.target.value); setClpFetched(false); }}
+        disabled={!clpSection}
+      >
+        <option value="">Select Subject</option>
+        {subjects.map(subject => (
+          <option key={subject.subjectID} value={subject.subjectName}>
+            {subject.subjectName}
+          </option>
+        ))}
+      </select>
+      <i className="fa-solid fa-chevron-down clp2-select-arrow"></i>
+    </div>
+  </div> */}
             <Tooltip text="Load lesson plans for the selected class and subject">
               <button className="clp2-fetch-btn" onClick={fetchLessonPlans}>
                 <i className="fa-solid fa-magnifying-glass"></i>
@@ -2053,6 +2475,8 @@ function Submissions({ toast, classesData = [] }) {
   const [viewerId, setViewerId] = useState(null);
   const [nbSubmitCtx, setNbSubmitCtx] = useState(null);
   const [pdfReq, setPdfReq] = useState(null);
+  /* Resolved ids for the loaded lesson plans (for detail/suggestion calls). */
+  const [subCtx, setSubCtx] = useState({});
 
   /* Analytics */
   const lpTotal = lpData.length;
@@ -2134,8 +2558,9 @@ function Submissions({ toast, classesData = [] }) {
       const json = await response.json();
       
       if (json.success && json.data) {
-        const formattedSubjects = json.data.map(subject => subject.subjectName);
-        setAvailableSubjects(formattedSubjects);
+        /* keep full objects (subjectID + subjectName) so we can resolve ids */
+        const unique = [...new Map(json.data.map(s => [s.subjectName.trim().toLowerCase(), s])).values()];
+        setAvailableSubjects(unique);
         // Reset subject selection when subjects change
         setSubject('');
       } else {
@@ -2161,15 +2586,40 @@ function Submissions({ toast, classesData = [] }) {
     }
   }, [cls, section]);
 
-  const fetchData = () => {
+  const fetchData = async () => {
     if (!cls || !section || !subject) {
-      toast('Please select Class, Section and Subject', 'error'); 
+      toast('Please select Class, Section and Subject', 'error');
       return;
     }
-    setFetched(true);
-    setInner('lp');
-    setLpUnitOpen({ 0: true });
-    toast(`Loaded submissions for ${cls}-${section} · ${subject}`, 'success');
+    const classID   = getGradeIdFromClassName(cls);
+    const sectionID = getSectionIdFromName(section);
+    const subjectID = availableSubjects.find(s => s.subjectName === subject)?.subjectID;
+    if (!classID || !subjectID) { toast('Could not resolve class/subject', 'error'); return; }
+    const branchID = sessionStorage.getItem('branchID') || '';
+    setSubCtx({ branchID, classID: String(classID), sectionID: String(sectionID || ''), subjectID: String(subjectID) });
+
+    try {
+      const token = sessionStorage.getItem('token') || '';
+      const res = await fetch(
+        buildUrl(`/api/getulpforclassesmaster?branchID=${branchID}&classID=${classID}&SectionID=${sectionID}&subjectID=${subjectID}&pageNo=1`),
+        { method: 'GET', headers: { Accept: '*/*', Authorization: `bearer ${token}` } },
+      );
+      const json = await res.json();
+      const rows = json?.data || [];
+      /* Map each ULP master row to a submission "plan" (grouped by unit below). */
+      const plans = rows.map(r => ({
+        id: r.id, unitNo: r.unitNo, unit: r.unitName || '(no name)',
+        topic: r.lessonPlanTopic, term: '', date: '', status: 'pending', record: r,
+      }));
+      setLpData(plans);
+      setFetched(true);
+      setInner('lp');
+      setLpUnitOpen({ 0: true });
+      toast(`Loaded lesson plans for ${cls}-${section} · ${subject}`, 'success');
+    } catch (e) {
+      console.error('Error loading lesson plans:', e);
+      toast('Could not load lesson plans', 'error');
+    }
   };
 
   /* Submit a single lesson plan from the viewer */
@@ -2314,7 +2764,7 @@ function Submissions({ toast, classesData = [] }) {
                       {loadingSubjects ? 'Loading subjects...' : 'Select Subject'}
                     </option>
                     {availableSubjects.map(s => (
-                      <option key={s} value={s}>{s}</option>
+                      <option key={s.subjectID} value={s.subjectName}>{s.subjectName}</option>
                     ))}
                   </select>
                   <i className="fa-solid fa-chevron-down sub-select-arrow"></i>
@@ -2642,6 +3092,8 @@ function Submissions({ toast, classesData = [] }) {
       {/* Modals remain the same */}
       <LpViewerModal
         plan={viewerId ? lpData.find(p => p.id === viewerId) : null}
+        ctx={subCtx}
+        toast={toast}
         onClose={() => setViewerId(null)}
         onSubmit={() => { submitLp(viewerId); }}
       />
@@ -2664,9 +3116,89 @@ function Submissions({ toast, classesData = [] }) {
 }
 
 /* ─── Lesson Plan Viewer Modal ─── */
-function LpViewerModal({ plan, onClose, onSubmit }) {
+function LpViewerModal({ plan, ctx = {}, toast = () => {}, onClose, onSubmit }) {
+  const [detail, setDetail]           = useState(null);
+  const [loading, setLoading]         = useState(false);
+  const [suggestion, setSuggestion]   = useState('');
+  const [suggestionId, setSuggestionId] = useState(0);
+  const [savingSug, setSavingSug]     = useState(false);
+
+  /* On open: load the lesson-plan detail (by master id) and its suggestion
+     (by the detail id), so the viewer shows real saved data. */
+  useEffect(() => {
+    if (!plan) { setDetail(null); setSuggestion(''); setSuggestionId(0); return; }
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const token = sessionStorage.getItem('token') || '';
+        const branchID = sessionStorage.getItem('branchID') || '';
+        const auth = { Accept: '*/*', Authorization: `bearer ${token}` };
+        const dres = await fetch(
+          buildUrl(`/api/getulpforclassdetailbytermsubjectandclass?MasterClassesID=${plan.id}&classID=${ctx.classID}&subjectID=${ctx.subjectID}&pageNo=1`),
+          { method: 'GET', headers: auth },
+        );
+        const d = ((await dres.json())?.data || [])[0] || null;
+        if (cancelled) return;
+        setDetail(d);
+        if (d?.id) {
+          const sres = await fetch(
+            buildUrl(`/api/getulpforclasssuggestion?BranchID=${branchID}&ClassID=${ctx.classID}&SubjectID=${ctx.subjectID}&DetailClassID=${d.id}&pageNo=1`),
+            { method: 'GET', headers: auth },
+          );
+          const s = ((await sres.json())?.data || [])[0] || null;
+          if (!cancelled) { setSuggestion(s?.suggestion || ''); setSuggestionId(s?.id || 0); }
+        } else if (!cancelled) {
+          setSuggestion(''); setSuggestionId(0);
+        }
+      } catch (e) {
+        console.error('Error loading lesson plan view:', e);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [plan, ctx.classID, ctx.subjectID]);
+
   if (!plan) return null;
   const isSubmitted = plan.status === 'submitted';
+
+  /* Saves the suggestion (insert/update) even when empty. Returns true on success. */
+  const saveSuggestion = async ({ silent = false } = {}) => {
+    if (!detail?.id) { if (!silent) toast('No lesson detail to attach the suggestion to', 'error'); return false; }
+    setSavingSug(true);
+    try {
+      const result = await lpPost('/api/detailclasssuggestioncrud', {
+        id: suggestionId || 0,
+        branchID: sessionStorage.getItem('branchID') || '',
+        classID: String(ctx.classID || ''),
+        subjectID: String(ctx.subjectID || ''),
+        suggestion,
+        detailClassID: detail.id,
+        action: suggestionId ? 'update' : 'insert',
+      });
+      if (result?.id) setSuggestionId(result.id);
+      if (!silent) toast(suggestionId ? 'Suggestion updated' : 'Suggestion saved', 'success');
+      return true;
+    } catch (e) {
+      console.error('Error saving suggestion:', e);
+      if (!silent) toast('Could not save suggestion', 'error');
+      return false;
+    } finally {
+      setSavingSug(false);
+    }
+  };
+
+  /* HTML rich-text section, or a muted placeholder when empty. */
+  const section = (icon, label, html) => (
+    <div className="lp-viewer-section">
+      <div className="lp-viewer-section-label"><i className={`fa-solid ${icon}`}></i>{label}</div>
+      {html
+        ? <div className="lp-viewer-section-value" dangerouslySetInnerHTML={{ __html: html }} />
+        : <div className="lp-viewer-section-value" style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>Not provided</div>}
+    </div>
+  );
+
   return (
     <div className="lp-viewer-overlay open" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="lp-viewer-modal">
@@ -2674,7 +3206,7 @@ function LpViewerModal({ plan, onClose, onSubmit }) {
           <div className="lp-viewer-header-icon"><i className="fa-solid fa-file-lines"></i></div>
           <div>
             <div className="lp-viewer-title">{plan.topic}</div>
-            <div className="lp-viewer-sub">{plan.unit} · {plan.term}</div>
+            <div className="lp-viewer-sub">{plan.unit}{plan.unitNo ? ` · Unit ${plan.unitNo}` : ''}</div>
           </div>
           <Tooltip text="Close"><button className="lp-viewer-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark"></i></button></Tooltip>
         </div>
@@ -2686,64 +3218,62 @@ function LpViewerModal({ plan, onClose, onSubmit }) {
               <div className="lp-viewer-meta-val">{plan.unit}</div>
             </div>
             <div className="lp-viewer-meta-card">
-              <div className="lp-viewer-meta-key"><i className="fa-solid fa-calendar" style={{ marginRight: 4, color: 'var(--brand-primary)' }}></i>Date</div>
-              <div className="lp-viewer-meta-val">{plan.date}</div>
+              <div className="lp-viewer-meta-key"><i className="fa-solid fa-stopwatch" style={{ marginRight: 4, color: 'var(--brand-primary)' }}></i>Duration</div>
+              <div className="lp-viewer-meta-val">{detail?.timeDuration || '—'}</div>
             </div>
             <div className="lp-viewer-meta-card">
-              <div className="lp-viewer-meta-key"><i className="fa-solid fa-bookmark" style={{ marginRight: 4, color: 'var(--brand-primary)' }}></i>Term</div>
-              <div className="lp-viewer-meta-val">{plan.term}</div>
+              <div className="lp-viewer-meta-key"><i className="fa-solid fa-hashtag" style={{ marginRight: 4, color: 'var(--brand-primary)' }}></i>Unit No.</div>
+              <div className="lp-viewer-meta-val">{plan.unitNo || '—'}</div>
             </div>
           </div>
 
-          {isSubmitted && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', borderRadius: 'var(--radius-md)', background: 'rgba(22,163,74,.08)', border: '1.5px solid rgba(22,163,74,.2)', marginBottom: 20 }}>
-              <i className="fa-solid fa-circle-check" style={{ color: '#16A34A', fontSize: 16, flexShrink: 0 }}></i>
-              <span style={{ fontSize: 13, fontWeight: 700, color: '#16A34A' }}>
-                Submitted on {plan.submittedDate}{plan.submittedTime ? ` at ${plan.submittedTime}` : ''}
-              </span>
+          {loading ? (
+            <div style={{ textAlign: 'center', padding: 28, color: 'var(--text-muted)' }}>
+              <i className="fa-solid fa-spinner fa-spin" style={{ marginRight: 8 }}></i>Loading lesson plan…
             </div>
-          )}
+          ) : (
+            <>
+              {section('fa-bullseye',         'Student Learning Objective', detail?.learningObjective)}
+              {section('fa-book-open',        'Lesson Introduction',        detail?.lessonIntroduction)}
+              {section('fa-flask',            'Development / Main Teaching', detail?.development)}
+              {section('fa-circle-check',     'Recap / Consolidation',      detail?.recap)}
 
-          <div className="lp-viewer-section">
-            <div className="lp-viewer-section-label"><i className="fa-solid fa-bullseye"></i>Lesson Objectives</div>
-            <div className="lp-viewer-section-value">Students will be able to understand the core concepts of <em>{plan.topic}</em>, apply key principles through structured activities, and demonstrate learning through assessment tasks.</div>
-          </div>
-          <div className="lp-viewer-section">
-            <div className="lp-viewer-section-label"><i className="fa-solid fa-list-check"></i>Learning Outcomes</div>
-            <div className="lp-viewer-section-value">
-              <ul style={{ margin: 0, paddingLeft: 18, lineHeight: 2 }}>
-                <li>Identify and explain the main components of {plan.topic}</li>
-                <li>Apply concepts in classroom exercises</li>
-                <li>Evaluate understanding through peer discussion</li>
-                <li>Complete assigned exercises with 80%+ accuracy</li>
-              </ul>
-            </div>
-          </div>
-          <div className="lp-viewer-section">
-            <div className="lp-viewer-section-label"><i className="fa-solid fa-chalkboard-user"></i>Teaching Strategy</div>
-            <div className="lp-viewer-section-value">Direct instruction followed by guided practice. Teacher will use visual aids, group discussion, and hands-on activities to reinforce key concepts. Students will work in pairs for collaborative learning exercises.</div>
-          </div>
-          <div className="lp-viewer-section">
-            <div className="lp-viewer-section-label"><i className="fa-solid fa-clock"></i>Time Allocation</div>
-            <div className="lp-viewer-section-value">
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                {[['Introduction','10 minutes'],['Main Activity','25 minutes'],['Practice','10 minutes'],['Assessment','5 minutes']].map(([k,v]) => (
-                  <div key={k} style={{ padding: '10px 12px', background: 'var(--bg-card)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-light)' }}>
-                    <div style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 3 }}>{k}</div>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{v}</div>
+              <div className="lp-viewer-section">
+                <div className="lp-viewer-section-label"><i className="fa-solid fa-clock"></i>Time Allocation</div>
+                <div className="lp-viewer-section-value">
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                    {[
+                      ['Learning Objective', detail?.timeForLearning],
+                      ['Introduction',       detail?.timeForLesson],
+                      ['Development',        detail?.timeForDevelopment],
+                      ['Recap',              detail?.timeForRecap],
+                    ].map(([k, v]) => (
+                      <div key={k} style={{ padding: '10px 12px', background: 'var(--bg-card)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-light)' }}>
+                        <div style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 3 }}>{k}</div>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{v || '—'}</div>
+                      </div>
+                    ))}
                   </div>
-                ))}
+                </div>
               </div>
-            </div>
-          </div>
-          <div className="lp-viewer-section">
-            <div className="lp-viewer-section-label"><i className="fa-solid fa-book-open"></i>Materials &amp; Resources</div>
-            <div className="lp-viewer-section-value">Textbook (Chapter related to {plan.topic}), whiteboard, markers, printed worksheets, visual chart/poster, and multimedia projector if available.</div>
-          </div>
-          <div className="lp-viewer-section">
-            <div className="lp-viewer-section-label"><i className="fa-solid fa-clipboard-check"></i>Assessment Method</div>
-            <div className="lp-viewer-section-value">Oral questioning during lesson, written exercise at end, teacher observation during group activities, and homework assignment for reinforcement.</div>
-          </div>
+
+              {/* Editable suggestion */}
+              <div className="lp-viewer-section">
+                <div className="lp-viewer-section-label"><i className="fa-solid fa-comment-dots"></i>Suggestion</div>
+                <textarea
+                  className="form-input"
+                  style={{ height: 'auto', minHeight: 90, padding: 12, resize: 'vertical', width: '100%' }}
+                  value={suggestion}
+                  onChange={e => setSuggestion(e.target.value)}
+                  placeholder="Write a suggestion for this lesson plan…"
+                />
+                <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 6 }}>
+                  <i className="fa-solid fa-circle-info" style={{ marginRight: 5 }}></i>
+                  The suggestion is saved when you click <strong>Submit Lesson Plan</strong>.
+                </div>
+              </div>
+            </>
+          )}
         </div>
 
         <div className="lp-viewer-footer">
@@ -2752,15 +3282,15 @@ function LpViewerModal({ plan, onClose, onSubmit }) {
               <i className="fa-solid fa-xmark"></i> Close
             </button>
           </Tooltip>
-          <Tooltip text={isSubmitted ? 'This lesson plan has already been submitted' : 'Submit this lesson plan for review'}>
+          <Tooltip text={isSubmitted ? 'This lesson plan has already been submitted' : 'Save the suggestion and submit this lesson plan'}>
             <button
               className={`lp-viewer-submit-btn${isSubmitted ? ' done' : ''}`}
-              disabled={isSubmitted}
-              onClick={onSubmit}
+              disabled={isSubmitted || savingSug}
+              onClick={async () => { await saveSuggestion({ silent: true }); onSubmit(); }}
             >
               {isSubmitted
                 ? <><i className="fa-solid fa-circle-check"></i> Already Submitted</>
-                : <><i className="fa-solid fa-paper-plane"></i> Submit Lesson Plan</>}
+                : <><i className={`fa-solid ${savingSug ? 'fa-spinner fa-spin' : 'fa-paper-plane'}`}></i> Submit Lesson Plan</>}
             </button>
           </Tooltip>
         </div>
@@ -3878,15 +4408,37 @@ function buildAdminSubjectReport(isColor) {
 /* ═══════════════════════════════════════════════════════════════════
    UNIT MGR MODAL — manage units (serial / no / name / lesson count)
    ═══════════════════════════════════════════════════════════════════ */
-function UnitMgrModal({ open, source, units, onSave, onClose, openConfirm, toast }) {
+function UnitMgrModal({ open, source, units, clpCtx = {}, onSave, onClose, openConfirm, toast }) {
   const [draft, setDraft] = useState([]);
   const [snoTarget, setSnoTarget] = useState(null); // {id, currentIdx}
+  const [origIds, setOrigIds] = useState(new Set()); // unit ids present before edits
 
   useEffect(() => {
     if (open) {
       setDraft(units.map(u => ({ ...u, lessons: [...(u.lessons || [])], questions: [...(u.questions || [])] })));
+      setOrigIds(new Set(units.map(u => u.id)));
     }
   }, [open, units]);
+
+  /* Persist newly-added units as ULP class-master rows with an empty topic
+     (lesson source only); then hand the draft back to the parent. */
+  const save = async () => {
+    if (source === 'lesson' && clpCtx.classID) {
+      const newUnits = draft.filter(u => !origIds.has(u.id) && (u.unitNo || u.unitName));
+      try {
+        await Promise.all(newUnits.map(u => lpPost('/api/ulpforclassmastercrud', {
+          id: 0,
+          branchID: clpCtx.branchID, classID: clpCtx.classID, sectionID: clpCtx.sectionID, subjectID: clpCtx.subjectID,
+          unitNo: u.unitNo, unitName: u.unitName, lessonPlanTopic: '', action: 'insert',
+        })));
+      } catch (e) {
+        console.error('Error inserting units:', e);
+        toast('Could not save new units', 'error');
+        return;
+      }
+    }
+    onSave(draft);
+  };
 
   if (!open) return null;
 
@@ -3994,7 +4546,7 @@ function UnitMgrModal({ open, source, units, onSave, onClose, openConfirm, toast
             <button className="lp-btn ghost" onClick={onClose}>Close</button>
           </Tooltip>
           <Tooltip text="Save unit order and changes">
-            <button className="lp-btn primary" onClick={() => onSave(draft)}>
+            <button className="lp-btn primary" onClick={save}>
               <i className="fa-solid fa-check"></i> Save
             </button>
           </Tooltip>
@@ -4069,14 +4621,27 @@ function LessonEditModal({ ctx, onSave, onClose, toast }) {
     setLang('en');
     setUnitNo(ctx.unit?.unitNo || '');
     setUnitName(ctx.unit?.unitName || '');
-    const unitLessons = (ctx.unit?.lessons || []).map(l => ({
-      id: l.id,
-      num: l.num || '',
-      topic: l.topic || '',
-      duration: l.duration || '',
-      contentMap: l.contentMap || {},
-      source: l.source || 'manual',
-    }));
+    /* Map the lesson-plan detail fetched on Edit into the editor sections. */
+    const d = ctx.detail;
+    const detailMap = d ? {
+      slo:   d.learningObjective  || '',
+      intro: d.lessonIntroduction || '',
+      devel: d.development        || '',
+      recap: d.recap              || '',
+    } : null;
+    const unitLessons = (ctx.unit?.lessons || []).map(l => {
+      const isSel = l.id === ctx.lesson?.id;
+      return {
+        id: l.id,
+        num: l.num || '',
+        topic: (isSel && d) ? (d.lessonPlanTopic ?? l.topic) : (l.topic || ''),
+        duration: (isSel && d) ? (d.timeDuration || '') : (l.duration || ''),
+        contentMap: (isSel && detailMap) ? detailMap : (l.contentMap || {}),
+        source: l.source || 'manual',
+        detail: isSel ? d : (l.detail || null),
+        record: l.record || null, // original ULP master row (for update vs insert)
+      };
+    });
     /* if the unit has no lessons, seed one blank */
     setLessons(unitLessons.length ? unitLessons : [{ id: Date.now(), num: '1', topic: '', duration: '', contentMap: {}, source: 'manual' }]);
     const idx = Math.max(0, unitLessons.findIndex(l => l.id === ctx.lesson?.id));
@@ -4089,7 +4654,10 @@ function LessonEditModal({ ctx, onSave, onClose, toast }) {
   const dir = isUrdu ? 'rtl' : 'ltr';
   const currentLesson = lessons[selectedIdx] || { num: '', topic: '', duration: '', contentMap: {} };
 
-  /* sync editor DOM when selection / lang changes — must be before any early return */
+  /* Sync editor DOM when selection/lang changes, or when the current lesson's
+     content is replaced (e.g. detail loaded on Edit/Fetch — contentMap gets a new
+     reference). Typing in the topic input keeps the same contentMap ref, so it
+     won't clobber unsaved editor content. */
   useEffect(() => {
     if (!ctx) return;
     sections.forEach(s => {
@@ -4098,7 +4666,7 @@ function LessonEditModal({ ctx, onSave, onClose, toast }) {
     });
     setDuration(currentLesson.duration || '');
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedIdx, lang, ctx]);
+  }, [selectedIdx, lang, ctx, currentLesson.contentMap]);
 
   if (!ctx) return null;
 
@@ -4138,19 +4706,149 @@ function LessonEditModal({ ctx, onSave, onClose, toast }) {
     setSelectedIdx(idx);
   };
 
+  /* Apply a fetched ULP class-detail row to its lesson (by master id) and, since
+     it's the one being viewed, into the editor fields. */
+  const applyDetail = (d, masterId) => {
+    const contentMap = {
+      slo:   d.learningObjective  || '',
+      intro: d.lessonIntroduction || '',
+      devel: d.development        || '',
+      recap: d.recap              || '',
+    };
+    setLessons(ls => ls.map(l => l.record?.id === masterId
+      ? { ...l, topic: d.lessonPlanTopic ?? l.topic, duration: d.timeDuration || '', contentMap, detail: d }
+      : l));
+    setDuration(d.timeDuration || '');
+    sections.forEach(s => { const el = editorRefs.current[s.key]; if (el) el.innerHTML = contentMap[s.key] || ''; });
+  };
+
+  /* GET the lesson-plan detail for a topic (masterClassesID) and map it in. */
+  const loadDetailById = async masterId => {
+    if (!masterId) return;
+    try {
+      const token = sessionStorage.getItem('token') || '';
+      const res = await fetch(
+        buildUrl(`/api/getulpforclassdetailbytermsubjectandclass?MasterClassesID=${masterId}&classID=${ctx.classID}&subjectID=${ctx.subjectID}&pageNo=1`),
+        { method: 'GET', headers: { Accept: '*/*', Authorization: `bearer ${token}` } },
+      );
+      const json = await res.json();
+      const d = (json?.data || [])[0];
+      if (d) applyDetail(d, masterId);
+    } catch (e) {
+      console.error('Error loading lesson detail:', e);
+    }
+  };
+
   const addLesson = () => {
     const nextNum = String(lessons.length + 1);
-    setLessons(ls => [...ls, { id: Date.now(), num: nextNum, topic: '', duration: '', contentMap: {}, source: 'manual' }]);
+    setLessons(ls => [...ls, { id: Date.now(), num: nextNum, topic: '', duration: '', contentMap: {}, source: 'manual', record: null }]);
     setSelectedIdx(lessons.length);
   };
 
-  const saveAndClose = () => {
+  /* ULP class-master persistence — class/section/subject/branch come from the
+     real selected context (the API returns sectionID 0, so we don't trust the
+     row). New topics (no record) insert, existing update. */
+  const ulpBase = () => ({
+    branchID:  ctx.branchID || sessionStorage.getItem('branchID') || '',
+    classID:   ctx.classID,
+    sectionID: ctx.sectionID,
+    subjectID: ctx.subjectID,
+  });
+  const ulpPayload = (l, base) => ({
+    id: l.record ? l.record.id : 0,
+    branchID: base.branchID, classID: base.classID, sectionID: base.sectionID, subjectID: base.subjectID,
+    unitNo, unitName,
+    lessonPlanTopic: l.topic || '',
+    action: l.record ? 'update' : 'insert',
+  });
+
+  /* Save a single topic (update if it exists, otherwise insert). */
+  const saveTopic = async li => {
+    const base = ulpBase();
+    if (!base.classID || !base.subjectID) { toast('Missing class/subject context', 'error'); return; }
+    const l = lessons[li];
+    try {
+      const result = await lpPost('/api/ulpforclassmastercrud', ulpPayload(l, base));
+      updateLesson(li, { record: { ...(l.record || {}), ...result, id: result?.id ?? l.record?.id } });
+      toast(l.record ? 'Lesson topic updated' : 'Lesson topic added', 'success');
+    } catch (e) {
+      console.error('Error saving lesson topic:', e);
+      toast('Could not save lesson topic', 'error');
+    }
+  };
+
+  /* Save the unit no/name across all topics (update existing, insert new). */
+  const saveAllTopics = async () => {
+    const base = ulpBase();
+    if (!base.classID || !base.subjectID) { toast('Missing class/subject context', 'error'); return; }
+    try {
+      const results = await Promise.all(lessons.map(l =>
+        lpPost('/api/ulpforclassmastercrud', ulpPayload(l, base))
+          .then(result => ({ lid: l.id, result }))
+          .catch(() => null)
+      ));
+      setLessons(ls => ls.map(l => {
+        const r = results.find(x => x && x.lid === l.id);
+        if (!r) return l;
+        return { ...l, record: { ...(l.record || {}), ...r.result, id: r.result?.id ?? l.record?.id } };
+      }));
+      toast('All lesson topics saved', 'success');
+    } catch (e) {
+      console.error('Error saving lesson topics:', e);
+      toast('Could not save lesson topics', 'error');
+    }
+  };
+
+  /* Save the lesson-plan detail (sections + timings) for a topic via
+     ulpforclassdetailcrud. masterClassesID = the topic's ULP master id; the
+     detail row's own id (from a prior load/save) drives update vs insert. */
+  const saveDetail = async li => {
+    const l = lessons[li];
+    const masterId = l?.record?.id;
+    if (!masterId) { toast('Save the topic first, then save the plan', 'error'); return; }
+    const map = (li === selectedIdx) ? captureEditors() : (l.contentMap || {});
+    const dur = (li === selectedIdx) ? duration : (l.duration || '');
+    const d = l.detail || {};
+    try {
+      const result = await lpPost('/api/ulpforclassdetailcrud', {
+        id: d.id || 0,
+        termID: d.termID || '',
+        slot: d.slot || '',
+        classID: ctx.classID,
+        subjectID: ctx.subjectID,
+        unitNo, unitName,
+        totalLessonPlans: d.totalLessonPlans || '',
+        timeDuration: dur || '',
+        lessonPlanTopic: l.topic || '',
+        learningObjective: map.slo || '',
+        timeForLearning: d.timeForLearning || '',
+        lessonIntroduction: map.intro || '',
+        timeForLesson: d.timeForLesson || '',
+        development: map.devel || '',
+        timeForDevelopment: d.timeForDevelopment || '',
+        recap: map.recap || '',
+        timeForRecap: d.timeForRecap || '',
+        rating: d.rating || '',
+        suggestion: d.suggestion || '',
+        suggestionDescription: d.suggestionDescription || '',
+        masterClassesID: masterId,
+        className: ctx.clpClass || '',
+        subjectName: ctx.clpSubject || '',
+        action: d.id ? 'update' : 'insert',
+      });
+      updateLesson(li, { contentMap: map, duration: dur, detail: { ...d, ...result, id: result?.id ?? d.id } });
+      toast(d.id ? 'Lesson plan updated' : 'Lesson plan saved', 'success');
+    } catch (e) {
+      console.error('Error saving lesson plan detail:', e);
+      toast('Could not save lesson plan', 'error');
+    }
+  };
+
+  const saveAndClose = async () => {
+    /* Persist the current lesson's plan detail, then hand the lesson back. */
+    await saveDetail(selectedIdx);
     const map = captureEditors();
-    const finalLessons = lessons.map((l, i) =>
-      i === selectedIdx ? { ...l, duration, contentMap: map } : l
-    );
-    /* pass the edited current lesson back (parent updates it) */
-    const target = finalLessons[selectedIdx];
+    const target = { ...lessons[selectedIdx], duration, contentMap: map };
     onSave({ ...target });
   };
 
@@ -4204,14 +4902,14 @@ function LessonEditModal({ ctx, onSave, onClose, toast }) {
                   <input className="clml-field-input" value={unitNo} type="text" inputMode="numeric"
                     placeholder="1"
                     onChange={e => setUnitNo(e.target.value.replace(/[^0-9]/g, ''))} />
-                  <Tooltip text="Edit"><button className="clml-edit-btn" aria-label="Edit"><i className="fa-solid fa-pen"></i></button></Tooltip>
+                  <Tooltip text="Save unit no. to all topics"><button className="clml-edit-btn" aria-label="Save unit number" onClick={saveAllTopics}><i className="fa-solid fa-pen"></i></button></Tooltip>
                 </div>
                 <div className="clml-field-row">
                   <span className="clml-field-lbl">NAME</span>
                   <input className="clml-field-input clml-field-input--grow" value={unitName}
                     placeholder="Unit name"
                     onChange={e => setUnitName(e.target.value)} />
-                  <Tooltip text="Edit"><button className="clml-edit-btn" aria-label="Edit"><i className="fa-solid fa-pen"></i></button></Tooltip>
+                  <Tooltip text="Save unit name to all topics"><button className="clml-edit-btn" aria-label="Save unit name" onClick={saveAllTopics}><i className="fa-solid fa-pen"></i></button></Tooltip>
                 </div>
               </div>
 
@@ -4238,20 +4936,20 @@ function LessonEditModal({ ctx, onSave, onClose, toast }) {
                       <input className="clml-field-input clml-field-input--grow"
                         value={l.topic} placeholder="Lesson topic…"
                         onChange={e => updateLesson(li, { topic: e.target.value })} />
-                      <Tooltip text="Edit topic"><button className="clml-edit-btn" aria-label="Edit topic">
+                      <Tooltip text={l.record ? 'Save topic changes' : 'Insert this topic'}><button className="clml-edit-btn" aria-label="Save topic" onClick={() => saveTopic(li)}>
                         <i className="fa-solid fa-pen"></i>
                       </button></Tooltip>
                     </div>
                     <div className="clml-lesson-actions">
-                      <Tooltip text="Save the editor content into this lesson">
+                      <Tooltip text="Save this topic (same as the pencil) and its editor content">
                         <button className="clml-action-btn clml-action-save"
-                          onClick={() => { if (li === selectedIdx) saveCurrent(); else toast('Switch to this lesson first via Fetch', 'info'); }}>
+                          onClick={() => { if (li === selectedIdx) saveCurrent(); saveTopic(li); saveDetail(li); }}>
                           <i className="fa-solid fa-floppy-disk"></i> Save
                         </button>
                       </Tooltip>
-                      <Tooltip text="Load this lesson into the editor">
+                      <Tooltip text="Load this lesson's saved plan into the editor">
                         <button className="clml-action-btn clml-action-fetch"
-                          onClick={() => { fetchLesson(li); toast(`Lesson ${l.num || li + 1} loaded into editor`, 'success'); }}>
+                          onClick={() => { fetchLesson(li); loadDetailById(l.record?.id); toast(`Lesson ${l.num || li + 1} loaded into editor`, 'success'); }}>
                           <i className="fa-solid fa-download"></i> Fetch
                         </button>
                       </Tooltip>
@@ -6766,7 +7464,7 @@ const LP_CSS = `
   display:inline-flex; align-items:center; justify-content:center;
 }
 .clp2-hero-sub { font-size:12px; opacity:.85; margin-top:4px; padding-left:46px; }
-.clp2-filter-row { display:grid; grid-template-columns:1fr 1fr auto; gap:10px; align-items:end; }
+.clp2-filter-row { display:grid; grid-template-columns:1fr 1fr 1fr auto; gap:10px; align-items:end; }
 .clp2-field { display:flex; flex-direction:column; gap:5px; }
 .clp2-field-label { font-size:10.5px; font-weight:700; letter-spacing:.5px; text-transform:uppercase; opacity:.85; display:flex; align-items:center; gap:6px; }
 .clp2-select-wrap { position:relative; }

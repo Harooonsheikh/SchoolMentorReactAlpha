@@ -10,24 +10,9 @@ export const mockTermBreakupClasses = [
 
 export const mockUnits = [
   {
-    id: 1, unitNo: '1', unitName: 'My Family and I',
+    id: 0, unitNo: '0', unitName: '',
     lessons: [
-      { id: 1, num: '1', topic: 'My Family Members',   source: 'manual',     content: '' },
-      { id: 2, num: '2', topic: 'Roles in the Family', source: 'manual',     content: '' },
-      { id: 3, num: '3', topic: 'Family Traditions',   source: 'mentorai',   content: '' },
-    ],
-  },
-  {
-    id: 2, unitNo: '2', unitName: 'My School',
-    lessons: [
-      { id: 4, num: '1', topic: 'Inside Our School', source: 'manual',   content: '' },
-      { id: 5, num: '2', topic: 'School Rules',      source: 'mentorai', content: '' },
-    ],
-  },
-  {
-    id: 3, unitNo: '3', unitName: 'The World Around Us',
-    lessons: [
-      { id: 6, num: '1', topic: 'Weather and Seasons', source: 'manual', content: '' },
+      { id: 0, num: '0', topic: '',   source: '',     content: '' },
     ],
   },
 ];
