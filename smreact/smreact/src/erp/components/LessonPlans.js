@@ -3,6 +3,7 @@ import Tooltip from './Tooltip';
 import * as academicsService from '../services/academicsService';
 import useAsync from '../hooks/useAsync';
 import { buildUrl } from '../../utils/apiConfig';
+import { termsCrud, termsBranchID, termsSessionYearID } from './Academics';
 
 /* ═══════════════════════════════════════════════════════════════════
    LESSON PLANS — port from
@@ -44,6 +45,7 @@ const PER_WEEK_BY_CLASS = {
 
 const TERM_BREAKUP_TERMS = ['Term 1', 'Term 2', 'Term 3'];
 const TERM_BREAKUP_SUBJECTS = ['English', 'Urdu', 'Mathematics', 'Science', 'Islamiat'];
+
 
 
 // NB_QUESTION_TYPES replaced by AQ_TYPES (verbatim from HTML — see below).
@@ -198,7 +200,8 @@ export default function LessonPlans({ toast, openConfirm }) {
   const [perWeekEditOpen, setPerWeekEditOpen] = useState(false);
 
   /* Term Breakup state */
-  const [tbModalClass, setTbModalClass] = useState(null);
+ const [tbModalClass, setTbModalClass] = useState(null);
+const [tbRefreshKey, setTbRefreshKey] = useState(0);
 
   /* Per Week Lesson Plans selected class — lifted so report can read it */
   const [pwSelectedClass, setPwSelectedClass] = useState('');
@@ -290,7 +293,8 @@ const getClassesData = async () => {
 
       {tab === 'breakup' && (
         <TermBreakups
-         classesData={classesData}  // Pass the fetched data
+         classesData={classesData}
+         refreshKey={tbRefreshKey}  // Pass the fetched data
           onUpdate={c => setTbModalClass(c)}
           onReport={openReport}
           openConfirm={openConfirm}
@@ -347,12 +351,15 @@ const getClassesData = async () => {
         onClose={() => setPerWeekEditOpen(false)}
         toast={toast}
       />
-
+{/* subject get thorup gradeID, SectionId */}
       <TermBreakupModal
-        cls={tbModalClass}
-        onClose={() => setTbModalClass(null)}
-        toast={toast}
-      />
+  cls={tbModalClass?.name}
+  gradeId={tbModalClass?.gradeId}
+  sectionId={tbModalClass?.sectionId}
+  onSaved={() => setTbRefreshKey(k => k + 1)}
+  onClose={() => setTbModalClass(null)}
+  toast={toast}
+/>
 
       <UnitMgrModal
         open={unitMgrSource !== null}
@@ -1103,10 +1110,34 @@ function VacationEditModal({ open, vacations, onChange, onClose, toast, openConf
 /* ═══════════════════════════════════════════════════════════════════
    TERM BREAKUPS — class table with expand details
    ═══════════════════════════════════════════════════════════════════ */
-function TermBreakups({ onUpdate, onReport, openConfirm, toast, classesData }) {
+function TermBreakups({ onUpdate, onReport, openConfirm, toast, classesData,  refreshKey }) {
   const [openId, setOpenId] = useState(null);
-  const [subjectsData, setSubjectsData] = useState({}); // Store fetched subjects for each class-section
-  const [loadingSubjects, setLoadingSubjects] = useState({}); // Track loading state for each class-section
+  const [subjectsData, setSubjectsData] = useState({});
+  const [loadingSubjects, setLoadingSubjects] = useState({});
+  const [terms, setTerms] = useState([]);
+  const [selectedTerm, setSelectedTerm] = useState({});      // { [uniqueId]: termId }
+  const [selectedSubject, setSelectedSubject] = useState({}); // { [uniqueId]: subjectID }
+  const [termBreakupData, setTermBreakupData] = useState({}); // { [uniqueId]: { loading, units, noData } }
+
+  useEffect(() => {
+    const loadTerms = async () => {
+      try {
+        const json = await termsCrud({
+          id: 0,
+          branchID: termsBranchID(),
+          term: 'string',
+          sessionYearID: termsSessionYearID(),
+          action: 'get',
+        });
+        const list = Array.isArray(json) ? json : (json?.data || []);
+        setTerms(list.map(t => ({ id: t.id, name: t.term || 'Term' })));
+      } catch (e) {
+        console.error('Error loading terms:', e);
+        setTerms([]);
+      }
+    };
+    loadTerms();
+  }, []);
   
   console.log("classesData in TermBreakups:", classesData);
 
@@ -1138,6 +1169,13 @@ function TermBreakups({ onUpdate, onReport, openConfirm, toast, classesData }) {
           ...prev,
           [uniqueId]: json.data
         }));
+        // Auto-select first subject for this row (always default to first on a fresh expand)
+        if (json.data.length) {
+          setSelectedSubject(prev => ({
+            ...prev,
+            [uniqueId]: json.data[0].subjectID,
+          }));
+        }
       } else {
         setSubjectsData(prev => ({
           ...prev,
@@ -1157,21 +1195,7 @@ function TermBreakups({ onUpdate, onReport, openConfirm, toast, classesData }) {
   };
 
   // Handle expand/collapse
-  const handleExpand = async (uniqueId, gradeId, sectionId) => {
-    if (openId === uniqueId) {
-      // Collapse
-      setOpenId(null);
-    } else {
-      // Expand - fetch subjects if not already fetched
-      setOpenId(uniqueId);
-      
-      // Only fetch if we haven't fetched subjects for this class-section yet
-      if (!subjectsData[uniqueId]) {
-        await fetchSubjectsForClassSection(gradeId, sectionId, uniqueId);
-      }
-    }
-  };
-
+  
   // Create a flat list of all class-section combinations
   const flattenedData = [];
   classesData.forEach((classItem) => {
@@ -1194,6 +1218,226 @@ function TermBreakups({ onUpdate, onReport, openConfirm, toast, classesData }) {
       });
     }
   });
+
+  // ── Fetch term-breakup details for a row: gettermbreakups → lptermbreakupdetailscrud
+// ── Fetch term-breakup details for a row: gettermbreakups → lptermbreakupdetailscrud
+  // ── Fetch term-breakup details for a row: gettermbreakups → lptermbreakupdetailscrud
+  const fetchTermBreakupDetails = async (uniqueId, item, termID, subjectID) => {
+    setTermBreakupData(prev => ({
+      ...prev,
+      [uniqueId]: { ...(prev[uniqueId] || {}), loading: true, noData: false, units: [] },
+    }));
+
+    try {
+      const token = sessionStorage.getItem('token') || localStorage.getItem('token');
+      const branchID = termsBranchID();
+      const sessionID = termsSessionYearID();
+
+      // Step 1: gettermbreakups → find termBreakupID
+      const params = new URLSearchParams({
+        branchID: String(branchID ?? ''),
+        classID: String(item.gradeId ?? ''),
+        sectionID: String(item.sectionId ?? ''),
+        subjectID: String(subjectID ?? ''),
+        termID: String(termID ?? ''),
+        sessionID: String(sessionID ?? ''),
+        pageNo: '1',
+      });
+
+      const fullUrl = buildUrl(`/api/gettermbreakups?${params.toString()}`);
+
+      // ── DIAGNOSTIC: yeh URL Swagger me paste karke test karo
+      console.log('═══ gettermbreakups PARAMS ═══');
+      console.log('branchID:', branchID);
+      console.log('classID (gradeId):', item.gradeId);
+      console.log('sectionID:', item.sectionId);
+      console.log('subjectID:', subjectID);
+      console.log('termID:', termID);
+      console.log('sessionID:', sessionID);
+      console.log('Full URL:', fullUrl);
+
+      const res1 = await fetch(fullUrl, {
+        method: 'GET',
+        headers: { Accept: '*/*', Authorization: `Bearer ${token}` },
+      });
+
+      console.log('gettermbreakups status:', res1.status);
+
+      // 401 / 404 / koi error → crash nahi, sirf "No data" dikhao
+      if (!res1.ok) {
+        console.warn('gettermbreakups NOT OK:', res1.status, '— is term/subject ke liye breakup exist nahi karta ya param galat hai');
+        setTermBreakupData(prev => ({
+          ...prev,
+          [uniqueId]: { loading: false, noData: true, units: [] },
+        }));
+        console.log('═══════════════════════════════════');
+        return;
+      }
+
+      const json1 = await res1.json().catch(() => ({}));
+      console.log('gettermbreakups response:', json1);
+
+      const list1 = Array.isArray(json1?.data) ? json1.data : [];
+
+      if (!list1.length || !list1[0]?.id) {
+        console.warn('gettermbreakups: data empty');
+        setTermBreakupData(prev => ({
+          ...prev,
+          [uniqueId]: { loading: false, noData: true, units: [] },
+        }));
+        console.log('═══════════════════════════════════');
+        return;
+      }
+      const termBreakupID = list1[0].id;
+      console.log('termBreakupID:', termBreakupID);
+
+      // Step 2: lptermbreakupdetailscrud → actual units/topics
+      const res2 = await fetch(buildUrl('/api/lptermbreakupdetailscrud'), {
+        method: 'POST',
+        headers: { Accept: '*/*', 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          id: termBreakupID,
+          termBreakupID,
+          unitNumber: '',
+          unitName: '',
+          weekRequired: '',
+          subTopic: '',
+          periodRequired: '',
+          type: '',
+          action: 'get',
+        }),
+      });
+      const json2 = await res2.json().catch(() => ({}));
+      console.log('json2 KEYS:', Object.keys(json2));
+console.log('json2 FULL:', JSON.stringify(json2).slice(0, 500));
+
+      console.log('lptermbreakupdetailscrud Raw response:', json2);
+
+      const rows = Array.isArray(json2) ? json2
+                  : Array.isArray(json2?.data) ? json2.data
+                  : Array.isArray(json2?.Data) ? json2.Data
+                  : [];
+
+      console.log('Parsed rows:', rows, '| count:', rows.length);
+
+      if (!rows.length) {
+        setTermBreakupData(prev => ({
+          ...prev,
+          [uniqueId]: { loading: false, noData: true, units: [] },
+        }));
+        console.log('═══════════════════════════════════');
+        return;
+      }
+
+      // Group rows by unitNumber+unitName+weekRequired
+      const unitMap = {};
+      const unitOrder = [];
+      rows.forEach(r => {
+        const unitNumber   = r.unitNumber ?? r.UnitNumber ?? '';
+        const unitName     = r.unitName ?? r.UnitName ?? '';
+        const weekRequired = r.weekRequired ?? r.WeekRequired ?? '';
+        const subTopic       = r.subTopic ?? r.SubTopic ?? '';
+        const periodRequired = r.periodRequired ?? r.PeriodRequired ?? '';
+
+        const key = `${unitNumber}__${unitName}__${weekRequired}`;
+        if (!unitMap[key]) {
+          unitMap[key] = { unitNumber, unitName, weekRequired, topics: [] };
+          unitOrder.push(key);
+        }
+        if (subTopic || periodRequired) {
+          unitMap[key].topics.push({ subTopic, periodRequired });
+        }
+      });
+
+      const units = unitOrder.map(k => unitMap[k]);
+      console.log('Grouped units:', units);
+      console.log('═══════════════════════════════════');
+
+      setTermBreakupData(prev => ({
+        ...prev,
+        [uniqueId]: { loading: false, noData: units.length === 0, units },
+      }));
+    } catch (e) {
+      console.error('Error fetching term breakup details:', e);
+      setTermBreakupData(prev => ({
+        ...prev,
+        [uniqueId]: { loading: false, noData: true, units: [] },
+      }));
+    }
+  };
+  // Auto-fetch term-breakup details whenever the open row's term or subject selection changes
+  // Auto-fetch term-breakup details whenever the open row's term or subject selection changes
+  useEffect(() => {
+    if (!openId) return;
+    const item = flattenedData.find(f => `${f.gradeId}_${f.sectionId || 'nosection'}` === openId);
+    if (!item) return;
+
+    const termID = selectedTerm[openId];
+    const subjectID = selectedSubject[openId];
+
+    // No term selected yet → nothing to show
+    if (termID === undefined) return;
+
+    // Subjects list loaded but empty → there's nothing to fetch breakup for
+    const subjList = subjectsData[openId];
+    if (Array.isArray(subjList) && subjList.length === 0) {
+      setTermBreakupData(prev => ({
+        ...prev,
+        [openId]: { loading: false, noData: true, units: [] },
+      }));
+      return;
+    }
+
+    // Still waiting on subject selection / subjects fetch
+    if (subjectID === undefined) return;
+
+    fetchTermBreakupDetails(openId, item, termID, subjectID);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+ }, [openId, selectedTerm[openId], selectedSubject[openId], subjectsData[openId], refreshKey]);
+
+  // Handle expand/collapse
+  // Handle expand/collapse
+  const handleExpand = async (uniqueId, gradeId, sectionId) => {
+    if (openId === uniqueId) {
+      // Collapse — reset selections so next expand starts fresh at the defaults
+      setOpenId(null);
+      setSelectedTerm(prev => {
+        const next = { ...prev };
+        delete next[uniqueId];
+        return next;
+      });
+      setSelectedSubject(prev => {
+        const next = { ...prev };
+        delete next[uniqueId];
+        return next;
+      });
+    } else {
+      // Expand - fetch subjects if not already fetched
+      setOpenId(uniqueId);
+
+      // Auto-select first term for this row
+      if (terms.length) {
+        setSelectedTerm(prev => ({ ...prev, [uniqueId]: terms[0].id }));
+      }
+
+      // If subjects already cached, auto-select first subject immediately
+      const cachedSubjects = subjectsData[uniqueId];
+      if (cachedSubjects && cachedSubjects.length) {
+        setSelectedSubject(prev => ({ ...prev, [uniqueId]: cachedSubjects[0].subjectID }));
+      } else if (cachedSubjects && cachedSubjects.length === 0) {
+        setSelectedSubject(prev => {
+          const next = { ...prev };
+          delete next[uniqueId];
+          return next;
+        });
+      }
+
+      // Only fetch if we haven't fetched subjects for this class-section yet
+      if (!subjectsData[uniqueId]) {
+        await fetchSubjectsForClassSection(gradeId, sectionId, uniqueId);
+      }
+    }
+  };
 
   return (
     <div className="section-card" style={{ overflow: 'visible' }}>
@@ -1257,7 +1501,11 @@ function TermBreakups({ onUpdate, onReport, openConfirm, toast, classesData }) {
               </div>
               <div className="tb-bp-td" style={{ width: 120, justifyContent: 'center' }}>
                 <Tooltip text={`Update term breakup for ${className} - Section ${item.sectionName || ''}`}>
-                  <button className="tb-update-btn" onClick={() => onUpdate(`${className} - Section ${item.sectionName || ''}`)}>
+                  <button className="tb-update-btn" onClick={() => onUpdate({
+  name: `${className} - Section ${item.sectionName || ''}`,
+  gradeId: item.gradeId,
+  sectionId: item.sectionId,
+})}>
                     <i className="fa-solid fa-pen"></i> Update
                   </button>
                 </Tooltip>
@@ -1277,12 +1525,27 @@ function TermBreakups({ onUpdate, onReport, openConfirm, toast, classesData }) {
               <div className="tb-detail">
                 <div className="tb-detail-inner">
                   <div className="tb-detail-section">
-                    <div className="tb-detail-label">Terms</div>
-                    <div className="tb-detail-pills">
-                      {TERM_BREAKUP_TERMS.map(t => <span key={t} className="tb-detail-pill">{t}</span>)}
-                    </div>
-                  </div>
-                  <div className="tb-detail-section">
+  <div className="tb-detail-label">Terms</div>
+  <div className="tb-detail-pills">
+    {terms.length === 0 ? (
+      <span style={{ fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic' }}>
+        No terms found
+      </span>
+    ) : (
+      terms.map(t => (
+        <button
+          key={t.id}
+          type="button"
+          className={`tb-detail-pill tb-detail-pill--clickable${selectedTerm[uniqueId] === t.id ? ' active' : ''}`}
+          onClick={() => setSelectedTerm(prev => ({ ...prev, [uniqueId]: t.id }))}
+        >
+          {t.name}
+        </button>
+      ))
+    )}
+  </div>
+</div>
+                 <div className="tb-detail-section">
                     <div className="tb-detail-label">Subjects</div>
                     <div className="tb-detail-pills">
                       {isLoading ? (
@@ -1291,9 +1554,14 @@ function TermBreakups({ onUpdate, onReport, openConfirm, toast, classesData }) {
                         </span>
                       ) : subjects.length > 0 ? (
                         subjects.map((subject) => (
-                          <span key={subject.subjectID} className="tb-detail-pill subj">
+                          <button
+                            key={subject.subjectID}
+                            type="button"
+                            className={`tb-detail-pill tb-detail-pill--clickable subj${selectedSubject[uniqueId] === subject.subjectID ? ' active' : ''}`}
+                            onClick={() => setSelectedSubject(prev => ({ ...prev, [uniqueId]: subject.subjectID }))}
+                          >
                             {subject.subjectName}
-                          </span>
+                          </button>
                         ))
                       ) : (
                         <span style={{ fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic' }}>
@@ -1301,6 +1569,77 @@ function TermBreakups({ onUpdate, onReport, openConfirm, toast, classesData }) {
                         </span>
                       )}
                     </div>
+                  </div>
+                  <div className="tb-detail-section">
+                    <div className="tb-detail-label">Term Breakup</div>
+                    {(() => {
+                      const tbd = termBreakupData[uniqueId];
+                      if (!tbd || tbd.loading) {
+                        return (
+                          <span style={{ fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                            <i className="fa-solid fa-spinner fa-spin"></i> Loading term breakup...
+                          </span>
+                        );
+                      }
+                      if (tbd.noData || !tbd.units.length) {
+                        return (
+                          <span style={{ fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                            No data available for this term.
+                          </span>
+                        );
+                      }
+                      return tbd.units.map((u, ui) => (
+                        <div key={ui} className="tbview-unit-card">
+                          <div className="tbview-unit-hdr">
+                            <span>Unit {u.unitNumber} - {u.unitName}</span>
+                            <span className="tbview-unit-weeks">{u.weekRequired} weeks</span>
+                          </div>
+                          <table className="tbview-table">
+                            <thead>
+                              <tr>
+                                <th style={{ width: 60 }}>S/No</th>
+                                <th style={{ width: 160 }}>Units</th>
+                                <th style={{ width: 120 }}>Weeks Required</th>
+                                <th>Topics</th>
+                                <th style={{ width: 130 }}>Periods Required</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {u.topics.length === 0 ? (
+                                <tr>
+                                  <td style={{ textAlign: 'center' }}><span className="tbview-cell-pill">{ui + 1}</span></td>
+                                  <td><span className="tbview-cell-pill">{u.unitName}</span></td>
+                                  <td style={{ textAlign: 'center' }}><span className="tbview-cell-pill">{u.weekRequired}</span></td>
+                                  <td colSpan={2}><span className="tbview-cell-pill tbview-cell-pill--empty"></span></td>
+                                </tr>
+                              ) : u.topics.map((t, ti) => (
+                                <tr key={ti}>
+                                  {ti === 0 ? (
+                                    <>
+                                      <td rowSpan={u.topics.length} style={{ textAlign: 'center', verticalAlign: 'middle' }}>
+                                        <span className="tbview-cell-pill">{ui + 1}</span>
+                                      </td>
+                                      <td rowSpan={u.topics.length} style={{ verticalAlign: 'middle' }}>
+                                        <span className="tbview-cell-pill">{u.unitName}</span>
+                                      </td>
+                                      <td rowSpan={u.topics.length} style={{ textAlign: 'center', verticalAlign: 'middle' }}>
+                                        <span className="tbview-cell-pill">{u.weekRequired}</span>
+                                      </td>
+                                    </>
+                                  ) : null}
+                                  <td>
+                                    <span className="tbview-cell-pill">{t.subTopic}</span>
+                                  </td>
+                                  <td style={{ textAlign: 'center' }}>
+                                    <span className="tbview-cell-pill">{t.periodRequired}</span>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      ));
+                    })()}
                   </div>
                   <div className="tb-detail-actions">
                     <Tooltip text={`Download ${className} - Section ${item.sectionName || ''} term breakup (color PDF)`}>
@@ -1341,15 +1680,103 @@ function TermBreakups({ onUpdate, onReport, openConfirm, toast, classesData }) {
 const TBM_TERMS    = ['2nd', '3rd Term', '5th Term', 'testing', 'combined'];
 const TBM_SUBJECTS = ['English', 'Urdu', 'Mathematics', 'Science', 'Islamiat'];
 
-function TermBreakupModal({ cls, onClose, toast }) {
-  const [termTab, setTermTab] = useState(TBM_TERMS[0]);
-  const [subjTab, setSubjTab] = useState(TBM_SUBJECTS[0]);
+function TermBreakupModal({ cls, gradeId, sectionId,onSaved, onClose, toast }) {
+  const [termTab, setTermTab] = useState('');
+  const [subjTab, setSubjTab] = useState('');
+  const [subjects, setSubjects] = useState([]);
+  const [loadingSubjects, setLoadingSubjects] = useState(false);
+  const [terms, setTerms] = useState([]);
+  const [termBreakupID, setTermBreakupID] = useState(null);
+const [loadingBreakup, setLoadingBreakup] = useState(false);
+const [savingBreakup, setSavingBreakup] = useState(false);
+const [totalLectures, setTotalLectures] = useState(0);
   const [units, setUnits] = useState([
     { id: 1, unitNum: '', unitName: '', weeksRequired: '0',
       topics: [{ id: 11, subTopic: '', periodsRequired: '0' }] },
   ]);
 
-  const open = cls !== null;
+
+  // useEffects PEHLE — early return se pehle
+  useEffect(() => {
+    if (!cls) return;
+    const loadTerms = async () => {
+      try {
+        const json = await termsCrud({
+          id: 0,
+          branchID: termsBranchID(),
+          term: 'string',
+          sessionYearID: termsSessionYearID(),
+          action: 'get',
+        });
+       console.log('termscrud response:', json);
+
+const list = Array.isArray(json)
+  ? json
+  : Array.isArray(json?.data)
+    ? json.data
+    : Array.isArray(json?.Data)
+      ? json.Data
+      : Array.isArray(json?.result)
+        ? json.result
+        : [];
+
+const mapped = list.map(t => ({
+  id: t.id ?? t.ID ?? t.termID ?? t.TermID,
+  name: t.term ?? t.Term ?? t.name ?? t.Name ?? 'Term',
+})).filter(t => t.id && t.name);
+
+setTerms(mapped);
+
+if (mapped.length > 0) {
+  setTermTab(prev => prev || mapped[0].name);
+}
+      } catch (e) {
+        console.error('Error loading terms:', e);
+      }
+    };
+    loadTerms();
+  }, [cls]);
+
+  useEffect(() => {
+    if (!gradeId || !sectionId) return;
+    console.log('Fetching subjects for gradeId:', gradeId, 'sectionId:', sectionId); // test log
+    const loadSubjects = async () => {
+  setLoadingSubjects(true);
+  try {
+    const res = await fetch(
+      buildUrl(`/api/LaunchSetup/get-subjects/${gradeId}/${sectionId}`),
+      { method: 'GET', headers: { Accept: '*/*' } }
+    );
+    console.log('Subjects API status:', res.status);
+    const json = await res.json().catch(() => ({}));
+    console.log('Subjects API response:', json);
+    const list = Array.isArray(json) ? json : (json?.data || []);
+    console.log('Subjects list:', list);
+    setSubjects(list);
+    if (list.length > 0) {
+      const firstSubject = list[0].subjectName || list[0].name || '';
+      console.log('First subject selected:', firstSubject);
+      setSubjTab(firstSubject);
+    }
+  } catch (e) {
+    console.error('Error loading subjects:', e);
+    setSubjects([]);
+  } finally {
+    setLoadingSubjects(false);
+  }
+};
+    
+    loadSubjects();
+  }, [gradeId, sectionId, cls]);
+  useEffect(() => {
+  if (!cls || !termTab || !subjTab) return;
+  loadTermBreakup();
+  fetchTotalLectures();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [cls, gradeId, sectionId, termTab, subjTab]);
+
+  //  Early return BAAD mein
+  const open = cls !== null && cls !== undefined;
   if (!open) return null;
 
   const addUnit = () => setUnits([
@@ -1361,8 +1788,19 @@ function TermBreakupModal({ cls, onClose, toast }) {
     if (units.length <= 1) { toast('At least one unit is required', 'error'); return; }
     setUnits(units.filter(u => u.id !== id));
   };
-  const updateUnit = (id, key, val) =>
-    setUnits(units.map(u => u.id === id ? { ...u, [key]: val } : u));
+  const updateUnit = (id, key, val) => {
+  setUnits(prevUnits => prevUnits.map(u => {
+    if (u.id !== id) return u;
+
+    const nextUnit = { ...u, [key]: val };
+
+  if (key === 'weeksRequired' && nextUnit.topics.some(t => !validateTopicPeriods(nextUnit, t))) {
+  return u;
+}
+
+    return nextUnit;
+  }));
+};
 
   const addTopic = unitId => setUnits(units.map(u => u.id !== unitId ? u : {
     ...u,
@@ -1373,11 +1811,427 @@ function TermBreakupModal({ cls, onClose, toast }) {
     if (u.topics.length <= 1) { toast('At least one topic is required', 'error'); return u; }
     return { ...u, topics: u.topics.filter(t => t.id !== topicId) };
   }));
-  const updateTopic = (unitId, topicId, key, val) =>
-    setUnits(units.map(u => u.id !== unitId ? u : {
+  const updateTopic = (unitId, topicId, key, val) => {
+  setUnits(prevUnits => prevUnits.map(u => {
+    if (u.id !== unitId) return u;
+
+    const nextUnit = {
       ...u,
       topics: u.topics.map(t => t.id === topicId ? { ...t, [key]: val } : t),
-    }));
+    };
+    const nextTopic = nextUnit.topics.find(t => t.id === topicId);
+
+    if (key === 'periodsRequired' && !validateTopicPeriods(nextUnit,nextTopic)) {
+      return u;
+    }
+
+    return nextUnit;
+  }));
+};
+    const getAuthHeaders = () => {
+  const token = sessionStorage.getItem('token') || localStorage.getItem('token');
+  return {
+    Accept: '*/*',
+    'Content-Type': 'application/json',
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+};
+
+const selectedTermID = () => {
+  const found = terms.find(t => t.name === termTab);
+  return found?.id ?? '';
+};
+
+const selectedSubjectID = () => {
+  const found = subjects.find(s => (s.subjectName || s.name || '') === subjTab);
+  return found?.subjectID || found?.id || '';
+};
+
+const emptyUnit = () => ({
+  id: Date.now(),
+  unitNum: '',
+  unitName: '',
+  weeksRequired: '0',
+  topics: [{ id: Date.now() + 1, subTopic: '', periodsRequired: '0' }],
+});
+
+const mapRowsToUnits = rows => {
+  const unitMap = {};
+  const unitOrder = [];
+
+  rows.forEach(r => {
+    const unitNumber = r.unitNumber ?? r.UnitNumber ?? '';
+    const unitName = r.unitName ?? r.UnitName ?? '';
+    const weekRequired = r.weekRequired ?? r.WeekRequired ?? '0';
+    const subTopic = r.subTopic ?? r.SubTopic ?? '';
+    const periodRequired = r.periodRequired ?? r.PeriodRequired ?? '0';
+
+    const key = `${unitNumber}__${unitName}__${weekRequired}`;
+    if (!unitMap[key]) {
+      unitMap[key] = {
+        id: r.id ?? r.detailID ?? Date.now() + unitOrder.length,
+        detailID: r.id ?? r.detailID ?? null,
+        unitNum: unitNumber,
+        unitName,
+        weeksRequired: String(weekRequired || '0'),
+        topics: [],
+      };
+      unitOrder.push(key);
+    }
+
+    unitMap[key].topics.push({
+      id: r.id ?? r.detailID ?? Date.now() + Math.random(),
+      detailID: r.id ?? r.detailID ?? null,
+      subTopic,
+      periodsRequired: String(periodRequired || '0'),
+    });
+  });
+
+  return unitOrder.map(k => ({
+    ...unitMap[k],
+    topics: unitMap[k].topics.length ? unitMap[k].topics : [
+      { id: Date.now(), subTopic: '', periodsRequired: '0' },
+    ],
+  }));
+};
+
+const loadTermBreakup = async () => {
+  const termID = selectedTermID();
+  const subjectID = selectedSubjectID();
+
+  if (!gradeId || !sectionId || !termID || !subjectID) return;
+
+  setLoadingBreakup(true);
+
+  try {
+    const params = new URLSearchParams({
+      branchID: String(termsBranchID() ?? ''),
+      classID: String(gradeId ?? ''),
+      sectionID: String(sectionId ?? ''),
+      subjectID: String(subjectID ?? ''),
+      termID: String(termID ?? ''),
+      sessionID: String(termsSessionYearID() ?? ''),
+      pageNo: '1',
+    });
+
+    const res = await fetch(buildUrl(`/api/gettermbreakups?${params.toString()}`), {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    });
+
+    const json = await res.json().catch(() => ({}));
+    const list = Array.isArray(json?.data) ? json.data : Array.isArray(json) ? json : [];
+    const breakupId = list[0]?.id ?? null;
+
+    setTermBreakupID(breakupId);
+
+    if (!breakupId) {
+      setUnits([emptyUnit()]);
+      return;
+    }
+
+    const detailRes = await fetch(buildUrl('/api/lptermbreakupdetailscrud'), {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({
+        id: breakupId,
+        termBreakupID: breakupId,
+        unitNumber: '',
+        unitName: '',
+        weekRequired: '',
+        subTopic: '',
+        periodRequired: '',
+        type: '',
+        action: 'get',
+      }),
+    });
+
+    const detailJson = await detailRes.json().catch(() => ({}));
+    const rows = Array.isArray(detailJson)
+      ? detailJson
+      : Array.isArray(detailJson?.data)
+        ? detailJson.data
+        : [];
+
+    setUnits(rows.length ? mapRowsToUnits(rows) : [emptyUnit()]);
+  } catch (e) {
+    console.error('Error loading term breakup:', e);
+    toast('Failed to load term breakup', 'error');
+  } finally {
+    setLoadingBreakup(false);
+  }
+};
+
+const toApiNumber = value => {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+};
+
+const readApiJson = async res => {
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    console.error('API failed:', res.url, res.status, json);
+    throw new Error(json?.message || json?.title || JSON.stringify(json) || `API failed: ${res.status}`);
+  }
+  return json;
+};
+
+//total lectres calculate karne ke liye
+const fetchTotalLectures = async () => {
+  const subjectID = selectedSubjectID();
+  if (!gradeId || !sectionId || !subjectID) {
+    setTotalLectures(0);
+    return;
+  }
+
+  try {
+    const payload = {
+      id: '0',
+      branchID: String(termsBranchID() ?? ''),
+      classID: String(gradeId ?? ''),
+      sectionID: String(sectionId ?? ''),
+      subjectID: String(subjectID ?? ''),
+      sessionID: String(termsSessionYearID() ?? ''),
+      totalLectures: '',
+      action: 'get',
+    };
+
+    console.log('lpcountforsubjectscrud payload:', payload);
+
+    const res = await fetch(buildUrl('/api/lpcountforsubjectscrud'), {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(payload),
+    });
+
+    const json = await readApiJson(res);
+    console.log('lpcountforsubjectscrud response:', json);
+
+    const rows = Array.isArray(json)
+      ? json
+      : Array.isArray(json?.data)
+        ? json.data
+        : Array.isArray(json?.Data)
+          ? json.Data
+          : json?.data
+            ? [json.data]
+            : [json];
+
+    const row = rows[0] || {};
+
+    const count =
+      row.totalLectures ??
+      row.TotalLectures ??
+      row.totalLecture ??
+      row.TotalLecture ??
+      row.totallectures ??
+      row.totallectres ??
+      row.totalLectres ??
+      row.TotalLectres ??
+      row.totalLectureCount ??
+      row.TotalLectureCount ??
+      row.total ??
+      row.Total ??
+      0;
+
+    console.log('Total lectures parsed:', count);
+    setTotalLectures(Number(count) || 0);
+  } catch (e) {
+    console.error('Error loading total lectures:', e);
+    setTotalLectures(0);
+  }
+};
+
+const getUnitPeriodLimit = unit => {
+  return (Number(totalLectures) || 0) * (Number(unit.weeksRequired) || 0);
+};
+
+const validateTopicPeriods = (unit, topic) => {
+  const limit = getUnitPeriodLimit(unit);
+  const entered = Number(topic.periodsRequired) || 0;
+
+  if (limit > 0 && entered > limit) {
+    toast(`Limit exceeded! Entered Periods (${entered}) exceed Total Lecture Count (${limit}).`, 'error');
+    return false;
+  }
+
+  return true;
+};
+
+const ensureTermBreakupID = async () => {
+  if (termBreakupID) return termBreakupID;
+
+const payload = {
+  termBreakupData: '',
+  id: '0',
+  branchID: String(termsBranchID() ?? ''),
+  classID: String(gradeId ?? ''),
+  sectionID: String(sectionId ?? ''),
+  subjectID: String(selectedSubjectID() ?? ''),
+  termID: String(selectedTermID() ?? ''),
+  sessionID: String(termsSessionYearID() ?? ''),
+  action: 'insert',
+};
+
+console.log('lptermbreakupcrud insert payload:', payload);
+
+const res = await fetch(buildUrl('/api/lptermbreakupcrud'), {
+  method: 'POST',
+  headers: getAuthHeaders(),
+  body: JSON.stringify(payload),
+});
+
+const json = await readApiJson(res);
+const newId = json?.id ?? json?.data?.id ?? json?.data?.[0]?.id ?? json?.termBreakupID ?? json?.data?.termBreakupID;
+  if (!newId) throw new Error('lptermbreakupcrud did not return id');
+
+  setTermBreakupID(newId);
+  return newId;
+};
+
+const saveDetailRow = async ({ unit, topic, action = 'insert' }) => {
+  const breakupId = await ensureTermBreakupID();
+  if (!String(unit.unitNum || '').trim() || Number.isNaN(Number(unit.unitNum))) {
+  throw new Error('Unit number must be numeric. Example: 1, 2, 3');
+}
+if (!String(unit.unitName || '').trim()) {
+  throw new Error('Unit name is required');
+}
+if (!validateTopicPeriods(unit, topic)) {
+  throw new Error('Periods exceeded allowed lecture limit');
+}
+
+  const payload = {
+  termBreakupDetailsData: '',
+  id: String(topic?.detailID || unit?.detailID || 0),
+  termBreakupID: String(breakupId ?? ''),
+  unitNumber: String(unit.unitNum ?? ''),
+  unitName: String(unit.unitName || '').trim(),
+  weekRequired: String(unit.weeksRequired ?? '0'),
+  subTopic: String(topic?.subTopic || '').trim(),
+  periodRequired: String(topic?.periodsRequired ?? '0'),
+  type: '',
+  action,
+};
+
+console.log('lptermbreakupdetailscrud payload:', payload);
+
+const res = await fetch(buildUrl('/api/lptermbreakupdetailscrud'), {
+  method: 'POST',
+  headers: getAuthHeaders(),
+  body: JSON.stringify(payload),
+});
+
+return readApiJson(res);
+};
+
+const saveUnitDetails = async unit => {
+  setSavingBreakup(true);
+  try {
+    for (const topic of unit.topics) {
+      await saveDetailRow({
+        unit,
+        topic,
+        action: topic.detailID ? 'update' : 'insert',
+      });
+    }
+  toast('Unit saved', 'success');
+await loadTermBreakup();
+onSaved?.();
+  } catch (e) {
+    console.error('Error saving unit:', e);
+  toast(e.message || 'Failed to save unit', 'error');
+  } finally {
+    setSavingBreakup(false);
+  }
+};
+
+const saveAllDetails = async () => {
+  setSavingBreakup(true);
+  try {
+    for (const unit of units) {
+      for (const topic of unit.topics) {
+        await saveDetailRow({
+          unit,
+          topic,
+          action: topic.detailID ? 'update' : 'insert',
+        });
+      }
+    }
+   toast('Term breakup saved', 'success');
+await loadTermBreakup();
+onSaved?.();
+onClose();
+  } catch (e) {
+    console.error('Error saving term breakup:', e);
+    toast(e.message || 'Failed to save term breakup', 'error');
+  } finally {
+    setSavingBreakup(false);
+  }
+};
+
+const updateWeekRequired = async unit => {
+  const breakupId = await ensureTermBreakupID();
+
+  await fetch(buildUrl('/api/lpupdateweekrequired'), {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({
+      id: unit.detailID || 0,
+      termBreakupID: breakupId,
+      unitNumber: unit.unitNum,
+      unitName: unit.unitName,
+      weekRequired: unit.weeksRequired,
+      action: 'update',
+    }),
+  });
+
+  toast('Weeks required updated', 'success');
+  await loadTermBreakup();
+};
+
+const deleteDetail = async ({ unit, topic }) => {
+  const breakupId = await ensureTermBreakupID();
+
+  const res = await fetch(buildUrl('/api/lptermbreakupdetailscrud'), {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({
+      termBreakupDetailsData: '',
+      id: String(topic?.detailID || unit?.detailID || 0),
+      termBreakupID: String(breakupId ?? ''),
+      unitNumber: String(unit.unitNum ?? ''),
+      unitName: String(unit.unitName || '').trim(),
+      weekRequired: String(unit.weeksRequired ?? '0'),
+      subTopic: String(topic?.subTopic || '').trim(),
+      periodRequired: String(topic?.periodsRequired ?? '0'),
+      type: '',
+      action: 'delete',
+    }),
+  });
+
+  await readApiJson(res);
+
+  setUnits(prevUnits => {
+    const nextUnits = prevUnits.map(u => {
+      if (u.id !== unit.id) return u;
+
+      const nextTopics = u.topics.filter(t => t.id !== topic.id);
+
+      return {
+        ...u,
+        topics: nextTopics.length
+          ? nextTopics
+          : [{ id: Date.now(), subTopic: '', periodsRequired: '0' }],
+      };
+    });
+
+    return nextUnits;
+  });
+
+  toast('Deleted successfully', 'success');
+  onSaved?.();
+};
 
   return (
     <div className="tbm-overlay open" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
@@ -1402,32 +2256,51 @@ function TermBreakupModal({ cls, onClose, toast }) {
 
         {/* FIXED: term tabs */}
         <div className="tbm-term-tabs">
-          {TBM_TERMS.map(t => (
-            <button key={t}
-              className={`tbm-term-tab${termTab === t ? ' active' : ''}`}
-              onClick={() => setTermTab(t)}>
-              {t}
-            </button>
-          ))}
-        </div>
+  {terms.length === 0 ? (
+    <span style={{ fontSize: 12, color: 'var(--text-muted)', padding: '8px 0' }}>
+      Loading terms...
+    </span>
+  ) : terms.map(t => (
+    <button key={t.id}
+      className={`tbm-term-tab${termTab === t.name ? ' active' : ''}`}
+      onClick={() => setTermTab(t.name)}>
+      {t.name}
+    </button>
+  ))}
+</div>
 
         {/* FIXED: subject tabs */}
         <div className="tbm-subj-tabs-wrap">
-          <div className="tbm-subj-tabs">
-            {TBM_SUBJECTS.map(s => (
-              <button key={s}
-                className={`tbm-subj-tab${subjTab === s ? ' active' : ''}`}
-                onClick={() => setSubjTab(s)}>
-                {s}
-              </button>
-            ))}
-          </div>
-        </div>
+  <div className="tbm-subj-tabs">
+    {loadingSubjects ? (
+      <span style={{ fontSize: 12, color: 'var(--text-muted)', padding: '10px 16px', display: 'inline-block' }}>
+        <i className="fa-solid fa-spinner fa-spin"></i> Loading subjects...
+      </span>
+    ) : subjects.length === 0 ? (
+      <span style={{ fontSize: 12, color: 'var(--text-muted)', padding: '10px 16px', display: 'inline-block' }}>
+        No subjects found
+      </span>
+    ) : subjects.map(s => {
+      const name = s.subjectName || s.name || '';
+      return (
+        <button key={s.subjectID || s.id || name}
+          className={`tbm-subj-tab${subjTab === name ? ' active' : ''}`}
+          onClick={() => setSubjTab(name)}>
+          {name}
+        </button>
+      );
+    })}
+  </div>
+</div>
 
         {/* SCROLLABLE: body contains units + add button */}
         <div className="tbm-scroll-area">
           <div className="tbm-body">
-            {units.map(u => (
+  {loadingBreakup ? (
+    <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)' }}>
+      <i className="fa-solid fa-spinner fa-spin"></i> Loading term breakup...
+    </div>
+  ) : units.map(u => (
               <div key={u.id} className="tbm-unit-block">
                 <div className="tbm-unit-top">
                   <div>
@@ -1453,14 +2326,15 @@ function TermBreakupModal({ cls, onClose, toast }) {
                   </div>
                   <div className="tbm-unit-top-btns">
                     <Tooltip text="Save unit"><button className="tbm-unit-save-btn"
-                      onClick={() => toast('Unit saved', 'success')}>
+                    disabled={savingBreakup}
+                      onClick={() => saveUnitDetails(u)}>
                       <i className="fa-solid fa-floppy-disk"></i>
                     </button></Tooltip>
-                    <Tooltip text="Remove unit"><button className="tbm-unit-save-btn"
-                      style={{ borderColor: 'rgba(220,38,38,.25)', background: 'rgba(220,38,38,.07)', color: '#DC2626' }}
-                     
-                      onClick={() => removeUnit(u.id)}>
-                      <i className="fa-solid fa-trash"></i>
+                    <Tooltip text="Update Week Required"><button className="tbm-unit-save-btn"
+                      style={{ borderColor: 'rgba(30,58,138,.25)', background: 'rgba(30,58,138,.07)', color: '#1E3A8A' }}
+                     //delete button replace with update button
+                      onClick={() => updateWeekRequired(u)}>
+                      <i className="fa-solid fa-pen"></i>
                     </button></Tooltip>
                   </div>
                 </div>
@@ -1482,9 +2356,18 @@ function TermBreakupModal({ cls, onClose, toast }) {
                           style={{ textAlign: 'center' }}
                           onChange={e => updateTopic(u.id, t.id, 'periodsRequired', e.target.value)} />
                       </div>
-                      <div style={{ display: 'flex', gap: 5, alignItems: 'flex-end' }}>
+                      <div className="tbm-topic-action-cell">
+                        {/* delete topics */}
                         <Tooltip text="Delete topic"><button className="tbm-topic-del-btn"
-                          onClick={() => removeTopic(u.id, t.id)}>
+                        disabled={savingBreakup}
+                         onClick={async () => {
+  if (t.detailID) {
+    await deleteDetail({ unit: u, topic: t });
+  } else {
+    removeTopic(u.id, t.id);
+    toast('Topic removed', 'success');
+  }
+}} >
                           <i className="fa-solid fa-trash"></i>
                         </button></Tooltip>
                       </div>
@@ -1519,9 +2402,10 @@ function TermBreakupModal({ cls, onClose, toast }) {
           </Tooltip>
           <Tooltip text="Save term breakup">
             <button className="tbm-btn tbm-btn--save"
-              onClick={() => { toast('Term breakup saved', 'success'); onClose(); }}>
-              Save
-            </button>
+  disabled={savingBreakup || loadingBreakup}
+  onClick={saveAllDetails}>
+  {savingBreakup ? 'Saving...' : 'Save'}
+</button>
           </Tooltip>
         </div>
 
@@ -6543,8 +7427,99 @@ const LP_CSS = `
   background:var(--bg-card); border:1.5px solid var(--border-light);
   font-size:11.5px; font-weight:700; color:var(--text-secondary);
 }
-.tb-detail-pill.subj { background:rgba(30,58,138,.05); border-color:rgba(30,58,138,.18); color:var(--brand-primary); }
+.tb-detail-pill.subj { background: rgba(30,58,138,.05); border-color: rgba(30,58,138,.18); color: var(--brand-primary); }
 .tb-detail-actions { display:flex; gap:8px; align-items:center; }
+
+/* Clickable Terms / Subjects pills — Term Breakups expanded row */
+.tb-detail-pill--clickable {
+  cursor: pointer;
+  border: 1.5px solid var(--border-light);
+  font-family: var(--font-body);
+  font-size: 11.5px;
+  font-weight: 700;
+  transition: all .18s cubic-bezier(.4,0,.2,1);
+}
+.tb-detail-pill--clickable:hover {
+  border-color: var(--brand-primary);
+  background: rgba(30,58,138,.06);
+  color: var(--brand-primary);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(30,58,138,.12);
+}
+.tb-detail-pill--clickable.active {
+  background: linear-gradient(135deg,#1E3A8A,#1E40AF);
+  border-color: transparent;
+  color: #fff;
+  box-shadow: 0 3px 10px rgba(30,58,138,.3);
+  transform: translateY(-1px);
+}
+.tb-detail-pill--clickable.subj.active {
+  background: linear-gradient(135deg,#7C3AED,#6D28D9);
+  box-shadow: 0 3px 10px rgba(124,58,237,.3);
+}
+[data-theme="dark"] .tb-detail-pill--clickable:hover {
+  border-color: #3B82F6;
+  background: rgba(59,130,246,.12);
+  color: #93C5FD;
+}
+
+/* Term Breakup units/topics view */
+/* Term Breakup units/topics view — teal/cyan card style */
+/* Term Breakup units/topics view — original brand-blue card style */
+.tbview-unit-card {
+  border: 1px solid #E0EAF5;
+  border-radius: 14px;
+  overflow: hidden;
+  margin-bottom: 16px;
+  background: linear-gradient(135deg,#F7FBFF,#EEF5FC);
+}
+.tbview-unit-hdr {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-weight: 800;
+  font-size: 15px;
+  color:#2e3c8a;
+  padding: 14px 18px;
+}
+.tbview-unit-weeks {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.tbview-table { width: 100%; border-collapse: collapse; font-size: 13px; table-layout: fixed; }
+.tbview-table th {
+  background: linear-gradient(135deg,#3B5B9E,#3A55A8);
+  color: #fff;
+  font-weight: 600;
+  padding: 10px 12px;
+  text-align: center;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.tbview-table td {
+  padding: 10px 14px;
+  vertical-align: middle;
+}
+.tbview-cell-pill {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  background: #F1F3F7;
+  border-radius: 8px;
+  padding: 9px 12px;
+  font-size: 13px;
+  color: var(--text-secondary, #475569);
+  text-align: center;
+  min-height: 38px;
+  line-height: 20px;
+}
+.tbview-cell-pill--empty { min-height: 38px; }
+[data-theme="dark"] .tbview-unit-card { background: rgba(30,58,138,.1); border-color: rgba(59,130,246,.3); }
+[data-theme="dark"] .tbview-unit-hdr { color: #93C5FD; }
+[data-theme="dark"] .tbview-cell-pill { background: rgba(255,255,255,.06); color: var(--text-primary); }
 
 /* ── Term Breakup Modal (.tbm-*) — verbatim from HTML ── */
 .tbm-overlay { position:fixed;inset:0;background:rgba(10,18,40,.5);backdrop-filter:blur(6px);z-index:1300;display:flex;align-items:center;justify-content:center;padding:24px 16px;opacity:0;pointer-events:none;transition:opacity .25s ease;overflow:hidden; }
@@ -6678,6 +7653,13 @@ const LP_CSS = `
 .tbm-topic-row {
   display:grid;grid-template-columns:1fr 200px auto;
   gap:10px;align-items:center;
+}
+  .tbm-topic-action-cell {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  height: 100%;
+  padding-top: 18px;
 }
 .tbm-topic-del-btn {
   width:38px;height:38px;border-radius:var(--radius-md);
