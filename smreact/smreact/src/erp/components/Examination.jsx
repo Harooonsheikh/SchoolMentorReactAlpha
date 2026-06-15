@@ -442,6 +442,385 @@ const [terms, setTerms] = useState([]);
 const [filtered, setFiltered] = useState([]);
 const [selectedTermId, setSelectedTermId] = useState(null);
 const [examClasses, setExamClasses] = useState([]);
+const [loadingGrades, setLoadingGrades] = useState(false);
+const [loadingSigs, setLoadingSigs] = useState(false);
+const [loadingRemarks, setLoadingRemarks] = useState(false);
+
+  
+    /* Load the session (academic-year) dropdown. Default-selects the session whose
+       id matches sessionStorage.sessionID — the active session for the logged-in user. */
+    useEffect(() => {
+      (async () => {
+        try {
+          const res = await fetch(buildUrl('/api/Setting/get-sessions'), { method: 'GET', headers: termsAuthHeaders() });
+          const json = await res.json();
+          setSessions(json?.data || []);
+          const stored = termsSessionYearID();
+          if (stored) setSessionId(String(stored));
+        } catch (e) {
+          console.error('Error loading sessions:', e);
+        }
+      })();
+    }, []);
+  
+    /* Load the session start/end dates for the current branch. */
+    useEffect(() => { loadSessionDates(); }, []);
+  
+    const loadSessionDates = async () => {
+      try {
+        const res = await fetch(
+          buildUrl(`/api/getsessionsummarybybranchid?branchID=${termsBranchID()}&pageNo=1`),
+         {
+          method: 'GET',
+          headers: {
+            Accept: '*/*',
+            Authorization: `Bearer ${sessionStorage.getItem('token') || ''}`,
+          },
+        }
+        );
+        const json = await res.json();
+        const row = (json?.data || [])[0];
+        if (!row) return;
+        if (row.sessionStart) setStart(row.sessionStart.slice(0, 10));
+        if (row.sessionEnd)   setEnd(row.sessionEnd.slice(0, 10));
+      } catch (e) {
+        console.error('Error loading session dates:', e);
+      }
+    };
+  
+  const getSessionData = async () => {
+    try {
+      const branchID = sessionStorage.getItem("branchID");
+      const empID = sessionStorage.getItem("employee_ID");
+  
+      const res = await fetch(
+        buildUrl(`api/Setting/get-branch-session/${branchID}`),
+        {
+          method: "GET",
+          headers: {
+            Accept: "*/*",
+          },
+        }
+      );
+  
+      const json = await res.json();
+      sessionStorage.setItem('sessionID', json.data[0].SessionID)
+      notifySessionChange();
+    } catch (error) {
+      console.error("Error loading classes:", error);
+    }
+  };
+
+    /* Switch the active session: persist it and reload the terms scoped to it. */
+    const changeSession = id => {
+      setSessionId(id);
+      /* Store the user-switched session under changeSessionId (takes priority in
+         termsSessionYearID) and broadcast so all loaders re-run. */
+      sessionStorage.setItem('changeSessionId', id);
+      notifySessionChange();
+    };
+  
+    /* Load terms from the backend on mount, replacing any seed/mock data. */
+    useEffect(() => { getTerms(); }, []);
+  
+    /* Re-run the term/session calls whenever a session key changes (same-tab event)
+       or another tab edits sessionStorage. */
+    useEffect(() => {
+      const reload = () => { getTerms(); loadSessionDates(); };
+      window.addEventListener(SESSION_CHANGE_EVENT, reload);
+      window.addEventListener('storage', reload);
+      return () => {
+        window.removeEventListener(SESSION_CHANGE_EVENT, reload);
+        window.removeEventListener('storage', reload);
+      };
+    }, []);
+    const termsBranchID      = () => Number(sessionStorage.getItem('branchID')) || 0;
+/* Prefer the user-switched session (changeSessionId); fall back to the session
+   set at login (SessionID / sessionID). Sent as sessionYearID on term calls. */
+const termsSessionYearID = () =>
+  sessionStorage.getItem('changeSessionId')
+  || sessionStorage.getItem('SessionID')
+  || sessionStorage.getItem('sessionID')
+  || '';
+
+/* sessionStorage writes don't fire the native 'storage' event in the same tab,
+   so we broadcast our own event after changing a session key. Loaders listen for
+   it (and the native cross-tab 'storage' event) to re-run their term/calendar calls. */
+const SESSION_CHANGE_EVENT = 'sm-session-change';
+const notifySessionChange = () => {
+  try { window.dispatchEvent(new Event(SESSION_CHANGE_EVENT)); } catch (e) { /* SSR/no-window */ }
+};
+
+
+/* Auth headers — attach the JWT from sessionStorage.token as a bearer token. */
+const termsAuthHeaders = (extra = {}) => ({
+  Accept: '*/*',
+  Authorization: `bearer ${sessionStorage.getItem('token') || ''}`,
+  ...extra,
+});
+  const [sessions,  setSessions]  = useState([]);
+  const [sessionId, setSessionId] = useState(() => termsSessionYearID());
+  const [start,  setStart]  = useState('2026-01-01');
+  const [end,    setEnd]    = useState('2026-12-31');
+   const loginSessionId = sessionStorage.getItem('SessionID') || sessionStorage.getItem('sessionID') || '';
+    const isOtherSession = !!sessionId && !!loginSessionId && String(sessionId) !== String(loginSessionId);
+async function getTerms() {
+  try {
+    const token = sessionStorage.getItem('token');
+    const branchID = Number(sessionStorage.getItem('branchID'));
+
+    const response = await fetch(buildUrl('/api/termscrud'), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`
+      },
+      body: JSON.stringify({
+        id: 0,
+        branchID,
+        term: '',
+        sessionYearID: termsSessionYearID(),
+        action: 'get'
+      })
+    });
+
+    const data = await response.json();
+
+    // FIX: Ensure data is an array before setting state
+    if (Array.isArray(data)) {
+      setTerms(data);
+    } else if (data && Array.isArray(data.data)) {
+      // If API returns { data: [...] }
+      setTerms(data.data);
+    } else if (data && data.length !== undefined) {
+      // If data is array-like
+      setTerms(Array.from(data));
+    } else {
+      // Fallback to empty array
+      console.warn('Unexpected terms data format:', data);
+      setTerms([]);
+    }
+  } catch (error) {
+    console.log('Could not load terms', error);
+    setTerms([]); // Set empty array on error
+  }
+} 
+
+  
+// Update fetchGradeSetup function
+async function fetchGradeSetup() {
+  try {
+    setLoadingGrades(true);
+    const token = sessionStorage.getItem('token');
+    const branchID = sessionStorage.getItem('branchID');
+
+    const response = await fetch(buildUrl('/api/gradingcrud'), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json'
+      },
+      body: JSON.stringify({
+        id: 0,
+        branchID: branchID || "1",
+        percentage: "",
+        grade: "",
+        remarks: "",
+        percentageNo: "",
+        action: "get"
+      })
+    });
+
+    const data = await response.json();
+    console.log("Grade Setup API Response:", data);
+    
+    // Transform API response to match the expected format
+    // API returns: { id, branchID, percentage: "≥90", grade: "A+", remarks: "good" }
+    const transformedGrades = (data || []).map(item => {
+      // Extract the condition and percentage value from "≥90" format
+      let cond = 'gte';
+      let pct = '';
+      
+      if (item.percentage) {
+        if (item.percentage.includes('≥')) {
+          cond = 'gte';
+          pct = item.percentage.replace('≥', '').trim();
+        } else if (item.percentage.includes('>')) {
+          cond = 'gt';
+          pct = item.percentage.replace('>', '').trim();
+        } else if (item.percentage.includes('≤')) {
+          cond = 'lte';
+          pct = item.percentage.replace('≤', '').trim();
+        } else if (item.percentage.includes('<')) {
+          cond = 'lt';
+          pct = item.percentage.replace('<', '').trim();
+        } else if (item.percentage.includes('=')) {
+          cond = 'eq';
+          pct = item.percentage.replace('=', '').trim();
+        } else {
+          pct = item.percentage;
+        }
+      }
+      
+      return {
+        id: item.id,
+        grade: item.grade || '',
+        cond: cond,
+        pct: pct,
+        comment: item.remarks || ''
+      };
+    });
+    
+    setRsGrades(transformedGrades);
+    return transformedGrades;
+  } catch (error) {
+    console.log("Could not load grade setup", error);
+    toast('Could not load grade setup', 'error');
+    return [];
+  } finally {
+    setLoadingGrades(false);
+  }
+}
+
+// Update fetchSignatureSetup function
+async function fetchSignatureSetup() {
+  try {
+    setLoadingSigs(true);
+    const token = sessionStorage.getItem('token');
+    const branchID = sessionStorage.getItem('branchID');
+
+    const response = await fetch(buildUrl('/api/gradinguploadercrud'), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json'
+      },
+      body: JSON.stringify({
+        id: 0,
+        branchID: branchID || "1",
+        name: "",
+        designation: "",
+        signature: "",
+        action: "get"
+      })
+    });
+
+    const data = await response.json();
+    console.log("Signature Setup API Response:", data);
+    
+    // Transform API response to match the expected format
+    // API returns: { id, branchID, name: "Sawaira", designation: "principle", signature: "sawairaG" }
+    const transformedSigs = (data || []).map(item => ({
+      id: item.id,
+      name: item.name || '',
+      desig: item.designation || '',
+      img: item.signature || ''  // signature field contains the name/signature text
+    }));
+    
+    setRsSigs(transformedSigs);
+    return transformedSigs;
+  } catch (error) {
+    console.log("Could not load signature setup", error);
+    toast('Could not load signature setup', 'error');
+    return [];
+  } finally {
+    setLoadingSigs(false);
+  }
+}
+
+// Update fetchRemarksSetup function
+async function fetchRemarksSetup() {
+  try {
+    setLoadingRemarks(true);
+    const token = sessionStorage.getItem('token');
+    const branchID = sessionStorage.getItem('branchID');
+
+    const response = await fetch(buildUrl('/api/overallgradingcrud'), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json'
+      },
+      body: JSON.stringify({
+        id: 0,
+        branchID: branchID || "1",
+        percentage: "",
+        finalRemarks: "",
+        action: "get"
+      })
+    });
+
+    const data = await response.json();
+    console.log("Remarks Setup API Response:", data);
+    
+    // Transform API response to match the expected format
+    // API returns: { id, branchID, percentage: "≥ 90", finalRemarks: "Outstanding" }
+    const transformedRemarks = (data || []).map(item => {
+      // Extract the condition and percentage value from "≥ 90" format
+      let cond = 'gte';
+      let pct = '';
+      
+      if (item.percentage) {
+        if (item.percentage.includes('≥')) {
+          cond = 'gte';
+          pct = item.percentage.replace('≥', '').trim();
+        } else if (item.percentage.includes('>')) {
+          cond = 'gt';
+          pct = item.percentage.replace('>', '').trim();
+        } else if (item.percentage.includes('≤')) {
+          cond = 'lte';
+          pct = item.percentage.replace('≤', '').trim();
+        } else if (item.percentage.includes('<')) {
+          cond = 'lt';
+          pct = item.percentage.replace('<', '').trim();
+        } else if (item.percentage.includes('=')) {
+          cond = 'eq';
+          pct = item.percentage.replace('=', '').trim();
+        } else {
+          pct = item.percentage;
+        }
+      }
+      
+      return {
+        id: item.id,
+        cond: cond,
+        pct: pct,
+        text: item.finalRemarks || ''
+      };
+    });
+    
+    setRsRemarks(transformedRemarks);
+    return transformedRemarks;
+  } catch (error) {
+    console.log("Could not load remarks setup", error);
+    toast('Could not load remarks setup', 'error');
+    return [];
+  } finally {
+    setLoadingRemarks(false);
+  }
+}
+
+// Update the useEffect that loads result setup when rsTab changes
+useEffect(() => {
+  if (rsTab === 'resultsetup' && rsL2 === 'setup') {
+    // Load all three APIs when Result Setup tab is active
+    fetchGradeSetup();
+    fetchSignatureSetup();
+    fetchRemarksSetup();
+  }
+}, [rsTab, rsL2]);
+
+// Also load when component mounts for the first time if Result Setup is active
+useEffect(() => {
+  if (rsTab === 'resultsetup' && rsL2 === 'setup') {
+    fetchGradeSetup();
+    fetchSignatureSetup();
+    fetchRemarksSetup();
+  }
+}, []);
 const openAdd = () => {
   setEditing({ name: '', classes: [], from: '', to: '', termID: selectedTermId });
 };
@@ -517,6 +896,7 @@ async function getExamClasses(examId, termId) {
     setDsOpenKey(null);
   };
  // For Date Sheet
+// Replace your existing dsPickExam function with this one
 const dsPickExam = async (id) => {
   setDsExamId(id);
   setDsOpenKey(null);
@@ -524,14 +904,36 @@ const dsPickExam = async (id) => {
   
   // Find the selected exam to get its selectExam ID and termID
   const selectedExam = filtered.find(ex => ex.id === id);
-  console.log("Selected Exam:", selectedExam); // Debug log
+  console.log("Selected Exam:", selectedExam);
   
   if (selectedExam) {
-    // Make sure we're passing the correct selectExam value
     const selectExamId = selectedExam.selectExam;
     const termID = selectedExam.termID;
     console.log("Fetching classes for selectExam:", selectExamId, "termID:", termID);
-    await getExamClasses(selectExamId, termID);
+    
+    // First, get the classes for this exam
+    const classes = await getExamClasses(selectExamId, termID);
+    setExamClasses(classes);
+    
+    // Then, load date sheet data for ALL classes at once
+    const dateSheetsMap = {};
+    
+    for (const cls of classes) {
+      const key = `cls_${id}_${cls.sectionID}_${classes.indexOf(cls)}`;
+      
+      // Fetch date sheet data for this class
+      const rows = await getDateSheetData(cls.classID, cls.sectionID, id, termID);
+      
+      console.log(`Loaded ${rows.length} subjects for class ${cls.gradeName} - ${cls.sectionName}`);
+      
+      dateSheetsMap[key] = rows;
+    }
+    
+    // Update date sheets state with all loaded data
+    setDateSheets(prev => ({
+      ...prev,
+      [id]: { ...(prev[id] || {}), ...dateSheetsMap },
+    }));
   }
 };
 const sylPickExam = async (id) => {
@@ -541,62 +943,448 @@ const sylPickExam = async (id) => {
   
   // Find the selected exam to get its selectExam ID and termID
   const selectedExam = filtered.find(ex => ex.id === id);
-  console.log("Selected Exam:", selectedExam); // Debug log
+  console.log("Selected Exam:", selectedExam);
   
   if (selectedExam) {
-    // Make sure we're passing the correct selectExam value
     const selectExamId = selectedExam.selectExam;
     const termID = selectedExam.termID;
     console.log("Fetching classes for selectExam:", selectExamId, "termID:", termID);
-    await getExamClasses(selectExamId, termID);
+    
+    // First, get the classes for this exam
+    const classes = await getExamClasses(selectExamId, termID);
+    setExamClasses(classes);
+    
+    // Load syllabus data for ALL classes at once (in parallel)
+    if (classes && classes.length > 0) {
+      // Create an array of promises to load syllabus for all classes
+      const loadPromises = classes.map(async (cls, index) => {
+        const key = `scls_${id}_${cls.sectionID}_${index}`;
+        
+        // Fetch syllabus for this class
+        const rows = await getExamSyllabusByClassAndTerms(
+          cls.classID,
+          cls.sectionID,
+          selectExamId,
+          termID,
+          1
+        );
+        
+        // Map API rows -> { subject, content, updatedAt } shape
+        const mapped = (rows || []).map(r => ({
+          subject: r.subjectDisplayName || '',
+          content: r.subjectDetails || '',
+          updatedAt: r.updatedAt || r.UpdatedOn || '—',
+        }));
+        
+        return { key, mapped };
+      });
+      
+      // Wait for all promises to complete
+      const results = await Promise.all(loadPromises);
+      
+      // Update syllabus data state with all loaded data
+      const syllabusMap = {};
+      results.forEach(({ key, mapped }) => {
+        syllabusMap[key] = mapped;
+      });
+      
+      setSyllabusData(prev => ({
+        ...prev,
+        [id]: { ...(prev[id] || {}), ...syllabusMap },
+      }));
+      
+      console.log(`Loaded syllabus for ${classes.length} classes`);
+    }
   }
 };
-  const dsOpenEdit = (classKey, className) => {
-    const existing = dateSheets[dsExamId]?.[classKey] || [];
-    const rows = existing.length ? existing.map(r => ({ ...r })) : [{ subject:'', date:'', timeFrom:'', timeTo:'' }];
-    setDsEditing({ examId: dsExamId, classKey, className, rows });
-  };
-  const dsSaveEdit = payload => {
-    const cleaned = payload.rows
-      .filter(r => r.subject && r.subject.trim())
-      .map(r => ({ ...r, subject: r.subject.trim() }));
-    if (!cleaned.length) { toast('Please add at least one subject', 'warning'); return; }
+async function getDateSheetData(classID, sectionID, examId, termId) {
+  try {
+    const branchID = sessionStorage.getItem('branchID');
+    const empID = sessionStorage.getItem('employee_ID');
+    const token = sessionStorage.getItem('token');
+    
+    // Find the selected exam to get the selectExam value
+    const selectedExam = filtered.find(ex => ex.id === examId);
+    const selectExamValue = selectedExam ? selectedExam.selectExam : examId;
+    
+    console.log("Fetching date sheet with:", {
+      branchID,
+      classID,
+      termID: termId,
+      ExamID: selectExamValue,  // ← Use selectExam value (27) instead of examId (38)
+      sectionID,
+      empID
+    });
+
+    const params = new URLSearchParams({
+      branchID: String(branchID),
+      classID: String(classID),
+      termID: String(termId),
+      ExamID: String(selectExamValue),  // ← This is the key fix
+      sectionID: String(sectionID),
+      empID: String(empID)
+    });
+
+    const response = await fetch(
+      buildUrl(`/api/getdatesheetbybranchclassidtermid?${params.toString()}`),
+      {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/json"
+        }
+      }
+    );
+const data = await response.json();
+console.log("Date Sheet API Response:", data);
+
+// API returns a plain array (or sometimes {success,data}) — handle both
+const rows = Array.isArray(data) ? data : (data?.data || []);
+
+if (rows.length) {
+  console.log("Transformed Date Sheet Rows:", rows); // Debug log 
+  const transformedRows = rows.map(item => ({
+        id: item.id,
+    subject: item.subjectName || item.subject || '',
+    date: item.date ? new Date(item.date).toISOString().split('T')[0] : '',
+    timeFrom: item.timeFrom || '',
+    timeTo: item.timeTo || '',
+  }));
+  return transformedRows;
+}
+
+return [];
+  } catch (error) {
+    console.log("Could not load date sheet data", error);
+    return [];
+  }
+}
+const dsOpenEdit = async (classKey, className, classID, sectionID) => {
+  // Fetch existing date sheet data from API
+  const existingRows = await getDateSheetData(classID, sectionID, dsExamId, selectedTermId);
+  
+  // Use fetched data if available, otherwise use local data or create empty row
+  const rows = existingRows.length 
+    ? existingRows.map(r => ({ ...r })) 
+    : (dateSheets[dsExamId]?.[classKey] || [{ subject: '', date: '', timeFrom: '', timeTo: '' }]);
+  
+  // Fetch subjects for this class for the dropdown
+  const fetchedSubjects = await getSyllabusSubjects(classID, sectionID);
+  
+  // Transform subjects to the format needed for the datalist
+  const subjectList = fetchedSubjects.map(s => s.subjectName);
+    const selectedExam = filtered.find(ex => ex.id === dsExamId);
+  const selectExamValue = selectedExam ? selectedExam.selectExam : dsExamId;
+  
+  setDsEditing({ 
+    examId: selectExamValue, 
+    classKey, 
+    className, 
+    rows, 
+    termID: selectedTermId  ,
+    subjects: subjectList,
+    classID: classID,
+    sectionID: sectionID
+  });
+};
+
+const dsSaveEdit = async (payload) => {
+  const cleaned = payload.rows
+    .filter(r => r.subject && r.subject.trim())
+    .map(r => ({ 
+            id: r.id,  // ← Make sure this is being passed
+      subject: r.subject.trim(),
+      date: r.date,
+      timeFrom: r.timeFrom,
+      timeTo: r.timeTo
+    }));
+  
+  if (!cleaned.length) { 
+    toast('Please add at least one subject', 'warning'); 
+    return; 
+  }
+  
+  try {
+    const token = sessionStorage.getItem('token');
+    const branchID = sessionStorage.getItem('branchID');
+    
+    // Find the selected exam to get the selectExam value
+    const selectedExam = filtered.find(ex => ex.id === payload.examId);
+    const selectExamValue = selectedExam ? selectedExam.selectExam : payload.examId;
+    
+    console.log("Saving date sheet with ExamID:", selectExamValue);
+    
+    // Prepare payload for each subject row
+    const savePromises = cleaned.map(async (row) => {
+     const requestPayload = {
+  id: row.id || 0,
+  branchID: Number(branchID),
+  classID: Number(payload.classID),
+  sectionID: Number(payload.sectionID),
+  examID: Number(selectExamValue),
+  termID: selectedTermId,
+  subjectName: row.subject,
+  date: row.date,
+  timeFrom: row.timeFrom,
+  timeTo: row.timeTo,
+  action: row.id && row.id !== 0 ? "update" : "insert"
+};
+      
+      console.log("Saving row payload:", requestPayload);
+      
+      const response = await fetch(buildUrl('/api/datesheetcrud'), {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+          Accept: 'application/json'
+        },
+        body: JSON.stringify(requestPayload)
+      });
+      
+      return response.json();
+    });
+    
+    await Promise.all(savePromises);
+    
+    // Also update local state
     setDateSheets(prev => ({
       ...prev,
-      [payload.examId]: { ...(prev[payload.examId] || {}), [payload.classKey]: cleaned },
+      [payload.examId]: { 
+        ...(prev[payload.examId] || {}), 
+        [payload.classKey]: cleaned 
+      },
     }));
-    toast('Date sheet saved!', 'success');
+    
+    toast('Date sheet saved successfully!', 'success');
     setDsEditing(null);
-  };
-  const dsRunDelete = ({ examId, classKey }) => {
-    setDateSheets(prev => {
-      const next = { ...prev };
-      if (next[examId]) { const c = { ...next[examId] }; delete c[classKey]; next[examId] = c; }
-      return next;
+  } catch (error) {
+    console.error('Error saving date sheet:', error);
+    toast('Failed to save date sheet', 'error');
+  }
+};
+const dsRunDelete = async ({ examId, classKey, className, classID, sectionID }) => {
+  try {
+    const token = sessionStorage.getItem('token');
+    const branchID = sessionStorage.getItem('branchID');
+    
+    // Find the selected exam to get the selectExam value
+    const selectedExam = filtered.find(ex => ex.id === examId);
+    const selectExamValue = selectedExam ? selectedExam.selectExam : examId;
+    
+    console.log("Deleting date sheet with ExamID:", selectExamValue);
+    
+    // Call the delete API
+    const params = new URLSearchParams({
+      branchID: String(branchID),
+      classID: String(classID),
+      termID: String(selectedTermId),
+      ExamID: String(selectExamValue),  // ← Use selectExam value (27) instead of examId (38)
+      sectionID: String(sectionID)
     });
-    setDsConfirmDel(null);
-    toast('Date sheet deleted', 'info');
-  };
-  const dsRunCopy = () => {
-    if (!dsConfirmCopy) return;
-    const { examId, sourceKey } = dsConfirmCopy;
-    const src = dateSheets[examId]?.[sourceKey];
-    if (!src) { setDsConfirmCopy(null); return; }
-    const ex = exams.find(e => e.id === examId);
-    if (!ex) { setDsConfirmCopy(null); return; }
-    setDateSheets(prev => {
-      const next = { ...prev };
-      const exMap = { ...(next[examId] || {}) };
-      ex.classes.forEach((cls, i) => {
-        const key = `cls_${examId}_${i}`;
-        if (key !== sourceKey) exMap[key] = src.map(s => ({ ...s }));
+    
+    const response = await fetch(
+      buildUrl(`/api/deletedatesheetbyfilters?${params.toString()}`),
+      {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/json"
+        }
+      }
+    );
+    
+    const data = await response.json();
+    
+    if (response.ok) {
+      // Also update local state after successful API call
+      setDateSheets(prev => {
+        const next = { ...prev };
+        if (next[examId]) { 
+          const c = { ...next[examId] }; 
+          delete c[classKey]; 
+          next[examId] = c; 
+        }
+        return next;
       });
-      next[examId] = exMap;
-      return next;
-    });
+      
+      toast('Date sheet deleted successfully!', 'success');
+    } else {
+      toast(data.message || 'Failed to delete date sheet', 'error');
+    }
+  } catch (error) {
+    console.error('Error deleting date sheet:', error);
+    toast('Failed to delete date sheet', 'error');
+  }
+  
+  setDsConfirmDel(null);
+};
+// Update the dsRunCopy function to only copy missing subjects
+const dsRunCopy = async () => {
+  if (!dsConfirmCopy) return;
+  
+  const { examId, sourceKey } = dsConfirmCopy;
+  const sourceRows = dateSheets[examId]?.[sourceKey];
+  
+  if (!sourceRows || sourceRows.length === 0) { 
     setDsConfirmCopy(null);
-    toast('Date sheet copied to all classes!', 'success');
-  };
+    toast('No source date sheet to copy from', 'warning');
+    return;
+  }
+  
+  const ex = exams.find(e => e.id === examId);
+  if (!ex) { 
+    setDsConfirmCopy(null);
+    return;
+  }
+  
+  try {
+    // Show loading toast
+    toast('Copying date sheets to other classes...', 'info');
+    
+    // Process each target class
+    const copyPromises = [];
+    const results = [];
+    
+    for (let i = 0; i < examClasses.length; i++) {
+      const targetCls = examClasses[i];
+      const targetKey = `cls_${examId}_${targetCls.sectionID}_${i}`;
+      
+      // Skip the source class
+      if (targetKey === sourceKey) continue;
+      
+      // Get existing date sheet for target class
+      const existingRows = await getDateSheetData(
+        targetCls.classID, 
+        targetCls.sectionID, 
+        examId, 
+        selectedTermId
+      );
+      
+      // Create a map of existing subjects for quick lookup
+      const existingSubjectsMap = new Map();
+      existingRows.forEach(row => {
+        existingSubjectsMap.set(row.subject.toLowerCase().trim(), true);
+      });
+      
+      // Filter source rows to only include subjects that don't exist in target
+      const rowsToCopy = sourceRows.filter(sourceRow => 
+        !existingSubjectsMap.has(sourceRow.subject.toLowerCase().trim())
+      );
+      
+      if (rowsToCopy.length === 0) {
+        results.push({
+          className: `${targetCls.gradeName} - ${targetCls.sectionName}`,
+          copiedCount: 0,
+          skippedCount: sourceRows.length,
+          reason: 'All subjects already exist'
+        });
+        continue;
+      }
+      
+      // Save each missing subject to the target class
+      const savePromises = rowsToCopy.map(async (row) => {
+        const selectedExam = filtered.find(ex => ex.id === examId);
+        const selectExamValue = selectedExam ? selectedExam.selectExam : examId;
+        
+        const requestPayload = {
+          id: 0,
+          branchID: Number(sessionStorage.getItem('branchID')),
+          classID: Number(targetCls.classID),
+          sectionID: Number(targetCls.sectionID),
+          examID: Number(selectExamValue),
+          termID: selectedTermId,
+          subjectName: row.subject,
+          date: row.date,
+          timeFrom: row.timeFrom,
+          timeTo: row.timeTo,
+          action: "insert"
+        };
+        
+        const response = await fetch(buildUrl('/api/datesheetcrud'), {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${sessionStorage.getItem('token')}`,
+            'Content-Type': 'application/json',
+            Accept: 'application/json'
+          },
+          body: JSON.stringify(requestPayload)
+        });
+        
+        return response.json();
+      });
+      
+      try {
+        await Promise.all(savePromises);
+        
+        // Update local state
+        setDateSheets(prev => {
+          const next = { ...prev };
+          const examData = { ...(next[examId] || {}) };
+          const existingTargetRows = examData[targetKey] || [];
+          
+          // Merge existing rows with new rows (avoid duplicates)
+          const mergedRows = [...existingTargetRows];
+          rowsToCopy.forEach(rowToCopy => {
+            const exists = mergedRows.some(r => 
+              r.subject.toLowerCase().trim() === rowToCopy.subject.toLowerCase().trim()
+            );
+            if (!exists) {
+              mergedRows.push({ ...rowToCopy });
+            }
+          });
+          
+          examData[targetKey] = mergedRows;
+          next[examId] = examData;
+          return next;
+        });
+        
+        results.push({
+          className: `${targetCls.gradeName} - ${targetCls.sectionName}`,
+          copiedCount: rowsToCopy.length,
+          skippedCount: sourceRows.length - rowsToCopy.length,
+          reason: rowsToCopy.length === 0 ? 'All subjects exist' : 'Success'
+        });
+        
+      } catch (error) {
+        console.error(`Error copying to class ${targetCls.className}:`, error);
+        results.push({
+          className: `${targetCls.gradeName} - ${targetCls.sectionName}`,
+          copiedCount: 0,
+          skippedCount: sourceRows.length,
+          reason: 'Error occurred'
+        });
+      }
+    }
+    
+    // Show summary toast
+    const successful = results.filter(r => r.copiedCount > 0);
+    const skipped = results.filter(r => r.copiedCount === 0);
+    
+    if (successful.length > 0) {
+      toast(`Successfully copied to ${successful.length} class(es)`, 'success');
+    }
+    if (skipped.length > 0) {
+      toast(`${skipped.length} class(es) had all subjects already`, 'info');
+    }
+    
+    // Reload the current class's date sheet to reflect changes
+    if (dsExamId && examClasses.length > 0) {
+      const currentClass = examClasses.find((_, idx) => 
+        `cls_${dsExamId}_${examClasses[idx].sectionID}_${idx}` === sourceKey
+      );
+      if (currentClass) {
+        await dsLoadClassDateSheet(sourceKey, currentClass);
+      }
+    }
+    
+  } catch (error) {
+    console.error('Error in copy operation:', error);
+    toast('Error copying date sheets', 'error');
+  }
+  
+  setDsConfirmCopy(null);
+};
 
   /* ── Syllabus helpers ── */
   const sylTermExams   = exams.filter(e => e.term === sylTerm);
@@ -651,83 +1439,8 @@ const sylRunDelete = async ({ examId, classKey, classID, sectionID }) => {
   setSylConfirmDel(null);
   toast('Syllabus deleted', 'info');
 };
-  async function getSessionList() {
-    try {
-      const res  = await fetch(buildUrl('/api/Setting/get-sessions'), { headers: { Accept: '*/*' } });
-      const json = await res.json();
-      setSessionList(json.data ?? []);
-    } catch { toast('Could not load sessions', 'error'); }
-  }
-  
-async function getSesssiondata() {
-  try {
-    const branchID = sessionStorage.getItem('branchID');
 
-    const res = await fetch(
-      buildUrl(`/api/Setting/get-branch-session/${branchID}`),
-      {
-        headers: { Accept: '*/*' }
-      }
-    );
 
-    const json = await res.json();
-    const d = json.data[0] ?? {};
-
-    if (d) {
-      setBranchSession(String(d.SessionID));
-
-      // SessionID ko sessionStorage mein save kar do
-      sessionStorage.setItem('SessionID', String(d.SessionID));
-
-      // Agar session name bhi chahiye
-      sessionStorage.setItem('SessionName', d.SessionName);
-    }
-  } catch (error) {
-    console.log('Could not load branch data', error);
-  }
-}
-async function getTerms() {
-  try {
-    const token = sessionStorage.getItem('token');
-    const branchID = Number(sessionStorage.getItem('branchID'));
-    const sessionYearID = sessionStorage.getItem('SessionID');
-
-    const response = await fetch(buildUrl('/api/termscrud'), {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`
-      },
-      body: JSON.stringify({
-        id: 0,
-        branchID,
-        term: '',
-        sessionYearID,
-        action: 'get'
-      })
-    });
-
-    const data = await response.json();
-
-    // FIX: Ensure data is an array before setting state
-    if (Array.isArray(data)) {
-      setTerms(data);
-    } else if (data && Array.isArray(data.data)) {
-      // If API returns { data: [...] }
-      setTerms(data.data);
-    } else if (data && data.length !== undefined) {
-      // If data is array-like
-      setTerms(Array.from(data));
-    } else {
-      // Fallback to empty array
-      console.warn('Unexpected terms data format:', data);
-      setTerms([]);
-    }
-  } catch (error) {
-    console.log('Could not load terms', error);
-    setTerms([]); // Set empty array on error
-  }
-} 
 
 const formatDate = (dateStr) => {
   if (!dateStr) return "—";
@@ -985,7 +1698,6 @@ async function getSyllabusSubjects(gradeId, sectionID) {
 
     const data = await response.json();
 
-    // Handle API response with success flag and data array
     if (data && data.success && data.data) {
       const subjectList = data.data.map(subject => ({
         subjectID: subject.subjectID,
@@ -995,8 +1707,8 @@ async function getSyllabusSubjects(gradeId, sectionID) {
         updatedAt: '—'
       }));
       setSubjects(subjectList);
+      return subjectList; // Return the subjects array
     } else if (data && Array.isArray(data)) {
-      // Fallback if API returns array directly
       const subjectList = data.map(subject => ({
         subjectID: subject.subjectID,
         subjectName: subject.subjectName,
@@ -1005,12 +1717,15 @@ async function getSyllabusSubjects(gradeId, sectionID) {
         updatedAt: '—'
       }));
       setSubjects(subjectList);
+      return subjectList; // Return the subjects array
     } else {
       setSubjects([]);
+      return [];
     }
   } catch (err) {
     console.error("Error fetching syllabus subjects:", err);
     setSubjects([]);
+    return [];
   }
 }
 async function getExamSyllabusBySubject(classID, sectionID, subjectID, selectExam, termName, pageNo = 1) {
@@ -1042,19 +1757,32 @@ async function getExamSyllabusBySubject(classID, sectionID, subjectID, selectExa
 }
 const sylLoadClassSyllabus = async (key, cls) => {
   if (!sylCurrentExam) return;
+  
+  // Check if we already have the data in state
+  const existingData = syllabusData[sylExamId]?.[key];
+  
+  if (existingData && existingData.length > 0) {
+    // Data already loaded, no need to fetch again
+    console.log('Using cached syllabus data for:', cls.gradeName);
+    return;
+  }
+  
+  // Only fetch if we don't have data (fallback)
   const rows = await getExamSyllabusByClassAndTerms(
     cls.classID,
     cls.sectionID,
     sylCurrentExam.selectExam,
-    selectedTermId ,  // term name string
+    selectedTermId,
     1
   );
-  // Map API rows -> { subject, content, updatedAt } shape used by the detail table
+  
+  // Map API rows -> { subject, content, updatedAt } shape
   const mapped = (rows || []).map(r => ({
     subject: r.subjectDisplayName || '',
     content: r.subjectDetails || '',
     updatedAt: r.updatedAt || r.UpdatedOn || '—',
   }));
+  
   setSyllabusData(prev => ({
     ...prev,
     [sylExamId]: { ...(prev[sylExamId] || {}), [key]: mapped },
@@ -1113,12 +1841,23 @@ async function deleteSyllabusByAllIds(classID, sectionID, selectExam, termName) 
     return { ok: false, data: null };
   }
 }
-
-useEffect(() => {
-  getSessionList();
-  getSesssiondata();
-  getTerms();
-}, []);
+const dsLoadClassDateSheet = async (key, cls) => {
+  // Check if we already have the data in state
+  const existingRows = dateSheets[dsExamId]?.[key];
+  
+  if (existingRows && existingRows.length > 0) {
+    // Data already loaded, no need to fetch again
+    console.log('Using cached date sheet data');
+    return;
+  }
+  
+  // Only fetch if we don't have data (fallback)
+  const rows = await getDateSheetData(cls.classID, cls.sectionID, dsExamId, selectedTermId);
+  setDateSheets(prev => ({
+    ...prev,
+    [dsExamId]: { ...(prev[dsExamId] || {}), [key]: rows },
+  }));
+};
 useEffect(() => {
   if (terms && terms.length > 0 && !selectedTermId) {
     // Select the first term by default
@@ -1426,6 +2165,7 @@ useEffect(() => {
             <div className="ds-th" style={{ textAlign: 'right' }}>Actions</div>
           </div>
           {examClasses.map((cls, i) => {
+            console.log('Rendering class row:', cls);
             const key = `cls_${dsExamId}_${cls.sectionID}_${i}`;
             const dsRows = dsExamSheets[key] || [];
             const hasDates = dsRows.length > 0;
@@ -1434,8 +2174,14 @@ useEffect(() => {
 
             return (
               <div key={key} className="ds-row-wrap">
-                <div className={`ds-row${isOpen ? ' open' : ''}`} onClick={() => setDsOpenKey(isOpen ? null : key)}>
-                  <div className="ds-td" style={{ color: 'var(--text-muted)', fontWeight: 600 }}>
+<div
+  className={`ds-row${isOpen ? ' open' : ''}`}
+  onClick={() => {
+    const next = isOpen ? null : key;
+    setDsOpenKey(next);
+    if (next) dsLoadClassDateSheet(key, cls);
+  }}
+>                  <div className="ds-td" style={{ color: 'var(--text-muted)', fontWeight: 600 }}>
                     <span style={{ color: 'var(--brand-primary)', fontSize: 10 }}>#</span>&nbsp;{i + 1}
                   </div>
                   <div className="ds-td cls-name">
@@ -1449,11 +2195,13 @@ useEffect(() => {
                       : <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>No date sheet</span>}
                   </div>
                   <div className="ds-td" onClick={e => e.stopPropagation()}>
-                    <Tooltip text={`Edit date sheet for ${className}`}>
-                      <button className="ds-edit-btn" onClick={() => dsOpenEdit(key, className)}>
-                        <i className="fa-solid fa-pen-to-square"></i> Edit
-                      </button>
-                    </Tooltip>
+                   <Tooltip text={`Edit date sheet for ${className}`}>
+  <span>
+    <button className="ds-edit-btn" onClick={() => dsOpenEdit(key, className, cls.classID, cls.sectionID)}>
+      <i className="fa-solid fa-pen-to-square"></i> Edit
+    </button>
+  </span>
+</Tooltip>
                   </div>
                   <div className="ds-td ds-actions-cell" onClick={e => e.stopPropagation()}>
                     <Tooltip text={`Download basic date sheet PDF for ${className}`}>
@@ -1461,29 +2209,52 @@ useEffect(() => {
                         <i className="fa-solid fa-file-pdf"></i> Basic PDF
                       </button>
                     </Tooltip>
-                    <Tooltip text={`Copy ${className}'s date sheet to other classes`}>
-                      <button className="ds-copy-row-btn" onClick={() => {
-                        if (!hasDates) { toast('No date sheet to copy', 'warning'); return; }
-                        setDsConfirmCopy({
-                          examId: dsExamId, sourceKey: key,
-                          count: examClasses.length - 1,
-                          examName: dsCurrentExam.name,
-                        });
-                      }}>
-                        <i className="fa-regular fa-copy"></i> Copy
-                      </button>
-                    </Tooltip>
+<Tooltip text={`Copy ${className}'s date sheet to other classes (only missing subjects)`}>
+  <button className="ds-copy-row-btn" onClick={() => {
+    if (!hasDates) { 
+      toast('No date sheet to copy', 'warning'); 
+      return; 
+    }
+    setDsConfirmCopy({
+      examId: dsExamId, 
+      sourceKey: key,
+      count: examClasses.length - 1,
+      examName: dsCurrentExam.name,
+      sourceClassName: className,
+      sourceRows: dsRows
+    });
+  }}>
+    <i className="fa-regular fa-copy"></i> Copy
+  </button>
+</Tooltip>
                   </div>
                   <div className="ds-td ds-actions-cell" style={{ justifyContent: 'flex-end' }} onClick={e => e.stopPropagation()}>
                     <Tooltip text={`Delete date sheet for ${className}`}>
-                      <button className="ds-del-btn" onClick={() => setDsConfirmDel({ examId: dsExamId, classKey: key, className: className })}>
-                        <i className="fa-solid fa-trash"></i>
-                      </button>
-                    </Tooltip>
+  <button 
+    className="ds-del-btn" 
+    onClick={() => setDsConfirmDel({ 
+      examId: dsExamId, 
+      classKey: key, 
+      className: className,
+      classID: cls.classID,    // ← Add this
+      sectionID: cls.sectionID  // ← Add this
+    })}
+  >
+    <i className="fa-solid fa-trash"></i>
+  </button>
+</Tooltip>
                     <Tooltip text={isOpen ? 'Hide date sheet details' : 'Show date sheet details'}>
-                      <button className={`ds-expand-btn${isOpen ? ' open' : ''}`} onClick={e => { e.stopPropagation(); setDsOpenKey(isOpen ? null : key); }}>
-                        <i className="fa-solid fa-chevron-down"></i>
-                      </button>
+                     <button
+  className={`ds-expand-btn${isOpen ? ' open' : ''}`}
+  onClick={e => {
+    e.stopPropagation();
+    const next = isOpen ? null : key;
+    setDsOpenKey(next);
+    if (next) dsLoadClassDateSheet(key, cls);
+  }}
+>
+  <i className="fa-solid fa-chevron-down"></i>
+</button>
                     </Tooltip>
                   </div>
                 </div>
@@ -2011,285 +2782,301 @@ useEffect(() => {
               )}
             </>
           )}
+{rsTab === 'singleassessment'   && (() => {
+  const resCurrentExam = resExamId ? filtered.find(e => e.id === resExamId) : null;
+  const resExamData    = resCurrentExam ? (resultData[resExamId] || {}) : {};
 
-          {rsTab === 'singleassessment'   && (() => {
-            const resTermExams   = exams.filter(e => e.term === resTerm);
-            const resCurrentExam = resExamId ? exams.find(e => e.id === resExamId) : null;
-            const resExamData    = resCurrentExam ? (resultData[resCurrentExam.id] || {}) : {};
+  const buildDefaultClass = () => ({
+    released: false,
+    totalMarks: { ...RES_DEFAULT_TOTALS },
+    students: freshStudents(),
+  });
 
-            const buildDefaultClass = () => ({
-              released: false,
-              totalMarks: { ...RES_DEFAULT_TOTALS },
-              students: freshStudents(),
-            });
+  const calcOverall = (cd, st) => {
+    const absSet = {};
+    (st.absentSubjects || []).forEach(s => { absSet[s] = true; });
+    const tot = st.absent
+      ? Object.values(cd.totalMarks).reduce((a, b) => a + b, 0)
+      : (rsAbsentMode === 'zero'
+          ? Object.values(cd.totalMarks).reduce((a, b) => a + b, 0)
+          : RES_SUBJECTS.reduce((a, s) => absSet[s] ? a : a + (cd.totalMarks[s] || 0), 0));
+    const obt = st.absent ? 0 : RES_SUBJECTS.reduce((a, s) => a + (absSet[s] ? 0 : (st.obtained[s] || 0)), 0);
+    const pct = tot && !st.absent ? Math.round((obt / tot) * 10000) / 100 : 0;
+    const grade = (!st.absent && obt > 0) ? rcGetGrade(obt, tot) : null;
+    return { tot, obt, pct, grade };
+  };
 
-            const calcOverall = (cd, st) => {
-              const absSet = {};
-              (st.absentSubjects || []).forEach(s => { absSet[s] = true; });
-              const tot = st.absent
-                ? Object.values(cd.totalMarks).reduce((a, b) => a + b, 0)
-                : (rsAbsentMode === 'zero'
-                    ? Object.values(cd.totalMarks).reduce((a, b) => a + b, 0)
-                    : RES_SUBJECTS.reduce((a, s) => absSet[s] ? a : a + (cd.totalMarks[s] || 0), 0));
-              const obt = st.absent ? 0 : RES_SUBJECTS.reduce((a, s) => a + (absSet[s] ? 0 : (st.obtained[s] || 0)), 0);
-              const pct = tot && !st.absent ? Math.round((obt / tot) * 10000) / 100 : 0;
-              const grade = (!st.absent && obt > 0) ? rcGetGrade(obt, tot) : null;
-              return { tot, obt, pct, grade };
-            };
+  const togglePublish = (key, className, currentlyReleased) => {
+    setResConfirmPublish({ key, className, released: currentlyReleased });
+  };
 
-            const togglePublish = (key, className, currentlyReleased) => {
-              setResConfirmPublish({ key, className, released: currentlyReleased });
-            };
+  // Single assessment ke liye exam select karne par classes API se load
+  const resPickExam = async (id) => {
+    setResExamId(id);
+    setResOpenKey(null);
+    setExamClasses([]);
+    const selectedExam = filtered.find(ex => ex.id === id);
+    if (selectedExam) {
+      const classes = await getExamClasses(selectedExam.selectExam, selectedExam.termID);
+      setExamClasses(classes);
+    }
+  };
 
-            return (
-              <>
-                {/* Term chips */}
-                <div className="exam-term-chips">
-                  {EXAM_TERMS.map(t => (
-                    <button
-                      key={t}
-                      className={`exam-term-chip${resTerm === t ? ' active' : ''}`}
-                      onClick={() => { setResTerm(t); setResExamId(null); setResOpenKey(null); }}
-                    >
-                      {t}
-                    </button>
-                  ))}
-                </div>
+  return (
+    <>
+      {/* Term chips — API se */}
+      <div className="exam-term-chips">
+        {terms.map(t => (
+          <button
+            key={t.id}
+            className={`exam-term-chip${selectedTermId === t.id ? ' active' : ''}`}
+            onClick={() => {
+              setTerm(t.term);
+              setSelectedTermId(t.id);
+              getExamsByTerm(t.id);
+              setResExamId(null);
+              setResOpenKey(null);
+              setExamClasses([]);
+            }}
+          >
+            {t.term}
+          </button>
+        ))}
+      </div>
 
-                {/* Exam buttons */}
-                {resTermExams.length > 0 && (
-                  <div style={{ marginBottom: 16 }}>
-                    <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <i className="fa-solid fa-chart-bar" style={{ color: 'var(--brand-primary)' }}></i> Select Exam
-                      <span style={{ flex: 1, height: 1, background: 'var(--border-light)' }}></span>
+      {/* Exam buttons — API se (filtered) */}
+      {filtered.length > 0 && (
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <i className="fa-solid fa-chart-bar" style={{ color: 'var(--brand-primary)' }}></i> Select Exam
+            <span style={{ flex: 1, height: 1, background: 'var(--border-light)' }}></span>
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            {filtered.map(ex => (
+              <button
+                key={ex.id}
+                className={`ds-exam-btn${resExamId === ex.id ? ' active' : ''}`}
+                onClick={() => resPickExam(ex.id)}
+              >
+                <i className="fa-solid fa-chart-bar"></i> {ex.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Classes panel — examClasses (API) se */}
+      <div>
+        {!resCurrentExam ? (
+          <div className="ds-empty" style={{ marginTop: 4 }}>
+            <i className="fa-solid fa-hand-pointer" style={{ display: 'block', fontSize: 22, marginBottom: 10, color: 'var(--border-med)' }}></i>
+            {filtered.length === 0 ? 'No exams in this term yet. Add one from Exam Setup.' : 'Select an exam above to view classes'}
+          </div>
+        ) : examClasses.length === 0 ? (
+          <div className="ds-empty">No classes assigned. Edit the exam in Exam Setup.</div>
+        ) : (
+          <div className="section-card" style={{ animation: 'fadeSlide .25s ease both', overflow: 'visible' }}>
+            <div className="res-table-head">
+              <div className="res-th">S. No.</div>
+              <div className="res-th">Class Name</div>
+              <div className="res-th">Section</div>
+              <div className="res-th">Status</div>
+              <div className="res-th">Publish</div>
+              <div className="res-th">Total Marks</div>
+              <div className="res-th" style={{ textAlign: 'right' }}>Actions</div>
+            </div>
+            {examClasses.map((cls, i) => {
+              const key    = `rcls_${resExamId}_${cls.sectionID}_${i}`;
+              const cd     = resExamData[key] || buildDefaultClass();
+              const isOpen = resOpenKey === key;
+              const isRel  = cd.released;
+              const className = `${cls.gradeName} - ${cls.sectionName}`;
+              return (
+                <div key={key} className="res-row-wrap">
+                  <div
+                    className={`res-row${isOpen ? ' open' : ''}`}
+                    onClick={() => setResOpenKey(isOpen ? null : key)}
+                  >
+                    <div className="res-td" style={{ color: 'var(--text-muted)', fontWeight: 600 }}>
+                      <span style={{ color: 'var(--brand-primary)', fontSize: 10 }}>#</span>&nbsp;{i + 1}
                     </div>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                      {resTermExams.map(ex => (
+                    <div className="res-td cls-name">
+                      <div className="ds-cls-icon"><i className="fa-solid fa-users"></i></div>
+                      <span style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: 13 }}>{className}</span>
+                    </div>
+                    <div className="res-td" style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>{cls.sectionName}</div>
+                    <div className="res-td">
+                      <span className={`res-released-badge${isRel ? ' released' : ' pending'}`}>
+                        <i className={`fa-solid ${isRel ? 'fa-circle-check' : 'fa-clock'}`}></i>
+                        {isRel ? 'Released' : 'Not Released'}
+                      </span>
+                    </div>
+                    <div className="res-td" onClick={e => e.stopPropagation()}>
+                      <Tooltip text={isRel ? 'Unpublish this class result' : 'Publish this class result'}>
                         <button
-                          key={ex.id}
-                          className={`ds-exam-btn${resExamId === ex.id ? ' active' : ''}`}
-                          onClick={() => { setResExamId(ex.id); setResOpenKey(null); }}
+                          className={`res-publish-btn${isRel ? ' released' : ''}`}
+                          onClick={e => { e.stopPropagation(); togglePublish(key, className, isRel); }}
                         >
-                          <i className="fa-solid fa-chart-bar"></i> {ex.name}
+                          <i className={`fa-solid ${isRel ? 'fa-eye-slash' : 'fa-paper-plane'}`}></i>
+                          {isRel ? 'Unpublish' : 'Publish Result'}
                         </button>
-                      ))}
+                      </Tooltip>
+                    </div>
+                    <div className="res-td" onClick={e => e.stopPropagation()}>
+                      <Tooltip text="Edit total marks for each subject">
+                        <button
+                          className="res-marks-btn"
+                          onClick={e => { e.stopPropagation(); setResTotalMarksCtx({ examId: resExamId, key, className }); }}
+                        >
+                          <i className="fa-solid fa-pen-to-square"></i> Total Marks
+                        </button>
+                      </Tooltip>
+                    </div>
+                    <div className="res-td" style={{ justifyContent: 'flex-end', gap: 5 }} onClick={e => e.stopPropagation()}>
+                      <Tooltip text="Download class result report"><button
+                        className="res-download-btn"
+                        onClick={e => { e.stopPropagation(); setResClassReportReq({ examId: resExamId, key, className }); }}
+                      >
+                        <i className="fa-solid fa-file-arrow-down"></i>
+                      </button></Tooltip>
+                      <Tooltip text="Delete class data"><button
+                        className="ds-del-btn"
+                        onClick={e => { e.stopPropagation(); setResConfirmDelete({ examId: resExamId, key, className }); }}
+                      >
+                        <i className="fa-solid fa-trash"></i>
+                      </button></Tooltip>
+                      <button
+                        className={`ds-expand-btn${isOpen ? ' open' : ''}`}
+                        onClick={e => { e.stopPropagation(); setResOpenKey(isOpen ? null : key); }}
+                      >
+                        <i className="fa-solid fa-chevron-down"></i>
+                      </button>
                     </div>
                   </div>
-                )}
 
-                {/* Classes panel */}
-                <div>
-                  {!resCurrentExam ? (
-                    <div className="ds-empty" style={{ marginTop: 4 }}>
-                      <i className="fa-solid fa-hand-pointer" style={{ display: 'block', fontSize: 22, marginBottom: 10, color: 'var(--border-med)' }}></i>
-                      {resTermExams.length === 0 ? 'No exams in this term yet. Add one from Exam Setup.' : 'Select an exam above to view classes'}
-                    </div>
-                  ) : !resCurrentExam.classes || !resCurrentExam.classes.length ? (
-                    <div className="ds-empty">No classes assigned. Edit the exam in Exam Setup.</div>
-                  ) : (
-                    <div className="section-card" style={{ animation: 'fadeSlide .25s ease both', overflow: 'visible' }}>
-                      <div className="res-table-head">
-                        <div className="res-th">S. No.</div>
-                        <div className="res-th">Class Name</div>
-                        <div className="res-th">Section</div>
-                        <div className="res-th">Status</div>
-                        <div className="res-th">Publish</div>
-                        <div className="res-th">Total Marks</div>
-                        <div className="res-th" style={{ textAlign: 'right' }}>Actions</div>
+                  {/* Expanded student table */}
+                  <div className={`res-detail${isOpen ? ' open' : ''}`}>
+                    <div className="res-detail-inner">
+                      <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 12, display: 'flex', alignItems: 'center' }}>
+                        <i className="fa-solid fa-users" style={{ color: 'var(--brand-primary)', marginRight: 5 }}></i>
+                        Student Results — {className}
+                        <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-muted)' }}>
+                          {cd.students.length} Student{cd.students.length !== 1 ? 's' : ''}
+                        </span>
                       </div>
-                      {resCurrentExam.classes.map((cls, i) => {
-                        const key    = `rcls_${resCurrentExam.id}_${i}`;
-                        const cd     = resExamData[key] || buildDefaultClass();
-                        const isOpen = resOpenKey === key;
-                        const isRel  = cd.released;
-                        return (
-                          <div key={key} className="res-row-wrap">
-                            <div
-                              className={`res-row${isOpen ? ' open' : ''}`}
-                              onClick={() => setResOpenKey(isOpen ? null : key)}
-                            >
-                              <div className="res-td" style={{ color: 'var(--text-muted)', fontWeight: 600 }}>
-                                <span style={{ color: 'var(--brand-primary)', fontSize: 10 }}>#</span>&nbsp;{i + 1}
-                              </div>
-                              <div className="res-td cls-name">
-                                <div className="ds-cls-icon"><i className="fa-solid fa-users"></i></div>
-                                <span style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: 13 }}>{cls}</span>
-                              </div>
-                              <div className="res-td" style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>A</div>
-                              <div className="res-td">
-                                <span className={`res-released-badge${isRel ? ' released' : ' pending'}`}>
-                                  <i className={`fa-solid ${isRel ? 'fa-circle-check' : 'fa-clock'}`}></i>
-                                  {isRel ? 'Released' : 'Not Released'}
-                                </span>
-                              </div>
-                              <div className="res-td" onClick={e => e.stopPropagation()}>
-                                <Tooltip text={isRel ? 'Unpublish this class result' : 'Publish this class result'}>
-                                  <button
-                                    className={`res-publish-btn${isRel ? ' released' : ''}`}
-                                    onClick={e => { e.stopPropagation(); togglePublish(key, cls, isRel); }}
-                                  >
-                                    <i className={`fa-solid ${isRel ? 'fa-eye-slash' : 'fa-paper-plane'}`}></i>
-                                    {isRel ? 'Unpublish' : 'Publish Result'}
-                                  </button>
-                                </Tooltip>
-                              </div>
-                              <div className="res-td" onClick={e => e.stopPropagation()}>
-                                <Tooltip text="Edit total marks for each subject">
-                                  <button
-                                    className="res-marks-btn"
-                                    onClick={e => { e.stopPropagation(); setResTotalMarksCtx({ examId: resCurrentExam.id, key, className: cls }); }}
-                                  >
-                                    <i className="fa-solid fa-pen-to-square"></i> Total Marks
-                                  </button>
-                                </Tooltip>
-                              </div>
-                              <div className="res-td" style={{ justifyContent: 'flex-end', gap: 5 }} onClick={e => e.stopPropagation()}>
-                                <Tooltip text="Download class result report"><button
-                                  className="res-download-btn"
-                                 
-                                  onClick={e => { e.stopPropagation(); setResClassReportReq({ examId: resCurrentExam.id, key, className: cls }); }}
-                                >
-                                  <i className="fa-solid fa-file-arrow-down"></i>
-                                </button></Tooltip>
-                                <Tooltip text="Delete class data"><button
-                                  className="ds-del-btn"
-                                 
-                                  onClick={e => { e.stopPropagation(); setResConfirmDelete({ examId: resCurrentExam.id, key, className: cls }); }}
-                                >
-                                  <i className="fa-solid fa-trash"></i>
-                                </button></Tooltip>
-                                <button
-                                  className={`ds-expand-btn${isOpen ? ' open' : ''}`}
-                                  onClick={e => { e.stopPropagation(); setResOpenKey(isOpen ? null : key); }}
-                                >
-                                  <i className="fa-solid fa-chevron-down"></i>
-                                </button>
-                              </div>
-                            </div>
+                      <div className="res-student-scroll">
+                        <table className="res-student-table">
+                          <thead>
+                            <tr>
+                              <th>#</th>
+                              <th>Student Name</th>
+                              <th>Father Name</th>
+                              <th style={{ textAlign: 'center' }}>Subjects</th>
+                              <th>Progress</th>
+                              <th>Status</th>
+                              <th style={{ textAlign: 'center' }}>Grade</th>
+                              <th>Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {cd.students.map((st, si) => {
+                              const totalSubj = RES_SUBJECTS.length;
+                              const isAbsent  = st.absent === true;
+                              const entered   = isAbsent ? 0 : RES_SUBJECTS.filter(s => st.obtained[s] > 0).length;
+                              const remaining = totalSubj - entered;
+                              const { grade } = calcOverall(cd, st);
 
-                            {/* Expanded student table */}
-                            <div className={`res-detail${isOpen ? ' open' : ''}`}>
-                              <div className="res-detail-inner">
-                                <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 12, display: 'flex', alignItems: 'center' }}>
-                                  <i className="fa-solid fa-users" style={{ color: 'var(--brand-primary)', marginRight: 5 }}></i>
-                                  Student Results — {cls} · Section A
-                                  <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-muted)' }}>
-                                    {cd.students.length} Student{cd.students.length !== 1 ? 's' : ''}
-                                  </span>
-                                </div>
-                                <div className="res-student-scroll">
-                                  <table className="res-student-table">
-                                    <thead>
-                                      <tr>
-                                        <th>#</th>
-                                        <th>Student Name</th>
-                                        <th>Father Name</th>
-                                        <th style={{ textAlign: 'center' }}>Subjects</th>
-                                        <th>Progress</th>
-                                        <th>Status</th>
-                                        <th style={{ textAlign: 'center' }}>Grade</th>
-                                        <th>Actions</th>
-                                      </tr>
-                                    </thead>
-                                    <tbody>
-                                      {cd.students.map((st, si) => {
-                                        const totalSubj = RES_SUBJECTS.length;
-                                        const isAbsent  = st.absent === true;
-                                        const entered   = isAbsent ? 0 : RES_SUBJECTS.filter(s => st.obtained[s] > 0).length;
-                                        const remaining = totalSubj - entered;
-                                        const { grade } = calcOverall(cd, st);
+                              let stStatus, stStatusCls, stStatusIcon;
+                              if (isAbsent) {
+                                stStatus = 'Absent'; stStatusCls = 'absent'; stStatusIcon = 'fa-user-xmark';
+                              } else if (entered === totalSubj) {
+                                stStatus = 'Complete'; stStatusCls = 'complete'; stStatusIcon = 'fa-circle-check';
+                              } else {
+                                stStatus = 'Incomplete'; stStatusCls = 'incomplete'; stStatusIcon = 'fa-circle-half-stroke';
+                              }
+                              const progW = Math.round((entered / totalSubj) * 100);
+                              const progColor = entered === totalSubj ? '#16A34A' : entered > 0 ? '#1E40AF' : '#E2E8F0';
+                              const gradeBg = grade ? (RS_GRADE_COLORS[grade.grade] || '#1E3A8A') : null;
 
-                                        let stStatus, stStatusCls, stStatusIcon;
-                                        if (isAbsent) {
-                                          stStatus = 'Absent'; stStatusCls = 'absent'; stStatusIcon = 'fa-user-xmark';
-                                        } else if (entered === totalSubj) {
-                                          stStatus = 'Complete'; stStatusCls = 'complete'; stStatusIcon = 'fa-circle-check';
-                                        } else {
-                                          stStatus = 'Incomplete'; stStatusCls = 'incomplete'; stStatusIcon = 'fa-circle-half-stroke';
-                                        }
-                                        const progW = Math.round((entered / totalSubj) * 100);
-                                        const progColor = entered === totalSubj ? '#16A34A' : entered > 0 ? '#1E40AF' : '#E2E8F0';
-                                        const gradeBg = grade ? (RS_GRADE_COLORS[grade.grade] || '#1E3A8A') : null;
-
-                                        return (
-                                          <tr key={st.id} style={isAbsent ? { opacity: .7 } : undefined}>
-                                            <td style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 700 }}>{si + 1}</td>
-                                            <td style={{ minWidth: 120 }}>
-                                              <div style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: 12.5 }}>{st.name}</div>
-                                              <div style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>{st.rollNo}</div>
-                                            </td>
-                                            <td style={{ fontSize: 12, color: 'var(--text-secondary)', minWidth: 100 }}>{st.father}</td>
-                                            <td style={{ textAlign: 'center', fontSize: 12, fontWeight: 700 }}>{totalSubj}</td>
-                                            <td style={{ minWidth: 110 }}>
-                                              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                                <div style={{ flex: 1, height: 6, background: '#E2E8F0', borderRadius: 3, overflow: 'hidden' }}>
-                                                  <div style={{ height: '100%', width: `${progW}%`, background: progColor, borderRadius: 3, transition: 'width .3s' }} />
-                                                </div>
-                                                <span style={{ fontSize: 11, fontWeight: 700, color: progColor, flexShrink: 0 }}>{entered}/{totalSubj}</span>
-                                              </div>
-                                              <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
-                                                {remaining > 0
-                                                  ? <span style={{ color: '#D97706' }}>{remaining} remaining</span>
-                                                  : <span style={{ color: '#16A34A' }}>All done</span>}
-                                              </div>
-                                            </td>
-                                            <td>
-                                              <span className={`res-st-badge ${stStatusCls}`}>
-                                                <i className={`fa-solid ${stStatusIcon}`}></i> {stStatus}
-                                              </span>
-                                            </td>
-                                            <td style={{ textAlign: 'center' }}>
-                                              {grade && !isAbsent ? (
-                                                <span className="res-grade-chip" style={{ background: gradeBg }}>{grade.grade}</span>
-                                              ) : isAbsent ? (
-                                                <span style={{ fontSize: 11, color: '#D97706' }}>Absent</span>
-                                              ) : '—'}
-                                            </td>
-                                            <td>
-                                              <div style={{ display: 'flex', gap: 4, flexWrap: 'nowrap' }}>
-                                                <Tooltip text="Update marks for this student">
-                                                  <button
-                                                    className="res-action-btn"
-                                                    onClick={() => setResUpdateCtx({ examId: resCurrentExam.id, key, studentId: st.id })}
-                                                  >
-                                                    <i className="fa-solid fa-pen-to-square"></i> Marks
-                                                  </button>
-                                                </Tooltip>
-                                                <Tooltip text="Add or edit remarks for this student">
-                                                  <button
-                                                    className="res-action-btn remarks"
-                                                    onClick={() => setResRemarksCtx({ examId: resCurrentExam.id, key, studentId: st.id })}
-                                                  >
-                                                    <i className="fa-solid fa-comment-dots"></i> Remarks
-                                                  </button>
-                                                </Tooltip>
-                                                <Tooltip text="View this student's result card">
-                                                  <button
-                                                    className="res-action-btn view"
-                                                    onClick={() => setResCardCtx({ examId: resCurrentExam.id, key, studentId: st.id })}
-                                                  >
-                                                    <i className="fa-solid fa-eye"></i> Card
-                                                  </button>
-                                                </Tooltip>
-                                              </div>
-                                            </td>
-                                          </tr>
-                                        );
-                                      })}
-                                    </tbody>
-                                  </table>
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })}
+                              return (
+                                <tr key={st.id} style={isAbsent ? { opacity: .7 } : undefined}>
+                                  <td style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 700 }}>{si + 1}</td>
+                                  <td style={{ minWidth: 120 }}>
+                                    <div style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: 12.5 }}>{st.name}</div>
+                                    <div style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>{st.rollNo}</div>
+                                  </td>
+                                  <td style={{ fontSize: 12, color: 'var(--text-secondary)', minWidth: 100 }}>{st.father}</td>
+                                  <td style={{ textAlign: 'center', fontSize: 12, fontWeight: 700 }}>{totalSubj}</td>
+                                  <td style={{ minWidth: 110 }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                      <div style={{ flex: 1, height: 6, background: '#E2E8F0', borderRadius: 3, overflow: 'hidden' }}>
+                                        <div style={{ height: '100%', width: `${progW}%`, background: progColor, borderRadius: 3, transition: 'width .3s' }} />
+                                      </div>
+                                      <span style={{ fontSize: 11, fontWeight: 700, color: progColor, flexShrink: 0 }}>{entered}/{totalSubj}</span>
+                                    </div>
+                                    <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
+                                      {remaining > 0
+                                        ? <span style={{ color: '#D97706' }}>{remaining} remaining</span>
+                                        : <span style={{ color: '#16A34A' }}>All done</span>}
+                                    </div>
+                                  </td>
+                                  <td>
+                                    <span className={`res-st-badge ${stStatusCls}`}>
+                                      <i className={`fa-solid ${stStatusIcon}`}></i> {stStatus}
+                                    </span>
+                                  </td>
+                                  <td style={{ textAlign: 'center' }}>
+                                    {grade && !isAbsent ? (
+                                      <span className="res-grade-chip" style={{ background: gradeBg }}>{grade.grade}</span>
+                                    ) : isAbsent ? (
+                                      <span style={{ fontSize: 11, color: '#D97706' }}>Absent</span>
+                                    ) : '—'}
+                                  </td>
+                                  <td>
+                                    <div style={{ display: 'flex', gap: 4, flexWrap: 'nowrap' }}>
+                                      <Tooltip text="Update marks for this student">
+                                        <button
+                                          className="res-action-btn"
+                                          onClick={() => setResUpdateCtx({ examId: resExamId, key, studentId: st.id })}
+                                        >
+                                          <i className="fa-solid fa-pen-to-square"></i> Marks
+                                        </button>
+                                      </Tooltip>
+                                      <Tooltip text="Add or edit remarks for this student">
+                                        <button
+                                          className="res-action-btn remarks"
+                                          onClick={() => setResRemarksCtx({ examId: resExamId, key, studentId: st.id })}
+                                        >
+                                          <i className="fa-solid fa-comment-dots"></i> Remarks
+                                        </button>
+                                      </Tooltip>
+                                      <Tooltip text="View this student's result card">
+<button
+  className="res-action-btn view"
+  onClick={() => setResCardCtx({ examId: resExamId, key, studentId: st.id, className })}
+>
+  <i className="fa-solid fa-eye"></i> Card
+</button>
+                                      </Tooltip>
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
                     </div>
-                  )}
+                  </div>
                 </div>
-              </>
-            );
-          })()}
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </>
+  );
+})()}
           {rsTab === 'combinedassessment' && (() => {
             // Filter
             const filtered = cbrFilterClass
@@ -3106,70 +3893,84 @@ useEffect(() => {
       )}
 
       {/* ── Date Sheet — delete confirm (Academics-style) ── */}
-      {dsConfirmDel && (
-        <div className="confirm-overlay open" onClick={e => { if (e.target === e.currentTarget) setDsConfirmDel(null); }}>
-          <div className="confirm-dialog">
-            <div className="confirm-glow" style={{ background: 'linear-gradient(90deg,#EF4444,#DC2626,#EF4444)' }} />
-            <div className="confirm-hero">
-              <div className="confirm-ring">
-                <div className="confirm-icon-wrap" style={{ background: 'rgba(220,38,38,.1)', color: '#DC2626' }}>
-                  <i className="fa-solid fa-trash"></i>
-                </div>
-              </div>
-            </div>
-            <div className="confirm-body">
-              <div className="confirm-title">Delete Date Sheet</div>
-              <div
-                className="confirm-msg"
-                dangerouslySetInnerHTML={{
-                  __html: `Are you sure you want to delete the date sheet for <strong>${dsConfirmDel.className}</strong>?`,
-                }}
-              />
-              <div className="confirm-hint">
-                <i className="fa-solid fa-triangle-exclamation"></i>
-                <span>This action cannot be undone. All subject schedule data will be lost.</span>
-              </div>
-            </div>
-            <div className="confirm-footer">
-              <Tooltip text="Cancel and close"><button className="confirm-btn confirm-btn--cancel" onClick={() => setDsConfirmDel(null)}>Cancel</button></Tooltip>
-              <Tooltip text="Yes, Delete (confirm)"><button className="confirm-btn confirm-btn--confirm" onClick={() => dsRunDelete(dsConfirmDel)}>Yes, Delete</button></Tooltip>
-            </div>
+    {dsConfirmDel && (
+  <div className="confirm-overlay open" onClick={e => { if (e.target === e.currentTarget) setDsConfirmDel(null); }}>
+    <div className="confirm-dialog">
+      <div className="confirm-glow" style={{ background: 'linear-gradient(90deg,#EF4444,#DC2626,#EF4444)' }} />
+      <div className="confirm-hero">
+        <div className="confirm-ring">
+          <div className="confirm-icon-wrap" style={{ background: 'rgba(220,38,38,.1)', color: '#DC2626' }}>
+            <i className="fa-solid fa-trash"></i>
           </div>
         </div>
-      )}
+      </div>
+      <div className="confirm-body">
+        <div className="confirm-title">Delete Date Sheet</div>
+        <div
+          className="confirm-msg"
+          dangerouslySetInnerHTML={{
+            __html: `Are you sure you want to delete the date sheet for <strong>${dsConfirmDel.className}</strong>?`,
+          }}
+        />
+        <div className="confirm-hint">
+          <i className="fa-solid fa-triangle-exclamation"></i>
+          <span>This action cannot be undone. All subject schedule data will be lost.</span>
+        </div>
+      </div>
+      <div className="confirm-footer">
+        <Tooltip text="Cancel and close">
+          <button className="confirm-btn confirm-btn--cancel" onClick={() => setDsConfirmDel(null)}>Cancel</button>
+        </Tooltip>
+        <Tooltip text="Yes, Delete (confirm)">
+          <button 
+            className="confirm-btn confirm-btn--confirm" 
+            onClick={() => dsRunDelete(dsConfirmDel)}
+          >
+            Yes, Delete
+          </button>
+        </Tooltip>
+      </div>
+    </div>
+  </div>
+)}
 
       {/* ── Date Sheet — copy confirm (primary blue) ── */}
-      {dsConfirmCopy && (
-        <div className="confirm-overlay open" onClick={e => { if (e.target === e.currentTarget) setDsConfirmCopy(null); }}>
-          <div className="confirm-dialog">
-            <div className="confirm-glow" style={{ background: 'linear-gradient(90deg,#1E3A8A,#1E40AF,#1E3A8A)' }} />
-            <div className="confirm-hero" style={{ background: 'linear-gradient(180deg,rgba(30,58,138,.04),transparent)' }}>
-              <div className="confirm-ring">
-                <div className="confirm-icon-wrap" style={{ background: 'rgba(30,58,138,.1)', color: '#1E40AF', boxShadow: '0 8px 24px rgba(30,58,138,.2)' }}>
-                  <i className="fa-solid fa-copy"></i>
-                </div>
-              </div>
-            </div>
-            <div className="confirm-body">
-              <div className="confirm-title">Copy to All Classes</div>
-              <div
-                className="confirm-msg"
-                dangerouslySetInnerHTML={{
-                  __html: `Are you sure you want to copy this date sheet to all <strong>${dsConfirmCopy.count} other class${dsConfirmCopy.count !== 1 ? 'es' : ''}</strong> in <strong>${dsConfirmCopy.examName}</strong>?`,
-                }}
-              />
-              <div className="confirm-hint" style={{ background: 'rgba(30,58,138,.06)', borderColor: 'rgba(30,58,138,.18)', color: '#1E3A8A' }}>
-                <i className="fa-solid fa-circle-info" style={{ color: '#1E40AF' }}></i>
-                <span>This will overwrite any existing date sheets in the other classes.</span>
-              </div>
-            </div>
-            <div className="confirm-footer">
-              <Tooltip text="Cancel and close"><button className="confirm-btn confirm-btn--cancel" onClick={() => setDsConfirmCopy(null)}>Cancel</button></Tooltip>
-              <Tooltip text="Confirm copy"><button className="confirm-btn confirm-btn--confirm primary-style" onClick={dsRunCopy}>Yes, Copy</button></Tooltip>
-            </div>
+{dsConfirmCopy && (
+  <div className="confirm-overlay open" onClick={e => { if (e.target === e.currentTarget) setDsConfirmCopy(null); }}>
+    <div className="confirm-dialog">
+      <div className="confirm-glow" style={{ background: 'linear-gradient(90deg,#1E3A8A,#1E40AF,#1E3A8A)' }} />
+      <div className="confirm-hero" style={{ background: 'linear-gradient(180deg,rgba(30,58,138,.04),transparent)' }}>
+        <div className="confirm-ring">
+          <div className="confirm-icon-wrap" style={{ background: 'rgba(30,58,138,.1)', color: '#1E40AF', boxShadow: '0 8px 24px rgba(30,58,138,.2)' }}>
+            <i className="fa-regular fa-copy"></i>
           </div>
         </div>
-      )}
+      </div>
+      <div className="confirm-body">
+        <div className="confirm-title">Copy to All Classes</div>
+        <div
+          className="confirm-msg"
+          dangerouslySetInnerHTML={{
+            __html: `Copy date sheet subjects from <strong>${dsConfirmCopy.sourceClassName}</strong> to all <strong>${dsConfirmCopy.count} other class${dsConfirmCopy.count !== 1 ? 'es' : ''}</strong> in <strong>${dsConfirmCopy.examName}</strong>?<br/><br/>
+            <span style="font-size: 11px; color: var(--text-muted);">⚠️ Only subjects that don't already exist in each class will be copied. Existing subjects will be preserved.</span>`,
+          }}
+        />
+        <div className="confirm-hint" style={{ background: 'rgba(30,58,138,.06)', borderColor: 'rgba(30,58,138,.18)', color: '#1E3A8A' }}>
+          <i className="fa-solid fa-circle-info" style={{ color: '#1E40AF' }}></i>
+          <span>This will add missing subjects without overwriting existing ones.</span>
+        </div>
+      </div>
+      <div className="confirm-footer">
+        <Tooltip text="Cancel and close">
+          <button className="confirm-btn confirm-btn--cancel" onClick={() => setDsConfirmCopy(null)}>Cancel</button>
+        </Tooltip>
+        <Tooltip text="Confirm copy (add missing subjects only)">
+          <button className="confirm-btn confirm-btn--confirm primary-style" onClick={dsRunCopy}>Yes, Copy Missing</button>
+        </Tooltip>
+      </div>
+    </div>
+  </div>
+)}
 
       {/* ── Date Sheet — report picker (Academics-style) ── */}
       {dsReportReq && (
@@ -3293,9 +4094,11 @@ useEffect(() => {
 
       {/* ── Single Assessment — Update Marks modal ── */}
       {resUpdateCtx && (() => {
-        const cd = resultData[resUpdateCtx.examId]?.[resUpdateCtx.key];
-        const st = cd?.students.find(s => s.id === resUpdateCtx.studentId);
-        if (!cd || !st) return null;
+const cd = resultData[resUpdateCtx.examId]?.[resUpdateCtx.key]
+    || { released: false, totalMarks: { ...RES_DEFAULT_TOTALS }, students: freshStudents() };
+  const st = cd.students.find(s => s.id === resUpdateCtx.studentId);
+  if (!st) return null;
+
         return (
           <ResultUpdateMarksModal
             cd={cd}
@@ -3569,9 +4372,10 @@ useEffect(() => {
 
       {/* ── Single Assessment — Final Remarks modal ── */}
       {resRemarksCtx && (() => {
-        const cd = resultData[resRemarksCtx.examId]?.[resRemarksCtx.key];
-        const st = cd?.students.find(s => s.id === resRemarksCtx.studentId);
-        if (!cd || !st) return null;
+  const cd = resultData[resRemarksCtx.examId]?.[resRemarksCtx.key]
+    || { released: false, totalMarks: { ...RES_DEFAULT_TOTALS }, students: freshStudents() };
+  const st = cd.students.find(s => s.id === resRemarksCtx.studentId);
+  if (!st) return null;
         return (
           <ResultRemarksModal
             cd={cd}
@@ -3597,50 +4401,56 @@ useEffect(() => {
       })()}
 
       {/* ── Single Assessment — Card viewer ── */}
-      {resCardCtx && (() => {
-        const cd = resultData[resCardCtx.examId]?.[resCardCtx.key];
-        const st = cd?.students.find(s => s.id === resCardCtx.studentId);
-        const ex = exams.find(e => e.id === resCardCtx.examId);
-        if (!cd || !st || !ex) return null;
-        return (
-          <ResultCardViewer
-            student={st}
-            rd={cd}
-            ex={ex}
-            template={rcTemplate}
-            rcoGeneral={rcoGeneral}
-            rcoSig={rcoSig}
-            rsSigs={rsSigs}
-            rsAbsentMode={rsAbsentMode}
-            onClose={() => setResCardCtx(null)}
-            toast={toast}
-          />
-        );
-      })()}
+{/* ── Single Assessment — Card viewer ── */}
+{resCardCtx && (() => {
+  const cd = resultData[resCardCtx.examId]?.[resCardCtx.key]
+    || { released: false, totalMarks: { ...RES_DEFAULT_TOTALS }, students: freshStudents() };
+  const st = cd.students.find(s => s.id === resCardCtx.studentId);
+  const ex = filtered.find(e => e.id === resCardCtx.examId);
+  if (!st || !ex) return null;
+  // classes ko string banao, object nahi
+  const cardEx = { name: ex.name, classes: [resCardCtx.className || ''] };
+  return (
+    <ResultCardViewer
+      student={st}
+      rd={cd}
+      ex={cardEx}
+      template={rcTemplate}
+      rcoGeneral={rcoGeneral}
+      rcoSig={rcoSig}
+      rsSigs={rsSigs}
+      rsAbsentMode={rsAbsentMode}
+      onClose={() => setResCardCtx(null)}
+      toast={toast}
+    />
+  );
+})()}
 
       {/* ── Single Assessment — Total Marks edit modal ── */}
-      {resTotalMarksCtx && (() => {
-        const cd = resultData[resTotalMarksCtx.examId]?.[resTotalMarksCtx.key];
-        if (!cd) return null;
-        return (
-          <ResultTotalMarksModal
-            cd={cd}
-            className={resTotalMarksCtx.className}
-            onClose={() => setResTotalMarksCtx(null)}
-            onSave={newTotals => {
-              setResultData(prev => {
-                const next = { ...prev };
-                const examMap = { ...(next[resTotalMarksCtx.examId] || {}) };
-                examMap[resTotalMarksCtx.key] = { ...cd, totalMarks: { ...newTotals } };
-                next[resTotalMarksCtx.examId] = examMap;
-                return next;
-              });
-              toast('Total marks saved!', 'success');
-              setResTotalMarksCtx(null);
-            }}
-          />
-        );
-      })()}
+     {/* ── Single Assessment — Total Marks edit modal ── */}
+{resTotalMarksCtx && (() => {
+  const cd = resultData[resTotalMarksCtx.examId]?.[resTotalMarksCtx.key]
+    || { released: false, totalMarks: { ...RES_DEFAULT_TOTALS }, students: freshStudents() };
+  return (
+    <ResultTotalMarksModal
+      cd={cd}
+      className={resTotalMarksCtx.className}
+      onClose={() => setResTotalMarksCtx(null)}
+      onSave={newTotals => {
+        setResultData(prev => {
+          const next = { ...prev };
+          const examMap = { ...(next[resTotalMarksCtx.examId] || {}) };
+          const oldCd = examMap[resTotalMarksCtx.key] || cd;
+          examMap[resTotalMarksCtx.key] = { ...oldCd, totalMarks: { ...newTotals } };
+          next[resTotalMarksCtx.examId] = examMap;
+          return next;
+        });
+        toast('Total marks saved!', 'success');
+        setResTotalMarksCtx(null);
+      }}
+    />
+  );
+})()}
 
       {/* ── Single Assessment — Delete class confirm ── */}
       {resConfirmDelete && (
@@ -4248,25 +5058,70 @@ function DsEditModal({ ctx, onClose, onSave, toast }) {
   const updateRow = (idx, key, val) => setRows(rs => rs.map((r, i) => i === idx ? { ...r, [key]: val } : r));
   const addRow = () => setRows(rs => [...rs, { subject: '', date: '', timeFrom: '', timeTo: '' }]);
   const requestRemove = idx => setPendingRemoveIdx(idx);
-  const confirmRemove = () => {
-    if (pendingRemoveIdx == null) return;
+const confirmRemove = async () => {
+  if (pendingRemoveIdx == null) return;
+
+  const row = rows[pendingRemoveIdx];
+
+  try {
+    const token = sessionStorage.getItem('token');
+    const branchID = sessionStorage.getItem('branchID');
+
+    const requestPayload = {
+      id: row.id,
+      branchID: Number(branchID),
+      classID: Number(ctx.classID),
+      sectionID: Number(ctx.sectionID),
+      examID: Number(ctx.examId),
+      termID: ctx.termID,
+          subjectName: row.subject,      // ← Add subject name
+      date: row.date,                // ← Add date
+      timeFrom: row.timeFrom,        // ← Add timeFrom
+      timeTo: row.timeTo,
+      action: "delete"
+    };
+
+    const res = await fetch(buildUrl('/api/datesheetcrud'), {
+      method: 'POST',   // (if backend supports DELETE, better; otherwise POST is fine)
+      headers: {
+        Authorization: `Bearer ${sessionStorage.getItem('token')}`,
+        'Content-Type': 'application/json',
+        Accept: 'application/json'
+      },
+      body: JSON.stringify(requestPayload)
+    });
+
+    const data = await res.json();
+
+    if (!res.ok) {
+      toast('Failed to delete subject', 'error');
+      return;
+    }
+
+    // UI se remove only after success
     setRows(rs => rs.filter((_, i) => i !== pendingRemoveIdx));
     setPendingRemoveIdx(null);
-  };
 
-  const save = () => {
-    const payload = {
-      ...ctx,
-      rows: rows.map(r => ({
-        subject: (r.subject || '').trim(),
-        date: r.date || '',
-        timeFrom: r.timeFrom || '',
-        timeTo: r.timeTo || '',
-      })),
-    };
-    onSave(payload);
-  };
+    toast('Subject deleted successfully', 'success');
 
+  } catch (err) {
+    console.error(err);
+    toast('Error deleting subject', 'error');
+  }
+};
+const save = () => {
+  const payload = {
+    ...ctx,
+    rows: rows.map(r => ({
+      id: r.id || 0,  // ← Add this line to preserve the ID
+      subject: (r.subject || '').trim(),
+      date: r.date || '',
+      timeFrom: r.timeFrom || '',
+      timeTo: r.timeTo || '',
+    })),
+  };
+  onSave(payload);
+};
   return (
     <div className="exam-modal-overlay open" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="exam-modal ds-edit-modal">
@@ -4312,9 +5167,9 @@ function DsEditModal({ ctx, onClose, onSave, toast }) {
                     value={r.subject}
                     onChange={e => updateRow(idx, 'subject', e.target.value)}
                   />
-                  <datalist id={`dsSubList-${idx}`}>
-                    {ALL_SUBJECTS.map(s => <option key={s} value={s} />)}
-                  </datalist>
+                 <datalist id={`dsSubList-${idx}`}>
+  {(ctx.subjects || []).map(s => <option key={s.subjectID || s} value={s.subjectName || s} />)}
+</datalist>
                 </div>
                 <div className="ds-edit-field">
                   <label>Date</label>
@@ -8463,21 +9318,56 @@ function TemplatePreviewModal({ templateId, rcoGeneral, rcoSig, rsSigs, rsAbsent
    RESULT SETUP — EDIT MODAL (4 tabs: grades, signatures, remarks, absent)
    ═══════════════════════════════════════════════════════════════════ */
 function ResultSetupModal({ grades, sigs, remarks, absentMode, onSave, onClose, toast }) {
-  const [tab, setTab]                 = useState('grades');
-  const [draftGrades, setDraftGrades]     = useState(() => grades.map(g => ({ ...g })));
-  const [draftSigs, setDraftSigs]         = useState(() => sigs.map(s => ({ ...s })));
-  const [draftRemarks, setDraftRemarks]   = useState(() => remarks.map(r => ({ ...r })));
-  const [draftAbsent, setDraftAbsent]     = useState(absentMode);
+  const [tab, setTab] = useState('grades');
+  const [draftGrades, setDraftGrades] = useState(() => {
+    if (grades && grades.length) {
+      return grades.map(g => ({ ...g }));
+    }
+    return [];
+  });
+  const [draftSigs, setDraftSigs] = useState(() => {
+    if (sigs && sigs.length) {
+      return sigs.map(s => ({ ...s }));
+    }
+    return [];
+  });
+  const [draftRemarks, setDraftRemarks] = useState(() => {
+    if (remarks && remarks.length) {
+      return remarks.map(r => ({ ...r }));
+    }
+    return [];
+  });
+  const [draftAbsent, setDraftAbsent] = useState(absentMode);
+  const [loading, setLoading] = useState(false);
 
-  const upGrade   = (id, k, v) => setDraftGrades(rows => rows.map(r => r.id === id ? { ...r, [k]: v } : r));
-  const upSig     = (id, k, v) => setDraftSigs(rows => rows.map(r => r.id === id ? { ...r, [k]: v } : r));
-  const upRemark  = (id, k, v) => setDraftRemarks(rows => rows.map(r => r.id === id ? { ...r, [k]: v } : r));
+  // Update drafts when props change
+  useEffect(() => {
+    if (grades && grades.length) {
+      setDraftGrades(grades.map(g => ({ ...g })));
+    }
+  }, [grades]);
 
-  const addGrade  = () => setDraftGrades(r => [...r, { id: Date.now(), grade:'A+', cond:'gte', pct:'', comment:'' }]);
-  const addSig    = () => setDraftSigs(r => [...r, { id: Date.now(), name:'', desig:'', img:'' }]);
-  const addRemark = () => setDraftRemarks(r => [...r, { id: Date.now(), cond:'gte', pct:'', text:'' }]);
+  useEffect(() => {
+    if (sigs && sigs.length) {
+      setDraftSigs(sigs.map(s => ({ ...s })));
+    }
+  }, [sigs]);
 
-  const [rsConfirm, setRsConfirm] = useState(null); // { kind:'grade'|'sig'|'remark', id, title, message }
+  useEffect(() => {
+    if (remarks && remarks.length) {
+      setDraftRemarks(remarks.map(r => ({ ...r })));
+    }
+  }, [remarks]);
+
+  const upGrade = (id, k, v) => setDraftGrades(rows => rows.map(r => r.id === id ? { ...r, [k]: v } : r));
+  const upSig = (id, k, v) => setDraftSigs(rows => rows.map(r => r.id === id ? { ...r, [k]: v } : r));
+  const upRemark = (id, k, v) => setDraftRemarks(rows => rows.map(r => r.id === id ? { ...r, [k]: v } : r));
+
+  const addGrade = () => setDraftGrades(r => [...r, { id: Date.now(), grade: 'A+', cond: 'gte', pct: '', comment: '' }]);
+  const addSig = () => setDraftSigs(r => [...r, { id: Date.now(), name: '', desig: '', img: '' }]);
+  const addRemark = () => setDraftRemarks(r => [...r, { id: Date.now(), cond: 'gte', pct: '', text: '' }]);
+
+  const [rsConfirm, setRsConfirm] = useState(null);
 
   const askDeleteGrade = g => setRsConfirm({
     kind: 'grade', id: g.id,
@@ -8498,8 +9388,8 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onSave, onClose, 
   const runDelete = () => {
     if (!rsConfirm) return;
     const { kind, id } = rsConfirm;
-    if (kind === 'grade')  setDraftGrades(r => r.filter(x => x.id !== id));
-    if (kind === 'sig')    setDraftSigs(r => r.filter(x => x.id !== id));
+    if (kind === 'grade') setDraftGrades(r => r.filter(x => x.id !== id));
+    if (kind === 'sig') setDraftSigs(r => r.filter(x => x.id !== id));
     if (kind === 'remark') setDraftRemarks(r => r.filter(x => x.id !== id));
     setRsConfirm(null);
   };
@@ -8511,13 +9401,316 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onSave, onClose, 
     reader.readAsDataURL(file);
   };
 
-  const submit = () => {
-    onSave({
-      grades:  draftGrades.map(g => ({ ...g, comment: (g.comment || '').slice(0, 28) })),
-      sigs:    draftSigs,
-      remarks: draftRemarks.map(r => ({ ...r, text: (r.text || '').slice(0, 200) })),
-      absentMode: draftAbsent,
-    });
+  // Helper function to save a single grade to API
+  const saveGradeToAPI = async (grade) => {
+    try {
+      const token = sessionStorage.getItem('token');
+      const branchID = sessionStorage.getItem('branchID');
+      
+      // Format percentage based on condition
+      let percentage = '';
+      switch (grade.cond) {
+        case 'gte': percentage = `≥${grade.pct}`; break;
+        case 'gt': percentage = `>${grade.pct}`; break;
+        case 'lte': percentage = `≤${grade.pct}`; break;
+        case 'lt': percentage = `<${grade.pct}`; break;
+        case 'eq': percentage = `=${grade.pct}`; break;
+        default: percentage = grade.pct;
+      }
+      
+      const isUpdate = grade.id && typeof grade.id === 'number' && grade.id > 0;
+      
+      const payload = {
+        id: isUpdate ? grade.id : 0,
+        branchID: branchID || "1",
+        percentage: percentage,
+        grade: grade.grade || '',
+        remarks: grade.comment || '',
+        percentageNo: "",
+        action: isUpdate ? "update" : "insert"
+      };
+      
+      console.log("Saving grade payload:", payload);
+      
+      const response = await fetch(buildUrl('/api/gradingcrud'), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/json'
+        },
+        body: JSON.stringify(payload)
+      });
+      
+      const data = await response.json();
+      console.log("Grade save response:", data);
+      return { success: response.ok, data };
+    } catch (error) {
+      console.error("Error saving grade:", error);
+      return { success: false, error };
+    }
+  };
+  
+  // Helper function to delete a grade from API
+  const deleteGradeFromAPI = async (gradeId) => {
+    try {
+      const token = sessionStorage.getItem('token');
+      const branchID = sessionStorage.getItem('branchID');
+      
+      const payload = {
+        id: gradeId,
+        branchID: branchID || "1",
+        percentage: "",
+        grade: "",
+        remarks: "",
+        percentageNo: "",
+        action: "delete"
+      };
+      
+      console.log("Deleting grade payload:", payload);
+      
+      const response = await fetch(buildUrl('/api/gradingcrud'), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/json'
+        },
+        body: JSON.stringify(payload)
+      });
+      
+      const data = await response.json();
+      return { success: response.ok, data };
+    } catch (error) {
+      console.error("Error deleting grade:", error);
+      return { success: false, error };
+    }
+  };
+  
+  // Helper function to save a single signature to API
+  const saveSignatureToAPI = async (signature) => {
+    try {
+      const token = sessionStorage.getItem('token');
+      const branchID = sessionStorage.getItem('branchID');
+      
+      const isUpdate = signature.id && typeof signature.id === 'number' && signature.id > 0;
+      
+      // Handle image - if it's a data URL, we need to send it as is or extract base64
+      let signatureValue = signature.img || '';
+      // If it's a file upload, we keep the data URL
+      
+      const payload = {
+        id: isUpdate ? signature.id : 0,
+        branchID: branchID || "1",
+        name: signature.name || '',
+        designation: signature.desig || '',
+        signature: signatureValue,
+        action: isUpdate ? "update" : "insert"
+      };
+      
+      console.log("Saving signature payload:", payload);
+      
+      const response = await fetch(buildUrl('/api/gradinguploadercrud'), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/json'
+        },
+        body: JSON.stringify(payload)
+      });
+      
+      const data = await response.json();
+      console.log("Signature save response:", data);
+      return { success: response.ok, data };
+    } catch (error) {
+      console.error("Error saving signature:", error);
+      return { success: false, error };
+    }
+  };
+  
+  // Helper function to delete a signature from API
+  const deleteSignatureFromAPI = async (signatureId) => {
+    try {
+      const token = sessionStorage.getItem('token');
+      const branchID = sessionStorage.getItem('branchID');
+      
+      const payload = {
+        id: signatureId,
+        branchID: branchID || "1",
+        name: "",
+        designation: "",
+        signature: "",
+        action: "delete"
+      };
+      
+      const response = await fetch(buildUrl('/api/gradinguploadercrud'), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/json'
+        },
+        body: JSON.stringify(payload)
+      });
+      
+      const data = await response.json();
+      return { success: response.ok, data };
+    } catch (error) {
+      console.error("Error deleting signature:", error);
+      return { success: false, error };
+    }
+  };
+  
+  // Helper function to save a single remark to API
+  const saveRemarkToAPI = async (remark) => {
+    try {
+      const token = sessionStorage.getItem('token');
+      const branchID = sessionStorage.getItem('branchID');
+      
+      // Format percentage based on condition
+      let percentage = '';
+      switch (remark.cond) {
+        case 'gte': percentage = `≥ ${remark.pct}`; break;
+        case 'gt': percentage = `> ${remark.pct}`; break;
+        case 'lte': percentage = `≤ ${remark.pct}`; break;
+        case 'lt': percentage = `< ${remark.pct}`; break;
+        case 'eq': percentage = `= ${remark.pct}`; break;
+        default: percentage = remark.pct;
+      }
+      
+      const isUpdate = remark.id && typeof remark.id === 'number' && remark.id > 0;
+      
+      const payload = {
+        id: isUpdate ? remark.id : 0,
+        branchID: branchID || "1",
+        percentage: percentage,
+        finalRemarks: remark.text || '',
+        action: isUpdate ? "update" : "insert"
+      };
+      
+      console.log("Saving remark payload:", payload);
+      
+      const response = await fetch(buildUrl('/api/overallgradingcrud'), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/json'
+        },
+        body: JSON.stringify(payload)
+      });
+      
+      const data = await response.json();
+      console.log("Remark save response:", data);
+      return { success: response.ok, data };
+    } catch (error) {
+      console.error("Error saving remark:", error);
+      return { success: false, error };
+    }
+  };
+  
+  // Helper function to delete a remark from API
+  const deleteRemarkFromAPI = async (remarkId) => {
+    try {
+      const token = sessionStorage.getItem('token');
+      const branchID = sessionStorage.getItem('branchID');
+      
+      const payload = {
+        id: remarkId,
+        branchID: branchID || "1",
+        percentage: "",
+        finalRemarks: "",
+        action: "delete"
+      };
+      
+      const response = await fetch(buildUrl('/api/overallgradingcrud'), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/json'
+        },
+        body: JSON.stringify(payload)
+      });
+      
+      const data = await response.json();
+      return { success: response.ok, data };
+    } catch (error) {
+      console.error("Error deleting remark:", error);
+      return { success: false, error };
+    }
+  };
+
+  const submit = async () => {
+    setLoading(true);
+    
+    try {
+      // Track which items were added/updated vs deleted
+      const originalGradeIds = new Set(grades.map(g => g.id));
+      const newGradeIds = new Set(draftGrades.map(g => g.id).filter(id => typeof id === 'number'));
+      
+      // Find deleted grades (present in original but not in new)
+      const deletedGrades = grades.filter(g => !newGradeIds.has(g.id));
+      
+      // Save/Update all grades
+      for (const grade of draftGrades) {
+        await saveGradeToAPI(grade);
+      }
+      
+      // Delete removed grades
+      for (const grade of deletedGrades) {
+        if (grade.id && typeof grade.id === 'number') {
+          await deleteGradeFromAPI(grade.id);
+        }
+      }
+      
+      // Handle Signatures
+      const originalSigIds = new Set(sigs.map(s => s.id));
+      const newSigIds = new Set(draftSigs.map(s => s.id).filter(id => typeof id === 'number'));
+      const deletedSigs = sigs.filter(s => !newSigIds.has(s.id));
+      
+      for (const sig of draftSigs) {
+        await saveSignatureToAPI(sig);
+      }
+      
+      for (const sig of deletedSigs) {
+        if (sig.id && typeof sig.id === 'number') {
+          await deleteSignatureFromAPI(sig.id);
+        }
+      }
+      
+      // Handle Remarks
+      const originalRemarkIds = new Set(remarks.map(r => r.id));
+      const newRemarkIds = new Set(draftRemarks.map(r => r.id).filter(id => typeof id === 'number'));
+      const deletedRemarks = remarks.filter(r => !newRemarkIds.has(r.id));
+      
+      for (const remark of draftRemarks) {
+        await saveRemarkToAPI(remark);
+      }
+      
+      for (const remark of deletedRemarks) {
+        if (remark.id && typeof remark.id === 'number') {
+          await deleteRemarkFromAPI(remark.id);
+        }
+      }
+      
+      toast('Result setup saved successfully!', 'success');
+      
+      // Call onSave to update parent state
+      onSave({
+        grades: draftGrades,
+        sigs: draftSigs,
+        remarks: draftRemarks,
+        absentMode: draftAbsent,
+      });
+      
+    } catch (error) {
+      console.error("Error saving result setup:", error);
+      toast('Error saving result setup', 'error');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -8537,10 +9730,10 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onSave, onClose, 
         {/* Modal tabs */}
         <div className="rs-modal-tabs">
           {[
-            { k:'grades',     l:'Grade',         icon:'fa-chart-bar' },
-            { k:'signatures', l:'Signature',     icon:'fa-signature' },
-            { k:'remarks',    l:'Final Remarks', icon:'fa-comment-dots' },
-            { k:'absent',     l:'Absent Handling', icon:'fa-user-xmark' },
+            { k: 'grades', l: 'Grade', icon: 'fa-chart-bar' },
+            { k: 'signatures', l: 'Signature', icon: 'fa-signature' },
+            { k: 'remarks', l: 'Final Remarks', icon: 'fa-comment-dots' },
+            { k: 'absent', l: 'Absent Handling', icon: 'fa-user-xmark' },
           ].map(t => (
             <button key={t.k} className={`rs-modal-tab${tab === t.k ? ' active' : ''}`} onClick={() => setTab(t.k)}>
               <i className={`fa-solid ${t.icon}`}></i> {t.l}
@@ -8552,43 +9745,47 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onSave, onClose, 
           {/* GRADES */}
           {tab === 'grades' && (
             <>
-              {draftGrades.map((g, i) => (
-                <div key={g.id} className="rm-grade-row">
-                  <div className="rm-sno">{i + 1}</div>
-                  <input
-                    className="rs-input"
-                    list={`gradeOpts-${g.id}`}
-                    value={g.grade}
-                    placeholder="Grade..."
-                    onChange={e => upGrade(g.id, 'grade', e.target.value)}
-                  />
-                  <datalist id={`gradeOpts-${g.id}`}>
-                    {RS_GRADE_LIST.map(opt => <option key={opt} value={opt} />)}
-                  </datalist>
-                  <select className="rs-input" value={g.cond} onChange={e => upGrade(g.id, 'cond', e.target.value)}>
-                    {RS_COND_LIST.map(c => <option key={c.v} value={c.v}>{c.l}</option>)}
-                  </select>
-                  <input
-                    className="rs-input"
-                    type="number"
-                    value={g.pct}
-                    placeholder="Value"
-                    onChange={e => upGrade(g.id, 'pct', e.target.value)}
-                  />
-                  <CharField
-                    value={g.comment || ''}
-                    max={28}
-                    placeholder="Comment (max 28 chars)"
-                    onChange={v => upGrade(g.id, 'comment', v)}
-                    toast={toast}
-                  />
-                  <Tooltip text="Remove this grade band">
-                    <button className="rs-del" onClick={() => askDeleteGrade(g)}>
-                      <i className="fa-solid fa-trash-can"></i>
-                    </button>
-                  </Tooltip>
-                </div>
-              ))}
+              {draftGrades.length === 0 ? (
+                <div className="rs-empty">No grades configured. Click "Add Grade" to create one.</div>
+              ) : (
+                draftGrades.map((g, i) => (
+                  <div key={g.id} className="rm-grade-row">
+                    <div className="rm-sno">{i + 1}</div>
+                    <input
+                      className="rs-input"
+                      list={`gradeOpts-${g.id}`}
+                      value={g.grade || ''}
+                      placeholder="Grade..."
+                      onChange={e => upGrade(g.id, 'grade', e.target.value)}
+                    />
+                    <datalist id={`gradeOpts-${g.id}`}>
+                      {RS_GRADE_LIST.map(opt => <option key={opt} value={opt} />)}
+                    </datalist>
+                    <select className="rs-input" value={g.cond || 'gte'} onChange={e => upGrade(g.id, 'cond', e.target.value)}>
+                      {RS_COND_LIST.map(c => <option key={c.v} value={c.v}>{c.l}</option>)}
+                    </select>
+                    <input
+                      className="rs-input"
+                      type="number"
+                      value={g.pct || ''}
+                      placeholder="Value"
+                      onChange={e => upGrade(g.id, 'pct', e.target.value)}
+                    />
+                    <CharField
+                      value={g.comment || ''}
+                      max={28}
+                      placeholder="Comment (max 28 chars)"
+                      onChange={v => upGrade(g.id, 'comment', v)}
+                      toast={toast}
+                    />
+                    <Tooltip text="Remove this grade band">
+                      <button className="rs-del" onClick={() => askDeleteGrade(g)}>
+                        <i className="fa-solid fa-trash-can"></i>
+                      </button>
+                    </Tooltip>
+                  </div>
+                ))
+              )}
               <Tooltip text="Add a new grade band">
                 <button className="rs-add" onClick={addGrade}>
                   <i className="fa-solid fa-plus"></i> Add Grade
@@ -8600,37 +9797,43 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onSave, onClose, 
           {/* SIGNATURES */}
           {tab === 'signatures' && (
             <>
-              {draftSigs.map((s, i) => (
-                <div key={s.id} className="rm-sig-row">
-                  <div className="rm-sno">{i + 1}</div>
-                  <input
-                    className="rs-input"
-                    value={s.name}
-                    placeholder="Name"
-                    onChange={e => upSig(s.id, 'name', e.target.value)}
-                  />
-                  <input
-                    className="rs-input"
-                    value={s.desig}
-                    placeholder="Designation"
-                    onChange={e => upSig(s.id, 'desig', e.target.value)}
-                  />
-                  <label className="rs-sig-upload">
-                    <input type="file" accept="image/*" onChange={e => uploadSig(s.id, e.target.files[0])} />
-                    {s.img
-                      ? <img src={s.img} alt="" />
-                      : <div className="rs-sig-upload-placeholder">
+              {draftSigs.length === 0 ? (
+                <div className="rs-empty">No signatures added. Click "Add Signature" to create one.</div>
+              ) : (
+                draftSigs.map((s, i) => (
+                  <div key={s.id} className="rm-sig-row">
+                    <div className="rm-sno">{i + 1}</div>
+                    <input
+                      className="rs-input"
+                      value={s.name || ''}
+                      placeholder="Name"
+                      onChange={e => upSig(s.id, 'name', e.target.value)}
+                    />
+                    <input
+                      className="rs-input"
+                      value={s.desig || ''}
+                      placeholder="Designation"
+                      onChange={e => upSig(s.id, 'desig', e.target.value)}
+                    />
+                    <label className="rs-sig-upload">
+                      <input type="file" accept="image/*" onChange={e => uploadSig(s.id, e.target.files[0])} />
+                      {s.img ? (
+                        <img src={s.img} alt="" />
+                      ) : (
+                        <div className="rs-sig-upload-placeholder">
                           <i className="fa-solid fa-plus"></i>
-                          <span>Upload</span>
-                        </div>}
-                  </label>
-                  <Tooltip text="Remove this signatory">
-                    <button className="rs-del" onClick={() => askDeleteSig(s)}>
-                      <i className="fa-solid fa-trash-can"></i>
-                    </button>
-                  </Tooltip>
-                </div>
-              ))}
+                          <span>{s.img || 'Upload'}</span>
+                        </div>
+                      )}
+                    </label>
+                    <Tooltip text="Remove this signatory">
+                      <button className="rs-del" onClick={() => askDeleteSig(s)}>
+                        <i className="fa-solid fa-trash-can"></i>
+                      </button>
+                    </Tooltip>
+                  </div>
+                ))
+              )}
               <Tooltip text="Add a new signatory">
                 <button className="rs-add" onClick={addSig}>
                   <i className="fa-solid fa-plus"></i> Add Signature
@@ -8642,39 +9845,43 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onSave, onClose, 
           {/* REMARKS */}
           {tab === 'remarks' && (
             <>
-              {draftRemarks.map((r, i) => (
-                <div key={r.id} className="rm-remark-row">
-                  <div className="rm-remark-top">
-                    <div className="rm-sno">{i + 1}</div>
-                    <div className="rs-remark-lbl">Total Marks</div>
-                    <select className="rs-input" value={r.cond} onChange={e => upRemark(r.id, 'cond', e.target.value)}>
-                      {RS_COND_LIST.map(c => <option key={c.v} value={c.v}>{c.l}</option>)}
-                    </select>
-                    <input
-                      className="rs-input"
-                      type="number"
-                      value={r.pct}
-                      placeholder="Percentage value"
-                      onChange={e => upRemark(r.id, 'pct', e.target.value)}
-                    />
-                    <Tooltip text="Remove this remark">
-                      <button className="rs-del" onClick={() => askDeleteRemark(r)}>
-                        <i className="fa-solid fa-trash-can"></i>
-                      </button>
-                    </Tooltip>
+              {draftRemarks.length === 0 ? (
+                <div className="rs-empty">No remarks configured. Click "Add Remark" to create one.</div>
+              ) : (
+                draftRemarks.map((r, i) => (
+                  <div key={r.id} className="rm-remark-row">
+                    <div className="rm-remark-top">
+                      <div className="rm-sno">{i + 1}</div>
+                      <div className="rs-remark-lbl">Total Marks</div>
+                      <select className="rs-input" value={r.cond || 'gte'} onChange={e => upRemark(r.id, 'cond', e.target.value)}>
+                        {RS_COND_LIST.map(c => <option key={c.v} value={c.v}>{c.l}</option>)}
+                      </select>
+                      <input
+                        className="rs-input"
+                        type="number"
+                        value={r.pct || ''}
+                        placeholder="Percentage value"
+                        onChange={e => upRemark(r.id, 'pct', e.target.value)}
+                      />
+                      <Tooltip text="Remove this remark">
+                        <button className="rs-del" onClick={() => askDeleteRemark(r)}>
+                          <i className="fa-solid fa-trash-can"></i>
+                        </button>
+                      </Tooltip>
+                    </div>
+                    <div className="rm-remark-bot">
+                      <CharField
+                        value={r.text || ''}
+                        max={200}
+                        placeholder="Final Remarks — max 200 characters"
+                        multiline
+                        onChange={v => upRemark(r.id, 'text', v)}
+                        toast={toast}
+                      />
+                    </div>
                   </div>
-                  <div className="rm-remark-bot">
-                    <CharField
-                      value={r.text || ''}
-                      max={200}
-                      placeholder="Final Remarks — max 200 characters"
-                      multiline
-                      onChange={v => upRemark(r.id, 'text', v)}
-                      toast={toast}
-                    />
-                  </div>
-                </div>
-              ))}
+                ))
+              )}
               <Tooltip text="Add a new remark band">
                 <button className="rs-add" onClick={addRemark}>
                   <i className="fa-solid fa-plus"></i> Add Remark
@@ -8693,14 +9900,14 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onSave, onClose, 
                 {
                   v: 'zero',
                   title: 'Count Absent Subjects as Zero Marks',
-                  desc:  'Absent subjects are included in the total marks but scored as 0. The student is assessed out of the full total marks.',
+                  desc: 'Absent subjects are included in the total marks but scored as 0. The student is assessed out of the full total marks.',
                   chips: ['10 subjects = 200 total', '2 absent → still / 200', 'Card shows: AB / 0'],
                   chipStyle: 'amber',
                 },
                 {
                   v: 'exclude',
                   title: 'Exclude Absent Subjects from Total Marks',
-                  desc:  'Absent subjects are removed from the total entirely. The student is only assessed on subjects they attended.',
+                  desc: 'Absent subjects are removed from the total entirely. The student is only assessed on subjects they attended.',
                   chips: ['10 subjects = 200 total', '2 absent → / 160', 'Card shows: AB'],
                   chipStyle: 'blue',
                   isDefault: true,
@@ -8736,12 +9943,24 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onSave, onClose, 
         </div>
 
         <div className="exam-modal-footer">
-          <Tooltip text="Cancel and close"><button className="exam-cancel-btn" onClick={onClose}><i className="fa-solid fa-xmark"></i> Cancel</button></Tooltip>
-          <Tooltip text="Submit"><button className="exam-submit-btn" onClick={submit}><i className="fa-solid fa-floppy-disk"></i> Submit</button></Tooltip>
+          <Tooltip text="Cancel and close">
+            <button className="exam-cancel-btn" onClick={onClose} disabled={loading}>
+              <i className="fa-solid fa-xmark"></i> Cancel
+            </button>
+          </Tooltip>
+          <Tooltip text="Submit">
+            <button className="exam-submit-btn" onClick={submit} disabled={loading}>
+              {loading ? (
+                <><i className="fa-solid fa-spinner fa-spin"></i> Saving...</>
+              ) : (
+                <><i className="fa-solid fa-floppy-disk"></i> Save</>
+              )}
+            </button>
+          </Tooltip>
         </div>
       </div>
 
-      {/* Nested delete confirmation (Academics-style) */}
+      {/* Nested delete confirmation */}
       {rsConfirm && (
         <div
           className="confirm-overlay open"
@@ -8766,8 +9985,12 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onSave, onClose, 
               </div>
             </div>
             <div className="confirm-footer">
-              <Tooltip text="Cancel and close"><button className="confirm-btn confirm-btn--cancel" onClick={() => setRsConfirm(null)}>Cancel</button></Tooltip>
-              <Tooltip text="Yes, Delete (confirm)"><button className="confirm-btn confirm-btn--confirm" onClick={runDelete}>Yes, Delete</button></Tooltip>
+              <Tooltip text="Cancel and close">
+                <button className="confirm-btn confirm-btn--cancel" onClick={() => setRsConfirm(null)}>Cancel</button>
+              </Tooltip>
+              <Tooltip text="Yes, Delete (confirm)">
+                <button className="confirm-btn confirm-btn--confirm" onClick={runDelete}>Yes, Delete</button>
+              </Tooltip>
             </div>
           </div>
         </div>
@@ -8775,7 +9998,6 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onSave, onClose, 
     </div>
   );
 }
-
 function CharField({ value, max, placeholder, multiline = false, onChange, toast }) {
   const warnRef  = useRef(false);
   const limitRef = useRef(false);
