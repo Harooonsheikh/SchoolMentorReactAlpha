@@ -1967,6 +1967,7 @@ const notifySessionChange = () => {
   try { window.dispatchEvent(new Event(SESSION_CHANGE_EVENT)); } catch (e) { /* SSR/no-window */ }
 };
 
+
 /* Auth headers — attach the JWT from sessionStorage.token as a bearer token. */
 const termsAuthHeaders = (extra = {}) => ({
   Accept: '*/*',
