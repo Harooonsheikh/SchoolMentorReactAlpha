@@ -3500,6 +3500,29 @@ function Submissions({ toast, classesData = [] }) {
       setInner('lp');
       setLpUnitOpen({ 0: true });
       toast(`Loaded lesson plans for ${cls}-${section} · ${subject}`, 'success');
+
+      /* Mark a plan "submitted" when it already has a suggestion record:
+         master → detail (by master id) → suggestion (by detail id). */
+      const auth = { Accept: '*/*', Authorization: `bearer ${token}` };
+      const withStatus = await Promise.all(plans.map(async p => {
+        try {
+          const dres = await fetch(
+            buildUrl(`/api/getulpforclassdetailbytermsubjectandclass?MasterClassesID=${p.id}&classID=${classID}&subjectID=${subjectID}&pageNo=1`),
+            { method: 'GET', headers: auth },
+          );
+          const d = ((await dres.json())?.data || [])[0];
+          if (!d?.id) return { ...p, status: 'pending' };
+          const sres = await fetch(
+            buildUrl(`/api/getulpforclasssuggestion?BranchID=${branchID}&ClassID=${classID}&SubjectID=${subjectID}&DetailClassID=${d.id}&pageNo=1`),
+            { method: 'GET', headers: auth },
+          );
+          const s = ((await sres.json())?.data || [])[0];
+          return { ...p, status: s ? 'submitted' : 'pending', detailId: d.id, suggestionId: s?.id || 0 };
+        } catch {
+          return { ...p, status: 'pending' };
+        }
+      }));
+      setLpData(withStatus);
     } catch (e) {
       console.error('Error loading lesson plans:', e);
       toast('Could not load lesson plans', 'error');
