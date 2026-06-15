@@ -743,11 +743,19 @@ function ActivityModal({ open, editing, onClose, onSave }) {
   if (!name.trim()) return;
   if (!start || !end) return;
 
+  const startDate = new Date(start);
+  const endDate = new Date(end);
+
+  if (startDate > endDate) {
+    alert('Start date cannot be after end date.');
+    return;
+  }
+
   setSaving(true);
 
   try {
-    const startIso = new Date(start).toISOString();
-    const endIso = new Date(end).toISOString();
+    const startIso = startDate.toISOString();
+    const endIso = endDate.toISOString();
 
     const payload = {
       id: editing?.id || 0,
@@ -1951,10 +1959,10 @@ function AcademicCalendar({ terms, onReport, onEdit }) {
 /* ─── Terms CRUD backend (POST /api/termscrud, action: get|insert|update|delete) ───
    Reads branch/session/token from sessionStorage so calls stay in sync with the
    logged-in user. The endpoint stores only the term name + session year. */
-const termsBranchID      = () => Number(sessionStorage.getItem('branchID')) || 0;
+export const termsBranchID      = () => Number(sessionStorage.getItem('branchID')) || 0;
 /* Prefer the user-switched session (changeSessionId); fall back to the session
    set at login (SessionID / sessionID). Sent as sessionYearID on term calls. */
-const termsSessionYearID = () =>
+export const termsSessionYearID = () =>
   sessionStorage.getItem('changeSessionId')
   || sessionStorage.getItem('SessionID')
   || sessionStorage.getItem('sessionID')
@@ -1963,10 +1971,11 @@ const termsSessionYearID = () =>
 /* sessionStorage writes don't fire the native 'storage' event in the same tab,
    so we broadcast our own event after changing a session key. Loaders listen for
    it (and the native cross-tab 'storage' event) to re-run their term/calendar calls. */
-const SESSION_CHANGE_EVENT = 'sm-session-change';
+ const SESSION_CHANGE_EVENT = 'sm-session-change';
 const notifySessionChange = () => {
   try { window.dispatchEvent(new Event(SESSION_CHANGE_EVENT)); } catch (e) { /* SSR/no-window */ }
 };
+
 
 /* Auth headers — attach the JWT from sessionStorage.token as a bearer token. */
 const termsAuthHeaders = (extra = {}) => ({
@@ -1975,7 +1984,7 @@ const termsAuthHeaders = (extra = {}) => ({
   ...extra,
 });
 
-async function termsCrud(payload) {
+export async function termsCrud(payload) {
   const res = await fetch(buildUrl('/api/termscrud'), {
     method: 'POST',
     headers: termsAuthHeaders({ 'Content-Type': 'application/json' }),
