@@ -420,7 +420,7 @@ const getClassesData = async () => {
             setLessonEdit({ unitId, lessonId, lesson, unit, clpClass, clpSubject, ...clpCtx, detail });
           }}
           onAddQuestionType={unitId => setNbAddCtx({ unitId })}
-          onEditQuestionType={(unitId, qId) => setNbEdit({ unitId, qId })}
+          onEditQuestionType={(unitId, q) => setNbEdit({ unitId, qId: q.id, existing: q })}
           onReport={openReport}
           openConfirm={openConfirm}
           toast={toast}
@@ -504,11 +504,9 @@ const getClassesData = async () => {
       <NbAQModal
         ctx={nbAddCtx}
         unit={nbAddCtx ? nbUnits.find(u => u.id === nbAddCtx.unitId) : null}
-        onSave={(unitId, payload) => {
-          setNbUnits(prev => prev.map(u =>
-            u.id !== unitId ? u : { ...u, questions: [...u.questions, { ...payload, id: Date.now() }] },
-          ));
+        onSave={() => {
           setNbAddCtx(null);
+          bumpClpRefresh();
           toast('Questions saved', 'success');
         }}
         onClose={() => setNbAddCtx(null)}
@@ -518,11 +516,9 @@ const getClassesData = async () => {
       <NbAQModal
         ctx={nbEdit}
         unit={nbEdit ? nbUnits.find(u => u.id === nbEdit.unitId) : null}
-        onSave={(unitId, qId, updated) => {
-          setNbUnits(prev => prev.map(u =>
-            u.id !== unitId ? u : { ...u, questions: u.questions.map(q => q.id === qId ? { ...q, ...updated } : q) },
-          ));
+        onSave={() => {
           setNbEdit(null);
+          bumpClpRefresh();
           toast('Questions updated', 'success');
         }}
         onClose={() => setNbEdit(null)}
@@ -2733,6 +2729,9 @@ function CreateLessonPlans({
 }) {
   // Extract unique class names from the API response
   const classOptions = classesData?.map(classItem => classItem.name) || [];
+  /* Bumped locally (panel deletes) to make notebook unit rows reload their
+     detail; combined with clpRefresh (bumped after modal saves). */
+  const [nbReload, setNbReload] = useState(0);
   
   // Get subjects based on selected class
 
@@ -2750,6 +2749,27 @@ const resolveCtx = () => {
   };
 };
 
+/* Load the notebook-plan unit master (one row per unit). Kept separate from the
+   lesson fetch so a notebook error never blocks the lesson list. Each row's raw
+   record id is preserved so the Add-Unit modal can update/delete it. */
+const fetchNotebookUnits = async ({ branchID, classID, sectionID, subjectID }) => {
+  const token = sessionStorage.getItem('token') || '';
+  const res = await window.fetch(
+    buildUrl(`/api/getulpfornotebookmaster?branchID=${branchID}&classID=${classID}&SectionID=${sectionID}&subjectID=${subjectID}&pageNo=1`),
+    { method: 'GET', headers: { Accept: '*/*', Authorization: `bearer ${token}` } },
+  );
+  const json = await res.json();
+  const rows = json?.data || [];
+  setNbUnits(rows.map(r => ({
+    id: r.id,
+    unitNo: r.unitNo,
+    unitName: r.unitName,
+    lessonPlanTopic: r.lessonPlanTopic || '',
+    questions: [],
+    record: r,
+  })));
+};
+
 const fetchLessonPlans = async (opts) => {
   const silent = opts === true || opts?.silent === true;
   if (!clpClass)   { if (!silent) toast("Please select a class", "error");   return; }
@@ -2759,6 +2779,11 @@ const fetchLessonPlans = async (opts) => {
   const { branchID, classID, sectionID, subjectID } = resolveCtx();
   if (!classID || !subjectID) { if (!silent) toast("Could not resolve class/subject", "error"); return; }
   setClpCtx({ branchID, classID, sectionID, subjectID });
+
+  /* Notebook master loads alongside lessons so the Notebook Plans subtab is
+     populated from the API too. */
+  try { await fetchNotebookUnits({ branchID, classID, sectionID, subjectID }); }
+  catch (e) { console.error('Error fetching notebook units:', e); }
 
   try {
     const token = sessionStorage.getItem('token') || '';
@@ -2858,6 +2883,11 @@ const handleSectionChange = async (e) => {
     id, ...resolveCtx(), unitNo: '', unitName: '', lessonPlanTopic: '', action: 'delete',
   });
 
+  /* Delete one notebook-master unit row by id. */
+  const deleteNbRecord = id => lpPost('/api/ulpfornotebookmastercrud', {
+    id, ...resolveCtx(), unitNo: '', unitName: '', lessonPlanTopic: '', action: 'delete',
+  });
+
   const removeUnit = u => openConfirm({
     title: 'Delete Unit?',
     message: `Unit <strong>"${u.unitName || u.unitNo}"</strong> and all its ${u.lessons?.length || u.questions?.length || 0} item(s) will be permanently removed.`,
@@ -2872,6 +2902,11 @@ const handleSectionChange = async (e) => {
         catch (e) { console.error('Error deleting unit topics:', e); toast('Could not delete unit', 'error'); return; }
         setUnits(units.filter(x => x.id !== u.id));
       } else {
+        const recId = u.record?.id ?? u.id;
+        if (recId) {
+          try { await deleteNbRecord(recId); }
+          catch (e) { console.error('Error deleting notebook unit:', e); toast('Could not delete unit', 'error'); return; }
+        }
         setNbUnits(nbUnits.filter(x => x.id !== u.id));
       }
       toast('Unit deleted', 'success');
@@ -2900,8 +2935,20 @@ const handleSectionChange = async (e) => {
     hint: 'This cannot be undone.',
     confirmLabel: 'Yes, Delete',
     icon: 'fa-trash',
-    onConfirm: () => {
-      setNbUnits(nbUnits.map(u => u.id !== unitId ? u : { ...u, questions: u.questions.filter(x => x.id !== q.id) }));
+    onConfirm: async () => {
+      /* Delete every saved row of this group through its type CRUD endpoint. */
+      const api = NB_QTYPE_API[q.typeId];
+      const branchID = sessionStorage.getItem('branchID') || '';
+      const ids = (q.rows || q.items || []).map(r => r.recordId).filter(Boolean);
+      if (api && ids.length) {
+        try {
+          await Promise.all(ids.map(id => lpPost(api.endpoint, {
+            id, notebookID: unitId, branchID, mainQuestion: q.mainQuestion || '',
+            isCheck: true, action: 'delete', ...api.body({}, 0),
+          })));
+        } catch (e) { console.error('Error deleting question type:', e); toast('Could not delete question type', 'error'); return; }
+      }
+      setNbReload(n => n + 1);
       toast('Question type deleted', 'success');
     },
   });
@@ -3091,8 +3138,9 @@ const handleSectionChange = async (e) => {
                     onReport={onReport}
                     onDeleteUnit={() => removeUnit(u)}
                     onAddType={() => onAddQuestionType(u.id)}
-                    onEditType={q => onEditQuestionType(u.id, q.id)}
+                    onEditType={q => onEditQuestionType(u.id, q)}
                     onDeleteType={q => removeQuestion(u.id, q)}
+                    reloadKey={`${clpRefresh}_${nbReload}`}
                   />
                 ))
               )
@@ -3223,11 +3271,198 @@ function UnitRow({ unit, index, onReport, onDeleteUnit, onEditLesson, onDeleteLe
   );
 }
 
+/* Notebook detail categories. Maps each getulpfornotebookdetails response array
+   to its UI question-type (AQ_CONFIG id + display label) and normalises each API
+   row into the field shape the Add/Edit modal expects (e.g. columnA→colA,
+   option1→opt1). Only arrays that carry data become rows in the expanded unit
+   panel; empty/null arrays are hidden. */
+const NB_DETAIL_CATEGORIES = [
+  { key:'wordOpposite',           typeId:'word_opposite',   type:'Word / Opposite',         recTitle:'Wordopposite',      map:r=>({ word:r.word, opposite:r.opposite }),                                                          preview:r=>`${r.word||''} → ${r.opposite||''}` },
+  { key:'singularPlural',         typeId:'singular_plural', type:'Singular / Plural',        recTitle:'Singularplural',    map:r=>({ singular:r.singular, plural:r.plural }),                                                      preview:r=>`${r.singular||''} → ${r.plural||''}` },
+  { key:'wordSynonym',            typeId:'word_synonyms',   type:'Word / Synonyms',          recTitle:'wordSynonyms',      map:r=>({ word:r.word, synonym:r.synonym }),                                                            preview:r=>`${r.word||''} → ${r.synonym||''}` },
+  { key:'wordSentences',          typeId:'word_sentences',  type:'Word Sentences',           recTitle:'WordSentences',     map:r=>({ word:r.word, sentence:r.sentences }),                                                         preview:r=>`${r.word||''}: ${r.sentence||''}` },
+  { key:'mcQs',                   typeId:'mcqs',            type:'MCQs Field',               recTitle:'MCQs',              map:r=>({ question:r.question, opt1:r.option1, opt2:r.option2, opt3:r.option3, opt4:r.option4, correct:r.correctAnswers }), preview:r=>`${r.question||''}` },
+  { key:'fillTheBlanks',          typeId:'fill_blanks',     type:'Fill in the Blanks',       recTitle:'FillintheBlank',    map:r=>({ question:r.question, answer:r.answer }),                                                      preview:r=>`${r.question||''} → ${r.answer||''}` },
+  { key:'trueFalseQuestions',     typeId:'true_false',      type:'True / False',             recTitle:'TrueFalse',         map:r=>({ question:r.question, answer:r.answer }),                                                      preview:r=>`${r.question||''} → ${r.answer||''}` },
+  { key:'matchColumns',           typeId:'match_columns',   type:'Match the Columns',        recTitle:'MatchColume',       map:r=>({ colA:r.columnA, colB:r.columnB }),                                                            preview:r=>`${r.colA||''} ↔ ${r.colB||''}` },
+  { key:'questionAnswers',        typeId:'short_questions', type:'Short Questions',          recTitle:'QuestionAns',       map:r=>({ question:r.question, answer:r.answer }),                                                      preview:r=>`${r.question||''}` },
+  { key:'longQuestion',           typeId:'long_question',   type:'Long Question',            recTitle:'LongQuetion',       map:r=>({ question:r.question, answer:r.answer }),                                                      preview:r=>`${r.question||''}` },
+  { key:'comprehensionQuestions', typeId:'comprehension',   type:'Comprehension Question',   recTitle:'Comprehension',     map:r=>({ question:r.question, answer:r.answer, statement:r.comprehensionStatement }),                  preview:r=>`${r.question||''}` },
+  { key:'punctuation',            typeId:'punctuation',     type:'Punctuation',              recTitle:'Punctuation',       map:r=>({ question:r.punctuation, answer:r.answer }),                                                   preview:r=>`${r.question||''} → ${r.answer||''}` },
+  { key:'circleCorrectWord',      typeId:'circle_words',    type:'Circle the Correct Words', recTitle:'CircleCorrectWord', map:r=>({ statement:r.question, answer:r.answer }),                                                     preview:r=>`${r.statement||''}` },
+  { key:'mdlParagraph',           typeId:'paragraph',       type:'Paragraph Writing',        recTitle:'Paragraph',         map:r=>({ title:r.topic, body:r.paragraph }),                                                           preview:r=>`${r.title||''}` },
+  { key:'stories',                typeId:'stories',         type:'Stories',                  recTitle:'stories',           map:r=>({ title:r.subject, body:r.body, moral:r.moral }),                                               preview:r=>`${r.title||''}` },
+  { key:'letters',                typeId:'letter',          type:'Letter',                   recTitle:'letters',           map:r=>({ subject:r.subject, body:r.body }),                                                            preview:r=>`${r.subject||''}` },
+  { key:'applications',           typeId:'application',     type:'Application',              recTitle:'application',       map:r=>({ subject:r.subject, body:r.body }),                                                            preview:r=>`${r.subject||''}` },
+  { key:'essays',                 typeId:'essays',          type:'Essays',                   recTitle:'essays',            map:r=>({ title:r.subject, body:r.body, conclusion:r.conclusion }),                                     preview:r=>`${r.title||''}` },
+];
+
+/* Per-question-type CRUD endpoints. `body(uiRow, i)` turns a modal row back into
+   the type-specific API fields; the common id/branchID/notebookID/mainQuestion/
+   isCheck/action wrapper is added by the modal at save time. */
+const NB_QTYPE_API = {
+  word_opposite:   { endpoint:'/api/ulpnwordoppositecrud',          body:r=>({ word:r.word||'', opposite:r.opposite||'', marks:r.marks||'' }) },
+  singular_plural: { endpoint:'/api/ulpnsingularpluralcrud',        body:r=>({ singular:r.singular||'', plural:r.plural||'', marks:r.marks||'' }) },
+  word_synonyms:   { endpoint:'/api/ulpnwordSynonymcrud',           body:r=>({ word:r.word||'', synonym:r.synonym||'', marks:r.marks||'' }) },
+  word_sentences:  { endpoint:'/api/ulpnwordsentencecrud',          body:r=>({ word:r.word||'', sentences:r.sentence||'', marks:r.marks||'' }) },
+  mcqs:            { endpoint:'/api/ulpnmcqscrud',                  body:r=>({ question:r.question||'', option1:r.opt1||'', option2:r.opt2||'', option3:r.opt3||'', option4:r.opt4||'', correctAnswer:r.correct||'', totalMarks:r.marks||'' }) },
+  fill_blanks:     { endpoint:'/api/ulpnfilltheblankcrud',          body:r=>({ question:r.question||'', answer:r.answer||'', correctAnswer:r.answer||'', marks:r.marks||'' }) },
+  true_false:      { endpoint:'/api/ulpntruefalsecrud',             body:r=>({ question:r.question||'', answer:r.answer||'', correctAnswer:r.answer||'', marks:r.marks||'' }) },
+  match_columns:   { endpoint:'/api/ulpnmatchcolumncrud',           body:(r,i)=>({ columnA:r.colA||'', columnB:r.colB||'', correctAnswer:'', srNo:String(i+1), marks:r.marks||'' }) },
+  short_questions: { endpoint:'/api/ulpnquestionanswercrud',        body:r=>({ question:r.question||'', answer:r.answer||'', correctAnswer:r.answer||'', marks:r.marks||'' }) },
+  circle_words:    { endpoint:'/api/ulpncirclecorrectwordcrud',     body:r=>({ question:r.statement||'', answer:r.answer||'' }) },
+  punctuation:     { endpoint:'/api/ulpnpunctuationcrud',           body:r=>({ punctuation:r.question||'', answer:r.answer||'' }) },
+  long_question:   { endpoint:'/api/ulpnLongQuestioncrud',          body:r=>({ question:r.question||'', answer:r.answer||'', marks:r.marks||'' }) },
+  paragraph:       { endpoint:'/api/ulpnparagraphcrud',             body:r=>({ topic:r.title||'', paragraph:r.body||'', marks:r.marks||'' }) },
+  comprehension:   { endpoint:'/api/ulpncomprehensionquestioncrud', body:r=>({ question:r.question||'', answer:r.answer||'', correctAnswer:r.answer||'', marks:r.marks||'' }) },
+  letter:          { endpoint:'/api/ulpnlettercrud',               body:r=>({ subject:r.subject||'', body:r.body||'', regards:r.regards||'', marks:r.marks||'' }) },
+  application:     { endpoint:'/api/ulpnapplicationcrud',           body:r=>({ subject:r.subject||'', body:r.body||'', regards:r.regards||'', marks:r.marks||'' }) },
+  stories:         { endpoint:'/api/ulpnstoriescrud',              body:r=>({ subject:r.title||'', body:r.body||'', moral:r.moral||'', marks:r.marks||'' }) },
+  essays:          { endpoint:'/api/ulpnessaycrud',               body:r=>({ subject:r.title||'', body:r.body||'', conclusion:r.conclusion||'', marks:r.marks||'' }) },
+};
+
+/* GET a notebook unit's detail and reduce it to question-type rows, normalised
+   for the modal. Rows that share the same main question are grouped into one
+   editable entry (comprehension also keys on its statement) so the dropdown
+   lists one entry per distinct main question. */
+async function fetchNotebookDetail(masterId) {
+  const token = sessionStorage.getItem('token') || '';
+  const res = await fetch(
+    buildUrl(`/api/getulpfornotebookdetails?masterNoteBookIDs=${masterId}`),
+    { method: 'GET', headers: { Accept: '*/*', Authorization: `bearer ${token}` } },
+  );
+  const json = await res.json();
+  const out = [];
+  NB_DETAIL_CATEGORIES.forEach(c => {
+    const apiRows = json?.[c.key];
+    if (!Array.isArray(apiRows) || apiRows.length === 0) return;
+    const groups = new Map();
+    apiRows.forEach(r => {
+      const mainQuestion = r.mainQuestion || '';
+      const statement = c.typeId === 'comprehension' ? (r.comprehensionStatement || '') : '';
+      const gkey = `${mainQuestion} ${statement}`;
+      if (!groups.has(gkey)) groups.set(gkey, { mainQuestion, statement, rows: [] });
+      groups.get(gkey).rows.push({ ...c.map(r), recordId: r.id, marks: r.marks ?? r.totalMarks ?? '' });
+    });
+    let gi = 0;
+    groups.forEach(g => {
+      out.push({
+        id: `${c.key}__${gi++}`,
+        typeId: c.typeId,
+        type: c.type,
+        mainQuestion: g.mainQuestion,
+        mainQ: g.mainQuestion,
+        statement: g.statement,
+        rows: g.rows,
+        items: g.rows,
+        source: 'manual',
+      });
+    });
+  });
+  return out;
+}
+
+/* GET the checked-checkbox list for a notebook unit. The API returns the
+   selected rows keyed by recTitle (question type) + recID (detail row id); we
+   return a Set of `${recTitle-lowercased}__${recID}` for fast lookup. */
+async function fetchNbCheckedSet(notebookID, gradeID, subjectID) {
+  const token = sessionStorage.getItem('token') || '';
+  const set = new Set();
+  try {
+    const res = await fetch(
+      buildUrl(`/api/getqpselectiondetail?notebookID=${notebookID}&gradeID=${gradeID}&subjectID=${subjectID}`),
+      { method: 'GET', headers: { Accept: '*/*', Authorization: `bearer ${token}` } },
+    );
+    const json = await res.json();
+    const list = Array.isArray(json) ? json
+      : (json?.data || json?.mdlQPSelectionDetails || json?.qpSelectionDetails || []);
+    (list || []).forEach(s => {
+      const rt  = (s.recTitle ?? s.recordTitle ?? s.RecTitle ?? '').toString().trim().toLowerCase();
+      const rid = s.recID ?? s.recId ?? s.recordID ?? s.recordId ?? s.RecID ?? s.id;
+      if (rt && rid != null) set.add(`${rt}__${rid}`);
+    });
+  } catch (e) {
+    console.error('Error loading checkbox selection:', e);
+  }
+  return set;
+}
+
+/* Build the notebook submission tree from the master + per-unit detail + the
+   checked-checkbox list. Each detail row becomes one submittable item whose
+   status reflects whether its checkbox is checked. */
+async function loadNbSubmissionData({ branchID, classID, sectionID, subjectID }) {
+  const token = sessionStorage.getItem('token') || '';
+  const auth = { Accept: '*/*', Authorization: `bearer ${token}` };
+  const mres = await fetch(
+    buildUrl(`/api/getulpfornotebookmaster?branchID=${branchID}&classID=${classID}&SectionID=${sectionID}&subjectID=${subjectID}&pageNo=1`),
+    { method: 'GET', headers: auth },
+  );
+  const units = (await mres.json())?.data || [];
+  return Promise.all(units.map(async u => {
+    const [dres, checkedSet] = await Promise.all([
+      fetch(buildUrl(`/api/getulpfornotebookdetails?masterNoteBookIDs=${u.id}`), { method: 'GET', headers: auth }),
+      fetchNbCheckedSet(u.id, classID, subjectID),
+    ]);
+    const dj = await dres.json();
+    const questionTypes = [];
+    NB_DETAIL_CATEGORIES.forEach(c => {
+      const apiRows = dj?.[c.key];
+      if (!Array.isArray(apiRows) || apiRows.length === 0) return;
+      const rtNorm = c.recTitle.toLowerCase();
+      const items = apiRows.map(r => ({
+        id: r.id,
+        preview: c.preview(c.map(r)),
+        status: checkedSet.has(`${rtNorm}__${r.id}`) ? 'submitted' : 'pending',
+      }));
+      questionTypes.push({ typeId: c.typeId, mainQ: apiRows[0]?.mainQuestion || '', items });
+    });
+    return { unitId: u.id, unitNo: u.unitNo, unitName: u.unitName, questionTypes };
+  }));
+}
+
+/* Check / uncheck a notebook question row's submission checkbox.
+   check  → action 'insert' (id 0); uncheck → action 'delete' with the selection
+   row's id. recID is the detail row id; recTitle identifies the question type. */
+const QP_SELECTION_CRUD = '/api/qpselectioncrud';
+function nbCheckRow({ action, selectionId = 0, notebookID, recID, recTitle, branchID, gradeID, subjectID }) {
+  return lpPost(QP_SELECTION_CRUD, {
+    action,
+    id: action === 'delete' ? selectionId : 0,
+    notebookID: Number(notebookID),
+    recID: Number(recID),
+    recTitle,
+    branchID: Number(branchID) || branchID,
+    gradeID: Number(gradeID),
+    subjectID: Number(subjectID),
+  });
+}
+
 /* ─── Notebook-plans unit row — verbatim from HTML ─── */
-function NbUnitRow({ unit, index, onReport, onDeleteUnit, onAddType, onEditType, onDeleteType }) {
+function NbUnitRow({ unit, index, onReport, onDeleteUnit, onAddType, onEditType, onDeleteType, reloadKey }) {
   const [open, setOpen] = useState(false);
-  const total  = unit.questions.length;
-  const manual = unit.questions.filter(q => q.source === 'manual').length;
+  /* Question types are loaded lazily from getulpfornotebookdetails the first
+     time the unit is expanded; null = not yet loaded. */
+  const [detail, setDetail]   = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  /* External refresh (after a question add/edit/delete): drop the cache so the
+     panel reloads from the API. */
+  useEffect(() => { setDetail(null); }, [reloadKey]);
+
+  useEffect(() => {
+    if (!open || detail !== null || unit.id == null) return;
+    let cancelled = false;
+    setLoading(true);
+    fetchNotebookDetail(unit.id)
+      .then(d => { if (!cancelled) setDetail(d); })
+      .catch(e => { console.error('Error loading notebook detail:', e); if (!cancelled) setDetail([]); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [open, detail, unit.id]);
+
+  const questions = detail ?? unit.questions;
+  const total  = questions.length;
+  const manual = questions.filter(q => q.source === 'manual').length;
 
   return (
     <div className={`clpr-unit-card${open ? ' open' : ''}`}>
@@ -3279,17 +3514,22 @@ function NbUnitRow({ unit, index, onReport, onDeleteUnit, onAddType, onEditType,
 
       {open && (
         <div className="clpr-lessons-panel">
-          {unit.questions.length === 0 ? (
+          {loading ? (
+            <div className="clpr-no-lessons">
+              <i className="fa-solid fa-spinner fa-spin" style={{ fontSize: 18, color: 'var(--brand-primary)' }}></i>
+              <span>Loading question types…</span>
+            </div>
+          ) : questions.length === 0 ? (
             <div className="clpr-no-lessons">
               <i className="fa-solid fa-circle-question" style={{ fontSize: 20, color: 'var(--brand-primary)', opacity: .4 }}></i>
               <span>No questions yet — click <strong>Add Questions</strong> to begin</span>
             </div>
-          ) : unit.questions.map((q, idx) => {
+          ) : questions.map((q, idx) => {
             const rowsCount = (q.rows && q.rows.length) || (q.items && q.items.length) || 0;
             return (
               <div key={q.id} className="clpr-lesson-card">
                 <div className="clpr-lesson-top">
-                  <div className="clpr-lesson-meta">
+                  <div className="clpr-lesson-meta" style={{ cursor: 'pointer' }} onClick={() => onEditType(q)} title="Click to view / edit this question type">
                     <span className="clpr-lesson-num">#{idx + 1}</span>
                     <span
                       className="clpr-lesson-num-tag"
@@ -3482,6 +3722,12 @@ function Submissions({ toast, classesData = [] }) {
     const branchID = sessionStorage.getItem('branchID') || '';
     setSubCtx({ branchID, classID: String(classID), sectionID: String(sectionID || ''), subjectID: String(subjectID) });
 
+    /* Notebook submission tree (master → detail → checkbox status). Loads in
+       parallel with the lesson plans below. */
+    loadNbSubmissionData({ branchID, classID, sectionID, subjectID })
+      .then(setNbData)
+      .catch(e => { console.error('Error loading notebook submissions:', e); toast('Could not load notebook plans', 'error'); });
+
     try {
       const token = sessionStorage.getItem('token') || '';
       const res = await fetch(
@@ -3537,26 +3783,26 @@ function Submissions({ toast, classesData = [] }) {
     toast('Lesson plan submitted successfully!', 'success');
   };
 
-  /* Submit selected NB items */
-  const submitNbItems = (unitId, typeId, itemIds) => {
+  /* Submit (check) selected NB items: insert a checkbox-selection row per item
+     through the qp-selection CRUD, then re-fetch so statuses/bars update. */
+  const submitNbItems = async (unitId, typeId, itemIds) => {
     if (!itemIds.length) return;
-    const today = new Date().toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
-    const time = new Date().toLocaleTimeString('en-US', { hour:'numeric', minute:'2-digit' });
-    setNbData(prev => prev.map(u => {
-      if (u.unitId !== unitId) return u;
-      return {
-        ...u,
-        questionTypes: u.questionTypes.map(qt => {
-          if (qt.typeId !== typeId) return qt;
-          return {
-            ...qt,
-            items: qt.items.map(it => itemIds.includes(it.id) ? { ...it, status: 'submitted', submittedDate: today, submittedTime: time } : it),
-          };
-        }),
-      };
-    }));
+    const cat = NB_DETAIL_CATEGORIES.find(c => c.typeId === typeId);
+    const recTitle = cat?.recTitle || typeId;
+    try {
+      await Promise.all(itemIds.map(recID => nbCheckRow({
+        action: 'insert', notebookID: unitId, recID, recTitle,
+        branchID: subCtx.branchID, gradeID: subCtx.classID, subjectID: subCtx.subjectID,
+      })));
+    } catch (e) {
+      console.error('Error submitting notebook items:', e);
+      toast('Could not submit items', 'error');
+      return;
+    }
     setNbSubmitCtx(null);
     toast(`${itemIds.length} item${itemIds.length > 1 ? 's' : ''} submitted successfully!`, 'success');
+    try { setNbData(await loadNbSubmissionData(subCtx)); }
+    catch (e) { console.error('Error reloading notebook submissions:', e); }
   };
 
   /* Generate the report after style is picked */
@@ -5330,7 +5576,34 @@ function UnitMgrModal({ open, source, units, clpCtx = {}, onSave, onClose, openC
   /* Persist newly-added units as ULP class-master rows with an empty topic
      (lesson source only); then hand the draft back to the parent. */
   const save = async () => {
-    if (source === 'lesson' && clpCtx.classID) {
+    if (source === 'notebook' && clpCtx.classID) {
+      /* Diff the draft against the units loaded when the modal opened and persist
+         every change through ulpfornotebookmastercrud: new rows → insert,
+         renamed/renumbered rows → update (by record id), removed rows → delete. */
+      const base = {
+        branchID: clpCtx.branchID, classID: clpCtx.classID,
+        sectionID: clpCtx.sectionID, subjectID: clpCtx.subjectID, lessonPlanTopic: '',
+      };
+      const origById  = new Map(units.map(u => [u.id, u]));
+      const draftIds  = new Set(draft.map(u => u.id));
+      const inserts = draft.filter(u => !origIds.has(u.id) && (u.unitNo || u.unitName));
+      const updates = draft.filter(u => {
+        const o = origById.get(u.id);
+        return o && (String(o.unitNo) !== String(u.unitNo) || (o.unitName || '') !== (u.unitName || ''));
+      });
+      const deletes = [...origIds].filter(id => !draftIds.has(id));
+      try {
+        await Promise.all([
+          ...inserts.map(u => lpPost('/api/ulpfornotebookmastercrud', { ...base, id: 0,    unitNo: u.unitNo, unitName: u.unitName, action: 'insert' })),
+          ...updates.map(u => lpPost('/api/ulpfornotebookmastercrud', { ...base, id: u.id, unitNo: u.unitNo, unitName: u.unitName, action: 'update' })),
+          ...deletes.map(id => lpPost('/api/ulpfornotebookmastercrud', { ...base, id, unitNo: '', unitName: '', action: 'delete' })),
+        ]);
+      } catch (e) {
+        console.error('Error saving notebook units:', e);
+        toast('Could not save notebook units', 'error');
+        return;
+      }
+    } else if (source === 'lesson' && clpCtx.classID) {
       const newUnits = draft.filter(u => !origIds.has(u.id) && (u.unitNo || u.unitName));
       try {
         await Promise.all(newUnits.map(u => lpPost('/api/ulpforclassmastercrud', {
@@ -6088,12 +6361,18 @@ function LessonEditModal({ ctx, onSave, onClose, toast }) {
 function NbAQModal({ ctx, unit, onSave, onClose, toast }) {
   const [activeType, setActiveType] = useState(null);
   const [mainQ, setMainQ] = useState('');
+  const [statement, setStatement] = useState(''); // comprehension statement
   const [rows, setRows] = useState([]);
+  const [deletedIds, setDeletedIds] = useState([]); // recordIds removed while editing
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (!ctx) return;
-    /* edit-mode: ctx.qId pre-selects the existing question */
-    const existing = ctx.qId && unit ? unit.questions.find(x => x.id === ctx.qId) : null;
+    setDeletedIds([]);
+    /* edit-mode: ctx.existing carries the clicked question (from the API-loaded
+       detail); fall back to looking it up in the unit by qId. */
+    const existing = ctx.existing
+      || (ctx.qId && unit ? unit.questions.find(x => x.id === ctx.qId) : null);
     /* Resolve type id: prefer existing.typeId, fall back to matching the type label
        against AQ_CONFIG title (handles older saved entries that lacked typeId). */
     let resolvedTypeId = null;
@@ -6107,6 +6386,7 @@ function NbAQModal({ ctx, unit, onSave, onClose, toast }) {
     if (existing && resolvedTypeId) {
       setActiveType(resolvedTypeId);
       setMainQ(existing.mainQ || existing.mainQuestion || '');
+      setStatement(existing.statement || '');
       const seeded = (existing.rows && existing.rows.length)
         ? JSON.parse(JSON.stringify(existing.rows)).map(r =>
             r._id ? r : { ...r, _id: `aqr_${++_aqRowCounter}` })
@@ -6115,6 +6395,7 @@ function NbAQModal({ ctx, unit, onSave, onClose, toast }) {
     } else {
       setActiveType(null);
       setMainQ('');
+      setStatement('');
       setRows([]);
     }
   }, [ctx, unit]);
@@ -6139,24 +6420,52 @@ function NbAQModal({ ctx, unit, onSave, onClose, toast }) {
 
   const removeRow = i => {
     if (rows.length <= 1) { toast('At least one row required', 'error'); return; }
+    const row = rows[i];
+    if (row?.recordId) setDeletedIds(ids => [...ids, row.recordId]);
     setRows(rs => rs.filter((_, idx) => idx !== i));
     toast('Row removed', 'info');
   };
 
-  const saveAll = () => {
+  /* Persist every row through the question type's CRUD endpoint: rows with a
+     recordId update, rows without insert, and rows removed while editing delete.
+     The unit's master id is the notebookID. */
+  const saveAll = async () => {
     if (!activeType) { toast('Select a question type first', 'error'); return; }
-    const typeLabel = AQ_TYPES.find(t => t.id === activeType)?.label || cfg.title;
-    const payload = {
-      typeId: activeType,
-      type: cfg.title || typeLabel,
-      mainQ: mainQ.trim() || '(Main Question)',
-      mainQuestion: mainQ.trim() || '(Main Question)',
-      rows: JSON.parse(JSON.stringify(rows)),
-      items: rows,
-      source: 'manual',
+    const api = NB_QTYPE_API[activeType];
+    if (!api) { toast('This question type is not supported yet', 'error'); return; }
+
+    const branchID   = sessionStorage.getItem('branchID') || '';
+    const notebookID = ctx.unitId;
+    const mq = mainQ.trim();
+    const wrap = (row, action, i) => {
+      const payload = {
+        id: action === 'insert' ? 0 : (row.recordId ?? 0),
+        notebookID, branchID,
+        mainQuestion: mq,
+        isCheck: true,
+        action,
+        ...api.body(row, i),
+      };
+      if (activeType === 'comprehension') payload.comprehensionStatement = statement || '';
+      return payload;
     };
-    if (isEdit) onSave(ctx.unitId, ctx.qId, payload);
-    else        onSave(ctx.unitId, payload);
+
+    const calls = [
+      ...rows.map((row, i) => lpPost(api.endpoint, wrap(row, row.recordId ? 'update' : 'insert', i))),
+      ...deletedIds.map(id => lpPost(api.endpoint, { id, notebookID, branchID, mainQuestion: mq, isCheck: true, action: 'delete', ...api.body({}, 0) })),
+    ];
+
+    setSaving(true);
+    try {
+      await Promise.all(calls);
+    } catch (e) {
+      console.error('Error saving questions:', e);
+      toast('Could not save questions', 'error');
+      setSaving(false);
+      return;
+    }
+    setSaving(false);
+    onSave();
   };
 
   const addMoreLabel = activeType === 'stories' ? '+ Add More Stories' : '+ Add More';
@@ -6215,8 +6524,8 @@ function NbAQModal({ ctx, unit, onSave, onClose, toast }) {
                         rows="4"
                         style={{ boxSizing: 'border-box', width: '100%', border: '2px solid #BAE6FD', borderRadius: 13, padding: '10px 16px', fontFamily: 'inherit', fontSize: 14, color: '#0F172A', background: '#fff', outline: 'none', resize: 'vertical', lineHeight: 1.6 }}
                         placeholder="Enter comprehension statement here…"
-                        value={mainQ}
-                        onChange={e => setMainQ(e.target.value)}
+                        value={statement}
+                        onChange={e => setStatement(e.target.value)}
                       />
                     </>
                   )}
@@ -6274,8 +6583,8 @@ function NbAQModal({ ctx, unit, onSave, onClose, toast }) {
         {/* ── Footer ── */}
         <div className="aq-footer" style={{ display: 'flex', gap: 12, padding: '14px 24px 18px', borderTop: '2px solid #E0F2FE', background: '#fff', flexShrink: 0 }}>
           <button onClick={onClose} className="aq-cancel-hover">Cancel</button>
-          <button onClick={saveAll} className="aq-save-all-hover">
-            <i className="fa-solid fa-floppy-disk"></i> Save Questions
+          <button onClick={saveAll} className="aq-save-all-hover" disabled={saving}>
+            <i className={`fa-solid ${saving ? 'fa-spinner fa-spin' : 'fa-floppy-disk'}`}></i> {saving ? 'Saving…' : 'Save Questions'}
           </button>
         </div>
       </div>
