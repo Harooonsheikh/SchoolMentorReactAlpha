@@ -446,7 +446,9 @@ const [loadingGrades, setLoadingGrades] = useState(false);
 const [loadingSigs, setLoadingSigs] = useState(false);
 const [loadingRemarks, setLoadingRemarks] = useState(false);
 
-  
+  const [resStudentData, setResStudentData] = useState({}); // key → { students, subjects, marks, rankings }
+const [resLoadingKey, setResLoadingKey] = useState(null);
+
     /* Load the session (academic-year) dropdown. Default-selects the session whose
        id matches sessionStorage.sessionID — the active session for the logged-in user. */
     useEffect(() => {
@@ -682,6 +684,51 @@ async function fetchGradeSetup() {
     setLoadingGrades(false);
   }
 }
+const handleConfirmPublish = async () => {
+  if (!resConfirmPublish) return;
+  const { key, released, cls } = resConfirmPublish;
+  const selectedExam = filtered.find(e => e.id === resExamId);
+const branchID = sessionStorage.getItem('branchID');
+    const token = sessionStorage.getItem('token');
+
+  try {
+    const payload = {
+      classID: cls.classID,
+      sectionID: cls.sectionID,
+      examID: selectedExam?.selectExam || 0,
+      termID: selectedExam?.termID || 0,
+      branchID: branchID,
+      isResultVisibleToParents: !released,
+    };
+
+    const res = await fetch( buildUrl('/api/sauploadmarksUpdatevissibility'), {
+      method: 'POST',
+ headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json'
+      },
+            body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) throw new Error('API failed');
+
+    setResultData(prev => {
+      const next = { ...prev };
+      const examMap = { ...(next[resExamId] || {}) };
+      const oldCd = examMap[key] || { released: false, totalMarks: { ...RES_DEFAULT_TOTALS }, students: freshStudents() };
+      examMap[key] = { ...oldCd, released: !oldCd.released };
+      next[resExamId] = examMap;
+      return next;
+    });
+
+    toast(released ? 'Result unpublished' : 'Result published!', 'success');
+  } catch (err) {
+    toast('Failed to update visibility. Please try again.', 'error');
+  } finally {
+    setResConfirmPublish(null);
+  }
+};
 
 // Update fetchSignatureSetup function
 async function fetchSignatureSetup() {
@@ -995,6 +1042,92 @@ const sylPickExam = async (id) => {
       
       console.log(`Loaded syllabus for ${classes.length} classes`);
     }
+  }
+};
+const loadResClassData = async (key, cls) => {
+  if (resStudentData[key]) return; // already loaded
+  setResLoadingKey(key);
+  try {
+    const branchID = sessionStorage.getItem('branchID');
+    const token = sessionStorage.getItem('token');
+    const selectedExam = filtered.find(e => e.id === resExamId);
+    const selectExamValue = selectedExam?.selectExam || 0;
+    const termID = selectedExam?.termID || selectedTermId;
+
+    const headers = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
+
+    // 1. Students
+    const studentsRes = await fetch(
+      buildUrl(`/api/getstudentsbybranchsectionandgrade?branchID=${branchID}&sectionID=${cls.sectionID}&gradeID=${cls.classID}`),
+      { method: 'GET', headers }
+    );
+    const studentsData = await studentsRes.json();
+    const students = Array.isArray(studentsData) ? studentsData : (studentsData?.data || []);
+
+    // 2. Subject totals
+    const subjParams = new URLSearchParams({
+      branchID: String(branchID),
+      classID: String(cls.classID),
+      termID: String(termID),
+      ExamID: String(selectExamValue),
+      sectionID: String(cls.sectionID),
+      pageNo: '1'
+    });
+    const subjRes = await fetch(
+      buildUrl(`/api/getsasubjectbybranchclassandtermtotalsum?${subjParams}`),
+      { method: 'GET', headers }
+    );
+    const subjData = await subjRes.json();
+    const subjects = Array.isArray(subjData) ? subjData : (subjData?.data || []);
+
+    // 3. Student marks
+    const marksParams = new URLSearchParams({
+      branchID: String(branchID),
+      classID: String(cls.classID),
+      termID: String(termID),
+      ExamID: String(selectExamValue),
+      sectionID: String(cls.sectionID),
+      pageNo: '1'
+    });
+    const marksRes = await fetch(
+      buildUrl(`/api/getsauploadmarksbystudentbranchsum?${marksParams}`),
+      { method: 'GET', headers }
+    );
+    const marksData = await marksRes.json();
+const marks = Array.isArray(marksData) 
+  ? marksData 
+  : (marksData?.data || marksData?.Data || []);
+    // 4. Rankings
+    const rankParams = new URLSearchParams({
+      sectionID: String(cls.sectionID),
+      termID: String(termID),
+      examID: String(selectExamValue)
+    });
+    const rankRes = await fetch(
+      buildUrl(`/api/getstudentsrankings?${rankParams}`),
+      { method: 'GET', headers }
+    );
+    const rankData = await rankRes.json();
+    const rankings = Array.isArray(rankData) ? rankData : (rankData?.data || []);
+
+    // 5. Update rankings
+    await fetch(
+      buildUrl(`/api/updaterankings?ClassID=${cls.classID}&SectionID=${cls.sectionID}&TermID=${termID}&ExamID=${selectExamValue}`),
+      { method: 'GET', headers }
+    );
+
+    // Store everything
+    setResStudentData(prev => ({
+      ...prev,
+      [key]: { students, subjects, marks, rankings }
+    }));
+console.log('SUBJECTS:', subjects);
+console.log('MARKS:', marks);
+console.log('totalMarksSum:', subjects[0]?.totalMarksSum);
+  } catch (err) {
+    console.error('Error loading class data:', err);
+  } finally {
+    setResLoadingKey(null);
   }
 };
 async function getDateSheetData(classID, sectionID, examId, termId) {
@@ -1439,9 +1572,48 @@ const sylRunDelete = async ({ examId, classKey, classID, sectionID }) => {
   setSylConfirmDel(null);
   toast('Syllabus deleted', 'info');
 };
+// Component ke bahar, ya useEffect se pehle
+const fetchSASubjects = async (classID, sectionID, examId, termId) => {
+  try {
+    const branchID = sessionStorage.getItem('branchID');
+    const token = sessionStorage.getItem('token');
 
+    const selectedExam = filtered.find(ex => ex.id === examId);
+    const selectExamValue = selectedExam ? selectedExam.selectExam : examId;
 
+    const params = new URLSearchParams({
+      branchID: String(branchID),
+      classID: String(classID),
+      termID: String(selectedTermId),
+      ExamID: String(selectExamValue),
+      sectionID: String(sectionID),
+      pageNo: '1'
+    });
 
+    const response = await fetch(
+      buildUrl(`/api/getsasubjectbybranchclassandterm?${params.toString()}`),
+      {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/json'
+        }
+      }
+    );
+
+    const data = await response.json();
+
+    return (data?.data || []).map(item => ({
+      id: item.id,
+      subjectID: item.subjectID,
+      subjectName: item.subjectName || item.name || item.subject,
+      totalMarks: item.totalMarks || "0"
+    }));
+  } catch (error) {
+    console.error('Error fetching SA subjects:', error);
+    return [];
+  }
+};
 const formatDate = (dateStr) => {
   if (!dateStr) return "—";
   
@@ -1857,6 +2029,49 @@ const dsLoadClassDateSheet = async (key, cls) => {
     ...prev,
     [dsExamId]: { ...(prev[dsExamId] || {}), [key]: rows },
   }));
+};
+const deleteSingleAssessment = async (examId, classID, sectionID, termId) => {
+  try {
+    const branchID = sessionStorage.getItem('branchID');
+    const token = sessionStorage.getItem('token');
+    
+    // Find the selected exam to get the selectExam value
+    const selectedExam = filtered.find(ex => ex.id === examId);
+    const selectExamValue = selectedExam ? selectedExam.selectExam : examId;
+    
+    const params = new URLSearchParams({
+      classID: String(classID),
+      sectionID: String(sectionID),
+      termID: String(termId),
+      examID: String(selectExamValue)
+    });
+    
+    console.log("Deleting single assessment with params:", {
+      classID,
+      sectionID,
+      termID: termId,
+      examID: selectExamValue
+    });
+    
+    const response = await fetch(
+      buildUrl(`/api/deletesingleassessment?${params.toString()}`),
+      {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/json"
+        }
+      }
+    );
+    
+    const data = await response.json();
+    console.log("Delete API Response:", data);
+    
+    return { success: response.ok, data };
+  } catch (error) {
+    console.error("Error deleting single assessment:", error);
+    return { success: false, error };
+  }
 };
 useEffect(() => {
   if (terms && terms.length > 0 && !selectedTermId) {
@@ -2785,6 +3000,7 @@ useEffect(() => {
 {rsTab === 'singleassessment'   && (() => {
   const resCurrentExam = resExamId ? filtered.find(e => e.id === resExamId) : null;
   const resExamData    = resCurrentExam ? (resultData[resExamId] || {}) : {};
+// Add this function to delete single assessment data
 
   const buildDefaultClass = () => ({
     released: false,
@@ -2806,21 +3022,99 @@ useEffect(() => {
     return { tot, obt, pct, grade };
   };
 
-  const togglePublish = (key, className, currentlyReleased) => {
-    setResConfirmPublish({ key, className, released: currentlyReleased });
-  };
-
+ const togglePublish = (key, className, currentlyReleased, cls) => {
+  setResConfirmPublish({ key, className, released: currentlyReleased, cls });
+};
+// Add this function to fetch visibility data for an exam
+const getExamVisibility = async (examId, termId) => {
+  try {
+    const branchID = sessionStorage.getItem('branchID');
+    const token = sessionStorage.getItem('token');
+    
+    // Find the selected exam to get the selectExam value
+    const selectedExam = filtered.find(ex => ex.id === examId);
+    const selectExamValue = selectedExam ? selectedExam.selectExam : examId;
+    
+    const params = new URLSearchParams({
+      termID: String(termId),
+      examID: String(selectExamValue),
+      branchID: String(branchID)
+    });
+    
+    console.log("Fetching visibility for:", {
+      termID: termId,
+      examID: selectExamValue,
+      branchID: branchID
+    });
+    
+    const response = await fetch(
+      buildUrl(`/api/sauploadmarksGetvisibility?${params.toString()}`),
+      {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/json"
+        }
+      }
+    );
+    
+    const data = await response.json();
+    console.log("Visibility API Response:", data);
+    
+    return data;
+  } catch (error) {
+    console.error("Error fetching exam visibility:", error);
+    return null;
+  }
+};
   // Single assessment ke liye exam select karne par classes API se load
   const resPickExam = async (id) => {
-    setResExamId(id);
-    setResOpenKey(null);
-    setExamClasses([]);
-    const selectedExam = filtered.find(ex => ex.id === id);
-    if (selectedExam) {
-      const classes = await getExamClasses(selectedExam.selectExam, selectedExam.termID);
-      setExamClasses(classes);
+  setResExamId(id);
+  setResOpenKey(null);
+  setExamClasses([]);
+  
+  const selectedExam = filtered.find(ex => ex.id === id);
+  if (selectedExam) {
+    const selectExamId = selectedExam.selectExam;
+    const termID = selectedExam.termID;
+    
+    // Get classes
+    const classes = await getExamClasses(selectExamId, termID);
+    setExamClasses(classes);
+    
+    // 📌 Call the visibility API
+    try {
+      const branchID = sessionStorage.getItem('branchID');
+      const token = sessionStorage.getItem('token');
+      
+      const params = new URLSearchParams({
+        termID: String(termID),
+        examID: String(selectExamId),
+        branchID: String(branchID)
+      });
+      
+      const response = await fetch(
+        buildUrl(`/api/sauploadmarksGetvisibility?${params.toString()}`),
+        {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: "application/json"
+          }
+        }
+      );
+      
+      const data = await response.json();
+      console.log("Visibility API Response:", data);
+      
+      // Store visibility data if needed
+      // setVisibilityData(data);
+      
+    } catch (error) {
+      console.error("Error fetching visibility:", error);
     }
-  };
+  }
+};
 
   return (
     <>
@@ -2895,8 +3189,11 @@ useEffect(() => {
                 <div key={key} className="res-row-wrap">
                   <div
                     className={`res-row${isOpen ? ' open' : ''}`}
-                    onClick={() => setResOpenKey(isOpen ? null : key)}
-                  >
+onClick={() => {
+  const next = isOpen ? null : key;
+  setResOpenKey(next);
+  if (next) loadResClassData(key, cls);
+}}                  >
                     <div className="res-td" style={{ color: 'var(--text-muted)', fontWeight: 600 }}>
                       <span style={{ color: 'var(--brand-primary)', fontSize: 10 }}>#</span>&nbsp;{i + 1}
                     </div>
@@ -2911,26 +3208,63 @@ useEffect(() => {
                         {isRel ? 'Released' : 'Not Released'}
                       </span>
                     </div>
+<div className="res-td" onClick={e => e.stopPropagation()}>
+  <Tooltip text={isRel ? 'Unpublish this class result' : 'Publish this class result'}>
+    <button
+      className={`res-publish-btn${isRel ? ' released' : ''}`}
+      onClick={e => { e.stopPropagation(); togglePublish(key, className, isRel, cls); }}
+    >
+      <i className={`fa-solid ${isRel ? 'fa-eye-slash' : 'fa-paper-plane'}`}></i>
+      {isRel ? 'Unpublish' : 'Publish Result'}
+    </button>
+  </Tooltip>
+</div>
                     <div className="res-td" onClick={e => e.stopPropagation()}>
-                      <Tooltip text={isRel ? 'Unpublish this class result' : 'Publish this class result'}>
-                        <button
-                          className={`res-publish-btn${isRel ? ' released' : ''}`}
-                          onClick={e => { e.stopPropagation(); togglePublish(key, className, isRel); }}
-                        >
-                          <i className={`fa-solid ${isRel ? 'fa-eye-slash' : 'fa-paper-plane'}`}></i>
-                          {isRel ? 'Unpublish' : 'Publish Result'}
-                        </button>
-                      </Tooltip>
-                    </div>
-                    <div className="res-td" onClick={e => e.stopPropagation()}>
-                      <Tooltip text="Edit total marks for each subject">
-                        <button
-                          className="res-marks-btn"
-                          onClick={e => { e.stopPropagation(); setResTotalMarksCtx({ examId: resExamId, key, className }); }}
-                        >
-                          <i className="fa-solid fa-pen-to-square"></i> Total Marks
-                        </button>
-                      </Tooltip>
+                   <Tooltip text="Edit total marks for each subject">
+  <button
+    className="res-marks-btn"
+    onClick={async () => {
+      const fetchedSubjects = await getSyllabusSubjects(
+  cls.classID,
+  cls.sectionID
+);
+
+const saSubjects = await fetchSASubjects(
+  cls.classID,
+  cls.sectionID,
+  resExamId
+);
+console.log("fetchedSubjects", fetchedSubjects);
+console.log("saSubjects", saSubjects);
+
+const mergedSubjects = fetchedSubjects.map(subject => {
+  const match = saSubjects.find(
+    s => Number(s.subjectID) === Number(subject.subjectID)
+  );
+console.log("match", match);
+
+  return {
+    ...subject,
+    id: match?.id || 0,           // ← yeh add karo
+    totalMarks: match?.totalMarks || "0"
+  };
+});
+console.log("mergedSubjects", mergedSubjects);
+
+setResTotalMarksCtx({
+    selectExam: resCurrentExam?.selectExam || 0,  // ← add this
+  examId: resExamId,
+  key,
+  className: cls.className,
+  classID: cls.classID,
+  sectionID: cls.sectionID,
+  subjects: mergedSubjects
+});
+    }}
+  >
+    <i className="fa-solid fa-pen-to-square"></i> Total Marks
+  </button>
+</Tooltip>
                     </div>
                     <div className="res-td" style={{ justifyContent: 'flex-end', gap: 5 }} onClick={e => e.stopPropagation()}>
                       <Tooltip text="Download class result report"><button
@@ -2947,8 +3281,12 @@ useEffect(() => {
                       </button></Tooltip>
                       <button
                         className={`ds-expand-btn${isOpen ? ' open' : ''}`}
-                        onClick={e => { e.stopPropagation(); setResOpenKey(isOpen ? null : key); }}
-                      >
+onClick={e => { 
+  e.stopPropagation(); 
+  const next = isOpen ? null : key;
+  setResOpenKey(next);
+  if (next) loadResClassData(key, cls);
+}}                      >
                         <i className="fa-solid fa-chevron-down"></i>
                       </button>
                     </div>
@@ -2957,13 +3295,21 @@ useEffect(() => {
                   {/* Expanded student table */}
                   <div className={`res-detail${isOpen ? ' open' : ''}`}>
                     <div className="res-detail-inner">
-                      <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 12, display: 'flex', alignItems: 'center' }}>
+                      {resLoadingKey === key ? (
+      <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-muted)' }}>
+        <i className="fa-solid fa-spinner fa-spin" style={{ fontSize: 20, marginBottom: 8, display: 'block' }}></i>
+        Loading student data...
+      </div>
+    ) : (
+<div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 12, display: 'flex', alignItems: 'center' }}>
                         <i className="fa-solid fa-users" style={{ color: 'var(--brand-primary)', marginRight: 5 }}></i>
                         Student Results — {className}
-                        <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-muted)' }}>
-                          {cd.students.length} Student{cd.students.length !== 1 ? 's' : ''}
-                        </span>
-                      </div>
+                      {/* Subject count from API */}
+<span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-muted)' }}>
+  {resStudentData[key]?.subjects?.length || 0} Subject{(resStudentData[key]?.subjects?.length || 0) !== 1 ? 's' : ''}
+</span>
+                      </div>    )}
+                      
                       <div className="res-student-scroll">
                         <table className="res-student-table">
                           <thead>
@@ -2979,90 +3325,121 @@ useEffect(() => {
                             </tr>
                           </thead>
                           <tbody>
-                            {cd.students.map((st, si) => {
-                              const totalSubj = RES_SUBJECTS.length;
-                              const isAbsent  = st.absent === true;
-                              const entered   = isAbsent ? 0 : RES_SUBJECTS.filter(s => st.obtained[s] > 0).length;
-                              const remaining = totalSubj - entered;
-                              const { grade } = calcOverall(cd, st);
+                           {(() => {
+  const apiStudents = resStudentData[key]?.students || [];
+  const apiMarks    = resStudentData[key]?.marks    || [];
+  const apiSubjects = resStudentData[key]?.subjects  || [];
+  const apiRankings = resStudentData[key]?.rankings  || [];
+  const totalMarksSum = apiSubjects[0]?.totalMarksSum 
+    ? Number(apiSubjects[0].totalMarksSum) 
+    : 0;
+  const subjCount = apiSubjects.length;
 
-                              let stStatus, stStatusCls, stStatusIcon;
-                              if (isAbsent) {
-                                stStatus = 'Absent'; stStatusCls = 'absent'; stStatusIcon = 'fa-user-xmark';
-                              } else if (entered === totalSubj) {
-                                stStatus = 'Complete'; stStatusCls = 'complete'; stStatusIcon = 'fa-circle-check';
-                              } else {
-                                stStatus = 'Incomplete'; stStatusCls = 'incomplete'; stStatusIcon = 'fa-circle-half-stroke';
-                              }
-                              const progW = Math.round((entered / totalSubj) * 100);
-                              const progColor = entered === totalSubj ? '#16A34A' : entered > 0 ? '#1E40AF' : '#E2E8F0';
-                              const gradeBg = grade ? (RS_GRADE_COLORS[grade.grade] || '#1E3A8A') : null;
+  if (!apiStudents.length) {
+    return (
+      <tr>
+        <td colSpan={8} style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 12 }}>
+          No students found for this class.
+        </td>
+      </tr>
+    );
+  }
 
-                              return (
-                                <tr key={st.id} style={isAbsent ? { opacity: .7 } : undefined}>
-                                  <td style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 700 }}>{si + 1}</td>
-                                  <td style={{ minWidth: 120 }}>
-                                    <div style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: 12.5 }}>{st.name}</div>
-                                    <div style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>{st.rollNo}</div>
-                                  </td>
-                                  <td style={{ fontSize: 12, color: 'var(--text-secondary)', minWidth: 100 }}>{st.father}</td>
-                                  <td style={{ textAlign: 'center', fontSize: 12, fontWeight: 700 }}>{totalSubj}</td>
-                                  <td style={{ minWidth: 110 }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                      <div style={{ flex: 1, height: 6, background: '#E2E8F0', borderRadius: 3, overflow: 'hidden' }}>
-                                        <div style={{ height: '100%', width: `${progW}%`, background: progColor, borderRadius: 3, transition: 'width .3s' }} />
-                                      </div>
-                                      <span style={{ fontSize: 11, fontWeight: 700, color: progColor, flexShrink: 0 }}>{entered}/{totalSubj}</span>
-                                    </div>
-                                    <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
-                                      {remaining > 0
-                                        ? <span style={{ color: '#D97706' }}>{remaining} remaining</span>
-                                        : <span style={{ color: '#16A34A' }}>All done</span>}
-                                    </div>
-                                  </td>
-                                  <td>
-                                    <span className={`res-st-badge ${stStatusCls}`}>
-                                      <i className={`fa-solid ${stStatusIcon}`}></i> {stStatus}
-                                    </span>
-                                  </td>
-                                  <td style={{ textAlign: 'center' }}>
-                                    {grade && !isAbsent ? (
-                                      <span className="res-grade-chip" style={{ background: gradeBg }}>{grade.grade}</span>
-                                    ) : isAbsent ? (
-                                      <span style={{ fontSize: 11, color: '#D97706' }}>Absent</span>
-                                    ) : '—'}
-                                  </td>
-                                  <td>
-                                    <div style={{ display: 'flex', gap: 4, flexWrap: 'nowrap' }}>
-                                      <Tooltip text="Update marks for this student">
-                                        <button
-                                          className="res-action-btn"
-                                          onClick={() => setResUpdateCtx({ examId: resExamId, key, studentId: st.id })}
-                                        >
-                                          <i className="fa-solid fa-pen-to-square"></i> Marks
-                                        </button>
-                                      </Tooltip>
-                                      <Tooltip text="Add or edit remarks for this student">
-                                        <button
-                                          className="res-action-btn remarks"
-                                          onClick={() => setResRemarksCtx({ examId: resExamId, key, studentId: st.id })}
-                                        >
-                                          <i className="fa-solid fa-comment-dots"></i> Remarks
-                                        </button>
-                                      </Tooltip>
-                                      <Tooltip text="View this student's result card">
-<button
-  className="res-action-btn view"
-  onClick={() => setResCardCtx({ examId: resExamId, key, studentId: st.id, className })}
->
-  <i className="fa-solid fa-eye"></i> Card
-</button>
-                                      </Tooltip>
-                                    </div>
-                                  </td>
-                                </tr>
-                              );
-                            })}
+  return apiStudents.map((st, si) => {
+    const marksEntry = apiMarks.find(m => m.studentID === st.id);
+    const rankEntry  = apiRankings.find(r => r.studentID === st.id);
+    const obtMarks   = marksEntry ? Number(marksEntry.obtainedMarks) : 0;
+    const pct        = totalMarksSum > 0 ? Math.round((obtMarks / totalMarksSum) * 10000) / 100 : 0;
+    const grade      = (obtMarks > 0 && totalMarksSum > 0) ? rcGetGrade(obtMarks, totalMarksSum) : null;
+    const gradeBg    = grade ? (RS_GRADE_COLORS[grade.grade] || '#1E3A8A') : null;
+    const hasMarks   = obtMarks > 0;
+    const stStatus   = hasMarks ? 'Complete' : 'Incomplete';
+    const stStatusCls  = hasMarks ? 'complete' : 'incomplete';
+    const stStatusIcon = hasMarks ? 'fa-circle-check' : 'fa-circle-half-stroke';
+    const progW = totalMarksSum > 0 ? Math.min(100, Math.round((obtMarks / totalMarksSum) * 100)) : 0;
+    const progColor = hasMarks ? '#16A34A' : '#E2E8F0';
+
+    return (
+      <tr key={st.id}>
+        <td style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 700 }}>{si + 1}</td>
+        <td style={{ minWidth: 120 }}>
+          <div style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: 12.5 }}>
+            {st.studentName}
+          </div>
+          <div style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>
+            {st.registrationNumber || '—'}
+          </div>
+        </td>
+        <td style={{ fontSize: 12, color: 'var(--text-secondary)', minWidth: 100 }}>
+          {st.fatherName}
+        </td>
+        <td style={{ textAlign: 'center', fontSize: 12, fontWeight: 700 }}>
+          {subjCount}
+        </td>
+        <td style={{ minWidth: 110 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <div style={{ flex: 1, height: 6, background: '#E2E8F0', borderRadius: 3, overflow: 'hidden' }}>
+              <div style={{ height: '100%', width: `${progW}%`, background: progColor, borderRadius: 3, transition: 'width .3s' }} />
+            </div>
+            <span style={{ fontSize: 11, fontWeight: 700, color: progColor, flexShrink: 0 }}>
+              {obtMarks}/{totalMarksSum || '—'}
+            </span>
+          </div>
+          <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
+            {pct > 0 ? `${pct}%` : 'No marks'}
+          </div>
+        </td>
+        <td>
+          <span className={`res-st-badge ${stStatusCls}`}>
+            <i className={`fa-solid ${stStatusIcon}`}></i> {stStatus}
+          </span>
+        </td>
+        <td style={{ textAlign: 'center' }}>
+          {grade ? (
+            <span className="res-grade-chip" style={{ background: gradeBg }}>{grade.grade}</span>
+          ) : '—'}
+        </td>
+        <td>
+          <div style={{ display: 'flex', gap: 4, flexWrap: 'nowrap' }}>
+            <Tooltip text="Update marks for this student">
+              <button
+                className="res-action-btn"
+               onClick={async () => {
+  const subjects = await getSyllabusSubjects(cls.classID, cls.sectionID);
+  console.log('subjects for marks modal:', subjects);
+  setResUpdateCtx({ 
+    examId: resExamId, 
+    key, 
+    studentId: st.id,
+    subjects: subjects || []
+  });
+}}
+              >
+                <i className="fa-solid fa-pen-to-square"></i> Marks
+              </button>
+            </Tooltip>
+            <Tooltip text="Add or edit remarks for this student">
+              <button
+                className="res-action-btn remarks"
+                onClick={() => setResRemarksCtx({ examId: resExamId, key, studentId: st.id })}
+              >
+                <i className="fa-solid fa-comment-dots"></i> Remarks
+              </button>
+            </Tooltip>
+            <Tooltip text="View this student's result card">
+              <button
+                className="res-action-btn view"
+                onClick={() => setResCardCtx({ examId: resExamId, key, studentId: st.id, className })}
+              >
+                <i className="fa-solid fa-eye"></i> Card
+              </button>
+            </Tooltip>
+          </div>
+        </td>
+      </tr>
+    );
+  });
+})()}
                           </tbody>
                         </table>
                       </div>
@@ -4093,42 +4470,55 @@ useEffect(() => {
       )}
 
       {/* ── Single Assessment — Update Marks modal ── */}
-      {resUpdateCtx && (() => {
-const cd = resultData[resUpdateCtx.examId]?.[resUpdateCtx.key]
-    || { released: false, totalMarks: { ...RES_DEFAULT_TOTALS }, students: freshStudents() };
-  const st = cd.students.find(s => s.id === resUpdateCtx.studentId);
+   {resUpdateCtx && (() => {
+  // API students se dhundo
+  const apiStudents = resStudentData[resUpdateCtx.key]?.students || [];
+  const apiSubjects = resStudentData[resUpdateCtx.key]?.subjects || [];
+  const apiMarks    = resStudentData[resUpdateCtx.key]?.marks    || [];
+  
+  const st = apiStudents.find(s => s.id === resUpdateCtx.studentId);
   if (!st) return null;
 
-        return (
-          <ResultUpdateMarksModal
-            cd={cd}
-            student={st}
-            onClose={() => setResUpdateCtx(null)}
-            onSave={payload => {
-              setResultData(prev => {
-                const next = { ...prev };
-                const examMap = { ...(next[resUpdateCtx.examId] || {}) };
-                const oldCd = examMap[resUpdateCtx.key] || cd;
-                const newStudents = oldCd.students.map(s => s.id === st.id ? {
-                  ...s,
-                  obtained: { ...payload.obtained },
-                  manualRemarks: { ...payload.manualRemarks },
-                  absent: payload.absent,
-                  finalRemarks: payload.finalRemarks,
-                } : s);
-                examMap[resUpdateCtx.key] = { ...oldCd, students: newStudents };
-                next[resUpdateCtx.examId] = examMap;
-                return next;
-              });
-              toast('Marks saved!', 'success');
-              setResUpdateCtx(null);
-            }}
-            absentMode={rsAbsentMode}
-            toast={toast}
-          />
-        );
-      })()}
+  // Modal ke liye compatible student object banao
+  const marksEntry = apiMarks.find(m => m.studentID === st.id);
+  const modalStudent = {
+    id: st.id,
+    name: st.studentName,
+    father: st.fatherName,
+    rollNo: st.registrationNumber || '—',
+    obtained: {},
+    absentSubjects: [],
+    absent: false,
+    manualRemarks: {},
+    finalRemarks: '',
+  };
 
+  // cd object banao subjects se
+  const totalMarksObj = {};
+  apiSubjects.forEach(s => {
+    if (s.subjectName) totalMarksObj[s.subjectName] = Number(s.totalMarks || 0);
+  });
+  const modalCd = {
+    released: false,
+    totalMarks: Object.keys(totalMarksObj).length ? totalMarksObj : { ...RES_DEFAULT_TOTALS },
+    students: [modalStudent],
+  };
+
+  return (
+    <ResultUpdateMarksModal
+      cd={modalCd}
+      student={modalStudent}
+      subjects={subjects}
+      onClose={() => setResUpdateCtx(null)}
+      onSave={payload => {
+        toast('Marks saved!', 'success');
+        setResUpdateCtx(null);
+      }}
+      absentMode={rsAbsentMode}
+      toast={toast}
+    />
+  );
+})()}
       {/* ── Result History — report picker (Colorful / Colorless) ── */}
       {rhReportReq && (
         <RhReportPicker
@@ -4371,34 +4761,40 @@ const cd = resultData[resUpdateCtx.examId]?.[resUpdateCtx.key]
       })()}
 
       {/* ── Single Assessment — Final Remarks modal ── */}
-      {resRemarksCtx && (() => {
-  const cd = resultData[resRemarksCtx.examId]?.[resRemarksCtx.key]
-    || { released: false, totalMarks: { ...RES_DEFAULT_TOTALS }, students: freshStudents() };
-  const st = cd.students.find(s => s.id === resRemarksCtx.studentId);
+   {resRemarksCtx && (() => {
+  const apiStudents = resStudentData[resRemarksCtx.key]?.students || [];
+  const st = apiStudents.find(s => s.id === resRemarksCtx.studentId);
   if (!st) return null;
-        return (
-          <ResultRemarksModal
-            cd={cd}
-            student={st}
-            absentMode={rsAbsentMode}
-            onClose={() => setResRemarksCtx(null)}
-            onSave={text => {
-              setResultData(prev => {
-                const next = { ...prev };
-                const examMap = { ...(next[resRemarksCtx.examId] || {}) };
-                const newStudents = cd.students.map(s => s.id === st.id
-                  ? { ...s, finalRemarks: text, manualFinalRemarks: true }
-                  : s);
-                examMap[resRemarksCtx.key] = { ...cd, students: newStudents };
-                next[resRemarksCtx.examId] = examMap;
-                return next;
-              });
-              toast('Final remarks saved!', 'success');
-              setResRemarksCtx(null);
-            }}
-          />
-        );
-      })()}
+
+  const modalStudent = {
+    id: st.id,
+    name: st.studentName,
+    father: st.fatherName,
+    rollNo: st.registrationNumber || '—',
+    obtained: {},
+    absentSubjects: [],
+    absent: false,
+    finalRemarks: '',
+  };
+  const modalCd = {
+    released: false,
+    totalMarks: { ...RES_DEFAULT_TOTALS },
+    students: [modalStudent],
+  };
+
+  return (
+    <ResultRemarksModal
+      cd={modalCd}
+      student={modalStudent}
+      absentMode={rsAbsentMode}
+      onClose={() => setResRemarksCtx(null)}
+      onSave={text => {
+        toast('Final remarks saved!', 'success');
+        setResRemarksCtx(null);
+      }}
+    />
+  );
+})()}
 
       {/* ── Single Assessment — Card viewer ── */}
 {/* ── Single Assessment — Card viewer ── */}
@@ -4434,7 +4830,10 @@ const cd = resultData[resUpdateCtx.examId]?.[resUpdateCtx.key]
   return (
     <ResultTotalMarksModal
       cd={cd}
+subjects={resTotalMarksCtx.subjects}
       className={resTotalMarksCtx.className}
+      resTotalMarksCtx={resTotalMarksCtx}
+      selectedTermId={selectedTermId}
       onClose={() => setResTotalMarksCtx(null)}
       onSave={newTotals => {
         setResultData(prev => {
@@ -4453,116 +4852,141 @@ const cd = resultData[resUpdateCtx.examId]?.[resUpdateCtx.key]
 })()}
 
       {/* ── Single Assessment — Delete class confirm ── */}
-      {resConfirmDelete && (
-        <div className="confirm-overlay open" onClick={e => { if (e.target === e.currentTarget) setResConfirmDelete(null); }}>
-          <div className="confirm-dialog">
-            <div className="confirm-glow" style={{ background: 'linear-gradient(90deg,#EF4444,#DC2626,#EF4444)' }} />
-            <div className="confirm-hero">
-              <div className="confirm-ring">
-                <div className="confirm-icon-wrap" style={{ background: 'rgba(220,38,38,.1)', color: '#DC2626' }}>
-                  <i className="fa-solid fa-trash"></i>
-                </div>
-              </div>
-            </div>
-            <div className="confirm-body">
-              <div className="confirm-title">Delete Class Result</div>
-              <div className="confirm-msg" dangerouslySetInnerHTML={{
-                __html: `Delete all result data for <strong>${resConfirmDelete.className}</strong>?`,
-              }} />
-              <div className="confirm-hint">
-                <i className="fa-solid fa-triangle-exclamation"></i>
-                <span>This will clear total marks, student marks and the release flag. This cannot be undone.</span>
-              </div>
-            </div>
-            <div className="confirm-footer">
-              <Tooltip text="Cancel and close"><button className="confirm-btn confirm-btn--cancel" onClick={() => setResConfirmDelete(null)}>Cancel</button></Tooltip>
-              <Tooltip text="Confirm delete">
-                <button
-                  className="confirm-btn confirm-btn--confirm"
-                  onClick={() => {
-                    setResultData(prev => {
-                      const next = { ...prev };
-                      if (next[resConfirmDelete.examId]) {
-                        const examMap = { ...next[resConfirmDelete.examId] };
-                        delete examMap[resConfirmDelete.key];
-                        next[resConfirmDelete.examId] = examMap;
-                      }
-                      return next;
-                    });
-                    toast('Class result deleted', 'info');
-                    setResConfirmDelete(null);
-                  }}
-                >
-                  Yes, Delete
-                </button>
-              </Tooltip>
+{resConfirmDelete && (() => {
+  // Find the selected exam to get the termID
+  const selectedExam = filtered.find(e => e.id === resConfirmDelete.examId);
+  const termId = selectedExam?.termID || selectedTermId;
+  
+  return (
+    <div className="confirm-overlay open" onClick={e => { if (e.target === e.currentTarget) setResConfirmDelete(null); }}>
+      <div className="confirm-dialog">
+        <div className="confirm-glow" style={{ background: 'linear-gradient(90deg,#EF4444,#DC2626,#EF4444)' }} />
+        <div className="confirm-hero">
+          <div className="confirm-ring">
+            <div className="confirm-icon-wrap" style={{ background: 'rgba(220,38,38,.1)', color: '#DC2626' }}>
+              <i className="fa-solid fa-trash"></i>
             </div>
           </div>
         </div>
-      )}
-
-      {/* ── Single Assessment — Publish confirm ── */}
-      {resConfirmPublish && (
-        <div className="confirm-overlay open" onClick={e => { if (e.target === e.currentTarget) setResConfirmPublish(null); }}>
-          <div className="confirm-dialog">
-            <div className="confirm-glow" style={{ background: resConfirmPublish.released
-              ? 'linear-gradient(90deg,#EF4444,#DC2626,#EF4444)'
-              : 'linear-gradient(90deg,#1E3A8A,#1E40AF,#1E3A8A)' }} />
-            <div className="confirm-hero" style={{ background: resConfirmPublish.released
-              ? 'linear-gradient(180deg,rgba(220,38,38,.04),transparent)'
-              : 'linear-gradient(180deg,rgba(30,58,138,.04),transparent)' }}>
-              <div className="confirm-ring">
-                <div className="confirm-icon-wrap" style={{
-                  background: resConfirmPublish.released ? 'rgba(220,38,38,.1)' : 'rgba(30,58,138,.1)',
-                  color: resConfirmPublish.released ? '#DC2626' : '#1E40AF',
-                }}>
-                  <i className={`fa-solid ${resConfirmPublish.released ? 'fa-eye-slash' : 'fa-paper-plane'}`}></i>
-                </div>
-              </div>
-            </div>
-            <div className="confirm-body">
-              <div className="confirm-title">{resConfirmPublish.released ? 'Unpublish Result?' : 'Publish Result?'}</div>
-              <div className="confirm-msg" dangerouslySetInnerHTML={{
-                __html: resConfirmPublish.released
-                  ? `Hide the result for <strong>${resConfirmPublish.className}</strong> from students and parents?`
-                  : `Release the result for <strong>${resConfirmPublish.className}</strong> to students and parents?`,
-              }} />
-              <div className="confirm-hint" style={resConfirmPublish.released ? undefined : {
-                background: 'rgba(30,58,138,.06)', borderColor: 'rgba(30,58,138,.18)', color: '#1E3A8A',
-              }}>
-                <i className={`fa-solid ${resConfirmPublish.released ? 'fa-triangle-exclamation' : 'fa-circle-info'}`} style={resConfirmPublish.released ? undefined : { color: '#1E40AF' }}></i>
-                <span>{resConfirmPublish.released
-                  ? 'Students and parents will lose access to this result card.'
-                  : 'Once published, this result will be visible on the student portal.'}
-                </span>
-              </div>
-            </div>
-            <div className="confirm-footer">
-              <Tooltip text="Cancel and close"><button className="confirm-btn confirm-btn--cancel" onClick={() => setResConfirmPublish(null)}>Cancel</button></Tooltip>
-              <Tooltip text={resConfirmPublish.released ? 'Confirm unpublish' : 'Confirm publish'}>
-                <button
-                  className={`confirm-btn confirm-btn--confirm${resConfirmPublish.released ? '' : ' primary-style'}`}
-                  onClick={() => {
-                    const { key, released } = resConfirmPublish;
-                    setResultData(prev => {
-                      const next = { ...prev };
-                      const examMap = { ...(next[resExamId] || {}) };
-                      const oldCd = examMap[key] || { released: false, totalMarks: { ...RES_DEFAULT_TOTALS }, students: freshStudents() };
-                      examMap[key] = { ...oldCd, released: !oldCd.released };
-                      next[resExamId] = examMap;
-                      return next;
-                    });
-                    toast(released ? 'Result unpublished' : 'Result published!', 'success');
-                    setResConfirmPublish(null);
-                  }}
-                >
-                  {resConfirmPublish.released ? 'Yes, Unpublish' : 'Yes, Publish'}
-                </button>
-              </Tooltip>
+        <div className="confirm-body">
+          <div className="confirm-title">Delete Class Result</div>
+          <div className="confirm-msg" dangerouslySetInnerHTML={{
+            __html: `Delete all result data for <strong>${resConfirmDelete.className}</strong>?`,
+          }} />
+          <div className="confirm-hint">
+            <i className="fa-solid fa-triangle-exclamation"></i>
+            <span>This will clear total marks, student marks and the release flag. This cannot be undone.</span>
+          </div>
+        </div>
+        <div className="confirm-footer">
+          <Tooltip text="Cancel and close">
+            <button className="confirm-btn confirm-btn--cancel" onClick={() => setResConfirmDelete(null)}>Cancel</button>
+          </Tooltip>
+          <Tooltip text="Confirm delete">
+            <button
+              className="confirm-btn confirm-btn--confirm"
+              onClick={async () => {
+                try {
+                  // Find the class data from examClasses
+                  const classData = examClasses.find(c => 
+                    `${c.gradeName} - ${c.sectionName}` === resConfirmDelete.className
+                  );
+                  
+                  if (classData) {
+                    // Call the delete API
+                    const result = await deleteSingleAssessment(
+                      resConfirmDelete.examId,
+                      classData.classID,
+                      classData.sectionID,
+                      termId
+                    );
+                    
+                    if (result.success) {
+                      // Remove from local state
+                      setResultData(prev => {
+                        const next = { ...prev };
+                        if (next[resConfirmDelete.examId]) {
+                          const examMap = { ...next[resConfirmDelete.examId] };
+                          delete examMap[resConfirmDelete.key];
+                          next[resConfirmDelete.examId] = examMap;
+                        }
+                        return next;
+                      });
+                      
+                      toast('Class result deleted successfully!', 'success');
+                    } else {
+                      toast('Failed to delete class result. Please try again.', 'error');
+                    }
+                  }
+                } catch (error) {
+                  console.error('Delete error:', error);
+                  toast('Error deleting class result', 'error');
+                }
+                setResConfirmDelete(null);
+              }}
+            >
+              Yes, Delete
+            </button>
+          </Tooltip>
+        </div>
+      </div>
+    </div>
+  );
+})()}
+{resConfirmPublish && (() => {
+  const { key, className, released, cls } = resConfirmPublish;
+  return (
+    <div className="confirm-overlay open" onClick={e => { if (e.target === e.currentTarget) setResConfirmPublish(null); }}>
+      <div className="confirm-dialog">
+        <div className="confirm-glow" style={{ background: released
+          ? 'linear-gradient(90deg,#EF4444,#DC2626,#EF4444)'
+          : 'linear-gradient(90deg,#1E3A8A,#1E40AF,#1E3A8A)' }} />
+        <div className="confirm-hero" style={{ background: released
+          ? 'linear-gradient(180deg,rgba(220,38,38,.04),transparent)'
+          : 'linear-gradient(180deg,rgba(30,58,138,.04),transparent)' }}>
+          <div className="confirm-ring">
+            <div className="confirm-icon-wrap" style={{
+              background: released ? 'rgba(220,38,38,.1)' : 'rgba(30,58,138,.1)',
+              color: released ? '#DC2626' : '#1E40AF',
+            }}>
+              <i className={`fa-solid ${released ? 'fa-eye-slash' : 'fa-paper-plane'}`}></i>
             </div>
           </div>
         </div>
-      )}
+        <div className="confirm-body">
+          <div className="confirm-title">{released ? 'Unpublish Result?' : 'Publish Result?'}</div>
+          <div className="confirm-msg" dangerouslySetInnerHTML={{
+            __html: released
+              ? `Hide the result for <strong>${className}</strong> from students and parents?`
+              : `Release the result for <strong>${className}</strong> to students and parents?`,
+          }} />
+          <div className="confirm-hint" style={released ? undefined : {
+            background: 'rgba(30,58,138,.06)', borderColor: 'rgba(30,58,138,.18)', color: '#1E3A8A',
+          }}>
+            <i className={`fa-solid ${released ? 'fa-triangle-exclamation' : 'fa-circle-info'}`} style={released ? undefined : { color: '#1E40AF' }}></i>
+            <span>{released
+              ? 'Students and parents will lose access to this result card.'
+              : 'Once published, this result will be visible on the student portal.'}
+            </span>
+          </div>
+        </div>
+        <div className="confirm-footer">
+          <Tooltip text="Cancel and close">
+            <button className="confirm-btn confirm-btn--cancel" onClick={() => setResConfirmPublish(null)}>Cancel</button>
+          </Tooltip>
+          <Tooltip text={released ? 'Confirm unpublish' : 'Confirm publish'}>
+            <button
+              className={`confirm-btn confirm-btn--confirm${released ? '' : ' primary-style'}`}
+              onClick={handleConfirmPublish}
+            >
+              {released ? 'Yes, Unpublish' : 'Yes, Publish'}
+            </button>
+          </Tooltip>
+        </div>
+      </div>
+    </div>
+  );
+})()}
 
       <TutorialModal
         open={tutorialOpen}
@@ -7126,7 +7550,7 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
 /* ═══════════════════════════════════════════════════════════════════
    SINGLE ASSESSMENT — UPDATE MARKS MODAL
    ═══════════════════════════════════════════════════════════════════ */
-function ResultUpdateMarksModal({ cd, student, onSave, onClose, absentMode, toast }) {
+function ResultUpdateMarksModal({ cd, student, onSave, onClose, absentMode, toast, subjects = [] }) {
   const [obtained, setObtained] = useState(() => ({ ...(student.obtained || {}) }));
   const [manualRemarks, setManualRemarks] = useState(() => ({ ...(student.manualRemarks || {}) }));
   const [absent, setAbsent] = useState(!!student.absent);
@@ -7144,7 +7568,7 @@ function ResultUpdateMarksModal({ cd, student, onSave, onClose, absentMode, toas
     setAbsent(checked);
     if (checked) {
       const zeros = {};
-      RES_SUBJECTS.forEach(s => { zeros[s] = 0; });
+      subjects.forEach(s => { zeros[s] = 0; });
       setObtained(zeros);
     }
   };
@@ -7167,13 +7591,14 @@ function ResultUpdateMarksModal({ cd, student, onSave, onClose, absentMode, toas
     };
   };
 
-  const saveAndNext = () => {
-    toast(`Saved subject ${tab + 1}`, 'info');
-    setTab(t => (t + 1) % RES_SUBJECTS.length);
-  };
+ const saveAndNext = () => {
+  toast(`Saved subject ${tab + 1}`, 'info');
+  setTab(t => (t + 1) % (subjects.length || 1));
+};
   const saveAndClose = () => onSave(computePayload());
 
-  const curSubj = RES_SUBJECTS[tab];
+const curSubjObj = subjects[tab] || {};
+const curSubj    = curSubjObj.subjectName || '';
   const curTotal = cd.totalMarks[curSubj] || 0;
   const curObt   = obtained[curSubj] || 0;
   const curPct   = curTotal ? Math.round((curObt / curTotal) * 100) : 0;
@@ -7199,13 +7624,13 @@ function ResultUpdateMarksModal({ cd, student, onSave, onClose, absentMode, toas
         <div className="exam-modal-body" style={{ paddingTop: 18, overflowY: 'auto' }}>
           {/* Subject tabs */}
           <div className="syl-subj-tabs">
-            {RES_SUBJECTS.map((s, i) => (
+            {subjects.map((s, i) => (
               <button
                 key={s}
-                className={`syl-subj-tab${tab === i ? ' active' : ''}`}
+    className={`syl-subj-tab${tab === i ? ' active' : ''}`}
                 onClick={() => setTab(i)}
               >
-                {s}
+      {s.subjectName}
               </button>
             ))}
           </div>
@@ -7814,27 +8239,108 @@ function ResultRemarksModal({ cd, student, absentMode, onSave, onClose }) {
 /* ═══════════════════════════════════════════════════════════════════
    SINGLE ASSESSMENT — TOTAL MARKS EDIT MODAL
    ═══════════════════════════════════════════════════════════════════ */
-function ResultTotalMarksModal({ cd, className, onSave, onClose }) {
-  const [totals, setTotals] = useState(() => ({ ...cd.totalMarks }));
+function ResultTotalMarksModal({ cd, className, onSave, onClose , subjects , resTotalMarksCtx, selectedTermId }) {
 
+const [totals, setTotals] = useState({});
+useEffect(() => {
+  const initialTotals = {};
+
+  subjects.forEach(subject => {
+    initialTotals[subject.subjectName] = Number(subject.totalMarks || 0);
+  });
+
+  setTotals(initialTotals);
+
+  console.log("subjects =", subjects);
+  console.log("initialTotals =", initialTotals);
+}, [subjects]);
   const upd = (subject, val) => {
     const n = val === '' ? '' : Math.max(0, parseFloat(val) || 0);
     setTotals(t => ({ ...t, [subject]: n }));
   };
 
-  const applyAll = val => {
-    const n = Math.max(0, parseFloat(val) || 0);
-    const next = {};
-    RES_SUBJECTS.forEach(s => { next[s] = n; });
-    setTotals(next);
-  };
+ const applyAll = val => {
+  const n = Math.max(0, parseFloat(val) || 0);
 
-  const save = () => {
-    const cleaned = {};
-    RES_SUBJECTS.forEach(s => { cleaned[s] = totals[s] === '' || totals[s] == null ? 0 : Number(totals[s]); });
-    onSave(cleaned);
-  };
+  const next = {};
 
+  subjects.forEach(subject => {
+    next[subject.subjectName] = n;
+  });
+
+  setTotals(next);
+};
+const save = async () => {
+  try {
+    const token = sessionStorage.getItem("token");
+    const branchID = sessionStorage.getItem("branchID");
+
+    const results = [];
+
+    for (const subject of subjects) {
+      const total =
+        totals[subject.subjectName] === "" ||
+        totals[subject.subjectName] == null
+          ? 0
+          : Number(totals[subject.subjectName]);
+
+      const hasExisting =
+        subject.id && Number(subject.id) > 0;
+
+      const payload = {
+        id: hasExisting ? Number(subject.id) : 0,
+        subjectID: Number(subject.subjectID),
+        totalMarks: String(total),
+        branchID: String(branchID),
+        classID: Number(resTotalMarksCtx?.classID || 0),
+        termID: Number(selectedTermId || 0),
+        examID: Number(
+          resTotalMarksCtx?.selectExam ||
+          resTotalMarksCtx?.examId ||
+          0
+        ),
+        sectionID: Number(resTotalMarksCtx?.sectionID || 0),
+        subjectName: "",
+        termName: "",
+        examName: "",
+        totalMarksSum: "",
+        action: hasExisting ? "update" : "insert"
+      };
+
+      console.log("Sending payload:", payload);
+
+      const response = await fetch(
+        buildUrl("/api/sasubjectcrud"),
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify(payload)
+        }
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error("API Error:", errorText);
+        throw new Error(errorText);
+      }
+
+      const data = await response.json();
+      results.push(data);
+    }
+
+    // Parent refresh callback
+    onSave?.(results);
+
+    // Modal close
+    onClose?.();
+
+  } catch (error) {
+    console.error("Save error:", error);
+  }
+};
   return createPortal(
     <div
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}
@@ -7871,23 +8377,40 @@ function ResultTotalMarksModal({ cd, className, onSave, onClose }) {
           </div>
 
           {/* Per-subject rows */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-            {RES_SUBJECTS.map(s => (
-              <div key={s} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: 'var(--bg-card)', border: '1px solid var(--border-light)', borderRadius: 8 }}>
-                <div style={{ flex: 1, fontSize: 12.5, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {s}
-                </div>
-                <input
-                  className="rs-input"
-                  type="number"
-                  min={0}
-                  value={totals[s] ?? ''}
-                  onChange={e => upd(s, e.target.value)}
-                  style={{ width: 80, textAlign: 'center' }}
-                />
-              </div>
-            ))}
-          </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+  {subjects.map(subject => (
+    <div
+      key={subject.subjectID}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        padding: '8px 12px',
+        background: 'var(--bg-card)',
+        border: '1px solid var(--border-light)',
+        borderRadius: 8
+      }}
+    >
+      <div
+        style={{
+          flex: 1,
+          fontSize: 12.5,
+          fontWeight: 600
+        }}
+      >
+        {subject.subjectName}
+      </div>
+<input
+  className="rs-input"
+  type="number"
+  min={0}
+  value={totals[subject.subjectName] ?? ''}
+  onChange={e => upd(subject.subjectName, e.target.value)}
+  style={{ width: 80, textAlign: 'center' }}
+/>
+    </div>
+  ))}
+</div>
         </div>
 
         <div className="exam-modal-footer">
@@ -9363,11 +9886,22 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onSave, onClose, 
   const upSig = (id, k, v) => setDraftSigs(rows => rows.map(r => r.id === id ? { ...r, [k]: v } : r));
   const upRemark = (id, k, v) => setDraftRemarks(rows => rows.map(r => r.id === id ? { ...r, [k]: v } : r));
 
-  const addGrade = () => setDraftGrades(r => [...r, { id: Date.now(), grade: 'A+', cond: 'gte', pct: '', comment: '' }]);
-  const addSig = () => setDraftSigs(r => [...r, { id: Date.now(), name: '', desig: '', img: '' }]);
-  const addRemark = () => setDraftRemarks(r => [...r, { id: Date.now(), cond: 'gte', pct: '', text: '' }]);
+const addGrade = () =>
+  setDraftGrades(r => [
+    ...r,
+    { id: `temp_${Date.now()}`, grade: 'A+', cond: 'gte', pct: '', comment: '' }
+  ]);
+   const addSig = () =>
+  setDraftSigs(r => [
+    ...r,
+    { id: `temp_${Date.now()}`, name: '', desig: '', img: '' }
+  ]);
 
-  const [rsConfirm, setRsConfirm] = useState(null);
+const addRemark = () =>
+  setDraftRemarks(r => [
+    ...r,
+    { id: `temp_${Date.now()}`, cond: 'gte', pct: '', text: '' }
+  ]);  const [rsConfirm, setRsConfirm] = useState(null);
 
   const askDeleteGrade = g => setRsConfirm({
     kind: 'grade', id: g.id,
@@ -9385,15 +9919,57 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onSave, onClose, 
     message: `Delete this final remark rule (${RS_COND_MAP[r.cond] || '≥'} ${r.pct || '—'}%)?`,
   });
 
-  const runDelete = () => {
-    if (!rsConfirm) return;
-    const { kind, id } = rsConfirm;
-    if (kind === 'grade') setDraftGrades(r => r.filter(x => x.id !== id));
-    if (kind === 'sig') setDraftSigs(r => r.filter(x => x.id !== id));
-    if (kind === 'remark') setDraftRemarks(r => r.filter(x => x.id !== id));
-    setRsConfirm(null);
-  };
+const runDelete = async () => {
+  if (!rsConfirm) return;
 
+  const { kind, id } = rsConfirm;
+
+  try {
+    const token = sessionStorage.getItem("token");
+
+    if (typeof id === "number" && id > 0) {
+      let endpoint = "";
+
+      if (kind === "grade") {
+        endpoint = `/api/delete-grading-setup/${id}`;
+      } else if (kind === "sig") {
+        endpoint = `/api/delete-grading-uploader/${id}`;
+      } else if (kind === "remark") {
+        endpoint = `/api/delete-overall-grading/${id}`;
+      }
+
+      if (endpoint) {
+        await fetch(buildUrl(endpoint), {
+          method: "DELETE",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: "application/json"
+          }
+        });
+      }
+    }
+
+    // Remove from local state
+    if (kind === "grade") {
+      setDraftGrades(r => r.filter(x => x.id !== id));
+    }
+
+    if (kind === "sig") {
+      setDraftSigs(r => r.filter(x => x.id !== id));
+    }
+
+    if (kind === "remark") {
+      setDraftRemarks(r => r.filter(x => x.id !== id));
+    }
+
+    setRsConfirm(null);
+
+    toast("Deleted successfully", "success");
+  } catch (err) {
+    console.error(err);
+    toast("Failed to delete", "error");
+  }
+};
   const uploadSig = (id, file) => {
     if (!file) return;
     const reader = new FileReader();
@@ -9998,6 +10574,7 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onSave, onClose, 
     </div>
   );
 }
+
 function CharField({ value, max, placeholder, multiline = false, onChange, toast }) {
   const warnRef  = useRef(false);
   const limitRef = useRef(false);
