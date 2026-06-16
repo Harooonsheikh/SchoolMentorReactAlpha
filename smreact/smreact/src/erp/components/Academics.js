@@ -88,8 +88,8 @@ const getSessionData = async () => {
     );
 
     const json = await res.json();
-    sessionStorage.setItem('sessionID', json.data[0].SessionID)
-    sessionStorage.setItem('sessionName', json.data[0].SessionName)
+    sessionStorage.setItem('sessionID', json.data[0].SessionID);
+    sessionStorage.setItem('sessionName', json.data[0].SessionName);
     notifySessionChange();
   } catch (error) {
     console.error("Error loading classes:", error);
@@ -2168,8 +2168,11 @@ function TermSettings({ termData, setTermData, openConfirm, toast }) {
   const changeSession = id => {
     setSessionId(id);
     /* Store the user-switched session under changeSessionId (takes priority in
-       termsSessionYearID) and broadcast so all loaders re-run. */
+       termsSessionYearID) and broadcast so all loaders re-run. Also mirror the
+       name so labels reading sessionName update. */
     sessionStorage.setItem('changeSessionId', id);
+    const sel = sessions.find(s => String(s.SessionID) === String(id));
+    if (sel?.SessionName) sessionStorage.setItem('sessionName', sel.SessionName);
     notifySessionChange();
   };
 
@@ -2360,13 +2363,18 @@ function TermSettings({ termData, setTermData, openConfirm, toast }) {
                 <label className="ts-label">Academic Year <span style={{ color: 'var(--error)' }}>*</span></label>
                 <div className="ts-input-wrap" style={{ maxWidth: 280 }}>
                   <i className="fa-solid fa-graduation-cap ts-input-icon"></i>
-                  <input
-                    className="ts-input"
-                    value={sessionStorage.getItem('sessionName') || ''}
-                    disabled
-                    readOnly
-                  />
+                  <select
+                    className="ts-input ts-select"
+                    value={sessionId || ''}
+                    onChange={e => changeSession(e.target.value)}
+                  >
+                    <option value="" disabled>Select session</option>
+                    {sessions.map(s => (
+                      <option key={s.SessionID} value={s.SessionID}>{s.SessionName}</option>
+                    ))}
+                  </select>
                 </div>
+                <div className="ts-hint"><i className="fa-solid fa-info-circle"></i> Switch the active academic session</div>
               </div>
               <div className="ts-field-group">
                 <label className="ts-label">Session Start Date</label>
