@@ -4,7 +4,9 @@ import Tooltip from './Tooltip';
 import TutorialModal from './TutorialModal';
 import * as paperService from '../services/paperService';
 import useAsync from '../hooks/useAsync';
-
+import { buildUrl } from '../../utils/apiConfig';
+import Reactselect from 'react-select';
+import Select from 'react-select';
 /* ═══════════════════════════════════════════════════════════════════
    PAPER GENERATOR — module shell
    Stage 1: page header, 2 inner tabs (Paper Setup / Paper Generator),
@@ -64,20 +66,15 @@ function pgClassKey(cls) {
 }
 /* Generated papers now load via paperService (src/services/paperService.js).
    Create/update/delete remain in-memory until backend wires the matching endpoints. */
-function pgBuildSubjDefaults(globalFmt, globalLine) {
-  return PG_CLASSES_DATA.map(cls =>
-    cls.subjects.map(() => ({ fmt: globalFmt, line: globalLine }))
-  );
-}
-function pgBuildClassDefaults(globalFmt, globalLine) {
-  return PG_CLASSES_DATA.map(() => ({ fmt: globalFmt, line: globalLine }));
-}
+
 
 export default function PaperGenerator({ toast = () => {} }) {
   const [tutorialOpen, setTutorialOpen] = useState(false);
   const [tab, setTab]               = useState('setup');   // 'setup' | 'generator'
   const [templateId, setTemplateId] = useState(1);
   const [previewN, setPreviewN]     = useState(null);      // 1 | 2 | 3 | null
+const [examClasses, setExamClasses] = useState([]);
+const [subjects, setSubjects] = useState([]);
 
   /* ── Class-wise Paper Format & Line Settings ── */
   const [globalFmt, setGlobalFmt]   = useState('with');     // 'with' | 'without'
@@ -135,8 +132,157 @@ export default function PaperGenerator({ toast = () => {} }) {
     setSubjDefaults(prev => prev.map((row, i) => i === ci ? row.map((d, j) => j === si ? { ...d, line: l } : d) : row));
     toast(`${subjName} → ${l === 'four' ? 'Four Line' : 'Single Line'}`, 'success');
   };
+// getExamClasses fix — flatten to {name, section, subjects:[]}
+async function getExamClasses() {
+  try {
+    const branchID = sessionStorage.getItem('branchID');
+    const empID = sessionStorage.getItem('employee_ID');
+    const token = sessionStorage.getItem('token');
 
-  return (
+    const response = await fetch(
+      buildUrl(`/get-classlist-sectionlist-studentlist-by-branch/${branchID}/${empID}`),
+      {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }
+      }
+    );
+
+    const data = await response.json();
+    const apiData = data?.data || [];
+
+    // Flatten: each grade → each section = one row (like PG_CLASSES_DATA shape)
+    const flat = [];
+    apiData.forEach(grade => {
+      (grade.sections || []).forEach(sec => {
+        flat.push({
+          gradeID: grade.id,
+          sectionID: sec.sectionID,
+          name: grade.name,
+          section: sec.sectionName,
+          subjects: [],  // getSyllabusSubjects se fill hoga
+                totalSubjectsCount: sec.totalSubjectsCount || 0,
+
+        });
+      });
+    });
+
+    setExamClasses(flat);
+    return flat;
+  } catch (error) {
+    console.error('Could not load exam classes', error);
+    setExamClasses([]);
+    return [];
+  }
+}
+async function getSyllabusSubjects(gradeId, sectionID) {
+  try {
+    const branchID = sessionStorage.getItem("branchID");
+    const empID = sessionStorage.getItem("employee_ID");
+    const token = sessionStorage.getItem("token");
+
+    const response = await fetch(
+      buildUrl(`/get-subjects_byEmployeeID/${gradeId}/${sectionID}/${empID}`),
+      {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/json",
+        },
+      }
+    );
+
+    const data = await response.json();
+
+    if (data && data.success && data.data) {
+      const subjectList = data.data.map(subject => ({
+        subjectID: subject.subjectID,
+        subjectName: subject.subjectName,
+        subject: subject.subjectName,
+        content: '',
+        updatedAt: '—'
+      }));
+      setSubjects(subjectList);
+      return subjectList; // Return the subjects array
+    } else if (data && Array.isArray(data)) {
+      const subjectList = data.map(subject => ({
+        subjectID: subject.subjectID,
+        subjectName: subject.subjectName,
+        subject: subject.subjectName,
+        content: '',
+        updatedAt: '—'
+      }));
+      setSubjects(subjectList);
+      return subjectList; // Return the subjects array
+    } else {
+      setSubjects([]);
+      return [];
+    }
+  } catch (err) {
+    console.error("Error fetching syllabus subjects:", err);
+    setSubjects([]);
+    return [];
+  }
+}
+const handleClassOpen = async (ci) => {
+  const isOpen = openClassIdx === ci;
+  setOpenClassIdx(isOpen ? null : ci);
+
+  if (!isOpen && examClasses[ci].subjects.length === 0) {
+    const cls = examClasses[ci];
+    const subs = await getSyllabusSubjects(cls.gradeID, cls.sectionID);
+    const subjectNames = subs.map(s => s.subjectName);
+
+    setExamClasses(prev => prev.map((c, i) =>
+      i === ci ? { ...c, subjects: subjectNames } : c
+    ));
+    setSubjDefaults(prev => prev.map((row, i) =>
+      i === ci ? subjectNames.map(() => ({ fmt: globalFmt, line: globalLine })) : row
+    ));
+  }
+};
+// PaperGenerator component mein
+const [loadingSubjects, setLoadingSubjects] = useState(false);
+
+// MakePaperModal open karne se pehle subjects fetch karein
+const handleMakePaper = async (idx) => {
+  const cls = examClasses[idx];
+  
+  // Agar subjects nahi hain toh fetch karein
+  if (cls.subjects.length === 0) {
+    const subs = await getSyllabusSubjects(cls.gradeID, cls.sectionID);
+    const subjectNames = subs.map(s => s.subjectName);
+    
+    setExamClasses(prev => prev.map((c, i) =>
+      i === idx ? { ...c, subjects: subjectNames } : c
+    ));
+    setSubjDefaults(prev => prev.map((row, i) =>
+      i === idx ? subjectNames.map(() => ({ fmt: globalFmt, line: globalLine })) : row
+    ));
+  }
+  
+  setMakeIdx(idx);
+};
+
+
+function pgBuildSubjDefaults(globalFmt, globalLine) {
+  return examClasses.map(cls =>
+    cls.subjects.map(() => ({ fmt: globalFmt, line: globalLine }))
+  );
+}
+function pgBuildClassDefaults(globalFmt, globalLine) {
+  return examClasses.map(() => ({ fmt: globalFmt, line: globalLine }));
+}
+useEffect(() => {getExamClasses();}, []);
+  
+useEffect(() => {
+  if (examClasses.length > 0) {
+    setClassDefaults(examClasses.map(() => ({ fmt: globalFmt, line: globalLine })));
+    setSubjDefaults(examClasses.map(cls => 
+      (cls.subjects || []).map(() => ({ fmt: globalFmt, line: globalLine }))
+    ));
+  }
+}, [examClasses]);
+return (
     <>
       <style>{PG_CSS}</style>
 
@@ -280,24 +426,25 @@ export default function PaperGenerator({ toast = () => {} }) {
             </div>
 
             <div style={{ padding: '16px 20px' }}>
-              {PG_CLASSES_DATA.map((cls, ci) => {
-                const cd = classDefaults[ci];
+              {examClasses.map((cls, ci) => {
+const cd = classDefaults[ci] || { fmt: globalFmt, line: globalLine };
                 const isOpen = openClassIdx === ci;
                 return (
                   <div key={`${cls.name}-${cls.section}-${ci}`} className={`pg-subj-class-block${isOpen ? ' open' : ''}`}>
                     <div
                       className="pg-subj-class-header"
-                      onClick={() => setOpenClassIdx(isOpen ? null : ci)}
+  onClick={() => handleClassOpen(ci)}
                     >
                       <div className="pg-subj-class-header-top">
                         <i className="fa-solid fa-school" style={{ color: '#1E40AF', fontSize: 13, flexShrink: 0 }}></i>
                         <span className="pg-subj-class-name">{cls.name}</span>
                         <span className="pg-subj-class-section">{cls.section}</span>
-                        <span className="pg-subj-count-pill">{cls.subjects.length} subj</span>
-                        <Tooltip text={isOpen ? 'Hide subjects' : 'Show subjects'}>
+<span className="pg-subj-count-pill">
+  {cls.subjects.length > 0 ? cls.subjects.length : cls.totalSubjectsCount} subj
+</span>                        <Tooltip text={isOpen ? 'Hide subjects' : 'Show subjects'}>
                           <button
                             className="pg-cls-chevron"
-                            onClick={e => { e.stopPropagation(); setOpenClassIdx(isOpen ? null : ci); }}
+onClick={e => { e.stopPropagation(); handleClassOpen(ci); }}
                             style={{ marginLeft: 'auto' }}
                             aria-label="Toggle"
                           >
@@ -346,7 +493,7 @@ export default function PaperGenerator({ toast = () => {} }) {
                     {isOpen && (
                       <div className="pg-subj-rows">
                         {cls.subjects.map((s, si) => {
-                          const sd = subjDefaults[ci][si];
+const sd = (subjDefaults[ci] || [])[si] || { fmt: globalFmt, line: globalLine };
                           const icon = PG_SUBJ_ICON[s] || 'fa-book';
                           return (
                             <div key={s + si} className="pg-subj-row">
@@ -426,9 +573,10 @@ export default function PaperGenerator({ toast = () => {} }) {
             <div style={{ textAlign: 'center' }}>Generated</div>
             <div style={{ textAlign: 'center' }}>Details</div>
           </div>
-          {PG_CLASSES_DATA.map((cls, idx) => {
-            const key    = pgClassKey(cls);
-            const papers = papersByKey[key] || [];
+          {examClasses.map((cls, idx) => {
+          // Jahan papers fetch hote hain Generator tab mein
+const key    = pgClassKey(cls);
+const papers = papersByKey[key] || [];
             const count  = papers.length;
             const isOpen = openGenIdx === idx;
             return (
@@ -446,12 +594,14 @@ export default function PaperGenerator({ toast = () => {} }) {
                   </div>
                   <div>
                     <Tooltip text={`Generate a new paper for ${cls.name} · ${cls.section}`}>
-                      <button
-                        className="pg-make-paper-btn"
-                        onClick={() => setMakeIdx(idx)}
-                      >
-                        <i className="fa-solid fa-wand-magic-sparkles"></i> Make Paper
-                      </button>
+<button
+  className="pg-make-paper-btn"
+  onClick={() => handleMakePaper(idx)}
+>
+<i className="fa-solid fa-wand-magic-sparkles"></i>
+  Make Paper
+</button>
+
                     </Tooltip>
                   </div>
                   <div style={{ textAlign: 'center' }}>
@@ -503,11 +653,13 @@ export default function PaperGenerator({ toast = () => {} }) {
       {/* ── Make Paper modal ── */}
       {makeIdx != null && (
         <MakePaperModal
-          cls={PG_CLASSES_DATA[makeIdx]}
+          cls={examClasses[makeIdx]}
           defaultFmt={classDefaults[makeIdx]?.fmt || 'with'}
           initialPaper={editPaper}
           onClose={() => { setMakeIdx(null); setEditPaper(null); }}
           toast={toast}
+              subjects={subjects} // 👈 YE ADD KAREIN
+
         />
       )}
 
@@ -900,19 +1052,25 @@ function freshTab(num) {
     totalEligible: 0,
   };
 }
-
-function MakePaperModal({ cls, defaultFmt, initialPaper, onClose, toast }) {
+function MakePaperModal({ cls, defaultFmt, initialPaper, onClose, toast, subjects = [] }) {
   const isEdit = !!initialPaper;
-  const [subject, setSubject]   = useState(isEdit ? (initialPaper.subj      || '') : '');
-  const [paperType, setPaperType] = useState(isEdit ? (initialPaper.type    || '') : '');
-  const [paperFmt, setPaperFmt] = useState(isEdit ? (initialPaper.format    || defaultFmt || '') : (defaultFmt || ''));
-  const [title, setTitle]       = useState(isEdit ? (initialPaper.title     || '') : '');
-  const [objMarks, setObjMarks] = useState(isEdit && initialPaper.objMarks  ? String(initialPaper.objMarks)  : '');
-  const [objTime, setObjTime]   = useState(isEdit && initialPaper.objTime   ? String(initialPaper.objTime)   : '');
+  const [subject, setSubject] = useState(isEdit ? (initialPaper.subj || '') : '');
+  const [paperType, setPaperType] = useState(isEdit ? (initialPaper.type || '') : '');
+  const [paperFmt, setPaperFmt] = useState(isEdit ? (initialPaper.format || defaultFmt || '') : (defaultFmt || ''));
+  const [title, setTitle] = useState(isEdit ? (initialPaper.title || '') : '');
+  const [objMarks, setObjMarks] = useState(isEdit && initialPaper.objMarks ? String(initialPaper.objMarks) : '');
+  const [objTime, setObjTime] = useState(isEdit && initialPaper.objTime ? String(initialPaper.objTime) : '');
   const [subjMarks, setSubjMarks] = useState(isEdit && initialPaper.subjMarks ? String(initialPaper.subjMarks) : '');
-  const [subjTime, setSubjTime] = useState(isEdit && initialPaper.subjTime  ? String(initialPaper.subjTime)  : '');
-  const [fetched, setFetched]   = useState(false);
-  const [qTab, setQTab]         = useState('obj');  // 'obj' | 'subj'
+  const [subjTime, setSubjTime] = useState(isEdit && initialPaper.subjTime ? String(initialPaper.subjTime) : '');
+  const [fetched, setFetched] = useState(false);
+  const [qTab, setQTab] = useState('obj');
+  
+  // 👇 States for units
+  const [units, setUnits] = useState([]);
+  const [selectedUnits, setSelectedUnits] = useState([]);
+  const [loadingUnits, setLoadingUnits] = useState(false);
+    const [loading, setLoading] = useState(false); // 👈 Loading state for fetch
+
 
   /* blocksState = { obj: { typeKey: { open, activeTab, tabs:[...] } }, subj: {...} } */
   const [blocksState, setBlocksState] = useState({ obj: {}, subj: {} });
@@ -926,37 +1084,113 @@ function MakePaperModal({ cls, defaultFmt, initialPaper, onClose, toast }) {
   /* Edit flow: notify once on mount */
   useEffect(() => {
     if (isEdit) toast(`Editing "${initialPaper.title}" — modify fields and Save`, 'info');
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const showObj  = paperType === 'objective' || paperType === 'both';
+  const showObj = paperType === 'objective' || paperType === 'both';
   const showSubj = paperType === 'subjective' || paperType === 'both';
   const showMarksRow = !!paperType;
 
   // Validation: every required field for the chosen paperType must be filled
-  const objOk  = !showObj  || ((+objMarks  > 0) && (+objTime  > 0));
+  const objOk = !showObj || ((+objMarks > 0) && (+objTime > 0));
   const subjOk = !showSubj || ((+subjMarks > 0) && (+subjTime > 0));
   const baseOk = !!subject && !!paperType && !!paperFmt && !!title.trim() && objOk && subjOk;
   const canFetch = baseOk;
 
   /* Live totals from saved + open tabs */
-  const objUsed  = sectionUsedMarks(blocksState.obj);
+  const objUsed = sectionUsedMarks(blocksState.obj);
   const subjUsed = sectionUsedMarks(blocksState.subj);
-  const objTarget  = +objMarks  || 0;
+  const objTarget = +objMarks || 0;
   const subjTarget = +subjMarks || 0;
-  const objStatus  = !showObj  ? 'na' : objUsed === objTarget && objTarget > 0 ? 'ok' : objUsed > objTarget ? 'over' : 'under';
+  const objStatus = !showObj ? 'na' : objUsed === objTarget && objTarget > 0 ? 'ok' : objUsed > objTarget ? 'over' : 'under';
   const subjStatus = !showSubj ? 'na' : subjUsed === subjTarget && subjTarget > 0 ? 'ok' : subjUsed > subjTarget ? 'over' : 'under';
   const validationOk = (!showObj || objStatus === 'ok') && (!showSubj || subjStatus === 'ok');
 
   const canGenerate = baseOk && fetched && validationOk;
 
   /* Reset fetched state when settings change */
-  const resetOnChange = () => { if (fetched) { setFetched(false); setBlocksState({ obj: {}, subj: {} }); } };
+  const resetOnChange = () => { 
+    if (fetched) { 
+      setFetched(false); 
+      setBlocksState({ obj: {}, subj: {} }); 
+    } 
+  };
+
+  // 👇 API function to fetch units
+  const fetchUnits = async (subjectId) => {
+    try {
+      setLoadingUnits(true);
+      const branchID = sessionStorage.getItem("branchID");
+      const token = sessionStorage.getItem("token");
+      
+      // Get classID and sectionID from cls prop
+      const classID = cls.gradeID || cls.id;
+      const sectionID = cls.sectionID || cls.section;
+
+      const url = buildUrl(`/api/getulpfornotebookmaster?branchID=${branchID}&classID=${classID}&SectionID=${sectionID}&subjectID=${subjectId}&pageNo=1`);
+      
+      const response = await fetch(url, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/json",
+        },
+      });
+
+      const data = await response.json();
+      
+      if (data && data.data && data.data.length > 0) {
+        // 👇 Map API response to unit options - using unitName as label
+        const unitList = data.data.map(unit => ({
+          value: unit.id, // using id as value
+          label: unit.unitName || `Unit ${unit.unitNo}`, // using unitName as label
+          unitNo: unit.unitNo,
+          unitName: unit.unitName,
+          // Store additional data if needed
+          ...unit
+        }));
+        setUnits(unitList);
+        toast(`${unitList.length} units loaded`, 'success');
+      } else {
+        setUnits([]);
+        toast('No units found for this subject', 'info');
+      }
+    } catch (err) {
+      console.error("Error fetching units:", err);
+      setUnits([]);
+      toast('Failed to load units', 'error');
+    } finally {
+      setLoadingUnits(false);
+    }
+  };
+
+  // 👇 Effect to fetch units when subject changes
+  useEffect(() => {
+    if (subject) {
+      // Find subjectID from subjects array
+      const selectedSubject = subjects.find(s => s.subjectName === subject || s === subject);
+      const subjectId = selectedSubject?.subjectID || selectedSubject?.id || subject;
+      fetchUnits(subjectId);
+    } else {
+      setUnits([]);
+      setSelectedUnits([]);
+    }
+    // Reset fetched state when subject changes
+    if (fetched) {
+      setFetched(false);
+      setBlocksState({ obj: {}, subj: {} });
+    }
+  }, [subject]);
+
+  // 👇 Unit options for React-Select
+  const unitOptions = units.map(unit => ({
+    value: unit.value,
+    label: unit.label
+  }));
 
   /* ── Block (accordion) helpers ── */
   const ensureBlock = (state, section, typeKey) => {
     const sec = { ...(state[section] || {}) };
-    if (!sec[typeKey]) sec[typeKey] = { open:false, activeTab:null, tabs:[] };
+    if (!sec[typeKey]) sec[typeKey] = { open: false, activeTab: null, tabs: [] };
     return { ...state, [section]: sec };
   };
 
@@ -978,7 +1212,7 @@ function MakePaperModal({ cls, defaultFmt, initialPaper, onClose, toast }) {
       const next = ensureBlock(prev, section, typeKey);
       const block = next[section][typeKey];
       const tab = freshTab(block.tabs.length + 1);
-      const newBlock = { ...block, open:true, activeTab: tab.entryId, tabs:[...block.tabs, tab] };
+      const newBlock = { ...block, open: true, activeTab: tab.entryId, tabs: [...block.tabs, tab] };
       return { ...next, [section]: { ...next[section], [typeKey]: newBlock } };
     });
   };
@@ -1024,22 +1258,96 @@ function MakePaperModal({ cls, defaultFmt, initialPaper, onClose, toast }) {
       toast('Items exceed approved count (' + tab.totalEligible + ')', 'warning');
       return;
     }
-    updateTab(section, typeKey, entryId, { saved:true });
+    updateTab(section, typeKey, entryId, { saved: true });
     toast('Question block saved', 'success');
   };
 
   const editTab = (section, typeKey, entryId) =>
-    updateTab(section, typeKey, entryId, { saved:false });
+    updateTab(section, typeKey, entryId, { saved: false });
+  // 👇 NEW: API function to create question paper
+  const createQuestionPaper = async () => {
+    try {
+      setLoading(true);
+      const branchID = sessionStorage.getItem("branchID");
+      const token = sessionStorage.getItem("token");
+      
+      // Find subjectID
+      const selectedSubject = subjects.find(s => s.subjectName === subject || s === subject);
+      const subjectId = selectedSubject?.subjectID || selectedSubject?.id || subject;
+      
+      // Get classID and sectionID
+      const classID = cls.gradeID || cls.id;
+      const sectionID = cls.sectionID || cls.section;
 
-  const onFetch = () => {
+      // Prepare payload
+      const payload = {
+        qpMasterID: isEdit ? (initialPaper.qpMasterID || 0) : 0,
+        action: isEdit ? "update" : "insert",
+        paperType: paperType,
+        paperFormate: paperFmt,
+        timeForSubjective: parseInt(subjTime) || 0,
+        timeForObject: parseInt(objTime) || 0,
+        marksForObject: parseInt(objMarks) || 0,
+        marksForSubjective: parseInt(subjMarks) || 0,
+        paperTitle: title,
+        branchID: parseInt(branchID),
+        gradeID: parseInt(classID),
+        sectionID: parseInt(sectionID),
+        subjectID: parseInt(subjectId),
+        createdDate: new Date().toISOString(),
+        notebookIDs: selectedUnits // Selected unit IDs
+      };
+
+      const url = buildUrl(`/api/questionpapercrud`);
+      
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await response.json();
+      
+      if (data && data.success) {
+        toast('Question paper created successfully!', 'success');
+        setFetched(true);
+        setQTab(showObj ? 'obj' : 'subj');
+        // You can also store the returned qpMasterID if needed
+        if (data.data && data.data.qpMasterID) {
+          // Store qpMasterID for future updates
+          console.log('QP Master ID:', data.data.qpMasterID);
+        }
+      } else {
+        toast(data.message || 'Failed to create question paper', 'error');
+        setFetched(false);
+      }
+    } catch (err) {
+      console.error("Error creating question paper:", err);
+      toast('Error creating question paper', 'error');
+      setFetched(false);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 👇 Modified onFetch function
+  const onFetch = async () => {
     if (!canFetch) {
       toast('Please fill all the fields before fetching', 'warning');
       return;
     }
-    setBlocksState({ obj: {}, subj: {} });
-    setFetched(true);
-    setQTab(showObj ? 'obj' : 'subj');
-    toast('Questions fetched successfully', 'success');
+    
+    if (selectedUnits.length === 0) {
+      toast('Please select at least one unit', 'warning');
+      return;
+    }
+    
+    // Call the API to create question paper
+    await createQuestionPaper();
   };
 
   const onGenerate = () => {
@@ -1062,7 +1370,11 @@ function MakePaperModal({ cls, defaultFmt, initialPaper, onClose, toast }) {
             <div className="pg-modal-title">Make Paper — {cls.name} ({cls.section})</div>
             <div className="pg-modal-sub">{cls.name} · Section {cls.section}</div>
           </div>
-          <Tooltip text="Close"><button className="pg-modal-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark"></i></button></Tooltip>
+          <Tooltip text="Close">
+            <button className="pg-modal-close" onClick={onClose} aria-label="Close">
+              <i className="fa-solid fa-xmark"></i>
+            </button>
+          </Tooltip>
         </div>
 
         <div className="pg-modal-body" style={{ padding: '16px 20px' }}>
@@ -1079,11 +1391,58 @@ function MakePaperModal({ cls, defaultFmt, initialPaper, onClose, toast }) {
             <div className="pg-settings-row">
               <div className="pg-sc-field">
                 <div className="pg-field-label">Subject</div>
-                <select className="pg-select" value={subject} onChange={e => { setSubject(e.target.value); resetOnChange(); }}>
+                <select 
+                  className="pg-select" 
+                  value={subject} 
+                  onChange={e => { 
+                    setSubject(e.target.value); 
+                    setSelectedUnits([]); // Clear selected units when subject changes
+                  }}
+                  disabled={loadingUnits}
+                >
                   <option value="">— Choose —</option>
-                  {cls.subjects.map(s => <option key={s} value={s}>{s}</option>)}
+                  {subjects.map(s => (
+                    <option key={s.subjectID || s} value={s.subjectName || s}>
+                      {s.subjectName || s}
+                    </option>
+                  ))}
                 </select>
               </div>
+
+              <div className="pg-sc-field">
+                <div className="pg-field-label">
+                  Units {loadingUnits && <i className="fa-solid fa-spinner fa-spin"></i>}
+                </div>
+                <Select
+                  isMulti
+                  options={unitOptions}
+                  value={unitOptions.filter(o => selectedUnits.includes(o.value))}
+                  onChange={(selected) => {
+                    setSelectedUnits(selected ? selected.map(x => x.value) : []);
+                    // Reset fetched state when units change
+                    if (fetched) {
+                      setFetched(false);
+                      setBlocksState({ obj: {}, subj: {} });
+                    }
+                  }}
+                  placeholder={loadingUnits ? "Loading units..." : "Select units..."}
+                  isDisabled={loadingUnits || !subject}
+                  styles={{
+                    control: (base) => ({
+                      ...base,
+                      minHeight: '38px',
+                      borderColor: 'var(--border-light)',
+                      borderRadius: 'var(--radius-md)',
+                    })
+                  }}
+                />
+                {subject && units.length === 0 && !loadingUnits && (
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
+                    <i className="fa-solid fa-info-circle"></i> No units available for this subject
+                  </div>
+                )}
+              </div>
+
               <div className="pg-sc-field">
                 <div className="pg-field-label">Paper Type</div>
                 <select className="pg-select" value={paperType} onChange={e => { setPaperType(e.target.value); resetOnChange(); }}>
@@ -1093,6 +1452,7 @@ function MakePaperModal({ cls, defaultFmt, initialPaper, onClose, toast }) {
                   <option value="both">Both</option>
                 </select>
               </div>
+
               <div className="pg-sc-field">
                 <div className="pg-field-label">Paper Format</div>
                 <select className="pg-select" value={paperFmt} onChange={e => { setPaperFmt(e.target.value); resetOnChange(); }}>
@@ -1101,6 +1461,7 @@ function MakePaperModal({ cls, defaultFmt, initialPaper, onClose, toast }) {
                   <option value="without">Without Answer Sheet</option>
                 </select>
               </div>
+
               <div className="pg-sc-field pg-sc-field--wide">
                 <div className="pg-field-label">Paper Title</div>
                 <input className="pg-input" type="text" value={title} onChange={e => setTitle(e.target.value)} placeholder="e.g. Monthly Test 1" />
