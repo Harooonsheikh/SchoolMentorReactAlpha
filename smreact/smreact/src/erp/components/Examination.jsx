@@ -445,7 +445,7 @@ const [examClasses, setExamClasses] = useState([]);
 const [loadingGrades, setLoadingGrades] = useState(false);
 const [loadingSigs, setLoadingSigs] = useState(false);
 const [loadingRemarks, setLoadingRemarks] = useState(false);
-
+const [examVisibilityMap, setExamVisibilityMap] = useState({});
   const [resStudentData, setResStudentData] = useState({}); // key → { students, subjects, marks, rankings }
 const [resLoadingKey, setResLoadingKey] = useState(null);
 
@@ -1960,6 +1960,59 @@ const sylLoadClassSyllabus = async (key, cls) => {
     [sylExamId]: { ...(prev[sylExamId] || {}), [key]: mapped },
   }));
 };
+const fetchStudentRemarks = async (cls, st , key) => {
+  try {
+    const token = sessionStorage.getItem('token');
+    const branchID = sessionStorage.getItem('branchID');
+    const selectedExam = filtered.find(ex => ex.id === resExamId);
+    const selectExamValue = selectedExam?.selectExam || 0;
+
+    const params = new URLSearchParams({
+      branchID: String(branchID),
+      classID: String(cls.classID),
+      sectionID: String(cls.sectionID),
+      examID: String(selectExamValue),
+      termID: String(selectedTermId),
+      studentID: String(st.id),
+      pageNo: '1',
+      pageCount: '20'
+    });
+
+    const res = await fetch(
+      buildUrl(`/api/getremarksbystudentfilters?${params}`),
+      {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/json'
+        }
+      }
+    );
+
+    const data = await res.json();
+    const existingRemark = Array.isArray(data) ? data[0] : (data?.data?.[0] || null);
+    console.log('Existing remark:', existingRemark);
+
+    setResRemarksCtx({ 
+  examId: resExamId, 
+  key,
+  studentId: st.id,
+  classID: cls.classID,
+  sectionID: cls.sectionID,
+  examID: selectExamValue,
+  termID: selectedTermId,
+  existingRemark: existingRemark || null
+});
+  } catch (err) {
+    console.error('Error fetching remarks:', err);
+    setResRemarksCtx({ 
+      examId: resExamId, 
+      key, 
+      studentId: st.id, 
+      existingRemark: null 
+    });
+  }
+};
   async function getExamSyllabusByClassAndTerms(classID, sectionID, selectExam, termName, pageNo = 1) {
   try {
     const branchID = sessionStorage.getItem('branchID');
@@ -3025,50 +3078,9 @@ useEffect(() => {
  const togglePublish = (key, className, currentlyReleased, cls) => {
   setResConfirmPublish({ key, className, released: currentlyReleased, cls });
 };
-// Add this function to fetch visibility data for an exam
-const getExamVisibility = async (examId, termId) => {
-  try {
-    const branchID = sessionStorage.getItem('branchID');
-    const token = sessionStorage.getItem('token');
-    
-    // Find the selected exam to get the selectExam value
-    const selectedExam = filtered.find(ex => ex.id === examId);
-    const selectExamValue = selectedExam ? selectedExam.selectExam : examId;
-    
-    const params = new URLSearchParams({
-      termID: String(termId),
-      examID: String(selectExamValue),
-      branchID: String(branchID)
-    });
-    
-    console.log("Fetching visibility for:", {
-      termID: termId,
-      examID: selectExamValue,
-      branchID: branchID
-    });
-    
-    const response = await fetch(
-      buildUrl(`/api/sauploadmarksGetvisibility?${params.toString()}`),
-      {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: "application/json"
-        }
-      }
-    );
-    
-    const data = await response.json();
-    console.log("Visibility API Response:", data);
-    
-    return data;
-  } catch (error) {
-    console.error("Error fetching exam visibility:", error);
-    return null;
-  }
-};
+
   // Single assessment ke liye exam select karne par classes API se load
-  const resPickExam = async (id) => {
+const resPickExam = async (id) => {
   setResExamId(id);
   setResOpenKey(null);
   setExamClasses([]);
@@ -3078,11 +3090,9 @@ const getExamVisibility = async (examId, termId) => {
     const selectExamId = selectedExam.selectExam;
     const termID = selectedExam.termID;
     
-    // Get classes
     const classes = await getExamClasses(selectExamId, termID);
     setExamClasses(classes);
     
-    // 📌 Call the visibility API
     try {
       const branchID = sessionStorage.getItem('branchID');
       const token = sessionStorage.getItem('token');
@@ -3095,23 +3105,28 @@ const getExamVisibility = async (examId, termId) => {
       
       const response = await fetch(
         buildUrl(`/api/sauploadmarksGetvisibility?${params.toString()}`),
-        {
-          method: "GET",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            Accept: "application/json"
-          }
-        }
+        { method: 'GET', headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } }
       );
       
       const data = await response.json();
-      console.log("Visibility API Response:", data);
       
-      // Store visibility data if needed
-      // setVisibilityData(data);
+      // Visibility map build karo
+      const visMap = {};
+      if (Array.isArray(data)) {
+        data.forEach(item => {
+          classes.forEach((cls, i) => {
+            if (Number(cls.sectionID) === Number(item.sectionID) &&
+                Number(cls.classID) === Number(item.classID)) {
+              const key = `rcls_${id}_${cls.sectionID}_${i}`;
+              visMap[key] = item.isResultVisibleToParents;
+            }
+          });
+        });
+      }
+      setExamVisibilityMap(prev => ({ ...prev, ...visMap }));
       
     } catch (error) {
-      console.error("Error fetching visibility:", error);
+      console.error('Error fetching visibility:', error);
     }
   }
 };
@@ -3180,11 +3195,11 @@ const getExamVisibility = async (examId, termId) => {
               <div className="res-th" style={{ textAlign: 'right' }}>Actions</div>
             </div>
             {examClasses.map((cls, i) => {
-              const key    = `rcls_${resExamId}_${cls.sectionID}_${i}`;
-              const cd     = resExamData[key] || buildDefaultClass();
-              const isOpen = resOpenKey === key;
-              const isRel  = cd.released;
-              const className = `${cls.gradeName} - ${cls.sectionName}`;
+const key    = `rcls_${resExamId}_${cls.sectionID}_${i}`;
+  const cd     = resExamData[key] || buildDefaultClass();
+  const isOpen = resOpenKey === key;
+  const isRel  = examVisibilityMap[key] ?? cd.released;  // ← yeh change karo
+  const className = `${cls.gradeName} - ${cls.sectionName}`;
               return (
                 <div key={key} className="res-row-wrap">
                   <div
@@ -3203,20 +3218,22 @@ onClick={() => {
                     </div>
                     <div className="res-td" style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>{cls.sectionName}</div>
                     <div className="res-td">
-                      <span className={`res-released-badge${isRel ? ' released' : ' pending'}`}>
-                        <i className={`fa-solid ${isRel ? 'fa-circle-check' : 'fa-clock'}`}></i>
-                        {isRel ? 'Released' : 'Not Released'}
-                      </span>
+                     <span className={`res-released-badge${isRel ? ' released' : ' pending'}`}>
+  <i className={`fa-solid ${isRel ? 'fa-circle-check' : 'fa-clock'}`}></i>
+  {isRel ? 'Released' : 'Not Released'}
+</span>
+
                     </div>
 <div className="res-td" onClick={e => e.stopPropagation()}>
   <Tooltip text={isRel ? 'Unpublish this class result' : 'Publish this class result'}>
-    <button
-      className={`res-publish-btn${isRel ? ' released' : ''}`}
-      onClick={e => { e.stopPropagation(); togglePublish(key, className, isRel, cls); }}
-    >
-      <i className={`fa-solid ${isRel ? 'fa-eye-slash' : 'fa-paper-plane'}`}></i>
-      {isRel ? 'Unpublish' : 'Publish Result'}
-    </button>
+<button
+  className={`res-publish-btn${isRel ? ' released' : ''}`}
+  onClick={e => { e.stopPropagation(); togglePublish(key, className, isRel, cls); }}
+>
+  <i className={`fa-solid ${isRel ? 'fa-eye-slash' : 'fa-paper-plane'}`}></i>
+  {isRel ? 'Unpublish' : 'Publish Result'}
+</button>
+
   </Tooltip>
 </div>
                     <div className="res-td" onClick={e => e.stopPropagation()}>
@@ -3404,28 +3421,32 @@ onClick={e => {
             <Tooltip text="Update marks for this student">
               <button
                 className="res-action-btn"
-               onClick={async () => {
+onClick={async () => {
   const subjects = await getSyllabusSubjects(cls.classID, cls.sectionID);
-  console.log('subjects for marks modal:', subjects);
   setResUpdateCtx({ 
     examId: resExamId, 
     key, 
     studentId: st.id,
-    subjects: subjects || []
+    subjects: subjects || [],
+    // Yeh add karo ↓
+    classID: cls.classID,
+    sectionID: cls.sectionID,
+    selectExam: resCurrentExam?.selectExam || 0,
+    termID: selectedTermId
   });
 }}
               >
                 <i className="fa-solid fa-pen-to-square"></i> Marks
               </button>
             </Tooltip>
-            <Tooltip text="Add or edit remarks for this student">
-              <button
-                className="res-action-btn remarks"
-                onClick={() => setResRemarksCtx({ examId: resExamId, key, studentId: st.id })}
-              >
-                <i className="fa-solid fa-comment-dots"></i> Remarks
-              </button>
-            </Tooltip>
+           <Tooltip text="Add or edit remarks for this student">
+  <button
+    className="res-action-btn remarks"
+    onClick={() => fetchStudentRemarks(cls, st , key)}
+  >
+    <i className="fa-solid fa-comment-dots"></i> Remarks
+  </button>
+</Tooltip>
             <Tooltip text="View this student's result card">
               <button
                 className="res-action-btn view"
@@ -4470,17 +4491,11 @@ onClick={e => {
       )}
 
       {/* ── Single Assessment — Update Marks modal ── */}
-   {resUpdateCtx && (() => {
-  // API students se dhundo
+  {resUpdateCtx && (() => {
   const apiStudents = resStudentData[resUpdateCtx.key]?.students || [];
-  const apiSubjects = resStudentData[resUpdateCtx.key]?.subjects || [];
-  const apiMarks    = resStudentData[resUpdateCtx.key]?.marks    || [];
-  
   const st = apiStudents.find(s => s.id === resUpdateCtx.studentId);
   if (!st) return null;
 
-  // Modal ke liye compatible student object banao
-  const marksEntry = apiMarks.find(m => m.studentID === st.id);
   const modalStudent = {
     id: st.id,
     name: st.studentName,
@@ -4493,14 +4508,9 @@ onClick={e => {
     finalRemarks: '',
   };
 
-  // cd object banao subjects se
-  const totalMarksObj = {};
-  apiSubjects.forEach(s => {
-    if (s.subjectName) totalMarksObj[s.subjectName] = Number(s.totalMarks || 0);
-  });
   const modalCd = {
     released: false,
-    totalMarks: Object.keys(totalMarksObj).length ? totalMarksObj : { ...RES_DEFAULT_TOTALS },
+    totalMarks: {},
     students: [modalStudent],
   };
 
@@ -4508,7 +4518,14 @@ onClick={e => {
     <ResultUpdateMarksModal
       cd={modalCd}
       student={modalStudent}
-      subjects={subjects}
+      subjects={resUpdateCtx.subjects || []}
+      // Yeh add karo ↓
+      resTotalMarksCtx={{
+        classID: resUpdateCtx.classID,
+        sectionID: resUpdateCtx.sectionID,
+        selectExam: resUpdateCtx.selectExam,
+      }}
+      selectedTermId={resUpdateCtx.termID}
       onClose={() => setResUpdateCtx(null)}
       onSave={payload => {
         toast('Marks saved!', 'success');
@@ -4783,16 +4800,18 @@ onClick={e => {
   };
 
   return (
-    <ResultRemarksModal
-      cd={modalCd}
-      student={modalStudent}
-      absentMode={rsAbsentMode}
-      onClose={() => setResRemarksCtx(null)}
-      onSave={text => {
-        toast('Final remarks saved!', 'success');
-        setResRemarksCtx(null);
-      }}
-    />
+<ResultRemarksModal
+  cd={modalCd}
+  student={modalStudent}
+  absentMode={rsAbsentMode}
+  existingRemark={resRemarksCtx.existingRemark}
+  remarksCtx={resRemarksCtx}
+  onClose={() => setResRemarksCtx(null)}
+  onSave={text => {
+    toast('Final remarks saved!', 'success');
+    setResRemarksCtx(null);
+  }}
+/>
   );
 })()}
 
@@ -4830,6 +4849,7 @@ onClick={e => {
   return (
     <ResultTotalMarksModal
       cd={cd}
+      
 subjects={resTotalMarksCtx.subjects}
       className={resTotalMarksCtx.className}
       resTotalMarksCtx={resTotalMarksCtx}
@@ -7550,15 +7570,114 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
 /* ═══════════════════════════════════════════════════════════════════
    SINGLE ASSESSMENT — UPDATE MARKS MODAL
    ═══════════════════════════════════════════════════════════════════ */
-function ResultUpdateMarksModal({ cd, student, onSave, onClose, absentMode, toast, subjects = [] }) {
+function ResultUpdateMarksModal({ cd, student, onSave, onClose, absentMode, toast, subjects = [], resTotalMarksCtx, selectedTermId }) {
   const [obtained, setObtained] = useState(() => ({ ...(student.obtained || {}) }));
   const [manualRemarks, setManualRemarks] = useState(() => ({ ...(student.manualRemarks || {}) }));
   const [absent, setAbsent] = useState(!!student.absent);
   const [tab, setTab] = useState(0);
+  const [subjectTotalMarks, setSubjectTotalMarks] = useState({});
+  const [subjectExistingMarkId, setSubjectExistingMarkId] = useState({});
+  const [loadingSubject, setLoadingSubject] = useState(false);
+
+  const fetchSubjectData = async (subjectObj) => {
+    if (!subjectObj) return;
+    setLoadingSubject(true);
+    try {
+      const token = sessionStorage.getItem('token');
+      const branchID = sessionStorage.getItem('branchID');
+      const classID = resTotalMarksCtx?.classID || '';
+      const sectionID = resTotalMarksCtx?.sectionID || '';
+      const examID = resTotalMarksCtx?.selectExam || 0;
+      const termID = selectedTermId || '';
+      const subjectID = subjectObj.subjectID;
+      const headers = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
+
+      // API 1: Subject total marks
+      const subjParams = new URLSearchParams({
+        branchID: String(branchID),
+        classID: String(classID),
+        termID: String(termID),
+        ExamID: String(examID),
+        SubjectID: String(subjectID),
+        sectionID: String(sectionID),
+        pageNo: '1'
+      });
+      const subjRes = await fetch(
+        buildUrl(`/api/getsasubjectbybranchclassandtermandexamandsubject?${subjParams}`),
+        { method: 'GET', headers }
+      );
+      const subjData = await subjRes.json();
+      const subjRecord = Array.isArray(subjData) ? subjData[0] : (subjData?.data?.[0] || null);
+      if (subjRecord) {
+        setSubjectTotalMarks(prev => ({
+          ...prev,
+          [subjectID]: Number(subjRecord.totalMarks || 0)
+        }));
+      }
+
+      // API 2: Student existing marks for this subject
+      const marksParams = new URLSearchParams({
+        classID: String(classID),
+        termID: String(termID),
+        ExamID: String(examID),
+        SubjectID: String(subjectID),
+        StudentID: String(student.id),
+        sectionID: String(sectionID),
+        pageNo: '1'
+      });
+      const marksRes = await fetch(
+        buildUrl(`/api/getsauploadmarksbyclassandtermandexamandsubject?${marksParams}`),
+        { method: 'GET', headers }
+      );
+      const marksData = await marksRes.json();
+      const marksRecord = Array.isArray(marksData) ? marksData[0] : (marksData?.data?.[0] || null);
+      if (marksRecord) {
+  setObtained(prev => ({
+    ...prev,
+    [subjectObj.subjectName]: Number(marksRecord.obtainedMarks || marksRecord.obtainMarks || marksRecord.marks || 0)
+  }));
+  setSubjectExistingMarkId(prev => ({
+    ...prev,
+    [subjectID]: marksRecord.id || 0
+  }));
+  // Remarks bhi pre-fill karo
+  if (marksRecord.remarks) {
+    setManualRemarks(prev => ({
+      ...prev,
+      [subjectObj.subjectName]: marksRecord.remarks
+    }));
+  }
+}
+    } catch (err) {
+      console.error('Error fetching subject data:', err);
+      toast?.('Could not load subject data', 'error');
+    } finally {
+      setLoadingSubject(false);
+    }
+  };
+
+  // First subject load on mount
+  useEffect(() => {
+    if (subjects.length > 0) {
+      fetchSubjectData(subjects[0]);
+    }
+  }, []);
+
+  const handleTabClick = (idx) => {
+    setTab(idx);
+    fetchSubjectData(subjects[idx]);
+  };
 
   const updateObt = (subject, val) => {
-    setObtained(o => ({ ...o, [subject]: val === '' ? 0 : Math.max(0, Math.min(cd.totalMarks[subject] || 0, parseFloat(val) || 0)) }));
+    const curSubjObj = subjects[tab];
+    const subjectID = curSubjObj?.subjectID;
+    const maxMarks = subjectTotalMarks[subjectID] ?? (cd.totalMarks[subject] || 0);
+    setObtained(o => ({
+      ...o,
+      [subject]: val === '' ? 0 : Math.max(0, Math.min(maxMarks, parseFloat(val) || 0))
+    }));
   };
+
   const updateMc = (subject, val) => {
     setManualRemarks(o => ({ ...o, [subject]: val }));
   };
@@ -7568,7 +7687,7 @@ function ResultUpdateMarksModal({ cd, student, onSave, onClose, absentMode, toas
     setAbsent(checked);
     if (checked) {
       const zeros = {};
-      subjects.forEach(s => { zeros[s] = 0; });
+      subjects.forEach(s => { zeros[s.subjectName] = 0; });
       setObtained(zeros);
     }
   };
@@ -7583,25 +7702,120 @@ function ResultUpdateMarksModal({ cd, student, onSave, onClose, absentMode, toas
           : RES_SUBJECTS.reduce((a, s) => absSet[s] ? a : a + (cd.totalMarks[s] || 0), 0));
     const obt = absent ? 0 : RES_SUBJECTS.reduce((a, s) => a + (absSet[s] ? 0 : (obtained[s] || 0)), 0);
     const pct = tot ? (obt / tot) * 100 : 0;
-    return {
-      obtained,
-      manualRemarks,
-      absent,
-      finalRemarks: rcGetFinalRemarks(pct),
-    };
+    return { obtained, manualRemarks, absent, finalRemarks: rcGetFinalRemarks(pct) };
   };
 
- const saveAndNext = () => {
-  toast(`Saved subject ${tab + 1}`, 'info');
-  setTab(t => (t + 1) % (subjects.length || 1));
-};
-  const saveAndClose = () => onSave(computePayload());
+  const saveAndNext = () => {
+    toast?.(`Saved subject ${tab + 1}`, 'info');
+    const nextIdx = (tab + 1) % (subjects.length || 1);
+    setTab(nextIdx);
+    fetchSubjectData(subjects[nextIdx]);
+  };
+const saveAndClose = async () => {
+  try {
+    const token = sessionStorage.getItem('token');
+    const branchID = sessionStorage.getItem('branchID');
+    const classID = resTotalMarksCtx?.classID || '';
+    const sectionID = resTotalMarksCtx?.sectionID || '';
+    const examID = resTotalMarksCtx?.selectExam || 0;
+    const termID = selectedTermId || '';
 
-const curSubjObj = subjects[tab] || {};
-const curSubj    = curSubjObj.subjectName || '';
-  const curTotal = cd.totalMarks[curSubj] || 0;
-  const curObt   = obtained[curSubj] || 0;
-  const curPct   = curTotal ? Math.round((curObt / curTotal) * 100) : 0;
+    const curSubjObj = subjects[tab] || {};
+    const curSubj = curSubjObj.subjectName || '';
+    const curSubjID = curSubjObj.subjectID;
+    const existingId = subjectExistingMarkId[curSubjID] || 0;
+    const obtainedMarks = obtained[curSubj] || 0;
+    const curTotal = subjectTotalMarks[curSubjID] ?? 0;
+    const pct = curTotal > 0 ? Math.round((obtainedMarks / curTotal) * 100) : 0;
+    const gradeObj = rcGetGrade(obtainedMarks, curTotal);
+    const remarks = manualRemarks[curSubj] || (gradeObj ? gradeObj.comment : '');
+
+    const headers = {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      Accept: 'application/json'
+    };
+
+    const commonParams = new URLSearchParams({
+      branchId: String(branchID),
+      classId: String(classID),
+      sectionId: String(sectionID),
+      termId: String(termID),
+      examId: String(examID),
+      studentId: String(student.id),
+    });
+
+    // API 1: Save marks
+    const savePayload = {
+      id: existingId,
+      branchId: String(branchID),
+      classID: Number(classID),
+      sectionID: Number(sectionID),
+      examID: String(examID),
+      termID: String(termID),
+      subjectID: Number(curSubjID),
+      studentID: Number(student.id),
+      obtainMarks: String(obtainedMarks),
+      TotalMarks: String(curTotal),
+      percentage: String(pct),
+      Remarks: remarks,
+      action: existingId > 0 ? 'update' : 'insert',
+      ClassName: '',
+      ExamName: '',
+      SectionName: '',
+      Term: '',
+      subjectName: '',
+    };
+
+    await fetch(buildUrl('/api/sauploadmarkscrud'), {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(savePayload)
+    });
+
+    // API 2: FetchFinalRemarksAgainstPercentage
+    await fetch(
+      buildUrl(`/api/FetchFinalRemarksAgainstPercentage?${commonParams}`),
+      { method: 'GET', headers }
+    );
+
+    // API 3: CalculateUploadRemark
+    const calculateParams = new URLSearchParams({
+      ...Object.fromEntries(commonParams),
+      subjectId: String(curSubjID),
+    });
+    await fetch(
+      buildUrl(`/api/CalculateUploadRemark?${calculateParams}`),
+      { method: 'GET', headers }
+    );
+
+    // API 4: saveoverallstudentresultpercentage
+    await fetch(buildUrl('/api/saveoverallstudentresultpercentage'), {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        branchID: Number(branchID),
+        classID: Number(classID),
+        sectionID: Number(sectionID),
+        termID: Number(termID),
+        examID: Number(examID),
+      })
+    });
+
+    toast?.('Marks saved!', 'success');
+  } catch (err) {
+    console.error('Error saving marks:', err);
+    toast?.('Could not save marks', 'error');
+  }
+
+  onSave(computePayload());
+};
+  const curSubjObj = subjects[tab] || {};
+  const curSubj = curSubjObj.subjectName || '';
+  const curSubjID = curSubjObj.subjectID;
+  const curTotal = subjectTotalMarks[curSubjID] ?? (cd.totalMarks[curSubj] || 0);
+  const curObt = obtained[curSubj] || 0;
+  const curPct = curTotal ? Math.round((curObt / curTotal) * 100) : 0;
   const curGrade = rcGetGrade(curObt, curTotal);
 
   return createPortal(
@@ -7626,11 +7840,11 @@ const curSubj    = curSubjObj.subjectName || '';
           <div className="syl-subj-tabs">
             {subjects.map((s, i) => (
               <button
-                key={s}
-    className={`syl-subj-tab${tab === i ? ' active' : ''}`}
-                onClick={() => setTab(i)}
+                key={`subj-${s.subjectID ?? i}-${i}`}
+                className={`syl-subj-tab${tab === i ? ' active' : ''}`}
+                onClick={() => handleTabClick(i)}
               >
-      {s.subjectName}
+                {s.subjectName}
               </button>
             ))}
           </div>
@@ -7650,52 +7864,61 @@ const curSubj    = curSubjObj.subjectName || '';
 
           {/* Active subject panel */}
           <div style={{ opacity: absent ? .35 : 1, pointerEvents: absent ? 'none' : 'auto' }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 8 }}>
-              {curSubj} — {student.name}
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
-              <div>
-                <label style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>Total Marks</label>
-                <input className="rs-input" type="number" value={curTotal} readOnly style={{ background: 'var(--bg-muted)' }} />
+            {loadingSubject ? (
+              <div style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                <i className="fa-solid fa-spinner fa-spin" style={{ fontSize: 20, marginBottom: 8, display: 'block' }}></i>
+                Loading subject data...
               </div>
-              <div>
-                <label style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>Obtained Marks</label>
-                <input
-                  className="rs-input"
-                  type="number"
-                  value={curObt}
-                  min={0}
-                  max={curTotal}
-                  onChange={e => updateObt(curSubj, e.target.value)}
-                />
-              </div>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', background: 'var(--bg-muted)', borderRadius: 'var(--radius-md)' }}>
-              <div>
-                <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.5px', color: 'var(--text-muted)', marginBottom: 3 }}>Percentage</div>
-                <div style={{ fontSize: 15, fontWeight: 800, color: '#1E40AF' }}>{curTotal ? `${curPct}%` : '—'}</div>
-              </div>
-              <div>
-                <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.5px', color: 'var(--text-muted)', marginBottom: 3 }}>Grade</div>
-                <div style={{ fontSize: 15, fontWeight: 800, color: curGrade ? (RS_GRADE_COLORS[curGrade.grade] || '#16A34A') : 'var(--text-muted)' }}>
-                  {curGrade ? curGrade.grade : '—'}
+            ) : (
+              <>
+                <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 8 }}>
+                  {curSubj} — {student.name}
                 </div>
-              </div>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.5px', color: 'var(--text-muted)', marginBottom: 3 }}>Auto Comment</div>
-                <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{curGrade ? curGrade.comment : '—'}</div>
-              </div>
-            </div>
-            <div style={{ marginTop: 12 }}>
-              <label style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>Manual Comment (optional)</label>
-              <input
-                className="rs-input"
-                type="text"
-                value={manualRemarks[curSubj] || ''}
-                onChange={e => updateMc(curSubj, e.target.value)}
-                placeholder="Override auto comment..."
-              />
-            </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+                  <div>
+                    <label style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>Total Marks</label>
+                    <input className="rs-input" type="number" value={curTotal} readOnly style={{ background: 'var(--bg-muted)' }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>Obtained Marks</label>
+                    <input
+                      className="rs-input"
+                      type="number"
+                      value={curObt}
+                      min={0}
+                      max={curTotal}
+                      onChange={e => updateObt(curSubj, e.target.value)}
+                    />
+                  </div>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', background: 'var(--bg-muted)', borderRadius: 'var(--radius-md)' }}>
+                  <div>
+                    <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.5px', color: 'var(--text-muted)', marginBottom: 3 }}>Percentage</div>
+                    <div style={{ fontSize: 15, fontWeight: 800, color: '#1E40AF' }}>{curTotal ? `${curPct}%` : '—'}</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.5px', color: 'var(--text-muted)', marginBottom: 3 }}>Grade</div>
+                    <div style={{ fontSize: 15, fontWeight: 800, color: curGrade ? (RS_GRADE_COLORS[curGrade.grade] || '#16A34A') : 'var(--text-muted)' }}>
+                      {curGrade ? curGrade.grade : '—'}
+                    </div>
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.5px', color: 'var(--text-muted)', marginBottom: 3 }}>Auto Comment</div>
+                    <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{curGrade ? curGrade.comment : '—'}</div>
+                  </div>
+                </div>
+                <div style={{ marginTop: 12 }}>
+                  <label style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>Manual Comment (optional)</label>
+                  <input
+                    className="rs-input"
+                    type="text"
+                    value={manualRemarks[curSubj] || ''}
+                    onChange={e => updateMc(curSubj, e.target.value)}
+                    placeholder="Override auto comment..."
+                  />
+                </div>
+              </>
+            )}
           </div>
         </div>
 
@@ -7717,7 +7940,6 @@ const curSubj    = curSubjObj.subjectName || '';
     document.body
   );
 }
-
 /* ═══════════════════════════════════════════════════════════════════
    SINGLE ASSESSMENT — RESULT CARD VIEWER (with PDF print)
    ═══════════════════════════════════════════════════════════════════ */
@@ -8151,7 +8373,7 @@ function CbrCreateModal({ exams, onClose, onCreate, toast }) {
   );
 }
 
-function ResultRemarksModal({ cd, student, absentMode, onSave, onClose }) {
+function ResultRemarksModal({ cd, student, absentMode, onSave, onClose, existingRemark, remarksCtx }) {
   const absSet = {};
   (student.absentSubjects || []).forEach(s => { absSet[s] = true; });
   const totalAll = absentMode === 'zero'
@@ -8161,8 +8383,43 @@ function ResultRemarksModal({ cd, student, absentMode, onSave, onClose }) {
   const ovPct  = totalAll ? Math.round((obtAll / totalAll) * 10000) / 100 : 0;
   const autoRem = rcGetFinalRemarks(ovPct);
 
-  const [text, setText] = useState(student.finalRemarks || autoRem);
+  // existingRemark se pre-fill karo
+  const [text, setText] = useState(existingRemark?.remarks || student.finalRemarks || autoRem);
   const MAX = 200;
+
+  const handleSave = async () => {
+    try {
+      const token = sessionStorage.getItem('token');
+      const branchID = sessionStorage.getItem('branchID');
+      const existingId = existingRemark?.id || 0;
+
+      const payload = {
+        id: existingId,
+        branchID: String(branchID),
+        classID: String(remarksCtx?.classID || ''),
+        sectionID: String(remarksCtx?.sectionID || ''),
+        examID: String(remarksCtx?.examID || ''),
+        termID: String(remarksCtx?.termID || ''),
+        studentID: String(student.id),
+        remarks: text.slice(0, MAX),
+        action: existingId > 0 ? 'update' : 'insert'
+      };
+
+      await fetch(buildUrl('/api/remarksforstudentcrud'), {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+          Accept: 'application/json'
+        },
+        body: JSON.stringify(payload)
+      });
+
+      onSave(text.slice(0, MAX));
+    } catch (err) {
+      console.error('Error saving remarks:', err);
+    }
+  };
 
   return createPortal(
     <div
@@ -8225,9 +8482,9 @@ function ResultRemarksModal({ cd, student, absentMode, onSave, onClose }) {
         <div className="exam-modal-footer">
           <Tooltip text="Close"><button className="exam-cancel-btn" onClick={onClose}><i className="fa-solid fa-xmark"></i> Close</button></Tooltip>
           <Tooltip text="Save remark and close">
-            <button className="exam-submit-btn" onClick={() => onSave(text.slice(0, MAX))}>
-              <i className="fa-solid fa-check"></i> Save &amp; Close
-            </button>
+<button className="exam-submit-btn" onClick={handleSave}>
+  <i className="fa-solid fa-check"></i> Save &amp; Close
+</button>
           </Tooltip>
         </div>
       </div>
@@ -8239,7 +8496,7 @@ function ResultRemarksModal({ cd, student, absentMode, onSave, onClose }) {
 /* ═══════════════════════════════════════════════════════════════════
    SINGLE ASSESSMENT — TOTAL MARKS EDIT MODAL
    ═══════════════════════════════════════════════════════════════════ */
-function ResultTotalMarksModal({ cd, className, onSave, onClose , subjects , resTotalMarksCtx, selectedTermId }) {
+function ResultTotalMarksModal({ cd, className, onSave, onClose , subjects , resTotalMarksCtx,  selectedTermId }) {
 
 const [totals, setTotals] = useState({});
 useEffect(() => {
