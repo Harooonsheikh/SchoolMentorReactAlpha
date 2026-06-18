@@ -259,10 +259,13 @@ export default function LessonPlans({ toast, openConfirm }) {
         end: fmt(first.sessionEnd),
         workingDaysPerWeek: Number(first.workingDaysPerWeek) || 0,
       };
-      setSession(computeSession(base, vacs));
+      const computedSession = computeSession(base, vacs);
+      setSession(computedSession);
       setVacations(vacs);
+      return { session: computedSession, vacations: vacs };
     } catch (e) {
       console.error('Error loading session summary:', e);
+      return null;
     }
   };
 
@@ -307,8 +310,8 @@ const [tbRefreshKey, setTbRefreshKey] = useState(0);
   const [nbEdit,        setNbEdit]        = useState(null); // { unitId, qId }
 
   /* Reports */
-  const [reportPicker, setReportPicker] = useState(null); // { name, format }
-  const openReport = (name, format = 'pdf') => setReportPicker({ name, format });
+  const [reportPicker, setReportPicker] = useState(null); // { name, format, style, extra }
+  const openReport = (name, format = 'pdf', style = 'color', extra = null) => setReportPicker({ name, format, style, extra });
   const [classesData, setClassesData] = useState([]);
 const getClassesData = async () => {
   try {
@@ -531,8 +534,22 @@ const getClassesData = async () => {
       <LpReportPicker
         cfg={reportPicker}
         onClose={() => setReportPicker(null)}
-        onGenerate={(style, fmt) => {
-          generateLessonPlanReport(reportPicker.name, style, fmt, { units, nbUnits, session, vacations, pwSelectedClass, clpClass, clpSubject });
+        onGenerate={async (style, fmt) => {
+          const reportName = reportPicker.name;
+          const freshSessionData = ['Academic Session', 'Vacations', 'Session Summary'].includes(reportName)
+            ? await loadSessionSummary()
+            : null;
+          await generateLessonPlanReport(reportName, style, fmt, {
+            units,
+            nbUnits,
+            session: freshSessionData?.session || session,
+            vacations: freshSessionData?.vacations || vacations,
+            classesData,
+            pwSelectedClass,
+            clpClass,
+            clpSubject,
+            tbReportData: reportPicker.extra || null,
+          });
           setReportPicker(null);
         }}
       />
@@ -649,12 +666,12 @@ function SessionSettings({
           <span className="ss-card-report-label"><i className="fa-solid fa-download"></i> Report</span>
           <div className="ss-card-report-btns">
             <Tooltip text="Download Academic Session report (color PDF)">
-              <button className="ss-card-rpt-btn ss-card-rpt-btn--color" onClick={() => onReport('Academic Session', 'pdf')}>
+              <button className="ss-card-rpt-btn ss-card-rpt-btn--color" onClick={() => onReport('Academic Session', 'pdf', 'color')}>
                 <i className="fa-solid fa-file-pdf"></i> Color PDF
               </button>
             </Tooltip>
             <Tooltip text="Download Academic Session report (Colorless PDF)">
-              <button className="ss-card-rpt-btn ss-card-rpt-btn--bw" onClick={() => onReport('Academic Session', 'pdf')}>
+              <button className="ss-card-rpt-btn ss-card-rpt-btn--bw" onClick={() => onReport('Academic Session', 'pdf', 'bw')}>
                 <i className="fa-solid fa-file-pdf"></i> B&amp;W
               </button>
             </Tooltip>
@@ -709,12 +726,12 @@ function SessionSettings({
           <span className="ss-card-report-label"><i className="fa-solid fa-download"></i> Report</span>
           <div className="ss-card-report-btns">
             <Tooltip text="Download Vacations report (color PDF)">
-              <button className="ss-card-rpt-btn ss-card-rpt-btn--color" onClick={() => onReport('Vacations', 'pdf')}>
+              <button className="ss-card-rpt-btn ss-card-rpt-btn--color" onClick={() => onReport('Vacations', 'pdf', 'color')}>
                 <i className="fa-solid fa-file-pdf"></i> Color PDF
               </button>
             </Tooltip>
             <Tooltip text="Download Vacations report (Colorless PDF)">
-              <button className="ss-card-rpt-btn ss-card-rpt-btn--bw" onClick={() => onReport('Vacations', 'pdf')}>
+              <button className="ss-card-rpt-btn ss-card-rpt-btn--bw" onClick={() => onReport('Vacations', 'pdf', 'bw')}>
                 <i className="fa-solid fa-file-pdf"></i> B&amp;W
               </button>
             </Tooltip>
@@ -770,12 +787,12 @@ function SessionSettings({
           <span className="ss-card-report-label"><i className="fa-solid fa-download"></i> Report</span>
           <div className="ss-card-report-btns">
             <Tooltip text="Download Session Summary (color PDF)">
-              <button className="ss-card-rpt-btn ss-card-rpt-btn--color" onClick={() => onReport('Session Summary', 'pdf')}>
+              <button className="ss-card-rpt-btn ss-card-rpt-btn--color" onClick={() => onReport('Session Summary', 'pdf', 'color')}>
                 <i className="fa-solid fa-file-pdf"></i> Color PDF
               </button>
             </Tooltip>
             <Tooltip text="Download Session Summary (Colorless PDF)">
-              <button className="ss-card-rpt-btn ss-card-rpt-btn--bw" onClick={() => onReport('Session Summary', 'pdf')}>
+              <button className="ss-card-rpt-btn ss-card-rpt-btn--bw" onClick={() => onReport('Session Summary', 'pdf', 'bw')}>
                 <i className="fa-solid fa-file-pdf"></i> B&amp;W
               </button>
             </Tooltip>
@@ -864,29 +881,29 @@ function SessionSettings({
           <span className="lp-report-bar-label"><i className="fa-solid fa-download"></i> Download Report</span>
           <div className="lp-report-btns">
             <Tooltip text="Download a combined per-week lesson plans PDF">
-              <button className="lp-rpt-btn" onClick={() => onReport('Per Week Lesson Plans — Combined', 'pdf')}>
+              <button className="lp-rpt-btn" onClick={() => onReport('Per Week Lesson Plans All', 'pdf', 'color')}>
                 <i className="fa-solid fa-layer-group"></i> Combined
               </button>
             </Tooltip>
             <div className="lp-rpt-sep"></div>
             <Tooltip text="Download lesson plans (color PDF)">
-              <button className="lp-rpt-btn lp-rpt-btn--pdf" onClick={() => onReport('Per Week Lesson Plans', 'pdf')}>
+              <button className="lp-rpt-btn lp-rpt-btn--pdf" onClick={() => onReport('Per Week Lesson Plans All', 'pdf', 'color')}>
                 <i className="fa-solid fa-file-pdf"></i> PDF Color
               </button>
             </Tooltip>
             <Tooltip text="Download lesson plans (Colorless PDF)">
-              <button className="lp-rpt-btn lp-rpt-btn--bw" onClick={() => onReport('Per Week Lesson Plans', 'pdf')}>
+              <button className="lp-rpt-btn lp-rpt-btn--bw" onClick={() => onReport('Per Week Lesson Plans All', 'pdf', 'bw')}>
                 <i className="fa-solid fa-file-pdf"></i> PDF B&amp;W
               </button>
             </Tooltip>
             <div className="lp-rpt-sep"></div>
             <Tooltip text="Download lesson plans for all classes (color PDF)">
-              <button className="lp-rpt-btn lp-rpt-btn--pdf" onClick={() => onReport('Per Week Lesson Plans — All', 'pdf')}>
+              <button className="lp-rpt-btn lp-rpt-btn--pdf" onClick={() => onReport('Per Week Lesson Plans All', 'pdf', 'color')}>
                 <i className="fa-solid fa-files"></i> All Color
               </button>
             </Tooltip>
             <Tooltip text="Download lesson plans for all classes (Colorless PDF)">
-              <button className="lp-rpt-btn lp-rpt-btn--bw" onClick={() => onReport('Per Week Lesson Plans — All', 'pdf')}>
+              <button className="lp-rpt-btn lp-rpt-btn--bw" onClick={() => onReport('Per Week Lesson Plans All', 'pdf', 'bw')}>
                 <i className="fa-solid fa-files"></i> All B&amp;W
               </button>
             </Tooltip>
@@ -1753,6 +1770,136 @@ console.log('json2 FULL:', JSON.stringify(json2).slice(0, 500));
     }
   };
 
+  /* Build the live report payload from the currently-loaded row state
+     (selected term + subject + fetched units), passed to tbGenerateReport
+     so the report shows real data instead of the static mock seed.
+     Used by the EXPANDED-section buttons (one term + one subject). */
+  const buildTbReportData = (item, uniqueId) => {
+    const subjList = subjectsData[uniqueId] || [];
+    const tbd = termBreakupData[uniqueId];
+    const termName = (terms.find(t => t.id === selectedTerm[uniqueId]) || {}).name || '';
+    const subjectName = (subjList.find(s => s.subjectID === selectedSubject[uniqueId]) || {}).subjectName || '';
+    return {
+      className: item.gradeName,
+      sectionName: item.sectionName || '',
+      termName,
+      subjectName,
+      terms: terms.map(t => t.name),
+      subjects: subjList.map(s => s.subjectName),
+      units: (tbd && Array.isArray(tbd.units)) ? tbd.units : [],
+    };
+  };
+
+  /* ── Pure fetchers (return data, don't touch state) — used to assemble the
+     OVERALL class report (all terms × all subjects). ── */
+  const apiFetchSubjects = async (gradeId, sectionId) => {
+    try {
+      const empID = sessionStorage.getItem('employee_ID');
+      const res = await fetch(buildUrl(`/get-subjects_byEmployeeID/${gradeId}/${sectionId}/${empID}`), {
+        method: 'GET', headers: { Accept: '*/*' },
+      });
+      const json = await res.json();
+      return (json.success && Array.isArray(json.data)) ? json.data : [];
+    } catch (e) {
+      console.error('apiFetchSubjects error:', e);
+      return [];
+    }
+  };
+
+  const apiFetchUnits = async (item, termID, subjectID) => {
+    try {
+      const token = sessionStorage.getItem('token') || localStorage.getItem('token');
+      const branchID = termsBranchID();
+      const sessionID = termsSessionYearID();
+      const params = new URLSearchParams({
+        branchID: String(branchID ?? ''), classID: String(item.gradeId ?? ''),
+        sectionID: String(item.sectionId ?? ''), subjectID: String(subjectID ?? ''),
+        termID: String(termID ?? ''), sessionID: String(sessionID ?? ''), pageNo: '1',
+      });
+      const res1 = await fetch(buildUrl(`/api/gettermbreakups?${params.toString()}`), {
+        method: 'GET', headers: { Accept: '*/*', Authorization: `Bearer ${token}` },
+      });
+      if (!res1.ok) return [];
+      const json1 = await res1.json().catch(() => ({}));
+      const list1 = Array.isArray(json1?.data) ? json1.data : [];
+      if (!list1.length || !list1[0]?.id) return [];
+      const termBreakupID = list1[0].id;
+
+      const res2 = await fetch(buildUrl('/api/lptermbreakupdetailscrud'), {
+        method: 'POST',
+        headers: { Accept: '*/*', 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          id: termBreakupID, termBreakupID, unitNumber: '', unitName: '',
+          weekRequired: '', subTopic: '', periodRequired: '', type: '', action: 'get',
+        }),
+      });
+      const json2 = await res2.json().catch(() => ({}));
+      const rows = Array.isArray(json2) ? json2
+        : Array.isArray(json2?.data) ? json2.data
+        : Array.isArray(json2?.Data) ? json2.Data : [];
+      if (!rows.length) return [];
+
+      const unitMap = {}, unitOrder = [];
+      rows.forEach(r => {
+        const unitNumber   = r.unitNumber ?? r.UnitNumber ?? '';
+        const unitName     = r.unitName ?? r.UnitName ?? '';
+        const weekRequired = r.weekRequired ?? r.WeekRequired ?? '';
+        const subTopic       = r.subTopic ?? r.SubTopic ?? '';
+        const periodRequired = r.periodRequired ?? r.PeriodRequired ?? '';
+        const key = `${unitNumber}__${unitName}__${weekRequired}`;
+        if (!unitMap[key]) { unitMap[key] = { unitNumber, unitName, weekRequired, topics: [] }; unitOrder.push(key); }
+        if (subTopic || periodRequired) unitMap[key].topics.push({ subTopic, periodRequired });
+      });
+      return unitOrder.map(k => unitMap[k]);
+    } catch (e) {
+      console.error('apiFetchUnits error:', e);
+      return [];
+    }
+  };
+
+  /* OVERALL class report — all terms × all subjects. Fetches everything, then
+     opens the picker with the combined payload. Used by the collapsed-row
+     (top) PDF/Word buttons. */
+  const [overallLoading, setOverallLoading] = useState(false);
+  const handleOverallReport = async (item, fmt) => {
+    if (overallLoading) return;
+    const uniqueId = `${item.gradeId}_${item.sectionId || 'nosection'}`;
+    setOverallLoading(true);
+    try {
+      toast('Preparing class report…', 'info');
+      const subjList = (subjectsData[uniqueId] && subjectsData[uniqueId].length)
+        ? subjectsData[uniqueId]
+        : await apiFetchSubjects(item.gradeId, item.sectionId);
+
+      const combos = [];
+      terms.forEach(term => subjList.forEach(subj => combos.push({ term, subj })));
+      const results = await Promise.all(combos.map(async ({ term, subj }) => {
+        const units = await apiFetchUnits(item, term.id, subj.subjectID);
+        return units.length ? { termName: term.name, subjectName: subj.subjectName, units } : null;
+      }));
+      const sections = results.filter(Boolean);
+
+      if (!sections.length) {
+        toast('No term breakup data found for this class', 'error');
+        return;
+      }
+
+      onReport(`${item.gradeName} - Section ${item.sectionName || 'No Section'} — Term Breakup`, fmt, 'color', {
+        className: item.gradeName,
+        sectionName: item.sectionName || '',
+        terms: terms.map(t => t.name),
+        subjects: subjList.map(s => s.subjectName),
+        overall: true,
+        sections,
+      });
+    } catch (e) {
+      console.error('handleOverallReport error:', e);
+      toast('Could not build class report', 'error');
+    } finally {
+      setOverallLoading(false);
+    }
+  };
+
   return (
     <div className="section-card" style={{ overflow: 'visible' }}>
       <div className="tb-breakup-head">
@@ -1802,13 +1949,13 @@ console.log('json2 FULL:', JSON.stringify(json2).slice(0, 500));
                 )}
               </div>
               <div className="tb-bp-td" style={{ width: 200, justifyContent: 'center', gap: 6 }}>
-                <Tooltip text={`Download term breakup for ${className} - Section ${item.sectionName || ''} as PDF`}>
-                  <button className="export-btn pdf" onClick={() => onReport(`${className} - Section ${item.sectionName || 'No Section'} — Term Breakup`, 'pdf')}>
+                <Tooltip text={`Download FULL term breakup for ${className} - Section ${item.sectionName || ''} (all terms & subjects) as PDF`}>
+                  <button className="export-btn pdf" disabled={overallLoading} onClick={() => handleOverallReport(item, 'pdf')}>
                     <i className="fa-solid fa-file-pdf"></i> PDF
                   </button>
                 </Tooltip>
-                <Tooltip text={`Download term breakup for ${className} - Section ${item.sectionName || ''} as Word`}>
-                  <button className="export-btn word" onClick={() => onReport(`${className} - Section ${item.sectionName || 'No Section'} — Term Breakup`, 'word')}>
+                <Tooltip text={`Download FULL term breakup for ${className} - Section ${item.sectionName || ''} (all terms & subjects) as Word`}>
+                  <button className="export-btn word" disabled={overallLoading} onClick={() => handleOverallReport(item, 'word')}>
                     <i className="fa-brands fa-microsoft"></i> Word
                   </button>
                 </Tooltip>
@@ -1957,12 +2104,12 @@ console.log('json2 FULL:', JSON.stringify(json2).slice(0, 500));
                   </div>
                   <div className="tb-detail-actions">
                     <Tooltip text={`Download ${className} - Section ${item.sectionName || ''} term breakup (color PDF)`}>
-                      <button className="export-btn pdf" onClick={() => onReport(`${className} - Section ${item.sectionName || ''} — Term Breakup`, 'pdf')}>
+                      <button className="export-btn pdf" onClick={() => onReport(`${className} - Section ${item.sectionName || ''} — Term Breakup`, 'pdf', 'color', buildTbReportData(item, uniqueId))}>
                         <i className="fa-solid fa-file-pdf"></i> PDF Color
                       </button>
                     </Tooltip>
                     <Tooltip text={`Download ${className} - Section ${item.sectionName || ''} term breakup as Word`}>
-                      <button className="export-btn word" onClick={() => onReport(`${className} - Section ${item.sectionName || ''} — Term Breakup`, 'word')}>
+                      <button className="export-btn word" onClick={() => onReport(`${className} - Section ${item.sectionName || ''} — Term Breakup`, 'word', 'color', buildTbReportData(item, uniqueId))}>
                         <i className="fa-brands fa-microsoft"></i> Word
                       </button>
                     </Tooltip>
@@ -3431,6 +3578,7 @@ async function loadNbSubmissionData({ branchID, classID, sectionID, subjectID })
       const items = apiRows.map(r => ({
         id: r.id,
         preview: c.preview(c.map(r)),
+        data: c.map(r),
         status: checkedSet.has(`${rtNorm}__${r.id}`) ? 'submitted' : 'pending',
       }));
       questionTypes.push({ typeId: c.typeId, mainQ: apiRows[0]?.mainQuestion || '', items });
@@ -3825,19 +3973,22 @@ function Submissions({ toast, classesData = [] }) {
   };
 
   /* Generate the report after style is picked */
-  const generatePdf = isColor => {
+  const generatePdf = async isColor => {
     if (!pdfReq) return;
     const { type, unitId } = pdfReq;
     const ctx = {
       cls, section, subject,
       lpData, nbData,
     };
-    if (type === 'lp') buildLpSubReport(ctx, isColor);
-    else if (type === 'nb') buildNbSubReport(ctx, isColor);
-    else if (type === 'nb-unit') buildNbSubUnitReport(ctx, unitId, isColor);
-    else if (type === 'admin-teacher') buildAdminTeacherReport(isColor);
-    else if (type === 'admin-class') buildAdminClassReport(isColor);
-    else if (type === 'admin-subject') buildAdminSubjectReport(isColor);
+    /* Branch header (logo, name, address, session) from /report-header/{branchID}
+       — same source as every other report. */
+    const reportHeader = await fetchLpReportHeader();
+    if (type === 'lp') buildLpSubReport(ctx, isColor, reportHeader);
+    else if (type === 'nb') buildNbSubReport(ctx, isColor, reportHeader);
+    else if (type === 'nb-unit') buildNbSubUnitReport(ctx, unitId, isColor, reportHeader);
+    else if (type === 'admin-teacher') buildAdminTeacherReport(isColor, reportHeader);
+    else if (type === 'admin-class') buildAdminClassReport(isColor, reportHeader);
+    else if (type === 'admin-subject') buildAdminSubjectReport(isColor, reportHeader);
     setPdfReq(null);
   };
 
@@ -4856,8 +5007,9 @@ function SubmissionsAdminPanel({ teachers, classes, subjects, onReport, toast })
    • Colorless: dedicated LOW-INK layout — white header (no gradient), no
      row alt fill, no card-bg fill, light gray borders. Optimised for
      printing on cheap printers / monochrome lasers. */
-function _subPdfPalette(isColor) {
+function _subPdfPalette(isColor, reportHeader = null) {
   return {
+    reportHeader,
     brand:   isColor ? '#1E3A8A'  : '#111111',
     accent:  isColor ? '#2563EB'  : '#374151',
     green:   isColor ? '#16A34A'  : '#374151',
@@ -4970,15 +5122,30 @@ tbody tr:nth-child(even) td{background:${C.rowAlt}}
 }
 
 function _subPdfHeader(C, reportName, metaCells, today) {
+  const rh = C.reportHeader || {};
+  const isColor = C.isColor;
+  const schoolName      = rh.branchName || getSchoolName();
+  const schoolAddress   = rh.address || '';
+  const academicSession = rh.academicSession || sessionStorage.getItem('sessionName') || 'Academic Session';
+  const initials = schoolName.split(/[\s,]+/).filter(Boolean).slice(0,2).map(w=>w[0].toUpperCase()).join('');
+  const logoInner = rh.branchLogo
+    ? `<img src="${lpEscapeHtml(rh.branchLogo)}" style="width:100%;height:100%;object-fit:cover" onerror="this.style.display='none'" />`
+    : lpEscapeHtml(initials);
+
   const cells = metaCells.map(m => `<div class="doc-meta-cell"><div class="doc-meta-key">${m.k}</div><div class="doc-meta-val">${m.v}</div></div>`).join('');
   return `<div class="doc-header">
-    <div class="doc-header-top">
-      <div class="doc-logo">🎓</div>
-      <div>
-        <div class="doc-school">School Mentor ERP</div>
-        <div class="doc-year">Academic Year 2025–2026</div>
-        <div class="doc-report-name">${reportName}</div>
+    <div class="doc-header-top" style="display:block">
+      <div style="display:flex;align-items:center;gap:14px">
+        <div class="doc-logo" style="overflow:hidden;font-size:15px;font-weight:800">${logoInner}</div>
+        <div>
+          <div style="font-size:9px;letter-spacing:2px;text-transform:uppercase;${isColor?'opacity:.6':`color:${C.muted}`};font-weight:700;margin-bottom:2px">School Mentor ERP</div>
+          <div class="doc-school">${lpEscapeHtml(schoolName)}</div>
+          ${schoolAddress ? `<div class="doc-year">${lpEscapeHtml(schoolAddress)}</div>` : ''}
+        </div>
       </div>
+      <div style="height:1px;background:${isColor?'rgba(255,255,255,.2)':C.border};margin:14px 0 12px"></div>
+      <div style="font-size:18px;font-weight:800;${isColor?'':`color:${C.text}`}">${reportName}</div>
+      <div class="doc-year" style="margin-top:3px">Academic Year ${lpEscapeHtml(academicSession)} · ${isColor?'Colorful':'Colorless'} Report</div>
     </div>
     <div class="doc-meta-bar">${cells}<div class="doc-meta-cell"><div class="doc-meta-key">Generated</div><div class="doc-meta-val">${today}</div></div></div>
   </div>`;
@@ -5001,10 +5168,35 @@ function _subPdfPbar(C, pct) {
   </span>`;
 }
 
+/* Field key → human label for rendering actual notebook item content. */
+const NB_FIELD_LABELS = {
+  word:'Word', opposite:'Opposite', synonym:'Synonym', singular:'Singular', plural:'Plural',
+  sentence:'Sentence', question:'Question', answer:'Answer',
+  opt1:'A', opt2:'B', opt3:'C', opt4:'D', correct:'Correct Answer',
+  colA:'Column A', colB:'Column B', statement:'Statement',
+  title:'Title', body:'Body', moral:'Moral', subject:'Subject', conclusion:'Conclusion',
+};
+
+/* Render an item's actual content (all non-empty mapped fields). Falls back to
+   the one-line preview if the full data isn't present. */
+function _subNbItemContent(C, item) {
+  const d = item && item.data;
+  if (!d || typeof d !== 'object') return lpEscapeHtml(item?.preview || '—');
+  const rows = Object.entries(d)
+    .filter(([, v]) => v != null && String(v).trim() !== '')
+    .map(([k, v]) => `<div style="margin-bottom:2px"><span style="color:${C.muted};font-weight:700">${NB_FIELD_LABELS[k] || k}:</span> ${lpEscapeHtml(v)}</div>`)
+    .join('');
+  return rows || lpEscapeHtml(item.preview || '—');
+}
+
 function _subPdfFooter(C) {
+  const rh = C.reportHeader || {};
+  const schoolName    = rh.branchName || getSchoolName();
+  const schoolAddress = rh.address || '';
   const stamp = new Date().toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });
   return `<div class="doc-footer">
-    <span class="doc-footer-logo">🎓 School Mentor ERP — Academics</span>
+    <span>${lpEscapeHtml(schoolName)}${schoolAddress ? ` · ${lpEscapeHtml(schoolAddress)}` : ''}</span>
+    <span>School Mentor ERP © ${new Date().getFullYear()}</span>
     <span>Generated: ${stamp}</span>
   </div>
   <div class="print-bar no-print">
@@ -5045,8 +5237,8 @@ function _openSubPdfWindow(html) {
 }
 
 /* 1. Lesson Plan submission report */
-function buildLpSubReport(ctx, isColor) {
-  const C     = _subPdfPalette(isColor);
+function buildLpSubReport(ctx, isColor, reportHeader = null) {
+  const C     = _subPdfPalette(isColor, reportHeader);
   const today = new Date().toLocaleDateString('en-US', { year:'numeric', month:'long', day:'numeric' });
   const data  = ctx.lpData || [];
   const total = data.length;
@@ -5066,7 +5258,7 @@ function buildLpSubReport(ctx, isColor) {
     { k:'Class',   v:(ctx.cls || '—').replace('-', ' ') },
     { k:'Section', v:`Section ${ctx.section || '—'}` },
     { k:'Subject', v:ctx.subject || '—' },
-    { k:'Session', v:'2025–2026' },
+    { k:'Session', v:(reportHeader?.academicSession || sessionStorage.getItem('sessionName') || '2025–2026') },
   ], today);
 
   html += _subPdfStatStrip([
@@ -5127,8 +5319,8 @@ function buildLpSubReport(ctx, isColor) {
 }
 
 /* 2. Notebook Plan submission report — full */
-function buildNbSubReport(ctx, isColor) {
-  const C     = _subPdfPalette(isColor);
+function buildNbSubReport(ctx, isColor, reportHeader = null) {
+  const C     = _subPdfPalette(isColor, reportHeader);
   const today = new Date().toLocaleDateString('en-US', { year:'numeric', month:'long', day:'numeric' });
   const data  = ctx.nbData || [];
   const all   = data.flatMap(u => u.questionTypes.flatMap(q => q.items));
@@ -5201,13 +5393,13 @@ function buildNbSubReport(ctx, isColor) {
       const subN = qt.items.filter(i => i.status === 'submitted').length;
       html += `<div style="margin-bottom:4px;font-size:11px;font-weight:800;color:${C.brand};letter-spacing:.4px">${meta.label} — ${subN}/${qt.items.length} submitted</div>
       <table style="margin-bottom:12px"><thead><tr>
-        <th style="width:36px">#</th><th>Item</th><th style="width:170px">Submitted On</th><th style="width:110px">Status</th>
+        <th style="width:36px">#</th><th>Content</th><th style="width:170px">Submitted On</th><th style="width:110px">Status</th>
       </tr></thead><tbody>`;
       qt.items.forEach((item, i) => {
         const isSub = item.status === 'submitted';
         html += `<tr>
           <td style="color:${C.muted};font-weight:700">${i + 1}</td>
-          <td>${item.preview}</td>
+          <td>${_subNbItemContent(C, item)}</td>
           <td style="color:${C.muted};font-size:11.5px">${isSub ? _subFmtSubmitted(item, `${unit.unitId}-${qt.typeId}-${item.id}`) : '—'}</td>
           <td><span class="tag ${isSub ? 'tag-sub' : 'tag-pend'}">${isSub ? '✓ Submitted' : '⏱ Pending'}</span></td>
         </tr>`;
@@ -5221,8 +5413,8 @@ function buildNbSubReport(ctx, isColor) {
 }
 
 /* 3. Notebook Plan submission report — single unit */
-function buildNbSubUnitReport(ctx, unitId, isColor) {
-  const C     = _subPdfPalette(isColor);
+function buildNbSubUnitReport(ctx, unitId, isColor, reportHeader = null) {
+  const C     = _subPdfPalette(isColor, reportHeader);
   const today = new Date().toLocaleDateString('en-US', { year:'numeric', month:'long', day:'numeric' });
   const unit  = (ctx.nbData || []).find(u => u.unitId === unitId);
   if (!unit) {
@@ -5280,13 +5472,13 @@ function buildNbSubUnitReport(ctx, unitId, isColor) {
     const s = qt.items.filter(i => i.status === 'submitted').length;
     html += `<div style="margin-bottom:4px;font-size:11px;font-weight:800;color:${C.brand};letter-spacing:.4px">${meta.label} — ${s}/${qt.items.length} submitted</div>
     <table style="margin-bottom:14px"><thead><tr>
-      <th style="width:36px">#</th><th>Item</th><th style="width:170px">Submitted On</th><th style="width:110px">Status</th>
+      <th style="width:36px">#</th><th>Content</th><th style="width:170px">Submitted On</th><th style="width:110px">Status</th>
     </tr></thead><tbody>`;
     qt.items.forEach((item, i) => {
       const isSub = item.status === 'submitted';
       html += `<tr>
         <td style="color:${C.muted};font-weight:700">${i + 1}</td>
-        <td>${item.preview}</td>
+        <td>${_subNbItemContent(C, item)}</td>
         <td style="color:${C.muted};font-size:11.5px">${isSub ? _subFmtSubmitted(item, `${unit.unitId}-${qt.typeId}-${item.id}`) : '—'}</td>
         <td><span class="tag ${isSub ? 'tag-sub' : 'tag-pend'}">${isSub ? '✓ Submitted' : '⏱ Pending'}</span></td>
       </tr>`;
@@ -5311,8 +5503,8 @@ function _adminGeneratedStamp() {
 const _ADMIN_A4_CSS = '';
 
 /* 4. Admin — Teacher-wise report */
-function buildAdminTeacherReport(isColor) {
-  const C       = _subPdfPalette(isColor);
+function buildAdminTeacherReport(isColor, reportHeader = null) {
+  const C       = _subPdfPalette(isColor, reportHeader);
   const today   = _adminGeneratedStamp();          /* "May 27, 2026 — 7:01 PM" — also used for the Generated meta cell */
   const teachers = SUB_ADMIN_TEACHERS;
   const totalLP = teachers.reduce((a, t) => a + t.lp.total, 0);
@@ -5409,8 +5601,8 @@ function buildAdminTeacherReport(isColor) {
 }
 
 /* 5. Admin — Class-wise report */
-function buildAdminClassReport(isColor) {
-  const C        = _subPdfPalette(isColor);
+function buildAdminClassReport(isColor, reportHeader = null) {
+  const C        = _subPdfPalette(isColor, reportHeader);
   const today    = _adminGeneratedStamp();   /* date + time for the GENERATED meta cell */
   const dateOnly = new Date().toLocaleDateString('en-US', { year:'numeric', month:'long', day:'numeric' });
   const classes = SUB_ADMIN_CLASSES;
@@ -5503,8 +5695,8 @@ function buildAdminClassReport(isColor) {
 }
 
 /* 6. Admin — Subject-wise report */
-function buildAdminSubjectReport(isColor) {
-  const C     = _subPdfPalette(isColor);
+function buildAdminSubjectReport(isColor, reportHeader = null) {
+  const C     = _subPdfPalette(isColor, reportHeader);
   const today = new Date().toLocaleDateString('en-US', { year:'numeric', month:'long', day:'numeric' });
   const subjects = SUB_ADMIN_SUBJECTS;
   const tTotal = subjects.reduce((a, s) => a + s.total,     0);
@@ -6933,7 +7125,7 @@ function LpReportPicker({ cfg, onClose, onGenerate }) {
 
   useEffect(() => {
     if (cfg) {
-      setStyle('color');
+      setStyle(cfg.style || 'color');
       setFmt(cfg.format || 'pdf');
     }
   }, [cfg]);
@@ -7105,15 +7297,56 @@ function getSchoolInitials(){
   const n = getSchoolName();
   return n.split(/[\s,]+/).filter(Boolean).slice(0,2).map(w=>w[0].toUpperCase()).join('');
 }
-function getReportLogo(style) {
+function lpEscapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+async function fetchLpReportHeader() {
+  const fallback = {
+    branchName: getSchoolName(),
+    branchLogo: '',
+    address: '',
+    academicSession: sessionStorage.getItem('sessionName') || '',
+  };
+
+  try {
+    const branchID = sessionStorage.getItem('branchID') || 1;
+    const res = await fetch(buildUrl(`/report-header/${branchID}`), {
+      method: 'GET',
+      headers: { Accept: '*/*' },
+    });
+    const json = await res.json();
+    if (json?.success && json?.data) {
+      return {
+        branchName: json.data.branchName || fallback.branchName,
+        branchLogo: json.data.branchLogo || '',
+        address: json.data.address || '',
+        academicSession: json.data.academicSession || fallback.academicSession,
+      };
+    }
+  } catch (e) {
+    console.error('Error loading report header:', e);
+  }
+
+  return fallback;
+}
+
+function getReportLogo(style, reportHeader = null) {
   const uid = Date.now();
-  const schoolName  = getSchoolName();
-  const initials    = getSchoolInitials();
+  const schoolName  = reportHeader?.branchName || getSchoolName();
+  const initials    = schoolName.split(/[\s,]+/).filter(Boolean).slice(0,2).map(w=>w[0].toUpperCase()).join('');
   const isColor     = style === 'color';
   const grad1       = isColor ? '#1a237e' : '#2C2C2C';
   const grad2       = isColor ? '#283593' : '#555';
 
-  const logoSvg = `<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+  const logoSvg = reportHeader?.branchLogo
+    ? `<img src="${lpEscapeHtml(reportHeader.branchLogo)}" width="64" height="64" style="display:block;width:64px;height:64px;object-fit:cover" onerror="this.style.display='none'" />`
+    : `<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
     <defs>
       <linearGradient id="lg${uid}" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
         <stop stop-color="${grad1}"/>
@@ -7131,7 +7364,7 @@ function getReportLogo(style) {
     <line x1="34" y1="26.2" x2="44" y2="27" stroke="rgba(255,255,255,0.4)" stroke-width="1.2"/>
     <line x1="34" y1="32.2" x2="44" y2="33" stroke="rgba(255,255,255,0.4)" stroke-width="1.2"/>
     <line x1="34" y1="38.2" x2="44" y2="39" stroke="rgba(255,255,255,0.3)" stroke-width="1.2"/>
-    <text x="32" y="38" text-anchor="middle" font-family="Arial,sans-serif" font-size="14" font-weight="900" fill="rgba(255,255,255,0.9)">${initials}</text>
+    <text x="32" y="38" text-anchor="middle" font-family="Arial,sans-serif" font-size="14" font-weight="900" fill="rgba(255,255,255,0.9)">${lpEscapeHtml(initials)}</text>
   </svg>`;
 
   return `
@@ -7144,7 +7377,7 @@ function getReportLogo(style) {
       <div style="font-size:9px;letter-spacing:2.5px;text-transform:uppercase;
         color:rgba(255,255,255,.55);font-weight:700;margin-bottom:3px">School Mentor ERP</div>
       <div style="font-size:20px;font-weight:800;color:#fff;letter-spacing:-.02em;
-        line-height:1.2;text-shadow:0 1px 4px rgba(0,0,0,.2)">${schoolName}</div>
+        line-height:1.2;text-shadow:0 1px 4px rgba(0,0,0,.2)">${lpEscapeHtml(schoolName)}</div>
     </div>
   </div>
   <div style="height:1px;background:rgba(255,255,255,.2);margin:18px 0 16px;position:relative;z-index:2"></div>`;
@@ -7153,12 +7386,19 @@ function getReportLogo(style) {
 /* ═══════════════════════════════════════════════════════════════════
    TERM BREAKUP REPORT — verbatim from HTML tbGenerateReport
    ═══════════════════════════════════════════════════════════════════ */
-function tbGenerateReport(cls, style) {
+function tbGenerateReport(cls, style, reportHeader = null, format = null, data = null) {
   tbInit();
   const isColor = style === 'color' || style === 'word-color';
-  const isWord  = style === 'word-color' || style === 'word-bw';
+  const isWord  = format ? (format === 'word') : (style === 'word-color' || style === 'word-bw');
   const styleLabel = isColor ? 'Colorful' : 'Colorless';
   const typeLabel  = isWord  ? 'Word'  : 'PDF';
+
+  /* Header (logo, school name, session, address) from /report-header/{branchID}. */
+  const schoolName      = reportHeader?.branchName || getSchoolName();
+  const schoolAddress   = reportHeader?.address || '';
+  const academicSession = reportHeader?.academicSession
+    || sessionStorage.getItem('sessionName') || 'Academic Session';
+  const generated = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
 
   const hdrBg = isColor
     ? 'linear-gradient(135deg,#1E3A8A 0%,#1E40AF 55%,#1D4ED8 100%)'
@@ -7170,103 +7410,230 @@ function tbGenerateReport(cls, style) {
   const rowAlt  = isColor ? '#F8FAFF' : '#F5F5F5';
   const accent  = isColor ? '#1E40AF' : '#444';
   const unitHdr = isColor ? 'linear-gradient(135deg,#1E3A8A,#1E40AF)' : 'linear-gradient(135deg,#3D3D3D,#555)';
-  const terms   = ['2nd', '3rd Term', '5th Term', 'testing', 'combined'];
+  /* ── Build content: live API data when passed in, else mock seed ── */
+  let subjectsHtml, totalUnits, totalSubjects, totalLessons;
 
-  /* Build per-subject sections with ALL units shown per term */
-  const subjectsHtml = (LP_SUBJECTS[cls] || []).map(s => {
-    const termSections = terms.map(term => {
-      const units = TB_DATA[cls]?.[term]?.[s.name] || [];
-      if (!units.length) return '';
-
-      /* Each unit gets its own table */
-      const unitTables = units.map((u, ui) => {
-        const totalPeriods = u.topics.reduce((a, tp) => a + (parseInt(tp.periodsRequired)||0), 0);
-        const rows = u.topics.map((tp, ti) => `
+  /* Shared unit-card renderer (used by the live path) */
+  const renderUnitCard = (u, ui) => {
+    const topics = u.topics || [];
+    const totalPeriods = topics.reduce((a, t) => a + (parseInt(t.periodRequired) || 0), 0);
+    const rows = topics.length
+      ? topics.map((t, ti) => `
           <tr style="background:${ti%2===0?'white':rowAlt}">
             <td style="padding:9px 13px;border:1px solid ${border};color:${textM};text-align:center;font-weight:600">${ti+1}</td>
-            <td style="padding:9px 13px;border:1px solid ${border};color:${textM}">${tp.subTopic}</td>
-            <td style="padding:9px 13px;border:1px solid ${border};color:${textD};font-weight:800;text-align:center;font-size:14px">${tp.periodsRequired}</td>
-          </tr>`).join('');
-
-        return `
-          <div style="margin-bottom:14px;border-radius:10px;overflow:hidden;border:1px solid ${border}">
-            <!-- Unit header bar -->
-            <div style="background:${unitHdr};padding:10px 16px;display:flex;align-items:center;justify-content:space-between">
-              <div style="display:flex;align-items:center;gap:12px">
-                <div style="width:28px;height:28px;border-radius:7px;background:rgba(255,255,255,.2);display:flex;align-items:center;justify-content:center;color:#fff;font-size:13px;font-weight:800">${u.unitNum||ui+1}</div>
-                <div style="font-size:14px;font-weight:800;color:#fff">${u.unitName}</div>
-              </div>
-              <div style="display:flex;gap:16px">
-                <div style="text-align:center">
-                  <div style="font-size:16px;font-weight:800;color:#fff">${u.weeksRequired}</div>
-                  <div style="font-size:9px;color:rgba(255,255,255,.65);text-transform:uppercase;letter-spacing:.6px;margin-top:2px">Weeks</div>
-                </div>
-                <div style="text-align:center">
-                  <div style="font-size:16px;font-weight:800;color:#fff">${totalPeriods}</div>
-                  <div style="font-size:9px;color:rgba(255,255,255,.65);text-transform:uppercase;letter-spacing:.6px;margin-top:2px">Total Periods</div>
-                </div>
-                <div style="text-align:center">
-                  <div style="font-size:16px;font-weight:800;color:#fff">${u.topics.length}</div>
-                  <div style="font-size:9px;color:rgba(255,255,255,.65);text-transform:uppercase;letter-spacing:.6px;margin-top:2px">Topics</div>
-                </div>
-              </div>
-            </div>
-            <!-- Topics table -->
-            <table style="width:100%;border-collapse:collapse;font-size:13px">
-              <thead><tr style="background:${tHead}">
-                <th style="padding:8px 13px;border:1px solid ${border};color:${textM};font-size:10px;text-transform:uppercase;letter-spacing:.6px;width:50px">#</th>
-                <th style="padding:8px 13px;border:1px solid ${border};color:${textM};font-size:10px;text-transform:uppercase;letter-spacing:.6px">Sub Topic</th>
-                <th style="padding:8px 13px;border:1px solid ${border};color:${textM};font-size:10px;text-transform:uppercase;letter-spacing:.6px;width:130px">Periods Required</th>
-              </tr></thead>
-              <tbody>${rows}</tbody>
-              <tfoot>
-                <tr style="background:${isColor?'rgba(30,58,138,.04)':'#F0F0F0'}">
-                  <td colspan="2" style="padding:9px 13px;border:1px solid ${border};font-weight:700;color:${textD}">Total</td>
-                  <td style="padding:9px 13px;border:1px solid ${border};font-weight:800;color:${accent};text-align:center;font-size:16px">${totalPeriods}</td>
-                </tr>
-              </tfoot>
-            </table>
-          </div>`;
-      }).join('');
-
-      return `
-        <div style="margin-bottom:18px">
-          <div style="font-size:11px;font-weight:800;letter-spacing:.9px;text-transform:uppercase;
-            color:${accent};margin-bottom:10px;display:flex;align-items:center;gap:8px">
-            <span style="display:inline-block;width:3px;height:14px;background:${accent};border-radius:2px"></span>
-            ${term} — ${units.length} unit${units.length>1?'s':''}
-          </div>
-          ${unitTables}
-        </div>`;
-    }).filter(Boolean).join('');
-
-    if (!termSections) return '';
+            <td style="padding:9px 13px;border:1px solid ${border};color:${textM}">${lpEscapeHtml(t.subTopic)}</td>
+            <td style="padding:9px 13px;border:1px solid ${border};color:${textD};font-weight:800;text-align:center;font-size:14px">${lpEscapeHtml(t.periodRequired)}</td>
+          </tr>`).join('')
+      : `<tr><td colspan="3" style="padding:14px;border:1px solid ${border};color:${textM};text-align:center;font-style:italic">No topics added</td></tr>`;
 
     return `
+      <div style="margin-bottom:14px;border-radius:10px;overflow:hidden;border:1px solid ${border}">
+        <div style="background:${unitHdr};padding:10px 16px;display:flex;align-items:center;justify-content:space-between">
+          <div style="display:flex;align-items:center;gap:12px">
+            <div style="width:28px;height:28px;border-radius:7px;background:rgba(255,255,255,.2);display:flex;align-items:center;justify-content:center;color:#fff;font-size:13px;font-weight:800">${lpEscapeHtml(u.unitNumber || ui+1)}</div>
+            <div style="font-size:14px;font-weight:800;color:#fff">${lpEscapeHtml(u.unitName)}</div>
+          </div>
+          <div style="display:flex;gap:16px">
+            <div style="text-align:center">
+              <div style="font-size:16px;font-weight:800;color:#fff">${lpEscapeHtml(u.weekRequired)}</div>
+              <div style="font-size:9px;color:rgba(255,255,255,.65);text-transform:uppercase;letter-spacing:.6px;margin-top:2px">Weeks</div>
+            </div>
+            <div style="text-align:center">
+              <div style="font-size:16px;font-weight:800;color:#fff">${totalPeriods}</div>
+              <div style="font-size:9px;color:rgba(255,255,255,.65);text-transform:uppercase;letter-spacing:.6px;margin-top:2px">Total Periods</div>
+            </div>
+            <div style="text-align:center">
+              <div style="font-size:16px;font-weight:800;color:#fff">${topics.length}</div>
+              <div style="font-size:9px;color:rgba(255,255,255,.65);text-transform:uppercase;letter-spacing:.6px;margin-top:2px">Topics</div>
+            </div>
+          </div>
+        </div>
+        <table style="width:100%;border-collapse:collapse;font-size:13px">
+          <thead><tr style="background:${tHead}">
+            <th style="padding:8px 13px;border:1px solid ${border};color:${textM};font-size:10px;text-transform:uppercase;letter-spacing:.6px;width:50px">#</th>
+            <th style="padding:8px 13px;border:1px solid ${border};color:${textM};font-size:10px;text-transform:uppercase;letter-spacing:.6px">Sub Topic</th>
+            <th style="padding:8px 13px;border:1px solid ${border};color:${textM};font-size:10px;text-transform:uppercase;letter-spacing:.6px;width:130px">Periods Required</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+          <tfoot>
+            <tr style="background:${isColor?'rgba(30,58,138,.04)':'#F0F0F0'}">
+              <td colspan="2" style="padding:9px 13px;border:1px solid ${border};font-weight:700;color:${textD}">Total</td>
+              <td style="padding:9px 13px;border:1px solid ${border};font-weight:800;color:${accent};text-align:center;font-size:16px">${totalPeriods}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>`;
+  };
+
+  if (data && data.overall && Array.isArray(data.sections)) {
+    /* OVERALL class report — every term × every subject, grouped by subject. */
+    const sections = data.sections;
+    const bySubject = {};
+    const subjOrder = [];
+    sections.forEach(sec => {
+      if (!bySubject[sec.subjectName]) { bySubject[sec.subjectName] = []; subjOrder.push(sec.subjectName); }
+      bySubject[sec.subjectName].push(sec);
+    });
+
+    totalSubjects = subjOrder.length;
+    totalUnits    = sections.reduce((a, s) => a + s.units.length, 0);
+    totalLessons  = sections.reduce((a, s) =>
+      a + s.units.reduce((b, u) => b + (u.topics || []).reduce((c, t) => c + (parseInt(t.periodRequired) || 0), 0), 0), 0);
+
+    const pills = (label, items) =>
+      (items && items.length) ? `
+        <div style="margin-bottom:14px">
+          <div style="font-size:10px;font-weight:800;letter-spacing:.9px;text-transform:uppercase;color:${textM};margin-bottom:8px">${label}</div>
+          ${items.map(it => `<span style="display:inline-block;background:${isColor?'#EFF6FF':'#EEE'};color:${textM};padding:4px 12px;border-radius:99px;font-size:11px;font-weight:700;margin:0 5px 5px 0">${lpEscapeHtml(it)}</span>`).join('')}
+        </div>` : '';
+
+    subjectsHtml = `
+      ${pills('Terms', data.terms)}
+      ${pills('Subjects', data.subjects)}
+      ${subjOrder.map(subjName => {
+        const secs = bySubject[subjName];
+        const termBlocks = secs.map(sec => `
+          <div style="margin-bottom:18px">
+            <div style="font-size:11px;font-weight:800;letter-spacing:.9px;text-transform:uppercase;
+              color:${accent};margin-bottom:10px;display:flex;align-items:center;gap:8px">
+              <span style="display:inline-block;width:3px;height:14px;background:${accent};border-radius:2px"></span>
+              ${lpEscapeHtml(sec.termName)} — ${sec.units.length} unit${sec.units.length>1?'s':''}
+            </div>
+            ${sec.units.map(renderUnitCard).join('')}
+          </div>`).join('');
+        return `
+          <div style="margin-bottom:32px;page-break-inside:avoid">
+            <div style="display:flex;align-items:center;gap:12px;padding:12px 16px;
+              background:${isColor?'linear-gradient(135deg,rgba(30,58,138,.07),rgba(30,64,175,.04))':'#F2F2F2'};
+              border-radius:10px;border-left:5px solid ${accent};margin-bottom:16px">
+              <div style="font-size:17px;font-weight:800;color:${textD}">${lpEscapeHtml(subjName)}</div>
+              <div style="margin-left:auto;background:${isColor?'rgba(30,64,175,.1)':'#E5E5E5'};color:${accent};padding:3px 12px;border-radius:99px;font-size:11px;font-weight:700">${secs.length} term${secs.length>1?'s':''}</div>
+            </div>
+            ${termBlocks}
+          </div>`;
+      }).join('')}`;
+  } else if (data && Array.isArray(data.units)) {
+    /* Live data fetched in the expanded row (selected term + subject). */
+    const realUnits = data.units;
+    totalUnits    = realUnits.length;
+    totalSubjects = (data.subjects && data.subjects.length) ? data.subjects.length : 1;
+    totalLessons  = realUnits.reduce((a, u) =>
+      a + (u.topics || []).reduce((b, t) => b + (parseInt(t.periodRequired) || 0), 0), 0);
+
+    const unitTables = realUnits.map(renderUnitCard).join('');
+
+    const pillRow = (label, items, activeVal, activeBg) =>
+      (items && items.length) ? `
+        <div style="margin-bottom:14px">
+          <div style="font-size:10px;font-weight:800;letter-spacing:.9px;text-transform:uppercase;color:${textM};margin-bottom:8px">${label}</div>
+          ${items.map(it => `<span style="display:inline-block;background:${it===activeVal?activeBg:(isColor?'#EFF6FF':'#EEE')};color:${it===activeVal?'#fff':textM};padding:4px 12px;border-radius:99px;font-size:11px;font-weight:700;margin:0 5px 5px 0">${lpEscapeHtml(it)}</span>`).join('')}
+        </div>` : '';
+
+    subjectsHtml = `
+      ${pillRow('Terms', data.terms, data.termName, isColor?'#1E40AF':'#444')}
+      ${pillRow('Subjects', data.subjects, data.subjectName, isColor?'#7C3AED':'#444')}
       <div style="margin-bottom:32px;page-break-inside:avoid">
-        <!-- Subject banner -->
         <div style="display:flex;align-items:center;gap:12px;padding:12px 16px;
           background:${isColor?'linear-gradient(135deg,rgba(30,58,138,.07),rgba(30,64,175,.04))':'#F2F2F2'};
           border-radius:10px;border-left:5px solid ${accent};margin-bottom:16px">
-          <div style="font-size:17px;font-weight:800;color:${textD}">${s.name}</div>
-          <div style="margin-left:auto;background:${isColor?'rgba(30,64,175,.1)':'#E5E5E5'};color:${accent};
-            padding:3px 12px;border-radius:99px;font-size:11px;font-weight:700">${s.lessons} lessons/week</div>
+          <div style="font-size:17px;font-weight:800;color:${textD}">${lpEscapeHtml(data.subjectName || 'Subject')}</div>
+          ${data.termName ? `<div style="margin-left:auto;background:${isColor?'rgba(30,64,175,.1)':'#E5E5E5'};color:${accent};padding:3px 12px;border-radius:99px;font-size:11px;font-weight:700">Term: ${lpEscapeHtml(data.termName)}</div>` : ''}
         </div>
-        ${termSections}
+        ${unitTables || `<p style="color:${textM};text-align:center;padding:30px">No units found for this term &amp; subject.</p>`}
       </div>`;
-  }).join('');
+  } else {
+    /* ── Mock seed fallback (no live data passed) ── */
+    const terms = ['2nd', '3rd Term', '5th Term', 'testing', 'combined'];
+    subjectsHtml = (LP_SUBJECTS[cls] || []).map(s => {
+      const termSections = terms.map(term => {
+        const units = TB_DATA[cls]?.[term]?.[s.name] || [];
+        if (!units.length) return '';
 
-  /* Summary strip */
-  const totalUnits    = Object.values(TB_DATA[cls]||{}).flatMap(t=>Object.values(t)).flat().length;
-  const totalSubjects = (LP_SUBJECTS[cls]||[]).length;
-  const totalLessons  = (LP_SUBJECTS[cls]||[]).reduce((a,s)=>a+s.lessons,0);
+        const unitTables = units.map((u, ui) => {
+          const totalPeriods = u.topics.reduce((a, tp) => a + (parseInt(tp.periodsRequired)||0), 0);
+          const rows = u.topics.map((tp, ti) => `
+            <tr style="background:${ti%2===0?'white':rowAlt}">
+              <td style="padding:9px 13px;border:1px solid ${border};color:${textM};text-align:center;font-weight:600">${ti+1}</td>
+              <td style="padding:9px 13px;border:1px solid ${border};color:${textM}">${tp.subTopic}</td>
+              <td style="padding:9px 13px;border:1px solid ${border};color:${textD};font-weight:800;text-align:center;font-size:14px">${tp.periodsRequired}</td>
+            </tr>`).join('');
+
+          return `
+            <div style="margin-bottom:14px;border-radius:10px;overflow:hidden;border:1px solid ${border}">
+              <div style="background:${unitHdr};padding:10px 16px;display:flex;align-items:center;justify-content:space-between">
+                <div style="display:flex;align-items:center;gap:12px">
+                  <div style="width:28px;height:28px;border-radius:7px;background:rgba(255,255,255,.2);display:flex;align-items:center;justify-content:center;color:#fff;font-size:13px;font-weight:800">${u.unitNum||ui+1}</div>
+                  <div style="font-size:14px;font-weight:800;color:#fff">${u.unitName}</div>
+                </div>
+                <div style="display:flex;gap:16px">
+                  <div style="text-align:center">
+                    <div style="font-size:16px;font-weight:800;color:#fff">${u.weeksRequired}</div>
+                    <div style="font-size:9px;color:rgba(255,255,255,.65);text-transform:uppercase;letter-spacing:.6px;margin-top:2px">Weeks</div>
+                  </div>
+                  <div style="text-align:center">
+                    <div style="font-size:16px;font-weight:800;color:#fff">${totalPeriods}</div>
+                    <div style="font-size:9px;color:rgba(255,255,255,.65);text-transform:uppercase;letter-spacing:.6px;margin-top:2px">Total Periods</div>
+                  </div>
+                  <div style="text-align:center">
+                    <div style="font-size:16px;font-weight:800;color:#fff">${u.topics.length}</div>
+                    <div style="font-size:9px;color:rgba(255,255,255,.65);text-transform:uppercase;letter-spacing:.6px;margin-top:2px">Topics</div>
+                  </div>
+                </div>
+              </div>
+              <table style="width:100%;border-collapse:collapse;font-size:13px">
+                <thead><tr style="background:${tHead}">
+                  <th style="padding:8px 13px;border:1px solid ${border};color:${textM};font-size:10px;text-transform:uppercase;letter-spacing:.6px;width:50px">#</th>
+                  <th style="padding:8px 13px;border:1px solid ${border};color:${textM};font-size:10px;text-transform:uppercase;letter-spacing:.6px">Sub Topic</th>
+                  <th style="padding:8px 13px;border:1px solid ${border};color:${textM};font-size:10px;text-transform:uppercase;letter-spacing:.6px;width:130px">Periods Required</th>
+                </tr></thead>
+                <tbody>${rows}</tbody>
+                <tfoot>
+                  <tr style="background:${isColor?'rgba(30,58,138,.04)':'#F0F0F0'}">
+                    <td colspan="2" style="padding:9px 13px;border:1px solid ${border};font-weight:700;color:${textD}">Total</td>
+                    <td style="padding:9px 13px;border:1px solid ${border};font-weight:800;color:${accent};text-align:center;font-size:16px">${totalPeriods}</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>`;
+        }).join('');
+
+        return `
+          <div style="margin-bottom:18px">
+            <div style="font-size:11px;font-weight:800;letter-spacing:.9px;text-transform:uppercase;
+              color:${accent};margin-bottom:10px;display:flex;align-items:center;gap:8px">
+              <span style="display:inline-block;width:3px;height:14px;background:${accent};border-radius:2px"></span>
+              ${term} — ${units.length} unit${units.length>1?'s':''}
+            </div>
+            ${unitTables}
+          </div>`;
+      }).filter(Boolean).join('');
+
+      if (!termSections) return '';
+
+      return `
+        <div style="margin-bottom:32px;page-break-inside:avoid">
+          <div style="display:flex;align-items:center;gap:12px;padding:12px 16px;
+            background:${isColor?'linear-gradient(135deg,rgba(30,58,138,.07),rgba(30,64,175,.04))':'#F2F2F2'};
+            border-radius:10px;border-left:5px solid ${accent};margin-bottom:16px">
+            <div style="font-size:17px;font-weight:800;color:${textD}">${s.name}</div>
+            <div style="margin-left:auto;background:${isColor?'rgba(30,64,175,.1)':'#E5E5E5'};color:${accent};
+              padding:3px 12px;border-radius:99px;font-size:11px;font-weight:700">${s.lessons} lessons/week</div>
+          </div>
+          ${termSections}
+        </div>`;
+    }).join('');
+
+    totalUnits    = Object.values(TB_DATA[cls]||{}).flatMap(t=>Object.values(t)).flat().length;
+    totalSubjects = (LP_SUBJECTS[cls]||[]).length;
+    totalLessons  = (LP_SUBJECTS[cls]||[]).reduce((a,s)=>a+s.lessons,0);
+  }
 
   const summaryStrip = `
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:28px">
       ${[
         [totalSubjects, 'Subjects',    '📚', isColor?'#EFF6FF':'#F5F5F5', accent],
         [totalUnits,    'Total Units',  '📋', isColor?'#F0FDF4':'#F5F5F5', isColor?'#16A34A':'#444'],
-        [totalLessons,  'Lessons/Week', '🗓', isColor?'#FEF9C3':'#F5F5F5', isColor?'#D97706':'#444'],
+        [totalLessons,  data ? 'Total Periods' : 'Lessons/Week', '🗓', isColor?'#FEF9C3':'#F5F5F5', isColor?'#D97706':'#444'],
       ].map(([v,l,ic,bg,c])=>`
         <div style="background:${bg};border:1px solid ${border};border-radius:12px;padding:16px;text-align:center">
           <div style="font-size:20px;margin-bottom:5px">${ic}</div>
@@ -7276,19 +7643,19 @@ function tbGenerateReport(cls, style) {
     </div>`;
 
   const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
-<title>Term Breakup — ${cls} · ${typeLabel} · ${styleLabel}</title>
+<title>Term Breakup — ${cls} · ${lpEscapeHtml(schoolName)}</title>
 <style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:'Segoe UI',Arial,sans-serif;background:#fff;color:${textD};font-size:13px}.page{width:210mm;margin:0 auto}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}.np{display:none}@page{size:A4;margin:15mm}}</style>
 </head><body><div class="page">
   <div style="background:${hdrBg};padding:24px 36px 28px;color:#fff;position:relative;overflow:hidden;border-radius:0 0 16px 16px;margin-bottom:28px">
     <div style="position:absolute;top:-40px;right:-40px;width:160px;height:160px;border-radius:50%;background:rgba(255,255,255,.06)"></div>
     <div style="position:absolute;bottom:-20px;left:180px;width:80px;height:80px;border-radius:50%;background:rgba(255,255,255,.04)"></div>
-    ${getReportLogo(style)}
+    ${getReportLogo(style, reportHeader)}
     <div style="font-size:22px;font-weight:800;letter-spacing:-.02em;margin-bottom:4px">Term Breakup — ${cls}</div>
-    <div style="font-size:13px;opacity:.75;margin-bottom:16px">Complete unit & topic breakdown across all terms · ${styleLabel} ${typeLabel}</div>
+    <div style="font-size:13px;opacity:.75;margin-bottom:16px">Academic Year ${lpEscapeHtml(academicSession)} · ${styleLabel} ${typeLabel} Report</div>
     <div style="display:flex;gap:10px;flex-wrap:wrap">
       <div style="background:rgba(255,255,255,.14);padding:6px 14px;border-radius:20px;font-size:11.5px"><strong>Class:</strong> ${cls}</div>
       <div style="background:rgba(255,255,255,.14);padding:6px 14px;border-radius:20px;font-size:11.5px"><strong>Format:</strong> ${typeLabel} · ${styleLabel}</div>
-      <div style="background:rgba(255,255,255,.14);padding:6px 14px;border-radius:20px;font-size:11.5px"><strong>Generated:</strong> ${new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}</div>
+      <div style="background:rgba(255,255,255,.14);padding:6px 14px;border-radius:20px;font-size:11.5px"><strong>Generated:</strong> ${generated}</div>
     </div>
   </div>
   <div style="padding:0 8px">
@@ -7296,7 +7663,7 @@ function tbGenerateReport(cls, style) {
     ${subjectsHtml || `<p style="color:${textM};text-align:center;padding:40px">No breakup data available.</p>`}
   </div>
   <div style="margin-top:24px;border-top:1px solid ${border};padding:12px 8px;display:flex;justify-content:space-between;font-size:11px;color:${textM}">
-    <span>${getSchoolName()}</span><span>School Mentor ERP © 2026</span><span>${cls} · Term Breakup</span>
+    <span>${lpEscapeHtml(schoolName)}${schoolAddress ? ` · ${lpEscapeHtml(schoolAddress)}` : ''}</span><span>School Mentor ERP © ${new Date().getFullYear()}</span><span>${cls} · Term Breakup</span>
   </div>
   <div class="np" style="text-align:center;padding:20px;background:#F8FAFC;border-top:1px solid #E2E8F0;margin-top:16px">
     <button onclick="window.print()" style="background:${isColor?'#1E3A8A':'#333'};color:#fff;border:none;padding:12px 28px;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;margin-right:10px">🖨 Print / Save as PDF</button>
@@ -7311,7 +7678,11 @@ function tbGenerateReport(cls, style) {
 /* ═══════════════════════════════════════════════════════════════════
    SESSION SETTINGS CARD REPORTS — verbatim from HTML generateCardReport
    ═══════════════════════════════════════════════════════════════════ */
-function generateCardReport(card, style) {
+async function generateCardReport(card, style, ctx = {}, reportHeader = null) {
+  /* Use the header passed in by the dispatcher; only fetch if absent. */
+  if (!reportHeader) reportHeader = await fetchLpReportHeader();
+  const reportSession = ctx.session || {};
+  const reportVacations = Array.isArray(ctx.vacations) ? ctx.vacations : [];
   const isColor = style === 'color';
   const hdrBg  = isColor ? 'linear-gradient(135deg,#1E3A8A,#1E40AF)' : 'linear-gradient(135deg,#2C2C2C,#555)';
   const accent  = isColor ? '#1E40AF' : '#444';
@@ -7321,6 +7692,22 @@ function generateCardReport(card, style) {
   const rowAlt  = isColor ? '#F0F6FF' : '#F5F5F5';
   const tHead   = isColor ? '#EFF6FF' : '#EAEAEA';
   const generated = new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'});
+  const schoolName = reportHeader.branchName || getSchoolName();
+  const schoolAddress = reportHeader.address || '';
+  const academicSession = reportHeader.academicSession || reportSession.year || sessionStorage.getItem('sessionName') || 'Academic Session';
+  const sessionStart = reportSession.start || '—';
+  const sessionEnd = reportSession.end || '—';
+  const workingDaysPerWeek = Number(reportSession.workingDaysPerWeek) || 0;
+  const totalDays = Number(reportSession.totalOnDays) || 0;
+  const workingDays = Number(reportSession.workingDays) || 0;
+  const workingWeeks = Number(reportSession.workingWeeks) || 0;
+  const holidays = Number(reportSession.holidays) || 0;
+  const vacationDayTotal = reportVacations.reduce((sum, v) => sum + vacationDays(v.start, v.end), 0);
+  const remainingDays = Math.max(0, totalDays - vacationDayTotal);
+  const workingPct = totalDays > 0 ? Math.round((workingDays / totalDays) * 100) : 0;
+  const holidayPct = totalDays > 0 ? Math.round((holidays / totalDays) * 100) : 0;
+  const startLabel = sessionStart !== '—' ? sessionStart : 'Start';
+  const endLabel = sessionEnd !== '—' ? sessionEnd : 'End';
 
   let title = '', body = '';
 
@@ -7328,13 +7715,13 @@ function generateCardReport(card, style) {
   if (card === 'session') {
     title = 'Academic Session Report';
     const rows = [
-      ['Session Start',        '2026-01-01'],
-      ['Session End',          '2027-01-01'],
-      ['Working Days / Week',  '5'],
-      ['Total On Days',        '262'],
-      ['Working Days',         '254'],
-      ['Working Weeks',        '50.80'],
-      ['Total Holidays',       '8'],
+      ['Session Start',        sessionStart],
+      ['Session End',          sessionEnd],
+      ['Working Days / Week',  workingDaysPerWeek],
+      ['Total On Days',        totalDays],
+      ['Working Days',         workingDays],
+      ['Working Weeks',        workingWeeks.toFixed(2)],
+      ['Total Holidays',       holidays],
     ];
     body = `
       <!-- Hero stat strip -->
@@ -7371,7 +7758,7 @@ function generateCardReport(card, style) {
           <div style="width:97%;height:100%;background:${isColor?'linear-gradient(90deg,#1E40AF,#3B82F6)':'#888'};border-radius:6px"></div>
         </div>
         <div style="display:flex;justify-content:space-between;font-size:11px;color:${textM};margin-top:6px">
-          <span>Jan 2026</span><span style="font-weight:700;color:${accent}">254 working days (97%)</span><span>Jan 2027</span>
+          <span>${startLabel}</span><span style="font-weight:700;color:${accent}">${workingDays} working days (${workingPct}%)</span><span>${endLabel}</span>
         </div>
       </div>`;
   }
@@ -7379,13 +7766,13 @@ function generateCardReport(card, style) {
   /* ── Vacations ── */
   else if (card === 'vacations') {
     title = 'Vacations Report';
-    const vacations = [
-      { name:'Kashmir Day',   start:'2026-03-21', end:'2026-03-30', days:10, color:isColor?'#3B82F6':'#666' },
-      { name:'Eid-ul-Fitr',   start:'2026-04-01', end:'2026-04-05', days:5,  color:isColor?'#22C55E':'#666' },
-      { name:'Summer Break',  start:'2026-07-01', end:'2026-07-31', days:31, color:isColor?'#F59E0B':'#666' },
-    ];
+    const vacations = reportVacations.map((v, i) => ({
+      ...v,
+      days: vacationDays(v.start, v.end),
+      color: v.color || (isColor ? ['#3B82F6', '#22C55E', '#F59E0B', '#7C3AED', '#EF4444'][i % 5] : '#666'),
+    }));
     const totalVacDays = vacations.reduce((a,v)=>a+v.days,0);
-    const totalWorkDays = 262 - totalVacDays;
+    const totalWorkDays = remainingDays;
 
     body = `
       <!-- Summary strip -->
@@ -7439,12 +7826,6 @@ function generateCardReport(card, style) {
   /* ── Session Summary ── */
   else if (card === 'summary') {
     title = 'Session Summary Report';
-    const totalDays    = 262;
-    const workingDays  = 254;
-    const holidays     = 8;
-    const workingWeeks = 50.80;
-    const workingPct   = Math.round((workingDays / totalDays) * 100);
-    const holidayPct   = Math.round((holidays / totalDays) * 100);
 
     body = `
       <!-- ── Hero numbers row (matches the card exactly) ── -->
@@ -7459,7 +7840,7 @@ function generateCardReport(card, style) {
         <div style="padding:28px 20px;text-align:center;border-left:1px solid ${border};
           background:${isColor?'linear-gradient(145deg,#F0FDF4,#DCFCE7)':'#F8F8F8'}">
           <div style="font-size:52px;font-weight:800;color:${isColor?'#15803D':'#333'};
-            line-height:1;letter-spacing:-.03em">${workingWeeks}</div>
+            line-height:1;letter-spacing:-.03em">${workingWeeks.toFixed(2)}</div>
           <div style="font-size:11px;font-weight:800;color:${isColor?'#16A34A':'#555'};
             text-transform:uppercase;letter-spacing:1.2px;margin-top:10px">Working Weeks</div>
         </div>
@@ -7468,7 +7849,7 @@ function generateCardReport(card, style) {
       <!-- ── Three stat pills (Total Days / Working / Holidays) ── -->
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:28px">
         ${[
-          [totalDays,   'Total Days',    '📅', isColor?'#1E3A8A':'#2C2C2C', isColor?'linear-gradient(145deg,#152D6E,#1E3A8A)':'linear-gradient(145deg,#2C2C2C,#555)'],
+          [totalDays,   'Total Days',    '📅', '#fff', isColor?'linear-gradient(145deg,#152D6E,#1E3A8A)':'linear-gradient(145deg,#2C2C2C,#555)'],
           [workingDays, 'Working',       '💼', '#fff',                       isColor?'linear-gradient(145deg,#1E3A8A,#1E40AF)':'linear-gradient(145deg,#3A3A3A,#666)'],
           [holidays,    'Holidays',      '🏖', '#fff',                       isColor?'linear-gradient(145deg,#1E40AF,#3B5BDE)':'linear-gradient(145deg,#555,#888)'],
         ].map(([v,l,ic,tc,bg]) => `
@@ -7530,10 +7911,10 @@ function generateCardReport(card, style) {
           ${[
             ['Total Calendar Days',    totalDays,               'Full academic year span'],
             ['Working Days',           workingDays,             `${workingPct}% of total days`],
-            ['Working Weeks',          workingWeeks,            `${workingDays} ÷ 5 working days/week`],
+            ['Working Weeks',          workingWeeks.toFixed(2), `${workingDays} ÷ ${workingDaysPerWeek || 0} working days/week`],
             ['Holiday / Vacation Days',holidays,                `${holidayPct}% of total days`],
-            ['Working Days per Week',  '5',                     'Mon – Fri schedule'],
-            ['Academic Year',          '2026 – 2027',           'Jan 1, 2026 → Jan 1, 2027'],
+            ['Working Days per Week',  workingDaysPerWeek,      'Configured weekly schedule'],
+            ['Academic Year',          academicSession,         `${sessionStart} → ${sessionEnd}`],
           ].map(([k,v,n],i) => `
             <tr style="background:${i%2===0?'white':rowAlt}">
               <td style="padding:11px 16px;border:1px solid ${border};
@@ -7554,14 +7935,14 @@ function generateCardReport(card, style) {
         <div style="font-size:22px">📊</div>
         <div style="font-size:13px;color:${textM};line-height:1.65">
           This academic session runs <strong style="color:${textD}">${workingDays} working days</strong>
-          across <strong style="color:${textD}">${workingWeeks} weeks</strong>, with
+          across <strong style="color:${textD}">${workingWeeks.toFixed(2)} weeks</strong>, with
           <strong style="color:${textD}">${holidays} days</strong> of scheduled vacations
-          (${holidayPct}% of the year). Students attend <strong style="color:${textD}">5 days per week</strong>.
+          (${holidayPct}% of the year). Students attend <strong style="color:${textD}">${workingDaysPerWeek} days per week</strong>.
         </div>
       </div>`;
   }
   const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
-<title>${title} — ${getSchoolName()}</title>
+<title>${title} — ${lpEscapeHtml(schoolName)}</title>
 <style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:'Segoe UI',Arial,sans-serif;background:#fff;color:${textD};font-size:13px}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}.np{display:none}@page{size:A4;margin:15mm}}</style>
 </head><body>
 <div style="width:210mm;margin:0 auto">
@@ -7569,9 +7950,9 @@ function generateCardReport(card, style) {
   <div style="background:${hdrBg};padding:24px 36px 28px;color:#fff;position:relative;overflow:hidden;border-radius:0 0 16px 16px;margin-bottom:28px">
     <div style="position:absolute;top:-40px;right:-40px;width:160px;height:160px;border-radius:50%;background:rgba(255,255,255,.06)"></div>
     <div style="position:absolute;bottom:-20px;left:120px;width:80px;height:80px;border-radius:50%;background:rgba(255,255,255,.04)"></div>
-    ${getReportLogo(style)}
+    ${getReportLogo(style, reportHeader)}
     <div style="font-size:22px;font-weight:800;letter-spacing:-.02em;margin-bottom:4px">${title}</div>
-    <div style="font-size:13px;opacity:.75;margin-bottom:16px">Academic Year 2026–2027 · ${isColor?'Colorful':'Colorless'} Report</div>
+    <div style="font-size:13px;opacity:.75;margin-bottom:16px">Academic Year ${lpEscapeHtml(academicSession)} · ${isColor?'Colorful':'Colorless'} Report</div>
     <div style="display:flex;gap:12px;flex-wrap:wrap">
       <div style="background:rgba(255,255,255,.14);padding:6px 14px;border-radius:20px;font-size:11.5px"><strong>Generated:</strong> ${generated}</div>
       <div style="background:rgba(255,255,255,.14);padding:6px 14px;border-radius:20px;font-size:11.5px"><strong>Style:</strong> ${isColor?'Colorful':'Colorless'}</div>
@@ -7580,9 +7961,9 @@ function generateCardReport(card, style) {
   <div style="padding:0 8px">${body}</div>
   <!-- Footer -->
   <div style="margin-top:32px;border-top:1px solid ${border};padding:14px 8px;display:flex;justify-content:space-between;font-size:11px;color:${textM}">
-    <span>${getSchoolName()}</span>
-    <span>School Mentor ERP © 2026</span>
-    <span>Academic Year 2026–2027</span>
+    <span>${lpEscapeHtml(schoolName)}${schoolAddress ? ` · ${lpEscapeHtml(schoolAddress)}` : ''}</span>
+    <span>School Mentor ERP © ${new Date().getFullYear()}</span>
+    <span>Academic Year ${lpEscapeHtml(academicSession)}</span>
   </div>
   <!-- Print toolbar -->
   <div class="np" style="text-align:center;padding:22px;background:#F8FAFC;border-top:1px solid #E2E8F0;margin-top:20px">
@@ -7599,7 +7980,16 @@ function generateCardReport(card, style) {
 /* ═══════════════════════════════════════════════════════════════════
    PER WEEK LESSON PLANS REPORT — verbatim from HTML lpOpenReport
    ═══════════════════════════════════════════════════════════════════ */
-function lpOpenReport(type, style, selectedClass) {
+async function lpOpenReport(type, style, selectedClass, ctx = {}, reportHeader = null) {
+  /* Header (logo, school name, session, address) from /report-header/{branchID}.
+     Use the one passed in by the dispatcher; only fetch if absent. */
+  if (!reportHeader) reportHeader = await fetchLpReportHeader();
+  const schoolName      = reportHeader?.branchName || getSchoolName();
+  const schoolAddress   = reportHeader?.address || '';
+  const academicSession = reportHeader?.academicSession
+    || sessionStorage.getItem('sessionName') || 'Academic Session';
+  const generated = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+
   const isColor = style === 'color';
   const bg     = isColor ? '#1E3A8A' : '#2C2C2C';
   // eslint-disable-next-line no-unused-vars
@@ -7611,22 +8001,53 @@ function lpOpenReport(type, style, selectedClass) {
   const rowAlt = isColor ? '#F8FAFF' : '#F5F5F5';
   const tHead  = isColor ? '#EFF6FF' : '#EAEAEA';
 
-  /* Resolve which classes to include */
-  let classKeys = [];
-  if (type === 'individual') {
-    if (!selectedClass) { alert('Please select a class first, then click a report button'); return; }
-    classKeys = [selectedClass];
-  } else {
-    classKeys = Object.keys(LP_SUBJECTS);
-  }
+  const apiClassOptions = [];
+  (ctx.classesData || []).forEach(cls => {
+    if (cls.sections && cls.sections.length > 0) {
+      cls.sections.forEach(sec => apiClassOptions.push({
+        key: `${cls.id}_${sec.sectionID}`,
+        label: `${cls.name}${sec.sectionName ? ` (${sec.sectionName})` : ''}`,
+        gradeId: cls.id,
+        sectionId: sec.sectionID,
+      }));
+    } else {
+      apiClassOptions.push({
+        key: `${cls.id}_nosection`,
+        label: cls.name,
+        gradeId: cls.id,
+        sectionId: null,
+      });
+    }
+  });
 
-  const title = type === 'combined'
-    ? `All Classes — Weekly Lesson Plan Report`
-    : `${selectedClass} — Weekly Lesson Plan Report`;
+  const reportClasses = apiClassOptions.length > 0
+    ? await Promise.all(apiClassOptions.map(async opt => {
+        if (opt.sectionId == null) return { ...opt, subjects: [] };
+        try {
+          const { subjects, counts } = await fetchPerWeekCounts(opt.gradeId, opt.sectionId);
+          return {
+            ...opt,
+            subjects: subjects.map(s => ({
+              name: s.subjectName,
+              lessons: Number(counts[s.subjectID]) || 0,
+            })),
+          };
+        } catch (e) {
+          console.error('Error loading per-week report data:', e);
+          return { ...opt, subjects: [] };
+        }
+      }))
+    : Object.keys(LP_SUBJECTS).map(key => ({
+        key,
+        label: key,
+        subjects: (LP_SUBJECTS[key] || []).map(s => ({ name: s.name, lessons: Number(s.lessons) || 0 })),
+      }));
+
+  const title = `All Classes — Weekly Lesson Plan Report`;
 
   /* Build class tables */
-  const classTables = classKeys.map(key => {
-    const subjects = LP_SUBJECTS[key] || [];
+  const classTables = reportClasses.map(cls => {
+    const subjects = cls.subjects || [];
     const total    = subjects.reduce((a, s) => a + s.lessons, 0);
     const rows     = subjects.map((s, i) =>
       `<tr style="background:${i%2===0?'white':rowAlt}">
@@ -7644,7 +8065,7 @@ function lpOpenReport(type, style, selectedClass) {
     return `
       <div style="margin-bottom:28px;break-inside:avoid">
         <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;padding:11px 16px;background:${isColor?'linear-gradient(135deg,rgba(30,58,138,.06),rgba(30,64,175,.04))':'#F5F5F5'};border-radius:10px;border-left:4px solid ${isColor?'#1E40AF':'#555'}">
-          <div style="font-size:16px;font-weight:800;color:${textD}">${key}</div>
+          <div style="font-size:16px;font-weight:800;color:${textD}">${cls.label}</div>
           <div style="margin-left:auto;background:${isColor?'rgba(30,64,175,.1)':'#EEE'};color:${isColor?'#1E40AF':textM};padding:3px 12px;border-radius:99px;font-size:11px;font-weight:700">${subjects.length} subjects · ${total} lessons/week</div>
         </div>
         <table style="width:100%;border-collapse:collapse;font-size:13px">
@@ -7669,20 +8090,23 @@ function lpOpenReport(type, style, selectedClass) {
   }).join('');
 
   /* Summary stats for combined */
-  const summaryBlock = type === 'combined' ? `
+  const totalSubjects = reportClasses.reduce((sum, cls) => sum + (cls.subjects?.length || 0), 0);
+  const totalLessons = reportClasses.reduce((sum, cls) => sum + (cls.subjects || []).reduce((a, s) => a + s.lessons, 0), 0);
+  const avgLessons = reportClasses.length ? Math.round(totalLessons / reportClasses.length) : 0;
+  const summaryBlock = `
     <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:28px">
       ${[
-        ['Total Classes', classKeys.length, '🏫'],
-        ['Total Subjects', classKeys.reduce((a,k)=>a+(LP_SUBJECTS[k]?.length||0),0), '📚'],
-        ['Avg Lessons/Class', Math.round(classKeys.reduce((a,k)=>a+(LP_SUBJECTS[k]?.reduce((b,s)=>b+s.lessons,0)||0),0)/classKeys.length), '📊'],
-        ['Academic Year', '2026–27', '📅'],
+        ['Total Classes', reportClasses.length, '🏫'],
+        ['Total Subjects', totalSubjects, '📚'],
+        ['Avg Lessons/Class', avgLessons, '📊'],
+        ['Academic Year', academicSession, '📅'],
       ].map(([l,v,ic]) => `
         <div style="background:${isColor?'#EFF6FF':'#F5F5F5'};border-radius:10px;padding:14px;text-align:center;border:1px solid ${border}">
           <div style="font-size:20px;margin-bottom:4px">${ic}</div>
           <div style="font-size:22px;font-weight:800;color:${isColor?'#1E40AF':'#333'};line-height:1">${v}</div>
           <div style="font-size:11px;color:${textM};margin-top:4px;font-weight:600">${l}</div>
         </div>`).join('')}
-    </div>` : '';
+    </div>`;
 
   /* Final HTML */
   const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
@@ -7699,12 +8123,11 @@ function lpOpenReport(type, style, selectedClass) {
   <div style="background:${hdrBg};padding:24px 36px 28px;color:#fff;position:relative;overflow:hidden;border-radius:0 0 16px 16px;margin-bottom:28px">
     <div style="position:absolute;top:-40px;right:-40px;width:160px;height:160px;border-radius:50%;background:rgba(255,255,255,.06)"></div>
     <div style="position:absolute;bottom:-20px;left:120px;width:80px;height:80px;border-radius:50%;background:rgba(255,255,255,.04)"></div>
-    ${getReportLogo(style)}
+    ${getReportLogo(style, reportHeader)}
     <div style="font-size:22px;font-weight:800;letter-spacing:-.02em;margin-bottom:4px">${title}</div>
-    <div style="font-size:13px;opacity:.75;margin-bottom:16px">Per Week Lesson Plan Breakdown · ${isColor?'Colorful':'Colorless'} Report</div>
-    <div style="display:flex;gap:10px;flex-wrap:wrap">
-      <div style="background:rgba(255,255,255,.14);padding:6px 14px;border-radius:20px;font-size:11.5px"><strong>Generated:</strong> ${new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}</div>
-      <div style="background:rgba(255,255,255,.14);padding:6px 14px;border-radius:20px;font-size:11.5px"><strong>Type:</strong> ${type==='combined'?'Combined (All Classes)':'Individual Class'}</div>
+    <div style="font-size:13px;opacity:.75;margin-bottom:16px">Academic Year ${lpEscapeHtml(academicSession)} · ${isColor?'Colorful':'Colorless'} Report</div>
+    <div style="display:flex;gap:12px;flex-wrap:wrap">
+      <div style="background:rgba(255,255,255,.14);padding:6px 14px;border-radius:20px;font-size:11.5px"><strong>Generated:</strong> ${generated}</div>
       <div style="background:rgba(255,255,255,.14);padding:6px 14px;border-radius:20px;font-size:11.5px"><strong>Style:</strong> ${isColor?'Colorful':'Colorless'}</div>
     </div>
   </div>
@@ -7716,9 +8139,9 @@ function lpOpenReport(type, style, selectedClass) {
 
   <!-- Footer -->
   <div style="margin-top:32px;border-top:1px solid ${border};padding:14px 8px;display:flex;justify-content:space-between;font-size:11px;color:${textM}">
-    <span>${getSchoolName()}</span>
-    <span>School Mentor ERP © 2026</span>
-    <span>${type==='combined'?`${classKeys.length} classes`:'Individual Report'}</span>
+    <span>${lpEscapeHtml(schoolName)}${schoolAddress ? ` · ${lpEscapeHtml(schoolAddress)}` : ''}</span>
+    <span>School Mentor ERP © ${new Date().getFullYear()}</span>
+    <span>${reportClasses.length} classes</span>
   </div>
 
   <!-- Print toolbar -->
@@ -7739,14 +8162,20 @@ function lpOpenReport(type, style, selectedClass) {
 /* ═══════════════════════════════════════════════════════════════════
    CREATE-LESSON-PLAN UNIT PDF — verbatim from HTML clpUnitPdfReport
    ═══════════════════════════════════════════════════════════════════ */
-function clpUnitPdfReport(unit, ctx, style) {
+function clpUnitPdfReport(unit, ctx, style, reportHeader = null) {
   if (!unit) return;
   const isColor = style === 'color';
 
-  const bg           = isColor ? '#1E3A8A'  : '#000';
-  const hdrBg        = isColor ? 'linear-gradient(135deg,#1E3A8A 0%,#1E40AF 55%,#2563EB 100%)' : '#fff';
-  const hdrColor     = isColor ? '#fff'     : '#000';
-  const hdrBorder    = isColor ? 'none'     : '2px solid #000';
+  /* Header (logo, school name, session, address) from /report-header/{branchID}.
+     Uses the shared getReportLogo block so it matches every other report. */
+  const schoolName      = reportHeader?.branchName || getSchoolName();
+  const schoolAddress   = reportHeader?.address || '';
+  const academicSession = reportHeader?.academicSession
+    || sessionStorage.getItem('sessionName') || 'Academic Session';
+  const generated = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+
+  const bg           = isColor ? '#1E3A8A'  : '#2C2C2C';
+  const hdrBg        = isColor ? 'linear-gradient(135deg,#1E3A8A,#1E40AF)' : 'linear-gradient(135deg,#2C2C2C,#555)';
   const textD        = isColor ? '#0F172A'  : '#000';
   const textM        = isColor ? '#64748B'  : '#444';
   const border       = isColor ? '#BFDBFE'  : '#999';
@@ -7886,24 +8315,18 @@ function clpUnitPdfReport(unit, ctx, style) {
 </style>
 </head><body><div class="page">
 
-  <div style="background:${hdrBg};padding:${isColor?'30px 40px 34px':'18px 24px'};color:${hdrColor};border:${hdrBorder};${isColor?'border-radius:0 0 20px 20px;':'border-bottom:3px solid #000;'}margin-bottom:26px;position:relative;overflow:hidden">
-    ${isColor?'<div style="position:absolute;top:-60px;right:-60px;width:200px;height:200px;border-radius:50%;background:rgba(255,255,255,.05)"></div>':''}
-    <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
-      <div style="width:46px;height:46px;border-radius:11px;background:rgba(255,255,255,.18);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:900;color:${hdrColor};flex-shrink:0;border:1.5px solid rgba(255,255,255,.25)">${getSchoolInitials()}</div>
-      <div>
-        <div style="font-size:9px;letter-spacing:2px;text-transform:uppercase;${isColor?'opacity:.55':'color:#555'};font-weight:700;margin-bottom:2px">School Mentor ERP</div>
-        <div style="font-size:15px;font-weight:800;color:${hdrColor};line-height:1.2">${getSchoolName()}</div>
-      </div>
+  <div style="background:${hdrBg};padding:24px 36px 28px;color:#fff;position:relative;overflow:hidden;border-radius:0 0 16px 16px;margin-bottom:28px">
+    <div style="position:absolute;top:-40px;right:-40px;width:160px;height:160px;border-radius:50%;background:rgba(255,255,255,.06)"></div>
+    <div style="position:absolute;bottom:-20px;left:120px;width:80px;height:80px;border-radius:50%;background:rgba(255,255,255,.04)"></div>
+    ${getReportLogo(style, reportHeader)}
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:4px">
+      <div style="font-size:22px;font-weight:800;letter-spacing:-.02em">${lpEscapeHtml(cls)} · Unit ${unit.unitNo} — ${unit.unitName}</div>
+      <div style="font-size:13px;font-weight:700;opacity:.85;white-space:nowrap;padding-top:6px;color:#fff">${lpEscapeHtml(subj)} · ${totalLessons} Lesson${totalLessons!==1?'s':''}</div>
     </div>
-    <div style="height:1px;background:${isColor?'rgba(255,255,255,.2)':'#ccc'};margin-bottom:14px"></div>
-    <div style="font-size:10px;font-weight:800;letter-spacing:2px;text-transform:uppercase;${isColor?'opacity:.65':'color:#555'};margin-bottom:6px">Lesson Plan Document</div>
-    <div style="font-size:${isColor?'26':'22'}px;font-weight:900;margin-bottom:4px;color:${hdrColor}">Unit ${unit.unitNo} — ${unit.unitName}</div>
-    <div style="font-size:12px;${isColor?'opacity:.75':'color:#555'};margin-bottom:${isColor?'20':'12'}px">Complete Lesson Plan Package · ${isColor?'Colorful':'Colorless — Ink Saver'} · Academic Year 2026–27</div>
-    <div style="display:flex;gap:${isColor?'10':'20'}px;flex-wrap:wrap">
-      ${[['Class',cls],['Subject',subj],['Total Lessons',totalLessons],['Generated',new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})]]
-        .map(([lbl,val])=>isColor
-          ? `<div style="background:rgba(255,255,255,.16);padding:6px 16px;border-radius:20px;font-size:11.5px;font-weight:600"><strong>${lbl}:</strong> ${val}</div>`
-          : `<div style="font-size:12px;font-weight:700;color:#000"><span style="font-weight:400;color:#555">${lbl}: </span>${val}</div>`).join('')}
+    <div style="font-size:13px;opacity:.75;margin-bottom:16px">Academic Year ${lpEscapeHtml(academicSession)} · ${isColor?'Colorful':'Colorless'} Report</div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap">
+      <div style="background:rgba(255,255,255,.14);padding:6px 14px;border-radius:20px;font-size:11.5px;color:#fff"><strong style="color:#fff">Generated:</strong> ${generated}</div>
+      <div style="background:rgba(255,255,255,.14);padding:6px 14px;border-radius:20px;font-size:11.5px;color:#fff"><strong style="color:#fff">Style:</strong> ${isColor?'Colorful':'Colorless'}</div>
     </div>
   </div>
 
@@ -7913,10 +8336,10 @@ function clpUnitPdfReport(unit, ctx, style) {
     ${lessonCards}
   </div>
 
-  <div style="margin-top:30px;border-top:${isColor?'2px solid '+border:'2px solid #000'};padding:12px 12px;display:flex;justify-content:space-between;font-size:11px;color:${textM}">
-    <span style="font-weight:700;color:${textD}">School Mentor ERP © 2026</span>
-    <span>${getSchoolName()}</span>
-    <span>${isColor?'Color':'B&amp;W Ink Saver'} · Unit ${unit.unitNo} · ${totalLessons} Lesson${totalLessons!==1?'s':''}</span>
+  <div style="margin-top:30px;border-top:${isColor?'2px solid '+border:'2px solid #000'};padding:12px 12px;display:flex;justify-content:space-between;align-items:center;font-size:11px;color:${textM}">
+    <span>${lpEscapeHtml(schoolName)}${schoolAddress ? ` · ${lpEscapeHtml(schoolAddress)}` : ''}</span>
+    <span>School Mentor ERP © ${new Date().getFullYear()}</span>
+    <span>Academic Year ${lpEscapeHtml(academicSession)}</span>
   </div>
 
   <div class="np" style="text-align:center;padding:22px;background:#F8FAFC;border-top:1px solid #E2E8F0;margin-top:18px">
@@ -8051,23 +8474,55 @@ function nbGeneratePdfHtml(u, questions, isColor) {
   if (w) { w.document.write(html); w.document.close(); }
 }
 
-function generateLessonPlanReport(name, style, format, ctx) {
+async function generateLessonPlanReport(name, style, format, ctx) {
+  
+  // ── Fetch report header ──
+  let schoolName      = 'School Mentor ERP';
+  let schoolAddress   = '';
+  let academicSession = '';
+  let branchLogoUrl   = null;
+
+  try {
+    const branchID = sessionStorage.getItem('branchID') || 1;
+    const res = await fetch(
+      buildUrl(`/report-header/${branchID}`),
+      { method: 'GET', headers: { Accept: '*/*' } }
+    );
+    const json = await res.json();
+    if (json.success && json.data) {
+      schoolName      = json.data.branchName      || schoolName;
+      schoolAddress   = json.data.address         || '';
+      academicSession = json.data.academicSession || '';
+      branchLogoUrl   = json.data.branchLogo      || null;
+    }
+  } catch (e) {
+    console.error('Error fetching report header:', e);
+  }
+
+  /* Shared header object — fetched once above, reused by every report path
+     so /report-header is not hit twice. */
+  const reportHeader = {
+    branchName: schoolName,
+    branchLogo: branchLogoUrl || '',
+    address: schoolAddress,
+    academicSession,
+  };
+
   /* Term Breakup — "<Class> — Term Breakup" */
   if (name.includes('Term Breakup')) {
     const cls = name.replace(/\s*—\s*Term Breakup\s*$/, '').trim();
-    tbGenerateReport(cls, style);
+    tbGenerateReport(cls, style, reportHeader, format, ctx?.tbReportData || null);
     return;
   }
 
   /* Session Settings cards */
-  if (name === 'Academic Session')  { generateCardReport('session',   style); return; }
-  if (name === 'Vacations')         { generateCardReport('vacations', style); return; }
-  if (name === 'Session Summary')   { generateCardReport('summary',   style); return; }
+  if (name === 'Academic Session')  { await generateCardReport('session',   style, ctx, reportHeader); return; }
+  if (name === 'Vacations')         { await generateCardReport('vacations', style, ctx, reportHeader); return; }
+  if (name === 'Session Summary')   { await generateCardReport('summary',   style, ctx, reportHeader); return; }
 
   /* Per Week Lesson Plans variants */
   if (name.startsWith('Per Week Lesson Plans')) {
-    const type = name.includes('Combined') || name.includes('All') ? 'combined' : 'individual';
-    lpOpenReport(type, style, ctx?.pwSelectedClass || '');
+    await lpOpenReport('combined', style, '', ctx, reportHeader);
     return;
   }
 
@@ -8108,7 +8563,7 @@ function generateLessonPlanReport(name, style, format, ctx) {
     const m = name.match(/^Unit\s+([^\s—]+)/);
     const unitNo = m ? m[1] : '';
     const unit = ctx?.units?.find(u => String(u.unitNo) === String(unitNo));
-    if (unit) { clpUnitPdfReport(unit, ctx, style); return; }
+    if (unit) { clpUnitPdfReport(unit, ctx, style, reportHeader); return; }
   }
   if (name.startsWith('Lesson ')) {
     /* Render lesson as a single-lesson unit using clpUnitPdfReport */
@@ -8120,7 +8575,7 @@ function generateLessonPlanReport(name, style, format, ctx) {
       const lessonNum = lessonMatch[1];
       const lesson = unit.lessons.find(l => String(l.num) === String(lessonNum));
       if (lesson) {
-        clpUnitPdfReport({ ...unit, lessons: [lesson] }, ctx, style);
+        clpUnitPdfReport({ ...unit, lessons: [lesson] }, ctx, style, reportHeader);
         return;
       }
     }
