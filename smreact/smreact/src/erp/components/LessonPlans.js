@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Tooltip from './Tooltip';
 import * as academicsService from '../services/academicsService';
 import useAsync from '../hooks/useAsync';
-import { buildUrl } from '../../utils/apiConfig';
+import { buildUrl, assertSessionPayload, registerSessionToast, apiMessage } from '../../utils/apiConfig';
 import { termsCrud, termsBranchID, termsSessionYearID } from './Academics';
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -192,6 +192,9 @@ const LESSON_SECTIONS_UR = [
 export default function LessonPlans({ toast, openConfirm }) {
   const [tab, setTab] = useState('session'); // session | breakup | create | view
 
+  /* Let module-level POST wrappers surface the "no session" error via toast. */
+  useEffect(() => { registerSessionToast(toast); }, [toast]);
+
   /* Session summary + vacations load live from getsessionsummarybybranchid
      (see loadSessionSummary). Seed sensible defaults so the cards render before
      the fetch resolves. */
@@ -219,7 +222,7 @@ export default function LessonPlans({ toast, openConfirm }) {
       loadSessionSummary();
     } catch (e) {
       console.error('Error saving session:', e);
-      toast('Could not save session', 'error');
+      if (!e.isSessionError) toast('Could not save session', 'error');
     }
   };
 
@@ -938,13 +941,22 @@ const lpAuthHeaders = (extra = {}) => ({
   ...extra,
 });
 async function lpPost(path, payload) {
+  assertSessionPayload(payload); // block session-scoped POSTs when no session is selected
   const res = await fetch(buildUrl(path), {
     method: 'POST',
     headers: lpAuthHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(payload),
   });
-  if (!res.ok) throw new Error(`${path} ${payload.action} failed: ${res.status}`);
-  return res.json().catch(() => ({}));
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    /* Surface the backend's message (e.g. "cannot be deleted as it is
+       referenced …") so callers can show it in a toast. */
+    const msg = apiMessage(json);
+    const err = new Error(msg || `${path} ${payload.action} failed: ${res.status}`);
+    err.serverMessage = msg;
+    throw err;
+  }
+  return json;
 }
 const lpToIso = d => { const x = new Date(d); return isNaN(x) ? null : x.toISOString(); };
 
@@ -1192,7 +1204,7 @@ function PerWeekEditModal({ open, classesData = [], onClose, onSaved, toast }) {
       onClose();
     } catch (e) {
       console.error('Error saving per week counts:', e);
-      toast('Could not save per week lesson plans', 'error');
+      if (!e.isSessionError) toast('Could not save per week lesson plans', 'error');
     } finally {
       setSaving(false);
     }
@@ -2273,7 +2285,10 @@ const readApiJson = async res => {
   const json = await res.json().catch(() => ({}));
   if (!res.ok) {
     console.error('API failed:', res.url, res.status, json);
-    throw new Error(json?.message || json?.title || JSON.stringify(json) || `API failed: ${res.status}`);
+    const msg = apiMessage(json);
+    const err = new Error(msg || JSON.stringify(json) || `API failed: ${res.status}`);
+    err.serverMessage = msg;
+    throw err;
   }
   return json;
 };
@@ -2377,6 +2392,8 @@ const payload = {
 
 console.log('lptermbreakupcrud insert payload:', payload);
 
+assertSessionPayload(payload); // block when no session is selected
+
 const res = await fetch(buildUrl('/api/lptermbreakupcrud'), {
   method: 'POST',
   headers: getAuthHeaders(),
@@ -2442,7 +2459,7 @@ await loadTermBreakup();
 onSaved?.();
   } catch (e) {
     console.error('Error saving unit:', e);
-  toast(e.message || 'Failed to save unit', 'error');
+  if (!e.isSessionError) toast(e.message || 'Failed to save unit', 'error');
   } finally {
     setSavingBreakup(false);
   }
@@ -2466,7 +2483,7 @@ onSaved?.();
 onClose();
   } catch (e) {
     console.error('Error saving term breakup:', e);
-    toast(e.message || 'Failed to save term breakup', 'error');
+    if (!e.isSessionError) toast(e.message || 'Failed to save term breakup', 'error');
   } finally {
     setSavingBreakup(false);
   }
@@ -2664,7 +2681,8 @@ const deleteDetail = async ({ unit, topic }) => {
                         disabled={savingBreakup}
                          onClick={async () => {
   if (t.detailID) {
-    await deleteDetail({ unit: u, topic: t });
+    try { await deleteDetail({ unit: u, topic: t }); }
+    catch (e) { console.error('Error deleting topic:', e); toast(e.serverMessage || 'Could not delete topic', 'error'); }
   } else {
     removeTopic(u.id, t.id);
     toast('Topic removed', 'success');
@@ -2899,13 +2917,13 @@ const handleSectionChange = async (e) => {
         /* Delete every topic record under this unit, then drop it locally. */
         const ids = (u.lessons || []).map(l => l.record?.id).filter(Boolean);
         try { await Promise.all(ids.map(deleteUlpRecord)); }
-        catch (e) { console.error('Error deleting unit topics:', e); toast('Could not delete unit', 'error'); return; }
+        catch (e) { console.error('Error deleting unit topics:', e); toast(e.serverMessage || 'Could not delete unit', 'error'); return; }
         setUnits(units.filter(x => x.id !== u.id));
       } else {
         const recId = u.record?.id ?? u.id;
         if (recId) {
           try { await deleteNbRecord(recId); }
-          catch (e) { console.error('Error deleting notebook unit:', e); toast('Could not delete unit', 'error'); return; }
+          catch (e) { console.error('Error deleting notebook unit:', e); toast(e.serverMessage || 'Could not delete unit', 'error'); return; }
         }
         setNbUnits(nbUnits.filter(x => x.id !== u.id));
       }
@@ -2922,7 +2940,7 @@ const handleSectionChange = async (e) => {
     onConfirm: async () => {
       if (lesson.record?.id) {
         try { await deleteUlpRecord(lesson.record.id); }
-        catch (e) { console.error('Error deleting lesson topic:', e); toast('Could not delete lesson', 'error'); return; }
+        catch (e) { console.error('Error deleting lesson topic:', e); toast(e.serverMessage || 'Could not delete lesson', 'error'); return; }
       }
       setUnits(units.map(u => u.id !== unitId ? u : { ...u, lessons: u.lessons.filter(l => l.id !== lesson.id) }));
       toast('Lesson deleted', 'success');
@@ -2939,14 +2957,15 @@ const handleSectionChange = async (e) => {
       /* Delete every saved row of this group through its type CRUD endpoint. */
       const api = NB_QTYPE_API[q.typeId];
       const branchID = sessionStorage.getItem('branchID') || '';
+      const notebookID = api?.notebookIDString ? String(unitId) : unitId;
       const ids = (q.rows || q.items || []).map(r => r.recordId).filter(Boolean);
       if (api && ids.length) {
         try {
           await Promise.all(ids.map(id => lpPost(api.endpoint, {
-            id, notebookID: unitId, branchID, mainQuestion: q.mainQuestion || '',
+            id, notebookID, branchID, mainQuestion: q.mainQuestion || '',
             isCheck: true, action: 'delete', ...api.body({}, 0),
           })));
-        } catch (e) { console.error('Error deleting question type:', e); toast('Could not delete question type', 'error'); return; }
+        } catch (e) { console.error('Error deleting question type:', e); toast(e.serverMessage || 'Could not delete question type', 'error'); return; }
       }
       setNbReload(n => n + 1);
       toast('Question type deleted', 'success');
@@ -3302,8 +3321,8 @@ const NB_DETAIL_CATEGORIES = [
    isCheck/action wrapper is added by the modal at save time. */
 const NB_QTYPE_API = {
   word_opposite:   { endpoint:'/api/ulpnwordoppositecrud',          body:r=>({ word:r.word||'', opposite:r.opposite||'', marks:r.marks||'' }) },
-  singular_plural: { endpoint:'/api/ulpnsingularpluralcrud',        body:r=>({ singular:r.singular||'', plural:r.plural||'', marks:r.marks||'' }) },
-  word_synonyms:   { endpoint:'/api/ulpnwordSynonymcrud',           body:r=>({ word:r.word||'', synonym:r.synonym||'', marks:r.marks||'' }) },
+  singular_plural: { endpoint:'/api/ulpnsingularpluralcrud',        notebookIDString:true, body:r=>({ singular:r.singular||'', plural:r.plural||'', marks:r.marks||'' }) },
+  word_synonyms:   { endpoint:'/api/ulpnwordSynonymcrud',           notebookIDString:true, body:r=>({ word:r.word||'', synonym:r.synonym||'', marks:r.marks||'' }) },
   word_sentences:  { endpoint:'/api/ulpnwordsentencecrud',          body:r=>({ word:r.word||'', sentences:r.sentence||'', marks:r.marks||'' }) },
   mcqs:            { endpoint:'/api/ulpnmcqscrud',                  body:r=>({ question:r.question||'', option1:r.opt1||'', option2:r.opt2||'', option3:r.opt3||'', option4:r.opt4||'', correctAnswer:r.correct||'', totalMarks:r.marks||'' }) },
   fill_blanks:     { endpoint:'/api/ulpnfilltheblankcrud',          body:r=>({ question:r.question||'', answer:r.answer||'', correctAnswer:r.answer||'', marks:r.marks||'' }) },
@@ -3312,7 +3331,7 @@ const NB_QTYPE_API = {
   short_questions: { endpoint:'/api/ulpnquestionanswercrud',        body:r=>({ question:r.question||'', answer:r.answer||'', correctAnswer:r.answer||'', marks:r.marks||'' }) },
   circle_words:    { endpoint:'/api/ulpncirclecorrectwordcrud',     body:r=>({ question:r.statement||'', answer:r.answer||'' }) },
   punctuation:     { endpoint:'/api/ulpnpunctuationcrud',           body:r=>({ punctuation:r.question||'', answer:r.answer||'' }) },
-  long_question:   { endpoint:'/api/ulpnLongQuestioncrud',          body:r=>({ question:r.question||'', answer:r.answer||'', marks:r.marks||'' }) },
+  long_question:   { endpoint:'/api/ulpnLongQuestioncrud',          notebookIDString:true, body:r=>({ question:r.question||'', answer:r.answer||'', marks:r.marks||'' }) },
   paragraph:       { endpoint:'/api/ulpnparagraphcrud',             body:r=>({ topic:r.title||'', paragraph:r.body||'', marks:r.marks||'' }) },
   comprehension:   { endpoint:'/api/ulpncomprehensionquestioncrud', body:r=>({ question:r.question||'', answer:r.answer||'', correctAnswer:r.answer||'', marks:r.marks||'' }) },
   letter:          { endpoint:'/api/ulpnlettercrud',               body:r=>({ subject:r.subject||'', body:r.body||'', regards:r.regards||'', marks:r.marks||'' }) },
@@ -5600,7 +5619,7 @@ function UnitMgrModal({ open, source, units, clpCtx = {}, onSave, onClose, openC
         ]);
       } catch (e) {
         console.error('Error saving notebook units:', e);
-        toast('Could not save notebook units', 'error');
+        toast(e.serverMessage || 'Could not save notebook units', 'error');
         return;
       }
     } else if (source === 'lesson' && clpCtx.classID) {
@@ -6435,7 +6454,9 @@ function NbAQModal({ ctx, unit, onSave, onClose, toast }) {
     if (!api) { toast('This question type is not supported yet', 'error'); return; }
 
     const branchID   = sessionStorage.getItem('branchID') || '';
-    const notebookID = ctx.unitId;
+    /* Some endpoints (singular/plural, synonyms, long question) expect notebookID
+       as a string; others as a number. */
+    const notebookID = api.notebookIDString ? String(ctx.unitId) : ctx.unitId;
     const mq = mainQ.trim();
     const wrap = (row, action, i) => {
       const payload = {

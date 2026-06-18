@@ -7,6 +7,7 @@ import { SettingsProvider, TopbarSessionPill } from '../pages/Settings/settingsS
 import { useModules } from '../context/ModuleContext';
 import { NAV_TO_MODULE_MAP } from '../config/moduleConfig';
 import { logout, goToLaunchSetup } from '../utils/auth';
+import { buildUrl } from '../../utils/apiConfig';
 import erpExtraCss from './erpExtraCss';
 
 /* ─── Code-split each ERP module ─────────────────────────────────────
@@ -128,7 +129,28 @@ export default function App() {
   const [profileOpen, setProfileOpen] = useState(false);
   const [logoutOpen, setLogoutOpen] = useState(false);
   const [toasts, setToasts] = useState([]);
-  const BranchName = sessionStorage.getItem('')
+
+  /* Branch header (name, logo, address) for the sidebar top — same API the
+     reports use. */
+  const [branchInfo, setBranchInfo] = useState(null);
+  useEffect(() => {
+    const branchId = sessionStorage.getItem('branchID');
+    if (!branchId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(buildUrl(`/report-header/${branchId}`), { headers: { Accept: '*/*' } });
+        const json = await res.json();
+        if (!cancelled && json?.success) setBranchInfo(json.data || null);
+      } catch (e) { console.error('Error loading branch header:', e); }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  /* Logged-in user for the sidebar footer. */
+  const userName = sessionStorage.getItem('displayName') || sessionStorage.getItem('userName') || 'User';
+  const userRole = sessionStorage.getItem('accountType') || 'User';
+  const userInitials = userName.trim().split(/\s+/).map(w => w[0]).slice(0, 2).join('').toUpperCase() || 'U';
 
   /* ─── Module activation engine ───
      Sidebar nav items + section headings are filtered through this.
@@ -197,7 +219,10 @@ export default function App() {
         {/* ═════════ SIDEBAR ═════════ */}
         <aside className={`sidebar${mobileOpen ? ' open' : ''}${collapsed ? ' collapsed' : ''}`}>
           <div className="sidebar-logo">
-            <div className="logo-icon">
+            <div className="logo-icon" style={branchInfo?.branchLogo ? { overflow: 'hidden', background: '#fff' } : undefined}>
+              {branchInfo?.branchLogo ? (
+                <img src={branchInfo.branchLogo} alt="logo" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+              ) : (
               <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
                 <rect width="36" height="36" fill="url(#smg1)" />
                 <defs>
@@ -214,8 +239,14 @@ export default function App() {
                 <line x1="19" y1="14.2" x2="24" y2="15" stroke="rgba(255,255,255,0.35)" strokeWidth="0.7" />
                 <line x1="19" y1="17.2" x2="24" y2="18" stroke="rgba(255,255,255,0.35)" strokeWidth="0.7" />
               </svg>
+              )}
             </div>
-            <div className="logo-name">The Oxford System,<br />Lahore Campus</div>
+            <div className="logo-name">
+              <div>{branchInfo?.branchName || 'The Oxford System, Lahore Campus'}</div>
+              {branchInfo?.address && (
+                <div style={{ fontSize: 9.5, fontWeight: 500, color: '#9CA3AF', marginTop: 2, lineHeight: 1.3 }}>{branchInfo.address}</div>
+              )}
+            </div>
             <Tooltip text={collapsed ? 'Expand sidebar' : 'Collapse sidebar'} placement="right">
               <button
                 className="sidebar-collapse-btn"
@@ -279,12 +310,16 @@ export default function App() {
           </nav>
 
           <div className="sidebar-footer" style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
-            <div className="user-av">OX</div>
+            <div className="user-av" style={{ overflow: 'hidden' }}>
+              {branchInfo?.userImage
+                ? <img src={branchInfo.userImage} alt={userName} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                : userInitials}
+            </div>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                The Oxford System, Lahore Campus
+                {userName}
               </div>
-              <div style={{ fontSize: 9.5, color: '#9CA3AF' }}>Administrator</div>
+              <div style={{ fontSize: 9.5, color: '#9CA3AF' }}>{userRole}</div>
             </div>
           </div>
 

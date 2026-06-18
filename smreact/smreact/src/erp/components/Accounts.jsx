@@ -1,9 +1,10 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Tooltip from './Tooltip';
 import TutorialModal from './TutorialModal';
 import * as accountsService from '../services/accountsService';
 import useAsync from '../hooks/useAsync';
+import { buildUrl } from '../../utils/apiConfig';
 
 /* ═══════════════════════════════════════════════════════════════════
    ACCOUNTS MODULE — shell + 4 main tabs.
@@ -96,51 +97,93 @@ export default function Accounts({ toast }) {
    head, with a hero-style confirm for destructive ops.
    ═══════════════════════════════════════════════════════════════════ */
 function ChartOfAccounts({ toast }) {
-  const { data: serverTypes = [], setData: setServerTypes } = useAsync(accountsService.getAccTypes, []);
-  const { data: serverNextNo = 222 } = useAsync(accountsService.getAccNextHeadNo, 222);
+  const branchID = sessionStorage.getItem('branchID') || '1';
+  const userID   = Number(sessionStorage.getItem('UserID')) || 1;
 
-  /* Local mutable mirror — service returns clones so we can edit
-     in-place without affecting the seed for the next caller. */
+  /* Account types + their heads, loaded from the API. Each type:
+     { key, id, name, icon, cls, heads:[{ no, recordId, name, desc, typeID }] } */
   const [types, setTypes] = useState(null);
-  useEffect(() => { if (serverTypes.length && types == null) setTypes(serverTypes); }, [serverTypes, types]);
-  const list = types || [];
+  const [loading, setLoading] = useState(false);
 
-  const [nextNo, setNextNo] = useState(null);
-  useEffect(() => { if (nextNo == null && serverNextNo) setNextNo(serverNextNo); }, [serverNextNo, nextNo]);
+  /* Map a type to an icon/colour class; Revenue → up/green, Expense → down/red. */
+  const typeMeta = (id, name) =>
+    id === 1 || /revenue|income/i.test(name) ? { icon: 'fa-arrow-trend-up', cls: 'rev' }
+    : id === 2 || /expense|expenditure/i.test(name) ? { icon: 'fa-arrow-trend-down', cls: 'exp' }
+    : { icon: 'fa-layer-group', cls: 'all' };
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const tRes  = await fetch(buildUrl('/get-account-types'), { headers: { Accept: '*/*' } });
+      const tJson = await tRes.json();
+      const apiTypes = tJson?.data || [];
+      const built = await Promise.all(apiTypes.map(async at => {
+        let heads = [];
+        try {
+          const hRes  = await fetch(buildUrl(`/get-accountsHeads-by-branch/${branchID}/${at.ID}`), { headers: { Accept: '*/*' } });
+          const hJson = await hRes.json();
+          heads = (hJson?.data || []).map(h => ({
+            no:       h.AccountID ?? h.ID,
+            recordId: h.ID,
+            name:     h.AccountHead,
+            desc:     h.Description || '',
+            typeID:   h.AccountTypeID,
+          }));
+        } catch (e) { console.error('Error loading account heads:', e); }
+        const m = typeMeta(at.ID, at.AccountTypeName);
+        return { key: String(at.ID), id: at.ID, name: at.AccountTypeName, icon: m.icon, cls: m.cls, heads };
+      }));
+      setTypes(built);
+    } catch (e) {
+      console.error('Error loading account types:', e);
+      toast('Could not load chart of accounts', 'error');
+    } finally {
+      setLoading(false);
+    }
+  }, [branchID, toast]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const list = types || [];
 
   const [openKey, setOpenKey] = useState(null);
   const [edit, setEdit]       = useState(null); // { typeKey, mode:'add'|'edit', head? }
   const [confirm, setConfirm] = useState(null);
 
   const totalTypes  = list.length;
-  const expCount    = list.find(t => t.key === 'exp')?.heads.length || 0;
-  const revCount    = list.find(t => t.key === 'rev')?.heads.length || 0;
+  const expCount    = list.find(t => t.cls === 'exp')?.heads.length || 0;
+  const revCount    = list.find(t => t.cls === 'rev')?.heads.length || 0;
 
   const openAdd  = (typeKey) => setEdit({ typeKey, mode: 'add' });
   const openEdit = (typeKey, head) => setEdit({ typeKey, mode: 'edit', head });
 
-  const handleSave = async ({ name, desc }) => {
+  /* Insert (id 0) or update (head.recordId) an account head, then refresh. */
+  const handleSave = async ({ name, desc, accountTypeID }) => {
     if (!edit) return;
-    const { typeKey, mode, head } = edit;
-    if (mode === 'add') {
-      const no = nextNo;
-      setNextNo(prev => (prev || 222) + 1);
-      setTypes(prev => prev.map(t => t.key === typeKey
-        ? { ...t, heads: [...t.heads, { no, name, desc }] }
-        : t));
-      setServerTypes(list.map(t => t.key === typeKey
-        ? { ...t, heads: [...t.heads, { no, name, desc }] }
-        : t));
-      await accountsService.saveAccHead({ typeKey, no, name, desc }).catch(() => {});
-      toast('Account head added', 'success');
-    } else {
-      setTypes(prev => prev.map(t => t.key === typeKey
-        ? { ...t, heads: t.heads.map(h => h.no === head.no ? { ...h, name, desc } : h) }
-        : t));
-      await accountsService.saveAccHead({ typeKey, no: head.no, name, desc }).catch(() => {});
-      toast('Account head updated', 'success');
+    const { mode, head } = edit;
+    try {
+      const res = await fetch(buildUrl('/save-account-Heads'), {
+        method: 'POST',
+        headers: { Accept: '*/*', 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: mode === 'edit' ? (head?.recordId ?? 0) : 0,
+          branchID: Number(branchID),
+          accountHead: name,
+          accountTypeID: Number(accountTypeID),
+          description: desc,
+          createdBy: userID,
+          modifiedBy: userID,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { toast(data?.message || 'Could not save account head', 'error'); return; }
+      toast(mode === 'edit' ? 'Account head updated' : 'Account head added', 'success');
+      setEdit(null);
+      load();
+    } catch (e) {
+      console.error('Error saving account head:', e);
+      toast('Could not save account head', 'error');
     }
-    setEdit(null);
   };
 
   const requestDelete = (typeKey, head) => {
@@ -150,11 +193,19 @@ function ChartOfAccounts({ toast }) {
       message: <span><strong>{head.name}</strong> (#{head.no}) will be removed from {typeName}.</span>,
       hint:    'This action cannot be undone. Transactions already recorded under this head will keep their data.',
       onConfirm: async () => {
-        setTypes(prev => prev.map(t => t.key === typeKey
-          ? { ...t, heads: t.heads.filter(h => h.no !== head.no) }
-          : t));
-        await accountsService.deleteAccHead({ typeKey, no: head.no }).catch(() => {});
-        toast('Account head deleted', 'success');
+        try {
+          const res = await fetch(buildUrl(`/delete-branch-accountHead/${head.recordId}`), {
+            method: 'DELETE',
+            headers: { Accept: '*/*' },
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) { toast(data?.message || 'Could not delete account head', 'error'); return; }
+          toast('Account head deleted', 'success');
+          load();
+        } catch (e) {
+          console.error('Error deleting account head:', e);
+          toast('Could not delete account head', 'error');
+        }
       },
     });
   };
@@ -240,7 +291,7 @@ function ChartOfAccounts({ toast }) {
         </div>
 
         {list.length === 0 ? (
-          <div className="fee-empty">Loading account types…</div>
+          <div className="fee-empty">{loading || types == null ? 'Loading account types…' : 'No account types found.'}</div>
         ) : list.map((t, i) => {
           const isOpen = openKey === t.key;
           return (
@@ -347,14 +398,17 @@ function ChartOfAccounts({ toast }) {
 function AccHeadModal({ cfg, types, onClose, onSave, toast }) {
   const [name, setName] = useState('');
   const [desc, setDesc] = useState('');
+  const [typeId, setTypeId] = useState('');
 
   useEffect(() => {
     if (!cfg) return;
     if (cfg.mode === 'edit' && cfg.head) {
       setName(cfg.head.name || '');
       setDesc(cfg.head.desc || '');
+      setTypeId(String(cfg.head.typeID ?? cfg.typeKey ?? ''));
     } else {
       setName(''); setDesc('');
+      setTypeId(String(cfg.typeKey ?? ''));
     }
   }, [cfg]);
 
@@ -377,7 +431,8 @@ function AccHeadModal({ cfg, types, onClose, onSave, toast }) {
   const handleSubmit = () => {
     const n = name.trim();
     if (!n) { toast('Please enter a head name', 'error'); return; }
-    onSave({ name: n, desc: desc.trim() });
+    if (!typeId) { toast('Please select an account type', 'error'); return; }
+    onSave({ name: n, desc: desc.trim(), accountTypeID: typeId });
   };
 
   return createPortal(
@@ -409,6 +464,17 @@ function AccHeadModal({ cfg, types, onClose, onSave, toast }) {
             <span>Heads defined here appear in the transactions dropdown when recording entries for this account type.</span>
           </div>
           <div className="acc-form-grid">
+            <div className="fee-field-stack">
+              <label className="fee-label">Account Type</label>
+              <select
+                className="fee-input"
+                value={typeId}
+                onChange={e => setTypeId(e.target.value)}
+              >
+                <option value="">Select account type</option>
+                {types.map(t => <option key={t.key} value={t.id}>{t.name}</option>)}
+              </select>
+            </div>
             <div className="fee-field-stack">
               <label className="fee-label">Head Name</label>
               <input
@@ -561,17 +627,70 @@ const nowISO = () => new Date().toISOString().slice(0, 19);
 
 function Transactions({ toast }) {
   const { data: typesData = [] }   = useAsync(accountsService.getAccTypes, []);
-  const { data: serverTxns = { rev: [], exp: [] } } = useAsync(accountsService.getAccTxns, { rev: [], exp: [] });
   const { data: users = [] }       = useAsync(accountsService.getAccUsers, []);
   const { data: currentUser = '' } = useAsync(accountsService.getAccCurrentUser, '');
   const { data: school = {} }      = useAsync(accountsService.getAccSchool, {});
 
-  const [txns, setTxns] = useState(null);
-  useEffect(() => { if (txns == null && serverTxns && (serverTxns.rev.length || serverTxns.exp.length)) setTxns(serverTxns); }, [serverTxns, txns]);
-  const list = useMemo(() => txns || { rev: [], exp: [] }, [txns]);
+  const branchID = sessionStorage.getItem('branchID') || '1';
+  const ACC_TYPE_ID = { rev: 1, exp: 2 }; // Revenue / Expense account type ids
 
   const [seg, setSeg]           = useState('rev'); // 'rev' | 'exp'
-  const [month, setMonth]       = useState('2026-05');
+  const [month, setMonth]       = useState(() => new Date().toISOString().slice(0, 7));
+
+  /* Transactions per segment, loaded from the API (null = not yet loaded). */
+  const [txns, setTxns] = useState({ rev: null, exp: null });
+  const [loadingSeg, setLoadingSeg] = useState(false);
+  const list = useMemo(() => ({ rev: txns.rev || [], exp: txns.exp || [] }), [txns]);
+
+  /* Map an API entry → the row shape the table uses. Field names guessed
+     defensively (PascalCase like the other endpoints). */
+  const mapEntry = (e) => {
+    const rawDate = e.entryDate ?? e.EntryDate ?? e.transactionDate ?? e.TransactionDate ?? e.date ?? e.Date ?? '';
+    const date = rawDate ? String(rawDate).slice(0, 10) : '';
+    return {
+      id:        e.id ?? e.ID,
+      recordId:  e.id ?? e.ID,
+      branchAccountID: e.branchAccountID ?? e.BranchAccountID ?? e.accountID ?? e.AccountID ?? '',
+      headNo:    e.accountID ?? e.AccountID ?? e.accountHeadID ?? e.AccountHeadID ?? '',
+      head:      e.accountHead ?? e.AccountHead ?? e.headName ?? e.HeadName ?? '',
+      date,
+      month:     date.slice(0, 7),
+      detail:    e.details ?? e.Details ?? e.description ?? e.Description ?? e.detail ?? e.Detail ?? '',
+      amount:    Number(e.amount ?? e.Amount ?? 0),
+      chqNo:     e.chequeNo ?? e.ChequeNo ?? e.chqNo ?? '',
+      chqDate:   (e.chequeDate ?? e.ChequeDate) ? String(e.chequeDate ?? e.ChequeDate).slice(0, 10) : '',
+      createdBy: e.createdByName ?? e.CreatedByName ?? e.createdBy ?? e.CreatedBy ?? '',
+      createdAt: e.createdAt ?? e.CreatedAt ?? '',
+      updatedBy: e.modifiedBy ?? e.ModifiedBy ?? null,
+      updatedAt: e.modifiedAt ?? e.ModifiedAt ?? null,
+    };
+  };
+
+  /* Entries are scoped to branch + account type + month + year. `ym` is the
+     'YYYY-MM' month-picker value. */
+  const loadSeg = useCallback(async (s, ym) => {
+    const [y, m] = (ym || '').split('-');
+    if (!y || !m) return;
+    setLoadingSeg(true);
+    try {
+      const res  = await fetch(
+        buildUrl(`/get-account-entries-by-branch-month/${branchID}/${s === 'rev' ? 1 : 2}/${Number(m)}/${Number(y)}`),
+        { headers: { Accept: '*/*' } },
+      );
+      const json = await res.json();
+      setTxns(prev => ({ ...prev, [s]: (json?.data || []).map(mapEntry) }));
+    } catch (e) {
+      console.error('Error loading transactions:', e);
+      toast('Could not load transactions', 'error');
+      setTxns(prev => ({ ...prev, [s]: [] }));
+    } finally {
+      setLoadingSeg(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [branchID, toast]);
+
+  /* (Re)load whenever the segment or selected month changes. */
+  useEffect(() => { loadSeg(seg, month); }, [seg, month, loadSeg]);
   const [search, setSearch]     = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
   const searchAnchorRef         = useRef(null);
@@ -649,49 +768,39 @@ function Transactions({ toast }) {
   const openNew  = () => setEntry({ mode: 'add'  });
   const openEdit = (x) => setEntry({ mode: 'edit', txn: x });
 
+  /* Insert (id 0) / update an account entry, then reload the current month.
+     branchAccountID = the selected head id; entered/created/modified = login user. */
   const handleSaveEntry = async (form) => {
-    const tType = typesData.find(t => t.key === seg);
-    const head  = tType?.heads.find(h => h.no === Number(form.headNo));
-    const baseMonth = String(form.date || '').slice(0, 7);
-    if (entry.mode === 'edit') {
-      setTxns(prev => ({
-        ...prev,
-        [seg]: prev[seg].map(x => x.id === entry.txn.id ? {
-          ...x,
-          headNo:    Number(form.headNo),
-          head:      head?.name || x.head,
-          date:      form.date,
-          month:     baseMonth,
-          detail:    form.detail,
-          amount:    Number(form.amount) || 0,
-          chqNo:     form.chqNo,
-          chqDate:   form.chqDate,
-          createdBy: form.enteredBy || x.createdBy,
-          updatedBy: currentUser || form.enteredBy,
-          updatedAt: nowISO(),
-        } : x),
-      }));
-      toast('Entry updated', 'success');
-    } else {
-      const id = `${seg}_${Date.now()}`;
-      setTxns(prev => ({
-        ...prev,
-        [seg]: [
-          ...prev[seg],
-          {
-            id, headNo: Number(form.headNo), head: head?.name || '',
-            date: form.date, month: baseMonth, detail: form.detail,
-            amount: Number(form.amount) || 0, chqNo: form.chqNo, chqDate: form.chqDate,
-            createdBy: form.enteredBy || currentUser, createdAt: nowISO(),
-            updatedBy: null, updatedAt: null,
-          },
-        ],
-      }));
-      toast('Entry added', 'success');
-      setMonth(baseMonth);
+    const userID = Number(sessionStorage.getItem('UserID')) || 1;
+    const toIso = d => (d ? new Date(d).toISOString() : null);
+    try {
+      const res = await fetch(buildUrl('/save-account-entry'), {
+        method: 'POST',
+        headers: { Accept: '*/*', 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: form.id || 0,
+          branchID: Number(branchID),
+          branchAccountID: Number(form.branchAccountID),
+          accountTypeID: seg === 'rev' ? 1 : 2,
+          entryDate: toIso(form.date),
+          details: form.detail,
+          amount: Number(form.amount) || 0,
+          chequeDate: form.chqDate ? toIso(form.chqDate) : null,
+          chequeNo: form.chqNo,
+          enteredBy: userID,
+          createdBy: userID,
+          modifiedBy: userID,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { toast(data?.message || 'Could not save entry', 'error'); return; }
+      toast(form.id ? 'Entry updated' : 'Entry added', 'success');
+      setEntry(null);
+      loadSeg(seg, month);
+    } catch (e) {
+      console.error('Error saving entry:', e);
+      toast('Could not save entry', 'error');
     }
-    accountsService.saveAccTxn({ seg, ...form }).catch(() => {});
-    setEntry(null);
   };
 
   const requestDelete = (x) => {
@@ -700,15 +809,15 @@ function Transactions({ toast }) {
       message: <span>The {seg === 'rev' ? 'revenue' : 'expenditure'} entry of <strong>{fmtMoney(x.amount)}</strong> dated {accFmtDate(x.date)} will be permanently removed.</span>,
       hint:    'This action cannot be undone.',
       onConfirm: async () => {
-        setTxns(prev => ({ ...prev, [seg]: prev[seg].filter(r => r.id !== x.id) }));
+        setTxns(prev => ({ ...prev, [seg]: (prev[seg] || []).filter(r => r.id !== x.id) }));
         await accountsService.deleteAccTxn({ seg, id: x.id }).catch(() => {});
         toast('Transaction deleted', 'success');
       },
     });
   };
 
-  const fetchData  = () => toast(`Loaded ${month} ${segLabelP.toLowerCase()}`, 'info');
-  const resetFilters = () => { setMonth('2026-05'); setSearch(''); toast('Filters reset', 'info'); };
+  const fetchData  = () => { loadSeg(seg, month); toast(`Loaded ${segLabelP.toLowerCase()}`, 'info'); };
+  const resetFilters = () => { setMonth(new Date().toISOString().slice(0, 7)); setSearch(''); toast('Filters reset', 'info'); };
 
   return (
     <>
@@ -969,7 +1078,8 @@ function Transactions({ toast }) {
       <AccEntryModal
         cfg={entry}
         seg={seg}
-        heads={(typesData.find(t => t.key === seg) || {}).heads || []}
+        branchID={branchID}
+        accountTypeID={seg === 'rev' ? 1 : 2}
         users={users}
         currentUser={currentUser}
         defaultMonth={month}
@@ -1048,22 +1158,39 @@ function AccAuditPanel({ x, isRev }) {
    audit trail (createdBy / createdAt for new, updatedBy / updatedAt
    for edits) inside Transactions' save handler.
    ═══════════════════════════════════════════════════════════════════ */
-function AccEntryModal({ cfg, seg, heads, users, currentUser, defaultMonth, onClose, onSave, toast }) {
+function AccEntryModal({ cfg, seg, branchID, accountTypeID, users, currentUser, defaultMonth, onClose, onSave, toast }) {
   const isRev = seg === 'rev';
+  const loginUserName = sessionStorage.getItem('displayName') || sessionStorage.getItem('userName') || currentUser || '';
   const [date, setDate]       = useState('');
-  const [headNo, setHeadNo]   = useState('');
+  const [headId, setHeadId]   = useState('');   // selected account head id (branchAccountID)
+  const [heads, setHeads]     = useState([]);   // [{ id, no, name }]
   const [detail, setDetail]   = useState('');
   const [amount, setAmount]   = useState('');
   const [chqDate, setChqDate] = useState('');
   const [chqNo, setChqNo]     = useState('');
   const [enteredBy, setEnteredBy] = useState(currentUser || '');
 
+  /* Load the account heads for this branch + account type when the modal opens. */
+  useEffect(() => {
+    if (!cfg) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res  = await fetch(buildUrl(`/get-accountsHeads-by-branch/${branchID}/${accountTypeID}`), { headers: { Accept: '*/*' } });
+        const json = await res.json();
+        const mapped = (json?.data || []).map(h => ({ id: h.ID, no: h.AccountID ?? h.ID, name: h.AccountHead }));
+        if (!cancelled) setHeads(mapped);
+      } catch (e) { console.error('Error loading account heads:', e); if (!cancelled) setHeads([]); }
+    })();
+    return () => { cancelled = true; };
+  }, [cfg, branchID, accountTypeID]);
+
   useEffect(() => {
     if (!cfg) return;
     if (cfg.mode === 'edit' && cfg.txn) {
       const x = cfg.txn;
       setDate(x.date);
-      setHeadNo(String(x.headNo));
+      setHeadId(String(x.branchAccountID ?? ''));
       setDetail(x.detail || '');
       setAmount(String(x.amount || ''));
       setChqDate(x.chqDate || '');
@@ -1072,12 +1199,12 @@ function AccEntryModal({ cfg, seg, heads, users, currentUser, defaultMonth, onCl
     } else {
       const today = new Date();
       const day = String(today.getDate()).padStart(2, '0');
-      setDate(`${defaultMonth || '2026-05'}-${day}`);
-      setHeadNo(heads[0]?.no ? String(heads[0].no) : '');
+      setDate(`${defaultMonth || new Date().toISOString().slice(0,7)}-${day}`);
+      setHeadId('');
       setDetail(''); setAmount(''); setChqDate(''); setChqNo('');
       setEnteredBy(currentUser || '');
     }
-  }, [cfg, heads, currentUser, defaultMonth]);
+  }, [cfg, currentUser, defaultMonth]);
 
   useEffect(() => {
     if (!cfg) return undefined;
@@ -1093,10 +1220,14 @@ function AccEntryModal({ cfg, seg, heads, users, currentUser, defaultMonth, onCl
   if (!cfg) return null;
 
   const handleSubmit = () => {
-    if (!headNo) { toast('Please select an account head', 'error'); return; }
+    if (!headId) { toast('Please select an account head', 'error'); return; }
     if (!date)   { toast('Please select a date', 'error'); return; }
     if (!Number(amount)) { toast('Please enter an amount', 'error'); return; }
-    onSave({ headNo, date, detail: detail.trim(), amount, chqNo: chqNo.trim(), chqDate, enteredBy });
+    onSave({
+      id: cfg.mode === 'edit' ? (cfg.txn?.recordId || cfg.txn?.id || 0) : 0,
+      branchAccountID: headId,
+      date, detail: detail.trim(), amount, chqNo: chqNo.trim(), chqDate, enteredBy,
+    });
   };
 
   const isEdit = cfg.mode === 'edit';
@@ -1146,9 +1277,9 @@ function AccEntryModal({ cfg, seg, heads, users, currentUser, defaultMonth, onCl
             <div className="fee-field">
               <span className="fee-label">Select Head</span>
               <div className="fee-select-wrap">
-                <select className="fee-select" value={headNo} onChange={e => setHeadNo(e.target.value)}>
+                <select className="fee-select" value={headId} onChange={e => setHeadId(e.target.value)}>
                   <option value="">— Pick a head —</option>
-                  {heads.map(h => <option key={h.no} value={h.no}>{h.no} — {h.name}</option>)}
+                  {heads.map(h => <option key={h.id} value={h.id}>{h.name}</option>)}
                 </select>
                 <i className="fa-solid fa-chevron-down"></i>
               </div>
@@ -1174,12 +1305,7 @@ function AccEntryModal({ cfg, seg, heads, users, currentUser, defaultMonth, onCl
             </div>
             <div className="fee-field">
               <span className="fee-label">Entered By</span>
-              <div className="fee-select-wrap">
-                <select className="fee-select" value={enteredBy} onChange={e => setEnteredBy(e.target.value)}>
-                  {users.map(u => <option key={u}>{u}</option>)}
-                </select>
-                <i className="fa-solid fa-chevron-down"></i>
-              </div>
+              <input className="fee-input" value={loginUserName} disabled readOnly />
             </div>
           </div>
 

@@ -4,7 +4,7 @@ import Tooltip from './Tooltip';
 import TutorialModal from './TutorialModal';
 import * as academicsService from '../services/academicsService';
 import useAsync from '../hooks/useAsync';
-import { buildUrl } from '../../utils/apiConfig';
+import { buildUrl, assertSessionPayload, registerSessionToast, apiMessage } from '../../utils/apiConfig';
 
 
 
@@ -38,6 +38,9 @@ export default function Academics({ l1, setL1, l2, setL2, l3, setL3, toast }) {
   const [terms, setTerms] = useState([]);
   const { data: termData = [], setData: setTermData } = useAsync(academicsService.getTermData,   []);
   const [events, setEvents] = useState([]);
+
+  /* Let module-level POST wrappers surface the "no session" error via toast. */
+  useEffect(() => { registerSessionToast(toast); }, [toast]);
 
   const [reportPicker, setReportPicker] = useState({ open: false, name: '', format: 'pdf' });
   const [confirmCfg, setConfirmCfg] = useState(null);
@@ -775,6 +778,8 @@ function ActivityModal({ open, editing, onClose, onSave }) {
       action: editing ? 'update' : 'insert',
     };
 
+    assertSessionPayload(payload); // block when no session is selected (toasts via registered callback)
+
     const res = await fetch(buildUrl('/api/activitycalendarcrud'), {
       method: 'POST',
       headers: {
@@ -1265,12 +1270,20 @@ const nextMonth = () => {
           body: JSON.stringify(payload),
         });
 
-        if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          const msg = apiMessage(json);
+          const err = new Error(msg || `Delete failed: ${res.status}`);
+          err.serverMessage = msg;
+          throw err;
+        }
 
         setEvents(prev => prev.filter(e => e.id !== ev.id));
         toast(`"${ev.name}" deleted`, 'success');
       } catch (error) {
         console.error('Error deleting activity:', error);
+        /* Show the backend's reason (e.g. referenced elsewhere) when present. */
+        toast(error.serverMessage || 'Could not delete activity', 'error');
       }
     },
   });
@@ -1985,13 +1998,22 @@ const termsAuthHeaders = (extra = {}) => ({
 });
 
 export async function termsCrud(payload) {
+  assertSessionPayload(payload); // block session-scoped term posts when no session is selected
   const res = await fetch(buildUrl('/api/termscrud'), {
     method: 'POST',
     headers: termsAuthHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(payload),
   });
-  if (!res.ok) throw new Error(`termscrud ${payload.action} failed: ${res.status}`);
-  return res.json().catch(() => ({}));
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    /* Surface the backend's message (e.g. "Term cannot be deleted as it is
+       referenced in the Exam.") so callers can show it in a toast. */
+    const msg = apiMessage(json);
+    const err = new Error(msg || `termscrud ${payload.action} failed: ${res.status}`);
+    err.serverMessage = msg;
+    throw err;
+  }
+  return json;
 }
 
 /* ─── Key Dates backend (Academic Calendar) ───
@@ -2234,7 +2256,7 @@ function TermSettings({ termData, setTermData, openConfirm, toast }) {
       loadTerms();
     } catch (e) {
       console.error('Error saving term:', e);
-      toast('Could not save term', 'error');
+      if (!e.isSessionError) toast('Could not save term', 'error');
     }
   };
 
@@ -2263,7 +2285,8 @@ function TermSettings({ termData, setTermData, openConfirm, toast }) {
           loadTerms();
         } catch (e) {
           console.error('Error deleting term:', e);
-          toast('Could not delete term', 'error');
+          /* Show the backend's reason (e.g. referenced in the Exam) when present. */
+          toast(e.serverMessage || 'Could not delete term', 'error');
         }
       },
     });

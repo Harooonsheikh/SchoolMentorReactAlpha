@@ -3,6 +3,7 @@ import Tooltip from '../../components/Tooltip';
 import TutorialModal from '../../components/TutorialModal';
 import { useModules } from '../../context/ModuleContext';
 import { MODULE_REGISTRY } from '../../config/moduleConfig';
+import { activeSessionId, NO_SESSION_MSG } from '../../../utils/apiConfig';
 
 /* ═══════════════════════════════════════════════════════════════════
    LAUNCH SETUP — first stop for a new school onboarding into the ERP.
@@ -36,6 +37,7 @@ export default function LaunchSetup({ toast = () => {} }) {
   const activeCount   = Object.values(moduleState).filter(v => v).length;
   const inactiveCount = Object.values(moduleState).filter(v => !v).length;
   const lockedCount   = MODULE_REGISTRY.filter(m => m.coreLocked).length;
+  const noSession     = !activeSessionId();
 
   return (
     <>
@@ -63,6 +65,22 @@ export default function LaunchSetup({ toast = () => {} }) {
           </button>
         </Tooltip>
       </div>
+
+      {/* ─── No-session notice ─── */}
+      {noSession && (
+        <div
+          role="alert"
+          style={{
+            display: 'flex', alignItems: 'flex-start', gap: 10,
+            padding: '12px 16px', marginBottom: 16, borderRadius: 12,
+            background: 'rgba(217,119,6,.08)', border: '1px solid rgba(217,119,6,.25)',
+            color: '#92400E', fontSize: 13, fontWeight: 600,
+          }}
+        >
+          <i className="fa-solid fa-triangle-exclamation" style={{ color: '#D97706', marginTop: 2, flexShrink: 0 }} aria-hidden="true"></i>
+          <span>{NO_SESSION_MSG}. Please select an academic session before configuring setup.</span>
+        </div>
+      )}
 
       {/* ─── Activated Modules section card ─── */}
       <div className="ls-card">
