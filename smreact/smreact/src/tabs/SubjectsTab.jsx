@@ -8,6 +8,8 @@ function BookListModal({ open, cls, subjects, setSubjects, getclassesdata, bookL
   const [localList, setLocalList] = useState({});
   const [showApplyConfirm, setShowApplyConfirm] = useState(false);
   const [showDeleteconfirm, setshowDeleteconfirm] = useState(false);
+  const [editSubjId, setEditSubjId] = useState(null); // subjectID being inline-edited
+  const [editSubjVal, setEditSubjVal] = useState('');
         const UserID = sessionStorage.getItem('UserID');
         const branchID = sessionStorage.getItem('branchID');
         const [refresh, setRefresh] = useState(0);
@@ -182,22 +184,18 @@ setshowDeleteconfirm(false)
           
   //   showToast(`Subject renamed to "${trimmed}"`, 'success');
   // };
-  const handleEditSubject = (oldSubj) => {
-  const newName = prompt("Edit subject name:", oldSubj.subjectName);
-
-  if (!newName || !newName.trim()) return;
-
-  const trimmed = newName.trim();
-
-  setSubjects(prev =>
-    prev.map(s =>
-      s.subjectID === oldSubj.subjectID
-        ? { ...s, subjectName: trimmed }
-        : s
-    )
-  );
-  showToast(`Subject renamed to "${trimmed}"`, "success");
-};
+  const startEditSubject = (subj) => {
+    setEditSubjId(subj.subjectID);
+    setEditSubjVal(subj.subjectName || '');
+  };
+  const cancelEditSubject = () => { setEditSubjId(null); setEditSubjVal(''); };
+  const saveEditSubject = (subj) => {
+    const trimmed = (editSubjVal || '').trim();
+    if (!trimmed) { showToast('Subject name cannot be empty', 'error'); return; }
+    setSubjects(prev => prev.map(s => s.subjectID === subj.subjectID ? { ...s, subjectName: trimmed } : s));
+    showToast(`Subject renamed to "${trimmed}"`, 'success');
+    cancelEditSubject();
+  };
 
   const handleDeleteSubject = (subjectName) => {
    setshowDeleteconfirm(subjectName)
@@ -230,13 +228,37 @@ setshowDeleteconfirm(false)
               return (
                 <div key={subj} className="book-item">
                   <div className="book-subject">
-                    <span style={{ fontWeight: 700, color: 'var(--brand-primary)', fontSize: 13 }}>{subj.subjectName}</span>
+                    {editSubjId === subj.subjectID ? (
+                      <input
+                        className="form-input"
+                        autoFocus
+                        value={editSubjVal}
+                        onChange={e => setEditSubjVal(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') saveEditSubject(subj); if (e.key === 'Escape') cancelEditSubject(); }}
+                        style={{ fontWeight: 700, color: 'var(--brand-primary)', fontSize: 13, padding: '4px 8px', maxWidth: 180 }}
+                      />
+                    ) : (
+                      <span style={{ fontWeight: 700, color: 'var(--brand-primary)', fontSize: 13 }}>{subj.subjectName}</span>
+                    )}
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                       {subj.book_Title ? <span className="book-badge">Set</span> : <span className="book-badge empty">Empty</span>}
-                      <button className="btn btn-icon btn-ghost btn-sm" title="Rename subject" style={{ width: 26, height: 26, fontSize: 11 }}
-                        onClick={() => handleEditSubject(subj)}>
-                        <i className="fas fa-pen"></i>
-                      </button>
+                      {editSubjId === subj.subjectID ? (
+                        <>
+                          <button className="btn btn-icon btn-sm" title="Save name" style={{ width: 26, height: 26, fontSize: 11, background: 'var(--success)', color: '#fff' }}
+                            onClick={() => saveEditSubject(subj)}>
+                            <i className="fas fa-check"></i>
+                          </button>
+                          <button className="btn btn-icon btn-ghost btn-sm" title="Cancel" style={{ width: 26, height: 26, fontSize: 11 }}
+                            onClick={cancelEditSubject}>
+                            <i className="fas fa-times"></i>
+                          </button>
+                        </>
+                      ) : (
+                        <button className="btn btn-icon btn-ghost btn-sm" title="Rename subject" style={{ width: 26, height: 26, fontSize: 11 }}
+                          onClick={() => startEditSubject(subj)}>
+                          <i className="fas fa-pen"></i>
+                        </button>
+                      )}
                       <button className="btn btn-icon btn-danger btn-sm" title="Delete subject" style={{ width: 26, height: 26, fontSize: 11 }}
                         onClick={() => handleDeleteSubject(subj)}>
                         <i className="fas fa-trash"></i>
@@ -756,7 +778,7 @@ useEffect(() => {
 }
 
 // ── Main Subjects Tab ─────────────────────────────────────────────────────
-export default function SubjectsTab({ classesData, setClassesData,  subjectsData, setSubjectsData, bookLists, setBookLists, schoolInfo, showToast, showSuccess }) {
+export default function SubjectsTab({ classesData, setClassesData,  subjectsData, setSubjectsData, bookLists, setBookLists, schoolInfo, showToast, showSuccess, onContinue }) {
   const [search, setSearch] = useState('');
   const [bookListTarget, setBookListTarget] = useState(null);
   const [showAddSubject, setShowAddSubject] = useState(false);
@@ -989,6 +1011,21 @@ export default function SubjectsTab({ classesData, setClassesData,  subjectsData
       />
       <AddSubjectModal open={showAddSubject} prefill={AddSubjectPrefill} subjects={subjectsData} showToast={showToast} getclassesdata={getclassesdata}
       classesData={classesData} onClose={() => {setShowAddSubject(false); setAddSubjectPrefill(null);}} onAdd={handleAddSubject} />
+
+      {/* spacer so the fixed save bar doesn't cover the pagination */}
+      <div style={{ height: 84 }} aria-hidden="true" />
+      {/* Save & Continue — move to the next setup step */}
+      <div className="save-bar">
+        <div className="save-bar-left">
+          <div className="autosave-dot"></div>
+          <span>Draft auto-saved</span>
+        </div>
+        <div className="save-bar-right">
+          <button className="btn btn-primary btn-md" onClick={() => onContinue?.()}>
+            Save &amp; Continue <i className="fas fa-arrow-right"></i>
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

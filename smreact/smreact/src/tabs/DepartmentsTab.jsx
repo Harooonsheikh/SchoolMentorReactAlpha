@@ -2,11 +2,18 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { downloadDeptReport } from '../utils/pdfReports';
 import { buildUrl } from '../utils/apiConfig';
 
-function AddDeptModal({ open, onClose, onAdd, getDeparmentdata }) {
+function AddDeptModal({ open, onClose, onAdd, getDeparmentdata, editDept = null }) {
   const [name, setName] = useState('');
   const [err, setErr] = useState('');
   const UserID = sessionStorage.getItem('UserID');
   const branchID = sessionStorage.getItem('branchID');
+  const isEdit = !!editDept;
+
+  useEffect(() => {
+    if (!open) return;
+    setName(editDept ? (editDept.departmentName || editDept.name || '') : '');
+    setErr('');
+  }, [open, editDept]);
 
   const handleAdd = async() => {
     if (!name.trim()) { setErr('Department name is required'); return; }
@@ -14,26 +21,42 @@ function AddDeptModal({ open, onClose, onAdd, getDeparmentdata }) {
       const branchID = sessionStorage.getItem('branchID');
     const userID = sessionStorage.getItem('UserID') || 0;
 
+    /* Edit reuses the add endpoint with the department id and preserves its
+       existing designations so a rename doesn't wipe them. */
+    const designations = isEdit && (editDept.designations || []).length
+      ? editDept.designations.map(d => ({
+          designationID: d.designationID ?? 0,
+          branchID: Number(branchID) || 0,
+          branchDepartmentID: editDept.id,
+          designationName: d.designationName ?? d.name ?? '',
+          description: d.description ?? '',
+          qualificationID: d.qualificationID ?? 0,
+          qualificationName: d.qualificationName ?? d.qual ?? '',
+          createdBy: Number(userID) || 0,
+          modifiedBy: Number(userID) || 0,
+        }))
+      : [
+          {
+            designationID: 0,
+            branchID: 0,
+            branchDepartmentID: 0,
+            designationName: "",
+            description: "",
+            qualificationID: 0,
+            qualificationName: "",
+            createdBy: 0,
+            modifiedBy: 0,
+          },
+        ];
+
     const payload = {
-      id: 0,
+      id: isEdit ? editDept.id : 0,
       branchID: branchID,
       departmentName: name,
-      totalDesignationCount: 0,
+      totalDesignationCount: isEdit ? (editDept.designations || []).length : 0,
       createdBy: Number(userID),
       modifiedBy: userID,
-      designations: [
-    {
-      designationID: 0,
-      branchID: 0,
-      branchDepartmentID: 0,
-      designationName: "",
-       description: "",
-      qualificationID: 0,
-      qualificationName: "",
-      createdBy: 0,
-      modifiedBy: 0,
-    }
-  ]
+      designations,
     };
     console.log(payload)
     const res = await fetch(buildUrl('/api/LaunchSetup/save-department'), {
@@ -67,7 +90,7 @@ setName('');
     <div className="modal-overlay open" onClick={e => e.target === e.currentTarget && onClose()}>
       <div className="modal modal-md">
         <div className="modal-header">
-          <div><div className="modal-title">Add Department</div><div className="modal-subtitle">Create a new department</div></div>
+          <div><div className="modal-title">{isEdit ? 'Edit Department' : 'Add Department'}</div><div className="modal-subtitle">{isEdit ? 'Update the department name' : 'Create a new department'}</div></div>
           <button className="modal-close" onClick={onClose}><i className="fas fa-times"></i></button>
         </div>
         <div className="modal-body">
@@ -83,7 +106,7 @@ setName('');
           </div>
           <div className="modal-footer">
             <button className="btn btn-secondary btn-md" onClick={onClose}>Cancel</button>
-            <button className="btn btn-primary btn-md" onClick={handleAdd}><i className="fas fa-plus"></i> Add Department</button>
+            <button className="btn btn-primary btn-md" onClick={handleAdd}><i className={`fas ${isEdit ? 'fa-save' : 'fa-plus'}`}></i> {isEdit ? 'Save Changes' : 'Add Department'}</button>
           </div>
         </div>
       </div>
@@ -256,10 +279,11 @@ setErr2(''),
   );
 }
 
-export default function DepartmentsTab({ deptsData, setDeptsData, schoolInfo, showToast, showSuccess }) {
+export default function DepartmentsTab({ deptsData, setDeptsData, schoolInfo, showToast, showSuccess, onContinue }) {
   const [search, setSearch] = useState('');
   const [expandedId, setExpandedId] = useState(null);
   const [showAddDept, setShowAddDept] = useState(false);
+  const [editDept, setEditDept] = useState(null); // department being edited (name)
   const [desigTarget, setDesigTarget] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
 
@@ -528,6 +552,25 @@ const dept = deptsData.find(d => d.id === deptId);
 {/* Details column */}
 <div className="td" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
   <button
+    onClick={e => { e.stopPropagation(); setEditDept(dept); }}
+    title="Edit department name"
+    style={{
+      width: 38,
+      height: 38,
+      display: 'inline-flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      background: 'rgba(30,64,175,.1)',
+      color: 'var(--brand-primary)',
+      border: 'none',
+      borderRadius: 10,
+      cursor: 'pointer',
+      fontSize: 14,
+    }}
+  >
+    <i className="fas fa-pen"></i>
+  </button>
+  <button
     onClick={e => { e.stopPropagation(); setDeleteTarget(dept); }}
     title="Delete department"
     style={{
@@ -655,6 +698,7 @@ const dept = deptsData.find(d => d.id === deptId);
       </div>
 
       <AddDeptModal open={showAddDept} onClose={() => setShowAddDept(false)} onAdd={handleAddDept}  getDeparmentdata={getDeparmentdata}/>
+      <AddDeptModal open={!!editDept} editDept={editDept} onClose={() => setEditDept(null)} getDeparmentdata={getDeparmentdata} />
       <AddDesigModal open={!!desigTarget} dept={desigTarget} onClose={() => setDesigTarget(null)} onAdd={handleAddDesig} getDeparmentdata={getDeparmentdata} showToast={showToast}/>
 
       {/* Edit Designation Modal */}
@@ -818,6 +862,21 @@ const dept = deptsData.find(d => d.id === deptId);
           </div>
         </div>
       )}
+
+      {/* spacer so the fixed save bar doesn't cover the pagination */}
+      <div style={{ height: 84 }} aria-hidden="true" />
+      {/* Save & Continue — move to the next setup step */}
+      <div className="save-bar">
+        <div className="save-bar-left">
+          <div className="autosave-dot"></div>
+          <span>Draft auto-saved</span>
+        </div>
+        <div className="save-bar-right">
+          <button className="btn btn-primary btn-md" onClick={() => onContinue?.()}>
+            Save &amp; Continue <i className="fas fa-arrow-right"></i>
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

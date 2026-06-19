@@ -821,7 +821,7 @@ const updatedSections = (secJson.data || secJson || []).map(item => ({
   );
 }
 
-export default function ClassesTab({ classesData, setClassesData, schoolInfo, showToast, showSuccess }) {
+export default function ClassesTab({ classesData, setClassesData, schoolInfo, showToast, showSuccess, onContinue }) {
   const [search, setSearch] = useState('');
   const [expandedId, setExpandedId] = useState(null);
   const [showAddModal, setShowAddModal] = useState(false);
@@ -1171,6 +1171,21 @@ const getclassesdata = useCallback(async () => {
           </div>
         </div>
       )}
+
+      {/* spacer so the fixed save bar doesn't cover the pagination */}
+      <div style={{ height: 84 }} aria-hidden="true" />
+      {/* Save & Continue — move to the next setup step */}
+      <div className="save-bar">
+        <div className="save-bar-left">
+          <div className="autosave-dot"></div>
+          <span>Draft auto-saved</span>
+        </div>
+        <div className="save-bar-right">
+          <button className="btn btn-primary btn-md" onClick={() => onContinue?.()}>
+            Save &amp; Continue <i className="fas fa-arrow-right"></i>
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

@@ -423,32 +423,93 @@ export async function downloadSectionStudentsReport(cls, sec, schoolInfo, showTo
   const isBW = false;
   const branch = await fetchReportHeader();
   const { schoolName, dateStr, timeStr } = resolveReportMeta(branch, schoolInfo);
-  const tdB = 'border-bottom:1px solid #E8EDF5';
   const students = sec?.students || [];
 
-  const rows = students.length
-    ? students.map((s,i) => {
-        const name = `${s.firstName||''} ${s.lastName||''}`.trim() || s.name || '—';
-        const reg  = s.registerNo || s.regNo || '—';
-        const dob  = s.dateOfBirth ? String(s.dateOfBirth).split('T')[0] : (s.dob || '—');
-        const bg = i%2===0?'#fff':'#f8faff';
-        return `<tr style="background:${bg}">
-          <td style="padding:8px 10px;${tdB};font-size:11px;color:#8898AA;font-weight:600">${String(i+1).padStart(2,'0')}</td>
-          <td style="padding:8px 10px;${tdB};font-size:11.5px;font-weight:600;white-space:nowrap">${reg}</td>
-          <td style="padding:8px 10px;${tdB};font-size:12px;font-weight:700;color:#0A1628">${name}</td>
-          <td style="padding:8px 10px;${tdB};font-size:11.5px;color:#4A5568">${s.fatherName||'—'}</td>
-          <td style="padding:8px 10px;${tdB};font-size:11.5px;color:#8898AA;white-space:nowrap">${dob}</td>
-          <td style="padding:8px 10px;${tdB};font-size:11.5px;color:#8898AA;white-space:nowrap">${s.mobileNo||s.mobile||'—'}</td>
-        </tr>`;
+  /* Clean a value (treat empty / "string" placeholder as a dash). */
+  const v  = x => { const s = (x ?? '').toString().trim(); return (!s || s === 'string') ? '—' : s; };
+  const dv = x => (x && x !== 'string' ? String(x).split('T')[0] : '—');
+  /* A grouped label/value block (3 columns). */
+  const group = (title, pairs) => `
+    <div style="margin-bottom:9px">
+      <div style="font-size:9.5px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:#1E40AF;border-bottom:1px solid #E8EDF5;padding-bottom:3px;margin-bottom:6px">${title}</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px 16px">
+        ${pairs.map(([l, val]) => `<div style="font-size:10.5px;line-height:1.5"><span style="color:#8898AA">${l}:</span> <span style="color:#0A1628;font-weight:600">${val}</span></div>`).join('')}
+      </div>
+    </div>`;
+
+  const blocks = students.length
+    ? students.map((s, i) => {
+        const name = `${s.firstName || ''} ${s.lastName || ''}`.trim() || s.name || '—';
+        const reg  = v(s.registerNo || s.regNo);
+        return `<div style="border:1px solid #E8EDF5;border-radius:10px;margin:0 36px 14px;overflow:hidden;break-inside:avoid;page-break-inside:avoid">
+          <div style="background:linear-gradient(135deg,#1E40AF,#1E3A8A);color:#fff;padding:8px 14px;display:flex;justify-content:space-between;align-items:center">
+            <span style="font-size:12.5px;font-weight:800">${String(i + 1).padStart(2, '0')}. ${name}</span>
+            <span style="font-size:10.5px;font-weight:700;opacity:.9">Reg No: ${reg}</span>
+          </div>
+          <div style="padding:11px 14px">
+            ${group('Registration & Names', [
+              ['Registration No', reg],
+              ['Previous Reg No', v(s.previousRegistrationNo)],
+              ['Family No', v(s.familyNo)],
+              ['Date of Admission', dv(s.dateOfAdmission)],
+              ['First Name', v(s.firstName || s.name)],
+              ['Last Name', v(s.lastName)],
+              ['First Name (Urdu)', v(s.firstNameInUrdu)],
+              ['Last Name (Urdu)', v(s.lastNameInUrdu)],
+            ])}
+            ${group('Parent / Guardian', [
+              ['Father Name', v(s.fatherName)],
+              ['Father CNIC', v(s.fatherCnic)],
+              ['Father Qualification', v(s.fatherQualification)],
+              ['Father Occupation', v(s.fatherOccupation)],
+              ['Mother Name', v(s.motherName)],
+              ['Mother CNIC', v(s.motherCnic)],
+              ['Mother Qualification', v(s.motherQualification)],
+              ['Mother Occupation', v(s.motherOccupation)],
+            ])}
+            ${group('Personal', [
+              ['Gender', v(s.gander || s.gender)],
+              ['Date of Birth', dv(s.dateOfBirth || s.dob)],
+              ['Caste', v(s.caste)],
+              ['Nationality', v(s.nationality)],
+              ['B-Form No', v(s.bFormNo)],
+              ['Marks % (Admission)', v(s.marksAdmissionTest || s.marksPercent)],
+              ['Total Previous Dues', v(s.totalPreviousDues ?? s.dues)],
+            ])}
+            ${group('Address & Contact', [
+              ['Mobile No', v(s.mobileNo || s.mobile)],
+              ['Mother Mobile', v(s.motherMobileNo)],
+              ['Email', v(s.email)],
+              ['Postal Address', v(s.postalAddress)],
+              ['Permanent Address', v(s.permanentAddesss || s.permanentAddress)],
+            ])}
+            ${group('Previous School', [
+              ['School Name', v(s.previousSchoolName)],
+              ['Focal Person', v(s.previousSchoolFocalPerson)],
+              ['Contact No', v(s.previousSchoolContactNo)],
+              ['School Address', v(s.previousSchoolAddress)],
+              ['Admission No', v(s.previousAdmissionNo)],
+              ['Previous Grade', v(s.previousSchoolPreviousGrade)],
+              ['Test of Grade', v(s.previousSchoolTestOfGrades)],
+            ])}
+            ${group('Health & Emergency', [
+              ['Blood Group', v(s.bloodGroup)],
+              ['Food & Dietary', v(s.foodAndDietaryReg)],
+              ['Allergies / Illness', v(s.allergiesMajorIllness)],
+              ['Condition of Child', v(s.conditionOfChild)],
+              ['Emergency Contact', v(s.emergencyContact)],
+            ])}
+          </div>
+        </div>`;
       }).join('')
-    : `<tr><td colspan="6" style="padding:18px;text-align:center;color:#888;font-style:italic">No students enrolled in this section</td></tr>`;
+    : `<div style="margin:0 36px;padding:18px;text-align:center;color:#888;font-style:italic">No students enrolled in this section</div>`;
 
   const secName = sec?.sectionName ? `Section ${sec.sectionName}` : 'No section';
-  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Student List — ${cls.name}</title>${FONTS}<style>${baseCss(isBW)}</style></head><body><div class="page">
-    ${header(schoolName,'Student List',dateStr,timeStr,isBW,branch)}
+  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Student Details — ${cls.name}</title>${FONTS}<style>${baseCss(isBW)}</style></head><body><div class="page">
+    ${header(schoolName,'Student Details',dateStr,timeStr,isBW,branch)}
     ${metaBar([['Generated By',currentUserName()],['Academic Session',branch?.academicSession||'—'],['Class',cls.name],['Section',sec?.sectionName||'—'],['Total Students',students.length+''],['Date',dateStr]],isBW)}
     ${sectionLabel(`${cls.name} — ${secName}`,isBW)}
-    ${tbl(['#','Reg No','Name','Father Name','DOB','Contact'],rows,isBW)}
+    ${blocks}
     ${ftr(schoolName,isBW)}</div></body></html>`;
 
   const fileBase = `Student List - ${cls.name}${sec?.sectionName?` ${sec.sectionName}`:''}`;

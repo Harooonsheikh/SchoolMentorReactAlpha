@@ -165,6 +165,7 @@ setLaunchSetup(launchSetup)
               schoolInfo={state.schoolInfo}
               showToast={state.showToast}
               showSuccess={showSuccess}
+              onContinue={() => state.switchTab('subjects')}
             />
           )}
           {state.activeTab === 'subjects' && (
@@ -178,6 +179,7 @@ setLaunchSetup(launchSetup)
               schoolInfo={state.schoolInfo}
               showToast={state.showToast}
               showSuccess={showSuccess}
+              onContinue={() => state.switchTab('departments')}
             />
           )}
           {state.activeTab === 'departments' && (
@@ -187,6 +189,7 @@ setLaunchSetup(launchSetup)
               schoolInfo={state.schoolInfo}
               showToast={state.showToast}
               showSuccess={showSuccess}
+              onContinue={() => state.switchTab('staff')}
             />
           )}
           {state.activeTab === 'staff' && (
@@ -200,6 +203,7 @@ setLaunchSetup(launchSetup)
               showSuccess={showSuccess}
               classesData={state.classesData}
               setClassesData={state.setClassesData}
+              onContinue={() => state.switchTab('student')}
             />
           )}
           {state.activeTab === 'student' && (

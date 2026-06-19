@@ -929,7 +929,7 @@ function TaskAssignModal({ open, staff, classesData, setClassesData, onClose, on
   );
 }
 
-export default function StaffTab({ staffData, setStaffData, deptsData, setDeptsData, schoolInfo, showToast, showSuccess, classesData, setClassesData }) {
+export default function StaffTab({ staffData, setStaffData, deptsData, setDeptsData, schoolInfo, showToast, showSuccess, classesData, setClassesData, onContinue }) {
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
   const [expandedId, setExpandedId] = useState(null);
@@ -1283,6 +1283,21 @@ const [taskTarget, setTaskTarget] = useState(null);
           </div>
         </div>
       )}
+
+      {/* spacer so the fixed save bar doesn't cover the pagination */}
+      <div style={{ height: 84 }} aria-hidden="true" />
+      {/* Save & Continue — move to the next setup step */}
+      <div className="save-bar">
+        <div className="save-bar-left">
+          <div className="autosave-dot"></div>
+          <span>Draft auto-saved</span>
+        </div>
+        <div className="save-bar-right">
+          <button className="btn btn-primary btn-md" onClick={() => onContinue?.()}>
+            Save &amp; Continue <i className="fas fa-arrow-right"></i>
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
