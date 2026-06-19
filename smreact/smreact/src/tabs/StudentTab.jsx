@@ -115,6 +115,7 @@ function StudentModal({ open, target, editIdx, editStudent, classesData, onClose
     } else if (!form.registrationNo.trim()) {
       e.registrationNo = 'Registration No is required';
     }
+    if (form.dob && form.dob > new Date().toISOString().slice(0, 10)) e.dob = 'Date of birth cannot be in the future';
     if (form.dues === '' || isNaN(Number(form.dues)) || Number(form.dues) < 0) e.dues = 'Enter dues (0 if none)';
     setErrors(e);
     return Object.keys(e).length === 0;
@@ -206,8 +207,16 @@ function StudentModal({ open, target, editIdx, editStudent, classesData, onClose
       {id && errors[id] && <span className="field-msg error"><i className="fas fa-times-circle"></i> {errors[id]}</span>}
     </div>
   );
+  const todayStr = new Date().toISOString().slice(0, 10);
   const inp = (key, ph, type = 'text') => (
-    <input className={`form-input${errors[key] ? ' error-field' : ''}`} type={type} placeholder={ph} value={form[key]} onChange={e => set(key, e.target.value)} />
+    <input
+      className={`form-input${errors[key] ? ' error-field' : ''}`}
+      type={type}
+      placeholder={ph}
+      value={form[key]}
+      max={type === 'date' && key === 'dob' ? todayStr : undefined}
+      onChange={e => set(key, e.target.value)}
+    />
   );
   const sel = (key, placeholder, options) => (
     <select className={`form-select${errors[key] ? ' error-field' : ''}`} value={form[key]} onChange={e => set(key, e.target.value)}>

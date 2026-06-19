@@ -111,7 +111,7 @@ export default function SchoolTab({ schoolInfo, setSchoolInfo, onSave, onSaveDra
   };
 
   const validateAll = () => {
-    const required = ['name','branchEmail1','branchPhone','countryID','provinceID','cityID','address','academicSession'];
+    const required = ['name','branchEmail1','branchPhone','countryID','provinceID','cityID','address','academicSession','bankAccountno','iban'];
     const errors = {};
     const missing = [];
     required.forEach(id => {
@@ -127,7 +127,11 @@ export default function SchoolTab({ schoolInfo, setSchoolInfo, onSave, onSaveDra
   // ── Save ──────────────────────────────────────────────────────────────────
   const handleSave = async () => {
     const missing = validateAll();
-    if (missing.length) { onSave('error', missing); return; }
+    if (missing.length) {
+      showToast?.(`Please fill required field${missing.length > 1 ? 's' : ''}: ${missing.join(', ')}`, 'error');
+      onSave?.('error', missing);
+      return;
+    }
     setSaving(true);
     try {
       const UserID = sessionStorage.getItem('UserID') || 0;
@@ -166,7 +170,7 @@ export default function SchoolTab({ schoolInfo, setSchoolInfo, onSave, onSaveDra
       fd.append('AccountTitle',             schoolInfo.accountTitle             ?? true);
       fd.append('IBAN',             schoolInfo.iban             ?? true);
       fd.append('BankBranchName',             schoolInfo.bankBranchName             ?? true);
-      if (logoFile) fd.append('BranchLogoFile', logoFile);
+      if (logoFile) fd.append('BranchLogoFile', logoFile, logoFile.name);
 
       const res  = await fetch(buildUrl('/api/Registration/update-branch'), { method: 'PUT', body: fd });
       const data = await res.json();
@@ -372,8 +376,10 @@ export default function SchoolTab({ schoolInfo, setSchoolInfo, onSave, onSaveDra
           <input id="logoInput" type="file" accept="image/*" style={{ display: 'none' }}
             onChange={e => {
               const file = e.target.files[0];
+              e.target.value = ''; // allow re-selecting the same file
               if (!file) return;
               setLogoFile(file);
+              markUnsaved?.();
               const reader = new FileReader();
               reader.onload = () => setLogoPreview(reader.result);
               reader.readAsDataURL(file);

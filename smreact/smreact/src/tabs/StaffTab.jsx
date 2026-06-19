@@ -155,6 +155,10 @@ function StaffModal({ open, staff, deptsData, onClose, onSave, setDeptsData, sho
   showToast('Please select at least one role (Principal or Teacher).', 'error');
   return;
 }
+    if (form.dateOfBirth && form.dateOfBirth > new Date().toISOString().slice(0, 10)) {
+      showToast('Date of birth cannot be in the future.', 'error');
+      return;
+    }
       try {
         const UserID = sessionStorage.getItem('UserID') || 0;
         const BranchID = sessionStorage.getItem('branchID') || 0;
@@ -460,7 +464,7 @@ console.log(payload)
                   <label className="form-label">Date of Birth</label>
                   <div className="input-wrapper">
                     <i className="fas fa-calendar input-icon"></i>
-                    <input className="form-input has-icon" type="date" value={form.dateOfBirth || ''} onChange={e => set('dateOfBirth', e.target.value)} />
+                    <input className="form-input has-icon" type="date" max={new Date().toISOString().slice(0, 10)} value={form.dateOfBirth || ''} onChange={e => set('dateOfBirth', e.target.value)} />
                   </div>
                 </div>
                 <div className="form-group">

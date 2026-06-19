@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import Tooltip from './Tooltip';
 import TutorialModal from './TutorialModal';
 import * as examService from '../services/examService';
+import * as cbrApi from '../services/combinedAssessmentService';
 import useAsync from '../hooks/useAsync';
 import { buildUrl } from '../../utils/apiConfig';
 /* ═══════════════════════════════════════════════════════════════════
@@ -159,6 +160,24 @@ function rcGetGrade(obt, tot) {
   if (!tot || !obt) return null;
   const pct = (obt / tot) * 100;
   return RC_GRADE_SETUP.find(g => pct >= g.min) || RC_GRADE_SETUP[RC_GRADE_SETUP.length - 1];
+}
+/* Grade from the branch's configured scale (Result Setup → Grade) by percentage.
+   rsGrades rows: { grade, pct, cond, comment }. Falls back to null if unset. */
+function rcGradeByScale(pct, grades) {
+  if (!grades || !grades.length || pct == null) return null;
+  const v = Number(pct);
+  const test = (g) => {
+    const t = Number(g.pct);
+    switch (g.cond) {
+      case 'gt':  return v > t;
+      case 'lte': return v <= t;
+      case 'lt':  return v < t;
+      case 'eq':  return v === t;
+      default:    return v >= t; // gte
+    }
+  };
+  const sorted = [...grades].sort((a, b) => Number(b.pct) - Number(a.pct));
+  return sorted.find(test) || sorted[sorted.length - 1];
 }
 function rcGetFinalRemarks(pct) {
   return (RC_FINAL_REMARKS_SETUP.find(r => pct >= r.min) || RC_FINAL_REMARKS_SETUP[RC_FINAL_REMARKS_SETUP.length - 1]).remark;
@@ -394,14 +413,155 @@ const [subjects, setSubjects] = useState([]);
   const { data: resultData = {}, setData: setResultData } = useAsync(examService.getResultData, []);
   const [resUpdateCtx, setResUpdateCtx] = useState(null); // { examId, key, studentId }
   const [resCardCtx, setResCardCtx]     = useState(null); // { examId, key, studentId }
+  const [resCardMarks, setResCardMarks] = useState(null); // real per-subject marks for the single card
   const [resConfirmPublish, setResConfirmPublish] = useState(null); // { key, className, released }
   const [resTotalMarksCtx, setResTotalMarksCtx]   = useState(null); // { examId, key, className }
   const [resConfirmDelete, setResConfirmDelete]   = useState(null); // { examId, key, className }
   const [resRemarksCtx, setResRemarksCtx]         = useState(null); // { examId, key, studentId }
   const [resClassReportReq, setResClassReportReq] = useState(null); // { examId, key, className }
 
+  /* Branch header (name / logo / address) for result cards — from the same
+     report-header API used elsewhere. */
+  const [branchSchool, setBranchSchool] = useState(null);
+  useEffect(() => {
+    const branchId = sessionStorage.getItem('branchID');
+    if (!branchId) return undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(buildUrl(`/report-header/${branchId}`), { headers: { Accept: '*/*' } });
+        const json = await res.json();
+        if (!cancelled && json?.success) {
+          const d = json.data || {};
+          setBranchSchool({ name: d.branchName || '', logo: d.branchLogo || '', address: d.address || '', session: d.academicSession || '' });
+        }
+      } catch (e) { console.error('Error loading branch header:', e); }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   /* ── Combined Assessment state ── */
-  const { data: cbrResults = [], setData: setCbrResults } = useAsync(examService.getCbrResults, []);
+  const [cbrResults, setCbrResults] = useState([]);
+  const reloadCbr = async () => {
+    try { setCbrResults(cbrApi.mapCombinedResults(await cbrApi.listCombinedResults())); }
+    catch (e) { console.error('Error loading combined results:', e); toast('Could not load combined results', 'error'); }
+  };
+  /* Load the combined-result list the first time the user opens that tab — not on
+     Examination mount (keeps the module fast and avoids racing other tab calls). */
+  const cbrLoadedOnce = useRef(false);
+  useEffect(() => {
+    if (rsTab === 'combinedassessment' && !cbrLoadedOnce.current) {
+      cbrLoadedOnce.current = true;
+      reloadCbr();
+      loadAllTermExams(); // needed to resolve each main exam's term for the card
+    }
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [rsTab]);
+
+  /* Load a class-section's students when its row expands: student IDs from the
+     CA-marks API (7), then the full per-student card (9) for each. */
+  const [cbrStudentsLoading, setCbrStudentsLoading] = useState({});
+  const loadCbrStudents = async (cr) => {
+    if (!cr || cr.studentsLoaded || cbrStudentsLoading[cr.id]) return;
+    setCbrStudentsLoading(p => ({ ...p, [cr.id]: true }));
+    try {
+      const caRaw = await cbrApi.getCaObtainedMarks(cr.subExamIDs, cr.classID, cr.sectionID);
+      const caList = Array.isArray(caRaw) ? caRaw : (caRaw?.data || []);
+      const ids = caList.map(r => r.studentID ?? r.StudentID ?? r.studentId).filter(v => v != null);
+      const cards = await Promise.all(ids.map(id =>
+        cbrApi.getStudentCard({ studentID: id, subExamIDs: cr.subExamIDs, classID: cr.classID, sectionID: cr.sectionID, mainExamID: cr.mainExamID })
+          .catch(e => { console.error('Error loading student card:', e); return null; }),
+      ));
+      /* Field names are read defensively (camelCase + PascalCase) since the
+         backend casing varies across endpoints. */
+      const num = v => Number(v ?? 0) || 0;
+      const students = cards.filter(Boolean).map(c => {
+        const main = c.mainExam ?? c.MainExam ?? {};
+        const subArr = c.subExams ?? c.SubExams ?? [];
+        return {
+          studentID: c.studentID ?? c.StudentID,
+          rollNo:    c.registrationNumber ?? c.RegistrationNumber ?? c.studentID ?? c.StudentID,
+          name:      c.studentName ?? c.StudentName ?? '',
+          father:    c.fatherName ?? c.FatherName ?? '',
+          mainObt:   num(main.obtainedMarks ?? main.ObtainedMarks),
+          mainTotal: num(main.totalMarks ?? main.TotalMarks),
+          subs: subArr.map(s => ({
+            name:   s.examName ?? s.ExamName ?? '',
+            subObt: num(s.originalObtained ?? s.OriginalObtained),
+            origT:  num(s.originalTotal ?? s.OriginalTotal),
+            conv:   num(s.convertedObtained ?? s.ConvertedObtained),
+            weight: num(s.weightage ?? s.Weightage),
+          })),
+          grandObt:   num(c.grandObtained ?? c.GrandObtained),
+          grandTotal: num(c.grandTotal ?? c.GrandTotal),
+          pct:        num(c.percentage ?? c.Percentage),
+          grade:      c.grade ?? c.Grade ?? '—',
+          rank:       String(c.ranking ?? c.Ranking ?? '—'),
+        };
+      });
+      setCbrResults(prev => prev.map(g => g.id === cr.id ? { ...g, students, studentsLoaded: true } : g));
+    } catch (e) {
+      console.error('Error loading combined-result students:', e);
+      toast('Could not load students', 'error');
+    } finally {
+      setCbrStudentsLoading(p => { const n = { ...p }; delete n[cr.id]; return n; });
+    }
+  };
+
+  /* Real per-subject main-exam marks for the open card (loaded on demand below,
+     after the cbr UI state is declared). */
+  const [cbrCardMarks, setCbrCardMarks] = useState(null); // { subjects:[names], totals:{}, obtained:{} }
+
+  /* Download a student's combined result (API 13). */
+  const cbrDownloadStudent = async (cr, st) => {
+    try {
+      const r = await cbrApi.getDownloadLink({ subExamIDs: cr.subExamIDs, studentID: st.studentID });
+      if (r?.filePath) window.open(r.filePath, '_blank');
+      else toast('Report not available yet', 'info');
+    } catch (e) {
+      if (e.status === 404) toast('Report not available yet', 'info');
+      else { console.error('Error downloading result:', e); toast('Could not download report', 'error'); }
+    }
+  };
+
+  /* Exams across ALL terms for the combined-create modal (so the user can pick a
+     main/sub exam from any term, labelled "exam (term)"). */
+  const [cbrAllExams, setCbrAllExams] = useState([]);
+  const cbrBuildExams = (rows) => {
+    const acc = {};
+    (rows || []).forEach(ex => {
+      const key = `${ex.examName}_${ex.termID}`;
+      if (!acc[key]) acc[key] = { name: ex.examName, termID: ex.termID, termName: ex.termName, selectExam: ex.selectExam, from: ex.dateFrom, to: ex.dateTo, gradeName: ex.gradeName, classes: new Map() };
+      acc[key].classes.set(String(ex.sectionID), {
+        id: ex.id, classID: ex.classID, sectionID: ex.sectionID, sectionName: ex.sectionName, gradeName: ex.gradeName,
+        className: `${ex.gradeName || ''}${ex.sectionName ? ' - ' + ex.sectionName : ''}`.trim(),
+      });
+    });
+    return Object.values(acc).map(e => ({ ...e, classes: Array.from(e.classes.values()) }));
+  };
+  const loadAllTermExams = async () => {
+    const token = sessionStorage.getItem('token');
+    const bID = sessionStorage.getItem('branchID');
+    const empID = sessionStorage.getItem('employee_ID');
+    const headers = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
+    try {
+      const tRes = await fetch(buildUrl('/api/termscrud'), {
+        method: 'POST',
+        headers: { ...headers, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: 0, branchID: Number(bID), term: '', sessionYearID: termsSessionYearID(), action: 'get' }),
+      });
+      const tJson = await tRes.json();
+      const termArr = Array.isArray(tJson) ? tJson : (tJson?.data || []);
+      const termIds = termArr.map(t => t.id ?? t.ID ?? t.termID).filter(v => v != null);
+      const lists = await Promise.all(termIds.map(tid =>
+        fetch(buildUrl(`/api/getexamsbybranchidtermid?branchID=${bID}&termID=${tid}&empID=${empID}`), { headers })
+          .then(r => r.json()).catch(() => []),
+      ));
+      const built = cbrBuildExams(lists.flat());
+      setCbrAllExams(built);
+      return built;
+    } catch (e) { console.error('Error loading all-term exams:', e); return []; }
+  };
   const [cbrFilterClass, setCbrFilterClass] = useState('');
   const [cbrActiveGroup, setCbrActiveGroup] = useState(null);
   const [cbrOpenKey, setCbrOpenKey]       = useState(null);
@@ -410,6 +570,88 @@ const [subjects, setSubjects] = useState([]);
   const [cbrConfirmDelete, setCbrConfirmDelete]   = useState(null); // { classId, className }
   const [cbrCreateOpen, setCbrCreateOpen]         = useState(false);
   const [cbrReportReq, setCbrReportReq]           = useState(null); // { classId, className }
+
+  /* When a class row expands, lazy-load its students (card-per-student). */
+  useEffect(() => {
+    if (!cbrOpenKey) return;
+    const cr = cbrResults.find(g => g.id === cbrOpenKey);
+    if (cr && !cr.studentsLoaded) loadCbrStudents(cr);
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [cbrOpenKey]);
+
+  /* Load all-term exams when the combined-create modal opens. */
+  useEffect(() => {
+    if (cbrCreateOpen) loadAllTermExams();
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [cbrCreateOpen]);
+
+  /* When a single-assessment card opens, load that student's real per-subject marks. */
+  useEffect(() => {
+    if (!resCardCtx) { setResCardMarks(null); return undefined; }
+    const { classID, sectionID, selectExam, termID, studentId } = resCardCtx;
+    let cancelled = false;
+    (async () => {
+      try {
+        const subs = await cbrApi.getMainExamSubjects({ classID, sectionID, termID, examID: selectExam });
+        const marks = await Promise.all(subs.map(su =>
+          cbrApi.getStudentSubjectMark({ classID, sectionID, termID, examID: selectExam, subjectID: su.subjectID, studentID: studentId }).catch(() => 0),
+        ));
+        if (cancelled) return;
+        const obtained = {}, totals = {};
+        subs.forEach((su, i) => { obtained[su.subjectName] = marks[i]; totals[su.subjectName] = su.totalMarks; });
+        setResCardMarks({ subjects: subs.map(s => s.subjectName), totals, obtained });
+      } catch (e) {
+        console.error('Error loading single card subject marks:', e);
+        if (!cancelled) setResCardMarks({ subjects: [], totals: {}, obtained: {} });
+      }
+    })();
+    return () => { cancelled = true; };
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [resCardCtx]);
+
+  /* When a student's card opens, load the real per-subject main-exam marks. */
+  useEffect(() => {
+    if (!cbrCardCtx) { setCbrCardMarks(null); return undefined; }
+    const grp = cbrResults.find(g => g.id === cbrCardCtx.classId);
+    const st  = grp?.students.find(s => s.rollNo === cbrCardCtx.studentRollNo);
+    if (!grp || !st) return undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        /* The main exam may belong to any term — resolve its term from the
+           all-term list (load it if not ready), then fall back to the current. */
+        let pool = cbrAllExams;
+        if (!pool.length) pool = await loadAllTermExams();
+        const mainEx = pool.find(e => String(e.selectExam) === String(grp.mainExamID))
+          || pool.find(e => e.name === grp.mainExam);
+        const termID = mainEx?.termID ?? selectedTermId;
+        let subs = await cbrApi.getMainExamSubjects({ classID: grp.classID, sectionID: grp.sectionID, termID, examID: grp.mainExamID });
+        let withMarks = true;
+        /* Main exam has no subjects → fall back to a sub exam's subject list and
+           leave the marks empty. */
+        if ((!subs || !subs.length) && grp.subExamIDs?.length) {
+          const subExamId = grp.subExamIDs[0];
+          const subTermID = pool.find(e => String(e.selectExam) === String(subExamId))?.termID ?? termID;
+          subs = await cbrApi.getMainExamSubjects({ classID: grp.classID, sectionID: grp.sectionID, termID: subTermID, examID: subExamId });
+          withMarks = false;
+        }
+        subs = subs || [];
+        const marks = withMarks
+          ? await Promise.all(subs.map(su =>
+              cbrApi.getStudentSubjectMark({ classID: grp.classID, sectionID: grp.sectionID, termID, examID: grp.mainExamID, subjectID: su.subjectID, studentID: st.studentID }).catch(() => 0)))
+          : subs.map(() => ''); // empty marks for the sub-exam fallback
+        if (cancelled) return;
+        const obtained = {}, totals = {};
+        subs.forEach((su, i) => { obtained[su.subjectName] = marks[i]; totals[su.subjectName] = su.totalMarks; });
+        setCbrCardMarks({ subjects: subs.map(s => s.subjectName), totals, obtained });
+      } catch (e) {
+        console.error('Error loading card subject marks:', e);
+        if (!cancelled) setCbrCardMarks({ subjects: [], totals: {}, obtained: {} });
+      }
+    })();
+    return () => { cancelled = true; };
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [cbrCardCtx]);
 
   /* ── Result History state ── */
   const [rhSearchQ, setRhSearchQ]             = useState('');
@@ -3450,7 +3692,7 @@ onClick={async () => {
             <Tooltip text="View this student's result card">
               <button
                 className="res-action-btn view"
-                onClick={() => setResCardCtx({ examId: resExamId, key, studentId: st.id, className })}
+                onClick={() => setResCardCtx({ examId: resExamId, key, studentId: st.id, className, classID: cls.classID, sectionID: cls.sectionID, selectExam: resCurrentExam?.selectExam || 0, termID: selectedTermId, student: st })}
               >
                 <i className="fa-solid fa-eye"></i> Card
               </button>
@@ -3613,7 +3855,7 @@ onClick={async () => {
                                     <Tooltip text={cr.published ? 'Unpublish this combined result' : 'Publish this combined result'}>
                                       <button
                                         className={`res-publish-btn${cr.published ? ' released' : ''}`}
-                                        onClick={e => { e.stopPropagation(); setCbrConfirmPublish({ classId: cr.id, className: cr.cls, published: cr.published }); }}
+                                        onClick={e => { e.stopPropagation(); setCbrConfirmPublish({ classId: cr.id, combinedResultID: cr.combinedResultID, classID: cr.classID, sectionID: cr.sectionID, className: cr.cls, published: cr.published }); }}
                                       >
                                         <i className={`fa-solid ${cr.published ? 'fa-eye-slash' : 'fa-paper-plane'}`}></i>
                                         {cr.published ? 'Unpublish' : 'Publish'}
@@ -3629,7 +3871,7 @@ onClick={async () => {
                                     <Tooltip text="Delete combined result"><button
                                       className="ds-del-btn"
                                      
-                                      onClick={e => { e.stopPropagation(); setCbrConfirmDelete({ classId: cr.id, className: cr.cls }); }}
+                                      onClick={e => { e.stopPropagation(); setCbrConfirmDelete({ classId: cr.id, combinedResultID: cr.combinedResultID, classID: cr.classID, sectionID: cr.sectionID, className: cr.cls }); }}
                                     >
                                       <i className="fa-solid fa-trash"></i>
                                     </button></Tooltip>
@@ -3645,6 +3887,14 @@ onClick={async () => {
                                 {/* Student table */}
                                 {isOpen && (
                                   <div className="cbr-class-detail">
+                                    {cbrStudentsLoading[cr.id] && (
+                                      <div style={{ padding: '12px 14px', fontSize: 12, color: 'var(--text-muted)' }}>
+                                        <i className="fa-solid fa-spinner fa-spin" style={{ marginRight: 6 }}></i> Loading students…
+                                      </div>
+                                    )}
+                                    {!cbrStudentsLoading[cr.id] && cr.studentsLoaded && cr.students.length === 0 && (
+                                      <div style={{ padding: '12px 14px', fontSize: 12, color: 'var(--text-muted)' }}>No students found for this class.</div>
+                                    )}
                                     <div className="cbr-table-wrap">
                                       <table className="cbr-student-table">
                                         <thead>
@@ -3702,14 +3952,24 @@ onClick={async () => {
                                                 </td>
                                                 <td style={{ textAlign: 'center', fontWeight: 700, color: '#1E40AF' }}>{st.rank}</td>
                                                 <td>
-                                                  <Tooltip text="View combined result card">
-                                                    <button
-                                                      className="res-action-btn view"
-                                                      onClick={() => setCbrCardCtx({ groupId: grp.name, classId: cr.id, studentRollNo: st.rollNo })}
-                                                    >
-                                                      <i className="fa-solid fa-eye"></i> Card
-                                                    </button>
-                                                  </Tooltip>
+                                                  <div style={{ display: 'inline-flex', gap: 6 }}>
+                                                    <Tooltip text="View combined result card">
+                                                      <button
+                                                        className="res-action-btn view"
+                                                        onClick={() => setCbrCardCtx({ groupId: grp.name, classId: cr.id, studentRollNo: st.rollNo })}
+                                                      >
+                                                        <i className="fa-solid fa-eye"></i> Card
+                                                      </button>
+                                                    </Tooltip>
+                                                    <Tooltip text="Download result PDF">
+                                                      <button
+                                                        className="res-action-btn"
+                                                        onClick={() => cbrDownloadStudent(cr, st)}
+                                                      >
+                                                        <i className="fa-solid fa-file-arrow-down"></i>
+                                                      </button>
+                                                    </Tooltip>
+                                                  </div>
                                                 </td>
                                               </tr>
                                             );
@@ -4580,6 +4840,8 @@ onClick={async () => {
             student={cardStudent}
             rd={cardRd}
             ex={cardEx}
+            school={branchSchool}
+            grades={rsGrades}
             template={rcTemplate}
             rcoGeneral={rcoGeneral}
             rcoSig={rcoSig}
@@ -4608,12 +4870,12 @@ onClick={async () => {
       {/* ── Combined Assessment — Create New modal ── */}
       {cbrCreateOpen && (
         <CbrCreateModal
-          exams={exams}
+          exams={cbrAllExams}
           onClose={() => setCbrCreateOpen(false)}
-          onCreate={results => {
-            setCbrResults(prev => [...results, ...prev]);
-            toast(`Created ${results.length} combined result${results.length !== 1 ? 's' : ''}`, 'success');
+          onCreate={() => {
             setCbrCreateOpen(false);
+            toast('Combined result created', 'success');
+            reloadCbr(); // refresh list from API (server computes the result)
           }}
           toast={toast}
         />
@@ -4632,7 +4894,7 @@ onClick={async () => {
           rollNo: st.rollNo,
           name: st.name,
           father: st.father,
-          obtained: cbrDeriveSubjectMarks(st.mainObt),
+          obtained: cbrCardMarks?.obtained || {},
           absentSubjects: [],
           attendance: '—',
           _combined: {
@@ -4647,13 +4909,18 @@ onClick={async () => {
             rankSfx:      rankSfx,
           },
         };
-        const cardRd = { totalMarks: { ...RES_DEFAULT_TOTALS } };
+        const cardRd = {
+          totalMarks: (cbrCardMarks && Object.keys(cbrCardMarks.totals).length) ? cbrCardMarks.totals : { ...RES_DEFAULT_TOTALS },
+          subjects: cbrCardMarks?.subjects,
+        };
         const cardEx = { name: grp.mainExam, classes: [grp.cls] };
         return (
           <ResultCardViewer
             student={cardStudent}
             rd={cardRd}
             ex={cardEx}
+            school={branchSchool}
+            grades={rsGrades}
             template={rcTemplate}
             rcoGeneral={rcoGeneral}
             rcoSig={rcoSig}
@@ -4703,8 +4970,15 @@ onClick={async () => {
               <Tooltip text={cbrConfirmPublish.published ? 'Confirm unpublish' : 'Confirm publish'}>
                 <button
                   className={`confirm-btn confirm-btn--confirm${cbrConfirmPublish.published ? '' : ' primary-style'}`}
-                  onClick={() => {
-                    const { classId, published } = cbrConfirmPublish;
+                  onClick={async () => {
+                    const { classId, combinedResultID, classID, sectionID, published } = cbrConfirmPublish;
+                    try {
+                      await cbrApi.publishCombinedResult({ combinedResultID, classID, sectionID, isPublished: !published });
+                    } catch (e) {
+                      console.error('Error publishing combined result:', e);
+                      toast(e.serverMessage || 'Could not update publish status', 'error');
+                      return;
+                    }
                     setCbrResults(prev => prev.map(g => g.id === classId ? { ...g, published: !g.published } : g));
                     toast(published ? 'Combined result unpublished' : 'Combined result published!', 'success');
                     setCbrConfirmPublish(null);
@@ -4745,8 +5019,16 @@ onClick={async () => {
               <Tooltip text="Confirm delete">
                 <button
                   className="confirm-btn confirm-btn--confirm"
-                  onClick={() => {
-                    setCbrResults(prev => prev.filter(g => g.id !== cbrConfirmDelete.classId));
+                  onClick={async () => {
+                    const { classId, combinedResultID, classID, sectionID } = cbrConfirmDelete;
+                    try {
+                      await cbrApi.deleteClassRow({ combinedResultID, gradeID: classID, sectionID });
+                    } catch (e) {
+                      console.error('Error deleting combined result:', e);
+                      toast(e.serverMessage || 'Could not delete combined result', 'error');
+                      return;
+                    }
+                    setCbrResults(prev => prev.filter(g => g.id !== classId));
                     toast('Combined result deleted', 'info');
                     setCbrConfirmDelete(null);
                   }}
@@ -4818,18 +5100,31 @@ onClick={async () => {
       {/* ── Single Assessment — Card viewer ── */}
 {/* ── Single Assessment — Card viewer ── */}
 {resCardCtx && (() => {
-  const cd = resultData[resCardCtx.examId]?.[resCardCtx.key]
-    || { released: false, totalMarks: { ...RES_DEFAULT_TOTALS }, students: freshStudents() };
-  const st = cd.students.find(s => s.id === resCardCtx.studentId);
-  const ex = filtered.find(e => e.id === resCardCtx.examId);
-  if (!st || !ex) return null;
-  // classes ko string banao, object nahi
+  const ex  = filtered.find(e => e.id === resCardCtx.examId);
+  const stu = resCardCtx.student;
+  if (!ex || !stu) return null;
+  const cardStudent = {
+    id:      stu.id,
+    rollNo:  stu.registrationNumber || stu.id,
+    name:    stu.studentName || stu.name || '',
+    father:  stu.fatherName || '',
+    obtained: resCardMarks?.obtained || {},
+    absentSubjects: [],
+    attendance: '—',
+  };
+  const cardRd = {
+    released: false,
+    totalMarks: (resCardMarks && Object.keys(resCardMarks.totals).length) ? resCardMarks.totals : { ...RES_DEFAULT_TOTALS },
+    subjects: resCardMarks?.subjects,
+  };
   const cardEx = { name: ex.name, classes: [resCardCtx.className || ''] };
   return (
     <ResultCardViewer
-      student={st}
-      rd={cd}
+      student={cardStudent}
+      rd={cardRd}
       ex={cardEx}
+      school={branchSchool}
+      grades={rsGrades}
       template={rcTemplate}
       rcoGeneral={rcoGeneral}
       rcoSig={rcoSig}
@@ -4837,6 +5132,7 @@ onClick={async () => {
       rsAbsentMode={rsAbsentMode}
       onClose={() => setResCardCtx(null)}
       toast={toast}
+      singleOnly
     />
   );
 })()}
@@ -6624,7 +6920,7 @@ function TemplateHero({ id, large = false }) {
   );
 }
 
-function ClassicResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 'single', student, rd: rdProp, ex: exProp }) {
+function ClassicResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 'single', student, rd: rdProp, ex: exProp, school, grades }) {
   const opt = {};
   rcoGeneral.forEach(o => { opt[o.label] = o.on; });
   rcoSig.forEach(o => { opt[o.label] = o.on; });
@@ -6633,7 +6929,7 @@ function ClassicResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
   const rd = rdProp  || SAMPLE_RC_RD;
   const ex = exProp  || SAMPLE_RC_EX;
   const isCombined = mode === 'combined';
-  const cb = isCombined ? SAMPLE_RC_COMBINED : null;
+  const cb = isCombined ? (st._combined || SAMPLE_RC_COMBINED) : null;
 
   // Color palette (Color version)
   const accent     = '#1E40AF';
@@ -6648,22 +6944,22 @@ function ClassicResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
   const successCol = '#16A34A';
   const warnCol    = '#D97706';
 
-  const schoolName = 'The Oxford System, Lahore Campus';
+  const schoolName = school?.name || 'The Oxford System, Lahore Campus';
   const today = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
 
   const absentSet = {};
   (st.absentSubjects || []).forEach(s => { absentSet[s] = true; });
 
   const useZeroMode = rsAbsentMode === 'zero';
-  const subjects = RES_SUBJECTS.slice(0, 10);
+  const subjects = (rd.subjects && rd.subjects.length ? rd.subjects : RES_SUBJECTS).slice(0, 10);
 
   const totalAll = subjects.reduce((a, s) => (useZeroMode || !absentSet[s]) ? a + (rd.totalMarks[s] ?? 20) : a, 0);
   const obtAll   = subjects.reduce((a, s) => absentSet[s] ? a : a + (st.obtained[s] || 0), 0);
   const ovPct    = isCombined ? cb.ovPct : (totalAll ? Math.min(100, Math.round((obtAll / totalAll) * 10000) / 100) : 0);
-  const ovGrade  = rcGetGrade(obtAll, totalAll);
+  const ovGrade  = (grades && grades.length) ? rcGradeByScale(ovPct, grades) : rcGetGrade(obtAll, totalAll);
   const finalRem = rcGetFinalRemarks(ovPct);
 
-  const position = opt['Show Position in Class'] ? '1st / 1' : '—';
+  const position = opt['Show Position in Class'] ? (isCombined && cb ? `${cb.rank}${cb.rankSfx || ''}` : '1st / 1') : '—';
 
   const hasSubjTable = opt['Show Subject-wise Marks'] || opt['Show Total Marks'] || opt['Show Obtained Marks'];
 
@@ -6701,8 +6997,10 @@ function ClassicResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
       {/* Header */}
       <div style={{ background: hdrBg, padding: '11px 18px', display: 'flex', alignItems: 'center', gap: 12 }}>
         {opt['Show School Logo'] && (
-          <div style={{ width: 42, height: 42, borderRadius: 9, flexShrink: 0, border: '1.5px solid rgba(255,255,255,.4)', background: 'rgba(255,255,255,.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#FCD34D' }}>
-            <i className="fa-solid fa-graduation-cap" style={{ fontSize: 20 }}></i>
+          <div style={{ width: 42, height: 42, borderRadius: 9, flexShrink: 0, border: '1.5px solid rgba(255,255,255,.4)', background: school?.logo ? '#fff' : 'rgba(255,255,255,.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#FCD34D', overflow: 'hidden' }}>
+            {school?.logo
+              ? <img src={school.logo} alt="logo" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+              : <i className="fa-solid fa-graduation-cap" style={{ fontSize: 20 }}></i>}
           </div>
         )}
         <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
@@ -6885,7 +7183,7 @@ function ClassicResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
                     {opt['Show Total Marks']    && <td style={{ padding: '5px 8px', textAlign: 'center', fontSize: 11, fontWeight: 800, color: successCol }}>{cb.grandTotal}</td>}
                     {opt['Show Obtained Marks'] && <td style={{ padding: '5px 8px', textAlign: 'center', fontSize: 12, fontWeight: 900, color: successCol }}>{cb.grandObt}</td>}
                     {opt['Show Percentage']     && <td style={{ padding: '5px 8px', textAlign: 'center', fontSize: 11, fontWeight: 800, color: successCol }}>{cb.ovPct}%</td>}
-                    {opt['Show Grade']          && <td style={{ padding: '5px 8px', textAlign: 'center', fontSize: 11, fontWeight: 900, color: successCol }}>{(rcGetGrade(cb.grandObt, cb.grandTotal) || {}).grade || '—'}</td>}
+                    {opt['Show Grade']          && <td style={{ padding: '5px 8px', textAlign: 'center', fontSize: 11, fontWeight: 900, color: successCol }}>{(((grades && grades.length) ? rcGradeByScale(cb.ovPct, grades) : rcGetGrade(cb.grandObt, cb.grandTotal)) || {}).grade || '—'}</td>}
                     <td style={{ padding: '5px 8px', fontSize: 9, color: textMut }}>{cb.mainExName} + sub exams</td>
                   </tr>
                 </>
@@ -6939,7 +7237,7 @@ function ClassicResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
   );
 }
 
-function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 'single', student, rd: rdProp, ex: exProp }) {
+function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 'single', student, rd: rdProp, ex: exProp, school, grades }) {
   const opt = {};
   rcoGeneral.forEach(o => { opt[o.label] = o.on; });
   rcoSig.forEach(o => { opt[o.label] = o.on; });
@@ -6948,7 +7246,7 @@ function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
   const rd = rdProp  || SAMPLE_RC_RD;
   const ex = exProp  || SAMPLE_RC_EX;
   const isCombined = mode === 'combined';
-  const cb = isCombined ? SAMPLE_RC_COMBINED : null;
+  const cb = isCombined ? (st._combined || SAMPLE_RC_COMBINED) : null;
 
   const accent     = '#1E40AF';
   const accentBg   = '#EFF6FF';
@@ -6961,20 +7259,20 @@ function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
   const amb        = '#D97706';
   const red        = '#DC2626';
   const today      = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
-  const schoolName = 'The Oxford System, Lahore Campus';
+  const schoolName = school?.name || 'The Oxford System, Lahore Campus';
 
   const absentSet = {};
   (st.absentSubjects || []).forEach(s => { absentSet[s] = true; });
 
   const useZeroMode = rsAbsentMode === 'zero';
-  const subjects = RES_SUBJECTS.slice(0, 10);
+  const subjects = (rd.subjects && rd.subjects.length ? rd.subjects : RES_SUBJECTS).slice(0, 10);
   const totalAll = subjects.reduce((a, s) => (useZeroMode || !absentSet[s]) ? a + (rd.totalMarks[s] ?? 20) : a, 0);
   const obtAll   = subjects.reduce((a, s) => absentSet[s] ? a : a + (st.obtained[s] || 0), 0);
   const ovPct    = isCombined ? cb.ovPct : (totalAll ? Math.min(100, Math.round((obtAll / totalAll) * 10000) / 100) : 0);
-  const ovGrade  = rcGetGrade(obtAll, totalAll);
+  const ovGrade  = (grades && grades.length) ? rcGradeByScale(ovPct, grades) : rcGetGrade(obtAll, totalAll);
   const finalRem = rcGetFinalRemarks(ovPct);
 
-  const position = opt['Show Position in Class'] ? '1st / 1' : '—';
+  const position = opt['Show Position in Class'] ? (isCombined && cb ? `${cb.rank}${cb.rankSfx || ''}` : '1st / 1') : '—';
 
   const barPalette = ['#1E40AF','#16A34A','#D97706','#7C3AED','#DC2626','#0891B2','#EA580C','#059669','#9333EA','#B45309'];
   const subjData = subjects.map((s, i) => {
@@ -7007,8 +7305,10 @@ function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
       {/* Header */}
       <div style={{ background: hdrBg, padding: '14px 20px', display: 'flex', alignItems: 'center', gap: 12 }}>
         {opt['Show School Logo'] && (
-          <div style={{ width: 36, height: 36, borderRadius: 8, flexShrink: 0, background: 'linear-gradient(135deg,#7C3AED,#1E40AF)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#FCD34D' }}>
-            <i className="fa-solid fa-graduation-cap" style={{ fontSize: 17 }}></i>
+          <div style={{ width: 36, height: 36, borderRadius: 8, flexShrink: 0, background: school?.logo ? '#fff' : 'linear-gradient(135deg,#7C3AED,#1E40AF)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#FCD34D', overflow: 'hidden' }}>
+            {school?.logo
+              ? <img src={school.logo} alt="logo" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+              : <i className="fa-solid fa-graduation-cap" style={{ fontSize: 17 }}></i>}
           </div>
         )}
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -7165,7 +7465,7 @@ function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
   );
 }
 
-function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 'single', student, rd: rdProp, ex: exProp }) {
+function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 'single', student, rd: rdProp, ex: exProp, school, grades }) {
   const opt = {};
   rcoGeneral.forEach(o => { opt[o.label] = o.on; });
   rcoSig.forEach(o => { opt[o.label] = o.on; });
@@ -7174,7 +7474,7 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
   const rd = rdProp  || SAMPLE_RC_RD;
   const ex = exProp  || SAMPLE_RC_EX;
   const isCombined = mode === 'combined';
-  const cb = isCombined ? SAMPLE_RC_COMBINED : null;
+  const cb = isCombined ? (st._combined || SAMPLE_RC_COMBINED) : null;
 
   const C = {
     p1bg:  'linear-gradient(150deg,#1A0533 0%,#2D1B69 40%,#1A3A5C 100%)',
@@ -7193,17 +7493,17 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
   };
 
   const today      = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
-  const schoolName = 'The Oxford System, Lahore Campus';
+  const schoolName = school?.name || 'The Oxford System, Lahore Campus';
 
   const absentSet = {};
   (st.absentSubjects || []).forEach(s => { absentSet[s] = true; });
 
   const useZeroMode = rsAbsentMode === 'zero';
-  const subjects = RES_SUBJECTS.slice(0, 10);
+  const subjects = (rd.subjects && rd.subjects.length ? rd.subjects : RES_SUBJECTS).slice(0, 10);
   const totalAll = subjects.reduce((a, s) => (useZeroMode || !absentSet[s]) ? a + (rd.totalMarks[s] ?? 20) : a, 0);
   const obtAll   = subjects.reduce((a, s) => absentSet[s] ? a : a + (st.obtained[s] || 0), 0);
   const ovPct    = isCombined ? cb.ovPct : (totalAll ? Math.min(100, Math.round((obtAll / totalAll) * 10000) / 100) : 0);
-  const ovGrade  = rcGetGrade(obtAll, totalAll);
+  const ovGrade  = (grades && grades.length) ? rcGradeByScale(ovPct, grades) : rcGetGrade(obtAll, totalAll);
   const finalRem = rcGetFinalRemarks(ovPct);
 
   const subjData = subjects.map((s, i) => {
@@ -7216,7 +7516,7 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
     return { s, tot, obt, pct, g, mc, isAbs, col: C.bars[i % C.bars.length] };
   });
 
-  const position = opt['Show Position in Class'] ? '1st' : '—';
+  const position = opt['Show Position in Class'] ? (isCombined && cb ? `${cb.rank}${cb.rankSfx || ''}` : '1st') : '—';
 
   const gCol = g => {
     if (!g) return '#94A3B8';
@@ -7252,8 +7552,10 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
         {/* Brand row */}
         <div style={{ padding: '22px 28px 14px', display: 'flex', alignItems: 'center', gap: 16, position: 'relative' }}>
           {opt['Show School Logo'] && (
-            <div style={{ width: 48, height: 48, borderRadius: 12, flexShrink: 0, boxShadow: '0 4px 16px rgba(0,0,0,.35)', background: 'linear-gradient(135deg,#D97706,#1E3A8A)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#FCD34D' }}>
-              <i className="fa-solid fa-graduation-cap" style={{ fontSize: 22 }}></i>
+            <div style={{ width: 48, height: 48, borderRadius: 12, flexShrink: 0, boxShadow: '0 4px 16px rgba(0,0,0,.35)', background: school?.logo ? '#fff' : 'linear-gradient(135deg,#D97706,#1E3A8A)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#FCD34D', overflow: 'hidden' }}>
+              {school?.logo
+                ? <img src={school.logo} alt="logo" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+                : <i className="fa-solid fa-graduation-cap" style={{ fontSize: 22 }}></i>}
             </div>
           )}
           <div style={{ flex: 1, minWidth: 0 }}>
@@ -7950,14 +8252,18 @@ const saveAndClose = async () => {
    COMBINED ASSESSMENT — CREATE NEW MODAL
    ═══════════════════════════════════════════════════════════════════ */
 function CbrCreateModal({ exams, onClose, onCreate, toast }) {
+  /* Exams are keyed by selectExam — the real exam id all the combined-assessment
+     APIs expect (mainExamID / subExams.examID / examIDs). */
   const [name, setName]             = useState('');
-  const [mainId, setMainId]         = useState(null);
-  const [subIds, setSubIds]         = useState([]);
-  const [weights, setWeights]       = useState({});
+  const [mainSel, setMainSel]       = useState(null);   // selected main exam's selectExam
+  const [subSels, setSubSels]       = useState([]);     // selected sub exams' selectExam
+  const [weights, setWeights]       = useState({});     // { selectExam: weightage }
+  const [subTotals, setSubTotals]   = useState({});     // { selectExam: originalTotalMarks }
   const [fetched, setFetched]       = useState(false);
-  const [commonClasses, setCommonClasses] = useState([]);
-  const [classes, setClasses]       = useState([]);
+  const [commonClasses, setCommonClasses] = useState([]); // [{ classID, sectionID, className, sectionName }]
+  const [classes, setClasses]       = useState([]);       // selected subset (same shape)
   const [errorMsg, setErrorMsg]     = useState('');
+  const [busy, setBusy]             = useState(false);
 
   useEffect(() => {
     const onKey = e => { if (e.key === 'Escape') onClose(); };
@@ -7965,80 +8271,84 @@ function CbrCreateModal({ exams, onClose, onCreate, toast }) {
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  const subList = exams.filter(e => e.id !== mainId);
+  const examSel = ex => String(ex.selectExam);
+  const findBySel = sel => exams.find(e => examSel(e) === String(sel));
+  const subList = exams.filter(e => examSel(e) !== String(mainSel));
+  const clsKey = c => `${c.classID}_${c.sectionID}`;
 
-  const pickMain = id => {
-    setMainId(id);
-    setSubIds([]);
-    setWeights({});
-    setFetched(false);
-    setCommonClasses([]);
-    setClasses([]);
-    setErrorMsg('');
+  const resetDownstream = () => { setFetched(false); setCommonClasses([]); setClasses([]); setErrorMsg(''); };
+
+  const pickMain = sel => {
+    setMainSel(sel);
+    setSubSels([]); setWeights({}); setSubTotals({});
+    resetDownstream();
   };
 
-  const toggleSub = id => {
-    setSubIds(prev => {
-      const idx = prev.indexOf(id);
-      if (idx > -1) {
-        const next = [...prev]; next.splice(idx, 1);
-        setWeights(w => { const n = { ...w }; delete n[id]; return n; });
-        return next;
+  const toggleSub = sel => {
+    const key = String(sel);
+    setSubSels(prev => {
+      if (prev.includes(key)) {
+        setWeights(w => { const n = { ...w }; delete n[key]; return n; });
+        return prev.filter(s => s !== key);
       }
-      setWeights(w => ({ ...w, [id]: w[id] ?? 20 }));
-      return [...prev, id];
+      setWeights(w => ({ ...w, [key]: w[key] ?? 20 }));
+      /* Load this sub exam's original total marks (API 3). */
+      const ex = findBySel(key);
+      const c  = ex?.classes?.[0];
+      if (ex && c && subTotals[key] == null) {
+        cbrApi.getSubExamTotalMarks(key, c.classID, c.sectionID, ex.termID)
+          .then(r => setSubTotals(t => ({ ...t, [key]: r?.originalTotalMarks ?? 0 })))
+          .catch(e => console.error('Error loading sub exam total marks:', e));
+      }
+      return [...prev, key];
     });
-    setFetched(false);
-    setCommonClasses([]);
-    setClasses([]);
-    setErrorMsg('');
+    resetDownstream();
   };
 
-  const updateWeight = (id, val) => {
+  const updateWeight = (sel, val) => {
     const w = Math.max(1, parseFloat(val) || 1);
-    setWeights(prev => ({ ...prev, [id]: w }));
+    setWeights(prev => ({ ...prev, [String(sel)]: w }));
   };
 
-  const fetch = () => {
-    if (!mainId || !subIds.length) return;
-    const mainEx = exams.find(e => e.id === mainId);
-    if (!mainEx || !mainEx.classes?.length) {
-      setErrorMsg('No classes assigned to this exam.');
-      return;
-    }
-    const common = mainEx.classes.filter(cls =>
-      subIds.every(sid => {
-        const se = exams.find(e => e.id === sid);
-        return se && se.classes && se.classes.indexOf(cls) > -1;
-      })
-    );
-    if (!common.length) {
-      setErrorMsg('No common classes found between main and sub exams.');
-      setFetched(false);
-      setCommonClasses([]);
-      setClasses([]);
-      return;
-    }
+  /* Fetch common classes across main + all sub exams (API 4). */
+  const doFetch = async () => {
+    if (!mainSel || !subSels.length) return;
     setErrorMsg('');
-    setFetched(true);
-    setCommonClasses(common);
-    setClasses(common.slice()); // pre-select all
+    try {
+      const examIDs = [mainSel, ...subSels];
+      const common = await cbrApi.getCommonClasses(examIDs);
+      if (!common || !common.length) {
+        setErrorMsg('No common classes found between main and sub exams.');
+        setFetched(true); setCommonClasses([]); setClasses([]);
+        return;
+      }
+      setFetched(true);
+      setCommonClasses(common);
+      setClasses(common.slice()); // pre-select all
+    } catch (e) {
+      console.error('Error fetching common classes:', e);
+      setErrorMsg(e.serverMessage || 'Could not fetch classes.');
+    }
   };
 
   const toggleClass = cls => {
-    setClasses(prev => prev.indexOf(cls) > -1 ? prev.filter(c => c !== cls) : [...prev, cls]);
+    setClasses(prev => prev.some(c => clsKey(c) === clsKey(cls))
+      ? prev.filter(c => clsKey(c) !== clsKey(cls))
+      : [...prev, cls]);
   };
 
-  const canCreate = !!mainId && subIds.length > 0 && fetched && classes.length > 0;
+  const canCreate = !!mainSel && subSels.length > 0 && fetched && classes.length > 0 && !!name.trim();
 
   let hint = 'Select a Main Exam to continue';
   let hintColor = 'var(--text-muted)';
   if (errorMsg) {
     hint = errorMsg;
     hintColor = '#DC2626';
-  } else if (!mainId) {
+  } else if (!name.trim()) {
+    hint = 'Enter a name for this combined result';
+  } else if (!mainSel) {
     hint = 'Select a Main Exam to continue';
-  } else if (!subIds.length) {
+  } else if (!subSels.length) {
     hint = 'Now select one or more Sub Exams';
   } else if (!fetched) {
     hint = 'Set weightage for each sub exam, then click Fetch Classes';
@@ -8050,68 +8360,28 @@ function CbrCreateModal({ exams, onClose, onCreate, toast }) {
     hintColor = '#16A34A';
   }
 
-  const handleCreate = () => {
-    if (!canCreate) return;
-    const mainEx = exams.find(e => e.id === mainId);
-    const subExs = subIds.map(sid => exams.find(e => e.id === sid)).filter(Boolean);
-    const subNames = subExs.map(s => s.name);
-    const today = new Date();
-    const pad = n => (n < 10 ? '0' : '') + n;
-    const dateStr = `${pad(today.getDate())}/${pad(today.getMonth() + 1)}/${today.getFullYear()}`;
-    const resultBaseName = (name || '').trim() || 'Combined Result';
-
-    const results = classes.map((cls, ci) => {
-      // Build students for this class using SA samples
-      const classStudents = RES_SAMPLE_STUDENTS.map(st => {
-        const absSet = {};
-        (st.absentSubjects || []).forEach(s => { absSet[s] = true; });
-        const mainTotal = RES_SUBJECTS.reduce(a => a + 20, 0);
-        const mainObt   = RES_SUBJECTS.reduce((a, s) => absSet[s] ? a : a + (st.obtained[s] || 0), 0);
-        let sumWt = 0;
-        let sumConv = 0;
-        const subs = subExs.map(sex => {
-          const wt    = weights[sex.id] || 20;
-          const origT = 100;
-          const subObt = Math.round(Math.random() * 60) + 30;
-          const conv  = Math.min(wt, Math.round((subObt / origT) * wt * 100) / 100);
-          sumWt   += wt;
-          sumConv += conv;
-          return { name: sex.name, origT, subObt, weight: wt, conv };
-        });
-        const grandTotal = mainTotal + sumWt;
-        const grandObt   = Math.round((mainObt + sumConv) * 100) / 100;
-        const pct        = grandTotal ? Math.min(100, Math.round((grandObt / grandTotal) * 10000) / 100) : 0;
-        const g          = rcGetGrade(grandObt, grandTotal);
-        return {
-          name: st.name, father: st.father, rollNo: st.rollNo,
-          mainObt, mainTotal,
-          subs, grandTotal, grandObt, pct,
-          grade: g ? g.grade : 'F',
-          rank: '—',
-        };
+  /* Create the combined result (API 5), then let the parent refresh the list. */
+  const handleCreate = async () => {
+    if (!canCreate || busy) return;
+    setBusy(true);
+    try {
+      await cbrApi.createCombinedResult({
+        combinedResultName: name.trim(),
+        mainExamID: Number(mainSel),
+        subExams: subSels.map(sel => ({
+          examID: Number(sel),
+          examName: findBySel(sel)?.name || '',
+          originalTotalMarks: Number(subTotals[sel] || 0),
+          weightage: Number(weights[sel] || 0),
+        })),
+        classSectionIDs: classes.map(c => ({ classID: c.classID, sectionID: c.sectionID })),
       });
-      // Rank within this class
-      const sorted = [...classStudents].sort((a, b) => b.grandObt - a.grandObt);
-      classStudents.forEach(s => {
-        const r = sorted.findIndex(x => x.rollNo === s.rollNo) + 1;
-        const sfx = r === 1 ? 'st' : r === 2 ? 'nd' : r === 3 ? 'rd' : 'th';
-        s.rank = `${r}${sfx}`;
-      });
-      const weightsCopy = { ...weights };
-      return {
-        id: `cbr_${Date.now()}_${ci}`,
-        name: `${resultBaseName} — ${cls}`,
-        mainExam: mainEx?.name || '',
-        subExams: subNames,
-        cls, section: 'A',
-        created: dateStr,
-        published: false,
-        weights: weightsCopy,
-        students: classStudents,
-      };
-    });
-
-    onCreate(results.reverse());
+      onCreate();
+    } catch (e) {
+      console.error('Error creating combined result:', e);
+      toast(e.serverMessage || 'Could not create combined result', 'error');
+      setBusy(false);
+    }
   };
 
   return createPortal(
@@ -8174,19 +8444,19 @@ function CbrCreateModal({ exams, onClose, onCreate, toast }) {
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
               {exams.map(ex => (
                 <button
-                  key={ex.id}
+                  key={examSel(ex)}
                   type="button"
-                  className={`ds-exam-btn${mainId === ex.id ? ' active' : ''}`}
-                  onClick={() => pickMain(ex.id)}
+                  className={`ds-exam-btn${String(mainSel) === examSel(ex) ? ' active' : ''}`}
+                  onClick={() => pickMain(examSel(ex))}
                 >
-                  <i className="fa-solid fa-book-open" style={{ fontSize: 10 }}></i> {ex.name}
+                  <i className="fa-solid fa-book-open" style={{ fontSize: 10 }}></i> {ex.name}{ex.termName ? ` (${ex.termName})` : ''}
                 </button>
               ))}
             </div>
           </div>
 
           {/* Sub Exams */}
-          {mainId && (
+          {mainSel && (
             <div style={{ marginBottom: 18 }}>
               <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.8px', color: 'var(--text-muted)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
                 <i className="fa-solid fa-layer-group" style={{ color: '#7C3AED' }}></i>Sub Exams
@@ -8195,12 +8465,12 @@ function CbrCreateModal({ exams, onClose, onCreate, toast }) {
               </div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                 {subList.map(ex => {
-                  const sel = subIds.indexOf(ex.id) > -1;
+                  const sel = subSels.includes(examSel(ex));
                   return (
                     <button
-                      key={ex.id}
+                      key={examSel(ex)}
                       type="button"
-                      onClick={() => toggleSub(ex.id)}
+                      onClick={() => toggleSub(examSel(ex))}
                       style={{
                         display: 'inline-flex', alignItems: 'center', gap: 7,
                         padding: '8px 16px', borderRadius: 999,
@@ -8220,7 +8490,7 @@ function CbrCreateModal({ exams, onClose, onCreate, toast }) {
                       }}>
                         <i className={`fa-solid ${sel ? 'fa-check' : 'fa-plus'}`}></i>
                       </span>
-                      {ex.name}
+                      {ex.name}{ex.termName ? ` (${ex.termName})` : ''}
                     </button>
                   );
                 })}
@@ -8229,7 +8499,7 @@ function CbrCreateModal({ exams, onClose, onCreate, toast }) {
           )}
 
           {/* Weightage Setup */}
-          {subIds.length > 0 && (
+          {subSels.length > 0 && (
             <div style={{ marginBottom: 18 }}>
               <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.8px', color: 'var(--text-muted)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
                 <i className="fa-solid fa-sliders" style={{ color: '#7C3AED' }}></i>Sub Exam Weightage
@@ -8242,17 +8512,17 @@ function CbrCreateModal({ exams, onClose, onCreate, toast }) {
                 </div>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                {subIds.map(sid => {
-                  const ex = exams.find(e => e.id === sid);
+                {subSels.map(sid => {
+                  const ex = findBySel(sid);
                   if (!ex) return null;
                   const wt = weights[sid] ?? 20;
-                  const origT = 100;
-                  const convEx = Math.round((80 / origT) * wt * 10) / 10;
+                  const origT = subTotals[sid] ?? 0;
+                  const convEx = origT > 0 ? Math.round((80 / origT) * wt * 10) / 10 : 0;
                   return (
                     <div key={sid} style={{ background: 'var(--bg-card)', border: '1.5px solid var(--border-light)', borderRadius: 10, padding: '12px 14px' }}>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
                         <div>
-                          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{ex.name}</div>
+                          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{ex.name}{ex.termName ? ` (${ex.termName})` : ''}</div>
                           <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>Original Total Marks: <strong>{origT}</strong></div>
                         </div>
                         <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 9px', borderRadius: 999, background: 'rgba(124,58,237,.1)', color: '#7C3AED', border: '1px solid rgba(124,58,237,.2)' }}>Sub Exam</span>
@@ -8285,11 +8555,11 @@ function CbrCreateModal({ exams, onClose, onCreate, toast }) {
           )}
 
           {/* Fetch Classes */}
-          {subIds.length > 0 && (
+          {subSels.length > 0 && (
             <div style={{ marginBottom: 18 }}>
               <button
                 type="button"
-                onClick={fetch}
+                onClick={doFetch}
                 style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '10px 26px', borderRadius: 10, background: 'linear-gradient(135deg,#1E3A8A,#1E40AF)', border: 'none', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', boxShadow: '0 2px 10px rgba(30,64,175,.25)', transition: '.2s' }}
               >
                 <i className="fa-solid fa-bolt"></i> Fetch Classes
@@ -8306,10 +8576,10 @@ function CbrCreateModal({ exams, onClose, onCreate, toast }) {
               </div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                 {commonClasses.map(cls => {
-                  const sel = classes.indexOf(cls) > -1;
+                  const sel = classes.some(c => clsKey(c) === clsKey(cls));
                   return (
                     <label
-                      key={cls}
+                      key={clsKey(cls)}
                       onClick={() => toggleClass(cls)}
                       style={{
                         display: 'inline-flex', alignItems: 'center', gap: 8,
@@ -8327,7 +8597,7 @@ function CbrCreateModal({ exams, onClose, onCreate, toast }) {
                       }}>
                         {sel && <i className="fa-solid fa-check" style={{ fontSize: 9, color: '#fff' }}></i>}
                       </span>
-                      {cls}
+                      {`${cls.className || ''}${cls.sectionName ? ' - ' + cls.sectionName : ''}`}
                     </label>
                   );
                 })}
@@ -8350,20 +8620,20 @@ function CbrCreateModal({ exams, onClose, onCreate, toast }) {
             <button
               type="button"
               onClick={handleCreate}
-              disabled={!canCreate}
+              disabled={!canCreate || busy}
               style={{
                 padding: '9px 24px', borderRadius: 10, border: 'none',
-                background: canCreate ? 'linear-gradient(135deg,#1E3A8A,#1E40AF)' : '#E2E8F0',
-                color: canCreate ? '#fff' : '#94A3B8',
+                background: (canCreate && !busy) ? 'linear-gradient(135deg,#1E3A8A,#1E40AF)' : '#E2E8F0',
+                color: (canCreate && !busy) ? '#fff' : '#94A3B8',
                 fontSize: 13, fontWeight: 700,
-                cursor: canCreate ? 'pointer' : 'not-allowed',
+                cursor: (canCreate && !busy) ? 'pointer' : 'not-allowed',
                 fontFamily: 'inherit',
                 display: 'inline-flex', alignItems: 'center', gap: 8,
-                boxShadow: canCreate ? '0 2px 10px rgba(30,64,175,.25)' : 'none',
+                boxShadow: (canCreate && !busy) ? '0 2px 10px rgba(30,64,175,.25)' : 'none',
                 transition: '.2s',
               }}
             >
-              <i className="fa-solid fa-circle-plus"></i> Create Combined Result
+              <i className={`fa-solid ${busy ? 'fa-spinner fa-spin' : 'fa-circle-plus'}`}></i> {busy ? 'Creating…' : 'Create Combined Result'}
             </button>
           </div>
         </div>
@@ -9857,7 +10127,7 @@ function rhBuildAttendanceReport(st, isColor) {
   rhRptOpen(rhRptShell(`Attendance Summary — ${st.name}`, body));
 }
 
-function ResultCardViewer({ student, rd, ex, template, rcoGeneral, rcoSig, rsSigs, rsAbsentMode, onClose, toast, initialMode = 'single' }) {
+function ResultCardViewer({ student, rd, ex, template, school, grades, rcoGeneral, rcoSig, rsSigs, rsAbsentMode, onClose, toast, initialMode = 'single', singleOnly = false }) {
   const [mode, setMode] = useState(initialMode);
   const cardRef = useRef(null);
 
@@ -9950,7 +10220,8 @@ html,body{background:#fff;font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-
           </div>
         </div>
 
-        {/* Sub-tabs */}
+        {/* Sub-tabs — hidden when the card is opened for a single assessment only */}
+        {!singleOnly && (
         <div style={{ display: 'flex', gap: 0, padding: '12px 22px 0', borderBottom: '1px solid var(--border-light)', background: 'var(--bg-muted)', flexShrink: 0 }}>
           <button type="button" style={mode === 'single' ? tabActive : tabBase} onClick={() => setMode('single')}>
             <i className="fa-solid fa-file"></i> Single Assessment
@@ -9959,6 +10230,7 @@ html,body{background:#fff;font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-
             <i className="fa-solid fa-layer-group"></i> Combined Assessment
           </button>
         </div>
+        )}
 
         {/* Card area */}
         <div style={{ flex: 1, overflowY: 'auto', padding: 24, background: '#F1F5F9' }}>
@@ -9966,19 +10238,19 @@ html,body{background:#fff;font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-
             {template === 'classic' && (
               <ClassicResultCard
                 rcoGeneral={rcoGeneral} rcoSig={rcoSig} rsSigs={rsSigs} rsAbsentMode={rsAbsentMode}
-                mode={mode} student={student} rd={rd} ex={ex}
+                mode={mode} student={student} rd={rd} ex={ex} school={school} grades={grades}
               />
             )}
             {template === 'insight' && (
               <InsightResultCard
                 rcoGeneral={rcoGeneral} rcoSig={rcoSig} rsSigs={rsSigs} rsAbsentMode={rsAbsentMode}
-                mode={mode} student={student} rd={rd} ex={ex}
+                mode={mode} student={student} rd={rd} ex={ex} school={school} grades={grades}
               />
             )}
             {template === 'portfolio' && (
               <PortfolioResultCard
                 rcoGeneral={rcoGeneral} rcoSig={rcoSig} rsSigs={rsSigs} rsAbsentMode={rsAbsentMode}
-                mode={mode} student={student} rd={rd} ex={ex}
+                mode={mode} student={student} rd={rd} ex={ex} school={school} grades={grades}
               />
             )}
           </div>
