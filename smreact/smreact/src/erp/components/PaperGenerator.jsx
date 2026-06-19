@@ -1,11 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import Tooltip from './Tooltip';
 import TutorialModal from './TutorialModal';
 import * as paperService from '../services/paperService';
 import useAsync from '../hooks/useAsync';
 import { buildUrl } from '../../utils/apiConfig';
-import Reactselect from 'react-select';
 import Select from 'react-select';
 /* ═══════════════════════════════════════════════════════════════════
    PAPER GENERATOR — module shell
@@ -60,9 +59,47 @@ const PG_SUBJ_TILE = {
   'Social Studies': { bg: '#FFFBEB', color: '#B45309' },
 };
 
+/* ── Paper Generation Setup API value mapping ──
+   UI uses fmt: 'with'|'without' and line: 'single'|'four'.
+   Backend stores paperFormate: 'WithSheet'|'NoSheet' and lineType: 'SingleLine'|'DoubleLine'. */
+const PG_FMT_TO_API  = { with: 'WithSheet', without: 'NoSheet' };
+const PG_LINE_TO_API = { single: 'SingleLine', four: 'DoubleLine' };
+const pgApiToFmt  = v => (v === 'NoSheet' || v === 'without' || v === 'A3' ? 'without' : 'with');
+const pgApiToLine = v => (v === 'DoubleLine' || v === 'FourLine' || v === 'four' ? 'four' : 'single');
+const pgSetupKey  = (classID, sectionID, subjectID) => `${classID}-${sectionID}-${subjectID}`;
+/* Most frequent value in a list (used to derive a class-level chip from its subjects). */
+const pgMajority = arr => {
+  const counts = {};
+  let best = arr[0], bestN = 0;
+  arr.forEach(v => { counts[v] = (counts[v] || 0) + 1; if (counts[v] > bestN) { bestN = counts[v]; best = v; } });
+  return best;
+};
+
 /* Sample generated papers per class key — derived idiomatically from the HTML draft */
 function pgClassKey(cls) {
   return cls.name.replace(/\s+/g, '') + '_' + cls.section;
+}
+
+/* Normalize a backend qpMaster record (getexamqpmasterbyids) into the card
+   shape PapersGrid renders. API uses different field names + string numbers. */
+function mapApiPaper(p) {
+  const created = String(p.createdDate || '').trim();
+  const [datePart = '', ...timeParts] = created.split(' ');
+  return {
+    ...p,
+    qpMasterID: p.id ?? p.qpMasterID ?? 0,
+    subj:      p.subjectName  || p.subj   || '—',
+    title:     p.paperTitle   || p.title  || 'Untitled Paper',
+    type:      p.paperType    || p.type   || 'both',
+    format:    p.paperFormate || p.format || 'with',
+    objMarks:  +p.marksforobject     || 0,
+    objTime:   +p.timeforobject      || 0,
+    subjMarks: +p.marksforsubjective || 0,
+    subjTime:  +p.timeforsubjective  || 0,
+    date:      datePart || '—',
+    time:      timeParts.join(' ') || '',
+    by:        p.createdBy || p.by || 'Admin',
+  };
 }
 /* Generated papers now load via paperService (src/services/paperService.js).
    Create/update/delete remain in-memory until backend wires the matching endpoints. */
@@ -82,6 +119,9 @@ const [subjects, setSubjects] = useState([]);
   const [classDefaults, setClassDefaults] = useState(() => pgBuildClassDefaults('with', 'single'));
   const [subjDefaults, setSubjDefaults]   = useState(() => pgBuildSubjDefaults('with', 'single'));
   const [openClassIdx, setOpenClassIdx]   = useState(null);
+  /* Saved paper-generation-setup records keyed by `${classID}-${sectionID}-${subjectID}`
+     → { id, fmt, line }. Drives insert-vs-update and pre-fills toggles from the backend. */
+  const [setupMap, setSetupMap] = useState({});
   /* Paper Generator tab: which class row's dropdown is open */
   const [openGenIdx, setOpenGenIdx]       = useState(null);
   /* Make Paper modal: holds the active class index (null = closed) */
@@ -97,40 +137,124 @@ const [subjects, setSubjects] = useState([]);
      Initial data comes from paperService.getAllPapers(); CRUD stays local. */
   const { data: papersByKey = {}, setData: setPapersByKey } = useAsync(paperService.getAllPapers, []);
 
-  /* Cascade helpers */
-  const cascadeFmt = f => {
+  /* Persist one subject's setup. Insert the first time, update afterwards
+     (decided by whether setupMap already holds an id for this class/section/subject). */
+  const saveSetup = async (cls, subjectID, subjectName, fmt, line) => {
+    if (!cls || !subjectID) return;
+    const classID   = cls.gradeID ?? cls.classID;
+    const sectionID = cls.sectionID;
+    if (!classID || !sectionID) return;
+    const branchID = sessionStorage.getItem('branchID');
+    const token    = sessionStorage.getItem('token');
+    const key      = pgSetupKey(classID, sectionID, subjectID);
+    const existing = setupMap[key];
+    const payload = {
+      id: existing?.id || 0,
+      branchID: parseInt(branchID),
+      classID: parseInt(classID),
+      sectionID: parseInt(sectionID),
+      subjectID: parseInt(subjectID),
+      paperFormate: PG_FMT_TO_API[fmt] || PG_FMT_TO_API.with,
+      lineType: PG_LINE_TO_API[line] || PG_LINE_TO_API.single,
+      action: existing?.id ? 'update' : 'insert',
+      className: cls.name || '',
+      sectionName: cls.section || '',
+      subjectName: subjectName || '',
+    };
+    try {
+      const res = await fetch(buildUrl('/api/paper_generation_setup'), {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      const newId = data?.id ?? existing?.id;
+      setSetupMap(prev => ({ ...prev, [key]: { id: newId, fmt, line } }));
+    } catch (err) {
+      console.error('Failed to save paper generation setup', err);
+      toast('Failed to save setup', 'error');
+    }
+  };
+
+  /* Ensure a class's subjects (names + IDs) are loaded; returns the loaded list. */
+  const ensureSubjectsLoaded = async (ci) => {
+    const cls = examClasses[ci];
+    if (cls.subjects.length > 0 && cls.subjectIDs) {
+      return cls.subjects.map((name, i) => ({ subjectName: name, subjectID: cls.subjectIDs[i] }));
+    }
+    const subs = await getSyllabusSubjects(cls.gradeID, cls.sectionID);
+    const subjectNames = subs.map(s => s.subjectName);
+    const subjectIDs   = subs.map(s => s.subjectID);
+    setExamClasses(prev => prev.map((c, i) => i === ci ? { ...c, subjects: subjectNames, subjectIDs } : c));
+    return subs;
+  };
+
+  /* Cascade helpers — apply locally and persist to every loaded subject. */
+  const cascadeFmt = async f => {
     setGlobalFmt(f);
     setClassDefaults(prev => prev.map(d => ({ ...d, fmt: f })));
     setSubjDefaults(prev => prev.map(row => row.map(d => ({ ...d, fmt: f }))));
-    toast(`Global default set: ${f === 'with' ? 'With Answer Sheet' : 'Without Answer Sheet'}`, 'success');
+    toast(`Global default set: ${f === 'with' ? 'With Answer Sheet' : 'No Answer Sheet'}`, 'success');
+    for (let ci = 0; ci < examClasses.length; ci++) {
+      const cls = examClasses[ci];
+      const subs = await ensureSubjectsLoaded(ci);
+      for (let si = 0; si < subs.length; si++) {
+        await saveSetup(cls, subs[si].subjectID, subs[si].subjectName, f, subjDefaults[ci]?.[si]?.line || globalLine);
+      }
+    }
   };
-  const cascadeLine = l => {
+  const cascadeLine = async l => {
     setGlobalLine(l);
     setClassDefaults(prev => prev.map(d => ({ ...d, line: l })));
     setSubjDefaults(prev => prev.map(row => row.map(d => ({ ...d, line: l }))));
     toast(`Global default set: ${l === 'four' ? 'Four Line' : 'Single Line'}`, 'success');
+    for (let ci = 0; ci < examClasses.length; ci++) {
+      const cls = examClasses[ci];
+      const subs = await ensureSubjectsLoaded(ci);
+      for (let si = 0; si < subs.length; si++) {
+        await saveSetup(cls, subs[si].subjectID, subs[si].subjectName, subjDefaults[ci]?.[si]?.fmt || globalFmt, l);
+      }
+    }
   };
-  const setClassFmt = (ci, f) => {
-    const cls = PG_CLASSES_DATA[ci];
+  const setClassFmt = async (ci, f) => {
+    const cls = examClasses[ci];
     setClassDefaults(prev => prev.map((d, i) => i === ci ? { ...d, fmt: f } : d));
     setSubjDefaults(prev => prev.map((row, i) => i === ci ? row.map(d => ({ ...d, fmt: f })) : row));
-    toast(`${cls.name} · ${cls.section} → ${f === 'with' ? 'With Answer Sheet' : 'Without Answer Sheet'}`, 'success');
+    toast(`${cls.name} · ${cls.section} → ${f === 'with' ? 'With Answer Sheet' : 'No Answer Sheet'}`, 'success');
+    const subs = await ensureSubjectsLoaded(ci);
+    for (let si = 0; si < subs.length; si++) {
+      await saveSetup(cls, subs[si].subjectID, subs[si].subjectName, f, subjDefaults[ci]?.[si]?.line || globalLine);
+    }
   };
-  const setClassLine = (ci, l) => {
-    const cls = PG_CLASSES_DATA[ci];
+  const setClassLine = async (ci, l) => {
+    const cls = examClasses[ci];
     setClassDefaults(prev => prev.map((d, i) => i === ci ? { ...d, line: l } : d));
     setSubjDefaults(prev => prev.map((row, i) => i === ci ? row.map(d => ({ ...d, line: l })) : row));
     toast(`${cls.name} · ${cls.section} → ${l === 'four' ? 'Four Line' : 'Single Line'}`, 'success');
+    const subs = await ensureSubjectsLoaded(ci);
+    for (let si = 0; si < subs.length; si++) {
+      await saveSetup(cls, subs[si].subjectID, subs[si].subjectName, subjDefaults[ci]?.[si]?.fmt || globalFmt, l);
+    }
   };
   const setSubjFmt = (ci, si, f) => {
-    const subjName = PG_CLASSES_DATA[ci].subjects[si];
+    const cls = examClasses[ci];
+    const subjName = cls.subjects[si];
+    const subjectID = (cls.subjectIDs || [])[si];
     setSubjDefaults(prev => prev.map((row, i) => i === ci ? row.map((d, j) => j === si ? { ...d, fmt: f } : d) : row));
-    toast(`${subjName} → ${f === 'with' ? 'With Answer Sheet' : 'Without Answer Sheet'}`, 'success');
+    toast(`${cls.name} · ${cls.section} — ${subjName} → ${f === 'with' ? 'With Answer Sheet' : 'No Answer Sheet'}`, 'success');
+    saveSetup(cls, subjectID, subjName, f, subjDefaults[ci]?.[si]?.line || globalLine);
   };
   const setSubjLine = (ci, si, l) => {
-    const subjName = PG_CLASSES_DATA[ci].subjects[si];
+    const cls = examClasses[ci];
+    const subjName = cls.subjects[si];
+    const subjectID = (cls.subjectIDs || [])[si];
     setSubjDefaults(prev => prev.map((row, i) => i === ci ? row.map((d, j) => j === si ? { ...d, line: l } : d) : row));
-    toast(`${subjName} → ${l === 'four' ? 'Four Line' : 'Single Line'}`, 'success');
+    toast(`${cls.name} · ${cls.section} — ${subjName} → ${l === 'four' ? 'Four Line' : 'Single Line'}`, 'success');
+    saveSetup(cls, subjectID, subjName, subjDefaults[ci]?.[si]?.fmt || globalFmt, l);
   };
 // getExamClasses fix — flatten to {name, section, subjects:[]}
 async function getExamClasses() {
@@ -231,12 +355,16 @@ const handleClassOpen = async (ci) => {
     const cls = examClasses[ci];
     const subs = await getSyllabusSubjects(cls.gradeID, cls.sectionID);
     const subjectNames = subs.map(s => s.subjectName);
+    const subjectIDs   = subs.map(s => s.subjectID);
 
     setExamClasses(prev => prev.map((c, i) =>
-      i === ci ? { ...c, subjects: subjectNames } : c
+      i === ci ? { ...c, subjects: subjectNames, subjectIDs } : c
     ));
     setSubjDefaults(prev => prev.map((row, i) =>
-      i === ci ? subjectNames.map(() => ({ fmt: globalFmt, line: globalLine })) : row
+      i === ci ? subs.map(s => {
+        const saved = setupMap[pgSetupKey(cls.gradeID, cls.sectionID, s.subjectID)];
+        return saved ? { fmt: saved.fmt, line: saved.line } : { fmt: globalFmt, line: globalLine };
+      }) : row
     ));
   }
 };
@@ -251,15 +379,28 @@ const handleMakePaper = async (idx) => {
   if (cls.subjects.length === 0) {
     const subs = await getSyllabusSubjects(cls.gradeID, cls.sectionID);
     const subjectNames = subs.map(s => s.subjectName);
-    
+    const subjectIDs   = subs.map(s => s.subjectID);
+
     setExamClasses(prev => prev.map((c, i) =>
-      i === idx ? { ...c, subjects: subjectNames } : c
+      i === idx ? { ...c, subjects: subjectNames, subjectIDs } : c
     ));
     setSubjDefaults(prev => prev.map((row, i) =>
-      i === idx ? subjectNames.map(() => ({ fmt: globalFmt, line: globalLine })) : row
+      i === idx ? subs.map(s => {
+        const saved = setupMap[pgSetupKey(cls.gradeID, cls.sectionID, s.subjectID)];
+        return saved ? { fmt: saved.fmt, line: saved.line } : { fmt: globalFmt, line: globalLine };
+      }) : row
     ));
   }
   
+  setMakeIdx(idx);
+};
+
+// Edit click: pehle is class ke subjects load karo (taake subject dropdown +
+// subjectID lookup chale), phir edit modal kholo.
+const handleEditPaper = async (idx, paper) => {
+  const cls = examClasses[idx];
+  await getSyllabusSubjects(cls.gradeID, cls.sectionID);
+  setEditPaper(paper);
   setMakeIdx(idx);
 };
 
@@ -272,16 +413,95 @@ function pgBuildSubjDefaults(globalFmt, globalLine) {
 function pgBuildClassDefaults(globalFmt, globalLine) {
   return examClasses.map(() => ({ fmt: globalFmt, line: globalLine }));
 }
-useEffect(() => {getExamClasses();}, []);
-  
-useEffect(() => {
-  if (examClasses.length > 0) {
-    setClassDefaults(examClasses.map(() => ({ fmt: globalFmt, line: globalLine })));
-    setSubjDefaults(examClasses.map(cls => 
-      (cls.subjects || []).map(() => ({ fmt: globalFmt, line: globalLine }))
-    ));
+ const fetchPapersByClass = async (gradeId, sectionID) => {
+    try {
+      const branchID = sessionStorage.getItem('branchID');
+      const token = sessionStorage.getItem('token');
+
+      const url = buildUrl(`/api/getexamqpmasterbyids?branchID=${branchID}&gradeId=${gradeId}&sectionID=${sectionID}&pageNo=1`);
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }
+      });
+      const data = await response.json();
+      // API returns a bare array; tolerate { data: [...] } too.
+      return Array.isArray(data) ? data : (data?.data || []);
+    } catch (err) {
+      console.error('Error fetching papers:', err);
+      return [];
+    }
+  };
+
+  // 👇 Button click handler
+const handleFetchPapers = async () => {
+  for (const cls of examClasses) {
+    const papers = await fetchPapersByClass(cls.gradeID, cls.sectionID);
+    if (papers.length > 0) {
+      const key = pgClassKey(cls);
+      console.log(key , "key")
+      console.log(papers , "papers")
+      const mapped = papers.map(mapApiPaper);
+      setPapersByKey(prev => ({ ...prev, [key]: mapped }));
+    }
   }
-}, [examClasses]);
+};
+
+  /* Load saved per-subject paper-generation setup for this branch. */
+  async function getPaperGenerationSetup() {
+    try {
+      const branchID = sessionStorage.getItem('branchID');
+      const token    = sessionStorage.getItem('token');
+      const res = await fetch(
+        buildUrl(`/api/getpapergenerationsetupbybranch?branchID=${branchID}`),
+        { method: 'GET', headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } }
+      );
+      const data = await res.json();
+      const list = Array.isArray(data) ? data : (data?.data || []);
+      const map = {};
+      list.forEach(r => {
+        const key = pgSetupKey(r.classID, r.sectionID, r.subjectID);
+        // Backend can hold multiple rows per subject — keep the most recent (highest id).
+        if (!map[key] || r.id > map[key].id) {
+          map[key] = {
+            id: r.id,
+            fmt: pgApiToFmt(r.paperFormate),
+            line: pgApiToLine(r.lineType),
+          };
+        }
+      });
+      setSetupMap(map);
+    } catch (err) {
+      console.error('Could not load paper generation setup', err);
+    }
+  }
+
+  // 👇 useEffect — defaults set karo + saved setup apply karo (existing rows preserve)
+  useEffect(() => {
+    if (examClasses.length > 0) {
+      setClassDefaults(prev => examClasses.map((cls, ci) => {
+        // Derive the class-level chip from this class+section's saved subject records.
+        const recs = Object.entries(setupMap)
+          .filter(([k]) => k.startsWith(`${cls.gradeID}-${cls.sectionID}-`))
+          .map(([, v]) => v);
+        if (recs.length) {
+          return { fmt: pgMajority(recs.map(r => r.fmt)), line: pgMajority(recs.map(r => r.line)) };
+        }
+        return prev[ci] || { fmt: globalFmt, line: globalLine };
+      }));
+      setSubjDefaults(prev => examClasses.map((cls, ci) => {
+        const existingRow = prev[ci] || [];
+        return (cls.subjects || []).map((name, si) => {
+          if (existingRow[si]) return existingRow[si];
+          const saved = setupMap[pgSetupKey(cls.gradeID, cls.sectionID, (cls.subjectIDs || [])[si])];
+          return saved ? { fmt: saved.fmt, line: saved.line } : { fmt: globalFmt, line: globalLine };
+        });
+      }));
+    }
+  }, [examClasses, setupMap]);
+
+useEffect(() => { getExamClasses(); getPaperGenerationSetup(); }, []);
+  
+
 return (
     <>
       <style>{PG_CSS}</style>
@@ -316,8 +536,10 @@ return (
         </button>
         <button
           className={`pg-tab${tab === 'generator' ? ' active' : ''}`}
-          onClick={() => setTab('generator')}
-        >
+ onClick={() => {
+            setTab('generator');
+            handleFetchPapers(); // 👈 Yahan call ho raha hai
+          }}        >
           <i className="fa-solid fa-wand-magic-sparkles"></i> Paper Generator
         </button>
       </div>
@@ -628,7 +850,7 @@ const papers = papersByKey[key] || [];
                     onView={p => setViewPaper({ paper: p, cls })}
                     onDownload={p => setDownloadPaper({ paper: p, cls })}
                     onDelete={(p, pi) => setDeletePaper({ paper: p, cls, key, index: pi })}
-                    onEdit={p => { setEditPaper(p); setMakeIdx(idx); }}
+                    onEdit={p => handleEditPaper(idx, p)}
                   />
                 </div>
               </div>
@@ -689,16 +911,32 @@ const papers = papersByKey[key] || [];
           paper={deletePaper.paper}
           cls={deletePaper.cls}
           onClose={() => setDeletePaper(null)}
-          onConfirm={() => {
+          onConfirm={async () => {
             const { key, index, paper } = deletePaper;
-            setPapersByKey(prev => {
-              const next = { ...prev };
-              const arr  = (next[key] || []).filter((_, i) => i !== index);
-              next[key]  = arr;
-              return next;
-            });
+            const id = paper.qpMasterID ?? paper.id;
+            try {
+              const token = sessionStorage.getItem('token');
+              const params = new URLSearchParams({ id: String(id) });
+              const response = await fetch(
+                buildUrl(`/api/deleteqpmasterrecord?${params.toString()}`),
+                { method: 'DELETE', headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } }
+              );
+              const data = await response.json().catch(() => ({}));
+              if (response.ok) {
+                setPapersByKey(prev => {
+                  const next = { ...prev };
+                  next[key] = (next[key] || []).filter((_, i) => i !== index);
+                  return next;
+                });
+                toast(`Paper "${paper.title}" deleted successfully`, 'success');
+              } else {
+                toast(data.message || 'Failed to delete paper', 'error');
+              }
+            } catch (error) {
+              console.error('Error deleting paper:', error);
+              toast('Failed to delete paper', 'error');
+            }
             setDeletePaper(null);
-            toast(`Paper "${paper.title}" deleted successfully`, 'success');
           }}
         />
       )}
@@ -1045,13 +1283,61 @@ function freshTab(num) {
     label: 'Q No. ' + num,
     saved: false,
     unitSelections: {},  // { unitName: instrIdx }
-    instr: '',
+    instr: '',           // typed Main Instruction → changedMainQuestion
+    selectedMainQ: '',   // main question picked from the dropdown → mainQuestion
     items: 0,
     choices: 0,
-    marks: 1,
+    marks: 0,
     totalEligible: 0,
   };
 }
+
+// API response keys ko PG type keys se map karo
+const API_KEY_MAP = {
+  mcq:            'mcQs',
+  fill_blanks:    'fillTheBlanks',
+  true_false:     'trueFalseQuestions',
+  qa:             'questionAnswers',
+  match_columns:  'matchColumns',
+  comprehension:  'comprehensionQuestions',
+  word_sentences: 'wordSentences',
+  letter:         'letters',
+  application:    'applications',
+  stories:        'stories',
+  essays:         'essays',
+  long_q:         'longQuestions',
+  paragraph:      'paragraphs',
+  word_synonyms:  'wordSynonyms',
+  word_opposite:  'wordOpposites',
+  singular_plural:'singularPlurals',
+  punctuation:    'punctuations',
+  circle_word:    'circleCorrectWords',
+  short_q:        'qMidLines',
+};
+
+/* typeKey → backend recTitle value sent to qpquestionselection_crud. */
+const PG_REC_TITLE = {
+  mcq:            'MCQs',
+  match_columns:  'MatchColume',
+  qa:             'QuestionAns',
+  comprehension:  'Comprehension',
+  word_sentences: 'WordSentences',
+  letter:         'letters',
+  application:    'application',
+  stories:        'stories',
+  essays:         'essays',
+  true_false:     'TrueFalse',
+  fill_blanks:    'FillintheBlank',
+  word_opposite:  'Wordopposite',
+  singular_plural:'Singularplural',
+  word_synonyms:  'wordSynonyms',
+  long_q:         'LongQuetion',
+  paragraph:      'Paragraph',
+  circle_word:    'CircleCorrectWord',
+  punctuation:    'Punctuation',
+};
+
+
 function MakePaperModal({ cls, defaultFmt, initialPaper, onClose, toast, subjects = [] }) {
   const isEdit = !!initialPaper;
   const [subject, setSubject] = useState(isEdit ? (initialPaper.subj || '') : '');
@@ -1068,23 +1354,20 @@ function MakePaperModal({ cls, defaultFmt, initialPaper, onClose, toast, subject
   // 👇 States for units
   const [units, setUnits] = useState([]);
   const [selectedUnits, setSelectedUnits] = useState([]);
-  const [loadingUnits, setLoadingUnits] = useState(false);
     const [loading, setLoading] = useState(false); // 👈 Loading state for fetch
 
+const [notebookDetails, setNotebookDetails] = useState(null);
 
   /* blocksState = { obj: { typeKey: { open, activeTab, tabs:[...] } }, subj: {...} } */
   const [blocksState, setBlocksState] = useState({ obj: {}, subj: {} });
-
+const [qpMasterID, setQpMasterID] = useState(isEdit ? (initialPaper.qpMasterID || 0) : 0);
   useEffect(() => {
     const onKey = e => { if (e.key === 'Escape') onClose(); };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  /* Edit flow: notify once on mount */
-  useEffect(() => {
-    if (isEdit) toast(`Editing "${initialPaper.title}" — modify fields and Save`, 'info');
-  }, []);
+ 
 
   const showObj = paperType === 'objective' || paperType === 'both';
   const showSubj = paperType === 'subjective' || paperType === 'both';
@@ -1106,6 +1389,7 @@ function MakePaperModal({ cls, defaultFmt, initialPaper, onClose, toast, subject
   const validationOk = (!showObj || objStatus === 'ok') && (!showSubj || subjStatus === 'ok');
 
   const canGenerate = baseOk && fetched && validationOk;
+const qpMasterIDRef = useRef(isEdit ? (initialPaper.qpMasterID || 0) : 0);
 
   /* Reset fetched state when settings change */
   const resetOnChange = () => { 
@@ -1114,11 +1398,128 @@ function MakePaperModal({ cls, defaultFmt, initialPaper, onClose, toast, subject
       setBlocksState({ obj: {}, subj: {} }); 
     } 
   };
+const fetchNotebookDetails = async (notebookIDs) => {
+  try {
+    const token = sessionStorage.getItem("token");
+
+    const url = buildUrl(`/api/getnotebookdetails`);
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify({
+        masterNoteBookIDs: notebookIDs  // selectedUnits (unit IDs)
+      }),
+    });
+
+    const data = await response.json();
+
+    if (data) {
+      setNotebookDetails(data);
+      toast('Questions loaded successfully!', 'success');
+      return data;
+    } else {
+      toast('No question data returned', 'warning');
+      return null;
+    }
+  } catch (err) {
+    console.error("Error fetching notebook details:", err);
+    toast('Failed to load question details', 'error');
+    return null;
+  }
+};
+
+// ── Edit mode: saved submission detail se pehle se save shuda questions ko
+//    blocksState mein tabs ke roop mein select/prefill karo. ──
+const prefillSavedTabs = (sections, details) => {
+  const recToTypeKey = {};
+  Object.entries(PG_REC_TITLE).forEach(([typeKey, rec]) => { recToTypeKey[pgRecKey(rec)] = typeKey; });
+  const objKeys = new Set(PG_OBJ_TYPES.map(t => t.key));
+
+  setBlocksState(prev => {
+    const next = { obj: { ...prev.obj }, subj: { ...prev.subj } };
+    sections.forEach(sec => {
+      const typeKey = recToTypeKey[pgRecKey(sec.recTitle)];
+      if (!typeKey) return;
+      const section = objKeys.has(typeKey) ? 'obj' : 'subj';
+      const apiItems = (details && details[API_KEY_MAP[typeKey]]) || [];
+      const unitName = apiItems[0]?.unitName;
+
+      const secObj = { ...(next[section] || {}) };
+      const block = secObj[typeKey] ? { ...secObj[typeKey] } : { open: true, activeTab: null, tabs: [] };
+      const tab = {
+        ...freshTab(block.tabs.length + 1),
+        unitSelections: unitName ? { '__api__': unitName } : {},
+        instr: sec.mainQuestion,                                  // changedMainQuestion (typed)
+        selectedMainQ: sec.rows[0]?.mainQuestion || sec.mainQuestion,
+        items: sec.rows.length,
+        totalEligible: apiItems.length || sec.rows.length,
+        saved: true,
+        existing: true,                                           // backend mein pehle se hai → update
+        savedId: sec.recordId || 0,                               // selection record id (agar mile)
+      };
+      block.tabs = [...block.tabs, tab];
+      block.open = true;
+      block.activeTab = tab.entryId;
+      secObj[typeKey] = block;
+      next[section] = secObj;
+    });
+    return next;
+  });
+};
+
+// Edit modal khulte hi: header bharo → saare questions load karo → saved select karo.
+useEffect(() => {
+  if (!isEdit) return;
+  let alive = true;
+  (async () => {
+    try {
+      const list = await fetchQpSubmissionDetail({
+        id: initialPaper.qpMasterID ?? initialPaper.id,
+        branchID: sessionStorage.getItem('branchID'),
+        gradeID: cls?.gradeID ?? initialPaper.gradeID,
+        sectionID: cls?.sectionID ?? initialPaper.sectionID,
+      });
+      if (!alive) return;
+      const { parent, sections } = normalizeQpDetail(list);
+
+      // 1) Header fields fill karo (submission detail authoritative hai).
+      if (parent) {
+        if (parent.subjectName && parent.subjectName !== subject) setSubject(parent.subjectName);
+        if (parent.paperType)          setPaperType(parent.paperType);
+        if (parent.paperFormate)       setPaperFmt(pgApiToFmt(parent.paperFormate));
+        if (parent.paperTitle)         setTitle(parent.paperTitle);
+        if (parent.marksforobject)     setObjMarks(String(parent.marksforobject));
+        if (parent.timeforobject)      setObjTime(String(parent.timeforobject));
+        if (parent.marksforsubjective) setSubjMarks(String(parent.marksforsubjective));
+        if (parent.timeforsubjective)  setSubjTime(String(parent.timeforsubjective));
+      }
+
+      // 2) Saved rows ke notebookID se units nikaalo + saare questions load karo.
+      const unitIds = [...new Set(sections.flatMap(s => s.rows.map(r => parseInt(r.notebookID))).filter(Boolean))];
+      qpMasterIDRef.current = initialPaper.qpMasterID ?? initialPaper.id;
+      if (unitIds.length) {
+        setSelectedUnits(unitIds);
+        const details = await fetchNotebookDetails(unitIds);
+        if (!alive) return;
+        setFetched(true);
+        // 3) Pehle se saved questions ko select/prefill karo.
+        prefillSavedTabs(sections, details);
+      }
+    } catch (err) {
+      console.error('Edit auto-load failed', err);
+    }
+  })();
+  return () => { alive = false; };
+}, []);
 
   // 👇 API function to fetch units
   const fetchUnits = async (subjectId) => {
     try {
-      setLoadingUnits(true);
       const branchID = sessionStorage.getItem("branchID");
       const token = sessionStorage.getItem("token");
       
@@ -1149,7 +1550,6 @@ function MakePaperModal({ cls, defaultFmt, initialPaper, onClose, toast, subject
           ...unit
         }));
         setUnits(unitList);
-        toast(`${unitList.length} units loaded`, 'success');
       } else {
         setUnits([]);
         toast('No units found for this subject', 'info');
@@ -1158,17 +1558,16 @@ function MakePaperModal({ cls, defaultFmt, initialPaper, onClose, toast, subject
       console.error("Error fetching units:", err);
       setUnits([]);
       toast('Failed to load units', 'error');
-    } finally {
-      setLoadingUnits(false);
-    }
+    } 
   };
 
   // 👇 Effect to fetch units when subject changes
   useEffect(() => {
     if (subject) {
-      // Find subjectID from subjects array
+      // Find subjectID from subjects array; Edit mode mein paper ka apna subjectID
+      // fallback rakho taake units API ko name ('Math') na jaye.
       const selectedSubject = subjects.find(s => s.subjectName === subject || s === subject);
-      const subjectId = selectedSubject?.subjectID || selectedSubject?.id || subject;
+      const subjectId = selectedSubject?.subjectID || selectedSubject?.id || initialPaper?.subjectID || subject;
       fetchUnits(subjectId);
     } else {
       setUnits([]);
@@ -1201,13 +1600,9 @@ function MakePaperModal({ cls, defaultFmt, initialPaper, onClose, toast, subject
       return { ...next, [section]: { ...next[section], [typeKey]: block } };
     });
   };
-
-  const addTab = (section, typeKey) => {
-    const subjUnits = (PG_UNIT_DATA[subject] || []).filter(u => u.qtypes[typeKey]);
-    if (subjUnits.length === 0) {
-      toast('No approved items found for this question type', 'warning');
-      return;
-    }
+const addTab = (section, typeKey) => {
+  // API data available hai toh direct add karo
+  if (notebookDetails) {
     setBlocksState(prev => {
       const next = ensureBlock(prev, section, typeKey);
       const block = next[section][typeKey];
@@ -1215,7 +1610,23 @@ function MakePaperModal({ cls, defaultFmt, initialPaper, onClose, toast, subject
       const newBlock = { ...block, open: true, activeTab: tab.entryId, tabs: [...block.tabs, tab] };
       return { ...next, [section]: { ...next[section], [typeKey]: newBlock } };
     });
-  };
+    return;
+  }
+  
+  // Static data check
+  const subjUnits = (PG_UNIT_DATA[subject] || []).filter(u => u.qtypes[typeKey]);
+  if (subjUnits.length === 0) {
+    toast('No approved items found for this question type', 'warning');
+    return;
+  }
+  setBlocksState(prev => {
+    const next = ensureBlock(prev, section, typeKey);
+    const block = next[section][typeKey];
+    const tab = freshTab(block.tabs.length + 1);
+    const newBlock = { ...block, open: true, activeTab: tab.entryId, tabs: [...block.tabs, tab] };
+    return { ...next, [section]: { ...next[section], [typeKey]: newBlock } };
+  });
+};
 
   const switchTab = (section, typeKey, entryId) => {
     setBlocksState(prev => {
@@ -1246,21 +1657,104 @@ function MakePaperModal({ cls, defaultFmt, initialPaper, onClose, toast, subject
     });
   };
 
-  const saveTab = (section, typeKey, entryId) => {
-    const block = blocksState[section]?.[typeKey];
-    const tab = block?.tabs.find(t => t.entryId === entryId);
-    if (!tab) return;
+const saveTab = async (section, typeKey, entryId) => {
+  const block = blocksState[section]?.[typeKey];
+  const tab = block?.tabs.find(t => t.entryId === entryId);
+  if (!tab) return;
+
+  if (!notebookDetails) {
     const selCount = Object.keys(tab.unitSelections).length;
     if (selCount === 0) { toast('Please select at least one unit', 'warning'); return; }
-    const items = +tab.items || 0;
-    if (items < 1) { toast('Please enter number of items', 'warning'); return; }
-    if (items > tab.totalEligible) {
-      toast('Items exceed approved count (' + tab.totalEligible + ')', 'warning');
-      return;
+  }
+
+  const items = +tab.items || 0;
+  if (items < 1) { toast('Please enter number of items', 'warning'); return; }
+  if (items > tab.totalEligible && tab.totalEligible > 0) {
+    toast('Items exceed available count (' + tab.totalEligible + ')', 'warning');
+    return;
+  }
+
+  // Section total (incl. this block's current values) must not exceed the configured limit.
+  const sectionTarget = section === 'obj' ? objTarget : subjTarget;
+  const sectionUsed   = sectionUsedMarks(blocksState[section]);
+  if (sectionTarget > 0 && sectionUsed > sectionTarget) {
+    toast(`Total ${section === 'obj' ? 'Objective' : 'Subjective'} Marks should not exceed the defined limit (${sectionTarget}).`, 'error');
+    return;
+  }
+
+  try {
+    const token = sessionStorage.getItem('token');
+    const branchID = sessionStorage.getItem('branchID');
+
+    const selectedSubject = subjects.find(s => s.subjectName === subject || s === subject);
+    const subjectId = selectedSubject?.subjectID || selectedSubject?.id || subject;
+    const classID = cls.gradeID || cls.id;
+    const sectionID = cls.sectionID || cls.section;
+let mainQuestions = [];
+if (notebookDetails) {
+  // mainQuestion = API se selected dropdown value (tab.selectedMainQ).
+  // tab.instr alag hai = user ka khud typed Main Instruction → changedMainQuestion.
+  mainQuestions = tab.selectedMainQ ? [tab.selectedMainQ] : [];
+} else {
+  // static mode — same as before
+  Object.entries(tab.unitSelections).forEach(([unitName, instrIdx]) => {
+    const unitObj = (PG_UNIT_DATA[subject] || []).find(u => u.name === unitName);
+    if (!unitObj) return;
+    const instrs = unitObj.qtypes[typeKey] || [];
+    const chosen = instrs[instrIdx];
+    if (chosen?.instr) mainQuestions.push(chosen.instr);
+  });
+}
+
+  // Fresh qpMasterID lives in the ref (state can be stale → 0 in this closure).
+  const qpMastId = qpMasterIDRef.current || qpMasterID;
+  console.log('Saving with qpMastID:', qpMastId);
+
+    // Pehle se saved question (edit/prefill ya pehle insert ho chuka) → update, warna insert.
+    const isExisting = !!tab.existing;
+    const payload = {
+      id: tab.savedId || 0,
+      qpMastID: qpMastId,
+      branchID: parseInt(branchID),
+      classID: parseInt(classID),
+      subjectID: parseInt(subjectId),
+      sectionID: parseInt(sectionID),
+      recTitle: PG_REC_TITLE[typeKey] || typeKey,
+      changedMainQuestion: tab.instr || '',
+      noOfItem: +tab.items || 0,
+      marksPerItem: +tab.marks || 1,
+      noOfChoices: +tab.choices || 0,
+      paperType: section === 'obj' ? 'objective' : 'subjective',
+      formatePaper: paperType,   // selected Paper Type dropdown: objective | subjective | both
+      mainQuestion: mainQuestions,
+      action: isExisting ? 'update' : 'insert',
+    };
+
+    const url = buildUrl('/api/qpquestionselection_crud');
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const data = await response.json();
+
+    if (data && (data.success || data.message?.toLowerCase().includes('success'))) {
+      // Mark existing so the next save updates (not re-inserts); keep any returned record id.
+      updateTab(section, typeKey, entryId, { saved: true, existing: true, savedId: data.id ?? data.recordId ?? tab.savedId ?? 0 });
+      toast('Question block saved!', 'success');
+    } else {
+      toast(data.message || 'Failed to save question block', 'error');
     }
-    updateTab(section, typeKey, entryId, { saved: true });
-    toast('Question block saved', 'success');
-  };
+  } catch (err) {
+    console.error('Error saving question block:', err);
+    toast('Error saving question block', 'error');
+  }
+};
 
   const editTab = (section, typeKey, entryId) =>
     updateTab(section, typeKey, entryId, { saved: false });
@@ -1285,10 +1779,10 @@ function MakePaperModal({ cls, defaultFmt, initialPaper, onClose, toast, subject
         action: isEdit ? "update" : "insert",
         paperType: paperType,
         paperFormate: paperFmt,
-        timeForSubjective: parseInt(subjTime) || 0,
-        timeForObject: parseInt(objTime) || 0,
-        marksForObject: parseInt(objMarks) || 0,
-        marksForSubjective: parseInt(subjMarks) || 0,
+        timeForSubjective: String(subjTime) || String(0),
+        timeForObject: String(objTime) || String(0),
+        marksForObject: String(objMarks) || String(0),
+        marksForSubjective: String(subjMarks) || String(0),
         paperTitle: title,
         branchID: parseInt(branchID),
         gradeID: parseInt(classID),
@@ -1298,7 +1792,7 @@ function MakePaperModal({ cls, defaultFmt, initialPaper, onClose, toast, subject
         notebookIDs: selectedUnits // Selected unit IDs
       };
 
-      const url = buildUrl(`/api/questionpapercrud`);
+      const url = buildUrl(`/api/qpmaster_crud`);
       
       const response = await fetch(url, {
         method: "POST",
@@ -1309,50 +1803,106 @@ function MakePaperModal({ cls, defaultFmt, initialPaper, onClose, toast, subject
         },
         body: JSON.stringify(payload),
       });
+const data = await response.json();
+console.log('QP Master CRUD Response:', data); // debug ke liye
 
-      const data = await response.json();
-      
-      if (data && data.success) {
-        toast('Question paper created successfully!', 'success');
-        setFetched(true);
-        setQTab(showObj ? 'obj' : 'subj');
-        // You can also store the returned qpMasterID if needed
-        if (data.data && data.data.qpMasterID) {
-          // Store qpMasterID for future updates
-          console.log('QP Master ID:', data.data.qpMasterID);
-        }
-      } else {
-        toast(data.message || 'Failed to create question paper', 'error');
-        setFetched(false);
-      }
+if (data && (data.qpMasterID || data.qpMasterID === 0)) {
+  const newID = data.qpMasterID;
+  toast('Question paper created successfully!', 'success');
+  setQpMasterID(newID);
+  qpMasterIDRef.current = newID;
+  console.log('qpMasterIDRef set to:', qpMasterIDRef.current); // confirm
+  setFetched(true);
+  setQTab(showObj ? 'obj' : 'subj');
+  return newID;
+} else {
+  toast(data.message || 'Failed to create question paper', 'error');
+  setFetched(false);
+  return false;
+}
     } catch (err) {
       console.error("Error creating question paper:", err);
       toast('Error creating question paper', 'error');
       setFetched(false);
+          return false; // 👈 return false on error
+
     } finally {
       setLoading(false);
     }
   };
+// API response keys ko PG type keys se map karo
 
-  // 👇 Modified onFetch function
-  const onFetch = async () => {
-    if (!canFetch) {
-      toast('Please fill all the fields before fetching', 'warning');
-      return;
+// notebookDetails se ek subject ka PG_UNIT_DATA jaisa structure banao
+const buildUnitDataFromAPI = (details) => {
+  if (!details) return {};
+  
+  const qtypes = {};
+  
+  Object.entries(API_KEY_MAP).forEach(([pgKey, apiKey]) => {
+    const items = details[apiKey];
+    if (items && items.length > 0) {
+      // mainQuestion se group karo
+      const grouped = {};
+      items.forEach(item => {
+        const mainQ = item.mainQuestion || 'Section A';
+        if (!grouped[mainQ]) grouped[mainQ] = [];
+        grouped[mainQ].push(item);
+      });
+      
+      // Har mainQuestion group ko ek instruction card banao
+      qtypes[pgKey] = Object.entries(grouped).map(([mainQ, groupItems]) => ({
+        instr: mainQ,
+        total: groupItems.length,
+        submitted: groupItems.length, // API se aaye hain = submitted
+        items: groupItems, // original items store karo
+      }));
     }
-    
-    if (selectedUnits.length === 0) {
-      toast('Please select at least one unit', 'warning');
-      return;
-    }
-    
-    // Call the API to create question paper
-    await createQuestionPaper();
+  });
+  
+  return {
+    // Single "unit" — API se loaded
+    unitName: 'Fetched Questions',
+    qtypes,
   };
+};
+const onFetch = async () => {
+  if (!canFetch) {
+    toast('Please fill all the fields before fetching', 'warning');
+    return;
+  }
+  
+  if (selectedUnits.length === 0) {
+    toast('Please select at least one unit', 'warning');
+    return;
+  }
+  
+  
+  const newQpMasterID = await createQuestionPaper(); // 👈 naam badlo
+  if (!newQpMasterID) return;
+  await fetchNotebookDetails(selectedUnits);
+};
 
   const onGenerate = () => {
-    if (!canGenerate) {
-      toast('Complete validation before generating', 'warning');
+    if (!baseOk) {
+      toast('Please fill all the fields before generating', 'warning');
+      return;
+    }
+    // Objective section must be exactly complete (and within limit).
+    if (showObj && objStatus === 'over') {
+      toast(`Total Objective Marks should not exceed the defined limit (${objTarget}).`, 'error');
+      return;
+    }
+    if (showObj && objStatus !== 'ok') {
+      toast(`Please complete all Objective Marks (${objTarget}) before saving the paper.`, 'warning');
+      return;
+    }
+    // Subjective section must be exactly complete (and within limit).
+    if (showSubj && subjStatus === 'over') {
+      toast(`Total Subjective Marks should not exceed the defined limit (${subjTarget}).`, 'error');
+      return;
+    }
+    if (showSubj && subjStatus !== 'ok') {
+      toast(`Please complete all Subjective Marks (${subjTarget}) before saving the paper.`, 'warning');
       return;
     }
     toast(`Paper generated — "${title}"`, 'success');
@@ -1398,7 +1948,6 @@ function MakePaperModal({ cls, defaultFmt, initialPaper, onClose, toast, subject
                     setSubject(e.target.value); 
                     setSelectedUnits([]); // Clear selected units when subject changes
                   }}
-                  disabled={loadingUnits}
                 >
                   <option value="">— Choose —</option>
                   {subjects.map(s => (
@@ -1411,7 +1960,7 @@ function MakePaperModal({ cls, defaultFmt, initialPaper, onClose, toast, subject
 
               <div className="pg-sc-field">
                 <div className="pg-field-label">
-                  Units {loadingUnits && <i className="fa-solid fa-spinner fa-spin"></i>}
+                  Units 
                 </div>
                 <Select
                   isMulti
@@ -1425,8 +1974,8 @@ function MakePaperModal({ cls, defaultFmt, initialPaper, onClose, toast, subject
                       setBlocksState({ obj: {}, subj: {} });
                     }
                   }}
-                  placeholder={loadingUnits ? "Loading units..." : "Select units..."}
-                  isDisabled={loadingUnits || !subject}
+                  placeholder="Select units..."
+                  isDisabled={!subject}
                   styles={{
                     control: (base) => ({
                       ...base,
@@ -1436,7 +1985,7 @@ function MakePaperModal({ cls, defaultFmt, initialPaper, onClose, toast, subject
                     })
                   }}
                 />
-                {subject && units.length === 0 && !loadingUnits && (
+                {subject && units.length === 0  && (
                   <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
                     <i className="fa-solid fa-info-circle"></i> No units available for this subject
                   </div>
@@ -1541,7 +2090,13 @@ function MakePaperModal({ cls, defaultFmt, initialPaper, onClose, toast, subject
                     </button>
                   </Tooltip>
                   <Tooltip text="Edit the subjective section (short / long questions)">
-                    <button className={`pg-qtype-tab${qTab === 'subj' ? ' active' : ''}`} onClick={() => setQTab('subj')}>
+                    <button className={`pg-qtype-tab${qTab === 'subj' ? ' active' : ''}`} onClick={() => {
+                      if (objStatus !== 'ok') {
+                        toast(`Please complete all Objective Marks (${objTarget}) before proceeding to the Subjective section.`, 'warning');
+                        return;
+                      }
+                      setQTab('subj');
+                    }}>
                       <i className="fa-solid fa-pencil"></i> Subjective
                     </button>
                   </Tooltip>
@@ -1559,20 +2114,22 @@ function MakePaperModal({ cls, defaultFmt, initialPaper, onClose, toast, subject
                   </div>
                   {PG_OBJ_TYPES.map(t => (
                     <QBlockAccordion
-                      key={t.key}
-                      typeDef={t}
-                      section="obj"
-                      subject={subject}
-                      block={blocksState.obj[t.key]}
-                      typeAgg={typeAggregates(blocksState.obj)[t.key]}
-                      onToggleOpen={() => toggleBlockOpen('obj', t.key)}
-                      onAddTab={() => addTab('obj', t.key)}
-                      onSwitchTab={entryId => switchTab('obj', t.key, entryId)}
-                      onRemoveTab={entryId => removeTab('obj', t.key, entryId)}
-                      onUpdateTab={(entryId, patch) => updateTab('obj', t.key, entryId, patch)}
-                      onSaveTab={entryId => saveTab('obj', t.key, entryId)}
-                      onEditTab={entryId => editTab('obj', t.key, entryId)}
-                    />
+        key={t.key}
+        typeDef={t}
+        section="obj"
+        subject={subject}
+        block={blocksState.obj[t.key]}
+        typeAgg={typeAggregates(blocksState.obj)[t.key]}
+        notebookDetails={notebookDetails}       // 👈 ADD
+        apiKeyMap={API_KEY_MAP}                 // 👈 ADD
+        onToggleOpen={() => toggleBlockOpen('obj', t.key)}
+        onAddTab={() => addTab('obj', t.key)}
+        onSwitchTab={entryId => switchTab('obj', t.key, entryId)}
+        onRemoveTab={entryId => removeTab('obj', t.key, entryId)}
+        onUpdateTab={(entryId, patch) => updateTab('obj', t.key, entryId, patch)}
+        onSaveTab={entryId => saveTab('obj', t.key, entryId)}
+        onEditTab={entryId => editTab('obj', t.key, entryId)}
+      />
                   ))}
                 </div>
               )}
@@ -1586,21 +2143,23 @@ function MakePaperModal({ cls, defaultFmt, initialPaper, onClose, toast, subject
                     </span>
                   </div>
                   {PG_SUBJ_TYPES.map(t => (
-                    <QBlockAccordion
-                      key={t.key}
-                      typeDef={t}
-                      section="subj"
-                      subject={subject}
-                      block={blocksState.subj[t.key]}
-                      typeAgg={typeAggregates(blocksState.subj)[t.key]}
-                      onToggleOpen={() => toggleBlockOpen('subj', t.key)}
-                      onAddTab={() => addTab('subj', t.key)}
-                      onSwitchTab={entryId => switchTab('subj', t.key, entryId)}
-                      onRemoveTab={entryId => removeTab('subj', t.key, entryId)}
-                      onUpdateTab={(entryId, patch) => updateTab('subj', t.key, entryId, patch)}
-                      onSaveTab={entryId => saveTab('subj', t.key, entryId)}
-                      onEditTab={entryId => editTab('subj', t.key, entryId)}
-                    />
+ <QBlockAccordion
+        key={t.key}
+        typeDef={t}
+        section="subj"
+        subject={subject}
+        block={blocksState.subj[t.key]}
+        typeAgg={typeAggregates(blocksState.subj)[t.key]}
+        notebookDetails={notebookDetails}       // 👈 ADD
+        apiKeyMap={API_KEY_MAP}                 // 👈 ADD
+        onToggleOpen={() => toggleBlockOpen('subj', t.key)}
+        onAddTab={() => addTab('subj', t.key)}
+        onSwitchTab={entryId => switchTab('subj', t.key, entryId)}
+        onRemoveTab={entryId => removeTab('subj', t.key, entryId)}
+        onUpdateTab={(entryId, patch) => updateTab('subj', t.key, entryId, patch)}
+        onSaveTab={entryId => saveTab('subj', t.key, entryId)}
+        onEditTab={entryId => editTab('subj', t.key, entryId)}
+      />
                   ))}
                 </div>
               )}
@@ -1621,8 +2180,7 @@ function MakePaperModal({ cls, defaultFmt, initialPaper, onClose, toast, subject
               <button
                 className="pg-btn-primary"
                 onClick={onGenerate}
-                disabled={!canGenerate}
-                style={!canGenerate ? { opacity: .5, cursor: 'not-allowed' } : undefined}
+                style={!canGenerate ? { opacity: .6 } : undefined}
               >
                 <i className="fa-solid fa-wand-magic-sparkles"></i> Generate Paper
               </button>
@@ -1661,27 +2219,84 @@ function MarksBar({ status, label, iconColor, iconClass, used, target, style }) 
    inside each tab a workspace where the user picks units, instruction,
    items / choices / marks. */
 function QBlockAccordion({ typeDef, section, subject, block, typeAgg,
-  onToggleOpen, onAddTab, onSwitchTab, onRemoveTab, onUpdateTab, onSaveTab, onEditTab }) {
+  onToggleOpen, onAddTab, onSwitchTab, onRemoveTab, onUpdateTab, onSaveTab, onEditTab,
+  notebookDetails, apiKeyMap
+}) {
 
+  const getApiItems = () => {
+    if (!notebookDetails || !apiKeyMap) return null;
+    const apiKey = apiKeyMap[typeDef.key];
+    if (!apiKey) return null;
+    const items = notebookDetails[apiKey];
+    return items && Array.isArray(items) && items.length > 0 ? items : null;
+  };
+
+  const apiItems = getApiItems();
+
+  // Static data fallback
   const unitData = PG_UNIT_DATA[subject] || [];
+  
   let totalSubmitted = 0, unitCount = 0;
-  unitData.forEach(u => {
-    const qt = u.qtypes[typeDef.key];
-    if (qt) { unitCount++; qt.forEach(q => { totalSubmitted += q.submitted; }); }
-  });
+
+  // API se unit-wise submitted count calculate karo
+  let unitSummary = []; // [{ unitName, submitted, total }]
+
+  if (apiItems) {
+    // Group by unitName
+    const unitMap = {};
+    apiItems.forEach(item => {
+      const uName = item.unitName || 'Unit';
+      if (!unitMap[uName]) {
+        unitMap[uName] = {
+          unitName: uName,
+          submitted: item.submittedCount || 0,
+          total: item.notebookTotalCount || 0,
+        };
+      }
+    });
+    unitSummary = Object.values(unitMap);
+    // Total submitted = sum of all unit submittedCounts
+    totalSubmitted = unitSummary.reduce((sum, u) => sum + u.submitted, 0);
+    unitCount = unitSummary.length;
+  } else {
+    unitData.forEach(u => {
+      const qt = u.qtypes[typeDef.key];
+      if (qt) { unitCount++; qt.forEach(q => { totalSubmitted += q.submitted; }); }
+    });
+  }
+
+  const hasApproved = totalSubmitted > 0;
 
   const open      = !!block?.open;
   const tabs      = block?.tabs || [];
   const activeTab = block?.activeTab;
   const activeIdx = tabs.findIndex(t => t.entryId === activeTab);
 
-  const badge = totalSubmitted > 0
-    ? <span className="pg-qblock-badge">{totalSubmitted} approved · {unitCount} unit{unitCount !== 1 ? 's' : ''}</span>
-    : <span className="pg-qblock-badge" style={{ background: 'var(--bg-muted)', color: 'var(--text-muted)' }}>No items</span>;
+  // Badge: unit summary dikhao
+const badge = apiItems ? (
+  hasApproved ? (
+    <span className="pg-qblock-badge" >
+      {totalSubmitted} approved · {unitCount} unit{unitCount !== 1 ? 's' : ''}
+    </span>
+  ) : (
+    <span className="pg-qblock-badge">
+      0 approved · {unitCount} unit{unitCount !== 1 ? 's' : ''}
+    </span>
+  )
+) : (
+  totalSubmitted > 0
+    ? <span className="pg-qblock-badge" >
+        {totalSubmitted} question{totalSubmitted !== 1 ? 's' : ''} available
+      </span>
+    : <span className="pg-qblock-badge" style={{ background: 'var(--bg-muted)', color: 'var(--text-muted)' }}>
+        No items
+      </span>
+);
 
   return (
     <div className="pg-qblock">
-      <div className="pg-qblock-header" onClick={onToggleOpen}>
+      <div className="pg-qblock-header" onClick={onToggleOpen} style={{ cursor: 'pointer' }}>
+
         <div className="pg-qblock-title">{typeDef.label}</div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
           {badge}
@@ -1691,22 +2306,36 @@ function QBlockAccordion({ typeDef, section, subject, block, typeAgg,
               {' '}{typeAgg.count} Question{typeAgg.count !== 1 ? 's' : ''} · {typeAgg.marks} Marks
             </span>
           )}
-          <i className="fa-solid fa-chevron-down" style={{ fontSize: 11, color: 'var(--text-muted)', transition: 'transform .2s', transform: open ? 'rotate(180deg)' : 'none', marginLeft: 2 }}></i>
+          {/* Chevron sirf tab dikhao jab approved items hain */}
+        <i className="fa-solid fa-chevron-down" style={{
+  fontSize: 11, color: 'var(--text-muted)',
+  transition: 'transform .2s',
+  transform: open ? 'rotate(180deg)' : 'none',
+  marginLeft: 2
+}}></i>
         </div>
       </div>
-      {open && (
+
+      {/* Block sirf tab open ho jab approved items hain */}
+      {open  && (
         <div className="pg-qblock-body open">
-          {/* Tab nav */}
           <div className="pg-qtab-nav">
             {tabs.length === 0 ? (
-              <>
-                <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text-muted)', padding: '2px 4px' }}>No question blocks yet.</span>
-                <Tooltip text="Add a question block of this type">
-                  <button className="pg-qtab-add-btn" onClick={onAddTab}>
-                    <i className="fa-solid fa-plus"></i> Add Question Block
-                  </button>
-                </Tooltip>
-              </>
+             <>
+          <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text-muted)', padding: '2px 4px' }}>
+            No question blocks yet.
+          </span>
+          <Tooltip text={!hasApproved ? 'No approved items for this question type' : 'Add a question block of this type'}>
+            <button 
+              className="pg-qtab-add-btn" 
+              onClick={hasApproved ? onAddTab : undefined}
+              disabled={!hasApproved}
+              style={!hasApproved ? { opacity: 0.4, cursor: 'not-allowed', borderStyle: 'solid' } : {}}
+            >
+              <i className="fa-solid fa-plus"></i> Add Question Block
+            </button>
+          </Tooltip>
+        </>
             ) : (
               <>
                 {tabs.map(t => {
@@ -1715,31 +2344,15 @@ function QBlockAccordion({ typeDef, section, subject, block, typeAgg,
                   const totalMk = visible * (+t.marks || 0);
                   const hasData = (+t.items || 0) > 0;
                   return (
-                    <Tooltip
-                      key={t.entryId}
-                      text={hasData
-                        ? `${t.label} · ${t.items} questions · ${totalMk} marks${t.saved ? ' (saved)' : ''}`
-                        : `${t.label}${t.saved ? ' (saved)' : ''}`}
-                    >
+                    <Tooltip key={t.entryId} text={hasData ? `${t.label} · ${t.items} questions · ${totalMk} marks${t.saved ? ' (saved)' : ''}` : `${t.label}${t.saved ? ' (saved)' : ''}`}>
                       <button
                         className={`pg-qtab-pill${isActive ? ' active' : ''}${t.saved ? ' saved' : ''}`}
                         onClick={() => onSwitchTab(t.entryId)}
                       >
-                        {t.saved && (
-                          <i className="fa-solid fa-check" style={{ fontSize: 9, marginRight: 2, color: isActive ? '#fff' : 'var(--success,#16A34A)' }}></i>
-                        )}
+                        {t.saved && <i className="fa-solid fa-check" style={{ fontSize: 9, marginRight: 2, color: isActive ? '#fff' : 'var(--success,#16A34A)' }}></i>}
                         {t.label}
-                        {hasData && (
-                          <span style={{ fontSize: 9.5, fontWeight: 700, opacity: .75, marginLeft: 3 }}>
-                            {t.items} Q · {totalMk} Marks
-                          </span>
-                        )}
-                        {tabs.length > 1 && (
-                          <span
-                            className="pg-qtab-close"
-                            onClick={e => { e.stopPropagation(); onRemoveTab(t.entryId); }}
-                          >×</span>
-                        )}
+                        {hasData && <span style={{ fontSize: 9.5, fontWeight: 700, opacity: .75, marginLeft: 3 }}>{t.items} Q · {totalMk} Marks</span>}
+                        {tabs.length > 1 && <span className="pg-qtab-close" onClick={e => { e.stopPropagation(); onRemoveTab(t.entryId); }}>×</span>}
                       </button>
                     </Tooltip>
                   );
@@ -1753,25 +2366,23 @@ function QBlockAccordion({ typeDef, section, subject, block, typeAgg,
             )}
           </div>
 
-          {/* Active tab workspace */}
           {activeIdx >= 0 && (
-            <div className="pg-qworkspace">
-              {tabs[activeIdx].saved ? (
-                <QSavedCard
-                  tab={tabs[activeIdx]}
-                  onEdit={() => onEditTab(tabs[activeIdx].entryId)}
-                />
-              ) : (
-                <QWorkspacePanel
-                  tab={tabs[activeIdx]}
-                  typeKey={typeDef.key}
-                  subject={subject}
-                  onUpdate={patch => onUpdateTab(tabs[activeIdx].entryId, patch)}
-                  onSave={() => onSaveTab(tabs[activeIdx].entryId)}
-                />
-              )}
-            </div>
-          )}
+      <div className="pg-qworkspace">
+        {tabs[activeIdx].saved ? (
+          <QSavedCard tab={tabs[activeIdx]} onEdit={() => onEditTab(tabs[activeIdx].entryId)} />
+        ) : (
+          <QWorkspacePanel
+            tab={tabs[activeIdx]}
+            typeKey={typeDef.key}
+            subject={subject}
+            onUpdate={patch => onUpdateTab(tabs[activeIdx].entryId, patch)}
+            onSave={() => onSaveTab(tabs[activeIdx].entryId)}
+            apiItems={apiItems}
+          />
+        )}
+      </div>
+    )}
+
         </div>
       )}
     </div>
@@ -1782,7 +2393,7 @@ function QBlockAccordion({ typeDef, section, subject, block, typeAgg,
 function QSavedCard({ tab, onEdit }) {
   const items   = +tab.items   || 0;
   const choices = +tab.choices || 0;
-  const marks   = +tab.marks   || 1;
+  const marks   = +tab.marks   || 0;
   const visible = Math.max(0, items - choices);
   const unitNames = Object.keys(tab.unitSelections || {});
   return (
@@ -1813,53 +2424,94 @@ function QSavedCard({ tab, onEdit }) {
     </div>
   );
 }
-
-/* Editable workspace: left = units + instructions, right = configure */
-function QWorkspacePanel({ tab, typeKey, subject, onUpdate, onSave }) {
-  const unitData      = PG_UNIT_DATA[subject] || [];
-  const unitsWithType = unitData.filter(u => u.qtypes[typeKey]);
+function QWorkspacePanel({ tab, typeKey, subject, onUpdate, onSave, apiItems }) {
+  
+  const useApiData = !!apiItems && apiItems.length > 0;
+  
+  const unitData = PG_UNIT_DATA[subject] || [];
+  const unitsWithType = useApiData ? [] : unitData.filter(u => u.qtypes[typeKey]);
 
   const selectedUnits = tab.unitSelections || {};
   const selCount = Object.keys(selectedUnits).length;
 
-  /* Recalculate eligible whenever unit/instruction selection changes */
-  const breakdown = [];
-  let totalEligible = 0;
-  Object.entries(selectedUnits).forEach(([unitName, instrIdx]) => {
-    const unitObj = unitData.find(u => u.name === unitName);
-    if (!unitObj) return;
-    const instrs = unitObj.qtypes[typeKey] || [];
-    const chosen = instrs[instrIdx];
-    if (chosen) {
-      totalEligible += chosen.submitted;
-      breakdown.push(`${unitName}: ${chosen.submitted}`);
-    }
-  });
+  // API mode: group by unitName
+  const apiUnitMap = useApiData ? (() => {
+    const map = {};
+    apiItems.forEach(item => {
+      const uName = item.unitName || 'Unit';
+      if (!map[uName]) {
+        map[uName] = {
+          unitName: uName,
+          total: item.notebookTotalCount || 0,
+          submitted: item.submittedCount || 0,
+          items: [],
+        };
+      }
+      map[uName].items.push(item);
+    });
+    return map;
+  })() : {};
 
-  /* Keep tab.totalEligible in sync */
+  const apiUnits = Object.values(apiUnitMap);
+
+  const selectedUnitName = selectedUnits['__api__'] || null;
+  const selectedUnitData = selectedUnitName ? apiUnitMap[selectedUnitName] : null;
+
+  const totalEligible = useApiData
+    ? (selectedUnitData ? selectedUnitData.submitted : 0)
+    : (() => {
+        let t = 0;
+        Object.entries(selectedUnits).forEach(([unitName, instrIdx]) => {
+          const unitObj = unitData.find(u => u.name === unitName);
+          if (!unitObj) return;
+          const instrs = unitObj.qtypes[typeKey] || [];
+          const chosen = instrs[instrIdx];
+          if (chosen) t += chosen.submitted;
+        });
+        return t;
+      })();
+
+  const breakdown = useApiData
+    ? (selectedUnitData ? [`${selectedUnitData.unitName}: ${selectedUnitData.submitted}`] : [])
+    : (() => {
+        const bd = [];
+        Object.entries(selectedUnits).forEach(([unitName, instrIdx]) => {
+          const unitObj = unitData.find(u => u.name === unitName);
+          if (!unitObj) return;
+          const instrs = unitObj.qtypes[typeKey] || [];
+          const chosen = instrs[instrIdx];
+          if (chosen) bd.push(`${unitName}: ${chosen.submitted}`);
+        });
+        return bd;
+      })();
+
   useEffect(() => {
     if (tab.totalEligible !== totalEligible) {
       onUpdate({ totalEligible });
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [totalEligible]);
 
-  const toggleUnit = (unitName) => {
-    const next = { ...selectedUnits };
-    if (unitName in next) delete next[unitName];
-    else next[unitName] = 0;
-    onUpdate({ unitSelections: next });
-  };
+  // API mode: auto-select first unit
 
-  const selectInstr = (unitName, instrIdx) => {
-    onUpdate({ unitSelections: { ...selectedUnits, [unitName]: instrIdx } });
-  };
 
   const items   = +tab.items   || 0;
   const choices = +tab.choices || 0;
-  const marks   = +tab.marks   || 1;
+  const marks   = +tab.marks   || 0;
   const visible = Math.max(0, items - choices);
   const overflow = items > totalEligible && totalEligible > 0;
+
+  // Selected unit ke mainQuestions (unique)
+  const selectedMainQuestions = selectedUnitData
+    ? (() => {
+        const mqs = {};
+        selectedUnitData.items.forEach(item => {
+          const mq = item.mainQuestion || 'Section A';
+          if (!mqs[mq]) mqs[mq] = [];
+          mqs[mq].push(item);
+        });
+        return mqs;
+      })()
+    : {};
 
   return (
     <div className="pg-qws-panel">
@@ -1868,84 +2520,235 @@ function QWorkspacePanel({ tab, typeKey, subject, onUpdate, onSave }) {
         <div className="pg-qws-left">
           <div className="pg-qws-section-label">
             <i className="fa-solid fa-layer-group" style={{ color: '#1E40AF' }}></i>
-            Select Units
-            <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0, fontSize: 10 }}>(click to toggle)</span>
+            {useApiData ? 'Select Unit' : 'Select Units'}
+            <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0, fontSize: 10 }}>
+              {useApiData
+                ? `(${apiUnits.length} unit${apiUnits.length !== 1 ? 's' : ''} available)`
+                : '(click to toggle)'}
+            </span>
           </div>
-          <div style={{ fontSize: 10.5, color: 'var(--text-muted)', marginBottom: 8, lineHeight: 1.45, padding: '5px 8px', background: 'var(--bg-muted)', borderRadius: 'var(--radius-sm)', borderLeft: '2px solid #1E40AF' }}>
-            Select the units to include. Only <strong>submitted &amp; acknowledged</strong> items from selected units will be available.
-          </div>
-          <div className="pg-unit-rows-container">
-            {unitsWithType.length === 0 ? (
-              <div style={{ padding: 12, fontSize: 12, color: 'var(--text-muted)', textAlign: 'center' }}>
-                No approved items for this type.
+
+          {useApiData ? (
+            <div>
+              {/* Hint box */}
+              <div style={{
+                fontSize: 10.5, color: 'var(--text-muted)', marginBottom: 8,
+                lineHeight: 1.45, padding: '5px 8px', background: 'var(--bg-muted)',
+                borderRadius: 'var(--radius-sm)', borderLeft: '2px solid #1E40AF'
+              }}>
+                Select a unit below. Only <strong>submitted &amp; acknowledged</strong> items
+                from the selected unit will be available for paper generation.
               </div>
-            ) : unitsWithType.map(u => {
-              const isActive = u.name in selectedUnits;
-              const totalSub = u.qtypes[typeKey].reduce((s, q) => s + q.submitted, 0);
-              const instrs   = u.qtypes[typeKey] || [];
-              const sel      = isActive ? selectedUnits[u.name] : -1;
-              return (
-                <div key={u.name} className="pg-unit-row-wrap">
-                  <div
-                    className={`pg-unit-row${isActive ? ' active' : ''}`}
-                    onClick={() => toggleUnit(u.name)}
-                  >
-                    <div className={`pg-unit-row-dot${isActive ? ' active' : ''}`}></div>
-                    <div className="pg-unit-row-name">{u.name}</div>
-                    <span className="pg-unit-chip-count">{totalSub} approved</span>
-                  </div>
-                  {isActive && (
-                    <div className="pg-unit-instr-list">
-                      {instrs.map((q, qi) => (
-                        <div
-                          key={qi}
-                          className={`pg-instr-card${sel === qi ? ' active' : ''}`}
-                          onClick={() => selectInstr(u.name, qi)}
-                        >
-                          <div className="pg-instr-card-radio"></div>
-                          <div className="pg-instr-card-body">
-                            <div className="pg-instr-card-text">{q.instr}</div>
-                            <div className="pg-instr-card-meta">
-                              <span className="pg-q-info-chip total" style={{ padding: '2px 6px', fontSize: 10 }}>Total: {q.total}</span>
-                              <span className="pg-q-info-chip available" style={{ padding: '2px 6px', fontSize: 10 }}>Approved: {q.submitted}</span>
-                            </div>
-                          </div>
+
+              {/* Unit rows */}
+              <div className="pg-unit-rows-container" style={{ marginBottom: 8 }}>
+                {apiUnits.map((u, ui) => {
+                  const isActive = selectedUnits['__api__'] === u.unitName;
+                  return (
+                    <div key={ui} className="pg-unit-row-wrap">
+                      <div
+                        className={`pg-unit-row${isActive ? ' active' : ''}`}
+                        onClick={() => {
+                          const firstMainQ = u.items[0]?.mainQuestion || '';
+                          onUpdate({
+                            unitSelections: { '__api__': u.unitName },
+                            selectedMainQ: firstMainQ,   // API mainQuestion → payload; instr stays user-typed
+                            totalEligible: u.submitted,
+                          });
+                        }}
+                      >
+                        <div className={`pg-unit-row-dot${isActive ? ' active' : ''}`}></div>
+                        <div className="pg-unit-row-name">{u.unitName}</div>
+                        <div style={{ display: 'flex', gap: 5, flexShrink: 0 }}>
+                          <span className="pg-q-info-chip total" style={{ padding: '2px 7px', fontSize: 10 }}>
+                            Total: {u.total}
+                          </span>
+                          <span className="pg-q-info-chip available" style={{ padding: '2px 7px', fontSize: 10 }}>
+                            Approved: {u.submitted}
+                          </span>
                         </div>
-                      ))}
+                      </div>
+
+                      {/* Selected unit ke mainQuestions */}
+                      {isActive && (
+                        <div className="pg-unit-instr-list">
+                          {Object.entries(selectedMainQuestions).map(([mainQ, qItems], mi) => (
+                            <div
+                              key={mi}
+                              className={`pg-instr-card${tab.selectedMainQ === mainQ ? ' active' : ''}`}
+                              onClick={() => onUpdate({ selectedMainQ: mainQ, totalEligible: u.submitted })}
+                            >
+                              <div className="pg-instr-card-radio"></div>
+                              <div className="pg-instr-card-body">
+                                <div className="pg-instr-card-text">{mainQ}</div>
+                                <div className="pg-instr-card-meta">
+                                  <span className="pg-q-info-chip total" style={{ padding: '2px 6px', fontSize: 10 }}>
+                                    Total: {u.total}
+                                  </span>
+                                  <span className="pg-q-info-chip available" style={{ padding: '2px 6px', fontSize: 10 }}>
+                                    Approved: {u.submitted}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-          <div className="pg-eligible-bar">
-            {selCount === 0 ? (
-              <>
-                <i className="fa-solid fa-database" style={{ color: 'var(--text-muted)', fontSize: 11 }}></i>
-                <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>Select units to see eligible items</span>
-              </>
-            ) : (
-              <>
-                <i className="fa-solid fa-check-circle" style={{ color: 'var(--success,#16A34A)', fontSize: 13 }}></i>
-                <div style={{ flex: 1 }}>
-                  <span style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: 12.5 }}>{totalEligible} Eligible Items</span>
-                  <span style={{ color: 'var(--text-muted)', fontSize: 11.5, marginLeft: 8 }}>({breakdown.join(' + ')})</span>
-                </div>
-              </>
-            )}
-          </div>
-          <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 6, lineHeight: 1.4 }}>
-            <i className="fa-solid fa-circle-info" style={{ fontSize: 9, marginRight: 3, color: '#0284C7' }}></i>
-            Eligible = teacher-submitted &amp; principal-acknowledged items only.
-          </div>
+                  );
+                })}
+              </div>
+
+              {/* Eligible bar */}
+              <div className="pg-eligible-bar">
+                {totalEligible > 0 ? (
+                  <>
+                    <i className="fa-solid fa-check-circle" style={{ color: '#16A34A', fontSize: 13 }}></i>
+                    <div style={{ flex: 1 }}>
+                      <span style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: 12.5 }}>
+                        {totalEligible} Eligible Items
+                      </span>
+                      <span style={{ color: 'var(--text-muted)', fontSize: 11.5, marginLeft: 8 }}>
+                        ({breakdown.join(' + ')})
+                      </span>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <i className="fa-solid fa-database" style={{ color: 'var(--text-muted)', fontSize: 11 }}></i>
+                    <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>
+                      Select a unit to see eligible items
+                    </span>
+                  </>
+                )}
+              </div>
+
+              {/* Eligible footnote */}
+              <div style={{
+                fontSize: 10, color: 'var(--text-muted)', marginTop: 6,
+                display: 'flex', alignItems: 'center', gap: 4
+              }}>
+                <i className="fa-solid fa-circle-info" style={{ fontSize: 10, color: '#1E40AF' }}></i>
+                Eligible = teacher-submitted &amp; principal-acknowledged items only.
+              </div>
+            </div>
+
+          ) : (
+            // Static Unit View
+            <>
+              <div style={{
+                fontSize: 10.5, color: 'var(--text-muted)', marginBottom: 8,
+                lineHeight: 1.45, padding: '5px 8px', background: 'var(--bg-muted)',
+                borderRadius: 'var(--radius-sm)', borderLeft: '2px solid #1E40AF'
+              }}>
+                Select the units to include. Only <strong>submitted &amp; acknowledged</strong> items
+                from selected units will be available.
+              </div>
+              <div className="pg-unit-rows-container">
+                {unitsWithType.length === 0 ? (
+                  <div style={{ padding: 12, fontSize: 12, color: 'var(--text-muted)', textAlign: 'center' }}>
+                    No approved items for this type.
+                  </div>
+                ) : unitsWithType.map(u => {
+                  const isActive = u.name in selectedUnits;
+                  const totalSub = u.qtypes[typeKey].reduce((s, q) => s + q.submitted, 0);
+                  const instrs = u.qtypes[typeKey] || [];
+                  const sel = isActive ? selectedUnits[u.name] : -1;
+                  return (
+                    <div key={u.name} className="pg-unit-row-wrap">
+                      <div
+                        className={`pg-unit-row${isActive ? ' active' : ''}`}
+                        onClick={() => {
+                          const next = { ...selectedUnits };
+                          if (u.name in next) delete next[u.name]; else next[u.name] = 0;
+                          onUpdate({ unitSelections: next });
+                        }}
+                      >
+                        <div className={`pg-unit-row-dot${isActive ? ' active' : ''}`}></div>
+                        <div className="pg-unit-row-name">{u.name}</div>
+                        <span className="pg-unit-chip-count">{totalSub} approved</span>
+                      </div>
+                      {isActive && (
+                        <div className="pg-unit-instr-list">
+                          {instrs.map((q, qi) => (
+                            <div
+                              key={qi}
+                              className={`pg-instr-card${sel === qi ? ' active' : ''}`}
+                              onClick={() => onUpdate({ unitSelections: { ...selectedUnits, [u.name]: qi } })}
+                            >
+                              <div className="pg-instr-card-radio"></div>
+                              <div className="pg-instr-card-body">
+                                <div className="pg-instr-card-text">{q.instr}</div>
+                                <div className="pg-instr-card-meta">
+                                  <span className="pg-q-info-chip total" style={{ padding: '2px 6px', fontSize: 10 }}>
+                                    Total: {q.total}
+                                  </span>
+                                  <span className="pg-q-info-chip available" style={{ padding: '2px 6px', fontSize: 10 }}>
+                                    Approved: {q.submitted}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="pg-eligible-bar">
+                {selCount === 0 ? (
+                  <>
+                    <i className="fa-solid fa-database" style={{ color: 'var(--text-muted)', fontSize: 11 }}></i>
+                    <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>
+                      Select units to see eligible items
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <i className="fa-solid fa-check-circle" style={{ color: 'var(--success,#16A34A)', fontSize: 13 }}></i>
+                    <div style={{ flex: 1 }}>
+                      <span style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: 12.5 }}>
+                        {totalEligible} Eligible Items
+                      </span>
+                      <span style={{ color: 'var(--text-muted)', fontSize: 11.5, marginLeft: 8 }}>
+                        ({breakdown.join(' + ')})
+                      </span>
+                    </div>
+                  </>
+                )}
+              </div>
+              <div style={{
+                fontSize: 10, color: 'var(--text-muted)', marginTop: 6,
+                display: 'flex', alignItems: 'center', gap: 4
+              }}>
+                <i className="fa-solid fa-circle-info" style={{ fontSize: 10, color: '#1E40AF' }}></i>
+                Eligible = teacher-submitted &amp; principal-acknowledged items only.
+              </div>
+            </>
+          )}
         </div>
 
-        {/* RIGHT */}
-        {selCount === 0 ? (
+        {/* RIGHT - Configure */}
+        {useApiData && !selectedUnitName ? (
           <div className="pg-qws-right pg-qws-right-empty">
             <i className="fa-solid fa-arrow-left" style={{ fontSize: 20, opacity: .3 }}></i>
-            <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-muted)' }}>Select units to configure</div>
-            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Click any unit on the left to begin</div>
+            <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-muted)' }}>
+              Select a unit to configure
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+              Click any unit on the left to begin
+            </div>
+          </div>
+        ) : !useApiData && selCount === 0 ? (
+          <div className="pg-qws-right pg-qws-right-empty">
+            <i className="fa-solid fa-arrow-left" style={{ fontSize: 20, opacity: .3 }}></i>
+            <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-muted)' }}>
+              Select units to configure
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+              Click any unit on the left to begin
+            </div>
           </div>
         ) : (
           <div className="pg-qws-right">
@@ -1953,84 +2756,104 @@ function QWorkspacePanel({ tab, typeKey, subject, onUpdate, onSave }) {
               <i className="fa-solid fa-sliders" style={{ color: '#1E40AF' }}></i>
               Configure Question
             </div>
+
             <div style={{ marginBottom: 10 }}>
               <div className="pg-q-field-label" style={{ marginBottom: 4 }}>
-                Main Instruction <span style={{ fontSize: 10, fontWeight: 400, color: 'var(--text-muted)' }}>(shown on paper)</span>
+                Main Instruction{' '}
+                <span style={{ fontSize: 10, fontWeight: 400, color: 'var(--text-muted)' }}>
+                  (shown on paper)
+                </span>
               </div>
-              <input
-                className="pg-q-instruction"
-                type="text"
-                value={tab.instr || ''}
-                onChange={e => onUpdate({ instr: e.target.value })}
-                placeholder="e.g. Write the Opposite of the following words"
-                style={{ borderRadius: 'var(--radius-sm)', fontSize: 12.5 }}
-              />
-              <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 3 }}>
-                <i className="fa-solid fa-lightbulb" style={{ fontSize: 9, color: '#F59E0B', marginRight: 3 }}></i>
-                Main questions may differ per unit even if the question type is the same.
+             <input
+  className="pg-q-instruction"
+  type="text"
+  value={tab.instr || ''}
+  onChange={e => onUpdate({ instr: e.target.value })}
+  placeholder="e.g. Write the Opposite of the following words"
+  style={{ borderRadius: 'var(--radius-sm)', fontSize: 12.5 }}
+/>
+              <div style={{
+                fontSize: 10, color: 'var(--text-muted)', marginTop: 4,
+                display: 'flex', alignItems: 'center', gap: 4
+              }}>
+                <i className="fa-solid fa-lightbulb" style={{ color: '#F59E0B', fontSize: 10 }}></i>
+                {useApiData
+                  ? 'This instruction will appear as the question heading on the paper.'
+                  : 'Main questions may differ per unit even if the question type is the same.'}
               </div>
             </div>
+
             <div className="pg-qws-fields">
               <div>
                 <div className="pg-q-field-label">No. of Items</div>
                 <input
-                  className="pg-q-input"
-                  type="number"
-                  min={1}
-                  value={items || ''}
-                  placeholder="e.g. 5"
+                  className="pg-q-input" type="number" min={1}
+                  value={items || ''} placeholder="e.g. 5"
                   onChange={e => onUpdate({ items: Math.max(0, +e.target.value || 0) })}
                 />
-                <div style={{ fontSize: 9.5, color: 'var(--text-muted)', marginTop: 3 }}>Max = Total Eligible</div>
+                <div style={{ fontSize: 9.5, color: 'var(--text-muted)', marginTop: 3 }}>
+                  Max = {totalEligible}
+                </div>
               </div>
               <div>
                 <div className="pg-q-field-label">No. of Choices</div>
                 <input
-                  className="pg-q-input"
-                  type="number"
-                  min={0}
+                  className="pg-q-input" type="number" min={0}
                   value={choices}
                   onChange={e => onUpdate({ choices: Math.max(0, +e.target.value || 0) })}
                 />
-                <div style={{ fontSize: 9.5, color: 'var(--text-muted)', marginTop: 3 }}>Choices = extra options; reduces compulsory items</div>
+                <div style={{ fontSize: 9.5, color: 'var(--text-muted)', marginTop: 3 }}>
+                  Choices = extra options; reduces compulsory items
+                </div>
               </div>
               <div>
                 <div className="pg-q-field-label">Marks / Item</div>
                 <input
-                  className="pg-q-input"
-                  type="number"
-                  min={1}
+                  className="pg-q-input" type="number"
                   value={marks}
                   onChange={e => onUpdate({ marks: Math.max(0, +e.target.value || 0) })}
                 />
-                <div style={{ fontSize: 9.5, color: 'var(--text-muted)', marginTop: 3 }}>Auto-calculates total marks</div>
+                <div style={{ fontSize: 9.5, color: 'var(--text-muted)', marginTop: 3 }}>
+                  Auto-calculates total marks
+                </div>
               </div>
               <div>
                 <div className="pg-q-field-label">Total Eligible</div>
                 <input
-                  className="pg-q-input"
-                  type="number"
-                  value={totalEligible}
-                  readOnly
+                  className="pg-q-input" type="number"
+                  value={totalEligible} readOnly
                   style={{ background: 'var(--bg-card)', fontWeight: 700, color: '#1E40AF', cursor: 'default' }}
                 />
-                <div style={{ fontSize: 9.5, color: 'var(--text-muted)', marginTop: 3 }}>From selected units</div>
+                <div style={{ fontSize: 9.5, color: 'var(--text-muted)', marginTop: 3 }}>
+                  {useApiData ? 'Approved questions' : 'From selected units'}
+                </div>
               </div>
             </div>
+
             <div className="pg-q-calc">
               {items > 0
-                ? <>Paper shows <strong>{visible} item{visible !== 1 ? 's' : ''}</strong> · <strong>{choices} choice item{choices !== 1 ? 's' : ''}</strong> · <strong>{visible * marks} mark{visible * marks !== 1 ? 's' : ''}</strong></>
+                ? <>Paper shows <strong>{visible} item{visible !== 1 ? 's' : ''}</strong> · <strong>{choices} choice{choices !== 1 ? 's' : ''}</strong> · <strong>{visible * marks} mark{visible * marks !== 1 ? 's' : ''}</strong></>
                 : <>Set items &amp; choices to see layout preview</>}
             </div>
+
             {overflow && (
               <div className="pg-q-warn">
                 <i className="fa-solid fa-triangle-exclamation"></i>
-                You selected {items} items but only {totalEligible} approved items are available.
+                {items} items requested but only {totalEligible} approved available.
               </div>
             )}
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border-light)' }}>
+
+            <div style={{
+              display: 'flex', justifyContent: 'flex-end',
+              marginTop: 12, paddingTop: 10,
+              borderTop: '1px solid var(--border-light)'
+            }}>
               <Tooltip text="Save this question block">
-                <button className="pg-btn-primary" style={{ padding: '8px 20px', fontSize: 12.5 }} onClick={onSave}>
+                <button
+                  className="pg-btn-primary"
+                  style={{ padding: '8px 20px', fontSize: 12.5 }}
+                  onClick={onSave}
+                >
                   <i className="fa-solid fa-floppy-disk"></i> Save
                 </button>
               </Tooltip>
@@ -2043,16 +2866,236 @@ function QWorkspacePanel({ tab, typeKey, subject, onUpdate, onSave }) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════
-   PAPER VIEW MODAL — Color/B&W toggle + sample paper body + Download
+   SAVED-SUBMISSION DETAIL — shared by Preview, Download (and Edit).
+   GET /api/getexamqpsubmissiondetail?ID&branchID&gradeID&sectionID
+   Response: [{ parentData, specificTableData }, ...] grouped per recTitle.
+   ═══════════════════════════════════════════════════════════════════ */
+async function fetchQpSubmissionDetail({ id, branchID, gradeID, sectionID }) {
+  const token = sessionStorage.getItem('token');
+  const params = new URLSearchParams({
+    ID: String(id),
+    branchID: String(branchID),
+    gradeID: String(gradeID),
+    sectionID: String(sectionID),
+  });
+  const res = await fetch(buildUrl(`/api/getexamqpsubmissiondetail?${params.toString()}`), {
+    method: 'GET',
+    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+  });
+  const data = await res.json();
+  return Array.isArray(data) ? data : (data?.data || []);
+}
+
+/* Turn the raw blocks into ordered, render-ready sections. */
+function normalizeQpDetail(list) {
+  const blocks = Array.isArray(list) ? list : [];
+  return {
+    parent: blocks[0]?.parentData || null,
+    sections: blocks.map(b => ({
+      recTitle: b.parentData?.recTitle || '',
+      mainQuestion: b.parentData?.changedMainQuestion || b.parentData?.recTitle || '',
+      // Selection record id for update lives on the specific row (parentData.id is the master).
+      recordId: b.specificTableData?.[0]?.id || 0,
+      rows: Array.isArray(b.specificTableData) ? b.specificTableData : [],
+    })),
+  };
+}
+
+const pgRecKey = s => String(s || '').toLowerCase().replace(/[^a-z]/g, '');
+const pgRoman = n => (['i','ii','iii','iv','v','vi','vii','viii','ix','x','xi','xii','xiii','xiv','xv','xvi','xvii','xviii','xix','xx'][n] || String(n + 1));
+const pgEsc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+/* The most likely "question text" field for a row, across all types. */
+const pgRowText = r => r.question || r.word || r.sentence || r.statement || r.topic || r.title || r.comprehensionStatement || r.mainQuestion || '';
+
+/* ── React renderer (Preview) — one block per saved section, by recTitle ── */
+function ApiPaperSections({ sections, isBW }) {
+  if (!sections || !sections.length) {
+    return <div style={{ fontSize: 12, color: '#64748B', textAlign: 'center', padding: 24 }}>No saved questions found for this paper.</div>;
+  }
+  const accent = isBW ? '#111111' : '#1E40AF';
+  const tdBorder = '1px solid #e2e8f0';
+  const thBg = isBW ? '#FFFFFF' : '#EFF6FF';
+  const thBorder = `1px solid ${isBW ? '#D1D5DB' : '#BFDBFE'}`;
+  const th = { padding: '5px 8px', border: thBorder, textAlign: 'left' };
+  const td = { padding: '6px 8px', border: tdBorder };
+  const blank = '___________';
+
+  const twoCol = (rows, leftKey, leftLabel, rightLabel) => (
+    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11.5, marginBottom: 12 }}>
+      <thead><tr style={{ background: thBg }}><th style={th}>#</th><th style={th}>{leftLabel}</th><th style={th}>{rightLabel}</th></tr></thead>
+      <tbody>
+        {rows.map((r, i) => (
+          <tr key={i}><td style={td}>{pgRoman(i)}</td><td style={td}>{r[leftKey] || pgRowText(r)}</td><td style={td}>{blank}</td></tr>
+        ))}
+      </tbody>
+    </table>
+  );
+
+  const renderRows = (sec) => {
+    const { rows } = sec;
+    const k = pgRecKey(sec.recTitle);
+    if (k === 'mcqs') {
+      return rows.map((r, i) => (
+        <div key={i} style={{ marginBottom: 8, fontSize: 12, color: '#334155' }}>
+          <div>{pgRoman(i)}. {r.question}</div>
+          <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginTop: 3, paddingLeft: 14 }}>
+            {['option1','option2','option3','option4'].map((o, oi) => r[o] ? (
+              <span key={oi} style={{ border: '1px solid #CBD5E1', borderRadius: 4, padding: '2px 8px', fontSize: 11.5 }}>
+                ({String.fromCharCode(65 + oi)}) {r[o]}
+              </span>
+            ) : null)}
+          </div>
+        </div>
+      ));
+    }
+    if (k === 'wordsynonyms') return twoCol(rows, 'word', 'Word', 'Synonym');
+    if (k === 'wordopposite' || k === 'wordopposites') return twoCol(rows, 'word', 'Word', 'Opposite');
+    if (k === 'singularplural' || k === 'singularplurals') return twoCol(rows, 'singular', 'Singular', 'Plural');
+    if (k === 'matchcolume' || k === 'matchcolumns') {
+      return (
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11.5, marginBottom: 12 }}>
+          <thead><tr style={{ background: thBg }}><th style={th}>Column A</th><th style={th}>Answer</th><th style={th}>Column B</th></tr></thead>
+          <tbody>
+            {rows.map((r, i) => (
+              <tr key={i}><td style={td}>{r.columnA || r.option1 || pgRowText(r)}</td><td style={td}>______</td><td style={td}>{r.columnB || r.option2 || ''}</td></tr>
+            ))}
+          </tbody>
+        </table>
+      );
+    }
+    if (k === 'comprehension') {
+      const passage = rows[0]?.comprehensionStatement;
+      return (
+        <>
+          {passage && <div style={{ background: isBW ? '#FFF' : '#F8FAFF', border: `1px solid ${isBW ? '#D1D5DB' : '#BFDBFE'}`, borderRadius: 4, padding: '8px 12px', fontSize: 11.5, marginBottom: 8, lineHeight: 1.6 }}>{passage}</div>}
+          {rows.map((r, i) => (
+            <div key={i} style={{ fontSize: 12, color: '#334155', marginBottom: 6 }}>
+              {pgRoman(i)}. {r.question}
+              <div style={{ height: 22, borderBottom: '1px solid #cbd5e1', margin: '6px 0 10px' }}></div>
+            </div>
+          ))}
+        </>
+      );
+    }
+    if (k === 'truefalse') {
+      return (
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11.5, marginBottom: 12 }}>
+          <thead><tr style={{ background: thBg }}><th style={th}>#</th><th style={th}>Statement</th><th style={th}>True</th><th style={th}>False</th></tr></thead>
+          <tbody>
+            {rows.map((r, i) => (
+              <tr key={i}><td style={td}>{pgRoman(i)}</td><td style={td}>{pgRowText(r)}</td><td style={{ ...td, width: 40 }}></td><td style={{ ...td, width: 40 }}></td></tr>
+            ))}
+          </tbody>
+        </table>
+      );
+    }
+    if (k === 'fillintheblank' || k === 'filltheblank' || k === 'fillintheblanks') {
+      return rows.map((r, i) => (
+        <div key={i} style={{ fontSize: 12, color: '#334155', marginBottom: 8 }}>{pgRoman(i)}. {pgRowText(r)} <span style={{ display: 'inline-block', minWidth: 90, borderBottom: '1px solid #334155' }}></span></div>
+      ));
+    }
+    /* Generic: essays, stories, letters, applications, paragraphs, wordSentences,
+       questionAns, longQuestions, punctuation, circleCorrectWord, fallback. */
+    return rows.map((r, i) => (
+      <div key={i} style={{ fontSize: 12, color: '#334155', marginBottom: 8 }}>
+        {pgRoman(i)}. {pgRowText(r)}
+        <div style={{ height: 22, borderBottom: '1px solid #cbd5e1', margin: '6px 0 10px' }}></div>
+      </div>
+    ));
+  };
+
+  return (
+    <>
+      {sections.map((sec, si) => (
+        <div key={si} style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: 12, color: '#334155', marginBottom: 10 }}>
+            <strong>Q.{si + 1}</strong> {sec.mainQuestion}
+          </div>
+          {renderRows(sec)}
+        </div>
+      ))}
+    </>
+  );
+}
+
+/* ── HTML builder (Download) — mirrors ApiPaperSections using paper CSS classes ── */
+function buildApiSectionsHTML(sections) {
+  if (!sections || !sections.length) {
+    return '<div style="text-align:center;color:#64748B;font-size:12px;padding:20px">No saved questions found for this paper.</div>';
+  }
+  const blank = '___________';
+  return sections.map((sec, si) => {
+    const k = pgRecKey(sec.recTitle);
+    const rows = sec.rows || [];
+    const header = `<div class="q-header"><span><b>Q.${si + 1}</b> ${pgEsc(sec.mainQuestion)}</span></div>`;
+    let body = '';
+    const twoCol = (leftKey, leftLabel, rightLabel) =>
+      `<table><tr><th>#</th><th>${leftLabel}</th><th>${rightLabel}</th></tr>` +
+      rows.map((r, i) => `<tr><td>${pgRoman(i)}</td><td>${pgEsc(r[leftKey] || pgRowText(r))}</td><td>${blank}</td></tr>`).join('') + '</table>';
+
+    if (k === 'mcqs') {
+      body = rows.map((r, i) => {
+        const opts = ['option1','option2','option3','option4'].map((o, oi) => r[o] ? `<span class="mcq-opt">(${String.fromCharCode(65 + oi)}) ${pgEsc(r[o])}</span>` : '').join('');
+        return `<div class="mcq-item">${pgRoman(i)}. ${pgEsc(r.question)}<div class="mcq-options">${opts}</div></div>`;
+      }).join('');
+    } else if (k === 'wordsynonyms') body = twoCol('word', 'Word', 'Synonym');
+    else if (k === 'wordopposite' || k === 'wordopposites') body = twoCol('word', 'Word', 'Opposite');
+    else if (k === 'singularplural' || k === 'singularplurals') body = twoCol('singular', 'Singular', 'Plural');
+    else if (k === 'matchcolume' || k === 'matchcolumns') {
+      body = `<table><tr><th>Column A</th><th>Answer</th><th>Column B</th></tr>` +
+        rows.map(r => `<tr><td>${pgEsc(r.columnA || r.option1 || pgRowText(r))}</td><td>______</td><td>${pgEsc(r.columnB || r.option2 || '')}</td></tr>`).join('') + '</table>';
+    } else if (k === 'comprehension') {
+      const passage = rows[0]?.comprehensionStatement;
+      body = (passage ? `<div style="background:#F8FAFF;border:1px solid #BFDBFE;border-radius:4px;padding:8px 12px;font-size:11.5px;margin-bottom:8px;line-height:1.6">${pgEsc(passage)}</div>` : '') +
+        rows.map((r, i) => `<div class="write-item">${pgRoman(i)}. ${pgEsc(r.question)}<div class="ans-line"></div></div>`).join('');
+    } else if (k === 'truefalse') {
+      body = `<table class="tf-table"><tr><th>#</th><th>Statement</th><th>True</th><th>False</th></tr>` +
+        rows.map((r, i) => `<tr><td>${pgRoman(i)}</td><td>${pgEsc(pgRowText(r))}</td><td><span class="tf-box"></span></td><td><span class="tf-box"></span></td></tr>`).join('') + '</table>';
+    } else if (k === 'fillintheblank' || k === 'filltheblank' || k === 'fillintheblanks') {
+      body = rows.map((r, i) => `<div class="write-item">${pgRoman(i)}. ${pgEsc(pgRowText(r))} <span class="blank"></span></div>`).join('');
+    } else {
+      body = rows.map((r, i) => `<div class="write-item">${pgRoman(i)}. ${pgEsc(pgRowText(r))}<div class="ans-line"></div></div>`).join('');
+    }
+    return `<div class="q-block">${header}${body}</div>`;
+  }).join('');
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   PAPER VIEW MODAL — Color/B&W toggle + API paper body + Download
    ═══════════════════════════════════════════════════════════════════ */
 function PaperViewModal({ paper, cls, onClose, onDownload }) {
   const [tone, setTone] = useState('color'); // 'color' | 'bw'
+  const [sections, setSections] = useState([]);
+  const [loadingDetail, setLoadingDetail] = useState(true);
 
   useEffect(() => {
     const onKey = e => { if (e.key === 'Escape') onClose(); };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
+
+  /* Load the saved questions for this paper from getexamqpsubmissiondetail. */
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        setLoadingDetail(true);
+        const list = await fetchQpSubmissionDetail({
+          id: paper.qpMasterID ?? paper.id,
+          branchID: sessionStorage.getItem('branchID'),
+          gradeID: cls?.gradeID ?? paper.gradeID,
+          sectionID: cls?.sectionID ?? paper.sectionID,
+        });
+        if (alive) setSections(normalizeQpDetail(list).sections);
+      } catch (err) {
+        console.error('Could not load paper detail', err);
+        if (alive) setSections([]);
+      } finally {
+        if (alive) setLoadingDetail(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, [paper, cls]);
 
   const isBW = tone === 'bw';
   /* Preview palettes: Colorful = brand blue header/sections; Colorless =
@@ -2139,59 +3182,12 @@ function PaperViewModal({ paper, cls, onClose, onDownload }) {
               <span>Total Marks: {totalMk} &nbsp;&nbsp; Obtained: ______/{totalMk}</span>
             </div>
 
-            {showObj && (
-              <>
-                <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.05em', color: '#64748B', borderBottom: '1px solid #e2e8f0', paddingBottom: 4, marginBottom: 8 }}>
-                  Section A — Objective ({objMarks} Marks · {paper.objTime || 0} Min)
-                </div>
-                <div style={{ fontSize: 12, color: '#334155', marginBottom: 10 }}>
-                  <strong>Q.1</strong> Write the Opposite of the following words.
-                  <span style={{ float: 'right', color: accent, fontWeight: 600 }}>[10 Marks]</span>
-                </div>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11.5, marginBottom: 14 }}>
-                  <thead>
-                    <tr style={{ background: isBW ? '#FFFFFF' : '#EFF6FF' }}>
-                      <th style={{ padding: '5px 8px', border: `1px solid ${isBW ? '#D1D5DB' : '#BFDBFE'}`, textAlign: 'left' }}>#</th>
-                      <th style={{ padding: '5px 8px', border: `1px solid ${isBW ? '#D1D5DB' : '#BFDBFE'}` }}>Word</th>
-                      <th style={{ padding: '5px 8px', border: `1px solid ${isBW ? '#D1D5DB' : '#BFDBFE'}` }}>Opposite</th>
-                      <th style={{ padding: '5px 8px', border: `1px solid ${isBW ? '#D1D5DB' : '#BFDBFE'}` }}>#</th>
-                      <th style={{ padding: '5px 8px', border: `1px solid ${isBW ? '#D1D5DB' : '#BFDBFE'}` }}>Word</th>
-                      <th style={{ padding: '5px 8px', border: `1px solid ${isBW ? '#D1D5DB' : '#BFDBFE'}` }}>Opposite</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {[
-                      ['i', 'Happy', 'iii', 'Hot'],
-                      ['ii', 'Day', 'iv', 'Big'],
-                    ].map((row, ri) => (
-                      <tr key={ri}>
-                        <td style={{ padding: '6px 8px', border: '1px solid #e2e8f0' }}>{row[0]}</td>
-                        <td style={{ padding: '6px 8px', border: '1px solid #e2e8f0' }}>{row[1]}</td>
-                        <td style={{ padding: '6px 8px', border: '1px solid #e2e8f0' }}>___________</td>
-                        <td style={{ padding: '6px 8px', border: '1px solid #e2e8f0' }}>{row[2]}</td>
-                        <td style={{ padding: '6px 8px', border: '1px solid #e2e8f0' }}>{row[3]}</td>
-                        <td style={{ padding: '6px 8px', border: '1px solid #e2e8f0' }}>___________</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </>
-            )}
-
-            {showSubj && (
-              <>
-                <div style={{ background: sectionBg, color: sectionColor, border: sectionBorder, padding: '6px 14px', fontSize: 11, fontWeight: 700, letterSpacing: '.05em', textTransform: 'uppercase', borderRadius: 4, marginBottom: 10 }}>
-                  Section B — Subjective ({subjMarks} Marks · {paper.subjTime || 0} Min)
-                </div>
-                <div style={{ fontSize: 12, color: '#334155', marginBottom: 10 }}>
-                  <strong>Q.2</strong> Answer the following Short Questions.
-                  <span style={{ float: 'right', color: accent, fontWeight: 600 }}>[15 Marks]</span>
-                </div>
-                <div style={{ fontSize: 12, color: '#334155', marginBottom: 6 }}>i. Where did the little red hen live?</div>
-                <div style={{ height: 26, borderBottom: '1px solid #cbd5e1', marginBottom: 10 }}></div>
-                <div style={{ fontSize: 12, color: '#334155', marginBottom: 6 }}>ii. What did the hen find in the field?</div>
-                <div style={{ height: 26, borderBottom: '1px solid #cbd5e1', marginBottom: 10 }}></div>
-              </>
+            {loadingDetail ? (
+              <div style={{ fontSize: 12, color: '#64748B', textAlign: 'center', padding: 24 }}>
+                <i className="fa-solid fa-spinner fa-spin" style={{ marginRight: 6 }}></i> Loading questions…
+              </div>
+            ) : (
+              <ApiPaperSections sections={sections} isBW={isBW} />
             )}
 
             <div style={{ marginTop: 20, paddingTop: 12, borderTop: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#64748B' }}>
@@ -2364,7 +3360,7 @@ function buildAnswerSheetSection() {
   );
 }
 
-function buildFullPaperHTML({ paper, cls, isBW, asWord }) {
+function buildFullPaperHTML({ paper, cls, isBW, asWord, sections }) {
   const fmt      = paper.format || 'with';
   const typ      = paper.type   || 'both';
   const subject  = paper.subj   || 'English';
@@ -2377,8 +3373,11 @@ function buildFullPaperHTML({ paper, cls, isBW, asWord }) {
   const showObj  = typ === 'objective'  || typ === 'both';
   const showSubj = typ === 'subjective' || typ === 'both';
 
-  const objSection  = showObj    ? buildObjSection()       : '';
-  const subjSection = showSubj   ? buildSubjSection()      : '';
+  // API-driven body (saved questions, grouped by recTitle) — kept in sync with Preview.
+  // Falls back to the static sample sections only if no API sections were supplied.
+  const apiBody     = Array.isArray(sections)
+    ? buildApiSectionsHTML(sections)
+    : `${showObj ? buildObjSection() : ''}${showSubj ? buildSubjSection() : ''}`;
   const answerSheet = fmt === 'with' ? buildAnswerSheetSection() : '';
 
   /* Two coordinated palettes:
@@ -2473,8 +3472,7 @@ td { padding:6px 8px; border:1px solid #E2E8F0; }
     <span>Total Marks: <strong>${totalMk}</strong> &nbsp; Obtained: <strong>______/${totalMk}</strong></span>
   </div>
 
-  ${objSection}
-  ${subjSection}
+  ${apiBody}
   ${answerSheet}
 
   <div class="paper-footer">
@@ -2514,18 +3512,33 @@ function DownloadModal({ paper, cls, onClose, toast }) {
     else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); setFormat('word'); }
   };
 
-  const doDownload = () => {
+  const doDownload = async () => {
     const win = window.open('', '_blank', 'width=900,height=750');
     if (!win) {
       toast('Please allow popups to download paper', 'warning');
       return;
+    }
+    win.document.write('<p style="font-family:sans-serif;padding:24px;color:#475569">Preparing paper…</p>');
+    let sections = [];
+    try {
+      const list = await fetchQpSubmissionDetail({
+        id: paper.qpMasterID ?? paper.id,
+        branchID: sessionStorage.getItem('branchID'),
+        gradeID: cls?.gradeID ?? paper.gradeID,
+        sectionID: cls?.sectionID ?? paper.sectionID,
+      });
+      sections = normalizeQpDetail(list).sections;
+    } catch (err) {
+      console.error('Could not load paper detail for download', err);
     }
     const html = buildFullPaperHTML({
       paper,
       cls,
       isBW: style === 'bw',
       asWord: format === 'word',
+      sections,
     });
+    win.document.open();
     win.document.write(html);
     win.document.close();
     toast(`${label} — opened in new window`, 'success');
