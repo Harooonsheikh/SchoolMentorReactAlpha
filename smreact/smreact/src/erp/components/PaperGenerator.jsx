@@ -1072,7 +1072,6 @@ const PG_OBJ_TYPES = [
   { key:'punctuation',    label:'Punctuation' },
 ];
 const PG_SUBJ_TYPES = [
-  { key:'short_q',        label:'Short Questions' },
   { key:'long_q',         label:'Long Question' },
   { key:'paragraph',      label:'Paragraph Writing' },
   { key:'comprehension',  label:'Comprehension' },
@@ -1086,6 +1085,15 @@ const PG_SUBJ_TYPES = [
   { key:'word_synonyms',  label:'Word Synonyms' },
   { key:'qa',             label:'Question & Answer' },
   { key:'punctuation',    label:'Punctuation' },
+];
+
+/* Combined, de-duplicated list of EVERY question type. Both the Objective
+   and Subjective tabs render this same list so all types are visible in
+   each tab. (Obj/subj classification for saved-question prefill still uses
+   PG_OBJ_TYPES — see prefillSavedTabs.) */
+const PG_ALL_TYPES = [
+  ...PG_OBJ_TYPES,
+  ...PG_SUBJ_TYPES.filter(s => !PG_OBJ_TYPES.some(o => o.key === s.key)),
 ];
 
 /* ═══════════════════════════════════════════════════════════
@@ -1312,7 +1320,6 @@ const API_KEY_MAP = {
   singular_plural:'singularPlurals',
   punctuation:    'punctuations',
   circle_word:    'circleCorrectWords',
-  short_q:        'qMidLines',
 };
 
 /* typeKey → backend recTitle value sent to qpquestionselection_crud. */
@@ -1435,7 +1442,7 @@ const fetchNotebookDetails = async (notebookIDs) => {
 
 // ── Edit mode: saved submission detail se pehle se save shuda questions ko
 //    blocksState mein tabs ke roop mein select/prefill karo. ──
-const prefillSavedTabs = (sections, details) => {
+const prefillSavedTabs = (sections, details, paperType) => {
   const recToTypeKey = {};
   Object.entries(PG_REC_TITLE).forEach(([typeKey, rec]) => { recToTypeKey[pgRecKey(rec)] = typeKey; });
   const objKeys = new Set(PG_OBJ_TYPES.map(t => t.key));
@@ -1445,7 +1452,13 @@ const prefillSavedTabs = (sections, details) => {
     sections.forEach(sec => {
       const typeKey = recToTypeKey[pgRecKey(sec.recTitle)];
       if (!typeKey) return;
-      const section = objKeys.has(typeKey) ? 'obj' : 'subj';
+      // Objective-only / subjective-only papers ka sirf ek hi tab visible hota hai,
+      // is liye saved questions ko usi visible section mein daalo — warna obj-classified
+      // types subjective paper mein (aur subj-classified types objective paper mein) chhup jaate.
+      // 'both' ke liye static obj/subj classification use karo.
+      const section = paperType === 'objective' ? 'obj'
+                    : paperType === 'subjective' ? 'subj'
+                    : (objKeys.has(typeKey) ? 'obj' : 'subj');
       const apiItems = (details && details[API_KEY_MAP[typeKey]]) || [];
       const unitName = apiItems[0]?.unitName;
 
@@ -1508,7 +1521,7 @@ useEffect(() => {
         if (!alive) return;
         setFetched(true);
         // 3) Pehle se saved questions ko select/prefill karo.
-        prefillSavedTabs(sections, details);
+        prefillSavedTabs(sections, details, parent?.paperType || paperType);
       }
     } catch (err) {
       console.error('Edit auto-load failed', err);
@@ -2112,7 +2125,7 @@ const onFetch = async () => {
                       Select main questions · set items &amp; choices per type
                     </span>
                   </div>
-                  {PG_OBJ_TYPES.map(t => (
+                  {PG_ALL_TYPES.map(t => (
                     <QBlockAccordion
         key={t.key}
         typeDef={t}

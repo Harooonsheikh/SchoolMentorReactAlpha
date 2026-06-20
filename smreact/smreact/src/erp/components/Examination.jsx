@@ -475,7 +475,29 @@ const [subjects, setSubjects] = useState([]);
       /* Field names are read defensively (camelCase + PascalCase) since the
          backend casing varies across endpoints. */
       const num = v => Number(v ?? 0) || 0;
+      // The CA-result APIs return empty studentName, so pull real names from the
+      // student-list API (keyed by studentID) to label cards & rows correctly.
+      const nameMap = {};
+      try {
+        const token = sessionStorage.getItem('token');
+        const branchID = sessionStorage.getItem('branchID');
+        const sRes = await fetch(
+          buildUrl(`/api/getstudentsbybranchsectionandgrade?branchID=${branchID}&sectionID=${cr.sectionID}&gradeID=${cr.classID}`),
+          { method: 'GET', headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } }
+        );
+        const sData = await sRes.json();
+        const sList = Array.isArray(sData) ? sData : (sData?.data || []);
+        sList.forEach(s => {
+          nameMap[s.id ?? s.studentID ?? s.StudentID] = {
+            name:   (s.studentName ?? s.StudentName ?? '').trim(),
+            father: (s.fatherName ?? s.FatherName ?? '').trim(),
+            rollNo: s.registrationNumber ?? s.RegistrationNumber ?? '',
+          };
+        });
+      } catch (e) { console.error('Could not load student names for CBR:', e); }
       const students = cards.filter(Boolean).map(c => {
+        const sid = c.studentID ?? c.StudentID;
+        const nm  = nameMap[sid] || {};
         const main = c.mainExam ?? c.MainExam ?? {};
         const subArr = c.subExams ?? c.SubExams ?? [];
         return {
@@ -592,7 +614,17 @@ const [subjects, setSubjects] = useState([]);
     let cancelled = false;
     (async () => {
       try {
-        const subs = await cbrApi.getMainExamSubjects({ classID, sectionID, termID, examID: selectExam });
+        const rawSubs = await cbrApi.getMainExamSubjects({ classID, sectionID, termID, examID: selectExam });
+        // This API returns subjectName=null, so resolve names by subjectID from the syllabus list.
+        const nameMap = {};
+        try {
+          const syl = await getSyllabusSubjects(classID, sectionID);
+          (syl || []).forEach(s => { nameMap[s.subjectID] = s.subjectName; });
+        } catch (e) { /* keep going with whatever names we have */ }
+        const subs = rawSubs.map(su => ({
+          ...su,
+          subjectName: su.subjectName || nameMap[su.subjectID] || `Subject ${su.subjectID}`,
+        }));
         const marks = await Promise.all(subs.map(su =>
           cbrApi.getStudentSubjectMark({ classID, sectionID, termID, examID: selectExam, subjectID: su.subjectID, studentID: studentId }).catch(() => 0),
         ));
@@ -636,6 +668,16 @@ const [subjects, setSubjects] = useState([]);
           withMarks = false;
         }
         subs = subs || [];
+        // getMainExamSubjects returns subjectName=null, so resolve names by subjectID.
+        const nameMap = {};
+        try {
+          const syl = await getSyllabusSubjects(grp.classID, grp.sectionID);
+          (syl || []).forEach(s => { nameMap[s.subjectID] = s.subjectName; });
+        } catch (e) { /* keep going with whatever names we have */ }
+        subs = subs.map(su => ({
+          ...su,
+          subjectName: su.subjectName || nameMap[su.subjectID] || `Subject ${su.subjectID}`,
+        }));
         const marks = withMarks
           ? await Promise.all(subs.map(su =>
               cbrApi.getStudentSubjectMark({ classID: grp.classID, sectionID: grp.sectionID, termID, examID: grp.mainExamID, subjectID: su.subjectID, studentID: st.studentID }).catch(() => 0)))
@@ -3918,7 +3960,11 @@ onClick={async () => {
                                         </thead>
                                         <tbody>
                                           {cr.students.map((st, si) => {
-                                            const grCol = RS_GRADE_COLORS[st.grade] || '#475569';
+                                            // Grade computed from Grand Obtained/Total (same logic as Single Assessment),
+                                            // since the combined API returns an empty grade string.
+                                            const gradeObj   = rcGetGrade(st.grandObt, st.grandTotal);
+                                            const gradeLabel = gradeObj?.grade || '—';
+                                            const grCol = RS_GRADE_COLORS[gradeLabel] || '#475569';
                                             const pctCol = st.pct >= 80 ? '#16A34A' : st.pct >= 60 ? '#D97706' : '#DC2626';
                                             return (
                                               <tr key={st.rollNo}>
@@ -3948,7 +3994,7 @@ onClick={async () => {
                                                 </td>
                                                 <td style={{ textAlign: 'center', fontWeight: 800, color: pctCol }}>{st.pct}%</td>
                                                 <td style={{ textAlign: 'center' }}>
-                                                  <span className="res-grade-chip" style={{ background: grCol }}>{st.grade}</span>
+                                                  <span className="res-grade-chip" style={{ background: grCol }}>{gradeLabel}</span>
                                                 </td>
                                                 <td style={{ textAlign: 'center', fontWeight: 700, color: '#1E40AF' }}>{st.rank}</td>
                                                 <td>
@@ -5105,9 +5151,12 @@ onClick={async () => {
   if (!ex || !stu) return null;
   const cardStudent = {
     id:      stu.id,
-    rollNo:  stu.registrationNumber || stu.id,
-    name:    stu.studentName || stu.name || '',
-    father:  stu.fatherName || '',
+    rollNo:  stu.registrationNumber || stu.registrationNo || stu.rollNo || stu.id,
+    name:    stu.studentName || stu.name || stu.studentname || stu.StudentName
+             || stu.fullName || stu.student_name
+             || [stu.firstName, stu.lastName].filter(Boolean).join(' ')
+             || '',
+    father:  stu.fatherName || stu.father || stu.fatherrName || '',
     obtained: resCardMarks?.obtained || {},
     absentSubjects: [],
     attendance: '—',
