@@ -548,6 +548,7 @@ const getClassesData = async () => {
             pwSelectedClass,
             clpClass,
             clpSubject,
+            clpCtx,
             tbReportData: reportPicker.extra || null,
           });
           setReportPicker(null);
@@ -8162,9 +8163,47 @@ async function lpOpenReport(type, style, selectedClass, ctx = {}, reportHeader =
 /* ═══════════════════════════════════════════════════════════════════
    CREATE-LESSON-PLAN UNIT PDF — verbatim from HTML clpUnitPdfReport
    ═══════════════════════════════════════════════════════════════════ */
-function clpUnitPdfReport(unit, ctx, style, reportHeader = null) {
+async function clpUnitPdfReport(unit, ctx, style, reportHeader = null) {
   if (!unit) return;
   const isColor = style === 'color';
+
+  /* Lesson content (SLO / Intro / Development / Recap) is NOT in the units list —
+     it loads per lesson from the detail API (same one the Edit modal uses). Fetch
+     it for every lesson here so the report shows real content instead of blanks. */
+  {
+    const classID   = ctx?.clpCtx?.classID;
+    const subjectID  = ctx?.clpCtx?.subjectID;
+    const token = sessionStorage.getItem('token') || '';
+    const lessons = await Promise.all((unit.lessons || []).map(async l => {
+      if (l.contentMap && Object.keys(l.contentMap).length) return l; // already loaded (e.g. just edited)
+      const masterId = l?.record?.id;
+      if (!masterId || !classID || !subjectID) return l;
+      try {
+        const res = await fetch(
+          buildUrl(`/api/getulpforclassdetailbytermsubjectandclass?MasterClassesID=${masterId}&classID=${classID}&subjectID=${subjectID}&pageNo=1`),
+          { method: 'GET', headers: { Accept: '*/*', Authorization: `bearer ${token}` } },
+        );
+        const json = await res.json();
+        const d = (json?.data || [])[0];
+        if (!d) return l;
+        return {
+          ...l,
+          topic: d.lessonPlanTopic ?? l.topic,
+          duration: d.timeDuration || l.duration || '',
+          contentMap: {
+            slo:   d.learningObjective  || '',
+            intro: d.lessonIntroduction || '',
+            devel: d.development        || '',
+            recap: d.recap              || '',
+          },
+        };
+      } catch (e) {
+        console.error('Error loading lesson detail for report:', e);
+        return l;
+      }
+    }));
+    unit = { ...unit, lessons };
+  }
 
   /* Header (logo, school name, session, address) from /report-header/{branchID}.
      Uses the shared getReportLogo block so it matches every other report. */
@@ -8357,13 +8396,21 @@ function clpUnitPdfReport(unit, ctx, style, reportHeader = null) {
 /* ═══════════════════════════════════════════════════════════════════
    NOTEBOOK PDF — verbatim from HTML nbGeneratePdfHtml
    ═══════════════════════════════════════════════════════════════════ */
-function nbGeneratePdfHtml(u, questions, isColor) {
+function nbGeneratePdfHtml(u, questions, isColor, reportHeader = null) {
   const pri    = isColor ? '#0C4A6E' : '#111';
   const hdrBg  = isColor ? 'linear-gradient(135deg,#1E3A8A,#2563EB)' : '#1a1a1a';
   const bdgBg  = isColor ? '#E0F2FE' : '#eee';
   const bdgC   = isColor ? '#0369A1' : '#333';
   const bdr    = isColor ? '#BAE6FD' : '#ccc';
   const optColors = ['#0369A1', '#6D28D9', '#0C4A6E', '#92400E'];
+
+  /* Header (logo, school name, session, address) from /report-header/{branchID}. */
+  const schoolName      = reportHeader?.branchName || getSchoolName();
+  const schoolAddress   = reportHeader?.address || '';
+  const academicSession = reportHeader?.academicSession
+    || sessionStorage.getItem('sessionName') || 'Academic Session';
+  const generated = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+  const style = isColor ? 'color' : 'bw';
 
   let html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${u.unitName} Report</title>
   <style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:'Segoe UI',Arial,sans-serif;background:#fff;color:#0F172A;font-size:13px}.page{width:210mm;margin:0 auto}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}@page{size:A4;margin:15mm}.no-print{display:none}}
@@ -8396,16 +8443,15 @@ function nbGeneratePdfHtml(u, questions, isColor) {
   .footer{text-align:center;font-size:11px;color:#94A3B8;padding:16px;border-top:1px solid #E2E8F0;margin-top:8px}
   </style></head><body><div class="page">
   <div class="header">
-    <div style="display:flex;align-items:center;gap:14px;margin-bottom:14px">
-      <div style="width:52px;height:52px;border-radius:13px;background:rgba(255,255,255,.18);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:900;color:#fff;flex-shrink:0;letter-spacing:-0.5px;border:1.5px solid rgba(255,255,255,.3)">${getSchoolInitials()}</div>
-      <div>
-        <div style="font-size:9px;letter-spacing:2px;text-transform:uppercase;color:rgba(255,255,255,.55);font-weight:700;margin-bottom:2px">School Mentor ERP</div>
-        <div style="font-size:15px;font-weight:800;color:#fff;line-height:1.2">${getSchoolName()}</div>
-      </div>
+    ${getReportLogo(style, reportHeader)}
+    <h1>Notebook — Unit ${u.unitNo}: ${lpEscapeHtml(u.unitName)}</h1>
+    <div class="header-sub" style="margin-top:4px">Academic Year ${lpEscapeHtml(academicSession)} · ${isColor ? 'Colorful' : 'Colorless'} Report</div>
+    <div class="meta">
+      <span><strong>Unit:</strong> ${u.unitNo}</span>
+      <span><strong>Sections:</strong> ${Object.keys(questions).length}</span>
+      <span><strong>Style:</strong> ${isColor ? 'Colorful' : 'Colorless'}</span>
+      <span><strong>Generated:</strong> ${generated}</span>
     </div>
-    <div style="height:1px;background:rgba(255,255,255,.2);margin-bottom:14px"></div>
-    <h1>${u.unitName}</h1><div class="header-sub">Notebook Report · Unit ${u.unitNo}</div>
-    <div class="meta"><span>${isColor ? '📅 ' : ''}${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}</span><span>${isColor ? '📋 ' : ''}${Object.keys(questions).length} Section${Object.keys(questions).length !== 1 ? 's' : ''}</span><span>${isColor ? '🎨 Colorful' : 'Colorless'}</span></div>
   </div>
   <div class="body">`;
 
@@ -8463,7 +8509,11 @@ function nbGeneratePdfHtml(u, questions, isColor) {
   });
 
   const bg = isColor ? '#1E3A8A' : '#2C2C2C';
-  html += `</div><div class="footer">${getSchoolName()} &nbsp;·&nbsp; School Mentor ERP · ${new Date().toLocaleDateString()} · ${isColor ? 'Colorful Report' : 'Colorless Report'}</div>
+  html += `</div><div class="footer" style="display:flex;justify-content:space-between;align-items:center;gap:8px;text-align:left">
+    <span>${lpEscapeHtml(schoolName)}${schoolAddress ? ` · ${lpEscapeHtml(schoolAddress)}` : ''}</span>
+    <span>School Mentor ERP © ${new Date().getFullYear()}</span>
+    <span>Academic Year ${lpEscapeHtml(academicSession)}</span>
+  </div>
   <div class="no-print" style="text-align:center;padding:22px;background:#F8FAFC;border-top:1px solid #E2E8F0;margin-top:8px">
     <button onclick="window.print()" style="background:${bg};color:#fff;border:none;padding:12px 28px;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;margin-right:10px">🖨 Print / Save as PDF</button>
     <button onclick="window.close()" style="background:transparent;border:1.5px solid #CBD5E1;color:#64748B;padding:12px 24px;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer">Close</button>
@@ -8526,34 +8576,41 @@ async function generateLessonPlanReport(name, style, format, ctx) {
     return;
   }
 
-  /* Notebook section PDF — "Section <id> — <type> — Unit <unitNo>" */
+  /* Notebook section PDF — "Section <id> — <type> — Unit <unitNo>" (one question type) */
   if (name.startsWith('Section ')) {
     const m = name.match(/^Section\s+(\S+)\s+—\s+(.+?)\s+—\s+Unit\s+(\S+)$/);
     if (m) {
       const qId = m[1], unitNo = m[3];
       const unit = ctx?.nbUnits?.find(u => String(u.unitNo) === String(unitNo));
-      const q = unit?.questions?.find(x => String(x.id) === String(qId));
-      if (unit && q) {
-        const typeKey = q.typeId || q.type;
-        const questions = { [typeKey]: { mainQ: q.mainQ || q.mainQuestion || '', rows: q.rows || q.items || [] } };
-        nbGeneratePdfHtml(unit, questions, style === 'color');
-        return;
+      if (unit) {
+        /* Question content isn't in the units list — fetch it (same API the row uses). */
+        const detail = await fetchNotebookDetail(unit.id);
+        const q = detail.find(x => String(x.id) === String(qId));
+        if (q) {
+          const typeKey = q.typeId || q.type;
+          const questions = { [typeKey]: { mainQ: q.mainQ || q.mainQuestion || '', rows: q.rows || q.items || [] } };
+          nbGeneratePdfHtml(unit, questions, style === 'color', reportHeader);
+          return;
+        }
       }
     }
   }
 
-  /* Notebook unit PDF — "Unit <unitNo> — Notebook" */
+  /* Notebook unit PDF — "Unit <unitNo> — Notebook" (whole unit, all question types) */
   if (/—\s*Notebook\s*$/.test(name)) {
     const m = name.match(/^Unit\s+(\S+)/);
     const unitNo = m ? m[1] : '';
     const unit = ctx?.nbUnits?.find(u => String(u.unitNo) === String(unitNo));
     if (unit) {
+      const detail = await fetchNotebookDetail(unit.id);
       const questions = {};
-      (unit.questions || []).forEach(q => {
+      detail.forEach(q => {
         const typeKey = q.typeId || q.type;
-        if (typeKey) questions[typeKey] = { mainQ: q.mainQ || q.mainQuestion || '', rows: q.rows || q.items || [] };
+        if (!typeKey) return;
+        if (!questions[typeKey]) questions[typeKey] = { mainQ: q.mainQ || q.mainQuestion || '', rows: [] };
+        questions[typeKey].rows.push(...(q.rows || q.items || []));
       });
-      nbGeneratePdfHtml(unit, questions, style === 'color');
+      nbGeneratePdfHtml(unit, questions, style === 'color', reportHeader);
       return;
     }
   }
@@ -8563,7 +8620,7 @@ async function generateLessonPlanReport(name, style, format, ctx) {
     const m = name.match(/^Unit\s+([^\s—]+)/);
     const unitNo = m ? m[1] : '';
     const unit = ctx?.units?.find(u => String(u.unitNo) === String(unitNo));
-    if (unit) { clpUnitPdfReport(unit, ctx, style, reportHeader); return; }
+    if (unit) { await clpUnitPdfReport(unit, ctx, style, reportHeader); return; }
   }
   if (name.startsWith('Lesson ')) {
     /* Render lesson as a single-lesson unit using clpUnitPdfReport */
@@ -8575,7 +8632,7 @@ async function generateLessonPlanReport(name, style, format, ctx) {
       const lessonNum = lessonMatch[1];
       const lesson = unit.lessons.find(l => String(l.num) === String(lessonNum));
       if (lesson) {
-        clpUnitPdfReport({ ...unit, lessons: [lesson] }, ctx, style, reportHeader);
+        await clpUnitPdfReport({ ...unit, lessons: [lesson] }, ctx, style, reportHeader);
         return;
       }
     }
