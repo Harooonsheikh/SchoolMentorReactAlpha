@@ -1248,14 +1248,14 @@ const PG_UNIT_DATA = {
    }
 */
 
-/* Sum visible marks (items - choices) × marks across all saved/dirty tabs of a section */
+/* Sum total marks (items × marks-per-item) across all saved/dirty tabs of a section.
+   Choices are NOT subtracted — total marks = items × marks (e.g. 2 items × 2 = 4). */
 function sectionUsedMarks(sectionState) {
   if (!sectionState) return 0;
   let total = 0;
   Object.values(sectionState).forEach(block => {
     (block.tabs || []).forEach(t => {
-      const visible = Math.max(0, (+t.items || 0) - (+t.choices || 0));
-      total += visible * (+t.marks || 0);
+      total += (+t.items || 0) * (+t.marks || 0);
     });
   });
   return total;
@@ -1268,12 +1268,10 @@ function typeAggregates(sectionState) {
   Object.entries(sectionState).forEach(([typeKey, block]) => {
     (block.tabs || []).forEach(t => {
       const items   = +t.items   || 0;
-      const choices = +t.choices || 0;
       const marks   = +t.marks   || 0;
-      const visible = Math.max(0, items - choices);
       const m = map[typeKey] || { items:0, marks:0, count:0 };
       m.items += items;
-      m.marks += visible * marks;
+      m.marks += items * marks;   // total marks = items × marks-per-item (choices not subtracted)
       m.count += items > 0 ? 1 : 0;
       map[typeKey] = m;
     });
@@ -1292,7 +1290,7 @@ function freshTab(num) {
     saved: false,
     unitSelections: {},  // { unitName: instrIdx }
     instr: '',           // typed Main Instruction → changedMainQuestion
-    selectedMainQ: '',   // main question picked from the dropdown → mainQuestion
+    selectedMainQs: [],  // main questions picked (multi-select) → mainQuestion[]
     items: 0,
     choices: 0,
     marks: 0,
@@ -1396,6 +1394,22 @@ const [qpMasterID, setQpMasterID] = useState(isEdit ? (initialPaper.qpMasterID |
   const validationOk = (!showObj || objStatus === 'ok') && (!showSubj || subjStatus === 'ok');
 
   const canGenerate = baseOk && fetched && validationOk;
+
+  /* Which question types to render in each tab.
+     - objective / subjective only papers → saare 18 types (PG_ALL_TYPES).
+     - 'both' paper → har tab mein bhi saare 18 types (taake koi bhi type add ho sake),
+       sirf wo type hata do jo DUSRE section mein already save hai (taake objective tab
+       mein subjective-saved question na aaye aur vice versa). Fresh 'both' paper (koi
+       block save nahi) → dono tabs mein poore 18 dikhenge. */
+  const objBlockKeys  = new Set(Object.keys(blocksState.obj || {}));
+  const subjBlockKeys = new Set(Object.keys(blocksState.subj || {}));
+  const objTabTypes = paperType === 'both'
+    ? PG_ALL_TYPES.filter(t => !subjBlockKeys.has(t.key))
+    : PG_ALL_TYPES;
+  const subjTabTypes = paperType === 'both'
+    ? PG_ALL_TYPES.filter(t => !objBlockKeys.has(t.key))
+    : PG_ALL_TYPES;
+
 const qpMasterIDRef = useRef(isEdit ? (initialPaper.qpMasterID || 0) : 0);
 
   /* Reset fetched state when settings change */
@@ -1455,9 +1469,13 @@ const prefillSavedTabs = (sections, details, paperType) => {
       // Objective-only / subjective-only papers ka sirf ek hi tab visible hota hai,
       // is liye saved questions ko usi visible section mein daalo — warna obj-classified
       // types subjective paper mein (aur subj-classified types objective paper mein) chhup jaate.
-      // 'both' ke liye static obj/subj classification use karo.
+      // 'both' ke liye API ka qpSubmissionPaperType use karo (kis tab mein save hua tha);
+      // agar wo na ho to static obj/subj classification fallback.
+      const submType = (sec.qpSubmissionPaperType || '').toLowerCase();
       const section = paperType === 'objective' ? 'obj'
                     : paperType === 'subjective' ? 'subj'
+                    : submType === 'objective' ? 'obj'
+                    : submType === 'subjective' ? 'subj'
                     : (objKeys.has(typeKey) ? 'obj' : 'subj');
       const apiItems = (details && details[API_KEY_MAP[typeKey]]) || [];
       const unitName = apiItems[0]?.unitName;
@@ -1468,8 +1486,13 @@ const prefillSavedTabs = (sections, details, paperType) => {
         ...freshTab(block.tabs.length + 1),
         unitSelections: unitName ? { '__api__': unitName } : {},
         instr: sec.mainQuestion,                                  // changedMainQuestion (typed)
-        selectedMainQ: sec.rows[0]?.mainQuestion || sec.mainQuestion,
-        items: sec.rows.length,
+        // saved rows ke unique mainQuestions (multi-select) ko prefill karo.
+        selectedMainQs: [...new Set((sec.rows || []).map(r => r.mainQuestion).filter(Boolean))],
+        items: sec.noOfQuestions || sec.rows.length,              // saved item count
+        // Agar choices == questions (sab choices, koi compulsory nahi) to input mein 0 dikhao;
+        // warna actual saved choices value.
+        choices: sec.noOfChoices === sec.noOfQuestions ? 0 : (sec.noOfChoices || 0),
+        marks: sec.marks || 0,                                    // saved marks per item
         totalEligible: apiItems.length || sec.rows.length,
         saved: true,
         existing: true,                                           // backend mein pehle se hai → update
@@ -1705,9 +1728,9 @@ const saveTab = async (section, typeKey, entryId) => {
     const sectionID = cls.sectionID || cls.section;
 let mainQuestions = [];
 if (notebookDetails) {
-  // mainQuestion = API se selected dropdown value (tab.selectedMainQ).
+  // mainQuestion = API se selected main questions (multi-select → tab.selectedMainQs).
   // tab.instr alag hai = user ka khud typed Main Instruction → changedMainQuestion.
-  mainQuestions = tab.selectedMainQ ? [tab.selectedMainQ] : [];
+  mainQuestions = tab.selectedMainQs || [];
 } else {
   // static mode — same as before
   Object.entries(tab.unitSelections).forEach(([unitName, instrIdx]) => {
@@ -1786,10 +1809,14 @@ if (notebookDetails) {
       const classID = cls.gradeID || cls.id;
       const sectionID = cls.sectionID || cls.section;
 
+      // Existing master id (edit mode OR a paper we already inserted in this session) →
+      // update instead of inserting a duplicate every time Fetch is clicked.
+      const existingMasterID = qpMasterIDRef.current || qpMasterID || (isEdit ? (initialPaper.qpMasterID || 0) : 0);
+
       // Prepare payload
       const payload = {
-        qpMasterID: isEdit ? (initialPaper.qpMasterID || 0) : 0,
-        action: isEdit ? "update" : "insert",
+        qpMasterID: existingMasterID,
+        action: existingMasterID ? "update" : "insert",
         paperType: paperType,
         paperFormate: paperFmt,
         timeForSubjective: String(subjTime) || String(0),
@@ -1801,7 +1828,14 @@ if (notebookDetails) {
         gradeID: parseInt(classID),
         sectionID: parseInt(sectionID),
         subjectID: parseInt(subjectId),
-        createdDate: new Date().toISOString(),
+        // Local wall-clock time (NOT UTC). toISOString() converts to UTC which shifts the
+        // hour by the timezone offset (+5 in PKT) and flips AM/PM on the cards.
+        createdDate: (() => {
+          const now = new Date();
+          return new Date(now.getTime() - now.getTimezoneOffset() * 60000)
+            .toISOString()
+            .slice(0, -1); // drop the trailing 'Z' so it reads as local time
+        })(),
         notebookIDs: selectedUnits // Selected unit IDs
       };
 
@@ -1821,7 +1855,7 @@ console.log('QP Master CRUD Response:', data); // debug ke liye
 
 if (data && (data.qpMasterID || data.qpMasterID === 0)) {
   const newID = data.qpMasterID;
-  toast('Question paper created successfully!', 'success');
+  toast(existingMasterID ? 'Question paper updated successfully!' : 'Question paper created successfully!', 'success');
   setQpMasterID(newID);
   qpMasterIDRef.current = newID;
   console.log('qpMasterIDRef set to:', qpMasterIDRef.current); // confirm
@@ -1878,21 +1912,45 @@ const buildUnitDataFromAPI = (details) => {
     qtypes,
   };
 };
+// Is qpMasterID ke against pehle se saved questions ko dobara load + prefill karo.
+// (Update/re-fetch ke baad bina modal close kiye saved blocks wapas dikhane ke liye.)
+const reloadSavedTabs = async (details) => {
+  const qpMastId = qpMasterIDRef.current || qpMasterID;
+  if (!qpMastId) return;
+  try {
+    const list = await fetchQpSubmissionDetail({
+      id: qpMastId,
+      branchID: sessionStorage.getItem('branchID'),
+      gradeID: cls?.gradeID ?? initialPaper?.gradeID,
+      sectionID: cls?.sectionID ?? initialPaper?.sectionID,
+    });
+    const { parent, sections } = normalizeQpDetail(list);
+    if (!sections.length) return;
+    // Purane prefilled blocks clear karo taake duplicate na hon, phir fresh prefill.
+    setBlocksState({ obj: {}, subj: {} });
+    prefillSavedTabs(sections, details, parent?.paperType || paperType);
+  } catch (err) {
+    console.error('reloadSavedTabs failed', err);
+  }
+};
+
 const onFetch = async () => {
   if (!canFetch) {
     toast('Please fill all the fields before fetching', 'warning');
     return;
   }
-  
+
   if (selectedUnits.length === 0) {
     toast('Please select at least one unit', 'warning');
     return;
   }
-  
-  
+
+
   const newQpMasterID = await createQuestionPaper(); // 👈 naam badlo
   if (!newQpMasterID) return;
-  await fetchNotebookDetails(selectedUnits);
+  const details = await fetchNotebookDetails(selectedUnits);
+  // qpMasterID ke against jo questions pehle save the unhe dobara dikhao.
+  await reloadSavedTabs(details);
 };
 
   const onGenerate = () => {
@@ -2098,7 +2156,13 @@ const onFetch = async () => {
               {paperType === 'both' && (
                 <div className="pg-qtype-tabs" style={{ marginBottom: 10 }}>
                   <Tooltip text="Edit the objective section (MCQs, fill in the blanks, etc.)">
-                    <button className={`pg-qtype-tab${qTab === 'obj' ? ' active' : ''}`} onClick={() => setQTab('obj')}>
+                    <button className={`pg-qtype-tab${qTab === 'obj' ? ' active' : ''}`} onClick={() => {
+  if (qTab === 'subj' && subjStatus !== 'ok') {
+    toast(`Please complete all Subjective Marks (${subjTarget}) before switching to Objective section.`, 'warning');
+    return;
+  }
+  setQTab('obj');
+}}>
                       <i className="fa-solid fa-circle-dot"></i> Objective
                     </button>
                   </Tooltip>
@@ -2125,7 +2189,7 @@ const onFetch = async () => {
                       Select main questions · set items &amp; choices per type
                     </span>
                   </div>
-                  {PG_ALL_TYPES.map(t => (
+                  {objTabTypes.map(t => (
                     <QBlockAccordion
         key={t.key}
         typeDef={t}
@@ -2155,7 +2219,7 @@ const onFetch = async () => {
                       Select main questions · set items &amp; marks per type
                     </span>
                   </div>
-                  {PG_SUBJ_TYPES.map(t => (
+                  {subjTabTypes.map(t => (
  <QBlockAccordion
         key={t.key}
         typeDef={t}
@@ -2353,8 +2417,7 @@ const badge = apiItems ? (
               <>
                 {tabs.map(t => {
                   const isActive = t.entryId === activeTab;
-                  const visible = Math.max(0, (+t.items || 0) - (+t.choices || 0));
-                  const totalMk = visible * (+t.marks || 0);
+                  const totalMk = (+t.items || 0) * (+t.marks || 0);   // items × marks-per-item
                   const hasData = (+t.items || 0) > 0;
                   return (
                     <Tooltip key={t.entryId} text={hasData ? `${t.label} · ${t.items} questions · ${totalMk} marks${t.saved ? ' (saved)' : ''}` : `${t.label}${t.saved ? ' (saved)' : ''}`}>
@@ -2407,7 +2470,6 @@ function QSavedCard({ tab, onEdit }) {
   const items   = +tab.items   || 0;
   const choices = +tab.choices || 0;
   const marks   = +tab.marks   || 0;
-  const visible = Math.max(0, items - choices);
   const unitNames = Object.keys(tab.unitSelections || {});
   return (
     <div className="pg-qws-panel">
@@ -2430,7 +2492,7 @@ function QSavedCard({ tab, onEdit }) {
           <span className="pg-qws-chip blue"><i className="fa-solid fa-list-ol" style={{ fontSize: 9 }}></i> {items} items</span>
           <span className="pg-qws-chip teal"><i className="fa-solid fa-eye-slash" style={{ fontSize: 9 }}></i> {choices} choices</span>
           <span className="pg-qws-chip green"><i className="fa-solid fa-star" style={{ fontSize: 9 }}></i> {marks} mark{marks !== 1 ? 's' : ''}/item</span>
-          <span className="pg-qws-chip amber"><i className="fa-solid fa-calculator" style={{ fontSize: 9 }}></i> {visible * marks} total marks</span>
+          <span className="pg-qws-chip amber"><i className="fa-solid fa-calculator" style={{ fontSize: 9 }}></i> {items * marks} total marks</span>
           <span className="pg-qws-chip gray"><i className="fa-solid fa-database" style={{ fontSize: 9 }}></i> {tab.totalEligible} eligible</span>
         </div>
       </div>
@@ -2510,7 +2572,6 @@ function QWorkspacePanel({ tab, typeKey, subject, onUpdate, onSave, apiItems }) 
   const items   = +tab.items   || 0;
   const choices = +tab.choices || 0;
   const marks   = +tab.marks   || 0;
-  const visible = Math.max(0, items - choices);
   const overflow = items > totalEligible && totalEligible > 0;
 
   // Selected unit ke mainQuestions (unique)
@@ -2562,10 +2623,12 @@ function QWorkspacePanel({ tab, typeKey, subject, onUpdate, onSave, apiItems }) 
                       <div
                         className={`pg-unit-row${isActive ? ' active' : ''}`}
                         onClick={() => {
-                          const firstMainQ = u.items[0]?.mainQuestion || '';
+                          // Unit select karte hi us unit ke saare unique main questions select karo
+                          // (user phir checkbox se kuch deselect kar sakti hai).
+                          const allMainQs = [...new Set(u.items.map(it => it.mainQuestion).filter(Boolean))];
                           onUpdate({
                             unitSelections: { '__api__': u.unitName },
-                            selectedMainQ: firstMainQ,   // API mainQuestion → payload; instr stays user-typed
+                            selectedMainQs: allMainQs,   // multi-select → payload mainQuestion[]
                             totalEligible: u.submitted,
                           });
                         }}
@@ -2585,13 +2648,27 @@ function QWorkspacePanel({ tab, typeKey, subject, onUpdate, onSave, apiItems }) 
                       {/* Selected unit ke mainQuestions */}
                       {isActive && (
                         <div className="pg-unit-instr-list">
-                          {Object.entries(selectedMainQuestions).map(([mainQ, qItems], mi) => (
+                          {Object.entries(selectedMainQuestions).map(([mainQ, qItems], mi) => {
+                            const checked = (tab.selectedMainQs || []).includes(mainQ);
+                            return (
                             <div
                               key={mi}
-                              className={`pg-instr-card${tab.selectedMainQ === mainQ ? ' active' : ''}`}
-                              onClick={() => onUpdate({ selectedMainQ: mainQ, totalEligible: u.submitted })}
+                              className={`pg-instr-card${checked ? ' active' : ''}`}
+                              onClick={() => {
+                                // multi-select toggle
+                                const cur = tab.selectedMainQs || [];
+                                const next = cur.includes(mainQ) ? cur.filter(x => x !== mainQ) : [...cur, mainQ];
+                                onUpdate({ selectedMainQs: next, totalEligible: u.submitted });
+                              }}
                             >
-                              <div className="pg-instr-card-radio"></div>
+                              <div style={{
+                                width: 14, height: 14, borderRadius: 3, flexShrink: 0, marginTop: 2,
+                                border: checked ? '2px solid #1E40AF' : '2px solid var(--border-med)',
+                                background: checked ? '#1E40AF' : 'transparent',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                              }}>
+                                {checked && <i className="fa-solid fa-check" style={{ fontSize: 8, color: '#fff' }}></i>}
+                              </div>
                               <div className="pg-instr-card-body">
                                 <div className="pg-instr-card-text">{mainQ}</div>
                                 <div className="pg-instr-card-meta">
@@ -2604,7 +2681,8 @@ function QWorkspacePanel({ tab, typeKey, subject, onUpdate, onSave, apiItems }) 
                                 </div>
                               </div>
                             </div>
-                          ))}
+                          );
+                          })}
                         </div>
                       )}
                     </div>
@@ -2845,7 +2923,7 @@ function QWorkspacePanel({ tab, typeKey, subject, onUpdate, onSave, apiItems }) 
 
             <div className="pg-q-calc">
               {items > 0
-                ? <>Paper shows <strong>{visible} item{visible !== 1 ? 's' : ''}</strong> · <strong>{choices} choice{choices !== 1 ? 's' : ''}</strong> · <strong>{visible * marks} mark{visible * marks !== 1 ? 's' : ''}</strong></>
+                ? <>Paper shows <strong>{items} item{items !== 1 ? 's' : ''}</strong> · <strong>{choices} choice{choices !== 1 ? 's' : ''}</strong> · <strong>{items * marks} mark{items * marks !== 1 ? 's' : ''}</strong></>
                 : <>Set items &amp; choices to see layout preview</>}
             </div>
 
@@ -2876,6 +2954,23 @@ function QWorkspacePanel({ tab, typeKey, subject, onUpdate, onSave, apiItems }) 
       </div>
     </div>
   );
+}
+
+/* Report header (branch name + logo + address) for the paper header. */
+async function fetchReportHeader() {
+  const token = sessionStorage.getItem('token');
+  const branchID = sessionStorage.getItem('branchID');
+  try {
+    const res = await fetch(buildUrl(`/report-header/${branchID}`), {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+    });
+    const data = await res.json();
+    return data?.data || null;
+  } catch (err) {
+    console.error('Could not load report header', err);
+    return null;
+  }
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -2909,6 +3004,13 @@ function normalizeQpDetail(list) {
       mainQuestion: b.parentData?.changedMainQuestion || b.parentData?.recTitle || '',
       // Selection record id for update lives on the specific row (parentData.id is the master).
       recordId: b.specificTableData?.[0]?.id || 0,
+      // Saved config (items / choices / marks-per-item) so the edit modal prefills correctly.
+      noOfQuestions: +b.parentData?.noOfQuestions || 0,
+      noOfChoices:   +b.parentData?.noOfChoices   || 0,
+      marks:         +b.parentData?.marks         || 0,
+      // Which section ('objective' | 'subjective') this question was saved under — used to
+      // place it in the correct tab for 'both' papers (a type may appear in either tab).
+      qpSubmissionPaperType: b.parentData?.qpSubmissionPaperType || '',
       rows: Array.isArray(b.specificTableData) ? b.specificTableData : [],
     })),
   };
@@ -2920,8 +3022,22 @@ const pgEsc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&':'&a
 /* The most likely "question text" field for a row, across all types. */
 const pgRowText = r => r.question || r.word || r.sentence || r.statement || r.topic || r.title || r.comprehensionStatement || r.mainQuestion || '';
 
+/* subjective-only type keys (in PG_SUBJ_TYPES but not PG_OBJ_TYPES) */
+const PG_SUBJ_ONLY_KEYS = PG_SUBJ_TYPES.filter(s => !PG_OBJ_TYPES.some(o => o.key === s.key)).map(s => s.key);
+/* Objective vs subjective for a saved section. Uses the API's qpSubmissionPaperType
+   first; if empty, falls back to the static type category (subj-only types → subj,
+   everything else → obj). */
+function pgSectionKind(sec) {
+  const t = (sec.qpSubmissionPaperType || '').toLowerCase();
+  if (t === 'objective') return 'obj';
+  if (t === 'subjective') return 'subj';
+  const recKey = pgRecKey(sec.recTitle);
+  const typeKey = Object.keys(PG_REC_TITLE).find(k => pgRecKey(PG_REC_TITLE[k]) === recKey);
+  return (typeKey && PG_SUBJ_ONLY_KEYS.includes(typeKey)) ? 'subj' : 'obj';
+}
+
 /* ── React renderer (Preview) — one block per saved section, by recTitle ── */
-function ApiPaperSections({ sections, isBW }) {
+function ApiPaperSections({ sections, isBW, paperType }) {
   if (!sections || !sections.length) {
     return <div style={{ fontSize: 12, color: '#64748B', textAlign: 'center', padding: 24 }}>No saved questions found for this paper.</div>;
   }
@@ -3017,30 +3133,50 @@ function ApiPaperSections({ sections, isBW }) {
     ));
   };
 
-  return (
-    <>
-      {sections.map((sec, si) => (
-        <div key={si} style={{ marginBottom: 16 }}>
-          <div style={{ fontSize: 12, color: '#334155', marginBottom: 10 }}>
-            <strong>Q.{si + 1}</strong> {sec.mainQuestion}
-          </div>
-          {renderRows(sec)}
-        </div>
-      ))}
-    </>
+  const sectionHeading = (label) => (
+    <div style={{
+      background: isBW ? '#FFFFFF' : '#1E3A8A', color: isBW ? '#0F172A' : '#FFFFFF',
+      border: isBW ? '1px solid #0F172A' : 'none', padding: '6px 14px', fontSize: 12,
+      fontWeight: 700, letterSpacing: '.05em', textTransform: 'uppercase',
+      margin: '16px 0 10px', borderRadius: 4,
+    }}>{label}</div>
   );
+  const renderBlock = (sec, num) => (
+    <div key={`${num}-${sec.recTitle}`} style={{ marginBottom: 16 }}>
+      <div style={{ fontSize: 12, color: '#334155', marginBottom: 10 }}>
+        <strong>Q.{num}</strong> {sec.mainQuestion}
+      </div>
+      {renderRows(sec)}
+    </div>
+  );
+
+  // 'both' paper → Objective section pehle, phir Subjective section.
+  if (paperType === 'both') {
+    const objSecs  = sections.filter(s => pgSectionKind(s) === 'obj');
+    const subjSecs = sections.filter(s => pgSectionKind(s) === 'subj');
+    let n = 0;
+    return (
+      <>
+        {objSecs.length > 0 && sectionHeading('Section A — Objective Questions')}
+        {objSecs.map(sec => renderBlock(sec, ++n))}
+        {subjSecs.length > 0 && sectionHeading('Section B — Subjective Questions')}
+        {subjSecs.map(sec => renderBlock(sec, ++n))}
+      </>
+    );
+  }
+  return <>{sections.map((sec, si) => renderBlock(sec, si + 1))}</>;
 }
 
 /* ── HTML builder (Download) — mirrors ApiPaperSections using paper CSS classes ── */
-function buildApiSectionsHTML(sections) {
+function buildApiSectionsHTML(sections, paperType) {
   if (!sections || !sections.length) {
     return '<div style="text-align:center;color:#64748B;font-size:12px;padding:20px">No saved questions found for this paper.</div>';
   }
   const blank = '___________';
-  return sections.map((sec, si) => {
+  const renderOne = (sec, num) => {
     const k = pgRecKey(sec.recTitle);
     const rows = sec.rows || [];
-    const header = `<div class="q-header"><span><b>Q.${si + 1}</b> ${pgEsc(sec.mainQuestion)}</span></div>`;
+    const header = `<div class="q-header"><span><b>Q.${num}</b> ${pgEsc(sec.mainQuestion)}</span></div>`;
     let body = '';
     const twoCol = (leftKey, leftLabel, rightLabel) =>
       `<table><tr><th>#</th><th>${leftLabel}</th><th>${rightLabel}</th></tr>` +
@@ -3070,7 +3206,19 @@ function buildApiSectionsHTML(sections) {
       body = rows.map((r, i) => `<div class="write-item">${pgRoman(i)}. ${pgEsc(pgRowText(r))}<div class="ans-line"></div></div>`).join('');
     }
     return `<div class="q-block">${header}${body}</div>`;
-  }).join('');
+  };
+
+  // 'both' paper → Objective section pehle, phir Subjective section.
+  if (paperType === 'both') {
+    const objSecs  = sections.filter(s => pgSectionKind(s) === 'obj');
+    const subjSecs = sections.filter(s => pgSectionKind(s) === 'subj');
+    let n = 0;
+    let html = '';
+    if (objSecs.length)  html += '<div class="section-title">Section A — Objective Questions</div>'  + objSecs.map(s => renderOne(s, ++n)).join('');
+    if (subjSecs.length) html += '<div class="section-title">Section B — Subjective Questions</div>' + subjSecs.map(s => renderOne(s, ++n)).join('');
+    return html;
+  }
+  return sections.map((sec, si) => renderOne(sec, si + 1)).join('');
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -3080,12 +3228,20 @@ function PaperViewModal({ paper, cls, onClose, onDownload }) {
   const [tone, setTone] = useState('color'); // 'color' | 'bw'
   const [sections, setSections] = useState([]);
   const [loadingDetail, setLoadingDetail] = useState(true);
+  const [reportHeader, setReportHeader] = useState(null); // { branchName, branchLogo, address }
 
   useEffect(() => {
     const onKey = e => { if (e.key === 'Escape') onClose(); };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
+
+  /* Branch name + logo for the paper header. */
+  useEffect(() => {
+    let alive = true;
+    (async () => { const h = await fetchReportHeader(); if (alive) setReportHeader(h); })();
+    return () => { alive = false; };
+  }, []);
 
   /* Load the saved questions for this paper from getexamqpsubmissiondetail. */
   useEffect(() => {
@@ -3178,8 +3334,18 @@ function PaperViewModal({ paper, cls, onClose, onDownload }) {
           </div>
 
           <div style={{ padding: 24, background: '#fff', minHeight: 400, fontFamily: "'Plus Jakarta Sans', sans-serif" }}>
-            <div style={{ background: headerBg, color: headerColor, border: headerBorder, borderBottom: 'none', textAlign: 'center', padding: 12, borderRadius: '6px 6px 0 0', margin: '-24px -24px 16px', fontSize: 14, fontWeight: 700, letterSpacing: '.02em' }}>
-              The Oxford System, Lahore Campus
+            <div style={{ background: headerBg, color: headerColor, border: headerBorder, borderBottom: 'none', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5, padding: 12, borderRadius: '6px 6px 0 0', margin: '-24px -24px 16px', textAlign: 'center' }}>
+              {reportHeader?.branchLogo && (
+                <img src={reportHeader.branchLogo} alt="logo" style={{ height: 48, width: 48, objectFit: 'contain', borderRadius: 8, background: '#fff' }} />
+              )}
+              <div style={{ fontSize: 15, fontWeight: 800, letterSpacing: '.02em' }}>
+                {reportHeader?.branchName || 'The Oxford System, Lahore Campus'}
+              </div>
+              {reportHeader?.address && (
+                <div style={{ fontSize: 10, fontWeight: 500, opacity: isBW ? 1 : .85, color: isBW ? '#4B5563' : 'inherit' }}>
+                  {reportHeader.address}
+                </div>
+              )}
             </div>
             <div style={{ textAlign: 'center', fontSize: 13, fontWeight: 600, color: '#334155', marginBottom: 12 }}>
               {paper.title} &middot; {paper.subj} &middot; {cls.name} ({cls.section})
@@ -3190,9 +3356,13 @@ function PaperViewModal({ paper, cls, onClose, onDownload }) {
               <div>Section: {cls.section}</div>
               <div>Date: ___________</div>
             </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, fontWeight: 600, color: accent, marginBottom: 16 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, fontWeight: 600, color: accent, marginBottom: 16, flexWrap: 'wrap', gap: 6 }}>
               <span>Total Time: {totalMin} Minutes</span>
-              <span>Total Marks: {totalMk} &nbsp;&nbsp; Obtained: ______/{totalMk}</span>
+              <span>
+                {showObj && <>Objective Marks: {objMarks} &nbsp;·&nbsp; </>}
+                {showSubj && <>Subjective Marks: {subjMarks} &nbsp;·&nbsp; </>}
+                 &nbsp;&nbsp; Obtained: ______/{totalMk}
+              </span>
             </div>
 
             {loadingDetail ? (
@@ -3200,7 +3370,7 @@ function PaperViewModal({ paper, cls, onClose, onDownload }) {
                 <i className="fa-solid fa-spinner fa-spin" style={{ marginRight: 6 }}></i> Loading questions…
               </div>
             ) : (
-              <ApiPaperSections sections={sections} isBW={isBW} />
+              <ApiPaperSections sections={sections} isBW={isBW} paperType={paper.type} />
             )}
 
             <div style={{ marginTop: 20, paddingTop: 12, borderTop: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#64748B' }}>
@@ -3373,13 +3543,18 @@ function buildAnswerSheetSection() {
   );
 }
 
-function buildFullPaperHTML({ paper, cls, isBW, asWord, sections }) {
+function buildFullPaperHTML({ paper, cls, isBW, asWord, sections, reportHeader }) {
+  const schoolName = reportHeader?.branchName || 'The Oxford System — Lahore Campus';
+  const schoolLogo = reportHeader?.branchLogo || '';
+  const schoolAddress = reportHeader?.address || '';
   const fmt      = paper.format || 'with';
   const typ      = paper.type   || 'both';
   const subject  = paper.subj   || 'English';
   const title    = paper.title  || 'Question Paper';
   const totalMin = (paper.objTime  || 0) + (paper.subjTime  || 0) || 100;
-  const totalMk  = (paper.objMarks || 0) + (paper.subjMarks || 0) || 100;
+  const objMarks  = paper.objMarks  || 0;
+  const subjMarks = paper.subjMarks || 0;
+  const totalMk  = (objMarks + subjMarks) || 100;
   const className = cls?.name    || 'Class';
   const section   = cls?.section || '';
 
@@ -3389,7 +3564,7 @@ function buildFullPaperHTML({ paper, cls, isBW, asWord, sections }) {
   // API-driven body (saved questions, grouped by recTitle) — kept in sync with Preview.
   // Falls back to the static sample sections only if no API sections were supplied.
   const apiBody     = Array.isArray(sections)
-    ? buildApiSectionsHTML(sections)
+    ? buildApiSectionsHTML(sections, typ)
     : `${showObj ? buildObjSection() : ''}${showSubj ? buildSubjSection() : ''}`;
   const answerSheet = fmt === 'with' ? buildAnswerSheetSection() : '';
 
@@ -3466,8 +3641,10 @@ td { padding:6px 8px; border:1px solid #E2E8F0; }
 </style>
 </head><body>
 <div class="paper-wrap">
-  <div class="school-header">
-    <div class="school-name">The Oxford System — Lahore Campus</div>
+  <div class="school-header" style="display:flex;flex-direction:column;align-items:center;gap:6px;text-align:center">
+    ${schoolLogo ? `<img src="${schoolLogo}" alt="logo" style="height:54px;width:54px;object-fit:contain;border-radius:8px;background:#fff" />` : ''}
+    <div class="school-name">${pgEsc(schoolName)}</div>
+    ${schoolAddress ? `<div class="exam-sub">${pgEsc(schoolAddress)}</div>` : ''}
     <div class="exam-sub">Annual Examination &bull; ${subject} &bull; ${className} &bull; Section ${section}</div>
   </div>
 
@@ -3482,7 +3659,7 @@ td { padding:6px 8px; border:1px solid #E2E8F0; }
     <span>Subject: <strong>${subject}</strong></span>
     <span>Class: <strong>${className}</strong></span>
     <span>Time: <strong>${totalMin} Minutes</strong></span>
-    <span>Total Marks: <strong>${totalMk}</strong> &nbsp; Obtained: <strong>______/${totalMk}</strong></span>
+    <span>${showObj ? `Objective Marks: <strong>${objMarks}</strong> &nbsp;·&nbsp; ` : ''}${showSubj ? `Subjective Marks: <strong>${subjMarks}</strong> &nbsp;·&nbsp; ` : ''}Obtained: <strong>______/${totalMk}</strong></span>
   </div>
 
   ${apiBody}
@@ -3533,14 +3710,19 @@ function DownloadModal({ paper, cls, onClose, toast }) {
     }
     win.document.write('<p style="font-family:sans-serif;padding:24px;color:#475569">Preparing paper…</p>');
     let sections = [];
+    let reportHeader = null;
     try {
-      const list = await fetchQpSubmissionDetail({
-        id: paper.qpMasterID ?? paper.id,
-        branchID: sessionStorage.getItem('branchID'),
-        gradeID: cls?.gradeID ?? paper.gradeID,
-        sectionID: cls?.sectionID ?? paper.sectionID,
-      });
+      const [list, header] = await Promise.all([
+        fetchQpSubmissionDetail({
+          id: paper.qpMasterID ?? paper.id,
+          branchID: sessionStorage.getItem('branchID'),
+          gradeID: cls?.gradeID ?? paper.gradeID,
+          sectionID: cls?.sectionID ?? paper.sectionID,
+        }),
+        fetchReportHeader(),
+      ]);
       sections = normalizeQpDetail(list).sections;
+      reportHeader = header;
     } catch (err) {
       console.error('Could not load paper detail for download', err);
     }
@@ -3550,6 +3732,7 @@ function DownloadModal({ paper, cls, onClose, toast }) {
       isBW: style === 'bw',
       asWord: format === 'word',
       sections,
+      reportHeader,
     });
     win.document.open();
     win.document.write(html);
