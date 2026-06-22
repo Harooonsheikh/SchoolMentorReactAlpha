@@ -1248,14 +1248,16 @@ const PG_UNIT_DATA = {
    }
 */
 
-/* Sum total marks (items × marks-per-item) across all saved/dirty tabs of a section.
-   Choices are NOT subtracted — total marks = items × marks (e.g. 2 items × 2 = 4). */
+/* Sum total marks across all saved/dirty tabs of a section.
+   total marks = (items − choices) × marks-per-item
+   (e.g. 10 items − 4 choices = 6, 6 × 2 = 12). */
 function sectionUsedMarks(sectionState) {
   if (!sectionState) return 0;
   let total = 0;
   Object.values(sectionState).forEach(block => {
     (block.tabs || []).forEach(t => {
-      total += (+t.items || 0) * (+t.marks || 0);
+      const eff = Math.max(0, (+t.items || 0) - (+t.choices || 0));
+      total += eff * (+t.marks || 0);
     });
   });
   return total;
@@ -1268,10 +1270,12 @@ function typeAggregates(sectionState) {
   Object.entries(sectionState).forEach(([typeKey, block]) => {
     (block.tabs || []).forEach(t => {
       const items   = +t.items   || 0;
+      const choices = +t.choices || 0;
       const marks   = +t.marks   || 0;
+      const eff     = Math.max(0, items - choices);   // effective items = items − choices
       const m = map[typeKey] || { items:0, marks:0, count:0 };
-      m.items += items;
-      m.marks += items * marks;   // total marks = items × marks-per-item (choices not subtracted)
+      m.items += eff;
+      m.marks += eff * marks;     // total marks = (items − choices) × marks-per-item
       m.count += items > 0 ? 1 : 0;
       map[typeKey] = m;
     });
@@ -2319,20 +2323,29 @@ function QBlockAccordion({ typeDef, section, subject, block, typeAgg,
   let unitSummary = []; // [{ unitName, submitted, total }]
 
   if (apiItems) {
-    // Group by unitName
+    // Group by unitName → fir mainQuestion ke groups. submittedCount/notebookTotalCount
+    // per-mainQuestion-group hote hain, is liye unit ka submitted/total un groups ka SUM hai.
     const unitMap = {};
     apiItems.forEach(item => {
       const uName = item.unitName || 'Unit';
-      if (!unitMap[uName]) {
-        unitMap[uName] = {
-          unitName: uName,
+      const mq = item.mainQuestion || 'Section A';
+      if (!unitMap[uName]) unitMap[uName] = { unitName: uName, groups: {} };
+      if (!unitMap[uName].groups[mq]) {
+        unitMap[uName].groups[mq] = {
           submitted: item.submittedCount || 0,
           total: item.notebookTotalCount || 0,
         };
       }
     });
-    unitSummary = Object.values(unitMap);
-    // Total submitted = sum of all unit submittedCounts
+    unitSummary = Object.values(unitMap).map(u => {
+      const groups = Object.values(u.groups);
+      return {
+        unitName: u.unitName,
+        submitted: groups.reduce((s, g) => s + g.submitted, 0), // sab mainQ ka approved
+        total:     groups.reduce((s, g) => s + g.total, 0),      // sab mainQ ka total
+      };
+    });
+    // Total submitted = sum of all units' (= sab mainQ ka) submitted
     totalSubmitted = unitSummary.reduce((sum, u) => sum + u.submitted, 0);
     unitCount = unitSummary.length;
   } else {
@@ -2349,11 +2362,20 @@ function QBlockAccordion({ typeDef, section, subject, block, typeAgg,
   const activeTab = block?.activeTab;
   const activeIdx = tabs.findIndex(t => t.entryId === activeTab);
 
+  // Badge ka approved = SIRF active (jo abhi add/edit ho raha) tab ke SELECTED main questions
+  // ka approved (us tab ka totalEligible). Baqi tabs ka sum NAHI — warna naya question add karte
+  // waqt sab ka jama dikhta tha. Check/uncheck par totalEligible badalta hai → badge live update.
+  // Agar active tab mein koi selection nahi, to available total dikhao.
+  const activeTabObj   = activeIdx >= 0 ? tabs[activeIdx] : null;
+  const anySelection   = (activeTabObj?.selectedMainQs || []).length > 0;
+  const selectedApprov = +(activeTabObj?.totalEligible) || 0;
+  const badgeApproved  = (apiItems && anySelection) ? selectedApprov : totalSubmitted;
+
   // Badge: unit summary dikhao
 const badge = apiItems ? (
   hasApproved ? (
     <span className="pg-qblock-badge" >
-      {totalSubmitted} approved · {unitCount} unit{unitCount !== 1 ? 's' : ''}
+      {badgeApproved} approved · {unitCount} unit{unitCount !== 1 ? 's' : ''}
     </span>
   ) : (
     <span className="pg-qblock-badge">
@@ -2380,7 +2402,7 @@ const badge = apiItems ? (
           {typeAgg && typeAgg.count > 0 && (
             <span className="pg-type-config-badge">
               <i className="fa-solid fa-check-circle" style={{ fontSize: 9 }}></i>
-              {' '}{typeAgg.count} Question{typeAgg.count !== 1 ? 's' : ''} · {typeAgg.marks} Marks
+              {' '}{typeAgg.count} Question{typeAgg.count !== 1 ? 's' : ''}
             </span>
           )}
           {/* Chevron sirf tab dikhao jab approved items hain */}
@@ -2417,17 +2439,18 @@ const badge = apiItems ? (
               <>
                 {tabs.map(t => {
                   const isActive = t.entryId === activeTab;
-                  const totalMk = (+t.items || 0) * (+t.marks || 0);   // items × marks-per-item
+                  const effQ    = Math.max(0, (+t.items || 0) - (+t.choices || 0));  // effective items = items − choices
+                  const totalMk = effQ * (+t.marks || 0);                            // (items − choices) × marks-per-item
                   const hasData = (+t.items || 0) > 0;
                   return (
-                    <Tooltip key={t.entryId} text={hasData ? `${t.label} · ${t.items} questions · ${totalMk} marks${t.saved ? ' (saved)' : ''}` : `${t.label}${t.saved ? ' (saved)' : ''}`}>
+                    <Tooltip key={t.entryId} text={hasData ? `${t.label} · ${effQ} questions · ${totalMk} marks${t.saved ? ' (saved)' : ''}` : `${t.label}${t.saved ? ' (saved)' : ''}`}>
                       <button
                         className={`pg-qtab-pill${isActive ? ' active' : ''}${t.saved ? ' saved' : ''}`}
                         onClick={() => onSwitchTab(t.entryId)}
                       >
                         {t.saved && <i className="fa-solid fa-check" style={{ fontSize: 9, marginRight: 2, color: isActive ? '#fff' : 'var(--success,#16A34A)' }}></i>}
                         {t.label}
-                        {hasData && <span style={{ fontSize: 9.5, fontWeight: 700, opacity: .75, marginLeft: 3 }}>{t.items} Q · {totalMk} Marks</span>}
+                        {hasData && <span style={{ fontSize: 9.5, fontWeight: 700, opacity: .75, marginLeft: 3 }}>{effQ} Q · {totalMk} Marks</span>}
                         {tabs.length > 1 && <span className="pg-qtab-close" onClick={e => { e.stopPropagation(); onRemoveTab(t.entryId); }}>×</span>}
                       </button>
                     </Tooltip>
@@ -2470,6 +2493,7 @@ function QSavedCard({ tab, onEdit }) {
   const items   = +tab.items   || 0;
   const choices = +tab.choices || 0;
   const marks   = +tab.marks   || 0;
+  const eff     = Math.max(0, items - choices);   // effective items = items − choices
   const unitNames = Object.keys(tab.unitSelections || {});
   return (
     <div className="pg-qws-panel">
@@ -2489,10 +2513,10 @@ function QSavedCard({ tab, onEdit }) {
           </Tooltip>
         </div>
         <div className="pg-qws-saved-chips">
-          <span className="pg-qws-chip blue"><i className="fa-solid fa-list-ol" style={{ fontSize: 9 }}></i> {items} items</span>
+          <span className="pg-qws-chip blue"><i className="fa-solid fa-list-ol" style={{ fontSize: 9 }}></i> {eff} items</span>
           <span className="pg-qws-chip teal"><i className="fa-solid fa-eye-slash" style={{ fontSize: 9 }}></i> {choices} choices</span>
           <span className="pg-qws-chip green"><i className="fa-solid fa-star" style={{ fontSize: 9 }}></i> {marks} mark{marks !== 1 ? 's' : ''}/item</span>
-          <span className="pg-qws-chip amber"><i className="fa-solid fa-calculator" style={{ fontSize: 9 }}></i> {items * marks} total marks</span>
+          <span className="pg-qws-chip amber"><i className="fa-solid fa-calculator" style={{ fontSize: 9 }}></i> {eff * marks} total marks</span>
           <span className="pg-qws-chip gray"><i className="fa-solid fa-database" style={{ fontSize: 9 }}></i> {tab.totalEligible} eligible</span>
         </div>
       </div>
@@ -2509,20 +2533,31 @@ function QWorkspacePanel({ tab, typeKey, subject, onUpdate, onSave, apiItems }) 
   const selectedUnits = tab.unitSelections || {};
   const selCount = Object.keys(selectedUnits).length;
 
-  // API mode: group by unitName
+  // API mode: group by unitName → har unit ke andar mainQuestion ke groups.
+  // notebookTotalCount / submittedCount per-mainQuestion-group hote hain, is liye
+  // unit ka Total/Approved un groups ka SUM hai (sab mainQ ka total/approved).
   const apiUnitMap = useApiData ? (() => {
     const map = {};
     apiItems.forEach(item => {
       const uName = item.unitName || 'Unit';
-      if (!map[uName]) {
-        map[uName] = {
-          unitName: uName,
-          total: item.notebookTotalCount || 0,
-          submitted: item.submittedCount || 0,
+      if (!map[uName]) map[uName] = { unitName: uName, items: [], groups: {} };
+      map[uName].items.push(item);
+      const mq = item.mainQuestion || 'Section A';
+      if (!map[uName].groups[mq]) {
+        map[uName].groups[mq] = {
+          mainQ: mq,
+          total: item.notebookTotalCount || 0,     // is mainQ group ka total
+          approved: item.submittedCount || 0,       // is mainQ group ka approved
           items: [],
         };
       }
-      map[uName].items.push(item);
+      map[uName].groups[mq].items.push(item);
+    });
+    // unit-level Total/Approved = saare mainQ groups ka sum
+    Object.values(map).forEach(u => {
+      const groups = Object.values(u.groups);
+      u.total     = groups.reduce((s, g) => s + g.total, 0);
+      u.submitted = groups.reduce((s, g) => s + g.approved, 0);
     });
     return map;
   })() : {};
@@ -2532,8 +2567,16 @@ function QWorkspacePanel({ tab, typeKey, subject, onUpdate, onSave, apiItems }) 
   const selectedUnitName = selectedUnits['__api__'] || null;
   const selectedUnitData = selectedUnitName ? apiUnitMap[selectedUnitName] : null;
 
+  // SELECTED main questions ka total (live; check/uncheck par update hota hai)
+  const selectedTotal = (useApiData && selectedUnitData)
+    ? (tab.selectedMainQs || []).reduce((s, mq) => s + (selectedUnitData.groups[mq]?.total || 0), 0)
+    : 0;
+
   const totalEligible = useApiData
-    ? (selectedUnitData ? selectedUnitData.submitted : 0)
+    ? (selectedUnitData
+        // sirf SELECTED main questions ke approved ka sum
+        ? (tab.selectedMainQs || []).reduce((s, mq) => s + (selectedUnitData.groups[mq]?.approved || 0), 0)
+        : 0)
     : (() => {
         let t = 0;
         Object.entries(selectedUnits).forEach(([unitName, instrIdx]) => {
@@ -2547,7 +2590,9 @@ function QWorkspacePanel({ tab, typeKey, subject, onUpdate, onSave, apiItems }) 
       })();
 
   const breakdown = useApiData
-    ? (selectedUnitData ? [`${selectedUnitData.unitName}: ${selectedUnitData.submitted}`] : [])
+    ? (selectedUnitData
+        ? (tab.selectedMainQs || []).map(mq => `${mq}: ${selectedUnitData.groups[mq]?.approved || 0}`)
+        : [])
     : (() => {
         const bd = [];
         Object.entries(selectedUnits).forEach(([unitName, instrIdx]) => {
@@ -2572,20 +2617,12 @@ function QWorkspacePanel({ tab, typeKey, subject, onUpdate, onSave, apiItems }) 
   const items   = +tab.items   || 0;
   const choices = +tab.choices || 0;
   const marks   = +tab.marks   || 0;
+  // Paper par dikhne wale effective items = input items − choices (jaise 5 items − 2 choices = 3)
+  const shownItems = Math.max(0, items - choices);
   const overflow = items > totalEligible && totalEligible > 0;
 
-  // Selected unit ke mainQuestions (unique)
-  const selectedMainQuestions = selectedUnitData
-    ? (() => {
-        const mqs = {};
-        selectedUnitData.items.forEach(item => {
-          const mq = item.mainQuestion || 'Section A';
-          if (!mqs[mq]) mqs[mq] = [];
-          mqs[mq].push(item);
-        });
-        return mqs;
-      })()
-    : {};
+  // Selected unit ke mainQuestion groups (har group mein apna total/approved/items)
+  const selectedMainQuestions = selectedUnitData ? selectedUnitData.groups : {};
 
   return (
     <div className="pg-qws-panel">
@@ -2637,10 +2674,11 @@ function QWorkspacePanel({ tab, typeKey, subject, onUpdate, onSave, apiItems }) 
                         <div className="pg-unit-row-name">{u.unitName}</div>
                         <div style={{ display: 'flex', gap: 5, flexShrink: 0 }}>
                           <span className="pg-q-info-chip total" style={{ padding: '2px 7px', fontSize: 10 }}>
-                            Total: {u.total}
+                            {/* Active unit par sirf selected mainQ ka sum (check/uncheck par live) */}
+                            Total: {isActive ? selectedTotal : u.total}
                           </span>
                           <span className="pg-q-info-chip available" style={{ padding: '2px 7px', fontSize: 10 }}>
-                            Approved: {u.submitted}
+                            Approved: {isActive ? totalEligible : u.submitted}
                           </span>
                         </div>
                       </div>
@@ -2648,7 +2686,7 @@ function QWorkspacePanel({ tab, typeKey, subject, onUpdate, onSave, apiItems }) 
                       {/* Selected unit ke mainQuestions */}
                       {isActive && (
                         <div className="pg-unit-instr-list">
-                          {Object.entries(selectedMainQuestions).map(([mainQ, qItems], mi) => {
+                          {Object.entries(selectedMainQuestions).map(([mainQ, g], mi) => {
                             const checked = (tab.selectedMainQs || []).includes(mainQ);
                             return (
                             <div
@@ -2658,7 +2696,9 @@ function QWorkspacePanel({ tab, typeKey, subject, onUpdate, onSave, apiItems }) 
                                 // multi-select toggle
                                 const cur = tab.selectedMainQs || [];
                                 const next = cur.includes(mainQ) ? cur.filter(x => x !== mainQ) : [...cur, mainQ];
-                                onUpdate({ selectedMainQs: next, totalEligible: u.submitted });
+                                // totalEligible = sirf selected mainQ ka approved sum
+                                const nextEligible = next.reduce((s, mq) => s + (u.groups[mq]?.approved || 0), 0);
+                                onUpdate({ selectedMainQs: next, totalEligible: nextEligible });
                               }}
                             >
                               <div style={{
@@ -2673,10 +2713,10 @@ function QWorkspacePanel({ tab, typeKey, subject, onUpdate, onSave, apiItems }) 
                                 <div className="pg-instr-card-text">{mainQ}</div>
                                 <div className="pg-instr-card-meta">
                                   <span className="pg-q-info-chip total" style={{ padding: '2px 6px', fontSize: 10 }}>
-                                    Total: {u.total}
+                                    Total: {g.total}
                                   </span>
                                   <span className="pg-q-info-chip available" style={{ padding: '2px 6px', fontSize: 10 }}>
-                                    Approved: {u.submitted}
+                                    Approved: {g.approved}
                                   </span>
                                 </div>
                               </div>
@@ -2923,7 +2963,7 @@ function QWorkspacePanel({ tab, typeKey, subject, onUpdate, onSave, apiItems }) 
 
             <div className="pg-q-calc">
               {items > 0
-                ? <>Paper shows <strong>{items} item{items !== 1 ? 's' : ''}</strong> · <strong>{choices} choice{choices !== 1 ? 's' : ''}</strong> · <strong>{items * marks} mark{items * marks !== 1 ? 's' : ''}</strong></>
+                ? <><strong>{shownItems} item{shownItems !== 1 ? 's' : ''}</strong> · <strong>{choices} choice{choices !== 1 ? 's' : ''}</strong> · <strong>{marks} marks/item{marks !== 1 ? 's' : ''}</strong></>
                 : <>Set items &amp; choices to see layout preview</>}
             </div>
 
