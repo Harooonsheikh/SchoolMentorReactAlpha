@@ -1344,7 +1344,7 @@ function VacationEditModal({ open, vacations, session = {}, sessionSummaryId, on
         present.add(v.id);
         if (!v.name || !v.name.trim()) return; // skip empty rows
         const exists = origIds.has(v.id);
-        ops.push(lpPost('/api/lpsessionsummarydetailscrud', {
+        ops.push(lpPost('/api/lpsessionssummarydetailscrud', {
           id: exists ? v.id : 0,
           sessionSummaryID: sessionSummaryId,
           vacationName: v.name.trim(),
@@ -1357,9 +1357,12 @@ function VacationEditModal({ open, vacations, session = {}, sessionSummaryId, on
       });
       origIds.forEach(id => {
         if (!present.has(id)) {
-          ops.push(lpPost('/api/lpsessionsummarydetailscrud', {
+          const orig = vacations.find(v => v.id === id) || {};
+          ops.push(lpPost('/api/lpsessionssummarydetailscrud', {
             id, sessionSummaryID: sessionSummaryId,
-            vacationName: '', vacationStart: null, vacationEnd: null,
+            vacationName: orig.name || '',
+            vacationStart: lpToIso(orig.start),
+            vacationEnd: lpToIso(orig.end),
             remainingDays, remainingWeeks, action: 'delete',
           }));
         }
@@ -4386,7 +4389,7 @@ function Submissions({ toast, classesData = [] }) {
                                         <div className="sub-qitem-body" style={{ paddingLeft: 4 }}>
                                           <div className="sub-qitem-num">{ii + 1}</div>
                                           <div style={{ flex: 1, minWidth: 0 }}>
-                                            <div className="sub-qitem-text">{item.preview}</div>
+                                            <div className="sub-qitem-text" dangerouslySetInnerHTML={{ __html: item.preview || '' }} />
                                           </div>
                                         </div>
                                         <div className="sub-qitem-actions">
@@ -4683,7 +4686,7 @@ function NbSubmitModal({ ctx, unit, onClose, onSubmit }) {
                 onClick={() => !isSub && toggleItem(item.id)}
               >
                 <div className="nb-submit-item-num">{i + 1}</div>
-                <div className="nb-submit-item-text">{item.preview}</div>
+                <div className="nb-submit-item-text" dangerouslySetInnerHTML={{ __html: item.preview || '' }} />
                 {!isSub && (
                   <input type="checkbox" checked={isChk}
                     onClick={e => e.stopPropagation()}
