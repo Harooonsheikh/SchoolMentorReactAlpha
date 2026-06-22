@@ -458,6 +458,41 @@ const [subjects, setSubjects] = useState([]);
     /* eslint-disable-next-line react-hooks/exhaustive-deps */
   }, [rsTab]);
 
+  /* Result History tab: pehli baar khulte hi zaroori lists load karo
+     (classes/sections/students, class-section-students, sessions, branch-session). */
+  const [rhData, setRhData] = useState({ classes: null, classSection: null, sessions: null, branchSession: null });
+  const rhLoadedOnce = useRef(false);
+  const loadResultHistoryData = async () => {
+    const branchID = sessionStorage.getItem('branchID');
+    const empID    = sessionStorage.getItem('employee_ID');
+    const headers  = { Accept: '*/*', Authorization: `Bearer ${sessionStorage.getItem('token') || ''}` };
+    const getJson  = async (url) => {
+      try { const r = await fetch(buildUrl(url), { method: 'GET', headers }); return await r.json(); }
+      catch (e) { console.error('Result History load failed:', url, e); return null; }
+    };
+    const [classes, classSection, sessions, branchSession] = await Promise.all([
+      getJson(`/get-classlist-sectionlist-studentlist-by-branch/${branchID}/${empID}`),
+      getJson(`/api/LaunchSetup/get-class-section-studentlist-by-branch/${branchID}`),
+      getJson(`/api/Setting/get-sessions`),
+      getJson(`/api/Setting/get-branch-session/${branchID}`),
+    ]);
+    setRhData({ classes, classSection, sessions, branchSession });
+    // Active session ko dropdown mein default-select karo (get-branch-session se).
+    const sessList = sessions?.data || [];
+    const active   = branchSession?.data?.[0] || branchSession?.data || {};
+    const activeName = active.SessionName
+      || sessList.find(s => String(s.SessionID) === String(active.SessionID))?.SessionName;
+    if (activeName) setRhFilterSession(activeName);
+    console.log('📜 Result History data loaded:', { classes, classSection, sessions, branchSession, activeName });
+  };
+  useEffect(() => {
+    if (rsTab === 'resulthistory' && !rhLoadedOnce.current) {
+      rhLoadedOnce.current = true;
+      loadResultHistoryData();
+    }
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [rsTab]);
+
   /* Load a class-section's students when its row expands: student IDs from the
      CA-marks API (7), then the full per-student card (9) for each. */
   const [cbrStudentsLoading, setCbrStudentsLoading] = useState({});
@@ -697,7 +732,7 @@ const [subjects, setSubjects] = useState([]);
 
   /* ── Result History state ── */
   const [rhSearchQ, setRhSearchQ]             = useState('');
-  const [rhFilterSession, setRhFilterSession] = useState('2025-26');
+  const [rhFilterSession, setRhFilterSession] = useState('');
   const [rhFilterClass, setRhFilterClass]     = useState('');
   const [rhFilterSection, setRhFilterSection] = useState('');
   const [rhFilterExam, setRhFilterExam]       = useState('');
@@ -1134,24 +1169,18 @@ async function fetchRemarksSetup() {
   }
 }
 
-// Update the useEffect that loads result setup when rsTab changes
+// Result Setup ka data tab load karo jab user Results → Result Setup par aaye.
+// `tab` (main tab) ko bhi dependency mein rakha — warna rsTab/rsL2 mount se hi
+// apne default pe hain, to Results main-tab par click karne se effect re-run nahi hota tha.
 useEffect(() => {
-  if (rsTab === 'resultsetup' && rsL2 === 'setup') {
+  if (tab === 'results' && rsTab === 'resultsetup' && rsL2 === 'setup') {
     // Load all three APIs when Result Setup tab is active
     fetchGradeSetup();
     fetchSignatureSetup();
     fetchRemarksSetup();
   }
-}, [rsTab, rsL2]);
+}, [tab, rsTab, rsL2]);
 
-// Also load when component mounts for the first time if Result Setup is active
-useEffect(() => {
-  if (rsTab === 'resultsetup' && rsL2 === 'setup') {
-    fetchGradeSetup();
-    fetchSignatureSetup();
-    fetchRemarksSetup();
-  }
-}, []);
 const openAdd = () => {
   setEditing({ name: '', classes: [], from: '', to: '', termID: selectedTermId });
 };
@@ -3077,6 +3106,7 @@ useEffect(() => {
               {rsL2 === 'setup' && (
                 <>
                   {/* Top action row */}
+                  
                   <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginBottom: 16 }}>
                     <button className="export-btn pdf" onClick={() => setRsReportReq(true)}>
                       <i className="fa-solid fa-file-pdf"></i> PDF
@@ -4038,16 +4068,51 @@ onClick={async () => {
           })()}
           {rsTab === 'resulthistory' && (() => {
             const q = rhSearchQ.trim().toLowerCase();
-            const filtered = RH_INITIAL_STUDENTS.filter(st => {
+
+            // API se students (get-class-section-studentlist) ko card-shape mein flatten karo.
+            const apiStudents = [];
+            (rhData.classSection?.data || []).forEach(cls => {
+              (cls.sections || []).forEach(sec => {
+                (sec.students || []).forEach(stu => {
+                  apiStudents.push({
+                    id: stu.id,
+                    name: `${stu.firstName || ''} ${stu.lastName || ''}`.trim() || '—',
+                    father: stu.fatherName || '',
+                    rollNo: stu.registerNo || '',
+                    admission: stu.previousRegistrationNo || stu.registerNo || '',
+                    cls: cls.name,
+                    section: sec.sectionName,
+                    gradeId: cls.id,
+                    sectionId: sec.sectionID,
+                    gender: stu.gander || '',
+                    dob: stu.dateOfBirth || '',
+                    mobile: stu.mobileNo || '',
+                    attendance: 0,
+                    session: '',
+                    results: [],
+                  });
+                });
+              });
+            });
+            const usingApi = apiStudents.length > 0;
+            const sourceStudents = usingApi ? apiStudents : RH_INITIAL_STUDENTS;
+
+            const filtered = sourceStudents.filter(st => {
               if (q) {
                 const hit = (
-                  st.name.toLowerCase().includes(q) ||
-                  st.rollNo.toLowerCase().includes(q) ||
-                  st.father.toLowerCase().includes(q) ||
-                  st.admission.toLowerCase().includes(q) ||
-                  st.cls.toLowerCase().includes(q)
+                  (st.name || '').toLowerCase().includes(q) ||
+                  (st.rollNo || '').toLowerCase().includes(q) ||
+                  (st.father || '').toLowerCase().includes(q) ||
+                  (st.admission || '').toLowerCase().includes(q) ||
+                  (st.cls || '').toLowerCase().includes(q)
                 );
                 if (!hit) return false;
+              }
+              if (usingApi) {
+                // API students: class/section name se filter; session/exam data nahi hota.
+                if (rhFilterClass   && st.cls     !== rhFilterClass)   return false;
+                if (rhFilterSection && st.section !== rhFilterSection) return false;
+                return true;
               }
               if (rhFilterSession && st.session !== rhFilterSession) return false;
               if (rhFilterClass   && st.cls     !== rhFilterClass)   return false;
@@ -4429,17 +4494,23 @@ onClick={async () => {
 
                 {/* Filters */}
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 18, alignItems: 'center' }}>
+                  {/* Sessions — get-sessions API; default = active session (get-branch-session) */}
                   <select className="rh-filter" value={rhFilterSession} onChange={e => setRhFilterSession(e.target.value)}>
                     <option value="">All Sessions</option>
-                    {RH_SESSIONS.map(s => <option key={s} value={s}>{s === '2025-26' ? '2025–2026' : s === '2024-25' ? '2024–2025' : s}</option>)}
+                    {(rhData.sessions?.data || []).map(s => <option key={s.SessionID} value={s.SessionName}>{s.SessionName}</option>)}
                   </select>
-                  <select className="rh-filter" value={rhFilterClass} onChange={e => setRhFilterClass(e.target.value)}>
+                  {/* Classes — get-class-section-studentlist-by-branch API */}
+                  <select className="rh-filter" value={rhFilterClass} onChange={e => { setRhFilterClass(e.target.value); setRhFilterSection(''); }}>
                     <option value="">All Classes</option>
-                    {CBR_CLASS_OPTIONS.map(c => <option key={c} value={c}>{c}</option>)}
+                    {(rhData.classSection?.data || []).map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
                   </select>
+                  {/* Sections — selected class ki sections */}
                   <select className="rh-filter" value={rhFilterSection} onChange={e => setRhFilterSection(e.target.value)}>
                     <option value="">All Sections</option>
-                    {RH_SECTIONS.map(s => <option key={s} value={s}>Section {s}</option>)}
+                    {(() => {
+                      const cls = (rhData.classSection?.data || []).find(c => c.name === rhFilterClass);
+                      return (cls?.sections || []).map(s => <option key={s.sectionID} value={s.sectionName}>{s.sectionName}</option>);
+                    })()}
                   </select>
                   <select className="rh-filter" value={rhFilterExam} onChange={e => setRhFilterExam(e.target.value)}>
                     <option value="">All Exams</option>
@@ -4481,7 +4552,7 @@ onClick={async () => {
                             <div className="rh-id">
                               <div className="rh-name">{st.name}</div>
                               <div className="rh-father">{st.father}</div>
-                              <div className="rh-cls">{st.cls} · {st.rollNo}</div>
+                              <div className="rh-cls">{st.cls}{st.section ? ` (${st.section})` : ''}{st.rollNo ? ` · ${st.rollNo}` : ''}</div>
                             </div>
                             <div className="rh-grade">
                               <div style={{ fontSize: 22, fontWeight: 900, color: gradeCol, lineHeight: 1 }}>{grade}</div>
@@ -4581,6 +4652,7 @@ onClick={async () => {
           req={reportReq}
           exams={exams}
           term={term}
+          branchSchool={branchSchool}
           onClose={() => setReportReq(null)}
           toast={toast}
         />
@@ -4683,6 +4755,7 @@ onClick={async () => {
           ex={dsCurrentExam}
           dateSheets={dateSheets}
           term={dsTerm}
+          branchSchool={branchSchool}
           onClose={() => setDsReportReq(null)}
           toast={toast}
         />
@@ -4741,6 +4814,7 @@ onClick={async () => {
           ex={sylCurrentExam}
           syllabusData={syllabusData}
           term={sylTerm}
+          branchSchool={branchSchool}
           onClose={() => setSylReportReq(null)}
           toast={toast}
         />
@@ -4791,6 +4865,7 @@ onClick={async () => {
           sigs={rsSigs}
           remarks={rsRemarks}
           absentMode={rsAbsentMode}
+          branchSchool={branchSchool}
           onClose={() => setRsReportReq(null)}
           toast={toast}
         />
@@ -6028,18 +6103,18 @@ const save = () => {
 /* ═══════════════════════════════════════════════════════════════════
    DATE SHEET — REPORT PICKER + BUILDER (A4 portrait)
    ═══════════════════════════════════════════════════════════════════ */
-function DsReportPicker({ req, ex, dateSheets, term, onClose, toast }) {
+function DsReportPicker({ req, ex, dateSheets, term, branchSchool, onClose, toast }) {
   const [style, setStyle]   = useState('color');
   const [format, setFormat] = useState('pdf');
   if (!ex) return null;
 
   const dlLabel = `Download ${style === 'color' ? 'Colorful' : 'Colorless'} ${format === 'pdf' ? 'PDF' : 'Word'}`;
 
-  const generate = () => {
+  const generate = async () => {
     if (format === 'word') {
       toast('Word export coming soon', 'info');
     } else {
-      generateDateSheetReport({ ex, dateSheets, term, classKey: req.classKey }, style === 'color');
+      await generateDateSheetReport({ ex, dateSheets, term, classKey: req.classKey, branchSchool }, style === 'color');
     }
     onClose();
   };
@@ -6131,16 +6206,63 @@ function DsReportPicker({ req, ex, dateSheets, term, onClose, toast }) {
   );
 }
 
-function generateDateSheetReport({ ex, dateSheets, term, classKey }, isColor) {
+async function generateDateSheetReport({ ex, dateSheets, term, classKey, branchSchool }, isColor) {
   const isAll = classKey === 'all';
-  const dsData = dateSheets[ex.id] || {};
-  let targetIdxs = [];
-  if (isAll) {
-    targetIdxs = ex.classes.map((_, i) => i);
-  } else {
-    const idx = parseInt(String(classKey).split('_').pop(), 10);
-    targetIdxs = [isNaN(idx) ? 0 : idx];
-  }
+
+  // Window pehle kholo (popup-blocker se bachne ke liye), phir data fetch.
+  const w = window.open('', '_blank', 'width=960,height=820');
+  if (!w) return;
+  w.document.write('<p style="font-family:sans-serif;padding:24px;color:#475569">Preparing report…</p>');
+
+  /* Real branch header (name / logo / address / academic year) from the
+     /report-header/{branchId} API (saved in branchSchool) — same as the exam report. */
+  const bs         = branchSchool || {};
+  const schoolName = bs.name    || 'School Mentor ERP';
+  const schoolLogo = bs.logo    || '';
+  const schoolAddr = bs.address || '';
+  const schoolYear = bs.session
+    ? (/year/i.test(bs.session) ? bs.session : `Academic Year ${bs.session}`)
+    : 'Academic Year 2026–2027';
+  const dsEsc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const dsFmtDate = (s) => {
+    if (!s) return '—';
+    const [y, m, d] = String(s).split('T')[0].split('-');
+    return (y && m && d) ? `${d}/${m}/${y}` : s;
+  };
+  const dsLogoHtml = schoolLogo
+    ? `<img src="${dsEsc(schoolLogo)}" width="46" height="46" style="border-radius:12px;object-fit:cover;display:block" onerror="this.style.display='none'" />`
+    : (isColor ? '🎓' : '');
+
+  // Target classes: 'all' → saari; warna classKey (cls_examId_sectionID_i) ki sectionID wali class.
+  const keyParts = String(classKey).split('_');
+  const sectionIdFromKey = keyParts[keyParts.length - 2];
+  const targetClasses = isAll
+    ? (ex.classes || [])
+    : (ex.classes || []).filter(c => String(c.sectionID) === String(sectionIdFromKey));
+
+  // Har class ka datesheet seedha API se fetch karo (dateSheets state/key mismatch se bachne ke liye).
+  const fetchDs = async (cls) => {
+    try {
+      const branchID = sessionStorage.getItem('branchID');
+      const empID    = sessionStorage.getItem('employee_ID');
+      const token    = sessionStorage.getItem('token');
+      const params = new URLSearchParams({
+        branchID: String(branchID), classID: String(cls.classID), termID: String(ex.termID ?? ''),
+        ExamID: String(ex.selectExam ?? ex.id), sectionID: String(cls.sectionID), empID: String(empID),
+      });
+      const r = await fetch(buildUrl(`/api/getdatesheetbybranchclassidtermid?${params.toString()}`),
+        { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } });
+      const data = await r.json();
+      const rows = Array.isArray(data) ? data : (data?.data || []);
+      return rows.map(it => ({
+        subject: it.subjectName || it.subject || '',
+        date: it.date ? String(it.date).split('T')[0] : '',
+        timeFrom: it.timeFrom || '',
+        timeTo: it.timeTo || '',
+      }));
+    } catch (e) { console.error('Date sheet fetch failed', e); return []; }
+  };
+  const blocks = await Promise.all((targetClasses || []).map(async cls => ({ cls, rows: await fetchDs(cls) })));
 
   const today = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
   /* Two coordinated palettes:
@@ -6158,19 +6280,16 @@ function generateDateSheetReport({ ex, dateSheets, term, classKey }, isColor) {
   const rowEv  = isColor ? '#F8FAFF' : '#FFFFFF';
   const hBg    = isColor ? 'linear-gradient(135deg,#1E3A8A 0%,#1E40AF 60%,#2563EB 100%)' : '#FFFFFF';
 
-  const classBlocks = targetIdxs.map(i => {
-    const cls = ex.classes[i];
+  const classBlocks = blocks.map(({ cls, rows }) => {
     if (!cls) return '';
-    const key  = `cls_${ex.id}_${i}`;
-    const rows = dsData[key] || [];
     const rowsHtml = rows.length
       ? rows.map((s, si) => `
         <tr style="background:${si % 2 === 0 ? '#fff' : rowEv}">
           <td style="padding:8px 12px;font-size:11.5px;font-weight:700;color:#0F172A;border-bottom:1px solid ${aBdr}">${si + 1}</td>
-          <td style="padding:8px 12px;font-size:11.5px;font-weight:700;color:#0F172A;border-bottom:1px solid ${aBdr}">${s.subject}</td>
-          <td style="padding:8px 12px;font-size:11.5px;color:${tMuted};border-bottom:1px solid ${aBdr}">${s.date || '—'}</td>
-          <td style="padding:8px 12px;font-size:11.5px;color:${tMuted};border-bottom:1px solid ${aBdr}">${s.timeFrom || '—'}</td>
-          <td style="padding:8px 12px;font-size:11.5px;color:${tMuted};border-bottom:1px solid ${aBdr}">${s.timeTo || '—'}</td>
+          <td style="padding:8px 12px;font-size:11.5px;font-weight:700;color:#0F172A;border-bottom:1px solid ${aBdr}">${dsEsc(s.subject)}</td>
+          <td style="padding:8px 12px;font-size:11.5px;color:${tMuted};border-bottom:1px solid ${aBdr}">${dsFmtDate(s.date)}</td>
+          <td style="padding:8px 12px;font-size:11.5px;color:${tMuted};border-bottom:1px solid ${aBdr}">${dsEsc(s.timeFrom) || '—'}</td>
+          <td style="padding:8px 12px;font-size:11.5px;color:${tMuted};border-bottom:1px solid ${aBdr}">${dsEsc(s.timeTo) || '—'}</td>
         </tr>`).join('')
       : `<tr><td colspan="5" style="padding:12px;font-size:12px;color:${tMuted};text-align:center">No subjects added</td></tr>`;
 
@@ -6178,9 +6297,7 @@ function generateDateSheetReport({ ex, dateSheets, term, classKey }, isColor) {
       <div style="margin-bottom:20px;page-break-inside:avoid">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:7px">
           <div style="width:7px;height:7px;border-radius:50%;background:${aColor};flex-shrink:0"></div>
-          <div style="font-size:13px;font-weight:800;color:#0F172A">${cls}
-            <span style="color:${tMuted};font-weight:500"> · Section A</span>
-          </div>
+          <div style="font-size:13px;font-weight:800;color:#0F172A">${dsEsc(cls.className || `${cls.gradeName || ''}${cls.sectionName ? ' - ' + cls.sectionName : ''}`.trim())}</div>
         </div>
         <table style="width:100%;table-layout:fixed;border-collapse:collapse;border:1px solid ${aBdr}">
           <colgroup><col style="width:34px"><col><col style="width:80px"><col style="width:78px"><col style="width:78px"></colgroup>
@@ -6202,10 +6319,10 @@ function generateDateSheetReport({ ex, dateSheets, term, classKey }, isColor) {
     <div class="page-wrap" style="font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif;background:#fff;color:#0F172A">
       <div class="${isColor ? '' : 'cl-doc-header'}" style="background:${hBg};color:${isColor ? '#fff' : '#0F172A'};${isColor ? '' : 'border-bottom:1px solid ' + aBdr + ';'}border-radius:0 0 14px 14px;padding:18px 22px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;page-break-inside:avoid">
         <div style="display:flex;align-items:center;gap:12px;min-width:0">
-          <div style="width:46px;height:46px;border-radius:12px;background:rgba(255,255,255,.18);display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0;border:1.5px solid rgba(255,255,255,.25)">${isColor ? '🎓' : ''}</div>
+          <div style="width:46px;height:46px;border-radius:12px;background:#fff;display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0;border:1.5px solid rgba(255,255,255,.25);overflow:hidden">${dsLogoHtml}</div>
           <div style="min-width:0">
-            <div style="font-size:17px;font-weight:800">The Oxford System, Lahore Campus</div>
-            <div style="font-size:10.5px;opacity:.75;margin-top:2px">Academic Year 2026–2027</div>
+            <div style="font-size:17px;font-weight:800">${dsEsc(schoolName)}</div>
+            <div style="font-size:10.5px;opacity:.75;margin-top:2px">${dsEsc(schoolYear)}</div>
           </div>
         </div>
         <div style="text-align:right;min-width:0">
@@ -6217,8 +6334,8 @@ function generateDateSheetReport({ ex, dateSheets, term, classKey }, isColor) {
         ${[
           ['Term', term],
           ['Exam', ex.name],
-          ['Classes', String(targetIdxs.length)],
-          ['Period', `${ex.from || '—'} → ${ex.to || '—'}`],
+          ['Classes', String(targetClasses.length)],
+          ['Period', `${dsFmtDate(ex.from)} → ${dsFmtDate(ex.to)}`],
         ].map(([k, v]) => `
           <div style="flex:1;min-width:120px;padding:10px 16px;border-right:1px solid ${aBdr};overflow-wrap:anywhere">
             <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:${tMuted};margin-bottom:2px">${k}</div>
@@ -6228,8 +6345,8 @@ function generateDateSheetReport({ ex, dateSheets, term, classKey }, isColor) {
       </div>
       <div style="padding:16px 16px">${classBlocks || '<div style="padding:24px;text-align:center;color:' + tMuted + '">No date sheets yet.</div>'}</div>
       <div style="padding:10px 16px;background:${aBg};border-top:1px solid ${aBdr};display:flex;justify-content:space-between;font-size:10px;color:${tMuted};flex-wrap:wrap;gap:6px">
-        <span>School Mentor ERP · Date Sheet Module</span>
-        <span>Confidential · The Oxford System, Lahore Campus</span>
+        <span>${dsEsc(schoolName)}${schoolAddr ? ` · ${dsEsc(schoolAddr)}` : ''}</span>
+        <span>Confidential · ${dsEsc(schoolName)}</span>
       </div>
     </div>`;
 
@@ -6275,8 +6392,9 @@ ${reportHTML}
 </div>
 </body></html>`;
 
-  const w = window.open('', '_blank', 'width=960,height=820');
-  if (w) { w.document.write(html); w.document.close(); }
+  w.document.open();
+  w.document.write(html);
+  w.document.close();
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -6590,18 +6708,18 @@ const save = () => {
 /* ═══════════════════════════════════════════════════════════════════
    SYLLABUS — REPORT PICKER + BUILDER (A4 portrait)
    ═══════════════════════════════════════════════════════════════════ */
-function SylReportPicker({ req, ex, syllabusData, term, onClose, toast }) {
+function SylReportPicker({ req, ex, syllabusData, term, branchSchool, onClose, toast }) {
   const [style, setStyle]   = useState('color');
   const [format, setFormat] = useState('pdf');
   if (!ex) return null;
 
   const dlLabel = `Download ${style === 'color' ? 'Colorful' : 'Colorless'} ${format === 'pdf' ? 'PDF' : 'Word'}`;
 
-  const generate = () => {
+  const generate = async () => {
     if (format === 'word') {
       toast('Word export coming soon', 'info');
     } else {
-      generateSyllabusReport({ ex, syllabusData, term, classKey: req.classKey }, style === 'color');
+      await generateSyllabusReport({ ex, syllabusData, term, classKey: req.classKey, branchSchool }, style === 'color');
     }
     onClose();
   };
@@ -6693,16 +6811,56 @@ function SylReportPicker({ req, ex, syllabusData, term, onClose, toast }) {
   );
 }
 
-function generateSyllabusReport({ ex, syllabusData, term, classKey }, isColor) {
+async function generateSyllabusReport({ ex, syllabusData, term, classKey, branchSchool }, isColor) {
   const isAll = classKey === 'all';
-  const sylData = syllabusData[ex.id] || {};
-  let targetIdxs = [];
-  if (isAll) {
-    targetIdxs = ex.classes.map((_, i) => i);
-  } else {
-    const idx = parseInt(String(classKey).split('_').pop(), 10);
-    targetIdxs = [isNaN(idx) ? 0 : idx];
-  }
+
+  // Window pehle kholo (popup-blocker se bachne ke liye), phir data fetch.
+  const w = window.open('', '_blank', 'width=960,height=820');
+  if (!w) return;
+  w.document.write('<p style="font-family:sans-serif;padding:24px;color:#475569">Preparing report…</p>');
+
+  /* Real branch header (name / logo / address / academic year) from /report-header (branchSchool). */
+  const bs         = branchSchool || {};
+  const schoolName = bs.name    || 'School Mentor ERP';
+  const schoolLogo = bs.logo    || '';
+  const schoolAddr = bs.address || '';
+  const schoolYear = bs.session
+    ? (/year/i.test(bs.session) ? bs.session : `Academic Year ${bs.session}`)
+    : 'Academic Year 2026–2027';
+  const sEsc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const sLogoHtml = schoolLogo
+    ? `<img src="${sEsc(schoolLogo)}" width="46" height="46" style="border-radius:12px;object-fit:cover;display:block" onerror="this.style.display='none'" />`
+    : (isColor ? '📚' : '');
+
+  // Target classes: 'all' → saari; warna classKey (scls_examId_sectionID_i) ki sectionID wali class.
+  const keyParts = String(classKey).split('_');
+  const sectionIdFromKey = keyParts[keyParts.length - 2];
+  const targetClasses = isAll
+    ? (ex.classes || [])
+    : (ex.classes || []).filter(c => String(c.sectionID) === String(sectionIdFromKey));
+
+  // Har class ka syllabus seedha API se fetch (syllabusData state/key mismatch se bachne ke liye).
+  const fetchSyl = async (cls) => {
+    try {
+      const branchID = sessionStorage.getItem('branchID');
+      const empID    = sessionStorage.getItem('employee_ID');
+      const token    = sessionStorage.getItem('token');
+      const params = new URLSearchParams({
+        branchID: String(branchID), classID: String(cls.classID), Terms: String(ex.termID ?? ''),
+        ExamID: String(ex.selectExam ?? ex.id), sectionID: String(cls.sectionID), pageNo: '1', empID: String(empID),
+      });
+      const r = await fetch(buildUrl(`/api/getexamsyllabusbybranchclassandterms?${params.toString()}`),
+        { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } });
+      const data = await r.json();
+      const rows = data?.data || data?.result || (Array.isArray(data) ? data : []);
+      return rows.map(it => ({
+        subject: it.subjectDisplayName || it.subjectName || '',
+        content: it.subjectDetails || '',
+        updatedAt: it.updatedAt || it.UpdatedOn || '—',
+      }));
+    } catch (e) { console.error('Syllabus fetch failed', e); return []; }
+  };
+  const blocks = await Promise.all((targetClasses || []).map(async cls => ({ cls, rows: await fetchSyl(cls) })));
 
   const today  = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
   const aColor = isColor ? '#1E40AF' : '#374151';
@@ -6714,27 +6872,24 @@ function generateSyllabusReport({ ex, syllabusData, term, classKey }, isColor) {
   const okC    = isColor ? '#16A34A' : '#333';
   const noC    = isColor ? '#D97706' : '#777';
 
-  const classBlocks = targetIdxs.map(ci => {
-    const cls  = ex.classes[ci]; if (!cls) return '';
-    const key  = `scls_${ex.id}_${ci}`;
-    const rows = sylData[key] || [];
-
+  const classBlocks = blocks.map(({ cls, rows }) => {
+    if (!cls) return '';
     const rowsHtml = rows.length ? rows.map((s, si) => {
       const plainAll = (s.content || '').replace(/<[^>]+>/g, '').trim();
       const added    = plainAll.length > 0;
-      const plain    = plainAll ? plainAll.substring(0, 80) + (plainAll.length > 80 ? '…' : '') : '—';
+      const plain    = plainAll ? sEsc(plainAll.substring(0, 80)) + (plainAll.length > 80 ? '…' : '') : '—';
       const sc       = added ? okC : noC;
       return `
         <tr style="background:${si % 2 === 0 ? '#fff' : rowEv}">
           <td style="padding:8px 12px;font-size:11.5px;font-weight:700;color:#0F172A;border-bottom:1px solid ${aBdr}">${si + 1}</td>
-          <td style="padding:8px 12px;font-size:11.5px;font-weight:700;color:#0F172A;border-bottom:1px solid ${aBdr}">${s.subject}</td>
+          <td style="padding:8px 12px;font-size:11.5px;font-weight:700;color:#0F172A;border-bottom:1px solid ${aBdr}">${sEsc(s.subject)}</td>
           <td style="padding:8px 12px;font-size:11px;color:${tMuted};border-bottom:1px solid ${aBdr}">${plain}</td>
           <td style="padding:8px 12px;border-bottom:1px solid ${aBdr}">
             <span style="display:inline-block;padding:2px 8px;border-radius:999px;font-size:10px;font-weight:700;background:${sc}22;color:${sc};border:1px solid ${sc}55">
               ${added ? 'Added' : 'Not Added'}
             </span>
           </td>
-          <td style="padding:8px 12px;font-size:11px;color:${tMuted};border-bottom:1px solid ${aBdr}">${s.updatedAt || '—'}</td>
+          <td style="padding:8px 12px;font-size:11px;color:${tMuted};border-bottom:1px solid ${aBdr}">${sEsc(s.updatedAt) || '—'}</td>
         </tr>`;
     }).join('') : `<tr><td colspan="5" style="padding:12px;text-align:center;font-size:12px;color:${tMuted}">No syllabus added</td></tr>`;
 
@@ -6742,9 +6897,7 @@ function generateSyllabusReport({ ex, syllabusData, term, classKey }, isColor) {
       <div style="margin-bottom:20px;page-break-inside:avoid">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:7px">
           <div style="width:7px;height:7px;border-radius:50%;background:${aColor};flex-shrink:0"></div>
-          <div style="font-size:13px;font-weight:800;color:#0F172A">${cls}
-            <span style="color:${tMuted};font-weight:500"> · Section A</span>
-          </div>
+          <div style="font-size:13px;font-weight:800;color:#0F172A">${sEsc(cls.className || `${cls.gradeName || ''}${cls.sectionName ? ' - ' + cls.sectionName : ''}`.trim())}</div>
         </div>
         <table style="width:100%;table-layout:fixed;border-collapse:collapse;border:1px solid ${aBdr}">
           <colgroup><col style="width:34px"><col style="width:90px"><col><col style="width:80px"><col style="width:78px"></colgroup>
@@ -6766,22 +6919,22 @@ function generateSyllabusReport({ ex, syllabusData, term, classKey }, isColor) {
     <div class="page-wrap" style="font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif;background:#fff;color:#0F172A">
       <div class="${isColor ? '' : 'cl-doc-header'}" style="background:${hBg};color:${isColor ? '#fff' : '#0F172A'};border-radius:0 0 14px 14px;padding:18px 22px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;page-break-inside:avoid">
         <div style="display:flex;align-items:center;gap:12px;min-width:0">
-          <div style="width:46px;height:46px;border-radius:12px;background:rgba(255,255,255,.18);display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0;border:1.5px solid rgba(255,255,255,.25)">📚</div>
+          <div style="width:46px;height:46px;border-radius:12px;background:#fff;display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0;border:1.5px solid rgba(255,255,255,.25);overflow:hidden">${sLogoHtml}</div>
           <div style="min-width:0">
-            <div style="font-size:17px;font-weight:800">The Oxford System, Lahore Campus</div>
-            <div style="font-size:10.5px;opacity:.75;margin-top:2px">Academic Year 2026–2027</div>
+            <div style="font-size:17px;font-weight:800">${sEsc(schoolName)}</div>
+            <div style="font-size:10.5px;opacity:.75;margin-top:2px">${sEsc(schoolYear)}</div>
           </div>
         </div>
         <div style="text-align:right;min-width:0">
           <div style="font-size:13px;font-weight:700;color:rgba(255,255,255,.9)">Syllabus Report</div>
-          <div style="font-size:10.5px;color:rgba(255,255,255,.65);margin-top:3px">${ex.name} · ${term} Term · Generated: ${today}</div>
+          <div style="font-size:10.5px;color:rgba(255,255,255,.65);margin-top:3px">${sEsc(ex.name)} · ${sEsc(term)} Term · Generated: ${today}</div>
         </div>
       </div>
       <div style="display:flex;flex-wrap:wrap;border-bottom:1px solid ${aBdr}">
         ${[
           ['Term', term],
           ['Exam', ex.name],
-          ['Classes', String(targetIdxs.length)],
+          ['Classes', String(targetClasses.length)],
         ].map(([k, v]) => `
           <div style="flex:1;min-width:120px;padding:10px 16px;border-right:1px solid ${aBdr};overflow-wrap:anywhere">
             <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:${tMuted};margin-bottom:2px">${k}</div>
@@ -6791,8 +6944,8 @@ function generateSyllabusReport({ ex, syllabusData, term, classKey }, isColor) {
       </div>
       <div style="padding:16px 16px">${classBlocks || '<div style="padding:24px;text-align:center;color:' + tMuted + '">No syllabus yet.</div>'}</div>
       <div style="padding:10px 16px;background:${aBg};border-top:1px solid ${aBdr};display:flex;justify-content:space-between;font-size:10px;color:${tMuted};flex-wrap:wrap;gap:6px">
-        <span>School Mentor ERP · Syllabus Module</span>
-        <span>Confidential · The Oxford System, Lahore Campus</span>
+        <span>${sEsc(schoolName)}${schoolAddr ? ` · ${sEsc(schoolAddr)}` : ''}</span>
+        <span>Confidential · ${sEsc(schoolName)}</span>
       </div>
     </div>`;
 
@@ -6838,8 +6991,9 @@ ${reportHTML}
 </div>
 </body></html>`;
 
-  const w = window.open('', '_blank', 'width=960,height=820');
-  if (w) { w.document.write(html); w.document.close(); }
+  w.document.open();
+  w.document.write(html);
+  w.document.close();
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -11216,7 +11370,7 @@ function CharField({ value, max, placeholder, multiline = false, onChange, toast
 /* ═══════════════════════════════════════════════════════════════════
    RESULT SETUP — REPORT PICKER + BUILDER (A4 portrait)
    ═══════════════════════════════════════════════════════════════════ */
-function ResultSetupReportPicker({ grades, sigs, remarks, absentMode, onClose, toast }) {
+function ResultSetupReportPicker({ grades, sigs, remarks, absentMode, branchSchool, onClose, toast }) {
   const [style, setStyle]   = useState('color');
   const [format, setFormat] = useState('pdf');
   const dlLabel = `Download ${style === 'color' ? 'Colorful' : 'Colorless'} ${format === 'pdf' ? 'PDF' : 'Word'}`;
@@ -11225,7 +11379,7 @@ function ResultSetupReportPicker({ grades, sigs, remarks, absentMode, onClose, t
     if (format === 'word') {
       toast('Word export coming soon', 'info');
     } else {
-      generateResultSetupReport({ grades, sigs, remarks, absentMode }, style === 'color');
+      generateResultSetupReport({ grades, sigs, remarks, absentMode, branchSchool }, style === 'color');
     }
     onClose();
   };
@@ -11317,7 +11471,20 @@ function ResultSetupReportPicker({ grades, sigs, remarks, absentMode, onClose, t
   );
 }
 
-function generateResultSetupReport({ grades, sigs, remarks, absentMode }, isColor) {
+function generateResultSetupReport({ grades, sigs, remarks, absentMode, branchSchool }, isColor) {
+  /* Real branch header (name / logo / address / academic year) from /report-header (branchSchool). */
+  const bs         = branchSchool || {};
+  const schoolName = bs.name    || 'School Mentor ERP';
+  const schoolLogo = bs.logo    || '';
+  const schoolAddr = bs.address || '';
+  const schoolYear = bs.session
+    ? (/year/i.test(bs.session) ? bs.session : `Academic Year ${bs.session}`)
+    : 'Academic Year 2026–2027';
+  const rsEsc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const rsLogoHtml = schoolLogo
+    ? `<img src="${rsEsc(schoolLogo)}" width="46" height="46" style="border-radius:12px;object-fit:cover;display:block" onerror="this.style.display='none'" />`
+    : (isColor ? '🏫' : '');
+
   const aColor = isColor ? '#1E40AF' : '#374151';
   const aBg    = isColor ? '#EFF6FF' : '#F5F5F5';
   const aBdr   = isColor ? '#BFDBFE' : '#DDD';
@@ -11447,10 +11614,10 @@ function generateResultSetupReport({ grades, sigs, remarks, absentMode }, isColo
     <div class="page-wrap" style="font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif;background:#fff;color:#0F172A">
       <div class="${isColor ? '' : 'cl-doc-header'}" style="background:${hBg};color:${isColor ? '#fff' : '#0F172A'};border-radius:0 0 14px 14px;padding:18px 22px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;page-break-inside:avoid">
         <div style="display:flex;align-items:center;gap:12px;min-width:0">
-          <div style="width:46px;height:46px;border-radius:12px;background:rgba(255,255,255,.18);display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0;border:1.5px solid rgba(255,255,255,.25)">🏫</div>
+          <div style="width:46px;height:46px;border-radius:12px;background:#fff;display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0;border:1.5px solid rgba(255,255,255,.25);overflow:hidden">${rsLogoHtml}</div>
           <div style="min-width:0">
-            <div style="font-size:17px;font-weight:800">The Oxford System, Lahore Campus</div>
-            <div style="font-size:10.5px;opacity:.75;margin-top:2px">Academic Year 2026–2027</div>
+            <div style="font-size:17px;font-weight:800">${rsEsc(schoolName)}</div>
+            <div style="font-size:10.5px;opacity:.75;margin-top:2px">${rsEsc(schoolYear)}</div>
           </div>
         </div>
         <div style="text-align:right;min-width:0">
@@ -11465,8 +11632,8 @@ function generateResultSetupReport({ grades, sigs, remarks, absentMode }, isColo
         ${sectionCard('fa-user-xmark', 'Absent Subject Handling', isZero ? 'Mode: Count as Zero' : 'Mode: Exclude from Total', absBody)}
       </div>
       <div style="padding:10px 16px;background:${aBg};border-top:1px solid ${aBdr};display:flex;justify-content:space-between;font-size:10px;color:${tMuted};flex-wrap:wrap;gap:6px">
-        <span>School Mentor ERP · Result Setup</span>
-        <span>Confidential · The Oxford System, Lahore Campus</span>
+        <span>${rsEsc(schoolName)}${schoolAddr ? ` · ${rsEsc(schoolAddr)}` : ''}</span>
+        <span>Confidential · ${rsEsc(schoolName)}</span>
       </div>
     </div>`;
 
@@ -11511,17 +11678,65 @@ ${reportHTML}
    REPORT BUILDER — A4 portrait
    ═══════════════════════════════════════════════════════════════════ */
 function generateExamReport(ctx, isColor) {
-  const { req, exams, term, target } = ctx;
-  const list = req.scope === 'all' ? exams.filter(e => e.term === term) : [target];
+  const { req, exams, term, target, branchSchool } = ctx;
+  /* `exams` already holds only the currently-loaded term's exams (getExamsByTerm
+     replaces it on each term switch), and the API gives termName not term — so the
+     "all" report uses the full list rather than a (mismatching) e.term filter. */
+  const list = req.scope === 'all' ? (exams || []) : [target].filter(Boolean);
   const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
-  const time  = new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+
+  /* Real branch header (name / logo / address / academic year) from the
+     /report-header/{branchId} API; fall back to generic labels if unloaded. */
+  const bs          = branchSchool || {};
+  const schoolName  = bs.name    || 'School Mentor ERP';
+  const schoolLogo  = bs.logo    || '';
+  const schoolAddr  = bs.address || '';
+  const schoolYear  = bs.session
+    ? (/year/i.test(bs.session) ? bs.session : `Academic Year ${bs.session}`)
+    : 'Academic Year 2025–2026';
+  const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  /* Local date formatter (module-level fn can't reach the component-scoped one) —
+     strips the time part and renders DD/MM/YYYY. */
+  const fmtDate = (s) => {
+    if (!s) return '—';
+    let d;
+    if (typeof s === 'string' && s.includes('-')) {
+      const [y, m, day] = s.split('T')[0].split('-');
+      d = new Date(Number(y), Number(m) - 1, Number(day));
+    } else if (typeof s === 'string' && s.includes('/')) {
+      const [day, m, y] = s.split('/');
+      d = new Date(Number(y), Number(m) - 1, Number(day));
+    } else { d = new Date(s); }
+    if (isNaN(d.getTime())) return '—';
+    const dd = String(d.getDate()).padStart(2, '0');
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    return `${dd}/${mm}/${d.getFullYear()}`;
+  };
+  const styleLabel = isColor ? 'Colorful' : 'Colorless';
+  const reportTitle = `Examination Report — ${req.scope === 'all' ? term + ' Term' : (target ? target.name : '')}`;
+  /* 64px logo block matching the Academics/Textbooks report header. Real image
+     if available; SVG monogram fallback otherwise. */
+  const logoFallbackSvg = isColor
+    ? `<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="64" height="64" rx="16" fill="rgba(255,255,255,.12)"/><path d="M32 18C25.5 18 18 20.2 18 20.2L18 46C18 46 25.5 43.8 32 43.8C38.5 43.8 46 46 46 46L46 20.2C46 20.2 38.5 18 32 18Z" fill="rgba(255,255,255,0.15)" stroke="rgba(255,255,255,0.5)" stroke-width="1.2"/><path d="M32 18L32 43.8" stroke="rgba(255,255,255,0.5)" stroke-width="1.2"/><text x="32" y="38" text-anchor="middle" font-family="Arial,sans-serif" font-size="14" font-weight="900" fill="rgba(255,255,255,0.9)">SM</text></svg>`
+    : `<svg width="56" height="56" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg"><rect x="1" y="1" width="62" height="62" rx="12" fill="#FFFFFF" stroke="#1F2937" stroke-width="1.5"/><path d="M32 18C25.5 18 18 20.2 18 20.2L18 46C18 46 25.5 43.8 32 43.8C38.5 43.8 46 46 46 46L46 20.2C46 20.2 38.5 18 32 18Z" fill="none" stroke="#1F2937" stroke-width="1.3"/><path d="M32 18L32 43.8" stroke="#1F2937" stroke-width="1.3"/><text x="32" y="36" text-anchor="middle" font-family="Arial,sans-serif" font-size="11" font-weight="800" fill="#1F2937">SM</text></svg>`;
+  const logoHtml = schoolLogo
+    ? `<img src="${esc(schoolLogo)}" width="64" height="64" style="border-radius:16px;object-fit:cover;display:block;${isColor ? 'box-shadow:0 4px 18px rgba(0,0,0,.35),0 0 0 2px rgba(255,255,255,.15)' : 'border:1.5px solid #E5E7EB'}" onerror="this.style.display='none'" />`
+    : logoFallbackSvg;
 
   const brand   = isColor ? '#1E40AF' : '#111';
   const muted   = isColor ? '#64748B' : '#555';
   const border  = isColor ? '#BFDBFE' : '#CCC';
   const tHead   = isColor ? '#EFF6FF' : '#EBEBEB';
   const rowAlt  = isColor ? '#F8FAFF' : '#F5F5F5';
-  const hdrBg   = isColor ? 'linear-gradient(135deg,#1E3A8A,#1E40AF)' : 'linear-gradient(135deg,#1a1a1a,#444)';
+
+  /* Header/footer palette mirroring the Academics / Textbooks report. */
+  const headerBg     = isColor ? '#1E3A8A' : '#FFFFFF';
+  const headerFg     = isColor ? '#FFFFFF' : '#111111';
+  const headerSubFg  = isColor ? 'rgba(255,255,255,.75)' : '#4B5563';
+  const headerKick   = isColor ? 'rgba(255,255,255,.55)' : '#6B7280';
+  const headerDivCol = isColor ? 'rgba(255,255,255,.2)'  : '#E5E7EB';
+  const chipBg       = isColor ? 'rgba(255,255,255,.14)' : 'transparent';
+  const chipBorder   = isColor ? 'transparent' : '#D1D5DB';
 
   const STATUS_COLORS = {
     upcoming: isColor ? { fg: '#D97706', bg: 'rgba(217,119,6,.1)', bd: 'rgba(217,119,6,.25)' } : { fg: '#555', bg: '#EEE', bd: '#CCC' },
@@ -11533,9 +11748,12 @@ function generateExamReport(ctx, isColor) {
     const st  = getExamStatus(ex);
     const sc  = STATUS_COLORS[st.cls];
     const dur = calcDuration(ex.from, ex.to);
-    const pillsHtml = ex.classes.map(c =>
-      `<span style="display:inline-block;padding:2px 8px;border-radius:99px;background:${isColor ? '#EFF6FF' : '#EEE'};color:${brand};font-size:10px;font-weight:600;border:1px solid ${border};margin:2px 3px 2px 0">${c}</span>`
-    ).join('');
+    const pillsHtml = (ex.classes || []).map(c => {
+      const label = typeof c === 'string'
+        ? c
+        : `${c.gradeName || ''}${c.sectionName ? ' - ' + c.sectionName : ''}`.trim() || (c.className || '');
+      return `<span style="display:inline-block;padding:2px 8px;border-radius:99px;background:${isColor ? '#EFF6FF' : '#EEE'};color:${brand};font-size:10px;font-weight:600;border:1px solid ${border};margin:2px 3px 2px 0">${esc(label)}</span>`;
+    }).join('');
     return `
     <tr>
       <td style="color:${muted};font-weight:700;text-align:center">${i + 1}</td>
@@ -11546,8 +11764,8 @@ function generateExamReport(ctx, isColor) {
       <td style="text-align:center">
         <span style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:99px;font-size:10.5px;font-weight:700;background:${sc.bg};color:${sc.fg};border:1px solid ${sc.bd}">${st.label}</span>
       </td>
-      <td style="text-align:center;color:${muted};font-size:11px">${ex.from || '—'}</td>
-      <td style="text-align:center;color:${muted};font-size:11px">${ex.to || '—'}</td>
+      <td style="text-align:center;color:${muted};font-size:11px">${fmtDate(ex.from)}</td>
+      <td style="text-align:center;color:${muted};font-size:11px">${fmtDate(ex.to)}</td>
       <td style="text-align:center;font-weight:700;color:${brand};font-size:11.5px">${dur}</td>
     </tr>`;
   }).join('');
@@ -11564,46 +11782,59 @@ function generateExamReport(ctx, isColor) {
     .no-print{display:none!important}
     .page-wrap{max-width:none!important;width:100%!important;padding:0!important;margin:0!important}
   }
-  .page-wrap{width:100%;max-width:210mm;margin:0 auto;padding:14mm 15mm 16mm;box-sizing:border-box;overflow:hidden}
-  .doc-header{background:${hdrBg};color:#fff;border-radius:0 0 14px 14px;padding:18px 24px 14px;margin-bottom:18px;page-break-inside:avoid}
-  .doc-school{font-size:17px;font-weight:800}
-  .doc-year{font-size:10.5px;opacity:.75;margin-top:2px}
-  .doc-name{font-size:13px;font-weight:700;margin-top:6px;opacity:.95}
-  .doc-meta-bar{display:flex;flex-wrap:wrap;gap:0;background:rgba(0,0,0,.15);border-top:1px solid rgba(255,255,255,.1);margin:14px -24px -14px}
-  .doc-meta-cell{flex:1;min-width:0;padding:8px 14px;border-right:1px solid rgba(255,255,255,.1);font-size:10.5px;overflow-wrap:anywhere}
-  .doc-meta-cell:last-child{border-right:none}
-  .doc-meta-key{opacity:.65;font-weight:600;text-transform:uppercase;letter-spacing:.3px;font-size:9px;margin-bottom:2px}
-  .doc-meta-val{font-weight:700;font-size:11.5px}
+  .page-wrap{width:100%;max-width:210mm;margin:0 auto;padding:0 0 16px;box-sizing:border-box;overflow:hidden}
+  .doc-body{padding:24px 28px 4px}
   table{width:100%;table-layout:fixed;border-collapse:collapse;font-size:11px;word-wrap:break-word}
   thead{background:${tHead};display:table-header-group}
   tr{page-break-inside:avoid}
   th{padding:7px 8px;text-align:left;font-size:9.5px;font-weight:800;color:${brand};text-transform:uppercase;letter-spacing:.4px;border-bottom:2px solid ${border}}
   td{padding:8px 8px;border-bottom:1px solid ${border};vertical-align:top;overflow-wrap:anywhere}
   tbody tr:nth-child(even) td{background:${rowAlt}}
-  .doc-footer{margin-top:18px;padding-top:10px;border-top:1.5px solid ${border};display:flex;justify-content:space-between;align-items:center;font-size:10px;color:${muted};flex-wrap:wrap;gap:6px}
-  .doc-footer-logo{font-weight:800;color:${brand}}
-  .print-bar{text-align:center;padding:16px;background:#F8FAFC;border-top:1px solid #E2E8F0;margin-top:14px;border-radius:10px}
+  .doc-footer{margin:18px 28px 0;border-top:1px solid ${border};padding:14px 0 0;display:flex;justify-content:space-between;align-items:center;font-size:11px;color:${muted};flex-wrap:wrap;gap:6px}
+  .print-bar{text-align:center;padding:22px;background:#F8FAFC;border-top:1px solid #E2E8F0;margin-top:14px}
   .print-bar button{background:${brand};color:#fff;border:none;padding:10px 22px;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;margin-right:8px}
   .print-bar .close-btn{background:transparent;border:1.5px solid #CBD5E1;color:#64748B}
 </style></head><body>
 <div class="page-wrap">
-  <div class="doc-header">
-    <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px">
-      <div style="width:46px;height:46px;border-radius:12px;background:rgba(255,255,255,.18);display:flex;align-items:center;justify-content:center;font-size:22px;border:1.5px solid rgba(255,255,255,.25);flex-shrink:0">🎓</div>
-      <div>
-        <div class="doc-school">School Mentor ERP</div>
-        <div class="doc-year">Academic Year 2025–2026</div>
-        <div class="doc-name">Examination Report — ${req.scope === 'all' ? term + ' Term' : (target ? target.name : '')}</div>
-      </div>
-    </div>
-    <div class="doc-meta-bar">
-      <div class="doc-meta-cell"><div class="doc-meta-key">Scope</div><div class="doc-meta-val">${req.scope === 'all' ? 'All Exams (' + list.length + ')' : 'Single Exam'}</div></div>
-      <div class="doc-meta-cell"><div class="doc-meta-key">Term</div><div class="doc-meta-val">${term}</div></div>
-      <div class="doc-meta-cell"><div class="doc-meta-key">Style</div><div class="doc-meta-val">${isColor ? 'Colorful' : 'Colorless'}</div></div>
-      <div class="doc-meta-cell"><div class="doc-meta-key">Generated</div><div class="doc-meta-val">${today} — ${time}</div></div>
-    </div>
-  </div>
+  ${isColor
+    ? `<div style="background:${headerBg};padding:24px 32px 28px;color:${headerFg};position:relative;overflow:hidden">
+        <div style="position:absolute;top:-30px;right:-30px;width:140px;height:140px;border-radius:50%;background:rgba(255,255,255,.06)"></div>
+        <div style="position:absolute;bottom:-20px;left:120px;width:80px;height:80px;border-radius:50%;background:rgba(14,165,233,.15)"></div>
+        <div style="display:flex;align-items:center;gap:18px;position:relative;z-index:2">
+          <div style="width:64px;height:64px;border-radius:16px;overflow:hidden;flex-shrink:0;box-shadow:0 4px 18px rgba(0,0,0,.35),0 0 0 2px rgba(255,255,255,.15)">${logoHtml}</div>
+          <div>
+            <div style="font-size:9px;letter-spacing:2.5px;text-transform:uppercase;color:${headerKick};font-weight:700;margin-bottom:3px">School Mentor ERP</div>
+            <div style="font-size:20px;font-weight:800;color:${headerFg};letter-spacing:-.02em;line-height:1.2;text-shadow:0 1px 4px rgba(0,0,0,.2)">${esc(schoolName)}</div>
+          </div>
+        </div>
+        <div style="height:1px;background:${headerDivCol};margin:18px 0 16px;position:relative;z-index:2"></div>
+        <div style="font-size:22px;font-weight:800;letter-spacing:-.02em;margin-bottom:4px">${esc(reportTitle)}</div>
+        <div style="font-size:13px;color:${headerSubFg};margin-bottom:16px">${esc(schoolYear)} · ${styleLabel} Report</div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <div style="background:${chipBg};border:1px solid ${chipBorder};padding:6px 14px;border-radius:20px;font-size:11.5px"><strong>Generated:</strong> ${today}</div>
+          <div style="background:${chipBg};border:1px solid ${chipBorder};padding:6px 14px;border-radius:20px;font-size:11.5px"><strong>Term:</strong> ${esc(term)}</div>
+          <div style="background:${chipBg};border:1px solid ${chipBorder};padding:6px 14px;border-radius:20px;font-size:11.5px"><strong>Scope:</strong> ${req.scope === 'all' ? 'All Exams (' + list.length + ')' : 'Single Exam'}</div>
+        </div>
+      </div>`
+    : `<div style="background:${headerBg};padding:22px 32px 22px;color:${headerFg};border-bottom:1px solid ${border}">
+        <div style="display:flex;align-items:center;gap:16px">
+          <div style="width:56px;height:56px;flex-shrink:0">${logoHtml}</div>
+          <div>
+            <div style="font-size:9px;letter-spacing:2.5px;text-transform:uppercase;color:${headerKick};font-weight:700;margin-bottom:3px">School Mentor ERP</div>
+            <div style="font-size:19px;font-weight:800;color:${headerFg};letter-spacing:-.02em;line-height:1.2">${esc(schoolName)}</div>
+          </div>
+        </div>
+        <div style="height:1px;background:${headerDivCol};margin:16px 0 14px"></div>
+        <div style="font-size:21px;font-weight:800;letter-spacing:-.02em;margin-bottom:3px;color:${headerFg}">${esc(reportTitle)}</div>
+        <div style="font-size:12.5px;color:${headerSubFg};margin-bottom:14px">${esc(schoolYear)} · ${styleLabel} Report</div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <div style="background:${chipBg};border:1px solid ${chipBorder};padding:5px 12px;border-radius:20px;font-size:11px;color:${headerFg}"><strong>Generated:</strong> ${today}</div>
+          <div style="background:${chipBg};border:1px solid ${chipBorder};padding:5px 12px;border-radius:20px;font-size:11px;color:${headerFg}"><strong>Term:</strong> ${esc(term)}</div>
+          <div style="background:${chipBg};border:1px solid ${chipBorder};padding:5px 12px;border-radius:20px;font-size:11px;color:${headerFg}"><strong>Scope:</strong> ${req.scope === 'all' ? 'All Exams (' + list.length + ')' : 'Single Exam'}</div>
+        </div>
+      </div>`}
 
+  <div class="doc-body">
   <table>
     <colgroup>
       <col style="width:38px">
@@ -11623,10 +11854,12 @@ function generateExamReport(ctx, isColor) {
     </tr></thead>
     <tbody>${rows || '<tr><td colspan="6" style="text-align:center;padding:24px;color:' + muted + '">No exams in this term.</td></tr>'}</tbody>
   </table>
+  </div>
 
   <div class="doc-footer">
-    <span class="doc-footer-logo">🎓 School Mentor ERP — Examination</span>
-    <span>Generated: ${today} — ${time}</span>
+    <span>${esc(schoolName)}${schoolAddr ? ` · ${esc(schoolAddr)}` : ''}</span>
+    <span>School Mentor ERP © ${new Date().getFullYear()}</span>
+    <span>Page 1 of 1</span>
   </div>
 
   <div class="print-bar no-print">
@@ -11638,7 +11871,6 @@ function generateExamReport(ctx, isColor) {
   const w = window.open('', '_blank', 'width=960,height=820');
   if (w) { w.document.write(html); w.document.close(); }
 }
-
 /* ═══════════════════════════════════════════════════════════════════
    CSS — verbatim from HTML's #module-exam styles
    ═══════════════════════════════════════════════════════════════════ */
