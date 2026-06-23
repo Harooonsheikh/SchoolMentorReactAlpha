@@ -135,6 +135,30 @@ const RS_GRADE_COLORS = {
 };
 
 /* Result Card Options now load via examService.getRcoGeneral() / getRcoSig(). */
+
+/* Result Card toggle label → examselectionsettings API field name.
+   GET (getexamselectionsettingsbybranchid) ke boolean fields se toggles set hote hain,
+   aur Save Preferences par inhi se POST (examselectionsettingscrud) payload banta hai. */
+const RCO_GENERAL_FIELD = {
+  'Show School Logo':         'showSchoolLogo',
+  'Show School Name':         'showSchoolName',
+  'Show Student Photo':       'showStudentPhoto',
+  'Show Student Roll Number': 'showRollNumber',
+  'Show Class and Section':   'showClassAndSection',
+  'Show Subject-wise Marks':  'showSubjectWiseMarks',
+  'Show Total Marks':         'showTotalMarks',
+  'Show Obtained Marks':      'showObtainedMarks',
+  'Show Percentage':          'showPercentage',
+  'Show Grade':               'showGrade',
+  'Show Position in Class':   'showPositionInClass',
+  'Show Attendance':          'showAttendance',
+};
+const RCO_SIG_FIELD = {
+  'Show Principal Signature': 'showPrincipalSignature',
+  'Show Parent Signature':    'showParentSignature',
+  'Show Final Remarks':       'showFinalRemarks',
+};
+
 /* ── Result Card preview seed data + helpers ── */
 const RES_SUBJECTS = [
   'English','Urdu','Mathematics','Science','Islamiyat',
@@ -740,11 +764,216 @@ const [subjects, setSubjects] = useState([]);
   const [rhActiveStudent, setRhActiveStudent] = useState(null); // student object
   const [rhCardCtx, setRhCardCtx]             = useState(null); // { student, result }
   const [rhReportReq, setRhReportReq]         = useState(null); // { student, type:'card'|'history'|'progress'|'comparison'|'attendance', result? }
+  const [rhExams, setRhExams]                 = useState([]);   // student-click par fetched exams (examName/termName)
+  const [rhExamsLoading, setRhExamsLoading]   = useState(false);
+  const [rhCardMarks, setRhCardMarks]         = useState(null); // View card ke liye real per-subject marks
+  const [rhExamScores, setRhExamScores]       = useState({});   // { [exam.id]: overall % } exam history ke liye
+  const [rhStudentSummaries, setRhStudentSummaries] = useState({}); // { [studentId]: { avgPct, best, count, trend, grade } } card list ke liye
+
+  // Student par click karte hi us ki class/section ke exams fetch karo (result history).
+  const loadStudentExams = async (st) => {
+    try {
+      setRhExamsLoading(true);
+      const branchID  = sessionStorage.getItem('branchID');
+      const token     = sessionStorage.getItem('token');
+      const classID   = st.gradeId   ?? st.classID   ?? st.classId   ?? '';
+      const sectionID = st.sectionId ?? st.sectionID ?? '';
+      const url = buildUrl(`/api/getexamsbybranchclassidsectionid?branchID=${branchID}&classID=${classID}&sectionID=${sectionID}&pageNo=1`);
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}`, Accept: '*/*' } });
+      const data = await res.json();
+      setRhExams(Array.isArray(data?.data) ? data.data : (Array.isArray(data) ? data : []));
+    } catch (e) {
+      console.error('Could not load student exam history', e);
+      setRhExams([]);
+    } finally {
+      setRhExamsLoading(false);
+    }
+  };
+
+  // Jab koi student active ho → uske exams load karo; band karte hi clear.
+  useEffect(() => {
+    if (rhActiveStudent) loadStudentExams(rhActiveStudent);
+    else setRhExams([]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rhActiveStudent]);
+
+  /* Result History "View" card khulte hi us exam ka REAL per-subject record load karo:
+       1) getSyllabusSubjects → class/section ke saare subjects (Math / Science 3 / KG)
+       2) har subject ke against getsauploadmarksbyclassandtermandexamandsubject → obtain + total marks
+     (Single assessment card bhi yahi marks API use karta hai). */
+  useEffect(() => {
+    if (!rhCardCtx) { setRhCardMarks(null); return undefined; }
+    const { result, student } = rhCardCtx;
+    const classID    = result?.classID   ?? student?.gradeId   ?? student?.classID;
+    const sectionID  = result?.sectionID ?? student?.sectionId ?? student?.sectionID;
+    const examID     = result?.selectExam;
+    const termID     = result?.termID;
+    const studentId  = student?.id;
+    if (!classID || !sectionID || !examID) { setRhCardMarks({ subjects: [], totals: {}, obtained: {} }); return undefined; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const token = sessionStorage.getItem('token');
+        const headers = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
+        // 1) Subjects list (Math / Science 3 / KG) — reliably subjects deta hai
+        const subs = (await getSyllabusSubjects(classID, sectionID)) || [];
+        // 2) Har subject ke against student ke obtain/total marks
+        const records = await Promise.all(subs.map(async su => {
+          try {
+            const p = new URLSearchParams({
+              classID: String(classID), termID: String(termID ?? ''), ExamID: String(examID),
+              SubjectID: String(su.subjectID), StudentID: String(studentId),
+              sectionID: String(sectionID), pageNo: '1',
+            });
+            const r = await fetch(buildUrl(`/api/getsauploadmarksbyclassandtermandexamandsubject?${p}`), { headers });
+            const d = await r.json();
+            const rec = Array.isArray(d) ? d[0] : (d?.data?.[0] || null);
+            return { su, rec };
+          } catch { return { su, rec: null }; }
+        }));
+        if (cancelled) return;
+        const obtained = {}, totals = {}, remarks = {};
+        records.forEach(({ su, rec }) => {
+          const name = su.subjectName || `Subject ${su.subjectID}`;
+          obtained[name] = Number(rec?.obtainMarks ?? rec?.obtainedMarks ?? 0);
+          totals[name]   = Number(rec?.totalMarks ?? su.totalMarks ?? 0);
+          if (rec?.remarks) remarks[name] = rec.remarks;   // saved remarks → Comment column
+        });
+        // 3) Student ka FINAL remark (getremarksbystudentfilters) → card ke Final Remarks mein
+        let finalRemark = '';
+        try {
+          const branchID = sessionStorage.getItem('branchID');
+          const fp = new URLSearchParams({
+            branchID: String(branchID), classID: String(classID), sectionID: String(sectionID),
+            examID: String(examID), termID: String(termID ?? ''), studentID: String(studentId),
+            pageNo: '1', pageCount: '20',
+          });
+          const fr = await fetch(buildUrl(`/api/getremarksbystudentfilters?${fp}`), { headers });
+          const fd = await fr.json();
+          const frec = Array.isArray(fd?.data) ? fd.data[0] : (Array.isArray(fd) ? fd[0] : (fd?.data || null));
+          finalRemark = frec?.remarks || '';
+        } catch (e) { /* no final remark */ }
+        if (cancelled) return;
+        setRhCardMarks({ subjects: subs.map(s => s.subjectName), totals, obtained, remarks, finalRemark });
+      } catch (e) {
+        console.error('Error loading result-history card subject marks:', e);
+        if (!cancelled) setRhCardMarks({ subjects: [], totals: {}, obtained: {} });
+      }
+    })();
+    return () => { cancelled = true; };
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [rhCardCtx]);
+
+  /* Exam history ke har exam ka overall % compute karo (score bar / grade / Performance Trends ke liye):
+     har exam ke saare subjects ke obtain/total marks jodo → % = sum(obtain)/sum(total)*100. */
+  useEffect(() => {
+    if (!rhActiveStudent || !rhExams.length) { setRhExamScores({}); return undefined; }
+    const st = rhActiveStudent;
+    const classID = st.gradeId ?? st.classID;
+    const sectionID = st.sectionId ?? st.sectionID;
+    const studentId = st.id;
+    let cancelled = false;
+    (async () => {
+      try {
+        const token = sessionStorage.getItem('token');
+        const headers = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
+        const subs = (await getSyllabusSubjects(classID, sectionID).catch(() => [])) || [];
+        const scores = {};
+        await Promise.all(rhExams.map(async ex => {
+          let obt = 0, tot = 0;
+          await Promise.all(subs.map(async su => {
+            try {
+              const p = new URLSearchParams({
+                classID: String(classID), termID: String(ex.termID ?? ''), ExamID: String(ex.selectExam),
+                SubjectID: String(su.subjectID), StudentID: String(studentId), sectionID: String(sectionID), pageNo: '1',
+              });
+              const r = await fetch(buildUrl(`/api/getsauploadmarksbyclassandtermandexamandsubject?${p}`), { headers });
+              const d = await r.json();
+              const rec = Array.isArray(d) ? d[0] : (d?.data?.[0] || null);
+              if (rec) { obt += Number(rec.obtainMarks ?? rec.obtainedMarks ?? 0); tot += Number(rec.totalMarks ?? 0); }
+            } catch { /* skip subject */ }
+          }));
+          scores[ex.id] = tot > 0 ? Math.round((obt / tot) * 100) : 0;
+        }));
+        if (!cancelled) setRhExamScores(scores);
+      } catch (e) {
+        console.error('Error computing exam history scores:', e);
+        if (!cancelled) setRhExamScores({});
+      }
+    })();
+    return () => { cancelled = true; };
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [rhExams, rhActiveStudent]);
+
+  /* Result History cards ke liye har student ki avg/best/trend calculation pehle se load karo
+     (wahi exams + marks APIs). Har section ke exams/subjects ek baar fetch hote hain, phir
+     har student ke per-exam % se avg/best/trend banta hai. Card jaise jaise ready hote jaate
+     hain progressively bhar jaate hain. */
+  useEffect(() => {
+    const cs = rhData.classSection?.data;
+    if (!cs || !cs.length) { setRhStudentSummaries({}); return undefined; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const branchID = sessionStorage.getItem('branchID');
+        const token    = sessionStorage.getItem('token');
+        const headers  = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
+        for (const cls of cs) {
+          for (const sec of (cls.sections || [])) {
+            if (cancelled) return;
+            const classID = cls.id, sectionID = sec.sectionID;
+            const students = sec.students || [];
+            if (!students.length) continue;
+            // exams + subjects: section ke liye ek hi baar
+            let exams = [];
+            try {
+              const exRes = await fetch(buildUrl(`/api/getexamsbybranchclassidsectionid?branchID=${branchID}&classID=${classID}&sectionID=${sectionID}&pageNo=1`), { headers });
+              const exData = await exRes.json();
+              exams = Array.isArray(exData?.data) ? exData.data : (Array.isArray(exData) ? exData : []);
+            } catch { /* no exams */ }
+            const subs = (await getSyllabusSubjects(classID, sectionID).catch(() => [])) || [];
+            for (const stu of students) {
+              if (cancelled) return;
+              const pcts = [];
+              for (const ex of exams) {
+                let obt = 0, tot = 0;
+                await Promise.all(subs.map(async su => {
+                  try {
+                    const p = new URLSearchParams({
+                      classID: String(classID), termID: String(ex.termID ?? ''), ExamID: String(ex.selectExam),
+                      SubjectID: String(su.subjectID), StudentID: String(stu.id), sectionID: String(sectionID), pageNo: '1',
+                    });
+                    const r = await fetch(buildUrl(`/api/getsauploadmarksbyclassandtermandexamandsubject?${p}`), { headers });
+                    const d = await r.json();
+                    const rec = Array.isArray(d) ? d[0] : (d?.data?.[0] || null);
+                    if (rec) { obt += Number(rec.obtainMarks ?? rec.obtainedMarks ?? 0); tot += Number(rec.totalMarks ?? 0); }
+                  } catch { /* skip */ }
+                }));
+                if (tot > 0) pcts.push(Math.round((obt / tot) * 100));
+              }
+              const avgPct = pcts.length ? Math.round(pcts.reduce((a, b) => a + b, 0) / pcts.length * 10) / 10 : 0;
+              const best   = pcts.length ? Math.max(...pcts) : 0;
+              const trend  = pcts.length >= 2 ? (pcts[pcts.length - 1] > pcts[0] ? 'up' : pcts[pcts.length - 1] < pcts[0] ? 'down' : 'flat') : 'flat';
+              const g = rcGetGrade(avgPct, 100);
+              if (!cancelled) {
+                setRhStudentSummaries(prev => ({ ...prev, [stu.id]: { avgPct, best, count: exams.length, trend, grade: g ? g.grade : '—' } }));
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.error('Error loading student summaries:', e);
+      }
+    })();
+    return () => { cancelled = true; };
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [rhData.classSection]);
 
   /* ── Result Card Options state ── */
   const [rcTemplate, setRcTemplate]     = useState('classic'); // classic | insight | portfolio
   const { data: rcoGeneral = [], setData: setRcoGeneral } = useAsync(examService.getRcoGeneral, []);
   const { data: rcoSig = [],     setData: setRcoSig }     = useAsync(examService.getRcoSig,     []);
+  const [rcoSettings, setRcoSettings]   = useState(null);      // loaded examselectionsettings record (id, includeX, signatures)
   const [rcPreviewId, setRcPreviewId]   = useState(null);      // template id being previewed
 
   /* ── Syllabus state ── */
@@ -1169,6 +1398,85 @@ async function fetchRemarksSetup() {
   }
 }
 
+// ── Result Card Options: GET settings + toggles set ──
+async function loadCardOptions() {
+  try {
+    const branchID = sessionStorage.getItem('branchID');
+    const token    = sessionStorage.getItem('token');
+    const res = await fetch(buildUrl(`/api/getexamselectionsettingsbybranchid?branchID=${branchID}`), {
+      headers: { Authorization: `Bearer ${token}`, Accept: '*/*' },
+    });
+    const data = await res.json();
+    // Response bare object/array dono ho sakta hai
+    const s = Array.isArray(data) ? data[0] : (data?.data || data);
+    if (!s || typeof s !== 'object') return;
+    setRcoSettings(s);
+    // API ke boolean fields se toggles ka on/off set karo
+    setRcoGeneral(g => g.map(it => ({ ...it, on: !!s[RCO_GENERAL_FIELD[it.label]] })));
+    setRcoSig(g => g.map(it => ({ ...it, on: !!s[RCO_SIG_FIELD[it.label]] })));
+  } catch (err) {
+    console.error('Could not load result card options', err);
+  }
+}
+
+// ── Result Card Options: Save Preferences → POST ──
+async function saveCardOptions() {
+  try {
+    const branchID = sessionStorage.getItem('branchID');
+    const token    = sessionStorage.getItem('token');
+    // Existing record (id) yaqeeni banao: agar load nahi hua / id nahi mili to abhi GET kar lo.
+    // Is se id hone par hamesha UPDATE jaye (INSERT nahi) — chahe loadCardOptions na chala ho.
+    let prev = rcoSettings;
+    if (!prev || !prev.id) {
+      try {
+        const r = await fetch(buildUrl(`/api/getexamselectionsettingsbybranchid?branchID=${branchID}`), {
+          headers: { Authorization: `Bearer ${token}`, Accept: '*/*' },
+        });
+        const d = await r.json();
+        const s = Array.isArray(d) ? d[0] : (d?.data || d);
+        if (s && typeof s === 'object') prev = s;
+      } catch { /* GET fail ho to insert hi sahi */ }
+    }
+    prev = prev || {};
+    const nowIso = new Date().toISOString();
+    const payload = {
+      id: prev.id || 0,
+      action: prev.id ? 'update' : 'insert',
+      // includeX fields ka UI toggle nahi — loaded value preserve karo (warna false)
+      includeComments:          !!prev.includeComments,
+      includeRemarks:           !!prev.includeRemarks,
+      includeOverallGrade:      !!prev.includeOverallGrade,
+      includeOverallPercentage: !!prev.includeOverallPercentage,
+      includeSectionRanking:    !!prev.includeSectionRanking,
+      // General toggles
+      ...Object.fromEntries(rcoGeneral.map(it => [RCO_GENERAL_FIELD[it.label], !!it.on])),
+      // Signatures & Remarks toggles
+      ...Object.fromEntries(rcoSig.map(it => [RCO_SIG_FIELD[it.label], !!it.on])),
+      signature1: prev.signature1 || 0,
+      signature2: prev.signature2 || 0,
+      branchID: parseInt(branchID),
+      createdAt: prev.createdAt || nowIso,
+      updatedAt: nowIso,
+    };
+    const res = await fetch(buildUrl('/api/examselectionsettingscrud'), {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: '*/*' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && (data.success || data.message?.toLowerCase?.().includes('success') || data.id || true)) {
+      toast('Preferences saved!', 'success');
+      // saved values ko state mein rakho taa-ke agla save update kare (insert nahi)
+      setRcoSettings({ ...prev, ...payload, id: data.id ?? data.recordId ?? prev.id ?? 0 });
+    } else {
+      toast(data.message || 'Failed to save preferences', 'error');
+    }
+  } catch (err) {
+    console.error('Could not save result card options', err);
+    toast('Error saving preferences', 'error');
+  }
+}
+
 // Result Setup ka data tab load karo jab user Results → Result Setup par aaye.
 // `tab` (main tab) ko bhi dependency mein rakha — warna rsTab/rsL2 mount se hi
 // apne default pe hain, to Results main-tab par click karne se effect re-run nahi hota tha.
@@ -1178,6 +1486,10 @@ useEffect(() => {
     fetchGradeSetup();
     fetchSignatureSetup();
     fetchRemarksSetup();
+  }
+  // Result Card Options tab par aate hi saved preferences GET karke toggles set karo
+  if (tab === 'results' && rsTab === 'resultsetup' && rsL2 === 'cardoptions') {
+    loadCardOptions();
   }
 }, [tab, rsTab, rsL2]);
 
@@ -3354,7 +3666,7 @@ useEffect(() => {
                           <i className="fa-solid fa-circle-info" style={{ color: '#1E40AF', marginRight: 5 }}></i>
                           Changes apply to both Classic and Insight templates.
                         </div>
-                        <button className="rco-save-btn" onClick={() => toast('Preferences saved!', 'success')}>
+                        <button className="rco-save-btn" onClick={saveCardOptions}>
                           <i className="fa-solid fa-floppy-disk"></i> Save Preferences
                         </button>
                       </div>
@@ -3764,7 +4076,7 @@ onClick={async () => {
             <Tooltip text="View this student's result card">
               <button
                 className="res-action-btn view"
-                onClick={() => setResCardCtx({ examId: resExamId, key, studentId: st.id, className, classID: cls.classID, sectionID: cls.sectionID, selectExam: resCurrentExam?.selectExam || 0, termID: selectedTermId, student: st })}
+                onClick={() => { loadCardOptions(); setResCardCtx({ examId: resExamId, key, studentId: st.id, className, classID: cls.classID, sectionID: cls.sectionID, selectExam: resCurrentExam?.selectExam || 0, termID: selectedTermId, student: st }); }}
               >
                 <i className="fa-solid fa-eye"></i> Card
               </button>
@@ -4032,7 +4344,7 @@ onClick={async () => {
                                                     <Tooltip text="View combined result card">
                                                       <button
                                                         className="res-action-btn view"
-                                                        onClick={() => setCbrCardCtx({ groupId: grp.name, classId: cr.id, studentRollNo: st.rollNo })}
+                                                        onClick={() => { loadCardOptions(); setCbrCardCtx({ groupId: grp.name, classId: cr.id, studentRollNo: st.rollNo }); }}
                                                       >
                                                         <i className="fa-solid fa-eye"></i> Card
                                                       </button>
@@ -4134,7 +4446,24 @@ onClick={async () => {
 
             // ── Student detail view ──
             if (rhActiveStudent) {
-              const st = rhActiveStudent;
+              const fmtD = d => d ? d.split('T')[0].split('-').reverse().join('/') : '—';
+              // Real exams (rhExams) ko results-shape mein dhalo taa-ke rich layout (score bar, grade,
+              // position, Performance Trends, KPIs) real data se chale. Score = computed overall % (rhExamScores).
+              const mappedResults = rhExams.length
+                ? rhExams.map(ex => ({
+                    exam: ex.examName || '—',
+                    type: 'single',
+                    year: ex.termName || '',
+                    date: `${fmtD(ex.dateFrom)} → ${fmtD(ex.dateTo)}`,
+                    pct: rhExamScores[ex.id] ?? 0,
+                    rank: 1,
+                    selectExam: ex.selectExam,
+                    termID: ex.termID,
+                    classID: ex.classID,
+                    sectionID: ex.sectionID,
+                  }))
+                : rhActiveStudent.results;
+              const st = { ...rhActiveStudent, results: mappedResults };
               const { avgPct, best, grade: avgGrade } = studentCardSummary(st);
               const worst = st.results.length ? Math.min(...st.results.map(r => r.pct)) : 0;
               const initials = st.name.split(' ').map(w => w[0] || '').join('').slice(0, 2).toUpperCase();
@@ -4219,10 +4548,20 @@ onClick={async () => {
                               <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 8 }}>
                                 <i className="fa-solid fa-clock-rotate-left" style={{ color: '#1E40AF' }}></i> Exam History
                               </div>
-                              <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{st.results.length} record{st.results.length !== 1 ? 's' : ''}</span>
+                              <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{(rhExams.length || st.results.length)} record{(rhExams.length || st.results.length) !== 1 ? 's' : ''}</span>
                             </div>
                             <div>
-                              {st.results.map((r, idx) => {
+                              {/* Student click par fetched exams (examName / termName / dates) */}
+                              {rhExamsLoading ? (
+                                <div style={{ padding: '18px 4px', fontSize: 12, color: 'var(--text-muted)', textAlign: 'center' }}>
+                                  <i className="fa-solid fa-spinner fa-spin" style={{ marginRight: 6 }}></i> Loading exam history…
+                                </div>
+                              ) : st.results.length === 0 ? (
+                                <div style={{ padding: '18px 4px', fontSize: 12, color: 'var(--text-muted)', textAlign: 'center' }}>
+                                  No exam history found for this student.
+                                </div>
+                              ) : (
+                              st.results.map((r, idx) => {
                                 const isCombined = r.type === 'combined';
                                 const pctCol = r.pct >= 80 ? '#16A34A' : r.pct >= 60 ? '#1E40AF' : r.pct >= 50 ? '#D97706' : '#DC2626';
                                 const grade = rcGetGrade(r.pct, 100);
@@ -4280,7 +4619,7 @@ onClick={async () => {
                                       <Tooltip text="View result card">
                                         <button
                                           className="res-action-btn view"
-                                          onClick={() => setRhCardCtx({ student: st, result: r })}
+                                          onClick={() => { loadCardOptions(); setRhCardCtx({ student: st, result: r }); }}
                                           style={{ padding: '6px 11px', fontSize: 11 }}
                                         >
                                           <i className="fa-solid fa-eye"></i> View
@@ -4298,7 +4637,7 @@ onClick={async () => {
                                     </div>
                                   </div>
                                 );
-                              })}
+                              }))}
                             </div>
                           </div>
 
@@ -4531,7 +4870,15 @@ onClick={async () => {
                 ) : (
                   <div className="rh-grid">
                     {filtered.map(st => {
-                      const { avgPct, best, trend, grade } = studentCardSummary(st);
+                      // Real summary (avg/best/trend/grade) jo background effect ne compute kiya;
+                      // jab tak load na ho, seed st.results se fallback.
+                      const _sum  = rhStudentSummaries[st.id];
+                      const _base = studentCardSummary(st);
+                      const avgPct = _sum ? _sum.avgPct : _base.avgPct;
+                      const best   = _sum ? _sum.best   : _base.best;
+                      const trend  = _sum ? _sum.trend  : _base.trend;
+                      const grade  = _sum ? _sum.grade  : _base.grade;
+                      const resultCount = _sum ? _sum.count : st.results.length;
                       const gradeCol = RS_GRADE_COLORS[grade] || '#1E40AF';
                       const barCol   = avgPct >= 80 ? '#16A34A' : avgPct >= 60 ? '#D97706' : '#DC2626';
                       const attCol   = st.attendance >= 90 ? '#16A34A' : st.attendance >= 75 ? '#D97706' : '#DC2626';
@@ -4577,7 +4924,7 @@ onClick={async () => {
                             <div style={{ width: `${Math.min(100, avgPct)}%`, background: barCol }} />
                           </div>
                           <div className="rh-foot">
-                            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{st.results.length} Result{st.results.length !== 1 ? 's' : ''}</span>
+                            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{resultCount} Result{resultCount !== 1 ? 's' : ''}</span>
                             <span style={{ fontSize: 11, fontWeight: 700, color: trendCol, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                               <i className={`fa-solid ${trend === 'up' ? 'fa-arrow-trend-up' : trend === 'down' ? 'fa-arrow-trend-down' : 'fa-minus'}`}></i>
                               {trendLbl}
@@ -4929,32 +5276,23 @@ onClick={async () => {
       {/* ── Result History — per-exam Card viewer ── */}
       {rhCardCtx && (() => {
         const { student, result } = rhCardCtx;
-        const mainObt = Math.round((result.pct / 100) * 200);
+        // Real per-subject record (rhCardMarks effect se load hua) — single assessment card jaisa.
         const cardStudent = {
           id: student.id,
           rollNo: student.rollNo,
           name: student.name,
           father: student.father,
-          obtained: cbrDeriveSubjectMarks(mainObt),
+          obtained: rhCardMarks?.obtained || {},
+          manualRemarks: rhCardMarks?.remarks || {},   // saved per-subject remarks → Comment column
+          finalRemarks: rhCardMarks?.finalRemark || '', // student ka final remark → Final Remarks section
           absentSubjects: [],
-          attendance: `${student.attendance}%`,
+          attendance: student.attendance ? `${student.attendance}%` : '—',
         };
-        if (result.type === 'combined') {
-          // Stub a minimal combined breakdown so the Combined view renders meaningfully
-          const mainTotal = 200;
-          const subBreakdown = [{ name: 'Sub Exam', origT: 100, subObt: Math.round(result.pct), weight: 20, conv: Math.round(((result.pct) / 100) * 20 * 100) / 100 }];
-          const grandTotal = mainTotal + 20;
-          const grandObt   = Math.round((mainObt + subBreakdown[0].conv) * 100) / 100;
-          cardStudent._combined = {
-            grandTotal, grandObt,
-            ovPct: result.pct,
-            mainExName: result.exam,
-            mainTotal, mainObt,
-            subBreakdown,
-            rank: 1, rankSfx: 'st',
-          };
-        }
-        const cardRd = { totalMarks: { ...RES_DEFAULT_TOTALS } };
+        const cardRd = {
+          released: false,
+          totalMarks: (rhCardMarks && Object.keys(rhCardMarks.totals).length) ? rhCardMarks.totals : { ...RES_DEFAULT_TOTALS },
+          subjects: rhCardMarks?.subjects,
+        };
         const cardEx = { name: result.exam, classes: [student.cls] };
         return (
           <ResultCardViewer
@@ -4970,7 +5308,7 @@ onClick={async () => {
             rsAbsentMode={rsAbsentMode}
             onClose={() => setRhCardCtx(null)}
             toast={toast}
-            initialMode={result.type === 'combined' ? 'combined' : 'single'}
+            singleOnly
           />
         );
       })()}
@@ -5769,14 +6107,31 @@ function ExamModal({ data, onClose, onSave, toast, selectedTermId }) {
               <label className="form-label">Start Date</label>
               <div className="exam-date-field">
                 <i className="fa-regular fa-calendar exam-field-icon"></i>
-                <input className="form-input" type="date" value={from} onChange={e => setFrom(e.target.value)} />
+                <input
+                  className="form-input"
+                  type="date"
+                  value={from}
+                  onChange={e => {
+                    const v = e.target.value;
+                    setFrom(v);
+                    // Agar end date ab start date se pehle ho gayi to use clear karo
+                    if (to && v && to < v) setTo('');
+                  }}
+                />
               </div>
             </div>
             <div className="form-group" style={{ marginBottom: 0 }}>
               <label className="form-label">End Date</label>
               <div className="exam-date-field">
                 <i className="fa-regular fa-calendar-check exam-field-icon"></i>
-                <input className="form-input" type="date" value={to} onChange={e => setTo(e.target.value)} />
+                {/* End date kam se kam start date ya us se aage ho (start se pehle nahi) */}
+                <input
+                  className="form-input"
+                  type="date"
+                  value={to}
+                  min={from || undefined}
+                  onChange={e => setTo(e.target.value)}
+                />
               </div>
             </div>
           </div>
@@ -5801,7 +6156,7 @@ function ExamModal({ data, onClose, onSave, toast, selectedTermId }) {
 /* ═══════════════════════════════════════════════════════════════════
    REPORT STYLE PICKER — opens new tab with the chosen-style PDF
    ═══════════════════════════════════════════════════════════════════ */
-function ExamReportPicker({ req, exams, term, onClose, toast }) {
+function ExamReportPicker({ req, exams, term, branchSchool, onClose, toast }) {
   const [style, setStyle]   = useState('color');
   const [format, setFormat] = useState('pdf');
 
@@ -5814,7 +6169,7 @@ function ExamReportPicker({ req, exams, term, onClose, toast }) {
     if (format === 'word') {
       toast('Word export coming soon', 'info');
     } else {
-      generateExamReport({ req, exams, term, target }, style === 'color');
+      generateExamReport({ req, exams, term, target, branchSchool }, style === 'color');
     }
     onClose();
   };
@@ -7160,7 +7515,7 @@ function ClassicResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
   const obtAll   = subjects.reduce((a, s) => absentSet[s] ? a : a + (st.obtained[s] || 0), 0);
   const ovPct    = isCombined ? cb.ovPct : (totalAll ? Math.min(100, Math.round((obtAll / totalAll) * 10000) / 100) : 0);
   const ovGrade  = (grades && grades.length) ? rcGradeByScale(ovPct, grades) : rcGetGrade(obtAll, totalAll);
-  const finalRem = rcGetFinalRemarks(ovPct);
+  const finalRem = st.finalRemarks || rcGetFinalRemarks(ovPct);
 
   const position = opt['Show Position in Class'] ? (isCombined && cb ? `${cb.rank}${cb.rankSfx || ''}` : '1st / 1') : '—';
 
@@ -7278,7 +7633,8 @@ function ClassicResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
                 const obt = isAbs ? 0 : (st.obtained[s] || 0);
                 const pct = (!isAbs && tot) ? Math.round((obt / tot) * 100) : 0;
                 const g   = (!isAbs && obt > 0) ? rcGetGrade(obt, tot) : null;
-                const mc  = isAbs ? 'Absent' : (g ? g.comment : '').slice(0, 28);
+                // Saved remarks (manualRemarks) ko tarjeeh do, warna grade ka comment.
+                const mc  = isAbs ? 'Absent' : ((st.manualRemarks && st.manualRemarks[s]) || (g ? g.comment : '')).slice(0, 40);
                 const gcol = gradeChipColor(g);
                 const bg = isAbs ? absRowBg : (i % 2 === 0 ? '#fff' : rowAlt);
                 const tdBase   = { padding: '4px 7px', fontSize: 11, borderBottom: `1px solid ${accentBdr}` };
@@ -7473,7 +7829,7 @@ function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
   const obtAll   = subjects.reduce((a, s) => absentSet[s] ? a : a + (st.obtained[s] || 0), 0);
   const ovPct    = isCombined ? cb.ovPct : (totalAll ? Math.min(100, Math.round((obtAll / totalAll) * 10000) / 100) : 0);
   const ovGrade  = (grades && grades.length) ? rcGradeByScale(ovPct, grades) : rcGetGrade(obtAll, totalAll);
-  const finalRem = rcGetFinalRemarks(ovPct);
+  const finalRem = st.finalRemarks || rcGetFinalRemarks(ovPct);
 
   const position = opt['Show Position in Class'] ? (isCombined && cb ? `${cb.rank}${cb.rankSfx || ''}` : '1st / 1') : '—';
 
@@ -7707,7 +8063,7 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
   const obtAll   = subjects.reduce((a, s) => absentSet[s] ? a : a + (st.obtained[s] || 0), 0);
   const ovPct    = isCombined ? cb.ovPct : (totalAll ? Math.min(100, Math.round((obtAll / totalAll) * 10000) / 100) : 0);
   const ovGrade  = (grades && grades.length) ? rcGradeByScale(ovPct, grades) : rcGetGrade(obtAll, totalAll);
-  const finalRem = rcGetFinalRemarks(ovPct);
+  const finalRem = st.finalRemarks || rcGetFinalRemarks(ovPct);
 
   const subjData = subjects.map((s, i) => {
     const isAbs = !!absentSet[s];
@@ -7715,7 +8071,8 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
     const obt = isAbs ? 0 : (st.obtained[s] || 0);
     const pct = (!isAbs && tot) ? Math.round((obt / tot) * 100) : 0;
     const g   = (!isAbs && obt > 0) ? rcGetGrade(obt, tot) : null;
-    const mc  = isAbs ? 'Absent' : (g ? g.comment : '').slice(0, 28);
+    // Saved remarks (manualRemarks) ko tarjeeh do, warna grade ka comment.
+    const mc  = isAbs ? 'Absent' : ((st.manualRemarks && st.manualRemarks[s]) || (g ? g.comment : '')).slice(0, 40);
     return { s, tot, obt, pct, g, mc, isAbs, col: C.bars[i % C.bars.length] };
   });
 
