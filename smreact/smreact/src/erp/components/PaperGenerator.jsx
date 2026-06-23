@@ -879,6 +879,13 @@ const papers = papersByKey[key] || [];
           defaultFmt={classDefaults[makeIdx]?.fmt || 'with'}
           initialPaper={editPaper}
           onClose={() => { setMakeIdx(null); setEditPaper(null); }}
+          onGenerated={async () => {
+            // Generate ke baad is class ki papers dobara fetch karke list update karo.
+            const c = examClasses[makeIdx];
+            if (!c) return;
+            const papers = await fetchPapersByClass(c.gradeID, c.sectionID);
+            setPapersByKey(prev => ({ ...prev, [pgClassKey(c)]: papers.map(mapApiPaper) }));
+          }}
           toast={toast}
               subjects={subjects} // 👈 YE ADD KAREIN
 
@@ -1292,9 +1299,9 @@ function freshTab(num) {
     entryId: newEntryId(),
     label: 'Q No. ' + num,
     saved: false,
-    unitSelections: {},  // { unitName: instrIdx }
+    unitSelections: {},  // API: { unitName: true } (multi-select) | static: { unitName: instrIdx }
     instr: '',           // typed Main Instruction → changedMainQuestion
-    selectedMainQs: [],  // main questions picked (multi-select) → mainQuestion[]
+    selectedMainQs: {},  // API: per-unit { unitName: [mainQ...] } (multi-select units)
     items: 0,
     choices: 0,
     marks: 0,
@@ -1347,7 +1354,7 @@ const PG_REC_TITLE = {
 };
 
 
-function MakePaperModal({ cls, defaultFmt, initialPaper, onClose, toast, subjects = [] }) {
+function MakePaperModal({ cls, defaultFmt, initialPaper, onClose, onGenerated, toast, subjects = [] }) {
   const isEdit = !!initialPaper;
   const [subject, setSubject] = useState(isEdit ? (initialPaper.subj || '') : '');
   const [paperType, setPaperType] = useState(isEdit ? (initialPaper.type || '') : '');
@@ -1484,14 +1491,29 @@ const prefillSavedTabs = (sections, details, paperType) => {
       const apiItems = (details && details[API_KEY_MAP[typeKey]]) || [];
       const unitName = apiItems[0]?.unitName;
 
+      // Saved rows ko per-unit group karo (multi-unit prefill). Agar row mein unitName na ho
+      // to pehle item ke unit par fallback (purana single-unit behavior reproduce ho jata hai).
+      const savedUnits = {};
+      const savedMainMap = {};
+      (sec.rows || []).forEach(r => {
+        const un = r.unitName || unitName;
+        if (!un) return;
+        savedUnits[un] = true;
+        if (!savedMainMap[un]) savedMainMap[un] = [];
+        if (r.mainQuestion && !savedMainMap[un].includes(r.mainQuestion)) savedMainMap[un].push(r.mainQuestion);
+      });
+      if (Object.keys(savedUnits).length === 0 && unitName) {
+        savedUnits[unitName] = true;
+        savedMainMap[unitName] = [...new Set((sec.rows || []).map(r => r.mainQuestion).filter(Boolean))];
+      }
+
       const secObj = { ...(next[section] || {}) };
       const block = secObj[typeKey] ? { ...secObj[typeKey] } : { open: true, activeTab: null, tabs: [] };
       const tab = {
         ...freshTab(block.tabs.length + 1),
-        unitSelections: unitName ? { '__api__': unitName } : {},
+        unitSelections: savedUnits,                               // API: { unitName: true } (multi)
         instr: sec.mainQuestion,                                  // changedMainQuestion (typed)
-        // saved rows ke unique mainQuestions (multi-select) ko prefill karo.
-        selectedMainQs: [...new Set((sec.rows || []).map(r => r.mainQuestion).filter(Boolean))],
+        selectedMainQs: savedMainMap,                             // per-unit { unitName: [mainQ...] }
         items: sec.noOfQuestions || sec.rows.length,              // saved item count
         // Agar choices == questions (sab choices, koi compulsory nahi) to input mein 0 dikhao;
         // warna actual saved choices value.
@@ -1732,9 +1754,10 @@ const saveTab = async (section, typeKey, entryId) => {
     const sectionID = cls.sectionID || cls.section;
 let mainQuestions = [];
 if (notebookDetails) {
-  // mainQuestion = API se selected main questions (multi-select → tab.selectedMainQs).
-  // tab.instr alag hai = user ka khud typed Main Instruction → changedMainQuestion.
-  mainQuestions = tab.selectedMainQs || [];
+  // mainQuestion = API se selected main questions. selectedMainQs ab per-unit object hai
+  // ({ unitName: [mq...] }) → saare units ke mainQ flatten karo. (Array bhi handle karo = old data.)
+  const smq = tab.selectedMainQs || {};
+  mainQuestions = Array.isArray(smq) ? smq : Object.values(smq).flat();
 } else {
   // static mode — same as before
   Object.entries(tab.unitSelections).forEach(([unitName, instrIdx]) => {
@@ -1981,6 +2004,9 @@ const onFetch = async () => {
       return;
     }
     toast(`Paper generated — "${title}"`, 'success');
+    // Parent ki papers list dobara GET API se refresh karo (count + naya card turant update,
+    // bina screen refresh ke).
+    onGenerated?.();
     onClose();
   };
 
@@ -2367,7 +2393,8 @@ function QBlockAccordion({ typeDef, section, subject, block, typeAgg,
   // waqt sab ka jama dikhta tha. Check/uncheck par totalEligible badalta hai → badge live update.
   // Agar active tab mein koi selection nahi, to available total dikhao.
   const activeTabObj   = activeIdx >= 0 ? tabs[activeIdx] : null;
-  const anySelection   = (activeTabObj?.selectedMainQs || []).length > 0;
+  const _smqA          = activeTabObj?.selectedMainQs || {};
+  const anySelection   = Array.isArray(_smqA) ? _smqA.length > 0 : Object.values(_smqA).some(a => (a || []).length > 0);
   const selectedApprov = +(activeTabObj?.totalEligible) || 0;
   const badgeApproved  = (apiItems && anySelection) ? selectedApprov : totalSubmitted;
 
@@ -2450,7 +2477,7 @@ const badge = apiItems ? (
                       >
                         {t.saved && <i className="fa-solid fa-check" style={{ fontSize: 9, marginRight: 2, color: isActive ? '#fff' : 'var(--success,#16A34A)' }}></i>}
                         {t.label}
-                        {hasData && <span style={{ fontSize: 9.5, fontWeight: 700, opacity: .75, marginLeft: 3 }}>{effQ} Q · {totalMk} Marks</span>}
+                        {hasData && <span style={{ fontSize: 9.5, fontWeight: 700, opacity: .75, marginLeft: 3 }}></span>}
                         {tabs.length > 1 && <span className="pg-qtab-close" onClick={e => { e.stopPropagation(); onRemoveTab(t.entryId); }}>×</span>}
                       </button>
                     </Tooltip>
@@ -2564,19 +2591,19 @@ function QWorkspacePanel({ tab, typeKey, subject, onUpdate, onSave, apiItems }) 
 
   const apiUnits = Object.values(apiUnitMap);
 
-  const selectedUnitName = selectedUnits['__api__'] || null;
-  const selectedUnitData = selectedUnitName ? apiUnitMap[selectedUnitName] : null;
+  // API mode: jitne bhi units checkbox se selected hain unke naam (multi-select).
+  const selectedUnitNames = useApiData ? Object.keys(selectedUnits) : [];
+  // selectedMainQs ab PER-UNIT object hai: { unitName: [mainQ...] }
+  const selMainMap = useApiData ? (tab.selectedMainQs || {}) : {};
 
-  // SELECTED main questions ka total (live; check/uncheck par update hota hai)
-  const selectedTotal = (useApiData && selectedUnitData)
-    ? (tab.selectedMainQs || []).reduce((s, mq) => s + (selectedUnitData.groups[mq]?.total || 0), 0)
-    : 0;
+  // Helper: ek unit ke selected main questions ka total/approved jodo
+  const unitSelectedSum = (uName, field) => {
+    const grp = apiUnitMap[uName]?.groups || {};
+    return (selMainMap[uName] || []).reduce((s, mq) => s + (grp[mq]?.[field] || 0), 0);
+  };
 
   const totalEligible = useApiData
-    ? (selectedUnitData
-        // sirf SELECTED main questions ke approved ka sum
-        ? (tab.selectedMainQs || []).reduce((s, mq) => s + (selectedUnitData.groups[mq]?.approved || 0), 0)
-        : 0)
+    ? selectedUnitNames.reduce((s, uName) => s + unitSelectedSum(uName, 'approved'), 0)
     : (() => {
         let t = 0;
         Object.entries(selectedUnits).forEach(([unitName, instrIdx]) => {
@@ -2590,9 +2617,10 @@ function QWorkspacePanel({ tab, typeKey, subject, onUpdate, onSave, apiItems }) 
       })();
 
   const breakdown = useApiData
-    ? (selectedUnitData
-        ? (tab.selectedMainQs || []).map(mq => `${mq}: ${selectedUnitData.groups[mq]?.approved || 0}`)
-        : [])
+    ? selectedUnitNames.flatMap(uName => {
+        const grp = apiUnitMap[uName]?.groups || {};
+        return (selMainMap[uName] || []).map(mq => `${uName} · ${mq}: ${grp[mq]?.approved || 0}`);
+      })
     : (() => {
         const bd = [];
         Object.entries(selectedUnits).forEach(([unitName, instrIdx]) => {
@@ -2620,9 +2648,6 @@ function QWorkspacePanel({ tab, typeKey, subject, onUpdate, onSave, apiItems }) 
   // Paper par dikhne wale effective items = input items − choices (jaise 5 items − 2 choices = 3)
   const shownItems = Math.max(0, items - choices);
   const overflow = items > totalEligible && totalEligible > 0;
-
-  // Selected unit ke mainQuestion groups (har group mein apna total/approved/items)
-  const selectedMainQuestions = selectedUnitData ? selectedUnitData.groups : {};
 
   return (
     <div className="pg-qws-panel">
@@ -2654,51 +2679,64 @@ function QWorkspacePanel({ tab, typeKey, subject, onUpdate, onSave, apiItems }) 
               {/* Unit rows */}
               <div className="pg-unit-rows-container" style={{ marginBottom: 8 }}>
                 {apiUnits.map((u, ui) => {
-                  const isActive = selectedUnits['__api__'] === u.unitName;
+                  // Units ab CHECKBOX (multi-select). isChecked = ye unit selected hai ya nahi.
+                  const isChecked = u.unitName in selectedUnits;
                   return (
                     <div key={ui} className="pg-unit-row-wrap">
                       <div
-                        className={`pg-unit-row${isActive ? ' active' : ''}`}
+                        className={`pg-unit-row${isChecked ? ' active' : ''}`}
                         onClick={() => {
-                          // Unit select karte hi us unit ke saare unique main questions select karo
-                          // (user phir checkbox se kuch deselect kar sakti hai).
-                          const allMainQs = [...new Set(u.items.map(it => it.mainQuestion).filter(Boolean))];
-                          onUpdate({
-                            unitSelections: { '__api__': u.unitName },
-                            selectedMainQs: allMainQs,   // multi-select → payload mainQuestion[]
-                            totalEligible: u.submitted,
-                          });
+                          const nextUnits = { ...selectedUnits };
+                          const nextMain  = { ...(tab.selectedMainQs || {}) };
+                          if (isChecked) {
+                            // uncheck → unit aur uske main questions hata do
+                            delete nextUnits[u.unitName];
+                            delete nextMain[u.unitName];
+                          } else {
+                            // check → unit add + uske saare main questions auto-select
+                            nextUnits[u.unitName] = true;
+                            nextMain[u.unitName] = [...new Set(u.items.map(it => it.mainQuestion).filter(Boolean))];
+                          }
+                          onUpdate({ unitSelections: nextUnits, selectedMainQs: nextMain });
                         }}
                       >
-                        <div className={`pg-unit-row-dot${isActive ? ' active' : ''}`}></div>
+                        {/* checkbox box (pehle radio dot tha) */}
+                        <div style={{
+                          width: 15, height: 15, borderRadius: 3, flexShrink: 0,
+                          border: isChecked ? '2px solid #1E40AF' : '2px solid var(--border-med)',
+                          background: isChecked ? '#1E40AF' : 'transparent',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        }}>
+                          {isChecked && <i className="fa-solid fa-check" style={{ fontSize: 9, color: '#fff' }}></i>}
+                        </div>
                         <div className="pg-unit-row-name">{u.unitName}</div>
                         <div style={{ display: 'flex', gap: 5, flexShrink: 0 }}>
                           <span className="pg-q-info-chip total" style={{ padding: '2px 7px', fontSize: 10 }}>
-                            {/* Active unit par sirf selected mainQ ka sum (check/uncheck par live) */}
-                            Total: {isActive ? selectedTotal : u.total}
+                            {/* Checked unit par sirf uske selected mainQ ka sum (check/uncheck par live) */}
+                            Total: {isChecked ? unitSelectedSum(u.unitName, 'total') : u.total}
                           </span>
                           <span className="pg-q-info-chip available" style={{ padding: '2px 7px', fontSize: 10 }}>
-                            Approved: {isActive ? totalEligible : u.submitted}
+                            Approved: {isChecked ? unitSelectedSum(u.unitName, 'approved') : u.submitted}
                           </span>
                         </div>
                       </div>
 
-                      {/* Selected unit ke mainQuestions */}
-                      {isActive && (
+                      {/* Checked unit ke mainQuestions (har unit ke apne) */}
+                      {isChecked && (
                         <div className="pg-unit-instr-list">
-                          {Object.entries(selectedMainQuestions).map(([mainQ, g], mi) => {
-                            const checked = (tab.selectedMainQs || []).includes(mainQ);
+                          {Object.entries(u.groups).map(([mainQ, g], mi) => {
+                            const checked = (selMainMap[u.unitName] || []).includes(mainQ);
                             return (
                             <div
                               key={mi}
                               className={`pg-instr-card${checked ? ' active' : ''}`}
-                              onClick={() => {
-                                // multi-select toggle
-                                const cur = tab.selectedMainQs || [];
-                                const next = cur.includes(mainQ) ? cur.filter(x => x !== mainQ) : [...cur, mainQ];
-                                // totalEligible = sirf selected mainQ ka approved sum
-                                const nextEligible = next.reduce((s, mq) => s + (u.groups[mq]?.approved || 0), 0);
-                                onUpdate({ selectedMainQs: next, totalEligible: nextEligible });
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                // is unit ke selected main questions toggle
+                                const cur = selMainMap[u.unitName] || [];
+                                const nextArr = cur.includes(mainQ) ? cur.filter(x => x !== mainQ) : [...cur, mainQ];
+                                const nextMain = { ...(tab.selectedMainQs || {}), [u.unitName]: nextArr };
+                                onUpdate({ selectedMainQs: nextMain });
                               }}
                             >
                               <div style={{
@@ -2861,7 +2899,7 @@ function QWorkspacePanel({ tab, typeKey, subject, onUpdate, onSave, apiItems }) 
         </div>
 
         {/* RIGHT - Configure */}
-        {useApiData && !selectedUnitName ? (
+        {useApiData && selectedUnitNames.length === 0 ? (
           <div className="pg-qws-right pg-qws-right-empty">
             <i className="fa-solid fa-arrow-left" style={{ fontSize: 20, opacity: .3 }}></i>
             <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-muted)' }}>
