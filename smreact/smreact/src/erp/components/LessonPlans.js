@@ -147,31 +147,6 @@ const SUB_CLASSES  = ['Class-I','Class-II','Class-III','Class-IV','Class-V','Cla
 const SUB_SECTIONS = ['A','B','C'];
 const SUB_SUBJECTS = ['English','Urdu','Mathematics','Science','Social Studies','Islamiat'];
 
-/* ── ADMIN OVERVIEW DATA — verbatim from HTML SUB_ADMIN_TEACHERS ── */
-const SUB_ADMIN_TEACHERS = [
-  { name:'Mr. Ahmed Ali',    subject:'Science', class:'Class V',    lp:{ total:15, submitted:15 }, nb:{ total:35, submitted:35 } },
-  { name:'Ms. Fatima Noor',  subject:'English', class:'Class VI',   lp:{ total:12, submitted:8  }, nb:{ total:28, submitted:20 } },
-  { name:'Mr. Usman Raza',   subject:'Math',    class:'Class VII',  lp:{ total:18, submitted:10 }, nb:{ total:42, submitted:28 } },
-  { name:'Ms. Ayesha Khan',  subject:'Urdu',    class:'Class IV',   lp:{ total:14, submitted:6  }, nb:{ total:30, submitted:12 } },
-  { name:'Mr. Bilal Hassan', subject:'SST',     class:'Class VIII', lp:{ total:16, submitted:3  }, nb:{ total:35, submitted:10 } },
-];
-
-const SUB_ADMIN_CLASSES = [
-  { cls:'Class IV',   subj:'Urdu',    teacher:'Ms. Ayesha Khan',   lp:14, lpSub:6,  nb:30, nbSub:12 },
-  { cls:'Class V',    subj:'Science', teacher:'Mr. Ahmed Ali',     lp:15, lpSub:15, nb:35, nbSub:35 },
-  { cls:'Class VI',   subj:'English', teacher:'Ms. Fatima Noor',   lp:12, lpSub:8,  nb:28, nbSub:20 },
-  { cls:'Class VII',  subj:'Math',    teacher:'Mr. Usman Raza',    lp:18, lpSub:10, nb:42, nbSub:28 },
-  { cls:'Class VIII', subj:'SST',     teacher:'Mr. Bilal Hassan',  lp:16, lpSub:3,  nb:35, nbSub:10 },
-];
-
-const SUB_ADMIN_SUBJECTS = [
-  { subj:'Science', icon:'🔬', total:50, submitted:50, teachers:['Mr. Ahmed Ali'] },
-  { subj:'English', icon:'📖', total:40, submitted:28, teachers:['Ms. Fatima Noor'] },
-  { subj:'Math',    icon:'📐', total:60, submitted:38, teachers:['Mr. Usman Raza'] },
-  { subj:'Urdu',    icon:'✍️', total:44, submitted:18, teachers:['Ms. Ayesha Khan'] },
-  { subj:'SST',     icon:'🌍', total:51, submitted:13, teachers:['Mr. Bilal Hassan'] },
-];
-
 /* Rich-text editor sections — verbatim from HTML CLPM_SECTIONS / CLPM_SECTIONS_URDU */
 const LESSON_SECTIONS_EN = [
   { key: 'slo',   title: '🎯 Student Learning Objective',  hint: "What will students be able to do by the end of this lesson?", mins: '05' },
@@ -3608,6 +3583,107 @@ function nbCheckRow({ action, selectionId = 0, notebookID, recID, recTitle, bran
   });
 }
 
+/* ═══════════════════════════════════════════════════════════════════
+   SUBMISSIONS · ADMIN OVERVIEW — live analytics
+   ───────────────────────────────────────────────────────────────────
+   Replaces the old hardcoded SUB_ADMIN_* demo arrays. Branch-scoped data
+   for the Submissions → Admin panel, built from:
+     • get-employees-by-branch        → teacher list (Teacher-wise card)
+     • get-grades-by-branch           → class+section list (card dropdowns)
+     • get-subjects/{grade}/{section} → subjects per class (admin scope)
+     • get-subjects_byEmployeeID      → a teacher's subjects (attribution)
+     • getulpfornotebookmaster        → units  → completion %
+     • getulpfornotebookdetails (+selection) → submitted/total items (X/Y)
+   The grade/employee endpoints aren't used elsewhere yet, so their field
+   names are normalised defensively and the raw payloads are logged.
+   ═══════════════════════════════════════════════════════════════════ */
+const lpBranchId = () => sessionStorage.getItem('branchID') || '';
+const lpGetHeaders = () => {
+  const token = sessionStorage.getItem('token') || '';
+  return token ? { Accept: '*/*', Authorization: `bearer ${token}` } : { Accept: '*/*' };
+};
+
+/* All grades (+sections) in the branch — admin scope, not employee-filtered. */
+async function fetchBranchGrades() {
+  const res = await fetch(buildUrl(`/api/LaunchSetup/get-grades-by-branch/${lpBranchId()}`), { method: 'GET', headers: lpGetHeaders() });
+  const json = await res.json().catch(() => ({}));
+  console.log('[admin] get-grades-by-branch:', json);
+  const list = Array.isArray(json) ? json : (json?.data || json?.Data || json?.result || []);
+  return list.map(g => ({
+    gradeId:   g.gradeID ?? g.gradeId ?? g.id ?? g.classID ?? g.ClassID,
+    gradeName: g.gradeName ?? g.name ?? g.className ?? g.grade ?? g.Name ?? `Grade ${g.gradeID ?? g.id ?? ''}`,
+    sections: (g.sections || g.sectionList || g.Sections || g.sectionsList || []).map(s => ({
+      sectionId:   s.sectionID ?? s.sectionId ?? s.id ?? s.SectionID,
+      sectionName: s.sectionName ?? s.name ?? s.section ?? s.SectionName ?? 'Section',
+    })).filter(s => s.sectionId != null),
+  })).filter(g => g.gradeId != null);
+}
+
+/* All employees (teachers) in the branch. */
+async function fetchBranchEmployees() {
+  const res = await fetch(buildUrl(`/api/LaunchSetup/get-employees-by-branch/${lpBranchId()}`), { method: 'GET', headers: lpGetHeaders() });
+  const json = await res.json().catch(() => ({}));
+  console.log('[admin] get-employees-by-branch:', json);
+  const list = Array.isArray(json) ? json : (json?.data || json?.Data || json?.result || []);
+  return list.map(e => ({
+    empId:       e.employeeID ?? e.employeeId ?? e.empID ?? e.id ?? e.EmployeeID,
+    name:        e.employeeName ?? e.name ?? e.fullName ?? (`${e.firstName ?? ''} ${e.lastName ?? ''}`.trim() || 'Teacher'),
+    designation: e.designation ?? e.designationName ?? e.role ?? '',
+  })).filter(e => e.empId != null);
+}
+
+/* Subjects of a class/section (admin scope). Shape: { success, data:[{subjectID, subjectName}] }. */
+async function fetchClassSubjects(gradeId, sectionId) {
+  const res = await fetch(buildUrl(`/api/LaunchSetup/get-subjects/${gradeId}/${sectionId}`), { method: 'GET', headers: lpGetHeaders() });
+  const json = await res.json().catch(() => ({}));
+  const list = Array.isArray(json) ? json : (json?.data || []);
+  return list.map(s => ({ subjectId: s.subjectID ?? s.subjectId ?? s.id, subjectName: s.subjectName ?? s.name ?? '' }))
+    .filter(s => s.subjectId != null);
+}
+
+/* Subjects a specific employee teaches in a class/section. */
+async function fetchEmployeeSubjects(gradeId, sectionId, empId) {
+  const res = await fetch(buildUrl(`/get-subjects_byEmployeeID/${gradeId}/${sectionId}/${empId}`), { method: 'GET', headers: lpGetHeaders() });
+  const json = await res.json().catch(() => ({}));
+  const list = (json?.success && Array.isArray(json.data)) ? json.data : (Array.isArray(json) ? json : (json?.data || []));
+  return list.map(s => ({ subjectId: s.subjectID ?? s.subjectId ?? s.id, subjectName: s.subjectName ?? s.name ?? '' }))
+    .filter(s => s.subjectId != null);
+}
+
+/* Submission record for one class+section+subject. Reuses loadNbSubmissionData
+   (master → per-unit detail + checkbox selection) and reduces it to a flat
+   submitted/total/units summary. master gives units (→ %); detail+selection give
+   the submitted-vs-total items (→ the "27/67" record). */
+async function fetchSubmissionStats({ classID, sectionID, subjectID }) {
+  try {
+    const units = await loadNbSubmissionData({ branchID: lpBranchId(), classID, sectionID, subjectID });
+    let total = 0, submitted = 0;
+    units.forEach(u => u.questionTypes.forEach(qt => qt.items.forEach(it => {
+      total += 1;
+      if (it.status === 'submitted') submitted += 1;
+    })));
+    return { total, submitted, units: units.length };
+  } catch (e) {
+    console.error('fetchSubmissionStats failed', { classID, sectionID, subjectID }, e);
+    return { total: 0, submitted: 0, units: 0 };
+  }
+}
+
+/* Run async mappers with a small concurrency cap so the admin overview doesn't
+   fire hundreds of requests at once. */
+async function lpMapLimited(items, limit, mapper) {
+  const out = new Array(items.length);
+  let cursor = 0;
+  const workers = new Array(Math.min(limit, items.length || 1)).fill(0).map(async () => {
+    while (cursor < items.length) {
+      const i = cursor++;
+      out[i] = await mapper(items[i], i);
+    }
+  });
+  await Promise.all(workers);
+  return out;
+}
+
 /* ─── Notebook-plans unit row — verbatim from HTML ─── */
 function NbUnitRow({ unit, index, onReport, onDeleteUnit, onAddType, onEditType, onDeleteType, reloadKey }) {
   const [open, setOpen] = useState(false);
@@ -3772,6 +3848,178 @@ function Submissions({ toast, classesData = [] }) {
   const [pdfReq, setPdfReq] = useState(null);
   /* Resolved ids for the loaded lesson plans (for detail/suggestion calls). */
   const [subCtx, setSubCtx] = useState({});
+
+  /* ── ADMIN OVERVIEW (live) ──────────────────────────────────────────
+     Loaded lazily the first time the Admin role is opened. */
+  const [adminLoaded, setAdminLoaded]       = useState(false);
+  const [adminGrades, setAdminGrades]       = useState([]);   // [{gradeId, gradeName, sections:[{sectionId, sectionName}]}]
+  const [adminEmployees, setAdminEmployees] = useState([]);   // [{empId, name, designation}]
+  /* Branch-wide stats matrix — one cell per (grade, section, subject) with its
+     submitted/total. Built once; the three admin cards are all derived from it. */
+  const [branchMatrix, setBranchMatrix]     = useState([]);   // [{gradeId, gradeName, sectionId, sectionName, subjectId, subjectName, total, submitted}]
+  const [matrixLoading, setMatrixLoading]   = useState(false);
+  /* Teacher-wise card — one row per (teacher × class × subject). */
+  const [teacherRows, setTeacherRows]       = useState([]);   // [{name, designation, className, subject, total, submitted, pct}]
+  const [teacherLoading, setTeacherLoading] = useState(false);
+  /* Class-wise card — subject dropdown → per-grade rows for that subject. */
+  const [classCardSubject, setClassCardSubject] = useState(''); // subject display name
+  /* Subject/Student-wise card — grade+section dropdown → that section's subjects. */
+  const [subjCardSel, setSubjCardSel]       = useState('');   // "gradeId:sectionId"
+
+  /* Bootstrap admin data (grades + employees) once, then build the teacher
+     aggregate in the background. */
+  useEffect(() => {
+    if (role !== 'admin' || adminLoaded) return;
+    let alive = true;
+    (async () => {
+      try {
+        const [grades, employees] = await Promise.all([fetchBranchGrades(), fetchBranchEmployees()]);
+        if (!alive) return;
+        setAdminGrades(grades);
+        setAdminEmployees(employees);
+        setAdminLoaded(true);
+        /* Teacher card is self-contained (computes its own stats) so it can run
+           in parallel with the branch-matrix sweep that feeds the other cards. */
+        buildTeacherAggregate(grades, employees);
+        buildBranchMatrix(grades);
+      } catch (e) {
+        console.error('Error loading admin overview:', e);
+        toast('Could not load admin overview', 'error');
+      }
+    })();
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [role, adminLoaded]);
+
+  /* Branch matrix: per (grade, section) resolve each subject's submission stats
+     ONCE. The teacher / class / subject cards are all derived from this. */
+  const buildBranchMatrix = async (grades) => {
+    if (!grades.length) { setBranchMatrix([]); return []; }
+    setMatrixLoading(true);
+    try {
+      const pairs = [];
+      grades.forEach(g => (g.sections.length ? g.sections : [{ sectionId: 0, sectionName: '' }])
+        .forEach(s => pairs.push({ g, s })));
+      const cells = [];
+      await lpMapLimited(pairs, 4, async ({ g, s }) => {
+        const subs = await fetchClassSubjects(g.gradeId, s.sectionId);
+        await lpMapLimited(subs, 4, async sub => {
+          const st = await fetchSubmissionStats({ classID: g.gradeId, sectionID: s.sectionId, subjectID: sub.subjectId });
+          cells.push({
+            gradeId: g.gradeId, gradeName: g.gradeName,
+            sectionId: s.sectionId, sectionName: s.sectionName,
+            subjectId: sub.subjectId, subjectName: sub.subjectName,
+            total: st.total, submitted: st.submitted,
+          });
+        });
+      });
+      setBranchMatrix(cells);
+      return cells;
+    } catch (e) {
+      console.error('Error building branch matrix:', e);
+      toast('Could not load submission analytics', 'error');
+      return [];
+    } finally {
+      setMatrixLoading(false);
+    }
+  };
+
+  /* Teacher-wise aggregate: for each teacher, list the subjects they teach per
+     class/section (get-subjects_byEmployeeID) and compute that subject's stats
+     directly. One row per (teacher × class × subject) so a teacher with 3
+     subjects in a class yields 3 separate cards. Self-contained — does NOT depend
+     on the branch matrix, so it always shows a teacher who has assigned subjects. */
+  const buildTeacherAggregate = async (grades, employees) => {
+    if (!grades.length || !employees.length) { setTeacherRows([]); return; }
+    setTeacherLoading(true);
+    try {
+      const pairs = [];
+      grades.forEach(g => (g.sections.length ? g.sections : [{ sectionId: 0, sectionName: '' }])
+        .forEach(s => pairs.push({ g, s })));
+
+      /* Cache stats per (grade:section:subject) so the same cell isn't refetched
+         for two teachers sharing it. */
+      const statsCache = {};
+      const getStats = async (gid, sid, subId) => {
+        const k = `${gid}:${sid}:${subId}`;
+        if (!statsCache[k]) {
+          const st = await fetchSubmissionStats({ classID: gid, sectionID: sid, subjectID: subId });
+          statsCache[k] = { total: st.total, submitted: st.submitted };
+        }
+        return statsCache[k];
+      };
+
+      const rows = [];
+      await lpMapLimited(employees, 3, async emp => {
+        for (const { g, s } of pairs) {
+          const empSubs = await fetchEmployeeSubjects(g.gradeId, s.sectionId, emp.empId);
+          for (const sub of empSubs) {
+            const st = await getStats(g.gradeId, s.sectionId, sub.subjectId);
+            rows.push({
+              name: emp.name, designation: emp.designation,
+              className: g.gradeName + (s.sectionName ? ` - ${s.sectionName}` : ''),
+              subject: sub.subjectName,
+              total: st.total, submitted: st.submitted,
+              pct: st.total ? Math.round((st.submitted / st.total) * 100) : 0,
+            });
+          }
+        }
+      });
+      console.log('[admin] teacher aggregate →', { employees: employees.length, rows: rows.length });
+      setTeacherRows(rows);
+    } catch (e) {
+      console.error('Error building teacher aggregate:', e);
+    } finally {
+      setTeacherLoading(false);
+    }
+  };
+
+  /* Class-wise card subject dropdown: distinct subject names across the branch
+     (same-name subjects collapse to one option). */
+  const classSubjects = useMemo(() => {
+    const seen = new Map(); // lowercased name → display name
+    branchMatrix.forEach(c => {
+      const k = (c.subjectName || '').trim().toLowerCase();
+      if (k && !seen.has(k)) seen.set(k, c.subjectName);
+    });
+    return [...seen.values()].sort((a, b) => a.localeCompare(b));
+  }, [branchMatrix]);
+
+  /* Class-wise rows: the selected subject's stats grouped per grade. */
+  const classCardRows = useMemo(() => {
+    if (!classCardSubject) return [];
+    const target = classCardSubject.trim().toLowerCase();
+    const byGrade = {};
+    branchMatrix
+      .filter(c => (c.subjectName || '').trim().toLowerCase() === target)
+      .forEach(c => {
+        if (!byGrade[c.gradeId]) byGrade[c.gradeId] = { grade: c.gradeName, total: 0, submitted: 0, sections: new Set() };
+        byGrade[c.gradeId].total += c.total;
+        byGrade[c.gradeId].submitted += c.submitted;
+        if (c.sectionName) byGrade[c.gradeId].sections.add(c.sectionName);
+      });
+    return Object.values(byGrade).map(r => ({ ...r, sections: [...r.sections] }));
+  }, [branchMatrix, classCardSubject]);
+
+  /* Subject-wise card dropdown: one option per grade+section combo. */
+  const subjCardOptions = useMemo(() => {
+    const opts = [];
+    adminGrades.forEach(g => (g.sections.length ? g.sections : [{ sectionId: 0, sectionName: '' }])
+      .forEach(s => opts.push({
+        value: `${g.gradeId}:${s.sectionId}`,
+        label: g.gradeName + (s.sectionName ? ` - ${s.sectionName}` : ''),
+      })));
+    return opts;
+  }, [adminGrades]);
+
+  /* Subject-wise rows: the selected grade+section's subjects. */
+  const subjCardRows = useMemo(() => {
+    if (!subjCardSel) return [];
+    const [gid, sid] = subjCardSel.split(':');
+    return branchMatrix
+      .filter(c => String(c.gradeId) === gid && String(c.sectionId) === sid)
+      .map(c => ({ subj: c.subjectName, cls: c.gradeName, section: c.sectionName, total: c.total, submitted: c.submitted }));
+  }, [branchMatrix, subjCardSel]);
 
   /* Analytics */
   const lpTotal = lpData.length;
@@ -3990,9 +4238,9 @@ function Submissions({ toast, classesData = [] }) {
     if (type === 'lp') buildLpSubReport(ctx, isColor, reportHeader);
     else if (type === 'nb') buildNbSubReport(ctx, isColor, reportHeader);
     else if (type === 'nb-unit') buildNbSubUnitReport(ctx, unitId, isColor, reportHeader);
-    else if (type === 'admin-teacher') buildAdminTeacherReport(isColor, reportHeader);
-    else if (type === 'admin-class') buildAdminClassReport(isColor, reportHeader);
-    else if (type === 'admin-subject') buildAdminSubjectReport(isColor, reportHeader);
+    else if (type === 'admin-teacher') buildAdminTeacherReport(isColor, reportHeader, teacherRows);
+    else if (type === 'admin-class') buildAdminClassReport(isColor, reportHeader, classCardRows, classCardSubject);
+    else if (type === 'admin-subject') buildAdminSubjectReport(isColor, reportHeader, subjCardRows);
     setPdfReq(null);
   };
 
@@ -4123,9 +4371,18 @@ function Submissions({ toast, classesData = [] }) {
       {/* ── ADMIN OVERVIEW PANEL ── */}
       {role === 'admin' && (
         <SubmissionsAdminPanel
-          teachers={SUB_ADMIN_TEACHERS}
-          classes={SUB_ADMIN_CLASSES}
-          subjects={SUB_ADMIN_SUBJECTS}
+          loaded={adminLoaded}
+          matrixLoading={matrixLoading}
+          teacherRows={teacherRows}
+          teacherLoading={teacherLoading}
+          classSubjects={classSubjects}
+          classCardSubject={classCardSubject}
+          classCardRows={classCardRows}
+          onClassCardSubject={setClassCardSubject}
+          subjOptions={subjCardOptions}
+          subjCardSel={subjCardSel}
+          subjCardRows={subjCardRows}
+          onSubjCardSel={setSubjCardSel}
           onReport={kind => setPdfReq({ type: kind })}
           toast={toast}
         />
@@ -4749,17 +5006,17 @@ function SubPdfModal({ req, unit, onClose, onGenerate }) {
   if (req.type === 'admin-teacher') {
     scopeIcon  = 'fa-chalkboard-user';
     scopeTitle = 'Teacher-wise Report';
-    scopeDesc  = 'All teachers · LP & NB submission analytics';
+    scopeDesc  = 'Per teacher · class · subject submission analytics';
   }
   if (req.type === 'admin-class') {
     scopeIcon  = 'fa-school';
     scopeTitle = 'Class-wise Report';
-    scopeDesc  = 'All classes · subject-wise submission breakdown';
+    scopeDesc  = 'Selected subject · per-class submission breakdown';
   }
   if (req.type === 'admin-subject') {
     scopeIcon  = 'fa-book-bookmark';
     scopeTitle = 'Subject-wise Report';
-    scopeDesc  = 'All subjects · plans submitted across all classes';
+    scopeDesc  = 'Selected class & section · subject submissions';
   }
 
   return (
@@ -4855,12 +5112,42 @@ function SubPdfModal({ req, unit, onClose, onGenerate }) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════
-   SUBMISSIONS ADMIN PANEL — verbatim from HTML subRenderAdminGrid
+   SUBMISSIONS ADMIN PANEL — live, API-driven
+   • Teacher-wise : get-employees-by-branch, aggregated submission %
+   • Class-wise   : class dropdown → subjects (deduped by name) + live %
+   • Subject-wise : class dropdown (get-grades) → per class+section subjects
+   Percentage from getulpfornotebookmaster (units); X/Y record from
+   getulpfornotebookdetails (+checkbox selection).
    ═══════════════════════════════════════════════════════════════════ */
-function SubmissionsAdminPanel({ teachers, classes, subjects, onReport, toast }) {
-  const totalPlans = teachers.reduce((a, t) => a + t.lp.total, 0);
-  const totalSub   = teachers.reduce((a, t) => a + t.lp.submitted, 0);
-  const overallPct = Math.round((totalSub / totalPlans) * 100);
+const _pctColor = pct => (pct === 100 ? '#16A34A' : pct >= 60 ? '#1E40AF' : '#D97706');
+const _spinner  = label => (
+  <div className="sub-admin-teacher-row" style={{ justifyContent: 'center', color: '#64748B', gap: 8 }}>
+    <i className="fa-solid fa-spinner fa-spin" style={{ color: '#1E40AF' }}></i> {label}
+  </div>
+);
+const _emptyRow = label => (
+  <div className="sub-admin-teacher-row" style={{ justifyContent: 'center', color: '#94A3B8' }}>{label}</div>
+);
+
+function SubmissionsAdminPanel({
+  loaded, matrixLoading,
+  teacherRows, teacherLoading,
+  classSubjects, classCardSubject, classCardRows, onClassCardSubject,
+  subjOptions, subjCardSel, subjCardRows, onSubjCardSel,
+  onReport, toast,
+}) {
+  const totalSub   = teacherRows.reduce((a, t) => a + t.submitted, 0);
+  const totalPlans = teacherRows.reduce((a, t) => a + t.total, 0);
+  const overallPct = totalPlans ? Math.round((totalSub / totalPlans) * 100) : 0;
+  const teacherCount = new Set(teacherRows.map(t => t.name)).size;
+
+  if (!loaded) {
+    return (
+      <div className="sub-admin-grid">
+        <div style={{ gridColumn: '1/-1' }}>{_spinner('Loading admin overview…')}</div>
+      </div>
+    );
+  }
 
   return (
     <div className="sub-admin-grid">
@@ -4868,16 +5155,16 @@ function SubmissionsAdminPanel({ teachers, classes, subjects, onReport, toast })
       <div style={{ gridColumn: '1/-1' }}>
         <div className="sub-analytics-strip" style={{ marginBottom: 16 }}>
           {[
-            { lbl:'Active Teachers',     val:teachers.length, color:'#1E40AF', bg:'rgba(30,64,175,.1)',  icon:'fa-users',        pct:100 },
-            { lbl:'Plans Submitted',     val:totalSub,        color:'#16A34A', bg:'rgba(22,163,74,.1)',  icon:'fa-circle-check', pct:overallPct },
-            { lbl:'Plans Pending',       val:totalPlans - totalSub, color:'#D97706', bg:'rgba(217,119,6,.1)', icon:'fa-clock',  pct:100 - overallPct },
-            { lbl:'Overall Completion',  val:`${overallPct}%`,color:'#7C3AED', bg:'rgba(124,58,237,.1)', icon:'fa-chart-pie',    pct:overallPct },
+            { lbl:'Active Teachers',    val:teacherCount,          color:'#1E40AF', bg:'rgba(30,64,175,.1)',  icon:'fa-users',        pct:100 },
+            { lbl:'Plans Submitted',    val:totalSub,              color:'#16A34A', bg:'rgba(22,163,74,.1)',  icon:'fa-circle-check', pct:overallPct },
+            { lbl:'Plans Pending',      val:totalPlans - totalSub, color:'#D97706', bg:'rgba(217,119,6,.1)',  icon:'fa-clock',        pct:100 - overallPct },
+            { lbl:'Overall Completion', val:`${overallPct}%`,      color:'#7C3AED', bg:'rgba(124,58,237,.1)', icon:'fa-chart-pie',    pct:overallPct },
           ].map((s, i) => (
             <div key={i} className="sub-stat-card">
               <div className="sub-stat-icon" style={{ background: s.bg, color: s.color }}>
                 <i className={`fa-solid ${s.icon}`}></i>
               </div>
-              <div className="sub-stat-val" style={{ color: s.color }}>{s.val}</div>
+              <div className="sub-stat-val" style={{ color: s.color }}>{teacherLoading ? '…' : s.val}</div>
               <div className="sub-stat-lbl">{s.lbl}</div>
               <div className="sub-stat-prog">
                 <div className="sub-stat-prog-bar" style={{ width: `${s.pct}%`, background: s.color }}></div>
@@ -4893,34 +5180,38 @@ function SubmissionsAdminPanel({ teachers, classes, subjects, onReport, toast })
           <div className="sub-admin-card-icon"><i className="fa-solid fa-chalkboard-user"></i></div>
           <div style={{ flex: 1 }}>
             <div className="sub-admin-card-title">Teacher-wise Progress</div>
-            <div className="sub-admin-card-sub">Lesson plan submission by teacher</div>
+            <div className="sub-admin-card-sub">Submission progress by teacher</div>
           </div>
           <Tooltip text="Export Teacher Report"><button className="sub-pdf-btn sub-pdf-btn--admin" onClick={() => onReport('admin-teacher')}>
             <i className="fa-solid fa-file-pdf"></i> PDF
           </button></Tooltip>
         </div>
         <div className="sub-admin-scroll">
-          {teachers.map((t, i) => {
-            const lpPct = Math.round((t.lp.submitted / t.lp.total) * 100);
-            const color = lpPct === 100 ? '#16A34A' : lpPct >= 60 ? '#1E40AF' : '#D97706';
-            const initials = t.name.split(' ').map(w => w[0]).join('').slice(0, 2);
-            return (
-              <div key={t.name} className="sub-admin-teacher-row"
-                onClick={() => toast(`${t.name} — ${t.lp.submitted}/${t.lp.total} LP | ${t.nb.submitted}/${t.nb.total} NB`, 'info')}>
-                <div className="sub-admin-teacher-avatar">{initials}</div>
-                <div className="sub-admin-teacher-info">
-                  <div className="sub-admin-teacher-name">{t.name}</div>
-                  <div className="sub-admin-teacher-sub">{t.subject} · {t.class}</div>
-                </div>
-                <div className="sub-admin-teacher-prog">
-                  <div className="sub-admin-teacher-pct" style={{ color }}>{lpPct}%</div>
-                  <div className="sub-admin-prog">
-                    <div className="sub-admin-prog-fill" style={{ width: `${lpPct}%`, background: color }}></div>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
+          {teacherLoading
+            ? _spinner('Calculating teacher progress…')
+            : teacherRows.length === 0
+              ? _emptyRow('No teacher submissions found')
+              : teacherRows.map((t, i) => {
+                  const color = _pctColor(t.pct);
+                  const initials = t.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
+                  const subLabel = [t.subject, t.className].filter(Boolean).join(' · ');
+                  return (
+                    <div key={`${t.name}-${t.className}-${t.subject}-${i}`} className="sub-admin-teacher-row"
+                      onClick={() => toast(`${t.name} — ${t.subject} (${t.className}) — ${t.submitted}/${t.total} submitted`, 'info')}>
+                      <div className="sub-admin-teacher-avatar">{initials}</div>
+                      <div className="sub-admin-teacher-info">
+                        <div className="sub-admin-teacher-name">{t.name}</div>
+                        <div className="sub-admin-teacher-sub">{subLabel || t.designation || '—'}</div>
+                      </div>
+                      <div className="sub-admin-teacher-prog">
+                        <div className="sub-admin-teacher-pct" style={{ color }}>{t.pct}%</div>
+                        <div className="sub-admin-prog">
+                          <div className="sub-admin-prog-fill" style={{ width: `${t.pct}%`, background: color }}></div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
         </div>
       </div>
 
@@ -4930,34 +5221,49 @@ function SubmissionsAdminPanel({ teachers, classes, subjects, onReport, toast })
           <div className="sub-admin-card-icon"><i className="fa-solid fa-school"></i></div>
           <div style={{ flex: 1 }}>
             <div className="sub-admin-card-title">Class-wise Progress</div>
-            <div className="sub-admin-card-sub">Submission status per class</div>
+            <div className="sub-admin-card-sub">Submission per class for a subject</div>
+          </div>
+          <div className="sub-select-wrap" style={{ minWidth: 180, marginRight: 10 }}>
+            <select className="sub-select" value={classCardSubject} onChange={e => onClassCardSubject(e.target.value)}>
+              <option value="">Select Subject</option>
+              {classSubjects.map(name => <option key={name} value={name}>{name}</option>)}
+            </select>
+            <i className="fa-solid fa-chevron-down sub-select-arrow"></i>
           </div>
           <Tooltip text="Export Class Report"><button className="sub-pdf-btn sub-pdf-btn--admin" onClick={() => onReport('admin-class')}>
             <i className="fa-solid fa-file-pdf"></i> PDF
           </button></Tooltip>
         </div>
         <div className="sub-admin-scroll">
-          {classes.map(c => {
-            const pct = Math.round((c.lpSub / c.lp) * 100);
-            const clr = pct === 100 ? '#16A34A' : pct >= 60 ? '#1E40AF' : '#D97706';
-            return (
-              <div key={c.cls} className="sub-admin-teacher-row">
-                <div className="sub-admin-teacher-avatar" style={{ background: 'linear-gradient(135deg,#EFF6FF,#DBEAFE)', borderRadius: 9 }}>
-                  <i className="fa-solid fa-school" style={{ fontSize: 13, color: '#1E40AF' }}></i>
-                </div>
-                <div className="sub-admin-teacher-info">
-                  <div className="sub-admin-teacher-name">{c.cls}</div>
-                  <div className="sub-admin-teacher-sub">{c.subj} · {c.lpSub}/{c.lp} submitted</div>
-                </div>
-                <div className="sub-admin-teacher-prog">
-                  <div className="sub-admin-teacher-pct" style={{ color: clr }}>{pct}%</div>
-                  <div className="sub-admin-prog">
-                    <div className="sub-admin-prog-fill" style={{ width: `${pct}%`, background: clr }}></div>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
+          {matrixLoading
+            ? _spinner('Loading subjects…')
+            : !classCardSubject
+              ? _emptyRow('Choose a subject to view classes')
+              : classCardRows.length === 0
+                ? _emptyRow('No classes found')
+                : classCardRows.map(c => {
+                    const pct = c.total ? Math.round((c.submitted / c.total) * 100) : 0;
+                    const clr = _pctColor(pct);
+                    const where = c.sections && c.sections.length
+                      ? `${c.grade} (${c.sections.join(', ')})` : c.grade;
+                    return (
+                      <div key={c.grade} className="sub-admin-teacher-row">
+                        <div className="sub-admin-teacher-avatar" style={{ background: 'linear-gradient(135deg,#EFF6FF,#DBEAFE)', borderRadius: 9 }}>
+                          <i className="fa-solid fa-school" style={{ fontSize: 13, color: '#1E40AF' }}></i>
+                        </div>
+                        <div className="sub-admin-teacher-info">
+                          <div className="sub-admin-teacher-name">{where}</div>
+                          <div className="sub-admin-teacher-sub">{c.submitted}/{c.total} submitted</div>
+                        </div>
+                        <div className="sub-admin-teacher-prog">
+                          <div className="sub-admin-teacher-pct" style={{ color: clr }}>{pct}%</div>
+                          <div className="sub-admin-prog">
+                            <div className="sub-admin-prog-fill" style={{ width: `${pct}%`, background: clr }}></div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
         </div>
       </div>
 
@@ -4967,38 +5273,53 @@ function SubmissionsAdminPanel({ teachers, classes, subjects, onReport, toast })
           <div className="sub-admin-card-icon"><i className="fa-solid fa-book"></i></div>
           <div style={{ flex: 1 }}>
             <div className="sub-admin-card-title">Subject-wise Progress</div>
-            <div className="sub-admin-card-sub">Total lesson plans submitted per subject across all classes</div>
+            <div className="sub-admin-card-sub">Select a class &amp; section to view its subjects</div>
+          </div>
+          <div className="sub-select-wrap" style={{ minWidth: 180, marginRight: 10 }}>
+            <select className="sub-select" value={subjCardSel} onChange={e => onSubjCardSel(e.target.value)}>
+              <option value="">Select Class &amp; Section</option>
+              {subjOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+            <i className="fa-solid fa-chevron-down sub-select-arrow"></i>
           </div>
           <Tooltip text="Export Subject Report"><button className="sub-pdf-btn sub-pdf-btn--admin" onClick={() => onReport('admin-subject')}>
             <i className="fa-solid fa-file-pdf"></i> PDF
           </button></Tooltip>
         </div>
         <div className="sub-admin-scroll sub-admin-scroll--horiz" style={{ padding: '16px 18px' }}>
-          <div style={{ display: 'flex', gap: 12, minWidth: 'max-content' }}>
-            {subjects.map(s => {
-              const pct = Math.round((s.submitted / s.total) * 100);
-              const clr = pct === 100 ? '#16A34A' : pct >= 60 ? '#1E40AF' : '#D97706';
-              const bg  = pct === 100 ? 'rgba(22,163,74,.08)' : pct >= 60 ? 'rgba(30,64,175,.07)' : 'rgba(217,119,6,.07)';
-              return (
-                <div key={s.subj} className="subj-scroll-card">
-                  <div className="subj-scroll-icon"><i className="fa-solid fa-book" style={{ fontSize: 14, color: '#1E40AF' }}></i></div>
-                  <div className="subj-scroll-name">{s.subj}</div>
-                  <div className="subj-scroll-counts">{s.submitted}/{s.total} plans</div>
-                  <div className="subj-scroll-pct" style={{ color: clr }}>{pct}%</div>
-                  <div className="subj-scroll-bar-track">
-                    <div className="subj-scroll-bar-fill" style={{ width: `${pct}%`, background: clr }}></div>
+          {matrixLoading
+            ? _spinner('Loading subjects…')
+            : !subjCardSel
+              ? _emptyRow('Choose a class & section to view subjects')
+              : subjCardRows.length === 0
+                ? _emptyRow('No subjects found')
+                : (
+                  <div style={{ display: 'flex', gap: 12, minWidth: 'max-content' }}>
+                    {subjCardRows.map((s, i) => {
+                      const pct = s.total ? Math.round((s.submitted / s.total) * 100) : 0;
+                      const clr = _pctColor(pct);
+                      const bg  = pct === 100 ? 'rgba(22,163,74,.08)' : pct >= 60 ? 'rgba(30,64,175,.07)' : 'rgba(217,119,6,.07)';
+                      return (
+                        <div key={`${s.subj}-${s.section}-${i}`} className="subj-scroll-card">
+                          <div className="subj-scroll-icon"><i className="fa-solid fa-book" style={{ fontSize: 14, color: '#1E40AF' }}></i></div>
+                          <div className="subj-scroll-name">{s.subj}</div>
+                          <div className="subj-scroll-counts">{s.cls}{s.section ? ` - ${s.section}` : ''} · {s.submitted}/{s.total}</div>
+                          <div className="subj-scroll-pct" style={{ color: clr }}>{pct}%</div>
+                          <div className="subj-scroll-bar-track">
+                            <div className="subj-scroll-bar-fill" style={{ width: `${pct}%`, background: clr }}></div>
+                          </div>
+                          <div className="subj-scroll-status" style={{ color: clr, background: bg }}>
+                            {pct === 100
+                              ? <><i className="fa-solid fa-circle-check"></i> Complete</>
+                              : pct >= 60
+                                ? <><i className="fa-solid fa-chart-line"></i> On Track</>
+                                : <><i className="fa-solid fa-clock"></i> In Progress</>}
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
-                  <div className="subj-scroll-status" style={{ color: clr, background: bg }}>
-                    {pct === 100
-                      ? <><i className="fa-solid fa-circle-check"></i> Complete</>
-                      : pct >= 60
-                        ? <><i className="fa-solid fa-chart-line"></i> On Track</>
-                        : <><i className="fa-solid fa-clock"></i> In Progress</>}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+                )}
         </div>
       </div>
     </div>
@@ -5112,7 +5433,7 @@ tbody tr:nth-child(even) td{background:${C.rowAlt}}
 
 .pbar-outer{display:inline-flex;align-items:center;gap:5px;max-width:100%}
 .pbar-track{width:54px;max-width:100%;height:5px;border-radius:99px;background:${C.isColor ? 'rgba(30,58,138,.1)' : '#E0E0E0'};overflow:hidden;display:inline-block;vertical-align:middle;flex-shrink:1}
-.pbar-fill{height:100%;border-radius:99px}
+.pbar-fill{display:block;height:100%;border-radius:99px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
 .pbar-pct{font-weight:800;font-size:10px;min-width:28px}
 
 .doc-footer{margin-top:20px;padding-top:10px;border-top:1.5px solid ${C.border};display:flex;justify-content:space-between;align-items:center;font-size:10px;color:${C.muted};flex-wrap:wrap;gap:6px}
@@ -5129,7 +5450,6 @@ function _subPdfHeader(C, reportName, metaCells, today) {
   const rh = C.reportHeader || {};
   const isColor = C.isColor;
   const schoolName      = rh.branchName || getSchoolName();
-  const schoolAddress   = rh.address || '';
   const academicSession = rh.academicSession || sessionStorage.getItem('sessionName') || 'Academic Session';
   const initials = schoolName.split(/[\s,]+/).filter(Boolean).slice(0,2).map(w=>w[0].toUpperCase()).join('');
   const logoInner = rh.branchLogo
@@ -5144,7 +5464,6 @@ function _subPdfHeader(C, reportName, metaCells, today) {
         <div>
           <div style="font-size:9px;letter-spacing:2px;text-transform:uppercase;${isColor?'opacity:.6':`color:${C.muted}`};font-weight:700;margin-bottom:2px">School Mentor ERP</div>
           <div class="doc-school">${lpEscapeHtml(schoolName)}</div>
-          ${schoolAddress ? `<div class="doc-year">${lpEscapeHtml(schoolAddress)}</div>` : ''}
         </div>
       </div>
       <div style="height:1px;background:${isColor?'rgba(255,255,255,.2)':C.border};margin:14px 0 12px"></div>
@@ -5506,242 +5825,166 @@ function _adminGeneratedStamp() {
    keep this as an empty string so existing call-sites still concatenate cleanly. */
 const _ADMIN_A4_CSS = '';
 
-/* 4. Admin — Teacher-wise report */
-function buildAdminTeacherReport(isColor, reportHeader = null) {
+/* 4. Admin — Teacher-wise report (live: one row per teacher × class × subject) */
+function buildAdminTeacherReport(isColor, reportHeader = null, rows = []) {
   const C       = _subPdfPalette(isColor, reportHeader);
   const today   = _adminGeneratedStamp();          /* "May 27, 2026 — 7:01 PM" — also used for the Generated meta cell */
-  const teachers = SUB_ADMIN_TEACHERS;
-  const totalLP = teachers.reduce((a, t) => a + t.lp.total, 0);
-  const subLP   = teachers.reduce((a, t) => a + t.lp.submitted, 0);
-  const totalNB = teachers.reduce((a, t) => a + t.nb.total, 0);
-  const subNB   = teachers.reduce((a, t) => a + t.nb.submitted, 0);
-  const overall = Math.round((subLP + subNB) / (totalLP + totalNB) * 100);
+  const teachers = Array.isArray(rows) ? rows : [];
+  const pctOf   = (s, t) => (t ? Math.round((s / t) * 100) : 0);
+  const total   = teachers.reduce((a, t) => a + (t.total || 0), 0);
+  const sub     = teachers.reduce((a, t) => a + (t.submitted || 0), 0);
+  const overall = pctOf(sub, total);
+  const teacherCount = new Set(teachers.map(t => t.name)).size;
 
   let html = _subPdfBase(C, 'Teacher-wise Submission Report');
   html += _ADMIN_A4_CSS;
   html += _subPdfHeader(C, 'Teacher-wise Submission Report — Admin Overview', [
-    { k:'Total Teachers',   v:teachers.length },
-    { k:'LP Submitted',     v:`${subLP}/${totalLP}` },
-    { k:'NB Submitted',     v:`${subNB}/${totalNB}` },
+    { k:'Teachers',         v:teacherCount },
+    { k:'Submitted',        v:`${sub}/${total}` },
+    { k:'Pending',          v:`${total - sub}` },
     { k:'Overall Progress', v:`${overall}%` },
   ], today);
 
   html += _subPdfStatStrip([
-    { lbl:'Total Teachers', val:teachers.length,    color:C.brand,  pct:100 },
-    { lbl:'LP Submitted',   val:subLP,              color:C.green,  pct:Math.round(subLP / totalLP * 100) },
-    { lbl:'NB Submitted',   val:subNB,              color:C.purple, pct:Math.round(subNB / totalNB * 100) },
-    { lbl:'Overall',        val:`${overall}%`,      color:C.accent, pct:overall },
+    { lbl:'Teachers',       val:teacherCount,    color:C.brand,  pct:100 },
+    { lbl:'Submitted',      val:sub,             color:C.green,  pct:overall },
+    { lbl:'Pending',        val:total - sub,     color:C.amber,  pct:100 - overall },
+    { lbl:'Overall',        val:`${overall}%`,   color:C.accent, pct:overall },
   ]);
 
   html += `<div class="sec-title">Teacher Performance Breakdown</div>
   <table><thead><tr>
     <th>#</th><th>Teacher</th><th>Subject</th><th>Class</th>
-    <th style="text-align:center">LP Total</th><th style="text-align:center">LP Submitted</th><th>LP Progress</th>
-    <th style="text-align:center">NB Total</th><th style="text-align:center">NB Submitted</th><th>NB Progress</th>
-    <th>Overall</th>
+    <th style="text-align:center">Total</th><th style="text-align:center">Submitted</th>
+    <th style="text-align:center">Pending</th><th>Progress</th>
   </tr></thead><tbody>`;
   teachers.forEach((t, i) => {
-    const lpPct = Math.round(t.lp.submitted / t.lp.total * 100);
-    const nbPct = Math.round(t.nb.submitted / t.nb.total * 100);
-    const ovPct = Math.round((t.lp.submitted + t.nb.submitted) / (t.lp.total + t.nb.total) * 100);
+    const pct = pctOf(t.submitted, t.total);
     html += `<tr>
       <td style="color:${C.muted};font-weight:700">${i + 1}</td>
       <td><strong>${t.name}</strong></td>
-      <td>${t.subject}</td>
-      <td><span class="tag tag-na">${t.class}</span></td>
-      <td style="text-align:center">${t.lp.total}</td>
-      <td style="text-align:center"><span class="tag tag-sub">✓ ${t.lp.submitted}</span></td>
-      <td>${_subPdfPbar(C, lpPct)}</td>
-      <td style="text-align:center">${t.nb.total}</td>
-      <td style="text-align:center"><span class="tag tag-sub">✓ ${t.nb.submitted}</span></td>
-      <td>${_subPdfPbar(C, nbPct)}</td>
-      <td>${_subPdfPbar(C, ovPct)}</td>
+      <td>${t.subject || '—'}</td>
+      <td><span class="tag tag-na">${t.className || '—'}</span></td>
+      <td style="text-align:center">${t.total || 0}</td>
+      <td style="text-align:center"><span class="tag tag-sub">✓ ${t.submitted || 0}</span></td>
+      <td style="text-align:center"><span class="tag ${(t.total - t.submitted) > 0 ? 'tag-pend' : 'tag-sub'}">${(t.total - t.submitted) > 0 ? (t.total - t.submitted) : 'Done'}</span></td>
+      <td>${_subPdfPbar(C, pct)}</td>
     </tr>`;
   });
   html += `<tr class="unit-row">
     <td colspan="4">Totals</td>
-    <td style="text-align:center">${totalLP}</td>
-    <td style="text-align:center">${subLP}</td>
-    <td>${_subPdfPbar(C, Math.round(subLP / totalLP * 100))}</td>
-    <td style="text-align:center">${totalNB}</td>
-    <td style="text-align:center">${subNB}</td>
-    <td>${_subPdfPbar(C, Math.round(subNB / totalNB * 100))}</td>
+    <td style="text-align:center">${total}</td>
+    <td style="text-align:center">${sub}</td>
+    <td style="text-align:center">${total - sub}</td>
     <td>${_subPdfPbar(C, overall)}</td>
   </tr></tbody></table>`;
-
-  /* Date-only string used to feed _subFmtSubmitted so it appends a synthetic time per teacher */
-  const dateOnly = new Date().toLocaleDateString('en-US', { year:'numeric', month:'long', day:'numeric' });
-  html += `<div class="sec-title">Individual Teacher Cards</div>`;
-  teachers.forEach(t => {
-    const lpPct = Math.round(t.lp.submitted / t.lp.total * 100);
-    const nbPct = Math.round(t.nb.submitted / t.nb.total * 100);
-    const stamp = _subFmtSubmitted({ status: 'submitted', submittedDate: dateOnly }, `admin-t-${t.name}`);
-    html += `<div style="border:1.5px solid ${C.border};border-radius:10px;padding:13px 16px;margin-bottom:10px;background:${C.cardBg};page-break-inside:avoid">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-        <div>
-          <div style="font-size:14px;font-weight:800;color:${C.brand}">${t.name}</div>
-          <div style="font-size:11px;color:${C.muted};margin-top:2px">${t.subject} · ${t.class}</div>
-          <div style="font-size:10.5px;color:${C.muted};margin-top:2px">Last submission: ${stamp}</div>
-        </div>
-        <span class="tag ${lpPct === 100 && nbPct === 100 ? 'tag-sub' : 'tag-pend'}">${lpPct === 100 && nbPct === 100 ? '✓ All Submitted' : 'In Progress'}</span>
-      </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-        <div style="padding:10px;background:${C.isColor ? '#EFF6FF' : '#F5F5F5'};border-radius:8px;border:1px solid ${C.border}">
-          <div style="font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:${C.muted};margin-bottom:6px">Lesson Plans</div>
-          <div style="font-size:18px;font-weight:900;color:${C.brand}">${t.lp.submitted}<span style="font-size:12px;font-weight:600;color:${C.muted}">/${t.lp.total}</span></div>
-          <div style="margin-top:6px">${_subPdfPbar(C, lpPct)}</div>
-        </div>
-        <div style="padding:10px;background:${C.isColor ? '#F5F3FF' : '#F5F5F5'};border-radius:8px;border:1px solid ${C.border}">
-          <div style="font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:${C.muted};margin-bottom:6px">Notebook Plans</div>
-          <div style="font-size:18px;font-weight:900;color:${C.purple}">${t.nb.submitted}<span style="font-size:12px;font-weight:600;color:${C.muted}">/${t.nb.total}</span></div>
-          <div style="margin-top:6px">${_subPdfPbar(C, nbPct)}</div>
-        </div>
-      </div>
-    </div>`;
-  });
 
   html += _subPdfFooter(C);
   _openSubPdfWindow(html);
 }
 
-/* 5. Admin — Class-wise report */
-function buildAdminClassReport(isColor, reportHeader = null) {
+/* 5. Admin — Class-wise report (live: per-grade breakdown of the selected subject) */
+function buildAdminClassReport(isColor, reportHeader = null, rows = [], subjectName = '') {
   const C        = _subPdfPalette(isColor, reportHeader);
   const today    = _adminGeneratedStamp();   /* date + time for the GENERATED meta cell */
-  const dateOnly = new Date().toLocaleDateString('en-US', { year:'numeric', month:'long', day:'numeric' });
-  const classes = SUB_ADMIN_CLASSES;
-  const tLP = classes.reduce((a, c) => a + c.lp,    0);
-  const sLP = classes.reduce((a, c) => a + c.lpSub, 0);
-  const tNB = classes.reduce((a, c) => a + c.nb,    0);
-  const sNB = classes.reduce((a, c) => a + c.nbSub, 0);
+  const classes = (Array.isArray(rows) ? rows : []).map(c => ({
+    grade: c.grade, sections: c.sections || [], total: c.total || 0, submitted: c.submitted || 0,
+  }));
+  const pctOf = (s, t) => (t ? Math.round((s / t) * 100) : 0);
+  const tAll = classes.reduce((a, c) => a + c.total,     0);
+  const sAll = classes.reduce((a, c) => a + c.submitted, 0);
 
   let html = _subPdfBase(C, 'Class-wise Submission Report');
   html += _ADMIN_A4_CSS;
   html += _subPdfHeader(C, 'Class-wise Submission Report — Admin Overview', [
-    { k:'Total Classes', v:classes.length },
-    { k:'LP Submitted',  v:`${sLP}/${tLP}` },
-    { k:'NB Submitted',  v:`${sNB}/${tNB}` },
-    { k:'LP Completion', v:`${Math.round(sLP / tLP * 100)}%` },
+    { k:'Subject',    v: subjectName || '—' },
+    { k:'Classes',    v:classes.length },
+    { k:'Submitted',  v:`${sAll}/${tAll}` },
+    { k:'Completion', v:`${pctOf(sAll, tAll)}%` },
   ], today);
 
   html += _subPdfStatStrip([
-    { lbl:'Total Classes', val:classes.length,                       color:C.brand,  pct:100 },
-    { lbl:'LP Submitted',  val:sLP,                                  color:C.green,  pct:Math.round(sLP / tLP * 100) },
-    { lbl:'NB Submitted',  val:sNB,                                  color:C.purple, pct:Math.round(sNB / tNB * 100) },
-    { lbl:'LP Completion', val:`${Math.round(sLP / tLP * 100)}%`,    color:C.accent, pct:Math.round(sLP / tLP * 100) },
+    { lbl:'Classes',    val:classes.length,        color:C.brand,  pct:100 },
+    { lbl:'Submitted',  val:sAll,                   color:C.green,  pct:pctOf(sAll, tAll) },
+    { lbl:'Pending',    val:tAll - sAll,            color:C.amber,  pct:pctOf(tAll - sAll, tAll) },
+    { lbl:'Completion', val:`${pctOf(sAll, tAll)}%`, color:C.accent, pct:pctOf(sAll, tAll) },
   ]);
 
-  html += `<div class="sec-title">Class-wise Breakdown</div>
+  html += `<div class="sec-title">Class-wise Breakdown${subjectName ? ` — ${subjectName}` : ''}</div>
   <table><thead><tr>
-    <th>Class</th><th>Subject</th><th>Teacher</th>
-    <th style="text-align:center">LP Total</th><th style="text-align:center">LP Sub.</th>
-    <th style="text-align:center">LP Pend.</th><th>LP Progress</th>
-    <th style="text-align:center">NB Total</th><th style="text-align:center">NB Sub.</th><th>NB Progress</th>
-    <th>Last Submission</th>
+    <th>Class</th><th>Section(s)</th>
+    <th style="text-align:center">Total</th><th style="text-align:center">Submitted</th>
+    <th style="text-align:center">Pending</th><th>Progress</th>
   </tr></thead><tbody>`;
   classes.forEach(c => {
-    const lpPct = Math.round(c.lpSub / c.lp * 100);
-    const nbPct = Math.round(c.nbSub / c.nb * 100);
-    const stamp = _subFmtSubmitted({ status: 'submitted', submittedDate: dateOnly }, `admin-c-${c.cls}`);
+    const pct = pctOf(c.submitted, c.total);
     html += `<tr>
-      <td><strong>${c.cls}</strong></td>
-      <td>${c.subj}</td>
-      <td style="font-size:11.5px">${c.teacher}</td>
-      <td style="text-align:center">${c.lp}</td>
-      <td style="text-align:center"><span class="tag tag-sub">✓ ${c.lpSub}</span></td>
-      <td style="text-align:center"><span class="tag ${c.lp - c.lpSub > 0 ? 'tag-pend' : 'tag-sub'}">${c.lp - c.lpSub > 0 ? '⏱ ' + (c.lp - c.lpSub) : 'Done'}</span></td>
-      <td>${_subPdfPbar(C, lpPct)}</td>
-      <td style="text-align:center">${c.nb}</td>
-      <td style="text-align:center"><span class="tag tag-sub">✓ ${c.nbSub}</span></td>
-      <td>${_subPdfPbar(C, nbPct)}</td>
-      <td style="color:${C.muted};font-size:11px">${stamp}</td>
+      <td><strong>${c.grade}</strong></td>
+      <td style="font-size:11.5px">${c.sections.join(', ') || '—'}</td>
+      <td style="text-align:center">${c.total}</td>
+      <td style="text-align:center"><span class="tag tag-sub">✓ ${c.submitted}</span></td>
+      <td style="text-align:center"><span class="tag ${c.total - c.submitted > 0 ? 'tag-pend' : 'tag-sub'}">${c.total - c.submitted > 0 ? '⏱ ' + (c.total - c.submitted) : 'Done'}</span></td>
+      <td>${_subPdfPbar(C, pct)}</td>
     </tr>`;
   });
   html += `<tr class="unit-row">
-    <td colspan="3">Totals</td>
-    <td style="text-align:center">${tLP}</td>
-    <td style="text-align:center">${sLP}</td>
-    <td style="text-align:center">${tLP - sLP}</td>
-    <td>${_subPdfPbar(C, Math.round(sLP / tLP * 100))}</td>
-    <td style="text-align:center">${tNB}</td>
-    <td style="text-align:center">${sNB}</td>
-    <td>${_subPdfPbar(C, Math.round(sNB / tNB * 100))}</td>
-    <td></td>
+    <td colspan="2">Totals</td>
+    <td style="text-align:center">${tAll}</td>
+    <td style="text-align:center">${sAll}</td>
+    <td style="text-align:center">${tAll - sAll}</td>
+    <td>${_subPdfPbar(C, pctOf(sAll, tAll))}</td>
   </tr></tbody></table>`;
-
-  html += `<div class="sec-title">Pending Work by Class</div>
-  <table><thead><tr>
-    <th>Class</th><th>Teacher</th><th>Subject</th>
-    <th style="text-align:center">LP Pending</th><th style="text-align:center">NB Pending</th><th>Priority</th>
-  </tr></thead><tbody>`;
-  const sorted = [...classes].sort((a, b) =>
-    (b.lp - b.lpSub + b.nb - b.nbSub) - (a.lp - a.lpSub + a.nb - a.nbSub)
-  );
-  sorted.forEach(c => {
-    const lpPend = c.lp - c.lpSub;
-    const nbPend = c.nb - c.nbSub;
-    const total  = lpPend + nbPend;
-    const priority = total === 0 ? 'Complete' : total > 20 ? 'High' : total > 10 ? 'Medium' : 'Low';
-    const priColor = total === 0 ? C.green : total > 20 ? C.amber : C.accent;
-    html += `<tr>
-      <td><strong>${c.cls}</strong></td>
-      <td>${c.teacher}</td>
-      <td>${c.subj}</td>
-      <td style="text-align:center"><span class="tag ${lpPend > 0 ? 'tag-pend' : 'tag-sub'}">${lpPend > 0 ? lpPend + ' left' : '✓ Done'}</span></td>
-      <td style="text-align:center"><span class="tag ${nbPend > 0 ? 'tag-pend' : 'tag-sub'}">${nbPend > 0 ? nbPend + ' left' : '✓ Done'}</span></td>
-      <td><span class="tag" style="background:${total === 0 ? (C.isColor ? 'rgba(22,163,74,.1)' : '#EEE') : 'transparent'};color:${priColor};border:1px solid ${priColor}40">${priority}</span></td>
-    </tr>`;
-  });
-  html += `</tbody></table>`;
 
   html += _subPdfFooter(C);
   _openSubPdfWindow(html);
 }
 
-/* 6. Admin — Subject-wise report */
-function buildAdminSubjectReport(isColor, reportHeader = null) {
+/* 6. Admin — Subject-wise report (live: per class+section subjects) */
+function buildAdminSubjectReport(isColor, reportHeader = null, rows = []) {
   const C     = _subPdfPalette(isColor, reportHeader);
   const today = new Date().toLocaleDateString('en-US', { year:'numeric', month:'long', day:'numeric' });
-  const subjects = SUB_ADMIN_SUBJECTS;
+  const subjects = (Array.isArray(rows) ? rows : []).map(s => ({
+    subj: s.subj,
+    where: `${s.cls || ''}${s.section ? ' - ' + s.section : ''}`.trim() || '—',
+    total: s.total || 0, submitted: s.submitted || 0,
+  }));
+  const pctOf  = (s, t) => (t ? Math.round((s / t) * 100) : 0);
   const tTotal = subjects.reduce((a, s) => a + s.total,     0);
   const tSub   = subjects.reduce((a, s) => a + s.submitted, 0);
 
   let html = _subPdfBase(C, 'Subject-wise Submission Report');
   html += _subPdfHeader(C, 'Subject-wise Submission Report — Admin Overview', [
     { k:'Subjects',    v:subjects.length },
-    { k:'Total Plans', v:tTotal },
+    { k:'Total Items', v:tTotal },
     { k:'Submitted',   v:tSub },
-    { k:'Completion',  v:`${Math.round(tSub / tTotal * 100)}%` },
+    { k:'Completion',  v:`${pctOf(tSub, tTotal)}%` },
   ], today);
 
   html += _subPdfStatStrip([
-    { lbl:'Total Subjects',  val:subjects.length,                       color:C.brand,  pct:100 },
-    { lbl:'Plans Submitted', val:tSub,                                  color:C.green,  pct:Math.round(tSub / tTotal * 100) },
-    { lbl:'Plans Pending',   val:tTotal - tSub,                         color:C.amber,  pct:Math.round((tTotal - tSub) / tTotal * 100) },
-    { lbl:'Completion',      val:`${Math.round(tSub / tTotal * 100)}%`, color:C.purple, pct:Math.round(tSub / tTotal * 100) },
+    { lbl:'Total Subjects',  val:subjects.length,        color:C.brand,  pct:100 },
+    { lbl:'Submitted',       val:tSub,                   color:C.green,  pct:pctOf(tSub, tTotal) },
+    { lbl:'Pending',         val:tTotal - tSub,          color:C.amber,  pct:pctOf(tTotal - tSub, tTotal) },
+    { lbl:'Completion',      val:`${pctOf(tSub, tTotal)}%`, color:C.purple, pct:pctOf(tSub, tTotal) },
   ]);
 
   html += `<div class="sec-title">Subject-wise Breakdown</div>
   <table><thead><tr>
-    <th>Subject</th><th>Teacher(s)</th>
-    <th style="text-align:center">Total Plans</th><th style="text-align:center">Submitted</th>
+    <th>Subject</th><th>Class / Section</th>
+    <th style="text-align:center">Total</th><th style="text-align:center">Submitted</th>
     <th style="text-align:center">Pending</th><th>Completion</th><th>Status</th>
-    <th>Last Submission</th>
   </tr></thead><tbody>`;
   subjects.forEach(s => {
-    const pct = Math.round(s.submitted / s.total * 100);
+    const pct = pctOf(s.submitted, s.total);
     const status = pct === 100 ? 'Complete' : pct >= 60 ? 'On Track' : pct >= 30 ? 'In Progress' : 'Needs Attention';
     const statusCls = pct === 100 ? 'tag-sub' : pct >= 60 ? 'tag-na' : 'tag-pend';
-    const stamp = _subFmtSubmitted({ status: 'submitted', submittedDate: today }, `admin-s-${s.subj}`);
     html += `<tr>
-      <td><strong>${s.icon} ${s.subj}</strong></td>
-      <td style="font-size:11.5px;color:${C.muted}">${s.teachers.join(', ')}</td>
+      <td><strong>${s.subj}</strong></td>
+      <td style="font-size:11.5px;color:${C.muted}">${s.where}</td>
       <td style="text-align:center;font-weight:700">${s.total}</td>
       <td style="text-align:center"><span class="tag tag-sub">✓ ${s.submitted}</span></td>
       <td style="text-align:center"><span class="tag ${s.total - s.submitted > 0 ? 'tag-pend' : 'tag-sub'}">${s.total - s.submitted > 0 ? '⏱ ' + (s.total - s.submitted) : 'All done'}</span></td>
       <td>${_subPdfPbar(C, pct)}</td>
       <td><span class="tag ${statusCls}">${status}</span></td>
-      <td style="color:${C.muted};font-size:11px">${stamp}</td>
     </tr>`;
   });
   html += `<tr class="unit-row">
@@ -5749,25 +5992,8 @@ function buildAdminSubjectReport(isColor, reportHeader = null) {
     <td style="text-align:center">${tTotal}</td>
     <td style="text-align:center"><strong style="color:${C.green}">${tSub}</strong></td>
     <td style="text-align:center"><strong style="color:${C.amber}">${tTotal - tSub}</strong></td>
-    <td colspan="3">${_subPdfPbar(C, Math.round(tSub / tTotal * 100))}</td>
+    <td colspan="2">${_subPdfPbar(C, pctOf(tSub, tTotal))}</td>
   </tr></tbody></table>`;
-
-  html += `<div class="sec-title">Submission Comparison</div>
-  <div style="display:grid;grid-template-columns:repeat(${Math.min(subjects.length, 5)},1fr);gap:10px">`;
-  subjects.forEach(s => {
-    const pct = Math.round(s.submitted / s.total * 100);
-    const color = pct === 100 ? C.green : pct >= 60 ? C.accent : C.amber;
-    html += `<div style="border:1.5px solid ${C.border};border-radius:10px;padding:13px;text-align:center;background:${C.cardBg};page-break-inside:avoid">
-      <div style="font-size:22px;margin-bottom:6px">${s.icon}</div>
-      <div style="font-weight:800;font-size:13px;color:${C.brand};margin-bottom:8px">${s.subj}</div>
-      <div style="font-size:22px;font-weight:900;color:${color}">${pct}%</div>
-      <div style="font-size:10px;color:${C.muted};margin-top:3px">${s.submitted}/${s.total} plans</div>
-      <div style="margin-top:8px;height:6px;border-radius:99px;background:${C.isColor ? 'rgba(30,58,138,.1)' : '#E0E0E0'};overflow:hidden">
-        <div style="width:${pct}%;height:100%;border-radius:99px;background:${color}"></div>
-      </div>
-    </div>`;
-  });
-  html += `</div>`;
 
   html += _subPdfFooter(C);
   _openSubPdfWindow(html);
