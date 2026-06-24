@@ -228,7 +228,7 @@ export default function SessionManagement({ toast }) {
                       <i className="fa-solid fa-flag" aria-hidden="true"></i>
                     </button>
                   </Tooltip>
-                  <Tooltip text={s.locked ? 'Unlock session' : 'Lock session'}>
+                  {/* <Tooltip text={s.locked ? 'Unlock session' : 'Lock session'}>
                     <button
                       className="settings-act"
                       onClick={() => {
@@ -239,7 +239,7 @@ export default function SessionManagement({ toast }) {
                     >
                       <i className={`fa-solid ${s.locked ? 'fa-lock-open' : 'fa-lock'}`} aria-hidden="true"></i>
                     </button>
-                  </Tooltip>
+                  </Tooltip> */}
                   <Tooltip text="Delete session">
                     <button
                       className="settings-act settings-act--danger"
