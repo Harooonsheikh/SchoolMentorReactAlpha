@@ -12,7 +12,7 @@ import {
    SIGNATURE MANAGEMENT — info banner, filter bar, table, modals
    ═══════════════════════════════════════════════════════════════════ */
 export default function SignatureManagement({ toast }) {
-  const { signatures, upsertSignature, deleteSignature, toggleSignatureStatus } = useSettings();
+  const { signatures, signaturesLoading, upsertSignature, deleteSignature, toggleSignatureStatus } = useSettings();
 
   const [search,    setSearch]    = useState('');
   const [fStatus,   setFStatus]   = useState('all');
@@ -24,7 +24,7 @@ export default function SignatureManagement({ toast }) {
     if (fStatus !== 'all' && s.status !== fStatus) return false;
     const q = search.trim().toLowerCase();
     if (q) {
-      const hay = `${s.staffName} ${s.title} ${s.designation}`.toLowerCase();
+      const hay = `${s.staffName} ${s.title} ${s.designation} ${s.department}`.toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;
@@ -33,11 +33,12 @@ export default function SignatureManagement({ toast }) {
   const docName = (id) => DOCUMENT_OPTIONS.find(d => d.id === id)?.label || id;
   const initialsOf = (name) => name.split(' ').filter(Boolean).map(p => p[0]).join('').toUpperCase().slice(0, 2);
 
-  const handleDeleteConfirm = () => {
+  const handleDeleteConfirm = async () => {
     if (!deleteItem) return;
-    deleteSignature(deleteItem.id);
-    toast(`Signature "${deleteItem.title}" deleted`, 'success');
+    const item = deleteItem;
     setDeleteItem(null);
+    const { ok, message } = await deleteSignature(item.id);
+    toast(message, ok ? 'success' : 'error');
   };
 
   return (
@@ -94,10 +95,18 @@ export default function SignatureManagement({ toast }) {
       </div>
 
       {/* ── Table ── */}
-      {filtered.length === 0 ? (
+      {signaturesLoading ? (
+        <div className="settings-empty">
+          <div className="settings-empty-ic"><i className="fa-solid fa-spinner fa-spin" aria-hidden="true"></i></div>
+          <div className="settings-empty-title">Loading signatures…</div>
+          <div className="settings-empty-sub">Fetching authorised signatures for this branch.</div>
+        </div>
+      ) : filtered.length === 0 ? (
         <div className="settings-empty">
           <div className="settings-empty-ic"><i className="fa-solid fa-pen-nib" aria-hidden="true"></i></div>
-          <div className="settings-empty-title">No signatures match this filter</div>
+          <div className="settings-empty-title">
+            {signatures.length === 0 ? 'No signatures yet' : 'No signatures match this filter'}
+          </div>
           <div className="settings-empty-sub">
             {signatures.length === 0
               ? 'Click "Add Signature" above to upload your first one.'
@@ -106,8 +115,9 @@ export default function SignatureManagement({ toast }) {
         </div>
       ) : (
         <div className="settings-table">
-          <div className="settings-table-head" style={{ gridTemplateColumns: '1.5fr 1fr 1fr 100px 100px 100px 170px' }}>
+          <div className="settings-table-head" style={{ gridTemplateColumns: '1.5fr 1fr 1fr 1fr 90px 90px 90px 160px' }}>
             <div className="th">Staff</div>
+            <div className="th">Department</div>
             <div className="th">Designation</div>
             <div className="th">Title</div>
             <div className="th c">Preview</div>
@@ -116,15 +126,16 @@ export default function SignatureManagement({ toast }) {
             <div className="th c">Actions</div>
           </div>
           {filtered.map(s => (
-            <div key={s.id} className="settings-table-row" style={{ gridTemplateColumns: '1.5fr 1fr 1fr 100px 100px 100px 170px' }}>
+            <div key={s.id} className="settings-table-row" style={{ gridTemplateColumns: '1.5fr 1fr 1fr 1fr 90px 90px 90px 160px' }}>
               <div className="td settings-emp">
                 <div className="settings-avatar">{initialsOf(s.staffName)}</div>
                 <div className="settings-emp-text">
                   <div className="settings-emp-name">{s.staffName}</div>
-                  <div className="settings-emp-meta">{s.designation}</div>
+                  <div className="settings-emp-meta">{s.department || '—'}</div>
                 </div>
               </div>
-              <div className="td">{s.designation}</div>
+              <div className="td">{s.department || '—'}</div>
+              <div className="td">{s.designation || '—'}</div>
               <div className="td"><em style={{ color: '#64748B' }}>{s.title}</em></div>
               <div className="td c">
                 <div className="settings-sig-preview">
@@ -183,15 +194,10 @@ export default function SignatureManagement({ toast }) {
         <SignatureFormModal
           signature={formCfg.signature}
           onClose={() => setFormCfg(null)}
-          onSave={(payload) => {
-            upsertSignature(payload);
-            toast(
-              formCfg.signature
-                ? `Signature "${payload.title}" updated`
-                : `Signature "${payload.title}" added`,
-              'success',
-            );
-            setFormCfg(null);
+          onSave={async (payload) => {
+            const { ok, message } = await upsertSignature(payload);
+            toast(message, ok ? 'success' : 'error');
+            if (ok) setFormCfg(null);
           }}
           toast={toast}
         />

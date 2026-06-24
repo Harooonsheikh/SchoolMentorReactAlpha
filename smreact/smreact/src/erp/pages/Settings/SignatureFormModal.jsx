@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import Tooltip from '../../components/Tooltip';
 import {
   DOCUMENT_OPTIONS,
-  SIGNATURE_STAFF_OPTIONS,
+  apiGetEmployees,
 } from './settingsStore';
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -13,23 +13,49 @@ export default function SignatureFormModal({ signature, onClose, onSave, toast }
   const isEdit = !!signature;
   const fileRef = useRef(null);
 
-  const [staffId,      setStaffId]      = useState(signature?.staffId      || SIGNATURE_STAFF_OPTIONS[0]?.id || '');
+  const [staffOptions, setStaffOptions] = useState([]);
+  const [staffLoading, setStaffLoading] = useState(true);
+  const [staffId,      setStaffId]      = useState(signature?.staffId      || '');
   const [designation,  setDesignation]  = useState(signature?.designation  || '');
   const [title,        setTitle]        = useState(signature?.title        || '');
   const [status,       setStatus]       = useState(signature?.status       || 'active');
   const [imageDataUrl, setImageDataUrl] = useState(signature?.imageDataUrl || '');
+  const [imageFile,    setImageFile]    = useState(null); // raw File for multipart upload
   const [fileName,     setFileName]     = useState('');
   const [fileSize,     setFileSize]     = useState('');
   const [documents,    setDocuments]    = useState(signature?.documents || DOCUMENT_OPTIONS.map(d => d.id));
   const [touched,      setTouched]      = useState(false);
 
-  /* Auto-fill designation from the staff dropdown when adding new. */
+  /* Load branch employees for the staff dropdown. On add, default to the first
+     employee and pre-fill its designation. */
   useEffect(() => {
-    if (isEdit) return;
-    const s = SIGNATURE_STAFF_OPTIONS.find(x => x.id === Number(staffId));
-    if (s && !designation) setDesignation(s.designation);
+    let cancelled = false;
+    (async () => {
+      setStaffLoading(true);
+      try {
+        const list = await apiGetEmployees();
+        if (cancelled) return;
+        setStaffOptions(list);
+        if (!isEdit && list.length) {
+          setStaffId(prev => prev || list[0].id);
+        }
+      } catch (err) {
+        console.error('Could not load employees:', err);
+        if (!cancelled) setStaffOptions([]);
+      } finally {
+        if (!cancelled) setStaffLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [staffId]);
+  }, []);
+
+  /* Designation is read-only and always mirrors the selected staff member. */
+  useEffect(() => {
+    const s = staffOptions.find(x => x.id === Number(staffId));
+    if (s) setDesignation(s.designation || '');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [staffId, staffOptions]);
 
   /* Esc + scroll lock */
   useEffect(() => {
@@ -44,11 +70,10 @@ export default function SignatureFormModal({ signature, onClose, onSave, toast }
 
   const errors = useMemo(() => {
     const e = {};
-    if (!staffId)            e.staffId     = 'Staff member is required';
-    if (!designation.trim()) e.designation = 'Designation is required';
-    if (!title.trim())       e.title       = 'Signature title is required';
+    if (!staffId)      e.staffId = 'Staff member is required';
+    if (!title.trim()) e.title   = 'Signature title is required';
     return e;
-  }, [staffId, designation, title]);
+  }, [staffId, title]);
 
   const hasErrors = Object.keys(errors).length > 0;
 
@@ -63,6 +88,7 @@ export default function SignatureFormModal({ signature, onClose, onSave, toast }
     if (!file) return;
     if (!file.type.startsWith('image/')) { toast('Please pick an image file', 'error'); return; }
     if (file.size > 2 * 1024 * 1024)     { toast('Image must be under 2 MB',  'error'); return; }
+    setImageFile(file); // kept for the multipart upload
     const reader = new FileReader();
     reader.onload = (e) => {
       setImageDataUrl(e.target.result);
@@ -78,7 +104,7 @@ export default function SignatureFormModal({ signature, onClose, onSave, toast }
       toast('Please fix the highlighted fields', 'error');
       return;
     }
-    const staff = SIGNATURE_STAFF_OPTIONS.find(s => s.id === Number(staffId));
+    const staff = staffOptions.find(s => s.id === Number(staffId));
     onSave({
       id:           signature?.id,
       staffId:      Number(staffId),
@@ -87,6 +113,7 @@ export default function SignatureFormModal({ signature, onClose, onSave, toast }
       title:        title.trim(),
       status,
       imageDataUrl,
+      imageFile,
       documents,
     });
   };
@@ -129,9 +156,13 @@ export default function SignatureFormModal({ signature, onClose, onSave, toast }
                 className={`settings-input${touched && errors.staffId ? ' has-error' : ''}`}
                 value={staffId}
                 onChange={(e) => setStaffId(Number(e.target.value))}
+                disabled={staffLoading}
               >
-                {SIGNATURE_STAFF_OPTIONS.map(s => (
-                  <option key={s.id} value={s.id}>{s.name} · {s.designation}</option>
+                {staffLoading && <option value="">Loading staff…</option>}
+                {!staffLoading && staffOptions.length === 0 && <option value="">No staff found</option>}
+                {!staffLoading && staffOptions.length > 0 && !staffId && <option value="">Select a staff member…</option>}
+                {staffOptions.map(s => (
+                  <option key={s.id} value={s.id}>{s.designation ? `${s.name} · ${s.designation}` : s.name}</option>
                 ))}
               </select>
               {touched && errors.staffId && (
@@ -150,20 +181,16 @@ export default function SignatureFormModal({ signature, onClose, onSave, toast }
 
             {/* Row 2: designation + title */}
             <div className="settings-field">
-              <label htmlFor="sig-designation">Designation <span className="settings-field-req">*</span></label>
+              <label htmlFor="sig-designation">Designation</label>
               <input
                 id="sig-designation"
                 type="text"
-                className={`settings-input${touched && errors.designation ? ' has-error' : ''}`}
+                className="settings-input"
                 value={designation}
-                onChange={(e) => setDesignation(e.target.value)}
-                placeholder="e.g. Principal"
+                placeholder="Auto-filled from selected staff"
+                disabled
+                readOnly
               />
-              {touched && errors.designation && (
-                <span className="settings-field-err">
-                  <i className="fa-solid fa-circle-exclamation" aria-hidden="true"></i> {errors.designation}
-                </span>
-              )}
             </div>
             <div className="settings-field">
               <label htmlFor="sig-title">Signature Title <span className="settings-field-req">*</span></label>
@@ -206,7 +233,7 @@ export default function SignatureFormModal({ signature, onClose, onSave, toast }
                     <button
                       type="button"
                       className="settings-upload-remove"
-                      onClick={() => { setImageDataUrl(''); setFileName(''); setFileSize(''); }}
+                      onClick={() => { setImageDataUrl(''); setImageFile(null); setFileName(''); setFileSize(''); }}
                     >
                       <i className="fa-solid fa-trash-can" aria-hidden="true"></i> Remove
                     </button>

@@ -15,7 +15,7 @@ import {
    ═══════════════════════════════════════════════════════════════════ */
 export default function SessionManagement({ toast }) {
   const {
-    sessions, currentSession,
+    sessions, currentSession, sessionsLoading,
     setAsCurrent, upsertSession, deleteSession, toggleSessionLock,
   } = useSettings();
 
@@ -52,16 +52,17 @@ export default function SessionManagement({ toast }) {
     setConfirmCfg({ kind: 'delete', session: s });
   };
 
-  const commitConfirm = () => {
+  const commitConfirm = async () => {
     if (!confirmCfg) return;
-    if (confirmCfg.kind === 'setCurrent') {
-      setAsCurrent(confirmCfg.session.id);
-      toast(`Current session updated to ${confirmCfg.session.name}`, 'success');
-    } else if (confirmCfg.kind === 'delete') {
-      deleteSession(confirmCfg.session.id);
-      toast(`Session "${confirmCfg.session.name}" deleted`, 'success');
-    }
+    const cfg = confirmCfg;
     setConfirmCfg(null);
+    if (cfg.kind === 'setCurrent') {
+      setAsCurrent(cfg.session.id);
+      toast(`Current session updated to ${cfg.session.name}`, 'success');
+    } else if (cfg.kind === 'delete') {
+      const { ok, message } = await deleteSession(cfg.session.id);
+      toast(message, ok ? 'success' : 'error');
+    }
   };
 
   return (
@@ -131,10 +132,18 @@ export default function SessionManagement({ toast }) {
       </div>
 
       {/* ── Table ── */}
-      {filtered.length === 0 ? (
+      {sessionsLoading ? (
+        <div className="settings-empty">
+          <div className="settings-empty-ic"><i className="fa-solid fa-spinner fa-spin" aria-hidden="true"></i></div>
+          <div className="settings-empty-title">Loading sessions…</div>
+          <div className="settings-empty-sub">Fetching academic sessions for this branch.</div>
+        </div>
+      ) : filtered.length === 0 ? (
         <div className="settings-empty">
           <div className="settings-empty-ic"><i className="fa-solid fa-calendar-xmark" aria-hidden="true"></i></div>
-          <div className="settings-empty-title">No sessions match this filter</div>
+          <div className="settings-empty-title">
+            {sessions.length === 0 ? 'No academic sessions yet' : 'No sessions match this filter'}
+          </div>
           <div className="settings-empty-sub">
             {sessions.length === 0
               ? 'Click "Create Academic Session" above to add your first session.'
@@ -253,15 +262,10 @@ export default function SessionManagement({ toast }) {
           session={formCfg.session}
           existingCurrent={currentSession}
           onClose={() => setFormCfg(null)}
-          onSave={(payload) => {
-            upsertSession(payload);
-            toast(
-              formCfg.session
-                ? `Session "${payload.name}" updated`
-                : `Session "${payload.name}" created`,
-              'success',
-            );
-            setFormCfg(null);
+          onSave={async (payload) => {
+            const { ok, message } = await upsertSession(payload);
+            toast(message, ok ? 'success' : 'error');
+            if (ok) setFormCfg(null);
           }}
           toast={toast}
         />
