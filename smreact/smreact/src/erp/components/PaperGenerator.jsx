@@ -84,6 +84,7 @@ function pgClassKey(cls) {
    shape PapersGrid renders. API uses different field names + string numbers. */
 function mapApiPaper(p) {
   const created = String(p.createdDate || '').trim();
+  
   const [datePart = '', ...timeParts] = created.split(' ');
   return {
     ...p,
@@ -1491,17 +1492,31 @@ const prefillSavedTabs = (sections, details, paperType) => {
       const apiItems = (details && details[API_KEY_MAP[typeKey]]) || [];
       const unitName = apiItems[0]?.unitName;
 
-      // Saved rows ko per-unit group karo (multi-unit prefill). Agar row mein unitName na ho
-      // to pehle item ke unit par fallback (purana single-unit behavior reproduce ho jata hai).
+      // mainQuestion → unitName map (is type ke saare units ke main questions notebook details se).
+      // Saved rows mein unitName nahi hota, is liye mainQuestion se uska unit resolve karte hain.
+      const mainQToUnit = {};
+      apiItems.forEach(it => {
+        const mk = String(it.mainQuestion ?? '').trim();
+        if (mk && it.unitName && !mainQToUnit[mk]) mainQToUnit[mk] = it.unitName;
+      });
+
+      // SELECTED main questions = parentData.mainQuestion (pipe-separated). YAHI edit modal ke
+      // checkboxes mein checked aayenge (rows se derive NAHI). Har mainQ apne unit ke andar.
+      const selectedMainList = String(sec.selectedMainRaw || '').split('|').map(s => s.trim()).filter(Boolean);
       const savedUnits = {};
       const savedMainMap = {};
-      (sec.rows || []).forEach(r => {
-        const un = r.unitName || unitName;
+      const pushMain = (un, mq) => {
         if (!un) return;
         savedUnits[un] = true;
         if (!savedMainMap[un]) savedMainMap[un] = [];
-        if (r.mainQuestion && !savedMainMap[un].includes(r.mainQuestion)) savedMainMap[un].push(r.mainQuestion);
-      });
+        if (mq && !savedMainMap[un].includes(mq)) savedMainMap[un].push(mq);
+      };
+      if (selectedMainList.length) {
+        selectedMainList.forEach(mq => pushMain(mainQToUnit[mq] || unitName, mq));
+      } else {
+        // fallback: rows ke mainQuestion se (purana behavior)
+        (sec.rows || []).forEach(r => pushMain(r.unitName || unitName, r.mainQuestion));
+      }
       if (Object.keys(savedUnits).length === 0 && unitName) {
         savedUnits[unitName] = true;
         savedMainMap[unitName] = [...new Set((sec.rows || []).map(r => r.mainQuestion).filter(Boolean))];
@@ -3080,6 +3095,8 @@ function normalizeQpDetail(list) {
     sections: blocks.map(b => ({
       recTitle: b.parentData?.recTitle || '',
       mainQuestion: b.parentData?.changedMainQuestion || b.parentData?.recTitle || '',
+      // Pipe-separated SELECTED main questions (jo user ne tab mein checkbox se chune the).
+      selectedMainRaw: b.parentData?.mainQuestion || '',
       // Selection record id for update lives on the specific row (parentData.id is the master).
       recordId: b.specificTableData?.[0]?.id || 0,
       // Saved config (items / choices / marks-per-item) so the edit modal prefills correctly.
@@ -3097,8 +3114,18 @@ function normalizeQpDetail(list) {
 const pgRecKey = s => String(s || '').toLowerCase().replace(/[^a-z]/g, '');
 const pgRoman = n => (['i','ii','iii','iv','v','vi','vii','viii','ix','x','xi','xii','xiii','xiv','xv','xvi','xvii','xviii','xix','xx'][n] || String(n + 1));
 const pgEsc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
-/* The most likely "question text" field for a row, across all types. */
-const pgRowText = r => r.question || r.word || r.sentence || r.statement || r.topic || r.title || r.comprehensionStatement || r.mainQuestion || '';
+/* API se question rich-text (HTML) aa sakta hai → tags hata kar plain text banao (preview/download). */
+const pgStripHtml = s => String(s == null ? '' : s)
+  .replace(/<br\s*\/?>/gi, ' ')
+  .replace(/<\/(p|div|h[1-6]|li)>/gi, ' ')
+  .replace(/<[^>]*>/g, '')                 // baqi saare tags hatao
+  .replace(/&nbsp;/gi, ' ')
+  .replace(/&amp;/gi, '&').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>')
+  .replace(/&quot;/gi, '"').replace(/&#39;/gi, "'").replace(/&apos;/gi, "'")
+  .replace(/\s+/g, ' ')
+  .trim();
+/* The most likely "question text" field for a row, across all types. (HTML → plain text) */
+const pgRowText = r => pgStripHtml(r.question || r.word || r.sentence || r.statement || r.topic || r.title || r.comprehensionStatement || r.mainQuestion || '');
 
 /* subjective-only type keys (in PG_SUBJ_TYPES but not PG_OBJ_TYPES) */
 const PG_SUBJ_ONLY_KEYS = PG_SUBJ_TYPES.filter(s => !PG_OBJ_TYPES.some(o => o.key === s.key)).map(s => s.key);
@@ -3132,7 +3159,7 @@ function ApiPaperSections({ sections, isBW, paperType }) {
       <thead><tr style={{ background: thBg }}><th style={th}>#</th><th style={th}>{leftLabel}</th><th style={th}>{rightLabel}</th></tr></thead>
       <tbody>
         {rows.map((r, i) => (
-          <tr key={i}><td style={td}>{pgRoman(i)}</td><td style={td}>{r[leftKey] || pgRowText(r)}</td><td style={td}>{blank}</td></tr>
+          <tr key={i}><td style={td}>{pgRoman(i)}</td><td style={td}>{pgStripHtml(r[leftKey]) || pgRowText(r)}</td><td style={td}>{blank}</td></tr>
         ))}
       </tbody>
     </table>
@@ -3144,11 +3171,11 @@ function ApiPaperSections({ sections, isBW, paperType }) {
     if (k === 'mcqs') {
       return rows.map((r, i) => (
         <div key={i} style={{ marginBottom: 8, fontSize: 12, color: '#334155' }}>
-          <div>{pgRoman(i)}. {r.question}</div>
+          <div>{pgRoman(i)}. {pgStripHtml(r.question)}</div>
           <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginTop: 3, paddingLeft: 14 }}>
             {['option1','option2','option3','option4'].map((o, oi) => r[o] ? (
               <span key={oi} style={{ border: '1px solid #CBD5E1', borderRadius: 4, padding: '2px 8px', fontSize: 11.5 }}>
-                ({String.fromCharCode(65 + oi)}) {r[o]}
+                ({String.fromCharCode(65 + oi)}) {pgStripHtml(r[o])}
               </span>
             ) : null)}
           </div>
@@ -3164,20 +3191,20 @@ function ApiPaperSections({ sections, isBW, paperType }) {
           <thead><tr style={{ background: thBg }}><th style={th}>Column A</th><th style={th}>Answer</th><th style={th}>Column B</th></tr></thead>
           <tbody>
             {rows.map((r, i) => (
-              <tr key={i}><td style={td}>{r.columnA || r.option1 || pgRowText(r)}</td><td style={td}>______</td><td style={td}>{r.columnB || r.option2 || ''}</td></tr>
+              <tr key={i}><td style={td}>{pgStripHtml(r.columnA || r.option1) || pgRowText(r)}</td><td style={td}>______</td><td style={td}>{pgStripHtml(r.columnB || r.option2)}</td></tr>
             ))}
           </tbody>
         </table>
       );
     }
     if (k === 'comprehension') {
-      const passage = rows[0]?.comprehensionStatement;
+      const passage = pgStripHtml(rows[0]?.comprehensionStatement);
       return (
         <>
           {passage && <div style={{ background: isBW ? '#FFF' : '#F8FAFF', border: `1px solid ${isBW ? '#D1D5DB' : '#BFDBFE'}`, borderRadius: 4, padding: '8px 12px', fontSize: 11.5, marginBottom: 8, lineHeight: 1.6 }}>{passage}</div>}
           {rows.map((r, i) => (
             <div key={i} style={{ fontSize: 12, color: '#334155', marginBottom: 6 }}>
-              {pgRoman(i)}. {r.question}
+              {pgRoman(i)}. {pgStripHtml(r.question)}
               <div style={{ height: 22, borderBottom: '1px solid #cbd5e1', margin: '6px 0 10px' }}></div>
             </div>
           ))}
@@ -3258,23 +3285,23 @@ function buildApiSectionsHTML(sections, paperType) {
     let body = '';
     const twoCol = (leftKey, leftLabel, rightLabel) =>
       `<table><tr><th>#</th><th>${leftLabel}</th><th>${rightLabel}</th></tr>` +
-      rows.map((r, i) => `<tr><td>${pgRoman(i)}</td><td>${pgEsc(r[leftKey] || pgRowText(r))}</td><td>${blank}</td></tr>`).join('') + '</table>';
+      rows.map((r, i) => `<tr><td>${pgRoman(i)}</td><td>${pgEsc(pgStripHtml(r[leftKey]) || pgRowText(r))}</td><td>${blank}</td></tr>`).join('') + '</table>';
 
     if (k === 'mcqs') {
       body = rows.map((r, i) => {
-        const opts = ['option1','option2','option3','option4'].map((o, oi) => r[o] ? `<span class="mcq-opt">(${String.fromCharCode(65 + oi)}) ${pgEsc(r[o])}</span>` : '').join('');
-        return `<div class="mcq-item">${pgRoman(i)}. ${pgEsc(r.question)}<div class="mcq-options">${opts}</div></div>`;
+        const opts = ['option1','option2','option3','option4'].map((o, oi) => r[o] ? `<span class="mcq-opt">(${String.fromCharCode(65 + oi)}) ${pgEsc(pgStripHtml(r[o]))}</span>` : '').join('');
+        return `<div class="mcq-item">${pgRoman(i)}. ${pgEsc(pgStripHtml(r.question))}<div class="mcq-options">${opts}</div></div>`;
       }).join('');
     } else if (k === 'wordsynonyms') body = twoCol('word', 'Word', 'Synonym');
     else if (k === 'wordopposite' || k === 'wordopposites') body = twoCol('word', 'Word', 'Opposite');
     else if (k === 'singularplural' || k === 'singularplurals') body = twoCol('singular', 'Singular', 'Plural');
     else if (k === 'matchcolume' || k === 'matchcolumns') {
       body = `<table><tr><th>Column A</th><th>Answer</th><th>Column B</th></tr>` +
-        rows.map(r => `<tr><td>${pgEsc(r.columnA || r.option1 || pgRowText(r))}</td><td>______</td><td>${pgEsc(r.columnB || r.option2 || '')}</td></tr>`).join('') + '</table>';
+        rows.map(r => `<tr><td>${pgEsc(pgStripHtml(r.columnA || r.option1) || pgRowText(r))}</td><td>______</td><td>${pgEsc(pgStripHtml(r.columnB || r.option2))}</td></tr>`).join('') + '</table>';
     } else if (k === 'comprehension') {
-      const passage = rows[0]?.comprehensionStatement;
+      const passage = pgStripHtml(rows[0]?.comprehensionStatement);
       body = (passage ? `<div style="background:#F8FAFF;border:1px solid #BFDBFE;border-radius:4px;padding:8px 12px;font-size:11.5px;margin-bottom:8px;line-height:1.6">${pgEsc(passage)}</div>` : '') +
-        rows.map((r, i) => `<div class="write-item">${pgRoman(i)}. ${pgEsc(r.question)}<div class="ans-line"></div></div>`).join('');
+        rows.map((r, i) => `<div class="write-item">${pgRoman(i)}. ${pgEsc(pgStripHtml(r.question))}<div class="ans-line"></div></div>`).join('');
     } else if (k === 'truefalse') {
       body = `<table class="tf-table"><tr><th>#</th><th>Statement</th><th>True</th><th>False</th></tr>` +
         rows.map((r, i) => `<tr><td>${pgRoman(i)}</td><td>${pgEsc(pgRowText(r))}</td><td><span class="tf-box"></span></td><td><span class="tf-box"></span></td></tr>`).join('') + '</table>';
