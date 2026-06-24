@@ -3652,16 +3652,19 @@ async function fetchEmployeeSubjects(gradeId, sectionId, empId) {
 
 /* Submission record for one class+section+subject. Reuses loadNbSubmissionData
    (master → per-unit detail + checkbox selection) and reduces it to a flat
-   submitted/total/units summary. master gives units (→ %); detail+selection give
-   the submitted-vs-total items (→ the "27/67" record). */
+   submitted/total/units summary — counted at the MASTER (unit) level, NOT the
+   child item level. A master counts as "submitted" if ANY of its items is
+   submitted; otherwise it is pending. e.g. 3 units, 2 with something submitted
+   → total 3, submitted 2, pending 1. */
 async function fetchSubmissionStats({ classID, sectionID, subjectID }) {
   try {
     const units = await loadNbSubmissionData({ branchID: lpBranchId(), classID, sectionID, subjectID });
     let total = 0, submitted = 0;
-    units.forEach(u => u.questionTypes.forEach(qt => qt.items.forEach(it => {
+    units.forEach(u => {
       total += 1;
-      if (it.status === 'submitted') submitted += 1;
-    })));
+      const hasSubmitted = u.questionTypes.some(qt => qt.items.some(it => it.status === 'submitted'));
+      if (hasSubmitted) submitted += 1;
+    });
     return { total, submitted, units: units.length };
   } catch (e) {
     console.error('fetchSubmissionStats failed', { classID, sectionID, subjectID }, e);
