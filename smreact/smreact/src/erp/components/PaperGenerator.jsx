@@ -1745,8 +1745,15 @@ const saveTab = async (section, typeKey, entryId) => {
   }
 
   const items = +tab.items || 0;
-  if (items < 1) { toast('Please enter number of items', 'warning'); return; }
-  if (items > tab.totalEligible && tab.totalEligible > 0) {
+if (items < 1) { toast('Please enter number of items', 'warning'); return; }
+
+const choicesVal = +tab.choices || 0;
+if (choicesVal > items) {
+  toast(`No. of choices (${choicesVal}) cannot be greater than no. of items (${items})`, 'warning');
+  return;
+}
+
+if (items > tab.totalEligible && tab.totalEligible > 0) {
     toast('Items exceed available count (' + tab.totalEligible + ')', 'warning');
     return;
   }
