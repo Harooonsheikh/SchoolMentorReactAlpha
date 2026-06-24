@@ -8896,7 +8896,7 @@ function ResultUpdateMarksModal({ cd, student, onSave, onClose, absentMode, toas
       if (marksRecord) {
   setObtained(prev => ({
     ...prev,
-    [subjectObj.subjectName]: Number(marksRecord.obtainedMarks || marksRecord.obtainMarks || marksRecord.marks || 0)
+    [subjectObj.subjectName]: Number(marksRecord.obtainedMarks || marksRecord.obtainMarks || marksRecord.marks )
   }));
   setSubjectExistingMarkId(prev => ({
     ...prev,
@@ -8934,10 +8934,10 @@ function ResultUpdateMarksModal({ cd, student, onSave, onClose, absentMode, toas
     const curSubjObj = subjects[tab];
     const subjectID = curSubjObj?.subjectID;
     const maxMarks = subjectTotalMarks[subjectID] ?? (cd.totalMarks[subject] || 0);
-    setObtained(o => ({
-      ...o,
-      [subject]: val === '' ? 0 : Math.max(0, Math.min(maxMarks, parseFloat(val) || 0))
-    }));
+setObtained(o => ({
+  ...o,
+  [subject]: val === '' ? '' : Math.max(0, Math.min(maxMarks, parseFloat(val) || 0))
+}));
   };
 
   const updateMc = (subject, val) => {
@@ -9076,7 +9076,7 @@ const saveAndClose = async () => {
   const curSubj = curSubjObj.subjectName || '';
   const curSubjID = curSubjObj.subjectID;
   const curTotal = subjectTotalMarks[curSubjID] ?? (cd.totalMarks[curSubj] || 0);
-  const curObt = obtained[curSubj] || 0;
+  const curObt = obtained[curSubj] || '';
   const curPct = curTotal ? Math.round((curObt / curTotal) * 100) : 0;
   const curGrade = rcGetGrade(curObt, curTotal);
 
