@@ -898,6 +898,7 @@ const papers = papersByKey[key] || [];
         <PaperViewModal
           paper={viewPaper.paper}
           cls={viewPaper.cls}
+          templateId={templateId}
           onClose={() => setViewPaper(null)}
           onDownload={() => { setDownloadPaper(viewPaper); setViewPaper(null); }}
         />
@@ -1745,11 +1746,14 @@ const saveTab = async (section, typeKey, entryId) => {
   }
 
   const items = +tab.items || 0;
-if (items < 1) { toast('Please enter number of items', 'warning'); return; }
+if (items < 1) { toast('No. of items cannot be 0 — please enter number of items', 'warning'); return; }
+
+const marksVal = +tab.marks || 0;
+if (marksVal < 1) { toast('Marks per item cannot be 0 — please enter the marks', 'warning'); return; }
 
 const choicesVal = +tab.choices || 0;
-if (choicesVal > items) {
-  toast(`No. of choices (${choicesVal}) cannot be greater than no. of items (${items})`, 'warning');
+if (choicesVal >= items) {
+  toast(`No. of choices (${choicesVal}) must be less than no. of items (${items})`, 'warning');
   return;
 }
 
@@ -1806,9 +1810,9 @@ if (notebookDetails) {
       sectionID: parseInt(sectionID),
       recTitle: PG_REC_TITLE[typeKey] || typeKey,
       changedMainQuestion: tab.instr || '',
-      noOfItem: +tab.items || 0,
-      marksPerItem: +tab.marks || 1,
-      noOfChoices: +tab.choices || 0,
+      noOfItem: items,
+      marksPerItem: marksVal,
+      noOfChoices: choicesVal,
       paperType: section === 'obj' ? 'objective' : 'subjective',
       formatePaper: paperType,   // selected Paper Type dropdown: objective | subjective | both
       mainQuestion: mainQuestions,
@@ -3094,11 +3098,18 @@ async function fetchQpSubmissionDetail({ id, branchID, gradeID, sectionID }) {
   return Array.isArray(data) ? data : (data?.data || []);
 }
 
-/* Turn the raw blocks into ordered, render-ready sections. */
+/* Turn the raw blocks into ordered, render-ready sections.
+   paperFormate / lineType come from AHM_PaperGenerationSetup via parentData and
+   drive how answer space is rendered:
+     • fmt  'with'  → answer sheet/lines shown, 'without' → questions only
+     • line 'single' → 1 answer line per question, 'four' → 4 lines. */
 function normalizeQpDetail(list) {
   const blocks = Array.isArray(list) ? list : [];
+  const parent = blocks[0]?.parentData || null;
   return {
-    parent: blocks[0]?.parentData || null,
+    parent,
+    fmt:  pgApiToFmt(parent?.paperFormate),
+    line: pgApiToLine(parent?.lineType),
     sections: blocks.map(b => ({
       recTitle: b.parentData?.recTitle || '',
       mainQuestion: b.parentData?.changedMainQuestion || b.parentData?.recTitle || '',
@@ -3149,10 +3160,20 @@ function pgSectionKind(sec) {
 }
 
 /* ── React renderer (Preview) — one block per saved section, by recTitle ── */
-function ApiPaperSections({ sections, isBW, paperType }) {
+function ApiPaperSections({ sections, isBW, paperType, fmt = 'with', line = 'single' }) {
   if (!sections || !sections.length) {
     return <div style={{ fontSize: 12, color: '#64748B', textAlign: 'center', padding: 24 }}>No saved questions found for this paper.</div>;
   }
+  /* Answer space per the class+subject setup: no sheet → none; with sheet →
+     1 line (single) or 4 lines (four) after each written-answer question. */
+  const lineCount = fmt === 'without' ? 0 : (line === 'four' ? 4 : 1);
+  const AnswerLines = () => (lineCount === 0 ? null : (
+    <div style={{ margin: '6px 0 10px' }}>
+      {Array.from({ length: lineCount }).map((_, i) => (
+        <div key={i} style={{ height: 18, borderBottom: '1px solid #cbd5e1', marginBottom: 6 }} />
+      ))}
+    </div>
+  ));
   const accent = isBW ? '#111111' : '#1E40AF';
   const tdBorder = '1px solid #e2e8f0';
   const thBg = isBW ? '#FFFFFF' : '#EFF6FF';
@@ -3212,7 +3233,7 @@ function ApiPaperSections({ sections, isBW, paperType }) {
           {rows.map((r, i) => (
             <div key={i} style={{ fontSize: 12, color: '#334155', marginBottom: 6 }}>
               {pgRoman(i)}. {pgStripHtml(r.question)}
-              <div style={{ height: 22, borderBottom: '1px solid #cbd5e1', margin: '6px 0 10px' }}></div>
+              <AnswerLines />
             </div>
           ))}
         </>
@@ -3240,7 +3261,7 @@ function ApiPaperSections({ sections, isBW, paperType }) {
     return rows.map((r, i) => (
       <div key={i} style={{ fontSize: 12, color: '#334155', marginBottom: 8 }}>
         {pgRoman(i)}. {pgRowText(r)}
-        <div style={{ height: 22, borderBottom: '1px solid #cbd5e1', margin: '6px 0 10px' }}></div>
+        <AnswerLines />
       </div>
     ));
   };
@@ -3280,11 +3301,16 @@ function ApiPaperSections({ sections, isBW, paperType }) {
 }
 
 /* ── HTML builder (Download) — mirrors ApiPaperSections using paper CSS classes ── */
-function buildApiSectionsHTML(sections, paperType) {
+function buildApiSectionsHTML(sections, paperType, fmt = 'with', line = 'single') {
   if (!sections || !sections.length) {
     return '<div style="text-align:center;color:#64748B;font-size:12px;padding:20px">No saved questions found for this paper.</div>';
   }
   const blank = '___________';
+  /* Answer space per the class+subject setup: no sheet → none; with sheet →
+     1 line (single) or 4 lines (four) after each written-answer question. */
+  const lineCount = fmt === 'without' ? 0 : (line === 'four' ? 4 : 1);
+  const ansLines = () => (lineCount === 0 ? ''
+    : `<div class="write-lines">${'<div class="line-rule"></div>'.repeat(lineCount)}</div>`);
   const renderOne = (sec, num) => {
     const k = pgRecKey(sec.recTitle);
     const rows = sec.rows || [];
@@ -3308,14 +3334,14 @@ function buildApiSectionsHTML(sections, paperType) {
     } else if (k === 'comprehension') {
       const passage = pgStripHtml(rows[0]?.comprehensionStatement);
       body = (passage ? `<div style="background:#F8FAFF;border:1px solid #BFDBFE;border-radius:4px;padding:8px 12px;font-size:11.5px;margin-bottom:8px;line-height:1.6">${pgEsc(passage)}</div>` : '') +
-        rows.map((r, i) => `<div class="write-item">${pgRoman(i)}. ${pgEsc(pgStripHtml(r.question))}<div class="ans-line"></div></div>`).join('');
+        rows.map((r, i) => `<div class="write-item">${pgRoman(i)}. ${pgEsc(pgStripHtml(r.question))}${ansLines()}</div>`).join('');
     } else if (k === 'truefalse') {
       body = `<table class="tf-table"><tr><th>#</th><th>Statement</th><th>True</th><th>False</th></tr>` +
         rows.map((r, i) => `<tr><td>${pgRoman(i)}</td><td>${pgEsc(pgRowText(r))}</td><td><span class="tf-box"></span></td><td><span class="tf-box"></span></td></tr>`).join('') + '</table>';
     } else if (k === 'fillintheblank' || k === 'filltheblank' || k === 'fillintheblanks') {
       body = rows.map((r, i) => `<div class="write-item">${pgRoman(i)}. ${pgEsc(pgRowText(r))} <span class="blank"></span></div>`).join('');
     } else {
-      body = rows.map((r, i) => `<div class="write-item">${pgRoman(i)}. ${pgEsc(pgRowText(r))}<div class="ans-line"></div></div>`).join('');
+      body = rows.map((r, i) => `<div class="write-item">${pgRoman(i)}. ${pgEsc(pgRowText(r))}${ansLines()}</div>`).join('');
     }
     return `<div class="q-block">${header}${body}</div>`;
   };
@@ -3336,9 +3362,11 @@ function buildApiSectionsHTML(sections, paperType) {
 /* ═══════════════════════════════════════════════════════════════════
    PAPER VIEW MODAL — Color/B&W toggle + API paper body + Download
    ═══════════════════════════════════════════════════════════════════ */
-function PaperViewModal({ paper, cls, onClose, onDownload }) {
+function PaperViewModal({ paper, cls, templateId = 1, onClose, onDownload }) {
   const [tone, setTone] = useState('color'); // 'color' | 'bw'
   const [sections, setSections] = useState([]);
+  /* Answer-space config from the class+subject setup (API submission detail). */
+  const [meta, setMeta] = useState({ fmt: paper.format || 'with', line: paper.line || 'single' });
   const [loadingDetail, setLoadingDetail] = useState(true);
   const [reportHeader, setReportHeader] = useState(null); // { branchName, branchLogo, address }
 
@@ -3367,7 +3395,11 @@ function PaperViewModal({ paper, cls, onClose, onDownload }) {
           gradeID: cls?.gradeID ?? paper.gradeID,
           sectionID: cls?.sectionID ?? paper.sectionID,
         });
-        if (alive) setSections(normalizeQpDetail(list).sections);
+        if (alive) {
+          const detail = normalizeQpDetail(list);
+          setSections(detail.sections);
+          setMeta({ fmt: detail.fmt, line: detail.line });
+        }
       } catch (err) {
         console.error('Could not load paper detail', err);
         if (alive) setSections([]);
@@ -3379,22 +3411,37 @@ function PaperViewModal({ paper, cls, onClose, onDownload }) {
   }, [paper, cls]);
 
   const isBW = tone === 'bw';
-  /* Preview palettes: Colorful = brand blue header/sections; Colorless =
-     printer-friendly white header/sections with dark text (matches the
-     final printed output produced by buildFullPaperHTML). */
-  const headerBg     = isBW ? '#FFFFFF' : '#1E3A8A';
-  const headerColor  = isBW ? '#0F172A' : '#FFFFFF';
-  const headerBorder = isBW ? '1px solid #D1D5DB' : 'none';
-  const accent       = isBW ? '#111111' : '#1E40AF';
-  const sectionBg    = isBW ? '#FFFFFF' : '#1E3A8A';
-  const sectionColor = isBW ? '#0F172A' : '#FFFFFF';
-  const sectionBorder = isBW ? '1px solid #0F172A' : 'none';
   const objMarks  = paper.objMarks  || 0;
   const subjMarks = paper.subjMarks || 0;
   const totalMk   = (objMarks + subjMarks) || 100;
   const totalMin  = ((paper.objTime || 0) + (paper.subjTime || 0)) || 100;
   const showObj   = paper.type === 'objective'  || paper.type === 'both';
   const showSubj  = paper.type === 'subjective' || paper.type === 'both';
+
+  /* Real paper data fed into the selected template's header design so the view
+     matches the template the user picked (Classic / Modern / Formal). */
+  const headerInfo = {
+    school:     reportHeader?.branchName || 'The Oxford System',
+    campus:     reportHeader?.address || '',
+    logo:       reportHeader?.branchLogo || '',
+    examTitle:  paper.title || '',
+    subject:    paper.subj || '',
+    className:  cls?.name || '',
+    section:    cls?.section || '',
+    time:       `${totalMin} Min`,
+    objTime:    paper.objTime || 0,
+    subjTime:   paper.subjTime || 0,
+    objMarks,
+    subjMarks,
+    totalMarks: totalMk,
+    showObj,
+    showSubj,
+  };
+  const templateHeader = () => {
+    if (templateId === 2) return <ModernHeader info={headerInfo} />;
+    if (templateId === 3) return <FormalHeader info={headerInfo} />;
+    return <ClassicHeader info={headerInfo} />;
+  };
 
   return createPortal(
     <div
@@ -3446,43 +3493,16 @@ function PaperViewModal({ paper, cls, onClose, onDownload }) {
           </div>
 
           <div style={{ padding: 24, background: '#fff', minHeight: 400, fontFamily: "'Plus Jakarta Sans', sans-serif" }}>
-            <div style={{ background: headerBg, color: headerColor, border: headerBorder, borderBottom: 'none', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5, padding: 12, borderRadius: '6px 6px 0 0', margin: '-24px -24px 16px', textAlign: 'center' }}>
-              {reportHeader?.branchLogo && (
-                <img src={reportHeader.branchLogo} alt="logo" style={{ height: 48, width: 48, objectFit: 'contain', borderRadius: 8, background: '#fff' }} />
-              )}
-              <div style={{ fontSize: 15, fontWeight: 800, letterSpacing: '.02em' }}>
-                {reportHeader?.branchName || 'The Oxford System, Lahore Campus'}
-              </div>
-              {reportHeader?.address && (
-                <div style={{ fontSize: 10, fontWeight: 500, opacity: isBW ? 1 : .85, color: isBW ? '#4B5563' : 'inherit' }}>
-                  {reportHeader.address}
-                </div>
-              )}
-            </div>
-            <div style={{ textAlign: 'center', fontSize: 13, fontWeight: 600, color: '#334155', marginBottom: 12 }}>
-              {paper.title} &middot; {paper.subj} &middot; {cls.name} ({cls.section})
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, fontSize: 12, color: '#334155', borderTop: '1px solid #e2e8f0', borderBottom: '1px solid #e2e8f0', padding: '8px 0', marginBottom: 12 }}>
-              <div>Student Name: _______________________</div>
-              <div>Roll No: ___________</div>
-              <div>Section: {cls.section}</div>
-              <div>Date: ___________</div>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, fontWeight: 600, color: accent, marginBottom: 16, flexWrap: 'wrap', gap: 6 }}>
-              <span>Total Time: {totalMin} Minutes</span>
-              <span>
-                {showObj && <>Objective Marks: {objMarks} &nbsp;·&nbsp; </>}
-                {showSubj && <>Subjective Marks: {subjMarks} &nbsp;·&nbsp; </>}
-                 &nbsp;&nbsp; Obtained: ______/{totalMk}
-              </span>
-            </div>
+            {/* Template-specific header (Classic / Modern / Formal) — includes the
+               exam title, student fields and marks grid for that design. */}
+            <div style={{ marginBottom: 16 }}>{templateHeader()}</div>
 
             {loadingDetail ? (
               <div style={{ fontSize: 12, color: '#64748B', textAlign: 'center', padding: 24 }}>
                 <i className="fa-solid fa-spinner fa-spin" style={{ marginRight: 6 }}></i> Loading questions…
               </div>
             ) : (
-              <ApiPaperSections sections={sections} isBW={isBW} paperType={paper.type} />
+              <ApiPaperSections sections={sections} isBW={isBW} paperType={paper.type} fmt={meta.fmt} line={meta.line} />
             )}
 
             <div style={{ marginTop: 20, paddingTop: 12, borderTop: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#64748B' }}>
@@ -3655,11 +3675,14 @@ function buildAnswerSheetSection() {
   );
 }
 
-function buildFullPaperHTML({ paper, cls, isBW, asWord, sections, reportHeader }) {
+function buildFullPaperHTML({ paper, cls, isBW, asWord, sections, reportHeader, fmt: fmtArg, line: lineArg }) {
   const schoolName = reportHeader?.branchName || 'The Oxford System — Lahore Campus';
   const schoolLogo = reportHeader?.branchLogo || '';
   const schoolAddress = reportHeader?.address || '';
-  const fmt      = paper.format || 'with';
+  /* Prefer the setup-derived fmt/line (from the API submission detail); fall back
+     to the paper's own values. */
+  const fmt      = fmtArg || paper.format || 'with';
+  const line     = lineArg || paper.line || 'single';
   const typ      = paper.type   || 'both';
   const subject  = paper.subj   || 'English';
   const title    = paper.title  || 'Question Paper';
@@ -3676,7 +3699,7 @@ function buildFullPaperHTML({ paper, cls, isBW, asWord, sections, reportHeader }
   // API-driven body (saved questions, grouped by recTitle) — kept in sync with Preview.
   // Falls back to the static sample sections only if no API sections were supplied.
   const apiBody     = Array.isArray(sections)
-    ? buildApiSectionsHTML(sections, typ)
+    ? buildApiSectionsHTML(sections, typ, fmt, line)
     : `${showObj ? buildObjSection() : ''}${showSubj ? buildSubjSection() : ''}`;
   const answerSheet = fmt === 'with' ? buildAnswerSheetSection() : '';
 
@@ -3823,6 +3846,8 @@ function DownloadModal({ paper, cls, onClose, toast }) {
     win.document.write('<p style="font-family:sans-serif;padding:24px;color:#475569">Preparing paper…</p>');
     let sections = [];
     let reportHeader = null;
+    let fmt = paper.format || 'with';
+    let line = paper.line || 'single';
     try {
       const [list, header] = await Promise.all([
         fetchQpSubmissionDetail({
@@ -3833,7 +3858,10 @@ function DownloadModal({ paper, cls, onClose, toast }) {
         }),
         fetchReportHeader(),
       ]);
-      sections = normalizeQpDetail(list).sections;
+      const detail = normalizeQpDetail(list);
+      sections = detail.sections;
+      fmt = detail.fmt;
+      line = detail.line;
       reportHeader = header;
     } catch (err) {
       console.error('Could not load paper detail for download', err);
@@ -3845,6 +3873,8 @@ function DownloadModal({ paper, cls, onClose, toast }) {
       asWord: format === 'word',
       sections,
       reportHeader,
+      fmt,
+      line,
     });
     win.document.open();
     win.document.write(html);
@@ -4096,28 +4126,43 @@ function TemplatePreviewModal({ n, onClose, onSelect }) {
   );
 }
 
-/* ── Classic (Template 1) ── */
-function ClassicHeader() {
+/* ── Classic (Template 1) ──
+   `info` (optional) drives real paper data in the live view; omitted in the
+   template-preview modal so it keeps showing the sample layout. */
+function ClassicHeader({ info }) {
+  const d = info || {};
+  const schoolBar = d.school
+    ? `${d.school}${d.campus ? ' — ' + d.campus : ''}`.toUpperCase()
+    : 'THE OXFORD SYSTEM — LAHORE CAMPUS';
+  const examLine = d.examTitle
+    ? [d.examTitle, d.subject, d.className && `Class ${d.className}${d.section ? ` (${d.section})` : ''}`].filter(Boolean).join('  •  ')
+    : 'Annual Examination 2026  •  English (A)  •  Class IV (White)';
+  const subject = d.subject || 'English (A)';
+  const klass   = d.className || 'IV';
+  const time    = d.time || '100 Min';
+  const total   = d.totalMarks ?? 100;
+  const objTxt  = `${d.objMarks ?? 40} Marks${d.objTime ? ` · ${d.objTime} Min` : ''}`;
+  const subjTxt = `${d.subjMarks ?? 60} Marks${d.subjTime ? ` · ${d.subjTime} Min` : ''}`;
   return (
     <>
-      <div className="pg-pp-school-bar">THE OXFORD SYSTEM — LAHORE CAMPUS</div>
-      <div className="pg-pp-exam-line">Annual Examination 2026 &nbsp;•&nbsp; English (A) &nbsp;•&nbsp; Class IV (White)</div>
+      <div className="pg-pp-school-bar">{schoolBar}</div>
+      <div className="pg-pp-exam-line">{examLine}</div>
       <div className="pg-pp-student-grid">
         <div className="pg-pp-student-field">Student Name: _______________________________</div>
         <div className="pg-pp-student-field">Roll No: _______________</div>
-        <div className="pg-pp-student-field">Section: _______________</div>
+        <div className="pg-pp-student-field">Section: {d.section || '_______________'}</div>
         <div className="pg-pp-student-field">Date: __________________</div>
       </div>
       <div className="pg-pp-marks-grid">
-        <div className="pg-pp-marks-cell"><span className="pg-pp-marks-label">Subject</span><span className="pg-pp-marks-val">English (A)</span></div>
-        <div className="pg-pp-marks-cell"><span className="pg-pp-marks-label">Class</span><span className="pg-pp-marks-val">IV</span></div>
-        <div className="pg-pp-marks-cell"><span className="pg-pp-marks-label">Time</span><span className="pg-pp-marks-val">100 Min</span></div>
-        <div className="pg-pp-marks-cell pg-pp-marks-cell--accent"><span className="pg-pp-marks-label">Total Marks</span><span className="pg-pp-marks-val">100</span></div>
-        <div className="pg-pp-marks-cell" style={{ gridColumn: 'span 2' }}><span className="pg-pp-marks-label">Objective</span><span className="pg-pp-marks-val">40 Marks · 40 Min</span></div>
-        <div className="pg-pp-marks-cell" style={{ gridColumn: 'span 2' }}><span className="pg-pp-marks-label">Subjective</span><span className="pg-pp-marks-val">60 Marks · 60 Min</span></div>
+        <div className="pg-pp-marks-cell"><span className="pg-pp-marks-label">Subject</span><span className="pg-pp-marks-val">{subject}</span></div>
+        <div className="pg-pp-marks-cell"><span className="pg-pp-marks-label">Class</span><span className="pg-pp-marks-val">{klass}</span></div>
+        <div className="pg-pp-marks-cell"><span className="pg-pp-marks-label">Time</span><span className="pg-pp-marks-val">{time}</span></div>
+        <div className="pg-pp-marks-cell pg-pp-marks-cell--accent"><span className="pg-pp-marks-label">Total Marks</span><span className="pg-pp-marks-val">{total}</span></div>
+        {(d.showObj ?? true) && <div className="pg-pp-marks-cell" style={{ gridColumn: 'span 2' }}><span className="pg-pp-marks-label">Objective</span><span className="pg-pp-marks-val">{objTxt}</span></div>}
+        {(d.showSubj ?? true) && <div className="pg-pp-marks-cell" style={{ gridColumn: 'span 2' }}><span className="pg-pp-marks-label">Subjective</span><span className="pg-pp-marks-val">{subjTxt}</span></div>}
       </div>
       <div className="pg-pp-meta-bar">
-        <span>Obtained Marks: ____________ / 100</span>
+        <span>Obtained Marks: ____________ / {total}</span>
         <span>Grade: _______ &nbsp;&nbsp; Rank: _______</span>
       </div>
     </>
@@ -4125,18 +4170,29 @@ function ClassicHeader() {
 }
 
 /* ── Modern (Template 2) ── */
-function ModernHeader() {
+function ModernHeader({ info }) {
+  const d = info || {};
+  const school = d.school || 'The Oxford System';
+  const campusLine = d.campus
+    ? `${d.campus}${d.examTitle ? '  ·  ' + d.examTitle : ''}`
+    : 'Lahore Campus  ·  Annual Examination 2026';
+  const classLine = d.className ? `Class ${d.className}${d.section ? `  ·  Section ${d.section}` : ''}` : 'Class IV · Section White';
+  const subject = d.subject || 'English (A)';
+  const total   = d.totalMarks ?? 100;
+  const seal    = (d.school || 'O').trim().charAt(0).toUpperCase() || 'O';
   return (
     <>
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, paddingBottom: 10, marginBottom: 8, borderBottom: '3px solid #1E3A8A' }}>
-        <div style={{ width: 44, height: 44, background: 'linear-gradient(135deg,#DBEAFE,#BFDBFE)', borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, fontWeight: 900, color: '#1E3A8A', flexShrink: 0 }}>O</div>
+        {d.logo
+          ? <img src={d.logo} alt="logo" style={{ width: 44, height: 44, objectFit: 'contain', borderRadius: 10, flexShrink: 0 }} />
+          : <div style={{ width: 44, height: 44, background: 'linear-gradient(135deg,#DBEAFE,#BFDBFE)', borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, fontWeight: 900, color: '#1E3A8A', flexShrink: 0 }}>{seal}</div>}
         <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 14, fontWeight: 800, color: '#0F172A' }}>The Oxford System</div>
-          <div style={{ fontSize: 10.5, color: '#64748B', marginTop: 1 }}>Lahore Campus &nbsp;·&nbsp; Annual Examination 2026</div>
+          <div style={{ fontSize: 14, fontWeight: 800, color: '#0F172A' }}>{school}</div>
+          <div style={{ fontSize: 10.5, color: '#64748B', marginTop: 1 }}>{campusLine}</div>
         </div>
         <div style={{ textAlign: 'right', flexShrink: 0 }}>
-          <div style={{ fontSize: 12, fontWeight: 800, color: '#1E3A8A' }}>Class IV &nbsp;·&nbsp; Section White</div>
-          <div style={{ fontSize: 10.5, color: '#64748B', marginTop: 1 }}>English (A)</div>
+          <div style={{ fontSize: 12, fontWeight: 800, color: '#1E3A8A' }}>{classLine}</div>
+          <div style={{ fontSize: 10.5, color: '#64748B', marginTop: 1 }}>{subject}</div>
         </div>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: 6, fontSize: 10.5, color: '#334155', marginBottom: 8 }}>
@@ -4145,21 +4201,23 @@ function ModernHeader() {
         <div style={{ borderBottom: '1px solid #CBD5E1', paddingBottom: 3 }}>Date: ___________</div>
       </div>
       <div style={{ display: 'flex', gap: 6, marginBottom: 4 }}>
+        {(d.showObj ?? true) && (
         <div style={{ flex: 1, background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 6, padding: '5px 10px', fontSize: 10.5 }}>
           <div style={{ fontSize: 8.5, fontWeight: 700, color: '#93C5FD', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 2 }}>Objective</div>
-          <div style={{ fontWeight: 700, color: '#1E3A8A' }}>40 Marks &nbsp;·&nbsp; 40 Min</div>
-        </div>
+          <div style={{ fontWeight: 700, color: '#1E3A8A' }}>{d.objMarks ?? 40} Marks{d.objTime ? ` · ${d.objTime} Min` : ''}</div>
+        </div>)}
+        {(d.showSubj ?? true) && (
         <div style={{ flex: 1, background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 6, padding: '5px 10px', fontSize: 10.5 }}>
           <div style={{ fontSize: 8.5, fontWeight: 700, color: '#6EE7B7', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 2 }}>Subjective</div>
-          <div style={{ fontWeight: 700, color: '#15803D' }}>60 Marks &nbsp;·&nbsp; 60 Min</div>
-        </div>
+          <div style={{ fontWeight: 700, color: '#15803D' }}>{d.subjMarks ?? 60} Marks{d.subjTime ? ` · ${d.subjTime} Min` : ''}</div>
+        </div>)}
         <div style={{ flex: 1, background: '#1E3A8A', borderRadius: 6, padding: '5px 10px', fontSize: 10.5, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
           <div style={{ fontSize: 8.5, fontWeight: 700, color: '#93C5FD', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 2 }}>Total</div>
-          <div style={{ fontWeight: 800, color: '#fff', fontSize: 13 }}>100</div>
+          <div style={{ fontWeight: 800, color: '#fff', fontSize: 13 }}>{total}</div>
         </div>
       </div>
       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, fontWeight: 600, color: '#64748B', marginTop: 4 }}>
-        <span>Obtained: _______ / 100</span>
+        <span>Obtained: _______ / {total}</span>
         <span>Grade: _______</span>
         <span>Rank: _______</span>
       </div>
@@ -4168,27 +4226,37 @@ function ModernHeader() {
 }
 
 /* ── Formal (Template 3) ── */
-function FormalHeader() {
+function FormalHeader({ info }) {
+  const d = info || {};
+  const schoolName = (d.school || 'THE OXFORD SYSTEM').toUpperCase();
+  const schoolSub  = (d.campus ? d.campus.toUpperCase() : 'LAHORE CAMPUS · ESTABLISHED 2004');
+  const examTitle  = (d.examTitle || 'ANNUAL EXAMINATION — 2026').toUpperCase();
+  const seal       = (d.school || 'OX').replace(/[^A-Za-z]/g, '').slice(0, 2).toUpperCase() || 'OX';
+  const metaCells = [
+    ['SUBJECT', d.subject || 'English (A)'],
+    ['CLASS', d.className ? `${d.className}${d.section ? ` ${d.section}` : ''}` : 'IV White'],
+    ['TOTAL MARKS', String(d.totalMarks ?? 100), true],
+    ['OBJ. MARKS', String(d.objMarks ?? 40)],
+    ['TOTAL TIME', d.time || '100 Min'],
+  ];
   return (
     <div className="pg-pp-formal-wrap">
       <div className="pg-pp-formal-top">
-        <div className="pg-pp-formal-seal"><div className="pg-pp-formal-seal-inner">OX</div></div>
+        <div className="pg-pp-formal-seal">
+          {d.logo
+            ? <img src={d.logo} alt="logo" style={{ width: '100%', height: '100%', objectFit: 'contain', borderRadius: '50%' }} />
+            : <div className="pg-pp-formal-seal-inner">{seal}</div>}
+        </div>
         <div className="pg-pp-formal-school-block">
-          <div className="pg-pp-formal-school-name">THE OXFORD SYSTEM</div>
-          <div className="pg-pp-formal-school-sub">LAHORE CAMPUS &nbsp;·&nbsp; ESTABLISHED 2004</div>
+          <div className="pg-pp-formal-school-name">{schoolName}</div>
+          <div className="pg-pp-formal-school-sub">{schoolSub}</div>
         </div>
         <div className="pg-pp-formal-board-tag">BOARD PATTERN</div>
       </div>
       <div className="pg-pp-formal-divider"></div>
-      <div className="pg-pp-formal-exam-title">ANNUAL EXAMINATION — 2026</div>
+      <div className="pg-pp-formal-exam-title">{examTitle}</div>
       <div className="pg-pp-formal-meta-grid">
-        {[
-          ['SUBJECT', 'English (A)'],
-          ['CLASS', 'IV White'],
-          ['TOTAL MARKS', '100', true],
-          ['OBJ. MARKS', '40'],
-          ['TOTAL TIME', '100 Min'],
-        ].map(([k, v, accent], i) => (
+        {metaCells.map(([k, v, accent], i) => (
           <div key={i} className="pg-pp-formal-meta-cell">
             <div className="pg-pp-formal-meta-label">{k}</div>
             <div className={`pg-pp-formal-meta-val${accent ? ' pg-pp-formal-meta-accent' : ''}`}>{v}</div>
