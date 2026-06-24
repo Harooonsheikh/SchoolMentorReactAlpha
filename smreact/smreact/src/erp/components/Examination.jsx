@@ -1356,6 +1356,7 @@ const loadResVisibility = async (examId = resExamId, classes = examClasses) => {
 
 const handleConfirmPublish = async () => {
   if (!resConfirmPublish) return;
+  if (isOtherSession) { toast('Method not allowed', 'error'); setResConfirmPublish(null); return; }
   const { key, released, cls } = resConfirmPublish;
   const selectedExam = filtered.find(e => e.id === resExamId);
 const branchID = sessionStorage.getItem('branchID');
@@ -1593,6 +1594,7 @@ const rhDownloadCardReport = async (st, r) => {
 
 // ── Result Card Options: Save Preferences → POST ──
 async function saveCardOptions() {
+  if (isOtherSession) { toast('Method not allowed', 'error'); return; }
   try {
     const branchID = sessionStorage.getItem('branchID');
     const token    = sessionStorage.getItem('token');
@@ -1710,18 +1712,26 @@ async function getExamClasses(examId, termId) {
     
     // Transform the data to match your component structure
     const transformedData = (data || []).map(item => ({
-      id: item.id,
-      classID: item.gradeID,      // Note: API returns gradeID
-      sectionID: item.sectionID,
-      sectionName: item.sectionName,
-      gradeName: item.name,        // API returns 'name' for grade name
-      className: `${item.name} - ${item.sectionName}`.trim()
-    }));
-    
-    console.log("Transformed Data:", transformedData); // Debug log
-    setExamClasses(transformedData);
-    return transformedData;
-    
+  id: item.id,
+  classID: item.gradeID,
+  sectionID: item.sectionID,
+  sectionName: item.sectionName,
+  gradeName: item.name,
+  className: `${item.name} - ${item.sectionName}`.trim()
+}));
+
+// Duplicate sectionID hataao — ek section ek baar dikhe
+const seen = new Set();
+const uniqueData = transformedData.filter(item => {
+  const key = `${item.classID}_${item.sectionID}`;
+  if (seen.has(key)) return false;
+  seen.add(key);
+  return true;
+});
+
+console.log("Transformed Data (unique):", uniqueData);
+setExamClasses(uniqueData);
+return uniqueData;
   } catch (error) {
     console.log("Could not load exam classes", error);
     setExamClasses([]);
@@ -2025,6 +2035,7 @@ const dsOpenEdit = async (classKey, className, classID, sectionID) => {
 };
 
 const dsSaveEdit = async (payload) => {
+  if (isOtherSession) { toast('Method not allowed', 'error'); return; }
   const cleaned = payload.rows
     .filter(r => r.subject && r.subject.trim())
     .map(r => ({ 
@@ -2105,6 +2116,7 @@ const dsSaveEdit = async (payload) => {
   }
 };
 const dsRunDelete = async ({ examId, classKey, className, classID, sectionID }) => {
+  if (isOtherSession) { toast('Method not allowed', 'error'); setDsConfirmDel(null); return; }
   try {
     const token = sessionStorage.getItem('token');
     const branchID = sessionStorage.getItem('branchID');
@@ -2160,7 +2172,7 @@ const dsRunDelete = async ({ examId, classKey, className, classID, sectionID }) 
 // Update the dsRunCopy function to only copy missing subjects
 const dsRunCopy = async () => {
   if (!dsConfirmCopy) return;
-  
+  if (isOtherSession) { toast('Method not allowed', 'error'); setDsConfirmCopy(null); return; }
   const { examId, sourceKey } = dsConfirmCopy;
   const sourceRows = dateSheets[examId]?.[sourceKey];
   
@@ -2357,6 +2369,7 @@ const dsRunCopy = async () => {
   const sylSaveEdit = async subjects => {
     const ed = sylEditing;
     if (!ed) return;
+    if (isOtherSession) { toast('Method not allowed', 'error'); setSylEditing(null); return; }
     const today = new Date().toLocaleDateString('en-GB');
     // Local fallback (agar GET fail ho)
     const localSaved = subjects.map(s => ({
@@ -2391,6 +2404,7 @@ const dsRunCopy = async () => {
     setSylEditing(null);
   };
 const sylRunDelete = async ({ examId, classKey, classID, sectionID }) => {
+  if (isOtherSession) { toast('Method not allowed', 'error'); setSylConfirmDel(null); return; }
   if (sylCurrentExam) {
     const { ok } = await deleteSyllabusByAllIds(
       classID,
@@ -2565,6 +2579,7 @@ async function getExamsByTerm(termID) {
 
 // Update handleSaveExam function
 async function handleSaveExam({ payloads, name, from, to, classes, deletedCount }) {
+  if (isOtherSession) { toast('Method not allowed', 'error'); return; }
   try {
     const token = sessionStorage.getItem('token');
     
@@ -2675,6 +2690,7 @@ async function getExamsByTerm(termID) {
   }
 }
 const handleDeleteExam = async (exam) => {
+  if (isOtherSession) { toast('Method not allowed', 'error'); return; }
   console.log("Deleting exam:", exam);
 
   try {
@@ -3060,7 +3076,10 @@ useEffect(() => {
 </div>
           <div className="exam-action-bar">
             <Tooltip text="Create a new exam for this term">
-              <button className="exam-add-btn" onClick={openAdd}>
+              <button className="exam-add-btn" onClick={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } openAdd(); }}
+                disabled={isOtherSession}
+                title={isOtherSession ? 'Editing is only allowed for the current session' : undefined}
+                style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
                 <i className="fa-solid fa-plus"></i> Add Exam
               </button>
             </Tooltip>
@@ -3117,7 +3136,9 @@ useEffect(() => {
                       </div>
                       <div className="exam-td" onClick={e => e.stopPropagation()}>
                         <Tooltip text={`Edit ${ex.name}`}>
-                          <button className="exam-edit-btn" onClick={() => openEdit(ex)}>
+                          <button className="exam-edit-btn" onClick={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } openEdit(ex); }}
+                            disabled={isOtherSession}
+                            style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
                             <i className="fa-solid fa-pen-to-square"></i> Edit
                           </button>
                         </Tooltip>
@@ -3138,7 +3159,9 @@ useEffect(() => {
                      <Tooltip text={`Delete ${ex.name}`}>
   <button
     className="exam-del-btn"
-    onClick={() => setConfirmDel(ex)}
+    disabled={isOtherSession}
+    style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+    onClick={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } setConfirmDel(ex); }}
   >
     <i className="fa-solid fa-trash"></i>
   </button>
@@ -3326,7 +3349,10 @@ useEffect(() => {
                   <div className="ds-td" onClick={e => e.stopPropagation()}>
                    <Tooltip text={`Edit date sheet for ${className}`}>
   <span>
-    <button className="ds-edit-btn" onClick={() => dsOpenEdit(key, className, cls.classID, cls.sectionID)}>
+    <button className="ds-edit-btn"
+      disabled={isOtherSession}
+      style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+      onClick={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } dsOpenEdit(key, className, cls.classID, cls.sectionID); }}>
       <i className="fa-solid fa-pen-to-square"></i> Edit
     </button>
   </span>
@@ -3339,10 +3365,14 @@ useEffect(() => {
                       </button>
                     </Tooltip>
 <Tooltip text={`Copy ${className}'s date sheet to other classes (only subjects those classes also have)`}>
-  <button className="ds-copy-row-btn" onClick={() => {
-    if (!hasDates) { 
-      toast('No date sheet to copy', 'warning'); 
-      return; 
+  <button className="ds-copy-row-btn"
+    disabled={isOtherSession}
+    style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+    onClick={() => {
+    if (isOtherSession) { toast('Method not allowed', 'error'); return; }
+    if (!hasDates) {
+      toast('No date sheet to copy', 'warning');
+      return;
     }
     setDsConfirmCopy({
       examId: dsExamId, 
@@ -3359,15 +3389,17 @@ useEffect(() => {
                   </div>
                   <div className="ds-td ds-actions-cell" style={{ justifyContent: 'flex-end' }} onClick={e => e.stopPropagation()}>
                     <Tooltip text={`Delete date sheet for ${className}`}>
-  <button 
-    className="ds-del-btn" 
-    onClick={() => setDsConfirmDel({ 
-      examId: dsExamId, 
-      classKey: key, 
+  <button
+    className="ds-del-btn"
+    disabled={isOtherSession}
+    style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+    onClick={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } setDsConfirmDel({
+      examId: dsExamId,
+      classKey: key,
       className: className,
       classID: cls.classID,    // ← Add this
       sectionID: cls.sectionID  // ← Add this
-    })}
+    }); }}
   >
     <i className="fa-solid fa-trash"></i>
   </button>
@@ -3539,7 +3571,10 @@ useEffect(() => {
                 <Tooltip text={`Edit syllabus for ${className}`}>
 <button
   className="syl-edit-btn"
+  disabled={isOtherSession}
+  style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
   onClick={() => {
+    if (isOtherSession) { toast('Method not allowed', 'error'); return; }
     getSyllabusSubjects(cls.classID , cls.sectionID);
     sylOpenEdit(key, className, cls.classID, cls.sectionID);
   }}
@@ -3556,7 +3591,7 @@ useEffect(() => {
               </div>
               <div className="syl-td" style={{ gap: 6, justifyContent: 'flex-end' }} onClick={e => e.stopPropagation()}>
                 <Tooltip text={`Delete syllabus for ${className}`}>
-<button className="syl-del-btn" onClick={() => setSylConfirmDel({ examId: sylExamId, classKey: key, className, classID: cls.classID, sectionID: cls.sectionID })}>                    <i className="fa-solid fa-trash"></i>
+<button className="syl-del-btn" disabled={isOtherSession} style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined} onClick={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } setSylConfirmDel({ examId: sylExamId, classKey: key, className, classID: cls.classID, sectionID: cls.sectionID }); }}>                    <i className="fa-solid fa-trash"></i>
                   </button>
                 </Tooltip>
                 <Tooltip text={isOpen ? 'Hide syllabus details' : 'Show syllabus details'}>
@@ -3663,7 +3698,10 @@ useEffect(() => {
                     <button className="export-btn pdf" onClick={() => setRsReportReq(true)}>
                       <i className="fa-solid fa-file-pdf"></i> PDF
                     </button>
-                    <button className="rs-edit-btn" onClick={() => setRsModalOpen(true)}>
+                    <button className="rs-edit-btn" onClick={() => setRsModalOpen(true)}
+                      disabled={isOtherSession}
+                      title={isOtherSession ? 'Editing is only allowed for the current session' : undefined}
+                      style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
                       <i className="fa-solid fa-pen-to-square"></i> Edit
                     </button>
                   </div>
@@ -3906,7 +3944,10 @@ useEffect(() => {
                           <i className="fa-solid fa-circle-info" style={{ color: '#1E40AF', marginRight: 5 }}></i>
                           Changes apply to both Classic and Insight templates.
                         </div>
-                        <button className="rco-save-btn" onClick={saveCardOptions}>
+                        <button className="rco-save-btn" onClick={saveCardOptions}
+                          disabled={isOtherSession}
+                          title={isOtherSession ? 'Editing is only allowed for the current session' : undefined}
+                          style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
                           <i className="fa-solid fa-floppy-disk"></i> Save Preferences
                         </button>
                       </div>
@@ -4094,7 +4135,9 @@ onClick={() => {
   <Tooltip text={isRel ? 'Unpublish this class result' : 'Publish this class result'}>
 <button
   className={`res-publish-btn${isRel ? ' released' : ''}`}
-  onClick={e => { e.stopPropagation(); togglePublish(key, className, isRel, cls); }}
+  disabled={isOtherSession}
+  style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+  onClick={e => { e.stopPropagation(); if (isOtherSession) { toast('Method not allowed', 'error'); return; } togglePublish(key, className, isRel, cls); }}
 >
   <i className={`fa-solid ${isRel ? 'fa-eye-slash' : 'fa-paper-plane'}`}></i>
   {isRel ? 'Unpublish' : 'Publish Result'}
@@ -4106,7 +4149,10 @@ onClick={() => {
                    <Tooltip text="Edit total marks for each subject">
   <button
     className="res-marks-btn"
+    disabled={isOtherSession}
+    style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
     onClick={async () => {
+      if (isOtherSession) { toast('Method not allowed', 'error'); return; }
       const fetchedSubjects = await getSyllabusSubjects(
   cls.classID,
   cls.sectionID
@@ -4298,9 +4344,12 @@ onClick={e => {
             <Tooltip text="Update marks for this student">
               <button
                 className="res-action-btn"
+                disabled={isOtherSession}
+                style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
 onClick={async () => {
+  if (isOtherSession) { toast('Method not allowed', 'error'); return; }
   const subjects = await getSyllabusSubjects(cls.classID, cls.sectionID);
-  setResUpdateCtx({ 
+  setResUpdateCtx({
     examId: resExamId, 
     key, 
     studentId: st.id,
@@ -4319,7 +4368,9 @@ onClick={async () => {
            <Tooltip text="Add or edit remarks for this student">
   <button
     className="res-action-btn remarks"
-    onClick={() => fetchStudentRemarks(cls, st , key)}
+    disabled={isOtherSession}
+    style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+    onClick={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } fetchStudentRemarks(cls, st , key); }}
   >
     <i className="fa-solid fa-comment-dots"></i> Remarks
   </button>
@@ -4385,7 +4436,9 @@ onClick={async () => {
                     <button
                       className="cbr-tab"
                       type="button"
-                      onClick={() => setCbrCreateOpen(true)}
+                      disabled={isOtherSession}
+                      style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                      onClick={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } setCbrCreateOpen(true); }}
                     >
                       <i className="fa-solid fa-plus"></i> Create New
                     </button>
@@ -4497,7 +4550,9 @@ onClick={async () => {
                                     <Tooltip text={cr.published ? 'Unpublish this combined result' : 'Publish this combined result'}>
                                       <button
                                         className={`res-publish-btn${cr.published ? ' released' : ''}`}
-                                        onClick={e => { e.stopPropagation(); setCbrConfirmPublish({ classId: cr.id, combinedResultID: cr.combinedResultID, classID: cr.classID, sectionID: cr.sectionID, className: cr.cls, published: cr.published }); }}
+                                        disabled={isOtherSession}
+                                        style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                                        onClick={e => { e.stopPropagation(); if (isOtherSession) { toast('Method not allowed', 'error'); return; } setCbrConfirmPublish({ classId: cr.id, combinedResultID: cr.combinedResultID, classID: cr.classID, sectionID: cr.sectionID, className: cr.cls, published: cr.published }); }}
                                       >
                                         <i className={`fa-solid ${cr.published ? 'fa-eye-slash' : 'fa-paper-plane'}`}></i>
                                         {cr.published ? 'Unpublish' : 'Publish'}
@@ -4521,8 +4576,9 @@ onClick={async () => {
                                     </button></Tooltip>
                                     <Tooltip text="Delete combined result"><button
                                       className="ds-del-btn"
-                                     
-                                      onClick={e => { e.stopPropagation(); setCbrConfirmDelete({ classId: cr.id, combinedResultID: cr.combinedResultID, classID: cr.classID, sectionID: cr.sectionID, className: cr.cls }); }}
+                                      disabled={isOtherSession}
+                                      style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                                      onClick={e => { e.stopPropagation(); if (isOtherSession) { toast('Method not allowed', 'error'); return; } setCbrConfirmDelete({ classId: cr.id, combinedResultID: cr.combinedResultID, classID: cr.classID, sectionID: cr.sectionID, className: cr.cls }); }}
                                     >
                                       <i className="fa-solid fa-trash"></i>
                                     </button></Tooltip>
@@ -5705,6 +5761,7 @@ onClick={async () => {
                 <button
                   className={`confirm-btn confirm-btn--confirm${cbrConfirmPublish.published ? '' : ' primary-style'}`}
                   onClick={async () => {
+                    if (isOtherSession) { toast('Method not allowed', 'error'); setCbrConfirmPublish(null); return; }
                     const { classId, combinedResultID, classID, sectionID, published } = cbrConfirmPublish;
                     try {
                       await cbrApi.publishCombinedResult({ combinedResultID, classID, sectionID, isPublished: !published });
@@ -5754,6 +5811,7 @@ onClick={async () => {
                 <button
                   className="confirm-btn confirm-btn--confirm"
                   onClick={async () => {
+                    if (isOtherSession) { toast('Method not allowed', 'error'); setCbrConfirmDelete(null); return; }
                     const { classId, combinedResultID, classID, sectionID } = cbrConfirmDelete;
                     try {
                       await cbrApi.deleteClassRow({ combinedResultID, gradeID: classID, sectionID });
