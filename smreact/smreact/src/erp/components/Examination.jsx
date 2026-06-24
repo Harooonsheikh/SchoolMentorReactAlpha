@@ -700,6 +700,7 @@ const [subjects, setSubjects] = useState([]);
   /* When a single-assessment card opens, load that student's real per-subject marks. */
   useEffect(() => {
     if (!resCardCtx) { setResCardMarks(null); return undefined; }
+    setResCardMarks(null); // pehle clear — sirf API data dikhe, static/stale flash na ho
     const { classID, sectionID, selectExam, termID, studentId } = resCardCtx;
     let cancelled = false;
     (async () => {
@@ -765,6 +766,7 @@ const [subjects, setSubjects] = useState([]);
   /* When a student's card opens, load the real per-subject main-exam marks. */
   useEffect(() => {
     if (!cbrCardCtx) { setCbrCardMarks(null); return undefined; }
+    setCbrCardMarks(null); // pehle clear — sirf API data dikhe, static/stale flash na ho
     const grp = cbrResults.find(g => g.id === cbrCardCtx.classId);
     const st  = grp?.students.find(s => s.rollNo === cbrCardCtx.studentRollNo);
     if (!grp || !st) return undefined;
@@ -895,6 +897,7 @@ const [subjects, setSubjects] = useState([]);
      (Single assessment card bhi yahi marks API use karta hai). */
   useEffect(() => {
     if (!rhCardCtx) { setRhCardMarks(null); return undefined; }
+    setRhCardMarks(null); // pehle clear karo taa-ke purana/static data flash na ho (sirf API data dikhe)
     const { result, student } = rhCardCtx;
     const classID    = result?.classID   ?? student?.gradeId   ?? student?.classID;
     const sectionID  = result?.sectionID ?? student?.sectionId ?? student?.sectionID;
@@ -1324,6 +1327,33 @@ async function fetchGradeSetup() {
     setLoadingGrades(false);
   }
 }
+// Single Assessment visibility (publish/release state) GET API se reload — button state update.
+const loadResVisibility = async (examId = resExamId, classes = examClasses) => {
+  const selectedExam = filtered.find(ex => ex.id === examId);
+  if (!selectedExam) return;
+  try {
+    const branchID = sessionStorage.getItem('branchID');
+    const token = sessionStorage.getItem('token');
+    const params = new URLSearchParams({
+      termID: String(selectedExam.termID), examID: String(selectedExam.selectExam), branchID: String(branchID),
+    });
+    const response = await fetch(buildUrl(`/api/sauploadmarksGetvisibility?${params.toString()}`),
+      { method: 'GET', headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } });
+    const data = await response.json();
+    const visMap = {};
+    if (Array.isArray(data)) {
+      data.forEach(item => {
+        (classes || []).forEach((cls, i) => {
+          if (Number(cls.sectionID) === Number(item.sectionID) && Number(cls.classID) === Number(item.classID)) {
+            visMap[`rcls_${examId}_${cls.sectionID}_${i}`] = item.isResultVisibleToParents;
+          }
+        });
+      });
+    }
+    setExamVisibilityMap(prev => ({ ...prev, ...visMap }));
+  } catch (error) { console.error('Error fetching visibility:', error); }
+};
+
 const handleConfirmPublish = async () => {
   if (!resConfirmPublish) return;
   const { key, released, cls } = resConfirmPublish;
@@ -1361,6 +1391,9 @@ const branchID = sessionStorage.getItem('branchID');
       next[resExamId] = examMap;
       return next;
     });
+
+    // Publish/unpublish ke baad visibility GET API se fresh state lo — button (Released/Publish) turant update.
+    await loadResVisibility();
 
     toast(released ? 'Result unpublished' : 'Result published!', 'success');
   } catch (err) {
@@ -1510,6 +1543,53 @@ async function loadCardOptions() {
     console.error('Could not load result card options', err);
   }
 }
+
+// Exam History row ke Download icon ke liye: View jaise REAL data (subjects/marks/remarks/finalRemark)
+// load karke us se report banao (mock nahi).
+const rhDownloadCardReport = async (st, r) => {
+  loadCardOptions();
+  const classID   = r?.classID   ?? st?.gradeId   ?? st?.classID;
+  const sectionID = r?.sectionID ?? st?.sectionId ?? st?.sectionID;
+  const examID    = r?.selectExam;
+  const termID    = r?.termID;
+  const studentId = st?.id;
+  const token     = sessionStorage.getItem('token');
+  const branchID  = sessionStorage.getItem('branchID');
+  const headers   = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
+  let subjectNames = [], totals = {}, obtained = {}, remarks = {}, finalRemark = '';
+  try {
+    const subs = (await getSyllabusSubjects(classID, sectionID).catch(() => [])) || [];
+    subjectNames = subs.map(s => s.subjectName);
+    await Promise.all(subs.map(async su => {
+      try {
+        const p = new URLSearchParams({
+          classID: String(classID), termID: String(termID ?? ''), ExamID: String(examID),
+          SubjectID: String(su.subjectID), StudentID: String(studentId), sectionID: String(sectionID), pageNo: '1',
+        });
+        const rr = await fetch(buildUrl(`/api/getsauploadmarksbyclassandtermandexamandsubject?${p}`), { headers });
+        const d = await rr.json();
+        const rec = Array.isArray(d) ? d[0] : (d?.data?.[0] || null);
+        const name = su.subjectName || `Subject ${su.subjectID}`;
+        obtained[name] = Number(rec?.obtainMarks ?? rec?.obtainedMarks ?? 0);
+        totals[name]   = Number(rec?.totalMarks ?? su.totalMarks ?? 0);
+        if (rec?.remarks) remarks[name] = rec.remarks;
+      } catch { /* skip subject */ }
+    }));
+    try {
+      const fp = new URLSearchParams({
+        branchID: String(branchID), classID: String(classID), sectionID: String(sectionID),
+        examID: String(examID), termID: String(termID ?? ''), studentID: String(studentId), pageNo: '1', pageCount: '20',
+      });
+      const fr = await fetch(buildUrl(`/api/getremarksbystudentfilters?${fp}`), { headers });
+      const fd = await fr.json();
+      const frec = Array.isArray(fd?.data) ? fd.data[0] : (Array.isArray(fd) ? fd[0] : null);
+      finalRemark = frec?.remarks || '';
+    } catch { /* no final remark */ }
+  } catch (e) { console.error('Could not load report data', e); }
+  // Report builders branch info (header/footer) ke liye branchSchool set karo, phir REAL data se report.
+  rhReportSchool = branchSchool || null;
+  rhBuildSingleCardReport(st, r, true, { subjects: subjectNames, totals, obtained, remarks, finalRemark });
+};
 
 // ── Result Card Options: Save Preferences → POST ──
 async function saveCardOptions() {
@@ -1768,8 +1848,8 @@ const sylPickExam = async (id) => {
     }
   }
 };
-const loadResClassData = async (key, cls) => {
-  if (resStudentData[key]) return; // already loaded
+const loadResClassData = async (key, cls, force = false) => {
+  if (!force && resStudentData[key]) return; // already loaded (force=true par dobara fetch)
   setResLoadingKey(key);
   try {
     const branchID = sessionStorage.getItem('branchID');
@@ -1930,14 +2010,13 @@ const dsOpenEdit = async (classKey, className, classID, sectionID) => {
   
   // Transform subjects to the format needed for the datalist
   const subjectList = fetchedSubjects.map(s => s.subjectName);
-    const selectedExam = filtered.find(ex => ex.id === dsExamId);
-  const selectExamValue = selectedExam ? selectedExam.selectExam : dsExamId;
-  
-  setDsEditing({ 
-    examId: selectExamValue, 
-    classKey, 
-    className, 
-    rows, 
+  setDsEditing({
+    // examId = dsExamId (exam id) rakho — table dateSheets[dsExamId] se read karta hai.
+    // (selectExam getDateSheetData/save ke andar id se resolve ho jata hai.)
+    examId: dsExamId,
+    classKey,
+    className,
+    rows,
     termID: selectedTermId  ,
     subjects: subjectList,
     classID: classID,
@@ -2003,16 +2082,21 @@ const dsSaveEdit = async (payload) => {
     });
     
     await Promise.all(savePromises);
-    
-    // Also update local state
+
+    // Save ke baad GET API se FRESH data lo (backend IDs + status turant update) — page refresh ni karna parta.
+    let freshRows = cleaned;
+    try {
+      const r = await getDateSheetData(payload.classID, payload.sectionID, payload.examId, selectedTermId);
+      if (Array.isArray(r) && r.length) freshRows = r;
+    } catch (e) { console.error('Datesheet refresh failed:', e); }
     setDateSheets(prev => ({
       ...prev,
-      [payload.examId]: { 
-        ...(prev[payload.examId] || {}), 
-        [payload.classKey]: cleaned 
+      [payload.examId]: {
+        ...(prev[payload.examId] || {}),
+        [payload.classKey]: freshRows
       },
     }));
-    
+
     toast('Date sheet saved successfully!', 'success');
     setDsEditing(null);
   } catch (error) {
@@ -2054,17 +2138,14 @@ const dsRunDelete = async ({ examId, classKey, className, classID, sectionID }) 
     const data = await response.json();
     
     if (response.ok) {
-      // Also update local state after successful API call
-      setDateSheets(prev => {
-        const next = { ...prev };
-        if (next[examId]) { 
-          const c = { ...next[examId] }; 
-          delete c[classKey]; 
-          next[examId] = c; 
-        }
-        return next;
-      });
-      
+      // Delete ke baad GET API se FRESH data lo (status turant update) — page refresh ni karna parta.
+      let freshRows = [];
+      try { freshRows = await getDateSheetData(classID, sectionID, examId, selectedTermId); } catch (e) { console.error('Datesheet delete-refresh failed:', e); }
+      setDateSheets(prev => ({
+        ...prev,
+        [examId]: { ...(prev[examId] || {}), [classKey]: Array.isArray(freshRows) ? freshRows : [] },
+      }));
+
       toast('Date sheet deleted successfully!', 'success');
     } else {
       toast(data.message || 'Failed to delete date sheet', 'error');
@@ -2189,29 +2270,30 @@ const dsRunCopy = async () => {
       
       try {
         await Promise.all(savePromises);
-        
-        // Update local state
+
+        // Copy ke baad target class ka FRESH datesheet GET karo (backend IDs + status turant update).
+        let freshRows = null;
+        try {
+          freshRows = await getDateSheetData(targetCls.classID, targetCls.sectionID, examId, selectedTermId);
+        } catch (e) { console.error('Datesheet copy-refresh failed:', e); }
         setDateSheets(prev => {
           const next = { ...prev };
           const examData = { ...(next[examId] || {}) };
-          const existingTargetRows = examData[targetKey] || [];
-          
-          // Merge existing rows with new rows (avoid duplicates)
-          const mergedRows = [...existingTargetRows];
-          rowsToCopy.forEach(rowToCopy => {
-            const exists = mergedRows.some(r => 
-              r.subject.toLowerCase().trim() === rowToCopy.subject.toLowerCase().trim()
-            );
-            if (!exists) {
-              mergedRows.push({ ...rowToCopy });
-            }
-          });
-          
-          examData[targetKey] = mergedRows;
+          if (Array.isArray(freshRows) && freshRows.length) {
+            examData[targetKey] = freshRows;
+          } else {
+            // fallback: local merge (avoid duplicates)
+            const mergedRows = [...(examData[targetKey] || [])];
+            rowsToCopy.forEach(rowToCopy => {
+              const exists = mergedRows.some(r => r.subject.toLowerCase().trim() === rowToCopy.subject.toLowerCase().trim());
+              if (!exists) mergedRows.push({ ...rowToCopy });
+            });
+            examData[targetKey] = mergedRows;
+          }
           next[examId] = examData;
           return next;
         });
-        
+
         results.push({
           className: `${targetCls.gradeName} - ${targetCls.sectionName}`,
           copiedCount: rowsToCopy.length,
@@ -2272,19 +2354,38 @@ const dsRunCopy = async () => {
     : ALL_SUBJECTS.slice(0, 5).map(s => ({ subject: s, content: '', updatedAt: '—' }));
   setSylEditing({ examId: sylExamId, classKey, className, classID, sectionID, subjects });
 };
-  const sylSaveEdit = subjects => {
-    if (!sylEditing) return;
+  const sylSaveEdit = async subjects => {
+    const ed = sylEditing;
+    if (!ed) return;
     const today = new Date().toLocaleDateString('en-GB');
-    const saved = subjects.map(s => ({
+    // Local fallback (agar GET fail ho)
+    const localSaved = subjects.map(s => ({
       subject: s.subject,
       content: s.content || '',
-      updatedAt: (s.content || '').replace(/<[^>]+>/g, '').trim()
-        ? today
-        : (s.updatedAt || '—'),
+      updatedAt: (s.content || '').replace(/<[^>]+>/g, '').trim() ? today : (s.updatedAt || '—'),
     }));
+    // Save ke baad GET API se FRESH syllabus lo (content + status turant update) — page refresh ni karna parta.
+    let freshRows = localSaved;
+    try {
+      const rows = await getExamSyllabusByClassAndTerms(ed.classID, ed.sectionID, sylCurrentExam?.selectExam, selectedTermId, 1);
+      if (Array.isArray(rows) && rows.length) {
+        const seen = new Set();
+        freshRows = rows.reduce((acc, r) => {
+          const dk = String(r.subjectName ?? r.subjectID ?? r.subjectDisplayName ?? '');
+          if (seen.has(dk)) return acc;
+          seen.add(dk);
+          acc.push({
+            subject: r.subjectDisplayName || '',
+            content: r.subjectDetails || '',
+            updatedAt: r.updatedAt || r.UpdatedOn || '—',
+          });
+          return acc;
+        }, []);
+      }
+    } catch (e) { console.error('Syllabus refresh failed:', e); }
     setSyllabusData(prev => ({
       ...prev,
-      [sylEditing.examId]: { ...(prev[sylEditing.examId] || {}), [sylEditing.classKey]: saved },
+      [ed.examId]: { ...(prev[ed.examId] || {}), [ed.classKey]: freshRows },
     }));
     toast('Syllabus saved successfully!', 'success');
     setSylEditing(null);
@@ -2303,12 +2404,25 @@ const sylRunDelete = async ({ examId, classKey, classID, sectionID }) => {
       return;
     }
   }
-  // Clear local cache so the row reflects the deletion
-  setSyllabusData(prev => {
-    const next = { ...prev };
-    if (next[examId]) { const c = { ...next[examId] }; delete c[classKey]; next[examId] = c; }
-    return next;
-  });
+  // Delete ke baad GET API se FRESH syllabus lo (status turant update) — page refresh ni karna parta.
+  let freshRows = [];
+  try {
+    const rows = await getExamSyllabusByClassAndTerms(classID, sectionID, sylCurrentExam?.selectExam, selectedTermId, 1);
+    if (Array.isArray(rows) && rows.length) {
+      const seen = new Set();
+      freshRows = rows.reduce((acc, r) => {
+        const dk = String(r.subjectName ?? r.subjectID ?? r.subjectDisplayName ?? '');
+        if (seen.has(dk)) return acc;
+        seen.add(dk);
+        acc.push({ subject: r.subjectDisplayName || '', content: r.subjectDetails || '', updatedAt: r.updatedAt || r.UpdatedOn || '—' });
+        return acc;
+      }, []);
+    }
+  } catch (e) { console.error('Syllabus delete-refresh failed:', e); }
+  setSyllabusData(prev => ({
+    ...prev,
+    [examId]: { ...(prev[examId] || {}), [classKey]: freshRows },
+  }));
   setSylConfirmDel(null);
   toast('Syllabus deleted', 'info');
 };
@@ -3473,7 +3587,7 @@ useEffect(() => {
                   </div>
                   {hasSyl ? data.map((s, si) => {
                     const plainAll = (s.content || '').replace(/<[^>]+>/g, '').trim();
-                    const plain    = plainAll ? plainAll.substring(0, 60) + (plainAll.length > 60 ? '…' : '') : '—';
+                    const plain    = plainAll || '—';   // poora content dikhao (truncate nahi)
                     const added    = plainAll.length > 0;
                     return (
                       <div key={si} className="syl-subj-row">
@@ -3483,7 +3597,11 @@ useEffect(() => {
                         <div className="syl-subj-td name">
                           <div className="syl-subj-icon"><i className="fa-solid fa-book-open"></i></div>{s.subject}
                         </div>
-                        <div className="syl-subj-td"><span className="syl-summary-text">{plain}</span></div>
+                        <div className="syl-subj-td">
+                          {added
+                            ? <div className="syl-summary-html" dangerouslySetInnerHTML={{ __html: s.content }} />
+                            : <span className="syl-summary-text">—</span>}
+                        </div>
                         <div className="syl-subj-td">
                           <span className={`syl-subj-status ${added ? 'completed' : 'pending'}`}>
                             <span className="dot"></span>{added ? 'Added' : 'Not Added'}
@@ -4209,7 +4327,7 @@ onClick={async () => {
             <Tooltip text="View this student's result card">
               <button
                 className="res-action-btn view"
-                onClick={() => { loadCardOptions(); setResCardCtx({ examId: resExamId, key, studentId: st.id, className, classID: cls.classID, sectionID: cls.sectionID, selectExam: resCurrentExam?.selectExam || 0, termID: selectedTermId, student: st }); }}
+                onClick={() => { setResCardMarks(null); loadCardOptions(); setResCardCtx({ examId: resExamId, key, studentId: st.id, className, classID: cls.classID, sectionID: cls.sectionID, selectExam: resCurrentExam?.selectExam || 0, termID: selectedTermId, student: st }); }}
               >
                 <i className="fa-solid fa-eye"></i> Card
               </button>
@@ -4493,7 +4611,7 @@ onClick={async () => {
                                                     <Tooltip text="View combined result card">
                                                       <button
                                                         className="res-action-btn view"
-                                                        onClick={() => { loadCardOptions(); setCbrCardCtx({ groupId: grp.name, classId: cr.id, studentRollNo: st.rollNo }); }}
+                                                        onClick={() => { setCbrCardMarks(null); loadCardOptions(); setCbrCardCtx({ groupId: grp.name, classId: cr.id, studentRollNo: st.rollNo }); }}
                                                       >
                                                         <i className="fa-solid fa-eye"></i> Card
                                                       </button>
@@ -4637,9 +4755,6 @@ onClick={async () => {
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: 20, fontWeight: 900, color: '#fff' }}>{st.name}</div>
                         <div style={{ fontSize: 12.5, color: 'rgba(255,255,255,.75)', marginTop: 2 }}>{st.father} · {st.cls}</div>
-                        <div style={{ fontSize: 11.5, color: 'rgba(255,255,255,.6)', marginTop: 3 }}>
-                          Roll: {st.rollNo} · Adm: {st.admission} · Session: {st.session}
-                        </div>
                       </div>
                       <div style={{ textAlign: 'center', flexShrink: 0 }}>
                         <div style={{ fontSize: 38, fontWeight: 900, color: '#fff', lineHeight: 1 }}>{avgGrade}</div>
@@ -4768,7 +4883,7 @@ onClick={async () => {
                                       <Tooltip text="View result card">
                                         <button
                                           className="res-action-btn view"
-                                          onClick={() => { loadCardOptions(); setRhCardCtx({ student: st, result: r }); }}
+                                          onClick={() => { setRhCardMarks(null); loadCardOptions(); setRhCardCtx({ student: st, result: r }); }}
                                           style={{ padding: '6px 11px', fontSize: 11 }}
                                         >
                                           <i className="fa-solid fa-eye"></i> View
@@ -4777,7 +4892,7 @@ onClick={async () => {
                                       <Tooltip text="Download result card report">
                                         <button
                                           className="res-download-btn"
-                                          onClick={() => setRhReportReq({ student: st, type: 'card', result: r })}
+                                          onClick={() => rhDownloadCardReport(st, r)}
                                           style={{ width: 30, height: 30 }}
                                         >
                                           <i className="fa-solid fa-download"></i>
@@ -5248,7 +5363,8 @@ onClick={async () => {
       {dsReportReq && (
         <DsReportPicker
           req={dsReportReq}
-          ex={dsCurrentExam}
+          /* Report mein classes wahi sequence mein aayein jo table (examClasses) mein hai. */
+          ex={dsCurrentExam ? { ...dsCurrentExam, classes: examClasses } : dsCurrentExam}
           dateSheets={dateSheets}
           term={dsTerm}
           branchSchool={branchSchool}
@@ -5307,7 +5423,8 @@ onClick={async () => {
       {sylReportReq && (
         <SylReportPicker
           req={sylReportReq}
-          ex={sylCurrentExam}
+          /* Report mein classes wahi sequence mein aayein jo table (examClasses) mein hai. */
+          ex={sylCurrentExam ? { ...sylCurrentExam, classes: examClasses } : sylCurrentExam}
           syllabusData={syllabusData}
           term={sylTerm}
           branchSchool={branchSchool}
@@ -5405,8 +5522,11 @@ onClick={async () => {
       selectedTermId={resUpdateCtx.termID}
       onClose={() => setResUpdateCtx(null)}
       onSave={payload => {
+        const ctx = resUpdateCtx;
         toast('Marks saved!', 'success');
         setResUpdateCtx(null);
+        // Marks save ke baad us class ka data GET APIs se dobara load karo (status/marks turant update).
+        if (ctx?.key) loadResClassData(ctx.key, { classID: ctx.classID, sectionID: ctx.sectionID }, true);
       }}
       absentMode={rsAbsentMode}
       toast={toast}
@@ -5417,6 +5537,7 @@ onClick={async () => {
       {rhReportReq && (
         <RhReportPicker
           req={rhReportReq}
+          branchSchool={branchSchool}
           onClose={() => setRhReportReq(null)}
           toast={toast}
         />
@@ -5425,7 +5546,8 @@ onClick={async () => {
       {/* ── Result History — per-exam Card viewer ── */}
       {rhCardCtx && (() => {
         const { student, result } = rhCardCtx;
-        // Real per-subject record (rhCardMarks effect se load hua) — single assessment card jaisa.
+        // Modal hamesha khulta hai; data load hone tak card area mein loader (static/mock data NAHI).
+        const cardLoading = !rhCardMarks;
         const cardStudent = {
           id: student.id,
           rollNo: student.rollNo,
@@ -5439,10 +5561,12 @@ onClick={async () => {
         };
         const cardRd = {
           released: false,
-          totalMarks: (rhCardMarks && Object.keys(rhCardMarks.totals).length) ? rhCardMarks.totals : { ...RES_DEFAULT_TOTALS },
-          subjects: rhCardMarks?.subjects,
+          totalMarks: rhCardMarks?.totals || {},
+          subjects: rhCardMarks?.subjects || [],
         };
         const cardEx = { name: result.exam, classes: [student.cls] };
+        // Result History card par Roll Number nahi dikhana (static/dummy hota hai) → uska toggle off.
+        const rhRcoGeneral = rcoGeneral.map(o => o.label === 'Show Student Roll Number' ? { ...o, on: false } : o);
         return (
           <ResultCardViewer
             student={cardStudent}
@@ -5451,12 +5575,13 @@ onClick={async () => {
             school={branchSchool}
             grades={rsGrades}
             template={rcTemplate}
-            rcoGeneral={rcoGeneral}
+            rcoGeneral={rhRcoGeneral}
             rcoSig={rcoSig}
             rsSigs={rsSigs}
             rsAbsentMode={rsAbsentMode}
             onClose={() => setRhCardCtx(null)}
             toast={toast}
+            loading={cardLoading}
             singleOnly
           />
         );
@@ -5518,8 +5643,8 @@ onClick={async () => {
           },
         };
         const cardRd = {
-          totalMarks: (cbrCardMarks && Object.keys(cbrCardMarks.totals).length) ? cbrCardMarks.totals : { ...RES_DEFAULT_TOTALS },
-          subjects: cbrCardMarks?.subjects,
+          totalMarks: cbrCardMarks?.totals || {},   // sirf API data (koi static fallback nahi)
+          subjects: cbrCardMarks?.subjects || [],
         };
         const cardEx = { name: grp.mainExam, classes: [grp.cls] };
         return (
@@ -5536,6 +5661,7 @@ onClick={async () => {
             rsAbsentMode={rsAbsentMode}
             onClose={() => setCbrCardCtx(null)}
             toast={toast}
+            loading={!cbrCardMarks}
             initialMode="combined"
           />
         );
@@ -5731,8 +5857,11 @@ onClick={async () => {
   remarksCtx={resRemarksCtx}
   onClose={() => setResRemarksCtx(null)}
   onSave={text => {
+    const ctx = resRemarksCtx;
     toast('Final remarks saved!', 'success');
     setResRemarksCtx(null);
+    // Remarks save ke baad us class ka data GET APIs se dobara load karo (turant update).
+    if (ctx?.key && ctx.classID && ctx.sectionID) loadResClassData(ctx.key, { classID: ctx.classID, sectionID: ctx.sectionID }, true);
   }}
 />
   );
@@ -5760,8 +5889,8 @@ onClick={async () => {
   };
   const cardRd = {
     released: false,
-    totalMarks: (resCardMarks && Object.keys(resCardMarks.totals).length) ? resCardMarks.totals : { ...RES_DEFAULT_TOTALS },
-    subjects: resCardMarks?.subjects,
+    totalMarks: resCardMarks?.totals || {},   // sirf API data (koi static fallback nahi)
+    subjects: resCardMarks?.subjects || [],
   };
   const cardEx = { name: ex.name, classes: [resCardCtx.className || ''] };
   return (
@@ -5778,6 +5907,7 @@ onClick={async () => {
       rsAbsentMode={rsAbsentMode}
       onClose={() => setResCardCtx(null)}
       toast={toast}
+      loading={!resCardMarks}
       singleOnly
     />
   );
@@ -5798,16 +5928,19 @@ subjects={resTotalMarksCtx.subjects}
       selectedTermId={selectedTermId}
       onClose={() => setResTotalMarksCtx(null)}
       onSave={newTotals => {
+        const ctx = resTotalMarksCtx;
         setResultData(prev => {
           const next = { ...prev };
-          const examMap = { ...(next[resTotalMarksCtx.examId] || {}) };
-          const oldCd = examMap[resTotalMarksCtx.key] || cd;
-          examMap[resTotalMarksCtx.key] = { ...oldCd, totalMarks: { ...newTotals } };
-          next[resTotalMarksCtx.examId] = examMap;
+          const examMap = { ...(next[ctx.examId] || {}) };
+          const oldCd = examMap[ctx.key] || cd;
+          examMap[ctx.key] = { ...oldCd, totalMarks: { ...newTotals } };
+          next[ctx.examId] = examMap;
           return next;
         });
         toast('Total marks saved!', 'success');
         setResTotalMarksCtx(null);
+        // Total marks save ke baad us class ka data GET APIs se dobara load karo (turant update).
+        if (ctx?.key) loadResClassData(ctx.key, { classID: ctx.classID, sectionID: ctx.sectionID }, true);
       }}
     />
   );
@@ -6927,6 +7060,12 @@ ${isColor ? '' : '.print-bar{background:#FFFFFF !important;border-top:1px solid 
 .cl-doc-header [style*="opacity:.65"]{opacity:1 !important;color:#4B5563 !important}
 .cl-doc-header [style*="color:rgba(255,255,255,.9)"],
 .cl-doc-header [style*="color:rgba(255,255,255,.65)"]{color:#4B5563 !important}
+/* Rich-text syllabus content reset (bullets/bold/headings/math preserve; KaTeX ko chhua nahi) */
+.syl-rep-html{font-size:11px;line-height:1.5;color:#334155;word-break:break-word;overflow-wrap:anywhere}
+.syl-rep-html p{font-size:11px !important;margin:2px 0 !important;color:#334155 !important}
+.syl-rep-html ul,.syl-rep-html ol{font-size:11px !important;margin:3px 0 !important;padding-left:18px !important;color:#334155 !important}
+.syl-rep-html li{margin:2px 0 !important}
+.syl-rep-html h1,.syl-rep-html h2,.syl-rep-html h3,.syl-rep-html h4,.syl-rep-html h5,.syl-rep-html h6{font-size:12px !important;font-weight:700 !important;margin:5px 0 2px !important;color:#0F172A !important}
 </style></head><body>
 ${reportHTML}
 <div class="print-bar no-print">
@@ -7428,19 +7567,20 @@ async function generateSyllabusReport({ ex, syllabusData, term, classKey, branch
     const rowsHtml = rows.length ? rows.map((s, si) => {
       const plainAll = (s.content || '').replace(/<[^>]+>/g, '').trim();
       const added    = plainAll.length > 0;
-      const plain    = plainAll ? sEsc(plainAll.substring(0, 80)) + (plainAll.length > 80 ? '…' : '') : '—';
+      // Rich-text content ko AS-IS (HTML) render karo — bullets/bold/headings/math preserve hon.
+      const plain    = added ? `<div class="syl-rep-html">${s.content}</div>` : '—';
       const sc       = added ? okC : noC;
       return `
         <tr style="background:${si % 2 === 0 ? '#fff' : rowEv}">
-          <td style="padding:8px 12px;font-size:11.5px;font-weight:700;color:#0F172A;border-bottom:1px solid ${aBdr}">${si + 1}</td>
-          <td style="padding:8px 12px;font-size:11.5px;font-weight:700;color:#0F172A;border-bottom:1px solid ${aBdr}">${sEsc(s.subject)}</td>
-          <td style="padding:8px 12px;font-size:11px;color:${tMuted};border-bottom:1px solid ${aBdr}">${plain}</td>
-          <td style="padding:8px 12px;border-bottom:1px solid ${aBdr}">
+          <td style="padding:8px 12px;font-size:11.5px;font-weight:700;color:#0F172A;border-bottom:1px solid ${aBdr};vertical-align:top">${si + 1}</td>
+          <td style="padding:8px 12px;font-size:11.5px;font-weight:700;color:#0F172A;border-bottom:1px solid ${aBdr};vertical-align:top">${sEsc(s.subject)}</td>
+          <td style="padding:8px 12px;font-size:11px;color:${tMuted};border-bottom:1px solid ${aBdr};vertical-align:top;word-break:break-word">${plain}</td>
+          <td style="padding:8px 12px;border-bottom:1px solid ${aBdr};vertical-align:top">
             <span style="display:inline-block;padding:2px 8px;border-radius:999px;font-size:10px;font-weight:700;background:${sc}22;color:${sc};border:1px solid ${sc}55">
               ${added ? 'Added' : 'Not Added'}
             </span>
           </td>
-          <td style="padding:8px 12px;font-size:11px;color:${tMuted};border-bottom:1px solid ${aBdr}">${sEsc(s.updatedAt) || '—'}</td>
+          <td style="padding:8px 12px;font-size:11px;color:${tMuted};border-bottom:1px solid ${aBdr};vertical-align:top;white-space:nowrap">${sEsc(s.updatedAt) || '—'}</td>
         </tr>`;
     }).join('') : `<tr><td colspan="5" style="padding:12px;text-align:center;font-size:12px;color:${tMuted}">No syllabus added</td></tr>`;
 
@@ -7534,6 +7674,12 @@ ${isColor ? '' : '.print-bar{background:#FFFFFF !important;border-top:1px solid 
 .cl-doc-header [style*="opacity:.65"]{opacity:1 !important;color:#4B5563 !important}
 .cl-doc-header [style*="color:rgba(255,255,255,.9)"],
 .cl-doc-header [style*="color:rgba(255,255,255,.65)"]{color:#4B5563 !important}
+/* Rich-text syllabus content reset (bullets/bold/headings/math preserve; KaTeX ko chhua nahi) */
+.syl-rep-html{font-size:11px;line-height:1.5;color:#334155;word-break:break-word;overflow-wrap:anywhere}
+.syl-rep-html p{font-size:11px !important;margin:2px 0 !important;color:#334155 !important}
+.syl-rep-html ul,.syl-rep-html ol{font-size:11px !important;margin:3px 0 !important;padding-left:18px !important;color:#334155 !important}
+.syl-rep-html li{margin:2px 0 !important}
+.syl-rep-html h1,.syl-rep-html h2,.syl-rep-html h3,.syl-rep-html h4,.syl-rep-html h5,.syl-rep-html h6{font-size:12px !important;font-weight:700 !important;margin:5px 0 2px !important;color:#0F172A !important}
 </style></head><body>
 ${reportHTML}
 <div class="print-bar no-print">
@@ -10318,7 +10464,7 @@ ${reportHTML}
 /* ═══════════════════════════════════════════════════════════════════
    RESULT HISTORY — report picker + 5 builders (single card + 4 reports)
    ═══════════════════════════════════════════════════════════════════ */
-function RhReportPicker({ req, onClose, toast }) {
+function RhReportPicker({ req, branchSchool, onClose, toast }) {
   const [style, setStyle]   = useState('color');
   const [format, setFormat] = useState('pdf');
 
@@ -10335,6 +10481,8 @@ function RhReportPicker({ req, onClose, toast }) {
       toast('Word export coming soon', 'info');
     } else {
       const isColor = style === 'color';
+      // Builders ke header/footer mein /report-header (branchSchool) ki info dikhane ke liye set.
+      rhReportSchool = branchSchool || null;
       if (req.type === 'card')       rhBuildSingleCardReport(req.student, req.result, isColor);
       if (req.type === 'history')    rhBuildHistoryReport(req.student, isColor);
       if (req.type === 'progress')   rhBuildProgressReport(req.student, isColor);
@@ -10443,7 +10591,14 @@ function rhRptPalette(isColor) {
     pur    : isColor ? '#7C3AED' : '#444',
   };
 }
-function rhRptShell(title, body) {
+function rhRptShell(title, body, school) {
+  const eff = rhReportSchool || school;
+  const fName = (eff && eff.name) || 'The Oxford System, Lahore Campus';
+  const fAddr = (eff && eff.address) || '';
+  const footer = `<div style="max-width:210mm;margin:0 auto;padding:10px 18px;background:#F8FAFF;border-top:1px solid #BFDBFE;display:flex;justify-content:space-between;font-size:10px;color:#64748B;flex-wrap:wrap;gap:6px">
+    <span>${fName}${fAddr ? ` · ${fAddr}` : ''}</span>
+    <span>Confidential · ${fName}</span>
+  </div>`;
   return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${title}</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
@@ -10470,19 +10625,32 @@ td,th{overflow-wrap:anywhere;word-break:break-word}
 .cl-doc-header [style*="color:rgba(255,255,255,.65)"]{color:#4B5563 !important}
 </style></head><body>
 ${body}
+${footer}
 <div class="print-bar no-print">
   <button onclick="window.print()">🖨 Save as PDF</button>
   <button class="close-btn" onclick="window.close()">Close</button>
 </div>
 </body></html>`;
 }
-function rhRptHeader(p, schoolName, today, title, subline) {
+/* Result History reports ke liye branchSchool (/report-header) — RhReportPicker generate se pehle
+   set karta hai, taa-ke saare builders bina signature change ke header/footer mein branch info dikhayein. */
+let rhReportSchool = null;
+function rhRptHeader(p, school, today, title, subline) {
+  // Module-set branchSchool ko tarjeeh; warna jo pass hua (naam string).
+  const eff = rhReportSchool || school;
+  const sName = (eff && eff.name) || (typeof eff === 'string' ? eff : '') || 'The Oxford System, Lahore Campus';
+  const sLogo = (eff && eff.logo) || '';
+  const sSess = eff && eff.session;
+  const sYear = sSess ? (/year/i.test(sSess) ? sSess : `Academic Year ${sSess}`) : 'Academic Year 2026–2027';
+  const logoHtml = sLogo
+    ? `<img src="${sLogo}" width="44" height="44" style="border-radius:11px;object-fit:cover;display:block" onerror="this.style.display='none'" />`
+    : '🎓';
   return `<div class="${p.isColor ? '' : 'cl-doc-header'}" style="background:${p.hBg};color:${p.isColor ? '#fff' : '#0F172A'};border-radius:0 0 14px 14px;padding:16px 22px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;page-break-inside:avoid">
     <div style="display:flex;align-items:center;gap:12px;min-width:0">
-      <div style="width:44px;height:44px;border-radius:11px;background:rgba(255,255,255,.18);display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;border:1.5px solid rgba(255,255,255,.25)">🎓</div>
+      <div style="width:44px;height:44px;border-radius:11px;background:#fff;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;border:1.5px solid rgba(255,255,255,.25);overflow:hidden">${logoHtml}</div>
       <div style="min-width:0">
-        <div style="font-size:16px;font-weight:800">${schoolName}</div>
-        <div style="font-size:10px;opacity:.75;margin-top:2px">Academic Year 2026–2027</div>
+        <div style="font-size:16px;font-weight:800">${sName}</div>
+        <div style="font-size:10px;opacity:.75;margin-top:2px">${sYear}</div>
       </div>
     </div>
     <div style="text-align:right;min-width:0">
@@ -10502,34 +10670,42 @@ function rhGradeColor(g, isColor) {
 }
 
 /* 1) Single result card report (download icon on each exam history row) */
-function rhBuildSingleCardReport(st, r, isColor) {
+function rhBuildSingleCardReport(st, r, isColor, data = null) {
   const p = rhRptPalette(isColor);
   const today = new Date().toLocaleDateString('en-GB', { day:'2-digit', month:'long', year:'numeric' });
-  const schoolName = 'The Oxford System, Lahore Campus';
-  const grade = rcGetGrade(r.pct, 100);
-  const gradeStr = grade ? grade.grade : '—';
-  const gradeCol = rhGradeColor(gradeStr, isColor);
-  const subjects = r.subjects || rhMakeSubjects(r.pct);
-  const totals = RES_DEFAULT_TOTALS;
-  const subjTotal = Object.values(totals).reduce((a, b) => a + b, 0);
-  const subjObt   = RES_SUBJECTS.reduce((a, s) => a + (subjects[s] || 0), 0);
-  const finalRem  = rcGetFinalRemarks(r.pct);
+  const schoolName = (rhReportSchool && rhReportSchool.name) || 'The Oxford System, Lahore Campus';
+  // Real data (subjects/totals/obtained/remarks/finalRemark) mile to use karo, warna mock.
+  const hasReal     = !!(data && data.subjects && data.subjects.length);
+  const subjList    = hasReal ? data.subjects : RES_SUBJECTS;
+  const totalsMap   = hasReal ? (data.totals   || {}) : RES_DEFAULT_TOTALS;
+  const obtainedMap = hasReal ? (data.obtained || {}) : (r.subjects || rhMakeSubjects(r.pct));
+  const remarksMap  = (data && data.remarks) || {};
+  const subjTotal = subjList.reduce((a, s) => a + (Number(totalsMap[s]) || 0), 0);
+  const subjObt   = subjList.reduce((a, s) => a + (Number(obtainedMap[s]) || 0), 0);
+  const ovPct     = hasReal ? (subjTotal ? Math.round((subjObt / subjTotal) * 10000) / 100 : 0) : (r.pct || 0);
+  const grade     = hasReal ? rcGetGrade(subjObt, subjTotal) : rcGetGrade(r.pct, 100);
+  const gradeStr  = grade ? grade.grade : '—';
+  const gradeCol  = rhGradeColor(gradeStr, isColor);
+  const finalRem  = (data && data.finalRemark) || rcGetFinalRemarks(ovPct);
 
-  const rows = RES_SUBJECTS.map((s, i) => {
-    const tot = totals[s] || 20;
-    const obt = subjects[s] || 0;
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+  const rows = subjList.map((s, i) => {
+    const tot = Number(totalsMap[s]) || 0;
+    const obt = Number(obtainedMap[s]) || 0;
     const pct = tot ? Math.round((obt / tot) * 100) : 0;
-    const g = rcGetGrade(obt, tot);
+    const g = (obt > 0 && tot) ? rcGetGrade(obt, tot) : null;
+    const cmt = remarksMap[s] || (g ? g.comment : '');
     const bg = i % 2 === 0 ? '#fff' : p.rowEv;
     return `<tr style="background:${bg}">
       <td style="padding:6px 9px;border-bottom:1px solid ${p.accBdr};font-size:10.5px;color:${p.tMuted};text-align:center;font-weight:700">${i + 1}</td>
-      <td style="padding:6px 9px;border-bottom:1px solid ${p.accBdr};font-weight:700;color:#0F172A">${s}</td>
+      <td style="padding:6px 9px;border-bottom:1px solid ${p.accBdr};font-weight:700;color:#0F172A">${esc(s)}</td>
       <td style="padding:6px 9px;border-bottom:1px solid ${p.accBdr};text-align:center;color:${p.tMuted}">${tot}</td>
       <td style="padding:6px 9px;border-bottom:1px solid ${p.accBdr};text-align:center;font-weight:800;color:${p.accent}">${obt}</td>
       <td style="padding:6px 9px;border-bottom:1px solid ${p.accBdr};text-align:center;font-weight:700;color:${pct >= 80 ? p.grn : pct >= 60 ? p.amb : p.red}">${pct}%</td>
       <td style="padding:6px 9px;border-bottom:1px solid ${p.accBdr};text-align:center">
         <span style="display:inline-flex;align-items:center;justify-content:center;min-width:22px;padding:2px 7px;border-radius:5px;background:${rhGradeColor(g ? g.grade : 'F', isColor)};color:#fff;font-size:10px;font-weight:800">${g ? g.grade : '—'}</span>
       </td>
+      <td style="padding:6px 9px;border-bottom:1px solid ${p.accBdr};font-size:10px;color:${p.tMuted}"><em>${esc(cmt).slice(0, 60)}</em></td>
     </tr>`;
   }).join('');
 
@@ -10539,7 +10715,6 @@ function rhBuildSingleCardReport(st, r, isColor) {
       ${[
         ['Student',     st.name],
         ['Father',      st.father],
-        ['Roll No',     st.rollNo],
         ['Class',       st.cls + ' · Section A'],
         ['Exam',        r.exam],
         ['Exam Date',   r.date],
@@ -10555,7 +10730,7 @@ function rhBuildSingleCardReport(st, r, isColor) {
         <div style="width:3px;height:13px;border-radius:2px;background:${p.accent}"></div>SUBJECT-WISE RESULT
       </div>
       <table style="border:1px solid ${p.accBdr}">
-        <colgroup><col style="width:32px"><col><col style="width:50px"><col style="width:60px"><col style="width:50px"><col style="width:46px"></colgroup>
+        <colgroup><col style="width:28px"><col><col style="width:42px"><col style="width:54px"><col style="width:38px"><col style="width:42px"><col></colgroup>
         <thead><tr style="background:${p.accBg}">
           <th style="padding:7px 9px;font-size:9.5px;font-weight:700;color:${p.accent};text-align:center;text-transform:uppercase;letter-spacing:.4px;border-bottom:2px solid ${p.accBdr}">#</th>
           <th style="padding:7px 9px;font-size:9.5px;font-weight:700;color:${p.accent};text-align:left;text-transform:uppercase;letter-spacing:.4px;border-bottom:2px solid ${p.accBdr}">Subject</th>
@@ -10563,16 +10738,18 @@ function rhBuildSingleCardReport(st, r, isColor) {
           <th style="padding:7px 9px;font-size:9.5px;font-weight:700;color:${p.accent};text-align:center;text-transform:uppercase;letter-spacing:.4px;border-bottom:2px solid ${p.accBdr}">Obtained</th>
           <th style="padding:7px 9px;font-size:9.5px;font-weight:700;color:${p.accent};text-align:center;text-transform:uppercase;letter-spacing:.4px;border-bottom:2px solid ${p.accBdr}">%</th>
           <th style="padding:7px 9px;font-size:9.5px;font-weight:700;color:${p.accent};text-align:center;text-transform:uppercase;letter-spacing:.4px;border-bottom:2px solid ${p.accBdr}">Grade</th>
+          <th style="padding:7px 9px;font-size:9.5px;font-weight:700;color:${p.accent};text-align:left;text-transform:uppercase;letter-spacing:.4px;border-bottom:2px solid ${p.accBdr}">Comment</th>
         </tr></thead>
         <tbody>${rows}</tbody>
         <tfoot><tr style="background:${p.accBg}">
           <td colspan="2" style="padding:7px 9px;font-size:11px;font-weight:800;color:${p.accent};border-top:2px solid ${p.accBdr}">Grand Total</td>
           <td style="padding:7px 9px;text-align:center;font-weight:800;color:${p.accent};border-top:2px solid ${p.accBdr}">${subjTotal}</td>
           <td style="padding:7px 9px;text-align:center;font-weight:900;color:${p.accent};border-top:2px solid ${p.accBdr}">${subjObt}</td>
-          <td style="padding:7px 9px;text-align:center;font-weight:900;color:${p.grn};border-top:2px solid ${p.accBdr}">${r.pct}%</td>
+          <td style="padding:7px 9px;text-align:center;font-weight:900;color:${p.grn};border-top:2px solid ${p.accBdr}">${ovPct}%</td>
           <td style="padding:7px 9px;text-align:center;border-top:2px solid ${p.accBdr}">
             <span style="display:inline-flex;align-items:center;justify-content:center;min-width:24px;padding:3px 9px;border-radius:6px;background:${gradeCol};color:#fff;font-size:11px;font-weight:800">${gradeStr}</span>
           </td>
+          <td style="border-top:2px solid ${p.accBdr}"></td>
         </tr></tfoot>
       </table>
     </div>
@@ -10883,7 +11060,7 @@ function rhBuildAttendanceReport(st, isColor) {
   rhRptOpen(rhRptShell(`Attendance Summary — ${st.name}`, body));
 }
 
-function ResultCardViewer({ student, rd, ex, template, school, grades, rcoGeneral, rcoSig, rsSigs, rsAbsentMode, onClose, toast, initialMode = 'single', singleOnly = false }) {
+function ResultCardViewer({ student, rd, ex, template, school, grades, rcoGeneral, rcoSig, rsSigs, rsAbsentMode, onClose, toast, initialMode = 'single', singleOnly = false, loading = false }) {
   const [mode, setMode] = useState(initialMode);
   const cardRef = useRef(null);
 
@@ -10990,6 +11167,12 @@ html,body{background:#fff;font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-
 
         {/* Card area */}
         <div style={{ flex: 1, overflowY: 'auto', padding: 24, background: '#F1F5F9' }}>
+          {loading ? (
+            <div style={{ maxWidth: 720, margin: '0 auto', minHeight: 280, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
+              <i className="fa-solid fa-spinner fa-spin" style={{ fontSize: 28, marginBottom: 14, color: tConfig.accent }}></i>
+              Loading result card…
+            </div>
+          ) : (
           <div ref={cardRef} style={{ maxWidth: 720, margin: '0 auto', borderRadius: 12, overflow: 'hidden', boxShadow: '0 8px 32px rgba(0,0,0,.14)' }}>
             {template === 'classic' && (
               <ClassicResultCard
@@ -11010,6 +11193,7 @@ html,body{background:#fff;font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-
               />
             )}
           </div>
+          )}
         </div>
       </div>
     </div>,
@@ -13723,7 +13907,7 @@ body.dark .ds-exam-btn:hover { background:rgba(30,64,175,.15); border-color:#1E4
   max-height:0; padding:0 18px; overflow:hidden;
   transition: max-height .28s ease, padding .28s ease;
 }
-.syl-detail.open { max-height:2000px; padding:14px 18px; }
+.syl-detail.open { max-height:6000px; padding:14px 18px; }
 
 .syl-subj-table-head {
   display:grid;
@@ -13740,7 +13924,7 @@ body.dark .ds-exam-btn:hover { background:rgba(30,64,175,.15); border-color:#1E4
   grid-template-columns: 50px 1.4fr 2fr 110px 100px;
   gap:10px; padding:9px 12px;
   border-bottom:1px solid var(--border-light);
-  font-size:12px; align-items:center;
+  font-size:12px; align-items:flex-start;   /* multi-line summary ke liye top-align */
 }
 .syl-subj-row:last-child { border-bottom:none; }
 .syl-subj-row:nth-child(odd) { background:#FCFCFD; }
@@ -13754,8 +13938,18 @@ body.dark .ds-exam-btn:hover { background:rgba(30,64,175,.15); border-color:#1E4
 }
 .syl-summary-text {
   font-size:11.5px; color:var(--text-muted);
-  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0;
+  white-space:normal; word-break:break-word; overflow-wrap:anywhere;
+  line-height:1.5; min-width:0;
 }
+/* Rich-text (HTML) syllabus content — editor ke bullets/bold/headings/math preserve;
+   editor ke bade margins/16px fonts ko card ke size mein reset (KaTeX ko chhua nahi taa-ke
+   math ki em-based sizing/positioning break na ho). */
+.syl-summary-html { font-size:11.5px; color:var(--text-secondary); line-height:1.5; min-width:0; overflow-wrap:anywhere; word-break:break-word; }
+.syl-summary-html p  { font-size:11.5px !important; margin:2px 0 !important; color:var(--text-secondary) !important; }
+.syl-summary-html ul, .syl-summary-html ol { font-size:11.5px !important; margin:2px 0 !important; padding-left:18px !important; color:var(--text-secondary) !important; }
+.syl-summary-html li { margin:2px 0 !important; }
+.syl-summary-html h1, .syl-summary-html h2, .syl-summary-html h3,
+.syl-summary-html h4, .syl-summary-html h5, .syl-summary-html h6 { font-size:12px !important; font-weight:700 !important; margin:5px 0 2px !important; color:var(--text-primary) !important; }
 .syl-subj-status { display:inline-flex; align-items:center; gap:5px; font-size:11px; font-weight:700; }
 .syl-subj-status .dot { width:7px; height:7px; border-radius:50%; flex-shrink:0; }
 .syl-subj-status.completed { color:#16A34A; }
