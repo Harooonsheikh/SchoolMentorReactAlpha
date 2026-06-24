@@ -43,6 +43,13 @@ export default function Academics({ l1, setL1, l2, setL2, l3, setL3, toast }) {
   /* Let module-level POST wrappers surface the "no session" error via toast. */
   useEffect(() => { registerSessionToast(toast); }, [toast]);
 
+  /* Editing (add/update/delete) is only allowed on the user's own login session.
+     When they switch to view another session (changeSessionId differs from the
+     login SessionID/sessionID), calendar action buttons are disabled. */
+  const changeSessionId = sessionStorage.getItem('changeSessionId');
+  const loginSessionId  = sessionStorage.getItem('sessionID') || sessionStorage.getItem('SessionID') || '';
+  const isOtherSession  = !!changeSessionId && !!loginSessionId && String(changeSessionId) !== String(loginSessionId);
+
   const [reportPicker, setReportPicker] = useState({ open: false, name: '', format: 'pdf' });
   const [confirmCfg, setConfirmCfg] = useState(null);
   const [calEditOpen, setCalEditOpen] = useState(false);
@@ -288,6 +295,7 @@ const closeReport = () => setReportPicker(r => ({ ...r, open: false }));  // ←
                   terms={terms}
                   onReport={openReport}
                   onEdit={() => setCalEditOpen(true)}
+                  isOtherSession={isOtherSession}
                 />
               )}
               {l3 === 'act' && (
@@ -299,6 +307,7 @@ const closeReport = () => setReportPicker(r => ({ ...r, open: false }));  // ←
                   onEdit={ev => setActivityModal({ open: true, editing: ev })}
                   openConfirm={openConfirm}
                   toast={toast}
+                  isOtherSession={isOtherSession}
                 />
               )}
             </>
@@ -1124,7 +1133,7 @@ if (w) {
 /* ═══════════════════════════════════════════════════════════════════
    ACTIVITY CALENDAR PANEL — stats, calendar views, events panel
    ═══════════════════════════════════════════════════════════════════ */
-function ActivityCalendar({ events, setEvents, onReport, onAdd, onEdit, openConfirm, toast }) {
+function ActivityCalendar({ events, setEvents, onReport, onAdd, onEdit, openConfirm, toast, isOtherSession }) {
   const today = useMemo(() => new Date(), []);
   const [calYear,  setCalYear]  = useState(today.getFullYear());
 const [calMonth, setCalMonth] = useState(today.getMonth()); // current month
@@ -1491,7 +1500,7 @@ const nextMonth = () => {
 ) : view === 'Day' ? (
   <DayView events={displayEvents} />
 ) : view === 'List' ? (
-  <ListView events={displayEvents} onReport={onReport} onEdit={onEdit} />
+  <ListView events={displayEvents} onReport={onReport} onEdit={onEdit} isOtherSession={isOtherSession} />
 ) : (
   <YearView
     events={displayEvents}
@@ -1510,8 +1519,10 @@ const nextMonth = () => {
               <div className="act-events-title">Activities</div>
               <div className="act-events-sub">{events.length} activities scheduled</div>
             </div>
-            <Tooltip text="Schedule a new activity on the calendar">
-              <button className="act-add-btn" onClick={onAdd}>
+            <Tooltip text={isOtherSession ? 'Editing is only allowed for the current session' : 'Schedule a new activity on the calendar'}>
+              <button className="act-add-btn" onClick={onAdd}
+                disabled={isOtherSession}
+                style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
                 <i className="fa-solid fa-plus"></i> Add Activity
               </button>
             </Tooltip>
@@ -1585,7 +1596,9 @@ const nextMonth = () => {
             style={{ position: 'fixed', top: dropdown.y, left: dropdown.x, zIndex: 9000 }}
             onClick={e => e.stopPropagation()}
           >
-            <button className="dropdown-item" onClick={() => { onEdit(ev); closeDropdown(); }}>
+            <button className="dropdown-item" onClick={() => { onEdit(ev); closeDropdown(); }}
+              disabled={isOtherSession}
+              style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
               <i className="fa-solid fa-pen"></i> Edit
             </button>
             <button className="dropdown-item" onClick={() => { onReport(ev.name, 'pdf'); closeDropdown(); }}>
@@ -1594,7 +1607,9 @@ const nextMonth = () => {
             <button className="dropdown-item" onClick={() => { onReport(ev.name, 'word'); closeDropdown(); }}>
               <i className="fa-brands fa-microsoft"></i> Word Report
             </button>
-            <button className="dropdown-item delete" onClick={() => handleDelete(ev)}>
+            <button className="dropdown-item delete" onClick={() => handleDelete(ev)}
+              disabled={isOtherSession}
+              style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
               <i className="fa-solid fa-trash"></i> Delete
             </button>
           </div>
@@ -1787,7 +1802,7 @@ function DayView({ events }) {
   );
 }
 
-function ListView({ events, onReport, onEdit }) {
+function ListView({ events, onReport, onEdit, isOtherSession }) {
   const sorted = [...events].sort((a, b) => new Date(a.start) - new Date(b.start));
   if (sorted.length === 0) {
     return (
@@ -1839,13 +1854,15 @@ function ListView({ events, onReport, onEdit }) {
                   }}
                 ><i className="fa-solid fa-file-pdf"></i></button>
               </Tooltip>
-              <Tooltip text={`Edit ${ev.name}`}>
+              <Tooltip text={isOtherSession ? 'Editing is only allowed for the current session' : `Edit ${ev.name}`}>
                 <button
                   onClick={() => onEdit(ev)}
+                  disabled={isOtherSession}
                   style={{
                     width: 26, height: 26, borderRadius: 7,
                     border: '1px solid var(--border-light)', background: 'var(--bg-muted)',
-                    color: 'var(--text-muted)', cursor: 'pointer', fontSize: 10,
+                    color: 'var(--text-muted)', cursor: isOtherSession ? 'not-allowed' : 'pointer', fontSize: 10,
+                    opacity: isOtherSession ? .45 : 1,
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                   }}
                 ><i className="fa-solid fa-pen"></i></button>
@@ -1959,7 +1976,7 @@ function YearView({ events, calYear, setCalYear, setCalMonth, setView }) {
 /* ═══════════════════════════════════════════════════════════════════
    ACADEMIC CALENDAR PANEL — term sections with key-date cards
    ═══════════════════════════════════════════════════════════════════ */
-function AcademicCalendar({ terms, onReport, onEdit }) {
+function AcademicCalendar({ terms, onReport, onEdit, isOtherSession }) {
   return (
     <div className="section-card">
       <div className="cal-header">
@@ -1983,8 +2000,10 @@ function AcademicCalendar({ terms, onReport, onEdit }) {
               <i className="fa-brands fa-microsoft"></i> Word
             </button>
           </Tooltip>
-          <Tooltip text="Edit the academic calendar key dates">
-            <button className="cal-edit-btn" onClick={onEdit}>
+          <Tooltip text={isOtherSession ? 'Editing is only allowed for the current session' : 'Edit the academic calendar key dates'}>
+            <button className="cal-edit-btn" onClick={onEdit}
+              disabled={isOtherSession}
+              style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
               <i className="fa-solid fa-pen"></i> Edit
             </button>
           </Tooltip>
