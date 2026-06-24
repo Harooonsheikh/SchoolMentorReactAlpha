@@ -799,14 +799,44 @@ const [subjects, setSubjects] = useState([]);
           ...su,
           subjectName: su.subjectName || nameMap[su.subjectID] || `Subject ${su.subjectID}`,
         }));
-        const marks = withMarks
-          ? await Promise.all(subs.map(su =>
-              cbrApi.getStudentSubjectMark({ classID: grp.classID, sectionID: grp.sectionID, termID, examID: grp.mainExamID, subjectID: su.subjectID, studentID: st.studentID }).catch(() => 0)))
-          : subs.map(() => ''); // empty marks for the sub-exam fallback
+        const token = sessionStorage.getItem('token');
+        const headers = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
+        const obtained = {}, totals = {}, remarks = {};
+        if (withMarks) {
+          // Direct fetch taa-ke obtain + remarks dono mil sakein (Comment column ke liye)
+          await Promise.all(subs.map(async su => {
+            try {
+              const p = new URLSearchParams({
+                classID: String(grp.classID), termID: String(termID ?? ''), ExamID: String(grp.mainExamID),
+                SubjectID: String(su.subjectID), StudentID: String(st.studentID), sectionID: String(grp.sectionID), pageNo: '1',
+              });
+              const r = await fetch(buildUrl(`/api/getsauploadmarksbyclassandtermandexamandsubject?${p}`), { headers });
+              const d = await r.json();
+              const rec = Array.isArray(d) ? d[0] : (d?.data?.[0] || null);
+              obtained[su.subjectName] = Number(rec?.obtainMarks ?? rec?.obtainedMarks ?? 0);
+              totals[su.subjectName]   = Number(rec?.totalMarks ?? su.totalMarks ?? 0);
+              if (rec?.remarks) remarks[su.subjectName] = rec.remarks;
+            } catch { obtained[su.subjectName] = 0; totals[su.subjectName] = Number(su.totalMarks ?? 0); }
+          }));
+        } else {
+          subs.forEach(su => { obtained[su.subjectName] = ''; totals[su.subjectName] = su.totalMarks; });
+        }
+        // Student ka FINAL remark (getremarksbystudentfilters) → card ke Final Remarks mein
+        let finalRemark = '';
+        try {
+          const branchID = sessionStorage.getItem('branchID');
+          const fp = new URLSearchParams({
+            branchID: String(branchID), classID: String(grp.classID), sectionID: String(grp.sectionID),
+            examID: String(grp.mainExamID), termID: String(termID ?? ''), studentID: String(st.studentID),
+            pageNo: '1', pageCount: '20',
+          });
+          const fr = await fetch(buildUrl(`/api/getremarksbystudentfilters?${fp}`), { headers });
+          const fd = await fr.json();
+          const frec = Array.isArray(fd?.data) ? fd.data[0] : (Array.isArray(fd) ? fd[0] : (fd?.data || null));
+          finalRemark = frec?.remarks || '';
+        } catch (e) { /* no final remark */ }
         if (cancelled) return;
-        const obtained = {}, totals = {};
-        subs.forEach((su, i) => { obtained[su.subjectName] = marks[i]; totals[su.subjectName] = su.totalMarks; });
-        setCbrCardMarks({ subjects: subs.map(s => s.subjectName), totals, obtained });
+        setCbrCardMarks({ subjects: subs.map(s => s.subjectName), totals, obtained, remarks, finalRemark });
       } catch (e) {
         console.error('Error loading card subject marks:', e);
         if (!cancelled) setCbrCardMarks({ subjects: [], totals: {}, obtained: {} });
@@ -2865,7 +2895,7 @@ useEffect(() => {
           </div>
           <div>
             <div className="page-title">Examination</div>
-            <div className="page-sub">Manage exams, date sheets, syllabus, question bank &amp; results</div>
+            <div className="page-sub">Manage exams, date sheets, syllabus, &amp; results</div>
           </div>
         </div>
         <Tooltip text="Play a short tutorial for the Examination module">
@@ -2894,7 +2924,7 @@ useEffect(() => {
           <i className="fa-solid fa-chart-bar"></i> Results
         </button>
       </div>
-
+ 
       {/* ── Exam Setup ── */}
       {tab === 'setup' && (
         <>
@@ -7943,7 +7973,7 @@ function ClassicResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
         <div style={{ padding: '8px 18px 10px', borderTop: `1px solid ${accentBdr}`, display: 'flex', gap: 10 }}>
           {rsSigs.map(sig => (
             <div key={sig.id} style={{ textAlign: 'center', flex: 1, minWidth: 0 }}>
-              <div style={{ height: 28, borderBottom: '1.5px solid #94A3B8', marginBottom: 4 }}>
+              <div style={{ height: 28,  marginBottom: 4 }}>
                 {sig.img && <img src={sig.img} alt="" style={{ maxHeight: 32, objectFit: 'contain' }} />}
               </div>
               <div style={{ fontSize: 9.5, fontWeight: 700, color: textMut }}>{sig.name}</div>
@@ -8171,7 +8201,7 @@ function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
         <div style={{ padding: '10px 20px 12px', borderTop: `1px solid ${accentBdr}`, display: 'flex', gap: 12 }}>
           {rsSigs.map(sig => (
             <div key={sig.id} style={{ textAlign: 'center', flex: 1 }}>
-              <div style={{ height: 30, borderBottom: `1px solid ${accentBdr}`, marginBottom: 5 }}>
+              <div style={{ height: 30, marginBottom: 5 }}>
                 {sig.img && <img src={sig.img} alt="" style={{ maxHeight: 28 }} />}
               </div>
               <div style={{ fontSize: 9.5, fontWeight: 700, color: textMut }}>{sig.name}</div>
@@ -8576,7 +8606,7 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
         <div style={{ padding: '14px 24px 16px', display: 'flex', gap: 16, borderBottom: `1px solid ${C.bdr}` }}>
           {rsSigs.map(sig => (
             <div key={sig.id} style={{ flex: 1, textAlign: 'center' }}>
-              <div style={{ height: 32, borderBottom: `1.5px solid ${C.sigBdr}`, marginBottom: 5 }}>
+              <div style={{ height: 32, marginBottom: 5 }}>
                 {sig.img && <img src={sig.img} alt="" style={{ maxHeight: 30 }} />}
               </div>
               <div style={{ fontSize: 9.5, fontWeight: 700, color: C.textM }}>{sig.name}</div>
