@@ -1421,6 +1421,13 @@ function VacationEditModal({ open, vacations, session = {}, sessionSummaryId, on
    TERM BREAKUPS — class table with expand details
    ═══════════════════════════════════════════════════════════════════ */
 function TermBreakups({ onUpdate, onReport, openConfirm, toast, classesData,  refreshKey }) {
+  /* Editing (update/delete) is only allowed on the user's own login session.
+     If they've switched to view another session (changeSessionId differs from
+     the login SessionID/sessionID) the action buttons are disabled. */
+  const changeSessionId = sessionStorage.getItem('changeSessionId');
+  const loginSessionId  = sessionStorage.getItem('sessionID') || sessionStorage.getItem('SessionID') || '';
+  const isOtherSession  = !!changeSessionId && !!loginSessionId && String(changeSessionId) !== String(loginSessionId);
+
   const [openId, setOpenId] = useState(null);
   const [subjectsData, setSubjectsData] = useState({});
   const [loadingSubjects, setLoadingSubjects] = useState({});
@@ -1940,8 +1947,11 @@ console.log('json2 FULL:', JSON.stringify(json2).slice(0, 500));
                 </Tooltip>
               </div>
               <div className="tb-bp-td" style={{ width: 120, justifyContent: 'center' }}>
-                <Tooltip text={`Update term breakup for ${className} - Section ${item.sectionName || ''}`}>
-                  <button className="tb-update-btn" onClick={() => onUpdate({
+                <Tooltip text={isOtherSession ? 'Editing is only allowed for the current session' : `Update term breakup for ${className} - Section ${item.sectionName || ''}`}>
+                  <button className="tb-update-btn"
+                    disabled={isOtherSession}
+                    style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                    onClick={() => onUpdate({
   name: `${className} - Section ${item.sectionName || ''}`,
   gradeId: item.gradeId,
   sectionId: item.sectionId,
@@ -2092,8 +2102,11 @@ console.log('json2 FULL:', JSON.stringify(json2).slice(0, 500));
                         <i className="fa-brands fa-microsoft"></i> Word
                       </button>
                     </Tooltip>
-                    <Tooltip text="Delete term breakup">
-                      <button className="lp-icon-del" onClick={() => openConfirm({
+                    <Tooltip text={isOtherSession ? 'Editing is only allowed for the current session' : 'Delete term breakup'}>
+                      <button className="lp-icon-del"
+                        disabled={isOtherSession}
+                        style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                        onClick={() => openConfirm({
                         title: 'Delete Term Breakup?',
                         message: `Term breakup for <strong>${className} - Section ${item.sectionName || ''}</strong> will be permanently removed.`,
                         hint: 'Linked lesson plans will no longer have a structure to follow.',
