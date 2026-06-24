@@ -1703,13 +1703,20 @@ const sylPickExam = async (id) => {
           1
         );
         
-        // Map API rows -> { subject, content, updatedAt } shape
-        const mapped = (rows || []).map(r => ({
-          subject: r.subjectDisplayName || '',
-          content: r.subjectDetails || '',
-          updatedAt: r.updatedAt || r.UpdatedOn || '—',
-        }));
-        
+        // Map API rows -> { subject, content, updatedAt } shape; subject (id) par dedupe (API duplicate deti hai)
+        const seen = new Set();
+        const mapped = (rows || []).reduce((acc, r) => {
+          const dk = String(r.subjectName ?? r.subjectID ?? r.subjectDisplayName ?? '');
+          if (seen.has(dk)) return acc;
+          seen.add(dk);
+          acc.push({
+            subject: r.subjectDisplayName || '',
+            content: r.subjectDetails || '',
+            updatedAt: r.updatedAt || r.UpdatedOn || '—',
+          });
+          return acc;
+        }, []);
+
         return { key, mapped };
       });
       
@@ -2081,23 +2088,39 @@ const dsRunCopy = async () => {
         selectedTermId
       );
       
-      // Create a map of existing subjects for quick lookup
+      // Target ke datesheet mein pehle se maujood subjects (duplicate na ho)
       const existingSubjectsMap = new Map();
       existingRows.forEach(row => {
         existingSubjectsMap.set(row.subject.toLowerCase().trim(), true);
       });
-      
-      // Filter source rows to only include subjects that don't exist in target
-      const rowsToCopy = sourceRows.filter(sourceRow => 
-        !existingSubjectsMap.has(sourceRow.subject.toLowerCase().trim())
-      );
-      
+
+      // Target class ke apne subjects (curriculum). Copy SIRF un subjects ka jo target class
+      // mein bhi maujood hain (same subject name). Jaise: source Science+KG, target Science+English
+      // → sirf Science copy hogi (KG target mein nahi hai).
+      let targetSubjectSet = new Set();
+      try {
+        const empID = sessionStorage.getItem('employee_ID');
+        const subjRes = await fetch(
+          buildUrl(`/get-subjects_byEmployeeID/${targetCls.classID}/${targetCls.sectionID}/${empID}`),
+          { headers: { Authorization: `Bearer ${sessionStorage.getItem('token')}`, Accept: 'application/json' } }
+        );
+        const subjData = await subjRes.json();
+        const subjArr = subjData?.data || (Array.isArray(subjData) ? subjData : []);
+        targetSubjectSet = new Set(subjArr.map(s => (s.subjectName || '').toLowerCase().trim()).filter(Boolean));
+      } catch (e) { console.error('Could not load target class subjects', e); }
+
+      // Copy karo sirf: (a) subject target class mein hai, AUR (b) target ke datesheet mein abhi nahi.
+      const rowsToCopy = sourceRows.filter(sourceRow => {
+        const sn = sourceRow.subject.toLowerCase().trim();
+        return targetSubjectSet.has(sn) && !existingSubjectsMap.has(sn);
+      });
+
       if (rowsToCopy.length === 0) {
         results.push({
           className: `${targetCls.gradeName} - ${targetCls.sectionName}`,
           copiedCount: 0,
           skippedCount: sourceRows.length,
-          reason: 'All subjects already exist'
+          reason: 'No matching subjects in this class (or already added)'
         });
         continue;
       }
@@ -2635,13 +2658,20 @@ const sylLoadClassSyllabus = async (key, cls) => {
     1
   );
   
-  // Map API rows -> { subject, content, updatedAt } shape
-  const mapped = (rows || []).map(r => ({
-    subject: r.subjectDisplayName || '',
-    content: r.subjectDetails || '',
-    updatedAt: r.updatedAt || r.UpdatedOn || '—',
-  }));
-  
+  // Map API rows -> { subject, content, updatedAt } shape; subject (id) par dedupe (API duplicate deti hai)
+  const seen = new Set();
+  const mapped = (rows || []).reduce((acc, r) => {
+    const dk = String(r.subjectName ?? r.subjectID ?? r.subjectDisplayName ?? '');
+    if (seen.has(dk)) return acc;
+    seen.add(dk);
+    acc.push({
+      subject: r.subjectDisplayName || '',
+      content: r.subjectDetails || '',
+      updatedAt: r.updatedAt || r.UpdatedOn || '—',
+    });
+    return acc;
+  }, []);
+
   setSyllabusData(prev => ({
     ...prev,
     [sylExamId]: { ...(prev[sylExamId] || {}), [key]: mapped },
@@ -3164,7 +3194,7 @@ useEffect(() => {
                         <i className="fa-solid fa-file-pdf"></i> Basic PDF
                       </button>
                     </Tooltip>
-<Tooltip text={`Copy ${className}'s date sheet to other classes (only missing subjects)`}>
+<Tooltip text={`Copy ${className}'s date sheet to other classes (only subjects those classes also have)`}>
   <button className="ds-copy-row-btn" onClick={() => {
     if (!hasDates) { 
       toast('No date sheet to copy', 'warning'); 
@@ -5164,12 +5194,12 @@ onClick={async () => {
           className="confirm-msg"
           dangerouslySetInnerHTML={{
             __html: `Copy date sheet subjects from <strong>${dsConfirmCopy.sourceClassName}</strong> to all <strong>${dsConfirmCopy.count} other class${dsConfirmCopy.count !== 1 ? 'es' : ''}</strong> in <strong>${dsConfirmCopy.examName}</strong>?<br/><br/>
-            <span style="font-size: 11px; color: var(--text-muted);">⚠️ Only subjects that don't already exist in each class will be copied. Existing subjects will be preserved.</span>`,
+            <span style="font-size: 11px; color: var(--text-muted);">⚠️ A subject is copied to a class only if that class <strong>also has the same subject</strong>. Subjects already added are skipped.</span>`,
           }}
         />
         <div className="confirm-hint" style={{ background: 'rgba(30,58,138,.06)', borderColor: 'rgba(30,58,138,.18)', color: '#1E3A8A' }}>
           <i className="fa-solid fa-circle-info" style={{ color: '#1E40AF' }}></i>
-          <span>This will add missing subjects without overwriting existing ones.</span>
+          <span>Only matching subjects (same name) are copied; existing ones are not overwritten.</span>
         </div>
       </div>
       <div className="confirm-footer">
@@ -6503,16 +6533,20 @@ const save = () => {
               <div className="ds-edit-fields">
                 <div className="ds-edit-field ds-edit-field-wide">
                   <label>Subject</label>
-                  <input
+                  {/* Sirf dropdown se subject pick — manual typing/edit nahi. */}
+                  <select
                     className="ds-edit-input"
-                    placeholder="e.g. Mathematics"
-                    list={`dsSubList-${idx}`}
                     value={r.subject}
                     onChange={e => updateRow(idx, 'subject', e.target.value)}
-                  />
-                 <datalist id={`dsSubList-${idx}`}>
-  {(ctx.subjects || []).map(s => <option key={s.subjectID || s} value={s.subjectName || s} />)}
-</datalist>
+                  >
+                    <option value="">Select subject…</option>
+                    {(() => {
+                      const opts = (ctx.subjects || []).map(s => s.subjectName || s).filter(Boolean);
+                      // Agar pehle se saved subject list mein nahi to use bhi option banao (warna blank dikhe).
+                      if (r.subject && !opts.includes(r.subject)) opts.unshift(r.subject);
+                      return [...new Set(opts)].map(name => <option key={name} value={name}>{name}</option>);
+                    })()}
+                  </select>
                 </div>
                 <div className="ds-edit-field">
                   <label>Date</label>
@@ -7332,11 +7366,19 @@ async function generateSyllabusReport({ ex, syllabusData, term, classKey, branch
         { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } });
       const data = await r.json();
       const rows = data?.data || data?.result || (Array.isArray(data) ? data : []);
-      return rows.map(it => ({
-        subject: it.subjectDisplayName || it.subjectName || '',
-        content: it.subjectDetails || '',
-        updatedAt: it.updatedAt || it.UpdatedOn || '—',
-      }));
+      // API har subject ko duplicate de rahi hai → subject (id) par dedupe, har subject ek hi baar.
+      const seen = new Set();
+      return rows.reduce((acc, it) => {
+        const key = String(it.subjectName ?? it.subjectID ?? it.subjectDisplayName ?? '');
+        if (seen.has(key)) return acc;
+        seen.add(key);
+        acc.push({
+          subject: it.subjectDisplayName || it.subjectName || '',
+          content: it.subjectDetails || '',
+          updatedAt: it.updatedAt || it.UpdatedOn || '—',
+        });
+        return acc;
+      }, []);
     } catch (e) { console.error('Syllabus fetch failed', e); return []; }
   };
   const blocks = await Promise.all((targetClasses || []).map(async cls => ({ cls, rows: await fetchSyl(cls) })));
