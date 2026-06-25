@@ -7579,6 +7579,8 @@ async function generateSyllabusReport({ ex, syllabusData, term, classKey, branch
     ? (ex.classes || [])
     : (ex.classes || []).filter(c => String(c.sectionID) === String(sectionIdFromKey));
 
+  // API response se asal term name yahan capture hoga (report header/meta ke liye).
+  let resolvedTermName = '';
   // Har class ka syllabus seedha API se fetch (syllabusData state/key mismatch se bachne ke liye).
   const fetchSyl = async (cls) => {
     try {
@@ -7593,6 +7595,8 @@ async function generateSyllabusReport({ ex, syllabusData, term, classKey, branch
         { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } });
       const data = await r.json();
       const rows = data?.data || data?.result || (Array.isArray(data) ? data : []);
+      // Asal term name API se le lo (e.g. "term 1") — UI ke sylTerm ki jagah.
+      if (!resolvedTermName && rows[0]?.termName) resolvedTermName = rows[0].termName;
       // API har subject ko duplicate de rahi hai → subject (id) par dedupe, har subject ek hi baar.
       const seen = new Set();
       return rows.reduce((acc, it) => {
@@ -7610,6 +7614,8 @@ async function generateSyllabusReport({ ex, syllabusData, term, classKey, branch
   };
   const blocks = await Promise.all((targetClasses || []).map(async cls => ({ cls, rows: await fetchSyl(cls) })));
 
+  // Report mein asal term name (API se) dikhao; na mile to passed term, warna exam ka term.
+  const termLabel = resolvedTermName || term || ex.term || '';
   const today  = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
   const aColor = isColor ? '#1E40AF' : '#374151';
   const aBg    = isColor ? '#EFF6FF' : '#F5F5F5';
@@ -7676,12 +7682,12 @@ async function generateSyllabusReport({ ex, syllabusData, term, classKey, branch
         </div>
         <div style="text-align:right;min-width:0">
           <div style="font-size:13px;font-weight:700;color:rgba(255,255,255,.9)">Syllabus Report</div>
-          <div style="font-size:10.5px;color:rgba(255,255,255,.65);margin-top:3px">${sEsc(ex.name)} · ${sEsc(term)} Term · Generated: ${today}</div>
+          <div style="font-size:10.5px;color:rgba(255,255,255,.65);margin-top:3px">${sEsc(ex.name)} · ${sEsc(termLabel)} · Generated: ${today}</div>
         </div>
       </div>
       <div style="display:flex;flex-wrap:wrap;border-bottom:1px solid ${aBdr}">
         ${[
-          ['Term', term],
+          ['Term', termLabel],
           ['Exam', ex.name],
           ['Classes', String(targetClasses.length)],
         ].map(([k, v]) => `

@@ -1538,7 +1538,8 @@ const prefillSavedTabs = (sections, details, paperType) => {
         totalEligible: apiItems.length || sec.rows.length,
         saved: true,
         existing: true,                                           // backend mein pehle se hai → update
-        savedId: sec.recordId || 0,                               // selection record id (agar mile)
+        savedId: sec.recordId || 0,                               // selection record id (update)
+        deleteId: sec.parentId || 0,                              // parentData.id → deleteqpsubmission/{id}
       };
       block.tabs = [...block.tabs, tab];
       block.open = true;
@@ -1733,6 +1734,33 @@ const addTab = (section, typeKey) => {
       const tabs = block.tabs.map(t => t.entryId === entryId ? { ...t, ...patch } : t);
       return { ...prev, [section]: { ...prev[section], [typeKey]: { ...block, tabs } } };
     });
+  };
+
+  // Saved question block ko backend se delete (/api/deleteqpsubmission/{id}) + local se remove.
+  const deleteTab = async (section, typeKey, entryId) => {
+    const block = blocksState[section]?.[typeKey];
+    const tab = block?.tabs.find(t => t.entryId === entryId);
+    if (!tab) return;
+    const subId = tab.savedId;
+    // Agar backend mein save hi nahi hua (sirf local) to seedha hata do.
+    if (!subId) { removeTab(section, typeKey, entryId); toast('Question block removed', 'info'); return; }
+    try {
+      const token = sessionStorage.getItem('token');
+      const res = await fetch(buildUrl(`/api/deleteqpsubmission/${subId}`), {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success !== false) {
+        removeTab(section, typeKey, entryId);
+        toast('Question block deleted', 'success');
+      } else {
+        toast(data.message || 'Failed to delete question block', 'error');
+      }
+    } catch (err) {
+      console.error('Error deleting question block:', err);
+      toast('Error deleting question block', 'error');
+    }
   };
 
 const saveTab = async (section, typeKey, entryId) => {
@@ -2262,6 +2290,7 @@ const onFetch = async () => {
         onUpdateTab={(entryId, patch) => updateTab('obj', t.key, entryId, patch)}
         onSaveTab={entryId => saveTab('obj', t.key, entryId)}
         onEditTab={entryId => editTab('obj', t.key, entryId)}
+        onDeleteTab={entryId => deleteTab('obj', t.key, entryId)}
       />
                   ))}
                 </div>
@@ -2292,6 +2321,7 @@ const onFetch = async () => {
         onUpdateTab={(entryId, patch) => updateTab('subj', t.key, entryId, patch)}
         onSaveTab={entryId => saveTab('subj', t.key, entryId)}
         onEditTab={entryId => editTab('subj', t.key, entryId)}
+        onDeleteTab={entryId => deleteTab('subj', t.key, entryId)}
       />
                   ))}
                 </div>
@@ -2352,7 +2382,7 @@ function MarksBar({ status, label, iconColor, iconClass, used, target, style }) 
    inside each tab a workspace where the user picks units, instruction,
    items / choices / marks. */
 function QBlockAccordion({ typeDef, section, subject, block, typeAgg,
-  onToggleOpen, onAddTab, onSwitchTab, onRemoveTab, onUpdateTab, onSaveTab, onEditTab,
+  onToggleOpen, onAddTab, onSwitchTab, onRemoveTab, onUpdateTab, onSaveTab, onEditTab, onDeleteTab,
   notebookDetails, apiKeyMap
 }) {
 
@@ -2529,6 +2559,7 @@ const badge = apiItems ? (
             subject={subject}
             onUpdate={patch => onUpdateTab(tabs[activeIdx].entryId, patch)}
             onSave={() => onSaveTab(tabs[activeIdx].entryId)}
+            onDelete={() => onDeleteTab(tabs[activeIdx].entryId)}
             apiItems={apiItems}
           />
         )}
@@ -2576,7 +2607,7 @@ function QSavedCard({ tab, onEdit }) {
     </div>
   );
 }
-function QWorkspacePanel({ tab, typeKey, subject, onUpdate, onSave, apiItems }) {
+function QWorkspacePanel({ tab, typeKey, subject, onUpdate, onSave, onDelete, apiItems }) {
   
   const useApiData = !!apiItems && apiItems.length > 0;
   
@@ -3039,10 +3070,27 @@ function QWorkspacePanel({ tab, typeKey, subject, onUpdate, onSave, apiItems }) 
             )}
 
             <div style={{
-              display: 'flex', justifyContent: 'flex-end',
+              display: 'flex', justifyContent: 'flex-end', gap: 8,
               marginTop: 12, paddingTop: 10,
               borderTop: '1px solid var(--border-light)'
             }}>
+              {/* Delete sirf tab dikhao jab block backend mein save/insert ho chuka ho. */}
+              {tab.existing && onDelete && (
+                <Tooltip text="Delete this saved question block">
+                  <button
+                    type="button"
+                    onClick={onDelete}
+                    style={{
+                      padding: '8px 18px', fontSize: 12.5, fontWeight: 700,
+                      borderRadius: 8, border: '1px solid rgba(220,38,38,.3)',
+                      background: 'rgba(220,38,38,.08)', color: '#DC2626', cursor: 'pointer',
+                      display: 'inline-flex', alignItems: 'center', gap: 6,
+                    }}
+                  >
+                    <i className="fa-solid fa-trash"></i> Delete
+                  </button>
+                </Tooltip>
+              )}
               <Tooltip text="Save this question block">
                 <button
                   className="pg-btn-primary"
@@ -3115,8 +3163,10 @@ function normalizeQpDetail(list) {
       mainQuestion: b.parentData?.changedMainQuestion || b.parentData?.recTitle || '',
       // Pipe-separated SELECTED main questions (jo user ne tab mein checkbox se chune the).
       selectedMainRaw: b.parentData?.mainQuestion || '',
-      // Selection record id for update lives on the specific row (parentData.id is the master).
+      // Update/delete ke liye selection record id — parentData.id (changed-main-question block id).
       recordId: b.specificTableData?.[0]?.id || 0,
+      // Delete API (deleteqpsubmission/{id}) ke liye parentData ki id alag se rakho.
+      parentId: b.parentData?.id || 0,
       // Saved config (items / choices / marks-per-item) so the edit modal prefills correctly.
       noOfQuestions: +b.parentData?.noOfQuestions || 0,
       noOfChoices:   +b.parentData?.noOfChoices   || 0,
