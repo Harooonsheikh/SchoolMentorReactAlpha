@@ -724,7 +724,7 @@ const sd = (subjDefaults[ci] || [])[si] || { fmt: globalFmt, line: globalLine };
                                 <div className="pg-subj-icon"><i className={`fa-solid ${icon}`}></i></div>
                                 <span className="pg-subj-name">{s}</span>
                               </div>
-
+{/* 
                               <div className="pg-subj-toggle-col">
                                 <span className="pg-subj-toggle-lbl">
                                   <i className="fa-solid fa-file-lines" style={{ fontSize: 8, marginRight: 3 }}></i>Paper Format
@@ -747,7 +747,7 @@ const sd = (subjDefaults[ci] || [])[si] || { fmt: globalFmt, line: globalLine };
                                     </button>
                                   </Tooltip>
                                 </div>
-                              </div>
+                              </div> */}
 
                               <div className="pg-subj-toggle-col">
                                 <span className="pg-subj-toggle-lbl">
@@ -1570,42 +1570,32 @@ useEffect(() => {
       // 2) Paper ka overall type (both / objective / subjective) set karo.
       if (overallType) setPaperType(overallType);
 
-      // 3) Is class/subject ke saare units laao (selection API mein notebookID nahi
-      //    aata, is liye mainQuestion → unit map banane ke liye saare units chahiye).
-      //    IDs seedha saved record se lo (cls/subjects pe depend na karo) — yeh sab se reliable.
+      // 3) Selection API mein notebookID nahi aata, is liye SIRF wahi units jo save
+      //    hue the unke notebookID old API (getexamqpsubmissiondetail) se nikaalo —
+      //    yahi reliable hai (name-matching unreliable thi: 2 APIs ke unitName alag).
       const meta = records[0] || {};
-      const subjectId = meta.subjectID || initialPaper?.subjectID
-        || subjects.find(s => s.subjectName === subject || s === subject)?.subjectID || subject;
-      const unitList = await fetchUnits(subjectId, meta.classID, meta.sectionID);
+      const list = await fetchQpSubmissionDetail({
+        id: masterId,
+        branchID: sessionStorage.getItem('branchID'),
+        gradeID: meta.classID ?? cls?.gradeID ?? initialPaper?.gradeID,
+        sectionID: meta.sectionID ?? cls?.sectionID ?? initialPaper?.sectionID,
+      });
       if (!alive) return;
-      const allUnitIds = (unitList || []).map(u => u.value).filter(Boolean);
-      console.log('[Edit prefill] subjectId:', subjectId, '| classID:', meta.classID, '| units:', allUnitIds.length);
-      if (!allUnitIds.length) return;
+      const savedUnitIds = [...new Set(
+        (Array.isArray(list) ? list : [])
+          .flatMap(b => (b.specificTableData || []).map(r => parseInt(r.notebookID)))
+          .filter(Boolean)
+      )];
+      console.log('[Edit prefill] savedUnitIds:', savedUnitIds);
+      if (!savedUnitIds.length) return;
 
-      // 4) Saare units ke notebook details load karo (questions ka source).
-      const details = await fetchNotebookDetails(allUnitIds);
+      // 4) Sirf saved units select karo + unke notebook details load karo.
+      setSelectedUnits(savedUnitIds);
+      const details = await fetchNotebookDetails(savedUnitIds);
       if (!alive) return;
       setFetched(true);
 
-      // 5) Selected main questions kin units mein hain — global mainQ → unitName map se
-      //    derive karke sirf wahi units top dropdown mein select karo.
-      const mainQToUnit = {};
-      Object.values(details || {}).forEach(arr => {
-        (Array.isArray(arr) ? arr : []).forEach(it => {
-          const mk = String(it.mainQuestion ?? '').trim();
-          if (mk && it.unitName && !mainQToUnit[mk]) mainQToUnit[mk] = it.unitName;
-        });
-      });
-      const unitNameToId = {};
-      (unitList || []).forEach(u => { if (u.unitName) unitNameToId[u.unitName] = u.value; });
-      const usedUnitIds = new Set();
-      sections.forEach(sec => {
-        String(sec.selectedMainRaw || '').split('|').map(s => s.trim()).filter(Boolean)
-          .forEach(mq => { const id = unitNameToId[mainQToUnit[mq]]; if (id) usedUnitIds.add(id); });
-      });
-      setSelectedUnits(usedUnitIds.size ? [...usedUnitIds] : allUnitIds);
-
-      // 6) Pehle se saved questions ko select/prefill karo.
+      // 5) Pehle se saved questions ko select/prefill karo.
       prefillSavedTabs(sections, details, overallType);
     } catch (err) {
       console.error('Edit auto-load failed', err);
@@ -2176,14 +2166,14 @@ const onFetch = async () => {
                 </select>
               </div>
 
-              <div className="pg-sc-field">
+              {/* <div className="pg-sc-field">
                 <div className="pg-field-label">Paper Format</div>
                 <select className="pg-select" value={paperFmt} onChange={e => { setPaperFmt(e.target.value); resetOnChange(); }}>
                   <option value="">— Choose —</option>
                   <option value="with">With Answer Sheet</option>
                   <option value="without">Without Answer Sheet</option>
                 </select>
-              </div>
+              </div> */}
 
               <div className="pg-sc-field pg-sc-field--wide">
                 <div className="pg-field-label">Paper Title</div>
