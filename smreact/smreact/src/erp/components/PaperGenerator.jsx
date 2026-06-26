@@ -1557,38 +1557,56 @@ useEffect(() => {
   let alive = true;
   (async () => {
     try {
-      const list = await fetchQpSubmissionDetail({
-        id: initialPaper.qpMasterID ?? initialPaper.id,
-        branchID: sessionStorage.getItem('branchID'),
-        gradeID: cls?.gradeID ?? initialPaper.gradeID,
-        sectionID: cls?.sectionID ?? initialPaper.sectionID,
-      });
+      const masterId = initialPaper.qpMasterID ?? initialPaper.id;
+      qpMasterIDRef.current = masterId;
+
+      // 1) Saved blocks (per-block config + selected main questions) naye API se.
+      const records = await fetchQpSelectionByMaster(masterId);
       if (!alive) return;
-      const { parent, sections } = normalizeQpDetail(list);
+      const { overallType, sections } = mapSelectionToSections(records);
+      console.log('[Edit prefill] masterId:', masterId, '| records:', records?.length || 0, '| sections:', sections.length);
+      if (!sections.length) return;
 
-      // 1) Header fields fill karo (submission detail authoritative hai).
-      if (parent) {
-        if (parent.subjectName && parent.subjectName !== subject) setSubject(parent.subjectName);
-        if (parent.paperType)          setPaperType(parent.paperType);
-        if (parent.paperFormate)       setPaperFmt(pgApiToFmt(parent.paperFormate));
-        if (parent.paperTitle)         setTitle(parent.paperTitle);
-        if (parent.marksforobject)     setObjMarks(String(parent.marksforobject));
-        if (parent.timeforobject)      setObjTime(String(parent.timeforobject));
-        if (parent.marksforsubjective) setSubjMarks(String(parent.marksforsubjective));
-        if (parent.timeforsubjective)  setSubjTime(String(parent.timeforsubjective));
-      }
+      // 2) Paper ka overall type (both / objective / subjective) set karo.
+      if (overallType) setPaperType(overallType);
 
-      // 2) Saved rows ke notebookID se units nikaalo + saare questions load karo.
-      const unitIds = [...new Set(sections.flatMap(s => s.rows.map(r => parseInt(r.notebookID))).filter(Boolean))];
-      qpMasterIDRef.current = initialPaper.qpMasterID ?? initialPaper.id;
-      if (unitIds.length) {
-        setSelectedUnits(unitIds);
-        const details = await fetchNotebookDetails(unitIds);
-        if (!alive) return;
-        setFetched(true);
-        // 3) Pehle se saved questions ko select/prefill karo.
-        prefillSavedTabs(sections, details, parent?.paperType || paperType);
-      }
+      // 3) Is class/subject ke saare units laao (selection API mein notebookID nahi
+      //    aata, is liye mainQuestion → unit map banane ke liye saare units chahiye).
+      //    IDs seedha saved record se lo (cls/subjects pe depend na karo) — yeh sab se reliable.
+      const meta = records[0] || {};
+      const subjectId = meta.subjectID || initialPaper?.subjectID
+        || subjects.find(s => s.subjectName === subject || s === subject)?.subjectID || subject;
+      const unitList = await fetchUnits(subjectId, meta.classID, meta.sectionID);
+      if (!alive) return;
+      const allUnitIds = (unitList || []).map(u => u.value).filter(Boolean);
+      console.log('[Edit prefill] subjectId:', subjectId, '| classID:', meta.classID, '| units:', allUnitIds.length);
+      if (!allUnitIds.length) return;
+
+      // 4) Saare units ke notebook details load karo (questions ka source).
+      const details = await fetchNotebookDetails(allUnitIds);
+      if (!alive) return;
+      setFetched(true);
+
+      // 5) Selected main questions kin units mein hain — global mainQ → unitName map se
+      //    derive karke sirf wahi units top dropdown mein select karo.
+      const mainQToUnit = {};
+      Object.values(details || {}).forEach(arr => {
+        (Array.isArray(arr) ? arr : []).forEach(it => {
+          const mk = String(it.mainQuestion ?? '').trim();
+          if (mk && it.unitName && !mainQToUnit[mk]) mainQToUnit[mk] = it.unitName;
+        });
+      });
+      const unitNameToId = {};
+      (unitList || []).forEach(u => { if (u.unitName) unitNameToId[u.unitName] = u.value; });
+      const usedUnitIds = new Set();
+      sections.forEach(sec => {
+        String(sec.selectedMainRaw || '').split('|').map(s => s.trim()).filter(Boolean)
+          .forEach(mq => { const id = unitNameToId[mainQToUnit[mq]]; if (id) usedUnitIds.add(id); });
+      });
+      setSelectedUnits(usedUnitIds.size ? [...usedUnitIds] : allUnitIds);
+
+      // 6) Pehle se saved questions ko select/prefill karo.
+      prefillSavedTabs(sections, details, overallType);
     } catch (err) {
       console.error('Edit auto-load failed', err);
     }
@@ -1597,14 +1615,16 @@ useEffect(() => {
 }, []);
 
   // 👇 API function to fetch units
-  const fetchUnits = async (subjectId) => {
+  //    Edit mode mein classID/sectionID override (saved record se) bhej sakte hain
+  //    taake cls prop pe depend na karna pade.
+  const fetchUnits = async (subjectId, classIdOverride, sectionIdOverride) => {
     try {
       const branchID = sessionStorage.getItem("branchID");
       const token = sessionStorage.getItem("token");
-      
-      // Get classID and sectionID from cls prop
-      const classID = cls.gradeID || cls.id;
-      const sectionID = cls.sectionID || cls.section;
+
+      // classID/sectionID: override > cls prop
+      const classID = classIdOverride ?? (cls.gradeID || cls.id);
+      const sectionID = sectionIdOverride ?? (cls.sectionID || cls.section);
 
       const url = buildUrl(`/api/getulpfornotebookmaster?branchID=${branchID}&classID=${classID}&SectionID=${sectionID}&subjectID=${subjectId}&pageNo=1`);
       
@@ -1629,15 +1649,18 @@ useEffect(() => {
           ...unit
         }));
         setUnits(unitList);
+        return unitList;
       } else {
         setUnits([]);
         toast('No units found for this subject', 'info');
+        return [];
       }
     } catch (err) {
       console.error("Error fetching units:", err);
       setUnits([]);
       toast('Failed to load units', 'error');
-    } 
+      return [];
+    }
   };
 
   // 👇 Effect to fetch units when subject changes
@@ -1999,17 +2022,13 @@ const reloadSavedTabs = async (details) => {
   const qpMastId = qpMasterIDRef.current || qpMasterID;
   if (!qpMastId) return;
   try {
-    const list = await fetchQpSubmissionDetail({
-      id: qpMastId,
-      branchID: sessionStorage.getItem('branchID'),
-      gradeID: cls?.gradeID ?? initialPaper?.gradeID,
-      sectionID: cls?.sectionID ?? initialPaper?.sectionID,
-    });
-    const { parent, sections } = normalizeQpDetail(list);
+    // Saved blocks ab naye selection API se (getqpquestionselectionbymasterid?qpMastID=).
+    const records = await fetchQpSelectionByMaster(qpMastId);
+    const { overallType, sections } = mapSelectionToSections(records);
     if (!sections.length) return;
     // Purane prefilled blocks clear karo taake duplicate na hon, phir fresh prefill.
     setBlocksState({ obj: {}, subj: {} });
-    prefillSavedTabs(sections, details, parent?.paperType || paperType);
+    prefillSavedTabs(sections, details, overallType);
   } catch (err) {
     console.error('reloadSavedTabs failed', err);
   }
@@ -3175,6 +3194,51 @@ function normalizeQpDetail(list) {
       // place it in the correct tab for 'both' papers (a type may appear in either tab).
       qpSubmissionPaperType: b.parentData?.qpSubmissionPaperType || '',
       rows: Array.isArray(b.specificTableData) ? b.specificTableData : [],
+    })),
+  };
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   SAVED QUESTION-SELECTION (per-block config) — Edit modal ke liye.
+   GET /api/getqpquestionselectionbymasterid?masterId={qpMasterID}
+   Response: [{ id, recTitle, changedMainQuestion, noOfItem, marksPerItem,
+   noOfChoices, paperType, formatePaper, mainQuestion:[...] }, ...]
+   Har record ek saved block hai (rows nahi, sirf config + selected main Qs).
+   ═══════════════════════════════════════════════════════════════════ */
+async function fetchQpSelectionByMaster(masterId) {
+  const token = sessionStorage.getItem('token');
+  const params = new URLSearchParams({ qpMastID: String(masterId) });
+  const res = await fetch(buildUrl(`/api/getqpquestionselectionbymasterid?${params.toString()}`), {
+    method: 'GET',
+    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+  });
+  const data = await res.json();
+  return Array.isArray(data) ? data : (data?.data || []);
+}
+
+/* Selection records ko prefill-ready "sections" mein badlo (normalizeQpDetail jaisa shape). */
+function mapSelectionToSections(records) {
+  const recs = Array.isArray(records) ? records : [];
+  // formatePaper = poore paper ka type (both / objective / subjective).
+  const overallType = recs[0]?.formatePaper || 'both';
+  return {
+    overallType,
+    sections: recs.map(r => ({
+      recTitle: r.recTitle || '',
+      mainQuestion: r.changedMainQuestion || r.recTitle || '',   // instr (typed)
+      // Selected main questions — array → pipe-separated (prefill '|' par split karta hai).
+      selectedMainRaw: Array.isArray(r.mainQuestion)
+        ? r.mainQuestion.join('|')
+        : String(r.mainQuestion || ''),
+      // Is API mein har block ki apni unique id hai → update aur delete dono isi se.
+      recordId: r.id || 0,
+      parentId: r.id || 0,
+      noOfQuestions: +r.noOfItem || 0,
+      noOfChoices:   +r.noOfChoices || 0,
+      marks:         +r.marksPerItem || 0,
+      // Kis section ('objective' | 'subjective') mein save hua tha (both papers ke liye).
+      qpSubmissionPaperType: r.paperType || '',
+      rows: [],
     })),
   };
 }
