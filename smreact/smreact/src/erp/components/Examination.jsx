@@ -691,6 +691,15 @@ const [subjects, setSubjects] = useState([]);
     /* eslint-disable-next-line react-hooks/exhaustive-deps */
   }, [cbrOpenKey]);
 
+  /* Classes list aate hi har class ke students eagerly fetch karo — taa-ke count/status
+     (jaise "Section A · 1 students") bina class dropdown khole turant dikh jaye. */
+  useEffect(() => {
+    cbrResults.forEach(cr => {
+      if (cr && !cr.studentsLoaded && !cbrStudentsLoading[cr.id]) loadCbrStudents(cr);
+    });
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [cbrResults.length]);
+
   /* Load all-term exams when the combined-create modal opens. */
   useEffect(() => {
     if (cbrCreateOpen) loadAllTermExams();
