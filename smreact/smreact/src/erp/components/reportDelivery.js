@@ -149,21 +149,30 @@ function buildWordView(name, html) {
   return view;
 }
 
+/* Write `html` into an already-open preview window (used when the caller had to
+   open the popup early — e.g. after an async fetch — to dodge popup blockers). */
+function writeToWindow(w, html) {
+  if (!w) return;
+  w.document.open();
+  w.document.write(html);
+  w.document.close();
+  w.focus();
+}
+
 /* Open `html` in a new window (the preview the user reviews before saving). */
 function openPreviewWindow(html, width = 900, height = 700) {
   const w = window.open('', '_blank', `width=${width},height=${height}`);
   if (w) {
-    w.document.open();
-    w.document.write(html);
-    w.document.close();
-    w.focus();
+    writeToWindow(w, html);
   } else {
     alert('Popup blocked! Please allow popups for this site.');
   }
 }
 
-/* Deliver a built report: a PDF print preview, or a Word "Save as Word" preview. */
+/* Deliver a built report: a PDF print preview, or a Word "Save as Word" preview.
+   Pass opts.win to reuse a window the caller already opened (popup-blocker safe). */
 export function deliverReport(name, format, html, opts = {}) {
   const out = format === 'word' ? buildWordView(name, html) : html;
-  openPreviewWindow(out, opts.width, opts.height);
+  if (opts.win) writeToWindow(opts.win, out);
+  else openPreviewWindow(out, opts.width, opts.height);
 }
