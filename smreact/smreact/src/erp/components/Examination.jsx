@@ -6,6 +6,7 @@ import * as examService from '../services/examService';
 import * as cbrApi from '../services/combinedAssessmentService';
 import useAsync from '../hooks/useAsync';
 import { buildUrl } from '../../utils/apiConfig';
+import { deliverReport } from './reportDelivery';
 /* ═══════════════════════════════════════════════════════════════════
    EXAMINATION — port of the HTML #module-exam (only Exam Setup is
    functional; other tabs show Coming Soon).
@@ -6946,34 +6947,13 @@ function DsReportPicker({ req, ex, dateSheets, term, branchSchool, onClose, toas
   );
 }
 
-/* HTML report ko Word (.doc) file ki tarah download karo. Word HTML-based .doc ko
-   natively kholता/render karta hai, aur user "Save As → .docx" kar sakta hai.
-   Screen-only print-bar (no-print) ko Word file se hata dete hain. */
-function downloadHtmlAsWord(html, filename) {
-  try {
-    const cleaned = String(html || '').replace(/<div class="print-bar[\s\S]*?<\/div>/i, '');
-    const blob = new Blob(['﻿' + cleaned], { type: 'application/msword' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${String(filename || 'report').replace(/[\\/:*?"<>|]+/g, ' ').trim()}.doc`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(url), 1500);
-  } catch (e) {
-    console.error('Word export failed', e);
-  }
-}
-
 async function generateDateSheetReport({ ex, dateSheets, term, classKey, branchSchool }, isColor, format = 'pdf') {
   const isAll = classKey === 'all';
-  const isWord = format === 'word';
 
-  // PDF/print ke liye window pehle kholo (popup-blocker se bachne ke liye); Word ke liye nahi.
-  const w = isWord ? null : window.open('', '_blank', 'width=960,height=820');
-  if (!isWord && !w) return;
-  if (w) w.document.write('<p style="font-family:sans-serif;padding:24px;color:#475569">Preparing report…</p>');
+  // Window pehle kholo (popup-blocker se bachne ke liye), phir data fetch — PDF aur Word dono ke liye.
+  const w = window.open('', '_blank', 'width=960,height=820');
+  if (!w) return;
+  w.document.write('<p style="font-family:sans-serif;padding:24px;color:#475569">Preparing report…</p>');
 
   /* Real branch header (name / logo / address / academic year) from the
      /report-header/{branchId} API (saved in branchSchool) — same as the exam report. */
@@ -7154,15 +7134,13 @@ ${isColor ? '' : '.print-bar{background:#FFFFFF !important;border-top:1px solid 
 </style></head><body>
 ${reportHTML}
 <div class="print-bar no-print">
-  <button onclick="window.print()">${isColor ? '🖨 ' : ''}Save as PDF</button>
+  <button onclick="window.print()">${isColor ? '🖨 ' : ''}Print / Save as PDF</button>
   <button class="close-btn" onclick="window.close()">Close</button>
 </div>
 </body></html>`;
 
-  if (isWord) { downloadHtmlAsWord(html, `Date Sheet - ${ex?.name || ''}`); return; }
-  w.document.open();
-  w.document.write(html);
-  w.document.close();
+  // PDF → print preview; Word → wahi preview "Save as Word" button ke saath (deliverReport).
+  deliverReport(`Date Sheet - ${ex?.name || ''}`, format, html, { win: w });
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -7579,12 +7557,11 @@ function SylReportPicker({ req, ex, syllabusData, term, branchSchool, onClose, t
 
 async function generateSyllabusReport({ ex, syllabusData, term, classKey, branchSchool }, isColor, format = 'pdf') {
   const isAll = classKey === 'all';
-  const isWord = format === 'word';
 
-  // PDF/print ke liye window pehle kholo (popup-blocker se bachne ke liye); Word ke liye nahi.
-  const w = isWord ? null : window.open('', '_blank', 'width=960,height=820');
-  if (!isWord && !w) return;
-  if (w) w.document.write('<p style="font-family:sans-serif;padding:24px;color:#475569">Preparing report…</p>');
+  // Window pehle kholo (popup-blocker se bachne ke liye), phir data fetch — PDF aur Word dono ke liye.
+  const w = window.open('', '_blank', 'width=960,height=820');
+  if (!w) return;
+  w.document.write('<p style="font-family:sans-serif;padding:24px;color:#475569">Preparing report…</p>');
 
   /* Real branch header (name / logo / address / academic year) from /report-header (branchSchool). */
   const bs         = branchSchool || {};
@@ -7774,15 +7751,13 @@ ${isColor ? '' : '.print-bar{background:#FFFFFF !important;border-top:1px solid 
 </style></head><body>
 ${reportHTML}
 <div class="print-bar no-print">
-  <button onclick="window.print()">${isColor ? '🖨 ' : ''}Save as PDF</button>
+  <button onclick="window.print()">${isColor ? '🖨 ' : ''}Print / Save as PDF</button>
   <button class="close-btn" onclick="window.close()">Close</button>
 </div>
 </body></html>`;
 
-  if (isWord) { downloadHtmlAsWord(html, `Syllabus - ${ex?.name || ''}`); return; }
-  w.document.open();
-  w.document.write(html);
-  w.document.close();
+  // PDF → print preview; Word → wahi preview "Save as Word" button ke saath (deliverReport).
+  deliverReport(`Syllabus - ${ex?.name || ''}`, format, html, { win: w });
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -10717,7 +10692,7 @@ td,th{overflow-wrap:anywhere;word-break:break-word}
 ${body}
 ${footer}
 <div class="print-bar no-print">
-  <button onclick="window.print()">🖨 Save as PDF</button>
+  <button onclick="window.print()">🖨 Print / Save as PDF</button>
   <button class="close-btn" onclick="window.close()">Close</button>
 </div>
 </body></html>`;
@@ -10752,14 +10727,13 @@ function rhRptHeader(p, school, today, title, subline) {
 // Picker generate ise set karta hai ('pdf' | 'word') — rhReportSchool jaisा module flag.
 let rhExportFormat = 'pdf';
 function rhRptOpen(html) {
-  if (rhExportFormat === 'word') {
-    // <title> se file ka naam le lo (rhRptShell har report ka title set karta hai).
-    const m = String(html).match(/<title>([\s\S]*?)<\/title>/i);
-    downloadHtmlAsWord(html, (m && m[1]) || 'Result Report');
-    return;
-  }
+  // <title> se report ka naam (Word file name + 'Save as Word' ke liye).
+  const m = String(html).match(/<title>([\s\S]*?)<\/title>/i);
+  const name = (m && m[1]) || 'Result Report';
+  // PDF → print preview; Word → wahi preview "Save as Word" button ke saath.
   const w = window.open('', '_blank', 'width=950,height=900');
-  if (w) { w.document.write(html); w.document.close(); }
+  if (!w) return;
+  deliverReport(name, rhExportFormat, html, { win: w });
 }
 function rhGradeColor(g, isColor) {
   if (!isColor || !g) return '#475569';
@@ -13043,12 +13017,8 @@ function generateExamReport(ctx, isColor, format = 'pdf') {
   </div>
 </div></body></html>`;
 
-  if (format === 'word') {
-    downloadHtmlAsWord(html, `Exam Report - ${target?.name || (req?.scope === 'all' ? 'All Exams' : '')}`);
-    return;
-  }
-  const w = window.open('', '_blank', 'width=960,height=820');
-  if (w) { w.document.write(html); w.document.close(); }
+  // PDF → print preview; Word → wahi preview "Save as Word" button ke saath (deliverReport).
+  deliverReport(`Exam Report - ${target?.name || (req?.scope === 'all' ? 'All Exams' : '')}`, format, html);
 }
 /* ═══════════════════════════════════════════════════════════════════
    CSS — verbatim from HTML's #module-exam styles
