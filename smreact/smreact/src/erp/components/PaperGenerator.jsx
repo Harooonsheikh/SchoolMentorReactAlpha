@@ -2543,7 +2543,8 @@ const badge = apiItems ? (
                         {t.saved && <i className="fa-solid fa-check" style={{ fontSize: 9, marginRight: 2, color: isActive ? '#fff' : 'var(--success,#16A34A)' }}></i>}
                         {t.label}
                         {hasData && <span style={{ fontSize: 9.5, fontWeight: 700, opacity: .75, marginLeft: 3 }}></span>}
-                        {tabs.length > 1 && <span className="pg-qtab-close" onClick={e => { e.stopPropagation(); onRemoveTab(t.entryId); }}>×</span>}
+                        {/* Cross sirf UNSAVED tab par — saved question ko cross se delete na ho (uske liye Delete button hai). */}
+                        {tabs.length > 1 && !t.saved && <span className="pg-qtab-close" onClick={e => { e.stopPropagation(); onRemoveTab(t.entryId); }}>×</span>}
                       </button>
                     </Tooltip>
                   );
