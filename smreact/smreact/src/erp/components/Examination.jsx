@@ -5422,7 +5422,8 @@ onClick={async () => {
           /* Report mein classes wahi sequence mein aayein jo table (examClasses) mein hai. */
           ex={dsCurrentExam ? { ...dsCurrentExam, classes: examClasses } : dsCurrentExam}
           dateSheets={dateSheets}
-          term={dsTerm}
+          /* termID (datesheet/exam) → termName terms-CRUD list se; warna exam ka termName / dsTerm. */
+          term={terms.find(t => String(t.id) === String(dsCurrentExam?.termID))?.term || dsCurrentExam?.termName || dsTerm}
           branchSchool={branchSchool}
           onClose={() => setDsReportReq(null)}
           toast={toast}
@@ -7061,7 +7062,7 @@ async function generateDateSheetReport({ ex, dateSheets, term, classKey, branchS
         </div>
         <div style="text-align:right;min-width:0">
           <div style="font-size:13px;font-weight:700;color:rgba(255,255,255,.9)">Date Sheet Report</div>
-          <div style="font-size:10.5px;color:rgba(255,255,255,.65);margin-top:3px">${ex.name} · ${term} Term · Generated: ${today}</div>
+          <div style="font-size:10.5px;color:rgba(255,255,255,.65);margin-top:3px">${ex.name} · ${term} · Generated: ${today}</div>
         </div>
       </div>
       <div style="display:flex;flex-wrap:wrap;border-bottom:1px solid ${aBdr}">
