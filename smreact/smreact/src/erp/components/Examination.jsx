@@ -878,6 +878,10 @@ const [subjects, setSubjects] = useState([]);
   const loadStudentExams = async (st) => {
     try {
       setRhExamsLoading(true);
+      // Naya student load hone se pehle purane student ka data foran clear karo —
+      // warna naye student ke neeche purane (stale) exams/scores flash karte hain.
+      setRhExams([]);
+      setRhExamScores({});
       const branchID  = sessionStorage.getItem('branchID');
       const token     = sessionStorage.getItem('token');
       const classID   = st.gradeId   ?? st.classID   ?? st.classId   ?? '';
@@ -4740,7 +4744,8 @@ onClick={async () => {
               });
             });
             const usingApi = apiStudents.length > 0;
-            const sourceStudents = usingApi ? apiStudents : RH_INITIAL_STUDENTS;
+            // Sirf API students dikhao — koi static/sample fallback nahi (na ho to empty state).
+            const sourceStudents = apiStudents;
 
             const filtered = sourceStudents.filter(st => {
               if (q) {
@@ -7648,9 +7653,8 @@ async function generateSyllabusReport({ ex, syllabusData, term, classKey, branch
               ${added ? 'Added' : 'Not Added'}
             </span>
           </td>
-          <td style="padding:8px 12px;font-size:11px;color:${tMuted};border-bottom:1px solid ${aBdr};vertical-align:top;white-space:nowrap">${sEsc(s.updatedAt) || '—'}</td>
         </tr>`;
-    }).join('') : `<tr><td colspan="5" style="padding:12px;text-align:center;font-size:12px;color:${tMuted}">No syllabus added</td></tr>`;
+    }).join('') : `<tr><td colspan="4" style="padding:12px;text-align:center;font-size:12px;color:${tMuted}">No syllabus added</td></tr>`;
 
     return `
       <div style="margin-bottom:20px;page-break-inside:avoid">
@@ -7659,14 +7663,13 @@ async function generateSyllabusReport({ ex, syllabusData, term, classKey, branch
           <div style="font-size:13px;font-weight:800;color:#0F172A">${sEsc(cls.className || `${cls.gradeName || ''}${cls.sectionName ? ' - ' + cls.sectionName : ''}`.trim())}</div>
         </div>
         <table style="width:100%;table-layout:fixed;border-collapse:collapse;border:1px solid ${aBdr}">
-          <colgroup><col style="width:34px"><col style="width:90px"><col><col style="width:80px"><col style="width:78px"></colgroup>
+          <colgroup><col style="width:34px"><col style="width:90px"><col><col style="width:80px"></colgroup>
           <thead>
             <tr style="background:${aBg}">
               <th style="padding:7px 12px;font-size:10px;font-weight:700;color:${aColor};text-align:left;text-transform:uppercase;letter-spacing:.5px;border-bottom:2px solid ${aBdr}">#</th>
               <th style="padding:7px 12px;font-size:10px;font-weight:700;color:${aColor};text-align:left;text-transform:uppercase;letter-spacing:.5px;border-bottom:2px solid ${aBdr}">Subject</th>
               <th style="padding:7px 12px;font-size:10px;font-weight:700;color:${aColor};text-align:left;text-transform:uppercase;letter-spacing:.5px;border-bottom:2px solid ${aBdr}">Syllabus Summary</th>
               <th style="padding:7px 12px;font-size:10px;font-weight:700;color:${aColor};text-align:left;text-transform:uppercase;letter-spacing:.5px;border-bottom:2px solid ${aBdr}">Status</th>
-              <th style="padding:7px 12px;font-size:10px;font-weight:700;color:${aColor};text-align:left;text-transform:uppercase;letter-spacing:.5px;border-bottom:2px solid ${aBdr}">Updated</th>
             </tr>
           </thead>
           <tbody>${rowsHtml}</tbody>
