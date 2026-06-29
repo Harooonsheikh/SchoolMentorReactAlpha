@@ -174,20 +174,20 @@ export default function SchoolTab({ schoolInfo, setSchoolInfo, onSave, onSaveDra
 
       const res  = await fetch(buildUrl('/api/Registration/update-branch'), { method: 'PUT', body: fd });
       const data = await res.json();
-    const res2 = await fetch(buildUrl('/api/Setting/save-branch-session'), {
-      method: 'POST',
-      headers: {
-        'Accept': '*/*',
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        id: 0,
-        branchID: BranchID,
-        isActive: true,
-        sessionID: branchSession,
-        sessionName: schoolInfo.academicSession
-      }),
-    });
+    // const res2 = await fetch(buildUrl('/api/Setting/save-branch-session'), {
+    //   method: 'POST',
+    //   headers: {
+    //     'Accept': '*/*',
+    //     'Content-Type': 'application/json',
+    //   },
+    //   body: JSON.stringify({
+    //     id: 0,
+    //     branchID: BranchID,
+    //     isActive: true,
+    //     sessionID: branchSession,
+    //     sessionName: schoolInfo.academicSession
+    //   }),
+    // });
 
       setSaving(false);
       if (res.ok) {
@@ -455,22 +455,10 @@ export default function SchoolTab({ schoolInfo, setSchoolInfo, onSave, onSaveDra
           />
         </FG>
 
-        <div style={{ marginTop: 12 }}>
+     {/*   <div style={{ marginTop: 12 }}>
           <div className="form-grid form-grid-2">
-            {/* <FG fieldErrors={fe} label="Landmark" id="landmark">
-              <input className="form-input" placeholder="Nearby landmark"
-                value={s('landmark')}
-                onChange={e => handleChange('landmark', e.target.value)} />
-            </FG> */}
 
             <FG fieldErrors={fe} label="Academic Session" id="academicSession" required>
-              {/* <input
-                className={`form-input${fe.academicSession === 'error' ? ' error-field' : fe.academicSession === 'ok' ? ' success-field' : ''}`}
-                placeholder="e.g. 2025-2026"
-                value={s('academicSession')}
-                onChange={e => handleChange('academicSession', e.target.value)}
-                onBlur={e => handleBlur('academicSession', e.target.value)}
-              /> */}
                <select
                 className={`form-select${fe.academicSession === 'error' ? ' error-field' : fe.academicSession === 'ok' ? ' success-field' : ''}`}
                 value={branchSession}
@@ -490,7 +478,7 @@ export default function SchoolTab({ schoolInfo, setSchoolInfo, onSave, onSaveDra
               </select>
             </FG>
           </div>
-        </div>
+        </div>*/}
       </div>
 
       {/* ══ Banking ════════════════════════════════════════════════════════ */}
