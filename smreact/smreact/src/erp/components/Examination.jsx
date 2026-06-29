@@ -3090,7 +3090,7 @@ useEffect(() => {
                 </button>
               </Tooltip>
               <Tooltip text="Download a Word report of all exams in this term">
-                <button className="export-btn word" onClick={() => setReportReq({ scope: 'all', name: 'All Exams' })}>
+                <button className="export-btn word" onClick={() => setReportReq({ scope: 'all', name: 'All Exams', format: 'word' })}>
                   <i className="fa-brands fa-microsoft"></i> Word
                 </button>
               </Tooltip>
@@ -3150,7 +3150,7 @@ useEffect(() => {
                           </button>
                         </Tooltip>
                         <Tooltip text={`Download Word for ${ex.name}`}>
-                          <button className="export-btn word" onClick={() => setReportReq({ scope: ex.id, name: ex.name })}>
+                          <button className="export-btn word" onClick={() => setReportReq({ scope: ex.id, name: ex.name, format: 'word' })}>
                             <i className="fa-brands fa-microsoft"></i> Word
                           </button>
                         </Tooltip>
@@ -3290,7 +3290,7 @@ useEffect(() => {
           </button>
         </Tooltip>
         <Tooltip text={`Download date sheet in Word for ${dsCurrentExam.name}`}>
-          <button className="export-btn word" onClick={() => setDsReportReq({ classKey: 'all', name: `All Classes — ${dsCurrentExam.name}` })}>
+          <button className="export-btn word" onClick={() => setDsReportReq({ classKey: 'all', name: `All Classes — ${dsCurrentExam.name}`, format: 'word' })}>
             <i className="fa-brands fa-microsoft"></i> Word
           </button>
         </Tooltip>
@@ -3510,7 +3510,7 @@ useEffect(() => {
                 </button>
               </Tooltip>
               <Tooltip text={`Download syllabus in Word for ${sylCurrentExam.name}`}>
-                <button className="export-btn word" onClick={() => setSylReportReq({ classKey: 'all', name: `All Classes — ${sylCurrentExam.name}` })}>
+                <button className="export-btn word" onClick={() => setSylReportReq({ classKey: 'all', name: `All Classes — ${sylCurrentExam.name}`, format: 'word' })}>
                   <i className="fa-brands fa-microsoft"></i> Word
                 </button>
               </Tooltip>
@@ -6534,7 +6534,8 @@ function ExamModal({ data, onClose, onSave, toast, selectedTermId }) {
    ═══════════════════════════════════════════════════════════════════ */
 function ExamReportPicker({ req, exams, term, branchSchool, onClose, toast }) {
   const [style, setStyle]   = useState('color');
-  const [format, setFormat] = useState('pdf');
+  // Format default us button se aata hai jisse picker khula (PDF ya Word).
+  const [format, setFormat] = useState(req?.format || 'pdf');
 
   const isAll  = req.scope === 'all';
   const target = isAll ? null : exams.find(e => e.id === req.scope);
@@ -6542,11 +6543,8 @@ function ExamReportPicker({ req, exams, term, branchSchool, onClose, toast }) {
   const dlLabel = `Download ${style === 'color' ? 'Colorful' : 'Colorless'} ${format === 'pdf' ? 'PDF' : 'Word'}`;
 
   const generate = () => {
-    if (format === 'word') {
-      toast('Word export coming soon', 'info');
-    } else {
-      generateExamReport({ req, exams, term, target, branchSchool }, style === 'color');
-    }
+    // PDF ya Word — generate function format ke hisaab se handle karta hai.
+    generateExamReport({ req, exams, term, target, branchSchool }, style === 'color', format);
     onClose();
   };
 
@@ -6840,17 +6838,15 @@ const save = () => {
    ═══════════════════════════════════════════════════════════════════ */
 function DsReportPicker({ req, ex, dateSheets, term, branchSchool, onClose, toast }) {
   const [style, setStyle]   = useState('color');
-  const [format, setFormat] = useState('pdf');
+  // Format default us button se aata hai jisse picker khula (PDF ya Word).
+  const [format, setFormat] = useState(req?.format || 'pdf');
   if (!ex) return null;
 
   const dlLabel = `Download ${style === 'color' ? 'Colorful' : 'Colorless'} ${format === 'pdf' ? 'PDF' : 'Word'}`;
 
   const generate = async () => {
-    if (format === 'word') {
-      toast('Word export coming soon', 'info');
-    } else {
-      await generateDateSheetReport({ ex, dateSheets, term, classKey: req.classKey, branchSchool }, style === 'color');
-    }
+    // PDF ya Word — dono generate function ke andar format ke hisaab se handle hote hain.
+    await generateDateSheetReport({ ex, dateSheets, term, classKey: req.classKey, branchSchool }, style === 'color', format);
     onClose();
   };
 
@@ -6941,13 +6937,34 @@ function DsReportPicker({ req, ex, dateSheets, term, branchSchool, onClose, toas
   );
 }
 
-async function generateDateSheetReport({ ex, dateSheets, term, classKey, branchSchool }, isColor) {
-  const isAll = classKey === 'all';
+/* HTML report ko Word (.doc) file ki tarah download karo. Word HTML-based .doc ko
+   natively kholता/render karta hai, aur user "Save As → .docx" kar sakta hai.
+   Screen-only print-bar (no-print) ko Word file se hata dete hain. */
+function downloadHtmlAsWord(html, filename) {
+  try {
+    const cleaned = String(html || '').replace(/<div class="print-bar[\s\S]*?<\/div>/i, '');
+    const blob = new Blob(['﻿' + cleaned], { type: 'application/msword' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${String(filename || 'report').replace(/[\\/:*?"<>|]+/g, ' ').trim()}.doc`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+  } catch (e) {
+    console.error('Word export failed', e);
+  }
+}
 
-  // Window pehle kholo (popup-blocker se bachne ke liye), phir data fetch.
-  const w = window.open('', '_blank', 'width=960,height=820');
-  if (!w) return;
-  w.document.write('<p style="font-family:sans-serif;padding:24px;color:#475569">Preparing report…</p>');
+async function generateDateSheetReport({ ex, dateSheets, term, classKey, branchSchool }, isColor, format = 'pdf') {
+  const isAll = classKey === 'all';
+  const isWord = format === 'word';
+
+  // PDF/print ke liye window pehle kholo (popup-blocker se bachne ke liye); Word ke liye nahi.
+  const w = isWord ? null : window.open('', '_blank', 'width=960,height=820');
+  if (!isWord && !w) return;
+  if (w) w.document.write('<p style="font-family:sans-serif;padding:24px;color:#475569">Preparing report…</p>');
 
   /* Real branch header (name / logo / address / academic year) from the
      /report-header/{branchId} API (saved in branchSchool) — same as the exam report. */
@@ -7133,6 +7150,7 @@ ${reportHTML}
 </div>
 </body></html>`;
 
+  if (isWord) { downloadHtmlAsWord(html, `Date Sheet - ${ex?.name || ''}`); return; }
   w.document.open();
   w.document.write(html);
   w.document.close();
@@ -7451,17 +7469,15 @@ const save = () => {
    ═══════════════════════════════════════════════════════════════════ */
 function SylReportPicker({ req, ex, syllabusData, term, branchSchool, onClose, toast }) {
   const [style, setStyle]   = useState('color');
-  const [format, setFormat] = useState('pdf');
+  // Format default us button se aata hai jisse picker khula (PDF ya Word).
+  const [format, setFormat] = useState(req?.format || 'pdf');
   if (!ex) return null;
 
   const dlLabel = `Download ${style === 'color' ? 'Colorful' : 'Colorless'} ${format === 'pdf' ? 'PDF' : 'Word'}`;
 
   const generate = async () => {
-    if (format === 'word') {
-      toast('Word export coming soon', 'info');
-    } else {
-      await generateSyllabusReport({ ex, syllabusData, term, classKey: req.classKey, branchSchool }, style === 'color');
-    }
+    // PDF ya Word — generate function format ke hisaab se handle karta hai.
+    await generateSyllabusReport({ ex, syllabusData, term, classKey: req.classKey, branchSchool }, style === 'color', format);
     onClose();
   };
 
@@ -7552,13 +7568,14 @@ function SylReportPicker({ req, ex, syllabusData, term, branchSchool, onClose, t
   );
 }
 
-async function generateSyllabusReport({ ex, syllabusData, term, classKey, branchSchool }, isColor) {
+async function generateSyllabusReport({ ex, syllabusData, term, classKey, branchSchool }, isColor, format = 'pdf') {
   const isAll = classKey === 'all';
+  const isWord = format === 'word';
 
-  // Window pehle kholo (popup-blocker se bachne ke liye), phir data fetch.
-  const w = window.open('', '_blank', 'width=960,height=820');
-  if (!w) return;
-  w.document.write('<p style="font-family:sans-serif;padding:24px;color:#475569">Preparing report…</p>');
+  // PDF/print ke liye window pehle kholo (popup-blocker se bachne ke liye); Word ke liye nahi.
+  const w = isWord ? null : window.open('', '_blank', 'width=960,height=820');
+  if (!isWord && !w) return;
+  if (w) w.document.write('<p style="font-family:sans-serif;padding:24px;color:#475569">Preparing report…</p>');
 
   /* Real branch header (name / logo / address / academic year) from /report-header (branchSchool). */
   const bs         = branchSchool || {};
@@ -7753,6 +7770,7 @@ ${reportHTML}
 </div>
 </body></html>`;
 
+  if (isWord) { downloadHtmlAsWord(html, `Syllabus - ${ex?.name || ''}`); return; }
   w.document.open();
   w.document.write(html);
   w.document.close();
@@ -10542,18 +10560,16 @@ function RhReportPicker({ req, branchSchool, onClose, toast }) {
   };
 
   const generate = () => {
-    if (format === 'word') {
-      toast('Word export coming soon', 'info');
-    } else {
-      const isColor = style === 'color';
-      // Builders ke header/footer mein /report-header (branchSchool) ki info dikhane ke liye set.
-      rhReportSchool = branchSchool || null;
-      if (req.type === 'card')       rhBuildSingleCardReport(req.student, req.result, isColor);
-      if (req.type === 'history')    rhBuildHistoryReport(req.student, isColor);
-      if (req.type === 'progress')   rhBuildProgressReport(req.student, isColor);
-      if (req.type === 'comparison') rhBuildComparisonReport(req.student, isColor);
-      if (req.type === 'attendance') rhBuildAttendanceReport(req.student, isColor);
-    }
+    const isColor = style === 'color';
+    // PDF ya Word — rhRptOpen is flag ke hisaab se popup ya .doc download karta hai.
+    rhExportFormat = format;
+    // Builders ke header/footer mein /report-header (branchSchool) ki info dikhane ke liye set.
+    rhReportSchool = branchSchool || null;
+    if (req.type === 'card')       rhBuildSingleCardReport(req.student, req.result, isColor);
+    if (req.type === 'history')    rhBuildHistoryReport(req.student, isColor);
+    if (req.type === 'progress')   rhBuildProgressReport(req.student, isColor);
+    if (req.type === 'comparison') rhBuildComparisonReport(req.student, isColor);
+    if (req.type === 'attendance') rhBuildAttendanceReport(req.student, isColor);
     onClose();
   };
 
@@ -10724,7 +10740,15 @@ function rhRptHeader(p, school, today, title, subline) {
     </div>
   </div>`;
 }
+// Picker generate ise set karta hai ('pdf' | 'word') — rhReportSchool jaisा module flag.
+let rhExportFormat = 'pdf';
 function rhRptOpen(html) {
+  if (rhExportFormat === 'word') {
+    // <title> se file ka naam le lo (rhRptShell har report ka title set karta hai).
+    const m = String(html).match(/<title>([\s\S]*?)<\/title>/i);
+    downloadHtmlAsWord(html, (m && m[1]) || 'Result Report');
+    return;
+  }
   const w = window.open('', '_blank', 'width=950,height=900');
   if (w) { w.document.write(html); w.document.close(); }
 }
@@ -12819,7 +12843,7 @@ ${reportHTML}
 /* ═══════════════════════════════════════════════════════════════════
    REPORT BUILDER — A4 portrait
    ═══════════════════════════════════════════════════════════════════ */
-function generateExamReport(ctx, isColor) {
+function generateExamReport(ctx, isColor, format = 'pdf') {
   const { req, exams, term, target, branchSchool } = ctx;
   /* `exams` already holds only the currently-loaded term's exams (getExamsByTerm
      replaces it on each term switch), and the API gives termName not term — so the
@@ -13010,6 +13034,10 @@ function generateExamReport(ctx, isColor) {
   </div>
 </div></body></html>`;
 
+  if (format === 'word') {
+    downloadHtmlAsWord(html, `Exam Report - ${target?.name || (req?.scope === 'all' ? 'All Exams' : '')}`);
+    return;
+  }
   const w = window.open('', '_blank', 'width=960,height=820');
   if (w) { w.document.write(html); w.document.close(); }
 }
