@@ -4,6 +4,7 @@ import * as academicsService from '../services/academicsService';
 import useAsync from '../hooks/useAsync';
 import { buildUrl, assertSessionPayload, registerSessionToast, apiMessage } from '../../utils/apiConfig';
 import { termsCrud, termsBranchID, termsSessionYearID } from './Academics';
+import { deliverReport } from './reportDelivery';
 
 /* ═══════════════════════════════════════════════════════════════════
    LESSON PLANS — port from
@@ -1011,6 +1012,11 @@ function SessionEditModal({ open, session, vacations, onSession, onVacations, on
   );
 
   const save = () => {
+    /* End date must be after the start date. */
+    if (start && end && end <= start) {
+      toast('Session End must be after Session Start', 'error');
+      return;
+    }
     /* Parent persists via lpsessionsummarycrud and reloads. */
     onSession({ start, end, workingDaysPerWeek: wpw });
     onClose();
@@ -1046,11 +1052,17 @@ function SessionEditModal({ open, session, vacations, onSession, onVacations, on
               <div className="form-row" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
                 <div className="form-group">
                   <label className="form-label">Session Start</label>
-                  <input className="form-input" type="date" value={start} onChange={e => setStart(e.target.value)} />
+                  <input className="form-input" type="date" value={start} max={end || undefined}
+                    onChange={e => {
+                      const v = e.target.value;
+                      setStart(v);
+                      if (end && v && end <= v) setEnd('');
+                    }} />
                 </div>
                 <div className="form-group">
                   <label className="form-label">Session End</label>
-                  <input className="form-input" type="date" value={end} onChange={e => setEnd(e.target.value)} />
+                  <input className="form-input" type="date" value={end} min={start || undefined}
+                    onChange={e => setEnd(e.target.value)} />
                 </div>
                 <div className="form-group">
                   <label className="form-label">Working Days / Week</label>
@@ -2091,33 +2103,54 @@ console.log('json2 FULL:', JSON.stringify(json2).slice(0, 500));
                       ));
                     })()}
                   </div>
-                  <div className="tb-detail-actions">
-                    <Tooltip text={`Download ${className} - Section ${item.sectionName || ''} term breakup (color PDF)`}>
-                      <button className="export-btn pdf" onClick={() => onReport(`${className} - Section ${item.sectionName || ''} — Term Breakup`, 'pdf', 'color', buildTbReportData(item, uniqueId))}>
-                        <i className="fa-solid fa-file-pdf"></i> PDF Color
-                      </button>
-                    </Tooltip>
-                    <Tooltip text={`Download ${className} - Section ${item.sectionName || ''} term breakup as Word`}>
-                      <button className="export-btn word" onClick={() => onReport(`${className} - Section ${item.sectionName || ''} — Term Breakup`, 'word', 'color', buildTbReportData(item, uniqueId))}>
-                        <i className="fa-brands fa-microsoft"></i> Word
-                      </button>
-                    </Tooltip>
-                    <Tooltip text={isOtherSession ? 'Editing is only allowed for the current session' : 'Delete term breakup'}>
-                      <button className="lp-icon-del"
-                        disabled={isOtherSession}
-                        style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
-                        onClick={() => openConfirm({
-                        title: 'Delete Term Breakup?',
-                        message: `Term breakup for <strong>${className} - Section ${item.sectionName || ''}</strong> will be permanently removed.`,
-                        hint: 'Linked lesson plans will no longer have a structure to follow.',
-                        confirmLabel: 'Yes, Delete',
-                        icon: 'fa-trash',
-                        onConfirm: () => toast('Term breakup deleted', 'success'),
-                      })} aria-label="Delete term breakup">
-                        <i className="fa-solid fa-trash"></i>
-                      </button>
-                    </Tooltip>
-                  </div>
+                 <div className="tb-detail-actions">
+  {(() => {
+    const tbd = termBreakupData[uniqueId];
+    const hasNoData = !tbd || tbd.loading || tbd.noData || !tbd.units?.length;
+    return (
+      <>
+        <Tooltip text={hasNoData ? 'No data to download' : `Download ${className} - Section ${item.sectionName || ''} term breakup (color PDF)`}>
+          <button
+            className="export-btn pdf"
+            disabled={hasNoData}
+            style={hasNoData ? { opacity: 0.4, cursor: 'not-allowed' } : {}}
+            onClick={() => !hasNoData && onReport(`${className} - Section ${item.sectionName || ''} — Term Breakup`, 'pdf', 'color', buildTbReportData(item, uniqueId))}
+          >
+            <i className="fa-solid fa-file-pdf"></i> PDF Color
+          </button>
+        </Tooltip>
+        <Tooltip text={hasNoData ? 'No data to download' : `Download ${className} - Section ${item.sectionName || ''} term breakup as Word`}>
+          <button
+            className="export-btn word"
+            disabled={hasNoData}
+            style={hasNoData ? { opacity: 0.4, cursor: 'not-allowed' } : {}}
+            onClick={() => !hasNoData && onReport(`${className} - Section ${item.sectionName || ''} — Term Breakup`, 'word', 'color', buildTbReportData(item, uniqueId))}
+          >
+            <i className="fa-brands fa-microsoft"></i> Word
+          </button>
+        </Tooltip>
+        <Tooltip text={hasNoData ? 'No data to delete' : 'Delete term breakup'}>
+          <button
+            className="lp-icon-del"
+            disabled={hasNoData}
+            style={hasNoData ? { opacity: 0.4, cursor: 'not-allowed' } : {}}
+            onClick={() => !hasNoData && openConfirm({
+              title: 'Delete Term Breakup?',
+              message: `Term breakup for <strong>${className} - Section ${item.sectionName || ''}</strong> will be permanently removed.`,
+              hint: 'Linked lesson plans will no longer have a structure to follow.',
+              confirmLabel: 'Yes, Delete',
+              icon: 'fa-trash',
+              onConfirm: () => toast('Term breakup deleted', 'success'),
+            })}
+            aria-label="Delete term breakup"
+          >
+            <i className="fa-solid fa-trash"></i>
+          </button>
+        </Tooltip>
+      </>
+    );
+  })()}
+</div>
                 </div>
               </div>
             )}
@@ -7917,14 +7950,13 @@ function tbGenerateReport(cls, style, reportHeader = null, format = null, data =
   </div>
 </div></body></html>`;
 
-  const w = window.open('', '_blank', 'width=980,height=800');
-  if (w) { w.document.write(html); w.document.close(); }
+  deliverReport(`${cls} — Term Breakup`, isWord ? 'word' : 'pdf', html, { width: 980, height: 800 });
 }
 
 /* ═══════════════════════════════════════════════════════════════════
    SESSION SETTINGS CARD REPORTS — verbatim from HTML generateCardReport
    ═══════════════════════════════════════════════════════════════════ */
-async function generateCardReport(card, style, ctx = {}, reportHeader = null) {
+async function generateCardReport(card, style, ctx = {}, reportHeader = null, format = null) {
   /* Use the header passed in by the dispatcher; only fetch if absent. */
   if (!reportHeader) reportHeader = await fetchLpReportHeader();
   const reportSession = ctx.session || {};
@@ -8219,14 +8251,15 @@ async function generateCardReport(card, style, ctx = {}, reportHeader = null) {
 </div>
 </body></html>`;
 
-  const w = window.open('', '_blank', 'width=900,height=750');
-  if (w) { w.document.write(html); w.document.close(); }
+  const cardTitle = card === 'vacations' ? 'Vacations'
+    : card === 'summary' ? 'Session Summary' : 'Academic Session';
+  deliverReport(cardTitle, format === 'word' ? 'word' : 'pdf', html, { width: 900, height: 750 });
 }
 
 /* ═══════════════════════════════════════════════════════════════════
    PER WEEK LESSON PLANS REPORT — verbatim from HTML lpOpenReport
    ═══════════════════════════════════════════════════════════════════ */
-async function lpOpenReport(type, style, selectedClass, ctx = {}, reportHeader = null) {
+async function lpOpenReport(type, style, selectedClass, ctx = {}, reportHeader = null, format = null) {
   /* Header (logo, school name, session, address) from /report-header/{branchID}.
      Use the one passed in by the dispatcher; only fetch if absent. */
   if (!reportHeader) reportHeader = await fetchLpReportHeader();
@@ -8398,8 +8431,7 @@ async function lpOpenReport(type, style, selectedClass, ctx = {}, reportHeader =
 </div>
 </body></html>`;
 
-  const w = window.open('', '_blank', 'width=960,height=750');
-  if (w) { w.document.write(html); w.document.close(); }
+  deliverReport(title, format === 'word' ? 'word' : 'pdf', html, { width: 960, height: 750 });
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -8408,7 +8440,7 @@ async function lpOpenReport(type, style, selectedClass, ctx = {}, reportHeader =
 /* ═══════════════════════════════════════════════════════════════════
    CREATE-LESSON-PLAN UNIT PDF — verbatim from HTML clpUnitPdfReport
    ═══════════════════════════════════════════════════════════════════ */
-async function clpUnitPdfReport(unit, ctx, style, reportHeader = null) {
+async function clpUnitPdfReport(unit, ctx, style, reportHeader = null, format = null) {
   if (!unit) return;
   const isColor = style === 'color';
 
@@ -8634,14 +8666,13 @@ async function clpUnitPdfReport(unit, ctx, style, reportHeader = null) {
 
 </div></body></html>`;
 
-  const w = window.open('', '_blank', 'width=1000,height=800');
-  if (w) { w.document.write(html); w.document.close(); }
+  deliverReport(`${cls} Unit ${unit.unitNo} ${unit.unitName}`, format === 'word' ? 'word' : 'pdf', html, { width: 1000, height: 800 });
 }
 
 /* ═══════════════════════════════════════════════════════════════════
    NOTEBOOK PDF — verbatim from HTML nbGeneratePdfHtml
    ═══════════════════════════════════════════════════════════════════ */
-function nbGeneratePdfHtml(u, questions, isColor, reportHeader = null) {
+function nbGeneratePdfHtml(u, questions, isColor, reportHeader = null, format = null) {
   const pri    = isColor ? '#0C4A6E' : '#111';
   const hdrBg  = isColor ? 'linear-gradient(135deg,#1E3A8A,#2563EB)' : '#1a1a1a';
   const bdgBg  = isColor ? '#E0F2FE' : '#eee';
@@ -8765,8 +8796,7 @@ function nbGeneratePdfHtml(u, questions, isColor, reportHeader = null) {
   </div>
   </div></body></html>`;
 
-  const w = window.open('', '_blank', 'width=1000,height=800');
-  if (w) { w.document.write(html); w.document.close(); }
+  deliverReport(`Unit ${u.unitNo || ''} Notebook`, format === 'word' ? 'word' : 'pdf', html, { width: 1000, height: 800 });
 }
 
 async function generateLessonPlanReport(name, style, format, ctx) {
@@ -8811,13 +8841,13 @@ async function generateLessonPlanReport(name, style, format, ctx) {
   }
 
   /* Session Settings cards */
-  if (name === 'Academic Session')  { await generateCardReport('session',   style, ctx, reportHeader); return; }
-  if (name === 'Vacations')         { await generateCardReport('vacations', style, ctx, reportHeader); return; }
-  if (name === 'Session Summary')   { await generateCardReport('summary',   style, ctx, reportHeader); return; }
+  if (name === 'Academic Session')  { await generateCardReport('session',   style, ctx, reportHeader, format); return; }
+  if (name === 'Vacations')         { await generateCardReport('vacations', style, ctx, reportHeader, format); return; }
+  if (name === 'Session Summary')   { await generateCardReport('summary',   style, ctx, reportHeader, format); return; }
 
   /* Per Week Lesson Plans variants */
   if (name.startsWith('Per Week Lesson Plans')) {
-    await lpOpenReport('combined', style, '', ctx, reportHeader);
+    await lpOpenReport('combined', style, '', ctx, reportHeader, format);
     return;
   }
 
@@ -8834,7 +8864,7 @@ async function generateLessonPlanReport(name, style, format, ctx) {
         if (q) {
           const typeKey = q.typeId || q.type;
           const questions = { [typeKey]: { mainQ: q.mainQ || q.mainQuestion || '', rows: q.rows || q.items || [] } };
-          nbGeneratePdfHtml(unit, questions, style === 'color', reportHeader);
+          nbGeneratePdfHtml(unit, questions, style === 'color', reportHeader, format);
           return;
         }
       }
@@ -8855,7 +8885,7 @@ async function generateLessonPlanReport(name, style, format, ctx) {
         if (!questions[typeKey]) questions[typeKey] = { mainQ: q.mainQ || q.mainQuestion || '', rows: [] };
         questions[typeKey].rows.push(...(q.rows || q.items || []));
       });
-      nbGeneratePdfHtml(unit, questions, style === 'color', reportHeader);
+      nbGeneratePdfHtml(unit, questions, style === 'color', reportHeader, format);
       return;
     }
   }
@@ -8865,7 +8895,7 @@ async function generateLessonPlanReport(name, style, format, ctx) {
     const m = name.match(/^Unit\s+([^\s—]+)/);
     const unitNo = m ? m[1] : '';
     const unit = ctx?.units?.find(u => String(u.unitNo) === String(unitNo));
-    if (unit) { await clpUnitPdfReport(unit, ctx, style, reportHeader); return; }
+    if (unit) { await clpUnitPdfReport(unit, ctx, style, reportHeader, format); return; }
   }
   if (name.startsWith('Lesson ')) {
     /* Render lesson as a single-lesson unit using clpUnitPdfReport */
@@ -8877,7 +8907,7 @@ async function generateLessonPlanReport(name, style, format, ctx) {
       const lessonNum = lessonMatch[1];
       const lesson = unit.lessons.find(l => String(l.num) === String(lessonNum));
       if (lesson) {
-        await clpUnitPdfReport({ ...unit, lessons: [lesson] }, ctx, style, reportHeader);
+        await clpUnitPdfReport({ ...unit, lessons: [lesson] }, ctx, style, reportHeader, format);
         return;
       }
     }
@@ -8912,8 +8942,7 @@ async function generateLessonPlanReport(name, style, format, ctx) {
     </div>
   </div></body></html>`;
 
-  const w = window.open('', '_blank', 'width=900,height=700');
-  if (w) { w.document.write(html); w.document.close(); }
+  deliverReport(name, format === 'word' ? 'word' : 'pdf', html);
 }
 
 /* ═══════════════════════════════════════════════════════════════════

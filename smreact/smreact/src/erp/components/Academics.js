@@ -5,6 +5,7 @@ import TutorialModal from './TutorialModal';
 import * as academicsService from '../services/academicsService';
 import useAsync from '../hooks/useAsync';
 import { buildUrl, assertSessionPayload, registerSessionToast, apiMessage } from '../../utils/apiConfig';
+import { deliverReport } from './reportDelivery';
 
 
 
@@ -1119,15 +1120,7 @@ async function generateReportWindow(name, style, format, ctx, classesData, subje
       <button onclick="window.close()" style="${closeBtnStyle}">Close</button>
     </div>
   </div></body></html>`;
-  const w = window.open('', '_blank', 'width=900,height=700');
-if (w) {
-  w.document.open();
-  w.document.write(html);
-  w.document.close();
-  w.focus();
-} else {
-  alert('Popup blocked! Please allow popups for this site.');
-}
+  deliverReport(name, format, html);
 }
 
 /* ═══════════════════════════════════════════════════════════════════
