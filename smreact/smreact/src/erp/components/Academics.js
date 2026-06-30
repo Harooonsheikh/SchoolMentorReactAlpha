@@ -2914,16 +2914,7 @@ const deleteTerm = id => {
                             View only
                           </span>
                         )}
-                        <Tooltip text={isOtherSession ? 'Deleting is only allowed for the current session' : 'Delete term'}>
-                          <button
-                            className="ts-act-btn del"
-                            onClick={() => deleteTerm(term.id)}
-                            aria-disabled={isOtherSession}
-                            style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
-                          >
-                            <i className="fa-solid fa-xmark"></i>
-                          </button>
-                        </Tooltip>
+                       
                       </div>
                     </div>
                   </div>
