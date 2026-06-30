@@ -163,50 +163,48 @@ export default function Fee({ toast = () => {} }) {
    download button.
    ═══════════════════════════════════════════════════════════════════ */
 function StudentFeeSetup({ toast }) {
-  const { data: classes = [] }                       = useAsync(feeService.getFeeClasses, []);
-  const { data: headsMap = {}, setData: setHeadsMap } = useAsync(feeService.getFeeHeads, []);
+  const { data: grades = [], refetch: reloadGrades } = useAsync(feeService.getFeeGrades, []);
 
   const [openKey, setOpenKey]       = useState(null);  // expanded class row
   const [editKey, setEditKey]       = useState(null);  // class being edited
   const [confirm, setConfirm]       = useState(null);  // { title, message, hint?, onConfirm }
   const [reportHtml, setReportHtml] = useState(null);  // { title, html }
 
+  /* Fee structure is per grade; the table reads classes + a key→heads map. */
+  const classes  = grades;
+  const headsMap = useMemo(
+    () => Object.fromEntries(grades.map(g => [g.key, g.heads || []])),
+    [grades],
+  );
+
   const editClass = classes.find(c => c.key === editKey) || null;
 
   const openEdit  = useCallback((key) => setEditKey(key), []);
   const closeEdit = useCallback(()    => setEditKey(null), []);
 
-  const saveHeads = useCallback(async (heads) => {
-    if (!editKey) return;
-    const cleaned = heads
-      .filter(h => h.name && h.name.trim())
-      .map(h => ({ name: h.name.trim(), amt: Math.max(0, Number(h.amt) || 0) }));
-    setHeadsMap(prev => ({ ...prev, [editKey]: cleaned }));
-    await feeService.saveFeeHeads(editKey, cleaned);
-    closeEdit();
-    toast('Fee structure updated', 'success');
-  }, [editKey, setHeadsMap, closeEdit, toast]);
-
   const requestCopyToAll = useCallback((srcKey) => {
     const srcHeads = headsMap[srcKey] || [];
     const src = classes.find(c => c.key === srcKey);
+    if (!srcHeads.length) { toast('This class has no fee heads to copy', 'error'); return; }
     setConfirm({
       title:   'Copy fee structure to all classes?',
-      message: `This will apply ${src?.cls} (${src?.sec})'s ${srcHeads.length} fee head${srcHeads.length !== 1 ? 's' : ''} to every other class for future challan generation.`,
-      hint:    'Already generated challans will not change — only newly generated challans will use the copied structure.',
+      message: `This will add ${src?.cls}'s ${srcHeads.length} fee head${srcHeads.length !== 1 ? 's' : ''} to every other class.`,
+      hint:    'Existing fee heads on other classes are kept — the copied heads are added to them.',
       onConfirm: async () => {
-        const next = { ...headsMap };
-        classes.forEach(c => {
-          if (c.key !== srcKey) next[c.key] = srcHeads.map(h => ({ ...h }));
-        });
-        setHeadsMap(next);
-        await Promise.all(classes
-          .filter(c => c.key !== srcKey)
-          .map(c => feeService.saveFeeHeads(c.key, next[c.key])));
-        toast('Fee structure copied to all classes', 'success');
+        try {
+          const targets = Array.from(
+            new Map(classes
+              .filter(c => c.key !== srcKey && c._gradeId !== src?._gradeId)
+              .map(c => [c._gradeId, c])).values(),
+          );
+          await Promise.all(targets.flatMap(c =>
+            srcHeads.map(h => feeService.saveFeeHead({ feeStructureID: 0, gradeId: c._gradeId, name: h.name, amt: h.amt }))));
+          await reloadGrades();
+          toast('Fee structure copied to all classes', 'success');
+        } catch (e) { toast(e.message || 'Could not copy fee structure', 'error'); }
       },
     });
-  }, [headsMap, classes, setHeadsMap, toast]);
+  }, [headsMap, classes, reloadGrades, toast]);
 
   const openClassReport = useCallback((c) => {
     const heads = headsMap[c.key] || [];
@@ -342,9 +340,8 @@ function StudentFeeSetup({ toast }) {
       <StructEditModal
         open={!!editClass}
         cls={editClass}
-        initialHeads={editKey ? (headsMap[editKey] || []) : []}
         onClose={closeEdit}
-        onSave={saveHeads}
+        onChanged={reloadGrades}
         toast={toast}
       />
 
@@ -381,14 +378,14 @@ function TransportFeeSetup({ toast }) {
   const openEdit  = useCallback((classKey, student) => setEditing({ classKey, student }), []);
   const closeEdit = useCallback(() => setEditing(null), []);
 
-  const saveStudent = useCallback(async ({ route, amount }) => {
+  const saveStudent = useCallback(async ({ amount }) => {
     if (!editing) return;
     const { classKey, student } = editing;
     const next = (transportMap[classKey] || []).map(s =>
-      s.reg === student.reg ? { ...s, route: route.trim(), transport: Math.max(0, Number(amount) || 0) } : s
+      s.reg === student.reg ? { ...s, transport: Math.max(0, Number(amount) || 0) } : s
     );
     setTransportMap(prev => ({ ...prev, [classKey]: next }));
-    await feeService.saveStudentTransport(classKey, student.reg, { route, transport: amount });
+    await feeService.saveStudentTransport(classKey, student.reg, { transport: amount });
     closeEdit();
     toast(`Transport fee updated for ${student.name}`, 'success');
   }, [editing, transportMap, setTransportMap, closeEdit, toast]);
@@ -472,25 +469,19 @@ function TransportFeeSetup({ toast }) {
                           <th>Reg No</th>
                           <th>Name</th>
                           <th>Father Name</th>
-                          <th>Route / Area</th>
                           <th className="fee-right">Transport Fee</th>
                           <th className="fee-center">Action</th>
                         </tr>
                       </thead>
                       <tbody>
                         {students.length === 0 ? (
-                          <tr><td colSpan="7" className="fee-stbl-empty">No students enrolled in this section.</td></tr>
+                          <tr><td colSpan="6" className="fee-stbl-empty">No students enrolled in this section.</td></tr>
                         ) : students.map((s, j) => (
-                          <tr key={s.reg}>
+                          <tr key={s.reg || s.studentID || `${s.name}-${j}`}>
                             <td className="fee-num">{j + 1}</td>
                             <td>{s.reg}</td>
                             <td><b>{s.name}</b></td>
                             <td>{s.father}</td>
-                            <td>
-                              {s.route
-                                ? s.route
-                                : <span className="fee-muted-dash">—</span>}
-                            </td>
                             <td className="fee-right">
                               {+s.transport > 0
                                 ? <b>{money(s.transport)}</b>
@@ -507,7 +498,7 @@ function TransportFeeSetup({ toast }) {
                         ))}
                         {students.length > 0 && (
                           <tr className="fee-stbl-foot">
-                            <td colSpan="5"><b>Monthly transport collection</b></td>
+                            <td colSpan="4"><b>Monthly transport collection</b></td>
                             <td className="fee-right">
                               <b>{money(students.reduce((s, x) => s + (+x.transport || 0), 0))}</b>
                             </td>
@@ -547,12 +538,10 @@ function TransportFeeSetup({ toast }) {
 
 /* ─── Update Transport Fee modal ─── */
 function TransportEditModal({ open, classMeta, student, onClose, onSave, toast }) {
-  const [route, setRoute]   = useState('');
   const [amount, setAmount] = useState('0');
 
   useEffect(() => {
     if (open && student) {
-      setRoute(student.route || '');
       setAmount(String(student.transport ?? 0));
     }
   }, [open, student]);
@@ -576,11 +565,7 @@ function TransportEditModal({ open, classMeta, student, onClose, onSave, toast }
       toast('Transport fee must be a non-negative number', 'error');
       return;
     }
-    if (num > 0 && !route.trim()) {
-      toast('Enter a route / area when transport fee is set', 'error');
-      return;
-    }
-    onSave({ route, amount: num });
+    onSave({ amount: num });
   };
 
   return createPortal(
@@ -608,19 +593,9 @@ function TransportEditModal({ open, classMeta, student, onClose, onSave, toast }
             <i className="fa-solid fa-circle-info"></i>
             <span>
               Setting an amount of <strong>0</strong> means this student doesn't use transport.
-              When an amount is set, enter the route or area name.
             </span>
           </div>
 
-          <div className="fee-field-stack">
-            <label className="fee-label">Transport Area / Route</label>
-            <input
-              className="fee-input"
-              value={route}
-              placeholder="e.g. Route 4 — Satellite Town"
-              onChange={e => setRoute(e.target.value)}
-            />
-          </div>
           <div className="fee-field-stack">
             <label className="fee-label">Transport Fee Amount (Rs.)</label>
             <input
@@ -7399,7 +7374,6 @@ function buildTransportReportHTML({ cls, sec, rows, isBW = false }) {
       <td style="padding:8px 10px;border-bottom:1px solid #E5E7EB">${escHtml(s.reg)}</td>
       <td style="padding:8px 10px;border-bottom:1px solid #E5E7EB"><b>${escHtml(s.name)}</b></td>
       <td style="padding:8px 10px;border-bottom:1px solid #E5E7EB">${escHtml(s.father)}</td>
-      <td style="padding:8px 10px;border-bottom:1px solid #E5E7EB">${s.route ? escHtml(s.route) : '<span style="color:#94A3B8">—</span>'}</td>
       <td style="padding:8px 10px;border-bottom:1px solid #E5E7EB;text-align:right;font-variant-numeric:tabular-nums">${+s.transport > 0 ? `Rs. ${(+s.transport).toLocaleString('en-PK')}` : '<span style="color:#94A3B8">—</span>'}</td>
     </tr>`).join('');
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escHtml(`Transport Fee — ${cls} (${sec})`)}</title>
@@ -7432,12 +7406,11 @@ function buildTransportReportHTML({ cls, sec, rows, isBW = false }) {
         <th style="width:130px">Reg No</th>
         <th>Name</th>
         <th>Father Name</th>
-        <th>Route / Area</th>
         <th class="right" style="width:140px">Transport Fee</th>
       </tr>
     </thead>
-    <tbody>${trs || `<tr><td colspan="6" style="text-align:center;padding:18px;color:#64748B">No students enrolled.</td></tr>`}</tbody>
-    ${rows.length > 0 ? `<tfoot><tr><td colspan="5">Monthly transport collection</td><td class="right">Rs. ${subtotal.toLocaleString('en-PK')}</td></tr></tfoot>` : ''}
+    <tbody>${trs || `<tr><td colspan="5" style="text-align:center;padding:18px;color:#64748B">No students enrolled.</td></tr>`}</tbody>
+    ${rows.length > 0 ? `<tfoot><tr><td colspan="4">Monthly transport collection</td><td class="right">Rs. ${subtotal.toLocaleString('en-PK')}</td></tr></tfoot>` : ''}
   </table>
 </div>
 </body></html>`;
@@ -8188,13 +8161,32 @@ function SettingCard({ name, desc, on, onToggle }) {
 }
 
 /* ─── Update Fee Structure modal ─── */
-function StructEditModal({ open, cls, initialHeads, onClose, onSave, toast }) {
-  const [rows, setRows]     = useState([]);
-  const [askRemove, setAsk] = useState(null);   // { idx, name }
+/* Per-head add / edit / delete against the LaunchSetup fee-head APIs,
+   mirroring the Launch Setup Classes tab. Each operation persists
+   immediately, then re-pulls this grade's heads and notifies the parent
+   so the table count stays in sync. */
+function StructEditModal({ open, cls, onClose, onChanged, toast }) {
+  const [rows, setRows]       = useState([]);   // [{ feeStructureID, name, amt }]
+  const [loading, setLoading] = useState(false);
+  const [busy, setBusy]       = useState(false);
+  const [newName, setNewName] = useState('');
+  const [newAmt, setNewAmt]   = useState('');
+  const [editId, setEditId]   = useState(null); // feeStructureID being edited
+  const [editName, setEditName] = useState('');
+  const [editAmt, setEditAmt]   = useState('');
+  const [askRemove, setAsk]   = useState(null); // { feeStructureID, name }
 
-  useEffect(() => {
-    if (open) setRows(initialHeads.map(h => ({ name: h.name || '', amt: h.amt ?? 0 })));
-  }, [open, initialHeads]);
+  const gradeId = cls?._gradeId;
+
+  const load = useCallback(async () => {
+    if (!gradeId) { setRows([]); return; }
+    setLoading(true);
+    try { setRows(await feeService.getFeeGradeHeads(gradeId)); }
+    catch (e) { toast(e.message || 'Could not load fee heads', 'error'); }
+    finally { setLoading(false); }
+  }, [gradeId, toast]);
+
+  useEffect(() => { if (open) load(); }, [open, load]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -8209,41 +8201,47 @@ function StructEditModal({ open, cls, initialHeads, onClose, onSave, toast }) {
 
   if (!open) return null;
 
-  const addRow    = () => setRows(r => [...r, { name: '', amt: 0 }]);
-  const updateRow = (i, k, v) => setRows(r => r.map((x, j) => j === i ? { ...x, [k]: v } : x));
-  const removeRow = (i) => {
-    const r = rows[i];
-    if (!r?.name?.trim()) {
-      setRows(r => r.filter((_, j) => j !== i));
-      return;
-    }
-    setAsk({ idx: i, name: r.name });
-  };
-  const doRemove = () => {
-    if (askRemove == null) return;
-    setRows(r => r.filter((_, j) => j !== askRemove.idx));
-    setAsk(null);
-    toast('Fee head removed', 'success');
+  const refresh = async () => { await load(); onChanged?.(); };
+
+  const addHead = async () => {
+    if (!newName.trim()) { toast('Fee head name is required', 'error'); return; }
+    if (newAmt === '' || Number.isNaN(+newAmt) || +newAmt < 0) { toast('Enter a valid amount', 'error'); return; }
+    setBusy(true);
+    try {
+      await feeService.saveFeeHead({ feeStructureID: 0, gradeId, name: newName.trim(), amt: Number(newAmt) });
+      setNewName(''); setNewAmt('');
+      await refresh();
+      toast('Fee head added', 'success');
+    } catch (e) { toast(e.message || 'Could not add fee head', 'error'); }
+    finally { setBusy(false); }
   };
 
-  const validateAndSave = () => {
-    const visible = rows.filter(h => h.name && h.name.trim());
-    if (visible.length === 0) {
-      toast('Add at least one fee head before saving', 'error');
-      return;
-    }
-    const namesLower = visible.map(h => h.name.trim().toLowerCase());
-    const dup = namesLower.find((n, i) => namesLower.indexOf(n) !== i);
-    if (dup) {
-      toast(`Duplicate fee head: "${dup}"`, 'error');
-      return;
-    }
-    const bad = visible.find(h => Number.isNaN(+h.amt) || +h.amt < 0);
-    if (bad) {
-      toast(`"${bad.name}" must have a valid non-negative amount`, 'error');
-      return;
-    }
-    onSave(visible);
+  const startEdit = (h) => { setEditId(h.feeStructureID); setEditName(h.name); setEditAmt(String(h.amt)); };
+  const cancelEdit = () => { setEditId(null); setEditName(''); setEditAmt(''); };
+  const saveEdit = async (h) => {
+    if (!editName.trim()) { toast('Fee head name is required', 'error'); return; }
+    if (editAmt === '' || Number.isNaN(+editAmt) || +editAmt < 0) { toast('Enter a valid amount', 'error'); return; }
+    setBusy(true);
+    try {
+      await feeService.saveFeeHead({ feeStructureID: h.feeStructureID, gradeId, name: editName.trim(), amt: Number(editAmt) });
+      cancelEdit();
+      await refresh();
+      toast('Fee head updated', 'success');
+    } catch (e) { toast(e.message || 'Could not update fee head', 'error'); }
+    finally { setBusy(false); }
+  };
+
+  const doRemove = async () => {
+    const f = askRemove;
+    setAsk(null);
+    if (!f) return;
+    setBusy(true);
+    try {
+      await feeService.deleteFeeHead(f.feeStructureID);
+      await refresh();
+      toast('Fee head removed', 'success');
+    } catch (e) { toast(e.message || 'Could not remove fee head', 'error'); }
+    finally { setBusy(false); }
   };
 
   const total = rows.reduce((s, h) => s + (+h.amt || 0), 0);
@@ -8256,7 +8254,7 @@ function StructEditModal({ open, cls, initialHeads, onClose, onSave, toast }) {
             <div className="fee-modal-head-icon"><i className="fa-solid fa-pen-to-square"></i></div>
             <div>
               <div className="fee-modal-title">Update Fee Structure</div>
-              <div className="fee-modal-sub">{cls?.cls} — Section {cls?.sec}</div>
+              <div className="fee-modal-sub">{cls?.cls}</div>
             </div>
           </div>
           <Tooltip text="Close">
@@ -8270,8 +8268,8 @@ function StructEditModal({ open, cls, initialHeads, onClose, onSave, toast }) {
           <div className="fee-info">
             <i className="fa-solid fa-circle-info"></i>
             <span>
-              Add or edit fee heads below. These amounts become the standard fee for every student
-              in this class &amp; section.
+              Add, edit or remove fee heads below. These amounts become the standard fee for every
+              student in this class. Each change is saved immediately.
             </span>
           </div>
 
@@ -8282,40 +8280,90 @@ function StructEditModal({ open, cls, initialHeads, onClose, onSave, toast }) {
           </div>
 
           <div className="fee-heads-list">
-            {rows.length === 0 ? (
+            {loading ? (
+              <div className="fee-empty fee-empty--small">Loading fee heads…</div>
+            ) : rows.length === 0 ? (
               <div className="fee-empty fee-empty--small">
-                No fee heads yet — click <strong>Add New Fee Head</strong> below.
+                No fee heads yet — add one below.
               </div>
-            ) : rows.map((h, i) => (
-              <div key={i} className="fee-head-grid">
-                <input
-                  className="fee-input"
-                  value={h.name}
-                  placeholder="Fee head name"
-                  onChange={e => updateRow(i, 'name', e.target.value)}
-                />
-                <input
-                  className="fee-input"
-                  type="number"
-                  min="0"
-                  value={h.amt}
-                  placeholder="0"
-                  onChange={e => updateRow(i, 'amt', e.target.value)}
-                />
-                <Tooltip text="Remove this fee head">
-                  <button className="fee-iconbtn danger fee-head-x" onClick={() => removeRow(i)}>
-                    <i className="fa-solid fa-xmark"></i>
-                  </button>
-                </Tooltip>
-              </div>
-            ))}
+            ) : rows.map((h) => {
+              const isEditing = editId === h.feeStructureID;
+              return (
+                <div key={h.feeStructureID} className="fee-head-grid">
+                  <input
+                    className="fee-input"
+                    value={isEditing ? editName : h.name}
+                    placeholder="Fee head name"
+                    disabled={!isEditing || busy}
+                    onChange={e => setEditName(e.target.value)}
+                  />
+                  <input
+                    className="fee-input"
+                    type="number"
+                    min="0"
+                    value={isEditing ? editAmt : h.amt}
+                    placeholder="0"
+                    disabled={!isEditing || busy}
+                    onChange={e => setEditAmt(e.target.value)}
+                  />
+                  {isEditing ? (
+                    <span style={{ display: 'inline-flex', gap: 6 }}>
+                      <Tooltip text="Save changes">
+                        <button className="fee-iconbtn" disabled={busy} onClick={() => saveEdit(h)}>
+                          <i className="fa-solid fa-check"></i>
+                        </button>
+                      </Tooltip>
+                      <Tooltip text="Cancel">
+                        <button className="fee-iconbtn" disabled={busy} onClick={cancelEdit}>
+                          <i className="fa-solid fa-xmark"></i>
+                        </button>
+                      </Tooltip>
+                    </span>
+                  ) : (
+                    <span style={{ display: 'inline-flex', gap: 6 }}>
+                      <Tooltip text="Edit this fee head">
+                        <button className="fee-iconbtn" disabled={busy} onClick={() => startEdit(h)}>
+                          <i className="fa-solid fa-pen"></i>
+                        </button>
+                      </Tooltip>
+                      <Tooltip text="Remove this fee head">
+                        <button className="fee-iconbtn danger fee-head-x" disabled={busy} onClick={() => setAsk({ feeStructureID: h.feeStructureID, name: h.name })}>
+                          <i className="fa-solid fa-trash"></i>
+                        </button>
+                      </Tooltip>
+                    </span>
+                  )}
+                </div>
+              );
+            })}
           </div>
 
-          <Tooltip text="Add another fee head row">
-            <button className="fee-add-head" onClick={addRow}>
-              <i className="fa-solid fa-plus"></i> Add New Fee Head
-            </button>
-          </Tooltip>
+          {/* Add new fee head */}
+          <div className="fee-head-grid" style={{ marginTop: 10 }}>
+            <input
+              className="fee-input"
+              value={newName}
+              placeholder="New fee head name"
+              disabled={busy}
+              onChange={e => setNewName(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') addHead(); }}
+            />
+            <input
+              className="fee-input"
+              type="number"
+              min="0"
+              value={newAmt}
+              placeholder="0"
+              disabled={busy}
+              onChange={e => setNewAmt(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') addHead(); }}
+            />
+            <Tooltip text="Add this fee head">
+              <button className="fee-iconbtn" disabled={busy} onClick={addHead}>
+                <i className="fa-solid fa-plus"></i>
+              </button>
+            </Tooltip>
+          </div>
 
           {rows.length > 0 && (
             <div className="fee-head-total">
@@ -8326,12 +8374,9 @@ function StructEditModal({ open, cls, initialHeads, onClose, onSave, toast }) {
         </div>
 
         <div className="fee-modal-foot">
-          <Tooltip text="Discard changes and close">
-            <button className="fee-btn fee-btn-ghost" onClick={onClose}>Cancel</button>
-          </Tooltip>
-          <Tooltip text="Save the fee structure for this class">
-            <button className="fee-btn fee-btn-primary" onClick={validateAndSave}>
-              <i className="fa-solid fa-floppy-disk"></i> Save Changes
+          <Tooltip text="Close">
+            <button className="fee-btn fee-btn-primary" onClick={onClose}>
+              <i className="fa-solid fa-check"></i> Done
             </button>
           </Tooltip>
         </div>
@@ -8340,8 +8385,8 @@ function StructEditModal({ open, cls, initialHeads, onClose, onSave, toast }) {
         <FeeConfirmDialog
           cfg={askRemove ? {
             title:   'Remove fee head?',
-            message: `"${askRemove.name}" will be removed from the structure.`,
-            hint:    'This action affects this class only and can be undone before saving.',
+            message: `"${askRemove.name}" will be removed from this class's fee structure.`,
+            hint:    'Already generated challans are not affected.',
             onConfirm: doRemove,
           } : null}
           onClose={() => setAsk(null)}

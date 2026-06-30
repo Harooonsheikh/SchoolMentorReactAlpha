@@ -50,7 +50,7 @@ export default function Academics({ l1, setL1, l2, setL2, l3, setL3, toast }) {
   const changeSessionId = sessionStorage.getItem('changeSessionId');
   const loginSessionId  = sessionStorage.getItem('sessionID') || sessionStorage.getItem('SessionID') || '';
   const isOtherSession  = !!changeSessionId && !!loginSessionId && String(changeSessionId) !== String(loginSessionId);
-
+const [noSessionModal, setNoSessionModal] = useState(false);
   const [reportPicker, setReportPicker] = useState({ open: false, name: '', format: 'pdf' });
   const [confirmCfg, setConfirmCfg] = useState(null);
   const [calEditOpen, setCalEditOpen] = useState(false);
@@ -58,8 +58,15 @@ export default function Academics({ l1, setL1, l2, setL2, l3, setL3, toast }) {
   const [activityModal, setActivityModal] = useState({ open: false, editing: null });
   const [classesData, setClassesData] = useState([]);
   const [monthApiEnabled, setMonthApiEnabled] = useState(false);
+  const [hasActiveSession, setHasActiveSession] = useState(true); // assume true until checked
 
 const getClassesData = async () => {
+  /* Don't fetch (or show) classes for a branch that has no active academic
+     session — there's nothing valid to scope the data to. */
+  if (!sessionStorage.getItem('sessionID')) {
+    setClassesData([]);
+    return;
+  }
   try {
     const branchID = sessionStorage.getItem("branchID");
     const empID = sessionStorage.getItem("employee_ID");
@@ -87,10 +94,9 @@ const getClassesData = async () => {
 const getSessionData = async () => {
   try {
     const branchID = sessionStorage.getItem("branchID");
-    const empID = sessionStorage.getItem("employee_ID");
 
     const res = await fetch(
-      buildUrl(`api/Setting/get-branch-session/${branchID}`),
+      buildUrl(`/api/Setting/get-academic-active-sessions-by-branch/${branchID}`),
       {
         method: "GET",
         headers: {
@@ -100,11 +106,25 @@ const getSessionData = async () => {
     );
 
     const json = await res.json();
-    sessionStorage.setItem('sessionID', json.data[0].SessionID);
-    sessionStorage.setItem('sessionName', json.data[0].SessionName);
-    notifySessionChange();
+
+    if (json?.data && json.data.length > 0) {
+      const active = json.data[0];
+      sessionStorage.setItem('sessionID', active.ID);
+      sessionStorage.setItem('sessionName', active.SessionName);
+      notifySessionChange();
+    } else {
+      /* No active academic session found for this branch — guide the user
+         to configure one instead of silently failing or carrying over a
+         stale session from a previously opened branch. */
+      sessionStorage.removeItem('sessionID');
+      sessionStorage.removeItem('sessionName');
+      sessionStorage.removeItem('changeSessionId');
+     setNoSessionModal(true);
+notifySessionChange();
+    }
   } catch (error) {
-    console.error("Error loading classes:", error);
+    console.error("Error loading session data:", error);
+    toast('Could not load academic session for this branch', 'error');
   }
 };
 
@@ -195,10 +215,12 @@ const closeReport = () => setReportPicker(r => ({ ...r, open: false }));  // ←
     };
   }, []);
 
-  return (
-    <>
-      <style>{ACADEMICS_CSS}</style>
+ const hasSession = !!sessionStorage.getItem('sessionID');
 
+if (!hasSession) {
+  return (
+    <div>
+      <style>{ACADEMICS_CSS}</style>
       <div className="page-header">
         <div className="page-title-row">
           <div className="page-title-icon"><i className="fa-solid fa-book-open-reader"></i></div>
@@ -207,174 +229,292 @@ const closeReport = () => setReportPicker(r => ({ ...r, open: false }));  // ←
             <div className="page-sub">Manage scheme of studies, textbooks, calendars &amp; lesson plans</div>
           </div>
         </div>
-        <Tooltip text="Play a short tutorial for the Academics module">
-          <button
-            className="tutorial-btn page-tutorial-btn"
-            onClick={() => setTutorialOpen(true)}
-          >
-            <div className="play-dot"><i className="fa-solid fa-play" style={{ fontSize: 8 }}></i></div>
-            <span className="tutorial-label">Tutorial</span>
-          </button>
-        </Tooltip>
       </div>
 
-      {/* ─── LEVEL 1 TABS ─── */}
-      <div className="l1-tabs">
-        <button className={`l1-tab${l1 === 'sos' ? ' active' : ''}`} onClick={() => setL1('sos')}>
-          <div className="l1-tab-icon"><i className="fa-solid fa-book"></i></div>
-          Scheme of Studies
-        </button>
-        <button className={`l1-tab${l1 === 'lp' ? ' active' : ''}`} onClick={() => setL1('lp')}>
-          <div className="l1-tab-icon"><i className="fa-solid fa-chalkboard-user"></i></div>
-          Lesson Plans
-        </button>
-      </div>
-
-      {l1 === 'sos' ? (
-        <>
-          {/* ─── LEVEL 2 TABS ─── */}
-          <div className="l2-tabs" style={{ gridTemplateColumns: '1fr 1fr 1fr' }}>
-           <button
-  className={`l2-tab${l2 === "tb" ? " active" : ""}`}
-  onClick={() => {
-    setL2("tb");
-    getClassesData();
-  }}
->
-  <div className="l2-tab-dot"></div>
-  <i
-    className="fa-solid fa-book-bookmark"
-    style={{ fontSize: 13 }}
-  ></i>
-  Textbooks
-</button>
-            <button className={`l2-tab${l2 === 'terms' ? ' active' : ''}`} onClick={() => setL2('terms')}>
-              <div className="l2-tab-dot"></div>
-              <i className="fa-solid fa-list-ol" style={{ fontSize: 13 }}></i> Terms Setting
-            </button>
-            <button className={`l2-tab${l2 === 'cal' ? ' active' : ''}`} onClick={() => setL2('cal')}>
-              <div className="l2-tab-dot"></div>
-              <i className="fa-solid fa-calendar-days" style={{ fontSize: 13 }}></i> Calendar
-            </button>
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        minHeight: '420px',
+        padding: '40px 20px',
+      }}>
+        <div style={{
+          maxWidth: 420,
+          width: '100%',
+          background: 'var(--bg-card)',
+          borderRadius: '24px',
+          border: '1px solid var(--border-light)',
+          boxShadow: 'var(--shadow-md)',
+          padding: '40px 32px',
+          textAlign: 'center',
+        }}>
+          <div style={{
+            width: 60, height: 60, borderRadius: 18,
+            background: 'rgba(217,119,6,.1)', color: '#D97706',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: 24, margin: '0 auto 22px',
+            boxShadow: '0 8px 24px rgba(217,119,6,.2)',
+          }}>
+            <i className="fa-solid fa-calendar-xmark"></i>
           </div>
-
-          {l2 === 'tb' && (
-            <TextBooks onReport={openReport} toast={toast}     classesData={classesData}   />
-          )}
-
-          {l2 === 'terms' && (
-            <TermSettings
-              termData={termData}
-              setTermData={setTermData}
-              openConfirm={openConfirm}
-              toast={toast}
-            />
-          )}
-
-          {l2 === 'cal' && (
-            <>
-              {/* ─── LEVEL 3 TABS ─── */}
-              <div className="l3-tabs">
-                <button className={`l3-tab${l3 === 'ac' ? ' active' : ''}`} onClick={() => setL3('ac')}>
-                  <div className="l3-tab-icon"><i className="fa-solid fa-calendar-check"></i></div>
-                  <div className="l3-tab-text">
-                    <div className="l3-tab-name">Academic Calendar</div>
-                    <div className="l3-tab-desc">Key dates &amp; term schedule</div>
-                  </div>
-                </button>
-                <button className={`l3-tab${l3 === 'act' ? ' active' : ''}`} onClick={() => setL3('act')}>
-                  <div className="l3-tab-icon"><i className="fa-solid fa-calendar-plus"></i></div>
-                  <div className="l3-tab-text">
-                    <div className="l3-tab-name">Activity Calendar</div>
-                    <div className="l3-tab-desc">Events &amp; school activities</div>
-                  </div>
-                </button>
-              </div>
-
-              {l3 === 'ac' && (
-                <AcademicCalendar
-                  terms={terms}
-                  onReport={openReport}
-                  onEdit={() => setCalEditOpen(true)}
-                  isOtherSession={isOtherSession}
-                />
-              )}
-              {l3 === 'act' && (
-                <ActivityCalendar
-                  events={events}
-                  setEvents={setEvents}
-                  onReport={openReport}
-                  onAdd={() => setActivityModal({ open: true, editing: null })}
-                  onEdit={ev => setActivityModal({ open: true, editing: ev })}
-                  openConfirm={openConfirm}
-                  toast={toast}
-                  isOtherSession={isOtherSession}
-                />
-              )}
-            </>
-          )}
-        </>
-      ) : (
-        <LessonPlans toast={toast} openConfirm={openConfirm} />
-      )}
-
-      {/* ─── MODALS ─── */}
-      <ReportPicker
-        open={reportPicker.open}
-        name={reportPicker.name}
-        initialFormat={reportPicker.format}
-        onClose={closeReport}
-        onGenerate={async (style, fmt) => {
-          const subsToUse = reportSubjectsRef.current;
-          const nameToUse = reportPicker.name;
-          closeReport();
-          await generateReportWindow(
-            nameToUse,
-            style,
-            fmt,
-            { events, terms },
-            classesData,
-            subsToUse
-          );
-        }}
-      />
-
-      <CalEditModal
-        open={calEditOpen}
-        terms={terms}
-        onClose={() => setCalEditOpen(false)}
-        onSave={async () => { await loadCalendar(); setCalEditOpen(false); toast('Academic calendar saved!', 'success'); }}
-        onError={() => toast('Could not save key dates', 'error')}
-      />
-
-      <ActivityModal
-        open={activityModal.open}
-        editing={activityModal.editing}
-        onClose={() => setActivityModal({ open: false, editing: null })}
-        onSave={ev => {
-  if (activityModal.editing) {
-    setEvents(prev => prev.map(p => p.id === ev.id ? { ...p, ...ev } : p));
-    toast(`"${ev.name}" updated`, 'success');
-          } else {
-            setEvents(prev => [ev, ...prev]);
-            toast(`"${ev.name}" added!`, 'success');
-          }
-          setActivityModal({ open: false, editing: null });
-         
-        }}
-      />
-
-      <ConfirmDialog cfg={confirmCfg} onClose={closeConfirm} />
-
-      <TutorialModal
-        open={tutorialOpen}
-        moduleKey="academics"
-        onClose={() => setTutorialOpen(false)}
-        toast={toast}
-      />
-    </>
+          <div style={{ fontSize: 20, fontWeight: 800, color: 'var(--text-primary)', marginBottom: 10, letterSpacing: '-.02em' }}>
+            No Active Session
+          </div>
+          <div style={{ fontSize: 13.5, color: 'var(--text-muted)', lineHeight: 1.75 }}>
+            Please set the session from Setting first.
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
+
+return (
+  <div>
+    <style>{ACADEMICS_CSS}</style>
+    <div className="page-header">
+      <div className="page-title-row">
+        <div className="page-title-icon"><i className="fa-solid fa-book-open-reader"></i></div>
+        <div>
+          <div className="page-title">Academics</div>
+          <div className="page-sub">Manage scheme of studies, textbooks, calendars &amp; lesson plans</div>
+        </div>
+      </div>
+      <Tooltip text="Play a short tutorial for the Academics module">
+        <button
+          className="tutorial-btn page-tutorial-btn"
+          onClick={() => setTutorialOpen(true)}
+        >
+          <div className="play-dot"><i className="fa-solid fa-play" style={{ fontSize: 8 }}></i></div>
+          <span className="tutorial-label">Tutorial</span>
+        </button>
+      </Tooltip>
+    </div>
+
+    {/* ─── LEVEL 1 TABS ─── */}
+    <div className="l1-tabs">
+      <button
+        className={`l1-tab${l1 === 'sos' ? ' active' : ''}`}
+        onClick={() => setL1('sos')}
+      >
+        <div className="l1-tab-icon"><i className="fa-solid fa-book"></i></div>
+        Scheme of Studies
+      </button>
+      <button
+        className={`l1-tab${l1 === 'lp' ? ' active' : ''}`}
+        onClick={() => setL1('lp')}
+      >
+        <div className="l1-tab-icon"><i className="fa-solid fa-chalkboard-user"></i></div>
+        Lesson Plans
+      </button>
+    </div>
+
+    {l1 === 'sos' ? (
+      <>
+        {/* ─── LEVEL 2 TABS ─── */}
+        <div className="l2-tabs" style={{ gridTemplateColumns: '1fr 1fr 1fr' }}>
+          <button
+            className={`l2-tab${l2 === "tb" ? " active" : ""}`}
+            onClick={() => { setL2("tb"); getClassesData(); }}
+          >
+            <div className="l2-tab-dot"></div>
+            <i className="fa-solid fa-book-bookmark" style={{ fontSize: 13 }}></i>
+            Textbooks
+          </button>
+          <button
+            className={`l2-tab${l2 === 'terms' ? ' active' : ''}`}
+            onClick={() => setL2('terms')}
+          >
+            <div className="l2-tab-dot"></div>
+            <i className="fa-solid fa-list-ol" style={{ fontSize: 13 }}></i> Terms Setting
+          </button>
+          <button
+            className={`l2-tab${l2 === 'cal' ? ' active' : ''}`}
+            onClick={() => setL2('cal')}
+          >
+            <div className="l2-tab-dot"></div>
+            <i className="fa-solid fa-calendar-days" style={{ fontSize: 13 }}></i> Calendar
+          </button>
+        </div>
+
+        {l2 === 'tb' && (
+          <TextBooks onReport={openReport} toast={toast} classesData={classesData} />
+        )}
+
+        {l2 === 'terms' && (
+          <TermSettings
+            termData={termData}
+            setTermData={setTermData}
+            openConfirm={openConfirm}
+            toast={toast}
+          />
+        )}
+
+        {l2 === 'cal' && (
+          <>
+            {/* ─── LEVEL 3 TABS ─── */}
+            <div className="l3-tabs">
+              <button
+                className={`l3-tab${l3 === 'ac' ? ' active' : ''}`}
+                onClick={() => setL3('ac')}
+              >
+                <div className="l3-tab-icon"><i className="fa-solid fa-calendar-check"></i></div>
+                <div className="l3-tab-text">
+                  <div className="l3-tab-name">Academic Calendar</div>
+                  <div className="l3-tab-desc">Key dates &amp; term schedule</div>
+                </div>
+              </button>
+              <button
+                className={`l3-tab${l3 === 'act' ? ' active' : ''}`}
+                onClick={() => setL3('act')}
+              >
+                <div className="l3-tab-icon"><i className="fa-solid fa-calendar-plus"></i></div>
+                <div className="l3-tab-text">
+                  <div className="l3-tab-name">Activity Calendar</div>
+                  <div className="l3-tab-desc">Events &amp; school activities</div>
+                </div>
+              </button>
+            </div>
+            {l3 === 'ac' && (
+              <AcademicCalendar
+                terms={terms}
+                onReport={openReport}
+                onEdit={() => setCalEditOpen(true)}
+                isOtherSession={isOtherSession}
+              />
+            )}
+            {l3 === 'act' && (
+              <ActivityCalendar
+                events={events}
+                setEvents={setEvents}
+                onReport={openReport}
+                onAdd={() => setActivityModal({ open: true, editing: null })}
+                onEdit={ev => setActivityModal({ open: true, editing: ev })}
+                openConfirm={openConfirm}
+                toast={toast}
+                isOtherSession={isOtherSession}
+              />
+            )}
+          </>
+        )}
+      </>
+    ) : (
+      <LessonPlans toast={toast} openConfirm={openConfirm} />
+    )}
+
+    {/* ─── MODALS ─── */}
+    <ReportPicker
+      open={reportPicker.open}
+      name={reportPicker.name}
+      initialFormat={reportPicker.format}
+      onClose={closeReport}
+      onGenerate={async (style, fmt) => {
+        const subsToUse = reportSubjectsRef.current;
+        const nameToUse = reportPicker.name;
+        closeReport();
+        await generateReportWindow(
+          nameToUse,
+          style,
+          fmt,
+          { events, terms },
+          classesData,
+          subsToUse
+        );
+      }}
+    />
+
+    <CalEditModal
+      open={calEditOpen}
+      terms={terms}
+      onClose={() => setCalEditOpen(false)}
+      onSave={async () => { await loadCalendar(); setCalEditOpen(false); toast('Academic calendar saved!', 'success'); }}
+      onError={() => toast('Could not save key dates', 'error')}
+    />
+
+    <ActivityModal
+      open={activityModal.open}
+      editing={activityModal.editing}
+      onClose={() => setActivityModal({ open: false, editing: null })}
+      onSave={ev => {
+        if (activityModal.editing) {
+          setEvents(prev => prev.map(p => p.id === ev.id ? { ...p, ...ev } : p));
+          toast(`"${ev.name}" updated`, 'success');
+        } else {
+          setEvents(prev => [ev, ...prev]);
+          toast(`"${ev.name}" added!`, 'success');
+        }
+        setActivityModal({ open: false, editing: null });
+      }}
+    />
+
+    <ConfirmDialog cfg={confirmCfg} onClose={closeConfirm} />
+
+       <TutorialModal
+      open={tutorialOpen}
+      moduleKey="academics"
+      onClose={() => setTutorialOpen(false)}
+      toast={toast}
+    />
+  </div>
+);
+}
+  {/* ─── MODALS ─── */}
+//       <ReportPicker
+//         open={reportPicker.open}
+//         name={reportPicker.name}
+//         initialFormat={reportPicker.format}
+//         onClose={closeReport}
+//         onGenerate={async (style, fmt) => {
+//           const subsToUse = reportSubjectsRef.current;
+//           const nameToUse = reportPicker.name;
+//           closeReport();
+//           await generateReportWindow(
+//             nameToUse,
+//             style,
+//             fmt,
+//             { events, terms },
+//             classesData,
+//             subsToUse
+//           );
+//         }}
+//       />
+
+//       <CalEditModal
+//         open={calEditOpen}
+//         terms={terms}
+//         onClose={() => setCalEditOpen(false)}
+//         onSave={async () => { await loadCalendar(); setCalEditOpen(false); toast('Academic calendar saved!', 'success'); }}
+//         onError={() => toast('Could not save key dates', 'error')}
+//       />
+
+//       <ActivityModal
+//         open={activityModal.open}
+//         editing={activityModal.editing}
+//         onClose={() => setActivityModal({ open: false, editing: null })}
+//         onSave={ev => {
+//   if (activityModal.editing) {
+//     setEvents(prev => prev.map(p => p.id === ev.id ? { ...p, ...ev } : p));
+//     toast(`"${ev.name}" updated`, 'success');
+//           } else {
+//             setEvents(prev => [ev, ...prev]);
+//             toast(`"${ev.name}" added!`, 'success');
+//           }
+//           setActivityModal({ open: false, editing: null });
+         
+//         }}
+//       />
+
+//       <ConfirmDialog cfg={confirmCfg} onClose={closeConfirm} />
+
+//      <TutorialModal
+//         open={tutorialOpen}
+//         moduleKey="academics"
+//         onClose={() => setTutorialOpen(false)}
+//         toast={toast}
+//       />
+//     </div>
+//   );
+// }
 
 /* ═══════════════════════════════════════════════════════════════════
    REPORT PICKER MODAL
@@ -563,6 +703,141 @@ function ConfirmDialog({ cfg, onClose }) {
             onClick={() => { onConfirm && onConfirm(); onClose(); }}
           >
             {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+/* ═══════════════════════════════════════════════════════════════════
+   NO SESSION MODAL
+   ═══════════════════════════════════════════════════════════════════ */
+function NoSessionModal({ open, onClose, onGoToSettings }) {
+  if (!open) return null;
+  return (
+    <div
+      style={{ 
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        zIndex: 99999,
+        background: 'rgba(0,0,0,0.5)',
+        backdropFilter: 'blur(4px)',
+        WebkitBackdropFilter: 'blur(4px)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '20px'
+      }}
+      onClick={e => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div 
+        style={{ 
+          maxWidth: 400,
+          width: '100%',
+          background: '#FFFFFF',
+          borderRadius: '24px',
+          border: '1px solid #E5E7EB',
+          boxShadow: '0 30px 80px rgba(0,0,0,0.2), 0 8px 24px rgba(0,0,0,0.1)',
+          overflow: 'hidden',
+          position: 'relative',
+          animation: 'confirmIn .32s cubic-bezier(.34,1.3,.64,1) both'
+        }}
+      >
+        <div style={{ 
+          position: 'absolute', 
+          top: 0, 
+          left: 0, 
+          right: 0, 
+          height: '3px', 
+          background: 'linear-gradient(90deg,#D97706,#B45309,#D97706)'
+        }} />
+        
+        <div style={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          padding: '32px 28px 10px',
+          background: 'linear-gradient(180deg,rgba(217,119,6,.03),transparent)'
+        }}>
+          <div style={{
+            width: '60px',
+            height: '60px',
+            borderRadius: '18px',
+            background: 'rgba(217,119,6,.1)',
+            color: '#D97706',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontSize: '24px',
+            boxShadow: '0 8px 24px rgba(217,119,6,.2)'
+          }}>
+            <i className="fa-solid fa-calendar-xmark"></i>
+          </div>
+        </div>
+        
+        <div style={{
+          padding: '16px 28px 8px',
+          textAlign: 'center'
+        }}>
+          <div style={{
+            fontSize: '20px',
+            fontWeight: 800,
+            color: '#111827',
+            marginBottom: '10px',
+            letterSpacing: '-.02em'
+          }}>
+            No active session found
+          </div>
+          <div style={{
+            fontSize: '13.5px',
+            color: '#6B7280',
+            lineHeight: 1.75,
+            marginBottom: '14px'
+          }}>
+            This branch has no active academic session.<br />
+            Set one up in <strong style={{ color: '#111827', fontWeight: 700 }}>Session Settings</strong> before using Academics.
+          </div>
+        </div>
+        
+        <div style={{
+          display: 'flex',
+          justifyContent: 'center',
+          padding: '20px 28px 28px'
+        }}>
+          <button
+            onClick={onClose}
+            style={{
+              minWidth: 140,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '8px',
+              height: '46px',
+              borderRadius: '12px',
+              border: '1.5px solid #E5E7EB',
+              cursor: 'pointer',
+              fontSize: '14px',
+              fontWeight: 700,
+              background: '#F3F4F6',
+              color: '#6B7280',
+              transition: 'all .2s cubic-bezier(.4,0,.2,1)',
+              letterSpacing: '.01em'
+            }}
+            onMouseEnter={e => {
+              e.currentTarget.style.background = '#FFFFFF';
+              e.currentTarget.style.color = '#111827';
+              e.currentTarget.style.borderColor = '#9CA3AF';
+            }}
+            onMouseLeave={e => {
+              e.currentTarget.style.background = '#F3F4F6';
+              e.currentTarget.style.color = '#6B7280';
+              e.currentTarget.style.borderColor = '#E5E7EB';
+            }}
+          >
+            Close
           </button>
         </div>
       </div>
@@ -2210,16 +2485,55 @@ function TermSettings({ termData, setTermData, openConfirm, toast }) {
   const loginSessionId = sessionStorage.getItem('SessionID') || sessionStorage.getItem('sessionID') || '';
   const isOtherSession = !!sessionId && !!loginSessionId && String(sessionId) !== String(loginSessionId);
 
+   /* Editing is only allowed when "today" (UTC) falls within the selected
+     session's start/end window (inclusive). Outside that window the
+     session is read-only — edit/delete/update controls are hidden. */
+  const isWithinSessionWindow = useMemo(() => {
+    if (!start || !end) return false;
+    const todayUtc = new Date(new Date().toISOString().slice(0, 10) + 'T00:00:00Z');
+    const startUtc = new Date(start + 'T00:00:00Z');
+    const endUtc   = new Date(end   + 'T00:00:00Z');
+    return todayUtc >= startUtc && todayUtc <= endUtc;
+  }, [start, end]);
+
+  const canEditTerms = !isOtherSession && isWithinSessionWindow;
+
   /* Load the session (academic-year) dropdown. Default-selects the session whose
      id matches sessionStorage.sessionID — the active session for the logged-in user. */
   useEffect(() => {
     (async () => {
       try {
-        const res = await fetch(buildUrl('/api/Setting/get-sessions'), { method: 'GET', headers: termsAuthHeaders() });
+        const branchID = termsBranchID();
+        const res = await fetch(
+          buildUrl(`/api/Setting/get-academic-sessions-by-branch/${branchID}`),
+          { method: 'GET', headers: termsAuthHeaders() }
+        );
         const json = await res.json();
-        setSessions(json?.data || []);
+        const list = json?.data || [];
+        /* Normalize to the shape the rest of this component expects:
+           SessionID/SessionName, plus the raw start/end dates for the
+           read-only date fields and the edit-window check below. */
+        const mapped = list.map(s => ({
+          SessionID: s.ID ?? s.id,
+          SessionName: s.SessionName,
+          StartDate: s.StartDate,
+          EndDate: s.EndDate,
+          Status: s.Status,
+        }));
+        setSessions(mapped);
+
         const stored = termsSessionYearID();
-        if (stored) setSessionId(String(stored));
+        if (stored) {
+          setSessionId(String(stored));
+        } else {
+          /* Default-select the branch's current/active session. */
+          const active = mapped.find(s => s.Status === 'Current') || mapped[0];
+          if (active) {
+            setSessionId(String(active.SessionID));
+            sessionStorage.setItem('sessionID', active.SessionID);
+            sessionStorage.setItem('sessionName', active.SessionName);
+          }
+        }
       } catch (e) {
         console.error('Error loading sessions:', e);
       }
@@ -2227,32 +2541,21 @@ function TermSettings({ termData, setTermData, openConfirm, toast }) {
   }, []);
 
   /* Load the session start/end dates for the current branch. */
-  useEffect(() => { loadSessionDates(); }, []);
+  // useEffect(() => { loadSessionDates(); }, []);
 
-  const loadSessionDates = async () => {
-    try {
-      const res = await fetch(
-        buildUrl(`/api/getsessionsummarybybranchid?branchID=${termsBranchID()}&pageNo=1`),
-       {
-        method: 'GET',
-        headers: {
-          Accept: '*/*',
-          Authorization: `Bearer ${sessionStorage.getItem('token') || ''}`,
-        },
-      }
-      );
-      const json = await res.json();
-      const row = (json?.data || [])[0];
-      if (!row) return;
-      if (row.sessionStart) setStart(row.sessionStart.slice(0, 10));
-      if (row.sessionEnd)   setEnd(row.sessionEnd.slice(0, 10));
-    } catch (e) {
-      console.error('Error loading session dates:', e);
+  /* Start/end dates now come straight from the selected session record
+     (set in the sessions-loading effect / changeSession) instead of a
+     separate summary endpoint. */
+  useEffect(() => {
+    const sel = sessions.find(s => String(s.SessionID) === String(sessionId));
+    if (sel) {
+      if (sel.StartDate) setStart(sel.StartDate.slice(0, 10));
+      if (sel.EndDate)   setEnd(sel.EndDate.slice(0, 10));
     }
-  };
+  }, [sessions, sessionId]);
 
   /* Switch the active session: persist it and reload the terms scoped to it. */
-  const changeSession = id => {
+ const changeSession = id => {
     setSessionId(id);
     /* Store the user-switched session under changeSessionId (takes priority in
        termsSessionYearID) and broadcast so all loaders re-run. Also mirror the
@@ -2260,6 +2563,8 @@ function TermSettings({ termData, setTermData, openConfirm, toast }) {
     sessionStorage.setItem('changeSessionId', id);
     const sel = sessions.find(s => String(s.SessionID) === String(id));
     if (sel?.SessionName) sessionStorage.setItem('sessionName', sel.SessionName);
+    if (sel?.StartDate) setStart(sel.StartDate.slice(0, 10));
+    if (sel?.EndDate)   setEnd(sel.EndDate.slice(0, 10));
     notifySessionChange();
   };
 
@@ -2268,8 +2573,11 @@ function TermSettings({ termData, setTermData, openConfirm, toast }) {
 
   /* Re-run the term/session calls whenever a session key changes (same-tab event)
      or another tab edits sessionStorage. */
+  /* Re-run the term calls whenever a session key changes (same-tab event)
+     or another tab edits sessionStorage. Start/end dates auto-update via
+     the sessions/sessionId effect above. */
   useEffect(() => {
-    const reload = () => { loadTerms(); loadSessionDates(); };
+    const reload = () => { loadTerms(); };
     window.addEventListener(SESSION_CHANGE_EVENT, reload);
     window.addEventListener('storage', reload);
     return () => {
@@ -2278,55 +2586,57 @@ function TermSettings({ termData, setTermData, openConfirm, toast }) {
     };
   }, []);
 
-  const loadTerms = async () => {
-    try {
-      const json = await termsCrud({
-        id: 0,
-        branchID: termsBranchID(),
-        term: 'string',
-        sessionYearID: termsSessionYearID(),
-        action: 'get',
-      });
-      const list = Array.isArray(json) ? json : (json?.data || []);
-      setTermData(list.map(t => ({
-        id: t.id,
-        name: t.term || '',
-        start: t.start || '',
-        end: t.end || '',
-      })));
-      console.log(termData)
-    } catch (e) {
-      console.error('Error loading terms:', e);
-      toast('Could not load terms', 'error');
-    }
-  };
+ const loadTerms = async () => {
+  try {
+    const json = await termsCrud({
+      id: 0,
+      branchID: termsBranchID(),
+      term: 'string',
+      sessionYearID: termsSessionYearID(),
+      action: 'get',
+    });
+    const list = Array.isArray(json) ? json : (json?.data || []);
+    setTermData(list.map(t => ({
+      id: t.id,
+      name: t.term || '',
+      start: t.startDate ? t.startDate.slice(0, 10) : '',
+      end: t.endDate ? t.endDate.slice(0, 10) : '',
+    })));
+  } catch (e) {
+    console.error('Error loading terms:', e);
+    toast('Could not load terms', 'error');
+  }
+};
 
   const updateRow = (id, key, val) =>
     setTermData(termData.map(t => t.id === id ? { ...t, [key]: val } : t));
 
-  const saveTerm = async id => {
-    if (isOtherSession) { toast('Method not allowed', 'error'); return; }
-    const t = termData.find(x => x.id === id);
-    if (!t) return;
-    if (!t.name || !t.name.trim()) { toast('Term name cannot be empty', 'error'); return; }
-    try {
-      await termsCrud({
-        id: t.isNew ? 0 : t.id,
-        branchID: termsBranchID(),
-        term: t.name.trim(),
-        sessionYearID: termsSessionYearID(),
-        action: t.isNew ? 'insert' : 'update',
-      });
-      toast(`"${t.name.trim()}" saved successfully`, 'success');
-      loadTerms();
-    } catch (e) {
-      console.error('Error saving term:', e);
-      if (!e.isSessionError) toast('Could not save term', 'error');
-    }
-  };
-
-  const deleteTerm = id => {
-    if (isOtherSession) { toast('Method not allowed', 'error'); return; }
+ const saveTerm = async id => {
+  if (!canEditTerms) { toast('Editing is only allowed within the session\'s date range', 'error'); return; }
+  const t = termData.find(x => x.id === id);
+  if (!t) return;
+  if (!t.name || !t.name.trim()) { toast('Term name cannot be empty', 'error'); return; }
+  if (!t.start || !t.end) { toast('Start and end date are required', 'error'); return; }
+  if (new Date(t.start) > new Date(t.end)) { toast('Start date cannot be after end date', 'error'); return; }
+  try {
+    await termsCrud({
+      id: t.isNew ? 0 : t.id,
+      branchID: termsBranchID(),
+      term: t.name.trim(),
+      sessionYearID: termsSessionYearID(),
+      action: t.isNew ? 'insert' : 'update',
+      startDate: t.start,
+      endDate: t.end,
+    });
+    toast(`"${t.name.trim()}" saved successfully`, 'success');
+    loadTerms();
+  } catch (e) {
+    console.error('Error saving term:', e);
+    if (!e.isSessionError) toast('Could not save term', 'error');
+  }
+};
+const deleteTerm = id => {
+    if (!canEditTerms) { toast('Editing is only allowed within the session\'s date range', 'error'); return; }
     const t = termData.find(x => x.id === id);
     if (!t) return;
     /* Unsaved rows aren't on the server yet — just drop them locally. */
@@ -2468,7 +2778,7 @@ function TermSettings({ termData, setTermData, openConfirm, toast }) {
                 <label className="ts-label">Session Start Date</label>
                 <div className="ts-input-wrap">
                   <i className="fa-solid fa-calendar-day ts-input-icon"></i>
-                  <input className="ts-input" type="date" value={start} onChange={e => setStart(e.target.value)} />
+                  <input className="ts-input" type="date" value={start} readOnly disabled style={{ opacity: .7, cursor: 'not-allowed' }} />
                 </div>
                 <div className="ts-hint"><i className="fa-solid fa-info-circle"></i> First day of the academic session</div>
               </div>
@@ -2476,10 +2786,11 @@ function TermSettings({ termData, setTermData, openConfirm, toast }) {
                 <label className="ts-label">Session End Date</label>
                 <div className="ts-input-wrap">
                   <i className="fa-solid fa-calendar-check ts-input-icon"></i>
-                  <input className="ts-input" type="date" value={end} onChange={e => setEnd(e.target.value)} />
+                  <input className="ts-input" type="date" value={end} readOnly disabled style={{ opacity: .7, cursor: 'not-allowed' }} />
                 </div>
                 <div className="ts-hint"><i className="fa-solid fa-info-circle"></i> Last day of the academic session</div>
               </div>
+              {/*
               <div className="ts-field-group">
                 <label className="ts-label">School System</label>
                 <div className="ts-input-wrap">
@@ -2503,7 +2814,8 @@ function TermSettings({ termData, setTermData, openConfirm, toast }) {
                   </select>
                 </div>
               </div>
-            </div>
+              */}
+              </div>
             <div style={{ display: 'flex', gap: 10, marginTop: 24, paddingTop: 18, borderTop: '1px solid var(--border-light)' }}>
               <Tooltip text="Save session settings">
                 <button className="ts-btn-primary" onClick={() => toast('Session settings saved successfully!', 'success')}>
@@ -2578,16 +2890,30 @@ function TermSettings({ termData, setTermData, openConfirm, toast }) {
                     </div>
                     <div className="ts-cell w100">
                       <div className="ts-actions">
-                        <Tooltip text={isOtherSession ? 'Editing is only allowed for the current session' : 'Save term changes'}>
-                          <button
-                            className="ts-act-btn save"
-                            onClick={() => saveTerm(term.id)}
-                            aria-disabled={isOtherSession}
-                            style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
-                          >
-                            <i className="fa-solid fa-check"></i>
-                          </button>
-                        </Tooltip>
+                        {canEditTerms ? (
+                          <>
+                            <Tooltip text="Save term changes">
+                              <button
+                                className="ts-act-btn save"
+                                onClick={() => saveTerm(term.id)}
+                              >
+                                <i className="fa-solid fa-check"></i>
+                              </button>
+                            </Tooltip>
+                            <Tooltip text="Delete term">
+                              <button
+                                className="ts-act-btn del"
+                                onClick={() => deleteTerm(term.id)}
+                              >
+                                <i className="fa-solid fa-xmark"></i>
+                              </button>
+                            </Tooltip>
+                          </>
+                        ) : (
+                          <span style={{ fontSize: 11, color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                            View only
+                          </span>
+                        )}
                         <Tooltip text={isOtherSession ? 'Deleting is only allowed for the current session' : 'Delete term'}>
                           <button
                             className="ts-act-btn del"
@@ -2605,13 +2931,15 @@ function TermSettings({ termData, setTermData, openConfirm, toast }) {
               })}
             </div>
 
-            <Tooltip text="Add another academic term">
-              <button className="ts-add-row-btn" onClick={addTerm}>
-                <div className="ts-add-icon"><i className="fa-solid fa-plus"></i></div>
-                <span>Add new term</span>
-                <span className="ts-add-hint">Click to add another academic term</span>
-              </button>
-            </Tooltip>
+           {canEditTerms && (
+              <Tooltip text="Add another academic term">
+                <button className="ts-add-row-btn" onClick={addTerm}>
+                  <div className="ts-add-icon"><i className="fa-solid fa-plus"></i></div>
+                  <span>Add new term</span>
+                  <span className="ts-add-hint">Click to add another academic term</span>
+                </button>
+              </Tooltip>
+            )}
           </div>
         )}
       </div>
