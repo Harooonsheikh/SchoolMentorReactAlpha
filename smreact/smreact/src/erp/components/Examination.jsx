@@ -1098,6 +1098,9 @@ const [subjects, setSubjects] = useState([]);
   const [sylReportReq, setSylReportReq]     = useState(null);   // { classKey, name }
   const [sessionList, setSessionList]   = useState([]);
   const [branchSession, setBranchSession]         = useState([]);
+  /* null = active-session check abhi pending; true = active session set hai (module dikhao);
+     false = koi active session nahi → "set session" popup dikhao. */
+  const [hasActiveSession, setHasActiveSession]   = useState(null);
 const [terms, setTerms] = useState([]);
 const [filtered, setFiltered] = useState([]);
 const [selectedTermId, setSelectedTermId] = useState(null);
@@ -1114,7 +1117,8 @@ const [resLoadingKey, setResLoadingKey] = useState(null);
     useEffect(() => {
       (async () => {
         try {
-          const res = await fetch(buildUrl('/api/Setting/get-sessions'), { method: 'GET', headers: termsAuthHeaders() });
+          
+          const res = await fetch(buildUrl(`/api/Setting/get-academic-sessions-by-branch/${termsBranchID()}`), { method: 'GET', headers: termsAuthHeaders() });
           const json = await res.json();
           setSessions(json?.data || []);
           const stored = termsSessionYearID();
@@ -1131,7 +1135,7 @@ const [resLoadingKey, setResLoadingKey] = useState(null);
     const loadSessionDates = async () => {
       try {
         const res = await fetch(
-          buildUrl(`/api/getsessionsummarybybranchid?branchID=${termsBranchID()}&pageNo=1`),
+          buildUrl(`/api/Setting/get-academic-active-sessions-by-branch/${termsBranchID()}`),
          {
           method: 'GET',
           headers: {
@@ -1141,12 +1145,25 @@ const [resLoadingKey, setResLoadingKey] = useState(null);
         }
         );
         const json = await res.json();
-        const row = (json?.data || [])[0];
-        if (!row) return;
+        /* Active session response can be an array or a single object. If there's
+           no active session, gate the whole module behind the "set session" popup. */
+        const data = json?.data;
+        const row  = Array.isArray(data) ? data[0] : data;
+ if (row) {
+      sessionStorage.setItem('sessionID', row.ID);
+      sessionStorage.setItem('sessionName', row.SessionName);
+      sessionStorage.setItem('sessionStatus', row.Status);        // ✅ ADD THIS
+      sessionStorage.setItem('sessionStartDate', row.StartDate);  // ✅ ADD THIS
+      sessionStorage.setItem('sessionEndDate', row.EndDate);      // ✅ ADD THIS
+      setHasActiveSession(true);
+    }
+        if (!row) { setHasActiveSession(false); return; }
+        setHasActiveSession(true);
         if (row.sessionStart) setStart(row.sessionStart.slice(0, 10));
         if (row.sessionEnd)   setEnd(row.sessionEnd.slice(0, 10));
       } catch (e) {
-        console.error('Error loading session dates:', e);
+        console.error('Error loading active session:', e);
+        setHasActiveSession(false);
       }
     };
   
@@ -1164,23 +1181,47 @@ const [resLoadingKey, setResLoadingKey] = useState(null);
           },
         }
       );
-  
-      const json = await res.json();
-      sessionStorage.setItem('sessionID', json.data[0].SessionID)
-      notifySessionChange();
+          const json = await res.json();   // ✅ ADD THIS LINE
+
+     const session = json.data[0];
+    
+    sessionStorage.setItem('sessionID', session.SessionID);
+    sessionStorage.setItem('sessionStatus', session.Status);        // ✅ ADD THIS
+    sessionStorage.setItem('sessionStartDate', session.StartDate);  // ✅ ADD THIS
+    sessionStorage.setItem('sessionEndDate', session.EndDate);      // ✅ ADD THIS
+    
+    notifySessionChange();
     } catch (error) {
       console.error("Error loading classes:", error);
     }
   };
 
-    /* Switch the active session: persist it and reload the terms scoped to it. */
-    const changeSession = id => {
-      setSessionId(id);
-      /* Store the user-switched session under changeSessionId (takes priority in
-         termsSessionYearID) and broadcast so all loaders re-run. */
-      sessionStorage.setItem('changeSessionId', id);
-      notifySessionChange();
-    };
+ const changeSession = async (id) => {
+  setSessionId(id);
+  sessionStorage.setItem('changeSessionId', id);
+  
+  // User ne session change kiya hai, toh us session ki details bhi load karo
+  try {
+    const branchID = sessionStorage.getItem('branchID');
+    const res = await fetch(
+      buildUrl(`/api/Setting/get-academic-sessions-by-branch/${branchID}`),
+      { headers: { Accept: '*/*' } }
+    );
+    const json = await res.json();
+    const sessions = json?.data || [];
+    const selected = sessions.find(s => String(s.ID) === String(id));
+    
+    if (selected) {
+      sessionStorage.setItem('sessionStatus', selected.Status);
+      sessionStorage.setItem('sessionStartDate', selected.StartDate);
+      sessionStorage.setItem('sessionEndDate', selected.EndDate);
+    }
+  } catch (e) {
+    console.error('Error loading session details:', e);
+  }
+  
+  notifySessionChange();
+};
   
     /* Load terms from the backend on mount, replacing any seed/mock data. */
     useEffect(() => { getTerms(); }, []);
@@ -1225,7 +1266,29 @@ const termsAuthHeaders = (extra = {}) => ({
   const [start,  setStart]  = useState('2026-01-01');
   const [end,    setEnd]    = useState('2026-12-31');
    const loginSessionId = sessionStorage.getItem('SessionID') || sessionStorage.getItem('sessionID') || '';
-    const isOtherSession = !!sessionId && !!loginSessionId && String(sessionId) !== String(loginSessionId);
+const isOtherSession = (() => {
+  // 1️⃣ Session ID mismatch check
+  if (!!sessionId && !!loginSessionId && String(sessionId) !== String(loginSessionId)) {
+    return true; // ❌ Disable - different session
+  }
+
+  // 2️⃣ Session Status check
+  const sessionStatus = sessionStorage.getItem('sessionStatus') || '';
+  if (sessionStatus !== 'Current') {
+    return true; // ❌ Disable - session not active
+  }
+
+  // 3️⃣ Date Range check
+  const now = new Date();
+  const start = new Date(sessionStorage.getItem('sessionStartDate'));
+  const end = new Date(sessionStorage.getItem('sessionEndDate'));
+  
+  if (now < start || now > end) {
+    return true; // ❌ Disable - outside date range
+  }
+
+  return false; // ✅ Enable - sab check pass
+})();
 async function getTerms() {
   try {
     const token = sessionStorage.getItem('token');
@@ -3032,6 +3095,39 @@ useEffect(() => {
     getExamsByTerm(firstTerm.id);
   }
 }, [terms]);
+  /* No active session set for this branch → block the module and ask the user
+     to configure it in Settings first. */
+  if (hasActiveSession === false) {
+    return (
+      <>
+        <style>{EXAM_CSS}</style>
+        <div style={{
+          minHeight: '60vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24,
+        }}>
+          <div style={{
+            maxWidth: 420, width: '100%', textAlign: 'center', background: '#fff',
+            border: '1px solid #E2E8F0', borderRadius: 16, padding: '36px 32px',
+            boxShadow: '0 10px 30px rgba(15,23,42,.08)',
+          }}>
+            <div style={{
+              width: 64, height: 64, borderRadius: '50%', margin: '0 auto 18px',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              background: 'rgba(217,119,6,.12)', color: '#B45309', fontSize: 28,
+            }}>
+              <i className="fa-solid fa-calendar-xmark"></i>
+            </div>
+            <div style={{ fontSize: 18, fontWeight: 800, color: '#0F172A', marginBottom: 8 }}>
+              No Active Session
+            </div>
+            <div style={{ fontSize: 14, color: '#475569', lineHeight: 1.6 }}>
+              Please set the session from Setting first.
+            </div>
+          </div>
+        </div>
+      </>
+    );
+  }
+
   return (
     <>
       <style>{EXAM_CSS}</style>
