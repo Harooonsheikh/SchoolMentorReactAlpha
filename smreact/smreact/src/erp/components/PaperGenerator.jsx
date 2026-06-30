@@ -6,6 +6,7 @@ import * as paperService from '../services/paperService';
 import useAsync from '../hooks/useAsync';
 import { buildUrl } from '../../utils/apiConfig';
 import Select from 'react-select';
+import { deliverReport } from './reportDelivery';
 /* ═══════════════════════════════════════════════════════════════════
    PAPER GENERATOR — module shell
    Stage 1: page header, 2 inner tabs (Paper Setup / Paper Generator),
@@ -3415,7 +3416,7 @@ function buildApiSectionsHTML(sections, paperType, fmt = 'with', line = 'single'
      1 line (single) or 4 lines (four) after each written-answer question. */
   const lineCount = fmt === 'without' ? 0 : (line === 'four' ? 4 : 1);
   const ansLines = () => (lineCount === 0 ? ''
-    : `<div class="write-lines">${'<div class="line-rule"></div>'.repeat(lineCount)}</div>`);
+    : `<div class="write-lines">${'<div class="line-rule">&nbsp;</div>'.repeat(lineCount)}</div>`);
   const renderOne = (sec, num) => {
     const k = pgRecKey(sec.recTitle);
     const rows = sec.rows || [];
@@ -3731,18 +3732,18 @@ function buildObjSection() {
 }
 
 function buildSubjSection() {
-  const fourLines = '<div class="line-rule"></div>'.repeat(4);
-  const eightLines = '<div class="line-rule"></div>'.repeat(8);
+  const fourLines = '<div class="line-rule">&nbsp;</div>'.repeat(4);
+  const eightLines = '<div class="line-rule">&nbsp;</div>'.repeat(8);
   return `
   <div class="section-title">Section B — Subjective Questions</div>
 
   <div class="q-block">
     <div class="q-header"><span><b>Q.10</b> Answer the following Short Questions</span><span class="q-marks">[Total Marks: 10]</span></div>
-    <div class="write-item">i. Where did the little red hen live? [2] <div class="ans-line"></div></div>
-    <div class="write-item">ii. What did the hen find in the field? [2] <div class="ans-line"></div></div>
-    <div class="write-item">iii. Why did the hen eat the bread alone? [2] <div class="ans-line"></div></div>
-    <div class="write-item">iv. Does Fiza have any siblings? Name them. [2] <div class="ans-line"></div></div>
-    <div class="write-item">v. What does Fiza's family do on weekends? [2] <div class="ans-line"></div></div>
+    <div class="write-item">i. Where did the little red hen live? [2] <div class="ans-line">&nbsp;</div></div>
+    <div class="write-item">ii. What did the hen find in the field? [2] <div class="ans-line">&nbsp;</div></div>
+    <div class="write-item">iii. Why did the hen eat the bread alone? [2] <div class="ans-line">&nbsp;</div></div>
+    <div class="write-item">iv. Does Fiza have any siblings? Name them. [2] <div class="ans-line">&nbsp;</div></div>
+    <div class="write-item">v. What does Fiza's family do on weekends? [2] <div class="ans-line">&nbsp;</div></div>
   </div>
 
   <div class="q-block">
@@ -3762,15 +3763,15 @@ function buildSubjSection() {
   <div class="q-block">
     <div class="q-header"><span><b>Q.13</b> Read the passage carefully and answer the questions</span><span class="q-marks">[Total Marks: 10]</span></div>
     <div style="background:#F8FAFF;border:1px solid #BFDBFE;border-radius:4px;padding:8px 12px;font-size:11.5px;margin-bottom:8px;line-height:1.6">Omar was a hardworking student who loved reading. Every day after school, he would go to the library and pick a new book. His favourite books were about science and nature. One day, he found a book about stars and planets. He read it all night and decided he wanted to become an astronaut.</div>
-    <div class="write-item">i. What did Omar do after school every day? [2] <div class="ans-line"></div></div>
-    <div class="write-item">ii. What type of books did Omar like the most? [2] <div class="ans-line"></div></div>
-    <div class="write-item">iii. What did Omar decide after reading the book about space? [2] <div class="ans-line"></div></div>
+    <div class="write-item">i. What did Omar do after school every day? [2] <div class="ans-line">&nbsp;</div></div>
+    <div class="write-item">ii. What type of books did Omar like the most? [2] <div class="ans-line">&nbsp;</div></div>
+    <div class="write-item">iii. What did Omar decide after reading the book about space? [2] <div class="ans-line">&nbsp;</div></div>
   </div>`;
 }
 
 function buildAnswerSheetSection() {
   const cells = Array.from({ length: 13 }, (_, i) =>
-    `<div class="ans-cell"><div class="qnum">Q.${i + 1}</div><div class="aline" style="border-bottom:1px solid #94A3B8;margin-top:18px"></div></div>`
+    `<div class="ans-cell"><div class="qnum">Q.${i + 1}</div><div class="aline" style="border-bottom:1px solid #94A3B8;margin-top:18px">&nbsp;</div></div>`
   ).join('');
   return (
     '<div class="ans-sheet">' +
@@ -3780,7 +3781,7 @@ function buildAnswerSheetSection() {
   );
 }
 
-function buildFullPaperHTML({ paper, cls, isBW, asWord, sections, reportHeader, fmt: fmtArg, line: lineArg }) {
+function buildFullPaperHTML({ paper, cls, isBW, sections, reportHeader, fmt: fmtArg, line: lineArg }) {
   const schoolName = reportHeader?.branchName || 'The Oxford System — Lahore Campus';
   const schoolLogo = reportHeader?.branchLogo || '';
   const schoolAddress = reportHeader?.address || '';
@@ -3830,9 +3831,10 @@ function buildFullPaperHTML({ paper, cls, isBW, asWord, sections, reportHeader, 
   const printColor = isBW ? '#0F172A' : '#FFFFFF';
   const printShadow = isBW ? '0 2px 8px rgba(0,0,0,.12)' : '0 4px 14px rgba(30,58,138,.4)';
   const printBorder = isBW ? '1.5px solid #0F172A' : 'none';
-  const dlButton   = asWord
-    ? `<button class="print-btn no-print" onclick="(function(){const blob=new Blob(['<html>'+document.documentElement.innerHTML+'</html>'],{type:'application/msword'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='${title.replace(/[^a-z0-9]/gi,'_')}.doc';a.click();})()">${isBW ? '' : '⬇ '}Save as Word</button>`
-    : `<button class="print-btn no-print" onclick="window.print()">${isBW ? '' : '⬇ '}Save as PDF</button>`;
+  /* Always render the PDF print button. When the chosen format is Word,
+     deliverReport() rewrites window.print() → __saveAsWord() and relabels
+     this button to "Save as Word" (rasterising logos/SVG into the .doc). */
+  const dlButton   = `<button class="print-btn no-print" onclick="window.print()">${isBW ? '' : '🖨 '}Print / Save as PDF</button>`;
 
   return `<!DOCTYPE html>
 <html><head>
@@ -3975,15 +3977,15 @@ function DownloadModal({ paper, cls, onClose, toast }) {
       paper,
       cls,
       isBW: style === 'bw',
-      asWord: format === 'word',
       sections,
       reportHeader,
       fmt,
       line,
     });
-    win.document.open();
-    win.document.write(html);
-    win.document.close();
+    /* PDF → print preview; Word → same preview with a "Save as Word" button
+       (deliverReport handles the format-specific delivery into `win`). */
+    const reportName = `${paper.title || 'Question Paper'} - ${cls?.name || ''}`;
+    deliverReport(reportName, format, html, { win });
     toast(`${label} — opened in new window`, 'success');
     onClose();
   };

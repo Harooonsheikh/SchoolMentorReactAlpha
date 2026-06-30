@@ -424,9 +424,12 @@ const [subjects, setSubjects] = useState([]);
   /* ── Result Setup state ── */
   const [rsTab, setRsTab]               = useState('resultsetup'); // resultsetup | singleassessment | combinedassessment | resulthistory
   const [rsL2, setRsL2]                 = useState('setup');       // setup | cardoptions (cardoptions = Coming Soon for now)
-  const { data: rsGrades = [],  setData: setRsGrades }  = useAsync(examService.getRsGrades,  []);
-  const { data: rsSigs = [],    setData: setRsSigs }    = useAsync(examService.getRsSigs,    []);
-  const { data: rsRemarks = [], setData: setRsRemarks } = useAsync(examService.getRsRemarks, []);
+  /* Result Setup grades / signatures / remarks — start EMPTY and fill only
+     from the real APIs (fetchGradeSetup / fetchSignatureSetup / fetchRemarksSetup).
+     No static/mock seed, so nothing flashes before the API responds. */
+  const [rsGrades, setRsGrades]   = useState([]);
+  const [rsSigs, setRsSigs]       = useState([]);
+  const [rsRemarks, setRsRemarks] = useState([]);
   const [rsAbsentMode, setRsAbsentMode] = useState('exclude'); // 'zero' | 'exclude'
   const [rsModalOpen, setRsModalOpen]   = useState(false);
   const [rsReportReq, setRsReportReq]   = useState(null);      // truthy → picker open
@@ -1665,12 +1668,14 @@ async function saveCardOptions() {
   }
 }
 
-// Result Setup ka data tab load karo jab user Results → Result Setup par aaye.
-// `tab` (main tab) ko bhi dependency mein rakha — warna rsTab/rsL2 mount se hi
-// apne default pe hain, to Results main-tab par click karne se effect re-run nahi hota tha.
+// Result Setup ka data tab load karo jab user Results par aaye.
+// Grades / signatures / remarks branch-level config hai — ise Results main-tab
+// khulte hi (kisi bhi sub-tab par) EK baar real API se load karte hain (ref guard),
+// taake Result Setup grid + sab result cards par real data aaye, koi static nahi.
+const rsSetupLoadedOnce = useRef(false);
 useEffect(() => {
-  if (tab === 'results' && rsTab === 'resultsetup' && rsL2 === 'setup') {
-    // Load all three APIs when Result Setup tab is active
+  if (tab === 'results' && !rsSetupLoadedOnce.current) {
+    rsSetupLoadedOnce.current = true;
     fetchGradeSetup();
     fetchSignatureSetup();
     fetchRemarksSetup();
