@@ -6960,10 +6960,12 @@ function DsReportPicker({ req, ex, dateSheets, term, branchSchool, onClose, toas
 async function generateDateSheetReport({ ex, dateSheets, term, classKey, branchSchool }, isColor, format = 'pdf') {
   const isAll = classKey === 'all';
 
-  // Window pehle kholo (popup-blocker se bachne ke liye), phir data fetch — PDF aur Word dono ke liye.
-  const w = window.open('', '_blank', 'width=960,height=820');
+ let w = null;
+if (format === 'pdf') {
+  w = window.open('', '_blank', 'width=960,height=820');
   if (!w) return;
   w.document.write('<p style="font-family:sans-serif;padding:24px;color:#475569">Preparing report…</p>');
+}
 
   /* Real branch header (name / logo / address / academic year) from the
      /report-header/{branchId} API (saved in branchSchool) — same as the exam report. */
@@ -7150,7 +7152,13 @@ ${reportHTML}
 </body></html>`;
 
   // PDF → print preview; Word → wahi preview "Save as Word" button ke saath (deliverReport).
-  deliverReport(`Date Sheet - ${ex?.name || ''}`, format, html, { win: w });
+if (format === 'word') {
+  deliverReport(`Date Sheet - ${ex?.name || ''}`, 'word', html);
+} else {
+  w.document.open();
+  w.document.write(html);
+  w.document.close();
+}
 }
 
 /* ═══════════════════════════════════════════════════════════════════
