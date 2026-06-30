@@ -161,6 +161,31 @@ const LESSON_SECTIONS_UR = [
   { key: 'devel', title: '🔬 ترقی / مرکزی تدریس',              hint: 'نئے مفہوم یا مہارت کی مرحلہ وار وضاحت',     mins: '20' },
   { key: 'recap', title: '✅ خلاصہ / اعادہ',                    hint: 'آپ کیسے جانچیں گے کہ طلباء نے آج کیا سیکھا؟', mins: '10' },
 ];
+/* Per-section default minutes (slo/intro/devel/recap). The four section
+   timings must add up to the lesson's Time Duration. */
+const DEFAULT_SEC_MINS = { slo: '05', intro: '05', devel: '20', recap: '10' };
+const onlyNum = v => String(v ?? '').replace(/[^0-9]/g, '');
+
+/* Auto-split the lesson's Time Duration across the four sections by their
+   default weight (5:5:20:10). The leftover from rounding is added to the
+   heaviest sections first, so the four values always sum back to the total. */
+function distributeMins(total) {
+  const t = parseInt(total, 10) || 0;
+  const out = { slo: '', intro: '', devel: '', recap: '' };
+  if (!t) return out;
+  const weights = { slo: 5, intro: 5, devel: 20, recap: 10 };
+  const wsum = 40;
+  const keys = ['slo', 'intro', 'devel', 'recap'];
+  const remainderOrder = ['devel', 'recap', 'slo', 'intro']; // heaviest first
+  const raw = {};
+  let used = 0;
+  keys.forEach(k => { raw[k] = Math.floor((t * weights[k]) / wsum); used += raw[k]; });
+  let rem = t - used;
+  let i = 0;
+  while (rem > 0) { raw[remainderOrder[i % remainderOrder.length]] += 1; rem -= 1; i += 1; }
+  keys.forEach(k => { out[k] = String(raw[k]); });
+  return out;
+}
 
 /* ═══════════════════════════════════════════════════════════════════
    MAIN MODULE
@@ -203,10 +228,15 @@ export default function LessonPlans({ toast, openConfirm }) {
   };
 
   const loadSessionSummary = async () => {
+    /* Prefer the switched session so its record loads; fall back to login session. */
+    const sessionID = sessionStorage.getItem('changeSessionId') || sessionStorage.getItem('sessionID') || sessionStorage.getItem('SessionID') || '';
+    if (!sessionID) {
+      setSession({ year: '', start: '', end: '', workingDaysPerWeek: 5, workingDays: 0, workingWeeks: 0, totalOnDays: 0, holidays: 0, vacationDays: 0 });
+      setVacations([]);
+      return null;
+    }
     try {
       const branchID  = sessionStorage.getItem('branchID');
-      /* Prefer the switched session so its record loads; fall back to login session. */
-      const sessionID = sessionStorage.getItem('changeSessionId') || sessionStorage.getItem('sessionID') || sessionStorage.getItem('SessionID') || '';
       const token     = sessionStorage.getItem('token') || '';
       const res = await fetch(
         buildUrl(`/api/getsessionsummarybybranchid?branchID=${branchID}&sessionID=${sessionID}&pageNo=1`),
@@ -290,6 +320,11 @@ const [tbRefreshKey, setTbRefreshKey] = useState(0);
   const openReport = (name, format = 'pdf', style = 'color', extra = null) => setReportPicker({ name, format, style, extra });
   const [classesData, setClassesData] = useState([]);
 const getClassesData = async () => {
+  /* No active session for this branch → don't fetch or show any class data. */
+  if (!sessionStorage.getItem('sessionID') && !sessionStorage.getItem('changeSessionId')) {
+    setClassesData([]);
+    return;
+  }
   try {
     const branchID = sessionStorage.getItem("branchID");
     const empID = sessionStorage.getItem("employee_ID");
@@ -678,24 +713,36 @@ function SessionSettings({
         </div>
 
         <div className="ss-vac-list">
-          {vacations.map((v, i) => {
-            const days = vacationDays(v.start, v.end);
-            const last = i === vacations.length - 1;
-            return (
-              <div key={v.id} className="ss-vac-row" style={last ? { borderBottom: 'none', paddingBottom: 0 } : null}>
-                <div className="ss-vac-left">
-                  <div className="ss-vac-dot" style={{ background: v.color }}></div>
-                  <div>
-                    <div className="ss-vac-name">{v.name}</div>
-                    <div className="ss-vac-range">
-                      <i className="fa-solid fa-calendar-range"></i> {v.start} → {v.end}
-                    </div>
-                  </div>
-                </div>
-                <div className="ss-vac-days">{days}<span>days</span></div>
-              </div>
-            );
-          })}
+         {vacations.map((v, i) => {
+  const days = vacationDays(v.start, v.end);
+  const last = i === vacations.length - 1;
+  const isInvalid = v.start && v.end && v.end < v.start;
+  return (
+    <div key={v.id} className="ss-vac-row" style={last ? { borderBottom: 'none', paddingBottom: 0 } : null}>
+      <div className="ss-vac-left">
+        <div className="ss-vac-dot" style={{ background: isInvalid ? '#EF4444' : v.color }}></div>
+        <div>
+          <div className="ss-vac-name" style={isInvalid ? { color: '#FECACA' } : {}}>
+            {v.name}
+            {isInvalid && (
+              <span style={{ fontSize: 10, fontWeight: 700, marginLeft: 6,
+                background: 'rgba(239,68,68,.25)', color: '#FCA5A5',
+                padding: '1px 6px', borderRadius: 4 }}>
+                ⚠ Invalid dates
+              </span>
+            )}
+          </div>
+          <div className="ss-vac-range">
+            <i className="fa-solid fa-calendar-range"></i> {v.start} → {v.end}
+          </div>
+        </div>
+      </div>
+      <div className="ss-vac-days" style={isInvalid ? { color: '#FCA5A5' } : {}}>
+        {isInvalid ? '!' : days}<span>days</span>
+      </div>
+    </div>
+  );
+})}
         </div>
 
         {/* Report bar */}
@@ -894,7 +941,8 @@ function SessionSettings({
 }function vacationDays(start, end) {
   const s = new Date(start), e = new Date(end);
   if (isNaN(s) || isNaN(e)) return 0;
-  return Math.round((e - s) / 86400000) + 1;
+  const diff = Math.round((e - s) / 86400000) + 1;
+  return Math.max(0, diff);
 }
 
 /* Derive session totals from start/end, working-days-per-week and vacations.
@@ -903,15 +951,33 @@ function SessionSettings({
    holidays. Returns the fields the cards & summary read. */
 function computeSession(base, vacations = []) {
   const wpw = Number(base.workingDaysPerWeek) || 0;
-  const s = new Date(base.start), e = new Date(base.end);
+
+  // Parse safely — handle both 'YYYY-MM-DD' and ISO strings
+  const parseDate = d => {
+    if (!d) return null;
+    // Force UTC midnight so timezone doesn't shift the date
+    const iso = String(d).slice(0, 10);
+    const [y, m, day] = iso.split('-').map(Number);
+    if (!y || !m || !day) return null;
+    return new Date(Date.UTC(y, m - 1, day));
+  };
+
+  const s = parseDate(base.start);
+  const e = parseDate(base.end);
+
   let totalDays = 0, calWeeks = 0, grossWorkingDays = 0, weeklyHolidays = 0;
-  if (!isNaN(s) && !isNaN(e) && e >= s) {
+  if (s && e && e >= s) {
     totalDays = Math.round((e - s) / 86400000) + 1;
     calWeeks = totalDays / 7;
     grossWorkingDays = Math.round(calWeeks * wpw);
     weeklyHolidays = totalDays - grossWorkingDays;
   }
-  const vacDays = (vacations || []).reduce((sum, v) => sum + vacationDays(v.start, v.end), 0);
+
+  const vacDays = (vacations || []).reduce((sum, v) => {
+    const d = vacationDays(v.start, v.end);
+    return sum + Math.max(0, d);
+  }, 0);
+
   const workingDays = Math.max(0, grossWorkingDays - vacDays);
   const workingWeeks = wpw > 0 ? workingDays / wpw : 0;
   return {
@@ -996,13 +1062,20 @@ function SessionEditModal({ open, session, vacations, onSession, onVacations, on
   const [wpw,   setWpw]   = useState(session.workingDaysPerWeek);
 
   useEffect(() => {
-    if (open) {
-      setStart(session.start);
-      setEnd(session.end);
-      setWpw(session.workingDaysPerWeek);
-      setSub('term');
-    }
-  }, [open, session]);
+  if (open) {
+    // Ensure YYYY-MM-DD format for date inputs
+    const toInputDate = d => {
+      if (!d) return '';
+      const parsed = new Date(d);
+      if (isNaN(parsed)) return '';
+      return parsed.toISOString().slice(0, 10);
+    };
+    setStart(toInputDate(session.start));
+    setEnd(toInputDate(session.end));
+    setWpw(session.workingDaysPerWeek || 5);
+    setSub('term');
+  }
+}, [open, session]);
 
   /* Live recalculation as the user edits start/end/working-days-per-week.
      Subtracts the current vacations so the preview matches the summary card. */
@@ -1012,13 +1085,27 @@ function SessionEditModal({ open, session, vacations, onSession, onVacations, on
   );
 
   const save = () => {
-    /* End date must be after the start date. */
-    if (start && end && end <= start) {
-      toast('Session End must be after Session Start', 'error');
+    const wpwNum = Number(wpw);
+
+    if (!wpwNum || wpwNum < 1) {
+      toast('Working days per week must be at least 1', 'error');
       return;
     }
+    if (wpwNum > 7) {
+      toast('Working days per week cannot be greater than 7', 'error');
+      return;
+    }
+    if (!start || !end) {
+      toast('Please select session start and end dates', 'error');
+      return;
+    }
+    if (new Date(end) < new Date(start)) {
+      toast('Session end date cannot be before start date', 'error');
+      return;
+    }
+
     /* Parent persists via lpsessionsummarycrud and reloads. */
-    onSession({ start, end, workingDaysPerWeek: wpw });
+    onSession({ start, end, workingDaysPerWeek: wpwNum });
     onClose();
   };
 
@@ -1320,6 +1407,12 @@ function VacationEditModal({ open, vacations, session = {}, sessionSummaryId, on
      session totals. */
   const save = async () => {
     if (!sessionSummaryId) { toast('Save the academic session first', 'error'); return; }
+    // Validate: end date must be >= start date
+  const invalidVacs = draft.filter(v => v.name && v.name.trim() && v.start && v.end && v.end < v.start);
+  if (invalidVacs.length > 0) {
+    toast(`"${invalidVacs[0].name}" — End date must be after Start date`, 'error');
+    return;
+  }
     setSaving(true);
     try {
       const computed = computeSession(session, draft);
@@ -1450,6 +1543,10 @@ function TermBreakups({ onUpdate, onReport, openConfirm, toast, classesData,  re
 
   useEffect(() => {
     const loadTerms = async () => {
+      if (!termsSessionYearID()) {
+        setTerms([]);
+        return;
+      }
       try {
         const json = await termsCrud({
           id: 0,
@@ -2186,6 +2283,11 @@ const [totalLectures, setTotalLectures] = useState(0);
   useEffect(() => {
     if (!cls) return;
     const loadTerms = async () => {
+      if (!termsSessionYearID()) {
+        setTerms([]);
+        toast('No active academic session. Please set one up first.', 'error');
+        return;
+      }
       try {
         const json = await termsCrud({
           id: 0,
@@ -2278,6 +2380,12 @@ if (mapped.length > 0) {
   setUnits(prevUnits => prevUnits.map(u => {
     if (u.id !== id) return u;
 
+    // Negative value block karo
+    if (key === 'weeksRequired' && Number(val) < 0) {
+      toast('Weeks Required cannot be negative', 'error');
+      return u;
+    }
+
     const nextUnit = { ...u, [key]: val };
 
   if (key === 'weeksRequired' && nextUnit.topics.some(t => !validateTopicPeriods(nextUnit, t))) {
@@ -2300,6 +2408,13 @@ if (mapped.length > 0) {
   const updateTopic = (unitId, topicId, key, val) => {
   setUnits(prevUnits => prevUnits.map(u => {
     if (u.id !== unitId) return u;
+
+     // Negative periods block karo
+    if (key === 'periodsRequired' && Number(val) < 0) {
+      toast('Total Period Required cannot be negative', 'error');
+      return u;
+    }
+
 
     const nextUnit = {
       ...u,
@@ -2617,6 +2732,16 @@ return readApiJson(res);
 };
 
 const saveUnitDetails = async unit => {
+  // Sirf unit fields validate karo — subtopic ki zaroorat nahi yahan
+  if (!String(unit.unitNum || '').trim()) {
+    toast('Unit Number is required', 'error'); return;
+  }
+  if (!String(unit.unitName || '').trim()) {
+    toast('Unit Name is required', 'error'); return;
+  }
+  if (Number(unit.weeksRequired) <= 0) {
+    toast('Weeks Required must be greater than 0', 'error'); return;
+  }
   setSavingBreakup(true);
   try {
     for (const topic of unit.topics) {
@@ -2638,6 +2763,20 @@ onSaved?.();
 };
 
 const saveAllDetails = async () => {
+    // Validation — unit name, weeks aur subtopic check
+  for (const unit of units) {
+    if (!String(unit.unitNum || '').trim()) {
+      toast('Unit Number is required', 'error'); return;
+    }
+    if (!String(unit.unitName || '').trim()) {
+      toast('Unit Name is required', 'error'); return;
+    }
+    if (Number(unit.weeksRequired) <= 0) {
+      toast(`Unit "${unit.unitName}" — Weeks Required must be positive integer`, 'error'); return;
+    }
+    
+    
+  }
   setSavingBreakup(true);
   try {
     for (const unit of units) {
@@ -2816,11 +2955,37 @@ const deleteDetail = async ({ unit, topic }) => {
                       onChange={e => updateUnit(u.id, 'weeksRequired', e.target.value)} />
                   </div>
                   <div className="tbm-unit-top-btns">
-                    <Tooltip text="Save unit"><button className="tbm-unit-save-btn"
-                    disabled={savingBreakup}
-                      onClick={() => saveUnitDetails(u)}>
-                      <i className="fa-solid fa-floppy-disk"></i>
-                    </button></Tooltip>
+                   <Tooltip text={
+  !String(u.unitNum || '').trim() ? 'Unit Number is required' :
+  !String(u.unitName || '').trim() ? 'Unit Name is required' :
+  Number(u.weeksRequired) <= 0 ? 'Weeks Required must be greater than 0' :
+  'Save unit'
+}>
+  <button
+    className="tbm-unit-save-btn"
+    disabled={
+      savingBreakup ||
+      !String(u.unitNum || '').trim() ||
+      !String(u.unitName || '').trim() ||
+      Number(u.weeksRequired) <= 0
+    }
+    style={{
+      opacity: (
+        !String(u.unitNum || '').trim() ||
+        !String(u.unitName || '').trim() ||
+        Number(u.weeksRequired) <= 0
+      ) ? 0.4 : 1,
+      cursor: (
+        !String(u.unitNum || '').trim() ||
+        !String(u.unitName || '').trim() ||
+        Number(u.weeksRequired) <= 0
+      ) ? 'not-allowed' : 'pointer',
+    }}
+    onClick={() => saveUnitDetails(u)}
+  >
+    <i className="fa-solid fa-floppy-disk"></i>
+  </button>
+</Tooltip>
                     <Tooltip text="Update Week Required"><button className="tbm-unit-save-btn"
                       style={{ borderColor: 'rgba(30,58,138,.25)', background: 'rgba(30,58,138,.07)', color: '#1E3A8A' }}
                      //delete button replace with update button
@@ -2892,13 +3057,13 @@ const deleteDetail = async ({ unit, topic }) => {
           <Tooltip text="Discard changes and close">
             <button className="tbm-btn tbm-btn--cancel" onClick={onClose}>Close</button>
           </Tooltip>
-          <Tooltip text="Save term breakup">
-            <button className="tbm-btn tbm-btn--save"
+         <button
+  className="tbm-btn tbm-btn--save"
   disabled={savingBreakup || loadingBreakup}
-  onClick={saveAllDetails}>
+  onClick={saveAllDetails}
+>
   {savingBreakup ? 'Saving...' : 'Save'}
 </button>
-          </Tooltip>
         </div>
 
       </div>
@@ -4086,13 +4251,17 @@ function Submissions({ toast, classesData = [] }) {
 
   // Helper functions to process classesData
   const getUniqueClasses = () => {
-    const uniqueClasses = new Set();
+    /* Classes ko classesData ke natural order me rakho (alphabetical sort nahi),
+       taa-ke yeh dropdown Create Lesson Plans wale dropdown se exactly match kare. */
+    const seen = new Set();
+    const out = [];
     classesData.forEach(classItem => {
-      if (classItem.name) {
-        uniqueClasses.add(classItem.name);
+      if (classItem.name && !seen.has(classItem.name)) {
+        seen.add(classItem.name);
+        out.push(classItem.name);
       }
     });
-    return Array.from(uniqueClasses).sort();
+    return out;
   };
 
   const getGradeIdFromClassName = (className) => {
@@ -5668,9 +5837,14 @@ function buildLpSubReport(ctx, isColor, reportHeader = null) {
     <td colspan="2">${_subPdfPbar(C, pct)}</td>
   </tr></tbody></table>`;
 
-  html += `<div class="sec-title">Lesson Plan Details</div>
-  <table><thead><tr>
-    <th>#</th><th>Unit</th><th>Lesson Topic</th><th>Date</th><th>Term</th><th>Status</th><th>Submitted On</th>
+ html += `<div class="sec-title">Lesson Plan Details</div>
+  <table style="table-layout:fixed;width:100%">
+  <thead><tr>
+    <th style="width:8%">#</th>
+    <th style="width:18%">Unit</th>
+    <th style="width:30%">Lesson Topic</th>
+    <th style="width:22%">Status</th>
+    <th style="width:22%">Submitted On</th>
   </tr></thead><tbody>`;
   data.forEach((p, i) => {
     const isSub = p.status === 'submitted';
@@ -5678,8 +5852,6 @@ function buildLpSubReport(ctx, isColor, reportHeader = null) {
       <td style="color:${C.muted};font-weight:700">${i + 1}</td>
       <td><span class="tag tag-na">Unit ${p.unitNo}</span></td>
       <td><strong>${p.topic}</strong></td>
-      <td style="color:${C.muted}">${p.date}</td>
-      <td style="color:${C.muted}">${p.term}</td>
       <td><span class="tag ${isSub ? 'tag-sub' : 'tag-pend'}">${isSub ? '✓ Submitted' : '⏱ Pending'}</span></td>
       <td style="color:${C.muted}">${isSub ? _subFmtSubmitted(p, `lp-${p.id}`) : '—'}</td>
     </tr>`;
@@ -6285,6 +6457,11 @@ function LessonEditModal({ ctx, onSave, onClose, toast }) {
   const [lessons, setLessons] = useState([]);
   const [selectedIdx, setSelectedIdx] = useState(0);
   const editorRefs = useRef({});
+  /* Last selection that lived inside an editor. Popups (image/link/math URL
+     inputs) steal focus and collapse the editor's selection, so we remember
+     it and restore it before running any execCommand. */
+  const savedRangeRef  = useRef(null);
+  const savedEditorRef = useRef(null);
 
   useEffect(() => {
     if (!ctx) return;
@@ -6306,6 +6483,12 @@ function LessonEditModal({ ctx, onSave, onClose, toast }) {
         num: l.num || '',
         topic: (isSel && d) ? (d.lessonPlanTopic ?? l.topic) : (l.topic || ''),
         duration: (isSel && d) ? (d.timeDuration || '') : (l.duration || ''),
+        secMins: (isSel && d) ? {
+          slo:   onlyNum(d.timeForLearning)    || DEFAULT_SEC_MINS.slo,
+          intro: onlyNum(d.timeForLesson)      || DEFAULT_SEC_MINS.intro,
+          devel: onlyNum(d.timeForDevelopment) || DEFAULT_SEC_MINS.devel,
+          recap: onlyNum(d.timeForRecap)       || DEFAULT_SEC_MINS.recap,
+        } : (l.secMins || null),
         contentMap: (isSel && detailMap) ? detailMap : (l.contentMap || {}),
         source: l.source || 'manual',
         detail: isSel ? d : (l.detail || null),
@@ -6324,6 +6507,12 @@ function LessonEditModal({ ctx, onSave, onClose, toast }) {
   const dir = isUrdu ? 'rtl' : 'ltr';
   const currentLesson = lessons[selectedIdx] || { num: '', topic: '', duration: '', contentMap: {} };
 
+  /* Section minutes are auto-divided from the Time Duration — the user does
+     not edit them. They always sum back to the total. */
+  const durationNum = parseInt(duration, 10) || 0;
+  const secMins = distributeMins(duration);
+  const sectionsTotal = sections.reduce((a, s) => a + (parseInt(secMins[s.key], 10) || 0), 0);
+
   /* Sync editor DOM when selection/lang changes, or when the current lesson's
      content is replaced (e.g. detail loaded on Edit/Fetch — contentMap gets a new
      reference). Typing in the topic input keeps the same contentMap ref, so it
@@ -6340,16 +6529,58 @@ function LessonEditModal({ ctx, onSave, onClose, toast }) {
 
   if (!ctx) return null;
 
-  const exec = (cmd, val) => document.execCommand(cmd, false, val !== undefined ? val : null);
-  const insertTable = () => {
-    const html = '<table style="border-collapse:collapse;width:100%;margin:8px 0"><tr><td style="border:1px solid #BFDBFE;padding:6px 10px">Col 1</td><td style="border:1px solid #BFDBFE;padding:6px 10px">Col 2</td></tr><tr><td style="border:1px solid #BFDBFE;padding:6px 10px">Row 2</td><td style="border:1px solid #BFDBFE;padding:6px 10px">Row 2</td></tr></table>';
-    document.execCommand('insertHTML', false, html);
-  };
+ /* Remember the live selection while it is inside an editor. */
+ const saveSelection = () => {
+   const sel = window.getSelection();
+   if (!sel || !sel.rangeCount) return;
+   const range = sel.getRangeAt(0);
+   const ed = Object.values(editorRefs.current)
+     .find(el => el && el.contains(range.commonAncestorContainer));
+   if (ed) { savedRangeRef.current = range; savedEditorRef.current = ed; }
+ };
+ /* Re-focus the editor and restore the remembered selection so execCommand
+    targets the right place even after a popup stole focus. */
+ const restoreSelection = () => {
+   const ed = savedEditorRef.current;
+   if (!ed) return false;
+   ed.focus();
+   const range = savedRangeRef.current;
+   if (range) {
+     const sel = window.getSelection();
+     sel.removeAllRanges();
+     sel.addRange(range);
+   }
+   return true;
+ };
+
+ const exec = (cmd, val) => {
+  restoreSelection();
+  document.execCommand(cmd, false, val !== undefined ? val : null);
+  saveSelection();
+};
+ const insertTable = () => {
+  const html = '<table style="border-collapse:collapse;width:100%;margin:8px 0"><tr><td style="border:1px solid #BFDBFE;padding:6px 10px">Col 1</td><td style="border:1px solid #BFDBFE;padding:6px 10px">Col 2</td></tr><tr><td style="border:1px solid #BFDBFE;padding:6px 10px">Row 2</td><td style="border:1px solid #BFDBFE;padding:6px 10px">Row 2</td></tr></table>';
+  restoreSelection();
+  document.execCommand('insertHTML', false, html);
+  saveSelection();
+};
   const insertLink = () => {
-    const url = window.prompt('Enter URL', 'https://');
-    if (!url) return;
-    document.execCommand('createLink', false, url);
-  };
+  /* Capture the caret BEFORE the popup steals focus. */
+  saveSelection();
+  const inp = document.createElement('input');
+  inp.type = 'text';
+  inp.value = 'https://';
+  inp.placeholder = 'Enter URL';
+  inp.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:9999;padding:8px 12px;border:1px solid #CBD5E1;border-radius:8px;font-size:13px;width:320px;box-shadow:0 4px 20px rgba(0,0,0,.15)';
+  document.body.appendChild(inp);
+  inp.focus();
+  inp.select();
+  inp.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { if (inp.value) { restoreSelection(); document.execCommand('createLink', false, inp.value); saveSelection(); } inp.remove(); }
+    if (e.key === 'Escape') inp.remove();
+  });
+  inp.addEventListener('blur', () => setTimeout(() => inp.remove(), 200));
+};
 
   const updateLesson = (idx, patch) =>
     setLessons(ls => ls.map((l, i) => i === idx ? { ...l, ...patch } : l));
@@ -6385,8 +6616,14 @@ function LessonEditModal({ ctx, onSave, onClose, toast }) {
       devel: d.development        || '',
       recap: d.recap              || '',
     };
+    const secMinsLoaded = {
+      slo:   onlyNum(d.timeForLearning)    || DEFAULT_SEC_MINS.slo,
+      intro: onlyNum(d.timeForLesson)      || DEFAULT_SEC_MINS.intro,
+      devel: onlyNum(d.timeForDevelopment) || DEFAULT_SEC_MINS.devel,
+      recap: onlyNum(d.timeForRecap)       || DEFAULT_SEC_MINS.recap,
+    };
     setLessons(ls => ls.map(l => l.record?.id === masterId
-      ? { ...l, topic: d.lessonPlanTopic ?? l.topic, duration: d.timeDuration || '', contentMap, detail: d }
+      ? { ...l, topic: d.lessonPlanTopic ?? l.topic, duration: d.timeDuration || '', secMins: secMinsLoaded, contentMap, detail: d }
       : l));
     setDuration(d.timeDuration || '');
     sections.forEach(s => { const el = editorRefs.current[s.key]; if (el) el.innerHTML = contentMap[s.key] || ''; });
@@ -6478,6 +6715,7 @@ function LessonEditModal({ ctx, onSave, onClose, toast }) {
     if (!masterId) { toast('Save the topic first, then save the plan', 'error'); return; }
     const map = (li === selectedIdx) ? captureEditors() : (l.contentMap || {});
     const dur = (li === selectedIdx) ? duration : (l.duration || '');
+    const sm = distributeMins(dur);
     const d = l.detail || {};
     try {
       const result = await lpPost('/api/ulpforclassdetailcrud', {
@@ -6491,13 +6729,13 @@ function LessonEditModal({ ctx, onSave, onClose, toast }) {
         timeDuration: dur || '',
         lessonPlanTopic: l.topic || '',
         learningObjective: map.slo || '',
-        timeForLearning: d.timeForLearning || '',
+        timeForLearning: sm.slo || '',
         lessonIntroduction: map.intro || '',
-        timeForLesson: d.timeForLesson || '',
+        timeForLesson: sm.intro || '',
         development: map.devel || '',
-        timeForDevelopment: d.timeForDevelopment || '',
+        timeForDevelopment: sm.devel || '',
         recap: map.recap || '',
-        timeForRecap: d.timeForRecap || '',
+        timeForRecap: sm.recap || '',
         rating: d.rating || '',
         suggestion: d.suggestion || '',
         suggestionDescription: d.suggestionDescription || '',
@@ -6515,6 +6753,12 @@ function LessonEditModal({ ctx, onSave, onClose, toast }) {
   };
 
   const saveAndClose = async () => {
+    /* Section timings ka total Time Duration ke barabar hona chahiye. */
+    if (!durationNum) { toast('Enter the Time Duration first', 'warning'); return; }
+    if (sectionsTotal !== durationNum) {
+      toast(`Section timings total ${sectionsTotal} mins — must equal Time Duration (${durationNum} mins)`, 'error');
+      return;
+    }
     /* Persist the current lesson's plan detail, then hand the lesson back. */
     await saveDetail(selectedIdx);
     const map = captureEditors();
@@ -6596,9 +6840,19 @@ function LessonEditModal({ ctx, onSave, onClose, toast }) {
                       </div>
                       <Tooltip text="Edit lesson number"><button className="clml-edit-btn"
                         onClick={() => {
-                          const v = window.prompt('Lesson number', l.num || '');
-                          if (v !== null) updateLesson(li, { num: v });
-                        }}>
+  const inp = document.createElement('input');
+  inp.type = 'text';
+  inp.value = l.num || '';
+  inp.placeholder = 'Lesson number';
+  inp.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:9999;padding:8px 12px;border:1px solid #CBD5E1;border-radius:8px;font-size:13px;width:200px;box-shadow:0 4px 20px rgba(0,0,0,.15)';
+  document.body.appendChild(inp);
+  inp.focus(); inp.select();
+  inp.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { updateLesson(li, { num: inp.value }); inp.remove(); }
+    if (e.key === 'Escape') inp.remove();
+  });
+  inp.addEventListener('blur', () => setTimeout(() => inp.remove(), 200));
+}}>
                         <i className="fa-solid fa-hashtag"></i>
                       </button></Tooltip>
                     </div>
@@ -6734,11 +6988,11 @@ function LessonEditModal({ ctx, onSave, onClose, toast }) {
               <div>
                 {sections.map((sec, i) => {
                   const timeInput = (
-                    <div className="clpm-time-input-wrap" title={isUrdu ? 'وقت منٹوں میں' : 'Enter time in minutes'}>
+                    <div className="clpm-time-input-wrap" title={isUrdu ? 'وقت کل دورانیے سے خودکار تقسیم' : 'Auto-divided from Time Duration'}>
                       <i className="fa-regular fa-clock clpm-time-icon"></i>
-                      <input className="clpm-time-input" type="text" inputMode="numeric" maxLength="3"
-                        defaultValue={sec.mins.replace(/[^0-9]/g, '')}
-                        onChange={e => { e.target.value = e.target.value.replace(/[^0-9]/g, ''); }}
+                      <input className="clpm-time-input" type="text" readOnly tabIndex={-1}
+                        value={secMins[sec.key] || '0'}
+                        style={{ background: 'transparent', cursor: 'default' }}
                         placeholder="0" />
                       <span className="clpm-time-suffix">mins</span>
                     </div>
@@ -6783,26 +7037,85 @@ function LessonEditModal({ ctx, onSave, onClose, toast }) {
                         <Tooltip text="Underline (Ctrl+U)"><button className="clpm-tb-btn" onMouseDown={e => e.preventDefault()} onClick={() => exec('underline')}><u>U</u></button></Tooltip>
                         <Tooltip text="Italic (Ctrl+I)"><button className="clpm-tb-btn" onMouseDown={e => e.preventDefault()} onClick={() => exec('italic')}><i>I</i></button></Tooltip>
                         <Tooltip text="Strikethrough"><button className="clpm-tb-btn" onMouseDown={e => e.preventDefault()} onClick={() => exec('strikeThrough')}><s>S</s></button></Tooltip>
-                        <Tooltip text="Text Color"><button className="clpm-tb-btn" onMouseDown={e => e.preventDefault()}
-                          onClick={() => { const c = window.prompt('Color (e.g. #DC2626)', '#DC2626'); if (c) exec('foreColor', c); }}
-                          style={{ fontSize: 11, fontWeight: 800, color: '#DC2626', textDecoration: 'underline', textDecorationColor: '#DC2626' }}>A</button></Tooltip>
+                        <Tooltip text="Text Color">
+  <label className="clpm-tb-btn" onMouseDown={e => e.preventDefault()}
+    style={{ fontSize: 11, fontWeight: 800, color: '#DC2626', textDecoration: 'underline', textDecorationColor: '#DC2626', cursor: 'pointer', position: 'relative' }}>
+    A
+    <input type="color" defaultValue="#DC2626"
+      style={{ position: 'absolute', opacity: 0, width: '100%', height: '100%', top: 0, left: 0, cursor: 'pointer' }}
+      onChange={e => exec('foreColor', e.target.value)} />
+  </label>
+</Tooltip>
                         <div className="clpm-tb-divider"></div>
-                        <Tooltip text="Align left"><button className="clpm-tb-btn" onMouseDown={e => e.preventDefault()} onClick={() => exec('justifyLeft')}><i className="fa-solid fa-align-left"></i></button></Tooltip>
-                        <Tooltip text="Align center"><button className="clpm-tb-btn" onMouseDown={e => e.preventDefault()} onClick={() => exec('justifyCenter')}><i className="fa-solid fa-align-center"></i></button></Tooltip>
-                        <Tooltip text="Align right"><button className="clpm-tb-btn" onMouseDown={e => e.preventDefault()} onClick={() => exec('justifyRight')}><i className="fa-solid fa-align-right"></i></button></Tooltip>
+                       {[
+  { tip: 'Align left',   cmd: 'justifyLeft',   icon: 'fa-align-left',    align: 'left'    },
+  { tip: 'Align center', cmd: 'justifyCenter', icon: 'fa-align-center',  align: 'center'  },
+  { tip: 'Align right',  cmd: 'justifyRight',  icon: 'fa-align-right',   align: 'right'   },
+  { tip: 'Justify',      cmd: 'justifyFull',   icon: 'fa-align-justify', align: 'justify' },
+].map(({ tip, cmd, icon }) => (
+  <Tooltip key={cmd} text={tip}>
+    <button className="clpm-tb-btn"
+      onMouseDown={e => {
+        e.preventDefault();
+        /* Justify ko bhi baaki align commands jaisa execCommand se chalao.
+           styleWithCSS on rakho taake alignment inline style ke roop me lage
+           (zyada portable + report/word export me theek render ho). */
+        if (!restoreSelection()) return;
+        try { document.execCommand('styleWithCSS', false, true); } catch (err) {}
+        document.execCommand(cmd, false, null);
+        saveSelection();
+      }}>
+      <i className={`fa-solid ${icon}`}></i>
+    </button>
+  </Tooltip>
+))}
                         <div className="clpm-tb-divider"></div>
                         <Tooltip text="Numbered list"><button className="clpm-tb-btn" onMouseDown={e => e.preventDefault()} onClick={() => exec('insertOrderedList')}><i className="fa-solid fa-list-ol"></i></button></Tooltip>
                         <Tooltip text="Bullet list"><button className="clpm-tb-btn" onMouseDown={e => e.preventDefault()} onClick={() => exec('insertUnorderedList')}><i className="fa-solid fa-list-ul"></i></button></Tooltip>
                         <Tooltip text="Insert table"><button className="clpm-tb-btn" onMouseDown={e => e.preventDefault()} onClick={insertTable}><i className="fa-solid fa-table-cells"></i></button></Tooltip>
                         <div className="clpm-tb-divider"></div>
                         <Tooltip text="Insert link"><button className="clpm-tb-btn" onMouseDown={e => e.preventDefault()} onClick={insertLink}><i className="fa-solid fa-link"></i></button></Tooltip>
-                        <Tooltip text="Insert image"><button className="clpm-tb-btn" onMouseDown={e => e.preventDefault()}
-                          onClick={() => { const u = window.prompt('Image URL'); if (u) exec('insertImage', u); }}>
-                          <i className="fa-regular fa-image"></i>
-                        </button></Tooltip>
-                        <Tooltip text="Insert math formula"><button className="clpm-tb-btn" onMouseDown={e => e.preventDefault()}
-                          onClick={() => { const f = window.prompt('Formula'); if (f) document.execCommand('insertHTML', false, `<span style="font-family:'Cambria Math',serif">${f}</span>`); }}
-                          style={{ fontWeight: 800, fontSize: 14 }}>∑</button></Tooltip>
+                       <Tooltip text="Insert image from your device">
+  <button className="clpm-tb-btn" onMouseDown={e => { e.preventDefault(); saveSelection(); }}
+    onClick={() => {
+      /* Device se image pick karo (desktop/folder), phir base64 data-URI ke roop
+         me editor me insert — taa-ke image save/report me bhi saath chale. */
+      const f = document.createElement('input');
+      f.type = 'file';
+      f.accept = 'image/*';
+      f.style.display = 'none';
+      document.body.appendChild(f);
+      f.addEventListener('change', () => {
+        const file = f.files && f.files[0];
+        if (file) {
+          const reader = new FileReader();
+          reader.onload = ev => exec('insertImage', ev.target.result);
+          reader.readAsDataURL(file);
+        }
+        f.remove();
+      });
+      f.click();
+    }}>
+    <i className="fa-regular fa-image"></i>
+  </button>
+</Tooltip>
+                       <Tooltip text="Insert math formula">
+  <button className="clpm-tb-btn" onMouseDown={e => { e.preventDefault(); saveSelection(); }}
+    style={{ fontWeight: 800, fontSize: 14 }}
+    onClick={() => {
+      const inp = document.createElement('input');
+      inp.type = 'text';
+      inp.placeholder = 'e.g. x² + y² = z²';
+      inp.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:9999;padding:8px 12px;border:1px solid #CBD5E1;border-radius:8px;font-size:13px;width:300px;box-shadow:0 4px 20px rgba(0,0,0,.15)';
+      document.body.appendChild(inp);
+      inp.focus();
+      inp.addEventListener('keydown', e => {
+        if (e.key === 'Enter') { if (inp.value) { restoreSelection(); document.execCommand('insertHTML', false, `<span style="font-family:'Cambria Math',serif">${inp.value}</span>`); saveSelection(); } inp.remove(); }
+        if (e.key === 'Escape') inp.remove();
+      });
+      inp.addEventListener('blur', () => setTimeout(() => inp.remove(), 200));
+    }}>∑</button>
+</Tooltip>
                         <div className="clpm-tb-divider"></div>
                         <Tooltip text="Clear formatting"><button className="clpm-tb-btn" onMouseDown={e => e.preventDefault()}
                           onClick={() => exec('removeFormat')}
@@ -6816,6 +7129,9 @@ function LessonEditModal({ ctx, onSave, onClose, toast }) {
                         suppressContentEditableWarning
                         dir={dir}
                         spellCheck={false}
+                        onMouseUp={saveSelection}
+                        onKeyUp={saveSelection}
+                        onFocus={saveSelection}
                       />
                     </div>
                   );
@@ -8005,10 +8321,10 @@ async function generateCardReport(card, style, ctx = {}, reportHeader = null, fo
       <!-- Hero stat strip -->
       <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:28px">
         ${[
-          ['262','Total On Days','📅',isColor?'#EFF6FF':'#F5F5F5',isColor?'#1E40AF':'#333'],
-          ['254','Working Days','💼',isColor?'#DCFCE7':'#F5F5F5',isColor?'#16A34A':'#333'],
-          ['8','Holidays','🌴',isColor?'#FEF9C3':'#F5F5F5',isColor?'#D97706':'#333'],
-        ].map(([v,l,ic,bg,c])=>`
+  [totalDays,   'Total On Days','📅',isColor?'#EFF6FF':'#F5F5F5',isColor?'#1E40AF':'#333'],
+  [workingDays, 'Working Days','💼',isColor?'#DCFCE7':'#F5F5F5',isColor?'#16A34A':'#333'],
+  [holidays,    'Holidays','🌴',isColor?'#FEF9C3':'#F5F5F5',isColor?'#D97706':'#333'],
+].map(([v,l,ic,bg,c])=>`
           <div style="background:${bg};border:1px solid ${border};border-radius:12px;padding:18px 14px;text-align:center">
             <div style="font-size:22px;margin-bottom:6px">${ic}</div>
             <div style="font-size:30px;font-weight:800;color:${c};line-height:1;letter-spacing:-.02em">${v}</div>
@@ -8531,7 +8847,7 @@ async function clpUnitPdfReport(unit, ctx, style, reportHeader = null, format = 
     const sections = sectionTitles.map((title, si) => {
       const sc       = secBars[si];
       const content  = getContent(lesson, si) || '';
-      const timeMins = sectionMins[si];
+      const timeMins = distributeMins(lesson?.duration)[sectionKeys[si]] || sectionMins[si];
       if (isColor) {
         return `
           <div style="margin-bottom:18px;break-inside:avoid">
