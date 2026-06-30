@@ -3,6 +3,7 @@ import Tooltip from './Tooltip';
 import TutorialModal from './TutorialModal';
 import * as studentService from '../services/studentService';
 import useAsync from '../hooks/useAsync';
+import { fetchReportHeader } from '../../utils/pdfReports';
 
 /* ─── Module-wide helpers ─── */
 const MONTHS_SHORT_STU = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -54,11 +55,20 @@ function stuOpenPrintWindow(title, css, inner, toast) {
   const escTitle = String(title || '').replace(/[<>&]/g, m => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[m]));
   w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${escTitle}</title><style>${css}</style></head><body>${inner}</body></html>`);
   w.document.close();
-  w.onload = () => { try { w.focus(); w.print(); } catch (e) { /* ignore */ } };
+  /* Small delay so the branch logo image has time to load before print. */
+  w.onload = () => setTimeout(() => { try { w.focus(); w.print(); } catch (e) { /* ignore */ } }, 500);
 }
 
 function stuSchoolLogoSVG() {
   return `<svg viewBox="0 0 36 36" xmlns="http://www.w3.org/2000/svg"><rect width="36" height="36" rx="6" fill="#1E3A8A"/><path d="M18 10 C14 10 10 11.5 10 11.5 L10 26 C10 26 14 24.5 18 24.5 C22 24.5 26 26 26 26 L26 11.5 C26 11.5 22 10 18 10Z" fill="rgba(255,255,255,0.2)" stroke="rgba(255,255,255,0.6)" stroke-width="0.8"/><path d="M18 10 L18 24.5" stroke="rgba(255,255,255,0.7)" stroke-width="0.8"/></svg>`;
+}
+
+/* Report logo — the branch logo from the shared report-header API when
+   available, otherwise the default SchoolMentor mark. */
+function stuLogoImg(school) {
+  return school?.logo
+    ? `<img src="${school.logo}" alt="logo" style="width:100%;height:100%;object-fit:contain"/>`
+    : stuSchoolLogoSVG();
 }
 
 /* Map class name → an icon for the class header row */
@@ -143,6 +153,7 @@ function buildStuAdmissionFormHTML(school, isBW = false) {
     <div class="page">
 
       <div class="af-head">
+        ${school?.logo ? `<div style="width:60px;height:60px;flex-shrink:0;display:flex;align-items:center;justify-content:center"><img src="${school.logo}" alt="logo" style="width:100%;height:100%;object-fit:contain"/></div>` : ''}
         <div class="left">
           <div class="af-school">${stuEsc(school?.name || 'School')}</div>
           <div class="af-session">${stuEsc(school?.session || 'Academic Session')}${school?.address ? ' · ' + stuEsc(school.address) : ''}</div>
@@ -318,8 +329,11 @@ function buildStuProfileHTML(s, cls, school, isBW = false) {
   const phone  = school?.phone || '';
   const session = school?.session || '2025 – 2026';
 
-  /* ── Brand logo (matches HTML repHeader logoSvg) ── */
-  const logoSvg = `<svg width="46" height="46" viewBox="0 0 36 36"><rect width="36" height="36" rx="9" fill="${brand}"/><path d="M18 9 L26 13 L18 17 L10 13 Z" fill="rgba(255,255,255,.95)"/><path d="M12 15 L12 21 C12 21 15 23 18 23 C21 23 24 21 24 21 L24 15" fill="none" stroke="rgba(255,255,255,.9)" stroke-width="1.4"/><line x1="26" y1="13" x2="26" y2="19" stroke="rgba(255,255,255,.9)" stroke-width="1.2"/></svg>`;
+  /* ── Brand logo — branch logo from the report-header API when available,
+       else the default mark (matches HTML repHeader logoSvg). ── */
+  const logoSvg = school?.logo
+    ? `<img src="${school.logo}" alt="logo" width="46" height="46" style="object-fit:contain;border-radius:9px"/>`
+    : `<svg width="46" height="46" viewBox="0 0 36 36"><rect width="36" height="36" rx="9" fill="${brand}"/><path d="M18 9 L26 13 L18 17 L10 13 Z" fill="rgba(255,255,255,.95)"/><path d="M12 15 L12 21 C12 21 15 23 18 23 C21 23 24 21 24 21 L24 15" fill="none" stroke="rgba(255,255,255,.9)" stroke-width="1.4"/><line x1="26" y1="13" x2="26" y2="19" stroke="rgba(255,255,255,.9)" stroke-width="1.2"/></svg>`;
 
   /* ── Compact QR placeholder used at top-right of hero strip ── */
   const QR_SVG = `<svg viewBox="0 0 44 44" width="100%" height="100%"><rect width="44" height="44" fill="#fff"/><rect x="2" y="2" width="14" height="14" fill="none" stroke="#111" stroke-width="2"/><rect x="6" y="6" width="6" height="6" fill="#111"/><rect x="28" y="2" width="14" height="14" fill="none" stroke="#111" stroke-width="2"/><rect x="32" y="6" width="6" height="6" fill="#111"/><rect x="2" y="28" width="14" height="14" fill="none" stroke="#111" stroke-width="2"/><rect x="6" y="32" width="6" height="6" fill="#111"/><rect x="22" y="22" width="4" height="4" fill="#111"/><rect x="30" y="24" width="4" height="4" fill="#111"/><rect x="36" y="30" width="4" height="4" fill="#111"/><rect x="24" y="34" width="4" height="4" fill="#111"/><rect x="40" y="22" width="2" height="4" fill="#111"/><rect x="22" y="40" width="4" height="2" fill="#111"/></svg>`;
@@ -768,7 +782,7 @@ function buildStuClassReportHTML(c, school, isBW = false) {
     </style>
     <div class="page">
       <div class="rhead">
-        <div class="rlogo">${stuSchoolLogoSVG()}</div>
+        <div class="rlogo">${stuLogoImg(school)}</div>
         <div>
           <div class="rname">${stuEsc(school?.name || 'School')}</div>
           <div class="rtitle">Class Roster — ${stuEsc(c.cls)} (${stuEsc(c.sec)})</div>
@@ -826,7 +840,7 @@ function buildStuSchoolReportHTML(classes, school, isBW = false) {
     </style>
     <div class="page">
       <div class="rhead">
-        <div class="rlogo">${stuSchoolLogoSVG()}</div>
+        <div class="rlogo">${stuLogoImg(school)}</div>
         <div>
           <div class="rname">${stuEsc(school?.name || 'School')}</div>
           <div class="rtitle">Whole-School Student Roster</div>
@@ -1290,25 +1304,35 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
   });
 
   /* Report Picker — generates the appropriate PDF */
-  const doReport = ({ style, format }) => {
+  const doReport = async ({ style, format }) => {
     if (!rpCfg) return;
     void format; // PDF + Word both render the same HTML in the print window
     const isBW = style === 'bw';
+    /* Pull the branch record (name, logo, address) from the shared
+       report-header API and use it in the report header, falling back
+       to the local school identity. */
+    const branch = await fetchReportHeader();
+    const rptSchool = {
+      ...school,
+      name:    branch?.branchName || school?.name,
+      address: branch?.address    || school?.address,
+      logo:    branch?.branchLogo || school?.logo,
+    };
     if (rpCfg.kind === 'admission') {
-      const html = buildStuAdmissionFormHTML(school, isBW);
+      const html = buildStuAdmissionFormHTML(rptSchool, isBW);
       stuOpenPrintWindow('Admission Form', '', html, toast);
     } else if (rpCfg.kind === 'profile') {
       const c = list.find(x => x.key === rpCfg.cKey);
       const s = c?.students.find(x => x.reg === rpCfg.reg);
       if (!s) return;
-      const html = buildStuProfileHTML(s, c, school, isBW);
+      const html = buildStuProfileHTML(s, c, rptSchool, isBW);
       stuOpenPrintWindow(`Profile — ${stuFullName(s)}`, '', html, toast);
     } else if (rpCfg.kind === 'class') {
       const c = list.find(x => x.key === rpCfg.cKey);
-      const html = buildStuClassReportHTML(c, school, isBW);
+      const html = buildStuClassReportHTML(c, rptSchool, isBW);
       stuOpenPrintWindow(`${c.cls} (${c.sec}) — Class Report`, '', html, toast);
     } else if (rpCfg.kind === 'school') {
-      const html = buildStuSchoolReportHTML(list, school, isBW);
+      const html = buildStuSchoolReportHTML(list, rptSchool, isBW);
       stuOpenPrintWindow('School Report', '', html, toast);
     }
     toast(`${rpCfg.title} (${style.toUpperCase()} · ${format.toUpperCase()}) ready`, 'success');
@@ -1412,29 +1436,63 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
   };
 
 
-  const handleSaveStudent = (payload) => {
+  /* Re-pull classes + students from the server after a mutation. */
+  const reloadClasses = async () => {
+    try { setClasses(await studentService.getStuClasses()); }
+    catch { toast('Could not refresh students', 'error'); }
+  };
+
+  /* Refresh the class + student list from the API every time this tab
+     is opened (the component re-mounts on each visit). */
+  useEffect(() => {
+    reloadClasses();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleSaveStudent = async (payload) => {
     const { cKey, mode, reg } = editCfg;
-    if (mode === 'add') {
-      const id = `${new Date().getFullYear()}-${String(nextReg || 25101).padStart(5, '0')}`;
-      const newReg = payload.reg || id;
-      setNextReg((nextReg || 25101) + 1);
-      const newAdm = payload.adm || String(nextAdm || 1100);
-      setNextAdm((nextAdm || 1100) + 1);
-      const newStudent = {
-        ...payload,
-        reg: newReg,
-        adm: newAdm,
-        name: `${payload.first || ''} ${payload.last || ''}`.trim(),
-      };
-      setClasses(prev => prev.map(c => c.key === cKey ? { ...c, students: [...c.students, newStudent] } : c));
-      toast(`${newStudent.name} registered in ${list.find(c => c.key === cKey)?.cls || ''}`, 'success');
-    } else {
-      setClasses(prev => prev.map(c => c.key === cKey
-        ? { ...c, students: c.students.map(s => s.reg === reg ? { ...s, ...payload, name: `${payload.first || ''} ${payload.last || ''}`.trim() } : s) }
-        : c));
-      toast('Student updated successfully', 'success');
+    /* Resolve the target grade/section ids from the chosen class+section
+       (falls back to the row the modal was opened from). */
+    const row = list.find(c => c.cls === payload.cls && c.sec === payload.sec)
+             || list.find(c => c.key === cKey);
+    const existing = mode === 'edit'
+      ? list.find(c => c.key === cKey)?.students.find(s => s.reg === reg)
+      : null;
+    try {
+      await studentService.saveStuStudent({
+        id:        existing?._id || 0,
+        gradeId:   row?._gradeId || 0,
+        sectionId: row?._sectionId || 0,
+        reg:       payload.reg,
+        adm:       payload.adm,
+        family:    payload.family,
+        admdate:   payload.admdate,
+        first:     payload.first,
+        last:      payload.last,
+        father:    payload.father,
+        fcnic:     payload.fcnic,
+        focc:      payload.focc,
+        mother:    payload.mother,
+        mcnic:     payload.mcnic,
+        gender:    payload.gender,
+        dob:       payload.dob,
+        nat:       payload.nat,
+        address:   payload.address,
+        mobile:    payload.mobile,
+        email:     payload.email,
+        bform:     payload.bform,
+        pschool:   payload.pschool,
+        pgrade:    payload.pgrade,
+        pcontact:  payload.pcontact,
+        gcontact:  payload.gcontact,
+        dues:      0,
+      });
+      await reloadClasses();
+      toast(mode === 'edit' ? 'Student updated successfully' : 'Student registered successfully', 'success');
+      setEditCfg(null);
+    } catch (err) {
+      toast(err.message || 'Could not save student', 'error');
     }
-    setEditCfg(null);
   };
 
   return (
@@ -1589,7 +1647,7 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
             : null}
           classList={classListLookup}
           sectionList={sectionList}
-          feeHeads={feeHeads}
+          classes={list}
           existingRegs={list.flatMap(c => c.students.map(s => s.reg))}
           suggestedReg={`${new Date().getFullYear()}-${String(nextReg || 25101).padStart(5, '0')}`}
           suggestedAdm={String(nextAdm || 1100)}
@@ -1892,7 +1950,7 @@ const STD_DOCS = [
   { key: 'birth',    label: 'Birth Certificate',            icon: 'fa-certificate' },
 ];
 
-function StuStudentModal({ cfg, activeClass, student, classList, sectionList, feeHeads, existingRegs, suggestedReg, suggestedAdm, onClose, onSave, toast }) {
+function StuStudentModal({ cfg, activeClass, student, classList, sectionList, classes, existingRegs, suggestedReg, suggestedAdm, onClose, onSave, toast }) {
   const isEdit = cfg.mode === 'edit';
 
   /* Default values: from student if editing, otherwise auto-filled */
@@ -1937,6 +1995,21 @@ function StuStudentModal({ cfg, activeClass, student, classList, sectionList, fe
   const stdDocRef = useRef(null);
   const customDocRef = useRef(null);
   const [pendingStdKey, setPendingStdKey] = useState(null);
+
+  /* Fee heads for the selected class — pulled from that grade's fee
+     structure (Launch Setup class fee setup) whenever the class changes. */
+  const [feeHeads, setFeeHeads] = useState([]);
+  useEffect(() => {
+    const row = (classes || []).find(c => c.cls === cls && c.sec === sec)
+             || (classes || []).find(c => c.cls === cls);
+    const gradeId = row?._gradeId;
+    if (!gradeId) { setFeeHeads([]); return; }
+    let alive = true;
+    studentService.getStuFeeHeads(gradeId)
+      .then(list => { if (alive) setFeeHeads(list); })
+      .catch(() => { if (alive) setFeeHeads([]); });
+    return () => { alive = false; };
+  }, [classes, cls, sec]);
 
   /* Discount table (keyed by fee head name) */
   const [disc, setDisc] = useState(() => {
@@ -2091,9 +2164,9 @@ function StuStudentModal({ cfg, activeClass, student, classList, sectionList, fe
           <button type="button" className={`stu-mtab${tab === 'general' ? ' active' : ''}`} onClick={() => setTab('general')}>
             <i className="fa-solid fa-circle-info"></i> General Information
           </button>
-          <button type="button" className={`stu-mtab${tab === 'fee' ? ' active' : ''}`} onClick={() => setTab('fee')}>
+       {/*    <button type="button" className={`stu-mtab${tab === 'fee' ? ' active' : ''}`} onClick={() => setTab('fee')}>
             <i className="fa-solid fa-percent"></i> Fee Details
-          </button>
+          </button>*/}
         </div>
 
         <div className="stu-modal-body">

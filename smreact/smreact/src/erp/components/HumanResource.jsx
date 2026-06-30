@@ -63,6 +63,14 @@ export default function HumanResource({ toast = () => {} }) {
   const desigList = desigs || [];
   const empList   = emps   || [];
 
+  /* Re-pull departments + designations from the server after a mutation
+     so the table reflects the saved state. */
+  const reloadHrBasics = async () => {
+    const [d, g] = await Promise.all([hrService.getHrDepts(), hrService.getHrDesigs()]);
+    setDepts(d);
+    setDesigs(g);
+  };
+
   return (
     <>
       <style>{HR_CSS}</style>
@@ -118,6 +126,7 @@ export default function HumanResource({ toast = () => {} }) {
           nextDesigId={nextDesigId || 9}
           setNextDeptId={setNextDeptId}
           setNextDesigId={setNextDesigId}
+          reload={reloadHrBasics}
           toast={toast}
         />
       )}
@@ -171,7 +180,7 @@ export default function HumanResource({ toast = () => {} }) {
    ═══════════════════════════════════════════════════════════════════ */
 function HrBasics({
   depts, setDepts, desigs, setDesigs, emps,
-  nextDeptId, nextDesigId, setNextDeptId, setNextDesigId, toast,
+  nextDeptId, nextDesigId, setNextDeptId, setNextDesigId, reload, toast,
 }) {
   const [openDeptId, setOpenDeptId] = useState(null);   // id of currently-expanded dept
   const [deptModal,  setDeptModal]  = useState(null);   // null | { mode:'add'|'edit', dept? }
@@ -189,21 +198,54 @@ function HrBasics({
     return m;
   }, [emps]);
 
-  /* ── Department mutators ── */
-  const saveDept = (payload) => {
+  /* ── Department mutators (real API: LaunchSetup/save-department) ── */
+  const saveDept = async (payload) => {
     const name = (payload.name || '').trim();
     if (!name) { toast('Department name is required', 'error'); return false; }
-    const desc = (payload.desc || '').trim();
-    if (deptModal?.mode === 'edit') {
-      setDepts(prev => prev.map(d => d.id === deptModal.dept.id ? { ...d, name, desc } : d));
-      toast('Department updated', 'success');
-    } else {
-      const id = nextDeptId;
-      setDepts(prev => [...prev, { id, name, desc }]);
-      setNextDeptId(id + 1);
-      toast('Department added', 'success');
+
+    const isEdit   = deptModal?.mode === 'edit';
+    const branchID = sessionStorage.getItem('branchID');
+    const userID   = Number(sessionStorage.getItem('UserID')) || 0;
+    /* An edit reuses the add endpoint with the department id; resend the
+       existing designations so a rename doesn't wipe them. */
+    const existing = isEdit ? (deptModal.dept.raw?.designations || []) : [];
+    const designations = isEdit && existing.length
+      ? existing.map(d => ({
+          designationID:      d.designationID ?? 0,
+          branchID:           Number(branchID) || 0,
+          branchDepartmentID: deptModal.dept.id,
+          designationName:    d.designationName ?? '',
+          description:        d.description ?? '',
+          qualificationID:    d.qualificationID ?? 0,
+          qualificationName:  d.qualificationName ?? '',
+          createdBy:          userID,
+          modifiedBy:         userID,
+        }))
+      : [{
+          designationID: 0, branchID: 0, branchDepartmentID: 0,
+          designationName: '', description: '', qualificationID: 0,
+          qualificationName: '', createdBy: 0, modifiedBy: 0,
+        }];
+
+    const apiPayload = {
+      id:                    isEdit ? deptModal.dept.id : 0,
+      branchID,
+      departmentName:        name,
+      totalDesignationCount: existing.length,
+      createdBy:             userID,
+      modifiedBy:            userID,
+      designations,
+    };
+
+    try {
+      await hrService.saveHrDept(apiPayload);
+      await reload();
+      toast(isEdit ? 'Department updated' : 'Department added', 'success');
+      return true;
+    } catch (err) {
+      toast(err.message || 'Could not save department', 'error');
+      return false;
     }
-    return true;
   };
   const deleteDept = (dept) => {
     setConfirmCfg({
@@ -215,33 +257,54 @@ function HrBasics({
       icon:         'fa-trash',
       iconBg:       'rgba(220,38,38,.1)',
       iconColor:    '#DC2626',
-      onConfirm: () => {
-        setDepts(prev => prev.filter(d => d.id !== dept.id));
-        setDesigs(prev => prev.filter(d => d.dId !== dept.id));
-        toast('Department deleted', 'success');
-        if (openDeptId === dept.id) setOpenDeptId(null);
+      onConfirm: async () => {
+        try {
+          await hrService.deleteHrDept({ id: dept.id });
+          await reload();
+          toast('Department deleted', 'success');
+          if (openDeptId === dept.id) setOpenDeptId(null);
+        } catch (err) {
+          toast(err.message || 'Could not delete department', 'error');
+        }
       },
     });
   };
 
-  /* ── Designation mutators ── */
-  const saveDesig = (payload) => {
+  /* ── Designation mutators (real API: save-department-designation) ── */
+  const saveDesig = async (payload) => {
     const name = (payload.name || '').trim();
     if (!name) { toast('Designation title required', 'error'); return false; }
-    const dId   = Number(payload.dId);
-    const qual  = (payload.qual || '').trim();
-    const desc  = (payload.desc || '').trim();
-    if (desigModal?.mode === 'edit') {
-      setDesigs(prev => prev.map(d => d.id === desigModal.desig.id ? { ...d, dId, name, qual, desc } : d));
-      toast('Designation updated', 'success');
-    } else {
-      const id = nextDesigId;
-      setDesigs(prev => [...prev, { id, dId, name, qual, desc }]);
-      setNextDesigId(id + 1);
-      toast('Designation added', 'success');
+    const dId    = Number(payload.dId);
+    if (!dId) { toast('Department is required', 'error'); return false; }
+    const qualId = Number(payload.qualId) || 0;
+    if (!qualId) { toast('Qualification is required', 'error'); return false; }
+    const desc   = (payload.desc || '').trim();
+
+    const isEdit   = desigModal?.mode === 'edit';
+    const branchID = sessionStorage.getItem('branchID');
+    const userID   = Number(sessionStorage.getItem('UserID')) || 0;
+    const apiPayload = {
+      designationID:      isEdit ? desigModal.desig.id : 0,
+      branchID,
+      branchDepartmentID: dId,
+      designationName:    name,
+      description:        desc,
+      qualificationID:    qualId,
+      qualificationName:  (payload.qualName || '').trim(),
+      createdBy:          userID,
+      modifiedBy:         userID,
+    };
+
+    try {
+      await hrService.saveHrDesig(apiPayload);
+      await reload();
+      toast(isEdit ? 'Designation updated' : 'Designation added', 'success');
+      if (dId && openDeptId !== dId) setOpenDeptId(dId);
+      return true;
+    } catch (err) {
+      toast(err.message || 'Could not save designation', 'error');
+      return false;
     }
-    if (dId && openDeptId !== dId) setOpenDeptId(dId);
-    return true;
   };
   const deleteDesig = (desig) => {
     setConfirmCfg({
@@ -253,9 +316,14 @@ function HrBasics({
       icon:         'fa-trash',
       iconBg:       'rgba(220,38,38,.1)',
       iconColor:    '#DC2626',
-      onConfirm: () => {
-        setDesigs(prev => prev.filter(d => d.id !== desig.id));
-        toast('Designation deleted', 'success');
+      onConfirm: async () => {
+        try {
+          await hrService.deleteHrDesig({ id: desig.id });
+          await reload();
+          toast('Designation deleted', 'success');
+        } catch (err) {
+          toast(err.message || 'Could not delete designation', 'error');
+        }
       },
     });
   };
@@ -436,8 +504,8 @@ function HrBasics({
           mode={deptModal.mode}
           dept={deptModal.dept}
           onClose={() => setDeptModal(null)}
-          onSave={(payload) => {
-            const ok = saveDept(payload);
+          onSave={async (payload) => {
+            const ok = await saveDept(payload);
             if (ok) setDeptModal(null);
           }}
         />
@@ -449,8 +517,8 @@ function HrBasics({
           defaultDId={desigModal.defaultDId}
           depts={depts}
           onClose={() => setDesigModal(null)}
-          onSave={(payload) => {
-            const ok = saveDesig(payload);
+          onSave={async (payload) => {
+            const ok = await saveDesig(payload);
             if (ok) setDesigModal(null);
           }}
         />
@@ -556,10 +624,19 @@ function DeptModal({ mode, dept, onClose, onSave }) {
    ═══════════════════════════════════════════════════════════════════ */
 function DesigModal({ mode, desig, defaultDId, depts, onClose, onSave }) {
   const isEdit = mode === 'edit';
-  const [name, setName] = useState(desig?.name || '');
-  const [dId,  setDId]  = useState(desig?.dId ?? defaultDId ?? (depts[0]?.id || ''));
-  const [qual, setQual] = useState(desig?.qual || '');
-  const [desc, setDesc] = useState(desig?.desc || '');
+  const [name, setName]   = useState(desig?.name || '');
+  const [dId,  setDId]    = useState(desig?.dId ?? defaultDId ?? (depts[0]?.id || ''));
+  const [qualId, setQualId] = useState(desig?.qualificationID ?? '');
+  const [desc, setDesc]   = useState(desig?.desc || '');
+  const [quals, setQuals] = useState([]);
+
+  useEffect(() => {
+    let alive = true;
+    hrService.getHrQualifications()
+      .then(list => { if (alive) setQuals(list); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
 
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
@@ -617,13 +694,17 @@ function DesigModal({ mode, desig, defaultDId, depts, onClose, onSave }) {
           </div>
           <div className="f-row">
             <div className="f-group">
-              <label className="f-label">Qualification Required</label>
-              <input
-                className="f-input"
-                placeholder="e.g. MSc, B.Com…"
-                value={qual}
-                onChange={(e) => setQual(e.target.value)}
-              />
+              <label className="f-label">Qualification Required <span className="req">*</span></label>
+              <select
+                className="f-select2"
+                value={qualId}
+                onChange={(e) => setQualId(e.target.value)}
+              >
+                <option value="">Select qualification</option>
+                {quals.map(q => (
+                  <option key={q.id} value={q.id}>{q.qualificationName}</option>
+                ))}
+              </select>
             </div>
             <div className="f-group" style={{ gridColumn: '1 / -1' }}>
               <label className="f-label">Job Description</label>
@@ -642,7 +723,11 @@ function DesigModal({ mode, desig, defaultDId, depts, onClose, onSave }) {
           <button
             type="button"
             className="btn-primary"
-            onClick={() => onSave({ name, dId, qual, desc })}
+            onClick={() => onSave({
+              name, dId, desc,
+              qualId,
+              qualName: quals.find(q => String(q.id) === String(qualId))?.qualificationName || '',
+            })}
           >
             <i className="fa-solid fa-check" aria-hidden="true"></i> {isEdit ? 'Save Changes' : 'Save Designation'}
           </button>

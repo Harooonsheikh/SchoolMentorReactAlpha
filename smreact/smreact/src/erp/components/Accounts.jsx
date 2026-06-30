@@ -26,6 +26,7 @@ function useBranchSchool() {
           monogram,
           address: d.address || '',
           session: d.academicSession || '',
+          generatedDate: d.generatedDate || '',
           logo: d.branchLogo || '',
           generatedBy: sessionStorage.getItem('displayName') || sessionStorage.getItem('userName') || 'Accounts',
         });
@@ -653,7 +654,6 @@ const accFmtStamp = (iso) => {
   if (!iso) return '—';
   return `${accFmtDate(iso)} · ${accFmtTime(iso)}`;
 };
-const nowISO = () => new Date().toISOString().slice(0, 19);
 
 function Transactions({ toast }) {
   const { data: typesData = [] }   = useAsync(accountsService.getAccTypes, []);
@@ -1600,6 +1600,20 @@ function AccDownloadReportModal({ cfg, onClose, toast, school, segLabel, month }
       if (!w) { toast('Please allow pop-ups to download the report', 'error'); return; }
       w.document.write(html); w.document.close();
       w.onload = () => { try { w.focus(); w.print(); } catch (e) { /* ignore */ } };
+    } else if (fmt === 'word') {
+      const html = isMulti
+        ? buildAccReportHTML(cfg, school, isBW)
+        : buildTxnReportHTML(cfg.list, cfg.seg, school, segLabel, month, isBW);
+      const blob = new Blob([html], { type: 'application/msword;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const slug = (segLabel || cfg.which || 'Report').replace(/[^A-Za-z0-9]+/g, '-');
+      a.download = `${slug}-${month || new Date().toISOString().slice(0,10)}.doc`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
     } else if (fmt === 'csv' || fmt === 'excel') {
       const csv = isMulti ? buildAccReportCSV(cfg) : buildTxnCSV(cfg.list);
       const blob = new Blob([csv], { type: fmt === 'csv' ? 'text/csv;charset=utf-8' : 'application/vnd.ms-excel' });
@@ -1705,6 +1719,10 @@ function AccDownloadReportModal({ cfg, onClose, toast, school, segLabel, month }
             <button type="button" className={`fee-dl-fmt${fmt === 'excel' ? ' sel' : ''}`} onClick={() => setFmt('excel')} role="radio" aria-checked={fmt === 'excel'} tabIndex={fmt === 'excel' ? 0 : -1}>
               <div className="fee-dl-fmt-ic" style={{ background: 'rgba(22,163,74,.1)', color: '#16A34A' }} aria-hidden="true"><i className="fa-solid fa-file-excel"></i></div>
               <div><div className="fee-dl-fmt-name">Excel Workbook</div><div className="fee-dl-desc">.xls spreadsheet</div></div>
+            </button>
+            <button type="button" className={`fee-dl-fmt${fmt === 'word' ? ' sel' : ''}`} onClick={() => setFmt('word')} role="radio" aria-checked={fmt === 'word'} tabIndex={fmt === 'word' ? 0 : -1}>
+              <div className="fee-dl-fmt-ic" style={{ background: 'rgba(37,99,235,.1)', color: '#2563EB' }} aria-hidden="true"><i className="fa-solid fa-file-word"></i></div>
+              <div><div className="fee-dl-fmt-name">Word Document</div><div className="fee-dl-desc">.doc report with branch header</div></div>
             </button>
             <button type="button" className={`fee-dl-fmt${fmt === 'csv' ? ' sel' : ''}`} onClick={() => setFmt('csv')} role="radio" aria-checked={fmt === 'csv'} tabIndex={fmt === 'csv' ? 0 : -1}>
               <div className="fee-dl-fmt-ic" style={{ background: 'rgba(30,58,138,.1)', color: '#1E3A8A' }} aria-hidden="true"><i className="fa-solid fa-file-csv"></i></div>
@@ -1834,7 +1852,7 @@ function buildTxnCSV(list) {
 
 function buildAccReportHTML(cfg, school, isBW = false) {
   const escH = (s) => String(s ?? '').replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
-  const today = new Date().toLocaleDateString('en-GB');
+  const today = school?.generatedDate ? accFmtStamp(school.generatedDate) : new Date().toLocaleDateString('en-GB');
   const fmtPK = (n) => `Rs. ${(Number(n) || 0).toLocaleString('en-PK')}`;
   const list  = cfg.list || [];
 
@@ -1849,6 +1867,9 @@ function buildAccReportHTML(cfg, school, isBW = false) {
     overview: { color: '#1E40AF', dark: '#1E3A8A', title: 'Financial Overview',       sub: 'Consolidated revenue / expense / books dashboard' },
   };
   const meta = META[cfg.kind] || META.revenue;
+  const logoHtml = school?.logo
+    ? `<img src="${escH(school.logo)}" alt="${escH(school?.name || 'Branch')} logo" />`
+    : escH(school?.monogram || 'SM');
 
   /* ─── KPI cards (vary per report) ─── */
   let kpis = '';
@@ -2148,9 +2169,12 @@ body{background:#F1F3F8;padding:18px 0;}
 .page{width:210mm;min-height:297mm;margin:0 auto;padding:14mm;background:#fff;box-shadow:0 10px 30px rgba(15,23,42,.12);box-sizing:border-box;}
 
 .head{display:flex;align-items:center;gap:14px;border-bottom:2px solid ${meta.color};padding-bottom:10px;margin-bottom:14px;}
-.logo{width:48px;height:48px;border-radius:14px;background:linear-gradient(135deg,${meta.color},${meta.dark});color:#fff;font-size:20px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+.logo{width:54px;height:54px;border-radius:14px;background:linear-gradient(135deg,${meta.color},${meta.dark});color:#fff;font-size:20px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0;overflow:hidden;border:1px solid #E5E7EB;}
+.logo img{width:100%;height:100%;object-fit:contain;background:#fff;display:block;}
 .school{font-size:17px;font-weight:800;color:#0F172A;}
 .title{font-size:12px;font-weight:700;color:${meta.dark};margin-top:3px;}
+.addr{font-size:9.8px;color:#64748B;margin-top:2px;max-width:420px;}
+.session{font-size:9.8px;color:#475569;margin-top:2px;font-weight:700;}
 .meta{margin-left:auto;font-size:9.5px;color:#64748B;text-align:right;line-height:1.55;}
 
 .report-card{margin-bottom:12px;padding:13px 16px;border-radius:10px;border:1.5px solid #E5E7EB;background:linear-gradient(135deg,${meta.color}0F,transparent 60%);}
@@ -2239,10 +2263,12 @@ body{background:#F1F3F8;padding:18px 0;}
 <div class="page">
 
 <div class="head">
-  <div class="logo">${escH(school?.monogram || 'OS')}</div>
+  <div class="logo">${logoHtml}</div>
   <div>
     <div class="school">${escH(school?.name || 'School')}</div>
     <div class="title">${escH(meta.title)}</div>
+    ${school?.address ? `<div class="addr">${escH(school.address)}</div>` : ''}
+    ${school?.session ? `<div class="session">Academic Session: ${escH(school.session)}</div>` : ''}
   </div>
   <div class="meta">Generated: ${today}<br/>By: ${escH(school?.generatedBy || 'Accounts')}<br/>Records: ${list.length}</div>
 </div>
@@ -2275,10 +2301,28 @@ function buildAccReportCSV(cfg) {
     ]);
     return [header.join(','), ...rows.map(r => r.map(escC).join(','))].join('\n');
   }
-  if (cfg.kind === 'pl' || cfg.kind === 'overview') {
+  if (cfg.kind === 'pl') {
     const header = ['Sr', 'Month', 'Revenue', 'Expense', 'ProfitLoss'];
     const rows = list.map(r => [r.sr, r.month, r.revenue, r.expense, r.pl]);
     return [header.join(','), ...rows.map(r => r.map(escC).join(','))].join('\n');
+  }
+  if (cfg.kind === 'overview') {
+    const monthHeader = ['Sr', 'Month', 'Revenue', 'Expense', 'ProfitLoss'];
+    const monthRows = list.map(r => [r.sr, r.month, r.revenue, r.expense, r.pl]);
+    const bookHeader = ['Book', 'Party', 'Type', 'CurrentBalance', 'InCash'];
+    const bookRows = (cfg.books || []).map(b => {
+      const c = bookCalc(b);
+      return [b.name, b.party || '', b.type, c.balance, b.includeInCash ? 'Yes' : 'No'];
+    });
+    return [
+      'Monthly Revenue / Expense Trend',
+      monthHeader.join(','),
+      ...monthRows.map(r => r.map(escC).join(',')),
+      '',
+      'Account Books Exposure',
+      bookHeader.join(','),
+      ...bookRows.map(r => r.map(escC).join(',')),
+    ].join('\n');
   }
   if (cfg.kind === 'cash') {
     const header = ['Source', 'Type', 'Amount'];
@@ -2309,8 +2353,21 @@ function buildAccReportCSV(cfg) {
    ═══════════════════════════════════════════════════════════════════ */
 
 function bookCalc(b) {
+  /* List view loads books without their ledger; trust the server's
+     aggregate totals so cards & stats are correct without the entries. */
+  if ((!b.txns || b.txns.length === 0) && b.serverBalance != null) {
+    const received = Number(b.serverReceived || 0);
+    const returned = Number(b.serverReturned || 0);
+    return {
+      received, returned, adjust: 0,
+      balance: Math.max(0, Number(b.serverBalance || 0)),
+      totalIn: Number(b.opening || 0) + received,
+      returnedAll: returned, withBal: [],
+      lastDate: b.openDate,
+    };
+  }
   let received = 0, returned = 0, adjust = 0;
-  const sorted = [...b.txns].sort((a, c) => (a.date < c.date ? -1 : a.date > c.date ? 1 : ((a.at || '') < (c.at || '') ? -1 : 1)));
+  const sorted = [...(b.txns || [])].sort((a, c) => (a.date < c.date ? -1 : a.date > c.date ? 1 : ((a.at || '') < (c.at || '') ? -1 : 1)));
   let bal = Number(b.opening || 0);
   const withBal = sorted.map(t => {
     const amt = Number(t.amount || 0);
@@ -2329,16 +2386,15 @@ function bookCalc(b) {
 }
 
 function AccountBooks({ toast }) {
-  const { data: serverBooks = [] } = useAsync(accountsService.getAccBooks, []);
+  const { data: serverBooks = [], refetch: refetchBooks } = useAsync(accountsService.getAccBooks, []);
   const { data: users = [] }       = useAsync(accountsService.getAccUsers, []);
   const { data: currentUser = '' } = useAsync(accountsService.getAccCurrentUser, '');
   const school = useBranchSchool();
 
-  const [books, setBooks] = useState(null);
-  useEffect(() => { if (serverBooks.length && books == null) setBooks(serverBooks); }, [serverBooks, books]);
-  const list = useMemo(() => books || [], [books]);
+  const list = serverBooks || [];
 
-  const [currentBookId, setCurrentBookId] = useState(null);
+  const [currentBookId, setCurrentBookId] = useState(null); // numeric book ID
+  const [currentBook, setCurrentBook]     = useState(null); // fetched detail (book + txns)
   const [search, setSearch]               = useState('');
   const [status, setStatus]               = useState('all');
   const [editBook, setEditBook]           = useState(null); // { mode:'add'|'edit', book? }
@@ -2356,7 +2412,8 @@ function AccountBooks({ toast }) {
   let totBooks = list.length, totPayable = 0, totReceivable = 0, totCash = 0;
   list.forEach(b => {
     const c = bookCalc(b);
-    if (b.type === 'payable') totPayable += c.balance; else totReceivable += c.balance;
+    totPayable += c.returnedAll;
+    if (b.type === 'receivable') totReceivable += c.balance;
     if (b.includeInCash) totCash += c.balance;
   });
 
@@ -2369,53 +2426,66 @@ function AccountBooks({ toast }) {
     });
   }, [list, search, status]);
 
-  const currentBook = list.find(b => b.id === currentBookId) || null;
-
-  /* Save / delete handlers */
-  const handleSaveBook = (form) => {
-    if (editBook.mode === 'edit') {
-      setBooks(prev => prev.map(b => b.id === editBook.book.id ? { ...b, ...form } : b));
-      toast('Book updated', 'success');
-    } else {
-      const id = `bk_${Date.now()}`;
-      const newBook = {
-        id, ...form, status: 'active',
-        createdBy: currentUser || 'System',
-        txns: [],
-      };
-      setBooks(prev => [...prev, newBook]);
-      toast('Account book created', 'success');
+  /* Open a book → fetch its full ledger from the backend. */
+  const loadDetail = useCallback(async (bookId) => {
+    try {
+      const detail = await accountsService.getAccBookDetail(bookId);
+      setCurrentBook(detail);
+    } catch (err) {
+      toast(err?.message || 'Could not load account book', 'error');
+      setCurrentBook(null);
+      setCurrentBookId(null);
     }
-    accountsService.saveAccBook(form).catch(() => {});
+  }, [toast]);
+
+  const openBook = (b) => { setCurrentBookId(b.bookID); setCurrentBook(null); loadDetail(b.bookID); };
+
+  /* Save / delete handlers — every action re-fetches so the list (and the
+     open book's ledger) reflect the server's recalculated balances. */
+  const handleSaveBook = async (form) => {
+    const wasEdit = editBook.mode === 'edit';
+    try {
+      await accountsService.saveAccBook(form);
+    } catch (err) {
+      toast(err?.message || 'Could not save account book', 'error');
+      return;
+    }
+    toast(wasEdit ? 'Book updated' : 'Account book created', 'success');
     setEditBook(null);
+    refetchBooks();
+    if (wasEdit && currentBookId) loadDetail(currentBookId);
   };
 
-  const handleSaveBookTxn = (form) => {
+  const handleSaveBookTxn = async (form) => {
     if (!currentBookId) return;
-    if (editTxn.mode === 'edit') {
-      setBooks(prev => prev.map(b => b.id === currentBookId
-        ? { ...b, txns: b.txns.map(t => t.id === editTxn.txn.id ? { ...t, ...form } : t) }
-        : b));
-      toast('Transaction updated', 'success');
-    } else {
-      const newTxn = { id: `bt_${Date.now()}`, ...form, at: nowISO(), attachments: form.attachments || [] };
-      setBooks(prev => prev.map(b => b.id === currentBookId ? { ...b, txns: [...b.txns, newTxn] } : b));
-      toast('Transaction added', 'success');
+    try {
+      await accountsService.saveAccBookTxn({ bookId: currentBookId, ...form });
+    } catch (err) {
+      toast(err?.message || 'Could not save transaction', 'error');
+      return;
     }
-    accountsService.saveAccBookTxn({ bookId: currentBookId, ...form }).catch(() => {});
+    toast(editTxn.mode === 'edit' ? 'Transaction updated' : 'Transaction added', 'success');
     setEditTxn(null);
+    loadDetail(currentBookId);
+    refetchBooks();
   };
 
   const requestDeleteBook = (b) => {
     setConfirm({
       title:   'Delete this account book?',
-      message: <span><strong>{b.name}</strong> and all <strong>{b.txns.length}</strong> ledger entries will be permanently removed.</span>,
+      message: <span><strong>{b.name}</strong> and all <strong>{b.txns?.length || 0}</strong> ledger entries will be permanently removed.</span>,
       hint:    'This action cannot be undone.',
       onConfirm: async () => {
-        setBooks(prev => prev.filter(x => x.id !== b.id));
-        await accountsService.deleteAccBook({ bookId: b.id }).catch(() => {});
+        try {
+          await accountsService.deleteAccBook(b.bookID);
+        } catch (err) {
+          toast(err?.message || 'Could not delete account book', 'error');
+          return;
+        }
         setCurrentBookId(null);
+        setCurrentBook(null);
         toast('Account book deleted', 'success');
+        refetchBooks();
       },
     });
   };
@@ -2426,11 +2496,15 @@ function AccountBooks({ toast }) {
       message: <span>The <strong>{t.type}</strong> entry of <strong>{fmtMoney(Math.abs(t.amount))}</strong> on {accFmtDate(t.date)} will be permanently removed.</span>,
       hint:    'The running balance will be re-calculated automatically.',
       onConfirm: async () => {
-        setBooks(prev => prev.map(b => b.id === currentBookId
-          ? { ...b, txns: b.txns.filter(x => x.id !== t.id) }
-          : b));
-        await accountsService.deleteAccBookTxn({ bookId: currentBookId, txnId: t.id }).catch(() => {});
+        try {
+          await accountsService.deleteAccBookTxn(t.id);
+        } catch (err) {
+          toast(err?.message || 'Could not delete transaction', 'error');
+          return;
+        }
         toast('Ledger entry deleted', 'success');
+        loadDetail(currentBookId);
+        refetchBooks();
       },
     });
   };
@@ -2439,20 +2513,27 @@ function AccountBooks({ toast }) {
      embedded attachment images so receipts print alongside each entry.
      Reads the local bookStyle ('color' / 'bw') so the user-picked
      Colorful / Colorless choice is honoured. */
-  const downloadBookReport = (b) => {
+  const downloadBookReport = async (b) => {
     const isBW = bookStyle === 'bw';
-    const html = buildBookReportHTML({ book: b, school, isBW });
+    /* Open the window inside the click gesture so it isn't pop-up blocked,
+       then load the full ledger (list cards carry only aggregate totals). */
     const w = window.open('', '_blank');
     if (!w) { toast('Please allow pop-ups to download the report', 'error'); return; }
+    let full = b;
+    if (!b.txns || b.txns.length === 0) {
+      try { full = await accountsService.getAccBookDetail(b.bookID); }
+      catch (err) { toast(err?.message || 'Could not load book for report', 'error'); w.close(); return; }
+    }
+    const html = buildBookReportHTML({ book: full, school, isBW });
     w.document.write(html);
     w.document.close();
     w.onload = () => { try { w.focus(); w.print(); } catch (e) { /* ignore */ } };
-    toast(`${b.name} ledger report ready (${isBW ? 'Colorless' : 'Colorful'}) — Save as PDF.`, 'success');
+    toast(`${full.name} ledger report ready (${isBW ? 'Colorless' : 'Colorful'}) — Save as PDF.`, 'success');
   };
 
   return (
     <>
-      {!currentBook ? (
+      {!currentBookId ? (
         /* ── LIST VIEW ── */
         <>
           <div className="acc-overview acc-books-explainer">
@@ -2589,7 +2670,7 @@ function AccountBooks({ toast }) {
               {filteredBooks.map(b => {
                 const c = bookCalc(b);
                 return (
-                  <button type="button" key={b.id} className="acc-book-card" onClick={() => setCurrentBookId(b.id)}>
+                  <button type="button" key={b.id} className="acc-book-card" onClick={() => openBook(b)}>
                     <div className="acc-book-card-top">
                       <div className="acc-book-card-ic"><i className="fa-solid fa-book-bookmark"></i></div>
                       <div className="acc-book-card-tt">
@@ -2643,6 +2724,12 @@ function AccountBooks({ toast }) {
             </div>
           )}
         </>
+      ) : !currentBook ? (
+        /* ── DETAIL LOADING ── */
+        <div className="acc-ledger-empty">
+          <i className="fa-solid fa-spinner fa-spin"></i>
+          Loading account book…
+        </div>
       ) : (
         /* ── DETAIL VIEW ── */
         <BookDetail
@@ -2651,7 +2738,7 @@ function AccountBooks({ toast }) {
           ledgerSearch={ledgerSearch} setLedgerSearch={setLedgerSearch}
           ledgerFilter={ledgerFilter} setLedgerFilter={setLedgerFilter}
           ledgerSort={ledgerSort}     setLedgerSort={setLedgerSort}
-          onBack={() => setCurrentBookId(null)}
+          onBack={() => { setCurrentBookId(null); setCurrentBook(null); }}
           onEditBook={() => setEditBook({ mode: 'edit', book: currentBook })}
           onDeleteBook={() => requestDeleteBook(currentBook)}
           onDownloadReport={() => downloadBookReport(currentBook)}
@@ -2868,18 +2955,39 @@ function BookDetail({
                           <div className="acc-ledger-attachhead">
                             <i className="fa-solid fa-paperclip"></i> Attachments
                           </div>
-                          <div className="acc-attach-thumbs">
-                            {t.attachments.map((a, i) => (
-                              <div key={i} className="acc-attach-thumb">
-                                <div className={`acc-attach-thumb-ic ${a.kind || 'img'}`}>
-                                  <i className={`fa-solid ${a.kind === 'pdf' ? 'fa-file-pdf' : 'fa-image'}`}></i>
+                          <div className="acc-attach-previews">
+                            {t.attachments.map((a, i) => {
+                              const src = a.url || a.data;
+                              return (
+                                <div key={i} className="acc-attach-preview">
+                                  <div className="acc-attach-preview-head">
+                                    <div className={`acc-attach-thumb-ic ${a.kind || 'img'}`}>
+                                      <i className={`fa-solid ${a.kind === 'pdf' ? 'fa-file-pdf' : 'fa-image'}`}></i>
+                                    </div>
+                                    <div>
+                                      <div className="acc-attach-thumb-nm">{a.name}</div>
+                                      <div className="acc-attach-thumb-sz">{a.size || (a.kind === 'pdf' ? 'PDF document' : 'Image attachment')}</div>
+                                    </div>
+                                    <Tooltip text="Open attachment in new tab">
+                                      <a
+                                        className="acc-attach-open"
+                                        href={src}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        aria-label={`Open ${a.name}`}
+                                      >
+                                        <i className="fa-solid fa-up-right-from-square"></i>
+                                      </a>
+                                    </Tooltip>
+                                  </div>
+                                  {a.kind === 'pdf' ? (
+                                    <iframe className="acc-attach-preview-pdf" src={src} title={a.name} />
+                                  ) : (
+                                    <img className="acc-attach-preview-img" src={src} alt={a.name} />
+                                  )}
                                 </div>
-                                <div>
-                                  <div className="acc-attach-thumb-nm">{a.name}</div>
-                                  <div className="acc-attach-thumb-sz">{a.size}</div>
-                                </div>
-                              </div>
-                            ))}
+                              );
+                            })}
                           </div>
                         </>
                       ) : (
@@ -3169,7 +3277,7 @@ ${sorted.length === 0
 }
 
 /* ─── Book Edit Modal (Create / Edit Account Book) ─── */
-function BookEditModal({ cfg, users, currentUser, onClose, onSave, toast }) {
+function BookEditModal({ cfg, currentUser, onClose, onSave, toast }) {
   const [name, setName]               = useState('');
   const [party, setParty]             = useState('');
   const [desc, setDesc]               = useState('');
@@ -3179,21 +3287,25 @@ function BookEditModal({ cfg, users, currentUser, onClose, onSave, toast }) {
   const [openedBy, setOpenedBy]       = useState('');
   const [includeInCash, setInclude]   = useState(false);
 
+  /* The real logged-in user — shown (disabled) as "Opened By"; their id is
+     sent as createdBy / modifiedBy by accountsService.saveAccBook. */
+  const loginUserName = sessionStorage.getItem('displayName') || sessionStorage.getItem('userName') || currentUser || '';
+
   useEffect(() => {
     if (!cfg) return;
     if (cfg.mode === 'edit' && cfg.book) {
       const b = cfg.book;
       setName(b.name); setParty(b.party || ''); setDesc(b.desc || '');
       setType(b.type); setOpening(String(b.opening || 0));
-      setOpenDate(b.openDate); setOpenedBy(b.createdBy || currentUser);
+      setOpenDate(b.openDate); setOpenedBy(b.createdBy || loginUserName);
       setInclude(!!b.includeInCash);
     } else {
       setName(''); setParty(''); setDesc('');
       setType('payable'); setOpening('');
       setOpenDate(new Date().toISOString().slice(0, 10));
-      setOpenedBy(currentUser); setInclude(false);
+      setOpenedBy(loginUserName); setInclude(false);
     }
-  }, [cfg, currentUser]);
+  }, [cfg, currentUser, loginUserName]);
 
   useEffect(() => {
     if (!cfg) return undefined;
@@ -3214,6 +3326,8 @@ function BookEditModal({ cfg, users, currentUser, onClose, onSave, toast }) {
     if (!openDate)    { toast('Opening date is required', 'error'); return; }
     if (opening === '' || Number.isNaN(Number(opening))) { toast('Opening amount is required', 'error'); return; }
     onSave({
+      // bookID 0 → insert; existing id → update
+      bookID: isEdit ? (cfg.book.bookID || cfg.book.id || 0) : 0,
       name: name.trim(), party: party.trim(), desc: desc.trim(),
       type, opening: Number(opening), openDate, createdBy: openedBy, includeInCash,
     });
@@ -3280,12 +3394,7 @@ function BookEditModal({ cfg, users, currentUser, onClose, onSave, toast }) {
             </div>
             <div className="fee-field-stack">
               <label className="fee-label">Opened By</label>
-              <div className="fee-select-wrap">
-                <select className="fee-select" value={openedBy} onChange={e => setOpenedBy(e.target.value)}>
-                  {users.map(u => <option key={u}>{u}</option>)}
-                </select>
-                <i className="fa-solid fa-chevron-down"></i>
-              </div>
+              <input className="fee-input" value={openedBy} disabled readOnly />
             </div>
           </div>
 
@@ -3361,7 +3470,11 @@ function BookTxnModal({ cfg, users, currentUser, book, onClose, onSave, toast })
   const handle = () => {
     if (!date)   { toast('Date is required', 'error'); return; }
     if (!amt)    { toast('Amount is required', 'error'); return; }
-    onSave({ type, date, amount: type === 'adjustment' ? Number(amount) : amt, notes: notes.trim(), enteredBy, attachments });
+    onSave({
+      id: isEdit ? cfg.txn.id : 0, // 0 → insert; existing record id → update
+      type, date, amount: type === 'adjustment' ? Number(amount) : amt,
+      notes: notes.trim(), enteredBy, attachments,
+    });
   };
 
   /* Read selected files as { name, size, kind, data:dataURL }. Caps total
@@ -3394,6 +3507,7 @@ function BookTxnModal({ cfg, users, currentUser, book, onClose, onSave, toast })
             : `${(file.size / (1024 * 1024)).toFixed(1)} MB`,
           kind: isImg ? 'img' : 'pdf',
           data: reader.result,
+          file, // raw File kept for multipart upload (AttachmentFile)
         };
         setAttachments(prev => [...prev, att]);
       };
@@ -3415,6 +3529,8 @@ function BookTxnModal({ cfg, users, currentUser, book, onClose, onSave, toast })
   const removeAttachment = (i) => {
     setAttachments(prev => prev.filter((_, idx) => idx !== i));
   };
+
+    const loginUserName = sessionStorage.getItem('displayName') || sessionStorage.getItem('userName') || currentUser || '';
 
   return createPortal(
     <div className="fee-overlay open" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
@@ -3445,10 +3561,10 @@ function BookTxnModal({ cfg, users, currentUser, book, onClose, onSave, toast })
               <i className="fa-solid fa-arrow-up"></i>
               <span><b>Paid / Returned</b><small>Payment made to the party — balance goes down</small></span>
             </button>
-            <button type="button" className={`acc-txntype${type === 'adjustment' ? ' active' : ''}`} onClick={() => setType('adjustment')}>
+            {/* <button type="button" className={`acc-txntype${type === 'adjustment' ? ' active' : ''}`} onClick={() => setType('adjustment')}>
               <i className="fa-solid fa-sliders"></i>
               <span><b>Adjustment</b><small>Discount / write-off / correction</small></span>
-            </button>
+            </button> */}
           </div>
 
           <div className="acc-entry-grid acc-entry-grid--2" style={{ marginTop: 18 }}>
@@ -3469,10 +3585,12 @@ function BookTxnModal({ cfg, users, currentUser, book, onClose, onSave, toast })
             <div className="fee-field-stack">
               <label className="fee-label">Entered By</label>
               <div className="fee-select-wrap">
-                <select className="fee-select" value={enteredBy} onChange={e => setEnteredBy(e.target.value)}>
-                  {users.map(u => <option key={u}>{u}</option>)}
-                </select>
-                <i className="fa-solid fa-chevron-down"></i>
+                  <input className="fee-input" value={loginUserName} disabled readOnly />
+                {/* <select className="fee-select" value={loginUserName} onChange={e => setEnteredBy(e.target.value)}>
+                  {/* {users.map(u => <option key={u}>{u}</option>)}
+                  {loginUserName}
+                </select> */}
+                {/* <i className="fa-solid fa-chevron-down"></i> */}
               </div>
             </div>
           </div>
@@ -3635,6 +3753,7 @@ function repMonthsBetween(fromM, toM) {
   const out = [];
   let [fy, fm] = fromM.split('-').map(Number);
   const [ty, tm] = toM.split('-').map(Number);
+  if (!fy || !fm || !ty || !tm) return out;
   while (fy < ty || (fy === ty && fm <= tm)) {
     out.push(`${fy}-${String(fm).padStart(2, '0')}`);
     fm += 1;
@@ -3644,14 +3763,17 @@ function repMonthsBetween(fromM, toM) {
   return out;
 }
 
+const dateMonth = (d) => String(d || '').slice(0, 7);
+
 function Reports({ toast }) {
   const { data: types = [] }      = useAsync(accountsService.getAccTypes, []);
-  const { data: txnData = { rev: [], exp: [] } } = useAsync(accountsService.getAccTxns, { rev: [], exp: [] });
   const { data: books = [] }      = useAsync(accountsService.getAccBooks, []);
   const school = useBranchSchool();
 
   const [repType, setRepType] = useState('revenue');
   const [plMode, setPlMode]   = useState('monthly');
+  const [txnData, setTxnData] = useState({ rev: [], exp: [] });
+  const [reportLoading, setReportLoading] = useState(false);
 
   /* Per-report filter state */
   const today      = new Date().toISOString().slice(0, 10);
@@ -3664,6 +3786,36 @@ function Reports({ toast }) {
   const [plTo, setPlTo]         = useState(startMonth);
   const [cashDate, setCashDate] = useState(today);
   const [dlReport, setDlReport] = useState(null); // download modal cfg
+
+  const reportMonths = useMemo(() => {
+    if (repType === 'revenue' || repType === 'expense' || repType === 'headwise') {
+      const fromM = dateMonth(fromDate) || dateMonth(today);
+      const toM = dateMonth(toDate) || fromM;
+      return repMonthsBetween(fromM, toM);
+    }
+    if (repType === 'pl') return plMode === 'monthly' ? [plMonth] : repMonthsBetween(plFrom, plTo);
+    if (repType === 'overview') return repMonthsBetween(plFrom, plTo);
+    if (repType === 'cash') {
+      const toM = dateMonth(cashDate) || dateMonth(today);
+      return repMonthsBetween(`${toM.slice(0, 4)}-01`, toM);
+    }
+    return [dateMonth(today)];
+  }, [repType, fromDate, toDate, today, plMode, plMonth, plFrom, plTo, cashDate]);
+
+  const loadReportData = useCallback(async () => {
+    setReportLoading(true);
+    try {
+      const next = await accountsService.getAccEntriesForMonths(reportMonths);
+      setTxnData(next);
+    } catch (e) {
+      toast(e?.message || 'Could not load account report data', 'error');
+      setTxnData({ rev: [], exp: [] });
+    } finally {
+      setReportLoading(false);
+    }
+  }, [reportMonths, toast]);
+
+  useEffect(() => { loadReportData(); }, [loadReportData]);
 
   /* Reset head when switching seg */
   useEffect(() => {
@@ -3873,8 +4025,8 @@ function Reports({ toast }) {
             )}
 
             <Tooltip text="Reload report data with the current filters">
-              <button type="button" className="fee-btn fee-btn-primary">
-                <i className="fa-solid fa-rotate"></i> Load Report
+              <button type="button" className="fee-btn fee-btn-primary" onClick={loadReportData} disabled={reportLoading}>
+                <i className={`fa-solid ${reportLoading ? 'fa-circle-notch fa-spin' : 'fa-rotate'}`}></i> {reportLoading ? 'Loading...' : 'Load Report'}
               </button>
             </Tooltip>
             <Tooltip text="Download the report as PDF / Excel / CSV">
@@ -4126,32 +4278,37 @@ function ReportBody({ repType, rows, books, plMode, onDownload }) {
   if (repType === 'cash') {
     const total = rows.reduce((a, r) => a + Number(r.amount || 0), 0);
     return (
-      <div className="acc-cih">
-        {rows.map((r, i) => (
-          <div key={i} className="acc-cih-row">
-            <div className="acc-cih-row-l">
-              <div className="acc-cih-row-ic" style={{
-                background: r.type === 'P&L'
-                  ? 'linear-gradient(135deg,#1E3A8A,#2563EB)'
-                  : 'linear-gradient(135deg,#7C3AED,#6D28D9)',
-              }}>
-                <i className={`fa-solid ${r.type === 'P&L' ? 'fa-scale-balanced' : 'fa-book-bookmark'}`}></i>
+      <div className="fee-section">
+        <RepSectionHeader name="Cash In Hand" sub="profit / loss plus cash-flagged account books" count={rows.length} onDownload={onDownload} />
+        <div className="fee-section-body">
+          <div className="acc-cih">
+            {rows.map((r, i) => (
+              <div key={i} className="acc-cih-row">
+                <div className="acc-cih-row-l">
+                  <div className="acc-cih-row-ic" style={{
+                    background: r.type === 'P&L'
+                      ? 'linear-gradient(135deg,#1E3A8A,#2563EB)'
+                      : 'linear-gradient(135deg,#7C3AED,#6D28D9)',
+                  }}>
+                    <i className={`fa-solid ${r.type === 'P&L' ? 'fa-scale-balanced' : 'fa-book-bookmark'}`}></i>
+                  </div>
+                  <div>
+                    <div className="acc-cih-row-nm">{r.source}</div>
+                    <div className="acc-cih-row-sub">{r.type}</div>
+                  </div>
+                </div>
+                <span className={`acc-cih-pill${r.amount < 0 ? ' neg' : ''}`}>
+                  {fmtMoney(r.amount)} <i className={`fa-solid fa-arrow-${r.amount < 0 ? 'down' : 'up'}`}></i>
+                </span>
               </div>
-              <div>
-                <div className="acc-cih-row-nm">{r.source}</div>
-                <div className="acc-cih-row-sub">{r.type}</div>
-              </div>
+            ))}
+            <div className="acc-cih-total">
+              <div className="acc-cih-total-lbl">Cash in Hand</div>
+              <span className={`acc-cih-pill lg${total < 0 ? ' neg' : ''}`}>
+                {fmtMoney(total)} <i className={`fa-solid fa-arrow-${total < 0 ? 'down' : 'up'}`}></i>
+              </span>
             </div>
-            <span className={`acc-cih-pill${r.amount < 0 ? ' neg' : ''}`}>
-              {fmtMoney(r.amount)} <i className={`fa-solid fa-arrow-${r.amount < 0 ? 'down' : 'up'}`}></i>
-            </span>
           </div>
-        ))}
-        <div className="acc-cih-total">
-          <div className="acc-cih-total-lbl">Cash in Hand</div>
-          <span className={`acc-cih-pill lg${total < 0 ? ' neg' : ''}`}>
-            {fmtMoney(total)} <i className={`fa-solid fa-arrow-${total < 0 ? 'down' : 'up'}`}></i>
-          </span>
         </div>
       </div>
     );
@@ -4229,6 +4386,9 @@ function ReportBody({ repType, rows, books, plMode, onDownload }) {
     const booksBal = (books || []).reduce((a, b) => a + bookCalc(b).balance, 0);
     const monthRows = rows.length > 0 ? rows : [];
     return (
+      <div className="fee-section">
+        <RepSectionHeader name="Financial Overview" sub="revenue, expense, profit and account-book exposure" count={monthRows.length + (books || []).length} onDownload={onDownload} />
+        <div className="fee-section-body">
       <div className="acc-ov-grid">
         <div className="acc-ov-panel">
           <div className="acc-ov-panel-h"><i className="fa-solid fa-chart-column"></i> Revenue vs Expense by Month</div>
@@ -4293,6 +4453,8 @@ function ReportBody({ repType, rows, books, plMode, onDownload }) {
               <div className="acc-ov-callout-d">From books flagged "include in cash". Total net exposure across all books: {fmtMoney(booksBal)}.</div>
             </div>
           </div>
+        </div>
+      </div>
         </div>
       </div>
     );
@@ -6639,6 +6801,13 @@ const ACC_CSS = `
 }
 .acc-ledger-attachhead i { color: #2563EB; }
 .acc-attach-thumbs { display: flex; flex-wrap: wrap; gap: 9px; }
+.acc-attach-previews {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  align-items: flex-start;
+  gap: 12px;
+}
 .acc-attach-thumb {
   display: flex;
   align-items: center;
@@ -6671,6 +6840,60 @@ const ACC_CSS = `
   text-overflow: ellipsis;
 }
 .acc-attach-thumb-sz { font-size: 10.5px; color: var(--text-muted); }
+.acc-attach-preview {
+  border: 1.5px solid var(--border-light);
+  border-radius: 12px;
+  background: var(--bg-card);
+  overflow: hidden;
+  width: min(360px, 100%);
+  padding: 10px;
+}
+.acc-attach-preview-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 0 9px;
+  border-bottom: 1px solid var(--border-light);
+  margin-bottom: 10px;
+}
+.acc-attach-preview-head > div:nth-child(2) {
+  min-width: 0;
+  flex: 1;
+}
+.acc-attach-open {
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #1E40AF;
+  background: var(--bg-card);
+  text-decoration: none;
+  flex-shrink: 0;
+}
+.acc-attach-open:hover {
+  border-color: #1E40AF;
+  background: rgba(30,64,175,.08);
+}
+.acc-attach-preview-img {
+  display: block;
+  width: 100%;
+  max-height: 200px;
+  object-fit: contain;
+  background: #F8FAFC;
+  border-radius: 8px;
+}
+.acc-attach-preview-pdf {
+  display: block;
+  width: 100%;
+  height: 200px;
+  max-height: 200px;
+  border: 0;
+  background: #F8FAFC;
+  border-radius: 8px;
+}
 
 /* Attachment uploader (Book Txn modal) */
 .acc-attach-zone {
@@ -6942,6 +7165,7 @@ const ACC_CSS = `
 [data-theme="dark"] .acc-cash-strip.off,
 [data-theme="dark"] .acc-ledger-card,
 [data-theme="dark"] .acc-attach-thumb,
+[data-theme="dark"] .acc-attach-preview,
 [data-theme="dark"] .acc-help-step,
 [data-theme="dark"] .acc-txntype {
   background: var(--bg-card);
@@ -6981,6 +7205,11 @@ const ACC_CSS = `
 [data-theme="dark"] .acc-ledger-chev { background: var(--bg-card); border-color: var(--border-light); color: var(--text-muted); }
 [data-theme="dark"] .acc-ledger-chev:hover,
 [data-theme="dark"] .acc-ledger-card.open .acc-ledger-chev { color: #93C5FD; border-color: #3B82F6; background: var(--bg-muted); }
+[data-theme="dark"] .acc-attach-preview-head { border-bottom-color: var(--border-light); }
+[data-theme="dark"] .acc-attach-open { background: var(--bg-muted); border-color: var(--border-light); color: #93C5FD; }
+[data-theme="dark"] .acc-attach-open:hover { border-color: #3B82F6; background: rgba(59,130,246,.14); }
+[data-theme="dark"] .acc-attach-preview-img,
+[data-theme="dark"] .acc-attach-preview-pdf { background: var(--bg-muted); }
 [data-theme="dark"] .acc-attach-thumb:hover { border-color: #3B82F6; }
 [data-theme="dark"] .acc-cash-toggle { background: var(--bg-muted); border-color: var(--border-light); }
 [data-theme="dark"] .acc-cash-toggle:hover { border-color: #A78BFA; }
