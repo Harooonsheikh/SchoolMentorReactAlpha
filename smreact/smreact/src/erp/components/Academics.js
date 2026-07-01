@@ -6,6 +6,7 @@ import * as academicsService from '../services/academicsService';
 import useAsync from '../hooks/useAsync';
 import { buildUrl, assertSessionPayload, registerSessionToast, apiMessage } from '../../utils/apiConfig';
 import { deliverReport } from './reportDelivery';
+import { useModuleReadOnly } from '../pages/Settings/settingsStore';
 
 
 
@@ -49,7 +50,11 @@ export default function Academics({ l1, setL1, l2, setL2, l3, setL3, toast }) {
      login SessionID/sessionID), calendar action buttons are disabled. */
   const changeSessionId = sessionStorage.getItem('changeSessionId');
   const loginSessionId  = sessionStorage.getItem('sessionID') || sessionStorage.getItem('SessionID') || '';
-  const isOtherSession  = !!changeSessionId && !!loginSessionId && String(changeSessionId) !== String(loginSessionId);
+  /* Even on the current session, if the Academics module checkbox is OFF in the
+     session settings, this module is view-only. Fold it into isOtherSession so
+     every existing edit/add/delete guard respects it. */
+  const acadModuleReadOnly = useModuleReadOnly('acad');
+  const isOtherSession  = (!!changeSessionId && !!loginSessionId && String(changeSessionId) !== String(loginSessionId)) || acadModuleReadOnly;
 const [noSessionModal, setNoSessionModal] = useState(false);
   const [reportPicker, setReportPicker] = useState({ open: false, name: '', format: 'pdf' });
   const [confirmCfg, setConfirmCfg] = useState(null);
@@ -2483,7 +2488,9 @@ function TermSettings({ termData, setTermData, openConfirm, toast }) {
      switched to a different session (changeSessionId), terms become read-only:
      Save/Delete are disabled and clicking them toasts "Method not allowed". */
   const loginSessionId = sessionStorage.getItem('SessionID') || sessionStorage.getItem('sessionID') || '';
-  const isOtherSession = !!sessionId && !!loginSessionId && String(sessionId) !== String(loginSessionId);
+  /* Academics module checkbox OFF in the current session → view-only. */
+  const acadModuleReadOnly = useModuleReadOnly('acad');
+  const isOtherSession = (!!sessionId && !!loginSessionId && String(sessionId) !== String(loginSessionId)) || acadModuleReadOnly;
 
    /* Editing is only allowed when "today" (UTC) falls within the selected
      session's start/end window (inclusive). Outside that window the

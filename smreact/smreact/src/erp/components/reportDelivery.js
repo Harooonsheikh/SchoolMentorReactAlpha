@@ -30,7 +30,42 @@ function safeFileName(name) {
     .replace(/\s+/g, ' ')
     .trim() || 'report';
 }
+/* ═══════════════════════════════════════════════════════════════════
+   UNIVERSAL PRINT-SAFE CSS — automatically injected into EVERY report.
+   Fixes "content/footer cut at page break" across ALL tabs, without
+   touching each report's own code individually.
+   ═══════════════════════════════════════════════════════════════════ */
+const PRINT_SAFE_CSS = `<style id="__print_safe__">
+@media print {
+  [class*="section"], [class*="row"], [class*="card"], [class*="item"],
+  [class*="pair"], [class*="unit"], [class*="footer"], [class*="header"],
+  [class*="hdr"], [class*="mcq-opts"], [class*="rte-block"], [class*="block"] {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+  table { page-break-inside: auto; }
+  tr { page-break-inside: avoid; break-inside: avoid; }
+  thead { display: table-header-group; }
+  tfoot { display: table-footer-group; }
+  h1, h2, h3, h4, [class*="sec-head"], [class*="unit-row"] {
+    page-break-after: avoid;
+    break-after: avoid;
+  }
+  .footer, .rpt-footer, [class*="footer"] {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+}
+</style>`;
 
+/* Injects PRINT_SAFE_CSS into any report's HTML — works for every tab/report
+   without editing each one individually. */
+function injectPrintSafeCss(html) {
+  if (typeof html !== 'string' || !html) return html;
+  if (html.includes('</head>')) return html.replace('</head>', `${PRINT_SAFE_CSS}</head>`);
+  if (html.includes('<head>'))  return html.replace('<head>', `<head>${PRINT_SAFE_CSS}`);
+  return PRINT_SAFE_CSS + html;
+}
 /* Self-contained script injected into the Word preview window. It defines
    __saveAsWord(), run when the user clicks "Save as Word" in the preview.
    It works on the live, fully-rendered document so images and SVG logos can
@@ -172,7 +207,8 @@ function openPreviewWindow(html, width = 900, height = 700) {
 /* Deliver a built report: a PDF print preview, or a Word "Save as Word" preview.
    Pass opts.win to reuse a window the caller already opened (popup-blocker safe). */
 export function deliverReport(name, format, html, opts = {}) {
-  const out = format === 'word' ? buildWordView(name, html) : html;
+  const safeHtml = injectPrintSafeCss(html);              // ← single fix point for ALL reports
+  const out = format === 'word' ? buildWordView(name, safeHtml) : safeHtml;
   if (opts.win) writeToWindow(opts.win, out);
   else openPreviewWindow(out, opts.width, opts.height);
 }

@@ -7,6 +7,7 @@
   import { buildUrl } from '../../utils/apiConfig';
   import Select from 'react-select';
   import { deliverReport } from './reportDelivery';
+  import { useModuleReadOnly } from '../pages/Settings/settingsStore';
   /* ═══════════════════════════════════════════════════════════════════
     PAPER GENERATOR — module shell
     Stage 1: page header, 2 inner tabs (Paper Setup / Paper Generator),
@@ -162,7 +163,10 @@ const [hasActiveSession, setHasActiveSession] = useState(null);
 
     const loginSessionId = sessionStorage.getItem('SessionID') || sessionStorage.getItem('sessionID') || '';
 
-    const isOtherSession = (() => {
+    /* Paper Generator module checkbox OFF in the current session → view-only. */
+    const paperModuleReadOnly = useModuleReadOnly('paper');
+
+    const isOtherSession = paperModuleReadOnly || (() => {
         // 1️⃣ Session ID mismatch check
         if (!!sessionId && !!loginSessionId && String(sessionId) !== String(loginSessionId)) {
             return true;
@@ -1929,6 +1933,7 @@ const setSubjLine = (ci, si, l) => {
       });
     };
   const addTab = (section, typeKey) => {
+    if (isOtherSession) { toast('Method not allowed', 'error'); return; }
     // API data available hai toh direct add karo
     if (notebookDetails) {
       setBlocksState(prev => {
@@ -1987,6 +1992,7 @@ const setSubjLine = (ci, si, l) => {
 
     // Saved question block ko backend se delete (/api/deleteqpsubmission/{id}) + local se remove.
     const deleteTab = async (section, typeKey, entryId) => {
+      if (isOtherSession) { toast('Method not allowed', 'error'); return; }
       const block = blocksState[section]?.[typeKey];
       const tab = block?.tabs.find(t => t.entryId === entryId);
       if (!tab) return;
@@ -2013,6 +2019,7 @@ const setSubjLine = (ci, si, l) => {
     };
 
   const saveTab = async (section, typeKey, entryId) => {
+    if (isOtherSession) { toast('Method not allowed', 'error'); return; }
     const block = blocksState[section]?.[typeKey];
     const tab = block?.tabs.find(t => t.entryId === entryId);
     if (!tab) return;

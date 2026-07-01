@@ -420,6 +420,17 @@ export function SettingsProvider({ children }) {
   );
 }
 
+/* True when a CURRENT session exists but this module's checkbox is turned OFF
+   in that session — the module becomes view-only (no add/edit/update/delete)
+   even though the session itself is current. `moduleId` is a MODULE_OPTIONS id
+   ('acad', 'exam', 'paper', ...). Returns false when there is no current session
+   (that "no session" case is handled separately by each module). */
+export function useModuleReadOnly(moduleId) {
+  const { currentSession } = useSettings();
+  if (!currentSession) return false;
+  return !(currentSession.modules || []).includes(moduleId);
+}
+
 export function useSettings() {
   const ctx = useContext(SettingsContext);
   /* If the provider isn't mounted (shouldn't happen since App wraps the

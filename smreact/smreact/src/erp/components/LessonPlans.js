@@ -5,6 +5,7 @@ import useAsync from '../hooks/useAsync';
 import { buildUrl, assertSessionPayload, registerSessionToast, apiMessage } from '../../utils/apiConfig';
 import { termsCrud, termsBranchID, termsSessionYearID } from './Academics';
 import { deliverReport } from './reportDelivery';
+import { useModuleReadOnly, useSettings } from '../pages/Settings/settingsStore';
 
 /* ═══════════════════════════════════════════════════════════════════
    LESSON PLANS — port from
@@ -201,20 +202,33 @@ export default function LessonPlans({ toast, openConfirm }) {
      the fetch resolves. */
   const [session, setSession]     = useState({ year: '', start: '', end: '', workingDaysPerWeek: 5, workingDays: 0, workingWeeks: 0, totalOnDays: 0, holidays: 0, vacationDays: 0 });
   const [vacations, setVacations] = useState([]);
+  /* Current academic session (Session Settings) ki start/end dates ko Academic
+     Session card + edit modal me map karo. User in dates ko edit nahi karta —
+     sirf Working Days set karta hai; dates yahan se auto aati hain. */
+  const { currentSession } = useSettings();
+  const sessionMapped = useMemo(() => {
+    const start = currentSession?.startDate || session.start;
+    const end   = currentSession?.endDate   || session.end;
+    if (start === session.start && end === session.end) return session;
+    return computeSession({ ...session, start, end }, vacations);
+  }, [session, vacations, currentSession]);
 
   /* Persist the academic session via lpsessionsummarycrud, then reload from
      the server. Existing summary (has id) → update, otherwise insert. */
   const saveSession = async base => {
+    /* Dates hamesha current academic session se — user sirf Working Days set karta hai. */
+    const start = currentSession?.startDate || base.start;
+    const end   = currentSession?.endDate   || base.end;
     const wpw = Number(base.workingDaysPerWeek) || 0;
-    const computed = computeSession({ ...session, ...base, workingDaysPerWeek: wpw }, vacations);
+    const computed = computeSession({ ...session, ...base, start, end, workingDaysPerWeek: wpw }, vacations);
     const grossWorkingDays = computed.workingDays + computed.vacationDays; // before vacation subtraction
     try {
       await lpPost('/api/lpsessionsummarycrud', {
         id: session.id || 0,
         branchID: sessionStorage.getItem('branchID') || '',
         sessionYearID: sessionStorage.getItem('sessionID') || sessionStorage.getItem('SessionID') || '',
-        sessionStart: lpToIso(base.start),
-        sessionEnd: lpToIso(base.end),
+        sessionStart: lpToIso(start),
+        sessionEnd: lpToIso(end),
         workingDaysPerWeek: String(wpw),
         remainingWorkingDays: String(grossWorkingDays),
         action: session.id ? 'update' : 'insert',
@@ -379,7 +393,7 @@ const getClassesData = async () => {
 
       {tab === 'session' && (
         <SessionSettings
-          session={session}
+          session={sessionMapped}
           vacations={vacations}
           selectedClass={pwSelectedClass}
           setSelectedClass={setPwSelectedClass}
@@ -449,7 +463,7 @@ const getClassesData = async () => {
       {/* ─── modals ─── */}
       <SessionEditModal
         open={sessionEditOpen}
-        session={session}
+        session={sessionMapped}
         vacations={vacations}
         onSession={saveSession}
         onClose={() => setSessionEditOpen(false)}
@@ -460,7 +474,7 @@ const getClassesData = async () => {
       <VacationEditModal
         open={vacationEditOpen}
         vacations={vacations}
-        session={session}
+        session={sessionMapped}
         sessionSummaryId={session.id}
         onReload={loadSessionSummary}
         onClose={() => setVacationEditOpen(false)}
@@ -588,7 +602,9 @@ function SessionSettings({
   const changeSessionId = sessionStorage.getItem('changeSessionId');
   const sessionName  = sessionStorage.getItem('sessionName ');
   const loginSessionId  = sessionStorage.getItem('sessionID') || sessionStorage.getItem('SessionID') || '';
-  const isOtherSession  = !!changeSessionId && !!loginSessionId && String(changeSessionId) !== String(loginSessionId);
+  /* Academics module checkbox OFF in the current session → Lesson Plans view-only. */
+  const acadModuleReadOnly = useModuleReadOnly('acad');
+  const isOtherSession  = (!!changeSessionId && !!loginSessionId && String(changeSessionId) !== String(loginSessionId)) || acadModuleReadOnly;
 
   /* Per-week card: class+section options + live subjects/counts (read-only view). */
   const pwOptions = useMemo(() => {
@@ -1139,17 +1155,16 @@ function SessionEditModal({ open, session, vacations, onSession, onVacations, on
               <div className="form-row" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
                 <div className="form-group">
                   <label className="form-label">Session Start</label>
-                  <input className="form-input" type="date" value={start} max={end || undefined}
-                    onChange={e => {
-                      const v = e.target.value;
-                      setStart(v);
-                      if (end && v && end <= v) setEnd('');
-                    }} />
+                  {/* Date current academic session se aati hai — read-only. */}
+                  <input className="form-input" type="date" value={start} readOnly disabled
+                    title="Comes from the current academic session (Settings)"
+                    style={{ opacity: .6, cursor: 'not-allowed' }} />
                 </div>
                 <div className="form-group">
                   <label className="form-label">Session End</label>
-                  <input className="form-input" type="date" value={end} min={start || undefined}
-                    onChange={e => setEnd(e.target.value)} />
+                  <input className="form-input" type="date" value={end} readOnly disabled
+                    title="Comes from the current academic session (Settings)"
+                    style={{ opacity: .6, cursor: 'not-allowed' }} />
                 </div>
                 <div className="form-group">
                   <label className="form-label">Working Days / Week</label>
@@ -1531,7 +1546,9 @@ function TermBreakups({ onUpdate, onReport, openConfirm, toast, classesData,  re
      the login SessionID/sessionID) the action buttons are disabled. */
   const changeSessionId = sessionStorage.getItem('changeSessionId');
   const loginSessionId  = sessionStorage.getItem('sessionID') || sessionStorage.getItem('SessionID') || '';
-  const isOtherSession  = !!changeSessionId && !!loginSessionId && String(changeSessionId) !== String(loginSessionId);
+  /* Academics module checkbox OFF in the current session → Term Breakups view-only. */
+  const acadModuleReadOnly = useModuleReadOnly('acad');
+  const isOtherSession  = (!!changeSessionId && !!loginSessionId && String(changeSessionId) !== String(loginSessionId)) || acadModuleReadOnly;
 
   const [openId, setOpenId] = useState(null);
   const [subjectsData, setSubjectsData] = useState({});
@@ -3084,6 +3101,12 @@ function CreateLessonPlans({
 }) {
   // Extract unique class names from the API response
   const classOptions = classesData?.map(classItem => classItem.name) || [];
+  /* Academics module OFF in the current session (or viewing another session) →
+     Create Lesson Plans is view-only: Add Unit / Edit / Delete are disabled. */
+  const clpChangeSessionId = sessionStorage.getItem('changeSessionId');
+  const clpLoginSessionId  = sessionStorage.getItem('sessionID') || sessionStorage.getItem('SessionID') || '';
+  const acadReadOnly = useModuleReadOnly('acad');
+  const isOtherSession = (!!clpChangeSessionId && !!clpLoginSessionId && String(clpChangeSessionId) !== String(clpLoginSessionId)) || acadReadOnly;
   /* Bumped locally (panel deletes) to make notebook unit rows reload their
      detail; combined with clpRefresh (bumped after modal saves). */
   const [nbReload, setNbReload] = useState(0);
@@ -3458,8 +3481,11 @@ const handleSectionChange = async (e) => {
                 </button>
               </Tooltip>
             </div>
-            <Tooltip text="Manage units (add, rename, reorder)">
-              <button className="clp2-add-btn" onClick={() => onManageUnits(clpSubtab)}>
+            <Tooltip text={isOtherSession ? 'Editing is only allowed for the current session' : 'Manage units (add, rename, reorder)'}>
+              <button className="clp2-add-btn"
+                disabled={isOtherSession}
+                style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                onClick={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } onManageUnits(clpSubtab); }}>
                 <i className="fa-solid fa-plus"></i><span>Add Unit</span>
               </button>
             </Tooltip>
@@ -3475,6 +3501,7 @@ const handleSectionChange = async (e) => {
                     key={u.id}
                     unit={u}
                     index={i}
+                    isOtherSession={isOtherSession}
                     onReport={onReport}
                     onDeleteUnit={() => removeUnit(u)}
                     onEditLesson={l => onEditLesson(u.id, l.id, l, u)}
@@ -3491,6 +3518,7 @@ const handleSectionChange = async (e) => {
                     key={u.id}
                     unit={u}
                     index={i}
+                    isOtherSession={isOtherSession}
                     onReport={onReport}
                     onDeleteUnit={() => removeUnit(u)}
                     onAddType={() => onAddQuestionType(u.id)}
@@ -3529,7 +3557,7 @@ function EmptyUnits({ label, onAdd }) {
 }
 
 /* ─── Lesson-plans unit row (lessons) ─── */
-function UnitRow({ unit, index, onReport, onDeleteUnit, onEditLesson, onDeleteLesson }) {
+function UnitRow({ unit, index, onReport, onDeleteUnit, onEditLesson, onDeleteLesson, isOtherSession }) {
   const [open, setOpen] = useState(false);
   const manualCount = unit.lessons.filter(l => l.source === 'manual').length;
   const aiCount     = unit.lessons.filter(l => l.source === 'mentorai').length;
@@ -3570,7 +3598,10 @@ function UnitRow({ unit, index, onReport, onDeleteUnit, onEditLesson, onDeleteLe
               <i className="fa-brands fa-microsoft"></i> Word
             </button>
           </Tooltip>
-          <Tooltip text="Delete unit"><button className="lp-icon-del" onClick={onDeleteUnit} aria-label="Delete unit">
+          <Tooltip text={isOtherSession ? 'Editing is only allowed for the current session' : 'Delete unit'}><button className="lp-icon-del"
+            disabled={isOtherSession}
+            style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+            onClick={onDeleteUnit} aria-label="Delete unit">
             <i className="fa-solid fa-trash"></i>
           </button></Tooltip>
           <Tooltip text={open ? 'Collapse unit' : 'Expand unit'}>
@@ -3602,8 +3633,11 @@ function UnitRow({ unit, index, onReport, onDeleteUnit, onEditLesson, onDeleteLe
                     : <><i className="fa-solid fa-pen-nib"></i> Manual</>}
                 </span>
                 <div className="clpr-lesson-actions" onClick={e => e.stopPropagation()}>
-                  <Tooltip text="Edit this lesson">
-                    <button className="clpr-action-btn clpr-action-edit" onClick={() => onEditLesson(l)}>
+                  <Tooltip text={isOtherSession ? 'Editing is only allowed for the current session' : 'Edit this lesson'}>
+                    <button className="clpr-action-btn clpr-action-edit"
+                      disabled={isOtherSession}
+                      style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                      onClick={() => onEditLesson(l)}>
                       <i className="fa-solid fa-pen"></i> <span>Edit</span>
                     </button>
                   </Tooltip>
@@ -3612,8 +3646,11 @@ function UnitRow({ unit, index, onReport, onDeleteUnit, onEditLesson, onDeleteLe
                       <i className="fa-solid fa-file-pdf"></i> <span>PDF</span>
                     </button>
                   </Tooltip>
-                  <Tooltip text="Delete this lesson">
-                    <button className="clpr-action-btn clpr-action-del" onClick={() => onDeleteLesson(l)}>
+                  <Tooltip text={isOtherSession ? 'Editing is only allowed for the current session' : 'Delete this lesson'}>
+                    <button className="clpr-action-btn clpr-action-del"
+                      disabled={isOtherSession}
+                      style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                      onClick={() => onDeleteLesson(l)}>
                       <i className="fa-solid fa-trash-can"></i>
                     </button>
                   </Tooltip>
@@ -3899,7 +3936,7 @@ async function lpMapLimited(items, limit, mapper) {
 }
 
 /* ─── Notebook-plans unit row — verbatim from HTML ─── */
-function NbUnitRow({ unit, index, onReport, onDeleteUnit, onAddType, onEditType, onDeleteType, reloadKey }) {
+function NbUnitRow({ unit, index, onReport, onDeleteUnit, onAddType, onEditType, onDeleteType, reloadKey, isOtherSession }) {
   const [open, setOpen] = useState(false);
   /* Question types are loaded lazily from getulpfornotebookdetails the first
      time the unit is expanded; null = not yet loaded. */
@@ -3953,7 +3990,10 @@ function NbUnitRow({ unit, index, onReport, onDeleteUnit, onAddType, onEditType,
 
         {/* Actions: Add Questions · PDF · Delete · Expand */}
         <div className="clpr-unit-right" onClick={e => e.stopPropagation()}>
-          <Tooltip text="Add Questions"><button className="nb-aq-pill" onClick={onAddType}>
+          <Tooltip text={isOtherSession ? 'Editing is only allowed for the current session' : 'Add Questions'}><button className="nb-aq-pill"
+            disabled={isOtherSession}
+            style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+            onClick={onAddType}>
             <i className="fa-solid fa-plus nb-aq-icon"></i>
             <span className="nb-aq-label">Add Questions</span>
           </button></Tooltip>
@@ -3961,7 +4001,10 @@ function NbUnitRow({ unit, index, onReport, onDeleteUnit, onAddType, onEditType,
             onClick={() => onReport(`Unit ${unit.unitNo} — Notebook`, 'pdf')}>
             <i className="fa-solid fa-file-pdf"></i>
           </button></Tooltip>
-          <Tooltip text="Delete unit"><button className="clpr-icon-btn clpr-icon-btn--del" onClick={onDeleteUnit} aria-label="Delete unit">
+          <Tooltip text={isOtherSession ? 'Editing is only allowed for the current session' : 'Delete unit'}><button className="clpr-icon-btn clpr-icon-btn--del"
+            disabled={isOtherSession}
+            style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+            onClick={onDeleteUnit} aria-label="Delete unit">
             <i className="fa-solid fa-trash-can"></i>
           </button></Tooltip>
           <Tooltip text={open ? 'Collapse unit' : 'Expand unit'}>
@@ -4010,8 +4053,11 @@ function NbUnitRow({ unit, index, onReport, onDeleteUnit, onAddType, onEditType,
                       : <><i className="fa-solid fa-pen-nib"></i> Manual</>}
                   </span>
                   <div className="clpr-lesson-actions" onClick={e => e.stopPropagation()}>
-                    <Tooltip text="Edit this question type">
-                      <button className="clpr-action-btn clpr-action-edit" onClick={() => onEditType(q)}>
+                    <Tooltip text={isOtherSession ? 'Editing is only allowed for the current session' : 'Edit this question type'}>
+                      <button className="clpr-action-btn clpr-action-edit"
+                        disabled={isOtherSession}
+                        style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                        onClick={() => onEditType(q)}>
                         <i className="fa-solid fa-pen"></i> <span>Edit</span>
                       </button>
                     </Tooltip>
@@ -4019,7 +4065,10 @@ function NbUnitRow({ unit, index, onReport, onDeleteUnit, onAddType, onEditType,
                       onClick={() => onReport(`Section ${q.id} — ${q.type} — Unit ${unit.unitNo}`, 'pdf')}>
                       <i className="fa-solid fa-file-pdf"></i>
                     </button></Tooltip>
-                    <Tooltip text="Delete"><button className="clpr-icon-btn clpr-icon-btn--del" onClick={() => onDeleteType(q)}>
+                    <Tooltip text={isOtherSession ? 'Editing is only allowed for the current session' : 'Delete'}><button className="clpr-icon-btn clpr-icon-btn--del"
+                      disabled={isOtherSession}
+                      style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                      onClick={() => onDeleteType(q)}>
                       <i className="fa-solid fa-trash-can"></i>
                     </button></Tooltip>
                   </div>
@@ -5717,7 +5766,22 @@ const NB_FIELD_LABELS = {
   colA:'Column A', colB:'Column B', statement:'Statement',
   title:'Title', body:'Body', moral:'Moral', subject:'Subject', conclusion:'Conclusion',
 };
-
+function _subStripRichText(html) {
+  if (!html) return '';
+  return String(html)
+    .replace(/<\/(p|div|li|h[1-6])>/gi, '\n')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<li>/gi, '• ')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/\n{2,}/g, '\n')
+    .trim();
+}
 /* Render an item's actual content (all non-empty mapped fields). Falls back to
    the one-line preview if the full data isn't present. */
 function _subNbItemContent(C, item) {
@@ -5725,10 +5789,11 @@ function _subNbItemContent(C, item) {
   if (!d || typeof d !== 'object') return lpEscapeHtml(item?.preview || '—');
   const rows = Object.entries(d)
     .filter(([, v]) => v != null && String(v).trim() !== '')
-    .map(([k, v]) => `<div style="margin-bottom:2px"><span style="color:${C.muted};font-weight:700">${NB_FIELD_LABELS[k] || k}:</span> ${lpEscapeHtml(v)}</div>`)
+    .map(([k, v]) => `<div style="margin-bottom:2px"><span style="color:${C.muted};font-weight:700">${NB_FIELD_LABELS[k] || k}:</span> <span style="white-space:pre-line">${lpEscapeHtml(_subStripRichText(v))}</span></div>`)
     .join('');
   return rows || lpEscapeHtml(item.preview || '—');
 }
+
 
 function _subPdfFooter(C) {
   const rh = C.reportHeader || {};
@@ -9006,6 +9071,7 @@ function nbGeneratePdfHtml(u, questions, isColor, reportHeader = null, format = 
 
   let html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${u.unitName} Report</title>
   <style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:'Segoe UI',Arial,sans-serif;background:#fff;color:#0F172A;font-size:13px}.page{width:210mm;margin:0 auto}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}@page{size:A4;margin:15mm}.no-print{display:none}}
+
   .header{background:${hdrBg};color:#fff;padding:24px 30px}.header h1{font-size:22px;font-weight:800}.header-sub{font-size:12px;opacity:.7;margin-top:4px}.meta{display:flex;gap:12px;margin-top:12px;flex-wrap:wrap}.meta span{font-size:11px;background:rgba(255,255,255,.15);padding:3px 10px;border-radius:20px}
   .body{padding:24px 30px}.section{margin-bottom:22px;border:1.5px solid ${bdr};border-radius:12px;overflow:hidden}
   .sec-head{background:${isColor ? 'linear-gradient(to right,#F0F9FF,#E0F2FE)' : '#f0f0f0'};padding:12px 16px;border-bottom:1.5px solid ${bdr};display:flex;align-items:center;gap:10px}

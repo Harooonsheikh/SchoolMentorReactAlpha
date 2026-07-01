@@ -7,6 +7,7 @@ import * as cbrApi from '../services/combinedAssessmentService';
 import useAsync from '../hooks/useAsync';
 import { buildUrl } from '../../utils/apiConfig';
 import { deliverReport } from './reportDelivery';
+import { useModuleReadOnly } from '../pages/Settings/settingsStore';
 /* ═══════════════════════════════════════════════════════════════════
    EXAMINATION — port of the HTML #module-exam (only Exam Setup is
    functional; other tabs show Coming Soon).
@@ -1266,7 +1267,9 @@ const termsAuthHeaders = (extra = {}) => ({
   const [start,  setStart]  = useState('2026-01-01');
   const [end,    setEnd]    = useState('2026-12-31');
    const loginSessionId = sessionStorage.getItem('SessionID') || sessionStorage.getItem('sessionID') || '';
-const isOtherSession = (() => {
+   /* Examination module checkbox OFF in the current session → view-only. */
+   const examModuleReadOnly = useModuleReadOnly('exam');
+const isOtherSession = examModuleReadOnly || (() => {
   // 1️⃣ Session ID mismatch check
   if (!!sessionId && !!loginSessionId && String(sessionId) !== String(loginSessionId)) {
     return true; // ❌ Disable - different session
