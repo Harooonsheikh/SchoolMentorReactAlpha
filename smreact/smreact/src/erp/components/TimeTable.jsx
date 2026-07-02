@@ -13,25 +13,9 @@ import useAsync from '../hooks/useAsync';
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
-const TT_CLASSES = [
-  { id: 1, name: 'Class 1A',  section: 'B' },
-  { id: 2, name: 'Class 1A',  section: 'C' },
-  { id: 3, name: 'Class 1A',  section: 'D' },
-  { id: 4, name: 'II-Pre',    section: 'A' },
-  { id: 5, name: 'III-Pre',   section: '2' },
-  { id: 6, name: 'IV',        section: 'A' },
-  { id: 7, name: 'V',         section: 'A' },
-  { id: 8, name: 'VI',        section: 'A' },
-  { id: 9, name: 'VII',       section: 'A' },
-  { id: 10, name: 'VIII',     section: 'A' },
-  { id: 11, name: 'IX',       section: 'A' },
-];
-
+/* Auto-generate subject-planning list (subjects are UI/planning only — the
+   timetable API stores teacher + time per period, not subject). */
 const TT_SUBJECTS = ['English', 'Urdu', 'Mathematics', 'Science', 'Social Studies', 'Islamiyat', 'Computer'];
-const TT_TEACHERS = [
-  'Ms. Ayesha Raza', 'Mr. Bilal Ahmed', 'Ms. Fatima Khan', 'Mr. Hassan Ali',
-  'Ms. Sana Tariq', 'Mr. Usman Shah', 'Ms. Zara Malik', 'Mr. Imran Qureshi',
-];
 
 const SUBJ_COLORS = {
   English:          '#1E40AF',
@@ -75,25 +59,46 @@ function fmtDuration(min) {
   return min >= 60 ? `${Math.floor(min / 60)}h ${min % 60}m` : `${min} min`;
 }
 
+/* Run async thunks with LIMITED concurrency. Auto-generate can save hundreds of
+   period rows; firing them all at once floods the browser's ~6-connection limit
+   so every request sits "pending" and never resolves. A small worker pool keeps
+   only `limit` requests in flight at a time, so they actually complete. */
+async function runLimited(thunks, limit = 4) {
+  let idx = 0;
+  const workers = Array.from({ length: Math.min(limit, thunks.length || 0) }, async () => {
+    while (idx < thunks.length) {
+      const my = idx++;
+      try { await thunks[my](); } catch (e) { console.error('TimeTable batch job failed:', e); }
+    }
+  });
+  await Promise.all(workers);
+}
+
 /* ═══════════════════════════════════════════════════════════════════
    PDF report builders — exact port of HTML reference
    ═══════════════════════════════════════════════════════════════════ */
 
 /* Shared portrait header (used by Daily / Weekly / Period Count) */
-function ttPageWrap(school, dateStr, timeStr, title, body, isBW) {
-  /* Two coordinated palettes:
+function ttPageWrap(hdr, dateStr, timeStr, title, body, isBW) {
+  /* `hdr` is the /report-header record: { name, logo, address, session }.
+     Two coordinated palettes:
      • Colorful: brand-blue gradient logo, brand-tinted title band.
      • Colorless: dedicated LOW-INK layout — white logo with dark border,
-       white title band with thin border, no decorative watermark. The
-       previous near-black fills (#000 logo, #f0f0f0 title) consumed too
-       much toner; replaced with bordered white containers. */
+       white title band with thin border, no decorative watermark. */
+  const h = hdr || {};
+  const name = h.name || 'School Mentor';
+  const logo = h.logo || '';
+  const address = h.address || '';
+  const session = h.session || '';
   const hdrBorder = isBW ? '1.5px solid #0F172A' : '3px solid #1E3A8A';
-  const logoBg    = isBW ? '#FFFFFF' : 'linear-gradient(135deg,#1E3A8A,#2563EB)';
+  const logoBg    = logo ? '#FFFFFF' : (isBW ? '#FFFFFF' : 'linear-gradient(135deg,#1E3A8A,#2563EB)');
   const logoColor = isBW ? '#0F172A' : '#FFFFFF';
-  const logoBorder = isBW ? '1px solid #0F172A' : 'none';
+  const logoBorder = (isBW || logo) ? '1px solid #E2E8F0' : 'none';
   const titleBg   = isBW ? '#FFFFFF' : '#EFF6FF';
   const titleBdr  = isBW ? '#D1D5DB' : '#BFDBFE';
-  const watermark = isBW ? '' : `<div style="position:fixed;bottom:20px;right:20px;font-size:9px;color:#CBD5E1;font-weight:700;letter-spacing:1px;text-transform:uppercase;opacity:.5">School Mentor ERP</div>`;
+  const logoInner = logo
+    ? `<img src="${logo}" alt="logo" style="width:100%;height:100%;object-fit:contain;border-radius:10px" onerror="this.remove()" />`
+    : 'SM';
   return `<!DOCTYPE html><html><head><meta charset="UTF-8">
 <title>${title}</title>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
@@ -101,23 +106,31 @@ function ttPageWrap(school, dateStr, timeStr, title, body, isBW) {
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:"Plus Jakarta Sans",sans-serif;font-size:12px;color:#0F172A;background:#fff}
 .hdr{display:flex;align-items:center;justify-content:space-between;padding:16px 24px;border-bottom:${hdrBorder};margin-bottom:16px}
-.logo{width:44px;height:44px;border-radius:10px;background:${logoBg};border:${logoBorder};display:flex;align-items:center;justify-content:center;color:${logoColor};font-size:13px;font-weight:800}
+.logo{width:46px;height:46px;border-radius:10px;background:${logoBg};border:${logoBorder};display:flex;align-items:center;justify-content:center;color:${logoColor};font-size:13px;font-weight:800;overflow:hidden;flex-shrink:0}
 .school-name{font-size:17px;font-weight:800;color:#0F172A;margin-left:12px}
+.school-sess{font-size:10.5px;font-weight:600;color:#64748B;margin-left:12px;margin-top:2px}
 .meta{font-size:10px;color:#64748B;text-align:right;line-height:1.55}
 .report-title{text-align:center;font-size:14px;font-weight:800;padding:10px;background:${titleBg};border:1px solid ${titleBdr};margin:0 24px 16px;border-radius:6px;color:#0F172A}
-.content{padding:0 24px 24px}
+.content{padding:0 24px 8px}
+.doc-foot{margin:16px 24px 20px;padding-top:10px;border-top:1px solid #E2E8F0;display:flex;justify-content:space-between;align-items:center;font-size:9.5px;color:#64748B;gap:10px;flex-wrap:wrap}
 @media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
 </style></head><body>
 <div class="hdr">
   <div style="display:flex;align-items:center">
-    <div class="logo">SM</div>
-    <div class="school-name">${school}</div>
+    <div class="logo">${logoInner}</div>
+    <div>
+      <div class="school-name" style="margin-left:12px">${name}</div>
+      ${session ? `<div class="school-sess">${session}</div>` : ''}
+    </div>
   </div>
   <div class="meta">Generated Date : ${dateStr}<br>Generated Time : ${timeStr}<br>Generated By : Administrator${isBW ? '<br><b>Colorless Print</b>' : ''}</div>
 </div>
 <div class="report-title">Report Name : ${title}</div>
 <div class="content">${body}</div>
-${watermark}
+<div class="doc-foot">
+  <span>${name}${address ? ' · ' + address : ''}</span>
+  <span>School Mentor ERP · Confidential</span>
+</div>
 </body></html>`;
 }
 
@@ -164,7 +177,7 @@ function ttHeaderRowHtml(isBW) {
   </tr>`;
 }
 
-function buildDailyTTReport({ school, cls, section, day, periods, isBW }) {
+function buildDailyTTReport({ header, cls, section, day, periods, isBW }) {
   const now = new Date();
   const dateStr = now.toLocaleDateString('en-PK');
   const timeStr = now.toLocaleTimeString('en-PK', { hour: '2-digit', minute: '2-digit' });
@@ -172,10 +185,10 @@ function buildDailyTTReport({ school, cls, section, day, periods, isBW }) {
     <thead>${ttHeaderRowHtml(isBW)}</thead>
     <tbody>${ttPeriodRowsHtml(periods, isBW)}</tbody>
   </table>`;
-  return ttPageWrap(school, dateStr, timeStr, `Daily Time Table Report — ${cls} Section ${section} — ${day}`, body, isBW);
+  return ttPageWrap(header, dateStr, timeStr, `Daily Time Table Report — ${cls} Section ${section} — ${day}`, body, isBW);
 }
 
-function buildWeeklyTTReport({ school, cls, section, weekPeriods, isBW }) {
+function buildWeeklyTTReport({ header, cls, section, weekPeriods, isBW }) {
   const now = new Date();
   const dateStr = now.toLocaleDateString('en-PK');
   const timeStr = now.toLocaleTimeString('en-PK', { hour: '2-digit', minute: '2-digit' });
@@ -193,10 +206,10 @@ function buildWeeklyTTReport({ school, cls, section, weekPeriods, isBW }) {
       </table>
     </div>`;
   }).join('');
-  return ttPageWrap(school, dateStr, timeStr, `Weekly Time Table Report For ${cls} Section ${section}`, dayBlocks, isBW);
+  return ttPageWrap(header, dateStr, timeStr, `Weekly Time Table Report For ${cls} Section ${section}`, dayBlocks, isBW);
 }
 
-function buildPeriodCountReport({ school, cls, section, weekPeriods, isBW }) {
+function buildPeriodCountReport({ header, cls, section, weekPeriods, isBW }) {
   const now = new Date();
   const dateStr = now.toLocaleDateString('en-PK');
   const timeStr = now.toLocaleTimeString('en-PK', { hour: '2-digit', minute: '2-digit' });
@@ -231,7 +244,7 @@ function buildPeriodCountReport({ school, cls, section, weekPeriods, isBW }) {
     </tr></thead>
     <tbody>${countRows}</tbody>
   </table>`;
-  return ttPageWrap(school, dateStr, timeStr, `Period Count Report — ${cls} Section ${section}`, body, isBW);
+  return ttPageWrap(header, dateStr, timeStr, `Period Count Report — ${cls} Section ${section}`, body, isBW);
 }
 
 /* ─────────────────────────────────────────────────────────────────
@@ -284,11 +297,19 @@ function schoolPeriodCellHtml(p, subjColorMap, idxRef, isBW = false) {
   </div>`;
 }
 
-function buildSchoolReport({ type, day, allData, school, isBW = false }) {
+function buildSchoolReport({ type, day, allData, header, classes = [], isBW = false }) {
   const now = new Date();
   const dateStr = now.toLocaleDateString('en-PK', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
   const timeStr = now.toLocaleTimeString('en-PK', { hour: '2-digit', minute: '2-digit' });
-  const rows = TT_CLASSES.map((cls, ci) => ({ ...cls, _ci: ci }));
+  /* Report header (school name + logo + address) from /report-header. */
+  const h = header || {};
+  const school = h.name || 'School Mentor';
+  const schoolLogo = h.logo || '';
+  const schoolAddr = h.address || '';
+  const schoolLogoHtml = schoolLogo
+    ? `<img src="${schoolLogo}" alt="logo" style="width:100%;height:100%;object-fit:contain;border-radius:10px" onerror="this.remove()" />`
+    : 'SM';
+  const rows = (classes || []).map((cls, ci) => ({ ...cls, _ci: ci }));
   const subjColorMap = {};
   const idxRef = { i: 0 };
 
@@ -299,7 +320,7 @@ function buildSchoolReport({ type, day, allData, school, isBW = false }) {
     /* DAY WISE — rows = classes, cols = periods grid */
     let maxPeriods = 0;
     rows.forEach((row) => {
-      const key = `${row.id}_${row.section}`;
+      const key = `${row.id}_${row.sectionID}`;
       const p = (allData[day] || {})[key] || [];
       if (p.length > maxPeriods) maxPeriods = p.length;
     });
@@ -309,7 +330,7 @@ function buildSchoolReport({ type, day, allData, school, isBW = false }) {
     for (let pi = 0; pi < maxPeriods; pi++) {
       let timeLabel = '';
       for (const row of rows) {
-        const key = `${row.id}_${row.section}`;
+        const key = `${row.id}_${row.sectionID}`;
         const ps = (allData[day] || {})[key] || [];
         if (ps[pi]) {
           timeLabel = ps[pi].startTime && ps[pi].endTime ? `${ps[pi].startTime}–${ps[pi].endTime}` : (ps[pi].startTime || '');
@@ -323,7 +344,7 @@ function buildSchoolReport({ type, day, allData, school, isBW = false }) {
     }
 
     const tableRows = rows.map((row, ri) => {
-      const key = `${row.id}_${row.section}`;
+      const key = `${row.id}_${row.sectionID}`;
       const periods = (allData[day] || {})[key] || [];
       totalPeriods += periods.length;
       const ac = CLASS_AVATAR_COLORS[ri % CLASS_AVATAR_COLORS.length];
@@ -362,7 +383,7 @@ function buildSchoolReport({ type, day, allData, school, isBW = false }) {
   } else {
     /* WEEKLY — per-class block, rows = periods, cols = days */
     rows.forEach((row, ri) => {
-      const key = `${row.id}_${row.section}`;
+      const key = `${row.id}_${row.sectionID}`;
       const ac = CLASS_AVATAR_COLORS[ri % CLASS_AVATAR_COLORS.length];
 
       let maxP = 0;
@@ -447,7 +468,7 @@ body{font-family:"Plus Jakarta Sans",sans-serif;font-size:11px;color:#0F172A;bac
 </style></head><body${isBW ? ' class="tt-school-bw"' : ''}>
 <div style="display:flex;align-items:center;justify-content:space-between;padding:0 0 10px;border-bottom:3px solid #1E3A8A;margin-bottom:10px">
   <div style="display:flex;align-items:center;gap:12px">
-    <div style="width:38px;height:38px;border-radius:10px;background:linear-gradient(135deg,#172554,#1E3A8A,#2563EB);display:flex;align-items:center;justify-content:center;color:#fff;font-size:11px;font-weight:800;flex-shrink:0">SM</div>
+    <div style="width:40px;height:40px;border-radius:10px;background:${schoolLogo ? '#FFFFFF' : 'linear-gradient(135deg,#172554,#1E3A8A,#2563EB)'};border:${schoolLogo ? '1px solid #E2E8F0' : 'none'};display:flex;align-items:center;justify-content:center;color:#fff;font-size:11px;font-weight:800;flex-shrink:0;overflow:hidden">${schoolLogoHtml}</div>
     <div>
       <div style="font-size:15px;font-weight:800;color:#0F172A;line-height:1">${school}</div>
       <div style="font-size:8.5px;color:#64748B;letter-spacing:.6px;text-transform:uppercase;margin-top:3px">School Timetable Report · ${type === 'daywise' ? DAYS[day] + ' Schedule' : 'Full Week Schedule'}</div>
@@ -471,7 +492,7 @@ body{font-family:"Plus Jakarta Sans",sans-serif;font-size:11px;color:#0F172A;bac
 </div>
 ${bodyHtml}
 <div style="margin-top:12px;padding-top:7px;border-top:1px solid #E2E8F0;display:flex;justify-content:space-between;align-items:center;font-size:8px;color:#94A3B8">
-  <span>School Mentor ERP · theschoolmentor.online</span>
+  <span>${school}${schoolAddr ? ' · ' + schoolAddr : ''}</span>
   <div style="display:flex;gap:14px">
     ${isBW
       ? '<span>Subject Period — bordered cell</span><span>Break — outlined cell</span><span>Teacher name shown below subject</span><span>Timings shown in each cell</span>'
@@ -554,7 +575,13 @@ export default function TimeTable({ toast = () => {} }) {
   const [day, setDay] = useState(0);          // 0 = Monday
   const [expandedKey, setExpandedKey] = useState(null);
   const [tutorialOpen, setTutorialOpen] = useState(false);
-  const { data = {}, setData } = useAsync(timeTableService.getTimeTable, []);
+  const { data = {}, setData, refetch: reloadTimeTable } = useAsync(timeTableService.getTimeTable, []);
+  /* Real class×section rows and branch teachers (no more dummy data). */
+  const { data: classes = [] }  = useAsync(timeTableService.getTimeTableClasses, []);
+  const { data: teachers = [] } = useAsync(timeTableService.getTeachers, []);
+  /* Branch report header (school name + logo + address) for report header/footer. */
+  const { data: reportHeader = {} } = useAsync(timeTableService.getReportHeader, []);
+  
 
   /* Modal state */
   const [editTarget, setEditTarget]               = useState(null); // { key, cls, section }
@@ -566,29 +593,30 @@ export default function TimeTable({ toast = () => {} }) {
 
   const dayData = data[day] || {};
 
-  const setPeriodsFor = useCallback((key, periods) => {
-    setData((prev) => {
-      const next = { ...prev };
-      next[day] = { ...(next[day] || {}), [key]: periods };
-      return next;
-    });
-  }, [day, setData]);
-
-  const deleteDay = () => {
-    setData((prev) => ({ ...prev, [day]: {} }));
-    toast(`${DAYS[day]} timetable cleared for all classes`, 'success');
+  /* Clear the whole day (all classes) — delete every period row for the day. */
+  const deleteDay = async () => {
+    try {
+      const allPeriods = Object.values(data[day] || {}).flat();
+      await timeTableService.deleteClassDayTimeTable(allPeriods);
+      await reloadTimeTable();
+      toast(`${DAYS[day]} timetable cleared for all classes`, 'success');
+    } catch (e) {
+      console.error('Could not clear day timetable:', e);
+      toast('Could not clear timetable', 'error');
+    }
     setDeletePayload(null);
   };
 
-  const deleteClassDay = (key) => {
-    setData((prev) => {
-      const next = { ...prev };
-      const ddata = { ...(next[day] || {}) };
-      delete ddata[key];
-      next[day] = ddata;
-      return next;
-    });
-    toast(`Timetable removed for ${DAYS[day]}`, 'success');
+  /* Remove one class's timetable for the day (delete its period rows by id). */
+  const deleteClassDay = async (key) => {
+    try {
+      await timeTableService.deleteClassDayTimeTable((data[day] || {})[key] || []);
+      await reloadTimeTable();
+      toast(`Timetable removed for ${DAYS[day]}`, 'success');
+    } catch (e) {
+      console.error('Could not delete class timetable:', e);
+      toast('Could not delete timetable', 'error');
+    }
     setDeletePayload(null);
   };
 
@@ -667,8 +695,8 @@ export default function TimeTable({ toast = () => {} }) {
           <div className="tt-th" style={{ textAlign: 'center' }}>Details</div>
         </div>
 
-        {TT_CLASSES.map((cls, i) => {
-          const key = `${cls.id}_${cls.section}`;
+        {classes.map((cls, i) => {
+          const key = `${cls.id}_${cls.sectionID}`;
           const periods = dayData[key] || [];
           const isExp = expandedKey === key;
           const avatarColor = CLASS_AVATAR_COLORS[i % CLASS_AVATAR_COLORS.length];
@@ -687,7 +715,7 @@ export default function TimeTable({ toast = () => {} }) {
                   <Tooltip text={`Edit ${DAYS[day]} periods for this class`}>
                     <button
                       className="btn-tt-update"
-                      onClick={(e) => { e.stopPropagation(); setEditTarget({ key, cls: cls.name, section: cls.section }); }}
+                      onClick={(e) => { e.stopPropagation(); setEditTarget({ key, cls: cls.name, section: cls.section, classID: cls.id, sectionID: cls.sectionID, classOrder: i }); }}
                     >
                       <i className="fa-solid fa-pen"></i> Update
                     </button>
@@ -732,7 +760,7 @@ export default function TimeTable({ toast = () => {} }) {
                       <button
                         className="btn-tt-update"
                         style={{ marginTop: 10 }}
-                        onClick={() => setEditTarget({ key, cls: cls.name, section: cls.section })}
+                        onClick={() => setEditTarget({ key, cls: cls.name, section: cls.section, classID: cls.id, sectionID: cls.sectionID, classOrder: i })}
                       >
                         <i className="fa-solid fa-plus"></i> Add Periods
                       </button>
@@ -799,12 +827,26 @@ export default function TimeTable({ toast = () => {} }) {
         <TTEditModal
           target={editTarget}
           day={day}
+          teachers={teachers}
           initialPeriods={dayData[editTarget.key] || []}
           prevDayPeriods={(data[(day + 5) % 6] || {})[editTarget.key] || []}
           onClose={() => setEditTarget(null)}
-          onSave={(periods) => {
-            setPeriodsFor(editTarget.key, periods);
-            toast(`Timetable saved for ${DAYS[day]}!`, 'success');
+          onSave={async (periods) => {
+            try {
+              await timeTableService.replaceClassDayTimeTable({
+                dayIndex: day,
+                classID: editTarget.classID,
+                sectionID: editTarget.sectionID,
+                classOrder: editTarget.classOrder || 0,
+                oldPeriods: dayData[editTarget.key] || [],
+                periods,
+              });
+              await reloadTimeTable();
+              toast(`Timetable saved for ${DAYS[day]}!`, 'success');
+            } catch (e) {
+              console.error('Could not save timetable:', e);
+              toast('Could not save timetable', 'error');
+            }
             setEditTarget(null);
           }}
         />
@@ -814,6 +856,7 @@ export default function TimeTable({ toast = () => {} }) {
         <TTDownloadModal
           target={downloadTarget}
           day={day}
+          header={reportHeader}
           dayPeriods={dayData[downloadTarget.key] || []}
           weekPeriods={DAYS.map((_, di) => (data[di] || {})[downloadTarget.key] || [])}
           onClose={() => setDownloadTarget(null)}
@@ -826,6 +869,8 @@ export default function TimeTable({ toast = () => {} }) {
         <TTSchoolReportModal
           day={day}
           data={data}
+          classes={classes}
+          header={reportHeader}
           onClose={() => setSchoolReportOpen(false)}
           onPreview={(title, html) => { setReportPreview({ title, html, landscape: true }); setSchoolReportOpen(false); }}
           toast={toast}
@@ -855,14 +900,37 @@ export default function TimeTable({ toast = () => {} }) {
 
       {autoGenOpen && (
         <TTAutoGenerateModal
+          classes={classes}
+          teachers={teachers}
           onClose={() => setAutoGenOpen(false)}
-          onGenerate={(newData, summary) => {
-            setData(newData);
+          onGenerate={async (newData, summary) => {
+            /* Persist the generated week to the API (delete-then-insert per
+               class/day), then reload from the server. */
+            try {
+              /* Build THUNKS (don't invoke yet) so runLimited controls how many
+                 requests fire at once — avoids the pending-forever pile-up. */
+              const jobs = [];
+              Object.entries(newData).forEach(([di, classMap]) => {
+                Object.entries(classMap).forEach(([key, periods]) => {
+                  const [classID, sectionID] = key.split('_');
+                  jobs.push(() => timeTableService.replaceClassDayTimeTable({
+                    dayIndex: Number(di), classID, sectionID, classOrder: 0,
+                    oldPeriods: (data[di] || {})[key] || [],
+                    periods,
+                  }));
+                });
+              });
+              await runLimited(jobs, 4);
+              await reloadTimeTable();
+              toast(
+                `Timetable generated — ${summary.classCount} class${summary.classCount !== 1 ? 'es' : ''} × ${summary.dayCount} days`,
+                'success'
+              );
+            } catch (e) {
+              console.error('Could not generate timetable:', e);
+              toast('Could not generate timetable', 'error');
+            }
             setAutoGenOpen(false);
-            toast(
-              `Timetable generated — ${summary.classCount} class${summary.classCount !== 1 ? 'es' : ''} × ${summary.dayCount} days × ~${summary.periodsPerDay} periods/day`,
-              'success'
-            );
           }}
         />
       )}
@@ -880,13 +948,24 @@ export default function TimeTable({ toast = () => {} }) {
 /* ═══════════════════════════════════════════════════════════════════
    Edit Timetable modal — period editor
    ═══════════════════════════════════════════════════════════════════ */
-function TTEditModal({ target, day, initialPeriods, prevDayPeriods, onClose, onSave }) {
+function TTEditModal({ target, day, teachers = [], initialPeriods, prevDayPeriods, onClose, onSave }) {
   const [periods, setPeriods] = useState(() =>
     initialPeriods.length
       ? JSON.parse(JSON.stringify(initialPeriods))
       : [{ startTime: '08:00', endTime: '08:40', subject: '', teacher: '' }]
   );
   const [pendingDelete, setPendingDelete] = useState(null); // index pending confirmation
+  const [subjects, setSubjects] = useState([]); // real subjects for this class × section
+
+  /* Load the class's real subjects for the Subject dropdown. */
+  useEffect(() => {
+    if (target?.classID == null) return undefined;
+    let cancelled = false;
+    timeTableService.getSubjectsForClass(target.classID, target.sectionID)
+      .then((list) => { if (!cancelled) setSubjects(list || []); })
+      .catch(() => { if (!cancelled) setSubjects([]); });
+    return () => { cancelled = true; };
+  }, [target]);
 
   useEffect(() => {
     const onKey = (e) => {
@@ -983,10 +1062,24 @@ function TTEditModal({ target, day, initialPeriods, prevDayPeriods, onClose, onS
                   </div>
                   <div className="ttp-field">
                     <label className="ttp-label"><i className="fa-solid fa-book-open"></i> Subject</label>
-                    <select className="ttp-select" value={p.subject} onChange={(e) => setField(i, { subject: e.target.value, teacher: e.target.value === 'Break' ? '' : p.teacher })}>
+                    <select className="ttp-select" value={p.subject || ''} onChange={(e) => {
+                      const name = e.target.value;
+                      const sub = subjects.find((s) => s.name === name);
+                      const isBreakSel = name === 'Break';
+                      setField(i, {
+                        subject: name,
+                        subjectId: sub ? sub.id : 0,
+                        teacher: isBreakSel ? '' : p.teacher,
+                        teacherId: isBreakSel ? 0 : p.teacherId,
+                      });
+                    }}>
                       <option value="">Select a Subject</option>
                       <option value="Break">Break</option>
-                      {TT_SUBJECTS.map((s) => <option key={s}>{s}</option>)}
+                      {/* Agar saved subject list me na ho to bhi option dikhao (warna selected blank lage). */}
+                      {p.subject && p.subject !== 'Break' && !subjects.some((s) => s.name === p.subject) && (
+                        <option value={p.subject}>{p.subject}</option>
+                      )}
+                      {subjects.map((s) => <option key={s.id} value={s.name}>{s.name}</option>)}
                     </select>
                   </div>
                   {isBreak ? (
@@ -997,9 +1090,15 @@ function TTEditModal({ target, day, initialPeriods, prevDayPeriods, onClose, onS
                   ) : (
                     <div className="ttp-field">
                       <label className="ttp-label"><i className="fa-solid fa-user-tie"></i> Teacher</label>
-                      <select className="ttp-select" value={p.teacher} onChange={(e) => setField(i, { teacher: e.target.value })}>
+                      <select className="ttp-select" value={p.teacherId || ''} onChange={(e) => {
+                        const id = e.target.value;
+                        const t = teachers.find((x) => String(x.id) === String(id));
+                        setField(i, { teacherId: id ? Number(id) : 0, teacher: t ? t.name : '' });
+                      }}>
                         <option value="">Select a Teacher</option>
-                        {TT_TEACHERS.map((t) => <option key={t}>{t}</option>)}
+                        {teachers.map((t) => (
+                          <option key={t.id} value={t.id}>{t.name}{t.designation ? ` — ${t.designation}` : ''}</option>
+                        ))}
                       </select>
                     </div>
                   )}
@@ -1088,7 +1187,7 @@ function TTEditModal({ target, day, initialPeriods, prevDayPeriods, onClose, onS
 /* ═══════════════════════════════════════════════════════════════════
    Download dialog — per class — color/BW + Daily/Weekly/Period Count
    ═══════════════════════════════════════════════════════════════════ */
-function TTDownloadModal({ target, day, dayPeriods, weekPeriods, onClose, onPreview, toast }) {
+function TTDownloadModal({ target, day, dayPeriods, weekPeriods, header, onClose, onPreview, toast }) {
   const [mode, setMode] = useState('color');
 
   useEffect(() => {
@@ -1098,20 +1197,19 @@ function TTDownloadModal({ target, day, dayPeriods, weekPeriods, onClose, onPrev
   }, [onClose]);
 
   const isBW = mode === 'bw';
-  const school = 'School Mentor';
 
   const generate = (kind) => {
     let html, title;
     if (kind === 'daily') {
-      html  = buildDailyTTReport({ school, cls: target.cls, section: target.section, day: DAYS[day], periods: dayPeriods, isBW });
+      html  = buildDailyTTReport({ header, cls: target.cls, section: target.section, day: DAYS[day], periods: dayPeriods, isBW });
       title = `Daily Timetable — ${target.cls} · ${target.section} · ${DAYS[day]}`;
     } else if (kind === 'weekly') {
       const wp = {}; weekPeriods.forEach((p, di) => { wp[di] = p; });
-      html  = buildWeeklyTTReport({ school, cls: target.cls, section: target.section, weekPeriods: wp, isBW });
+      html  = buildWeeklyTTReport({ header, cls: target.cls, section: target.section, weekPeriods: wp, isBW });
       title = `Weekly Timetable — ${target.cls} · ${target.section}`;
     } else {
       const wp = {}; weekPeriods.forEach((p, di) => { wp[di] = p; });
-      html  = buildPeriodCountReport({ school, cls: target.cls, section: target.section, weekPeriods: wp, isBW });
+      html  = buildPeriodCountReport({ header, cls: target.cls, section: target.section, weekPeriods: wp, isBW });
       title = `Period Count — ${target.cls} · ${target.section}`;
     }
     onPreview(title, html);
@@ -1232,7 +1330,7 @@ function TTDownloadModal({ target, day, dayPeriods, weekPeriods, onClose, onPrev
 /* ═══════════════════════════════════════════════════════════════════
    School Report dialog — Day Wise / Weekly
    ═══════════════════════════════════════════════════════════════════ */
-function TTSchoolReportModal({ day, data, onClose, onPreview, toast }) {
+function TTSchoolReportModal({ day, data, classes = [], header, onClose, onPreview, toast }) {
   /* Local report-style toggle — applies to whichever report the user
      picks next (Day Wise or Weekly). Defaults to Colorful. */
   const [style, setStyle] = useState('color'); // 'color' | 'bw'
@@ -1248,7 +1346,8 @@ function TTSchoolReportModal({ day, data, onClose, onPreview, toast }) {
       type: kind,            // 'daywise' | 'weekly'
       day,
       allData: data,
-      school: 'School Mentor',
+      classes,
+      header,
       isBW: style === 'bw',
     });
     const title = kind === 'daywise' ? `Day Wise School Report — ${DAYS[day]}` : 'Weekly School Report';
@@ -1424,7 +1523,11 @@ const WIZ_STEPS = [
 const toMin  = (t) => { const [h, m] = String(t).split(':').map(Number); return h * 60 + m; };
 const toTime = (m) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
 
-function TTAutoGenerateModal({ onClose, onGenerate }) {
+function TTAutoGenerateModal({ classes = [], teachers = [], onClose, onGenerate }) {
+  /* Real teacher names + a name→id map (auto-gen stores teacherId for saving). */
+  const teacherNames = teachers.map((t) => t.name);
+  const teacherIdByName = {};
+  teachers.forEach((t) => { teacherIdByName[t.name] = t.id; });
   const initWiz = useCallback(() => ({
     step: 1,
     /* Step 1 */
@@ -1444,8 +1547,8 @@ function TTAutoGenerateModal({ onClose, onGenerate }) {
     subjectWeeklyLessons: TT_SUBJECTS.reduce((acc, s) => ({ ...acc, [s]: 5 }), {}),
     dayPeriodLens: {},        // { dayIdx: [40, 40, 45, ...] }  per-period duration overrides
     _step3Day: 0,             // currently selected day in Step 3 editor
-    /* Step 4 — teacher × day availability */
-    teacherWorkdays: TT_TEACHERS.reduce((acc, t) => ({ ...acc, [t]: [0, 1, 2, 3, 4] }), {}),
+    /* Step 4 — teacher × day availability (empty = every teacher available all days) */
+    teacherWorkdays: {},
     /* internal */
     _leaveBlank: true,
   }), []);
@@ -1462,7 +1565,7 @@ function TTAutoGenerateModal({ onClose, onGenerate }) {
   /* ─── Helpers ─── */
   const autoPeriods = Math.max(1, Math.floor((toMin(w.schoolEnd) - toMin(w.schoolStart)) / w.defaultPeriodLen));
   const defP        = w.defaultPeriodsPerDay || autoPeriods;
-  const allClassKeys = TT_CLASSES.map((c) => `${c.id}_${c.section}`);
+  const allClassKeys = (classes || []).map((c) => `${c.id}_${c.sectionID}`);
   const selectedSet  = w.selectedClasses || new Set(allClassKeys);
 
   /* Compute the chronological list of slots (periods + breaks) for a day.
@@ -1627,10 +1730,12 @@ function TTAutoGenerateModal({ onClose, onGenerate }) {
       for (let i = 0; i < count; i++) subjectPool.push(subj);
     });
 
-    /* Pick a teacher who teaches a subject and is available that day */
+    /* Pick a real teacher available that day (undefined workdays = available). */
     const teacherFor = (subj, dayIdx, used) => {
-      /* Simple rotation: assign teachers cyclically based on subject hash */
-      const candidates = TT_TEACHERS.filter((t) => (w.teacherWorkdays[t] || []).includes(dayIdx));
+      const candidates = teacherNames.filter((t) => {
+        const wd = w.teacherWorkdays[t];
+        return wd ? wd.includes(dayIdx) : true;
+      });
       if (candidates.length === 0) return '';
       const idx = (subj.charCodeAt(0) + used) % candidates.length;
       return candidates[idx];
@@ -1681,6 +1786,7 @@ function TTAutoGenerateModal({ onClose, onGenerate }) {
             const subj = ordered[subjPtr++];
             slot.subject = subj;
             slot.teacher = teacherFor(subj, di, subjPtr);
+            slot.teacherId = teacherIdByName[slot.teacher] || 0;
           }
         });
 
@@ -1698,7 +1804,7 @@ function TTAutoGenerateModal({ onClose, onGenerate }) {
   /* ─── Render step body ─── */
   const renderStep = () => {
     if (w.step === 1) return <WizStep1 w={w} update={update} toggleDay={toggleDay} autoPeriods={autoPeriods} defP={defP}
-                                       selectedSet={selectedSet} toggleClassKey={toggleClassKey}
+                                       selectedSet={selectedSet} toggleClassKey={toggleClassKey} classes={classes}
                                        selectAllClasses={selectAllClasses} clearAllClasses={clearAllClasses} />;
     if (w.step === 2) return <WizStep2 w={w} defP={defP} addBreakTo={addBreakTo} removeBreakAt={removeBreakAt} setDayBreakMode={setDayBreakMode} />;
     if (w.step === 3) return (
@@ -1715,7 +1821,7 @@ function TTAutoGenerateModal({ onClose, onGenerate }) {
         totalWeekPeriods={totalWeekPeriods}
       />
     );
-    if (w.step === 4) return <WizStep4 w={w} update={update} toggleTeacherDay={toggleTeacherDay} wizSlotsFor={wizSlotsFor} totalWeekPeriods={totalWeekPeriods} />;
+    if (w.step === 4) return <WizStep4 w={w} update={update} toggleTeacherDay={toggleTeacherDay} wizSlotsFor={wizSlotsFor} totalWeekPeriods={totalWeekPeriods} teacherNames={teacherNames} />;
     if (w.step === 5) return <WizStep5 w={w} update={update} validation={validation} wizSlotsFor={wizSlotsFor} totalWeekPeriods={totalWeekPeriods} selectedSet={selectedSet} />;
     return null;
   };
@@ -1799,7 +1905,7 @@ function TTAutoGenerateModal({ onClose, onGenerate }) {
 }
 
 /* ─── Step 1 — Hours ─── */
-function WizStep1({ w, update, toggleDay, autoPeriods, defP, selectedSet, toggleClassKey, selectAllClasses, clearAllClasses }) {
+function WizStep1({ w, update, toggleDay, autoPeriods, defP, selectedSet, toggleClassKey, selectAllClasses, clearAllClasses, classes = [] }) {
   return (
     <>
       <div className="wiz-section">
@@ -1942,7 +2048,7 @@ function WizStep1({ w, update, toggleDay, autoPeriods, defP, selectedSet, toggle
       {/* Class selector */}
       <div className="wiz-section">
         <div className="wiz-section-label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <span><i className="fa-solid fa-school" style={{ color: '#7C3AED', marginRight: 6 }}></i> Select Classes ({selectedSet.size} / {TT_CLASSES.length})</span>
+          <span><i className="fa-solid fa-school" style={{ color: '#7C3AED', marginRight: 6 }}></i> Select Classes ({selectedSet.size} / {classes.length})</span>
           <div style={{ display: 'flex', gap: 6 }}>
             <Tooltip text="Select every class">
               <button className="wiz-pill-btn wiz-pill-btn--purple" onClick={selectAllClasses}>All</button>
@@ -1953,8 +2059,8 @@ function WizStep1({ w, update, toggleDay, autoPeriods, defP, selectedSet, toggle
           </div>
         </div>
         <div className="wiz-cls-grid">
-          {TT_CLASSES.map((c) => {
-            const key = `${c.id}_${c.section}`;
+          {classes.map((c) => {
+            const key = `${c.id}_${c.sectionID}`;
             const on = selectedSet.has(key);
             return (
               <Tooltip key={key} text={on ? `Remove ${c.name} · ${c.section} from auto-generation` : `Include ${c.name} · ${c.section} in auto-generation`}>
@@ -2292,13 +2398,13 @@ function WizStep3({ w, update, defP, wizSlotsFor, setSubjectLessons, setPeriodDu
 }
 
 /* ─── Step 4 — Teacher Workload ─── */
-function WizStep4({ w, update, toggleTeacherDay, wizSlotsFor, totalWeekPeriods }) {
+function WizStep4({ w, update, toggleTeacherDay, wizSlotsFor, totalWeekPeriods, teacherNames = [] }) {
   /* Build teacher load. assigned periods are seeded proportionally from
      subject weekly lessons so the visualisation feels meaningful. */
   const subjectLessonsTotal = Object.values(w.subjectWeeklyLessons).reduce((a, b) => a + (+b || 0), 0);
-  const assignedPerTeacher = TT_TEACHERS.length > 0 ? Math.round(subjectLessonsTotal / TT_TEACHERS.length) : 0;
+  const assignedPerTeacher = teacherNames.length > 0 ? Math.round(subjectLessonsTotal / teacherNames.length) : 0;
 
-  const teacherLoad = TT_TEACHERS.map((name) => {
+  const teacherLoad = teacherNames.map((name) => {
     const days = w.teacherWorkdays[name] !== undefined ? w.teacherWorkdays[name] : w.workDays;
     const capacity = days
       .filter((d) => w.workDays.includes(d))
