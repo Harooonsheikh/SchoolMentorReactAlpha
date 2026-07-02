@@ -7,6 +7,7 @@ import useAsync from '../hooks/useAsync';
 import { buildUrl, assertSessionPayload, registerSessionToast, apiMessage } from '../../utils/apiConfig';
 import { deliverReport } from './reportDelivery';
 import { useModuleReadOnly } from '../pages/Settings/settingsStore';
+import RouteFallback from '../shared/RouteFallback';
 
 
 
@@ -56,6 +57,9 @@ export default function Academics({ l1, setL1, l2, setL2, l3, setL3, toast }) {
   const acadModuleReadOnly = useModuleReadOnly('acad');
   const isOtherSession  = (!!changeSessionId && !!loginSessionId && String(changeSessionId) !== String(loginSessionId)) || acadModuleReadOnly;
 const [noSessionModal, setNoSessionModal] = useState(false);
+/* True until the active-session API resolves — shows a loader instead of the
+   "no session" screen so it doesn't flash before the session actually loads. */
+const [sessionLoading, setSessionLoading] = useState(true);
   const [reportPicker, setReportPicker] = useState({ open: false, name: '', format: 'pdf' });
   const [confirmCfg, setConfirmCfg] = useState(null);
   const [calEditOpen, setCalEditOpen] = useState(false);
@@ -130,6 +134,8 @@ notifySessionChange();
   } catch (error) {
     console.error("Error loading session data:", error);
     toast('Could not load academic session for this branch', 'error');
+  } finally {
+    setSessionLoading(false);
   }
 };
 
@@ -221,6 +227,14 @@ const closeReport = () => setReportPicker(r => ({ ...r, open: false }));  // ←
   }, []);
 
  const hasSession = !!sessionStorage.getItem('sessionID');
+
+/* While the active-session API is still loading, show the same module loader
+   used across the app — never the "no session" screen. This stops the false
+   "no session" flash on entry (e.g. right after login) while the session-get
+   API is in flight. */
+if (sessionLoading) {
+  return <RouteFallback label="Loading Academics…" sub="Loading the current academic session — please wait." />;
+}
 
 if (!hasSession) {
   return (
