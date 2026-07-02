@@ -228,7 +228,28 @@ export async function monthlySetup(payload) {
 
   return await response.json();
 }
+// attendanceService.js
 
+// ✅ Staff Attendance Update/Get ke liye function
+export async function staffAttendance(payload) {
+  const token = sessionStorage.getItem("token");
+
+  const response = await fetch(buildUrl("/api/staff-attendance"), {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    throw new Error(`HTTP error! status: ${response.status}`);
+  }
+
+  return await response.json();
+}
 export async function getHolidays() {
   await delay();
   return clone(mockHolidays);
@@ -303,6 +324,25 @@ export async function getClassStudentList() {
 export async function getStaffAttendance(month) {
   await delay();
   return clone(mockStaffAttendance);
+}
+
+// All employees for the branch (with class/section assignments).
+// Used for Staff Attendance rows + Student Attendance class-teacher lookup.
+export async function getEmployeesByBranch() {
+  const token = sessionStorage.getItem("token");
+  const branchID = sessionStorage.getItem("branchID");
+
+  const response = await fetch(
+    buildUrl(`/api/LaunchSetup/get-employees-by-branch/${branchID}`),
+    { method: "GET", headers: { Accept: "*/*", Authorization: `Bearer ${token}` } }
+  );
+
+  if (!response.ok) {
+    throw new Error(`HTTP error! status: ${response.status}`);
+  }
+
+  const json = await response.json();
+  return json?.data || [];
 }
 
 // Student attendance endpoint → /api/student-attendance
