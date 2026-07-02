@@ -15,7 +15,7 @@ import React from 'react';
 
    No data, no business logic — purely a UI placeholder.
    ═══════════════════════════════════════════════════════════════════ */
-export default function RouteFallback({ label = 'Loading…' }) {
+export default function RouteFallback({ label = 'Loading…', sub = 'Fetching module — this only happens the first time you open it.' }) {
   return (
     <div
       className="route-fallback"
@@ -28,7 +28,7 @@ export default function RouteFallback({ label = 'Loading…' }) {
       </div>
       <div className="route-fallback-label">{label}</div>
       <div className="route-fallback-sub">
-        Fetching module — this only happens the first time you open it.
+        {sub}
       </div>
     </div>
   );
