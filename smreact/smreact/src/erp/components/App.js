@@ -90,31 +90,31 @@ const NAV_SECTIONS = [
     items: [
       { id: 'fee',       name: 'Fee',       icon: 'fa-money-bill-wave' },
       { id: 'accounts',  name: 'Accounts',  icon: 'fa-landmark' },
-      { id: 'inventory', name: 'Inventory', icon: 'fa-boxes-stacked' },
+      // { id: 'inventory', name: 'Inventory', icon: 'fa-boxes-stacked' },
     ],
   },
   {
     label: 'Administration',
     items: [
-      { id: 'crm',       name: 'Admission CRM',  icon: 'fa-user-plus' },
+      // { id: 'crm',       name: 'Admission CRM',  icon: 'fa-user-plus' },
       { id: 'students',  name: 'Students',       icon: 'fa-user-graduate' },
       { id: 'hr',        name: 'Human Resource', icon: 'fa-users' },
-      { id: 'appraisal', name: 'Staff Appraisals', icon: 'fa-star' },
+      // { id: 'appraisal', name: 'Staff Appraisals', icon: 'fa-star' },
     ],
   },
   {
     label: 'School Mentor',
     items: [
       { id: 'sops',      name: 'School SOPs',       icon: 'fa-book-open' },
-      { id: 'trainings', name: 'Teacher Trainings', icon: 'fa-chalkboard-user' },
-      { id: 'feedback',  name: 'Feedback',          icon: 'fa-comment-dots' },
+      // { id: 'trainings', name: 'Teacher Trainings', icon: 'fa-chalkboard-user' },
+      // { id: 'feedback',  name: 'Feedback',          icon: 'fa-comment-dots' },
     ],
   },
   {
     label: 'Basics',
     items: [
       { id: 'launch',   name: 'Launch Setup',     icon: 'fa-rocket' },
-      { id: 'audit',    name: 'Audit Logs',       icon: 'fa-clipboard-list' },
+      // { id: 'audit',    name: 'Audit Logs',       icon: 'fa-clipboard-list' },
       { id: 'settings', name: 'Settings',         icon: 'fa-gear' },
       { id: 'perm',     name: 'User Permissions', icon: 'fa-shield-halved' },
     ],

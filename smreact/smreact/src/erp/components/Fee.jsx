@@ -164,6 +164,7 @@ export default function Fee({ toast = () => {} }) {
    ═══════════════════════════════════════════════════════════════════ */
 function StudentFeeSetup({ toast }) {
   const { data: grades = [], refetch: reloadGrades } = useAsync(feeService.getFeeGrades, []);
+  const { data: branchHeader = null } = useAsync(feeService.getReportHeader, [], null);
 
   const [openKey, setOpenKey]       = useState(null);  // expanded class row
   const [editKey, setEditKey]       = useState(null);  // class being edited
@@ -208,9 +209,9 @@ function StudentFeeSetup({ toast }) {
 
   const openClassReport = useCallback((c) => {
     const heads = headsMap[c.key] || [];
-    const html = buildStudentFeeReportHTML({ cls: c.cls, sec: c.sec, heads });
+    const html = buildStudentFeeReportHTML({ cls: c.cls, sec: c.sec, heads, school: branchHeader });
     setReportHtml({ title: `Fee Heads — ${c.cls} (${c.sec})`, html });
-  }, [headsMap]);
+  }, [headsMap, branchHeader]);
 
   return (
     <>
@@ -370,6 +371,7 @@ function StudentFeeSetup({ toast }) {
 function TransportFeeSetup({ toast }) {
   const { data: classes = [] } = useAsync(feeService.getFeeClasses, []);
   const { data: transportMap = {}, setData: setTransportMap } = useAsync(feeService.getTransportFee, []);
+  const { data: branchHeader = null } = useAsync(feeService.getReportHeader, [], null);
 
   const [openKey, setOpenKey]       = useState(null);
   const [editing, setEditing]       = useState(null); // { classKey, student }
@@ -381,20 +383,41 @@ function TransportFeeSetup({ toast }) {
   const saveStudent = useCallback(async ({ amount }) => {
     if (!editing) return;
     const { classKey, student } = editing;
-    const next = (transportMap[classKey] || []).map(s =>
-      s.reg === student.reg ? { ...s, transport: Math.max(0, Number(amount) || 0) } : s
-    );
-    setTransportMap(prev => ({ ...prev, [classKey]: next }));
-    await feeService.saveStudentTransport(classKey, student.reg, { transport: amount });
-    closeEdit();
-    toast(`Transport fee updated for ${student.name}`, 'success');
-  }, [editing, transportMap, setTransportMap, closeEdit, toast]);
+    const classMeta = classes.find(c => c.key === classKey) || {};
+    try {
+      const saved = await feeService.saveStudentTransport(classKey, student.reg, {
+        id: student.transportSetupId || student.transportSetup?.id || 0,
+        applicantsID: student.applicantsID || student.studentID,
+        gradeID: student.gradeID || classMeta._gradeId,
+        sectionID: student.sectionID || classMeta._sectionId,
+        amount,
+        createdDate: student.transportSetup?.createdDate,
+        createdBy: student.transportSetup?.createdBy,
+        isActive: true,
+      });
+      const next = (transportMap[classKey] || []).map(s =>
+        s.reg === student.reg
+          ? {
+              ...s,
+              transportSetupId: saved.id || s.transportSetupId,
+              transport: Math.max(0, Number(saved.amount ?? amount) || 0),
+              transportSetup: saved,
+            }
+          : s
+      );
+      setTransportMap(prev => ({ ...prev, [classKey]: next }));
+      closeEdit();
+      toast(`Transport fee updated for ${student.name}`, 'success');
+    } catch (err) {
+      toast(err.message || 'Could not save transport fee', 'error');
+    }
+  }, [editing, classes, transportMap, setTransportMap, closeEdit, toast]);
 
   const openClassReport = useCallback((c) => {
     const rows = transportMap[c.key] || [];
-    const html = buildTransportReportHTML({ cls: c.cls, sec: c.sec, rows });
+    const html = buildTransportReportHTML({ cls: c.cls, sec: c.sec, rows, school: branchHeader });
     setReportHtml({ title: `Transport Fee — ${c.cls} (${c.sec})`, html });
-  }, [transportMap]);
+  }, [transportMap, branchHeader]);
 
   return (
     <>
@@ -1150,6 +1173,7 @@ function FamilyTreeChallansList({ toast }) {
         students={bulkGen?.students || []}
         heads={bulkGen?.heads || []}
         defaultMonth={appliedMonth}
+        defaultYear={appliedYear}
         genSet={genSet}
         keyOf={keyOf}
         onClose={() => setBulkGen(null)}
@@ -1729,6 +1753,8 @@ function FeeChallansList({ toast }) {
         students={bulkGen?.students || []}
         heads={bulkGen?.heads || []}
         defaultMonth={appliedMonth}
+        defaultYear={appliedYear}
+        discountMap={discountMap}
         genSet={genSet}
         keyOf={keyOf}
         onClose={() => setBulkGen(null)}
@@ -1776,7 +1802,8 @@ function FeeChallansList({ toast }) {
    flips to "Completed", a final toast fires, the modal closes.
    ═══════════════════════════════════════════════════════════════════ */
 function BulkGenerateModal({
-  open, classMeta, students, heads, defaultMonth,
+  open, classMeta, students, heads, defaultMonth, defaultYear,
+  discountMap = {},
   genSet, keyOf, onClose, onGenerated, toast,
   familyMode = false, singleMode = false,
 }) {
@@ -1881,20 +1908,34 @@ function BulkGenerateModal({
       if (done < targets.length) {
         setTimeout(step, 55);
       } else {
-        setProgress({ done, total: targets.length, label: 'Completed' });
-        /* Commit to parent + persist via service */
+        setProgress({ done, total: targets.length, label: 'Saving challans...' });
         const regs = targets.map(s => s.reg);
+        const selectedHeads = picked.length
+          ? heads.filter(h => picked.includes(h.name))
+          : heads;
         feeService.generateChallan(classMeta.key, regs, monthIdx, {
-          heads: picked, type, issueDate, dueDate,
-        }).catch(() => {});
-        onGenerated(classMeta.key, regs);
-        setTimeout(() => {
+          classMeta,
+          students: targets,
+          heads: selectedHeads,
+          selectedHeadNames: picked,
+          discountMap,
+          type,
+          issueDate,
+          dueDate,
+          year: defaultYear,
+          familyMode,
+        }).then(() => {
+          setProgress({ done, total: targets.length, label: 'Completed' });
+          onGenerated(classMeta.key, regs);
           const msg = skipCount > 0
             ? `${targets.length} challan${targets.length === 1 ? '' : 's'} generated (${skipCount} skipped — already existed)`
             : `${targets.length} challan${targets.length === 1 ? '' : 's'} generated successfully`;
           toast(msg, 'success');
-          onClose();
-        }, 500);
+          setTimeout(onClose, 500);
+        }).catch((err) => {
+          setProgress(null);
+          toast(err.message || 'Could not generate challans', 'error');
+        });
       }
     };
     setTimeout(step, 150);
@@ -4863,6 +4904,7 @@ function FeeHistoryTab({ toast }) {
   const { data: settings = {} }    = useAsync(feeService.getFeeSettings, []);
   const { data: generatedInitial } = useAsync(feeService.getGeneratedChallans, []);
   const { data: serverReceipts = [] } = useAsync(feeService.getReceipts, []);
+  const { data: branchHeader = null } = useAsync(feeService.getReportHeader, [], null);
 
   /* Filters */
   const [fromMonth, setFromMonth] = useState(FEE_MONTHS[0]);
@@ -4968,13 +5010,13 @@ function FeeHistoryTab({ toast }) {
   };
   const downloadStudent = (mode, c, s) => {
     const months = historyFor(c, s);
-    const html = buildHistStudentReportHTML({ mode, c, s, months, period: `${appliedFrom} – ${appliedTo} ${appliedYear}` });
+    const html = buildHistStudentReportHTML({ mode, c, s, months, period: `${appliedFrom} – ${appliedTo} ${appliedYear}`, school: branchHeader });
     printWindow(`${mode === 'detail' ? 'Detailed' : 'Ledger'} History — ${s.name}`, html);
     toast(`${mode === 'detail' ? 'Detailed' : 'Ledger'} history ready — Save as PDF.`, 'success');
   };
   const downloadClass = (c) => {
     const rows = (studentsMap[c.key] || []).map(s => ({ s, months: historyFor(c, s) }));
-    const html = buildHistClassReportHTML({ mode: seg, c, rows, period: `${appliedFrom} – ${appliedTo} ${appliedYear}` });
+    const html = buildHistClassReportHTML({ mode: seg, c, rows, period: `${appliedFrom} – ${appliedTo} ${appliedYear}`, school: branchHeader });
     printWindow(`Class ${seg === 'detail' ? 'Detailed' : 'Ledger'} — ${c.cls} (${c.sec})`, html);
     toast(`Class ${seg === 'detail' ? 'detailed history' : 'ledger summary'} ready — Save as PDF.`, 'success');
   };
@@ -4982,7 +5024,7 @@ function FeeHistoryTab({ toast }) {
     const blocks = classes.map(c => ({
       c, rows: (studentsMap[c.key] || []).map(s => ({ s, months: historyFor(c, s) })),
     }));
-    const html = buildHistOverallReportHTML({ mode, blocks, period: `${appliedFrom} – ${appliedTo} ${appliedYear}` });
+    const html = buildHistOverallReportHTML({ mode, blocks, period: `${appliedFrom} – ${appliedTo} ${appliedYear}`, school: branchHeader });
     printWindow(`Overall ${mode === 'detail' ? 'Detailed History' : 'Ledger Summary'}`, html);
     toast(`Overall ${mode === 'detail' ? 'detailed history' : 'ledger summary'} ready — Save as PDF.`, 'success');
   };
@@ -5503,8 +5545,12 @@ const HIST_REPORT_CSS = `
 body{font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif;color:#0F172A;background:#fff;font-size:12px;padding:18px;}
 .hist-page{max-width:1100px;margin:0 auto 14px;padding:0;}
 .hist-head{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:2px solid #1E3A8A;padding-bottom:14px;margin-bottom:16px;}
+.hist-brand{display:flex;align-items:center;gap:12px;}
+.hist-logo{width:44px;height:44px;border:1px solid #BFDBFE;border-radius:12px;display:flex;align-items:center;justify-content:center;overflow:hidden;color:#1E3A8A;font-weight:800;background:#fff;flex-shrink:0;}
+.hist-logo img{width:100%;height:100%;object-fit:contain;}
 .hist-school{font-size:18px;font-weight:800;color:#1E3A8A;}
 .hist-title{font-size:14px;font-weight:700;color:#1E40AF;margin-top:6px;}
+.hist-addr{font-size:10px;color:#64748B;margin-top:3px;max-width:420px;}
 .hist-meta{font-size:11px;color:#64748B;text-align:right;line-height:1.55;}
 .hist-band{background:linear-gradient(135deg,#1E3A8A,#1E40AF);color:#fff;padding:9px 14px;border-radius:6px;font-weight:800;margin:12px 0 8px;font-size:13px;}
 .hist-cards{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px;}
@@ -5560,17 +5606,18 @@ function histStudentLedgerRows(months, year) {
     </tr>`).join('');
 }
 
-function buildHistStudentReportHTML({ mode, c, s, months, period }) {
+function buildHistStudentReportHTML({ mode, c, s, months, period, school = null }) {
+  const meta = feeReportSchool(school);
   const t = feeHistTotals(months);
-  const today = new Date().toLocaleDateString('en-GB');
+  const today = feeReportDate(meta);
   if (mode === 'ledger') {
     return `<style>${HIST_REPORT_CSS}</style><body><div class="hist-page">
   <div class="hist-head">
     <div>
-      <div class="hist-school">${escHtml(FEE_SCHOOL.name)}</div>
+      <div class="hist-school">${escHtml(meta.name)}</div>
       <div class="hist-title">Fee Ledger Summary — ${escHtml(s.name)}</div>
     </div>
-    <div class="hist-meta">Generated: ${today}<br/>Reg: ${escHtml(s.reg)} · ${escHtml(c.cls)} / ${escHtml(c.sec)}<br/>Period: ${escHtml(period)}</div>
+    <div class="hist-meta">Generated: ${today}<br/>By: ${escHtml(meta.generatedBy)}<br/>Reg: ${escHtml(s.reg)} · ${escHtml(c.cls)} / ${escHtml(c.sec)}<br/>Period: ${escHtml(period)}${meta.address ? `<br/>${escHtml(meta.address)}` : ''}${meta.session ? `<br/>Session: ${escHtml(meta.session)}` : ''}</div>
   </div>
   <div class="hist-cards">
     <div class="hist-card"><div class="l">Total Fee</div><div class="v">${t.fee.toLocaleString('en-PK')}</div></div>
@@ -5616,10 +5663,10 @@ function buildHistStudentReportHTML({ mode, c, s, months, period }) {
   return `<style>${HIST_REPORT_CSS}</style><body><div class="hist-page">
   <div class="hist-head">
     <div>
-      <div class="hist-school">${escHtml(FEE_SCHOOL.name)}</div>
+      <div class="hist-school">${escHtml(meta.name)}</div>
       <div class="hist-title">Detailed Fee History — ${escHtml(s.name)}</div>
     </div>
-    <div class="hist-meta">Generated: ${today}<br/>Reg: ${escHtml(s.reg)} · ${escHtml(c.cls)} / ${escHtml(c.sec)}<br/>Period: ${escHtml(period)}</div>
+    <div class="hist-meta">Generated: ${today}<br/>By: ${escHtml(meta.generatedBy)}<br/>Reg: ${escHtml(s.reg)} · ${escHtml(c.cls)} / ${escHtml(c.sec)}<br/>Period: ${escHtml(period)}${meta.address ? `<br/>${escHtml(meta.address)}` : ''}${meta.session ? `<br/>Session: ${escHtml(meta.session)}` : ''}</div>
   </div>
   <div class="hist-cards">
     <div class="hist-card"><div class="l">Total Challans</div><div class="v">${t.challans}</div></div>
@@ -5631,8 +5678,9 @@ function buildHistStudentReportHTML({ mode, c, s, months, period }) {
 </div>`;
 }
 
-function buildHistClassReportHTML({ mode, c, rows, period }) {
-  const today = new Date().toLocaleDateString('en-GB');
+function buildHistClassReportHTML({ mode, c, rows, period, school = null }) {
+  const meta = feeReportSchool(school);
+  const today = feeReportDate(meta);
   const totals = rows.reduce((a, { months }) => {
     const t = feeHistTotals(months);
     return { fee: a.fee + t.fee, recv: a.recv + t.recv, pend: a.pend + t.pend };
@@ -5666,10 +5714,10 @@ function buildHistClassReportHTML({ mode, c, rows, period }) {
   return `<style>${HIST_REPORT_CSS}</style><body><div class="hist-page">
   <div class="hist-head">
     <div>
-      <div class="hist-school">${escHtml(FEE_SCHOOL.name)}</div>
+      <div class="hist-school">${escHtml(meta.name)}</div>
       <div class="hist-title">Class ${mode === 'detail' ? 'Detailed History' : 'Ledger Summary'} — ${escHtml(c.cls)} (${escHtml(c.sec)})</div>
     </div>
-    <div class="hist-meta">Generated: ${today}<br/>Students: ${rows.length}<br/>Period: ${escHtml(period)}</div>
+    <div class="hist-meta">Generated: ${today}<br/>By: ${escHtml(meta.generatedBy)}<br/>Students: ${rows.length}<br/>Period: ${escHtml(period)}${meta.address ? `<br/>${escHtml(meta.address)}` : ''}${meta.session ? `<br/>Session: ${escHtml(meta.session)}` : ''}</div>
   </div>
   <div class="hist-band">${escHtml(c.cls)} — Section ${escHtml(c.sec)}</div>
   <table>
@@ -5693,8 +5741,9 @@ function buildHistClassReportHTML({ mode, c, rows, period }) {
 </div>`;
 }
 
-function buildHistOverallReportHTML({ mode, blocks, period }) {
-  const today = new Date().toLocaleDateString('en-GB');
+function buildHistOverallReportHTML({ mode, blocks, period, school = null }) {
+  const meta = feeReportSchool(school);
+  const today = feeReportDate(meta);
   const grand = blocks.reduce((a, b) => {
     const sub = b.rows.reduce((x, { months }) => {
       const t = feeHistTotals(months);
@@ -5703,16 +5752,16 @@ function buildHistOverallReportHTML({ mode, blocks, period }) {
     return { fee: a.fee + sub.fee, recv: a.recv + sub.recv, pend: a.pend + sub.pend };
   }, { fee: 0, recv: 0, pend: 0 });
 
-  const pages = blocks.map(({ c, rows }) => buildHistClassReportHTML({ mode, c, rows, period })).join('');
+  const pages = blocks.map(({ c, rows }) => buildHistClassReportHTML({ mode, c, rows, period, school })).join('');
 
   return `<style>${HIST_REPORT_CSS}</style><body>
   <div class="hist-page">
     <div class="hist-head">
       <div>
-        <div class="hist-school">${escHtml(FEE_SCHOOL.name)}</div>
+        <div class="hist-school">${escHtml(meta.name)}</div>
         <div class="hist-title">Overall ${mode === 'detail' ? 'Detailed Fee History' : 'Fee Ledger Summary'}</div>
       </div>
-      <div class="hist-meta">Generated: ${today}<br/>Classes: ${blocks.length}<br/>Period: ${escHtml(period)}</div>
+      <div class="hist-meta">Generated: ${today}<br/>By: ${escHtml(meta.generatedBy)}<br/>Classes: ${blocks.length}<br/>Period: ${escHtml(period)}${meta.address ? `<br/>${escHtml(meta.address)}` : ''}${meta.session ? `<br/>Session: ${escHtml(meta.session)}` : ''}</div>
     </div>
     <div class="hist-band">Grand Totals</div>
     <div class="hist-cards">
@@ -5908,10 +5957,12 @@ function repPayModesFromReceipts(receiptsList) {
 /* React context that lets every report panel read the page-level
    Colorful / Colorless style choice without prop-drilling. */
 const FeeReportStyleContext = React.createContext('color');
+const FeeReportBranchContext = React.createContext(null);
 
 function FeeReportsTab({ toast }) {
   const [current, setCurrent] = useState('defaulter');
   const [style, setStyle]     = useState('color'); // 'color' | 'bw'
+  const { data: branchHeader = null } = useAsync(feeService.getReportHeader, [], null);
 
   const onStyleKey = (e, value) => {
     if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); setStyle(value); }
@@ -5921,67 +5972,65 @@ function FeeReportsTab({ toast }) {
 
   return (
     <FeeReportStyleContext.Provider value={style}>
-      <div className="fee-rep-chips">
-        {FEE_REPORT_CATS.map(r => (
-          <Tooltip key={r.id} text={r.desc}>
+      <FeeReportBranchContext.Provider value={branchHeader}>
+        <div className="fee-rep-chips">
+          {FEE_REPORT_CATS.map(r => (
+            <Tooltip key={r.id} text={r.desc}>
+              <button
+                type="button"
+                className={`fee-rep-chip${current === r.id ? ' active' : ''}`}
+                onClick={() => setCurrent(r.id)}
+              >
+                <div className="fee-rep-chip-ic"><i className={`fa-solid ${r.ic}`}></i></div>
+                <div>
+                  <div className="fee-rep-chip-name">{r.name}</div>
+                </div>
+              </button>
+            </Tooltip>
+          ))}
+        </div>
+
+        <div
+          className="fee-rep-style-row"
+          role="radiogroup"
+          aria-label="Report Style"
+        >
+          <span className="fee-rep-style-lbl">Report Style</span>
+          <div className="fee-rep-style-seg">
             <button
               type="button"
-              className={`fee-rep-chip${current === r.id ? ' active' : ''}`}
-              onClick={() => setCurrent(r.id)}
+              className={`fee-rep-style-btn${style === 'color' ? ' on' : ''}`}
+              onClick={() => setStyle('color')}
+              role="radio"
+              aria-checked={style === 'color'}
+              tabIndex={style === 'color' ? 0 : -1}
+              onKeyDown={(e) => onStyleKey(e, 'color')}
             >
-              <div className="fee-rep-chip-ic"><i className={`fa-solid ${r.ic}`}></i></div>
-              <div>
-                <div className="fee-rep-chip-name">{r.name}</div>
-                <div className="fee-rep-chip-desc">{r.desc}</div>
-              </div>
+              <i className="fa-solid fa-palette" aria-hidden="true"></i> Colorful
             </button>
-          </Tooltip>
-        ))}
-      </div>
-
-      {/* Page-level Colorful / Colorless toggle — applies to every report
-          panel below via FeeReportStyleContext. */}
-      <div
-        className="fee-rep-style-row"
-        role="radiogroup"
-        aria-label="Report Style"
-      >
-        <span className="fee-rep-style-lbl">Report Style</span>
-        <div className="fee-rep-style-seg">
-          <button
-            type="button"
-            className={`fee-rep-style-btn${style === 'color' ? ' on' : ''}`}
-            onClick={() => setStyle('color')}
-            role="radio"
-            aria-checked={style === 'color'}
-            tabIndex={style === 'color' ? 0 : -1}
-            onKeyDown={(e) => onStyleKey(e, 'color')}
-          >
-            <i className="fa-solid fa-palette" aria-hidden="true"></i> Colorful
-          </button>
-          <button
-            type="button"
-            className={`fee-rep-style-btn${style === 'bw' ? ' on' : ''}`}
-            onClick={() => setStyle('bw')}
-            role="radio"
-            aria-checked={style === 'bw'}
-            tabIndex={style === 'bw' ? 0 : -1}
-            onKeyDown={(e) => onStyleKey(e, 'bw')}
-          >
-            <i className="fa-solid fa-circle-half-stroke" aria-hidden="true"></i> Colorless
-          </button>
+            <button
+              type="button"
+              className={`fee-rep-style-btn${style === 'bw' ? ' on' : ''}`}
+              onClick={() => setStyle('bw')}
+              role="radio"
+              aria-checked={style === 'bw'}
+              tabIndex={style === 'bw' ? 0 : -1}
+              onKeyDown={(e) => onStyleKey(e, 'bw')}
+            >
+              <i className="fa-solid fa-circle-half-stroke" aria-hidden="true"></i> Colorless
+            </button>
+          </div>
         </div>
-      </div>
 
-      {current === 'defaulter'  && <ReportPanelDefaulter  toast={toast} />}
-      {current === 'collection' && <ReportPanelCollection toast={toast} />}
-      {current === 'headwise'   && <ReportPanelHeadwise   toast={toast} />}
-      {current === 'aging'      && <ReportPanelAging      toast={toast} />}
-      {current === 'summary'    && <ReportPanelSummary    toast={toast} />}
+        {current === 'defaulter' && <ReportPanelDefaulter toast={toast} />}
+        {current === 'collection' && <ReportPanelCollection toast={toast} />}
+        {current === 'headwise'   && <ReportPanelHeadwise toast={toast} />}
+        {current === 'aging'      && <ReportPanelAging toast={toast} />}
+        {current === 'summary'    && <ReportPanelSummary toast={toast} />}
+      </FeeReportBranchContext.Provider>
     </FeeReportStyleContext.Provider>
   );
 }
-
 function useReportData() {
   const { data: classes = [] }       = useAsync(feeService.getFeeClasses, []);
   const { data: studentsMap = {} }   = useAsync(feeService.getTransportFee, []);
@@ -6073,13 +6122,14 @@ function RepActions({ onPreview, onPdf }) {
 function ReportPanelDefaulter({ toast }) {
   const { classes, studentsMap, allStudents, totals } = useReportData();
   const repStyle              = useContext(FeeReportStyleContext);
+  const school                = useContext(FeeReportBranchContext);
   const [seg, setSeg]         = useState('all');
   const [openKey, setOpenKey] = useState(null);
   const [month, setMonth]     = useState(FEE_MONTHS[4]);
   const [year, setYear]       = useState('2026');
 
   const downloadReport = (mode) => {
-    const html = buildRepDefaulterHTML({ classes, studentsMap, allStudents, totals, month, year, scope: seg, isBW: repStyle === 'bw' });
+    const html = buildRepDefaulterHTML({ classes, studentsMap, allStudents, totals, month, year, scope: seg, isBW: repStyle === 'bw', school });
     openPrintReport(html, `Defaulter List — ${seg === 'month' ? `${month} ${year}` : 'All'}`, toast, mode);
   };
 
@@ -6207,6 +6257,7 @@ function ReportPanelDefaulter({ toast }) {
 function ReportPanelCollection({ toast }) {
   const { classes, studentsMap, allStudents, totals, paymentsFor } = useReportData();
   const repStyle        = useContext(FeeReportStyleContext);
+  const school          = useContext(FeeReportBranchContext);
   const [seg, setSeg]   = useState('daily');
   const [openKey, setOpenKey] = useState(null);
   const today = new Date().toISOString().slice(0, 10);
@@ -6216,7 +6267,7 @@ function ReportPanelCollection({ toast }) {
   const [to, setTo]         = useState(today);
 
   const downloadReport = (mode) => {
-    const html = buildRepCollectionHTML({ classes, studentsMap, allStudents, paymentsFor, seg, date, month, from, to, isBW: repStyle === 'bw' });
+    const html = buildRepCollectionHTML({ classes, studentsMap, allStudents, paymentsFor, seg, date, month, from, to, isBW: repStyle === 'bw', school });
     openPrintReport(html, `Collection Report — ${seg === 'daily' ? date : seg === 'month' ? month : `${from} – ${to}`}`, toast, mode);
   };
 
@@ -6425,6 +6476,7 @@ function ReportPanelCollection({ toast }) {
 /* ════════════ 3. HEAD-WISE COLLECTION ════════════ */
 function ReportPanelHeadwise({ toast }) {
   const repStyle = useContext(FeeReportStyleContext);
+  const school = useContext(FeeReportBranchContext);
   const { classes, studentsMap, headsMap, allStudents } = useReportData();
   const [seg, setSeg] = useState('student');
   const today = new Date().toISOString().slice(0, 10);
@@ -6470,7 +6522,7 @@ function ReportPanelHeadwise({ toast }) {
       setPreview({ ...result, head });
       return;
     }
-    const html = buildRepHeadwiseHTML({ ...result, head, isBW: repStyle === 'bw' });
+    const html = buildRepHeadwiseHTML({ ...result, head, isBW: repStyle === 'bw', school });
     openPrintReport(html, `Head-Wise Collection — ${head}`, toast, 'pdf');
   };
 
@@ -6631,7 +6683,7 @@ function ReportPanelHeadwise({ toast }) {
         cfg={preview}
         onClose={() => setPreview(null)}
         onDownload={() => {
-          const html = buildRepHeadwiseHTML({ ...preview, isBW: repStyle === 'bw' });
+          const html = buildRepHeadwiseHTML({ ...preview, isBW: repStyle === 'bw', school });
           setPreview(null);
           openPrintReport(html, `Head-Wise Collection — ${preview.head}`, toast, 'pdf');
         }}
@@ -6829,6 +6881,7 @@ function buildHeadwiseRows(c, s, m, headFilter) {
 /* ════════════ 4. AGING / OUTSTANDING ════════════ */
 function ReportPanelAging({ toast }) {
   const repStyle = useContext(FeeReportStyleContext);
+  const school = useContext(FeeReportBranchContext);
   const { classes, allStudents } = useReportData();
   const list = useMemo(() => allStudents
     .filter(x => x.m.remaining > 0)
@@ -6836,7 +6889,7 @@ function ReportPanelAging({ toast }) {
   const tot = list.reduce((o, x) => ({ cur: o.cur + x.a.cur, d30: o.d30 + x.a.d30, d60: o.d60 + x.a.d60, d90: o.d90 + x.a.d90 }), { cur: 0, d30: 0, d60: 0, d90: 0 });
 
   const downloadReport = (mode) => {
-    const html = buildRepAgingHTML({ list, tot, asOf: new Date().toISOString().slice(0, 10), isBW: repStyle === 'bw' });
+    const html = buildRepAgingHTML({ list, tot, asOf: new Date().toISOString().slice(0, 10), isBW: repStyle === 'bw', school });
     openPrintReport(html, 'Aging / Outstanding Analysis', toast, mode);
   };
 
@@ -6965,6 +7018,7 @@ function ReportPanelAging({ toast }) {
 /* ════════════ 5. COLLECTION vs EXPECTED ════════════ */
 function ReportPanelSummary({ toast }) {
   const repStyle = useContext(FeeReportStyleContext);
+  const school = useContext(FeeReportBranchContext);
   const { classes, studentsMap, allStudents, totals, serverReceipts, paymentsFor } = useReportData();
   const real  = totals.exp ? Math.round(totals.recv / totals.exp * 100) : 0;
   const modes = useMemo(() => repPayModesFromReceipts(serverReceipts), [serverReceipts]);
@@ -6977,7 +7031,7 @@ function ReportPanelSummary({ toast }) {
   const maxE = Math.max(...sectionsData.map(s => s.e), 1);
 
   const downloadReport = (mode) => {
-    const html = buildRepSummaryHTML({ totals, real, modes, modeTot, sectionsData, isBW: repStyle === 'bw' });
+    const html = buildRepSummaryHTML({ totals, real, modes, modeTot, sectionsData, isBW: repStyle === 'bw', school });
     openPrintReport(html, 'Collection vs Expected', toast, mode);
   };
   const downloadByMode = (mode, fmt) => {
@@ -6989,7 +7043,7 @@ function ReportPanelSummary({ toast }) {
         }
       });
     });
-    const html = buildRepPayModeHTML({ method: mode, rows, isBW: repStyle === 'bw' });
+    const html = buildRepPayModeHTML({ method: mode, rows, isBW: repStyle === 'bw', school });
     openPrintReport(html, `${mode} Collections`, toast, fmt);
   };
 
@@ -7130,8 +7184,10 @@ body{font-family:'Plus Jakarta Sans',Arial,sans-serif;color:#111;font-size:10.5p
 .rep-page{width:210mm;min-height:297mm;margin:0 auto;padding:14mm;background:#fff}
 .rep-head{display:flex;align-items:center;gap:14px;border-bottom:2px solid #1E3A8A;padding-bottom:10px;margin-bottom:10px}
 .rep-logo{width:42px;height:42px;border:2px solid #1E3A8A;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:#1E3A8A;font-weight:800}
+.rep-logo img{width:100%;height:100%;object-fit:contain;border-radius:50%;background:#fff}
 .rep-name{font-size:18px;font-weight:800;color:#1E3A8A;line-height:1.1}
 .rep-title{font-size:12px;font-weight:600;color:#444;margin-top:3px}
+.rep-addr,.rep-session{font-size:9.5px;color:#64748B;margin-top:2px;max-width:420px}
 .rep-filters{display:flex;flex-wrap:wrap;gap:6px 22px;font-size:10.5px;color:#333;margin-bottom:12px;background:#F1F5FB;padding:9px 13px;border-radius:6px}
 .rep-secttl{font-size:12px;font-weight:800;color:#1E3A8A;margin:14px 0 6px;padding-bottom:4px;border-bottom:1px solid #cdd7ea}
 .rep-tbl{width:100%;border-collapse:collapse;font-size:10px;margin-bottom:4px}
@@ -7167,21 +7223,52 @@ body{font-family:'Plus Jakarta Sans',Arial,sans-serif;color:#111;font-size:10.5p
 .fee-rep-bw .neg, .fee-rep-bw .pos, .fee-rep-bw .amb{color:#0F172A !important;}
 `;
 
-function repWrap(title, filters, body, isBW = false) {
-  const today = new Date().toLocaleDateString('en-GB');
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escHtml(FEE_SCHOOL.name)} — ${escHtml(title)}</title>
+function feeReportSchool(school) {
+  const name = school?.branchName || school?.name || FEE_SCHOOL.name;
+  const words = String(name).split(/\s+/).filter(Boolean);
+  return {
+    name,
+    monogram: school?.monogram || words.map(w => w[0]).slice(0, 2).join('').toUpperCase() || FEE_SCHOOL.monogram,
+    address: school?.address || '',
+    logo: school?.branchLogo || school?.logo || '',
+    session: school?.academicSession || school?.session || '',
+    generatedDate: school?.generatedDate || null,
+    generatedBy: school?.generatedBy || sessionStorage.getItem('displayName') || sessionStorage.getItem('userName') || 'Fee',
+  };
+}
+
+function feeReportDate(school) {
+  const d = school?.generatedDate ? new Date(school.generatedDate) : new Date();
+  return Number.isNaN(d.getTime()) ? new Date().toLocaleDateString('en-GB') : d.toLocaleDateString('en-GB');
+}
+
+function feeReportLogoHtml(school) {
+  return school.logo
+    ? `<img src="${escHtml(school.logo)}" alt="${escHtml(school.name)} logo" />`
+    : escHtml(school.monogram);
+}
+
+function repWrap(title, filters, body, isBW = false, school = null) {
+  const meta = feeReportSchool(school);
+  const today = feeReportDate(meta);
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escHtml(meta.name)} — ${escHtml(title)}</title>
 <style>${REP_A4_CSS}</style></head><body${isBW ? ' class="fee-rep-bw"' : ''}><div class="rep-page">
   <div class="rep-head">
-    <div class="rep-logo">${FEE_SCHOOL.monogram}</div>
-    <div><div class="rep-name">${escHtml(FEE_SCHOOL.name)}</div><div class="rep-title">${escHtml(title)}${isBW ? ' · <b>Colorless Print</b>' : ''}</div></div>
+    <div class="rep-logo">${feeReportLogoHtml(meta)}</div>
+    <div>
+      <div class="rep-name">${escHtml(meta.name)}</div>
+      <div class="rep-title">${escHtml(title)}${isBW ? ' · <b>Colorless Print</b>' : ''}</div>
+      ${meta.address ? `<div class="rep-addr">${escHtml(meta.address)}</div>` : ''}
+      ${meta.session ? `<div class="rep-session">Academic Session: ${escHtml(meta.session)}</div>` : ''}
+    </div>
   </div>
   <div class="rep-filters">${filters}</div>
   ${body}
-  <div class="rep-foot">Computer generated report — ${escHtml(FEE_SCHOOL.name)} · ${escHtml(title)} · ${escHtml(today)}</div>
+  <div class="rep-foot">Computer generated report — ${escHtml(meta.name)} · ${escHtml(title)} · ${escHtml(today)} · By: ${escHtml(meta.generatedBy)}</div>
 </div></body></html>`;
 }
 
-function buildRepDefaulterHTML({ classes, studentsMap, allStudents, totals, month, year, scope = 'all', isBW = false }) {
+function buildRepDefaulterHTML({ classes, studentsMap, allStudents, totals, month, year, scope = 'all', isBW = false, school = null }) {
   const blocks = classes.map(c => {
     const defs = (studentsMap[c.key] || []).map(s => {
       const m = allStudents.find(x => x.c.key === c.key && x.s.reg === s.reg)?.m;
@@ -7208,10 +7295,11 @@ function buildRepDefaulterHTML({ classes, studentsMap, allStudents, totals, mont
     </div>
     ${blocks || '<div style="text-align:center;color:#94A3B8;padding:20px">No defaulters — congratulations!</div>'}`,
   isBW,
+  school,
   );
 }
 
-function buildRepCollectionHTML({ classes, studentsMap, allStudents, paymentsFor, seg, date, month, from, to, isBW = false }) {
+function buildRepCollectionHTML({ classes, studentsMap, allStudents, paymentsFor, seg, date, month, from, to, isBW = false, school = null }) {
   /* Paid Students report — dedicated layout with Father/Contact + status */
   if (seg === 'paid') {
     const blocks = classes.map(c => {
@@ -7253,6 +7341,7 @@ function buildRepCollectionHTML({ classes, studentsMap, allStudents, paymentsFor
       </div>
       ${blocks || '<div style="text-align:center;color:#94A3B8;padding:20px">No fully-paid students in this range.</div>'}`,
     isBW,
+    school,
   );
   }
 
@@ -7290,10 +7379,11 @@ function buildRepCollectionHTML({ classes, studentsMap, allStudents, paymentsFor
     `<span><b>Mode:</b> ${seg.toUpperCase()}</span><span><b>Records:</b> ${allStudents.filter(x => x.m.paid > 0).length}</span><span><b>Grand Total:</b> Rs. ${grand.toLocaleString('en-PK')}</span>`,
     blocks || '<div style="text-align:center;color:#94A3B8;padding:20px">No collections in this range.</div>',
   isBW,
+  school,
   );
 }
 
-function buildRepHeadwiseHTML({ kind, c, s, rows, from, to, head, isBW = false }) {
+function buildRepHeadwiseHTML({ kind, c, s, rows, from, to, head, isBW = false, school = null }) {
   if (kind === 'student') {
     const sum = rows.reduce((a, r) => ({ total: a.total + r.total, disc: a.disc + r.disc, recv: a.recv + r.recv, pend: a.pend + r.pend }), { total: 0, disc: 0, recv: 0, pend: 0 });
     return repWrap(`Head-Wise Collection — ${s.name}`,
@@ -7301,7 +7391,7 @@ function buildRepHeadwiseHTML({ kind, c, s, rows, from, to, head, isBW = false }
       `<table class="rep-tbl"><thead><tr><th>Sn.</th><th>Account Type</th><th>Fee Head</th><th class="r">Standard</th><th class="r">Discount</th><th class="r">Received</th><th class="r">Pending</th></tr></thead>
         <tbody>${rows.map((r, j) => `<tr><td>${j + 1}</td><td>${escHtml(r.head)}</td><td><b>${escHtml(r.sub)}</b></td><td class="r">${r.total.toLocaleString('en-PK')}</td><td class="r">${r.disc.toLocaleString('en-PK')}</td><td class="r pos">${r.recv.toLocaleString('en-PK')}</td><td class="r ${r.pend > 0 ? 'neg' : ''}">${r.pend.toLocaleString('en-PK')}</td></tr>`).join('')}</tbody>
         <tfoot><tr class="rep-tot"><td colspan="3">Total</td><td class="r">${sum.total.toLocaleString('en-PK')}</td><td class="r">${sum.disc.toLocaleString('en-PK')}</td><td class="r">${sum.recv.toLocaleString('en-PK')}</td><td class="r">${sum.pend.toLocaleString('en-PK')}</td></tr></tfoot>
-      </table>`, isBW);
+      </table>`, isBW, school);
   }
   /* class */
   const trs = (rows || []).map(({ s, heads }, j) => {
@@ -7310,10 +7400,10 @@ function buildRepHeadwiseHTML({ kind, c, s, rows, from, to, head, isBW = false }
   }).join('');
   return repWrap(`Class Head-Wise Collection — ${c.cls} (${c.sec})`,
     `<span><b>Class:</b> ${escHtml(c.cls)} — ${escHtml(c.sec)}</span><span><b>Head:</b> ${escHtml(head)}</span><span><b>Range:</b> ${escHtml(from)} → ${escHtml(to)}</span>`,
-    `<table class="rep-tbl"><thead><tr><th>Sn.</th><th>Student</th><th>Reg No</th><th class="r">Standard</th><th class="r">Discount</th><th class="r">Received</th><th class="r">Pending</th></tr></thead><tbody>${trs}</tbody></table>`, isBW);
+    `<table class="rep-tbl"><thead><tr><th>Sn.</th><th>Student</th><th>Reg No</th><th class="r">Standard</th><th class="r">Discount</th><th class="r">Received</th><th class="r">Pending</th></tr></thead><tbody>${trs}</tbody></table>`, isBW, school);
 }
 
-function buildRepAgingHTML({ list, tot, asOf, isBW = false }) {
+function buildRepAgingHTML({ list, tot, asOf, isBW = false, school = null }) {
   const trs = list.map((x, j) => `<tr><td>${j + 1}</td><td><b>${escHtml(x.s.name)}</b><br><small>s/o ${escHtml(x.s.father || '—')}</small></td><td>${escHtml(x.c.cls)}/${escHtml(x.c.sec)}</td><td class="r">${x.a.cur.toLocaleString('en-PK')}</td><td class="r amb">${x.a.d30.toLocaleString('en-PK')}</td><td class="r amb">${x.a.d60.toLocaleString('en-PK')}</td><td class="r neg">${x.a.d90.toLocaleString('en-PK')}</td><td class="r"><b>${x.m.remaining.toLocaleString('en-PK')}</b></td></tr>`).join('');
   return repWrap('Aging / Outstanding Analysis',
     `<span><b>As of:</b> ${escHtml(asOf)}</span><span><b>Students with dues:</b> ${list.length}</span><span><b>Grand Outstanding:</b> Rs. ${(tot.cur + tot.d30 + tot.d60 + tot.d90).toLocaleString('en-PK')}</span>`,
@@ -7326,10 +7416,10 @@ function buildRepAgingHTML({ list, tot, asOf, isBW = false }) {
     <table class="rep-tbl"><thead><tr><th>Sn.</th><th>Student</th><th>Class/Sec</th><th class="r">Current</th><th class="r">1–30</th><th class="r">31–60</th><th class="r">61–90+</th><th class="r">Total Due</th></tr></thead>
       <tbody>${trs}</tbody>
       <tfoot><tr class="rep-grandtot"><td colspan="3" style="text-align:right">GRAND TOTAL</td><td class="r">${tot.cur.toLocaleString('en-PK')}</td><td class="r">${tot.d30.toLocaleString('en-PK')}</td><td class="r">${tot.d60.toLocaleString('en-PK')}</td><td class="r">${tot.d90.toLocaleString('en-PK')}</td><td class="r">${(tot.cur + tot.d30 + tot.d60 + tot.d90).toLocaleString('en-PK')}</td></tr></tfoot>
-    </table>`, isBW);
+    </table>`, isBW, school);
 }
 
-function buildRepSummaryHTML({ totals, real, modes, modeTot, sectionsData, isBW = false }) {
+function buildRepSummaryHTML({ totals, real, modes, modeTot, sectionsData, isBW = false, school = null }) {
   const sectionRows = sectionsData.map((c, j) => {
     const pend = Math.max(c.e - c.r, 0);
     const pct  = c.e > 0 ? Math.round(c.r / c.e * 100) : 0;
@@ -7350,10 +7440,10 @@ function buildRepSummaryHTML({ totals, real, modes, modeTot, sectionsData, isBW 
     <div class="rep-secttl">Expected vs Collected by Section</div>
     <table class="rep-tbl"><thead><tr><th>Sn.</th><th>Section</th><th class="r">Expected</th><th class="r">Collected</th><th class="r">Pending</th><th class="r">% Realised</th></tr></thead><tbody>${sectionRows}</tbody></table>
     <div class="rep-secttl">Collection by Payment Mode</div>
-    <table class="rep-tbl"><thead><tr><th>Sn.</th><th>Method</th><th class="r">Amount</th><th class="r">% of Receipts</th></tr></thead><tbody>${modeRows}</tbody></table>`, isBW);
+    <table class="rep-tbl"><thead><tr><th>Sn.</th><th>Method</th><th class="r">Amount</th><th class="r">% of Receipts</th></tr></thead><tbody>${modeRows}</tbody></table>`, isBW, school);
 }
 
-function buildRepPayModeHTML({ method, rows, isBW = false }) {
+function buildRepPayModeHTML({ method, rows, isBW = false, school = null }) {
   const trs = rows.map((r, j) => `<tr><td>${j + 1}</td><td><b>${escHtml(r.name)}</b><br><small>s/o ${escHtml(r.father || '—')}</small></td><td>${escHtml(r.cls)}</td><td>${escHtml(r.reg)}</td><td>${escHtml(r.date)}${r.time ? `<br><small>${escHtml(fmtTime12(r.time))}</small>` : ''}</td><td>${escHtml(r.ref)}</td><td class="r pos">${(+r.amt || 0).toLocaleString('en-PK')}</td></tr>`).join('');
   const total = rows.reduce((a, r) => a + (+r.amt || 0), 0);
   return repWrap(`${method} Collections`,
@@ -7361,13 +7451,16 @@ function buildRepPayModeHTML({ method, rows, isBW = false }) {
     `<table class="rep-tbl"><thead><tr><th>Sn.</th><th>Student</th><th>Class/Sec</th><th>Reg No</th><th>Date &amp; Time</th><th>Reference</th><th class="r">Amount</th></tr></thead>
       <tbody>${trs || `<tr><td colspan="7" style="text-align:center;color:#94A3B8">No payments via ${escHtml(method)}.</td></tr>`}</tbody>
       <tfoot><tr class="rep-tot"><td colspan="6">Total</td><td class="r">${total.toLocaleString('en-PK')}</td></tr></tfoot>
-    </table>`, isBW);
+    </table>`, isBW, school);
 }
 
-function buildTransportReportHTML({ cls, sec, rows, isBW = false }) {
+function buildTransportReportHTML({ cls, sec, rows, isBW = false, school = null }) {
+  const meta = feeReportSchool(school);
   const charged   = rows.filter(r => +r.transport > 0);
   const subtotal  = rows.reduce((s, r) => s + (+r.transport || 0), 0);
-  const today = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
+  const today = meta.generatedDate
+    ? feeReportDate(meta)
+    : new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
   const trs = rows.map((s, i) => `
     <tr>
       <td style="padding:8px 10px;border-bottom:1px solid #E5E7EB">${i + 1}</td>
@@ -7376,13 +7469,17 @@ function buildTransportReportHTML({ cls, sec, rows, isBW = false }) {
       <td style="padding:8px 10px;border-bottom:1px solid #E5E7EB">${escHtml(s.father)}</td>
       <td style="padding:8px 10px;border-bottom:1px solid #E5E7EB;text-align:right;font-variant-numeric:tabular-nums">${+s.transport > 0 ? `Rs. ${(+s.transport).toLocaleString('en-PK')}` : '<span style="color:#94A3B8">—</span>'}</td>
     </tr>`).join('');
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escHtml(`Transport Fee — ${cls} (${sec})`)}</title>
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escHtml(`${meta.name} — Transport Fee — ${cls} (${sec})`)}</title>
 <style>
   body { margin:0; font-family:'Segoe UI',Arial,sans-serif; color:#0F172A; background:#fff; font-size:13px; }
   .page { width:210mm; margin:0 auto; padding:18mm 14mm; box-sizing:border-box; }
   .header { display:flex; justify-content:space-between; align-items:flex-end; border-bottom:2px solid #1E3A8A; padding-bottom:14px; margin-bottom:18px; }
+  .brand { display:flex; align-items:center; gap:12px; }
+  .logo { width:44px; height:44px; border:1px solid #BFDBFE; border-radius:12px; display:flex; align-items:center; justify-content:center; overflow:hidden; color:#1E3A8A; font-weight:800; background:#fff; }
+  .logo img { width:100%; height:100%; object-fit:contain; }
   .school { font-size:18px; font-weight:800; color:#1E3A8A; letter-spacing:-.01em; }
   .title  { font-size:14px; font-weight:700; color:#1E40AF; margin-top:6px; }
+  .addr { font-size:10px; color:#64748B; margin-top:3px; max-width:360px; }
   .meta   { font-size:11px; color:#64748B; text-align:right; line-height:1.55; }
   table { width:100%; border-collapse:collapse; margin-top:8px; }
   thead th { background:#EFF6FF; color:#1E3A5F; font-weight:800; text-align:left; padding:10px; border-bottom:2px solid #BFDBFE; font-size:11px; text-transform:uppercase; letter-spacing:.4px; }
@@ -7393,11 +7490,16 @@ function buildTransportReportHTML({ cls, sec, rows, isBW = false }) {
 </style></head><body>
 <div class="page">
   <div class="header">
-    <div>
-      <div class="school">The Oxford System, Lahore Campus</div>
-      <div class="title">Transport Fee — ${escHtml(cls)} (${escHtml(sec)})</div>
+    <div class="brand">
+      <div class="logo">${feeReportLogoHtml(meta)}</div>
+      <div>
+        <div class="school">${escHtml(meta.name)}</div>
+        <div class="title">Transport Fee — ${escHtml(cls)} (${escHtml(sec)})</div>
+        ${meta.address ? `<div class="addr">${escHtml(meta.address)}</div>` : ''}
+        ${meta.session ? `<div class="addr">Academic Session: ${escHtml(meta.session)}</div>` : ''}
+      </div>
     </div>
-    <div class="meta">Generated: ${escHtml(today)}<br/>${charged.length} of ${rows.length} student${rows.length === 1 ? '' : 's'} using transport</div>
+    <div class="meta">Generated: ${escHtml(today)}<br/>By: ${escHtml(meta.generatedBy)}<br/>${charged.length} of ${rows.length} student${rows.length === 1 ? '' : 's'} using transport</div>
   </div>
   <table>
     <thead>
@@ -7903,7 +8005,13 @@ function feeThermalFamilyChallanHTML({ family, settings, period, issueISO, dueIS
    feeService.saveFeeSettings().
    ═══════════════════════════════════════════════════════════════════ */
 function FeeChallanSettings({ toast }) {
-  const { data: serverSettings, loading } = useAsync(feeService.getFeeSettings, []);
+  const {
+    data: serverSettings,
+    loading,
+    error,
+    refetch,
+    setData: setServerSettings,
+  } = useAsync(feeService.getFeeSettings, []);
   const [local, setLocal] = useState(null);
   const [saving, setSaving] = useState(false);
 
@@ -7931,14 +8039,18 @@ function FeeChallanSettings({ toast }) {
     }
     setSaving(true);
     try {
-      await feeService.saveFeeSettings(value);
+      const saved = await feeService.saveFeeSettings(value);
+      setServerSettings(saved);
+      setLocal(saved);
       toast('Fee challan settings saved', 'success');
+    } catch (err) {
+      toast(err.message || 'Could not save fee challan settings', 'error');
     } finally {
       setSaving(false);
     }
   };
 
-  if (loading || !local) {
+  if (loading || (!local && !error)) {
     return (
       <>
         <div className="fee-info">
@@ -7946,6 +8058,16 @@ function FeeChallanSettings({ toast }) {
           <span>Loading challan settings…</span>
         </div>
       </>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="fee-info" style={{ borderColor: '#FCA5A5', color: '#991B1B' }}>
+        <i className="fa-solid fa-triangle-exclamation"></i>
+        <span>{error.message || 'Could not load challan settings'}</span>
+        <button className="fee-btn fee-btn-sm" onClick={refetch} type="button">Retry</button>
+      </div>
     );
   }
 
@@ -8534,23 +8656,30 @@ function FeeReportPreview({ open, title, html, onClose }) {
   );
 }
 
-function buildStudentFeeReportHTML({ cls, sec, heads }) {
+function buildStudentFeeReportHTML({ cls, sec, heads, school = null }) {
+  const meta = feeReportSchool(school);
   const total = heads.reduce((s, h) => s + (+h.amt || 0), 0);
-  const today = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
+  const today = meta.generatedDate
+    ? feeReportDate(meta)
+    : new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
   const rows = heads.map((h, i) => `
     <tr>
       <td style="padding:8px 10px;border-bottom:1px solid #E5E7EB">${i + 1}</td>
       <td style="padding:8px 10px;border-bottom:1px solid #E5E7EB"><b>${escHtml(h.name)}</b></td>
       <td style="padding:8px 10px;border-bottom:1px solid #E5E7EB;text-align:right;font-variant-numeric:tabular-nums">Rs. ${(+h.amt || 0).toLocaleString('en-PK')}</td>
     </tr>`).join('');
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escHtml(`Fee Heads — ${cls} (${sec})`)}</title>
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escHtml(`${meta.name} — Fee Heads — ${cls} (${sec})`)}</title>
 <style>
   body { margin:0; font-family:'Segoe UI',Arial,sans-serif; color:#0F172A; background:#fff; font-size:13px; }
   .page { width:210mm; margin:0 auto; padding:18mm 14mm; box-sizing:border-box; }
   .header { display:flex; justify-content:space-between; align-items:flex-end; border-bottom:2px solid #1E3A8A; padding-bottom:14px; margin-bottom:18px; }
+  .brand { display:flex; align-items:center; gap:12px; }
+  .logo { width:44px; height:44px; border:1px solid #BFDBFE; border-radius:12px; display:flex; align-items:center; justify-content:center; overflow:hidden; color:#1E3A8A; font-weight:800; background:#fff; }
+  .logo img { width:100%; height:100%; object-fit:contain; }
   .school { font-size:18px; font-weight:800; color:#1E3A8A; letter-spacing:-.01em; }
   .title  { font-size:14px; font-weight:700; color:#1E40AF; margin-top:6px; }
-  .meta { font-size:11px; color:#64748B; text-align:right; }
+  .addr { font-size:10px; color:#64748B; margin-top:3px; max-width:360px; }
+  .meta { font-size:11px; color:#64748B; text-align:right; line-height:1.55; }
   table { width:100%; border-collapse:collapse; margin-top:8px; }
   thead th { background:#EFF6FF; color:#1E3A5F; font-weight:800; text-align:left; padding:10px; border-bottom:2px solid #BFDBFE; font-size:11.5px; text-transform:uppercase; letter-spacing:.4px; }
   thead th.right { text-align:right; }
@@ -8560,11 +8689,16 @@ function buildStudentFeeReportHTML({ cls, sec, heads }) {
 </style></head><body>
 <div class="page">
   <div class="header">
-    <div>
-      <div class="school">The Oxford System, Lahore Campus</div>
-      <div class="title">Fee Heads — ${escHtml(cls)} (${escHtml(sec)})</div>
+    <div class="brand">
+      <div class="logo">${feeReportLogoHtml(meta)}</div>
+      <div>
+        <div class="school">${escHtml(meta.name)}</div>
+        <div class="title">Fee Heads — ${escHtml(cls)} (${escHtml(sec)})</div>
+        ${meta.address ? `<div class="addr">${escHtml(meta.address)}</div>` : ''}
+        ${meta.session ? `<div class="addr">Academic Session: ${escHtml(meta.session)}</div>` : ''}
+      </div>
     </div>
-    <div class="meta">Generated: ${escHtml(today)}<br/>${escHtml(heads.length)} fee head${heads.length === 1 ? '' : 's'}</div>
+    <div class="meta">Generated: ${escHtml(today)}<br/>By: ${escHtml(meta.generatedBy)}<br/>${escHtml(heads.length)} fee head${heads.length === 1 ? '' : 's'}</div>
   </div>
   <table>
     <thead>

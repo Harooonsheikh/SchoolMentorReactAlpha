@@ -1,5 +1,4 @@
 import {
-  mockFeeHeads,
   mockFeeSettings,
   mockChallans,
   mockReceipts,
@@ -13,6 +12,18 @@ import { delay, clone } from './_http';
 import { buildUrl, apiMessage } from '../../utils/apiConfig';
 
 const pick = (obj, ...keys) => keys.map(k => obj?.[k]).find(v => v !== undefined && v !== null && v !== '');
+
+export async function getReportHeader() {
+  const branchID = Number(sessionStorage.getItem('branchID')) || 1;
+  const res = await fetch(buildUrl(`/report-header/${branchID}`), {
+    headers: { Accept: '*/*' },
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok || json?.success === false) {
+    throw new Error(apiMessage(json) || 'Could not load report header');
+  }
+  return json?.data || null;
+}
 
 /* ═══════════════════════════════════════════════════════════════════
    Student Fee Setup — real API wiring (LaunchSetup).
@@ -139,6 +150,9 @@ async function fetchFeeClassStudents() {
         const fullName = [first, last].filter(Boolean).join(' ').trim();
         return {
           studentID,
+          applicantsID: Number(pick(st, 'applicantsID', 'applicantID', 'applicantId', 'studentID', 'studentId', 'id')) || studentID,
+          gradeID: gradeId,
+          sectionID: sectionId,
           reg,
           name: fullName || '-',
           father: pick(st, 'fatherName', 'guardianName') || '-',
@@ -224,12 +238,181 @@ export async function deleteFeeHead(feeStructureID) {
 /* Read APIs — return clones so callers can mutate locally without
    corrupting the mock for the next caller. */
 export async function getFeeClasses()   { const data = await fetchFeeClassStudents(); return data.classes; }
-export async function getFeeHeads()     { await delay(); return clone(mockFeeHeads); }
-export async function getTransportFee() { const data = await fetchFeeClassStudents(); return data.studentsMap; }
-export async function getFeeSettings()  { await delay(); return clone(mockFeeSettings); }
+export async function getFeeHeads() {
+  const grades = await getFeeGrades();
+  return Object.fromEntries(
+    grades.map(g => [g.key, clone(g.heads || [])])
+  );
+}
 export async function getChallans()     { await delay(); return clone(mockChallans); }
 export async function getReceipts()     { await delay(); return clone(mockReceipts); }
 export async function getFeeHistory()   { await delay(); return clone(mockFeeHistory); }
+
+const transportFeeBranchID = () => Number(sessionStorage.getItem('branchID')) || 1;
+const transportFeeUserID = () => Number(sessionStorage.getItem('UserID')) || 1;
+
+function mapTransportSetupFromApi(row = {}) {
+  return {
+    id:           Number(row.id ?? row.ID ?? 0) || 0,
+    branchID:     Number(row.branchID ?? row.branchId ?? transportFeeBranchID()) || 0,
+    applicantsID: Number(row.applicantsID ?? row.applicantID ?? row.applicantId ?? 0) || 0,
+    gradeID:      Number(row.gradeID ?? row.gradeId ?? 0) || 0,
+    sectionID:    Number(row.sectionID ?? row.sectionId ?? 0) || 0,
+    amount:       Number(row.amount ?? row.transport ?? 0) || 0,
+    createdDate:  row.createdDate ?? null,
+    modifiedDate: row.modifiedDate ?? null,
+    createdBy:    row.createdBy ?? null,
+    modifiedBy:   row.modifiedBy ?? null,
+    isActive:     row.isActive !== false,
+  };
+}
+
+function mapTransportSetupToApi(payload = {}) {
+  const now = new Date().toISOString();
+  const id = Number(payload.id ?? payload.transportSetupId) || 0;
+  const userID = transportFeeUserID();
+
+  return {
+    id,
+    branchID:     Number(payload.branchID ?? transportFeeBranchID()) || 0,
+    applicantsID: Number(payload.applicantsID ?? payload.studentID) || 0,
+    gradeID:      Number(payload.gradeID ?? payload._gradeId) || 0,
+    sectionID:    Number(payload.sectionID ?? payload._sectionId) || 0,
+    createdDate:  payload.createdDate || now,
+    modifiedDate: now,
+    createdBy:    Number(payload.createdBy) || userID,
+    modifiedBy:   userID,
+    amount:       Number(payload.amount ?? payload.transport) || 0,
+    isActive:     payload.isActive !== false,
+  };
+}
+
+export async function getTransportFeeSetups() {
+  const branchID = transportFeeBranchID();
+  const res = await fetch(buildUrl(`/api/TransportFeeSetup/get-all?branchId=${branchID}`), {
+    headers: { Accept: '*/*' },
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok || json?.success === false) {
+    throw new Error(apiMessage(json) || 'Could not load transport fee setup');
+  }
+  return (Array.isArray(json?.data) ? json.data : []).map(mapTransportSetupFromApi);
+}
+
+export async function getTransportFeeSetup(id) {
+  if (!id) return null;
+  const res = await fetch(buildUrl(`/api/TransportFeeSetup/get/${id}`), {
+    headers: { Accept: '*/*' },
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok || json?.success === false) {
+    throw new Error(apiMessage(json) || 'Could not load transport fee setup record');
+  }
+  return mapTransportSetupFromApi(json?.data || {});
+}
+
+export async function getTransportFee() {
+  const data = await fetchFeeClassStudents();
+  const setups = await getTransportFeeSetups();
+  const byApplicantClass = new Map();
+  const byApplicant = new Map();
+
+  setups.forEach(row => {
+    const classKey = `${row.applicantsID}|${row.gradeID}|${row.sectionID}`;
+    byApplicantClass.set(classKey, row);
+    if (!byApplicant.has(String(row.applicantsID))) byApplicant.set(String(row.applicantsID), row);
+  });
+
+  return Object.fromEntries(Object.entries(data.studentsMap).map(([classKey, rows]) => [
+    classKey,
+    rows.map(st => {
+      const setup =
+        byApplicantClass.get(`${st.applicantsID}|${st.gradeID}|${st.sectionID}`) ||
+        byApplicant.get(String(st.applicantsID));
+      if (!setup) return st;
+      return {
+        ...st,
+        transportSetupId: setup.id,
+        transport: setup.amount,
+        transportSetup: setup,
+      };
+    }),
+  ]));
+}
+
+const feeSettingsBranchID = () => Number(sessionStorage.getItem('branchID')) || 1;
+const feeSettingsUserID = () => Number(sessionStorage.getItem('UserID')) || 1;
+
+const apiFineToUi = (fineType) => (
+  String(fineType || '').toLowerCase().includes('day') ? 'daily' : 'fixed'
+);
+
+const uiFineToApi = (fineType) => (
+  fineType === 'daily' ? 'Per Day Fine' : 'Fixed Amount'
+);
+
+const apiPrintSizeToUi = (size) => (
+  String(size || '').toLowerCase().includes('thermal') ? 'thermal' : 'a4'
+);
+
+const uiPrintSizeToApi = (size) => (
+  size === 'thermal' ? 'Thermal' : 'A4'
+);
+
+function mapFeeSettingsFromApi(row = {}) {
+  return {
+    ...clone(mockFeeSettings),
+    id:                 Number(row.id ?? row.ID ?? 0) || 0,
+    branchID:           Number(row.branchID ?? row.branchId ?? feeSettingsBranchID()) || 0,
+    showDiscount:       row.showDiscount ?? mockFeeSettings.showDiscount,
+    showPsd:            row.showPSDCode ?? row.showPsd ?? mockFeeSettings.showPsd,
+    fineEnabled:        row.fineStatusEnabled ?? row.fineEnabled ?? mockFeeSettings.fineEnabled,
+    fineType:           apiFineToUi(row.fineType ?? mockFeeSettings.fineType),
+    fineAmt:            Number(row.fineAmountRs ?? row.fineAmt ?? mockFeeSettings.fineAmt) || 0,
+    printSize:          apiPrintSizeToUi(row.defaultPrintSize ?? row.printSize ?? mockFeeSettings.printSize),
+    createdDate:        row.createdDate ?? null,
+    modifiedDate:       row.modifiedDate ?? null,
+    createdBy:          row.createdBy ?? null,
+    modifiedBy:         row.modifiedBy ?? null,
+    isActive:           row.isActive ?? true,
+  };
+}
+
+function mapFeeSettingsToApi(settings = {}) {
+  const now = new Date().toISOString();
+  const id = Number(settings.id) || 0;
+  const userID = feeSettingsUserID();
+
+  return {
+    id,
+    branchID:          Number(settings.branchID ?? feeSettingsBranchID()) || 0,
+    showDiscount:      settings.showDiscount !== false,
+    showPSDCode:       settings.showPsd !== false,
+    fineStatusEnabled: settings.fineEnabled !== false,
+    fineType:          uiFineToApi(settings.fineType),
+    fineAmountRs:      Number(settings.fineAmt) || 0,
+    defaultPrintSize:  uiPrintSizeToApi(settings.printSize),
+    createdDate:       settings.createdDate || now,
+    modifiedDate:      now,
+    createdBy:         Number(settings.createdBy) || userID,
+    modifiedBy:        userID,
+    isActive:          settings.isActive !== false,
+  };
+}
+
+export async function getFeeSettings() {
+  const branchID = feeSettingsBranchID();
+  const res = await fetch(buildUrl(`/api/FeeChallanSettings/get-all?branchId=${branchID}`), {
+    headers: { Accept: '*/*' },
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok || json?.success === false) {
+    throw new Error(apiMessage(json) || 'Could not load fee challan settings');
+  }
+
+  const rows = Array.isArray(json?.data) ? json.data : [];
+  return mapFeeSettingsFromApi(rows[0] || { id: 0, branchID });
+}
 
 /* Generated-challans set is returned as a fresh Set so callers can
    add / delete locally without disturbing the seed. */
@@ -248,11 +431,137 @@ export async function getGeneratedFamilyChallans() {
 /* Write APIs — in-memory only until backend wires real endpoints. */
 export async function saveFeeHeads(classKey, heads) { await delay(); return clone({ classKey, heads }); }
 export async function saveTransportFee(classKey, rows) { await delay(); return clone({ classKey, rows }); }
-export async function saveStudentTransport(classKey, reg, payload) { await delay(); return clone({ classKey, reg, ...payload }); }
-export async function saveFeeSettings(payload) { await delay(); return clone({ ...mockFeeSettings, ...payload }); }
-export async function generateChallan(classKey, reg, monthIdx, options) {
-  await delay();
-  return clone({ classKey, reg, monthIdx, ...options });
+export async function saveStudentTransport(classKey, reg, payload) {
+  const body = mapTransportSetupToApi(payload);
+  const res = await fetch(buildUrl('/api/TransportFeeSetup/save'), {
+    method: 'POST',
+    headers: { Accept: '*/*', 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok || json?.success === false) {
+    throw new Error(apiMessage(json) || 'Could not save transport fee setup');
+  }
+
+  let returnedId = Number(json?.data?.id ?? json?.id ?? body.id) || 0;
+  if (!returnedId) {
+    const rows = await getTransportFeeSetups();
+    const match = rows.find(row =>
+      row.applicantsID === body.applicantsID &&
+      row.gradeID === body.gradeID &&
+      row.sectionID === body.sectionID
+    );
+    returnedId = match?.id || 0;
+  }
+  const saved = returnedId ? await getTransportFeeSetup(returnedId) : mapTransportSetupFromApi(json?.data || body);
+  return { classKey, reg, ...saved };
+}
+export async function saveFeeSettings(payload) {
+  const body = mapFeeSettingsToApi(payload);
+  const res = await fetch(buildUrl('/api/FeeChallanSettings/save'), {
+    method: 'POST',
+    headers: { Accept: '*/*', 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok || json?.success === false) {
+    throw new Error(apiMessage(json) || 'Could not save fee challan settings');
+  }
+
+  return getFeeSettings();
+}
+const toApiDate = (value) => {
+  if (!value) return new Date().toISOString();
+  const d = new Date(`${value}T00:00:00`);
+  return Number.isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString();
+};
+
+function buildLedgerChallanPayload({ classMeta = {}, student = {}, heads = [], monthIdx = 0, options = {} }) {
+  const now = new Date().toISOString();
+  const branchID = Number(sessionStorage.getItem('branchID')) || 1;
+  const userID = Number(sessionStorage.getItem('UserID')) || 1;
+  const issueDate = toApiDate(options.issueDate);
+  const dueDate = toApiDate(options.dueDate);
+  const classDisc = options.discountMap?.[classMeta.key]?.[student.reg] || {};
+
+  return {
+    ledger: {
+      id: 0,
+      dateofCreattion: issueDate,
+      dueDate,
+      studentID: Number(student.studentID) || 0,
+      branchID,
+      gradeID: Number(student.gradeID || classMeta._gradeId) || 0,
+      sectionID: Number(student.sectionID || classMeta._sectionId) || 0,
+      registrationNumber: String(student.reg || ''),
+      tranType: '',
+      paymentMethod: '',
+      month: Number(monthIdx) + 1,
+      year: Number(options.year) || new Date().getFullYear(),
+      plApplicantID: '',
+      plpsid: '',
+      createdAt: now,
+      createdBy: userID,
+      modifiedAt: now,
+      modifiedBy: userID,
+      isActive: true,
+      detailRows: heads.map(h => {
+        const amount = Number(h.amt ?? h.amount) || 0;
+        return {
+          id: 0,
+          blid: 0,
+          branchId: branchID,
+          head: '',
+          subHead: String(h.name || h.headName || ''),
+          challanAmount: amount,
+          discount: Number(classDisc[h.name]) || 0,
+          receivedAmount: 0,
+          pendingorAdv: 0,
+          createdAt: now,
+          createdBy: userID,
+          modifiedAt: now,
+          modifiedBy: userID,
+          isActive: true,
+        };
+      }),
+    },
+  };
+}
+
+export async function generateChallan(classKey, reg, monthIdx, options = {}) {
+  if (options.familyMode) {
+    await delay();
+    return clone({ classKey, reg, monthIdx, ...options });
+  }
+
+  const regs = Array.isArray(reg) ? reg : [reg];
+  const students = Array.isArray(options.students) && options.students.length
+    ? options.students
+    : regs.map(r => ({ reg: r }));
+  const heads = Array.isArray(options.heads) ? options.heads : [];
+
+  const results = [];
+  for (const student of students) {
+    const payload = buildLedgerChallanPayload({
+      classMeta: options.classMeta,
+      student,
+      heads,
+      monthIdx,
+      options,
+    });
+    const res = await fetch(buildUrl('/api/BranchLedger/create-challan'), {
+      method: 'POST',
+      headers: { Accept: '*/*', 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const json = await res.json().catch(() => null);
+    if (!res.ok || json?.success === false) {
+      throw new Error(apiMessage(json) || `Could not generate challan for ${student.name || student.reg || 'student'}`);
+    }
+    results.push(json);
+  }
+
+  return { classKey, regs, monthIdx, results };
 }
 export async function deleteChallan(classKey, reg, monthIdx) {
   await delay();
