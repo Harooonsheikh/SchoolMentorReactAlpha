@@ -2796,9 +2796,42 @@ const handleDeleteExam = async (exam) => {
   try {
     const branchID = Number(sessionStorage.getItem("branchID"));
     const token = sessionStorage.getItem("token");
+    const empID = sessionStorage.getItem("employee_ID");
+    const headers = { Authorization: `Bearer ${token}`, Accept: "application/json" };
+    const selectExam = Number(exam.selectExam);
+
+    // Guard: agar is exam ke against datesheet ya syllabus bana hua hai → delete block.
+    let hasDatesheet = false, hasSyllabus = false;
+    await Promise.all((exam.classes || []).map(async (cls) => {
+      try {
+        const dp = new URLSearchParams({
+          branchID: String(branchID), classID: String(cls.classID), termID: String(exam.termID),
+          ExamID: String(selectExam), sectionID: String(cls.sectionID), empID: String(empID),
+        });
+        const dd = await (await fetch(buildUrl(`/api/getdatesheetbybranchclassidtermid?${dp}`), { headers })).json();
+        if ((Array.isArray(dd) ? dd : (dd?.data || [])).length) hasDatesheet = true;
+      } catch (e) { /* ignore */ }
+      try {
+        const sp = new URLSearchParams({
+          branchID: String(branchID), classID: String(cls.classID), Terms: String(exam.termID),
+          ExamID: String(selectExam), sectionID: String(cls.sectionID), pageNo: "1", empID: String(empID),
+        });
+        const sd = await (await fetch(buildUrl(`/api/getexamsyllabusbybranchclassandterms?${sp}`), { headers })).json();
+        if ((sd?.data || sd?.result || (Array.isArray(sd) ? sd : [])).length) hasSyllabus = true;
+      } catch (e) { /* ignore */ }
+    }));
+
+    if (hasDatesheet || hasSyllabus) {
+      const parts = [];
+      if (hasDatesheet) parts.push("datesheet");
+      if (hasSyllabus)  parts.push("syllabus");
+      toast(`There is record of ${parts.join(" and ")}, so you cannot delete this exam.`, "error");
+      setConfirmDel(null);
+      return;
+    }
 
     const url = buildUrl(
-      `/api/deleteexamdata?branchID=${branchID}&id=${Number(exam.selectExam)}`
+      `/api/deleteexamdata?branchID=${branchID}&id=${selectExam}`
     );
 
     const response = await fetch(url, {
@@ -6206,7 +6239,9 @@ subjects={resTotalMarksCtx.subjects}
                         }
                         return next;
                       });
-                      
+                      // Add ki tarah GET APIs se fresh data laao (status/marks turant reset).
+                      loadResClassData(resConfirmDelete.key, { classID: classData.classID, sectionID: classData.sectionID }, true);
+
                       toast('Class result deleted successfully!', 'success');
                     } else {
                       toast('Failed to delete class result. Please try again.', 'error');
@@ -8977,7 +9012,12 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
 function ResultUpdateMarksModal({ cd, student, onSave, onClose, absentMode, toast, subjects = [], resTotalMarksCtx, selectedTermId }) {
   const [obtained, setObtained] = useState(() => ({ ...(student.obtained || {}) }));
   const [manualRemarks, setManualRemarks] = useState(() => ({ ...(student.manualRemarks || {}) }));
-  const [absent, setAbsent] = useState(!!student.absent);
+  // Per-subject absent — { [subjectName]: true }. Har subject alag mark hota hai.
+  const [absentSubs, setAbsentSubs] = useState(() => {
+    const init = {};
+    (student.absentSubjects || []).forEach((s) => { init[s] = true; });
+    return init;
+  });
   const [tab, setTab] = useState(0);
   const [subjectTotalMarks, setSubjectTotalMarks] = useState({});
   const [subjectExistingMarkId, setSubjectExistingMarkId] = useState({});
@@ -9088,34 +9128,32 @@ setObtained(o => ({
 
   const onAbsentToggle = e => {
     const checked = e.target.checked;
-    setAbsent(checked);
-    if (checked) {
-      const zeros = {};
-      subjects.forEach(s => { zeros[s.subjectName] = 0; });
-      setObtained(zeros);
-    }
+    const cs = subjects[tab]?.subjectName;
+    if (!cs) return;
+    // Sirf CURRENT subject ko absent mark/unmark karo (baaki subjects par asar nahi).
+    setAbsentSubs(prev => ({ ...prev, [cs]: checked }));
+    if (checked) setObtained(o => ({ ...o, [cs]: 0 }));
   };
 
   const computePayload = () => {
-    const absSet = {};
+    const absSet = { ...absentSubs };
     (student.absentSubjects || []).forEach(s => { absSet[s] = true; });
-    const tot = absent
+    const tot = absentMode === 'zero'
       ? Object.values(cd.totalMarks).reduce((a, b) => a + b, 0)
-      : (absentMode === 'zero'
-          ? Object.values(cd.totalMarks).reduce((a, b) => a + b, 0)
-          : RES_SUBJECTS.reduce((a, s) => absSet[s] ? a : a + (cd.totalMarks[s] || 0), 0));
-    const obt = absent ? 0 : RES_SUBJECTS.reduce((a, s) => a + (absSet[s] ? 0 : (obtained[s] || 0)), 0);
+      : RES_SUBJECTS.reduce((a, s) => absSet[s] ? a : a + (cd.totalMarks[s] || 0), 0);
+    const obt = RES_SUBJECTS.reduce((a, s) => a + (absSet[s] ? 0 : (obtained[s] || 0)), 0);
     const pct = tot ? (obt / tot) * 100 : 0;
-    return { obtained, manualRemarks, absent, finalRemarks: rcGetFinalRemarks(pct) };
+    return { obtained, manualRemarks, absentSubjects: Object.keys(absSet).filter(k => absSet[k]), finalRemarks: rcGetFinalRemarks(pct) };
   };
 
-  const saveAndNext = () => {
-    toast?.(`Saved subject ${tab + 1}`, 'info');
+  const saveAndNext = async () => {
+    // Save & Close jaise hi saari save APIs chalao, phir next subject par jao.
+    await saveCurrentSubject();
     const nextIdx = (tab + 1) % (subjects.length || 1);
     setTab(nextIdx);
     fetchSubjectData(subjects[nextIdx]);
   };
-const saveAndClose = async () => {
+const saveCurrentSubject = async () => {
   try {
     const token = sessionStorage.getItem('token');
     const branchID = sessionStorage.getItem('branchID');
@@ -9207,16 +9245,22 @@ const saveAndClose = async () => {
     });
 
     toast?.('Marks saved!', 'success');
+    return true;
   } catch (err) {
     console.error('Error saving marks:', err);
     toast?.('Could not save marks', 'error');
+    return false;
   }
+};
 
+const saveAndClose = async () => {
+  await saveCurrentSubject();
   onSave(computePayload());
 };
   const curSubjObj = subjects[tab] || {};
   const curSubj = curSubjObj.subjectName || '';
   const curSubjID = curSubjObj.subjectID;
+  const curAbsent = !!absentSubs[curSubj]; // sirf is subject ka absent state
   const curTotal = subjectTotalMarks[curSubjID] ?? (cd.totalMarks[curSubj] || 0);
   const curObt = obtained[curSubj] || '';
   const curPct = curTotal ? Math.round((curObt / curTotal) * 100) : 0;
@@ -9257,17 +9301,17 @@ const saveAndClose = async () => {
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', background: 'var(--bg-muted)', borderRadius: 'var(--radius-md)', marginBottom: 14, border: '1px solid var(--border-light)' }}>
             <i className="fa-solid fa-user-xmark" style={{ color: '#D97706', fontSize: 16 }}></i>
             <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--text-primary)' }}>Mark Student as Absent</div>
-              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>If absent, all marks will be set to 0</div>
+              <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--text-primary)' }}>Mark Absent — {curSubj}</div>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>If absent, this subject's marks will be set to 0</div>
             </div>
             <label className="res-toggle-wrap">
-              <input type="checkbox" checked={absent} onChange={onAbsentToggle} />
+              <input type="checkbox" checked={curAbsent} onChange={onAbsentToggle} />
               <span className="res-toggle-slider"></span>
             </label>
           </div>
 
           {/* Active subject panel */}
-          <div style={{ opacity: absent ? .35 : 1, pointerEvents: absent ? 'none' : 'auto' }}>
+          <div style={{ opacity: curAbsent ? .35 : 1, pointerEvents: curAbsent ? 'none' : 'auto' }}>
             {loadingSubject ? (
               <div style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)' }}>
                 <i className="fa-solid fa-spinner fa-spin" style={{ fontSize: 20, marginBottom: 8, display: 'block' }}></i>
@@ -9755,8 +9799,9 @@ function ResultRemarksModal({ cd, student, absentMode, onSave, onClose, existing
   const ovPct  = totalAll ? Math.round((obtAll / totalAll) * 10000) / 100 : 0;
   const autoRem = rcGetFinalRemarks(ovPct);
 
-  // existingRemark se pre-fill karo
-  const [text, setText] = useState(existingRemark?.remarks || student.finalRemarks || autoRem);
+  // Sirf SAVED remark (getremarksbystudentfilters) se pre-fill; agar API khali
+  // hai to input bhi khali (koi static/auto remark nahi).
+  const [text, setText] = useState(existingRemark?.remarks || '');
   const MAX = 200;
 
   const handleSave = async () => {
