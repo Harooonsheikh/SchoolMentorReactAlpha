@@ -1206,12 +1206,34 @@ function FamilyTreeChallansList({ toast }) {
   );
 }
 
+/* Split a challan's detailRows into the screen figures: a "previous pending"
+   head becomes Total Dues when positive, or Advance (as a positive number) when
+   negative; every other head sums into Current Fee. Total Payable = Current Fee
+   + Total Dues − Advance. */
+function challanFigures(rec) {
+  const rows = (rec && rec.detailRows) || [];
+  let dues = 0, advance = 0, current = 0;
+  rows.forEach(r => {
+    const amt   = Number(r.challanAmount) || 0;
+    const disc  = Number(r.discount) || 0;
+    const label = String(r.subHead || r.head || '').toLowerCase();
+    if (/previous|pending|arrear/.test(label)) {
+      if (amt >= 0) dues += amt;
+      else advance += Math.abs(amt);
+    } else {
+      current += amt - disc;
+    }
+  });
+  return { dues, advance, current, payable: current + dues - advance };
+}
+
 function FeeChallansList({ toast }) {
   const { data: classes = [] } = useAsync(feeService.getFeeClasses, []);
   const { data: studentsMap = {} } = useAsync(feeService.getTransportFee, []);
   const { data: headsMap = {} } = useAsync(feeService.getFeeHeads, []);
   const { data: settings = {} } = useAsync(feeService.getFeeSettings, []);
-  const { data: generatedInitial } = useAsync(feeService.getGeneratedChallans, []);
+  /* Branch header (name / address / logo / session / date) for challan slips. */
+  const { data: branchHeader = null } = useAsync(feeService.getReportHeader, [], null);
 
   /* Filters */
   const today = new Date();
@@ -1249,11 +1271,48 @@ function FeeChallansList({ toast }) {
     return () => window.removeEventListener('keydown', onKey);
   }, [searchOpen]);
 
-  /* Generation state (local mirror of generated set) */
+  /* Generated challans, loaded live from /api/BranchLedger/get-by-month for the
+     applied month/year. `genSet` marks which class|reg|month challans exist;
+     `challanMap` holds the full challan record (incl. id + detailRows) per key
+     so deletes can target the real BranchLedger id. */
   const [genSet, setGenSet] = useState(null);
-  useEffect(() => { if (generatedInitial && genSet == null) setGenSet(new Set(generatedInitial)); }, [generatedInitial, genSet]);
+  const [challanMap, setChallanMap] = useState({});
   const monthIdx = FEE_MONTHS.indexOf(appliedMonth);
   const keyOf    = (classKey, reg) => `${classKey}|${reg}|${monthIdx}`;
+
+  /* Pull the month's challans and index them onto the class|reg keys. Matches
+     each challan to a student by studentID (falling back to the challan's own
+     grade/section/registration), so the list reflects real generated data. */
+  const loadChallans = useCallback(async () => {
+    if (!studentsMap || Object.keys(studentsMap).length === 0) return;
+    const mIdx = FEE_MONTHS.indexOf(appliedMonth);
+    try {
+      const rows = await feeService.getMonthChallans(mIdx + 1, appliedYear);
+      const byStudentId = new Map();
+      Object.entries(studentsMap).forEach(([ck, studs]) => {
+        (studs || []).forEach(s => byStudentId.set(String(s.studentID), { classKey: ck, reg: s.reg }));
+      });
+      const set = new Set();
+      const map = {};
+      rows.forEach(ch => {
+        const loc = byStudentId.get(String(ch.studentID));
+        const classKey = loc ? loc.classKey : `g${ch.gradeID}-s${ch.sectionID}`;
+        const reg      = loc ? loc.reg      : String(ch.registrationNumber || '');
+        const k = `${classKey}|${reg}|${mIdx}`;
+        set.add(k);
+        map[k] = ch;
+      });
+      setGenSet(set);
+      setChallanMap(map);
+    } catch (e) {
+      toast(e.message || 'Could not load challans', 'error');
+      setGenSet(new Set());
+      setChallanMap({});
+    }
+  }, [studentsMap, appliedMonth, appliedYear, toast]);
+
+  /* Load on mount and whenever the student roster or applied month/year change. */
+  useEffect(() => { loadChallans(); }, [loadChallans]);
 
   /* Expanded row */
   const [openKey, setOpenKey] = useState(null);
@@ -1302,6 +1361,8 @@ function FeeChallansList({ toast }) {
       regs.forEach(reg => n.add(keyOf(classKey, reg)));
       return n;
     });
+    /* Re-pull from the API so the new challans carry their real ids (needed for delete). */
+    loadChallans();
   };
   const openIndivGen = (c, s) => {
     setBulkGen({
@@ -1312,6 +1373,10 @@ function FeeChallansList({ toast }) {
     });
   };
 
+  /* Attach the real generated challan (with its detailRows) to a student so the
+     slip renders exactly the heads the API returned, incl. "Previous Pending". */
+  const withChallan = (c, s) => ({ ...s, _challan: challanMap[keyOf(c.key, s.reg)] || null });
+
   const resolveCtx = (ctx) => {
     const c = classes.find(x => x.key === ctx.classKey);
     if (!c) return null;
@@ -1319,13 +1384,13 @@ function FeeChallansList({ toast }) {
     if (ctx.type === 'student') {
       const s = (studentsMap[ctx.classKey] || []).find(x => x.reg === ctx.reg);
       if (!s) return null;
-      return { classMeta: c, students: [s], heads, sub: `${s.name} · child of ${s.father || '—'}` };
+      return { classMeta: c, students: [withChallan(c, s)], heads, sub: `${s.name} · child of ${s.father || '—'}` };
     }
     if (ctx.type === 'bulk') {
       const all  = studentsMap[ctx.classKey] || [];
       const list = all.filter(s => genSet && genSet.has(keyOf(c.key, s.reg)));
       if (list.length === 0) return null;
-      return { classMeta: c, students: list, heads, sub: `${c.cls} — Section ${c.sec} · ${list.length} student${list.length === 1 ? '' : 's'}` };
+      return { classMeta: c, students: list.map(s => withChallan(c, s)), heads, sub: `${c.cls} — Section ${c.sec} · ${list.length} student${list.length === 1 ? '' : 's'}` };
     }
     return null;
   };
@@ -1335,7 +1400,7 @@ function FeeChallansList({ toast }) {
     if (!r) { toast('Nothing to preview', 'info'); return; }
     const inner = buildChallanInner({
       classMeta: r.classMeta, students: r.students, heads: r.heads,
-      settings, discountMap, bw: false,
+      settings, discountMap, bw: false, school: branchHeader,
     });
     setChallanPreview({
       title: ctx.type === 'bulk' ? 'Bulk Challan Preview' : 'Challan Preview',
@@ -1355,7 +1420,7 @@ function FeeChallansList({ toast }) {
     const bw   = theme === 'bw';
     const html = buildChallanHTML({
       classMeta: r.classMeta, students: r.students, heads: r.heads,
-      settings, discountMap, bw, size,
+      settings, discountMap, bw, size, school: branchHeader,
     });
     const w = window.open('', '_blank');
     if (!w) { toast('Please allow pop-ups to download the challan', 'error'); return; }
@@ -1401,7 +1466,7 @@ function FeeChallansList({ toast }) {
     setDiscountCtx(null);
   };
 
-  /* Confirm-driven delete */
+  /* Confirm-driven delete — hits /api/BranchLedger/delete/{id} per challan record. */
   const requestDeleteClassChallans = (c) => {
     const gen = genCountFor(c.key);
     if (gen === 0) { toast('No challans to delete for this class', 'warning'); return; }
@@ -1411,11 +1476,19 @@ function FeeChallansList({ toast }) {
       hint:   'This action cannot be undone.',
       onConfirm: async () => {
         const studs = studentsMap[c.key] || [];
-        const next = new Set(genSet);
-        studs.forEach(s => next.delete(keyOf(c.key, s.reg)));
-        setGenSet(next);
-        await feeService.deleteClassChallans(c.key, monthIdx);
-        toast('Generated challans removed', 'success');
+        const ids = studs
+          .map(s => challanMap[keyOf(c.key, s.reg)]?.id)
+          .filter(id => id != null);
+        try {
+          for (const id of ids) {
+            await feeService.deleteChallanById(id);
+          }
+          toast('Generated challans removed', 'success');
+        } catch (e) {
+          toast(e.message || 'Could not delete challans', 'error');
+        } finally {
+          await loadChallans();
+        }
       },
     });
   };
@@ -1426,10 +1499,16 @@ function FeeChallansList({ toast }) {
       message: `The ${appliedMonth} ${appliedYear} challan for ${s.name} will be deleted.`,
       hint:   'This action cannot be undone.',
       onConfirm: async () => {
-        const k = keyOf(c.key, s.reg);
-        setGenSet(prev => { const n = new Set(prev); n.delete(k); return n; });
-        await feeService.deleteChallan(c.key, s.reg, monthIdx);
-        toast(`Challan removed for ${s.name}`, 'success');
+        const rec = challanMap[keyOf(c.key, s.reg)];
+        if (!rec?.id) { toast('No challan found to delete', 'warning'); return; }
+        try {
+          await feeService.deleteChallanById(rec.id);
+          toast(`Challan removed for ${s.name}`, 'success');
+        } catch (e) {
+          toast(e.message || 'Could not delete challan', 'error');
+        } finally {
+          await loadChallans();
+        }
       },
     });
   };
@@ -1676,21 +1755,29 @@ function FeeChallansList({ toast }) {
                         {students.length === 0 ? (
                           <tr><td colSpan="9" className="fee-stbl-empty">No students in this section.</td></tr>
                         ) : students.map((s, j) => {
-                          const payable = (+s.current || 0) - (+s.dues || 0) - (+s.advance || 0);
                           const generated = isGenerated(c.key, s.reg);
+                          /* Generated → figures from the real challan detailRows;
+                             otherwise fall back to the student roster values. */
+                          const rec = generated ? challanMap[keyOf(c.key, s.reg)] : null;
+                          const fig = rec ? challanFigures(rec) : {
+                            dues:    +s.dues    || 0,
+                            advance: +s.advance || 0,
+                            current: +s.current || 0,
+                            payable: (+s.current || 0) + (+s.dues || 0) - (+s.advance || 0),
+                          };
                           return (
                             <tr key={s.reg} id={`fee-st-${c.key}-${s.reg}`}>
                               <td className="fee-num">{j + 1}</td>
                               <td>{s.reg}</td>
                               <td><b>{s.name}</b></td>
                               <td>{s.father}</td>
-                              <td className="fee-right">{money(s.dues)}</td>
-                              <td className="fee-right">{money(s.advance)}</td>
-                              <td className="fee-right" style={+s.current === 0 ? { color: '#DC2626', fontWeight: 700 } : undefined}>
-                                {money(s.current)}
+                              <td className="fee-right">{money(fig.dues)}</td>
+                              <td className="fee-right">{money(fig.advance)}</td>
+                              <td className="fee-right" style={fig.current === 0 ? { color: '#DC2626', fontWeight: 700 } : undefined}>
+                                {money(fig.current)}
                               </td>
-                              <td className={`fee-right${payable < 0 ? ' fee-neg' : ''}`}>
-                                {money(payable)}
+                              <td className={`fee-right${fig.payable < 0 ? ' fee-neg' : ''}`}>
+                                {money(fig.payable)}
                               </td>
                               <td className="fee-center fee-st-actions">
                                 {generated ? (
@@ -2974,6 +3061,7 @@ function FeeSlipModal({ cfg, onClose, toast }) {
   const { classMeta, student, period, payment } = cfg;
   const headRows = Object.entries(payment.perHead || {}).map(([name, amt]) => ({ name, amt: +amt || 0 }));
   const total    = headRows.reduce((a, r) => a + r.amt, 0);
+  const sch      = feeReportSchool(cfg.school);
 
   const doPrint = () => {
     const w = window.open('', '_blank');
@@ -2981,7 +3069,8 @@ function FeeSlipModal({ cfg, onClose, toast }) {
     const slipHtml = `
       <div class="fee-slip-doc fee-slip-${size}">
         <div class="fee-slip-head">
-          <div class="fee-slip-school">${escHtml(FEE_SCHOOL.name)}</div>
+          <div class="fee-slip-school">${escHtml(sch.name)}</div>
+          ${sch.address ? `<div class="fee-slip-addr" style="font-size:11px;color:#555;margin-top:2px;">${escHtml(sch.address)}</div>` : ''}
           <div class="fee-slip-tag">Fee Received Slip</div>
         </div>
         <div class="fee-slip-kv">
@@ -3078,7 +3167,8 @@ function FeeSlipModal({ cfg, onClose, toast }) {
           <div className="fee-dl-label" style={{ marginTop: 16 }}>Preview</div>
           <div className={`fee-slip-doc fee-slip-${size}`}>
             <div className="fee-slip-head">
-              <div className="fee-slip-school">{FEE_SCHOOL.name}</div>
+              <div className="fee-slip-school">{sch.name}</div>
+              {sch.address && <div className="fee-slip-addr" style={{ fontSize: 11, color: '#555', marginTop: 2 }}>{sch.address}</div>}
               <div className="fee-slip-tag">Fee Received Slip</div>
             </div>
             <div className="fee-slip-kv">
@@ -3138,19 +3228,37 @@ function FeeSlipModal({ cfg, onClose, toast }) {
    ═══════════════════════════════════════════════════════════════════ */
 
 /* ── Models / helpers ── */
-function recStudentModel({ student, headsForClass, generated, classDisc, payments }) {
-  const heads = (headsForClass || []).map(h => {
-    const std = +h.amt || 0;
-    const d   = +(classDisc?.[h.name]) || 0;
-    return { name: h.name, std, disc: Math.min(d, std), net: std - Math.min(d, std) };
-  });
-  if (generated && +student.transport > 0) {
-    heads.push({ name: 'Transport Fee', std: +student.transport, disc: 0, net: +student.transport });
+function recStudentModel({ student, headsForClass, generated, classDisc, payments, challan = null }) {
+  let heads, prev, advance, thisMonth, disc;
+  if (challan && Array.isArray(challan.detailRows)) {
+    /* Real challan: build heads from its detailRows. A "previous pending" head
+       becomes previous dues (positive) or advance (negative); the rest are the
+       current-month fee heads. Mirrors the Challans screen split. */
+    heads = [];
+    prev = 0; advance = 0;
+    challan.detailRows.forEach(r => {
+      const amt   = +r.challanAmount || 0;
+      const d     = +r.discount || 0;
+      const label = String(r.subHead || r.head || '').toLowerCase();
+      if (/previous|pending|arrear/.test(label)) {
+        if (amt >= 0) prev += amt; else advance += Math.abs(amt);
+      } else {
+        heads.push({ name: r.subHead || r.head || '', std: amt, disc: Math.min(d, amt), net: amt - Math.min(d, amt) });
+      }
+    });
+    thisMonth = heads.reduce((a, h) => a + h.std, 0);
+    disc      = heads.reduce((a, h) => a + h.disc, 0);
+  } else {
+    heads = (headsForClass || []).map(h => {
+      const std = +h.amt || 0;
+      const d   = +(classDisc?.[h.name]) || 0;
+      return { name: h.name, std, disc: Math.min(d, std), net: std - Math.min(d, std) };
+    });
+    prev      = +student.dues || 0;
+    advance   = +student.advance || 0;
+    thisMonth = generated ? heads.reduce((a, h) => a + h.std, 0) : 0;
+    disc      = generated ? heads.reduce((a, h) => a + h.disc, 0) : 0;
   }
-  const prev      = +student.dues || 0;
-  const advance   = +student.advance || 0;
-  const thisMonth = generated ? heads.reduce((a, h) => a + h.std, 0) : 0;
-  const disc      = generated ? heads.reduce((a, h) => a + h.disc, 0) : 0;
   const payable   = Math.max(0, prev + thisMonth - disc - advance);
   const paid      = (payments || []).reduce((a, p) => a + (+p.amount || 0), 0);
   const remaining = Math.max(0, payable - paid);
@@ -3214,8 +3322,9 @@ function FeeReceivingIndividual({ toast }) {
   const { data: studentsMap = {} }  = useAsync(feeService.getTransportFee, []);
   const { data: headsMap = {} }     = useAsync(feeService.getFeeHeads, []);
   const { data: settings = {} }     = useAsync(feeService.getFeeSettings, []);
-  const { data: generatedInitial }  = useAsync(feeService.getGeneratedChallans, []);
   const { data: serverReceipts = [] } = useAsync(feeService.getReceipts, []);
+  /* Branch header (name / address / logo / date) for the received-fee slip. */
+  const { data: branchHeader = null } = useAsync(feeService.getReportHeader, [], null);
 
   const today = new Date();
   const [month, setMonth] = useState(FEE_MONTHS[today.getMonth()]);
@@ -3236,10 +3345,44 @@ function FeeReceivingIndividual({ toast }) {
     return () => document.removeEventListener('mousedown', onDown);
   }, [searchOpen]);
 
+  /* Generated challans loaded live from /api/BranchLedger/get-by-month for the
+     applied month/year — genSet marks which class|reg|month challans exist and
+     challanMap holds the full record (detailRows) so payable/heads come from
+     real data. */
   const [genSet, setGenSet] = useState(null);
-  useEffect(() => { if (generatedInitial && genSet == null) setGenSet(new Set(generatedInitial)); }, [generatedInitial, genSet]);
+  const [challanMap, setChallanMap] = useState({});
   const monthIdx = FEE_MONTHS.indexOf(appliedMonth);
   const keyOf    = (classKey, reg) => `${classKey}|${reg}|${monthIdx}`;
+
+  const loadChallans = useCallback(async () => {
+    if (!studentsMap || Object.keys(studentsMap).length === 0) return;
+    const mIdx = FEE_MONTHS.indexOf(appliedMonth);
+    try {
+      const rows = await feeService.getMonthChallans(mIdx + 1, appliedYear);
+      const byStudentId = new Map();
+      Object.entries(studentsMap).forEach(([ck, studs]) => {
+        (studs || []).forEach(s => byStudentId.set(String(s.studentID), { classKey: ck, reg: s.reg }));
+      });
+      const set = new Set();
+      const map = {};
+      rows.forEach(ch => {
+        const loc = byStudentId.get(String(ch.studentID));
+        const classKey = loc ? loc.classKey : `g${ch.gradeID}-s${ch.sectionID}`;
+        const reg      = loc ? loc.reg      : String(ch.registrationNumber || '');
+        const k = `${classKey}|${reg}|${mIdx}`;
+        set.add(k);
+        map[k] = ch;
+      });
+      setGenSet(set);
+      setChallanMap(map);
+    } catch (e) {
+      toast(e.message || 'Could not load challans', 'error');
+      setGenSet(new Set());
+      setChallanMap({});
+    }
+  }, [studentsMap, appliedMonth, appliedYear, toast]);
+
+  useEffect(() => { loadChallans(); }, [loadChallans]);
 
   /* Receipts mirror (mutable so we can add new payments locally) */
   const [receipts, setReceipts] = useState(null);
@@ -3262,9 +3405,10 @@ function FeeReceivingIndividual({ toast }) {
     return recStudentModel({
       student: s, headsForClass: heads, generated, classDisc,
       payments: paymentsFor(c.key, s.reg),
+      challan: generated ? (challanMap[keyOf(c.key, s.reg)] || null) : null,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [genSet, headsMap, paymentsFor]);
+  }, [genSet, headsMap, paymentsFor, challanMap]);
 
   const classSummary = useCallback((c) => {
     const students = studentsMap[c.key] || [];
@@ -3327,7 +3471,31 @@ function FeeReceivingIndividual({ toast }) {
       }
       return next;
     });
-    feeService.saveReceipt(payload).catch(() => {});
+
+    /* POST to /api/BranchLedger/receive-payment. ledgerId is the challan id;
+       each detailRow carries the running receivedAmount + pendingorAdv. The
+       per-head amounts entered now are matched to detailRows by subHead. */
+    const rec = challanMap[keyOf(payload.classKey, payload.reg)];
+    if (rec && rec.id) {
+      const userID = Number(sessionStorage.getItem('UserID')) || 0;
+      const now    = new Date().toISOString();
+      const detailRows = (rec.detailRows || []).map(r => {
+        const recvNow  = +(payload.perHead?.[r.subHead ?? r.head]) || 0;
+        const received = (+r.receivedAmount || 0) + recvNow;
+        const net      = (+r.challanAmount || 0) - (+r.discount || 0);
+        return { ...r, receivedAmount: received, pendingorAdv: net - received, modifiedAt: now, modifiedBy: userID };
+      });
+      feeService.receivePayment({
+        ledgerId:      rec.id,
+        paymentMethod: payload.method || '',
+        modifiedBy:    userID,
+        detailRows,
+      })
+        .then(() => loadChallans())
+        .catch(e => toast(e.message || 'Could not record payment', 'error'));
+    } else {
+      toast('No challan found to receive against', 'warning');
+    }
     toast(`Rs. ${(payload.amount || 0).toLocaleString('en-PK')} received from ${payload.studentName}`, 'success');
     /* After save: close receive modal and open slip modal for the new payment */
     const c = receiveCtx?.classMeta, s = receiveCtx?.student;
@@ -3337,6 +3505,7 @@ function FeeReceivingIndividual({ toast }) {
         classMeta: c, student: s, period: receiveCtx.period,
         payment: { date: payload.date, method: payload.method, ref: payload.ref, txn: payload.txn, amount: payload.amount, perHead: payload.perHead },
         defaultSize: settings.printSize || 'a4',
+        school: branchHeader,
       });
     }
   };
@@ -3626,7 +3795,7 @@ function FeeReceivingIndividual({ toast }) {
                                           <button className="fee-iconbtn tiny" onClick={() => {
                                             const payments = paymentsFor(c.key, s.reg);
                                             const last = payments[payments.length - 1];
-                                            if (last) setSlipCtx({ classMeta: c, student: s, period: `${appliedMonth} ${appliedYear}`, payment: last, defaultSize: settings.printSize || 'a4' });
+                                            if (last) setSlipCtx({ classMeta: c, student: s, period: `${appliedMonth} ${appliedYear}`, payment: last, defaultSize: settings.printSize || 'a4', school: branchHeader });
                                           }}>
                                             <i className="fa-solid fa-download"></i>
                                           </button>
@@ -7623,25 +7792,47 @@ const fmtChallanDate = (iso) => {
   return `${d}-${m[(+mo - 1) || 0]}-${y.slice(2)}`;
 };
 
-function feeSlipHTML({ copyLabel, classMeta, student, heads, settings, period, issueISO, dueISO, studentDisc }) {
+function feeSlipHTML({ copyLabel, classMeta, student, heads, settings, period, issueISO, dueISO, studentDisc, school }) {
   const showDisc = settings.showDiscount !== false;
   const showPsd  = settings.showPsd      !== false;
   const fine     = !!settings.fineEnabled;
   const fineAmt  = +settings.fineAmt || 0;
   const fineType = settings.fineType || 'fixed';
   const disMap   = studentDisc || {};
+  const schName  = school?.name || FEE_SCHOOL.name;
+  const schAddr  = school?.address || '';
+  const schDate  = feeReportDate(school);
+  const logoHtml = school?.logo
+    ? `<img src="${escHtml(school.logo)}" alt="${escHtml(schName)} logo" style="width:100%;height:100%;object-fit:contain;border-radius:50%;" />`
+    : FEE_LOGO_SVG;
 
-  const rows = heads.map(h => {
-    const raw   = +h.amt || 0;
-    const dRaw  = +disMap[h.name] || 0;
-    const disc  = showDisc ? Math.min(dRaw, raw) : 0;
-    return { name: h.name, std: raw, disc, net: raw - disc };
-  });
-  if (+student.transport > 0) {
-    rows.push({ name: 'Transport Fee', std: +student.transport, disc: 0, net: +student.transport });
+  /* Prefer the real generated challan's detailRows so every head the API returned
+     (incl. "Previous Pending") is printed; fall back to the class fee-head config. */
+  const detailRows = student?._challan?.detailRows;
+  let rows, arrears;
+  if (Array.isArray(detailRows) && detailRows.length) {
+    rows = detailRows.map(r => {
+      const std  = +r.challanAmount || 0;
+      const disc = showDisc ? (+r.discount || 0) : 0;
+      return { name: r.subHead || r.head || '', std, disc, net: std - disc };
+    });
+    /* If the challan didn't carry a transport line, fall back to the student's
+       Transport Setup amount so the download always reflects transport. */
+    const hasTransport = detailRows.some(r => /transport/i.test(String(r.subHead || r.head || '')));
+    if (!hasTransport && +student.transport > 0) {
+      rows.push({ name: 'Transport', std: +student.transport, disc: 0, net: +student.transport });
+    }
+    arrears = 0; // previous pending / advance is already a line in detailRows
+  } else {
+    rows = heads.map(h => {
+      const raw   = +h.amt || 0;
+      const dRaw  = +disMap[h.name] || 0;
+      const disc  = showDisc ? Math.min(dRaw, raw) : 0;
+      return { name: h.name, std: raw, disc, net: raw - disc };
+    });
+    arrears = (+student.dues || 0) - (+student.advance || 0);
   }
   const tNet    = rows.reduce((a, r) => a + r.net, 0);
-  const arrears = (+student.dues || 0) - (+student.advance || 0);
   const payable = tNet + arrears;
   const fineTxt = `Rs. ${fineAmt.toLocaleString('en-PK')}`;
   const psidPlain = FEE_SCHOOL.psid.replace(/[^0-9]/g, '');
@@ -7649,15 +7840,17 @@ function feeSlipHTML({ copyLabel, classMeta, student, heads, settings, period, i
   return `
 <div class="slip">
   <div class="slip-header">
-    <div class="logo-circle">${FEE_LOGO_SVG}</div>
+    <div class="logo-circle">${logoHtml}</div>
     <div>
-      <div class="school-name">${escHtml(FEE_SCHOOL.name)}</div>
+      <div class="school-name">${escHtml(schName)}</div>
+      ${schAddr ? `<div class="school-addr" style="font-size:8px;color:#555;line-height:1.3;">${escHtml(schAddr)}</div>` : ''}
       <span class="copy-tag">${escHtml(copyLabel)}</span>
     </div>
   </div>
   <div class="info-grid">
     <span class="ig-lbl">Fee Period</span><span class="ig-val">${escHtml(period)}</span>
     <span class="ig-lbl">Issue / Due</span><span class="ig-val">${escHtml(fmtChallanDate(issueISO))} / ${escHtml(fmtChallanDate(dueISO))}</span>
+    <span class="ig-lbl">Date</span><span class="ig-val">${escHtml(schDate)}</span>
     <span class="ig-lbl">Admn. No</span><span class="ig-val">${escHtml(student.reg)}</span>
     <span class="ig-lbl">Student</span><span class="ig-val">${escHtml(student.name)}</span>
     <span class="ig-lbl">Father</span><span class="ig-val">${escHtml(student.father || '—')}</span>
@@ -7702,7 +7895,7 @@ function feeSlipHTML({ copyLabel, classMeta, student, heads, settings, period, i
 </div>`;
 }
 
-function buildChallanInner({ classMeta, students, heads, settings, discountMap, bw = false, size = 'a4' }) {
+function buildChallanInner({ classMeta, students, heads, settings, discountMap, bw = false, size = 'a4', school = null }) {
   const today    = new Date();
   const issueISO = today.toISOString().slice(0, 10);
   const dueDate  = new Date(today); dueDate.setDate(dueDate.getDate() + 10);
@@ -7710,11 +7903,12 @@ function buildChallanInner({ classMeta, students, heads, settings, discountMap, 
   const m = ['January','February','March','April','May','June','July','August','September','October','November','December'];
   const period  = `${m[today.getMonth()]} ${today.getFullYear()}`;
   const classDisc = (discountMap && discountMap[classMeta.key]) || {};
+  const sch = feeReportSchool(school);
 
   if (size === 'thermal') {
     const slips = students.map(s => feeThermalChallanHTML({
       classMeta, student: s, heads, settings, period, issueISO, dueISO,
-      studentDisc: classDisc[s.reg] || {},
+      studentDisc: classDisc[s.reg] || {}, school: sch,
     })).join('');
     return `<div class="fee-thermal-doc">${slips || '<div style="padding:14px;text-align:center;color:#64748B">Nothing to render.</div>'}</div>`;
   }
@@ -7724,9 +7918,9 @@ function buildChallanInner({ classMeta, students, heads, settings, discountMap, 
     return `
     <div class="challan-page">
       <div class="challan-row">
-        ${feeSlipHTML({ copyLabel: 'Parent Copy', classMeta, student: s, heads, settings, period, issueISO, dueISO, studentDisc: sd })}
-        ${feeSlipHTML({ copyLabel: 'Bank Copy',   classMeta, student: s, heads, settings, period, issueISO, dueISO, studentDisc: sd })}
-        ${feeSlipHTML({ copyLabel: 'School Copy', classMeta, student: s, heads, settings, period, issueISO, dueISO, studentDisc: sd })}
+        ${feeSlipHTML({ copyLabel: 'Parent Copy', classMeta, student: s, heads, settings, period, issueISO, dueISO, studentDisc: sd, school: sch })}
+        ${feeSlipHTML({ copyLabel: 'Bank Copy',   classMeta, student: s, heads, settings, period, issueISO, dueISO, studentDisc: sd, school: sch })}
+        ${feeSlipHTML({ copyLabel: 'School Copy', classMeta, student: s, heads, settings, period, issueISO, dueISO, studentDisc: sd, school: sch })}
       </div>
     </div>`;
   }).join('');
@@ -7773,32 +7967,49 @@ body{font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif;color:#111;back
 @media print{ body{padding:0;} .th-challan{page-break-after:always;} .th-challan:last-child{page-break-after:auto;} }
 `;
 
-function feeThermalChallanHTML({ classMeta, student, heads, settings, period, issueISO, dueISO, studentDisc }) {
+function feeThermalChallanHTML({ classMeta, student, heads, settings, period, issueISO, dueISO, studentDisc, school }) {
   const showDisc = settings.showDiscount !== false;
   const showPsd  = settings.showPsd      !== false;
   const fine     = !!settings.fineEnabled;
   const fineAmt  = +settings.fineAmt || 0;
   const fineType = settings.fineType || 'fixed';
   const disMap   = studentDisc || {};
+  const schName  = school?.name || FEE_SCHOOL.name;
+  const schAddr  = school?.address || '';
 
-  const rows = heads.map(h => {
-    const raw  = +h.amt || 0;
-    const dRaw = +disMap[h.name] || 0;
-    const disc = showDisc ? Math.min(dRaw, raw) : 0;
-    return { name: h.name, std: raw, disc, net: raw - disc };
-  });
-  if (+student.transport > 0) {
-    rows.push({ name: 'Transport Fee', std: +student.transport, disc: 0, net: +student.transport });
+  /* Prefer the real generated challan's detailRows (shows every API head incl.
+     "Previous Pending"); otherwise fall back to the class fee-head config. */
+  const detailRows = student?._challan?.detailRows;
+  let rows, arrears;
+  if (Array.isArray(detailRows) && detailRows.length) {
+    rows = detailRows.map(r => {
+      const std  = +r.challanAmount || 0;
+      const disc = showDisc ? (+r.discount || 0) : 0;
+      return { name: r.subHead || r.head || '', std, disc, net: std - disc };
+    });
+    const hasTransport = detailRows.some(r => /transport/i.test(String(r.subHead || r.head || '')));
+    if (!hasTransport && +student.transport > 0) {
+      rows.push({ name: 'Transport', std: +student.transport, disc: 0, net: +student.transport });
+    }
+    arrears = 0;
+  } else {
+    rows = heads.map(h => {
+      const raw  = +h.amt || 0;
+      const dRaw = +disMap[h.name] || 0;
+      const disc = showDisc ? Math.min(dRaw, raw) : 0;
+      return { name: h.name, std: raw, disc, net: raw - disc };
+    });
+    arrears = (+student.dues || 0) - (+student.advance || 0);
   }
   const tNet    = rows.reduce((a, r) => a + r.net, 0);
-  const arrears = (+student.dues || 0) - (+student.advance || 0);
   const payable = tNet + arrears;
   const fineTxt = `Rs. ${fineAmt.toLocaleString('en-PK')}`;
   const showDiscCol = rows.some(r => r.disc > 0);
 
   return `
 <div class="th-challan">
-  <div class="th-school">${escHtml(FEE_SCHOOL.name)}</div>
+  <div class="th-school">${escHtml(schName)}</div>
+  ${schAddr ? `<div style="font-size:9px;color:#555;text-align:center;margin-bottom:2px;">${escHtml(schAddr)}</div>` : ''}
   <div class="th-tag">Fee Challan</div>
   <div class="th-kv">
     <span class="k">Period</span><span class="v">${escHtml(period)}</span>

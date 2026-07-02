@@ -484,6 +484,32 @@ function buildLedgerChallanPayload({ classMeta = {}, student = {}, heads = [], m
   const dueDate = toApiDate(options.dueDate);
   const classDisc = options.discountMap?.[classMeta.key]?.[student.reg] || {};
 
+  const makeRow = (subHead, amount, discount = 0) => ({
+    id: 0,
+    blid: 0,
+    branchId: branchID,
+    head: 'Account Payable',
+    subHead: String(subHead || ''),
+    challanAmount: Number(amount) || 0,
+    discount: Number(discount) || 0,
+    receivedAmount: 0,
+    pendingorAdv: 0,
+    createdAt: now,
+    createdBy: userID,
+    modifiedAt: now,
+    modifiedBy: userID,
+    isActive: true,
+  });
+
+  const detailRows = heads.map(h =>
+    makeRow(h.name || h.headName, h.amt ?? h.amount, classDisc[h.name])
+  );
+  /* Auto-add the student's transport fee (from Transport Setup) as its own
+     challan head — subHead "Transport", head "Account Payable". */
+  if (Number(student.transport) > 0) {
+    detailRows.push(makeRow('Transport', student.transport));
+  }
+
   return {
     ledger: {
       id: 0,
@@ -505,25 +531,7 @@ function buildLedgerChallanPayload({ classMeta = {}, student = {}, heads = [], m
       modifiedAt: now,
       modifiedBy: userID,
       isActive: true,
-      detailRows: heads.map(h => {
-        const amount = Number(h.amt ?? h.amount) || 0;
-        return {
-          id: 0,
-          blid: 0,
-          branchId: branchID,
-          head: '',
-          subHead: String(h.name || h.headName || ''),
-          challanAmount: amount,
-          discount: Number(classDisc[h.name]) || 0,
-          receivedAmount: 0,
-          pendingorAdv: 0,
-          createdAt: now,
-          createdBy: userID,
-          modifiedAt: now,
-          modifiedBy: userID,
-          isActive: true,
-        };
-      }),
+      detailRows,
     },
   };
 }
@@ -570,6 +578,68 @@ export async function deleteChallan(classKey, reg, monthIdx) {
 export async function deleteClassChallans(classKey, monthIdx) {
   await delay();
   return { classKey, monthIdx, cleared: true };
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   BranchLedger challans — real API reads/deletes.
+   month is 1-based (July = 7); callers pass monthIdx + 1.
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* All students' challans for a branch/month/year (the challan-list source). */
+export async function getMonthChallans(month, year) {
+  const branchID = Number(sessionStorage.getItem('branchID')) || 1;
+  const res = await fetch(
+    buildUrl(`/api/BranchLedger/get-by-month?branchId=${branchID}&month=${month}&year=${year}`),
+    { headers: { Accept: '*/*' } },
+  );
+  const json = await res.json().catch(() => null);
+  if (!res.ok || json?.success === false) {
+    throw new Error(apiMessage(json) || 'Could not load challans');
+  }
+  return Array.isArray(json?.data) ? json.data : [];
+}
+
+/* One student's challans for a branch/month/year. */
+export async function getStudentChallans(studentId, month, year) {
+  const branchID = Number(sessionStorage.getItem('branchID')) || 1;
+  const res = await fetch(
+    buildUrl(`/api/BranchLedger/get-all?branchId=${branchID}&studentId=${studentId}&month=${month}&year=${year}`),
+    { headers: { Accept: '*/*' } },
+  );
+  const json = await res.json().catch(() => null);
+  if (!res.ok || json?.success === false) {
+    throw new Error(apiMessage(json) || 'Could not load student challans');
+  }
+  return Array.isArray(json?.data) ? json.data : [];
+}
+
+/* Record a payment against a challan. body:
+   { ledgerId (challan id), paymentMethod, modifiedBy, detailRows:[...] }.
+   The caller fills each detailRow's receivedAmount / pendingorAdv. */
+export async function receivePayment(body) {
+  const res = await fetch(buildUrl('/api/BranchLedger/receive-payment'), {
+    method: 'POST',
+    headers: { Accept: '*/*', 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok || json?.success === false) {
+    throw new Error(apiMessage(json) || 'Could not record payment');
+  }
+  return json;
+}
+
+/* Delete a single challan record by its BranchLedger id. */
+export async function deleteChallanById(id) {
+  const res = await fetch(buildUrl(`/api/BranchLedger/delete/${id}`), {
+    method: 'DELETE',
+    headers: { Accept: '*/*' },
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok || json?.success === false) {
+    throw new Error(apiMessage(json) || 'Could not delete challan');
+  }
+  return json;
 }
 export async function generateFamilyChallan(famKey, regs, monthIdx, options) {
   await delay();
