@@ -166,6 +166,17 @@ const RES_SUBJECTS = [
   'English','Urdu','Mathematics','Science','Islamiyat',
   'Computer','Social Studies','Quran','Art & Craft','Physical Education',
 ];
+
+/* A subject counts as ABSENT when its marks weren't entered — no marks record,
+   or blank obtained / total marks. The Result-Setup absent handling (zero|exclude)
+   then applies to it on the result cards (single / combined / history). */
+function resSubjAbsent(rec, subjTotal) {
+  const blank = (v) => v == null || String(v).trim() === '';
+  if (rec == null) return true;
+  const obt = rec.obtainMarks ?? rec.obtainedMarks ?? rec.marks;
+  const tot = !blank(rec.totalMarks) ? rec.totalMarks : subjTotal;
+  return blank(obt) || blank(tot) || Number(tot) <= 0;
+}
 const RC_GRADE_SETUP = [
   { min:90, grade:'A+', comment:'Excellent Work Done' },
   { min:80, grade:'A',  comment:'Very Good Work Done' },
@@ -504,15 +515,15 @@ const [subjects, setSubjects] = useState([]);
     const [classes, classSection, sessions, branchSession] = await Promise.all([
       getJson(`/get-classlist-sectionlist-studentlist-by-branch/${branchID}/${empID}`),
       getJson(`/api/LaunchSetup/get-class-section-studentlist-by-branch/${branchID}`),
-      getJson(`/api/Setting/get-sessions`),
-      getJson(`/api/Setting/get-branch-session/${branchID}`),
+      getJson(`/api/Setting/get-academic-sessions-by-branch/${branchID}`),
+      getJson(`/api/Setting/get-academic-active-sessions-by-branch/${branchID}`),
     ]);
     setRhData({ classes, classSection, sessions, branchSession });
-    // Active session ko dropdown mein default-select karo (get-branch-session se).
+    // Active session ko dropdown mein default-select karo (active-sessions API se).
     const sessList = sessions?.data || [];
-    const active   = branchSession?.data?.[0] || branchSession?.data || {};
+    const active   = (Array.isArray(branchSession?.data) ? branchSession.data[0] : branchSession?.data) || {};
     const activeName = active.SessionName
-      || sessList.find(s => String(s.SessionID) === String(active.SessionID))?.SessionName;
+      || sessList.find(s => String(s.ID ?? s.SessionID) === String(active.ID ?? active.SessionID))?.SessionName;
     if (activeName) setRhFilterSession(activeName);
     console.log('📜 Result History data loaded:', { classes, classSection, sessions, branchSession, activeName });
   };
@@ -720,16 +731,16 @@ const [subjects, setSubjects] = useState([]);
     (async () => {
       try {
         const rawSubs = await cbrApi.getMainExamSubjects({ classID, sectionID, termID, examID: selectExam });
-        // This API returns subjectName=null, so resolve names by subjectID from the syllabus list.
+        // Class ke REAL subjects (get-subjects_byEmployeeID) — naam + fallback ke liye.
+        let syl = [];
+        try { syl = await getSyllabusSubjects(classID, sectionID) || []; } catch (e) { /* keep going */ }
         const nameMap = {};
-        try {
-          const syl = await getSyllabusSubjects(classID, sectionID);
-          (syl || []).forEach(s => { nameMap[s.subjectID] = s.subjectName; });
-        } catch (e) { /* keep going with whatever names we have */ }
-        const subs = rawSubs.map(su => ({
-          ...su,
-          subjectName: su.subjectName || nameMap[su.subjectID] || `Subject ${su.subjectID}`,
-        }));
+        syl.forEach(s => { nameMap[s.subjectID] = s.subjectName; });
+        // Exam mein subjects assign hon to wahi; warna class ke real subjects dikhao
+        // (marks add na hone par bhi subjects nazar aayein → blank → absent handling).
+        const subs = (rawSubs && rawSubs.length)
+          ? rawSubs.map(su => ({ ...su, subjectName: su.subjectName || nameMap[su.subjectID] || `Subject ${su.subjectID}` }))
+          : syl.map(s => ({ subjectID: s.subjectID, subjectName: s.subjectName }));
         const token = sessionStorage.getItem('token');
         const headers = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
         // Direct marks fetch taa-ke obtain + remarks dono mil sakein
@@ -746,11 +757,12 @@ const [subjects, setSubjects] = useState([]);
           } catch { return { su, rec: null }; }
         }));
         if (cancelled) return;
-        const obtained = {}, totals = {}, remarks = {};
+        const obtained = {}, totals = {}, remarks = {}, absentSubjects = [];
         records.forEach(({ su, rec }) => {
           obtained[su.subjectName] = Number(rec?.obtainMarks ?? rec?.obtainedMarks ?? 0);
           totals[su.subjectName]   = Number(rec?.totalMarks ?? su.totalMarks ?? 0);
           if (rec?.remarks) remarks[su.subjectName] = rec.remarks;   // saved remarks → Comment column
+          if (resSubjAbsent(rec, su.totalMarks)) absentSubjects.push(su.subjectName);
         });
         // Student ka FINAL remark (getremarksbystudentfilters) → card ke Final Remarks mein
         let finalRemark = '';
@@ -767,7 +779,7 @@ const [subjects, setSubjects] = useState([]);
           finalRemark = frec?.remarks || '';
         } catch (e) { /* no final remark */ }
         if (cancelled) return;
-        setResCardMarks({ subjects: subs.map(s => s.subjectName), totals, obtained, remarks, finalRemark });
+        setResCardMarks({ subjects: subs.map(s => s.subjectName), totals, obtained, remarks, finalRemark, absentSubjects });
       } catch (e) {
         console.error('Error loading single card subject marks:', e);
         if (!cancelled) setResCardMarks({ subjects: [], totals: {}, obtained: {} });
@@ -805,19 +817,20 @@ const [subjects, setSubjects] = useState([]);
           withMarks = false;
         }
         subs = subs || [];
-        // getMainExamSubjects returns subjectName=null, so resolve names by subjectID.
+        // Class ke REAL subjects (naam resolve + fallback list ke liye).
+        let syl = [];
+        try { syl = await getSyllabusSubjects(grp.classID, grp.sectionID) || []; } catch (e) { /* keep going */ }
         const nameMap = {};
-        try {
-          const syl = await getSyllabusSubjects(grp.classID, grp.sectionID);
-          (syl || []).forEach(s => { nameMap[s.subjectID] = s.subjectName; });
-        } catch (e) { /* keep going with whatever names we have */ }
+        syl.forEach(s => { nameMap[s.subjectID] = s.subjectName; });
+        // Exam/sub-exam mein koi subject nahi → class ke real subjects dikhao (marks blank → absent).
+        if (!subs.length) { subs = syl.map(s => ({ subjectID: s.subjectID, subjectName: s.subjectName })); withMarks = false; }
         subs = subs.map(su => ({
           ...su,
           subjectName: su.subjectName || nameMap[su.subjectID] || `Subject ${su.subjectID}`,
         }));
         const token = sessionStorage.getItem('token');
         const headers = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
-        const obtained = {}, totals = {}, remarks = {};
+        const obtained = {}, totals = {}, remarks = {}, absentSubjects = [];
         if (withMarks) {
           // Direct fetch taa-ke obtain + remarks dono mil sakein (Comment column ke liye)
           await Promise.all(subs.map(async su => {
@@ -832,10 +845,11 @@ const [subjects, setSubjects] = useState([]);
               obtained[su.subjectName] = Number(rec?.obtainMarks ?? rec?.obtainedMarks ?? 0);
               totals[su.subjectName]   = Number(rec?.totalMarks ?? su.totalMarks ?? 0);
               if (rec?.remarks) remarks[su.subjectName] = rec.remarks;
-            } catch { obtained[su.subjectName] = 0; totals[su.subjectName] = Number(su.totalMarks ?? 0); }
+              if (resSubjAbsent(rec, su.totalMarks)) absentSubjects.push(su.subjectName);
+            } catch { obtained[su.subjectName] = 0; totals[su.subjectName] = Number(su.totalMarks ?? 0); absentSubjects.push(su.subjectName); }
           }));
         } else {
-          subs.forEach(su => { obtained[su.subjectName] = ''; totals[su.subjectName] = su.totalMarks; });
+          subs.forEach(su => { obtained[su.subjectName] = ''; totals[su.subjectName] = su.totalMarks; absentSubjects.push(su.subjectName); });
         }
         // Student ka FINAL remark (getremarksbystudentfilters) → card ke Final Remarks mein
         let finalRemark = '';
@@ -852,7 +866,7 @@ const [subjects, setSubjects] = useState([]);
           finalRemark = frec?.remarks || '';
         } catch (e) { /* no final remark */ }
         if (cancelled) return;
-        setCbrCardMarks({ subjects: subs.map(s => s.subjectName), totals, obtained, remarks, finalRemark });
+        setCbrCardMarks({ subjects: subs.map(s => s.subjectName), totals, obtained, remarks, finalRemark, absentSubjects });
       } catch (e) {
         console.error('Error loading card subject marks:', e);
         if (!cancelled) setCbrCardMarks({ subjects: [], totals: {}, obtained: {} });
@@ -945,12 +959,13 @@ const [subjects, setSubjects] = useState([]);
           } catch { return { su, rec: null }; }
         }));
         if (cancelled) return;
-        const obtained = {}, totals = {}, remarks = {};
+        const obtained = {}, totals = {}, remarks = {}, absentSubjects = [];
         records.forEach(({ su, rec }) => {
           const name = su.subjectName || `Subject ${su.subjectID}`;
           obtained[name] = Number(rec?.obtainMarks ?? rec?.obtainedMarks ?? 0);
           totals[name]   = Number(rec?.totalMarks ?? su.totalMarks ?? 0);
           if (rec?.remarks) remarks[name] = rec.remarks;   // saved remarks → Comment column
+          if (resSubjAbsent(rec, su.totalMarks)) absentSubjects.push(name);
         });
         // 3) Student ka FINAL remark (getremarksbystudentfilters) → card ke Final Remarks mein
         let finalRemark = '';
@@ -967,7 +982,7 @@ const [subjects, setSubjects] = useState([]);
           finalRemark = frec?.remarks || '';
         } catch (e) { /* no final remark */ }
         if (cancelled) return;
-        setRhCardMarks({ subjects: subs.map(s => s.subjectName), totals, obtained, remarks, finalRemark });
+        setRhCardMarks({ subjects: subs.map(s => s.subjectName), totals, obtained, remarks, finalRemark, absentSubjects });
       } catch (e) {
         console.error('Error loading result-history card subject marks:', e);
         if (!cancelled) setRhCardMarks({ subjects: [], totals: {}, obtained: {} });
@@ -3193,11 +3208,17 @@ useEffect(() => {
   ))}
 </div>
           <div className="exam-action-bar">
-            <Tooltip text="Create a new exam for this term">
-              <button className="exam-add-btn" onClick={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } openAdd(); }}
-                disabled={isOtherSession}
-                title={isOtherSession ? 'Editing is only allowed for the current session' : undefined}
-                style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
+            <Tooltip text={!terms.length ? 'Add a term first to create an exam' : 'Create a new exam for this term'}>
+              <button className="exam-add-btn"
+                onClick={() => {
+                  if (isOtherSession) { toast('Method not allowed', 'error'); return; }
+                  if (!terms.length) { toast('Please add a term first', 'error'); return; }
+                  openAdd();
+                }}
+                disabled={isOtherSession || !terms.length}
+                title={isOtherSession ? 'Editing is only allowed for the current session'
+                     : !terms.length ? 'Add a term first to create an exam' : undefined}
+                style={(isOtherSession || !terms.length) ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
                 <i className="fa-solid fa-plus"></i> Add Exam
               </button>
             </Tooltip>
@@ -5272,10 +5293,10 @@ onClick={async () => {
 
                 {/* Filters */}
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 18, alignItems: 'center' }}>
-                  {/* Sessions — get-sessions API; default = active session (get-branch-session) */}
+                  {/* Sessions — get-academic-sessions-by-branch; default = active (get-academic-active-sessions-by-branch) */}
                   <select className="rh-filter" value={rhFilterSession} onChange={e => setRhFilterSession(e.target.value)}>
                     <option value="">All Sessions</option>
-                    {(rhData.sessions?.data || []).map(s => <option key={s.SessionID} value={s.SessionName}>{s.SessionName}</option>)}
+                    {(rhData.sessions?.data || []).map(s => <option key={s.ID ?? s.SessionID} value={s.SessionName}>{s.SessionName}</option>)}
                   </select>
                   {/* Classes — get-class-section-studentlist-by-branch API */}
                   <select className="rh-filter" value={rhFilterClass} onChange={e => { setRhFilterClass(e.target.value); setRhFilterSection(''); }}>
@@ -5732,7 +5753,7 @@ onClick={async () => {
           obtained: rhCardMarks?.obtained || {},
           manualRemarks: rhCardMarks?.remarks || {},   // saved per-subject remarks → Comment column
           finalRemarks: rhCardMarks?.finalRemark || '', // student ka final remark → Final Remarks section
-          absentSubjects: [],
+          absentSubjects: rhCardMarks?.absentSubjects || [],
           attendance: student.attendance ? `${student.attendance}%` : '—',
         };
         const cardRd = {
@@ -5804,7 +5825,7 @@ onClick={async () => {
           name: st.name,
           father: st.father,
           obtained: cbrCardMarks?.obtained || {},
-          absentSubjects: [],
+          absentSubjects: cbrCardMarks?.absentSubjects || [],
           attendance: '—',
           _combined: {
             grandTotal:   st.grandTotal,
@@ -6062,7 +6083,7 @@ onClick={async () => {
     obtained: resCardMarks?.obtained || {},
     manualRemarks: resCardMarks?.remarks || {},     // saved per-subject remarks → Comment column
     finalRemarks: resCardMarks?.finalRemark || '',  // student ka final remark → Final Remarks section
-    absentSubjects: [],
+    absentSubjects: resCardMarks?.absentSubjects || [],
     attendance: '—',
   };
   const cardRd = {
@@ -8157,23 +8178,23 @@ function ClassicResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
                 const obt = isAbs ? 0 : (st.obtained[s] || 0);
                 const pct = (!isAbs && tot) ? Math.round((obt / tot) * 100) : 0;
                 const g   = (!isAbs && obt > 0) ? rcGetGrade(obt, tot) : null;
-                // Saved remarks (manualRemarks) ko tarjeeh do, warna grade ka comment.
-                const mc  = isAbs ? 'Absent' : ((st.manualRemarks && st.manualRemarks[s]) || (g ? g.comment : '')).slice(0, 40);
+                // Comment column hamesha REAL remarks dikhaye (absent ho ya na ho).
+                const mc  = ((st.manualRemarks && st.manualRemarks[s]) || (g ? g.comment : '')).slice(0, 40);
                 const gcol = gradeChipColor(g);
-                const bg = isAbs ? absRowBg : (i % 2 === 0 ? '#fff' : rowAlt);
+                const bg = (i % 2 === 0 ? '#fff' : rowAlt);
                 const tdBase   = { padding: '4px 7px', fontSize: 11, borderBottom: `1px solid ${accentBdr}` };
                 const tdCenter = { ...tdBase, textAlign: 'center' };
                 return (
                   <tr key={s} style={{ background: bg }}>
                     <td style={{ ...tdBase, fontWeight: 700, color: textPri }}>{i + 1}</td>
                     {opt['Show Subject-wise Marks'] && (
-                      <td style={{ ...tdBase, fontWeight: 600, color: isAbs ? absCol : textPri }}>
-                        {s}{isAbs && <span style={{ fontSize: 9, color: absCol, fontWeight: 500 }}> (Absent)</span>}
-                      </td>
+                      <td style={{ ...tdBase, fontWeight: 600, color: textPri }}>{s}</td>
                     )}
                     {opt['Show Total Marks'] && (
                       <td style={tdCenter}>
-                        {isAbs ? <span style={{ color: textMut, fontSize: 10 }}>—</span> : tot}
+                        {/* Case 1 (zero): absent ka total count hota hai → dikhao.
+                            Case 2 (exclude): absent total mein nahi → "—". */}
+                        {isAbs ? (useZeroMode ? tot : <span style={{ color: textMut, fontSize: 10 }}>—</span>) : tot}
                       </td>
                     )}
                     {opt['Show Obtained Marks'] && (
@@ -8205,7 +8226,7 @@ function ClassicResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
                         )}
                       </td>
                     )}
-                    <td style={{ ...tdBase, fontSize: 10, color: isAbs ? absCol : textMut }}><em>{mc}</em></td>
+                    <td style={{ ...tdBase, fontSize: 10, color: textMut }}><em>{mc}</em></td>
                   </tr>
                 );
               })}
@@ -8218,9 +8239,6 @@ function ClassicResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
                 {opt['Show Total Marks'] && (
                   <td style={{ padding: '5px 7px', textAlign: 'center', fontSize: 10.5, fontWeight: 800, color: accent, borderTop: `2px solid ${accentBdr}` }}>
                     {totalAll}
-                    {!useZeroMode && (
-                      <span style={{ fontSize: 8.5, fontWeight: 500, color: textMut, display: 'block', lineHeight: 1 }}>(excl. absent)</span>
-                    )}
                   </td>
                 )}
                 {opt['Show Obtained Marks'] && (
@@ -8476,7 +8494,7 @@ function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
         </div>
         {subjData.map(d => (
           <div key={d.s} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '4px 0' }}>
-            <div style={{ width: 100, flexShrink: 0, fontSize: 11, fontWeight: 600, color: d.isAbs ? amb : textPri, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.s}</div>
+            <div style={{ width: 100, flexShrink: 0, fontSize: 11, fontWeight: 600, color: textPri, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.s}</div>
             <div style={{ flex: 1, height: 7, borderRadius: 4, background: '#F1F5F9', overflow: 'hidden' }}>
               <div style={{ height: '100%', width: `${d.isAbs ? 0 : d.pct}%`, background: d.isAbs ? 'rgba(217,119,6,.3)' : d.col, borderRadius: 4 }} />
             </div>
@@ -8595,8 +8613,8 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
     const obt = isAbs ? 0 : (st.obtained[s] || 0);
     const pct = (!isAbs && tot) ? Math.round((obt / tot) * 100) : 0;
     const g   = (!isAbs && obt > 0) ? rcGetGrade(obt, tot) : null;
-    // Saved remarks (manualRemarks) ko tarjeeh do, warna grade ka comment.
-    const mc  = isAbs ? 'Absent' : ((st.manualRemarks && st.manualRemarks[s]) || (g ? g.comment : '')).slice(0, 40);
+    // Comment column hamesha REAL remarks dikhaye (absent ho ya na ho).
+    const mc  = ((st.manualRemarks && st.manualRemarks[s]) || (g ? g.comment : '')).slice(0, 40);
     return { s, tot, obt, pct, g, mc, isAbs, col: C.bars[i % C.bars.length] };
   });
 
@@ -8737,10 +8755,10 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
                 <tr key={d.s} style={{ background: bg }}>
                   <td style={{ ...tdBase, fontSize: 10.5, fontWeight: 700, color: C.textM }}>{i + 1}</td>
                   {opt['Show Subject-wise Marks'] && (
-                    <td style={{ ...tdBase, fontWeight: 600, color: d.isAbs ? absC : C.textP }}>{d.s}</td>
+                    <td style={{ ...tdBase, fontWeight: 600, color: C.textP }}>{d.s}</td>
                   )}
                   {opt['Show Total Marks'] && (
-                    <td style={{ ...tdBase, textAlign: 'center', color: C.textM }}>{d.isAbs ? '—' : d.tot}</td>
+                    <td style={{ ...tdBase, textAlign: 'center', color: C.textM }}>{d.isAbs ? (useZeroMode ? d.tot : '—') : d.tot}</td>
                   )}
                   {opt['Show Obtained Marks'] && (
                     <td style={{ ...tdBase, textAlign: 'center' }}>
@@ -8763,7 +8781,7 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
                       )}
                     </td>
                   )}
-                  <td style={{ ...tdBase, fontSize: 10, color: d.isAbs ? absC : C.textM }}>{d.mc}</td>
+                  <td style={{ ...tdBase, fontSize: 10, color: C.textM }}>{d.mc}</td>
                 </tr>
               );
             })}
@@ -11435,7 +11453,7 @@ function BulkCardModal({ ctx, template, school, grades, rcoGeneral, rcoSig, rsSi
         for (const stu of studentsRaw) {
           if (cancelled) return;
           const studentId = stu.id ?? stu.studentID ?? stu.StudentID;
-          const obtained = {}, remarks = {}, totals = {};
+          const obtained = {}, remarks = {}, totals = {}, absentSubjects = [];
           // 3) Har subject ke marks + remarks
           await Promise.all(subs.map(async su => {
             try {
@@ -11449,7 +11467,8 @@ function BulkCardModal({ ctx, template, school, grades, rcoGeneral, rcoSig, rsSi
               obtained[su.subjectName] = Number(rec?.obtainMarks ?? rec?.obtainedMarks ?? 0);
               totals[su.subjectName]   = Number(rec?.totalMarks ?? su.totalMarks ?? 0);
               if (rec?.remarks) remarks[su.subjectName] = rec.remarks;
-            } catch { /* skip */ }
+              if (resSubjAbsent(rec, su.totalMarks)) absentSubjects.push(su.subjectName);
+            } catch { absentSubjects.push(su.subjectName); }
           }));
           // 4) Final remark
           let finalRemark = '';
@@ -11472,7 +11491,7 @@ function BulkCardModal({ ctx, template, school, grades, rcoGeneral, rcoSig, rsSi
               name: (stu.studentName ?? stu.StudentName ?? `${stu.firstName || ''} ${stu.lastName || ''}`.trim()) || '—',
               father: stu.fatherName ?? stu.FatherName ?? '',
               obtained, manualRemarks: remarks, finalRemarks: finalRemark,
-              absentSubjects: [], attendance: '—',
+              absentSubjects, attendance: '—',
             },
             rd: { released: false, totalMarks: totals, subjects: subjectNames },
           });
@@ -11615,22 +11634,23 @@ function BulkCombinedCardModal({ grp, termID, template, school, grades, rcoGener
         const built = [];
         for (const st of students) {
           if (cancelled) return;
-          const obtained = {}, totals = {};
+          const obtained = {}, totals = {}, absentSubjects = [];
           if (withMarks) {
             await Promise.all(subs.map(async su => {
-              const m = await cbrApi.getStudentSubjectMark({ classID: grp.classID, sectionID: grp.sectionID, termID, examID: grp.mainExamID, subjectID: su.subjectID, studentID: st.studentID }).catch(() => 0);
-              obtained[su.subjectName] = m;
+              const m = await cbrApi.getStudentSubjectMark({ classID: grp.classID, sectionID: grp.sectionID, termID, examID: grp.mainExamID, subjectID: su.subjectID, studentID: st.studentID }).catch(() => null);
+              obtained[su.subjectName] = m == null ? '' : m;
               totals[su.subjectName]   = su.totalMarks;
+              if (m == null || String(m).trim() === '' || !su.totalMarks || Number(su.totalMarks) <= 0) absentSubjects.push(su.subjectName);
             }));
           } else {
-            subs.forEach(su => { obtained[su.subjectName] = ''; totals[su.subjectName] = su.totalMarks; });
+            subs.forEach(su => { obtained[su.subjectName] = ''; totals[su.subjectName] = su.totalMarks; absentSubjects.push(su.subjectName); });
           }
           const rankNum = parseInt(st.rank, 10) || 1;
           const rankSfx = (String(st.rank).match(/[a-z]+$/i) || ['th'])[0];
           built.push({
             student: {
               id: st.rollNo, rollNo: st.rollNo, name: st.name, father: st.father,
-              obtained, absentSubjects: [], attendance: '—',
+              obtained, absentSubjects, attendance: '—',
               _combined: {
                 grandTotal: st.grandTotal, grandObt: st.grandObt, ovPct: st.pct,
                 mainExName: grp.mainExam, mainTotal: st.mainTotal, mainObt: st.mainObt,
