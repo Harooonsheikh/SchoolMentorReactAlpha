@@ -4,6 +4,7 @@
   import TutorialModal from "./TutorialModal";
   import * as attendanceService from "../services/attendanceService";
   import useAsync from "../hooks/useAsync";
+  import { useModuleReadOnly } from "../pages/Settings/settingsStore";
 
   /* ============================================================================
     SchoolMentor ERP — Attendance Module (React / JSX)
@@ -221,27 +222,20 @@
   /* ─── Tab 1: Holidays Setup ─────────────────────────────────────────────────
     Pixel-faithful port of the HTML reference. Uses att-* classes + FA icons. */
 
-  function HolidaysTab({ weeklyOff, requestToggleDay, holidays, openHolModal, requestDeleteHoliday, openReportPicker, toast  , onSaveWeeklyOff, onExpandMonth, loadingMonth }) {
+  function HolidaysTab({ weeklyOff, requestToggleDay, holidays, openHolModal, requestDeleteHoliday, openReportPicker, toast  , onSaveWeeklyOff, onExpandMonth, loadingMonth, isOtherSession = false }) {
     const [openMonth, setOpenMonth] = useState(null);
     const [holYear, setHolYear] = useState("");
-    const [sessions, setSessions] = useState([]); // [{ ID, SessionName, ... }]
 
-    // Session dropdown: list all branch sessions, default-select the active one.
+    // Current academic session ka naam — fixed (active session only, non-changeable).
     useEffect(() => {
       let alive = true;
       (async () => {
         try {
-          const [list, active] = await Promise.all([
-            attendanceService.getSessionsForBranch(),
-            attendanceService.getActiveSession(),
-          ]);
+          const active = await attendanceService.getActiveSession();
           if (!alive) return;
-          setSessions(list);
-          const activeName = active?.SessionName
-            || list.find((s) => String(s.ID) === String(active?.ID))?.SessionName;
-          if (activeName) setHolYear(activeName);
+          if (active?.SessionName) setHolYear(active.SessionName);
         } catch (err) {
-          console.error("Could not load sessions", err);
+          console.error("Could not load active session", err);
         }
       })();
       return () => { alive = false; };
@@ -259,9 +253,11 @@
                 <div className="att-section-sub">Select regular weekly off days for this school</div>
               </div>
             </div>
-            <Tooltip text="Save the selected weekly off days">
+            <Tooltip text={isOtherSession ? "Editing is only allowed for the current session" : "Save the selected weekly off days"}>
             <button
     className="att-btn-save-small"
+    disabled={isOtherSession}
+    style={isOtherSession ? { opacity: .45, cursor: "not-allowed" } : undefined}
     onClick={() => {
     // YEH LINE HATADO: toast("Weekly off days saved", "success");
     onSaveWeeklyOff(); // SIRF YEH RAHE
@@ -281,10 +277,11 @@
               {DAYS_F.map((day, i) => {
                 const off = weeklyOff.includes(i);
                 return (
-                  <Tooltip key={day} text={off ? `Mark ${day} as a working day` : `Mark ${day} as a weekly off`}>
+                  <Tooltip key={day} text={isOtherSession ? "Editing is only allowed for the current session" : (off ? `Mark ${day} as a working day` : `Mark ${day} as a weekly off`)}>
                     <div
                       className={`att-day-card${off ? " selected" : ""}`}
                       onClick={() => requestToggleDay(i)}
+                      style={isOtherSession ? { opacity: .5, cursor: "not-allowed" } : undefined}
                     >
                       <div className="att-day-icon">{DAY_ICONS[i]}</div>
                       <div className="att-day-name">{day.slice(0, 3)}</div>
@@ -308,14 +305,13 @@
               </div>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-              <div className="att-select-wrap">
-                <select className="att-select" value={holYear} onChange={(e) => setHolYear(e.target.value)} style={{ minWidth: 130 }}>
-                  {sessions.length === 0
-                    ? <option value={holYear}>{holYear || "Loading…"}</option>
-                    : sessions.map((s) => <option key={s.ID} value={s.SessionName}>{s.SessionName}</option>)}
-                </select>
-                <i className="fa-solid fa-chevron-down att-select-arrow"></i>
-              </div>
+              {/* Current academic session — fixed, non-changeable (active session only). */}
+              <Tooltip text="Current academic session">
+                <div className="att-select" style={{ minWidth: 130, display: "inline-flex", alignItems: "center", gap: 6, cursor: "default" }}>
+                  <i className="fa-solid fa-calendar-days" style={{ opacity: .6 }}></i>
+                  {holYear || "Loading…"}
+                </div>
+              </Tooltip>
               <Tooltip text="Download a PDF of all holidays for the selected year">
                 <button
                   className="att-btn-report"
@@ -346,9 +342,11 @@
                         </div>
                       </div>
                       <div className="att-month-actions">
-                        <Tooltip text={`Add a new holiday in ${m}`}>
+                        <Tooltip text={isOtherSession ? "Editing is only allowed for the current session" : `Add a new holiday in ${m}`}>
                           <button
                             className="att-add-holiday-btn"
+                            disabled={isOtherSession}
+                            style={isOtherSession ? { opacity: .45, cursor: "not-allowed" } : undefined}
                             onClick={(e) => { e.stopPropagation(); openHolModal(null, i); }}
                           >
                             <i className="fa-solid fa-plus"></i> Add Holiday
@@ -385,13 +383,13 @@
                                 <span key={c} className="att-holiday-class-pill" style={{ marginRight: 4 }}>{c}</span>
                               ))}
                             </div>
-                            <Tooltip text="Edit holiday">
-                              <button className="att-icon-btn" onClick={() => openHolModal(h.id)}>
+                            <Tooltip text={isOtherSession ? "Editing is only allowed for the current session" : "Edit holiday"}>
+                              <button className="att-icon-btn" disabled={isOtherSession} style={isOtherSession ? { opacity: .45, cursor: "not-allowed" } : undefined} onClick={() => openHolModal(h.id)}>
                                 <i className="fa-solid fa-pen"></i>
                               </button>
                             </Tooltip>
-                            <Tooltip text="Delete holiday">
-                              <button className="att-icon-btn del" onClick={() => requestDeleteHoliday(h.id)}>
+                            <Tooltip text={isOtherSession ? "Editing is only allowed for the current session" : "Delete holiday"}>
+                              <button className="att-icon-btn del" disabled={isOtherSession} style={isOtherSession ? { opacity: .45, cursor: "not-allowed" } : undefined} onClick={() => requestDeleteHoliday(h.id)}>
                                 <i className="fa-solid fa-trash-can"></i>
                               </button>
                             </Tooltip>
@@ -1739,7 +1737,7 @@
   /* ─── Tab 2: Student Attendance ─────────────────────────────────────────────
     HTML-faithful: att-section, att-st-row table, expandable detail panels,
     per-class Mark/Update Attendance button, calendar with date detail. */
-  function StudentTab({ weeklyOff, holidays, studentData, openMarkSt, openReportPicker, toast, onExpandClass, teacherMap = {}, onSelectDate, dateAttendance }) {
+  function StudentTab({ weeklyOff, holidays, studentData, openMarkSt, openReportPicker, toast, onExpandClass, teacherMap = {}, onSelectDate, dateAttendance, isOtherSession = false }) {
     const [month, setMonth] = useState(CURRENT_MONTH_LABEL);
     const [selected, setSelected] = useState(null);
     const [openClassIdx, setOpenClassIdx] = useState(null);
@@ -1800,6 +1798,7 @@
                 dateAttendance={dateAttendance}
                 openMarkSt={openMarkSt}
                 openReportPicker={openReportPicker}
+                isOtherSession={isOtherSession}
               />
             )}
           </div>
@@ -1867,10 +1866,12 @@
                   <div className="att-td att-td-absent"><span style={{ color: "#DC2626", fontWeight: 800, fontSize: 14 }}>{isMarked ? r.absent : "—"}</span></div>
                   <div className="att-td att-td-leave"><span style={{ color: "#D97706", fontWeight: 800, fontSize: 14 }}>{isMarked ? r.leave : "—"}</span></div>
                   <div className="att-td att-td-action">
-                    <Tooltip text={isMarked ? `Update attendance for ${r.cls} (${r.sec})` : `Mark attendance for ${r.cls} (${r.sec})`}>
+                    <Tooltip text={isOtherSession ? "Editing is only allowed for the current session" : (isMarked ? `Update attendance for ${r.cls} (${r.sec})` : `Mark attendance for ${r.cls} (${r.sec})`)}>
                       <button
                         className={`att-mark-btn-primary${isMarked ? " update-mode" : ""}`}
                         onClick={() => openMarkSt(i)}
+                        disabled={isOtherSession}
+                        style={isOtherSession ? { opacity: .45, cursor: "not-allowed" } : undefined}
                       >
                         <i className={`fa-solid ${isMarked ? "fa-rotate-right" : "fa-pen-to-square"}`}></i>
                         {isMarked ? "Update Attendance" : "Mark Attendance"}
@@ -1958,7 +1959,7 @@
   }
 
   /* ─── Selected-date panel under the Student calendar ────────────────────── */
-  function StudentDatePanel({ sel, dateAttendance, openMarkSt, openReportPicker }) {
+  function StudentDatePanel({ sel, dateAttendance, openMarkSt, openReportPicker, isOtherSession = false }) {
     const dowName  = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][new Date(sel.year, sel.monthIdx, sel.day).getDay()];
     const dateStr  = `${sel.day} ${MONTHS[sel.monthIdx]} ${sel.year}`;
     const selKey   = `${sel.year}-${String(sel.monthIdx + 1).padStart(2, "0")}-${String(sel.day).padStart(2, "0")}`;
@@ -1998,10 +1999,12 @@
               </button>
             </Tooltip>
             {sel.isToday && (
-              <Tooltip text={allMarked ? "Update today's student attendance for all classes" : "Mark today's student attendance for all classes"}>
+              <Tooltip text={isOtherSession ? "Editing is only allowed for the current session" : (allMarked ? "Update today's student attendance for all classes" : "Mark today's student attendance for all classes")}>
                 <button
                   className={`att-mark-btn-primary${allMarked ? " update-mode" : ""}`}
                   onClick={() => openMarkSt(0)}
+                  disabled={isOtherSession}
+                  style={isOtherSession ? { opacity: .45, cursor: "not-allowed" } : undefined}
                 >
                   <i className={`fa-solid ${allMarked ? "fa-rotate-right" : "fa-pen-to-square"}`}></i>
                   {allMarked ? "Update Attendance" : "Mark Attendance"}
@@ -2221,7 +2224,7 @@
   /* ─── Tab 3: Staff Attendance ─────────────────────────────────────────────
     HTML-faithful: filter bar, calendar with date-detail (top mark CTA),
     staff list table with expandable per-staff detail rows. */
-  function StaffTab({ weeklyOff, holidays, staffData, staffTodayMarked, openMarkSf, openReportPicker, toast, onExpandStaff, onSelectDate, staffDateAttendance }) {
+  function StaffTab({ weeklyOff, holidays, staffData, staffTodayMarked, openMarkSf, openReportPicker, toast, onExpandStaff, onSelectDate, staffDateAttendance, isOtherSession = false }) {
     const [month, setMonth] = useState(CURRENT_MONTH_LABEL);
     const [selected, setSelected] = useState(null);
     const [openIdx, setOpenIdx] = useState(null);
@@ -2282,6 +2285,7 @@
                 staffTodayMarked={staffTodayMarked}
                 openMarkSf={openMarkSf}
                 openReportPicker={openReportPicker}
+                isOtherSession={isOtherSession}
               />
             )}
           </div>
@@ -2298,8 +2302,8 @@
               </div>
             </div>
 
-<Tooltip text={staffTodayMarked ? "Update today's staff attendance" : "Mark today's staff attendance"}>
-  <button className={`att-mark-btn-primary${staffTodayMarked ? " update-mode" : ""}`} onClick={openMarkSf}>
+<Tooltip text={isOtherSession ? "Editing is only allowed for the current session" : (staffTodayMarked ? "Update today's staff attendance" : "Mark today's staff attendance")}>
+  <button className={`att-mark-btn-primary${staffTodayMarked ? " update-mode" : ""}`} onClick={openMarkSf} disabled={isOtherSession} style={isOtherSession ? { opacity: .45, cursor: "not-allowed" } : undefined}>
     <i className={`fa-solid ${staffTodayMarked ? "fa-rotate-right" : "fa-pen-to-square"}`}></i>
     {staffTodayMarked ? "Update Attendance" : "Mark Attendance"}
   </button>
@@ -2408,7 +2412,7 @@
   }
 
   /* ─── Selected-date panel under the Staff calendar ──────────────────────── */
-  function StaffDatePanel({ sel, staffDateAttendance, staffTodayMarked, openMarkSf, openReportPicker }) {
+  function StaffDatePanel({ sel, staffDateAttendance, staffTodayMarked, openMarkSf, openReportPicker, isOtherSession = false }) {
     const dowName = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][new Date(sel.year, sel.monthIdx, sel.day).getDay()];
     const dateStr = `${sel.day} ${MONTHS[sel.monthIdx]} ${sel.year}`;
     const selKey  = `${sel.year}-${String(sel.monthIdx + 1).padStart(2, "0")}-${String(sel.day).padStart(2, "0")}`;
@@ -2447,10 +2451,12 @@
               </button>
             </Tooltip>
             {sel.isToday && (
-              <Tooltip text={staffTodayMarked ? "Update today's staff attendance" : "Mark today's staff attendance"}>
+              <Tooltip text={isOtherSession ? "Editing is only allowed for the current session" : (staffTodayMarked ? "Update today's staff attendance" : "Mark today's staff attendance")}>
                 <button
                   className={`att-mark-btn-primary${staffTodayMarked ? " update-mode" : ""}`}
                   onClick={openMarkSf}
+                  disabled={isOtherSession}
+                  style={isOtherSession ? { opacity: .45, cursor: "not-allowed" } : undefined}
                 >
                   <i className={`fa-solid ${staffTodayMarked ? "fa-rotate-right" : "fa-pen-to-square"}`}></i>
                   {staffTodayMarked ? "Update Attendance" : "Mark Attendance"}
@@ -2720,7 +2726,7 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
     HTML-faithful: 2 sub-tabs (General / Individual). General = 4 grp-card
     accordions, each with embedded report rows + inline filters + Generate.
     Individual = expandable student class rows + flat staff list. */
-  function ReportsTab({ staffData, studentData = [], teacherMap = {}, runGeneralReport, openIndivReport, toast, classOpts = [] }) {
+  function ReportsTab({ staffData, studentData = [], teacherMap = {}, runGeneralReport, openIndivReport, toast, classOpts = [], sessionName = "" }) {
     const [subTab, setSubTab] = useState("general");
     const [openCardIdx, setOpenCardIdx] = useState(0);
     const [openClassIdx, setOpenClassIdx] = useState(null);
@@ -2804,6 +2810,7 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
                           accent={rpt.altAccent || g.accent}
                           gradient={rpt.altGradient || g.gradient}
                           classOpts={classOpts}
+                          sessionName={sessionName}
                           onGenerate={(filters) => runGeneralReport(rpt, filters, toast)}
                         />
                       ))}
@@ -3042,7 +3049,7 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
   }
 
   /* ─── ReportRow — inline filter editor + Generate ──────────────────────── */
-  function ReportRow({ rpt, accent, gradient, onGenerate, classOpts = [] }) {
+  function ReportRow({ rpt, accent, gradient, onGenerate, classOpts = [], sessionName = "" }) {
     const today    = new Date().toISOString().split("T")[0];
     const currMon  = CURRENT_MONTH_LABEL;
     const [vals, setVals] = useState(() => {
@@ -3050,11 +3057,24 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
       rpt.filters.forEach((f) => {
         if (f.type === "date")  init[f.field] = today;
         if (f.type === "month") init[f.field] = currMon;
-        if (f.type === "year")  init[f.field] = "2025-2026";
+        if (f.type === "year")  init[f.field] = sessionName || "2025-2026";
         if (f.type === "class") init[f.field] = "All Classes";
       });
       return init;
     });
+
+    // Active session name async aata hai — aane par year/Academic Year fields update karo.
+    useEffect(() => {
+      if (!sessionName) return;
+      setVals((prev) => {
+        let changed = false;
+        const next = { ...prev };
+        rpt.filters.forEach((f) => {
+          if (f.type === "year" && next[f.field] !== sessionName) { next[f.field] = sessionName; changed = true; }
+        });
+        return changed ? next : prev;
+      });
+    }, [sessionName, rpt.filters]);
 
     const setVal = (field, v) => setVals((p) => ({ ...p, [field]: v }));
 
@@ -3096,7 +3116,7 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
                 )}
                 {f.type === "year" && (
                   <select className="att-select" value={vals[f.field] || ""} onChange={(e) => setVal(f.field, e.target.value)}>
-                    {YEAR_OPTIONS.map((y) => <option key={y}>{y}</option>)}
+                    {(sessionName ? [sessionName] : YEAR_OPTIONS).map((y) => <option key={y}>{y}</option>)}
                   </select>
                 )}
                 {f.type === "class" && (
@@ -3269,6 +3289,32 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
     const [classList, setClassList] = useState([]); // branch class+section list (for name lookup)
     const { toasts, toast } = useToasts(onToast);
 
+    /* ── Session gating (same as Paper Generator) ─────────────────────────────
+       Attendance module ka checkbox current session mein OFF ho, ya session
+       "Current" na ho, ya aaj ki date session ki StartDate–EndDate range se
+       bahar ho → poora module view-only ho jata hai (koi mark/save/add/edit/
+       delete allowed nahi). Read-only signal Settings ke current session se
+       aata hai (Attendance flag). */
+    const attModuleReadOnly = useModuleReadOnly("att");
+    const isOtherSession = attModuleReadOnly || (() => {
+      // Session status "Current" na ho to lock.
+      const sessionStatus = sessionStorage.getItem("sessionStatus") || "";
+      if (sessionStatus && sessionStatus !== "Current") return true;
+      // Aaj ki date session ki date-range se bahar ho to lock.
+      const startRaw = sessionStorage.getItem("sessionStartDate");
+      const endRaw   = sessionStorage.getItem("sessionEndDate");
+      if (startRaw && endRaw) {
+        const now = new Date();
+        if (now < new Date(startRaw) || now > new Date(endRaw)) return true;
+      }
+      return false;
+    })();
+    // Mutating action se pehle guard: read-only session mein block + toast.
+    const blockIfReadOnly = useCallback(() => {
+      if (isOtherSession) { toast("Method not allowed", "error"); return true; }
+      return false;
+    }, [isOtherSession, toast]);
+
     /* Modal state for Tab 1 */
     const [holModal, setHolModal]         = useState(null); // { id?, monthIdx? } | null
     const [delHolId, setDelHolId]         = useState(null); // holiday id pending delete
@@ -3331,6 +3377,7 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
     const [indivTarget,    setIndivTarget]    = useState(null); // { type, name, detail, id } | null
     const [branchSchool,   setBranchSchool]   = useState(null); // /report-header → { name, logo, address, session }
     const [reportSessions, setReportSessions] = useState([]);   // [{ ID, SessionName }] for report filters
+    const [activeSessionName, setActiveSessionName] = useState(""); // active session ka SessionName (e.g. "2026-2027")
 
     // Report header (branch info) + session list — for the Holiday report picker.
     useEffect(() => {
@@ -3339,6 +3386,11 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
         catch (err) { console.error("Could not load report header:", err); }
         try { setReportSessions(await attendanceService.getSessionsForBranch()); }
         catch (err) { console.error("Could not load sessions:", err); }
+        // Active session ka naam — poore module mein "Academic Year"/Session yahi dikhega.
+        try {
+          const active = await attendanceService.getActiveSession();
+          if (active?.SessionName) setActiveSessionName(active.SessionName);
+        } catch (err) { console.error("Could not load active session name:", err); }
       })();
     }, []);
 // Attendance component mein, useAsync ki jagah yeh use karo
@@ -3382,7 +3434,7 @@ useEffect(() => {
   fetchWeeklyOff();
 }, []);
     const openReportPicker = useCallback((cfg) => setReportPicker(cfg), []);
-    const openMarkSt = useCallback((idx) => setMarkStIdx(idx), []);
+    const openMarkSt = useCallback((idx) => { if (blockIfReadOnly()) return; setMarkStIdx(idx); }, [blockIfReadOnly]);
 
     const openIndivReport = useCallback((target) => setIndivTarget(target), []);
 
@@ -3449,7 +3501,7 @@ useEffect(() => {
       setReportPreview({ title: `${target.type === "student" ? "Student" : "Staff"} Attendance Report — ${target.name}`, html });
     }, [indivTarget, weeklyOff, holidays, toast, fetchIndividualAttendance, branchSchool]);
 
-    const openMarkSf = useCallback(() => setMarkSfOpen(true), []);
+    const openMarkSf = useCallback(() => { if (blockIfReadOnly()) return; setMarkSfOpen(true); }, [blockIfReadOnly]);
   // Attendance component ke andar (around line 2100)
 
  // Attendance component ke andar - saveMarkSf ko replace karo
@@ -3457,6 +3509,7 @@ useEffect(() => {
 // Attendance component mein - saveMarkSf function
 
 const saveMarkSf = useCallback(async (rows) => {
+  if (blockIfReadOnly()) return;
   const branchID = Number(sessionStorage.getItem("branchID"));
   const employeeID = Number(sessionStorage.getItem("employee_ID")) || 0;
   const attendanceDate = new Date().toISOString().slice(0, 10);
@@ -3503,13 +3556,14 @@ const saveMarkSf = useCallback(async (rows) => {
   }
   // loadStaffAttendance closure se resolve hota hai (baad mein defined).
   // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [staffData, toast]);
+}, [staffData, toast, blockIfReadOnly]);
     const generateReport = useCallback(async ({ effective, style, filters }) => {
       const isColor = style === "color";
       let html, title;
       if (effective === "holidayYearly") {
         // Chosen session (name → ID) → fetch that session's holidays from the API.
-        const sess = reportSessions.find((s) => s.SessionName === filters.year);
+        const yearName = filters.year || activeSessionName;
+        const sess = reportSessions.find((s) => s.SessionName === yearName);
         const sessionID = sess?.ID || reportPicker?.sessionID || await ensureSessionID();
         const branchID  = Number(sessionStorage.getItem("branchID"));
         const classes   = await ensureClasses();
@@ -3530,7 +3584,7 @@ const saveMarkSf = useCallback(async (rows) => {
         if (filters.class && filters.class !== "All Classes") {
           hols = hols.filter((h) => (h.selectedClasses || []).some((c) => c.label === filters.class));
         }
-        html  = buildYearlyHolidayReportHTML({ holidays: hols, weeklyOff, year: filters.year, classFilter: filters.class, isColor, branchSchool });
+        html  = buildYearlyHolidayReportHTML({ holidays: hols, weeklyOff, year: yearName, classFilter: filters.class, isColor, branchSchool });
         title = "Yearly Holiday Report";
         setReportPicker(null);
         setReportPreview({ title, html });
@@ -3556,7 +3610,7 @@ const saveMarkSf = useCallback(async (rows) => {
         html  = buildStudentMonthlySummaryHTML({
           rows,
           monthLabel,
-          sessionName: branchSchool?.session,
+          sessionName: activeSessionName || branchSchool?.session,
           branchSchool,
           isColor,
           classFilter: filters.class,
@@ -3601,7 +3655,7 @@ const saveMarkSf = useCallback(async (rows) => {
         toast("Generating class-wise report…", "info");
         const rows = await fetchRangeReportRows(filters.from, filters.to);
         html  = buildStudentMonthlySummaryHTML({
-          rows, monthLabel: period, sessionName: branchSchool?.session,
+          rows, monthLabel: period, sessionName: activeSessionName || branchSchool?.session,
           branchSchool, isColor, classFilter: filters.class,
         });
         title = "Class-wise Student Attendance Report";
@@ -3610,7 +3664,7 @@ const saveMarkSf = useCallback(async (rows) => {
         toast("Generating summary report…", "info");
         const rows = await fetchRangeReportRows(filters.from, filters.to);
         html  = buildStudentMonthlySummaryHTML({
-          rows, monthLabel: period, sessionName: branchSchool?.session,
+          rows, monthLabel: period, sessionName: activeSessionName || branchSchool?.session,
           branchSchool, isColor,
         });
         title = "Student Attendance Summary";
@@ -3654,7 +3708,7 @@ const saveMarkSf = useCallback(async (rows) => {
       setReportPreview({ title, html });
       // ensureClasses/ensureSessionID are defined later; referenced via closure at call time.
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [holidays, weeklyOff, studentData, staffData, reportPicker, reportSessions, branchSchool]);
+    }, [holidays, weeklyOff, studentData, staffData, reportPicker, reportSessions, branchSchool, activeSessionName]);
 
     /* General Reports tab → trigger generateReport with the inline filters
       (always Color print style for one-click generation). */
@@ -3664,10 +3718,12 @@ const saveMarkSf = useCallback(async (rows) => {
     }, [generateReport, toast]);
 
   const requestToggleDay = useCallback((i) => {
+    if (blockIfReadOnly()) return;
     setDayToggleIdx(i);
-  }, []);
+  }, [blockIfReadOnly]);
 
   const confirmToggleDay = useCallback(() => {
+    if (blockIfReadOnly()) { setDayToggleIdx(null); return; }
     if (dayToggleIdx == null) return;
     setWeeklyOff((prev) => {
       const isOff = prev.includes(dayToggleIdx);
@@ -3680,7 +3736,7 @@ const saveMarkSf = useCallback(async (rows) => {
       return newWeeklyOff;
     });
     setDayToggleIdx(null);
-  }, [dayToggleIdx, toast, setWeeklyOff]);
+  }, [dayToggleIdx, toast, setWeeklyOff, blockIfReadOnly]);
     // Active session — same active-session API examination uses. Cached once.
     useEffect(() => {
       let alive = true;
@@ -3752,6 +3808,7 @@ const saveMarkSf = useCallback(async (rows) => {
 
     // Save Attendance → action:"insert" for EACH student.
     const saveStudentMarks = useCallback(async (idx, studentRows) => {
+      if (blockIfReadOnly()) throw new Error("read-only");
       const row = studentData[idx];
       if (!row) return;
       const branchID   = Number(sessionStorage.getItem("branchID"));
@@ -3791,7 +3848,7 @@ const saveMarkSf = useCallback(async (rows) => {
       } : r));
       setMarkStIdx(null);
       toast("Attendance saved successfully", "success");
-    }, [studentData, ensureSessionID, toast, setStudentData]);
+    }, [studentData, ensureSessionID, toast, setStudentData, blockIfReadOnly]);
 
     // Student tab active → GET saved attendance for EVERY class (so the table
     // shows P/A/L counts without needing to expand each class).
@@ -4357,8 +4414,9 @@ useEffect(() => {
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [reportPicker]);
 
-    const requestDeleteHoliday = useCallback((id) => setDelHolId(id), []);
+    const requestDeleteHoliday = useCallback((id) => { if (blockIfReadOnly()) return; setDelHolId(id); }, [blockIfReadOnly]);
     const confirmDeleteHoliday = useCallback(async () => {
+      if (blockIfReadOnly()) { setDelHolId(null); return; }
       const h = holidays.find((x) => x.id === delHolId);
       const branchID   = Number(sessionStorage.getItem("branchID"));
       const employeeID = Number(sessionStorage.getItem("employee_ID")) || 0;
@@ -4387,14 +4445,16 @@ useEffect(() => {
       setHolidays((prev) => prev.filter((x) => x.id !== delHolId));
       setDelHolId(null);
       toast("Holiday deleted", "success");
-    }, [delHolId, holidays, ensureSessionID, toast]);
+    }, [delHolId, holidays, ensureSessionID, toast, blockIfReadOnly]);
 
     const openHolModal = useCallback((id, monthIdx) => {
+      if (blockIfReadOnly()) return;
       setHolModal({ id, monthIdx });
-    }, []);
+    }, [blockIfReadOnly]);
     // YEH CODE Attendance component ke ANDAR add karo (around line 2530)
 // Attendance component mein onSaveWeeklyOff ko update karo
 const onSaveWeeklyOff = useCallback(async () => {
+  if (blockIfReadOnly()) return;
   const branchID = Number(sessionStorage.getItem("branchID"));
   const employeeID = Number(sessionStorage.getItem("employee_ID"));
 
@@ -4484,8 +4544,9 @@ const onSaveWeeklyOff = useCallback(async () => {
     console.error("Error saving weekly off days:", err);
     toast("Failed to save weekly off days. Please try again.", "error");
   }
-}, [weeklyOff, toast, setWeeklyOff]);
+}, [weeklyOff, toast, setWeeklyOff, blockIfReadOnly]);
 const saveHoliday = useCallback(async (payload) => {
+      if (blockIfReadOnly()) return;
       const branchID   = Number(sessionStorage.getItem("branchID"));
       const employeeID = Number(sessionStorage.getItem("employee_ID")) || 0;
       const selected   = payload.selectedClasses || [];
@@ -4533,7 +4594,7 @@ const saveHoliday = useCallback(async (payload) => {
       });
       toast(payload.id ? "Holiday updated" : "Holiday added", "success");
       setHolModal(null);
-    }, [toast, setHolidays, ensureSessionID]);
+    }, [toast, setHolidays, ensureSessionID, blockIfReadOnly]);
 
     const editingHoliday  = holModal?.id != null ? holidays.find((h) => h.id === holModal.id) : null;
     const deletingHoliday = delHolId    != null ? holidays.find((h) => h.id === delHolId)    : null;
@@ -4566,6 +4627,14 @@ const saveHoliday = useCallback(async (payload) => {
           </Tooltip>
         </div>
 
+        {/* View-only banner — Attendance module OFF / non-current session */}
+        {isOtherSession && (
+          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 16px", marginBottom: 16, borderRadius: T.radiusMd, background: "rgba(217,119,6,.08)", border: "1.5px solid rgba(217,119,6,.35)", color: "#92400E", fontSize: 13, fontWeight: 600 }}>
+            <i className="fa-solid fa-lock" style={{ fontSize: 14 }}></i>
+            <span>This module is view-only for the selected session. Marking, saving, and edits are disabled.</span>
+          </div>
+        )}
+
         {/* Tab bar */}
         <div className="att-tabs-row">
           {TABS.map((tb) => (
@@ -4592,6 +4661,7 @@ const saveHoliday = useCallback(async (payload) => {
                 onSaveWeeklyOff={onSaveWeeklyOff}  // ← YEH ADD KARO
             onExpandMonth={loadMonthHolidays}
             loadingMonth={loadingMonth}
+            isOtherSession={isOtherSession}
           />
         )}
         {tab === "student" && (
@@ -4606,6 +4676,7 @@ const saveHoliday = useCallback(async (payload) => {
             teacherMap={teacherMap}
             onSelectDate={loadDateAttendance}
             dateAttendance={dateAttendance}
+            isOtherSession={isOtherSession}
           />
         )}
         {tab === "staff" && (
@@ -4620,6 +4691,7 @@ const saveHoliday = useCallback(async (payload) => {
             onExpandStaff={() => loadStaffAttendance()}
             onSelectDate={loadStaffDateAttendance}
             staffDateAttendance={staffDateAttendance}
+            isOtherSession={isOtherSession}
           />
         )}
         {tab === "reports" && (
@@ -4631,6 +4703,7 @@ const saveHoliday = useCallback(async (payload) => {
             openIndivReport={openIndivReport}
             toast={toast}
             classOpts={["All Classes", ...Array.from(new Set(studentData.map((r) => r.cls)))]}
+            sessionName={activeSessionName}
           />
         )}
 
@@ -4710,12 +4783,12 @@ const saveHoliday = useCallback(async (payload) => {
           open={!!reportPicker}
           title={reportPicker?.title}
           context={reportPicker?.context}
-          defaultYear={reportPicker?.defaultYear}
+          defaultYear={reportPicker?.defaultYear || activeSessionName}
           defaultMonth={reportPicker?.defaultMonth}
           defaultDate={reportPicker?.defaultDate}
           forClass={reportPicker?.forClass}
           forStaff={reportPicker?.forStaff}
-          sessionOpts={reportSessions.map((s) => s.SessionName)}
+          sessionOpts={activeSessionName ? [activeSessionName] : reportSessions.map((s) => s.SessionName)}
           holidayClassOpts={["All Classes", ...classList.map((c) => c.label)]}
           studentClassOpts={["All Classes", ...Array.from(new Set(studentData.map((r) => r.cls)))]}
           studentSectionOpts={["All Sections", ...Array.from(new Set(studentData.map((r) => r.sec)))]}
