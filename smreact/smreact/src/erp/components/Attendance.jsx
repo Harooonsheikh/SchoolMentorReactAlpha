@@ -528,7 +528,7 @@
               </div>
               <div>
                 <label className="att-label">Date To *</label>
-                <input className="att-input" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+                <input className="att-input" type="date" min={from || undefined} value={to} onChange={(e) => setTo(e.target.value)} />
               </div>
             </div>
             <div className="att-field-row full">
@@ -1850,7 +1850,7 @@
                   </div>
                   <div className="att-td att-td-teacher">
                     <div style={{ fontSize: 12, fontWeight: 700, color: T.textPrimary, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                      {teacherMap[`${r.classID}-${r.sectionID}`] || (r.teacher && r.teacher !== "—" ? r.teacher : "—")}
+                      {teacherMap[`${r.classID}-${r.sectionID}`] || teacherMap[`${r.classID}`] || (r.teacher && r.teacher !== "—" ? r.teacher : "—")}
                     </div>
                   </div>
                   <div className="att-td att-td-total">
@@ -2864,7 +2864,7 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
                 <div className="att-row" style={{ padding: 20, color: T.textMuted, fontStyle: "italic" }}>No classes found.</div>
               ) : (studentData || []).map((cl, i) => {
                 const isOpen = openClassIdx === i;
-                const teacher = teacherMap[`${cl.classID}-${cl.sectionID}`] || cl.teacher || "—";
+                const teacher = teacherMap[`${cl.classID}-${cl.sectionID}`] || teacherMap[`${cl.classID}`] || cl.teacher || "—";
                 const students = cl.students || [];
                 // Real attendance % — aaj ki mark hui attendance ke against (present/total).
                 const pct = cl.marked && cl.total > 0 ? Math.round((cl.present / cl.total) * 100) : null;
@@ -3087,7 +3087,7 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
               <div key={f.field} className="grp-rpt-field">
                 <span className="grp-rpt-field-lbl">{f.k}</span>
                 {f.type === "date" && (
-                  <input type="date" className="att-input" value={vals[f.field] || ""} onChange={(e) => setVal(f.field, e.target.value)} />
+                  <input type="date" className="att-input" min={f.field === "to" ? (vals.from || undefined) : undefined} value={vals[f.field] || ""} onChange={(e) => setVal(f.field, e.target.value)} />
                 )}
                 {f.type === "month" && (
                   <select className="att-select" value={vals[f.field] || ""} onChange={(e) => setVal(f.field, e.target.value)}>
@@ -3162,7 +3162,7 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
               </div>
               <div>
                 <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px", color: T.textMuted, marginBottom: 6 }}>To Date</div>
-                <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} className="att-input" style={{ width: "100%", height: 40, fontSize: 13 }} />
+                <input type="date" min={fromDate || undefined} value={toDate} onChange={(e) => setToDate(e.target.value)} className="att-input" style={{ width: "100%", height: 40, fontSize: 13 }} />
               </div>
             </div>
             <div className="att-rpt-section-lbl" id="att-indiv-style-lbl">Print Style</div>
@@ -3307,13 +3307,19 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
     }, []);
 
     // class+section (gradeId-sectionId) → class teacher name (first assigned teacher).
+    // Bhi gradeId akele se index karo taake exact section ka assignment na ho to
+    // bhi us grade ka teacher name dikhe (grade-level fallback).
     const teacherMap = useMemo(() => {
       const map = {};
       employees.forEach((e) => {
         const tName = `${e.firstName || ""} ${e.lastName || ""}`.trim();
+        if (!tName) return;
         (e.assignments || []).forEach((a) => {
-          const key = `${a.gradeId}-${a.sectionId}`;
-          if (!map[key] && tName) map[key] = tName;
+          if (a.gradeId == null) return;
+          const secKey   = `${a.gradeId}-${a.sectionId}`;
+          const gradeKey = `${a.gradeId}`;
+          if (!map[secKey])   map[secKey]   = tName; // section-specific match
+          if (!map[gradeKey]) map[gradeKey] = tName; // grade-level fallback
         });
       });
       return map;
@@ -3835,7 +3841,7 @@ const saveMarkSf = useCallback(async (rows) => {
           present, absent, leave, late,
           marked: recs.length > 0,
           markedFrom: platform || (recs.length ? "ERP" : ""),
-          markedBy: teacherMap[`${r.classID}-${r.sectionID}`] || "—",
+          markedBy: teacherMap[`${r.classID}-${r.sectionID}`] || teacherMap[`${r.classID}`] || "—",
         };
       }));
       setDateAttendance({ key: dateStr, rows, loading: false });
@@ -4024,7 +4030,7 @@ const saveMarkSf = useCallback(async (rows) => {
         const marks = present + absent + leave;
         return {
           cls: r.cls, sec: r.sec, strength: r.total,
-          teacher: teacherMap[`${r.classID}-${r.sectionID}`] || "—",
+          teacher: teacherMap[`${r.classID}-${r.sectionID}`] || teacherMap[`${r.classID}`] || "—",
           workingDays: holidayInfo.workingDays,
           present, absent, leave,
           pct: marks > 0 ? Math.round((present / marks) * 100) : 0,
@@ -4079,7 +4085,7 @@ const saveMarkSf = useCallback(async (rows) => {
         const marks = present + absent + leave;
         return {
           cls: r.cls, sec: r.sec, strength: r.total,
-          teacher: teacherMap[`${r.classID}-${r.sectionID}`] || "—",
+          teacher: teacherMap[`${r.classID}-${r.sectionID}`] || teacherMap[`${r.classID}`] || "—",
           workingDays: markedDates.size, present, absent, leave,
           pct: marks > 0 ? Math.round((present / marks) * 100) : 0,
         };
