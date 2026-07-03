@@ -828,6 +828,7 @@ export default function TimeTable({ toast = () => {} }) {
           target={editTarget}
           day={day}
           teachers={teachers}
+          toast={toast}
           initialPeriods={dayData[editTarget.key] || []}
           prevDayPeriods={(data[(day + 5) % 6] || {})[editTarget.key] || []}
           onClose={() => setEditTarget(null)}
@@ -891,10 +892,7 @@ export default function TimeTable({ toast = () => {} }) {
           payload={deletePayload}
           day={day}
           onClose={() => setDeletePayload(null)}
-          onConfirm={() => {
-            if (deletePayload.type === 'day') deleteDay();
-            else deleteClassDay(deletePayload.key);
-          }}
+          onConfirm={() => (deletePayload.type === 'day' ? deleteDay() : deleteClassDay(deletePayload.key))}
         />
       )}
 
@@ -948,7 +946,7 @@ export default function TimeTable({ toast = () => {} }) {
 /* ═══════════════════════════════════════════════════════════════════
    Edit Timetable modal — period editor
    ═══════════════════════════════════════════════════════════════════ */
-function TTEditModal({ target, day, teachers = [], initialPeriods, prevDayPeriods, onClose, onSave }) {
+function TTEditModal({ target, day, teachers = [], toast = () => {}, initialPeriods, prevDayPeriods, onClose, onSave }) {
   const [periods, setPeriods] = useState(() =>
     initialPeriods.length
       ? JSON.parse(JSON.stringify(initialPeriods))
@@ -956,6 +954,25 @@ function TTEditModal({ target, day, teachers = [], initialPeriods, prevDayPeriod
   );
   const [pendingDelete, setPendingDelete] = useState(null); // index pending confirmation
   const [subjects, setSubjects] = useState([]); // real subjects for this class × section
+  const [saving, setSaving] = useState(false);
+
+  /* Validate + save: every period's End Time must be after its Start Time. */
+  const handleSave = async () => {
+    if (saving) return;
+    for (let i = 0; i < periods.length; i++) {
+      const p = periods[i];
+      if (!p.startTime || !p.endTime) {
+        toast(`Period ${i + 1}: set both start and end time`, 'error');
+        return;
+      }
+      if (minutesBetween(p.startTime, p.endTime) <= 0) {
+        toast(`Period ${i + 1}: End time must be after start time`, 'error');
+        return;
+      }
+    }
+    setSaving(true);
+    try { await onSave(periods); } catch (e) { console.error(e); setSaving(false); }
+  };
 
   /* Load the class's real subjects for the Subject dropdown. */
   useEffect(() => {
@@ -1127,11 +1144,14 @@ function TTEditModal({ target, day, teachers = [], initialPeriods, prevDayPeriod
           </div>
           <div className="tt-edit-footer-right">
             <Tooltip text="Discard changes and close">
-              <button className="tt-foot-btn tt-foot-btn--cancel" onClick={onClose}>Cancel</button>
+              <button className="tt-foot-btn tt-foot-btn--cancel" onClick={onClose} disabled={saving}>Cancel</button>
             </Tooltip>
             <Tooltip text="Save the timetable for this class and day">
-              <button className="tt-foot-btn tt-foot-btn--save" onClick={() => onSave(periods)}>
-                <i className="fa-solid fa-save"></i> Save Timetable
+              <button className="tt-foot-btn tt-foot-btn--save" onClick={handleSave} disabled={saving}
+                style={saving ? { opacity: .7, cursor: 'not-allowed' } : undefined}>
+                {saving
+                  ? <><i className="fa-solid fa-spinner fa-spin"></i> Saving…</>
+                  : <><i className="fa-solid fa-save"></i> Save Timetable</>}
               </button>
             </Tooltip>
           </div>
@@ -1461,11 +1481,18 @@ function TTSchoolReportModal({ day, data, classes = [], header, onClose, onPrevi
    Delete confirmation
    ═══════════════════════════════════════════════════════════════════ */
 function TTDeleteConfirm({ payload, day, onClose, onConfirm }) {
+  const [deleting, setDeleting] = useState(false);
   useEffect(() => {
-    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    const onKey = (e) => { if (e.key === 'Escape' && !deleting) onClose(); };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [onClose, deleting]);
+
+  const runDelete = async () => {
+    if (deleting) return;
+    setDeleting(true);
+    try { await onConfirm(); } catch (e) { console.error(e); setDeleting(false); }
+  };
 
   const isDay = payload.type === 'day';
   const title = isDay ? `Delete Entire ${DAYS[day]} Timetable` : 'Delete Class Timetable';
@@ -1492,13 +1519,16 @@ function TTDeleteConfirm({ payload, day, onClose, onConfirm }) {
         </div>
         <div className="tt-del-footer">
           <Tooltip text="Cancel and keep the timetable">
-            <button className="tt-foot-btn tt-foot-btn--cancel" onClick={onClose}>
+            <button className="tt-foot-btn tt-foot-btn--cancel" onClick={onClose} disabled={deleting}>
               <i className="fa-solid fa-xmark"></i> Cancel
             </button>
           </Tooltip>
           <Tooltip text={`Confirm: ${title}`}>
-            <button className="tt-foot-btn tt-foot-btn--delete" onClick={onConfirm}>
-              <i className="fa-solid fa-trash"></i> Delete
+            <button className="tt-foot-btn tt-foot-btn--delete" onClick={runDelete} disabled={deleting}
+              style={deleting ? { opacity: .7, cursor: 'not-allowed' } : undefined}>
+              {deleting
+                ? <><i className="fa-solid fa-spinner fa-spin"></i> Deleting…</>
+                : <><i className="fa-solid fa-trash"></i> Delete</>}
             </button>
           </Tooltip>
         </div>
@@ -1554,6 +1584,7 @@ function TTAutoGenerateModal({ classes = [], teachers = [], onClose, onGenerate 
   }), []);
 
   const [w, setW] = useState(initWiz);
+  const [generating, setGenerating] = useState(false);
   const update = (patch) => setW((prev) => ({ ...prev, ...patch }));
 
   useEffect(() => {
@@ -1722,8 +1753,8 @@ function TTAutoGenerateModal({ classes = [], teachers = [], onClose, onGenerate 
   })();
 
   /* ─── Generate the timetable ─── */
-  const generate = () => {
-    if (!validation.ok) return;
+  const generate = async () => {
+    if (!validation.ok || generating) return; // block double-click while saving
     /* Build pool of subject lessons, weighted by weekly count */
     const subjectPool = [];
     Object.entries(w.subjectWeeklyLessons).forEach(([subj, count]) => {
@@ -1794,11 +1825,17 @@ function TTAutoGenerateModal({ classes = [], teachers = [], onClose, onGenerate 
       });
     });
 
-    onGenerate(data, {
-      classCount: selectedSet.size,
-      dayCount: w.workDays.length,
-      periodsPerDay: defP,
-    });
+    setGenerating(true);
+    try {
+      await onGenerate(data, {
+        classCount: selectedSet.size,
+        dayCount: w.workDays.length,
+        periodsPerDay: defP,
+      });
+    } catch (e) {
+      console.error('Generate failed:', e);
+      setGenerating(false);
+    }
   };
 
   /* ─── Render step body ─── */
@@ -1885,14 +1922,16 @@ function TTAutoGenerateModal({ classes = [], teachers = [], onClose, onGenerate 
                 </button>
               </Tooltip>
             ) : (
-              <Tooltip text={canContinue ? 'Generate the full timetable for all selected classes' : 'Fix the issues above before generating'}>
+              <Tooltip text={generating ? 'Generating timetable — please wait…' : (canContinue ? 'Generate the full timetable for all selected classes' : 'Fix the issues above before generating')}>
                 <button
                   className="wiz-btn wiz-btn-generate"
-                  disabled={!canContinue}
+                  disabled={!canContinue || generating}
                   onClick={generate}
-                  style={!canContinue ? { opacity: .5, cursor: 'not-allowed' } : undefined}
+                  style={(!canContinue || generating) ? { opacity: .6, cursor: 'not-allowed' } : undefined}
                 >
-                  <i className="fa-solid fa-bolt"></i> Generate Timetable
+                  {generating
+                    ? <><i className="fa-solid fa-spinner fa-spin"></i> Generating…</>
+                    : <><i className="fa-solid fa-bolt"></i> Generate Timetable</>}
                 </button>
               </Tooltip>
             )}
