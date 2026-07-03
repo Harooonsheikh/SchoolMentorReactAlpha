@@ -12,14 +12,16 @@
                 (browser print → Save as PDF). Unchanged.
      • 'word' → the SAME preview (identical design) but the toolbar button
                 becomes "Save as Word". Clicking it serialises the rendered
-                report and downloads it as a real Word file (.doc):
+                report and downloads it as a real Word file (.docx — the
+                modern OOXML format):
                   – logos (both <img> and inline <svg>) are rasterised to
                     PNG and embedded, so the picture shows in Word;
                   – CSS gradients get a solid background-color fallback so
                     coloured headers don't drop out;
                   – decorative absolutely-positioned shapes are removed.
-                No extra library is required — Word opens HTML-based .doc
-                files natively.
+                The rendered HTML is packed as an OOXML "altChunk" inside a
+                hand-built .docx ZIP (see buildDocx), so no library is
+                required and Word imports it on open.
    ═══════════════════════════════════════════════════════════════════ */
 
 /* Make a filesystem-safe file name (also safe to embed in an onclick attr). */
@@ -118,6 +120,71 @@ const WORD_SAVE_SCRIPT = `<script>
       }catch(e){ res(null); }
     });
   }
+  /* ── Real .docx builder ─────────────────────────────────────────────
+     A .docx is an OOXML ZIP. We embed the rendered report HTML as an
+     "altChunk" part; Word imports it on open (same technique html-docx-js
+     uses), so no library is needed. Vanilla ZIP writer below stores parts
+     uncompressed with a CRC-32. */
+  function utf8Bytes(str){
+    var s=unescape(encodeURIComponent(str)), a=new Uint8Array(s.length);
+    for(var i=0;i<s.length;i++) a[i]=s.charCodeAt(i);
+    return a;
+  }
+  function crc32(bytes){
+    var crc=0xFFFFFFFF;
+    for(var i=0;i<bytes.length;i++){
+      crc^=bytes[i];
+      for(var k=0;k<8;k++){ crc=(crc>>>1)^(0xEDB88320 & -(crc & 1)); }
+    }
+    return (crc^0xFFFFFFFF)>>>0;
+  }
+  function zipDocx(files){
+    var u16=function(n){return [n&255,(n>>8)&255];};
+    var u32=function(n){return [n&255,(n>>8)&255,(n>>16)&255,(n>>24)&255];};
+    var parts=[], central=[], offset=0;
+    files.forEach(function(f){
+      var name=utf8Bytes(f.name), data=f.data, crc=crc32(data);
+      var lh=[].concat(u32(0x04034b50),u16(20),u16(0),u16(0),u16(0),u16(0),u32(crc),u32(data.length),u32(data.length),u16(name.length),u16(0));
+      var lhb=new Uint8Array(lh);
+      parts.push(lhb,name,data);
+      var ch=[].concat(u32(0x02014b50),u16(20),u16(20),u16(0),u16(0),u16(0),u16(0),u32(crc),u32(data.length),u32(data.length),u16(name.length),u16(0),u16(0),u16(0),u16(0),u32(0),u32(offset));
+      central.push({h:new Uint8Array(ch),n:name});
+      offset+=lhb.length+name.length+data.length;
+    });
+    var cStart=offset, cParts=[], cSize=0;
+    central.forEach(function(c){ cParts.push(c.h,c.n); cSize+=c.h.length+c.n.length; });
+    var end=new Uint8Array([].concat(u32(0x06054b50),u16(0),u16(0),u16(files.length),u16(files.length),u32(cSize),u32(cStart),u16(0)));
+    return new Blob(parts.concat(cParts).concat([end]),{type:'application/vnd.openxmlformats-officedocument.wordprocessingml.document'});
+  }
+  function buildDocx(htmlDoc){
+    var CT='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+      +'<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+      +'<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+      +'<Default Extension="xml" ContentType="application/xml"/>'
+      +'<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
+      +'<Override PartName="/word/afchunk.html" ContentType="text/html"/>'
+      +'</Types>';
+    var rels='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+      +'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+      +'<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>'
+      +'</Relationships>';
+    var doc='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+      +'<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+      +'<w:body><w:altChunk r:id="htmlChunk"/>'
+      +'<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr>'
+      +'</w:body></w:document>';
+    var docRels='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+      +'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+      +'<Relationship Id="htmlChunk" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/aFChunk" Target="afchunk.html"/>'
+      +'</Relationships>';
+    return zipDocx([
+      {name:'[Content_Types].xml', data:utf8Bytes(CT)},
+      {name:'_rels/.rels', data:utf8Bytes(rels)},
+      {name:'word/document.xml', data:utf8Bytes(doc)},
+      {name:'word/_rels/document.xml.rels', data:utf8Bytes(docRels)},
+      {name:'word/afchunk.html', data:utf8Bytes(htmlDoc)}
+    ]);
+  }
   window.__saveAsWord=function(title){
     var clone=document.documentElement.cloneNode(true);
     /* Drop the on-screen toolbar(s) and absolutely-positioned decorations. */
@@ -159,10 +226,10 @@ const WORD_SAVE_SCRIPT = `<script>
       var inner=gradientToSolid(clone.innerHTML);
       var html='<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word">'+inner+'</html>';
       html=html.replace('</head>','<style>@page{size:21cm 29.7cm;margin:1.5cm}body{width:auto!important}.page{width:auto!important;max-width:100%!important;margin:0!important}img{max-width:100%}</style></head>');
-      var blob=new Blob(['\\ufeff', html], {type:'application/msword'});
+      var blob=buildDocx(html);
       var a=document.createElement('a');
       a.href=URL.createObjectURL(blob);
-      a.download=(title||'report')+'.doc';
+      a.download=(title||'report')+'.docx';
       document.body.appendChild(a); a.click();
       setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); }, 1500);
     });
