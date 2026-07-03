@@ -698,6 +698,7 @@
     const [fClass, setFClass] = useState(forClass ? forClass.cls : "All Classes");
     const [fSection, setFSection] = useState(forClass ? forClass.sec : "All Sections");
     const [fDept, setFDept]   = useState(forStaff ? forStaff.dept : "All Departments");
+    const [generating, setGenerating] = useState(false);
 
     useEffect(() => {
       if (!open) return;
@@ -730,12 +731,18 @@
     const lockedClass = !!forClass;
     const lockedStaff = !!forStaff;
 
-    const submit = () => {
-      onGenerate({
-        effective: ctx,
-        style,
-        filters: { year: fYear, month: fMonth, date: fDate, class: fClass, section: fSection, dept: fDept },
-      });
+    const submit = async () => {
+      if (generating) return;
+      try {
+        setGenerating(true);
+        await onGenerate({
+          effective: ctx,
+          style,
+          filters: { year: fYear, month: fMonth, date: fDate, class: fClass, section: fSection, dept: fDept },
+        });
+      } finally {
+        setGenerating(false);
+      }
     };
 
     return createPortal(
@@ -860,8 +867,10 @@
               <button className="att-btn-secondary" onClick={onClose}>Cancel</button>
             </Tooltip>
             <Tooltip text="Generate the report and open print preview">
-              <button className="att-btn-primary" onClick={submit}>
-                <i className="fa-solid fa-file-pdf"></i> Generate &amp; Print
+              <button className="att-btn-primary" onClick={submit} disabled={generating} style={generating ? { opacity: .7, cursor: "wait" } : undefined}>
+                {generating
+                  ? <><i className="fa-solid fa-spinner fa-spin"></i> Generating…</>
+                  : <><i className="fa-solid fa-file-pdf"></i> Generate &amp; Print</>}
               </button>
             </Tooltip>
           </div>
@@ -3124,7 +3133,9 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
 
     const setVal = (field, v) => setVals((p) => ({ ...p, [field]: v }));
 
-    const submit = () => {
+    const [generating, setGenerating] = useState(false);
+    const submit = async () => {
+      if (generating) return;
       /* Validate that all required filters are filled */
       for (const f of rpt.filters) {
         if ((f.type === "date" || f.type === "month") && !vals[f.field]) {
@@ -3132,7 +3143,12 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
           return;
         }
       }
-      onGenerate(vals);
+      try {
+        setGenerating(true);
+        await onGenerate(vals);
+      } finally {
+        setGenerating(false);
+      }
     };
 
     return (
@@ -3142,8 +3158,10 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
             <i className={`fa-solid ${rpt.icon}`} style={{ color: accent }}></i>{rpt.label}
           </div>
           <Tooltip text={`Generate ${rpt.label}`}>
-            <button className="grp-gen-btn" style={{ background: gradient }} onClick={submit}>
-              <i className="fa-solid fa-file-lines"></i> Generate
+            <button className="grp-gen-btn" style={{ background: gradient, ...(generating ? { opacity: .7, cursor: "wait" } : {}) }} onClick={submit} disabled={generating}>
+              {generating
+                ? <><i className="fa-solid fa-spinner fa-spin"></i> Generating…</>
+                : <><i className="fa-solid fa-file-lines"></i> Generate</>}
             </button>
           </Tooltip>
         </div>
@@ -3187,6 +3205,7 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
     const [fromDate, setFromDate] = useState(firstOfMonth);
     const [toDate, setToDate]     = useState(todayStr);
     const [style, setStyle]       = useState("color");
+    const [generating, setGenerating] = useState(false);
 
     useEffect(() => {
       const onKey = (e) => { if (e.key === "Escape") onClose(); };
@@ -3196,10 +3215,16 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
 
     if (!target) return null;
 
-    const submit = () => {
+    const submit = async () => {
       if (!fromDate || !toDate) return onGenerate({ __error: "Please select both From and To dates" });
       if (fromDate > toDate)    return onGenerate({ __error: "From Date cannot be after To Date" });
-      onGenerate({ fromDate, toDate, isColor: style === "color" });
+      if (generating) return;
+      try {
+        setGenerating(true);
+        await onGenerate({ fromDate, toDate, isColor: style === "color" });
+      } finally {
+        setGenerating(false);
+      }
     };
 
     const titlePrefix = target.type === "student" ? "Student" : "Staff";
@@ -3282,8 +3307,10 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
               <button className="att-btn-secondary" onClick={onClose}>Cancel</button>
             </Tooltip>
             <Tooltip text="Generate the individual attendance report">
-              <button className="att-btn-primary" onClick={submit}>
-                <i className="fa-solid fa-file-lines"></i> Generate Report
+              <button className="att-btn-primary" onClick={submit} disabled={generating} style={generating ? { opacity: .7, cursor: "wait" } : undefined}>
+                {generating
+                  ? <><i className="fa-solid fa-spinner fa-spin"></i> Generating…</>
+                  : <><i className="fa-solid fa-file-lines"></i> Generate Report</>}
               </button>
             </Tooltip>
           </div>
@@ -3540,10 +3567,10 @@ useEffect(() => {
     const runIndivReport = useCallback(async ({ fromDate, toDate, isColor, __error }) => {
       if (__error) { toast(__error, "error"); return; }
       const target = indivTarget;
-      setIndivTarget(null);
-      toast(`Generating ${target.name}'s report…`, "info");
+      // Modal ko generation ke baad band karo taake button par spinner dikhe.
       const records = await fetchIndividualAttendance(target, fromDate, toDate);
       const html = buildIndividualReportHTML({ target, fromDate, toDate, weeklyOff, holidays, isColor, records, branchSchool });
+      setIndivTarget(null);
       setReportPreview({ title: `${target.type === "student" ? "Student" : "Staff"} Attendance Report — ${target.name}`, html });
     }, [indivTarget, weeklyOff, holidays, toast, fetchIndividualAttendance, branchSchool]);
 
@@ -3556,6 +3583,12 @@ useEffect(() => {
 
 const saveMarkSf = useCallback(async (rows) => {
   if (blockIfReadOnly()) return;
+  // Validation: Out Time, In Time se pehle na ho (Present staff ke liye).
+  const badTime = rows.find((r) => r.status === "present" && r.inTime && r.outTime && r.outTime < r.inTime);
+  if (badTime) {
+    toast("Out Time, In Time se pehle nahi ho sakta. Please theek karein.", "error");
+    return;
+  }
   const branchID = Number(sessionStorage.getItem("branchID"));
   const employeeID = Number(sessionStorage.getItem("employee_ID")) || 0;
   const attendanceDate = new Date().toISOString().slice(0, 10);
@@ -3651,7 +3684,6 @@ const saveMarkSf = useCallback(async (rows) => {
       } else if (effective === "studentMonthly" || effective === "studentMonthlyClass") {
         const monthLabel = filters.month || reportPicker?.defaultMonth || CURRENT_MONTH_LABEL;
         const { year, monthIdx0 } = parseMonthLabel(monthLabel);
-        toast(`Generating ${monthLabel} report…`, "info");
         const rows = await fetchMonthlyReportRows(year, monthIdx0);
         html  = buildStudentMonthlySummaryHTML({
           rows,
@@ -3678,7 +3710,6 @@ const saveMarkSf = useCallback(async (rows) => {
       } else if (effective === "staffMonthly" || effective === "staffMonthlyOne") {
         const monthLabel = filters.month || reportPicker?.defaultMonth || CURRENT_MONTH_LABEL;
         const { year, monthIdx0 } = parseMonthLabel(monthLabel);
-        toast(`Generating ${monthLabel} staff report…`, "info");
         const rows = await fetchMonthlyStaffReportRows(year, monthIdx0);
         html  = buildMonthlyStaffReportHTML({
           staffData: rows,
@@ -3692,13 +3723,11 @@ const saveMarkSf = useCallback(async (rows) => {
       } else if (effective === "staffSummary") {
         const monthLabel = filters.month || CURRENT_MONTH_LABEL;
         const { year, monthIdx0 } = parseMonthLabel(monthLabel);
-        toast(`Generating ${monthLabel} staff summary…`, "info");
         const rows = await fetchMonthlyStaffReportRows(year, monthIdx0);
         html  = buildMonthlyStaffReportHTML({ staffData: rows, month: monthLabel, isColor, branchSchool });
         title = "Staff Attendance Summary";
       } else if (effective === "studentClasswise") {
         const period = filters.from && filters.to ? `${filters.from} → ${filters.to}` : "";
-        toast("Generating class-wise report…", "info");
         const rows = await fetchRangeReportRows(filters.from, filters.to);
         html  = buildStudentMonthlySummaryHTML({
           rows, monthLabel: period, sessionName: activeSessionName || branchSchool?.session,
@@ -3707,7 +3736,6 @@ const saveMarkSf = useCallback(async (rows) => {
         title = "Class-wise Student Attendance Report";
       } else if (effective === "studentSummary") {
         const period = filters.from && filters.to ? `${filters.from} → ${filters.to}` : "";
-        toast("Generating summary report…", "info");
         const rows = await fetchRangeReportRows(filters.from, filters.to);
         html  = buildStudentMonthlySummaryHTML({
           rows, monthLabel: period, sessionName: activeSessionName || branchSchool?.session,
@@ -3717,21 +3745,18 @@ const saveMarkSf = useCallback(async (rows) => {
       } else if (effective === "classOverview") {
         const monthLabel = filters.month || CURRENT_MONTH_LABEL;
         const { year, monthIdx0 } = parseMonthLabel(monthLabel);
-        toast(`Generating ${monthLabel} class overview…`, "info");
         const rows = await fetchMonthlyReportRows(year, monthIdx0);
         html  = buildClassOverviewHTML({ rows, month: monthLabel, isColor, branchSchool });
         title = "Class Overview Report";
       } else if (effective === "classComparison") {
         const monthLabel = filters.month || CURRENT_MONTH_LABEL;
         const { year, monthIdx0 } = parseMonthLabel(monthLabel);
-        toast(`Generating ${monthLabel} class comparison…`, "info");
         const rows = await fetchMonthlyReportRows(year, monthIdx0);
         html  = buildClassComparisonHTML({ rows, month: monthLabel, isColor, branchSchool });
         title = "Class Comparison Report";
       } else if (effective === "lowAttendance") {
         const monthLabel = filters.month || CURRENT_MONTH_LABEL;
         const { year, monthIdx0 } = parseMonthLabel(monthLabel);
-        toast(`Generating ${monthLabel} low-attendance alert…`, "info");
         const rows = await fetchMonthlyReportRows(year, monthIdx0);
         html  = buildLowAttendanceHTML({ rows, month: monthLabel, isColor, branchSchool });
         title = "Low Attendance Alert Report";
@@ -3760,7 +3785,8 @@ const saveMarkSf = useCallback(async (rows) => {
       (always Color print style for one-click generation). */
     const runGeneralReport = useCallback((rpt, filters) => {
       if (filters.__error) { toast(filters.__error, "error"); return; }
-      generateReport({ effective: rpt.key, style: "color", filters });
+      // Promise return karo taake Generate button spinner report banne tak chale.
+      return generateReport({ effective: rpt.key, style: "color", filters });
     }, [generateReport, toast]);
 
   const requestToggleDay = useCallback((i) => {
@@ -3858,6 +3884,12 @@ const saveMarkSf = useCallback(async (rows) => {
     // Save Attendance → action:"insert" for EACH student.
     const saveStudentMarks = useCallback(async (idx, studentRows) => {
       if (blockIfReadOnly()) throw new Error("read-only");
+      // Validation: Out Time, In Time se pehle na ho (Present students ke liye).
+      const badTime = studentRows.find((s) => s.status === "present" && s.inTime && s.outTime && s.outTime < s.inTime);
+      if (badTime) {
+        toast("Out Time must be greater than In Time.", "error");
+        throw new Error("bad-time"); // modal khula rahe taake user theek kar sake
+      }
       const row = studentData[idx];
       if (!row) return;
       const branchID   = Number(sessionStorage.getItem("branchID"));
