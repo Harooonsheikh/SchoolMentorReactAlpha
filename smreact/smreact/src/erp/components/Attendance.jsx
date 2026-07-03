@@ -123,6 +123,16 @@
   const CURRENT_MONTH_LABEL = `${MONTHS[new Date().getMonth()]} ${new Date().getFullYear()}`;
   const YEAR_OPTIONS  = ["2025-2026", "2024-2025", "2023-2024"];
 
+  /* "July 2026" → { year: 2026, monthIdx0: 6 } for month-range attendance fetch. */
+  const parseMonthLabel = (label) => {
+    const [mName, yr] = String(label || "").trim().split(/\s+/);
+    const monthIdx0 = MONTHS.indexOf(mName);
+    return {
+      year: Number(yr) || new Date().getFullYear(),
+      monthIdx0: monthIdx0 < 0 ? new Date().getMonth() : monthIdx0,
+    };
+  };
+
   /* Individual Reports rosters */
   const RPT_STUDENTS_BY_CLASS = [
     { cls:"Class I",   sec:"Red",   total:38, teacher:"Ms. Ayesha Raza", students:[
@@ -670,7 +680,7 @@
   const RPT_MONTH_OPTS   = genMonthYearOptions();
   const RPT_DEPT_OPTS    = ["All Departments", "Primary", "Secondary", "Administration", "Support Staff"];
 
-  function ReportPickerModal({ open, title, context, defaultYear, defaultMonth, defaultDate, forClass, forStaff, onClose, onGenerate, sessionOpts = [], holidayClassOpts = [] }) {
+  function ReportPickerModal({ open, title, context, defaultYear, defaultMonth, defaultDate, forClass, forStaff, onClose, onGenerate, sessionOpts = [], holidayClassOpts = [], studentClassOpts = [], studentSectionOpts = [], staffDeptOpts = [] }) {
     /* Compact picker — only filters relevant to the current report context. */
     const todayStr = new Date().toISOString().split("T")[0];
     const currMonth = CURRENT_MONTH_LABEL;
@@ -754,8 +764,8 @@
                   <FilterInput label="Date" value={fDate} onChange={setFDate} type="date" />
                   {!lockedClass && (
                     <>
-                      <FilterSelect label="Class"   value={fClass}   onChange={setFClass}   opts={RPT_CLASS_OPTS} />
-                      <FilterSelect label="Section" value={fSection} onChange={setFSection} opts={RPT_SECTION_OPTS} />
+                      <FilterSelect label="Class"   value={fClass}   onChange={setFClass}   opts={studentClassOpts.length ? studentClassOpts : RPT_CLASS_OPTS} />
+                      <FilterSelect label="Section" value={fSection} onChange={setFSection} opts={studentSectionOpts.length ? studentSectionOpts : RPT_SECTION_OPTS} />
                     </>
                   )}
                 </>
@@ -765,8 +775,8 @@
                   <FilterSelect label="Month" value={fMonth} onChange={setFMonth} opts={RPT_MONTH_OPTS} />
                   {!lockedClass && (
                     <>
-                      <FilterSelect label="Class"   value={fClass}   onChange={setFClass}   opts={RPT_CLASS_OPTS} />
-                      <FilterSelect label="Section" value={fSection} onChange={setFSection} opts={RPT_SECTION_OPTS} />
+                      <FilterSelect label="Class"   value={fClass}   onChange={setFClass}   opts={studentClassOpts.length ? studentClassOpts : RPT_CLASS_OPTS} />
+                      <FilterSelect label="Section" value={fSection} onChange={setFSection} opts={studentSectionOpts.length ? studentSectionOpts : RPT_SECTION_OPTS} />
                     </>
                   )}
                 </>
@@ -775,7 +785,7 @@
                 <>
                   <FilterInput label="Date" value={fDate} onChange={setFDate} type="date" />
                   {!lockedStaff && (
-                    <FilterSelect label="Department" value={fDept} onChange={setFDept} opts={RPT_DEPT_OPTS} />
+                    <FilterSelect label="Department" value={fDept} onChange={setFDept} opts={staffDeptOpts.length ? staffDeptOpts : RPT_DEPT_OPTS} />
                   )}
                 </>
               )}
@@ -783,7 +793,7 @@
                 <>
                   <FilterSelect label="Month" value={fMonth} onChange={setFMonth} opts={RPT_MONTH_OPTS} />
                   {!lockedStaff && (
-                    <FilterSelect label="Department" value={fDept} onChange={setFDept} opts={RPT_DEPT_OPTS} />
+                    <FilterSelect label="Department" value={fDept} onChange={setFDept} opts={staffDeptOpts.length ? staffDeptOpts : RPT_DEPT_OPTS} />
                   )}
                 </>
               )}
@@ -1101,21 +1111,23 @@
     </div>`;
   }
 
-  /* ─── Daily Student Attendance Report ────────────────────────────────────── */
-  function buildDailyStudentReportHTML({ studentData, date, classFilter, sectionFilter, forClass, isColor }) {
+  /* ─── Daily Student Attendance Report ─────────────────────────────────────
+    `rows` = REAL per class+section aggregates for the SELECTED date, fetched
+    from /api/student-attendance (action:"get"). Header = branch (branchSchool). */
+  function buildDailyStudentReportHTML({ rows, date, classFilter, sectionFilter, forClass, isColor, branchSchool }) {
     const { bdr, GREEN, RED, AMB, th, td, badge } = rptTableHelpers(isColor);
     const dateLabel = date
       ? new Date(date).toLocaleDateString("en-GB", { weekday: "long", day: "2-digit", month: "long", year: "numeric" })
       : new Date().toLocaleDateString("en-GB", { weekday: "long", day: "2-digit", month: "long", year: "numeric" });
 
-    const rows = (studentData || []).filter((r) => {
+    const filtered = (rows || []).filter((r) => {
       if (forClass) return r.cls === forClass.cls && r.sec === forClass.sec;
       const cMatch = !classFilter || classFilter === "All Classes" || r.cls === classFilter;
       const sMatch = !sectionFilter || sectionFilter === "All Sections" || r.sec === sectionFilter;
       return cMatch && sMatch;
     });
 
-    const tableRows = rows.map((r, i) => {
+    const tableRows = filtered.map((r, i) => {
       const pc = r.marked && r.total > 0 ? Math.round((r.present / r.total) * 100) : 0;
       return `<tr style="background:${i % 2 === 0 ? "#fff" : "#f8fafc"}">
         ${td(i + 1, "text-align:center;color:#94A3B8")}
@@ -1129,10 +1141,10 @@
       </tr>`;
     }).join("");
 
-    const pres = rows.filter((r) => r.marked).reduce((s, r) => s + r.present, 0);
-    const abs  = rows.filter((r) => r.marked).reduce((s, r) => s + r.absent, 0);
-    const lv   = rows.filter((r) => r.marked).reduce((s, r) => s + r.leave, 0);
-    const tot  = rows.reduce((s, r) => s + r.total, 0);
+    const pres = filtered.filter((r) => r.marked).reduce((s, r) => s + r.present, 0);
+    const abs  = filtered.filter((r) => r.marked).reduce((s, r) => s + r.absent, 0);
+    const lv   = filtered.filter((r) => r.marked).reduce((s, r) => s + r.leave, 0);
+    const tot  = filtered.reduce((s, r) => s + r.total, 0);
 
     const content = rptInfoGrid([
       ["Date", dateLabel],
@@ -1141,14 +1153,14 @@
       ["Total Students", String(tot)],
     ], bdr) +
     rptStatsRow([["Total", tot, "#374151"], ["Present", pres, GREEN], ["Absent", abs, RED], ["Leave", lv, AMB]], bdr, isColor) +
-    (rows.length === 0
-      ? `<div style="text-align:center;padding:30px;color:#94A3B8;font-size:13.5px"><i>No classes match the selected filters.</i></div>`
+    (filtered.length === 0
+      ? `<div style="text-align:center;padding:30px;color:#94A3B8;font-size:13.5px"><i>No attendance found for the selected date and filters.</i></div>`
       : `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11.5px">
           <thead><tr>${[th("#", "center"), th("Class"), th("Section"), th("Total", "center"), th("Present", "center"), th("Absent", "center"), th("Leave", "center"), th("Attend %", "center"), th("Marked By")].join("")}</tr></thead>
           <tbody>${tableRows}</tbody>
         </table></div>`);
 
-    return rptPageWrap({ rptLabel: "Daily Student Attendance Report", period: dateLabel, isColor, content });
+    return rptPageWrap({ rptLabel: "Daily Student Attendance Report", period: dateLabel, isColor, school: branchSchool, content });
   }
 
   /* ─── Monthly Student Attendance Report ──────────────────────────────────── */
@@ -1242,7 +1254,7 @@
   }
 
   /* ─── Daily Staff Attendance Report ─────────────────────────────────────── */
-  function buildDailyStaffReportHTML({ staffData, date, deptFilter, forStaff, isColor }) {
+  function buildDailyStaffReportHTML({ staffData, date, deptFilter, forStaff, isColor, branchSchool }) {
     const { bdr, GREEN, RED, AMB, th, td, badge } = rptTableHelpers(isColor);
     const dateLabel = date
       ? new Date(date).toLocaleDateString("en-GB", { weekday: "long", day: "2-digit", month: "long", year: "numeric" })
@@ -1291,11 +1303,14 @@
           <tbody>${tableRows}</tbody>
         </table></div>`);
 
-    return rptPageWrap({ rptLabel: "Daily Staff Attendance Report", period: dateLabel, isColor, content });
+    return rptPageWrap({ rptLabel: "Daily Staff Attendance Report", period: dateLabel, isColor, school: branchSchool, content });
   }
 
-  /* ─── Monthly Staff Attendance Report ───────────────────────────────────── */
-  function buildMonthlyStaffReportHTML({ staffData, month, deptFilter, forStaff, isColor }) {
+  /* ─── Monthly Staff Attendance Report ─────────────────────────────────────
+    `staffData` = REAL per-staff month aggregates (present/absent/leave, working
+    days, present %) fetched from /api/staff-attendance across the month's dates.
+    Header = branch (branchSchool). */
+  function buildMonthlyStaffReportHTML({ staffData, month, deptFilter, forStaff, isColor, branchSchool }) {
     const { bdr, GREEN, RED, AMB, th, td, badge } = rptTableHelpers(isColor);
     const monthLabel = month || CURRENT_MONTH_LABEL;
 
@@ -1305,11 +1320,9 @@
     });
 
     const tableRows = list.map((s, i) => {
-      const workingDays = 22;
-      const present = s.marked ? Math.max(0, workingDays - (i % 3) - (s.status === "absent" ? 1 : 0)) : 0;
-      const absent  = s.marked ? (s.status === "absent" ? 1 : 0) + (i % 2) : 0;
-      const leave   = s.marked ? Math.max(0, workingDays - present - absent) : 0;
-      const pc = workingDays > 0 ? Math.round((present / workingDays) * 100) : 0;
+      const workingDays = s.workingDays || 0;
+      const present = s.present || 0, absent = s.absent || 0, leave = s.leave || 0;
+      const pc = s.pct || 0;
       return `<tr style="background:${i % 2 === 0 ? "#fff" : "#f8fafc"}">
         ${td(i + 1, "text-align:center;color:#94A3B8")}
         ${td(`<strong>${s.name}</strong>`)}
@@ -1335,59 +1348,55 @@
           <tbody>${tableRows}</tbody>
         </table></div>`);
 
-    return rptPageWrap({ rptLabel: "Monthly Staff Attendance Report", period: monthLabel, isColor, content });
+    return rptPageWrap({ rptLabel: "Monthly Staff Attendance Report", period: monthLabel, isColor, school: branchSchool, content });
   }
 
-  /* ─── Class Overview (Monthly) Report ───────────────────────────────────── */
-  function buildClassOverviewHTML({ studentData, month, isColor }) {
+  /* ─── Class Overview (Monthly) Report ─────────────────────────────────────
+    `rows` = REAL per class+section month aggregates (fetchMonthlyReportRows). */
+  function buildClassOverviewHTML({ rows, month, isColor, branchSchool }) {
     const { bdr, GREEN, RED, AMB, th, td, badge } = rptTableHelpers(isColor);
     const monthLabel = month || CURRENT_MONTH_LABEL;
-    const workingDays = 22;
+    const list = rows || [];
+    const workingDays = list[0]?.workingDays ?? 0;
 
-    const tableRows = (studentData || []).map((r, i) => {
-      const present = r.marked ? Math.round((r.present / r.total) * workingDays) : 0;
-      const absent  = r.marked ? Math.round((r.absent  / r.total) * workingDays) : 0;
-      const leave   = r.marked ? Math.round((r.leave   / r.total) * workingDays) : 0;
-      const pc = workingDays > 0 ? Math.round((present / workingDays) * 100) : 0;
+    const tableRows = list.map((r, i) => {
+      const pc = r.pct || 0;
       return `<tr style="background:${i % 2 === 0 ? "#fff" : "#f8fafc"}">
         ${td(i + 1, "text-align:center;color:#94A3B8")}
         ${td(`<strong>${r.cls}</strong>`)}${td(r.sec)}
         ${td(r.teacher || "—", "font-size:11px")}
-        ${td(r.total, "text-align:center;font-weight:700")}
-        ${td(`<strong style="color:${GREEN}">${present}</strong>`, "text-align:center")}
-        ${td(`<strong style="color:${RED}">${absent}</strong>`,    "text-align:center")}
-        ${td(`<strong style="color:${AMB}">${leave}</strong>`,     "text-align:center")}
+        ${td(r.strength, "text-align:center;font-weight:700")}
+        ${td(`<strong style="color:${GREEN}">${r.present}</strong>`, "text-align:center")}
+        ${td(`<strong style="color:${RED}">${r.absent}</strong>`,    "text-align:center")}
+        ${td(`<strong style="color:${AMB}">${r.leave}</strong>`,     "text-align:center")}
         ${td(badge(pc + "%", pc >= 90 ? GREEN : pc >= 75 ? AMB : RED), "text-align:center")}
       </tr>`;
     }).join("");
 
     const content = rptInfoGrid([
       ["Month", monthLabel],
-      ["Total Classes", String((studentData || []).length)],
+      ["Total Classes", String(list.length)],
       ["Working Days", String(workingDays)],
       ["Generated", new Date().toLocaleString("en-GB", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })],
     ], bdr) +
-    `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11.5px">
+    (list.length === 0
+      ? `<div style="text-align:center;padding:30px;color:#94A3B8;font-size:13.5px"><i>No attendance data found for this month.</i></div>`
+      : `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11.5px">
       <thead><tr>${[th("#", "center"), th("Class"), th("Section"), th("Teacher"), th("Strength", "center"), th("Present", "center"), th("Absent", "center"), th("Leave", "center"), th("Attend %", "center")].join("")}</tr></thead>
       <tbody>${tableRows}</tbody>
-    </table></div>`;
+    </table></div>`);
 
-    return rptPageWrap({ rptLabel: "Monthly Class Overview Report", period: monthLabel, isColor, content });
+    return rptPageWrap({ rptLabel: "Monthly Class Overview Report", period: monthLabel, isColor, school: branchSchool, content });
   }
 
   /* ─── Class Comparison Report ───────────────────────────────────────────── */
-  function buildClassComparisonHTML({ studentData, month, isColor }) {
+  function buildClassComparisonHTML({ rows, month, isColor, branchSchool }) {
     const { bdr, GREEN, RED, AMB, th, td } = rptTableHelpers(isColor);
     const monthLabel = month || CURRENT_MONTH_LABEL;
-    const workingDays = 22;
 
-    const rows = (studentData || []).map((r) => {
-      const present = r.marked ? Math.round((r.present / r.total) * workingDays) : 0;
-      const pc = workingDays > 0 ? Math.round((present / workingDays) * 100) : 0;
-      return { ...r, present, pc };
-    }).sort((a, b) => b.pc - a.pc);
+    const list = (rows || []).map((r) => ({ ...r, pc: r.pct || 0 })).sort((a, b) => b.pc - a.pc);
 
-    const tableRows = rows.map((r, i) => `<tr style="background:${i % 2 === 0 ? "#fff" : "#f8fafc"}">
+    const tableRows = list.map((r, i) => `<tr style="background:${i % 2 === 0 ? "#fff" : "#f8fafc"}">
       ${td(i + 1, "text-align:center;color:#94A3B8")}
       ${td(`<strong>${r.cls}</strong> · ${r.sec}`)}
       ${td(r.teacher || "—", "font-size:11px")}
@@ -1397,39 +1406,36 @@
 
     const content = rptInfoGrid([
       ["Month", monthLabel],
-      ["Classes Compared", String(rows.length)],
-      ["Top Class", rows[0] ? `${rows[0].cls} · ${rows[0].sec} (${rows[0].pc}%)` : "—"],
-      ["Lowest Class", rows[rows.length - 1] ? `${rows[rows.length - 1].cls} · ${rows[rows.length - 1].sec} (${rows[rows.length - 1].pc}%)` : "—"],
+      ["Classes Compared", String(list.length)],
+      ["Top Class", list[0] ? `${list[0].cls} · ${list[0].sec} (${list[0].pc}%)` : "—"],
+      ["Lowest Class", list[list.length - 1] ? `${list[list.length - 1].cls} · ${list[list.length - 1].sec} (${list[list.length - 1].pc}%)` : "—"],
     ], bdr) +
-    `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11.5px">
+    (list.length === 0
+      ? `<div style="text-align:center;padding:30px;color:#94A3B8;font-size:13.5px"><i>No attendance data found for this month.</i></div>`
+      : `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11.5px">
       <thead><tr>${[th("#", "center"), th("Class / Section"), th("Teacher"), th("Attendance"), th("%", "center")].join("")}</tr></thead>
       <tbody>${tableRows}</tbody>
-    </table></div>`;
+    </table></div>`);
 
-    return rptPageWrap({ rptLabel: "Class Comparison Report", period: monthLabel, isColor, content });
+    return rptPageWrap({ rptLabel: "Class Comparison Report", period: monthLabel, isColor, school: branchSchool, content });
   }
 
   /* ─── Low Attendance Alert Report ───────────────────────────────────────── */
-  function buildLowAttendanceHTML({ studentData, month, isColor }) {
+  function buildLowAttendanceHTML({ rows, month, isColor, branchSchool }) {
     const { bdr, RED, AMB, th, td, badge } = rptTableHelpers(isColor);
     const monthLabel = month || CURRENT_MONTH_LABEL;
-    const workingDays = 22;
     const threshold = 75;
 
-    const rows = (studentData || []).map((r) => {
-      const present = r.marked ? Math.round((r.present / r.total) * workingDays) : 0;
-      const absent  = r.marked ? workingDays - present : 0;
-      const pc = workingDays > 0 ? Math.round((present / workingDays) * 100) : 0;
-      return { ...r, present, absent, pc };
-    }).filter((r) => r.pc < threshold).sort((a, b) => a.pc - b.pc);
+    const list = (rows || []).map((r) => ({ ...r, pc: r.pct || 0 }))
+      .filter((r) => r.pc < threshold).sort((a, b) => a.pc - b.pc);
 
-    const tableRows = rows.length === 0
+    const tableRows = list.length === 0
       ? `<tr><td colspan="6" style="padding:24px;text-align:center;color:#94A3B8;font-style:italic">All classes are above the ${threshold}% threshold.</td></tr>`
-      : rows.map((r, i) => `<tr style="background:${i % 2 === 0 ? "#fff" : "#f8fafc"}">
+      : list.map((r, i) => `<tr style="background:${i % 2 === 0 ? "#fff" : "#f8fafc"}">
           ${td(i + 1, "text-align:center;color:#94A3B8")}
           ${td(`<strong>${r.cls}</strong> · ${r.sec}`)}
           ${td(r.teacher || "—", "font-size:11px")}
-          ${td(r.total, "text-align:center;font-weight:700")}
+          ${td(r.strength, "text-align:center;font-weight:700")}
           ${td(`<strong style="color:${RED}">${r.absent}</strong>`, "text-align:center")}
           ${td(badge(r.pc + "%", r.pc >= 60 ? AMB : RED), "text-align:center")}
         </tr>`).join("");
@@ -1437,7 +1443,7 @@
     const content = rptInfoGrid([
       ["Month", monthLabel],
       ["Threshold", `< ${threshold}%`],
-      ["Classes Flagged", String(rows.length)],
+      ["Classes Flagged", String(list.length)],
       ["Generated", new Date().toLocaleString("en-GB", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })],
     ], bdr) +
     `<div style="background:rgba(220,38,38,.06);border:1px solid rgba(220,38,38,.2);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:${RED};display:flex;align-items:center;gap:8px"><strong>Action required:</strong> Classes listed below have monthly attendance under ${threshold}%. Investigate causes and schedule remedial steps.</div>
@@ -1446,11 +1452,11 @@
       <tbody>${tableRows}</tbody>
     </table></div>`;
 
-    return rptPageWrap({ rptLabel: "Low Attendance Alert Report", period: monthLabel, isColor, content });
+    return rptPageWrap({ rptLabel: "Low Attendance Alert Report", period: monthLabel, isColor, school: branchSchool, content });
   }
 
   /* ─── Monthly Holiday Report ───────────────────────────────────────────── */
-  function buildMonthlyHolidayReportHTML({ holidays, weeklyOff, month, isColor }) {
+  function buildMonthlyHolidayReportHTML({ holidays, weeklyOff, month, isColor, branchSchool }) {
     const { bdr, th, td } = rptTableHelpers(isColor);
     const monthLabel = month || CURRENT_MONTH_LABEL;
     const monthIdx = MONTHS.indexOf(monthLabel.split(" ")[0]);
@@ -1479,27 +1485,25 @@
       <tbody>${tableRows}</tbody>
     </table></div>`;
 
-    return rptPageWrap({ rptLabel: "Monthly Holiday Report", period: monthLabel, isColor, content });
+    return rptPageWrap({ rptLabel: "Monthly Holiday Report", period: monthLabel, isColor, school: branchSchool, content });
   }
 
   /* ─── Individual (Student/Staff) Date-Range Report ──────────────────────── */
-  function buildIndividualReportHTML({ target, fromDate, toDate, weeklyOff, holidays, isColor }) {
+  function buildIndividualReportHTML({ target, fromDate, toDate, weeklyOff, holidays, isColor, records, branchSchool }) {
     const { bdr, GREEN, RED, AMB, th, td, badge } = rptTableHelpers(isColor);
     const titleType = target.type === "student" ? "Student" : "Staff";
     const dateLabel = `${fromDate} → ${toDate}`;
+    const recs = records || {};
 
     /* Generate the date sequence */
-    const start = new Date(fromDate);
-    const end   = new Date(toDate);
+    const start = new Date(`${fromDate}T00:00:00`);
+    const end   = new Date(`${toDate}T00:00:00`);
     const dates = [];
     for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
       dates.push(new Date(d));
     }
 
-    /* Demo statuses repeated cyclically (matches HTML reference) */
-    const stats = ["Present", "Present", "Absent", "Present", "Leave", "Present", "Present", "Present", "Present", "Absent", "Present", "Leave", "Present", "Present", "Present", "Present", "Absent", "Present", "Present", "Present", "Present", "Present"];
-    const plats = ["ERP", "Mobile App", "Biometric", "ERP", "ERP", "Mobile App", "Biometric", "ERP", "ERP", "Mobile App", "ERP", "ERP", "Biometric", "ERP", "ERP", "Mobile App", "ERP", "Biometric", "ERP", "ERP", "Mobile App", "ERP"];
-    const inTs  = ["07:45", "07:58", "", "07:50", "", "07:48", "07:55", "08:01", "", "07:44", "", "07:52", "07:47", "07:56", "08:00", "07:53", "", "08:03", "", "07:51", "07:46", "07:59"];
+    const STLABEL = { present: "Present", absent: "Absent", leave: "Leave", late: "Late" };
     const WDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
     let present = 0, absent = 0, leave = 0, wDays = 0, wOff = 0, hols = 0;
@@ -1507,9 +1511,11 @@
       const dow = (d.getDay() + 6) % 7;
       const isOff = weeklyOff.includes(dow);
       const hol = (holidays || []).find((h) => {
-        const f = new Date(h.from), t2 = new Date(h.to);
+        const f = new Date(`${h.from}T00:00:00`), t2 = new Date(`${h.to}T00:00:00`);
         return d >= f && d <= t2;
       });
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      const rec = recs[key]; // { status, platform, inTime, outTime } | undefined
       const dStr = `${String(d.getDate()).padStart(2, "0")} ${MONTHS[d.getMonth()].slice(0, 3)} ${d.getFullYear()}`;
       const dowName = WDAYS[d.getDay()];
       let dType = "Working Day", dColor = isColor ? "#16A34A" : "#333";
@@ -1517,15 +1523,17 @@
       else if (hol)   { dType = "Holiday";    dColor = isColor ? "#3B82F6" : "#555"; hols++; }
       else            { wDays++; }
 
-      const st = (isOff || hol) ? "—" : stats[i % stats.length];
-      const pl = (isOff || hol) ? "—" : plats[i % plats.length];
-      const inT = target.type === "staff" && st === "Present" && inTs[i % inTs.length] ? fmtTime(inTs[i % inTs.length]) : "—";
-      const outT = target.type === "staff" && st === "Present" ? "2:30 PM" : "—";
+      // Real status: weekly-off/holiday → "—"; warna record se; record na ho → "Not Marked".
+      const stKey = rec ? rec.status : "";
+      const st = (isOff || hol) ? "—" : (STLABEL[stKey] || (rec ? "Marked" : "Not Marked"));
+      const pl = (isOff || hol) ? "—" : (rec?.platform || "—");
+      const inT = target.type === "staff" && rec?.inTime ? fmtTime(rec.inTime) : "—";
+      const outT = target.type === "staff" && rec?.outTime ? fmtTime(rec.outTime) : "—";
 
-      if (!isOff && !hol) {
-        if (st === "Present") present++;
-        else if (st === "Absent") absent++;
-        else if (st === "Leave") leave++;
+      if (!isOff && !hol && rec) {
+        if (stKey === "present") present++;
+        else if (stKey === "absent") absent++;
+        else if (stKey === "leave") leave++;
       }
       const sc = st === "Present" ? GREEN : st === "Absent" ? RED : st === "Leave" ? AMB : "#94A3B8";
       const bg = isOff ? "#f8fafc" : i % 2 === 0 ? "#fff" : "#f9fafb";
@@ -1576,7 +1584,7 @@
       <tbody>${tableRows}</tbody>
     </table></div>`;
 
-    return rptPageWrap({ rptLabel: `Individual ${titleType} Attendance Report`, period: dateLabel, isColor, content });
+    return rptPageWrap({ rptLabel: `Individual ${titleType} Attendance Report`, period: dateLabel, isColor, school: branchSchool, content });
   }
 
   /* ─── Shared month-calendar grid (student + staff) ────────────────────────── */
@@ -2712,27 +2720,28 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
     HTML-faithful: 2 sub-tabs (General / Individual). General = 4 grp-card
     accordions, each with embedded report rows + inline filters + Generate.
     Individual = expandable student class rows + flat staff list. */
-  function ReportsTab({ staffData, runGeneralReport, openIndivReport, toast }) {
+  function ReportsTab({ staffData, studentData = [], teacherMap = {}, runGeneralReport, openIndivReport, toast, classOpts = [] }) {
     const [subTab, setSubTab] = useState("general");
     const [openCardIdx, setOpenCardIdx] = useState(0);
     const [openClassIdx, setOpenClassIdx] = useState(null);
-    const [highlightStudent, setHighlightStudent] = useState(null); // roll number of highlighted row
+    const [highlightStudent, setHighlightStudent] = useState(null); // student id of highlighted row
     const [highlightStaff, setHighlightStaff]     = useState(null); // empId of highlighted row
 
-    /* Flat student list with class info (for the dropdown) */
-    const allStudents = RPT_STUDENTS_BY_CLASS.flatMap((cl, ci) =>
-      cl.students.map((s) => ({
-        ...s, cls: cl.cls, sec: cl.sec, teacher: cl.teacher, classIdx: ci,
+    /* Flat student list with class info (for the search dropdown) — REAL data. */
+    const allStudents = (studentData || []).flatMap((cl, ci) =>
+      (cl.students || []).map((s) => ({
+        id: s.id, name: s.name, fn: s.father, roll: s.reg, adm: s.reg,
+        cls: cl.cls, sec: cl.sec, classIdx: ci,
       }))
     );
 
     /* Pick handlers — open the right class, highlight the row, scroll into view */
     const pickStudent = (s) => {
       setOpenClassIdx(s.classIdx);
-      setHighlightStudent(s.roll);
+      setHighlightStudent(s.id);
       /* Wait one frame so the accordion has opened, then scroll into view */
       setTimeout(() => {
-        const el = document.getElementById(`rpt-student-${s.roll}`);
+        const el = document.getElementById(`rpt-student-${s.id}`);
         if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
         /* Auto-clear the highlight after 2s */
         setTimeout(() => setHighlightStudent(null), 2000);
@@ -2794,6 +2803,7 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
                           rpt={rpt}
                           accent={rpt.altAccent || g.accent}
                           gradient={rpt.altGradient || g.gradient}
+                          classOpts={classOpts}
                           onGenerate={(filters) => runGeneralReport(rpt, filters, toast)}
                         />
                       ))}
@@ -2820,9 +2830,9 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
                   </div>
                 </div>
                 <SearchCombobox
-                  placeholder="Search student name, roll, or adm no.…"
+                  placeholder="Search student name, father, reg no, class…"
                   items={allStudents}
-                  getKey={(s) => s.roll}
+                  getKey={(s) => s.id}
                   getSearchText={(s) => `${s.name} ${s.fn} ${s.roll} ${s.adm} ${s.cls} ${s.sec}`}
                   onPick={pickStudent}
                   renderItem={(s) => (
@@ -2850,12 +2860,17 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
                 <div className="att-th att-rpt-cls-pct">Attendance</div>
                 <div className="att-th att-rpt-cls-chev" style={{ textAlign: "center" }}>Details</div>
               </div>
-              {RPT_STUDENTS_BY_CLASS.map((cl, i) => {
+              {(studentData || []).length === 0 ? (
+                <div className="att-row" style={{ padding: 20, color: T.textMuted, fontStyle: "italic" }}>No classes found.</div>
+              ) : (studentData || []).map((cl, i) => {
                 const isOpen = openClassIdx === i;
-                const pct = 82 + i * 3;
-                const pctColor = pct >= 90 ? "#16A34A" : pct >= 75 ? "#D97706" : "#DC2626";
+                const teacher = teacherMap[`${cl.classID}-${cl.sectionID}`] || cl.teacher || "—";
+                const students = cl.students || [];
+                // Real attendance % — aaj ki mark hui attendance ke against (present/total).
+                const pct = cl.marked && cl.total > 0 ? Math.round((cl.present / cl.total) * 100) : null;
+                const pctColor = pct == null ? T.textMuted : pct >= 90 ? "#16A34A" : pct >= 75 ? "#D97706" : "#DC2626";
                 return (
-                  <div key={`${cl.cls}-${cl.sec}`} className="att-row-wrap">
+                  <div key={`${cl.classID}-${cl.sectionID}`} className="att-row-wrap">
                     <div className="att-row att-rpt-cls-row">
                       <div className="att-td att-rpt-cls-num">{i + 1}</div>
                       <div className="att-td att-rpt-cls-name">
@@ -2867,13 +2882,13 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
                           </div>
                         </div>
                       </div>
-                      <div className="att-td att-rpt-cls-teacher">{cl.teacher}</div>
+                      <div className="att-td att-rpt-cls-teacher">{teacher}</div>
                       <div className="att-td att-rpt-cls-total">
                         <span style={{ fontSize: 15, fontWeight: 800 }}>{cl.total}</span>
                         <span style={{ fontSize: 10, color: T.textMuted, marginLeft: 3 }}>students</span>
                       </div>
                       <div className="att-td att-rpt-cls-pct">
-                        <span style={{ fontSize: 13, fontWeight: 800, color: pctColor }}>{pct}%</span>
+                        <span style={{ fontSize: 13, fontWeight: 800, color: pctColor }}>{pct == null ? "—" : `${pct}%`}</span>
                       </div>
                       <div className="att-td att-rpt-cls-chev" style={{ justifyContent: "center" }}>
                         <Tooltip text={isOpen ? 'Hide student list' : 'Show student list'}>
@@ -2892,20 +2907,19 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
                         <table className="att-student-table" style={{ minWidth: 480 }}>
                           <thead>
                             <tr>
-                              <th>#</th><th>Student Name</th><th>Father Name</th><th>Roll No.</th><th>Adm. No.</th>
+                              <th>#</th><th>Student Name</th><th>Father Name</th><th>Reg No.</th>
                               <th style={{ textAlign: "center" }}>Action</th>
                             </tr>
                           </thead>
                           <tbody>
-                            {cl.students.length === 0 ? (
-                              <tr><td colSpan={6} style={{ textAlign: "center", color: T.textMuted, padding: 14, fontStyle: "italic" }}>No student records found.</td></tr>
-                            ) : cl.students.map((s, j) => (
-                              <tr key={s.roll} id={`rpt-student-${s.roll}`} className={highlightStudent === s.roll ? "att-row-highlight" : ""}>
+                            {students.length === 0 ? (
+                              <tr><td colSpan={5} style={{ textAlign: "center", color: T.textMuted, padding: 14, fontStyle: "italic" }}>No student records found.</td></tr>
+                            ) : students.map((s, j) => (
+                              <tr key={s.id} id={`rpt-student-${s.id}`} className={highlightStudent === s.id ? "att-row-highlight" : ""}>
                                 <td>{j + 1}</td>
                                 <td><strong>{s.name}</strong></td>
-                                <td>{s.fn}</td>
-                                <td>{s.roll}</td>
-                                <td>{s.adm}</td>
+                                <td>{s.father}</td>
+                                <td>{s.reg}</td>
                                 <td style={{ textAlign: "center" }}>
                                   <Tooltip text={`Generate attendance report for ${s.name}`}>
                                     <button
@@ -2915,7 +2929,10 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
                                         type: "student",
                                         name: s.name,
                                         detail: `${cl.cls} (${cl.sec})`,
-                                        id: s.roll,
+                                        id: s.reg,
+                                        sid: s.id,
+                                        classID: cl.classID,
+                                        sectionID: cl.sectionID,
                                       })}
                                     >
                                       <i className="fa-solid fa-file-lines"></i> Report
@@ -3006,6 +3023,7 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
                               name: s.name,
                               detail: s.desig,
                               id: s.empId,
+                              sid: s.id,
                             })}
                           >
                             <i className="fa-solid fa-file-lines"></i> Report
@@ -3024,7 +3042,7 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
   }
 
   /* ─── ReportRow — inline filter editor + Generate ──────────────────────── */
-  function ReportRow({ rpt, accent, gradient, onGenerate }) {
+  function ReportRow({ rpt, accent, gradient, onGenerate, classOpts = [] }) {
     const today    = new Date().toISOString().split("T")[0];
     const currMon  = CURRENT_MONTH_LABEL;
     const [vals, setVals] = useState(() => {
@@ -3083,7 +3101,7 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
                 )}
                 {f.type === "class" && (
                   <select className="att-select" value={vals[f.field] || ""} onChange={(e) => setVal(f.field, e.target.value)}>
-                    {CLASS_OPTIONS.map((c) => <option key={c}>{c}</option>)}
+                    {(classOpts.length ? classOpts : CLASS_OPTIONS).map((c) => <option key={c}>{c}</option>)}
                   </select>
                 )}
               </div>
@@ -3361,12 +3379,69 @@ useEffect(() => {
     const openMarkSt = useCallback((idx) => setMarkStIdx(idx), []);
 
     const openIndivReport = useCallback((target) => setIndivTarget(target), []);
-    const runIndivReport = useCallback(({ fromDate, toDate, isColor, __error }) => {
+
+    // Ek person (student/staff) ki real attendance range ke andar → date → { status, platform, in/out }.
+    const fetchIndividualAttendance = useCallback(async (target, fromDate, toDate) => {
+      if (!target || !fromDate || !toDate) return {};
+      const branchID  = Number(sessionStorage.getItem("branchID"));
+      const sessionID = await ensureSessionID();
+      const sid = String(target.sid ?? "");
+      const isStudent = target.type === "student";
+      const dates = [];
+      const end = new Date(`${toDate}T00:00:00`);
+      for (let d = new Date(`${fromDate}T00:00:00`); d <= end; d.setDate(d.getDate() + 1)) {
+        dates.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`);
+      }
+      const map = {};
+      await Promise.all(dates.map(async (dateStr) => {
+        try {
+          let recs = [];
+          if (isStudent) {
+            const res = await attendanceService.studentAttendance({
+              id: 0, branchID, studentID: 0, sessionID,
+              classID: target.classID || 0, sectionID: target.sectionID || 0,
+              attendanceDate: dateStr, status: "", platform: "ERP",
+              isNotificationGen: false, action: "get", createdBy: 0, modifiedBy: 0,
+            });
+            recs = (res?.data || []).filter((r) =>
+              String(r.AttendanceDate ?? r.attendanceDate ?? "").slice(0, 10) === dateStr &&
+              String(r.StudentID ?? r.studentID ?? r.studentId) === sid);
+          } else {
+            const res = await attendanceService.staffAttendance({
+              id: 0, staffID: 0, branchID, attendanceDate: dateStr,
+              checkInTime: "", checkOutTime: "", status: "", platform: "",
+              isNotificationGen: false, action: "get", createdBy: 0, modifiedBy: 0,
+            });
+            recs = (res?.data || []).filter((r) =>
+              String(r.AttendanceDate ?? r.attendanceDate ?? "").slice(0, 10) === dateStr &&
+              String(r.StaffID ?? r.staffID) === sid);
+          }
+          if (recs.length) {
+            const rec = recs[recs.length - 1]; // us din ka aakhri mark
+            const raw = String(rec.Status ?? rec.status ?? "").toLowerCase();
+            map[dateStr] = {
+              status: ST_CODE_TO_STATUS[raw] || raw,
+              platform: rec.Platform ?? rec.platform ?? "",
+              inTime: rec.CheckInTime ?? rec.checkInTime ?? "",
+              outTime: rec.CheckOutTime ?? rec.checkOutTime ?? "",
+            };
+          }
+        } catch (err) { console.error("Individual attendance fetch error:", err); }
+      }));
+      return map;
+      // ensureSessionID is defined later; referenced via closure at call time.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    const runIndivReport = useCallback(async ({ fromDate, toDate, isColor, __error }) => {
       if (__error) { toast(__error, "error"); return; }
-      const html = buildIndividualReportHTML({ target: indivTarget, fromDate, toDate, weeklyOff, holidays, isColor });
+      const target = indivTarget;
       setIndivTarget(null);
-      setReportPreview({ title: `${indivTarget.type === "student" ? "Student" : "Staff"} Attendance Report — ${indivTarget.name}`, html });
-    }, [indivTarget, weeklyOff, holidays, toast]);
+      toast(`Generating ${target.name}'s report…`, "info");
+      const records = await fetchIndividualAttendance(target, fromDate, toDate);
+      const html = buildIndividualReportHTML({ target, fromDate, toDate, weeklyOff, holidays, isColor, records, branchSchool });
+      setReportPreview({ title: `${target.type === "student" ? "Student" : "Staff"} Attendance Report — ${target.name}`, html });
+    }, [indivTarget, weeklyOff, holidays, toast, fetchIndividualAttendance, branchSchool]);
 
     const openMarkSf = useCallback(() => setMarkSfOpen(true), []);
   // Attendance component ke andar (around line 2100)
@@ -3455,63 +3530,110 @@ const saveMarkSf = useCallback(async (rows) => {
         setReportPreview({ title, html });
         return;
       } else if (effective === "studentDaily" || effective === "studentDailyClass") {
+        const date = filters.date || reportPicker?.defaultDate || new Date().toISOString().slice(0, 10);
+        const rows = await fetchDailyReportRows(date);
         html  = buildDailyStudentReportHTML({
-          studentData,
-          date: filters.date || reportPicker?.defaultDate,
+          rows,
+          date,
           classFilter: filters.class,
           sectionFilter: filters.section,
           forClass: reportPicker?.forClass,
           isColor,
+          branchSchool,
         });
         title = reportPicker?.title || "Daily Student Attendance Report";
       } else if (effective === "studentMonthly" || effective === "studentMonthlyClass") {
-        html  = buildMonthlyStudentReportHTML({
-          studentData,
-          month: filters.month || reportPicker?.defaultMonth,
+        const monthLabel = filters.month || reportPicker?.defaultMonth || CURRENT_MONTH_LABEL;
+        const { year, monthIdx0 } = parseMonthLabel(monthLabel);
+        toast(`Generating ${monthLabel} report…`, "info");
+        const rows = await fetchMonthlyReportRows(year, monthIdx0);
+        html  = buildStudentMonthlySummaryHTML({
+          rows,
+          monthLabel,
+          sessionName: branchSchool?.session,
+          branchSchool,
+          isColor,
           classFilter: filters.class,
           sectionFilter: filters.section,
-          forClass: reportPicker?.forClass,
-          isColor,
         });
         title = reportPicker?.title || "Monthly Student Attendance Report";
       } else if (effective === "staffDaily" || effective === "staffDailyOne") {
+        const date = filters.date || reportPicker?.defaultDate || new Date().toISOString().slice(0, 10);
+        const rows = await fetchDailyStaffReportRows(date);
         html  = buildDailyStaffReportHTML({
-          staffData,
-          date: filters.date || reportPicker?.defaultDate,
+          staffData: rows,
+          date,
           deptFilter: filters.dept,
           forStaff: reportPicker?.forStaff,
           isColor,
+          branchSchool,
         });
         title = reportPicker?.title || "Daily Staff Attendance Report";
       } else if (effective === "staffMonthly" || effective === "staffMonthlyOne") {
+        const monthLabel = filters.month || reportPicker?.defaultMonth || CURRENT_MONTH_LABEL;
+        const { year, monthIdx0 } = parseMonthLabel(monthLabel);
+        toast(`Generating ${monthLabel} staff report…`, "info");
+        const rows = await fetchMonthlyStaffReportRows(year, monthIdx0);
         html  = buildMonthlyStaffReportHTML({
-          staffData,
-          month: filters.month || reportPicker?.defaultMonth,
+          staffData: rows,
+          month: monthLabel,
           deptFilter: filters.dept,
           forStaff: reportPicker?.forStaff,
           isColor,
+          branchSchool,
         });
         title = reportPicker?.title || "Monthly Staff Attendance Report";
       } else if (effective === "staffSummary") {
-        html  = buildMonthlyStaffReportHTML({ staffData, month: filters.month, isColor });
+        const monthLabel = filters.month || CURRENT_MONTH_LABEL;
+        const { year, monthIdx0 } = parseMonthLabel(monthLabel);
+        toast(`Generating ${monthLabel} staff summary…`, "info");
+        const rows = await fetchMonthlyStaffReportRows(year, monthIdx0);
+        html  = buildMonthlyStaffReportHTML({ staffData: rows, month: monthLabel, isColor, branchSchool });
         title = "Staff Attendance Summary";
       } else if (effective === "studentClasswise") {
-        html  = buildMonthlyStudentReportHTML({ studentData, month: filters.from && filters.to ? `${filters.from} → ${filters.to}` : "", classFilter: filters.class, isColor });
+        const period = filters.from && filters.to ? `${filters.from} → ${filters.to}` : "";
+        toast("Generating class-wise report…", "info");
+        const rows = await fetchRangeReportRows(filters.from, filters.to);
+        html  = buildStudentMonthlySummaryHTML({
+          rows, monthLabel: period, sessionName: branchSchool?.session,
+          branchSchool, isColor, classFilter: filters.class,
+        });
         title = "Class-wise Student Attendance Report";
       } else if (effective === "studentSummary") {
-        html  = buildMonthlyStudentReportHTML({ studentData, month: filters.from && filters.to ? `${filters.from} → ${filters.to}` : "", isColor });
+        const period = filters.from && filters.to ? `${filters.from} → ${filters.to}` : "";
+        toast("Generating summary report…", "info");
+        const rows = await fetchRangeReportRows(filters.from, filters.to);
+        html  = buildStudentMonthlySummaryHTML({
+          rows, monthLabel: period, sessionName: branchSchool?.session,
+          branchSchool, isColor,
+        });
         title = "Student Attendance Summary";
       } else if (effective === "classOverview") {
-        html  = buildClassOverviewHTML({ studentData, month: filters.month, isColor });
+        const monthLabel = filters.month || CURRENT_MONTH_LABEL;
+        const { year, monthIdx0 } = parseMonthLabel(monthLabel);
+        toast(`Generating ${monthLabel} class overview…`, "info");
+        const rows = await fetchMonthlyReportRows(year, monthIdx0);
+        html  = buildClassOverviewHTML({ rows, month: monthLabel, isColor, branchSchool });
         title = "Class Overview Report";
       } else if (effective === "classComparison") {
-        html  = buildClassComparisonHTML({ studentData, month: filters.month, isColor });
+        const monthLabel = filters.month || CURRENT_MONTH_LABEL;
+        const { year, monthIdx0 } = parseMonthLabel(monthLabel);
+        toast(`Generating ${monthLabel} class comparison…`, "info");
+        const rows = await fetchMonthlyReportRows(year, monthIdx0);
+        html  = buildClassComparisonHTML({ rows, month: monthLabel, isColor, branchSchool });
         title = "Class Comparison Report";
       } else if (effective === "lowAttendance") {
-        html  = buildLowAttendanceHTML({ studentData, month: filters.month, isColor });
+        const monthLabel = filters.month || CURRENT_MONTH_LABEL;
+        const { year, monthIdx0 } = parseMonthLabel(monthLabel);
+        toast(`Generating ${monthLabel} low-attendance alert…`, "info");
+        const rows = await fetchMonthlyReportRows(year, monthIdx0);
+        html  = buildLowAttendanceHTML({ rows, month: monthLabel, isColor, branchSchool });
         title = "Low Attendance Alert Report";
       } else if (effective === "holidayMonthly") {
-        html  = buildMonthlyHolidayReportHTML({ holidays, weeklyOff, month: filters.month, isColor });
+        const monthLabel = filters.month || CURRENT_MONTH_LABEL;
+        const { monthIdx0 } = parseMonthLabel(monthLabel);
+        const monthHolidays = await fetchMonthHolidaysList(monthIdx0);
+        html  = buildMonthlyHolidayReportHTML({ holidays: monthHolidays, weeklyOff, month: monthLabel, isColor, branchSchool });
         title = "Monthly Holiday Report";
       } else {
         html = rptPageWrap({
@@ -3719,6 +3841,251 @@ const saveMarkSf = useCallback(async (rows) => {
       setDateAttendance({ key: dateStr, rows, loading: false });
     }, [studentData, ensureSessionID, teacherMap]);
 
+    /* Working days = month ke total din − (weekly-off din ∪ holiday din).
+      OVERALL — poore month ke liye EK hi number, sab classes + staff ke liye same.
+      • Weekly-off: `weeklyOff` state (attendance-weekly-setup API se) — DAYS_F index
+        (Monday=0 … Sunday=6). Month ki har date ka weekday check karke off dates banate hain.
+      • Holidays: /api/attendance-monthly-setup (get) — wahi jo Holidays module use karta hai.
+        Har row ki DateFrom→DateTo range ko target month ke andar expand karte hain.
+      Weekly-off aur holiday ka overlap Set union se automatically dedupe hota hai. */
+    const fetchMonthHolidayInfo = useCallback(async (year, monthIdx0) => {
+      const branchID  = Number(sessionStorage.getItem("branchID"));
+      const sessionID = await ensureSessionID();
+      const daysInMonth = new Date(year, monthIdx0 + 1, 0).getDate();
+      const offDates = new Set(); // weekly-off + holiday dates (union → no double count)
+
+      // 1) Weekly-off dates — har date jiska weekday `weeklyOff` me hai.
+      //    JS getDay(): Sunday=0…Saturday=6 → DAYS_F index (Monday=0…Sunday=6) = (getDay()+6)%7.
+      for (let day = 1; day <= daysInMonth; day++) {
+        const dowMon0 = (new Date(year, monthIdx0, day).getDay() + 6) % 7;
+        if (weeklyOff.includes(dowMon0)) {
+          offDates.add(`${year}-${String(monthIdx0 + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`);
+        }
+      }
+
+      // 2) Holiday dates — is month ki (whole month, sab classes ke liye common).
+      try {
+        const res = await attendanceService.monthlySetup({
+          id: 0, branchID, sessionID, holidayTitle: "", description: "",
+          dateFrom: "", dateTo: "", month: monthIdx0 + 1, action: "get",
+          createdBy: 0, modifiedBy: 0, classIDs: [],
+        });
+        (res?.data || []).forEach((h) => {
+          const from = String(h.DateFrom ?? h.dateFrom ?? "").slice(0, 10);
+          const to   = String(h.DateTo ?? h.dateTo ?? "").slice(0, 10);
+          if (!from || !to) return;
+          // Range ko din-ba-din expand karo; sirf target month/year ki dates lo.
+          // (Local date components — toISOString TZ shift se bachne ke liye.)
+          const end = new Date(`${to}T00:00:00`);
+          for (let d = new Date(`${from}T00:00:00`); d <= end; d.setDate(d.getDate() + 1)) {
+            if (d.getFullYear() === year && d.getMonth() === monthIdx0) {
+              offDates.add(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`);
+            }
+          }
+        });
+      } catch (err) { console.error("Holiday info fetch error:", err); }
+
+      // 3) Working days = daysInMonth − off dates (weekly-off ∪ holidays).
+      const workingDays = Math.max(0, daysInMonth - offDates.size);
+      return { daysInMonth, workingDays };
+    }, [ensureSessionID, weeklyOff]);
+
+    // Monthly Holiday report ke liye — us month ke holidays (grouped) laao,
+    // taake Reports tab se bhi bina Holidays tab visit kiye report ban jaye.
+    const fetchMonthHolidaysList = useCallback(async (monthIdx0) => {
+      const branchID  = Number(sessionStorage.getItem("branchID"));
+      const sessionID = await ensureSessionID();
+      const classes   = await ensureClasses();
+      try {
+        const res = await attendanceService.monthlySetup({
+          id: 0, branchID, sessionID, holidayTitle: "", description: "",
+          dateFrom: "", dateTo: "", month: monthIdx0 + 1, action: "get",
+          createdBy: 0, modifiedBy: 0, classIDs: [],
+        });
+        return groupHolidayRows(res?.data || [], classes);
+      } catch (err) { console.error("Monthly holiday list fetch error:", err); return []; }
+      // ensureClasses is defined later; referenced via closure at call time.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [ensureSessionID]);
+
+    /* ─── Report data fetchers ───────────────────────────────────────────────
+      Real per class+section attendance from /api/student-attendance (get).
+      Backend returns the whole class roster's records → we filter locally to
+      the class+section and the target date (daily) or month (monthly). */
+
+    // studentID → class index (roster se). Ek record ko sahi class me daalne ke liye —
+    // taake report har class ke against uska APNA P/A/L dikhaye (sab combined nahi).
+    // studentID na mile to ClassID/SectionID se fallback.
+    const makeRecordClassResolver = useCallback((classes) => {
+      const studentClassIdx = new Map();
+      classes.forEach((r, idx) => (r.students || []).forEach((st) =>
+        studentClassIdx.set(String(st.id), idx)));
+      return (rec) => {
+        const sid = String(rec.StudentID ?? rec.studentID ?? rec.studentId ?? "");
+        let idx = studentClassIdx.get(sid);
+        if (idx == null) {
+          idx = classes.findIndex((r) =>
+            String(rec.ClassID ?? rec.classID) === String(r.classID) &&
+            String(rec.SectionID ?? rec.sectionID) === String(r.sectionID));
+        }
+        return (idx == null || idx < 0) ? -1 : idx;
+      };
+    }, []);
+
+    // Daily report: ek call → us date ke SAARE records; phir studentID/class se
+    // har record ko uski class me daal kar per-class P/A/L nikalte hain.
+    const fetchDailyReportRows = useCallback(async (dateStr) => {
+      const branchID  = Number(sessionStorage.getItem("branchID"));
+      const sessionID = await ensureSessionID();
+      const classes = studentData || [];
+      if (!classes.length) return [];
+      const resolveIdx = makeRecordClassResolver(classes);
+
+      let recs = [];
+      try {
+        const res = await attendanceService.studentAttendance({
+          id: 0, branchID, studentID: 0, sessionID,
+          classID: classes[0].classID, sectionID: classes[0].sectionID,
+          attendanceDate: dateStr, status: "", platform: "ERP",
+          isNotificationGen: false, action: "get", createdBy: 0, modifiedBy: 0,
+        });
+        recs = (res?.data || []).filter((rec) =>
+          String(rec.AttendanceDate ?? rec.attendanceDate ?? "").slice(0, 10) === dateStr);
+      } catch (err) { console.error("Daily report fetch error:", err); }
+
+      const agg = classes.map(() => ({ present: 0, absent: 0, leave: 0, marked: false, platform: "" }));
+      recs.forEach((rec) => {
+        const idx = resolveIdx(rec);
+        if (idx < 0) return;
+        const raw = String(rec.Status ?? rec.status ?? "").toLowerCase();
+        const st = ST_CODE_TO_STATUS[raw] || raw;
+        if (st === "present") agg[idx].present++;
+        else if (st === "absent") agg[idx].absent++;
+        else if (st === "leave") agg[idx].leave++;
+        else return;
+        agg[idx].marked = true;
+        // "Marked By" column me platform (ERP / Mobile App / Biometric …) dikhana hai.
+        agg[idx].platform = String(rec.Platform ?? rec.platform ?? "") || agg[idx].platform;
+      });
+
+      return classes.map((r, idx) => ({
+        cls: r.cls, sec: r.sec, total: r.total,
+        present: agg[idx].present, absent: agg[idx].absent, leave: agg[idx].leave,
+        marked: agg[idx].marked,
+        markedBy: agg[idx].platform || "—",
+      }));
+    }, [studentData, ensureSessionID, makeRecordClassResolver]);
+
+    // Monthly report: backend har call mein sirf passed date ka data deta hai,
+    // isliye month ki har date (start→end) par API chalate hain — har class+section
+    // ke against P/A/L aggregate, distinct working-day count aur present %.
+    const fetchMonthlyReportRows = useCallback(async (year, monthIdx0) => {
+      const branchID  = Number(sessionStorage.getItem("branchID"));
+      const sessionID = await ensureSessionID();
+      const classes = studentData || [];
+      if (!classes.length) return [];
+      const mm = String(monthIdx0 + 1).padStart(2, "0");
+      const daysInMonth = new Date(year, monthIdx0 + 1, 0).getDate(); // month ki last date
+      const dates = Array.from({ length: daysInMonth }, (_, d) =>
+        `${year}-${mm}-${String(d + 1).padStart(2, "0")}`); // "2026-07-01" … "2026-07-31"
+      const resolveIdx = makeRecordClassResolver(classes);
+
+      // Working days holidays+weekly-off API se (overall — sab classes ke liye same).
+      const holidayInfo = await fetchMonthHolidayInfo(year, monthIdx0);
+
+      // Har date par ek call → us date ke saare records → studentID/class se
+      // har record ko uski class ke counter me daalte hain.
+      const agg = classes.map(() => ({ present: 0, absent: 0, leave: 0 }));
+      await Promise.all(dates.map(async (dateStr) => {
+        let recs = [];
+        try {
+          const res = await attendanceService.studentAttendance({
+            id: 0, branchID, studentID: 0, sessionID,
+            classID: classes[0].classID, sectionID: classes[0].sectionID,
+            attendanceDate: dateStr, status: "", platform: "ERP",
+            isNotificationGen: false, action: "get", createdBy: 0, modifiedBy: 0,
+          });
+          recs = (res?.data || []).filter((rec) =>
+            String(rec.AttendanceDate ?? rec.attendanceDate ?? "").slice(0, 10) === dateStr);
+        } catch (err) { console.error("Monthly report fetch error:", err); }
+        recs.forEach((rec) => {
+          const idx = resolveIdx(rec);
+          if (idx < 0) return;
+          const raw = String(rec.Status ?? rec.status ?? "").toLowerCase();
+          const st = ST_CODE_TO_STATUS[raw] || raw;
+          if (st === "present") agg[idx].present++;
+          else if (st === "absent") agg[idx].absent++;
+          else if (st === "leave") agg[idx].leave++;
+        });
+      }));
+
+      return classes.map((r, idx) => {
+        const { present, absent, leave } = agg[idx];
+        const marks = present + absent + leave;
+        return {
+          cls: r.cls, sec: r.sec, strength: r.total,
+          teacher: teacherMap[`${r.classID}-${r.sectionID}`] || "—",
+          workingDays: holidayInfo.workingDays,
+          present, absent, leave,
+          pct: marks > 0 ? Math.round((present / marks) * 100) : 0,
+        };
+      });
+    }, [studentData, ensureSessionID, fetchMonthHolidayInfo, makeRecordClassResolver, teacherMap]);
+
+    // Date-range report (Class-wise / Summary): From→To ke beech har date par ek call,
+    // studentID/class se bucket → per class present/absent/leave aur present %.
+    // Working days = range me jitni dates par attendance mark hui (distinct).
+    const fetchRangeReportRows = useCallback(async (fromDate, toDate) => {
+      const branchID  = Number(sessionStorage.getItem("branchID"));
+      const sessionID = await ensureSessionID();
+      const classes = studentData || [];
+      if (!classes.length || !fromDate || !toDate) return [];
+      const resolveIdx = makeRecordClassResolver(classes);
+
+      const dates = [];
+      const end = new Date(`${toDate}T00:00:00`);
+      for (let d = new Date(`${fromDate}T00:00:00`); d <= end; d.setDate(d.getDate() + 1)) {
+        dates.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`);
+      }
+
+      const agg = classes.map(() => ({ present: 0, absent: 0, leave: 0 }));
+      const markedDates = new Set();
+      await Promise.all(dates.map(async (dateStr) => {
+        let recs = [];
+        try {
+          const res = await attendanceService.studentAttendance({
+            id: 0, branchID, studentID: 0, sessionID,
+            classID: classes[0].classID, sectionID: classes[0].sectionID,
+            attendanceDate: dateStr, status: "", platform: "ERP",
+            isNotificationGen: false, action: "get", createdBy: 0, modifiedBy: 0,
+          });
+          recs = (res?.data || []).filter((rec) =>
+            String(rec.AttendanceDate ?? rec.attendanceDate ?? "").slice(0, 10) === dateStr);
+        } catch (err) { console.error("Range report fetch error:", err); }
+        if (recs.length) markedDates.add(dateStr);
+        recs.forEach((rec) => {
+          const idx = resolveIdx(rec);
+          if (idx < 0) return;
+          const raw = String(rec.Status ?? rec.status ?? "").toLowerCase();
+          const st = ST_CODE_TO_STATUS[raw] || raw;
+          if (st === "present") agg[idx].present++;
+          else if (st === "absent") agg[idx].absent++;
+          else if (st === "leave") agg[idx].leave++;
+        });
+      }));
+
+      return classes.map((r, idx) => {
+        const { present, absent, leave } = agg[idx];
+        const marks = present + absent + leave;
+        return {
+          cls: r.cls, sec: r.sec, strength: r.total,
+          teacher: teacherMap[`${r.classID}-${r.sectionID}`] || "—",
+          workingDays: markedDates.size, present, absent, leave,
+          pct: marks > 0 ? Math.round((present / marks) * 100) : 0,
+        };
+      });
+    }, [studentData, ensureSessionID, makeRecordClassResolver, teacherMap]);
+
     // Branch class+section list — cached; used to turn ClassID/SectionID into names.
     const ensureClasses = useCallback(async () => {
       if (classList.length) return classList;
@@ -3881,11 +4248,87 @@ const loadStaffDateAttendance = useCallback(async (dateStr) => {
   });
   setStaffDateAttendance({ key: dateStr, rows, loading: false });
 }, [staffData]);
+
+/* ─── Staff report data fetchers ───────────────────────────────────────────
+  Ek staff-attendance (get) call ek date ke SAARE staff ka record deta hai
+  (staffID:0). Daily = us date ke against, Monthly = month ki har date par. */
+
+// Daily: selected date ke against har employee ki status/in-out.
+const fetchDailyStaffReportRows = useCallback(async (dateStr) => {
+  const branchID = Number(sessionStorage.getItem("branchID"));
+  let recs = [];
+  try {
+    const res = await attendanceService.staffAttendance({
+      id: 0, staffID: 0, branchID, attendanceDate: dateStr,
+      checkInTime: "", checkOutTime: "", status: "", platform: "",
+      isNotificationGen: false, action: "get", createdBy: 0, modifiedBy: 0,
+    });
+    recs = (res?.data || []).filter((r) =>
+      String(r.AttendanceDate ?? r.attendanceDate ?? "").slice(0, 10) === dateStr);
+  } catch (err) { console.error("Daily staff report fetch error:", err); }
+  return (staffData || []).map((s) => {
+    const found = recs.find((r) => String(r.StaffID ?? r.staffID) === String(s.id));
+    return {
+      empId: s.empId, name: s.name, desig: s.desig, dept: s.dept,
+      marked: !!found,
+      status:  found ? String((found.Status ?? found.status) || "").toLowerCase() : "",
+      inTime:  found ? ((found.CheckInTime ?? found.checkInTime) || "") : "",
+      outTime: found ? ((found.CheckOutTime ?? found.checkOutTime) || "") : "",
+      from:    found ? ((found.Platform ?? found.platform) || "") : "",
+    };
+  });
+}, [staffData]);
+
+// Monthly: month ki har date (start→end) par call → per-employee aggregate
+// (present/absent/leave, distinct working days, present %).
+const fetchMonthlyStaffReportRows = useCallback(async (year, monthIdx0) => {
+  const branchID = Number(sessionStorage.getItem("branchID"));
+  const mm = String(monthIdx0 + 1).padStart(2, "0");
+  const daysInMonth = new Date(year, monthIdx0 + 1, 0).getDate();
+  const dates = Array.from({ length: daysInMonth }, (_, d) =>
+    `${year}-${mm}-${String(d + 1).padStart(2, "0")}`);
+
+  // Working days = month ke din − (weekly-off ∪ saare holidays). Overall — sab ke liye same.
+  const holidayInfo = await fetchMonthHolidayInfo(year, monthIdx0);
+  const workingDays = holidayInfo.workingDays;
+
+  // Har date par ek call → us date ke saare staff records.
+  const perDate = await Promise.all(dates.map(async (dateStr) => {
+    try {
+      const res = await attendanceService.staffAttendance({
+        id: 0, staffID: 0, branchID, attendanceDate: dateStr,
+        checkInTime: "", checkOutTime: "", status: "", platform: "",
+        isNotificationGen: false, action: "get", createdBy: 0, modifiedBy: 0,
+      });
+      return { dateStr, recs: (res?.data || []).filter((r) =>
+        String(r.AttendanceDate ?? r.attendanceDate ?? "").slice(0, 10) === dateStr) };
+    } catch (err) { console.error("Monthly staff report fetch error:", err); return { dateStr, recs: [] }; }
+  }));
+
+  return (staffData || []).map((s) => {
+    let present = 0, absent = 0, leave = 0;
+    perDate.forEach(({ recs }) => {
+      const found = recs.find((r) => String(r.StaffID ?? r.staffID) === String(s.id));
+      if (!found) return;
+      const raw = String((found.Status ?? found.status) || "").toLowerCase();
+      const st = ST_CODE_TO_STATUS[raw] || raw;
+      if (st === "present") present++;
+      else if (st === "absent") absent++;
+      else if (st === "leave") leave++;
+    });
+    const marks = present + absent + leave;
+    return {
+      empId: s.empId, name: s.name, desig: s.desig, dept: s.dept,
+      workingDays, present, absent, leave,
+      pct: marks > 0 ? Math.round((present / marks) * 100) : 0,
+    };
+  });
+}, [staffData, fetchMonthHolidayInfo]);
 // Attendance component mein - useEffect add karo
 
 useEffect(() => {
-  if (tab === "staff" && staffData.length) {
-    // Staff tab active (aur employees loaded) → today's attendance GET.
+  if ((tab === "staff" || tab === "reports") && staffData.length) {
+    // Staff/Reports tab active (aur employees loaded) → today's attendance GET.
     const today = new Date().toISOString().slice(0, 10);
     loadStaffAttendance(today);
   }
@@ -3896,9 +4339,9 @@ useEffect(() => {
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [tab]);
 
-    // Student tab open (aur data ready) → saari classes ki attendance GET.
+    // Student/Reports tab open (aur data ready) → saari classes ki attendance GET.
     useEffect(() => {
-      if (tab === "student" && studentData.length) loadAllStudentMarks();
+      if ((tab === "student" || tab === "reports") && studentData.length) loadAllStudentMarks();
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [tab, studentData.length]);
 
@@ -4176,9 +4619,12 @@ const saveHoliday = useCallback(async (payload) => {
         {tab === "reports" && (
           <ReportsTab
             staffData={staffData}
+            studentData={studentData}
+            teacherMap={teacherMap}
             runGeneralReport={runGeneralReport}
             openIndivReport={openIndivReport}
             toast={toast}
+            classOpts={["All Classes", ...Array.from(new Set(studentData.map((r) => r.cls)))]}
           />
         )}
 
@@ -4265,6 +4711,9 @@ const saveHoliday = useCallback(async (payload) => {
           forStaff={reportPicker?.forStaff}
           sessionOpts={reportSessions.map((s) => s.SessionName)}
           holidayClassOpts={["All Classes", ...classList.map((c) => c.label)]}
+          studentClassOpts={["All Classes", ...Array.from(new Set(studentData.map((r) => r.cls)))]}
+          studentSectionOpts={["All Sections", ...Array.from(new Set(studentData.map((r) => r.sec)))]}
+          staffDeptOpts={["All Departments", ...Array.from(new Set(staffData.map((s) => s.dept).filter((d) => d && d !== "—")))]}
           onClose={() => setReportPicker(null)}
           onGenerate={generateReport}
         />
