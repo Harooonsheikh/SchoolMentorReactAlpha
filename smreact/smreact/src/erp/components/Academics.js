@@ -2688,7 +2688,12 @@ const deleteTerm = id => {
     });
   };
 
+  /* "Add new term" stays disabled while there is an unsaved new term row —
+     the user must save (✓) or delete (✗) it before adding another. */
+  const canAddTerm = !termData.some(t => t.isNew);
+
   const addTerm = () => {
+    if (!canAddTerm) return;
     setTermData([...termData, { id: Date.now(), name: '', start: '', end: '', isNew: true }]);
   };
 
@@ -2944,11 +2949,12 @@ const deleteTerm = id => {
             </div>
 
            {canEditTerms && (
-              <Tooltip text="Add another academic term">
-                <button className="ts-add-row-btn" onClick={addTerm}>
+              <Tooltip text={canAddTerm ? 'Add another academic term' : 'Save or delete the current term first'}>
+                <button className="ts-add-row-btn" onClick={addTerm} disabled={!canAddTerm}
+                  style={!canAddTerm ? { opacity: .5, cursor: 'not-allowed' } : undefined}>
                   <div className="ts-add-icon"><i className="fa-solid fa-plus"></i></div>
                   <span>Add new term</span>
-                  <span className="ts-add-hint">Click to add another academic term</span>
+                  <span className="ts-add-hint">{canAddTerm ? 'Click to add another academic term' : 'Save or delete the current term first'}</span>
                 </button>
               </Tooltip>
             )}

@@ -4,6 +4,7 @@ import Tooltip from './Tooltip';
 import TutorialModal from './TutorialModal';
 import * as timeTableService from '../services/timeTableService';
 import useAsync from '../hooks/useAsync';
+import { useSettings } from '../pages/Settings/settingsStore';
 
 /* ═══════════════════════════════════════════════════════════════════
    TIME TABLE — module shell
@@ -581,7 +582,23 @@ export default function TimeTable({ toast = () => {} }) {
   const { data: teachers = [] } = useAsync(timeTableService.getTeachers, []);
   /* Branch report header (school name + logo + address) for report header/footer. */
   const { data: reportHeader = {} } = useAsync(timeTableService.getReportHeader, []);
-  
+
+  /* ── Session-based edit gating (same rule as Academics / Examination) ──
+     View-only (edit/update/delete disabled) when: there is no current session,
+     OR the current session has the Time Table module unchecked in Session
+     Settings, OR today (UTC) is outside the current session's start–end window. */
+  const { currentSession } = useSettings();
+  const isOtherSession = (() => {
+    if (!currentSession) return true;
+    if (!(currentSession.modules || []).includes('tt')) return true;
+    const { startDate, endDate } = currentSession;
+    if (!startDate || !endDate) return true;
+    const todayUtc = new Date(new Date().toISOString().slice(0, 10) + 'T00:00:00Z');
+    const startUtc = new Date(startDate + 'T00:00:00Z');
+    const endUtc   = new Date(endDate   + 'T00:00:00Z');
+    if (todayUtc < startUtc || todayUtc > endUtc) return true;
+    return false;
+  })();
 
   /* Modal state */
   const [editTarget, setEditTarget]               = useState(null); // { key, cls, section }
@@ -654,13 +671,17 @@ export default function TimeTable({ toast = () => {} }) {
           <div className="tt-toolbar-sub">Edit per class · per day · or auto-generate the whole week</div>
         </div>
         <div className="tt-toolbar-right">
-          <Tooltip text="Auto-generate the full weekly timetable for all classes">
-            <button className="tt-btn tt-btn-purple" onClick={() => setAutoGenOpen(true)}>
+          <Tooltip text={isOtherSession ? 'Editing is only allowed for the current session' : 'Auto-generate the full weekly timetable for all classes'}>
+            <button className="tt-btn tt-btn-purple" disabled={isOtherSession}
+              style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+              onClick={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } setAutoGenOpen(true); }}>
               <i className="fa-solid fa-wand-magic-sparkles"></i> Auto Generate
             </button>
           </Tooltip>
-          <Tooltip text={`Clear the entire ${DAYS[day]} timetable for all classes`}>
-            <button className="tt-btn tt-btn-red" onClick={() => setDeletePayload({ type: 'day' })}>
+          <Tooltip text={isOtherSession ? 'Editing is only allowed for the current session' : `Clear the entire ${DAYS[day]} timetable for all classes`}>
+            <button className="tt-btn tt-btn-red" disabled={isOtherSession}
+              style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+              onClick={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } setDeletePayload({ type: 'day' }); }}>
               <i className="fa-solid fa-trash-can"></i> Delete Day
             </button>
           </Tooltip>
@@ -712,10 +733,12 @@ export default function TimeTable({ toast = () => {} }) {
                   <span className="tt-section-pill">{cls.section}</span>
                 </div>
                 <div className="tt-td tt-td-actions">
-                  <Tooltip text={`Edit ${DAYS[day]} periods for this class`}>
+                  <Tooltip text={isOtherSession ? 'Editing is only allowed for the current session' : `Edit ${DAYS[day]} periods for this class`}>
                     <button
                       className="btn-tt-update"
-                      onClick={(e) => { e.stopPropagation(); setEditTarget({ key, cls: cls.name, section: cls.section, classID: cls.id, sectionID: cls.sectionID, classOrder: i }); }}
+                      disabled={isOtherSession}
+                      style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                      onClick={(e) => { e.stopPropagation(); if (isOtherSession) { toast('Method not allowed', 'error'); return; } setEditTarget({ key, cls: cls.name, section: cls.section, classID: cls.id, sectionID: cls.sectionID, classOrder: i }); }}
                     >
                       <i className="fa-solid fa-pen"></i> Update
                     </button>
@@ -728,10 +751,12 @@ export default function TimeTable({ toast = () => {} }) {
                       <i className="fa-solid fa-file-pdf"></i> PDF
                     </button>
                   </Tooltip>
-                  <Tooltip text={`Delete ${DAYS[day]} timetable for this class`}>
+                  <Tooltip text={isOtherSession ? 'Editing is only allowed for the current session' : `Delete ${DAYS[day]} timetable for this class`}>
                     <button
                       className="btn-tt-del"
-                      onClick={(e) => { e.stopPropagation(); setDeletePayload({ type: 'class', key, cls: cls.name, section: cls.section }); }}
+                      disabled={isOtherSession}
+                      style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                      onClick={(e) => { e.stopPropagation(); if (isOtherSession) { toast('Method not allowed', 'error'); return; } setDeletePayload({ type: 'class', key, cls: cls.name, section: cls.section }); }}
                     >
                       <i className="fa-solid fa-trash"></i>
                     </button>
@@ -756,11 +781,12 @@ export default function TimeTable({ toast = () => {} }) {
                     <div className="tt-empty-icon"><i className="fa-regular fa-clock"></i></div>
                     <div className="tt-empty-title">No Periods Set</div>
                     <div className="tt-empty-sub">Click <strong>Update</strong> to add periods for {DAYS[day]}</div>
-                    <Tooltip text={`Add periods for ${DAYS[day]}`}>
+                    <Tooltip text={isOtherSession ? 'Editing is only allowed for the current session' : `Add periods for ${DAYS[day]}`}>
                       <button
                         className="btn-tt-update"
-                        style={{ marginTop: 10 }}
-                        onClick={() => setEditTarget({ key, cls: cls.name, section: cls.section, classID: cls.id, sectionID: cls.sectionID, classOrder: i })}
+                        disabled={isOtherSession}
+                        style={{ marginTop: 10, ...(isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : {}) }}
+                        onClick={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } setEditTarget({ key, cls: cls.name, section: cls.section, classID: cls.id, sectionID: cls.sectionID, classOrder: i }); }}
                       >
                         <i className="fa-solid fa-plus"></i> Add Periods
                       </button>

@@ -3586,7 +3586,7 @@ const saveMarkSf = useCallback(async (rows) => {
   // Validation: Out Time, In Time se pehle na ho (Present staff ke liye).
   const badTime = rows.find((r) => r.status === "present" && r.inTime && r.outTime && r.outTime < r.inTime);
   if (badTime) {
-    toast("Out Time, In Time se pehle nahi ho sakta. Please theek karein.", "error");
+    toast("Out Time Must Be Greater Than In Time", "error");
     return;
   }
   const branchID = Number(sessionStorage.getItem("branchID"));

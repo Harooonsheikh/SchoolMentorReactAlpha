@@ -8,6 +8,7 @@ import useAsync from '../hooks/useAsync';
 import { buildUrl } from '../../utils/apiConfig';
 import { deliverReport } from './reportDelivery';
 import { useModuleReadOnly } from '../pages/Settings/settingsStore';
+import { getActiveSessionID } from '../services/attendanceService';
 /* ═══════════════════════════════════════════════════════════════════
    EXAMINATION — port of the HTML #module-exam (only Exam Setup is
    functional; other tabs show Coming Soon).
@@ -891,6 +892,100 @@ const [subjects, setSubjects] = useState([]);
   const [rhCardMarks, setRhCardMarks]         = useState(null); // View card ke liye real per-subject marks
   const [rhExamScores, setRhExamScores]       = useState({});   // { [exam.id]: overall % } exam history ke liye
   const [rhStudentSummaries, setRhStudentSummaries] = useState({}); // { [studentId]: { avgPct, best, count, trend, grade } } card list ke liye
+  const [rhAttendance, setRhAttendance] = useState(null); // active student ki REAL attendance: { pct, monthly:[{label,pct}] }
+  const [rhAttnLoading, setRhAttnLoading] = useState(false); // attendance per-day loop chalte waqt spinner ke liye
+  const rhAttnReqRef = useRef(0); // stale-response guard: student switch hone par purani loop ka result ignore
+
+  /* Active student ki asli attendance (Attendance module se) laao.
+     ⚠️ Backend har get-call mein SIRF us `attendanceDate` ka data deta hai (Attendance
+     module bhi isi liye per-date loop karta hai). Isliye session ke start→aaj tak har din
+     par ek get call chalate hain (concurrency-limited taake browser flood na ho), is student
+     ke record ka status le kar overall % + monthly breakdown banate hain.
+     sessionID wahi active-session ID hona chahiye jis ke against attendance save hui —
+     Attendance module `getActiveSessionID()` use karta hai, hum bhi wahi lete hain. */
+  const loadStudentAttendance = async (st) => {
+    const reqId = ++rhAttnReqRef.current; // is call ka token; naya student aaya to purana ignore
+    setRhAttnLoading(true);
+    setRhAttendance(null);
+    try {
+      const branchID  = Number(sessionStorage.getItem('branchID')) || 0;
+      const token     = sessionStorage.getItem('token');
+      const classID   = st.gradeId   ?? st.classID   ?? st.classId   ?? '';
+      const sectionID = st.sectionId ?? st.sectionID ?? '';
+      const studentId = st.id;
+
+      // sessionID: wahi jis se attendance save hui (active-session row ID).
+      let sessionID = '';
+      try { sessionID = await getActiveSessionID(); } catch (_) { /* ignore */ }
+      if (!sessionID) sessionID = sessionStorage.getItem('sessionId') || sessionStorage.getItem('sessionID') || sessionStorage.getItem('SessionID') || '';
+
+      // Session ka date range (sessionStorage se) — start se aaj (ya end, jo pehle aaye) tak.
+      const startStr = sessionStorage.getItem('sessionStartDate');
+      const endStr   = sessionStorage.getItem('sessionEndDate');
+      const start = startStr ? new Date(startStr) : null;
+      const today = new Date(); today.setHours(0, 0, 0, 0);
+      let end = endStr ? new Date(endStr) : null;
+      if (!start || isNaN(start.getTime())) { if (reqId === rhAttnReqRef.current) setRhAttendance({ pct: 0, monthly: [] }); return; }
+      if (!end || isNaN(end.getTime()) || end > today) end = today;
+
+      // Har din ki date-string (YYYY-MM-DD).
+      const dates = [];
+      for (let d = new Date(start.getFullYear(), start.getMonth(), start.getDate()); d <= end; d.setDate(d.getDate() + 1)) {
+        dates.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
+      }
+
+      const CODE = { '1': 'present', '2': 'absent', '3': 'leave', '4': 'late' };
+      const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      const monthAgg = {};
+      let att = 0, total = 0;
+
+      // Concurrency-limited worker-pool (6 parallel) — browser ki 6-connection limit flood na ho.
+      let cursor = 0;
+      const worker = async () => {
+        while (cursor < dates.length && reqId === rhAttnReqRef.current) {
+          const dateStr = dates[cursor++];
+          try {
+            const res = await fetch(buildUrl('/api/student-attendance'), {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'application/json' },
+              body: JSON.stringify({
+                id: 0, branchID, studentID: 0, sessionID,
+                classID, sectionID, attendanceDate: dateStr, status: '', platform: 'ERP',
+                isNotificationGen: false, action: 'get', createdBy: 0, modifiedBy: 0,
+              }),
+            });
+            const json = await res.json();
+            const recs = (json?.data || []).filter(r =>
+              String(r.AttendanceDate ?? r.attendanceDate ?? '').slice(0, 10) === dateStr &&
+              String(r.StudentID ?? r.studentID ?? r.studentId) === String(studentId));
+            if (!recs.length) continue;
+            const rec = recs[recs.length - 1]; // us din ka aakhri mark
+            const raw = rec.Status ?? rec.status;
+            const status = CODE[String(raw)] || (typeof raw === 'string' ? raw.toLowerCase() : '');
+            if (!status) continue;
+            const isAtt = status === 'present' || status === 'late';
+            total++; if (isAtt) att++;
+            const mi = new Date(`${dateStr}T00:00:00`).getMonth();
+            if (!monthAgg[mi]) monthAgg[mi] = { att: 0, total: 0 };
+            monthAgg[mi].total++; if (isAtt) monthAgg[mi].att++;
+          } catch (_) { /* is din ko skip */ }
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(6, dates.length) }, worker));
+
+      if (reqId !== rhAttnReqRef.current) return; // beech mein student switch ho gaya → ignore
+      const pct = total ? Math.round((att / total) * 100) : 0;
+      const monthly = Object.keys(monthAgg)
+        .sort((a, b) => a - b)
+        .map(mi => ({ label: MONTHS[mi], pct: monthAgg[mi].total ? Math.round((monthAgg[mi].att / monthAgg[mi].total) * 100) : 0 }));
+      setRhAttendance({ pct, monthly });
+    } catch (e) {
+      console.error('Could not load student attendance:', e);
+      if (reqId === rhAttnReqRef.current) setRhAttendance({ pct: 0, monthly: [] });
+    } finally {
+      if (reqId === rhAttnReqRef.current) setRhAttnLoading(false);
+    }
+  };
 
   // Student par click karte hi us ki class/section ke exams fetch karo (result history).
   const loadStudentExams = async (st) => {
@@ -916,10 +1011,10 @@ const [subjects, setSubjects] = useState([]);
     }
   };
 
-  // Jab koi student active ho → uske exams load karo; band karte hi clear.
+  // Jab koi student active ho → uske exams + attendance load karo; band karte hi clear.
   useEffect(() => {
-    if (rhActiveStudent) loadStudentExams(rhActiveStudent);
-    else setRhExams([]);
+    if (rhActiveStudent) { loadStudentExams(rhActiveStudent); loadStudentAttendance(rhActiveStudent); }
+    else { setRhExams([]); rhAttnReqRef.current++; setRhAttendance(null); setRhAttnLoading(false); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rhActiveStudent]);
 
@@ -4959,7 +5054,13 @@ onClick={async () => {
                     sectionID: ex.sectionID,
                   }))
                 : rhActiveStudent.results;
-              const st = { ...rhActiveStudent, results: mappedResults };
+              const st = {
+                ...rhActiveStudent,
+                results: mappedResults,
+                /* Real attendance (Attendance module se) — % + monthly breakdown. */
+                attendance: rhAttendance?.pct ?? rhActiveStudent.attendance,
+                attendanceMonthly: rhAttendance?.monthly || null,
+              };
               const { avgPct, best, grade: avgGrade } = studentCardSummary(st);
               const worst = st.results.length ? Math.min(...st.results.map(r => r.pct)) : 0;
               const initials = st.name.split(' ').map(w => w[0] || '').join('').slice(0, 2).toUpperCase();
@@ -4996,7 +5097,7 @@ onClick={async () => {
                         { label:'Average',  val: `${avgPct}%`,             icon:'fa-chart-line',     col: avgCol },
                         { label:'Best',     val: `${best}%`,               icon:'fa-star',           col:'#16A34A' },
                         { label:'Worst',    val: `${worst}%`,              icon:'fa-arrow-down',     col: worstCol },
-                        { label:'Attend.',  val: `${st.attendance}%`,      icon:'fa-calendar-check', col: attCol  },
+                        { label:'Attend.',  val: rhAttnLoading ? <i className="fa-solid fa-spinner fa-spin" style={{ fontSize: 15 }}></i> : `${st.attendance}%`, icon:'fa-calendar-check', col: attCol  },
                       ].map((kpi, i, arr) => (
                         <div
                           key={kpi.label}
@@ -10712,6 +10813,7 @@ ${reportHTML}
 function RhReportPicker({ req, branchSchool, onClose, toast }) {
   const [style, setStyle]   = useState('color');
   const [format, setFormat] = useState('pdf');
+  const [generating, setGenerating] = useState(false);
 
   const titles = {
     card:       'Result Card Report',
@@ -10721,18 +10823,28 @@ function RhReportPicker({ req, branchSchool, onClose, toast }) {
     attendance: 'Attendance Summary',
   };
 
-  const generate = () => {
-    const isColor = style === 'color';
-    // PDF ya Word — rhRptOpen is flag ke hisaab se popup ya .doc download karta hai.
-    rhExportFormat = format;
-    // Builders ke header/footer mein /report-header (branchSchool) ki info dikhane ke liye set.
-    rhReportSchool = branchSchool || null;
-    if (req.type === 'card')       rhBuildSingleCardReport(req.student, req.result, isColor);
-    if (req.type === 'history')    rhBuildHistoryReport(req.student, isColor);
-    if (req.type === 'progress')   rhBuildProgressReport(req.student, isColor);
-    if (req.type === 'comparison') rhBuildComparisonReport(req.student, isColor);
-    if (req.type === 'attendance') rhBuildAttendanceReport(req.student, isColor);
-    onClose();
+  const generate = async () => {
+    if (generating) return;
+    setGenerating(true);
+    try {
+      // Let the spinner paint before the (synchronous) report build blocks.
+      await new Promise(r => setTimeout(r, 0));
+      const isColor = style === 'color';
+      // PDF ya Word — rhRptOpen is flag ke hisaab se popup ya .doc download karta hai.
+      rhExportFormat = format;
+      // Builders ke header/footer mein /report-header (branchSchool) ki info dikhane ke liye set.
+      rhReportSchool = branchSchool || null;
+      if (req.type === 'card')       rhBuildSingleCardReport(req.student, req.result, isColor);
+      if (req.type === 'history')    rhBuildHistoryReport(req.student, isColor);
+      if (req.type === 'progress')   rhBuildProgressReport(req.student, isColor);
+      if (req.type === 'comparison') rhBuildComparisonReport(req.student, isColor);
+      if (req.type === 'attendance') rhBuildAttendanceReport(req.student, isColor);
+      onClose();
+    } catch (e) {
+      console.error('Report generation failed:', e);
+      setGenerating(false);
+      toast('Could not generate report', 'error');
+    }
   };
 
   return createPortal(
@@ -10811,7 +10923,14 @@ function RhReportPicker({ req, branchSchool, onClose, toast }) {
         </div>
         <div className="rp-footer">
           <Tooltip text="Cancel and close"><button className="rp-btn cancel" onClick={onClose}>Cancel</button></Tooltip>
-          <Tooltip text="Generate and download the report"><button className="rp-btn go" onClick={generate}><i className="fa-solid fa-download"></i><span>Download {style === 'color' ? 'Colorful' : 'Colorless'} {format === 'pdf' ? 'PDF' : 'Word'}</span></button></Tooltip>
+          <Tooltip text={generating ? 'Preparing report…' : 'Generate and download the report'}>
+            <button className="rp-btn go" onClick={generate} disabled={generating}
+              style={generating ? { opacity: .7, cursor: 'not-allowed' } : undefined}>
+              {generating
+                ? <><i className="fa-solid fa-spinner fa-spin"></i><span>Preparing…</span></>
+                : <><i className="fa-solid fa-download"></i><span>Download {style === 'color' ? 'Colorful' : 'Colorless'} {format === 'pdf' ? 'PDF' : 'Word'}</span></>}
+            </button>
+          </Tooltip>
         </div>
       </div>
     </div>,
@@ -11009,10 +11128,6 @@ function rhBuildSingleCardReport(st, r, isColor, data = null) {
         <div style="font-size:11.5px;color:#0F172A;line-height:1.55">${finalRem.slice(0, 200)}</div>
       </div>
     </div>
-    <div style="padding:9px 16px;background:${p.accBg};border-top:1px solid ${p.accBdr};display:flex;justify-content:space-between;font-size:10px;color:${p.tMuted};flex-wrap:wrap;gap:6px">
-      <span>School Mentor ERP · Result History</span>
-      <span>Confidential · ${schoolName}</span>
-    </div>
   </div>`;
 
   rhRptOpen(rhRptShell(`Result Card — ${st.name}`, body));
@@ -11022,7 +11137,7 @@ function rhBuildSingleCardReport(st, r, isColor, data = null) {
 function rhBuildHistoryReport(st, isColor) {
   const p = rhRptPalette(isColor);
   const today = new Date().toLocaleDateString('en-GB', { day:'2-digit', month:'long', year:'numeric' });
-  const schoolName = 'The Oxford System, Lahore Campus';
+  const schoolName = (rhReportSchool && rhReportSchool.name) || 'The Oxford System, Lahore Campus';
   const pcts = st.results.map(r => r.pct);
   const avgPct = pcts.length ? Math.round((pcts.reduce((a, b) => a + b, 0) / pcts.length) * 10) / 10 : 0;
   const best   = pcts.length ? Math.max(...pcts) : 0;
@@ -11090,9 +11205,6 @@ function rhBuildHistoryReport(st, isColor) {
         <tbody>${rows}</tbody>
       </table>
     </div>
-    <div style="padding:9px 16px;background:${p.accBg};border-top:1px solid ${p.accBdr};display:flex;justify-content:space-between;font-size:10px;color:${p.tMuted}">
-      <span>School Mentor ERP · Result History</span><span>Confidential · ${schoolName}</span>
-    </div>
   </div>`;
   rhRptOpen(rhRptShell(`Academic History — ${st.name}`, body));
 }
@@ -11101,7 +11213,7 @@ function rhBuildHistoryReport(st, isColor) {
 function rhBuildProgressReport(st, isColor) {
   const p = rhRptPalette(isColor);
   const today = new Date().toLocaleDateString('en-GB', { day:'2-digit', month:'long', year:'numeric' });
-  const schoolName = 'The Oxford System, Lahore Campus';
+  const schoolName = (rhReportSchool && rhReportSchool.name) || 'The Oxford System, Lahore Campus';
   const pcts = st.results.map(r => r.pct);
   const first = pcts[0] || 0;
   const last  = pcts[pcts.length - 1] || 0;
@@ -11176,9 +11288,6 @@ function rhBuildProgressReport(st, isColor) {
         <tbody>${subjRows}</tbody>
       </table>
     </div>` : ''}
-    <div style="margin-top:10px;padding:9px 16px;background:${p.accBg};border-top:1px solid ${p.accBdr};display:flex;justify-content:space-between;font-size:10px;color:${p.tMuted}">
-      <span>School Mentor ERP · Result History</span><span>Confidential · ${schoolName}</span>
-    </div>
   </div>`;
   rhRptOpen(rhRptShell(`Progress Report — ${st.name}`, body));
 }
@@ -11187,7 +11296,7 @@ function rhBuildProgressReport(st, isColor) {
 function rhBuildComparisonReport(st, isColor) {
   const p = rhRptPalette(isColor);
   const today = new Date().toLocaleDateString('en-GB', { day:'2-digit', month:'long', year:'numeric' });
-  const schoolName = 'The Oxford System, Lahore Campus';
+  const schoolName = (rhReportSchool && rhReportSchool.name) || 'The Oxford System, Lahore Campus';
 
   const rows = [];
   for (let i = 1; i < st.results.length; i++) {
@@ -11227,9 +11336,6 @@ function rhBuildComparisonReport(st, isColor) {
         <tbody>${rows.join('') || `<tr><td colspan="6" style="padding:16px;text-align:center;color:${p.tMuted}">Need at least 2 exams to compare</td></tr>`}</tbody>
       </table>
     </div>
-    <div style="margin-top:10px;padding:9px 16px;background:${p.accBg};border-top:1px solid ${p.accBdr};display:flex;justify-content:space-between;font-size:10px;color:${p.tMuted}">
-      <span>School Mentor ERP · Result History</span><span>Confidential · ${schoolName}</span>
-    </div>
   </div>`;
   rhRptOpen(rhRptShell(`Comparison Report — ${st.name}`, body));
 }
@@ -11238,14 +11344,21 @@ function rhBuildComparisonReport(st, isColor) {
 function rhBuildAttendanceReport(st, isColor) {
   const p = rhRptPalette(isColor);
   const today = new Date().toLocaleDateString('en-GB', { day:'2-digit', month:'long', year:'numeric' });
-  const schoolName = 'The Oxford System, Lahore Campus';
+  const schoolName = (rhReportSchool && rhReportSchool.name) || 'The Oxford System, Lahore Campus';
   const attCol = st.attendance >= 90 ? p.grn : st.attendance >= 75 ? p.amb : p.red;
   const statusLbl = st.attendance >= 90 ? 'Excellent' : st.attendance >= 75 ? 'Good' : st.attendance >= 60 ? 'Needs Improvement' : 'Critical';
 
-  // Generate 12 plausible monthly bars (deterministic from the overall attendance)
-  const months = ['Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'];
-  const monthOffsets = [-2, 1, 0, 2, -1, 0, 1, -2, 0, 1, 2, 0];
-  const monthAtt = months.map((m, i) => Math.max(40, Math.min(100, st.attendance + monthOffsets[i])));
+  // Real monthly breakdown from the Attendance module when available;
+  // otherwise fall back to a plausible spread derived from the overall %.
+  let months, monthAtt;
+  if (st.attendanceMonthly && st.attendanceMonthly.length) {
+    months  = st.attendanceMonthly.map(m => m.label);
+    monthAtt = st.attendanceMonthly.map(m => m.pct);
+  } else {
+    months = ['Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'];
+    const monthOffsets = [-2, 1, 0, 2, -1, 0, 1, -2, 0, 1, 2, 0];
+    monthAtt = months.map((m, i) => Math.max(40, Math.min(100, st.attendance + monthOffsets[i])));
+  }
 
   const monthBars = months.map((m, i) => {
     const a = monthAtt[i];
@@ -11302,9 +11415,6 @@ function rhBuildAttendanceReport(st, isColor) {
         </tr></thead>
         <tbody>${monthRows}</tbody>
       </table>
-    </div>
-    <div style="margin-top:10px;padding:9px 16px;background:${p.accBg};border-top:1px solid ${p.accBdr};display:flex;justify-content:space-between;font-size:10px;color:${p.tMuted}">
-      <span>School Mentor ERP · Result History</span><span>Confidential · ${schoolName}</span>
     </div>
   </div>`;
   rhRptOpen(rhRptShell(`Attendance Summary — ${st.name}`, body));
