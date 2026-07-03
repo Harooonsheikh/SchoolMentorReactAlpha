@@ -5994,6 +5994,9 @@ onClick={async () => {
             toast={toast}
             loading={!cbrCardMarks}
             initialMode="combined"
+            attnClassID={grp.classID}
+            attnSectionID={grp.sectionID}
+            attnStudentID={st.studentID}
           />
         );
       })()}
@@ -6242,6 +6245,8 @@ onClick={async () => {
       toast={toast}
       loading={!resCardMarks}
       singleOnly
+      attnClassID={resCardCtx.classID}
+      attnSectionID={resCardCtx.sectionID}
     />
   );
 })()}
@@ -11420,8 +11425,80 @@ function rhBuildAttendanceReport(st, isColor) {
   rhRptOpen(rhRptShell(`Attendance Summary — ${st.name}`, body));
 }
 
-function ResultCardViewer({ student, rd, ex, template, school, grades, rcoGeneral, rcoSig, rsSigs, rsAbsentMode, onClose, toast, initialMode = 'single', singleOnly = false, loading = false }) {
+/* Ek poori class/section ki REAL attendance (Attendance module se) → { [studentId]: pct }.
+   Backend har get-call mein sirf us `attendanceDate` ka data deta hai, aur us response mein us din
+   ke SAARE students hote hain — is liye per-date ek call (concurrency-limited) kaafi hai poori class
+   ke liye (per-student loop ki zaroorat nahi). sessionID wahi jis se attendance save hui. */
+async function fetchClassAttendanceMap(classID, sectionID) {
+  try {
+    const branchID = Number(sessionStorage.getItem('branchID')) || 0;
+    const token    = sessionStorage.getItem('token');
+    let sessionID = '';
+    try { sessionID = await getActiveSessionID(); } catch (_) { /* ignore */ }
+    if (!sessionID) sessionID = sessionStorage.getItem('sessionId') || sessionStorage.getItem('sessionID') || sessionStorage.getItem('SessionID') || '';
+
+    const startStr = sessionStorage.getItem('sessionStartDate');
+    const endStr   = sessionStorage.getItem('sessionEndDate');
+    const start = startStr ? new Date(startStr) : null;
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    let end = endStr ? new Date(endStr) : null;
+    if (!start || isNaN(start.getTime())) return {};
+    if (!end || isNaN(end.getTime()) || end > today) end = today;
+
+    const dates = [];
+    for (let d = new Date(start.getFullYear(), start.getMonth(), start.getDate()); d <= end; d.setDate(d.getDate() + 1)) {
+      dates.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
+    }
+
+    const CODE = { '1': 'present', '2': 'absent', '3': 'leave', '4': 'late' };
+    const agg = {}; // { sid: { att, total } }
+    let cursor = 0;
+    const worker = async () => {
+      while (cursor < dates.length) {
+        const dateStr = dates[cursor++];
+        try {
+          const res = await fetch(buildUrl('/api/student-attendance'), {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify({
+              id: 0, branchID, studentID: 0, sessionID,
+              classID, sectionID, attendanceDate: dateStr, status: '', platform: 'ERP',
+              isNotificationGen: false, action: 'get', createdBy: 0, modifiedBy: 0,
+            }),
+          });
+          const json = await res.json();
+          // Us din ke records → per student aakhri mark (dedupe same-day duplicate).
+          const dayMap = {};
+          (json?.data || []).forEach(r => {
+            if (String(r.AttendanceDate ?? r.attendanceDate ?? '').slice(0, 10) !== dateStr) return;
+            const sid = String(r.StudentID ?? r.studentID ?? r.studentId ?? '');
+            if (!sid) return;
+            const raw = r.Status ?? r.status;
+            const status = CODE[String(raw)] || (typeof raw === 'string' ? raw.toLowerCase() : '');
+            if (status) dayMap[sid] = status;
+          });
+          Object.keys(dayMap).forEach(sid => {
+            const isAtt = dayMap[sid] === 'present' || dayMap[sid] === 'late';
+            if (!agg[sid]) agg[sid] = { att: 0, total: 0 };
+            agg[sid].total++; if (isAtt) agg[sid].att++;
+          });
+        } catch (_) { /* is din ko skip */ }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(6, dates.length) }, worker));
+
+    const map = {};
+    Object.keys(agg).forEach(sid => { map[sid] = agg[sid].total ? Math.round(agg[sid].att / agg[sid].total * 100) : 0; });
+    return map;
+  } catch (e) {
+    console.error('fetchClassAttendanceMap error:', e);
+    return {};
+  }
+}
+
+function ResultCardViewer({ student, rd, ex, template, school, grades, rcoGeneral, rcoSig, rsSigs, rsAbsentMode, onClose, toast, initialMode = 'single', singleOnly = false, loading = false, attnClassID, attnSectionID, attnStudentID }) {
   const [mode, setMode] = useState(initialMode);
+  const [attnPct, setAttnPct] = useState(null); // is student ki REAL attendance %
   const cardRef = useRef(null);
 
   useEffect(() => {
@@ -11429,6 +11506,25 @@ function ResultCardViewer({ student, rd, ex, template, school, grades, rcoGenera
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
+
+  // Real attendance (Attendance module se) — class/section diye hon to laao aur card par dikhao.
+  // Lookup key: attnStudentID (agar diya, e.g. combined card jahan id=rollNo hota) warna student.id.
+  const attnLookupId = attnStudentID != null ? attnStudentID : student?.id;
+  useEffect(() => {
+    let alive = true;
+    setAttnPct(null);
+    if (attnClassID != null && attnSectionID != null && attnLookupId != null) {
+      fetchClassAttendanceMap(attnClassID, attnSectionID).then(map => {
+        if (!alive) return;
+        const v = map[String(attnLookupId)];
+        setAttnPct(v != null ? v : null);
+      });
+    }
+    return () => { alive = false; };
+  }, [attnClassID, attnSectionID, attnLookupId]);
+
+  // Attendance mile to student.attendance override karo (warna jo aya wahi — mostly '—').
+  const stEff = attnPct != null ? { ...student, attendance: `${attnPct}%` } : student;
 
   const tConfig = RC_TEMPLATES.find(x => x.id === template) || RC_TEMPLATES[0];
 
@@ -11537,19 +11633,19 @@ html,body{background:#fff;font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-
             {template === 'classic' && (
               <ClassicResultCard
                 rcoGeneral={rcoGeneral} rcoSig={rcoSig} rsSigs={rsSigs} rsAbsentMode={rsAbsentMode}
-                mode={mode} student={student} rd={rd} ex={ex} school={school} grades={grades}
+                mode={mode} student={stEff} rd={rd} ex={ex} school={school} grades={grades}
               />
             )}
             {template === 'insight' && (
               <InsightResultCard
                 rcoGeneral={rcoGeneral} rcoSig={rcoSig} rsSigs={rsSigs} rsAbsentMode={rsAbsentMode}
-                mode={mode} student={student} rd={rd} ex={ex} school={school} grades={grades}
+                mode={mode} student={stEff} rd={rd} ex={ex} school={school} grades={grades}
               />
             )}
             {template === 'portfolio' && (
               <PortfolioResultCard
                 rcoGeneral={rcoGeneral} rcoSig={rcoSig} rsSigs={rsSigs} rsAbsentMode={rsAbsentMode}
-                mode={mode} student={student} rd={rd} ex={ex} school={school} grades={grades}
+                mode={mode} student={stEff} rd={rd} ex={ex} school={school} grades={grades}
               />
             )}
           </div>
@@ -11570,6 +11666,7 @@ function BulkCardModal({ ctx, template, school, grades, rcoGeneral, rcoSig, rsSi
   const [cards, setCards]       = useState([]);   // [{ student, rd }]
   const [loading, setLoading]   = useState(true);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
+  const [attnMap, setAttnMap]   = useState({});   // { [studentId]: pct } — REAL attendance
   const cardRef = useRef(null);
 
   useEffect(() => {
@@ -11577,6 +11674,14 @@ function BulkCardModal({ ctx, template, school, grades, rcoGeneral, rcoSig, rsSi
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
+
+  // Poori class ki REAL attendance (cards ke saath parallel) — ek dafa laao.
+  useEffect(() => {
+    let alive = true;
+    fetchClassAttendanceMap(classID, sectionID).then(map => { if (alive) setAttnMap(map || {}); });
+    return () => { alive = false; };
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -11729,7 +11834,9 @@ ${node.innerHTML}
               {cards.map((c, i) => (
                 <div key={c.student.id || i} className="bulk-card" style={{ marginBottom: 18, borderRadius: 12, overflow: 'hidden', boxShadow: '0 8px 32px rgba(0,0,0,.14)' }}>
                   <Card rcoGeneral={rcoGeneral} rcoSig={rcoSig} rsSigs={rsSigs} rsAbsentMode={rsAbsentMode}
-                    mode="single" student={c.student} rd={c.rd} ex={cardEx} school={school} grades={grades} />
+                    mode="single"
+                    student={attnMap[String(c.student.id)] != null ? { ...c.student, attendance: `${attnMap[String(c.student.id)]}%` } : c.student}
+                    rd={c.rd} ex={cardEx} school={school} grades={grades} />
                 </div>
               ))}
             </div>
@@ -11748,6 +11855,7 @@ function BulkCombinedCardModal({ grp, termID, template, school, grades, rcoGener
   const [cards, setCards]       = useState([]);
   const [loading, setLoading]   = useState(true);
   const [progress, setProgress] = useState({ done: 0, total: (grp?.students || []).length });
+  const [attnMap, setAttnMap]   = useState({});   // { [studentId]: pct } — REAL attendance
   const cardRef = useRef(null);
 
   useEffect(() => {
@@ -11755,6 +11863,15 @@ function BulkCombinedCardModal({ grp, termID, template, school, grades, rcoGener
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
+
+  // Poori class ki REAL attendance (cards ke saath parallel) — ek dafa laao.
+  useEffect(() => {
+    if (!grp) return undefined;
+    let alive = true;
+    fetchClassAttendanceMap(grp.classID, grp.sectionID).then(map => { if (alive) setAttnMap(map || {}); });
+    return () => { alive = false; };
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, []);
 
   useEffect(() => {
     if (!grp) return undefined;
@@ -11805,7 +11922,7 @@ function BulkCombinedCardModal({ grp, termID, template, school, grades, rcoGener
           built.push({
             student: {
               id: st.rollNo, rollNo: st.rollNo, name: st.name, father: st.father,
-              obtained, absentSubjects, attendance: '—',
+              obtained, absentSubjects, attendance: '—', _attnId: st.studentID,
               _combined: {
                 grandTotal: st.grandTotal, grandObt: st.grandObt, ovPct: st.pct,
                 mainExName: grp.mainExam, mainTotal: st.mainTotal, mainObt: st.mainObt,
@@ -11891,7 +12008,9 @@ ${node.innerHTML}
               {cards.map((c, i) => (
                 <div key={c.student.id || i} className="bulk-card" style={{ marginBottom: 18, borderRadius: 12, overflow: 'hidden', boxShadow: '0 8px 32px rgba(0,0,0,.14)' }}>
                   <Card rcoGeneral={rcoGeneral} rcoSig={rcoSig} rsSigs={rsSigs} rsAbsentMode={rsAbsentMode}
-                    mode="combined" student={c.student} rd={c.rd} ex={cardEx} school={school} grades={grades} />
+                    mode="combined"
+                    student={attnMap[String(c.student._attnId)] != null ? { ...c.student, attendance: `${attnMap[String(c.student._attnId)]}%` } : c.student}
+                    rd={c.rd} ex={cardEx} school={school} grades={grades} />
                 </div>
               ))}
             </div>
