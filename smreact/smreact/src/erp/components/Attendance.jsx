@@ -159,9 +159,17 @@
   ];
 
   /* ─── Helpers ─────────────────────────────────────────────────────────────── */
+  // API se time value object ({}), null, number ya string — kuch bhi aa sakti hai.
+  // Isay hamesha safe string mein badlo (object/null → "" taake "—" dikhe).
+  const timeVal = (v) => (v == null || typeof v === "object") ? "" : String(v);
   const fmtTime = (t) => {
-    if (!t || !t.includes(":")) return t || "—";
-    const [h, m] = t.split(":").map(Number);
+    if (t == null || t === "" || typeof t === "object") return "—";
+    const str = String(t);                       // number/Date/string — kuch bhi ho, safe
+    // ISO datetime (e.g. "2026-07-03T09:05:00") → time hissa nikaal lo.
+    const timePart = str.includes("T") ? str.split("T")[1] : str;
+    if (!timePart || !timePart.includes(":")) return str || "—";
+    const [h, m] = timePart.split(":").map(Number);
+    if (Number.isNaN(h) || Number.isNaN(m)) return str;
     const ampm = h >= 12 ? "PM" : "AM";
     const h12 = h % 12 || 12;
     return `${h12}:${m < 10 ? "0" + m : m} ${ampm}`;
@@ -1125,17 +1133,24 @@
       return cMatch && sMatch;
     });
 
-    const tableRows = filtered.map((r, i) => {
-      const pc = r.marked && r.total > 0 ? Math.round((r.present / r.total) * 100) : 0;
+    // Per-student rows (har student ki alag row) — In/Out time yahin meaningful hai.
+    const studentRows = filtered.flatMap((r) =>
+      (r.students || []).map((s) => ({ ...s, cls: r.cls, sec: r.sec }))
+    );
+
+    const tableRows = studentRows.map((s, i) => {
+      const st = s.status; // "present" | "absent" | "leave" | ""
+      const stCell = st
+        ? badge(st[0].toUpperCase() + st.slice(1), st === "present" ? GREEN : st === "absent" ? RED : AMB)
+        : badge("Not Marked", "#94A3B8");
       return `<tr style="background:${i % 2 === 0 ? "#fff" : "#f8fafc"}">
         ${td(i + 1, "text-align:center;color:#94A3B8")}
-        ${td(`<strong>${r.cls}</strong>`)}${td(r.sec)}
-        ${td(r.total, "text-align:center;font-weight:700")}
-        ${td(r.marked ? `<strong style="color:${GREEN}">${r.present}</strong>` : "—", "text-align:center")}
-        ${td(r.marked ? `<strong style="color:${RED}">${r.absent}</strong>`  : "—", "text-align:center")}
-        ${td(r.marked ? `<strong style="color:${AMB}">${r.leave}</strong>`   : "—", "text-align:center")}
-        ${td(r.marked ? badge(pc + "%", pc >= 90 ? GREEN : pc >= 75 ? AMB : RED) : badge("Not Marked", "#94A3B8"), "text-align:center")}
-        ${td(r.markedBy || "—", "font-size:11px")}
+        ${td(`<strong>${s.cls}</strong> · ${s.sec}`, "font-size:11px")}
+        ${td(`<strong>${s.name}</strong>${s.reg ? `<div style="font-size:10px;color:#64748B">${s.reg}</div>` : ""}`)}
+        ${td(stCell, "text-align:center")}
+        ${td(st === "present" && s.inTime  ? fmtTime(s.inTime)  : "—", "text-align:center;font-size:11px")}
+        ${td(st === "present" && s.outTime ? fmtTime(s.outTime) : "—", "text-align:center;font-size:11px")}
+        ${td(s.platform || (st ? "ERP" : "—"), "font-size:11px")}
       </tr>`;
     }).join("");
 
@@ -1151,10 +1166,10 @@
       ["Total Students", String(tot)],
     ], bdr) +
     rptStatsRow([["Total", tot, "#374151"], ["Present", pres, GREEN], ["Absent", abs, RED], ["Leave", lv, AMB]], bdr, isColor) +
-    (filtered.length === 0
+    (studentRows.length === 0
       ? `<div style="text-align:center;padding:30px;color:#94A3B8;font-size:13.5px"><i>No attendance found for the selected date and filters.</i></div>`
       : `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11.5px">
-          <thead><tr>${[th("#", "center"), th("Class"), th("Section"), th("Total", "center"), th("Present", "center"), th("Absent", "center"), th("Leave", "center"), th("Attend %", "center"), th("Marked By")].join("")}</tr></thead>
+          <thead><tr>${[th("#", "center"), th("Class / Section"), th("Student"), th("Status", "center"), th("In Time", "center"), th("Out Time", "center"), th("Marked From")].join("")}</tr></thead>
           <tbody>${tableRows}</tbody>
         </table></div>`);
 
@@ -1501,7 +1516,7 @@
       dates.push(new Date(d));
     }
 
-    const STLABEL = { present: "Present", absent: "Absent", leave: "Leave", late: "Late" };
+    const STLABEL = { present: "Present", absent: "Absent", leave: "Leave" };
     const WDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
     let present = 0, absent = 0, leave = 0, wDays = 0, wOff = 0, hols = 0;
@@ -1525,8 +1540,9 @@
       const stKey = rec ? rec.status : "";
       const st = (isOff || hol) ? "—" : (STLABEL[stKey] || (rec ? "Marked" : "Not Marked"));
       const pl = (isOff || hol) ? "—" : (rec?.platform || "—");
-      const inT = target.type === "staff" && rec?.inTime ? fmtTime(rec.inTime) : "—";
-      const outT = target.type === "staff" && rec?.outTime ? fmtTime(rec.outTime) : "—";
+      // In/Out time — ab student aur staff dono ke liye (present days par API se aata hai).
+      const inT  = rec?.inTime  ? fmtTime(rec.inTime)  : "—";
+      const outT = rec?.outTime ? fmtTime(rec.outTime) : "—";
 
       if (!isOff && !hol && rec) {
         if (stKey === "present") present++;
@@ -1542,8 +1558,8 @@
         ${td(dowName, "font-size:11px;color:#64748B")}
         ${td(`<span style="color:${dColor};font-weight:700">${dType}</span>${hol ? `<div style="font-size:10px;color:#64748B;margin-top:2px">${hol.title}</div>` : ""}`)}
         ${td(st === "—" ? "—" : badge(st, sc), "text-align:center")}
-        ${target.type === "staff" ? td(inT, "text-align:center;font-size:11px") : ""}
-        ${target.type === "staff" ? td(outT, "text-align:center;font-size:11px") : ""}
+        ${td(inT, "text-align:center;font-size:11px")}
+        ${td(outT, "text-align:center;font-size:11px")}
         ${td(pl, "font-size:11px")}
       </tr>`;
     }).join("");
@@ -1576,7 +1592,7 @@
         th("Day"),
         th("Type"),
         th("Status", "center"),
-        ...(target.type === "staff" ? [th("In Time", "center"), th("Out Time", "center")] : []),
+        th("In Time", "center"), th("Out Time", "center"),
         th("Platform"),
       ].join("")}</tr></thead>
       <tbody>${tableRows}</tbody>
@@ -1894,10 +1910,10 @@
                       Attendance Detail — {r.cls} ({r.sec})
                     </div>
                     <div style={{ overflowX: "auto" }}>
-                      <table className="att-student-table" style={{ minWidth: 500 }}>
+                      <table className="att-student-table" style={{ minWidth: 620 }}>
                         <thead>
                           <tr>
-                            <th>#</th><th>Reg. No.</th><th>Student Name</th><th>Father Name</th><th>Status</th><th>Marked From</th>
+                            <th>#</th><th>Reg. No.</th><th>Student Name</th><th>Father Name</th><th>Status</th><th>In Time</th><th>Out Time</th><th>Marked From</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -1914,6 +1930,8 @@
                                     ? <span className={`att-${st}-badge`}>{st[0].toUpperCase() + st.slice(1)}</span>
                                     : <span style={{ color: T.textMuted, fontSize: 11.5 }}>Not Marked</span>}
                                 </td>
+                                <td style={{ fontWeight: 600 }}>{s.inTime  ? fmtTime(s.inTime)  : "—"}</td>
+                                <td style={{ fontWeight: 600 }}>{s.outTime ? fmtTime(s.outTime) : "—"}</td>
                                 <td style={{ fontSize: 11.5, color: T.textMuted }}>{st ? "ERP" : ""}</td>
                               </tr>
                             );
@@ -2082,7 +2100,7 @@
     const row = studentData[classIdx];
     const today = new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" });
     const [rows, setRows] = useState(() =>
-      (row ? rosterForClass(row) : []).map((s) => ({ ...s, status: s.status || "" }))
+      (row ? rosterForClass(row) : []).map((s) => ({ ...s, status: s.status || "", inTime: s.inTime || "", outTime: s.outTime || "" }))
     );
     const [loading, setLoading]   = useState(true);
     const [saving, setSaving]     = useState(false);
@@ -2101,7 +2119,12 @@
         setLoading(true);
         const map = await onLoadMarks(classIdx);
         if (!alive) return;
-        setRows((prev) => prev.map((s) => ({ ...s, status: map[s.id] || s.status || "" })));
+        setRows((prev) => prev.map((s) => {
+          const m = map[s.id];
+          return m
+            ? { ...s, status: m.status || s.status || "", inTime: m.inTime || "", outTime: m.outTime || "" }
+            : { ...s, status: s.status || "" };
+        }));
         // "Update" mode only if a student in THIS class actually has a status.
         setHasSaved((row.students || []).some((s) => map[s.id]));
         setLoading(false);
@@ -2113,7 +2136,9 @@
     if (!row) return null;
     const isUpdate = hasSaved;
 
-    const setStatus = (j, st) => setRows((prev) => prev.map((r, i) => i === j ? { ...r, status: st } : r));
+    const setField = (j, patch) => setRows((prev) => prev.map((r, i) => i === j ? { ...r, ...patch } : r));
+    // Present → in/out time editable; Absent/Leave → clear times (staff jaisa).
+    const setStatus = (j, st) => setField(j, st === "present" ? { status: st } : { status: st, inTime: "", outTime: "" });
 
     const save = async () => {
       if (saving) return;
@@ -2155,7 +2180,7 @@
               </div>
             )}
             <div style={{ overflowX: "auto" }}>
-              <table className="att-mark-table" style={{ minWidth: 550 }}>
+              <table className="att-mark-table" style={{ minWidth: 720 }}>
                 <thead>
                   <tr>
                     <th style={{ width: 44 }}>#</th>
@@ -2163,6 +2188,8 @@
                     <th>Student Name</th>
                     <th>Father Name</th>
                     <th>Status</th>
+                    <th>In Time</th>
+                    <th>Out Time</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -2177,25 +2204,39 @@
                           <Tooltip text="Mark Present">
                             <button className={`att-radio-btn p${s.status === "present" ? " active" : ""}`} onClick={() => setStatus(j, "present")}>P</button>
                           </Tooltip>
-                          <Tooltip text="Mark Absent">
+                          <Tooltip text="Mark Absent (clears in/out times)">
                             <button className={`att-radio-btn a${s.status === "absent"  ? " active" : ""}`} onClick={() => setStatus(j, "absent")}>A</button>
                           </Tooltip>
-                          <Tooltip text="Mark on Leave">
+                          <Tooltip text="Mark on Leave (clears in/out times)">
                             <button className={`att-radio-btn l${s.status === "leave"   ? " active" : ""}`} onClick={() => setStatus(j, "leave")}>L</button>
                           </Tooltip>
-                          <Tooltip text="Mark as Late">
-                            <button
-                              className="att-radio-btn"
-                              style={{
-                                color: s.status === "late" ? "#fff" : "#7C3AED",
-                                borderColor: s.status === "late" ? "#7C3AED" : "rgba(124,58,237,.25)",
-                                background: s.status === "late" ? "#7C3AED" : "transparent",
-                                fontSize: 10, padding: "5px 9px",
-                              }}
-                              onClick={() => setStatus(j, "late")}
-                            >Late</button>
-                          </Tooltip>
+
                         </div>
+                      </td>
+                      <td>
+                        <input
+                          className="att-input"
+                          type="time"
+                          value={s.inTime || ""}
+                          disabled={s.status !== "present"}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            // In Time badla → agar Out Time ab chhoti reh gayi to clear.
+                            setField(j, { inTime: v, ...(s.outTime && v && s.outTime < v ? { outTime: "" } : {}) });
+                          }}
+                          style={{ width: 108, height: 34, fontSize: 12.5 }}
+                        />
+                      </td>
+                      <td>
+                        <input
+                          className="att-input"
+                          type="time"
+                          value={s.outTime || ""}
+                          min={s.inTime || undefined}
+                          disabled={s.status !== "present"}
+                          onChange={(e) => setField(j, { outTime: e.target.value })}
+                          style={{ width: 108, height: 34, fontSize: 12.5 }}
+                        />
                       </td>
                     </tr>
                   ))}
@@ -2610,7 +2651,11 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
                             type="time"
                             value={r.inTime}
                             disabled={r.status !== "present"}
-                            onChange={(e) => setField(j, { inTime: e.target.value })}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              // In Time badla → agar Out Time ab chhoti reh gayi to clear.
+                              setField(j, { inTime: v, ...(r.outTime && v && r.outTime < v ? { outTime: "" } : {}) });
+                            }}
                             style={{ width: 108, height: 34, fontSize: 12.5 }}
                           />
                         </td>
@@ -2619,6 +2664,7 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
                             className="att-input"
                             type="time"
                             value={r.outTime}
+                            min={r.inTime || undefined}
                             disabled={r.status !== "present"}
                             onChange={(e) => setField(j, { outTime: e.target.value })}
                             style={{ width: 108, height: 34, fontSize: 12.5 }}
@@ -3480,8 +3526,8 @@ useEffect(() => {
             map[dateStr] = {
               status: ST_CODE_TO_STATUS[raw] || raw,
               platform: rec.Platform ?? rec.platform ?? "",
-              inTime: rec.CheckInTime ?? rec.checkInTime ?? "",
-              outTime: rec.CheckOutTime ?? rec.checkOutTime ?? "",
+              inTime: timeVal(rec.CheckInTime ?? rec.checkInTime),
+              outTime: timeVal(rec.CheckOutTime ?? rec.checkOutTime),
             };
           }
         } catch (err) { console.error("Individual attendance fetch error:", err); }
@@ -3785,15 +3831,18 @@ const saveMarkSf = useCallback(async (rows) => {
             // Status numeric code ("1") ya word ("present") — dono handle karo.
             const status = ST_CODE_TO_STATUS[String(raw)]
               || (typeof raw === "string" ? raw.toLowerCase() : undefined);
-            if (sid != null && status) map[sid] = status;
+            // In/Out time (staff jaise CheckInTime/CheckOutTime) — object/null → "".
+            const inTime  = timeVal(rec.CheckInTime  ?? rec.checkInTime);
+            const outTime = timeVal(rec.CheckOutTime ?? rec.checkOutTime);
+            if (sid != null && status) map[sid] = { status, inTime, outTime };
           });
       } catch (err) {
         console.error("Error loading student attendance:", err);
       }
-      // Reflect saved statuses into the class row (detail table + counts).
+      // Reflect saved statuses + times into the class row (detail table + counts).
       setStudentData((prev) => prev.map((r, i) => {
         if (i !== idx) return r;
-        const students = (r.students || []).map((s) => ({ ...s, status: map[s.id] }));
+        const students = (r.students || []).map((s) => ({ ...s, status: map[s.id]?.status, inTime: map[s.id]?.inTime || "", outTime: map[s.id]?.outTime || "" }));
         // Marked only if at least one student in THIS class has a status.
         const anyMarked = students.some((s) => s.status);
         return {
@@ -3826,6 +3875,9 @@ const saveMarkSf = useCallback(async (rows) => {
           id: 0, branchID, studentID: s.id, sessionID,
           classID: row.classID, sectionID: row.sectionID,
           attendanceDate, status: String(ST_STATUS_TO_CODE[s.status]), platform: "ERP",
+          // In/Out time sirf Present ke liye bhejo (staff jaisa); warna khali.
+          checkInTime:  s.status === "present" ? (s.inTime  || "") : "",
+          checkOutTime: s.status === "present" ? (s.outTime || "") : "",
           isNotificationGen: false, action: "insert",
           createdBy: employeeID, modifiedBy: employeeID,
         })));
@@ -3841,7 +3893,7 @@ const saveMarkSf = useCallback(async (rows) => {
         ...r, marked: true, present, absent, leave,
         students: (r.students || []).map((st) => {
           const m = studentRows.find((x) => x.id === st.id);
-          return m ? { ...st, status: m.status } : st;
+          return m ? { ...st, status: m.status, inTime: m.status === "present" ? (m.inTime || "") : "", outTime: m.status === "present" ? (m.outTime || "") : "" } : st;
         }),
         markedFrom: "ERP",
         markedTime: new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }),
@@ -4017,11 +4069,23 @@ const saveMarkSf = useCallback(async (rows) => {
       } catch (err) { console.error("Daily report fetch error:", err); }
 
       const agg = classes.map(() => ({ present: 0, absent: 0, leave: 0, marked: false, platform: "" }));
+      // Per-student record map (studentID → status + in/out + platform) — daily report
+      // mein har student ki row + In/Out Time dikhane ke liye.
+      const byStudent = {};
       recs.forEach((rec) => {
         const idx = resolveIdx(rec);
-        if (idx < 0) return;
         const raw = String(rec.Status ?? rec.status ?? "").toLowerCase();
         const st = ST_CODE_TO_STATUS[raw] || raw;
+        const sid = rec.StudentID ?? rec.studentID ?? rec.studentId;
+        if (sid != null && st) {
+          byStudent[sid] = {
+            status: st,
+            inTime:  timeVal(rec.CheckInTime  ?? rec.checkInTime),
+            outTime: timeVal(rec.CheckOutTime ?? rec.checkOutTime),
+            platform: String(rec.Platform ?? rec.platform ?? ""),
+          };
+        }
+        if (idx < 0) return;
         if (st === "present") agg[idx].present++;
         else if (st === "absent") agg[idx].absent++;
         else if (st === "leave") agg[idx].leave++;
@@ -4036,6 +4100,15 @@ const saveMarkSf = useCallback(async (rows) => {
         present: agg[idx].present, absent: agg[idx].absent, leave: agg[idx].leave,
         marked: agg[idx].marked,
         markedBy: agg[idx].platform || "—",
+        // Per-student detail (status + in/out) — report table isse per-student rows banata hai.
+        students: (r.students || []).map((s) => {
+          const m = byStudent[s.id];
+          return {
+            reg: s.reg, name: s.name, father: s.father,
+            status: m?.status || "", inTime: m?.inTime || "", outTime: m?.outTime || "",
+            platform: m?.platform || "",
+          };
+        }),
       }));
     }, [studentData, ensureSessionID, makeRecordClassResolver]);
 
@@ -4256,8 +4329,8 @@ const loadStaffAttendance = useCallback(async (dateStr) => {
         return {
           ...s,
           status:  (found.Status ?? found.status) || "present",
-          inTime:  (found.CheckInTime ?? found.checkInTime) || "",
-          outTime: (found.CheckOutTime ?? found.checkOutTime) || "",
+          inTime:  timeVal(found.CheckInTime ?? found.checkInTime),
+          outTime: timeVal(found.CheckOutTime ?? found.checkOutTime),
           from:    (found.Platform ?? found.platform) || "ERP",
           marked: true,
           markedBy: "Admin",
@@ -4303,8 +4376,8 @@ const loadStaffDateAttendance = useCallback(async (dateStr) => {
       name: s.name, empId: s.empId, desig: s.desig,
       marked: !!found,
       status:  found ? ((found.Status ?? found.status) || "") : "",
-      inTime:  found ? ((found.CheckInTime ?? found.checkInTime) || "") : "",
-      outTime: found ? ((found.CheckOutTime ?? found.checkOutTime) || "") : "",
+      inTime:  found ? timeVal(found.CheckInTime ?? found.checkInTime) : "",
+      outTime: found ? timeVal(found.CheckOutTime ?? found.checkOutTime) : "",
       from:    found ? ((found.Platform ?? found.platform) || "") : "",
       markedBy: found ? "Admin" : "",
     };
@@ -4335,8 +4408,8 @@ const fetchDailyStaffReportRows = useCallback(async (dateStr) => {
       empId: s.empId, name: s.name, desig: s.desig, dept: s.dept,
       marked: !!found,
       status:  found ? String((found.Status ?? found.status) || "").toLowerCase() : "",
-      inTime:  found ? ((found.CheckInTime ?? found.checkInTime) || "") : "",
-      outTime: found ? ((found.CheckOutTime ?? found.checkOutTime) || "") : "",
+      inTime:  found ? timeVal(found.CheckInTime ?? found.checkInTime) : "",
+      outTime: found ? timeVal(found.CheckOutTime ?? found.checkOutTime) : "",
       from:    found ? ((found.Platform ?? found.platform) || "") : "",
     };
   });
