@@ -116,6 +116,19 @@ export const EP = {
     plan: (id) => `${ROOT}/mentor/plans/${id}`,
     payments: () => `${ROOT}/mentor/payments`,
   },
+
+  /* ── Registration (branch directory — lives on the main ERP API, NOT under
+     the superadmin root, so services call it with an absolute URL). ── */
+  registration: {
+    branches: () => `/api/Registration/get-all-branches`,
+  },
+
+  /* ── AI / wallet (per-branch Mentor AI plan + subscription state). ── */
+  wallet: {
+    subscriptions: () => `/ai/api/wallet/admin/branches/subscriptions/`,
+    subscription: (branchId) => `/ai/api/wallet/admin/branches/${branchId}/subscription/`,
+    status: (branchId) => `/ai/api/wallet/admin/branches/${branchId}/status/`,
+  },
 };
 
 export default EP;

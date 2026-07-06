@@ -42,6 +42,21 @@ const cfg = {
 /* Live-binding export (updated by configureSuperAdmin). */
 export let SA_API_BASE = cfg.apiBaseUrl;
 
+/* Main ERP API base — hosts the shared Registration/branch directory, which
+   lives outside the superadmin root.
+
+   Default '' → the browser calls a RELATIVE, same-origin path. In dev that
+   path is forwarded to the real ERP host by src/setupProxy.js (which avoids
+   the CORS block, since the ERP host sends no Access-Control-Allow-Origin
+   for localhost). Set REACT_APP_SA_ERP_BASE to an absolute URL only for a
+   deployment that talks to the ERP host directly (same origin or CORS-enabled). */
+export const ERP_API_BASE = stripTrailingSlash(env.REACT_APP_SA_ERP_BASE || '');
+
+/* AI / wallet API base — hosts per-branch plan + subscription state.
+   Same story as ERP_API_BASE: default '' → relative, same-origin path that
+   src/setupProxy.js forwards to the AI host in dev (avoids the CORS block). */
+export const AI_API_BASE = stripTrailingSlash(env.REACT_APP_SA_AI_BASE || '');
+
 const IDENTITY_KEYS = ['role', 'userId', 'name', 'email'];
 
 /**
