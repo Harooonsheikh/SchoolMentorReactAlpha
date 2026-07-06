@@ -42,6 +42,9 @@ export default function Academics({ l1, setL1, l2, setL2, l3, setL3, toast }) {
   const { data: termData = [], setData: setTermData } = useAsync(academicsService.getTermData,   []);
   const [events, setEvents] = useState([]);
   const reportSubjectsRef = React.useRef(null);
+  /* Activity report ka current-view scope: { events: filtered, label: 'July 2026' | ... }.
+     Month/Week/Day/Year jo view active ho, report usi period tak scoped download hoti hai. */
+  const reportActivityScopeRef = React.useRef(null);
 
   /* Let module-level POST wrappers surface the "no session" error via toast. */
   useEffect(() => { registerSessionToast(toast); }, [toast]);
@@ -65,6 +68,7 @@ const [sessionLoading, setSessionLoading] = useState(true);
   const [calEditOpen, setCalEditOpen] = useState(false);
   const [tutorialOpen, setTutorialOpen] = useState(false);
   const [activityModal, setActivityModal] = useState({ open: false, editing: null });
+  const [activityReload, setActivityReload] = useState(0); // bump → ActivityCalendar apne month-events dobara laaye
   const [classesData, setClassesData] = useState([]);
   const [monthApiEnabled, setMonthApiEnabled] = useState(false);
   const [hasActiveSession, setHasActiveSession] = useState(true); // assume true until checked
@@ -134,22 +138,31 @@ notifySessionChange();
   } catch (error) {
     console.error("Error loading session data:", error);
     toast('Could not load academic session for this branch', 'error');
-  } finally {
-    setSessionLoading(false);
   }
+  // NOTE: setSessionLoading(false) yahan se hata diya — mount effect isay session +
+  // classes DONO load hone ke baad off karta hai (warna classes empty aati thi).
 };
 
 
 useEffect(() => {
-  getSessionData();
-  if (l2 === 'tb') {
-    getClassesData();
-  }
+  (async () => {
+    try {
+      /* Pehle session-check API (sessionID set hoti hai), PHIR classes — warna classes
+         bina sessionID ke empty aati thi aur user ko Textbooks tab dobara click karna
+         padta tha. Loader tab tak chalta hai jab tak dono ready na hon. */
+      await getSessionData();
+      if (l2 === 'tb') await getClassesData();
+    } finally {
+      setSessionLoading(false);
+    }
+  })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
 }, []);
 
 
-const openReport = (name, format = 'pdf', subjectsForReport = null) => {
+const openReport = (name, format = 'pdf', subjectsForReport = null, activityScope = null) => {
   reportSubjectsRef.current = subjectsForReport;
+  reportActivityScopeRef.current = activityScope;
   setReportPicker({ open: true, name, format, subjectsForReport });
 };
 
@@ -412,6 +425,7 @@ return (
                 openConfirm={openConfirm}
                 toast={toast}
                 isOtherSession={isOtherSession}
+                reloadKey={activityReload}
               />
             )}
           </>
@@ -429,13 +443,15 @@ return (
       onClose={closeReport}
       onGenerate={async (style, fmt) => {
         const subsToUse = reportSubjectsRef.current;
+        const scope = reportActivityScopeRef.current; // { events, label } | null
         const nameToUse = reportPicker.name;
         closeReport();
         await generateReportWindow(
           nameToUse,
           style,
           fmt,
-          { events, terms },
+          /* Activity report scoped ho to sirf us view/period ke events + label bhejo. */
+          { events: scope?.events || events, terms, periodLabel: scope?.label || '' },
           classesData,
           subsToUse
         );
@@ -453,8 +469,9 @@ return (
     <ActivityModal
       open={activityModal.open}
       editing={activityModal.editing}
+      toast={toast}
       onClose={() => setActivityModal({ open: false, editing: null })}
-      onSave={ev => {
+      onSave={async ev => {
         if (activityModal.editing) {
           setEvents(prev => prev.map(p => p.id === ev.id ? { ...p, ...ev } : p));
           toast(`"${ev.name}" updated`, 'success');
@@ -463,6 +480,10 @@ return (
           toast(`"${ev.name}" added!`, 'success');
         }
         setActivityModal({ open: false, editing: null });
+        // Backend se dobara load karo taake edit/add har view (month-API view bhi) mein reflect ho
+        // aur persistence confirm ho — sirf local state update se month-events stale reh jaate the.
+        await loadActivities();
+        setActivityReload(k => k + 1);
       }}
     />
 
@@ -1030,7 +1051,7 @@ function CalEditModal({ open, terms, onClose, onSave, onError }) {
 /* ═══════════════════════════════════════════════════════════════════
    ACTIVITY MODAL — add / edit a single activity
    ═══════════════════════════════════════════════════════════════════ */
-function ActivityModal({ open, editing, onClose, onSave }) {
+function ActivityModal({ open, editing, onClose, onSave, toast }) {
   const [name, setName] = useState('');
   const [start, setStart] = useState('');
   const [end, setEnd] = useState('');
@@ -1072,6 +1093,15 @@ function ActivityModal({ open, editing, onClose, onSave }) {
     return;
   }
 
+  // Update ke liye real backend id chahiye. Fake/oversized id (Date.now() fallback ~1.7e12)
+  // backend ke Int32 me fit nahi hota → "One or more validation errors occurred". Aise me
+  // list refresh karke real id lena zaroori hai.
+  const editId = editing ? Number(editing.id) : 0;
+  if (editing && (!Number.isInteger(editId) || editId <= 0 || editId > 2147483647)) {
+    (toast || window.alert)('Please refresh the activity list, then edit again.', 'error');
+    return;
+  }
+
   setSaving(true);
 
   try {
@@ -1079,7 +1109,7 @@ function ActivityModal({ open, editing, onClose, onSave }) {
     const endIso = endDate.toISOString();
 
     const payload = {
-      id: editing?.id || 0,
+      id: editId,
       branchID: Number(sessionStorage.getItem('branchID')) || 0,
       sessionYearID: Number(
         sessionStorage.getItem('changeSessionId') ||
@@ -1110,10 +1140,15 @@ function ActivityModal({ open, editing, onClose, onSave }) {
 
     const json = await res.json().catch(() => ({}));
 
-    if (!res.ok) throw new Error(`Failed: ${res.status}`);
+    if (!res.ok) {
+      const msg = (json && (json.message || json.title)) ||
+        (json?.errors ? 'One or more validation errors occurred.' : '') ||
+        `Save failed: ${res.status}`;
+      throw new Error(msg);
+    }
 
     onSave({
-      id: editing?.id || json?.id || json?.data?.id || Date.now(),
+      id: editId || json?.id || json?.data?.id || Date.now(),
       name: name.trim(),
       start: fmt(start),
       end: fmt(end),
@@ -1127,6 +1162,7 @@ function ActivityModal({ open, editing, onClose, onSave }) {
     });
   } catch (e) {
     console.error('Error saving activity:', e);
+    (toast || window.alert)(e.message || 'Could not save activity', 'error');
   } finally {
     setSaving(false);
   }
@@ -1243,8 +1279,15 @@ async function generateReportWindow(name, style, format, ctx, classesData, subje
 
   const textbookSubjects = Array.isArray(subjectsForReport) ? subjectsForReport : null;
   const isTextbookReport = textbookSubjects !== null;
-  const isAcademic = name.includes('Academic');
-  const isActivity = name.includes('Activity');
+  /* Whole-calendar reports are triggered ONLY by the exact calendar-download buttons
+     ('Academic Calendar' / 'Activity Calendar'). Individual activity downloads pass the
+     activity's own name (ev.name) — jo bhi ho, wo neeche single-activity branch mein jaye,
+     chahe uske naam mein "Activity"/"Academic" word ho. (Pehle .includes() se collide ho raha tha.) */
+  const isAcademic = name === 'Academic Calendar';
+  const isActivity = name === 'Activity Calendar';
+  /* Activity report ka current-view period (Month/Week/Day/Year) — header title me dikhega. */
+  const periodLabel = ctx?.periodLabel || '';
+  const displayTitle = (isActivity && periodLabel) ? `${name} — ${periodLabel}` : name;
 
   /* Status pill — colored fill in Colorful; bordered text-only pill in Colorless. */
   const statusPill = (s) => {
@@ -1368,7 +1411,7 @@ async function generateReportWindow(name, style, format, ctx, classesData, subje
           </div>
         </div>
         <div style="height:1px;background:${headerDivCol};margin:18px 0 16px;position:relative;z-index:2"></div>
-        <div style="font-size:22px;font-weight:800;letter-spacing:-.02em;margin-bottom:4px">${name}</div>
+        <div style="font-size:22px;font-weight:800;letter-spacing:-.02em;margin-bottom:4px">${displayTitle}</div>
        <div style="font-size:13px;color:${headerSubFg};margin-bottom:16px">${academicSession ? `Academic Year ${academicSession}` : 'Academic Year 2026–2027'} · ${styleLabel} Report</div>
         <div style="display:flex;gap:10px;flex-wrap:wrap">
           <div style="background:${chipBg};border:1px solid ${chipBorder};padding:6px 14px;border-radius:20px;font-size:11.5px"><strong>Generated:</strong> ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}</div>
@@ -1384,7 +1427,7 @@ async function generateReportWindow(name, style, format, ctx, classesData, subje
           </div>
         </div>
         <div style="height:1px;background:${headerDivCol};margin:16px 0 14px"></div>
-        <div style="font-size:21px;font-weight:800;letter-spacing:-.02em;margin-bottom:3px;color:${headerFg}">${name}</div>
+        <div style="font-size:21px;font-weight:800;letter-spacing:-.02em;margin-bottom:3px;color:${headerFg}">${displayTitle}</div>
         <div style="font-size:12.5px;color:${headerSubFg};margin-bottom:14px">${academicSession ? `Academic Year ${academicSession}` : 'Academic Year 2026–2027'} · ${styleLabel} Report (low-ink)</div>
         <div style="display:flex;gap:10px;flex-wrap:wrap">
           <div style="background:${chipBg};border:1px solid ${chipBorder};padding:5px 12px;border-radius:20px;font-size:11px;color:${textD}"><strong>Generated:</strong> ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}</div>
@@ -1420,20 +1463,78 @@ async function generateReportWindow(name, style, format, ctx, classesData, subje
 /* ═══════════════════════════════════════════════════════════════════
    ACTIVITY CALENDAR PANEL — stats, calendar views, events panel
    ═══════════════════════════════════════════════════════════════════ */
-function ActivityCalendar({ events, setEvents, onReport, onAdd, onEdit, openConfirm, toast, isOtherSession }) {
+function ActivityCalendar({ events, setEvents, onReport, onAdd, onEdit, openConfirm, toast, isOtherSession, reloadKey }) {
   const today = useMemo(() => new Date(), []);
   const [calYear,  setCalYear]  = useState(today.getFullYear());
 const [calMonth, setCalMonth] = useState(today.getMonth()); // current month
   const [view, setView] = useState('Month');
+  const [weekOffset, setWeekOffset] = useState(0); // Week view ka anchor (lifted — report scope ke liye)
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState('all');
   const [monthApiEnabled, setMonthApiEnabled] = useState(false);
   const [monthEvents, setMonthEvents] = useState([]);
- const displayEvents = monthApiEnabled 
-  ? [...monthEvents, ...events.filter(ev => 
+ const displayEvents = monthApiEnabled
+  ? [...monthEvents, ...events.filter(ev =>
       !monthEvents.some(me => me.id === ev.id)
     )]
   : events;
+  /* List view visible month (calYear/calMonth) tak scoped hona chahiye — warna August mein
+     July wali activity bhi dikh jaati hai. Activity ko month mein tab count karo jab uski
+     date-range us month se overlap kare (start <= monthEnd && end >= monthStart). */
+  const monthScopedEvents = useMemo(() => {
+    const mStart = new Date(calYear, calMonth, 1, 0, 0, 0);
+    const mEnd   = new Date(calYear, calMonth + 1, 0, 23, 59, 59);
+    return displayEvents.filter(ev => {
+      const s = new Date(ev.rawStart || ev.start);
+      const e = new Date(ev.rawEnd || ev.end || ev.rawStart || ev.start);
+      if (isNaN(s.getTime()) || isNaN(e.getTime())) return true; // date parse na ho to safety mein dikha do
+      return s <= mEnd && e >= mStart;
+    });
+  }, [displayEvents, calYear, calMonth]);
+
+  /* Whole-activity report ko CURRENT VIEW ke period tak scope karo:
+       Month → us month ki, Week → us week ki, Day → aaj ki, Year → us saal ki, List → month ki.
+     Activity period me tab aati hai jab uski date-range us range se overlap kare. */
+  const getReportScope = () => {
+    const evs = events; // poora dataset (backend se) — Year/Week bhi doosre months tak sahi rahe
+    const overlaps = (ev, start, end) => {
+      const s = new Date(ev.rawStart || ev.start);
+      const e = new Date(ev.rawEnd || ev.end || ev.rawStart || ev.start);
+      if (isNaN(s.getTime()) || isNaN(e.getTime())) return true;
+      return s <= end && e >= start;
+    };
+    const dOnly = (d) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    const monthName = new Date(calYear, calMonth, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+
+    if (view === 'Year') {
+      const start = new Date(calYear, 0, 1, 0, 0, 0);
+      const end   = new Date(calYear, 11, 31, 23, 59, 59);
+      return { events: evs.filter(ev => overlaps(ev, start, end)), label: `Year ${calYear}` };
+    }
+    if (view === 'Day') {
+      const t = new Date();
+      const start = new Date(t.getFullYear(), t.getMonth(), t.getDate(), 0, 0, 0);
+      const end   = new Date(t.getFullYear(), t.getMonth(), t.getDate(), 23, 59, 59);
+      return { events: evs.filter(ev => overlaps(ev, start, end)), label: t.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }) };
+    }
+    if (view === 'Week') {
+      // WeekView jaisa hi anchor: mahine ki 1 tareekh se weekOffset*7 din aage.
+      const start = new Date(calYear, calMonth, 1);
+      start.setDate(1 + weekOffset * 7);
+      start.setHours(0, 0, 0, 0);
+      const end = new Date(start);
+      end.setDate(start.getDate() + 6);
+      end.setHours(23, 59, 59, 0);
+      return { events: evs.filter(ev => overlaps(ev, start, end)), label: `Week: ${dOnly(start)} – ${dOnly(end)}` };
+    }
+    // Month + List → current month
+    const start = new Date(calYear, calMonth, 1, 0, 0, 0);
+    const end   = new Date(calYear, calMonth + 1, 0, 23, 59, 59);
+    return { events: evs.filter(ev => overlaps(ev, start, end)), label: monthName };
+  };
+  /* Month/year badalne par Week anchor ko us month ke pehle week par reset karo. */
+  useEffect(() => { setWeekOffset(0); }, [calMonth, calYear]);
+
   /* Jab visible month/year badle, us month ki activities backend se laao. */
  useEffect(() => {
   if (!monthApiEnabled) return;
@@ -1446,7 +1547,7 @@ const [calMonth, setCalMonth] = useState(today.getMonth()); // current month
       console.error('Error loading month activities:', e);
     }
   })();
-}, [calMonth, calYear, monthApiEnabled]);
+}, [calMonth, calYear, monthApiEnabled, reloadKey]);
 
   /* 3-dot dropdown — uses fixed positioning so it can never clip behind other cards */
   const [dropdown, setDropdown] = useState({ id: null, x: 0, y: 0 });
@@ -1591,8 +1692,23 @@ const nextMonth = () => {
     iconColor: '#DC2626',
     onConfirm: async () => {
       try {
+        // Date ko hamesha valid ISO bhejo — khaali string ('') backend ke DateTime bind ko
+        // fail kar deti hai ("One or more validation errors occurred").
+        const toIso = (v) => {
+          const d = new Date(v);
+          return isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString();
+        };
+        const idNum = Number(ev.id);
+        // Fake/oversized id (jaise Date.now() fallback ~1.7e12) backend ke Int32 me fit nahi hota
+        // → validation error. Ye tab hota hai jab abhi-add ki hui activity ka real backend id
+        // humare paas nahi. Aise me list refresh karke real id lena zaroori hai.
+        if (!Number.isInteger(idNum) || idNum <= 0 || idNum > 2147483647) {
+          toast('Please refresh the activity list, then delete again.', 'error');
+          return;
+        }
+
         const payload = {
-          id: ev.id,
+          id: idNum,
           branchID: Number(sessionStorage.getItem('branchID')) || 0,
           sessionYearID: Number(
             sessionStorage.getItem('changeSessionId') ||
@@ -1603,8 +1719,8 @@ const nextMonth = () => {
           activityPurpose: ev.purpose || 'string',
           activityDevelopment: ev.development || 'string',
           resourseMaterial: ev.resource || 'string',
-          startAt: ev.rawStart || '',
-          endAt: ev.rawEnd || '',
+          startAt: toIso(ev.rawStart || ev.start),
+          endAt: toIso(ev.rawEnd || ev.end || ev.rawStart || ev.start),
           createdDate: new Date().toISOString(),
           action: 'delete',
         };
@@ -1628,6 +1744,7 @@ const nextMonth = () => {
         }
 
         setEvents(prev => prev.filter(e => e.id !== ev.id));
+        setMonthEvents(prev => prev.filter(e => e.id !== ev.id)); // month-API view bhi update ho
         toast(`"${ev.name}" deleted`, 'success');
       } catch (error) {
         console.error('Error deleting activity:', error);
@@ -1713,18 +1830,18 @@ const nextMonth = () => {
                 ))}
               </div>
               <div style={{ display: 'flex', gap: 6 }}>
-                <Tooltip text="Download Activity Calendar as PDF">
+                <Tooltip text={`Download ${view} activities as PDF`}>
                   <button
                     className="act-icon-btn act-icon-btn--pdf"
-                    onClick={() => onReport('Activity Calendar', 'pdf')}
+                    onClick={() => onReport('Activity Calendar', 'pdf', null, getReportScope())}
                   >
                     <i className="fa-solid fa-file-pdf"></i>
                   </button>
                 </Tooltip>
-                <Tooltip text="Download Activity Calendar as Word">
+                <Tooltip text={`Download ${view} activities as Word`}>
                   <button
                     className="act-icon-btn act-icon-btn--word"
-                    onClick={() => onReport('Activity Calendar', 'word')}
+                    onClick={() => onReport('Activity Calendar', 'word', null, getReportScope())}
                   >
                     <i className="fa-brands fa-microsoft"></i>
                   </button>
@@ -1783,11 +1900,11 @@ const nextMonth = () => {
               </div>
             </>
           ) : view === 'Week' ? (
-  <WeekView events={displayEvents} calYear={calYear} calMonth={calMonth} />
+  <WeekView events={displayEvents} calYear={calYear} calMonth={calMonth} weekOffset={weekOffset} setWeekOffset={setWeekOffset} />
 ) : view === 'Day' ? (
   <DayView events={displayEvents} />
 ) : view === 'List' ? (
-  <ListView events={displayEvents} onReport={onReport} onEdit={onEdit} isOtherSession={isOtherSession} />
+  <ListView events={monthScopedEvents} onReport={onReport} onEdit={onEdit} isOtherSession={isOtherSession} />
 ) : (
   <YearView
     events={displayEvents}
@@ -1907,9 +2024,8 @@ const nextMonth = () => {
 }
 
 /* ─── Activity-calendar non-month views ─── */
-function WeekView({ events, calYear, calMonth }) {
+function WeekView({ events, calYear, calMonth, weekOffset = 0, setWeekOffset = () => {} }) {
   const today = new Date();
-  const [weekOffset, setWeekOffset] = useState(0);
 
   // Start from first day of the selected month
  const firstOfMonth = new Date(calYear, calMonth, 1);
@@ -2455,7 +2571,7 @@ const mapActivity = (a, i) => {
     console.log('Mapping activity:', a, '→ rawStart:', rawStart, 'rawEnd:', rawEnd);
 
   return {
-    id: a.id || a.activityID || a.activityId || Date.now() + i,
+    id: a.id ?? a.ID ?? a.Id ?? a.activityID ?? a.activityId ?? a.activityCalendarID ?? a.activityCalendarId ?? (Date.now() + i),
     name: a.name || a.activityName || a.title || 'Activity',
     start: actFmtDate(rawStart),
     end: actFmtDate(rawEnd),

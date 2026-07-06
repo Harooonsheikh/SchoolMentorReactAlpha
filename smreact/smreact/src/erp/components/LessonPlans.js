@@ -162,9 +162,7 @@ const LESSON_SECTIONS_UR = [
   { key: 'devel', title: '🔬 ترقی / مرکزی تدریس',              hint: 'نئے مفہوم یا مہارت کی مرحلہ وار وضاحت',     mins: '20' },
   { key: 'recap', title: '✅ خلاصہ / اعادہ',                    hint: 'آپ کیسے جانچیں گے کہ طلباء نے آج کیا سیکھا؟', mins: '10' },
 ];
-/* Per-section default minutes (slo/intro/devel/recap). The four section
-   timings must add up to the lesson's Time Duration. */
-const DEFAULT_SEC_MINS = { slo: '05', intro: '05', devel: '20', recap: '10' };
+/* Section timings user khud set karta hai; sum === Time Duration (validation on save). */
 const onlyNum = v => String(v ?? '').replace(/[^0-9]/g, '');
 
 /* Auto-split the lesson's Time Duration across the four sections by their
@@ -3904,19 +3902,62 @@ async function fetchEmployeeSubjects(gradeId, sectionId, empId) {
    child item level. A master counts as "submitted" if ANY of its items is
    submitted; otherwise it is pending. e.g. 3 units, 2 with something submitted
    → total 3, submitted 2, pending 1. */
+/* Lesson-plan submission stats for one class+section+subject (master level).
+   total = ULP master rows; submitted = masters jinke detail par suggestion record maujood ho
+   (teacher-side fetchData jaisa hi criterion). Notebook ke saath combine hota hai. */
+async function fetchLpSubmissionStats({ classID, sectionID, subjectID }) {
+  try {
+    const branchID = lpBranchId();
+    const headers = lpGetHeaders();
+    const mres = await fetch(
+      buildUrl(`/api/getulpforclassesmaster?branchID=${branchID}&classID=${classID}&SectionID=${sectionID}&subjectID=${subjectID}&pageNo=1`),
+      { method: 'GET', headers },
+    );
+    const masters = ((await mres.json())?.data || []);
+    let submitted = 0;
+    await lpMapLimited(masters, 4, async (m) => {
+      try {
+        const dres = await fetch(
+          buildUrl(`/api/getulpforclassdetailbytermsubjectandclass?MasterClassesID=${m.id}&classID=${classID}&subjectID=${subjectID}&pageNo=1`),
+          { method: 'GET', headers },
+        );
+        const d = ((await dres.json())?.data || [])[0];
+        if (!d?.id) return;
+        const sres = await fetch(
+          buildUrl(`/api/getulpforclasssuggestion?BranchID=${branchID}&ClassID=${classID}&SubjectID=${subjectID}&DetailClassID=${d.id}&pageNo=1`),
+          { method: 'GET', headers },
+        );
+        const s = ((await sres.json())?.data || [])[0];
+        if (s) submitted += 1; // single-threaded → increment safe
+      } catch (_) { /* skip this master */ }
+    });
+    return { total: masters.length, submitted };
+  } catch (e) {
+    console.error('fetchLpSubmissionStats failed', { classID, sectionID, subjectID }, e);
+    return { total: 0, submitted: 0 };
+  }
+}
+
 async function fetchSubmissionStats({ classID, sectionID, subjectID }) {
   try {
-    const units = await loadNbSubmissionData({ branchID: lpBranchId(), classID, sectionID, subjectID });
-    let total = 0, submitted = 0;
-    units.forEach(u => {
-      total += 1;
-      const hasSubmitted = u.questionTypes.some(qt => qt.items.some(it => it.status === 'submitted'));
-      if (hasSubmitted) submitted += 1;
-    });
-    return { total, submitted, units: units.length };
+    /* Lesson-plan + Notebook DONO ki combined stats (admin overall values). */
+    const [nb, lp] = await Promise.all([
+      (async () => {
+        const units = await loadNbSubmissionData({ branchID: lpBranchId(), classID, sectionID, subjectID });
+        let total = 0, submitted = 0;
+        units.forEach(u => {
+          total += 1;
+          const hasSubmitted = u.questionTypes.some(qt => qt.items.some(it => it.status === 'submitted'));
+          if (hasSubmitted) submitted += 1;
+        });
+        return { total, submitted };
+      })(),
+      fetchLpSubmissionStats({ classID, sectionID, subjectID }),
+    ]);
+    return { total: nb.total + lp.total, submitted: nb.submitted + lp.submitted };
   } catch (e) {
     console.error('fetchSubmissionStats failed', { classID, sectionID, subjectID }, e);
-    return { total: 0, submitted: 0, units: 0 };
+    return { total: 0, submitted: 0 };
   }
 }
 
@@ -4134,6 +4175,20 @@ function Submissions({ toast, classesData = [] }) {
   useEffect(() => {
     if (role !== 'admin' || adminLoaded) return;
     let alive = true;
+    const cacheKey = `subm_admin_v2_${sessionStorage.getItem('branchID') || ''}`;
+    /* 1) Cached aggregate FORAN dikhao (stale-while-revalidate) — admin dobara khulne par
+       instant data, poora sweep dobara nahi chalta. Pehli dfa cache nahi hota to normal load. */
+    let hadCache = false;
+    try {
+      const cached = JSON.parse(sessionStorage.getItem(cacheKey) || 'null');
+      if (cached && Array.isArray(cached.branchMatrix) && Array.isArray(cached.teacherRows)) {
+        hadCache = true;
+        if (cached.adminGrades) setAdminGrades(cached.adminGrades);
+        if (cached.adminEmployees) setAdminEmployees(cached.adminEmployees);
+        setBranchMatrix(cached.branchMatrix);
+        setTeacherRows(cached.teacherRows);
+      }
+    } catch (_) { /* corrupt cache — ignore */ }
     (async () => {
       try {
         const [grades, employees] = await Promise.all([fetchBranchGrades(), fetchBranchEmployees()]);
@@ -4141,13 +4196,22 @@ function Submissions({ toast, classesData = [] }) {
         setAdminGrades(grades);
         setAdminEmployees(employees);
         setAdminLoaded(true);
-        /* Teacher card is self-contained (computes its own stats) so it can run
-           in parallel with the branch-matrix sweep that feeds the other cards. */
-        buildTeacherAggregate(grades, employees);
-        buildBranchMatrix(grades);
+        /* 2) Background refresh — cache maujood ho to loaders suppress (cached data flicker na ho).
+           Teacher aggregate + branch matrix parallel. Complete hote hi cache update. */
+        const [matrix, tRows] = await Promise.all([
+          buildBranchMatrix(grades, { background: hadCache }),
+          buildTeacherAggregate(grades, employees, { background: hadCache }),
+        ]);
+        if (!alive) return;
+        try {
+          sessionStorage.setItem(cacheKey, JSON.stringify({
+            adminGrades: grades, adminEmployees: employees,
+            branchMatrix: matrix || [], teacherRows: tRows || [],
+          }));
+        } catch (_) { /* quota — ignore */ }
       } catch (e) {
         console.error('Error loading admin overview:', e);
-        toast('Could not load admin overview', 'error');
+        if (!hadCache) toast('Could not load admin overview', 'error');
       }
     })();
     return () => { alive = false; };
@@ -4156,9 +4220,9 @@ function Submissions({ toast, classesData = [] }) {
 
   /* Branch matrix: per (grade, section) resolve each subject's submission stats
      ONCE. The teacher / class / subject cards are all derived from this. */
-  const buildBranchMatrix = async (grades) => {
+  const buildBranchMatrix = async (grades, { background = false } = {}) => {
     if (!grades.length) { setBranchMatrix([]); return []; }
-    setMatrixLoading(true);
+    if (!background) setMatrixLoading(true);
     try {
       const pairs = [];
       grades.forEach(g => (g.sections.length ? g.sections : [{ sectionId: 0, sectionName: '' }])
@@ -4180,10 +4244,10 @@ function Submissions({ toast, classesData = [] }) {
       return cells;
     } catch (e) {
       console.error('Error building branch matrix:', e);
-      toast('Could not load submission analytics', 'error');
+      if (!background) toast('Could not load submission analytics', 'error');
       return [];
     } finally {
-      setMatrixLoading(false);
+      if (!background) setMatrixLoading(false);
     }
   };
 
@@ -4192,9 +4256,9 @@ function Submissions({ toast, classesData = [] }) {
      directly. One row per (teacher × class × subject) so a teacher with 3
      subjects in a class yields 3 separate cards. Self-contained — does NOT depend
      on the branch matrix, so it always shows a teacher who has assigned subjects. */
-  const buildTeacherAggregate = async (grades, employees) => {
-    if (!grades.length || !employees.length) { setTeacherRows([]); return; }
-    setTeacherLoading(true);
+  const buildTeacherAggregate = async (grades, employees, { background = false } = {}) => {
+    if (!grades.length || !employees.length) { setTeacherRows([]); return []; }
+    if (!background) setTeacherLoading(true);
     try {
       const pairs = [];
       grades.forEach(g => (g.sections.length ? g.sections : [{ sectionId: 0, sectionName: '' }])
@@ -4230,10 +4294,12 @@ function Submissions({ toast, classesData = [] }) {
       });
       console.log('[admin] teacher aggregate →', { employees: employees.length, rows: rows.length });
       setTeacherRows(rows);
+      return rows;
     } catch (e) {
       console.error('Error building teacher aggregate:', e);
+      return [];
     } finally {
-      setTeacherLoading(false);
+      if (!background) setTeacherLoading(false);
     }
   };
 
@@ -4297,6 +4363,12 @@ function Submissions({ toast, classesData = [] }) {
   const nbPct = nbTotal ? Math.round((nbSubmitted / nbTotal) * 100) : 0;
   const nbUnits = nbData.length;
   const nbQTypes = nbData.reduce((a, u) => a + u.questionTypes.length, 0);
+
+  /* Combined (Lesson Plans + Notebook) overall — total/submitted/pending/percentage. */
+  const combTotal = lpTotal + nbTotal;
+  const combSubmitted = lpSubmitted + nbSubmitted;
+  const combPending = combTotal - combSubmitted;
+  const combPct = combTotal ? Math.round((combSubmitted / combTotal) * 100) : 0;
 
   // Helper functions to process classesData
   const getUniqueClasses = () => {
@@ -4659,6 +4731,26 @@ function Submissions({ toast, classesData = [] }) {
        {/* ── MAIN AREA ── */}
       {role === 'teacher' && fetched && (
         <div>
+          {/* Combined Lesson + Notebook overall — dono plans ka total/submitted/pending/% */}
+          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12, padding: '10px 16px', margin: '0 0 12px', borderRadius: 12, background: 'linear-gradient(135deg,#EFF6FF,#F5F3FF)', border: '1px solid #DBEAFE' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 800, color: '#1E3A8A', fontSize: 13 }}>
+              <i className="fa-solid fa-layer-group"></i> Overall — Lesson + Notebook
+            </div>
+            <div style={{ display: 'flex', gap: 20, marginLeft: 'auto', flexWrap: 'wrap' }}>
+              {[
+                { v: combTotal,     l: 'TOTAL',     c: '#1E40AF' },
+                { v: combSubmitted, l: 'SUBMITTED', c: '#16A34A' },
+                { v: combPending,   l: 'PENDING',   c: '#D97706' },
+                { v: `${combPct}%`, l: 'OVERALL',   c: '#7C3AED' },
+              ].map(x => (
+                <div key={x.l} style={{ textAlign: 'center', minWidth: 56 }}>
+                  <div style={{ fontSize: 17, fontWeight: 900, color: x.c, lineHeight: 1 }}>{x.v}</div>
+                  <div style={{ fontSize: 9.5, color: '#64748B', fontWeight: 700, letterSpacing: '.4px', marginTop: 3 }}>{x.l}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
           {/* Analytics strip — switches by inner tab */}
           {inner === 'lp' ? (
             <div className="sub-analytics-strip">
@@ -5014,6 +5106,14 @@ function LpViewerModal({ plan, ctx = {}, toast = () => {}, onClose, onSubmit }) 
   if (!plan) return null;
   const isSubmitted = plan.status === 'submitted';
 
+  /* Validation: khaali lesson plan submit na ho. Kisi bhi section (SLO / Introduction /
+     Development / Recap) me real content ho tabhi submit allowed. HTML tags/&nbsp;/spaces
+     hata ke check karte hain taake khaali <p></p> ya sirf spaces "content" na gine jayein. */
+  const stripTxt = (v) => String(v ?? '').replace(/<[^>]*>/g, '').replace(/&nbsp;/gi, ' ').replace(/\s+/g, ' ').trim();
+  const hasLpContent = !!detail && [
+    detail.learningObjective, detail.lessonIntroduction, detail.development, detail.recap,
+  ].some(v => stripTxt(v).length > 0);
+
   /* Saves the suggestion (insert/update) even when empty. Returns true on success. */
   const saveSuggestion = async ({ silent = false } = {}) => {
     if (!detail?.id) { if (!silent) toast('No lesson detail to attach the suggestion to', 'error'); return false; }
@@ -5133,11 +5233,23 @@ function LpViewerModal({ plan, ctx = {}, toast = () => {}, onClose, onSubmit }) 
               <i className="fa-solid fa-xmark"></i> Close
             </button>
           </Tooltip>
-          <Tooltip text={isSubmitted ? 'This lesson plan has already been submitted' : 'Save the suggestion and submit this lesson plan'}>
+          <Tooltip text={isSubmitted
+            ? 'This lesson plan has already been submitted'
+            : (!hasLpContent ? 'Add lesson plan details first — empty plans cannot be submitted'
+                             : 'Save the suggestion and submit this lesson plan')}>
             <button
               className={`lp-viewer-submit-btn${isSubmitted ? ' done' : ''}`}
-              disabled={isSubmitted || savingSug}
-              onClick={async () => { await saveSuggestion({ silent: true }); onSubmit(); }}
+              disabled={isSubmitted || savingSug || loading}
+              style={(!isSubmitted && !loading && !hasLpContent) ? { opacity: .55 } : undefined}
+              onClick={async () => {
+                // Validation: khaali lesson plan submit na ho — clear reason toast.
+                if (!hasLpContent) {
+                  toast('Cannot submit — this lesson plan has no details. Please add content first.', 'error');
+                  return;
+                }
+                await saveSuggestion({ silent: true });
+                onSubmit();
+              }}
             >
               {isSubmitted
                 ? <><i className="fa-solid fa-circle-check"></i> Already Submitted</>
@@ -5403,8 +5515,19 @@ function SubmissionsAdminPanel({
   subjOptions, subjCardSel, subjCardRows, onSubjCardSel,
   onReport, toast,
 }) {
-  const totalSub   = teacherRows.reduce((a, t) => a + t.submitted, 0);
-  const totalPlans = teacherRows.reduce((a, t) => a + t.total, 0);
+  /* Overall totals: plans (class·section·subject) ke against store hote hain, teacher ke
+     against nahi. Do teacher agar SAME class+subject padhate hon to teacherRows me 2 rows
+     aati hain (same plans) — sum karne se double-count ho jaata. Is liye (class||subject)
+     par DEDUPE karke har subject-set ko sirf EK dafa ginte hain. */
+  const _seenCS = new Set();
+  let totalSub = 0, totalPlans = 0;
+  teacherRows.forEach(t => {
+    const k = `${t.className}||${(t.subject || '').trim().toLowerCase()}`;
+    if (_seenCS.has(k)) return;
+    _seenCS.add(k);
+    totalSub   += t.submitted;
+    totalPlans += t.total;
+  });
   const overallPct = totalPlans ? Math.round((totalSub / totalPlans) * 100) : 0;
   const teacherCount = new Set(teacherRows.map(t => t.name)).size;
 
@@ -5696,7 +5819,7 @@ tbody tr:nth-child(even) td{background:${C.rowAlt}}
 .tag{display:inline-flex;align-items:center;gap:3px;padding:2px 7px;border-radius:99px;font-size:9.5px;font-weight:700;white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis}
 .tag-sub{background:${C.isColor ? 'rgba(22,163,74,.1)' : '#E8E8E8'};color:${C.green};border:1px solid ${C.isColor ? 'rgba(22,163,74,.2)' : '#CCC'}}
 .tag-pend{background:${C.isColor ? 'rgba(217,119,6,.1)' : '#EBEBEB'};color:${C.amber};border:1px solid ${C.isColor ? 'rgba(217,119,6,.2)' : '#CCC'}}
-.tag-na{background:${C.isColor ? 'rgba(30,58,138,.08)' : '#EBEBEB'};color:${C.brand};border:1px solid ${C.border}}
+.tag-na{background:${C.isColor ? 'rgba(30,58,138,.08)' : '#EBEBEB'};color:${C.brand};border:1px solid ${C.border};max-width:none;overflow:visible;text-overflow:clip;white-space:normal;word-break:break-word;text-align:center}
 
 .pbar-outer{display:inline-flex;align-items:center;gap:5px;max-width:100%}
 .pbar-track{width:54px;max-width:100%;height:5px;border-radius:99px;background:${C.isColor ? 'rgba(30,58,138,.1)' : '#E0E0E0'};overflow:hidden;display:inline-block;vertical-align:middle;flex-shrink:1}
@@ -6140,9 +6263,9 @@ function buildAdminTeacherReport(isColor, reportHeader = null, rows = []) {
 
   html += `<div class="sec-title">Teacher Performance Breakdown</div>
   <table><thead><tr>
-    <th>#</th><th>Teacher</th><th>Subject</th><th>Class</th>
-    <th style="text-align:center">Total</th><th style="text-align:center">Submitted</th>
-    <th style="text-align:center">Pending</th><th>Progress</th>
+    <th style="width:4%">#</th><th style="width:20%">Teacher</th><th style="width:16%">Subject</th><th style="width:16%">Class</th>
+    <th style="text-align:center;width:8%">Total</th><th style="text-align:center;width:10%">Submitted</th>
+    <th style="text-align:center;width:10%">Pending</th><th style="width:16%">Progress</th>
   </tr></thead><tbody>`;
   teachers.forEach((t, i) => {
     const pct = pctOf(t.submitted, t.total);
@@ -6527,6 +6650,13 @@ function LessonEditModal({ ctx, onSave, onClose, toast }) {
      it and restore it before running any execCommand. */
   const savedRangeRef  = useRef(null);
   const savedEditorRef = useRef(null);
+  /* Editor me select ki hui <img> (resize/align ke liye). imgTick sirf overlay ko
+     img ke saath reposition karne ke liye re-render trigger karta hai. */
+  const [imgSel, setImgSel] = useState(null);
+  const [, setImgTick] = useState(0);
+  /* Section timings — ab USER khud set karta hai (auto-divide nahi). Har section blank
+     rehta hai; save par validation: sum(sections) === Time Duration. */
+  const [secMins, setSecMins] = useState({ slo: '', intro: '', devel: '', recap: '' });
 
   useEffect(() => {
     if (!ctx) return;
@@ -6548,11 +6678,13 @@ function LessonEditModal({ ctx, onSave, onClose, toast }) {
         num: l.num || '',
         topic: (isSel && d) ? (d.lessonPlanTopic ?? l.topic) : (l.topic || ''),
         duration: (isSel && d) ? (d.timeDuration || '') : (l.duration || ''),
+        /* Saved detail se jo values hain wahi load karo (user ne jo set ki thi);
+           nayi lesson me blank — auto-divide NAHI. */
         secMins: (isSel && d) ? {
-          slo:   onlyNum(d.timeForLearning)    || DEFAULT_SEC_MINS.slo,
-          intro: onlyNum(d.timeForLesson)      || DEFAULT_SEC_MINS.intro,
-          devel: onlyNum(d.timeForDevelopment) || DEFAULT_SEC_MINS.devel,
-          recap: onlyNum(d.timeForRecap)       || DEFAULT_SEC_MINS.recap,
+          slo:   onlyNum(d.timeForLearning),
+          intro: onlyNum(d.timeForLesson),
+          devel: onlyNum(d.timeForDevelopment),
+          recap: onlyNum(d.timeForRecap),
         } : (l.secMins || null),
         contentMap: (isSel && detailMap) ? detailMap : (l.contentMap || {}),
         source: l.source || 'manual',
@@ -6575,7 +6707,6 @@ function LessonEditModal({ ctx, onSave, onClose, toast }) {
   /* Section minutes are auto-divided from the Time Duration — the user does
      not edit them. They always sum back to the total. */
   const durationNum = parseInt(duration, 10) || 0;
-  const secMins = distributeMins(duration);
   const sectionsTotal = sections.reduce((a, s) => a + (parseInt(secMins[s.key], 10) || 0), 0);
 
   /* Sync editor DOM when selection/lang changes, or when the current lesson's
@@ -6589,8 +6720,32 @@ function LessonEditModal({ ctx, onSave, onClose, toast }) {
       if (el) el.innerHTML = currentLesson.contentMap?.[s.key] || '';
     });
     setDuration(currentLesson.duration || '');
+    setSecMins(currentLesson.secMins || { slo: '', intro: '', devel: '', recap: '' });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedIdx, lang, ctx, currentLesson.contentMap]);
+
+  /* Image resize/align overlay ko scroll/resize par img ke saath reposition karo; bahar
+     click/Escape par band. (Hook — early return se PEHLE hona chahiye taake har render me chale.) */
+  useEffect(() => {
+    if (!imgSel) return undefined;
+    const reposition = () => setImgTick(t => t + 1);
+    const onDocDown = (e) => {
+      if (e.target.closest && e.target.closest('.clpm-img-overlay')) return; // overlay ke andar
+      if (e.target.tagName === 'IMG') return; // koi image click — editor onClick handle karega
+      setImgSel(null);
+    };
+    const onKey = (e) => { if (e.key === 'Escape') setImgSel(null); };
+    window.addEventListener('scroll', reposition, true);
+    window.addEventListener('resize', reposition);
+    document.addEventListener('mousedown', onDocDown, true);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('scroll', reposition, true);
+      window.removeEventListener('resize', reposition);
+      document.removeEventListener('mousedown', onDocDown, true);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [imgSel]);
 
   if (!ctx) return null;
 
@@ -6601,7 +6756,9 @@ function LessonEditModal({ ctx, onSave, onClose, toast }) {
    const range = sel.getRangeAt(0);
    const ed = Object.values(editorRefs.current)
      .find(el => el && el.contains(range.commonAncestorContainer));
-   if (ed) { savedRangeRef.current = range; savedEditorRef.current = ed; }
+   // CLONE karo — getRangeAt(0) live range deta hai; agar koi popup (math/link/image ka
+   // input) focus le le to ye range collapse ho jaata hai aur restore par kuch insert nahi hota.
+   if (ed) { savedRangeRef.current = range.cloneRange(); savedEditorRef.current = ed; }
  };
  /* Re-focus the editor and restore the remembered selection so execCommand
     targets the right place even after a popup stole focus. */
@@ -6617,6 +6774,59 @@ function LessonEditModal({ ctx, onSave, onClose, toast }) {
    }
    return true;
  };
+
+ /* ── Editor image resize/align ──────────────────────────────────────────
+    contentEditable me <img> ko browser resize handles nahi deta (Chrome), is liye
+    hum image click par ek overlay dikhate hain: corner handle se drag-resize aur
+    toolbar se align (left/center/right) + preset widths. Style img par hi lagti hai,
+    is liye save/report me bhi wahi size/position chali jaati hai. */
+ const isEditorImg = (node) =>
+   node && node.tagName === 'IMG' &&
+   Object.values(editorRefs.current).some(ed => ed && ed.contains(node));
+
+ const onEditorClick = (e) => {
+   saveSelection(); // click par caret capture — math/insert ke liye reliable position
+   if (isEditorImg(e.target)) setImgSel(e.target);
+   else setImgSel(null);
+ };
+
+ const alignImg = (mode) => {
+   const img = imgSel; if (!img) return;
+   if (mode === 'inline') {
+     img.style.display = 'inline';
+     img.style.marginLeft = '';
+     img.style.marginRight = '';
+   } else {
+     img.style.display = 'block';
+     img.style.marginLeft = (mode === 'center' || mode === 'right') ? 'auto' : '0';
+     img.style.marginRight = (mode === 'center' || mode === 'left')  ? 'auto' : '0';
+   }
+   setImgTick(t => t + 1);
+   saveSelection();
+ };
+
+ const setImgWidth = (pct) => {
+   const img = imgSel; if (!img) return;
+   img.style.width = pct + '%';
+   img.style.height = 'auto';
+   img.style.maxWidth = '100%';
+   setImgTick(t => t + 1);
+   saveSelection();
+ };
+
+ /* Fine size nudge (± pixels) — button click par SIRF ek re-render (drag storm/crash nahi).
+    Drag-resize hata diya gaya kyunke wo app ko crash kar raha tha. */
+ const nudgeImg = (deltaPx) => {
+   const img = imgSel; if (!img) return;
+   const cur = img.getBoundingClientRect().width || 0;
+   const w = Math.max(40, Math.round(cur + deltaPx));
+   img.style.width = w + 'px';
+   img.style.height = 'auto';
+   img.style.maxWidth = '100%';
+   setImgTick(t => t + 1);
+   saveSelection();
+ };
+
 
  const exec = (cmd, val) => {
   restoreSelection();
@@ -6661,14 +6871,14 @@ function LessonEditModal({ ctx, onSave, onClose, toast }) {
 
   const saveCurrent = () => {
     const map = captureEditors();
-    updateLesson(selectedIdx, { duration, contentMap: map });
+    updateLesson(selectedIdx, { duration, contentMap: map, secMins });
     toast(`Lesson ${currentLesson.num || selectedIdx + 1} saved`, 'success');
   };
 
   const fetchLesson = idx => {
     /* commit current edits, then switch selection */
     const map = captureEditors();
-    updateLesson(selectedIdx, { duration, contentMap: map });
+    updateLesson(selectedIdx, { duration, contentMap: map, secMins });
     setSelectedIdx(idx);
   };
 
@@ -6681,11 +6891,12 @@ function LessonEditModal({ ctx, onSave, onClose, toast }) {
       devel: d.development        || '',
       recap: d.recap              || '',
     };
+    // Saved values load karo (user ne jo set ki); missing → blank (auto-fill nahi).
     const secMinsLoaded = {
-      slo:   onlyNum(d.timeForLearning)    || DEFAULT_SEC_MINS.slo,
-      intro: onlyNum(d.timeForLesson)      || DEFAULT_SEC_MINS.intro,
-      devel: onlyNum(d.timeForDevelopment) || DEFAULT_SEC_MINS.devel,
-      recap: onlyNum(d.timeForRecap)       || DEFAULT_SEC_MINS.recap,
+      slo:   onlyNum(d.timeForLearning),
+      intro: onlyNum(d.timeForLesson),
+      devel: onlyNum(d.timeForDevelopment),
+      recap: onlyNum(d.timeForRecap),
     };
     setLessons(ls => ls.map(l => l.record?.id === masterId
       ? { ...l, topic: d.lessonPlanTopic ?? l.topic, duration: d.timeDuration || '', secMins: secMinsLoaded, contentMap, detail: d }
@@ -6780,7 +6991,8 @@ function LessonEditModal({ ctx, onSave, onClose, toast }) {
     if (!masterId) { toast('Save the topic first, then save the plan', 'error'); return; }
     const map = (li === selectedIdx) ? captureEditors() : (l.contentMap || {});
     const dur = (li === selectedIdx) ? duration : (l.duration || '');
-    const sm = distributeMins(dur);
+    // User-set section timings (auto-divide nahi). Current lesson → state se; warna lesson se.
+    const sm = (li === selectedIdx) ? secMins : (l.secMins || { slo: '', intro: '', devel: '', recap: '' });
     const d = l.detail || {};
     try {
       const result = await lpPost('/api/ulpforclassdetailcrud', {
@@ -6827,7 +7039,7 @@ function LessonEditModal({ ctx, onSave, onClose, toast }) {
     /* Persist the current lesson's plan detail, then hand the lesson back. */
     await saveDetail(selectedIdx);
     const map = captureEditors();
-    const target = { ...lessons[selectedIdx], duration, contentMap: map };
+    const target = { ...lessons[selectedIdx], duration, contentMap: map, secMins };
     onSave({ ...target });
   };
 
@@ -7049,15 +7261,29 @@ function LessonEditModal({ ctx, onSave, onClose, toast }) {
 
             {/* Rich text sections */}
             <div className="clpm-sections-area">
-              <div className="clpm-step-label" style={{ paddingTop: 4 }}>Lesson Plan Sections</div>
+              <div className="clpm-step-label" style={{ paddingTop: 4, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <span>Lesson Plan Sections</span>
+                {durationNum ? (
+                  <span style={{
+                    fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 99,
+                    background: sectionsTotal === durationNum ? 'rgba(22,163,74,.1)' : 'rgba(220,38,38,.1)',
+                    color: sectionsTotal === durationNum ? '#16A34A' : '#DC2626',
+                  }}>
+                    {sectionsTotal} / {durationNum} mins {sectionsTotal === durationNum ? '✓' : ''}
+                  </span>
+                ) : null}
+              </div>
               <div>
                 {sections.map((sec, i) => {
                   const timeInput = (
-                    <div className="clpm-time-input-wrap" title={isUrdu ? 'وقت کل دورانیے سے خودکار تقسیم' : 'Auto-divided from Time Duration'}>
+                    <div className="clpm-time-input-wrap" title={isUrdu ? 'اس حصے کے منٹ خود درج کریں' : 'Enter minutes for this section'}>
                       <i className="fa-regular fa-clock clpm-time-icon"></i>
-                      <input className="clpm-time-input" type="text" readOnly tabIndex={-1}
-                        value={secMins[sec.key] || '0'}
-                        style={{ background: 'transparent', cursor: 'default' }}
+                      <input className="clpm-time-input" type="text" inputMode="numeric" maxLength={3}
+                        value={secMins[sec.key] || ''}
+                        onChange={e => {
+                          const v = e.target.value.replace(/[^0-9]/g, '');
+                          setSecMins(m => ({ ...m, [sec.key]: v }));
+                        }}
                         placeholder="0" />
                       <span className="clpm-time-suffix">mins</span>
                     </div>
@@ -7154,7 +7380,32 @@ function LessonEditModal({ ctx, onSave, onClose, toast }) {
         const file = f.files && f.files[0];
         if (file) {
           const reader = new FileReader();
-          reader.onload = ev => exec('insertImage', ev.target.result);
+          reader.onload = ev => {
+            // Styled + selectable img node insert karo (bare execCommand ke bajaye) taake
+            // resize/align overlay isay pakad sake aur size/position user set kar sake.
+            restoreSelection();
+            const img = document.createElement('img');
+            img.src = ev.target.result;
+            img.className = 'clpm-img';
+            img.style.maxWidth = '100%';
+            img.style.height = 'auto';
+            img.style.cursor = 'pointer';
+            const sel = window.getSelection();
+            const ed = savedEditorRef.current;
+            if (sel && sel.rangeCount && ed && ed.contains(sel.getRangeAt(0).commonAncestorContainer)) {
+              const range = sel.getRangeAt(0);
+              range.deleteContents();
+              range.insertNode(img);
+              range.setStartAfter(img);
+              range.collapse(true);
+              sel.removeAllRanges();
+              sel.addRange(range);
+            } else if (ed) {
+              ed.appendChild(img);
+            }
+            saveSelection();
+            setImgSel(img); // insert hote hi select — user turant resize/align kar sake
+          };
           reader.readAsDataURL(file);
         }
         f.remove();
@@ -7167,18 +7418,67 @@ function LessonEditModal({ ctx, onSave, onClose, toast }) {
                        <Tooltip text="Insert math formula">
   <button className="clpm-tb-btn" onMouseDown={e => { e.preventDefault(); saveSelection(); }}
     style={{ fontWeight: 800, fontSize: 14 }}
-    onClick={() => {
+    onClick={(e) => {
+      // Input ko ∑ button ke theek neeche kholo (screen-center nahi), aur ISI section ke
+      // editor ko target karo — chahe caret save hua ho ya nahi, formula sahi box me jaaye.
+      const btnRect = e.currentTarget.getBoundingClientRect();
+      const targetEd = editorRefs.current[sec.key];
+      /* ∑ click ke waqt ka LIVE caret pakdo (mousedown ne preventDefault kiya, is liye
+         selection abhi bhi editor me hi hai). Ye savedRangeRef se zyada reliable hai —
+         savedRangeRef stale ho sakta hai (purani line 1 wali position). */
+      let capturedRange = null;
+      const s0 = window.getSelection();
+      if (s0 && s0.rangeCount) {
+        const r0 = s0.getRangeAt(0);
+        if (targetEd && targetEd.contains(r0.commonAncestorContainer)) capturedRange = r0.cloneRange();
+      }
+      // Live caret na mile to hi savedRangeRef par jao — aur wo bhi sirf ISI editor ka ho.
+      if (!capturedRange && savedRangeRef.current && targetEd &&
+          targetEd.contains(savedRangeRef.current.commonAncestorContainer)) {
+        capturedRange = savedRangeRef.current.cloneRange();
+      }
       const inp = document.createElement('input');
       inp.type = 'text';
       inp.placeholder = 'e.g. x² + y² = z²';
-      inp.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:9999;padding:8px 12px;border:1px solid #CBD5E1;border-radius:8px;font-size:13px;width:300px;box-shadow:0 4px 20px rgba(0,0,0,.15)';
+      const top = Math.min(window.innerHeight - 48, btnRect.bottom + 6);
+      const left = Math.max(8, Math.min(window.innerWidth - 268, btnRect.left));
+      inp.style.cssText = `position:fixed;top:${top}px;left:${left}px;z-index:100001;padding:8px 12px;border:1px solid #1E40AF;border-radius:8px;font-size:13px;width:260px;box-shadow:0 6px 22px rgba(0,0,0,.18);background:#fff`;
       document.body.appendChild(inp);
       inp.focus();
-      inp.addEventListener('keydown', e => {
-        if (e.key === 'Enter') { if (inp.value) { restoreSelection(); document.execCommand('insertHTML', false, `<span style="font-family:'Cambria Math',serif">${inp.value}</span>`); saveSelection(); } inp.remove(); }
-        if (e.key === 'Escape') inp.remove();
+      const insertFormula = () => {
+        const val = inp.value;
+        inp.remove(); // pehle input hatao taake focus wapas editor par jaaye
+        if (!val || !targetEd) return;
+        const span = document.createElement('span');
+        span.style.fontFamily = "'Cambria Math',serif";
+        span.textContent = val;
+        targetEd.focus();
+        const sel = window.getSelection();
+        if (capturedRange) {
+          // Caret/selection ke END par insert (selected text delete kiye baghair).
+          const r = capturedRange.cloneRange();
+          r.collapse(false);
+          r.insertNode(span);
+          r.setStartAfter(span);
+          r.collapse(true);
+          sel.removeAllRanges();
+          sel.addRange(r);
+        } else {
+          // Editor me caret hi nahi tha → end me lagao (kabhi bhi stale line-1 par nahi).
+          targetEd.appendChild(span);
+          const r = document.createRange();
+          r.setStartAfter(span);
+          r.collapse(true);
+          sel.removeAllRanges();
+          sel.addRange(r);
+        }
+        saveSelection();
+      };
+      inp.addEventListener('keydown', ev => {
+        if (ev.key === 'Enter') { ev.preventDefault(); insertFormula(); }
+        else if (ev.key === 'Escape') { ev.preventDefault(); inp.remove(); }
       });
-      inp.addEventListener('blur', () => setTimeout(() => inp.remove(), 200));
+      inp.addEventListener('blur', () => setTimeout(() => { if (inp.isConnected) inp.remove(); }, 200));
     }}>∑</button>
 </Tooltip>
                         <div className="clpm-tb-divider"></div>
@@ -7197,6 +7497,7 @@ function LessonEditModal({ ctx, onSave, onClose, toast }) {
                         onMouseUp={saveSelection}
                         onKeyUp={saveSelection}
                         onFocus={saveSelection}
+                        onClick={onEditorClick}
                       />
                     </div>
                   );
@@ -7222,6 +7523,42 @@ function LessonEditModal({ ctx, onSave, onClose, toast }) {
         </div>
 
       </div>
+
+      {/* ── Image resize/align overlay — selected editor image ke upar ── */}
+      {imgSel && (() => {
+        const r = imgSel.getBoundingClientRect();
+        const tbBtn = {
+          border: 'none', background: 'transparent', color: '#E2E8F0', cursor: 'pointer',
+          fontSize: 12, padding: '3px 6px', borderRadius: 5, fontFamily: 'inherit', lineHeight: 1,
+        };
+        return (
+          <div className="clpm-img-overlay" style={{
+            position: 'fixed', top: r.top, left: r.left, width: r.width, height: r.height,
+            border: '2px solid #1E40AF', boxSizing: 'border-box', zIndex: 100000, pointerEvents: 'none',
+          }}>
+            {/* Toolbar — buttons se size/align (drag nahi, is liye crash nahi) */}
+            <div style={{
+              position: 'absolute', top: -36, left: 0, display: 'flex', alignItems: 'center', gap: 2,
+              background: '#1E293B', borderRadius: 8, padding: '3px 5px', pointerEvents: 'auto',
+              boxShadow: '0 4px 14px rgba(0,0,0,.3)', whiteSpace: 'nowrap',
+            }}
+              onMouseDown={e => e.preventDefault()}>
+              <Tooltip text="Align left"><button style={tbBtn} onClick={() => alignImg('left')}><i className="fa-solid fa-align-left"></i></button></Tooltip>
+              <Tooltip text="Center"><button style={tbBtn} onClick={() => alignImg('center')}><i className="fa-solid fa-align-center"></i></button></Tooltip>
+              <Tooltip text="Align right"><button style={tbBtn} onClick={() => alignImg('right')}><i className="fa-solid fa-align-right"></i></button></Tooltip>
+              <span style={{ width: 1, height: 16, background: '#475569', margin: '0 3px' }}></span>
+              <Tooltip text="Smaller"><button style={tbBtn} onClick={() => nudgeImg(-30)}><i className="fa-solid fa-minus"></i></button></Tooltip>
+              <Tooltip text="Bigger"><button style={tbBtn} onClick={() => nudgeImg(30)}><i className="fa-solid fa-plus"></i></button></Tooltip>
+              <span style={{ width: 1, height: 16, background: '#475569', margin: '0 3px' }}></span>
+              <Tooltip text="25%"><button style={tbBtn} onClick={() => setImgWidth(25)}>25%</button></Tooltip>
+              <Tooltip text="50%"><button style={tbBtn} onClick={() => setImgWidth(50)}>50%</button></Tooltip>
+              <Tooltip text="100%"><button style={tbBtn} onClick={() => setImgWidth(100)}>100%</button></Tooltip>
+              <span style={{ width: 1, height: 16, background: '#475569', margin: '0 3px' }}></span>
+              <Tooltip text="Done"><button style={tbBtn} onClick={() => setImgSel(null)}><i className="fa-solid fa-xmark"></i></button></Tooltip>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
@@ -8854,6 +9191,13 @@ async function clpUnitPdfReport(unit, ctx, style, reportHeader = null, format = 
             devel: d.development        || '',
             recap: d.recap              || '',
           },
+          /* User-set section timings (auto-divide NAHI) — report inhi ko dikhaye. */
+          secMins: {
+            slo:   onlyNum(d.timeForLearning),
+            intro: onlyNum(d.timeForLesson),
+            devel: onlyNum(d.timeForDevelopment),
+            recap: onlyNum(d.timeForRecap),
+          },
         };
       } catch (e) {
         console.error('Error loading lesson detail for report:', e);
@@ -8912,7 +9256,10 @@ async function clpUnitPdfReport(unit, ctx, style, reportHeader = null, format = 
     const sections = sectionTitles.map((title, si) => {
       const sc       = secBars[si];
       const content  = getContent(lesson, si) || '';
-      const timeMins = distributeMins(lesson?.duration)[sectionKeys[si]] || sectionMins[si];
+      /* User-set section time dikhao (auto-divide nahi). secMins na mile to hi fallback. */
+      const timeMins = onlyNum(lesson?.secMins?.[sectionKeys[si]])
+        || distributeMins(lesson?.duration)[sectionKeys[si]]
+        || sectionMins[si];
       if (isColor) {
         return `
           <div style="margin-bottom:18px;break-inside:avoid">
