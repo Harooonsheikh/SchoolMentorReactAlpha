@@ -222,26 +222,45 @@ function buildPeriodCountReport({ header, cls, section, weekPeriods, isBW }) {
   const rowAlt    = isBW ? '#FFFFFF' : '#f8faff';
   const totBg     = isBW ? '#FFFFFF' : '#EFF6FF';
   const totClr    = isBW ? '#0F172A' : '#1E3A8A';
-  let countRows = '';
+  /* Period count = total periods PER SUBJECT for this class across the whole
+     week (skip Breaks). A period whose subject isn't persisted is grouped under
+     "Unassigned" so it is still counted and the total matches real periods. */
+  const esc = (s) => String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const counts = {};
   let grand = 0;
   DAYS.forEach((day, di) => {
-    const cnt = (weekPeriods[di] || []).filter((p) => p.subject && p.subject !== 'Break').length;
-    grand += cnt;
-    countRows += `<tr style="background:${di % 2 === 0 ? '#fff' : rowAlt}">
-      <td style="padding:8px 10px;border-bottom:1px solid #ddd">${di + 1}</td>
-      <td style="padding:8px 10px;border-bottom:1px solid #ddd">${day}</td>
-      <td style="padding:8px 10px;border-bottom:1px solid #ddd;font-weight:700;color:${totClr}">${cnt}</td>
-    </tr>`;
+    (weekPeriods[di] || []).forEach((p) => {
+      if (!p || p.subject === 'Break') return;
+      const subj = (p.subject || '').trim() || 'Unassigned';
+      counts[subj] = (counts[subj] || 0) + 1;
+      grand += 1;
+    });
   });
+  /* Most periods first, then alphabetical for ties. */
+  const subjects = Object.keys(counts).sort((a, b) => counts[b] - counts[a] || a.localeCompare(b));
+
+  let countRows = '';
+  if (subjects.length === 0) {
+    countRows = '<tr><td colspan="3" style="text-align:center;color:#888;padding:16px">No periods set</td></tr>';
+  } else {
+    subjects.forEach((subj, i) => {
+      countRows += `<tr style="background:${i % 2 === 0 ? '#fff' : rowAlt}">
+        <td style="padding:8px 10px;border-bottom:1px solid #ddd">${i + 1}</td>
+        <td style="padding:8px 10px;border-bottom:1px solid #ddd">${esc(subj)}</td>
+        <td style="padding:8px 10px;border-bottom:1px solid #ddd;font-weight:700;color:${totClr}">${counts[subj]}</td>
+      </tr>`;
+    });
+  }
   countRows += `<tr style="background:${totBg};font-weight:800">
-    <td colspan="2" style="padding:8px 10px;border-top:2px solid ${totClr}">Total</td>
+    <td colspan="2" style="padding:8px 10px;border-top:2px solid ${totClr}">Total Periods</td>
     <td style="padding:8px 10px;border-top:2px solid ${totClr};color:${totClr}">${grand}</td>
   </tr>`;
   const body = `<table style="width:100%;border-collapse:collapse">
     <thead><tr style="background:${hdrBg};color:${hdrFg};${hdrBorder}">
       <th style="padding:8px 10px;text-align:left">Sr. No</th>
-      <th style="padding:8px 10px;text-align:left">Day</th>
-      <th style="padding:8px 10px;text-align:left">Periods</th>
+      <th style="padding:8px 10px;text-align:left">Subject</th>
+      <th style="padding:8px 10px;text-align:left">Total Periods</th>
     </tr></thead>
     <tbody>${countRows}</tbody>
   </table>`;
@@ -1355,13 +1374,13 @@ function TTDownloadModal({ target, day, dayPeriods, weekPeriods, header, onClose
                 <i className="fa-solid fa-arrow-right" style={{ color: 'var(--text-muted)', fontSize: 13 }}></i>
               </button>
             </Tooltip>
-            <Tooltip text="Download a PDF summarising period counts per subject"><button className="tt-dl-card tt-dl-card--amber" onClick={() => generate('periodcount')}>
+            <Tooltip text="Download a PDF with the total periods per subject for this class"><button className="tt-dl-card tt-dl-card--amber" onClick={() => generate('periodcount')}>
               <div className="tt-dl-card-icon" style={{ background: 'linear-gradient(135deg,#D97706,#B45309)' }}>
                 <i className="fa-solid fa-list-ol"></i>
               </div>
               <div style={{ flex: 1 }}>
                 <div className="tt-dl-card-name">Period Count</div>
-                <div className="tt-dl-card-sub">Subject-wise period summary</div>
+                <div className="tt-dl-card-sub">Total periods per subject (whole week)</div>
               </div>
               <i className="fa-solid fa-arrow-right" style={{ color: 'var(--text-muted)', fontSize: 13 }}></i>
             </button></Tooltip>

@@ -1,0 +1,15 @@
+{
+  "files": {
+    "main.css": "/superadmin/static/css/main.68e23a13.css",
+    "main.js": "/superadmin/static/js/main.a2fa6db4.js",
+    "static/js/453.ddc56d60.chunk.js": "/superadmin/static/js/453.ddc56d60.chunk.js",
+    "index.html": "/superadmin/index.html",
+    "main.68e23a13.css.map": "/superadmin/static/css/main.68e23a13.css.map",
+    "main.a2fa6db4.js.map": "/superadmin/static/js/main.a2fa6db4.js.map",
+    "453.ddc56d60.chunk.js.map": "/superadmin/static/js/453.ddc56d60.chunk.js.map"
+  },
+  "entrypoints": [
+    "static/css/main.68e23a13.css",
+    "static/js/main.a2fa6db4.js"
+  ]
+}

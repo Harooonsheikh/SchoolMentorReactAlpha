@@ -831,9 +831,11 @@ function Transactions({ toast, isOtherSession }) {
       amount:    Number(e.amount ?? e.Amount ?? 0),
       chqNo:     e.chequeNo ?? e.ChequeNo ?? e.chqNo ?? '',
       chqDate:   (e.chequeDate ?? e.ChequeDate) ? String(e.chequeDate ?? e.ChequeDate).slice(0, 10) : '',
-      createdBy: e.createdByName ?? e.CreatedByName ?? e.createdBy ?? e.CreatedBy ?? '',
+      createdBy: e.createdBy ?? e.CreatedBy ?? e.createdByName ?? e.CreatedByName ?? '',
+      createdByName: e.createdByName ?? e.CreatedByName ?? e.createdByUser ?? e.CreatedByUser ?? e.createdByUserName ?? e.CreatedByUserName ?? '',
       createdAt: e.createdAt ?? e.CreatedAt ?? '',
       updatedBy: e.modifiedBy ?? e.ModifiedBy ?? null,
+      updatedByName: e.modifiedByName ?? e.ModifiedByName ?? e.modifiedByUser ?? e.ModifiedByUser ?? '',
       updatedAt: e.modifiedAt ?? e.ModifiedAt ?? null,
     };
   };
@@ -945,6 +947,12 @@ function Transactions({ toast, isOtherSession }) {
   const handleSaveEntry = async (form) => {
     const userID = Number(sessionStorage.getItem('UserID')) || 1;
     const toIso = d => (d ? new Date(d).toISOString() : null);
+    /* Send the selected date stamped with the current time in 24-hour format
+       (e.g. 2026-07-02T14:05:09) so the entry carries a real time; it's shown
+       back in 12-hour format on retrieve (accFmtTime). */
+    const pad = n => String(n).padStart(2, '0');
+    const now = new Date();
+    const toIsoWithTime = d => (d ? `${d}T${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}` : null);
     try {
       const res = await fetch(buildUrl('/save-account-entry'), {
         method: 'POST',
@@ -954,7 +962,7 @@ function Transactions({ toast, isOtherSession }) {
           branchID: Number(branchID),
           branchAccountID: Number(form.branchAccountID),
           accountTypeID: seg === 'rev' ? 1 : 2,
-          entryDate: toIso(form.date),
+          entryDate: toIsoWithTime(form.date),
           details: form.detail,
           amount: Number(form.amount) || 0,
           chequeDate: form.chqDate ? toIso(form.chqDate) : null,
@@ -1366,7 +1374,16 @@ function AccAuditPanel({ x, isRev }) {
    ═══════════════════════════════════════════════════════════════════ */
 function AccEntryModal({ cfg, seg, branchID, accountTypeID, users, currentUser, defaultMonth, onClose, onSave, toast }) {
   const isRev = seg === 'rev';
-  const loginUserName = sessionStorage.getItem('displayName') || sessionStorage.getItem('userName') || currentUser || '';
+  /* The logged-in user's id (recorded on save) and display name (shown in the
+     UI). Prefer the API-provided name for a record; otherwise, if the record's
+     user id is the logged-in user, show their name; else fall back to the id. */
+  const loginUserId   = sessionStorage.getItem('UserID') || '';
+  const loginUserName = sessionStorage.getItem('displayName') || sessionStorage.getItem('userName') || '';
+  const displayUser = (name, id) => (
+    name
+    || (id != null && String(id) === String(loginUserId) && loginUserName ? loginUserName : '')
+    || (id != null && id !== '' ? String(id) : '—')
+  );
   const [date, setDate]       = useState('');
   const [headId, setHeadId]   = useState('');   // selected account head id (branchAccountID)
   const [heads, setHeads]     = useState([]);   // [{ id, no, name }]
@@ -1441,9 +1458,9 @@ function AccEntryModal({ cfg, seg, branchID, accountTypeID, users, currentUser, 
     <div className="acc-audit-note" style={{ display: 'flex' }}>
       <i className="fa-solid fa-shield-halved"></i>
       <div>
-        <b>Created by {cfg.txn.createdBy || '—'}</b> on {accFmtStamp(cfg.txn.createdAt)}.
-        {cfg.txn.updatedBy && <> Last updated by <b>{cfg.txn.updatedBy}</b> on {accFmtStamp(cfg.txn.updatedAt)}.</>}
-        {' '}Saving will record <b>{currentUser}</b> as the last editor now.
+        <b>Created by {displayUser(cfg.txn.createdByName, cfg.txn.createdBy)}</b> on {accFmtStamp(cfg.txn.createdAt)}.
+        {cfg.txn.updatedBy && <> Last updated by <b>{displayUser(cfg.txn.updatedByName, cfg.txn.updatedBy)}</b> on {accFmtStamp(cfg.txn.updatedAt)}.</>}
+        {' '}Saving will record <b>{loginUserName || loginUserId || '—'}</b> as the last editor now.
       </div>
     </div>
   ) : null;
@@ -1511,7 +1528,7 @@ function AccEntryModal({ cfg, seg, branchID, accountTypeID, users, currentUser, 
             </div>
             <div className="fee-field">
               <span className="fee-label">Entered By</span>
-              <input className="fee-input" value={loginUserName} disabled readOnly />
+              <input className="fee-input" value={loginUserName || loginUserId} disabled readOnly />
             </div>
           </div>
 

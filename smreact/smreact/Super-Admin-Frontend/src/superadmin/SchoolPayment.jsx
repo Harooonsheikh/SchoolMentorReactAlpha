@@ -1,0 +1,820 @@
+import React, { useMemo, useState } from 'react';
+import {
+  PAY_SCHOOLS, INITIAL_PAY_SETUP, RECEIVING_METHODS,
+  monthlyCharge, pkr, kfmt, fmtDateLong, fmtDateShort, plusDays, todayISO, deriveRow,
+} from './paymentData';
+
+/* ═══════════════════════════════════════════════════════════════════
+   SCHOOLS PAYMENT (Payment Status) — Super Admin module (frontend only)
+
+   Four tabs: Payment Setup · Challans · Receiving · Reports.
+   Setup defines a billing formula per school; challans bill it; receiving
+   records payments; reports roll everything up (summary / outstanding /
+   received / challan) with PDF export. All state is in-component demo
+   state (see ./paymentData). No backend.
+   ═══════════════════════════════════════════════════════════════════ */
+
+const TABS = [
+  { id: 'setup',     name: 'Payment Setup', icon: 'fa-gear' },
+  { id: 'challans',  name: 'Challans',      icon: 'fa-file-invoice' },
+  { id: 'receiving', name: 'Receiving',     icon: 'fa-hand-holding-dollar' },
+  { id: 'report',    name: 'Reports',       icon: 'fa-chart-bar' },
+];
+
+export default function SchoolPayment({ toast }) {
+  const [tab, setTab] = useState('setup');
+  const [payStore, setPayStore] = useState(INITIAL_PAY_SETUP);
+  const [chStore, setChStore] = useState({});
+  const [recvStore, setRecvStore] = useState({});
+  const [modal, setModal] = useState(null);
+
+  const charge = (s) => monthlyCharge(s, payStore[s.id]);
+
+  /* Stats (header) */
+  const stats = useMemo(() => {
+    const total = PAY_SCHOOLS.length;
+    const done = PAY_SCHOOLS.filter((s) => payStore[s.id]).length;
+    const revenue = PAY_SCHOOLS.reduce((sum, s) => sum + charge(s), 0);
+    return { total, done, pending: total - done, revenue };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [payStore]);
+
+  /* ── Setup ── */
+  const saveSetup = (id, setup) => {
+    setPayStore((prev) => ({ ...prev, [id]: setup }));
+    setModal(null);
+    const s = PAY_SCHOOLS.find((x) => x.id === id);
+    toast?.(`Payment setup saved for ${s ? s.name : 'school'}`, 'success');
+  };
+
+  /* ── Challans ── */
+  const generateChallan = (id, { dueDate, prevDues }) => {
+    const s = PAY_SCHOOLS.find((x) => x.id === id);
+    const setup = payStore[id];
+    const monthly = monthlyCharge(s, setup);
+    setChStore((prev) => ({ ...prev, [id]: {
+      schoolId: id, formula: setup.formula, monthly, prevDues, total: monthly + prevDues,
+      dueDate: fmtDateLong(dueDate), dueDateRaw: dueDate, issueDate: fmtDateLong(todayISO()),
+      studentCount: parseInt(setup.studentCount || s.students || 0, 10), perStudentRate: parseFloat(setup.perStudentRate || 0),
+      lumpAmount: parseFloat(setup.lumpAmount || 0),
+    } }));
+    setModal(null); toast?.(`Challan generated for ${s.name}`, 'success');
+  };
+  const bulkGenerate = (ids, dueDate) => {
+    setChStore((prev) => {
+      const next = { ...prev };
+      ids.forEach((id) => {
+        const s = PAY_SCHOOLS.find((x) => x.id === id); const setup = payStore[id];
+        if (!s || !setup) return;
+        const monthly = monthlyCharge(s, setup);
+        next[id] = { schoolId: id, formula: setup.formula, monthly, prevDues: 0, total: monthly,
+          dueDate: fmtDateLong(dueDate), dueDateRaw: dueDate, issueDate: fmtDateLong(todayISO()),
+          studentCount: parseInt(setup.studentCount || s.students || 0, 10), perStudentRate: parseFloat(setup.perStudentRate || 0),
+          lumpAmount: parseFloat(setup.lumpAmount || 0) };
+      });
+      return next;
+    });
+    setModal(null); toast?.(`Challans generated for ${ids.length} school${ids.length !== 1 ? 's' : ''}`, 'success');
+  };
+  const deleteChallan = (id) => {
+    setChStore((prev) => { const n = { ...prev }; delete n[id]; return n; });
+    setModal(null); toast?.('Challan deleted', 'info');
+  };
+
+  /* ── Receiving ── */
+  const saveReceiving = (id, rec) => {
+    setRecvStore((prev) => {
+      const existing = prev[id];
+      const history = existing && existing.history ? [...existing.history] : [];
+      history.push({ amount: rec.receivedAmount, via: rec.via, date: rec.date });
+      return { ...prev, [id]: { ...rec, history } };
+    });
+    setModal(null);
+    const s = PAY_SCHOOLS.find((x) => x.id === id);
+    toast?.(`Payment recorded for ${s ? s.name : 'school'}`, 'success');
+  };
+  const deleteReceiving = (id) => {
+    setRecvStore((prev) => { const n = { ...prev }; delete n[id]; return n; });
+    setModal(null); toast?.('Receiving record deleted', 'info');
+  };
+
+  return (
+    <div className="page-content">
+      <div className="page-header">
+        <div className="page-title-row">
+          <div className="page-icon" style={{ background: 'linear-gradient(135deg,#0369A1,#0284C7)' }}><i className="fa-solid fa-credit-card" /></div>
+          <div>
+            <div className="page-title">Schools Payment</div>
+            <div className="page-sub">Manage payment setup, challan generation, fee receiving, and financial reports for all schools.</div>
+          </div>
+        </div>
+      </div>
+
+      <div className="stat-grid">
+        <div className="stat-card"><div className="stat-icon"><i className="fa-solid fa-school" /></div><div className="stat-val">{stats.total}</div><div className="stat-lbl">Total Schools</div></div>
+        <div className="stat-card s-green"><div className="stat-icon"><i className="fa-solid fa-circle-check" /></div><div className="stat-val">{stats.done}</div><div className="stat-lbl">Setup Done</div></div>
+        <div className="stat-card s-warn"><div className="stat-icon"><i className="fa-solid fa-hourglass-half" /></div><div className="stat-val">{stats.pending}</div><div className="stat-lbl">Pending Setup</div></div>
+        <div className="stat-card" style={{ borderLeftColor: 'var(--info)' }}><div className="stat-icon" style={{ background: 'linear-gradient(135deg,#0369A1,#0284C7)' }}><i className="fa-solid fa-money-bill-wave" /></div><div className="stat-val">{(stats.revenue / 1000).toFixed(1)}</div><div className="stat-lbl">Monthly Revenue (K)</div></div>
+      </div>
+
+      <div className="pay-tabs">
+        {TABS.map((t) => (
+          <button key={t.id} className={`pay-tab${tab === t.id ? ' active' : ''}`} onClick={() => setTab(t.id)}><i className={`fa-solid ${t.icon}`} /> {t.name}</button>
+        ))}
+      </div>
+
+      {tab === 'setup' && <SetupTab payStore={payStore} onEdit={(s) => setModal({ type: 'setup', school: s })} />}
+      {tab === 'challans' && (
+        <ChallansTab payStore={payStore} chStore={chStore}
+          onGenerate={(s) => setModal({ type: 'genChallan', school: s })}
+          onDownload={(s) => setModal({ type: 'slip', school: s })}
+          onDelete={(s) => setModal({ type: 'delChallan', school: s })}
+          onBulk={() => setModal({ type: 'bulk' })} />
+      )}
+      {tab === 'receiving' && (
+        <ReceivingTab payStore={payStore} chStore={chStore} recvStore={recvStore}
+          onReceive={(s) => setModal({ type: 'receive', school: s })}
+          onDelete={(s) => setModal({ type: 'delRecv', school: s })}
+          toast={toast} />
+      )}
+      {tab === 'report' && <ReportTab payStore={payStore} chStore={chStore} recvStore={recvStore} />}
+
+      {/* ── MODALS ── */}
+      {modal?.type === 'setup' && <SetupModal school={modal.school} setup={payStore[modal.school.id]} onClose={() => setModal(null)} onSave={saveSetup} toast={toast} />}
+      {modal?.type === 'genChallan' && <GenChallanModal school={modal.school} setup={payStore[modal.school.id]} onClose={() => setModal(null)} onGenerate={generateChallan} toast={toast} />}
+      {modal?.type === 'bulk' && <BulkChallanModal payStore={payStore} onClose={() => setModal(null)} onGenerate={bulkGenerate} toast={toast} />}
+      {modal?.type === 'slip' && <SlipModal school={modal.school} setup={payStore[modal.school.id]} challan={chStore[modal.school.id]} onClose={() => setModal(null)} />}
+      {modal?.type === 'delChallan' && <ConfirmDel title="Delete Challan?" sub="This will permanently delete the generated challan for this school." confirmText="Delete Challan" onConfirm={() => deleteChallan(modal.school.id)} onClose={() => setModal(null)} />}
+      {modal?.type === 'receive' && <ReceiveModal school={modal.school} setup={payStore[modal.school.id]} challan={chStore[modal.school.id]} prevRecv={recvStore[modal.school.id]} onClose={() => setModal(null)} onSave={saveReceiving} toast={toast} />}
+      {modal?.type === 'delRecv' && <ConfirmDel title="Delete Receiving Record?" sub={`This will permanently delete the payment receiving record for "${modal.school.name}". This action cannot be undone.`} confirmText="Delete" onConfirm={() => deleteReceiving(modal.school.id)} onClose={() => setModal(null)} />}
+    </div>
+  );
+}
+
+/* ── shared bits ── */
+function FormulaBadge({ setup }) {
+  if (!setup) return <span className="badge b-gray" style={{ fontSize: 9.5 }}>—</span>;
+  return setup.formula === 'lumpsum'
+    ? <span className="badge b-blue"><i className="fa-solid fa-money-bill-wave" style={{ fontSize: 8 }} /> Lump Sum</span>
+    : <span className="badge b-green"><i className="fa-solid fa-user-graduate" style={{ fontSize: 8 }} /> Per Student</span>;
+}
+function NoResults({ cols, msg = 'No schools found' }) {
+  return <tr><td colSpan={cols} style={{ textAlign: 'center', padding: 44, color: 'var(--tm)' }}><i className="fa-solid fa-magnifying-glass" style={{ fontSize: 28, display: 'block', margin: '0 auto 12px', opacity: 0.3 }} /><div style={{ fontSize: 14, fontWeight: 700 }}>{msg}</div></td></tr>;
+}
+function CardHeader({ icon, title, sub, children }) {
+  return (
+    <div className="card-header">
+      <div><div className="card-title"><i className={`fa-solid ${icon}`} /> {title}</div><div className="card-sub">{sub}</div></div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>{children}</div>
+    </div>
+  );
+}
+function Search({ value, onChange, placeholder, width = 220 }) {
+  return (
+    <div className="search-box" style={{ width }}>
+      <i className="fa-solid fa-magnifying-glass" />
+      <input className="search-input" value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} />
+    </div>
+  );
+}
+
+/* ═══════════════════════ SETUP TAB ═══════════════════════ */
+function SetupTab({ payStore, onEdit }) {
+  const [q, setQ] = useState('');
+  const [filter, setFilter] = useState('');
+  const [expanded, setExpanded] = useState({});
+  const list = PAY_SCHOOLS.filter((s) => {
+    const m = s.name.toLowerCase().includes(q.toLowerCase()) || (s.principal || '').toLowerCase().includes(q.toLowerCase());
+    if (!m) return false;
+    if (filter === 'done' && !payStore[s.id]) return false;
+    if (filter === 'pending' && payStore[s.id]) return false;
+    return true;
+  });
+  return (
+    <div className="ss-panel">
+      <div className="section-card">
+        <CardHeader icon="fa-gear" title="Payment Setup" sub="Configure billing formula (Lump Sum or Per Student) for each school.">
+          <Search value={q} onChange={setQ} placeholder="Search schools…" />
+          <select className="f-input" value={filter} onChange={(e) => setFilter(e.target.value)} style={{ width: 150, height: 38 }}>
+            <option value="">All Status</option><option value="done">Setup Done</option><option value="pending">Pending</option>
+          </select>
+        </CardHeader>
+        <div className="tbl-wrap">
+          <table className="psetup-table">
+            <thead><tr><th style={{ width: 44 }}>#</th><th>Branch Name</th><th style={{ width: 130 }}>Formula</th><th style={{ width: 110 }}>Free Trial</th><th style={{ width: 120, textAlign: 'center' }}>Monthly Charge</th><th style={{ width: 110, textAlign: 'center' }}>Status</th><th style={{ width: 80, textAlign: 'center' }}>Action</th><th style={{ width: 60, textAlign: 'center' }}>Details</th></tr></thead>
+            <tbody>
+              {list.length === 0 ? <NoResults cols={8} /> : list.map((s, i) => {
+                const setup = payStore[s.id];
+                const monthly = monthlyCharge(s, setup);
+                const hasTrial = setup && setup.freeTrial && setup.trialDays;
+                return (
+                  <React.Fragment key={s.id}>
+                    <tr>
+                      <td style={{ color: 'var(--tm)', fontWeight: 700 }}>{i + 1}</td>
+                      <td><div style={{ fontWeight: 700, color: 'var(--t1)' }}>{s.name}</div><div style={{ fontSize: 11, color: 'var(--tm)', marginTop: 2 }}>{s.principal} · {s.contact}</div></td>
+                      <td><FormulaBadge setup={setup} /></td>
+                      <td>{hasTrial ? <span className="badge b-blue" style={{ fontSize: 9.5 }}><i className="fa-solid fa-gift" style={{ fontSize: 8 }} /> {setup.trialDays}d trial</span> : '—'}</td>
+                      <td style={{ textAlign: 'center' }}>{setup ? <><span style={{ fontWeight: 800, color: 'var(--t1)' }}>{pkr(monthly)}</span><div style={{ fontSize: 10, color: 'var(--tm)' }}>{setup.formula === 'perstudent' ? `${setup.perStudentRate} × ${setup.studentCount || s.students} students` : '/ month'}</div></> : '—'}</td>
+                      <td style={{ textAlign: 'center' }}>{setup ? <span className="badge ps-badge-setup"><i className="fa-solid fa-circle-check" style={{ fontSize: 8 }} /> Set Up</span> : <span className="badge ps-badge-pending"><i className="fa-solid fa-hourglass-half" style={{ fontSize: 8 }} /> Pending</span>}</td>
+                      <td style={{ textAlign: 'center' }}><button className={`ps-action-btn${setup ? ' is-edit' : ' is-setup'}`} onClick={() => onEdit(s)}><i className={`fa-solid fa-${setup ? 'pen' : 'plus'}`} /> {setup ? 'Edit' : 'Set Up'}</button></td>
+                      <td style={{ textAlign: 'center' }}><button className="det-btn" data-tip="Toggle details" onClick={() => setExpanded((e) => ({ ...e, [s.id]: !e[s.id] }))}><i className="fa-solid fa-chevron-down" /></button></td>
+                    </tr>
+                    {expanded[s.id] && (
+                      <tr className="psetup-expand-row"><td colSpan={8}>
+                        <div className="psetup-detail-box open">{setup ? (() => {
+                          const annual = monthly * 12;
+                          return (
+                            <div className="psetup-detail-grid">
+                              <div className="psetup-detail-card"><div className="pdc-lbl">Formula</div><div className="pdc-val" style={{ fontSize: 13 }}>{setup.formula === 'lumpsum' ? 'Lump Sum' : 'Per Student'}</div></div>
+                              <div className="psetup-detail-card"><div className="pdc-lbl">Monthly Bill</div><div className="pdc-val">{pkr(monthly)}</div></div>
+                              <div className="psetup-detail-card"><div className="pdc-lbl">Annual Revenue</div><div className="pdc-val">{pkr(annual)}</div><div className="pdc-sub">projected</div></div>
+                              <div className="psetup-detail-card"><div className="pdc-lbl">Free Trial</div><div className="pdc-val" style={{ fontSize: 13 }}>{setup.freeTrial && setup.trialDays ? `${setup.trialDays} days` : 'None'}</div></div>
+                              {setup.notes && <div className="psetup-detail-card" style={{ gridColumn: 'span 4', textAlign: 'left' }}><div className="pdc-lbl">Notes</div><div style={{ fontSize: 12.5, color: 'var(--t2)', marginTop: 4 }}>{setup.notes}</div></div>}
+                            </div>
+                          );
+                        })() : <div style={{ textAlign: 'center', padding: 16, color: 'var(--tm)', fontSize: 13 }}><i className="fa-solid fa-circle-info" style={{ marginRight: 6 }} />No payment setup configured yet. Click Set Up to begin.</div>}</div>
+                      </td></tr>
+                    )}
+                  </React.Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════════════ CHALLANS TAB ═══════════════════════ */
+function ChallansTab({ payStore, chStore, onGenerate, onDownload, onDelete, onBulk }) {
+  const [q, setQ] = useState('');
+  const [filter, setFilter] = useState('');
+  const list = PAY_SCHOOLS.filter((s) => {
+    const m = s.name.toLowerCase().includes(q.toLowerCase()) || (s.principal || '').toLowerCase().includes(q.toLowerCase());
+    if (!m) return false;
+    if (filter === 'generated' && !chStore[s.id]) return false;
+    if (filter === 'pending' && chStore[s.id]) return false;
+    return true;
+  });
+  return (
+    <div className="ss-panel">
+      <div className="section-card">
+        <CardHeader icon="fa-file-invoice" title="Challans" sub="Generate, download, and delete fee challans for each school.">
+          <Search value={q} onChange={setQ} placeholder="Search schools…" />
+          <select className="f-input" value={filter} onChange={(e) => setFilter(e.target.value)} style={{ width: 150, height: 38 }}>
+            <option value="">All Schools</option><option value="generated">Challan Generated</option><option value="pending">Not Generated</option>
+          </select>
+          <button className="btn-primary" onClick={onBulk}><i className="fa-solid fa-bolt" /> Generate in Bulk</button>
+        </CardHeader>
+        <div className="tbl-wrap">
+          <table className="ch-table">
+            <thead><tr><th style={{ width: 44 }}>#</th><th>Branch Name</th><th style={{ width: 110 }}>Formula</th><th style={{ width: 120, textAlign: 'center' }}>Monthly Amount</th><th style={{ width: 130, textAlign: 'center' }}>Challan Status</th><th style={{ width: 200, textAlign: 'center' }}>Actions</th></tr></thead>
+            <tbody>
+              {list.length === 0 ? <NoResults cols={6} /> : list.map((s, i) => {
+                const setup = payStore[s.id]; const challan = chStore[s.id]; const monthly = monthlyCharge(s, setup);
+                return (
+                  <tr key={s.id}>
+                    <td style={{ color: 'var(--tm)', fontWeight: 700 }}>{i + 1}</td>
+                    <td><div style={{ fontWeight: 700, color: 'var(--t1)' }}>{s.name}</div><div style={{ fontSize: 11, color: 'var(--tm)', marginTop: 2 }}>{s.principal}</div></td>
+                    <td><FormulaBadge setup={setup} /></td>
+                    <td style={{ textAlign: 'center' }}>{setup ? <><div style={{ fontWeight: 800, color: 'var(--t1)' }}>{pkr(monthly)}</div><div style={{ fontSize: 10, color: 'var(--tm)' }}>/ month</div></> : <span style={{ color: 'var(--tm)', fontSize: 12 }}>—</span>}</td>
+                    <td style={{ textAlign: 'center' }}>{challan ? <div><span className="badge b-green"><i className="fa-solid fa-circle-check" style={{ fontSize: 8 }} /> Generated</span><div style={{ fontSize: 10, color: 'var(--tm)', marginTop: 3 }}>Due: {challan.dueDate || '—'}</div></div> : <span className="badge b-gray"><i className="fa-solid fa-clock" style={{ fontSize: 8 }} /> Not Generated</span>}</td>
+                    <td style={{ textAlign: 'center' }}>
+                      <div className="ch-actions" style={{ justifyContent: 'center' }}>
+                        <button className="ch-btn ch-btn-gen" disabled={!setup} data-tip={!setup ? 'Set up payment first' : ''} onClick={() => onGenerate(s)}><i className="fa-solid fa-file-invoice-dollar" /> Generate</button>
+                        <button className="ch-btn ch-btn-dl" disabled={!challan} data-tip={!challan ? 'Generate challan first' : ''} onClick={() => onDownload(s)}><i className="fa-solid fa-download" /> Download</button>
+                        <button className="ch-btn ch-btn-del" disabled={!challan} data-tip={challan ? 'Delete challan' : 'No challan to delete'} data-tip-pos="left" onClick={() => onDelete(s)}><i className="fa-solid fa-trash-can" /></button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════════════ RECEIVING TAB ═══════════════════════ */
+function ReceivingTab({ payStore, chStore, recvStore, onReceive, onDelete, toast }) {
+  const [q, setQ] = useState('');
+  const [expanded, setExpanded] = useState({});
+  const list = PAY_SCHOOLS.filter((s) => s.name.toLowerCase().includes(q.toLowerCase()) || (s.principal || '').toLowerCase().includes(q.toLowerCase()));
+  const Dues = ({ v }) => v === 0 ? <span className="dues-zero">0</span> : v > 0 ? <span className="dues-pos">{v.toLocaleString()}</span> : <span className="dues-neg">{v.toLocaleString()}</span>;
+  return (
+    <div className="ss-panel">
+      <div className="section-card">
+        <CardHeader icon="fa-hand-holding-dollar" title="Receiving" sub="Record and track fee receiving from schools. Manage discounts, remaining dues, and payment history.">
+          <Search value={q} onChange={setQ} placeholder="Search schools…" width={200} />
+        </CardHeader>
+        <div className="tbl-wrap">
+          <table className="recv-table">
+            <thead><tr><th style={{ width: 44 }}>#</th><th>Branch Name</th><th style={{ width: 110, textAlign: 'center' }}>Total Dues</th><th style={{ width: 145, textAlign: 'center' }}>Prev Month Remaining</th><th style={{ width: 120, textAlign: 'center' }}>Receiving Dues</th><th style={{ width: 120, textAlign: 'center' }}>Remaining Dues</th><th style={{ width: 90, textAlign: 'center' }}>Download</th><th style={{ width: 80, textAlign: 'center' }}>Delete</th><th style={{ width: 100, textAlign: 'center' }}>Receiving</th><th style={{ width: 60, textAlign: 'center' }}>Detail</th></tr></thead>
+            <tbody>
+              {list.length === 0 ? <NoResults cols={10} /> : list.map((s, i) => {
+                const setup = payStore[s.id]; const challan = chStore[s.id]; const recv = recvStore[s.id];
+                const monthly = setup ? monthlyCharge(s, setup) : 0;
+                const totalDues = challan ? challan.total : monthly;
+                const prevRemaining = recv ? (recv.remainingAmount || 0) : 0;
+                const receivingDues = recv ? (recv.receivedAmount || 0) : 0;
+                const remainingDues = recv ? (recv.remainingAmount || 0) : totalDues;
+                return (
+                  <React.Fragment key={s.id}>
+                    <tr>
+                      <td style={{ color: 'var(--tm)', fontWeight: 700 }}>{i + 1}</td>
+                      <td><div style={{ fontWeight: 700, color: 'var(--t1)' }}>{s.name}</div><div style={{ fontSize: 11, color: 'var(--tm)', marginTop: 2 }}>{s.principal}</div></td>
+                      <td style={{ textAlign: 'center' }}><Dues v={totalDues} /></td>
+                      <td style={{ textAlign: 'center' }}><Dues v={prevRemaining} /></td>
+                      <td style={{ textAlign: 'center' }}>{recv ? <span style={{ color: 'var(--success)', fontWeight: 800 }}>{receivingDues.toLocaleString()}</span> : <span className="dues-zero">—</span>}</td>
+                      <td style={{ textAlign: 'center' }}><Dues v={remainingDues} /></td>
+                      <td style={{ textAlign: 'center' }}><button className="recv-btn-dl" disabled={!recv} data-tip={!recv ? 'No receiving record' : ''} onClick={() => recv && downloadRecvSlip(s, recv)}><i className="fa-solid fa-download" /> Download</button></td>
+                      <td style={{ textAlign: 'center' }}><button className="recv-btn-del" disabled={!recv} data-tip={!recv ? 'No record to delete' : ''} onClick={() => onDelete(s)}><i className="fa-solid fa-trash-can" /> Delete</button></td>
+                      <td style={{ textAlign: 'center' }}><button className="recv-btn-recv" onClick={() => onReceive(s)}><i className="fa-solid fa-hand-holding-dollar" /> Receiving</button></td>
+                      <td style={{ textAlign: 'center' }}><button className="det-btn" data-tip="Toggle details" onClick={() => setExpanded((e) => ({ ...e, [s.id]: !e[s.id] }))}><i className="fa-solid fa-chevron-down" /></button></td>
+                    </tr>
+                    {expanded[s.id] && (
+                      <tr className="recv-expand-row"><td colSpan={10}>
+                        <div className="recv-detail-box open"><RecvDetail s={s} monthly={monthly} totalDues={totalDues} recv={recv} /></div>
+                      </td></tr>
+                    )}
+                  </React.Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+function RecvDetail({ s, monthly, totalDues, recv }) {
+  const discount = recv ? (recv.discount || 0) : 0;
+  const netPayable = recv ? (recv.netPayable || 0) : totalDues;
+  const received = recv ? (recv.receivedAmount || 0) : 0;
+  const remaining = recv ? (recv.remainingAmount || 0) : totalDues;
+  return (
+    <>
+      <div className="recv-detail-grid">
+        <div className="recv-dc"><div className="recv-dc-lbl">Monthly Charge</div><div className="recv-dc-val">{pkr(monthly)}</div></div>
+        <div className="recv-dc"><div className="recv-dc-lbl">Discount</div><div className="recv-dc-val">{discount > 0 ? pkr(discount) : '—'}</div></div>
+        <div className="recv-dc"><div className="recv-dc-lbl">Net Payable</div><div className="recv-dc-val">{pkr(netPayable)}</div></div>
+        <div className="recv-dc"><div className="recv-dc-lbl">Payment Paid</div><div className="recv-dc-val" style={{ color: 'var(--success)' }}>{pkr(received)}</div></div>
+        <div className="recv-dc"><div className="recv-dc-lbl">Remaining</div><div className="recv-dc-val" style={{ color: remaining > 0 ? 'var(--err)' : 'var(--success)' }}>{pkr(remaining)}</div></div>
+      </div>
+      {recv && <div style={{ marginBottom: 8 }}><span className="badge b-green" style={{ fontSize: 11 }}><i className="fa-solid fa-circle-check" style={{ fontSize: 8 }} /> Payment Via: {recv.via || '—'}</span> <span className="badge b-blue" style={{ fontSize: 11, marginLeft: 4 }}><i className="fa-regular fa-calendar" style={{ fontSize: 8 }} /> {recv.date || '—'}</span></div>}
+      {recv && recv.history && recv.history.length > 0 && (
+        <div style={{ borderTop: '1.5px solid var(--bl)', paddingTop: 10, marginTop: 4 }}>
+          <div className="recv-history-title"><i className="fa-solid fa-clock-rotate-left" /> Payment History</div>
+          {recv.history.map((h, j) => (
+            <div className="recv-hist-item" key={j}><div className="recv-hist-dot" /><div className="recv-hist-amount">{pkr(h.amount)}</div><div className="recv-hist-via">{h.via || '—'}</div><div className="recv-hist-date">{h.date || '—'}</div></div>
+          ))}
+        </div>
+      )}
+      {!recv && <div style={{ textAlign: 'center', color: 'var(--tm)', fontSize: 12.5, padding: '8px 0' }}><i className="fa-solid fa-circle-info" style={{ marginRight: 6 }} />No receiving record yet. Click <strong>Receiving</strong> to record a payment.</div>}
+    </>
+  );
+}
+
+/* ═══════════════════════ REPORT TAB ═══════════════════════ */
+const RPT_SUBTABS = [
+  { id: 'summary', name: 'Summary', icon: 'fa-table-list' },
+  { id: 'outstanding', name: 'Outstanding', icon: 'fa-triangle-exclamation' },
+  { id: 'received', name: 'Received', icon: 'fa-circle-check' },
+  { id: 'challan', name: 'Challan', icon: 'fa-file-invoice-dollar' },
+];
+function RptStatusBadge({ status }) {
+  const map = { paid: ['rpt-paid', 'Paid'], partial: ['rpt-partial', 'Partial'], unpaid: ['rpt-unpaid', 'Unpaid'] };
+  const [cls, lbl] = map[status] || ['rpt-pending', 'No Setup'];
+  return <span className={cls}>{lbl}</span>;
+}
+function ReportTab({ payStore, chStore, recvStore }) {
+  const [sub, setSub] = useState('summary');
+  const [q, setQ] = useState('');
+  const [status, setStatus] = useState('');
+
+  const rows = useMemo(() => PAY_SCHOOLS.map((s) => {
+    const setup = payStore[s.id]; const challan = chStore[s.id]; const recv = recvStore[s.id];
+    const d = deriveRow(s, setup, challan, recv);
+    return { s, setup, challan, recv, ...d, lastPayDate: recv ? recv.date : null };
+  }), [payStore, chStore, recvStore]);
+
+  const overview = useMemo(() => {
+    let payable = 0, received = 0, outstanding = 0, paid = 0, unpaid = 0;
+    rows.forEach((r) => { payable += r.payable; received += r.received; outstanding += r.outstanding; if (r.received >= r.payable && r.payable > 0) paid++; else if (r.payable > 0) unpaid++; });
+    return { total: PAY_SCHOOLS.length, payable, received, outstanding, paid, unpaid };
+  }, [rows]);
+
+  const filtered = rows.filter(({ s, status: st }) => {
+    const m = s.name.toLowerCase().includes(q.toLowerCase()) || (s.principal || '').toLowerCase().includes(q.toLowerCase());
+    if (!m) return false;
+    if (status && st !== status) return false;
+    return true;
+  });
+
+  return (
+    <div className="ss-panel">
+      <div className="rpt-stat-grid">
+        <div className="rpt-stat"><div className="rpt-stat-val">{overview.total}</div><div className="rpt-stat-lbl">Total Schools</div></div>
+        <div className="rpt-stat s-info"><div className="rpt-stat-val" style={{ fontSize: 14 }}>PKR {kfmt(overview.payable)}</div><div className="rpt-stat-lbl">Total Payable</div></div>
+        <div className="rpt-stat s-green"><div className="rpt-stat-val" style={{ fontSize: 14 }}>PKR {kfmt(overview.received)}</div><div className="rpt-stat-lbl">Total Received</div></div>
+        <div className="rpt-stat s-red"><div className="rpt-stat-val" style={{ fontSize: 14 }}>PKR {kfmt(overview.outstanding)}</div><div className="rpt-stat-lbl">Outstanding</div></div>
+        <div className="rpt-stat s-green"><div className="rpt-stat-val">{overview.paid}</div><div className="rpt-stat-lbl">Paid Schools</div></div>
+        <div className="rpt-stat s-warn"><div className="rpt-stat-val">{overview.unpaid}</div><div className="rpt-stat-lbl">Unpaid / Partial</div></div>
+      </div>
+
+      <div className="section-card">
+        <div className="rpt-filter-bar">
+          <div className="f-field-grow"><Search value={q} onChange={setQ} placeholder="Search by school name…" width="100%" /></div>
+          <div className="f-field"><select className="f-input" value={status} onChange={(e) => setStatus(e.target.value)} style={{ height: 38, width: 150 }}><option value="">All Statuses</option><option value="paid">Paid</option><option value="partial">Partial</option><option value="unpaid">Unpaid</option><option value="no-setup">No Setup</option></select></div>
+          <button className="btn-secondary" style={{ height: 38 }} onClick={() => { setQ(''); setStatus(''); }}><i className="fa-solid fa-rotate-left" /> Reset</button>
+          <button className="rpt-pdf-btn" onClick={() => window.print()}><i className="fa-solid fa-file-pdf" /> Download PDF</button>
+        </div>
+
+        <div style={{ padding: '14px 18px 0' }}>
+          <div className="rpt-subtabs">
+            {RPT_SUBTABS.map((t) => <button key={t.id} className={`rpt-stab${sub === t.id ? ' active' : ''}`} onClick={() => setSub(t.id)}><i className={`fa-solid ${t.icon}`} /> {t.name}</button>)}
+          </div>
+        </div>
+
+        {sub === 'summary' && <SummaryReport rows={filtered} />}
+        {sub === 'outstanding' && <OutstandingReport rows={filtered.filter((r) => r.outstanding > 0 || r.status === 'unpaid' || r.status === 'partial')} />}
+        {sub === 'received' && <ReceivedReport rows={filtered.filter((r) => r.received > 0)} />}
+        {sub === 'challan' && <ChallanReport rows={filtered.filter((r) => r.challan)} />}
+      </div>
+    </div>
+  );
+}
+function ReportTable({ head, children, foot }) {
+  return <div className="tbl-wrap"><table className="rpt-table"><thead><tr>{head}</tr></thead><tbody>{children}</tbody>{foot && <tfoot>{foot}</tfoot>}</table></div>;
+}
+function EmptyReport({ cols, msg }) {
+  return <tr><td colSpan={cols} style={{ textAlign: 'center', padding: 40, color: 'var(--tm)' }}><i className="fa-solid fa-chart-bar" style={{ fontSize: 28, opacity: 0.2, display: 'block', margin: '0 auto 10px' }} /><div style={{ fontSize: 13, fontWeight: 700 }}>{msg}</div></td></tr>;
+}
+function SummaryReport({ rows }) {
+  const tot = rows.reduce((a, r) => ({ payable: a.payable + r.payable, received: a.received + r.received, outstanding: a.outstanding + r.outstanding }), { payable: 0, received: 0, outstanding: 0 });
+  return (
+    <ReportTable
+      head={<><th style={{ width: 40 }}>#</th><th>School Name</th><th style={{ width: 110 }}>Formula</th><th style={{ width: 120, textAlign: 'right' }}>Total Payable</th><th style={{ width: 120, textAlign: 'right' }}>Total Received</th><th style={{ width: 120, textAlign: 'right' }}>Outstanding</th><th style={{ width: 100, textAlign: 'center' }}>Status</th><th style={{ width: 100 }}>Last Payment</th></>}
+      foot={rows.length ? <tr className="rpt-totals-row"><td colSpan={3} style={{ fontWeight: 800, color: 'var(--brand)', padding: '10px 13px' }}>TOTALS</td><td style={{ textAlign: 'right', padding: '10px 13px' }}>{pkr(tot.payable)}</td><td style={{ textAlign: 'right', padding: '10px 13px', color: 'var(--success)' }}>{pkr(tot.received)}</td><td style={{ textAlign: 'right', padding: '10px 13px', color: 'var(--err)' }}>{pkr(tot.outstanding)}</td><td colSpan={2} /></tr> : null}>
+      {rows.length === 0 ? <EmptyReport cols={8} msg="No data found" /> : rows.map(({ s, setup, status, payable, received, outstanding, lastPayDate }, i) => (
+        <tr key={s.id}>
+          <td>{i + 1}</td>
+          <td><div style={{ fontWeight: 700, color: 'var(--t1)' }}>{s.name}</div><div style={{ fontSize: 10.5, color: 'var(--tm)' }}>{s.principal}</div></td>
+          <td><FormulaBadge setup={setup} /></td>
+          <td style={{ textAlign: 'right', fontWeight: 700 }}>{pkr(payable)}</td>
+          <td style={{ textAlign: 'right', fontWeight: 700, color: 'var(--success)' }}>{pkr(received)}</td>
+          <td style={{ textAlign: 'right', fontWeight: 700, color: outstanding > 0 ? 'var(--err)' : 'var(--success)' }}>{pkr(outstanding)}</td>
+          <td style={{ textAlign: 'center' }}><RptStatusBadge status={status} /></td>
+          <td>{lastPayDate || <span style={{ color: 'var(--tm)' }}>—</span>}</td>
+        </tr>
+      ))}
+    </ReportTable>
+  );
+}
+function OutstandingReport({ rows }) {
+  return (
+    <ReportTable head={<><th style={{ width: 40 }}>#</th><th>School Name</th><th>Owner / Contact</th><th style={{ width: 120, textAlign: 'right' }}>Due Amount</th><th style={{ width: 120 }}>Due Period</th><th style={{ width: 90, textAlign: 'center' }}>Status</th></>}>
+      {rows.length === 0 ? <EmptyReport cols={6} msg="No outstanding payments found" /> : rows.map(({ s, outstanding, challan, status }, i) => (
+        <tr key={s.id}>
+          <td>{i + 1}</td><td><div style={{ fontWeight: 700, color: 'var(--t1)' }}>{s.name}</div></td>
+          <td>{s.principal || '—'}<br /><span style={{ fontSize: 11, color: 'var(--tm)' }}>{s.contact}</span></td>
+          <td style={{ textAlign: 'right', fontWeight: 800, color: 'var(--err)' }}>{pkr(outstanding)}</td>
+          <td>{challan ? challan.dueDate : '—'}</td>
+          <td style={{ textAlign: 'center' }}><RptStatusBadge status={status} /></td>
+        </tr>
+      ))}
+    </ReportTable>
+  );
+}
+function ReceivedReport({ rows }) {
+  return (
+    <ReportTable head={<><th style={{ width: 40 }}>#</th><th>School Name</th><th style={{ width: 120, textAlign: 'right' }}>Amount Received</th><th style={{ width: 100 }}>Payment Date</th><th style={{ width: 160 }}>Payment Method</th><th style={{ width: 120, textAlign: 'right' }}>Remaining</th></>}>
+      {rows.length === 0 ? <EmptyReport cols={6} msg="No received payments found" /> : rows.map(({ s, recv, received, outstanding }, i) => (
+        <tr key={s.id}>
+          <td>{i + 1}</td><td><div style={{ fontWeight: 700, color: 'var(--t1)' }}>{s.name}</div></td>
+          <td style={{ textAlign: 'right', fontWeight: 800, color: 'var(--success)' }}>{pkr(received)}</td>
+          <td>{recv ? recv.date : '—'}</td><td>{recv ? recv.via : '—'}</td>
+          <td style={{ textAlign: 'right', fontWeight: 700, color: outstanding > 0 ? 'var(--err)' : 'var(--success)' }}>{pkr(outstanding)}</td>
+        </tr>
+      ))}
+    </ReportTable>
+  );
+}
+function ChallanReport({ rows }) {
+  return (
+    <ReportTable head={<><th style={{ width: 40 }}>#</th><th>School Name</th><th style={{ width: 100 }}>Formula</th><th style={{ width: 120, textAlign: 'right' }}>Challan Amount</th><th style={{ width: 120, textAlign: 'right' }}>Previous Dues</th><th style={{ width: 120, textAlign: 'right' }}>Total</th><th style={{ width: 100 }}>Due Date</th><th style={{ width: 100, textAlign: 'center' }}>Status</th></>}>
+      {rows.length === 0 ? <EmptyReport cols={8} msg="No challans generated yet" /> : rows.map(({ s, setup, challan, status }, i) => (
+        <tr key={s.id}>
+          <td>{i + 1}</td><td><div style={{ fontWeight: 700, color: 'var(--t1)' }}>{s.name}</div></td>
+          <td><FormulaBadge setup={setup} /></td>
+          <td style={{ textAlign: 'right', fontWeight: 700 }}>{pkr(challan.monthly)}</td>
+          <td style={{ textAlign: 'right' }}>{pkr(challan.prevDues)}</td>
+          <td style={{ textAlign: 'right', fontWeight: 800, color: 'var(--brand)' }}>{pkr(challan.total)}</td>
+          <td>{challan.dueDate}</td>
+          <td style={{ textAlign: 'center' }}><RptStatusBadge status={status} /></td>
+        </tr>
+      ))}
+    </ReportTable>
+  );
+}
+
+/* ═══════════════════════ MODALS ═══════════════════════ */
+function Switch({ checked, onChange }) {
+  return <label className="sw"><input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} /><div className="sw-track" /><div className="sw-thumb" /></label>;
+}
+function Ov({ cls, children, onClose, wrap, wrapStyle }) {
+  return <div className={`${cls} open`} onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}><div className={wrap} style={wrapStyle}>{children}</div></div>;
+}
+
+function SetupModal({ school: s, setup: existing, onClose, onSave, toast }) {
+  const init = existing || { formula: 'lumpsum', freeTrial: false, trialDays: '', lumpAmount: '', perStudentRate: '', studentCount: s.students || 0, notes: '' };
+  const [f, setF] = useState({ ...init });
+  const set = (k, v) => setF((p) => ({ ...p, [k]: v }));
+  const preview = (parseFloat(f.perStudentRate) || 0) * (parseInt(f.studentCount, 10) || 0);
+  const save = () => {
+    if (f.formula === 'lumpsum' && !f.lumpAmount) { toast?.('Please enter the monthly lump sum amount', 'warn'); return; }
+    if (f.formula === 'perstudent' && !f.perStudentRate) { toast?.('Please enter the per student rate', 'warn'); return; }
+    if (f.freeTrial && !f.trialDays) { toast?.('Please enter trial duration in days', 'warn'); return; }
+    onSave(s.id, { ...f, notes: (f.notes || '').trim() });
+  };
+  return (
+    <Ov cls="pay-ov" onClose={onClose} wrap="pay-modal">
+      <div className="pay-modal-hdr">
+        <div className="pay-modal-av">{s.initials}</div>
+        <div style={{ flex: 1, minWidth: 0 }}><div className="pay-modal-title">{s.name}</div><div className="pay-modal-sub">{s.principal}{s.contact ? ` · ${s.contact}` : ''}</div></div>
+        <button className="pm-close" data-tip="Close" data-tip-pos="bottom" onClick={onClose}><i className="fa-solid fa-xmark" /></button>
+      </div>
+      <div className="pay-modal-body">
+        <div style={{ marginBottom: 18 }}>
+          <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--brand)', letterSpacing: '.6px', textTransform: 'uppercase', marginBottom: 10 }}><i className="fa-solid fa-calculator" /> Billing Formula</div>
+          <div className="pay-formula-grid">
+            <div className={`pay-formula-card${f.formula === 'lumpsum' ? ' selected' : ''}`} onClick={() => set('formula', 'lumpsum')}>
+              <div className="pay-fc-icon" style={{ background: 'linear-gradient(135deg,#1E3A8A,#1E40AF)' }}><i className="fa-solid fa-money-bill-wave" /></div>
+              <div className="pay-fc-title">Lump Sum / Month</div><div className="pay-fc-desc">Charge a fixed flat amount per month regardless of student count.</div>
+            </div>
+            <div className={`pay-formula-card${f.formula === 'perstudent' ? ' selected' : ''}`} onClick={() => set('formula', 'perstudent')}>
+              <div className="pay-fc-icon" style={{ background: 'linear-gradient(135deg,#15803d,#16a34a)' }}><i className="fa-solid fa-user-graduate" /></div>
+              <div className="pay-fc-title">Per Student / Month</div><div className="pay-fc-desc">Charge a fixed rate multiplied by number of active students each month.</div>
+            </div>
+          </div>
+        </div>
+        <div className="pay-toggle-row">
+          <div><div className="pay-toggle-label"><i className="fa-solid fa-gift" style={{ color: 'var(--brand)', marginRight: 5 }} /> Free Trial</div><div className="pay-toggle-sub">If enabled, no payment is charged during the trial period.</div></div>
+          <Switch checked={f.freeTrial} onChange={(v) => set('freeTrial', v)} />
+        </div>
+        {f.freeTrial && <div className="pay-field"><label><i className="fa-regular fa-calendar" style={{ color: 'var(--brand)', marginRight: 4 }} /> Trial Duration (days)</label><input className="pay-input" type="number" value={f.trialDays} onChange={(e) => set('trialDays', e.target.value)} placeholder="e.g. 30" /></div>}
+        {f.formula === 'lumpsum' ? (
+          <div className="pay-formula-panel active">
+            <div className="pay-info-box"><i className="fa-solid fa-circle-info" /><p>The school will be charged a fixed <strong>monthly lump sum amount</strong>, independent of how many students are enrolled.</p></div>
+            <div className="pay-field"><label><i className="fa-solid fa-money-bill" style={{ color: 'var(--brand)', marginRight: 4 }} /> Monthly Amount (PKR)</label><input className="pay-input" type="number" value={f.lumpAmount} onChange={(e) => set('lumpAmount', e.target.value)} placeholder="e.g. 5000" /></div>
+          </div>
+        ) : (
+          <div className="pay-formula-panel active">
+            <div className="pay-info-box"><i className="fa-solid fa-circle-info" /><p>The school will be charged <strong>per active student per month</strong>. Total bill = Rate × Student Count.</p></div>
+            <div className="pay-input-row">
+              <div className="pay-field" style={{ marginBottom: 0 }}><label><i className="fa-solid fa-tag" style={{ color: 'var(--brand)', marginRight: 4 }} /> Rate per Student (PKR)</label><input className="pay-input" type="number" value={f.perStudentRate} onChange={(e) => set('perStudentRate', e.target.value)} placeholder="e.g. 50" /></div>
+              <div className="pay-field" style={{ marginBottom: 0 }}><label><i className="fa-solid fa-users" style={{ color: 'var(--brand)', marginRight: 4 }} /> Current Students</label><input className="pay-input" type="number" value={f.studentCount} onChange={(e) => set('studentCount', e.target.value)} placeholder="Auto-filled" /></div>
+            </div>
+            {(preview > 0) && <div style={{ marginTop: 14, background: 'var(--muted)', border: '1.5px solid var(--bl)', borderRadius: 'var(--r-md)', padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}><div style={{ fontSize: 12, color: 'var(--tm)', fontWeight: 600 }}>Estimated Monthly Bill</div><div style={{ fontSize: 20, fontWeight: 800, color: 'var(--brand)' }}>PKR {preview.toLocaleString()}</div></div>}
+          </div>
+        )}
+        <div className="pay-field" style={{ marginTop: 16, marginBottom: 0 }}><label><i className="fa-regular fa-note-sticky" style={{ color: 'var(--brand)', marginRight: 4 }} /> Notes (optional)</label><textarea className="pay-input" rows={2} style={{ height: 'auto', padding: '10px 14px', resize: 'vertical' }} value={f.notes} onChange={(e) => set('notes', e.target.value)} placeholder="Add any billing notes or special instructions…" /></div>
+      </div>
+      <div className="pay-modal-foot"><button className="btn-secondary" onClick={onClose}><i className="fa-solid fa-xmark" /> Cancel</button><button className="btn-primary" onClick={save}><i className="fa-solid fa-floppy-disk" /> Save Setup</button></div>
+    </Ov>
+  );
+}
+
+function GenChallanModal({ school: s, setup, onClose, onGenerate, toast }) {
+  const monthly = monthlyCharge(s, setup);
+  const [dueDate, setDueDate] = useState(plusDays(7));
+  const [prevDues, setPrevDues] = useState('');
+  const prev = parseFloat(prevDues) || 0;
+  return (
+    <Ov cls="ch-gen-ov" onClose={onClose} wrap="ch-gen-modal">
+      <div className="ch-gen-hdr">
+        <div className="ch-gen-hdr-icon"><i className="fa-solid fa-file-invoice-dollar" /></div>
+        <div style={{ flex: 1, minWidth: 0 }}><div className="ch-gen-title">Generate Challan</div><div className="ch-gen-sub">{s.name}</div></div>
+        <button className="pm-close" data-tip="Close" data-tip-pos="bottom" onClick={onClose}><i className="fa-solid fa-xmark" /></button>
+      </div>
+      <div className="ch-gen-body">
+        <div className="ch-gen-info">
+          <div className="ch-gen-info-row"><span className="ch-gen-info-lbl">Formula</span><span className="ch-gen-info-val">{setup.formula === 'lumpsum' ? 'Lump Sum / Month' : `Per Student (${setup.perStudentRate} × ${setup.studentCount || s.students || 0} students)`}</span></div>
+          <div className="ch-gen-info-row"><span className="ch-gen-info-lbl">Students</span><span className="ch-gen-info-val">{s.students || setup.studentCount || 0}</span></div>
+          <div className="ch-gen-info-row"><span className="ch-gen-info-lbl">Previous Dues</span><span className="ch-gen-info-val" style={{ color: 'var(--err)', fontWeight: 800 }}>{pkr(prev)}</span></div>
+        </div>
+        <div className="ch-gen-amount-preview"><div><div style={{ fontSize: 11, fontWeight: 700, color: 'var(--tm)', textTransform: 'uppercase', letterSpacing: '.4px' }}>Estimated Challan Amount</div><div style={{ fontSize: 10, color: 'var(--tm)', marginTop: 2 }}>Current month charges</div></div><div style={{ fontSize: 24, fontWeight: 800, color: 'var(--brand)' }}>{pkr(monthly)}</div></div>
+        <div className="ch-gen-field"><label><i className="fa-regular fa-calendar" style={{ color: 'var(--brand)', marginRight: 4 }} /> Due Date</label><input className="ch-gen-input" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} /></div>
+        <div className="ch-gen-field"><label><i className="fa-solid fa-triangle-exclamation" style={{ color: 'var(--warn)', marginRight: 4 }} /> Previous Dues (PKR)</label><input className="ch-gen-input" type="number" value={prevDues} onChange={(e) => setPrevDues(e.target.value)} placeholder="0" /></div>
+        <div style={{ background: 'linear-gradient(135deg,rgba(30,58,138,.08),rgba(30,64,175,.04))', border: '1.5px solid var(--bl)', borderRadius: 'var(--r-md)', padding: '14px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}><div><div style={{ fontSize: 11, fontWeight: 700, color: 'var(--tm)', textTransform: 'uppercase', letterSpacing: '.4px' }}>Total Net Payable</div><div style={{ fontSize: 10, color: 'var(--tm)', marginTop: 1 }}>Current charges + previous dues</div></div><div style={{ fontSize: 22, fontWeight: 800, color: 'var(--success)' }}>{pkr(monthly + prev)}</div></div>
+      </div>
+      <div className="ch-gen-foot"><button className="btn-secondary" onClick={onClose}><i className="fa-solid fa-xmark" /> Close</button><button className="btn-primary" style={{ background: 'linear-gradient(135deg,#15803d,#16a34a)', boxShadow: '0 4px 14px rgba(22,163,74,.28)' }} onClick={() => { if (!dueDate) { toast?.('Please select a due date', 'warn'); return; } onGenerate(s.id, { dueDate, prevDues: prev }); }}><i className="fa-solid fa-file-invoice-dollar" /> Generate Challan</button></div>
+    </Ov>
+  );
+}
+
+function BulkChallanModal({ payStore, onClose, onGenerate, toast }) {
+  const [selected, setSelected] = useState(new Set());
+  const [dueDate, setDueDate] = useState(plusDays(7));
+  const [search, setSearch] = useState('');
+  const [ddOpen, setDdOpen] = useState(false);
+  const withSetup = PAY_SCHOOLS.filter((s) => payStore[s.id]);
+  const opts = withSetup.filter((s) => s.name.toLowerCase().includes(search.toLowerCase()));
+  const toggle = (id) => setSelected((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const total = [...selected].reduce((sum, id) => { const s = PAY_SCHOOLS.find((x) => x.id === id); return sum + monthlyCharge(s, payStore[id]); }, 0);
+  return (
+    <Ov cls="ch-bulk-ov" onClose={onClose} wrap="ch-bulk-modal">
+      <div className="ch-bulk-hdr">
+        <div className="ch-bulk-hdr-icon"><i className="fa-solid fa-bolt" /></div>
+        <div style={{ flex: 1 }}><div style={{ fontSize: 14, fontWeight: 800, color: 'var(--t1)' }}>Bulk Challan Generate</div><div style={{ fontSize: 11.5, color: 'var(--tm)', marginTop: 2 }}>Select branches and generate challans for multiple schools at once.</div></div>
+        <button className="pm-close" data-tip="Close" data-tip-pos="bottom" onClick={onClose}><i className="fa-solid fa-xmark" /></button>
+      </div>
+      <div className="ch-bulk-body">
+        <div style={{ marginBottom: 16 }}>
+          <label style={{ display: 'block', fontSize: 11.5, fontWeight: 700, color: 'var(--t2)', marginBottom: 6 }}><i className="fa-solid fa-school" style={{ color: 'var(--brand)', marginRight: 4 }} /> Select Branches</label>
+          <div className="ch-branch-selector">
+            <div className="ch-tags">
+              {[...selected].map((id) => { const s = PAY_SCHOOLS.find((x) => x.id === id); return <span className="ch-tag" key={id}>{s.name}<span className="ch-tag-x" data-tip="Remove" onClick={() => toggle(id)}>×</span></span>; })}
+            </div>
+            <input className="ch-branch-input" value={search} onChange={(e) => { setSearch(e.target.value); setDdOpen(true); }} onFocus={() => setDdOpen(true)} placeholder="Select Branches…" />
+          </div>
+          {ddOpen && (
+            <div className="ch-dropdown open">
+              {opts.length === 0 ? <div className="ch-dropdown-item">No schools with setup</div> : (() => {
+                const allSelected = opts.length > 0 && opts.every((s) => selected.has(s.id));
+                const toggleAll = () => setSelected((prev) => {
+                  const n = new Set(prev);
+                  if (allSelected) opts.forEach((s) => n.delete(s.id));
+                  else opts.forEach((s) => n.add(s.id));
+                  return n;
+                });
+                return (
+                  <>
+                    <div className="ch-dropdown-item ch-dropdown-all" onClick={toggleAll}>
+                      <i className={`fa-${allSelected ? 'solid fa-square-check' : 'regular fa-square'}`} /> Select All ({opts.length})
+                    </div>
+                    {opts.map((s) => (
+                      <div className={`ch-dropdown-item${selected.has(s.id) ? ' selected' : ''}`} key={s.id} onClick={() => toggle(s.id)}>
+                        <i className={`fa-${selected.has(s.id) ? 'solid fa-square-check' : 'regular fa-square'}`} /> {s.name}
+                      </div>
+                    ))}
+                  </>
+                );
+              })()}
+            </div>
+          )}
+          <div style={{ fontSize: 11, color: 'var(--tm)', marginTop: 4 }}>{selected.size} branches selected</div>
+        </div>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
+          <button className="btn-sm" style={{ height: 30, fontSize: 11 }} onClick={() => setSelected(new Set(withSetup.map((s) => s.id)))}><i className="fa-solid fa-check-double" /> Select All</button>
+          <button className="btn-sm" style={{ height: 30, fontSize: 11, borderColor: 'var(--err)', color: 'var(--err)', background: 'rgba(220,38,38,.05)' }} onClick={() => setSelected(new Set())}><i className="fa-solid fa-xmark" /> Clear All</button>
+        </div>
+        <div className="ch-gen-field"><label><i className="fa-regular fa-calendar" style={{ color: 'var(--brand)', marginRight: 4 }} /> Due Date for All Challans</label><input className="ch-gen-input" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} /></div>
+        <div style={{ background: 'var(--muted)', border: '1.5px solid var(--bl)', borderRadius: 'var(--r-md)', padding: '14px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}><div style={{ fontSize: 12, color: 'var(--tm)', fontWeight: 600 }}>Total Estimated Revenue</div><div style={{ fontSize: 18, fontWeight: 800, color: 'var(--brand)' }}>{pkr(total)}</div></div>
+      </div>
+      <div className="ch-bulk-foot"><button className="btn-secondary" onClick={onClose}><i className="fa-solid fa-xmark" /> Cancel</button><button className="btn-primary" onClick={() => { if (selected.size === 0) { toast?.('Select at least one branch', 'warn'); return; } if (!dueDate) { toast?.('Select a due date', 'warn'); return; } onGenerate([...selected], dueDate); }}><i className="fa-solid fa-bolt" /> Generate for Selected</button></div>
+    </Ov>
+  );
+}
+
+function SlipModal({ school: s, setup, challan, onClose }) {
+  if (!challan) return null;
+  return (
+    <Ov cls="ch-slip-ov" onClose={onClose} wrap="ch-slip-wrap">
+      <div className="ch-slip-toolbar">
+        <div className="ch-slip-toolbar-title"><i className="fa-solid fa-file-invoice-dollar" /> Challan Slip Preview</div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn-primary" style={{ height: 34, fontSize: 12 }} onClick={() => window.print()}><i className="fa-solid fa-print" /> Print / Download PDF</button>
+          <button className="pm-close" data-tip="Close" data-tip-pos="bottom" onClick={onClose}><i className="fa-solid fa-xmark" /></button>
+        </div>
+      </div>
+      <div className="ch-slip-paper">
+        <div className="ch-slip-band" />
+        <div className="ch-slip-header">
+          <div className="ch-slip-logo-area"><div className="ch-slip-logo-circle">{s.initials}</div><div><div className="ch-slip-school-name">{s.name}</div><div className="ch-slip-school-city">{s.principal}</div><div className="ch-slip-school-addr">School Mentor App Pvt Ltd</div></div></div>
+          <div className="ch-slip-title-area"><div className="ch-slip-doc-title">Challan Slip</div><div className="ch-slip-doc-sub">Branch Phone: {s.contact || '—'}</div></div>
+        </div>
+        <div className="ch-slip-info">
+          <div className="ch-slip-info-row"><div className="ch-slip-info-key">Owner Name</div><div className="ch-slip-info-val">{s.principal || '—'}</div></div>
+          <div className="ch-slip-info-row"><div className="ch-slip-info-key">Issue Date</div><div className="ch-slip-info-val">{challan.issueDate}</div></div>
+          <div className="ch-slip-info-row"><div className="ch-slip-info-key">Due Date</div><div className="ch-slip-info-val">{challan.dueDate}</div></div>
+        </div>
+        <div className="ch-slip-calc">
+          <div className="ch-slip-calc-left">
+            <div className="ch-slip-calc-title"><i className="fa-solid fa-calculator" /> {setup.formula === 'lumpsum' ? 'Lump Sum' : 'Per Student'} Calculation</div>
+            {setup.formula === 'lumpsum' ? (
+              <div className="ch-slip-calc-row"><div className="ch-slip-calc-key">Monthly Lump Sum</div><div className="ch-slip-calc-val highlight">PKR {challan.monthly.toLocaleString()}</div></div>
+            ) : (
+              <>
+                <div className="ch-slip-calc-row"><div className="ch-slip-calc-key">Rate / Student</div><div className="ch-slip-calc-val">PKR {challan.perStudentRate.toLocaleString()}</div></div>
+                <div className="ch-slip-calc-row"><div className="ch-slip-calc-key">Students</div><div className="ch-slip-calc-val">{challan.studentCount}</div></div>
+                <div className="ch-slip-calc-row"><div className="ch-slip-calc-key">Monthly Charge</div><div className="ch-slip-calc-val highlight">PKR {challan.monthly.toLocaleString()}</div></div>
+              </>
+            )}
+          </div>
+          <div className="ch-slip-calc-right">
+            <div className="ch-slip-calc-title"><i className="fa-solid fa-wallet" /> Net Payable</div>
+            <div className="ch-slip-calc-row"><div className="ch-slip-net-key">Previous Dues</div><div className="ch-slip-net-val" style={{ fontSize: 13, fontWeight: 700, color: '#DC2626' }}>{challan.prevDues.toLocaleString()}</div></div>
+            <div className="ch-slip-calc-row"><div className="ch-slip-net-key">Net Payable</div><div className="ch-slip-net-val" style={{ fontSize: 11, color: '#64748B', fontWeight: 500 }}>Current Month Charges + Previous Dues</div></div>
+            <div className="ch-slip-calc-row" style={{ borderBottom: 'none' }}><div className="ch-slip-net-key" style={{ background: '#0284C7' }}>Total Net Payable</div><div className="ch-slip-net-val" style={{ fontSize: 20, fontWeight: 800, color: '#0284C7' }}>{challan.total.toLocaleString()}</div></div>
+          </div>
+        </div>
+        <div className="ch-slip-bank">
+          <div className="ch-slip-bank-title"><i className="fa-solid fa-building-columns" /> Payment Method — Bank Transfer</div>
+          <div className="ch-slip-bank-grid">
+            <div className="ch-slip-bank-row"><div className="ch-slip-bank-key">Bank Name</div><div className="ch-slip-bank-val">Soneri Bank</div></div>
+            <div className="ch-slip-bank-row"><div className="ch-slip-bank-key">A/C Title</div><div className="ch-slip-bank-val">School Mentor App (Private) Limited</div></div>
+            <div className="ch-slip-bank-row"><div className="ch-slip-bank-key">A/C No</div><div className="ch-slip-bank-val">20014183265</div></div>
+            <div className="ch-slip-bank-row"><div className="ch-slip-bank-key">Branch Code</div><div className="ch-slip-bank-val">0387</div></div>
+            <div className="ch-slip-bank-row" style={{ gridColumn: 'span 2' }}><div className="ch-slip-bank-key">IBAN</div><div className="ch-slip-bank-val">PK15SONE0038720014183265</div></div>
+          </div>
+        </div>
+        <div className="ch-slip-instructions"><div className="ch-slip-instr-title"><i className="fa-solid fa-circle-info" /> Payment Instructions</div><div className="ch-slip-instr-text">Please pay your bill on or before the due date using the methods mentioned above. Late payment may result in service disruption. For queries, contact School Mentor support.</div></div>
+        <div className="ch-slip-bottom-band" />
+      </div>
+    </Ov>
+  );
+}
+
+function ReceiveModal({ school: s, setup, challan, prevRecv, onClose, onSave, toast }) {
+  const monthly = setup ? monthlyCharge(s, setup) : 0;
+  const totalDues = challan ? challan.total : monthly;
+  const prevRemaining = prevRecv ? (prevRecv.remainingAmount || 0) : 0;
+  const [discount, setDiscount] = useState('');
+  const [received, setReceived] = useState('');
+  const [via, setVia] = useState(RECEIVING_METHODS[0]);
+  const [date, setDate] = useState(todayISO());
+  const net = Math.max(0, totalDues - (parseFloat(discount) || 0));
+  const remaining = net - (parseFloat(received) || 0);
+  const save = () => {
+    if (!received) { toast?.('Please enter the received amount', 'warn'); return; }
+    if (!date) { toast?.('Please select a payment date', 'warn'); return; }
+    onSave(s.id, { discount: parseFloat(discount) || 0, netPayable: net, receivedAmount: parseFloat(received) || 0, remainingAmount: remaining, via, date: fmtDateShort(date) });
+  };
+  return (
+    <Ov cls="recv-ov" onClose={onClose} wrap="recv-modal">
+      <div className="recv-modal-hdr">
+        <div className="recv-modal-icon"><i className="fa-solid fa-hand-holding-dollar" /></div>
+        <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 14, fontWeight: 800, color: 'var(--t1)' }}>Payment Receiving</div><div style={{ fontSize: 11.5, color: 'var(--tm)', marginTop: 2 }}>{s.name}</div></div>
+        <button className="pm-close" data-tip="Close" data-tip-pos="bottom" onClick={onClose}><i className="fa-solid fa-xmark" /></button>
+      </div>
+      <div className="recv-modal-body">
+        <div className="recv-summary-card">
+          <div className="recv-summary-row"><span className="recv-summary-lbl">Previous Month Remaining Amount</span><span className="recv-summary-val">{pkr(prevRemaining)}</span></div>
+          <div className="recv-summary-row"><span className="recv-summary-lbl">Total Payable Amount</span><span className="recv-summary-val">{pkr(totalDues)}</span></div>
+        </div>
+        <div className="recv-field"><label><i className="fa-solid fa-percent" style={{ color: '#0284C7', marginRight: 4 }} /> Discount (PKR)</label><input className="recv-input" type="number" value={discount} onChange={(e) => setDiscount(e.target.value)} placeholder="0" /></div>
+        <div className="recv-input-2col">
+          <div className="recv-field"><label><i className="fa-solid fa-calculator" style={{ color: '#0284C7', marginRight: 4 }} /> Net Payable</label><input className="recv-input" type="number" value={net} readOnly /></div>
+          <div className="recv-field"><label><i className="fa-solid fa-money-bill-wave" style={{ color: '#0284C7', marginRight: 4 }} /> Received Amount</label><input className="recv-input" type="number" value={received} onChange={(e) => setReceived(e.target.value)} placeholder="0" /></div>
+        </div>
+        <div className="recv-field"><label><i className="fa-solid fa-building-columns" style={{ color: '#0284C7', marginRight: 4 }} /> Payment Via</label><select className="recv-input" style={{ cursor: 'pointer' }} value={via} onChange={(e) => setVia(e.target.value)}>{RECEIVING_METHODS.map((m) => <option key={m}>{m}</option>)}</select></div>
+        <div className="recv-field"><label><i className="fa-regular fa-calendar" style={{ color: '#0284C7', marginRight: 4 }} /> Payment Receiving Date</label><input className="recv-input" type="date" value={date} onChange={(e) => setDate(e.target.value)} /></div>
+        <div className="recv-remaining-live"><div><div style={{ fontSize: 11, fontWeight: 700, color: 'var(--tm)', textTransform: 'uppercase', letterSpacing: '.4px' }}>Remaining Amount</div><div style={{ fontSize: 10, color: 'var(--tm)', marginTop: 1 }}>Net Payable − Received Amount</div></div><div style={{ fontSize: 22, fontWeight: 800, color: remaining > 0 ? 'var(--err)' : remaining < 0 ? 'var(--success)' : 'var(--tm)' }}>{pkr(remaining)}</div></div>
+      </div>
+      <div className="recv-modal-foot"><button className="btn-secondary" onClick={onClose}><i className="fa-solid fa-xmark" /> Close</button><button className="btn-primary" style={{ background: 'linear-gradient(135deg,#0369A1,#0284C7)', boxShadow: '0 4px 14px rgba(3,105,161,.28)' }} onClick={save}><i className="fa-solid fa-circle-check" /> Add Payment</button></div>
+    </Ov>
+  );
+}
+
+function ConfirmDel({ title, sub, confirmText, onConfirm, onClose }) {
+  return (
+    <Ov cls="ch-del-ov" onClose={onClose} wrap="ch-del-modal">
+      <div style={{ width: 60, height: 60, borderRadius: '50%', background: 'rgba(220,38,38,.1)', border: '2px solid rgba(220,38,38,.25)', color: '#DC2626', fontSize: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}><i className="fa-solid fa-trash-can" /></div>
+      <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--t1)', marginBottom: 8 }}>{title}</div>
+      <div style={{ fontSize: 13, color: 'var(--tm)', marginBottom: 20, lineHeight: 1.6 }}>{sub}</div>
+      <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}><button className="btn-secondary" onClick={onClose}>Cancel</button><button className="btn-danger" onClick={onConfirm}><i className="fa-solid fa-trash-can" /> {confirmText}</button></div>
+    </Ov>
+  );
+}
+
+/* Open a printable receiving slip in a new window. */
+function downloadRecvSlip(s, recv) {
+  const w = window.open('', '_blank');
+  if (!w) return;
+  w.document.write(`<!DOCTYPE html><html><head><title>Receiving Slip - ${s.name}</title>
+  <style>*{box-sizing:border-box;margin:0;padding:0;font-family:system-ui,sans-serif}body{background:#f5f5f5;padding:24px}
+  .slip{background:#fff;border-radius:12px;max-width:600px;margin:0 auto;overflow:hidden;box-shadow:0 2px 20px rgba(0,0,0,.1)}
+  .band{background:linear-gradient(135deg,#0369A1,#0284C7);height:8px}.hdr{padding:22px 28px 18px;border-bottom:2px solid #e5e7eb;display:flex;justify-content:space-between;align-items:center}
+  .school-name{font-size:18px;font-weight:800;color:#0F172A}.slip-title{font-size:20px;font-weight:800;color:#0284C7;text-align:right}
+  .body{padding:22px 28px}.row{display:flex;align-items:center;justify-content:space-between;padding:11px 14px;border-radius:8px;margin-bottom:8px;background:#f8fafc;border:1px solid #e5e7eb}
+  .lbl{font-size:12.5px;color:#64748B;font-weight:600}.val{font-size:13px;font-weight:800;color:#0F172A}
+  .val-blue{background:#0369A1;color:#fff;border-radius:99px;padding:3px 12px;font-size:12px;font-weight:700}.val-green{background:#15803d;color:#fff;border-radius:99px;padding:3px 12px;font-size:12px;font-weight:700}
+  .bottom-band{background:#0369A1;height:6px}.footer{text-align:center;padding:14px;font-size:11px;color:#94a3b8}</style></head><body>
+  <div class="slip"><div class="band"></div>
+  <div class="hdr"><div><div class="school-name">${s.name}</div><div style="font-size:11px;color:#64748B;margin-top:2px">${s.principal || ''}${s.contact ? ' · ' + s.contact : ''}</div></div>
+  <div><div class="slip-title">Receiving Slip</div><div style="font-size:11px;color:#64748B;text-align:right;margin-top:3px">School Mentor App Pvt Ltd</div></div></div>
+  <div class="body">
+  <div class="row"><span class="lbl">Total Payable Amount</span><span class="val-blue">${(recv.netPayable || 0).toLocaleString()}</span></div>
+  <div class="row"><span class="lbl">Discount</span><span class="val">${recv.discount || 0}</span></div>
+  <div class="row"><span class="lbl">Payment Paid</span><span class="val-green">${(recv.receivedAmount || 0).toLocaleString()}</span></div>
+  <div class="row"><span class="lbl">Remaining Amount</span><span class="val" style="color:${(recv.remainingAmount || 0) > 0 ? '#DC2626' : '#16A34A'}">${(recv.remainingAmount || 0).toLocaleString()}</span></div>
+  <div class="row"><span class="lbl">Payment Via</span><span class="val-blue">${recv.via || '—'}</span></div>
+  <div class="row"><span class="lbl">Payment Receiving Date</span><span class="val-blue">${recv.date || '—'}</span></div>
+  </div><div class="bottom-band"></div><div class="footer">© 2026 School Mentor App Pvt Ltd · schoolmentor.app</div></div></body></html>`);
+  w.document.close();
+  setTimeout(() => w.print(), 400);
+}
