@@ -220,6 +220,25 @@ function rcGradeByScale(pct, grades) {
 function rcGetFinalRemarks(pct) {
   return (RC_FINAL_REMARKS_SETUP.find(r => pct >= r.min) || RC_FINAL_REMARKS_SETUP[RC_FINAL_REMARKS_SETUP.length - 1]).remark;
 }
+/* Final remarks from branch's configured overall grading (overallgradingcrud → rsRemarks)
+   by percentage. rsRemarks rows: { cond, pct, text }. Returns text or '' if no match. */
+function rcRemarkByScale(pct, remarks) {
+  if (!remarks || !remarks.length || pct == null) return '';
+  const v = Number(pct);
+  const test = (r) => {
+    const t = Number(r.pct);
+    switch (r.cond) {
+      case 'gt':  return v > t;
+      case 'lte': return v <= t;
+      case 'lt':  return v < t;
+      case 'eq':  return v === t;
+      default:    return v >= t; // gte
+    }
+  };
+  const sorted = [...remarks].sort((a, b) => Number(b.pct) - Number(a.pct));
+  const hit = sorted.find(test);
+  return hit ? (hit.text || '') : '';
+}
 
 const SAMPLE_RC_STUDENT = {
   id: 1, rollNo: '245-00072', name: 'Ali Khan', father: 'Ahmed Khan',
@@ -889,6 +908,7 @@ const [subjects, setSubjects] = useState([]);
   const [rhReportReq, setRhReportReq]         = useState(null); // { student, type:'card'|'history'|'progress'|'comparison'|'attendance', result? }
   const [rhExams, setRhExams]                 = useState([]);   // student-click par fetched exams (examName/termName)
   const [rhExamsLoading, setRhExamsLoading]   = useState(false);
+  const [rhCombined, setRhCombined]           = useState([]);   // student ki class/section ke combined assessments (combinedassessmentcrud)
   const [rhCardMarks, setRhCardMarks]         = useState(null); // View card ke liye real per-subject marks
   const [rhExamScores, setRhExamScores]       = useState({});   // { [exam.id]: overall % } exam history ke liye
   const [rhStudentSummaries, setRhStudentSummaries] = useState({}); // { [studentId]: { avgPct, best, count, trend, grade } } card list ke liye
@@ -1011,10 +1031,43 @@ const [subjects, setSubjects] = useState([]);
     }
   };
 
-  // Jab koi student active ho → uske exams + attendance load karo; band karte hi clear.
+  // Student ki class/section ke Combined Assessments (combinedassessmentcrud) laao —
+  // Exam History mein single ke saath combined records (combinedResultName) bhi dikhein.
+  const loadStudentCombined = async (st) => {
+    try {
+      setRhCombined([]);
+      const branchID  = sessionStorage.getItem('branchID');
+      const token     = sessionStorage.getItem('token');
+      const classID   = st.gradeId   ?? st.classID   ?? st.classId   ?? '';
+      const sectionID = st.sectionId ?? st.sectionID ?? '';
+      const res = await fetch(buildUrl('/api/combinedassessmentcrud'), {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: '*/*' },
+        body: JSON.stringify({
+          action: 'get',
+          branchID: Number(branchID),
+          classSectionIDs: [],
+          combinedResultName: 'get',
+          mainExamID: 0,
+          subExams: [],
+        }),
+      });
+      const data = await res.json();
+      const list = Array.isArray(data) ? data : (Array.isArray(data?.data) ? data.data : []);
+      // Sirf wahi combined jinke classSections mein is student ki class+section shaamil ho.
+      const forStudent = list.filter(c => (c.classSections || []).some(cs =>
+        String(cs.classID) === String(classID) && String(cs.sectionID) === String(sectionID)));
+      setRhCombined(forStudent);
+    } catch (e) {
+      console.error('Could not load combined assessments', e);
+      setRhCombined([]);
+    }
+  };
+
+  // Jab koi student active ho → uske exams + attendance + combined load karo; band karte hi clear.
   useEffect(() => {
-    if (rhActiveStudent) { loadStudentExams(rhActiveStudent); loadStudentAttendance(rhActiveStudent); }
-    else { setRhExams([]); rhAttnReqRef.current++; setRhAttendance(null); setRhAttnLoading(false); }
+    if (rhActiveStudent) { loadStudentExams(rhActiveStudent); loadStudentAttendance(rhActiveStudent); loadStudentCombined(rhActiveStudent); }
+    else { setRhExams([]); setRhCombined([]); rhAttnReqRef.current++; setRhAttendance(null); setRhAttnLoading(false); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rhActiveStudent]);
 
@@ -1924,7 +1977,16 @@ const uniqueData = transformedData.filter(item => {
   return true;
 });
 
-console.log("Transformed Data (unique):", uniqueData);
+// Launch Setup (student module) jaisi sequence — classID (gradeID) phir sectionID
+// ke numeric order par sort. Isse "Grade 10 before Grade 2" jaisa string-sort issue
+// nahi hota aur classes wahi tarteeb me aati hain jaise launch setup me.
+uniqueData.sort((a, b) => {
+  const g = (Number(a.classID) || 0) - (Number(b.classID) || 0);
+  if (g !== 0) return g;
+  return (Number(a.sectionID) || 0) - (Number(b.sectionID) || 0);
+});
+
+console.log("Transformed Data (unique, sorted):", uniqueData);
 setExamClasses(uniqueData);
 return uniqueData;
   } catch (error) {
@@ -3392,7 +3454,7 @@ useEffect(() => {
                         <div style={{ minWidth: 0 }}>
                           <div style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: 13 }}>{ex.name}</div>
                           <div style={{ fontSize: 10.5, color: 'var(--text-muted)', marginTop: 2 }}>
-                            {ex.classes.length} Class{ex.classes.length !== 1 ? 'es' : ''} · {formatDate(ex.to || '—')}
+                            {ex.classes.length} Class{ex.classes.length !== 1 ? 'es' : ''} · {formatDate(ex.from || '—')}
                           </div>
                         </div>
                       </div>
@@ -5040,19 +5102,32 @@ onClick={async () => {
               const fmtD = d => d ? d.split('T')[0].split('-').reverse().join('/') : '—';
               // Real exams (rhExams) ko results-shape mein dhalo taa-ke rich layout (score bar, grade,
               // position, Performance Trends, KPIs) real data se chale. Score = computed overall % (rhExamScores).
-              const mappedResults = rhExams.length
-                ? rhExams.map(ex => ({
-                    exam: ex.examName || '—',
-                    type: 'single',
-                    year: ex.termName || '',
-                    date: `${fmtD(ex.dateFrom)} → ${fmtD(ex.dateTo)}`,
-                    pct: rhExamScores[ex.id] ?? 0,
-                    rank: 1,
-                    selectExam: ex.selectExam,
-                    termID: ex.termID,
-                    classID: ex.classID,
-                    sectionID: ex.sectionID,
-                  }))
+              const singleMapped = rhExams.map(ex => ({
+                exam: ex.examName || '—',
+                type: 'single',
+                year: ex.termName || '',
+                date: `${fmtD(ex.dateFrom)} → ${fmtD(ex.dateTo)}`,
+                pct: rhExamScores[ex.id] ?? 0,
+                rank: 1,
+                selectExam: ex.selectExam,
+                termID: ex.termID,
+                classID: ex.classID,
+                sectionID: ex.sectionID,
+              }));
+              // Combined Assessment records (combinedassessmentcrud) — examName = combinedResultName.
+              const combinedMapped = rhCombined.map(c => ({
+                exam: c.combinedResultName || '—',
+                type: 'combined',
+                year: '',
+                date: fmtD(c.createdDate),
+                pct: 0,
+                rank: 1,
+                combinedId: c.id,
+                mainExamID: c.mainExamID,
+                mainExamName: c.mainExamName || '',
+              }));
+              const mappedResults = (singleMapped.length || combinedMapped.length)
+                ? [...singleMapped, ...combinedMapped]
                 : rhActiveStudent.results;
               const st = {
                 ...rhActiveStudent,
@@ -5142,7 +5217,7 @@ onClick={async () => {
                               <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 8 }}>
                                 <i className="fa-solid fa-clock-rotate-left" style={{ color: '#1E40AF' }}></i> Exam History
                               </div>
-                              <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{(rhExams.length || st.results.length)} record{(rhExams.length || st.results.length) !== 1 ? 's' : ''}</span>
+                              <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{st.results.length} record{st.results.length !== 1 ? 's' : ''}</span>
                             </div>
                             <div>
                               {/* Student click par fetched exams (examName / termName / dates) */}
@@ -5767,7 +5842,7 @@ onClick={async () => {
       {/* ── Result Setup — edit modal ── */}
       {rsModalOpen && (
         <ResultSetupModal
-          grades={rsGrades}
+          grades={rsGrades} remarks={rsRemarks}
           sigs={rsSigs}
           remarks={rsRemarks}
           absentMode={rsAbsentMode}
@@ -5805,7 +5880,7 @@ onClick={async () => {
       {/* ── Result Setup — report picker ── */}
       {rsReportReq && (
         <ResultSetupReportPicker
-          grades={rsGrades}
+          grades={rsGrades} remarks={rsRemarks}
           sigs={rsSigs}
           remarks={rsRemarks}
           absentMode={rsAbsentMode}
@@ -5844,6 +5919,7 @@ onClick={async () => {
       cd={modalCd}
       student={modalStudent}
       subjects={resUpdateCtx.subjects || []}
+      grades={rsGrades}
       // Yeh add karo ↓
       resTotalMarksCtx={{
         classID: resUpdateCtx.classID,
@@ -5904,7 +5980,7 @@ onClick={async () => {
             rd={cardRd}
             ex={cardEx}
             school={branchSchool}
-            grades={rsGrades}
+            grades={rsGrades} remarks={rsRemarks}
             template={rcTemplate}
             rcoGeneral={rhRcoGeneral}
             rcoSig={rcoSig}
@@ -5984,7 +6060,7 @@ onClick={async () => {
             rd={cardRd}
             ex={cardEx}
             school={branchSchool}
-            grades={rsGrades}
+            grades={rsGrades} remarks={rsRemarks}
             template={rcTemplate}
             rcoGeneral={rcoGeneral}
             rcoSig={rcoSig}
@@ -6135,7 +6211,7 @@ onClick={async () => {
           ctx={bulkCardCtx}
           template={rcTemplate}
           school={branchSchool}
-          grades={rsGrades}
+          grades={rsGrades} remarks={rsRemarks}
           rcoGeneral={rcoGeneral}
           rcoSig={rcoSig}
           rsSigs={rsSigs}
@@ -6152,7 +6228,7 @@ onClick={async () => {
           termID={bulkCbrCtx.termID}
           template={rcTemplate}
           school={branchSchool}
-          grades={rsGrades}
+          grades={rsGrades} remarks={rsRemarks}
           rcoGeneral={rcoGeneral}
           rcoSig={rcoSig}
           rsSigs={rsSigs}
@@ -6235,7 +6311,7 @@ onClick={async () => {
       rd={cardRd}
       ex={cardEx}
       school={branchSchool}
-      grades={rsGrades}
+      grades={rsGrades} remarks={rsRemarks}
       template={rcTemplate}
       rcoGeneral={rcoGeneral}
       rcoSig={rcoSig}
@@ -7301,7 +7377,7 @@ if (format === 'pdf') {
         <tr style="background:${si % 2 === 0 ? '#fff' : rowEv}">
           <td style="padding:8px 12px;font-size:11.5px;font-weight:700;color:#0F172A;border-bottom:1px solid ${aBdr}">${si + 1}</td>
           <td style="padding:8px 12px;font-size:11.5px;font-weight:700;color:#0F172A;border-bottom:1px solid ${aBdr}">${dsEsc(s.subject)}</td>
-          <td style="padding:8px 12px;font-size:11.5px;color:${tMuted};border-bottom:1px solid ${aBdr}">${dsFmtDate(s.date)}</td>
+          <td style="padding:8px 12px;font-size:11.5px;color:${tMuted};white-space:nowrap;border-bottom:1px solid ${aBdr}">${dsFmtDate(s.date)}</td>
           <td style="padding:8px 12px;font-size:11.5px;color:${tMuted};border-bottom:1px solid ${aBdr}">${dsEsc(s.timeFrom) || '—'}</td>
           <td style="padding:8px 12px;font-size:11.5px;color:${tMuted};border-bottom:1px solid ${aBdr}">${dsEsc(s.timeTo) || '—'}</td>
         </tr>`).join('')
@@ -7314,14 +7390,14 @@ if (format === 'pdf') {
           <div style="font-size:13px;font-weight:800;color:#0F172A">${dsEsc(cls.className || `${cls.gradeName || ''}${cls.sectionName ? ' - ' + cls.sectionName : ''}`.trim())}</div>
         </div>
         <table style="width:100%;table-layout:fixed;border-collapse:collapse;border:1px solid ${aBdr}">
-          <colgroup><col style="width:34px"><col><col style="width:80px"><col style="width:78px"><col style="width:78px"></colgroup>
+          <colgroup><col style="width:34px"><col><col style="width:108px"><col style="width:92px"><col style="width:92px"></colgroup>
           <thead>
             <tr style="background:${aBg}">
               <th style="padding:7px 10px;font-size:10px;font-weight:700;color:${aColor};text-align:left;text-transform:uppercase;letter-spacing:.5px;border-bottom:2px solid ${aBdr}">#</th>
               <th style="padding:7px 10px;font-size:10px;font-weight:700;color:${aColor};text-align:left;text-transform:uppercase;letter-spacing:.5px;border-bottom:2px solid ${aBdr}">Subject</th>
-              <th style="padding:7px 10px;font-size:10px;font-weight:700;color:${aColor};text-align:left;text-transform:uppercase;letter-spacing:.5px;border-bottom:2px solid ${aBdr}">Date</th>
-              <th style="padding:7px 10px;font-size:10px;font-weight:700;color:${aColor};text-align:left;text-transform:uppercase;letter-spacing:.5px;border-bottom:2px solid ${aBdr}">Time From</th>
-              <th style="padding:7px 10px;font-size:10px;font-weight:700;color:${aColor};text-align:left;text-transform:uppercase;letter-spacing:.5px;border-bottom:2px solid ${aBdr}">Time To</th>
+              <th style="padding:7px 10px;font-size:10px;font-weight:700;color:${aColor};text-align:left;text-transform:uppercase;letter-spacing:.5px;white-space:nowrap;border-bottom:2px solid ${aBdr}">Date</th>
+              <th style="padding:7px 10px;font-size:10px;font-weight:700;color:${aColor};text-align:left;text-transform:uppercase;letter-spacing:.5px;white-space:nowrap;border-bottom:2px solid ${aBdr}">Time From</th>
+              <th style="padding:7px 10px;font-size:10px;font-weight:700;color:${aColor};text-align:left;text-transform:uppercase;letter-spacing:.5px;white-space:nowrap;border-bottom:2px solid ${aBdr}">Time To</th>
             </tr>
           </thead>
           <tbody>${rowsHtml}</tbody>
@@ -7399,11 +7475,12 @@ ${isColor ? '' : '.print-bar{background:#FFFFFF !important;border-top:1px solid 
 .cl-doc-header [style*="color:rgba(255,255,255,.9)"],
 .cl-doc-header [style*="color:rgba(255,255,255,.65)"]{color:#4B5563 !important}
 /* Rich-text syllabus content reset (bullets/bold/headings/math preserve; KaTeX ko chhua nahi) */
-.syl-rep-html{font-size:11px;line-height:1.5;color:#334155;word-break:break-word;overflow-wrap:anywhere}
+.syl-rep-html{font-size:11px;line-height:1.5;color:#334155;overflow-wrap:break-word;word-break:normal}
 .syl-rep-html p{font-size:11px !important;margin:2px 0 !important;color:#334155 !important}
 .syl-rep-html ul,.syl-rep-html ol{font-size:11px !important;margin:3px 0 !important;padding-left:18px !important;color:#334155 !important}
 .syl-rep-html li{margin:2px 0 !important}
 .syl-rep-html h1,.syl-rep-html h2,.syl-rep-html h3,.syl-rep-html h4,.syl-rep-html h5,.syl-rep-html h6{font-size:12px !important;font-weight:700 !important;margin:5px 0 2px !important;color:#0F172A !important}
+.syl-rep-html img{max-width:100%;height:auto}
 </style></head><body>
 ${reportHTML}
 <div class="print-bar no-print">
@@ -7425,33 +7502,160 @@ if (format === 'word') {
 /* ═══════════════════════════════════════════════════════════════════
    SYLLABUS — EDIT MODAL (subject tabs + rich-text editor)
    ═══════════════════════════════════════════════════════════════════ */
+/* Self-contained rich-text editor for Syllabus — Lesson Plan editor jaisa
+   full toolbar (undo/redo, size, bold/underline/italic/strike, color, align,
+   lists, table, link, image, math, clear). Selection ko save/restore karta hai
+   taake popup (link/image/math) focus churaye to bhi command sahi jagah lage. */
 function SylRteEditor({ html, onChange, placeholder }) {
   const ref = useRef(null);
+  const savedRange = useRef(null);
 
   // Sync only when external html actually changes
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-
     // ❗ don't overwrite while user is typing
     if (document.activeElement === el) return;
-
     if (el.innerHTML !== (html || '')) {
       el.innerHTML = html || '';
     }
   }, [html]);
 
+  const emit = () => { if (ref.current) onChange(ref.current.innerHTML); };
+
+  const saveSelection = () => {
+    const sel = window.getSelection();
+    if (!sel || !sel.rangeCount) return;
+    const range = sel.getRangeAt(0);
+    if (ref.current && ref.current.contains(range.commonAncestorContainer)) {
+      savedRange.current = range;
+    }
+  };
+  const restoreSelection = () => {
+    const el = ref.current;
+    if (!el) return false;
+    el.focus();
+    const range = savedRange.current;
+    if (range) {
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
+    return true;
+  };
+  const exec = (cmd, val) => {
+    restoreSelection();
+    document.execCommand(cmd, false, val !== undefined ? val : null);
+    saveSelection();
+    emit();
+  };
+  const execAlign = (cmd) => {
+    if (!restoreSelection()) return;
+    try { document.execCommand('styleWithCSS', false, true); } catch (err) {}
+    document.execCommand(cmd, false, null);
+    saveSelection();
+    emit();
+  };
+  const insertHTMLCmd = (h) => {
+    restoreSelection();
+    document.execCommand('insertHTML', false, h);
+    saveSelection();
+    emit();
+  };
+  const insertTable = () => insertHTMLCmd(
+    '<table style="border-collapse:collapse;width:100%;margin:8px 0"><tr><td style="border:1px solid #BFDBFE;padding:6px 10px">Col 1</td><td style="border:1px solid #BFDBFE;padding:6px 10px">Col 2</td></tr><tr><td style="border:1px solid #BFDBFE;padding:6px 10px">Row 2</td><td style="border:1px solid #BFDBFE;padding:6px 10px">Row 2</td></tr></table>'
+  );
+  const popupInput = (placeholderTxt, initial, onEnter) => {
+    saveSelection();
+    const inp = document.createElement('input');
+    inp.type = 'text';
+    inp.value = initial || '';
+    inp.placeholder = placeholderTxt;
+    inp.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:9999;padding:8px 12px;border:1px solid #CBD5E1;border-radius:8px;font-size:13px;width:320px;box-shadow:0 4px 20px rgba(0,0,0,.15)';
+    document.body.appendChild(inp);
+    inp.focus(); inp.select();
+    inp.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { if (inp.value) onEnter(inp.value); inp.remove(); }
+      if (e.key === 'Escape') inp.remove();
+    });
+    inp.addEventListener('blur', () => setTimeout(() => inp.remove(), 200));
+  };
+  const insertLink = () => popupInput('Enter URL', 'https://', (v) => exec('createLink', v));
+  const insertMath = () => popupInput('e.g. x² + y² = z²', '', (v) =>
+    insertHTMLCmd(`<span style="font-family:'Cambria Math',serif">${v}</span>`));
+  const insertImage = () => {
+    saveSelection();
+    const f = document.createElement('input');
+    f.type = 'file'; f.accept = 'image/*'; f.style.display = 'none';
+    document.body.appendChild(f);
+    f.addEventListener('change', () => {
+      const file = f.files && f.files[0];
+      if (file) {
+        const reader = new FileReader();
+        reader.onload = (ev) => exec('insertImage', ev.target.result);
+        reader.readAsDataURL(file);
+      }
+      f.remove();
+    });
+    f.click();
+  };
+
   return (
-    <div
-      ref={ref}
-      className="syl-rte-editor"
-      contentEditable
-      suppressContentEditableWarning
-      data-placeholder={placeholder}
-      onInput={(e) => {
-        onChange(e.currentTarget.innerHTML);
-      }}
-    />
+    <>
+      <div className="syl-rte-toolbar">
+        <Tooltip text="Undo"><button className="syl-tb-btn" onMouseDown={e => e.preventDefault()} onClick={() => exec('undo')}><i className="fa-solid fa-rotate-left"></i></button></Tooltip>
+        <Tooltip text="Redo"><button className="syl-tb-btn" onMouseDown={e => e.preventDefault()} onClick={() => exec('redo')}><i className="fa-solid fa-rotate-right"></i></button></Tooltip>
+        <div className="syl-tb-divider"></div>
+        <Tooltip text="Font size"><select className="syl-tb-select" defaultValue="" onMouseDown={e => e.stopPropagation()} onChange={e => { exec('fontSize', e.target.value); e.target.value = ''; }}>
+          <option value="">Size</option>
+          <option value="1">Small</option>
+          <option value="3">Normal</option>
+          <option value="4">Large</option>
+          <option value="5">X-Large</option>
+        </select></Tooltip>
+        <div className="syl-tb-divider"></div>
+        <Tooltip text="Bold"><button className="syl-tb-btn" onMouseDown={e => e.preventDefault()} onClick={() => exec('bold')}><b>B</b></button></Tooltip>
+        <Tooltip text="Underline"><button className="syl-tb-btn" onMouseDown={e => e.preventDefault()} onClick={() => exec('underline')}><u>U</u></button></Tooltip>
+        <Tooltip text="Italic"><button className="syl-tb-btn" onMouseDown={e => e.preventDefault()} onClick={() => exec('italic')}><i>I</i></button></Tooltip>
+        <Tooltip text="Strikethrough"><button className="syl-tb-btn" onMouseDown={e => e.preventDefault()} onClick={() => exec('strikeThrough')}><s>S</s></button></Tooltip>
+        <Tooltip text="Text color">
+          <label className="syl-tb-btn" onMouseDown={e => e.preventDefault()}
+            style={{ fontSize: 11, fontWeight: 800, color: '#DC2626', textDecoration: 'underline', textDecorationColor: '#DC2626', cursor: 'pointer', position: 'relative' }}>
+            A
+            <input type="color" defaultValue="#DC2626"
+              style={{ position: 'absolute', opacity: 0, width: '100%', height: '100%', top: 0, left: 0, cursor: 'pointer' }}
+              onChange={e => exec('foreColor', e.target.value)} />
+          </label>
+        </Tooltip>
+        <div className="syl-tb-divider"></div>
+        <Tooltip text="Align left"><button className="syl-tb-btn" onMouseDown={e => e.preventDefault()} onClick={() => execAlign('justifyLeft')}><i className="fa-solid fa-align-left"></i></button></Tooltip>
+        <Tooltip text="Align center"><button className="syl-tb-btn" onMouseDown={e => e.preventDefault()} onClick={() => execAlign('justifyCenter')}><i className="fa-solid fa-align-center"></i></button></Tooltip>
+        <Tooltip text="Align right"><button className="syl-tb-btn" onMouseDown={e => e.preventDefault()} onClick={() => execAlign('justifyRight')}><i className="fa-solid fa-align-right"></i></button></Tooltip>
+        <Tooltip text="Justify"><button className="syl-tb-btn" onMouseDown={e => e.preventDefault()} onClick={() => execAlign('justifyFull')}><i className="fa-solid fa-align-justify"></i></button></Tooltip>
+        <div className="syl-tb-divider"></div>
+        <Tooltip text="Numbered list"><button className="syl-tb-btn" onMouseDown={e => e.preventDefault()} onClick={() => exec('insertOrderedList')}><i className="fa-solid fa-list-ol"></i></button></Tooltip>
+        <Tooltip text="Bullet list"><button className="syl-tb-btn" onMouseDown={e => e.preventDefault()} onClick={() => exec('insertUnorderedList')}><i className="fa-solid fa-list-ul"></i></button></Tooltip>
+        <Tooltip text="Insert table"><button className="syl-tb-btn" onMouseDown={e => e.preventDefault()} onClick={insertTable}><i className="fa-solid fa-table-cells"></i></button></Tooltip>
+        <div className="syl-tb-divider"></div>
+        <Tooltip text="Insert link"><button className="syl-tb-btn" onMouseDown={e => e.preventDefault()} onClick={insertLink}><i className="fa-solid fa-link"></i></button></Tooltip>
+        <Tooltip text="Insert image from your device"><button className="syl-tb-btn" onMouseDown={e => { e.preventDefault(); saveSelection(); }} onClick={insertImage}><i className="fa-regular fa-image"></i></button></Tooltip>
+        <Tooltip text="Insert math formula"><button className="syl-tb-btn" onMouseDown={e => { e.preventDefault(); saveSelection(); }} style={{ fontWeight: 800, fontSize: 14 }} onClick={insertMath}>∑</button></Tooltip>
+        <div className="syl-tb-divider"></div>
+        <Tooltip text="Clear formatting"><button className="syl-tb-btn" onMouseDown={e => e.preventDefault()} onClick={() => exec('removeFormat')} style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 700 }}>Clear</button></Tooltip>
+      </div>
+      <div
+        ref={ref}
+        className="syl-rte-editor"
+        contentEditable
+        suppressContentEditableWarning
+        data-placeholder={placeholder}
+        dir="ltr"
+        onInput={emit}
+        onMouseUp={saveSelection}
+        onKeyUp={saveSelection}
+        onFocus={saveSelection}
+      />
+    </>
   );
 }
 
@@ -7604,12 +7808,6 @@ useEffect(() => {
     setLocalSubjects(ss => ss.map((s, i) => i === activeIdx ? { ...s, content: htmlVal } : s));
   };
 
-  const cmd = (name, val) => {
-    document.execCommand(name, false, val ?? null);
-    const node = document.querySelector(`#sylEditor_${activeIdx}`);
-    if (node) updateContent(node.innerHTML);
-  };
-
 const saveAndNext = () => {
   saveSubject(true);
 };
@@ -7659,37 +7857,12 @@ const save = () => {
               </div>
 
               <div className="syl-rte-wrap">
-                <div className="syl-rte-toolbar">
-                  <Tooltip text="Undo"><button className="syl-tb-btn" onMouseDown={e => e.preventDefault()} onClick={() => cmd('undo')}><i className="fa-solid fa-rotate-left"></i></button></Tooltip>
-                  <Tooltip text="Redo"><button className="syl-tb-btn" onMouseDown={e => e.preventDefault()} onClick={() => cmd('redo')}><i className="fa-solid fa-rotate-right"></i></button></Tooltip>
-                  <div className="syl-tb-divider"></div>
-                  <select className="syl-tb-select" onMouseDown={e => e.preventDefault()} onChange={e => { cmd('fontSize', e.target.value); e.target.selectedIndex = 0; }}>
-                    <option>Size</option>
-                    <option value="1">Small</option>
-                    <option value="3">Normal</option>
-                    <option value="4">Large</option>
-                    <option value="5">X-Large</option>
-                  </select>
-                  <div className="syl-tb-divider"></div>
-                  <Tooltip text="Bold"><button className="syl-tb-btn" onMouseDown={e => e.preventDefault()} onClick={() => cmd('bold')}><b>B</b></button></Tooltip>
-                  <Tooltip text="Underline"><button className="syl-tb-btn" onMouseDown={e => e.preventDefault()} onClick={() => cmd('underline')}><u>U</u></button></Tooltip>
-                  <Tooltip text="Italic"><button className="syl-tb-btn" onMouseDown={e => e.preventDefault()} onClick={() => cmd('italic')}><i>I</i></button></Tooltip>
-                  <div className="syl-tb-divider"></div>
-                  <Tooltip text="Bullet List"><button className="syl-tb-btn" onMouseDown={e => e.preventDefault()} onClick={() => cmd('insertUnorderedList')}><i className="fa-solid fa-list-ul"></i></button></Tooltip>
-                  <Tooltip text="Numbered List"><button className="syl-tb-btn" onMouseDown={e => e.preventDefault()} onClick={() => cmd('insertOrderedList')}><i className="fa-solid fa-list-ol"></i></button></Tooltip>
-                  <div className="syl-tb-divider"></div>
-                  <Tooltip text="Align Left"><button className="syl-tb-btn" onMouseDown={e => e.preventDefault()} onClick={() => cmd('justifyLeft')}><i className="fa-solid fa-align-left"></i></button></Tooltip>
-                  <Tooltip text="Align Center"><button className="syl-tb-btn" onMouseDown={e => e.preventDefault()} onClick={() => cmd('justifyCenter')}><i className="fa-solid fa-align-center"></i></button></Tooltip>
-                  <Tooltip text="Align Right"><button className="syl-tb-btn" onMouseDown={e => e.preventDefault()} onClick={() => cmd('justifyRight')}><i className="fa-solid fa-align-right"></i></button></Tooltip>
-                </div>
-
-        <SylRteEditor
-  key={`${activeIdx}-${cur?.id}`}   // ✅ stable key
-  html={cur?.content || ''}
-  onChange={updateContent}
-  placeholder="Enter syllabus content here..."
-/>
-                <div id={`sylEditor_${activeIdx}`} style={{ display: 'none' }} />
+                <SylRteEditor
+                  key={`${activeIdx}-${cur?.id}`}   // ✅ stable key
+                  html={cur?.content || ''}
+                  onChange={updateContent}
+                  placeholder="Enter syllabus content here..."
+                />
                 <div className="syl-rte-char-count">Characters: {plainLen}</div>
               </div>
             </div>
@@ -7921,7 +8094,7 @@ async function generateSyllabusReport({ ex, syllabusData, term, classKey, branch
         <tr style="background:${si % 2 === 0 ? '#fff' : rowEv}">
           <td style="padding:8px 12px;font-size:11.5px;font-weight:700;color:#0F172A;border-bottom:1px solid ${aBdr};vertical-align:top">${si + 1}</td>
           <td style="padding:8px 12px;font-size:11.5px;font-weight:700;color:#0F172A;border-bottom:1px solid ${aBdr};vertical-align:top">${sEsc(s.subject)}</td>
-          <td style="padding:8px 12px;font-size:11px;color:${tMuted};border-bottom:1px solid ${aBdr};vertical-align:top;word-break:break-word">${plain}</td>
+          <td style="padding:8px 12px;font-size:11px;color:${tMuted};border-bottom:1px solid ${aBdr};vertical-align:top;overflow-wrap:break-word;word-break:normal">${plain}</td>
           <td style="padding:8px 12px;border-bottom:1px solid ${aBdr};vertical-align:top">
             <span style="display:inline-block;padding:2px 8px;border-radius:999px;font-size:10px;font-weight:700;background:${sc}22;color:${sc};border:1px solid ${sc}55">
               ${added ? 'Added' : 'Not Added'}
@@ -7937,7 +8110,7 @@ async function generateSyllabusReport({ ex, syllabusData, term, classKey, branch
           <div style="font-size:13px;font-weight:800;color:#0F172A">${sEsc(cls.className || `${cls.gradeName || ''}${cls.sectionName ? ' - ' + cls.sectionName : ''}`.trim())}</div>
         </div>
         <table style="width:100%;table-layout:fixed;border-collapse:collapse;border:1px solid ${aBdr}">
-          <colgroup><col style="width:34px"><col style="width:90px"><col><col style="width:80px"></colgroup>
+          <colgroup><col style="width:34px"><col style="width:110px"><col><col style="width:80px"></colgroup>
           <thead>
             <tr style="background:${aBg}">
               <th style="padding:7px 12px;font-size:10px;font-weight:700;color:${aColor};text-align:left;text-transform:uppercase;letter-spacing:.5px;border-bottom:2px solid ${aBdr}">#</th>
@@ -7999,7 +8172,9 @@ body{font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif;color:#0F172A;f
 }
 .page-wrap{width:100%;max-width:210mm;margin:0 auto;padding:0;box-sizing:border-box;overflow:hidden}
 table{width:100%;table-layout:fixed}
-td,th{overflow-wrap:anywhere;word-break:break-word}
+/* Break long words only when needed — normal text wraps at word boundaries,
+   not mid-word (warna text agli row me ajeeb tarah chala jata hai). */
+td,th{overflow-wrap:break-word;word-break:normal}
 .print-bar{text-align:center;padding:14px;background:#F8FAFF;border-top:1px solid #BFDBFE;margin-top:10px}
 .print-bar button{background:linear-gradient(135deg,#1E3A8A,#1E40AF);color:#fff;border:none;padding:10px 22px;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;margin-right:8px}
 .print-bar .close-btn{background:transparent;border:1.5px solid #CBD5E1;color:#64748B}
@@ -8020,11 +8195,12 @@ ${isColor ? '' : '.print-bar{background:#FFFFFF !important;border-top:1px solid 
 .cl-doc-header [style*="color:rgba(255,255,255,.9)"],
 .cl-doc-header [style*="color:rgba(255,255,255,.65)"]{color:#4B5563 !important}
 /* Rich-text syllabus content reset (bullets/bold/headings/math preserve; KaTeX ko chhua nahi) */
-.syl-rep-html{font-size:11px;line-height:1.5;color:#334155;word-break:break-word;overflow-wrap:anywhere}
+.syl-rep-html{font-size:11px;line-height:1.5;color:#334155;overflow-wrap:break-word;word-break:normal}
 .syl-rep-html p{font-size:11px !important;margin:2px 0 !important;color:#334155 !important}
 .syl-rep-html ul,.syl-rep-html ol{font-size:11px !important;margin:3px 0 !important;padding-left:18px !important;color:#334155 !important}
 .syl-rep-html li{margin:2px 0 !important}
 .syl-rep-html h1,.syl-rep-html h2,.syl-rep-html h3,.syl-rep-html h4,.syl-rep-html h5,.syl-rep-html h6{font-size:12px !important;font-weight:700 !important;margin:5px 0 2px !important;color:#0F172A !important}
+.syl-rep-html img{max-width:100%;height:auto}
 </style></head><body>
 ${reportHTML}
 <div class="print-bar no-print">
@@ -8164,7 +8340,7 @@ function TemplateHero({ id, large = false }) {
   );
 }
 
-function ClassicResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 'single', student, rd: rdProp, ex: exProp, school, grades }) {
+function ClassicResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 'single', student, rd: rdProp, ex: exProp, school, grades, remarks = [] }) {
   const opt = {};
   rcoGeneral.forEach(o => { opt[o.label] = o.on; });
   rcoSig.forEach(o => { opt[o.label] = o.on; });
@@ -8201,7 +8377,15 @@ function ClassicResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
   const obtAll   = subjects.reduce((a, s) => absentSet[s] ? a : a + (st.obtained[s] || 0), 0);
   const ovPct    = isCombined ? cb.ovPct : (totalAll ? Math.min(100, Math.round((obtAll / totalAll) * 10000) / 100) : 0);
   const ovGrade  = (grades && grades.length) ? rcGradeByScale(ovPct, grades) : rcGetGrade(obtAll, totalAll);
-  const finalRem = st.finalRemarks || rcGetFinalRemarks(ovPct);
+  // Subject-table ka Grand Total % SIRF obtained/total se (77/80 → 96.25%). Combined
+  // weighted result (ovPct) alag "Combined" breakdown row/tile me hai. Single ke liye
+  // ye ovPct ke barabar hota hai.
+  const gtPct    = totalAll ? Math.round((obtAll / totalAll) * 10000) / 100 : 0;
+  const gtGrade  = (grades && grades.length) ? rcGradeByScale(gtPct, grades) : rcGetGrade(obtAll, totalAll);
+  // Final Remarks SIRF overallgradingcrud (rsRemarks) se — Grand Total percentage ke
+  // hisaab se matching band ki finalRemarks. Koi match na ho to KHALI (na koi static/
+  // hardcoded text, na getremarksbystudentfilters).
+  const finalRem = rcRemarkByScale(ovPct, remarks);
 
   const position = opt['Show Position in Class'] ? (isCombined && cb ? `${cb.rank}${cb.rankSfx || ''}` : '1st / 1') : '—';
 
@@ -8320,7 +8504,9 @@ function ClassicResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
                 const pct = (!isAbs && tot) ? Math.round((obt / tot) * 100) : 0;
                 const g   = (!isAbs && obt > 0) ? rcGetGrade(obt, tot) : null;
                 // Comment column hamesha REAL remarks dikhaye (absent ho ya na ho).
-                const mc  = ((st.manualRemarks && st.manualRemarks[s]) || (g ? g.comment : '')).slice(0, 40);
+                // Comment column: gradingcrud (grades) se — is subject ki % ke matching band ki remarks.
+// getsauploadmarks (st.manualRemarks) YAHAN use NAHI hoti. Absent → koi comment nahi.
+const mc  = (!isAbs ? (((grades && grades.length) ? (rcGradeByScale(pct, grades) || {}).comment : (g && g.comment)) || '') : '').slice(0, 40);
                 const gcol = gradeChipColor(g);
                 const bg = (i % 2 === 0 ? '#fff' : rowAlt);
                 const tdBase   = { padding: '4px 7px', fontSize: 11, borderBottom: `1px solid ${accentBdr}` };
@@ -8386,11 +8572,11 @@ function ClassicResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
                   <td style={{ padding: '5px 7px', textAlign: 'center', fontSize: 11, fontWeight: 800, color: accent, borderTop: `2px solid ${accentBdr}` }}>{obtAll}</td>
                 )}
                 {opt['Show Percentage'] && (
-                  <td style={{ padding: '5px 7px', textAlign: 'center', fontSize: 11, fontWeight: 800, color: successCol, borderTop: `2px solid ${accentBdr}` }}>{ovPct}%</td>
+                  <td style={{ padding: '5px 7px', textAlign: 'center', fontSize: 11, fontWeight: 800, color: successCol, borderTop: `2px solid ${accentBdr}` }}>{gtPct}%</td>
                 )}
                 {opt['Show Grade'] && (
                   <td style={{ padding: '5px 7px', textAlign: 'center', fontSize: 11, fontWeight: 800, color: accent, borderTop: `2px solid ${accentBdr}` }}>
-                    {ovGrade ? ovGrade.grade : '—'}
+                    {gtGrade ? gtGrade.grade : '—'}
                   </td>
                 )}
                 <td style={{ padding: '5px 7px', fontSize: 9.5, color: textMut, borderTop: `2px solid ${accentBdr}` }}>N/A</td>
@@ -8448,7 +8634,7 @@ function ClassicResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
       )}
 
       {/* Final Remarks */}
-      {opt['Show Final Remarks'] && (
+      {opt['Show Final Remarks'] && finalRem && (
         <div style={{ padding: '8px 18px 6px' }}>
           <div style={{ fontSize: 7.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.7px', color: textMut, marginBottom: 2 }}>FINAL REMARKS</div>
           <div style={{ fontSize: 10.5, color: '#374151', lineHeight: 1.4 }}>{finalRem.slice(0, 200)}</div>
@@ -8479,7 +8665,7 @@ function ClassicResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
   );
 }
 
-function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 'single', student, rd: rdProp, ex: exProp, school, grades }) {
+function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 'single', student, rd: rdProp, ex: exProp, school, grades, remarks = [] }) {
   const opt = {};
   rcoGeneral.forEach(o => { opt[o.label] = o.on; });
   rcoSig.forEach(o => { opt[o.label] = o.on; });
@@ -8512,7 +8698,15 @@ function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
   const obtAll   = subjects.reduce((a, s) => absentSet[s] ? a : a + (st.obtained[s] || 0), 0);
   const ovPct    = isCombined ? cb.ovPct : (totalAll ? Math.min(100, Math.round((obtAll / totalAll) * 10000) / 100) : 0);
   const ovGrade  = (grades && grades.length) ? rcGradeByScale(ovPct, grades) : rcGetGrade(obtAll, totalAll);
-  const finalRem = st.finalRemarks || rcGetFinalRemarks(ovPct);
+  // Subject-table ka Grand Total % SIRF obtained/total se (77/80 → 96.25%). Combined
+  // weighted result (ovPct) alag "Combined" breakdown row/tile me hai. Single ke liye
+  // ye ovPct ke barabar hota hai.
+  const gtPct    = totalAll ? Math.round((obtAll / totalAll) * 10000) / 100 : 0;
+  const gtGrade  = (grades && grades.length) ? rcGradeByScale(gtPct, grades) : rcGetGrade(obtAll, totalAll);
+  // Final Remarks SIRF overallgradingcrud (rsRemarks) se — Grand Total percentage ke
+  // hisaab se matching band ki finalRemarks. Koi match na ho to KHALI (na koi static/
+  // hardcoded text, na getremarksbystudentfilters).
+  const finalRem = rcRemarkByScale(ovPct, remarks);
 
   const position = opt['Show Position in Class'] ? (isCombined && cb ? `${cb.rank}${cb.rankSfx || ''}` : '1st / 1') : '—';
 
@@ -8665,7 +8859,7 @@ function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
           <div style={{ flex: 1, height: 7, borderRadius: 4, background: '#EFF6FF', overflow: 'hidden' }}>
             <div style={{ height: '100%', width: `${Math.max(2, Math.round(ovPct))}%`, background: accent, borderRadius: 4 }} />
           </div>
-          <div style={{ width: 30, textAlign: 'right', fontSize: 10.5, fontWeight: 800, color: accent, flexShrink: 0 }}>{ovPct}%</div>
+          <div style={{ width: 30, textAlign: 'right', fontSize: 10.5, fontWeight: 800, color: accent, flexShrink: 0 }}>{gtPct}%</div>
           {(opt['Show Obtained Marks'] || opt['Show Total Marks']) && (
             <div style={{ width: 36, textAlign: 'right', fontSize: 10, fontWeight: 700, color: accent, flexShrink: 0 }}>
               {obtAll}/{totalAll}
@@ -8676,7 +8870,7 @@ function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
       </div>
 
       {/* Final Remarks */}
-      {opt['Show Final Remarks'] && (
+      {opt['Show Final Remarks'] && finalRem && (
         <div style={{ padding: '6px 20px 8px', borderTop: `1px solid ${accentBdr}` }}>
           <div style={{ fontSize: 8, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.7px', color: textMut, marginBottom: 4 }}>Final Remarks</div>
           <div style={{ fontSize: 11, color: '#374151', lineHeight: 1.5 }}>{finalRem.slice(0, 200)}</div>
@@ -8707,7 +8901,7 @@ function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
   );
 }
 
-function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 'single', student, rd: rdProp, ex: exProp, school, grades }) {
+function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 'single', student, rd: rdProp, ex: exProp, school, grades, remarks = [] }) {
   const opt = {};
   rcoGeneral.forEach(o => { opt[o.label] = o.on; });
   rcoSig.forEach(o => { opt[o.label] = o.on; });
@@ -8746,7 +8940,15 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
   const obtAll   = subjects.reduce((a, s) => absentSet[s] ? a : a + (st.obtained[s] || 0), 0);
   const ovPct    = isCombined ? cb.ovPct : (totalAll ? Math.min(100, Math.round((obtAll / totalAll) * 10000) / 100) : 0);
   const ovGrade  = (grades && grades.length) ? rcGradeByScale(ovPct, grades) : rcGetGrade(obtAll, totalAll);
-  const finalRem = st.finalRemarks || rcGetFinalRemarks(ovPct);
+  // Subject-table ka Grand Total % SIRF obtained/total se (77/80 → 96.25%). Combined
+  // weighted result (ovPct) alag "Combined" breakdown row/tile me hai. Single ke liye
+  // ye ovPct ke barabar hota hai.
+  const gtPct    = totalAll ? Math.round((obtAll / totalAll) * 10000) / 100 : 0;
+  const gtGrade  = (grades && grades.length) ? rcGradeByScale(gtPct, grades) : rcGetGrade(obtAll, totalAll);
+  // Final Remarks SIRF overallgradingcrud (rsRemarks) se — Grand Total percentage ke
+  // hisaab se matching band ki finalRemarks. Koi match na ho to KHALI (na koi static/
+  // hardcoded text, na getremarksbystudentfilters).
+  const finalRem = rcRemarkByScale(ovPct, remarks);
 
   const subjData = subjects.map((s, i) => {
     const isAbs = !!absentSet[s];
@@ -8755,7 +8957,9 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
     const pct = (!isAbs && tot) ? Math.round((obt / tot) * 100) : 0;
     const g   = (!isAbs && obt > 0) ? rcGetGrade(obt, tot) : null;
     // Comment column hamesha REAL remarks dikhaye (absent ho ya na ho).
-    const mc  = ((st.manualRemarks && st.manualRemarks[s]) || (g ? g.comment : '')).slice(0, 40);
+    // Comment column: gradingcrud (grades) se — is subject ki % ke matching band ki remarks.
+// getsauploadmarks (st.manualRemarks) YAHAN use NAHI hoti. Absent → koi comment nahi.
+const mc  = (!isAbs ? (((grades && grades.length) ? (rcGradeByScale(pct, grades) || {}).comment : (g && g.comment)) || '') : '').slice(0, 40);
     return { s, tot, obt, pct, g, mc, isAbs, col: C.bars[i % C.bars.length] };
   });
 
@@ -8768,8 +8972,9 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
   };
 
   const sorted = subjData.filter(d => !d.isAbs).sort((a, b) => b.pct - a.pct);
+  // Top Subjects aur Needs Attention — DONO mein SAME subjects dikhane hain (ek hi list).
   const strengths    = sorted.slice(0, 3);
-  const improvements = sorted.filter(d => d.pct < 80).slice(-3).reverse();
+  const improvements = strengths;
 
   const tilesEnabled = [];
   if (opt['Show Percentage'])        tilesEnabled.push({ icon: 'fa-chart-line',     label: 'Overall %', val: `${ovPct}%`,         col: C.blu, bg: C.bluL, bdr: C.bluBdr });
@@ -8930,8 +9135,8 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
               <td colSpan={span} style={{ padding: '6px 8px', fontSize: 10.5, fontWeight: 800, color: C.blu, borderTop: `2px solid ${C.bluBdr}` }}>Grand Total</td>
               {opt['Show Total Marks']    && <td style={{ padding: '6px 8px', textAlign: 'center', fontWeight: 800, color: C.blu, borderTop: `2px solid ${C.bluBdr}` }}>{totalAll}</td>}
               {opt['Show Obtained Marks'] && <td style={{ padding: '6px 8px', textAlign: 'center', fontSize: 12, fontWeight: 900, color: C.blu, borderTop: `2px solid ${C.bluBdr}` }}>{obtAll}</td>}
-              {opt['Show Percentage']     && <td style={{ padding: '6px 8px', textAlign: 'center', fontSize: 12, fontWeight: 900, color: C.grn, borderTop: `2px solid ${C.bluBdr}` }}>{ovPct}%</td>}
-              {opt['Show Grade']          && <td style={{ padding: '6px 8px', textAlign: 'center', fontSize: 12, fontWeight: 900, color: gCol(ovGrade), borderTop: `2px solid ${C.bluBdr}` }}>{ovGrade ? ovGrade.grade : '—'}</td>}
+              {opt['Show Percentage']     && <td style={{ padding: '6px 8px', textAlign: 'center', fontSize: 12, fontWeight: 900, color: C.grn, borderTop: `2px solid ${C.bluBdr}` }}>{gtPct}%</td>}
+              {opt['Show Grade']          && <td style={{ padding: '6px 8px', textAlign: 'center', fontSize: 12, fontWeight: 900, color: gCol(gtGrade), borderTop: `2px solid ${C.bluBdr}` }}>{gtGrade ? gtGrade.grade : '—'}</td>}
               <td style={{ borderTop: `2px solid ${C.bluBdr}` }} />
             </tr>
           </tbody>
@@ -9002,7 +9207,7 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
             {(opt['Show Obtained Marks'] || opt['Show Total Marks']) && (
               <div style={{ width: 36, textAlign: 'right', fontSize: 9.5, fontWeight: 700, color: C.blu, flexShrink: 0 }}>{obtAll}/{totalAll}</div>
             )}
-            <div style={{ width: 32, textAlign: 'right', fontSize: 11, fontWeight: 900, color: C.grn, flexShrink: 0 }}>{ovPct}%</div>
+            <div style={{ width: 32, textAlign: 'right', fontSize: 11, fontWeight: 900, color: C.grn, flexShrink: 0 }}>{gtPct}%</div>
             {opt['Show Grade'] && <div style={{ width: 24, flexShrink: 0 }} />}
           </div>
         </div>
@@ -9066,14 +9271,13 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
             </div>
           )) : (
             <div style={{ padding: '14px 10px', textAlign: 'center' }}>
-              <div style={{ fontSize: 28, marginBottom: 6 }}>🌟</div>
-              <div style={{ fontSize: 11, fontWeight: 700, color: C.grn }}>Excellent!</div>
-              <div style={{ fontSize: 10, color: C.textM, marginTop: 2 }}>All subjects above 80%</div>
+              <div style={{ fontSize: 28, marginBottom: 6 }}>📘</div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.textM }}>No subjects to show</div>
             </div>
           )}
         </div>
 
-        {opt['Show Final Remarks'] && (
+        {opt['Show Final Remarks'] && finalRem && (
           <div style={{ padding: '16px 20px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
               <div style={{ width: 28, height: 28, borderRadius: 7, background: C.purL, color: C.pur, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12 }}>
@@ -9115,7 +9319,7 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
 /* ═══════════════════════════════════════════════════════════════════
    SINGLE ASSESSMENT — UPDATE MARKS MODAL
    ═══════════════════════════════════════════════════════════════════ */
-function ResultUpdateMarksModal({ cd, student, onSave, onClose, absentMode, toast, subjects = [], resTotalMarksCtx, selectedTermId }) {
+function ResultUpdateMarksModal({ cd, student, onSave, onClose, absentMode, toast, subjects = [], resTotalMarksCtx, selectedTermId, grades = [] }) {
   const [obtained, setObtained] = useState(() => ({ ...(student.obtained || {}) }));
   const [manualRemarks, setManualRemarks] = useState(() => ({ ...(student.manualRemarks || {}) }));
   // Per-subject absent — { [subjectName]: true }. Har subject alag mark hota hai.
@@ -9181,6 +9385,7 @@ function ResultUpdateMarksModal({ cd, student, onSave, onClose, absentMode, toas
       );
       const marksData = await marksRes.json();
       const marksRecord = Array.isArray(marksData) ? marksData[0] : (marksData?.data?.[0] || null);
+      console.log('[loadMarks] GET marksRecord for', subjectObj.subjectName, ':', marksRecord);
       if (marksRecord) {
   setObtained(prev => ({
     ...prev,
@@ -9190,13 +9395,13 @@ function ResultUpdateMarksModal({ cd, student, onSave, onClose, absentMode, toas
     ...prev,
     [subjectID]: marksRecord.id || 0
   }));
-  // Remarks bhi pre-fill karo
-  if (marksRecord.remarks) {
-    setManualRemarks(prev => ({
-      ...prev,
-      [subjectObj.subjectName]: marksRecord.remarks
-    }));
-  }
+  // Manual Comment = is subject ke saved remarks (getsauploadmarks... API se).
+  // Casing tolerate karo (remarks / Remarks) aur hamesha reflect karo (API source of truth).
+  const savedRemarks = marksRecord.remarks ?? marksRecord.Remarks ?? '';
+  setManualRemarks(prev => ({
+    ...prev,
+    [subjectObj.subjectName]: savedRemarks
+  }));
 }
     } catch (err) {
       console.error('Error fetching subject data:', err);
@@ -9275,7 +9480,13 @@ const saveCurrentSubject = async () => {
     const obtainedMarks = obtained[curSubj] || 0;
     const curTotal = subjectTotalMarks[curSubjID] ?? 0;
     const pct = curTotal > 0 ? Math.round((obtainedMarks / curTotal) * 100) : 0;
-    const gradeObj = rcGetGrade(obtainedMarks, curTotal);
+    // Auto Comment/remarks branch ke configured grading se (percentage → matching band).
+    const gradeObj = (obtainedMarks && curTotal)
+      ? (rcGradeByScale(pct, grades) || rcGetGrade(obtainedMarks, curTotal))
+      : null;
+    // Manual comment mojood hai? (agar hai to CalculateUploadRemark na chalao warna
+    // wo auto-computed remark se manual value overwrite kar dega.)
+    const hasManual = !!(manualRemarks[curSubj] && String(manualRemarks[curSubj]).trim());
     const remarks = manualRemarks[curSubj] || (gradeObj ? gradeObj.comment : '');
 
     const headers = {
@@ -9292,34 +9503,47 @@ const saveCurrentSubject = async () => {
       examId: String(examID),
       studentId: String(student.id),
     });
+const today = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
 
     // API 1: Save marks
-    const savePayload = {
-      id: existingId,
-      branchId: String(branchID),
-      classID: Number(classID),
-      sectionID: Number(sectionID),
-      examID: String(examID),
-      termID: String(termID),
-      subjectID: Number(curSubjID),
-      studentID: Number(student.id),
-      obtainMarks: String(obtainedMarks),
-      TotalMarks: String(curTotal),
-      percentage: String(pct),
-      Remarks: remarks,
-      action: existingId > 0 ? 'update' : 'insert',
-      ClassName: '',
-      ExamName: '',
-      SectionName: '',
-      Term: '',
-      subjectName: '',
-    };
+const savePayload = {
+  id: existingId,
+  subjectID: Number(curSubjID),
+  obtainMarks: String(obtainedMarks),
+  totalMarks: String(curTotal),
+  subjectName: "",
+  studentID: Number(student.id),
+  classID: Number(classID),
+  className: "",
+  termID: Number(termID),
+  term: "",
+  examID: Number(examID),
+  examName: "",
+  sectionID: Number(sectionID),
+  sectionName: "",
+  branchID: Number(branchID),
+  dateFrom: today, // ya dynamic date
+  dateTo: today,   // ya dynamic date
+  remarks: remarks,
+  percentage: String(pct),
+  action: existingId > 0 ? "update" : "insert",
+};
 
-    await fetch(buildUrl('/api/sauploadmarkscrud'), {
+    // API 1: Save marks — response check + log (silent-fail diagnose ke liye).
+    // Console me actual URL/status/response dikhega; agar base URL galat ho
+    // (localStorage sm_api_base_url) ya token expire ho to yahin pata chal jayega.
+    const saveUrl = buildUrl('/api/sauploadmarkscrud');
+    const saveRes = await fetch(saveUrl, {
       method: 'POST',
       headers,
       body: JSON.stringify(savePayload)
     });
+    const saveText = await saveRes.text().catch(() => '');
+    console.log('[saveMarks] POST', saveUrl, '\npayload:', savePayload, '\nstatus:', saveRes.status, '\nresponse:', saveText);
+    if (!saveRes.ok) {
+      toast?.(`Save failed (HTTP ${saveRes.status}). ${String(saveText).slice(0, 140)}`, 'error');
+      return false;
+    }
 
     // API 2: FetchFinalRemarksAgainstPercentage
     await fetch(
@@ -9327,15 +9551,19 @@ const saveCurrentSubject = async () => {
       { method: 'GET', headers }
     );
 
-    // API 3: CalculateUploadRemark
-    const calculateParams = new URLSearchParams({
-      ...Object.fromEntries(commonParams),
-      subjectId: String(curSubjID),
-    });
-    await fetch(
-      buildUrl(`/api/CalculateUploadRemark?${calculateParams}`),
-      { method: 'GET', headers }
-    );
+    // API 3: CalculateUploadRemark — remark ko percentage/grade se dobara compute karta
+    // hai. Manual comment ho to ye NA chalao, warna manual value auto se overwrite ho
+    // jati hai. Manual na ho to hi auto-calculate chale.
+    if (!hasManual) {
+      const calculateParams = new URLSearchParams({
+        ...Object.fromEntries(commonParams),
+        subjectId: String(curSubjID),
+      });
+      await fetch(
+        buildUrl(`/api/CalculateUploadRemark?${calculateParams}`),
+        { method: 'GET', headers }
+      );
+    }
 
     // API 4: saveoverallstudentresultpercentage
     await fetch(buildUrl('/api/saveoverallstudentresultpercentage'), {
@@ -9370,7 +9598,11 @@ const saveAndClose = async () => {
   const curTotal = subjectTotalMarks[curSubjID] ?? (cd.totalMarks[curSubj] || 0);
   const curObt = obtained[curSubj] || '';
   const curPct = curTotal ? Math.round((curObt / curTotal) * 100) : 0;
-  const curGrade = rcGetGrade(curObt, curTotal);
+  // Grade + Auto Comment branch ke configured grading (gradingcrud → grades) se —
+  // percentage ke hisaab se matching band ki remarks dikhao. Config na ho to default.
+  const curGrade = (curObt && curTotal)
+    ? (rcGradeByScale(curPct, grades) || rcGetGrade(curObt, curTotal))
+    : null;
 
   return createPortal(
     <div
@@ -11496,7 +11728,7 @@ async function fetchClassAttendanceMap(classID, sectionID) {
   }
 }
 
-function ResultCardViewer({ student, rd, ex, template, school, grades, rcoGeneral, rcoSig, rsSigs, rsAbsentMode, onClose, toast, initialMode = 'single', singleOnly = false, loading = false, attnClassID, attnSectionID, attnStudentID }) {
+function ResultCardViewer({ student, rd, ex, template, school, grades, remarks = [], rcoGeneral, rcoSig, rsSigs, rsAbsentMode, onClose, toast, initialMode = 'single', singleOnly = false, loading = false, attnClassID, attnSectionID, attnStudentID }) {
   const [mode, setMode] = useState(initialMode);
   const [attnPct, setAttnPct] = useState(null); // is student ki REAL attendance %
   const cardRef = useRef(null);
@@ -11633,19 +11865,19 @@ html,body{background:#fff;font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-
             {template === 'classic' && (
               <ClassicResultCard
                 rcoGeneral={rcoGeneral} rcoSig={rcoSig} rsSigs={rsSigs} rsAbsentMode={rsAbsentMode}
-                mode={mode} student={stEff} rd={rd} ex={ex} school={school} grades={grades}
+                mode={mode} student={stEff} rd={rd} ex={ex} school={school} grades={grades} remarks={remarks}
               />
             )}
             {template === 'insight' && (
               <InsightResultCard
                 rcoGeneral={rcoGeneral} rcoSig={rcoSig} rsSigs={rsSigs} rsAbsentMode={rsAbsentMode}
-                mode={mode} student={stEff} rd={rd} ex={ex} school={school} grades={grades}
+                mode={mode} student={stEff} rd={rd} ex={ex} school={school} grades={grades} remarks={remarks}
               />
             )}
             {template === 'portfolio' && (
               <PortfolioResultCard
                 rcoGeneral={rcoGeneral} rcoSig={rcoSig} rsSigs={rsSigs} rsAbsentMode={rsAbsentMode}
-                mode={mode} student={stEff} rd={rd} ex={ex} school={school} grades={grades}
+                mode={mode} student={stEff} rd={rd} ex={ex} school={school} grades={grades} remarks={remarks}
               />
             )}
           </div>
@@ -11661,7 +11893,7 @@ html,body{background:#fff;font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-
    APIs: getstudentsbybranchsectionandgrade (students) → get-subjects_byEmployeeID (subjects)
    → getsauploadmarksbyclassandtermandexamandsubject (per student/subject marks + remarks)
    → getremarksbystudentfilters (final remark). Single-card jaisi hi rendering, bas N students. */
-function BulkCardModal({ ctx, template, school, grades, rcoGeneral, rcoSig, rsSigs, rsAbsentMode, onClose, toast }) {
+function BulkCardModal({ ctx, template, school, grades, remarks = [], rcoGeneral, rcoSig, rsSigs, rsAbsentMode, onClose, toast }) {
   const { classID, sectionID, selectExam, termID, className, examName } = ctx;
   const [cards, setCards]       = useState([]);   // [{ student, rd }]
   const [loading, setLoading]   = useState(true);
@@ -11836,7 +12068,7 @@ ${node.innerHTML}
                   <Card rcoGeneral={rcoGeneral} rcoSig={rcoSig} rsSigs={rsSigs} rsAbsentMode={rsAbsentMode}
                     mode="single"
                     student={attnMap[String(c.student.id)] != null ? { ...c.student, attendance: `${attnMap[String(c.student.id)]}%` } : c.student}
-                    rd={c.rd} ex={cardEx} school={school} grades={grades} />
+                    rd={c.rd} ex={cardEx} school={school} grades={grades} remarks={remarks} />
                 </div>
               ))}
             </div>
@@ -11851,7 +12083,7 @@ ${node.innerHTML}
 /* Bulk COMBINED result cards — ek class ke SAARE students ke combined cards ek saath.
    Combined breakdown (grandTotal / sub-exam breakdown / overall % / rank) pehle se cbrResults
    group ke har student par maujood hai; sirf per-subject main-exam marks load karne hain. */
-function BulkCombinedCardModal({ grp, termID, template, school, grades, rcoGeneral, rcoSig, rsSigs, rsAbsentMode, onClose, toast }) {
+function BulkCombinedCardModal({ grp, termID, template, school, grades, remarks = [], rcoGeneral, rcoSig, rsSigs, rsAbsentMode, onClose, toast }) {
   const [cards, setCards]       = useState([]);
   const [loading, setLoading]   = useState(true);
   const [progress, setProgress] = useState({ done: 0, total: (grp?.students || []).length });
@@ -12010,7 +12242,7 @@ ${node.innerHTML}
                   <Card rcoGeneral={rcoGeneral} rcoSig={rcoSig} rsSigs={rsSigs} rsAbsentMode={rsAbsentMode}
                     mode="combined"
                     student={attnMap[String(c.student._attnId)] != null ? { ...c.student, attendance: `${attnMap[String(c.student._attnId)]}%` } : c.student}
-                    rd={c.rd} ex={cardEx} school={school} grades={grades} />
+                    rd={c.rd} ex={cardEx} school={school} grades={grades} remarks={remarks} />
                 </div>
               ))}
             </div>
@@ -12617,16 +12849,23 @@ const runDelete = async () => {
                 draftGrades.map((g, i) => (
                   <div key={g.id} className="rm-grade-row">
                     <div className="rm-sno">{i + 1}</div>
-                    <input
+                    <select
                       className="rs-input"
-                      list={`gradeOpts-${g.id}`}
                       value={g.grade || ''}
-                      placeholder="Grade..."
                       onChange={e => upGrade(g.id, 'grade', e.target.value)}
-                    />
-                    <datalist id={`gradeOpts-${g.id}`}>
-                      {RS_GRADE_LIST.map(opt => <option key={opt} value={opt} />)}
-                    </datalist>
+                    >
+                      <option value="" disabled>Grade...</option>
+                      {(() => {
+                        // Har grade sirf ek baar — dusri rows me use hue grades hata do,
+                        // magar is row ki apni current value hamesha rakho.
+                        const used = new Set(
+                          draftGrades.filter(x => x.id !== g.id).map(x => x.grade).filter(Boolean)
+                        );
+                        const opts = RS_GRADE_LIST.filter(opt => !used.has(opt));
+                        if (g.grade && !opts.includes(g.grade)) opts.unshift(g.grade);
+                        return opts.map(opt => <option key={opt} value={opt}>{opt}</option>);
+                      })()}
+                    </select>
                     <select className="rs-input" value={g.cond || 'gte'} onChange={e => upGrade(g.id, 'cond', e.target.value)}>
                       {RS_COND_LIST.map(c => <option key={c.v} value={c.v}>{c.l}</option>)}
                     </select>
@@ -12652,11 +12891,19 @@ const runDelete = async () => {
                   </div>
                 ))
               )}
-              <Tooltip text="Add a new grade band">
-                <button className="rs-add" onClick={addGrade}>
-                  <i className="fa-solid fa-plus"></i> Add Grade
-                </button>
-              </Tooltip>
+              {(() => {
+                // Saare grades add ho chuke to Add Grade disable — har grade sirf ek baar.
+                const usedCount = new Set(draftGrades.map(x => x.grade).filter(Boolean)).size;
+                const allUsed = usedCount >= RS_GRADE_LIST.length;
+                return (
+                  <Tooltip text={allUsed ? 'All grades already added' : 'Add a new grade band'}>
+                    <button className="rs-add" onClick={addGrade} disabled={allUsed}
+                      style={allUsed ? { opacity: .5, cursor: 'not-allowed' } : undefined}>
+                      <i className="fa-solid fa-plus"></i> Add Grade
+                    </button>
+                  </Tooltip>
+                );
+              })()}
             </>
           )}
 
@@ -13320,7 +13567,7 @@ function generateExamReport(ctx, isColor, format = 'pdf') {
         <div style="font-size:10.5px;color:${muted};margin-top:3px">${pillsHtml}</div>
       </td>
       <td style="text-align:center">
-        <span style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:99px;font-size:10.5px;font-weight:700;background:${sc.bg};color:${sc.fg};border:1px solid ${sc.bd}">${st.label}</span>
+        <span style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:99px;font-size:10.5px;font-weight:700;white-space:nowrap;background:${sc.bg};color:${sc.fg};border:1px solid ${sc.bd}">${st.label}</span>
       </td>
       <td style="text-align:center;color:${muted};font-size:11px">${fmtDate(ex.from)}</td>
       <td style="text-align:center;color:${muted};font-size:11px">${fmtDate(ex.to)}</td>
@@ -13397,7 +13644,7 @@ function generateExamReport(ctx, isColor, format = 'pdf') {
     <colgroup>
       <col style="width:38px">
       <col>
-      <col style="width:78px">
+      <col style="width:110px">
       <col style="width:76px">
       <col style="width:76px">
       <col style="width:62px">
