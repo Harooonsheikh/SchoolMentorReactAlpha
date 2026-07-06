@@ -1,8 +1,9 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  planLimits, INITIAL_SCHOOLS, INITIAL_PAYMENTS,
+  INITIAL_SCHOOLS, INITIAL_PAYMENTS,
   fmt, today, monthLabel, PLAN_BADGE, STATUS_BADGE, ACTION_ICON, actionsFor,
 } from './mentorData';
+import { branchesApi } from './api';
 import PaymentReport from './PaymentReport';
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -25,9 +26,35 @@ function StatusBadge({ status }) {
 
 export default function MentorAI({ toast }) {
   const [tab, setTab] = useState('plans');           // 'plans' | 'payments'
-  const [schools, setSchools] = useState(INITIAL_SCHOOLS);
+  const [schools, setSchools] = useState([]);
   const [payments, setPayments] = useState(INITIAL_PAYMENTS);
+  const [loadingSchools, setLoadingSchools] = useState(true);
   const paymentSeq = useRef(1009);
+
+  /* Keep the latest toast in a ref so the loader effect below can call it
+     without listing `toast` as a dependency (the parent passes a new
+     function each render, which would otherwise re-fire the fetch forever). */
+  const toastRef = useRef(toast);
+  toastRef.current = toast;
+
+  /* Load the branch directory + subscription state and map it into the plan
+     roster. Reused for the initial load AND to refresh after a plan update,
+     so the table always reflects the real subscription status from the API. */
+  const loadSchools = useCallback(async () => {
+    setLoadingSchools(true);
+    try {
+      const rows = await branchesApi.listBranchesWithPlans();
+      setSchools(rows && rows.length ? rows : INITIAL_SCHOOLS);
+    } catch {
+      setSchools(INITIAL_SCHOOLS);
+      toastRef.current?.('Could not load branches — showing sample data', 'warn');
+    } finally {
+      setLoadingSchools(false);
+    }
+  }, []);
+
+  /* Fetch once when the screen mounts. */
+  useEffect(() => { loadSchools(); }, [loadSchools]);
 
   const getSchool = (id) => schools.find((s) => s.id === id);
 
@@ -55,7 +82,7 @@ export default function MentorAI({ toast }) {
       </div>
 
       {tab === 'plans' && (
-        <PlansPanel schools={schools} setSchools={setSchools} getSchool={getSchool} toast={toast} />
+        <PlansPanel schools={schools} setSchools={setSchools} getSchool={getSchool} toast={toast} loading={loadingSchools} reload={loadSchools} />
       )}
       {tab === 'payments' && (
         <PaymentsPanel
@@ -68,7 +95,7 @@ export default function MentorAI({ toast }) {
 }
 
 /* ═══════════════════════ PLANS PANEL ═══════════════════════ */
-function PlansPanel({ schools, setSchools, getSchool, toast }) {
+function PlansPanel({ schools, setSchools, getSchool, toast, loading, reload }) {
   const [search, setSearch] = useState('');
   const [planFilter, setPlanFilter] = useState('All Plans');
   const [statusFilter, setStatusFilter] = useState('All');
@@ -112,9 +139,20 @@ function PlansPanel({ schools, setSchools, getSchool, toast }) {
     else setModal({ type: 'plan', school: s, newPlan: act, effective: today(), due: '', notes: '' });
   };
 
-  const confirmPlan = () => {
-    setSchools((prev) => prev.map((s) => s.id === modal.school.id ? { ...s, plan: modal.newPlan, status: 'Active' } : s));
-    setModal(null); toast('Plan updated successfully', 'success');
+  const confirmPlan = async () => {
+    if (modal.saving) return;                    // guard against double-submit
+    setModal((m) => ({ ...m, saving: true }));
+    try {
+      await branchesApi.updateBranchPlan(modal.school.id, modal.newPlan, true);
+      setModal(null);
+      toast('Plan updated successfully', 'success');
+      /* Re-fetch subscriptions so the row shows the real, server-confirmed
+         status/plan/period instead of an optimistic guess. */
+      await reload();
+    } catch (err) {
+      setModal((m) => ({ ...m, saving: false }));
+      toast(err?.message || 'Could not update plan', 'error');
+    }
   };
   const confirmBlock = () => {
     setSchools((prev) => prev.map((s) => s.id === modal.school.id ? { ...s, status: 'Blocked' } : s));
@@ -160,7 +198,7 @@ function PlansPanel({ schools, setSchools, getSchool, toast }) {
           <div className="f-field">
             <label className="f-label">Status</label>
             <select className="f-input" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
-              <option>All</option><option>Active</option><option>Expired</option><option>Blocked</option>
+              <option>All</option><option>Active</option><option>Expired</option><option>Blocked</option><option>Inactive</option>
             </select>
           </div>
           <button className="btn-primary" onClick={applyFilters}><i className="fa-solid fa-magnifying-glass" /> Search</button>
@@ -215,7 +253,10 @@ function PlansPanel({ schools, setSchools, getSchool, toast }) {
                   </td>
                 </tr>
               ))}
-              {list.length === 0 && (
+              {loading && (
+                <tr><td className="td-empty" colSpan={7}><i className="fa-solid fa-spinner fa-spin" />Loading branches…</td></tr>
+              )}
+              {!loading && list.length === 0 && (
                 <tr><td className="td-empty" colSpan={7}><i className="fa-solid fa-inbox" />No schools found</td></tr>
               )}
             </tbody>
@@ -231,8 +272,10 @@ function PlansPanel({ schools, setSchools, getSchool, toast }) {
         <Modal title="Update Mentor AI Plan" sub="Change subscription plan for this school" icon="fa-pen-to-square"
           onClose={() => setModal(null)}
           footer={<>
-            <button className="btn-secondary" onClick={() => setModal(null)}>Cancel</button>
-            <button className="btn-primary" onClick={confirmPlan}><i className="fa-solid fa-check" /> Confirm Update</button>
+            <button className="btn-secondary" onClick={() => setModal(null)} disabled={modal.saving}>Cancel</button>
+            <button className="btn-primary" onClick={confirmPlan} disabled={modal.saving}>
+              <i className={`fa-solid ${modal.saving ? 'fa-spinner fa-spin' : 'fa-check'}`} /> {modal.saving ? 'Updating…' : 'Confirm Update'}
+            </button>
           </>}>
           <div className="modal-grid">
             <Field label="School Name"><input className="f-input" value={modal.school.school} readOnly /></Field>
@@ -287,7 +330,15 @@ function PlansPanel({ schools, setSchools, getSchool, toast }) {
         </Modal>
       )}
 
-      {modal?.type === 'usage' && <UsageModal school={modal.school} onClose={() => setModal(null)} />}
+      {modal?.type === 'usage' && (
+        <UsageModal
+          school={modal.school}
+          toast={toast}
+          onWalletChange={(enabled) => setSchools((prev) => prev.map((s) =>
+            s.id === modal.school.id ? { ...s, walletEnabled: enabled } : s))}
+          onClose={() => setModal(null)}
+        />
+      )}
     </div>
   );
 }
@@ -513,41 +564,110 @@ function PaymentsPanel({ schools, payments, setPayments, getSchool, paymentSeq, 
 }
 
 /* ═══════════════════════ MODAL SUB-COMPONENTS ═══════════════════════ */
-function UsageModal({ school, onClose }) {
-  const lim = planLimits[school.plan];
-  const items = [
-    ['fa-coins', 'Tokens', school.usage.tokens, lim.tokens],
-    ['fa-book-open', 'Lesson Plans', school.usage.lessons, lim.lessons],
-    ['fa-landmark', 'Question Banks', school.usage.banks, lim.banks],
-    ['fa-file-lines', 'Worksheets', school.usage.worksheets, lim.worksheets],
-    ['fa-image', 'Social Posts', school.usage.posts, lim.posts],
-  ];
+/* Wallet bucket → display metadata (label + icon), in display order. */
+const WALLET_BUCKETS = [
+  ['tokens', 'Tokens', 'fa-coins'],
+  ['image_scans', 'Image Scans', 'fa-image'],
+  ['worksheets', 'Worksheets', 'fa-file-lines'],
+  ['ai_posts', 'AI Posts', 'fa-share-nodes'],
+];
+/* Bucket state → progress-bar / text colour. */
+const BUCKET_STATE_COLOR = {
+  healthy: 'var(--success)', warning: 'var(--warn)', critical: 'var(--err)', exhausted: 'var(--err)',
+};
+
+function UsageModal({ school, toast, onWalletChange, onClose }) {
+  const [loading, setLoading] = useState(true);
+  const [wallet, setWallet] = useState(null);
+  const [enabled, setEnabled] = useState(Boolean(school.walletEnabled));
+  const [toggling, setToggling] = useState(false);
+
+  /* Load the live wallet (usage buckets) by re-posting the current flag. */
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    branchesApi.getWalletUsage(school.id, Boolean(school.walletEnabled)).then(
+      (w) => { if (cancelled) return; setWallet(w); if (w) setEnabled(Boolean(w.wallet_enabled)); setLoading(false); },
+      () => { if (cancelled) return; setWallet(null); setLoading(false); },
+    );
+    return () => { cancelled = true; };
+  }, [school.id, school.walletEnabled]);
+
+  const toggleWallet = async () => {
+    if (toggling) return;
+    const next = !enabled;
+    setToggling(true);
+    try {
+      const res = await branchesApi.setWalletStatus(school.id, next);
+      setEnabled(Boolean(res?.wallet?.wallet_enabled ?? next));
+      if (res?.wallet) setWallet(res.wallet);
+      onWalletChange?.(Boolean(res?.wallet?.wallet_enabled ?? next));
+      toast?.(next ? 'Wallet enabled' : 'Wallet disabled', 'success');
+    } catch (err) {
+      toast?.(err?.message || 'Could not update wallet', 'error');
+    } finally {
+      setToggling(false);
+    }
+  };
+
+  const buckets = wallet?.buckets || {};
+
   return (
     <Modal large title="Mentor AI Usage Details" sub={`Plan: ${school.plan} · Status: ${school.status} · Due: ${school.due}`}
       icon="fa-chart-pie" onClose={onClose}
       footer={<button className="btn-secondary" onClick={onClose}>Close</button>}>
-      <div style={{ marginBottom: 14, fontSize: 16, fontWeight: 800, color: 'var(--t1)' }}>{school.school} — {school.campus}</div>
-      <div className="usage-grid">
-        {items.map(([icon, label, used, max]) => {
-          const pct = Math.min(100, Math.round((used / max) * 100));
-          return (
-            <div className="usage-card" key={label}>
-              <div className="usage-title"><i className={`fa-solid ${icon}`} /> {label}</div>
-              <div className="usage-stats"><span>Used</span><b>{fmt(used)}</b></div>
-              <div className="usage-stats"><span>Limit</span><b>{fmt(max)}</b></div>
-              <div className="progress" style={{ height: 8, marginTop: 4 }}><span style={{ width: `${pct}%` }} /></div>
-              <div style={{ fontSize: 11, color: 'var(--tm)', marginTop: 4, fontWeight: 600 }}>{pct}% used</div>
-            </div>
-          );
-        })}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, gap: 12, flexWrap: 'wrap' }}>
+        <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--t1)' }}>{school.school} — {school.campus}</div>
+        <button
+          className={enabled ? 'btn-success' : 'btn-secondary'}
+          onClick={toggleWallet}
+          disabled={toggling || loading}
+          data-tip="Toggle wallet access">
+          <i className={`fa-solid ${toggling ? 'fa-spinner fa-spin' : enabled ? 'fa-toggle-on' : 'fa-toggle-off'}`} />
+          {' '}Wallet {enabled ? 'Enabled' : 'Disabled'}
+        </button>
       </div>
+
+      {loading ? (
+        <div style={{ textAlign: 'center', padding: '48px 20px', color: 'var(--tm)', fontSize: 13, fontWeight: 600 }}>
+          <i className="fa-solid fa-spinner fa-spin" style={{ fontSize: 28, display: 'block', marginBottom: 10 }} />
+          Loading wallet usage…
+        </div>
+      ) : !wallet ? (
+        <div style={{ textAlign: 'center', padding: '48px 20px', color: 'var(--tm)', fontSize: 13, fontWeight: 600 }}>
+          <i className="fa-solid fa-wallet" style={{ fontSize: 32, display: 'block', marginBottom: 10, color: 'var(--bl)' }} />
+          No wallet data available for this branch.
+        </div>
+      ) : (
+        <div className="usage-grid">
+          {WALLET_BUCKETS.map(([key, label, icon]) => {
+            const b = buckets[key] || { used: 0, quota: 0, remaining: 0, percent: 0, unlimited: false, state: 'healthy' };
+            const pct = b.unlimited ? 0 : Math.min(100, Math.round(b.percent || 0));
+            const color = BUCKET_STATE_COLOR[b.state] || 'var(--brand)';
+            return (
+              <div className="usage-card" key={key}>
+                <div className="usage-title"><i className={`fa-solid ${icon}`} /> {label}</div>
+                <div className="usage-stats"><span>Used</span><b>{fmt(b.used || 0)}</b></div>
+                <div className="usage-stats"><span>Limit</span><b>{b.unlimited ? '∞' : fmt(b.quota || 0)}</b></div>
+                <div className="usage-stats"><span>Remaining</span><b>{b.unlimited ? '∞' : fmt(b.remaining || 0)}</b></div>
+                <div className="progress" style={{ height: 8, marginTop: 4 }}>
+                  <span style={{ width: `${pct}%`, background: color }} />
+                </div>
+                <div style={{ fontSize: 11, color, marginTop: 4, fontWeight: 700, textTransform: 'capitalize' }}>
+                  {b.unlimited ? 'Unlimited' : `${pct}% used · ${b.state || 'healthy'}`}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </Modal>
   );
 }
 
 function ReceivePaymentModal({ schools, onClose, onSave }) {
   const [form, setForm] = useState(() => {
-    const s = schools[0];
+    const s = schools[0] || { id: '', campus: '', plan: 'Basic' };
     return { schoolId: s.id, campus: s.campus, currentPlan: s.plan, paymentPlan: s.plan,
       amount: '', date: today(), method: 'Bank Transfer', reference: '', receivedBy: 'Super Admin', notes: '',
       proofUrl: '', proofName: '', proofIsPdf: false };
