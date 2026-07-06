@@ -43,19 +43,19 @@ const cfg = {
 export let SA_API_BASE = cfg.apiBaseUrl;
 
 /* Main ERP API base — hosts the shared Registration/branch directory, which
-   lives outside the superadmin root.
+   lives outside the superadmin root (e.g. .../api/Registration/get-all-branches).
 
-   Default '' → the browser calls a RELATIVE, same-origin path. In dev that
-   path is forwarded to the real ERP host by src/setupProxy.js (which avoids
-   the CORS block, since the ERP host sends no Access-Control-Allow-Origin
-   for localhost). Set REACT_APP_SA_ERP_BASE to an absolute URL only for a
-   deployment that talks to the ERP host directly (same origin or CORS-enabled). */
-export const ERP_API_BASE = stripTrailingSlash(env.REACT_APP_SA_ERP_BASE || '');
+   Points DIRECTLY at the absolute ERP host on :4100, exactly like the main app's
+   src/utils/apiConfig.js (DEFAULT_URL) — so branch calls hit the full URL
+   http://50.190.164.42:4100/api/Registration/get-all-branches in dev and prod,
+   no proxy needed. Override with REACT_APP_SA_ERP_BASE when the host changes. */
+export const ERP_API_BASE = stripTrailingSlash(env.REACT_APP_SA_ERP_BASE || 'http://50.190.164.42:4100');
 
-/* AI / wallet API base — hosts per-branch plan + subscription state.
-   Same story as ERP_API_BASE: default '' → relative, same-origin path that
-   src/setupProxy.js forwards to the AI host in dev (avoids the CORS block). */
-export const AI_API_BASE = stripTrailingSlash(env.REACT_APP_SA_AI_BASE || '');
+/* AI / wallet API base — hosts per-branch Mentor AI plan + subscription state
+   (subscriptions / subscription / status). Points DIRECTLY at the absolute AI
+   host on :8000, so calls hit http://50.190.164.42:8000/ai/api/wallet/...
+   Override with REACT_APP_SA_AI_BASE when the host changes. */
+export const AI_API_BASE = stripTrailingSlash(env.REACT_APP_SA_AI_BASE || 'http://50.190.164.42:8000');
 
 const IDENTITY_KEYS = ['role', 'userId', 'name', 'email'];
 
