@@ -912,6 +912,7 @@ const [subjects, setSubjects] = useState([]);
   const [rhCardMarks, setRhCardMarks]         = useState(null); // View card ke liye real per-subject marks
   const [rhExamScores, setRhExamScores]       = useState({});   // { [exam.id]: overall % } exam history ke liye
   const [rhExamRanks, setRhExamRanks]         = useState({});   // { [exam.id]: "1st" } getstudentsrankings se
+  const [rhCombinedRanks, setRhCombinedRanks] = useState({});   // { [combined.id]: { rank:"1st", pct } } getstudentsrankings(mainExamID) se
   const [rhStudentSummaries, setRhStudentSummaries] = useState({}); // { [studentId]: { avgPct, best, count, trend, grade } } card list ke liye
   const [rhAttendance, setRhAttendance] = useState(null); // active student ki REAL attendance: { pct, monthly:[{label,pct}] }
   const [rhAttnLoading, setRhAttnLoading] = useState(false); // attendance per-day loop chalte waqt spinner ke liye
@@ -1080,10 +1081,11 @@ const [subjects, setSubjects] = useState([]);
     if (!rhCardCtx) { setRhCardMarks(null); return undefined; }
     setRhCardMarks(null); // pehle clear karo taa-ke purana/static data flash na ho (sirf API data dikhe)
     const { result, student } = rhCardCtx;
+    const isCombined = result?.type === 'combined' || result?.combinedId != null;
     const classID    = result?.classID   ?? student?.gradeId   ?? student?.classID;
     const sectionID  = result?.sectionID ?? student?.sectionId ?? student?.sectionID;
-    const examID     = result?.selectExam;
-    const termID     = result?.termID;
+    // Combined ka koi selectExam nahi hota — uski jagah mainExamID exam ke tor par use hota hai.
+    const examID     = isCombined ? result?.mainExamID : result?.selectExam;
     const studentId  = student?.id;
     if (!classID || !sectionID || !examID) { setRhCardMarks({ subjects: [], totals: {}, obtained: {} }); return undefined; }
     let cancelled = false;
@@ -1091,10 +1093,37 @@ const [subjects, setSubjects] = useState([]);
       try {
         const token = sessionStorage.getItem('token');
         const headers = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
-        // 1) Subjects list (Math / Science 3 / KG) — reliably subjects deta hai
-        const subs = (await getSyllabusSubjects(classID, sectionID)) || [];
-        // 2) Har subject ke against student ke obtain/total marks
-        const records = await Promise.all(subs.map(async su => {
+        // Combined: mainExam kisi bhi term ka ho sakta hai → term all-term list se resolve karo.
+        // Single: result.termID pehle se available hota hai.
+        let termID = result?.termID;
+        let subjList;
+        if (isCombined) {
+          let pool = cbrAllExams;
+          if (!pool.length) pool = (await loadAllTermExams().catch(() => [])) || [];
+          const mainEx = (pool || []).find(e => String(e.selectExam) === String(examID))
+            || (pool || []).find(e => e.name === result?.mainExamName);
+          termID = mainEx?.termID ?? termID ?? selectedTermId;
+          // Combined tab jaisा: mainExam ke subjects; na milein to sub-exam ke subjects (marks phir bhi
+          // mainExamID ke against fetch honge). Subject naam class syllabus se resolve.
+          let subs = await cbrApi.getMainExamSubjects({ classID, sectionID, termID, examID }).catch(() => []);
+          if ((!subs || !subs.length) && (result?.subExamIDs || []).length) {
+            const subExamId = result.subExamIDs[0];
+            const subTermID = (pool || []).find(e => String(e.selectExam) === String(subExamId))?.termID ?? termID;
+            subs = await cbrApi.getMainExamSubjects({ classID, sectionID, termID: subTermID, examID: subExamId }).catch(() => []);
+          }
+          subs = subs || [];
+          let syl = [];
+          try { syl = (await getSyllabusSubjects(classID, sectionID)) || []; } catch { /* keep going */ }
+          const nameMap = {};
+          syl.forEach(s => { nameMap[s.subjectID] = s.subjectName; });
+          if (!subs.length) subs = syl.map(s => ({ subjectID: s.subjectID, subjectName: s.subjectName }));
+          subjList = subs.map(su => ({ ...su, subjectName: su.subjectName || nameMap[su.subjectID] || `Subject ${su.subjectID}` }));
+        } else {
+          // 1) Subjects list (Math / Science 3 / KG) — reliably subjects deta hai
+          subjList = (await getSyllabusSubjects(classID, sectionID)) || [];
+        }
+        // 2) Har subject ke against student ke obtain/total marks (dono modes ExamID=examID use karte hain)
+        const records = await Promise.all(subjList.map(async su => {
           try {
             const p = new URLSearchParams({
               classID: String(classID), termID: String(termID ?? ''), ExamID: String(examID),
@@ -1131,7 +1160,7 @@ const [subjects, setSubjects] = useState([]);
           finalRemark = frec?.remarks || '';
         } catch (e) { /* no final remark */ }
         if (cancelled) return;
-        setRhCardMarks({ subjects: subs.map(s => s.subjectName), totals, obtained, remarks, finalRemark, absentSubjects });
+        setRhCardMarks({ subjects: subjList.map(s => s.subjectName), totals, obtained, remarks, finalRemark, absentSubjects });
       } catch (e) {
         console.error('Error loading result-history card subject marks:', e);
         if (!cancelled) setRhCardMarks({ subjects: [], totals: {}, obtained: {} });
@@ -1195,6 +1224,64 @@ const [subjects, setSubjects] = useState([]);
     return () => { cancelled = true; };
     /* eslint-disable-next-line react-hooks/exhaustive-deps */
   }, [rhExams, rhActiveStudent]);
+
+  /* Combined Assessment records ka rank + score. Rank = getstudentsrankings me EXAM ke tor par
+     combined ka mainExamID pass karke (jo combinedassessmentcrud response me aata hai). Score =
+     usi mainExam ke per-subject marks ka overall % (single jaisा). Jis combined ka score 0 ho,
+     uski position "—" dikhegi (neeche display rule). */
+  useEffect(() => {
+    if (!rhActiveStudent || !rhCombined.length) { setRhCombinedRanks({}); return undefined; }
+    const st = rhActiveStudent;
+    const classID = st.gradeId ?? st.classID;
+    const sectionID = st.sectionId ?? st.sectionID;
+    const studentId = st.id;
+    let cancelled = false;
+    (async () => {
+      try {
+        const token = sessionStorage.getItem('token');
+        const headers = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
+        let pool = cbrAllExams;
+        if (!pool.length) pool = (await loadAllTermExams().catch(() => [])) || [];
+        const subs = (await getSyllabusSubjects(classID, sectionID).catch(() => [])) || [];
+        const out = {};
+        await Promise.all(rhCombined.map(async c => {
+          const mainExamID = c.mainExamID;
+          const termID = (pool || []).find(e => String(e.selectExam) === String(mainExamID))?.termID ?? '';
+          // rank — mainExamID ko examID ke tor par getstudentsrankings me
+          let rank = '';
+          try {
+            const rp = new URLSearchParams({ sectionID: String(sectionID), termID: String(termID), examID: String(mainExamID) });
+            const rr = await fetch(buildUrl(`/api/getstudentsrankings?${rp}`), { headers });
+            const rd = await rr.json();
+            const listR = Array.isArray(rd) ? rd : (rd?.data || []);
+            const mine = listR.find(x => String(x.studentId ?? x.StudentId ?? x.studentID) === String(studentId));
+            if (mine && mine.ranking) rank = String(mine.ranking);
+          } catch { /* skip combined ranking */ }
+          // score — mainExam ke saare subjects ka obtain/total (single jaisा)
+          let obt = 0, tot = 0;
+          await Promise.all(subs.map(async su => {
+            try {
+              const p = new URLSearchParams({
+                classID: String(classID), termID: String(termID), ExamID: String(mainExamID),
+                SubjectID: String(su.subjectID), StudentID: String(studentId), sectionID: String(sectionID), pageNo: '1',
+              });
+              const r = await fetch(buildUrl(`/api/getsauploadmarksbyclassandtermandexamandsubject?${p}`), { headers });
+              const d = await r.json();
+              const rec = Array.isArray(d) ? d[0] : (d?.data?.[0] || null);
+              if (rec) { obt += Number(rec.obtainMarks ?? rec.obtainedMarks ?? 0); tot += Number(rec.totalMarks ?? 0); }
+            } catch { /* skip subject */ }
+          }));
+          out[c.id] = { rank, pct: tot > 0 ? Math.round((obt / tot) * 100) : 0 };
+        }));
+        if (!cancelled) setRhCombinedRanks(out);
+      } catch (e) {
+        console.error('Error computing combined ranks:', e);
+        if (!cancelled) setRhCombinedRanks({});
+      }
+    })();
+    return () => { cancelled = true; };
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [rhCombined, rhActiveStudent]);
 
   /* Result History cards ke liye har student ki avg/best/trend calculation pehle se load karo
      (wahi exams + marks APIs). Har section ke exams/subjects ek baar fetch hote hain, phir
@@ -1810,17 +1897,42 @@ async function loadCardOptions() {
 // load karke us se report banao (mock nahi).
 const rhDownloadCardReport = async (st, r) => {
   loadCardOptions();
+  const isCombined = r?.type === 'combined' || r?.combinedId != null;
   const classID   = r?.classID   ?? st?.gradeId   ?? st?.classID;
   const sectionID = r?.sectionID ?? st?.sectionId ?? st?.sectionID;
-  const examID    = r?.selectExam;
-  const termID    = r?.termID;
+  // Combined ke liye mainExamID exam ki tarah use hota hai (selectExam nahi hota).
+  const examID    = isCombined ? r?.mainExamID : r?.selectExam;
+  let   termID    = r?.termID;
   const studentId = st?.id;
   const token     = sessionStorage.getItem('token');
   const branchID  = sessionStorage.getItem('branchID');
   const headers   = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
   let subjectNames = [], totals = {}, obtained = {}, remarks = {}, finalRemark = '';
   try {
-    const subs = (await getSyllabusSubjects(classID, sectionID).catch(() => [])) || [];
+    // Combined tab jaisा subject-resolution: mainExam ke subjects → na milein to sub-exam ke.
+    let subs;
+    if (isCombined) {
+      let pool = cbrAllExams;
+      if (!pool.length) pool = (await loadAllTermExams().catch(() => [])) || [];
+      const mainEx = (pool || []).find(e => String(e.selectExam) === String(examID))
+        || (pool || []).find(e => e.name === r?.mainExamName);
+      termID = mainEx?.termID ?? termID ?? selectedTermId;
+      let ms = await cbrApi.getMainExamSubjects({ classID, sectionID, termID, examID }).catch(() => []);
+      if ((!ms || !ms.length) && (r?.subExamIDs || []).length) {
+        const subExamId = r.subExamIDs[0];
+        const subTermID = (pool || []).find(e => String(e.selectExam) === String(subExamId))?.termID ?? termID;
+        ms = await cbrApi.getMainExamSubjects({ classID, sectionID, termID: subTermID, examID: subExamId }).catch(() => []);
+      }
+      ms = ms || [];
+      let syl = [];
+      try { syl = (await getSyllabusSubjects(classID, sectionID)) || []; } catch { /* keep going */ }
+      const nameMap = {};
+      syl.forEach(s => { nameMap[s.subjectID] = s.subjectName; });
+      if (!ms.length) ms = syl.map(s => ({ subjectID: s.subjectID, subjectName: s.subjectName }));
+      subs = ms.map(su => ({ ...su, subjectName: su.subjectName || nameMap[su.subjectID] || `Subject ${su.subjectID}` }));
+    } else {
+      subs = (await getSyllabusSubjects(classID, sectionID).catch(() => [])) || [];
+    }
     subjectNames = subs.map(s => s.subjectName);
     await Promise.all(subs.map(async su => {
       try {
@@ -5143,11 +5255,12 @@ onClick={async () => {
                 type: 'combined',
                 year: '',
                 date: fmtD(c.createdDate),
-                pct: 0,
-                rank: '',   // combined ka koi ranking API nahi → position blank
+                pct: rhCombinedRanks[c.id]?.pct ?? 0,
+                rank: rhCombinedRanks[c.id]?.rank || '',   // getstudentsrankings(mainExamID) se; score 0 → "—"
                 combinedId: c.id,
                 mainExamID: c.mainExamID,
                 mainExamName: c.mainExamName || '',
+                subExamIDs: (c.subExams || []).map(s => s.examID ?? s.ExamID).filter(v => v != null),
               }));
               const mappedResults = (singleMapped.length || combinedMapped.length)
                 ? [...singleMapped, ...combinedMapped]
@@ -5259,9 +5372,12 @@ onClick={async () => {
                                 const grade = rcGetGrade(r.pct, 100);
                                 const gradeCol = RS_GRADE_COLORS[grade ? grade.grade : 'F'] || '#475569';
                                 // rank string ("1st") API se aata hai; number ho to suffix lagao; khali → "—".
-                                const rankStr = (typeof r.rank === 'string' && /[a-z]/i.test(r.rank))
-                                  ? r.rank
-                                  : (r.rank ? `${r.rank}${r.rank === 1 ? 'st' : r.rank === 2 ? 'nd' : r.rank === 3 ? 'rd' : 'th'}` : '—');
+                                // Score 0% ho (koi marks nahi) to position dikhana galat h → "—".
+                                const rankStr = (Number(r.pct) <= 0)
+                                  ? '—'
+                                  : (typeof r.rank === 'string' && /[a-z]/i.test(r.rank))
+                                    ? r.rank
+                                    : (r.rank ? `${r.rank}${r.rank === 1 ? 'st' : r.rank === 2 ? 'nd' : r.rank === 3 ? 'rd' : 'th'}` : '—');
                                 return (
                                   <div key={idx} className="rh-timeline-row">
                                     <div style={{ width: 10, height: 10, borderRadius: '50%', background: isCombined ? '#7C3AED' : '#1E40AF', flexShrink: 0, marginTop: 6 }} />
@@ -11463,7 +11579,8 @@ function rhBuildSingleCardReport(st, r, isColor, data = null) {
         ['Class',       st.cls + ' · Section A'],
         ['Exam',        r.exam],
         ['Exam Date',   r.date],
-        ['Year',        r.year === '2025-26' ? '2025–2026' : r.year],
+        // Combined Assessment ki report me session/year nahi dikhana.
+        ...(r.type === 'combined' ? [] : [['Year', r.year === '2025-26' ? '2025–2026' : r.year]]),
         ['Type',        r.type === 'combined' ? 'Combined Assessment' : 'Single Assessment'],
       ].map(([k,v]) => `<div style="flex:1;min-width:120px;padding:8px 14px;border-right:1px solid ${p.accBdr}">
         <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:${p.tMuted};margin-bottom:2px">${k}</div>
@@ -11475,7 +11592,7 @@ function rhBuildSingleCardReport(st, r, isColor, data = null) {
         <div style="width:3px;height:13px;border-radius:2px;background:${p.accent}"></div>SUBJECT-WISE RESULT
       </div>
       <table style="border:1px solid ${p.accBdr}">
-        <colgroup><col style="width:28px"><col><col style="width:42px"><col style="width:54px"><col style="width:38px"><col style="width:42px"><col></colgroup>
+        <colgroup><col style="width:28px"><col><col style="width:62px"><col style="width:74px"><col style="width:58px"><col style="width:62px"><col></colgroup>
         <thead><tr style="background:${p.accBg}">
           <th style="padding:7px 9px;font-size:9.5px;font-weight:700;color:${p.accent};text-align:center;text-transform:uppercase;letter-spacing:.4px;border-bottom:2px solid ${p.accBdr}">#</th>
           <th style="padding:7px 9px;font-size:9.5px;font-weight:700;color:${p.accent};text-align:left;text-transform:uppercase;letter-spacing:.4px;border-bottom:2px solid ${p.accBdr}">Subject</th>
