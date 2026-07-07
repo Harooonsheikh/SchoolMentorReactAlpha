@@ -9564,7 +9564,9 @@ setObtained(o => ({
 
   const saveAndNext = async () => {
     // Save & Close jaise hi saari save APIs chalao, phir next subject par jao.
-    await saveCurrentSubject();
+    // Agar save block ho (jaise total marks 0) to next par mat jao — user theek kare.
+    const ok = await saveCurrentSubject();
+    if (ok === false) return;
     const nextIdx = (tab + 1) % (subjects.length || 1);
     setTab(nextIdx);
     fetchSubjectData(subjects[nextIdx]);
@@ -9584,6 +9586,11 @@ const saveCurrentSubject = async () => {
     const existingId = subjectExistingMarkId[curSubjID] || 0;
     const obtainedMarks = obtained[curSubj] || 0;
     const curTotal = subjectTotalMarks[curSubjID] ?? 0;
+    // Total marks set na ho (0) to marks save mat karo — toaster dikhao.
+    if (!curTotal || Number(curTotal) <= 0) {
+      toast?.('Please add total marks for this subject.', 'error');
+      return false;
+    }
     const pct = curTotal > 0 ? Math.round((obtainedMarks / curTotal) * 100) : 0;
     // Auto Comment/remarks branch ke configured grading se (percentage → matching band).
     const gradeObj = (obtainedMarks && curTotal)
@@ -9693,7 +9700,9 @@ const savePayload = {
 };
 
 const saveAndClose = async () => {
-  await saveCurrentSubject();
+  // Save block ho (total marks 0) to modal band mat karo — user total marks add kare.
+  const ok = await saveCurrentSubject();
+  if (ok === false) return;
   onSave(computePayload());
 };
   const curSubjObj = subjects[tab] || {};
