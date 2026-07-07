@@ -99,6 +99,7 @@ export const STATUS_BADGE = {
   'Active':               { cls: 'b-green', icon: 'fa-circle-check' },
   'Expired':              { cls: 'b-warn',  icon: 'fa-clock' },
   'Blocked':              { cls: 'b-red',   icon: 'fa-ban' },
+  'Inactive':             { cls: 'b-gray',  icon: 'fa-circle-minus' },
   'Received':             { cls: 'b-green', icon: 'fa-check' },
   'Pending Verification': { cls: 'b-warn',  icon: 'fa-hourglass-half' },
   'Rejected':             { cls: 'b-red',   icon: 'fa-xmark' },

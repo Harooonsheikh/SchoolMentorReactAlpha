@@ -285,7 +285,7 @@ const SCHOOL_RPT_SUBJ_PALETTE = [
 ];
 
 function schoolPeriodCellHtml(p, subjColorMap, idxRef, isBW = false) {
-  if (!p || !p.subject) return `<div style="color:#CBD5E1;font-size:8px;text-align:center;padding:4px">—</div>`;
+  if (!p) return `<div style="color:#CBD5E1;font-size:8px;text-align:center;padding:4px">—</div>`;
   const isBreak = p.subject === 'Break';
   if (isBreak) {
     if (isBW) {
@@ -299,19 +299,31 @@ function schoolPeriodCellHtml(p, subjColorMap, idxRef, isBW = false) {
       <div style="font-size:7px;color:#EF4444;margin-top:2px">${fmt12plain(p.startTime)} – ${fmt12plain(p.endTime)}</div>
     </div>`;
   }
-  if (!subjColorMap[p.subject]) {
-    subjColorMap[p.subject] = SCHOOL_RPT_SUBJ_PALETTE[idxRef.i++ % SCHOOL_RPT_SUBJ_PALETTE.length];
+  /* Subject mapped na ho to bhi period ko dikhao (teacher/time ke saath) aur "No Subject"
+     likho — sirf bilkul khaali slot (na subject, na teacher, na time) par hi "—". */
+  const hasSubj = !!p.subject && String(p.subject).trim() !== '';
+  if (!hasSubj && !p.teacher && !p.startTime && !p.endTime) {
+    return `<div style="color:#CBD5E1;font-size:8px;text-align:center;padding:4px">—</div>`;
   }
-  const c = subjColorMap[p.subject];
+  const subjLabel = hasSubj ? p.subject : 'No Subject';
+  let c;
+  if (hasSubj) {
+    if (!subjColorMap[p.subject]) {
+      subjColorMap[p.subject] = SCHOOL_RPT_SUBJ_PALETTE[idxRef.i++ % SCHOOL_RPT_SUBJ_PALETTE.length];
+    }
+    c = subjColorMap[p.subject];
+  } else {
+    c = { bg: '#64748B', light: '#F1F5F9' }; // No Subject → muted gray
+  }
   if (isBW) {
-    return `<div style="background:#FFFFFF;border:1px solid #D1D5DB;border-left:3px solid #0F172A;border-radius:4px;padding:4px 5px">
-      <div style="font-size:8.5px;font-weight:700;color:#0F172A;line-height:1.2">${p.subject}</div>
+    return `<div style="background:#FFFFFF;border:1px solid #D1D5DB;border-left:3px solid ${hasSubj ? '#0F172A' : '#9CA3AF'};border-radius:4px;padding:4px 5px">
+      <div style="font-size:8.5px;font-weight:700;color:${hasSubj ? '#0F172A' : '#6B7280'};line-height:1.2">${subjLabel}</div>
       ${p.teacher ? `<div style="font-size:7.5px;color:#4B5563;margin-top:1px">${p.teacher}</div>` : ''}
       <div style="font-size:7px;color:#6B7280;margin-top:1px">${fmt12plain(p.startTime)}${p.endTime ? ' – ' + fmt12plain(p.endTime) : ''}</div>
     </div>`;
   }
   return `<div style="background:${c.light};border-left:3px solid ${c.bg};border-radius:4px;padding:4px 5px">
-    <div style="font-size:8.5px;font-weight:700;color:${c.bg};line-height:1.2">${p.subject}</div>
+    <div style="font-size:8.5px;font-weight:700;color:${c.bg};line-height:1.2">${subjLabel}</div>
     ${p.teacher ? `<div style="font-size:7.5px;color:#475569;margin-top:1px">👤 ${p.teacher}</div>` : ''}
     <div style="font-size:7px;color:#94A3B8;margin-top:1px">⏱ ${fmt12plain(p.startTime)}${p.endTime ? ' – ' + fmt12plain(p.endTime) : ''}</div>
   </div>`;
