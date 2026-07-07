@@ -3797,18 +3797,15 @@ const saveMarkSf = useCallback(async (rows) => {
   const confirmToggleDay = useCallback(() => {
     if (blockIfReadOnly()) { setDayToggleIdx(null); return; }
     if (dayToggleIdx == null) return;
-    setWeeklyOff((prev) => {
-      const isOff = prev.includes(dayToggleIdx);
-      const newWeeklyOff = isOff 
-        ? prev.filter((x) => x !== dayToggleIdx) 
-        : [...prev, dayToggleIdx];
-      
-      console.log(`Updated weeklyOff: ${dayToggleIdx} is now ${isOff ? 'removed' : 'added'}`, newWeeklyOff);
-      toast(isOff ? `${DAYS_F[dayToggleIdx]} marked as Working Day` : `${DAYS_F[dayToggleIdx]} marked as Weekly Off`, "success");
-      return newWeeklyOff;
-    });
+    // isOff pehle nikaal lo; toast updater ke BAHAR (warna StrictMode double-invoke se
+    // toast 2 dafa chalta hai). Updater sirf pure state transform kare.
+    const isOff = weeklyOff.includes(dayToggleIdx);
+    setWeeklyOff((prev) => (prev.includes(dayToggleIdx)
+      ? prev.filter((x) => x !== dayToggleIdx)
+      : [...prev, dayToggleIdx]));
+    toast(isOff ? `${DAYS_F[dayToggleIdx]} marked as Working Day` : `${DAYS_F[dayToggleIdx]} marked as Weekly Off`, "success");
     setDayToggleIdx(null);
-  }, [dayToggleIdx, toast, setWeeklyOff, blockIfReadOnly]);
+  }, [dayToggleIdx, weeklyOff, toast, setWeeklyOff, blockIfReadOnly]);
     // Active session — same active-session API examination uses. Cached once.
     useEffect(() => {
       let alive = true;
@@ -4565,11 +4562,17 @@ const onSaveWeeklyOff = useCallback(async () => {
 
   console.log("Weekly Off Days to save:", weeklyOff);
 
-  // Pehle fetch karo current data from API to get IDs
+  // Current saved days laao taake IDs mil sakein. Agar ye GET fail ho (500 etc.) to
+  // bhi SAVE ko mat roko — savedDaysMap khali maan kar selected days save kar do.
+  let currentData = [];
   try {
     const currentResponse = await attendanceService.getWeeklyOffSetup();
-    const currentData = currentResponse?.data || [];
-    
+    currentData = currentResponse?.data || [];
+  } catch (getErr) {
+    console.warn("getWeeklyOffSetup (initial) failed — empty saved state se aage barhte hain:", getErr);
+  }
+
+  try {
     // Current saved days with their IDs
     const savedDaysMap = {};
     currentData.forEach(item => {
@@ -4633,16 +4636,20 @@ const onSaveWeeklyOff = useCallback(async () => {
     const results = await Promise.all(savePromises);
     console.log("All operations completed:", results);
 
-    // Refresh the data after save/delete
-    const refreshedResponse = await attendanceService.getWeeklyOffSetup();
-    const refreshedData = refreshedResponse?.data || [];
-    const weekDays = refreshedData
-      .map(item => {
-        const index = DAYS_F.indexOf(item.WeekDay);
-        return index !== -1 ? index : null;
-      })
-      .filter(idx => idx !== null);
-    setWeeklyOff(weekDays);
+    // Refresh — agar ye GET fail ho to bhi save successful hi maana jaye (local state rahe).
+    try {
+      const refreshedResponse = await attendanceService.getWeeklyOffSetup();
+      const refreshedData = refreshedResponse?.data || [];
+      const weekDays = refreshedData
+        .map(item => {
+          const index = DAYS_F.indexOf(item.WeekDay);
+          return index !== -1 ? index : null;
+        })
+        .filter(idx => idx !== null);
+      setWeeklyOff(weekDays);
+    } catch (refreshErr) {
+      console.warn("getWeeklyOffSetup (refresh) failed — local state rakhte hain:", refreshErr);
+    }
 
     toast(`Weekly off days updated successfully`, "success");
   } catch (err) {

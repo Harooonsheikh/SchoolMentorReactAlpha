@@ -122,7 +122,7 @@ function calcDuration(from, to) {
   return days + ' Day' + (days !== 1 ? 's' : '');
 }
 /* Result Setup grades / signatures / remarks now load via examService. */
-const RS_GRADE_LIST = ['A+','A','B+','B','C+','C','D','E','F'];
+const RS_GRADE_LIST = ['A+','A','B+','B','C+','C','D+','D','E+','E','F'];
 const RS_COND_LIST = [
   { v:'gte',     l:'Greater than or equal to (>=)' },
   { v:'gt',      l:'Greater than (>)' },
@@ -3398,16 +3398,17 @@ useEffect(() => {
   ))}
 </div>
           <div className="exam-action-bar">
-            <Tooltip text={!terms.length ? 'Add a term first to create an exam' : 'Create a new exam for this term'}>
+            <Tooltip text={!terms.length ? 'There is no term against this — add a term from Academics' : 'Create a new exam for this term'}>
               <button className="exam-add-btn"
                 onClick={() => {
                   if (isOtherSession) { toast('Method not allowed', 'error'); return; }
-                  if (!terms.length) { toast('Please add a term first', 'error'); return; }
+                  // Term na ho to disable ke bajaye clickable rakhte hain taake toast dikhe.
+                  if (!terms.length) { toast('There is no term soo to Add Exam Please add a term from Academics.', 'error'); return; }
                   openAdd();
                 }}
-                disabled={isOtherSession || !terms.length}
+                disabled={isOtherSession}
                 title={isOtherSession ? 'Editing is only allowed for the current session'
-                     : !terms.length ? 'Add a term first to create an exam' : undefined}
+                     : !terms.length ? 'There is no term soo to Add Exam Please add a term from Academics' : undefined}
                 style={(isOtherSession || !terms.length) ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
                 <i className="fa-solid fa-plus"></i> Add Exam
               </button>
@@ -4424,7 +4425,7 @@ const resPickExam = async (id) => {
             <div className="res-table-head">
               <div className="res-th">S. No.</div>
               <div className="res-th">Class Name</div>
-              <div className="res-th">Section</div>
+              <div className="res-th" >Section</div>
               <div className="res-th">Status</div>
               <div className="res-th">Publish</div>
               <div className="res-th">Total Marks</div>
@@ -7509,33 +7510,69 @@ if (format === 'word') {
 function SylRteEditor({ html, onChange, placeholder }) {
   const ref = useRef(null);
   const savedRange = useRef(null);
+  const lastEmitted = useRef(null); // editor ne khud jo aakhri content bheja
+  const [imgSel, setImgSel] = useState(null); // editor me select ki hui <img> (resize/align)
+  const [, setImgTick] = useState(0);         // overlay ko img ke saath reposition karne ke liye
 
-  // Sync only when external html actually changes
+  // Image resize/align overlay — scroll/resize par reposition; bahar click/Escape par band.
+  useEffect(() => {
+    if (!imgSel) return undefined;
+    const reposition = () => setImgTick(t => t + 1);
+    const onDocDown = (e) => {
+      if (e.target.closest && e.target.closest('.syl-img-overlay')) return;
+      if (e.target.tagName === 'IMG') return;
+      setImgSel(null);
+    };
+    const onKey = (e) => { if (e.key === 'Escape') setImgSel(null); };
+    window.addEventListener('scroll', reposition, true);
+    window.addEventListener('resize', reposition);
+    document.addEventListener('mousedown', onDocDown, true);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('scroll', reposition, true);
+      window.removeEventListener('resize', reposition);
+      document.removeEventListener('mousedown', onDocDown, true);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [imgSel]);
+
+  // Sirf EXTERNAL html change par overwrite karo (jaise subject switch / async load).
+  // Apne hi emit (color/image/math/typing) par reset NA karo — warna content/cursor
+  // disturb hota hai aur functionality "kaam nahi kar rahi" lagti hai.
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    // ❗ don't overwrite while user is typing
-    if (document.activeElement === el) return;
+    if (html === lastEmitted.current) return;     // apna hi emit — skip
+    if (document.activeElement === el) return;     // typing ke doran overwrite mat karo
     if (el.innerHTML !== (html || '')) {
       el.innerHTML = html || '';
     }
   }, [html]);
 
-  const emit = () => { if (ref.current) onChange(ref.current.innerHTML); };
+  const emit = () => {
+    if (!ref.current) return;
+    lastEmitted.current = ref.current.innerHTML;
+    onChange(ref.current.innerHTML);
+  };
 
   const saveSelection = () => {
     const sel = window.getSelection();
     if (!sel || !sel.rangeCount) return;
     const range = sel.getRangeAt(0);
     if (ref.current && ref.current.contains(range.commonAncestorContainer)) {
-      savedRange.current = range;
+      // CLONE karo — warna live range popup focus par collapse ho kar start (1st row)
+      // par chala jata hai, aur equation/link galat jagah insert hoti hai.
+      savedRange.current = range.cloneRange();
     }
   };
   const restoreSelection = () => {
     const el = ref.current;
     if (!el) return false;
-    el.focus();
+    // range ko focus() se PEHLE parho — warna el.focus() editor ka onFocus={saveSelection}
+    // trigger karta hai jo savedRange ko galat (start/1st row) position se overwrite kar
+    // deta hai, aur equation/insert galat jagah chala jata hai.
     const range = savedRange.current;
+    el.focus();
     if (range) {
       const sel = window.getSelection();
       sel.removeAllRanges();
@@ -7600,6 +7637,43 @@ function SylRteEditor({ html, onChange, placeholder }) {
     f.click();
   };
 
+  // ── Image resize/align (Lesson Plan editor jaisa) ──
+  // contentEditable Chrome me <img> ke resize handles nahi deta, is liye image click par
+  // ek overlay dikhate hain: align (L/C/R) + size (± / 25/50/100%). Style img par lagti hai.
+  const isEditorImg = (node) => node && node.tagName === 'IMG' && ref.current && ref.current.contains(node);
+  const onEditorClick = (e) => {
+    saveSelection();
+    setImgSel(isEditorImg(e.target) ? e.target : null);
+  };
+  const alignImg = (mode) => {
+    const img = imgSel; if (!img) return;
+    if (mode === 'inline') { img.style.display = 'inline'; img.style.marginLeft = ''; img.style.marginRight = ''; }
+    else {
+      img.style.display = 'block';
+      img.style.marginLeft  = (mode === 'center' || mode === 'right') ? 'auto' : '0';
+      img.style.marginRight = (mode === 'center' || mode === 'left')  ? 'auto' : '0';
+    }
+    setImgTick(t => t + 1); emit();
+  };
+  const setImgWidth = (pct) => {
+    const img = imgSel; if (!img) return;
+    img.style.width = pct + '%'; img.style.height = 'auto'; img.style.maxWidth = '100%';
+    setImgTick(t => t + 1); emit();
+  };
+  const nudgeImg = (deltaPx) => {
+    const img = imgSel; if (!img) return;
+    const cur = img.getBoundingClientRect().width || 0;
+    img.style.width = Math.max(40, Math.round(cur + deltaPx)) + 'px';
+    img.style.height = 'auto'; img.style.maxWidth = '100%';
+    setImgTick(t => t + 1); emit();
+  };
+  const deleteImg = () => {
+    const img = imgSel; if (!img) return;
+    img.remove();          // image ko editor se hatao
+    setImgSel(null);       // overlay band
+    emit();                // content sync (image gayab)
+  };
+
   return (
     <>
       <div className="syl-rte-toolbar">
@@ -7651,10 +7725,37 @@ function SylRteEditor({ html, onChange, placeholder }) {
         data-placeholder={placeholder}
         dir="ltr"
         onInput={emit}
+        onClick={onEditorClick}
         onMouseUp={saveSelection}
         onKeyUp={saveSelection}
         onFocus={saveSelection}
       />
+      {/* Image resize/align overlay — selected image ke upar toolbar.
+          Portal to body — warna modal ke transform (fadeSlide) se position:fixed toot
+          jata hai aur overlay image se bahar aa jata hai. */}
+      {imgSel && createPortal((() => {
+        const r = imgSel.getBoundingClientRect();
+        const tbBtn = { border: 'none', background: 'transparent', color: '#E2E8F0', cursor: 'pointer', fontSize: 12, padding: '3px 6px', borderRadius: 5, fontFamily: 'inherit', lineHeight: 1 };
+        return (
+          <div className="syl-img-overlay" style={{ position: 'fixed', top: r.top, left: r.left, width: r.width, height: r.height, border: '2px solid #1E40AF', boxSizing: 'border-box', zIndex: 100000, pointerEvents: 'none' }}>
+            <div style={{ position: 'absolute', top: -36, left: 0, display: 'flex', alignItems: 'center', gap: 2, background: '#1E293B', borderRadius: 8, padding: '3px 5px', pointerEvents: 'auto', boxShadow: '0 4px 14px rgba(0,0,0,.3)', whiteSpace: 'nowrap' }} onMouseDown={e => e.preventDefault()}>
+              <Tooltip text="Align left"><button style={tbBtn} onClick={() => alignImg('left')}><i className="fa-solid fa-align-left"></i></button></Tooltip>
+              <Tooltip text="Center"><button style={tbBtn} onClick={() => alignImg('center')}><i className="fa-solid fa-align-center"></i></button></Tooltip>
+              <Tooltip text="Align right"><button style={tbBtn} onClick={() => alignImg('right')}><i className="fa-solid fa-align-right"></i></button></Tooltip>
+              <span style={{ width: 1, height: 16, background: '#475569', margin: '0 3px' }}></span>
+              <Tooltip text="Smaller"><button style={tbBtn} onClick={() => nudgeImg(-30)}><i className="fa-solid fa-minus"></i></button></Tooltip>
+              <Tooltip text="Bigger"><button style={tbBtn} onClick={() => nudgeImg(30)}><i className="fa-solid fa-plus"></i></button></Tooltip>
+              <span style={{ width: 1, height: 16, background: '#475569', margin: '0 3px' }}></span>
+              <Tooltip text="25%"><button style={tbBtn} onClick={() => setImgWidth(25)}>25%</button></Tooltip>
+              <Tooltip text="50%"><button style={tbBtn} onClick={() => setImgWidth(50)}>50%</button></Tooltip>
+              <Tooltip text="100%"><button style={tbBtn} onClick={() => setImgWidth(100)}>100%</button></Tooltip>
+              <span style={{ width: 1, height: 16, background: '#475569', margin: '0 3px' }}></span>
+              <Tooltip text="Remove image"><button style={{ ...tbBtn, color: '#F87171' }} onClick={deleteImg}><i className="fa-solid fa-trash-can"></i></button></Tooltip>
+              <Tooltip text="Done"><button style={tbBtn} onClick={() => setImgSel(null)}><i className="fa-solid fa-xmark"></i></button></Tooltip>
+            </div>
+          </div>
+        );
+      })(), document.body)}
     </>
   );
 }
@@ -8506,7 +8607,9 @@ function ClassicResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
                 // Comment column hamesha REAL remarks dikhaye (absent ho ya na ho).
                 // Comment column: gradingcrud (grades) se — is subject ki % ke matching band ki remarks.
 // getsauploadmarks (st.manualRemarks) YAHAN use NAHI hoti. Absent → koi comment nahi.
-const mc  = (!isAbs ? (((grades && grades.length) ? (rcGradeByScale(pct, grades) || {}).comment : (g && g.comment)) || '') : '').slice(0, 40);
+// Comment column: pehle subject ka manual comment (getsauploadmarks remarks) — agar ho.
+// Warna gradingcrud (grades) se % ke matching band ki remarks. Absent → koi comment nahi.
+const mc  = (!isAbs ? ((st.manualRemarks && st.manualRemarks[s]) || ((grades && grades.length) ? (rcGradeByScale(pct, grades) || {}).comment : (g && g.comment)) || '') : '').slice(0, 40);
                 const gcol = gradeChipColor(g);
                 const bg = (i % 2 === 0 ? '#fff' : rowAlt);
                 const tdBase   = { padding: '4px 7px', fontSize: 11, borderBottom: `1px solid ${accentBdr}` };
@@ -8959,7 +9062,9 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
     // Comment column hamesha REAL remarks dikhaye (absent ho ya na ho).
     // Comment column: gradingcrud (grades) se — is subject ki % ke matching band ki remarks.
 // getsauploadmarks (st.manualRemarks) YAHAN use NAHI hoti. Absent → koi comment nahi.
-const mc  = (!isAbs ? (((grades && grades.length) ? (rcGradeByScale(pct, grades) || {}).comment : (g && g.comment)) || '') : '').slice(0, 40);
+// Comment column: pehle subject ka manual comment (getsauploadmarks remarks) — agar ho.
+// Warna gradingcrud (grades) se % ke matching band ki remarks. Absent → koi comment nahi.
+const mc  = (!isAbs ? ((st.manualRemarks && st.manualRemarks[s]) || ((grades && grades.length) ? (rcGradeByScale(pct, grades) || {}).comment : (g && g.comment)) || '') : '').slice(0, 40);
     return { s, tot, obt, pct, g, mc, isAbs, col: C.bars[i % C.bars.length] };
   });
 
@@ -12855,16 +12960,8 @@ const runDelete = async () => {
                       onChange={e => upGrade(g.id, 'grade', e.target.value)}
                     >
                       <option value="" disabled>Grade...</option>
-                      {(() => {
-                        // Har grade sirf ek baar — dusri rows me use hue grades hata do,
-                        // magar is row ki apni current value hamesha rakho.
-                        const used = new Set(
-                          draftGrades.filter(x => x.id !== g.id).map(x => x.grade).filter(Boolean)
-                        );
-                        const opts = RS_GRADE_LIST.filter(opt => !used.has(opt));
-                        if (g.grade && !opts.includes(g.grade)) opts.unshift(g.grade);
-                        return opts.map(opt => <option key={opt} value={opt}>{opt}</option>);
-                      })()}
+                      {/* Saari grade values hamesha dikhein (koi filter nahi). */}
+                      {RS_GRADE_LIST.map(opt => <option key={opt} value={opt}>{opt}</option>)}
                     </select>
                     <select className="rs-input" value={g.cond || 'gte'} onChange={e => upGrade(g.id, 'cond', e.target.value)}>
                       {RS_COND_LIST.map(c => <option key={c.v} value={c.v}>{c.l}</option>)}
@@ -12891,19 +12988,11 @@ const runDelete = async () => {
                   </div>
                 ))
               )}
-              {(() => {
-                // Saare grades add ho chuke to Add Grade disable — har grade sirf ek baar.
-                const usedCount = new Set(draftGrades.map(x => x.grade).filter(Boolean)).size;
-                const allUsed = usedCount >= RS_GRADE_LIST.length;
-                return (
-                  <Tooltip text={allUsed ? 'All grades already added' : 'Add a new grade band'}>
-                    <button className="rs-add" onClick={addGrade} disabled={allUsed}
-                      style={allUsed ? { opacity: .5, cursor: 'not-allowed' } : undefined}>
-                      <i className="fa-solid fa-plus"></i> Add Grade
-                    </button>
-                  </Tooltip>
-                );
-              })()}
+              <Tooltip text="Add a new grade band">
+                <button className="rs-add" onClick={addGrade}>
+                  <i className="fa-solid fa-plus"></i> Add Grade
+                </button>
+              </Tooltip>
             </>
           )}
 
@@ -14741,6 +14830,16 @@ body.dark .ds-exam-btn:hover { background:rgba(30,64,175,.15); border-color:#1E4
   color:var(--text-muted); pointer-events:none;
 }
 .syl-rte-editor:focus { background:var(--bg-card); }
+/* Content element styles — Lesson Plan editor (.clpm-editor) jaisi, taake image/
+   table/list/color sab theek dikhein. */
+.syl-rte-editor p, .syl-rte-editor div { margin:0 0 6px; }
+.syl-rte-editor ol, .syl-rte-editor ul { padding-left:22px; margin:8px 0; }
+.syl-rte-editor li { margin-bottom:4px; }
+.syl-rte-editor blockquote { border-left:3px solid #1E40AF; padding-left:14px; color:#64748B; margin:10px 0; font-style:italic; }
+.syl-rte-editor table { border-collapse:collapse; width:100%; margin:10px 0; font-size:13px; }
+.syl-rte-editor td, .syl-rte-editor th { border:1px solid #E2E8F0; padding:7px 12px; }
+.syl-rte-editor th { background:#EFF6FF; font-weight:700; color:#1E3A8A; }
+.syl-rte-editor img { max-width:100%; height:auto; border-radius:8px; margin:8px 0; }
 .syl-rte-char-count {
   text-align:right; font-size:10.5px; color:var(--text-muted);
   padding:5px 12px; background:linear-gradient(135deg,#F8FAFC,#F1F5F9);
@@ -15291,7 +15390,7 @@ body.dark .rct-pages { background:rgba(255,255,255,.02); }
    ═══════════════════════════════════════════════════════════════════ */
 .res-table-head {
   display:grid;
-  grid-template-columns: 56px 1.3fr 50px 120px 150px 130px 130px;
+  grid-template-columns: 56px 1.3fr 80px 120px 150px 130px 130px;
   background:linear-gradient(135deg,#F8FAFC,#F1F5F9);
   border:1px solid var(--border-light); border-bottom:none;
   border-radius:10px 10px 0 0;
@@ -15305,7 +15404,7 @@ body.dark .rct-pages { background:rgba(255,255,255,.02); }
 .res-row-wrap:last-child .res-detail.open { border-radius:0 0 10px 10px; }
 .res-row {
   display:grid;
-  grid-template-columns: 56px 1.3fr 50px 120px 150px 130px 130px;
+  grid-template-columns: 56px 1.3fr 80px 120px 150px 130px 130px;
   align-items:center; gap:10px;
   padding:13px 14px;
   background:var(--bg-card);
@@ -15437,7 +15536,7 @@ body.dark .rct-pages { background:rgba(255,255,255,.02); }
 .res-toggle-wrap input:checked + .res-toggle-slider::before { transform:translateX(18px); }
 
 @media (max-width: 820px) {
-  .res-table-head, .res-row { grid-template-columns: 46px 1.2fr 50px 100px 130px 110px 90px; }
+  .res-table-head, .res-row { grid-template-columns: 46px 1.2fr 72px 100px 130px 110px 90px; }
 }
 @media (max-width: 640px) {
   .res-table-head { display:none; }
