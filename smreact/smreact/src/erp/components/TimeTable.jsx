@@ -186,7 +186,7 @@ function buildDailyTTReport({ header, cls, section, day, periods, isBW }) {
     <thead>${ttHeaderRowHtml(isBW)}</thead>
     <tbody>${ttPeriodRowsHtml(periods, isBW)}</tbody>
   </table>`;
-  return ttPageWrap(header, dateStr, timeStr, `Daily Time Table Report — ${cls} Section ${section} — ${day}`, body, isBW);
+  return ttPageWrap(header, dateStr, timeStr, `Daily Timetable Report — ${cls} Section ${section} — ${day}`, body, isBW);
 }
 
 function buildWeeklyTTReport({ header, cls, section, weekPeriods, isBW }) {
@@ -207,7 +207,7 @@ function buildWeeklyTTReport({ header, cls, section, weekPeriods, isBW }) {
       </table>
     </div>`;
   }).join('');
-  return ttPageWrap(header, dateStr, timeStr, `Weekly Time Table Report For ${cls} Section ${section}`, dayBlocks, isBW);
+  return ttPageWrap(header, dateStr, timeStr, `Weekly Timetable Report For ${cls} Section ${section}`, dayBlocks, isBW);
 }
 
 function buildPeriodCountReport({ header, cls, section, weekPeriods, isBW }) {
@@ -591,7 +591,7 @@ function ReportPreviewOverlay({ open, title, html, landscape, onClose }) {
       </div>
       <iframe
         ref={frameRef}
-        title="Time Table Report Preview"
+        title="Timetable Report Preview"
         srcDoc={html}
         style={{ width:'100%', maxWidth:landscape ? 1100 : 960, flex:1, border:'none', borderRadius:12, background:'#fff', boxShadow:'0 20px 60px rgba(0,0,0,.4)', minHeight:0 }}
       />
@@ -616,7 +616,7 @@ export default function TimeTable({ toast = () => {} }) {
 
   /* ── Session-based edit gating (same rule as Academics / Examination) ──
      View-only (edit/update/delete disabled) when: there is no current session,
-     OR the current session has the Time Table module unchecked in Session
+     OR the current session has the Timetable module unchecked in Session
      Settings, OR today (UTC) is outside the current session's start–end window. */
   const { currentSession } = useSettings();
   const isOtherSession = (() => {
@@ -677,11 +677,11 @@ export default function TimeTable({ toast = () => {} }) {
         <div className="page-title-row">
           <div className="page-title-icon"><i className="fa-solid fa-calendar-days"></i></div>
           <div>
-            <div className="page-title">Time Table</div>
+            <div className="page-title">Timetable</div>
             <div className="page-sub">Manage daily &amp; weekly class schedules for the whole school</div>
           </div>
         </div>
-        <Tooltip text="Play a short tutorial for the Time Table module">
+        <Tooltip text="Play a short tutorial for the Timetable module">
           <button
             className="tutorial-btn page-tutorial-btn"
             onClick={() => setTutorialOpen(true)}
@@ -826,7 +826,7 @@ export default function TimeTable({ toast = () => {} }) {
                 ) : (
                   <div>
                     <div className="tt-details-hdr">
-                      Time Table Details — {cls.name} · {cls.section} · {DAYS[day]}
+                      Timetable Details — {cls.name} · {cls.section} · {DAYS[day]}
                     </div>
                     <div style={{ overflowX: 'auto' }}>
                       <table className="tt-detail-table" style={{ minWidth: 520 }}>
@@ -1082,7 +1082,7 @@ function TTEditModal({ target, day, teachers = [], toast = () => {}, initialPeri
         <div className="tt-edit-hdr">
           <div className="tt-edit-hdr-icon"><i className="fa-solid fa-calendar-alt"></i></div>
           <div className="tt-edit-hdr-text">
-            <div className="tt-edit-hdr-title">Time Table for Class {target.cls} Section {target.section}</div>
+            <div className="tt-edit-hdr-title">Timetable for Class {target.cls} Section {target.section}</div>
             <div className="tt-edit-hdr-sub">Add or edit periods for this class</div>
           </div>
           <Tooltip text="Close"><button className="tt-edit-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark"></i></button></Tooltip>
