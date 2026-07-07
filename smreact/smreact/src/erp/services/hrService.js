@@ -54,7 +54,7 @@ export async function getHrDesigs() {
     qualificationID: g.qualificationID,
   })));
 }
-export async function getHrEmployees()   { await delay(); return clone(mockHrEmployees); }
+
 export async function getHrNextDeptId()  { await delay(); return mockHrNextDeptId; }
 export async function getHrNextDesigId() { await delay(); return mockHrNextDesigId; }
 export async function getHrNextEmpId()   { await delay(); return mockHrNextEmpId; }
@@ -116,8 +116,110 @@ export async function deleteHrDesig({ id }) {
   if (!res.ok) throw new Error(apiMessage(json) || 'Could not delete designation');
   return json;
 }
+
+/* ─── Employee Management — real API (LaunchSetup) ─── */
+/* ─── Employee Management — real API (LaunchSetup) ───
+   Backend requires isActive as a query param, so Active + Inactive
+   employees come from two separate calls. We fetch both and merge
+   them into one flat list — the UI's existing status-based filter
+   (Active / Inactive tabs) keeps working unchanged. */
+export async function getHrEmployees() {
+  const token    = sessionStorage.getItem('token');
+  const branchID = sessionStorage.getItem('branchID') || 0;
+
+  const fetchByStatus = async (isActive) => {
+    const res = await fetch(
+      buildUrl(`/api/LaunchSetup/get-employees-by-branch/${branchID}?isActive=${isActive}`),
+      {
+        method: 'GET',
+        headers: {
+          Accept: '*/*',
+          Authorization: `Bearer ${token}`,
+        },
+      }
+    );
+    const json = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(apiMessage(json) || 'Could not load employees');
+    return Array.isArray(json?.data) ? json.data : [];
+  };
+
+  const [activeList, inactiveList] = await Promise.all([
+    fetchByStatus(true),
+    fetchByStatus(false),
+  ]);
+
+  return [...activeList, ...inactiveList].map(mapApiEmployeeToEmp);
+}
+export async function restoreHrEmployee({ id }) {
+  const res  = await fetch(buildUrl(`/api/LaunchSetup/restore-employee/${id}`), {
+    method: 'PUT',
+    headers: { Accept: '*/*' },
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(apiMessage(json) || 'Could not restore employee');
+  return json;
+}
+function mapApiEmployeeToEmp(e) {
+  return {
+    id:        e.id,
+    eid:       `EMP-${String(e.id).padStart(3, '0')}`,
+    firstName: e.firstName,
+    lastName:  e.lastName,
+    fn:        e.fatherName,
+    cnic:      e.cnic,
+    dob:       e.dateOfBirth,
+    gender:    e.gender,
+    marital:   e.maritalStatus,
+    phone:     e.phone,
+    email:     e.email,
+    blood:     e.bloodGroup,
+    nationality: e.countryName,
+    address:   e.address,
+
+    join:      e.dateOfJoining,
+    status:    e.isActive ? 'Active' : 'Inactive',
+
+    dId:       e.departmentID,
+    desId:     e.designationID,
+    qual:      e.qualificationName,
+    exp:       e.experience,
+    country:   e.countryName,
+    province:  e.provinceName,
+    city:      e.cityName,
+
+    basicSalary: e.basicSalary,
+    payMethod:   e.paymentMethod,
+    bankName:    e.bankName,
+    bankAcc:     e.accountNumber,
+    salaryHeads: [
+      { name: 'Medical Allowance',   amount: e.medicalAllowanace,  type: 'allow' },
+      { name: 'Rent Allowance',      amount: e.rentAllowance,      type: 'allow' },
+      { name: 'Transport Allowance', amount: e.transportAllowance, type: 'allow' },
+    ],
+
+    photo: e.empImage,
+
+    subjects: (e.assignments || []).reduce((acc, a) => {
+      const key = `${a.gradeId}_${a.sectionId}`;
+      if (!acc[key]) acc[key] = [];
+      acc[key].push(a.subjectId);
+      return acc;
+    }, {}),
+
+    tasks: [], letters: [], docs: [], attendance: [],
+  };
+}
+
 export async function saveHrEmployee(payload) { await delay(); return clone({ ...payload, ok: true }); }
-export async function deleteHrEmployee({ id }){ await delay(); return { id, deleted: true }; }
+export async function deleteHrEmployee({ id }) {
+  const res  = await fetch(buildUrl(`/api/LaunchSetup/delete-employee/${id}`), {
+    method: 'DELETE',
+    headers: { Accept: '*/*' },
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(apiMessage(json) || 'Could not mark employee inactive');
+  return json;
+}
 
 /* ─── HR Module — Payroll (Step 5) ─── */
 export async function getHrPayroll()           { await delay(); return clone(mockHrPayroll); }
