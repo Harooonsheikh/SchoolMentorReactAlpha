@@ -106,7 +106,12 @@ setLaunchSetup(launchSetup)
                             <span className="tutorial-label">Tutorial</span>
                           </button>
                         </Tooltip>
-                <button className="erp-launch-btn" onClick={() => setErpOpen(true)}>
+                <button className="erp-launch-btn" onClick={() => {
+                  /* Branch ko ERP access ho (launchSetup === 1) to popup nahi — seedha ERP kholo.
+                     Warna popup (permission/setup message) dikhao jaise pehle. */
+                  if (isErpUnlocked() && onOpenErp) onOpenErp();
+                  else setErpOpen(true);
+                }}>
                   <div className="erp-btn-icon"><i className="fas fa-th-large"></i></div>
                   <span>ERP</span>
                   {Number(launchSetup) !== 1 && <i className="fas fa-lock" style={{ fontSize: 11, opacity: .7 }}></i>}
@@ -269,6 +274,46 @@ const App_CSS = `
   .tutorial-btn{display:flex;align-items:center;gap:8px;background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.28);border-radius:var(--radius-md);padding:10px 16px;color:#fff;font-size:13px;font-weight:600;cursor:pointer;transition:var(--tr);white-space:nowrap;backdrop-filter:blur(8px)}
 .tutorial-btn:hover{background:rgba(255,255,255,.2);transform:translateY(-1px);box-shadow:0 8px 24px rgba(0,0,0,.2)}
 .play-icon{width:26px;height:26px;background:linear-gradient(135deg,#1E40AF,#0EA5E9);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:9px;animation:blink-glow 2s ease-in-out infinite}
+
+/* ── Welcome-card Tutorial button — ERP module jaisa (rounded pill + animated play-dot),
+   blue banner par legible white variant. .welcome-card scope se sirf yahin apply hota hai. ── */
+.welcome-card .tutorial-btn{
+  display:flex;align-items:center;gap:10px;
+  background:rgba(255,255,255,.12);
+  border:2px solid rgba(255,255,255,.55);border-radius:999px;
+  padding:8px 18px 8px 8px;color:#fff;font-size:13px;font-weight:700;
+  letter-spacing:.01em;cursor:pointer;white-space:nowrap;flex-shrink:0;
+  box-shadow:0 2px 10px rgba(0,0,0,.14);backdrop-filter:blur(8px);
+  transition:all .25s cubic-bezier(.4,0,.2,1);position:relative;overflow:hidden;
+}
+.welcome-card .tutorial-btn::before{
+  content:'';position:absolute;inset:0;
+  background:linear-gradient(105deg,transparent 30%,rgba(255,255,255,.18) 50%,transparent 70%);
+  transform:translateX(-100%);transition:transform .5s ease;
+}
+.welcome-card .tutorial-btn:hover::before{transform:translateX(100%)}
+.welcome-card .tutorial-btn:hover{transform:translateY(-2px);box-shadow:0 8px 22px rgba(0,0,0,.22);background:rgba(255,255,255,.2)}
+.welcome-card .tutorial-btn:active{transform:scale(.97) translateY(0)}
+.welcome-card .tutorial-label{line-height:1}
+.welcome-card .play-dot{
+  width:28px;height:28px;border-radius:50%;
+  background:rgba(255,255,255,.2);color:#fff;
+  display:flex;align-items:center;justify-content:center;
+  font-size:9px;flex-shrink:0;position:relative;
+}
+.welcome-card .play-dot::before{
+  content:'';position:absolute;inset:-4px;border-radius:50%;
+  border:2px solid rgba(255,255,255,.45);
+  animation:lsPlayRingPulse 2s ease infinite;
+}
+.welcome-card .play-dot::after{
+  content:'';position:absolute;inset:-9px;border-radius:50%;
+  border:1.5px solid rgba(255,255,255,.2);
+  animation:lsPlayRingPulse 2s ease .4s infinite;
+}
+@keyframes lsPlayRingPulse{0%{transform:scale(.85);opacity:1}60%{transform:scale(1.3);opacity:0}100%{transform:scale(1.3);opacity:0}}
+.welcome-card .play-dot i{animation:lsPlayIconBounce 1.8s ease infinite;position:relative;z-index:1}
+@keyframes lsPlayIconBounce{0%,100%{transform:scale(1) translateX(0)}40%{transform:scale(1.15) translateX(1px)}70%{transform:scale(.95) translateX(0)}}
 
 `;
 

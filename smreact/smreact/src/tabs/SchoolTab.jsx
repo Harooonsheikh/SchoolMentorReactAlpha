@@ -358,18 +358,32 @@ export default function SchoolTab({ schoolInfo, setSchoolInfo, onSave, onSaveDra
           </FG>
         </div>
 
-        {/* Logo */}
+        {/* Logo — square only */}
         <div className="form-group">
-          <label className="form-label">School Logo</label>
-          <div className="upload-zone" onClick={() => document.getElementById('logoInput').click()}>
+          <label className="form-label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', width: '100%' }}>
+            <span>School Logo</span>
+            <span style={{
+              fontSize: 11, fontWeight: 700, color: '#DC2626',
+              background: 'rgba(220,38,38,.08)', border: '1px solid rgba(220,38,38,.25)',
+              padding: '2px 10px', borderRadius: 99, marginLeft: 'auto',
+            }}>
+              <i className="fas fa-crop-simple" style={{ marginRight: 5 }}></i>Logo must be 1024 × 1024 (square)
+            </span>
+          </label>
+          {/* Square dropzone — centered, 1:1 aspect */}
+          <div
+            className="upload-zone"
+            style={{ width: 240, height: 240, maxWidth: '100%', margin: '0 auto', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', aspectRatio: '1 / 1' }}
+            onClick={() => document.getElementById('logoInput').click()}
+          >
             {logoPreview ? (
               <img src={logoPreview} alt="School Logo"
-                style={{ width: 120, height: 120, objectFit: 'cover', borderRadius: 10 }} />
+                style={{ width: 200, height: 200, objectFit: 'contain', borderRadius: 10 }} />
             ) : (
               <>
                 <div className="upload-icon"><i className="fas fa-image"></i></div>
                 <div className="upload-title">Upload School Logo</div>
-                <div className="upload-sub">Drag &amp; drop or <span>click to browse</span> — JPG, PNG (max 2 MB)</div>
+                <div className="upload-sub">Drag &amp; drop or <span>click to browse</span> — square JPG/PNG (1024 × 1024)</div>
               </>
             )}
           </div>
@@ -378,11 +392,24 @@ export default function SchoolTab({ schoolInfo, setSchoolInfo, onSave, onSaveDra
               const file = e.target.files[0];
               e.target.value = ''; // allow re-selecting the same file
               if (!file) return;
-              setLogoFile(file);
-              markUnsaved?.();
-              const reader = new FileReader();
-              reader.onload = () => setLogoPreview(reader.result);
-              reader.readAsDataURL(file);
+              /* Sirf SQUARE image allow — non-square reject taake logo distort/crop na ho. */
+              const objUrl = URL.createObjectURL(file);
+              const img = new Image();
+              img.onload = () => {
+                const isSquare = img.naturalWidth === img.naturalHeight;
+                URL.revokeObjectURL(objUrl);
+                if (!isSquare) {
+                  showToast?.(`Logo must be a square image (e.g. 1024 × 1024). Selected: ${img.naturalWidth} × ${img.naturalHeight}.`, 'error');
+                  return;
+                }
+                setLogoFile(file);
+                markUnsaved?.();
+                const reader = new FileReader();
+                reader.onload = () => setLogoPreview(reader.result);
+                reader.readAsDataURL(file);
+              };
+              img.onerror = () => { URL.revokeObjectURL(objUrl); showToast?.('Could not read the image. Please try another file.', 'error'); };
+              img.src = objUrl;
             }} />
         </div>
       </div>

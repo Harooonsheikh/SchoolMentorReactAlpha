@@ -2918,18 +2918,22 @@ const deleteTerm = id => {
               </div>
               <div className="ts-field-group">
                 <label className="ts-label">Session Start Date</label>
-                <div className="ts-input-wrap">
-                  <i className="fa-solid fa-calendar-day ts-input-icon"></i>
-                  <input className="ts-input" type="date" value={start} readOnly disabled style={{ opacity: .7, cursor: 'not-allowed' }} />
-                </div>
+                <Tooltip text="To edit this date, go to Settings › Academic Sessions.">
+                  <div className="ts-input-wrap">
+                    <i className="fa-solid fa-calendar-day ts-input-icon"></i>
+                    <input className="ts-input" type="date" value={start} readOnly disabled style={{ opacity: .7, cursor: 'not-allowed' }} />
+                  </div>
+                </Tooltip>
                 <div className="ts-hint"><i className="fa-solid fa-info-circle"></i> First day of the academic session</div>
               </div>
               <div className="ts-field-group">
                 <label className="ts-label">Session End Date</label>
-                <div className="ts-input-wrap">
-                  <i className="fa-solid fa-calendar-check ts-input-icon"></i>
-                  <input className="ts-input" type="date" value={end} readOnly disabled style={{ opacity: .7, cursor: 'not-allowed' }} />
-                </div>
+                <Tooltip text="To edit this date, go to Settings › Academic Sessions.">
+                  <div className="ts-input-wrap">
+                    <i className="fa-solid fa-calendar-check ts-input-icon"></i>
+                    <input className="ts-input" type="date" value={end} readOnly disabled style={{ opacity: .7, cursor: 'not-allowed' }} />
+                  </div>
+                </Tooltip>
                 <div className="ts-hint"><i className="fa-solid fa-info-circle"></i> Last day of the academic session</div>
               </div>
               {/*
@@ -2964,11 +2968,13 @@ const deleteTerm = id => {
                   <i className="fa-solid fa-check"></i> Save Session
                 </button>
               </Tooltip>
+              {/*
               <Tooltip text="Reset to defaults">
                 <button className="ts-btn-ghost" onClick={() => toast('Reset to defaults', 'info')}>
                   <i className="fa-solid fa-rotate-left"></i> Reset
                 </button>
               </Tooltip>
+              */}
             </div>
           </div>
         ) : (

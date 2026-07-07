@@ -3759,6 +3759,7 @@ async function fetchNotebookDetail(masterId) {
 async function fetchNbCheckedSet(notebookID, gradeID, subjectID) {
   const token = sessionStorage.getItem('token') || '';
   const set = new Set();
+  const idMap = {}; // `${rt}__${rid}` → selection row ka apna id (un-submit/delete ke liye)
   try {
     const res = await fetch(
       buildUrl(`/api/getqpselectiondetail?notebookID=${notebookID}&gradeID=${gradeID}&subjectID=${subjectID}`),
@@ -3769,13 +3770,14 @@ async function fetchNbCheckedSet(notebookID, gradeID, subjectID) {
       : (json?.data || json?.mdlQPSelectionDetails || json?.qpSelectionDetails || []);
     (list || []).forEach(s => {
       const rt  = (s.recTitle ?? s.recordTitle ?? s.RecTitle ?? '').toString().trim().toLowerCase();
-      const rid = s.recID ?? s.recId ?? s.recordID ?? s.recordId ?? s.RecID ?? s.id;
-      if (rt && rid != null) set.add(`${rt}__${rid}`);
+      const rid = s.recID ?? s.recId ?? s.recordID ?? s.recordId ?? s.RecID;
+      const selId = s.id ?? s.selectionID ?? s.selectionId ?? s.qpSelectionID ?? s.qpSelectionId ?? s.ID;
+      if (rt && rid != null) { const key = `${rt}__${rid}`; set.add(key); if (selId != null) idMap[key] = selId; }
     });
   } catch (e) {
     console.error('Error loading checkbox selection:', e);
   }
-  return set;
+  return { set, idMap };
 }
 
 /* Build the notebook submission tree from the master + per-unit detail + the
@@ -3790,22 +3792,29 @@ async function loadNbSubmissionData({ branchID, classID, sectionID, subjectID })
   );
   const units = (await mres.json())?.data || [];
   return Promise.all(units.map(async u => {
-    const [dres, checkedSet] = await Promise.all([
+    const [dres, checked] = await Promise.all([
       fetch(buildUrl(`/api/getulpfornotebookdetails?masterNoteBookIDs=${u.id}`), { method: 'GET', headers: auth }),
       fetchNbCheckedSet(u.id, classID, subjectID),
     ]);
+    const checkedSet = checked.set;
+    const checkedIds = checked.idMap;
     const dj = await dres.json();
     const questionTypes = [];
     NB_DETAIL_CATEGORIES.forEach(c => {
       const apiRows = dj?.[c.key];
       if (!Array.isArray(apiRows) || apiRows.length === 0) return;
       const rtNorm = c.recTitle.toLowerCase();
-      const items = apiRows.map(r => ({
-        id: r.id,
-        preview: c.preview(c.map(r)),
-        data: c.map(r),
-        status: checkedSet.has(`${rtNorm}__${r.id}`) ? 'submitted' : 'pending',
-      }));
+      const items = apiRows.map(r => {
+        const key = `${rtNorm}__${r.id}`;
+        const isSub = checkedSet.has(key);
+        return {
+          id: r.id,
+          preview: c.preview(c.map(r)),
+          data: c.map(r),
+          status: isSub ? 'submitted' : 'pending',
+          selectionId: isSub ? (checkedIds[key] || 0) : 0, // un-submit ke liye
+        };
+      });
       questionTypes.push({ typeId: c.typeId, mainQ: apiRows[0]?.mainQuestion || '', items });
     });
     return { unitId: u.id, unitNo: u.unitNo, unitName: u.unitName, questionTypes };
@@ -4175,7 +4184,7 @@ function Submissions({ toast, classesData = [] }) {
   useEffect(() => {
     if (role !== 'admin' || adminLoaded) return;
     let alive = true;
-    const cacheKey = `subm_admin_v2_${sessionStorage.getItem('branchID') || ''}`;
+    const cacheKey = `subm_admin_v5_${sessionStorage.getItem('branchID') || ''}`;
     /* 1) Cached aggregate FORAN dikhao (stale-while-revalidate) — admin dobara khulne par
        instant data, poora sweep dobara nahi chalta. Pehli dfa cache nahi hota to normal load. */
     let hadCache = false;
@@ -4256,6 +4265,9 @@ function Submissions({ toast, classesData = [] }) {
      directly. One row per (teacher × class × subject) so a teacher with 3
      subjects in a class yields 3 separate cards. Self-contained — does NOT depend
      on the branch matrix, so it always shows a teacher who has assigned subjects. */
+  /* Teacher-wise aggregate: for each teacher, list the subjects they teach per class/section
+     (get-subjects_byEmployeeID) and compute that subject's stats directly. One row per
+     (teacher × class × subject). Stats lesson+notebook combined (fetchSubmissionStats). */
   const buildTeacherAggregate = async (grades, employees, { background = false } = {}) => {
     if (!grades.length || !employees.length) { setTeacherRows([]); return []; }
     if (!background) setTeacherLoading(true);
@@ -4264,8 +4276,7 @@ function Submissions({ toast, classesData = [] }) {
       grades.forEach(g => (g.sections.length ? g.sections : [{ sectionId: 0, sectionName: '' }])
         .forEach(s => pairs.push({ g, s })));
 
-      /* Cache stats per (grade:section:subject) so the same cell isn't refetched
-         for two teachers sharing it. */
+      /* Cache stats per (grade:section:subject) so the same cell isn't refetched. */
       const statsCache = {};
       const getStats = async (gid, sid, subId) => {
         const k = `${gid}:${sid}:${subId}`;
@@ -4363,12 +4374,6 @@ function Submissions({ toast, classesData = [] }) {
   const nbPct = nbTotal ? Math.round((nbSubmitted / nbTotal) * 100) : 0;
   const nbUnits = nbData.length;
   const nbQTypes = nbData.reduce((a, u) => a + u.questionTypes.length, 0);
-
-  /* Combined (Lesson Plans + Notebook) overall — total/submitted/pending/percentage. */
-  const combTotal = lpTotal + nbTotal;
-  const combSubmitted = lpSubmitted + nbSubmitted;
-  const combPending = combTotal - combSubmitted;
-  const combPct = combTotal ? Math.round((combSubmitted / combTotal) * 100) : 0;
 
   // Helper functions to process classesData
   const getUniqueClasses = () => {
@@ -4563,6 +4568,43 @@ function Submissions({ toast, classesData = [] }) {
     catch (e) { console.error('Error reloading notebook submissions:', e); }
   };
 
+  /* Edit an already-submitted notebook question-type: checkedIds = final desired submitted set.
+     Naye check = insert; jo pehle submitted the aur ab unchecked = delete (selectionId se). */
+  const editNbItems = async (unitId, typeId, checkedIds) => {
+    const cat = NB_DETAIL_CATEGORIES.find(c => c.typeId === typeId);
+    const recTitle = cat?.recTitle || typeId;
+    const unit = nbData.find(u => u.unitId === unitId);
+    const qt = unit?.questionTypes.find(q => q.typeId === typeId);
+    if (!qt) { setNbSubmitCtx(null); return; }
+    const checkedSet = new Set(checkedIds);
+    const toInsert = qt.items.filter(i => i.status !== 'submitted' && checkedSet.has(i.id));
+    const toDelete = qt.items.filter(i => i.status === 'submitted' && !checkedSet.has(i.id));
+    if (!toInsert.length && !toDelete.length) { setNbSubmitCtx(null); return; }
+    /* Delete ke liye selectionId zaroori — na mile to un-submit skip (warn). */
+    const delOk = toDelete.filter(it => it.selectionId);
+    if (delOk.length < toDelete.length) console.warn('[nb-edit] kuch items ka selectionId nahi mila — un-submit skip');
+    try {
+      await Promise.all([
+        ...toInsert.map(it => nbCheckRow({
+          action: 'insert', notebookID: unitId, recID: it.id, recTitle,
+          branchID: subCtx.branchID, gradeID: subCtx.classID, subjectID: subCtx.subjectID,
+        })),
+        ...delOk.map(it => nbCheckRow({
+          action: 'delete', selectionId: it.selectionId, notebookID: unitId, recID: it.id, recTitle,
+          branchID: subCtx.branchID, gradeID: subCtx.classID, subjectID: subCtx.subjectID,
+        })),
+      ]);
+    } catch (e) {
+      console.error('Error editing notebook submission:', e);
+      toast('Could not save changes', 'error');
+      return;
+    }
+    setNbSubmitCtx(null);
+    toast('Notebook submission updated', 'success');
+    try { setNbData(await loadNbSubmissionData(subCtx)); }
+    catch (e) { console.error('Error reloading notebook submissions:', e); }
+  };
+
   /* Generate the report after style is picked */
   const generatePdf = async isColor => {
     if (!pdfReq) return;
@@ -4731,26 +4773,6 @@ function Submissions({ toast, classesData = [] }) {
        {/* ── MAIN AREA ── */}
       {role === 'teacher' && fetched && (
         <div>
-          {/* Combined Lesson + Notebook overall — dono plans ka total/submitted/pending/% */}
-          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12, padding: '10px 16px', margin: '0 0 12px', borderRadius: 12, background: 'linear-gradient(135deg,#EFF6FF,#F5F3FF)', border: '1px solid #DBEAFE' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 800, color: '#1E3A8A', fontSize: 13 }}>
-              <i className="fa-solid fa-layer-group"></i> Overall — Lesson + Notebook
-            </div>
-            <div style={{ display: 'flex', gap: 20, marginLeft: 'auto', flexWrap: 'wrap' }}>
-              {[
-                { v: combTotal,     l: 'TOTAL',     c: '#1E40AF' },
-                { v: combSubmitted, l: 'SUBMITTED', c: '#16A34A' },
-                { v: combPending,   l: 'PENDING',   c: '#D97706' },
-                { v: `${combPct}%`, l: 'OVERALL',   c: '#7C3AED' },
-              ].map(x => (
-                <div key={x.l} style={{ textAlign: 'center', minWidth: 56 }}>
-                  <div style={{ fontSize: 17, fontWeight: 900, color: x.c, lineHeight: 1 }}>{x.v}</div>
-                  <div style={{ fontSize: 9.5, color: '#64748B', fontWeight: 700, letterSpacing: '.4px', marginTop: 3 }}>{x.l}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-
           {/* Analytics strip — switches by inner tab */}
           {inner === 'lp' ? (
             <div className="sub-analytics-strip">
@@ -4991,6 +5013,14 @@ function Submissions({ toast, classesData = [] }) {
                                       <i className="fa-solid fa-circle-check"></i> <span className="snb-submit-label">Done</span>
                                     </span>
                                   )}
+                                  {sub > 0 && (
+                                    <Tooltip text="Edit submission — submitted questions add / remove karein">
+                                      <button className="snb-qtype-submit-btn" style={{ background: 'rgba(30,64,175,.1)', color: '#1E40AF', border: '1px solid rgba(30,64,175,.25)' }}
+                                        onClick={e => { e.stopPropagation(); setNbSubmitCtx({ unitId: u.unitId, typeId: qt.typeId, edit: true }); }}>
+                                        <i className="fa-solid fa-pen"></i> <span className="snb-submit-label">Edit</span>
+                                      </button>
+                                    </Tooltip>
+                                  )}
                                   <div className="snb-qtype-chevron"><i className="fa-solid fa-chevron-down"></i></div>
                                 </div>
                                 <div className="snb-qtype-mq">{qt.mainQ}</div>
@@ -5045,7 +5075,9 @@ function Submissions({ toast, classesData = [] }) {
         ctx={nbSubmitCtx}
         unit={nbSubmitCtx ? nbData.find(u => u.unitId === nbSubmitCtx.unitId) : null}
         onClose={() => setNbSubmitCtx(null)}
-        onSubmit={ids => submitNbItems(nbSubmitCtx.unitId, nbSubmitCtx.typeId, ids)}
+        onSubmit={ids => nbSubmitCtx.edit
+          ? editNbItems(nbSubmitCtx.unitId, nbSubmitCtx.typeId, ids)
+          : submitNbItems(nbSubmitCtx.unitId, nbSubmitCtx.typeId, ids)}
       />
 
       <SubPdfModal
@@ -5265,16 +5297,23 @@ function LpViewerModal({ plan, ctx = {}, toast = () => {}, onClose, onSubmit }) 
 /* ─── Notebook Submit Modal — select pending items + submit ─── */
 function NbSubmitModal({ ctx, unit, onClose, onSubmit }) {
   const [checked, setChecked] = useState(new Set());
+  const editMode = !!ctx?.edit;
 
-  useEffect(() => { setChecked(new Set()); }, [ctx]);
+  useEffect(() => {
+    if (!ctx || !unit) { setChecked(new Set()); return; }
+    const qt = unit.questionTypes.find(q => q.typeId === ctx.typeId);
+    /* Edit mode → jo pehle se submitted hain wo checked; user un-check karke un-submit kar sake. */
+    setChecked(editMode && qt ? new Set(qt.items.filter(i => i.status === 'submitted').map(i => i.id)) : new Set());
+  }, [ctx, unit, editMode]);
 
   if (!ctx || !unit) return null;
   const qt = unit.questionTypes.find(q => q.typeId === ctx.typeId);
   if (!qt) return null;
   const meta = SUB_NB_QTYPE_META[ctx.typeId] || { label: ctx.typeId, icon: 'fa-circle-question', color: '#64748B' };
 
-  const pendingItems = qt.items.filter(i => i.status === 'pending');
-  const allSelected  = pendingItems.length > 0 && pendingItems.every(i => checked.has(i.id));
+  /* Toggle-able items: edit mode me SAB; warna sirf pending. */
+  const toggleable = editMode ? qt.items : qt.items.filter(i => i.status === 'pending');
+  const allSelected = toggleable.length > 0 && toggleable.every(i => checked.has(i.id));
 
   const toggleItem = id => {
     setChecked(c => {
@@ -5284,7 +5323,7 @@ function NbSubmitModal({ ctx, unit, onClose, onSubmit }) {
     });
   };
   const toggleAll = on => {
-    if (on) setChecked(new Set(pendingItems.map(i => i.id)));
+    if (on) setChecked(new Set(toggleable.map(i => i.id)));
     else    setChecked(new Set());
   };
 
@@ -5293,10 +5332,10 @@ function NbSubmitModal({ ctx, unit, onClose, onSubmit }) {
       <div className="nb-submit-modal">
         <div className="nb-submit-modal-header">
           <div className="nb-submit-modal-icon" style={{ background: meta.color }}>
-            <i className={`fa-solid ${meta.icon}`}></i>
+            <i className={`fa-solid ${editMode ? 'fa-pen-to-square' : meta.icon}`}></i>
           </div>
           <div>
-            <div className="nb-submit-modal-title">{meta.label}</div>
+            <div className="nb-submit-modal-title">{editMode ? `Edit — ${meta.label}` : meta.label}</div>
             <div className="nb-submit-modal-sub">{unit.unitName} · Unit {unit.unitNo}</div>
           </div>
           <Tooltip text="Close"><button className="nb-submit-modal-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark"></i></button></Tooltip>
@@ -5304,9 +5343,9 @@ function NbSubmitModal({ ctx, unit, onClose, onSubmit }) {
 
         <div className="nb-submit-modal-toolbar">
           <label className="nb-submit-select-all-label">
-            <input type="checkbox" checked={allSelected} disabled={pendingItems.length === 0}
+            <input type="checkbox" checked={allSelected} disabled={toggleable.length === 0}
               onChange={e => toggleAll(e.target.checked)} />
-            Select all pending
+            {editMode ? 'Select all' : 'Select all pending'}
           </label>
           <span className="nb-submit-count-badge"><i className="fa-solid fa-check"></i> {checked.size} selected</span>
         </div>
@@ -5315,22 +5354,23 @@ function NbSubmitModal({ ctx, unit, onClose, onSubmit }) {
           {qt.items.map((item, i) => {
             const isSub = item.status === 'submitted';
             const isChk = checked.has(item.id);
+            const canToggle = editMode || !isSub; // edit me sab, warna sirf pending
             return (
               <div
                 key={item.id}
-                className={`nb-submit-item${isChk ? ' is-checked' : ''}${isSub ? ' is-submitted' : ''}`}
-                onClick={() => !isSub && toggleItem(item.id)}
+                className={`nb-submit-item${isChk ? ' is-checked' : ''}${isSub && !editMode ? ' is-submitted' : ''}`}
+                onClick={() => canToggle && toggleItem(item.id)}
               >
                 <div className="nb-submit-item-num">{i + 1}</div>
                 <div className="nb-submit-item-text" dangerouslySetInnerHTML={{ __html: item.preview || '' }} />
-                {!isSub && (
+                {canToggle && (
                   <input type="checkbox" checked={isChk}
                     onClick={e => e.stopPropagation()}
                     onChange={() => toggleItem(item.id)}
                     style={{ width: 16, height: 16, accentColor: 'var(--brand-primary)', flexShrink: 0, cursor: 'pointer' }} />
                 )}
-                <span className={`nb-submit-item-status ${isSub ? 'submitted' : 'pending'}`}>
-                  <i className={`fa-solid ${isSub ? 'fa-circle-check' : 'fa-clock'}`}></i> {isSub ? 'Submitted' : 'Pending'}
+                <span className={`nb-submit-item-status ${isChk ? 'submitted' : 'pending'}`}>
+                  <i className={`fa-solid ${isChk ? 'fa-circle-check' : 'fa-clock'}`}></i> {isChk ? 'Submitted' : 'Pending'}
                 </span>
               </div>
             );
@@ -5343,13 +5383,21 @@ function NbSubmitModal({ ctx, unit, onClose, onSubmit }) {
               <i className="fa-solid fa-xmark"></i> Cancel
             </button>
           </Tooltip>
-          <Tooltip text={checked.size === 0 ? 'Select questions to submit first' : `Submit ${checked.size} question${checked.size === 1 ? '' : 's'}`}>
-            <button className="nb-submit-modal-submit-btn"
-              disabled={checked.size === 0}
-              onClick={() => onSubmit([...checked])}>
-              <i className="fa-solid fa-paper-plane"></i> Submit
-            </button>
-          </Tooltip>
+          {editMode ? (
+            <Tooltip text="Save changes — checked = submitted, unchecked = un-submitted">
+              <button className="nb-submit-modal-submit-btn" onClick={() => onSubmit([...checked])}>
+                <i className="fa-solid fa-floppy-disk"></i> Save Changes
+              </button>
+            </Tooltip>
+          ) : (
+            <Tooltip text={checked.size === 0 ? 'Select questions to submit first' : `Submit ${checked.size} question${checked.size === 1 ? '' : 's'}`}>
+              <button className="nb-submit-modal-submit-btn"
+                disabled={checked.size === 0}
+                onClick={() => onSubmit([...checked])}>
+                <i className="fa-solid fa-paper-plane"></i> Submit
+              </button>
+            </Tooltip>
+          )}
         </div>
       </div>
     </div>
@@ -7802,30 +7850,251 @@ function NbAQModal({ ctx, unit, onSave, onClose, toast }) {
   );
 }
 
-/* ─── Single AQ row — renders the correct layout per type ─── */
-/* Stable contenteditable field — initialises innerHTML once and commits on input/blur
-   without re-writing the DOM (so the caret doesn't jump). */
-function AqRte({ initial, ph, onCommit }) {
-  const ref = useRef(null);
+/* ═══════════════════════════════════════════════════════════════════
+   REUSABLE RICH-TEXT EDITOR (full toolbar) — notebook question fields ke liye.
+   Saari operations working: undo/redo, size, B/U/I/S, color, align + JUSTIFY,
+   lists, table, link, IMAGE (upload + resize/align overlay), MATH formula, clear.
+   Logic LessonEditModal wale (tested) editor se port ki gayi — cloned-range fix,
+   node-based image/math insert, image resize overlay (buttons, no-crash).
+   ═══════════════════════════════════════════════════════════════════ */
+function RichTextEditor({ value, onChange, placeholder, minHeight = 90 }) {
+  const editorRef      = useRef(null);
+  const savedRangeRef  = useRef(null);
+  const [imgSel, setImgSel] = useState(null);
+  const [, setImgTick] = useState(0);
+
+  /* Initial HTML sirf ek dafa set (caret jump se bachne ke liye). */
   useEffect(() => {
-    if (ref.current && ref.current.innerHTML !== (initial || '')) {
-      ref.current.innerHTML = initial || '';
+    if (editorRef.current && editorRef.current.innerHTML !== (value || '')) {
+      editorRef.current.innerHTML = value || '';
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const commit = () => { if (editorRef.current) onChange(editorRef.current.innerHTML); };
+
+  const saveSelection = () => {
+    const sel = window.getSelection();
+    if (!sel || !sel.rangeCount) return;
+    const range = sel.getRangeAt(0);
+    if (editorRef.current && editorRef.current.contains(range.commonAncestorContainer)) {
+      savedRangeRef.current = range.cloneRange(); // clone — popup focus se collapse na ho
+    }
+  };
+  const restoreSelection = () => {
+    const ed = editorRef.current;
+    if (!ed) return false;
+    ed.focus();
+    const r = savedRangeRef.current;
+    if (r) { const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r); }
+    return true;
+  };
+  const exec = (cmd, val) => {
+    restoreSelection();
+    document.execCommand(cmd, false, val !== undefined ? val : null);
+    saveSelection();
+    commit();
+  };
+  const insertTable = () => {
+    restoreSelection();
+    document.execCommand('insertHTML', false,
+      '<table style="border-collapse:collapse;width:100%;margin:8px 0"><tr><td style="border:1px solid #BFDBFE;padding:6px 10px">Col 1</td><td style="border:1px solid #BFDBFE;padding:6px 10px">Col 2</td></tr><tr><td style="border:1px solid #BFDBFE;padding:6px 10px">Row 2</td><td style="border:1px solid #BFDBFE;padding:6px 10px">Row 2</td></tr></table>');
+    saveSelection();
+    commit();
+  };
+  const insertLink = () => {
+    const url = window.prompt('Enter URL');
+    if (!url) return;
+    restoreSelection();
+    document.execCommand('createLink', false, url);
+    saveSelection();
+    commit();
+  };
+
+  /* Image resize/align overlay handlers */
+  const isEditorImg = (n) => n && n.tagName === 'IMG' && editorRef.current && editorRef.current.contains(n);
+  const onEditorClick = (e) => { saveSelection(); if (isEditorImg(e.target)) setImgSel(e.target); else setImgSel(null); };
+  const alignImg = (mode) => {
+    const img = imgSel; if (!img) return;
+    if (mode === 'inline') { img.style.display = 'inline'; img.style.marginLeft = ''; img.style.marginRight = ''; }
+    else { img.style.display = 'block'; img.style.marginLeft = (mode === 'center' || mode === 'right') ? 'auto' : '0'; img.style.marginRight = (mode === 'center' || mode === 'left') ? 'auto' : '0'; }
+    setImgTick(t => t + 1); commit();
+  };
+  const setImgWidth = (pct) => { const img = imgSel; if (!img) return; img.style.width = pct + '%'; img.style.height = 'auto'; img.style.maxWidth = '100%'; setImgTick(t => t + 1); commit(); };
+  const nudgeImg = (d) => { const img = imgSel; if (!img) return; const w = Math.max(40, Math.round((img.getBoundingClientRect().width || 0) + d)); img.style.width = w + 'px'; img.style.height = 'auto'; img.style.maxWidth = '100%'; setImgTick(t => t + 1); commit(); };
+
+  useEffect(() => {
+    if (!imgSel) return undefined;
+    const reposition = () => setImgTick(t => t + 1);
+    const onDocDown = (e) => { if (e.target.closest && e.target.closest('.clpm-img-overlay')) return; if (e.target.tagName === 'IMG') return; setImgSel(null); };
+    const onKey = (e) => { if (e.key === 'Escape') setImgSel(null); };
+    window.addEventListener('scroll', reposition, true);
+    window.addEventListener('resize', reposition);
+    document.addEventListener('mousedown', onDocDown, true);
+    window.addEventListener('keydown', onKey);
+    return () => { window.removeEventListener('scroll', reposition, true); window.removeEventListener('resize', reposition); document.removeEventListener('mousedown', onDocDown, true); window.removeEventListener('keydown', onKey); };
+  }, [imgSel]);
+
+  const alignBtns = [
+    { tip: 'Align left',   cmd: 'justifyLeft',   icon: 'fa-align-left' },
+    { tip: 'Align center', cmd: 'justifyCenter', icon: 'fa-align-center' },
+    { tip: 'Align right',  cmd: 'justifyRight',  icon: 'fa-align-right' },
+    { tip: 'Justify',      cmd: 'justifyFull',   icon: 'fa-align-justify' },
+  ];
+  const tbBtn = { border: 'none', background: 'transparent', color: '#E2E8F0', cursor: 'pointer', fontSize: 12, padding: '3px 6px', borderRadius: 5, fontFamily: 'inherit', lineHeight: 1 };
+
   return (
-    <div
-      ref={ref}
-      contentEditable
-      suppressContentEditableWarning
-      data-ph={ph}
-      style={{ minHeight: 70, padding: '10px 13px', fontSize: 14, color: '#0F172A', lineHeight: 1.6, outline: 'none', border: '1.5px solid #CBD5E1', borderRadius: 10, background: '#fff', transition: 'border-color .18s, box-shadow .18s', fontFamily: 'inherit' }}
-      onFocus={e => { e.target.style.borderColor = '#0891B2'; e.target.style.boxShadow = '0 0 0 3px rgba(6,182,212,.12)'; }}
-      onBlur={e => { e.target.style.borderColor = '#CBD5E1'; e.target.style.boxShadow = 'none'; onCommit(e.currentTarget.innerHTML); }}
-      onInput={e => onCommit(e.currentTarget.innerHTML)}
-    />
+    <div style={{ border: '1.5px solid #CBD5E1', borderRadius: 10, overflow: 'hidden', background: '#fff' }}>
+      {/* Toolbar */}
+      <div className="clpm-rte-toolbar" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 2, padding: '6px 8px', borderBottom: '1px solid #E2E8F0', background: '#F8FAFC' }}>
+        <Tooltip text="Undo"><button className="clpm-tb-btn" onMouseDown={e => e.preventDefault()} onClick={() => exec('undo')}><i className="fa-solid fa-rotate-left"></i></button></Tooltip>
+        <Tooltip text="Redo"><button className="clpm-tb-btn" onMouseDown={e => e.preventDefault()} onClick={() => exec('redo')}><i className="fa-solid fa-rotate-right"></i></button></Tooltip>
+        <div className="clpm-tb-divider"></div>
+        <select className="clpm-tb-btn" onMouseDown={e => e.preventDefault()} defaultValue=""
+          onChange={e => { if (e.target.value) { exec('fontSize', e.target.value); e.target.value = ''; } }}
+          style={{ width: 64 }}>
+          <option value="">Size</option>
+          <option value="2">Small</option>
+          <option value="3">Normal</option>
+          <option value="5">Large</option>
+          <option value="7">Huge</option>
+        </select>
+        <div className="clpm-tb-divider"></div>
+        <Tooltip text="Bold"><button className="clpm-tb-btn" onMouseDown={e => e.preventDefault()} onClick={() => exec('bold')}><b>B</b></button></Tooltip>
+        <Tooltip text="Underline"><button className="clpm-tb-btn" onMouseDown={e => e.preventDefault()} onClick={() => exec('underline')}><u>U</u></button></Tooltip>
+        <Tooltip text="Italic"><button className="clpm-tb-btn" onMouseDown={e => e.preventDefault()} onClick={() => exec('italic')}><i>I</i></button></Tooltip>
+        <Tooltip text="Strikethrough"><button className="clpm-tb-btn" onMouseDown={e => e.preventDefault()} onClick={() => exec('strikeThrough')}><s>S</s></button></Tooltip>
+        <label className="clpm-tb-btn" onMouseDown={e => { e.preventDefault(); saveSelection(); }} style={{ position: 'relative', color: '#DC2626' }}>
+          <b>A</b>
+          <input type="color" onMouseDown={() => saveSelection()} onChange={e => exec('foreColor', e.target.value)}
+            style={{ position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer' }} />
+        </label>
+        <div className="clpm-tb-divider"></div>
+        {alignBtns.map(a => (
+          <Tooltip key={a.cmd} text={a.tip}>
+            <button className="clpm-tb-btn" onMouseDown={e => e.preventDefault()}
+              onClick={() => { restoreSelection(); try { document.execCommand('styleWithCSS', false, true); } catch (err) {} document.execCommand(a.cmd, false, null); saveSelection(); commit(); }}>
+              <i className={`fa-solid ${a.icon}`}></i>
+            </button>
+          </Tooltip>
+        ))}
+        <div className="clpm-tb-divider"></div>
+        <Tooltip text="Numbered list"><button className="clpm-tb-btn" onMouseDown={e => e.preventDefault()} onClick={() => exec('insertOrderedList')}><i className="fa-solid fa-list-ol"></i></button></Tooltip>
+        <Tooltip text="Bullet list"><button className="clpm-tb-btn" onMouseDown={e => e.preventDefault()} onClick={() => exec('insertUnorderedList')}><i className="fa-solid fa-list-ul"></i></button></Tooltip>
+        <Tooltip text="Insert table"><button className="clpm-tb-btn" onMouseDown={e => e.preventDefault()} onClick={insertTable}><i className="fa-solid fa-table-cells"></i></button></Tooltip>
+        <div className="clpm-tb-divider"></div>
+        <Tooltip text="Insert link"><button className="clpm-tb-btn" onMouseDown={e => e.preventDefault()} onClick={insertLink}><i className="fa-solid fa-link"></i></button></Tooltip>
+        {/* Image from device */}
+        <Tooltip text="Insert image from your device">
+          <button className="clpm-tb-btn" onMouseDown={e => { e.preventDefault(); saveSelection(); }}
+            onClick={() => {
+              const f = document.createElement('input');
+              f.type = 'file'; f.accept = 'image/*'; f.style.display = 'none';
+              document.body.appendChild(f);
+              f.addEventListener('change', () => {
+                const file = f.files && f.files[0];
+                if (file) {
+                  const reader = new FileReader();
+                  reader.onload = ev => {
+                    restoreSelection();
+                    const img = document.createElement('img');
+                    img.src = ev.target.result; img.className = 'clpm-img';
+                    img.style.maxWidth = '100%'; img.style.height = 'auto'; img.style.cursor = 'pointer';
+                    const sel = window.getSelection();
+                    const ed = editorRef.current;
+                    if (sel && sel.rangeCount && ed && ed.contains(sel.getRangeAt(0).commonAncestorContainer)) {
+                      const range = sel.getRangeAt(0); range.deleteContents(); range.insertNode(img);
+                      range.setStartAfter(img); range.collapse(true); sel.removeAllRanges(); sel.addRange(range);
+                    } else if (ed) { ed.appendChild(img); }
+                    saveSelection(); commit(); setImgSel(img);
+                  };
+                  reader.readAsDataURL(file);
+                }
+                f.remove();
+              });
+              f.click();
+            }}>
+            <i className="fa-regular fa-image"></i>
+          </button>
+        </Tooltip>
+        {/* Math formula */}
+        <Tooltip text="Insert math formula">
+          <button className="clpm-tb-btn" onMouseDown={e => { e.preventDefault(); saveSelection(); }} style={{ fontWeight: 800, fontSize: 14 }}
+            onClick={(e) => {
+              const btnRect = e.currentTarget.getBoundingClientRect();
+              const targetEd = editorRef.current;
+              let capturedRange = null;
+              const s0 = window.getSelection();
+              if (s0 && s0.rangeCount) { const r0 = s0.getRangeAt(0); if (targetEd && targetEd.contains(r0.commonAncestorContainer)) capturedRange = r0.cloneRange(); }
+              if (!capturedRange && savedRangeRef.current && targetEd && targetEd.contains(savedRangeRef.current.commonAncestorContainer)) capturedRange = savedRangeRef.current.cloneRange();
+              const inp = document.createElement('input');
+              inp.type = 'text'; inp.placeholder = 'e.g. x² + y² = z²';
+              const top = Math.min(window.innerHeight - 48, btnRect.bottom + 6);
+              const left = Math.max(8, Math.min(window.innerWidth - 268, btnRect.left));
+              inp.style.cssText = `position:fixed;top:${top}px;left:${left}px;z-index:100001;padding:8px 12px;border:1px solid #1E40AF;border-radius:8px;font-size:13px;width:260px;box-shadow:0 6px 22px rgba(0,0,0,.18);background:#fff`;
+              document.body.appendChild(inp); inp.focus();
+              const insertFormula = () => {
+                const val = inp.value; inp.remove();
+                if (!val || !targetEd) return;
+                const span = document.createElement('span'); span.style.fontFamily = "'Cambria Math',serif"; span.textContent = val;
+                targetEd.focus();
+                const sel = window.getSelection();
+                if (capturedRange) { const r = capturedRange.cloneRange(); r.collapse(false); r.insertNode(span); r.setStartAfter(span); r.collapse(true); sel.removeAllRanges(); sel.addRange(r); }
+                else { targetEd.appendChild(span); const r = document.createRange(); r.setStartAfter(span); r.collapse(true); sel.removeAllRanges(); sel.addRange(r); }
+                saveSelection(); commit();
+              };
+              inp.addEventListener('keydown', ev => { if (ev.key === 'Enter') { ev.preventDefault(); insertFormula(); } else if (ev.key === 'Escape') { ev.preventDefault(); inp.remove(); } });
+              inp.addEventListener('blur', () => setTimeout(() => { if (inp.isConnected) inp.remove(); }, 200));
+            }}>∑</button>
+        </Tooltip>
+        <div className="clpm-tb-divider"></div>
+        <Tooltip text="Clear formatting"><button className="clpm-tb-btn" onMouseDown={e => e.preventDefault()} onClick={() => exec('removeFormat')} style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 700 }}>Clear</button></Tooltip>
+      </div>
+
+      {/* Editor */}
+      <div
+        ref={editorRef}
+        className="clpm-editor"
+        contentEditable
+        suppressContentEditableWarning
+        data-placeholder={placeholder}
+        spellCheck={false}
+        style={{ minHeight, padding: '10px 13px', fontSize: 14, color: '#0F172A', lineHeight: 1.6, outline: 'none' }}
+        onInput={commit}
+        onBlur={commit}
+        onMouseUp={saveSelection}
+        onKeyUp={saveSelection}
+        onFocus={saveSelection}
+        onClick={onEditorClick}
+      />
+
+      {/* Image resize/align overlay */}
+      {imgSel && (() => {
+        const r = imgSel.getBoundingClientRect();
+        return (
+          <div className="clpm-img-overlay" style={{ position: 'fixed', top: r.top, left: r.left, width: r.width, height: r.height, border: '2px solid #1E40AF', boxSizing: 'border-box', zIndex: 100000, pointerEvents: 'none' }}>
+            <div style={{ position: 'absolute', top: -36, left: 0, display: 'flex', alignItems: 'center', gap: 2, background: '#1E293B', borderRadius: 8, padding: '3px 5px', pointerEvents: 'auto', boxShadow: '0 4px 14px rgba(0,0,0,.3)', whiteSpace: 'nowrap' }} onMouseDown={e => e.preventDefault()}>
+              <Tooltip text="Align left"><button style={tbBtn} onClick={() => alignImg('left')}><i className="fa-solid fa-align-left"></i></button></Tooltip>
+              <Tooltip text="Center"><button style={tbBtn} onClick={() => alignImg('center')}><i className="fa-solid fa-align-center"></i></button></Tooltip>
+              <Tooltip text="Align right"><button style={tbBtn} onClick={() => alignImg('right')}><i className="fa-solid fa-align-right"></i></button></Tooltip>
+              <span style={{ width: 1, height: 16, background: '#475569', margin: '0 3px' }}></span>
+              <Tooltip text="Smaller"><button style={tbBtn} onClick={() => nudgeImg(-30)}><i className="fa-solid fa-minus"></i></button></Tooltip>
+              <Tooltip text="Bigger"><button style={tbBtn} onClick={() => nudgeImg(30)}><i className="fa-solid fa-plus"></i></button></Tooltip>
+              <span style={{ width: 1, height: 16, background: '#475569', margin: '0 3px' }}></span>
+              <Tooltip text="25%"><button style={tbBtn} onClick={() => setImgWidth(25)}>25%</button></Tooltip>
+              <Tooltip text="50%"><button style={tbBtn} onClick={() => setImgWidth(50)}>50%</button></Tooltip>
+              <Tooltip text="100%"><button style={tbBtn} onClick={() => setImgWidth(100)}>100%</button></Tooltip>
+              <span style={{ width: 1, height: 16, background: '#475569', margin: '0 3px' }}></span>
+              <Tooltip text="Done"><button style={tbBtn} onClick={() => setImgSel(null)}><i className="fa-solid fa-xmark"></i></button></Tooltip>
+            </div>
+          </div>
+        );
+      })()}
+    </div>
   );
 }
+
+/* ─── Single AQ row — renders the correct layout per type ─── */
 
 function AqRow({ i, cfg, row, typeId, onChange, onRemove, onSaveRow }) {
   const NUM_S  = { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 7, background: 'linear-gradient(135deg,#0369A1,#0891B2)', color: '#fff', fontSize: 12, fontWeight: 800, flexShrink: 0 };
@@ -7854,9 +8123,12 @@ function AqRow({ i, cfg, row, typeId, onChange, onRemove, onSaveRow }) {
       onChange={e => onChange(key, e.target.value)}
     />
   );
-  const rte = (key, ph) => (
-    <AqRte initial={row[key] || ''} ph={ph} onCommit={html => onChange(key, html)} />
+  /* Full rich-text editor (toolbar: justify, color, image+resize, math, table, link, lists…).
+     `rte` aur `richField` dono yehi editor use karte hain (True/False ko chhod ke sab jagah). */
+  const richField = (key, ph, minHeight = 90) => (
+    <RichTextEditor value={row[key] || ''} placeholder={ph} minHeight={minHeight} onChange={html => onChange(key, html)} />
   );
+  const rte = (key, ph) => richField(key, ph, 90);
   const acts = (
     <div style={ACT_S}>
       <button type="button" className="aq-rb-btn" onClick={onRemove}>
@@ -7993,10 +8265,10 @@ function AqRow({ i, cfg, row, typeId, onChange, onRemove, onSaveRow }) {
           <div style={{ fontSize: 18, color: '#94A3B8', flexShrink: 0 }}>↔</div>
           <div style={{ flex: 1, fontSize: 11, fontWeight: 700, color: '#6D28D9', textTransform: 'uppercase', letterSpacing: '.5px' }}>Column B (Correct Match)</div>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 10 }}>
-          <div style={{ flex: 1 }}>{inp('colA', 'e.g. Apple, Cat, Big…', { borderColor: '#BAE6FD' })}</div>
-          <div style={{ fontSize: 20, color: '#94A3B8', flexShrink: 0 }}>↔</div>
-          <div style={{ flex: 1 }}>{inp('colB', 'e.g. Fruit, Animal, Small…', { borderColor: '#C4B5FD' })}</div>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 10 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>{richField('colA', 'e.g. Apple, Cat, Big…')}</div>
+          <div style={{ fontSize: 20, color: '#94A3B8', flexShrink: 0, paddingTop: 24 }}>↔</div>
+          <div style={{ flex: 1, minWidth: 0 }}>{richField('colB', 'e.g. Fruit, Animal, Small…')}</div>
         </div>
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 11.5, color: '#64748B', background: '#F0F9FF', borderRadius: 9, padding: '9px 12px', lineHeight: 1.5, marginBottom: 4 }}>
           <i className="fa-solid fa-circle-info" style={{ color: '#0891B2', fontSize: 11, flexShrink: 0, marginTop: 2 }}></i>
@@ -8026,14 +8298,14 @@ function AqRow({ i, cfg, row, typeId, onChange, onRemove, onSaveRow }) {
     return (
       <div className="aq-row-card-hover">
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>{num}{lbl('Statement / Sentence with word choices')}</div>
-        {inp('statement', 'e.g. The cat is (big / small / tall).', { marginBottom: 10 })}
+        {richField('statement', 'e.g. The cat is (big / small / tall).')}
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginTop: 10, padding: 12, background: '#F0F9FF', borderRadius: 10 }}>
           <div style={{ width: 36, height: 36, borderRadius: 10, background: 'rgba(6,182,212,.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#0891B2', fontSize: 16, flexShrink: 0, marginTop: 18 }}>
             <i className="fa-regular fa-circle-dot"></i>
           </div>
-          <div style={{ flex: 1 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
             {lbl('Correct Word to Circle')}
-            {inp('answer', 'Type the correct word…', { borderColor: '#0891B2', height: 40 })}
+            {richField('answer', 'Type the correct word…', 64)}
           </div>
         </div>
         {acts}
@@ -8046,12 +8318,12 @@ function AqRow({ i, cfg, row, typeId, onChange, onRemove, onSaveRow }) {
     return (
       <div className="aq-row-card-hover">
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>{num}{lbl('Unpunctuated Sentence')}</div>
-        {ta('question', 'Write the sentence without punctuation (e.g. the cat sat on the mat it was happy)', 2)}
+        {richField('question', 'Write the sentence without punctuation (e.g. the cat sat on the mat it was happy)')}
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginTop: 10, padding: 10, background: '#F0F9FF', borderRadius: 10 }}>
           <i className="fa-solid fa-pen-nib" style={{ color: '#0891B2', fontSize: 13, flexShrink: 0, marginTop: 4 }}></i>
-          <div style={{ flex: 1 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
             {lbl('Correctly Punctuated (Answer)')}
-            {ta('answer', 'Write the correctly punctuated sentence…', 2)}
+            {richField('answer', 'Write the correctly punctuated sentence…')}
           </div>
         </div>
         {acts}
