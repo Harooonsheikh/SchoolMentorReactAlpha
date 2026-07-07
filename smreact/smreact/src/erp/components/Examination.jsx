@@ -12855,8 +12855,32 @@ const runDelete = async () => {
   };
 
   const submit = async () => {
+    // ── Validation (setLoading se PEHLE) — SIRF naye add kiye rows par ──────
+    // (Pre-existing saved duplicates par block na ho — warna naya grade add karne par
+    //  purane remark duplicates ka toaster aa jata hai.) Naye rows ka id 'temp_' se
+    //  shuru hota hai; existing (API) rows ka numeric.
+    const isNew = (row) => String(row.id).startsWith('temp_');
+    const gradePctKey = (g) => `${g.cond}|${String(g.pct ?? '').trim()}`;
+    // Naya grade: same grade value ya same percentage kisi DOOSRI grade row me na ho.
+    for (const ng of draftGrades.filter(isNew)) {
+      const gv = String(ng.grade || '').trim();
+      if (gv && draftGrades.some(g => g.id !== ng.id && String(g.grade || '').trim() === gv)) {
+        toast(`"${gv}" is already added. This grade cannot be added again.`, 'error'); return;
+      }
+      if (String(ng.pct ?? '').trim() !== '' && draftGrades.some(g => g.id !== ng.id && gradePctKey(g) === gradePctKey(ng))) {
+        toast('This percentage has already been assigned a grade.', 'error'); return;
+      }
+    }
+    // Naya remark: same percentage kisi DOOSRI remark row me na ho.
+    const remarkPctKey = (r) => `${r.cond}|${String(r.pct ?? '').trim()}`;
+    for (const nr of draftRemarks.filter(isNew)) {
+      if (String(nr.pct ?? '').trim() !== '' && draftRemarks.some(r => r.id !== nr.id && remarkPctKey(r) === remarkPctKey(nr))) {
+        toast('This percentage has already been assigned a remark.', 'error'); return;
+      }
+    }
+
     setLoading(true);
-    
+
     try {
       // Track which items were added/updated vs deleted
       const originalGradeIds = new Set(grades.map(g => g.id));
