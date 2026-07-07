@@ -2887,8 +2887,10 @@ function EmployeeManagement({ emps, setEmps, depts, desigs, nextEmpId, setNextEm
     setEditFor(null);
   };
 
-  const confirmMarkInactive = (payload) => {
-    const id = payload.id;
+const confirmMarkInactive = async (payload) => {
+  const id = payload.id;
+  try {
+    await hrService.deleteHrEmployee({ id });
     setEmps(prev => (prev || []).map(e => e.id === id ? {
       ...e,
       status: 'Inactive',
@@ -2899,8 +2901,26 @@ function EmployeeManagement({ emps, setEmps, depts, desigs, nextEmpId, setNextEm
     setInactFor(null);
     setSub('inactive');
     toast(`${payload.name} marked Inactive`, 'success');
-  };
-
+  } catch (err) {
+    toast(err.message || 'Could not mark employee inactive', 'error');
+  }
+};
+const markActiveAgain = async (emp) => {
+  try {
+    await hrService.restoreHrEmployee({ id: emp.id });
+    setEmps(prev => (prev || []).map(e => e.id === emp.id ? {
+      ...e,
+      status: 'Active',
+      inactiveReason: undefined,
+      inactiveDate:   undefined,
+      inactiveNotes:  undefined,
+    } : e));
+    setSub('active');
+    toast(`${getFullName(emp)} marked Active again`, 'success');
+  } catch (err) {
+    toast(err.message || 'Could not mark employee active', 'error');
+  }
+};
   const recordLetterIssued = (empId, letter) => {
     setEmps(prev => (prev || []).map(e => e.id === empId ? {
       ...e,
@@ -3072,26 +3092,27 @@ function EmployeeManagement({ emps, setEmps, depts, desigs, nextEmpId, setNextEm
         ) : (
           <div>
             {list.map((e, i) => (
-              <EmployeeRow
-                key={e.id}
-                idx={i + 1}
-                emp={e}
-                depts={depts}
-                desigs={desigs}
-                deptName={getDeptName(e.dId)}
-                desigName={getDesigName(e.desId)}
-                isOpen={openEmpId === e.id}
-                onToggleOpen={() => setOpenEmpId(prev => prev === e.id ? null : e.id)}
-                menuOpen={menuOpenId === e.id}
-                onToggleMenu={() => setMenuOpenId(prev => prev === e.id ? null : e.id)}
-                onCloseMenu={() => setMenuOpenId(null)}
-                onEdit={()      => { setMenuOpenId(null); setEditFor(e); }}
-                onProfile={()   => { setMenuOpenId(null); setProfileFor(e); }}
-                onIdCard={()    => { setMenuOpenId(null); setIdcFor(e); }}
-                onLetter={()    => { setMenuOpenId(null); setLetterFor(e); }}
-                onInactive={()  => { setMenuOpenId(null); setInactFor(e); }}
-                toast={toast}
-              />
+         <EmployeeRow
+  key={e.id}
+  idx={i + 1}
+  emp={e}
+  depts={depts}
+  desigs={desigs}
+  deptName={getDeptName(e.dId)}
+  desigName={getDesigName(e.desId)}
+  isOpen={openEmpId === e.id}
+  onToggleOpen={() => setOpenEmpId(prev => prev === e.id ? null : e.id)}
+  menuOpen={menuOpenId === e.id}
+  onToggleMenu={() => setMenuOpenId(prev => prev === e.id ? null : e.id)}
+  onCloseMenu={() => setMenuOpenId(null)}
+  onEdit={()      => { setMenuOpenId(null); setEditFor(e); }}
+  onProfile={()   => { setMenuOpenId(null); setProfileFor(e); }}
+  onIdCard={()    => { setMenuOpenId(null); setIdcFor(e); }}
+  onLetter={()    => { setMenuOpenId(null); setLetterFor(e); }}
+  onInactive={()  => { setMenuOpenId(null); setInactFor(e); }}
+  onRestore={()   => { setMenuOpenId(null); markActiveAgain(e); }}
+  toast={toast}
+/>
             ))}
           </div>
         )}
@@ -3173,7 +3194,7 @@ function EmployeeRow({
   idx, emp, depts, desigs, deptName, desigName,
   isOpen, onToggleOpen,
   menuOpen, onToggleMenu, onCloseMenu,
-  onEdit, onProfile, onIdCard, onLetter, onInactive,
+  onEdit, onProfile, onIdCard, onLetter, onInactive, onRestore,
   toast,
 }) {
   const nm  = getFullName(emp);
@@ -3270,9 +3291,9 @@ function EmployeeRow({
                     <button type="button" className="drop-item" onClick={() => stubAction('Issue Letter')}>
                       <i className="fa-solid fa-envelope-open-text" aria-hidden="true"></i> Issue Letter
                     </button>
-                    <button type="button" className="drop-item" style={{ color: '#16A34A' }} onClick={() => stubAction('Mark Active Again')}>
-                      <i className="fa-solid fa-user-check" aria-hidden="true"></i> Mark Active Again
-                    </button>
+                  <button type="button" className="drop-item" style={{ color: '#16A34A' }} onClick={onRestore}>
+  <i className="fa-solid fa-user-check" aria-hidden="true"></i> Mark Active Again
+</button>
                     <button type="button" className="drop-item red" onClick={() => stubAction('Delete Employee')}>
                       <i className="fa-solid fa-trash" aria-hidden="true"></i> Delete Employee
                     </button>
