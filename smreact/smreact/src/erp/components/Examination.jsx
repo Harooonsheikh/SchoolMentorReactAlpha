@@ -911,6 +911,7 @@ const [subjects, setSubjects] = useState([]);
   const [rhCombined, setRhCombined]           = useState([]);   // student ki class/section ke combined assessments (combinedassessmentcrud)
   const [rhCardMarks, setRhCardMarks]         = useState(null); // View card ke liye real per-subject marks
   const [rhExamScores, setRhExamScores]       = useState({});   // { [exam.id]: overall % } exam history ke liye
+  const [rhExamRanks, setRhExamRanks]         = useState({});   // { [exam.id]: "1st" } getstudentsrankings se
   const [rhStudentSummaries, setRhStudentSummaries] = useState({}); // { [studentId]: { avgPct, best, count, trend, grade } } card list ke liye
   const [rhAttendance, setRhAttendance] = useState(null); // active student ki REAL attendance: { pct, monthly:[{label,pct}] }
   const [rhAttnLoading, setRhAttnLoading] = useState(false); // attendance per-day loop chalte waqt spinner ke liye
@@ -1143,7 +1144,7 @@ const [subjects, setSubjects] = useState([]);
   /* Exam history ke har exam ka overall % compute karo (score bar / grade / Performance Trends ke liye):
      har exam ke saare subjects ke obtain/total marks jodo → % = sum(obtain)/sum(total)*100. */
   useEffect(() => {
-    if (!rhActiveStudent || !rhExams.length) { setRhExamScores({}); return undefined; }
+    if (!rhActiveStudent || !rhExams.length) { setRhExamScores({}); setRhExamRanks({}); return undefined; }
     const st = rhActiveStudent;
     const classID = st.gradeId ?? st.classID;
     const sectionID = st.sectionId ?? st.sectionID;
@@ -1153,6 +1154,20 @@ const [subjects, setSubjects] = useState([]);
       try {
         const token = sessionStorage.getItem('token');
         const headers = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
+        // Har exam ki rankings (getstudentsrankings) — is student ka rank Position column me.
+        const ranks = {};
+        await Promise.all(rhExams.map(async ex => {
+          try {
+            const rp = new URLSearchParams({ sectionID: String(sectionID), termID: String(ex.termID ?? ''), examID: String(ex.selectExam) });
+            const rr = await fetch(buildUrl(`/api/getstudentsrankings?${rp}`), { headers });
+            const rd = await rr.json();
+            const listR = Array.isArray(rd) ? rd : (rd?.data || []);
+            const mine = listR.find(x => String(x.studentId ?? x.StudentId ?? x.studentID) === String(studentId));
+            if (mine && mine.ranking) ranks[ex.id] = String(mine.ranking);
+          } catch { /* skip exam ranking */ }
+        }));
+        if (!cancelled) setRhExamRanks(ranks);
+
         const subs = (await getSyllabusSubjects(classID, sectionID).catch(() => [])) || [];
         const scores = {};
         await Promise.all(rhExams.map(async ex => {
@@ -3455,7 +3470,7 @@ useEffect(() => {
                         <div style={{ minWidth: 0 }}>
                           <div style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: 13 }}>{ex.name}</div>
                           <div style={{ fontSize: 10.5, color: 'var(--text-muted)', marginTop: 2 }}>
-                            {ex.classes.length} Class{ex.classes.length !== 1 ? 'es' : ''} · {formatDate(ex.from || '—')}
+                            {ex.classes.length} Class{ex.classes.length !== 1 ? 'es' : ''} · {formatDate(ex.from || '—')} - {formatDate(ex.to || '—')}
                           </div>
                         </div>
                       </div>
@@ -4308,7 +4323,10 @@ useEffect(() => {
           : RES_SUBJECTS.reduce((a, s) => absSet[s] ? a : a + (cd.totalMarks[s] || 0), 0));
     const obt = st.absent ? 0 : RES_SUBJECTS.reduce((a, s) => a + (absSet[s] ? 0 : (st.obtained[s] || 0)), 0);
     const pct = tot && !st.absent ? Math.round((obt / tot) * 10000) / 100 : 0;
-    const grade = (!st.absent && obt > 0) ? rcGetGrade(obt, tot) : null;
+    // Grade card jaisा — gradingcrud (rsGrades) se % ke hisaab se (fallback rcGetGrade).
+    const grade = (!st.absent && obt > 0)
+      ? ((rsGrades && rsGrades.length) ? rcGradeByScale(pct, rsGrades) : rcGetGrade(obt, tot))
+      : null;
     return { tot, obt, pct, grade };
   };
 
@@ -4620,7 +4638,10 @@ onClick={e => {
     const rankEntry  = apiRankings.find(r => r.studentID === st.id);
     const obtMarks   = marksEntry ? Number(marksEntry.obtainedMarks) : 0;
     const pct        = totalMarksSum > 0 ? Math.round((obtMarks / totalMarksSum) * 10000) / 100 : 0;
-    const grade      = (obtMarks > 0 && totalMarksSum > 0) ? rcGetGrade(obtMarks, totalMarksSum) : null;
+    // Grade card jaisa — gradingcrud (rsGrades) se % ke hisaab se, taake table & card SAME.
+    const grade      = (obtMarks > 0 && totalMarksSum > 0)
+      ? ((rsGrades && rsGrades.length) ? rcGradeByScale(pct, rsGrades) : rcGetGrade(obtMarks, totalMarksSum))
+      : null;
     const gradeBg    = grade ? (RS_GRADE_COLORS[grade.grade] || '#1E3A8A') : null;
     const hasMarks   = obtMarks > 0;
     const stStatus   = hasMarks ? 'Complete' : 'Incomplete';
@@ -4955,9 +4976,10 @@ onClick={async () => {
                                         </thead>
                                         <tbody>
                                           {cr.students.map((st, si) => {
-                                            // Grade computed from Grand Obtained/Total (same logic as Single Assessment),
-                                            // since the combined API returns an empty grade string.
-                                            const gradeObj   = rcGetGrade(st.grandObt, st.grandTotal);
+                                            // Grade card jaisा — grandObt/grandTotal ka % nikaal kar gradingcrud
+                                            // (rsGrades) se. Taake table aur card/report ka grade SAME ho.
+                                            const _gtPct = Number(st.grandTotal) > 0 ? Math.round((Number(st.grandObt) / Number(st.grandTotal)) * 10000) / 100 : 0;
+                                            const gradeObj   = (rsGrades && rsGrades.length) ? rcGradeByScale(_gtPct, rsGrades) : rcGetGrade(st.grandObt, st.grandTotal);
                                             const gradeLabel = gradeObj?.grade || '—';
                                             const grCol = RS_GRADE_COLORS[gradeLabel] || '#475569';
                                             const pctCol = st.pct >= 80 ? '#16A34A' : st.pct >= 60 ? '#D97706' : '#DC2626';
@@ -5109,7 +5131,7 @@ onClick={async () => {
                 year: ex.termName || '',
                 date: `${fmtD(ex.dateFrom)} → ${fmtD(ex.dateTo)}`,
                 pct: rhExamScores[ex.id] ?? 0,
-                rank: 1,
+                rank: rhExamRanks[ex.id] || '',   // getstudentsrankings se "1st"/"2nd"…
                 selectExam: ex.selectExam,
                 termID: ex.termID,
                 classID: ex.classID,
@@ -5122,7 +5144,7 @@ onClick={async () => {
                 year: '',
                 date: fmtD(c.createdDate),
                 pct: 0,
-                rank: 1,
+                rank: '',   // combined ka koi ranking API nahi → position blank
                 combinedId: c.id,
                 mainExamID: c.mainExamID,
                 mainExamName: c.mainExamName || '',
@@ -5236,7 +5258,10 @@ onClick={async () => {
                                 const pctCol = r.pct >= 80 ? '#16A34A' : r.pct >= 60 ? '#1E40AF' : r.pct >= 50 ? '#D97706' : '#DC2626';
                                 const grade = rcGetGrade(r.pct, 100);
                                 const gradeCol = RS_GRADE_COLORS[grade ? grade.grade : 'F'] || '#475569';
-                                const rankSfx = r.rank === 1 ? 'st' : r.rank === 2 ? 'nd' : r.rank === 3 ? 'rd' : 'th';
+                                // rank string ("1st") API se aata hai; number ho to suffix lagao; khali → "—".
+                                const rankStr = (typeof r.rank === 'string' && /[a-z]/i.test(r.rank))
+                                  ? r.rank
+                                  : (r.rank ? `${r.rank}${r.rank === 1 ? 'st' : r.rank === 2 ? 'nd' : r.rank === 3 ? 'rd' : 'th'}` : '—');
                                 return (
                                   <div key={idx} className="rh-timeline-row">
                                     <div style={{ width: 10, height: 10, borderRadius: '50%', background: isCombined ? '#7C3AED' : '#1E40AF', flexShrink: 0, marginTop: 6 }} />
@@ -5282,7 +5307,7 @@ onClick={async () => {
                                       <div style={{ fontSize: 16, fontWeight: 900, color: gradeCol }}>{grade ? grade.grade : '—'}</div>
                                     </div>
                                     <div style={{ textAlign: 'center', width: 40, flexShrink: 0 }}>
-                                      <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--text-secondary)' }}>{r.rank}{rankSfx}</div>
+                                      <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--text-secondary)' }}>{rankStr}</div>
                                       <div style={{ fontSize: 8.5, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.4px' }}>Pos.</div>
                                     </div>
                                     <div style={{ display: 'flex', gap: 6, flexShrink: 0, flexWrap: 'wrap' }}>
@@ -12855,29 +12880,31 @@ const runDelete = async () => {
   };
 
   const submit = async () => {
-    // ── Validation (setLoading se PEHLE) — SIRF naye add kiye rows par ──────
-    // (Pre-existing saved duplicates par block na ho — warna naya grade add karne par
-    //  purane remark duplicates ka toaster aa jata hai.) Naye rows ka id 'temp_' se
-    //  shuru hota hai; existing (API) rows ka numeric.
-    const isNew = (row) => String(row.id).startsWith('temp_');
-    const gradePctKey = (g) => `${g.cond}|${String(g.pct ?? '').trim()}`;
-    // Naya grade: same grade value ya same percentage kisi DOOSRI grade row me na ho.
-    for (const ng of draftGrades.filter(isNew)) {
-      const gv = String(ng.grade || '').trim();
-      if (gv && draftGrades.some(g => g.id !== ng.id && String(g.grade || '').trim() === gv)) {
-        toast(`"${gv}" is already added. This grade cannot be added again.`, 'error'); return;
+    // ── Validation (setLoading se PEHLE) ────────────────────────────────────
+    // Duplicate tabhi block karo jab USER ne banaya ho (naya add ya edit karke) — yani
+    // draft me us key ki count original (DB) se ZYADA ho. Pehle se DB me maujood
+    // duplicates par block NAHI (warna unrelated save bhi ruk jate). Keys:
+    //   grade value | grade percentage (cond+pct) | remark percentage (cond+pct)
+    const countBy = (arr, keyFn) => (arr || []).reduce((m, x) => {
+      const k = keyFn(x); if (k) m[k] = (m[k] || 0) + 1; return m;
+    }, {});
+    const gVal  = (g) => String(g.grade || '').trim();
+    const gPct  = (g) => { const p = String(g.pct ?? '').trim(); return p ? `${g.cond}|${p}` : ''; };
+    const rPct  = (r) => { const p = String(r.pct ?? '').trim(); return p ? `${r.cond}|${p}` : ''; };
+    // User-created duplicate check: draft count >= 2 aur original count se zyada.
+    const findUserDup = (draftArr, origArr, keyFn) => {
+      const dCnt = countBy(draftArr, keyFn), oCnt = countBy(origArr, keyFn);
+      for (const [key, cnt] of Object.entries(dCnt)) {
+        if (cnt >= 2 && cnt > (oCnt[key] || 0)) return key;
       }
-      if (String(ng.pct ?? '').trim() !== '' && draftGrades.some(g => g.id !== ng.id && gradePctKey(g) === gradePctKey(ng))) {
-        toast('This percentage has already been assigned a grade.', 'error'); return;
-      }
-    }
-    // Naya remark: same percentage kisi DOOSRI remark row me na ho.
-    const remarkPctKey = (r) => `${r.cond}|${String(r.pct ?? '').trim()}`;
-    for (const nr of draftRemarks.filter(isNew)) {
-      if (String(nr.pct ?? '').trim() !== '' && draftRemarks.some(r => r.id !== nr.id && remarkPctKey(r) === remarkPctKey(nr))) {
-        toast('This percentage has already been assigned a remark.', 'error'); return;
-      }
-    }
+      return null;
+    };
+    if (findUserDup(draftGrades, grades, gVal))
+      { toast(`"${findUserDup(draftGrades, grades, gVal)}" is already added. This grade cannot be added again.`, 'error'); return; }
+    if (findUserDup(draftGrades, grades, gPct))
+      { toast('This percentage has already been assigned a grade.', 'error'); return; }
+    if (findUserDup(draftRemarks, remarks, rPct))
+      { toast('This percentage has already been assigned a remark.', 'error'); return; }
 
     setLoading(true);
 
