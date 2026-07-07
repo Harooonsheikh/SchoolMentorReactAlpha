@@ -99,6 +99,35 @@ async function fetchClassSectionStudents() {
   return rows;
 }
 
+/* Wahi class-section API — magr INACTIVE students ka FLAT list (har student par
+   cls/sec set) — taake Inactive tab bhi Active jaisा class-wise (class ke against
+   students) dikha sake. */
+async function fetchInactiveStudents() {
+  const branchID = sessionStorage.getItem('branchID') || 0;
+  const res  = await fetch(buildUrl(`/api/LaunchSetup/get-class-section-studentlist-by-branch/${branchID}`), {
+    headers: { Accept: '*/*' },
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(apiMessage(json) || 'Could not load inactive students');
+  const grades = Array.isArray(json?.data) ? json.data : [];
+
+  const out = [];
+  grades.forEach(g => {
+    const gradeName = pick(g, 'name', 'gradeName', 'className') || '—';
+    const sections  = Array.isArray(g.sections) ? g.sections : [];
+    sections.forEach(s => {
+      const sectionName = pick(s, 'sectionName', 'name') || '—';
+      // Inactive tab = jinka isActive === false (Active tab ka ulta). Jab kisi student
+      // ko "Mark Inactive" kiya jaye (isActive false) to woh yahan class-wise dikhega.
+      (Array.isArray(s.students) ? s.students : [])
+        .map(mapStudent)
+        .filter(st => !st.isActive)
+        .forEach(st => out.push({ ...st, cls: gradeName, sec: sectionName }));
+    });
+  });
+  return out;
+}
+
 /* ─── Legacy APIs (Dashboard, etc.) — kept unchanged ─── */
 export async function getRecentAdmissions() { await delay(); return clone(mockRecentAdmissions); }
 export async function getStudents()         { await delay(); return clone(mockStudents); }
@@ -111,7 +140,7 @@ export async function getStudentById(id)    {
 
 /* ─── Students Module APIs ─── */
 export async function getStuClasses() { return fetchClassSectionStudents(); }
-export async function getStuInactive()        { await delay(); return clone(mockStuInactive); }
+export async function getStuInactive()        { return fetchInactiveStudents(); }
 export async function getStuFamilies()        { await delay(); return clone(mockStuFamilies); }
 /* Class names for the Add/Edit dropdown — derived from the loaded rows
    so the option labels exactly match the class+section data. */

@@ -1062,15 +1062,15 @@ export default function Students({ toast }) {
   /* Shared data — fetched once at the module level so the Active,
      Inactive and Family Tree tabs see the same students. */
   const { data: serverClasses = [] }   = useAsync(studentService.getStuClasses, []);
-  const { data: serverInactive = [] }  = useAsync(studentService.getStuInactive, []);
   const { data: serverFamilies = [] }  = useAsync(studentService.getStuFamilies, []);
   const { data: school = {} }          = useAsync(studentService.getStuSchool, {});
 
   const [classes, setClasses]     = useState(null);
+  // Inactive students module-load par NAHI — Inactive tab kholne par (InactiveStudents
+  // mount par) fetch hote hain, taake tab click par hi API hit ho.
   const [inactive, setInactive]   = useState(null);
   const [families, setFamilies]   = useState(null);
   useEffect(() => { if (serverClasses.length  && classes  == null) setClasses(serverClasses);   }, [serverClasses, classes]);
-  useEffect(() => { if (serverInactive.length && inactive == null) setInactive(serverInactive); }, [serverInactive, inactive]);
   useEffect(() => { if (serverFamilies.length && families == null) setFamilies(serverFamilies); }, [serverFamilies, families]);
   const classList = classes  || [];
   const inactList = inactive || [];
@@ -2446,6 +2446,21 @@ function Field({ label, hint, wide, children }) {
 function InactiveStudents({ classes, setClasses, inactive, setInactive, toast }) {
   /* school identity for the report header */
   const { data: school = {} } = useAsync(studentService.getStuSchool, {});
+  const [loading, setLoading] = useState(false);
+
+  /* Inactive students ki API tab hit karo jab ye tab khule (component mount) —
+     module load par nahi. Har baar tab kholne par fresh data. */
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    studentService.getStuInactive()
+      .then(data => { if (alive) setInactive(Array.isArray(data) ? data : []); })
+      .catch(err => { console.error('Could not load inactive students', err); if (alive) { setInactive([]); toast?.('Could not load inactive students', 'error'); } })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const [profileCfg, setProfileCfg] = useState(null);   // { student, title, sub } for the Report Picker
   const [search, setSearch] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
@@ -2465,16 +2480,23 @@ function InactiveStudents({ classes, setClasses, inactive, setInactive, toast })
     return () => document.removeEventListener('mousedown', onClick);
   }, [searchOpen]);
 
-  /* Group inactive list by `${cls}__${sec}` */
+  /* Group inactive list by `${cls}__${sec}`.
+     Base: SAARI classes/sections (Active tab jaisा — `classes` prop se), taake
+     har class dikhe chahe us me abhi koi inactive student na ho. Phir inactive
+     students ko unki class/section me daal do. */
   const groups = useMemo(() => {
     const map = {};
+    (classes || []).forEach(c => {
+      const key = `${c.cls || 'Unassigned'}__${c.sec || '—'}`;
+      if (!map[key]) map[key] = { key, cls: c.cls || 'Unassigned', sec: c.sec || '—', students: [] };
+    });
     inactive.forEach(s => {
       const key = `${s.cls || 'Unassigned'}__${s.sec || '—'}`;
       if (!map[key]) map[key] = { key, cls: s.cls || 'Unassigned', sec: s.sec || '—', students: [] };
       map[key].students.push(s);
     });
     return Object.values(map).sort((a, b) => a.cls.localeCompare(b.cls) || a.sec.localeCompare(b.sec));
-  }, [inactive]);
+  }, [classes, inactive]);
 
   const filteredGroups = useMemo(() => {
     if (!search.trim()) return groups;
@@ -2654,7 +2676,12 @@ function InactiveStudents({ classes, setClasses, inactive, setInactive, toast })
           <div className="th c">Details</div>
         </div>
 
-        {filteredGroups.length === 0 ? (
+        {loading ? (
+          <div className="stu-empty">
+            <div className="stu-empty-ic"><i className="fa-solid fa-spinner fa-spin"></i></div>
+            <div className="stu-empty-title">Loading inactive students…</div>
+          </div>
+        ) : filteredGroups.length === 0 ? (
           <div className="stu-empty">
             <div className="stu-empty-ic"><i className="fa-solid fa-user-slash"></i></div>
             <div className="stu-empty-title">No inactive students</div>
