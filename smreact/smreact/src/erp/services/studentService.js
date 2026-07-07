@@ -3,9 +3,7 @@ import {
   mockStudentStats,
   mockRecentAdmissions,
   mockStuInactive,
-  mockStuFamilies,
   mockStuInactiveReasons,
-  mockStuSchool,
   mockStuNextReg,
   mockStuNextAdm,
   mockStuNextFamId,
@@ -57,6 +55,7 @@ function mapStudent(st) {
     pcontact: pick(st, 'previousSchoolContactNo'),
     photo:    pick(st, 'picture') || null,
     isActive: st?.isActive !== false,
+    reason:   pick(st, 'inactiveReason', 'reason'),   // struck-off reason (Inactive tab)
     _disc:    {},
     stdDocs:  {},
     docs:     [],
@@ -104,7 +103,9 @@ async function fetchClassSectionStudents() {
    students) dikha sake. */
 async function fetchInactiveStudents() {
   const branchID = sessionStorage.getItem('branchID') || 0;
-  const res  = await fetch(buildUrl(`/api/LaunchSetup/get-class-section-studentlist-by-branch/${branchID}`), {
+  // Dedicated inactive list — same nested grades→sections→students shape as the
+  // active call, but the backend filters to isActive=false via the query param.
+  const res  = await fetch(buildUrl(`/api/LaunchSetup/get-class-section-studentlist-by-branch/${branchID}?isActive=false`), {
     headers: { Accept: '*/*' },
   });
   const json = await res.json().catch(() => null);
@@ -128,6 +129,130 @@ async function fetchInactiveStudents() {
   return out;
 }
 
+/* ═══════════════════════════════════════════════════════════════════
+   Family Tree — one action-based endpoint for the whole CRUD.
+     POST /api/FamilyTree/familytreecrud
+     body: { action: 'get'|'insert'|'update'|'delete', id, branchID,
+             familyName, familyDetails, guardianName, contactNumber,
+             email, createdBy, modifiedBy }
+   'get' returns { data: [ { id, familyName, ..., students:[…] } ] };
+   the embedded students become each family's linked members.
+   ═══════════════════════════════════════════════════════════════════ */
+const FAMILY_URL = '/api/FamilyTree/familytreecrud';
+
+/* One embedded student record → the member shape the Family Tree UI reads. */
+function mapFamilyMember(s) {
+  return {
+    detailID:   pick(s, 'detailID') || 0,
+    _id:        pick(s, 'applicantsID', 'applicantsId', 'id') || 0,
+    reg:        String(pick(s, 'registerNo', 'regNo') || ''),
+    first:      pick(s, 'firstName', 'name'),
+    last:       pick(s, 'lastName'),
+    photo:      pick(s, 'picture') || null,
+    _cls:       pick(s, 'className', 'gradeName') || '',
+    _sec:       pick(s, 'sectionName') || '',
+    _gradeId:   pick(s, 'gradeID', 'gradeId') || 0,
+    _sectionId: pick(s, 'sectionID', 'sectionId') || 0,
+    _raw:       s,
+  };
+}
+
+/* One backend family record → the UI family shape (with members inline). */
+function mapFamily(f) {
+  return {
+    id:       pick(f, 'id', 'ID') || 0,
+    branchID: pick(f, 'branchID', 'branchId') || 0,
+    name:     pick(f, 'familyName'),
+    details:  pick(f, 'familyDetails'),
+    guardian: pick(f, 'guardianName'),
+    contact:  pick(f, 'contactNumber'),
+    email:    pick(f, 'email'),
+    created:  String(pick(f, 'createdAt', 'CreatedAt') || '').slice(0, 10),
+    members:  (Array.isArray(f.students) ? f.students : []).map(mapFamilyMember),
+    _raw:     f,
+  };
+}
+
+/* POST the CRUD body; the caller supplies the action + fields. */
+async function familyCrud(fields = {}) {
+  const branchID = Number(sessionStorage.getItem('branchID')) || 0;
+  const userID   = Number(sessionStorage.getItem('UserID')) || 0;
+  const body = {
+    action:        'get',
+    id:            0,
+    branchID,
+    familyName:    '',
+    familyDetails: '',
+    guardianName:  '',
+    contactNumber: '',
+    email:         '',
+    createdBy:     userID,
+    modifiedBy:    userID,
+    ...fields,
+  };
+  const res  = await fetch(buildUrl(FAMILY_URL), {
+    method: 'POST',
+    headers: { Accept: '*/*', 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(apiMessage(json) || 'Family tree request failed');
+  return json;
+}
+
+/* action:get → mapped family rows (with embedded members). */
+async function fetchFamilies() {
+  const json = await familyCrud({ action: 'get' });
+  const rows = Array.isArray(json?.data) ? json.data : (Array.isArray(json) ? json : []);
+  return rows.map(mapFamily);
+}
+
+/* ─── Family Tree DETAIL (student ↔ family links) ───
+   POST /api/FamilyTree/familytreedetailcrud
+     body: { action, id, treeID, branchID, applicantsID, gradeID, sectionID, createdBy }
+   insert → link a student to a family (treeID = family id, applicantsID = student id);
+   delete → remove a link by its detail id. */
+async function familyDetailCrud(fields = {}) {
+  const branchID = Number(sessionStorage.getItem('branchID')) || 0;
+  const userID   = Number(sessionStorage.getItem('UserID')) || 0;
+  const body = {
+    action:       'insert',
+    id:           0,
+    treeID:       0,
+    branchID,
+    applicantsID: 0,
+    gradeID:      0,
+    sectionID:    0,
+    createdBy:    userID,
+    ...fields,
+  };
+  const res  = await fetch(buildUrl('/api/FamilyTree/familytreedetailcrud'), {
+    method: 'POST',
+    headers: { Accept: '*/*', 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(apiMessage(json) || 'Family link request failed');
+  return json;
+}
+
+/* Link a student to a family (Active Students → "Add Student to Family Tree"). */
+export async function linkStuToFamily({ treeID, applicantsID, gradeID, sectionID } = {}) {
+  return familyDetailCrud({
+    action:       'insert',
+    id:           0,
+    treeID:       Number(treeID) || 0,
+    applicantsID: Number(applicantsID) || 0,
+    gradeID:      Number(gradeID) || 0,
+    sectionID:    Number(sectionID) || 0,
+  });
+}
+
+/* Unlink a student from a family by its detail id (Family Tree → Unlink). */
+export async function unlinkStuFromFamily({ id } = {}) {
+  return familyDetailCrud({ action: 'delete', id: Number(id) || 0 });
+}
+
 /* ─── Legacy APIs (Dashboard, etc.) — kept unchanged ─── */
 export async function getRecentAdmissions() { await delay(); return clone(mockRecentAdmissions); }
 export async function getStudents()         { await delay(); return clone(mockStudents); }
@@ -141,7 +266,7 @@ export async function getStudentById(id)    {
 /* ─── Students Module APIs ─── */
 export async function getStuClasses() { return fetchClassSectionStudents(); }
 export async function getStuInactive()        { return fetchInactiveStudents(); }
-export async function getStuFamilies()        { await delay(); return clone(mockStuFamilies); }
+export async function getStuFamilies()        { return fetchFamilies(); }
 /* Class names for the Add/Edit dropdown — derived from the loaded rows
    so the option labels exactly match the class+section data. */
 export async function getStuClassList() {
@@ -171,7 +296,67 @@ export async function getStuFeeHeads(gradeId) {
   }));
 }
 export async function getStuInactiveReasons() { await delay(); return clone(mockStuInactiveReasons); }
-export async function getStuSchool()          { await delay(); return clone(mockStuSchool); }
+
+/* Branch staff — used to auto-fill certificate signatures: the Principal
+   (isPrinciple) and the teacher assigned to a given class/section.
+   GET /api/LaunchSetup/get-employees-by-branch/{branchID}. */
+export async function getStuStaff() {
+  const branchID = sessionStorage.getItem('branchID') || 0;
+  const res  = await fetch(buildUrl(`/api/LaunchSetup/get-employees-by-branch/${branchID}`), {
+    headers: { Accept: '*/*' },
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(apiMessage(json) || 'Could not load staff');
+  const rows = Array.isArray(json?.data) ? json.data : [];
+  return rows.map(e => ({
+    id:          pick(e, 'id') || 0,
+    name:        `${pick(e, 'firstName')} ${pick(e, 'lastName')}`.trim(),
+    designation: pick(e, 'designationName', 'designation'),
+    isPrinciple: e?.isPrinciple === true,
+    isTeacher:   e?.isTeacher === true,
+    assignments: (Array.isArray(e.assignments) ? e.assignments : []).map(a => ({
+      gradeId:   pick(a, 'gradeId', 'gradeID') || 0,
+      sectionId: pick(a, 'sectionId', 'sectionID') || 0,
+    })),
+  }));
+}
+
+/* Resolve a branch logo to an absolute URL usable inside a print window
+   (data URIs / absolute URLs pass through; relative paths get the API base). */
+function branchLogoUrl(raw) {
+  if (!raw) return '';
+  if (/^(https?:|data:)/i.test(raw)) return raw;
+  return buildUrl(raw.startsWith('/') ? raw : `/${raw}`);
+}
+
+/* School/branch identity used by EVERY student report (ID cards, certificates,
+   profile PDFs, class/inactive/family reports). Real branch details from
+   GET /api/Registration/get-branch/{branchID} — name, address, logo, created. */
+export async function getStuSchool() {
+  const branchID = sessionStorage.getItem('branchID') || 0;
+  const res  = await fetch(buildUrl(`/api/Registration/get-branch/${branchID}`), {
+    headers: { Accept: '*/*' },
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(apiMessage(json) || 'Could not load branch details');
+  const d = json?.data || json || {};
+  const name    = pick(d, 'name', 'branchName') || 'School';
+  const address = [pick(d, 'address'), pick(d, 'landmark')].filter(Boolean).join(', ');
+  const monogram = name.split(/\s+/).map(w => w[0]).filter(Boolean).slice(0, 2).join('').toUpperCase() || 'SM';
+  return {
+    id:       pick(d, 'id', 'ID') || 0,
+    name,
+    campus:   pick(d, 'branchName', 'branchCode') || 'Main Campus',
+    monogram,
+    address,
+    phone:    pick(d, 'branchPhone', 'phone'),
+    email:    pick(d, 'branchEmail1', 'email'),
+    logo:     branchLogoUrl(pick(d, 'branchLogo', 'logo')),
+    session:  pick(d, 'academicSession'),
+    created:  String(pick(d, 'createdAt', 'CreatedAt') || '').slice(0, 10),
+    _raw:     d,
+  };
+}
 export async function getStuNextReg()         { await delay(); return mockStuNextReg; }
 export async function getStuNextAdm()         { await delay(); return mockStuNextAdm; }
 export async function getStuNextFamId()       { await delay(); return mockStuNextFamId; }
@@ -247,10 +432,53 @@ export async function saveStuStudent(p = {}) {
   if (!res.ok) throw new Error(apiMessage(json) || 'Could not save student');
   return json;
 }
+/* Mark a student inactive (soft delete). The backend's delete-student endpoint
+   flips isActive → false, so the student drops out of the active roster and
+   shows up in the inactive list (get-...?isActive=false). The reason rides
+   along as a query param. id 0 is a no-op. */
+export async function markStuInactive(id, reason = '') {
+  const qs   = reason ? `?reason=${encodeURIComponent(reason)}` : '';
+  const res  = await fetch(buildUrl(`/api/LaunchSetup/delete-student/${id || 0}${qs}`), {
+    method: 'DELETE',
+    headers: { Accept: '*/*' },
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(apiMessage(json) || 'Could not mark student inactive');
+  return json;
+}
+
+/* Restore a student (make active again). The backend's restore-student endpoint
+   flips isActive → true, so the student returns to the active roster and leaves
+   the inactive list. id 0 is a no-op. */
+export async function restoreStuStudent(id) {
+  const res  = await fetch(buildUrl(`/api/LaunchSetup/restore-student/${id || 0}`), {
+    method: 'PUT',
+    headers: { Accept: '*/*' },
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(apiMessage(json) || 'Could not restore student');
+  return json;
+}
 export async function deleteStuStudent({ reg }) { await delay(); return { reg, deleted: true }; }
 export async function promoteStuStudents(payload) { await delay(); return clone({ ...payload, ok: true }); }
 export async function inactivateStuStudent(payload) { await delay(); return clone({ ...payload, ok: true }); }
 export async function reactivateStuStudent({ reg }) { await delay(); return { reg, reactivated: true }; }
 export async function settleStuDues(payload)    { await delay(); return clone({ ...payload, ok: true }); }
-export async function saveStuFamily(payload)    { await delay(); return clone({ ...payload, ok: true }); }
-export async function deleteStuFamily({ id })   { await delay(); return { id, deleted: true }; }
+/* Create (id 0 → action:insert) or update (id > 0 → action:update) a family.
+   payload = { id, name, guardian, contact, email, details }. */
+export async function saveStuFamily(payload = {}) {
+  const id = Number(payload.id) || 0;
+  return familyCrud({
+    action:        id ? 'update' : 'insert',
+    id,
+    familyName:    payload.name     || '',
+    familyDetails: payload.details  || '',
+    guardianName:  payload.guardian || '',
+    contactNumber: payload.contact  || '',
+    email:         payload.email    || '',
+  });
+}
+/* action:delete — remove a family by id (linked students are not deleted). */
+export async function deleteStuFamily({ id } = {}) {
+  return familyCrud({ action: 'delete', id: Number(id) || 0 });
+}

@@ -561,7 +561,7 @@ function buildStuIdCardHTML(s, cls, school, template, theme, session, role) {
   const front = `
     <div class="card">
       <div class="card-top" style="background:linear-gradient(135deg,${theme.c1},${theme.c2})">
-        <div class="logo-wrap">${stuSchoolLogoSVG()}</div>
+        <div class="logo-wrap">${stuLogoImg(school)}</div>
         <div class="school-name">${stuEsc(school?.name || 'School')}</div>
         <div class="face-lbl">Front</div>
       </div>
@@ -578,7 +578,7 @@ function buildStuIdCardHTML(s, cls, school, template, theme, session, role) {
   const back = `
     <div class="card">
       <div class="card-top" style="background:linear-gradient(135deg,${theme.c1},${theme.c2})">
-        <div class="logo-wrap">${stuSchoolLogoSVG()}</div>
+        <div class="logo-wrap">${stuLogoImg(school)}</div>
         <div class="school-name">${stuEsc(school?.name || 'School')}</div>
         <div class="face-lbl">Back</div>
       </div>
@@ -644,7 +644,7 @@ function buildStuBulkIdHTML(students, cls, school, template, theme, session) {
     return `
       <div class="card">
         <div class="card-top" style="background:linear-gradient(135deg,${theme.c1},${theme.c2})">
-          <div class="logo-wrap">${stuSchoolLogoSVG()}</div>
+          <div class="logo-wrap">${stuLogoImg(school)}</div>
           <div class="school-name">${stuEsc(school?.name || 'School')}</div>
         </div>
         <div class="card-body">
@@ -689,7 +689,9 @@ function buildStuInactiveReportHTML(list, title, school) {
   const addr   = school?.address || '';
   const phone  = school?.phone || '';
   const session = school?.session || '';
-  const logoSvg = `<svg width="46" height="46" viewBox="0 0 36 36"><rect width="36" height="36" rx="9" fill="${brand}"/><path d="M18 9 L26 13 L18 17 L10 13 Z" fill="rgba(255,255,255,.95)"/><path d="M12 15 L12 21 C12 21 15 23 18 23 C21 23 24 21 24 21 L24 15" fill="none" stroke="rgba(255,255,255,.9)" stroke-width="1.4"/><line x1="26" y1="13" x2="26" y2="19" stroke="rgba(255,255,255,.9)" stroke-width="1.2"/></svg>`;
+  const logoSvg = school?.logo
+    ? `<img src="${school.logo}" alt="logo" width="46" height="46" style="object-fit:contain;border-radius:9px"/>`
+    : `<svg width="46" height="46" viewBox="0 0 36 36"><rect width="36" height="36" rx="9" fill="${brand}"/><path d="M18 9 L26 13 L18 17 L10 13 Z" fill="rgba(255,255,255,.95)"/><path d="M12 15 L12 21 C12 21 15 23 18 23 C21 23 24 21 24 21 L24 15" fill="none" stroke="rgba(255,255,255,.9)" stroke-width="1.4"/><line x1="26" y1="13" x2="26" y2="19" stroke="rgba(255,255,255,.9)" stroke-width="1.2"/></svg>`;
   const rows = list.map((s, i) => {
     const dueTotal = Number(s.dues?.total || 0);
     const outCell = dueTotal > 0
@@ -1172,7 +1174,6 @@ export default function Students({ toast }) {
 function ActiveStudents({ classes, setClasses, inactive, setInactive, families, setFamilies, school, toast }) {
   const { data: classListLookup = [] }  = useAsync(studentService.getStuClassList, []);
   const { data: sectionList = [] }      = useAsync(studentService.getStuSectionList, []);
-  const { data: feeHeads = [] }         = useAsync(studentService.getStuFeeHeads, []);
   const { data: reasonsLookup = [] }    = useAsync(studentService.getStuInactiveReasons, []);
   const { data: serverNextReg = 25101 } = useAsync(studentService.getStuNextReg, 25101);
   const { data: serverNextAdm = 1100 }  = useAsync(studentService.getStuNextAdm, 1100);
@@ -1368,16 +1369,26 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
     toast(`${STU_CERT_DEFAULTS[certCfg.type].title} generated`, 'success');
     setCertCfg(null);
   };
-  const doAddToFamily = ({ familyId, relationship }) => {
+  const doAddToFamily = async ({ familyId }) => {
     if (!familyId) { toast('Pick a family first', 'error'); return; }
     const c = list.find(x => x.key === addFamCfg.cKey);
     const s = c?.students.find(x => x.reg === addFamCfg.reg);
     if (!s) return;
-    setClasses(prev => prev.map(cc => cc.key === c.key
-      ? { ...cc, students: cc.students.map(x => x.reg === s.reg ? { ...x, family: familyId, _famRel: relationship } : x) }
-      : cc));
-    const fam = famArr.find(f => f.id === familyId);
-    toast(`${stuFullName(s)} added to ${fam?.name || 'family'} as ${relationship || 'Sibling'}`, 'success');
+    try {
+      /* insert a family-tree detail link: treeID = family, applicantsID = student. */
+      await studentService.linkStuToFamily({
+        treeID:       familyId,
+        applicantsID: s._id,
+        gradeID:      c._gradeId,
+        sectionID:    c._sectionId,
+      });
+      /* refresh families so the student shows under the family's members. */
+      setFamilies(await studentService.getStuFamilies());
+      const fam = famArr.find(f => f.id === familyId);
+      toast(`${stuFullName(s)} added to ${fam?.name || 'family'}`, 'success');
+    } catch (err) {
+      toast(err.message || 'Could not add to family', 'error');
+    }
     setAddFamCfg(null);
   };
 
@@ -1407,31 +1418,30 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
     setPromoteCfg(null);
   };
 
-  /* Mark Inactive: remove from source class, freeze a dues snapshot and
-     push to the inactive list shared with the Inactive Students tab. */
-  const freezeDues = (s) => {
-    /* Realistic mock: ~40% chance of carrying a balance forward. */
-    const heads = [];
-    if (Math.random() < 0.4) {
-      const tuition = feeHeads.find(h => /tuition/i.test(h.name)) || { name: 'Tuition Fee', amount: 5500 };
-      const months  = Math.floor(Math.random() * 4) + 1;
-      heads.push({ name: 'Tuition Fee', amount: tuition.amount * months });
-      const annual  = 4500;
-      if (Math.random() < 0.5) heads.push({ name: 'Annual Charges', amount: annual });
-    }
-    const total = heads.reduce((a, h) => a + h.amount, 0);
-    return { total, heads, session: '2025-2026', months: 'Aug 2025 – Mar 2026', history: [] };
-  };
-  const handleMarkInactive = ({ reason, effectiveDate }) => {
+  /* Mark Inactive: DELETE the student on the server (soft delete → isActive=false),
+     then refresh the Active + Inactive lists from the API. */
+  const handleMarkInactive = async ({ reason, effectiveDate }) => {
+    void effectiveDate; // captured for UX; the delete-student API takes only the id
     const src = list.find(c => c.key === inactiveCfg.cKey);
     if (!src) return;
     const s = src.students.find(x => x.reg === inactiveCfg.reg);
     if (!s) return;
     if (!reason.trim()) { toast('Please enter a reason', 'error'); return; }
-    const snapshot = { ...s, cls: src.cls, sec: src.sec, reason: reason.trim(), inactiveDate: effectiveDate, dues: freezeDues(s) };
-    setClasses(prev => prev.map(c => c.key === src.key ? { ...c, students: c.students.filter(x => x.reg !== s.reg) } : c));
-    setInactive(prev => [snapshot, ...(prev || [])]);
-    toast(`${s.name || stuFullName(s)} moved to Inactive Students`, 'info');
+    try {
+      /* DELETE /api/LaunchSetup/delete-student/{id}?reason=... → soft-deletes (isActive=false). */
+      await studentService.markStuInactive(s._id, reason.trim());
+      /* Refresh both lists from the server so Active drops the student and the
+         Inactive tab (get-...?isActive=false) shows it. */
+      const [freshClasses, freshInactive] = await Promise.all([
+        studentService.getStuClasses(),
+        studentService.getStuInactive(),
+      ]);
+      setClasses(freshClasses);
+      setInactive(Array.isArray(freshInactive) ? freshInactive : []);
+      toast(`${s.name || stuFullName(s)} moved to Inactive Students`, 'info');
+    } catch (err) {
+      toast(err.message || 'Could not mark student inactive', 'error');
+    }
     setInactiveCfg(null);
   };
 
@@ -2528,20 +2538,21 @@ function InactiveStudents({ classes, setClasses, inactive, setInactive, toast })
     }, 80);
   };
 
-  /* Reactivate — move student back to an active class. Creates the
-     class+section if it doesn't exist anymore. */
-  const reactivate = (student) => {
-    const targetKey = `c-${(student.cls || '').toLowerCase().replace(/\s+/g, '-')}-${(student.sec || '').toLowerCase()}`;
-    const target = classes.find(c => c.cls === student.cls && c.sec === student.sec);
-    /* eslint-disable no-unused-vars */
-    const { reason, inactiveDate, dues, ...clean } = student;
-    /* eslint-enable no-unused-vars */
-    setClasses(prev => {
-      if (target) return prev.map(c => c === target ? { ...c, students: [...c.students, clean] } : c);
-      return [...prev, { key: targetKey, cls: student.cls, sec: student.sec, trend: 'up', students: [clean] }];
-    });
-    setInactive(prev => prev.filter(s => s.reg !== student.reg));
-    toast(`${stuFullName(student)} restored to ${student.cls} (${student.sec})`, 'success');
+  /* Reactivate — PUT restore-student/{id} on the server (isActive → true), then
+     refresh the Active + Inactive lists from the API. */
+  const reactivate = async (student) => {
+    try {
+      await studentService.restoreStuStudent(student._id);
+      const [freshClasses, freshInactive] = await Promise.all([
+        studentService.getStuClasses(),
+        studentService.getStuInactive(),
+      ]);
+      setClasses(freshClasses);
+      setInactive(Array.isArray(freshInactive) ? freshInactive : []);
+      toast(`${stuFullName(student)} restored to ${student.cls} (${student.sec})`, 'success');
+    } catch (err) {
+      toast(err.message || 'Could not restore student', 'error');
+    }
     setReactCfg(null);
   };
 
@@ -3107,7 +3118,8 @@ function StuPromoteModal({ cls, classList, sectionList, onClose, onSubmit }) {
 function StuInactiveModal({ cls, student, reasons, onClose, onSubmit }) {
   const [reason, setReason] = useState('');
   const [pickReason, setPickReason] = useState('');
-  const [effectiveDate, setEff] = useState(new Date().toISOString().slice(0, 10));
+  /* Effective date is fixed to today (field is disabled in the form). */
+  const [effectiveDate] = useState(new Date().toISOString().slice(0, 10));
 
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
@@ -3152,7 +3164,14 @@ function StuInactiveModal({ cls, student, reasons, onClose, onSubmit }) {
               />
             </Field>
             <Field label="Effective Date">
-              <input className="stu-finput" type="date" value={effectiveDate} onChange={(e) => setEff(e.target.value)} />
+              <input
+                className="stu-finput"
+                type="date"
+                value={effectiveDate}
+                disabled
+                style={{ background: 'var(--stu-disabled-bg, #f1f5f9)', cursor: 'not-allowed', color: 'var(--text-muted)' }}
+                title="Effective date is today and cannot be changed"
+              />
             </Field>
           </div>
           <div className="stu-warn" style={{ marginTop: 12 }}>
@@ -3819,7 +3838,7 @@ function StuCertModal({ cfg, student, cls, school, onClose, onDownload }) {
   const [sigPrincipal, setSigPrincipal] = useState(true);
   const [sigDirector, setSigDirector]   = useState(false);
   const [sigTeacher, setSigTeacher]     = useState(false);
-  const [namePrincipal, setNamePrincipal] = useState('Dr. Ahmad Raza');
+  const [namePrincipal, setNamePrincipal] = useState('Principal');
   const [nameDirector, setNameDirector]   = useState('Mr. Imran Saleem');
   const [nameTeacher, setNameTeacher]     = useState('Class Teacher');
 
@@ -3829,6 +3848,28 @@ function StuCertModal({ cfg, student, cls, school, onClose, onDownload }) {
     document.body.style.overflow = 'hidden';
     return () => { window.removeEventListener('keydown', onKey); document.body.style.overflow = ''; };
   }, [onClose]);
+
+  /* Auto-fill signatures from real staff: Principal = the branch's principal
+     (isPrinciple); Class Teacher = the teacher assigned to this class/section. */
+  useEffect(() => {
+    let alive = true;
+    studentService.getStuStaff().then(staff => {
+      if (!alive || !Array.isArray(staff)) return;
+      const principal = staff.find(s => s.isPrinciple)
+        || staff.find(s => /principal/i.test(s.designation || ''));
+      if (principal?.name) setNamePrincipal(principal.name);
+
+      const gid = String(cls?._gradeId ?? '');
+      const sid = String(cls?._sectionId ?? '');
+      if (gid && sid) {
+        const matches = (s) => s.assignments.some(a => String(a.gradeId) === gid && String(a.sectionId) === sid);
+        const teacher = staff.find(s => s.isTeacher && matches(s)) || staff.find(s => !s.isPrinciple && matches(s));
+        if (teacher?.name) { setNameTeacher(teacher.name); setSigTeacher(true); }
+      }
+    }).catch(() => {});
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   /* Reset title/body when type switches */
   useEffect(() => {
@@ -4063,10 +4104,14 @@ function StuCertPreview({ student: s, cls, school, type, style, opts }) {
       {/* Header (blue gradient) */}
       <div className="stu-cert-prv-head">
         <div className="stu-cert-prv-logo">
-          <svg width="28" height="28" viewBox="0 0 64 64" fill="none">
-            <polygon points="32,10 60,24 32,32 4,24" fill="#1ABCCD" />
-            <rect x="14" y="36" width="36" height="18" rx="5" fill="rgba(255,255,255,0.18)" stroke="rgba(255,255,255,0.5)" strokeWidth="2" />
-          </svg>
+          {school?.logo ? (
+            <img src={school.logo} alt="logo" style={{ width: 28, height: 28, objectFit: 'contain' }} />
+          ) : (
+            <svg width="28" height="28" viewBox="0 0 64 64" fill="none">
+              <polygon points="32,10 60,24 32,32 4,24" fill="#1ABCCD" />
+              <rect x="14" y="36" width="36" height="18" rx="5" fill="rgba(255,255,255,0.18)" stroke="rgba(255,255,255,0.5)" strokeWidth="2" />
+            </svg>
+          )}
         </div>
         <div className="stu-cert-prv-head-text">
           <div className="stu-cert-prv-school">{school?.name || 'School'}</div>
@@ -4360,7 +4405,7 @@ function buildStuFamilyReportHTML(families, classes, school) {
     </style>
     <div class="page">
       <div class="rhead">
-        <div class="rlogo">${stuSchoolLogoSVG()}</div>
+        <div class="rlogo">${stuLogoImg(school)}</div>
         <div>
           <div class="rname">${stuEsc(school?.name || 'School')}</div>
           <div class="rtitle">Family Tree Report</div>
@@ -4383,7 +4428,7 @@ function buildStuFamilyReportHTML(families, classes, school) {
 /* ═══════════════════════════════════════════════════════════════════
    FAMILY TREE tab
    ═══════════════════════════════════════════════════════════════════ */
-function FamilyTree({ classes, setClasses, families, setFamilies, school, toast }) {
+function FamilyTree({ classes, families, setFamilies, school, toast }) {
   const [search, setSearch] = useState('');
   const [openKey, setOpenKey] = useState(null);
   const [editCfg, setEditCfg] = useState(null);  // {mode:'add'|'edit', family?}
@@ -4398,7 +4443,9 @@ function FamilyTree({ classes, setClasses, families, setFamilies, school, toast 
     return out;
   };
 
-  const enriched = useMemo(() => families.map(f => ({ ...f, members: memberOf(f.id) })), [families, classes]); // eslint-disable-line react-hooks/exhaustive-deps
+  /* Members come embedded in each family (get-...→ students[]); fall back to
+     resolving from class data for any family record that lacks them. */
+  const enriched = useMemo(() => families.map(f => ({ ...f, members: Array.isArray(f.members) ? f.members : memberOf(f.id) })), [families, classes]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const filtered = useMemo(() => {
     if (!search.trim()) return enriched;
@@ -4417,33 +4464,48 @@ function FamilyTree({ classes, setClasses, families, setFamilies, school, toast 
 
   const openAdd  = () => setEditCfg({ mode: 'add' });
   const openEdit = (family) => setEditCfg({ mode: 'edit', family });
-  const handleSave = (payload) => {
+  /* Insert (id 0) / update (id > 0) via familytreecrud, then reload the list. */
+  const handleSave = async (payload) => {
     if (!payload.name.trim()) { toast('Family name is required', 'error'); return; }
-    if (editCfg.mode === 'edit') {
-      setFamilies(prev => prev.map(f => f.id === editCfg.family.id ? { ...f, ...payload, name: payload.name.trim() } : f));
-      toast(`${payload.name} updated`, 'success');
-    } else {
-      const id = `fam-${Date.now()}`;
-      setFamilies(prev => [...(prev || []), { id, ...payload, name: payload.name.trim(), created: new Date().toISOString().slice(0, 10) }]);
-      toast(`${payload.name} created`, 'success');
+    const isEdit = editCfg.mode === 'edit';
+    try {
+      await studentService.saveStuFamily({
+        id:       isEdit ? editCfg.family.id : 0,
+        name:     payload.name.trim(),
+        guardian: payload.guardian,
+        contact:  payload.contact,
+        email:    payload.email,
+        details:  payload.details,
+      });
+      setFamilies(await studentService.getStuFamilies());
+      toast(isEdit ? `${payload.name} updated` : `${payload.name} created`, 'success');
+    } catch (err) {
+      toast(err.message || 'Could not save family', 'error');
     }
     setEditCfg(null);
   };
 
-  const handleDelete = (family) => {
-    /* Unlink all students from this family */
-    setClasses(prev => prev.map(c => ({ ...c, students: c.students.map(s => s.family === family.id ? { ...s, family: '', _famRel: undefined } : s) })));
-    setFamilies(prev => prev.filter(f => f.id !== family.id));
-    toast(`${family.name} deleted — ${memberOf(family.id).length} student(s) unlinked`, 'info');
+  /* action:delete via familytreecrud, then reload the list. */
+  const handleDelete = async (family) => {
+    try {
+      await studentService.deleteStuFamily({ id: family.id });
+      setFamilies(await studentService.getStuFamilies());
+      toast(`${family.name} deleted`, 'info');
+    } catch (err) {
+      toast(err.message || 'Could not delete family', 'error');
+    }
     setDelCfg(null);
   };
 
-  const handleUnlink = (reg) => {
-    setClasses(prev => prev.map(c => ({
-      ...c,
-      students: c.students.map(s => s.reg === reg ? { ...s, family: '', _famRel: undefined } : s),
-    })));
-    toast('Student unlinked from family', 'info');
+  /* Unlink a member: delete its family-tree detail by id, then reload families. */
+  const handleUnlink = async (member) => {
+    try {
+      await studentService.unlinkStuFromFamily({ id: member.detailID });
+      setFamilies(await studentService.getStuFamilies());
+      toast('Student unlinked from family', 'info');
+    } catch (err) {
+      toast(err.message || 'Could not unlink student', 'error');
+    }
   };
 
   const downloadPDF = () => {
@@ -4629,7 +4691,7 @@ function FamilyRow({ f, idx, isOpen, onToggle, onEdit, onDelete, onUnlink }) {
             <div><div className="fam-meta-l">Guardian</div><div className="fam-meta-v">{f.guardian || '—'}</div></div>
             <div><div className="fam-meta-l">Contact</div><div className="fam-meta-v" style={{ fontFamily: 'ui-monospace,Menlo,monospace' }}>{f.contact || '—'}</div></div>
             {f.email && <div><div className="fam-meta-l">Email</div><div className="fam-meta-v">{f.email}</div></div>}
-            <div><div className="fam-meta-l">Created</div><div className="fam-meta-v">{stuFmtDate(f.created)}</div></div>
+            {/* Created field hidden — the family API returns no created date. */}
             {f.details && <div className="fam-meta-full"><div className="fam-meta-l">Details</div><div className="fam-meta-v">{f.details}</div></div>}
           </div>
 
@@ -4666,7 +4728,6 @@ function FamilyRow({ f, idx, isOpen, onToggle, onEdit, onDelete, onUnlink }) {
                   <div className="td stu-reg-cell">{m.reg}</div>
                   <div className="td stu-name-cell">
                     <div className="stu-srow-name">{stuFullName(m)}</div>
-                    <div className="stu-srow-sub">{m.father || '—'}</div>
                   </div>
                   <div className="td">{m._cls} · {m._sec}</div>
                   <div className="td">
@@ -4674,7 +4735,7 @@ function FamilyRow({ f, idx, isOpen, onToggle, onEdit, onDelete, onUnlink }) {
                   </div>
                   <div className="td c">
                     <Tooltip text="Unlink this student">
-                      <button className="stu-rep-btn" style={{ borderColor: 'rgba(220,38,38,.32)', color: '#B91C1C' }} onClick={() => onUnlink(m.reg)}>
+                      <button className="stu-rep-btn" style={{ borderColor: 'rgba(220,38,38,.32)', color: '#B91C1C' }} onClick={() => onUnlink(m)}>
                         <i className="fa-solid fa-link-slash"></i>
                       </button>
                     </Tooltip>
