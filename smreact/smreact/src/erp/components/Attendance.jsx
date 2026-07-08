@@ -1143,6 +1143,8 @@
     });
 
     // Per-student rows (har student ki alag row) — In/Out time yahin meaningful hai.
+    // Class column table se hata di gayi — classes/sections upar (date ke sath)
+    // dikhte hain; yeh sirf student list hai.
     const studentRows = filtered.flatMap((r) =>
       (r.students || []).map((s) => ({ ...s, cls: r.cls, sec: r.sec }))
     );
@@ -1154,8 +1156,7 @@
         : badge("Not Marked", "#94A3B8");
       return `<tr style="background:${i % 2 === 0 ? "#fff" : "#f8fafc"}">
         ${td(i + 1, "text-align:center;color:#94A3B8")}
-        ${td(`<strong>${s.cls}</strong> · ${s.sec}`, "font-size:11px")}
-        ${td(`<strong>${s.name}</strong>${s.reg ? `<div style="font-size:10px;color:#64748B">${s.reg}</div>` : ""}`)}
+        ${td(s.name ? `<strong>${s.name}</strong>${s.reg ? `<div style="font-size:10px;color:#64748B">${s.reg}</div>` : ""}` : "—")}
         ${td(stCell, "text-align:center")}
         ${td(st === "present" && s.inTime  ? fmtTime(s.inTime)  : "—", "text-align:center;font-size:11px")}
         ${td(st === "present" && s.outTime ? fmtTime(s.outTime) : "—", "text-align:center;font-size:11px")}
@@ -1168,17 +1169,22 @@
     const lv   = filtered.filter((r) => r.marked).reduce((s, r) => s + r.leave, 0);
     const tot  = filtered.reduce((s, r) => s + r.total, 0);
 
+    // Date ke sath jo classes/sections aa rahe hain — inhe upar dikhao (table me
+    // class column ki jagah). Har filtered row = ek class+section.
+    const classesText = forClass
+      ? `${forClass.cls} (${forClass.sec})`
+      : (filtered.map((r) => `${r.cls}${r.sec ? ` (${r.sec})` : ""}`).join(", ") || "All Classes");
+
     const content = rptInfoGrid([
       ["Date", dateLabel],
-      ["Class", forClass ? forClass.cls : (classFilter || "All Classes")],
-      ["Section", forClass ? forClass.sec : (sectionFilter || "All Sections")],
+      ["Classes & Sections", classesText],
       ["Total Students", String(tot)],
     ], bdr) +
     rptStatsRow([["Total", tot, "#374151"], ["Present", pres, GREEN], ["Absent", abs, RED], ["Leave", lv, AMB]], bdr, isColor) +
     (studentRows.length === 0
       ? `<div style="text-align:center;padding:30px;color:#94A3B8;font-size:13.5px"><i>No attendance found for the selected date and filters.</i></div>`
       : `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11.5px">
-          <thead><tr>${[th("#", "center"), th("Class / Section"), th("Student"), th("Status", "center"), th("In Time", "center"), th("Out Time", "center"), th("Marked From")].join("")}</tr></thead>
+          <thead><tr>${[th("#", "center"), th("Student"), th("Status", "center"), th("In Time", "center"), th("Out Time", "center"), th("Marked From")].join("")}</tr></thead>
           <tbody>${tableRows}</tbody>
         </table></div>`);
 
@@ -4083,63 +4089,68 @@ const saveMarkSf = useCallback(async (rows) => {
       const sessionID = await ensureSessionID();
       const classes = studentData || [];
       if (!classes.length) return [];
-      const resolveIdx = makeRecordClassResolver(classes);
 
-      let recs = [];
-      try {
-        const res = await attendanceService.studentAttendance({
-          id: 0, branchID, studentID: 0, sessionID,
-          classID: classes[0].classID, sectionID: classes[0].sectionID,
-          attendanceDate: dateStr, status: "", platform: "ERP",
-          isNotificationGen: false, action: "get", createdBy: 0, modifiedBy: 0,
+      // Har class+section ke against alag call — taake "All Classes" report me
+      // sab classes/sections ke records aayen (sirf pehli class par bharosa nahi).
+      return Promise.all(classes.map(async (r) => {
+        let recs = [];
+        try {
+          const res = await attendanceService.studentAttendance({
+            id: 0, branchID, studentID: 0, sessionID,
+            classID: r.classID, sectionID: r.sectionID,
+            attendanceDate: dateStr, status: "", platform: "ERP",
+            isNotificationGen: false, action: "get", createdBy: 0, modifiedBy: 0,
+          });
+          // Sirf IS class+section aur SELECTED date ke records (backend sab de
+          // deta hai to bhi cross-class data mix na ho).
+          recs = (res?.data || []).filter((rec) =>
+            String(rec.AttendanceDate ?? rec.attendanceDate ?? "").slice(0, 10) === dateStr &&
+            String(rec.ClassID ?? rec.classID) === String(r.classID) &&
+            String(rec.SectionID ?? rec.sectionID) === String(r.sectionID)
+          );
+        } catch (err) { console.error("Daily report fetch error:", err); }
+
+        // Per-student record map (studentID → status + in/out + platform) — daily
+        // report mein har student ki row + In/Out Time dikhane ke liye.
+        const byStudent = {};
+        let present = 0, absent = 0, leave = 0, marked = false, platform = "";
+        recs.forEach((rec) => {
+          const raw = String(rec.Status ?? rec.status ?? "").toLowerCase();
+          const st = ST_CODE_TO_STATUS[raw] || raw;
+          const sid = rec.StudentID ?? rec.studentID ?? rec.studentId;
+          if (sid != null && st) {
+            byStudent[sid] = {
+              status: st,
+              inTime:  timeVal(rec.CheckInTime  ?? rec.checkInTime),
+              outTime: timeVal(rec.CheckOutTime ?? rec.checkOutTime),
+              platform: String(rec.Platform ?? rec.platform ?? ""),
+            };
+          }
+          if (st === "present") present++;
+          else if (st === "absent") absent++;
+          else if (st === "leave") leave++;
+          else return;
+          marked = true;
+          // "Marked By" column me platform (ERP / Mobile App / Biometric …).
+          platform = String(rec.Platform ?? rec.platform ?? "") || platform;
         });
-        recs = (res?.data || []).filter((rec) =>
-          String(rec.AttendanceDate ?? rec.attendanceDate ?? "").slice(0, 10) === dateStr);
-      } catch (err) { console.error("Daily report fetch error:", err); }
 
-      const agg = classes.map(() => ({ present: 0, absent: 0, leave: 0, marked: false, platform: "" }));
-      // Per-student record map (studentID → status + in/out + platform) — daily report
-      // mein har student ki row + In/Out Time dikhane ke liye.
-      const byStudent = {};
-      recs.forEach((rec) => {
-        const idx = resolveIdx(rec);
-        const raw = String(rec.Status ?? rec.status ?? "").toLowerCase();
-        const st = ST_CODE_TO_STATUS[raw] || raw;
-        const sid = rec.StudentID ?? rec.studentID ?? rec.studentId;
-        if (sid != null && st) {
-          byStudent[sid] = {
-            status: st,
-            inTime:  timeVal(rec.CheckInTime  ?? rec.checkInTime),
-            outTime: timeVal(rec.CheckOutTime ?? rec.checkOutTime),
-            platform: String(rec.Platform ?? rec.platform ?? ""),
-          };
-        }
-        if (idx < 0) return;
-        if (st === "present") agg[idx].present++;
-        else if (st === "absent") agg[idx].absent++;
-        else if (st === "leave") agg[idx].leave++;
-        else return;
-        agg[idx].marked = true;
-        // "Marked By" column me platform (ERP / Mobile App / Biometric …) dikhana hai.
-        agg[idx].platform = String(rec.Platform ?? rec.platform ?? "") || agg[idx].platform;
-      });
-
-      return classes.map((r, idx) => ({
-        cls: r.cls, sec: r.sec, total: r.total,
-        present: agg[idx].present, absent: agg[idx].absent, leave: agg[idx].leave,
-        marked: agg[idx].marked,
-        markedBy: agg[idx].platform || "—",
-        // Per-student detail (status + in/out) — report table isse per-student rows banata hai.
-        students: (r.students || []).map((s) => {
-          const m = byStudent[s.id];
-          return {
-            reg: s.reg, name: s.name, father: s.father,
-            status: m?.status || "", inTime: m?.inTime || "", outTime: m?.outTime || "",
-            platform: m?.platform || "",
-          };
-        }),
+        return {
+          cls: r.cls, sec: r.sec, total: r.total,
+          present, absent, leave, marked,
+          markedBy: platform || "—",
+          // Per-student detail (status + in/out) — report table per-student rows banata hai.
+          students: (r.students || []).map((s) => {
+            const m = byStudent[s.id];
+            return {
+              reg: s.reg, name: s.name, father: s.father,
+              status: m?.status || "", inTime: m?.inTime || "", outTime: m?.outTime || "",
+              platform: m?.platform || "",
+            };
+          }),
+        };
       }));
-    }, [studentData, ensureSessionID, makeRecordClassResolver]);
+    }, [studentData, ensureSessionID]);
 
     // Monthly report: backend har call mein sirf passed date ka data deta hai,
     // isliye month ki har date (start→end) par API chalate hain — har class+section
