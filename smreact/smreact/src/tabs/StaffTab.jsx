@@ -252,6 +252,15 @@ fd.append(
 
     const handleupdateOffical = async() => {
          try {
+          // Department & Designation are required — block the save and keep the modal open.
+          if (!form.dept || Number(form.dept) === 0) {
+            showToast('Department is required', 'error');
+            return;
+          }
+          if (!form.designation || Number(form.designation) === 0) {
+            showToast('Designation is required', 'error');
+            return;
+          }
           const branchID = sessionStorage.getItem('branchID');
         const userID = sessionStorage.getItem('UserID') || 0;
             const now = new Date().toISOString();
@@ -308,7 +317,7 @@ console.log(payload)
         const data = await res.json();
     
         if (!res.ok) {
-        showToast('Offical details Save Successfully', 'success');
+        showToast(data?.message || 'Could not save official details. Please check the required fields.', 'error');
         console.log(data)
         console.log(res.data)
           return;
@@ -385,7 +394,7 @@ console.log(payload)
         const data = await res.json();
     
         if (!res.ok) {
-        showToast('Offical details Save Successfully', 'success');
+        showToast(data?.message || 'Could not save salary details. Please try again.', 'error');
         console.log(data)
         console.log(res.data)
           return;

@@ -573,6 +573,9 @@ const getClassesData = async () => {
             clpSubject,
             clpCtx,
             tbReportData: reportPicker.extra || null,
+            /* Notebook report ke liye EXACT unit/question id (unitNo ambiguous hota hai). */
+            nbUnitId: reportPicker.extra?.nbUnitId,
+            nbQId: reportPicker.extra?.nbQId,
           });
           setReportPicker(null);
         }}
@@ -3988,8 +3991,9 @@ async function lpMapLimited(items, limit, mapper) {
 /* ─── Notebook-plans unit row — verbatim from HTML ─── */
 function NbUnitRow({ unit, index, onReport, onDeleteUnit, onAddType, onEditType, onDeleteType, reloadKey, isOtherSession }) {
   const [open, setOpen] = useState(false);
-  /* Question types are loaded lazily from getulpfornotebookdetails the first
-     time the unit is expanded; null = not yet loaded. */
+  /* Question types are loaded from getulpfornotebookdetails on mount so the
+     type/manual counts show at runtime WITHOUT expanding the unit; null = not
+     yet loaded. */
   const [detail, setDetail]   = useState(null);
   const [loading, setLoading] = useState(false);
 
@@ -3998,7 +4002,7 @@ function NbUnitRow({ unit, index, onReport, onDeleteUnit, onAddType, onEditType,
   useEffect(() => { setDetail(null); }, [reloadKey]);
 
   useEffect(() => {
-    if (!open || detail !== null || unit.id == null) return;
+    if (detail !== null || unit.id == null) return;
     let cancelled = false;
     setLoading(true);
     fetchNotebookDetail(unit.id)
@@ -4006,7 +4010,7 @@ function NbUnitRow({ unit, index, onReport, onDeleteUnit, onAddType, onEditType,
       .catch(e => { console.error('Error loading notebook detail:', e); if (!cancelled) setDetail([]); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [open, detail, unit.id]);
+  }, [detail, unit.id]);
 
   const questions = detail ?? unit.questions;
   const total  = questions.length;
@@ -4048,7 +4052,7 @@ function NbUnitRow({ unit, index, onReport, onDeleteUnit, onAddType, onEditType,
             <span className="nb-aq-label">Add Questions</span>
           </button></Tooltip>
           <Tooltip text="Download PDF"><button className="clpr-icon-btn clpr-icon-btn--pdf"
-            onClick={() => onReport(`Unit ${unit.unitNo} — Notebook`, 'pdf')}>
+            onClick={() => onReport(`Unit ${unit.unitNo} — Notebook`, 'pdf', 'color', { nbUnitId: unit.id })}>
             <i className="fa-solid fa-file-pdf"></i>
           </button></Tooltip>
           <Tooltip text={isOtherSession ? 'Editing is only allowed for the current session' : 'Delete unit'}><button className="clpr-icon-btn clpr-icon-btn--del"
@@ -4112,7 +4116,7 @@ function NbUnitRow({ unit, index, onReport, onDeleteUnit, onAddType, onEditType,
                       </button>
                     </Tooltip>
                     <Tooltip text="Download PDF"><button className="clpr-icon-btn clpr-icon-btn--pdf"
-                      onClick={() => onReport(`Section ${q.id} — ${q.type} — Unit ${unit.unitNo}`, 'pdf')}>
+                      onClick={() => onReport(`Section ${q.id} — ${q.type} — Unit ${unit.unitNo}`, 'pdf', 'color', { nbUnitId: unit.id, nbQId: q.id })}>
                       <i className="fa-solid fa-file-pdf"></i>
                     </button></Tooltip>
                     <Tooltip text={isOtherSession ? 'Editing is only allowed for the current session' : 'Delete'}><button className="clpr-icon-btn clpr-icon-btn--del"
@@ -6478,10 +6482,12 @@ function UnitMgrModal({ open, source, units, clpCtx = {}, onSave, onClose, openC
       /* Diff the draft against the units loaded when the modal opened and persist
          every change through ulpfornotebookmastercrud: new rows → insert,
          renamed/renumbered rows → update (by record id), removed rows → delete. */
+      /* Notebook: ek unit = ek master row (id = real record id). */
       const base = {
         branchID: clpCtx.branchID, classID: clpCtx.classID,
-        sectionID: clpCtx.sectionID, subjectID: clpCtx.subjectID, lessonPlanTopic: '',
+        sectionID: clpCtx.sectionID, subjectID: clpCtx.subjectID,
       };
+      const rid = (u) => { const n = Number(u.id); return Number.isFinite(n) ? n : u.id; };
       const origById  = new Map(units.map(u => [u.id, u]));
       const draftIds  = new Set(draft.map(u => u.id));
       const inserts = draft.filter(u => !origIds.has(u.id) && (u.unitNo || u.unitName));
@@ -6489,12 +6495,12 @@ function UnitMgrModal({ open, source, units, clpCtx = {}, onSave, onClose, openC
         const o = origById.get(u.id);
         return o && (String(o.unitNo) !== String(u.unitNo) || (o.unitName || '') !== (u.unitName || ''));
       });
-      const deletes = [...origIds].filter(id => !draftIds.has(id));
+      const deletes = [...origById.values()].filter(u => !draftIds.has(u.id));
       try {
         await Promise.all([
-          ...inserts.map(u => lpPost('/api/ulpfornotebookmastercrud', { ...base, id: 0,    unitNo: u.unitNo, unitName: u.unitName, action: 'insert' })),
-          ...updates.map(u => lpPost('/api/ulpfornotebookmastercrud', { ...base, id: u.id, unitNo: u.unitNo, unitName: u.unitName, action: 'update' })),
-          ...deletes.map(id => lpPost('/api/ulpfornotebookmastercrud', { ...base, id, unitNo: '', unitName: '', action: 'delete' })),
+          ...inserts.map(u => lpPost('/api/ulpfornotebookmastercrud', { ...base, id: 0,       unitNo: u.unitNo, unitName: u.unitName, lessonPlanTopic: '', action: 'insert' })),
+          ...updates.map(u => lpPost('/api/ulpfornotebookmastercrud', { ...base, id: rid(u),  unitNo: u.unitNo, unitName: u.unitName, lessonPlanTopic: u.record?.lessonPlanTopic ?? u.lessonPlanTopic ?? '', action: 'update' })),
+          ...deletes.map(u => lpPost('/api/ulpfornotebookmastercrud', { ...base, id: rid(u),  unitNo: '', unitName: '', lessonPlanTopic: '', action: 'delete' })),
         ]);
       } catch (e) {
         console.error('Error saving notebook units:', e);
@@ -6502,16 +6508,56 @@ function UnitMgrModal({ open, source, units, clpCtx = {}, onSave, onClose, openC
         return;
       }
     } else if (source === 'lesson' && clpCtx.classID) {
-      const newUnits = draft.filter(u => !origIds.has(u.id) && (u.unitNo || u.unitName));
+      /* ⚠️ Lesson unit ka `id` synthetic composite key ha ("unitNo__unitName") — REAL master
+         record id nahi. Ek unit dar-asl kai master rows ka group ha (har lesson = ek row jiska
+         apna record.id). Is liye rename/renumber par unit ki HAR row ka id se update karo. */
+      const base = {
+        branchID: clpCtx.branchID, classID: clpCtx.classID,
+        sectionID: clpCtx.sectionID, subjectID: clpCtx.subjectID,
+      };
+      const recId = (l) => l?.id ?? l?.record?.id ?? l?.recordId;
+      const origById = new Map(units.map(u => [u.id, u]));
+      const draftIds = new Set(draft.map(u => u.id));
+      const calls = [];
+
+      /* Naye units (Add New Unit) — ek master row empty topic ke saath insert. */
+      draft.filter(u => !origIds.has(u.id) && (u.unitNo || u.unitName)).forEach(u => {
+        calls.push(lpPost('/api/ulpforclassmastercrud', {
+          ...base, id: 0, unitNo: u.unitNo, unitName: u.unitName, lessonPlanTopic: '', action: 'insert',
+        }));
+      });
+
+      /* Renamed/renumbered units — unit ki har lesson-row ka id se update (topic preserve). */
+      draft.filter(u => {
+        const o = origById.get(u.id);
+        return o && (String(o.unitNo) !== String(u.unitNo) || (o.unitName || '') !== (u.unitName || ''));
+      }).forEach(u => {
+        (u.lessons || []).forEach(l => {
+          const id = recId(l);
+          if (id == null) return;
+          calls.push(lpPost('/api/ulpforclassmastercrud', {
+            ...base, id, unitNo: u.unitNo, unitName: u.unitName,
+            lessonPlanTopic: l.record?.lessonPlanTopic ?? l.topic ?? '', action: 'update',
+          }));
+        });
+      });
+
+      /* Removed units — har lesson-row delete. */
+      [...origById.values()].filter(u => !draftIds.has(u.id)).forEach(u => {
+        (u.lessons || []).forEach(l => {
+          const id = recId(l);
+          if (id == null) return;
+          calls.push(lpPost('/api/ulpforclassmastercrud', {
+            ...base, id, unitNo: '', unitName: '', lessonPlanTopic: '', action: 'delete',
+          }));
+        });
+      });
+
       try {
-        await Promise.all(newUnits.map(u => lpPost('/api/ulpforclassmastercrud', {
-          id: 0,
-          branchID: clpCtx.branchID, classID: clpCtx.classID, sectionID: clpCtx.sectionID, subjectID: clpCtx.subjectID,
-          unitNo: u.unitNo, unitName: u.unitName, lessonPlanTopic: '', action: 'insert',
-        })));
+        await Promise.all(calls);
       } catch (e) {
-        console.error('Error inserting units:', e);
-        toast('Could not save new units', 'error');
+        console.error('Error saving units:', e);
+        toast(e.serverMessage || 'Could not save units', 'error');
         return;
       }
     }
@@ -7621,6 +7667,9 @@ function NbAQModal({ ctx, unit, onSave, onClose, toast }) {
   const [rows, setRows] = useState([]);
   const [deletedIds, setDeletedIds] = useState([]); // recordIds removed while editing
   const [saving, setSaving] = useState(false);
+  const [lang, setLang] = useState('en'); // English/Urdu — Create Lesson Plan jaisa
+  const isUrdu = lang === 'ur';
+  const dir = isUrdu ? 'rtl' : 'ltr';
 
   useEffect(() => {
     if (!ctx) return;
@@ -7648,11 +7697,18 @@ function NbAQModal({ ctx, unit, onSave, onClose, toast }) {
             r._id ? r : { ...r, _id: `aqr_${++_aqRowCounter}` })
         : [aqEmptyRow(resolvedTypeId)];
       setRows(seeded);
+      /* Edit: saved content Urdu ha to default Urdu, warna English. */
+      const blob = [existing.mainQ, existing.mainQuestion, existing.statement,
+        ...(existing.rows || []).flatMap(r => Object.values(r || {}).filter(v => typeof v === 'string')),
+      ].join(' ');
+      // Urdu/Arabic script (U+0600–06FF, presentation forms) → default Urdu.
+      setLang(/[؀-ۿﭐ-﷿ﹰ-﻿]/.test(blob) ? 'ur' : 'en');
     } else {
       setActiveType(null);
       setMainQ('');
       setStatement('');
       setRows([]);
+      setLang('en'); // Naya question → default English
     }
   }, [ctx, unit]);
 
@@ -7765,6 +7821,23 @@ function NbAQModal({ ctx, unit, onSave, onClose, toast }) {
             </div>
           )}
 
+          {/* Language toggle — English / Urdu (Create Lesson Plan jaisa) */}
+          <div className="clpm-lang-row" style={{ margin: '2px 0 6px' }}>
+            <span className="clpm-lang-label">Language</span>
+            <div className="clpm-lang-pills">
+              <Tooltip text="Write questions in English">
+                <button className={`clpm-lang-pill${lang === 'en' ? ' active' : ''}`} onClick={() => setLang('en')}>
+                  <span className="clpm-lang-flag">🇬🇧</span> English
+                </button>
+              </Tooltip>
+              <Tooltip text="Write questions in Urdu">
+                <button className={`clpm-lang-pill${lang === 'ur' ? ' active' : ''}`} onClick={() => setLang('ur')}>
+                  <span className="clpm-lang-flag">🇵🇰</span> اردو
+                </button>
+              </Tooltip>
+            </div>
+          </div>
+
           {/* Form area */}
           {activeType && cfg && (
             <div className="aq-form-area">
@@ -7780,7 +7853,8 @@ function NbAQModal({ ctx, unit, onSave, onClose, toast }) {
                       <div style={{ fontSize: 11, fontWeight: 700, color: '#0369A1', textTransform: 'uppercase', letterSpacing: '.6px', marginBottom: 7 }}>Comprehension Statement</div>
                       <textarea
                         rows="4"
-                        style={{ boxSizing: 'border-box', width: '100%', border: '2px solid #BAE6FD', borderRadius: 13, padding: '10px 16px', fontFamily: 'inherit', fontSize: 14, color: '#0F172A', background: '#fff', outline: 'none', resize: 'vertical', lineHeight: 1.6 }}
+                        dir={dir}
+                        style={{ boxSizing: 'border-box', width: '100%', border: '2px solid #BAE6FD', borderRadius: 13, padding: '10px 16px', fontFamily: 'inherit', fontSize: 14, color: '#0F172A', background: '#fff', outline: 'none', resize: 'vertical', lineHeight: 1.6, textAlign: isUrdu ? 'right' : 'left' }}
                         placeholder="Enter comprehension statement here…"
                         value={statement}
                         onChange={e => setStatement(e.target.value)}
@@ -7794,6 +7868,8 @@ function NbAQModal({ ctx, unit, onSave, onClose, toast }) {
                       <input
                         type="text"
                         className="aq-mq-input"
+                        dir={dir}
+                        style={{ textAlign: isUrdu ? 'right' : 'left' }}
                         placeholder="Enter main question"
                         value={mainQ}
                         onChange={e => setMainQ(e.target.value)}
@@ -7823,6 +7899,8 @@ function NbAQModal({ ctx, unit, onSave, onClose, toast }) {
                       cfg={cfg}
                       row={row}
                       typeId={activeType}
+                      dir={dir}
+                      isUrdu={isUrdu}
                       onChange={(k, v) => updateRow(i, k, v)}
                       onRemove={() => removeRow(i)}
                       onSaveRow={() => toast(`Row ${i + 1} saved`, 'success')}
@@ -7857,7 +7935,7 @@ function NbAQModal({ ctx, unit, onSave, onClose, toast }) {
    Logic LessonEditModal wale (tested) editor se port ki gayi — cloned-range fix,
    node-based image/math insert, image resize overlay (buttons, no-crash).
    ═══════════════════════════════════════════════════════════════════ */
-function RichTextEditor({ value, onChange, placeholder, minHeight = 90 }) {
+function RichTextEditor({ value, onChange, placeholder, minHeight = 90, dir = 'ltr' }) {
   const editorRef      = useRef(null);
   const savedRangeRef  = useRef(null);
   const [imgSel, setImgSel] = useState(null);
@@ -8058,8 +8136,9 @@ function RichTextEditor({ value, onChange, placeholder, minHeight = 90 }) {
         contentEditable
         suppressContentEditableWarning
         data-placeholder={placeholder}
+        dir={dir}
         spellCheck={false}
-        style={{ minHeight, padding: '10px 13px', fontSize: 14, color: '#0F172A', lineHeight: 1.6, outline: 'none' }}
+        style={{ minHeight, padding: '10px 13px', fontSize: 14, color: '#0F172A', lineHeight: 1.6, outline: 'none', textAlign: dir === 'rtl' ? 'right' : undefined }}
         onInput={commit}
         onBlur={commit}
         onMouseUp={saveSelection}
@@ -8096,7 +8175,7 @@ function RichTextEditor({ value, onChange, placeholder, minHeight = 90 }) {
 
 /* ─── Single AQ row — renders the correct layout per type ─── */
 
-function AqRow({ i, cfg, row, typeId, onChange, onRemove, onSaveRow }) {
+function AqRow({ i, cfg, row, typeId, onChange, onRemove, onSaveRow, dir = 'ltr', isUrdu = false }) {
   const NUM_S  = { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 7, background: 'linear-gradient(135deg,#0369A1,#0891B2)', color: '#fff', fontSize: 12, fontWeight: 800, flexShrink: 0 };
   const LABEL  = { fontSize: 11, fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '.5px', display: 'block', marginBottom: 5 };
   const ACT_S  = { display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12, paddingTop: 10, borderTop: '1px dashed #E0F2FE' };
@@ -8108,7 +8187,8 @@ function AqRow({ i, cfg, row, typeId, onChange, onRemove, onSaveRow }) {
     <input
       type="text"
       className="aq-inp-hover"
-      style={extra}
+      dir={dir}
+      style={{ ...(extra || {}), textAlign: isUrdu ? 'right' : undefined }}
       placeholder={ph}
       value={row[key] || ''}
       onChange={e => onChange(key, e.target.value)}
@@ -8118,6 +8198,8 @@ function AqRow({ i, cfg, row, typeId, onChange, onRemove, onSaveRow }) {
     <textarea
       className="aq-ta-hover"
       rows={rows}
+      dir={dir}
+      style={{ textAlign: isUrdu ? 'right' : undefined }}
       placeholder={ph}
       value={row[key] || ''}
       onChange={e => onChange(key, e.target.value)}
@@ -8126,7 +8208,7 @@ function AqRow({ i, cfg, row, typeId, onChange, onRemove, onSaveRow }) {
   /* Full rich-text editor (toolbar: justify, color, image+resize, math, table, link, lists…).
      `rte` aur `richField` dono yehi editor use karte hain (True/False ko chhod ke sab jagah). */
   const richField = (key, ph, minHeight = 90) => (
-    <RichTextEditor value={row[key] || ''} placeholder={ph} minHeight={minHeight} onChange={html => onChange(key, html)} />
+    <RichTextEditor value={row[key] || ''} placeholder={ph} minHeight={minHeight} dir={dir} onChange={html => onChange(key, html)} />
   );
   const rte = (key, ph) => richField(key, ph, 90);
   const acts = (
@@ -9856,27 +9938,49 @@ async function generateLessonPlanReport(name, style, format, ctx) {
   if (name.startsWith('Section ')) {
     const m = name.match(/^Section\s+(\S+)\s+—\s+(.+?)\s+—\s+Unit\s+(\S+)$/);
     if (m) {
-      const qId = m[1], unitNo = m[3];
-      const unit = ctx?.nbUnits?.find(u => String(u.unitNo) === String(unitNo));
+      const qId = ctx?.nbQId || m[1], typeName = String(m[2]).trim(), unitNo = String(m[3]).trim();
+      const nbList = ctx?.nbUnits || [];
+      /* EXACT unit.id se match (unitNo ambiguous — do units same unitNo ke ho sakte). */
+      const unit = (ctx?.nbUnitId != null && nbList.find(u => String(u.id) === String(ctx.nbUnitId)))
+        || nbList.find(u => String(u.unitNo).trim() === unitNo)
+        || (nbList.length === 1 ? nbList[0] : null);
       if (unit) {
         /* Question content isn't in the units list — fetch it (same API the row uses). */
         const detail = await fetchNotebookDetail(unit.id);
-        const q = detail.find(x => String(x.id) === String(qId));
+        /* q ko id se dhoondo; na mile to category-key (qId ka prefix) ya type-name se. */
+        let q = detail.find(x => String(x.id) === String(qId));
+        if (!q) {
+          const cat = String(qId).split('__')[0];
+          q = detail.find(x => String(x.id).split('__')[0] === cat)
+            || detail.find(x => String(x.type) === typeName);
+        }
+        console.log('[nb-section-report] qId:', qId, 'unitNo:', unitNo, '| unit.id:', unit.id,
+          '| detail ids:', detail.map(x => x.id), '| matched:', !!q,
+          '| q.rows:', q ? (q.rows || q.items) : null);
         if (q) {
           const typeKey = q.typeId || q.type;
           const questions = { [typeKey]: { mainQ: q.mainQ || q.mainQuestion || '', rows: q.rows || q.items || [] } };
           nbGeneratePdfHtml(unit, questions, style === 'color', reportHeader, format);
           return;
         }
+      } else {
+        console.log('[nb-section-report] unit NOT found. unitNo:', unitNo, '| nbUnits:', nbList.map(u => u.unitNo));
       }
     }
   }
 
   /* Notebook unit PDF — "Unit <unitNo> — Notebook" (whole unit, all question types) */
   if (/—\s*Notebook\s*$/.test(name)) {
-    const m = name.match(/^Unit\s+(\S+)/);
-    const unitNo = m ? m[1] : '';
-    const unit = ctx?.nbUnits?.find(u => String(u.unitNo) === String(unitNo));
+    /* unitNo ko "Unit … — Notebook" ke beech se precisely nikaalo (em-dash se pehle). */
+    const m = name.match(/^Unit\s+(.+?)\s+—\s*Notebook\s*$/) || name.match(/^Unit\s+(\S+)/);
+    const unitNo = m ? String(m[1]).trim() : '';
+    const nbList = ctx?.nbUnits || [];
+    /* EXACT unit.id se match (unitNo ambiguous ho sakta — do units same unitNo). */
+    const unit = (ctx?.nbUnitId != null && nbList.find(u => String(u.id) === String(ctx.nbUnitId)))
+      || nbList.find(u => String(u.unitNo).trim() === unitNo)
+      || nbList.find(u => `Unit ${u.unitNo} — Notebook` === name)
+      || (nbList.length === 1 ? nbList[0] : null);
+    console.log('[nb-report] name:', name, '→ unitNo:', unitNo, '| nbUnits:', nbList.map(u => u.unitNo), '| matched:', !!unit);
     if (unit) {
       const detail = await fetchNotebookDetail(unit.id);
       const questions = {};
@@ -9921,21 +10025,24 @@ async function generateLessonPlanReport(name, style, format, ctx) {
   const textM  = isColor ? '#64748B' : '#555';
   const border = isColor ? '#BFDBFE' : '#CCC';
 
+  /* Fallback bhi REAL header/footer use kare (dummy "The Oxford System" nahi). */
+  const fbYear = academicSession || sessionStorage.getItem('sessionName') || '2026–2027';
   const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${name} — Report</title>
     <style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:'Segoe UI',Arial,sans-serif;background:#fff;color:${textD};font-size:13px}.page{width:210mm;margin:0 auto}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}.no-print{display:none}@page{size:A4;margin:15mm}}</style>
   </head><body><div class="page">
     <div style="background:${bg};padding:24px 32px 28px;color:#fff">
-      ${getReportLogo(style)}
-      <div style="font-size:22px;font-weight:800">${name}</div>
-      <div style="font-size:13px;opacity:.75;margin-bottom:16px">Academic Year 2026–2027 · ${isColor ? 'Colorful' : 'Colorless'} Report</div>
+      ${getReportLogo(style, reportHeader)}
+      <div style="font-size:14px;font-weight:700;opacity:.9">${lpEscapeHtml(schoolName)}${schoolAddress ? ` · ${lpEscapeHtml(schoolAddress)}` : ''}</div>
+      <div style="font-size:22px;font-weight:800;margin-top:6px">${name}</div>
+      <div style="font-size:13px;opacity:.75;margin-bottom:16px">Academic Year ${lpEscapeHtml(fbYear)} · ${isColor ? 'Colorful' : 'Colorless'} Report</div>
       <div style="display:flex;gap:10px">
         <div style="background:rgba(255,255,255,.14);padding:6px 14px;border-radius:20px;font-size:11.5px"><strong>Generated:</strong> ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}</div>
         <div style="background:rgba(255,255,255,.14);padding:6px 14px;border-radius:20px;font-size:11.5px"><strong>Format:</strong> ${(format||'pdf').toUpperCase()}</div>
       </div>
     </div>
-    <div style="padding:28px 32px"><p style="font-size:13px;color:${textM};line-height:1.7">Report content for <strong style="color:${textD}">${name}</strong>.</p></div>
+    <div style="padding:28px 32px"><p style="font-size:13px;color:${textM};line-height:1.7">No content found for <strong style="color:${textD}">${name}</strong>. Please make sure this section has saved questions.</p></div>
     <div style="border-top:1px solid ${border};padding:14px 32px;font-size:11px;color:${textM};display:flex;justify-content:space-between">
-      <span>${getSchoolName()}</span><span>School Mentor ERP © 2026</span>
+      <span>${lpEscapeHtml(schoolName)}${schoolAddress ? ` · ${lpEscapeHtml(schoolAddress)}` : ''}</span><span>School Mentor ERP © ${new Date().getFullYear()}</span>
     </div>
     <div class="no-print" style="text-align:center;padding:22px;background:#F8FAFC;border-top:1px solid #E2E8F0">
       <button onclick="window.print()" style="background:${bg};color:#fff;border:none;padding:12px 28px;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;margin-right:10px">🖨 Print / Save as PDF</button>

@@ -32,6 +32,16 @@ const parseEventDate = str => {
   return isNaN(d) ? null : d;
 };
 
+/* ── Module-level cache (mount ke beech survive karta hai) ──
+   Ek dafa Academics load ho jaye to dobara aane par loader NAHI — cached classes
+   foran, background refresh. Loader sirf: (a) pehli dfa (login ke baad), ya
+   (b) jab session badle (Settings me action → sessionID/changeSessionId change). */
+let acadLoadedOnce = false;
+let acadLoadedSessionKey = '';
+let acadClassesCache = [];
+const acadSessionKey = () =>
+  `${sessionStorage.getItem('sessionID') || ''}|${sessionStorage.getItem('changeSessionId') || ''}`;
+
 /* ═══════════════════════════════════════════════════════════════════
    MAIN ACADEMICS SHELL
    ═══════════════════════════════════════════════════════════════════ */
@@ -60,16 +70,16 @@ export default function Academics({ l1, setL1, l2, setL2, l3, setL3, toast }) {
   const acadModuleReadOnly = useModuleReadOnly('acad');
   const isOtherSession  = (!!changeSessionId && !!loginSessionId && String(changeSessionId) !== String(loginSessionId)) || acadModuleReadOnly;
 const [noSessionModal, setNoSessionModal] = useState(false);
-/* True until the active-session API resolves — shows a loader instead of the
-   "no session" screen so it doesn't flash before the session actually loads. */
-const [sessionLoading, setSessionLoading] = useState(true);
+/* Loader tabhi jab pehli dfa load ho raha ho YA session badla ho — warna cached
+   data foran (dobara Academics par aane par loader nahi). */
+const [sessionLoading, setSessionLoading] = useState(() => !acadLoadedOnce || acadLoadedSessionKey !== acadSessionKey());
   const [reportPicker, setReportPicker] = useState({ open: false, name: '', format: 'pdf' });
   const [confirmCfg, setConfirmCfg] = useState(null);
   const [calEditOpen, setCalEditOpen] = useState(false);
   const [tutorialOpen, setTutorialOpen] = useState(false);
   const [activityModal, setActivityModal] = useState({ open: false, editing: null });
   const [activityReload, setActivityReload] = useState(0); // bump → ActivityCalendar apne month-events dobara laaye
-  const [classesData, setClassesData] = useState([]);
+  const [classesData, setClassesData] = useState(acadClassesCache);
   const [monthApiEnabled, setMonthApiEnabled] = useState(false);
   const [hasActiveSession, setHasActiveSession] = useState(true); // assume true until checked
 
@@ -98,7 +108,8 @@ const getClassesData = async () => {
 
     console.log("API Response:", json);
 
-    setClassesData(json.data || []);
+    acadClassesCache = json.data || [];      // cache — remount par foran dikhane ke liye
+    setClassesData(acadClassesCache);
   } catch (error) {
     console.error("Error loading classes:", error);
   }
@@ -147,13 +158,15 @@ notifySessionChange();
 useEffect(() => {
   (async () => {
     try {
-      /* Pehle session-check API (sessionID set hoti hai), PHIR classes — warna classes
-         bina sessionID ke empty aati thi aur user ko Textbooks tab dobara click karna
-         padta tha. Loader tab tak chalta hai jab tak dono ready na hon. */
+      /* Pehle session-check API (sessionID set hoti hai), PHIR classes. Agar pehle se
+         loaded ha aur session wahi ha to sessionLoading already false ha (loader nahi) —
+         ye fetch sirf background refresh ha. Warna loader chalta ha. */
       await getSessionData();
       if (l2 === 'tb') await getClassesData();
     } finally {
-      setSessionLoading(false);
+      acadLoadedOnce = true;
+      acadLoadedSessionKey = acadSessionKey();
+      setSessionLoading(false); // needFull tha to loader band; warna already false (no-op)
     }
   })();
   // eslint-disable-next-line react-hooks/exhaustive-deps

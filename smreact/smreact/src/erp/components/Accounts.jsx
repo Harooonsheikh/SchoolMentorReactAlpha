@@ -778,23 +778,68 @@ function AccConfirmDialog({ cfg, onClose }) {
 const fmtMoney = (n) => `Rs. ${(Number(n) || 0).toLocaleString('en-PK')}`;
 const MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
+/* Date-only value (e.g. transaction date "2026-07-03") → "03-Jul-26".
+   Pure string slice — NO timezone shift (a plain date must not move a day). */
 const accFmtDate = (iso) => {
   if (!iso) return '—';
   const p = String(iso).slice(0, 10).split('-');
   if (p.length !== 3) return iso;
   return `${p[2]}-${MONTHS_SHORT[Number(p[1]) - 1] || p[1]}-${p[0].slice(2)}`;
 };
+/* The backend records createdAt / updatedAt as its OWN local wall-clock time
+   (server runs in US Pacific) and sends it as a naive string with no timezone
+   designator. So we interpret those naive components as Pacific wall time, get
+   the true UTC instant, and let the formatters render it in the viewer's local
+   time. If a value already carries a Z/offset, we trust it as-is. */
+const ACC_SERVER_TZ = 'America/Los_Angeles';
+
+/* Offset (ms) of `tz` at instant `ts`, i.e. (wall clock in tz) − UTC. */
+const accTzOffsetMs = (ts, tz) => {
+  const p = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz, hour12: false,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  }).formatToParts(new Date(ts)).reduce((a, x) => { a[x.type] = x.value; return a; }, {});
+  const hh = p.hour === '24' ? 0 : Number(p.hour);
+  const asUTC = Date.UTC(+p.year, +p.month - 1, +p.day, hh, +p.minute, +p.second);
+  return asUTC - ts;
+};
+
+const accParseStamp = (iso) => {
+  if (!iso) return null;
+  const s = String(iso).trim();
+  if (s.length < 13) return null;            // date-only / not a real timestamp
+  if (/[zZ]$|[+-]\d{2}:?\d{2}$/.test(s)) {   // already zoned → trust it
+    const d = new Date(s);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  const m = s.match(/(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?/);
+  if (!m) return null;
+  const [, Y, Mo, D, H, Mi, S] = m;
+  // First guess: treat the wall time as UTC, then correct by the server-zone
+  // offset (loop twice to settle DST boundaries).
+  let ts = Date.UTC(+Y, +Mo - 1, +D, +H, +Mi, +(S || 0));
+  const wallUTC = ts;
+  for (let i = 0; i < 2; i++) ts = wallUTC - accTzOffsetMs(ts, ACC_SERVER_TZ);
+  const d = new Date(ts);
+  return isNaN(d.getTime()) ? null : d;
+};
+/* Local calendar date of a UTC timestamp → "03-Jul-26". */
+const accFmtStampDate = (iso) => {
+  const d = accParseStamp(iso);
+  if (!d) return accFmtDate(iso);
+  return `${String(d.getDate()).padStart(2, '0')}-${MONTHS_SHORT[d.getMonth()]}-${String(d.getFullYear()).slice(2)}`;
+};
+/* Local wall-clock time of a UTC timestamp → "02:06 PM". */
 const accFmtTime = (iso) => {
-  if (!iso || iso.length < 13) return '—';
-  const t = iso.slice(11, 16);
-  const [h, m] = t.split(':').map(Number);
-  const period = h >= 12 ? 'PM' : 'AM';
-  const h12 = ((h + 11) % 12) + 1;
-  return `${String(h12).padStart(2, '0')}:${String(m || 0).padStart(2, '0')} ${period}`;
+  const d = accParseStamp(iso);
+  if (!d) return '—';
+  return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: true }).toUpperCase();
 };
 const accFmtStamp = (iso) => {
-  if (!iso) return '—';
-  return `${accFmtDate(iso)} · ${accFmtTime(iso)}`;
+  const d = accParseStamp(iso);
+  if (!d) return '—';
+  return `${accFmtStampDate(iso)} · ${accFmtTime(iso)}`;
 };
 
 function Transactions({ toast, isOtherSession }) {
@@ -1227,7 +1272,7 @@ function Transactions({ toast, isOtherSession }) {
                         <div className="acc-txn-meta">
                           <span><i className="fa-solid fa-user-pen"></i> {x.createdBy || '—'}</span>
                           {x.chqNo && <span><i className="fa-solid fa-money-check"></i> {x.chqNo}</span>}
-                          <span><i className="fa-regular fa-calendar"></i> {accFmtDate(x.createdAt ? x.createdAt.slice(0, 10) : x.date)}</span>
+                          <span><i className="fa-regular fa-calendar"></i> {x.createdAt ? accFmtStampDate(x.createdAt) : accFmtDate(x.date)}</span>
                           <span><i className="fa-regular fa-clock"></i> {accFmtTime(x.createdAt)}</span>
                           {x.updatedAt && <span className="acc-meta-upd"><i className="fa-solid fa-pen-to-square"></i> edited</span>}
                         </div>
@@ -1336,7 +1381,7 @@ function AccAuditPanel({ x, isRev }) {
           </div>
           <div className="acc-audit-row">
             <span><i className="fa-regular fa-calendar"></i> Entry Date</span>
-            <b>{accFmtDate(x.createdAt ? x.createdAt.slice(0, 10) : x.date)}</b>
+            <b>{x.createdAt ? accFmtStampDate(x.createdAt) : accFmtDate(x.date)}</b>
           </div>
           <div className="acc-audit-row">
             <span><i className="fa-regular fa-clock"></i> Entry Time</span>
