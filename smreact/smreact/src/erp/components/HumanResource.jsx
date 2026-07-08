@@ -2863,28 +2863,34 @@ function EmployeeManagement({ emps, setEmps, depts, desigs, nextEmpId, setNextEm
   const [letterFor, setLetterFor] = useState(null); // emp for Issue Letter
   const [profileFor, setProfileFor] = useState(null); // emp for Profile Report
 
-  const saveNewEmployee = (payload) => {
-    const id = nextEmpId || ((emps.reduce((m, e) => Math.max(m, e.id || 0), 0)) + 1);
-    const eid = payload.eid || `EMP-${String(id).padStart(3, '0')}`;
-    const newEmp = {
-      ...payload,
-      id,
-      eid,
-      status: payload.status || 'Active',
-    };
-    setEmps(prev => [...(prev || []), newEmp]);
-    setNextEmpId(id + 1);
-    setSub(newEmp.status === 'Active' ? 'active' : 'inactive');
-    hrService.saveHrEmployee?.(newEmp).catch(() => {});
-    toast(`${getFullName(newEmp)} added`, 'success');
-    setAddOpen(false);
+  /* Pull the fresh staff list back from the API so newly-saved salary amounts
+     and custom-head ids (needed for later edits/deletes) are reflected. */
+  const reloadEmps = async () => {
+    try { setEmps(await hrService.getHrEmployees()); }
+    catch (e) { /* keep the current list if the reload fails */ }
   };
 
-  const saveEditedEmployee = (payload) => {
-    setEmps(prev => (prev || []).map(e => e.id === payload.id ? { ...e, ...payload } : e));
-    hrService.saveHrEmployee?.(payload).catch(() => {});
-    toast(`${getFullName(payload)} updated`, 'success');
-    setEditFor(null);
+  const saveNewEmployee = async (payload) => {
+    try {
+      await hrService.saveHrEmployee(payload);
+      await reloadEmps();
+      setSub((payload.status || 'Active') === 'Active' ? 'active' : 'inactive');
+      toast(`${getFullName(payload)} added`, 'success');
+      setAddOpen(false);
+    } catch (err) {
+      toast(err.message || 'Could not add employee', 'error');
+    }
+  };
+
+  const saveEditedEmployee = async (payload) => {
+    try {
+      await hrService.saveHrEmployee(payload);
+      await reloadEmps();
+      toast(`${getFullName(payload)} updated`, 'success');
+      setEditFor(null);
+    } catch (err) {
+      toast(err.message || 'Could not update employee', 'error');
+    }
   };
 
 const confirmMarkInactive = async (payload) => {
@@ -3203,7 +3209,7 @@ function EmployeeRow({
 
   const taskCount   = (emp.tasks   || []).length;
   const letterCount = (emp.letters || []).length;
-  const docCount    = (emp.docs    || []).filter(Boolean).length;
+  const docCount    = Object.keys(emp.stdDocs || {}).length + (emp.docs || []).length;
   const subjCount   = Object.values(emp.subjects || {}).reduce((s, arr) => s + (arr?.length || 0), 0);
   const attCount    = (emp.attendance || []).length;
 
@@ -3384,20 +3390,24 @@ const HR_SUBJECT_LIST = [
   { id: 9, name: 'English' },
 ];
 
+/* Fixed employee document slots — key matches hrService.HR_EMP_DOC_TYPES;
+   `type` is the backend documentType sent on upload. */
 const HR_DOC_SLOTS = [
-  { icon: 'fa-id-card',        label: 'CNIC Copy' },
-  { icon: 'fa-file-signature', label: 'Appointment Letter' },
-  { icon: 'fa-graduation-cap', label: 'Educational Certificates' },
-  { icon: 'fa-briefcase',      label: 'Experience Letter' },
-  { icon: 'fa-folder-plus',    label: 'Other Documents' },
+  { key: 'cnic',       type: 'CNIC',             icon: 'fa-id-card',        label: 'CNIC' },
+  { key: 'degree',     type: 'Degree',           icon: 'fa-graduation-cap', label: 'Degree / Certificate' },
+  { key: 'experience', type: 'ExperienceLetter', icon: 'fa-briefcase',      label: 'Experience Letter' },
+  { key: 'contract',   type: 'Contract',         icon: 'fa-file-signature', label: 'Contract' },
+  { key: 'resume',     type: 'Resume',           icon: 'fa-file-lines',     label: 'Resume / CV' },
 ];
 
+/* The three allowances are fixed employee columns on the backend, so they are
+   always present and non-removable. Extra heads are added by the user and live
+   on the /api/HR/*-salary-head endpoints. */
 function hrDefaultSalaryHeads() {
   return [
-    { name: 'House Allowance',     amount: 0, type: 'allow'  },
-    { name: 'Transport Allowance', amount: 0, type: 'allow'  },
-    { name: 'Medical Allowance',   amount: 0, type: 'allow'  },
-    { name: 'Income Tax',          amount: 0, type: 'deduct' },
+    { name: 'Medical Allowance',   amount: 0, type: 'allow', fixed: true },
+    { name: 'Rent Allowance',      amount: 0, type: 'allow', fixed: true },
+    { name: 'Transport Allowance', amount: 0, type: 'allow', fixed: true },
   ];
 }
 
@@ -3406,6 +3416,7 @@ function AddEmployeeModal({ mode = 'add', emp, depts, desigs, nextEmpId, onClose
   const photoRef = useRef(null);
   const [tab, setTab]             = useState(0);
   const [assignTab, setAssignTab] = useState(0);
+  const [removedHeadIds, setRemovedHeadIds] = useState([]);   // custom heads to delete on save
 
   /* ── Seeded form state — Add mode mirrors openAddEmp(); Edit mode
      pre-fills every field from the emp record. ── */
@@ -3421,16 +3432,18 @@ function AddEmployeeModal({ mode = 'add', emp, depts, desigs, nextEmpId, onClose
     dId: '', desId: '',
     manager: '', qual: '', exp: '', shift: '',
     country: 'Pakistan', province: '', city: '',
+    countryID: '', provinceID: '', cityID: '', qualificationID: '',
     role: '',
     basicSalary: '', payMethod: 'Bank Transfer',
     bankName: '', bankAcc: '',
     salaryHeads: hrDefaultSalaryHeads(),
     leaves: {
-      annual: 20, casual: 10, sick: 8, maternity: 0,
+      annual: '', casual: '', sick: '', maternity: '',
       balance: '', policy: 'Standard',
-      deductEn: true, absentDed: 100, unpaidDed: 1000,
+      deductEn: true, absentDed: '', unpaidDed: '',
     },
-    docs: ['', '', '', '', ''],
+    stdDocs: {},
+    docs: [],
     photo: '',
     subjects:   {},
     attendance: [],
@@ -3442,7 +3455,8 @@ function AddEmployeeModal({ mode = 'add', emp, depts, desigs, nextEmpId, onClose
       ...emp,
       leaves: { ...blank.leaves, ...(emp.leaves || {}) },
       salaryHeads: emp.salaryHeads ? emp.salaryHeads.map(h => ({ ...h })) : blank.salaryHeads,
-      docs:       Array.isArray(emp.docs) ? [...emp.docs] : [...blank.docs],
+      stdDocs:    emp.stdDocs ? { ...emp.stdDocs } : {},
+      docs:       Array.isArray(emp.docs) ? emp.docs.map(d => ({ ...d })) : [],
       subjects:   emp.subjects   ? JSON.parse(JSON.stringify(emp.subjects))   : {},
       attendance: Array.isArray(emp.attendance) ? [...emp.attendance] : [],
     };
@@ -3450,6 +3464,70 @@ function AddEmployeeModal({ mode = 'add', emp, depts, desigs, nextEmpId, onClose
 
   const [openClasses,  setOpenClasses]  = useState({});
   const [openSections, setOpenSections] = useState({});
+
+  /* ── Cascading location + qualification lookups (real /api/Setting data) ── */
+  const [countryList,  setCountryList]  = useState([]);
+  const [provinceList, setProvinceList] = useState([]);
+  const [cityList,     setCityList]     = useState([]);
+  const [qualList,     setQualList]     = useState([]);
+
+  /* Real classes/sections + lazily-loaded subjects for the Assignments tab. */
+  const [hrGrades,      setHrGrades]      = useState([]);
+  const [subjectsByKey, setSubjectsByKey] = useState({});   // { "gradeId_sectionId": [{id,name}] }
+  useEffect(() => {
+    let alive = true;
+    hrService.getHrGrades().then(g => alive && setHrGrades(g)).catch(() => {});
+    return () => { alive = false; };
+  }, []);
+  const loadSubjectsFor = (gradeId, sectionId) => {
+    const key = `${gradeId}_${sectionId}`;
+    setSubjectsByKey(prev => {
+      if (prev[key]) return prev;                 // already loaded
+      hrService.getHrSubjects(gradeId, sectionId)
+        .then(list => setSubjectsByKey(p => ({ ...p, [key]: list })))
+        .catch(() => setSubjectsByKey(p => ({ ...p, [key]: [] })));
+      return prev;
+    });
+  };
+
+  /* Load countries + qualifications once; in edit mode also pre-load the
+     province/city lists for the employee's saved country/province so the
+     dropdowns show the current selection. */
+  useEffect(() => {
+    let alive = true;
+    hrService.getHrCountries().then(l => alive && setCountryList(l)).catch(() => {});
+    hrService.getHrQualifications().then(l => alive && setQualList(l)).catch(() => {});
+    if (form.countryID)  hrService.getHrProvinces(form.countryID).then(l => alive && setProvinceList(l)).catch(() => {});
+    if (form.provinceID) hrService.getHrCities(form.provinceID).then(l => alive && setCityList(l)).catch(() => {});
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const onCountryChange = (val) => {
+    setForm(f => ({ ...f, countryID: val, provinceID: '', cityID: '' }));
+    setProvinceList([]); setCityList([]);
+    if (val) hrService.getHrProvinces(val).then(setProvinceList).catch(() => {});
+  };
+  const onProvinceChange = (val) => {
+    setForm(f => ({ ...f, provinceID: val, cityID: '' }));
+    setCityList([]);
+    if (val) hrService.getHrCities(val).then(setCityList).catch(() => {});
+  };
+
+  /* Leave settings live on their own endpoint — on edit, pull the saved record
+     and merge it into the form (blank fields stay blank if the employee has none). */
+  useEffect(() => {
+    if (!isEdit || !emp?.id) return;
+    let alive = true;
+    hrService.getHrLeaveSettings(emp.id)
+      .then(l => { if (alive && l) setForm(f => ({ ...f, leaves: { ...f.leaves, ...l } })); })
+      .catch(() => {});
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /* Snapshot the subject assignments at open so save can toggle only the diff. */
+  const subjectsOriginalRef = useRef(JSON.parse(JSON.stringify(emp?.subjects || {})));
 
   /* Esc dismisses, body lock */
   useEffect(() => {
@@ -3488,8 +3566,13 @@ function AddEmployeeModal({ mode = 'add', emp, depts, desigs, nextEmpId, onClose
     ...f, salaryHeads: f.salaryHeads.map((h, idx) => idx === i ? { ...h, ...patch } : h),
   }));
   const toggleHeadType = (i) => setHead(i, { type: form.salaryHeads[i].type === 'allow' ? 'deduct' : 'allow' });
-  const addHead    = () => setForm(f => ({ ...f, salaryHeads: [...f.salaryHeads, { name: '', amount: 0, type: 'allow' }] }));
-  const removeHead = (i) => setForm(f => ({ ...f, salaryHeads: f.salaryHeads.filter((_, idx) => idx !== i) }));
+  const addHead    = () => setForm(f => ({ ...f, salaryHeads: [...f.salaryHeads, { name: '', amount: 0, type: 'allow', fixed: false }] }));
+  const removeHead = (i) => setForm(f => {
+    const h = f.salaryHeads[i];
+    if (h?.fixed) return f;                              // fixed heads can't be removed
+    if (h?.id) setRemovedHeadIds(ids => [...ids, h.id]); // queue the server delete
+    return { ...f, salaryHeads: f.salaryHeads.filter((_, idx) => idx !== i) };
+  });
 
   /* ── Live salary summary ── */
   const allowTotal  = form.salaryHeads.filter(h => h.type === 'allow').reduce((s, h) => s + (Number(h.amount) || 0), 0);
@@ -3503,18 +3586,61 @@ function AddEmployeeModal({ mode = 'add', emp, depts, desigs, nextEmpId, onClose
     if (!file) return;
     if (!file.type.startsWith('image/')) { toast('Please pick an image file', 'error'); return; }
     if (file.size > 1.5 * 1024 * 1024)   { toast('Image must be under 1.5 MB', 'error'); return; }
+    setForm(f => ({ ...f, photoFile: file }));           // real File for the multipart upload
     const reader = new FileReader();
     reader.onload = (e) => set('photo', e.target.result);
     reader.readAsDataURL(file);
   };
-  const onDocPick = (idx, file) => {
+  /* ── Employee documents (real upload/delete on save; auto-replace by type) ──
+     stdDocs[key] is either { id, path } (on server) or { file, name } (picked,
+     pending upload); customDocs holds "Other" docs in the same union shape;
+     removedDocIds queues server docs to delete on save. */
+  const [newEmpDocName, setNewEmpDocName] = useState('');
+  const [removedDocIds, setRemovedDocIds] = useState([]);
+  const empDocRef = useRef(null);
+  const empCustomDocRef = useRef(null);
+  const pendingDocKeyRef = useRef(null);
+
+  const pickEmpDoc = (key) => {
+    pendingDocKeyRef.current = key;
+    setTimeout(() => empDocRef.current && empDocRef.current.click(), 0);
+  };
+  const onEmpDocFile = (e) => {
+    const file = e.target.files && e.target.files[0];
+    const key  = pendingDocKeyRef.current;
+    if (!file || !key) return;
+    setForm(f => ({ ...f, stdDocs: { ...f.stdDocs, [key]: { file, name: file.name } } }));
+    pendingDocKeyRef.current = null;
+    e.target.value = '';
+    toast(`Document "${HR_DOC_SLOTS.find(d => d.key === key)?.label}" attached`, 'success');
+  };
+  const onEmpCustomDoc = () => {
+    if (!newEmpDocName.trim()) { toast('Enter the document name first', 'error'); return; }
+    empCustomDocRef.current && empCustomDocRef.current.click();
+  };
+  const onEmpCustomDocFile = (e) => {
+    const file = e.target.files && e.target.files[0];
     if (!file) return;
+    const name = newEmpDocName.trim();
+    setForm(f => ({ ...f, docs: [...f.docs, { name, file }] }));
+    setNewEmpDocName('');
+    e.target.value = '';
+    toast('Document attached', 'success');
+  };
+  const removeEmpCustomDoc = (i) => {
     setForm(f => {
-      const docs = [...f.docs];
-      docs[idx] = file.name;
-      return { ...f, docs };
+      const doc = f.docs[i];
+      if (doc && doc.id) setRemovedDocIds(ids => [...ids, doc.id]);
+      return { ...f, docs: f.docs.filter((_, idx) => idx !== i) };
     });
-    toast('Document uploaded', 'success');
+  };
+  const removeEmpStdDoc = (key) => {
+    setForm(f => {
+      const doc = f.stdDocs[key];
+      if (doc && doc.id) setRemovedDocIds(ids => [...ids, doc.id]);
+      const next = { ...f.stdDocs }; delete next[key];
+      return { ...f, stdDocs: next };
+    });
   };
 
   /* ── Subject Assignment helpers ── */
@@ -3531,7 +3657,11 @@ function AddEmployeeModal({ mode = 'add', emp, depts, desigs, nextEmpId, onClose
     });
   };
   const toggleClassOpen   = (cId)       => setOpenClasses(o => ({ ...o, [cId]: !o[cId] }));
-  const toggleSectionOpen = (cId, sId)  => setOpenSections(o => ({ ...o, [subjKey(cId, sId)]: !o[subjKey(cId, sId)] }));
+  const toggleSectionOpen = (cId, sId)  => {
+    const k = subjKey(cId, sId);
+    setOpenSections(o => ({ ...o, [k]: !o[k] }));
+    loadSubjectsFor(cId, sId);   // fetch real subjects the first time it opens
+  };
 
   /* ── Attendance helpers ── */
   const allSections = useMemo(() => {
@@ -3558,10 +3688,27 @@ function AddEmployeeModal({ mode = 'add', emp, depts, desigs, nextEmpId, onClose
     if (!form.phone.trim())     { toast('Mobile number required', 'error');     setTab(0); return; }
     if (!form.dId || !form.desId) { toast('Department & Designation required', 'error'); setTab(1); return; }
 
+    /* Documents the user picked this session (each carries a real File). Fixed
+       slots map to their backend documentType; custom docs use their free-text
+       name. These upload after the employee is saved. */
+    const docUploads = [];
+    Object.entries(form.stdDocs || {}).forEach(([key, v]) => {
+      if (v && v.file instanceof File) {
+        docUploads.push({ documentType: HR_DOC_SLOTS.find(d => d.key === key)?.type || key, file: v.file });
+      }
+    });
+    (form.docs || []).forEach(d => {
+      if (d && d.file instanceof File && d.name) docUploads.push({ documentType: d.name, file: d.file });
+    });
+
     const payload = {
       ...form,
       basicSalary: Number(form.basicSalary) || 0,
       salaryHeads: form.salaryHeads.map(h => ({ ...h, amount: Number(h.amount) || 0 })),
+      removedHeadIds,
+      subjectsOriginal: subjectsOriginalRef.current,
+      docUploads,
+      removedDocIds,
       leaves: {
         ...form.leaves,
         annual:    Number(form.leaves.annual)    || 0,
@@ -3751,15 +3898,37 @@ function AddEmployeeModal({ mode = 'add', emp, depts, desigs, nextEmpId, onClose
               </div>
 
               <div className="f-row-3">
-                <div className="f-group"><label className="f-label">Qualification</label><input className="f-input" placeholder="Highest qualification" value={form.qual} onChange={(e) => set('qual', e.target.value)} /></div>
+                <div className="f-group"><label className="f-label">Qualification</label>
+                  <select className="f-select2" value={form.qualificationID || ''} onChange={(e) => set('qualificationID', Number(e.target.value) || '')}>
+                    <option value="">Select Qualification</option>
+                    {qualList.map(q => (
+                      <option key={q.qualificationID ?? q.id} value={q.qualificationID ?? q.id}>{q.qualificationName ?? q.name}</option>
+                    ))}
+                  </select>
+                </div>
                 <div className="f-group"><label className="f-label">Experience</label><input className="f-input" placeholder="e.g. 5 years" value={form.exp} onChange={(e) => set('exp', e.target.value)} /></div>
                 <div className="f-group"><label className="f-label">Shift / Duty Timing</label><input className="f-input" placeholder="e.g. 8:00 AM – 2:00 PM" value={form.shift} onChange={(e) => set('shift', e.target.value)} /></div>
               </div>
 
               <div className="f-row-3">
-                <div className="f-group"><label className="f-label">Country</label><input className="f-input" placeholder="Country" value={form.country} onChange={(e) => set('country', e.target.value)} /></div>
-                <div className="f-group"><label className="f-label">Province / State</label><input className="f-input" placeholder="Province" value={form.province} onChange={(e) => set('province', e.target.value)} /></div>
-                <div className="f-group"><label className="f-label">City</label><input className="f-input" placeholder="City" value={form.city} onChange={(e) => set('city', e.target.value)} /></div>
+                <div className="f-group"><label className="f-label">Country</label>
+                  <select className="f-select2" value={form.countryID || ''} onChange={(e) => onCountryChange(Number(e.target.value) || '')}>
+                    <option value="">Select Country</option>
+                    {countryList.map(c => <option key={c.ID ?? c.id} value={c.ID ?? c.id}>{c.Name ?? c.name}</option>)}
+                  </select>
+                </div>
+                <div className="f-group"><label className="f-label">Province / State</label>
+                  <select className="f-select2" value={form.provinceID || ''} onChange={(e) => onProvinceChange(Number(e.target.value) || '')} disabled={!form.countryID}>
+                    <option value="">Select Province</option>
+                    {provinceList.map(p => <option key={p.ID ?? p.id} value={p.ID ?? p.id}>{p.Name ?? p.name}</option>)}
+                  </select>
+                </div>
+                <div className="f-group"><label className="f-label">City</label>
+                  <select className="f-select2" value={form.cityID || ''} onChange={(e) => set('cityID', Number(e.target.value) || '')} disabled={!form.provinceID}>
+                    <option value="">Select City</option>
+                    {cityList.map(c => <option key={c.ID ?? c.id} value={c.ID ?? c.id}>{c.Name ?? c.name}</option>)}
+                  </select>
+                </div>
               </div>
               <div className="f-group"><label className="f-label">Job Role / Responsibilities</label><textarea className="f-textarea" placeholder="Key responsibilities and job role…" value={form.role} onChange={(e) => set('role', e.target.value)} /></div>
             </div>
@@ -3811,24 +3980,41 @@ function AddEmployeeModal({ mode = 'add', emp, depts, desigs, nextEmpId, onClose
                   {form.salaryHeads.map((h, i) => (
                     <div key={i} className={`sal-head-card type-${h.type}`}>
                       <div className="sal-head-top">
-                        <input
-                          className="sal-head-name-input"
-                          placeholder="Salary head name"
-                          value={h.name}
-                          onChange={(e) => setHead(i, { name: e.target.value })}
-                        />
-                        <Tooltip text="Click to toggle">
-                          <button type="button" className={`sal-head-type-pill ${h.type}`} onClick={() => toggleHeadType(i)}>
-                            {h.type === 'allow'
-                              ? (<><i className="fa-solid fa-plus" aria-hidden="true"></i> Allow</>)
-                              : (<><i className="fa-solid fa-minus" aria-hidden="true"></i> Deduct</>)}
-                          </button>
-                        </Tooltip>
-                        <Tooltip text="Remove">
-                          <button type="button" className="sal-head-remove" onClick={() => removeHead(i)} aria-label="Remove salary head">
-                            <i className="fa-solid fa-xmark" aria-hidden="true"></i>
-                          </button>
-                        </Tooltip>
+                        {h.fixed ? (
+                          <div className="sal-head-name-fixed">{h.name}</div>
+                        ) : (
+                          <input
+                            className="sal-head-name-input"
+                            placeholder="Salary head name"
+                            value={h.name}
+                            onChange={(e) => setHead(i, { name: e.target.value })}
+                          />
+                        )}
+                        {h.fixed ? (
+                          <span className="sal-head-type-pill allow" style={{ cursor: 'default' }}>
+                            <i className="fa-solid fa-plus" aria-hidden="true"></i> Allow
+                          </span>
+                        ) : (
+                          <Tooltip text={h.type === 'allow'
+                            ? 'Currently an allowance — click to switch to a deduction'
+                            : 'Currently a deduction — click to switch to an allowance'}>
+                            {/* Pill shows the ACTION (opposite of current state): clicking
+                               "Allow" makes the head an allowance (isAllowance true), and
+                               clicking "Deduct" makes it a deduction (isAllowance false). */}
+                            <button type="button" className={`sal-head-type-pill ${h.type === 'allow' ? 'deduct' : 'allow'}`} onClick={() => toggleHeadType(i)}>
+                              {h.type === 'allow'
+                                ? (<><i className="fa-solid fa-minus" aria-hidden="true"></i> Deduct</>)
+                                : (<><i className="fa-solid fa-plus" aria-hidden="true"></i> Allow</>)}
+                            </button>
+                          </Tooltip>
+                        )}
+                        {!h.fixed && (
+                          <Tooltip text="Remove">
+                            <button type="button" className="sal-head-remove" onClick={() => removeHead(i)} aria-label="Remove salary head">
+                              <i className="fa-solid fa-xmark" aria-hidden="true"></i>
+                            </button>
+                          </Tooltip>
+                        )}
                       </div>
                       <div className="sal-head-bottom">
                         <div className="sal-head-amt-prefix">PKR</div>
@@ -3925,14 +4111,52 @@ function AddEmployeeModal({ mode = 'add', emp, depts, desigs, nextEmpId, onClose
 
             <div className="m-section">
               <div className="m-section-title"><i className="fa-solid fa-folder-open" aria-hidden="true"></i> Required Documents</div>
-              {HR_DOC_SLOTS.map((slot, i) => (
-                <div className="doc-item" key={i}>
-                  <div className="doc-icon"><i className={`fa-solid ${slot.icon}`} aria-hidden="true"></i></div>
-                  <div style={{ flex: 1 }}>
-                    <div className="doc-item-name">{slot.label}</div>
-                    <div className="doc-item-meta">{form.docs[i] || 'Not uploaded'}</div>
+              {HR_DOC_SLOTS.map((slot) => {
+                const doc = form.stdDocs[slot.key];
+                const uploaded = !!doc;
+                return (
+                  <div className="doc-item" key={slot.key}>
+                    <div className="doc-icon"><i className={`fa-solid ${uploaded ? 'fa-circle-check' : slot.icon}`} aria-hidden="true"></i></div>
+                    <div style={{ flex: 1 }}>
+                      <div className="doc-item-name">{slot.label}</div>
+                      <div className="doc-item-meta">{uploaded ? (doc.file instanceof File ? doc.name : 'Uploaded') : 'Not uploaded'}</div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                      {doc?.path && <a className="btn-sm" href={doc.path} target="_blank" rel="noreferrer"><i className="fa-solid fa-eye" aria-hidden="true"></i> View</a>}
+                      <button type="button" className="btn-sm" onClick={() => pickEmpDoc(slot.key)}>
+                        <i className={`fa-solid ${uploaded ? 'fa-rotate' : 'fa-upload'}`} aria-hidden="true"></i> {uploaded ? 'Replace' : 'Upload'}
+                      </button>
+                      {uploaded && <button type="button" className="btn-sm" style={{ borderColor: 'var(--err)', color: 'var(--err)' }} onClick={() => removeEmpStdDoc(slot.key)}><i className="fa-solid fa-xmark" aria-hidden="true"></i></button>}
+                    </div>
                   </div>
-                  <DocUploadBtn onPick={(file) => onDocPick(i, file)} />
+                );
+              })}
+              <input ref={empDocRef} type="file" style={{ display: 'none' }} onChange={onEmpDocFile} />
+            </div>
+
+            <div className="m-section">
+              <div className="m-section-title"><i className="fa-solid fa-folder-plus" aria-hidden="true"></i> Other Documents</div>
+              <div className="f-row">
+                <div className="f-group" style={{ flex: 1 }}>
+                  <label className="f-label">Other Document Name</label>
+                  <input className="f-input" placeholder="e.g. Police Clearance, Reference Letter" value={newEmpDocName} onChange={(e) => setNewEmpDocName(e.target.value)} />
+                </div>
+                <button type="button" className="btn-sm" style={{ alignSelf: 'flex-end', height: 38 }} onClick={onEmpCustomDoc}>
+                  <i className="fa-solid fa-upload" aria-hidden="true"></i> Upload &amp; Attach
+                </button>
+                <input ref={empCustomDocRef} type="file" style={{ display: 'none' }} onChange={onEmpCustomDocFile} />
+              </div>
+              {(form.docs || []).map((d, i) => (
+                <div className="doc-item" key={i}>
+                  <div className="doc-icon"><i className="fa-solid fa-file" aria-hidden="true"></i></div>
+                  <div style={{ flex: 1 }}>
+                    <div className="doc-item-name">{d.name}</div>
+                    <div className="doc-item-meta">{d.file instanceof File ? d.file.name : 'Uploaded'}</div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    {d.path && <a className="btn-sm" href={d.path} target="_blank" rel="noreferrer"><i className="fa-solid fa-eye" aria-hidden="true"></i> View</a>}
+                    <button type="button" className="btn-sm" style={{ borderColor: 'var(--err)', color: 'var(--err)' }} onClick={() => removeEmpCustomDoc(i)}><i className="fa-solid fa-xmark" aria-hidden="true"></i> Remove</button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -3975,7 +4199,10 @@ function AddEmployeeModal({ mode = 'add', emp, depts, desigs, nextEmpId, onClose
                     <span className="assign-section-hint">Click a class to expand</span>
                   </div>
                   <div className="assign-tree">
-                    {HR_CLASS_LIST.map(cls => {
+                    {hrGrades.length === 0 && (
+                      <div style={{ padding: 16, color: 'var(--tm)', fontWeight: 600 }}>Loading classes…</div>
+                    )}
+                    {hrGrades.map(cls => {
                       const classOpen = !!openClasses[cls.id];
                       let totalChecked = 0;
                       cls.sections.forEach(s => { totalChecked += (form.subjects[subjKey(cls.id, s.id)] || []).length; });
@@ -3999,6 +4226,7 @@ function AddEmployeeModal({ mode = 'add', emp, depts, desigs, nextEmpId, onClose
                               const sKey = subjKey(cls.id, sec.id);
                               const secOpen = !!openSections[sKey];
                               const checked = (form.subjects[sKey] || []).length;
+                              const subs = subjectsByKey[sKey];
                               return (
                                 <div className="assign-section-row" key={sec.id}>
                                   <div className="assign-section-head" onClick={() => toggleSectionOpen(cls.id, sec.id)}>
@@ -4007,25 +4235,29 @@ function AddEmployeeModal({ mode = 'add', emp, depts, desigs, nextEmpId, onClose
                                     <div className="assign-class-count">
                                       {checked > 0
                                         ? (<><i className="fa-solid fa-check" aria-hidden="true"></i> {checked} subject{checked === 1 ? '' : 's'}</>)
-                                        : <span style={{ color: 'var(--tm)', fontWeight: 600 }}>{HR_SUBJECT_LIST.length} subjects</span>}
+                                        : <span style={{ color: 'var(--tm)', fontWeight: 600 }}>{Array.isArray(subs) ? `${subs.length} subjects` : 'View subjects'}</span>}
                                     </div>
                                     <i className={`fa-solid fa-chevron-down assign-class-chev${secOpen ? ' open' : ''}`} aria-hidden="true"></i>
                                   </div>
                                   <div className={`assign-subjects-list${secOpen ? ' open' : ''}`}>
                                     <div className="assign-subjects-grid">
-                                      {HR_SUBJECT_LIST.map(sub => {
-                                        const ck = (form.subjects[sKey] || []).includes(sub.id);
-                                        return (
-                                          <div
-                                            key={sub.id}
-                                            className={`assign-subj-pill${ck ? ' checked' : ''}`}
-                                            onClick={() => toggleSubject(cls.id, sec.id, sub.id)}
-                                          >
-                                            <div className="check-icon"><i className="fa-solid fa-check" aria-hidden="true"></i></div>
-                                            <span>{sub.name}</span>
-                                          </div>
-                                        );
-                                      })}
+                                      {!Array.isArray(subs)
+                                        ? <span style={{ color: 'var(--tm)', fontWeight: 600, padding: 8 }}>Loading subjects…</span>
+                                        : subs.length === 0
+                                          ? <span style={{ color: 'var(--tm)', fontWeight: 600, padding: 8 }}>No subjects for this section.</span>
+                                          : subs.map(sub => {
+                                              const ck = (form.subjects[sKey] || []).includes(sub.id);
+                                              return (
+                                                <div
+                                                  key={sub.id}
+                                                  className={`assign-subj-pill${ck ? ' checked' : ''}`}
+                                                  onClick={() => toggleSubject(cls.id, sec.id, sub.id)}
+                                                >
+                                                  <div className="check-icon"><i className="fa-solid fa-check" aria-hidden="true"></i></div>
+                                                  <span>{sub.name}</span>
+                                                </div>
+                                              );
+                                            })}
                                     </div>
                                   </div>
                                 </div>
@@ -4127,24 +4359,6 @@ function AddEmployeeModal({ mode = 'add', emp, depts, desigs, nextEmpId, onClose
 
 /* Tiny helper so each Documents row can wire its own hidden file input
    without resorting to imperative DOM access. */
-function DocUploadBtn({ onPick }) {
-  const ref = useRef(null);
-  return (
-    <label>
-      <input
-        ref={ref} type="file"
-        accept=".pdf,.jpg,.jpeg,.png"
-        style={{ display: 'none' }}
-        onChange={(e) => onPick(e.target.files?.[0])}
-      />
-      <button type="button" className="btn-sm" onClick={() => ref.current?.click()}>
-        <i className="fa-solid fa-upload" aria-hidden="true"></i> Upload
-      </button>
-    </label>
-  );
-}
-
-
 /* ═══════════════════════════════════════════════════════════════════
    EMPLOYEE DETAIL PANEL — multi-section read-only view shown when the
    row chevron is expanded. Covers Personal · Official · Salary · Leaves
@@ -4245,20 +4459,31 @@ function EmployeeDetailPanel({ emp, deptName, desigName }) {
 
       <div className="emp-detail-cols">
         <div className="emp-detail-col">
-          <div className="emp-detail-mini-title"><i className="fa-solid fa-file-lines" aria-hidden="true"></i> Documents ({(emp.docs || []).filter(Boolean).length}/5)</div>
+          <div className="emp-detail-mini-title"><i className="fa-solid fa-file-lines" aria-hidden="true"></i> Documents ({Object.keys(emp.stdDocs || {}).length + (emp.docs || []).length})</div>
           <div className="emp-detail-docs">
-            {HR_DOC_SLOTS.map((slot, i) => {
-              const fname = (emp.docs || [])[i];
+            {HR_DOC_SLOTS.map((slot) => {
+              const doc = (emp.stdDocs || {})[slot.key];
               return (
-                <div key={i} className={`emp-detail-doc${fname ? ' is-up' : ''}`}>
+                <div key={slot.key} className={`emp-detail-doc${doc ? ' is-up' : ''}`}>
                   <div className="emp-detail-doc-icn"><i className={`fa-solid ${slot.icon}`} aria-hidden="true"></i></div>
                   <div className="emp-detail-doc-info">
                     <div className="emp-detail-doc-name">{slot.label}</div>
-                    <div className="emp-detail-doc-meta">{fname || 'Not uploaded'}</div>
+                    <div className="emp-detail-doc-meta">
+                      {doc ? (doc.path ? <a href={doc.path} target="_blank" rel="noreferrer">View</a> : 'Uploaded') : 'Not uploaded'}
+                    </div>
                   </div>
                 </div>
               );
             })}
+            {(emp.docs || []).map((d, i) => (
+              <div key={`c${i}`} className="emp-detail-doc is-up">
+                <div className="emp-detail-doc-icn"><i className="fa-solid fa-file" aria-hidden="true"></i></div>
+                <div className="emp-detail-doc-info">
+                  <div className="emp-detail-doc-name">{d.name}</div>
+                  <div className="emp-detail-doc-meta">{d.path ? <a href={d.path} target="_blank" rel="noreferrer">View</a> : 'Uploaded'}</div>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
 
@@ -5042,11 +5267,11 @@ const LETTER_PRINT_CSS = `
    ═══════════════════════════════════════════════════════════════════ */
 
 const RPT_DOC_META = [
-  { name: 'CNIC',                    icon: 'fa-id-card' },
-  { name: 'Appointment Letter',      icon: 'fa-file-signature' },
-  { name: 'Educational Certificates',icon: 'fa-graduation-cap' },
-  { name: 'Experience Letter',       icon: 'fa-briefcase' },
-  { name: 'Other Documents',         icon: 'fa-folder-open' },
+  { key: 'cnic',       name: 'CNIC',                 icon: 'fa-id-card' },
+  { key: 'degree',     name: 'Degree / Certificate', icon: 'fa-graduation-cap' },
+  { key: 'experience', name: 'Experience Letter',    icon: 'fa-briefcase' },
+  { key: 'contract',   name: 'Contract',             icon: 'fa-file-signature' },
+  { key: 'resume',     name: 'Resume / CV',          icon: 'fa-file-lines' },
 ];
 
 function defaultFinancial() {
@@ -5108,6 +5333,7 @@ function ProfileReportModal({ emp, deptName, desigName, onClose }) {
   const tasks      = emp.tasks      || [];
   const letters    = emp.letters    || [];
   const docs       = emp.docs       || [];
+  const stdDocs    = emp.stdDocs    || {};
   const subjMap    = emp.subjects   || {};
   const attCls     = emp.attendance || [];
 
@@ -5541,20 +5767,23 @@ function ProfileReportModal({ emp, deptName, desigName, onClose }) {
                 </tr>
               </thead>
               <tbody>
-                {RPT_DOC_META.map((m, i) => {
-                  const file = docs[i];
+                {[
+                  ...RPT_DOC_META.map(m => ({ name: m.name, doc: stdDocs[m.key] })),
+                  ...docs.map(d => ({ name: d.name, doc: d })),
+                ].map((row, i) => {
+                  const doc = row.doc;
                   return (
                     <tr key={i}>
                       <td>{i + 1}</td>
-                      <td><strong>{m.name}</strong></td>
+                      <td><strong>{row.name}</strong></td>
                       <td>
-                        {file
+                        {doc
                           ? <span style={{ color: '#16A34A', fontWeight: 700 }}>Uploaded</span>
                           : <span style={{ color: '#94A3B8' }}>Not Uploaded</span>}
                       </td>
-                      <td style={{ fontSize: 9.5, color: '#64748B' }}>{file || '—'}</td>
+                      <td style={{ fontSize: 9.5, color: '#64748B' }}>{doc?.path ? 'File attached' : '—'}</td>
                       <td style={{ textAlign: 'center' }}>
-                        {file ? <span style={{ color: '#1E3A8A', fontWeight: 700 }}>⬇ Download</span> : '—'}
+                        {doc?.path ? <a href={doc.path} target="_blank" rel="noreferrer" style={{ color: '#1E3A8A', fontWeight: 700 }}>⬇ Download</a> : '—'}
                       </td>
                     </tr>
                   );
@@ -6811,6 +7040,14 @@ export const HR_CSS = `
   transition: var(--tr);
 }
 .modal-xl .sal-head-amt-input { font-weight: 700; }
+.modal-xl .sal-head-name-fixed {
+  flex: 1; min-width: 0;
+  height: 34px;
+  display: flex; align-items: center;
+  padding: 0 10px;
+  font: 700 12.5px/1.2 var(--hr-font);
+  color: var(--t1);
+}
 .modal-xl .sal-head-name-input:focus,
 .modal-xl .sal-head-amt-input:focus { border-color: var(--brand); }
 .modal-xl .sal-head-type-pill {
