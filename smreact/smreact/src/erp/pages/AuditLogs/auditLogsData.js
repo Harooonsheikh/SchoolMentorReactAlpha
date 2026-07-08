@@ -13,7 +13,7 @@ export const MODULES = [
   { id: 'examination', label: 'Examination',       icon: 'fa-file-pen' },
   { id: 'papers',      label: 'Paper Generator',   icon: 'fa-scroll' },
   { id: 'attendance',  label: 'Attendance',        icon: 'fa-clipboard-check' },
-  { id: 'timetable',   label: 'Time Table',        icon: 'fa-calendar-days' },
+  { id: 'timetable',   label: 'Timetable',        icon: 'fa-calendar-days' },
   { id: 'fee',         label: 'Fee',               icon: 'fa-money-bill-wave' },
   { id: 'accounts',    label: 'Accounts',          icon: 'fa-calculator' },
   { id: 'inventory',   label: 'Inventory',         icon: 'fa-boxes-stacked' },

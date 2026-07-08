@@ -274,7 +274,7 @@ const attendanceProvider = {
 const timeTableProvider = {
   moduleId:    'timetable',
   navTarget:   'tt',
-  moduleLabel: 'Time Table',
+  moduleLabel: 'Timetable',
   icon:        'fa-calendar-days',
   accent:      '#0891B2',
   priority:    50,
@@ -287,7 +287,7 @@ const timeTableProvider = {
           id:       `tt-${c.cls}-${c.sec}`,
           title:    `${c.cls} ${c.sec}`,
           subtitle: 'Class timetable',
-          path:     ['Time Table', `${c.cls} ${c.sec}`],
+          path:     ['Timetable', `${c.cls} ${c.sec}`],
         });
         if (out.length >= ctx.limit) return out;
       }

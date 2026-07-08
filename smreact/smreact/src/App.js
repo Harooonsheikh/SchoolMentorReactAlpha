@@ -136,7 +136,7 @@ setLaunchSetup(launchSetup)
                 { key: 'departments', num: 4, icon: 'fa-building', label: 'Departments' },
                 { key: 'staff', num: 5, icon: 'fa-users', label: 'Staff Details' },
                 { key: 'student', num: 6, icon: 'fa-user-graduate', label: 'Student Details' },
-                // { key: 'timetable', num: 7, icon: 'fa-calendar-alt', label: 'Time Table' },
+                // { key: 'timetable', num: 7, icon: 'fa-calendar-alt', label: 'Timetable' },
               ].map(t => (
                 <div
                   key={t.key}

@@ -97,7 +97,7 @@ const TEACHER_SEARCHABLE_MODULES = new Set([
    TEACHER DASHBOARD — premium personal workspace, REAL ERP data only.
 
    Every section maps to a real teacher-scope feature:
-     • Today's Schedule  → Time Table module
+     • Today's Schedule  → Timetable module
      • My Classes        → Students module (filtered)
      • My Lesson Plans   → Academics / Submissions
      • My Homework       → Academics / Homework Diary
@@ -150,7 +150,7 @@ export default function TeacherDashboard({ visibility, toast, navigate = () => {
   const newReminderCount       = PRINCIPAL_REMINDERS.filter(r => r.status === 'new').length;
 
   const NAV_LABELS = {
-    acad: 'Academics', exam: 'Examination', att: 'Attendance', tt: 'Time Table',
+    acad: 'Academics', exam: 'Examination', att: 'Attendance', tt: 'Timetable',
     students: 'Students', appraisal: 'Staff Appraisals', sops: 'School SOPs', trainings: 'Teacher Trainings',
   };
   const openModule = (target) => {

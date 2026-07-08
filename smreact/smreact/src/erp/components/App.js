@@ -49,7 +49,7 @@ const NAV_LABELS = {
   acad: 'Academics',
   exam: 'Examination',
   att: 'Attendance',
-  tt: 'Time Table',
+  tt: 'Timetable',
   paper: 'Paper Generator',
   fee: 'Fee',
   accounts: 'Accounts',
@@ -82,7 +82,7 @@ const NAV_SECTIONS = [
       { id: 'exam',  name: 'Examination',     icon: 'fa-file-pen' },
       { id: 'paper', name: 'Paper Generator', icon: 'fa-file-circle-check' },
       { id: 'att',   name: 'Attendance',      icon: 'fa-calendar-check' },
-      { id: 'tt',    name: 'Time Table',      icon: 'fa-clock' },
+      { id: 'tt',    name: 'Timetable',      icon: 'fa-clock' },
     ],
   },
   {
@@ -410,7 +410,7 @@ export default function App() {
               </Suspense>
             )}
             {active === 'tt' && (
-              <Suspense fallback={<RouteFallback label="Loading Time Table…" />}>
+              <Suspense fallback={<RouteFallback label="Loading Timetable…" />}>
                 <TimeTable toast={pushToast} />
               </Suspense>
             )}

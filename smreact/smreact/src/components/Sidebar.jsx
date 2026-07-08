@@ -7,7 +7,7 @@ const NAV_ITEMS = [
   { key: 'departments', icon: 'fa-building',         label: 'Departments',     status: 'Step 4' },
   { key: 'staff',       icon: 'fa-users',            label: 'Staff',           status: 'Step 5' },
   { key: 'student',     icon: 'fa-user-graduate',    label: 'Students',        status: 'Step 6' },
-  // { key: 'timetable',   icon: 'fa-calendar-alt',     label: 'Time Table',      status: 'Step 7' },
+  // { key: 'timetable',   icon: 'fa-calendar-alt',     label: 'Timetable',      status: 'Step 7' },
 ];
 
 export default function Sidebar({ activeTab, onTabChange, isOpen }) {

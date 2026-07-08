@@ -16,7 +16,7 @@ export const MODULE_REGISTRY = [
   { id: 'examination',      label: 'Examination',       icon: 'fa-file-pen',         group: 'ACADEMICS',      route: '/examination',        coreLocked: false },
   { id: 'paper_generator',  label: 'Paper Generator',   icon: 'fa-scroll',           group: 'ACADEMICS',      route: '/paper-generator',    coreLocked: false },
   { id: 'attendance',       label: 'Attendance',        icon: 'fa-clipboard-check',  group: 'ACADEMICS',      route: '/attendance',         coreLocked: false },
-  { id: 'timetable',        label: 'Time Table',        icon: 'fa-calendar-days',    group: 'ACADEMICS',      route: '/timetable',          coreLocked: false },
+  { id: 'timetable',        label: 'Timetable',        icon: 'fa-calendar-days',    group: 'ACADEMICS',      route: '/timetable',          coreLocked: false },
 
   /* ── ACCOUNTS GROUP ──────────────────────────────────────────── */
   { id: 'fee',              label: 'Fee',               icon: 'fa-money-bill-wave',  group: 'ACCOUNTS',       route: '/fee',                coreLocked: false },

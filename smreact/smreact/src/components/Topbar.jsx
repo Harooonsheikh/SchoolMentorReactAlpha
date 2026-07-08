@@ -7,7 +7,7 @@ const CRUMBS = {
   departments: 'Departments',
   staff:       'Staff Details',
   student:     'Student Details',
-  // timetable:   'Time Table',
+  // timetable:   'Timetable',
 };
 
 export default function Topbar({ activeTab, theme, onToggleTheme, onOpenSidebar, onOpenERP, showToast }) {

@@ -84,11 +84,11 @@ export const MODULE_TREE = [
       { id: 'att.staff',    label: 'Staff Attendance' },
       { id: 'att.reports',  label: 'Reports' },
     ] },
-  { id: 'timetable',   label: 'Time Table',        icon: 'fa-calendar-days',
+  { id: 'timetable',   label: 'Timetable',        icon: 'fa-calendar-days',
     children: [
       /* ── Single screen in TimeTable.jsx:552 — no L1 sub-tabs.
             Old split (tt.view + tt.manage) was artificial. */
-      { id: 'tt.timetable', label: 'Time Table' },
+      { id: 'tt.timetable', label: 'Timetable' },
     ] },
   { id: 'fee',         label: 'Fee',               icon: 'fa-money-bill-wave',
     children: [
@@ -427,7 +427,7 @@ export const MODULE_PERMISSIONS = {
          (audited 2026-05-31). Single screen, no L1 nesting. The
          day selector is just a filter on the same screen. */
 
-  /* L1 → Time Table (single screen)
+  /* L1 → Timetable (single screen)
      TimeTable.jsx:552
      Real buttons: Auto Generate (multi-step wizard creates the
                    full weekly timetable), Delete Day, Download

@@ -261,7 +261,7 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
     students: 'Students', hr: 'Human Resource', crm: 'Admission CRM',
     exam: 'Examination', acad: 'Academics', fee: 'Fee', accounts: 'Accounts',
     inventory: 'Inventory', att: 'Attendance', appraisal: 'Staff Appraisals',
-    audit: 'Audit Logs', tt: 'Time Table', paper: 'Paper Generator',
+    audit: 'Audit Logs', tt: 'Timetable', paper: 'Paper Generator',
   };
   const openModule = (target) => {
     if (!target) return;

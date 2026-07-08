@@ -58,7 +58,7 @@ export const TUTORIAL_LINKS = {
     ],
   },
   timeTable: {
-    title: 'Time Table Tutorials',
+    title: 'Timetable Tutorials',
     items: [
       { label: 'Class Timetable',     url: '' },
       { label: 'Weekly Auto-Generate', url: '' },

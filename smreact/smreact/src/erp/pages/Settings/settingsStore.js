@@ -18,7 +18,7 @@ export const MODULE_OPTIONS = [
   { id: 'exam',      label: 'Examination' },
   { id: 'paper',     label: 'Paper Generator' },
   { id: 'att',       label: 'Attendance' },
-  { id: 'tt',        label: 'Time Table' },
+  { id: 'tt',        label: 'Timetable' },
   { id: 'fee',       label: 'Fee' },
   { id: 'accounts',  label: 'Accounts' },
   { id: 'inventory', label: 'Inventory' },
