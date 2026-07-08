@@ -695,6 +695,30 @@ function FeeChallansTab({ toast }) {
   );
 }
 
+/* Split a BranchLedger challan record into the family-table figures:
+   transport heads → Transport, previous/pending heads → dues/advance,
+   everything else → Fee; discounts sum across heads. `payable` mirrors the
+   family table's fee + transport − discount (dues/advance are surfaced
+   separately and not rolled into the displayed payable, matching the class
+   challan list's behaviour). */
+function familyChildFigures(rec) {
+  const rows = (rec && rec.detailRows) || [];
+  let fee = 0, transport = 0, discount = 0, dues = 0, advance = 0;
+  rows.forEach(r => {
+    const amt   = Number(r.challanAmount) || 0;
+    const disc  = Number(r.discount) || 0;
+    const label = String(r.subHead || r.head || '').toLowerCase();
+    if (/previous|pending|arrear/.test(label)) {
+      if (amt >= 0) dues += amt; else advance += Math.abs(amt);
+    } else if (/transport/.test(label)) {
+      transport += amt; discount += disc;
+    } else {
+      fee += amt; discount += disc;
+    }
+  });
+  return { fee, transport, discount, dues, advance, payable: fee + transport - discount };
+}
+
 /* ═══════════════════════════════════════════════════════════════════
    FAMILY TREE CHALLANS — combines siblings under one guardian. Mirrors
    FeeChallansList structurally: filters, smart search, table, per-row
@@ -705,7 +729,6 @@ function FeeChallansTab({ toast }) {
 function FamilyTreeChallansList({ toast }) {
   const { data: serverFams = [] }      = useAsync(feeService.getFamilies, []);
   const { data: settings = {} }        = useAsync(feeService.getFeeSettings, []);
-  const { data: genInitial }           = useAsync(feeService.getGeneratedFamilyChallans, []);
 
   /* Local mirror of families (mutable: remove-child support) */
   const [families, setFamilies] = useState(null);
@@ -744,11 +767,56 @@ function FamilyTreeChallansList({ toast }) {
     return () => window.removeEventListener('keydown', onKey);
   }, [searchOpen]);
 
-  /* Generation state */
+  /* Generation state — driven live from BranchLedger (loadLedgers below). */
   const [genSet, setGenSet] = useState(null);
-  useEffect(() => { if (genInitial && genSet == null) setGenSet(new Set(genInitial)); }, [genInitial, genSet]);
   const monthIdx = FEE_MONTHS.indexOf(appliedMonth);
   const keyOf    = (famKey, reg) => `${famKey}|${reg}|${monthIdx}`;
+
+  /* Per-child fee figures from BranchLedger, keyed by keyOf(fam,reg). For
+     every student in every family we hit /api/BranchLedger/get-all with the
+     student's applicantsID as `studentId` (+ branch + applied month/year).
+     Runs on mount (i.e. when the Family Tree Challans tab opens) and whenever
+     the family list or the applied month/year changes. A child that has a
+     ledger row for the month is marked generated. */
+  const [figMap, setFigMap] = useState({});
+  const loadLedgers = useCallback(async () => {
+    const fams = families;
+    if (!fams || !fams.length) { setFigMap({}); setGenSet(new Set()); return; }
+    const mIdx  = FEE_MONTHS.indexOf(appliedMonth);
+    const pairs = fams
+      .flatMap(f => (f.children || []).map(ch => ({ f, ch })))
+      .filter(({ ch }) => ch.applicantsID != null);
+    try {
+      const results = await Promise.all(pairs.map(async ({ f, ch }) => {
+        const key = `${f.key}|${ch.reg}|${mIdx}`;
+        try {
+          const rows = await feeService.getStudentChallans(ch.applicantsID, mIdx + 1, appliedYear);
+          const rec  = Array.isArray(rows) && rows.length ? rows[0] : null;
+          return { key, fig: rec ? familyChildFigures(rec) : null };
+        } catch (e) {
+          return { key, fig: null };
+        }
+      }));
+      const fmap = {};
+      const gset = new Set();
+      results.forEach(({ key, fig }) => { if (fig) { fmap[key] = fig; gset.add(key); } });
+      setFigMap(fmap);
+      setGenSet(gset);
+    } catch (e) {
+      toast(e.message || 'Could not load family ledgers', 'error');
+      setFigMap({});
+      setGenSet(new Set());
+    }
+  }, [families, appliedMonth, appliedYear, toast]);
+  useEffect(() => { loadLedgers(); }, [loadLedgers]);
+
+  /* A child's displayed figures: real ledger data when a challan exists for
+     the month, else the family-tree defaults (zeros until one is generated). */
+  const childFig = (f, ch) => figMap[keyOf(f.key, ch.reg)] || {
+    fee: +ch.fee || 0, transport: +ch.transport || 0, discount: +ch.discount || 0,
+    dues: +ch.dues || 0, advance: +ch.advance || 0,
+    payable: (+ch.fee || 0) + (+ch.transport || 0) - (+ch.discount || 0),
+  };
 
   /* Expanded row */
   const [openKey, setOpenKey]                       = useState(null);
@@ -777,11 +845,19 @@ function FamilyTreeChallansList({ toast }) {
   /* ── Bulk generate (family mode) ── */
   const openBulkGen = (f) => {
     if (!f.children.length) { toast('No children in this family', 'warning'); return; }
-    /* Build pseudo-students for BulkGenerateModal — re-use that infra. */
-    const pseudoStudents = f.children.map(ch => ({
-      reg: ch.reg, name: ch.name, father: ch.father,
-      transport: 0, dues: ch.dues || 0, advance: ch.advance || 0, current: 0,
-    }));
+    /* Build pseudo-students for BulkGenerateModal — re-use that infra. IDs
+       (studentID = applicantsID, gradeID, sectionID) + the child's own
+       fee/transport/discount travel through so the create-challan payload is
+       correct per child. */
+    const pseudoStudents = f.children.map(ch => {
+      const fig = childFig(f, ch);
+      return {
+        reg: ch.reg, name: ch.name, father: ch.father,
+        studentID: ch.applicantsID, gradeID: ch.gradeID, sectionID: ch.sectionID,
+        fee: fig.fee, transport: fig.transport, discount: fig.discount,
+        dues: fig.dues || 0, advance: fig.advance || 0, current: fig.payable,
+      };
+    });
     /* Fixed family-mode head categories (no per-head amounts — family
        combined challan rolls up each child's fee+transport−discount). */
     const familyHeads = [
@@ -807,12 +883,14 @@ function FamilyTreeChallansList({ toast }) {
     /* Roll-up child's family-level fee into `current` so the modal's
        student card can display Total Fee + Pending Amount via the same
        (current − dues − advance) calculation used in class single-mode. */
-    const totalFee = (+ch.fee || 0) + (+ch.transport || 0) - (+ch.discount || 0);
+    const fig = childFig(f, ch);
+    const totalFee = fig.fee + fig.transport - fig.discount;
     const pseudo = {
       reg: ch.reg, name: ch.name, father: ch.father,
-      transport: 0,
-      dues:    +ch.dues    || 0,
-      advance: +ch.advance || 0,
+      studentID: ch.applicantsID, gradeID: ch.gradeID, sectionID: ch.sectionID,
+      fee: fig.fee, transport: fig.transport, discount: fig.discount,
+      dues:    fig.dues    || 0,
+      advance: fig.advance || 0,
       current: totalFee,
     };
     const familyHeads = [
@@ -1042,7 +1120,7 @@ function FamilyTreeChallansList({ toast }) {
           const isOpen = openKey === f.key;
           const gen    = genCountFor(f.key, f.children);
           const tot    = f.children.length;
-          const total  = f.children.reduce((a, ch) => a + (+ch.fee || 0) + (+ch.transport || 0) - (+ch.discount || 0), 0);
+          const total  = f.children.reduce((a, ch) => a + childFig(f, ch).payable, 0);
           return (
             <div key={f.key} className="fee-rowwrap" id={`fam-row-${f.key}`}>
               <div
@@ -1105,7 +1183,8 @@ function FamilyTreeChallansList({ toast }) {
                         {f.children.length === 0 ? (
                           <tr><td colSpan="10" className="fee-stbl-empty">No children in this family.</td></tr>
                         ) : f.children.map((ch, j) => {
-                          const pay = (+ch.fee || 0) + (+ch.transport || 0) - (+ch.discount || 0);
+                          const fig = childFig(f, ch);
+                          const pay = fig.payable;
                           const generated = isGen(f.key, ch.reg);
                           return (
                             <tr key={ch.reg}>
@@ -1114,9 +1193,9 @@ function FamilyTreeChallansList({ toast }) {
                               <td><b>{ch.name}</b></td>
                               <td>{ch.cls}</td>
                               <td>{ch.sec}</td>
-                              <td className="fee-right">{money(ch.fee)}</td>
-                              <td className="fee-right">{money(ch.transport)}</td>
-                              <td className="fee-right">{money(ch.discount)}</td>
+                              <td className="fee-right">{money(fig.fee)}</td>
+                              <td className="fee-right">{money(fig.transport)}</td>
+                              <td className="fee-right">{money(fig.discount)}</td>
                               <td className="fee-right"><b>{money(pay)}</b></td>
                               <td className="fee-center fee-st-actions">
                                 {generated ? (

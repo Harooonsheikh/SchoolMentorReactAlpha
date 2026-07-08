@@ -4,7 +4,6 @@ import {
   mockReceipts,
   mockFeeHistory,
   mockGeneratedChallans,
-  mockFamilies,
   mockGeneratedFamilyChallans,
   mockFamilyReceipts,
 } from '../mock/fee';
@@ -421,8 +420,68 @@ export async function getGeneratedChallans() {
   return new Set(mockGeneratedChallans);
 }
 
-/* Family-tree challan readers. */
-export async function getFamilies() { await delay(); return clone(mockFamilies); }
+/* Family-tree challan readers.
+
+   Real API: POST /api/FamilyTree/familytreecrud with action:'get' returns
+   every family for the branch, each with a nested `students` array. We
+   project that into the { key, name, guardian, children:[…] } shape the
+   Family Tree Challans table reads. Fee/transport/discount figures aren't
+   part of the family-tree payload (they live in the challan/fee-setup data),
+   so they default to 0 until a challan is generated. */
+function mapFamilyFromApi(fam) {
+  const students = Array.isArray(fam?.students) ? fam.students : [];
+  return {
+    key: `fam${fam?.id}`,
+    id: fam?.id,
+    branchID: fam?.branchID,
+    name: fam?.familyName || '—',
+    familyDetails: fam?.familyDetails || '',
+    guardian: fam?.guardianName || '—',
+    contactNumber: fam?.contactNumber || '',
+    email: fam?.email || '',
+    children: students.map(st => ({
+      reg: st?.registerNo || '',
+      name: `${st?.firstName || ''} ${st?.lastName || ''}`.trim() || '—',
+      father: fam?.guardianName || '',
+      cls: st?.className || '',
+      sec: st?.sectionName || '',
+      picture: st?.picture || '',
+      /* ids carried through for challan generation / detail lookups */
+      detailID: st?.detailID,
+      applicantsID: st?.applicantsID,
+      gradeID: st?.gradeID,
+      sectionID: st?.sectionID,
+      /* money fields aren't in the family-tree payload yet */
+      fee: 0, transport: 0, discount: 0, dues: 0, advance: 0,
+    })),
+  };
+}
+
+export async function getFamilies() {
+  const branchID = Number(sessionStorage.getItem('branchID')) || 0;
+  const res = await fetch(buildUrl('/api/FamilyTree/familytreecrud'), {
+    method: 'POST',
+    headers: { Accept: '*/*', 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      action: 'get',
+      id: 0,
+      branchID,
+      familyName: '',
+      familyDetails: '',
+      guardianName: '',
+      contactNumber: '',
+      email: '',
+      createdBy: 0,
+      modifiedBy: 0,
+    }),
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok || json?.success === false) {
+    throw new Error(apiMessage(json) || 'Could not load family trees');
+  }
+  const data = Array.isArray(json?.data) ? json.data : [];
+  return data.map(mapFamilyFromApi);
+}
 export async function getGeneratedFamilyChallans() {
   await delay();
   return new Set(mockGeneratedFamilyChallans);
@@ -501,11 +560,15 @@ function buildLedgerChallanPayload({ classMeta = {}, student = {}, heads = [], m
     isActive: true,
   });
 
-  const detailRows = heads.map(h =>
-    makeRow(h.name || h.headName, h.amt ?? h.amount, classDisc[h.name])
-  );
-  /* Auto-add the student's transport fee (from Transport Setup) as its own
-     challan head — subHead "Transport", head "Account Payable". */
+  /* Family mode: each child carries its own fee/transport/discount (there are
+     no shared per-class heads), so build a single "Tuition Fee" row from the
+     child's fee and let the transport block below add its transport head.
+     Class mode: one row per selected fee head, with that class's amounts. */
+  const detailRows = options.familyMode
+    ? [makeRow('Tuition Fee', student.fee, student.discount)]
+    : heads.map(h => makeRow(h.name || h.headName, h.amt ?? h.amount, classDisc[h.name]));
+  /* Auto-add the student's transport fee (from Transport Setup / family figures)
+     as its own challan head — subHead "Transport", head "Account Payable". */
   if (Number(student.transport) > 0) {
     detailRows.push(makeRow('Transport', student.transport));
   }
@@ -537,11 +600,10 @@ function buildLedgerChallanPayload({ classMeta = {}, student = {}, heads = [], m
 }
 
 export async function generateChallan(classKey, reg, monthIdx, options = {}) {
-  if (options.familyMode) {
-    await delay();
-    return clone({ classKey, reg, monthIdx, ...options });
-  }
-
+  /* Both class-wise and family-tree challans post to the same BranchLedger
+     create-challan endpoint. Family mode differs only in how detailRows are
+     built (per-child fee/transport instead of shared class heads) — see
+     buildLedgerChallanPayload. */
   const regs = Array.isArray(reg) ? reg : [reg];
   const students = Array.isArray(options.students) && options.students.length
     ? options.students
