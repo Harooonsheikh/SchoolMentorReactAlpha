@@ -1469,7 +1469,7 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
       ? list.find(c => c.key === cKey)?.students.find(s => s.reg === reg)
       : null;
     try {
-      await studentService.saveStuStudent({
+      const resp = await studentService.saveStuStudent({
         id:        existing?._id || 0,
         gradeId:   row?._gradeId || 0,
         sectionId: row?._sectionId || 0,
@@ -1484,6 +1484,7 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
         focc:      payload.focc,
         mother:    payload.mother,
         mcnic:     payload.mcnic,
+        guardian:  payload.guardian,
         gender:    payload.gender,
         dob:       payload.dob,
         nat:       payload.nat,
@@ -1495,8 +1496,46 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
         pgrade:    payload.pgrade,
         pcontact:  payload.pcontact,
         gcontact:  payload.gcontact,
+        photo:       payload.photo || '',
+        pictureFile: payload.pictureFile || null,
         dues:      0,
       });
+
+      /* Documents ride on separate endpoints and need the student's id. For an
+         edit we have it; for a fresh add we read it from the save response, and
+         fall back to reloading + matching on the (unique) registration no. */
+      const docUploads    = payload.docUploads    || [];
+      const removedDocIds = payload.removedDocIds || [];
+      if (docUploads.length || removedDocIds.length) {
+        let studentId = existing?._id || studentService.studentIdFromSaveResponse(resp) || 0;
+        if (!studentId) {
+          const fresh = await studentService.getStuClasses();
+          for (const c of fresh) {
+            const found = c.students.find(s => s.reg === String(payload.reg));
+            if (found) { studentId = found._id; break; }
+          }
+        }
+        if (studentId) {
+          for (const id of removedDocIds) {
+            try { await studentService.deleteStuStudentDocument(id); }
+            catch (e) { toast(e.message || 'Could not remove a document', 'error'); }
+          }
+          for (const d of docUploads) {
+            try {
+              await studentService.uploadStuStudentDocument({
+                studentId,
+                gradeId:      row?._gradeId || 0,
+                sectionId:    row?._sectionId || 0,
+                documentType: d.documentType,
+                file:         d.file,
+              });
+            } catch (e) { toast(e.message || `Could not upload "${d.documentType}"`, 'error'); }
+          }
+        } else {
+          toast('Student saved, but documents could not be attached (no id)', 'error');
+        }
+      }
+
       await reloadClasses();
       toast(mode === 'edit' ? 'Student updated successfully' : 'Student registered successfully', 'success');
       setEditCfg(null);
@@ -1650,6 +1689,7 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
 
       {editCfg && (
         <StuStudentModal
+          key={`${editCfg.mode}-${editCfg.cKey}-${editCfg.reg || 'new'}`}
           cfg={editCfg}
           activeClass={list.find(c => c.key === editCfg.cKey)}
           student={editCfg.mode === 'edit'
@@ -1960,6 +2000,26 @@ const STD_DOCS = [
   { key: 'birth',    label: 'Birth Certificate',            icon: 'fa-certificate' },
 ];
 
+/* Collapsible form section. Defined at module scope (NOT inside the modal) so
+   its component identity stays stable across the modal's re-renders — an inner
+   definition would remount its whole subtree on every keystroke and steal input
+   focus. Toggle state is passed in from the modal. */
+function StuFormSection({ id, icon, title, open, setOpen, children }) {
+  const isOpen = !!open[id];
+  return (
+    <div className={`stu-fsec${isOpen ? ' open' : ''}`}>
+      <div className="stu-fsec-head" onClick={() => setOpen(p => ({ ...p, [id]: !p[id] }))}>
+        <div className="stu-fsec-head-l">
+          <div className="stu-fsec-ic"><i className={`fa-solid ${icon}`}></i></div>
+          <div className="stu-fsec-title">{title}</div>
+        </div>
+        <i className={`fa-solid fa-chevron-${isOpen ? 'up' : 'down'} stu-fsec-chev`}></i>
+      </div>
+      {isOpen && <div className="stu-fsec-body">{children}</div>}
+    </div>
+  );
+}
+
 function StuStudentModal({ cfg, activeClass, student, classList, sectionList, classes, existingRegs, suggestedReg, suggestedAdm, onClose, onSave, toast }) {
   const isEdit = cfg.mode === 'edit';
 
@@ -1996,10 +2056,15 @@ function StuStudentModal({ cfg, activeClass, student, classList, sectionList, cl
   const [pgrade,   setPgrade]   = useState(init.pgrade   || '');
   const [pcontact, setPcontact] = useState(init.pcontact || '');
   const [photo,    setPhoto]    = useState(init.photo    || null);
+  const [pictureFile, setPictureFile] = useState(null);   // new File to upload (null = keep existing)
 
-  /* Documents */
+  /* Documents. stdDocs is keyed by the fixed slot key; each value is either
+     { id, path } (already on the server) or { file, name } (picked, pending
+     upload). customDocs holds "Other" documents in the same union shape.
+     removedDocIds collects server doc ids the user cleared, to delete on save. */
   const [stdDocs, setStdDocs] = useState(init.stdDocs || {});
   const [customDocs, setCustomDocs] = useState(init.docs || []);
+  const [removedDocIds, setRemovedDocIds] = useState([]);
   const [newDocName, setNewDocName] = useState('');
   const photoRef = useRef(null);
   const stdDocRef = useRef(null);
@@ -2051,31 +2116,36 @@ function StuStudentModal({ cfg, activeClass, student, classList, sectionList, cl
     };
   }, [onClose]);
 
-  /* Photo upload */
+  /* Photo upload — keep a base64 preview for the UI and the real File for
+     the multipart save (rides along on save-student as PictureFile). */
   const handlePhotoPick = (e) => {
     const f = e.target.files && e.target.files[0];
     if (!f) return;
     if (f.size > 2 * 1024 * 1024) { toast('Image too large (max 2 MB)', 'error'); return; }
+    setPictureFile(f);
     const reader = new FileReader();
     reader.onload = () => setPhoto(reader.result);
     reader.readAsDataURL(f);
   };
 
-  /* Standard doc upload */
+  /* Standard doc upload — stash the picked File under its slot key; it uploads
+     on save. If the slot already held a server document, remember its id so the
+     replace can delete the old one first. */
   const pickStdDoc = (key) => {
     setPendingStdKey(key);
     setTimeout(() => stdDocRef.current && stdDocRef.current.click(), 0);
   };
   const handleStdDocFile = (e) => {
     const f = e.target.files && e.target.files[0];
-    if (!f || !pendingStdKey) return;
-    setStdDocs(prev => ({ ...prev, [pendingStdKey]: true }));
+    const key = pendingStdKey;
+    if (!f || !key) return;
+    setStdDocs(prev => ({ ...prev, [key]: { file: f, name: f.name } }));
     setPendingStdKey(null);
     e.target.value = '';
-    toast(`Document "${STD_DOCS.find(d => d.key === pendingStdKey)?.label}" attached`, 'success');
+    toast(`Document "${STD_DOCS.find(d => d.key === key)?.label}" attached`, 'success');
   };
 
-  /* Custom doc add */
+  /* Custom doc add — store the real File plus the user's chosen name. */
   const handleCustomDoc = () => {
     if (!newDocName.trim()) { toast('Please enter the document name first', 'error'); return; }
     customDocRef.current && customDocRef.current.click();
@@ -2083,10 +2153,18 @@ function StuStudentModal({ cfg, activeClass, student, classList, sectionList, cl
   const handleCustomDocFile = (e) => {
     const f = e.target.files && e.target.files[0];
     if (!f) return;
-    setCustomDocs(prev => [...prev, { name: newDocName.trim(), file: f.name }]);
+    setCustomDocs(prev => [...prev, { name: newDocName.trim(), file: f }]);
     setNewDocName('');
     e.target.value = '';
     toast('Document attached', 'success');
+  };
+  /* Remove a custom doc row; queue a server delete if it was already uploaded. */
+  const removeCustomDoc = (i) => {
+    setCustomDocs(prev => {
+      const doc = prev[i];
+      if (doc && doc.id) setRemovedDocIds(ids => [...ids, doc.id]);
+      return prev.filter((_, idx) => idx !== i);
+    });
   };
 
   /* Discount handlers — clamped to max amount */
@@ -2120,6 +2198,22 @@ function StuStudentModal({ cfg, activeClass, student, classList, sectionList, cl
     }
     const _disc = {};
     Object.entries(disc).forEach(([k, v]) => { if (Number(v) > 0) _disc[k] = Number(v); });
+
+    /* Collect the documents the user actually picked this session (they carry a
+       real File). Fixed slots map to their backend documentType; custom docs use
+       their free-text name. These upload after the student is saved. */
+    const docUploads = [];
+    Object.entries(stdDocs).forEach(([key, v]) => {
+      if (v && v.file instanceof File) {
+        docUploads.push({ documentType: studentService.STU_DOC_TYPES[key] || key, file: v.file });
+      }
+    });
+    customDocs.forEach(d => {
+      if (d && d.file instanceof File && d.name) {
+        docUploads.push({ documentType: d.name, file: d.file });
+      }
+    });
+
     onSave({
       first: first.trim(), last: last.trim(), gender, dob,
       cls, sec, bform, nat, reg, adm, family, admdate,
@@ -2127,24 +2221,8 @@ function StuStudentModal({ cfg, activeClass, student, classList, sectionList, cl
       mother, mcnic, guardian, gcontact, email, address,
       pschool, pgrade, pcontact,
       photo, stdDocs, docs: customDocs, _disc,
+      pictureFile, docUploads, removedDocIds,
     });
-  };
-
-  /* Section toggler */
-  const Section = ({ id, icon, title, children }) => {
-    const isOpen = !!open[id];
-    return (
-      <div className={`stu-fsec${isOpen ? ' open' : ''}`}>
-        <div className="stu-fsec-head" onClick={() => setOpen(p => ({ ...p, [id]: !p[id] }))}>
-          <div className="stu-fsec-head-l">
-            <div className="stu-fsec-ic"><i className={`fa-solid ${icon}`}></i></div>
-            <div className="stu-fsec-title">{title}</div>
-          </div>
-          <i className={`fa-solid fa-chevron-${isOpen ? 'up' : 'down'} stu-fsec-chev`}></i>
-        </div>
-        {isOpen && <div className="stu-fsec-body">{children}</div>}
-      </div>
-    );
   };
 
   return (
@@ -2183,7 +2261,7 @@ function StuStudentModal({ cfg, activeClass, student, classList, sectionList, cl
           {tab === 'general' ? (
             <>
               {/* SECTION A — Student Registration */}
-              <Section id="reg" icon="fa-id-card" title="Student Registration">
+              <StuFormSection id="reg" icon="fa-id-card" title="Student Registration" open={open} setOpen={setOpen}>
                 <div className="stu-reg-grid">
                   {/* Photo widget */}
                   <div className="stu-photo-wrap">
@@ -2197,7 +2275,7 @@ function StuStudentModal({ cfg, activeClass, student, classList, sectionList, cl
                       <i className="fa-solid fa-upload"></i> {photo ? 'Replace Photo' : 'Upload Photo'}
                     </button>
                     {photo && (
-                      <button type="button" className="stu-btn-link stu-btn-link--danger" onClick={() => setPhoto(null)}>
+                      <button type="button" className="stu-btn-link stu-btn-link--danger" onClick={() => { setPhoto(null); setPictureFile(null); }}>
                         <i className="fa-solid fa-xmark"></i> Remove
                       </button>
                     )}
@@ -2257,10 +2335,10 @@ function StuStudentModal({ cfg, activeClass, student, classList, sectionList, cl
                     <input className="stu-finput" value={nat} onChange={(e) => setNat(e.target.value)} placeholder="Pakistani" />
                   </Field>
                 </div>
-              </Section>
+              </StuFormSection>
 
               {/* SECTION B — Parent & Guardian */}
-              <Section id="parent" icon="fa-people-group" title="Parent & Guardian">
+              <StuFormSection id="parent" icon="fa-people-group" title="Parent & Guardian" open={open} setOpen={setOpen}>
                 <div className="stu-fgrid stu-fgrid-4">
                   <Field label="Father Name *">
                     <input className="stu-finput" value={father} onChange={(e) => setFather(e.target.value)} placeholder="Father name" />
@@ -2293,10 +2371,10 @@ function StuStudentModal({ cfg, activeClass, student, classList, sectionList, cl
                     <input className="stu-finput" value={address} onChange={(e) => setAddress(e.target.value)} placeholder="Permanent / postal address" />
                   </Field>
                 </div>
-              </Section>
+              </StuFormSection>
 
               {/* SECTION C — Previous School */}
-              <Section id="prev" icon="fa-school" title="Previous School (optional)">
+              <StuFormSection id="prev" icon="fa-school" title="Previous School (optional)" open={open} setOpen={setOpen}>
                 <div className="stu-fgrid stu-fgrid-3">
                   <Field label="School Name">
                     <input className="stu-finput" value={pschool} onChange={(e) => setPschool(e.target.value)} placeholder="Previous school" />
@@ -2308,10 +2386,10 @@ function StuStudentModal({ cfg, activeClass, student, classList, sectionList, cl
                     <input className="stu-finput" value={pcontact} onChange={(e) => setPcontact(e.target.value)} placeholder="Contact" />
                   </Field>
                 </div>
-              </Section>
+              </StuFormSection>
 
               {/* SECTION D — Documents */}
-              <Section id="docs" icon="fa-paperclip" title="Documents">
+              <StuFormSection id="docs" icon="fa-paperclip" title="Documents" open={open} setOpen={setOpen}>
                 <div className="stu-doc-help">
                   <i className="fa-solid fa-circle-info"></i>
                   Upload the standard documents below. Uploaded documents are listed in the student profile report &amp; preview. You can upload or replace any document.
@@ -2325,9 +2403,16 @@ function StuStudentModal({ cfg, activeClass, student, classList, sectionList, cl
                         <div className="stu-docslot-name">{d.label}</div>
                         <div className="stu-docslot-status">{stdDocs[d.key] ? 'Uploaded' : 'Not uploaded'}</div>
                       </div>
-                      <button type="button" className="stu-btn-link" onClick={() => pickStdDoc(d.key)}>
-                        <i className={`fa-solid ${stdDocs[d.key] ? 'fa-rotate' : 'fa-upload'}`}></i> {stdDocs[d.key] ? 'Replace' : 'Upload'}
-                      </button>
+                      <div className="stu-docslot-actions">
+                        {stdDocs[d.key]?.path && (
+                          <a className="stu-btn-link" href={stdDocs[d.key].path} target="_blank" rel="noreferrer">
+                            <i className="fa-solid fa-eye"></i> View
+                          </a>
+                        )}
+                        <button type="button" className="stu-btn-link" onClick={() => pickStdDoc(d.key)}>
+                          <i className={`fa-solid ${stdDocs[d.key] ? 'fa-rotate' : 'fa-upload'}`}></i> {stdDocs[d.key] ? 'Replace' : 'Upload'}
+                        </button>
+                      </div>
                     </div>
                   ))}
                   <input ref={stdDocRef} type="file" style={{ display: 'none' }} onChange={handleStdDocFile} />
@@ -2350,16 +2435,20 @@ function StuStudentModal({ cfg, activeClass, student, classList, sectionList, cl
                         <div className="stu-docitem-ic"><i className="fa-solid fa-file"></i></div>
                         <div className="stu-docitem-body">
                           <div className="stu-docitem-name">{d.name}</div>
-                          {d.file && <div className="stu-docitem-sub">{d.file}</div>}
+                          {d.file instanceof File
+                            ? <div className="stu-docitem-sub">{d.file.name}</div>
+                            : d.path
+                              ? <a className="stu-docitem-sub" href={d.path} target="_blank" rel="noreferrer">View</a>
+                              : null}
                         </div>
-                        <button type="button" className="stu-btn-link stu-btn-link--danger" onClick={() => setCustomDocs(prev => prev.filter((_, idx) => idx !== i))}>
+                        <button type="button" className="stu-btn-link stu-btn-link--danger" onClick={() => removeCustomDoc(i)}>
                           <i className="fa-solid fa-xmark"></i> Remove
                         </button>
                       </div>
                     ))}
                   </div>
                 )}
-              </Section>
+              </StuFormSection>
             </>
           ) : (
             <div className="stu-fee-tab">
@@ -5906,6 +5995,7 @@ select.stu-finput { appearance: none; padding-right: 32px; cursor: pointer; }
 .stu-docslot-name { font-size: 12.5px; font-weight: 800; color: var(--text-primary); }
 .stu-docslot-status { font-size: 11px; color: var(--text-muted); margin-top: 1px; }
 .stu-docslot.filled .stu-docslot-status { color: #15803D; }
+.stu-docslot-actions { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
 
 .stu-doc-custom {
   display: grid;

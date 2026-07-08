@@ -28,8 +28,52 @@ const pick = (obj, ...keys) => {
   return '';
 };
 
+/* Normalize a backend date/datetime to the `yyyy-MM-dd` that <input type="date">
+   requires — the API returns full ISO strings ("2010-05-03T00:00:00"), which the
+   date input silently rejects (renders blank), breaking edit pre-fill. */
+const dateOnly = (v) => {
+  if (!v) return '';
+  const s = String(v);
+  const m = s.match(/^\d{4}-\d{2}-\d{2}/);
+  return m ? m[0] : s;
+};
+
+/* Standard document slots ↔ backend `documentType` strings. The UI keys its
+   five fixed document cards by these short keys; the backend stores/returns the
+   PascalCase names on the right. Anything else counts as a custom ("Other")
+   document and is surfaced by its raw type name. */
+export const STU_DOC_TYPES = {
+  bform:    'BForm',
+  fcnic:    'FatherCNIC',
+  mcnic:    'MotherCNIC',
+  prevcert: 'PreviousSchoolCertificate',
+  birth:    'BirthCertificate',
+};
+const DOC_TYPE_TO_KEY = Object.fromEntries(
+  Object.entries(STU_DOC_TYPES).map(([key, type]) => [type, key]),
+);
+
+/* Split a student's backend `documents[]` into the two shapes the UI reads:
+   `stdDocs` — a map keyed by the fixed slot key ({ bform: { id, path }, … })
+   `docs`    — the leftover custom documents ([{ id, name, path }, …]).
+   Both are truthy-safe: the modal/profile just check `stdDocs[key]`. */
+function mapStudentDocuments(list) {
+  const stdDocs = {};
+  const docs = [];
+  (Array.isArray(list) ? list : []).forEach(d => {
+    const id   = pick(d, 'id', 'documentID', 'documentId') || 0;
+    const type = pick(d, 'documentType');
+    const path = pick(d, 'documentPath', 'path') || '';
+    const key  = DOC_TYPE_TO_KEY[type];
+    if (key) stdDocs[key] = { id, path, type };
+    else if (type) docs.push({ id, name: type, path });
+  });
+  return { stdDocs, docs };
+}
+
 /* Map one backend student record into the flat shape the UI reads. */
 function mapStudent(st) {
+  const { stdDocs, docs } = mapStudentDocuments(st?.documents);
   return {
     _id:      pick(st, 'id', 'studentID', 'studentId') || 0,
     reg:      String(pick(st, 'registerNo', 'regNo', 'registrationNo') || ''),
@@ -41,15 +85,17 @@ function mapStudent(st) {
     focc:     pick(st, 'fatherOccupation'),
     mother:   pick(st, 'motherName'),
     mcnic:    pick(st, 'motherCnic'),
+    guardian: pick(st, 'guardianName'),
+    gcontact: pick(st, 'guardianContact', 'emergencyContact'),
     gender:   pick(st, 'gander', 'gender'),
-    dob:      pick(st, 'dateOfBirth', 'dob'),
+    dob:      dateOnly(pick(st, 'dateOfBirth', 'dob')),
     mobile:   pick(st, 'mobileNo', 'mobile'),
     email:    pick(st, 'email'),
     address:  pick(st, 'postalAddress', 'permanentAddesss', 'permanentAddress', 'address'),
     nat:      pick(st, 'nationality') || 'Pakistani',
     bform:    pick(st, 'bFormNo', 'bform'),
     family:   String(pick(st, 'familyNo') || ''),
-    admdate:  pick(st, 'dateOfAdmission', 'admdate'),
+    admdate:  dateOnly(pick(st, 'dateOfAdmission', 'admdate')),
     pschool:  pick(st, 'previousSchoolName'),
     pgrade:   pick(st, 'previousSchoolPreviousGrade'),
     pcontact: pick(st, 'previousSchoolContactNo'),
@@ -57,8 +103,8 @@ function mapStudent(st) {
     isActive: st?.isActive !== false,
     reason:   pick(st, 'inactiveReason', 'reason'),   // struck-off reason (Inactive tab)
     _disc:    {},
-    stdDocs:  {},
-    docs:     [],
+    stdDocs,
+    docs,
     _raw:     st,
   };
 }
@@ -389,6 +435,8 @@ export async function saveStuStudent(p = {}) {
   set('FatherOccupation',            p.focc);
   set('MotherName',                  p.mother);
   set('MotherCnic',                  p.mcnic);
+  set('GuardianName',                p.guardian);
+  set('GuardianContact',             p.gcontact);
   set('MotherQualification',         '');
   set('MotherOccupation',            '');
   set('Gander',                      p.gender);
@@ -403,7 +451,10 @@ export async function saveStuStudent(p = {}) {
   set('BFormNo',                     p.bform);
   set('MarksAdmissionTest',          '');
   set('TotalPreviousDues',           Number(p.dues) || 0);
-  set('Picture',                     '');
+  /* When a new file is posted the backend saves it via PictureFile and Picture
+     stays empty; on an edit with no new file, echo the existing picture back so
+     the save doesn't blank it. Never echo a base64 preview (data: URI). */
+  set('Picture', p.pictureFile ? '' : (/^data:/i.test(p.photo || '') ? '' : (p.photo || '')));
   set('PreviousSchoolName',          p.pschool);
   set('PreviousSchoolFocalPerson',   '');
   set('PreviousSchoolContactNo',     p.pcontact);
@@ -416,6 +467,8 @@ export async function saveStuStudent(p = {}) {
   set('AllergiesMajorIllness',       '');
   set('ConditionOfChild',            '');
   set('EmergencyContact',            p.gcontact);
+  set('InactiveReason',              p.inactiveReason);
+  set('InactiveDate',                p.inactiveDate);
   set('CreatedAt',                   now);
   set('CreatedBy',                   userID);
   set('ModifiedAt',                  now);
@@ -430,6 +483,58 @@ export async function saveStuStudent(p = {}) {
   });
   const json = await res.json().catch(() => null);
   if (!res.ok) throw new Error(apiMessage(json) || 'Could not save student');
+  return json;
+}
+
+/* Pull the (possibly newly-created) student id out of a save-student response —
+   used to attach documents right after an add, before the list is reloaded. */
+export function studentIdFromSaveResponse(json) {
+  const d = json?.data ?? json;
+  return Number(pick(d || {}, 'id', 'studentID', 'studentId', 'applicantsID')) || 0;
+}
+
+/* Upload/replace just the profile picture (standalone — no full-form resubmit).
+   Re-calling for the same id replaces the old picture on the backend. Returns
+   the new full picture URL. */
+export async function uploadStuStudentPicture(studentId, file) {
+  const fd = new FormData();
+  fd.append('id', studentId ?? 0);
+  fd.append('PictureFile', file);
+  const res  = await fetch(buildUrl('/api/LaunchSetup/upload-student-picture'), {
+    method: 'POST', headers: { Accept: '*/*' }, body: fd,
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(apiMessage(json) || 'Could not upload picture');
+  return json?.data?.picture ?? json?.data ?? null;
+}
+
+/* Upload (or auto-replace) one student document. Same studentId + documentType
+   replaces the previous file on the backend — no separate delete needed.
+   `documentType` is one of STU_DOC_TYPES for the fixed cards, or any free-text
+   name for an "Other" document. Returns { id, studentId, documentType, documentPath }. */
+export async function uploadStuStudentDocument({ studentId, branchId, gradeId, sectionId, documentType, file } = {}) {
+  const fd = new FormData();
+  fd.append('studentId',    studentId ?? 0);
+  fd.append('branchId',     branchId ?? (Number(sessionStorage.getItem('branchID')) || 0));
+  fd.append('gradeId',      gradeId ?? 0);
+  fd.append('sectionId',    sectionId ?? 0);
+  fd.append('documentType', documentType || '');
+  fd.append('DocumentFile', file);
+  const res  = await fetch(buildUrl('/api/LaunchSetup/upload-student-document'), {
+    method: 'POST', headers: { Accept: '*/*' }, body: fd,
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(apiMessage(json) || 'Could not upload document');
+  return json?.data ?? json;
+}
+
+/* Delete one student document by its id. */
+export async function deleteStuStudentDocument(documentId) {
+  const res  = await fetch(buildUrl(`/api/LaunchSetup/delete-student-document/${documentId || 0}`), {
+    method: 'DELETE', headers: { Accept: '*/*' },
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(apiMessage(json) || 'Could not delete document');
   return json;
 }
 /* Mark a student inactive (soft delete). The backend's delete-student endpoint
