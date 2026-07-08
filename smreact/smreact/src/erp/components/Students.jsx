@@ -4,6 +4,7 @@ import TutorialModal from './TutorialModal';
 import * as studentService from '../services/studentService';
 import useAsync from '../hooks/useAsync';
 import { fetchReportHeader } from '../../utils/pdfReports';
+import { deliverReport } from './reportDelivery';
 
 /* ─── Module-wide helpers ─── */
 const MONTHS_SHORT_STU = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -57,6 +58,36 @@ function stuOpenPrintWindow(title, css, inner, toast) {
   w.document.close();
   /* Small delay so the branch logo image has time to load before print. */
   w.onload = () => setTimeout(() => { try { w.focus(); w.print(); } catch (e) { /* ignore */ } }, 500);
+}
+
+/* Wrap a report's inner HTML into a full A4 document with the SAME toolbar the
+   Academics/Exam reports use (a `window.print()` button labelled
+   "Print / Save as PDF"). deliverReport() rewrites that button into
+   "Save as Word" for the Word path, so the shared .docx exporter works here too. */
+function stuWrapFullDoc(title, css, inner) {
+  const esc = String(title || '').replace(/[<>&]/g, m => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[m]));
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${esc}</title>
+    <style>${css || ''}
+      @media print { .no-print { display:none } }
+      body { margin:0 }
+    </style></head><body>${inner}
+    <div class="no-print" style="text-align:center;padding:20px;background:#F8FAFC;border-top:1px solid #E2E8F0">
+      <button onclick="window.print()" style="background:linear-gradient(135deg,#2563EB,#1E40AF);color:#fff;border:none;padding:12px 24px;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer;margin-right:8px">🖨 Print / Save as PDF</button>
+      <button onclick="window.close()" style="background:transparent;border:1.5px solid #CBD5E1;color:#64748B;padding:12px 24px;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer">Close</button>
+    </div>
+  </body></html>`;
+}
+
+/* Deliver a Students report by chosen format:
+     • 'word' → shared preview with a "Save as Word" button → real .docx download
+                (matches the Academics module exactly).
+     • 'pdf'  → existing auto-print A4 window (unchanged). */
+function stuDeliverReport(title, css, inner, format, toast) {
+  if (format === 'word') {
+    deliverReport(title, 'word', stuWrapFullDoc(title, css, inner));
+  } else {
+    stuOpenPrintWindow(title, css, inner, toast);
+  }
 }
 
 function stuSchoolLogoSVG() {
@@ -601,7 +632,8 @@ function buildStuIdCardHTML(s, cls, school, template, theme, session, role) {
     .sheet{display:flex;flex-direction:column;align-items:center;gap:20px;padding:14px}
     .card{${isV ? 'width:54mm;height:86mm;' : 'width:86mm;height:54mm;'}border-radius:4mm;overflow:hidden;background:#fff;box-shadow:0 6px 18px rgba(15,23,42,.18);display:flex;flex-direction:column}
     .card-top{padding:3mm 4mm 2mm;color:#fff;display:flex;align-items:center;gap:2mm;position:relative}
-    .logo-wrap svg{width:7mm;height:7mm}
+    .logo-wrap{width:7mm;height:7mm;flex-shrink:0;background:#fff;border-radius:1.5mm;padding:0.4mm;display:flex;align-items:center;justify-content:center}
+    .logo-wrap svg,.logo-wrap img{width:100%;height:100%;object-fit:contain;display:block}
     .school-name{font-size:9.5px;font-weight:800;letter-spacing:.3px;flex:1;line-height:1.1}
     .face-lbl{position:absolute;right:3mm;top:2mm;background:rgba(255,255,255,.18);padding:1mm 2mm;border-radius:2mm;font-size:7px;font-weight:800;text-transform:uppercase;letter-spacing:.4px}
     .card-body{padding:3mm 4mm;flex:1;display:flex;flex-direction:column;${isV ? '' : 'flex-direction:row;'}gap:2mm;background:#fff}
@@ -641,11 +673,12 @@ function buildStuBulkIdHTML(students, cls, school, template, theme, session) {
   const isV = template === 'v';
   const inner = students.map(s => {
     const initials = stuInitials(s);
-    return `
+    const front = `
       <div class="card">
         <div class="card-top" style="background:linear-gradient(135deg,${theme.c1},${theme.c2})">
           <div class="logo-wrap">${stuLogoImg(school)}</div>
           <div class="school-name">${stuEsc(school?.name || 'School')}</div>
+          <div class="face-lbl">Front</div>
         </div>
         <div class="card-body">
           <div class="photo">${s.photo ? `<img src="${s.photo}" alt=""/>` : `<span>${stuEsc(initials)}</span>`}</div>
@@ -656,15 +689,36 @@ function buildStuBulkIdHTML(students, cls, school, template, theme, session) {
         </div>
         <div class="card-foot" style="background:${theme.c1}">If found, please return to the school office.</div>
       </div>`;
+    const back = `
+      <div class="card">
+        <div class="card-top" style="background:linear-gradient(135deg,${theme.c1},${theme.c2})">
+          <div class="logo-wrap">${stuLogoImg(school)}</div>
+          <div class="school-name">${stuEsc(school?.name || 'School')}</div>
+          <div class="face-lbl">Back</div>
+        </div>
+        <div class="card-body card-body-back">
+          <div class="qr-strip-back"><div class="qr-big"></div><div class="qr-meta"><div class="qr-l">Scan to verify</div><div class="qr-reg" style="color:${theme.c1}">${stuEsc(s.reg)}</div></div></div>
+          <div class="back-rows">
+            <div class="back-row"><span class="lbl">Guardian</span><b>${stuEsc(s.father || '—')}</b></div>
+            <div class="back-row"><span class="lbl">Mobile</span><b class="mono">${stuEsc(s.mobile || '—')}</b></div>
+            <div class="back-row"><span class="lbl">D.O.B.</span><b>${stuFmtDate(s.dob)}</b></div>
+            <div class="back-row"><span class="lbl">Adm No</span><b class="mono">${stuEsc(s.adm || '—')}</b></div>
+          </div>
+        </div>
+        <div class="card-foot" style="background:${theme.c1}">Property of ${stuEsc(school?.name || 'School')} — return if found.</div>
+      </div>`;
+    return front + back;
   }).join('');
   const css = `
     *{box-sizing:border-box;margin:0;padding:0;font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif}
     html,body{background:#F1F3F8}body{padding:10px 0}
     .sheet{display:grid;grid-template-columns:${isV ? 'repeat(4,1fr)' : 'repeat(2,1fr)'};gap:6mm;padding:8mm;background:#fff;width:210mm;margin:0 auto;box-shadow:0 10px 30px rgba(15,23,42,.12)}
     .card{${isV ? 'height:86mm;' : 'height:54mm;'}border-radius:3mm;overflow:hidden;background:#fff;border:1px dashed #94A3B8;display:flex;flex-direction:column;page-break-inside:avoid}
-    .card-top{padding:2.5mm 3mm 1.5mm;color:#fff;display:flex;align-items:center;gap:1.5mm}
-    .logo-wrap svg{width:6mm;height:6mm}
+    .card-top{padding:2.5mm 3mm 1.5mm;color:#fff;display:flex;align-items:center;gap:1.5mm;position:relative}
+    .logo-wrap{width:6mm;height:6mm;flex-shrink:0;background:#fff;border-radius:1.2mm;padding:0.3mm;display:flex;align-items:center;justify-content:center}
+    .logo-wrap svg,.logo-wrap img{width:100%;height:100%;object-fit:contain;display:block}
     .school-name{font-size:8px;font-weight:800;flex:1;line-height:1.1}
+    .face-lbl{position:absolute;right:2.5mm;top:1.8mm;background:rgba(255,255,255,.18);padding:0.7mm 1.6mm;border-radius:1.6mm;font-size:6px;font-weight:800;text-transform:uppercase;letter-spacing:.4px}
     .card-body{padding:2.5mm 3mm;flex:1;display:flex;flex-direction:${isV ? 'column' : 'row'};gap:2mm}
     .photo{${isV ? 'width:18mm;height:22mm;align-self:center;' : 'width:18mm;height:24mm;'}border-radius:2mm;background:${theme.c1}18;color:${theme.c1};display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;overflow:hidden;flex-shrink:0;border:0.5px solid ${theme.c1}33}
     .photo img{width:100%;height:100%;object-fit:cover}
@@ -674,6 +728,17 @@ function buildStuBulkIdHTML(students, cls, school, template, theme, session) {
     .val.mono{font-family:ui-monospace,Menlo,monospace;color:${theme.c1};font-weight:800}
     .kv-row{display:grid;grid-template-columns:1fr 1fr;gap:1mm 2.5mm;margin-top:1.3mm}
     .card-foot{color:#fff;padding:1mm 2mm;font-size:5.5px;font-weight:700;text-align:center}
+    .card-body-back{flex-direction:column !important}
+    .qr-strip-back{display:flex;align-items:center;gap:2.5mm;padding:0.5mm 0 1.5mm}
+    .qr-big{width:${isV ? '15mm' : '13mm'};height:${isV ? '15mm' : '13mm'};background:repeating-linear-gradient(0deg,#111 0 0.6mm,transparent 0.6mm 1.2mm),repeating-linear-gradient(90deg,#111 0 0.6mm,transparent 0.6mm 1.2mm);background-blend-mode:multiply;border:0.6mm solid #fff;border-radius:1mm;flex-shrink:0;box-shadow:0 0 0 0.3mm ${theme.c1}}
+    .qr-meta{flex:1;min-width:0}
+    .qr-l{font-size:5.5px;font-weight:800;color:#0F172A;text-transform:uppercase;letter-spacing:.3px}
+    .qr-reg{font-size:8.5px;font-weight:800;margin-top:0.4mm;font-family:ui-monospace,Menlo,monospace;letter-spacing:.3px}
+    .back-rows{display:grid;grid-template-columns:1fr 1fr;gap:1mm 2.5mm;margin-top:0.8mm;padding-top:1.2mm;border-top:0.6px dashed #CBD5E1}
+    .back-row{display:flex;flex-direction:column;gap:0.2mm}
+    .back-row .lbl{font-size:5.5px;color:#64748B;text-transform:uppercase;letter-spacing:.3px;font-weight:800}
+    .back-row b{font-size:7.5px;color:#0F172A;font-weight:700;line-height:1.15}
+    .back-row b.mono{font-family:ui-monospace,Menlo,monospace}
     @page{size:A4 portrait;margin:0}
     @media print{body{background:#fff;padding:0}.sheet{box-shadow:none;width:auto;margin:0}}
   `;
@@ -1307,7 +1372,6 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
   /* Report Picker — generates the appropriate PDF */
   const doReport = async ({ style, format }) => {
     if (!rpCfg) return;
-    void format; // PDF + Word both render the same HTML in the print window
     const isBW = style === 'bw';
     /* Pull the branch record (name, logo, address) from the shared
        report-header API and use it in the report header, falling back
@@ -1321,20 +1385,20 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
     };
     if (rpCfg.kind === 'admission') {
       const html = buildStuAdmissionFormHTML(rptSchool, isBW);
-      stuOpenPrintWindow('Admission Form', '', html, toast);
+      stuDeliverReport('Admission Form', '', html, format, toast);
     } else if (rpCfg.kind === 'profile') {
       const c = list.find(x => x.key === rpCfg.cKey);
       const s = c?.students.find(x => x.reg === rpCfg.reg);
       if (!s) return;
       const html = buildStuProfileHTML(s, c, rptSchool, isBW);
-      stuOpenPrintWindow(`Profile — ${stuFullName(s)}`, '', html, toast);
+      stuDeliverReport(`Profile — ${stuFullName(s)}`, '', html, format, toast);
     } else if (rpCfg.kind === 'class') {
       const c = list.find(x => x.key === rpCfg.cKey);
       const html = buildStuClassReportHTML(c, rptSchool, isBW);
-      stuOpenPrintWindow(`${c.cls} (${c.sec}) — Class Report`, '', html, toast);
+      stuDeliverReport(`${c.cls} (${c.sec}) — Class Report`, '', html, format, toast);
     } else if (rpCfg.kind === 'school') {
       const html = buildStuSchoolReportHTML(list, rptSchool, isBW);
-      stuOpenPrintWindow('School Report', '', html, toast);
+      stuDeliverReport('School Report', '', html, format, toast);
     }
     toast(`${rpCfg.title} (${style.toUpperCase()} · ${format.toUpperCase()}) ready`, 'success');
     setRpCfg(null);
@@ -2689,11 +2753,10 @@ function InactiveStudents({ classes, setClasses, inactive, setInactive, toast })
   };
   const doProfileReport = ({ style, format }) => {
     if (!profileCfg?.student) return;
-    void format; /* PDF + Word render the same HTML in the print window */
     const s = profileCfg.student;
     const cls = { cls: s.cls || '—', sec: s.sec || '—' };
     const html = buildStuProfileHTML(s, cls, school, style === 'bw');
-    stuOpenPrintWindow(`Profile — ${stuFullName(s)}`, '', html, toast);
+    stuDeliverReport(`Profile — ${stuFullName(s)}`, '', html, format, toast);
     toast(`${profileCfg.title} (${style.toUpperCase()} · ${format.toUpperCase()}) ready`, 'success');
     setProfileCfg(null);
   };

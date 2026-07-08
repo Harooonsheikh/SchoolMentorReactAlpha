@@ -3513,7 +3513,15 @@ const setSubjLine = (ci, si, l) => {
      items × marks. Floats like "1.00" collapse to plain numbers. */
   const pgFmtMk    = n => String(+n || 0);
   const pgSecItems = sec => (+sec.noOfQuestions || (Array.isArray(sec.rows) ? sec.rows.length : 0));
-  const pgSecTotalMarks = sec => Math.max(0, pgSecItems(sec) - (+sec.noOfChoices || 0)) * (+sec.marks || 0);
+  /* Effective (skippable) choices. Convention: jab koi choice nahi hoti (sab
+     compulsory / "attempt all") to backend `noOfChoices` ko `noOfQuestions` ke
+     BARABAR store karta hai — is case ko 0 samjho, warna (items − items) = 0
+     hone se total marks galti se 0 aa jaata hai. */
+  const pgSecEffChoices = sec => {
+    const ch = +sec.noOfChoices || 0;
+    return ch >= pgSecItems(sec) ? 0 : ch;
+  };
+  const pgSecTotalMarks = sec => Math.max(0, pgSecItems(sec) - pgSecEffChoices(sec)) * (+sec.marks || 0);
 
   /* Match-the-Columns: Column B ko shuffle karo taa-ke sahi jawab apni hi Column A question ke
      saamne na aaye (asli match exercise). Shuffle DETERMINISTIC hai (Column B ke text se seed
