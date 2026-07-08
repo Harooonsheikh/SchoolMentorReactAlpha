@@ -13146,9 +13146,16 @@ const runDelete = async () => {
                     <input
                       className="rs-input"
                       type="number"
+                      min={0}
+                      max={100}
                       value={g.pct || ''}
                       placeholder="Value"
-                      onChange={e => upGrade(g.id, 'pct', e.target.value)}
+                      onChange={e => {
+                        let v = e.target.value;
+                        if (v !== '' && Number(v) > 100) v = '100';
+                        if (v !== '' && Number(v) < 0) v = '0';
+                        upGrade(g.id, 'pct', v);
+                      }}
                     />
                     <CharField
                       value={g.comment || ''}
@@ -13238,9 +13245,16 @@ const runDelete = async () => {
                       <input
                         className="rs-input"
                         type="number"
+                        min={0}
+                        max={100}
                         value={r.pct || ''}
                         placeholder="Percentage value"
-                        onChange={e => upRemark(r.id, 'pct', e.target.value)}
+                        onChange={e => {
+                          let v = e.target.value;
+                          if (v !== '' && Number(v) > 100) v = '100';
+                          if (v !== '' && Number(v) < 0) v = '0';
+                          upRemark(r.id, 'pct', v);
+                        }}
                       />
                       <Tooltip text="Remove this remark">
                         <button className="rs-del" onClick={() => askDeleteRemark(r)}>
