@@ -3505,6 +3505,34 @@ const setSubjLine = (ci, si, l) => {
   /* The most likely "question text" field for a row, across all types. (HTML → plain text) */
   const pgRowText = r => pgStripHtml(r.question || r.word || r.sentence || r.statement || r.topic || r.title || r.comprehensionStatement || r.mainQuestion || '');
 
+  /* Match-the-Columns: Column B ko shuffle karo taa-ke sahi jawab apni hi Column A question ke
+     saamne na aaye (asli match exercise). Shuffle DETERMINISTIC hai (Column B ke text se seed
+     hota hai) — is liye preview aur download dono me bilkul same order aata hai. n>=2 par koi bhi
+     entry apni asli row par nahi rehti (derangement). */
+  const pgShuffleColumnB = (rows) => {
+    const bs = rows.map(r => pgStripHtml(r.columnB || r.option2));
+    const n = bs.length;
+    if (n < 2) return bs;
+    let seed = 0;
+    const src = bs.join('|') || 'match';
+    for (let i = 0; i < src.length; i++) { seed = (Math.imul(seed, 131) + src.charCodeAt(i)) >>> 0; }
+    if (!seed) seed = 1;
+    const rand = () => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed / 4294967296; };
+    const order = bs.map((_, i) => i);
+    for (let i = n - 1; i > 0; i--) {
+      const j = Math.floor(rand() * (i + 1));
+      [order[i], order[j]] = [order[j], order[i]];
+    }
+    // Derangement fix: jo entry apni asli jagah par reh gayi use next se swap karo.
+    for (let i = 0; i < n; i++) {
+      if (order[i] === i) {
+        const k = (i + 1) % n;
+        [order[i], order[k]] = [order[k], order[i]];
+      }
+    }
+    return order.map(i => bs[i]);
+  };
+
   /* subjective-only type keys (in PG_SUBJ_TYPES but not PG_OBJ_TYPES) */
   const PG_SUBJ_ONLY_KEYS = PG_SUBJ_TYPES.filter(s => !PG_OBJ_TYPES.some(o => o.key === s.key)).map(s => s.key);
   /* Objective vs subjective for a saved section. Uses the API's qpSubmissionPaperType
@@ -3574,12 +3602,13 @@ const setSubjLine = (ci, si, l) => {
       if (k === 'wordopposite' || k === 'wordopposites') return twoCol(rows, 'word', 'Word', 'Opposite');
       if (k === 'singularplural' || k === 'singularplurals') return twoCol(rows, 'singular', 'Singular', 'Plural');
       if (k === 'matchcolume' || k === 'matchcolumns') {
+        const shufB = pgShuffleColumnB(rows);   // Column B shuffled (sahi jawab saamne na aaye)
         return (
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11.5, marginBottom: 12 }}>
             <thead><tr style={{ background: thBg }}><th style={th}>Column A</th><th style={th}>Answer</th><th style={th}>Column B</th></tr></thead>
             <tbody>
               {rows.map((r, i) => (
-                <tr key={i}><td style={td}>{pgStripHtml(r.columnA || r.option1) || pgRowText(r)}</td><td style={td}>______</td><td style={td}>{pgStripHtml(r.columnB || r.option2)}</td></tr>
+                <tr key={i}><td style={td}>{pgStripHtml(r.columnA || r.option1) || pgRowText(r)}</td><td style={td}>______</td><td style={td}>{shufB[i]}</td></tr>
               ))}
             </tbody>
           </table>
@@ -3689,8 +3718,9 @@ const setSubjLine = (ci, si, l) => {
       else if (k === 'wordopposite' || k === 'wordopposites') body = twoCol('word', 'Word', 'Opposite');
       else if (k === 'singularplural' || k === 'singularplurals') body = twoCol('singular', 'Singular', 'Plural');
       else if (k === 'matchcolume' || k === 'matchcolumns') {
+        const shufB = pgShuffleColumnB(rows);   // Column B shuffled (preview jaisा hi deterministic order)
         body = `<table><tr><th>Column A</th><th>Answer</th><th>Column B</th></tr>` +
-          rows.map(r => `<tr><td>${pgEsc(pgStripHtml(r.columnA || r.option1) || pgRowText(r))}</td><td>______</td><td>${pgEsc(pgStripHtml(r.columnB || r.option2))}</td></tr>`).join('') + '</table>';
+          rows.map((r, i) => `<tr><td>${pgEsc(pgStripHtml(r.columnA || r.option1) || pgRowText(r))}</td><td>______</td><td>${pgEsc(shufB[i])}</td></tr>`).join('') + '</table>';
       } else if (k === 'comprehension') {
         const passage = pgStripHtml(rows[0]?.comprehensionStatement);
         body = (passage ? `<div style="background:#F8FAFF;border:1px solid #BFDBFE;border-radius:4px;padding:8px 12px;font-size:11.5px;margin-bottom:8px;line-height:1.6">${pgEsc(passage)}</div>` : '') +
