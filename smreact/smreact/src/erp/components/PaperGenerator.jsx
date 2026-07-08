@@ -3505,6 +3505,16 @@ const setSubjLine = (ci, si, l) => {
   /* The most likely "question text" field for a row, across all types. (HTML → plain text) */
   const pgRowText = r => pgStripHtml(r.question || r.word || r.sentence || r.statement || r.topic || r.title || r.comprehensionStatement || r.mainQuestion || '');
 
+  /* ── Marks helpers for saved (API) sections ──────────────────────────────
+     Per-item marks = marks-per-item (parentData.marks). Section total marks =
+     (items − choices) × marks-per-item — same formula the workspace uses
+     (sectionUsedMarks / typeAggregates). `choices` are the optional/skippable
+     questions, so only (items − choices) are counted; with no choice it's just
+     items × marks. Floats like "1.00" collapse to plain numbers. */
+  const pgFmtMk    = n => String(+n || 0);
+  const pgSecItems = sec => (+sec.noOfQuestions || (Array.isArray(sec.rows) ? sec.rows.length : 0));
+  const pgSecTotalMarks = sec => Math.max(0, pgSecItems(sec) - (+sec.noOfChoices || 0)) * (+sec.marks || 0);
+
   /* Match-the-Columns: Column B ko shuffle karo taa-ke sahi jawab apni hi Column A question ke
      saamne na aaye (asli match exercise). Shuffle DETERMINISTIC hai (Column B ke text se seed
      hota hai) — is liye preview aur download dono me bilkul same order aata hai. n>=2 par koi bhi
@@ -3570,12 +3580,12 @@ const setSubjLine = (ci, si, l) => {
     const td = { padding: '6px 8px', border: tdBorder };
     const blank = '___________';
 
-    const twoCol = (rows, leftKey, leftLabel, rightLabel) => (
+    const twoCol = (rows, leftKey, leftLabel, rightLabel, mk) => (
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11.5, marginBottom: 12 }}>
-        <thead><tr style={{ background: thBg }}><th style={th}>#</th><th style={th}>{leftLabel}</th><th style={th}>{rightLabel}</th></tr></thead>
+        <thead><tr style={{ background: thBg }}><th style={th}>#</th><th style={th}>{leftLabel}</th><th style={th}>{rightLabel}</th><th style={{ ...th, textAlign: 'center', width: 60 }}>Marks</th></tr></thead>
         <tbody>
           {rows.map((r, i) => (
-            <tr key={i}><td style={td}>{pgRoman(i)}</td><td style={td}>{pgStripHtml(r[leftKey]) || pgRowText(r)}</td><td style={td}>{blank}</td></tr>
+            <tr key={i}><td style={td}>{pgRoman(i)}</td><td style={td}>{pgStripHtml(r[leftKey]) || pgRowText(r)}</td><td style={td}>{blank}</td><td style={{ ...td, textAlign: 'center' }}>[{mk}]</td></tr>
           ))}
         </tbody>
       </table>
@@ -3584,10 +3594,13 @@ const setSubjLine = (ci, si, l) => {
     const renderRows = (sec) => {
       const { rows } = sec;
       const k = pgRecKey(sec.recTitle);
+      /* Per-item marks — same for every item in the section (marks-per-item). */
+      const mk = pgFmtMk(sec.marks);
+      const mkTag = <span style={{ float: 'right', fontWeight: 700, marginLeft: 8 }}>[{mk}]</span>;
       if (k === 'mcqs') {
         return rows.map((r, i) => (
           <div key={i} style={{ marginBottom: 8, fontSize: 12, color: '#334155' }}>
-            <div>{pgRoman(i)}. {pgStripHtml(r.question)}</div>
+            <div>{mkTag}{pgRoman(i)}. {pgStripHtml(r.question)}</div>
             <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginTop: 3, paddingLeft: 14 }}>
               {['option1','option2','option3','option4'].map((o, oi) => r[o] ? (
                 <span key={oi} style={{ border: '1px solid #CBD5E1', borderRadius: 4, padding: '2px 8px', fontSize: 11.5 }}>
@@ -3598,17 +3611,17 @@ const setSubjLine = (ci, si, l) => {
           </div>
         ));
       }
-      if (k === 'wordsynonyms') return twoCol(rows, 'word', 'Word', 'Synonym');
-      if (k === 'wordopposite' || k === 'wordopposites') return twoCol(rows, 'word', 'Word', 'Opposite');
-      if (k === 'singularplural' || k === 'singularplurals') return twoCol(rows, 'singular', 'Singular', 'Plural');
+      if (k === 'wordsynonyms') return twoCol(rows, 'word', 'Word', 'Synonym', mk);
+      if (k === 'wordopposite' || k === 'wordopposites') return twoCol(rows, 'word', 'Word', 'Opposite', mk);
+      if (k === 'singularplural' || k === 'singularplurals') return twoCol(rows, 'singular', 'Singular', 'Plural', mk);
       if (k === 'matchcolume' || k === 'matchcolumns') {
         const shufB = pgShuffleColumnB(rows);   // Column B shuffled (sahi jawab saamne na aaye)
         return (
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11.5, marginBottom: 12 }}>
-            <thead><tr style={{ background: thBg }}><th style={th}>Column A</th><th style={th}>Answer</th><th style={th}>Column B</th></tr></thead>
+            <thead><tr style={{ background: thBg }}><th style={th}>Column A</th><th style={th}>Answer</th><th style={th}>Column B</th><th style={{ ...th, textAlign: 'center', width: 60 }}>Marks</th></tr></thead>
             <tbody>
               {rows.map((r, i) => (
-                <tr key={i}><td style={td}>{pgStripHtml(r.columnA || r.option1) || pgRowText(r)}</td><td style={td}>______</td><td style={td}>{shufB[i]}</td></tr>
+                <tr key={i}><td style={td}>{pgStripHtml(r.columnA || r.option1) || pgRowText(r)}</td><td style={td}>______</td><td style={td}>{shufB[i]}</td><td style={{ ...td, textAlign: 'center' }}>[{mk}]</td></tr>
               ))}
             </tbody>
           </table>
@@ -3621,7 +3634,7 @@ const setSubjLine = (ci, si, l) => {
             {passage && <div style={{ background: isBW ? '#FFF' : '#F8FAFF', border: `1px solid ${isBW ? '#D1D5DB' : '#BFDBFE'}`, borderRadius: 4, padding: '8px 12px', fontSize: 11.5, marginBottom: 8, lineHeight: 1.6 }}>{passage}</div>}
             {rows.map((r, i) => (
               <div key={i} style={{ fontSize: 12, color: '#334155', marginBottom: 6 }}>
-                {pgRoman(i)}. {pgStripHtml(r.question)}
+                {mkTag}{pgRoman(i)}. {pgStripHtml(r.question)}
                 <AnswerLines />
               </div>
             ))}
@@ -3631,10 +3644,10 @@ const setSubjLine = (ci, si, l) => {
       if (k === 'truefalse') {
         return (
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11.5, marginBottom: 12 }}>
-            <thead><tr style={{ background: thBg }}><th style={th}>#</th><th style={th}>Statement</th><th style={th}>True</th><th style={th}>False</th></tr></thead>
+            <thead><tr style={{ background: thBg }}><th style={th}>#</th><th style={th}>Statement</th><th style={th}>True</th><th style={th}>False</th><th style={{ ...th, textAlign: 'center', width: 60 }}>Marks</th></tr></thead>
             <tbody>
               {rows.map((r, i) => (
-                <tr key={i}><td style={td}>{pgRoman(i)}</td><td style={td}>{pgRowText(r)}</td><td style={{ ...td, width: 40 }}></td><td style={{ ...td, width: 40 }}></td></tr>
+                <tr key={i}><td style={td}>{pgRoman(i)}</td><td style={td}>{pgRowText(r)}</td><td style={{ ...td, width: 40 }}></td><td style={{ ...td, width: 40 }}></td><td style={{ ...td, textAlign: 'center' }}>[{mk}]</td></tr>
               ))}
             </tbody>
           </table>
@@ -3642,14 +3655,14 @@ const setSubjLine = (ci, si, l) => {
       }
       if (k === 'fillintheblank' || k === 'filltheblank' || k === 'fillintheblanks') {
         return rows.map((r, i) => (
-          <div key={i} style={{ fontSize: 12, color: '#334155', marginBottom: 8 }}>{pgRoman(i)}. {pgRowText(r)} <span style={{ display: 'inline-block', minWidth: 90, borderBottom: '1px solid #334155' }}></span></div>
+          <div key={i} style={{ fontSize: 12, color: '#334155', marginBottom: 8 }}>{mkTag}{pgRoman(i)}. {pgRowText(r)} <span style={{ display: 'inline-block', minWidth: 90, borderBottom: '1px solid #334155' }}></span></div>
         ));
       }
       /* Generic: essays, stories, letters, applications, paragraphs, wordSentences,
         questionAns, longQuestions, punctuation, circleCorrectWord, fallback. */
       return rows.map((r, i) => (
         <div key={i} style={{ fontSize: 12, color: '#334155', marginBottom: 8 }}>
-          {pgRoman(i)}. {pgRowText(r)}
+          {mkTag}{pgRoman(i)}. {pgRowText(r)}
           <AnswerLines />
         </div>
       ));
@@ -3665,8 +3678,9 @@ const setSubjLine = (ci, si, l) => {
     );
     const renderBlock = (sec, num) => (
       <div key={`${num}-${sec.recTitle}`} style={{ marginBottom: 16 }}>
-        <div style={{ fontSize: 12, color: '#334155', marginBottom: 10 }}>
-          <strong>Q.{num}</strong> {sec.mainQuestion}
+        <div style={{ fontSize: 12, color: '#334155', marginBottom: 10, display: 'flex', justifyContent: 'space-between', gap: 10 }}>
+          <span><strong>Q.{num}</strong> {sec.mainQuestion}</span>
+          <strong style={{ whiteSpace: 'nowrap' }}>[Total Marks: {pgSecTotalMarks(sec)}]</strong>
         </div>
         {renderRows(sec)}
       </div>
@@ -3703,35 +3717,38 @@ const setSubjLine = (ci, si, l) => {
     const renderOne = (sec, num) => {
       const k = pgRecKey(sec.recTitle);
       const rows = sec.rows || [];
-      const header = `<div class="q-header"><span><b>Q.${num}</b> ${pgEsc(sec.mainQuestion)}</span></div>`;
+      /* Per-item marks (right-aligned) + section total marks on the header. */
+      const mk = pgFmtMk(sec.marks);
+      const mkTag = `<span style="float:right;font-weight:700;margin-left:8px">[${mk}]</span>`;
+      const header = `<div class="q-header"><span><b>Q.${num}</b> ${pgEsc(sec.mainQuestion)}</span><span class="q-marks">[Total Marks: ${pgSecTotalMarks(sec)}]</span></div>`;
       let body = '';
       const twoCol = (leftKey, leftLabel, rightLabel) =>
-        `<table><tr><th>#</th><th>${leftLabel}</th><th>${rightLabel}</th></tr>` +
-        rows.map((r, i) => `<tr><td>${pgRoman(i)}</td><td>${pgEsc(pgStripHtml(r[leftKey]) || pgRowText(r))}</td><td>${blank}</td></tr>`).join('') + '</table>';
+        `<table><tr><th>#</th><th>${leftLabel}</th><th>${rightLabel}</th><th style="text-align:center;width:60px">Marks</th></tr>` +
+        rows.map((r, i) => `<tr><td>${pgRoman(i)}</td><td>${pgEsc(pgStripHtml(r[leftKey]) || pgRowText(r))}</td><td>${blank}</td><td style="text-align:center">[${mk}]</td></tr>`).join('') + '</table>';
 
       if (k === 'mcqs') {
         body = rows.map((r, i) => {
           const opts = ['option1','option2','option3','option4'].map((o, oi) => r[o] ? `<span class="mcq-opt">(${String.fromCharCode(65 + oi)}) ${pgEsc(pgStripHtml(r[o]))}</span>` : '').join('');
-          return `<div class="mcq-item">${pgRoman(i)}. ${pgEsc(pgStripHtml(r.question))}<div class="mcq-options">${opts}</div></div>`;
+          return `<div class="mcq-item">${mkTag}${pgRoman(i)}. ${pgEsc(pgStripHtml(r.question))}<div class="mcq-options">${opts}</div></div>`;
         }).join('');
       } else if (k === 'wordsynonyms') body = twoCol('word', 'Word', 'Synonym');
       else if (k === 'wordopposite' || k === 'wordopposites') body = twoCol('word', 'Word', 'Opposite');
       else if (k === 'singularplural' || k === 'singularplurals') body = twoCol('singular', 'Singular', 'Plural');
       else if (k === 'matchcolume' || k === 'matchcolumns') {
         const shufB = pgShuffleColumnB(rows);   // Column B shuffled (preview jaisा hi deterministic order)
-        body = `<table><tr><th>Column A</th><th>Answer</th><th>Column B</th></tr>` +
-          rows.map((r, i) => `<tr><td>${pgEsc(pgStripHtml(r.columnA || r.option1) || pgRowText(r))}</td><td>______</td><td>${pgEsc(shufB[i])}</td></tr>`).join('') + '</table>';
+        body = `<table><tr><th>Column A</th><th>Answer</th><th>Column B</th><th style="text-align:center;width:60px">Marks</th></tr>` +
+          rows.map((r, i) => `<tr><td>${pgEsc(pgStripHtml(r.columnA || r.option1) || pgRowText(r))}</td><td>______</td><td>${pgEsc(shufB[i])}</td><td style="text-align:center">[${mk}]</td></tr>`).join('') + '</table>';
       } else if (k === 'comprehension') {
         const passage = pgStripHtml(rows[0]?.comprehensionStatement);
         body = (passage ? `<div style="background:#F8FAFF;border:1px solid #BFDBFE;border-radius:4px;padding:8px 12px;font-size:11.5px;margin-bottom:8px;line-height:1.6">${pgEsc(passage)}</div>` : '') +
-          rows.map((r, i) => `<div class="write-item">${pgRoman(i)}. ${pgEsc(pgStripHtml(r.question))}${ansLines()}</div>`).join('');
+          rows.map((r, i) => `<div class="write-item">${mkTag}${pgRoman(i)}. ${pgEsc(pgStripHtml(r.question))}${ansLines()}</div>`).join('');
       } else if (k === 'truefalse') {
-        body = `<table class="tf-table"><tr><th>#</th><th>Statement</th><th>True</th><th>False</th></tr>` +
-          rows.map((r, i) => `<tr><td>${pgRoman(i)}</td><td>${pgEsc(pgRowText(r))}</td><td><span class="tf-box"></span></td><td><span class="tf-box"></span></td></tr>`).join('') + '</table>';
+        body = `<table class="tf-table"><tr><th>#</th><th>Statement</th><th>True</th><th>False</th><th style="text-align:center;width:60px">Marks</th></tr>` +
+          rows.map((r, i) => `<tr><td>${pgRoman(i)}</td><td>${pgEsc(pgRowText(r))}</td><td><span class="tf-box"></span></td><td><span class="tf-box"></span></td><td style="text-align:center">[${mk}]</td></tr>`).join('') + '</table>';
       } else if (k === 'fillintheblank' || k === 'filltheblank' || k === 'fillintheblanks') {
-        body = rows.map((r, i) => `<div class="write-item">${pgRoman(i)}. ${pgEsc(pgRowText(r))} <span class="blank"></span></div>`).join('');
+        body = rows.map((r, i) => `<div class="write-item">${mkTag}${pgRoman(i)}. ${pgEsc(pgRowText(r))} <span class="blank"></span></div>`).join('');
       } else {
-        body = rows.map((r, i) => `<div class="write-item">${pgRoman(i)}. ${pgEsc(pgRowText(r))}${ansLines()}</div>`).join('');
+        body = rows.map((r, i) => `<div class="write-item">${mkTag}${pgRoman(i)}. ${pgEsc(pgRowText(r))}${ansLines()}</div>`).join('');
       }
       return `<div class="q-block">${header}${body}</div>`;
     };
