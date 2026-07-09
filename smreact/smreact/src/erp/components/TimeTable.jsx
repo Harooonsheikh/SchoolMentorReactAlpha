@@ -1943,6 +1943,7 @@ function TTAutoGenerateModal({ classes = [], teachers = [], existingData = {}, o
         resetDayDurs={resetDayDurs}
         validation={validation}
         totalWeekPeriods={totalWeekPeriods}
+        classCount={selectedSet.size}
       />
     );
     if (w.step === 4) return <WizStep4 w={w} update={update} toggleTeacherDay={toggleTeacherDay} wizSlotsFor={wizSlotsFor} totalWeekPeriods={totalWeekPeriods} teacherNames={teacherNames} />;
@@ -2383,7 +2384,7 @@ function WizStep2({ w, defP, addBreakTo, removeBreakAt, setDayBreakMode }) {
 }
 
 /* ─── Step 3 — Periods (two-panel: per-day editor + lesson allocation) ─── */
-function WizStep3({ w, update, defP, wizSlotsFor, setSubjectLessons, setPeriodDur, resetPeriodDur, resetDayDurs, totalWeekPeriods }) {
+function WizStep3({ w, update, defP, wizSlotsFor, setSubjectLessons, setPeriodDur, resetPeriodDur, resetDayDurs, totalWeekPeriods, classCount = 1 }) {
   const selDay     = (w._step3Day != null && w.workDays.includes(w._step3Day)) ? w._step3Day : w.workDays[0];
   const slots      = wizSlotsFor(selDay);
   const periods    = slots.filter((s) => !s.isBreak);
@@ -2527,16 +2528,17 @@ function WizStep3({ w, update, defP, wizSlotsFor, setSubjectLessons, setPeriodDu
         </div>
         <div className="wiz-desc-box" style={{ marginBottom: 10 }}>
           <i className="fa-solid fa-info-circle"></i>
-          Total available this week: <b>{totalWeekPeriods} periods/class</b>. Use −/+ per subject.
+          <span><b>{totalWeekPeriods} periods/class</b> × {classCount} class{classCount !== 1 ? 'es' : ''} = <b>{totalWeekPeriods * classCount} total lectures</b>. Neeche lessons <b>per class</b> set karein.</span>
         </div>
         <div className="wiz-lesson-bar-wrap">
           <div className="wiz-lesson-bar-track">
             <div className={`wiz-lesson-bar-fill wiz-lesson-bar--${lessonStatus}`} style={{ width: `${lessonPct}%` }} />
           </div>
           <div className={`wiz-lesson-sum wiz-lesson-sum--${lessonStatus}`}>
-            {usedLessons} / {totalWeekPeriods} lessons allocated
+            {usedLessons} / {totalWeekPeriods} lessons allocated per class
             {lessonStatus === 'over'  && '  ⚠️ Over capacity'}
             {lessonStatus === 'exact' && '  ✅ Perfect'}
+            {lessonStatus === 'under' && totalWeekPeriods > 0 && `  · ${totalWeekPeriods - usedLessons} slot${totalWeekPeriods - usedLessons !== 1 ? 's' : ''} blank`}
           </div>
         </div>
         <div className="wiz-subj-list">

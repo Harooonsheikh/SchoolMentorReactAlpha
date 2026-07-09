@@ -500,7 +500,7 @@ export async function saveStuStudent(p = {}) {
     const msg =
       (inner && (inner.Message ?? inner.message)) ||
       (json?.message && !/success/i.test(json.message) ? json.message : '') ||
-      'This registration or contact number already exists';
+      'Number already exist';
     throw new Error(msg);
   }
   return json;
