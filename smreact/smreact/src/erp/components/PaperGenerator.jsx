@@ -1126,6 +1126,7 @@ const setSubjLine = (ci, si, l) => {
           <DownloadModal
             paper={downloadPaper.paper}
             cls={downloadPaper.cls}
+            templateId={templateId}
             onClose={() => setDownloadPaper(null)}
             toast={toast}
           />
@@ -4090,7 +4091,137 @@ const setSubjLine = (ci, si, l) => {
     );
   }
 
-  function buildFullPaperHTML({ paper, cls, isBW, sections, reportHeader, fmt: fmtArg, line: lineArg }) {
+  /* ── Download-side template headers ──────────────────────────────────────
+    HTML mirrors of the on-screen ClassicHeader / ModernHeader / FormalHeader so
+    the downloaded (PDF/Word) paper header matches the "Choose Paper Template"
+    design the user selected. `isBW` = colorless (low-ink) variant. */
+  function buildPaperHeaderHTML(templateId, info, isBW) {
+    const d = info || {};
+
+    if (templateId === 2) {
+      /* Modern — logo + school block, blue underline, marks cards. */
+      const AC = isBW ? '#0F172A' : '#1E3A8A';
+      const school = d.school || 'The Oxford System';
+      const campusLine = [d.campus, d.examTitle].filter(Boolean).join('  ·  ');
+      const classLine  = d.className ? `Class ${d.className}${d.section ? `  ·  Section ${d.section}` : ''}` : '';
+      const seal = (d.school || 'O').trim().charAt(0).toUpperCase() || 'O';
+      const logoBox = d.logo
+        ? `<img src="${d.logo}" alt="logo" style="width:44px;height:44px;object-fit:contain;border-radius:10px;flex-shrink:0" />`
+        : `<div style="width:44px;height:44px;background:${isBW ? '#fff' : 'linear-gradient(135deg,#DBEAFE,#BFDBFE)'};border:${isBW ? '1px solid #0F172A' : 'none'};border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:900;color:${AC};flex-shrink:0">${seal}</div>`;
+      const objBox = d.showObj
+        ? `<div style="flex:1;background:${isBW ? '#fff' : '#EFF6FF'};border:1px solid ${isBW ? '#D1D5DB' : '#BFDBFE'};border-radius:6px;padding:5px 10px;font-size:10.5px">
+            <div style="font-size:8.5px;font-weight:700;color:${isBW ? '#64748B' : '#93C5FD'};text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px">Objective</div>
+            <div style="font-weight:700;color:${AC}">${d.objMarks || 0} Marks${d.objTime ? ` · ${d.objTime} Min` : ''}</div></div>` : '';
+      const subjBox = d.showSubj
+        ? `<div style="flex:1;background:${isBW ? '#fff' : '#F0FDF4'};border:1px solid ${isBW ? '#D1D5DB' : '#BBF7D0'};border-radius:6px;padding:5px 10px;font-size:10.5px">
+            <div style="font-size:8.5px;font-weight:700;color:${isBW ? '#64748B' : '#6EE7B7'};text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px">Subjective</div>
+            <div style="font-weight:700;color:${isBW ? '#0F172A' : '#15803D'}">${d.subjMarks || 0} Marks${d.subjTime ? ` · ${d.subjTime} Min` : ''}</div></div>` : '';
+      const totalBox = `<div style="flex:1;background:${isBW ? '#fff' : '#1E3A8A'};border:${isBW ? '1px solid #0F172A' : 'none'};border-radius:6px;padding:5px 10px;font-size:10.5px;display:flex;flex-direction:column;justify-content:center">
+            <div style="font-size:8.5px;font-weight:700;color:${isBW ? '#64748B' : '#93C5FD'};text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px">Total</div>
+            <div style="font-weight:800;color:${isBW ? '#0F172A' : '#fff'};font-size:13px">${d.totalMarks}</div></div>`;
+      return `<div style="display:flex;align-items:flex-start;gap:12px;padding-bottom:10px;margin-bottom:8px;border-bottom:3px solid ${AC}">
+          ${logoBox}
+          <div style="flex:1">
+            <div style="font-size:14px;font-weight:800;color:#0F172A">${pgEsc(school)}</div>
+            <div style="font-size:10.5px;color:#64748B;margin-top:1px">${pgEsc(campusLine)}</div>
+          </div>
+          <div style="text-align:right;flex-shrink:0">
+            <div style="font-size:12px;font-weight:800;color:${AC}">${pgEsc(classLine)}</div>
+            <div style="font-size:10.5px;color:#64748B;margin-top:1px">${pgEsc(d.subject || '')}</div>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:6px;font-size:10.5px;color:#334155;margin-bottom:8px">
+          <div style="border-bottom:1px solid #CBD5E1;padding-bottom:3px">Student Name: _____________________</div>
+          <div style="border-bottom:1px solid #CBD5E1;padding-bottom:3px">Roll No: _________</div>
+          <div style="border-bottom:1px solid #CBD5E1;padding-bottom:3px">Date: ___________</div>
+        </div>
+        <div style="display:flex;gap:6px;margin-bottom:4px">${objBox}${subjBox}${totalBox}</div>
+        <div style="display:flex;justify-content:space-between;font-size:10px;font-weight:600;color:#64748B;margin-top:4px">
+          <span>Obtained: _______ / ${d.totalMarks}</span><span>Grade: _______</span><span>Rank: _______</span>
+        </div>`;
+    }
+
+    if (templateId === 3) {
+      /* Formal — round seal, board tag, gradient divider, meta + student grids. */
+      const AC = isBW ? '#0F172A' : '#1E3A8A';
+      const schoolName = (d.school  || 'THE OXFORD SYSTEM').toUpperCase();
+      const schoolSub  = (d.campus  ? d.campus.toUpperCase() : 'LAHORE CAMPUS');
+      const examTitle  = (d.examTitle || 'ANNUAL EXAMINATION').toUpperCase();
+      const seal = (d.school || 'OX').replace(/[^A-Za-z]/g, '').slice(0, 2).toUpperCase() || 'OX';
+      const metaCells = [
+        ['SUBJECT', d.subject || '—'],
+        ['CLASS', d.className ? `${d.className}${d.section ? ` ${d.section}` : ''}` : '—'],
+        ['TOTAL MARKS', String(d.totalMarks), true],
+        ['OBJ. MARKS', String(d.objMarks || 0)],
+        ['TOTAL TIME', d.time || '—'],
+      ];
+      const sealInner = d.logo
+        ? `<img src="${d.logo}" alt="logo" style="width:100%;height:100%;object-fit:contain;border-radius:50%" />`
+        : `<div style="font-size:15px;font-weight:900;color:${isBW ? '#0F172A' : '#fff'};letter-spacing:.02em">${seal}</div>`;
+      const metaHTML = metaCells.map(([k, v, accent], i) =>
+        `<div style="padding:6px 9px;border-right:${i === 4 ? 'none' : '1px solid #E2E8F0'};background:${isBW ? '#fff' : '#FAFBFF'}">
+          <div style="font-size:8px;font-weight:800;color:#94A3B8;text-transform:uppercase;letter-spacing:.08em;margin-bottom:3px">${k}</div>
+          <div style="font-size:${accent ? '14px' : '12px'};font-weight:700;color:${accent ? AC : '#0F172A'}">${pgEsc(v)}</div></div>`).join('');
+      const studentHTML = ['Student Name', 'Roll No.', 'Section', 'Date'].map((lbl, i) =>
+        `<div style="display:flex;flex-direction:column;gap:3px;padding:6px 9px;border-right:${i === 3 ? 'none' : '1px solid #E2E8F0'};background:#fff">
+          <span style="font-size:8.5px;font-weight:800;color:#94A3B8;text-transform:uppercase;letter-spacing:.06em">${lbl}</span>
+          <span style="display:block;border-bottom:1px solid #CBD5E1;margin-top:10px"></span></div>`).join('');
+      return `<div style="display:flex;align-items:center;gap:12px;margin-bottom:10px">
+          <div style="width:50px;height:50px;border-radius:50%;background:${isBW ? '#fff' : 'linear-gradient(135deg,#1E3A8A,#1D4ED8)'};border:${isBW ? '1px solid #0F172A' : 'none'};display:flex;align-items:center;justify-content:center;flex-shrink:0">${sealInner}</div>
+          <div style="flex:1">
+            <div style="font-size:14px;font-weight:900;color:#0F172A;letter-spacing:.08em;text-transform:uppercase">${pgEsc(schoolName)}</div>
+            <div style="font-size:9.5px;color:#64748B;letter-spacing:.06em;text-transform:uppercase;margin-top:2px">${pgEsc(schoolSub)}</div>
+          </div>
+          <div style="background:${isBW ? '#fff' : '#1E3A8A'};color:${isBW ? '#0F172A' : '#fff'};border:${isBW ? '1px solid #0F172A' : 'none'};font-size:8.5px;font-weight:800;letter-spacing:.1em;padding:4px 9px;border-radius:5px;text-transform:uppercase;flex-shrink:0">BOARD PATTERN</div>
+        </div>
+        <div style="height:2px;background:${isBW ? '#0F172A' : 'linear-gradient(90deg,#1E3A8A 60%,#60A5FA,transparent)'};margin:8px 0;border-radius:2px"></div>
+        <div style="text-align:center;font-size:11px;font-weight:800;letter-spacing:.16em;color:#0F172A;text-transform:uppercase;margin-bottom:10px;padding:5px 0;border-top:1px solid #E2E8F0;border-bottom:1px solid #E2E8F0">${pgEsc(examTitle)}</div>
+        <div style="display:grid;grid-template-columns:repeat(5,1fr);border:1.5px solid #CBD5E1;border-radius:7px;overflow:hidden;margin-bottom:10px">${metaHTML}</div>
+        <div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr;border:1.5px solid #CBD5E1;border-radius:7px;overflow:hidden;margin-bottom:8px">${studentHTML}</div>
+        <div style="display:flex;gap:10px;margin-top:6px">
+          <div style="display:flex;align-items:center;gap:8px;flex:1;font-size:10px"><span style="font-size:8.5px;font-weight:800;color:#94A3B8;text-transform:uppercase">Obtained Marks</span><span style="flex:1;border-bottom:1px solid #CBD5E1"></span><span style="font-size:9px;font-weight:700;color:#94A3B8">/${d.totalMarks}</span></div>
+          <div style="display:flex;align-items:center;gap:8px;flex:1;font-size:10px"><span style="font-size:8.5px;font-weight:800;color:#94A3B8;text-transform:uppercase">Grade</span><span style="flex:1;border-bottom:1px solid #CBD5E1"></span></div>
+          <div style="display:flex;align-items:center;gap:8px;flex:1;font-size:10px"><span style="font-size:8.5px;font-weight:800;color:#94A3B8;text-transform:uppercase">Rank</span><span style="flex:1;border-bottom:1px solid #CBD5E1"></span></div>
+        </div>`;
+    }
+
+    /* Classic (Template 1, default) — centered school bar, exam line, student &
+      marks grids, accent meta bar. */
+    const AC = isBW ? '#0F172A' : '#1E3A8A';
+    const barBg     = isBW ? '#FFFFFF' : 'linear-gradient(135deg,#1E3A8A,#1D4ED8)';
+    const barColor  = isBW ? '#0F172A' : '#fff';
+    const barBorder = isBW ? '1px solid #0F172A' : 'none';
+    const schoolBar = (d.school ? `${d.school}${d.campus ? ' — ' + d.campus : ''}` : 'THE OXFORD SYSTEM').toUpperCase();
+    const examLine  = [d.examTitle, d.subject, d.className && `Class ${d.className}${d.section ? ` (${d.section})` : ''}`].filter(Boolean).join('  •  ');
+    const objTxt    = `${d.objMarks  || 0} Marks${d.objTime  ? ` · ${d.objTime} Min`  : ''}`;
+    const subjTxt   = `${d.subjMarks || 0} Marks${d.subjTime ? ` · ${d.subjTime} Min` : ''}`;
+    const cell = (label, val, span, accent) =>
+      `<div style="border:1px solid ${isBW ? '#D1D5DB' : (accent ? '#BFDBFE' : '#E2E8F0')};border-radius:6px;padding:6px 8px;background:${isBW ? '#fff' : (accent ? '#EFF6FF' : '#F8FAFF')}${span ? ';grid-column:span 2' : ''}">
+        <span style="display:block;font-size:9px;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px">${label}</span>
+        <span style="display:block;font-size:12px;font-weight:700;color:${AC}">${val}</span></div>`;
+    return `<div style="background:${barBg};color:${barColor};border:${barBorder};text-align:center;padding:12px 16px;font-size:12.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;border-radius:6px 6px 0 0;margin-bottom:14px">${pgEsc(schoolBar)}</div>
+      <div style="text-align:center;font-size:11.5px;font-weight:600;color:#334155;margin-bottom:12px">${pgEsc(examLine)}</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:11px;color:#334155;margin-bottom:10px">
+        <div style="border-bottom:1px solid #CBD5E1;padding-bottom:5px">Student Name: _______________________________</div>
+        <div style="border-bottom:1px solid #CBD5E1;padding-bottom:5px">Roll No: _______________</div>
+        <div style="border-bottom:1px solid #CBD5E1;padding-bottom:5px">Section: ${d.section || '_______________'}</div>
+        <div style="border-bottom:1px solid #CBD5E1;padding-bottom:5px">Date: __________________</div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:10px">
+        ${cell('Subject', pgEsc(d.subject || '—'))}
+        ${cell('Class', pgEsc(d.className || '—'))}
+        ${cell('Time', pgEsc(d.time || '—'))}
+        ${cell('Total Marks', d.totalMarks, false, true)}
+        ${d.showObj  ? cell('Objective', objTxt, true) : ''}
+        ${d.showSubj ? cell('Subjective', subjTxt, true) : ''}
+      </div>
+      <div style="display:flex;justify-content:space-between;border-top:2px solid ${AC};padding-top:8px;margin-top:6px;font-size:11px;font-weight:600;color:${AC}">
+        <span>Obtained Marks: ____________ / ${d.totalMarks}</span>
+        <span>Grade: _______ &nbsp;&nbsp; Rank: _______</span>
+      </div>`;
+  }
+
+  function buildFullPaperHTML({ paper, cls, templateId = 1, isBW, sections, reportHeader, fmt: fmtArg, line: lineArg }) {
     const schoolName = reportHeader?.branchName || 'The Oxford System — Lahore Campus';
     const schoolLogo = reportHeader?.branchLogo || '';
     const schoolAddress = reportHeader?.address || '';
@@ -4110,6 +4241,28 @@ const setSubjLine = (ci, si, l) => {
 
     const showObj  = typ === 'objective'  || typ === 'both';
     const showSubj = typ === 'subjective' || typ === 'both';
+
+    /* Same info the on-screen preview feeds into the template header, so the
+      downloaded paper's header matches the "Choose Paper Template" design
+      (Classic / Modern / Formal) the user picked. */
+    const headerInfo = {
+      school:     schoolName,
+      campus:     schoolAddress,
+      logo:       schoolLogo,
+      examTitle:  title,
+      subject,
+      className,
+      section,
+      time:       `${totalMin} Min`,
+      objTime:    paper.objTime  || 0,
+      subjTime:   paper.subjTime || 0,
+      objMarks,
+      subjMarks,
+      totalMarks: totalMk,
+      showObj,
+      showSubj,
+    };
+    const headerHTML = buildPaperHeaderHTML(templateId, headerInfo, isBW);
 
     // API-driven body (saved questions, grouped by recTitle) — kept in sync with Preview.
     // Falls back to the static sample sections only if no API sections were supplied.
@@ -4192,26 +4345,7 @@ const setSubjLine = (ci, si, l) => {
   </style>
   </head><body>
   <div class="paper-wrap">
-    <div class="school-header" style="display:flex;flex-direction:column;align-items:center;gap:6px;text-align:center">
-      ${schoolLogo ? `<img src="${schoolLogo}" alt="logo" style="height:54px;width:54px;object-fit:contain;border-radius:8px;background:#fff" />` : ''}
-      <div class="school-name">${pgEsc(schoolName)}</div>
-      ${schoolAddress ? `<div class="exam-sub">${pgEsc(schoolAddress)}</div>` : ''}
-      <div class="exam-sub">Annual Examination &bull; ${subject} &bull; ${className} &bull; Section ${section}</div>
-    </div>
-
-    <div class="student-bar">
-      <div><span>Student Name</span>______________________________</div>
-      <div><span>Roll No.</span>____________</div>
-      <div><span>Section</span>${section || '____________'}</div>
-      <div><span>Date</span>____________</div>
-    </div>
-
-    <div class="info-bar">
-      <span>Subject: <strong>${subject}</strong></span>
-      <span>Class: <strong>${className}</strong></span>
-      <span>Time: <strong>${totalMin} Minutes</strong></span>
-      <span>${showObj ? `Objective Marks: <strong>${objMarks}</strong> &nbsp;·&nbsp; ` : ''}${showSubj ? `Subjective Marks: <strong>${subjMarks}</strong> &nbsp;·&nbsp; ` : ''}Obtained: <strong>______/${totalMk}</strong></span>
-    </div>
+    ${headerHTML}
 
     ${apiBody}
     ${answerSheet}
@@ -4229,7 +4363,7 @@ const setSubjLine = (ci, si, l) => {
   /* ═══════════════════════════════════════════════════════════════════
     DOWNLOAD MODAL — Print Style (Color/BW) + File Format (PDF/Word)
     ═══════════════════════════════════════════════════════════════════ */
-  function DownloadModal({ paper, cls, onClose, toast }) {
+  function DownloadModal({ paper, cls, templateId = 1, onClose, toast }) {
     const [style,  setStyle]  = useState('color'); // 'color' | 'bw'
     const [format, setFormat] = useState('pdf');   // 'pdf'   | 'word'
 
@@ -4285,6 +4419,7 @@ const setSubjLine = (ci, si, l) => {
       const html = buildFullPaperHTML({
         paper,
         cls,
+        templateId,
         isBW: style === 'bw',
         sections,
         reportHeader,

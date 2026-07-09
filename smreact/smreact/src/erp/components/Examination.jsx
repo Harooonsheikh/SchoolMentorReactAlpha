@@ -1781,11 +1781,15 @@ async function fetchSignatureSetup() {
     
     // Transform API response to match the expected format
     // API returns: { id, branchID, name: "Sawaira", designation: "principle", signature: "sawairaG" }
+    // `on` = ye signature result card par dikhani hai ya nahi (max 2 — saved
+    // signature1 / signature2 se restore).
+    const sig1 = rcoSettings?.signature1, sig2 = rcoSettings?.signature2;
     const transformedSigs = (data || []).map(item => ({
       id: item.id,
       name: item.name || '',
       desig: item.designation || '',
-      img: item.signature || ''  // signature field contains the name/signature text
+      img: item.signature || '',  // signature field contains the name/signature text
+      on: !!(sig1 && item.id === sig1) || !!(sig2 && item.id === sig2),
     }));
     
     setRsSigs(transformedSigs);
@@ -1888,6 +1892,8 @@ async function loadCardOptions() {
     // API ke boolean fields se toggles ka on/off set karo
     setRcoGeneral(g => g.map(it => ({ ...it, on: !!s[RCO_GENERAL_FIELD[it.label]] })));
     setRcoSig(g => g.map(it => ({ ...it, on: !!s[RCO_SIG_FIELD[it.label]] })));
+    // Signature selection (max 2) → saved signature1 / signature2 se restore karo.
+    setRsSigs(list => list.map(sg => ({ ...sg, on: (s.signature1 && sg.id === s.signature1) || (s.signature2 && sg.id === s.signature2) })));
   } catch (err) {
     console.error('Could not load result card options', err);
   }
@@ -1966,8 +1972,28 @@ const rhDownloadCardReport = async (st, r) => {
 };
 
 // ── Result Card Options: Save Preferences → POST ──
+/* Result card par kaunsi signatures dikhen — designation-wise toggle. Max 2
+   signatures (signature1 / signature2). 3rd on karne par rok do. */
+const toggleSigShow = (id) => {
+  // Check + toast updater ke BAHAR — warna StrictMode me updater do baar chalta hai
+  // aur toast do dafa aata hai.
+  const target = (rsSigs || []).find(s => s.id === id);
+  if (!target) return;
+  if (!target.on && rsSigs.filter(s => s.on).length >= 2) {
+    toast('You can show a maximum of 2 signatures on the result card.', 'warning');
+    return;
+  }
+  setRsSigs(list => list.map(s => s.id === id ? { ...s, on: !s.on } : s));
+};
+
 async function saveCardOptions() {
   if (isOtherSession) { toast('Method not allowed', 'error'); return; }
+  // 2 se ziada signature result card par allow nahi.
+  const selectedSigIds = (rsSigs || []).filter(s => s.on).map(s => s.id);
+  if (selectedSigIds.length > 2) {
+    toast('You can show a maximum of 2 signatures on the result card.', 'error');
+    return;
+  }
   try {
     const branchID = sessionStorage.getItem('branchID');
     const token    = sessionStorage.getItem('token');
@@ -1999,8 +2025,9 @@ async function saveCardOptions() {
       ...Object.fromEntries(rcoGeneral.map(it => [RCO_GENERAL_FIELD[it.label], !!it.on])),
       // Signatures & Remarks toggles
       ...Object.fromEntries(rcoSig.map(it => [RCO_SIG_FIELD[it.label], !!it.on])),
-      signature1: prev.signature1 || 0,
-      signature2: prev.signature2 || 0,
+      // Selected signatures (designation-wise, max 2) → signature1 / signature2.
+      signature1: selectedSigIds[0] || 0,
+      signature2: selectedSigIds[1] || 0,
       branchID: parseInt(branchID),
       createdAt: prev.createdAt || nowIso,
       updatedAt: nowIso,
@@ -4223,14 +4250,12 @@ useEffect(() => {
                     </div>
                     <div className="rs-rem-cols">
                       <div className="rs-rem-col sno">Sr.no</div>
-                      <div className="rs-rem-col total">Total Marks</div>
                       <div className="rs-rem-col pct">Percentage</div>
                       <div className="rs-rem-col text">Remarks</div>
                     </div>
                     {rsRemarks.length ? rsRemarks.map((r, i) => (
                       <div key={r.id} className="rs-rem-row">
                         <div className="rs-rem-col sno">{i + 1}</div>
-                        <div className="rs-rem-col total">Total Marks</div>
                         <div className="rs-rem-col pct">
                           <span className="rs-pct-pill">{(RS_COND_MAP[r.cond] || '≥') + ' ' + r.pct}</span>
                         </div>
@@ -4377,7 +4402,31 @@ useEffect(() => {
                         <span>Signatures &amp; Remarks</span>
                       </div>
                       <div className="rco-grid">
-                        {rcoSig.map((item, idx) => (
+                        {/* Signature toggles — designations gradinguploadercrud API se
+                          (rsSigs). Max 2 signatures result card par (signature1 / signature2). */}
+                        {rsSigs.length === 0 ? (
+                          <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '4px 2px', gridColumn: '1 / -1' }}>
+                            No signatures configured yet — add them in Result Setup → Signature.
+                          </div>
+                        ) : rsSigs.map((sig, idx) => (
+                          <div key={sig.id} className="rco-row">
+                            <span className="rco-row-lbl">
+                              <i className="fa-solid fa-signature" style={{ color: '#1E40AF', width: 14 }}></i>
+                              Show {sig.desig || sig.name || `Signature ${idx + 1}`} Signature
+                            </span>
+                            <Tooltip text={sig.on ? 'Hide this signature on result card' : 'Show this signature on result card'}>
+                              <button
+                                className={`rco-toggle${sig.on ? ' on' : ''}`}
+                                onClick={() => toggleSigShow(sig.id)}
+                                aria-pressed={!!sig.on}
+                              >
+                                <span className="rco-dot"></span>
+                              </button>
+                            </Tooltip>
+                          </div>
+                        ))}
+                        {/* Final Remarks toggle (rcoSig me se) */}
+                        {rcoSig.map((item, idx) => item.label !== 'Show Final Remarks' ? null : (
                           <div key={item.label} className="rco-row">
                             <span className="rco-row-lbl">
                               <i className={`fa-solid ${item.icon}`} style={{ color: '#1E40AF', width: 14 }}></i>
@@ -5994,7 +6043,8 @@ onClick={async () => {
             setRsRemarks(remarks);
             setRsAbsentMode(absentMode);
             setRsModalOpen(false);
-            toast('Result setup saved successfully', 'success');
+            // Success toast is shown by the modal itself (after the API save
+            // succeeds) — don't fire a second one here.
           }}
           onClose={() => setRsModalOpen(false)}
           toast={toast}
@@ -8885,20 +8935,26 @@ const mc  = (!isAbs ? ((st.manualRemarks && st.manualRemarks[s]) || ((grades && 
         </div>
       )}
 
-      {/* Signatures */}
-      {(opt['Show Principal Signature'] || opt['Show Parent Signature']) && rsSigs.length > 0 && (
-        <div style={{ padding: '8px 18px 10px', borderTop: `1px solid ${accentBdr}`, display: 'flex', gap: 10 }}>
-          {rsSigs.map(sig => (
-            <div key={sig.id} style={{ textAlign: 'center', flex: 1, minWidth: 0 }}>
-              <div style={{ height: 28,  marginBottom: 4 }}>
-                {sig.img && <img src={sig.img} alt="" style={{ maxHeight: 32, objectFit: 'contain' }} />}
+      {/* Signatures — selected (max 2) + hamesha ek fixed PARENTS signing line. */}
+      {(() => {
+        const cols = [
+          ...rsSigs.filter(s => s.on).slice(0, 2).map(s => ({ img: s.img, label: s.desig || s.name })),
+          { img: '', label: 'Parents' },
+        ];
+        return (
+          <div style={{ padding: '14px 18px 12px', borderTop: `1px solid ${accentBdr}`, display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
+            {cols.map((c, i) => (
+              <div key={i} style={{ textAlign: 'center', minWidth: 0 }}>
+                <div style={{ height: 30, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
+                  {c.img && <img src={c.img} alt="" style={{ maxHeight: 30, maxWidth: '90%', objectFit: 'contain' }} />}
+                </div>
+                <div style={{ borderTop: '1px solid #334155', margin: '2px 8px 5px' }}></div>
+                <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: '.5px', textTransform: 'uppercase', color: textMut }}>{c.label}</div>
               </div>
-              <div style={{ fontSize: 9.5, fontWeight: 700, color: textMut }}>{sig.name}</div>
-              <div style={{ fontSize: 8.5, color: textMut }}>{sig.desig}</div>
-            </div>
-          ))}
-        </div>
-      )}
+            ))}
+          </div>
+        );
+      })()}
 
       {/* Footer */}
       <div style={{ padding: '6px 18px', background: accentBg, borderTop: `1px solid ${accentBdr}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -9122,19 +9178,25 @@ function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
       )}
 
       {/* Signatures */}
-      {(opt['Show Principal Signature'] || opt['Show Parent Signature']) && rsSigs.length > 0 && (
-        <div style={{ padding: '10px 20px 12px', borderTop: `1px solid ${accentBdr}`, display: 'flex', gap: 12 }}>
-          {rsSigs.map(sig => (
-            <div key={sig.id} style={{ textAlign: 'center', flex: 1 }}>
-              <div style={{ height: 30, marginBottom: 5 }}>
-                {sig.img && <img src={sig.img} alt="" style={{ maxHeight: 28 }} />}
+      {(() => {
+        const cols = [
+          ...rsSigs.filter(s => s.on).slice(0, 2).map(s => ({ img: s.img, label: s.desig || s.name })),
+          { img: '', label: 'Parents' },
+        ];
+        return (
+          <div style={{ padding: '14px 20px 14px', borderTop: `1px solid ${accentBdr}`, display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
+            {cols.map((c, i) => (
+              <div key={i} style={{ textAlign: 'center', minWidth: 0 }}>
+                <div style={{ height: 30, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
+                  {c.img && <img src={c.img} alt="" style={{ maxHeight: 30, maxWidth: '90%', objectFit: 'contain' }} />}
+                </div>
+                <div style={{ borderTop: '1px solid #334155', margin: '2px 8px 5px' }}></div>
+                <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: '.5px', textTransform: 'uppercase', color: textMut }}>{c.label}</div>
               </div>
-              <div style={{ fontSize: 9.5, fontWeight: 700, color: textMut }}>{sig.name}</div>
-              <div style={{ fontSize: 8.5, color: textMut }}>{sig.desig}</div>
-            </div>
-          ))}
-        </div>
-      )}
+            ))}
+          </div>
+        );
+      })()}
 
       {/* Footer */}
       <div style={{ padding: '5px 20px', background: accentBg, borderTop: `1px solid ${accentBdr}`, display: 'flex', justifyContent: 'space-between' }}>
@@ -9539,19 +9601,25 @@ const mc  = (!isAbs ? ((st.manualRemarks && st.manualRemarks[s]) || ((grades && 
       </div>
 
       {/* Signatures */}
-      {(opt['Show Principal Signature'] || opt['Show Parent Signature']) && rsSigs.length > 0 && (
-        <div style={{ padding: '14px 24px 16px', display: 'flex', gap: 16, borderBottom: `1px solid ${C.bdr}` }}>
-          {rsSigs.map(sig => (
-            <div key={sig.id} style={{ flex: 1, textAlign: 'center' }}>
-              <div style={{ height: 32, marginBottom: 5 }}>
-                {sig.img && <img src={sig.img} alt="" style={{ maxHeight: 30 }} />}
+      {(() => {
+        const cols = [
+          ...rsSigs.filter(s => s.on).slice(0, 2).map(s => ({ img: s.img, label: s.desig || s.name })),
+          { img: '', label: 'Parents' },
+        ];
+        return (
+          <div style={{ padding: '16px 24px 18px', display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 18, borderBottom: `1px solid ${C.bdr}` }}>
+            {cols.map((c, i) => (
+              <div key={i} style={{ textAlign: 'center', minWidth: 0 }}>
+                <div style={{ height: 32, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
+                  {c.img && <img src={c.img} alt="" style={{ maxHeight: 30, maxWidth: '90%', objectFit: 'contain' }} />}
+                </div>
+                <div style={{ borderTop: `1px solid ${C.textM}`, margin: '2px 8px 5px' }}></div>
+                <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: '.5px', textTransform: 'uppercase', color: C.textM }}>{c.label}</div>
               </div>
-              <div style={{ fontSize: 9.5, fontWeight: 700, color: C.textM }}>{sig.name}</div>
-              <div style={{ fontSize: 8.5, color: C.textM }}>{sig.desig}</div>
-            </div>
-          ))}
-        </div>
-      )}
+            ))}
+          </div>
+        );
+      })()}
 
       {/* Page 2 footer */}
       <div style={{ padding: '8px 24px', background: '#1A0533', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -12665,10 +12733,16 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onSave, onClose, 
   const upRemark = (id, k, v) => setDraftRemarks(rows => rows.map(r => r.id === id ? { ...r, [k]: v } : r));
 
 const addGrade = () =>
-  setDraftGrades(r => [
-    ...r,
-    { id: `temp_${Date.now()}`, grade: 'A+', cond: 'gte', pct: '', comment: '' }
-  ]);
+  setDraftGrades(r => {
+    // Jo grades pehle se use ho chuki hain unhe skip karke agli available grade
+    // default karo (A+ used → A, phir B+ ...). Sab use ho gayi to blank.
+    const used = new Set(r.map(g => g.grade));
+    const nextGrade = RS_GRADE_LIST.find(gr => !used.has(gr)) || '';
+    return [
+      ...r,
+      { id: `temp_${Date.now()}`, grade: nextGrade, cond: 'gte', pct: '', comment: '' }
+    ];
+  });
    const addSig = () =>
   setDraftSigs(r => [
     ...r,
@@ -12997,18 +13071,13 @@ const runDelete = async () => {
   };
 
   const submit = async () => {
-    // ── Validation (setLoading se PEHLE) ────────────────────────────────────
-    // Duplicate tabhi block karo jab USER ne banaya ho (naya add ya edit karke) — yani
-    // draft me us key ki count original (DB) se ZYADA ho. Pehle se DB me maujood
-    // duplicates par block NAHI (warna unrelated save bhi ruk jate). Keys:
-    //   grade value | grade percentage (cond+pct) | remark percentage (cond+pct)
+    // ── Validation (setLoading se PEHLE) — SIRF active tab validate hota hai ────
+    // Har tab par uska apna toaster chale: Grade tab par grade, Signature tab par
+    // signature, Remarks tab par remarks. Cross-tab toaster nahi. Duplicate check:
+    // draft me us key ki count original (DB) se ZYADA ho (user ne naya banaya ho).
     const countBy = (arr, keyFn) => (arr || []).reduce((m, x) => {
       const k = keyFn(x); if (k) m[k] = (m[k] || 0) + 1; return m;
     }, {});
-    const gVal  = (g) => String(g.grade || '').trim();
-    const gPct  = (g) => { const p = String(g.pct ?? '').trim(); return p ? `${g.cond}|${p}` : ''; };
-    const rPct  = (r) => { const p = String(r.pct ?? '').trim(); return p ? `${r.cond}|${p}` : ''; };
-    // User-created duplicate check: draft count >= 2 aur original count se zyada.
     const findUserDup = (draftArr, origArr, keyFn) => {
       const dCnt = countBy(draftArr, keyFn), oCnt = countBy(origArr, keyFn);
       for (const [key, cnt] of Object.entries(dCnt)) {
@@ -13016,65 +13085,87 @@ const runDelete = async () => {
       }
       return null;
     };
-    if (findUserDup(draftGrades, grades, gVal))
-      { toast(`"${findUserDup(draftGrades, grades, gVal)}" is already added. This grade cannot be added again.`, 'error'); return; }
-    if (findUserDup(draftGrades, grades, gPct))
-      { toast('This percentage has already been assigned a grade.', 'error'); return; }
-    if (findUserDup(draftRemarks, remarks, rPct))
-      { toast('This percentage has already been assigned a remark.', 'error'); return; }
+
+    if (tab === 'grades') {
+      // Grade tab: har row me grade + percentage + comment required.
+      const gVal = (g) => String(g.grade || '').trim();
+      const gPct = (g) => { const p = String(g.pct ?? '').trim(); return p ? `${g.cond}|${p}` : ''; };
+      const dupVal = findUserDup(draftGrades, grades, gVal);
+      if (dupVal) { toast(`"${dupVal}" is already added. This grade cannot be added again.`, 'error'); return; }
+      if (findUserDup(draftGrades, grades, gPct)) { toast('This percentage has already been assigned a grade.', 'error'); return; }
+      const bad = (draftGrades || []).some(g =>
+        !String(g.grade ?? '').trim() || !String(g.pct ?? '').trim() || !String(g.comment ?? '').trim());
+      if (bad) { toast('Grade, percentage and comment cannot be empty.', 'error'); return; }
+    } else if (tab === 'signatures') {
+      // Signature tab: har row me name + designation + signature (image) required.
+      const bad = (draftSigs || []).some(s =>
+        !String(s.name ?? '').trim() || !String(s.desig ?? '').trim() || !String(s.img ?? '').trim());
+      if (bad) { toast('Signature name, designation and image are required.', 'error'); return; }
+    } else if (tab === 'remarks') {
+      // Remarks tab: har row me percentage + final remark text required.
+      const rPct = (r) => { const p = String(r.pct ?? '').trim(); return p ? `${r.cond}|${p}` : ''; };
+      if (findUserDup(draftRemarks, remarks, rPct)) { toast('This percentage has already been assigned a remark.', 'error'); return; }
+      const bad = (draftRemarks || []).some(r =>
+        !String(r.pct ?? '').trim() || !String(r.text ?? '').trim());
+      if (bad) { toast('Final remark cannot be empty.', 'error'); return; }
+    }
 
     setLoading(true);
 
     try {
-      // Track which items were added/updated vs deleted
-      const originalGradeIds = new Set(grades.map(g => g.id));
-      const newGradeIds = new Set(draftGrades.map(g => g.id).filter(id => typeof id === 'number'));
-      
-      // Find deleted grades (present in original but not in new)
-      const deletedGrades = grades.filter(g => !newGradeIds.has(g.id));
-      
-      // Save/Update all grades
-      for (const grade of draftGrades) {
-        await saveGradeToAPI(grade);
-      }
-      
-      // Delete removed grades
-      for (const grade of deletedGrades) {
-        if (grade.id && typeof grade.id === 'number') {
-          await deleteGradeFromAPI(grade.id);
+      // SIRF active tab ki API hit ho — grades save karo to sirf grade API, waghera.
+      if (tab === 'grades') {
+        const newGradeIds = new Set(draftGrades.map(g => g.id).filter(id => typeof id === 'number'));
+        // Find deleted grades (present in original but not in new)
+        const deletedGrades = grades.filter(g => !newGradeIds.has(g.id));
+
+        // Sirf COMPLETE grade rows save karo (grade + pct + comment).
+        const gradesToSave = draftGrades.filter(g =>
+          String(g.grade ?? '').trim() && String(g.pct ?? '').trim() && String(g.comment ?? '').trim());
+        for (const grade of gradesToSave) {
+          await saveGradeToAPI(grade);
+        }
+        // Delete removed grades
+        for (const grade of deletedGrades) {
+          if (grade.id && typeof grade.id === 'number') {
+            await deleteGradeFromAPI(grade.id);
+          }
         }
       }
-      
-      // Handle Signatures
-      const originalSigIds = new Set(sigs.map(s => s.id));
-      const newSigIds = new Set(draftSigs.map(s => s.id).filter(id => typeof id === 'number'));
-      const deletedSigs = sigs.filter(s => !newSigIds.has(s.id));
-      
-      for (const sig of draftSigs) {
-        await saveSignatureToAPI(sig);
-      }
-      
-      for (const sig of deletedSigs) {
-        if (sig.id && typeof sig.id === 'number') {
-          await deleteSignatureFromAPI(sig.id);
+
+      if (tab === 'signatures') {
+        const newSigIds = new Set(draftSigs.map(s => s.id).filter(id => typeof id === 'number'));
+        const deletedSigs = sigs.filter(s => !newSigIds.has(s.id));
+
+        // Sirf COMPLETE signature rows save karo (name + designation + image).
+        const sigsToSave = draftSigs.filter(s =>
+          String(s.name ?? '').trim() && String(s.desig ?? '').trim() && String(s.img ?? '').trim());
+        for (const sig of sigsToSave) {
+          await saveSignatureToAPI(sig);
+        }
+        for (const sig of deletedSigs) {
+          if (sig.id && typeof sig.id === 'number') {
+            await deleteSignatureFromAPI(sig.id);
+          }
         }
       }
-      
-      // Handle Remarks
-      const originalRemarkIds = new Set(remarks.map(r => r.id));
-      const newRemarkIds = new Set(draftRemarks.map(r => r.id).filter(id => typeof id === 'number'));
-      const deletedRemarks = remarks.filter(r => !newRemarkIds.has(r.id));
-      
-      for (const remark of draftRemarks) {
-        await saveRemarkToAPI(remark);
-      }
-      
-      for (const remark of deletedRemarks) {
-        if (remark.id && typeof remark.id === 'number') {
-          await deleteRemarkFromAPI(remark.id);
+
+      if (tab === 'remarks') {
+        const newRemarkIds = new Set(draftRemarks.map(r => r.id).filter(id => typeof id === 'number'));
+        const deletedRemarks = remarks.filter(r => !newRemarkIds.has(r.id));
+
+        // Sirf COMPLETE remark rows save karo (percentage + text).
+        const remarksToSave = draftRemarks.filter(r => String(r.pct ?? '').trim() && String(r.text ?? '').trim());
+        for (const remark of remarksToSave) {
+          await saveRemarkToAPI(remark);
+        }
+        for (const remark of deletedRemarks) {
+          if (remark.id && typeof remark.id === 'number') {
+            await deleteRemarkFromAPI(remark.id);
+          }
         }
       }
-      
+
       toast('Result setup saved successfully!', 'success');
       
       // Call onSave to update parent state
@@ -13137,8 +13228,12 @@ const runDelete = async () => {
                       onChange={e => upGrade(g.id, 'grade', e.target.value)}
                     >
                       <option value="" disabled>Grade...</option>
-                      {/* Saari grade values hamesha dikhein (koi filter nahi). */}
-                      {RS_GRADE_LIST.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                      {/* Jo grade kisi doosri row me pehle se chuni ja chuki hai wo is
+                        dropdown me na aaye — sirf apni current value + baqi baaki bachi
+                        grades dikhen (e.g. A+ add ho gaya to next me A+ hidden). */}
+                      {RS_GRADE_LIST
+                        .filter(opt => opt === g.grade || !draftGrades.some(o => o.id !== g.id && o.grade === opt))
+                        .map(opt => <option key={opt} value={opt}>{opt}</option>)}
                     </select>
                     <select className="rs-input" value={g.cond || 'gte'} onChange={e => upGrade(g.id, 'cond', e.target.value)}>
                       {RS_COND_LIST.map(c => <option key={c.v} value={c.v}>{c.l}</option>)}
@@ -13238,7 +13333,6 @@ const runDelete = async () => {
                   <div key={r.id} className="rm-remark-row">
                     <div className="rm-remark-top">
                       <div className="rm-sno">{i + 1}</div>
-                      <div className="rs-remark-lbl">Total Marks</div>
                       <select className="rs-input" value={r.cond || 'gte'} onChange={e => upRemark(r.id, 'cond', e.target.value)}>
                         {RS_COND_LIST.map(c => <option key={c.v} value={c.v}>{c.l}</option>)}
                       </select>
@@ -15286,7 +15380,7 @@ body.dark .syl-tb-select { background:var(--bg-card); color:var(--text-primary);
 .rm-remark-row { padding:12px 0; border-bottom:1px solid var(--border-light); }
 .rm-remark-top {
   display:grid;
-  grid-template-columns: 28px 110px 1.2fr 100px 32px;
+  grid-template-columns: 28px 1fr 240px 32px;
   gap:10px; align-items:center; margin-bottom:8px;
 }
 .rs-remark-lbl { font-size:12px; color:var(--text-muted); font-weight:600; }
