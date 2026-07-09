@@ -483,6 +483,26 @@ export async function saveStuStudent(p = {}) {
   });
   const json = await res.json().catch(() => null);
   if (!res.ok) throw new Error(apiMessage(json) || 'Could not save student');
+  /* API HTTP 200 + top-level "…saved successfully" deta hai, magar ASLI natija
+     `data` ke andar hota hai. Duplicate (e.g. reg/mobile) par kai shapes aa
+     sakti hain:
+        data: 0
+        data: [{ Success: 0, Message: "Number already exist" }]
+        data: { Success: 0, Message: "..." }
+     In sab ko fail treat karo taake caller ka catch sahi error toast dikhaye. */
+  const d = json?.data;
+  const inner = Array.isArray(d) ? d[0] : (d && typeof d === 'object' ? d : null);
+  const innerSuccess = inner ? (inner.Success ?? inner.success) : undefined;
+  const isFail =
+    innerSuccess === 0 || innerSuccess === false || innerSuccess === '0' ||
+    d === 0 || d === '0';
+  if (isFail) {
+    const msg =
+      (inner && (inner.Message ?? inner.message)) ||
+      (json?.message && !/success/i.test(json.message) ? json.message : '') ||
+      'This registration or contact number already exists';
+    throw new Error(msg);
+  }
   return json;
 }
 
