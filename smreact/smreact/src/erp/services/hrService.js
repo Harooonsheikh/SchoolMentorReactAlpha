@@ -292,6 +292,114 @@ export async function getHrLeaveSettings(employeeId) {
   return leaveApiToForm(rec);
 }
 
+/* Count a staff member's ABSENT and LEAVE days across a whole calendar year by
+   polling the per-date staff-attendance endpoint (the only "get" it exposes —
+   one call per day, returning every staff record for that date). Heavy, so
+   callers should show a loading state. Returns { absent, leave, present }. */
+export async function getHrStaffYearlyAttendance(staffId, year) {
+  const branchID = Number(sessionStorage.getItem('branchID')) || 0;
+  const token    = sessionStorage.getItem('token');
+  const CODE     = { '1': 'present', '2': 'absent', '3': 'leave', '4': 'late' };
+  const yr       = Number(year) || new Date().getFullYear();
+
+  const dates = [];
+  for (let m = 0; m < 12; m++) {
+    const days = new Date(yr, m + 1, 0).getDate();
+    for (let d = 1; d <= days; d++) dates.push(`${yr}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`);
+  }
+
+  let absent = 0, leave = 0, present = 0;
+  const CHUNK = 12;   // limit concurrency so we don't hammer the server
+  for (let i = 0; i < dates.length; i += CHUNK) {
+    const chunk = dates.slice(i, i + CHUNK);
+    const results = await Promise.all(chunk.map(async (dateStr) => {
+      try {
+        const res  = await fetch(buildUrl('/api/staff-attendance'), {
+          method: 'POST',
+          headers: { Accept: 'application/json', 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+          body: JSON.stringify({ id: 0, staffID: 0, branchID, attendanceDate: dateStr, checkInTime: '', checkOutTime: '', status: '', platform: '', isNotificationGen: false, action: 'get', createdBy: 0, modifiedBy: 0 }),
+        });
+        const json = await res.json().catch(() => null);
+        return { dateStr, recs: json?.data || [] };
+      } catch { return { dateStr, recs: [] }; }
+    }));
+    results.forEach(({ dateStr, recs }) => {
+      const found = (recs || []).find(r =>
+        String(r.StaffID ?? r.staffID) === String(staffId) &&
+        String(r.AttendanceDate ?? r.attendanceDate ?? '').slice(0, 10) === dateStr);
+      if (!found) return;
+      const raw = String((found.Status ?? found.status) ?? '').toLowerCase();
+      const st  = CODE[raw] || raw;
+      if (st === 'absent') absent++;
+      else if (st === 'leave') leave++;
+      else if (st === 'present') present++;
+    });
+  }
+  return { absent, leave, present };
+}
+
+/* Save the payroll setup for one employee/month (bonus, loan/fine/leave/absent
+   deductions + comments). POST /api/HR/payroll-setup. */
+export async function saveHrPayrollSetup(p = {}) {
+  const branchID = Number(sessionStorage.getItem('branchID')) || 0;
+  const userID   = Number(sessionStorage.getItem('UserID')) || 0;
+  const res  = await fetch(buildUrl('/api/HR/payroll-setup'), {
+    method: 'POST',
+    headers: { Accept: '*/*', 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      employeeID:       Number(p.employeeID) || 0,
+      branchID,
+      payrollMonth:     Number(p.payrollMonth) || 0,
+      payrollYear:      Number(p.payrollYear) || 0,
+      bonus:            Number(p.bonus) || 0,
+      loanDeduction:    Number(p.loanDeduction) || 0,
+      customLoanAmount: Number(p.customLoanAmount) || 0,
+      fineDeduction:    Number(p.fineDeduction) || 0,
+      fineComment:      p.fineComment || '',
+      leaveCount:       Number(p.leaveCount) || 0,
+      leaveDeduction:   Number(p.leaveDeduction) || 0,
+      leaveComment:     p.leaveComment || '',
+      absentCount:      Number(p.absentCount) || 0,
+      absentDeduction:  Number(p.absentDeduction) || 0,
+      absentComment:    p.absentComment || '',
+      createdBy:        userID,
+      modifiedBy:       userID,
+    }),
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(apiMessage(json) || 'Could not save payroll setup');
+  return json;
+}
+
+/* Pull the payroll record id out of a payroll-setup response (needed to attach
+   payments to it). */
+export function payrollIdFromSetupResponse(json) {
+  const d = json?.data ?? json;
+  if (d && typeof d === 'object') return Number(d.id ?? d.payrollID ?? d.ID) || 0;
+  return Number(d) || 0;
+}
+
+/* Record a payment against a saved payroll record. POST /api/HR/save-payroll-payment. */
+export async function saveHrPayrollPayment({ payrollID, amount, comment, paymentDate } = {}) {
+  const branchID = Number(sessionStorage.getItem('branchID')) || 0;
+  const userID   = Number(sessionStorage.getItem('UserID')) || 0;
+  const res  = await fetch(buildUrl('/api/HR/save-payroll-payment'), {
+    method: 'POST',
+    headers: { Accept: '*/*', 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      payrollID:   Number(payrollID) || 0,
+      branchID,
+      amount:      Number(amount) || 0,
+      comment:     comment || '',
+      paymentDate: paymentDate || new Date().toISOString(),
+      createdBy:   userID,
+    }),
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(apiMessage(json) || 'Could not record payment');
+  return json;
+}
+
 /* Create (id 0) or update leave settings for an employee. */
 export async function saveHrLeaveSettings({ id = 0, employeeID, leaves = {} }) {
   const branchID = Number(sessionStorage.getItem('branchID')) || 0;
@@ -322,6 +430,7 @@ export async function saveHrLeaveSettings({ id = 0, employeeID, leaves = {} }) {
 
 function mapApiEmployeeToEmp(e) {
   const { stdDocs: docStd, docs: docCustom } = mapEmployeeDocuments(e.documents);
+  const assignmentRows = e.assignments ?? e.subjectAssignments ?? e.employeeSubjects ?? e.subjects ?? [];
   return {
     id:        e.id,
     eid:       `EMP-${String(e.id).padStart(3, '0')}`,
@@ -386,7 +495,7 @@ function mapApiEmployeeToEmp(e) {
     /* Existing subject assignments → { "gradeId_sectionId": [subjectId] }, keyed
        and typed exactly like the assignment tree (real numeric ids) so the saved
        subjects show as checked on edit. Field names vary in casing across the API. */
-    subjects: (e.assignments ?? e.subjectAssignments ?? e.employeeSubjects ?? e.subjects ?? []).reduce((acc, a) => {
+    subjects: assignmentRows.reduce((acc, a) => {
       const gradeId   = Number(a.gradeId   ?? a.gradeID   ?? a.grade_id   ?? 0);
       const sectionId = Number(a.sectionId ?? a.sectionID ?? a.section_id ?? 0);
       const subjectId = Number(a.subjectId ?? a.subjectID ?? a.subject_id ?? 0);
@@ -396,10 +505,26 @@ function mapApiEmployeeToEmp(e) {
       acc[key].push(subjectId);
       return acc;
     }, {}),
+    /* Human-readable assignment rows for the detail panel / report (the API
+       carries the names alongside the ids, same as the toggle payload). */
+    subjectsDisplay: assignmentRows.map(a => ({
+      className:   a.className   ?? a.gradeName   ?? a.grade   ?? '',
+      sectionName: a.sectionName ?? a.section     ?? '',
+      subjectName: a.subjectName ?? a.subject     ?? '',
+    })).filter(x => x.subjectName),
+
+    /* Class-attendance assignments → [{ gradeId, sectionId, className, sectionName }]
+       (names come straight from the API, same shape as the toggle payload). */
+    attendance: (e.classSectionAttendanceAssignments ?? e.attendanceAssignments ?? []).map(a => ({
+      gradeId:     Number(a.gradeId   ?? a.gradeID   ?? 0),
+      sectionId:   Number(a.sectionId ?? a.sectionID ?? 0),
+      className:   a.className   ?? a.gradeName ?? '',
+      sectionName: a.sectionName ?? '',
+    })).filter(a => a.gradeId && a.sectionId),
 
     stdDocs: docStd,
     docs:    docCustom,
-    tasks: [], letters: [], attendance: [],
+    tasks: [], letters: [],
   };
 }
 
@@ -645,6 +770,9 @@ export async function saveHrEmployee(payload = {}) {
   /* ── 7. Subject assignments — toggle only what changed since open ── */
   await syncSubjectAssignments(employeeId, payload.subjects || {}, payload.subjectsOriginal || {}, branchID);
 
+  /* ── 8. Class-attendance assignments — toggle only what changed ── */
+  await syncAttendanceAssignments(employeeId, payload.attendance || [], payload.attendanceOriginal || []);
+
   return { id: employeeId };
 }
 
@@ -674,6 +802,50 @@ export async function toggleHrSubjectAssignment({ employeeId, gradeId, sectionId
   const json = await res.json().catch(() => null);
   if (!res.ok) throw new Error(apiMessage(json) || 'Could not update subject assignment');
   return json;
+}
+
+/* One class-attendance toggle. This endpoint is a true toggle — calling it for
+   a class/section that isn't assigned ADDS it; calling again REMOVES it (no
+   isChecked flag), so we only fire it for class/sections whose state changed. */
+export async function toggleHrAttendanceAssignment({ employeeId, gradeId, sectionId, className = '', sectionName = '' }) {
+  const branchId = Number(sessionStorage.getItem('branchID')) || 0;
+  const userID   = Number(sessionStorage.getItem('UserID')) || 0;
+  const now      = new Date().toISOString();
+  const res  = await fetch(buildUrl('/api/HR/toggle-Employees_ClassSection_Attendance_Assignments'), {
+    method: 'POST',
+    headers: { Accept: '*/*', 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      id: 0,
+      employeId:  Number(employeeId) || 0,
+      gradeId:    Number(gradeId) || 0,
+      sectionId:  Number(sectionId) || 0,
+      branchId,
+      createdBy:  userID,
+      createdAt:  now,
+      modifiedBy: userID,
+      modifiedAt: now,
+      className, sectionName,
+    }),
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(apiMessage(json) || 'Could not update attendance assignment');
+  return json;
+}
+
+/* Diff desired vs original attendance ([{ gradeId, sectionId, ... }]) and fire a
+   toggle for each add/remove (the endpoint flips existence). */
+async function syncAttendanceAssignments(employeeId, desired = [], original = []) {
+  const key = (a) => `${a.gradeId}_${a.sectionId}`;
+  const desiredKeys  = new Set(desired.map(key));
+  const originalKeys = new Set(original.map(key));
+  const changed = [
+    ...desired.filter(a => !originalKeys.has(key(a))),
+    ...original.filter(a => !desiredKeys.has(key(a))),
+  ];
+  for (const a of changed) {
+    try { await toggleHrAttendanceAssignment({ employeeId, gradeId: a.gradeId, sectionId: a.sectionId, className: a.className, sectionName: a.sectionName }); }
+    catch (e) { /* surfaced by reload */ }
+  }
 }
 
 /* Diff desired vs original subject maps ({ "gradeId_sectionId": [subjectId] })

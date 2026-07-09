@@ -1869,6 +1869,33 @@ function PayRollModal({
     setAbsentDeduct((Number(v) || 0) * perAbsent);
   };
 
+  /* Auto-calc chargeable leave/absent from the staff's whole-year attendance.
+     allowed = sum of the employee's leave settings. Authorized leaves consume
+     the allowance first; absents beyond the remaining allowance are chargeable.
+     Chargeable leaves × 'Absent Ded.', chargeable absents × 'Unpaid Ded.'. */
+  const [attnCalc, setAttnCalc] = useState({ loading: false, done: false, absent: 0, leave: 0, allowed: 0 });
+  useEffect(() => {
+    let alive = true;
+    const allowed = (Number(emp.leaves?.annual) || 0) + (Number(emp.leaves?.casual) || 0)
+                  + (Number(emp.leaves?.sick) || 0)  + (Number(emp.leaves?.maternity) || 0);
+    setAttnCalc({ loading: true, done: false, absent: 0, leave: 0, allowed });
+    hrService.getHrStaffYearlyAttendance(emp.id, year)
+      .then(({ absent, leave }) => {
+        if (!alive) return;
+        const chargeableLeave  = Math.max(0, leave - allowed);
+        const remaining        = Math.max(0, allowed - leave);
+        const chargeableAbsent = Math.max(0, absent - remaining);
+        setLeaveCount(chargeableLeave);
+        setLeaveDeduct(chargeableLeave * (Number(emp.leaves?.absentDed) || 0));
+        setAbsentCount(chargeableAbsent);
+        setAbsentDeduct(chargeableAbsent * (Number(emp.leaves?.unpaidDed) || 0));
+        setAttnCalc({ loading: false, done: true, absent, leave, allowed });
+      })
+      .catch(() => { if (alive) setAttnCalc(c => ({ ...c, loading: false, done: true })); });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   /* ── Make Payment derived state ── */
   const payments     = existingRec?.payments || [];
   const totalPaid    = payments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
@@ -1889,13 +1916,44 @@ function PayRollModal({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, existingRec?.payments?.length, recNet]);
 
-  const savePRSetup = () => {
+  const [savingSetup, setSavingSetup] = useState(false);
+  const savePRSetup = async () => {
+    if (savingSetup) return;
+    /* Persist the setup values to the backend, then update the local record. */
+    setSavingSetup(true);
+    let payrollID = existingRec?.payrollID || 0;
+    try {
+      const resp = await hrService.saveHrPayrollSetup({
+        employeeID:       emp.id,
+        payrollMonth:     PAY_MONTHS.indexOf(month) + 1,
+        payrollYear:      Number(year),
+        bonus,
+        loanDeduction:    loanDeduct,
+        customLoanAmount: customLoan,
+        fineDeduction:    fineDeduct,
+        fineComment,
+        leaveCount,
+        leaveDeduction:   leaveDeduct,
+        leaveComment,
+        absentCount,
+        absentDeduction:  absentDeduct,
+        absentComment,
+      });
+      payrollID = hrService.payrollIdFromSetupResponse(resp) || payrollID;
+    } catch (err) {
+      toast(err.message || 'Could not save payroll setup', 'error');
+      setSavingSetup(false);
+      return;
+    }
+    setSavingSetup(false);
+
     const status =
       existingRec?.status === 'Paid'
         ? 'Paid'
         : (existingRec?.payments?.length ? 'Partially Paid' : 'Generated');
     onSaveSetup({
       month, year,
+      payrollID,
       status,
       basicPay: basic,
       bonus: Number(bonus),
@@ -1921,7 +1979,9 @@ function PayRollModal({
     setTab(1);
   };
 
-  const makePayment = () => {
+  const [payingNow, setPayingNow] = useState(false);
+  const makePayment = async () => {
+    if (payingNow) return;
     if (!existingRec) { toast('Please save payroll setup first', 'error'); return; }
     if (remaining <= 0.01) { toast('This payroll is already fully paid', 'warning'); return; }
     const amt = Number(payAmount) || 0;
@@ -1930,6 +1990,24 @@ function PayRollModal({
       toast(`Amount exceeds remaining balance (PKR ${fmtMoney(remaining)})`, 'error');
       return;
     }
+    if (!existingRec.payrollID) { toast('Please save payroll setup first', 'error'); return; }
+
+    /* Record the payment on the backend before updating the local record. */
+    setPayingNow(true);
+    try {
+      await hrService.saveHrPayrollPayment({
+        payrollID:   existingRec.payrollID,
+        amount:      amt,
+        comment:     payComment.trim(),
+        paymentDate: new Date().toISOString(),
+      });
+    } catch (err) {
+      toast(err.message || 'Could not record payment', 'error');
+      setPayingNow(false);
+      return;
+    }
+    setPayingNow(false);
+
     const today = new Date().toISOString().slice(0, 10);
     const newPayments = [...payments, { amount: amt, date: today, comment: payComment.trim() }];
     const paidAmount  = newPayments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
@@ -1957,10 +2035,10 @@ function PayRollModal({
   const footerBtn = (() => {
     if (tab === 0) {
       return {
-        label: 'Save & Next',
-        icon:  'fa-floppy-disk',
+        label: savingSetup ? 'Saving…' : 'Save & Next',
+        icon:  savingSetup ? 'fa-spinner fa-spin' : 'fa-floppy-disk',
         onClick: savePRSetup,
-        disabled: false,
+        disabled: savingSetup,
       };
     }
     if (isFullyPaid) {
@@ -1972,10 +2050,10 @@ function PayRollModal({
       };
     }
     return {
-      label: totalPaid > 0 ? 'Record Additional Payment' : 'Make Payment',
-      icon:  'fa-money-bill-wave',
+      label: payingNow ? 'Processing…' : (totalPaid > 0 ? 'Record Additional Payment' : 'Make Payment'),
+      icon:  payingNow ? 'fa-spinner fa-spin' : 'fa-money-bill-wave',
       onClick: makePayment,
-      disabled: false,
+      disabled: payingNow,
     };
   })();
 
@@ -2084,6 +2162,17 @@ function PayRollModal({
                   <div className="pr-field pr-field-full">
                     <label>Fine Comment</label>
                     <input type="text" placeholder="Reason for fine deduction" value={fineComment} onChange={(e) => setFineComment(e.target.value)} />
+                  </div>
+                  <div className="pr-field pr-field-full" style={{ fontSize: 12, color: 'var(--tm)' }}>
+                    {attnCalc.loading ? (
+                      <span><i className="fa-solid fa-spinner fa-spin" aria-hidden="true"></i> Calculating leaves &amp; absents from {year} attendance…</span>
+                    ) : attnCalc.done ? (
+                      <span>
+                        <i className="fa-solid fa-circle-info" aria-hidden="true"></i>{' '}
+                        {year} attendance — Leaves: <strong>{attnCalc.leave}</strong>, Absents: <strong>{attnCalc.absent}</strong>,
+                        Allowed: <strong>{attnCalc.allowed}</strong>. Chargeable amounts auto-filled below (editable).
+                      </span>
+                    ) : null}
                   </div>
                   <div className="pr-field">
                     <label>Number of Leaves this Month</label>
@@ -3416,6 +3505,7 @@ function AddEmployeeModal({ mode = 'add', emp, depts, desigs, nextEmpId, onClose
   const photoRef = useRef(null);
   const [tab, setTab]             = useState(0);
   const [assignTab, setAssignTab] = useState(0);
+  const [saving, setSaving]       = useState(false);          // true while the save APIs run
   const [removedHeadIds, setRemovedHeadIds] = useState([]);   // custom heads to delete on save
 
   /* ── Seeded form state — Add mode mirrors openAddEmp(); Edit mode
@@ -3526,8 +3616,9 @@ function AddEmployeeModal({ mode = 'add', emp, depts, desigs, nextEmpId, onClose
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* Snapshot the subject assignments at open so save can toggle only the diff. */
-  const subjectsOriginalRef = useRef(JSON.parse(JSON.stringify(emp?.subjects || {})));
+  /* Snapshot the subject + attendance assignments at open so save toggles only the diff. */
+  const subjectsOriginalRef   = useRef(JSON.parse(JSON.stringify(emp?.subjects || {})));
+  const attendanceOriginalRef = useRef(JSON.parse(JSON.stringify(emp?.attendance || [])));
 
   /* Esc dismisses, body lock */
   useEffect(() => {
@@ -3663,25 +3754,32 @@ function AddEmployeeModal({ mode = 'add', emp, depts, desigs, nextEmpId, onClose
     loadSubjectsFor(cId, sId);   // fetch real subjects the first time it opens
   };
 
-  /* ── Attendance helpers ── */
+  /* ── Attendance helpers (real classes/sections; each entry is an object
+     { gradeId, sectionId, className, sectionName }) ── */
   const allSections = useMemo(() => {
     const out = [];
-    HR_CLASS_LIST.forEach(c => c.sections.forEach(s => out.push({
-      classId: c.id, className: c.name, secId: s.id, secName: s.name,
+    hrGrades.forEach(c => c.sections.forEach(s => out.push({
+      gradeId: c.id, className: c.name, sectionId: s.id, sectionName: s.name,
     })));
     return out;
-  }, []);
-  const toggleAttend = (secId) => setForm(f => ({
-    ...f,
-    attendance: f.attendance.includes(secId)
-      ? f.attendance.filter(x => x !== secId)
-      : [...f.attendance, secId],
-  }));
-  const attendSelectAll = () => setForm(f => ({ ...f, attendance: allSections.map(s => s.secId) }));
+  }, [hrGrades]);
+  const isAttendChecked = (gradeId, sectionId) =>
+    form.attendance.some(a => a.gradeId === gradeId && a.sectionId === sectionId);
+  const toggleAttend = (item) => setForm(f => {
+    const has = f.attendance.some(a => a.gradeId === item.gradeId && a.sectionId === item.sectionId);
+    return {
+      ...f,
+      attendance: has
+        ? f.attendance.filter(a => !(a.gradeId === item.gradeId && a.sectionId === item.sectionId))
+        : [...f.attendance, item],
+    };
+  });
+  const attendSelectAll = () => setForm(f => ({ ...f, attendance: allSections.map(s => ({ ...s })) }));
   const attendClearAll  = () => setForm(f => ({ ...f, attendance: [] }));
 
   /* ── Submit (mirrors saveEmp() in the HTML) ── */
-  const submit = () => {
+  const submit = async () => {
+    if (saving) return;
     if (!form.firstName.trim()) { toast('First name required', 'error');        setTab(0); return; }
     if (!form.cnic.trim())      { toast('CNIC required', 'error');              setTab(0); return; }
     if (!form.fn.trim())        { toast('Father / Husband name required', 'error'); setTab(0); return; }
@@ -3707,6 +3805,7 @@ function AddEmployeeModal({ mode = 'add', emp, depts, desigs, nextEmpId, onClose
       salaryHeads: form.salaryHeads.map(h => ({ ...h, amount: Number(h.amount) || 0 })),
       removedHeadIds,
       subjectsOriginal: subjectsOriginalRef.current,
+      attendanceOriginal: attendanceOriginalRef.current,
       docUploads,
       removedDocIds,
       leaves: {
@@ -3721,7 +3820,15 @@ function AddEmployeeModal({ mode = 'add', emp, depts, desigs, nextEmpId, onClose
       },
     };
     if (isEdit && emp?.id) payload.id = emp.id;
-    onSave(payload);
+
+    /* Run the save (many APIs) with the button in a loading state; the parent
+       closes the modal on success and toasts on failure. */
+    setSaving(true);
+    try {
+      await onSave(payload);
+    } finally {
+      setSaving(false);
+    }
   };
 
   /* Tab nav */
@@ -4311,13 +4418,16 @@ function AddEmployeeModal({ mode = 'add', emp, depts, desigs, nextEmpId, onClose
                       <div className="th">Section</div>
                       <div className="th" style={{ textAlign: 'center' }}>Select</div>
                     </div>
+                    {allSections.length === 0 && (
+                      <div style={{ padding: 16, color: 'var(--tm)', fontWeight: 600 }}>Loading classes…</div>
+                    )}
                     {allSections.map((s, i) => {
-                      const ck = form.attendance.includes(s.secId);
+                      const ck = isAttendChecked(s.gradeId, s.sectionId);
                       return (
-                        <div key={s.secId} className={`attend-row${ck ? ' checked' : ''}`} onClick={() => toggleAttend(s.secId)}>
+                        <div key={`${s.gradeId}_${s.sectionId}`} className={`attend-row${ck ? ' checked' : ''}`} onClick={() => toggleAttend(s)}>
                           <div className="td td-num">{i + 1}</div>
                           <div className="td td-bold">{s.className}</div>
-                          <div className="td"><span className="badge b-blue">{s.secName}</span></div>
+                          <div className="td"><span className="badge b-blue">{s.sectionName}</span></div>
                           <div className="td" style={{ justifyContent: 'center' }}>
                             <div className="attend-checkbox"><i className="fa-solid fa-check" aria-hidden="true"></i></div>
                           </div>
@@ -4337,19 +4447,21 @@ function AddEmployeeModal({ mode = 'add', emp, depts, desigs, nextEmpId, onClose
             <i className="fa-solid fa-circle-info" aria-hidden="true"></i>
             <span>You can switch between tabs — your input is preserved.</span>
           </div>
-          <button type="button" className="btn-secondary" onClick={onClose}>Cancel</button>
+          <button type="button" className="btn-secondary" onClick={onClose} disabled={saving}>Cancel</button>
           {tab > 0 && (
-            <button type="button" className="btn-secondary" onClick={goPrev}>
+            <button type="button" className="btn-secondary" onClick={goPrev} disabled={saving}>
               <i className="fa-solid fa-chevron-left" aria-hidden="true"></i> Previous
             </button>
           )}
           {tab < 5 && (
-            <button type="button" className="btn-secondary" onClick={goNext}>
+            <button type="button" className="btn-secondary" onClick={goNext} disabled={saving}>
               Next <i className="fa-solid fa-chevron-right" aria-hidden="true"></i>
             </button>
           )}
-          <button type="button" className="btn-primary" onClick={submit}>
-            <i className="fa-solid fa-check" aria-hidden="true"></i> {isEdit ? 'Save Changes' : 'Save Employee'}
+          <button type="button" className="btn-primary" onClick={submit} disabled={saving}>
+            {saving
+              ? (<><i className="fa-solid fa-spinner fa-spin" aria-hidden="true"></i> Saving…</>)
+              : (<><i className="fa-solid fa-check" aria-hidden="true"></i> {isEdit ? 'Save Changes' : 'Save Employee'}</>)}
           </button>
         </div>
       </div>
@@ -4371,23 +4483,25 @@ function EmployeeDetailPanel({ emp, deptName, desigName }) {
   const net    = basic + allow - deduct;
   const fmt    = (n) => `PKR ${Number(n || 0).toLocaleString('en-PK')}`;
 
-  const subjectsFlat = [];
-  Object.entries(emp.subjects || {}).forEach(([k, arr]) => {
-    const [cId, sId] = k.split('_').map(Number);
-    const cls = HR_CLASS_LIST.find(c => c.id === cId);
-    const sec = cls?.sections.find(s => s.id === sId);
-    arr.forEach(subId => {
-      const sub = HR_SUBJECT_LIST.find(x => x.id === subId);
-      if (cls && sec && sub) subjectsFlat.push(`${cls.name} · ${sec.name} · ${sub.name}`);
+  /* Prefer the names the API returns with each assignment; fall back to the
+     mock class/subject lists only if no display rows are present. */
+  let subjectsFlat = (emp.subjectsDisplay || [])
+    .map(x => [x.className, x.sectionName, x.subjectName].filter(Boolean).join(' · '))
+    .filter(Boolean);
+  if (subjectsFlat.length === 0) {
+    Object.entries(emp.subjects || {}).forEach(([k, arr]) => {
+      const [cId, sId] = k.split('_').map(Number);
+      const cls = HR_CLASS_LIST.find(c => c.id === cId);
+      const sec = cls?.sections.find(s => s.id === sId);
+      arr.forEach(subId => {
+        const sub = HR_SUBJECT_LIST.find(x => x.id === subId);
+        if (cls && sec && sub) subjectsFlat.push(`${cls.name} · ${sec.name} · ${sub.name}`);
+      });
     });
-  });
-  const attendanceFlat = (emp.attendance || []).map(secId => {
-    for (const c of HR_CLASS_LIST) {
-      const s = c.sections.find(x => x.id === secId);
-      if (s) return `${c.name} · ${s.name}`;
-    }
-    return null;
-  }).filter(Boolean);
+  }
+  const attendanceFlat = (emp.attendance || [])
+    .map(a => [a.className, a.sectionName].filter(Boolean).join(' · '))
+    .filter(Boolean);
 
   return (
     <div className="emp-detail">
@@ -5343,23 +5457,20 @@ function ProfileReportModal({ emp, deptName, desigName, onClose }) {
   const netSalary   = basicNum + allowTotal - deductTotal;
 
   /* Flatten subject + attendance maps using the seed lists */
-  const subjItems = [];
-  Object.keys(subjMap).forEach(key => {
-    const [cId, sId] = key.split('_').map(Number);
-    const cls = HR_CLASS_LIST.find(c => c.id === cId);
-    const sec = cls?.sections.find(s => s.id === sId);
-    (subjMap[key] || []).forEach(sid => {
-      const sub = HR_SUBJECT_LIST.find(x => x.id === sid);
-      if (cls && sec && sub) subjItems.push({ cls: cls.name, sec: sec.name, sub: sub.name });
+  /* Prefer the API's assignment names; fall back to the mock lists. */
+  let subjItems = (emp.subjectsDisplay || []).map(x => ({ cls: x.className, sec: x.sectionName, sub: x.subjectName }));
+  if (subjItems.length === 0) {
+    Object.keys(subjMap).forEach(key => {
+      const [cId, sId] = key.split('_').map(Number);
+      const cls = HR_CLASS_LIST.find(c => c.id === cId);
+      const sec = cls?.sections.find(s => s.id === sId);
+      (subjMap[key] || []).forEach(sid => {
+        const sub = HR_SUBJECT_LIST.find(x => x.id === sid);
+        if (cls && sec && sub) subjItems.push({ cls: cls.name, sec: sec.name, sub: sub.name });
+      });
     });
-  });
-  const attItems = [];
-  attCls.forEach(sId => {
-    HR_CLASS_LIST.forEach(c => {
-      const sec = c.sections.find(s => s.id === sId);
-      if (sec) attItems.push({ cls: c.name, sec: sec.name });
-    });
-  });
+  }
+  const attItems = (attCls || []).map(a => ({ cls: a.className, sec: a.sectionName }));
 
   const f = emp.financial || defaultFinancial();
   const depOut = f.securityDepositApplicable
