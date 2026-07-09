@@ -1142,26 +1142,46 @@
       return cMatch && sMatch;
     });
 
-    // Per-student rows (har student ki alag row) — In/Out time yahin meaningful hai.
-    // Class column table se hata di gayi — classes/sections upar (date ke sath)
-    // dikhte hain; yeh sirf student list hai.
-    const studentRows = filtered.flatMap((r) =>
-      (r.students || []).map((s) => ({ ...s, cls: r.cls, sec: r.sec }))
-    );
+    const totalStudentCount = filtered.reduce((n, r) => n + (r.students || []).length, 0);
 
-    const tableRows = studentRows.map((s, i) => {
-      const st = s.status; // "present" | "absent" | "leave" | ""
-      const stCell = st
-        ? badge(st[0].toUpperCase() + st.slice(1), st === "present" ? GREEN : st === "absent" ? RED : AMB)
-        : badge("Not Marked", "#94A3B8");
-      return `<tr style="background:${i % 2 === 0 ? "#fff" : "#f8fafc"}">
-        ${td(i + 1, "text-align:center;color:#94A3B8")}
-        ${td(s.name ? `<strong>${s.name}</strong>${s.reg ? `<div style="font-size:10px;color:#64748B">${s.reg}</div>` : ""}` : "—")}
-        ${td(stCell, "text-align:center")}
-        ${td(st === "present" && s.inTime  ? fmtTime(s.inTime)  : "—", "text-align:center;font-size:11px")}
-        ${td(st === "present" && s.outTime ? fmtTime(s.outTime) : "—", "text-align:center;font-size:11px")}
-        ${td(s.platform || (st ? "ERP" : "—"), "font-size:11px")}
-      </tr>`;
+    // Class-wise blocks — pehle ek class ka heading (uski present/absent/leave
+    // summary ke sath), phir usi class ke saare students ki table; phir agli
+    // class. Har filtered row = ek class+section.
+    const classBlocks = filtered.map((r) => {
+      const students = r.students || [];
+      const rowsHtml = students.map((s, i) => {
+        const st = s.status; // "present" | "absent" | "leave" | ""
+        const stCell = st
+          ? badge(st[0].toUpperCase() + st.slice(1), st === "present" ? GREEN : st === "absent" ? RED : AMB)
+          : badge("Not Marked", "#94A3B8");
+        return `<tr style="background:${i % 2 === 0 ? "#fff" : "#f8fafc"}">
+          ${td(i + 1, "text-align:center;color:#94A3B8")}
+          ${td(s.name ? `<strong>${s.name}</strong>${s.reg ? `<div style="font-size:10px;color:#64748B">${s.reg}</div>` : ""}` : "—")}
+          ${td(stCell, "text-align:center")}
+          ${td(st === "present" && s.inTime  ? fmtTime(s.inTime)  : "—", "text-align:center;font-size:11px")}
+          ${td(st === "present" && s.outTime ? fmtTime(s.outTime) : "—", "text-align:center;font-size:11px")}
+          ${td(s.platform || (st ? "ERP" : "—"), "font-size:11px")}
+        </tr>`;
+      }).join("");
+
+      const cTitle = `${r.cls}${r.sec ? ` (${r.sec})` : ""}`;
+      const cSummary = r.marked
+        ? `Strength ${r.total} &nbsp;·&nbsp; <span style="color:${GREEN}">Present ${r.present}</span> &nbsp;·&nbsp; <span style="color:${RED}">Absent ${r.absent}</span> &nbsp;·&nbsp; <span style="color:${AMB}">Leave ${r.leave}</span>`
+        : `Strength ${r.total} &nbsp;·&nbsp; <span style="color:#94A3B8">Not marked</span>`;
+
+      const heading = `<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin:22px 0 9px;padding:10px 14px;border-radius:10px;border:1.5px solid ${bdr}${isColor ? ";background:#EFF6FF" : ""}">
+        <div style="font-size:13.5px;font-weight:800;color:#0F172A">${cTitle}</div>
+        <div style="font-size:10.5px;font-weight:700;color:#64748B">${cSummary}</div>
+      </div>`;
+
+      const table = students.length === 0
+        ? `<div style="text-align:center;padding:16px;color:#94A3B8;font-size:12px"><i>No students in this class.</i></div>`
+        : `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11.5px">
+            <thead><tr>${[th("#", "center"), th("Student"), th("Status", "center"), th("In Time", "center"), th("Out Time", "center"), th("Marked From")].join("")}</tr></thead>
+            <tbody>${rowsHtml}</tbody>
+          </table></div>`;
+
+      return heading + table;
     }).join("");
 
     const pres = filtered.filter((r) => r.marked).reduce((s, r) => s + r.present, 0);
@@ -1169,24 +1189,15 @@
     const lv   = filtered.filter((r) => r.marked).reduce((s, r) => s + r.leave, 0);
     const tot  = filtered.reduce((s, r) => s + r.total, 0);
 
-    // Date ke sath jo classes/sections aa rahe hain — inhe upar dikhao (table me
-    // class column ki jagah). Har filtered row = ek class+section.
-    const classesText = forClass
-      ? `${forClass.cls} (${forClass.sec})`
-      : (filtered.map((r) => `${r.cls}${r.sec ? ` (${r.sec})` : ""}`).join(", ") || "All Classes");
-
     const content = rptInfoGrid([
       ["Date", dateLabel],
-      ["Classes & Sections", classesText],
+      ["Classes", forClass ? `${forClass.cls} (${forClass.sec})` : String(filtered.length)],
       ["Total Students", String(tot)],
     ], bdr) +
     rptStatsRow([["Total", tot, "#374151"], ["Present", pres, GREEN], ["Absent", abs, RED], ["Leave", lv, AMB]], bdr, isColor) +
-    (studentRows.length === 0
+    (totalStudentCount === 0
       ? `<div style="text-align:center;padding:30px;color:#94A3B8;font-size:13.5px"><i>No attendance found for the selected date and filters.</i></div>`
-      : `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11.5px">
-          <thead><tr>${[th("#", "center"), th("Student"), th("Status", "center"), th("In Time", "center"), th("Out Time", "center"), th("Marked From")].join("")}</tr></thead>
-          <tbody>${tableRows}</tbody>
-        </table></div>`);
+      : classBlocks);
 
     return rptPageWrap({ rptLabel: "Daily Student Attendance Report", period: dateLabel, isColor, school: branchSchool, content });
   }
