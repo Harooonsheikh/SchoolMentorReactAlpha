@@ -97,6 +97,189 @@ const AQ_CONFIG = {
   essays:          { title:'Essays',                   fields:[{key:'title',label:'Title',ph:'Enter essay title',rte:true},{key:'body',label:'Essay Body',ph:'Write the essay…',rte:true},{key:'conclusion',label:'Conclusion',ph:'Write conclusion…',rte:true}], layout:'vertical-expand' },
 };
 
+/* Notebook Add-Questions modal — English → Urdu (Noori Nastaliq) headings/labels.
+   Urdu chunne par sari question-type labels aur field headings translate ho jati hain. */
+const NB_UR = {
+  // Question-type labels (AQ_TYPES)
+  'Word/Opposite': 'لفظ / متضاد',
+  'Singular/Plural': 'واحد / جمع',
+  'Word/Synonyms': 'لفظ / مترادف',
+  'Word Sentences': 'الفاظ اور جملے',
+  'MCQs Field': 'کثیر الانتخابی سوالات',
+  'Fill in the Blanks': 'خالی جگہ پُر کریں',
+  'True / False': 'صحیح / غلط',
+  'Match the Columns': 'کالم ملائیں',
+  'Short Questions': 'مختصر سوالات',
+  'Circle the Correct Words': 'درست الفاظ پر دائرہ لگائیں',
+  'Punctuation': 'رموزِ اوقاف',
+  'Long Question': 'طویل سوال',
+  'Paragraph Writing': 'پیراگراف نویسی',
+  'Comprehension': 'فہمِ عبارت',
+  'Letter': 'خط',
+  'Application': 'درخواست',
+  'Stories': 'کہانیاں',
+  'Essays': 'مضامین',
+  // Config titles (jahan type label se mukhtalif)
+  'Word / Opposite': 'لفظ / متضاد',
+  'Singular / Plural': 'واحد / جمع',
+  'Word / Synonyms': 'لفظ / مترادف',
+  'Comprehension Question': 'فہمِ عبارت کا سوال',
+  // Field labels
+  'Word': 'لفظ',
+  'Opposite': 'متضاد',
+  'Singular': 'واحد',
+  'Plural': 'جمع',
+  'Synonym': 'مترادف',
+  'Sentence': 'جملہ',
+  'Question': 'سوال',
+  'Answer': 'جواب',
+  'Title': 'عنوان',
+  'Body': 'متن',
+  'Paragraph Body': 'پیراگراف کا متن',
+  'Story Body': 'کہانی کا متن',
+  'Essay Body': 'مضمون کا متن',
+  'Moral': 'اخلاقی سبق',
+  'Conclusion': 'اختتامیہ',
+  'Subject': 'موضوع',
+  // Section / inline headings
+  'Select Question Field': 'سوال کی قسم منتخب کریں',
+  'Main Question': 'بنیادی سوال',
+  'Comprehension Statement': 'عبارت',
+  'Language': 'زبان',
+  'Column A': 'کالم الف',
+  'Column B (Correct Match)': 'کالم ب (درست جوڑ)',
+  'CORRECT ANSWER': 'درست جواب',
+  'Statement (use ___ for blank)': 'جملہ (خالی جگہ کے لیے ___ لکھیں)',
+  'Blank Answer:': 'خالی جگہ کا جواب:',
+  'Statement / Sentence with word choices': 'جملہ / بیان (الفاظ کے انتخاب کے ساتھ)',
+  'Correct Word to Circle': 'دائرہ لگانے والا درست لفظ',
+  'Unpunctuated Sentence': 'بغیر رموز کے جملہ',
+  'Correctly Punctuated (Answer)': 'درست رموز کے ساتھ (جواب)',
+  'Answer / Model Answer': 'جواب / نمونہ جواب',
+  // Buttons
+  'Remove': 'حذف کریں',
+  'Save': 'محفوظ کریں',
+  '+ Add More': '+ مزید شامل کریں',
+  '+ Add More Stories': '+ مزید کہانیاں شامل کریں',
+  // Option (MCQ) prefix
+  'Option': 'آپشن',
+  // Placeholders
+  'e.g. Big': 'مثلاً بڑا',
+  'e.g. Small': 'مثلاً چھوٹا',
+  'e.g. Cat': 'مثلاً بلی',
+  'e.g. Cats': 'مثلاً بلیاں',
+  'e.g. Happy': 'مثلاً خوش',
+  'e.g. Joyful': 'مثلاً مسرور',
+  'Enter title': 'عنوان لکھیں',
+  'Write paragraph here…': 'یہاں پیراگراف لکھیں…',
+  'Enter subject': 'موضوع لکھیں',
+  'Write letter body…': 'خط کا متن لکھیں…',
+  'Write application body…': 'درخواست کا متن لکھیں…',
+  'Enter story title': 'کہانی کا عنوان لکھیں',
+  'Write the story…': 'کہانی لکھیں…',
+  'Moral of the story…': 'کہانی کا سبق…',
+  'Enter essay title': 'مضمون کا عنوان لکھیں',
+  'Write the essay…': 'مضمون لکھیں…',
+  'Write conclusion…': 'اختتامیہ لکھیں…',
+  'Enter word': 'لفظ لکھیں',
+  'Write a sentence using this word…': 'اس لفظ سے جملہ بنائیں…',
+  'Enter question text…': 'سوال لکھیں…',
+  'A / B / C / D or exact text': 'A / B / C / D یا درست متن',
+  'Write the statement here. Use ___ where the blank should be…': 'یہاں جملہ لکھیں۔ خالی جگہ کے لیے ___ استعمال کریں…',
+  'One word…': 'ایک لفظ…',
+  'Write the statement — students mark True or False…': 'جملہ لکھیں — طلباء صحیح یا غلط نشان لگائیں گے…',
+  'e.g. Apple, Cat, Big…': 'مثلاً سیب، بلی، بڑا…',
+  'e.g. Fruit, Animal, Small…': 'مثلاً پھل، جانور، چھوٹا…',
+  'Write the question here…': 'یہاں سوال لکھیں…',
+  'Write the answer here…': 'یہاں جواب لکھیں…',
+  'e.g. The cat is (big / small / tall).': 'مثلاً بلی (بڑی / چھوٹی / لمبی) ہے۔',
+  'Type the correct word…': 'درست لفظ لکھیں…',
+  'Write the sentence without punctuation (e.g. the cat sat on the mat it was happy)': 'بغیر رموز کے جملہ لکھیں (مثلاً بلی چٹائی پر بیٹھی وہ خوش تھی)',
+  'Write the correctly punctuated sentence…': 'درست رموز کے ساتھ جملہ لکھیں…',
+  'Write the long question here…': 'یہاں طویل سوال لکھیں…',
+  'Write the detailed model answer here…': 'یہاں تفصیلی نمونہ جواب لکھیں…',
+  'Enter question…': 'سوال لکھیں…',
+  'Enter answer…': 'جواب لکھیں…',
+  'Enter main question': 'بنیادی سوال لکھیں',
+  'Enter comprehension statement here…': 'یہاں عبارت لکھیں…',
+  // Report headings/terms
+  'Correct': 'درست',
+  'True': 'صحیح',
+  'False': 'غلط',
+  'Notebook': 'نوٹ بک',
+  'Unit': 'یونٹ',
+  'Sections': 'حصے',
+  'Style': 'انداز',
+  'Generated': 'تیاری',
+  'Colorful': 'رنگین',
+  'Colorless': 'بے رنگ',
+  'Report': 'رپورٹ',
+  'Academic Year': 'تعلیمی سال',
+  'Q': 'س',
+  'A': 'ج',
+  'Shuffle Column B when writing on board.': 'بورڈ پر لکھتے وقت کالم ب کی ترتیب بدل دیں۔',
+  // Lesson-plan report terms
+  'Student Learning Objectives (SLOs)': 'طلباء کے سیکھنے کے مقاصد',
+  'Lesson Introduction': 'سبق کا تعارف',
+  'Development / Main Teaching': 'ترقی / مرکزی تدریس',
+  'Recap / Consolidation': 'خلاصہ / اعادہ',
+  'mins': 'منٹ',
+  '✨ Mentor AI Generated': '✨ مینٹور اے آئی سے تیار',
+  '✏ Manually Added': '✏ دستی طور پر شامل',
+  'Lesson No.': 'سبق نمبر',
+  'No lessons have been added to this unit yet.': 'اس یونٹ میں ابھی کوئی سبق شامل نہیں کیا گیا۔',
+  'Total Lessons': 'کل اسباق',
+  'Mentor AI': 'مینٹور اے آئی',
+  'Manual': 'دستی',
+  'Sections/Lesson': 'حصے/سبق',
+  'Each lesson includes:': 'ہر سبق میں یہ شامل ہے:',
+  'SLOs': 'مقاصد',
+  'Introduction': 'تعارف',
+  'Development': 'ترقی',
+  'Recap': 'خلاصہ',
+  'Lesson': 'سبق',
+  'Lessons': 'اسباق',
+  '(untitled)': '(بلا عنوان)',
+  // Lesson plan viewer (submission view) labels
+  'Student Learning Objective': 'طلباء کا سیکھنے کا مقصد',
+  'Duration': 'دورانیہ',
+  'Unit No.': 'یونٹ نمبر',
+  'Time Allocation': 'وقت کی تقسیم',
+  'Learning Objective': 'سیکھنے کا مقصد',
+  'Suggestion': 'تجویز',
+  'Close': 'بند کریں',
+  'Submit Lesson Plan': 'سبق پلان جمع کریں',
+  'Loading lesson plan…': 'سبق پلان لوڈ ہو رہا ہے…',
+  // Notebook submission report labels
+  'Notebook Plan Report': 'نوٹ بک پلان رپورٹ',
+  'Unit Report': 'یونٹ رپورٹ',
+  'Unit No': 'یونٹ نمبر',
+  'Unit Name': 'یونٹ کا نام',
+  'Q. Types': 'سوال کی اقسام',
+  'Total Items': 'کل آئٹمز',
+  'Submitted': 'جمع شدہ',
+  'Pending': 'باقی',
+  'Completion': 'تکمیل',
+  'Question Type Summary': 'سوال کی اقسام کا خلاصہ',
+  'Question Type': 'سوال کی قسم',
+  'Generated': 'بنائے گئے',
+  'Progress': 'پیش رفت',
+  'Done': 'مکمل',
+  'Item-level Details': 'آئٹم کی تفصیلات',
+  'Content': 'مواد',
+  'Submitted On': 'جمع کرنے کی تاریخ',
+  'Status': 'حالت',
+  'submitted': 'جمع شدہ',
+};
+const nbTr = (s, isUrdu) => (isUrdu ? (NB_UR[s] || s) : s);
+
+/* Submission VIEW helper: content Urdu ho (Urdu/Arabic script) to RTL + Noori font,
+   English content → default (LTR). Medium field ki zaroorat nahi — content se detect. */
+const LP_URDU_RE = /[؀-ۿﭐ-﷿ﹰ-﻿]/;
+const lpUrduProps = (html, extraStyle = {}) => (LP_URDU_RE.test(String(html || ''))
+  ? { dir: 'rtl', style: { textAlign: 'right', fontFamily: "'Noto Nastaliq Urdu','Jameel Noori Nastaleeq','Alvi Nastaleeq',serif", lineHeight: 2, ...extraStyle } }
+  : (Object.keys(extraStyle).length ? { style: extraStyle } : {}));
+
 let _aqRowCounter = 0;
 function aqEmptyRow(typeId) {
   const cfg = AQ_CONFIG[typeId];
@@ -1017,6 +1200,14 @@ const lpAuthHeaders = (extra = {}) => ({
   Authorization: `bearer ${sessionStorage.getItem('token') || ''}`,
   ...extra,
 });
+/* Backend `ulpforclassmastercrud` medium accept karta hai, magar CAPITALIZED
+   ("English"/"Urdu") — lowercase par 500 deta tha. Internally hum medium ko
+   lowercase ('english'/'urdu') rakhte hain (toggle/compare ke liye); API bhejte
+   waqt `apiMedium()` se capitalize karte hain. */
+const LP_MEDIUM_API_READY = true;
+/* Kisi bhi casing ("urdu"/"Urdu"/"URDU") ko backend-format ("Urdu"/"English") me. */
+const apiMedium = (m) => (String(m || 'english').toLowerCase() === 'urdu' ? 'Urdu' : 'English');
+
 async function lpPost(path, payload) {
   assertSessionPayload(payload); // block session-scoped POSTs when no session is selected
   const res = await fetch(buildUrl(path), {
@@ -1035,6 +1226,49 @@ async function lpPost(path, payload) {
   }
   return json;
 }
+
+/* Delete a lesson ULP master row SAFELY. The master has a child DETAIL row
+   (AHM_ULP_ForClassesDetail.MasterClassesID → FK). Deleting the master directly
+   throws a 500 REFERENCE-constraint error, so we DELETE THE DETAIL FIRST, then
+   the master. `rec` = original API master row; `ctx` = {branchID,classID,sectionID,subjectID}. */
+async function deleteUlpMasterCascade(rec, ctx = {}) {
+  const masterId = rec?.id;
+  if (masterId == null) return;
+  /* 1) Child detail row(s) fetch karo (agar fetch fail ho to khaali maan lo). */
+  let dets = [];
+  try {
+    const token = sessionStorage.getItem('token') || '';
+    const res = await window.fetch(
+      buildUrl(`/api/getulpforclassdetailbytermsubjectandclass?MasterClassesID=${masterId}&classID=${ctx.classID || ''}&subjectID=${ctx.subjectID || ''}&pageNo=1`),
+      { headers: { Accept: '*/*', Authorization: `bearer ${token}` } },
+    );
+    const json = await res.json().catch(() => null);
+    dets = Array.isArray(json?.data) ? json.data : [];
+  } catch (e) {
+    console.warn('LP detail fetch failed:', e);
+  }
+  /* 2) Har child detail row delete karo — poora record + action:'delete'.
+     Agar ye fail ho to error propagate hone do (master delete pointless hai). */
+  for (const det of dets) {
+    if (det?.id == null) continue;
+    await lpPost('/api/ulpforclassdetailcrud', {
+      ...det,
+      masterClassesID: det.masterClassesID ?? masterId,
+      classID: det.classID ?? ctx.classID,
+      subjectID: det.subjectID ?? ctx.subjectID,
+      action: 'delete',
+    });
+  }
+  /* 3) Ab parent master row delete. */
+  return lpPost('/api/ulpforclassmastercrud', {
+    id: masterId,
+    branchID: ctx.branchID, classID: ctx.classID, sectionID: ctx.sectionID, subjectID: ctx.subjectID,
+    unitNo: rec?.unitNo ?? '', unitName: rec?.unitName ?? '', lessonPlanTopic: rec?.lessonPlanTopic ?? '',
+    ...(LP_MEDIUM_API_READY ? { medium: apiMedium(rec?.medium) } : {}),
+    action: 'delete',
+  });
+}
+
 const lpToIso = d => { const x = new Date(d); return isNaN(x) ? null : x.toISOString(); };
 
 /* Active session: switched session first, else the login session. */
@@ -3144,6 +3378,7 @@ const fetchNotebookUnits = async ({ branchID, classID, sectionID, subjectID }) =
     unitNo: r.unitNo,
     unitName: r.unitName,
     lessonPlanTopic: r.lessonPlanTopic || '',
+    medium: String(r.medium || 'english').toLowerCase(),   // unit ki language (Manage Units se)
     questions: [],
     record: r,
   })));
@@ -3180,7 +3415,8 @@ const fetchLessonPlans = async (opts) => {
     rows.forEach(r => {
       const key = `${r.unitNo}__${r.unitName}`;
       if (!byUnit.has(key)) {
-        byUnit.set(key, { id: key, unitNo: r.unitNo, unitName: r.unitName, lessons: [] });
+        // medium = is unit ki language (Manage Units mein set hoti hai). Default 'english'.
+        byUnit.set(key, { id: key, unitNo: r.unitNo, unitName: r.unitName, medium: String(r.medium || 'english').toLowerCase(), lessons: [] });
       }
       const unit = byUnit.get(key);
       unit.lessons.push({
@@ -3257,10 +3493,9 @@ const handleSectionChange = async (e) => {
   }
 };
   // Rest of your component remains the same...
-  /* Delete one ULP class-master row (topic) by id. */
-  const deleteUlpRecord = id => lpPost('/api/ulpforclassmastercrud', {
-    id, ...resolveCtx(), unitNo: '', unitName: '', lessonPlanTopic: '', action: 'delete',
-  });
+  /* Delete one ULP class-master row (child DETAIL pehle delete hota hai — FK constraint).
+     `rec` = original API row (l.record). */
+  const deleteUlpRecord = (rec) => deleteUlpMasterCascade(rec, resolveCtx());
 
   /* Delete one notebook-master unit row by id. */
   const deleteNbRecord = id => lpPost('/api/ulpfornotebookmastercrud', {
@@ -3276,9 +3511,9 @@ const handleSectionChange = async (e) => {
     onConfirm: async () => {
       if (clpSubtab === 'lesson') {
         /* Delete every topic record under this unit, then drop it locally. */
-        const ids = (u.lessons || []).map(l => l.record?.id).filter(Boolean);
-        try { await Promise.all(ids.map(deleteUlpRecord)); }
-        catch (e) { console.error('Error deleting unit topics:', e); toast(e.serverMessage || 'Could not delete unit', 'error'); return; }
+        const recs = (u.lessons || []).map(l => l.record).filter(r => r && r.id != null);
+        try { await Promise.all(recs.map(deleteUlpRecord)); }
+        catch (e) { console.error('Error deleting unit topics:', e); toast(e.serverMessage || e.message || 'Could not delete unit', 'error'); return; }
         setUnits(units.filter(x => x.id !== u.id));
       } else {
         const recId = u.record?.id ?? u.id;
@@ -3300,8 +3535,8 @@ const handleSectionChange = async (e) => {
     icon: 'fa-trash',
     onConfirm: async () => {
       if (lesson.record?.id) {
-        try { await deleteUlpRecord(lesson.record.id); }
-        catch (e) { console.error('Error deleting lesson topic:', e); toast(e.serverMessage || 'Could not delete lesson', 'error'); return; }
+        try { await deleteUlpRecord(lesson.record); }
+        catch (e) { console.error('Error deleting lesson topic:', e); toast(e.serverMessage || e.message || 'Could not delete lesson', 'error'); return; }
       }
       setUnits(units.map(u => u.id !== unitId ? u : { ...u, lessons: u.lessons.filter(l => l.id !== lesson.id) }));
       toast('Lesson deleted', 'success');
@@ -5027,7 +5262,7 @@ function Submissions({ toast, classesData = [] }) {
                                   )}
                                   <div className="snb-qtype-chevron"><i className="fa-solid fa-chevron-down"></i></div>
                                 </div>
-                                <div className="snb-qtype-mq">{qt.mainQ}</div>
+                                <div className="snb-qtype-mq" {...lpUrduProps(qt.mainQ)}>{qt.mainQ}</div>
                               </div>
 
                               {qIsOpen && (
@@ -5039,7 +5274,7 @@ function Submissions({ toast, classesData = [] }) {
                                         <div className="sub-qitem-body" style={{ paddingLeft: 4 }}>
                                           <div className="sub-qitem-num">{ii + 1}</div>
                                           <div style={{ flex: 1, minWidth: 0 }}>
-                                            <div className="sub-qitem-text" dangerouslySetInnerHTML={{ __html: item.preview || '' }} />
+                                            <div className="sub-qitem-text" {...lpUrduProps(item.preview)} dangerouslySetInnerHTML={{ __html: item.preview || '' }} />
                                           </div>
                                         </div>
                                         <div className="sub-qitem-actions">
@@ -5150,6 +5385,10 @@ function LpViewerModal({ plan, ctx = {}, toast = () => {}, onClose, onSubmit }) 
     detail.learningObjective, detail.lessonIntroduction, detail.development, detail.recap,
   ].some(v => stripTxt(v).length > 0);
 
+  /* Content Urdu ho to viewer ke LABELS bhi Urdu (content se auto-detect). */
+  const isUrdu = LP_URDU_RE.test([detail?.learningObjective, detail?.lessonIntroduction, detail?.development, detail?.recap, plan?.topic].join(' '));
+  const T = s => nbTr(s, isUrdu);
+
   /* Saves the suggestion (insert/update) even when empty. Returns true on success. */
   const saveSuggestion = async ({ silent = false } = {}) => {
     if (!detail?.id) { if (!silent) toast('No lesson detail to attach the suggestion to', 'error'); return false; }
@@ -5176,12 +5415,13 @@ function LpViewerModal({ plan, ctx = {}, toast = () => {}, onClose, onSubmit }) 
     }
   };
 
-  /* HTML rich-text section, or a muted placeholder when empty. */
+  /* HTML rich-text section, or a muted placeholder when empty. Urdu par heading
+     bhi RTL (right side, icon text ke daayein). */
   const section = (icon, label, html) => (
     <div className="lp-viewer-section">
-      <div className="lp-viewer-section-label"><i className={`fa-solid ${icon}`}></i>{label}</div>
+      <div className="lp-viewer-section-label" style={isUrdu ? { flexDirection: 'row-reverse', fontFamily: "'Noto Nastaliq Urdu','Jameel Noori Nastaleeq',serif", fontSize: 12 } : undefined}><i className={`fa-solid ${icon}`}></i>{label}</div>
       {html
-        ? <div className="lp-viewer-section-value" dangerouslySetInnerHTML={{ __html: html }} />
+        ? <div className="lp-viewer-section-value" {...lpUrduProps(html)} dangerouslySetInnerHTML={{ __html: html }} />
         : <div className="lp-viewer-section-value" style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>Not provided</div>}
     </div>
   );
@@ -5201,32 +5441,32 @@ function LpViewerModal({ plan, ctx = {}, toast = () => {}, onClose, onSubmit }) 
         <div className="lp-viewer-body">
           <div className="lp-viewer-meta-grid">
             <div className="lp-viewer-meta-card">
-              <div className="lp-viewer-meta-key"><i className="fa-solid fa-layer-group" style={{ marginRight: 4, color: 'var(--brand-primary)' }}></i>Unit</div>
-              <div className="lp-viewer-meta-val">{plan.unit}</div>
+              <div className="lp-viewer-meta-key"><i className="fa-solid fa-layer-group" style={{ marginRight: 4, color: 'var(--brand-primary)' }}></i>{T('Unit')}</div>
+              <div className="lp-viewer-meta-val" {...lpUrduProps(plan.unit)}>{plan.unit}</div>
             </div>
             <div className="lp-viewer-meta-card">
-              <div className="lp-viewer-meta-key"><i className="fa-solid fa-stopwatch" style={{ marginRight: 4, color: 'var(--brand-primary)' }}></i>Duration</div>
+              <div className="lp-viewer-meta-key"><i className="fa-solid fa-stopwatch" style={{ marginRight: 4, color: 'var(--brand-primary)' }}></i>{T('Duration')}</div>
               <div className="lp-viewer-meta-val">{detail?.timeDuration || '—'}</div>
             </div>
             <div className="lp-viewer-meta-card">
-              <div className="lp-viewer-meta-key"><i className="fa-solid fa-hashtag" style={{ marginRight: 4, color: 'var(--brand-primary)' }}></i>Unit No.</div>
+              <div className="lp-viewer-meta-key"><i className="fa-solid fa-hashtag" style={{ marginRight: 4, color: 'var(--brand-primary)' }}></i>{T('Unit No.')}</div>
               <div className="lp-viewer-meta-val">{plan.unitNo || '—'}</div>
             </div>
           </div>
 
           {loading ? (
             <div style={{ textAlign: 'center', padding: 28, color: 'var(--text-muted)' }}>
-              <i className="fa-solid fa-spinner fa-spin" style={{ marginRight: 8 }}></i>Loading lesson plan…
+              <i className="fa-solid fa-spinner fa-spin" style={{ marginRight: 8 }}></i>{T('Loading lesson plan…')}
             </div>
           ) : (
             <>
-              {section('fa-bullseye',         'Student Learning Objective', detail?.learningObjective)}
-              {section('fa-book-open',        'Lesson Introduction',        detail?.lessonIntroduction)}
-              {section('fa-flask',            'Development / Main Teaching', detail?.development)}
-              {section('fa-circle-check',     'Recap / Consolidation',      detail?.recap)}
+              {section('fa-bullseye',         T('Student Learning Objective'), detail?.learningObjective)}
+              {section('fa-book-open',        T('Lesson Introduction'),        detail?.lessonIntroduction)}
+              {section('fa-flask',            T('Development / Main Teaching'), detail?.development)}
+              {section('fa-circle-check',     T('Recap / Consolidation'),      detail?.recap)}
 
               <div className="lp-viewer-section">
-                <div className="lp-viewer-section-label"><i className="fa-solid fa-clock"></i>Time Allocation</div>
+                <div className="lp-viewer-section-label" style={isUrdu ? { flexDirection: 'row-reverse', textAlign: 'right', fontFamily: "'Noto Nastaliq Urdu','Jameel Noori Nastaleeq',serif" } : undefined}><i className="fa-solid fa-clock"></i>{T('Time Allocation')}</div>
                 <div className="lp-viewer-section-value">
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                     {[
@@ -5236,7 +5476,7 @@ function LpViewerModal({ plan, ctx = {}, toast = () => {}, onClose, onSubmit }) 
                       ['Recap',              detail?.timeForRecap],
                     ].map(([k, v]) => (
                       <div key={k} style={{ padding: '10px 12px', background: 'var(--bg-card)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-light)' }}>
-                        <div style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 3 }}>{k}</div>
+                        <div style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 3 }}>{T(k)}</div>
                         <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{v || '—'}</div>
                       </div>
                     ))}
@@ -5246,7 +5486,7 @@ function LpViewerModal({ plan, ctx = {}, toast = () => {}, onClose, onSubmit }) 
 
               {/* Editable suggestion */}
               <div className="lp-viewer-section">
-                <div className="lp-viewer-section-label"><i className="fa-solid fa-comment-dots"></i>Suggestion</div>
+                <div className="lp-viewer-section-label" style={isUrdu ? { flexDirection: 'row-reverse', textAlign: 'right', fontFamily: "'Noto Nastaliq Urdu','Jameel Noori Nastaleeq',serif" } : undefined}><i className="fa-solid fa-comment-dots"></i>{T('Suggestion')}</div>
                 <textarea
                   className="form-input"
                   style={{ height: 'auto', minHeight: 90, padding: 12, resize: 'vertical', width: '100%' }}
@@ -5266,7 +5506,7 @@ function LpViewerModal({ plan, ctx = {}, toast = () => {}, onClose, onSubmit }) 
         <div className="lp-viewer-footer">
           <Tooltip text="Close the lesson plan viewer">
             <button className="lp-viewer-cancel-btn" onClick={onClose}>
-              <i className="fa-solid fa-xmark"></i> Close
+              <i className="fa-solid fa-xmark"></i> {T('Close')}
             </button>
           </Tooltip>
           <Tooltip text={isSubmitted
@@ -5288,8 +5528,8 @@ function LpViewerModal({ plan, ctx = {}, toast = () => {}, onClose, onSubmit }) 
               }}
             >
               {isSubmitted
-                ? <><i className="fa-solid fa-circle-check"></i> Already Submitted</>
-                : <><i className={`fa-solid ${savingSug ? 'fa-spinner fa-spin' : 'fa-paper-plane'}`}></i> Submit Lesson Plan</>}
+                ? <><i className="fa-solid fa-circle-check"></i> {isUrdu ? 'پہلے جمع ہو چکا' : 'Already Submitted'}</>
+                : <><i className={`fa-solid ${savingSug ? 'fa-spinner fa-spin' : 'fa-paper-plane'}`}></i> {T('Submit Lesson Plan')}</>}
             </button>
           </Tooltip>
         </div>
@@ -5366,7 +5606,7 @@ function NbSubmitModal({ ctx, unit, onClose, onSubmit }) {
                 onClick={() => canToggle && toggleItem(item.id)}
               >
                 <div className="nb-submit-item-num">{i + 1}</div>
-                <div className="nb-submit-item-text" dangerouslySetInnerHTML={{ __html: item.preview || '' }} />
+                <div className="nb-submit-item-text" {...lpUrduProps(item.preview)} dangerouslySetInnerHTML={{ __html: item.preview || '' }} />
                 {canToggle && (
                   <input type="checkbox" checked={isChk}
                     onClick={e => e.stopPropagation()}
@@ -5799,7 +6039,8 @@ function _subPdfPalette(isColor, reportHeader = null) {
   };
 }
 
-function _subPdfBase(C, title) {
+function _subPdfBase(C, title, isUrdu = false) {
+  const URDU_FONT = "'Noto Nastaliq Urdu','Jameel Noori Nastaleeq','Alvi Nastaleeq',serif";
   /* A4-portrait safe base.
      Key rules:
      - @page reserves a 15mm margin so the printer leaves a uniform gutter.
@@ -5815,7 +6056,7 @@ function _subPdfBase(C, title) {
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{background:#fff;width:100%;overflow-x:hidden}
-body{font-family:'Segoe UI',Arial,sans-serif;color:#0F172A;font-size:12px;line-height:1.5;padding:0}
+body{font-family:${isUrdu ? URDU_FONT : "'Segoe UI',Arial,sans-serif"};color:#0F172A;font-size:12px;line-height:${isUrdu ? '2' : '1.5'};padding:0;${isUrdu ? 'direction:rtl;' : ''}}${isUrdu ? 'th,td{text-align:right}.sec-title{text-align:right}.doc-header,.doc-header *{direction:ltr;text-align:left;font-family:\'Segoe UI\',Arial,sans-serif}' : ''}
 
 @page{size:A4 portrait;margin:15mm}
 @media print{
@@ -5888,9 +6129,10 @@ tbody tr:nth-child(even) td{background:${C.rowAlt}}
 </style></head><body><div class="page-wrap">`;
 }
 
-function _subPdfHeader(C, reportName, metaCells, today) {
+function _subPdfHeader(C, reportName, metaCells, today, isUrdu = false) {
   const rh = C.reportHeader || {};
   const isColor = C.isColor;
+  const T = s => nbTr(s, isUrdu);
   const schoolName      = rh.branchName || getSchoolName();
   const academicSession = rh.academicSession || sessionStorage.getItem('sessionName') || 'Academic Session';
   const initials = schoolName.split(/[\s,]+/).filter(Boolean).slice(0,2).map(w=>w[0].toUpperCase()).join('');
@@ -5909,10 +6151,10 @@ function _subPdfHeader(C, reportName, metaCells, today) {
         </div>
       </div>
       <div style="height:1px;background:${isColor?'rgba(255,255,255,.2)':C.border};margin:14px 0 12px"></div>
-      <div style="font-size:18px;font-weight:800;${isColor?'':`color:${C.text}`}">${reportName}</div>
-      <div class="doc-year" style="margin-top:3px">Academic Year ${lpEscapeHtml(academicSession)} · ${isColor?'Colorful':'Colorless'} Report</div>
+      <div style="font-size:18px;font-weight:800;text-align:center;${isColor?'':`color:${C.text}`}">${reportName}</div>
+      <div class="doc-year" style="margin-top:3px;text-align:center">${T('Academic Year')} ${lpEscapeHtml(academicSession)} · ${T(isColor?'Colorful':'Colorless')} ${T('Report')}</div>
     </div>
-    <div class="doc-meta-bar">${cells}<div class="doc-meta-cell"><div class="doc-meta-key">Generated</div><div class="doc-meta-val">${today}</div></div></div>
+    <div class="doc-meta-bar">${cells}<div class="doc-meta-cell"><div class="doc-meta-key">${T('Generated')}</div><div class="doc-meta-val">${today}</div></div></div>
   </div>`;
 }
 
@@ -6211,27 +6453,31 @@ function buildNbSubUnitReport(ctx, unitId, isColor, reportHeader = null) {
   const pend  = total - sub;
   const pct   = total ? Math.round(sub / total * 100) : 0;
 
-  let html = _subPdfBase(C, `Unit Report — ${unit.unitName}`);
-  html += _subPdfHeader(C, `Notebook Plan Report — Unit ${unit.unitNo}: ${unit.unitName}`, [
-    { k:'Unit No',     v:unit.unitNo },
-    { k:'Unit Name',   v:unit.unitName },
-    { k:'Q. Types',    v:unit.questionTypes.length },
-    { k:'Total Items', v:total },
-    { k:'Submitted',   v:sub },
-  ], today);
+  /* Content Urdu ho to report Urdu (labels translate + RTL + Noori font). */
+  const isUrdu = LP_URDU_RE.test(JSON.stringify(unit));
+  const T = s => nbTr(s, isUrdu);
+
+  let html = _subPdfBase(C, `${T('Unit Report')} — ${unit.unitName}`, isUrdu);
+  html += _subPdfHeader(C, `${T('Notebook Plan Report')} — ${T('Unit')} ${unit.unitNo}: ${unit.unitName}`, [
+    { k:T('Unit No'),     v:unit.unitNo },
+    { k:T('Unit Name'),   v:unit.unitName },
+    { k:T('Q. Types'),    v:unit.questionTypes.length },
+    { k:T('Total Items'), v:total },
+    { k:T('Submitted'),   v:sub },
+  ], today, isUrdu);
 
   html += _subPdfStatStrip([
-    { lbl:'Total Items', val:total,     color:C.brand,  pct:100 },
-    { lbl:'Submitted',   val:sub,       color:C.green,  pct },
-    { lbl:'Pending',     val:pend,      color:C.amber,  pct:total ? Math.round(pend / total * 100) : 0 },
-    { lbl:'Completion',  val:`${pct}%`, color:C.purple, pct },
+    { lbl:T('Total Items'), val:total,     color:C.brand,  pct:100 },
+    { lbl:T('Submitted'),   val:sub,       color:C.green,  pct },
+    { lbl:T('Pending'),     val:pend,      color:C.amber,  pct:total ? Math.round(pend / total * 100) : 0 },
+    { lbl:T('Completion'),  val:`${pct}%`, color:C.purple, pct },
   ]);
 
-  html += `<div class="sec-title">Question Type Summary</div>
+  html += `<div class="sec-title">${T('Question Type Summary')}</div>
   <table><thead><tr>
-    <th>Question Type</th><th>Main Question</th>
-    <th style="text-align:center">Generated</th><th style="text-align:center">Submitted</th>
-    <th style="text-align:center">Pending</th><th>Progress</th>
+    <th>${T('Question Type')}</th><th>${T('Main Question')}</th>
+    <th style="text-align:center">${T('Generated')}</th><th style="text-align:center">${T('Submitted')}</th>
+    <th style="text-align:center">${T('Pending')}</th><th>${T('Progress')}</th>
   </tr></thead><tbody>`;
   unit.questionTypes.forEach(qt => {
     const meta = SUB_NB_QTYPE_META[qt.typeId] || { label: qt.typeId };
@@ -6240,23 +6486,23 @@ function buildNbSubUnitReport(ctx, unitId, isColor, reportHeader = null) {
     const pe = t - s;
     const p  = t ? Math.round(s / t * 100) : 0;
     html += `<tr>
-      <td><strong>${meta.label}</strong></td>
+      <td><strong>${T(meta.label)}</strong></td>
       <td style="font-size:11.5px;color:${C.muted}">${qt.mainQ}</td>
       <td style="text-align:center;font-weight:700">${t}</td>
       <td style="text-align:center"><span class="tag tag-sub">✓ ${s}</span></td>
-      <td style="text-align:center"><span class="tag ${pe > 0 ? 'tag-pend' : 'tag-sub'}">${pe > 0 ? '⏱ ' + pe : 'Done'}</span></td>
+      <td style="text-align:center"><span class="tag ${pe > 0 ? 'tag-pend' : 'tag-sub'}">${pe > 0 ? '⏱ ' + pe : T('Done')}</span></td>
       <td>${_subPdfPbar(C, p)}</td>
     </tr>`;
   });
   html += `</tbody></table>`;
 
-  html += `<div class="sec-title">Item-level Details</div>`;
+  html += `<div class="sec-title">${T('Item-level Details')}</div>`;
   unit.questionTypes.forEach(qt => {
     const meta = SUB_NB_QTYPE_META[qt.typeId] || { label: qt.typeId };
     const s = qt.items.filter(i => i.status === 'submitted').length;
-    html += `<div style="margin-bottom:4px;font-size:11px;font-weight:800;color:${C.brand};letter-spacing:.4px">${meta.label} — ${s}/${qt.items.length} submitted</div>
+    html += `<div style="margin-bottom:4px;font-size:11px;font-weight:800;color:${C.brand};letter-spacing:.4px">${T(meta.label)} — ${s}/${qt.items.length} ${T('submitted')}</div>
     <table style="margin-bottom:14px"><thead><tr>
-      <th style="width:36px">#</th><th>Content</th><th style="width:170px">Submitted On</th><th style="width:110px">Status</th>
+      <th style="width:36px">#</th><th>${T('Content')}</th><th style="width:170px">${T('Submitted On')}</th><th style="width:110px">${T('Status')}</th>
     </tr></thead><tbody>`;
     qt.items.forEach((item, i) => {
       const isSub = item.status === 'submitted';
@@ -6264,7 +6510,7 @@ function buildNbSubUnitReport(ctx, unitId, isColor, reportHeader = null) {
         <td style="color:${C.muted};font-weight:700">${i + 1}</td>
         <td>${_subNbItemContent(C, item)}</td>
         <td style="color:${C.muted};font-size:11.5px">${isSub ? _subFmtSubmitted(item, `${unit.unitId}-${qt.typeId}-${item.id}`) : '—'}</td>
-        <td><span class="tag ${isSub ? 'tag-sub' : 'tag-pend'}">${isSub ? '✓ Submitted' : '⏱ Pending'}</span></td>
+        <td><span class="tag ${isSub ? 'tag-sub' : 'tag-pend'}">${isSub ? '✓ ' + T('Submitted') : '⏱ ' + T('Pending')}</span></td>
       </tr>`;
     });
     html += `</tbody></table>`;
@@ -6488,19 +6734,23 @@ function UnitMgrModal({ open, source, units, clpCtx = {}, onSave, onClose, openC
         sectionID: clpCtx.sectionID, subjectID: clpCtx.subjectID,
       };
       const rid = (u) => { const n = Number(u.id); return Number.isFinite(n) ? n : u.id; };
+      const med = (u) => (LP_MEDIUM_API_READY ? { medium: apiMedium(u.medium) } : {});
       const origById  = new Map(units.map(u => [u.id, u]));
       const draftIds  = new Set(draft.map(u => u.id));
       const inserts = draft.filter(u => !origIds.has(u.id) && (u.unitNo || u.unitName));
       const updates = draft.filter(u => {
         const o = origById.get(u.id);
-        return o && (String(o.unitNo) !== String(u.unitNo) || (o.unitName || '') !== (u.unitName || ''));
+        if (!o) return false;
+        if (String(o.unitNo) !== String(u.unitNo) || (o.unitName || '') !== (u.unitName || '')) return true;
+        if (LP_MEDIUM_API_READY && (o.medium || 'english') !== (u.medium || 'english')) return true;
+        return false;
       });
       const deletes = [...origById.values()].filter(u => !draftIds.has(u.id));
       try {
         await Promise.all([
-          ...inserts.map(u => lpPost('/api/ulpfornotebookmastercrud', { ...base, id: 0,       unitNo: u.unitNo, unitName: u.unitName, lessonPlanTopic: '', action: 'insert' })),
-          ...updates.map(u => lpPost('/api/ulpfornotebookmastercrud', { ...base, id: rid(u),  unitNo: u.unitNo, unitName: u.unitName, lessonPlanTopic: u.record?.lessonPlanTopic ?? u.lessonPlanTopic ?? '', action: 'update' })),
-          ...deletes.map(u => lpPost('/api/ulpfornotebookmastercrud', { ...base, id: rid(u),  unitNo: '', unitName: '', lessonPlanTopic: '', action: 'delete' })),
+          ...inserts.map(u => lpPost('/api/ulpfornotebookmastercrud', { ...base, id: 0,       unitNo: u.unitNo, unitName: u.unitName, lessonPlanTopic: '', ...med(u), action: 'insert' })),
+          ...updates.map(u => lpPost('/api/ulpfornotebookmastercrud', { ...base, id: rid(u),  unitNo: u.unitNo, unitName: u.unitName, lessonPlanTopic: u.record?.lessonPlanTopic ?? u.lessonPlanTopic ?? '', ...med(u), action: 'update' })),
+          ...deletes.map(u => lpPost('/api/ulpfornotebookmastercrud', { ...base, id: rid(u),  unitNo: '', unitName: '', lessonPlanTopic: '', ...med(u), action: 'delete' })),
         ]);
       } catch (e) {
         console.error('Error saving notebook units:', e);
@@ -6520,44 +6770,73 @@ function UnitMgrModal({ open, source, units, clpCtx = {}, onSave, onClose, openC
       const draftIds = new Set(draft.map(u => u.id));
       const calls = [];
 
+      /* medium sirf tab payload me jaye jab backend ready ho; value CAPITALIZED. */
+      const med = (u) => (LP_MEDIUM_API_READY ? { medium: apiMedium(u.medium) } : {});
+
       /* Naye units (Add New Unit) — ek master row empty topic ke saath insert. */
       draft.filter(u => !origIds.has(u.id) && (u.unitNo || u.unitName)).forEach(u => {
         calls.push(lpPost('/api/ulpforclassmastercrud', {
-          ...base, id: 0, unitNo: u.unitNo, unitName: u.unitName, lessonPlanTopic: '', action: 'insert',
+          ...base, id: 0, unitNo: u.unitNo, unitName: u.unitName, lessonPlanTopic: '',
+          ...med(u), action: 'insert',
         }));
       });
 
-      /* Renamed/renumbered units — unit ki har lesson-row ka id se update (topic preserve). */
+      /* Renamed/renumbered (aur medium — jab backend ready) units ki har lesson-row update. */
       draft.filter(u => {
         const o = origById.get(u.id);
-        return o && (String(o.unitNo) !== String(u.unitNo) || (o.unitName || '') !== (u.unitName || ''));
+        if (!o) return false;
+        if (String(o.unitNo) !== String(u.unitNo) || (o.unitName || '') !== (u.unitName || '')) return true;
+        if (LP_MEDIUM_API_READY && (o.medium || 'english') !== (u.medium || 'english')) return true;
+        return false;
       }).forEach(u => {
         (u.lessons || []).forEach(l => {
           const id = recId(l);
           if (id == null) return;
           calls.push(lpPost('/api/ulpforclassmastercrud', {
             ...base, id, unitNo: u.unitNo, unitName: u.unitName,
-            lessonPlanTopic: l.record?.lessonPlanTopic ?? l.topic ?? '', action: 'update',
+            lessonPlanTopic: l.record?.lessonPlanTopic ?? l.topic ?? '',
+            ...med(u), action: 'update',
           }));
         });
       });
 
-      /* Removed units — har lesson-row delete. */
+      /* Removed units — har lesson-row ka child DETAIL pehle, phir master delete
+         (FK constraint: detail master ko reference karta ha). */
       [...origById.values()].filter(u => !draftIds.has(u.id)).forEach(u => {
         (u.lessons || []).forEach(l => {
           const id = recId(l);
           if (id == null) return;
-          calls.push(lpPost('/api/ulpforclassmastercrud', {
-            ...base, id, unitNo: '', unitName: '', lessonPlanTopic: '', action: 'delete',
-          }));
+          const rec = {
+            id,
+            unitNo: l.record?.unitNo ?? u.unitNo ?? '',
+            unitName: l.record?.unitName ?? u.unitName ?? '',
+            lessonPlanTopic: l.record?.lessonPlanTopic ?? l.topic ?? '',
+            medium: u.medium,
+          };
+          calls.push(deleteUlpMasterCascade(rec, base));
         });
       });
 
       try {
-        await Promise.all(calls);
+        const results = await Promise.all(calls);
+        /* API 200 de sakti ha magar ASLI natija `data` me chhupa hota ha —
+           `data: 0` ya `data:[{Success:0}]` = fail. Isay pakdo warna insert
+           "saved" dikhta ha par actually persist nahi hota. */
+        const bad = (results || []).find(r => {
+          const d = r?.data;
+          const inner = Array.isArray(d) ? d[0] : (d && typeof d === 'object' ? d : null);
+          const s = inner ? (inner.Success ?? inner.success) : undefined;
+          return s === 0 || s === false || s === '0' || d === 0 || d === '0';
+        });
+        if (bad) {
+          const d = bad.data;
+          const inner = Array.isArray(d) ? d[0] : (d && typeof d === 'object' ? d : null);
+          toast((inner && (inner.Message ?? inner.message)) || bad.message || 'Server could not save the unit', 'error');
+          return;
+        }
       } catch (e) {
         console.error('Error saving units:', e);
-        toast(e.serverMessage || 'Could not save units', 'error');
+        toast(e.serverMessage || e.message || 'Could not save units', 'error');
         return;
       }
     }
@@ -6580,6 +6859,7 @@ function UnitMgrModal({ open, source, units, clpCtx = {}, onSave, onClose, openC
   };
   const add = () => setDraft(d => [...d, {
     id: Date.now(), unitNo: String(d.length + 1), unitName: '',
+    medium: 'english',   // naya unit → default English (Manage Units mein toggle se badal sakte hain)
     lessons: source === 'lesson' ? [] : undefined,
     questions: source === 'notebook' ? [] : undefined,
   }]);
@@ -6650,6 +6930,26 @@ function UnitMgrModal({ open, source, units, clpCtx = {}, onSave, onClose, openC
                 <i className="fa-solid fa-book" style={{ fontSize: 9 }}></i>{' '}
                 {(u.lessons || u.questions || []).length}
               </span>
+              {/* Per-unit language (medium) toggle — Lesson + Notebook dono.
+                  Yahan jo select hoga wahi lesson/question modal ke andar read-only dikhega. */}
+              {(source === 'lesson' || source === 'notebook') && (
+                <div className="umgr-lang-toggle">
+                  <Tooltip text="Set this unit's language to English">
+                    <button
+                      type="button"
+                      className={`umgr-lang-pill${(u.medium || 'english') !== 'urdu' ? ' active' : ''}`}
+                      onClick={() => update(u.id, 'medium', 'english')}
+                    >EN</button>
+                  </Tooltip>
+                  <Tooltip text="Set this unit's language to Urdu">
+                    <button
+                      type="button"
+                      className={`umgr-lang-pill umgr-lang-pill--ur${(u.medium || 'english') === 'urdu' ? ' active' : ''}`}
+                      onClick={() => update(u.id, 'medium', 'urdu')}
+                    >اردو</button>
+                  </Tooltip>
+                </div>
+              )}
               <Tooltip text="Delete unit">
                 <button className="umgr-del-btn" onClick={() => remove(u.id)}>
                   <i className="fa-solid fa-trash"></i>
@@ -6754,7 +7054,9 @@ function LessonEditModal({ ctx, onSave, onClose, toast }) {
 
   useEffect(() => {
     if (!ctx) return;
-    setLang('en');
+    /* Language ab UNIT ke medium se aati hai (Manage Units mein set hoti hai) —
+       modal ke andar toggle read-only hai, sirf dikhata hai. */
+    setLang(ctx.unit?.medium === 'urdu' ? 'ur' : 'en');
     setUnitNo(ctx.unit?.unitNo || '');
     setUnitName(ctx.unit?.unitName || '');
     /* Map the lesson-plan detail fetched on Edit into the editor sections. */
@@ -7036,6 +7338,8 @@ function LessonEditModal({ ctx, onSave, onClose, toast }) {
     branchID: base.branchID, classID: base.classID, sectionID: base.sectionID, subjectID: base.subjectID,
     unitNo, unitName,
     lessonPlanTopic: l.topic || '',
+    // medium sirf tab bhejo jab backend ready ho; value CAPITALIZED ("English"/"Urdu")
+    ...(LP_MEDIUM_API_READY ? { medium: lang === 'ur' ? 'Urdu' : 'English' } : {}),
     action: l.record ? 'update' : 'insert',
   });
 
@@ -7307,21 +7611,21 @@ function LessonEditModal({ ctx, onSave, onClose, toast }) {
                 </div>
               </div>
 
-              {/* Language toggle */}
+              {/* Language toggle — READ-ONLY. Unit ki language Manage Units mein set
+                  hoti hai; yahan sirf dikhata hai ke is unit ne EN/UR select kiya. */}
               <div className="clpm-lang-row">
                 <span className="clpm-lang-label">Language</span>
-                <div className="clpm-lang-pills">
-                  <Tooltip text="Write lesson plan in English">
-                    <button className={`clpm-lang-pill${lang === 'en' ? ' active' : ''}`} onClick={() => setLang('en')}>
+                <Tooltip text="This unit's language is set in Manage Units. It cannot be changed here.">
+                  <div className="clpm-lang-pills clpm-lang-pills--readonly">
+                    <span className={`clpm-lang-pill${lang === 'en' ? ' active' : ''}`}>
                       <span className="clpm-lang-flag">🇬🇧</span> English
-                    </button>
-                  </Tooltip>
-                  <Tooltip text="Write lesson plan in Urdu">
-                    <button className={`clpm-lang-pill${lang === 'ur' ? ' active' : ''}`} onClick={() => setLang('ur')}>
+                    </span>
+                    <span className={`clpm-lang-pill${lang === 'ur' ? ' active' : ''}`}>
                       <span className="clpm-lang-flag">🇵🇰</span> اردو
-                    </button>
-                  </Tooltip>
-                </div>
+                    </span>
+                    <i className="fa-solid fa-lock" style={{ fontSize: 10, color: '#94A3B8', marginLeft: 4 }}></i>
+                  </div>
+                </Tooltip>
               </div>
             </div>
 
@@ -7667,13 +7971,16 @@ function NbAQModal({ ctx, unit, onSave, onClose, toast }) {
   const [rows, setRows] = useState([]);
   const [deletedIds, setDeletedIds] = useState([]); // recordIds removed while editing
   const [saving, setSaving] = useState(false);
-  const [lang, setLang] = useState('en'); // English/Urdu — Create Lesson Plan jaisa
+  const [lang, setLang] = useState('en'); // English/Urdu — UNIT ke medium se (read-only)
   const isUrdu = lang === 'ur';
   const dir = isUrdu ? 'rtl' : 'ltr';
 
   useEffect(() => {
     if (!ctx) return;
     setDeletedIds([]);
+    /* Language ab UNIT ke medium se aati ha (Manage Units me set) — modal ke andar
+       toggle read-only ha, sirf dikhata ha. */
+    setLang(unit?.medium === 'urdu' ? 'ur' : 'en');
     /* edit-mode: ctx.existing carries the clicked question (from the API-loaded
        detail); fall back to looking it up in the unit by qId. */
     const existing = ctx.existing
@@ -7697,18 +8004,12 @@ function NbAQModal({ ctx, unit, onSave, onClose, toast }) {
             r._id ? r : { ...r, _id: `aqr_${++_aqRowCounter}` })
         : [aqEmptyRow(resolvedTypeId)];
       setRows(seeded);
-      /* Edit: saved content Urdu ha to default Urdu, warna English. */
-      const blob = [existing.mainQ, existing.mainQuestion, existing.statement,
-        ...(existing.rows || []).flatMap(r => Object.values(r || {}).filter(v => typeof v === 'string')),
-      ].join(' ');
-      // Urdu/Arabic script (U+0600–06FF, presentation forms) → default Urdu.
-      setLang(/[؀-ۿﭐ-﷿ﹰ-﻿]/.test(blob) ? 'ur' : 'en');
+      /* Language unit.medium se aa chuki (upar) — yahan override nahi karte. */
     } else {
       setActiveType(null);
       setMainQ('');
       setStatement('');
       setRows([]);
-      setLang('en'); // Naya question → default English
     }
   }, [ctx, unit]);
 
@@ -7782,11 +8083,11 @@ function NbAQModal({ ctx, unit, onSave, onClose, toast }) {
     onSave();
   };
 
-  const addMoreLabel = activeType === 'stories' ? '+ Add More Stories' : '+ Add More';
+  const addMoreLabel = nbTr(activeType === 'stories' ? '+ Add More Stories' : '+ Add More', isUrdu);
 
   return (
     <div className="aq-overlay open" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="aq-modal">
+      <div className={`aq-modal${isUrdu ? ' rtl-mode' : ''}`}>
 
         {/* ── Header ── */}
         <div className="aq-header">
@@ -7806,7 +8107,7 @@ function NbAQModal({ ctx, unit, onSave, onClose, toast }) {
           {/* Type selector — hidden in edit mode (matches HTML's nbEditSection) */}
           {!isEdit && (
             <div className="aq-type-section">
-              <div className="aq-type-label">Select Question Field</div>
+              <div className="aq-type-label">{nbTr('Select Question Field', isUrdu)}</div>
               <div className="aq-types-grid">
                 {AQ_TYPES.map(t => (
                   <button
@@ -7814,28 +8115,28 @@ function NbAQModal({ ctx, unit, onSave, onClose, toast }) {
                     className={`aq-type-btn-hover${activeType === t.id ? ' active' : ''}`}
                     onClick={() => selectType(t.id)}
                   >
-                    <i className={`fa-solid ${t.icon}`} style={{ fontSize: 11 }}></i> {t.label}
+                    <i className={`fa-solid ${t.icon}`} style={{ fontSize: 11 }}></i> {nbTr(t.label, isUrdu)}
                   </button>
                 ))}
               </div>
             </div>
           )}
 
-          {/* Language toggle — English / Urdu (Create Lesson Plan jaisa) */}
+          {/* Language toggle — READ-ONLY. Unit ki language Manage Units me set hoti
+              ha; yahan sirf dikhata ha ke is unit ne EN/UR select kiya. */}
           <div className="clpm-lang-row" style={{ margin: '2px 0 6px' }}>
-            <span className="clpm-lang-label">Language</span>
-            <div className="clpm-lang-pills">
-              <Tooltip text="Write questions in English">
-                <button className={`clpm-lang-pill${lang === 'en' ? ' active' : ''}`} onClick={() => setLang('en')}>
+            <span className="clpm-lang-label">{nbTr('Language', isUrdu)}</span>
+            <Tooltip text="This unit's language is set in Manage Units. It cannot be changed here.">
+              <div className="clpm-lang-pills clpm-lang-pills--readonly">
+                <span className={`clpm-lang-pill${lang === 'en' ? ' active' : ''}`}>
                   <span className="clpm-lang-flag">🇬🇧</span> English
-                </button>
-              </Tooltip>
-              <Tooltip text="Write questions in Urdu">
-                <button className={`clpm-lang-pill${lang === 'ur' ? ' active' : ''}`} onClick={() => setLang('ur')}>
+                </span>
+                <span className={`clpm-lang-pill${lang === 'ur' ? ' active' : ''}`}>
                   <span className="clpm-lang-flag">🇵🇰</span> اردو
-                </button>
-              </Tooltip>
-            </div>
+                </span>
+                <i className="fa-solid fa-lock" style={{ fontSize: 10, color: '#94A3B8', marginLeft: 4 }}></i>
+              </div>
+            </Tooltip>
           </div>
 
           {/* Form area */}
@@ -7845,17 +8146,17 @@ function NbAQModal({ ctx, unit, onSave, onClose, toast }) {
                 <div style={{ padding: '20px 22px 16px', borderBottom: '1.5px solid #E0F9FF', background: 'linear-gradient(135deg,#F0F9FF,#E0F2FE)' }}>
                   <div style={{ fontSize: 19, fontWeight: 800, color: '#0C4A6E', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 9 }}>
                     <span style={{ display: 'inline-block', width: 4, height: 20, background: 'linear-gradient(#0369A1,#06B6D4)', borderRadius: 2, flexShrink: 0 }}></span>
-                    {cfg.title}
+                    {nbTr(cfg.title, isUrdu)}
                   </div>
 
                   {cfg.layout === 'comprehension' && (
                     <>
-                      <div style={{ fontSize: 11, fontWeight: 700, color: '#0369A1', textTransform: 'uppercase', letterSpacing: '.6px', marginBottom: 7 }}>Comprehension Statement</div>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: '#0369A1', textTransform: 'uppercase', letterSpacing: '.6px', marginBottom: 7 }}>{nbTr('Comprehension Statement', isUrdu)}</div>
                       <textarea
                         rows="4"
                         dir={dir}
                         style={{ boxSizing: 'border-box', width: '100%', border: '2px solid #BAE6FD', borderRadius: 13, padding: '10px 16px', fontFamily: 'inherit', fontSize: 14, color: '#0F172A', background: '#fff', outline: 'none', resize: 'vertical', lineHeight: 1.6, textAlign: isUrdu ? 'right' : 'left' }}
-                        placeholder="Enter comprehension statement here…"
+                        placeholder={nbTr('Enter comprehension statement here…', isUrdu)}
                         value={statement}
                         onChange={e => setStatement(e.target.value)}
                       />
@@ -7864,13 +8165,13 @@ function NbAQModal({ ctx, unit, onSave, onClose, toast }) {
 
                   {cfg.layout !== 'comprehension' && (
                     <>
-                      <div style={{ fontSize: 11, fontWeight: 700, color: '#0369A1', textTransform: 'uppercase', letterSpacing: '.6px', marginBottom: 7 }}>Main Question</div>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: '#0369A1', textTransform: 'uppercase', letterSpacing: '.6px', marginBottom: 7 }}>{nbTr('Main Question', isUrdu)}</div>
                       <input
                         type="text"
                         className="aq-mq-input"
                         dir={dir}
                         style={{ textAlign: isUrdu ? 'right' : 'left' }}
-                        placeholder="Enter main question"
+                        placeholder={nbTr('Enter main question', isUrdu)}
                         value={mainQ}
                         onChange={e => setMainQ(e.target.value)}
                       />
@@ -7884,7 +8185,9 @@ function NbAQModal({ ctx, unit, onSave, onClose, toast }) {
                     <input
                       type="text"
                       className="aq-mq-input"
-                      placeholder="Enter main question"
+                      dir={dir}
+                      style={{ textAlign: isUrdu ? 'right' : 'left' }}
+                      placeholder={nbTr('Enter main question', isUrdu)}
                       value={mainQ}
                       onChange={e => setMainQ(e.target.value)}
                     />
@@ -8180,8 +8483,9 @@ function AqRow({ i, cfg, row, typeId, onChange, onRemove, onSaveRow, dir = 'ltr'
   const LABEL  = { fontSize: 11, fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '.5px', display: 'block', marginBottom: 5 };
   const ACT_S  = { display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12, paddingTop: 10, borderTop: '1px dashed #E0F2FE' };
 
+  const tr   = s => nbTr(s, isUrdu);
   const num  = <span style={NUM_S}>#{i + 1}</span>;
-  const lbl  = t => <span style={LABEL}>{t}</span>;
+  const lbl  = t => <span style={LABEL}>{tr(t)}</span>;
 
   const inp = (key, ph, extra) => (
     <input
@@ -8189,7 +8493,7 @@ function AqRow({ i, cfg, row, typeId, onChange, onRemove, onSaveRow, dir = 'ltr'
       className="aq-inp-hover"
       dir={dir}
       style={{ ...(extra || {}), textAlign: isUrdu ? 'right' : undefined }}
-      placeholder={ph}
+      placeholder={tr(ph)}
       value={row[key] || ''}
       onChange={e => onChange(key, e.target.value)}
     />
@@ -8200,7 +8504,7 @@ function AqRow({ i, cfg, row, typeId, onChange, onRemove, onSaveRow, dir = 'ltr'
       rows={rows}
       dir={dir}
       style={{ textAlign: isUrdu ? 'right' : undefined }}
-      placeholder={ph}
+      placeholder={tr(ph)}
       value={row[key] || ''}
       onChange={e => onChange(key, e.target.value)}
     />
@@ -8208,16 +8512,16 @@ function AqRow({ i, cfg, row, typeId, onChange, onRemove, onSaveRow, dir = 'ltr'
   /* Full rich-text editor (toolbar: justify, color, image+resize, math, table, link, lists…).
      `rte` aur `richField` dono yehi editor use karte hain (True/False ko chhod ke sab jagah). */
   const richField = (key, ph, minHeight = 90) => (
-    <RichTextEditor value={row[key] || ''} placeholder={ph} minHeight={minHeight} dir={dir} onChange={html => onChange(key, html)} />
+    <RichTextEditor value={row[key] || ''} placeholder={tr(ph)} minHeight={minHeight} dir={dir} onChange={html => onChange(key, html)} />
   );
   const rte = (key, ph) => richField(key, ph, 90);
   const acts = (
     <div style={ACT_S}>
       <button type="button" className="aq-rb-btn" onClick={onRemove}>
-        <i className="fa-solid fa-trash-can"></i> Remove
+        <i className="fa-solid fa-trash-can"></i> {tr('Remove')}
       </button>
       <button type="button" className="aq-sb-btn" onClick={onSaveRow}>
-        <i className="fa-solid fa-floppy-disk"></i> Save
+        <i className="fa-solid fa-floppy-disk"></i> {tr('Save')}
       </button>
     </div>
   );
@@ -8269,7 +8573,7 @@ function AqRow({ i, cfg, row, typeId, onChange, onRemove, onSaveRow, dir = 'ltr'
               <input
                 type="text"
                 style={{ flex: 1, height: 44, border: 'none', background: bg, padding: '0 10px', fontFamily: 'inherit', fontSize: 13, color: '#0F172A', outline: 'none' }}
-                placeholder={`Option ${letter}`}
+                placeholder={isUrdu ? `${tr('Option')} ${letter}` : `Option ${letter}`}
                 value={row[key] || ''}
                 onChange={e => onChange(key, e.target.value)}
               />
@@ -8278,11 +8582,11 @@ function AqRow({ i, cfg, row, typeId, onChange, onRemove, onSaveRow, dir = 'ltr'
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', background: '#F0FDF4', borderRadius: 10, border: '1.5px solid #BBF7D0' }}>
           <i className="fa-solid fa-circle-check" style={{ color: '#16A34A', fontSize: 13, flexShrink: 0 }}></i>
-          <span style={{ fontSize: 11, fontWeight: 700, color: '#16A34A', whiteSpace: 'nowrap' }}>CORRECT ANSWER</span>
+          <span style={{ fontSize: 11, fontWeight: 700, color: '#16A34A', whiteSpace: 'nowrap' }}>{tr('CORRECT ANSWER')}</span>
           <input
             type="text"
             style={{ boxSizing: 'border-box', display: 'block', width: '100%', height: 36, border: '1.5px solid #16A34A', borderRadius: 10, padding: '0 13px', fontFamily: 'inherit', fontSize: 14, color: '#0F172A', background: '#F0FDF4', outline: 'none', flex: 1 }}
-            placeholder="A / B / C / D or exact text"
+            placeholder={tr('A / B / C / D or exact text')}
             value={row.correct || ''}
             onChange={e => onChange('correct', e.target.value)}
           />
@@ -8304,7 +8608,7 @@ function AqRow({ i, cfg, row, typeId, onChange, onRemove, onSaveRow, dir = 'ltr'
           <input
             type="text"
             style={{ boxSizing: 'border-box', display: 'block', width: '100%', maxWidth: 220, height: 36, border: '1.5px solid #0891B2', borderRadius: 10, padding: '0 13px', fontFamily: 'inherit', fontSize: 14, color: '#0F172A', background: '#fff', outline: 'none' }}
-            placeholder="One word…"
+            placeholder={tr('One word…')}
             value={row.answer || ''}
             onChange={e => onChange('answer', e.target.value)}
           />
@@ -8343,9 +8647,9 @@ function AqRow({ i, cfg, row, typeId, onChange, onRemove, onSaveRow, dir = 'ltr'
       <div className="aq-row-card-hover">
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
           {num}
-          <div style={{ flex: 1, fontSize: 11, fontWeight: 700, color: '#0369A1', textTransform: 'uppercase', letterSpacing: '.5px' }}>Column A</div>
+          <div style={{ flex: 1, fontSize: 11, fontWeight: 700, color: '#0369A1', textTransform: 'uppercase', letterSpacing: '.5px' }}>{tr('Column A')}</div>
           <div style={{ fontSize: 18, color: '#94A3B8', flexShrink: 0 }}>↔</div>
-          <div style={{ flex: 1, fontSize: 11, fontWeight: 700, color: '#6D28D9', textTransform: 'uppercase', letterSpacing: '.5px' }}>Column B (Correct Match)</div>
+          <div style={{ flex: 1, fontSize: 11, fontWeight: 700, color: '#6D28D9', textTransform: 'uppercase', letterSpacing: '.5px' }}>{tr('Column B (Correct Match)')}</div>
         </div>
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 10 }}>
           <div style={{ flex: 1, minWidth: 0 }}>{richField('colA', 'e.g. Apple, Cat, Big…')}</div>
@@ -8366,7 +8670,7 @@ function AqRow({ i, cfg, row, typeId, onChange, onRemove, onSaveRow, dir = 'ltr'
     return (
       <div className="aq-row-card-hover">
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-          {num}<span style={{ fontSize: 13, fontWeight: 700, color: '#0369A1' }}>{aqOrdinal(i + 1)} Question</span>
+          {num}<span style={{ fontSize: 13, fontWeight: 700, color: '#0369A1' }}>{isUrdu ? `${tr('Question')} ${i + 1}` : `${aqOrdinal(i + 1)} Question`}</span>
         </div>
         {lbl('Question')}{rte('question', 'Write the question here…')}
         <div style={{ marginTop: 12 }}>{lbl('Answer')}{rte('answer', 'Write the answer here…')}</div>
@@ -8418,7 +8722,7 @@ function AqRow({ i, cfg, row, typeId, onChange, onRemove, onSaveRow, dir = 'ltr'
     return (
       <div className="aq-row-card-hover">
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-          {num}<span style={{ fontSize: 13, fontWeight: 600, color: '#64748B' }}>Question {i + 1}</span>
+          {num}<span style={{ fontSize: 13, fontWeight: 600, color: '#64748B' }}>{tr('Question')} {i + 1}</span>
         </div>
         {lbl('Question')}{rte('question', 'Write the long question here…')}
         <div style={{ marginTop: 12 }}>{lbl('Answer / Model Answer')}{rte('answer', 'Write the detailed model answer here…')}</div>
@@ -8430,9 +8734,9 @@ function AqRow({ i, cfg, row, typeId, onChange, onRemove, onSaveRow, dir = 'ltr'
   /* VERTICAL-EXPAND (Stories, Essays, Letter, Application, Paragraph) */
   if (cfg.layout === 'vertical-expand') {
     const rowLabel = typeId === 'stories' ? (
-      <div style={{ fontSize: 13, fontWeight: 800, color: '#0369A1', marginBottom: 12, padding: '7px 12px', background: 'rgba(3,105,161,.06)', borderLeft: '3px solid #0891B2', borderRadius: '0 9px 9px 0' }}>Story {i + 1}</div>
+      <div style={{ fontSize: 13, fontWeight: 800, color: '#0369A1', marginBottom: 12, padding: '7px 12px', background: 'rgba(3,105,161,.06)', borderLeft: '3px solid #0891B2', borderRadius: '0 9px 9px 0' }}>{isUrdu ? 'کہانی' : 'Story'} {i + 1}</div>
     ) : typeId === 'essays' ? (
-      <div style={{ fontSize: 13, fontWeight: 800, color: '#0369A1', marginBottom: 12, padding: '7px 12px', background: 'rgba(3,105,161,.06)', borderLeft: '3px solid #0891B2', borderRadius: '0 9px 9px 0' }}>Essay {i + 1}</div>
+      <div style={{ fontSize: 13, fontWeight: 800, color: '#0369A1', marginBottom: 12, padding: '7px 12px', background: 'rgba(3,105,161,.06)', borderLeft: '3px solid #0891B2', borderRadius: '0 9px 9px 0' }}>{isUrdu ? 'مضمون' : 'Essay'} {i + 1}</div>
     ) : null;
     return (
       <div className="aq-row-card-hover">
@@ -8452,7 +8756,7 @@ function AqRow({ i, cfg, row, typeId, onChange, onRemove, onSaveRow, dir = 'ltr'
   if (cfg.layout === 'comprehension') {
     return (
       <div className="aq-row-card-hover">
-        <div style={{ fontSize: 13, fontWeight: 800, color: '#0369A1', marginBottom: 12, padding: '7px 12px', background: 'rgba(3,105,161,.06)', borderLeft: '3px solid #0891B2', borderRadius: '0 9px 9px 0' }}>{aqOrdinal(i + 1)} Question</div>
+        <div style={{ fontSize: 13, fontWeight: 800, color: '#0369A1', marginBottom: 12, padding: '7px 12px', background: 'rgba(3,105,161,.06)', borderLeft: '3px solid #0891B2', borderRadius: '0 9px 9px 0' }}>{isUrdu ? `${tr('Question')} ${i + 1}` : `${aqOrdinal(i + 1)} Question`}</div>
         {lbl('Question')}{rte('question', 'Enter question…')}
         <div style={{ marginTop: 12 }}>{lbl('Answer')}{rte('answer', 'Enter answer…')}</div>
         {acts}
@@ -9515,6 +9819,10 @@ async function lpOpenReport(type, style, selectedClass, ctx = {}, reportHeader =
 async function clpUnitPdfReport(unit, ctx, style, reportHeader = null, format = null) {
   if (!unit) return;
   const isColor = style === 'color';
+  /* Unit ka medium Urdu ho to report Urdu (RTL + Noori font + headings translate). */
+  const isUrdu = String(unit?.medium || '').toLowerCase() === 'urdu';
+  const T = s => nbTr(s, isUrdu);
+  const URDU_FONT = "'Noto Nastaliq Urdu','Jameel Noori Nastaleeq','Alvi Nastaleeq',serif";
 
   /* Lesson content (SLO / Intro / Development / Recap) is NOT in the units list —
      it loads per lesson from the detail API (same one the Edit modal uses). Fetch
@@ -9605,7 +9913,7 @@ async function clpUnitPdfReport(unit, ctx, style, reportHeader = null, format = 
     const isAi   = lesson.source === 'mentorai' || lesson.source === 'ai';
     const srcBg  = isAi ? aiBg  : manualBg;
     const srcClr = isAi ? aiClr : manualClr;
-    const srcLbl = isAi ? '✨ Mentor AI Generated' : '✏ Manually Added';
+    const srcLbl = isAi ? T('✨ Mentor AI Generated') : T('✏ Manually Added');
 
     const sections = sectionTitles.map((title, si) => {
       const sc       = secBars[si];
@@ -9618,8 +9926,8 @@ async function clpUnitPdfReport(unit, ctx, style, reportHeader = null, format = 
         return `
           <div style="margin-bottom:18px;break-inside:avoid">
             <div style="background:${sc.bar};color:#fff;padding:8px 16px;border-radius:8px 8px 0 0;display:flex;align-items:center;justify-content:space-between">
-              <span style="font-size:12px;font-weight:800">${sectionIcons[si]} ${title}</span>
-              <span style="font-size:10.5px;background:rgba(255,255,255,.2);padding:2px 10px;border-radius:20px;font-weight:600">⏱ ${timeMins} mins</span>
+              <span style="font-size:12px;font-weight:800">${sectionIcons[si]} ${T(title)}</span>
+              <span style="font-size:10.5px;background:rgba(255,255,255,.2);padding:2px 10px;border-radius:20px;font-weight:600">⏱ ${timeMins} ${T('mins')}</span>
             </div>
             <div style="background:${sc.bg};border:1px solid ${border};border-top:none;border-radius:0 0 8px 8px;padding:14px 16px;font-size:12.5px;line-height:1.75;color:${textD}">${content}</div>
           </div>`;
@@ -9627,8 +9935,8 @@ async function clpUnitPdfReport(unit, ctx, style, reportHeader = null, format = 
         return `
           <div style="margin-bottom:14px;break-inside:avoid;border:1px solid #999;border-radius:3px;overflow:hidden">
             <div style="border-bottom:2px solid #000;padding:7px 14px;display:flex;align-items:center;justify-content:space-between;background:#fff">
-              <span style="font-size:12px;font-weight:900;color:#000">${title}</span>
-              <span style="font-size:10.5px;font-weight:700;color:#444;border:1px solid #999;padding:1px 9px;border-radius:3px">${timeMins} mins</span>
+              <span style="font-size:12px;font-weight:900;color:#000">${T(title)}</span>
+              <span style="font-size:10.5px;font-weight:700;color:#444;border:1px solid #999;padding:1px 9px;border-radius:3px">${timeMins} ${T('mins')}</span>
             </div>
             <div style="padding:12px 14px;font-size:12.5px;line-height:1.75;color:#000;background:#fff">${content}</div>
           </div>`;
@@ -9642,8 +9950,8 @@ async function clpUnitPdfReport(unit, ctx, style, reportHeader = null, format = 
             <div style="display:flex;align-items:center;gap:14px">
               <div style="width:38px;height:38px;background:rgba(255,255,255,.18);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:900;flex-shrink:0">${li+1}</div>
               <div>
-                <div style="font-size:15px;font-weight:800">${lesson.topic||'(untitled)'}</div>
-                <div style="font-size:11px;opacity:.75;margin-top:2px">Lesson No. ${lesson.num} · Unit ${unit.unitNo}</div>
+                <div style="font-size:15px;font-weight:800">${lesson.topic||T('(untitled)')}</div>
+                <div style="font-size:11px;opacity:.75;margin-top:2px">${T('Lesson No.')} ${lesson.num} · ${T('Unit')} ${unit.unitNo}</div>
               </div>
             </div>
             <span style="background:${srcBg};color:${srcClr};padding:4px 13px;border-radius:20px;font-size:10.5px;font-weight:700;white-space:nowrap">${srcLbl}</span>
@@ -9657,8 +9965,8 @@ async function clpUnitPdfReport(unit, ctx, style, reportHeader = null, format = 
             <div style="display:flex;align-items:center;gap:12px">
               <div style="width:30px;height:30px;border:2px solid #000;border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:900;color:#000;flex-shrink:0">${li+1}</div>
               <div>
-                <div style="font-size:14px;font-weight:900;color:#000">${lesson.topic||'(untitled)'}</div>
-                <div style="font-size:11px;color:#444;margin-top:1px">Lesson No. ${lesson.num} · Unit ${unit.unitNo}</div>
+                <div style="font-size:14px;font-weight:900;color:#000">${lesson.topic||T('(untitled)')}</div>
+                <div style="font-size:11px;color:#444;margin-top:1px">${T('Lesson No.')} ${lesson.num} · ${T('Unit')} ${unit.unitNo}</div>
               </div>
             </div>
             <span style="font-size:10px;font-weight:700;color:#000;border:1.5px solid #000;padding:3px 10px;border-radius:3px">${srcLbl}</span>
@@ -9666,27 +9974,27 @@ async function clpUnitPdfReport(unit, ctx, style, reportHeader = null, format = 
           <div style="padding:16px;background:#fff">${sections}</div>
         </div>`;
     }
-  }).join('') : `<div style="padding:28px;text-align:center;color:${textM};border:1px solid ${border};border-radius:8px;font-style:italic">No lessons have been added to this unit yet.</div>`;
+  }).join('') : `<div style="padding:28px;text-align:center;color:${textM};border:1px solid ${border};border-radius:8px;font-style:italic">${T('No lessons have been added to this unit yet.')}</div>`;
 
   const statsRow = isColor ? `
     <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:28px">
       ${[['Total Lessons',totalLessons,'📚','#EFF6FF','#1E40AF'],['Mentor AI',aiCount,'🤖','#EDE9FE','#7C3AED'],['Manual',manualCount,'📝','#DCFCE7','#16A34A'],['Sections/Lesson','4','📋','#FFF7ED','#C2410C']]
-        .map(([lbl,val,ic,bg2,clr])=>`<div style="background:${bg2};border-radius:10px;padding:14px;text-align:center;border:1px solid ${border}"><div style="font-size:18px;margin-bottom:4px">${ic}</div><div style="font-size:24px;font-weight:900;color:${clr};line-height:1">${val}</div><div style="font-size:10.5px;color:#64748B;margin-top:5px;font-weight:700;text-transform:uppercase;letter-spacing:.5px">${lbl}</div></div>`).join('')}
+        .map(([lbl,val,ic,bg2,clr])=>`<div style="background:${bg2};border-radius:10px;padding:14px;text-align:center;border:1px solid ${border}"><div style="font-size:18px;margin-bottom:4px">${ic}</div><div style="font-size:24px;font-weight:900;color:${clr};line-height:1">${val}</div><div style="font-size:10.5px;color:#64748B;margin-top:5px;font-weight:700;text-transform:uppercase;letter-spacing:.5px">${T(lbl)}</div></div>`).join('')}
     </div>` : `
     <table style="width:100%;border-collapse:collapse;margin-bottom:20px;font-size:12.5px">
       <tr>${[['Total Lessons',totalLessons],['Mentor AI',aiCount],['Manual',manualCount],['Sections/Lesson','4']]
-        .map(([lbl,val])=>`<td style="border:1.5px solid #000;padding:10px 14px;text-align:center"><div style="font-size:22px;font-weight:900;color:#000">${val}</div><div style="font-size:10px;font-weight:700;color:#444;text-transform:uppercase;letter-spacing:.5px;margin-top:3px">${lbl}</div></td>`).join('')}</tr>
+        .map(([lbl,val])=>`<td style="border:1.5px solid #000;padding:10px 14px;text-align:center"><div style="font-size:22px;font-weight:900;color:#000">${val}</div><div style="font-size:10px;font-weight:700;color:#444;text-transform:uppercase;letter-spacing:.5px;margin-top:3px">${T(lbl)}</div></td>`).join('')}</tr>
     </table>`;
 
   const legendBlock = isColor ? `
     <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:24px;padding:14px 18px;background:#F8FAFF;border-radius:10px;border:1px solid ${border}">
-      <span style="font-size:10.5px;font-weight:700;color:#64748B;text-transform:uppercase;letter-spacing:.6px;margin-right:6px;align-self:center">Each lesson includes:</span>
+      <span style="font-size:10.5px;font-weight:700;color:#64748B;text-transform:uppercase;letter-spacing:.6px;margin-right:6px;align-self:center">${T('Each lesson includes:')}</span>
       ${[['🎯','SLOs','#7C3AED'],['📖','Introduction','#1E40AF'],['🔬','Development','#EA580C'],['✅','Recap','#16A34A']]
-        .map(([ic,lbl,clr])=>`<span style="display:inline-flex;align-items:center;gap:5px;padding:4px 12px;border-radius:20px;background:#fff;border:1px solid ${border};font-size:11.5px;font-weight:700;color:${clr}">${ic} ${lbl}</span>`).join('')}
+        .map(([ic,lbl,clr])=>`<span style="display:inline-flex;align-items:center;gap:5px;padding:4px 12px;border-radius:20px;background:#fff;border:1px solid ${border};font-size:11.5px;font-weight:700;color:${clr}">${ic} ${T(lbl)}</span>`).join('')}
     </div>` : `
     <div style="margin-bottom:18px;padding:9px 14px;border:1.5px solid #000;border-radius:3px">
-      <span style="font-size:10.5px;font-weight:900;color:#000;text-transform:uppercase;letter-spacing:.6px">Each lesson contains: </span>
-      ${sectionTitles.map((t,si)=>`<span style="font-size:11px;font-weight:700;color:#000;margin-left:12px">${sectionIcons[si]} ${t}</span>`).join('')}
+      <span style="font-size:10.5px;font-weight:900;color:#000;text-transform:uppercase;letter-spacing:.6px">${T('Each lesson includes:')} </span>
+      ${sectionTitles.map((t,si)=>`<span style="font-size:11px;font-weight:700;color:#000;margin-left:12px">${sectionIcons[si]} ${T(t)}</span>`).join('')}
     </div>`;
 
   const html = `<!DOCTYPE html>
@@ -9694,7 +10002,7 @@ async function clpUnitPdfReport(unit, ctx, style, reportHeader = null, format = 
 <title>Unit ${unit.unitNo} — ${unit.unitName} · Full Lesson Plan</title>
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:'Segoe UI',Arial,sans-serif;background:#fff;color:${textD};font-size:13px;line-height:1.6}
+  body{font-family:${isUrdu ? URDU_FONT : "'Segoe UI',Arial,sans-serif"};background:#fff;color:${textD};font-size:13px;line-height:${isUrdu ? '2' : '1.6'};${isUrdu ? 'direction:rtl;' : ''}}
   .page{width:210mm;margin:0 auto;padding-bottom:40px}
   table{border-collapse:collapse;width:100%}
   td,th{border:1px solid ${border};padding:7px 11px;font-size:12.5px}
@@ -9718,13 +10026,13 @@ async function clpUnitPdfReport(unit, ctx, style, reportHeader = null, format = 
     <div style="position:absolute;bottom:-20px;left:120px;width:80px;height:80px;border-radius:50%;background:rgba(255,255,255,.04)"></div>
     ${getReportLogo(style, reportHeader)}
     <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:4px">
-      <div style="font-size:22px;font-weight:800;letter-spacing:-.02em">${lpEscapeHtml(cls)} · Unit ${unit.unitNo} — ${unit.unitName}</div>
-      <div style="font-size:13px;font-weight:700;opacity:.85;white-space:nowrap;padding-top:6px;color:#fff">${lpEscapeHtml(subj)} · ${totalLessons} Lesson${totalLessons!==1?'s':''}</div>
+      <div style="font-size:22px;font-weight:800;letter-spacing:-.02em">${lpEscapeHtml(cls)} · ${T('Unit')} ${unit.unitNo} — ${unit.unitName}</div>
+      <div style="font-size:13px;font-weight:700;opacity:.85;white-space:nowrap;padding-top:6px;color:#fff">${lpEscapeHtml(subj)} · ${totalLessons} ${T(totalLessons!==1?'Lessons':'Lesson')}</div>
     </div>
-    <div style="font-size:13px;opacity:.75;margin-bottom:16px">Academic Year ${lpEscapeHtml(academicSession)} · ${isColor?'Colorful':'Colorless'} Report</div>
+    <div style="font-size:13px;opacity:.75;margin-bottom:16px">${T('Academic Year')} ${lpEscapeHtml(academicSession)} · ${T(isColor?'Colorful':'Colorless')} ${T('Report')}</div>
     <div style="display:flex;gap:10px;flex-wrap:wrap">
-      <div style="background:rgba(255,255,255,.14);padding:6px 14px;border-radius:20px;font-size:11.5px;color:#fff"><strong style="color:#fff">Generated:</strong> ${generated}</div>
-      <div style="background:rgba(255,255,255,.14);padding:6px 14px;border-radius:20px;font-size:11.5px;color:#fff"><strong style="color:#fff">Style:</strong> ${isColor?'Colorful':'Colorless'}</div>
+      <div style="background:rgba(255,255,255,.14);padding:6px 14px;border-radius:20px;font-size:11.5px;color:#fff"><strong style="color:#fff">${T('Generated')}:</strong> ${generated}</div>
+      <div style="background:rgba(255,255,255,.14);padding:6px 14px;border-radius:20px;font-size:11.5px;color:#fff"><strong style="color:#fff">${T('Style')}:</strong> ${T(isColor?'Colorful':'Colorless')}</div>
     </div>
   </div>
 
@@ -9737,7 +10045,7 @@ async function clpUnitPdfReport(unit, ctx, style, reportHeader = null, format = 
   <div style="margin-top:30px;border-top:${isColor?'2px solid '+border:'2px solid #000'};padding:12px 12px;display:flex;justify-content:space-between;align-items:center;font-size:11px;color:${textM}">
     <span>${lpEscapeHtml(schoolName)}${schoolAddress ? ` · ${lpEscapeHtml(schoolAddress)}` : ''}</span>
     <span>School Mentor ERP © ${new Date().getFullYear()}</span>
-    <span>Academic Year ${lpEscapeHtml(academicSession)}</span>
+    <span>${T('Academic Year')} ${lpEscapeHtml(academicSession)}</span>
   </div>
 
   <div class="np" style="text-align:center;padding:22px;background:#F8FAFC;border-top:1px solid #E2E8F0;margin-top:18px">
@@ -9761,6 +10069,10 @@ function nbGeneratePdfHtml(u, questions, isColor, reportHeader = null, format = 
   const bdgC   = isColor ? '#0369A1' : '#333';
   const bdr    = isColor ? '#BAE6FD' : '#ccc';
   const optColors = ['#0369A1', '#6D28D9', '#0C4A6E', '#92400E'];
+  /* Unit ka medium Urdu ho to report Urdu (RTL + Noori font + headings translate). */
+  const isUrdu = String(u?.medium || '').toLowerCase() === 'urdu';
+  const T = s => nbTr(s, isUrdu);
+  const URDU_FONT = "'Noto Nastaliq Urdu','Jameel Noori Nastaleeq','Alvi Nastaleeq',serif";
 
   /* Header (logo, school name, session, address) from /report-header/{branchID}. */
   const schoolName      = reportHeader?.branchName || getSchoolName();
@@ -9771,7 +10083,7 @@ function nbGeneratePdfHtml(u, questions, isColor, reportHeader = null, format = 
   const style = isColor ? 'color' : 'bw';
 
   let html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${u.unitName} Report</title>
-  <style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:'Segoe UI',Arial,sans-serif;background:#fff;color:#0F172A;font-size:13px}.page{width:210mm;margin:0 auto}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}@page{size:A4;margin:15mm}.no-print{display:none}}
+  <style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:${isUrdu ? URDU_FONT : "'Segoe UI',Arial,sans-serif"};background:#fff;color:#0F172A;font-size:13px;${isUrdu ? 'direction:rtl;' : ''}}${isUrdu ? '.body,.sec-q,.item-body,.item-ans,.rte-block,.two-col,.match-pair,.ws-sent,.tf-q,.punc-q,.punc-a{text-align:right}' : ''}.page{width:210mm;margin:0 auto}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}@page{size:A4;margin:15mm}.no-print{display:none}}
 
   .header{background:${hdrBg};color:#fff;padding:24px 30px}.header h1{font-size:22px;font-weight:800}.header-sub{font-size:12px;opacity:.7;margin-top:4px}.meta{display:flex;gap:12px;margin-top:12px;flex-wrap:wrap}.meta span{font-size:11px;background:rgba(255,255,255,.15);padding:3px 10px;border-radius:20px}
   .body{padding:24px 30px}.section{margin-bottom:22px;border:1.5px solid ${bdr};border-radius:12px;overflow:hidden}
@@ -9803,13 +10115,13 @@ function nbGeneratePdfHtml(u, questions, isColor, reportHeader = null, format = 
   </style></head><body><div class="page">
   <div class="header">
     ${getReportLogo(style, reportHeader)}
-    <h1>Notebook — Unit ${u.unitNo}: ${lpEscapeHtml(u.unitName)}</h1>
-    <div class="header-sub" style="margin-top:4px">Academic Year ${lpEscapeHtml(academicSession)} · ${isColor ? 'Colorful' : 'Colorless'} Report</div>
+    <h1>${T('Notebook')} — ${T('Unit')} ${u.unitNo}: ${lpEscapeHtml(u.unitName)}</h1>
+    <div class="header-sub" style="margin-top:4px">${T('Academic Year')} ${lpEscapeHtml(academicSession)} · ${T(isColor ? 'Colorful' : 'Colorless')} ${T('Report')}</div>
     <div class="meta">
-      <span><strong>Unit:</strong> ${u.unitNo}</span>
-      <span><strong>Sections:</strong> ${Object.keys(questions).length}</span>
-      <span><strong>Style:</strong> ${isColor ? 'Colorful' : 'Colorless'}</span>
-      <span><strong>Generated:</strong> ${generated}</span>
+      <span><strong>${T('Unit')}:</strong> ${u.unitNo}</span>
+      <span><strong>${T('Sections')}:</strong> ${Object.keys(questions).length}</span>
+      <span><strong>${T('Style')}:</strong> ${T(isColor ? 'Colorful' : 'Colorless')}</span>
+      <span><strong>${T('Generated')}:</strong> ${generated}</span>
     </div>
   </div>
   <div class="body">`;
@@ -9818,7 +10130,7 @@ function nbGeneratePdfHtml(u, questions, isColor, reportHeader = null, format = 
     const cfg    = AQ_CONFIG[typeId] || {};
     const rows   = sec.rows || [];
     const layout = cfg.layout || '';
-    html += `<div class="section"><div class="sec-head"><div class="sec-num">${idx + 1}</div><div class="sec-type">${cfg.title || typeId}</div><div class="sec-q">${sec.mainQ || sec.mainQuestion || ''}</div></div><div>`;
+    html += `<div class="section"><div class="sec-head"><div class="sec-num">${idx + 1}</div><div class="sec-type">${T(cfg.title || typeId)}</div><div class="sec-q">${sec.mainQ || sec.mainQuestion || ''}</div></div><div>`;
 
     if (layout === 'two-col') {
       const f = cfg.fields || [];
@@ -9831,7 +10143,7 @@ function nbGeneratePdfHtml(u, questions, isColor, reportHeader = null, format = 
       });
     } else if (layout === 'mcq') {
       rows.forEach((r, i) => {
-        html += `<div style="padding:10px 14px;border-bottom:1px solid ${isColor ? '#F0F9FF' : '#eee'}"><div style="font-size:13px;font-weight:600;margin-bottom:8px;">${i + 1}. ${r.question || ''}</div><div class="mcq-opts">${[['opt1','A'],['opt2','B'],['opt3','C'],['opt4','D']].map(([k, l], oi) => `<div class="mcq-opt"><span class="mcq-lbl" style="background:${isColor ? optColors[oi] : '#555'}">${l}</span><span class="mcq-val">${r[k] || ''}</span></div>`).join('')}</div><div class="mcq-ans">✓ Correct: ${r.correct || ''}</div></div>`;
+        html += `<div style="padding:10px 14px;border-bottom:1px solid ${isColor ? '#F0F9FF' : '#eee'}"><div style="font-size:13px;font-weight:600;margin-bottom:8px;">${i + 1}. ${r.question || ''}</div><div class="mcq-opts">${[['opt1','A'],['opt2','B'],['opt3','C'],['opt4','D']].map(([k, l], oi) => `<div class="mcq-opt"><span class="mcq-lbl" style="background:${isColor ? optColors[oi] : '#555'}">${l}</span><span class="mcq-val">${r[k] || ''}</span></div>`).join('')}</div><div class="mcq-ans">✓ ${T('Correct')}: ${r.correct || ''}</div></div>`;
       });
     } else if (layout === 'fill-blanks') {
       rows.forEach((r, i) => {
@@ -9839,16 +10151,16 @@ function nbGeneratePdfHtml(u, questions, isColor, reportHeader = null, format = 
       });
     } else if (layout === 'true_false') {
       rows.forEach((r, i) => {
-        html += `<div class="tf-row"><span class="tf-q">${i + 1}. ${r.question || ''}</span><span class="${r.answer === 'true' ? 'tf-t' : 'tf-f'}">${r.answer === 'true' ? 'True' : 'False'}</span></div>`;
+        html += `<div class="tf-row"><span class="tf-q">${i + 1}. ${r.question || ''}</span><span class="${r.answer === 'true' ? 'tf-t' : 'tf-f'}">${r.answer === 'true' ? T('True') : T('False')}</span></div>`;
       });
     } else if (layout === 'match') {
-      html += `<div style="margin:8px 14px;padding:7px 12px;background:${isColor ? '#F0F9FF' : '#f0f0f0'};border-radius:8px;font-size:11px;color:#64748B;border:1px solid ${bdr};">ℹ️ Shuffle Column B when writing on board.</div>`;
+      html += `<div style="margin:8px 14px;padding:7px 12px;background:${isColor ? '#F0F9FF' : '#f0f0f0'};border-radius:8px;font-size:11px;color:#64748B;border:1px solid ${bdr};">ℹ️ ${T('Shuffle Column B when writing on board.')}</div>`;
       rows.forEach(r => {
         html += `<div class="match-pair"><span class="match-a">${r.colA || ''}</span><span class="arrow">↔</span><span class="match-b">${r.colB || ''}</span></div>`;
       });
     } else if (layout === 'short-q' || layout === 'long' || layout === 'comprehension') {
       rows.forEach((r, i) => {
-        html += `<div class="rte-block"><strong>${i + 1}. Q:</strong> ${r.question || ''}<br><strong style="color:${isColor ? '#0369A1' : '#333'}">A:</strong> ${r.answer || ''}</div>`;
+        html += `<div class="rte-block"><strong>${i + 1}. ${T('Q')}:</strong> ${r.question || ''}<br><strong style="color:${isColor ? '#0369A1' : '#333'}">${T('A')}:</strong> ${r.answer || ''}</div>`;
       });
     } else if (layout === 'circle') {
       rows.forEach((r, i) => {
@@ -9861,7 +10173,7 @@ function nbGeneratePdfHtml(u, questions, isColor, reportHeader = null, format = 
     } else {
       const fields = cfg.fields || [];
       rows.forEach((r) => {
-        html += `<div class="rte-block">${fields.map(f => `<div style="margin-bottom:5px"><strong>${f.label}:</strong> ${r[f.key] || ''}</div>`).join('')}</div>`;
+        html += `<div class="rte-block">${fields.map(f => `<div style="margin-bottom:5px"><strong>${T(f.label)}:</strong> ${r[f.key] || ''}</div>`).join('')}</div>`;
       });
     }
     html += `</div></div>`;
@@ -9871,7 +10183,7 @@ function nbGeneratePdfHtml(u, questions, isColor, reportHeader = null, format = 
   html += `</div><div class="footer" style="display:flex;justify-content:space-between;align-items:center;gap:8px;text-align:left">
     <span>${lpEscapeHtml(schoolName)}${schoolAddress ? ` · ${lpEscapeHtml(schoolAddress)}` : ''}</span>
     <span>School Mentor ERP © ${new Date().getFullYear()}</span>
-    <span>Academic Year ${lpEscapeHtml(academicSession)}</span>
+    <span>${T('Academic Year')} ${lpEscapeHtml(academicSession)}</span>
   </div>
   <div class="no-print" style="text-align:center;padding:22px;background:#F8FAFC;border-top:1px solid #E2E8F0;margin-top:8px">
     <button onclick="window.print()" style="background:${bg};color:#fff;border:none;padding:12px 28px;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;margin-right:10px">🖨 Print / Save as PDF</button>
@@ -11076,6 +11388,27 @@ const LP_CSS = `
   display:flex; flex-direction:column;
   overflow:hidden;
 }
+/* ── Urdu mode — RTL layout + Noori Nastaliq font (Create Lesson Plan jaisa) ──
+   direction:rtl body ko flip karta hai (Word right, Opposite left; Column A right). */
+.aq-modal.rtl-mode .aq-body { direction:rtl; }
+.aq-modal.rtl-mode .aq-type-label,
+.aq-modal.rtl-mode .aq-type-btn-hover,
+.aq-modal.rtl-mode .aq-add-more-hover,
+.aq-modal.rtl-mode .aq-inp-hover,
+.aq-modal.rtl-mode .aq-ta-hover,
+.aq-modal.rtl-mode .aq-mq-input,
+.aq-modal.rtl-mode .aq-form-area {
+  font-family:'Noto Nastaliq Urdu','Jameel Noori Nastaleeq','Alvi Nastaleeq',serif;
+}
+/* Nastaliq font visually chhota render hota hai → Urdu mode mein font-size bada
+   aur thodi extra height/line-height (loops clip na hon). */
+.aq-modal.rtl-mode .aq-type-btn-hover { font-size:15px; height:40px; padding:0 16px; gap:8px; }
+.aq-modal.rtl-mode .aq-types-grid { gap:9px; }
+.aq-modal.rtl-mode .aq-type-label { font-size:14px; }
+.aq-modal.rtl-mode .aq-inp-hover,
+.aq-modal.rtl-mode .aq-ta-hover,
+.aq-modal.rtl-mode .aq-mq-input { font-size:15px; line-height:2.1; }
+.aq-modal.rtl-mode .aq-add-more-hover { font-size:14px; }
 .aq-header {
   display:flex; align-items:center; justify-content:space-between;
   padding:18px 24px; flex-shrink:0; position:relative; overflow:hidden;
@@ -12273,6 +12606,23 @@ const LP_CSS = `
   cursor:pointer; font-size:11px; transition:var(--tr);
 }
 .umgr-del-btn:hover { background:#DC2626; color:#fff; transform:scale(1.08); }
+
+/* Per-unit language (medium) toggle in Manage Units row */
+.umgr-lang-toggle { display:inline-flex; gap:0; border:1.5px solid var(--border-light,#E2E8F0); border-radius:8px; overflow:hidden; flex-shrink:0; }
+.umgr-lang-pill {
+  border:none; background:#F8FAFF; color:#64748B; cursor:pointer;
+  padding:0 9px; height:32px; font-size:11px; font-weight:800; transition:var(--tr);
+}
+.umgr-lang-pill--ur { font-family:'Noto Nastaliq Urdu','Jameel Noori Nastaleeq',serif; font-size:13px; border-left:1.5px solid var(--border-light,#E2E8F0); }
+.umgr-lang-pill.active { background:linear-gradient(135deg,#1E3A8A,#2563EB); color:#fff; }
+.umgr-lang-pill:hover:not(.active) { background:#EEF2FF; color:#1E3A8A; }
+[data-theme="dark"] .umgr-lang-toggle { border-color:var(--border-light); }
+[data-theme="dark"] .umgr-lang-pill { background:var(--bg-muted); color:var(--text-secondary); }
+[data-theme="dark"] .umgr-lang-pill.active { background:linear-gradient(135deg,#2563EB,#3B82F6); color:#fff; }
+
+/* Read-only language pills inside the Lesson Plan modal (unit medium ka display) */
+.clpm-lang-pills--readonly .clpm-lang-pill { cursor:default; opacity:.75; }
+.clpm-lang-pills--readonly .clpm-lang-pill.active { opacity:1; }
 
 /* ══════════════════════════════════════════════════════
    UPLOAD LESSON PLAN MODAL — verbatim from HTML
