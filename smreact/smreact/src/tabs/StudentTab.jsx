@@ -184,12 +184,24 @@ function StudentModal({ open, target, editIdx, editStudent, classesData, onClose
         body: fd,
       });
       const data = await res.json();
-      if (res.ok) {
+      /* API HTTP 200 + top-level "…saved successfully" deta hai, magar ASLI natija
+         `data` mein hota hai. Duplicate (e.g. reg/mobile) par shapes:
+            data: 0  |  data: [{ Success: 0, Message: "Number already exist" }]  |  data: { Success: 0, Message }
+         In sab ko fail treat karo aur exact error toast dikhao (na "added"). */
+      const d = data?.data;
+      const inner = Array.isArray(d) ? d[0] : (d && typeof d === 'object' ? d : null);
+      const innerSuccess = inner ? (inner.Success ?? inner.success) : undefined;
+      const isFail = innerSuccess === 0 || innerSuccess === false || innerSuccess === '0' || d === 0 || d === '0';
+      if (res.ok && !isFail) {
         showToast?.(editStudent ? 'Student updated successfully' : 'Student added successfully', 'success');
         onSaved?.();   // refetch class/section/student list
         onClose();
       } else {
-        showToast?.(data?.message || 'Save failed', 'error');
+        const msg =
+          (inner && (inner.Message ?? inner.message)) ||
+          (data?.message && !/success/i.test(data.message) ? data.message : '') ||
+          'Number already exist';
+        showToast?.(msg, 'error');
       }
     } catch (err) {
       console.error(err);
