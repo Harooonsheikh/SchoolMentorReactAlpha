@@ -38,7 +38,8 @@ function StaffModal({ open, staff, deptsData, onClose, onSave, setDeptsData, sho
         rentAllowance:       staff.rentAllowance      ?? staff.rent ?? 0,
         transportAllowance:  staff.transportAllowance ?? staff.transport ?? 0,
         isPrincipal:   staff.isPrinciple ?? staff.isPrincipal ?? false,
-        isTeacher:     staff.isTeacher ?? false,
+        // Naya staff (id null) → by default Teacher; existing edit → jo saved tha wahi.
+        isTeacher:     staff.isTeacher ?? (staff.id == null),
         isParent:      staff.isParent ?? false,
         // show existing image (URL); keep file undefined until user picks a new one
         profileImage:  staff.empImage ?? staff.profileImage ?? '',
@@ -151,10 +152,27 @@ function StaffModal({ open, staff, deptsData, onClose, onSave, setDeptsData, sho
   };
 
   const handleSave = async () => {
-    if (!form.isPrincipal && !form.isTeacher && !form.isParent) {
-  showToast('Please select at least one role (Principal or Teacher).', 'error');
-  return;
-}
+    /* Personal Information ke required fields (form par * waale). Koi bhi missing ho
+       to yahin rok do aur us EXACT field ka toast dikhao — taake API call na ho aur
+       galti se "Employee saved successfully" wala toast na aaye. */
+    const requiredFields = [
+      ['firstName',  'First Name'],
+      ['fatherName', 'Father / Husband Name'],
+      ['cnic',       'CNIC'],
+      ['phone',      'Phone Number'],
+    ];
+    for (const [key, label] of requiredFields) {
+      if (!form[key] || !String(form[key]).trim()) {
+        showToast(`${label} is required`, 'error');
+        return;
+      }
+    }
+    /* Role UI hidden hai aur har staff by default Teacher (isTeacher = true) hota
+       hai — is liye role-selection validation ki zaroorat nahi rahi. */
+    // if (!form.isPrincipal && !form.isTeacher && !form.isParent) {
+    //   showToast('Please select at least one role (Principal or Teacher).', 'error');
+    //   return;
+    // }
     if (form.dateOfBirth && form.dateOfBirth > new Date().toISOString().slice(0, 10)) {
       showToast('Date of birth cannot be in the future.', 'error');
       return;
@@ -234,7 +252,16 @@ fd.append(
         const data = await res.json();
 
         if (res.status == 200) {
-          const newId = data?.data[0].id ?? data?.id ?? data?.data[0].ID ?? data?.ID;
+          /* API HTTP 200 + top-level "Employee saved successfully" deta hai, magar
+             ASLI result data[0] ke andar hota hai. Duplicate (e.g. CNIC/phone) par
+             data[0] = { Success: 0, Message: "Number already exist" } aata hai — is
+             case ko fail samjho aur inner Message ka error toast dikhao (na "saved"). */
+          const inner = Array.isArray(data?.data) ? data.data[0] : null;
+          if (inner && (inner.Success === 0 || inner.Success === false)) {
+            showToast(inner.Message || data?.message || 'Save failed', 'error');
+            return false;
+          }
+          const newId = inner?.id ?? data?.id ?? inner?.ID ?? data?.ID;
           if (newId) setForm(prev => ({ ...prev, id: newId }));
           showToast('Employee saved successfully', 'success');
            setTab('employee')
@@ -512,10 +539,13 @@ console.log(payload)
                     {BLOOD_GROUPS.map(b => <option key={b}>{b}</option>)}
                   </select>
                 </div>
+                {/* ROLE section hidden — har naya staff by default Teacher (isTeacher = true)
+                    hota hai. Dobara enable karna ho to `false &&` hata dein. */}
+                {false && (
                 <div className="form-group" style={{ marginLeft: 14 }}>
                 <label className="form-label">Role</label>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 25 , marginTop: 10}}>
-                  {/* {['Principal', 'Teacher', 'Parent'].map(role => { */}
+                  {/* {['Principal', 'Teacher', 'Parent'].map(role =&gt; { */}
                   {['Principal', 'Teacher'].map(role => {
                     const key = `is${role}`;
                     return (
@@ -532,6 +562,7 @@ console.log(payload)
                   })}
                 </div>
               </div>
+              )}
               </div>
 
               {/* Image upload + preview */}

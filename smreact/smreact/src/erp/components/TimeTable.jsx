@@ -957,6 +957,7 @@ export default function TimeTable({ toast = () => {} }) {
         <TTAutoGenerateModal
           classes={classes}
           teachers={teachers}
+          existingData={data}
           onClose={() => setAutoGenOpen(false)}
           onGenerate={async (newData, summary) => {
             /* Persist the generated week to the API (delete-then-insert per
@@ -1610,7 +1611,7 @@ const WIZ_STEPS = [
 const toMin  = (t) => { const [h, m] = String(t).split(':').map(Number); return h * 60 + m; };
 const toTime = (m) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
 
-function TTAutoGenerateModal({ classes = [], teachers = [], onClose, onGenerate }) {
+function TTAutoGenerateModal({ classes = [], teachers = [], existingData = {}, onClose, onGenerate }) {
   /* Real teacher names + a name→id map (auto-gen stores teacherId for saving). */
   const teacherNames = teachers.map((t) => t.name);
   const teacherIdByName = {};
@@ -1642,6 +1643,9 @@ function TTAutoGenerateModal({ classes = [], teachers = [], onClose, onGenerate 
 
   const [w, setW] = useState(initWiz);
   const [generating, setGenerating] = useState(false);
+  /* Overwrite-warning popup: jab selected classes mein se kisi ka pehle se
+     (manual/previous) timetable mojood ho. null = no popup. */
+  const [overwriteWarn, setOverwriteWarn] = useState(null);   // { names: [] } | null
   const update = (patch) => setW((prev) => ({ ...prev, ...patch }));
 
   useEffect(() => {
@@ -1809,8 +1813,34 @@ function TTAutoGenerateModal({ classes = [], teachers = [], onClose, onGenerate 
     return true;
   })();
 
+  /* ─── Existing-timetable (overwrite) detection ─── */
+  const classLabel = (key) => {
+    const c = (classes || []).find((x) => `${x.id}_${x.sectionID}` === key);
+    return c ? `${c.name} · ${c.section}` : key;
+  };
+  /* Kya is class ka kisi bhi din pehle se koi real period (subject/teacher) saved hai? */
+  const classHasExisting = (key) =>
+    Object.values(existingData || {}).some(
+      (classMap) =>
+        Array.isArray(classMap?.[key]) &&
+        classMap[key].some((p) => (p.subject && p.subject !== 'Break') || p.teacher)
+    );
+
+  /* Generate button → pehle overwrite-conflict check karo. Agar koi selected
+     class ka pehle se timetable hai to popup dikhao (Yes = overwrite,
+     No = Step 1 par wapas jaake wo class uncheck kar lo). */
+  const generate = () => {
+    if (!validation.ok || generating) return;
+    const conflicts = Array.from(selectedSet).filter(classHasExisting);
+    if (conflicts.length > 0) {
+      setOverwriteWarn({ names: conflicts.map(classLabel) });
+      return;
+    }
+    runGenerate();
+  };
+
   /* ─── Generate the timetable ─── */
-  const generate = async () => {
+  const runGenerate = async () => {
     if (!validation.ok || generating) return; // block double-click while saving
     /* Build pool of subject lessons, weighted by weekly count */
     const subjectPool = [];
@@ -1913,6 +1943,7 @@ function TTAutoGenerateModal({ classes = [], teachers = [], onClose, onGenerate 
         resetDayDurs={resetDayDurs}
         validation={validation}
         totalWeekPeriods={totalWeekPeriods}
+        classCount={selectedSet.size}
       />
     );
     if (w.step === 4) return <WizStep4 w={w} update={update} toggleTeacherDay={toggleTeacherDay} wizSlotsFor={wizSlotsFor} totalWeekPeriods={totalWeekPeriods} teacherNames={teacherNames} />;
@@ -1995,6 +2026,47 @@ function TTAutoGenerateModal({ classes = [], teachers = [], onClose, onGenerate 
           </div>
         </div>
       </div>
+
+      {/* Overwrite-confirm popup — koi selected class ka pehle se timetable ho to */}
+      {overwriteWarn && (
+        <div
+          onClick={() => setOverwriteWarn(null)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100000 }}
+        >
+          <div onClick={(e) => e.stopPropagation()} style={{ background: '#fff', borderRadius: 14, width: 'min(470px,92vw)', boxShadow: '0 20px 60px rgba(15,23,42,.35)', overflow: 'hidden' }}>
+            <div style={{ padding: '18px 22px', display: 'flex', gap: 12, alignItems: 'flex-start', borderBottom: '1px solid #F1F5F9' }}>
+              <div style={{ width: 40, height: 40, borderRadius: 10, background: 'rgba(234,179,8,.14)', color: '#B45309', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <i className="fa-solid fa-triangle-exclamation" style={{ fontSize: 18 }}></i>
+              </div>
+              <div>
+                <div style={{ fontSize: 15, fontWeight: 800, color: '#0F172A' }}>Timetable already exists</div>
+                <div style={{ fontSize: 12.5, color: '#475569', marginTop: 3, lineHeight: 1.5 }}>
+                  In class{overwriteWarn.names.length > 1 ? 'es' : ''} ka pehle se timetable mojood hai. Generate karne par wo <b>overwrite</b> ho jayega:
+                </div>
+              </div>
+            </div>
+            <div style={{ padding: '12px 22px', maxHeight: 190, overflowY: 'auto' }}>
+              {overwriteWarn.names.map((nm, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#0F172A', padding: '5px 0', fontWeight: 600 }}>
+                  <i className="fa-solid fa-chalkboard" style={{ color: '#7C3AED', fontSize: 12 }}></i> {nm}
+                </div>
+              ))}
+            </div>
+            <div style={{ padding: '14px 22px', display: 'flex', gap: 10, justifyContent: 'flex-end', background: '#F8FAFC', borderTop: '1px solid #F1F5F9' }}>
+              <Tooltip text="Cancel and go back to class selection to uncheck these classes">
+                <button className="wiz-btn wiz-btn-back" onClick={() => { setOverwriteWarn(null); update({ step: 1 }); }}>
+                  <i className="fa-solid fa-xmark"></i> No, let me uncheck
+                </button>
+              </Tooltip>
+              <Tooltip text="Overwrite the existing timetable and generate">
+                <button className="wiz-btn wiz-btn-generate" onClick={() => { setOverwriteWarn(null); runGenerate(); }}>
+                  <i className="fa-solid fa-bolt"></i> Yes, overwrite
+                </button>
+              </Tooltip>
+            </div>
+          </div>
+        </div>
+      )}
     </div>,
     document.body
   );
@@ -2071,7 +2143,8 @@ function WizStep1({ w, update, toggleDay, autoPeriods, defP, selectedSet, toggle
           <div>
             <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{defP} period{defP !== 1 ? 's' : ''} per day</div>
             <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 2 }}>
-              {defP * w.workDays.length} total periods per week × {w.workDays.length} working day{w.workDays.length !== 1 ? 's' : ''}
+              {defP * w.workDays.length} periods/week per class × {selectedSet.size} class{selectedSet.size !== 1 ? 'es' : ''} = <strong>{defP * w.workDays.length * selectedSet.size} total lectures</strong>
+              <span style={{ opacity: .8 }}> ({defP} × {w.workDays.length} day{w.workDays.length !== 1 ? 's' : ''} × {selectedSet.size} class{selectedSet.size !== 1 ? 'es' : ''})</span>
             </div>
           </div>
           {w.defaultPeriodsPerDay > 0 && w.defaultPeriodsPerDay !== autoPeriods && (
@@ -2311,7 +2384,7 @@ function WizStep2({ w, defP, addBreakTo, removeBreakAt, setDayBreakMode }) {
 }
 
 /* ─── Step 3 — Periods (two-panel: per-day editor + lesson allocation) ─── */
-function WizStep3({ w, update, defP, wizSlotsFor, setSubjectLessons, setPeriodDur, resetPeriodDur, resetDayDurs, totalWeekPeriods }) {
+function WizStep3({ w, update, defP, wizSlotsFor, setSubjectLessons, setPeriodDur, resetPeriodDur, resetDayDurs, totalWeekPeriods, classCount = 1 }) {
   const selDay     = (w._step3Day != null && w.workDays.includes(w._step3Day)) ? w._step3Day : w.workDays[0];
   const slots      = wizSlotsFor(selDay);
   const periods    = slots.filter((s) => !s.isBreak);
@@ -2455,16 +2528,17 @@ function WizStep3({ w, update, defP, wizSlotsFor, setSubjectLessons, setPeriodDu
         </div>
         <div className="wiz-desc-box" style={{ marginBottom: 10 }}>
           <i className="fa-solid fa-info-circle"></i>
-          Total available this week: <b>{totalWeekPeriods} periods/class</b>. Use −/+ per subject.
+          <span><b>{totalWeekPeriods} periods/class</b> × {classCount} class{classCount !== 1 ? 'es' : ''} = <b>{totalWeekPeriods * classCount} total lectures</b>. Neeche lessons <b>per class</b> set karein.</span>
         </div>
         <div className="wiz-lesson-bar-wrap">
           <div className="wiz-lesson-bar-track">
             <div className={`wiz-lesson-bar-fill wiz-lesson-bar--${lessonStatus}`} style={{ width: `${lessonPct}%` }} />
           </div>
           <div className={`wiz-lesson-sum wiz-lesson-sum--${lessonStatus}`}>
-            {usedLessons} / {totalWeekPeriods} lessons allocated
+            {usedLessons} / {totalWeekPeriods} lessons allocated per class
             {lessonStatus === 'over'  && '  ⚠️ Over capacity'}
             {lessonStatus === 'exact' && '  ✅ Perfect'}
+            {lessonStatus === 'under' && totalWeekPeriods > 0 && `  · ${totalWeekPeriods - usedLessons} slot${totalWeekPeriods - usedLessons !== 1 ? 's' : ''} blank`}
           </div>
         </div>
         <div className="wiz-subj-list">

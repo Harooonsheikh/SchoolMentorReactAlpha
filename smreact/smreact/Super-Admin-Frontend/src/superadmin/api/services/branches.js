@@ -10,7 +10,7 @@
      2. AI/wallet API  GET /ai/api/wallet/admin/branches/subscriptions/
         → { branches: [ { branch, branch_name, plan{code,...},
                           subscription_active, is_expired, is_paid,
-                          subscription_period_end, ... } ] }
+                          wallet_enabled, subscription_period_end, ... } ] }
         The Mentor AI plan + subscription state per branch.
 
    `listBranchesWithPlans()` fetches both, then merges each subscription onto
@@ -32,11 +32,17 @@ const toPlanLabel = (code) => PLAN_LABEL[String(code || '').toLowerCase()] || 'B
 /* UI plan label ('Basic'/'Pro'/'Premium') → the API's plan_code. */
 export const toPlanCode = (label) => String(label || '').toLowerCase();
 
-/* Map a subscription record → { plan, status, due } for the table. */
+/* Map a subscription record → { plan, status, due } for the table.
+
+   A branch whose wallet has been switched off (wallet_enabled === false via
+   the Block action / POST .../status/) is shown as Blocked FIRST — the admin
+   block overrides the subscription state, so a still-active/paid subscription
+   with the wallet disabled correctly reads as Blocked (not Active). */
 function subToPlanFields(sub) {
-  const status = sub.is_expired ? 'Expired'
-    : sub.subscription_active ? 'Active'
-      : 'Blocked';
+  const status = sub.wallet_enabled === false ? 'Blocked'
+    : sub.is_expired ? 'Expired'
+      : sub.subscription_active ? 'Active'
+        : 'Blocked';
   const due = sub.subscription_period_end
     ? String(sub.subscription_period_end).slice(0, 10)
     : 'Free';
@@ -92,7 +98,11 @@ async function fetchBranches() {
   return Array.isArray(body?.data) ? body.data : Array.isArray(body) ? body : [];
 }
 
-/** Raw subscription rows from the AI/wallet API. */
+/** Raw subscription rows from the AI/wallet API.
+   GET /ai/api/wallet/admin/branches/subscriptions/  → { total, limit, offset,
+   branches: [ { branch, branch_name, plan{...}, subscription_active,
+   is_expired, is_paid, wallet_enabled, ... } ] }. (The server only allows GET
+   here — a POST returns 405 Method Not Allowed.) */
 async function fetchSubscriptions() {
   const body = await getJson(`${AI_API_BASE}${EP.wallet.subscriptions()}`, 'subscriptions');
   return Array.isArray(body?.branches) ? body.branches : Array.isArray(body) ? body : [];
