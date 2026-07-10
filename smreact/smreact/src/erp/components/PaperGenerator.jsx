@@ -95,6 +95,7 @@
       title:     p.paperTitle   || p.title  || 'Untitled Paper',
       type:      p.paperType    || p.type   || 'both',
       format:    p.paperFormate || p.format || 'with',
+      medium:    (p.medium || 'english').toLowerCase(),
       objMarks:  +p.marksforobject     || 0,
       objTime:   +p.timeforobject      || 0,
       subjMarks: +p.marksforsubjective || 0,
@@ -1346,6 +1347,30 @@ const setSubjLine = (ci, si, l) => {
     ...PG_SUBJ_TYPES.filter(s => !PG_OBJ_TYPES.some(o => o.key === s.key)),
   ];
 
+  /* Question-type labels ka Urdu tarjuma — medium Urdu ho to modal ke block titles
+    aur tabs Urdu mein dikhein. */
+  const PG_TYPE_LABELS_UR = {
+    match_columns:  'کالم ملائیں',
+    true_false:     'درست / غلط',
+    mcq:            'کثیر الانتخابی سوالات',
+    fill_blanks:    'خالی جگہ پُر کریں',
+    circle_word:    'درست لفظ پر دائرہ لگائیں',
+    comprehension:  'فہمِ عبارت',
+    word_sentences: 'الفاظ کے جملے',
+    word_opposite:  'متضاد الفاظ',
+    singular_plural:'واحد / جمع',
+    word_synonyms:  'مترادف الفاظ',
+    qa:             'سوال و جواب',
+    punctuation:    'رموزِ اوقاف',
+    long_q:         'طویل سوال',
+    paragraph:      'پیراگراف نویسی',
+    letter:         'خط',
+    application:    'درخواست',
+    stories:        'کہانیاں',
+    essays:         'مضامین',
+  };
+  const pgTypeLabel = (key, fallback, isUrdu) => ((isUrdu && PG_TYPE_LABELS_UR[key]) || fallback);
+
   /* ═══════════════════════════════════════════════════════════
     RICH UNIT DATA — per subject, per unit, per question type
     Each unit has: main questions (instructions) and item counts
@@ -1602,6 +1627,7 @@ const setSubjLine = (ci, si, l) => {
     const [subject, setSubject] = useState(isEdit ? (initialPaper.subj || '') : '');
     const [paperType, setPaperType] = useState(isEdit ? (initialPaper.type || '') : '');
     const [paperFmt, setPaperFmt] = useState(isEdit ? (initialPaper.format || defaultFmt || '') : (defaultFmt || ''));
+    const [medium, setMedium] = useState(isEdit ? (initialPaper.medium || 'english') : 'english');
     const [title, setTitle] = useState(isEdit ? (initialPaper.title || '') : '');
     const [objMarks, setObjMarks] = useState(isEdit && initialPaper.objMarks ? String(initialPaper.objMarks) : '');
     const [objTime, setObjTime] = useState(isEdit && initialPaper.objTime ? String(initialPaper.objTime) : '');
@@ -1822,6 +1848,10 @@ const setSubjLine = (ci, si, l) => {
           sectionID: meta.sectionID ?? cls?.sectionID ?? initialPaper?.sectionID,
         });
         if (!alive) return;
+        // Medium API se aata hai (parentData.medium) → dropdown update karo.
+        const loadedMedium = Array.isArray(list) && list[0]?.parentData?.medium
+          ? String(list[0].parentData.medium).toLowerCase() : null;
+        if (loadedMedium) setMedium(loadedMedium);
         const savedUnitIds = [...new Set(
           (Array.isArray(list) ? list : [])
             .flatMap(b => (b.specificTableData || []).map(r => parseInt(r.notebookID)))
@@ -2174,7 +2204,8 @@ const setSubjLine = (ci, si, l) => {
               .toISOString()
               .slice(0, -1); // drop the trailing 'Z' so it reads as local time
           })(),
-          notebookIDs: selectedUnits // Selected unit IDs
+          notebookIDs: selectedUnits, // Selected unit IDs
+          medium: medium, // 'english' | 'urdu' — paper ka language medium
         };
 
         const url = buildUrl(`/api/qpmaster_crud`);
@@ -2418,6 +2449,14 @@ const setSubjLine = (ci, si, l) => {
                   </select>
                 </div>
 
+                <div className="pg-sc-field">
+                  <div className="pg-field-label">Medium</div>
+                  <select className="pg-select" value={medium} onChange={e => { setMedium(e.target.value); resetOnChange(); }}>
+                    <option value="english">English</option>
+                    <option value="urdu">Urdu</option>
+                  </select>
+                </div>
+
                 {/* <div className="pg-sc-field">
                   <div className="pg-field-label">Paper Format</div>
                   <select className="pg-select" value={paperFmt} onChange={e => { setPaperFmt(e.target.value); resetOnChange(); }}>
@@ -2488,13 +2527,15 @@ const setSubjLine = (ci, si, l) => {
                 <div style={{ marginBottom: 8 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--text-muted)', marginBottom: 6, padding: '6px 10px', background: 'var(--bg-muted)', borderRadius: 'var(--radius-sm)' }}>
                     <i className="fa-solid fa-chart-bar" style={{ color: '#1E40AF', fontSize: 11 }}></i>
-                    <span><strong>Marks tracker:</strong> Used marks must exactly match the required marks before you can generate the paper. Adjust item counts or marks per item to balance.</span>
+                    <span>{medium === 'urdu'
+                      ? <><strong>نمبر ٹریکر:</strong> پرچہ بنانے سے پہلے استعمال شدہ نمبر لازمی طور پر مطلوبہ نمبروں کے برابر ہونے چاہئیں۔ توازن کے لیے اشیاء کی تعداد یا فی آئٹم نمبر ایڈجسٹ کریں۔</>
+                      : <><strong>Marks tracker:</strong> Used marks must exactly match the required marks before you can generate the paper. Adjust item counts or marks per item to balance.</>}</span>
                   </div>
                   {showObj && (
-                    <MarksBar status={objStatus} label="Objective" iconColor="#1E40AF" iconClass="fa-circle-dot" used={objUsed} target={objTarget} />
+                    <MarksBar status={objStatus} label="Objective" isUrdu={medium === 'urdu'} iconColor="#1E40AF" iconClass="fa-circle-dot" used={objUsed} target={objTarget} />
                   )}
                   {showSubj && (
-                    <MarksBar status={subjStatus} label="Subjective" iconColor="#0891B2" iconClass="fa-pencil" used={subjUsed} target={subjTarget} style={{ marginTop: 6 }} />
+                    <MarksBar status={subjStatus} label="Subjective" isUrdu={medium === 'urdu'} iconColor="#0891B2" iconClass="fa-pencil" used={subjUsed} target={subjTarget} style={{ marginTop: 6 }} />
                   )}
                 </div>
 
@@ -2509,7 +2550,7 @@ const setSubjLine = (ci, si, l) => {
     }
     setQTab('obj');
   }}>
-                        <i className="fa-solid fa-circle-dot"></i> Objective
+                        <i className="fa-solid fa-circle-dot"></i> {medium === 'urdu' ? 'معروضی' : 'Objective'}
                       </button>
                     </Tooltip>
                     <Tooltip text="Edit the subjective section (short / long questions)">
@@ -2520,7 +2561,7 @@ const setSubjLine = (ci, si, l) => {
                         }
                         setQTab('subj');
                       }}>
-                        <i className="fa-solid fa-pencil"></i> Subjective
+                        <i className="fa-solid fa-pencil"></i> {medium === 'urdu' ? 'انشائی' : 'Subjective'}
                       </button>
                     </Tooltip>
                   </div>
@@ -2528,17 +2569,18 @@ const setSubjLine = (ci, si, l) => {
 
                 {/* Question type blocks */}
                 {(showObj && (paperType === 'objective' || qTab === 'obj')) && (
-                  <div>
+                  <div dir={medium === 'urdu' ? 'rtl' : undefined}>
                     <div className="pg-section-label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <span>Objective Question Types</span>
+                      <span>{medium === 'urdu' ? 'معروضی سوالات کی اقسام' : 'Objective Question Types'}</span>
                       <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 500, textTransform: 'none', letterSpacing: 0 }}>
-                        Select main questions · set items &amp; choices per type
+                        {medium === 'urdu' ? 'مرکزی سوالات منتخب کریں · فی قسم اشیاء و انتخاب مقرر کریں' : 'Select main questions · set items & choices per type'}
                       </span>
                     </div>
                     {objTabTypes.map(t => (
                       <QBlockAccordion
           key={t.key}
           typeDef={t}
+          isUrdu={medium === 'urdu'}
           section="obj"
           subject={subject}
           block={blocksState.obj[t.key]}
@@ -2559,17 +2601,18 @@ const setSubjLine = (ci, si, l) => {
                 )}
 
                 {(showSubj && (paperType === 'subjective' || qTab === 'subj')) && (
-                  <div>
+                  <div dir={medium === 'urdu' ? 'rtl' : undefined}>
                     <div className="pg-section-label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <span>Subjective Question Types</span>
+                      <span>{medium === 'urdu' ? 'انشائی سوالات کی اقسام' : 'Subjective Question Types'}</span>
                       <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 500, textTransform: 'none', letterSpacing: 0 }}>
-                        Select main questions · set items &amp; marks per type
+                        {medium === 'urdu' ? 'مرکزی سوالات منتخب کریں · فی قسم اشیاء و نمبر مقرر کریں' : 'Select main questions · set items & marks per type'}
                       </span>
                     </div>
                     {subjTabTypes.map(t => (
   <QBlockAccordion
           key={t.key}
           typeDef={t}
+          isUrdu={medium === 'urdu'}
           section="subj"
           subject={subject}
           block={blocksState.subj[t.key]}
@@ -2622,21 +2665,25 @@ const setSubjLine = (ci, si, l) => {
   }
 
   /* Marks tracker bar with color-coded status */
-  function MarksBar({ status, label, iconColor, iconClass, used, target, style }) {
+  function MarksBar({ status, label, iconColor, iconClass, used, target, style, isUrdu = false }) {
+    const t = (en, ur) => (isUrdu ? ur : en);
     const cls = target > 0 ? status : '';
     const remain = target - used;
+    const U = t('Used', 'استعمال شدہ'), T = t('Target', 'ہدف');
+    const lbl = label === 'Objective' ? t('Objective', 'معروضی')
+      : label === 'Subjective' ? t('Subjective', 'انشائی') : label;
     let body;
     if (status === 'ok') {
-      body = <>Used: <strong>{used}</strong> / Target: {target} ✓</>;
+      body = <>{U}: <strong>{used}</strong> / {T}: {target} ✓</>;
     } else if (status === 'over') {
-      body = <>Used: <strong style={{ color: 'var(--error,#DC2626)' }}>{used}</strong> / Target: {target} <span style={{ fontSize: 10 }}>(+{used - target} over)</span></>;
+      body = <>{U}: <strong style={{ color: 'var(--error,#DC2626)' }}>{used}</strong> / {T}: {target} <span style={{ fontSize: 10 }}>(+{used - target} {t('over', 'زائد')})</span></>;
     } else {
-      body = <>Used: <strong>{used}</strong> / Target: {target} <span style={{ fontSize: 10 }}>({target > 0 ? `${remain} remaining` : 'set marks above'})</span></>;
+      body = <>{U}: <strong>{used}</strong> / {T}: {target} <span style={{ fontSize: 10 }}>({target > 0 ? (isUrdu ? `${remain} باقی` : `${remain} remaining`) : t('set marks above', 'اوپر نمبر مقرر کریں')})</span></>;
     }
     return (
       <div className={`pg-marks-bar ${cls}`} style={style}>
         <span className="pg-marks-label">
-          <i className={`fa-solid ${iconClass}`} style={{ color: iconColor }}></i> {label}
+          <i className={`fa-solid ${iconClass}`} style={{ color: iconColor }}></i> {lbl}
         </span>
         <span className={`pg-marks-status ${status}`}>{body}</span>
       </div>
@@ -2646,10 +2693,12 @@ const setSubjLine = (ci, si, l) => {
   /* Per-question-type accordion. Holds tabs (Question No. 1/2/...) and
     inside each tab a workspace where the user picks units, instruction,
     items / choices / marks. */
-  function QBlockAccordion({ typeDef, section, subject, block, typeAgg,
+  function QBlockAccordion({ typeDef, isUrdu = false, section, subject, block, typeAgg,
     onToggleOpen, onAddTab, onSwitchTab, onRemoveTab, onUpdateTab, onSaveTab, onEditTab, onDeleteTab,
     notebookDetails, apiKeyMap
   }) {
+    const typeLabel = pgTypeLabel(typeDef.key, typeDef.label, isUrdu);
+    const t = (en, ur) => (isUrdu ? ur : en);
 
     const getApiItems = () => {
       if (!notebookDetails || !apiKeyMap) return null;
@@ -2723,20 +2772,20 @@ const setSubjLine = (ci, si, l) => {
   const badge = apiItems ? (
     hasApproved ? (
       <span className="pg-qblock-badge" >
-        {badgeApproved} approved · {unitCount} unit{unitCount !== 1 ? 's' : ''}
+        {badgeApproved} {t('approved', 'منظور شدہ')} · {unitCount} {t(`unit${unitCount !== 1 ? 's' : ''}`, 'یونٹ')}
       </span>
     ) : (
       <span className="pg-qblock-badge">
-        0 approved · {unitCount} unit{unitCount !== 1 ? 's' : ''}
+        0 {t('approved', 'منظور شدہ')} · {unitCount} {t(`unit${unitCount !== 1 ? 's' : ''}`, 'یونٹ')}
       </span>
     )
   ) : (
     totalSubmitted > 0
       ? <span className="pg-qblock-badge" >
-          {totalSubmitted} question{totalSubmitted !== 1 ? 's' : ''} available
+          {totalSubmitted} {t(`question${totalSubmitted !== 1 ? 's' : ''} available`, 'سوالات دستیاب')}
         </span>
       : <span className="pg-qblock-badge" style={{ background: 'var(--bg-muted)', color: 'var(--text-muted)' }}>
-          No items
+          {t('No items', 'کوئی آئٹم نہیں')}
         </span>
   );
 
@@ -2744,13 +2793,13 @@ const setSubjLine = (ci, si, l) => {
       <div className="pg-qblock">
         <div className="pg-qblock-header" onClick={onToggleOpen} style={{ cursor: 'pointer' }}>
 
-          <div className="pg-qblock-title">{typeDef.label}</div>
+          <div className="pg-qblock-title">{typeLabel}</div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
             {badge}
             {typeAgg && typeAgg.count > 0 && (
               <span className="pg-type-config-badge">
                 <i className="fa-solid fa-check-circle" style={{ fontSize: 9 }}></i>
-                {' '}{typeAgg.count} Question{typeAgg.count !== 1 ? 's' : ''}
+                {' '}{typeAgg.count} {t(`Question${typeAgg.count !== 1 ? 's' : ''}`, 'سوال')}
               </span>
             )}
             {/* Chevron sirf tab dikhao jab approved items hain */}
@@ -2770,16 +2819,16 @@ const setSubjLine = (ci, si, l) => {
               {tabs.length === 0 ? (
               <>
             <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text-muted)', padding: '2px 4px' }}>
-              No question blocks yet.
+              {t('No question blocks yet.', 'ابھی کوئی سوال بلاک نہیں۔')}
             </span>
             <Tooltip text={!hasApproved ? 'No approved items for this question type' : 'Add a question block of this type'}>
-              <button 
-                className="pg-qtab-add-btn" 
+              <button
+                className="pg-qtab-add-btn"
                 onClick={hasApproved ? onAddTab : undefined}
                 disabled={!hasApproved}
                 style={!hasApproved ? { opacity: 0.4, cursor: 'not-allowed', borderStyle: 'solid' } : {}}
               >
-                <i className="fa-solid fa-plus"></i> Add Question Block
+                <i className="fa-solid fa-plus"></i> {t('Add Question Block', 'سوال بلاک شامل کریں')}
               </button>
             </Tooltip>
           </>
@@ -2797,7 +2846,7 @@ const setSubjLine = (ci, si, l) => {
                           onClick={() => onSwitchTab(t.entryId)}
                         >
                           {t.saved && <i className="fa-solid fa-check" style={{ fontSize: 9, marginRight: 2, color: isActive ? '#fff' : 'var(--success,#16A34A)' }}></i>}
-                          {t.label}
+                          {isUrdu ? typeLabel : t.label}
                           {hasData && <span style={{ fontSize: 9.5, fontWeight: 700, opacity: .75, marginLeft: 3 }}></span>}
                           {/* Cross sirf UNSAVED tab par — saved question ko cross se delete na ho (uske liye Delete button hai). */}
                           {tabs.length > 1 && !t.saved && <span className="pg-qtab-close" onClick={e => { e.stopPropagation(); onRemoveTab(t.entryId); }}>×</span>}
@@ -2807,7 +2856,7 @@ const setSubjLine = (ci, si, l) => {
                   })}
                   <Tooltip text="Add another tab of this question type">
                     <button className="pg-qtab-add-btn" onClick={onAddTab}>
-                      <i className="fa-solid fa-plus"></i> Add
+                      <i className="fa-solid fa-plus"></i> {t('Add', 'شامل کریں')}
                     </button>
                   </Tooltip>
                 </>
@@ -2817,11 +2866,12 @@ const setSubjLine = (ci, si, l) => {
             {activeIdx >= 0 && (
         <div className="pg-qworkspace">
           {tabs[activeIdx].saved ? (
-            <QSavedCard tab={tabs[activeIdx]} onEdit={() => onEditTab(tabs[activeIdx].entryId)} />
+            <QSavedCard tab={tabs[activeIdx]} isUrdu={isUrdu} onEdit={() => onEditTab(tabs[activeIdx].entryId)} />
           ) : (
             <QWorkspacePanel
               tab={tabs[activeIdx]}
               typeKey={typeDef.key}
+              isUrdu={isUrdu}
               subject={subject}
               onUpdate={patch => onUpdateTab(tabs[activeIdx].entryId, patch)}
               onSave={() => onSaveTab(tabs[activeIdx].entryId)}
@@ -2839,7 +2889,8 @@ const setSubjLine = (ci, si, l) => {
   }
 
   /* Saved-state summary card shown inside a tab once user clicks Save */
-  function QSavedCard({ tab, onEdit }) {
+  function QSavedCard({ tab, onEdit, isUrdu = false }) {
+    const t = (en, ur) => (isUrdu ? ur : en);
     const items   = +tab.items   || 0;
     const choices = +tab.choices || 0;
     const marks   = +tab.marks   || 0;
@@ -2852,29 +2903,29 @@ const setSubjLine = (ci, si, l) => {
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1 }}>
               <div className="pg-qws-saved-icon"><i className="fa-solid fa-check"></i></div>
               <div>
-                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{tab.instr || '(no instruction)'}</div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{tab.instr || t('(no instruction)', '(کوئی ہدایت نہیں)')}</div>
                 <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 2 }}>{unitNames.join(' · ')}</div>
               </div>
             </div>
             <Tooltip text="Edit this question block">
               <button className="pg-qws-edit-btn" onClick={onEdit}>
-                <i className="fa-solid fa-pen"></i> Edit
+                <i className="fa-solid fa-pen"></i> {t('Edit', 'ترمیم')}
               </button>
             </Tooltip>
           </div>
           <div className="pg-qws-saved-chips">
-            <span className="pg-qws-chip blue"><i className="fa-solid fa-list-ol" style={{ fontSize: 9 }}></i> {eff} items</span>
-            <span className="pg-qws-chip teal"><i className="fa-solid fa-eye-slash" style={{ fontSize: 9 }}></i> {choices} choices</span>
-            <span className="pg-qws-chip green"><i className="fa-solid fa-star" style={{ fontSize: 9 }}></i> {marks} mark{marks !== 1 ? 's' : ''}/item</span>
-            <span className="pg-qws-chip amber"><i className="fa-solid fa-calculator" style={{ fontSize: 9 }}></i> {eff * marks} total marks</span>
-            <span className="pg-qws-chip gray"><i className="fa-solid fa-database" style={{ fontSize: 9 }}></i> {tab.totalEligible} eligible</span>
+            <span className="pg-qws-chip blue"><i className="fa-solid fa-list-ol" style={{ fontSize: 9 }}></i> {eff} {t('items', 'اشیاء')}</span>
+            <span className="pg-qws-chip teal"><i className="fa-solid fa-eye-slash" style={{ fontSize: 9 }}></i> {choices} {t('choices', 'انتخاب')}</span>
+            <span className="pg-qws-chip green"><i className="fa-solid fa-star" style={{ fontSize: 9 }}></i> {marks} {t(`mark${marks !== 1 ? 's' : ''}/item`, 'نمبر/آئٹم')}</span>
+            <span className="pg-qws-chip amber"><i className="fa-solid fa-calculator" style={{ fontSize: 9 }}></i> {eff * marks} {t('total marks', 'کل نمبر')}</span>
+            <span className="pg-qws-chip gray"><i className="fa-solid fa-database" style={{ fontSize: 9 }}></i> {tab.totalEligible} {t('eligible', 'اہل')}</span>
           </div>
         </div>
       </div>
     );
   }
-  function QWorkspacePanel({ tab, typeKey, subject, onUpdate, onSave, onDelete, apiItems }) {
-    
+  function QWorkspacePanel({ tab, typeKey, subject, onUpdate, onSave, onDelete, apiItems, isUrdu = false }) {
+    const t = (en, ur) => (isUrdu ? ur : en);
     const useApiData = !!apiItems && apiItems.length > 0;
     
     const unitData = PG_UNIT_DATA[subject] || [];
@@ -2979,11 +3030,11 @@ const setSubjLine = (ci, si, l) => {
           <div className="pg-qws-left">
             <div className="pg-qws-section-label">
               <i className="fa-solid fa-layer-group" style={{ color: '#1E40AF' }}></i>
-              {useApiData ? 'Select Unit' : 'Select Units'}
+              {useApiData ? t('Select Unit', 'یونٹ منتخب کریں') : t('Select Units', 'یونٹس منتخب کریں')}
               <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0, fontSize: 10 }}>
                 {useApiData
-                  ? `(${apiUnits.length} unit${apiUnits.length !== 1 ? 's' : ''} available)`
-                  : '(click to toggle)'}
+                  ? t(`(${apiUnits.length} unit${apiUnits.length !== 1 ? 's' : ''} available)`, `(${apiUnits.length} یونٹ دستیاب)`)
+                  : t('(click to toggle)', '(منتخب کرنے کے لیے کلک کریں)')}
               </span>
             </div>
 
@@ -2995,8 +3046,9 @@ const setSubjLine = (ci, si, l) => {
                   lineHeight: 1.45, padding: '5px 8px', background: 'var(--bg-muted)',
                   borderRadius: 'var(--radius-sm)', borderLeft: '2px solid #1E40AF'
                 }}>
-                  Select a unit below. Only <strong>submitted &amp; acknowledged</strong> items
-                  from the selected unit will be available for paper generation.
+                  {isUrdu
+                    ? <>نیچے سے ایک یونٹ منتخب کریں۔ صرف <strong>جمع کرائی گئی اور تصدیق شدہ</strong> اشیاء ہی پرچہ سازی کے لیے دستیاب ہوں گی۔</>
+                    : <>Select a unit below. Only <strong>submitted &amp; acknowledged</strong> items from the selected unit will be available for paper generation.</>}
                 </div>
 
                 {/* Unit rows */}
@@ -3036,10 +3088,10 @@ const setSubjLine = (ci, si, l) => {
                           <div style={{ display: 'flex', gap: 5, flexShrink: 0 }}>
                             <span className="pg-q-info-chip total" style={{ padding: '2px 7px', fontSize: 10 }}>
                               {/* Checked unit par sirf uske selected mainQ ka sum (check/uncheck par live) */}
-                              Total: {isChecked ? unitSelectedSum(u.unitName, 'total') : u.total}
+                              {t('Total', 'کل')}: {isChecked ? unitSelectedSum(u.unitName, 'total') : u.total}
                             </span>
                             <span className="pg-q-info-chip available" style={{ padding: '2px 7px', fontSize: 10 }}>
-                              Approved: {isChecked ? unitSelectedSum(u.unitName, 'approved') : u.submitted}
+                              {t('Approved', 'منظور شدہ')}: {isChecked ? unitSelectedSum(u.unitName, 'approved') : u.submitted}
                             </span>
                           </div>
                         </div>
@@ -3074,10 +3126,10 @@ const setSubjLine = (ci, si, l) => {
                                   <div className="pg-instr-card-text">{mainQ}</div>
                                   <div className="pg-instr-card-meta">
                                     <span className="pg-q-info-chip total" style={{ padding: '2px 6px', fontSize: 10 }}>
-                                      Total: {g.total}
+                                      {t('Total', 'کل')}: {g.total}
                                     </span>
                                     <span className="pg-q-info-chip available" style={{ padding: '2px 6px', fontSize: 10 }}>
-                                      Approved: {g.approved}
+                                      {t('Approved', 'منظور شدہ')}: {g.approved}
                                     </span>
                                   </div>
                                 </div>
@@ -3098,7 +3150,7 @@ const setSubjLine = (ci, si, l) => {
                       <i className="fa-solid fa-check-circle" style={{ color: '#16A34A', fontSize: 13 }}></i>
                       <div style={{ flex: 1 }}>
                         <span style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: 12.5 }}>
-                          {totalEligible} Eligible Items
+                          {totalEligible} {t('Eligible Items', 'اہل اشیاء')}
                         </span>
                         <span style={{ color: 'var(--text-muted)', fontSize: 11.5, marginLeft: 8 }}>
                           ({breakdown.join(' + ')})
@@ -3109,7 +3161,7 @@ const setSubjLine = (ci, si, l) => {
                     <>
                       <i className="fa-solid fa-database" style={{ color: 'var(--text-muted)', fontSize: 11 }}></i>
                       <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>
-                        Select a unit to see eligible items
+                        {t('Select a unit to see eligible items', 'اہل اشیاء دیکھنے کے لیے یونٹ منتخب کریں')}
                       </span>
                     </>
                   )}
@@ -3121,7 +3173,7 @@ const setSubjLine = (ci, si, l) => {
                   display: 'flex', alignItems: 'center', gap: 4
                 }}>
                   <i className="fa-solid fa-circle-info" style={{ fontSize: 10, color: '#1E40AF' }}></i>
-                  Eligible = teacher-submitted &amp; principal-acknowledged items only.
+                  {t('Eligible = teacher-submitted & principal-acknowledged items only.', 'اہل = صرف استاد کی جمع کرائی گئی اور پرنسپل کی تصدیق شدہ اشیاء۔')}
                 </div>
               </div>
 
@@ -3215,7 +3267,7 @@ const setSubjLine = (ci, si, l) => {
                   display: 'flex', alignItems: 'center', gap: 4
                 }}>
                   <i className="fa-solid fa-circle-info" style={{ fontSize: 10, color: '#1E40AF' }}></i>
-                  Eligible = teacher-submitted &amp; principal-acknowledged items only.
+                  {t('Eligible = teacher-submitted & principal-acknowledged items only.', 'اہل = صرف استاد کی جمع کرائی گئی اور پرنسپل کی تصدیق شدہ اشیاء۔')}
                 </div>
               </>
             )}
@@ -3226,10 +3278,10 @@ const setSubjLine = (ci, si, l) => {
             <div className="pg-qws-right pg-qws-right-empty">
               <i className="fa-solid fa-arrow-left" style={{ fontSize: 20, opacity: .3 }}></i>
               <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-muted)' }}>
-                Select a unit to configure
+                {t('Select a unit to configure', 'ترتیب دینے کے لیے یونٹ منتخب کریں')}
               </div>
               <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                Click any unit on the left to begin
+                {t('Click any unit on the left to begin', 'شروع کرنے کے لیے بائیں طرف کوئی یونٹ منتخب کریں')}
               </div>
             </div>
           ) : !useApiData && selCount === 0 ? (
@@ -3246,14 +3298,14 @@ const setSubjLine = (ci, si, l) => {
             <div className="pg-qws-right">
               <div className="pg-qws-section-label">
                 <i className="fa-solid fa-sliders" style={{ color: '#1E40AF' }}></i>
-                Configure Question
+                {t('Configure Question', 'سوال ترتیب دیں')}
               </div>
 
               <div style={{ marginBottom: 10 }}>
                 <div className="pg-q-field-label" style={{ marginBottom: 4 }}>
-                  Main Instruction{' '}
+                  {t('Main Instruction', 'بنیادی ہدایت')}{' '}
                   <span style={{ fontSize: 10, fontWeight: 400, color: 'var(--text-muted)' }}>
-                    (shown on paper)
+                    {t('(shown on paper)', '(پرچے پر ظاہر ہوگی)')}
                   </span>
                 </div>
               <input
@@ -3270,68 +3322,72 @@ const setSubjLine = (ci, si, l) => {
                 }}>
                   <i className="fa-solid fa-lightbulb" style={{ color: '#F59E0B', fontSize: 10 }}></i>
                   {useApiData
-                    ? 'This instruction will appear as the question heading on the paper.'
-                    : 'Main questions may differ per unit even if the question type is the same.'}
+                    ? t('This instruction will appear as the question heading on the paper.', 'یہ ہدایت پرچے پر سوال کی سرخی کے طور پر ظاہر ہوگی۔')
+                    : t('Main questions may differ per unit even if the question type is the same.', 'سوال کی قسم ایک جیسی ہونے کے باوجود مرکزی سوالات ہر یونٹ میں مختلف ہو سکتے ہیں۔')}
                 </div>
               </div>
 
               <div className="pg-qws-fields">
                 <div>
-                  <div className="pg-q-field-label">No. of Items</div>
+                  <div className="pg-q-field-label">{t('No. of Items', 'اشیاء کی تعداد')}</div>
                   <input
                     className="pg-q-input" type="number" min={1}
                     value={items || ''} placeholder="e.g. 5"
                     onChange={e => onUpdate({ items: Math.max(0, +e.target.value || 0) })}
                   />
                   <div style={{ fontSize: 9.5, color: 'var(--text-muted)', marginTop: 3 }}>
-                    Max = {totalEligible}
+                    {t('Max', 'زیادہ سے زیادہ')} = {totalEligible}
                   </div>
                 </div>
                 <div>
-                  <div className="pg-q-field-label">No. of Choices</div>
+                  <div className="pg-q-field-label">{t('No. of Choices', 'انتخاب کی تعداد')}</div>
                   <input
                     className="pg-q-input" type="number" min={0}
                     value={choices}
                     onChange={e => onUpdate({ choices: Math.max(0, +e.target.value || 0) })}
                   />
                   <div style={{ fontSize: 9.5, color: 'var(--text-muted)', marginTop: 3 }}>
-                    Choices = extra options; reduces compulsory items
+                    {t('Choices = extra options; reduces compulsory items', 'انتخاب = اضافی اختیارات؛ لازمی اشیاء کم کرتے ہیں')}
                   </div>
                 </div>
                 <div>
-                  <div className="pg-q-field-label">Marks / Item</div>
+                  <div className="pg-q-field-label">{t('Marks / Item', 'نمبر / آئٹم')}</div>
                   <input
                     className="pg-q-input" type="number"
                     value={marks}
                     onChange={e => onUpdate({ marks: Math.max(0, +e.target.value || 0) })}
                   />
                   <div style={{ fontSize: 9.5, color: 'var(--text-muted)', marginTop: 3 }}>
-                    Auto-calculates total marks
+                    {t('Auto-calculates total marks', 'کل نمبر خودکار شمار ہوتے ہیں')}
                   </div>
                 </div>
                 <div>
-                  <div className="pg-q-field-label">Total Eligible</div>
+                  <div className="pg-q-field-label">{t('Total Eligible', 'کل اہل')}</div>
                   <input
                     className="pg-q-input" type="number"
                     value={totalEligible} readOnly
                     style={{ background: 'var(--bg-card)', fontWeight: 700, color: '#1E40AF', cursor: 'default' }}
                   />
                   <div style={{ fontSize: 9.5, color: 'var(--text-muted)', marginTop: 3 }}>
-                    {useApiData ? 'Approved questions' : 'From selected units'}
+                    {useApiData ? t('Approved questions', 'منظور شدہ سوالات') : t('From selected units', 'منتخب یونٹس سے')}
                   </div>
                 </div>
               </div>
 
               <div className="pg-q-calc">
                 {items > 0
-                  ? <><strong>{shownItems} item{shownItems !== 1 ? 's' : ''}</strong> · <strong>{choices} choice{choices !== 1 ? 's' : ''}</strong> · <strong>{marks} marks/item{marks !== 1 ? 's' : ''}</strong></>
-                  : <>Set items &amp; choices to see layout preview</>}
+                  ? (isUrdu
+                      ? <><strong>{shownItems} اشیاء</strong> · <strong>{choices} انتخاب</strong> · <strong>{marks} نمبر/آئٹم</strong></>
+                      : <><strong>{shownItems} item{shownItems !== 1 ? 's' : ''}</strong> · <strong>{choices} choice{choices !== 1 ? 's' : ''}</strong> · <strong>{marks} marks/item{marks !== 1 ? 's' : ''}</strong></>)
+                  : t('Set items & choices to see layout preview', 'خاکہ دیکھنے کے لیے اشیاء اور انتخاب مقرر کریں')}
               </div>
 
               {overflow && (
                 <div className="pg-q-warn">
                   <i className="fa-solid fa-triangle-exclamation"></i>
-                  {items} items requested but only {totalEligible} approved available.
+                  {isUrdu
+                    ? <>{items} اشیاء درکار ہیں لیکن صرف {totalEligible} منظور شدہ دستیاب ہیں۔</>
+                    : <>{items} items requested but only {totalEligible} approved available.</>}
                 </div>
               )}
 
@@ -3353,7 +3409,7 @@ const setSubjLine = (ci, si, l) => {
                         display: 'inline-flex', alignItems: 'center', gap: 6,
                       }}
                     >
-                      <i className="fa-solid fa-trash"></i> Delete
+                      <i className="fa-solid fa-trash"></i> {t('Delete', 'حذف کریں')}
                     </button>
                   </Tooltip>
                 )}
@@ -3363,7 +3419,7 @@ const setSubjLine = (ci, si, l) => {
                     style={{ padding: '8px 20px', fontSize: 12.5 }}
                     onClick={onSave}
                   >
-                    <i className="fa-solid fa-floppy-disk"></i> Save
+                    <i className="fa-solid fa-floppy-disk"></i> {t('Save', 'محفوظ کریں')}
                   </button>
                 </Tooltip>
               </div>
@@ -3424,6 +3480,7 @@ const setSubjLine = (ci, si, l) => {
       parent,
       fmt:  pgApiToFmt(parent?.paperFormate),
       line: pgApiToLine(parent?.lineType),
+      medium: String(parent?.medium || 'english').toLowerCase(),
       sections: blocks.map(b => ({
         recTitle: b.parentData?.recTitle || '',
         mainQuestion: b.parentData?.changedMainQuestion || b.parentData?.recTitle || '',
@@ -3504,7 +3561,7 @@ const setSubjLine = (ci, si, l) => {
     .replace(/\s+/g, ' ')
     .trim();
   /* The most likely "question text" field for a row, across all types. (HTML → plain text) */
-  const pgRowText = r => pgStripHtml(r.question || r.word || r.sentence || r.statement || r.topic || r.title || r.comprehensionStatement || r.mainQuestion || '');
+  const pgRowText = r => pgStripHtml(r.question || r.word || r.sentence || r.statement || r.topic || r.title || r.comprehensionStatement || r.subject || r.punctuation || r.mainQuestion || '');
 
   /* ── Marks helpers for saved (API) sections ──────────────────────────────
      Per-item marks = marks-per-item (parentData.marks). Section total marks =
@@ -3567,7 +3624,24 @@ const setSubjLine = (ci, si, l) => {
   }
 
   /* ── React renderer (Preview) — one block per saved section, by recTitle ── */
-  function ApiPaperSections({ sections, isBW, paperType, fmt = 'with', line = 'single' }) {
+  /* Static UI labels (column headers, section titles, "Total Marks") — English ya
+    Urdu medium ke hisaab se. Question ki apni heading to API se (Urdu) aati hi hai;
+    yahan sirf fixed labels translate hote hain taake Urdu paper poora Urdu lage. */
+  const PG_UI_LABELS = {
+    en: { word:'Word', synonym:'Synonym', opposite:'Opposite', singular:'Singular', plural:'Plural',
+      marks:'Marks', colA:'Column A', colB:'Column B', answer:'Answer', statement:'Statement',
+      tru:'True', fls:'False', totalMarks:'Total Marks',
+      secObj:'Section A — Objective Questions', secSubj:'Section B — Subjective Questions' },
+    ur: { word:'لفظ', synonym:'مترادف', opposite:'متضاد', singular:'واحد', plural:'جمع',
+      marks:'نمبر', colA:'کالم الف', colB:'کالم ب', answer:'جواب', statement:'بیان',
+      tru:'درست', fls:'غلط', totalMarks:'کل نمبر',
+      secObj:'حصہ الف — معروضی سوالات', secSubj:'حصہ ب — انشائی سوالات' },
+  };
+  const pgLabels = (isUrdu) => (isUrdu ? PG_UI_LABELS.ur : PG_UI_LABELS.en);
+
+  function ApiPaperSections({ sections, isBW, paperType, fmt = 'with', line = 'single', medium = 'english' }) {
+    const isUrdu = String(medium).toLowerCase() === 'urdu';
+    const L = pgLabels(isUrdu);
     if (!sections || !sections.length) {
       return <div style={{ fontSize: 12, color: '#64748B', textAlign: 'center', padding: 24 }}>No saved questions found for this paper.</div>;
     }
@@ -3585,13 +3659,14 @@ const setSubjLine = (ci, si, l) => {
     const tdBorder = '1px solid #e2e8f0';
     const thBg = isBW ? '#FFFFFF' : '#EFF6FF';
     const thBorder = `1px solid ${isBW ? '#D1D5DB' : '#BFDBFE'}`;
-    const th = { padding: '5px 8px', border: thBorder, textAlign: 'left' };
-    const td = { padding: '6px 8px', border: tdBorder };
+    // Urdu (RTL) → header bhi right-align ho taake body words ke saath match kare.
+    const th = { padding: '5px 8px', border: thBorder, textAlign: isUrdu ? 'right' : 'left' };
+    const td = { padding: '6px 8px', border: tdBorder, textAlign: isUrdu ? 'right' : undefined };
     const blank = '___________';
 
     const twoCol = (rows, leftKey, leftLabel, rightLabel, mk) => (
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11.5, marginBottom: 12 }}>
-        <thead><tr style={{ background: thBg }}><th style={th}>#</th><th style={th}>{leftLabel}</th><th style={th}>{rightLabel}</th><th style={{ ...th, textAlign: 'center', width: 60 }}>Marks</th></tr></thead>
+      <table dir={isUrdu ? 'rtl' : undefined} style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11.5, marginBottom: 12 }}>
+        <thead><tr style={{ background: thBg }}><th style={th}>#</th><th style={th}>{leftLabel}</th><th style={th}>{rightLabel}</th><th style={{ ...th, textAlign: 'center', width: 60 }}>{L.marks}</th></tr></thead>
         <tbody>
           {rows.map((r, i) => (
             <tr key={i}><td style={td}>{pgRoman(i)}</td><td style={td}>{pgStripHtml(r[leftKey]) || pgRowText(r)}</td><td style={td}>{blank}</td><td style={{ ...td, textAlign: 'center' }}>[{mk}]</td></tr>
@@ -3605,7 +3680,10 @@ const setSubjLine = (ci, si, l) => {
       const k = pgRecKey(sec.recTitle);
       /* Per-item marks — same for every item in the section (marks-per-item). */
       const mk = pgFmtMk(sec.marks);
-      const mkTag = <span style={{ float: 'right', fontWeight: 700, marginLeft: 8 }}>[{mk}]</span>;
+      // Urdu (RTL) → marks left side par (line ke end), warna English mein right par.
+      const mkTag = (
+        <span style={{ float: isUrdu ? 'left' : 'right', fontWeight: 700, ...(isUrdu ? { marginRight: 8 } : { marginLeft: 8 }) }}>[{mk}]</span>
+      );
       if (k === 'mcqs') {
         return rows.map((r, i) => (
           <div key={i} style={{ marginBottom: 8, fontSize: 12, color: '#334155' }}>
@@ -3620,14 +3698,14 @@ const setSubjLine = (ci, si, l) => {
           </div>
         ));
       }
-      if (k === 'wordsynonyms') return twoCol(rows, 'word', 'Word', 'Synonym', mk);
-      if (k === 'wordopposite' || k === 'wordopposites') return twoCol(rows, 'word', 'Word', 'Opposite', mk);
-      if (k === 'singularplural' || k === 'singularplurals') return twoCol(rows, 'singular', 'Singular', 'Plural', mk);
+      if (k === 'wordsynonyms') return twoCol(rows, 'word', L.word, L.synonym, mk);
+      if (k === 'wordopposite' || k === 'wordopposites') return twoCol(rows, 'word', L.word, L.opposite, mk);
+      if (k === 'singularplural' || k === 'singularplurals') return twoCol(rows, 'singular', L.singular, L.plural, mk);
       if (k === 'matchcolume' || k === 'matchcolumns') {
         const shufB = pgShuffleColumnB(rows);   // Column B shuffled (sahi jawab saamne na aaye)
         return (
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11.5, marginBottom: 12 }}>
-            <thead><tr style={{ background: thBg }}><th style={th}>Column A</th><th style={th}>Answer</th><th style={th}>Column B</th><th style={{ ...th, textAlign: 'center', width: 60 }}>Marks</th></tr></thead>
+          <table dir={isUrdu ? 'rtl' : undefined} style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11.5, marginBottom: 12 }}>
+            <thead><tr style={{ background: thBg }}><th style={th}>{L.colA}</th><th style={th}>{L.answer}</th><th style={th}>{L.colB}</th><th style={{ ...th, textAlign: 'center', width: 60 }}>{L.marks}</th></tr></thead>
             <tbody>
               {rows.map((r, i) => (
                 <tr key={i}><td style={td}>{pgStripHtml(r.columnA || r.option1) || pgRowText(r)}</td><td style={td}>______</td><td style={td}>{shufB[i]}</td><td style={{ ...td, textAlign: 'center' }}>[{mk}]</td></tr>
@@ -3652,8 +3730,8 @@ const setSubjLine = (ci, si, l) => {
       }
       if (k === 'truefalse') {
         return (
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11.5, marginBottom: 12 }}>
-            <thead><tr style={{ background: thBg }}><th style={th}>#</th><th style={th}>Statement</th><th style={th}>True</th><th style={th}>False</th><th style={{ ...th, textAlign: 'center', width: 60 }}>Marks</th></tr></thead>
+          <table dir={isUrdu ? 'rtl' : undefined} style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11.5, marginBottom: 12 }}>
+            <thead><tr style={{ background: thBg }}><th style={th}>#</th><th style={th}>{L.statement}</th><th style={th}>{L.tru}</th><th style={th}>{L.fls}</th><th style={{ ...th, textAlign: 'center', width: 60 }}>{L.marks}</th></tr></thead>
             <tbody>
               {rows.map((r, i) => (
                 <tr key={i}><td style={td}>{pgRoman(i)}</td><td style={td}>{pgRowText(r)}</td><td style={{ ...td, width: 40 }}></td><td style={{ ...td, width: 40 }}></td><td style={{ ...td, textAlign: 'center' }}>[{mk}]</td></tr>
@@ -3688,8 +3766,8 @@ const setSubjLine = (ci, si, l) => {
     const renderBlock = (sec, num) => (
       <div key={`${num}-${sec.recTitle}`} style={{ marginBottom: 16 }}>
         <div style={{ fontSize: 12, color: '#334155', marginBottom: 10, display: 'flex', justifyContent: 'space-between', gap: 10 }}>
-          <span><strong>Q.{num}</strong> {sec.mainQuestion}</span>
-          <strong style={{ whiteSpace: 'nowrap' }}>[Total Marks: {pgSecTotalMarks(sec)}]</strong>
+          <span><strong>{isUrdu ? `سوال نمبر ${num}` : `Q.${num}`}</strong> {sec.mainQuestion}</span>
+          <strong style={{ whiteSpace: 'nowrap' }}>[{L.totalMarks}: {pgSecTotalMarks(sec)}]</strong>
         </div>
         {renderRows(sec)}
       </div>
@@ -3702,9 +3780,9 @@ const setSubjLine = (ci, si, l) => {
       let n = 0;
       return (
         <>
-          {objSecs.length > 0 && sectionHeading('Section A — Objective Questions')}
+          {objSecs.length > 0 && sectionHeading(L.secObj)}
           {objSecs.map(sec => renderBlock(sec, ++n))}
-          {subjSecs.length > 0 && sectionHeading('Section B — Subjective Questions')}
+          {subjSecs.length > 0 && sectionHeading(L.secSubj)}
           {subjSecs.map(sec => renderBlock(sec, ++n))}
         </>
       );
@@ -3713,10 +3791,12 @@ const setSubjLine = (ci, si, l) => {
   }
 
   /* ── HTML builder (Download) — mirrors ApiPaperSections using paper CSS classes ── */
-  function buildApiSectionsHTML(sections, paperType, fmt = 'with', line = 'single') {
+  function buildApiSectionsHTML(sections, paperType, fmt = 'with', line = 'single', medium = 'english') {
     if (!sections || !sections.length) {
       return '<div style="text-align:center;color:#64748B;font-size:12px;padding:20px">No saved questions found for this paper.</div>';
     }
+    const isUrdu = String(medium).toLowerCase() === 'urdu';
+    const L = pgLabels(isUrdu);
     const blank = '___________';
     /* Answer space per the class+subject setup: no sheet → none; with sheet →
       1 line (single) or 4 lines (four) after each written-answer question. */
@@ -3726,13 +3806,18 @@ const setSubjLine = (ci, si, l) => {
     const renderOne = (sec, num) => {
       const k = pgRecKey(sec.recTitle);
       const rows = sec.rows || [];
-      /* Per-item marks (right-aligned) + section total marks on the header. */
+      /* Per-item marks + section total marks. Urdu → left side, English → right.
+        Float use karte hain (Word/PDF dono mein reliable; flex Word mein nahi chalta).
+        Total-marks span pehle rakha (float ke liye source order). */
       const mk = pgFmtMk(sec.marks);
-      const mkTag = `<span style="float:right;font-weight:700;margin-left:8px">[${mk}]</span>`;
-      const header = `<div class="q-header"><span><b>Q.${num}</b> ${pgEsc(sec.mainQuestion)}</span><span class="q-marks">[Total Marks: ${pgSecTotalMarks(sec)}]</span></div>`;
+      const mkFloat = isUrdu ? 'left' : 'right';
+      const mkMargin = isUrdu ? 'margin-right:8px' : 'margin-left:8px';
+      const mkTag = `<span style="float:${mkFloat};font-weight:700;${mkMargin}">[${mk}]</span>`;
+      const qLabel = isUrdu ? `سوال نمبر ${num}` : `Q.${num}`;
+      const header = `<div class="q-header"><span class="q-marks">[${L.totalMarks}: ${pgSecTotalMarks(sec)}]</span><span><b>${qLabel}</b> ${pgEsc(sec.mainQuestion)}</span></div>`;
       let body = '';
       const twoCol = (leftKey, leftLabel, rightLabel) =>
-        `<table><tr><th>#</th><th>${leftLabel}</th><th>${rightLabel}</th><th style="text-align:center;width:60px">Marks</th></tr>` +
+        `<table><tr><th>#</th><th>${leftLabel}</th><th>${rightLabel}</th><th style="text-align:center;width:60px">${L.marks}</th></tr>` +
         rows.map((r, i) => `<tr><td>${pgRoman(i)}</td><td>${pgEsc(pgStripHtml(r[leftKey]) || pgRowText(r))}</td><td>${blank}</td><td style="text-align:center">[${mk}]</td></tr>`).join('') + '</table>';
 
       if (k === 'mcqs') {
@@ -3740,19 +3825,19 @@ const setSubjLine = (ci, si, l) => {
           const opts = ['option1','option2','option3','option4'].map((o, oi) => r[o] ? `<span class="mcq-opt">(${String.fromCharCode(65 + oi)}) ${pgEsc(pgStripHtml(r[o]))}</span>` : '').join('');
           return `<div class="mcq-item">${mkTag}${pgRoman(i)}. ${pgEsc(pgStripHtml(r.question))}<div class="mcq-options">${opts}</div></div>`;
         }).join('');
-      } else if (k === 'wordsynonyms') body = twoCol('word', 'Word', 'Synonym');
-      else if (k === 'wordopposite' || k === 'wordopposites') body = twoCol('word', 'Word', 'Opposite');
-      else if (k === 'singularplural' || k === 'singularplurals') body = twoCol('singular', 'Singular', 'Plural');
+      } else if (k === 'wordsynonyms') body = twoCol('word', L.word, L.synonym);
+      else if (k === 'wordopposite' || k === 'wordopposites') body = twoCol('word', L.word, L.opposite);
+      else if (k === 'singularplural' || k === 'singularplurals') body = twoCol('singular', L.singular, L.plural);
       else if (k === 'matchcolume' || k === 'matchcolumns') {
         const shufB = pgShuffleColumnB(rows);   // Column B shuffled (preview jaisा hi deterministic order)
-        body = `<table><tr><th>Column A</th><th>Answer</th><th>Column B</th><th style="text-align:center;width:60px">Marks</th></tr>` +
+        body = `<table><tr><th>${L.colA}</th><th>${L.answer}</th><th>${L.colB}</th><th style="text-align:center;width:60px">${L.marks}</th></tr>` +
           rows.map((r, i) => `<tr><td>${pgEsc(pgStripHtml(r.columnA || r.option1) || pgRowText(r))}</td><td>______</td><td>${pgEsc(shufB[i])}</td><td style="text-align:center">[${mk}]</td></tr>`).join('') + '</table>';
       } else if (k === 'comprehension') {
         const passage = pgStripHtml(rows[0]?.comprehensionStatement);
         body = (passage ? `<div style="background:#F8FAFF;border:1px solid #BFDBFE;border-radius:4px;padding:8px 12px;font-size:11.5px;margin-bottom:8px;line-height:1.6">${pgEsc(passage)}</div>` : '') +
           rows.map((r, i) => `<div class="write-item">${mkTag}${pgRoman(i)}. ${pgEsc(pgStripHtml(r.question))}${ansLines()}</div>`).join('');
       } else if (k === 'truefalse') {
-        body = `<table class="tf-table"><tr><th>#</th><th>Statement</th><th>True</th><th>False</th><th style="text-align:center;width:60px">Marks</th></tr>` +
+        body = `<table class="tf-table"><tr><th>#</th><th>${L.statement}</th><th>${L.tru}</th><th>${L.fls}</th><th style="text-align:center;width:60px">${L.marks}</th></tr>` +
           rows.map((r, i) => `<tr><td>${pgRoman(i)}</td><td>${pgEsc(pgRowText(r))}</td><td><span class="tf-box"></span></td><td><span class="tf-box"></span></td><td style="text-align:center">[${mk}]</td></tr>`).join('') + '</table>';
       } else if (k === 'fillintheblank' || k === 'filltheblank' || k === 'fillintheblanks') {
         body = rows.map((r, i) => `<div class="write-item">${mkTag}${pgRoman(i)}. ${pgEsc(pgRowText(r))} <span class="blank"></span></div>`).join('');
@@ -3768,8 +3853,8 @@ const setSubjLine = (ci, si, l) => {
       const subjSecs = sections.filter(s => pgSectionKind(s) === 'subj');
       let n = 0;
       let html = '';
-      if (objSecs.length)  html += '<div class="section-title">Section A — Objective Questions</div>'  + objSecs.map(s => renderOne(s, ++n)).join('');
-      if (subjSecs.length) html += '<div class="section-title">Section B — Subjective Questions</div>' + subjSecs.map(s => renderOne(s, ++n)).join('');
+      if (objSecs.length)  html += `<div class="section-title">${L.secObj}</div>`  + objSecs.map(s => renderOne(s, ++n)).join('');
+      if (subjSecs.length) html += `<div class="section-title">${L.secSubj}</div>` + subjSecs.map(s => renderOne(s, ++n)).join('');
       return html;
     }
     return sections.map((sec, si) => renderOne(sec, si + 1)).join('');
@@ -3782,7 +3867,7 @@ const setSubjLine = (ci, si, l) => {
     const [tone, setTone] = useState('color'); // 'color' | 'bw'
     const [sections, setSections] = useState([]);
     /* Answer-space config from the class+subject setup (API submission detail). */
-    const [meta, setMeta] = useState({ fmt: paper.format || 'with', line: paper.line || 'single' });
+    const [meta, setMeta] = useState({ fmt: paper.format || 'with', line: paper.line || 'single', medium: paper.medium || 'english' });
     const [loadingDetail, setLoadingDetail] = useState(true);
     const [reportHeader, setReportHeader] = useState(null); // { branchName, branchLogo, address }
 
@@ -3814,7 +3899,8 @@ const setSubjLine = (ci, si, l) => {
           if (alive) {
             const detail = normalizeQpDetail(list);
             setSections(detail.sections);
-            setMeta({ fmt: detail.fmt, line: detail.line });
+            // Medium API se aaye to wahi, warna paper ka apna medium (fallback english).
+            setMeta({ fmt: detail.fmt, line: detail.line, medium: detail.medium || paper.medium || 'english' });
           }
         } catch (err) {
           console.error('Could not load paper detail', err);
@@ -3827,6 +3913,8 @@ const setSubjLine = (ci, si, l) => {
     }, [paper, cls]);
 
     const isBW = tone === 'bw';
+    // Urdu paper → RTL layout (questions right-to-left, Urdu-friendly font).
+    const isUrdu = String(meta.medium || paper.medium || 'english').toLowerCase() === 'urdu';
     const objMarks  = paper.objMarks  || 0;
     const subjMarks = paper.subjMarks || 0;
     const totalMk   = (objMarks + subjMarks) || 100;
@@ -3918,7 +4006,12 @@ const setSubjLine = (ci, si, l) => {
                   <i className="fa-solid fa-spinner fa-spin" style={{ marginRight: 6 }}></i> Loading questions…
                 </div>
               ) : (
-                <ApiPaperSections sections={sections} isBW={isBW} paperType={paper.type} fmt={meta.fmt} line={meta.line} />
+                <div
+                  dir={isUrdu ? 'rtl' : 'ltr'}
+                  style={isUrdu ? { textAlign: 'right', fontFamily: "'Noto Nastaliq Urdu','Jameel Noori Nastaleeq','Segoe UI',sans-serif" } : undefined}
+                >
+                  <ApiPaperSections sections={sections} isBW={isBW} paperType={paper.type} fmt={meta.fmt} line={meta.line} medium={meta.medium} />
+                </div>
               )}
 
               <div style={{ marginTop: 20, paddingTop: 12, borderTop: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#64748B' }}>
@@ -4221,7 +4314,7 @@ const setSubjLine = (ci, si, l) => {
       </div>`;
   }
 
-  function buildFullPaperHTML({ paper, cls, templateId = 1, isBW, sections, reportHeader, fmt: fmtArg, line: lineArg }) {
+  function buildFullPaperHTML({ paper, cls, templateId = 1, isBW, sections, reportHeader, fmt: fmtArg, line: lineArg, medium: mediumArg }) {
     const schoolName = reportHeader?.branchName || 'The Oxford System — Lahore Campus';
     const schoolLogo = reportHeader?.branchLogo || '';
     const schoolAddress = reportHeader?.address || '';
@@ -4229,6 +4322,8 @@ const setSubjLine = (ci, si, l) => {
       to the paper's own values. */
     const fmt      = fmtArg || paper.format || 'with';
     const line     = lineArg || paper.line || 'single';
+    // Urdu paper → RTL layout (questions dayen-se-bayen, Urdu-friendly font).
+    const isUrdu   = String(mediumArg || paper.medium || 'english').toLowerCase() === 'urdu';
     const typ      = paper.type   || 'both';
     const subject  = paper.subj   || 'English';
     const title    = paper.title  || 'Question Paper';
@@ -4267,7 +4362,7 @@ const setSubjLine = (ci, si, l) => {
     // API-driven body (saved questions, grouped by recTitle) — kept in sync with Preview.
     // Falls back to the static sample sections only if no API sections were supplied.
     const apiBody     = Array.isArray(sections)
-      ? buildApiSectionsHTML(sections, typ, fmt, line)
+      ? buildApiSectionsHTML(sections, typ, fmt, line, isUrdu ? 'urdu' : 'english')
       : `${showObj ? buildObjSection() : ''}${showSubj ? buildSubjSection() : ''}`;
     const answerSheet = fmt === 'with' ? buildAnswerSheetSection() : '';
 
@@ -4304,7 +4399,19 @@ const setSubjLine = (ci, si, l) => {
   <title>${title} — ${subject}</title>
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css" rel="stylesheet">
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  ${isUrdu ? '<link href="https://fonts.googleapis.com/css2?family=Noto+Nastaliq+Urdu:wght@400;600;700&display=swap" rel="stylesheet">' : ''}
   <style>
+  /* Urdu: dir="rtl" flex ko khud flip kar deta hai — flex-direction override mat
+    karo (warna double-flip ho kar layout bigad jata hai). Sirf font + text-align
+    + logical padding adjust karo. */
+  .urdu-body { font-family:'Noto Nastaliq Urdu','Jameel Noori Nastaleeq','Segoe UI',sans-serif; text-align:right; direction:rtl; }
+  /* Urdu → total marks / per-item marks left side par float karein. */
+  .urdu-body .q-marks { float:left; }
+  .urdu-body .mcq-options { padding-left:0; padding-right:14px; }
+  /* Table columns bhi right-to-left order mein (serial number + heading dayen se). */
+  .urdu-body table { direction:rtl; }
+  .urdu-body th, .urdu-body td { text-align:right; }
+  .urdu-body .blank { margin:0 4px; }
   * { box-sizing:border-box; margin:0; padding:0; }
   body { font-family:'Plus Jakarta Sans',sans-serif; background:#fff; color:#1E293B; font-size:13px; }
   @page { size:A4; margin:15mm 18mm; }
@@ -4320,8 +4427,8 @@ const setSubjLine = (ci, si, l) => {
   .info-bar { display:flex; justify-content:space-between; align-items:center; background:${infoBg}; border:1px solid ${infoBorder}; border-radius:6px; padding:8px 14px; margin:12px 0; font-size:12px; font-weight:600; color:${infoColor}; flex-wrap:wrap; gap:8px; }
   .section-title { background:${sectionBg}; color:${sectionColor}; border:${sectionBorder}; padding:6px 14px; font-size:12px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; margin:16px 0 10px; border-radius:4px; }
   .q-block { margin-bottom:14px; }
-  .q-header { font-size:12.5px; font-weight:700; color:#1E293B; margin-bottom:8px; display:flex; justify-content:space-between; gap:10px; }
-  .q-marks { color:${infoColor}; font-weight:700; }
+  .q-header { font-size:12.5px; font-weight:700; color:#1E293B; margin-bottom:8px; overflow:hidden; }
+  .q-marks { color:${infoColor}; font-weight:700; float:right; white-space:nowrap; }
   table { width:100%; border-collapse:collapse; margin-bottom:8px; font-size:12px; }
   th { background:${thBg}; color:${thColor}; padding:5px 8px; border:1px solid ${thBorder}; font-weight:700; }
   td { padding:6px 8px; border:1px solid #E2E8F0; }
@@ -4347,8 +4454,10 @@ const setSubjLine = (ci, si, l) => {
   <div class="paper-wrap">
     ${headerHTML}
 
-    ${apiBody}
-    ${answerSheet}
+    <div dir="${isUrdu ? 'rtl' : 'ltr'}"${isUrdu ? ' class="urdu-body"' : ''}>
+      ${apiBody}
+      ${answerSheet}
+    </div>
 
     <div class="paper-footer">
       <span>Examiner: _______________________</span>
@@ -4398,6 +4507,7 @@ const setSubjLine = (ci, si, l) => {
       let reportHeader = null;
       let fmt = paper.format || 'with';
       let line = paper.line || 'single';
+      let medium = paper.medium || 'english';
       try {
         const [list, header] = await Promise.all([
           fetchQpSubmissionDetail({
@@ -4412,6 +4522,7 @@ const setSubjLine = (ci, si, l) => {
         sections = detail.sections;
         fmt = detail.fmt;
         line = detail.line;
+        medium = detail.medium || medium;
         reportHeader = header;
       } catch (err) {
         console.error('Could not load paper detail for download', err);
@@ -4425,6 +4536,7 @@ const setSubjLine = (ci, si, l) => {
         reportHeader,
         fmt,
         line,
+        medium,
       });
       /* PDF → print preview; Word → same preview with a "Save as Word" button
         (deliverReport handles the format-specific delivery into `win`). */
