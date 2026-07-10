@@ -154,14 +154,36 @@ function PlansPanel({ schools, setSchools, getSchool, toast, loading, reload }) 
       toast(err?.message || 'Could not update plan', 'error');
     }
   };
-  const confirmBlock = () => {
-    setSchools((prev) => prev.map((s) => s.id === modal.school.id ? { ...s, status: 'Blocked' } : s));
-    setModal(null); toast('School blocked from Mentor AI', 'warn');
-  };
-  const confirmUnblock = () => {
-    setSchools((prev) => prev.map((s) => s.id === modal.school.id ? { ...s, status: 'Active', plan: modal.restore } : s));
-    setModal(null); toast('Mentor AI access restored', 'success');
-  };
+const confirmBlock = async () => {
+  if (modal.saving) return;
+  setModal((m) => ({ ...m, saving: true }));
+  try {
+    // POST /ai/api/wallet/admin/branches/{id}/status/  { wallet_enabled: false }
+    await branchesApi.setWalletStatus(modal.school.id, false);
+    setModal(null);
+    toast('School blocked from Mentor AI', 'warn');
+    // GET /ai/api/wallet/admin/branches/subscriptions/  — refresh real status
+    await reload();
+  } catch (err) {
+    setModal((m) => ({ ...m, saving: false }));
+    toast(err?.message || 'Could not block school', 'error');
+  }
+};
+
+const confirmUnblock = async () => {
+  if (modal.saving) return;
+  setModal((m) => ({ ...m, saving: true }));
+  try {
+    // POST /ai/api/wallet/admin/branches/{id}/status/  { wallet_enabled: true }
+    await branchesApi.setWalletStatus(modal.school.id, true);
+    setModal(null);
+    toast('Mentor AI access restored', 'success');
+    await reload();
+  } catch (err) {
+    setModal((m) => ({ ...m, saving: false }));
+    toast(err?.message || 'Could not restore access', 'error');
+  }
+};
 
   return (
     <div>
@@ -295,9 +317,11 @@ function PlansPanel({ schools, setSchools, getSchool, toast, loading, reload }) 
       {modal?.type === 'block' && (
         <Modal title="Block Mentor AI Access" sub="Suspend AI access for this school" icon="fa-ban" iconColor="var(--err)"
           onClose={() => setModal(null)}
-          footer={<>
-            <button className="btn-secondary" onClick={() => setModal(null)}>Cancel</button>
-            <button className="btn-danger" onClick={confirmBlock}><i className="fa-solid fa-ban" /> Block Mentor AI</button>
+    footer={<>
+      <button className="btn-secondary" onClick={() => setModal(null)} disabled={modal.saving}>Cancel</button>
+      <button className="btn-danger" onClick={confirmBlock} disabled={modal.saving}>
+        <i className={`fa-solid ${modal.saving ? 'fa-spinner fa-spin' : 'fa-ban'}`} /> {modal.saving ? 'Blocking…' : 'Block Mentor AI'}
+      </button>
           </>}>
           <div className="modal-grid">
             <Field label="School Name"><input className="f-input" value={modal.school.school} readOnly /></Field>
