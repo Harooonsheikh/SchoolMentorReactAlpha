@@ -12,10 +12,36 @@ export default function ProfileModal({ open, onClose, toast }) {
   const { data: profile } = useAsync(profileService.getProfile, []);
   const [tab, setTab] = useState('info');
   const [avatarSrc, setAvatarSrc] = useState(null);
+  const [avatarFile, setAvatarFile] = useState(null);   // raw File to upload (null = keep existing)
   const [unsaved, setUnsaved] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  /* Editable form fields — seeded from the fetched profile once it loads. */
+  const [form, setForm] = useState({
+    fullName: '', displayName: '', email: '', phone: '', cnic: '', language: 'English (UK)',
+  });
+  useEffect(() => {
+    if (!profile) return;
+    setForm({
+      fullName:    profile.name || '',
+      displayName: profile.displayName || profile.name || '',
+      email:       profile.email || '',
+      phone:       profile.phone || '',
+      cnic:        profile.cnic || '',
+      language:    profile.language || 'English (UK)',
+    });
+    setOtpPhone(profile.phone || '');
+    if (profile.photo) setAvatarSrc(profile.photo);
+    setUnsaved(false);
+  }, [profile]);
+  const setField = (k, v) => { setForm(f => ({ ...f, [k]: v })); setUnsaved(true); };
+
+  /* Avatar initials from the user's name (falls back to "U"). */
+  const initials = (form.fullName || profile?.name || 'U')
+    .split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase() || 'U';
 
   const [pwdStep, setPwdStep] = useState(1);
-  const [otpPhone, setOtpPhone] = useState('+92 300 1234567');
+  const [otpPhone, setOtpPhone] = useState('');
   const [otpDigits, setOtpDigits] = useState(['', '', '', '']);
   const [otpError, setOtpError] = useState(false);
   const [otpTimer, setOtpTimer] = useState(120);
@@ -52,36 +78,43 @@ export default function ProfileModal({ open, onClose, toast }) {
     const file = e.target.files[0];
     if (!file) return;
     if (file.size > 2 * 1024 * 1024) { toast('File too large. Max 2MB.', 'error'); return; }
+    setAvatarFile(file);
+    setUnsaved(true);
     const reader = new FileReader();
     reader.onload = ev => {
       setAvatarSrc(ev.target.result);
-      toast('Profile photo updated!', 'success');
+      toast('Photo selected — click Save Changes to apply', 'success');
     };
     reader.readAsDataURL(file);
   };
   const removeAvatar = () => {
     setAvatarSrc(null);
+    setAvatarFile(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
     toast('Photo removed', 'info');
   };
 
   const sendOTP = async () => {
-    if (!otpPhone.trim()) { toast('Please enter a contact number', 'error'); return; }
-    await profileService.sendPasswordOtp(otpPhone);
+    if (!otpPhone.trim()) { toast('No contact number on file — add one in Personal Info first', 'error'); return; }
+    try {
+      await profileService.sendPasswordOtp(otpPhone);
+    } catch (err) { toast(err.message || 'Could not send OTP', 'error'); return; }
     setOtpSentTo(otpPhone);
     setOtpDigits(['', '', '', '']);
     setOtpError(false);
     setOtpTimer(120);
     setPwdStep(2);
-    toast(`OTP sent to ${otpPhone} — enter any 4 digits to verify`, 'success');
+    toast(`OTP sent to ${otpPhone}`, 'success');
     setTimeout(() => otpRefs.current[0]?.focus(), 100);
   };
   const resendOTP = async () => {
-    await profileService.sendPasswordOtp(otpPhone);
+    try {
+      await profileService.sendPasswordOtp(otpPhone);
+    } catch (err) { toast(err.message || 'Could not resend OTP', 'error'); return; }
     setOtpDigits(['', '', '', '']);
     setOtpError(false);
     setOtpTimer(120);
-    toast('New OTP sent — enter any 4 digits to verify', 'success');
+    toast('New OTP sent', 'success');
     setTimeout(() => otpRefs.current[0]?.focus(), 50);
   };
   const onOtpChange = (idx, val) => {
@@ -102,13 +135,17 @@ export default function ProfileModal({ open, onClose, toast }) {
   };
   const verifyOTP = async () => {
     if (otpDigits.some(d => d === '')) { toast('Please enter all 4 digits', 'error'); return; }
-    await profileService.verifyPasswordOtp(otpPhone, otpDigits.join(''));
+    if (!profileService.verifyPasswordOtp(otpDigits.join(''))) {
+      setOtpError(true);
+      toast('Incorrect OTP. Please try again.', 'error');
+      return;
+    }
     toast('OTP verified!', 'success');
     setPwdStep(3);
   };
 
   const passRules = {
-    len: newPass.length >= 8,
+    len: newPass.length >= 6,
     upper: /[A-Z]/.test(newPass),
     num: /[0-9]/.test(newPass),
     special: /[^A-Za-z0-9]/.test(newPass),
@@ -125,16 +162,57 @@ export default function ProfileModal({ open, onClose, toast }) {
   const passMatch = confirmPass !== '' && newPass === confirmPass;
   const passMismatch = confirmPass !== '' && newPass !== confirmPass;
 
+  const [changingPass, setChangingPass] = useState(false);
   const saveNewPassword = async () => {
-    if (!newPass || newPass.length < 8) { toast('Password must be at least 8 characters', 'error'); return; }
+    if (changingPass) return;
+    if (!newPass || newPass.length < 6) { toast('Password must be at least 6 characters', 'error'); return; }
     if (newPass !== confirmPass) { toast('Passwords do not match', 'error'); return; }
-    await profileService.changePassword(newPass);
+    setChangingPass(true);
+    try {
+      await profileService.changePassword(newPass);
+    } catch (err) {
+      toast(err.message || 'Could not update password', 'error');
+      setChangingPass(false);
+      return;
+    }
+    setChangingPass(false);
     toast('Password changed successfully!', 'success');
     setPwdStep(4);
   };
 
   const saveProfile = async () => {
-    await profileService.updateProfile({});
+    if (saving) return;
+    if (!form.fullName.trim()) { toast('Full Name is required', 'error'); return; }
+    if (!form.phone.trim())    { toast('Contact Number is required', 'error'); return; }
+
+    /* API wants first/last separately — split on the first space. */
+    const nameParts = form.fullName.trim().split(/\s+/);
+    const firstName = nameParts.shift() || '';
+    const lastName  = nameParts.join(' ');
+
+    setSaving(true);
+    try {
+      await profileService.updateProfile({
+        firstName,
+        lastName,
+        displayName: form.displayName.trim(),
+        email:       form.email.trim(),
+        phone:       form.phone.trim(),
+        cnic:        form.cnic.trim(),
+        imageFile:   avatarFile,   // null → photo unchanged
+      });
+    } catch (err) {
+      toast(err.message || 'Could not update profile', 'error');
+      setSaving(false);
+      return;
+    }
+    setSaving(false);
+
+    /* Keep the shell (sidebar/header) in sync with the edited display name. */
+    if (typeof sessionStorage !== 'undefined' && form.displayName.trim()) {
+      sessionStorage.setItem('displayName', form.displayName.trim());
+    }
+    setAvatarFile(null);   // uploaded — no longer pending
     toast('Profile saved successfully!', 'success');
     setUnsaved(false);
   };
@@ -188,7 +266,7 @@ export default function ProfileModal({ open, onClose, toast }) {
                     <img src={avatarSrc} alt="Profile" />
                   </div>
                 ) : (
-                  <div className="prof-avatar-circle">OX</div>
+                  <div className="prof-avatar-circle">{initials}</div>
                 )}
                 <Tooltip text="Click to change profile photo">
                   <button
@@ -241,21 +319,21 @@ export default function ProfileModal({ open, onClose, toast }) {
               <div className="prof-stat-row">
                 <i className="fa-solid fa-calendar-days" style={{ color: 'var(--brand-primary)' }}></i>
                 <div>
-                  <div className="prof-stat-val">May 2024</div>
+                  <div className="prof-stat-val">{profile?.memberSince || '—'}</div>
                   <div className="prof-stat-lbl">Member since</div>
                 </div>
               </div>
               <div className="prof-stat-row">
                 <i className="fa-solid fa-clock-rotate-left" style={{ color: 'var(--success)' }}></i>
                 <div>
-                  <div className="prof-stat-val">Today, 1:02 PM</div>
+                  <div className="prof-stat-val">{profile?.lastLogin || '—'}</div>
                   <div className="prof-stat-lbl">Last login</div>
                 </div>
               </div>
               <div className="prof-stat-row">
                 <i className="fa-solid fa-building-columns" style={{ color: 'var(--warning)' }}></i>
                 <div>
-                  <div className="prof-stat-val">The Oxford System, Lahore Campus</div>
+                  <div className="prof-stat-val">{profile?.campus || '—'}</div>
                   <div className="prof-stat-lbl">Active campus</div>
                 </div>
               </div>
@@ -314,43 +392,43 @@ export default function ProfileModal({ open, onClose, toast }) {
                     <label className="prof-label">Full Name <span className="req-star">*</span></label>
                     <div className="prof-input-wrap">
                       <i className="fa-solid fa-user prof-input-icon"></i>
-                      <input className="prof-input" defaultValue="Oxford System Admin" placeholder="Full name" onChange={() => setUnsaved(true)} />
+                      <input className="prof-input" value={form.fullName} placeholder="Full name" onChange={e => setField('fullName', e.target.value)} />
                     </div>
                   </div>
                   <div className="prof-form-group">
                     <label className="prof-label">Display Name</label>
                     <div className="prof-input-wrap">
                       <i className="fa-solid fa-id-badge prof-input-icon"></i>
-                      <input className="prof-input" defaultValue="OX Admin" placeholder="Display name" onChange={() => setUnsaved(true)} />
+                      <input className="prof-input" value={form.displayName} placeholder="Display name" onChange={e => setField('displayName', e.target.value)} />
                     </div>
                   </div>
                   <div className="prof-form-group">
                     <label className="prof-label">Email Address</label>
                     <div className="prof-input-wrap">
                       <i className="fa-solid fa-envelope prof-input-icon"></i>
-                      <input className="prof-input" defaultValue="admin@oxfordlahore.edu.pk" placeholder="Email" onChange={() => setUnsaved(true)} />
+                      <input className="prof-input" type="email" value={form.email} placeholder="Email" onChange={e => setField('email', e.target.value)} />
                     </div>
                   </div>
                   <div className="prof-form-group">
                     <label className="prof-label">Contact Number <span className="req-star">*</span></label>
                     <div className="prof-input-wrap">
                       <i className="fa-solid fa-phone prof-input-icon"></i>
-                      <input className="prof-input" defaultValue="+92 300 1234567" placeholder="+92 3XX XXXXXXX" onChange={() => setUnsaved(true)} />
+                      <input className="prof-input" value={form.phone} readOnly disabled style={{ opacity: .6, cursor: 'not-allowed' }} placeholder="+92 3XX XXXXXXX" />
                     </div>
-                    <div className="prof-field-hint"><i className="fa-solid fa-circle-info"></i> Used for OTP verification</div>
+                    <div className="prof-field-hint"><i className="fa-solid fa-circle-info"></i> Registered number — used for OTP verification (cannot be edited)</div>
                   </div>
                   <div className="prof-form-group">
                     <label className="prof-label">Role</label>
                     <div className="prof-input-wrap">
                       <i className="fa-solid fa-shield-halved prof-input-icon"></i>
-                      <input className="prof-input" defaultValue="Administrator" readOnly style={{ opacity: .6, cursor: 'not-allowed' }} />
+                      <input className="prof-input" value={profile?.role || ''} readOnly style={{ opacity: .6, cursor: 'not-allowed' }} />
                     </div>
                   </div>
                   <div className="prof-form-group">
                     <label className="prof-label">Campus</label>
                     <div className="prof-input-wrap">
                       <i className="fa-solid fa-building-columns prof-input-icon"></i>
-                      <input className="prof-input" defaultValue="The Oxford System, Lahore Campus" readOnly style={{ opacity: .6, cursor: 'not-allowed' }} />
+                      <input className="prof-input" value={profile?.campus || ''} readOnly style={{ opacity: .6, cursor: 'not-allowed' }} />
                     </div>
                   </div>
                 </div>
@@ -361,14 +439,14 @@ export default function ProfileModal({ open, onClose, toast }) {
                     <label className="prof-label">CNIC / ID Number</label>
                     <div className="prof-input-wrap">
                       <i className="fa-solid fa-id-card prof-input-icon"></i>
-                      <input className="prof-input" placeholder="35202-XXXXXXX-X" onChange={() => setUnsaved(true)} />
+                      <input className="prof-input" value={form.cnic} placeholder="35202-XXXXXXX-X" onChange={e => setField('cnic', e.target.value)} />
                     </div>
                   </div>
                   <div className="prof-form-group">
                     <label className="prof-label">Language</label>
                     <div className="prof-input-wrap">
                       <i className="fa-solid fa-globe prof-input-icon"></i>
-                      <select className="prof-input" style={{ cursor: 'pointer', appearance: 'none', paddingLeft: 36 }} onChange={() => setUnsaved(true)}>
+                      <select className="prof-input" disabled style={{ appearance: 'none', paddingLeft: 36, opacity: .6, cursor: 'not-allowed' }} value={form.language} onChange={e => setField('language', e.target.value)}>
                         <option>English (UK)</option>
                         <option>Urdu</option>
                         <option>English (US)</option>
@@ -389,8 +467,13 @@ export default function ProfileModal({ open, onClose, toast }) {
                       <button className="prof-btn prof-btn--ghost" onClick={onClose}>Cancel</button>
                     </Tooltip>
                     <Tooltip text="Save changes to your profile">
-                      <button className="prof-btn prof-btn--primary" onClick={saveProfile}>
-                        <i className="fa-solid fa-check"></i> Save Changes
+                      <button
+                        className="prof-btn prof-btn--primary"
+                        onClick={saveProfile}
+                        disabled={saving}
+                        style={saving ? { opacity: .6, cursor: 'not-allowed' } : undefined}
+                      >
+                        <i className={`fa-solid ${saving ? 'fa-spinner fa-spin' : 'fa-check'}`}></i> {saving ? 'Saving…' : 'Save Changes'}
                       </button>
                     </Tooltip>
                   </div>
@@ -436,7 +519,7 @@ export default function ProfileModal({ open, onClose, toast }) {
                     </div>
                     <div className="pwd-panel-title">Verify Your Identity</div>
                     <div className="pwd-panel-sub">
-                      We'll send a 6-digit OTP to your registered contact number to confirm it's you.
+                      We'll send a 4-digit OTP to your registered contact number to confirm it's you.
                     </div>
                     <div className="prof-form-group" style={{ textAlign: 'left', marginTop: 18, width: '100%', maxWidth: 340 }}>
                       <label className="prof-label">Contact Number</label>
@@ -445,11 +528,13 @@ export default function ProfileModal({ open, onClose, toast }) {
                         <input
                           className="prof-input"
                           value={otpPhone}
-                          onChange={e => setOtpPhone(e.target.value)}
-                          placeholder="+92 3XX XXXXXXX"
+                          readOnly
+                          disabled
+                          style={{ opacity: .6, cursor: 'not-allowed' }}
+                          placeholder="No number on file"
                         />
                       </div>
-                      <div className="prof-field-hint"><i className="fa-solid fa-lock"></i> OTP will be sent to this number</div>
+                      <div className="prof-field-hint"><i className="fa-solid fa-lock"></i> Your registered number from Personal Info — OTP is sent here</div>
                     </div>
                     <Tooltip text="Send a one-time code to this phone number">
                       <button className="pwd-action-btn" onClick={sendOTP}>
@@ -535,7 +620,7 @@ export default function ProfileModal({ open, onClose, toast }) {
                             type={showNewPass ? 'text' : 'password'}
                             value={newPass}
                             onChange={e => setNewPass(e.target.value)}
-                            placeholder="Min 8 characters"
+                            placeholder="Min 6 characters"
                           />
                           <Tooltip text={showNewPass ? 'Hide password' : 'Show password'}>
                             <button
@@ -590,7 +675,7 @@ export default function ProfileModal({ open, onClose, toast }) {
 
                       <div className="pass-rules">
                         <div className={`pass-rule${passRules.len ? ' ok' : ''}`}>
-                          <i className={`fa-solid ${passRules.len ? 'fa-circle-check' : 'fa-circle'}`}></i> At least 8 characters
+                          <i className={`fa-solid ${passRules.len ? 'fa-circle-check' : 'fa-circle'}`}></i> At least 6 characters
                         </div>
                         <div className={`pass-rule${passRules.upper ? ' ok' : ''}`}>
                           <i className={`fa-solid ${passRules.upper ? 'fa-circle-check' : 'fa-circle'}`}></i> One uppercase letter
@@ -604,8 +689,13 @@ export default function ProfileModal({ open, onClose, toast }) {
                       </div>
                     </div>
                     <Tooltip text="Save your new password">
-                      <button className="pwd-action-btn" onClick={saveNewPassword} style={{ marginTop: 20 }}>
-                        <i className="fa-solid fa-shield-halved"></i> Update Password
+                      <button
+                        className="pwd-action-btn"
+                        onClick={saveNewPassword}
+                        disabled={changingPass}
+                        style={{ marginTop: 20, ...(changingPass ? { opacity: .6, cursor: 'not-allowed' } : {}) }}
+                      >
+                        <i className={`fa-solid ${changingPass ? 'fa-spinner fa-spin' : 'fa-shield-halved'}`}></i> {changingPass ? 'Updating…' : 'Update Password'}
                       </button>
                     </Tooltip>
                     <Tooltip text="Go back to OTP entry">

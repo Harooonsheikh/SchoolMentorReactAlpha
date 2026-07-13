@@ -373,6 +373,97 @@ export async function calculateLeaveAbsentDeduction({ employeeID, payrollMonth, 
   return json?.data ?? json;
 }
 
+/* Month index (1–12) → full month name, for the record's `month` field. */
+const PAYROLL_MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
+
+/* Map one API payroll row (get-payroll-by-branch, PascalCase) → the record shape
+   the Financials UI + reports consume (see the demo-seed record in
+   HumanResource.jsx). Server-computed totals (TotalGross / TotalDeductions /
+   NetPayable) are trusted as-is rather than recomputed. `empHeads` are the
+   employee's custom salary heads returned alongside the payroll. Advance/loan
+   fields are left to the separate empLoans flow. */
+function mapApiPayrollRecord(p, empHeads = []) {
+  const paid    = Number(p.PaidSoFar) || 0;
+  const payDate = dateOnly(p.ModifiedAt || p.CreatedAt);
+  const status  = p.PaymentStatus || (paid > 0 ? 'Partially Paid' : 'Generated');
+  return {
+    payrollID:          p.PayrollID,
+    month:              PAYROLL_MONTH_NAMES[(Number(p.PayrollMonth) || 1) - 1] || '',
+    year:               Number(p.PayrollYear) || 0,
+    status,
+    basicPay:           Number(p.BasicPay) || 0,
+    bonus:              Number(p.Bonus) || 0,
+    previousArrears:    Number(p.PreviousArrears) || 0,
+    houseAllowance:     Number(p.HouseAllowance) || 0,
+    transportAllowance: Number(p.TransportAllowance) || 0,
+    medicalAllowance:   Number(p.MedicalAllowance) || 0,
+    extraAllowances:    Number(p.ExtraAllowances) || 0,
+    extraDeductions:    Number(p.ExtraDeductions) || 0,
+    totalGross:         Number(p.TotalGross) || 0,
+    loanDeduct:         Number(p.LoanDeduction) || 0,
+    customLoan:         Number(p.CustomLoanAmount) || 0,
+    fineDeduct:         Number(p.FineDeduction) || 0,
+    fineComment:        p.FineComment || '',
+    leaveCount:         Number(p.LeaveCount) || 0,
+    leaveDeduct:        Number(p.LeaveDeduction) || 0,
+    leaveComment:       p.LeaveComment || '',
+    absentCount:        Number(p.AbsentCount) || 0,
+    absentDeduct:       Number(p.AbsentDeduction) || 0,
+    absentComment:      p.AbsentComment || '',
+    totalDeductions:    Number(p.TotalDeductions) || 0,
+    netPayable:         Number(p.NetPayable) || 0,
+    paidAmount:         paid,
+    payments:           paid > 0 ? [{ amount: paid, date: payDate, comment: 'Payment recorded' }] : [],
+    paidDate:           paid > 0 ? payDate : null,
+    generatedAt:        dateOnly(p.CreatedAt),
+    empSalaryHeads:     empHeads,
+  };
+}
+
+/* Fetch all saved payroll records for a branch in one month/year and return them
+   keyed for merging into the Financials empPayroll state:
+     { [employeeID]: { 'YYYY-MM': record } }
+   Employees with no payroll that month simply don't appear (→ Not Generated).
+   GET /api/HR/get-payroll-by-branch/{branchID}/{month}/{year}. */
+export async function getHrPayrollByBranch(month, year) {
+  const branchID = Number(sessionStorage.getItem('branchID')) || 0;
+  const m = Number(month) || 0;
+  const y = Number(year)  || 0;
+  let json = null;
+  try {
+    const res = await fetch(buildUrl(`/api/HR/get-payroll-by-branch/${branchID}/${m}/${y}`), { headers: { Accept: '*/*' } });
+    json = await res.json().catch(() => null);
+    if (!res.ok || json?.success === false) return {};
+  } catch {
+    return {};
+  }
+  const rows  = Array.isArray(json?.payroll) ? json.payroll : [];
+  const heads = Array.isArray(json?.salaryHeads) ? json.salaryHeads : [];
+
+  /* Group the per-employee custom salary heads by employee id. */
+  const headsByEmp = {};
+  heads.forEach(h => {
+    const eid = Number(h.EmployeeID) || 0;
+    (headsByEmp[eid] = headsByEmp[eid] || []).push({
+      id:     h.ID ?? h.id ?? 0,
+      name:   h.HeadName ?? '',
+      amount: Number(h.Amount) || 0,
+      type:   (h.IsAllowance === false) ? 'deduct' : 'allow',
+    });
+  });
+
+  const out = {};
+  rows.forEach(p => {
+    const eid = Number(p.EmployeeID) || 0;
+    const key = `${Number(p.PayrollYear)}-${String(Number(p.PayrollMonth)).padStart(2, '0')}`;
+    (out[eid] = out[eid] || {})[key] = mapApiPayrollRecord(p, headsByEmp[eid] || []);
+  });
+  return out;
+}
+
 /* Save the payroll setup for one employee/month (bonus, loan/fine/leave/absent
    deductions + comments). POST /api/HR/payroll-setup. */
 export async function saveHrPayrollSetup(p = {}) {
@@ -404,6 +495,18 @@ export async function saveHrPayrollSetup(p = {}) {
   const json = await res.json().catch(() => null);
   if (!res.ok) throw new Error(apiMessage(json) || 'Could not save payroll setup');
   return json;
+}
+
+/* Delete a whole payroll record — the setup AND its payments — for one
+   employee/month. Called from the Pay Roll modal's Delete button.
+
+   ENDPOINT PENDING: the delete API hasn't been provided yet. Once it is,
+   replace the throw below with the real fetch (DELETE to the payroll id,
+   with the standard Accept header + apiMessage error handling used by the
+   other HR calls in this file). */
+export async function deleteHrPayroll(payrollID) {
+  if (!payrollID) throw new Error('Missing payroll id');
+  throw new Error('Delete payroll API is not configured yet — provide the endpoint to finish wiring this.');
 }
 
 /* Pull the payroll record id out of a payroll-setup response (needed to attach

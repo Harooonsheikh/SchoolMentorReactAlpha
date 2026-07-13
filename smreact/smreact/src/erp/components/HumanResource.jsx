@@ -1175,64 +1175,39 @@ function Financials({ emps, depts = [], desigs, toast }) {
   });
   const [nextLoanId, setNextLoanId] = useState(1002);
 
-  /* ── Seed demo payroll history for Dr. Islahudin (emp #1) — 1:1
-        port of seedDemoFinancialData. Populates 10 months of historic
-        records so the Salary Slip + Pay History Ledger reports show
-        realistic data when generated. Runs once after emps load. ── */
-  const seededRef = useRef(false);
+  /* ── Load real payroll for the whole selected year from the backend
+        (get-payroll-by-branch, one call per month) and merge it into
+        empPayroll, keyed as empPayroll[empId]['YYYY-MM'] = record. This
+        drives each row's status, the expand-panel breakdown and the
+        Salary Slip / Pay History reports off live data. Employees with no
+        payroll for a month simply stay "Not Generated". Advance/Loan is
+        unaffected — it keeps using empLoans. Refetches when the year (or
+        employee set) changes; month switching is instant since the whole
+        year is already cached. ── */
+  const [payrollLoading, setPayrollLoading] = useState(false);
   useEffect(() => {
-    if (seededRef.current) return;
     if (!emps || !emps.length) return;
-    const empId = 1;
-    const e = emps.find(x => x.id === empId);
-    if (!e) return;
-    seededRef.current = true;
-
-    const basic     = +e.basicSalary || 80000;
-    const stdDeduct = getEmpStdDeductions(e);
-    const demoMonths = [
-      { key: '2025-08', month: 'August',    year: 2025, bonus: 0,     fineDeduct: 0,   leaveDeduct: 0,    absentDeduct: 0, leaveCount: 0, absentCount: 0, fineComment: '',                       leaveComment: '',               loanCut: 0,    advRecovery: 0 },
-      { key: '2025-09', month: 'September', year: 2025, bonus: 0,     fineDeduct: 0,   leaveDeduct: 0,    absentDeduct: 0, leaveCount: 0, absentCount: 0, fineComment: '',                       leaveComment: '',               loanCut: 5000, advRecovery: 0 },
-      { key: '2025-10', month: 'October',   year: 2025, bonus: 5000,  fineDeduct: 0,   leaveDeduct: 0,    absentDeduct: 0, leaveCount: 0, absentCount: 0, fineComment: '',                       leaveComment: '',               loanCut: 5000, advRecovery: 0 },
-      { key: '2025-11', month: 'November',  year: 2025, bonus: 0,     fineDeduct: 500, leaveDeduct: 0,    absentDeduct: 0, leaveCount: 0, absentCount: 0, fineComment: 'Late report submission', leaveComment: '',               loanCut: 5000, advRecovery: 0 },
-      { key: '2025-12', month: 'December',  year: 2025, bonus: 10000, fineDeduct: 0,   leaveDeduct: 0,    absentDeduct: 0, leaveCount: 0, absentCount: 0, fineComment: '',                       leaveComment: '',               loanCut: 5000, advRecovery: 0 },
-      { key: '2026-01', month: 'January',   year: 2026, bonus: 0,     fineDeduct: 0,   leaveDeduct: 0,    absentDeduct: 0, leaveCount: 0, absentCount: 0, fineComment: '',                       leaveComment: '',               loanCut: 5000, advRecovery: 0 },
-      { key: '2026-02', month: 'February',  year: 2026, bonus: 0,     fineDeduct: 0,   leaveDeduct: 0,    absentDeduct: 0, leaveCount: 0, absentCount: 0, fineComment: '',                       leaveComment: '',               loanCut: 0,    advRecovery: 3000 },
-      { key: '2026-03', month: 'March',     year: 2026, bonus: 0,     fineDeduct: 0,   leaveDeduct: 1500, absentDeduct: 0, leaveCount: 1, absentCount: 0, fineComment: '',                       leaveComment: '1 unpaid leave', loanCut: 0,    advRecovery: 3000 },
-      { key: '2026-04', month: 'April',     year: 2026, bonus: 5000,  fineDeduct: 0,   leaveDeduct: 0,    absentDeduct: 0, leaveCount: 0, absentCount: 0, fineComment: '',                       leaveComment: '',               loanCut: 0,    advRecovery: 2500 },
-      { key: '2026-06', month: 'June',      year: 2026, bonus: 3000,  fineDeduct: 0,   leaveDeduct: 0,    absentDeduct: 0, leaveCount: 0, absentCount: 0, fineComment: '',                       leaveComment: '',               loanCut: 5000, advRecovery: 0 },
-    ];
-
-    setEmpPayroll(prev => {
-      const empMap = { ...(prev[empId] || {}) };
-      demoMonths.forEach((m) => {
-        if (empMap[m.key]) return;
-        const totalGross  = getEmpTotalGross(e, m.bonus);
-        const otherDed    = (m.fineDeduct || 0) + (m.leaveDeduct || 0) + (m.absentDeduct || 0);
-        const totalDeduct = stdDeduct + (m.loanCut || 0) + (m.advRecovery || 0) + otherDed;
-        const net         = totalGross - totalDeduct;
-        const monthIdx    = parseInt(m.key.split('-')[1], 10);
-        const lastDay     = new Date(m.year, monthIdx, 0).getDate();
-        const payDate     = `${m.year}-${String(monthIdx).padStart(2, '0')}-${String(Math.min(lastDay, 28)).padStart(2, '0')}`;
-        empMap[m.key] = {
-          month: m.month, year: m.year, status: 'Paid',
-          basicPay: basic, bonus: m.bonus || 0, totalGross,
-          stdDeductions: stdDeduct,
-          loanDeduct: m.loanCut || 0, customLoan: 0,
-          advanceRecovery: m.advRecovery || 0,
-          fineDeduct: m.fineDeduct || 0, leaveDeduct: m.leaveDeduct || 0, absentDeduct: m.absentDeduct || 0,
-          totalDeductions: totalDeduct,
-          leaveCount: m.leaveCount || 0, absentCount: m.absentCount || 0,
-          fineComment: m.fineComment || '', leaveComment: m.leaveComment || '', absentComment: '',
-          netPayable: net,
-          payments: [{ amount: net, date: payDate, comment: 'Salary cleared' }],
-          paidAmount: net, paidDate: payDate, loanRecorded: (m.loanCut || 0) > 0,
-          generatedAt: payDate,
-        };
-      });
-      return { ...prev, [empId]: empMap };
-    });
-  }, [emps]);
+    let alive = true;
+    const y = Number(year);
+    const months = Array.from({ length: 12 }, (_, i) => i + 1);
+    setPayrollLoading(true);
+    Promise.all(months.map(m => hrService.getHrPayrollByBranch(m, y).catch(() => ({}))))
+      .then((results) => {
+        if (!alive) return;
+        setEmpPayroll((prev) => {
+          const next = { ...prev };
+          results.forEach((map) => {
+            Object.entries(map).forEach(([eid, byKey]) => {
+              next[eid] = { ...(next[eid] || {}), ...byKey };
+            });
+          });
+          return next;
+        });
+      })
+      .finally(() => { if (alive) setPayrollLoading(false); });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [year, emps]);
 
   const monthKey = (m, y) => {
     const idx = PAY_MONTHS.indexOf(m) + 1;
@@ -1246,6 +1221,18 @@ function Financials({ emps, depts = [], desigs, toast }) {
       const next = { ...prev };
       next[empId] = { ...(next[empId] || {}) };
       next[empId][key] = { ...(next[empId][key] || {}), ...partial };
+      return next;
+    });
+  };
+
+  /* Drop a payroll record entirely (setup + payments) for one employee/month —
+     used after a successful backend delete. */
+  const removeRec = (empId, m, y) => {
+    setEmpPayroll(prev => {
+      const key = monthKey(m, y);
+      if (!prev[empId]?.[key]) return prev;
+      const next = { ...prev, [empId]: { ...prev[empId] } };
+      delete next[empId][key];
       return next;
     });
   };
@@ -1413,6 +1400,27 @@ function Financials({ emps, depts = [], desigs, toast }) {
     setAlFor(e);
   };
 
+  /* Delete a saved payroll (setup + payments) straight from the row's Actions
+     menu — reachable even when the Pay Roll modal can't open (e.g. a fully-paid
+     month). Calls the backend, then drops the local record. */
+  const deletePayrollFor = async (e) => {
+    setActionsId(null);
+    const rec = getRec(e.id);
+    if (!rec?.payrollID) { toast('No saved payroll to delete for this month', 'warning'); return; }
+    const ok = window.confirm(
+      `Delete the payroll setup and all recorded payments for ${getFullName(e)} — ${month} ${year}?\n\nThis cannot be undone.`
+    );
+    if (!ok) return;
+    try {
+      await hrService.deleteHrPayroll(rec.payrollID);
+    } catch (err) {
+      toast(err.message || 'Could not delete payroll', 'error');
+      return;
+    }
+    removeRec(e.id, month, year);
+    toast('Payroll setup & payments deleted', 'success');
+  };
+
   return (
     <div className="hrb-root">
       <div className="section-card">
@@ -1420,7 +1428,7 @@ function Financials({ emps, depts = [], desigs, toast }) {
         <div className="ux-info-banner">
           <div className="ux-info-icon"><i className="fa-solid fa-circle-info" aria-hidden="true"></i></div>
           <div className="ux-info-body">
-            <div className="ux-info-row"><strong>Salary Information:</strong> Salary data here will be connected with the Payroll engine once the full Payroll Module is implemented.</div>
+            <div className="ux-info-row"><strong>Salary Information:</strong> Payroll below is loaded live from saved records for the selected month &amp; year — each employee's status, breakdown and Salary Slip / Pay History reports reflect real data.</div>
             <div className="ux-info-row"><strong>Advance / Loan:</strong> Employee advances and loans recorded here will be automatically reflected in future payroll calculations.</div>
           </div>
         </div>
@@ -1468,6 +1476,11 @@ function Financials({ emps, depts = [], desigs, toast }) {
                 <i className="fa-solid fa-circle" aria-hidden="true"></i> Paid
               </span>
             </Tooltip>
+            {payrollLoading && (
+              <span className="pay-status-chip" style={{ color: 'var(--tm)' }}>
+                <i className="fa-solid fa-spinner fa-spin" aria-hidden="true"></i> Loading payroll…
+              </span>
+            )}
           </div>
         </div>
 
@@ -1509,6 +1522,7 @@ function Financials({ emps, depts = [], desigs, toast }) {
               onToggleActions={() => { setReportsId(null); setActionsId(prev => prev === e.id ? null : e.id); }}
               onPayRoll={() => openPayRoll(e)}
               onAdvLoan={() => openAdvLoan(e)}
+              onDeletePayroll={() => deletePayrollFor(e)}
               onReport={(type) => openRsp(e, type)}
               onStub={stub}
             />
@@ -1527,6 +1541,7 @@ function Financials({ emps, depts = [], desigs, toast }) {
           onClose={() => setPrFor(null)}
           onSaveSetup={(rec) => upsertRec(prFor.id, month, year, rec)}
           onRecordPayment={(rec) => upsertRec(prFor.id, month, year, rec)}
+          onDelete={() => { removeRec(prFor.id, month, year); setPrFor(null); }}
           toast={toast}
         />
       )}
@@ -1570,7 +1585,7 @@ function PayrollRow({
   isOpen, onToggleOpen,
   reportsOpen, onToggleReports,
   actionsOpen, onToggleActions,
-  onPayRoll, onAdvLoan, onReport, onStub,
+  onPayRoll, onAdvLoan, onDeletePayroll, onReport, onStub,
 }) {
   const nm = getFullName(emp);
   const ini = nm.split(' ').filter(Boolean).map(p => p[0]).join('').toUpperCase().slice(0, 2) || '?';
@@ -1661,6 +1676,13 @@ function PayrollRow({
                     <i className="fa-solid fa-hand-holding-dollar" style={{ color: '#16A34A' }} aria-hidden="true"></i> Advance / Loan
                   </button>
                 </Tooltip>
+                {rec?.payrollID && (
+                  <Tooltip text="Delete this month's payroll setup and all its payments">
+                    <button type="button" className="drop-item" onClick={onDeletePayroll}>
+                      <i className="fa-solid fa-trash" style={{ color: '#DC2626' }} aria-hidden="true"></i> Delete Payroll
+                    </button>
+                  </Tooltip>
+                )}
               </div>
             )}
           </div>
@@ -1805,7 +1827,7 @@ function PdItem({ k, v, valClass }) {
 function PayRollModal({
   emp, month, year, rec: existingRec,
   loanRemaining = 0, monthlyLoanDeduct = 0,
-  onClose, onSaveSetup, onRecordPayment, toast,
+  onClose, onSaveSetup, onRecordPayment, onDelete, toast,
 }) {
   const [tab, setTab] = useState(0);
 
@@ -2053,6 +2075,32 @@ function PayRollModal({
   })();
 
   const num = (n) => fmtMoney(n);
+
+  /* Delete the whole payroll (setup + payments) for this employee/month. Only
+     possible once it's been saved (has a payrollID). */
+  const [deleting, setDeleting] = useState(false);
+  const deletePayroll = async () => {
+    if (deleting) return;
+    if (!existingRec?.payrollID) {
+      toast('Nothing to delete — this payroll has not been saved yet', 'warning');
+      return;
+    }
+    const ok = window.confirm(
+      `Delete the payroll setup and all recorded payments for ${getFullName(emp)} — ${month} ${year}?\n\nThis cannot be undone.`
+    );
+    if (!ok) return;
+    setDeleting(true);
+    try {
+      await hrService.deleteHrPayroll(existingRec.payrollID);
+    } catch (err) {
+      toast(err.message || 'Could not delete payroll', 'error');
+      setDeleting(false);
+      return;
+    }
+    setDeleting(false);
+    onDelete?.();
+    toast('Payroll setup & payments deleted', 'success');
+  };
 
   return createPortal((
     <div
@@ -2334,6 +2382,25 @@ function PayRollModal({
         </div>
 
         <div className="modal-foot">
+          {existingRec?.payrollID && (
+            <Tooltip text="Delete this month's payroll setup and all its payments">
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={deletePayroll}
+                disabled={deleting}
+                style={{
+                  marginRight: 'auto',
+                  color: '#DC2626',
+                  borderColor: 'rgba(220,38,38,.4)',
+                  ...(deleting ? { opacity: .55, cursor: 'not-allowed' } : {}),
+                }}
+              >
+                <i className={`fa-solid ${deleting ? 'fa-spinner fa-spin' : 'fa-trash'}`} aria-hidden="true"></i>{' '}
+                {deleting ? 'Deleting…' : 'Delete Payroll'}
+              </button>
+            </Tooltip>
+          )}
           <button type="button" className="btn-secondary" onClick={onClose}>Close</button>
           <button
             type="button"
@@ -2611,7 +2678,7 @@ function AdvLoanModal({
                     <i className="fa-solid fa-money-bill-transfer" aria-hidden="true"></i> Record Loan Repayment
                   </div>
                   <div className="pr-grid">
-                    <div className="pr-field">
+                    <div className="pr-field pr-field-wide">
                       <label>Select Loan <span className="req">*</span></label>
                       <select
                         value={repayLoanId}
@@ -2642,7 +2709,7 @@ function AdvLoanModal({
                         onChange={(e) => setRepayDate(e.target.value)}
                       />
                     </div>
-                    <div className="pr-field">
+                    <div className="pr-field pr-field-full">
                       <label>Add Comments</label>
                       <input
                         type="text"
@@ -2807,12 +2874,14 @@ const RSP_META = {
 function RspModal({ emp, type, month, year, onClose, onGenerate }) {
   const meta = RSP_META[type] || RSP_META.salaryslip;
 
-  /* Pre-fill the single month picker with the Financials filter month. */
+  /* Pre-fill the pickers from the Financials filter: the single-month picker to
+     the selected month, and the history range to Jan → the selected month of the
+     selected year (so the currently-viewed month is always inside the range). */
   const monthIdx = PAY_MONTHS.indexOf(month) + 1;
   const seedMonthKey = `${year}-${String(monthIdx || 1).padStart(2, '0')}`;
   const [rspMonth, setRspMonth] = useState(seedMonthKey);
-  const [rspFrom,  setRspFrom]  = useState('2026-01');
-  const [rspTo,    setRspTo]    = useState('2026-06');
+  const [rspFrom,  setRspFrom]  = useState(`${year}-01`);
+  const [rspTo,    setRspTo]    = useState(seedMonthKey);
 
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
@@ -8735,15 +8804,20 @@ export const HR_CSS = `
 .pr-section-title i { font-size: 13px; }
 
 /* 4-col / 3-col / 2-col grid */
-.pr-grid    { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
-.pr-grid.g3 { grid-template-columns: repeat(3, 1fr); }
-.pr-grid.g2 { grid-template-columns: repeat(2, 1fr); }
+/* minmax(0, 1fr) lets each track shrink below its content's intrinsic width
+   (e.g. a <select> with a long option), so fields never overflow the modal. */
+.pr-grid    { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.pr-grid.g3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.pr-grid.g2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 
-.pr-field        { display: flex; flex-direction: column; gap: 4px; }
+.pr-field        { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .pr-field label  { font: 700 10.5px/1.2 var(--hr-font); color: var(--t2); letter-spacing: .2px; }
 .pr-field input,
 .pr-field select,
 .pr-field textarea {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   padding: 9px 12px;
   border: 1.5px solid var(--bl);
   border-radius: var(--r-sm);
@@ -8752,6 +8826,7 @@ export const HR_CSS = `
   color: var(--t1);
   transition: var(--tr);
 }
+.pr-field select { text-overflow: ellipsis; }
 .pr-field input:focus,
 .pr-field select:focus,
 .pr-field textarea:focus {
@@ -8937,8 +9012,8 @@ export const HR_CSS = `
 
 /* Responsive: stack the 4-col grids on small screens */
 @media (max-width: 900px) {
-  .pr-grid       { grid-template-columns: repeat(2, 1fr); }
-  .pr-grid.g3    { grid-template-columns: repeat(2, 1fr); }
+  .pr-grid       { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .pr-grid.g3    { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .settle-tiles  { grid-template-columns: 1fr; }
   .pr-net-card   { grid-template-columns: 1fr; }
   .pr-net-side   { text-align: left; }
