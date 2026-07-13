@@ -8,6 +8,7 @@
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^13.5.0",
+    "mathlive": "^0.110.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "react-scripts": "5.0.1",
@@ -23,8 +24,8 @@
     "eject": "react-scripts eject"
   },
   "resolutions": {
-  "react-select": "^5.10.2"
-},
+    "react-select": "^5.10.2"
+  },
   "eslintConfig": {
     "extends": [
       "react-app",
