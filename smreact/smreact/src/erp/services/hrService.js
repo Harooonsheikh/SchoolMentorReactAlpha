@@ -260,11 +260,19 @@ export async function restoreHrEmployee({ id }) {
   if (!res.ok) throw new Error(apiMessage(json) || 'Could not restore employee');
   return json;
 }
-/* Backend leave-settings shape (api/HR/get-leave-settings-by-employee) → the
-   modal's leaves form shape. Missing values stay '' so a new employee's fields
-   start blank; `_leaveId` carries the record id so a save updates in place. */
+/* Backend leave-settings shape → the modal's leaves form shape. Missing values
+   stay '' so a new employee's fields start blank; `_leaveId` carries the record
+   id so a save updates in place.
+
+   Keys are resolved case-insensitively because the two sources disagree on
+   casing: the branch-list endpoint (get-employees-by-branch) returns camelCase
+   (`annualPaidLeaves`, `deductionOneDayAbsent`) while the dedicated endpoint
+   (get-leave-settings-by-employee) returns PascalCase (`AnnualPaidLeaves`,
+   `DeductionOneDayAbsent`). A case-sensitive read left the leaves tab blank. */
 function leaveApiToForm(d = {}) {
-  const val = (k) => (d[k] == null ? '' : d[k]);
+  const lower = {};
+  for (const k in d) lower[k.toLowerCase()] = d[k];
+  const val = (k) => { const v = lower[k.toLowerCase()]; return v == null ? '' : v; };
   return {
     annual:    val('annualPaidLeaves'),
     casual:    val('casualLeaves'),
@@ -272,10 +280,10 @@ function leaveApiToForm(d = {}) {
     maternity: val('maternityPaternityLeaves'),
     balance:   val('leaveBalance'),
     policy:    'Standard',
-    deductEn:  d.enableLeaveDeduction !== false,
+    deductEn:  lower['enableleavededuction'] !== false,
     absentDed: val('deductionOneDayAbsent'),
     unpaidDed: val('deductionUnpaidLeaves'),
-    _leaveId:  d.id ?? 0,
+    _leaveId:  val('id') || 0,
   };
 }
 
@@ -336,6 +344,33 @@ export async function getHrStaffYearlyAttendance(staffId, year) {
     });
   }
   return { absent, leave, present };
+}
+
+/* Calculate this month's chargeable leave/absent counts + deduction amounts for
+   one employee. Absents have no quota (every absent day is charged); leaves have
+   an annual quota and the server subtracts excess already charged in earlier
+   months this year, so ALWAYS call this right before saveHrPayrollSetup for the
+   same employee/month/year. POST /api/HR/calculate-leave-absent-deduction.
+   Returns the `data` object (annualPaidLeaves, cumulativeLeavesTakenYTD,
+   leavesAlreadyDeductedYTD, excessLeavesThisMonth, leaveDeductionAmount,
+   absentCountThisMonth, absentDeductionAmount, totalDeductionAmount, …). */
+export async function calculateLeaveAbsentDeduction({ employeeID, payrollMonth, payrollYear } = {}) {
+  const branchID = Number(sessionStorage.getItem('branchID')) || 0;
+  const res  = await fetch(buildUrl('/api/HR/calculate-leave-absent-deduction'), {
+    method: 'POST',
+    headers: { Accept: '*/*', 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      employeeID:   Number(employeeID) || 0,
+      branchID,
+      payrollMonth: Number(payrollMonth) || 0,
+      payrollYear:  Number(payrollYear) || 0,
+    }),
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok || json?.success === false) {
+    throw new Error(apiMessage(json) || 'Could not calculate leave/absent deduction');
+  }
+  return json?.data ?? json;
 }
 
 /* Save the payroll setup for one employee/month (bonus, loan/fine/leave/absent

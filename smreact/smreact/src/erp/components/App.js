@@ -34,6 +34,9 @@ const StaffAppraisalPage = lazy(() => import(/* webpackChunkName: "mod-appraisal
 const SettingsModule = lazy(() => import(/* webpackChunkName: "mod-settings" */      '../pages/Settings/SettingsModule.jsx'));
 const SchoolSOPs     = lazy(() => import(/* webpackChunkName: "mod-sops" */          '../pages/SchoolMentor/SchoolSOPs.jsx'));
 const TeacherTrainings = lazy(() => import(/* webpackChunkName: "mod-trainings" */    '../pages/SchoolMentor/TeacherTrainings.jsx'));
+const ETube          = lazy(() => import(/* webpackChunkName: "mod-etube" */         '../pages/SchoolMentor/ETube.jsx'));
+const Chat           = lazy(() => import(/* webpackChunkName: "mod-chat" */          '../pages/SchoolMentor/Chat.jsx'));
+const Notifications  = lazy(() => import(/* webpackChunkName: "mod-notifications" */ '../pages/SchoolMentor/Notifications.jsx'));
 const UserPermissions  = lazy(() => import(/* webpackChunkName: "mod-permissions" */  '../pages/UserPermissions/UserPermissions.jsx'));
 const AuditLogs        = lazy(() => import(/* webpackChunkName: "mod-auditlogs"   */  '../pages/AuditLogs/AuditLogs.jsx'));
 const LaunchSetup      = lazy(() => import(/* webpackChunkName: "mod-launchsetup" */  '../pages/LaunchSetup/LaunchSetup.jsx'));
@@ -60,6 +63,9 @@ const NAV_LABELS = {
   crm: 'Admission CRM',
   sops: 'School SOPs',
   trainings: 'Teacher Trainings',
+  etube: 'e-Tube',
+  chat: 'Chat',
+  notifications: 'Notifications',
   launch: 'Launch Setup',
   settings: 'Settings',
   perm: 'User Permissions',
@@ -105,8 +111,12 @@ const NAV_SECTIONS = [
   {
     label: 'School Mentor',
     items: [
-      { id: 'sops',      name: 'School SOPs',       icon: 'fa-book-open' },
+      // { id: 'sops',          name: 'School SOPs',       icon: 'fa-book-open' },
       // { id: 'trainings', name: 'Teacher Trainings', icon: 'fa-chalkboard-user' },
+      // Hidden for now (routes still wired, just not shown in the sidebar):
+      // { id: 'etube',         name: 'e-Tube',            icon: 'fa-play-circle' },
+      // { id: 'chat',          name: 'Chat',              icon: 'fa-comments' },
+      // { id: 'notifications', name: 'Notifications',     icon: 'fa-bell' },
       // { id: 'feedback',  name: 'Feedback',          icon: 'fa-comment-dots' },
     ],
   },
@@ -464,6 +474,21 @@ export default function App() {
                 <TeacherTrainings toast={pushToast} />
               </Suspense>
             )}
+            {active === 'etube' && (
+              <Suspense fallback={<RouteFallback label="Loading e-Tube…" />}>
+                <ETube toast={pushToast} />
+              </Suspense>
+            )}
+            {active === 'chat' && (
+              <Suspense fallback={<RouteFallback label="Loading Chat…" />}>
+                <Chat toast={pushToast} onUnreadChange={() => {}} />
+              </Suspense>
+            )}
+            {active === 'notifications' && (
+              <Suspense fallback={<RouteFallback label="Loading Notifications…" />}>
+                <Notifications toast={pushToast} />
+              </Suspense>
+            )}
             {active === 'perm' && (
               <Suspense fallback={<RouteFallback label="Loading User Permissions…" />}>
                 <UserPermissions toast={pushToast} />
@@ -496,7 +521,7 @@ export default function App() {
                 />
               </Suspense>
             )}
-            {active !== 'acad' && active !== 'exam' && active !== 'paper' && active !== 'att' && active !== 'tt' && active !== 'fee' && active !== 'accounts' && active !== 'inventory' && active !== 'crm' && active !== 'students' && active !== 'hr' && active !== 'appraisal' && active !== 'settings' && active !== 'sops' && active !== 'trainings' && active !== 'perm' && active !== 'audit' && active !== 'launch' && active !== 'dashboard' && (
+            {active !== 'acad' && active !== 'exam' && active !== 'paper' && active !== 'att' && active !== 'tt' && active !== 'fee' && active !== 'accounts' && active !== 'inventory' && active !== 'crm' && active !== 'students' && active !== 'hr' && active !== 'appraisal' && active !== 'settings' && active !== 'sops' && active !== 'trainings' && active !== 'etube' && active !== 'chat' && active !== 'notifications' && active !== 'perm' && active !== 'audit' && active !== 'launch' && active !== 'dashboard' && (
               <NavComingSoon label={NAV_LABELS[active] || 'This module'} />
             )}
           </main>

@@ -1856,42 +1856,29 @@ function PayRollModal({
     + Number(absentDeduct);
   const netPayable = totalGross - totalDeductions;
 
-  /* Auto-calc deductions when leave/absent counts change. Mirrors
-     autoCalcLeaveDeduct / autoCalcAbsentDeduct. */
-  const onChangeLeaveCount = (v) => {
-    setLeaveCount(v);
-    const perLeave = Number(emp.leaves?.absentDed) || 0;
-    setLeaveDeduct((Number(v) || 0) * perLeave);
-  };
-  const onChangeAbsentCount = (v) => {
-    setAbsentCount(v);
-    const perAbsent = Number(emp.leaves?.unpaidDed) || 0;
-    setAbsentDeduct((Number(v) || 0) * perAbsent);
-  };
-
-  /* Auto-calc chargeable leave/absent from the staff's whole-year attendance.
-     allowed = sum of the employee's leave settings. Authorized leaves consume
-     the allowance first; absents beyond the remaining allowance are chargeable.
-     Chargeable leaves × 'Absent Ded.', chargeable absents × 'Unpaid Ded.'. */
-  const [attnCalc, setAttnCalc] = useState({ loading: false, done: false, absent: 0, leave: 0, allowed: 0 });
+  /* Auto-calc chargeable leave/absent via the server. Absents have no quota
+     (charged in full every month); leaves have an annual quota and the server
+     subtracts excess already charged in earlier months this year — so the count
+     fields are server-owned (read-only) while the amounts stay editable. The
+     returned data mirrors calculate-leave-absent-deduction's `data` payload. */
+  const [attnCalc, setAttnCalc] = useState({ loading: false, done: false, data: null });
   useEffect(() => {
     let alive = true;
-    const allowed = (Number(emp.leaves?.annual) || 0) + (Number(emp.leaves?.casual) || 0)
-                  + (Number(emp.leaves?.sick) || 0)  + (Number(emp.leaves?.maternity) || 0);
-    setAttnCalc({ loading: true, done: false, absent: 0, leave: 0, allowed });
-    hrService.getHrStaffYearlyAttendance(emp.id, year)
-      .then(({ absent, leave }) => {
+    setAttnCalc({ loading: true, done: false, data: null });
+    hrService.calculateLeaveAbsentDeduction({
+      employeeID:   emp.id,
+      payrollMonth: PAY_MONTHS.indexOf(month) + 1,
+      payrollYear:  Number(year),
+    })
+      .then((data) => {
         if (!alive) return;
-        const chargeableLeave  = Math.max(0, leave - allowed);
-        const remaining        = Math.max(0, allowed - leave);
-        const chargeableAbsent = Math.max(0, absent - remaining);
-        setLeaveCount(chargeableLeave);
-        setLeaveDeduct(chargeableLeave * (Number(emp.leaves?.absentDed) || 0));
-        setAbsentCount(chargeableAbsent);
-        setAbsentDeduct(chargeableAbsent * (Number(emp.leaves?.unpaidDed) || 0));
-        setAttnCalc({ loading: false, done: true, absent, leave, allowed });
+        setLeaveCount(Number(data.excessLeavesThisMonth) || 0);
+        setLeaveDeduct(Number(data.leaveDeductionAmount) || 0);
+        setAbsentCount(Number(data.absentCountThisMonth) || 0);
+        setAbsentDeduct(Number(data.absentDeductionAmount) || 0);
+        setAttnCalc({ loading: false, done: true, data });
       })
-      .catch(() => { if (alive) setAttnCalc(c => ({ ...c, loading: false, done: true })); });
+      .catch(() => { if (alive) setAttnCalc({ loading: false, done: true, data: null }); });
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -2165,18 +2152,26 @@ function PayRollModal({
                   </div>
                   <div className="pr-field pr-field-full" style={{ fontSize: 12, color: 'var(--tm)' }}>
                     {attnCalc.loading ? (
-                      <span><i className="fa-solid fa-spinner fa-spin" aria-hidden="true"></i> Calculating leaves &amp; absents from {year} attendance…</span>
-                    ) : attnCalc.done ? (
+                      <span><i className="fa-solid fa-spinner fa-spin" aria-hidden="true"></i> Calculating leaves &amp; absents for {month} {year}…</span>
+                    ) : attnCalc.done && attnCalc.data ? (
                       <span>
                         <i className="fa-solid fa-circle-info" aria-hidden="true"></i>{' '}
-                        {year} attendance — Leaves: <strong>{attnCalc.leave}</strong>, Absents: <strong>{attnCalc.absent}</strong>,
-                        Allowed: <strong>{attnCalc.allowed}</strong>. Chargeable amounts auto-filled below (editable).
+                        Leaves YTD: <strong>{attnCalc.data.cumulativeLeavesTakenYTD}</strong>/<strong>{attnCalc.data.annualPaidLeaves}</strong>,
+                        already charged: <strong>{attnCalc.data.leavesAlreadyDeductedYTD}</strong>,
+                        excess this month: <strong>{attnCalc.data.excessLeavesThisMonth}</strong>,
+                        absents this month: <strong>{attnCalc.data.absentCountThisMonth}</strong>.
+                        Counts are server-calculated (locked); amounts stay editable.
+                      </span>
+                    ) : attnCalc.done ? (
+                      <span>
+                        <i className="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>{' '}
+                        Could not auto-calculate leave/absent deduction — enter the amounts manually.
                       </span>
                     ) : null}
                   </div>
                   <div className="pr-field">
                     <label>Number of Leaves this Month</label>
-                    <input type="number" min={0} value={leaveCount} onChange={(e) => onChangeLeaveCount(e.target.value)} />
+                    <input type="number" min={0} value={leaveCount} disabled title="Auto-calculated from server — locked" />
                   </div>
                   <div className="pr-field">
                     <label>Leave Deduction</label>
@@ -2188,7 +2183,7 @@ function PayRollModal({
                   </div>
                   <div className="pr-field">
                     <label>Number of Absents this Month</label>
-                    <input type="number" min={0} value={absentCount} onChange={(e) => onChangeAbsentCount(e.target.value)} />
+                    <input type="number" min={0} value={absentCount} disabled title="Auto-calculated from server — locked" />
                   </div>
                   <div className="pr-field">
                     <label>Absent Deduction</label>
