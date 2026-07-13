@@ -1244,6 +1244,15 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
   const { data: serverNextAdm = 1100 }  = useAsync(studentService.getStuNextAdm, 1100);
   const famArr = families;
 
+  /* Reg numbers of students already linked to any family tree (from the
+     families' embedded members). Used to disable "Add to Family Tree" for
+     students who are already in a family. Students carrying s.family are
+     covered directly in the row. */
+  const linkedRegs = useMemo(
+    () => new Set(famArr.flatMap(f => (f.members || []).map(m => m.reg))),
+    [famArr]
+  );
+
   const list = classes;
   void inactive; // accepted for parity; only setInactive is used here
 
@@ -1747,6 +1756,7 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
             onStudentIdCard={(reg) => openIdCard(c.key, reg)}
             onStudentCert={(reg, type) => openCert(c.key, reg, type)}
             onStudentAddFamily={(reg) => openAddToFamily(c.key, reg)}
+            linkedRegs={linkedRegs}
           />
         ))}
       </div>
@@ -1844,7 +1854,7 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
 }
 
 /* ─── Class header row + collapsible student list ─── */
-function StuClassRow({ c, idx, isOpen, onToggle, onReport, onPromote, onAdd, onBulkId, flashReg, onStudentEdit, onStudentMarkInactive, onStudentProfile, onStudentIdCard, onStudentCert, onStudentAddFamily }) {
+function StuClassRow({ c, idx, isOpen, onToggle, onReport, onPromote, onAdd, onBulkId, flashReg, onStudentEdit, onStudentMarkInactive, onStudentProfile, onStudentIdCard, onStudentCert, onStudentAddFamily, linkedRegs }) {
   return (
     <div className={`stu-clswrap${isOpen ? ' open' : ''}`}>
       <div className="stu-cls-row" onClick={onToggle}>
@@ -1931,6 +1941,7 @@ function StuClassRow({ c, idx, isOpen, onToggle, onReport, onPromote, onAdd, onB
                   onIdCard={() => onStudentIdCard(s.reg)}
                   onCert={(type) => onStudentCert(s.reg, type)}
                   onAddFamily={() => onStudentAddFamily(s.reg)}
+                  isLinkedToFamily={Boolean(s.family) || linkedRegs?.has(s.reg)}
                 />
               ))}
             </>
@@ -1942,7 +1953,7 @@ function StuClassRow({ c, idx, isOpen, onToggle, onReport, onPromote, onAdd, onB
 }
 
 /* ─── Per-student row + 3-dot floating menu ─── */
-function StuStudentRow({ s, i, flash, onEdit, onMarkInactive, onProfile, onIdCard, onCert, onAddFamily }) {
+function StuStudentRow({ s, i, flash, onEdit, onMarkInactive, onProfile, onIdCard, onCert, onAddFamily, isLinkedToFamily }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [certOpen, setCertOpen] = useState(false);
   const [menuUp, setMenuUp] = useState(false);
@@ -2031,8 +2042,14 @@ function StuStudentRow({ s, i, flash, onEdit, onMarkInactive, onProfile, onIdCar
                 </button>
               </div>
             )}
-            <button className="stu-actitem" onClick={() => fire(onAddFamily)}>
-              <i className="fa-solid fa-people-roof" style={{ color: '#7C3AED' }}></i> Add Student to Family Tree
+            <button
+              className="stu-actitem"
+              onClick={() => fire(onAddFamily)}
+              disabled={isLinkedToFamily}
+              title={isLinkedToFamily ? 'This student is already linked to a family tree' : undefined}
+            >
+              <i className="fa-solid fa-people-roof" style={{ color: '#7C3AED' }}></i>
+              {isLinkedToFamily ? 'Already in a Family Tree' : 'Add Student to Family Tree'}
             </button>
             <div className="stu-actmenu-div"></div>
             <button className="stu-actitem stu-actitem--danger" onClick={() => fire(onMarkInactive)}>
@@ -4373,6 +4390,7 @@ function StuAddToFamilyModal({ student, cls, families, setFamilies, onClose, onC
   const [familyId, setFamilyId] = useState(student?.family || '');
   const [relationship, setRelationship] = useState('Sibling');
   const [creating, setCreating] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [newName, setNewName] = useState('');
   const [newGuardian, setNewGuardian] = useState(student?.father || '');
   const [newContact, setNewContact] = useState(student?.mobile || '');
@@ -4383,9 +4401,19 @@ function StuAddToFamilyModal({ student, cls, families, setFamilies, onClose, onC
     document.body.style.overflow = 'hidden';
     return () => { window.removeEventListener('keydown', onKey); document.body.style.overflow = ''; };
   }, [onClose]);
+  const visible = families.filter(f => `${f.name} ${f.guardian || ''}`.toLowerCase().includes(filter.toLowerCase()));
+
+  /* Keep a valid family selected. A lone listbox option is pre-highlighted by
+     the browser but fires no onChange, so familyId would stay '' and the button
+     stay disabled — default to the first visible family whenever the current
+     selection isn't in the visible list. */
+  useEffect(() => {
+    if (familyId && visible.some(f => f.id === familyId)) return;
+    if (visible.length > 0) setFamilyId(visible[0].id);
+  }, [filter, families]); // eslint-disable-line react-hooks/exhaustive-deps
+
   if (!student) return null;
 
-  const visible = families.filter(f => `${f.name} ${f.guardian || ''}`.toLowerCase().includes(filter.toLowerCase()));
   const sx = student.gender === 'Female' ? 'd/o' : 's/o';
 
   const createFamily = () => {
@@ -4469,7 +4497,7 @@ function StuAddToFamilyModal({ student, cls, families, setFamilies, onClose, onC
           )}
         </div>
         <div className="stu-modal-foot">
-          <button className="stu-btn-ghost" onClick={onClose}>Cancel</button>
+          <button className="stu-btn-ghost" onClick={onClose} disabled={submitting}>Cancel</button>
           {creating ? (
             <button className="stu-btn-primary" onClick={createFamily}>
               <i className="fa-solid fa-plus"></i> Create &amp; Select
@@ -4478,10 +4506,17 @@ function StuAddToFamilyModal({ student, cls, families, setFamilies, onClose, onC
             <button
               className="stu-btn-primary"
               style={{ background: 'linear-gradient(135deg,#7C3AED,#6D28D9)', boxShadow: '0 4px 14px rgba(124,58,237,.28)' }}
-              onClick={() => onConfirm({ familyId, relationship })}
-              disabled={!familyId}
+              onClick={async () => {
+                if (submitting) return;
+                setSubmitting(true);
+                try { await onConfirm({ familyId, relationship }); }
+                finally { setSubmitting(false); }
+              }}
+              disabled={!familyId || submitting}
             >
-              <i className="fa-solid fa-link"></i> Add to Family
+              {submitting
+                ? (<><i className="fa-solid fa-spinner fa-spin"></i> Adding…</>)
+                : (<><i className="fa-solid fa-link"></i> Add to Family</>)}
             </button>
           )}
         </div>
@@ -5737,6 +5772,8 @@ const STU_CSS = `
   width: 100%;
 }
 .stu-actitem:hover { background: var(--bg-muted); }
+.stu-actitem:disabled { opacity: .5; cursor: not-allowed; }
+.stu-actitem:disabled:hover { background: transparent; }
 .stu-actitem i { font-size: 12px; width: 16px; text-align: center; }
 .stu-actitem--sub {
   display: flex; align-items: center; justify-content: space-between;
