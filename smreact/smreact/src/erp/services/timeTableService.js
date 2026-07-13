@@ -17,6 +17,16 @@ import { buildUrl } from '../../utils/apiConfig';
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
+/* Break/Recess ke pass koi real subject id nahi hota (subjectId 0). Backend sirf
+   `period` (subjectId) persist karta hai — subject text nahi — is liye 0 par break
+   aur empty period ek jaise ho jate hain aur reload par break gum ho jata tha.
+   Break ko is sentinel id se save karte hain aur load par wapas 'Break' bana lete
+   hain, taake manual save, auto-generate aur reports sab me break persist rahe. */
+export const TT_BREAK_SUBJECT_ID = -1;
+const isBreakPeriod = (p) =>
+  String(p?.subject ?? p?.Subject ?? p?.subjectName ?? p?.SubjectName ?? '').trim().toLowerCase() === 'break'
+  || Number(p?.subjectId ?? p?.subjectID) === TT_BREAK_SUBJECT_ID;
+
 const ss = (k) => sessionStorage.getItem(k) || '';
 const branchID = () => ss('branchID') || '1';
 const empID = () => ss('employee_ID') || '';
@@ -203,16 +213,19 @@ export async function getTimeTable() {
     const tid = r.teacher ?? r.Teacher ?? r.teacherId ?? r.TeacherID;
     /* subjectID is stored in the `period` field. */
     const subjId = r.period ?? r.Period ?? r.subjectID ?? r.SubjectID ?? 0;
+    /* Break row → sentinel id (ya subject text 'Break') se pehchano. */
+    const brk = Number(subjId) === TT_BREAK_SUBJECT_ID
+      || String(r.subject ?? r.Subject ?? r.subjectName ?? r.SubjectName ?? '').trim().toLowerCase() === 'break';
     if (!data[di]) data[di] = {};
     if (!data[di][key]) data[di][key] = [];
     data[di][key].push({
       id: r.id ?? r.ID ?? r.Id,
       startTime: normTime(r.startTime ?? r.StartTime),
       endTime: normTime(r.endTime ?? r.EndTime),
-      teacherId: tid,
-      teacher: tMap[String(tid)] || '',
-      subjectId: subjId,
-      subject: subjMap[String(subjId)] || r.subject || r.Subject || r.subjectName || r.SubjectName || '',
+      teacherId: brk ? 0 : tid,
+      teacher: brk ? '' : (tMap[String(tid)] || ''),
+      subjectId: brk ? TT_BREAK_SUBJECT_ID : subjId,
+      subject: brk ? 'Break' : (subjMap[String(subjId)] || r.subject || r.Subject || r.subjectName || r.SubjectName || ''),
     });
   });
   // Keep each class's periods in start-time order.
@@ -225,6 +238,10 @@ export async function getTimeTable() {
 
 /* Insert (id 0) or update (id > 0) one period row. */
 export async function saveTimeTablePeriod({ dayIndex, classID, sectionID, classOrder = 0, periodIndex, period }) {
+  const brk = isBreakPeriod(period);
+  /* `period` field carries the SUBJECT ID. Break → sentinel id (warna 0 par reload
+     par break pehchana nahi jata). */
+  const periodVal = brk ? TT_BREAK_SUBJECT_ID : (Number(period.subjectId) || 0);
   const payload = {
     id: period.id || 0,
     classID: Number(classID) || 0,
@@ -235,12 +252,12 @@ export async function saveTimeTablePeriod({ dayIndex, classID, sectionID, classO
     startTime: period.startTime || '',
     endTime: period.endTime || '',
     /* `period` field carries the SUBJECT ID (backend has no separate subject column). */
-    period: Number(period.subjectId) || 0,
-    teacher: Number(period.teacherId) || 0,
+    period: periodVal,
+    teacher: brk ? 0 : (Number(period.teacherId) || 0),
     /* Also send subject fields (harmless if the backend ignores them). */
-    subject: period.subject || '',
-    subjectName: period.subject || '',
-    subjectID: Number(period.subjectId) || 0,
+    subject: brk ? 'Break' : (period.subject || ''),
+    subjectName: brk ? 'Break' : (period.subject || ''),
+    subjectID: periodVal,
     action: period.id ? 'update' : 'insert',
   };
   const resp = await ttPost(payload);
