@@ -15,6 +15,7 @@ import {
   generateHrLeaveRegister,
   generateHrPayrollSummary,
 } from './hrReports';
+import { fetchReportHeader } from '../../utils/pdfReports';
 
 /* ═══════════════════════════════════════════════════════════════════
    HUMAN RESOURCE module — entry point.
@@ -942,10 +943,13 @@ function HrReports({ emps, depts, desigs, toast }) {
     getEmpTotalGross, getEmpStdDeductions,
   });
 
-  const generate = (style, monthKey) => {
+  const generate = async (style, monthKey) => {
     if (!picker) return;
     const { type } = picker;
-    const ctx = buildCtx();
+    /* Live branch header (name, logo, address, session, generated date) from the
+       /report-header API — replaces the old hardcoded school details. */
+    const branch = await fetchReportHeader();
+    const ctx = { ...buildCtx(), branch };
     let html = '';
     if      (type === 'directory')       html = generateHrDirectoryReport(ctx);
     else if (type === 'salary-register') html = generateHrSalaryRegister(ctx, monthKey);
@@ -1377,13 +1381,17 @@ function Financials({ emps, depts = [], desigs, toast }) {
   };
 
   /* Open the generated report in a new window. Mirrors generateChosenReport. */
-  const generateReport = (style, picked) => {
+  const generateReport = async (style, picked) => {
     if (!rspFor) return;
     const { emp, type } = rspFor;
+    /* Live branch header (name, logo, address, session, generated date) from the
+       /report-header API — replaces the old hardcoded school details. */
+    const branch = await fetchReportHeader();
     const ctx = {
       fmtMoney, fmtDate, getFullName,
       getDeptName, getDesigName,
       empPayroll, empLoans,
+      branch,
     };
     let html = '';
     if      (type === 'salaryslip') html = generateSalarySlipHTML(emp, picked.monthKey || '2026-05', style, ctx);
@@ -4779,6 +4787,7 @@ function MarkInactiveModal({ emp, onClose, onConfirm }) {
 function StaffIdCardModal({ emp, deptName, desigName, onClose }) {
   const [layout, setLayout] = useState('v');     // 'v' | 'h'
   const [generated, setGenerated] = useState(false);
+  const [branch, setBranch] = useState(null);    // live /report-header data
 
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
@@ -4790,9 +4799,22 @@ function StaffIdCardModal({ emp, deptName, desigName, onClose }) {
     };
   }, [onClose]);
 
+  /* Live branch identity (name, logo, address, session, contact) from the
+     /report-header API — replaces the hardcoded "SCHOOL MENTOR" card details. */
+  useEffect(() => {
+    let alive = true;
+    fetchReportHeader().then((b) => { if (alive && b) setBranch(b); });
+    return () => { alive = false; };
+  }, []);
+
   const fullName = getFullName(emp);
   const ini = fullName.split(' ').filter(Boolean).map(p => p[0]).join('').toUpperCase().slice(0, 2) || '?';
-  const session = `${new Date().getFullYear()} – ${new Date().getFullYear() + 1}`;
+  const schoolName = branch?.branchName || 'School Mentor';
+  const schoolLogo = branch?.branchLogo || '';
+  const schoolAddr = branch?.address || 'Sector G-9, Islamabad';
+  const schoolPhone = branch?.phone || branch?.branchPhone || branch?.contactNumber || '+92 51 0000 000';
+  const schoolEmail = branch?.email || branch?.branchEmail || 'admin@schoolmentor.app';
+  const session = branch?.academicSession || `${new Date().getFullYear()} – ${new Date().getFullYear() + 1}`;
   const validity = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
   return createPortal((
@@ -4857,8 +4879,10 @@ function StaffIdCardModal({ emp, deptName, desigName, onClose }) {
                 <>
                   <div className="idc-render idc-render--v">
                     <div className="idc-r-head">
-                      <div className="idc-r-logo"><i className="fa-solid fa-school"></i></div>
-                      <div className="idc-r-school">SCHOOL MENTOR</div>
+                      <div className="idc-r-logo">
+                        {schoolLogo ? <img src={schoolLogo} alt="" /> : <i className="fa-solid fa-school"></i>}
+                      </div>
+                      <div className="idc-r-school">{schoolName}</div>
                       <div className="idc-r-tag">Staff Identification</div>
                     </div>
                     <div className="idc-r-photo-v">
@@ -4879,15 +4903,15 @@ function StaffIdCardModal({ emp, deptName, desigName, onClose }) {
                   </div>
                   <div className="idc-render idc-render--v idc-render--back">
                     <div className="idc-r-head idc-r-head--back">
-                      <div className="idc-r-school">SCHOOL MENTOR</div>
+                      <div className="idc-r-school">{schoolName}</div>
                       <div className="idc-r-tag">If found, please return</div>
                     </div>
                     <div className="idc-r-back-body">
-                      <p>This card is the property of School Mentor Academy. Please return it to the principal's office on resignation or termination.</p>
+                      <p>This card is the property of {schoolName}. Please return it to the principal's office on resignation or termination.</p>
                       <div className="idc-r-back-kv">
-                        <div><span>Address</span><b>Sector G-9, Islamabad</b></div>
-                        <div><span>Phone</span><b>+92 51 0000 000</b></div>
-                        <div><span>Email</span><b>admin@schoolmentor.app</b></div>
+                        <div><span>Address</span><b>{schoolAddr}</b></div>
+                        <div><span>Phone</span><b>{schoolPhone}</b></div>
+                        <div><span>Email</span><b>{schoolEmail}</b></div>
                       </div>
                       <div className="idc-r-sign">
                         <div className="idc-r-sign-line" />
@@ -4905,7 +4929,9 @@ function StaffIdCardModal({ emp, deptName, desigName, onClose }) {
                       </div>
                     </div>
                     <div className="idc-r-h-right">
-                      <div className="idc-r-h-school"><i className="fa-solid fa-school"></i> SCHOOL MENTOR</div>
+                      <div className="idc-r-h-school">
+                        {schoolLogo ? <img src={schoolLogo} alt="" className="idc-r-h-logo" /> : <i className="fa-solid fa-school"></i>} {schoolName}
+                      </div>
                       <div className="idc-r-name">{fullName}</div>
                       <div className="idc-r-desig">{desigName} · {deptName}</div>
                       <div className="idc-r-kv idc-r-kv--h">
@@ -4919,10 +4945,10 @@ function StaffIdCardModal({ emp, deptName, desigName, onClose }) {
                   <div className="idc-render idc-render--h idc-render--back">
                     <div className="idc-r-back-body">
                       <div className="idc-r-tag">If found, please return</div>
-                      <p>This card is the property of School Mentor Academy.</p>
+                      <p>This card is the property of {schoolName}.</p>
                       <div className="idc-r-back-kv">
-                        <div><span>Address</span><b>Sector G-9, Islamabad</b></div>
-                        <div><span>Phone</span><b>+92 51 0000 000</b></div>
+                        <div><span>Address</span><b>{schoolAddr}</b></div>
+                        <div><span>Phone</span><b>{schoolPhone}</b></div>
                       </div>
                       <div className="idc-r-sign">
                         <div className="idc-r-sign-line" />
@@ -5108,6 +5134,19 @@ function LetterModal({ emp, deptName, desigName, onClose, onIssue, toast }) {
       document.body.style.overflow = '';
     };
   }, [onClose]);
+
+  /* Pre-fill the letterhead (name, address, logo) from the live /report-header
+     API so the letter reflects the real branch instead of dummy defaults. */
+  useEffect(() => {
+    let alive = true;
+    fetchReportHeader().then((b) => {
+      if (!alive || !b) return;
+      if (b.branchName) setSchoolName(b.branchName);
+      if (b.address)    setSchoolAddr(b.address);
+      if (b.branchLogo) { setLogoData(b.branchLogo); setLogoName('Branch Logo'); }
+    });
+    return () => { alive = false; };
+  }, []);
 
   /* Template apply — populates subject + content on first mount and on
      every type change. Keeps the school-name token live by re-filling
@@ -5423,6 +5462,7 @@ function fmtDate(d) {
 
 function ProfileReportModal({ emp, deptName, desigName, onClose }) {
   const [style, setStyle] = useState('color');     // 'color' | 'bw'
+  const [branch, setBranch] = useState(null);       // live /report-header data
 
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
@@ -5433,6 +5473,16 @@ function ProfileReportModal({ emp, deptName, desigName, onClose }) {
       document.body.style.overflow = '';
     };
   }, [onClose]);
+
+  /* Branch header (name, logo, address, session) from the /report-header API —
+     replaces the hardcoded "School Mentor" letterhead. */
+  useEffect(() => {
+    let alive = true;
+    fetchReportHeader().then((b) => { if (alive && b) setBranch(b); });
+    return () => { alive = false; };
+  }, []);
+
+  const schoolName = branch?.branchName || 'School Mentor';
 
   const fullName = getFullName(emp);
   const ini = fullName.split(' ').filter(Boolean).map(p => p[0]).join('').toUpperCase().slice(0, 2) || '?';
@@ -5531,10 +5581,14 @@ function ProfileReportModal({ emp, deptName, desigName, onClose }) {
           {/* ─── Header ─── */}
           <div className="report-header">
             <div className="report-header-left">
-              <div className="report-logo"><i className="fa-solid fa-graduation-cap" aria-hidden="true"></i></div>
+              <div className="report-logo">
+                {branch?.branchLogo
+                  ? <img src={branch.branchLogo} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 'inherit' }} />
+                  : <i className="fa-solid fa-graduation-cap" aria-hidden="true"></i>}
+              </div>
               <div>
-                <div className="report-school-name">School Mentor</div>
-                <div className="report-school-tag">Comprehensive School ERP — Human Resource Department</div>
+                <div className="report-school-name">{schoolName}</div>
+                <div className="report-school-tag">{branch?.address || 'Comprehensive School ERP — Human Resource Department'}</div>
               </div>
             </div>
             <div className="report-type-badge"><i className="fa-solid fa-user-tie" aria-hidden="true"></i> Employee Profile Report</div>
@@ -5542,7 +5596,8 @@ function ProfileReportModal({ emp, deptName, desigName, onClose }) {
 
           {/* ─── Meta strip ─── */}
           <div className="report-meta">
-            <div><strong>Generated:</strong> {today}</div>
+            <div><strong>Generated:</strong> {branch?.generatedDate ? fmtDate(branch.generatedDate) : today}</div>
+            {branch?.academicSession && <div><strong>Session:</strong> {branch.academicSession}</div>}
             <div><strong>Employee ID:</strong> {emp.eid}</div>
             <div><strong>Ref:</strong> HR/PROFILE/{emp.eid}</div>
           </div>
@@ -5901,7 +5956,7 @@ function ProfileReportModal({ emp, deptName, desigName, onClose }) {
           {/* ─── Footer ─── */}
           <div className="report-foot">
             <div>
-              <div>This is a system-generated report from School Mentor HR.</div>
+              <div>This is a system-generated report from {schoolName} HR.</div>
               <div style={{ marginTop: 2 }}>Confidential — for internal use only.</div>
             </div>
             <div className="sig-mini">
@@ -7659,7 +7714,10 @@ export const HR_CSS = `
   display: inline-flex; align-items: center; justify-content: center;
   font-size: 14px;
   margin-bottom: 6px;
+  overflow: hidden;
 }
+.idc-r-logo img { width: 100%; height: 100%; object-fit: cover; }
+.idc-r-h-logo { width: 14px; height: 14px; border-radius: 3px; object-fit: cover; vertical-align: middle; }
 .idc-r-school { font: 800 13px/1 var(--hr-font); letter-spacing: .4px; }
 .idc-r-tag    { font: 500 9.5px/1 var(--hr-font); opacity: .85; margin-top: 4px; }
 .idc-r-photo-v {
