@@ -541,7 +541,10 @@ function openMathFieldPopup(anchorRect, initialLatex, onInsert) {
     try {
       /* "Formulas" + "Shortcuts" submenu ko default menu ke UPAR add karo (defaults rehne den). */
       const defaults = Array.isArray(mf.menuItems) ? mf.menuItems : [];
-      mf.menuItems = [buildSchoolFormulaMenu(mf), buildShortcutsMenu(mf), { type: 'divider' }, ...defaults];
+      // Ye 4 default items menu se hata do: Mode, Font Style (variant), Color, Background.
+      const HIDE_IDS = ['mode', 'variant', 'color', 'background-color'];
+      const kept = defaults.filter(it => !(it && HIDE_IDS.includes(it.id)));
+      mf.menuItems = [buildSchoolFormulaMenu(mf), buildShortcutsMenu(mf), { type: 'divider' }, ...kept];
     } catch (e) { /* ignore — default menu hi rahega */ }
     try { place(); } catch (e) { /* ignore */ }   // asli height ke saath dobara position
     try { mf.focus(); } catch (e) { /* ignore */ }

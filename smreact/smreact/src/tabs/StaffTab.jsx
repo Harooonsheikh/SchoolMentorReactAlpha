@@ -17,8 +17,12 @@ function StaffModal({ open, staff, deptsData, onClose, onSave, setDeptsData, sho
     const [provinceList, setProvinceList] = useState([]);
     const [cityList, setCityList]         = useState([]);
   const [Qualification, setQualification] = useState({});
+  /* Duplicate-number popup: number pehle se ho to email maango, email ko phone field me
+     map karke email ke through add karo. */
+  const [dupPopup, setDupPopup] = useState(false);
+  const [dupEmail, setDupEmail] = useState('');
 
-  
+
   React.useEffect(() => {
     if (open && staff) {
       const dateOnly = (v) => (v ? String(v).split('T')[0] : '');
@@ -151,7 +155,11 @@ function StaffModal({ open, staff, deptsData, onClose, onSave, setDeptsData, sho
     );
   };
 
-  const handleSave = async () => {
+  const handleSave = async (phoneOverride) => {
+    /* phoneOverride: duplicate-number popup se aane wala email — Phone field ki jagah
+       is email ko use karo (email ke through add). Warna normal form.phone. */
+    const effPhone = (typeof phoneOverride === 'string' && phoneOverride.trim())
+      ? phoneOverride.trim() : form.phone;
     /* Personal Information ke required fields (form par * waale). Koi bhi missing ho
        to yahin rok do aur us EXACT field ka toast dikhao — taake API call na ho aur
        galti se "Employee saved successfully" wala toast na aaye. */
@@ -162,7 +170,8 @@ function StaffModal({ open, staff, deptsData, onClose, onSave, setDeptsData, sho
       ['phone',      'Phone Number'],
     ];
     for (const [key, label] of requiredFields) {
-      if (!form[key] || !String(form[key]).trim()) {
+      const v = key === 'phone' ? effPhone : form[key];
+      if (!v || !String(v).trim()) {
         showToast(`${label} is required`, 'error');
         return;
       }
@@ -193,7 +202,7 @@ function StaffModal({ open, staff, deptsData, onClose, onSave, setDeptsData, sho
         fd.append('ProvinceID',          form.province || 0);
         fd.append('CityID',              form.city || 0);
         fd.append('Address',             form.address ?? '');
-        fd.append('Phone',               form.phone ?? '');
+        fd.append('Phone',               effPhone ?? '');
         fd.append('BranchID',            BranchID);
         fd.append('DateOfBirth',         form.dateOfBirth ?? now);
         fd.append('DateOfJoining',       form.joiningDate ?? '');
@@ -258,7 +267,15 @@ fd.append(
              case ko fail samjho aur inner Message ka error toast dikhao (na "saved"). */
           const inner = Array.isArray(data?.data) ? data.data[0] : null;
           if (inner && (inner.Success === 0 || inner.Success === false)) {
-            showToast(inner.Message || data?.message || 'Save failed', 'error');
+            const msg = inner.Message || data?.message || 'Save failed';
+            showToast(msg, 'error');   // toaster same rahega ("Number already exist")
+            /* Duplicate number → popup kholo taake email de kar (email ke through) add ho sake.
+               Agar ye pehle se email-retry tha aur wo bhi duplicate nikla, to us email ko
+               prefill karke dobara maango (loop nahi — user ko Enter dabana padega). */
+            if (/exist|number|already/i.test(msg)) {
+              setDupEmail(phoneOverride ? String(phoneOverride) : '');
+              setDupPopup(true);
+            }
             return false;
           }
           const newId = inner?.id ?? data?.id ?? inner?.ID ?? data?.ID;
@@ -275,6 +292,19 @@ fd.append(
         console.error(err);
         return false;
       }
+    };
+
+    /* Duplicate-number popup ka Enter/Confirm: email ko phone-number field me map karo
+       (UI bhi update) aur usi email ke through dobara add karo. */
+    const confirmDupEmail = () => {
+      const email = (dupEmail || '').trim();
+      if (!email || !/^\S+@\S+\.\S+$/.test(email)) {
+        showToast('Please enter a valid email', 'error');
+        return;
+      }
+      set('phone', email);      // email → phone-number input (field me dikhega)
+      setDupPopup(false);
+      handleSave(email);        // email ke saath add (reliable override, stale state se bachne ke liye)
     };
 
     const handleupdateOffical = async() => {
@@ -518,7 +548,7 @@ console.log(payload)
                   </div>
                 </div>
                 <div className="form-group">
-                  <label className="form-label">phone Number <span className="req-star">*</span></label>
+                  <label className="form-label">Phone/Email <span className="req-star">*</span></label>
                   <div className="input-wrapper">
                     <i className="fas fa-phone input-icon"></i>
                     <input className="form-input has-icon" value={form.phone || ''} onChange={e => set('phone', e.target.value)} placeholder="0300 0000000" />
@@ -731,6 +761,40 @@ console.log(payload)
           </div>
         </div>
       </div>
+
+      {/* ── Duplicate-number popup: number pehle se ho to email maango, email ke through add ── */}
+      {dupPopup && (
+        <div
+          style={{ position: 'fixed', inset: 0, zIndex: 10050, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(2,6,23,.55)', backdropFilter: 'blur(2px)' }}
+          onClick={e => { if (e.target === e.currentTarget) setDupPopup(false); }}>
+          <div style={{ background: '#fff', borderRadius: 14, width: 'min(430px,92vw)', padding: '22px 22px 18px', boxShadow: '0 24px 70px rgba(2,6,23,.4)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+              <i className="fas fa-triangle-exclamation" style={{ color: '#dc2626', fontSize: 18 }}></i>
+              <div style={{ fontSize: 16, fontWeight: 800, color: '#0f172a' }}>Number already exists</div>
+            </div>
+            <div style={{ fontSize: 13, color: '#64748b', marginBottom: 14, lineHeight: 1.55 }}>
+              This phone number is already registered. You can continue with email.
+            </div>
+            <label style={{ fontSize: 12, fontWeight: 700, color: '#475569', display: 'block', marginBottom: 6 }}>Email</label>
+            <input
+              autoFocus
+              type="email"
+              value={dupEmail}
+              placeholder="name@example.com"
+              onChange={e => setDupEmail(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') { e.preventDefault(); confirmDupEmail(); }
+                else if (e.key === 'Escape') { setDupPopup(false); }
+              }}
+              style={{ width: '100%', padding: '10px 12px', border: '1.5px solid #cbd5e1', borderRadius: 9, fontSize: 14, outline: 'none', boxSizing: 'border-box' }}
+            />
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 18 }}>
+              <button className="btn btn-secondary btn-md" onClick={() => setDupPopup(false)}>Cancel</button>
+              <button className="btn btn-primary btn-md" onClick={confirmDupEmail}>Enter</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1192,7 +1256,7 @@ const [taskTarget, setTaskTarget] = useState(null);
                       <div className="emp-section-hdr"><i className="fas fa-user" style={{ marginRight: 8 }}></i>Personal Information</div>
                       <div className="emp-section-body">
                         <div className="emp-field-grid">
-                          {[['First Name', s.firstName], ['Last Name', s.lastName], ['Father Name', s.fatherName], ['CNIC', s.cnic], ['Date of Birth', dateOnly(s.dateOfBirth)], ['Gender', s.gender], ['Marital Status', s.maritalStatus], ['Address', s.address], ['phone', s.phone], ['Blood Group', s.bloodGroup]].map(([lbl, val]) => (
+                          {[['First Name', s.firstName], ['Last Name', s.lastName], ['Father Name', s.fatherName], ['CNIC', s.cnic], ['Date of Birth', dateOnly(s.dateOfBirth)], ['Gender', s.gender], ['Marital Status', s.maritalStatus], ['Address', s.address], ['Phone/Email', s.phone], ['Blood Group', s.bloodGroup]].map(([lbl, val]) => (
                             <div key={lbl} className="emp-field">
                               <div className="emp-field-label">{lbl}</div>
                               <div className="emp-field-val">{val || '—'}</div>
