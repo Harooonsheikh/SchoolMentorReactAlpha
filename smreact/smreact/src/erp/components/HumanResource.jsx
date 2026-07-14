@@ -841,96 +841,6 @@ function fmtMoney(n) {
    1:1 port of #hrP4 + openHrReport flow from "Human Resource .html".
    ═══════════════════════════════════════════════════════════════════ */
 
-/* Same demo seed as Financials uses (Aug 2025 → Jun 2026 for Dr. Islahudin).
-   The Reports tab needs payroll history to produce non-empty Salary
-   Register / Payroll Summary outputs. Mirrors seedDemoFinancialData. */
-function useHrDemoPayroll(emps) {
-  const [empPayroll, setEmpPayroll] = useState({});
-  const seededRef = useRef(false);
-  useEffect(() => {
-    if (seededRef.current) return;
-    if (!emps || !emps.length) return;
-    const activeEmps = emps.filter(x => x.status === 'Active');
-    if (!activeEmps.length) return;
-    seededRef.current = true;
-    const demoMonths = [
-      { key:'2025-08', month:'August',    year:2025, bonus:0,     fineDeduct:0,   leaveDeduct:0,    absentDeduct:0, leaveCount:0, absentCount:0, fineComment:'',                       leaveComment:'',               loanCut:0,    advRecovery:0 },
-      { key:'2025-09', month:'September', year:2025, bonus:0,     fineDeduct:0,   leaveDeduct:0,    absentDeduct:0, leaveCount:0, absentCount:0, fineComment:'',                       leaveComment:'',               loanCut:5000, advRecovery:0 },
-      { key:'2025-10', month:'October',   year:2025, bonus:5000,  fineDeduct:0,   leaveDeduct:0,    absentDeduct:0, leaveCount:0, absentCount:0, fineComment:'',                       leaveComment:'',               loanCut:5000, advRecovery:0 },
-      { key:'2025-11', month:'November',  year:2025, bonus:0,     fineDeduct:500, leaveDeduct:0,    absentDeduct:0, leaveCount:0, absentCount:0, fineComment:'Late report submission', leaveComment:'',               loanCut:5000, advRecovery:0 },
-      { key:'2025-12', month:'December',  year:2025, bonus:10000, fineDeduct:0,   leaveDeduct:0,    absentDeduct:0, leaveCount:0, absentCount:0, fineComment:'',                       leaveComment:'',               loanCut:5000, advRecovery:0 },
-      { key:'2026-01', month:'January',   year:2026, bonus:0,     fineDeduct:0,   leaveDeduct:0,    absentDeduct:0, leaveCount:0, absentCount:0, fineComment:'',                       leaveComment:'',               loanCut:5000, advRecovery:0 },
-      { key:'2026-02', month:'February',  year:2026, bonus:0,     fineDeduct:0,   leaveDeduct:0,    absentDeduct:0, leaveCount:0, absentCount:0, fineComment:'',                       leaveComment:'',               loanCut:0,    advRecovery:3000 },
-      { key:'2026-03', month:'March',     year:2026, bonus:0,     fineDeduct:0,   leaveDeduct:1500, absentDeduct:0, leaveCount:1, absentCount:0, fineComment:'',                       leaveComment:'1 unpaid leave', loanCut:0,    advRecovery:3000 },
-      { key:'2026-04', month:'April',     year:2026, bonus:5000,  fineDeduct:0,   leaveDeduct:0,    absentDeduct:0, leaveCount:0, absentCount:0, fineComment:'',                       leaveComment:'',               loanCut:0,    advRecovery:2500 },
-      { key:'2026-05', month:'May',       year:2026, bonus:0,     fineDeduct:0,   leaveDeduct:0,    absentDeduct:0, leaveCount:0, absentCount:0, fineComment:'',                       leaveComment:'',               loanCut:5000, advRecovery:0 },
-      { key:'2026-06', month:'June',      year:2026, bonus:3000,  fineDeduct:0,   leaveDeduct:0,    absentDeduct:0, leaveCount:0, absentCount:0, fineComment:'',                       leaveComment:'',               loanCut:5000, advRecovery:0 },
-      { key:'2026-07', month:'July',      year:2026, bonus:0,     fineDeduct:0,   leaveDeduct:0,    absentDeduct:0, leaveCount:0, absentCount:0, fineComment:'',                       leaveComment:'',               loanCut:5000, advRecovery:0 },
-    ];
-    /* Seed a full "Paid" payroll history for every active employee so the
-       reports show complete data for each month. Employee #1 keeps the rich
-       loan / advance / fine / leave schedule; the rest get clean full-salary
-       records (those deductions are specific to emp #1's wedding loan). */
-    const payroll = {};
-    activeEmps.forEach(emp => {
-      const isPrimary = emp.id === 1;
-      const basic     = +emp.basicSalary || 80000;
-      const stdDeduct = getEmpStdDeductions(emp);
-      const empMap = {};
-      demoMonths.forEach(m => {
-        const totalGross  = getEmpTotalGross(emp, m.bonus);
-        const loanCut     = isPrimary ? (m.loanCut || 0) : 0;
-        const advRecovery = isPrimary ? (m.advRecovery || 0) : 0;
-        const fineDeduct  = isPrimary ? (m.fineDeduct || 0) : 0;
-        const leaveDeduct = isPrimary ? (m.leaveDeduct || 0) : 0;
-        const absentDeduct = isPrimary ? (m.absentDeduct || 0) : 0;
-        const otherDed    = fineDeduct + leaveDeduct + absentDeduct;
-        const totalDeduct = stdDeduct + loanCut + advRecovery + otherDed;
-        const net         = totalGross - totalDeduct;
-        const monthIdx    = parseInt(m.key.split('-')[1], 10);
-        const lastDay     = new Date(m.year, monthIdx, 0).getDate();
-        const payDate     = `${m.year}-${String(monthIdx).padStart(2,'0')}-${String(Math.min(lastDay, 28)).padStart(2,'0')}`;
-        empMap[m.key] = {
-          month: m.month, year: m.year, status: 'Paid',
-          basicPay: basic, bonus: m.bonus || 0, totalGross,
-          stdDeductions: stdDeduct,
-          loanDeduct: loanCut, customLoan: 0,
-          advanceRecovery: advRecovery,
-          fineDeduct, leaveDeduct, absentDeduct,
-          totalDeductions: totalDeduct,
-          leaveCount: isPrimary ? (m.leaveCount || 0) : 0, absentCount: isPrimary ? (m.absentCount || 0) : 0,
-          fineComment: isPrimary ? (m.fineComment || '') : '', leaveComment: isPrimary ? (m.leaveComment || '') : '', absentComment: '',
-          netPayable: net,
-          payments: [{ amount: net, date: payDate, comment: 'Salary cleared' }],
-          paidAmount: net, paidDate: payDate, loanRecorded: loanCut > 0,
-          generatedAt: payDate,
-        };
-      });
-      payroll[emp.id] = empMap;
-    });
-    setEmpPayroll(payroll);
-  }, [emps]);
-  return empPayroll;
-}
-
-/* The same Wedding Loan seed Financials uses. */
-const HR_DEMO_EMP_LOANS = {
-  1: [{
-    id: 1001, loanNumber: 1, amount: 100000, comment: 'Wedding Loan',
-    repaymentType: 'Installment', deductDate: '2025-08-15',
-    installmentType: 'Monthly', installmentAmount: 5000,
-    status: 'active',
-    received: [
-      { amount: 5000, date: '2025-09-30', comment: 'September installment via payroll' },
-      { amount: 5000, date: '2025-10-31', comment: 'October installment via payroll'   },
-      { amount: 5000, date: '2025-11-30', comment: 'November installment via payroll'  },
-      { amount: 5000, date: '2025-12-31', comment: 'December installment via payroll'  },
-      { amount: 5000, date: '2026-01-31', comment: 'January installment via payroll'   },
-    ],
-    remaining: 75000, createdAt: '2025-08-15',
-  }],
-};
-
 const HR_REPORT_META = {
   'directory'       : { title: 'Employee Directory',          sub: 'All staff · Personal, department & contact info',                       icon: 'fa-users',                gradFrom: 'rgba(30,58,138,.1)',  gradTo: 'rgba(30,64,175,.18)',  iconColor: '#1E40AF', period: false, chips: ['All Staff', 'Dept-wise', 'Active / Inactive'], desc: 'Full staff list with personal details, departments, designations & contact info' },
   'salary-register' : { title: 'Salary Register',             sub: 'Monthly gross, deductions & net pay for all staff',                     icon: 'fa-file-invoice-dollar',  gradFrom: 'rgba(22,163,74,.1)',  gradTo: 'rgba(22,163,74,.18)',  iconColor: '#16A34A', period: true,  chips: ['Monthly', 'All Employees', 'PKR Totals'],          desc: 'Month-wise gross pay, allowances, deductions & net payable for all employees' },
@@ -941,9 +851,6 @@ const HR_REPORT_META = {
 };
 
 function HrReports({ emps, depts, desigs, toast }) {
-  const empPayroll = useHrDemoPayroll(emps);
-  const empLoans   = HR_DEMO_EMP_LOANS;
-
   const deptMap  = useMemo(() => new Map(depts.map(d => [d.id, d])), [depts]);
   const desigMap = useMemo(() => new Map(desigs.map(d => [d.id, d])), [desigs]);
   const getDeptName  = (id) => deptMap.get(id)?.name || '—';
@@ -953,7 +860,6 @@ function HrReports({ emps, depts, desigs, toast }) {
 
   const buildCtx = () => ({
     emps, depts, desigs,
-    empPayroll, empLoans,
     fmtMoney, fmtDate, getFullName,
     getDeptName, getDesigName,
     getEmpTotalGross, getEmpStdDeductions,
@@ -965,7 +871,29 @@ function HrReports({ emps, depts, desigs, toast }) {
     /* Live branch header (name, logo, address, session, generated date) from the
        /report-header API — replaces the old hardcoded school details. */
     const branch = await fetchReportHeader();
-    const ctx = { ...buildCtx(), branch };
+
+    /* Pull the REAL data each report needs (no more demo seeds):
+         • payroll reports  → all saved payroll for the picked month/year
+         • loan ledger      → every active employee's loans + repayments        */
+    let empPayroll = {};
+    let empLoans   = {};
+    try {
+      if (type === 'salary-register' || type === 'payroll-summary') {
+        const [y, m] = String(monthKey || '').split('-').map(Number);
+        empPayroll = await hrService.getHrPayrollByBranch(m, y);
+      } else if (type === 'loan-summary') {
+        const active = emps.filter(e => e.status === 'Active');
+        const lists  = await Promise.all(
+          active.map(e => hrService.getHrEmployeeLoans(e.id).catch(() => [])),
+        );
+        active.forEach((e, i) => { empLoans[e.id] = lists[i] || []; });
+      }
+    } catch (err) {
+      toast(err.message || 'Could not load report data', 'error');
+      return;
+    }
+
+    const ctx = { ...buildCtx(), empPayroll, empLoans, branch };
     let html = '';
     if      (type === 'directory')       html = generateHrDirectoryReport(ctx);
     else if (type === 'salary-register') html = generateHrSalaryRegister(ctx, monthKey);
@@ -1160,39 +1088,27 @@ function Financials({ emps, depts = [], desigs, toast }) {
      since no Payroll service has landed yet. */
   const [empPayroll, setEmpPayroll] = useState({});
 
-  /* Per-employee loans: empLoans[empId] = [...loans]. Each loan:
+  /* Per-employee loans: empLoans[empId] = [...loans], loaded live from
+     /api/HR/get-employee-loans when the Advance/Loan (or Pay Roll) modal opens.
+     Each loan (mapApiLoan shape):
        { id, loanNumber, amount, comment,
          repaymentType: 'OneTime' | 'Installment',
          deductDate, installmentType, installmentAmount,
          status: 'active' | 'returned',
-         received: [{ amount, date, comment }],
+         received: [{ amount, date, comment, source }],
          remaining, createdAt }                          */
-  const [empLoans,   setEmpLoans]   = useState({
-    /* Sample loan for emp 1 (Dr. Islahudin) — 1:1 from HTML reference. */
-    1: [
-      {
-        id:                1001,
-        loanNumber:        1,
-        amount:            100000,
-        comment:           'Wedding Loan',
-        repaymentType:     'Installment',
-        deductDate:        '2025-08-15',
-        installmentType:   'Monthly',
-        installmentAmount: 5000,
-        status:            'active',
-        received:          [
-          { amount: 5000, date: '2025-09-30', comment: 'September installment via payroll' },
-          { amount: 5000, date: '2025-10-31', comment: 'October installment via payroll'   },
-          { amount: 5000, date: '2025-11-30', comment: 'November installment via payroll'  },
-          { amount: 5000, date: '2025-12-31', comment: 'December installment via payroll'  },
-          { amount: 5000, date: '2026-01-31', comment: 'January installment via payroll'   },
-        ],
-        remaining:         75000,
-        createdAt:         '2025-08-15',
-      },
-    ],
-  });
-  const [nextLoanId, setNextLoanId] = useState(1002);
+  const [empLoans, setEmpLoans] = useState({});
+
+  /* Fetch (or refresh) one employee's loans into empLoans[empId]. */
+  const loadEmpLoans = async (empId) => {
+    if (!empId) return;
+    try {
+      const loans = await hrService.getHrEmployeeLoans(empId);
+      setEmpLoans(prev => ({ ...prev, [empId]: loans }));
+    } catch (err) {
+      toast(err.message || 'Could not load loans', 'error');
+    }
+  };
 
   /* ── Load real payroll for the whole selected year from the backend
         (get-payroll-by-branch, one call per month) and merge it into
@@ -1268,8 +1184,8 @@ function Financials({ emps, depts = [], desigs, toast }) {
       .filter(l => l.repaymentType === 'Installment')
       .reduce((s, l) => s + (Number(l.installmentAmount) || 0), 0);
 
-  /* Loan mutators */
-  const saveNewLoan = (empId, payload) => {
+  /* Loan mutators — persist to the backend, then refresh the employee's loans. */
+  const saveNewLoan = async (empId, payload) => {
     const amount = Number(payload.amount) || 0;
     if (amount <= 0) { toast('Please enter a valid loan amount', 'error'); return; }
     if (!payload.repaymentType) { toast('Please select repayment type', 'error'); return; }
@@ -1277,76 +1193,57 @@ function Financials({ emps, depts = [], desigs, toast }) {
         && (!payload.installmentType || !(Number(payload.installmentAmount) > 0))) {
       toast('Please complete installment details', 'error'); return;
     }
-    const today    = new Date().toISOString().slice(0, 10);
-    const existing = empLoans[empId] || [];
-    const loan = {
-      id:                nextLoanId,
-      loanNumber:        existing.length + 1,
-      amount,
-      comment:           payload.comment || 'N/A',
-      repaymentType:     payload.repaymentType,
-      deductDate:        payload.deductDate || today,
-      installmentType:   payload.repaymentType === 'Installment' ? payload.installmentType : null,
-      installmentAmount: payload.repaymentType === 'Installment'
-                           ? (Number(payload.installmentAmount) || 0)
-                           : amount,
-      status:            'active',
-      received:          [],
-      remaining:         amount,
-      createdAt:         today,
-    };
-    setEmpLoans(prev => ({ ...prev, [empId]: [...(prev[empId] || []), loan] }));
-    setNextLoanId(id => id + 1);
+    try {
+      await hrService.saveHrEmployeeLoan({
+        employeeID:        empId,
+        loanAmount:        amount,
+        comments:          payload.comment || '',
+        repaymentType:     payload.repaymentType,
+        repaymentDate:     payload.deductDate,
+        installmentType:   payload.repaymentType === 'Installment' ? payload.installmentType : '',
+        installmentAmount: payload.repaymentType === 'Installment' ? (Number(payload.installmentAmount) || 0) : amount,
+      });
+    } catch (err) {
+      toast(err.message || 'Could not save loan', 'error');
+      return;
+    }
+    await loadEmpLoans(empId);
     toast(`Loan of PKR ${fmtMoney(amount)} set up successfully`, 'success');
   };
 
-  const saveLoanRepayment = (empId, payload) => {
+  const saveLoanRepayment = async (empId, payload) => {
     const amt = Number(payload.amount) || 0;
     if (!payload.loanId || amt <= 0) {
       toast('Please select a loan and enter a valid amount', 'error'); return;
     }
     const loan = (empLoans[empId] || []).find(l => l.id === payload.loanId);
-    if (!loan) return;
-    if (amt > loan.remaining) {
+    if (loan && amt > loan.remaining) {
       toast(`Amount cannot exceed remaining balance (PKR ${fmtMoney(loan.remaining)})`, 'error');
       return;
     }
-    setEmpLoans(prev => {
-      const list = (prev[empId] || []).map(l => {
-        if (l.id !== payload.loanId) return l;
-        const remaining = Math.max(0, (Number(l.remaining) || 0) - amt);
-        return {
-          ...l,
-          remaining,
-          status: remaining <= 0 ? 'returned' : l.status,
-          received: [
-            ...(l.received || []),
-            { amount: amt, date: payload.date, comment: payload.comment || '' },
-          ],
-        };
+    try {
+      await hrService.saveHrEmployeeLoanRepayment({
+        loanID:        payload.loanId,
+        amount:        amt,
+        repaymentDate: payload.date,
+        comments:      payload.comment || '',
       });
-      return { ...prev, [empId]: list };
-    });
+    } catch (err) {
+      toast(err.message || 'Could not record repayment', 'error');
+      return;
+    }
+    await loadEmpLoans(empId);
     toast(`Loan repayment of PKR ${fmtMoney(amt)} recorded`, 'success');
   };
 
-  const markLoanReturned = (empId, loanId) => {
-    const today = new Date().toISOString().slice(0, 10);
-    setEmpLoans(prev => {
-      const list = (prev[empId] || []).map(l => {
-        if (l.id !== loanId) return l;
-        const received = [...(l.received || [])];
-        if ((Number(l.remaining) || 0) > 0) {
-          received.push({
-            amount:  Number(l.remaining) || 0,
-            date:    today,
-            comment: 'Final settlement — marked returned',
-          });
-        }
-        return { ...l, remaining: 0, status: 'returned', received };
-      });
-      return { ...prev, [empId]: list };
-    });
+  const markLoanReturned = async (empId, loanId) => {
+    try {
+      await hrService.markHrEmployeeLoanReturned(loanId);
+    } catch (err) {
+      toast(err.message || 'Could not mark loan returned', 'error');
+      return;
+    }
+    await loadEmpLoans(empId);
     toast('Loan marked as returned', 'success');
   };
 
@@ -1378,6 +1275,7 @@ function Financials({ emps, depts = [], desigs, toast }) {
   const openPayRoll = (e) => {
     setActionsId(null);
     setReportsId(null);
+    loadEmpLoans(e.id);   // keep the loan-deduction figure in sync
     setPrFor(e);
   };
   const openRsp = (e, type) => {
@@ -1416,6 +1314,7 @@ function Financials({ emps, depts = [], desigs, toast }) {
   const openAdvLoan = (e) => {
     setActionsId(null);
     setReportsId(null);
+    loadEmpLoans(e.id);
     setAlFor(e);
   };
 
@@ -1862,6 +1761,18 @@ function PayRollModal({
   const [bonus,         setBonus]         = useState(seed.bonus || 0);
   const [loanDeduct,    setLoanDeduct]    = useState(seed.loanDeduct !== undefined ? seed.loanDeduct : monthlyLoanDeduct);
   const [customLoan,    setCustomLoan]    = useState(seed.customLoan || 0);
+
+  /* Loans load asynchronously after the modal opens, so `monthlyLoanDeduct` (the
+     sum of active installment amounts) starts at 0. Once it resolves, reflect it
+     in "Loan Deduction this Month" so the active installment always shows —
+     unless this payroll is already settled, or the user has edited the field. */
+  const loanDeductTouched = useRef(false);
+  const loanDeductLocked  = existingRec?.status === 'Paid' || existingRec?.status === 'Partially Paid';
+  useEffect(() => {
+    if (loanDeductTouched.current || loanDeductLocked) return;
+    if (monthlyLoanDeduct > 0) setLoanDeduct(monthlyLoanDeduct);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [monthlyLoanDeduct]);
   const [fineDeduct,    setFineDeduct]    = useState(seed.fineDeduct || 0);
   const [fineComment,   setFineComment]   = useState(seed.fineComment || '');
   const [leaveCount,    setLeaveCount]    = useState(seed.leaveCount  || 0);
@@ -1893,10 +1804,11 @@ function PayRollModal({
     };
   }, [onClose]);
 
-  /* Auto-recalc whenever any deduction input changes. Mirrors recalcPR. */
+  /* Auto-recalc whenever any deduction input changes. Mirrors recalcPR.
+     Loan Deduction (scheduled installment) and Custom Loan Amount are BOTH
+     deducted — they add together, they don't override. */
   const totalGross = getEmpTotalGross(emp, bonus);
-  const effectiveLoanDeduct =
-    Number(customLoan) > 0 ? Number(customLoan) : Number(loanDeduct);
+  const effectiveLoanDeduct = Number(loanDeduct) + Number(customLoan);
   const totalDeductions =
     stdDeduct
     + effectiveLoanDeduct
@@ -2209,8 +2121,8 @@ function PayRollModal({
                   </div>
                   <div className="pr-field">
                     <label>Loan Deduction this Month</label>
-                    <input type="number" min={0} value={loanDeduct} onChange={(e) => setLoanDeduct(e.target.value)} />
-                    <div className="pr-field-hint">Scheduled monthly repayment</div>
+                    <input type="number" min={0} value={loanDeduct} onChange={(e) => { loanDeductTouched.current = true; setLoanDeduct(e.target.value); }} />
+                    <div className="pr-field-hint">Scheduled monthly repayment (auto-filled from active installment loan)</div>
                   </div>
                   <div className="pr-field">
                     <label>Custom Loan Amount Receiving</label>

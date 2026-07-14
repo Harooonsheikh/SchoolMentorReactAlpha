@@ -332,7 +332,7 @@ export function generateSalarySlipHTML(e, monthKey, style, ctx) {
       annual: leavesAllotted.annual - leavesUsedYTD.annual,
     };
 
-    const loanDeductedThisMonth = (rec.customLoan > 0 ? rec.customLoan : rec.loanDeduct) || 0;
+    const loanDeductedThisMonth = (Number(rec.loanDeduct) || 0) + (Number(rec.customLoan) || 0);
     const empLoanList = empLoans[e.id] || [];
     const activeLoan  = empLoanList.find(l => l.status === 'active') || empLoanList[0];
     let loanProgressHTML = '';
@@ -440,7 +440,8 @@ export function generateSalarySlipHTML(e, monthKey, style, ctx) {
         <div class="slip-sec-title"><i class="fa-solid fa-minus-circle"></i> Deductions Applied<span class="right">All values in PKR</span></div>
         <div class="slip-fields">
           ${stdDeducts.map(h => `<div class="slip-field ded"><label>${h.name}</label><div class="v">PKR ${fmtMoney(+h.amount||0)}</div></div>`).join('')}
-          <div class="slip-field ded"><label>Loan / Advance</label><div class="v">PKR ${fmtMoney(loanDeductedThisMonth)}</div></div>
+          <div class="slip-field ded"><label>Loan Deduction</label><div class="v">PKR ${fmtMoney(rec.loanDeduct||0)}</div></div>
+          ${(rec.customLoan||0) > 0 ? `<div class="slip-field ded"><label>Custom Loan Deduction</label><div class="v">PKR ${fmtMoney(rec.customLoan)}</div></div>` : ''}
           <div class="slip-field ded"><label>Fine${rec.fineComment?' *':''}</label><div class="v">PKR ${fmtMoney(rec.fineDeduct||0)}</div></div>
           <div class="slip-field ded"><label>Leave Deduction${rec.leaveCount?` (${rec.leaveCount}d)`:''}</label><div class="v">PKR ${fmtMoney(rec.leaveDeduct||0)}</div></div>
           <div class="slip-field ded"><label>Absent Deduction${rec.absentCount?` (${rec.absentCount}d)`:''}</label><div class="v">PKR ${fmtMoney(rec.absentDeduct||0)}</div></div>

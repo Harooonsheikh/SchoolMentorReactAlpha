@@ -54,6 +54,13 @@ const dateOnly = (v) => {
   const m = String(v).match(/^\d{4}-\d{2}-\d{2}/);
   return m ? m[0] : String(v);
 };
+/* A date-ish value ("2026-07-14" or full ISO) → a full ISO datetime string the
+   API expects; blank/invalid falls back to now. */
+const toIso = (v) => {
+  if (!v) return new Date().toISOString();
+  const d = new Date(v);
+  return isNaN(d) ? new Date().toISOString() : d.toISOString();
+};
 /* First integer found in a value ("5 years" → 5) for numeric API fields. */
 const toInt = (v) => { const m = String(v ?? '').match(/-?\d+/); return m ? Number(m[0]) : 0; };
 /* Numeric id or a sensible default when the UI field is free-text/blank. */
@@ -535,6 +542,108 @@ export async function saveHrPayrollPayment({ payrollID, amount, comment, payment
   });
   const json = await res.json().catch(() => null);
   if (!res.ok) throw new Error(apiMessage(json) || 'Could not record payment');
+  return json;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   ADVANCE / LOAN — /api/HR/*-employee-loan[-repayment] endpoints.
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* One backend loan row (get-employee-loans) → the Advance/Loan modal's shape. */
+function mapApiLoan(l = {}) {
+  return {
+    id:                l.ID,
+    loanNumber:        l.LoanNo,
+    amount:            Number(l.LoanAmount) || 0,
+    comment:           l.Comments || '',
+    repaymentType:     l.RepaymentType || '',        // 'Installment' | 'OneTime'
+    deductDate:        dateOnly(l.RepaymentDate),
+    installmentType:   l.InstallmentType || null,    // 'Monthly' | …
+    installmentAmount: Number(l.InstallmentAmount) || 0,
+    status:            String(l.Status || '').toLowerCase() === 'active' ? 'active' : 'returned',
+    remaining:         Number(l.Remaining) || 0,
+    createdAt:         dateOnly(l.CreatedAt),
+    received: (Array.isArray(l.Repayments) ? l.Repayments : []).map(r => ({
+      amount:  Number(r.Amount) || 0,
+      date:    dateOnly(r.RepaymentDate),
+      comment: r.Comments || '',
+      source:  r.Source || '',
+    })),
+  };
+}
+
+/* Load an employee's loans (+ their repayments). GET /api/HR/get-employee-loans/
+   {employeeId}?branchId={branchId}. Returns the mapped loan array (the caller
+   recomputes the summary from it, matching the server's summary block). */
+export async function getHrEmployeeLoans(employeeId) {
+  const branchID = Number(sessionStorage.getItem('branchID')) || 0;
+  const res = await fetch(buildUrl(`/api/HR/get-employee-loans/${employeeId}?branchId=${branchID}`), {
+    headers: { Accept: '*/*' },
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(apiMessage(json) || 'Could not load loans');
+  return Array.isArray(json?.loans) ? json.loans.map(mapApiLoan) : [];
+}
+
+/* Create a new employee loan/advance. POST /api/HR/save-employee-loan. */
+export async function saveHrEmployeeLoan(p = {}) {
+  const branchID = Number(sessionStorage.getItem('branchID')) || 0;
+  const userID   = Number(sessionStorage.getItem('UserID')) || 0;
+  const res = await fetch(buildUrl('/api/HR/save-employee-loan'), {
+    method: 'POST',
+    headers: { Accept: '*/*', 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      id:                0,
+      employeeID:        Number(p.employeeID) || 0,
+      branchID,
+      loanAmount:        Number(p.loanAmount) || 0,
+      comments:          p.comments || '',
+      repaymentType:     p.repaymentType || '',
+      repaymentDate:     toIso(p.repaymentDate),
+      installmentType:   p.installmentType || '',
+      installmentAmount: Number(p.installmentAmount) || 0,
+      createdBy:         userID,
+      modifiedBy:        userID,
+    }),
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok || json?.success === false) throw new Error(apiMessage(json) || 'Could not save loan');
+  return json;
+}
+
+/* Record a repayment against a loan. POST /api/HR/save-employee-loan-repayment. */
+export async function saveHrEmployeeLoanRepayment(p = {}) {
+  const branchID = Number(sessionStorage.getItem('branchID')) || 0;
+  const userID   = Number(sessionStorage.getItem('UserID')) || 0;
+  const res = await fetch(buildUrl('/api/HR/save-employee-loan-repayment'), {
+    method: 'POST',
+    headers: { Accept: '*/*', 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      id:            0,
+      loanID:        Number(p.loanID) || 0,
+      branchID,
+      amount:        Number(p.amount) || 0,
+      repaymentDate: toIso(p.repaymentDate),
+      comments:      p.comments || '',
+      createdBy:     userID,
+      modifiedBy:    userID,
+    }),
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok || json?.success === false) throw new Error(apiMessage(json) || 'Could not save repayment');
+  return json;
+}
+
+/* Mark a loan fully returned. POST /api/HR/mark-employee-loan-returned/{loanId}
+   ?modifiedBy={loginUserId}. */
+export async function markHrEmployeeLoanReturned(loanId) {
+  const userID = Number(sessionStorage.getItem('UserID')) || 0;
+  const res = await fetch(buildUrl(`/api/HR/mark-employee-loan-returned/${loanId}?modifiedBy=${userID}`), {
+    method: 'POST',
+    headers: { Accept: '*/*' },
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok || json?.success === false) throw new Error(apiMessage(json) || 'Could not mark loan returned');
   return json;
 }
 
