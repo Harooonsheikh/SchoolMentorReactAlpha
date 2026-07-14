@@ -850,11 +850,9 @@ function useHrDemoPayroll(emps) {
   useEffect(() => {
     if (seededRef.current) return;
     if (!emps || !emps.length) return;
-    const e = emps.find(x => x.id === 1);
-    if (!e) return;
+    const activeEmps = emps.filter(x => x.status === 'Active');
+    if (!activeEmps.length) return;
     seededRef.current = true;
-    const basic     = +e.basicSalary || 80000;
-    const stdDeduct = getEmpStdDeductions(e);
     const demoMonths = [
       { key:'2025-08', month:'August',    year:2025, bonus:0,     fineDeduct:0,   leaveDeduct:0,    absentDeduct:0, leaveCount:0, absentCount:0, fineComment:'',                       leaveComment:'',               loanCut:0,    advRecovery:0 },
       { key:'2025-09', month:'September', year:2025, bonus:0,     fineDeduct:0,   leaveDeduct:0,    absentDeduct:0, leaveCount:0, absentCount:0, fineComment:'',                       leaveComment:'',               loanCut:5000, advRecovery:0 },
@@ -865,34 +863,52 @@ function useHrDemoPayroll(emps) {
       { key:'2026-02', month:'February',  year:2026, bonus:0,     fineDeduct:0,   leaveDeduct:0,    absentDeduct:0, leaveCount:0, absentCount:0, fineComment:'',                       leaveComment:'',               loanCut:0,    advRecovery:3000 },
       { key:'2026-03', month:'March',     year:2026, bonus:0,     fineDeduct:0,   leaveDeduct:1500, absentDeduct:0, leaveCount:1, absentCount:0, fineComment:'',                       leaveComment:'1 unpaid leave', loanCut:0,    advRecovery:3000 },
       { key:'2026-04', month:'April',     year:2026, bonus:5000,  fineDeduct:0,   leaveDeduct:0,    absentDeduct:0, leaveCount:0, absentCount:0, fineComment:'',                       leaveComment:'',               loanCut:0,    advRecovery:2500 },
+      { key:'2026-05', month:'May',       year:2026, bonus:0,     fineDeduct:0,   leaveDeduct:0,    absentDeduct:0, leaveCount:0, absentCount:0, fineComment:'',                       leaveComment:'',               loanCut:5000, advRecovery:0 },
       { key:'2026-06', month:'June',      year:2026, bonus:3000,  fineDeduct:0,   leaveDeduct:0,    absentDeduct:0, leaveCount:0, absentCount:0, fineComment:'',                       leaveComment:'',               loanCut:5000, advRecovery:0 },
+      { key:'2026-07', month:'July',      year:2026, bonus:0,     fineDeduct:0,   leaveDeduct:0,    absentDeduct:0, leaveCount:0, absentCount:0, fineComment:'',                       leaveComment:'',               loanCut:5000, advRecovery:0 },
     ];
-    const empMap = {};
-    demoMonths.forEach(m => {
-      const totalGross  = getEmpTotalGross(e, m.bonus);
-      const otherDed    = (m.fineDeduct || 0) + (m.leaveDeduct || 0) + (m.absentDeduct || 0);
-      const totalDeduct = stdDeduct + (m.loanCut || 0) + (m.advRecovery || 0) + otherDed;
-      const net         = totalGross - totalDeduct;
-      const monthIdx    = parseInt(m.key.split('-')[1], 10);
-      const lastDay     = new Date(m.year, monthIdx, 0).getDate();
-      const payDate     = `${m.year}-${String(monthIdx).padStart(2,'0')}-${String(Math.min(lastDay, 28)).padStart(2,'0')}`;
-      empMap[m.key] = {
-        month: m.month, year: m.year, status: 'Paid',
-        basicPay: basic, bonus: m.bonus || 0, totalGross,
-        stdDeductions: stdDeduct,
-        loanDeduct: m.loanCut || 0, customLoan: 0,
-        advanceRecovery: m.advRecovery || 0,
-        fineDeduct: m.fineDeduct || 0, leaveDeduct: m.leaveDeduct || 0, absentDeduct: m.absentDeduct || 0,
-        totalDeductions: totalDeduct,
-        leaveCount: m.leaveCount || 0, absentCount: m.absentCount || 0,
-        fineComment: m.fineComment || '', leaveComment: m.leaveComment || '', absentComment: '',
-        netPayable: net,
-        payments: [{ amount: net, date: payDate, comment: 'Salary cleared' }],
-        paidAmount: net, paidDate: payDate, loanRecorded: (m.loanCut || 0) > 0,
-        generatedAt: payDate,
-      };
+    /* Seed a full "Paid" payroll history for every active employee so the
+       reports show complete data for each month. Employee #1 keeps the rich
+       loan / advance / fine / leave schedule; the rest get clean full-salary
+       records (those deductions are specific to emp #1's wedding loan). */
+    const payroll = {};
+    activeEmps.forEach(emp => {
+      const isPrimary = emp.id === 1;
+      const basic     = +emp.basicSalary || 80000;
+      const stdDeduct = getEmpStdDeductions(emp);
+      const empMap = {};
+      demoMonths.forEach(m => {
+        const totalGross  = getEmpTotalGross(emp, m.bonus);
+        const loanCut     = isPrimary ? (m.loanCut || 0) : 0;
+        const advRecovery = isPrimary ? (m.advRecovery || 0) : 0;
+        const fineDeduct  = isPrimary ? (m.fineDeduct || 0) : 0;
+        const leaveDeduct = isPrimary ? (m.leaveDeduct || 0) : 0;
+        const absentDeduct = isPrimary ? (m.absentDeduct || 0) : 0;
+        const otherDed    = fineDeduct + leaveDeduct + absentDeduct;
+        const totalDeduct = stdDeduct + loanCut + advRecovery + otherDed;
+        const net         = totalGross - totalDeduct;
+        const monthIdx    = parseInt(m.key.split('-')[1], 10);
+        const lastDay     = new Date(m.year, monthIdx, 0).getDate();
+        const payDate     = `${m.year}-${String(monthIdx).padStart(2,'0')}-${String(Math.min(lastDay, 28)).padStart(2,'0')}`;
+        empMap[m.key] = {
+          month: m.month, year: m.year, status: 'Paid',
+          basicPay: basic, bonus: m.bonus || 0, totalGross,
+          stdDeductions: stdDeduct,
+          loanDeduct: loanCut, customLoan: 0,
+          advanceRecovery: advRecovery,
+          fineDeduct, leaveDeduct, absentDeduct,
+          totalDeductions: totalDeduct,
+          leaveCount: isPrimary ? (m.leaveCount || 0) : 0, absentCount: isPrimary ? (m.absentCount || 0) : 0,
+          fineComment: isPrimary ? (m.fineComment || '') : '', leaveComment: isPrimary ? (m.leaveComment || '') : '', absentComment: '',
+          netPayable: net,
+          payments: [{ amount: net, date: payDate, comment: 'Salary cleared' }],
+          paidAmount: net, paidDate: payDate, loanRecorded: loanCut > 0,
+          generatedAt: payDate,
+        };
+      });
+      payroll[emp.id] = empMap;
     });
-    setEmpPayroll({ 1: empMap });
+    setEmpPayroll(payroll);
   }, [emps]);
   return empPayroll;
 }
@@ -1016,7 +1032,10 @@ function HrReports({ emps, depts, desigs, toast }) {
 
 function HrRptModal({ type, onClose, onGenerate }) {
   const meta = HR_REPORT_META[type] || HR_REPORT_META.directory;
-  const [monthKey, setMonthKey] = useState('2026-05');
+  const [monthKey, setMonthKey] = useState(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  });
 
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
@@ -4978,9 +4997,9 @@ function StaffIdCardModal({ emp, deptName, desigName, onClose }) {
                     <div className="idc-r-back-body">
                       <p>This card is the property of {schoolName}. Please return it to the principal's office on resignation or termination.</p>
                       <div className="idc-r-back-kv">
-                        <div><span>Address</span><b>{schoolAddr}</b></div>
-                        <div><span>Phone</span><b>{schoolPhone}</b></div>
-                        <div><span>Email</span><b>{schoolEmail}</b></div>
+                        <div><span>Address</span><b>{emp.address || '—'}</b></div>
+                        <div><span>Phone</span><b>{emp.phone || '—'}</b></div>
+                        <div><span>Email</span><b>{emp.email || '—'}</b></div>
                       </div>
                       <div className="idc-r-sign">
                         <div className="idc-r-sign-line" />
@@ -5016,8 +5035,9 @@ function StaffIdCardModal({ emp, deptName, desigName, onClose }) {
                       <div className="idc-r-tag">If found, please return</div>
                       <p>This card is the property of {schoolName}.</p>
                       <div className="idc-r-back-kv">
-                        <div><span>Address</span><b>{schoolAddr}</b></div>
-                        <div><span>Phone</span><b>{schoolPhone}</b></div>
+                        <div><span>Address</span><b>{emp.address || '—'}</b></div>
+                        <div><span>Phone</span><b>{emp.phone || '—'}</b></div>
+                        <div><span>Email</span><b>{emp.email || '—'}</b></div>
                       </div>
                       <div className="idc-r-sign">
                         <div className="idc-r-sign-line" />
