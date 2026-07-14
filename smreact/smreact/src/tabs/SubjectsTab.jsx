@@ -120,15 +120,33 @@ getclassesdata()
       },
     });
 
-    const data = await res.json();
-    console.log("Login Response:", data);
-showSuccess(
-  'Deleted Successfully!',
-  `${showDeleteconfirm.subjectName} has been deleted from class ${cls.className}.`
+    let data = null;
+    try { data = await res.json(); } catch (e) { data = null; }
+    console.log("Delete Response:", data);
 
-);
-setRefresh(prev => prev + 1);
-setshowDeleteconfirm(false)
+    /* Subject delete tab hi hota hai jab uske against koi data na para ho. Agar kisi class/
+       lesson-plan/term-breakup me ye subject use ho raha hai to backend FK REFERENCE
+       constraint error deta hai — usy fail samjho aur user ko easy toaster dikhao (na "deleted"). */
+    const bodyStr = (typeof data === 'string' ? data : JSON.stringify(data ?? '')) || '';
+    const isConflict = /reference constraint|conflicted|FK_|DeleteSubjectAsync|Error in/i.test(bodyStr);
+    const innerFail = data && (data.Success === 0 || data.success === false);
+    if (!res.ok || isConflict || innerFail) {
+      showToast(
+        isConflict
+          ? `Cannot delete "${showDeleteconfirm.subjectName}" — it has related data linked to a class. Please remove that data first.`
+          : (typeof data === 'string' ? data : (data?.message || 'Could not delete subject.')),
+        'error'
+      );
+      setshowDeleteconfirm(false);
+      return;
+    }
+
+    showSuccess(
+      'Deleted Successfully!',
+      `${showDeleteconfirm.subjectName} has been deleted from class ${cls.className}.`
+    );
+    setRefresh(prev => prev + 1);
+    setshowDeleteconfirm(false)
   } catch (err) {
     showToast('Network error. Please try again.', 'error');
     console.error(err);

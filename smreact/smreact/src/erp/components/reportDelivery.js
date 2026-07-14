@@ -68,6 +68,47 @@ function injectPrintSafeCss(html) {
   if (html.includes('<head>'))  return html.replace('<head>', `<head>${PRINT_SAFE_CSS}`);
   return PRINT_SAFE_CSS + html;
 }
+
+/* MathLive rendered math (.ML__ spans) reports ke naye window me by-default render
+   nahi hoti (uski static CSS sirf app ke document me hoti ha). App ke injected
+   MathLive stylesheet ka text uthaa kar report ke <head> me daal do. */
+let __mlCssCache = null;
+function getMathliveCss() {
+  if (__mlCssCache != null) return __mlCssCache;
+  let out = '';
+  try {
+    for (const sheet of Array.from(document.styleSheets || [])) {
+      let rules;
+      try { rules = sheet.cssRules; } catch (e) { continue; } // cross-origin sheet
+      if (!rules || !rules.length) continue;
+      let hasML = false;
+      for (let i = 0; i < Math.min(rules.length, 80); i++) {
+        if (rules[i].cssText && rules[i].cssText.indexOf('.ML__') !== -1) { hasML = true; break; }
+      }
+      if (!hasML) continue;
+      for (const r of rules) out += r.cssText + '\n';
+      break;
+    }
+  } catch (e) { /* ignore */ }
+  __mlCssCache = out;
+  return out;
+}
+/* Report HTML me math ho to hi MathLive CSS inject karo (warna skip — fast). */
+function injectMathliveCss(html) {
+  if (typeof html !== 'string' || html.indexOf('ML__') === -1) return html;
+  let css = getMathliveCss();
+  if (!css) return html;
+  /* Font url() ko absolute karo (naya window about:blank hota ha — root-relative
+     /static/… wahan resolve nahi hota). */
+  try {
+    const origin = window.location.origin;
+    css = css.replace(/url\(\s*(['"]?)(\/[^'")]+)\1\s*\)/g, (m, q, p) => `url(${q}${origin}${p}${q})`);
+  } catch (e) { /* ignore */ }
+  const tag = `<style id="__mathlive_report__">${css}</style>`;
+  if (html.includes('</head>')) return html.replace('</head>', `${tag}</head>`);
+  if (html.includes('<head>'))  return html.replace('<head>', `<head>${tag}`);
+  return tag + html;
+}
 /* Self-contained script injected into the Word preview window. It defines
    __saveAsWord(), run when the user clicks "Save as Word" in the preview.
    It works on the live, fully-rendered document so images and SVG logos can
@@ -274,7 +315,7 @@ function openPreviewWindow(html, width = 900, height = 700) {
 /* Deliver a built report: a PDF print preview, or a Word "Save as Word" preview.
    Pass opts.win to reuse a window the caller already opened (popup-blocker safe). */
 export function deliverReport(name, format, html, opts = {}) {
-  const safeHtml = injectPrintSafeCss(html);              // ← single fix point for ALL reports
+  const safeHtml = injectMathliveCss(injectPrintSafeCss(html)); // print-safe + math (MathLive) render
   const out = format === 'word' ? buildWordView(name, safeHtml) : safeHtml;
   if (opts.win) writeToWindow(opts.win, out);
   else openPreviewWindow(out, opts.width, opts.height);

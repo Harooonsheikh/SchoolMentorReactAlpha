@@ -955,6 +955,16 @@ export async function saveHrEmployee(payload = {}) {
   const json1 = await res1.json().catch(() => null);
   if (!res1.ok) throw new Error(apiMessage(json1) || 'Could not save employee');
 
+  /* Duplicate (phone/CNIC) par backend HTTP 200 + data[0] = { Success:0,
+     Message:"Number already exist" } deta hai. Isy fail samjho — aur agar number-
+     duplicate hai to error par flag lagao taake caller email-popup dikha sake. */
+  const inner1 = Array.isArray(json1?.data) ? json1.data[0] : null;
+  if (inner1 && (inner1.Success === 0 || inner1.Success === false)) {
+    const e = new Error(inner1.Message || apiMessage(json1) || 'Number already exist');
+    e.isDuplicatePhone = /exist|number|already/i.test(e.message);
+    throw e;
+  }
+
   const d = json1?.data;
   const employeeId =
     (Array.isArray(d) ? (d[0]?.id ?? d[0]?.ID) : (d?.id ?? d?.ID)) ??
