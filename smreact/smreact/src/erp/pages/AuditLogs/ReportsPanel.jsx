@@ -35,7 +35,7 @@ const QUICK_RANGES = [
                  a "Colorful / Colorless" toggle and Print/Excel
                  export. Print isolation is handled by global CSS.
    ═══════════════════════════════════════════════════════════════════ */
-export default function ReportsPanel({ type, allLogs, onChangeType, onClose, toast }) {
+export default function ReportsPanel({ type, allLogs, onChangeType, onClose, toast, canDownload = true, canPrint = true }) {
   /* ─── Filter state (configure step). */
   const [fromDate, setFromDate] = useState(quickRange('last30').fromDate);
   const [toDate,   setToDate]   = useState(quickRange('last30').toDate);
@@ -276,16 +276,20 @@ export default function ReportsPanel({ type, allLogs, onChangeType, onClose, toa
                     </button>
                   </Tooltip>
                 </div>
-                <Tooltip text="Download as Excel/CSV" placement="bottom">
-                  <button type="button" className="up-btn up-btn-ghost up-btn-sm" onClick={handleExcel}>
-                    <i className="fa-solid fa-file-excel" aria-hidden="true"></i> Excel
-                  </button>
-                </Tooltip>
-                <Tooltip text="Print report" placement="bottom">
-                  <button type="button" className="up-btn up-btn-primary up-btn-sm" onClick={handlePrint}>
-                    <i className="fa-solid fa-print" aria-hidden="true"></i> Print
-                  </button>
-                </Tooltip>
+                {canDownload && (
+                  <Tooltip text="Download as Excel/CSV" placement="bottom">
+                    <button type="button" className="up-btn up-btn-ghost up-btn-sm" onClick={handleExcel}>
+                      <i className="fa-solid fa-file-excel" aria-hidden="true"></i> Excel
+                    </button>
+                  </Tooltip>
+                )}
+                {canPrint && (
+                  <Tooltip text="Print report" placement="bottom">
+                    <button type="button" className="up-btn up-btn-primary up-btn-sm" onClick={handlePrint}>
+                      <i className="fa-solid fa-print" aria-hidden="true"></i> Print
+                    </button>
+                  </Tooltip>
+                )}
               </div>
             </div>
 

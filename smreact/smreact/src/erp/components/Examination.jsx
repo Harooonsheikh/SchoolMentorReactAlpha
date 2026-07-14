@@ -9,6 +9,7 @@ import { buildUrl } from '../../utils/apiConfig';
 import { deliverReport } from './reportDelivery';
 import { useModuleReadOnly } from '../pages/Settings/settingsStore';
 import { getActiveSessionID } from '../services/attendanceService';
+import { usePermissions } from '../context/PermissionsContext';
 /* ═══════════════════════════════════════════════════════════════════
    EXAMINATION — port of the HTML #module-exam (only Exam Setup is
    functional; other tabs show Coming Soon).
@@ -435,8 +436,46 @@ function dsTimeFromInput(t) {
    MAIN COMPONENT
    ═══════════════════════════════════════════════════════════════════ */
 export default function Examination({ toast = () => {} }) {
+  /* Logged-in user ki action-level permissions (School Head → sab true). */
+  const { can } = usePermissions();
+  const canExamCreate   = can('Examination', 'Exam Setup', 'Create');
+  const canExamEdit     = can('Examination', 'Exam Setup', 'Edit');
+  const canExamDelete   = can('Examination', 'Exam Setup', 'Delete');
+  const canExamDownload = can('Examination', 'Exam Setup', 'Download');
+
+  /* Screen (tab) level View — jis screen ka View nahi, uska tab hi hide. */
+  const examView = (sub) => can('Examination', sub, 'View');
+  const showSetupTab     = examView('Exam Setup');
+  const showDatesheetTab = examView('Date Sheet');
+  const showSyllabusTab  = examView('Syllabus');
+  const showResultsTab   = ['Result Setup', 'Result Card Options', 'Single Assessment', 'Combined Assessment', 'Result History'].some(examView);
+
+  /* Date Sheet screen actions */
+  const canDsCreate   = can('Examination', 'Date Sheet', 'Create');
+  const canDsEdit     = can('Examination', 'Date Sheet', 'Edit');
+  const canDsDelete   = can('Examination', 'Date Sheet', 'Delete');
+  const canDsDownload = can('Examination', 'Date Sheet', 'Download');
+  /* Syllabus screen actions */
+  const canSylEdit     = can('Examination', 'Syllabus', 'Edit');
+  const canSylDelete   = can('Examination', 'Syllabus', 'Delete');
+  const canSylDownload = can('Examination', 'Syllabus', 'Download');
+  /* Results screens actions */
+  const canRsEdit         = can('Examination', 'Result Setup', 'Edit');
+  const canRsDownload     = can('Examination', 'Result Setup', 'Download');
+  const canRcoEdit        = can('Examination', 'Result Card Options', 'Edit');
+  const canSingleEdit     = can('Examination', 'Single Assessment', 'Edit');
+  const canCombinedCreate = can('Examination', 'Combined Assessment', 'Create');
+
   const [tutorialOpen, setTutorialOpen] = useState(false);
   const [tab, setTab]               = useState('setup'); // setup | datesheet | syllabus | results
+
+  /* Agar active tab ka View permission nahi, to pehle visible tab par snap karo. */
+  useEffect(() => {
+    const visible = { setup: showSetupTab, datesheet: showDatesheetTab, syllabus: showSyllabusTab, results: showResultsTab };
+    if (visible[tab]) return;
+    const first = ['setup', 'datesheet', 'syllabus', 'results'].find((t) => visible[t]);
+    if (first && first !== tab) setTab(first);
+  }, [showSetupTab, showDatesheetTab, showSyllabusTab, showResultsTab, tab]);
   const [term, setTerm]             = useState('');
   const [openExamId, setOpenExamId] = useState(null);
   const [editing, setEditing]       = useState(null);     // null = closed, { id?, ... } = open
@@ -3518,18 +3557,26 @@ useEffect(() => {
 
       {/* ── Module tabs ── */}
       <div className="exam-tabs-row">
+        {showSetupTab && (
         <button className={`exam-tab${tab === 'setup' ? ' active' : ''}`} onClick={() => setTab('setup')}>
           <i className="fa-solid fa-gear"></i> Exam Setup
         </button>
+        )}
+        {showDatesheetTab && (
         <button className={`exam-tab${tab === 'datesheet' ? ' active' : ''}`} onClick={() => setTab('datesheet')}>
           <i className="fa-solid fa-calendar-days"></i> Date Sheet
         </button>
+        )}
+        {showSyllabusTab && (
         <button className={`exam-tab${tab === 'syllabus' ? ' active' : ''}`} onClick={() => setTab('syllabus')}>
           <i className="fa-solid fa-book-open"></i> Syllabus
         </button>
+        )}
+        {showResultsTab && (
         <button className={`exam-tab${tab === 'results' ? ' active' : ''}`} onClick={() => setTab('results')}>
           <i className="fa-solid fa-chart-bar"></i> Results
         </button>
+        )}
       </div>
  
       {/* ── Exam Setup ── */}
@@ -3552,7 +3599,7 @@ useEffect(() => {
   ))}
 </div>
           <div className="exam-action-bar">
-            <Tooltip text={!terms.length ? 'There is no term against this — add a term from Academics' : 'Create a new exam for this term'}>
+            <Tooltip text={!canExamCreate ? 'You do not have permission to create exams' : (!terms.length ? 'There is no term against this — add a term from Academics' : 'Create a new exam for this term')}>
               <button className="exam-add-btn"
                 onClick={() => {
                   if (isOtherSession) { toast('Method not allowed', 'error'); return; }
@@ -3560,13 +3607,15 @@ useEffect(() => {
                   if (!terms.length) { toast('There is no term soo to Add Exam Please add a term from Academics.', 'error'); return; }
                   openAdd();
                 }}
-                disabled={isOtherSession}
-                title={isOtherSession ? 'Editing is only allowed for the current session'
+                disabled={isOtherSession || !canExamCreate}
+                title={!canExamCreate ? 'You do not have permission to create exams'
+                     : isOtherSession ? 'Editing is only allowed for the current session'
                      : !terms.length ? 'There is no term soo to Add Exam Please add a term from Academics' : undefined}
-                style={(isOtherSession || !terms.length) ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
+                style={(isOtherSession || !terms.length || !canExamCreate) ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
                 <i className="fa-solid fa-plus"></i> Add Exam
               </button>
             </Tooltip>
+            {canExamDownload && (
             <div style={{ display: 'flex', gap: 8 }}>
               <Tooltip text="Download a PDF report of all exams in this term">
                 <button className="export-btn pdf" onClick={() => setReportReq({ scope: 'all', name: 'All Exams' })}>
@@ -3579,6 +3628,7 @@ useEffect(() => {
                 </button>
               </Tooltip>
             </div>
+            )}
           </div>
 
           <div className="section-card" style={{ animation: 'fadeSlide .25s ease both' }}>
@@ -3619,15 +3669,16 @@ useEffect(() => {
                         </span>
                       </div>
                       <div className="exam-td" onClick={e => e.stopPropagation()}>
-                        <Tooltip text={`Edit ${ex.name}`}>
+                        <Tooltip text={!canExamEdit ? 'You do not have permission to edit exams' : `Edit ${ex.name}`}>
                           <button className="exam-edit-btn" onClick={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } openEdit(ex); }}
-                            disabled={isOtherSession}
-                            style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
+                            disabled={isOtherSession || !canExamEdit}
+                            style={(isOtherSession || !canExamEdit) ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
                             <i className="fa-solid fa-pen-to-square"></i> Edit
                           </button>
                         </Tooltip>
                       </div>
                       <div className="exam-td" onClick={e => e.stopPropagation()} style={{ gap: 6 }}>
+                        {canExamDownload && (<>
                         <Tooltip text={`Download PDF for ${ex.name}`}>
                           <button className="export-btn pdf" onClick={() => setReportReq({ scope: ex.id, name: ex.name })}>
                             <i className="fa-solid fa-file-pdf"></i> PDF
@@ -3638,13 +3689,14 @@ useEffect(() => {
                             <i className="fa-brands fa-microsoft"></i> Word
                           </button>
                         </Tooltip>
+                        </>)}
                       </div>
                       <div className="exam-td" style={{ justifyContent: 'flex-end', gap: 8 }} onClick={e => e.stopPropagation()}>
-                     <Tooltip text={`Delete ${ex.name}`}>
+                     <Tooltip text={!canExamDelete ? 'You do not have permission to delete exams' : `Delete ${ex.name}`}>
   <button
     className="exam-del-btn"
-    disabled={isOtherSession}
-    style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+    disabled={isOtherSession || !canExamDelete}
+    style={(isOtherSession || !canExamDelete) ? { opacity: .45, cursor: 'not-allowed' } : undefined}
     onClick={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } setConfirmDel(ex); }}
   >
     <i className="fa-solid fa-trash"></i>
@@ -3831,11 +3883,11 @@ useEffect(() => {
                       : <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>No date sheet</span>}
                   </div>
                   <div className="ds-td" onClick={e => e.stopPropagation()}>
-                   <Tooltip text={`Edit date sheet for ${className}`}>
+                   <Tooltip text={!canDsEdit ? 'You do not have permission to edit date sheets' : `Edit date sheet for ${className}`}>
   <span>
     <button className="ds-edit-btn"
-      disabled={isOtherSession}
-      style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+      disabled={isOtherSession || !canDsEdit}
+      style={(isOtherSession || !canDsEdit) ? { opacity: .45, cursor: 'not-allowed' } : undefined}
       onClick={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } dsOpenEdit(key, className, cls.classID, cls.sectionID); }}>
       <i className="fa-solid fa-pen-to-square"></i> Edit
     </button>
@@ -3843,15 +3895,17 @@ useEffect(() => {
 </Tooltip>
                   </div>
                   <div className="ds-td ds-actions-cell" onClick={e => e.stopPropagation()}>
+                    {canDsDownload && (
                     <Tooltip text={`Download basic date sheet PDF for ${className}`}>
                       <button className="ds-report-btn" onClick={() => setDsReportReq({ classKey: key, name: className })}>
                         <i className="fa-solid fa-file-pdf"></i> Basic PDF
                       </button>
                     </Tooltip>
-<Tooltip text={`Copy ${className}'s date sheet to other classes (only subjects those classes also have)`}>
+                    )}
+<Tooltip text={!canDsCreate ? 'You do not have permission to copy date sheets' : `Copy ${className}'s date sheet to other classes (only subjects those classes also have)`}>
   <button className="ds-copy-row-btn"
-    disabled={isOtherSession}
-    style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+    disabled={isOtherSession || !canDsCreate}
+    style={(isOtherSession || !canDsCreate) ? { opacity: .45, cursor: 'not-allowed' } : undefined}
     onClick={() => {
     if (isOtherSession) { toast('Method not allowed', 'error'); return; }
     if (!hasDates) {
@@ -3872,11 +3926,11 @@ useEffect(() => {
 </Tooltip>
                   </div>
                   <div className="ds-td ds-actions-cell" style={{ justifyContent: 'flex-end' }} onClick={e => e.stopPropagation()}>
-                    <Tooltip text={`Delete date sheet for ${className}`}>
+                    <Tooltip text={!canDsDelete ? 'You do not have permission to delete date sheets' : `Delete date sheet for ${className}`}>
   <button
     className="ds-del-btn"
-    disabled={isOtherSession}
-    style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+    disabled={isOtherSession || !canDsDelete}
+    style={(isOtherSession || !canDsDelete) ? { opacity: .45, cursor: 'not-allowed' } : undefined}
     onClick={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } setDsConfirmDel({
       examId: dsExamId,
       classKey: key,
@@ -4052,11 +4106,11 @@ useEffect(() => {
                 </span>
               </div>
               <div className="syl-td" onClick={e => e.stopPropagation()}>
-                <Tooltip text={`Edit syllabus for ${className}`}>
+                <Tooltip text={!canSylEdit ? 'You do not have permission to edit syllabus' : `Edit syllabus for ${className}`}>
 <button
   className="syl-edit-btn"
-  disabled={isOtherSession}
-  style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+  disabled={isOtherSession || !canSylEdit}
+  style={(isOtherSession || !canSylEdit) ? { opacity: .45, cursor: 'not-allowed' } : undefined}
   onClick={() => {
     if (isOtherSession) { toast('Method not allowed', 'error'); return; }
     getSyllabusSubjects(cls.classID , cls.sectionID);
@@ -4067,15 +4121,17 @@ useEffect(() => {
                 </Tooltip>
               </div>
               <div className="syl-td" onClick={e => e.stopPropagation()}>
+                {canSylDownload && (
                 <Tooltip text={`Download syllabus PDF for ${className}`}>
                   <button className="syl-report-btn" onClick={() => setSylReportReq({ classKey: key, name: className })}>
                     <i className="fa-solid fa-file-pdf"></i> Report
                   </button>
                 </Tooltip>
+                )}
               </div>
               <div className="syl-td" style={{ gap: 6, justifyContent: 'flex-end' }} onClick={e => e.stopPropagation()}>
-                <Tooltip text={`Delete syllabus for ${className}`}>
-<button className="syl-del-btn" disabled={isOtherSession} style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined} onClick={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } setSylConfirmDel({ examId: sylExamId, classKey: key, className, classID: cls.classID, sectionID: cls.sectionID }); }}>                    <i className="fa-solid fa-trash"></i>
+                <Tooltip text={!canSylDelete ? 'You do not have permission to delete syllabus' : `Delete syllabus for ${className}`}>
+<button className="syl-del-btn" disabled={isOtherSession || !canSylDelete} style={(isOtherSession || !canSylDelete) ? { opacity: .45, cursor: 'not-allowed' } : undefined} onClick={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } setSylConfirmDel({ examId: sylExamId, classKey: key, className, classID: cls.classID, sectionID: cls.sectionID }); }}>                    <i className="fa-solid fa-trash"></i>
                   </button>
                 </Tooltip>
                 <Tooltip text={isOpen ? 'Hide syllabus details' : 'Show syllabus details'}>
@@ -4147,14 +4203,14 @@ useEffect(() => {
 
       {tab === 'results' && (
         <>
-          {/* ── Level-1 sub-tabs ── */}
+          {/* ── Level-1 sub-tabs ── (sirf woh screens jinka View permission hai) */}
           <div className="res-sub-tabs">
             {[
-              { k:'resultsetup',        l:'Result Setup' },
-              { k:'singleassessment',   l:'Single Assessment Result' },
-              { k:'combinedassessment', l:'Combined Assessment Result' },
-              { k:'resulthistory',      l:'Result History' },
-            ].map(it => (
+              { k:'resultsetup',        l:'Result Setup',                show: examView('Result Setup') || examView('Result Card Options') },
+              { k:'singleassessment',   l:'Single Assessment Result',    show: examView('Single Assessment') },
+              { k:'combinedassessment', l:'Combined Assessment Result',  show: examView('Combined Assessment') },
+              { k:'resulthistory',      l:'Result History',              show: examView('Result History') },
+            ].filter(it => it.show).map(it => (
               <button
                 key={it.k}
                 className={`res-sub-tab${rsTab === it.k ? ' active' : ''}`}
@@ -4168,24 +4224,30 @@ useEffect(() => {
           {/* ── Result Setup sub-panel ── */}
           {rsTab === 'resultsetup' && (
             <>
-              {/* Level-2 inner tabs */}
+              {/* Level-2 inner tabs (View permission ke hisaab se) */}
               <div className="rs-l2-tabs">
+                {examView('Result Setup') && (
                 <button className={`rs-l2-tab${rsL2 === 'setup' ? ' active' : ''}`}        onClick={() => setRsL2('setup')}>Result Setup</button>
+                )}
+                {examView('Result Card Options') && (
                 <button className={`rs-l2-tab${rsL2 === 'cardoptions' ? ' active' : ''}`} onClick={() => setRsL2('cardoptions')}>Result Card Options</button>
+                )}
               </div>
 
               {rsL2 === 'setup' && (
                 <>
                   {/* Top action row */}
-                  
+
                   <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginBottom: 16 }}>
+                    {canRsDownload && (
                     <button className="export-btn pdf" onClick={() => setRsReportReq(true)}>
                       <i className="fa-solid fa-file-pdf"></i> PDF
                     </button>
+                    )}
                     <button className="rs-edit-btn" onClick={() => setRsModalOpen(true)}
-                      disabled={isOtherSession}
-                      title={isOtherSession ? 'Editing is only allowed for the current session' : undefined}
-                      style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
+                      disabled={isOtherSession || !canRsEdit}
+                      title={!canRsEdit ? 'You do not have permission to edit result setup' : isOtherSession ? 'Editing is only allowed for the current session' : undefined}
+                      style={(isOtherSession || !canRsEdit) ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
                       <i className="fa-solid fa-pen-to-square"></i> Edit
                     </button>
                   </div>
@@ -4451,9 +4513,9 @@ useEffect(() => {
                           Changes apply to both Classic and Insight templates.
                         </div>
                         <button className="rco-save-btn" onClick={saveCardOptions}
-                          disabled={isOtherSession}
-                          title={isOtherSession ? 'Editing is only allowed for the current session' : undefined}
-                          style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
+                          disabled={isOtherSession || !canRcoEdit}
+                          title={!canRcoEdit ? 'You do not have permission to edit result card options' : isOtherSession ? 'Editing is only allowed for the current session' : undefined}
+                          style={(isOtherSession || !canRcoEdit) ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
                           <i className="fa-solid fa-floppy-disk"></i> Save Preferences
                         </button>
                       </div>
@@ -4641,11 +4703,11 @@ onClick={() => {
 
                     </div>
 <div className="res-td" onClick={e => e.stopPropagation()}>
-  <Tooltip text={isRel ? 'Unpublish this class result' : 'Publish this class result'}>
+  <Tooltip text={!canSingleEdit ? 'You do not have permission to publish results' : (isRel ? 'Unpublish this class result' : 'Publish this class result')}>
 <button
   className={`res-publish-btn${isRel ? ' released' : ''}`}
-  disabled={isOtherSession}
-  style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+  disabled={isOtherSession || !canSingleEdit}
+  style={(isOtherSession || !canSingleEdit) ? { opacity: .45, cursor: 'not-allowed' } : undefined}
   onClick={e => { e.stopPropagation(); if (isOtherSession) { toast('Method not allowed', 'error'); return; } togglePublish(key, className, isRel, cls); }}
 >
   <i className={`fa-solid ${isRel ? 'fa-eye-slash' : 'fa-paper-plane'}`}></i>
@@ -4655,11 +4717,11 @@ onClick={() => {
   </Tooltip>
 </div>
                     <div className="res-td" onClick={e => e.stopPropagation()}>
-                   <Tooltip text="Edit total marks for each subject">
+                   <Tooltip text={!canSingleEdit ? 'You do not have permission to edit marks' : 'Edit total marks for each subject'}>
   <button
     className="res-marks-btn"
-    disabled={isOtherSession}
-    style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+    disabled={isOtherSession || !canSingleEdit}
+    style={(isOtherSession || !canSingleEdit) ? { opacity: .45, cursor: 'not-allowed' } : undefined}
     onClick={async () => {
       if (isOtherSession) { toast('Method not allowed', 'error'); return; }
       const fetchedSubjects = await getSyllabusSubjects(
@@ -4944,12 +5006,12 @@ onClick={async () => {
                   <button className="cbr-tab active" type="button">
                     <i className="fa-solid fa-list-check"></i> Created
                   </button>
-                  <Tooltip text="Create a new combined assessment result">
+                  <Tooltip text={!canCombinedCreate ? 'You do not have permission to create combined results' : 'Create a new combined assessment result'}>
                     <button
                       className="cbr-tab"
                       type="button"
-                      disabled={isOtherSession}
-                      style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                      disabled={isOtherSession || !canCombinedCreate}
+                      style={(isOtherSession || !canCombinedCreate) ? { opacity: .45, cursor: 'not-allowed' } : undefined}
                       onClick={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } setCbrCreateOpen(true); }}
                     >
                       <i className="fa-solid fa-plus"></i> Create New

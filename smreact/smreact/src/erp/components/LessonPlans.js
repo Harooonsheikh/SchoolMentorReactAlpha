@@ -7,6 +7,7 @@ import { buildUrl, assertSessionPayload, registerSessionToast, apiMessage } from
 import { termsCrud, termsBranchID, termsSessionYearID } from './Academics';
 import { deliverReport } from './reportDelivery';
 import { useModuleReadOnly, useSettings } from '../pages/Settings/settingsStore';
+import { usePermissions } from '../context/PermissionsContext';
 import 'mathlive';   // registers the <math-field> visual math editor custom element
 import { convertLatexToMarkup } from 'mathlive';  // LaTeX → rendered HTML (editor/view/report)
 import 'mathlive/static.css';                     // static render CSS (fractions, powers …)
@@ -673,6 +674,22 @@ function distributeMins(total) {
 export default function LessonPlans({ toast, openConfirm }) {
   const [tab, setTab] = useState('session'); // session | breakup | create | view
 
+  /* Lesson Plans ke screens ka View permission (School Head → sab true). */
+  const { can } = usePermissions();
+  const lpView = (sub) => can('Academics', sub, 'View');
+  const showSessionTab = lpView('Session Settings');
+  const showBreakupTab = lpView('Term Breakups');
+  const showCreateTab  = lpView('Create Lesson Plans');
+  const showViewTab    = lpView('Submissions');
+
+  /* Active tab hide ho jaye to pehle visible par snap. */
+  useEffect(() => {
+    const vis = { session: showSessionTab, breakup: showBreakupTab, create: showCreateTab, view: showViewTab };
+    if (vis[tab]) return;
+    const first = ['session', 'breakup', 'create', 'view'].find((k) => vis[k]);
+    if (first && first !== tab) setTab(first);
+  }, [showSessionTab, showBreakupTab, showCreateTab, showViewTab, tab]);
+
   /* Let module-level POST wrappers surface the "no session" error via toast. */
   useEffect(() => { registerSessionToast(toast); }, [toast]);
 
@@ -851,23 +868,31 @@ const getClassesData = async () => {
     <>
       <style>{LP_CSS}</style>
 
-      {/* ─── L2 sub-tabs ─── */}
+      {/* ─── L2 sub-tabs ─── (View permission ke hisaab se) */}
       <div className="lp-l2-tabs">
+        {showSessionTab && (
         <button className={`lp-l2-tab${tab === 'session' ? ' active' : ''}`} onClick={() =>{setTab('session'); getClassesData();}}>
           <i className="fa-solid fa-gear"></i> Session Settings
         </button>
+        )}
+        {showBreakupTab && (
         <button className={`lp-l2-tab${tab === 'breakup' ? ' active' : ''}`} onClick={() => {
     setTab('breakup');
     getClassesData(); // Call the function here
   }}>
           <i className="fa-solid fa-layer-group"></i> Term Breakups
         </button>
+        )}
+        {showCreateTab && (
         <button className={`lp-l2-tab${tab === 'create' ? ' active' : ''}`} onClick={() => {setTab('create'); getClassesData();}}>
           <i className="fa-solid fa-plus-circle"></i> Create Lesson Plans
         </button>
+        )}
+        {showViewTab && (
         <button className={`lp-l2-tab${tab === 'view' ? ' active' : ''}`} onClick={() => {setTab('view'); getClassesData();}}>
           <i className="fa-solid fa-table-list"></i> Submissions
         </button>
+        )}
       </div>
 
       {tab === 'session' && (
@@ -1088,6 +1113,10 @@ function SessionSettings({
   const acadModuleReadOnly = useModuleReadOnly('acad');
   const isOtherSession  = (!!changeSessionId && !!loginSessionId && String(changeSessionId) !== String(loginSessionId)) || acadModuleReadOnly;
 
+  const { can } = usePermissions();
+  const canSsEdit     = can('Academics', 'Session Settings', 'Edit');
+  const canSsDownload = can('Academics', 'Session Settings', 'Download');
+
   /* Per-week card: class+section options + live subjects/counts (read-only view). */
   const pwOptions = useMemo(() => {
     const out = [];
@@ -1139,8 +1168,8 @@ function SessionSettings({
           </div>
           <Tooltip text={isOtherSession ? 'Editing is only allowed for the current session' : 'Edit academic session'}>
             <button className="ss-card-edit-btn" onClick={onEditSession} aria-label="Edit academic session"
-              disabled={isOtherSession}
-              style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
+              disabled={isOtherSession || !canSsEdit}
+              style={(isOtherSession || !canSsEdit) ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
               <i className="fa-solid fa-pen"></i>
             </button>
           </Tooltip>
@@ -1203,8 +1232,8 @@ function SessionSettings({
           </div>
           <Tooltip text={isOtherSession ? 'Editing is only allowed for the current session' : 'Edit vacations'}>
             <button className="ss-card-edit-btn" onClick={onEditVacations} aria-label="Edit vacations"
-              disabled={isOtherSession}
-              style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
+              disabled={isOtherSession || !canSsEdit}
+              style={(isOtherSession || !canSsEdit) ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
               <i className="fa-solid fa-pen"></i>
             </button>
           </Tooltip>
@@ -1346,8 +1375,8 @@ function SessionSettings({
           )}
           <Tooltip text={isOtherSession ? 'Editing is only allowed for the current session' : 'Edit per week lesson plans'}>
             <button className="ss-card-edit-btn" onClick={onEditPerWeek} aria-label="Edit per week lesson plans"
-              disabled={isOtherSession}
-              style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
+              disabled={isOtherSession || !canSsEdit}
+              style={(isOtherSession || !canSsEdit) ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
               <i className="fa-solid fa-pen"></i>
             </button>
           </Tooltip>
@@ -2083,6 +2112,11 @@ function TermBreakups({ onUpdate, onReport, openConfirm, toast, classesData,  re
   const acadModuleReadOnly = useModuleReadOnly('acad');
   const isOtherSession  = (!!changeSessionId && !!loginSessionId && String(changeSessionId) !== String(loginSessionId)) || acadModuleReadOnly;
 
+  const { can } = usePermissions();
+  const canTbEdit     = can('Academics', 'Term Breakups', 'Edit');
+  const canTbDelete   = can('Academics', 'Term Breakups', 'Delete');
+  const canTbDownload = can('Academics', 'Term Breakups', 'Download');
+
   const [openId, setOpenId] = useState(null);
   const [subjectsData, setSubjectsData] = useState({});
   const [loadingSubjects, setLoadingSubjects] = useState({});
@@ -2594,6 +2628,7 @@ console.log('json2 FULL:', JSON.stringify(json2).slice(0, 500));
                 )}
               </div>
               <div className="tb-bp-td" style={{ width: 200, justifyContent: 'center', gap: 6 }}>
+                {canTbDownload && (<>
                 <Tooltip text={`Download FULL term breakup for ${className} - Section ${item.sectionName || ''} (all terms & subjects) as PDF`}>
                   <button className="export-btn pdf" disabled={overallLoading} onClick={() => handleOverallReport(item, 'pdf')}>
                     <i className="fa-solid fa-file-pdf"></i> PDF
@@ -2604,12 +2639,13 @@ console.log('json2 FULL:', JSON.stringify(json2).slice(0, 500));
                     <i className="fa-brands fa-microsoft"></i> Word
                   </button>
                 </Tooltip>
+                </>)}
               </div>
               <div className="tb-bp-td" style={{ width: 120, justifyContent: 'center' }}>
-                <Tooltip text={isOtherSession ? 'Editing is only allowed for the current session' : `Update term breakup for ${className} - Section ${item.sectionName || ''}`}>
+                <Tooltip text={!canTbEdit ? 'You do not have permission to update term breakups' : (isOtherSession ? 'Editing is only allowed for the current session' : `Update term breakup for ${className} - Section ${item.sectionName || ''}`)}>
                   <button className="tb-update-btn"
-                    disabled={isOtherSession}
-                    style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                    disabled={isOtherSession || !canTbEdit}
+                    style={(isOtherSession || !canTbEdit) ? { opacity: .45, cursor: 'not-allowed' } : undefined}
                     onClick={() => onUpdate({
   name: `${className} - Section ${item.sectionName || ''}`,
   gradeId: item.gradeId,
@@ -2756,6 +2792,7 @@ console.log('json2 FULL:', JSON.stringify(json2).slice(0, 500));
     const hasNoData = !tbd || tbd.loading || tbd.noData || !tbd.units?.length;
     return (
       <>
+        {canTbDownload && (<>
         <Tooltip text={hasNoData ? 'No data to download' : `Download ${className} - Section ${item.sectionName || ''} term breakup (color PDF)`}>
           <button
             className="export-btn pdf"
@@ -2776,6 +2813,8 @@ console.log('json2 FULL:', JSON.stringify(json2).slice(0, 500));
             <i className="fa-brands fa-microsoft"></i> Word
           </button>
         </Tooltip>
+        </>)}
+        {canTbDelete && (
         <Tooltip text={hasNoData ? 'No data to delete' : 'Delete term breakup'}>
           <button
             className="lp-icon-del"
@@ -2794,6 +2833,7 @@ console.log('json2 FULL:', JSON.stringify(json2).slice(0, 500));
             <i className="fa-solid fa-trash"></i>
           </button>
         </Tooltip>
+        )}
       </>
     );
   })()}
@@ -3640,6 +3680,8 @@ function CreateLessonPlans({
   const clpLoginSessionId  = sessionStorage.getItem('sessionID') || sessionStorage.getItem('SessionID') || '';
   const acadReadOnly = useModuleReadOnly('acad');
   const isOtherSession = (!!clpChangeSessionId && !!clpLoginSessionId && String(clpChangeSessionId) !== String(clpLoginSessionId)) || acadReadOnly;
+  const { can: canClp } = usePermissions();
+  const canClpCreate = canClp('Academics', 'Create Lesson Plans', 'Create');
   /* Bumped locally (panel deletes) to make notebook unit rows reload their
      detail; combined with clpRefresh (bumped after modal saves). */
   const [nbReload, setNbReload] = useState(0);
@@ -4015,10 +4057,10 @@ const handleSectionChange = async (e) => {
                 </button>
               </Tooltip>
             </div>
-            <Tooltip text={isOtherSession ? 'Editing is only allowed for the current session' : 'Manage units (add, rename, reorder)'}>
+            <Tooltip text={!canClpCreate ? 'You do not have permission to create lesson plans' : (isOtherSession ? 'Editing is only allowed for the current session' : 'Manage units (add, rename, reorder)')}>
               <button className="clp2-add-btn"
-                disabled={isOtherSession}
-                style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                disabled={isOtherSession || !canClpCreate}
+                style={(isOtherSession || !canClpCreate) ? { opacity: .45, cursor: 'not-allowed' } : undefined}
                 onClick={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } onManageUnits(clpSubtab); }}>
                 <i className="fa-solid fa-plus"></i><span>Add Unit</span>
               </button>

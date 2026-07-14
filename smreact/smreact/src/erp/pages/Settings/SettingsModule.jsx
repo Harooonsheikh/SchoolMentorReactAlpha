@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import Tooltip from '../../components/Tooltip';
 import TutorialModal from '../../components/TutorialModal';
 import SessionManagement from './SessionManagement';
 import SignatureManagement from './SignatureManagement';
+import { usePermissions } from '../../context/PermissionsContext';
 
 /* ═══════════════════════════════════════════════════════════════════
    SETTINGS MODULE — top-level page
@@ -26,8 +27,20 @@ const SETTINGS_SUBTABS = [
 ];
 
 export default function SettingsModule({ toast = () => {} }) {
+  const { can } = usePermissions();
   const [sub, setSub] = useState('sessions');
   const [tutorialOpen, setTutorialOpen] = useState(false);
+
+  /* Layer 1 — only show sub-tabs the user can View. Tab labels map 1:1
+     to the `can()` submenu strings ('Academic Sessions' / 'Signature Management'). */
+  const visibleSubtabs = SETTINGS_SUBTABS.filter(t => can('Settings', t.label, 'View'));
+
+  /* Snap to first visible tab if the active one is now hidden. */
+  useEffect(() => {
+    if (visibleSubtabs.length && !visibleSubtabs.some(t => t.id === sub)) {
+      setSub(visibleSubtabs[0].id);
+    }
+  }, [visibleSubtabs, sub]);
 
   return (
     <>
@@ -58,7 +71,7 @@ export default function SettingsModule({ toast = () => {} }) {
 
       {/* Horizontal tab bar — same shape as hr-tabs / apr-subtabs */}
       <div className="settings-tabs" role="tablist" aria-label="Settings sections">
-        {SETTINGS_SUBTABS.map(t => (
+        {visibleSubtabs.map(t => (
           <Tooltip key={t.id} text={t.desc} placement="bottom">
             <button
               type="button"

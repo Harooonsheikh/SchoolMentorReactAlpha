@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Tooltip from '../../components/Tooltip';
 import ModuleTutorialModal from '../../components/TutorialModal';
+import { usePermissions } from '../../context/PermissionsContext';
 
 /* ═══════════════════════════════════════════════════════════════════
    SCHOOL SOPs — Centralised SOP & School Manual Library
@@ -85,6 +86,9 @@ const MANUALS = [
    MAIN COMPONENT
    ═══════════════════════════════════════════════════════════════════ */
 export default function SchoolSOPs({ toast = () => {} }) {
+  const { can } = usePermissions();
+  const canViewManuals    = can('School SOPs', 'View Manuals', 'View');
+  const canWatchTutorials = can('School SOPs', 'Watch Tutorials', 'View');
   const [cat,    setCat]    = useState('Academic');
   const [search, setSearch] = useState('');
   const [pdfFor, setPdfFor] = useState(null);
@@ -127,6 +131,7 @@ export default function SchoolSOPs({ toast = () => {} }) {
           </div>
         </div>
 
+        {canWatchTutorials && (
         <Tooltip text="Play a short tutorial for the School SOPs module">
           <button
             className="tutorial-btn page-tutorial-btn"
@@ -137,6 +142,7 @@ export default function SchoolSOPs({ toast = () => {} }) {
             <span className="tutorial-label">Tutorial</span>
           </button>
         </Tooltip>
+        )}
       </div>
 
       {/* ── Info banner ── */}
@@ -227,6 +233,8 @@ export default function SchoolSOPs({ toast = () => {} }) {
               manual={m}
               onView={() => setPdfFor(m)}
               onTutorial={() => setTutFor(m)}
+              canViewManuals={canViewManuals}
+              canWatchTutorials={canWatchTutorials}
             />
           ))}
         </div>
@@ -275,7 +283,7 @@ function Stat({ tone, icon, label, value, sub }) {
 /* ═══════════════════════════════════════════════════════════════════
    MANUAL ROW — simple, no expansion
    ═══════════════════════════════════════════════════════════════════ */
-function ManualRow({ manual, onView, onTutorial }) {
+function ManualRow({ manual, onView, onTutorial, canViewManuals = true, canWatchTutorials = true }) {
   return (
     <div className="sops-rowwrap">
       <div className="sops-row">
@@ -286,6 +294,7 @@ function ManualRow({ manual, onView, onTutorial }) {
         <div className="td c sops-pages">{manual.pages}</div>
         <div className="td sops-updated">{manual.lastUpdated}</div>
         <div className="td c sops-actions">
+          {canViewManuals && (
           <Tooltip text="Open SOP document">
             <button
               type="button"
@@ -296,6 +305,8 @@ function ManualRow({ manual, onView, onTutorial }) {
               View Manual
             </button>
           </Tooltip>
+          )}
+          {canWatchTutorials && (
           <Tooltip text={manual.hasTutorial ? 'Watch training tutorial' : 'No tutorial available for this manual'}>
             <button
               type="button"
@@ -308,6 +319,7 @@ function ManualRow({ manual, onView, onTutorial }) {
               Tutorial
             </button>
           </Tooltip>
+          )}
         </div>
       </div>
     </div>

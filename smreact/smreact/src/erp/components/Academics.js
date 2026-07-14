@@ -7,6 +7,7 @@ import useAsync from '../hooks/useAsync';
 import { buildUrl, assertSessionPayload, registerSessionToast, apiMessage } from '../../utils/apiConfig';
 import { deliverReport } from './reportDelivery';
 import { useModuleReadOnly } from '../pages/Settings/settingsStore';
+import { usePermissions } from '../context/PermissionsContext';
 import RouteFallback from '../shared/RouteFallback';
 
 
@@ -46,6 +47,39 @@ const acadSessionKey = () =>
    MAIN ACADEMICS SHELL
    ═══════════════════════════════════════════════════════════════════ */
 export default function Academics({ l1, setL1, l2, setL2, l3, setL3, toast }) {
+  /* Logged-in user ki Academics permissions (School Head → sab true). */
+  const { can } = usePermissions();
+  const acadView = (sub) => can('Academics', sub, 'View');
+  const showTextbooks = acadView('Textbooks');
+  const showTerms     = acadView('Term Settings');
+  const showAcadCal   = acadView('Academic Calendar');
+  const showActCal    = acadView('Activity Calendar');
+  const showCal       = showAcadCal || showActCal;
+  const showSos       = showTextbooks || showTerms || showCal;
+  const showLp        = ['Session Settings', 'Term Breakups', 'Create Lesson Plans', 'Submissions'].some(acadView);
+
+  /* Agar active tab ka View nahi to pehle visible tab par snap karo (L1/L2/L3). */
+  useEffect(() => {
+    const vis = { sos: showSos, lp: showLp };
+    if (vis[l1]) return;
+    const first = ['sos', 'lp'].find((k) => vis[k]);
+    if (first && first !== l1) setL1(first);
+  }, [showSos, showLp, l1, setL1]);
+  useEffect(() => {
+    if (l1 !== 'sos') return;
+    const vis = { tb: showTextbooks, terms: showTerms, cal: showCal };
+    if (vis[l2]) return;
+    const first = ['tb', 'terms', 'cal'].find((k) => vis[k]);
+    if (first && first !== l2) setL2(first);
+  }, [l1, showTextbooks, showTerms, showCal, l2, setL2]);
+  useEffect(() => {
+    if (l1 !== 'sos' || l2 !== 'cal') return;
+    const vis = { ac: showAcadCal, act: showActCal };
+    if (vis[l3]) return;
+    const first = ['ac', 'act'].find((k) => vis[k]);
+    if (first && first !== l3) setL3(first);
+  }, [l1, l2, showAcadCal, showActCal, l3, setL3]);
+
   /* Academic-calendar terms are built live from termscrud + key dates (see loadCalendar).
      Start empty so the modal never opens against id-less seed data. */
   const [terms, setTerms] = useState([]);
@@ -336,8 +370,9 @@ return (
       </Tooltip>
     </div>
 
-    {/* ─── LEVEL 1 TABS ─── */}
+    {/* ─── LEVEL 1 TABS ─── (View permission ke hisaab se) */}
     <div className="l1-tabs">
+      {showSos && (
       <button
         className={`l1-tab${l1 === 'sos' ? ' active' : ''}`}
         onClick={() => setL1('sos')}
@@ -345,6 +380,8 @@ return (
         <div className="l1-tab-icon"><i className="fa-solid fa-book"></i></div>
         Scheme of Studies
       </button>
+      )}
+      {showLp && (
       <button
         className={`l1-tab${l1 === 'lp' ? ' active' : ''}`}
         onClick={() => setL1('lp')}
@@ -352,12 +389,14 @@ return (
         <div className="l1-tab-icon"><i className="fa-solid fa-chalkboard-user"></i></div>
         Lesson Plans
       </button>
+      )}
     </div>
 
     {l1 === 'sos' ? (
       <>
-        {/* ─── LEVEL 2 TABS ─── */}
+        {/* ─── LEVEL 2 TABS ─── (View permission ke hisaab se) */}
         <div className="l2-tabs" style={{ gridTemplateColumns: '1fr 1fr 1fr' }}>
+          {showTextbooks && (
           <button
             className={`l2-tab${l2 === "tb" ? " active" : ""}`}
             onClick={() => { setL2("tb"); getClassesData(); }}
@@ -366,6 +405,8 @@ return (
             <i className="fa-solid fa-book-bookmark" style={{ fontSize: 13 }}></i>
             Textbooks
           </button>
+          )}
+          {showTerms && (
           <button
             className={`l2-tab${l2 === 'terms' ? ' active' : ''}`}
             onClick={() => setL2('terms')}
@@ -373,6 +414,8 @@ return (
             <div className="l2-tab-dot"></div>
             <i className="fa-solid fa-list-ol" style={{ fontSize: 13 }}></i> Terms Setting
           </button>
+          )}
+          {showCal && (
           <button
             className={`l2-tab${l2 === 'cal' ? ' active' : ''}`}
             onClick={() => setL2('cal')}
@@ -380,6 +423,7 @@ return (
             <div className="l2-tab-dot"></div>
             <i className="fa-solid fa-calendar-days" style={{ fontSize: 13 }}></i> Calendar
           </button>
+          )}
         </div>
 
         {l2 === 'tb' && (
@@ -397,8 +441,9 @@ return (
 
         {l2 === 'cal' && (
           <>
-            {/* ─── LEVEL 3 TABS ─── */}
+            {/* ─── LEVEL 3 TABS ─── (View permission ke hisaab se) */}
             <div className="l3-tabs">
+              {showAcadCal && (
               <button
                 className={`l3-tab${l3 === 'ac' ? ' active' : ''}`}
                 onClick={() => setL3('ac')}
@@ -409,6 +454,8 @@ return (
                   <div className="l3-tab-desc">Key dates &amp; term schedule</div>
                 </div>
               </button>
+              )}
+              {showActCal && (
               <button
                 className={`l3-tab${l3 === 'act' ? ' active' : ''}`}
                 onClick={() => setL3('act')}
@@ -419,6 +466,7 @@ return (
                   <div className="l3-tab-desc">Events &amp; school activities</div>
                 </div>
               </button>
+              )}
             </div>
             {l3 === 'ac' && (
               <AcademicCalendar
@@ -1477,6 +1525,11 @@ async function generateReportWindow(name, style, format, ctx, classesData, subje
    ACTIVITY CALENDAR PANEL — stats, calendar views, events panel
    ═══════════════════════════════════════════════════════════════════ */
 function ActivityCalendar({ events, setEvents, onReport, onAdd, onEdit, openConfirm, toast, isOtherSession, reloadKey }) {
+  const { can } = usePermissions();
+  const canActCreate   = can('Academics', 'Activity Calendar', 'Create');
+  const canActEdit     = can('Academics', 'Activity Calendar', 'Edit');
+  const canActDelete   = can('Academics', 'Activity Calendar', 'Delete');
+  const canActDownload = can('Academics', 'Activity Calendar', 'Download');
   const today = useMemo(() => new Date(), []);
   const [calYear,  setCalYear]  = useState(today.getFullYear());
 const [calMonth, setCalMonth] = useState(today.getMonth()); // current month
@@ -1843,6 +1896,7 @@ const nextMonth = () => {
                 ))}
               </div>
               <div style={{ display: 'flex', gap: 6 }}>
+                {canActDownload && (<>
                 <Tooltip text={`Download ${view} activities as PDF`}>
                   <button
                     className="act-icon-btn act-icon-btn--pdf"
@@ -1859,6 +1913,7 @@ const nextMonth = () => {
                     <i className="fa-brands fa-microsoft"></i>
                   </button>
                 </Tooltip>
+                </>)}
               </div>
             </div>
           </div>
@@ -1936,10 +1991,10 @@ const nextMonth = () => {
               <div className="act-events-title">Activities</div>
               <div className="act-events-sub">{events.length} activities scheduled</div>
             </div>
-            <Tooltip text={isOtherSession ? 'Editing is only allowed for the current session' : 'Schedule a new activity on the calendar'}>
+            <Tooltip text={!canActCreate ? 'You do not have permission to add activities' : (isOtherSession ? 'Editing is only allowed for the current session' : 'Schedule a new activity on the calendar')}>
               <button className="act-add-btn" onClick={onAdd}
-                disabled={isOtherSession}
-                style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
+                disabled={isOtherSession || !canActCreate}
+                style={(isOtherSession || !canActCreate) ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
                 <i className="fa-solid fa-plus"></i> Add Activity
               </button>
             </Tooltip>
@@ -2013,22 +2068,28 @@ const nextMonth = () => {
             style={{ position: 'fixed', top: dropdown.y, left: dropdown.x, zIndex: 9000 }}
             onClick={e => e.stopPropagation()}
           >
+            {canActEdit && (
             <button className="dropdown-item" onClick={() => { onEdit(ev); closeDropdown(); }}
               disabled={isOtherSession}
               style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
               <i className="fa-solid fa-pen"></i> Edit
             </button>
+            )}
+            {canActDownload && (<>
             <button className="dropdown-item" onClick={() => { onReport(ev.name, 'pdf'); closeDropdown(); }}>
               <i className="fa-solid fa-file-pdf"></i> PDF Report
             </button>
             <button className="dropdown-item" onClick={() => { onReport(ev.name, 'word'); closeDropdown(); }}>
               <i className="fa-brands fa-microsoft"></i> Word Report
             </button>
+            </>)}
+            {canActDelete && (
             <button className="dropdown-item delete" onClick={() => handleDelete(ev)}
               disabled={isOtherSession}
               style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
               <i className="fa-solid fa-trash"></i> Delete
             </button>
+            )}
           </div>
         );
       })()}
@@ -2393,6 +2454,9 @@ function YearView({ events, calYear, setCalYear, setCalMonth, setView }) {
    ACADEMIC CALENDAR PANEL — term sections with key-date cards
    ═══════════════════════════════════════════════════════════════════ */
 function AcademicCalendar({ terms, onReport, onEdit, isOtherSession }) {
+  const { can } = usePermissions();
+  const canAcEdit     = can('Academics', 'Academic Calendar', 'Edit');
+  const canAcDownload = can('Academics', 'Academic Calendar', 'Download');
   return (
     <div className="section-card">
       <div className="cal-header">
@@ -2406,6 +2470,7 @@ function AcademicCalendar({ terms, onReport, onEdit, isOtherSession }) {
           </div>
         </div>
         <div style={{ display: 'flex', flexDirection: 'row', gap: 8, alignItems: 'center', flexWrap: 'nowrap' }}>
+          {canAcDownload && (<>
           <Tooltip text="Download the academic calendar as PDF">
             <button className="export-btn pdf" onClick={() => onReport('Academic Calendar', 'pdf')}>
               <i className="fa-solid fa-file-pdf"></i> PDF
@@ -2416,10 +2481,11 @@ function AcademicCalendar({ terms, onReport, onEdit, isOtherSession }) {
               <i className="fa-brands fa-microsoft"></i> Word
             </button>
           </Tooltip>
-          <Tooltip text={isOtherSession ? 'Editing is only allowed for the current session' : 'Edit the academic calendar key dates'}>
+          </>)}
+          <Tooltip text={!canAcEdit ? 'You do not have permission to edit the academic calendar' : (isOtherSession ? 'Editing is only allowed for the current session' : 'Edit the academic calendar key dates')}>
             <button className="cal-edit-btn" onClick={onEdit}
-              disabled={isOtherSession}
-              style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
+              disabled={isOtherSession || !canAcEdit}
+              style={(isOtherSession || !canAcEdit) ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
               <i className="fa-solid fa-pen"></i> Edit
             </button>
           </Tooltip>
@@ -2646,6 +2712,10 @@ function TermSettings({ termData, setTermData, openConfirm, toast }) {
     return todayUtc >= startUtc && todayUtc <= endUtc;
   }, [start, end]);
 
+  const { can: canTs } = usePermissions();
+  const canTermsEdit   = canTs('Academics', 'Term Settings', 'Edit');
+  const canTermsCreate = canTs('Academics', 'Term Settings', 'Create');
+  const canTermsDelete = canTs('Academics', 'Term Settings', 'Delete');
   const canEditTerms = !isOtherSession && isWithinSessionWindow;
 
   /* Load the session (academic-year) dropdown. Default-selects the session whose
@@ -3051,8 +3121,9 @@ const deleteTerm = id => {
                     </div>
                     <div className="ts-cell w100">
                       <div className="ts-actions">
-                        {canEditTerms ? (
+                        {canEditTerms && (canTermsEdit || canTermsDelete) ? (
                           <>
+                            {canTermsEdit && (
                             <Tooltip text="Save term changes">
                               <button
                                 className="ts-act-btn save"
@@ -3061,6 +3132,8 @@ const deleteTerm = id => {
                                 <i className="fa-solid fa-check"></i>
                               </button>
                             </Tooltip>
+                            )}
+                            {canTermsDelete && (
                             <Tooltip text="Delete term">
                               <button
                                 className="ts-act-btn del"
@@ -3069,6 +3142,7 @@ const deleteTerm = id => {
                                 <i className="fa-solid fa-xmark"></i>
                               </button>
                             </Tooltip>
+                            )}
                           </>
                         ) : (
                           <span style={{ fontSize: 11, color: 'var(--text-muted)', fontStyle: 'italic' }}>
@@ -3083,7 +3157,7 @@ const deleteTerm = id => {
               })}
             </div>
 
-           {canEditTerms && (
+           {canEditTerms && canTermsCreate && (
               <Tooltip text={canAddTerm ? 'Add another academic term' : 'Save or delete the current term first'}>
                 <button className="ts-add-row-btn" onClick={addTerm} disabled={!canAddTerm}
                   style={!canAddTerm ? { opacity: .5, cursor: 'not-allowed' } : undefined}>
@@ -3104,6 +3178,8 @@ const deleteTerm = id => {
    TEXT BOOKS PANEL — class rows with expand/collapse
    ═══════════════════════════════════════════════════════════════════ */
 function TextBooks({ onReport, toast, classesData }) {
+  const { can: canTb } = usePermissions();
+  const canTbDownload = canTb('Academics', 'Textbooks', 'Download');
   const [openId, setOpenId] = useState(null);
   const [subjectsData, setSubjectsData] = useState({});
   const [loadingSubjects, setLoadingSubjects] = useState({});
@@ -3248,6 +3324,7 @@ function TextBooks({ onReport, toast, classesData }) {
               </div>
 
               <div className="td inline-export" onClick={e => e.stopPropagation()}>
+                {canTbDownload && (<>
                 <Tooltip text={`Download textbook list for ${item.gradeName} - Section ${item.sectionName} as PDF`}>
                   <button className="export-btn pdf" onClick={async (e) => {
                     e.stopPropagation();
@@ -3272,6 +3349,7 @@ function TextBooks({ onReport, toast, classesData }) {
                     <i className="fa-brands fa-microsoft"></i> Word
                   </button>
                 </Tooltip>
+                </>)}
               </div>
 
               <div className="td" style={{ justifyContent: 'flex-end', paddingLeft: 0 }}>

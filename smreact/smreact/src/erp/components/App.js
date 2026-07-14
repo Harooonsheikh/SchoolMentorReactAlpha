@@ -5,10 +5,14 @@ import RouteFallback from '../shared/RouteFallback';
 import ComingSoon from '../shared/ComingSoon';
 import { SettingsProvider, TopbarSessionPill } from '../pages/Settings/settingsStore';
 import { useModules } from '../context/ModuleContext';
-import { NAV_TO_MODULE_MAP } from '../config/moduleConfig';
+import { usePermissions } from '../context/PermissionsContext';
+import { NAV_TO_MODULE_MAP, MODULE_REGISTRY } from '../config/moduleConfig';
 import { logout, goToLaunchSetup } from '../utils/auth';
 import { buildUrl } from '../../utils/apiConfig';
 import erpExtraCss from './erpExtraCss';
+
+/* Registry module id → uska label (API menuName se match karta hai). */
+const MODULE_ID_TO_LABEL = Object.fromEntries(MODULE_REGISTRY.map((m) => [m.id, m.label]));
 
 /* ─── Code-split each ERP module ─────────────────────────────────────
    React.lazy() wraps each module so its JS chunk is fetched only when
@@ -170,10 +174,15 @@ export default function App() {
      Logs / User Permissions) always render regardless of state
      because ModuleContext.toggleModule() refuses to flip them off. */
   const { isActive: isModuleActive } = useModules();
+  /* Logged-in user ki module-level access (School Head → sab allowed; warna API
+     permissions ke hisaab se). Jis module me koi access nahi, wo nav se hat jata hai. */
+  const { canModule } = usePermissions();
   const navItemVisible = (navId) => {
     const modId = NAV_TO_MODULE_MAP[navId];
     if (!modId) return true;                  /* not registry-backed → always show */
-    return isModuleActive(modId);
+    if (!isModuleActive(modId)) return false; /* school ne module off kiya hua */
+    const label = MODULE_ID_TO_LABEL[modId];
+    return label ? canModule(label) : true;   /* user ki permission ke hisaab se */
   };
 
   /* ── Academics tab state (lifted so the topbar breadcrumb stays in sync) ── */

@@ -6,6 +6,7 @@ import * as accountsService from '../services/accountsService';
 import useAsync from '../hooks/useAsync';
 import { buildUrl } from '../../utils/apiConfig';
 import { useModuleReadOnly } from '../pages/Settings/settingsStore';
+import { usePermissions } from '../context/PermissionsContext';
 
 /* Other modules broadcast this custom event after changing a session key
    (sessionStorage writes don't fire the native 'storage' event in the same tab).
@@ -66,6 +67,17 @@ const ACC_TABS = [
 export default function Accounts({ toast }) {
   const [tab, setTab] = useState('coa');
   const [tutorialOpen, setTutorialOpen] = useState(false);
+
+  /* Screen (tab) View permission — jis screen ka View nahi, uska tab hide. */
+  const { can } = usePermissions();
+  const visibleTabs = ACC_TABS.filter(t => can('Accounts', t.label, 'View'));
+
+  /* Active tab hide ho jaye to pehle visible tab par snap. */
+  useEffect(() => {
+    if (visibleTabs.some(t => t.id === tab)) return;
+    if (visibleTabs[0]) setTab(visibleTabs[0].id);
+  }, [visibleTabs, tab]);
+
   const activeMeta = ACC_TABS.find(t => t.id === tab);
 
   /* null = active-session check pending; true = active session set (show module);
@@ -211,7 +223,7 @@ export default function Accounts({ toast }) {
       </div>
 
       <div className="fee-subtabs">
-        {ACC_TABS.map(t => (
+        {visibleTabs.map(t => (
           <Tooltip key={t.id} text={t.label}>
             <button
               className={`fee-subtab${tab === t.id ? ' active' : ''}`}
@@ -252,6 +264,10 @@ export default function Accounts({ toast }) {
    head, with a hero-style confirm for destructive ops.
    ═══════════════════════════════════════════════════════════════════ */
 function ChartOfAccounts({ toast, isOtherSession }) {
+  const { can } = usePermissions();
+  const canCoaCreate = can('Accounts', 'Chart of Accounts', 'Create');
+  const canCoaEdit   = can('Accounts', 'Chart of Accounts', 'Edit');
+  const canCoaDelete = can('Accounts', 'Chart of Accounts', 'Delete');
   const branchID = sessionStorage.getItem('branchID') || '1';
   const userID   = Number(sessionStorage.getItem('UserID')) || 1;
 
@@ -464,13 +480,13 @@ function ChartOfAccounts({ toast, isOtherSession }) {
                   <span className="fee-tag">{t.heads.length}</span>
                 </div>
                 <div className="fee-td fee-center" data-label="Action" onClick={e => e.stopPropagation()}>
-                  <Tooltip text={`Add a new head under ${t.name}`}>
+                  <Tooltip text={!canCoaCreate ? 'You do not have permission to add account heads' : `Add a new head under ${t.name}`}>
                     <button
                       className="acc-addheads"
                       onClick={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } openAdd(t.key); }}
-                      disabled={isOtherSession}
-                      title={isOtherSession ? 'Editing is only allowed for the current session' : undefined}
-                      style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                      disabled={isOtherSession || !canCoaCreate}
+                      title={!canCoaCreate ? 'You do not have permission to add account heads' : isOtherSession ? 'Editing is only allowed for the current session' : undefined}
+                      style={(isOtherSession || !canCoaCreate) ? { opacity: .45, cursor: 'not-allowed' } : undefined}
                     >
                       <i className="fa-solid fa-plus"></i> Add Heads
                     </button>
@@ -515,6 +531,7 @@ function ChartOfAccounts({ toast, isOtherSession }) {
                               <td className="acc-head-desc" data-label="Description">{h.desc || '—'}</td>
                               <td className="r" data-label="Action">
                                 <div className="acc-heads-actions">
+                                  {canCoaEdit && (
                                   <Tooltip text={`Edit ${h.name}`}>
                                     <button
                                       className="fee-iconbtn"
@@ -526,6 +543,8 @@ function ChartOfAccounts({ toast, isOtherSession }) {
                                       <i className="fa-solid fa-pen"></i>
                                     </button>
                                   </Tooltip>
+                                  )}
+                                  {canCoaDelete && (
                                   <Tooltip text={`Delete ${h.name}`}>
                                     <button
                                       className="fee-iconbtn danger"
@@ -537,6 +556,7 @@ function ChartOfAccounts({ toast, isOtherSession }) {
                                       <i className="fa-solid fa-trash-can"></i>
                                     </button>
                                   </Tooltip>
+                                  )}
                                 </div>
                               </td>
                             </tr>
@@ -843,6 +863,11 @@ const accFmtStamp = (iso) => {
 };
 
 function Transactions({ toast, isOtherSession }) {
+  const { can } = usePermissions();
+  const canTxnCreate   = can('Accounts', 'Transactions', 'Create');
+  const canTxnEdit     = can('Accounts', 'Transactions', 'Edit');
+  const canTxnDelete   = can('Accounts', 'Transactions', 'Delete');
+  const canTxnDownload = can('Accounts', 'Transactions', 'Download');
   const { data: typesData = [] }   = useAsync(accountsService.getAccTypes, []);
   const { data: users = [] }       = useAsync(accountsService.getAccUsers, []);
   const { data: currentUser = '' } = useAsync(accountsService.getAccCurrentUser, '');
@@ -1090,13 +1115,13 @@ function Transactions({ toast, isOtherSession }) {
                 <i className="fa-solid fa-filter"></i> Fetch
               </button>
             </Tooltip>
-            <Tooltip text={`Record a new ${segLabel.toLowerCase()} entry`}>
+            <Tooltip text={!canTxnCreate ? 'You do not have permission to add transactions' : `Record a new ${segLabel.toLowerCase()} entry`}>
               <button
                 className="fee-btn fee-btn-primary acc-newentry-btn"
                 onClick={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } openNew(); }}
-                disabled={isOtherSession}
-                title={isOtherSession ? 'Editing is only allowed for the current session' : undefined}
-                style={isOtherSession
+                disabled={isOtherSession || !canTxnCreate}
+                title={!canTxnCreate ? 'You do not have permission to add transactions' : isOtherSession ? 'Editing is only allowed for the current session' : undefined}
+                style={(isOtherSession || !canTxnCreate)
                   ? { background: 'linear-gradient(135deg,#16A34A,#15803D)', boxShadow: '0 4px 14px rgba(22,163,74,.28)', opacity: .45, cursor: 'not-allowed' }
                   : { background: 'linear-gradient(135deg,#16A34A,#15803D)', boxShadow: '0 4px 14px rgba(22,163,74,.28)' }}
               >
@@ -1280,6 +1305,7 @@ function Transactions({ toast, isOtherSession }) {
                       <td className="r"><span className="acc-txn-amt">{fmtMoney(x.amount)}</span></td>
                       <td className="c" onClick={e => e.stopPropagation()}>
                         <div className="acc-txn-actions">
+                          {canTxnDelete && (
                           <Tooltip text="Delete entry">
                             <button
                               className="fee-iconbtn danger"
@@ -1291,6 +1317,8 @@ function Transactions({ toast, isOtherSession }) {
                               <i className="fa-solid fa-trash-can"></i>
                             </button>
                           </Tooltip>
+                          )}
+                          {canTxnEdit && (
                           <Tooltip text="Edit entry">
                             <button
                               className="fee-iconbtn"
@@ -1302,11 +1330,14 @@ function Transactions({ toast, isOtherSession }) {
                               <i className="fa-solid fa-pen"></i>
                             </button>
                           </Tooltip>
+                          )}
+                          {canTxnDownload && (
                           <Tooltip text="Download voucher">
                             <button className="fee-iconbtn acc-dl" onClick={() => setSlip({ txn: x, seg, school })}>
                               <i className="fa-solid fa-download"></i>
                             </button>
                           </Tooltip>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -2618,6 +2649,11 @@ function bookCalc(b) {
 }
 
 function AccountBooks({ toast, isOtherSession }) {
+  const { can } = usePermissions();
+  const canBkCreate   = can('Accounts', 'Account Books', 'Create');
+  const canBkEdit     = can('Accounts', 'Account Books', 'Edit');
+  const canBkDelete   = can('Accounts', 'Account Books', 'Delete');
+  const canBkDownload = can('Accounts', 'Account Books', 'Download');
   const { data: serverBooks = [], refetch: refetchBooks } = useAsync(accountsService.getAccBooks, []);
   const { data: users = [] }       = useAsync(accountsService.getAccUsers, []);
   const { data: currentUser = '' } = useAsync(accountsService.getAccCurrentUser, '');
@@ -2882,13 +2918,13 @@ function AccountBooks({ toast, isOtherSession }) {
                     </button>
                   </div>
                 </div>
-                <Tooltip text="Open a new running account with a party">
+                <Tooltip text={!canBkCreate ? 'You do not have permission to add account books' : 'Open a new running account with a party'}>
                   <button
                     className="fee-btn fee-btn-primary"
                     onClick={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } setEditBook({ mode: 'add' }); }}
-                    disabled={isOtherSession}
-                    title={isOtherSession ? 'Editing is only allowed for the current session' : undefined}
-                    style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                    disabled={isOtherSession || !canBkCreate}
+                    title={!canBkCreate ? 'You do not have permission to add account books' : isOtherSession ? 'Editing is only allowed for the current session' : undefined}
+                    style={(isOtherSession || !canBkCreate) ? { opacity: .45, cursor: 'not-allowed' } : undefined}
                   >
                     <i className="fa-solid fa-plus"></i> Add New Account Book
                   </button>
@@ -2943,6 +2979,7 @@ function AccountBooks({ toast, isOtherSession }) {
                         {b.includeInCash
                           ? <span className="acc-book-cashtag"><i className="fa-solid fa-wallet"></i> In Cash</span>
                           : <span className="acc-book-card-meta">{b.txns.length} txns</span>}
+                        {canBkDownload && (
                         <Tooltip text={`Download ${b.name} A4 ledger report`}>
                           <span
                             role="button"
@@ -2954,6 +2991,7 @@ function AccountBooks({ toast, isOtherSession }) {
                             <i className="fa-solid fa-file-arrow-down"></i>
                           </span>
                         </Tooltip>
+                        )}
                       </div>
                     </div>
                   </button>
@@ -2983,6 +3021,7 @@ function AccountBooks({ toast, isOtherSession }) {
           onAddTxn={() => setEditTxn({ mode: 'add' })}
           onEditTxn={(t) => setEditTxn({ mode: 'edit', txn: t })}
           onDeleteTxn={requestDeleteTxn}
+          canBkCreate={canBkCreate} canBkEdit={canBkEdit} canBkDelete={canBkDelete} canBkDownload={canBkDownload}
           toast={toast}
           isOtherSession={isOtherSession}
         />
@@ -3001,6 +3040,7 @@ function BookDetail({
   book, users, ledgerSearch, setLedgerSearch, ledgerFilter, setLedgerFilter,
   ledgerSort, setLedgerSort, onBack, onEditBook, onDeleteBook, onDownloadReport,
   onAddTxn, onEditTxn, onDeleteTxn, isOtherSession,
+  canBkCreate = true, canBkEdit = true, canBkDelete = true, canBkDownload = true,
 }) {
   const [openLedgerId, setOpenLedgerId] = useState(null);
   const c = bookCalc(book);
@@ -3024,11 +3064,14 @@ function BookDetail({
         <div className="acc-book-topbar-title">{book.name}</div>
         <div className="acc-book-topbar-actions">
           <span className={`acc-book-status ${book.status}`}>{book.status}</span>
+          {canBkDownload && (
           <Tooltip text="Download a detailed A4 PDF ledger report (includes attachment images)">
             <button className="fee-btn fee-btn-primary acc-btn-download" onClick={onDownloadReport}>
               <i className="fa-solid fa-file-arrow-down"></i> Ledger Report
             </button>
           </Tooltip>
+          )}
+          {canBkEdit && (
           <Tooltip text="Edit book details">
             <button
               className="fee-btn fee-btn-ghost"
@@ -3040,6 +3083,8 @@ function BookDetail({
               <i className="fa-solid fa-pen"></i> Edit Book
             </button>
           </Tooltip>
+          )}
+          {canBkDelete && (
           <Tooltip text="Delete this book and all ledger entries">
             <button
               className="fee-btn fee-btn-ghost acc-btn-danger"
@@ -3051,6 +3096,7 @@ function BookDetail({
               <i className="fa-solid fa-trash-can"></i> Delete Book
             </button>
           </Tooltip>
+          )}
         </div>
       </div>
 
@@ -3133,6 +3179,7 @@ function BookDetail({
             <i className="fa-solid fa-chevron-down"></i>
           </div>
         </div>
+        {canBkCreate && (
         <Tooltip text="Record a new ledger entry">
           <button
             className="fee-btn fee-btn-primary"
@@ -3144,6 +3191,7 @@ function BookDetail({
             <i className="fa-solid fa-plus"></i> Add Transaction
           </button>
         </Tooltip>
+        )}
       </div>
 
       <div className="fee-section">
@@ -3260,6 +3308,7 @@ function BookDetail({
                       )}
 
                       <div className="acc-ledger-actions-row">
+                        {canBkEdit && (
                         <Tooltip text="Edit this ledger entry">
                           <button
                             className="fee-btn fee-btn-ghost"
@@ -3271,6 +3320,8 @@ function BookDetail({
                             <i className="fa-solid fa-pen"></i> Edit
                           </button>
                         </Tooltip>
+                        )}
+                        {canBkDelete && (
                         <Tooltip text="Delete this ledger entry">
                           <button
                             className="fee-btn fee-btn-ghost acc-ledger-del"
@@ -3282,6 +3333,7 @@ function BookDetail({
                             <i className="fa-solid fa-trash-can"></i> Delete
                           </button>
                         </Tooltip>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -4041,6 +4093,8 @@ function repMonthsBetween(fromM, toM) {
 const dateMonth = (d) => String(d || '').slice(0, 7);
 
 function Reports({ toast }) {
+  const { can } = usePermissions();
+  const canRepDownload = can('Accounts', 'Reports', 'Download');
   const { data: types = [] }      = useAsync(accountsService.getAccTypes, []);
   const { data: books = [] }      = useAsync(accountsService.getAccBooks, []);
   const school = useBranchSchool();
@@ -4304,11 +4358,13 @@ function Reports({ toast }) {
                 <i className={`fa-solid ${reportLoading ? 'fa-circle-notch fa-spin' : 'fa-rotate'}`}></i> {reportLoading ? 'Loading...' : 'Load Report'}
               </button>
             </Tooltip>
+            {canRepDownload && (
             <Tooltip text="Download the report as PDF / Excel / CSV">
               <button type="button" className="fee-btn fee-btn-ghost acc-dlreport-btn" onClick={openDownload}>
                 <i className="fa-solid fa-file-export"></i> Download Report
               </button>
             </Tooltip>
+            )}
           </div>
 
           <div className="acc-rep-hint">

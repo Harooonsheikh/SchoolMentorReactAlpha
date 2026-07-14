@@ -8,6 +8,7 @@
   import Select from 'react-select';
   import { deliverReport } from './reportDelivery';
   import { useModuleReadOnly } from '../pages/Settings/settingsStore';
+  import { usePermissions } from '../context/PermissionsContext';
   /* ═══════════════════════════════════════════════════════════════════
     PAPER GENERATOR — module shell
     Stage 1: page header, 2 inner tabs (Paper Setup / Paper Generator),
@@ -112,6 +113,28 @@
   export default function PaperGenerator({ toast = () => {} }) {
     const [tutorialOpen, setTutorialOpen] = useState(false);
     const [tab, setTab]               = useState('setup');   // 'setup' | 'generator'
+
+    /* ── Per-user permissions (fail-open: true for School Head / unknown) ── */
+    const { can } = usePermissions();
+    const canSetupView    = can('Paper Generator', 'Paper Setup', 'View');
+    const canSetupEdit    = can('Paper Generator', 'Paper Setup', 'Edit');
+    const canGenView      = can('Paper Generator', 'Paper Generator', 'View');
+    const canGenCreate    = can('Paper Generator', 'Paper Generator', 'Create');
+    const canGenEdit      = can('Paper Generator', 'Paper Generator', 'Edit');
+    const canGenDelete    = can('Paper Generator', 'Paper Generator', 'Delete');
+    const canGenDownload  = can('Paper Generator', 'Paper Generator', 'Download');
+
+    /* Snap to the first visible tab if the active one is not permitted. */
+    useEffect(() => {
+      const vis = [
+        canSetupView && 'setup',
+        canGenView   && 'generator',
+      ].filter(Boolean);
+      if (vis.length && !vis.includes(tab)) {
+        setTab(vis[0]);
+      }
+    }, [canSetupView, canGenView, tab]);
+
     const [templateId, setTemplateId] = useState(1);
     const [previewN, setPreviewN]     = useState(null);      // 1 | 2 | 3 | null
   const [examClasses, setExamClasses] = useState([]);
@@ -715,12 +738,15 @@ const setSubjLine = (ci, si, l) => {
 
         {/* ── Two inner tabs ── */}
         <div className="pg-tabs-row">
+          {canSetupView && (
           <button
             className={`pg-tab${tab === 'setup' ? ' active' : ''}`}
             onClick={() => setTab('setup')}
           >
             <i className="fa-solid fa-sliders"></i> Paper Setup
           </button>
+          )}
+          {canGenView && (
           <button
             className={`pg-tab${tab === 'generator' ? ' active' : ''}`}
   onClick={() => {
@@ -729,10 +755,11 @@ const setSubjLine = (ci, si, l) => {
             }}        >
             <i className="fa-solid fa-wand-magic-sparkles"></i> Paper Generator
           </button>
+          )}
         </div>
 
         {/* ── Paper Setup tab ── */}
-        {tab === 'setup' && (
+        {tab === 'setup' && canSetupView && (
           <>
             {/* Choose Paper Template */}
             <div className="section-card" style={{ marginBottom: 16, overflow: 'hidden' }}>
@@ -791,6 +818,7 @@ const setSubjLine = (ci, si, l) => {
                     </div>
                     <div className="pg-card-sub">Set paper format and answer line type per class and subject</div>
                   </div>
+                  {canSetupEdit && (
                   <div className="pg-global-defaults-controls">
                     <span className="pg-global-lbl">Global Default:</span>
                     <div className="pg-seg">
@@ -843,6 +871,7 @@ const setSubjLine = (ci, si, l) => {
                       </Tooltip>
                     </div>
                   </div>
+                  )}
                 </div>
               </div>
 
@@ -873,6 +902,7 @@ const setSubjLine = (ci, si, l) => {
                             </button>
                           </Tooltip>
                         </div>
+                        {canSetupEdit && (
                         <div className="pg-cls-defaults" onClick={e => e.stopPropagation()}>
                           <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 600, flexShrink: 0 }}>Default:</span>
                           <Tooltip text={`Apply 'With Sheet' to every subject in ${cls.name} (${cls.section})`}>
@@ -922,6 +952,7 @@ const setSubjLine = (ci, si, l) => {
                             </button>
                           </Tooltip>
                         </div>
+                        )}
                       </div>
 
                       {isOpen && (
@@ -960,6 +991,7 @@ const setSubjLine = (ci, si, l) => {
                                   </div>
                                 </div> */}
 
+                                {canSetupEdit && (
                                 <div className="pg-subj-toggle-col">
                                   <span className="pg-subj-toggle-lbl">
                                     <i className="fa-solid fa-bars" style={{ fontSize: 8, marginRight: 3 }}></i>Line Type
@@ -983,6 +1015,7 @@ const setSubjLine = (ci, si, l) => {
                                     </Tooltip>
                                   </div>
                                 </div>
+                                )}
                               </div>
                             );
                           })}
@@ -997,7 +1030,7 @@ const setSubjLine = (ci, si, l) => {
         )}
 
         {/* ── Paper Generator tab ── */}
-        {tab === 'generator' && (
+        {tab === 'generator' && canGenView && (
           <div className="section-card" style={{ animation: 'fadeSlide .2s ease both', padding: 0, overflow: 'hidden' }}>
             <div className="pg-class-table-head">
               <div>S. No.</div>
@@ -1027,6 +1060,7 @@ const setSubjLine = (ci, si, l) => {
                       <span style={{ color: 'var(--text-secondary)' }}>{cls.section}</span>
                     </div>
                     <div>
+                      {canGenCreate && (
                       <Tooltip text={`Generate a new paper for ${cls.name} · ${cls.section}`}>
   <button
     className="pg-make-paper-btn"
@@ -1040,6 +1074,7 @@ const setSubjLine = (ci, si, l) => {
   </button>
 
                       </Tooltip>
+                      )}
                     </div>
                     <div style={{ textAlign: 'center' }}>
                       <Tooltip text={count === 0 ? 'No papers generated yet' : `${count} paper${count !== 1 ? 's' : ''} generated for this class`}>
@@ -1067,7 +1102,9 @@ const setSubjLine = (ci, si, l) => {
                       onDelete={(p, pi) => setDeletePaper({ paper: p, cls, key, index: pi })}
                       onEdit={p => handleEditPaper(idx, p)}
                         isOtherSession={isOtherSession}  // ← Add this line
-
+                      canEdit={canGenEdit}
+                      canDownload={canGenDownload}
+                      canDelete={canGenDelete}
                     />
 
                   </div>
@@ -1119,6 +1156,7 @@ const setSubjLine = (ci, si, l) => {
             templateId={templateId}
             onClose={() => setViewPaper(null)}
             onDownload={() => { setDownloadPaper(viewPaper); setViewPaper(null); }}
+            canDownload={canGenDownload}
           />
         )}
 
@@ -1184,7 +1222,7 @@ const setSubjLine = (ci, si, l) => {
   /* ═══════════════════════════════════════════════════════════════════
     PAPERS GRID — list of generated papers under a class row
     ═══════════════════════════════════════════════════════════════════ */
-  function PapersGrid({ papers, toast, onView, onDownload, onDelete, onEdit , isOtherSession }) {
+  function PapersGrid({ papers, toast, onView, onDownload, onDelete, onEdit , isOtherSession, canEdit = true, canDownload = true, canDelete = true }) {
     if (!papers.length) {
       return (
         <div style={{ textAlign: 'center', padding: '28px 20px', color: 'var(--text-muted)' }}>
@@ -1263,9 +1301,10 @@ const setSubjLine = (ci, si, l) => {
                   <Tooltip text="Shuffle questions in this paper">
                     <button className="pg-action-icon shuffle" onClick={() => toast(`Shuffling "${p.title}" — questions re-ordered`, 'info')}><i className="fa-solid fa-shuffle"></i></button>
                   </Tooltip>
+{canEdit && (
 <Tooltip text="Edit this paper">
-  <button 
-    className="pg-action-icon edit" 
+  <button
+    className="pg-action-icon edit"
     onClick={() => {
       if (isOtherSession) {
         toast('Method not allowed', 'error');
@@ -1279,12 +1318,16 @@ const setSubjLine = (ci, si, l) => {
     <i className="fa-solid fa-pen"></i>
   </button>
 </Tooltip>
+)}
                   <Tooltip text="Preview this paper">
                     <button className="pg-action-icon view" onClick={() => onView && onView(p)}><i className="fa-solid fa-eye"></i></button>
                   </Tooltip>
+                  {canDownload && (
                   <Tooltip text="Download as PDF or Word">
                     <button className="pg-action-icon download" onClick={() => onDownload && onDownload(p)}><i className="fa-solid fa-download"></i></button>
                   </Tooltip>
+                  )}
+                  {canDelete && (
                   <Tooltip text="Delete this paper">
                     <button className="pg-action-icon delete"  onClick={() => {
         if (isOtherSession) {
@@ -1296,6 +1339,7 @@ const setSubjLine = (ci, si, l) => {
       disabled={isOtherSession}
       style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}><i className="fa-solid fa-trash"></i></button>
                   </Tooltip>
+                  )}
                 </div>
               </div>
             );
@@ -3863,7 +3907,7 @@ const setSubjLine = (ci, si, l) => {
   /* ═══════════════════════════════════════════════════════════════════
     PAPER VIEW MODAL — Color/B&W toggle + API paper body + Download
     ═══════════════════════════════════════════════════════════════════ */
-  function PaperViewModal({ paper, cls, templateId = 1, onClose, onDownload }) {
+  function PaperViewModal({ paper, cls, templateId = 1, onClose, onDownload, canDownload = true }) {
     const [tone, setTone] = useState('color'); // 'color' | 'bw'
     const [sections, setSections] = useState([]);
     /* Answer-space config from the class+subject setup (API submission detail). */
@@ -3985,6 +4029,7 @@ const setSubjLine = (ci, si, l) => {
                   <i className="fa-solid fa-circle-half-stroke"></i> Colorless
                 </button>
               </Tooltip>
+              {canDownload && (
               <Tooltip text="Open download options">
                 <button
                   className="pg-btn-primary"
@@ -3994,6 +4039,7 @@ const setSubjLine = (ci, si, l) => {
                   <i className="fa-solid fa-download"></i> Download
                 </button>
               </Tooltip>
+              )}
             </div>
 
             <div style={{ padding: 24, background: '#fff', minHeight: 400, fontFamily: "'Plus Jakarta Sans', sans-serif" }}>
@@ -4026,11 +4072,13 @@ const setSubjLine = (ci, si, l) => {
             <Tooltip text="Close preview">
               <button className="pg-btn-secondary" onClick={onClose}>Close</button>
             </Tooltip>
+            {canDownload && (
             <Tooltip text="Open download options">
               <button className="pg-btn-primary" onClick={onDownload}>
                 <i className="fa-solid fa-download"></i> Download Paper
               </button>
             </Tooltip>
+            )}
           </div>
         </div>
       </div>,

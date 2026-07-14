@@ -15,6 +15,7 @@ import {
 export default function UsersTab({
   users, roles, assignRole, setUserStatus, updateUserPermissions,
   setDashboardType, toast,
+  canEdit = true, canAssign = true,
 }) {
   const [search,    setSearch]    = useState('');
   const [fRole,     setFRole]     = useState('all');
@@ -29,15 +30,35 @@ export default function UsersTab({
   /* Filtered + role-enriched list. */
   const rows = useMemo(() => users.map(u => {
     const role = findRole(roles, u.role);
-    return { ...u, roleLabel: role?.name || '—', roleColor: role?.color || '#64748B' };
+    /* App-role mile to wahi, warna user ka apna roleLabel/roleColor (e.g. employee
+       flags se derive kiya Principal/Teacher/Parent), warna '—'. */
+    return {
+      ...u,
+      roleLabel: role?.name || u.roleLabel || '—',
+      roleColor: role?.color || u.roleColor || '#64748B',
+    };
   }).filter(u => {
-    if (fRole !== 'all' && u.role !== fRole) return false;
+    /* Role filter ab label par match karta hai (app-role id ya employee-flag role). */
+    if (fRole !== 'all' && u.role !== fRole && u.roleLabel !== fRole) return false;
     if (fStatus !== 'all' && u.status !== fStatus) return false;
     if (fPerm !== 'all' && u.permType !== fPerm) return false;
     const q = search.trim().toLowerCase();
     if (!q) return true;
     return `${u.name} ${u.email} ${u.employeeId}`.toLowerCase().includes(q);
   }), [users, roles, search, fRole, fStatus, fPerm]);
+
+  /* Role dropdown ke options — jo roles asal me users me maujood hain (Principal /
+     Teacher / Parent, ya app-roles jab wo use hon). Distinct + '—' hataya. */
+  const roleOptions = useMemo(() => {
+    const seen = new Map(); // value → label
+    users.forEach(u => {
+      const r = findRole(roles, u.role);
+      if (r) { seen.set(r.id, r.name); return; }
+      const lbl = u.roleLabel;
+      if (lbl && lbl !== '—') seen.set(lbl, lbl);
+    });
+    return [...seen.entries()].map(([value, label]) => ({ value, label }));
+  }, [users, roles]);
 
   const onStatusToggleAsk = (user) => {
     if (user.status === 'Active') {
@@ -71,7 +92,7 @@ export default function UsersTab({
         </div>
         <select className="up-select" value={fRole} onChange={(e) => setFRole(e.target.value)} aria-label="Filter by role">
           <option value="all">All Roles</option>
-          {roles.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+          {roleOptions.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
         </select>
         <select className="up-select" value={fStatus} onChange={(e) => setFStatus(e.target.value)} aria-label="Filter by status">
           <option value="all">All Status</option>
@@ -169,35 +190,52 @@ export default function UsersTab({
                 <div className="td up-emp-meta">{u.lastLogin}</div>
               </Tooltip>
               <div className="td c up-actions">
-                <Tooltip text="View read-only summary">
-                  <button className="up-act" onClick={() => setEditFor({ user: u, readOnly: true })} aria-label="View permissions">
+                <Tooltip text={u.roleLabel === 'Principal' ? 'Not available for Principal' : 'View read-only summary'}>
+                  <button
+                    className="up-act"
+                    onClick={() => setEditFor({ user: u, readOnly: true })}
+                    disabled={u.roleLabel === 'Principal'}
+                    aria-label="View permissions"
+                  >
                     <i className="fa-solid fa-eye" aria-hidden="true"></i>
                   </button>
                 </Tooltip>
-                <Tooltip text="Edit permissions">
-                  <button className="up-act" onClick={() => setEditFor({ user: u, readOnly: false })} aria-label="Edit permissions">
-                    <i className="fa-solid fa-pen-to-square" aria-hidden="true"></i>
-                  </button>
-                </Tooltip>
-                <Tooltip text="Assign role">
-                  <button className="up-act" onClick={() => setAssignFor(u)} aria-label="Assign role">
-                    <i className="fa-solid fa-user-tag" aria-hidden="true"></i>
-                  </button>
-                </Tooltip>
-                <Tooltip text="Set Dashboard type (Admin / Teacher)">
-                  <button className="up-act" onClick={() => setDashFor(u)} aria-label="Set dashboard type">
+                {canEdit && (
+                  <Tooltip text={u.roleLabel === 'Principal' ? 'Not available for Principal' : 'Edit permissions'}>
+                    <button
+                      className="up-act"
+                      onClick={() => setEditFor({ user: u, readOnly: false })}
+                      disabled={u.roleLabel === 'Principal'}
+                      aria-label="Edit permissions"
+                    >
+                      <i className="fa-solid fa-pen-to-square" aria-hidden="true"></i>
+                    </button>
+                  </Tooltip>
+                )}
+                {canAssign && (
+                  <Tooltip text={u.roleLabel === 'Principal' ? 'Not available for Principal' : 'Assign role'}>
+                    <button className="up-act" onClick={() => setAssignFor(u)} disabled={u.roleLabel === 'Principal'} aria-label="Assign role">
+                      <i className="fa-solid fa-user-tag" aria-hidden="true"></i>
+                    </button>
+                  </Tooltip>
+                )}
+                <Tooltip text={u.roleLabel === 'Principal' ? 'Not available for Principal' : 'Set Dashboard type (Admin / Teacher)'}>
+                  <button className="up-act" onClick={() => setDashFor(u)} disabled={u.roleLabel === 'Principal'} aria-label="Set dashboard type">
                     <i className="fa-solid fa-gauge-high" aria-hidden="true"></i>
                   </button>
                 </Tooltip>
-                <Tooltip text={u.status === 'Active' ? 'Deactivate user' : 'Activate user'}>
-                  <button
-                    className={`up-act${u.status === 'Active' ? ' up-act--danger' : ''}`}
-                    onClick={() => onStatusToggleAsk(u)}
-                    aria-label={u.status === 'Active' ? 'Deactivate' : 'Activate'}
-                  >
-                    <i className={`fa-solid ${u.status === 'Active' ? 'fa-ban' : 'fa-check'}`} aria-hidden="true"></i>
-                  </button>
-                </Tooltip>
+                {canEdit && (
+                  <Tooltip text={u.roleLabel === 'Principal' ? 'Not available for Principal' : (u.status === 'Active' ? 'Deactivate user' : 'Activate user')}>
+                    <button
+                      className={`up-act${u.status === 'Active' ? ' up-act--danger' : ''}`}
+                      onClick={() => onStatusToggleAsk(u)}
+                      disabled={u.roleLabel === 'Principal'}
+                      aria-label={u.status === 'Active' ? 'Deactivate' : 'Activate'}
+                    >
+                      <i className={`fa-solid ${u.status === 'Active' ? 'fa-ban' : 'fa-check'}`} aria-hidden="true"></i>
+                    </button>
+                  </Tooltip>
+                )}
               </div>
             </div>
           ))}

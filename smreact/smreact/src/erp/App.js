@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import SchoolMentorShell from './components/App';
 import { ModuleProvider } from './context/ModuleContext';
+import { PermissionsProvider } from './context/PermissionsContext';
 import { setErpNavHandlers } from './utils/auth';
 
 function App({ onExitToSetup, onLogout }) {
@@ -12,7 +13,9 @@ function App({ onExitToSetup, onLogout }) {
 
   return (
     <ModuleProvider>
-      <SchoolMentorShell />
+      <PermissionsProvider>
+        <SchoolMentorShell />
+      </PermissionsProvider>
     </ModuleProvider>
   );
 }
