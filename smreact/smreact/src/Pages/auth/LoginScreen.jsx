@@ -35,6 +35,15 @@ export default function LoginScreen({ onLogin, onSignup }) {
       setError(data?.message || 'Login failed');
       return;
     }
+    /* Parent role ERP me login NAHI kar sakta — chahe credentials sahi hon, "User not found"
+       dikha kar rok do (session store / onLogin se pehle). */
+    const roleStr = String(
+      data?.accountType ?? data?.role ?? data?.roleName ?? data?.userType ?? ''
+    ).trim().toLowerCase();
+    if (roleStr === 'parent' || data?.isParent === true) {
+      setError('User not found');
+      return;
+    }
     if (data?.branchID) {
       sessionStorage.setItem("branchID", data.branchID);
     }
