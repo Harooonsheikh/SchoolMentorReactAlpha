@@ -5,6 +5,7 @@
   import * as attendanceService from "../services/attendanceService";
   import useAsync from "../hooks/useAsync";
   import { useModuleReadOnly } from "../pages/Settings/settingsStore";
+  import { usePermissions } from "../context/PermissionsContext";
 
   /* ============================================================================
     SchoolMentor ERP — Attendance Module (React / JSX)
@@ -231,6 +232,11 @@
     Pixel-faithful port of the HTML reference. Uses att-* classes + FA icons. */
 
   function HolidaysTab({ weeklyOff, requestToggleDay, holidays, openHolModal, requestDeleteHoliday, openReportPicker, toast  , onSaveWeeklyOff, onExpandMonth, loadingMonth, isOtherSession = false }) {
+    const { can } = usePermissions();
+    const canHolCreate   = can("Attendance", "Holidays Setup", "Create");
+    const canHolEdit     = can("Attendance", "Holidays Setup", "Edit");
+    const canHolDelete   = can("Attendance", "Holidays Setup", "Delete");
+    const canHolDownload = can("Attendance", "Holidays Setup", "Download");
     const [openMonth, setOpenMonth] = useState(null);
     const [holYear, setHolYear] = useState("");
 
@@ -320,6 +326,7 @@
                   {holYear || "Loading…"}
                 </div>
               </Tooltip>
+              {canHolDownload && (
               <Tooltip text="Download a PDF of all holidays for the selected year">
                 <button
                   className="att-btn-report"
@@ -328,6 +335,7 @@
                   <i className="fa-solid fa-file-pdf"></i> Yearly Report
                 </button>
               </Tooltip>
+              )}
             </div>
           </div>
           <div className="att-section-body">
@@ -350,6 +358,7 @@
                         </div>
                       </div>
                       <div className="att-month-actions">
+                        {canHolCreate && (
                         <Tooltip text={isOtherSession ? "Editing is only allowed for the current session" : `Add a new holiday in ${m}`}>
                           <button
                             className="att-add-holiday-btn"
@@ -360,6 +369,7 @@
                             <i className="fa-solid fa-plus"></i> Add Holiday
                           </button>
                         </Tooltip>
+                        )}
                         <Tooltip text={isOpen ? "Collapse month" : "Expand month"}>
                           <button className={`att-chevron-btn${isOpen ? " open" : ""}`} aria-label="Toggle">
                             <i className="fa-solid fa-chevron-down"></i>
@@ -391,16 +401,20 @@
                                 <span key={c} className="att-holiday-class-pill" style={{ marginRight: 4 }}>{c}</span>
                               ))}
                             </div>
+                            {canHolEdit && (
                             <Tooltip text={isOtherSession ? "Editing is only allowed for the current session" : "Edit holiday"}>
                               <button className="att-icon-btn" disabled={isOtherSession} style={isOtherSession ? { opacity: .45, cursor: "not-allowed" } : undefined} onClick={() => openHolModal(h.id)}>
                                 <i className="fa-solid fa-pen"></i>
                               </button>
                             </Tooltip>
+                            )}
+                            {canHolDelete && (
                             <Tooltip text={isOtherSession ? "Editing is only allowed for the current session" : "Delete holiday"}>
                               <button className="att-icon-btn del" disabled={isOtherSession} style={isOtherSession ? { opacity: .45, cursor: "not-allowed" } : undefined} onClick={() => requestDeleteHoliday(h.id)}>
                                 <i className="fa-solid fa-trash-can"></i>
                               </button>
                             </Tooltip>
+                            )}
                           </div>
                         ))
                       )}
@@ -1780,6 +1794,9 @@
     HTML-faithful: att-section, att-st-row table, expandable detail panels,
     per-class Mark/Update Attendance button, calendar with date detail. */
   function StudentTab({ weeklyOff, holidays, studentData, openMarkSt, openReportPicker, toast, onExpandClass, teacherMap = {}, onSelectDate, dateAttendance, isOtherSession = false }) {
+    const { can } = usePermissions();
+    const canStMark     = can("Attendance", "Student Attendance", "Create") || can("Attendance", "Student Attendance", "Edit");
+    const canStDownload = can("Attendance", "Student Attendance", "Download");
     const [month, setMonth] = useState(CURRENT_MONTH_LABEL);
     const [selected, setSelected] = useState(null);
     const [openClassIdx, setOpenClassIdx] = useState(null);
@@ -1791,6 +1808,7 @@
           <div className="att-section-body" style={{ padding: "14px 18px" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
               <MonthNav month={month} onChange={(m) => { setMonth(m); setSelected(null); }} />
+              {canStDownload && (
               <Tooltip text="Download monthly student attendance as PDF">
                 <button
                   className="att-btn-report"
@@ -1804,6 +1822,7 @@
                   <i className="fa-solid fa-file-pdf"></i> PDF Report
                 </button>
               </Tooltip>
+              )}
             </div>
           </div>
         </div>
@@ -1908,12 +1927,12 @@
                   <div className="att-td att-td-absent"><span style={{ color: "#DC2626", fontWeight: 800, fontSize: 14 }}>{isMarked ? r.absent : "—"}</span></div>
                   <div className="att-td att-td-leave"><span style={{ color: "#D97706", fontWeight: 800, fontSize: 14 }}>{isMarked ? r.leave : "—"}</span></div>
                   <div className="att-td att-td-action">
-                    <Tooltip text={isOtherSession ? "Editing is only allowed for the current session" : (isMarked ? `Update attendance for ${r.cls} (${r.sec})` : `Mark attendance for ${r.cls} (${r.sec})`)}>
+                    <Tooltip text={!canStMark ? "You do not have permission to mark attendance" : (isOtherSession ? "Editing is only allowed for the current session" : (isMarked ? `Update attendance for ${r.cls} (${r.sec})` : `Mark attendance for ${r.cls} (${r.sec})`))}>
                       <button
                         className={`att-mark-btn-primary${isMarked ? " update-mode" : ""}`}
                         onClick={() => openMarkSt(i)}
-                        disabled={isOtherSession}
-                        style={isOtherSession ? { opacity: .45, cursor: "not-allowed" } : undefined}
+                        disabled={isOtherSession || !canStMark}
+                        style={(isOtherSession || !canStMark) ? { opacity: .45, cursor: "not-allowed" } : undefined}
                       >
                         <i className={`fa-solid ${isMarked ? "fa-rotate-right" : "fa-pen-to-square"}`}></i>
                         {isMarked ? "Update Attendance" : "Mark Attendance"}
@@ -1965,6 +1984,7 @@
                         </tbody>
                       </table>
                     </div>
+                    {canStDownload && (
                     <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
                       <Tooltip text={`Download today's attendance for ${r.cls} (${r.sec}) as PDF`}>
                         <button
@@ -1992,6 +2012,7 @@
                         </button>
                       </Tooltip>
                     </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -2004,6 +2025,9 @@
 
   /* ─── Selected-date panel under the Student calendar ────────────────────── */
   function StudentDatePanel({ sel, dateAttendance, openMarkSt, openReportPicker, isOtherSession = false }) {
+    const { can } = usePermissions();
+    const canStMark     = can("Attendance", "Student Attendance", "Create") || can("Attendance", "Student Attendance", "Edit");
+    const canStDownload = can("Attendance", "Student Attendance", "Download");
     const dowName  = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][new Date(sel.year, sel.monthIdx, sel.day).getDay()];
     const dateStr  = `${sel.day} ${MONTHS[sel.monthIdx]} ${sel.year}`;
     const selKey   = `${sel.year}-${String(sel.monthIdx + 1).padStart(2, "0")}-${String(sel.day).padStart(2, "0")}`;
@@ -2030,6 +2054,7 @@
             </div>
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            {canStDownload && (
             <Tooltip text="Download a PDF of student attendance for this date">
               <button
                 className="att-btn-report"
@@ -2042,7 +2067,8 @@
                 <i className="fa-solid fa-file-pdf"></i> Daily Report
               </button>
             </Tooltip>
-            {sel.isToday && (
+            )}
+            {sel.isToday && canStMark && (
               <Tooltip text={isOtherSession ? "Editing is only allowed for the current session" : (allMarked ? "Update today's student attendance for all classes" : "Mark today's student attendance for all classes")}>
                 <button
                   className={`att-mark-btn-primary${allMarked ? " update-mode" : ""}`}
@@ -2292,6 +2318,9 @@
     HTML-faithful: filter bar, calendar with date-detail (top mark CTA),
     staff list table with expandable per-staff detail rows. */
   function StaffTab({ weeklyOff, holidays, staffData, staffTodayMarked, openMarkSf, openReportPicker, toast, onExpandStaff, onSelectDate, staffDateAttendance, isOtherSession = false }) {
+    const { can } = usePermissions();
+    const canSfMark     = can("Attendance", "Staff Attendance", "Create") || can("Attendance", "Staff Attendance", "Edit");
+    const canSfDownload = can("Attendance", "Staff Attendance", "Download");
     const [month, setMonth] = useState(CURRENT_MONTH_LABEL);
     const [selected, setSelected] = useState(null);
     const [openIdx, setOpenIdx] = useState(null);
@@ -2303,6 +2332,7 @@
           <div className="att-section-body" style={{ padding: "14px 18px" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
               <MonthNav month={month} onChange={(m) => { setMonth(m); setSelected(null); }} />
+              {canSfDownload && (
               <Tooltip text="Download monthly staff attendance as PDF">
                 <button
                   className="att-btn-report"
@@ -2316,6 +2346,7 @@
                   <i className="fa-solid fa-file-pdf"></i> PDF Report
                 </button>
               </Tooltip>
+              )}
             </div>
           </div>
         </div>
@@ -2441,6 +2472,7 @@
                         </div>
                       ))}
                     </div>
+                    {canSfDownload && (
                     <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
                       <Tooltip text={`Download today's attendance for ${s.name} as PDF`}>
                         <button
@@ -2468,6 +2500,7 @@
                         </button>
                       </Tooltip>
                     </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -2480,6 +2513,9 @@
 
   /* ─── Selected-date panel under the Staff calendar ──────────────────────── */
   function StaffDatePanel({ sel, staffDateAttendance, staffTodayMarked, openMarkSf, openReportPicker, isOtherSession = false }) {
+    const { can } = usePermissions();
+    const canSfMark     = can("Attendance", "Staff Attendance", "Create") || can("Attendance", "Staff Attendance", "Edit");
+    const canSfDownload = can("Attendance", "Staff Attendance", "Download");
     const dowName = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][new Date(sel.year, sel.monthIdx, sel.day).getDay()];
     const dateStr = `${sel.day} ${MONTHS[sel.monthIdx]} ${sel.year}`;
     const selKey  = `${sel.year}-${String(sel.monthIdx + 1).padStart(2, "0")}-${String(sel.day).padStart(2, "0")}`;
@@ -2505,6 +2541,7 @@
             </div>
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            {canSfDownload && (
             <Tooltip text="Download a PDF of staff attendance for this date">
               <button
                 className="att-btn-report"
@@ -2517,7 +2554,8 @@
                 <i className="fa-solid fa-file-pdf"></i> Daily Report
               </button>
             </Tooltip>
-            {sel.isToday && (
+            )}
+            {sel.isToday && canSfMark && (
               <Tooltip text={isOtherSession ? "Editing is only allowed for the current session" : (staffTodayMarked ? "Update today's staff attendance" : "Mark today's staff attendance")}>
                 <button
                   className={`att-mark-btn-primary${staffTodayMarked ? " update-mode" : ""}`}
@@ -3122,6 +3160,8 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
 
   /* ─── ReportRow — inline filter editor + Generate ──────────────────────── */
   function ReportRow({ rpt, accent, gradient, onGenerate, classOpts = [], sessionName = "" }) {
+    const { can: canRR } = usePermissions();
+    const canRRDownload = canRR("Attendance", "Reports", "Download");
     const today    = new Date().toISOString().split("T")[0];
     const currMon  = CURRENT_MONTH_LABEL;
     const [vals, setVals] = useState(() => {
@@ -3174,6 +3214,7 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
           <div className="grp-rpt-row-label">
             <i className={`fa-solid ${rpt.icon}`} style={{ color: accent }}></i>{rpt.label}
           </div>
+          {canRRDownload && (
           <Tooltip text={`Generate ${rpt.label}`}>
             <button className="grp-gen-btn" style={{ background: gradient, ...(generating ? { opacity: .7, cursor: "wait" } : {}) }} onClick={submit} disabled={generating}>
               {generating
@@ -3181,6 +3222,7 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
                 : <><i className="fa-solid fa-file-lines"></i> Generate</>}
             </button>
           </Tooltip>
+          )}
         </div>
         {rpt.filters.length > 0 && (
           <div className="grp-rpt-row-filters">
@@ -3215,6 +3257,8 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
 
   /* ─── Individual Report date-picker modal ────────────────────────────── */
   function IndividualReportModal({ target, onClose, onGenerate }) {
+    const { can: canIR } = usePermissions();
+    const canIRDownload = canIR("Attendance", "Reports", "Download");
     const today    = new Date();
     const firstOfMonth = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split("T")[0];
     const todayStr     = today.toISOString().split("T")[0];
@@ -3323,6 +3367,7 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
             <Tooltip text="Cancel and close">
               <button className="att-btn-secondary" onClick={onClose}>Cancel</button>
             </Tooltip>
+            {canIRDownload && (
             <Tooltip text="Generate the individual attendance report">
               <button className="att-btn-primary" onClick={submit} disabled={generating} style={generating ? { opacity: .7, cursor: "wait" } : undefined}>
                 {generating
@@ -3330,6 +3375,7 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
                   : <><i className="fa-solid fa-file-lines"></i> Generate Report</>}
               </button>
             </Tooltip>
+            )}
           </div>
         </div>
       </div>,
@@ -3364,13 +3410,22 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
 
   /* ─── Main component ──────────────────────────────────────────────────────── */
   export default function Attendance({ onToast }) {
-    const TABS = [
+    const ALL_TABS = [
       { id: "holidays", label: "Holidays Setup",     icon: "fa-umbrella-beach" },
       { id: "student",  label: "Student Attendance", icon: "fa-user-graduate" },
       { id: "staff",    label: "Staff Attendance",   icon: "fa-users" },
       { id: "reports",  label: "Reports",            icon: "fa-chart-bar" },
     ];
+    /* Screen (tab) View permission — jis screen ka View nahi wo tab hide. */
+    const { can } = usePermissions();
+    const TABS = ALL_TABS.filter((t) => can("Attendance", t.label, "View"));
     const [tab, setTab] = useState("holidays");
+
+    /* Active tab hide ho jaye to pehle visible par snap. */
+    useEffect(() => {
+      if (TABS.some((t) => t.id === tab)) return;
+      if (TABS[0]) setTab(TABS[0].id);
+    }, [TABS, tab]);
     const [tutorialOpen, setTutorialOpen] = useState(false);
     // Holidays load per-month from the API when a month is expanded.
     const [holidays, setHolidays]         = useState([]);

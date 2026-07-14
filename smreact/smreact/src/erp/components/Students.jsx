@@ -3,6 +3,7 @@ import Tooltip from './Tooltip';
 import TutorialModal from './TutorialModal';
 import * as studentService from '../services/studentService';
 import useAsync from '../hooks/useAsync';
+import { usePermissions } from '../context/PermissionsContext';
 import { fetchReportHeader } from '../../utils/pdfReports';
 import { deliverReport } from './reportDelivery';
 
@@ -1145,6 +1146,15 @@ export default function Students({ toast }) {
 
   const [tab, setTab] = useState('active');
   const [tutorialOpen, setTutorialOpen] = useState(false);
+
+  /* Screen (tab) View permission — jis screen ka View nahi wo tab hide. */
+  const { can } = usePermissions();
+  const visibleTabs = STU_TABS.filter(t => can('Students', t.label, 'View'));
+  useEffect(() => {
+    if (visibleTabs.some(t => t.id === tab)) return;
+    if (visibleTabs[0]) setTab(visibleTabs[0].id);
+  }, [visibleTabs, tab]);
+
   const activeMeta = STU_TABS.find(t => t.id === tab);
 
   return (
@@ -1174,7 +1184,7 @@ export default function Students({ toast }) {
       </div>
 
       <div className="fee-subtabs">
-        {STU_TABS.map(t => (
+        {visibleTabs.map(t => (
           <Tooltip key={t.id} text={t.label}>
             <button
               className={`fee-subtab${tab === t.id ? ' active' : ''}`}
@@ -1237,6 +1247,13 @@ export default function Students({ toast }) {
    nested student rows that carry a 3-dot action menu.
    ═══════════════════════════════════════════════════════════════════ */
 function ActiveStudents({ classes, setClasses, inactive, setInactive, families, setFamilies, school, toast }) {
+  const { can } = usePermissions();
+  const canStuCreate   = can('Students', 'Active Students', 'Create');
+  const canStuEdit     = can('Students', 'Active Students', 'Edit');
+  const canStuDelete   = can('Students', 'Active Students', 'Delete');
+  const canStuDownload = can('Students', 'Active Students', 'Download');
+  const canStuPrint    = can('Students', 'Active Students', 'Print');
+  const canFamCreate   = can('Students', 'Family Tree', 'Create');
   const { data: classListLookup = [] }  = useAsync(studentService.getStuClassList, []);
   const { data: sectionList = [] }      = useAsync(studentService.getStuSectionList, []);
   const { data: reasonsLookup = [] }    = useAsync(studentService.getStuInactiveReasons, []);
@@ -1708,16 +1725,20 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
         </div>
 
         <div className="stu-toolbar-actions">
+          {canStuDownload && (
           <Tooltip text="Download whole-school student report">
             <button className="stu-iconbtn" onClick={openSchoolPicker} aria-label="Download whole-school student report">
               <i className="fa-solid fa-file-arrow-down"></i>
             </button>
           </Tooltip>
+          )}
+          {canStuPrint && (
           <Tooltip text="Print a blank Admission Form template">
             <button className="stu-rowbtn admission-cta" onClick={openAdmissionPicker}>
               <i className="fa-solid fa-file-lines"></i> Get Admission Form
             </button>
           </Tooltip>
+          )}
         </div>
       </div>
 
@@ -1757,6 +1778,8 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
             onStudentCert={(reg, type) => openCert(c.key, reg, type)}
             onStudentAddFamily={(reg) => openAddToFamily(c.key, reg)}
             linkedRegs={linkedRegs}
+            canStuCreate={canStuCreate} canStuEdit={canStuEdit} canStuDelete={canStuDelete}
+            canStuDownload={canStuDownload} canStuPrint={canStuPrint} canFamCreate={canFamCreate}
           />
         ))}
       </div>
@@ -1854,7 +1877,8 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
 }
 
 /* ─── Class header row + collapsible student list ─── */
-function StuClassRow({ c, idx, isOpen, onToggle, onReport, onPromote, onAdd, onBulkId, flashReg, onStudentEdit, onStudentMarkInactive, onStudentProfile, onStudentIdCard, onStudentCert, onStudentAddFamily, linkedRegs }) {
+function StuClassRow({ c, idx, isOpen, onToggle, onReport, onPromote, onAdd, onBulkId, flashReg, onStudentEdit, onStudentMarkInactive, onStudentProfile, onStudentIdCard, onStudentCert, onStudentAddFamily, linkedRegs,
+  canStuCreate = true, canStuEdit = true, canStuDelete = true, canStuDownload = true, canStuPrint = true, canFamCreate = true }) {
   return (
     <div className={`stu-clswrap${isOpen ? ' open' : ''}`}>
       <div className="stu-cls-row" onClick={onToggle}>
@@ -1871,23 +1895,29 @@ function StuClassRow({ c, idx, isOpen, onToggle, onReport, onPromote, onAdd, onB
         <div className="td"><span className="stu-sec-pill"><i className="fa-solid fa-grip"></i> {c.sec}</span></div>
         <div className="td c"><div className="stu-strength"><span className="num">{c.students.length}</span></div></div>
         <div className="td c" onClick={(e) => e.stopPropagation()}>
+          {canStuDownload && (
           <Tooltip text="Download report for this class">
             <button className="stu-rep-btn" onClick={onReport} aria-label="Download report for this class">
               <i className="fa-solid fa-file-arrow-down"></i>
             </button>
           </Tooltip>
+          )}
         </div>
         <div className="td stu-cls-actions" onClick={(e) => e.stopPropagation()}>
+          {canStuEdit && (
           <Tooltip text="Promote this section to the next class">
             <button className="stu-rowbtn promote" onClick={onPromote}>
               <i className="fa-solid fa-arrow-up-right-dots"></i> Promotion
             </button>
           </Tooltip>
+          )}
+          {canStuCreate && (
           <Tooltip text="Register a new student in this section">
             <button className="stu-rowbtn add" onClick={onAdd}>
               <i className="fa-solid fa-user-plus"></i> Add Student
             </button>
           </Tooltip>
+          )}
         </div>
         <div className="td c">
           <Tooltip text={isOpen ? 'Collapse details' : 'Expand details'}>
@@ -1942,6 +1972,8 @@ function StuClassRow({ c, idx, isOpen, onToggle, onReport, onPromote, onAdd, onB
                   onCert={(type) => onStudentCert(s.reg, type)}
                   onAddFamily={() => onStudentAddFamily(s.reg)}
                   isLinkedToFamily={Boolean(s.family) || linkedRegs?.has(s.reg)}
+                  canStuEdit={canStuEdit} canStuDelete={canStuDelete} canStuDownload={canStuDownload}
+                  canStuPrint={canStuPrint} canFamCreate={canFamCreate}
                 />
               ))}
             </>
@@ -1953,7 +1985,8 @@ function StuClassRow({ c, idx, isOpen, onToggle, onReport, onPromote, onAdd, onB
 }
 
 /* ─── Per-student row + 3-dot floating menu ─── */
-function StuStudentRow({ s, i, flash, onEdit, onMarkInactive, onProfile, onIdCard, onCert, onAddFamily, isLinkedToFamily }) {
+function StuStudentRow({ s, i, flash, onEdit, onMarkInactive, onProfile, onIdCard, onCert, onAddFamily, isLinkedToFamily,
+  canStuEdit = true, canStuDelete = true, canStuDownload = true, canStuPrint = true, canFamCreate = true }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [certOpen, setCertOpen] = useState(false);
   const [menuUp, setMenuUp] = useState(false);
@@ -2013,15 +2046,22 @@ function StuStudentRow({ s, i, flash, onEdit, onMarkInactive, onProfile, onIdCar
         {menuOpen && (
           <div className={`stu-actmenu${menuUp ? ' stu-actmenu--up' : ''}`}>
             <div className="stu-actmenu-lbl">{stuFullName(s)} · {s.reg}</div>
+            {canStuEdit && (
             <button className="stu-actitem" onClick={() => fire(onEdit)}>
               <i className="fa-solid fa-pen" style={{ color: '#1E40AF' }}></i> Edit / Update Student
             </button>
+            )}
+            {canStuDownload && (
             <button className="stu-actitem" onClick={() => fire(onProfile)}>
               <i className="fa-solid fa-file-arrow-down" style={{ color: '#7C3AED' }}></i> Download Student Profile
             </button>
+            )}
+            {canStuPrint && (
             <button className="stu-actitem" onClick={() => fire(onIdCard)}>
               <i className="fa-solid fa-id-badge" style={{ color: '#0E7490' }}></i> Generate Student ID Card
             </button>
+            )}
+            {canStuPrint && (<>
             <button className="stu-actitem stu-actitem--sub" onClick={() => setCertOpen(!certOpen)}>
               <span><i className="fa-solid fa-award" style={{ color: '#D97706' }}></i> Certificates</span>
               <i className={`fa-solid fa-chevron-${certOpen ? 'up' : 'down'} stu-sub-chev`}></i>
@@ -2042,6 +2082,9 @@ function StuStudentRow({ s, i, flash, onEdit, onMarkInactive, onProfile, onIdCar
                 </button>
               </div>
             )}
+            </>
+            )}
+            {canFamCreate && (
             <button
               className="stu-actitem"
               onClick={() => fire(onAddFamily)}
@@ -2051,10 +2094,13 @@ function StuStudentRow({ s, i, flash, onEdit, onMarkInactive, onProfile, onIdCar
               <i className="fa-solid fa-people-roof" style={{ color: '#7C3AED' }}></i>
               {isLinkedToFamily ? 'Already in a Family Tree' : 'Add Student to Family Tree'}
             </button>
+            )}
+            {canStuDelete && (<>
             <div className="stu-actmenu-div"></div>
             <button className="stu-actitem stu-actitem--danger" onClick={() => fire(onMarkInactive)}>
               <i className="fa-solid fa-user-slash"></i> Mark Inactive
             </button>
+            </>)}
           </div>
         )}
       </div>
@@ -2624,6 +2670,9 @@ function Field({ label, hint, wide, children }) {
    dues > 0), Pending Dues settle, Make Active Again.
    ═══════════════════════════════════════════════════════════════════ */
 function InactiveStudents({ classes, setClasses, inactive, setInactive, toast }) {
+  const { can } = usePermissions();
+  const canInEdit     = can('Students', 'Inactive Students', 'Edit');
+  const canInDownload = can('Students', 'Inactive Students', 'Download');
   /* school identity for the report header */
   const { data: school = {} } = useAsync(studentService.getStuSchool, {});
   const [loading, setLoading] = useState(false);
@@ -2837,11 +2886,13 @@ function InactiveStudents({ classes, setClasses, inactive, setInactive, toast })
         </div>
 
         <div className="stu-toolbar-actions">
+          {canInDownload && (
           <Tooltip text="Download all inactive students report">
             <button className="stu-iconbtn" onClick={downloadAll} aria-label="Download all inactive students report">
               <i className="fa-solid fa-file-arrow-down"></i>
             </button>
           </Tooltip>
+          )}
         </div>
       </div>
 
@@ -2888,6 +2939,8 @@ function InactiveStudents({ classes, setClasses, inactive, setInactive, toast })
               handleAction(`${type === 'character' ? 'Character' : 'School Leaving'} Certificate`);
             }}
             onProfileDownload={(student) => openProfilePicker(student)}
+            canInEdit={canInEdit}
+            canInDownload={canInDownload}
           />
         ))}
       </div>
@@ -2914,7 +2967,7 @@ function InactiveStudents({ classes, setClasses, inactive, setInactive, toast })
 }
 
 /* ─── Inactive group row + expanded student list ─── */
-function StuInactiveGroup({ g, idx, isOpen, onToggle, onGroupReport, flashReg, onReactivate, onPendingDues, onCert, onProfileDownload }) {
+function StuInactiveGroup({ g, idx, isOpen, onToggle, onGroupReport, flashReg, onReactivate, onPendingDues, onCert, onProfileDownload, canInEdit = true, canInDownload = true }) {
   return (
     <div className={`stu-clswrap${isOpen ? ' open' : ''}`}>
       <div className="stu-cls-row" style={{ gridTemplateColumns: '54px 1.4fr 1fr 110px 90px 70px' }} onClick={onToggle}>
@@ -2974,6 +3027,7 @@ function StuInactiveGroup({ g, idx, isOpen, onToggle, onGroupReport, flashReg, o
               onPendingDues={() => onPendingDues(s)}
               onCert={(type) => onCert(s, type)}
               onProfileDownload={() => onProfileDownload(s)}
+              canInEdit={canInEdit} canInDownload={canInDownload}
             />
           ))}
         </div>
@@ -2983,7 +3037,7 @@ function StuInactiveGroup({ g, idx, isOpen, onToggle, onGroupReport, flashReg, o
 }
 
 /* ─── Per-inactive-student row + 3-dot menu ─── */
-function StuInactiveRow({ s, i, flash, onReactivate, onPendingDues, onCert, onProfileDownload }) {
+function StuInactiveRow({ s, i, flash, onReactivate, onPendingDues, onCert, onProfileDownload, canInEdit = true, canInDownload = true }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuUp, setMenuUp] = useState(false);
   const anchorRef = useRef(null);
@@ -3059,9 +3113,11 @@ function StuInactiveRow({ s, i, flash, onReactivate, onPendingDues, onCert, onPr
               </div>
               {locked && <i className="fa-solid fa-lock stu-act-lock"></i>}
             </button>
+            {canInDownload && (
             <button className="stu-actitem" onClick={() => fire(onProfileDownload)}>
               <i className="fa-solid fa-file-arrow-down" style={{ color: '#7C3AED' }}></i> Download Student Profile
             </button>
+            )}
             <div className="stu-actmenu-div"></div>
             {locked && (
               <button className="stu-actitem stu-actitem--warn" onClick={() => fire(onPendingDues)}>
@@ -3072,6 +3128,7 @@ function StuInactiveRow({ s, i, flash, onReactivate, onPendingDues, onCert, onPr
                 </div>
               </button>
             )}
+            {canInEdit && (
             <button className="stu-actitem stu-actitem--success" onClick={() => fire(onReactivate)}>
               <i className="fa-solid fa-user-check" style={{ color: '#16A34A' }}></i>
               <div className="stu-act-text">
@@ -3079,6 +3136,7 @@ function StuInactiveRow({ s, i, flash, onReactivate, onPendingDues, onCert, onPr
                 <div className="stu-act-sub">Restore to active records</div>
               </div>
             </button>
+            )}
           </div>
         )}
       </div>
@@ -4616,6 +4674,10 @@ function buildStuFamilyReportHTML(families, classes, school) {
    FAMILY TREE tab
    ═══════════════════════════════════════════════════════════════════ */
 function FamilyTree({ classes, families, setFamilies, school, toast }) {
+  const { can } = usePermissions();
+  const canFamCreate   = can('Students', 'Family Tree', 'Create');
+  const canFamEdit     = can('Students', 'Family Tree', 'Edit');
+  const canFamDelete   = can('Students', 'Family Tree', 'Delete');
   const [search, setSearch] = useState('');
   const [openKey, setOpenKey] = useState(null);
   const [editCfg, setEditCfg] = useState(null);  // {mode:'add'|'edit', family?}
@@ -4767,11 +4829,13 @@ function FamilyTree({ classes, families, setFamilies, school, toast }) {
               <i className="fa-solid fa-file-pdf"></i>
             </button>
           </Tooltip>
+          {canFamCreate && (
           <Tooltip text="Create a new family tree">
             <button className="stu-rowbtn admission-cta" onClick={openAdd}>
               <i className="fa-solid fa-plus"></i> New Family Tree
             </button>
           </Tooltip>
+          )}
         </div>
       </div>
 
@@ -4807,6 +4871,7 @@ function FamilyTree({ classes, families, setFamilies, school, toast }) {
             onEdit={() => openEdit(f)}
             onDelete={() => setDelCfg(f)}
             onUnlink={handleUnlink}
+            canFamEdit={canFamEdit} canFamDelete={canFamDelete}
           />
         ))}
       </div>
@@ -4826,7 +4891,7 @@ function FamilyTree({ classes, families, setFamilies, school, toast }) {
 }
 
 /* ─── Family row + expanded member list ─── */
-function FamilyRow({ f, idx, isOpen, onToggle, onEdit, onDelete, onUnlink }) {
+function FamilyRow({ f, idx, isOpen, onToggle, onEdit, onDelete, onUnlink, canFamEdit = true, canFamDelete = true }) {
   return (
     <div className={`stu-clswrap${isOpen ? ' open' : ''}`}>
       <div className="stu-cls-row" style={{ gridTemplateColumns: '54px 1.4fr 1.2fr 1fr 110px 180px 70px' }} onClick={onToggle}>
@@ -4850,16 +4915,20 @@ function FamilyRow({ f, idx, isOpen, onToggle, onEdit, onDelete, onUnlink }) {
           </div>
         </div>
         <div className="td stu-cls-actions" onClick={(e) => e.stopPropagation()}>
+          {canFamEdit && (
           <Tooltip text="Edit this family">
             <button className="stu-rowbtn" onClick={onEdit}>
               <i className="fa-solid fa-pen"></i> Edit
             </button>
           </Tooltip>
+          )}
+          {canFamDelete && (
           <Tooltip text="Delete this family (students stay)">
             <button className="stu-rowbtn fam-del" onClick={onDelete}>
               <i className="fa-solid fa-trash"></i> Delete
             </button>
           </Tooltip>
+          )}
         </div>
         <div className="td c">
           <Tooltip text={isOpen ? 'Collapse details' : 'Expand details'}>
@@ -4921,11 +4990,13 @@ function FamilyRow({ f, idx, isOpen, onToggle, onEdit, onDelete, onUnlink }) {
                     <span className="fam-rel-pill">{m._famRel || 'Sibling'}</span>
                   </div>
                   <div className="td c">
+                    {canFamEdit && (
                     <Tooltip text="Unlink this student">
                       <button className="stu-rep-btn" style={{ borderColor: 'rgba(220,38,38,.32)', color: '#B91C1C' }} onClick={() => onUnlink(m)}>
                         <i className="fa-solid fa-link-slash"></i>
                       </button>
                     </Tooltip>
+                    )}
                   </div>
                 </div>
               ))}

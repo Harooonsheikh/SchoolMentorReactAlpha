@@ -1,10 +1,12 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import Tooltip from '../../components/Tooltip';
 import TutorialModal from '../../components/TutorialModal';
+import { getEmployeesByBranch } from '../../services/attendanceService';
 import UsersTab from './UsersTab';
 import RolesTab from './RolesTab';
 import PermissionGroupsTab from './PermissionGroupsTab';
 import AuditLogsTab from './AuditLogsTab';
+import { usePermissions } from '../../context/PermissionsContext';
 import {
   INITIAL_USERS,
   INITIAL_ROLES,
@@ -30,13 +32,77 @@ const TABS = [
   { id: 'audit',  icon: 'fa-clipboard-list',  label: 'Audit Logs'        },
 ];
 
+/* get-employees-by-branch ki employee row ko Users-tab wali user shape me map karo.
+   UI same rehti hai — sirf real employee data dikhta hai. */
+const EMPTY_TEXT = new Set(['', 'string', 'n/a']);
+const cleanVal = (v) => {
+  const s = String(v ?? '').trim();
+  return EMPTY_TEXT.has(s.toLowerCase()) ? '' : s;
+};
+function mapEmployeeToUser(e) {
+  const name = `${cleanVal(e.firstName)} ${cleanVal(e.lastName)}`.trim() || 'Unnamed';
+  const email = cleanVal(e.email);
+  /* Role = jo flag true ho (Principal > Teacher > Parent priority). */
+  const roleInfo = e.isPrinciple ? { label: 'Principal', color: '#7C3AED' }
+    : e.isTeacher ? { label: 'Teacher', color: '#1E40AF' }
+    : e.isParent ? { label: 'Parent', color: '#15803D' }
+    : { label: '—', color: '#64748B' };
+  return {
+    id: `emp-${e.id}`,
+    empId: e.id,
+    name,
+    email: email || '—',
+    role: undefined,                       // app-role id nahi; label/color neeche diye hain
+    roleLabel: roleInfo.label,
+    roleColor: roleInfo.color,
+    employeeId: `EMP-${String(e.id).padStart(3, '0')}`,
+    dept: cleanVal(e.departmentName),
+    designation: cleanVal(e.designationName),
+    status: e.isActive ? 'Active' : 'Inactive',
+    lastLogin: '—',
+    permType: 'custom',
+    /* Teacher (magar principal nahi) → teacher dashboard, warna admin. */
+    dashboardType: (e.isTeacher && !e.isPrinciple) ? 'teacher' : 'admin',
+    _employee: e,                          // raw employee (future use)
+  };
+}
+
 export default function UserPermissions({ toast = () => {} }) {
+  const { can } = usePermissions();
+  const visibleTabs = TABS.filter(t => can('User Permissions', t.label, 'View'));
+  const canUsersEdit    = can('User Permissions', 'Users', 'Edit');
+  const canUsersAssign  = can('User Permissions', 'Users', 'Assign');
+  const canRolesCreate  = can('User Permissions', 'Roles', 'Create');
+  const canRolesEdit    = can('User Permissions', 'Roles', 'Edit');
+  const canRolesDelete  = can('User Permissions', 'Roles', 'Delete');
+  const canGroupsCreate = can('User Permissions', 'Permission Groups', 'Create');
+  const canGroupsEdit   = can('User Permissions', 'Permission Groups', 'Edit');
+  const canGroupsDelete = can('User Permissions', 'Permission Groups', 'Delete');
   const [tab,      setTab]      = useState('users');
   const [users,    setUsers]    = useState(INITIAL_USERS);
   const [roles,    setRoles]    = useState(INITIAL_ROLES);
   const [groups,   setGroups]   = useState(INITIAL_GROUPS);
   const [auditLog, setAuditLog] = useState(INITIAL_AUDIT);
   const [tutorialOpen, setTutorialOpen] = useState(false);
+  const [usersLoaded, setUsersLoaded] = useState(false);
+
+  /* Users tab active hote hi real employees API se laa kar map karo (ek dafa). */
+  useEffect(() => {
+    if (tab !== 'users' || usersLoaded) return undefined;
+    let alive = true;
+    getEmployeesByBranch()
+      .then((list) => {
+        if (!alive) return;
+        const mapped = (list || []).map(mapEmployeeToUser);
+        if (mapped.length) setUsers(mapped);
+        setUsersLoaded(true);
+      })
+      .catch((err) => {
+        console.error('Could not load employees for User Permissions:', err);
+        if (alive) setUsersLoaded(true);
+      });
+    return () => { alive = false; };
+  }, [tab, usersLoaded]);
 
   /* ─── Audit helper ─── */
   const logAudit = useCallback((entry) => {
@@ -158,6 +224,13 @@ export default function UserPermissions({ toast = () => {} }) {
     auditEvents:  auditLog.length,
   }), [users, roles, groups, auditLog]);
 
+  /* Active tab hidden ho to pehle visible tab par snap kar do. */
+  useEffect(() => {
+    if (visibleTabs.length && !visibleTabs.some(t => t.id === tab)) {
+      setTab(visibleTabs[0].id);
+    }
+  }, [visibleTabs, tab]);
+
   return (
     <>
       <style>{UP_CSS}</style>
@@ -199,7 +272,7 @@ export default function UserPermissions({ toast = () => {} }) {
 
       {/* Tab bar */}
       <div className="up-tabs" role="tablist" aria-label="User Permissions sections">
-        {TABS.map(t => (
+        {visibleTabs.map(t => (
           <Tooltip key={t.id} text={t.label} placement="bottom">
             <button
               type="button"
@@ -227,6 +300,8 @@ export default function UserPermissions({ toast = () => {} }) {
             updateUser={updateUser}
             setDashboardType={setDashboardType}
             toast={toast}
+            canEdit={canUsersEdit}
+            canAssign={canUsersAssign}
           />
         )}
         {tab === 'roles'  && (
@@ -236,6 +311,9 @@ export default function UserPermissions({ toast = () => {} }) {
             deleteRole={deleteRole}
             cloneRole={cloneRole}
             toast={toast}
+            canCreate={canRolesCreate}
+            canEdit={canRolesEdit}
+            canDelete={canRolesDelete}
           />
         )}
         {tab === 'groups' && (
@@ -244,6 +322,9 @@ export default function UserPermissions({ toast = () => {} }) {
             upsertGroup={upsertGroup}
             deleteGroup={deleteGroup}
             toast={toast}
+            canCreate={canGroupsCreate}
+            canEdit={canGroupsEdit}
+            canDelete={canGroupsDelete}
           />
         )}
         {tab === 'audit'  && (

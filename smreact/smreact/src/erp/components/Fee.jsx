@@ -4,6 +4,7 @@ import Tooltip from './Tooltip';
 import TutorialModal from './TutorialModal';
 import * as feeService from '../services/feeService';
 import useAsync from '../hooks/useAsync';
+import { usePermissions } from '../context/PermissionsContext';
 
 const money = (n) => `Rs. ${(Number(n) || 0).toLocaleString('en-PK')}`;
 const escHtml = (s) => String(s ?? '').replace(/[&<>"']/g, m =>
@@ -68,6 +69,32 @@ export default function Fee({ toast = () => {} }) {
   const [structSeg, setStructSeg] = useState('student');
   const [tutorialOpen, setTutorialOpen] = useState(false);
 
+  /* Screen (tab/segment) View permission — jis screen ka View nahi wo hide. */
+  const { can } = usePermissions();
+  const feeView = (sub) => can('Fee', sub, 'View');
+  const structViewMap = {
+    student:   feeView('Student Fee Setup'),
+    transport: feeView('Transport Fee Setup'),
+    settings:  feeView('Fee Challan Settings'),
+  };
+  const tabViewMap = {
+    structure: Object.values(structViewMap).some(Boolean),
+    challans:  feeView('Fee Challans'),
+    receipts:  feeView('Fee Receiving'),
+    history:   feeView('Fee History'),
+    reports:   feeView('Reports'),
+  };
+  const visibleTabs = FEE_TABS.filter(t => tabViewMap[t.id]);
+  const visibleSegs = STRUCTURE_SEGS.filter(s => structViewMap[s.id]);
+
+  /* Active tab/segment hide ho jaye to pehle visible par snap. */
+  useEffect(() => {
+    if (!tabViewMap[tab] && visibleTabs[0]) setTab(visibleTabs[0].id);
+  }, [tabViewMap, tab, visibleTabs]);
+  useEffect(() => {
+    if (tab === 'structure' && !structViewMap[structSeg] && visibleSegs[0]) setStructSeg(visibleSegs[0].id);
+  }, [tab, structViewMap, structSeg, visibleSegs]);
+
   const activeMeta = FEE_TABS.find(t => t.id === tab);
 
   return (
@@ -96,7 +123,7 @@ export default function Fee({ toast = () => {} }) {
 
       {/* Top-level tabs */}
       <div className="fee-subtabs">
-        {FEE_TABS.map(t => (
+        {visibleTabs.map(t => (
           <Tooltip key={t.id} text={`Open ${t.label}`}>
             <button
               className={`fee-subtab${tab === t.id ? ' active' : ''}`}
@@ -111,9 +138,9 @@ export default function Fee({ toast = () => {} }) {
       {/* ── Tab body ── */}
       {tab === 'structure' ? (
         <>
-          {/* 3-segment pill bar */}
+          {/* 3-segment pill bar (View permission ke hisaab se) */}
           <div className="fee-seg fee-seg-3">
-            {STRUCTURE_SEGS.map(s => (
+            {visibleSegs.map(s => (
               <Tooltip key={s.id} text={`Open ${s.label}`}>
                 <button
                   className={`fee-seg-btn${structSeg === s.id ? ' active' : ''}`}
@@ -163,6 +190,9 @@ export default function Fee({ toast = () => {} }) {
    download button.
    ═══════════════════════════════════════════════════════════════════ */
 function StudentFeeSetup({ toast }) {
+  const { can } = usePermissions();
+  const canSfEdit     = can('Fee', 'Student Fee Setup', 'Edit');
+  const canSfDownload = can('Fee', 'Student Fee Setup', 'Download');
   const { data: grades = [], refetch: reloadGrades } = useAsync(feeService.getFeeGrades, []);
   const { data: branchHeader = null } = useAsync(feeService.getReportHeader, [], null);
 
@@ -259,15 +289,17 @@ function StudentFeeSetup({ toast }) {
                   <span className="fee-count">{heads.length} <small>head{heads.length === 1 ? '' : 's'}</small></span>
                 </div>
                 <div className="fee-td fee-center fee-actions" data-label="Update" onClick={e => e.stopPropagation()}>
-                  <Tooltip text={`Edit fee heads for ${c.cls} (${c.sec})`}>
-                    <button className="fee-btn fee-btn-primary fee-btn-xs" onClick={() => openEdit(c.key)}>
+                  <Tooltip text={!canSfEdit ? 'You do not have permission to edit fee setup' : `Edit fee heads for ${c.cls} (${c.sec})`}>
+                    <button className="fee-btn fee-btn-primary fee-btn-xs" onClick={() => openEdit(c.key)}
+                      disabled={!canSfEdit} style={!canSfEdit ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
                       <i className="fa-solid fa-pen"></i> Update
                     </button>
                   </Tooltip>
                 </div>
                 <div className="fee-td fee-center fee-actions" data-label="Copy to All" onClick={e => e.stopPropagation()}>
-                  <Tooltip text="Copy this class's fee heads to every other class">
-                    <button className="fee-btn fee-btn-ghost fee-btn-xs" onClick={() => requestCopyToAll(c.key)}>
+                  <Tooltip text={!canSfEdit ? 'You do not have permission to edit fee setup' : "Copy this class's fee heads to every other class"}>
+                    <button className="fee-btn fee-btn-ghost fee-btn-xs" onClick={() => requestCopyToAll(c.key)}
+                      disabled={!canSfEdit} style={!canSfEdit ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
                       <i className="fa-solid fa-copy"></i> Copy to All
                     </button>
                   </Tooltip>
@@ -287,7 +319,7 @@ function StudentFeeSetup({ toast }) {
                     <div className="fee-detail-title">
                       <i className="fa-solid fa-list-ul"></i> Fee Heads — {c.cls} ({c.sec})
                     </div>
-                    {heads.length > 0 && (
+                    {heads.length > 0 && canSfDownload && (
                       <Tooltip text={`Download fee heads for ${c.cls} (${c.sec}) as PDF`}>
                         <button className="fee-btn fee-btn-ghost fee-btn-xs" onClick={() => openClassReport(c)}>
                           <i className="fa-solid fa-file-pdf"></i> PDF
@@ -369,6 +401,9 @@ function StudentFeeSetup({ toast }) {
    amount can be edited per student via a small modal.
    ═══════════════════════════════════════════════════════════════════ */
 function TransportFeeSetup({ toast }) {
+  const { can } = usePermissions();
+  const canTfEdit     = can('Fee', 'Transport Fee Setup', 'Edit');
+  const canTfDownload = can('Fee', 'Transport Fee Setup', 'Download');
   const { data: classes = [] } = useAsync(feeService.getFeeClasses, []);
   const { data: transportMap = {}, setData: setTransportMap } = useAsync(feeService.getTransportFee, []);
   const { data: branchHeader = null } = useAsync(feeService.getReportHeader, [], null);
@@ -476,7 +511,7 @@ function TransportFeeSetup({ toast }) {
                         </span>
                       )}
                     </div>
-                    {students.length > 0 && (
+                    {students.length > 0 && canTfDownload && (
                       <Tooltip text={`Download transport list for ${c.cls} (${c.sec}) as PDF`}>
                         <button className="fee-btn fee-btn-ghost fee-btn-xs" onClick={() => openClassReport(c)}>
                           <i className="fa-solid fa-file-pdf"></i> PDF
@@ -511,8 +546,9 @@ function TransportFeeSetup({ toast }) {
                                 : <span className="fee-muted-dash">—</span>}
                             </td>
                             <td className="fee-center">
-                              <Tooltip text={`Edit transport fee for ${s.name}`}>
-                                <button className="fee-iconbtn" onClick={() => openEdit(c.key, s)}>
+                              <Tooltip text={!canTfEdit ? 'You do not have permission to edit transport fee' : `Edit transport fee for ${s.name}`}>
+                                <button className="fee-iconbtn" onClick={() => openEdit(c.key, s)}
+                                  disabled={!canTfEdit} style={!canTfEdit ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
                                   <i className="fa-solid fa-pen"></i>
                                 </button>
                               </Tooltip>
@@ -1307,6 +1343,10 @@ function challanFigures(rec) {
 }
 
 function FeeChallansList({ toast }) {
+  const { can } = usePermissions();
+  const canChCreate   = can('Fee', 'Fee Challans', 'Create');
+  const canChDelete   = can('Fee', 'Fee Challans', 'Delete');
+  const canChDownload = can('Fee', 'Fee Challans', 'Download');
   const { data: classes = [] } = useAsync(feeService.getFeeClasses, []);
   const { data: studentsMap = {} } = useAsync(feeService.getTransportFee, []);
   const { data: headsMap = {} } = useAsync(feeService.getFeeHeads, []);
@@ -1767,11 +1807,13 @@ function FeeChallansList({ toast }) {
                 <div className="fee-td fee-name" data-label="Class">{c.cls}</div>
                 <div className="fee-td" data-label="Section"><span className="fee-tag">{c.sec}</span></div>
                 <div className="fee-td fee-center" data-label="Download" onClick={e => e.stopPropagation()}>
+                  {canChDownload && (
                   <Tooltip text={`Download all generated challans for ${c.cls} (${c.sec})`}>
                     <button className="fee-iconbtn" onClick={() => openDownload({ type: 'bulk', classKey: c.key })}>
                       <i className="fa-solid fa-file-arrow-down"></i>
                     </button>
                   </Tooltip>
+                  )}
                 </div>
                 <div className="fee-td fee-center" data-label="Generated">
                   <div className="fee-gen-block">
@@ -1782,13 +1824,16 @@ function FeeChallansList({ toast }) {
                   </div>
                 </div>
                 <div className="fee-td fee-center" data-label="Bulk" onClick={e => e.stopPropagation()}>
+                  {canChCreate && (
                   <Tooltip text={`Generate challans for all ${total} students in ${c.cls} (${c.sec})`}>
                     <button className="fee-btn fee-btn-primary fee-btn-xs" onClick={() => openBulkGen(c)}>
                       <i className="fa-solid fa-layer-group"></i> Bulk Challans
                     </button>
                   </Tooltip>
+                  )}
                 </div>
                 <div className="fee-td fee-center" data-label="Delete" onClick={e => e.stopPropagation()}>
+                  {canChDelete && (
                   <Tooltip text={gen > 0 ? `Delete all ${gen} generated challan${gen === 1 ? '' : 's'} for this class` : 'No challans to delete'}>
                     <button
                       className="fee-iconbtn danger"
@@ -1799,6 +1844,7 @@ function FeeChallansList({ toast }) {
                       <i className="fa-solid fa-trash-can"></i>
                     </button>
                   </Tooltip>
+                  )}
                 </div>
                 <div className="fee-td fee-center" data-label="Details">
                   <Tooltip text={isOpen ? 'Hide student challan list' : 'Show student challan list'}>
@@ -3397,6 +3443,10 @@ function FeeReceivingTab({ toast }) {
 }
 
 function FeeReceivingIndividual({ toast }) {
+  const { can } = usePermissions();
+  const canRcvCreate   = can('Fee', 'Fee Receiving', 'Create');
+  const canRcvDelete   = can('Fee', 'Fee Receiving', 'Delete');
+  const canRcvDownload = can('Fee', 'Fee Receiving', 'Download');
   const { data: classes = [] }      = useAsync(feeService.getFeeClasses, []);
   const { data: studentsMap = {} }  = useAsync(feeService.getTransportFee, []);
   const { data: headsMap = {} }     = useAsync(feeService.getFeeHeads, []);
@@ -3851,14 +3901,16 @@ function FeeReceivingIndividual({ toast }) {
                                 <div className="fee-recv-acts">
                                   {!m.generated ? null
                                     : m.status === 'none' ? (
+                                      canRcvCreate && (
                                       <Tooltip text="Open receive form for this student">
                                         <button type="button" className="fee-recv-link" onClick={() => openReceive(c, s, false)}>
                                           Fee Receive <i className="fa-solid fa-eye"></i>
                                         </button>
                                       </Tooltip>
+                                      )
                                     ) : (
                                       <>
-                                        {m.status === 'partial' && (
+                                        {m.status === 'partial' && canRcvCreate && (
                                           <Tooltip text="Receive remaining balance">
                                             <button type="button" className="fee-recv-link" onClick={() => openReceive(c, s, false)}>
                                               Receive More <i className="fa-solid fa-plus"></i>
@@ -3870,6 +3922,7 @@ function FeeReceivingIndividual({ toast }) {
                                             <i className="fa-solid fa-eye"></i>
                                           </button>
                                         </Tooltip>
+                                        {canRcvDownload && (
                                         <Tooltip text="Download receipt slip">
                                           <button className="fee-iconbtn tiny" onClick={() => {
                                             const payments = paymentsFor(c.key, s.reg);
@@ -3879,7 +3932,8 @@ function FeeReceivingIndividual({ toast }) {
                                             <i className="fa-solid fa-download"></i>
                                           </button>
                                         </Tooltip>
-                                        {!m.onelink && (
+                                        )}
+                                        {!m.onelink && canRcvDelete && (
                                           <Tooltip text="Delete manual receipt">
                                             <button className="fee-iconbtn tiny danger" onClick={() => requestDeleteReceipt(c, s)}>
                                               <i className="fa-solid fa-trash-can"></i>
@@ -5144,6 +5198,8 @@ function feeHistTotals(months) {
 }
 
 function FeeHistoryTab({ toast }) {
+  const { can } = usePermissions();
+  const canHistDownload = can('Fee', 'Fee History', 'Download');
   const [seg, setSeg] = useState('ledger');
 
   const { data: classes = [] }     = useAsync(feeService.getFeeClasses, []);
@@ -5434,6 +5490,7 @@ function FeeHistoryTab({ toast }) {
             <div className="fee-hist-overall-sub">Download complete fee history for all classes &amp; sections (A4 printable).</div>
           </div>
         </div>
+        {canHistDownload && (
         <div className="fee-hist-overall-btns">
           <Tooltip text="Download a school-wide ledger summary report">
             <button className="fee-btn fee-btn-ghost" onClick={() => downloadOverall('ledger')}>
@@ -5448,6 +5505,7 @@ function FeeHistoryTab({ toast }) {
             </button>
           </Tooltip>
         </div>
+        )}
       </div>
 
       {/* Class table */}
@@ -6350,6 +6408,8 @@ const fmtRs = (n) => `Rs. ${(Number(n) || 0).toLocaleString('en-PK')}`;
 
 /* ─── Common Preview / PDF button group ─── */
 function RepActions({ onPreview, onPdf }) {
+  const { can } = usePermissions();
+  const canRepDownload = can('Fee', 'Reports', 'Download');
   return (
     <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
       <Tooltip text="Open A4 preview of this report">
@@ -6357,11 +6417,13 @@ function RepActions({ onPreview, onPdf }) {
           <i className="fa-solid fa-eye"></i> Preview
         </button>
       </Tooltip>
+      {canRepDownload && (
       <Tooltip text="Generate the A4 PDF (Save as PDF from the print window)">
         <button className="fee-btn fee-btn-ghost" onClick={onPdf}>
           <i className="fa-solid fa-file-pdf"></i> PDF
         </button>
       </Tooltip>
+      )}
     </div>
   );
 }
@@ -8295,6 +8357,8 @@ function feeThermalFamilyChallanHTML({ family, settings, period, issueISO, dueIS
    feeService.saveFeeSettings().
    ═══════════════════════════════════════════════════════════════════ */
 function FeeChallanSettings({ toast }) {
+  const { can } = usePermissions();
+  const canFcsEdit = can('Fee', 'Fee Challan Settings', 'Edit');
   const {
     data: serverSettings,
     loading,
@@ -8383,12 +8447,12 @@ function FeeChallanSettings({ toast }) {
               </div>
             </div>
           </div>
-          <Tooltip text={dirty ? 'Save your changes' : 'No changes to save'}>
+          <Tooltip text={!canFcsEdit ? 'You do not have permission to edit fee settings' : (dirty ? 'Save your changes' : 'No changes to save')}>
             <button
               className="fee-btn fee-btn-primary fee-btn-sm"
               onClick={validateAndSave}
-              disabled={!dirty || saving}
-              style={!dirty || saving ? { opacity: .55, cursor: 'not-allowed' } : undefined}
+              disabled={!dirty || saving || !canFcsEdit}
+              style={(!dirty || saving || !canFcsEdit) ? { opacity: .55, cursor: 'not-allowed' } : undefined}
             >
               <i className={`fa-solid ${saving ? 'fa-circle-notch fa-spin' : 'fa-floppy-disk'}`}></i>
               {saving ? ' Saving…' : ' Save Settings'}

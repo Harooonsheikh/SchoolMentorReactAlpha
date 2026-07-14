@@ -14,8 +14,11 @@ import {
   getApplicablePerms,
   isPermApplicable,
   getActiveModuleTree,
+  permsFromApiPermissions,
+  apiPermissionsFromKeys,
 } from './permissionsData';
 import { useModules } from '../../context/ModuleContext';
+import { buildUrl } from '../../../utils/apiConfig';
 
 /* ═══════════════════════════════════════════════════════════════════
    EDIT PERMISSIONS PANEL — full-screen XL modal
@@ -105,6 +108,57 @@ export default function EditPermissionsPanel({ user, roles, readOnly, onClose, o
   const [perms,     setPerms]     = useState(() => ({ ...effectivePermsForUser(user, roles) }));
   const [selModId,  setSelModId]  = useState(visibleTree[0]?.id || MODULE_TREE[0].id);
   const [showAdv,   setShowAdv]   = useState(false);
+  /* API se aayi permissions ke keys (`${childId}.${action}`). Frontend applicability
+     config (MODULE_PERMISSIONS) backend se out-of-sync ho sakti hai, is liye jo perm
+     API ne di ho use bhi applicable maano — warna checkbox greyed reh kar checked
+     nahi dikhta. */
+  const [apiKeys,   setApiKeys]   = useState(() => new Set());
+
+  /* Config-applicable actions + jo API ne is screen ke liye di hain. */
+  const applicableFor = (childId) => {
+    const base = getApplicablePerms(childId);
+    if (!apiKeys.size) return base;
+    let extra = null;
+    const prefix = `${childId}.`;
+    apiKeys.forEach((k) => {
+      if (k.startsWith(prefix)) {
+        const act = k.slice(prefix.length);
+        if (act && !act.includes('.') && !base.includes(act)) { (extra || (extra = [])).push(act); }
+      }
+    });
+    return extra ? [...base, ...extra] : base;
+  };
+
+  /* View / Edit kholte hi is user ki real permissions API se laao aur checkboxes
+     seed karo: menuName → module (left), subMenuName → screen (right), action ka
+     isAccessable=true → checkbox checked. */
+  useEffect(() => {
+    const empId = user.empId;
+    if (empId == null) return undefined;
+    let alive = true;
+    const branchId = sessionStorage.getItem('branchID') || '1';
+    const token = sessionStorage.getItem('token');
+    fetch(buildUrl(`/get-user-menu-permissions-by-branch/${branchId}`), {
+      method: 'GET',
+      headers: { Accept: '*/*', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    })
+      .then((r) => r.json())
+      .then((json) => {
+        if (!alive) return;
+        const entry = (json?.data || []).find((d) => String(d.employeeID) === String(empId));
+        if (!entry) return;
+        const mapped = permsFromApiPermissions(entry.permissions);
+        setPerms(mapped);
+        const keys = Object.keys(mapped);
+        setApiKeys(new Set(keys));
+        /* Jis module me perm hai usi tab ko active kar do. */
+        const grantedChildIds = new Set(keys.map((k) => k.slice(0, k.lastIndexOf('.'))));
+        const modWithPerm = visibleTree.find((m) => m.children.some((c) => grantedChildIds.has(c.id)));
+        if (modWithPerm) setSelModId(modWithPerm.id);
+      })
+      .catch((err) => console.error('Could not load user menu permissions:', err));
+    return () => { alive = false; };
+  }, [user]);
 
   /* If the currently-selected module gets switched off while the
      panel is open, snap to the first visible module instead of
@@ -170,7 +224,7 @@ export default function EditPermissionsPanel({ user, roles, readOnly, onClose, o
     setPerms(p => {
       const next = { ...p };
       mod.children.forEach(c => {
-        getApplicablePerms(c.id).forEach(a => {
+        applicableFor(c.id).forEach(a => {
           next[`${c.id}.${a}`] = !!on;
         });
       });
@@ -180,7 +234,7 @@ export default function EditPermissionsPanel({ user, roles, readOnly, onClose, o
   const selectAllForRow = (childId, on) => {
     setPerms(p => {
       const next = { ...p };
-      getApplicablePerms(childId).forEach(a => {
+      applicableFor(childId).forEach(a => {
         next[`${childId}.${a}`] = !!on;
       });
       return next;
@@ -194,7 +248,7 @@ export default function EditPermissionsPanel({ user, roles, readOnly, onClose, o
       const next = { ...p };
       visibleTree.forEach(mod => {
         mod.children.forEach(c => {
-          getApplicablePerms(c.id).forEach(a => {
+          applicableFor(c.id).forEach(a => {
             next[`${c.id}.${a}`] = true;
           });
         });
@@ -207,7 +261,7 @@ export default function EditPermissionsPanel({ user, roles, readOnly, onClose, o
       const next = { ...p };
       visibleTree.forEach(mod => {
         mod.children.forEach(c => {
-          getApplicablePerms(c.id).forEach(a => {
+          applicableFor(c.id).forEach(a => {
             next[`${c.id}.${a}`] = false;
           });
         });
@@ -223,7 +277,7 @@ export default function EditPermissionsPanel({ user, roles, readOnly, onClose, o
     setPerms(p => {
       const next = { ...p };
       selectedModule.children.forEach(c => {
-        getApplicablePerms(c.id).forEach(a => {
+        applicableFor(c.id).forEach(a => {
           const key = `${c.id}.${a}`;
           next[key] = !!tplPerms[key];
         });
@@ -242,7 +296,7 @@ export default function EditPermissionsPanel({ user, roles, readOnly, onClose, o
       let total = 0;
       let on = 0;
       mod.children.forEach(c => {
-        const applicable = getApplicablePerms(c.id);
+        const applicable = applicableFor(c.id);
         applicable.forEach(a => {
           total += 1;
           if (perms[`${c.id}.${a}`]) on += 1;
@@ -251,12 +305,15 @@ export default function EditPermissionsPanel({ user, roles, readOnly, onClose, o
       out[mod.id] = { total, on, allOn: on === total && total > 0, anyOn: on > 0 };
     });
     return out;
-  }, [perms, visibleTree]);
+  }, [perms, visibleTree, apiKeys]);
 
   const stats = useMemo(() => permStats(perms), [perms]);
 
-  const onSubmit = () => {
+  const [saving, setSaving] = useState(false);
+
+  const onSubmit = async () => {
     if (readOnly) { onClose(); return; }
+    if (saving) return;
     /* Defensive: filter out any non-applicable keys that may have been
        carried over from an older saved state. We intentionally iterate
        the FULL MODULE_TREE here (not visibleTree) so permissions for
@@ -266,13 +323,51 @@ export default function EditPermissionsPanel({ user, roles, readOnly, onClose, o
     const cleaned = {};
     MODULE_TREE.forEach(mod => {
       mod.children.forEach(c => {
-        getApplicablePerms(c.id).forEach(a => {
+        applicableFor(c.id).forEach(a => {
           const key = `${c.id}.${a}`;
           if (perms[key]) cleaned[key] = true;
         });
       });
     });
     const summary = `${stats.modules} modules · ${stats.screens} screens · ${stats.active} permissions`;
+
+    /* Real API save — /save-user-menu-permissions. Payload backend ki shape me. */
+    setSaving(true);
+    try {
+      const branchId = sessionStorage.getItem('branchID') || '1';
+      const token = sessionStorage.getItem('token');
+      /* Sirf un menus/submenus ko bhejo jo user ne actually touch/grant kiye:
+         abhi checked (true) + jo API se load hue the (apiKeys — taake unchecking bhi
+         false ke saath persist ho). Poore module-tree ki entries nahi. */
+      const relevantKeys = new Set(apiKeys);
+      Object.keys(perms).forEach((k) => { if (perms[k]) relevantKeys.add(k); });
+      const payload = {
+        branchID: Number(branchId) || 0,
+        employeeID: Number(user.empId) || 0,
+        permissions: apiPermissionsFromKeys(perms, [...relevantKeys]),
+      };
+      const res = await fetch(buildUrl('/save-user-menu-permissions'), {
+        method: 'POST',
+        headers: {
+          Accept: '*/*',
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(payload),
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok || (json && json.success === false)) {
+        toast((json && json.message) || 'Could not save permissions', 'error');
+        setSaving(false);
+        return;
+      }
+    } catch (err) {
+      console.error('Could not save permissions:', err);
+      toast('Could not save permissions', 'error');
+      setSaving(false);
+      return;
+    }
+    setSaving(false);
     onSave(cleaned, summary);
   };
 
@@ -617,7 +712,7 @@ export default function EditPermissionsPanel({ user, roles, readOnly, onClose, o
 
                 {/* ─── Data rows ─── */}
                 {(selectedModule?.children || []).map(child => {
-                  const applicable = getApplicablePerms(child.id);
+                  const applicable = applicableFor(child.id);
                   const someOn = applicable.some(a => perms[`${child.id}.${a}`]);
                   return (
                     <div
@@ -639,7 +734,7 @@ export default function EditPermissionsPanel({ user, roles, readOnly, onClose, o
                       >
                         {child.label}
                       </div>
-                      {visibleActions.map(a => renderCell(child, a, perms, setPerms, readOnly))}
+                      {visibleActions.map(a => renderCell(child, a, perms, setPerms, readOnly, applicable.includes(a)))}
                       <div className="up-matrix-cell" style={actionCellStyle}>
                         <Tooltip text={someOn ? `Clear every applicable permission on the ${child.label} row` : `Toggle every applicable permission on the ${child.label} row`}>
                           <button
@@ -699,8 +794,11 @@ export default function EditPermissionsPanel({ user, roles, readOnly, onClose, o
             </Tooltip>
             {!readOnly && (
               <Tooltip text="Save these custom permissions for this user">
-                <button type="button" className="up-btn up-btn-primary" onClick={onSubmit}>
-                  <i className="fa-solid fa-floppy-disk" aria-hidden="true"></i> Save Permissions
+                <button type="button" className="up-btn up-btn-primary" onClick={onSubmit} disabled={saving}
+                  style={saving ? { opacity: .7, cursor: 'not-allowed' } : undefined}>
+                  {saving
+                    ? <><i className="fa-solid fa-spinner fa-spin" aria-hidden="true"></i> Saving…</>
+                    : <><i className="fa-solid fa-floppy-disk" aria-hidden="true"></i> Save Permissions</>}
                 </button>
               </Tooltip>
             )}
@@ -716,9 +814,8 @@ export default function EditPermissionsPanel({ user, roles, readOnly, onClose, o
    cells render disabled, dimmed, with a "Not applicable" tooltip and
    never reach setPerms. The cell itself always has fixed width so
    columns stay aligned. */
-function renderCell(child, action, perms, setPerms, readOnly) {
+function renderCell(child, action, perms, setPerms, readOnly, applicable = isPermApplicable(child.id, action)) {
   const key        = `${child.id}.${action}`;
-  const applicable = isPermApplicable(child.id, action);
 
   return (
     <div

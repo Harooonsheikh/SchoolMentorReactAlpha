@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import Tooltip from '../../components/Tooltip';
 import SessionFormModal from './SessionFormModal';
 import SessionDetailsModal from './SessionDetailsModal';
+import { usePermissions } from '../../context/PermissionsContext';
 import {
   MODULE_OPTIONS,
   formatDate,
@@ -18,6 +19,12 @@ export default function SessionManagement({ toast }) {
     sessions, currentSession, sessionsLoading,
     setAsCurrent, upsertSession, deleteSession, toggleSessionLock,
   } = useSettings();
+
+  const { can } = usePermissions();
+  const canCreate  = can('Settings', 'Academic Sessions', 'Create');
+  const canEdit    = can('Settings', 'Academic Sessions', 'Edit');
+  const canDelete  = can('Settings', 'Academic Sessions', 'Delete');
+  const canManage  = can('Settings', 'Academic Sessions', 'Settings');
 
   const [search, setSearch] = useState('');
   const [fStatus, setFStatus] = useState('all');
@@ -120,15 +127,17 @@ export default function SessionManagement({ toast }) {
           <option value="upcoming">Upcoming only</option>
           <option value="past">Past only</option>
         </select>
-        <Tooltip text="Create a brand new academic session">
-          <button
-            type="button"
-            className="settings-btn settings-btn-primary"
-            onClick={() => setFormCfg({})}
-          >
-            <i className="fa-solid fa-plus" aria-hidden="true"></i> Create Academic Session
-          </button>
-        </Tooltip>
+        {canCreate && (
+          <Tooltip text="Create a brand new academic session">
+            <button
+              type="button"
+              className="settings-btn settings-btn-primary"
+              onClick={() => setFormCfg({})}
+            >
+              <i className="fa-solid fa-plus" aria-hidden="true"></i> Create Academic Session
+            </button>
+          </Tooltip>
+        )}
       </div>
 
       {/* ── Table ── */}
@@ -208,26 +217,30 @@ export default function SessionManagement({ toast }) {
                       <i className="fa-solid fa-eye" aria-hidden="true"></i>
                     </button>
                   </Tooltip>
-                  <Tooltip text={s.locked ? 'Unlock to edit' : 'Edit session'}>
-                    <button
-                      className="settings-act"
-                      onClick={() => setFormCfg({ session: s })}
-                      disabled={s.locked}
-                      aria-label="Edit session"
-                    >
-                      <i className="fa-solid fa-pen" aria-hidden="true"></i>
-                    </button>
-                  </Tooltip>
-                  <Tooltip text={isCurrent ? 'This is already the current session' : 'Set as current session'}>
-                    <button
-                      className="settings-act"
-                      onClick={() => askSetCurrent(s)}
-                      disabled={isCurrent}
-                      aria-label="Set as current"
-                    >
-                      <i className="fa-solid fa-flag" aria-hidden="true"></i>
-                    </button>
-                  </Tooltip>
+                  {canEdit && (
+                    <Tooltip text={s.locked ? 'Unlock to edit' : 'Edit session'}>
+                      <button
+                        className="settings-act"
+                        onClick={() => setFormCfg({ session: s })}
+                        disabled={s.locked}
+                        aria-label="Edit session"
+                      >
+                        <i className="fa-solid fa-pen" aria-hidden="true"></i>
+                      </button>
+                    </Tooltip>
+                  )}
+                  {canManage && (
+                    <Tooltip text={isCurrent ? 'This is already the current session' : 'Set as current session'}>
+                      <button
+                        className="settings-act"
+                        onClick={() => askSetCurrent(s)}
+                        disabled={isCurrent}
+                        aria-label="Set as current"
+                      >
+                        <i className="fa-solid fa-flag" aria-hidden="true"></i>
+                      </button>
+                    </Tooltip>
+                  )}
                   {/* <Tooltip text={s.locked ? 'Unlock session' : 'Lock session'}>
                     <button
                       className="settings-act"
@@ -240,15 +253,17 @@ export default function SessionManagement({ toast }) {
                       <i className={`fa-solid ${s.locked ? 'fa-lock-open' : 'fa-lock'}`} aria-hidden="true"></i>
                     </button>
                   </Tooltip> */}
-                  <Tooltip text="Delete session">
-                    <button
-                      className="settings-act settings-act--danger"
-                      onClick={() => askDelete(s)}
-                      aria-label="Delete session"
-                    >
-                      <i className="fa-solid fa-trash" aria-hidden="true"></i>
-                    </button>
-                  </Tooltip>
+                  {canDelete && (
+                    <Tooltip text="Delete session">
+                      <button
+                        className="settings-act settings-act--danger"
+                        onClick={() => askDelete(s)}
+                        aria-label="Delete session"
+                      >
+                        <i className="fa-solid fa-trash" aria-hidden="true"></i>
+                      </button>
+                    </Tooltip>
+                  )}
                 </div>
               </div>
             );

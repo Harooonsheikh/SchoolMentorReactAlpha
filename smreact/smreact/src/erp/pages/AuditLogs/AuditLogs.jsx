@@ -3,6 +3,7 @@ import Tooltip from '../../components/Tooltip';
 import TutorialModal from '../../components/TutorialModal';
 import LogDetailsModal from './LogDetailsModal';
 import ReportsPanel from './ReportsPanel';
+import { usePermissions } from '../../context/PermissionsContext';
 import {
   INITIAL_LOGS,
   MODULES,
@@ -48,6 +49,12 @@ export default function AuditLogs({ toast = () => {} }) {
          module is the filter state. */
   const [logs] = useState(INITIAL_LOGS);
   const [tutorialOpen, setTutorialOpen] = useState(false);
+
+  /* ─── Per-user permissions — the Reports export/print actions are
+         gated on the logged-in user's rights. FAIL-OPEN via can(). */
+  const { can } = usePermissions();
+  const canDownload = can('Audit Logs', 'Activity Logs', 'Download');
+  const canPrint    = can('Audit Logs', 'Activity Logs', 'Print');
 
   /* ─── Filters ─── */
   const [fromDate, setFromDate] = useState('');
@@ -482,6 +489,8 @@ export default function AuditLogs({ toast = () => {} }) {
           onChangeType={setReportsTab}
           onClose={() => setReportsOpen(false)}
           toast={toast}
+          canDownload={canDownload}
+          canPrint={canPrint}
         />
       )}
 

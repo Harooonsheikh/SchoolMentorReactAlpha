@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import Tooltip from '../../components/Tooltip';
 import SignatureFormModal from './SignatureFormModal';
 import SignaturePreviewModal from './SignaturePreviewModal';
+import { usePermissions } from '../../context/PermissionsContext';
 import {
   DOCUMENT_OPTIONS,
   useSettings,
@@ -13,6 +14,11 @@ import {
    ═══════════════════════════════════════════════════════════════════ */
 export default function SignatureManagement({ toast }) {
   const { signatures, signaturesLoading, upsertSignature, deleteSignature, toggleSignatureStatus } = useSettings();
+
+  const { can } = usePermissions();
+  const canCreate  = can('Settings', 'Signature Management', 'Create');
+  const canEdit    = can('Settings', 'Signature Management', 'Edit');
+  const canDelete  = can('Settings', 'Signature Management', 'Delete');
 
   const [search,    setSearch]    = useState('');
   const [fStatus,   setFStatus]   = useState('all');
@@ -83,15 +89,17 @@ export default function SignatureManagement({ toast }) {
           <option value="active">Active only</option>
           <option value="inactive">Inactive only</option>
         </select>
-        <Tooltip text="Add a new authorised signature">
-          <button
-            type="button"
-            className="settings-btn settings-btn-primary"
-            onClick={() => setFormCfg({})}
-          >
-            <i className="fa-solid fa-plus" aria-hidden="true"></i> Add Signature
-          </button>
-        </Tooltip>
+        {canCreate && (
+          <Tooltip text="Add a new authorised signature">
+            <button
+              type="button"
+              className="settings-btn settings-btn-primary"
+              onClick={() => setFormCfg({})}
+            >
+              <i className="fa-solid fa-plus" aria-hidden="true"></i> Add Signature
+            </button>
+          </Tooltip>
+        )}
       </div>
 
       {/* ── Table ── */}
@@ -161,28 +169,34 @@ export default function SignatureManagement({ toast }) {
                     <i className="fa-solid fa-eye" aria-hidden="true"></i>
                   </button>
                 </Tooltip>
-                <Tooltip text="Edit signature">
-                  <button className="settings-act" onClick={() => setFormCfg({ signature: s })} aria-label="Edit signature">
-                    <i className="fa-solid fa-pen" aria-hidden="true"></i>
-                  </button>
-                </Tooltip>
-                <Tooltip text={s.status === 'active' ? 'Deactivate' : 'Activate'}>
-                  <button
-                    className="settings-act"
-                    onClick={() => {
-                      toggleSignatureStatus(s.id);
-                      toast(s.status === 'active' ? 'Signature deactivated' : 'Signature activated', 'success');
-                    }}
-                    aria-label="Toggle status"
-                  >
-                    <i className={`fa-solid ${s.status === 'active' ? 'fa-toggle-on' : 'fa-toggle-off'}`} aria-hidden="true"></i>
-                  </button>
-                </Tooltip>
-                <Tooltip text="Delete signature">
-                  <button className="settings-act settings-act--danger" onClick={() => setDeleteItem(s)} aria-label="Delete signature">
-                    <i className="fa-solid fa-trash" aria-hidden="true"></i>
-                  </button>
-                </Tooltip>
+                {canEdit && (
+                  <Tooltip text="Edit signature">
+                    <button className="settings-act" onClick={() => setFormCfg({ signature: s })} aria-label="Edit signature">
+                      <i className="fa-solid fa-pen" aria-hidden="true"></i>
+                    </button>
+                  </Tooltip>
+                )}
+                {canEdit && (
+                  <Tooltip text={s.status === 'active' ? 'Deactivate' : 'Activate'}>
+                    <button
+                      className="settings-act"
+                      onClick={() => {
+                        toggleSignatureStatus(s.id);
+                        toast(s.status === 'active' ? 'Signature deactivated' : 'Signature activated', 'success');
+                      }}
+                      aria-label="Toggle status"
+                    >
+                      <i className={`fa-solid ${s.status === 'active' ? 'fa-toggle-on' : 'fa-toggle-off'}`} aria-hidden="true"></i>
+                    </button>
+                  </Tooltip>
+                )}
+                {canDelete && (
+                  <Tooltip text="Delete signature">
+                    <button className="settings-act settings-act--danger" onClick={() => setDeleteItem(s)} aria-label="Delete signature">
+                      <i className="fa-solid fa-trash" aria-hidden="true"></i>
+                    </button>
+                  </Tooltip>
+                )}
               </div>
             </div>
           ))}

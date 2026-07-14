@@ -920,6 +920,101 @@ export function effectivePermsForUser(user, roles) {
   return permsFromTemplate(role.template);
 }
 
+/* ─── API permissions → editor perm map ───
+   get-user-menu-permissions-by-branch response ki har permission:
+     { menuName, subMenuName, action, isAccessable }
+   ko editor ke `${child.id}.${actionKey}` map me convert karo:
+     • menuName    → module (MODULE_TREE label se match)
+     • subMenuName → screen/child (module ke child label se match)
+     • action      → 'View'/'Create'/'Edit'... → lowercase key
+     • isAccessable true → checkbox on
+   Label matching case-insensitive/trim; jo match na ho wo ignore. */
+const _CHILD_ID_BY_LABEL = (() => {
+  const map = {};
+  MODULE_TREE.forEach((m) => {
+    const menu = String(m.label).trim().toLowerCase();
+    m.children.forEach((c) => {
+      map[`${menu}|${String(c.label).trim().toLowerCase()}`] = c.id;
+    });
+  });
+  return map;
+})();
+const _ACTION_KEY_BY_LABEL = (() => {
+  const map = {};
+  Object.entries(ACTION_LABELS).forEach(([key, label]) => {
+    map[String(label).trim().toLowerCase()] = key;
+  });
+  return map;
+})();
+export function permsFromApiPermissions(apiPerms) {
+  const out = {};
+  (apiPerms || []).forEach((p) => {
+    if (!p || !p.isAccessable) return;
+    const menu = String(p.menuName || '').trim().toLowerCase();
+    const sub  = String(p.subMenuName || '').trim().toLowerCase();
+    const childId = _CHILD_ID_BY_LABEL[`${menu}|${sub}`];
+    if (!childId) return;
+    const rawAct = String(p.action || '').trim().toLowerCase();
+    const actKey = _ACTION_KEY_BY_LABEL[rawAct] || rawAct;
+    if (!actKey) return;
+    out[`${childId}.${actKey}`] = true;
+  });
+  return out;
+}
+
+/* Reverse of permsFromApiPermissions — editor perm map → save-user-menu-permissions
+   ki `permissions[]` array. HAR applicable permission apni actual value ke saath
+   (checked → isAccessable:true, unchecked → false), taake unchecking bhi persist ho:
+     { menuName: module label, subMenuName: screen label, action: 'View'/'Edit'…,
+       isAccessable: true | false } */
+export function apiPermissionsFromPerms(perms, applicableFor = getApplicablePerms) {
+  const out = [];
+  MODULE_TREE.forEach((m) => {
+    m.children.forEach((c) => {
+      applicableFor(c.id).forEach((actKey) => {
+        out.push({
+          menuName: m.label,
+          subMenuName: c.label,
+          action: ACTION_LABELS[actKey] || actKey,
+          isAccessable: !!perms?.[`${c.id}.${actKey}`],
+        });
+      });
+    });
+  });
+  return out;
+}
+
+/* childId → { menu label, submenu label } reverse lookup. */
+const _CHILD_META_BY_ID = (() => {
+  const map = {};
+  MODULE_TREE.forEach((m) => {
+    m.children.forEach((c) => { map[c.id] = { menu: m.label, sub: c.label }; });
+  });
+  return map;
+})();
+
+/* Sirf diye gaye keys (`${childId}.${action}`) ke liye payload banao — poore tree ke
+   liye nahi. Isse save call me sirf wahi menus/submenus jaate hain jo user ne select
+   kiya (ya jo pehle se API se aaye the), har ek apni actual isAccessable value ke saath. */
+export function apiPermissionsFromKeys(perms, keys) {
+  const out = [];
+  (keys || []).forEach((key) => {
+    const dot = key.lastIndexOf('.');
+    if (dot < 0) return;
+    const childId = key.slice(0, dot);
+    const actKey  = key.slice(dot + 1);
+    const meta = _CHILD_META_BY_ID[childId];
+    if (!meta) return;
+    out.push({
+      menuName: meta.menu,
+      subMenuName: meta.sub,
+      action: ACTION_LABELS[actKey] || actKey,
+      isAccessable: !!perms?.[key],
+    });
+  });
+  return out;
+}
+
 /* Counts used by the permissions footer + chips.
    Only applicable permissions are counted; non-applicable cells are
    ignored even if they happen to be true in state. */

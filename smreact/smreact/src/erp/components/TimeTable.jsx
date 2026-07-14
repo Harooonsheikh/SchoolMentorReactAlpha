@@ -5,6 +5,7 @@ import TutorialModal from './TutorialModal';
 import * as timeTableService from '../services/timeTableService';
 import useAsync from '../hooks/useAsync';
 import { useSettings } from '../pages/Settings/settingsStore';
+import { usePermissions } from '../context/PermissionsContext';
 
 /* ═══════════════════════════════════════════════════════════════════
    TIME TABLE — module shell
@@ -604,6 +605,13 @@ function ReportPreviewOverlay({ open, title, html, landscape, onClose }) {
    Main TimeTable component
    ═══════════════════════════════════════════════════════════════════ */
 export default function TimeTable({ toast = () => {} }) {
+  /* Logged-in user ki Timetable action permissions (School Head → sab true). */
+  const { can } = usePermissions();
+  const canTtCreate   = can('Timetable', 'Timetable', 'Create');
+  const canTtEdit     = can('Timetable', 'Timetable', 'Edit');
+  const canTtDelete   = can('Timetable', 'Timetable', 'Delete');
+  const canTtDownload = can('Timetable', 'Timetable', 'Download');
+
   const [day, setDay] = useState(0);          // 0 = Monday
   const [expandedKey, setExpandedKey] = useState(null);
   const [tutorialOpen, setTutorialOpen] = useState(false);
@@ -702,6 +710,7 @@ export default function TimeTable({ toast = () => {} }) {
           <div className="tt-toolbar-sub">Edit per class · per day · or auto-generate the whole week</div>
         </div>
         <div className="tt-toolbar-right">
+          {canTtCreate && (
           <Tooltip text={isOtherSession ? 'Editing is only allowed for the current session' : 'Auto-generate the full weekly timetable for all classes'}>
             <button className="tt-btn tt-btn-purple" disabled={isOtherSession}
               style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
@@ -709,6 +718,8 @@ export default function TimeTable({ toast = () => {} }) {
               <i className="fa-solid fa-wand-magic-sparkles"></i> Auto Generate
             </button>
           </Tooltip>
+          )}
+          {canTtDelete && (
           <Tooltip text={isOtherSession ? 'Editing is only allowed for the current session' : `Clear the entire ${DAYS[day]} timetable for all classes`}>
             <button className="tt-btn tt-btn-red" disabled={isOtherSession}
               style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
@@ -716,11 +727,14 @@ export default function TimeTable({ toast = () => {} }) {
               <i className="fa-solid fa-trash-can"></i> Delete Day
             </button>
           </Tooltip>
+          )}
+          {canTtDownload && (
           <Tooltip text="Download a school-wide PDF (day-wise or weekly)">
             <button className="tt-btn tt-btn-pdf" onClick={() => setSchoolReportOpen(true)}>
               <i className="fa-solid fa-file-pdf"></i> Download Report
             </button>
           </Tooltip>
+          )}
         </div>
       </div>
 
@@ -764,6 +778,7 @@ export default function TimeTable({ toast = () => {} }) {
                   <span className="tt-section-pill">{cls.section}</span>
                 </div>
                 <div className="tt-td tt-td-actions">
+                  {canTtEdit && (
                   <Tooltip text={isOtherSession ? 'Editing is only allowed for the current session' : `Edit ${DAYS[day]} periods for this class`}>
                     <button
                       className="btn-tt-update"
@@ -774,6 +789,8 @@ export default function TimeTable({ toast = () => {} }) {
                       <i className="fa-solid fa-pen"></i> Update
                     </button>
                   </Tooltip>
+                  )}
+                  {canTtDownload && (
                   <Tooltip text="Download timetable as PDF">
                     <button
                       className="btn-tt-dl"
@@ -782,6 +799,8 @@ export default function TimeTable({ toast = () => {} }) {
                       <i className="fa-solid fa-file-pdf"></i> PDF
                     </button>
                   </Tooltip>
+                  )}
+                  {canTtDelete && (
                   <Tooltip text={isOtherSession ? 'Editing is only allowed for the current session' : `Delete ${DAYS[day]} timetable for this class`}>
                     <button
                       className="btn-tt-del"
@@ -792,6 +811,7 @@ export default function TimeTable({ toast = () => {} }) {
                       <i className="fa-solid fa-trash"></i>
                     </button>
                   </Tooltip>
+                  )}
                 </div>
                 <div className="tt-td tt-td-chev">
                   <Tooltip text={isExp ? 'Hide period details' : 'Show period details'}>
@@ -812,6 +832,7 @@ export default function TimeTable({ toast = () => {} }) {
                     <div className="tt-empty-icon"><i className="fa-regular fa-clock"></i></div>
                     <div className="tt-empty-title">No Periods Set</div>
                     <div className="tt-empty-sub">Click <strong>Update</strong> to add periods for {DAYS[day]}</div>
+                    {canTtEdit && (
                     <Tooltip text={isOtherSession ? 'Editing is only allowed for the current session' : `Add periods for ${DAYS[day]}`}>
                       <button
                         className="btn-tt-update"
@@ -822,6 +843,7 @@ export default function TimeTable({ toast = () => {} }) {
                         <i className="fa-solid fa-plus"></i> Add Periods
                       </button>
                     </Tooltip>
+                    )}
                   </div>
                 ) : (
                   <div>

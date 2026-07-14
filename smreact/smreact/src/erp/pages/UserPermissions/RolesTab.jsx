@@ -6,7 +6,10 @@ import RoleFormModal from './RoleFormModal';
 /* ═══════════════════════════════════════════════════════════════════
    ROLES TAB — card grid + Create / Edit / Clone / Delete
    ═══════════════════════════════════════════════════════════════════ */
-export default function RolesTab({ roles, upsertRole, deleteRole, toast }) {
+export default function RolesTab({
+  roles, upsertRole, deleteRole, toast,
+  canCreate = true, canEdit = true, canDelete = true,
+}) {
   const [formCfg,    setFormCfg]    = useState(null);   // { mode, role? }
   const [deleteFor,  setDeleteFor]  = useState(null);
 
@@ -16,15 +19,17 @@ export default function RolesTab({ roles, upsertRole, deleteRole, toast }) {
         <div className="up-roles-toolbar-l">
           <b style={{ color: '#1E3A8A', fontWeight: 800 }}>{roles.length}</b> roles configured
         </div>
-        <Tooltip text="Create a new role from scratch or from a template">
-          <button
-            type="button"
-            className="up-btn up-btn-primary"
-            onClick={() => setFormCfg({ mode: 'create' })}
-          >
-            <i className="fa-solid fa-plus" aria-hidden="true"></i> Create Role
-          </button>
-        </Tooltip>
+        {canCreate && (
+          <Tooltip text="Create a new role from scratch or from a template">
+            <button
+              type="button"
+              className="up-btn up-btn-primary"
+              onClick={() => setFormCfg({ mode: 'create' })}
+            >
+              <i className="fa-solid fa-plus" aria-hidden="true"></i> Create Role
+            </button>
+          </Tooltip>
+        )}
       </div>
 
       {roles.length === 0 ? (
@@ -58,30 +63,36 @@ export default function RolesTab({ roles, upsertRole, deleteRole, toast }) {
                 </Tooltip>
               </div>
               <div className="up-role-foot">
-                <Tooltip text="Edit this role">
-                  <button
-                    className="up-btn up-btn-ghost up-btn-sm"
-                    onClick={() => setFormCfg({ mode: 'edit', role: r })}
-                  >
-                    <i className="fa-solid fa-pen" aria-hidden="true"></i> Edit
-                  </button>
-                </Tooltip>
-                <Tooltip text="Clone this role as a starting point">
-                  <button
-                    className="up-btn up-btn-ghost up-btn-sm"
-                    onClick={() => setFormCfg({ mode: 'clone', role: r })}
-                  >
-                    <i className="fa-solid fa-copy" aria-hidden="true"></i> Clone
-                  </button>
-                </Tooltip>
-                <Tooltip text="Delete this role">
-                  <button
-                    className="up-btn up-btn-del up-btn-sm"
-                    onClick={() => setDeleteFor(r)}
-                  >
-                    <i className="fa-solid fa-trash" aria-hidden="true"></i> Delete
-                  </button>
-                </Tooltip>
+                {canEdit && (
+                  <Tooltip text="Edit this role">
+                    <button
+                      className="up-btn up-btn-ghost up-btn-sm"
+                      onClick={() => setFormCfg({ mode: 'edit', role: r })}
+                    >
+                      <i className="fa-solid fa-pen" aria-hidden="true"></i> Edit
+                    </button>
+                  </Tooltip>
+                )}
+                {canCreate && (
+                  <Tooltip text="Clone this role as a starting point">
+                    <button
+                      className="up-btn up-btn-ghost up-btn-sm"
+                      onClick={() => setFormCfg({ mode: 'clone', role: r })}
+                    >
+                      <i className="fa-solid fa-copy" aria-hidden="true"></i> Clone
+                    </button>
+                  </Tooltip>
+                )}
+                {canDelete && (
+                  <Tooltip text="Delete this role">
+                    <button
+                      className="up-btn up-btn-del up-btn-sm"
+                      onClick={() => setDeleteFor(r)}
+                    >
+                      <i className="fa-solid fa-trash" aria-hidden="true"></i> Delete
+                    </button>
+                  </Tooltip>
+                )}
               </div>
             </div>
           ))}

@@ -6,7 +6,10 @@ import { MODULE_TREE } from './permissionsData';
 /* ═══════════════════════════════════════════════════════════════════
    PERMISSION GROUPS TAB — banner + table + Create/Edit/Delete
    ═══════════════════════════════════════════════════════════════════ */
-export default function PermissionGroupsTab({ groups, upsertGroup, deleteGroup, toast }) {
+export default function PermissionGroupsTab({
+  groups, upsertGroup, deleteGroup, toast,
+  canCreate = true, canEdit = true, canDelete = true,
+}) {
   const [search,    setSearch]    = useState('');
   const [formCfg,   setFormCfg]   = useState(null);   // { mode, group? }
   const [deleteFor, setDeleteFor] = useState(null);
@@ -47,11 +50,13 @@ export default function PermissionGroupsTab({ groups, upsertGroup, deleteGroup, 
             </Tooltip>
           )}
         </div>
-        <Tooltip text="Create a brand new permission group">
-          <button type="button" className="up-btn up-btn-primary" onClick={() => setFormCfg({ mode: 'create' })}>
-            <i className="fa-solid fa-plus" aria-hidden="true"></i> Create Group
-          </button>
-        </Tooltip>
+        {canCreate && (
+          <Tooltip text="Create a brand new permission group">
+            <button type="button" className="up-btn up-btn-primary" onClick={() => setFormCfg({ mode: 'create' })}>
+              <i className="fa-solid fa-plus" aria-hidden="true"></i> Create Group
+            </button>
+          </Tooltip>
+        )}
       </div>
 
       {filtered.length === 0 ? (
@@ -101,16 +106,20 @@ export default function PermissionGroupsTab({ groups, upsertGroup, deleteGroup, 
                   </Tooltip>
                 </div>
                 <div className="td c up-actions">
-                  <Tooltip text="Edit group">
-                    <button className="up-act" onClick={() => setFormCfg({ mode: 'edit', group: g })} aria-label="Edit group">
-                      <i className="fa-solid fa-pen" aria-hidden="true"></i>
-                    </button>
-                  </Tooltip>
-                  <Tooltip text="Delete group">
-                    <button className="up-act up-act--danger" onClick={() => setDeleteFor(g)} aria-label="Delete group">
-                      <i className="fa-solid fa-trash" aria-hidden="true"></i>
-                    </button>
-                  </Tooltip>
+                  {canEdit && (
+                    <Tooltip text="Edit group">
+                      <button className="up-act" onClick={() => setFormCfg({ mode: 'edit', group: g })} aria-label="Edit group">
+                        <i className="fa-solid fa-pen" aria-hidden="true"></i>
+                      </button>
+                    </Tooltip>
+                  )}
+                  {canDelete && (
+                    <Tooltip text="Delete group">
+                      <button className="up-act up-act--danger" onClick={() => setDeleteFor(g)} aria-label="Delete group">
+                        <i className="fa-solid fa-trash" aria-hidden="true"></i>
+                      </button>
+                    </Tooltip>
+                  )}
                 </div>
               </div>
             );
