@@ -81,7 +81,7 @@ const AQ_TYPES = [
 ];
 
 const AQ_CONFIG = {
-  word_opposite:   { title:'Word / Opposite',         fields:[{key:'word',label:'Word',ph:'e.g. Big'},{key:'opposite',label:'Opposite',ph:'e.g. Small'}],                                                             layout:'two-col', arrow:'↔' },
+  word_opposite:   { title:'Word / Opposite',         fields:[{key:'word',label:'Word',ph:'e.g. Big'},{key:'opposite',label:'Opposite',ph:'e.g. Small'}],                                                             layout:'two-col', arrow:'→' },
   singular_plural: { title:'Singular / Plural',        fields:[{key:'singular',label:'Singular',ph:'e.g. Cat'},{key:'plural',label:'Plural',ph:'e.g. Cats'}],                                                         layout:'two-col', arrow:'→' },
   word_synonyms:   { title:'Word / Synonyms',          fields:[{key:'word',label:'Word',ph:'e.g. Happy'},{key:'synonym',label:'Synonym',ph:'e.g. Joyful'}],                                                           layout:'two-col', arrow:'=' },
   word_sentences:  { title:'Word Sentences',           layout:'word-sentence' },
@@ -8772,13 +8772,15 @@ function AqRow({ i, cfg, row, typeId, onChange, onRemove, onSaveRow, dir = 'ltr'
   const num  = <span style={NUM_S}>#{i + 1}</span>;
   const lbl  = t => <span style={LABEL}>{tr(t)}</span>;
 
+  /* NOTE: placeholders intentionally hataye gaye hain (sab question types) — user ne
+     kaha fields me placeholder na dikhe. `ph` arg rehne diya taake callers na badlein. */
   const inp = (key, ph, extra) => (
     <input
       type="text"
       className="aq-inp-hover"
       dir={dir}
       style={{ ...(extra || {}), textAlign: isUrdu ? 'right' : undefined }}
-      placeholder={tr(ph)}
+      placeholder=""
       value={row[key] || ''}
       onChange={e => onChange(key, e.target.value)}
     />
@@ -8789,7 +8791,7 @@ function AqRow({ i, cfg, row, typeId, onChange, onRemove, onSaveRow, dir = 'ltr'
       rows={rows}
       dir={dir}
       style={{ textAlign: isUrdu ? 'right' : undefined }}
-      placeholder={tr(ph)}
+      placeholder=""
       value={row[key] || ''}
       onChange={e => onChange(key, e.target.value)}
     />
@@ -8797,7 +8799,7 @@ function AqRow({ i, cfg, row, typeId, onChange, onRemove, onSaveRow, dir = 'ltr'
   /* Full rich-text editor (toolbar: justify, color, image+resize, math, table, link, lists…).
      `rte` aur `richField` dono yehi editor use karte hain (True/False ko chhod ke sab jagah). */
   const richField = (key, ph, minHeight = 90) => (
-    <RichTextEditor value={row[key] || ''} placeholder={tr(ph)} minHeight={minHeight} dir={dir} onChange={html => onChange(key, html)} />
+    <RichTextEditor value={row[key] || ''} placeholder="" minHeight={minHeight} dir={dir} onChange={html => onChange(key, html)} />
   );
   const rte = (key, ph) => richField(key, ph, 90);
   const acts = (
@@ -8820,7 +8822,7 @@ function AqRow({ i, cfg, row, typeId, onChange, onRemove, onSaveRow, dir = 'ltr'
         <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12 }}>
           {num}
           <div style={{ flex: 1, minWidth: 0 }}>{lbl(f0.label)}{inp(f0.key, f0.ph)}</div>
-          <div style={{ fontSize: 22, color: '#0891B2', paddingBottom: 10, flexShrink: 0 }}>{arrow}</div>
+          <div style={{ fontSize: 22, color: '#0891B2', paddingBottom: 10, flexShrink: 0, display: 'inline-block', transform: isUrdu ? 'scaleX(-1)' : undefined }}>{arrow}</div>
           <div style={{ flex: 1, minWidth: 0 }}>{lbl(f1.label)}{inp(f1.key, f1.ph)}</div>
         </div>
         {acts}
@@ -8835,7 +8837,7 @@ function AqRow({ i, cfg, row, typeId, onChange, onRemove, onSaveRow, dir = 'ltr'
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
           {num}
           <div style={{ flex: '0 0 160px' }}>{lbl('Word')}{inp('word', 'Enter word', { height: 40 })}</div>
-          <div style={{ fontSize: 18, color: '#94A3B8', paddingTop: 28, flexShrink: 0 }}>→</div>
+          <div style={{ fontSize: 18, color: '#94A3B8', paddingTop: 28, flexShrink: 0, display: 'inline-block', transform: isUrdu ? 'scaleX(-1)' : undefined }}>→</div>
           <div style={{ flex: 1, minWidth: 0 }}>{lbl('Sentence')}{ta('sentence', 'Write a sentence using this word…', 3)}</div>
         </div>
         {acts}

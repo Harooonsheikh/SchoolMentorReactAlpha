@@ -2649,6 +2649,7 @@ function InactiveStudents({ classes, setClasses, inactive, setInactive, toast })
   const [flashReg, setFlashReg] = useState(null);
   const [reactCfg, setReactCfg] = useState(null);
   const [duesCfg, setDuesCfg]   = useState(null);
+  const [certCfg, setCertCfg]   = useState(null);   // { type, student, cls } — certificate modal
 
   /* outside-click closes the search dropdown */
   useEffect(() => {
@@ -2778,6 +2779,18 @@ function InactiveStudents({ classes, setClasses, inactive, setInactive, toast })
     setProfileCfg(null);
   };
 
+  /* Inactive student ka certificate generate + download (Active tab jaisa hi — StuCertModal
+     se style/opts leke buildStuCertHTML → print/PDF window). Pehle sirf stub toast tha. */
+  const doCert = (style, opts) => {
+    if (!certCfg?.student) return;
+    const s = certCfg.student;
+    const cls = certCfg.cls || { cls: s.cls || '—', sec: s.sec || '—' };
+    const { css, html } = buildStuCertHTML(s, cls, school, certCfg.type, style, opts);
+    stuOpenPrintWindow(`Certificate — ${stuFullName(s)}`, css, html, toast);
+    toast(`${STU_CERT_DEFAULTS[certCfg.type]?.title || 'Certificate'} generated`, 'success');
+    setCertCfg(null);
+  };
+
   return (
     <>
       {/* Info banner */}
@@ -2885,7 +2898,7 @@ function InactiveStudents({ classes, setClasses, inactive, setInactive, toast })
                 toast('Certificates are blocked due to pending outstanding dues.', 'error');
                 return;
               }
-              handleAction(`${type === 'character' ? 'Character' : 'School Leaving'} Certificate`);
+              setCertCfg({ type, student, cls: { cls: student.cls || '—', sec: student.sec || '—' } });
             }}
             onProfileDownload={(student) => openProfilePicker(student)}
           />
@@ -2907,6 +2920,17 @@ function InactiveStudents({ classes, setClasses, inactive, setInactive, toast })
           cfg={profileCfg}
           onClose={() => setProfileCfg(null)}
           onConfirm={doProfileReport}
+        />
+      )}
+
+      {certCfg && (
+        <StuCertModal
+          cfg={certCfg}
+          student={certCfg.student}
+          cls={certCfg.cls}
+          school={school}
+          onClose={() => setCertCfg(null)}
+          onDownload={doCert}
         />
       )}
     </>
