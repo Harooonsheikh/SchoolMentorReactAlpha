@@ -2954,6 +2954,10 @@ function EmployeeManagement({ emps, setEmps, depts, desigs, nextEmpId, setNextEm
   const [idcFor,   setIdcFor]   = useState(null);   // emp for ID card
   const [letterFor, setLetterFor] = useState(null); // emp for Issue Letter
   const [profileFor, setProfileFor] = useState(null); // emp for Profile Report
+  /* Duplicate-number popup (Launch Setup jaisa): number pehle se ho to email maango,
+     email ko phone field me daal kar (email ke through) dobara add/update karo. */
+  const [dupEmp,   setDupEmp]   = useState(null);   // { payload, mode:'add'|'edit' }
+  const [dupEmail, setDupEmail] = useState('');
 
   /* Pull the fresh staff list back from the API so newly-saved salary amounts
      and custom-head ids (needed for later edits/deletes) are reflected. */
@@ -2970,7 +2974,9 @@ function EmployeeManagement({ emps, setEmps, depts, desigs, nextEmpId, setNextEm
       toast(`${getFullName(payload)} added`, 'success');
       setAddOpen(false);
     } catch (err) {
-      toast(err.message || 'Could not add employee', 'error');
+      toast(err.message || 'Could not add employee', 'error');   // toaster same ("Number already exist")
+      // Duplicate number → email popup kholo (email ke through add ho sake)
+      if (err?.isDuplicatePhone) { setDupEmail(payload?.phone && /@/.test(payload.phone) ? String(payload.phone) : ''); setDupEmp({ payload, mode: 'add' }); }
     }
   };
 
@@ -2982,7 +2988,20 @@ function EmployeeManagement({ emps, setEmps, depts, desigs, nextEmpId, setNextEm
       setEditFor(null);
     } catch (err) {
       toast(err.message || 'Could not update employee', 'error');
+      if (err?.isDuplicatePhone) { setDupEmail(payload?.phone && /@/.test(payload.phone) ? String(payload.phone) : ''); setDupEmp({ payload, mode: 'edit' }); }
     }
+  };
+
+  /* Popup Enter/Confirm: email ko phone field me map karke usi email ke through dobara save. */
+  const confirmDupEmail = () => {
+    const email = (dupEmail || '').trim();
+    if (!email || !/^\S+@\S+\.\S+$/.test(email)) { toast('Please enter a valid email', 'error'); return; }
+    const info = dupEmp;
+    setDupEmp(null);
+    if (!info) return;
+    const newPayload = { ...info.payload, phone: email };   // email → phone field
+    if (info.mode === 'edit') saveEditedEmployee(newPayload);
+    else saveNewEmployee(newPayload);
   };
 
 const confirmMarkInactive = async (payload) => {
@@ -3238,6 +3257,40 @@ const markActiveAgain = async (emp) => {
           onSave={saveEditedEmployee}
           toast={toast}
         />
+      )}
+
+      {/* ── Duplicate-number popup: number pehle se ho to email maango, email ke through add ── */}
+      {dupEmp && (
+        <div
+          style={{ position: 'fixed', inset: 0, zIndex: 10050, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(2,6,23,.55)', backdropFilter: 'blur(2px)' }}
+          onClick={e => { if (e.target === e.currentTarget) setDupEmp(null); }}>
+          <div style={{ background: '#fff', borderRadius: 14, width: 'min(430px,92vw)', padding: '22px 22px 18px', boxShadow: '0 24px 70px rgba(2,6,23,.4)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+              <i className="fas fa-triangle-exclamation" style={{ color: '#dc2626', fontSize: 18 }}></i>
+              <div style={{ fontSize: 16, fontWeight: 800, color: '#0f172a' }}>Number already exists</div>
+            </div>
+            <div style={{ fontSize: 13, color: '#64748b', marginBottom: 14, lineHeight: 1.55 }}>
+              This phone number is already registered. You can continue with email.
+            </div>
+            <label style={{ fontSize: 12, fontWeight: 700, color: '#475569', display: 'block', marginBottom: 6 }}>Email</label>
+            <input
+              autoFocus
+              type="email"
+              value={dupEmail}
+              placeholder="name@example.com"
+              onChange={e => setDupEmail(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') { e.preventDefault(); confirmDupEmail(); }
+                else if (e.key === 'Escape') { setDupEmp(null); }
+              }}
+              style={{ width: '100%', padding: '10px 12px', border: '1.5px solid #cbd5e1', borderRadius: 9, fontSize: 14, outline: 'none', boxSizing: 'border-box' }}
+            />
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 18 }}>
+              <button className="btn btn-secondary btn-md" onClick={() => setDupEmp(null)}>Cancel</button>
+              <button className="btn btn-primary btn-md" onClick={confirmDupEmail}>Enter</button>
+            </div>
+          </div>
+        </div>
       )}
       {inactFor && (
         <MarkInactiveModal
@@ -6807,7 +6860,12 @@ export const HR_CSS = `
 .emp-phone-cell {
   font-size: 12px;
   color: var(--t2);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  /* Email cut na ho — column ke andar wrap ho kar poori dikhe (width same rehti hai). */
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.3;
 }
 
 /* Summary chips */
