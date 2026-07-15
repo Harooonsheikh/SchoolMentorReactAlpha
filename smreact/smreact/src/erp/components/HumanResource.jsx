@@ -653,15 +653,6 @@ function DeptModal({ mode, dept, onClose, onSave }) {
               autoFocus
             />
           </div>
-          <div className="f-group">
-            <label className="f-label">Description</label>
-            <textarea
-              className="f-textarea"
-              placeholder="Brief description…"
-              value={desc}
-              onChange={(e) => setDesc(e.target.value)}
-            />
-          </div>
         </div>
         <div className="modal-foot">
           <button type="button" className="btn-secondary" onClick={onClose}>Cancel</button>
