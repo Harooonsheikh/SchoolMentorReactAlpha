@@ -9,7 +9,7 @@ import {
   mockHrNextPayrollId,
 } from '../mock/hr';
 import { delay, clone } from './_http';
-import { buildUrl, apiMessage } from '../../utils/apiConfig';
+import { buildUrl, apiMessage, getBaseUrl } from '../../utils/apiConfig';
 
 /* The three allowance heads the backend stores as fixed employee columns
    (basicSalary + these 3 = the "4 basic" salary values). They render as
@@ -689,6 +689,7 @@ function mapApiEmployeeToEmp(e) {
     gender:    e.gender,
     marital:   e.maritalStatus,
     phone:     e.phone,
+    emergency: e.emergencyContact ?? e.EmergencyContact ?? '',
     email:     e.email,
     blood:     e.bloodGroup,
     nationality: e.countryName,
@@ -699,6 +700,10 @@ function mapApiEmployeeToEmp(e) {
 
     dId:       e.departmentID,
     desId:     e.designationID,
+    type:      e.employmentType ?? '',
+    manager:   e.reportingManagerName ?? '',
+    shift:     e.shiftDutyTime ?? '',
+    role:      e.responsibilities ?? '',
     qual:      e.qualificationName,
     exp:       e.experience,
     /* Names for display; ids for the edit-form dropdowns + save payload. */
@@ -799,6 +804,7 @@ function buildEmploymentBody(payload, { branchID, userID, employeeId }) {
     cityID:             idOr(payload.cityID ?? payload.city, 20),
     address:            payload.address ?? '',
     phone:              payload.phone ?? '',
+    emergencyContact:   payload.emergency ?? '',
     branchID,
     dateOfBirth:        payload.dob || now,
     dateOfJoining:      payload.join || now,
@@ -815,6 +821,10 @@ function buildEmploymentBody(payload, { branchID, userID, employeeId }) {
     paymentMethod:      payload.payMethod ?? '',
     bankName:           payload.bankName ?? '',
     accountNumber:      payload.bankAcc ?? '',
+    reportingManagerName: payload.manager ?? '',
+    employmentType:       payload.type ?? '',
+    shiftDutyTime:        payload.shift ?? '',
+    responsibilities:     payload.role ?? '',
     isPrinciple:        !!payload.isPrinciple,
     isTeacher:          payload.isPrinciple ? false : true,
     isParent:           !!payload.isParent,
@@ -882,6 +892,102 @@ export async function deleteHrEmployeeDocument(documentId) {
   return json;
 }
 
+/* ─── Issue Letters (real API: /api/HR/*-issue-letter*) ───────────────
+   save-issue-letter (multipart, uploads the generated letter file),
+   get-issue-letters-by-branch/{branchId} (all branch letters) and
+   delete-issue-letter/{id}. The save endpoint stores ONLY a file per
+   employee — no type/subject/ref columns — so the letter's identity is
+   carried in the uploaded file name and re-derived on read. */
+
+/* A stored file path → a browser-openable URL (absolute stays as-is; a
+   server-relative path gets the API base prefixed). */
+export function hrFileUrl(path) {
+  if (!path) return '';
+  if (/^https?:/i.test(path)) return path;
+  const base = getBaseUrl();
+  return `${base}${path.startsWith('/') ? '' : '/'}${path}`;
+}
+
+/* One API issue-letter row → the shape the UI list renders. Field names
+   are read defensively because the response casing/keys aren't fixed. */
+function mapIssueLetter(l = {}) {
+  /* The API stores only a file per employee (no type/subject/ref columns) and
+     returns PascalCase keys: { ID, EmployeeID, EmployeeName, IssueLetter, … }.
+     IssueLetter is already an absolute URL to the uploaded file. */
+  const path =
+    l.IssueLetter ?? l.issueLetter ?? l.issueLetterPath ?? l.documentPath ?? l.path ?? '';
+  const fileName = String(path).split(/[/\\]/).pop() || '';
+  const ext = (fileName.match(/\.([a-z0-9]+)$/i)?.[1] || '').toUpperCase();
+  return {
+    id:         l.ID ?? l.id ?? l.issueLetterID ?? l.issueLetterId ?? 0,
+    employeeId: l.EmployeeID ?? l.employeeID ?? l.employeeId ?? l.EmployeeId ?? 0,
+    empName:    l.EmployeeName ?? l.employeeName ?? '',
+    path,
+    url:        hrFileUrl(path),
+    label:      'Issued Letter',
+    fileType:   ext,
+    fileName,
+    date:       dateOnly(l.CreatedAt ?? l.createdAt ?? l.ModifiedAt ?? l.modifiedAt ?? ''),
+  };
+}
+
+/* Upload one issued letter (the generated letter file) for an employee.
+   POST /api/HR/save-issue-letter (multipart). */
+export async function saveHrIssueLetter({ employeeId, file } = {}) {
+  const branchId = Number(sessionStorage.getItem('branchID')) || 0;
+  const userID   = Number(sessionStorage.getItem('UserID')) || 0;
+  const fd = new FormData();
+  fd.append('employeeId',     employeeId ?? 0);
+  fd.append('branchId',       branchId);
+  fd.append('createdBy',      userID);
+  fd.append('modifiedBy',     userID);
+  fd.append('IssueLetterFile', file);
+  const res  = await fetch(buildUrl('/api/HR/save-issue-letter'), {
+    method: 'POST', headers: { Accept: '*/*' }, body: fd,
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok || json?.success === false) {
+    throw new Error(apiMessage(json) || 'Could not save issue letter');
+  }
+  return json?.data ?? json;
+}
+
+/* All issue letters for the active branch, mapped. GET
+   /api/HR/get-issue-letters-by-branch/{branchId}. */
+export async function getHrIssueLettersByBranch(branchId) {
+  const bId  = Number(branchId ?? sessionStorage.getItem('branchID')) || 0;
+  const res  = await fetch(buildUrl(`/api/HR/get-issue-letters-by-branch/${bId}`), {
+    headers: { Accept: '*/*' },
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(apiMessage(json) || 'Could not load issue letters');
+  const list = Array.isArray(json?.data) ? json.data
+             : Array.isArray(json)       ? json
+             : Array.isArray(json?.issueLetters) ? json.issueLetters
+             : [];
+  /* delete-issue-letter is a soft delete (IsActive=false) but the GET still
+     returns those rows — drop them so deleted letters disappear from the list. */
+  return list
+    .filter(l => (l.IsActive ?? l.isActive) !== false)
+    .map(mapIssueLetter);
+}
+
+/* Issue letters for one employee (filtered from the branch list). */
+export async function getHrIssueLettersByEmployee(employeeId) {
+  const all = await getHrIssueLettersByBranch();
+  return all.filter(l => Number(l.employeeId) === Number(employeeId));
+}
+
+/* DELETE /api/HR/delete-issue-letter/{id}. */
+export async function deleteHrIssueLetter(id) {
+  const res  = await fetch(buildUrl(`/api/HR/delete-issue-letter/${id || 0}`), {
+    method: 'DELETE', headers: { Accept: '*/*' },
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(apiMessage(json) || 'Could not delete issue letter');
+  return json;
+}
+
 /* DELETE /api/HR/delete-salary-head/{id}. */
 export async function deleteHrSalaryHead(id) {
   const res  = await fetch(buildUrl(`/api/HR/delete-salary-head/${id || 0}`), {
@@ -919,6 +1025,7 @@ export async function saveHrEmployee(payload = {}) {
   set('CityID',             idOr(payload.cityID ?? payload.city, 20));
   set('Address',            payload.address);
   set('Phone',              payload.phone);
+  set('EmergencyContact',   payload.emergency);
   set('BranchID',           branchID);
   set('DateOfBirth',        payload.dob || now);
   set('DateOfJoining',      payload.join || '');
@@ -936,6 +1043,10 @@ export async function saveHrEmployee(payload = {}) {
   set('PaymentMethod',      payload.payMethod);
   set('BankName',           payload.bankName);
   set('AccountNumber',      payload.bankAcc);
+  set('EmploymentType',       payload.type);
+  set('ReportingManagerName', payload.manager);
+  set('ShiftDutyTime',        payload.shift);
+  set('Responsibilities',     payload.role);
   set('IsPrinciple',        !!payload.isPrinciple);
   set('IsTeacher',          payload.isPrinciple ? false : true);
   set('IsParent',           !!payload.isParent);

@@ -932,26 +932,40 @@ function HrReports({ emps, depts, desigs, toast, canDownload = true }) {
 
     /* Pull the REAL data each report needs (no more demo seeds):
          • payroll reports  → all saved payroll for the picked month/year
-         • loan ledger      → every active employee's loans + repayments        */
-    let empPayroll = {};
-    let empLoans   = {};
+         • loan ledger      → every employee's loans + repayments
+         • leave register   → each active employee's leave settings (the
+                              employee-list API omits them, so fetch per-employee
+                              or every row shows zeros).                          */
+    let empPayroll  = {};
+    let empLoans    = {};
+    let empsForCtx  = emps;
     try {
       if (type === 'salary-register' || type === 'payroll-summary') {
         const [y, m] = String(monthKey || '').split('-').map(Number);
         empPayroll = await hrService.getHrPayrollByBranch(m, y);
       } else if (type === 'loan-summary') {
-        const active = emps.filter(e => e.status === 'Active');
-        const lists  = await Promise.all(
-          active.map(e => hrService.getHrEmployeeLoans(e.id).catch(() => [])),
+        /* Fetch loans for ALL employees (not just Active) — an inactive
+           employee can still carry an outstanding balance, and the ledger
+           lists every employee. */
+        const lists = await Promise.all(
+          emps.map(e => hrService.getHrEmployeeLoans(e.id).catch(() => [])),
         );
-        active.forEach((e, i) => { empLoans[e.id] = lists[i] || []; });
+        emps.forEach((e, i) => { empLoans[e.id] = lists[i] || []; });
+      } else if (type === 'leave-register') {
+        const active   = emps.filter(e => e.status === 'Active');
+        const settings = await Promise.all(
+          active.map(e => hrService.getHrLeaveSettings(e.id).catch(() => null)),
+        );
+        const byId = {};
+        active.forEach((e, i) => { if (settings[i]) byId[e.id] = settings[i]; });
+        empsForCtx = emps.map(e => byId[e.id] ? { ...e, leaves: { ...e.leaves, ...byId[e.id] } } : e);
       }
     } catch (err) {
       toast(err.message || 'Could not load report data', 'error');
       return;
     }
 
-    const ctx = { ...buildCtx(), empPayroll, empLoans, branch };
+    const ctx = { ...buildCtx(), emps: empsForCtx, empPayroll, empLoans, branch };
     let html = '';
     if      (type === 'directory')       html = generateHrDirectoryReport(ctx);
     else if (type === 'salary-register') html = generateHrSalaryRegister(ctx, monthKey);
@@ -1354,10 +1368,27 @@ function Financials({ emps, depts = [], desigs, toast, canCreate = true, canDele
     /* Live branch header (name, logo, address, session, generated date) from the
        /report-header API — replaces the old hardcoded school details. */
     const branch = await fetchReportHeader();
+
+    /* Loan report reads empLoans[emp.id], but that map is only populated when
+       the Advance/Loan or Pay Roll modal has been opened for the employee.
+       Opening the report directly would otherwise show an empty statement
+       (all zeros) even for employees who DO have loans — so fetch fresh here. */
+    let empLoansForCtx = empLoans;
+    if (type === 'loan') {
+      try {
+        const loans = await hrService.getHrEmployeeLoans(emp.id);
+        empLoansForCtx = { ...empLoans, [emp.id]: loans };
+        setEmpLoans(prev => ({ ...prev, [emp.id]: loans }));   // cache for later use
+      } catch (err) {
+        toast(err.message || 'Could not load loans for this employee', 'error');
+        return;
+      }
+    }
+
     const ctx = {
       fmtMoney, fmtDate, getFullName,
       getDeptName, getDesigName,
-      empPayroll, empLoans,
+      empPayroll, empLoans: empLoansForCtx,
       branch,
     };
     let html = '';
@@ -3035,6 +3066,8 @@ function EmployeeManagement({ emps, setEmps, depts, desigs, nextEmpId, setNextEm
   const [inactFor, setInactFor] = useState(null);   // emp to mark inactive
   const [idcFor,   setIdcFor]   = useState(null);   // emp for ID card
   const [letterFor, setLetterFor] = useState(null); // emp for Issue Letter
+  const [viewLetterFor, setViewLetterFor] = useState(null); // letter to view (PDF/Word)
+  const [letterConfirm, setLetterConfirm] = useState(null); // { empId, letter } pending delete
   const [profileFor, setProfileFor] = useState(null); // emp for Profile Report
   /* Duplicate-number popup (Launch Setup jaisa): number pehle se ho to email maango,
      email ko phone field me daal kar (email ke through) dobara add/update karo. */
@@ -3120,12 +3153,47 @@ const markActiveAgain = async (emp) => {
     toast(err.message || 'Could not mark employee active', 'error');
   }
 };
-  const recordLetterIssued = (empId, letter) => {
-    setEmps(prev => (prev || []).map(e => e.id === empId ? {
-      ...e,
-      letters: [...(e.letters || []), letter],
-    } : e));
-    toast(`${letter.label} issued`, 'success');
+  /* Fetch an employee's issued letters (from the branch endpoint, filtered)
+     and store them on emp.letters so the detail panel lists them. */
+  const loadEmpLetters = async (empId) => {
+    if (!empId) return;
+    try {
+      const letters = await hrService.getHrIssueLettersByEmployee(empId);
+      setEmps(prev => (prev || []).map(e => e.id === empId ? { ...e, letters } : e));
+    } catch (err) {
+      /* non-fatal — the panel just shows no letters */
+    }
+  };
+
+  /* Upload the generated letter file via save-issue-letter, then refresh the
+     employee's letter list off the API. */
+  const recordLetterIssued = async (empId, letter) => {
+    try {
+      if (letter.file) {
+        await hrService.saveHrIssueLetter({ employeeId: empId, file: letter.file });
+      }
+      await loadEmpLetters(empId);
+      toast(`${letter.label} issued`, 'success');
+    } catch (err) {
+      toast(err.message || 'Could not issue letter', 'error');
+    }
+  };
+
+  /* Open the ERP-themed letter viewer (preview + Save-as-PDF / Download-Word). */
+  const viewLetter = (letter) => {
+    if (letter?.url) setViewLetterFor(letter);
+    else toast('Letter file not available', 'error');
+  };
+
+  /* Delete an issued letter (delete-issue-letter/{id}), then refresh. */
+  const deleteLetter = async (empId, letter) => {
+    try {
+      await hrService.deleteHrIssueLetter(letter.id);
+      await loadEmpLetters(empId);
+      toast('Letter deleted', 'success');
+    } catch (err) {
+      toast(err.message || 'Could not delete letter', 'error');
+    }
   };
 
   /* Sub-tab counts — based on ALL employees, not the filtered slice. */
@@ -3302,7 +3370,11 @@ const markActiveAgain = async (emp) => {
   deptName={getDeptName(e.dId)}
   desigName={getDesigName(e.desId)}
   isOpen={openEmpId === e.id}
-  onToggleOpen={() => setOpenEmpId(prev => prev === e.id ? null : e.id)}
+  onToggleOpen={() => setOpenEmpId(prev => {
+    const next = prev === e.id ? null : e.id;
+    if (next === e.id) loadEmpLetters(e.id);   // load letters on expand
+    return next;
+  })}
   menuOpen={menuOpenId === e.id}
   onToggleMenu={() => setMenuOpenId(prev => prev === e.id ? null : e.id)}
   onCloseMenu={() => setMenuOpenId(null)}
@@ -3312,6 +3384,8 @@ const markActiveAgain = async (emp) => {
   onLetter={()    => { setMenuOpenId(null); setLetterFor(e); }}
   onInactive={()  => { setMenuOpenId(null); setInactFor(e); }}
   onRestore={()   => { setMenuOpenId(null); markActiveAgain(e); }}
+  onViewLetter={viewLetter}
+  onDeleteLetter={(letter) => setLetterConfirm({ empId: e.id, letter })}
   toast={toast}
   canEdit={canEdit}
   canDelete={canDelete}
@@ -3414,6 +3488,27 @@ const markActiveAgain = async (emp) => {
           onClose={() => setProfileFor(null)}
         />
       )}
+      {viewLetterFor && (
+        <LetterViewModal
+          letter={viewLetterFor}
+          toast={toast}
+          onClose={() => setViewLetterFor(null)}
+        />
+      )}
+      {letterConfirm && (
+        <ConfirmDialog
+          cfg={{
+            title:        'Delete Issued Letter',
+            message:      `Delete <strong>${letterConfirm.letter.label}</strong>${letterConfirm.letter.date ? ` (${letterConfirm.letter.date})` : ''}?`,
+            hint:         'This permanently removes the letter from this employee’s record.',
+            confirmLabel: 'Yes, Delete Letter',
+            confirmStyle: 'danger',
+            icon:         'fa-trash',
+            onConfirm:    () => deleteLetter(letterConfirm.empId, letterConfirm.letter),
+          }}
+          onClose={() => setLetterConfirm(null)}
+        />
+      )}
     </div>
   );
 }
@@ -3421,6 +3516,192 @@ const markActiveAgain = async (emp) => {
 /* ─── getFullName helper used by the search + row ─── */
 function getFullName(e) {
   return `${e.firstName || e.name || ''}${e.lastName ? ' ' + e.lastName : ''}`.trim() || '—';
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Minimal, dependency-free .docx (OOXML) generator so "Download Word"
+   yields a REAL .docx (not HTML renamed .doc). A .docx is a ZIP of a few
+   XML parts; we build the ZIP with the STORE method (no compression) so
+   no zip library is needed.
+   ═══════════════════════════════════════════════════════════════════ */
+function docxCrc32(bytes) {
+  let crc = 0xFFFFFFFF;
+  for (let i = 0; i < bytes.length; i++) {
+    let c = (crc ^ bytes[i]) & 0xFF;
+    for (let k = 0; k < 8; k++) c = (c & 1) ? (c >>> 1) ^ 0xEDB88320 : c >>> 1;
+    crc = (crc >>> 8) ^ c;
+  }
+  return (crc ^ 0xFFFFFFFF) >>> 0;
+}
+function docxZip(files) {
+  const enc = new TextEncoder();
+  const u16 = (n) => [n & 0xFF, (n >>> 8) & 0xFF];
+  const u32 = (n) => [n & 0xFF, (n >>> 8) & 0xFF, (n >>> 16) & 0xFF, (n >>> 24) & 0xFF];
+  const local = [], central = [];
+  let offset = 0;
+  files.forEach((f) => {
+    const nameB = enc.encode(f.name);
+    const data  = typeof f.data === 'string' ? enc.encode(f.data) : f.data;
+    const crc   = docxCrc32(data);
+    const size  = data.length;
+    const lh = new Uint8Array([].concat(
+      u32(0x04034b50), u16(20), u16(0), u16(0), u16(0), u16(0),
+      u32(crc), u32(size), u32(size), u16(nameB.length), u16(0),
+    ));
+    local.push(lh, nameB, data);
+    central.push(new Uint8Array([].concat(
+      u32(0x02014b50), u16(20), u16(20), u16(0), u16(0), u16(0), u16(0),
+      u32(crc), u32(size), u32(size),
+      u16(nameB.length), u16(0), u16(0), u16(0), u16(0), u32(0), u32(offset),
+    )), nameB);
+    offset += lh.length + nameB.length + size;
+  });
+  const cdStart = offset;
+  const cdSize  = central.reduce((s, c) => s + c.length, 0);
+  const end = new Uint8Array([].concat(
+    u32(0x06054b50), u16(0), u16(0), u16(files.length), u16(files.length),
+    u32(cdSize), u32(cdStart), u16(0),
+  ));
+  return new Blob([...local, ...central, end], {
+    type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  });
+}
+/* Wrap the FULL letter HTML (letterhead, colours, borders, signatures — the
+   exact same markup the PDF/preview uses) inside a .docx via an altChunk part.
+   Word converts the embedded HTML on open, so the .docx looks identical to the
+   PDF instead of a plain-text transcription. */
+function buildDocxFromHtml(htmlContent) {
+  const documentXml =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" ` +
+    `xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body>` +
+    `<w:altChunk r:id="htmlChunk"/>` +
+    `<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134"/></w:sectPr>` +
+    `</w:body></w:document>`;
+  const contentTypes =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
+    `<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>` +
+    `<Default Extension="xml" ContentType="application/xml"/>` +
+    `<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>` +
+    `<Override PartName="/word/afchunk.html" ContentType="text/html"/></Types>`;
+  const rels =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+    `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>`;
+  const docRels =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+    `<Relationship Id="htmlChunk" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/aFChunk" Target="afchunk.html"/></Relationships>`;
+  return docxZip([
+    { name: '[Content_Types].xml',            data: contentTypes },
+    { name: '_rels/.rels',                    data: rels },
+    { name: 'word/document.xml',              data: documentXml },
+    { name: 'word/_rels/document.xml.rels',   data: docRels },
+    { name: 'word/afchunk.html',              data: String(htmlContent || '<html><body>Letter</body></html>') },
+  ]);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   LETTER VIEW MODAL — ERP-themed viewer for a saved issue letter.
+   The stored file is served as application/msword (so a raw new-tab open
+   just downloads it); the server allows CORS, so we fetch the file's HTML
+   body and render it in a sandboxed iframe. From there the user can
+   Save as PDF (print the preview) or Download the Word (.doc) file.
+   ═══════════════════════════════════════════════════════════════════ */
+function LetterViewModal({ letter, onClose, toast }) {
+  const [html, setHtml]       = useState('');
+  const [loading, setLoading] = useState(true);
+  const [err, setErr]         = useState('');
+  const frameRef = useRef(null);
+
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    document.body.style.overflow = 'hidden';
+    return () => { document.removeEventListener('keydown', onKey); document.body.style.overflow = ''; };
+  }, [onClose]);
+
+  useEffect(() => {
+    let alive = true;
+    setLoading(true); setErr('');
+    fetch(letter.url)
+      .then(r => { if (!r.ok) throw new Error('load'); return r.text(); })
+      .then(t => { if (alive) { setHtml(t); setLoading(false); } })
+      .catch(() => { if (alive) { setErr('Preview unavailable — use "Download Word" to open the letter.'); setLoading(false); } });
+    return () => { alive = false; };
+  }, [letter.url]);
+
+  const saveAsPdf = () => {
+    const w = frameRef.current?.contentWindow;
+    if (!w) { toast && toast('Preview not ready yet', 'info'); return; }
+    w.focus();
+    w.print();   // browser print → "Save as PDF"
+  };
+
+  const downloadWord = () => {
+    /* Real .docx that embeds the full letter HTML (same design as the PDF/
+       preview) via altChunk — Word renders the letterhead, colours & layout. */
+    const blob = buildDocxFromHtml(html);
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href = url;
+    a.download = `${(letter.label || 'letter').replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '')}.docx`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+  };
+
+  return createPortal((
+    <div
+      className="ov open"
+      role="dialog" aria-modal="true"
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="modal letter-view-modal" style={{ display: 'flex', flexDirection: 'column', width: '100%', maxWidth: 760, height: '90vh', maxHeight: '90vh' }}>
+        <div className="modal-head">
+          <div className="modal-head-left">
+            <div className="modal-head-icon"><i className="fa-solid fa-envelope-open-text" aria-hidden="true"></i></div>
+            <div>
+              <div className="modal-title">View Letter</div>
+              <div className="modal-sub">{letter.label}{letter.date ? ` · ${letter.date}` : ''}</div>
+            </div>
+          </div>
+          <Tooltip text="Close">
+            <button type="button" className="modal-close" onClick={onClose} aria-label="Close">
+              <i className="fa-solid fa-xmark" aria-hidden="true"></i>
+            </button>
+          </Tooltip>
+        </div>
+
+        <div className="modal-body letter-view-body" style={{ flex: '1 1 0', minHeight: 0, padding: 16 }}>
+          {loading && (
+            <div className="letter-view-state"><i className="fa-solid fa-spinner fa-spin" aria-hidden="true"></i> Loading letter…</div>
+          )}
+          {!loading && err && (
+            <div className="letter-view-state"><i className="fa-solid fa-triangle-exclamation" aria-hidden="true"></i> {err}</div>
+          )}
+          {!loading && !err && (
+            <iframe
+              ref={frameRef}
+              title="Letter preview"
+              srcDoc={html}
+              className="letter-view-frame"
+            />
+          )}
+        </div>
+
+        <div className="modal-foot">
+          <button type="button" className="btn-secondary" onClick={onClose}>Close</button>
+          <button type="button" className="btn-secondary" onClick={downloadWord} disabled={!html}>
+            <i className="fa-solid fa-file-word" aria-hidden="true"></i>Word (.docx)
+          </button>
+          <button type="button" className="btn-primary" onClick={saveAsPdf} disabled={!html}>
+            <i className="fa-solid fa-file-pdf" aria-hidden="true"></i> Save as PDF
+          </button>
+        </div>
+      </div>
+    </div>
+  ), document.body);
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -3434,6 +3715,7 @@ function EmployeeRow({
   isOpen, onToggleOpen,
   menuOpen, onToggleMenu, onCloseMenu,
   onEdit, onProfile, onIdCard, onLetter, onInactive, onRestore,
+  onViewLetter, onDeleteLetter,
   toast,
   canEdit = true, canDelete = true, canDownload = true, canAssign = true,
 }) {
@@ -3526,12 +3808,12 @@ function EmployeeRow({
                 {isInactive ? (
                   <>
                     {canDownload && (
-                    <button type="button" className="drop-item" onClick={() => stubAction('Download Profile Report')}>
+                    <button type="button" className="drop-item" onClick={onProfile}>
                       <i className="fa-solid fa-download" aria-hidden="true"></i> Download Profile Report
                     </button>
                     )}
                     {canAssign && (
-                    <button type="button" className="drop-item" onClick={() => stubAction('Issue Letter')}>
+                    <button type="button" className="drop-item" onClick={onLetter}>
                       <i className="fa-solid fa-envelope-open-text" aria-hidden="true"></i> Issue Letter
                     </button>
                     )}
@@ -3599,6 +3881,9 @@ function EmployeeRow({
               emp={emp}
               deptName={deptName}
               desigName={desigName}
+              onViewLetter={onViewLetter}
+              onDeleteLetter={onDeleteLetter}
+              canDelete={canDelete}
             />
           )}
         </div>
@@ -4637,7 +4922,7 @@ function AddEmployeeModal({ mode = 'add', emp, depts, desigs, nextEmpId, onClose
    row chevron is expanded. Covers Personal · Official · Salary · Leaves
    · Documents · Tasks · Subjects · Attendance · Letters.
    ═══════════════════════════════════════════════════════════════════ */
-function EmployeeDetailPanel({ emp, deptName, desigName }) {
+function EmployeeDetailPanel({ emp, deptName, desigName, onViewLetter, onDeleteLetter, canDelete = true }) {
   const allow  = (emp.salaryHeads || []).filter(h => h.type === 'allow').reduce((s, h) => s + (Number(h.amount) || 0), 0);
   const deduct = (emp.salaryHeads || []).filter(h => h.type === 'deduct').reduce((s, h) => s + (Number(h.amount) || 0), 0);
   const basic  = Number(emp.basicSalary) || 0;
@@ -4817,15 +5102,38 @@ function EmployeeDetailPanel({ emp, deptName, desigName }) {
         ) : (
           <div className="emp-detail-letters">
             {(emp.letters || []).map((lt, i) => (
-              <div key={i} className="emp-detail-letter">
+              <div key={lt.id ?? i} className="emp-detail-letter">
                 <div className="emp-detail-letter-l">
                   <i className="fa-solid fa-envelope-open-text" aria-hidden="true"></i>
                   <div>
                     <div className="emp-detail-letter-title">{lt.label}</div>
-                    <div className="emp-detail-letter-meta">Ref · {lt.ref} · {lt.date}</div>
+                    <div className="emp-detail-letter-meta">{lt.ref ? `Ref · ${lt.ref} · ` : ''}{lt.date || '—'}</div>
                   </div>
                 </div>
-                <span className="emp-detail-letter-style">{lt.style === 'bw' ? 'B&W' : 'Color'}</span>
+                <div className="emp-detail-letter-actions">
+                  <Tooltip text="View letter">
+                    <button
+                      type="button"
+                      className="letter-act-btn"
+                      onClick={() => onViewLetter && onViewLetter(lt)}
+                      aria-label="View letter"
+                    >
+                      <i className="fa-solid fa-eye" aria-hidden="true"></i> View
+                    </button>
+                  </Tooltip>
+                  {canDelete && (
+                    <Tooltip text="Delete letter">
+                      <button
+                        type="button"
+                        className="letter-act-btn danger"
+                        onClick={() => onDeleteLetter && onDeleteLetter(lt)}
+                        aria-label="Delete letter"
+                      >
+                        <i className="fa-solid fa-trash" aria-hidden="true"></i> Delete
+                      </button>
+                    </Tooltip>
+                  )}
+                </div>
               </div>
             ))}
           </div>
@@ -5282,6 +5590,7 @@ function LetterModal({ emp, deptName, desigName, onClose, onIssue, toast }) {
   const [sigD,         setSigD]        = useState(false);
   const [sigH,         setSigH]        = useState(true);
   const [style,        setStyle]       = useState('color');
+  const [issuing,      setIssuing]     = useState(false);
   const logoRef = useRef(null);
 
   useEffect(() => {
@@ -5335,27 +5644,70 @@ function LetterModal({ emp, deptName, desigName, onClose, onIssue, toast }) {
   if (sigH) sigs.push({ title: 'HR Manager', sub: 'Human Resource Dept.' });
   if (sigs.length === 0) sigs.push({ title: 'Authorized Signatory', sub: schoolName || 'School Mentor' });
 
-  const issue = () => {
+  /* Build a self-contained HTML letter file — no external CSS/assets — that the
+     save-issue-letter API stores and the "View" button re-opens. */
+  const buildLetterFileHtml = () => {
+    const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const accent = style === 'bw' ? '#333' : '#1E3A8A';
+    const sigCells = sigs.map(s => `
+      <div style="text-align:center;min-width:150px">
+        <div style="border-top:1px solid #333;padding-top:6px;font-weight:700;font-size:12px">${esc(s.title)}</div>
+        <div style="font-size:10px;color:#666">${esc(s.sub)}</div>
+      </div>`).join('');
+    return `<!DOCTYPE html><html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><title>${esc(type)} — ${esc(getFullName(emp))}</title>
+      <style>
+        *{box-sizing:border-box;margin:0;padding:0}
+        body{font-family:'Segoe UI',Arial,sans-serif;color:#111;background:#fff;padding:40px;line-height:1.6}
+        .sheet{max-width:800px;margin:0 auto}
+        .head{display:flex;align-items:center;gap:16px;border-bottom:3px solid ${accent};padding-bottom:14px}
+        .logo{width:56px;height:56px;border-radius:50%;border:2px solid ${accent};display:flex;align-items:center;justify-content:center;font-size:24px;color:${accent};overflow:hidden;flex-shrink:0}
+        .school{flex:1}.school-name{font-size:22px;font-weight:800;color:${accent}}.school-addr{font-size:12px;color:#666;margin-top:2px}
+        .ref{text-align:right;font-size:12px;color:#444}
+        .meta{display:flex;justify-content:space-between;margin:20px 0}
+        .to{font-size:13px}.to strong{display:block;font-size:15px;margin-top:2px}
+        .date{font-size:12px;color:#444;text-align:right}
+        .subject{font-weight:700;font-size:14px;margin:16px 0;padding-bottom:8px;border-bottom:1px solid #ddd}
+        .body{font-size:13px;white-space:pre-wrap;margin:16px 0 40px}
+        .signs{display:flex;justify-content:space-around;flex-wrap:wrap;gap:24px;margin-top:50px}
+        .foot{margin-top:40px;text-align:center;font-size:10px;color:#999;border-top:1px solid #eee;padding-top:10px}
+        @media print{body{padding:0}}
+      </style></head><body>
+      <div class="sheet">
+        <div class="head">
+          <div class="logo">${logoData ? `<img src="${logoData}" style="width:100%;height:100%;object-fit:cover">` : '&#127891;'}</div>
+          <div class="school"><div class="school-name">${esc(schoolName || 'School Mentor')}</div><div class="school-addr">${esc(schoolAddr)}</div></div>
+          <div class="ref">${ref ? `<div><strong>Ref:</strong> ${esc(ref)}</div>` : ''}<div>${esc(type)}</div></div>
+        </div>
+        <div class="meta">
+          <div class="to">To,<strong>${esc(getFullName(emp))}</strong>${emp.eid ? `<div>Employee ID: ${esc(emp.eid)}</div>` : ''}${desigName ? `<div>${esc(desigName)}, ${esc(deptName)}</div>` : ''}</div>
+          <div class="date">Date<br>${esc(fmtDate(letterDate) || '—')}</div>
+        </div>
+        ${subject ? `<div class="subject">Subject: ${esc(subject)}</div>` : ''}
+        <div class="body">${esc(content)}</div>
+        <div class="signs">${sigCells}</div>
+        <div class="foot">This letter is system-generated by ${esc(schoolName || 'School Mentor')} HR.</div>
+      </div>
+      </body></html>`;
+  };
+
+  const issue = async () => {
+    if (issuing) return;
     if (!subject.trim()) { toast('Subject is required', 'error'); return; }
     if (!content.trim()) { toast('Letter content is required', 'error'); return; }
-    onIssue({
-      id:        `letter-${Date.now()}`,
-      type,
-      label:     type,
-      subject:   subject.trim(),
-      content:   content.trim(),
-      date:      letterDate,
-      ref:       ref.trim(),
-      issuedBy:  issuedBy.trim() || 'HR Department',
-      sigPrincipal: sigP,
-      sigDirector:  sigD,
-      sigHR:        sigH,
-      style,
-      schoolName,
-      schoolAddr,
-      logo:      logoData,
-    });
-    onClose();
+    setIssuing(true);
+    try {
+      const html = buildLetterFileHtml();
+      const name = `${type} ${ref.replace(/\//g, '-')}`.replace(/\s+/g, ' ').trim() || 'Letter';
+      /* The API only accepts PDF/DOC/DOCX/JPG/PNG and validates by extension, and
+         no PDF lib is bundled — so ship the letter as a Word-openable .doc (HTML
+         body with Office namespaces). Word/browsers render it as the formatted
+         letter. */
+      const file = new File([html], `${name}.doc`, { type: 'application/msword' });
+      await onIssue({ type, label: type, ref: ref.trim(), date: letterDate, file });
+      onClose();
+    } finally {
+      setIssuing(false);
+    }
   };
 
   return createPortal((
@@ -5527,8 +5879,10 @@ function LetterModal({ emp, deptName, desigName, onClose, onIssue, toast }) {
           <button type="button" className="btn-secondary" onClick={() => window.print()}>
             <i className="fa-solid fa-print" aria-hidden="true"></i> Print
           </button>
-          <button type="button" className="btn-primary" onClick={issue}>
-            <i className="fa-solid fa-check" aria-hidden="true"></i> Issue &amp; Save Letter
+          <button type="button" className="btn-primary" onClick={issue} disabled={issuing}>
+            {issuing
+              ? <><i className="fa-solid fa-spinner fa-spin" aria-hidden="true"></i> Saving…</>
+              : <><i className="fa-solid fa-check" aria-hidden="true"></i> Issue &amp; Save Letter</>}
           </button>
         </div>
       </div>
@@ -6141,14 +6495,39 @@ function RKv({ k, v, span, valueStyle }) {
 
 const PROFILE_PRINT_CSS = `
 @media print {
-  body * { visibility: hidden !important; }
-  #report-print-root, #report-print-root * { visibility: visible !important; }
-  #report-print-root {
-    position: fixed !important; inset: 0 !important;
-    margin: 0 auto !important; padding: 24px 30px !important;
-    background: #fff !important; box-shadow: none !important;
-    max-width: 100% !important;
+  /* The report is portaled to <body> as a sibling of #root, so hide the
+     app and let the report flow through normal document flow. Using
+     position:fixed here caused only the first page to render (fixed
+     elements don't paginate) and clipped the sheet to one viewport,
+     leaving the rest of the profile blank. */
+  #root { display: none !important; }
+  .report-ov {
+    position: static !important;
+    display: block !important;
+    inset: auto !important;
+    background: #fff !important;
+    backdrop-filter: none !important;
+    padding: 0 !important;
+    z-index: auto !important;
   }
+  .report-toolbar { display: none !important; }
+  .report-scroll {
+    flex: none !important;
+    overflow: visible !important;
+    padding: 0 !important;
+    background: #fff !important;
+  }
+  #report-print-root {
+    position: static !important;
+    margin: 0 auto !important;
+    padding: 24px 30px !important;
+    background: #fff !important;
+    box-shadow: none !important;
+    max-width: 100% !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  .report-sec { page-break-inside: avoid; }
 }
 `;
 /* ═══════════════════════════════════════════════════════════════════
@@ -7848,22 +8227,27 @@ export const HR_CSS = `
 
 /* Rendered card preview (front + back) */
 .idc-preview {
-  padding: 18px 24px;
-  display: flex; gap: 18px;
+  padding: 22px 24px 24px;
+  display: flex; gap: 20px;
   flex-wrap: wrap;
   justify-content: center;
-  background: linear-gradient(180deg, rgba(30,58,138,.04), transparent);
+  background: linear-gradient(180deg, rgba(30,58,138,.05), transparent 70%);
 }
 .idc-render {
+  position: relative;
   background: #fff;
-  border: 2px solid var(--bl);
-  border-radius: 14px;
+  border: 1px solid var(--bl);
+  border-radius: 16px;
   overflow: hidden;
-  box-shadow: 0 10px 30px rgba(15,23,42,.12);
+  box-shadow: 0 14px 36px rgba(15,23,42,.16), 0 2px 6px rgba(15,23,42,.06);
   color: #0F172A;
+  -webkit-print-color-adjust: exact; print-color-adjust: exact;
 }
-.idc-render--v { width: 220px; height: 340px; display: flex; flex-direction: column; }
-.idc-render--h { width: 340px; height: 220px; display: grid; grid-template-columns: 100px 1fr 40px; }
+.idc-render--v { width: 234px; height: 368px; display: flex; flex-direction: column; }
+.idc-render--h { width: 340px; height: 214px; display: grid; grid-template-columns: 104px 1fr 42px; }
+/* Horizontal BACK has a single body child — don't inherit the 3-col grid
+   (that squeezed the whole panel into the 104px photo column). */
+.idc-render--h.idc-render--back { display: block; }
 
 .idc-r-head {
   background: linear-gradient(135deg, #1E3A8A, #1E40AF);
@@ -7871,42 +8255,81 @@ export const HR_CSS = `
   padding: 12px 10px;
 }
 .idc-r-head--back { background: linear-gradient(135deg, #475569, #334155); }
-.idc-r-logo {
-  width: 32px; height: 32px;
-  border-radius: 50%;
-  background: rgba(255,255,255,.2);
-  display: inline-flex; align-items: center; justify-content: center;
-  font-size: 14px;
-  margin-bottom: 6px;
+
+/* Vertical front: deeper header + a gold accent rule + soft radial sheen,
+   with the photo overlapping the header edge for a premium ID-card look. */
+.idc-render--v .idc-r-head {
+  position: relative;
   overflow: hidden;
+  background: linear-gradient(140deg, #1E3A8A 0%, #274CAB 55%, #1E40AF 100%);
+  padding: 16px 12px 40px;
+}
+.idc-render--v .idc-r-head::before {
+  content: ""; position: absolute; top: -45%; right: -18%;
+  width: 150px; height: 150px; border-radius: 50%;
+  background: radial-gradient(circle, rgba(255,255,255,.20), transparent 70%);
+  pointer-events: none;
+}
+.idc-render--v .idc-r-head::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 3px;
+  background: linear-gradient(90deg, #F59E0B, #FBBF24);
+}
+.idc-r-logo {
+  width: 40px; height: 40px;
+  border-radius: 50%;
+  background: rgba(255,255,255,.18);
+  box-shadow: 0 0 0 2px rgba(255,255,255,.35), 0 4px 10px rgba(0,0,0,.18);
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 16px;
+  margin-bottom: 8px;
+  overflow: hidden;
+  position: relative; z-index: 1;
 }
 .idc-r-logo img { width: 100%; height: 100%; object-fit: cover; }
 .idc-r-h-logo { width: 14px; height: 14px; border-radius: 3px; object-fit: cover; vertical-align: middle; }
-.idc-r-school { font: 800 13px/1 var(--hr-font); letter-spacing: .4px; }
-.idc-r-tag    { font: 500 9.5px/1 var(--hr-font); opacity: .85; margin-top: 4px; }
+.idc-r-school { font: 800 13.5px/1.15 var(--hr-font); letter-spacing: .3px; position: relative; z-index: 1; }
+.idc-r-tag    { font: 600 8.5px/1 var(--hr-font); letter-spacing: 1px; text-transform: uppercase; opacity: .82; margin-top: 5px; position: relative; z-index: 1; }
+
 .idc-r-photo-v {
-  width: 80px; height: 80px;
+  width: 88px; height: 88px;
   border-radius: 50%;
-  border: 3px solid #1E40AF;
+  border: 3px solid #fff;
   background: linear-gradient(135deg, #DBEAFE, #BFDBFE);
   color: #1E40AF;
   display: inline-flex; align-items: center; justify-content: center;
-  font: 800 22px/1 var(--hr-font);
-  margin: 14px auto 8px;
+  font: 800 24px/1 var(--hr-font);
+  margin: -32px auto 8px;
   overflow: hidden;
+  box-shadow: 0 6px 16px rgba(15,23,42,.22);
+  position: relative; z-index: 2;
 }
 .idc-r-photo-v img { width: 100%; height: 100%; object-fit: cover; }
 .idc-r-name {
   text-align: center;
-  font: 800 14px/1.1 var(--hr-font);
+  font: 800 15px/1.15 var(--hr-font);
   color: #0F172A;
   margin: 0 10px;
+  letter-spacing: -.01em;
 }
 .idc-r-desig {
   text-align: center;
   font: 600 10.5px/1.2 var(--hr-font);
   color: #475569;
   margin: 2px 10px 8px;
+}
+/* Vertical designation → brand pill */
+.idc-render--v .idc-r-desig {
+  align-self: center;
+  display: inline-block;
+  color: #1E40AF;
+  background: rgba(30,64,175,.09);
+  border: 1px solid rgba(30,64,175,.18);
+  border-radius: 9999px;
+  padding: 4px 12px;
+  margin: 6px auto 12px;
+  font: 700 9px/1 var(--hr-font);
+  text-transform: uppercase;
+  letter-spacing: .5px;
 }
 .idc-r-kv {
   display: grid;
@@ -7917,27 +8340,38 @@ export const HR_CSS = `
   color: #64748B;
 }
 .idc-r-kv > div { display: flex; flex-direction: column; gap: 2px; }
+.idc-render--v .idc-r-kv { gap: 8px; padding: 2px 16px 14px; }
+.idc-render--v .idc-r-kv > div {
+  background: #F8FAFC;
+  border: 1px solid #EEF2F7;
+  border-radius: 8px;
+  padding: 6px 9px;
+}
 .idc-r-kv span { font: 700 8px/1 var(--hr-font); text-transform: uppercase; letter-spacing: .35px; color: #94A3B8; }
 .idc-r-kv b    { color: #0F172A; font-weight: 800; }
+.idc-render--v .idc-r-kv b { font-size: 10px; }
 .idc-r-kv--h   { grid-template-columns: repeat(3, 1fr); gap: 4px 8px; padding: 0; margin-top: 4px; }
 .idc-r-foot {
   margin-top: auto;
-  background: #F1F5F9;
+  background: linear-gradient(180deg, #F8FAFC, #F1F5F9);
   border-top: 1px solid #E2E8F0;
-  padding: 8px 12px;
+  padding: 9px 12px;
   display: flex; align-items: center; justify-content: space-between;
+  gap: 8px;
 }
 .idc-r-qr {
-  width: 38px; height: 38px;
+  width: 40px; height: 40px;
   background: #fff;
   border: 1px solid #E2E8F0;
-  border-radius: 5px;
+  border-radius: 7px;
   display: inline-flex; align-items: center; justify-content: center;
   font-size: 26px;
   color: #1E3A8A;
+  flex-shrink: 0;
+  box-shadow: 0 1px 3px rgba(15,23,42,.08);
 }
-.idc-r-validity { font: 600 9.5px/1.3 var(--hr-font); color: #475569; text-align: right; }
-.idc-r-validity small { color: #94A3B8; }
+.idc-r-validity { font: 700 9px/1.35 var(--hr-font); color: #334155; text-align: right; }
+.idc-r-validity small { color: #94A3B8; font-weight: 600; }
 
 .idc-render--h .idc-r-h-left {
   background: linear-gradient(160deg, #1E3A8A, #1E40AF);
@@ -9614,6 +10048,37 @@ export const HR_CSS = `
   border: 1px solid rgba(2,132,199,.25);
   padding: 4px 9px;
   border-radius: var(--r-f);
+}
+.emp-detail-letter-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.letter-act-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  font: 700 10.5px/1 var(--hr-font);
+  padding: 6px 10px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--bl);
+  background: var(--card);
+  color: var(--brand);
+  cursor: pointer;
+  transition: var(--tr);
+}
+.letter-act-btn:hover { background: var(--brand-light); border-color: var(--bm); }
+.letter-act-btn.danger { color: var(--err); border-color: rgba(220,38,38,.25); }
+.letter-act-btn.danger:hover { background: rgba(220,38,38,.08); border-color: rgba(220,38,38,.4); }
+.letter-view-body { background: #E8EEF7; }
+[data-theme="dark"] .letter-view-body { background: #0B1322; }
+.letter-view-frame {
+  width: 100%; height: 100%;
+  border: 1px solid var(--bl);
+  border-radius: var(--r-md);
+  background: #fff;
+}
+.letter-view-state {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  height: 100%;
+  font: 600 13px/1.4 var(--hr-font);
+  color: var(--tm);
+  text-align: center;
+  padding: 20px;
 }
 
 @media (max-width: 720px) {
