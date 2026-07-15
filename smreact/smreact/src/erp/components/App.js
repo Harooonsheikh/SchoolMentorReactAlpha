@@ -115,7 +115,7 @@ const NAV_SECTIONS = [
   {
     label: 'School Mentor',
     items: [
-      // { id: 'sops',          name: 'School SOPs',       icon: 'fa-book-open' },
+      { id: 'sops',          name: 'School SOPs',       icon: 'fa-book-open' },
       // { id: 'trainings', name: 'Teacher Trainings', icon: 'fa-chalkboard-user' },
       // Hidden for now (routes still wired, just not shown in the sidebar):
       // { id: 'etube',         name: 'e-Tube',            icon: 'fa-play-circle' },
