@@ -16,6 +16,7 @@ import {
   generateHrPayrollSummary,
 } from './hrReports';
 import { fetchReportHeader } from '../../utils/pdfReports';
+import { usePermissions } from '../context/PermissionsContext';
 
 /* ═══════════════════════════════════════════════════════════════════
    HUMAN RESOURCE module — entry point.
@@ -36,6 +37,36 @@ const HR_TABS = [
 export default function HumanResource({ toast = () => {} }) {
   const [tab, setTab] = useState('basics');
   const [tutorialOpen, setTutorialOpen] = useState(false);
+
+  /* ── Permission gating (2-layer): tab View + per-action buttons ── */
+  const { can } = usePermissions();
+  const TAB_LABEL = {
+    basics:  'HR Basics',
+    emps:    'Employee Management',
+    finance: 'Financials',
+    reports: 'Reports',
+  };
+  const visibleTabs = HR_TABS.filter(t => can('Human Resource', TAB_LABEL[t.id], 'View'));
+  useEffect(() => {
+    if (visibleTabs.length && !visibleTabs.some(t => t.id === tab)) {
+      setTab(visibleTabs[0].id);
+    }
+  }, [visibleTabs, tab]);
+  // action flags per screen
+  const canBasicsCreate = can('Human Resource', 'HR Basics', 'Create');
+  const canBasicsEdit   = can('Human Resource', 'HR Basics', 'Edit');
+  const canBasicsDelete = can('Human Resource', 'HR Basics', 'Delete');
+  const canEmpCreate    = can('Human Resource', 'Employee Management', 'Create');
+  const canEmpEdit      = can('Human Resource', 'Employee Management', 'Edit');
+  const canEmpDelete    = can('Human Resource', 'Employee Management', 'Delete');
+  const canEmpDownload  = can('Human Resource', 'Employee Management', 'Download');
+  const canEmpAssign    = can('Human Resource', 'Employee Management', 'Assign');
+  const canFinCreate    = can('Human Resource', 'Financials', 'Create');
+  const canFinEdit      = can('Human Resource', 'Financials', 'Edit');
+  const canFinDelete    = can('Human Resource', 'Financials', 'Delete');
+  const canFinApprove   = can('Human Resource', 'Financials', 'Approve');
+  const canFinDownload  = can('Human Resource', 'Financials', 'Download');
+  const canRepDownload  = can('Human Resource', 'Reports', 'Download');
 
   /* Shared data hoisted to the module so the rebuilt screens can
      reuse it later without re-fetching. */
@@ -101,7 +132,7 @@ export default function HumanResource({ toast = () => {} }) {
 
       {/* L1 main tabs */}
       <div className="hr-tabs" role="tablist" aria-label="Human Resource sections">
-        {HR_TABS.map(t => (
+        {visibleTabs.map(t => (
           <Tooltip key={t.id} text={t.label}>
             <button
               className={`hr-tab${tab === t.id ? ' active' : ''}`}
@@ -129,6 +160,9 @@ export default function HumanResource({ toast = () => {} }) {
           setNextDesigId={setNextDesigId}
           reload={reloadHrBasics}
           toast={toast}
+          canCreate={canBasicsCreate}
+          canEdit={canBasicsEdit}
+          canDelete={canBasicsDelete}
         />
       )}
       {tab === 'emps' && (
@@ -140,6 +174,11 @@ export default function HumanResource({ toast = () => {} }) {
           nextEmpId={nextEmpId || 7}
           setNextEmpId={setNextEmpId}
           toast={toast}
+          canCreate={canEmpCreate}
+          canEdit={canEmpEdit}
+          canDelete={canEmpDelete}
+          canDownload={canEmpDownload}
+          canAssign={canEmpAssign}
         />
       )}
       {tab === 'finance' && (
@@ -148,6 +187,11 @@ export default function HumanResource({ toast = () => {} }) {
           depts={deptList}
           desigs={desigList}
           toast={toast}
+          canCreate={canFinCreate}
+          canEdit={canFinEdit}
+          canDelete={canFinDelete}
+          canApprove={canFinApprove}
+          canDownload={canFinDownload}
         />
       )}
       {tab === 'reports' && (
@@ -156,6 +200,7 @@ export default function HumanResource({ toast = () => {} }) {
           depts={deptList}
           desigs={desigList}
           toast={toast}
+          canDownload={canRepDownload}
         />
       )}
 
@@ -182,6 +227,7 @@ export default function HumanResource({ toast = () => {} }) {
 function HrBasics({
   depts, setDepts, desigs, setDesigs, emps,
   nextDeptId, nextDesigId, setNextDeptId, setNextDesigId, reload, toast,
+  canCreate = true, canEdit = true, canDelete = true,
 }) {
   const [openDeptId, setOpenDeptId] = useState(null);   // id of currently-expanded dept
   const [deptModal,  setDeptModal]  = useState(null);   // null | { mode:'add'|'edit', dept? }
@@ -337,6 +383,7 @@ function HrBasics({
             <i className="fa-solid fa-building" style={{ color: '#1E3A8A' }} aria-hidden="true"></i>
             Departments &amp; Designations
           </div>
+          {canCreate && (
           <Tooltip text="Add a new department to organize employees">
             <button
               type="button"
@@ -346,6 +393,7 @@ function HrBasics({
               <i className="fa-solid fa-plus" aria-hidden="true"></i> Add Department
             </button>
           </Tooltip>
+          )}
         </div>
 
         <div className="ux-info-banner">
@@ -391,6 +439,7 @@ function HrBasics({
                       <span className="badge b-green">{ds.length} designation{ds.length === 1 ? '' : 's'}</span>
                     </div>
                     <div className="td dept-row-actions">
+                      {canCreate && (
                       <Tooltip text="Add Designation">
                         <button
                           type="button"
@@ -400,6 +449,8 @@ function HrBasics({
                           <i className="fa-solid fa-plus" aria-hidden="true"></i> Designation
                         </button>
                       </Tooltip>
+                      )}
+                      {canEdit && (
                       <Tooltip text="Edit">
                         <button
                           type="button"
@@ -410,6 +461,8 @@ function HrBasics({
                           <i className="fa-solid fa-pen" aria-hidden="true"></i>
                         </button>
                       </Tooltip>
+                      )}
+                      {canDelete && (
                       <Tooltip text="Delete">
                         <button
                           type="button"
@@ -420,6 +473,7 @@ function HrBasics({
                           <i className="fa-solid fa-trash" aria-hidden="true"></i>
                         </button>
                       </Tooltip>
+                      )}
                     </div>
                     <div className="td" style={{ justifyContent: 'center' }}>
                       <Tooltip text="View Designations">
@@ -465,6 +519,7 @@ function HrBasics({
                                 </div>
                                 <div className="td"><span className="badge b-green">{dec} emp.</span></div>
                                 <div className="td desig-row-actions">
+                                  {canEdit && (
                                   <Tooltip text="Edit">
                                     <button
                                       type="button"
@@ -475,6 +530,8 @@ function HrBasics({
                                       <i className="fa-solid fa-pen" aria-hidden="true"></i>
                                     </button>
                                   </Tooltip>
+                                  )}
+                                  {canDelete && (
                                   <Tooltip text="Delete">
                                     <button
                                       type="button"
@@ -485,6 +542,7 @@ function HrBasics({
                                       <i className="fa-solid fa-trash" aria-hidden="true"></i>
                                     </button>
                                   </Tooltip>
+                                  )}
                                 </div>
                               </div>
                             );
@@ -850,7 +908,7 @@ const HR_REPORT_META = {
   'payroll-summary' : { title: 'Payroll Summary Report',      sub: 'Month-wise payroll totals, deductions & status for all staff',          icon: 'fa-chart-pie',            gradFrom: 'rgba(15,118,110,.1)', gradTo: 'rgba(15,118,110,.18)', iconColor: '#0F766E', period: true,  chips: ['Monthly', 'All Staff', 'Totals & Status'],         desc: 'Month-wise payroll totals — gross pay, deductions, net payable & payment status overview' },
 };
 
-function HrReports({ emps, depts, desigs, toast }) {
+function HrReports({ emps, depts, desigs, toast, canDownload = true }) {
   const deptMap  = useMemo(() => new Map(depts.map(d => [d.id, d])), [depts]);
   const desigMap = useMemo(() => new Map(desigs.map(d => [d.id, d])), [desigs]);
   const getDeptName  = (id) => deptMap.get(id)?.name || '—';
@@ -952,13 +1010,14 @@ function HrReports({ emps, depts, desigs, toast }) {
           type={picker.type}
           onClose={() => setPicker(null)}
           onGenerate={generate}
+          canDownload={canDownload}
         />
       )}
     </div>
   );
 }
 
-function HrRptModal({ type, onClose, onGenerate }) {
+function HrRptModal({ type, onClose, onGenerate, canDownload = true }) {
   const meta = HR_REPORT_META[type] || HR_REPORT_META.directory;
   const [monthKey, setMonthKey] = useState(() => {
     const d = new Date();
@@ -1023,6 +1082,7 @@ function HrRptModal({ type, onClose, onGenerate }) {
           </div>
 
           <div className="style-pick-grid">
+            {canDownload && (
             <div className="style-pick-card" onClick={() => onGenerate('color', monthKey)}>
               <span className="style-pick-tag">Recommended</span>
               <div className="style-pick-preview color">
@@ -1037,6 +1097,8 @@ function HrRptModal({ type, onClose, onGenerate }) {
                 <div className="style-pick-desc">ERP theme colors, professional header, color-coded badges and highlights.</div>
               </div>
             </div>
+            )}
+            {canDownload && (
             <div className="style-pick-card bw-card" onClick={() => onGenerate('bw', monthKey)}>
               <span className="style-pick-tag">Low Ink</span>
               <div className="style-pick-preview bw">
@@ -1051,6 +1113,7 @@ function HrRptModal({ type, onClose, onGenerate }) {
                 <div className="style-pick-desc">White background, black/gray text, light borders only — saves ink on printing.</div>
               </div>
             </div>
+            )}
           </div>
         </div>
 
@@ -1072,7 +1135,7 @@ function getEmpStdDeductions(e) {
   return (e.salaryHeads || []).filter(h => h.type === 'deduct').reduce((s, h) => s + (Number(h.amount) || 0), 0);
 }
 
-function Financials({ emps, depts = [], desigs, toast }) {
+function Financials({ emps, depts = [], desigs, toast, canCreate = true, canDelete = true, canApprove = true, canDownload = true }) {
   const now = new Date();
   const [month, setMonth] = useState(PAY_MONTHS[now.getMonth()]);
   const [year,  setYear]  = useState(String(now.getFullYear()));
@@ -1443,6 +1506,9 @@ function Financials({ emps, depts = [], desigs, toast }) {
               onDeletePayroll={() => deletePayrollFor(e)}
               onReport={(type) => openRsp(e, type)}
               onStub={stub}
+              canCreate={canCreate}
+              canDelete={canDelete}
+              canDownload={canDownload}
             />
           ))
         )}
@@ -1461,6 +1527,9 @@ function Financials({ emps, depts = [], desigs, toast }) {
           onRecordPayment={(rec) => upsertRec(prFor.id, month, year, rec)}
           onDelete={() => { removeRec(prFor.id, month, year); setPrFor(null); }}
           toast={toast}
+          canCreate={canCreate}
+          canApprove={canApprove}
+          canDelete={canDelete}
         />
       )}
 
@@ -1489,6 +1558,8 @@ function Financials({ emps, depts = [], desigs, toast }) {
           onSaveRepay={(payload) => saveLoanRepayment(alFor.id, payload)}
           onMarkReturned={(loanId) => markLoanReturned(alFor.id, loanId)}
           toast={toast}
+          canCreate={canCreate}
+          canApprove={canApprove}
         />
       )}
     </div>
@@ -1504,6 +1575,7 @@ function PayrollRow({
   reportsOpen, onToggleReports,
   actionsOpen, onToggleActions,
   onPayRoll, onAdvLoan, onDeletePayroll, onReport, onStub,
+  canCreate = true, canDelete = true, canDownload = true,
 }) {
   const nm = getFullName(emp);
   const ini = nm.split(' ').filter(Boolean).map(p => p[0]).join('').toUpperCase().slice(0, 2) || '?';
@@ -1537,6 +1609,7 @@ function PayrollRow({
 
         {/* Reports button + dropdown */}
         <div className="td" style={{ justifyContent: 'center' }}>
+          {canDownload && (
           <div className="menu-wrap">
             <Tooltip text="Open employee reports">
               <button type="button" className="btn-reports" onClick={onToggleReports}>
@@ -1565,6 +1638,7 @@ function PayrollRow({
               </div>
             )}
           </div>
+          )}
         </div>
 
         {/* 3-dots Actions button + dropdown */}
@@ -1577,6 +1651,7 @@ function PayrollRow({
             </Tooltip>
             {actionsOpen && (
               <div className="drop-menu" role="menu">
+                {canCreate && (
                 <Tooltip text="Generate, process and pay this month's salary">
                   <button
                     type="button"
@@ -1589,12 +1664,15 @@ function PayrollRow({
                     {status === 'partial' ? 'Pay Roll (Add More Payment)' : status === 'paid' ? 'Pay Roll (Already Paid)' : 'Pay Roll'}
                   </button>
                 </Tooltip>
+                )}
+                {canCreate && (
                 <Tooltip text="Set up new advance/loan, record repayments or view loan history">
                   <button type="button" className="drop-item" onClick={onAdvLoan}>
                     <i className="fa-solid fa-hand-holding-dollar" style={{ color: '#16A34A' }} aria-hidden="true"></i> Advance / Loan
                   </button>
                 </Tooltip>
-                {rec?.payrollID && (
+                )}
+                {canDelete && rec?.payrollID && (
                   <Tooltip text="Delete this month's payroll setup and all its payments">
                     <button type="button" className="drop-item" onClick={onDeletePayroll}>
                       <i className="fa-solid fa-trash" style={{ color: '#DC2626' }} aria-hidden="true"></i> Delete Payroll
@@ -1746,6 +1824,7 @@ function PayRollModal({
   emp, month, year, rec: existingRec,
   loanRemaining = 0, monthlyLoanDeduct = 0,
   onClose, onSaveSetup, onRecordPayment, onDelete, toast,
+  canCreate = true, canApprove = true, canDelete = true,
 }) {
   const [tab, setTab] = useState(0);
 
@@ -2313,7 +2392,7 @@ function PayRollModal({
         </div>
 
         <div className="modal-foot">
-          {existingRec?.payrollID && (
+          {canDelete && existingRec?.payrollID && (
             <Tooltip text="Delete this month's payroll setup and all its payments">
               <button
                 type="button"
@@ -2333,6 +2412,7 @@ function PayRollModal({
             </Tooltip>
           )}
           <button type="button" className="btn-secondary" onClick={onClose}>Close</button>
+          {((tab === 0 && canCreate) || (tab !== 0 && canApprove)) && (
           <button
             type="button"
             className="btn-primary"
@@ -2342,6 +2422,7 @@ function PayRollModal({
           >
             <i className={`fa-solid ${footerBtn.icon}`} aria-hidden="true"></i> {footerBtn.label}
           </button>
+          )}
         </div>
       </div>
     </div>
@@ -2356,6 +2437,7 @@ function AdvLoanModal({
   emp, loans, activeLoans, totalLoaned, totalReturned,
   totalRemaining, activeCount,
   onClose, onSaveNew, onSaveRepay, onMarkReturned, toast,
+  canCreate = true, canApprove = true,
 }) {
   const [tab, setTab] = useState(0);
   const today = new Date().toISOString().slice(0, 10);
@@ -2731,7 +2813,7 @@ function AdvLoanModal({
                       </div>
                     )}
 
-                    {l.status === 'active' && (
+                    {canApprove && l.status === 'active' && (
                       <div style={{
                         display: 'flex', justifyContent: 'flex-end', gap: 8,
                         marginTop: 10, paddingTop: 10, borderTop: '1px dashed var(--bl)',
@@ -2756,12 +2838,12 @@ function AdvLoanModal({
         {/* ─── Foot ─── */}
         <div className="modal-foot">
           <button type="button" className="btn-secondary" onClick={onClose}>Cancel</button>
-          {tab === 0 && (
+          {tab === 0 && canCreate && (
             <button type="button" className="btn-primary" onClick={handleSaveNew}>
               <i className="fa-solid fa-floppy-disk" aria-hidden="true"></i> Save
             </button>
           )}
-          {tab === 1 && activeLoans.length > 0 && (
+          {tab === 1 && canApprove && activeLoans.length > 0 && (
             <button type="button" className="btn-primary" onClick={handleSaveRepay}>
               <i className="fa-solid fa-money-bill-transfer" aria-hidden="true"></i> Loan Repayment
             </button>
@@ -2941,7 +3023,7 @@ function RspModal({ emp, type, month, year, onClose, onGenerate }) {
    to a placeholder, the 3-dots button opens an empty dropdown placeholder,
    and Add Employee toasts a "coming soon" message.
    ═══════════════════════════════════════════════════════════════════ */
-function EmployeeManagement({ emps, setEmps, depts, desigs, nextEmpId, setNextEmpId, toast }) {
+function EmployeeManagement({ emps, setEmps, depts, desigs, nextEmpId, setNextEmpId, toast, canCreate = true, canEdit = true, canDelete = true, canDownload = true, canAssign = true }) {
   const [sub, setSub] = useState('active');
   const [q,   setQ]   = useState('');
   const [fDept,  setFDept]  = useState('');
@@ -3172,6 +3254,7 @@ const markActiveAgain = async (emp) => {
               {desigs.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
             </select>
           </Tooltip>
+          {canCreate && (
           <Tooltip text="Add a new employee with full personal, official and salary details">
             <button
               type="button"
@@ -3182,6 +3265,7 @@ const markActiveAgain = async (emp) => {
               <i className="fa-solid fa-user-plus" aria-hidden="true"></i> Add Employee
             </button>
           </Tooltip>
+          )}
         </div>
 
         {/* ─── Table head ─── */}
@@ -3229,6 +3313,10 @@ const markActiveAgain = async (emp) => {
   onInactive={()  => { setMenuOpenId(null); setInactFor(e); }}
   onRestore={()   => { setMenuOpenId(null); markActiveAgain(e); }}
   toast={toast}
+  canEdit={canEdit}
+  canDelete={canDelete}
+  canDownload={canDownload}
+  canAssign={canAssign}
 />
             ))}
           </div>
@@ -3347,6 +3435,7 @@ function EmployeeRow({
   menuOpen, onToggleMenu, onCloseMenu,
   onEdit, onProfile, onIdCard, onLetter, onInactive, onRestore,
   toast,
+  canEdit = true, canDelete = true, canDownload = true, canAssign = true,
 }) {
   const nm  = getFullName(emp);
   const ini = nm.split(' ').filter(Boolean).map(p => p[0]).join('').toUpperCase().slice(0, 2) || '?';
@@ -3436,36 +3525,52 @@ function EmployeeRow({
               <div className="drop-menu" role="menu">
                 {isInactive ? (
                   <>
+                    {canDownload && (
                     <button type="button" className="drop-item" onClick={() => stubAction('Download Profile Report')}>
                       <i className="fa-solid fa-download" aria-hidden="true"></i> Download Profile Report
                     </button>
+                    )}
+                    {canAssign && (
                     <button type="button" className="drop-item" onClick={() => stubAction('Issue Letter')}>
                       <i className="fa-solid fa-envelope-open-text" aria-hidden="true"></i> Issue Letter
                     </button>
+                    )}
                   <button type="button" className="drop-item" style={{ color: '#16A34A' }} onClick={onRestore}>
   <i className="fa-solid fa-user-check" aria-hidden="true"></i> Mark Active Again
 </button>
+                    {canDelete && (
                     <button type="button" className="drop-item red" onClick={() => stubAction('Delete Employee')}>
                       <i className="fa-solid fa-trash" aria-hidden="true"></i> Delete Employee
                     </button>
+                    )}
                   </>
                 ) : (
                   <>
+                    {canEdit && (
                     <button type="button" className="drop-item" onClick={onEdit}>
                       <i className="fa-solid fa-pen" aria-hidden="true"></i> Edit Employee
                     </button>
+                    )}
+                    {canDownload && (
+                    <>
                     <button type="button" className="drop-item" onClick={onProfile}>
                       <i className="fa-solid fa-download" aria-hidden="true"></i> Download Profile Report
                     </button>
                     <button type="button" className="drop-item" onClick={onIdCard}>
                       <i className="fa-solid fa-id-card" aria-hidden="true"></i> Generate Staff ID Card
                     </button>
+                    </>
+                    )}
+                    {canAssign && (
                     <button type="button" className="drop-item" onClick={onLetter}>
                       <i className="fa-solid fa-envelope-open-text" aria-hidden="true"></i> Issue Letter
                     </button>
+                    )}
+                    {canDelete && (
                     <button type="button" className="drop-item red" onClick={onInactive}>
                       <i className="fa-solid fa-user-slash" aria-hidden="true"></i> Mark Inactive
                     </button>
+                    )}
                   </>
                 )}
               </div>
