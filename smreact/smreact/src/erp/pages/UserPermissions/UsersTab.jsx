@@ -225,11 +225,11 @@ export default function UsersTab({
                     </button>
                   </Tooltip>
                 )}
-                <Tooltip text={u.roleLabel === 'Principal' ? 'Not available for Principal' : 'Set Dashboard type (Admin / Teacher)'}>
+              {/*  <Tooltip text={u.roleLabel === 'Principal' ? 'Not available for Principal' : 'Set Dashboard type (Admin / Teacher)'}>
                   <button className="up-act" onClick={() => setDashFor(u)} disabled={u.roleLabel === 'Principal'} aria-label="Set dashboard type">
                     <i className="fa-solid fa-gauge-high" aria-hidden="true"></i>
                   </button>
-                </Tooltip>
+                </Tooltip> */}
                 {canEdit && (
                   <Tooltip text={u.roleLabel === 'Principal' ? 'Not available for Principal' : (u.status === 'Active' ? 'Deactivate user' : 'Activate user')}>
                     <button

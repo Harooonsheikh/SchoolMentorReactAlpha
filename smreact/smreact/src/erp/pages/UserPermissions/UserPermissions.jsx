@@ -27,7 +27,7 @@ import {
 const TABS = [
   { id: 'users',  icon: 'fa-users',           label: 'Users'             },
   { id: 'roles',  icon: 'fa-id-badge',        label: 'Roles'             },
-  { id: 'groups', icon: 'fa-layer-group',     label: 'Permission Groups' },
+ /* { id: 'groups', icon: 'fa-layer-group',     label: 'Permission Groups' },*/
   { id: 'audit',  icon: 'fa-clipboard-list',  label: 'Audit Logs'        },
 ];
 
