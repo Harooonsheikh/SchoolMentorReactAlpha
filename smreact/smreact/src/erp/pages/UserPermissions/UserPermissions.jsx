@@ -8,7 +8,6 @@ import PermissionGroupsTab from './PermissionGroupsTab';
 import AuditLogsTab from './AuditLogsTab';
 import { usePermissions } from '../../context/PermissionsContext';
 import {
-  INITIAL_USERS,
   INITIAL_ROLES,
   INITIAL_GROUPS,
   INITIAL_AUDIT,
@@ -28,7 +27,7 @@ import {
 const TABS = [
   { id: 'users',  icon: 'fa-users',           label: 'Users'             },
   { id: 'roles',  icon: 'fa-id-badge',        label: 'Roles'             },
-  { id: 'groups', icon: 'fa-layer-group',     label: 'Permission Groups' },
+ /* { id: 'groups', icon: 'fa-layer-group',     label: 'Permission Groups' },*/
   { id: 'audit',  icon: 'fa-clipboard-list',  label: 'Audit Logs'        },
 ];
 
@@ -79,27 +78,33 @@ export default function UserPermissions({ toast = () => {} }) {
   const canGroupsEdit   = can('User Permissions', 'Permission Groups', 'Edit');
   const canGroupsDelete = can('User Permissions', 'Permission Groups', 'Delete');
   const [tab,      setTab]      = useState('users');
-  const [users,    setUsers]    = useState(INITIAL_USERS);
+  /* Koi static data nahi — asli staff API se aata hai; tab tak loader chalta hai. */
+  const [users,    setUsers]    = useState([]);
   const [roles,    setRoles]    = useState(INITIAL_ROLES);
   const [groups,   setGroups]   = useState(INITIAL_GROUPS);
   const [auditLog, setAuditLog] = useState(INITIAL_AUDIT);
   const [tutorialOpen, setTutorialOpen] = useState(false);
   const [usersLoaded, setUsersLoaded] = useState(false);
+  const [usersLoading, setUsersLoading] = useState(true);
 
   /* Users tab active hote hi real employees API se laa kar map karo (ek dafa). */
   useEffect(() => {
     if (tab !== 'users' || usersLoaded) return undefined;
     let alive = true;
+    setUsersLoading(true);
     getEmployeesByBranch()
       .then((list) => {
         if (!alive) return;
         const mapped = (list || []).map(mapEmployeeToUser);
-        if (mapped.length) setUsers(mapped);
+        setUsers(mapped);
         setUsersLoaded(true);
       })
       .catch((err) => {
         console.error('Could not load employees for User Permissions:', err);
         if (alive) setUsersLoaded(true);
+      })
+      .finally(() => {
+        if (alive) setUsersLoading(false);
       });
     return () => { alive = false; };
   }, [tab, usersLoaded]);
@@ -300,6 +305,7 @@ export default function UserPermissions({ toast = () => {} }) {
             updateUser={updateUser}
             setDashboardType={setDashboardType}
             toast={toast}
+            loading={usersLoading}
             canEdit={canUsersEdit}
             canAssign={canUsersAssign}
           />

@@ -14,7 +14,7 @@ import {
    ═══════════════════════════════════════════════════════════════════ */
 export default function UsersTab({
   users, roles, assignRole, setUserStatus, updateUserPermissions,
-  setDashboardType, toast,
+  setDashboardType, toast, loading = false,
   canEdit = true, canAssign = true,
 }) {
   const [search,    setSearch]    = useState('');
@@ -107,7 +107,13 @@ export default function UsersTab({
         <span /> {/* keep grid column count */}
       </div>
 
-      {rows.length === 0 ? (
+      {loading ? (
+        <div className="up-empty">
+          <div className="up-empty-ic"><i className="fa-solid fa-spinner fa-spin" aria-hidden="true"></i></div>
+          <div className="up-empty-title">Loading staff details…</div>
+          <div className="up-empty-sub">Fetching users from the server, please wait.</div>
+        </div>
+      ) : rows.length === 0 ? (
         <div className="up-empty">
           <div className="up-empty-ic"><i className="fa-solid fa-user-slash" aria-hidden="true"></i></div>
           <div className="up-empty-title">No users match the current filters</div>
@@ -219,11 +225,11 @@ export default function UsersTab({
                     </button>
                   </Tooltip>
                 )}
-                <Tooltip text={u.roleLabel === 'Principal' ? 'Not available for Principal' : 'Set Dashboard type (Admin / Teacher)'}>
+              {/*  <Tooltip text={u.roleLabel === 'Principal' ? 'Not available for Principal' : 'Set Dashboard type (Admin / Teacher)'}>
                   <button className="up-act" onClick={() => setDashFor(u)} disabled={u.roleLabel === 'Principal'} aria-label="Set dashboard type">
                     <i className="fa-solid fa-gauge-high" aria-hidden="true"></i>
                   </button>
-                </Tooltip>
+                </Tooltip> */}
                 {canEdit && (
                   <Tooltip text={u.roleLabel === 'Principal' ? 'Not available for Principal' : (u.status === 'Active' ? 'Deactivate user' : 'Activate user')}>
                     <button
