@@ -336,8 +336,10 @@ function AuthGate() {
 
   function handleLogin(userData) {
     setUser(userData);
+    // Fresh login → koi purana 'forceSetup' flag na rahe (default screen par jao).
+    sessionStorage.removeItem('forceSetup');
     // launchSetup === 1 → go straight to the ERP screen, otherwise launch setup.
-    if (isErpUnlocked() && !sessionStorage.getItem('forceSetup')) { setScreen('erp'); return; }
+    if (isErpUnlocked()) { setScreen('erp'); return; }
     setScreen('app');
   }
 
@@ -372,7 +374,9 @@ function AuthGate() {
     <AppShell
       user={user}
       onLogout={() => { sessionStorage.clear(); setUser(null); setScreen('login'); }}
-      onOpenErp={() => setScreen('erp')}
+      /* ERP me wapas jaate waqt 'forceSetup' clear karo — warna refresh par ye flag
+         reh jata hai aur user ko galti se dubara Launch Setup par le jata hai. */
+      onOpenErp={() => { sessionStorage.removeItem('forceSetup'); setScreen('erp'); }}
     />
   );
 }

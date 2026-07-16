@@ -505,15 +505,34 @@ export async function saveHrPayrollSetup(p = {}) {
 }
 
 /* Delete a whole payroll record — the setup AND its payments — for one
-   employee/month. Called from the Pay Roll modal's Delete button.
+   employee/month. Called from the Pay Roll modal's Delete button and the row
+   Actions menu. DELETE /api/HR/delete-employee-payroll/{payrollId}?force=...
 
-   ENDPOINT PENDING: the delete API hasn't been provided yet. Once it is,
-   replace the throw below with the real fetch (DELETE to the payroll id,
-   with the standard Accept header + apiMessage error handling used by the
-   other HR calls in this file). */
-export async function deleteHrPayroll(payrollID) {
+   When payments (or loan repayments) already exist, the backend refuses a plain
+   delete with a 400 whose body is
+     { success:false, message, data:{ PaymentCount, PaidAmount, LoanRepaymentCount } }.
+   In that case we throw a structured error (err.blocked = true, err.details =
+   data) so the UI can show a "payments already recorded — still delete?" popup
+   and retry with force:true, which forces the delete through. */
+export async function deleteHrPayroll(payrollID, { force = false } = {}) {
   if (!payrollID) throw new Error('Missing payroll id');
-  throw new Error('Delete payroll API is not configured yet — provide the endpoint to finish wiring this.');
+  const res = await fetch(
+    buildUrl(`/api/HR/delete-employee-payroll/${payrollID}?force=${force ? 'true' : 'false'}`),
+    { method: 'DELETE', headers: { Accept: '*/*' } }
+  );
+  const json = await res.json().catch(() => null);
+  if (!res.ok) {
+    const data = json?.data;
+    const hasPayments = data && (Number(data.PaymentCount) > 0 || Number(data.LoanRepaymentCount) > 0);
+    if (!force && hasPayments) {
+      const err = new Error(apiMessage(json) || 'This payroll already has recorded payments.');
+      err.blocked = true;
+      err.details = data;
+      throw err;
+    }
+    throw new Error(apiMessage(json) || 'Could not delete payroll');
+  }
+  return json;
 }
 
 /* Pull the payroll record id out of a payroll-setup response (needed to attach
