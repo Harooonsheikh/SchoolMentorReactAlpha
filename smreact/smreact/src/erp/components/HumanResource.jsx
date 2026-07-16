@@ -1255,11 +1255,11 @@ function Financials({ emps, depts = [], desigs, toast, canCreate = true, canDele
   /* Loan mutators — persist to the backend, then refresh the employee's loans. */
   const saveNewLoan = async (empId, payload) => {
     const amount = Number(payload.amount) || 0;
-    if (amount <= 0) { toast('Please enter a valid loan amount', 'error'); return; }
-    if (!payload.repaymentType) { toast('Please select repayment type', 'error'); return; }
+    if (amount <= 0) { toast('Please enter a valid loan amount', 'error'); return false; }
+    if (!payload.repaymentType) { toast('Please select repayment type', 'error'); return false; }
     if (payload.repaymentType === 'Installment'
         && (!payload.installmentType || !(Number(payload.installmentAmount) > 0))) {
-      toast('Please complete installment details', 'error'); return;
+      toast('Please complete installment details', 'error'); return false;
     }
     try {
       await hrService.saveHrEmployeeLoan({
@@ -1273,21 +1273,22 @@ function Financials({ emps, depts = [], desigs, toast, canCreate = true, canDele
       });
     } catch (err) {
       toast(err.message || 'Could not save loan', 'error');
-      return;
+      return false;
     }
     await loadEmpLoans(empId);
     toast(`Loan of PKR ${fmtMoney(amount)} set up successfully`, 'success');
+    return true;
   };
 
   const saveLoanRepayment = async (empId, payload) => {
     const amt = Number(payload.amount) || 0;
     if (!payload.loanId || amt <= 0) {
-      toast('Please select a loan and enter a valid amount', 'error'); return;
+      toast('Please select a loan and enter a valid amount', 'error'); return false;
     }
     const loan = (empLoans[empId] || []).find(l => l.id === payload.loanId);
     if (loan && amt > loan.remaining) {
       toast(`Amount cannot exceed remaining balance (PKR ${fmtMoney(loan.remaining)})`, 'error');
-      return;
+      return false;
     }
     try {
       await hrService.saveHrEmployeeLoanRepayment({
@@ -1298,10 +1299,11 @@ function Financials({ emps, depts = [], desigs, toast, canCreate = true, canDele
       });
     } catch (err) {
       toast(err.message || 'Could not record repayment', 'error');
-      return;
+      return false;
     }
     await loadEmpLoans(empId);
     toast(`Loan repayment of PKR ${fmtMoney(amt)} recorded`, 'success');
+    return true;
   };
 
   const markLoanReturned = async (empId, loanId) => {
@@ -2507,8 +2509,8 @@ function AdvLoanModal({
     setInstallmentAmount('');
   };
 
-  const handleSaveNew = () => {
-    onSaveNew({
+  const handleSaveNew = async () => {
+    const ok = await onSaveNew({
       amount:            Number(loanAmount) || 0,
       comment:           loanComment.trim(),
       repaymentType:     repayType,
@@ -2516,21 +2518,24 @@ function AdvLoanModal({
       installmentType,
       installmentAmount: Number(installmentAmount) || 0,
     });
-    if (Number(loanAmount) > 0 && repayType
-        && (repayType !== 'Installment' || (installmentType && Number(installmentAmount) > 0))) {
+    if (ok) {
       resetNewLoanForm();
+      onClose();
     }
   };
 
-  const handleSaveRepay = () => {
-    onSaveRepay({
+  const handleSaveRepay = async () => {
+    const ok = await onSaveRepay({
       loanId:  Number(repayLoanId),
       amount:  Number(repayAmount) || 0,
       date:    repayDate,
       comment: repayComment.trim(),
     });
-    setRepayAmount('');
-    setRepayComment('');
+    if (ok) {
+      setRepayAmount('');
+      setRepayComment('');
+      onClose();
+    }
   };
 
   const installmentDisabled = repayType !== 'Installment';
@@ -4085,6 +4090,14 @@ function AddEmployeeModal({ mode = 'add', emp, depts, desigs, nextEmpId, onClose
     [desigs, form.dId],
   );
 
+  /* Strip any leading minus / negative value — money fields can't be negative. */
+  const nonNeg = (v) => {
+    if (v === '' || v == null) return '';
+    const n = Number(v);
+    if (Number.isNaN(n)) return '';
+    return n < 0 ? '0' : v;
+  };
+
   /* ── Generic setters ── */
   const set      = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const setLeave = (k, v) => setForm(f => ({ ...f, leaves: { ...f.leaves, [k]: v } }));
@@ -4497,7 +4510,7 @@ function AddEmployeeModal({ mode = 'add', emp, depts, desigs, nextEmpId, onClose
             <div className="m-section">
               <div className="m-section-title"><i className="fa-solid fa-money-bill-wave" aria-hidden="true"></i> Basic Salary</div>
               <div className="f-row">
-                <div className="f-group"><label className="f-label">Basic Monthly Salary (PKR) <span className="req">*</span></label><input type="number" className="f-input" placeholder="e.g. 50000" value={form.basicSalary} onChange={(e) => set('basicSalary', e.target.value)} min={0} /></div>
+                <div className="f-group"><label className="f-label">Basic Monthly Salary (PKR) <span className="req">*</span></label><input type="number" className="f-input" placeholder="e.g. 50000" value={form.basicSalary} onChange={(e) => set('basicSalary', nonNeg(e.target.value))} min={0} /></div>
                 <div className="f-group"><label className="f-label">Payment Method</label>
                   <select className="f-select2" value={form.payMethod} onChange={(e) => set('payMethod', e.target.value)}>
                     <option>Bank Transfer</option><option>Cash</option><option>Cheque</option><option>Mobile Wallet</option>
@@ -4567,7 +4580,7 @@ function AddEmployeeModal({ mode = 'add', emp, depts, desigs, nextEmpId, onClose
                           className="sal-head-amt-input"
                           placeholder="0"
                           value={h.amount}
-                          onChange={(e) => setHead(i, { amount: e.target.value })}
+                          onChange={(e) => setHead(i, { amount: nonNeg(e.target.value) })}
                         />
                       </div>
                     </div>
