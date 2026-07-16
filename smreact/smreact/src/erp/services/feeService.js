@@ -234,6 +234,55 @@ export async function deleteFeeHead(feeStructureID) {
   return json;
 }
 
+/* Student-specific fee discount (Fee Challans → Discount Manager → Save).
+   One record per fee head: POST /api/Student/save-fee-discount. */
+export async function saveFeeDiscount({ id = 0, gradeID = 0, sectionID = 0, headID = 0, headName = '', discountAmount = 0, studentID = 0, studentName = '' } = {}) {
+  const branchID = Number(sessionStorage.getItem('branchID')) || 0;
+  const userID   = Number(sessionStorage.getItem('UserID')) || 0;
+  const now      = new Date().toISOString();
+  const body = {
+    id:             Number(id) || 0,   // >0 → us record ko update; 0 → insert
+    branchID,
+    gradeID:        Number(gradeID) || 0,
+    headID:         Number(headID) || 0,
+    headName:       String(headName || ''),
+    discountAmount: Number(discountAmount) || 0,
+    studentID:      Number(studentID) || 0,
+    studentName:    String(studentName || ''),
+    sectionID:      Number(sectionID) || 0,
+    createdAt:      now,
+    createdBy:      userID,
+    modifiedAt:     now,
+    modifiedBy:     userID,
+    isActive:       true,
+  };
+  const res = await fetch(buildUrl('/api/Student/save-fee-discount'), {
+    method: 'POST',
+    headers: { Accept: '*/*', 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok || json?.success === false) {
+    throw new Error(apiMessage(json) || 'Could not save fee discount');
+  }
+  return json;
+}
+
+/* Saved fee discounts for ONE student — used to pre-fill the Discount Manager.
+   GET /api/Student/get-fee-discounts-by-student/{studentId}.
+   Returns only that student's rows: { headID, discountAmount, ... }. */
+export async function getFeeDiscountsByStudent(studentId) {
+  if (!studentId) return [];
+  const res = await fetch(buildUrl(`/api/Student/get-fee-discounts-by-student/${studentId}`), {
+    headers: { Accept: '*/*' },
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok || json?.success === false) {
+    throw new Error(apiMessage(json) || 'Could not load fee discounts');
+  }
+  return Array.isArray(json?.data) ? json.data : [];
+}
+
 /* Read APIs — return clones so callers can mutate locally without
    corrupting the mock for the next caller. */
 export async function getFeeClasses()   { const data = await fetchFeeClassStudents(); return data.classes; }
@@ -487,6 +536,58 @@ export async function getGeneratedFamilyChallans() {
   return new Set(mockGeneratedFamilyChallans);
 }
 
+/* Class-wise fee heads for the branch — used to populate the Family Tree
+   Challans "Select Fee Heads" dropdown. Returns { [classId]: [headName, …] }. */
+export async function getClassFeeHeadsMap() {
+  const branchID = sessionStorage.getItem('branchID');
+  const empID    = sessionStorage.getItem('employee_ID');
+  const token    = sessionStorage.getItem('token');
+  const res = await fetch(buildUrl(`/get-classlist-sectionlist-studentlist-by-branch/${branchID}/${empID}`), {
+    method: 'GET',
+    headers: { Accept: 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok || json?.success === false) {
+    throw new Error(apiMessage(json) || 'Could not load class fee heads');
+  }
+  const data = Array.isArray(json?.data) ? json.data : [];
+  const map = {};
+  data.forEach(cls => {
+    map[cls.id] = (Array.isArray(cls.feeHeads) ? cls.feeHeads : [])
+      .map(h => h.headName)
+      .filter(Boolean);
+  });
+  return map;
+}
+
+/* Class-wise fee-structure heads (full objects) for the branch — same source
+   as above but keeps feeStructureID + amount. Used to resolve fee discounts
+   (discount.headID ↔ feeStructureID) and to render the Discount Manager rows.
+   Returns { [classId/gradeId]: [{ feeStructureID, name, amt }] }. */
+export async function getClassFeeStructureMap() {
+  const branchID = sessionStorage.getItem('branchID');
+  const empID    = sessionStorage.getItem('employee_ID');
+  const token    = sessionStorage.getItem('token');
+  const res = await fetch(buildUrl(`/get-classlist-sectionlist-studentlist-by-branch/${branchID}/${empID}`), {
+    method: 'GET',
+    headers: { Accept: 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok || json?.success === false) {
+    throw new Error(apiMessage(json) || 'Could not load class fee heads');
+  }
+  const data = Array.isArray(json?.data) ? json.data : [];
+  const map = {};
+  data.forEach(cls => {
+    map[cls.id] = (Array.isArray(cls.feeHeads) ? cls.feeHeads : []).map(h => ({
+      feeStructureID: h.feeStructureID ?? h.id ?? 0,
+      name:           h.headName ?? h.name ?? '',
+      amt:            Number(h.amount ?? h.amt) || 0,
+    }));
+  });
+  return map;
+}
+
 /* Write APIs — in-memory only until backend wires real endpoints. */
 export async function saveFeeHeads(classKey, heads) { await delay(); return clone({ classKey, heads }); }
 export async function saveTransportFee(classKey, rows) { await delay(); return clone({ classKey, rows }); }
@@ -714,6 +815,34 @@ export async function deleteFamilyChallan(famKey, reg, monthIdx) {
 export async function removeFamilyChild(famKey, reg) {
   await delay();
   return { famKey, reg, removed: true };
+}
+
+/* Remove a child from a family (Family Tree Challans → "Remove child from family").
+   Real API: POST /api/FamilyTree/familytreedetailcrud with action:'delete'.
+   `id` = the family-tree DETAIL record id (child link) to delete. */
+export async function deleteFamilyTreeDetail({ id, treeID = 0, applicantsID = 0, gradeID = 0, sectionID = 0 } = {}) {
+  const branchID = Number(sessionStorage.getItem('branchID')) || 0;
+  const userID   = Number(sessionStorage.getItem('UserID')) || 0;
+  const body = {
+    action:       'delete',
+    id:           Number(id) || 0,
+    treeID:       Number(treeID) || 0,
+    branchID,
+    applicantsID: Number(applicantsID) || 0,
+    gradeID:      Number(gradeID) || 0,
+    sectionID:    Number(sectionID) || 0,
+    createdBy:    userID,
+  };
+  const res  = await fetch(buildUrl('/api/FamilyTree/familytreedetailcrud'), {
+    method: 'POST',
+    headers: { Accept: '*/*', 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok || json?.success === false) {
+    throw new Error(apiMessage(json) || 'Could not remove child from family');
+  }
+  return json;
 }
 
 /* Fee Receiving APIs. */

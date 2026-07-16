@@ -765,6 +765,26 @@ function familyChildFigures(rec) {
 function FamilyTreeChallansList({ toast }) {
   const { data: serverFams = [] }      = useAsync(feeService.getFamilies, []);
   const { data: settings = {} }        = useAsync(feeService.getFeeSettings, []);
+  /* Class-wise fee heads (headName) — powers the Generate Family Challans
+     "Select Fee Heads" dropdown, keyed by class/grade id. */
+  const { data: classFeeHeads = {} }   = useAsync(feeService.getClassFeeHeadsMap, []);
+
+  /* Build deduped fee-head options (by name, case-insensitive) across the
+     given class/grade ids. Family challans carry no per-head amount, so we
+     surface names only. */
+  const feeHeadsFor = (gradeIds) => {
+    const seen = new Set();
+    const out = [];
+    (gradeIds || []).forEach(gid => {
+      (classFeeHeads[gid] || []).forEach(name => {
+        const k = String(name).trim().toLowerCase();
+        if (!k || seen.has(k)) return;
+        seen.add(k);
+        out.push({ name });
+      });
+    });
+    return out;
+  };
 
   /* Local mirror of families (mutable: remove-child support) */
   const [families, setFamilies] = useState(null);
@@ -815,9 +835,12 @@ function FamilyTreeChallansList({ toast }) {
      the family list or the applied month/year changes. A child that has a
      ledger row for the month is marked generated. */
   const [figMap, setFigMap] = useState({});
+  /* BranchLedger record id per child challan — used to delete via
+     /api/BranchLedger/delete/{id}. Keyed by keyOf(fam, reg). */
+  const [idMap, setIdMap] = useState({});
   const loadLedgers = useCallback(async () => {
     const fams = families;
-    if (!fams || !fams.length) { setFigMap({}); setGenSet(new Set()); return; }
+    if (!fams || !fams.length) { setFigMap({}); setIdMap({}); setGenSet(new Set()); return; }
     const mIdx  = FEE_MONTHS.indexOf(appliedMonth);
     const pairs = fams
       .flatMap(f => (f.children || []).map(ch => ({ f, ch })))
@@ -828,19 +851,22 @@ function FamilyTreeChallansList({ toast }) {
         try {
           const rows = await feeService.getStudentChallans(ch.applicantsID, mIdx + 1, appliedYear);
           const rec  = Array.isArray(rows) && rows.length ? rows[0] : null;
-          return { key, fig: rec ? familyChildFigures(rec) : null };
+          return { key, fig: rec ? familyChildFigures(rec) : null, id: rec?.id ?? null };
         } catch (e) {
-          return { key, fig: null };
+          return { key, fig: null, id: null };
         }
       }));
       const fmap = {};
+      const imap = {};
       const gset = new Set();
-      results.forEach(({ key, fig }) => { if (fig) { fmap[key] = fig; gset.add(key); } });
+      results.forEach(({ key, fig, id }) => { if (fig) { fmap[key] = fig; gset.add(key); if (id != null) imap[key] = id; } });
       setFigMap(fmap);
+      setIdMap(imap);
       setGenSet(gset);
     } catch (e) {
       toast(e.message || 'Could not load family ledgers', 'error');
       setFigMap({});
+      setIdMap({});
       setGenSet(new Set());
     }
   }, [families, appliedMonth, appliedYear, toast]);
@@ -894,14 +920,8 @@ function FamilyTreeChallansList({ toast }) {
         dues: fig.dues || 0, advance: fig.advance || 0, current: fig.payable,
       };
     });
-    /* Fixed family-mode head categories (no per-head amounts — family
-       combined challan rolls up each child's fee+transport−discount). */
-    const familyHeads = [
-      { name: 'Tuition Fee' },
-      { name: 'Transport Fee' },
-      { name: 'Admission Fee' },
-      { name: 'Examination Fee' },
-    ];
+    /* Fee heads come from each child's class fee-setup (deduped by name). */
+    const familyHeads = feeHeadsFor(f.children.map(ch => ch.gradeID));
     setBulkGen({
       classMeta: { key: f.key, cls: f.name, sec: f.guardian },
       students:  pseudoStudents,
@@ -929,12 +949,8 @@ function FamilyTreeChallansList({ toast }) {
       advance: fig.advance || 0,
       current: totalFee,
     };
-    const familyHeads = [
-      { name: 'Tuition Fee' },
-      { name: 'Transport Fee' },
-      { name: 'Admission Fee' },
-      { name: 'Examination Fee' },
-    ];
+    /* Fee heads for this child's own class (deduped by name). */
+    const familyHeads = feeHeadsFor([ch.gradeID]);
     setBulkGen({
       /* Pass the child's actual class/section to the card, but keep the
          family key so the genSet keys roll up under the family. */
@@ -997,9 +1013,17 @@ function FamilyTreeChallansList({ toast }) {
       message: `${ch.name}'s ${appliedMonth} ${appliedYear} challan will be deleted.`,
       hint:    'This action cannot be undone.',
       onConfirm: async () => {
-        setGenSet(prev => { const n = new Set(prev); n.delete(keyOf(f.key, ch.reg)); return n; });
-        await feeService.deleteFamilyChallan(f.key, ch.reg, monthIdx);
-        toast(`Challan removed for ${ch.name}`, 'success');
+        /* Real API: delete the BranchLedger challan record by its id. */
+        const id = idMap[keyOf(f.key, ch.reg)];
+        if (id == null) { toast('No challan found to delete', 'warning'); return; }
+        try {
+          await feeService.deleteChallanById(id);
+          toast(`Challan removed for ${ch.name}`, 'success');
+        } catch (e) {
+          toast(e.message || 'Could not delete challan', 'error');
+        } finally {
+          await loadLedgers();
+        }
       },
     });
   };
@@ -1011,12 +1035,24 @@ function FamilyTreeChallansList({ toast }) {
       confirmLabel: 'Yes, Remove',
       icon:    'fa-user-minus',
       onConfirm: async () => {
+        /* Real API: delete the family-tree detail record by its id. */
+        try {
+          await feeService.deleteFamilyTreeDetail({
+            id:           ch.detailID,
+            treeID:       f.id,
+            applicantsID: ch.applicantsID,
+            gradeID:      ch.gradeID,
+            sectionID:    ch.sectionID,
+          });
+        } catch (err) {
+          toast(err.message || 'Could not remove child from family', 'error');
+          return;
+        }
         setFamilies(prev => prev.map(x => x.key === f.key ? {
           ...x,
           children: x.children.filter(c => c.reg !== ch.reg),
         } : x));
         setGenSet(prev => { const n = new Set(prev); n.delete(keyOf(f.key, ch.reg)); return n; });
-        await feeService.removeFamilyChild(f.key, ch.reg);
         toast('Child removed from family challan', 'success');
       },
     });
@@ -1343,6 +1379,12 @@ function challanFigures(rec) {
 }
 
 function FeeChallansList({ toast }) {
+  /* Classes API ke fee heads (feeStructureID + name) — Discount Manager ke
+     heads render + saved-discount ko headID se resolve karne ke liye. */
+  const { data: classFeeStruct = {} } = useAsync(feeService.getClassFeeStructureMap, []);
+  /* Existing discount record ids: { [studentID]: { [headID]: recordId } } — save
+     par bheja jaata hai taake already-added discount update ho (na ke naya insert). */
+  const discountIdRef = useRef({});
   const { can } = usePermissions();
   const canChCreate   = can('Fee', 'Fee Challans', 'Create');
   const canChDelete   = can('Fee', 'Fee Challans', 'Delete');
@@ -1568,20 +1610,79 @@ function FeeChallansList({ toast }) {
     setTimeout(() => toast('Challan ready — use your browser\'s Save as PDF.', 'success'), 1100);
   };
 
-  const openDiscount = (c, s) => {
-    const heads   = headsMap[c.key] || [];
+  const openDiscount = async (c, s) => {
+    const gradeId = s.gradeID || c._gradeId;
+    /* Heads classes API (get-classlist-…) se — inme feeStructureID + headName
+       hota hai jo discount ke headID se match karta hai. Fallback: headsMap. */
+    const heads = (classFeeStruct[gradeId] && classFeeStruct[gradeId].length)
+      ? classFeeStruct[gradeId]
+      : (headsMap[c.key] || []);
     if (heads.length === 0) { toast('Configure fee heads for this class first', 'warning'); return; }
-    const initial = (discountMap[c.key] && discountMap[c.key][s.reg]) || {};
+    /* Pehle local mirror; phir by-student API se saved discounts laa kar head
+       ke against dikhao (API sirf isi student ke records deti hai). */
+    let initial = (discountMap[c.key] && discountMap[c.key][s.reg]) || {};
+    try {
+      const rows   = await feeService.getFeeDiscountsByStudent(s.studentID);
+      const active = (rows || []).filter(r => r.isActive !== false);
+      /* headID → existing record id yaad rakho (save par update ke liye). */
+      const idMap = {};
+      active.forEach(r => { idMap[String(r.headID)] = r.id; });
+      discountIdRef.current[String(s.studentID)] = idMap;
+      if (active.length) {
+        const fromApi = {};
+        active.forEach(r => {
+          /* headName API me khaali aata hai — headID ko head.feeStructureID se match karo. */
+          const head = heads.find(h => Number(h.feeStructureID) === Number(r.headID));
+          if (head) fromApi[head.name] = Number(r.discountAmount) || 0;
+        });
+        if (Object.keys(fromApi).length) initial = fromApi;
+      }
+    } catch (e) { /* API fail → local mirror hi use hoga */ }
     setDiscountCtx({ classMeta: c, student: s, heads, initial });
   };
-  const saveDiscount = (classKey, reg, perHead) => {
+  const saveDiscount = async (classKey, reg, perHead) => {
+    /* Local mirror (drives the challan discount figures). */
     setDiscountMap(prev => {
       const next = { ...prev };
       next[classKey] = { ...(next[classKey] || {}) };
       next[classKey][reg] = { ...perHead };
       return next;
     });
-    toast('Discount saved', 'success');
+
+    /* Real API: POST /api/Student/save-fee-discount — ek record per fee head. */
+    const cls     = classes.find(x => x.key === classKey);
+    const student = (studentsMap[classKey] || []).find(x => x.reg === reg);
+    const gradeId = student?.gradeID || cls?._gradeId;
+    /* feeStructureID classes API se (modal heads jaisi hi source), fallback headsMap. */
+    const heads   = (classFeeStruct[gradeId] && classFeeStruct[gradeId].length)
+      ? classFeeStruct[gradeId]
+      : (headsMap[classKey] || []);
+    const entries = Object.entries(perHead || {});
+    const idMap   = discountIdRef.current[String(student?.studentID)] || {};
+    if (student && entries.length) {
+      try {
+        for (const [headName, discountAmount] of entries) {
+          const head = heads.find(h => h.name === headName);
+          /* Already-added discount ho to uska id bhejo (update); warna 0 (insert). */
+          const existingId = idMap[String(head?.feeStructureID)] || 0;
+          await feeService.saveFeeDiscount({
+            id:             existingId,
+            gradeID:        student.gradeID || cls?._gradeId,
+            sectionID:      student.sectionID || cls?._sectionId,
+            headID:         head?.feeStructureID,
+            headName,
+            discountAmount,
+            studentID:      student.studentID,
+            studentName:    student.name,
+          });
+        }
+        toast('Discount saved', 'success');
+      } catch (e) {
+        toast(e.message || 'Could not save discount', 'error');
+      }
+    } else {
+      toast('Discount saved', 'success');
+    }
     setDiscountCtx(null);
   };
 
@@ -3577,6 +3678,11 @@ function FeeReceivingIndividual({ toast }) {
   };
 
   const handleSaveReceipt = (payload) => {
+    /* Sirf tab receive karo jab amount > 0 ho — warna kuch create na karo. */
+    if (!(Number(payload.amount) > 0)) {
+      toast('Receiving amount must be greater than 0', 'warning');
+      return;
+    }
     /* Append payment to receipts state */
     setReceipts(prev => {
       const next = [...(prev || [])];
@@ -4042,9 +4148,18 @@ function FamilyTreeReceiving({ toast }) {
     return r ? r.payments : [];
   }, [receiptsList, monthIdx]);
 
-  const modelFor = useCallback((ch, famKey) => childRecModel({
-    child: ch, payments: paymentsFor(famKey, ch.reg),
-  }), [paymentsFor]);
+  /* Ledger record (challan id + detailRows) per child, keyed by `${famKey}|${reg}`.
+     Filled when a receive/bulk modal is opened; used to POST receive-payment. */
+  const ledgerRecRef = useRef({});
+  const modelFor = useCallback((ch, famKey) => {
+    const payments = paymentsFor(famKey, ch.reg);
+    /* Real challan present → build heads from its detailRows so head names
+       match the ledger (receive-payment matches perHead by subHead/head). */
+    if (ch._challan && Array.isArray(ch._challan.detailRows)) {
+      return recStudentModel({ student: ch, generated: true, payments, challan: ch._challan });
+    }
+    return childRecModel({ child: ch, payments });
+  }, [paymentsFor]);
 
   const familySummary = useCallback((f) => {
     let total = 0, paid = 0, unpaid = 0, onelink = 0;
@@ -4084,14 +4199,37 @@ function FamilyTreeReceiving({ toast }) {
     setSearchQ('');
   };
 
-  const openReceive = (f, ch, viewOnly = false) => {
-    const m = modelFor(ch, f.key);
+  const openReceive = async (f, ch, viewOnly = false) => {
+    /* Child ki asli receivable /api/BranchLedger/get-all se laa kar enrich karo,
+       phir uska model bana kar receiving modal kholo. */
+    let child = ch;
+    if (ch.applicantsID != null) {
+      try {
+        const rows = await feeService.getStudentChallans(ch.applicantsID, monthIdx + 1, appliedYear);
+        const rec  = Array.isArray(rows) && rows.length ? rows[0] : null;
+        if (rec) {
+          const fig = familyChildFigures(rec);
+          child = {
+            ...ch,
+            fee:       fig.fee,
+            transport: fig.transport,
+            discount:  fig.discount,
+            dues:      fig.dues,
+            advance:   fig.advance,
+            _ledgerId: rec.id,
+            _challan:  rec,
+          };
+          ledgerRecRef.current[`${f.key}|${ch.reg}`] = rec;
+        }
+      } catch (e) { /* keep original child on failure */ }
+    }
+    const m = modelFor(child, f.key);
     setReceiveCtx({
       kind: 'child',
       famKey: f.key, family: f,
-      classMeta: { key: f.key, cls: ch.cls, sec: ch.sec, familyName: f.name, guardian: f.guardian },
-      student: ch, model: m,
-      payments: paymentsFor(f.key, ch.reg),
+      classMeta: { key: f.key, cls: child.cls, sec: child.sec, familyName: f.name, guardian: f.guardian },
+      student: child, model: m,
+      payments: paymentsFor(f.key, child.reg),
       period:   `${appliedMonth} ${appliedYear}`,
       monthIdx,
       viewOnly,
@@ -4100,6 +4238,11 @@ function FamilyTreeReceiving({ toast }) {
   };
 
   const handleSaveReceipt = (payload) => {
+    /* Sirf tab receive karo jab amount > 0 ho — warna kuch create na karo. */
+    if (!(Number(payload.amount) > 0)) {
+      toast('Receiving amount must be greater than 0', 'warning');
+      return;
+    }
     setReceipts(prev => {
       const next = [...(prev || [])];
       const idx  = next.findIndex(r => r.famKey === payload.famKey && r.reg === payload.reg && r.monthIdx === payload.monthIdx);
@@ -4113,6 +4256,30 @@ function FamilyTreeReceiving({ toast }) {
       else          next.push({ famKey: payload.famKey, reg: payload.reg, monthIdx: payload.monthIdx, payments: [pay] });
       return next;
     });
+
+    /* POST to /api/BranchLedger/receive-payment. ledgerId = the child challan id;
+       each detailRow carries the running receivedAmount + pendingorAdv. The
+       per-head amounts entered now are matched to detailRows by subHead/head. */
+    const rec = ledgerRecRef.current[`${payload.famKey}|${payload.reg}`];
+    if (rec && rec.id) {
+      const userID = Number(sessionStorage.getItem('UserID')) || 0;
+      const now    = new Date().toISOString();
+      const detailRows = (rec.detailRows || []).map(r => {
+        const recvNow  = +(payload.perHead?.[r.subHead ?? r.head]) || 0;
+        const received = (+r.receivedAmount || 0) + recvNow;
+        const net      = (+r.challanAmount || 0) - (+r.discount || 0);
+        return { ...r, receivedAmount: received, pendingorAdv: net - received, modifiedAt: now, modifiedBy: userID };
+      });
+      feeService.receivePayment({
+        ledgerId:      rec.id,
+        paymentMethod: payload.method || '',
+        modifiedBy:    userID,
+        detailRows,
+      }).catch(e => toast(e.message || 'Could not record payment', 'error'));
+    } else {
+      toast('No challan found to receive against', 'warning');
+    }
+
     feeService.saveFamilyReceipt(payload).catch(() => {});
     toast(`Rs. ${(payload.amount || 0).toLocaleString('en-PK')} received from ${payload.studentName}`, 'success');
     const f = receiveCtx?.family, ch = receiveCtx?.student;
@@ -4145,20 +4312,70 @@ function FamilyTreeReceiving({ toast }) {
   };
 
   const requestDeleteFamily = (f) => {
+    const children = f.children || [];
     setConfirm({
       title:   'Delete family record?',
       message: <span><strong>{f.name}</strong> will be removed from fee receiving.</span>,
-      hint:    'Children remain in their classes — only the family grouping is removed.',
+      hint:    `The ${appliedMonth} ${appliedYear} challan of each child (${children.length}) will be deleted.`,
       confirmLabel: 'Yes, Remove',
       icon:    'fa-people-roof',
-      onConfirm: () => {
+      onConfirm: async () => {
+        /* For every child, delete its BranchLedger challan record for the
+           applied month/year — one /api/BranchLedger/delete/{id} call each. */
+        const mIdx = FEE_MONTHS.indexOf(appliedMonth);
+        let deleted = 0, failed = 0;
+        for (const ch of children) {
+          if (ch.applicantsID == null) continue;
+          try {
+            const rows = await feeService.getStudentChallans(ch.applicantsID, mIdx + 1, appliedYear);
+            const rec  = Array.isArray(rows) && rows.length ? rows[0] : null;
+            if (!rec?.id) continue;                 // no challan for this child/month
+            await feeService.deleteChallanById(rec.id);
+            deleted++;
+          } catch (e) {
+            failed++;
+          }
+        }
         setFamilies(prev => (prev || []).filter(x => x.key !== f.key));
-        toast('Family record removed', 'success');
+        if (failed) {
+          toast(`Family removed — ${deleted} challan${deleted === 1 ? '' : 's'} deleted, ${failed} failed`, deleted ? 'warning' : 'error');
+        } else {
+          toast(`Family record removed — ${deleted} challan${deleted === 1 ? '' : 's'} deleted`, 'success');
+        }
       },
     });
   };
 
-  const openBulk = (f) => setBulkCtx({ family: f, period: `${appliedMonth} ${appliedYear}`, monthIdx });
+  /* Bulk receiving: har child ke against /api/BranchLedger/get-all hit karke
+     (getStudentChallans) uski asli receivable (fee/transport/discount/dues/
+     advance) laa kar children ko enrich karo, phir bulk modal kholo. */
+  const openBulk = async (f) => {
+    const children = f.children || [];
+    toast('Loading receivables…', 'info');
+    const enriched = await Promise.all(children.map(async (ch) => {
+      if (ch.applicantsID == null) return ch;
+      try {
+        const rows = await feeService.getStudentChallans(ch.applicantsID, monthIdx + 1, appliedYear);
+        const rec  = Array.isArray(rows) && rows.length ? rows[0] : null;
+        if (!rec) return ch;
+        ledgerRecRef.current[`${f.key}|${ch.reg}`] = rec;
+        const fig = familyChildFigures(rec);
+        return {
+          ...ch,
+          fee:       fig.fee,
+          transport: fig.transport,
+          discount:  fig.discount,
+          dues:      fig.dues,
+          advance:   fig.advance,
+          _ledgerId: rec.id,
+          _challan:  rec,
+        };
+      } catch (e) {
+        return ch;
+      }
+    }));
+    setBulkCtx({ family: { ...f, children: enriched }, period: `${appliedMonth} ${appliedYear}`, monthIdx });
+  };
 
   const downloadFamilySlip = (f) => {
     setFamilySlipCtx({ family: f, period: `${appliedMonth} ${appliedYear}`, defaultSize: settings.printSize || 'a4' });
