@@ -661,13 +661,33 @@ function buildLedgerChallanPayload({ classMeta = {}, student = {}, heads = [], m
     isActive: true,
   });
 
-  /* Family mode: each child carries its own fee/transport/discount (there are
-     no shared per-class heads), so build a single "Tuition Fee" row from the
-     child's fee and let the transport block below add its transport head.
-     Class mode: one row per selected fee head, with that class's amounts. */
-  const detailRows = options.familyMode
-    ? [makeRow('Tuition Fee', student.fee, student.discount)]
-    : heads.map(h => makeRow(h.name || h.headName, h.amt ?? h.amount, classDisc[h.name]));
+  const headName = (h) => h.name ?? h.headName ?? '';
+  const headAmt  = (h) => Number(h.amt ?? h.amount) || 0;
+  const rowsFromHeads = (list) => list.map(h => makeRow(headName(h), headAmt(h), classDisc[headName(h)]));
+
+  /* Selected fee-head names from the "Select Fee Heads" picker (deduped, so one
+     entry per common head name). Empty → use all of the student's heads. */
+  const sameName = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
+  const pickedNames = Array.isArray(options.selectedHeadNames) ? options.selectedHeadNames : [];
+  const keepPicked  = (list) => (pickedNames.length
+    ? list.filter(h => pickedNames.some(n => sameName(n, headName(h))))
+    : list);
+
+  /* Class mode: one row per selected class fee head.
+     Family: build head-by-head from EACH child's OWN grade heads (student.heads),
+     so a common head selected in bulk sends each student's own amount. Only heads
+     with a real amount are used; if none resolve, fall back to a combined
+     "Tuition Fee" row so a challan is never generated empty. */
+  let detailRows;
+  if (!options.familyMode) {
+    detailRows = rowsFromHeads(heads);
+  } else {
+    const childHeads = Array.isArray(student.heads) ? student.heads : heads;
+    const useHeads   = keepPicked(childHeads).filter(h => headAmt(h) > 0);
+    detailRows = useHeads.length
+      ? rowsFromHeads(useHeads)
+      : [makeRow('Tuition Fee', student.fee, student.discount)];
+  }
   /* Auto-add the student's transport fee (from Transport Setup / family figures)
      as its own challan head — subHead "Transport", head "Account Payable". */
   if (Number(student.transport) > 0) {

@@ -768,6 +768,15 @@ function FamilyTreeChallansList({ toast }) {
   /* Class-wise fee heads (headName) — powers the Generate Family Challans
      "Select Fee Heads" dropdown, keyed by class/grade id. */
   const { data: classFeeHeads = {} }   = useAsync(feeService.getClassFeeHeadsMap, []);
+  /* Full fee heads WITH amounts per grade — so a SEPARATE (single) family-child
+     challan can be generated per-head exactly like an Individual student. */
+  const { data: feeGrades = [] }       = useAsync(feeService.getFeeGrades, []);
+  /* Branch header (name / address / logo) for the separate child slip. */
+  const { data: branchHeader = null }  = useAsync(feeService.getReportHeader, [], null);
+  const headsForChildGrade = useCallback(
+    (gradeID) => (feeGrades.find(g => String(g._gradeId) === String(gradeID))?.heads) || [],
+    [feeGrades],
+  );
 
   /* Build deduped fee-head options (by name, case-insensitive) across the
      given class/grade ids. Family challans carry no per-head amount, so we
@@ -918,6 +927,9 @@ function FamilyTreeChallansList({ toast }) {
         studentID: ch.applicantsID, gradeID: ch.gradeID, sectionID: ch.sectionID,
         fee: fig.fee, transport: fig.transport, discount: fig.discount,
         dues: fig.dues || 0, advance: fig.advance || 0, current: fig.payable,
+        /* Each child's OWN grade fee heads (with amounts) so a common head
+           selected in bulk sends this student's own amount to the API. */
+        heads: headsForChildGrade(ch.gradeID),
       };
     });
     /* Fee heads come from each child's class fee-setup (deduped by name). */
@@ -948,9 +960,14 @@ function FamilyTreeChallansList({ toast }) {
       dues:    fig.dues    || 0,
       advance: fig.advance || 0,
       current: totalFee,
+      /* This child's own grade fee heads (with amounts) → per-head challan. */
+      heads: headsForChildGrade(ch.gradeID),
     };
-    /* Fee heads for this child's own class (deduped by name). */
-    const familyHeads = feeHeadsFor([ch.gradeID]);
+    /* Per-head fee heads (with amounts) for this child's own class, so the
+       separate challan is built head-by-head like an Individual student.
+       Falls back to name-only heads if the grade has no fee setup. */
+    const perHead     = headsForChildGrade(ch.gradeID);
+    const familyHeads = perHead.length ? perHead : feeHeadsFor([ch.gradeID]);
     setBulkGen({
       /* Pass the child's actual class/section to the card, but keep the
          family key so the genSet keys roll up under the family. */
@@ -978,6 +995,60 @@ function FamilyTreeChallansList({ toast }) {
       sub: `${f.name} — ${f.guardian} · ${f.children.length} children`,
       defaultSize: settings.printSize || 'a4',
     });
+  };
+
+  /* SEPARATE (single-child) download — produces an individual challan slip for
+     that one child, exactly like the Individual tab (buildChallanHTML with the
+     child's real BranchLedger challan), instead of the combined family slip. */
+  const openChildDownload = async (f, ch) => {
+    if (ch.applicantsID == null) { toast(`Generate ${ch.name}'s challan first`, 'warning'); return; }
+    let rec = null;
+    try {
+      const rows = await feeService.getStudentChallans(ch.applicantsID, monthIdx + 1, appliedYear);
+      rec = Array.isArray(rows) && rows.length ? rows[0] : null;
+    } catch (e) { /* ignore */ }
+    if (!rec) { toast(`No ${appliedMonth} challan for ${ch.name} — generate it first`, 'warning'); return; }
+    setDownloadCtx({
+      kind: 'child',
+      classMeta: { key: `g${ch.gradeID}-s${ch.sectionID}`, cls: ch.cls, sec: ch.sec },
+      student: {
+        reg: ch.reg, name: ch.name, father: ch.father,
+        studentID: ch.applicantsID, gradeID: ch.gradeID, sectionID: ch.sectionID,
+        _challan: rec,
+      },
+      heads: headsForChildGrade(ch.gradeID),
+      sub: `${ch.name} · child of ${ch.father || '—'}`,
+      defaultSize: settings.printSize || 'a4',
+    });
+  };
+  const runChildDownload = (ctx, { theme, fmt, size = 'a4' }) => {
+    const bw   = theme === 'bw';
+    const html = buildChallanHTML({
+      classMeta: ctx.classMeta, students: [ctx.student], heads: ctx.heads,
+      settings, discountMap: {}, bw, size, school: branchHeader,
+    });
+    const w = window.open('', '_blank');
+    if (!w) { toast('Please allow pop-ups to download the challan', 'error'); return; }
+    w.document.write(html);
+    w.document.close();
+    const sizeT = size === 'thermal' ? 'Thermal 80mm' : 'A4';
+    toast(`Generating ${sizeT} · ${bw ? 'B&W' : 'Color'} ${fmt === 'word' ? 'Word' : 'PDF'} — challan…`, 'info');
+    if (fmt === 'word') {
+      try {
+        const blob = new Blob([html], { type: 'application/msword' });
+        const url  = URL.createObjectURL(blob);
+        const a    = w.document.createElement('a');
+        a.href = url;
+        a.download = `${(ctx.student.name || 'student').replace(/\s+/g, '-')}-challan.doc`;
+        w.document.body.appendChild(a);
+        a.click();
+        URL.revokeObjectURL(url);
+        setTimeout(() => { try { w.close(); } catch (e) { /* ignore */ } }, 300);
+      } catch (e) { /* ignore */ }
+    } else {
+      w.onload = () => { try { w.focus(); w.print(); } catch (e) { /* ignore */ } };
+    }
+    setTimeout(() => toast('Challan ready — use your browser\'s Save as PDF.', 'success'), 1100);
   };
   const runDownload = (family, { theme, fmt, size = 'a4' }) => {
     const bw   = theme === 'bw';
@@ -1283,8 +1354,8 @@ function FamilyTreeChallansList({ toast }) {
                                     </button>
                                   </Tooltip>
                                 )}
-                                <Tooltip text="Download family challan">
-                                  <button className="fee-iconbtn" onClick={() => openDownload(f)}>
+                                <Tooltip text={`Download ${ch.name}'s separate challan`}>
+                                  <button className="fee-iconbtn" onClick={() => openChildDownload(f, ch)}>
                                     <i className="fa-solid fa-download"></i>
                                   </button>
                                 </Tooltip>
@@ -1348,9 +1419,11 @@ function FamilyTreeChallansList({ toast }) {
         cfg={downloadCtx}
         onClose={() => setDownloadCtx(null)}
         onSubmit={(picks) => {
-          const f = downloadCtx?.family;
+          const ctx = downloadCtx;
           setDownloadCtx(null);
-          if (f) runDownload(f, picks);
+          if (!ctx) return;
+          if (ctx.kind === 'child') runChildDownload(ctx, picks);   // separate child slip
+          else if (ctx.family)      runDownload(ctx.family, picks); // combined family slip
         }}
       />
     </>
@@ -2237,6 +2310,7 @@ function BulkGenerateModal({
           dueDate,
           year: defaultYear,
           familyMode,
+          singleMode,
         }).then(() => {
           setProgress({ done, total: targets.length, label: 'Completed' });
           onGenerated(classMeta.key, regs);
@@ -2338,9 +2412,9 @@ function BulkGenerateModal({
             <div className="fee-field">
               <span className="fee-label">Challan Type</span>
               <div className="fee-select-wrap">
-                <select className="fee-select" value={type} onChange={e => setType(e.target.value)} disabled={!!progress}>
+                {/* Only "One Month" is available — Two Months removed per request. */}
+                <select className="fee-select" value="1" disabled>
                   <option value="1">One Month</option>
-                  <option value="2">Two Months</option>
                 </select>
                 <i className="fa-solid fa-chevron-down"></i>
               </div>
@@ -2874,10 +2948,17 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
   useEffect(() => {
     if (!cfg) return;
     setDate(todayISO()); setMethod('Cash'); setRef(''); setTxn('');
-    /* Default: each head's remaining amount auto-filled per row. */
+    /* Default: each head's remaining amount auto-filled per row. Count what the
+       challan already received (survives refresh) as well as session payments. */
+    const chRecv = {};
+    (cfg.challan?.detailRows || []).forEach(r => {
+      const n = r.subHead || r.head || '';
+      chRecv[n] = (chRecv[n] || 0) + (+r.receivedAmount || 0);
+    });
     const seed = {};
     (cfg.model.heads || []).forEach(h => {
-      const paidPerHead = (cfg.payments || []).reduce((a, p) => a + (+(p.perHead?.[h.name]) || 0), 0);
+      const fromPay     = (cfg.payments || []).reduce((a, p) => a + (+(p.perHead?.[h.name]) || 0), 0);
+      const paidPerHead = cfg.challan ? Math.max(+chRecv[h.name] || 0, fromPay) : fromPay;
       const remHead     = Math.max(0, h.net - paidPerHead);
       seed[h.name] = remHead;
     });
@@ -2897,13 +2978,27 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
 
   if (!cfg) return null;
 
-  const { classMeta, student, model, payments, period, monthIdx, viewOnly, settings } = cfg;
+  const { classMeta, student, model, payments, challan, period, monthIdx, viewOnly, settings } = cfg;
 
-  const perHeadPaid = {};
+  /* Per-head already-received. Session `payments` are lost on refresh, so when a
+     real challan exists take each head's authoritative receivedAmount from its
+     detailRows (matched by subHead) and keep the larger of the two. */
+  const challanRecvByHead = {};
+  (challan?.detailRows || []).forEach(r => {
+    const n = r.subHead || r.head || '';
+    challanRecvByHead[n] = (challanRecvByHead[n] || 0) + (+r.receivedAmount || 0);
+  });
+  const paymentsPerHead = {};
   (payments || []).forEach(p => {
     Object.entries(p.perHead || {}).forEach(([n, v]) => {
-      perHeadPaid[n] = (perHeadPaid[n] || 0) + (+v || 0);
+      paymentsPerHead[n] = (paymentsPerHead[n] || 0) + (+v || 0);
     });
+  });
+  const perHeadPaid = {};
+  (model.heads || []).forEach(h => {
+    const fromPay = +paymentsPerHead[h.name] || 0;
+    const fromCh  = +challanRecvByHead[h.name] || 0;
+    perHeadPaid[h.name] = challan ? Math.max(fromCh, fromPay) : fromPay;
   });
 
   /* Build display rows with live recompute */
@@ -3486,7 +3581,16 @@ function recStudentModel({ student, headsForClass, generated, classDisc, payment
     disc      = generated ? heads.reduce((a, h) => a + h.disc, 0) : 0;
   }
   const payable   = Math.max(0, prev + thisMonth - disc - advance);
-  const paid      = (payments || []).reduce((a, p) => a + (+p.amount || 0), 0);
+  /* Paid must survive a page refresh. The local `payments` array is session-only
+     (getReceipts is mock), so when a real challan exists take the authoritative
+     received total straight from its detailRows' receivedAmount. Math.max keeps
+     the figure correct in the brief window after a payment, before loadChallans
+     re-fetches the updated challan. */
+  const paidFromChallan  = (challan && Array.isArray(challan.detailRows))
+    ? challan.detailRows.reduce((a, r) => a + (+r.receivedAmount || 0), 0)
+    : 0;
+  const paidFromPayments = (payments || []).reduce((a, p) => a + (+p.amount || 0), 0);
+  const paid      = challan ? Math.max(paidFromChallan, paidFromPayments) : paidFromPayments;
   const remaining = Math.max(0, payable - paid);
   let status = 'none';
   if (generated && paid > 0) status = remaining <= 0 ? 'full' : 'partial';
@@ -3670,10 +3774,38 @@ function FeeReceivingIndividual({ toast }) {
     setReceiveCtx({
       classMeta: c, student: s, model: m,
       payments: paymentsFor(c.key, s.reg),
+      challan:  challanMap[keyOf(c.key, s.reg)] || null,
       period:   `${appliedMonth} ${appliedYear}`,
       monthIdx,
       viewOnly,
       settings,
+    });
+  };
+
+  /* Open the receipt slip. Prefer the latest session payment; if there is none
+     (e.g. after a page refresh — the local receipts are session-only), rebuild
+     the payment from the challan's persisted receivedAmount so the slip still
+     opens for an already-received fee. */
+  const openReceiptSlip = (c, s) => {
+    const payments = paymentsFor(c.key, s.reg);
+    const last = payments[payments.length - 1];
+    if (last) {
+      setSlipCtx({ classMeta: c, student: s, period: `${appliedMonth} ${appliedYear}`, payment: last, defaultSize: settings.printSize || 'a4', school: branchHeader });
+      return;
+    }
+    const rec  = challanMap[keyOf(c.key, s.reg)];
+    const rows = rec && Array.isArray(rec.detailRows) ? rec.detailRows : [];
+    const received = rows.reduce((a, r) => a + (+r.receivedAmount || 0), 0);
+    if (received <= 0) { toast('No payment recorded for this student yet', 'info'); return; }
+    const perHead = {};
+    rows.forEach(r => { const n = r.subHead || r.head || ''; perHead[n] = (perHead[n] || 0) + (+r.receivedAmount || 0); });
+    setSlipCtx({
+      classMeta: c, student: s, period: `${appliedMonth} ${appliedYear}`,
+      payment: {
+        date:   String(rec.modifiedAt || rec.dateofCreattion || '').slice(0, 10),
+        method: rec.paymentMethod || 'Cash', ref: '', txn: '', amount: received, perHead,
+      },
+      defaultSize: settings.printSize || 'a4', school: branchHeader,
     });
   };
 
@@ -4030,11 +4162,7 @@ function FeeReceivingIndividual({ toast }) {
                                         </Tooltip>
                                         {canRcvDownload && (
                                         <Tooltip text="Download receipt slip">
-                                          <button className="fee-iconbtn tiny" onClick={() => {
-                                            const payments = paymentsFor(c.key, s.reg);
-                                            const last = payments[payments.length - 1];
-                                            if (last) setSlipCtx({ classMeta: c, student: s, period: `${appliedMonth} ${appliedYear}`, payment: last, defaultSize: settings.printSize || 'a4', school: branchHeader });
-                                          }}>
+                                          <button className="fee-iconbtn tiny" onClick={() => openReceiptSlip(c, s)}>
                                             <i className="fa-solid fa-download"></i>
                                           </button>
                                         </Tooltip>
@@ -4151,15 +4279,33 @@ function FamilyTreeReceiving({ toast }) {
   /* Ledger record (challan id + detailRows) per child, keyed by `${famKey}|${reg}`.
      Filled when a receive/bulk modal is opened; used to POST receive-payment. */
   const ledgerRecRef = useRef({});
+
+  /* Preload every child's real challan (with detailRows/receivedAmount) so each
+     child's received status + amounts survive a page refresh — exactly like the
+     Individual tab. One /get-by-month call, matched to children by studentID. */
+  const [challanByStudent, setChallanByStudent] = useState({});
+  const loadFamilyChallans = useCallback(async () => {
+    const mIdx = FEE_MONTHS.indexOf(appliedMonth);
+    try {
+      const rows = await feeService.getMonthChallans(mIdx + 1, appliedYear);
+      const map = {};
+      rows.forEach(ch => { map[String(ch.studentID)] = ch; });
+      setChallanByStudent(map);
+    } catch { setChallanByStudent({}); }
+  }, [appliedMonth, appliedYear]);
+  useEffect(() => { loadFamilyChallans(); }, [loadFamilyChallans]);
+
   const modelFor = useCallback((ch, famKey) => {
     const payments = paymentsFor(famKey, ch.reg);
     /* Real challan present → build heads from its detailRows so head names
-       match the ledger (receive-payment matches perHead by subHead/head). */
-    if (ch._challan && Array.isArray(ch._challan.detailRows)) {
-      return recStudentModel({ student: ch, generated: true, payments, challan: ch._challan });
+       match the ledger (receive-payment matches perHead by subHead/head), and
+       paid is read from receivedAmount (persists on refresh). */
+    const challan = ch._challan || challanByStudent[String(ch.applicantsID)] || null;
+    if (challan && Array.isArray(challan.detailRows)) {
+      return recStudentModel({ student: ch, generated: true, payments, challan });
     }
     return childRecModel({ child: ch, payments });
-  }, [paymentsFor]);
+  }, [paymentsFor, challanByStudent]);
 
   const familySummary = useCallback((f) => {
     let total = 0, paid = 0, unpaid = 0, onelink = 0;
@@ -4220,6 +4366,8 @@ function FamilyTreeReceiving({ toast }) {
             _challan:  rec,
           };
           ledgerRecRef.current[`${f.key}|${ch.reg}`] = rec;
+          /* keep the list's preloaded map fresh too */
+          if (ch.applicantsID != null) setChallanByStudent(prev => ({ ...prev, [String(ch.applicantsID)]: rec }));
         }
       } catch (e) { /* keep original child on failure */ }
     }
@@ -4230,10 +4378,38 @@ function FamilyTreeReceiving({ toast }) {
       classMeta: { key: f.key, cls: child.cls, sec: child.sec, familyName: f.name, guardian: f.guardian },
       student: child, model: m,
       payments: paymentsFor(f.key, child.reg),
+      challan:  child._challan || null,
       period:   `${appliedMonth} ${appliedYear}`,
       monthIdx,
       viewOnly,
       settings,
+    });
+  };
+
+  /* Open a child's receipt slip — prefer the latest session payment; otherwise
+     rebuild it from the child's persisted challan receivedAmount (survives a
+     refresh, since the local receipts are session-only). */
+  const openReceiptSlip = (f, ch) => {
+    const payments = paymentsFor(f.key, ch.reg);
+    const last = payments[payments.length - 1];
+    if (last) {
+      setSlipCtx({ classMeta: { key: f.key, cls: ch.cls, sec: ch.sec }, student: ch, period: `${appliedMonth} ${appliedYear}`, payment: last, defaultSize: settings.printSize || 'a4' });
+      return;
+    }
+    const rec  = ch._challan || challanByStudent[String(ch.applicantsID)];
+    const rows = rec && Array.isArray(rec.detailRows) ? rec.detailRows : [];
+    const received = rows.reduce((a, r) => a + (+r.receivedAmount || 0), 0);
+    if (received <= 0) { toast('No payment recorded for this student yet', 'info'); return; }
+    const perHead = {};
+    rows.forEach(r => { const n = r.subHead || r.head || ''; perHead[n] = (perHead[n] || 0) + (+r.receivedAmount || 0); });
+    setSlipCtx({
+      classMeta: { key: f.key, cls: ch.cls, sec: ch.sec }, student: ch,
+      period: `${appliedMonth} ${appliedYear}`,
+      payment: {
+        date:   String(rec.modifiedAt || rec.dateofCreattion || '').slice(0, 10),
+        method: rec.paymentMethod || 'Cash', ref: '', txn: '', amount: received, perHead,
+      },
+      defaultSize: settings.printSize || 'a4',
     });
   };
 
@@ -4275,7 +4451,9 @@ function FamilyTreeReceiving({ toast }) {
         paymentMethod: payload.method || '',
         modifiedBy:    userID,
         detailRows,
-      }).catch(e => toast(e.message || 'Could not record payment', 'error'));
+      })
+        .then(() => loadFamilyChallans())   // refresh list so status persists
+        .catch(e => toast(e.message || 'Could not record payment', 'error'));
     } else {
       toast('No challan found to receive against', 'warning');
     }
@@ -4378,7 +4556,25 @@ function FamilyTreeReceiving({ toast }) {
   };
 
   const downloadFamilySlip = (f) => {
-    setFamilySlipCtx({ family: f, period: `${appliedMonth} ${appliedYear}`, defaultSize: settings.printSize || 'a4' });
+    /* Enrich each child with real figures (payable) and received amount from the
+       preloaded challan, so the slip shows actual data — the session receipts are
+       empty on refresh. A single synthetic payment carries the cumulative
+       received total (the challan stores receivedAmount, not per-transaction). */
+    const enriched = (f.children || []).map(ch => {
+      const rec = ch._challan || challanByStudent[String(ch.applicantsID)] || null;
+      if (!rec || !Array.isArray(rec.detailRows)) return ch;
+      const fig      = familyChildFigures(rec);
+      const received = rec.detailRows.reduce((a, r) => a + (+r.receivedAmount || 0), 0);
+      const perHead  = {};
+      rec.detailRows.forEach(r => { const n = r.subHead || r.head || ''; perHead[n] = (perHead[n] || 0) + (+r.receivedAmount || 0); });
+      const _payments = received > 0 ? [{
+        amount: received,
+        date:   String(rec.modifiedAt || rec.dateofCreattion || '').slice(0, 10),
+        method: rec.paymentMethod || 'Cash', ref: '', txn: '', source: 'counter', perHead,
+      }] : [];
+      return { ...ch, ...fig, _challan: rec, _payments };
+    });
+    setFamilySlipCtx({ family: { ...f, children: enriched }, period: `${appliedMonth} ${appliedYear}`, defaultSize: settings.printSize || 'a4' });
   };
 
   const matches = useMemo(() => {
@@ -4619,11 +4815,7 @@ function FamilyTreeReceiving({ toast }) {
                                         </button>
                                       </Tooltip>
                                       <Tooltip text="Download receipt slip">
-                                        <button className="fee-iconbtn tiny" onClick={() => {
-                                          const payments = paymentsFor(f.key, ch.reg);
-                                          const last = payments[payments.length - 1];
-                                          if (last) setSlipCtx({ classMeta: { key: f.key, cls: ch.cls, sec: ch.sec }, student: ch, period: `${appliedMonth} ${appliedYear}`, payment: last, defaultSize: settings.printSize || 'a4' });
-                                        }}>
+                                        <button className="fee-iconbtn tiny" onClick={() => openReceiptSlip(f, ch)}>
                                           <i className="fa-solid fa-download"></i>
                                         </button>
                                       </Tooltip>
@@ -5202,9 +5394,17 @@ function FamilyFeeSlipModal({ cfg, onClose, paymentsFor, toast }) {
   if (!cfg) return null;
   const { family, period } = cfg;
 
+  /* Prefer the child's enriched payments (built from the persisted challan) so
+     the slip reflects real received amounts even after a refresh; fall back to
+     the live session receipts. Used by both the preview and the printed slip. */
+  const slipPaymentsFor = (famKey, reg) => {
+    const ch = family.children.find(c => c.reg === reg);
+    return (ch && Array.isArray(ch._payments)) ? ch._payments : paymentsFor(famKey, reg);
+  };
+
   /* Live rows for preview */
   const rows = family.children.map(ch => {
-    const pays = paymentsFor(family.key, ch.reg);
+    const pays = slipPaymentsFor(family.key, ch.reg);
     const paid = pays.reduce((a, p) => a + (+p.amount || 0), 0);
     const payable = Math.max(0, (+ch.fee || 0) + (+ch.transport || 0) - (+ch.discount || 0) + (+ch.dues || 0));
     return { ch, paid, payable, rem: Math.max(0, payable - paid), pays };
@@ -5214,7 +5414,7 @@ function FamilyFeeSlipModal({ cfg, onClose, paymentsFor, toast }) {
   }), { paid: 0, payable: 0, rem: 0 });
 
   const doPrint = () => {
-    const html = buildFamilyReceivingSlipHTML({ family, period, paymentsFor, size });
+    const html = buildFamilyReceivingSlipHTML({ family, period, paymentsFor: slipPaymentsFor, size });
     const w = window.open('', '_blank');
     if (!w) { toast('Please allow pop-ups to download the slip', 'error'); return; }
     w.document.write(html);
@@ -6397,10 +6597,12 @@ function buildHistMonthSlipHTML({ c, s, mo, year, size = 'a4' }) {
 
 const FEE_REPORT_CATS = [
   { id: 'defaulter',  ic: 'fa-user-clock',          name: 'Fee Defaulter List',       desc: 'All & monthly defaulters, class-wise' },
-  { id: 'collection', ic: 'fa-hand-holding-dollar', name: 'General Fee Collections',  desc: 'Daily, monthly & paid-student lists' },
   { id: 'headwise',   ic: 'fa-layer-group',         name: 'Head-Wise Fee Collection', desc: 'Student-wise & class-wise by fee head' },
+  /* Hidden per request — restore any entry to bring the tab back:
+  { id: 'collection', ic: 'fa-hand-holding-dollar', name: 'General Fee Collections',  desc: 'Daily, monthly & paid-student lists' },
   { id: 'aging',      ic: 'fa-hourglass-half',      name: 'Aging / Outstanding',      desc: '30 / 60 / 90+ day overdue analysis' },
   { id: 'summary',    ic: 'fa-chart-pie',           name: 'Collection vs Expected',   desc: 'Realisation %, payment-mode breakdown' },
+  */
 ];
 
 /* Pretty method chip — colour-codes Cash / Online / Bank / OneLink etc.
