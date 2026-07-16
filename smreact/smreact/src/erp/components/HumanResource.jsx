@@ -4064,11 +4064,14 @@ const HR_DOC_SLOTS = [
 /* The three allowances are fixed employee columns on the backend, so they are
    always present and non-removable. Extra heads are added by the user and live
    on the /api/HR/*-salary-head endpoints. */
+/* The 3 fixed heads are ALLOWANCES on the backend (they add to salary), so their
+   amount is calculated as a plus everywhere. They're displayed with a red
+   "— Deduct" pill purely as a visual label (see the fixed-head render). */
 function hrDefaultSalaryHeads() {
   return [
-    { name: 'Medical Allowance',   amount: 0, type: 'deduct', fixed: true },
-    { name: 'Rent Allowance',      amount: 0, type: 'deduct', fixed: true },
-    { name: 'Transport Allowance', amount: 0, type: 'deduct', fixed: true },
+    { name: 'Medical Allowance',   amount: 0, type: 'allow', fixed: true },
+    { name: 'Rent Allowance',      amount: 0, type: 'allow', fixed: true },
+    { name: 'Transport Allowance', amount: 0, type: 'allow', fixed: true },
   ];
 }
 
@@ -4665,7 +4668,9 @@ function AddEmployeeModal({ mode = 'add', emp, depts, desigs, nextEmpId, onClose
               ) : (
                 <div className="sal-heads-grid">
                   {form.salaryHeads.map((h, i) => (
-                    <div key={i} className={`sal-head-card type-${h.type}`}>
+                    /* Fixed heads calculate as allowances (plus) but are shown with a
+                       red "— Deduct" label, so force the deduct card look for them. */
+                    <div key={i} className={`sal-head-card ${h.fixed ? 'type-deduct' : `type-${h.type}`}`}>
                       <div className="sal-head-top">
                         {h.fixed ? (
                           <div className="sal-head-name-fixed">{h.name}</div>
@@ -4678,18 +4683,22 @@ function AddEmployeeModal({ mode = 'add', emp, depts, desigs, nextEmpId, onClose
                           />
                         )}
                         {h.fixed ? (
-                          <span className={`sal-head-type-pill ${h.type === 'deduct' ? 'deduct' : 'allow'}`} style={{ cursor: 'default' }}>
-                            {h.type === 'deduct'
-                              ? (<><i className="fa-solid fa-minus" aria-hidden="true"></i> Deduct</>)
-                              : (<><i className="fa-solid fa-plus" aria-hidden="true"></i> Allow</>)}
-                          </span>
+                          /* Visual-only "— Deduct" label; the amount still adds as an
+                             allowance (type stays 'allow') in every calculation. Fixed
+                             heads can't be toggled — hover explains why. */
+                          <Tooltip text="These heads cannot be deducted">
+                            <span className="sal-head-type-pill deduct" style={{ cursor: 'not-allowed' }}>
+                              <i className="fa-solid fa-minus" aria-hidden="true"></i> Deduct
+                            </span>
+                          </Tooltip>
                         ) : (
                           <Tooltip text={h.type === 'allow'
-                            ? 'Currently an allowance — click to switch to a deduction'
-                            : 'Currently a deduction — click to switch to an allowance'}>
-                            {/* Pill shows the ACTION (opposite of current state): clicking
-                               "Allow" makes the head an allowance (isAllowance true), and
-                               clicking "Deduct" makes it a deduction (isAllowance false). */}
+                            ? 'This amount is added as an allowance (+) — click "Deduct" to subtract it instead'
+                            : 'This amount is subtracted as a deduction (−) — click "Allow" to add it instead'}>
+                            {/* Pill shows the ACTION (opposite of the current state), matching
+                               the fixed heads: while a head ADDS (allowance) the pill reads
+                               "— Deduct", and while it SUBTRACTS the pill reads "+ Allow".
+                               Clicking toggles the type. */}
                             <button type="button" className={`sal-head-type-pill ${h.type === 'allow' ? 'deduct' : 'allow'}`} onClick={() => toggleHeadType(i)}>
                               {h.type === 'allow'
                                 ? (<><i className="fa-solid fa-minus" aria-hidden="true"></i> Deduct</>)
