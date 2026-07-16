@@ -336,8 +336,9 @@ function AuthGate() {
 
   function handleLogin(userData) {
     setUser(userData);
-    // Fresh login → koi purana 'forceSetup' flag na rahe (default screen par jao).
+    // Fresh login → koi purana flag/last-module na rahe (default screen/module par jao).
     sessionStorage.removeItem('forceSetup');
+    sessionStorage.removeItem('erp_active_module');   // ERP fresh login → Academics default
     // launchSetup === 1 → go straight to the ERP screen, otherwise launch setup.
     if (isErpUnlocked()) { setScreen('erp'); return; }
     setScreen('app');
@@ -365,7 +366,7 @@ function AuthGate() {
     return (
       <ErpApp
         onExitToSetup={() => { sessionStorage.setItem('forceSetup', '1'); setScreen('app'); }}
-        onLogout={() => { sessionStorage.clear(); setUser(null); setScreen('login'); }}
+        onLogout={() => { sessionStorage.clear(); sessionStorage.removeItem('erp_active_module'); setUser(null); setScreen('login'); }}
       />
     );
   }
@@ -373,7 +374,7 @@ function AuthGate() {
   return (
     <AppShell
       user={user}
-      onLogout={() => { sessionStorage.clear(); setUser(null); setScreen('login'); }}
+      onLogout={() => { sessionStorage.clear(); sessionStorage.removeItem('erp_active_module'); setUser(null); setScreen('login'); }}
       /* ERP me wapas jaate waqt 'forceSetup' clear karo — warna refresh par ye flag
          reh jata hai aur user ko galti se dubara Launch Setup par le jata hai. */
       onOpenErp={() => { sessionStorage.removeItem('forceSetup'); setScreen('erp'); }}

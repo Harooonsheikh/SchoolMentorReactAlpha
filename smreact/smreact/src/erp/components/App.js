@@ -140,12 +140,13 @@ export default function App() {
   /* Active ERP module localStorage me yaad rakho — refresh par usi module par wapas
      aao (default 'acad' = Academics). */
   const [active, setActive] = useState(() => {
-    try { return localStorage.getItem('erp_active_module') || 'acad'; }
+    try { return sessionStorage.getItem('erp_active_module') || 'acad'; }
     catch (e) { return 'acad'; }
   });
-  /* Jab bhi module badle, localStorage me save — agli refresh isay padh legi. */
+  /* Jab bhi module badle, sessionStorage me save — agli refresh isay padh legi.
+     (sessionStorage: sirf isi tab ke liye, tab band hote hi apne aap clear.) */
   useEffect(() => {
-    try { localStorage.setItem('erp_active_module', active); } catch (e) { /* ignore */ }
+    try { sessionStorage.setItem('erp_active_module', active); } catch (e) { /* ignore */ }
   }, [active]);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
