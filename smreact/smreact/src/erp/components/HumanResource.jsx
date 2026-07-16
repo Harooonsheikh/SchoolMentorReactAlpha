@@ -956,7 +956,7 @@ function HrReports({ emps, depts, desigs, toast, canDownload = true }) {
       return;
     }
 
-    const ctx = { ...buildCtx(), emps: empsForCtx, empPayroll, empLoans, branch };
+    const ctx = { ...buildCtx(), emps: empsForCtx, empPayroll, empLoans, branch, style };
     let html = '';
     if      (type === 'directory')       html = generateHrDirectoryReport(ctx);
     else if (type === 'salary-register') html = generateHrSalaryRegister(ctx, monthKey);
@@ -1140,6 +1140,82 @@ function getEmpStdDeductions(e) {
   return (e.salaryHeads || []).filter(h => h.type === 'deduct').reduce((s, h) => s + (Number(h.amount) || 0), 0);
 }
 
+/* Delete-payroll confirmation popup — replaces the browser window.confirm.
+   Two modes:
+     • 'confirm' — first ask: "delete this month's payroll + payments?"
+     • 'force'   — shown when the backend blocks the delete because payments were
+                   already recorded; surfaces that message verbatim and asks
+                   "Are you still want to delete?" (retries with force:true).      */
+function DeletePayrollModal({ open, mode = 'confirm', empName, month, year, message, busy, onCancel, onConfirm }) {
+  if (!open) return null;
+  const isForce = mode === 'force';
+  return createPortal((
+    <div
+      className="ov open"
+      role="dialog" aria-modal="true"
+      onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) onCancel(); }}
+    >
+      <div className="modal" style={{ maxWidth: 460 }}>
+        <div className="modal-head">
+          <div className="modal-head-left">
+            <div className="modal-head-icon" style={{ background: 'rgba(220,38,38,.12)', color: '#DC2626' }}>
+              <i className="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>
+            </div>
+            <div>
+              <div className="modal-title">Delete Payroll</div>
+              <div className="modal-sub">
+                {isForce
+                  ? 'Payments already recorded'
+                  : `${empName || 'Employee'} · ${month} ${year}`}
+              </div>
+            </div>
+          </div>
+        </div>
+        <div style={{ padding: '18px 22px' }}>
+          {isForce ? (
+            <>
+              <p style={{ margin: 0, color: 'var(--tm)', lineHeight: 1.55 }}>{message}</p>
+              <p style={{ margin: '16px 0 0', fontWeight: 700, color: 'var(--td)' }}>
+                Are you still want to delete?
+              </p>
+            </>
+          ) : (
+            <>
+              <p style={{ margin: 0, color: 'var(--tm)', lineHeight: 1.55 }}>
+                Delete the payroll setup and all recorded payments for
+                {' '}<strong style={{ color: 'var(--td)' }}>{empName}</strong> — {month} {year}?
+              </p>
+              <p style={{ margin: '14px 0 0', color: '#DC2626', fontWeight: 600 }}>
+                <i className="fa-solid fa-circle-info" aria-hidden="true"></i> This cannot be undone.
+              </p>
+            </>
+          )}
+        </div>
+        <div className="modal-foot" style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+          <button type="button" className="btn-secondary" onClick={onCancel} disabled={busy}>
+            {isForce ? 'No' : 'Cancel'}
+          </button>
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={onConfirm}
+            disabled={busy}
+            style={{
+              color: '#fff',
+              background: '#DC2626',
+              borderColor: '#DC2626',
+              ...(busy ? { opacity: .6, cursor: 'not-allowed' } : {}),
+            }}
+          >
+            <i className={`fa-solid ${busy ? 'fa-spinner fa-spin' : 'fa-trash'}`} aria-hidden="true"></i>{' '}
+            {busy ? 'Deleting…' : (isForce ? 'Yes' : 'Delete Payroll')}
+          </button>
+        </div>
+      </div>
+    </div>
+  ), document.body);
+}
+
 function Financials({ emps, depts = [], desigs, toast, canCreate = true, canDelete = true, canApprove = true, canDownload = true }) {
   const now = new Date();
   const [month, setMonth] = useState(PAY_MONTHS[now.getMonth()]);
@@ -1149,6 +1225,10 @@ function Financials({ emps, depts = [], desigs, toast, canCreate = true, canDele
   const [actionsId,  setActionsId]  = useState(null);
   const [prFor,      setPrFor]      = useState(null);   // emp opened in the Pay Roll modal
   const [alFor,      setAlFor]      = useState(null);   // emp opened in the Advance / Loan modal
+  // Delete-payroll popup: { emp, payrollID, mode:'confirm'|'force', message }.
+  // `delBusy` guards the confirm button while the API call is in flight.
+  const [delPay,     setDelPay]     = useState(null);
+  const [delBusy,    setDelBusy]    = useState(false);
   const [rspFor,     setRspFor]     = useState(null);   // { emp, type } for the Reports style picker
 
   /* Per-employee payroll: empPayroll[empId][monthKey] = { ...record }.
@@ -1408,21 +1488,38 @@ function Financials({ emps, depts = [], desigs, toast, canCreate = true, canDele
   /* Delete a saved payroll (setup + payments) straight from the row's Actions
      menu — reachable even when the Pay Roll modal can't open (e.g. a fully-paid
      month). Calls the backend, then drops the local record. */
-  const deletePayrollFor = async (e) => {
+  const deletePayrollFor = (e) => {
     setActionsId(null);
     const rec = getRec(e.id);
     if (!rec?.payrollID) { toast('No saved payroll to delete for this month', 'warning'); return; }
-    const ok = window.confirm(
-      `Delete the payroll setup and all recorded payments for ${getFullName(e)} — ${month} ${year}?\n\nThis cannot be undone.`
-    );
-    if (!ok) return;
+    // Open the confirmation popup (no browser confirm) — the actual API call
+    // happens when the user confirms in the popup.
+    setDelPay({ emp: e, payrollID: rec.payrollID, mode: 'confirm', message: '' });
+  };
+
+  /* Confirm handler for the delete-payroll popup. First press deletes with
+     force:false; if the backend blocks it because payments already exist, the
+     popup switches to 'force' mode and a second press retries with force:true. */
+  const confirmDeletePayroll = async () => {
+    if (!delPay || delBusy) return;
+    const { emp: e, payrollID, mode } = delPay;
+    const force = mode === 'force';
+    setDelBusy(true);
     try {
-      await hrService.deleteHrPayroll(rec.payrollID);
+      await hrService.deleteHrPayroll(payrollID, { force });
     } catch (err) {
+      setDelBusy(false);
+      // Blocked by recorded payments — switch the popup to force-confirm mode.
+      if (err.blocked) {
+        setDelPay({ emp: e, payrollID, mode: 'force', message: err.message });
+        return;
+      }
       toast(err.message || 'Could not delete payroll', 'error');
       return;
     }
     removeRec(e.id, month, year);
+    setDelBusy(false);
+    setDelPay(null);
     toast('Payroll setup & payments deleted', 'success');
   };
 
@@ -1586,6 +1683,18 @@ function Financials({ emps, depts = [], desigs, toast, canCreate = true, canDele
           canApprove={canApprove}
         />
       )}
+
+      <DeletePayrollModal
+        open={!!delPay}
+        mode={delPay?.mode}
+        empName={delPay ? getFullName(delPay.emp) : ''}
+        month={month}
+        year={year}
+        message={delPay?.message}
+        busy={delBusy}
+        onCancel={() => { if (!delBusy) setDelPay(null); }}
+        onConfirm={confirmDeletePayroll}
+      />
     </div>
   );
 }
@@ -2111,27 +2220,36 @@ function PayRollModal({
   const num = (n) => fmtMoney(n);
 
   /* Delete the whole payroll (setup + payments) for this employee/month. Only
-     possible once it's been saved (has a payrollID). */
-  const [deleting, setDeleting] = useState(false);
-  const deletePayroll = async () => {
-    if (deleting) return;
+     possible once it's been saved (has a payrollID). Opens a confirmation popup
+     (mode 'confirm'); if the backend blocks it because payments already exist,
+     the popup switches to 'force' mode and retries with force:true. */
+  const [deleting,   setDeleting]   = useState(false);   // footer button spinner
+  const [delMode,    setDelMode]    = useState(null);    // null | 'confirm' | 'force'
+  const [delMessage, setDelMessage] = useState('');      // backend message in force mode
+  const openDeletePayroll = () => {
     if (!existingRec?.payrollID) {
       toast('Nothing to delete — this payroll has not been saved yet', 'warning');
       return;
     }
-    const ok = window.confirm(
-      `Delete the payroll setup and all recorded payments for ${getFullName(emp)} — ${month} ${year}?\n\nThis cannot be undone.`
-    );
-    if (!ok) return;
+    setDelMessage('');
+    setDelMode('confirm');
+  };
+
+  const confirmDeletePayroll = async () => {
+    if (deleting || !existingRec?.payrollID) return;
+    const force = delMode === 'force';
     setDeleting(true);
     try {
-      await hrService.deleteHrPayroll(existingRec.payrollID);
+      await hrService.deleteHrPayroll(existingRec.payrollID, { force });
     } catch (err) {
-      toast(err.message || 'Could not delete payroll', 'error');
       setDeleting(false);
+      // Blocked by recorded payments — switch the popup to force-confirm mode.
+      if (err.blocked) { setDelMessage(err.message); setDelMode('force'); return; }
+      toast(err.message || 'Could not delete payroll', 'error');
       return;
     }
     setDeleting(false);
+    setDelMode(null);
     onDelete?.();
     toast('Payroll setup & payments deleted', 'success');
   };
@@ -2421,7 +2539,7 @@ function PayRollModal({
               <button
                 type="button"
                 className="btn-secondary"
-                onClick={deletePayroll}
+                onClick={openDeletePayroll}
                 disabled={deleting}
                 style={{
                   marginRight: 'auto',
@@ -2449,6 +2567,18 @@ function PayRollModal({
           )}
         </div>
       </div>
+
+      <DeletePayrollModal
+        open={!!delMode}
+        mode={delMode}
+        empName={getFullName(emp)}
+        month={month}
+        year={year}
+        message={delMessage}
+        busy={deleting}
+        onCancel={() => { if (!deleting) setDelMode(null); }}
+        onConfirm={confirmDeletePayroll}
+      />
     </div>
   ), document.body);
 }
@@ -3936,9 +4066,9 @@ const HR_DOC_SLOTS = [
    on the /api/HR/*-salary-head endpoints. */
 function hrDefaultSalaryHeads() {
   return [
-    { name: 'Medical Allowance',   amount: 0, type: 'allow', fixed: true },
-    { name: 'Rent Allowance',      amount: 0, type: 'allow', fixed: true },
-    { name: 'Transport Allowance', amount: 0, type: 'allow', fixed: true },
+    { name: 'Medical Allowance',   amount: 0, type: 'deduct', fixed: true },
+    { name: 'Rent Allowance',      amount: 0, type: 'deduct', fixed: true },
+    { name: 'Transport Allowance', amount: 0, type: 'deduct', fixed: true },
   ];
 }
 
@@ -4548,8 +4678,10 @@ function AddEmployeeModal({ mode = 'add', emp, depts, desigs, nextEmpId, onClose
                           />
                         )}
                         {h.fixed ? (
-                          <span className="sal-head-type-pill allow" style={{ cursor: 'default' }}>
-                            <i className="fa-solid fa-plus" aria-hidden="true"></i> Allow
+                          <span className={`sal-head-type-pill ${h.type === 'deduct' ? 'deduct' : 'allow'}`} style={{ cursor: 'default' }}>
+                            {h.type === 'deduct'
+                              ? (<><i className="fa-solid fa-minus" aria-hidden="true"></i> Deduct</>)
+                              : (<><i className="fa-solid fa-plus" aria-hidden="true"></i> Allow</>)}
                           </span>
                         ) : (
                           <Tooltip text={h.type === 'allow'

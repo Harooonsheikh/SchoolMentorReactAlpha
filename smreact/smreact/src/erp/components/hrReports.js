@@ -779,13 +779,39 @@ const hrGenLabel = (ctx) => {
   return isNaN(dt) ? hrToday() : dt.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
 };
 
-/* Shared popup shell — Accounts-module style. Returns a full HTML document. */
+/* Shared popup shell — Accounts-module style. Returns a full HTML document.
+   Honors ctx.style: 'bw' renders a true colorless / low-ink version (white
+   backgrounds, black/gray text, light borders) while the default keeps the
+   ERP-blue theme. */
 function hrBuildReportHTML(fileTitle, title, filtersHtml, innerHtml, ctx) {
   const b = resolveBranch(ctx);
   const sn = b.name;
+  const bw = ctx?.style === 'bw';
   const logoInner = b.logo
     ? `<img src="${b.logo}" alt="School logo" style="width:100%;height:100%;object-fit:cover;border-radius:50%">`
-    : HR_LOGO_SVG;
+    : (bw ? HR_LOGO_SVG.replace(/#1E3A8A/g, '#000') : HR_LOGO_SVG);
+  // Colorless palette vs ERP-blue palette — one token set drives the whole sheet.
+  const C = bw ? {
+    brand:'#000', headBorder:'2px solid #000',
+    filtersBg:'#fff', filtersBorder:'1px solid #9CA3AF', filtersText:'#222',
+    secTtl:'#000', secBorder:'1px solid #000',
+    thBg:'#fff', thText:'#000', thBorder:'1px solid #000',
+    tdBorder:'1px solid #9CA3AF',
+    evenBg:'#F2F2F2',
+    totBg:'#F2F2F2', totBorder:'2px solid #000',
+    grandBg:'#000', grandText:'#fff',
+    footText:'#555', footBorder:'1px solid #9CA3AF',
+  } : {
+    brand:'#1E3A8A', headBorder:'2px solid #1E3A8A',
+    filtersBg:'#F1F5FB', filtersBorder:'none', filtersText:'#333',
+    secTtl:'#1E3A8A', secBorder:'1px solid #cdd7ea',
+    thBg:'#1E3A8A', thText:'#fff', thBorder:'none',
+    tdBorder:'1px solid #e5e9f2',
+    evenBg:'#F8FAFF',
+    totBg:'#EAF0FA', totBorder:'2px solid #1E3A8A',
+    grandBg:'#1E3A8A', grandText:'#fff',
+    footText:'#999', footBorder:'1px solid #e5e9f2',
+  };
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${fileTitle}</title>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
     <style>
@@ -793,22 +819,22 @@ function hrBuildReportHTML(fileTitle, title, filtersHtml, innerHtml, ctx) {
       html,body{background:#fff}
       body{font-family:'Plus Jakarta Sans',Arial,sans-serif;color:#111;font-size:10.5px;line-height:1.4;}
       .rep-page{width:210mm;min-height:297mm;margin:0 auto;padding:14mm;background:#fff;}
-      .rep-head{display:flex;align-items:center;gap:14px;border-bottom:2px solid #1E3A8A;padding-bottom:10px;margin-bottom:10px}
-      .rep-logo{width:42px;height:42px;border:2px solid #1E3A8A;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+      .rep-head{display:flex;align-items:center;gap:14px;border-bottom:${C.headBorder};padding-bottom:10px;margin-bottom:10px}
+      .rep-logo{width:42px;height:42px;border:2px solid ${C.brand};border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0}
       .rep-logo svg{width:22px;height:22px}
-      .rep-name{font-size:18px;font-weight:800;color:#1E3A8A;line-height:1.1}
+      .rep-name{font-size:18px;font-weight:800;color:${C.brand};line-height:1.1}
       .rep-title{font-size:12px;font-weight:600;color:#444;margin-top:3px}
-      .rep-filters{display:flex;flex-wrap:wrap;gap:6px 22px;font-size:10.5px;color:#333;margin-bottom:12px;background:#F1F5FB;padding:9px 13px;border-radius:6px}
-      .rep-secttl{font-size:12px;font-weight:800;color:#1E3A8A;margin:14px 0 6px;padding-bottom:4px;border-bottom:1px solid #cdd7ea;}
+      .rep-filters{display:flex;flex-wrap:wrap;gap:6px 22px;font-size:10.5px;color:${C.filtersText};margin-bottom:12px;background:${C.filtersBg};border:${C.filtersBorder};padding:9px 13px;border-radius:6px}
+      .rep-secttl{font-size:12px;font-weight:800;color:${C.secTtl};margin:14px 0 6px;padding-bottom:4px;border-bottom:${C.secBorder};}
       .rep-tbl{width:100%;border-collapse:collapse;font-size:10px;margin-bottom:4px;}
       .rep-tbl thead{display:table-header-group;}
-      .rep-tbl th{background:#1E3A8A;color:#fff;padding:6px 7px;text-align:left;font-size:10px;font-weight:700}
+      .rep-tbl th{background:${C.thBg};color:${C.thText};border:${C.thBorder};padding:6px 7px;text-align:left;font-size:10px;font-weight:700}
       .rep-tbl th.r,.rep-tbl td.r{text-align:right}
-      .rep-tbl td{padding:5px 7px;border-bottom:1px solid #e5e9f2;vertical-align:top}
-      .rep-tbl tr:nth-child(even) td{background:#F8FAFF}
-      .rep-tot td{background:#EAF0FA;font-weight:800;border-top:2px solid #1E3A8A}
-      .rep-grandtot td{background:#1E3A8A;color:#fff;font-weight:800;padding:7px 7px}
-      .rep-foot{margin-top:16px;text-align:center;font-size:9px;color:#999;border-top:1px solid #e5e9f2;padding-top:8px}
+      .rep-tbl td{padding:5px 7px;border-bottom:${C.tdBorder};vertical-align:top}
+      .rep-tbl tr:nth-child(even) td{background:${C.evenBg}}
+      .rep-tot td{background:${C.totBg};font-weight:800;border-top:${C.totBorder}}
+      .rep-grandtot td{background:${C.grandBg};color:${C.grandText};font-weight:800;padding:7px 7px}
+      .rep-foot{margin-top:16px;text-align:center;font-size:9px;color:${C.footText};border-top:${C.footBorder};padding-top:8px}
       @page{size:A4 portrait;margin:14mm}
       @media print{.rep-page{width:auto;min-height:0;margin:0;padding:0;}body{font-size:10px;}}
     </style></head><body>
@@ -1019,7 +1045,9 @@ export function generateHrPayrollSummary(ctx, monthKey) {
     if (status === 'Paid') cPaid++;
     else if (status === 'Generated' || status === 'Partially Paid') cGen++;
     else cNot++;
-    const sColor = status === 'Paid' ? '#16A34A' : status === 'Generated' ? '#D97706' : status === 'Partially Paid' ? '#0284C7' : '#94A3B8';
+    const sColor = ctx?.style === 'bw'
+      ? '#000'
+      : (status === 'Paid' ? '#16A34A' : status === 'Generated' ? '#D97706' : status === 'Partially Paid' ? '#0284C7' : '#94A3B8');
     return `<tr>
       <td>${i+1}</td><td><b>${getFullName(e)}</b></td><td>${e.eid}</td>
       <td>${getDeptName(e.dId)||'—'}</td><td>${getDesigName(e.desId)||'—'}</td>
