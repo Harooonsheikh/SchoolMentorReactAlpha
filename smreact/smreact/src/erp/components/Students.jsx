@@ -1484,28 +1484,24 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
 
   /* Promotion: move selected students from source class → target class. If
      the target class+section doesn't exist yet, it is created on the fly. */
-  const handlePromote = ({ selectedRegs, toClass, toSection, carryDiscounts }) => {
-    if (selectedRegs.length === 0) { toast('Pick at least one student first', 'error'); return; }
-    const src = list.find(c => c.key === promoteCfg.cKey);
-    if (!src) return;
-    const moving = src.students.filter(s => selectedRegs.includes(s.reg)).map(s => {
-      const next = { ...s, cls: toClass, sec: toSection };
-      if (!carryDiscounts) next._disc = {};
-      return next;
-    });
-    const remaining = src.students.filter(s => !selectedRegs.includes(s.reg));
-
-    const targetKey = `c-${toClass.toLowerCase().replace(/\s+/g, '-')}-${toSection.toLowerCase()}`;
-    setClasses(prev => {
-      const updatedSrc = prev.map(c => c.key === src.key ? { ...c, students: remaining } : c);
-      const target = updatedSrc.find(c => c.cls === toClass && c.sec === toSection);
-      if (target) {
-        return updatedSrc.map(c => c === target ? { ...c, students: [...c.students, ...moving] } : c);
+  const handlePromote = async ({ toClass, toSection, promotions }) => {
+    if (!promotions || promotions.length === 0) { toast('Pick at least one student first', 'error'); return; }
+    /* Zaroori IDs resolve hue? (to-class/section grades se, session active hona chahiye) */
+    const bad = promotions.find(p => !p.newGradeID || !p.newSectionID);
+    if (bad) { toast('Please select a valid To Class and To Section', 'error'); return; }
+    if (!promotions[0].sessionYearID) { toast('No active academic session found — set one in Settings.', 'error'); return; }
+    try {
+      /* Har student ke liye promote-student API call (backend carry-forward logic handle karta hai). */
+      for (const p of promotions) {
+        await studentService.promoteStuStudent(p);
       }
-      return [...updatedSrc, { key: targetKey, cls: toClass, sec: toSection, trend: 'up', students: moving }];
-    });
-    toast(`${moving.length} student(s) promoted to ${toClass} (${toSection})`, 'success');
-    setPromoteCfg(null);
+      /* Server se fresh list — promoted students nayi class/section me reflect ho jayenge. */
+      setClasses(await studentService.getStuClasses());
+      toast(`${promotions.length} student(s) promoted to ${toClass} (${toSection})`, 'success');
+      setPromoteCfg(null);
+    } catch (err) {
+      toast(err.message || 'Could not promote students', 'error');
+    }
   };
 
   /* Mark Inactive: DELETE the student on the server (soft delete → isActive=false),
@@ -1811,6 +1807,7 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
           sectionList={sectionList}
           onClose={() => setPromoteCfg(null)}
           onSubmit={handlePromote}
+          toast={toast}
         />
       )}
 
@@ -3227,15 +3224,37 @@ const PROMOTE_NEXT = {
   'Class 9': 'Class 10',
 };
 
-function StuPromoteModal({ cls, classList, sectionList, onClose, onSubmit }) {
+function StuPromoteModal({ cls, classList, sectionList, onClose, onSubmit, toast }) {
   const fromCls = cls?.cls || '';
   const fromSec = cls?.sec || '';
-  const [toClass, setToClass] = useState(PROMOTE_NEXT[fromCls] || classList[0] || '');
+  const [grades, setGrades]   = useState([]);   // school ki proper-sequence classes + unke sections
+  const [toClass, setToClass] = useState(PROMOTE_NEXT[fromCls] || fromCls || '');
   const [toSec, setToSec]     = useState(fromSec);
-  const [session, setSession] = useState('2026 – 2027');
-  const [carry, setCarry]     = useState(true);
+  const [session, setSession] = useState('');   // active session NAME (read-only) — Settings se change hota hai
+  const [sessionId, setSessionId] = useState(0); // active session ID → API ka sessionYearID
+  const [carry, setCarry]     = useState(false);   // by default uncheck
   const [selected, setSelected] = useState({});
   const [selAll, setSelAll]     = useState(false);
+
+  /* Mount par: (1) proper-order classes + sections, (2) active session (name + id) fetch. */
+  useEffect(() => {
+    let alive = true;
+    studentService.getStuGrades().then(g => { if (alive) setGrades(Array.isArray(g) ? g : []); }).catch(() => {});
+    studentService.getStuActiveSession().then(s => { if (alive) { setSession(s?.name || ''); setSessionId(s?.id || 0); } }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
+
+  /* To Class ke options = school-order classes (fallback: purani classList prop).
+     To Section = us SELECTED class ke against sections (fallback: sectionList prop). */
+  const classOptions = grades.length ? grades.map(g => g.name) : (classList || []);
+  const selGrade = grades.find(g => g.name === toClass);
+  const sectionOptions = selGrade ? selGrade.sections.map(s => s.name) : (sectionList || []);
+
+  /* To Class badle to section list refresh — agar current section us class me na ho to pehli par set. */
+  useEffect(() => {
+    if (sectionOptions.length && !sectionOptions.includes(toSec)) setToSec(sectionOptions[0]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [toClass, grades]);
 
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
@@ -3244,22 +3263,22 @@ function StuPromoteModal({ cls, classList, sectionList, onClose, onSubmit }) {
     return () => { window.removeEventListener('keydown', onKey); document.body.style.overflow = ''; };
   }, [onClose]);
 
+  /* Selection key = student ka UNIQUE _id (reg khaali ho sakta hai → collide karta tha). */
   const toggleAll = (v) => {
     setSelAll(v);
     const next = {};
-    (cls?.students || []).forEach(s => { next[s.reg] = v; });
+    (cls?.students || []).forEach(s => { next[s._id] = v; });
     setSelected(next);
   };
-  const toggleOne = (reg) => {
+  const toggleOne = (id) => {
     setSelected(prev => {
-      const next = { ...prev, [reg]: !prev[reg] };
-      const all  = (cls?.students || []).every(s => next[s.reg]);
+      const next = { ...prev, [id]: !prev[id] };
+      const all  = (cls?.students || []).length > 0 && (cls?.students || []).every(s => next[s._id]);
       setSelAll(all);
       return next;
     });
   };
-  const selectedRegs = Object.keys(selected).filter(k => selected[k]);
-  const count = selectedRegs.length;
+  const count = (cls?.students || []).filter(s => selected[s._id]).length;
 
   return (
     <div className="stu-modal-overlay open" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
@@ -3290,17 +3309,25 @@ function StuPromoteModal({ cls, classList, sectionList, onClose, onSubmit }) {
             <Field label="To Class *">
               <select className="stu-finput" value={toClass} onChange={(e) => setToClass(e.target.value)}>
                 <option value="">Select</option>
-                {classList.map(c => <option key={c}>{c}</option>)}
+                {classOptions.map(c => <option key={c}>{c}</option>)}
               </select>
             </Field>
             <Field label="To Section *">
               <select className="stu-finput" value={toSec} onChange={(e) => setToSec(e.target.value)}>
                 <option value="">Select</option>
-                {sectionList.map(s => <option key={s}>{s}</option>)}
+                {sectionOptions.map(s => <option key={s}>{s}</option>)}
               </select>
             </Field>
             <Field label="Session / Academic Year" wide>
-              <input className="stu-finput" value={session} onChange={(e) => setSession(e.target.value)} />
+              {/* Read-only — session sirf Settings se change hota hai. Click par message. */}
+              <input
+                className="stu-finput"
+                value={session}
+                readOnly
+                title="To change the session, go to Settings."
+                style={{ cursor: 'not-allowed', background: '#F1F5F9', color: '#475569' }}
+                onMouseDown={(e) => { e.preventDefault(); toast && toast('To change the session, go to Settings.', 'info'); }}
+              />
             </Field>
             <div className="stu-fg stu-fg-wide">
               <label className="stu-flabel">Settings</label>
@@ -3328,13 +3355,13 @@ function StuPromoteModal({ cls, classList, sectionList, onClose, onSubmit }) {
                 {(cls?.students || []).length === 0 ? (
                   <tr><td colSpan="5" className="stu-promo-empty">No students in this section.</td></tr>
                 ) : cls.students.map((s, i) => (
-                  <tr key={s.reg} className={selected[s.reg] ? 'sel' : ''}>
+                  <tr key={s._id ?? s.reg ?? i} className={selected[s._id] ? 'sel' : ''}>
                     <td>{i + 1}</td>
                     <td className="mono">{s.reg}</td>
                     <td><strong>{stuFullName(s)}</strong></td>
                     <td>{s.father || '—'}</td>
                     <td className="c">
-                      <input type="checkbox" checked={!!selected[s.reg]} onChange={() => toggleOne(s.reg)} />
+                      <input type="checkbox" checked={!!selected[s._id]} onChange={() => toggleOne(s._id)} />
                     </td>
                   </tr>
                 ))}
@@ -3353,7 +3380,23 @@ function StuPromoteModal({ cls, classList, sectionList, onClose, onSubmit }) {
             className="stu-btn-primary"
             style={{ background: 'linear-gradient(135deg,#16A34A,#15803D)', boxShadow: '0 4px 14px rgba(22,163,74,.28)' }}
             disabled={count === 0 || !toClass || !toSec}
-            onClick={() => onSubmit({ selectedRegs, toClass, toSection: toSec, carryDiscounts: carry, session })}
+            onClick={() => {
+              /* Har selected student ke liye promote payload banao (IDs resolve karke). */
+              const newGrade   = grades.find(g => g.name === toClass);
+              const newSection = newGrade?.sections.find(s => s.name === toSec);
+              const promotions = (cls?.students || [])
+                .filter(s => selected[s._id])
+                .map(s => ({
+                  studentID:     s._id,
+                  oldGradeID:    cls?._gradeId,
+                  oldSectionID:  cls?._sectionId,
+                  newGradeID:    newGrade?.id,
+                  newSectionID:  newSection?.id,
+                  sessionYearID: sessionId,
+                  isCarryForward: carry,
+                }));
+              onSubmit({ toClass, toSection: toSec, promotions });
+            }}
           >
             <i className="fa-solid fa-arrow-up-right-dots"></i> Promote Students
           </button>

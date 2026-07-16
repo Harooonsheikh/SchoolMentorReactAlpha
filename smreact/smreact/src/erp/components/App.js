@@ -137,7 +137,16 @@ const NAV_SECTIONS = [
 
 export default function App() {
   const [theme, setTheme] = useState('light');
-  const [active, setActive] = useState('acad');
+  /* Active ERP module localStorage me yaad rakho — refresh par usi module par wapas
+     aao (default 'acad' = Academics). */
+  const [active, setActive] = useState(() => {
+    try { return localStorage.getItem('erp_active_module') || 'acad'; }
+    catch (e) { return 'acad'; }
+  });
+  /* Jab bhi module badle, localStorage me save — agli refresh isay padh legi. */
+  useEffect(() => {
+    try { localStorage.setItem('erp_active_module', active); } catch (e) { /* ignore */ }
+  }, [active]);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);

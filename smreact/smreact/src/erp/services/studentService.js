@@ -323,6 +323,81 @@ export async function getStuSectionList() {
   const rows = await fetchClassSectionStudents();
   return [...new Set(rows.map(r => r.sec))];
 }
+
+/* Grades (classes) in the SCHOOL'S proper sequence, each with its own sections —
+   Promote modal ke "To Class" (sahi order) aur "To Section" (usi class ke against)
+   ke liye. GET /api/LaunchSetup/get-grades-by-branch/{branchID}. */
+export async function getStuGrades() {
+  const branchID = sessionStorage.getItem('branchID') || 0;
+  const res  = await fetch(buildUrl(`/api/LaunchSetup/get-grades-by-branch/${branchID}`), {
+    headers: { Accept: '*/*' },
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(apiMessage(json) || 'Could not load classes');
+  const rows = Array.isArray(json?.data) ? json.data : [];
+  return rows.map(g => ({
+    id:   Number(g.id ?? g.gradeID ?? g.gradeId ?? 0),
+    name: g.name ?? g.gradeName ?? g.className ?? '—',
+    sections: (Array.isArray(g.sections) ? g.sections : []).map(s => ({
+      id:   Number(s.sectionID ?? s.id ?? s.sectionId ?? 0),
+      name: s.sectionName ?? s.name ?? '—',
+    })),
+  }));
+}
+
+/* Branch ka ACTIVE academic session (read-only display ke liye) — session yahin
+   se aata hai, change sirf Settings me hota hai.
+   GET /api/Setting/get-academic-active-sessions-by-branch/{branchID}. */
+export async function getStuActiveSession() {
+  const branchID = sessionStorage.getItem('branchID') || 0;
+  try {
+    const res  = await fetch(buildUrl(`/api/Setting/get-academic-active-sessions-by-branch/${branchID}`), {
+      headers: { Accept: '*/*' },
+    });
+    const json = await res.json().catch(() => null);
+    const first = Array.isArray(json?.data) ? json.data[0] : null;
+    return {
+      id:   Number(first?.ID ?? first?.id ?? sessionStorage.getItem('sessionID') ?? 0) || 0,
+      name: first?.SessionName ?? first?.sessionName ?? sessionStorage.getItem('sessionName') ?? '',
+    };
+  } catch (e) {
+    return { id: Number(sessionStorage.getItem('sessionID')) || 0, name: sessionStorage.getItem('sessionName') || '' };
+  }
+}
+
+/* Promote ONE student to a new class/section. isCarryForward=true → agar from-class aur
+   to-class ke fee-heads ka number same ho to us student ke discounts/financial settings bhi
+   move ho jate hain; false → sirf student move hota hai (backend ye logic handle karta hai).
+   POST /api/Student/promote-student. */
+export async function promoteStuStudent({ studentID, oldGradeID, oldSectionID, newGradeID, newSectionID, sessionYearID, isCarryForward } = {}) {
+  const branchID = Number(sessionStorage.getItem('branchID')) || 0;
+  const userID   = Number(sessionStorage.getItem('UserID')) || 0;
+  const now      = new Date().toISOString();
+  const body = {
+    id:            0,
+    branchID,
+    oldGradeID:    Number(oldGradeID) || 0,
+    oldSectionID:  Number(oldSectionID) || 0,
+    newGradeID:    Number(newGradeID) || 0,
+    newSectionID:  Number(newSectionID) || 0,
+    studentID:     Number(studentID) || 0,
+    sessionYearID: Number(sessionYearID) || 0,
+    isActive:      false,                 // promotion record: hamesha false
+    isCarryForward: !!isCarryForward,     // checkbox: unchecked → false, checked → true
+    createdBy:     userID,
+    createdAt:     now,
+    modifiedBy:    userID,
+    modifiedAt:    now,
+  };
+  const res  = await fetch(buildUrl('/api/Student/promote-student'), {
+    method: 'POST',
+    headers: { Accept: '*/*', 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(apiMessage(json) || 'Could not promote student');
+  return json;
+}
 /* Fee heads for a single grade — the per-class fee structure shown in
    the student's Fee Details tab. */
 export async function getStuFeeHeads(gradeId) {
