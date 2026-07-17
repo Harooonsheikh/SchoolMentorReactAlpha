@@ -796,6 +796,52 @@ export async function getStudentChallans(studentId, month, year) {
   return Array.isArray(json?.data) ? json.data : [];
 }
 
+/* Every challan in a month range, whole branch, one call.
+   GET /api/BranchLedger/get-by-month-range — months are 1-based. */
+export async function getLedgerRange(fromMonth, fromYear, toMonth, toYear) {
+  const branchID = Number(sessionStorage.getItem('branchID')) || 1;
+  const res = await fetch(
+    buildUrl(`/api/BranchLedger/get-by-month-range?branchId=${branchID}&fromMonth=${fromMonth}&fromYear=${fromYear}&toMonth=${toMonth}&toYear=${toYear}`),
+    { headers: { Accept: '*/*' } },
+  );
+  const json = await res.json().catch(() => null);
+  if (!res.ok || json?.success === false) {
+    throw new Error(apiMessage(json) || 'Could not load ledger history');
+  }
+  return Array.isArray(json?.data) ? json.data : [];
+}
+
+/* The ledger stamps createdBy/modifiedBy with the LOGIN user id, which is not
+   an employee id — nothing in get-employees-by-branch joins to it, so the name
+   has to come from /api/HR/get-employee-by-loginuser/{loginUserId}.
+
+   The in-flight promise is cached (misses included, as null) so a month range
+   full of the same cashier costs exactly one request per distinct user. */
+const loginUserNameCache = new Map();
+export async function getEmployeeNameByLoginUser(loginUserId) {
+  const id = Number(loginUserId) || 0;
+  if (!id) return null;
+  if (loginUserNameCache.has(id)) return loginUserNameCache.get(id);
+
+  const token = sessionStorage.getItem('token');
+  const p = (async () => {
+    try {
+      const res = await fetch(buildUrl(`/api/HR/get-employee-by-loginuser/${id}`), {
+        headers: { Accept: '*/*', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok || json?.success === false || !json?.data) return null;
+      const e = json.data;
+      return [e.firstName, e.lastName].filter(Boolean).join(' ').trim() || null;
+    } catch (err) {
+      return null;
+    }
+  })();
+
+  loginUserNameCache.set(id, p);
+  return p;
+}
+
 /* Record a payment against a challan. body:
    { ledgerId (challan id), paymentMethod, modifiedBy, detailRows:[...] }.
    The caller fills each detailRow's receivedAmount / pendingorAdv. */
@@ -808,6 +854,23 @@ export async function receivePayment(body) {
   const json = await res.json().catch(() => null);
   if (!res.ok || json?.success === false) {
     throw new Error(apiMessage(json) || 'Could not record payment');
+  }
+  return json;
+}
+
+/* Reverse the receiving recorded against a challan — the challan itself stays,
+   its heads go back to unpaid. DELETE /api/BranchLedger/delete-receiving/{ledgerId}
+   This is the Receiving tab's delete; deleteChallanById (below) is the Challans
+   tab's, and destroys the challan itself. */
+export async function deleteReceiving(ledgerId) {
+  const userID = Number(sessionStorage.getItem('UserID')) || 0;
+  const res = await fetch(
+    buildUrl(`/api/BranchLedger/delete-receiving/${ledgerId}?modifiedBy=${userID}`),
+    { method: 'DELETE', headers: { Accept: '*/*' } },
+  );
+  const json = await res.json().catch(() => null);
+  if (!res.ok || json?.success === false) {
+    throw new Error(apiMessage(json) || 'Could not delete the receiving');
   }
   return json;
 }

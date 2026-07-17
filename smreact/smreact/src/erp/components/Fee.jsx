@@ -3877,18 +3877,32 @@ function FeeReceivingIndividual({ toast }) {
     }
   };
 
+  /* Reverse this student's receiving via /api/BranchLedger/delete-receiving —
+     the challan stays and its heads go back to unpaid. `challanMap` already
+     holds the month's record, so its id is the ledgerId to delete. */
   const requestDeleteReceipt = (c, s) => {
+    const rec = challanMap[keyOf(c.key, s.reg)];
     setConfirm({
       title:   'Delete received fee?',
       message: <span>The manually received payment(s) for <strong>{s.name}</strong> will be removed.</span>,
-      hint:    'OneLink / Bank payments cannot be deleted from here.',
-      onConfirm: () => {
-        setReceipts(prev => (prev || []).map(r => (
-          r.classKey === c.key && r.reg === s.reg && r.monthIdx === monthIdx
-            ? { ...r, payments: r.payments.filter(p => p.source === 'onelink' || p.source === 'bank') }
-            : r
-        )));
-        toast('Receipt deleted', 'success');
+      hint:    'The challan stays — only the receiving is reversed. OneLink / Bank payments cannot be deleted from here.',
+      onConfirm: async () => {
+        if (!rec?.id) {
+          toast(`No ${appliedMonth} ${appliedYear} challan found for ${s.name}`, 'warning');
+          return;
+        }
+        try {
+          await feeService.deleteReceiving(rec.id);
+          setReceipts(prev => (prev || []).map(r => (
+            r.classKey === c.key && r.reg === s.reg && r.monthIdx === monthIdx
+              ? { ...r, payments: r.payments.filter(p => p.source === 'onelink' || p.source === 'bank') }
+              : r
+          )));
+          await loadChallans();
+          toast('Receipt deleted', 'success');
+        } catch (e) {
+          toast(e.message || 'Could not delete receipt', 'error');
+        }
       },
     });
   };
@@ -4473,52 +4487,78 @@ function FamilyTreeReceiving({ toast }) {
     }
   };
 
+  /* One child's ledger id for the applied month — from the row's own challan,
+     the preloaded get-by-month map, or whatever openReceive last cached. */
+  const childLedgerId = useCallback((f, ch) => (
+    ch._challan?.id
+    || challanByStudent[String(ch.applicantsID)]?.id
+    || ledgerRecRef.current[`${f.key}|${ch.reg}`]?.id
+    || null
+  ), [challanByStudent]);
+
   const requestDeleteReceipt = (f, ch) => {
+    const ledgerId = childLedgerId(f, ch);
     setConfirm({
       title:   'Delete received fee?',
       message: <span>The manually received payment(s) for <strong>{ch.name}</strong> will be removed.</span>,
-      hint:    'OneLink / Bank payments cannot be deleted from here.',
-      onConfirm: () => {
-        setReceipts(prev => (prev || []).map(r => (
-          r.famKey === f.key && r.reg === ch.reg && r.monthIdx === monthIdx
-            ? { ...r, payments: r.payments.filter(p => p.source === 'onelink' || p.source === 'bank') }
-            : r
-        )));
-        toast('Receipt deleted', 'success');
+      hint:    'The challan stays — only the receiving is reversed. OneLink / Bank payments cannot be deleted from here.',
+      onConfirm: async () => {
+        if (!ledgerId) {
+          toast(`No ${appliedMonth} ${appliedYear} challan found for ${ch.name}`, 'warning');
+          return;
+        }
+        try {
+          await feeService.deleteReceiving(ledgerId);
+          setReceipts(prev => (prev || []).map(r => (
+            r.famKey === f.key && r.reg === ch.reg && r.monthIdx === monthIdx
+              ? { ...r, payments: r.payments.filter(p => p.source === 'onelink' || p.source === 'bank') }
+              : r
+          )));
+          await loadFamilyChallans();
+          toast('Receipt deleted', 'success');
+        } catch (e) {
+          toast(e.message || 'Could not delete receipt', 'error');
+        }
       },
     });
   };
 
+  /* Reverse the whole family's receiving — one
+     /api/BranchLedger/delete-receiving/{ledgerId} call per child. The challans
+     survive, so the family stays listed with its dues restored. */
   const requestDeleteFamily = (f) => {
     const children = f.children || [];
+    const targets  = children.filter(ch => childLedgerId(f, ch));
     setConfirm({
       title:   'Delete family record?',
-      message: <span><strong>{f.name}</strong> will be removed from fee receiving.</span>,
-      hint:    `The ${appliedMonth} ${appliedYear} challan of each child (${children.length}) will be deleted.`,
-      confirmLabel: 'Yes, Remove',
+      message: <span>Every manually received payment for <strong>{f.name}</strong> will be reversed.</span>,
+      hint:    `The ${appliedMonth} ${appliedYear} receiving of each child (${targets.length}) will be deleted. The challans stay — only the payments are undone.`,
+      confirmLabel: 'Yes, Delete',
       icon:    'fa-people-roof',
       onConfirm: async () => {
-        /* For every child, delete its BranchLedger challan record for the
-           applied month/year — one /api/BranchLedger/delete/{id} call each. */
-        const mIdx = FEE_MONTHS.indexOf(appliedMonth);
+        if (!targets.length) {
+          toast(`No ${appliedMonth} ${appliedYear} challans found for this family`, 'warning');
+          return;
+        }
         let deleted = 0, failed = 0;
-        for (const ch of children) {
-          if (ch.applicantsID == null) continue;
+        for (const ch of targets) {
           try {
-            const rows = await feeService.getStudentChallans(ch.applicantsID, mIdx + 1, appliedYear);
-            const rec  = Array.isArray(rows) && rows.length ? rows[0] : null;
-            if (!rec?.id) continue;                 // no challan for this child/month
-            await feeService.deleteChallanById(rec.id);
+            await feeService.deleteReceiving(childLedgerId(f, ch));
             deleted++;
           } catch (e) {
             failed++;
           }
         }
-        setFamilies(prev => (prev || []).filter(x => x.key !== f.key));
+        setReceipts(prev => (prev || []).map(r => (
+          r.famKey === f.key && r.monthIdx === monthIdx
+            ? { ...r, payments: r.payments.filter(p => p.source === 'onelink' || p.source === 'bank') }
+            : r
+        )));
+        await loadFamilyChallans();
         if (failed) {
-          toast(`Family removed — ${deleted} challan${deleted === 1 ? '' : 's'} deleted, ${failed} failed`, deleted ? 'warning' : 'error');
+          toast(`${deleted} receiving deleted, ${failed} failed`, deleted ? 'warning' : 'error');
         } else {
-          toast(`Family record removed — ${deleted} challan${deleted === 1 ? '' : 's'} deleted`, 'success');
+          toast(`Family receiving deleted — ${deleted} child${deleted === 1 ? '' : 'ren'}`, 'success');
         }
       },
     });
@@ -5536,63 +5576,86 @@ function FamilyFeeSlipModal({ cfg, onClose, paymentsFor, toast }) {
 
 const FEE_HIST_YEARS = ['2025', '2026', '2027'];
 
-/* Deterministic per-student PRNG so historical months stay stable
-   between renders (no flicker when toggling segments). */
-function feeHistSeed(reg, monthIdx) {
-  let h = 5381;
-  const k = `${reg}|${monthIdx}`;
-  for (let i = 0; i < k.length; i++) h = ((h << 5) + h + k.charCodeAt(i)) >>> 0;
-  return h;
-}
+/* ═══════════ BranchLedger row maths — shared by History and Reports ═══════════
 
-/* Build the month-by-month history for one student. Current month
-   (May 2026 in the seed data) pulls live numbers from genSet + the
-   receipts ledger; past months are synthesised deterministically. */
-function buildStudentHistory({ c, s, headsForClass, settings, fromIdx, toIdx, year, paymentsFor, genSet, keyOf }) {
-  const months  = [];
-  const baseHead = (headsForClass || []).reduce((a, h) => a + (+h.amt || 0), 0) + (+s.transport > 0 ? +s.transport : 0);
+   detailRow.receivedAmount is the paid/unpaid signal the ledger gives us:
+   null means nothing has been taken against that head yet, a number is what
+   was actually received. Discount comes off the billed amount before anything
+   is owed, so `net` — not challanAmount — is the real receivable. */
+const ledgerRowNet    = (r) => Math.max((+r.challanAmount || 0) - (+r.discount || 0), 0);
+const ledgerRowUnpaid = (r) => r.receivedAmount == null;
+const ledgerRowRecv   = (r) => +r.receivedAmount || 0;
+const ledgerRowPend   = (r) => (ledgerRowUnpaid(r) ? ledgerRowNet(r) : Math.max(ledgerRowNet(r) - ledgerRowRecv(r), 0));
 
+/* Build the month-by-month history for one student straight from their real
+   BranchLedger challans. Only months that actually carry a challan appear —
+   a month with no challan is not an unpaid challan, so it must not inflate
+   the counts. `empNames` maps a login user id to the employee who acted. */
+function buildStudentHistory({ recs, fromIdx, toIdx, year, empNames = {} }) {
+  const byMonth = new Map();
+  (recs || []).forEach(rec => {
+    if (String(rec.year) !== String(year)) return;
+    byMonth.set(Number(rec.month) - 1, rec);
+  });
+
+  const months = [];
   for (let m = fromIdx; m <= toIdx; m++) {
-    const isCurrent = (m === 4 && year === '2026');
-    const seed = feeHistSeed(s.reg, m);
-    const challanNo = `CH-${year}${String(m + 1).padStart(2, '0')}-${String(s.reg).replace(/[^0-9]/g, '').slice(-5)}`;
-    const challanDate = `${year}-${String(m + 1).padStart(2, '0')}-01`;
-    const dueDate     = `${year}-${String(m + 1).padStart(2, '0')}-14`;
-    let challanAmt, received, method, recvDate, recvBy, status, time = '—';
-    let payments = [];
+    const rec = byMonth.get(m);
+    if (!rec) continue;
+    const rows = rec.detailRows || [];
 
-    if (isCurrent) {
-      const generated = !!genSet && genSet.has(keyOf(c.key, s.reg));
-      const md = recStudentModel({
-        student: s, headsForClass, generated, classDisc: {},
-        payments: paymentsFor(c.key, s.reg),
-      });
-      payments   = paymentsFor(c.key, s.reg);
-      challanAmt = md.payable;
-      received   = md.paid;
-      status     = md.status;
-      const last = payments[payments.length - 1];
-      method   = last ? last.method : '—';
-      recvDate = last ? last.date   : '—';
-      time     = last ? (last.time || '—') : '—';
-      recvBy   = last ? (last.source === 'onelink' || last.source === 'bank' ? 'OneLink / Bank' : 'Front Desk') : '—';
-    } else {
-      challanAmt = baseHead + (seed % 3000);
-      const r = seed % 10;
-      if (r < 6)      { received = challanAmt;                  status = 'full'; }
-      else if (r < 8) { received = Math.round(challanAmt * 0.4); status = 'partial'; }
-      else            { received = 0;                            status = 'none'; }
-      const methods = ['Cash', 'Bank Transfer', 'Online / App', 'Cheque', 'OneLink / Bank'];
-      method   = received > 0 ? methods[seed % methods.length] : '—';
-      recvDate = received > 0 ? `${year}-${String(m + 1).padStart(2, '0')}-${String(5 + (seed % 18)).padStart(2, '0')}` : '—';
-      time     = received > 0 ? `${String(8 + (seed % 9)).padStart(2, '0')}:${String((seed * 7) % 60).padStart(2, '0')}` : '—';
-      recvBy   = received > 0 ? (method === 'OneLink / Bank' ? 'OneLink / Bank' : ['Front Desk', 'Accounts Office', 'Bursar'][seed % 3]) : '—';
-    }
+    const challanAmt = rows.reduce((a, r) => a + ledgerRowNet(r), 0);
+    const received   = rows.reduce((a, r) => a + ledgerRowRecv(r), 0);
+    const pending    = rows.reduce((a, r) => a + ledgerRowPend(r), 0);
+    const status     = received <= 0 ? 'none' : pending > 0 ? 'partial' : 'full';
+
+    /* Receiving a payment stamps modifiedAt, but an untouched challan still
+       carries its creation stamp — so it only counts as a receiving date once
+       money has actually come in. */
+    const stamp  = received > 0 ? String(rec.modifiedAt || rec.dateofCreattion || '') : '';
+    const recvBy = received > 0
+      ? (empNames[String(rec.modifiedBy)] || `User #${rec.modifiedBy}`)
+      : '—';
+
+    const perHead = {};
+    rows.forEach(r => {
+      const n = r.subHead || r.head || '—';
+      perHead[n] = (perHead[n] || 0) + ledgerRowRecv(r);
+    });
 
     months.push({
-      m, monthName: FEE_MONTHS[m], challanNo, challanDate, dueDate,
-      challanAmt, received, pending: Math.max(0, challanAmt - received),
-      status, method, recvDate, recvBy, time, payments,
+      m,
+      monthName:   FEE_MONTHS[m],
+      challanNo:   `CH-${rec.year}${String(rec.month).padStart(2, '0')}-${rec.id}`,
+      challanDate: String(rec.dateofCreattion || '').slice(0, 10) || '—',
+      dueDate:     String(rec.dueDate || '').slice(0, 10) || '—',
+      challanAmt, received, pending, status,
+      method:   received > 0 ? (rec.paymentMethod || 'Cash') : '—',
+      recvDate: stamp ? stamp.slice(0, 10) : '—',
+      time:     stamp ? stamp.slice(11, 16) : '—',
+      recvBy,
+      createdBy: empNames[String(rec.createdBy)] || `User #${rec.createdBy}`,
+      /* Per-head breakdown so Detailed History can show every billed line. */
+      heads: rows.map(r => ({
+        head:    r.head || 'Account Payable',
+        sub:     r.subHead || r.head || '—',
+        challan: +r.challanAmount || 0,
+        disc:    +r.discount || 0,
+        recv:    ledgerRowRecv(r),
+        pend:    ledgerRowPend(r),
+        unpaid:  ledgerRowUnpaid(r),
+      })),
+      /* The ledger stores a cumulative receivedAmount, not per-transaction
+         rows, so the slip builder gets one synthetic payment carrying it. */
+      payments: received > 0 ? [{
+        amount: received,
+        date:   stamp.slice(0, 10),
+        time:   stamp.slice(11, 16),
+        method: rec.paymentMethod || 'Cash',
+        ref: '', txn: '', source: 'counter',
+        by: recvBy, perHead,
+      }] : [],
+      _rec: rec,
     });
   }
   return months;
@@ -5623,40 +5686,67 @@ function FeeHistoryTab({ toast }) {
   const { data: studentsMap = {} } = useAsync(feeService.getTransportFee, []);
   const { data: headsMap = {} }    = useAsync(feeService.getFeeHeads, []);
   const { data: settings = {} }    = useAsync(feeService.getFeeSettings, []);
-  const { data: generatedInitial } = useAsync(feeService.getGeneratedChallans, []);
-  const { data: serverReceipts = [] } = useAsync(feeService.getReceipts, []);
   const { data: branchHeader = null } = useAsync(feeService.getReportHeader, [], null);
 
   /* Filters */
+  const today = new Date();
   const [fromMonth, setFromMonth] = useState(FEE_MONTHS[0]);
-  const [toMonth, setToMonth]     = useState(FEE_MONTHS[4]);
-  const [year, setYear]           = useState('2026');
+  const [toMonth, setToMonth]     = useState(FEE_MONTHS[today.getMonth()]);
+  const [year, setYear]           = useState(String(today.getFullYear()));
   const [appliedFrom, setAppliedFrom] = useState(fromMonth);
   const [appliedTo, setAppliedTo]     = useState(toMonth);
   const [appliedYear, setAppliedYear] = useState(year);
 
-  const [genSet, setGenSet] = useState(null);
-  useEffect(() => { if (generatedInitial && genSet == null) setGenSet(new Set(generatedInitial)); }, [generatedInitial, genSet]);
-  const keyOf = (classKey, reg) => `${classKey}|${reg}|${4}`; // current = May 2026
-
-  const [receipts, setReceipts] = useState(null);
-  useEffect(() => { if (serverReceipts.length && receipts == null) setReceipts(serverReceipts); }, [serverReceipts, receipts]);
-  const paymentsFor = useCallback((classKey, reg) => {
-    const r = (receipts || []).find(x => x.classKey === classKey && x.reg === reg && x.monthIdx === 4);
-    return r ? r.payments : [];
-  }, [receipts]);
-
   const fromIdx = FEE_MONTHS.indexOf(appliedFrom);
   const toIdx   = FEE_MONTHS.indexOf(appliedTo);
 
-  /* Per-student history (memoised lightly by class+reg+filter scope) */
+  /* The applied range's challans — one /api/BranchLedger/get-by-month-range
+     call covers every student in the branch across the whole range. */
+  const [records, setRecords]     = useState([]);
+  const [histLoading, setLoading] = useState(true);
+  const [histError, setError]     = useState(null);
+  useEffect(() => {
+    let alive = true;
+    const f = FEE_MONTHS.indexOf(appliedFrom) + 1;
+    const t = FEE_MONTHS.indexOf(appliedTo) + 1;
+    setLoading(true);
+    setError(null);
+    feeService.getLedgerRange(f, appliedYear, Math.max(f, t), appliedYear)
+      .then(rows => { if (alive) { setRecords(rows); setLoading(false); } })
+      .catch(e => { if (alive) { setRecords([]); setError(e.message || 'Could not load fee history'); setLoading(false); } });
+    return () => { alive = false; };
+  }, [appliedFrom, appliedTo, appliedYear]);
+
+  /* createdBy / modifiedBy are login user ids — resolve each distinct one to
+     its employee name once, then reuse across every row. */
+  const [empNames, setEmpNames] = useState({});
+  useEffect(() => {
+    const ids = [...new Set(
+      records.flatMap(r => [r.modifiedBy, r.createdBy]).filter(Boolean).map(String),
+    )];
+    const missing = ids.filter(id => !(id in empNames));
+    if (!missing.length) return undefined;
+    let alive = true;
+    Promise.all(missing.map(id => feeService.getEmployeeNameByLoginUser(id).then(n => [id, n])))
+      .then(pairs => { if (alive) setEmpNames(prev => ({ ...prev, ...Object.fromEntries(pairs) })); });
+    return () => { alive = false; };
+  }, [records, empNames]);
+
+  const recsByStudent = useMemo(() => {
+    const map = new Map();
+    records.forEach(rec => {
+      const k = String(rec.studentID);
+      if (!map.has(k)) map.set(k, []);
+      map.get(k).push(rec);
+    });
+    return map;
+  }, [records]);
+
+  /* Per-student history, built from that student's real challans. */
   const historyFor = useCallback((c, s) => buildStudentHistory({
-    c, s,
-    headsForClass: headsMap[c.key] || [],
-    settings,
-    fromIdx, toIdx: Math.max(fromIdx, toIdx), year: appliedYear,
-    paymentsFor, genSet, keyOf,
-  }), [headsMap, settings, fromIdx, toIdx, appliedYear, paymentsFor, genSet]);
+    recs: recsByStudent.get(String(s.studentID)) || recsByStudent.get(String(s.applicantsID)) || [],
+    fromIdx, toIdx: Math.max(fromIdx, toIdx), year: appliedYear, empNames,
+  }), [recsByStudent, fromIdx, toIdx, appliedYear, empNames]);
 
   /* Search */
   const [searchQ, setSearchQ]       = useState('');
@@ -5683,8 +5773,10 @@ function FeeHistoryTab({ toast }) {
     toast(`Loaded ${fromMonth} – ${toMonth} ${year} history`, 'info');
   };
   const resetFilters = () => {
-    setFromMonth(FEE_MONTHS[0]); setToMonth(FEE_MONTHS[4]); setYear('2026');
-    setAppliedFrom(FEE_MONTHS[0]); setAppliedTo(FEE_MONTHS[4]); setAppliedYear('2026');
+    const nowM = FEE_MONTHS[new Date().getMonth()];
+    const nowY = String(new Date().getFullYear());
+    setFromMonth(FEE_MONTHS[0]); setToMonth(nowM); setYear(nowY);
+    setAppliedFrom(FEE_MONTHS[0]); setAppliedTo(nowM); setAppliedYear(nowY);
     setSearchQ('');
   };
 
@@ -5788,6 +5880,13 @@ function FeeHistoryTab({ toast }) {
           </button>
         </Tooltip>
       </div>
+
+      <RepLoadState
+        loading={histLoading}
+        error={histError}
+        empty={!histLoading && !histError && records.length === 0}
+        emptyText={`No challans exist for ${appliedFrom} – ${appliedTo} ${appliedYear}.`}
+      />
 
       {/* Filters + universal search */}
       <div className="fee-section fee-section--overflow">
@@ -6240,6 +6339,45 @@ function FeeHistoryDetailModal({ cfg, onClose, year, onDownloadStudent, onDownlo
                       </div>
                     </div>
                   </div>
+
+                  {/* Every billed head on this month's challan. */}
+                  {mo.heads.length > 0 && (
+                    <div className="fee-month-body" style={{ paddingTop: 0 }}>
+                      <div className="fee-month-col" style={{ gridColumn: '1 / -1' }}>
+                        <h5><span><i className="fa-solid fa-layer-group"></i> Head-Wise Breakdown</span></h5>
+                        <div className="fee-stbl-wrap">
+                          <table className="fee-stbl">
+                            <thead>
+                              <tr>
+                                <th>Account Type</th>
+                                <th>Fee Head</th>
+                                <th className="fee-right">Challan</th>
+                                <th className="fee-right">Discount</th>
+                                <th className="fee-right">Received</th>
+                                <th className="fee-right">Pending</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {mo.heads.map((h, i) => (
+                                <tr key={`${h.sub}-${i}`}>
+                                  <td>{h.head}</td>
+                                  <td><b>{h.sub}</b></td>
+                                  <td className="fee-right">{money(h.challan)}</td>
+                                  <td className="fee-right">{money(h.disc)}</td>
+                                  <td className="fee-right">
+                                    {h.unpaid
+                                      ? <span style={{ color: 'var(--text-muted)' }}>—</span>
+                                      : <span className="fee-paid-amt">{money(h.recv)}</span>}
+                                  </td>
+                                  <td className="fee-right">{h.pend > 0 ? <span className="fee-neg">{money(h.pend)}</span> : '0'}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -6847,18 +6985,6 @@ function RepActions({ onPreview, onPdf }) {
   );
 }
 
-/* ═══════════ Live BranchLedger source for the report panels ═══════════
-
-   Every figure in the Defaulter and Head-Wise reports comes from the real
-   /api/BranchLedger challans. get-by-month returns the same records as
-   get-all?studentId=… but for the whole branch in one request, so a class
-   report costs one call per month instead of one call per student.
-
-   detailRow.receivedAmount is the paid/unpaid signal: null means nothing has
-   been taken against that head yet, a number is what was actually received. */
-const ledgerRowNet    = (r) => Math.max((+r.challanAmount || 0) - (+r.discount || 0), 0);
-const ledgerRowUnpaid = (r) => r.receivedAmount == null;
-
 /* The (month, year) pairs a report spans, oldest first. Capped so a wide date
    range can't fan out into an unbounded number of requests. */
 function ledgerPeriods(fromM, fromY, toM, toY) {
@@ -6881,8 +7007,8 @@ function ledgerModel(recs) {
   (recs || []).forEach(rec => {
     (rec.detailRows || []).forEach(r => {
       const net  = ledgerRowNet(r);
-      const recv = +r.receivedAmount || 0;
-      const pend = ledgerRowUnpaid(r) ? net : Math.max(net - recv, 0);
+      const recv = ledgerRowRecv(r);
+      const pend = ledgerRowPend(r);
       payable += net; paid += recv; remaining += pend; disc += (+r.discount || 0);
       const sub = r.subHead || r.head || '—';
       const k   = `${r.head || ''}|${sub}`;
