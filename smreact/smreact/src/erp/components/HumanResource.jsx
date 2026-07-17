@@ -3831,6 +3831,98 @@ function LetterViewModal({ letter, onClose, toast }) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════
+   DOCUMENT VIEW MODAL — opens an uploaded HR document (CNIC, degree,
+   contract, resume …) inline. Images render as <img>, PDFs / other
+   files render in an <iframe>, with Open-in-new-tab & Download actions.
+   ═══════════════════════════════════════════════════════════════════ */
+function DocViewModal({ doc, onClose }) {
+  const frameRef = useRef(null);
+
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    document.body.style.overflow = 'hidden';
+    return () => { document.removeEventListener('keydown', onKey); document.body.style.overflow = ''; };
+  }, [onClose]);
+
+  const url  = doc?.path || '';
+  const name = doc?.name || 'Document';
+  const ext  = (url.split('?')[0].split('#')[0].match(/\.([a-z0-9]+)$/i)?.[1] || '').toLowerCase();
+  const isImage = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg'].includes(ext);
+  const isPdf   = ext === 'pdf';
+
+  /* Open a print dialog for the document → browser "Save as PDF". PDFs/other
+     files print via their iframe; images are wrapped in a print window. */
+  const saveAsPdf = () => {
+    if (!url) return;
+    if (isImage) {
+      const w = window.open('', '_blank');
+      if (!w) return;
+      w.document.write(`<!doctype html><html><head><title>${name}</title><style>@page{margin:12mm}body{margin:0}img{max-width:100%}</style></head><body><img src="${url}" onload="window.focus();window.print();" /></body></html>`);
+      w.document.close();
+      return;
+    }
+    const fw = frameRef.current?.contentWindow;
+    if (fw) { fw.focus(); fw.print(); }
+    else { window.open(url, '_blank'); }
+  };
+
+  return createPortal((
+    <div
+      className="ov open"
+      role="dialog" aria-modal="true"
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="modal doc-view-modal" style={{ display: 'flex', flexDirection: 'column', width: '100%', maxWidth: 820, height: '90vh', maxHeight: '90vh' }}>
+        <div className="modal-head">
+          <div className="modal-head-left">
+            <div className="modal-head-icon"><i className="fa-solid fa-file-lines" aria-hidden="true"></i></div>
+            <div>
+              <div className="modal-title">View Document</div>
+              <div className="modal-sub">{name}</div>
+            </div>
+          </div>
+          <Tooltip text="Close">
+            <button type="button" className="modal-close" onClick={onClose} aria-label="Close">
+              <i className="fa-solid fa-xmark" aria-hidden="true"></i>
+            </button>
+          </Tooltip>
+        </div>
+
+        <div className="modal-body doc-view-body" style={{ flex: '1 1 0', minHeight: 0, padding: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'auto', background: 'var(--bg2, #f3f4f6)' }}>
+          {!url ? (
+            <div className="letter-view-state"><i className="fa-solid fa-triangle-exclamation" aria-hidden="true"></i> No document available.</div>
+          ) : isImage ? (
+            <img src={url} alt={name} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', borderRadius: 6 }} />
+          ) : (
+            <iframe
+              ref={frameRef}
+              title={name}
+              src={isPdf ? `${url}#toolbar=1` : url}
+              style={{ width: '100%', height: '100%', border: 'none', borderRadius: 6, background: '#fff' }}
+            />
+          )}
+        </div>
+
+        <div className="modal-foot">
+          <button type="button" className="btn-secondary" onClick={onClose}>Close</button>
+          {url && (
+            <a className="btn-secondary" href={url} target="_blank" rel="noreferrer" style={{ textDecoration: 'none' }}>
+              <i className="fa-solid fa-up-right-from-square" aria-hidden="true"></i> Open in new tab
+            </a>
+          )}
+          {url && (
+            <button type="button" className="btn-primary" onClick={saveAsPdf}>
+              <i className="fa-solid fa-file-pdf" aria-hidden="true"></i> PDF
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  ), document.body);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
    EMPLOYEE ROW — 9-col grid with the 5-chip summary on the right.
    Expanding the chevron / opening the 3-dots is wired but their
    internal content is intentionally left as a placeholder so that
@@ -5068,6 +5160,7 @@ function AddEmployeeModal({ mode = 'add', emp, depts, desigs, nextEmpId, onClose
    · Documents · Tasks · Subjects · Attendance · Letters.
    ═══════════════════════════════════════════════════════════════════ */
 function EmployeeDetailPanel({ emp, deptName, desigName, onViewLetter, onDeleteLetter, canDelete = true }) {
+  const [viewDoc, setViewDoc] = useState(null);   // uploaded document to preview in-modal
   const allow  = (emp.salaryHeads || []).filter(h => h.type === 'allow').reduce((s, h) => s + (Number(h.amount) || 0), 0);
   const deduct = (emp.salaryHeads || []).filter(h => h.type === 'deduct').reduce((s, h) => s + (Number(h.amount) || 0), 0);
   const basic  = Number(emp.basicSalary) || 0;
@@ -5174,7 +5267,7 @@ function EmployeeDetailPanel({ emp, deptName, desigName, onViewLetter, onDeleteL
                   <div className="emp-detail-doc-info">
                     <div className="emp-detail-doc-name">{slot.label}</div>
                     <div className="emp-detail-doc-meta">
-                      {doc ? (doc.path ? <a href={doc.path} target="_blank" rel="noreferrer">View</a> : 'Uploaded') : 'Not uploaded'}
+                      {doc ? (doc.path ? <button type="button" className="doc-view-link" onClick={() => setViewDoc({ path: doc.path, name: slot.label })}>View</button> : 'Uploaded') : 'Not uploaded'}
                     </div>
                   </div>
                 </div>
@@ -5185,7 +5278,7 @@ function EmployeeDetailPanel({ emp, deptName, desigName, onViewLetter, onDeleteL
                 <div className="emp-detail-doc-icn"><i className="fa-solid fa-file" aria-hidden="true"></i></div>
                 <div className="emp-detail-doc-info">
                   <div className="emp-detail-doc-name">{d.name}</div>
-                  <div className="emp-detail-doc-meta">{d.path ? <a href={d.path} target="_blank" rel="noreferrer">View</a> : 'Uploaded'}</div>
+                  <div className="emp-detail-doc-meta">{d.path ? <button type="button" className="doc-view-link" onClick={() => setViewDoc({ path: d.path, name: d.name })}>View</button> : 'Uploaded'}</div>
                 </div>
               </div>
             ))}
@@ -5284,6 +5377,8 @@ function EmployeeDetailPanel({ emp, deptName, desigName, onViewLetter, onDeleteL
           </div>
         )}
       </div>
+
+      {viewDoc && <DocViewModal doc={viewDoc} onClose={() => setViewDoc(null)} />}
     </div>
   );
 }
