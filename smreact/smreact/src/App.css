@@ -399,6 +399,8 @@ body{font-family:var(--font-body);background:var(--bg-base);color:var(--text-pri
 .btn-details-staff:hover{background:linear-gradient(135deg,#1E40AF,#1E3A8A);transform:translateY(-1px)}
 .btn-task-staff{background:transparent;color:var(--brand-primary);border:1.5px solid rgba(30,58,138,.22);border-radius:var(--radius-sm);padding:5px 12px;font-size:12px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:5px;transition:var(--tr);white-space:nowrap;font-family:var(--font-body)}
 .btn-task-staff:hover{background:rgba(30,58,138,.06);border-color:rgba(30,58,138,.4);transform:translateY(-1px)}
+.doc-view-link{background:none;border:none;padding:0;margin:0;font:inherit;color:var(--brand-primary,#7c3aed);font-weight:600;text-decoration:underline;cursor:pointer;transition:var(--tr)}
+.doc-view-link:hover{opacity:.8}
 .emp-details-section{border:1px solid var(--border-light);border-radius:var(--radius-md);overflow:hidden;margin-bottom:14px}
 [data-theme="dark"] .emp-details-section{border-color:#1E3055}
 .emp-section-hdr{background:linear-gradient(135deg,#172554,#1E40AF);padding:10px 18px;color:#fff;font-size:13px;font-weight:700;letter-spacing:.3px}

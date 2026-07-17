@@ -8475,47 +8475,28 @@ function NbAQModal({ ctx, unit, onSave, onClose, toast }) {
                     {nbTr(cfg.title, isUrdu)}
                   </div>
 
-                  {cfg.layout === 'comprehension' && (
-                    <>
-                      <div style={{ fontSize: 11, fontWeight: 700, color: '#0369A1', textTransform: 'uppercase', letterSpacing: '.6px', marginBottom: 7 }}>{nbTr('Comprehension Statement', isUrdu)}</div>
-                      <textarea
-                        rows="4"
-                        dir={dir}
-                        style={{ boxSizing: 'border-box', width: '100%', border: '2px solid #BAE6FD', borderRadius: 13, padding: '10px 16px', fontFamily: 'inherit', fontSize: 14, color: '#0F172A', background: '#fff', outline: 'none', resize: 'vertical', lineHeight: 1.6, textAlign: isUrdu ? 'right' : 'left' }}
-                        placeholder={nbTr('Enter comprehension statement here…', isUrdu)}
-                        value={statement}
-                        onChange={e => setStatement(e.target.value)}
-                      />
-                    </>
-                  )}
-
-                  {cfg.layout !== 'comprehension' && (
-                    <>
-                      <div style={{ fontSize: 11, fontWeight: 700, color: '#0369A1', textTransform: 'uppercase', letterSpacing: '.6px', marginBottom: 7 }}>{nbTr('Main Question', isUrdu)}</div>
-                      <input
-                        type="text"
-                        className="aq-mq-input"
-                        dir={dir}
-                        style={{ textAlign: isUrdu ? 'right' : 'left' }}
-                        placeholder={nbTr('Enter main question', isUrdu)}
-                        value={mainQ}
-                        onChange={e => setMainQ(e.target.value)}
-                      />
-                    </>
-                  )}
+                  <div style={{ fontSize: 11, fontWeight: 700, color: '#0369A1', textTransform: 'uppercase', letterSpacing: '.6px', marginBottom: 7 }}>{nbTr('Main Question', isUrdu)}</div>
+                  <input
+                    type="text"
+                    className="aq-mq-input"
+                    dir={dir}
+                    style={{ textAlign: isUrdu ? 'right' : 'left' }}
+                    placeholder={nbTr('Enter main question', isUrdu)}
+                    value={mainQ}
+                    onChange={e => setMainQ(e.target.value)}
+                  />
                 </div>
 
                 {cfg.layout === 'comprehension' && (
                   <div style={{ padding: '12px 22px 10px' }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: '#0369A1', textTransform: 'uppercase', letterSpacing: '.6px', marginBottom: 7 }}>Main Question</div>
-                    <input
-                      type="text"
-                      className="aq-mq-input"
+                    <div style={{ fontSize: 11, fontWeight: 700, color: '#0369A1', textTransform: 'uppercase', letterSpacing: '.6px', marginBottom: 7 }}>{nbTr('Comprehension Statement', isUrdu)}</div>
+                    <textarea
+                      rows="4"
                       dir={dir}
-                      style={{ textAlign: isUrdu ? 'right' : 'left' }}
-                      placeholder={nbTr('Enter main question', isUrdu)}
-                      value={mainQ}
-                      onChange={e => setMainQ(e.target.value)}
+                      style={{ boxSizing: 'border-box', width: '100%', border: '2px solid #BAE6FD', borderRadius: 13, padding: '10px 16px', fontFamily: 'inherit', fontSize: 14, color: '#0F172A', background: '#fff', outline: 'none', resize: 'vertical', lineHeight: 1.6, textAlign: isUrdu ? 'right' : 'left' }}
+                      placeholder={nbTr('Enter comprehension statement here…', isUrdu)}
+                      value={statement}
+                      onChange={e => setStatement(e.target.value)}
                     />
                   </div>
                 )}
