@@ -4,6 +4,7 @@ import Tooltip from './Tooltip';
 import TutorialModal from './TutorialModal';
 import * as feeService from '../services/feeService';
 import useAsync from '../hooks/useAsync';
+import { downloadDocxFromHtml } from '../../utils/docx';
 import { usePermissions } from '../context/PermissionsContext';
 
 const money = (n) => `Rs. ${(Number(n) || 0).toLocaleString('en-PK')}`;
@@ -1057,53 +1058,37 @@ function FamilyTreeChallansList({ toast }) {
       classMeta: ctx.classMeta, students: [ctx.student], heads: ctx.heads,
       settings, discountMap: {}, bw, size, school: branchHeader,
     });
+    const sizeT = size === 'thermal' ? 'Thermal 80mm' : 'A4';
+    toast(`Generating ${sizeT} · ${bw ? 'B&W' : 'Color'} ${fmt === 'word' ? 'Word' : 'PDF'} — challan…`, 'info');
+    /* Word needs no pop-up — the .docx is built and downloaded in place. */
+    if (fmt === 'word') {
+      downloadDocxFromHtml(html, `${(ctx.student.name || 'student').replace(/\s+/g, '-')}-challan`);
+      toast('Challan Word file downloaded.', 'success');
+      return;
+    }
     const w = window.open('', '_blank');
     if (!w) { toast('Please allow pop-ups to download the challan', 'error'); return; }
     w.document.write(html);
     w.document.close();
-    const sizeT = size === 'thermal' ? 'Thermal 80mm' : 'A4';
-    toast(`Generating ${sizeT} · ${bw ? 'B&W' : 'Color'} ${fmt === 'word' ? 'Word' : 'PDF'} — challan…`, 'info');
-    if (fmt === 'word') {
-      try {
-        const blob = new Blob([html], { type: 'application/msword' });
-        const url  = URL.createObjectURL(blob);
-        const a    = w.document.createElement('a');
-        a.href = url;
-        a.download = `${(ctx.student.name || 'student').replace(/\s+/g, '-')}-challan.doc`;
-        w.document.body.appendChild(a);
-        a.click();
-        URL.revokeObjectURL(url);
-        setTimeout(() => { try { w.close(); } catch (e) { /* ignore */ } }, 300);
-      } catch (e) { /* ignore */ }
-    } else {
-      w.onload = () => { try { w.focus(); w.print(); } catch (e) { /* ignore */ } };
-    }
+    w.onload = () => { try { w.focus(); w.print(); } catch (e) { /* ignore */ } };
     setTimeout(() => toast('Challan ready — use your browser\'s Save as PDF.', 'success'), 1100);
   };
   const runDownload = (family, { theme, fmt, size = 'a4' }) => {
     const bw   = theme === 'bw';
     const html = buildFamilyChallanHTML({ family, settings, bw, size });
-    const w    = window.open('', '_blank');
+    const sizeT = size === 'thermal' ? 'Thermal 80mm' : 'A4';
+    toast(`Generating ${sizeT} · ${bw ? 'B&W' : 'Color'} ${fmt === 'word' ? 'Word' : 'PDF'} — family challan…`, 'info');
+    /* Word needs no pop-up — the .docx is built and downloaded in place. */
+    if (fmt === 'word') {
+      downloadDocxFromHtml(html, `${family.name.replace(/\s+/g, '-')}-family-challan`);
+      toast('Family challan Word file downloaded.', 'success');
+      return;
+    }
+    const w = window.open('', '_blank');
     if (!w) { toast('Please allow pop-ups to download the challan', 'error'); return; }
     w.document.write(html);
     w.document.close();
-    const sizeT = size === 'thermal' ? 'Thermal 80mm' : 'A4';
-    toast(`Generating ${sizeT} · ${bw ? 'B&W' : 'Color'} ${fmt === 'word' ? 'Word' : 'PDF'} — family challan…`, 'info');
-    if (fmt === 'word') {
-      try {
-        const blob = new Blob([html], { type: 'application/msword' });
-        const url  = URL.createObjectURL(blob);
-        const a    = w.document.createElement('a');
-        a.href = url;
-        a.download = `${family.name.replace(/\s+/g, '-')}-family-challan.doc`;
-        w.document.body.appendChild(a);
-        a.click();
-        URL.revokeObjectURL(url);
-        setTimeout(() => { try { w.close(); } catch (e) { /* ignore */ } }, 300);
-      } catch (e) { /* ignore */ }
-    } else {
-      w.onload = () => { try { w.focus(); w.print(); } catch (e) { /* ignore */ } };
-    }
+    w.onload = () => { try { w.focus(); w.print(); } catch (e) { /* ignore */ } };
     setTimeout(() => toast('Family challan ready — use your browser\'s Save as PDF.', 'success'), 1100);
   };
 
@@ -1690,30 +1675,21 @@ function FeeChallansList({ toast }) {
       classMeta: r.classMeta, students: r.students, heads: r.heads,
       settings, discountMap, bw, size, school: branchHeader,
     });
-    const w = window.open('', '_blank');
-    if (!w) { toast('Please allow pop-ups to download the challan', 'error'); return; }
-    w.document.write(html);
-    w.document.close();
     const cnt    = r.students.length;
     const sizeT  = size === 'thermal' ? 'Thermal 80mm' : 'A4';
     const label  = `${sizeT} · ${bw ? 'B&W' : 'Color'} ${fmt === 'word' ? 'Word' : 'PDF'}`;
     toast(`Generating ${label} — ${cnt} challan${cnt === 1 ? '' : 's'}…`, 'info');
+    /* Word needs no pop-up — the .docx is built and downloaded in place. */
     if (fmt === 'word') {
-      /* Word: trigger download as .doc using HTML stream */
-      try {
-        const blob = new Blob([html], { type: 'application/msword' });
-        const url  = URL.createObjectURL(blob);
-        const a    = w.document.createElement('a');
-        a.href = url;
-        a.download = `${r.classMeta.cls}-${r.classMeta.sec}-challans.doc`;
-        w.document.body.appendChild(a);
-        a.click();
-        URL.revokeObjectURL(url);
-        setTimeout(() => { try { w.close(); } catch (e) { /* ignore */ } }, 300);
-      } catch (e) { /* fall through to print */ }
-    } else {
-      w.onload = () => { try { w.focus(); w.print(); } catch (e) { /* ignore */ } };
+      downloadDocxFromHtml(html, `${r.classMeta.cls}-${r.classMeta.sec}-challans`);
+      toast(`${cnt} challan${cnt === 1 ? '' : 's'} downloaded as Word.`, 'success');
+      return;
     }
+    const w = window.open('', '_blank');
+    if (!w) { toast('Please allow pop-ups to download the challan', 'error'); return; }
+    w.document.write(html);
+    w.document.close();
+    w.onload = () => { try { w.focus(); w.print(); } catch (e) { /* ignore */ } };
     setTimeout(() => toast('Challan ready — use your browser\'s Save as PDF.', 'success'), 1100);
   };
 
@@ -2216,7 +2192,7 @@ function FeeChallansList({ toast }) {
 /* ═══════════════════════════════════════════════════════════════════
    BULK GENERATE MODAL — bulk-generates challans for every student of
    the picked class for the chosen month. Mirrors the reference HTML:
-   Month + Challan Type + Multi-select Fee Heads + Issue/Due dates;
+   Month + Multi-select Fee Heads + Issue/Due dates;
    then a footer "Generate Challans" CTA that swaps to an animated
    progress bar (batch increments at 55 ms intervals). At 100%, label
    flips to "Completed", a final toast fires, the modal closes.
@@ -2234,7 +2210,6 @@ function BulkGenerateModal({
   };
 
   const [month, setMonth]         = useState(defaultMonth || FEE_MONTHS[0]);
-  const [type, setType]           = useState('1');     // '1' or '2'
   const [picked, setPicked]       = useState([]);      // selected fee head names
   const [msOpen, setMsOpen]       = useState(false);
   const [issueDate, setIssueDate] = useState(todayISO());
@@ -2249,7 +2224,6 @@ function BulkGenerateModal({
     if (!open) return;
     cancelRef.current = false;
     setMonth(defaultMonth || FEE_MONTHS[0]);
-    setType('1');
     setPicked([]);
     setMsOpen(false);
     setIssueDate(todayISO());
@@ -2291,6 +2265,12 @@ function BulkGenerateModal({
     : `${picked.length} head${picked.length === 1 ? '' : 's'} selected`;
 
   const validate = () => {
+    if (!heads.length) {
+      toast('No fee heads are defined for this class — add them in Fee Setup first', 'error');
+      return false;
+    }
+    /* A challan with no head picked used to silently bill every head. */
+    if (!picked.length) { toast('Select at least one fee head', 'error'); return false; }
     if (!issueDate) { toast('Pick an issue date', 'error'); return false; }
     if (!dueDate)   { toast('Pick a due date',   'error'); return false; }
     if (dueDate < issueDate) {
@@ -2330,16 +2310,14 @@ function BulkGenerateModal({
       } else {
         setProgress({ done, total: targets.length, label: 'Saving challans...' });
         const regs = targets.map(s => s.reg);
-        const selectedHeads = picked.length
-          ? heads.filter(h => picked.includes(h.name))
-          : heads;
+        /* validate() guarantees picked is non-empty — never fall back to all heads. */
+        const selectedHeads = heads.filter(h => picked.includes(h.name));
         feeService.generateChallan(classMeta.key, regs, monthIdx, {
           classMeta,
           students: targets,
           heads: selectedHeads,
           selectedHeadNames: picked,
           discountMap,
-          type,
           issueDate,
           dueDate,
           year: defaultYear,
@@ -2439,16 +2417,6 @@ function BulkGenerateModal({
               <div className="fee-select-wrap">
                 <select className="fee-select" value={month} onChange={e => setMonth(e.target.value)} disabled={!!progress}>
                   {FEE_MONTHS.map(m => <option key={m}>{m}</option>)}
-                </select>
-                <i className="fa-solid fa-chevron-down"></i>
-              </div>
-            </div>
-            <div className="fee-field">
-              <span className="fee-label">Challan Type</span>
-              <div className="fee-select-wrap">
-                {/* Only "One Month" is available — Two Months removed per request. */}
-                <select className="fee-select" value="1" disabled>
-                  <option value="1">One Month</option>
                 </select>
                 <i className="fa-solid fa-chevron-down"></i>
               </div>
@@ -2791,7 +2759,7 @@ function DownloadPickerModal({ cfg, onClose, onSubmit }) {
               <div className="fee-dl-fmt-ic" style={{ background: 'rgba(2,132,199,.1)', color: '#0284C7' }}>
                 <i className="fa-solid fa-file-word"></i>
               </div>
-              <div className="fee-dl-fmt-name">Word</div>
+              <div className="fee-dl-fmt-name">Word (.docx)</div>
             </button>
           </div>
         </div>
@@ -2819,6 +2787,7 @@ function DownloadPickerModal({ cfg, onClose, onSubmit }) {
    ═══════════════════════════════════════════════════════════════════ */
 function DiscountManagerModal({ cfg, onClose, onSave, toast }) {
   const [discs, setDiscs] = useState({});
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (!cfg) return;
@@ -2828,6 +2797,7 @@ function DiscountManagerModal({ cfg, onClose, onSave, toast }) {
       init[h.name] = Number((cfg.initial || {})[h.name]) || 0;
     });
     setDiscs(init);
+    setSaving(false);
   }, [cfg]);
 
   useEffect(() => {
@@ -2858,10 +2828,18 @@ function DiscountManagerModal({ cfg, onClose, onSave, toast }) {
   });
   const totalNet = totalStd - totalDisc;
 
-  const handleSave = () => {
+  /* onSave posts one /api/Student/save-fee-discount per head and closes the
+     modal itself, so hold the spinner until it resolves. */
+  const handleSave = async () => {
+    if (saving) return;
     const perHead = {};
     rows.forEach(r => { if (r.disc > 0) perHead[r.name] = r.disc; });
-    onSave(cfg.classMeta.key, cfg.student.reg, perHead);
+    try {
+      setSaving(true);
+      await onSave(cfg.classMeta.key, cfg.student.reg, perHead);
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleClear = () => {
@@ -2944,16 +2922,23 @@ function DiscountManagerModal({ cfg, onClose, onSave, toast }) {
 
         <div className="fee-modal-foot">
           <Tooltip text="Reset all discount inputs to zero">
-            <button className="fee-btn fee-btn-ghost" onClick={handleClear}>
+            <button className="fee-btn fee-btn-ghost" onClick={handleClear} disabled={saving}>
               <i className="fa-solid fa-rotate-left"></i> Clear
             </button>
           </Tooltip>
           <Tooltip text="Discard changes and close">
-            <button className="fee-btn fee-btn-ghost" onClick={onClose}>Cancel</button>
+            <button className="fee-btn fee-btn-ghost" onClick={onClose} disabled={saving}>Cancel</button>
           </Tooltip>
           <Tooltip text="Save discount for this student">
-            <button className="fee-btn fee-btn-primary" onClick={handleSave}>
-              <i className="fa-solid fa-floppy-disk"></i> Save Discount
+            <button
+              className="fee-btn fee-btn-primary"
+              onClick={handleSave}
+              disabled={saving}
+              style={saving ? { opacity: .7, cursor: 'wait' } : undefined}
+            >
+              {saving
+                ? <><i className="fa-solid fa-spinner fa-spin"></i> Saving…</>
+                : <><i className="fa-solid fa-floppy-disk"></i> Save Discount</>}
             </button>
           </Tooltip>
         </div>
@@ -9122,6 +9107,19 @@ function FeeChallanSettings({ toast }) {
   const dirty = JSON.stringify(value) !== JSON.stringify(serverSettings || {});
 
   const set = (patch) => setLocal(prev => ({ ...(prev || serverSettings || {}), ...patch }));
+
+  /* This panel unmounts as soon as the tab or segment changes, so unsaved
+     toggles would otherwise disappear without a word. Read both through refs:
+     `toast` is rebuilt on every parent render, and depending on it directly
+     would fire the cleanup on unrelated re-renders. */
+  const dirtyRef = useRef(false);
+  const toastRef = useRef(toast);
+  useEffect(() => { dirtyRef.current = dirty; toastRef.current = toast; });
+  useEffect(() => () => {
+    if (dirtyRef.current) {
+      toastRef.current('Fee challan settings not saved — please click Save Settings', 'warning');
+    }
+  }, []);
 
   const validateAndSave = async () => {
     if (value.fineEnabled) {

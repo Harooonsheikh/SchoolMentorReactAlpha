@@ -428,6 +428,28 @@ function mapFeeSettingsFromApi(row = {}) {
   };
 }
 
+/* No saved record for this branch yet. Every toggle starts OFF — the mock
+   defaults are all-on, and inheriting those would show the user features as
+   enabled that the server has never been told about. */
+function blankFeeSettings() {
+  return {
+    ...clone(mockFeeSettings),
+    id:               0,
+    branchID:         feeSettingsBranchID(),
+    showDiscount:     false,
+    showPsd:          false,
+    prevMonthChallan: false,
+    nextMonthChallan: false,
+    fineEnabled:      false,
+    fineAmt:          0,
+    createdDate:  null,
+    modifiedDate: null,
+    createdBy:    null,
+    modifiedBy:   null,
+    isActive:     true,
+  };
+}
+
 function mapFeeSettingsToApi(settings = {}) {
   const now = new Date().toISOString();
   const id = Number(settings.id) || 0;
@@ -463,7 +485,8 @@ export async function getFeeSettings() {
   }
 
   const rows = Array.isArray(json?.data) ? json.data : [];
-  return mapFeeSettingsFromApi(rows[0] || { id: 0, branchID });
+  /* Empty data = branch has never saved its challan settings → everything off. */
+  return rows.length ? mapFeeSettingsFromApi(rows[0]) : blankFeeSettings();
 }
 
 /* Generated-challans set is returned as a fresh Set so callers can
