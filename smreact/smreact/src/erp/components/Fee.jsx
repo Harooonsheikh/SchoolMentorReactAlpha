@@ -184,11 +184,9 @@ export default function Fee({ toast = () => {} }) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════
-   STUDENT FEE SETUP — class+section table, per-row Update / Copy to
-   All / expandable details. Update opens a modal to add, edit, rename
-   or remove fee heads. Copy to All applies the source class's heads
-   to every other class with a confirm. Details panel includes a PDF
-   download button.
+   STUDENT FEE SETUP — class+section table, per-row Update / expandable
+   details. Update opens a modal to add, edit, rename or remove fee
+   heads. Details panel includes a PDF download button.
    ═══════════════════════════════════════════════════════════════════ */
 function StudentFeeSetup({ toast }) {
   const { can } = usePermissions();
@@ -214,35 +212,6 @@ function StudentFeeSetup({ toast }) {
   const openEdit  = useCallback((key) => setEditKey(key), []);
   const closeEdit = useCallback(()    => setEditKey(null), []);
 
-  const requestCopyToAll = useCallback((srcKey) => {
-    const srcHeads = headsMap[srcKey] || [];
-    const src = classes.find(c => c.key === srcKey);
-    if (!srcHeads.length) { toast('This class has no fee heads to copy', 'error'); return; }
-    setConfirm({
-      title:   'Copy fee structure to all classes?',
-      /* Nothing is destroyed here, so it must not wear the danger/trash skin
-         the dialog falls back to. */
-      confirmStyle: 'primary',
-      icon:         'fa-copy',
-      confirmLabel: 'Yes, Copy',
-      message: `This will add ${src?.cls}'s ${srcHeads.length} fee head${srcHeads.length !== 1 ? 's' : ''} to every other class.`,
-      hint:    'Existing fee heads on other classes are kept — the copied heads are added to them.',
-      onConfirm: async () => {
-        try {
-          const targets = Array.from(
-            new Map(classes
-              .filter(c => c.key !== srcKey && c._gradeId !== src?._gradeId)
-              .map(c => [c._gradeId, c])).values(),
-          );
-          await Promise.all(targets.flatMap(c =>
-            srcHeads.map(h => feeService.saveFeeHead({ feeStructureID: 0, gradeId: c._gradeId, name: h.name, amt: h.amt }))));
-          await reloadGrades();
-          toast('Fee structure copied to all classes', 'success');
-        } catch (e) { toast(e.message || 'Could not copy fee structure', 'error'); }
-      },
-    });
-  }, [headsMap, classes, reloadGrades, toast]);
-
   const openClassReport = useCallback((c) => {
     const heads = headsMap[c.key] || [];
     const html = buildStudentFeeReportHTML({ cls: c.cls, sec: c.sec, heads, school: branchHeader });
@@ -258,14 +227,6 @@ function StudentFeeSetup({ toast }) {
           Use <strong>Update</strong> to add, rename, edit amounts or remove heads.
         </span>
       </div>
-      <div className="fee-info fee-info--warn">
-        <i className="fa-solid fa-triangle-exclamation"></i>
-        <span>
-          <strong>Copy to All Classes</strong> will not affect already generated challans —
-          it applies only to newly generated challans.
-        </span>
-      </div>
-
       <div className="fee-section">
         <div className="fee-table-head fee-struct-row">
           <div className="fee-th">#</div>
@@ -273,7 +234,6 @@ function StudentFeeSetup({ toast }) {
           <div className="fee-th">Section</div>
           <div className="fee-th fee-center">Total Heads</div>
           <div className="fee-th fee-center">Update</div>
-          <div className="fee-th fee-center">Copy to All</div>
           <div className="fee-th fee-center">Details</div>
         </div>
 
@@ -299,14 +259,6 @@ function StudentFeeSetup({ toast }) {
                     <button className="fee-btn fee-btn-primary fee-btn-xs" onClick={() => openEdit(c.key)}
                       disabled={!canSfEdit} style={!canSfEdit ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
                       <i className="fa-solid fa-pen"></i> Update
-                    </button>
-                  </Tooltip>
-                </div>
-                <div className="fee-td fee-center fee-actions" data-label="Copy to All" onClick={e => e.stopPropagation()}>
-                  <Tooltip text={!canSfEdit ? 'You do not have permission to edit fee setup' : "Copy this class's fee heads to every other class"}>
-                    <button className="fee-btn fee-btn-ghost fee-btn-xs" onClick={() => requestCopyToAll(c.key)}
-                      disabled={!canSfEdit} style={!canSfEdit ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
-                      <i className="fa-solid fa-copy"></i> Copy to All
                     </button>
                   </Tooltip>
                 </div>
@@ -1648,12 +1600,44 @@ function FeeChallansList({ toast }) {
     return null;
   };
 
-  const openPreview = (ctx) => {
+  /* Saved discounts for the students about to be printed, in the
+     { [classKey]: { [reg]: { [headName]: amt } } } shape the slip builders read.
+
+     They have to come from /api/Student/get-fee-discounts-by-student: the local
+     discountMap only holds this session's edits, so on a fresh page the Disc
+     column would print blank even though a discount exists. The API's headName
+     is always empty, so rows are matched to heads by headID → feeStructureID. */
+  const fetchStudentDiscounts = useCallback(async (classMeta, students) => {
+    const perReg = {};
+    await Promise.all((students || []).map(async (s) => {
+      const gradeId = s.gradeID || classMeta._gradeId;
+      const gHeads  = (classFeeStruct[gradeId] && classFeeStruct[gradeId].length)
+        ? classFeeStruct[gradeId]
+        : (headsMap[classMeta.key] || []);
+      let fromApi = {};
+      try {
+        const rows = await feeService.getFeeDiscountsByStudent(s.studentID);
+        (rows || []).filter(r => r.isActive !== false).forEach(r => {
+          const head = gHeads.find(h => Number(h.feeStructureID) === Number(r.headID));
+          const amt  = Number(r.discountAmount) || 0;
+          if (head && amt > 0) fromApi[head.name] = amt;
+        });
+      } catch (e) { fromApi = {}; }   /* no discounts → Disc stays blank */
+      /* This session's just-saved edits win over what the server returned. */
+      const local  = (discountMap[classMeta.key] || {})[s.reg] || {};
+      const merged = { ...fromApi, ...local };
+      if (Object.keys(merged).length) perReg[s.reg] = merged;
+    }));
+    return { [classMeta.key]: perReg };
+  }, [classFeeStruct, headsMap, discountMap]);
+
+  const openPreview = async (ctx) => {
     const r = resolveCtx(ctx);
     if (!r) { toast('Nothing to preview', 'info'); return; }
+    const dMap  = await fetchStudentDiscounts(r.classMeta, r.students);
     const inner = buildChallanInner({
       classMeta: r.classMeta, students: r.students, heads: r.heads,
-      settings, discountMap, bw: false, school: branchHeader,
+      settings, discountMap: dMap, bw: false, school: branchHeader,
     });
     setChallanPreview({
       title: ctx.type === 'bulk' ? 'Bulk Challan Preview' : 'Challan Preview',
@@ -1667,13 +1651,14 @@ function FeeChallansList({ toast }) {
     if (!r) { toast('Nothing to download', 'info'); return; }
     setDownloadCtx({ ...ctx, sub: r.sub, defaultSize: settings.printSize || 'a4' });
   };
-  const runDownload = (ctx, { theme, fmt, size = 'a4' }) => {
+  const runDownload = async (ctx, { theme, fmt, size = 'a4' }) => {
     const r = resolveCtx(ctx);
     if (!r) { toast('Nothing to download', 'info'); return; }
     const bw   = theme === 'bw';
+    const dMap = await fetchStudentDiscounts(r.classMeta, r.students);
     const html = buildChallanHTML({
       classMeta: r.classMeta, students: r.students, heads: r.heads,
-      settings, discountMap, bw, size, school: branchHeader,
+      settings, discountMap: dMap, bw, size, school: branchHeader,
     });
     const cnt    = r.students.length;
     const sizeT  = size === 'thermal' ? 'Thermal 80mm' : 'A4';
@@ -3042,6 +3027,15 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
     setPerHeadInput(prev => ({ ...prev, [name]: Math.max(0, Number(v) || 0) }));
   };
 
+  /* Pending is the mirror of Received — the two always add up to what is still
+     owed on that head, so typing either one drives the other. Both write to the
+     same perHeadInput state; there is no second source of truth. */
+  const setPendingFor = (row, v) => {
+    const owed = Math.max(0, row.net - row.paid);
+    const pend = Math.max(0, Math.min(Number(v) || 0, owed));
+    setPerHeadInput(prev => ({ ...prev, [row.name]: owed - pend }));
+  };
+
   const fineTxt = settings?.fineEnabled
     ? `Rs. ${(+settings.fineAmt || 0).toLocaleString('en-PK')} ${settings.fineType === 'daily' ? '/ day' : '(fixed)'}`
     : '—';
@@ -3170,7 +3164,20 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
                         />
                       )}
                     </td>
-                    <td className="fee-right">{money(r.pending)}</td>
+                    <td className="fee-right">
+                      {viewOnly ? (
+                        money(r.pending)
+                      ) : (
+                        <input
+                          type="number"
+                          min="0"
+                          max={Math.max(0, r.net - r.paid)}
+                          value={r.pending}
+                          onChange={e => setPendingFor(r, e.target.value)}
+                          placeholder="0"
+                        />
+                      )}
+                    </td>
                   </tr>
                 ))}
                 {model.prev > 0 && (
@@ -5013,6 +5020,15 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
 
   const setHead = (name, v) => setPerHeadInput(prev => ({ ...prev, [name]: Math.max(0, Number(v) || 0) }));
 
+  /* Pending is the mirror of Received — the two always add up to what is still
+     owed on that head, so typing either one drives the other through the same
+     perHeadInput state. */
+  const setPendingFor = (row, v) => {
+    const owed = Math.max(0, row.net - row.paid);
+    const pend = Math.max(0, Math.min(Number(v) || 0, owed));
+    setPerHeadInput(prev => ({ ...prev, [row.name]: owed - pend }));
+  };
+
   const computeRows = (ch, m, payments) => {
     const perHeadPaid = {};
     payments.forEach(p => Object.entries(p.perHead || {}).forEach(([k, v]) => {
@@ -5181,7 +5197,20 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
                                     />
                                   )}
                                 </td>
-                                <td className="fee-right">{money(r.pending)}</td>
+                                <td className="fee-right">
+                                  {selModel.onelink || selModel.status === 'full' ? (
+                                    <span className="fee-cell-grey">{money(r.pending)}</span>
+                                  ) : (
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      max={Math.max(0, r.net - r.paid)}
+                                      value={r.pending}
+                                      onChange={e => setPendingFor(r, e.target.value)}
+                                      placeholder="0"
+                                    />
+                                  )}
+                                </td>
                               </tr>
                             ))}
                           </tbody>
@@ -8681,9 +8710,15 @@ function feeSlipHTML({ copyLabel, classMeta, student, heads, settings, period, i
   let rows, arrears;
   if (Array.isArray(detailRows) && detailRows.length) {
     rows = detailRows.map(r => {
+      const name = r.subHead || r.head || '';
       const std  = +r.challanAmount || 0;
-      const disc = showDisc ? (+r.discount || 0) : 0;
-      return { name: r.subHead || r.head || '', std, disc, net: std - disc };
+      /* Saved discounts (get-fee-discounts-by-student) win over the ledger's own
+         figure — a discount added after the challan was generated never reached
+         the ledger row, so that row alone would print Disc as blank. */
+      const saved = +disMap[name] || 0;
+      const raw   = saved || (+r.discount || 0);
+      const disc  = showDisc ? Math.min(raw, std) : 0;
+      return { name, std, disc, net: std - disc };
     });
     /* If the challan didn't carry a transport line, fall back to the student's
        Transport Setup amount so the download always reflects transport. */
@@ -8852,9 +8887,15 @@ function feeThermalChallanHTML({ classMeta, student, heads, settings, period, is
   let rows, arrears;
   if (Array.isArray(detailRows) && detailRows.length) {
     rows = detailRows.map(r => {
+      const name = r.subHead || r.head || '';
       const std  = +r.challanAmount || 0;
-      const disc = showDisc ? (+r.discount || 0) : 0;
-      return { name: r.subHead || r.head || '', std, disc, net: std - disc };
+      /* Saved discounts (get-fee-discounts-by-student) win over the ledger's own
+         figure — a discount added after the challan was generated never reached
+         the ledger row, so that row alone would print Disc as blank. */
+      const saved = +disMap[name] || 0;
+      const raw   = saved || (+r.discount || 0);
+      const disc  = showDisc ? Math.min(raw, std) : 0;
+      return { name, std, disc, net: std - disc };
     });
     const hasTransport = detailRows.some(r => /transport/i.test(String(r.subHead || r.head || '')));
     if (!hasTransport && +student.transport > 0) {
@@ -10097,7 +10138,7 @@ const FEE_CSS = `
 .fee-center { justify-content: center; text-align: center; }
 .fee-right  { text-align: right; }
 
-.fee-struct-row  { grid-template-columns: 48px 1fr 1fr 110px 110px 150px 80px; }
+.fee-struct-row  { grid-template-columns: 48px 1fr 1fr 110px 110px 80px; }
 .fee-trans-row   { grid-template-columns: 48px 1fr 1fr 130px 90px; }
 .fee-challan-row { grid-template-columns: 48px 1fr 1fr 90px 150px 150px 80px 80px; }
 .fee-family-row  { grid-template-columns: 48px 1fr 130px 110px 160px 80px; }
@@ -12786,9 +12827,9 @@ const FEE_CSS = `
 
   /* ── Student Fee Setup class rows (.fee-struct-row) — compact 2-line card.
        Row 1: [#]  Class  [Section]  Heads count  [⌄]
-       Row 2: [─── Update ───]   [─── Copy to All ───]
+       Row 2: [──────── Update ────────]
        Overrides the older 768px rule that used grid-template-columns:1fr
-       + data-label pseudo-labels (which stacked all 7 cells vertically). */
+       + data-label pseudo-labels (which stacked all 6 cells vertically). */
   .fee-row.fee-struct-row {
     display: flex !important;
     flex-wrap: wrap !important;
@@ -12816,7 +12857,7 @@ const FEE_CSS = `
     font-size: 11px; color: var(--text-muted);
     white-space: nowrap;
   }
-  .fee-row.fee-struct-row > .fee-td:nth-of-type(7) {
+  .fee-row.fee-struct-row > .fee-td:nth-of-type(6) {
     order: 5; flex: 0 0 auto;
     margin-left: auto !important;
     justify-content: flex-end !important;
@@ -12830,17 +12871,14 @@ const FEE_CSS = `
     order: 5.5;
   }
 
-  /* Row 2 — Update + Copy to All share full width as touch-friendly CTAs */
-  .fee-row.fee-struct-row > .fee-td:nth-of-type(5),
-  .fee-row.fee-struct-row > .fee-td:nth-of-type(6) {
-    flex: 1 1 calc(50% - 4px) !important;
+  /* Row 2 — Update spans the full width as a touch-friendly CTA */
+  .fee-row.fee-struct-row > .fee-td:nth-of-type(5) {
+    flex: 1 1 100% !important;
     min-width: 0 !important;
     justify-content: stretch !important;
+    order: 6;
   }
-  .fee-row.fee-struct-row > .fee-td:nth-of-type(5) { order: 6; }
-  .fee-row.fee-struct-row > .fee-td:nth-of-type(6) { order: 7; }
-  .fee-row.fee-struct-row > .fee-td:nth-of-type(5) .fee-btn,
-  .fee-row.fee-struct-row > .fee-td:nth-of-type(6) .fee-btn {
+  .fee-row.fee-struct-row > .fee-td:nth-of-type(5) .fee-btn {
     width: 100% !important;
     justify-content: center !important;
     padding: 8px 10px !important;
