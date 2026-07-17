@@ -219,6 +219,11 @@ function StudentFeeSetup({ toast }) {
     if (!srcHeads.length) { toast('This class has no fee heads to copy', 'error'); return; }
     setConfirm({
       title:   'Copy fee structure to all classes?',
+      /* Nothing is destroyed here, so it must not wear the danger/trash skin
+         the dialog falls back to. */
+      confirmStyle: 'primary',
+      icon:         'fa-copy',
+      confirmLabel: 'Yes, Copy',
       message: `This will add ${src?.cls}'s ${srcHeads.length} fee head${srcHeads.length !== 1 ? 's' : ''} to every other class.`,
       hint:    'Existing fee heads on other classes are kept — the copied heads are added to them.',
       onConfirm: async () => {
@@ -699,6 +704,27 @@ const FEE_MONTHS = [
   'July', 'August', 'September', 'October', 'November', 'December',
 ];
 
+/* Fee Challan Settings can lock the month either side of the current one.
+   The API's previousMonthFeeChallan / nextMonthFeeChallan are ON = locked:
+   turning "Previous Month Challan Receiving" on stops last month's challans
+   from being generated or received, and likewise for next month.
+
+   "Previous"/"next" are measured against today's real month, not the month
+   picker, so changing the filter can't shift what the lock means. Returns the
+   reason a month is barred, or null when it's fine. */
+function challanMonthLock(monthIdx, year, settings) {
+  if (!settings || monthIdx < 0) return null;
+  const now  = new Date();
+  const diff = (Number(year) * 12 + monthIdx) - (now.getFullYear() * 12 + now.getMonth());
+  if (diff === -1 && settings.prevMonthChallan) {
+    return 'Previous month is locked — turn off "Previous Month Challan Receiving" in Fee Challan Settings to allow it.';
+  }
+  if (diff === 1 && settings.nextMonthChallan) {
+    return 'Next month is locked — turn off "Next Month Challan Receiving" in Fee Challan Settings to allow it.';
+  }
+  return null;
+}
+
 function FeeChallansTab({ toast }) {
   const [seg, setSeg] = useState('challan');
 
@@ -915,6 +941,8 @@ function FamilyTreeChallansList({ toast }) {
 
   /* ── Bulk generate (family mode) ── */
   const openBulkGen = (f) => {
+    const lock = challanMonthLock(monthIdx, appliedYear, settings);
+    if (lock) { toast(lock, 'warning'); return; }
     if (!f.children.length) { toast('No children in this family', 'warning'); return; }
     /* Build pseudo-students for BulkGenerateModal — re-use that infra. IDs
        (studentID = applicantsID, gradeID, sectionID) + the child's own
@@ -948,6 +976,8 @@ function FamilyTreeChallansList({ toast }) {
     });
   };
   const openIndivGen = (f, ch) => {
+    const lock = challanMonthLock(monthIdx, appliedYear, settings);
+    if (lock) { toast(lock, 'warning'); return; }
     /* Roll-up child's family-level fee into `current` so the modal's
        student card can display Total Fee + Pending Amount via the same
        (current − dues − advance) calculation used in class single-mode. */
@@ -1581,6 +1611,8 @@ function FeeChallansList({ toast }) {
   const isGenerated = (classKey, reg) => !!genSet && genSet.has(keyOf(classKey, reg));
 
   const openBulkGen = (c) => {
+    const lock = challanMonthLock(monthIdx, appliedYear, settings);
+    if (lock) { toast(lock, 'warning'); return; }
     const students = studentsMap[c.key] || [];
     const heads    = headsMap[c.key] || [];
     if (students.length === 0) {
@@ -1599,6 +1631,8 @@ function FeeChallansList({ toast }) {
     loadChallans();
   };
   const openIndivGen = (c, s) => {
+    const lock = challanMonthLock(monthIdx, appliedYear, settings);
+    if (lock) { toast(lock, 'warning'); return; }
     setBulkGen({
       classMeta: c,
       students:  [s],
@@ -3769,6 +3803,9 @@ function FeeReceivingIndividual({ toast }) {
   const [confirm, setConfirm]       = useState(null);
 
   const openReceive = (c, s, viewOnly = false) => {
+    /* A locked month can still be viewed — only taking money is barred. */
+    const lock = viewOnly ? null : challanMonthLock(monthIdx, appliedYear, settings);
+    if (lock) { toast(lock, 'warning'); return; }
     const m = modelFor(c, s);
     if (!m.generated) { toast(`Challan not generated for ${s.name} in ${appliedMonth}`, 'warning'); return; }
     setReceiveCtx({
@@ -4360,6 +4397,9 @@ function FamilyTreeReceiving({ toast }) {
   };
 
   const openReceive = async (f, ch, viewOnly = false) => {
+    /* A locked month can still be viewed — only taking money is barred. */
+    const lock = viewOnly ? null : challanMonthLock(monthIdx, appliedYear, settings);
+    if (lock) { toast(lock, 'warning'); return; }
     /* Child ki asli receivable /api/BranchLedger/get-all se laa kar enrich karo,
        phir uska model bana kar receiving modal kholo. */
     let child = ch;
@@ -4568,6 +4608,8 @@ function FamilyTreeReceiving({ toast }) {
      (getStudentChallans) uski asli receivable (fee/transport/discount/dues/
      advance) laa kar children ko enrich karo, phir bulk modal kholo. */
   const openBulk = async (f) => {
+    const lock = challanMonthLock(monthIdx, appliedYear, settings);
+    if (lock) { toast(lock, 'warning'); return; }
     const children = f.children || [];
     toast('Loading receivables…', 'info');
     const enriched = await Promise.all(children.map(async (ch) => {
@@ -9052,10 +9094,11 @@ function feeThermalFamilyChallanHTML({ family, settings, period, issueISO, dueIS
 }
 
 /* ═══════════════════════════════════════════════════════════════════
-   FEE CHALLAN SETTINGS — three master toggles + dependent fine config.
-   Discount / PSD code show on every challan; Fine is conditional, with
-   fine type (Fixed / Per Day) and amount. All values persist via
-   feeService.saveFeeSettings().
+   FEE CHALLAN SETTINGS — master toggles + dependent fine config.
+   Discount / PSD code show on every challan; Previous / Next Month
+   Challan Receiving gate which months the counter may receive against;
+   Fine is conditional, with fine type (Fixed / Per Day) and amount.
+   All values persist via feeService.saveFeeSettings().
    ═══════════════════════════════════════════════════════════════════ */
 function FeeChallanSettings({ toast }) {
   const { can } = usePermissions();
@@ -9178,6 +9221,22 @@ function FeeChallanSettings({ toast }) {
               desc="Print the PSID / bank payment code so parents can pay via bank or app."
               on={value.showPsd}
               onToggle={() => set({ showPsd: !value.showPsd })}
+            />
+
+            {/* Previous month receiving */}
+            <SettingCard
+              name="Previous Month Challan Receiving"
+              desc="Allow the counter to receive a challan from the month before the current one."
+              on={value.prevMonthChallan}
+              onToggle={() => set({ prevMonthChallan: !value.prevMonthChallan })}
+            />
+
+            {/* Next month receiving */}
+            <SettingCard
+              name="Next Month Challan Receiving"
+              desc="Allow the counter to receive a challan from the month after the current one — advance payments."
+              on={value.nextMonthChallan}
+              onToggle={() => set({ nextMonthChallan: !value.nextMonthChallan })}
             />
 
             {/* Fine — with conditional fields */}

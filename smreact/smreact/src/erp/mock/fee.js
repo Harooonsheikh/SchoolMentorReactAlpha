@@ -91,6 +91,9 @@ export const mockGeneratedChallans = new Set([
 export const mockFeeSettings = {
   showDiscount: true,
   showPsd:      true,
+  /* Allow receiving a challan of the month before / after the current one. */
+  prevMonthChallan: true,
+  nextMonthChallan: true,
   fineEnabled:  true,
   fineType:     'fixed',
   fineAmt:      100,
