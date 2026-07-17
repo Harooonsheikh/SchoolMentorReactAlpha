@@ -6847,15 +6847,162 @@ function RepActions({ onPreview, onPdf }) {
   );
 }
 
+/* ═══════════ Live BranchLedger source for the report panels ═══════════
+
+   Every figure in the Defaulter and Head-Wise reports comes from the real
+   /api/BranchLedger challans. get-by-month returns the same records as
+   get-all?studentId=… but for the whole branch in one request, so a class
+   report costs one call per month instead of one call per student.
+
+   detailRow.receivedAmount is the paid/unpaid signal: null means nothing has
+   been taken against that head yet, a number is what was actually received. */
+const ledgerRowNet    = (r) => Math.max((+r.challanAmount || 0) - (+r.discount || 0), 0);
+const ledgerRowUnpaid = (r) => r.receivedAmount == null;
+
+/* The (month, year) pairs a report spans, oldest first. Capped so a wide date
+   range can't fan out into an unbounded number of requests. */
+function ledgerPeriods(fromM, fromY, toM, toY) {
+  const out = [];
+  let y = fromY, m = fromM;
+  while ((y < toY || (y === toY && m <= toM)) && out.length < 36) {
+    out.push({ month: m, year: y });
+    m += 1;
+    if (m > 12) { m = 1; y += 1; }
+  }
+  return out;
+}
+
+/* Roll one student's challan records into the figures the panels and the A4
+   builders expect. `heads` carries one row per fee head across all periods —
+   unpaid heads land wholly in `pend`, partly-paid ones only for the shortfall. */
+function ledgerModel(recs) {
+  const heads = new Map();
+  let payable = 0, paid = 0, remaining = 0, disc = 0;
+  (recs || []).forEach(rec => {
+    (rec.detailRows || []).forEach(r => {
+      const net  = ledgerRowNet(r);
+      const recv = +r.receivedAmount || 0;
+      const pend = ledgerRowUnpaid(r) ? net : Math.max(net - recv, 0);
+      payable += net; paid += recv; remaining += pend; disc += (+r.discount || 0);
+      const sub = r.subHead || r.head || '—';
+      const k   = `${r.head || ''}|${sub}`;
+      const agg = heads.get(k) || { head: r.head || 'Account Payable', sub, total: 0, disc: 0, recv: 0, pend: 0 };
+      agg.total += (+r.challanAmount || 0);
+      agg.disc  += (+r.discount || 0);
+      agg.recv  += recv;
+      agg.pend  += pend;
+      heads.set(k, agg);
+    });
+  });
+  return {
+    billed: (recs || []).length > 0,
+    payable, paid, remaining, disc, advance: 0,
+    heads: Array.from(heads.values()),
+    recs: recs || [],
+    /* Heads still carrying receivedAmount === null — the defaulter evidence. */
+    unpaidHeads: Array.from(new Set(
+      (recs || []).flatMap(rec => (rec.detailRows || []).filter(ledgerRowUnpaid).map(r => r.subHead || r.head || '—')),
+    )),
+  };
+}
+
+/* Pulls the given periods' challans and joins them onto the class roster.
+   Returns the same { classes, studentsMap, allStudents, totals } shape the
+   panels already consume, so the A4 builders keep working untouched. */
+function useLedgerReportData(periods) {
+  const { data: classes = [] }     = useAsync(feeService.getFeeClasses, []);
+  const { data: studentsMap = {} } = useAsync(feeService.getTransportFee, []);
+  const [records, setRecords] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError]     = useState(null);
+
+  /* Serialised so the effect re-runs on value, not identity, of `periods`. */
+  const periodKey = JSON.stringify(periods || []);
+  useEffect(() => {
+    let alive = true;
+    const list = JSON.parse(periodKey);
+    if (!list.length) { setRecords([]); setLoading(false); return undefined; }
+    setLoading(true);
+    setError(null);
+    Promise.all(list.map(p => feeService.getMonthChallans(p.month, p.year).catch(() => null)))
+      .then(res => {
+        if (!alive) return;
+        if (res.every(r => r === null)) setError('Could not load challans from the ledger');
+        setRecords(res.filter(Boolean).flat());
+        setLoading(false);
+      });
+    return () => { alive = false; };
+  }, [periodKey]);
+
+  const allStudents = useMemo(() => {
+    const byStudent = new Map();
+    records.forEach(rec => {
+      const k = String(rec.studentID);
+      if (!byStudent.has(k)) byStudent.set(k, []);
+      byStudent.get(k).push(rec);
+    });
+    const out = [];
+    classes.forEach(c => {
+      (studentsMap[c.key] || []).forEach(s => {
+        const recs = byStudent.get(String(s.studentID)) || byStudent.get(String(s.applicantsID)) || [];
+        out.push({ c, s, m: ledgerModel(recs) });
+      });
+    });
+    return out;
+  }, [classes, studentsMap, records]);
+
+  /* Only billed students count — a student with no challan isn't a defaulter. */
+  const totals = useMemo(() => {
+    let exp = 0, recv = 0, pend = 0, disc = 0, def = 0, paid = 0, n = 0;
+    allStudents.forEach(({ m }) => {
+      if (!m.billed) return;
+      n += 1;
+      exp += m.payable; recv += m.paid; pend += m.remaining; disc += m.disc;
+      if (m.remaining > 0) def += 1; else paid += 1;
+    });
+    return { exp, recv, pend, disc, adv: 0, def, paid, n };
+  }, [allStudents]);
+
+  return { classes, studentsMap, allStudents, totals, records, loading, error };
+}
+
+/* Per-head breakdown for one student. Head-Wise shows every head — paid,
+   partly paid and unpaid alike; the receivedAmount === null filter belongs to
+   the Defaulter report, not here. */
+function ledgerHeadRows(m, headFilter) {
+  const rows = m ? m.heads : [];
+  if (headFilter && headFilter !== 'All Heads') return rows.filter(r => r.sub === headFilter);
+  return rows;
+}
+
+/* Small inline banner for the ledger fetch state. */
+function RepLoadState({ loading, error, empty, emptyText }) {
+  if (loading) return <div className="fee-info"><i className="fa-solid fa-circle-notch fa-spin"></i> <span>Loading challans from the ledger…</span></div>;
+  if (error)   return <div className="fee-info" style={{ color: '#B91C1C' }}><i className="fa-solid fa-triangle-exclamation"></i> <span>{error}</span></div>;
+  if (empty)   return <div className="fee-info"><i className="fa-solid fa-circle-info"></i> <span>{emptyText}</span></div>;
+  return null;
+}
+
 /* ════════════ 1. DEFAULTER LIST ════════════ */
 function ReportPanelDefaulter({ toast }) {
-  const { classes, studentsMap, allStudents, totals } = useReportData();
   const repStyle              = useContext(FeeReportStyleContext);
   const school                = useContext(FeeReportBranchContext);
   const [seg, setSeg]         = useState('all');
   const [openKey, setOpenKey] = useState(null);
-  const [month, setMonth]     = useState(FEE_MONTHS[4]);
-  const [year, setYear]       = useState('2026');
+  const [month, setMonth]     = useState(FEE_MONTHS[new Date().getMonth()]);
+  const [year, setYear]       = useState(String(new Date().getFullYear()));
+
+  /* "All" walks January → the current month of the picked year and aggregates;
+     "Monthly" pulls just the selected month. Same ledger call either way. */
+  const periods = useMemo(() => {
+    const now = new Date();
+    const y   = Number(year) || now.getFullYear();
+    if (seg === 'month') return [{ month: FEE_MONTHS.indexOf(month) + 1, year: y }];
+    const upto = y === now.getFullYear() ? now.getMonth() + 1 : 12;
+    return ledgerPeriods(1, y, upto, y);
+  }, [seg, month, year]);
+
+  const { classes, studentsMap, allStudents, totals, loading, error } = useLedgerReportData(periods);
 
   const downloadReport = (mode) => {
     const html = buildRepDefaulterHTML({ classes, studentsMap, allStudents, totals, month, year, scope: seg, isBW: repStyle === 'bw', school });
@@ -6875,8 +7022,16 @@ function ReportPanelDefaulter({ toast }) {
 
       <div className="fee-info">
         <i className="fa-solid fa-circle-info"></i>
-        <span>Defaulters are students with a positive pending balance. Open any class to see student dues; download a class-wise A4 report via Preview / PDF.</span>
+        <span>
+          Defaulters are students whose challan heads are still unpaid in the ledger (no amount received yet).
+          {seg === 'all'
+            ? ' All Fee Defaulters aggregates every month from January up to the current month of the selected year.'
+            : ' Monthly Fee Defaulters shows only the selected month.'}
+          {' '}Open any class to see student dues; download a class-wise A4 report via Preview / PDF.
+        </span>
       </div>
+
+      <RepLoadState loading={loading} error={error} />
 
       {repKpiStrip([
         ['k-red',   'fa-user-clock',           'Total Defaulters', `${totals.def} students`, ''],
@@ -6891,7 +7046,8 @@ function ReportPanelDefaulter({ toast }) {
             <div className="fee-field">
               <span className="fee-label">Select Month</span>
               <div className="fee-select-wrap">
-                <select className="fee-select" value={month} onChange={e => setMonth(e.target.value)}>
+                {/* The All scope spans every month, so the picker only drives the Monthly view. */}
+                <select className="fee-select" value={month} onChange={e => setMonth(e.target.value)} disabled={seg === 'all'}>
                   {FEE_MONTHS.map(m => <option key={m}>{m}</option>)}
                 </select>
                 <i className="fa-solid fa-chevron-down"></i>
@@ -6953,6 +7109,7 @@ function ReportPanelDefaulter({ toast }) {
                               <th>Father</th>
                               <th>Reg No</th>
                               <th>Contact</th>
+                              <th>Unpaid Heads</th>
                               <th className="fee-right">Total Pending</th>
                             </tr>
                           </thead>
@@ -6964,6 +7121,7 @@ function ReportPanelDefaulter({ toast }) {
                                 <td>{x.s.father || '—'}</td>
                                 <td>{x.s.reg}</td>
                                 <td style={{ fontVariantNumeric: 'tabular-nums' }}>{studentPhone(x.s)}</td>
+                                <td>{x.m.unpaidHeads.length ? x.m.unpaidHeads.join(', ') : '—'}</td>
                                 <td className="fee-right fee-neg">{money(x.m.remaining)}</td>
                               </tr>
                             ))}
@@ -7206,41 +7364,53 @@ function ReportPanelCollection({ toast }) {
 function ReportPanelHeadwise({ toast }) {
   const repStyle = useContext(FeeReportStyleContext);
   const school = useContext(FeeReportBranchContext);
-  const { classes, studentsMap, headsMap, allStudents } = useReportData();
   const [seg, setSeg] = useState('student');
   const today = new Date().toISOString().slice(0, 10);
-  const [from, setFrom]       = useState('2025-01-01');
+  const [from, setFrom]       = useState(`${new Date().getFullYear()}-01-01`);
   const [to, setTo]           = useState(today);
   const [stuKey, setStuKey]   = useState('');
-  const [clsKey, setClsKey]   = useState(classes[0]?.key || '');
+  const [clsKey, setClsKey]   = useState('');
   const [head, setHead]       = useState('All Heads');
   const [result, setResult]   = useState(null);
+
+  /* The ledger is billed per month, so the date range resolves to the months it
+     covers and every challan in those months is pulled. */
+  const periods = useMemo(() => {
+    const f = new Date(from), t = new Date(to);
+    if (isNaN(f.getTime()) || isNaN(t.getTime()) || f > t) return [];
+    return ledgerPeriods(f.getMonth() + 1, f.getFullYear(), t.getMonth() + 1, t.getFullYear());
+  }, [from, to]);
+
+  const { classes, allStudents, records, loading, error } = useLedgerReportData(periods);
   useEffect(() => { if (classes.length && !clsKey) setClsKey(classes[0].key); }, [classes, clsKey]);
 
+  /* Head options come from the heads the ledger actually billed in this range. */
   const allHeads = useMemo(() => {
     const set = new Set();
-    Object.values(headsMap).forEach(arr => (arr || []).forEach(h => set.add(h.name)));
-    return ['All Heads', ...Array.from(set), 'Previous Dues', 'Transport'];
-  }, [headsMap]);
+    records.forEach(rec => (rec.detailRows || []).forEach(r => set.add(r.subHead || r.head || '—')));
+    return ['All Heads', ...Array.from(set).sort()];
+  }, [records]);
+  useEffect(() => { if (head !== 'All Heads' && !allHeads.includes(head)) setHead('All Heads'); }, [allHeads, head]);
 
   const fetchResult = () => {
+    if (loading) { toast('Ledger is still loading — try again in a moment', 'warning'); return; }
     if (seg === 'student') {
       if (!stuKey) { toast('Select a student first', 'warning'); return; }
       const [ck, reg] = stuKey.split('|');
-      const c = classes.find(x => x.key === ck); if (!c) return;
-      const s = (studentsMap[ck] || []).find(x => x.reg === reg); if (!s) return;
-      const m = allStudents.find(x => x.c.key === ck && x.s.reg === reg)?.m;
-      const rows = buildHeadwiseRows(c, s, m, head);
-      setResult({ kind: 'student', c, s, rows, from, to });
-      toast('Head-wise data loaded', 'info');
+      const hit = allStudents.find(x => x.c.key === ck && x.s.reg === reg);
+      if (!hit) { toast('Student not found', 'warning'); return; }
+      const rows = ledgerHeadRows(hit.m, head);
+      setResult({ kind: 'student', c: hit.c, s: hit.s, rows, from, to });
+      toast(rows.length ? 'Head-wise data loaded' : 'No challans for this student in the selected range', rows.length ? 'info' : 'warning');
     } else {
-      const c = classes.find(x => x.key === clsKey); if (!c) return;
-      const rows = (studentsMap[clsKey] || []).map(s => {
-        const m = allStudents.find(x => x.c.key === clsKey && x.s.reg === s.reg)?.m;
-        return { s, heads: buildHeadwiseRows(c, s, m, head) };
-      });
+      const c = classes.find(x => x.key === clsKey);
+      if (!c) { toast('Select a class first', 'warning'); return; }
+      const rows = allStudents
+        .filter(x => x.c.key === clsKey && x.m.billed)
+        .map(({ s, m }) => ({ s, heads: ledgerHeadRows(m, head) }))
+        .filter(x => x.heads.length > 0);
       setResult({ kind: 'class', c, rows, from, to });
-      toast('Class head-wise data loaded', 'info');
+      toast(rows.length ? 'Class head-wise data loaded' : 'No challans for this class in the selected range', rows.length ? 'info' : 'warning');
     }
   };
 
@@ -7268,8 +7438,15 @@ function ReportPanelHeadwise({ toast }) {
 
       <div className="fee-info">
         <i className="fa-solid fa-circle-info"></i>
-        <span>Break down collection by individual fee head (Tuition, Admission, Transport, etc.) for a student or class over a date range — essential for revenue accounting.</span>
+        <span>Break down collection by individual fee head (Admission, Monthly Fee, Transport, etc.) for a student or class over a date range — essential for revenue accounting. Every billed head is listed, whether it has been received, part-received or is still outstanding.</span>
       </div>
+
+      <RepLoadState
+        loading={loading}
+        error={error}
+        empty={!loading && !error && periods.length === 0}
+        emptyText="Pick a valid From / To range to load the ledger."
+      />
 
       <div className="fee-section fee-section--overflow">
         <div className="fee-section-body">
@@ -7584,27 +7761,6 @@ function HeadwisePreviewModal({ cfg, onClose, onDownload }) {
     </div>,
     document.body
   );
-}
-
-/* Builds the per-head row breakdown for one student. */
-function buildHeadwiseRows(c, s, m, headFilter) {
-  if (!c || !s || !m) return [];
-  const rows = [];
-  if ((+s.dues || 0) > 0) {
-    rows.push({ head: 'Custom Account', sub: 'Previous Dues', total: +s.dues || 0, disc: 0, recv: Math.min(m.paid, +s.dues), pend: Math.max((+s.dues) - Math.min(m.paid, +s.dues), 0) });
-  }
-  m.heads.forEach(h => {
-    const gen = m.generated;
-    const net = h.std - h.disc;
-    rows.push({ head: 'Account Payable', sub: h.name, total: h.std, disc: h.disc, recv: gen ? net : 0, pend: gen ? 0 : net });
-  });
-  if ((+s.transport || 0) > 0) {
-    rows.push({ head: 'Account Payable', sub: 'Transport', total: +s.transport, disc: 0, recv: m.generated ? +s.transport : 0, pend: m.generated ? 0 : +s.transport });
-  }
-  if (headFilter && headFilter !== 'All Heads') {
-    return rows.filter(r => r.sub === headFilter);
-  }
-  return rows;
 }
 
 /* ════════════ 4. AGING / OUTSTANDING ════════════ */
@@ -8007,9 +8163,9 @@ function buildRepDefaulterHTML({ classes, studentsMap, allStudents, totals, mont
     const sub = defs.reduce((a, x) => a + x.m.remaining, 0);
     return `<div class="rep-secttl">${escHtml(c.cls)} — Section ${escHtml(c.sec)} · ${defs.length} defaulter(s)</div>
       <table class="rep-tbl">
-        <thead><tr><th>Sn.</th><th>Student</th><th>Father</th><th>Reg No</th><th>Contact</th><th class="r">Pending</th></tr></thead>
-        <tbody>${defs.map((x, j) => `<tr><td>${j + 1}</td><td><b>${escHtml(x.s.name)}</b></td><td>${escHtml(x.s.father || '—')}</td><td>${escHtml(x.s.reg)}</td><td>${escHtml(studentPhone(x.s))}</td><td class="r neg">${(x.m.remaining).toLocaleString('en-PK')}</td></tr>`).join('')}</tbody>
-        <tfoot><tr class="rep-tot"><td colspan="5">${escHtml(c.cls)}/${escHtml(c.sec)} Subtotal</td><td class="r">${sub.toLocaleString('en-PK')}</td></tr></tfoot>
+        <thead><tr><th>Sn.</th><th>Student</th><th>Father</th><th>Reg No</th><th>Contact</th><th>Unpaid Heads</th><th class="r">Pending</th></tr></thead>
+        <tbody>${defs.map((x, j) => `<tr><td>${j + 1}</td><td><b>${escHtml(x.s.name)}</b></td><td>${escHtml(x.s.father || '—')}</td><td>${escHtml(x.s.reg)}</td><td>${escHtml(studentPhone(x.s))}</td><td>${escHtml((x.m.unpaidHeads || []).join(', ') || '—')}</td><td class="r neg">${(x.m.remaining).toLocaleString('en-PK')}</td></tr>`).join('')}</tbody>
+        <tfoot><tr class="rep-tot"><td colspan="6">${escHtml(c.cls)}/${escHtml(c.sec)} Subtotal</td><td class="r">${sub.toLocaleString('en-PK')}</td></tr></tfoot>
       </table>`;
   }).filter(Boolean).join('');
 
