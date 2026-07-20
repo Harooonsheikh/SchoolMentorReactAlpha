@@ -1,0 +1,72 @@
+/* ═══════════ OPERATIONAL SOPs MODULE ═══════════ */
+
+/* Category bar */
+.sop-cat-bar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
+.sop-cat-btn { display: inline-flex; align-items: center; gap: 7px; padding: 9px 16px; border-radius: var(--r-lg); border: 1.5px solid var(--bl); background: var(--card); font-family: var(--font); font-size: 12.5px; font-weight: 600; color: var(--t2); cursor: pointer; transition: var(--tr); }
+.sop-cat-btn:hover { border-color: var(--brand); color: var(--brand); background: var(--muted); }
+.sop-cat-btn.active { background: linear-gradient(135deg,#1E3A8A,#1E40AF); color: #fff; border-color: transparent; box-shadow: 0 3px 10px rgba(30,58,138,.28); }
+.sop-cat-count { background: rgba(255,255,255,.22); color: #fff; border-radius: 99px; padding: 1px 7px; font-size: 10px; font-weight: 800; }
+.sop-cat-btn:not(.active) .sop-cat-count { background: rgba(30,58,138,.1); color: var(--brand); }
+.sop-cat-edit-btn { width: 26px; height: 26px; border-radius: 7px; border: none; background: rgba(255,255,255,.18); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 11px; cursor: pointer; transition: var(--tr); flex-shrink: 0; }
+.sop-cat-btn:not(.active) .sop-cat-edit-btn { background: rgba(30,58,138,.08); color: var(--brand); }
+.sop-cat-edit-btn:hover { background: rgba(255,255,255,.35); }
+.sop-cat-edit-btn.del { background: rgba(220,38,38,.16); color: #b91c1c; }
+.sop-cat-btn.active .sop-cat-edit-btn.del { background: rgba(220,38,38,.25); color: #fca5a5; }
+.sop-cat-edit-btn.dis { opacity: .35; cursor: not-allowed; }
+
+/* Table */
+.sop-table { width: 100%; border-collapse: collapse; }
+.sop-table thead tr { background: linear-gradient(135deg,#1E3A8A,#1E40AF); }
+.sop-table th { padding: 11px 13px; text-align: left; font-size: 10.5px; font-weight: 800; color: #fff; letter-spacing: .5px; text-transform: uppercase; white-space: nowrap; }
+.sop-table td { padding: 10px 13px; border-bottom: 1px solid var(--bl); font-size: 12.5px; color: var(--t2); vertical-align: middle; }
+.sop-table tbody tr:hover td { background: rgba(30,58,138,.025); }
+.sop-manual-title { font-weight: 700; color: var(--brand); cursor: pointer; display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.sop-manual-title:hover { text-decoration: underline; }
+
+.sop-expand-box { background: var(--muted); border-top: 1px solid var(--bl); padding: 12px 16px; }
+.sop-form-item { display: flex; align-items: center; gap: 10px; padding: 7px 10px; background: var(--card); border: 1px solid var(--bl); border-radius: var(--r-md); margin-bottom: 6px; }
+.sop-form-item:last-child { margin-bottom: 0; }
+.sop-form-icon { width: 28px; height: 28px; border-radius: 7px; background: linear-gradient(135deg,#b91c1c,#dc2626); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 11px; flex-shrink: 0; }
+.sop-form-title { font-size: 12.5px; font-weight: 700; color: var(--t1); }
+.sop-form-code { font-size: 11px; color: var(--tm); }
+.sop-form-ref { font-size: 10.5px; color: var(--tm); background: var(--muted); border: 1px solid var(--bl); border-radius: var(--r-f); padding: 1px 7px; white-space: nowrap; }
+
+.sop-btn-view { display: inline-flex; align-items: center; gap: 5px; height: 29px; padding: 0 11px; border-radius: var(--r-md); border: none; background: linear-gradient(135deg,#1E3A8A,#1E40AF); color: #fff; font-size: 11px; font-weight: 700; cursor: pointer; font-family: var(--font); transition: var(--tr); }
+.sop-btn-view:hover { transform: translateY(-1px); }
+
+.sop-dots-btn { width: 28px; height: 28px; border-radius: 7px; border: 1.5px solid var(--bl); background: var(--card); color: var(--tm); display: flex; align-items: center; justify-content: center; font-size: 13px; cursor: pointer; transition: var(--tr); position: relative; }
+.sop-dots-btn:hover { background: var(--muted); color: var(--t1); }
+.sop-dropdown { position: absolute; top: 32px; right: 0; background: var(--card); border: 1.5px solid var(--bl); border-radius: var(--r-md); box-shadow: var(--s-md); min-width: 150px; z-index: 200; animation: sFd .14s ease both; }
+.sop-dd-item { display: flex; align-items: center; gap: 8px; padding: 9px 13px; font-size: 12.5px; font-weight: 600; color: var(--t2); cursor: pointer; transition: var(--tr); }
+.sop-dd-item:hover { background: var(--muted); color: var(--t1); }
+.sop-dd-item.danger { color: var(--err); }
+.sop-dd-item.danger:hover { background: rgba(220,38,38,.07); }
+
+.sop-badge-pdf { background: rgba(220,38,38,.09); color: #DC2626; border: 1px solid rgba(220,38,38,.2); border-radius: var(--r-f); padding: 2px 8px; font-size: 10px; font-weight: 700; white-space: nowrap; }
+.sop-badge-form { background: rgba(30,58,138,.09); color: var(--brand); border: 1px solid var(--bl); border-radius: var(--r-f); padding: 2px 8px; font-size: 10px; font-weight: 700; white-space: nowrap; }
+.sop-badge-soon { background: rgba(100,116,139,.09); color: #64748B; border: 1px solid rgba(100,116,139,.2); border-radius: var(--r-f); padding: 2px 8px; font-size: 10px; font-weight: 700; white-space: nowrap; }
+
+/* Upload dropzone (manual / form modals) */
+.sop-upload { border: 2px dashed var(--bl); border-radius: var(--r-md); padding: 18px; text-align: center; cursor: pointer; transition: var(--tr); background: var(--muted); }
+.sop-upload:hover { border-color: var(--brand); background: rgba(30,58,138,.04); }
+.sop-upload i { font-size: 22px; color: var(--brand); margin-bottom: 6px; }
+.sop-upload-name { font-size: 12px; color: var(--tm); margin-top: 4px; word-break: break-word; }
+
+/* PDF viewer modal */
+.sop-pdf-doc { background: #fff; border-radius: var(--r-lg); overflow: hidden; border: 1px solid var(--bl); }
+
+/* Video modal */
+.sop-vid-ov { position: fixed; inset: 0; background: rgba(0,0,0,.85); backdrop-filter: blur(6px); display: flex; align-items: center; justify-content: center; padding: 20px; z-index: 1600; }
+.sop-vid-modal { background: #000; border-radius: var(--r-xl); width: 100%; max-width: 800px; box-shadow: 0 20px 60px rgba(0,0,0,.8); overflow: hidden; animation: mIn .28s cubic-bezier(.34,1.26,.64,1) both; }
+.sop-vid-toolbar { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; background: #111; border-bottom: 1px solid #333; }
+.sop-vid-title { color: #fff; font-size: 13.5px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+.sop-vid-x { width: 30px; height: 30px; border-radius: 8px; border: 1px solid #444; background: #1a1a1a; color: #fff; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 13px; }
+.sop-vid-frame { width: 100%; aspect-ratio: 16/9; border: none; display: block; }
+
+@media (max-width: 760px) {
+  .sop-table thead { display: none; }
+  .sop-table tr { display: block; margin-bottom: 10px; background: var(--card); border: 1px solid var(--bl); border-radius: var(--r-md); padding: 10px; }
+  .sop-table td { display: flex; justify-content: space-between; align-items: center; border: none; padding: 5px 2px; gap: 12px; }
+  .sop-table td::before { content: attr(data-label); font-size: 10.5px; font-weight: 700; color: var(--tm); text-transform: uppercase; }
+  .stat-grid { grid-template-columns: repeat(2,1fr) !important; }
+}

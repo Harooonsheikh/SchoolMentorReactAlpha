@@ -1,0 +1,121 @@
+/* ═══════════════════════════════════════════════════════════════════
+   GLOBAL MOBILE RESPONSIVE LAYER
+   Loaded last so it can refine every module for tablet/phone without
+   touching each screen. Collapses multi-column grids, turns wide tables
+   and tab bars into horizontal scrollers, and stacks modal forms.
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* Never allow the page to scroll sideways as a whole */
+html, body { overflow-x: hidden; max-width: 100%; }
+img, svg, video, canvas { max-width: 100%; height: auto; }
+.page-content { overflow-x: hidden; }
+
+/* ── Wide data tables → horizontal scroll (skip tables already card-ified).
+   `display:block` turns the <table> into its own scroll container; browsers
+   keep an anonymous table box inside, so columns stay aligned. ── */
+@media (max-width: 820px) {
+  table:not(.sch-table) {
+    display: block;
+    width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  table:not(.sch-table) th,
+  table:not(.sch-table) td { white-space: nowrap; }
+}
+
+/* ── Tab bars → swipeable horizontal strip ── */
+@media (max-width: 760px) {
+  .acc-tabs, .att-tabs, .hr-tabs, .inv-tabs, .pay-tabs, .um-tabs, .stg-tabs {
+    display: flex !important;
+    grid-template-columns: none !important;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+  }
+  .acc-tabs > *, .att-tabs > *, .hr-tabs > *, .inv-tabs > *,
+  .pay-tabs > *, .um-tabs > *, .stg-tabs > * {
+    flex: 1 0 auto !important;
+    min-width: max-content;
+    white-space: nowrap;
+  }
+  /* Academics sub-nav also scrolls instead of wrapping awkwardly */
+  .ac-subtabs { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .ac-subtabs .ac-subtab { flex: 0 0 auto; white-space: nowrap; }
+}
+
+/* ── Multi-column grids: 4/3-col → 2-col on tablet ── */
+@media (max-width: 960px) {
+  .hr-sum-cards, .rpt-stat-grid, .pm-mod-grid, .ss-mod-grid, .ss-ob-grid,
+  .em-ob-grid, .nt-aud-grid, .pay-formula-grid, .hr-loan-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+}
+
+/* ── …→ single column on phones ── */
+@media (max-width: 600px) {
+  .hr-sum-cards, .rpt-stat-grid, .pm-mod-grid, .ss-mod-grid, .ss-ob-grid,
+  .em-ob-grid, .em-ob-summary, .nt-aud-grid, .pay-formula-grid, .hr-loan-grid,
+  .hr-repay-row, .hr-txn-row, .psetup-detail-grid, .recv-detail-grid {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+/* ── Inline-styled grids inside modals collapse to one column on phones
+   (CSS !important overrides the React inline style). ── */
+@media (max-width: 600px) {
+  .pay-modal [style*="grid-template-columns"],
+  .modal [style*="grid-template-columns"],
+  .ss-modal [style*="grid-template-columns"],
+  .stg-modal [style*="grid-template-columns"] {
+    grid-template-columns: 1fr !important;
+  }
+}
+/* Page-level inline grids stack on very small screens */
+@media (max-width: 520px) {
+  .page-content [style*="grid-template-columns"] { grid-template-columns: 1fr !important; }
+}
+
+/* ── Attendance: weekly day cards swipe; month calendar stays a 7-col grid ── */
+@media (max-width: 720px) {
+  .att-days-grid {
+    display: flex !important;
+    grid-template-columns: none !important;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    gap: 8px;
+    padding-bottom: 4px;
+  }
+  .att-days-grid > * { flex: 0 0 86px; }
+  .att-cal-grid { gap: 3px; }
+}
+
+/* ── Filter / selector bars wrap; their fields go full width ── */
+@media (max-width: 600px) {
+  .ac-bar, .um-toolbar { flex-wrap: wrap; }
+  .ac-bar .ac-field, .ac-bar > * { flex: 1 1 100%; min-width: 0; }
+  .ac-bar .btn-primary, .ac-bar .btn-secondary { width: 100%; justify-content: center; }
+}
+
+/* ── Page header: title + actions stack cleanly ── */
+@media (max-width: 600px) {
+  .page-header, .page-title-row { flex-wrap: wrap; gap: 10px; }
+  .card-header { gap: 10px; }
+  .card-header .btn-primary, .card-header .btn-secondary { flex: 1 1 auto; justify-content: center; }
+}
+
+/* ── Modals: comfortable on phones, body scrolls vertically ── */
+@media (max-width: 600px) {
+  .pay-ov, .ov, .ss-overlay { padding: 10px; }
+  .pay-modal, .modal, .ss-modal { max-width: 100% !important; max-height: 94vh; }
+  .pay-modal-body, .modal-body { max-height: 78vh; }
+  .pay-modal-foot, .stg-modal-foot, .ss-footer { flex-wrap: wrap; }
+  .pay-modal-foot button, .ss-footer button { flex: 1 1 auto; justify-content: center; }
+}
+
+/* ── Tighter padding on small phones ── */
+@media (max-width: 480px) {
+  .page-content { padding: 12px; }
+  .card-body { padding: 14px; }
+  .chart-bd { padding: 14px; }
+}
