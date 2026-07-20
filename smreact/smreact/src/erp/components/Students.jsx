@@ -1443,10 +1443,10 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
     toast('ID card generated', 'success');
     setIdCardCfg(null);
   };
-  const doBulkId = (selectedRegs, template, theme, session) => {
+  const doBulkId = (selectedIds, template, theme, session) => {
     const c = list.find(x => x.key === bulkIdCfg.cKey);
     if (!c) return;
-    const studs = c.students.filter(s => selectedRegs.includes(s.reg));
+    const studs = c.students.filter(s => selectedIds.includes(s._id));
     if (studs.length === 0) { toast('Pick at least one student first', 'error'); return; }
     const { css, html } = buildStuBulkIdHTML(studs, c, school, template, theme, session);
     stuOpenPrintWindow(`Class ID Cards — ${c.cls} (${c.sec})`, css, html, toast);
@@ -1706,8 +1706,8 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
                 <div className="stu-sr-empty">No students found for "<b>{search}</b>"</div>
               ) : (
                 <>
-                  {matches.slice(0, 30).map(({ s, c }) => (
-                    <button key={s.reg} type="button" className="stu-sr-item" onClick={() => jumpTo(c.key, s.reg)}>
+                  {matches.slice(0, 30).map(({ s, c }, mi) => (
+                    <button key={s._id ?? `idx-${mi}`} type="button" className="stu-sr-item" onClick={() => jumpTo(c.key, s.reg)}>
                       <div className="stu-sr-av">{stuInitials(s)}</div>
                       <div className="stu-sr-main">
                         <div className="stu-sr-name">{stuFullName(s)}</div>
@@ -1969,7 +1969,10 @@ function StuClassRow({ c, idx, isOpen, onToggle, onReport, onPromote, onAdd, onB
               </div>
               {c.students.map((s, i) => (
                 <StuStudentRow
-                  key={s.reg}
+                  /* Key on the DB id — reg can be blank (or repeated) for freshly
+                     added students, and duplicate keys leave ghost rows behind
+                     when a reg no is later filled in. */
+                  key={s._id ?? `idx-${i}`}
                   s={s}
                   i={i + 1}
                   flash={flashReg === s.reg}
@@ -2888,8 +2891,8 @@ function InactiveStudents({ classes, setClasses, inactive, setInactive, toast })
                 <div className="stu-sr-empty">No inactive students found for "<b>{search}</b>"</div>
               ) : (
                 <>
-                  {matches.slice(0, 30).map(({ s, g }) => (
-                    <button key={s.reg} type="button" className="stu-sr-item" onClick={() => jumpTo(g.key, s.reg)}>
+                  {matches.slice(0, 30).map(({ s, g }, mi) => (
+                    <button key={s._id ?? `idx-${mi}`} type="button" className="stu-sr-item" onClick={() => jumpTo(g.key, s.reg)}>
                       <div className="stu-sr-av" style={{ background: 'rgba(220,38,38,.10)', color: '#DC2626' }}>{stuInitials(s)}</div>
                       <div className="stu-sr-main">
                         <div className="stu-sr-name">{stuFullName(s)}</div>
@@ -3056,7 +3059,7 @@ function StuInactiveGroup({ g, idx, isOpen, onToggle, onGroupReport, flashReg, o
           </div>
           {g.students.map((s, i) => (
             <StuInactiveRow
-              key={s.reg}
+              key={s._id ?? `idx-${i}`}
               s={s}
               i={i + 1}
               flash={flashReg === s.reg}
@@ -3972,9 +3975,11 @@ function StuBulkIdModal({ cls, school, onClose, onDownload }) {
   const [themeKey, setThemeKey] = useState('blue');
   const [custom, setCustom] = useState('#2D7DD2');
   const [session, setSession] = useState('2026-2027');
+  /* Selection is keyed on the DB id — reg no can be blank on freshly added
+     students, which would make them share a single checkbox. */
   const [selected, setSelected] = useState(() => {
     const out = {};
-    (cls?.students || []).forEach(s => { out[s.reg] = true; });
+    (cls?.students || []).forEach(s => { out[s._id] = true; });
     return out;
   });
   const [refreshTick, setRefreshTick] = useState(0);
@@ -3988,13 +3993,13 @@ function StuBulkIdModal({ cls, school, onClose, onDownload }) {
   const theme = themeKey === 'custom'
     ? { c1: custom, c2: custom, mid: custom, ink: '#0F172A' }
     : (STU_ID_THEMES.find(t => t.key === themeKey) || STU_ID_THEMES[0]);
-  const allOn = cls.students.length > 0 && cls.students.every(s => selected[s.reg]);
+  const allOn = cls.students.length > 0 && cls.students.every(s => selected[s._id]);
   const toggleAll = (v) => {
-    const next = {}; cls.students.forEach(s => { next[s.reg] = v; }); setSelected(next);
+    const next = {}; cls.students.forEach(s => { next[s._id] = v; }); setSelected(next);
   };
-  const selectedRegs = Object.keys(selected).filter(k => selected[k]);
-  const count = selectedRegs.length;
-  const previewStudents = cls.students.filter(s => selected[s.reg]).slice(0, 4);
+  const selectedIds = cls.students.filter(s => selected[s._id]).map(s => s._id);
+  const count = selectedIds.length;
+  const previewStudents = cls.students.filter(s => selected[s._id]).slice(0, 4);
 
   return (
     <div className="stu-modal-overlay open" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
@@ -4066,13 +4071,13 @@ function StuBulkIdModal({ cls, school, onClose, onDownload }) {
             <div className="stu-bulk-list">
               {cls.students.length === 0 ? (
                 <div className="stu-sr-empty">No students in this class.</div>
-              ) : cls.students.map(s => (
-                <label key={s.reg} className="stu-bulk-item">
+              ) : cls.students.map((s, i) => (
+                <label key={s._id ?? `idx-${i}`} className="stu-bulk-item">
                   <input
                     type="checkbox"
                     className="stu-pchk"
-                    checked={!!selected[s.reg]}
-                    onChange={() => setSelected(p => ({ ...p, [s.reg]: !p[s.reg] }))}
+                    checked={!!selected[s._id]}
+                    onChange={() => setSelected(p => ({ ...p, [s._id]: !p[s._id] }))}
                   />
                   <span className="stu-bulk-av">
                     {s.photo ? <img src={s.photo} alt="" /> : stuInitials(s)}
@@ -4095,8 +4100,8 @@ function StuBulkIdModal({ cls, school, onClose, onDownload }) {
               ) : (
                 <>
                   <div className="stu-bulk-prevgrid">
-                    {previewStudents.map(s => (
-                      <div key={s.reg} className="stu-bulk-prevcard">
+                    {previewStudents.map((s, i) => (
+                      <div key={s._id ?? `idx-${i}`} className="stu-bulk-prevcard">
                         <div className="stu-bulk-prevcard-stack">
                           <StuIdCardPreview student={s} cls={cls} school={school} template={tmpl} theme={theme} session={session} role="Student" face="front" />
                           <StuIdCardPreview student={s} cls={cls} school={school} template={tmpl} theme={theme} session={session} role="Student" face="back" />
@@ -4120,7 +4125,7 @@ function StuBulkIdModal({ cls, school, onClose, onDownload }) {
           <button
             className="stu-btn stu-btn-primary"
             disabled={count === 0}
-            onClick={() => onDownload(selectedRegs, tmpl, theme, session)}
+            onClick={() => onDownload(selectedIds, tmpl, theme, session)}
           >
             <i className="fa-solid fa-download"></i> Generate &amp; Download PDF
           </button>
@@ -5057,7 +5062,7 @@ function FamilyRow({ f, idx, isOpen, onToggle, onEdit, onDelete, onUnlink, canFa
                 <div className="th c">Unlink</div>
               </div>
               {f.members.map((m, i) => (
-                <div key={m.reg} className="stu-srow" style={{ gridTemplateColumns: '46px 58px 1.1fr 1.4fr 1.1fr 1.2fr 60px' }}>
+                <div key={m._id ?? m.id ?? `idx-${i}`} className="stu-srow" style={{ gridTemplateColumns: '46px 58px 1.1fr 1.4fr 1.1fr 1.2fr 60px' }}>
                   <div className="td c"><div className="stu-srow-sn">{i + 1}</div></div>
                   <div className="td c">
                     <div className="stu-avatar" style={{ background: 'rgba(124,58,237,.10)', color: '#7C3AED' }}>
