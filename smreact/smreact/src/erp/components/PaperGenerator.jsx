@@ -2009,6 +2009,16 @@ const setSubjLine = (ci, si, l) => {
     };
   const addTab = (section, typeKey) => {
     if (isOtherSession) { toast('Method not allowed', 'error'); return; }
+    /* Block adding another question block once the section already holds its
+       full marks — the save-time check only stops an over-limit save, so
+       without this the user could keep piling on empty blocks. */
+    const sectionName   = section === 'obj' ? 'Objective' : 'Subjective';
+    const sectionTarget = section === 'obj' ? objTarget : subjTarget;
+    const sectionUsed   = sectionUsedMarks(blocksState[section]);
+    if (sectionTarget > 0 && sectionUsed >= sectionTarget) {
+      toast(`You can't add more questions — the ${sectionName} section already has its full ${sectionTarget} marks.`, 'error');
+      return;
+    }
     // API data available hai toh direct add karo
     if (notebookDetails) {
       setBlocksState(prev => {
@@ -2108,7 +2118,8 @@ const setSubjLine = (ci, si, l) => {
   if (items < 1) { toast('No. of items cannot be 0 — please enter number of items', 'warning'); return; }
 
   const marksVal = +tab.marks || 0;
-  if (marksVal < 1) { toast('Marks per item cannot be 0 — please enter the marks', 'warning'); return; }
+  /* Any positive value is valid — fractional marks (0.5, 2.5, …) included. */
+  if (marksVal <= 0) { toast('Marks per item cannot be 0 — please enter the marks', 'warning'); return; }
 
   const choicesVal = +tab.choices || 0;
   if (choicesVal >= items) {
@@ -2122,10 +2133,11 @@ const setSubjLine = (ci, si, l) => {
     }
 
     // Section total (incl. this block's current values) must not exceed the configured limit.
+    const sectionName   = section === 'obj' ? 'Objective' : 'Subjective';
     const sectionTarget = section === 'obj' ? objTarget : subjTarget;
     const sectionUsed   = sectionUsedMarks(blocksState[section]);
     if (sectionTarget > 0 && sectionUsed > sectionTarget) {
-      toast(`Total ${section === 'obj' ? 'Objective' : 'Subjective'} Marks should not exceed the defined limit (${sectionTarget}).`, 'error');
+      toast(`You can't add more questions — the ${sectionName} section is limited to ${sectionTarget} marks (this would make it ${sectionUsed}).`, 'error');
       return;
     }
 
@@ -2375,24 +2387,26 @@ const setSubjLine = (ci, si, l) => {
         toast('Please fill all the fields before generating', 'warning');
         return;
       }
-      // Objective section must be exactly complete (and within limit).
-      if (showObj && objStatus === 'over') {
-        toast(`Total Objective Marks should not exceed the defined limit (${objTarget}).`, 'error');
-        return;
-      }
-      if (showObj && objStatus !== 'ok') {
-        toast(`Please complete all Objective Marks (${objTarget}) before saving the paper.`, 'warning');
-        return;
-      }
-      // Subjective section must be exactly complete (and within limit).
-      if (showSubj && subjStatus === 'over') {
-        toast(`Total Subjective Marks should not exceed the defined limit (${subjTarget}).`, 'error');
-        return;
-      }
-      if (showSubj && subjStatus !== 'ok') {
-        toast(`Please complete all Subjective Marks (${subjTarget}) before saving the paper.`, 'warning');
-        return;
-      }
+      /* Generate validates only the section of the ACTIVE tab — the button
+         works for whichever tab you're on. For a single-type paper that's the
+         only section shown; for a 'both' paper it's the tab currently open. */
+      const validateSection = (status, target, name) => {
+        if (status === 'over') {
+          toast(`Total ${name} Marks should not exceed the defined limit (${target}).`, 'error');
+          return false;
+        }
+        if (status !== 'ok') {
+          toast(`Please complete all ${name} Marks (${target}) before saving the paper.`, 'warning');
+          return false;
+        }
+        return true;
+      };
+      const activeSection = paperType === 'both' ? qTab : (showObj ? 'obj' : 'subj');
+      const activeOk = activeSection === 'obj'
+        ? validateSection(objStatus, objTarget, 'Objective')
+        : validateSection(subjStatus, subjTarget, 'Subjective');
+      if (!activeOk) return;
+
       toast(`Paper generated — "${title}"`, 'success');
       // Parent ki papers list dobara GET API se refresh karo (count + naya card turant update,
       // bina screen refresh ke).
@@ -2588,7 +2602,8 @@ const setSubjLine = (ci, si, l) => {
                   <div className="pg-qtype-tabs" style={{ marginBottom: 10 }}>
                     <Tooltip text="Edit the objective section (MCQs, fill in the blanks, etc.)">
                       <button className={`pg-qtype-tab${qTab === 'obj' ? ' active' : ''}`} onClick={() => {
-    if (qTab === 'subj' && subjStatus !== 'ok') {
+    /* Same rule the other way: block only while Subjective is still under target. */
+    if (qTab === 'subj' && subjStatus === 'under') {
       toast(`Please complete all Subjective Marks (${subjTarget}) before switching to Objective section.`, 'warning');
       return;
     }
@@ -2599,7 +2614,10 @@ const setSubjLine = (ci, si, l) => {
                     </Tooltip>
                     <Tooltip text="Edit the subjective section (short / long questions)">
                       <button className={`pg-qtype-tab${qTab === 'subj' ? ' active' : ''}`} onClick={() => {
-                        if (objStatus !== 'ok') {
+                        /* Only block while the Objective section is still short of
+                           its target. Once it's complete (or over), the marks are
+                           filled, so let the user move on. */
+                        if (objStatus === 'under') {
                           toast(`Please complete all Objective Marks (${objTarget}) before proceeding to the Subjective section.`, 'warning');
                           return;
                         }
@@ -2971,6 +2989,23 @@ const setSubjLine = (ci, si, l) => {
   function QWorkspacePanel({ tab, typeKey, subject, onUpdate, onSave, onDelete, apiItems, isUrdu = false }) {
     const t = (en, ur) => (isUrdu ? ur : en);
     const useApiData = !!apiItems && apiItems.length > 0;
+
+    /* Save/Update is an async API call. Without gating, 2–5 quick clicks fire
+       that many requests (and generate duplicate questions). Hold a local flag
+       until the call resolves; on success the block flips to saved and this
+       panel unmounts, so the flag only ever resets on failure. */
+    const [saving, setSaving] = useState(false);
+    const mountedRef = useRef(true);
+    useEffect(() => () => { mountedRef.current = false; }, []);
+    const handleSave = async () => {
+      if (saving) return;
+      setSaving(true);
+      try {
+        await onSave();
+      } finally {
+        if (mountedRef.current) setSaving(false);
+      }
+    };
     
     const unitData = PG_UNIT_DATA[subject] || [];
     const unitsWithType = useApiData ? [] : unitData.filter(u => u.qtypes[typeKey]);
@@ -3396,13 +3431,20 @@ const setSubjLine = (ci, si, l) => {
                 </div>
                 <div>
                   <div className="pg-q-field-label">{t('Marks / Item', 'نمبر / آئٹم')}</div>
+                  {/* Decimal marks (e.g. 2.5) must be typeable — a number input
+                      wipes the value at the intermediate "2." keystroke, so use a
+                      text field with a decimal filter and keep the raw string.
+                      Every consumer coerces with +marks, so a string is safe. */}
                   <input
-                    className="pg-q-input" type="number"
+                    className="pg-q-input" type="text" inputMode="decimal"
                     value={marks}
-                    onChange={e => onUpdate({ marks: Math.max(0, +e.target.value || 0) })}
+                    onChange={e => {
+                      const v = e.target.value;
+                      if (v === '' || /^\d*\.?\d*$/.test(v)) onUpdate({ marks: v });
+                    }}
                   />
                   <div style={{ fontSize: 9.5, color: 'var(--text-muted)', marginTop: 3 }}>
-                    {t('Auto-calculates total marks', 'کل نمبر خودکار شمار ہوتے ہیں')}
+                    {t('Auto-calculates total marks · decimals allowed (e.g. 2.5)', 'کل نمبر خودکار شمار ہوتے ہیں · اعشاریہ نمبر بھی (مثلاً 2.5)')}
                   </div>
                 </div>
                 <div>
@@ -3457,13 +3499,19 @@ const setSubjLine = (ci, si, l) => {
                     </button>
                   </Tooltip>
                 )}
-                <Tooltip text="Save this question block">
+                <Tooltip text={tab.existing ? 'Update this saved question block' : 'Save this question block'}>
                   <button
+                    type="button"
                     className="pg-btn-primary"
-                    style={{ padding: '8px 20px', fontSize: 12.5 }}
-                    onClick={onSave}
+                    disabled={saving}
+                    style={{ padding: '8px 20px', fontSize: 12.5, ...(saving ? { opacity: 0.6, cursor: 'wait' } : {}) }}
+                    onClick={handleSave}
                   >
-                    <i className="fa-solid fa-floppy-disk"></i> {t('Save', 'محفوظ کریں')}
+                    {saving ? (
+                      <><i className="fa-solid fa-spinner fa-spin"></i> {t('Saving…', 'محفوظ ہو رہا ہے…')}</>
+                    ) : (
+                      <><i className="fa-solid fa-floppy-disk"></i> {tab.existing ? t('Update', 'اپ ڈیٹ کریں') : t('Save', 'محفوظ کریں')}</>
+                    )}
                   </button>
                 </Tooltip>
               </div>
@@ -3607,6 +3655,29 @@ const setSubjLine = (ci, si, l) => {
   /* The most likely "question text" field for a row, across all types. (HTML → plain text) */
   const pgRowText = r => pgStripHtml(r.question || r.word || r.sentence || r.statement || r.topic || r.title || r.comprehensionStatement || r.subject || r.punctuation || r.mainQuestion || '');
 
+  /* A Match-Columns cell can hold either plain text or an <img> (base64 data
+     URI). Pull just the src out of the stored markup so we render a clean,
+     size-controlled image instead of injecting the source's own inline styles
+     (which set width:25% etc. and blow up the column). */
+  const pgCellImgSrc = v => {
+    const m = String(v == null ? '' : v).match(/<img[^>]+src=["']([^"']+)["']/i);
+    return m ? m[1] : null;
+  };
+  /* React (preview): image if the cell holds one, else stripped text. */
+  const pgRenderCell = v => {
+    const src = pgCellImgSrc(v);
+    return src
+      ? <img src={src} alt="" style={{ maxWidth: 90, maxHeight: 60, objectFit: 'contain', display: 'block', margin: '0 auto' }} />
+      : pgStripHtml(v);
+  };
+  /* Download (HTML string): same, as an escaped-text or <img> string. */
+  const pgCellHtml = v => {
+    const src = pgCellImgSrc(v);
+    return src
+      ? `<img src="${src}" alt="" style="max-width:90px;max-height:60px;object-fit:contain;display:block;margin:0 auto" />`
+      : pgEsc(pgStripHtml(v));
+  };
+
   /* ── Marks helpers for saved (API) sections ──────────────────────────────
      Per-item marks = marks-per-item (parentData.marks). Section total marks =
      (items − choices) × marks-per-item — same formula the workspace uses
@@ -3630,9 +3701,12 @@ const setSubjLine = (ci, si, l) => {
      hota hai) — is liye preview aur download dono me bilkul same order aata hai. n>=2 par koi bhi
      entry apni asli row par nahi rehti (derangement). */
   const pgShuffleColumnB = (rows) => {
-    const bs = rows.map(r => pgStripHtml(r.columnB || r.option2));
-    const n = bs.length;
-    if (n < 2) return bs;
+    /* Keep the RAW cell (so an image survives); seed only from its stripped
+       text, so the deterministic order is identical in preview and download. */
+    const raw = rows.map(r => r.columnB || r.option2 || '');
+    const bs = raw.map(v => pgStripHtml(v));
+    const n = raw.length;
+    if (n < 2) return raw;
     let seed = 0;
     const src = bs.join('|') || 'match';
     for (let i = 0; i < src.length; i++) { seed = (Math.imul(seed, 131) + src.charCodeAt(i)) >>> 0; }
@@ -3650,7 +3724,7 @@ const setSubjLine = (ci, si, l) => {
         [order[i], order[k]] = [order[k], order[i]];
       }
     }
-    return order.map(i => bs[i]);
+    return order.map(i => raw[i]);
   };
 
   /* subjective-only type keys (in PG_SUBJ_TYPES but not PG_OBJ_TYPES) */
@@ -3751,8 +3825,12 @@ const setSubjLine = (ci, si, l) => {
           <table dir={isUrdu ? 'rtl' : undefined} style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11.5, marginBottom: 12 }}>
             <thead><tr style={{ background: thBg }}><th style={th}>{L.colA}</th><th style={th}>{L.answer}</th><th style={th}>{L.colB}</th><th style={{ ...th, textAlign: 'center', width: 60 }}>{L.marks}</th></tr></thead>
             <tbody>
+              {/* Match Columns shows ONLY Column A / Column B (text or image).
+                  No pgRowText fallback on Column A — its chain includes
+                  mainQuestion, which otherwise leaked the question text into an
+                  empty Column A cell. */}
               {rows.map((r, i) => (
-                <tr key={i}><td style={td}>{pgStripHtml(r.columnA || r.option1) || pgRowText(r)}</td><td style={td}>______</td><td style={td}>{shufB[i]}</td><td style={{ ...td, textAlign: 'center' }}>[{mk}]</td></tr>
+                <tr key={i}><td style={td}>{pgRenderCell(r.columnA || r.option1)}</td><td style={td}>______</td><td style={td}>{pgRenderCell(shufB[i])}</td><td style={{ ...td, textAlign: 'center' }}>[{mk}]</td></tr>
               ))}
             </tbody>
           </table>
@@ -3786,7 +3864,7 @@ const setSubjLine = (ci, si, l) => {
       }
       if (k === 'fillintheblank' || k === 'filltheblank' || k === 'fillintheblanks') {
         return rows.map((r, i) => (
-          <div key={i} style={{ fontSize: 12, color: '#334155', marginBottom: 8 }}>{mkTag}{pgRoman(i)}. {pgRowText(r)} <span style={{ display: 'inline-block', minWidth: 90, borderBottom: '1px solid #334155' }}></span></div>
+          <div key={i} style={{ fontSize: 12, color: '#334155', marginBottom: 8 }}>{mkTag}{pgRoman(i)}. {pgRowText(r)}</div>
         ));
       }
       /* Generic: essays, stories, letters, applications, paragraphs, wordSentences,
@@ -3875,7 +3953,7 @@ const setSubjLine = (ci, si, l) => {
       else if (k === 'matchcolume' || k === 'matchcolumns') {
         const shufB = pgShuffleColumnB(rows);   // Column B shuffled (preview jaisा hi deterministic order)
         body = `<table><tr><th>${L.colA}</th><th>${L.answer}</th><th>${L.colB}</th><th style="text-align:center;width:60px">${L.marks}</th></tr>` +
-          rows.map((r, i) => `<tr><td>${pgEsc(pgStripHtml(r.columnA || r.option1) || pgRowText(r))}</td><td>______</td><td>${pgEsc(shufB[i])}</td><td style="text-align:center">[${mk}]</td></tr>`).join('') + '</table>';
+          rows.map((r, i) => `<tr><td>${pgCellHtml(r.columnA || r.option1)}</td><td>______</td><td>${pgCellHtml(shufB[i])}</td><td style="text-align:center">[${mk}]</td></tr>`).join('') + '</table>';
       } else if (k === 'comprehension') {
         const passage = pgStripHtml(rows[0]?.comprehensionStatement);
         body = (passage ? `<div style="background:#F8FAFF;border:1px solid #BFDBFE;border-radius:4px;padding:8px 12px;font-size:11.5px;margin-bottom:8px;line-height:1.6">${pgEsc(passage)}</div>` : '') +
@@ -3884,7 +3962,7 @@ const setSubjLine = (ci, si, l) => {
         body = `<table class="tf-table"><tr><th>#</th><th>${L.statement}</th><th>${L.tru}</th><th>${L.fls}</th><th style="text-align:center;width:60px">${L.marks}</th></tr>` +
           rows.map((r, i) => `<tr><td>${pgRoman(i)}</td><td>${pgEsc(pgRowText(r))}</td><td><span class="tf-box"></span></td><td><span class="tf-box"></span></td><td style="text-align:center">[${mk}]</td></tr>`).join('') + '</table>';
       } else if (k === 'fillintheblank' || k === 'filltheblank' || k === 'fillintheblanks') {
-        body = rows.map((r, i) => `<div class="write-item">${mkTag}${pgRoman(i)}. ${pgEsc(pgRowText(r))} <span class="blank"></span></div>`).join('');
+        body = rows.map((r, i) => `<div class="write-item">${mkTag}${pgRoman(i)}. ${pgEsc(pgRowText(r))}</div>`).join('');
       } else {
         body = rows.map((r, i) => `<div class="write-item">${mkTag}${pgRoman(i)}. ${pgEsc(pgRowText(r))}${ansLines()}</div>`).join('');
       }
