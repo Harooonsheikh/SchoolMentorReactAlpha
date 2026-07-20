@@ -1,0 +1,68 @@
+/* ═══════════ USER MANAGEMENT MODULE ═══════════ */
+
+/* 3-tab bar */
+.um-tabs { display: grid; grid-template-columns: repeat(3,1fr); background: var(--card); border: 1.5px solid var(--bl); border-radius: var(--r-lg); overflow: hidden; box-shadow: var(--s-sm); margin-bottom: 20px; }
+.um-tab { padding: 13px 10px; border: none; background: transparent; font-family: var(--font); font-size: 13px; font-weight: 600; color: var(--tm); cursor: pointer; transition: var(--tr); display: flex; align-items: center; justify-content: center; gap: 8px; border-right: 1px solid var(--bl); }
+.um-tab:last-child { border-right: none; }
+.um-tab:hover:not(.active) { background: var(--muted); color: var(--t1); }
+.um-tab.active { background: linear-gradient(135deg,#1E3A8A,#1E40AF,#2563EB); color: #fff; font-weight: 700; }
+
+/* Registration form */
+.um-form-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-bottom: 14px; }
+.um-form-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 14px; }
+.um-field { display: flex; flex-direction: column; gap: 5px; }
+.um-label { font-size: 11.5px; font-weight: 700; color: var(--t2); }
+.um-input { height: 38px; border: 1.5px solid var(--bl); border-radius: var(--r-md); padding: 0 13px; font-family: var(--font); font-size: 13px; color: var(--t1); background: var(--inp); outline: none; transition: var(--tr); width: 100%; }
+.um-input:focus { border-color: var(--brand); box-shadow: 0 0 0 3px rgba(30,58,138,.09); }
+.um-pw-wrap { position: relative; }
+.um-pw-wrap .um-input { padding-right: 38px; }
+.um-pw-eye { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); background: none; border: none; cursor: pointer; color: var(--tm); font-size: 14px; padding: 0; }
+.um-img-preview { width: 80px; height: 80px; border-radius: var(--r-md); border: 2px dashed var(--bl); background: var(--muted); display: flex; align-items: center; justify-content: center; font-size: 22px; color: var(--tm); overflow: hidden; flex-shrink: 0; }
+.um-img-preview img { width: 100%; height: 100%; object-fit: cover; }
+.um-checkbox-row { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.um-checkbox-row input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--brand); cursor: pointer; }
+.um-checkbox-row label { font-size: 13px; font-weight: 600; color: var(--t1); cursor: pointer; }
+
+/* Tables */
+.um-table, .um-assign-table, .um-perm-table { width: 100%; border-collapse: collapse; }
+.um-table thead tr, .um-assign-table thead tr, .um-perm-table thead tr { background: linear-gradient(135deg,#1E3A8A,#1E40AF); }
+.um-table th, .um-assign-table th, .um-perm-table th { padding: 11px 13px; text-align: left; font-size: 10.5px; font-weight: 800; color: #fff; letter-spacing: .5px; text-transform: uppercase; white-space: nowrap; }
+.um-table td, .um-assign-table td, .um-perm-table td { padding: 10px 13px; border-bottom: 1px solid var(--bl); font-size: 13px; color: var(--t2); vertical-align: middle; }
+.um-table tbody tr:hover td, .um-assign-table tbody tr:hover td { background: rgba(30,58,138,.03); }
+.um-table tbody tr:last-child td, .um-perm-table tbody tr:last-child td { border-bottom: none; }
+.um-table input[type=checkbox], .um-assign-table input[type=checkbox], .um-perm-table input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--brand); cursor: pointer; }
+.um-avatar { width: 32px; height: 32px; border-radius: 50%; background: linear-gradient(135deg,#1E3A8A,#1E40AF); color: #fff; font-size: 11px; font-weight: 800; display: flex; align-items: center; justify-content: center; flex-shrink: 0; overflow: hidden; }
+.um-avatar img { width: 100%; height: 100%; object-fit: cover; }
+
+/* User selector */
+.um-user-select { width: 100%; max-width: 340px; height: 38px; border: 1.5px solid var(--brand); border-radius: var(--r-f); padding: 0 14px; font-family: var(--font); font-size: 13px; color: var(--t1); background: var(--inp); outline: none; cursor: pointer; }
+
+/* Assign sub-tabs */
+.um-school-tabs { display: flex; background: var(--muted); border: 1.5px solid var(--bl); border-radius: var(--r-md); overflow: hidden; margin-bottom: 14px; }
+.um-stab { flex: 1; padding: 10px 14px; border: none; background: transparent; font-family: var(--font); font-size: 12.5px; font-weight: 600; color: var(--tm); cursor: pointer; transition: var(--tr); display: flex; align-items: center; justify-content: center; gap: 6px; }
+.um-stab.active { background: linear-gradient(135deg,#1E3A8A,#1E40AF); color: #fff; font-weight: 700; }
+.um-stab:hover:not(.active) { background: rgba(30,58,138,.06); color: var(--t1); }
+
+.um-select-all-th { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+
+/* Pagination */
+.um-pagination { display: flex; align-items: center; justify-content: space-between; padding: 12px 4px 0; flex-wrap: wrap; gap: 8px; }
+.um-pag-info { font-size: 12px; color: var(--tm); }
+.um-pag-btns { display: flex; align-items: center; gap: 4px; }
+.um-pag-btn { min-width: 32px; height: 32px; padding: 0 8px; border-radius: var(--r-md); border: 1.5px solid var(--bl); background: var(--card); color: var(--t2); font-size: 12.5px; font-weight: 600; cursor: pointer; transition: var(--tr); font-family: var(--font); }
+.um-pag-btn:hover:not(.active):not(:disabled) { background: var(--muted); }
+.um-pag-btn.active { background: linear-gradient(135deg,#1E3A8A,#1E40AF); color: #fff; border-color: transparent; }
+.um-pag-btn:disabled { opacity: .4; cursor: not-allowed; }
+
+.um-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.um-toolbar .lbl { font-size: 13px; color: var(--tm); }
+
+@media (max-width: 720px) {
+  .um-tabs { grid-template-columns: 1fr; }
+  .um-tab { border-right: none; border-bottom: 1px solid var(--bl); }
+  .um-form-grid, .um-form-grid-2 { grid-template-columns: 1fr; }
+  .um-table thead, .um-assign-table thead { display: none; }
+  .um-table tr, .um-assign-table tr { display: block; margin-bottom: 10px; background: var(--card); border: 1px solid var(--bl); border-radius: var(--r-md); padding: 10px; }
+  .um-table td, .um-assign-table td { display: flex; justify-content: space-between; align-items: center; border: none; padding: 5px 2px; gap: 12px; }
+  .um-table td::before, .um-assign-table td::before { content: attr(data-label); font-size: 10.5px; font-weight: 700; color: var(--tm); text-transform: uppercase; }
+}

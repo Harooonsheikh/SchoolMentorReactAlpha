@@ -1,0 +1,126 @@
+/* ═══════════ HUMAN RESOURCE MODULE ═══════════ */
+
+.hr-tabs { display: grid; grid-template-columns: repeat(4,1fr); background: var(--card); border: 1.5px solid var(--bl); border-radius: var(--r-lg); overflow: hidden; box-shadow: var(--s-sm); margin-bottom: 20px; }
+.hr-tab { padding: 13px 10px; border: none; background: transparent; font-family: var(--font); font-size: 13px; font-weight: 600; color: var(--tm); cursor: pointer; transition: var(--tr); display: flex; align-items: center; justify-content: center; gap: 7px; border-right: 1px solid var(--bl); }
+.hr-tab:last-child { border-right: none; }
+.hr-tab:hover:not(.active) { background: var(--muted); color: var(--t1); }
+.hr-tab.active { background: linear-gradient(135deg,#1E3A8A,#1E40AF,#2563EB); color: #fff; font-weight: 700; }
+
+.hr-seg { display: inline-flex; background: var(--muted); border: 1.5px solid var(--bl); border-radius: var(--r-md); padding: 3px; margin-bottom: 16px; flex-wrap: wrap; }
+.hr-seg-btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; border: none; background: transparent; font-family: var(--font); font-size: 12.5px; font-weight: 700; color: var(--tm); cursor: pointer; border-radius: var(--r-sm); transition: var(--tr); }
+.hr-seg-btn.active { background: linear-gradient(135deg,#1E3A8A,#1E40AF); color: #fff; box-shadow: 0 2px 8px rgba(30,58,138,.22); }
+.hr-seg-count { font-size: 10px; font-weight: 800; padding: 1px 7px; border-radius: var(--r-f); background: rgba(255,255,255,.25); }
+.hr-seg-btn:not(.active) .hr-seg-count { background: var(--brand-light); color: var(--brand); }
+
+.hr-bar { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
+.hr-field { display: flex; flex-direction: column; gap: 5px; }
+.hr-field label { font-size: 11.5px; font-weight: 700; color: var(--t2); }
+.hr-input { height: 38px; border: 1.5px solid var(--bl); border-radius: var(--r-md); padding: 0 12px; font-family: var(--font); font-size: 13px; color: var(--t1); background: var(--inp); outline: none; transition: var(--tr); width: 100%; }
+.hr-input:focus { border-color: var(--brand); box-shadow: 0 0 0 3px rgba(30,58,138,.09); }
+textarea.hr-input { height: auto; padding: 9px 12px; resize: vertical; }
+
+.hr-kpis { display: grid; grid-template-columns: repeat(auto-fit,minmax(160px,1fr)); gap: 12px; margin-bottom: 18px; }
+.hr-kpi { background: var(--card); border: 1px solid var(--bl); border-left: 3px solid var(--brand); border-radius: var(--r-lg); padding: 13px 15px; box-shadow: var(--s-xs); }
+.hr-kpi.green { border-left-color: var(--success); } .hr-kpi.red { border-left-color: var(--err); } .hr-kpi.amber { border-left-color: var(--warn); } .hr-kpi.info { border-left-color: #0284C7; }
+.hr-kpi-top { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--tm); font-weight: 600; }
+.hr-kpi-val { font-size: 19px; font-weight: 800; color: var(--t1); margin-top: 6px; letter-spacing: -.02em; }
+.hr-kpi-sub { font-size: 10.5px; color: var(--tm); margin-top: 2px; }
+
+/* Table */
+.hr-table { width: 100%; border-collapse: collapse; }
+.hr-table thead tr { background: linear-gradient(135deg,#1E3A8A,#1E40AF); }
+.hr-table th { padding: 10px 12px; text-align: left; font-size: 10px; font-weight: 800; color: #fff; letter-spacing: .5px; text-transform: uppercase; white-space: nowrap; }
+.hr-table th.r, .hr-table td.r { text-align: right; } .hr-table th.c, .hr-table td.c { text-align: center; }
+.hr-table td { padding: 9px 12px; border-bottom: 1px solid var(--bl); font-size: 12.5px; color: var(--t2); vertical-align: middle; }
+.hr-table tbody tr:hover td { background: rgba(30,58,138,.03); }
+.hr-table tfoot td { padding: 10px 12px; font-weight: 800; color: var(--t1); background: var(--muted); border-top: 1.5px solid var(--bl); }
+
+.hr-avatar { width: 34px; height: 34px; border-radius: 50%; background: linear-gradient(135deg,#1E3A8A,#1E40AF); color: #fff; font-size: 11px; font-weight: 800; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+
+/* Dept rows */
+.hr-dept-card { background: var(--card); border: 1.5px solid var(--bl); border-radius: var(--r-lg); margin-bottom: 12px; overflow: hidden; }
+.hr-dept-head { display: flex; align-items: center; gap: 12px; padding: 13px 16px; cursor: pointer; }
+.hr-dept-ic { width: 38px; height: 38px; border-radius: 10px; background: var(--brand-light); color: var(--brand); display: flex; align-items: center; justify-content: center; font-size: 15px; flex-shrink: 0; }
+.hr-dept-name { font-size: 14px; font-weight: 800; color: var(--t1); }
+.hr-dept-sub { font-size: 11.5px; color: var(--tm); }
+.hr-dept-body { border-top: 1px solid var(--bl); background: var(--muted); padding: 12px 16px; }
+.hr-desig-row { display: flex; align-items: center; gap: 12px; padding: 9px 12px; background: var(--card); border: 1px solid var(--bl); border-radius: var(--r-md); margin-bottom: 7px; }
+
+/* Status pills */
+.st-paid { background: rgba(22,163,74,.12); color: var(--success); }
+.st-generated { background: rgba(217,119,6,.12); color: var(--warn); }
+.st-partial { background: rgba(2,132,199,.1); color: var(--info); }
+.st-pending { background: rgba(100,116,139,.12); color: var(--tm); }
+
+/* Report cards */
+.hr-rpt-grid { display: grid; grid-template-columns: repeat(auto-fill,minmax(280px,1fr)); gap: 16px; }
+.hr-rpt-card { display: flex; align-items: center; gap: 14px; background: var(--card); border: 1.5px solid var(--bl); border-radius: var(--r-lg); padding: 18px; cursor: pointer; transition: var(--tr); box-shadow: var(--s-xs); }
+.hr-rpt-card:hover { box-shadow: var(--s-md); border-color: var(--bm); transform: translateY(-2px); }
+.hr-rpt-icon { width: 46px; height: 46px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 19px; flex-shrink: 0; }
+.hr-rpt-name { font-size: 14px; font-weight: 800; color: var(--t1); }
+.hr-rpt-desc { font-size: 11.5px; color: var(--tm); margin-top: 3px; line-height: 1.45; }
+.hr-rpt-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+.hr-rpt-chips span { font-size: 9.5px; font-weight: 700; padding: 2px 8px; border-radius: var(--r-f); background: var(--muted); color: var(--tm); border: 1px solid var(--bl); }
+.hr-rpt-arrow { margin-left: auto; color: var(--tm); }
+
+/* Report viewer controls */
+.hr-rpt-bar { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
+.hr-pdf-btn { display: inline-flex; align-items: center; gap: 6px; height: 38px; padding: 0 15px; border-radius: var(--r-md); border: none; background: linear-gradient(135deg,#b91c1c,#dc2626); color: #fff; font-size: 12.5px; font-weight: 700; box-shadow: 0 2px 8px rgba(220,38,38,.25); cursor: pointer; transition: var(--tr); font-family: var(--font); }
+.hr-pdf-btn:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(220,38,38,.35); }
+.hr-sect-title { font-size: 12.5px; font-weight: 800; color: var(--brand); margin: 16px 0 8px; padding-bottom: 5px; border-bottom: 1px solid var(--bl); }
+
+.hr-empty { text-align: center; padding: 44px; color: var(--tm); }
+.hr-empty i { font-size: 30px; display: block; margin: 0 auto 12px; opacity: .25; }
+
+/* Modal salary head editor */
+.hr-head-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.hr-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.hr-grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+.hr-modal-tabs { display: flex; gap: 4px; border-bottom: 1.5px solid var(--bl); margin-bottom: 16px; flex-wrap: wrap; }
+.hr-modal-tab { padding: 8px 14px; border: none; background: none; font-family: var(--font); font-size: 12.5px; font-weight: 600; color: var(--tm); cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1.5px; }
+.hr-modal-tab.active { color: var(--brand); font-weight: 800; border-bottom-color: var(--brand); }
+
+/* Dropdown menus (Reports / 3-dots) */
+.hr-menu-wrap { position: relative; display: inline-block; }
+.hr-dots { width: 30px; height: 30px; border-radius: 8px; border: 1.5px solid var(--bl); background: var(--card); color: var(--tm); cursor: pointer; font-size: 13px; }
+.hr-dots:hover { background: var(--muted); color: var(--t1); }
+.hr-rep-btn { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 11px; border-radius: 8px; border: 1.5px solid var(--bl); background: var(--card); color: var(--t2); font-family: var(--font); font-size: 11.5px; font-weight: 700; cursor: pointer; }
+.hr-rep-btn:hover { border-color: var(--brand); color: var(--brand); }
+.hr-drop { position: absolute; top: 34px; right: 0; min-width: 210px; background: var(--card); border: 1.5px solid var(--bl); border-radius: var(--r-md); box-shadow: var(--s-md); z-index: 60; padding: 5px; animation: sFd .14s ease both; }
+.hr-drop-item { display: flex; align-items: center; gap: 9px; width: 100%; padding: 9px 11px; border: none; background: none; font-family: var(--font); font-size: 12.5px; font-weight: 600; color: var(--t2); cursor: pointer; border-radius: var(--r-sm); text-align: left; }
+.hr-drop-item:hover:not(:disabled) { background: var(--muted); color: var(--t1); }
+.hr-drop-item:disabled { opacity: .45; cursor: not-allowed; }
+
+/* Payroll detail panel */
+.hr-pay-detail { background: var(--muted); border: 1px solid var(--bl); border-top: none; border-radius: 0 0 var(--r-md) var(--r-md); padding: 14px 16px; margin: -6px 0 12px; }
+.hr-pd-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(150px,1fr)); gap: 10px; }
+.hr-pd-item { background: var(--card); border: 1px solid var(--bl); border-radius: var(--r-md); padding: 9px 12px; }
+.hr-pd-item label { font-size: 10px; color: var(--tm); font-weight: 700; text-transform: uppercase; letter-spacing: .3px; display: block; }
+.hr-pd-item .val { font-size: 13.5px; font-weight: 800; color: var(--t1); margin-top: 3px; }
+.hr-pd-item .val.neg { color: var(--err); } .hr-pd-item .val.pos { color: var(--success); } .hr-pd-item .val.zero { color: var(--tm); }
+.hr-txn-row { display: grid; grid-template-columns: 30px 120px 1fr 100px; gap: 8px; align-items: center; font-size: 11.5px; padding: 6px 10px; border-bottom: 1px solid var(--bl); }
+.hr-txn-row:last-child { border-bottom: none; }
+
+/* Modal tabs (loan / payroll) */
+.hr-mtabs { display: flex; gap: 0; border-bottom: 1.5px solid var(--bl); margin-bottom: 16px; }
+.hr-mtab { flex: 1; padding: 10px; border: none; background: none; font-family: var(--font); font-size: 12.5px; font-weight: 700; color: var(--tm); cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1.5px; display: flex; align-items: center; justify-content: center; gap: 6px; }
+.hr-mtab.active { color: var(--brand); border-bottom-color: var(--brand); }
+
+.hr-sum-cards { display: grid; grid-template-columns: repeat(3,1fr); gap: 10px; margin-bottom: 16px; }
+.hr-sum-card { background: var(--muted); border: 1px solid var(--bl); border-radius: var(--r-md); padding: 11px 13px; text-align: center; }
+.hr-sum-card .l { font-size: 10px; color: var(--tm); font-weight: 700; text-transform: uppercase; }
+.hr-sum-card .v { font-size: 16px; font-weight: 800; color: var(--t1); margin-top: 3px; }
+
+.hr-loan-card { background: var(--card); border: 1.5px solid var(--bl); border-radius: var(--r-md); padding: 14px; margin-bottom: 10px; }
+.hr-loan-card.returned { opacity: .75; }
+.hr-loan-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.hr-loan-title { font-size: 13px; font-weight: 800; color: var(--t1); }
+.hr-loan-grid { display: grid; grid-template-columns: repeat(2,1fr); gap: 8px; }
+.hr-loan-f label { font-size: 10px; color: var(--tm); font-weight: 700; text-transform: uppercase; display: block; }
+.hr-loan-f .v { font-size: 12.5px; font-weight: 700; color: var(--t1); margin-top: 2px; }
+.hr-repay-row { display: grid; grid-template-columns: 110px 1fr 110px; gap: 8px; font-size: 11.5px; padding: 5px 0; border-top: 1px dashed var(--bl); }
+
+.hr-net-bar { display: flex; align-items: center; justify-content: space-around; flex-wrap: wrap; gap: 10px; background: var(--brand-light); border: 1.5px solid var(--bm); border-radius: var(--r-md); padding: 12px 16px; margin-top: 6px; }
+.hr-net-bar .b { text-align: center; } .hr-net-bar .b .l { font-size: 10.5px; color: var(--tm); font-weight: 700; } .hr-net-bar .b .v { font-size: 17px; font-weight: 800; color: var(--brand); }
+
+@media (max-width: 720px) { .hr-tabs { grid-template-columns: 1fr 1fr; } .hr-grid2, .hr-grid3 { grid-template-columns: 1fr; } .hr-sum-cards { grid-template-columns: 1fr; } .hr-loan-grid { grid-template-columns: 1fr; } }

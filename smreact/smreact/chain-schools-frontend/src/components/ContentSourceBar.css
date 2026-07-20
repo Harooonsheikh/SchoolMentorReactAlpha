@@ -1,0 +1,22 @@
+/* ═══════════ Content Source toggle bar ═══════════ */
+.cs-bar { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; border: 1.5px solid var(--bl); border-radius: var(--r-lg); padding: 14px 18px; margin-bottom: 20px; background: var(--card); border-left: 4px solid var(--brand); }
+.cs-bar.mentor { border-left-color: var(--success); background: linear-gradient(180deg, rgba(22,163,74,.05), transparent); }
+.cs-bar-left { display: flex; align-items: center; gap: 13px; min-width: 0; }
+.cs-bar-icon { width: 42px; height: 42px; border-radius: 11px; display: flex; align-items: center; justify-content: center; font-size: 17px; color: #fff; flex-shrink: 0; background: linear-gradient(135deg,var(--brand),var(--brand-mid)); }
+.cs-bar.mentor .cs-bar-icon { background: linear-gradient(135deg,#15803d,#16a34a); }
+.cs-bar-title { font-size: 13.5px; font-weight: 800; color: var(--t1); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cs-bar-tag { font-size: 9.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .5px; padding: 2px 8px; border-radius: var(--r-f); background: var(--brand-light); color: var(--brand); }
+.cs-bar.mentor .cs-bar-tag { background: rgba(22,163,74,.12); color: var(--success); }
+.cs-bar-desc { font-size: 12px; color: var(--tm); margin-top: 3px; line-height: 1.45; }
+
+.cs-seg { display: inline-flex; background: var(--muted); border: 1.5px solid var(--bl); border-radius: var(--r-md); padding: 3px; flex-shrink: 0; }
+.cs-seg-btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border: none; background: transparent; font-family: var(--font); font-size: 12px; font-weight: 700; color: var(--tm); cursor: pointer; border-radius: var(--r-sm); transition: var(--tr); white-space: nowrap; }
+.cs-seg-btn:hover:not(.active) { color: var(--t1); }
+.cs-seg-btn.active { background: linear-gradient(135deg,var(--brand),var(--brand-mid)); color: #fff; box-shadow: 0 2px 8px rgba(30,58,138,.22); }
+.cs-seg-btn.active.mentor { background: linear-gradient(135deg,#15803d,#16a34a); box-shadow: 0 2px 8px rgba(22,163,74,.25); }
+
+@media (max-width: 620px) {
+  .cs-bar { flex-direction: column; align-items: stretch; }
+  .cs-seg { width: 100%; }
+  .cs-seg-btn { flex: 1; justify-content: center; }
+}
