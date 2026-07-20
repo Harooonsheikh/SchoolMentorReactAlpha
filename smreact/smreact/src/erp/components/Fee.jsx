@@ -657,23 +657,24 @@ const FEE_MONTHS = [
   'July', 'August', 'September', 'October', 'November', 'December',
 ];
 
-/* Fee Challan Settings can lock the month either side of the current one.
-   The API's previousMonthFeeChallan / nextMonthFeeChallan are ON = locked:
-   turning "Previous Month Challan Receiving" on stops last month's challans
-   from being generated or received, and likewise for next month.
+/* Fee Challan Settings gate the month either side of the current one.
+   The API's previousMonthFeeChallan / nextMonthFeeChallan are ON = allowed:
+   turning "Previous Month Challan Receiving" on lets last month's challans be
+   generated and received, and likewise for next month. When a toggle is off,
+   that adjacent month is barred.
 
    "Previous"/"next" are measured against today's real month, not the month
-   picker, so changing the filter can't shift what the lock means. Returns the
+   picker, so changing the filter can't shift what the gate means. Returns the
    reason a month is barred, or null when it's fine. */
 function challanMonthLock(monthIdx, year, settings) {
   if (!settings || monthIdx < 0) return null;
   const now  = new Date();
   const diff = (Number(year) * 12 + monthIdx) - (now.getFullYear() * 12 + now.getMonth());
-  if (diff === -1 && settings.prevMonthChallan) {
-    return 'Previous month is locked — turn off "Previous Month Challan Receiving" in Fee Challan Settings to allow it.';
+  if (diff === -1 && !settings.prevMonthChallan) {
+    return 'Previous month is locked — turn on "Previous Month Challan Receiving" in Fee Challan Settings to allow it.';
   }
-  if (diff === 1 && settings.nextMonthChallan) {
-    return 'Next month is locked — turn off "Next Month Challan Receiving" in Fee Challan Settings to allow it.';
+  if (diff === 1 && !settings.nextMonthChallan) {
+    return 'Next month is locked — turn on "Next Month Challan Receiving" in Fee Challan Settings to allow it.';
   }
   return null;
 }
@@ -897,11 +898,20 @@ function FamilyTreeChallansList({ toast }) {
     const lock = challanMonthLock(monthIdx, appliedYear, settings);
     if (lock) { toast(lock, 'warning'); return; }
     if (!f.children.length) { toast('No children in this family', 'warning'); return; }
+    /* Only children who don't already have a challan for the applied month.
+       A sibling whose challan is already generated/received is dropped here so
+       the bulk modal loads heads for — and generates challans for — just the
+       remaining children, never re-billing the one that's already done. */
+    const remaining = f.children.filter(ch => !isGen(f.key, ch.reg));
+    if (!remaining.length) {
+      toast(`All children already have ${appliedMonth} ${appliedYear} challans`, 'info');
+      return;
+    }
     /* Build pseudo-students for BulkGenerateModal — re-use that infra. IDs
        (studentID = applicantsID, gradeID, sectionID) + the child's own
        fee/transport/discount travel through so the create-challan payload is
        correct per child. */
-    const pseudoStudents = f.children.map(ch => {
+    const pseudoStudents = remaining.map(ch => {
       const fig = childFig(f, ch);
       return {
         reg: ch.reg, name: ch.name, father: ch.father,
@@ -913,8 +923,19 @@ function FamilyTreeChallansList({ toast }) {
         heads: headsForChildGrade(ch.gradeID),
       };
     });
-    /* Fee heads come from each child's class fee-setup (deduped by name). */
-    const familyHeads = feeHeadsFor(f.children.map(ch => ch.gradeID));
+    /* Dropdown heads = the union (deduped by name) of each child's OWN grade
+       heads — the exact source used for generation (getFeeGrades). This keeps
+       the picker in sync with what actually gets billed, and never comes back
+       empty due to getClassFeeHeadsMap / employee_ID, which is what made the
+       heads disappear once a child already had a challan. */
+    const seen = new Set();
+    const familyHeads = [];
+    pseudoStudents.forEach(s => (s.heads || []).forEach(h => {
+      const k = String(h.name || '').trim().toLowerCase();
+      if (!k || seen.has(k)) return;
+      seen.add(k);
+      familyHeads.push({ name: h.name });
+    }));
     setBulkGen({
       classMeta: { key: f.key, cls: f.name, sec: f.guardian },
       students:  pseudoStudents,
@@ -1230,7 +1251,17 @@ function FamilyTreeChallansList({ toast }) {
           const isOpen = openKey === f.key;
           const gen    = genCountFor(f.key, f.children);
           const tot    = f.children.length;
-          const total  = f.children.reduce((a, ch) => a + childFig(f, ch).payable, 0);
+          /* Column totals for the table footer — summed from each child's figures. */
+          const sums = f.children.reduce((a, ch) => {
+            const fig = childFig(f, ch);
+            return {
+              fee:       a.fee       + (Number(fig.fee)       || 0),
+              transport: a.transport + (Number(fig.transport) || 0),
+              discount:  a.discount  + (Number(fig.discount)  || 0),
+              payable:   a.payable   + (Number(fig.payable)   || 0),
+            };
+          }, { fee: 0, transport: 0, discount: 0, payable: 0 });
+          const total = sums.payable;
           return (
             <div key={f.key} className="fee-rowwrap" id={`fam-row-${f.key}`}>
               <div
@@ -1252,7 +1283,9 @@ function FamilyTreeChallansList({ toast }) {
                   </Tooltip>
                 </div>
                 <div className="fee-td fee-center" data-label="Bulk" onClick={e => e.stopPropagation()}>
-                  <Tooltip text={`Generate challans for all ${tot} children`}>
+                  <Tooltip text={tot - gen > 0
+                    ? `Generate challans for the ${tot - gen} remaining child${tot - gen === 1 ? '' : 'ren'} (already-generated ones are skipped)`
+                    : `All ${tot} children already have challans`}>
                     <button className="fee-btn fee-btn-primary fee-btn-xs" onClick={() => openBulkGen(f)}>
                       <i className="fa-solid fa-people-roof"></i> Bulk Challans
                     </button>
@@ -1341,6 +1374,18 @@ function FamilyTreeChallansList({ toast }) {
                           );
                         })}
                       </tbody>
+                      {f.children.length > 0 && (
+                        <tfoot>
+                          <tr className="fee-stbl-foot">
+                            <td colSpan="5" className="fee-stbl-foot-lbl">Total Family Payable</td>
+                            <td className="fee-right">{money(sums.fee)}</td>
+                            <td className="fee-right">{money(sums.transport)}</td>
+                            <td className="fee-right">{money(sums.discount)}</td>
+                            <td className="fee-right fee-stbl-foot-total">{money(sums.payable)}</td>
+                            <td></td>
+                          </tr>
+                        </tfoot>
+                      )}
                     </table>
                   </div>
 
@@ -2204,16 +2249,19 @@ function BulkGenerateModal({
   const cancelRef = useRef(false);
   const msAnchorRef = useRef(null);
 
-  /* Reset state every time the modal opens */
+  /* Reset state every time the modal opens. Heads are pre-selected (all of
+     them) so the challan is ready to generate without the user having to open
+     the "Select Fee Heads" dropdown first — they can still deselect any head. */
   useEffect(() => {
     if (!open) return;
     cancelRef.current = false;
     setMonth(defaultMonth || FEE_MONTHS[0]);
-    setPicked([]);
+    setPicked((heads || []).map(h => h.name));
     setMsOpen(false);
     setIssueDate(todayISO());
     setDueDate(plusDays(10));
     setProgress(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, defaultMonth]);
 
   /* Esc + body-scroll lock */
@@ -10370,7 +10418,23 @@ const FEE_CSS = `
 .fee-stbl .fee-num   { color: var(--text-muted); font-weight: 700; width: 36px; }
 .fee-stbl .fee-right { text-align: right; font-variant-numeric: tabular-nums; }
 .fee-stbl-empty { text-align: center; color: var(--text-muted); padding: 16px; }
-.fee-stbl-foot td { background: var(--bg-muted); }
+.fee-stbl-foot td {
+  background: var(--bg-muted);
+  padding: 10px 10px;
+  border-top: 2px solid var(--border-light);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+.fee-stbl-foot .fee-stbl-foot-lbl {
+  text-align: right;
+  text-transform: uppercase;
+  letter-spacing: .4px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.fee-stbl-foot .fee-stbl-foot-total { color: #1E3A8A; font-size: 13.5px; }
+[data-theme="dark"] .fee-stbl-foot .fee-stbl-foot-total { color: #93C5FD; }
 
 .fee-chip {
   display: inline-flex;

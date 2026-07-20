@@ -1355,22 +1355,25 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
     }, 80);
   };
 
-  /* Open/save handlers for the Student modal */
+  /* Open/save handlers for the Student modal.
+     NOTE: students are identified by their DB id (`_id`), never by registration
+     number — regs can be blank or duplicated across classes, so a reg-based
+     lookup could silently target the wrong student. */
   const openAddStudent     = (cKey) => setEditCfg({ mode: 'add',  cKey });
-  const openEditStudent    = (cKey, reg) => setEditCfg({ mode: 'edit', cKey, reg });
+  const openEditStudent    = (cKey, id) => setEditCfg({ mode: 'edit', cKey, id });
   const openPromote        = (cKey) => setPromoteCfg({ cKey });
-  const openMarkInactive   = (cKey, reg) => setInactiveCfg({ cKey, reg });
+  const openMarkInactive   = (cKey, id) => setInactiveCfg({ cKey, id });
 
   /* Per-student action openers */
-  const openIdCard         = (cKey, reg) => setIdCardCfg({ cKey, reg });
+  const openIdCard         = (cKey, id) => setIdCardCfg({ cKey, id });
   const openBulkId         = (cKey)      => setBulkIdCfg({ cKey });
-  const openCert           = (cKey, reg, type) => setCertCfg({ cKey, reg, type });
-  const openAddToFamily    = (cKey, reg) => setAddFamCfg({ cKey, reg });
-  const openProfilePicker  = (cKey, reg) => {
-    const s = list.find(c => c.key === cKey)?.students.find(x => x.reg === reg);
+  const openCert           = (cKey, id, type) => setCertCfg({ cKey, id, type });
+  const openAddToFamily    = (cKey, id) => setAddFamCfg({ cKey, id });
+  const openProfilePicker  = (cKey, id) => {
+    const s = list.find(c => c.key === cKey)?.students.find(x => x._id === id);
     if (!s) return;
     setRpCfg({
-      kind: 'profile', cKey, reg,
+      kind: 'profile', cKey, id,
       title: 'Download Student Profile',
       sub: `${stuFullName(s)} · ${s.reg} — choose style & format`,
     });
@@ -1414,7 +1417,7 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
       stuDeliverReport('Admission Form', '', html, format, toast);
     } else if (rpCfg.kind === 'profile') {
       const c = list.find(x => x.key === rpCfg.cKey);
-      const s = c?.students.find(x => x.reg === rpCfg.reg);
+      const s = c?.students.find(x => x._id === rpCfg.id);
       if (!s) return;
       const html = buildStuProfileHTML(s, c, rptSchool, isBW);
       stuDeliverReport(`Profile — ${stuFullName(s)}`, '', html, format, toast);
@@ -1433,7 +1436,7 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
   /* ID card / certificate generators just print and toast */
   const doIdCard = (template, theme, session, role) => {
     const c = list.find(x => x.key === idCardCfg.cKey);
-    const s = c?.students.find(x => x.reg === idCardCfg.reg);
+    const s = c?.students.find(x => x._id === idCardCfg.id);
     if (!s) return;
     const { css, html } = buildStuIdCardHTML(s, c, school, template, theme, session, role);
     stuOpenPrintWindow(`ID Card — ${stuFullName(s)}`, css, html, toast);
@@ -1452,7 +1455,7 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
   };
   const doCert = (style, opts) => {
     const c = list.find(x => x.key === certCfg.cKey);
-    const s = c?.students.find(x => x.reg === certCfg.reg);
+    const s = c?.students.find(x => x._id === certCfg.id);
     if (!s) return;
     const { css, html } = buildStuCertHTML(s, c, school, certCfg.type, style, opts);
     stuOpenPrintWindow(`Certificate — ${stuFullName(s)}`, css, html, toast);
@@ -1462,7 +1465,7 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
   const doAddToFamily = async ({ familyId }) => {
     if (!familyId) { toast('Pick a family first', 'error'); return; }
     const c = list.find(x => x.key === addFamCfg.cKey);
-    const s = c?.students.find(x => x.reg === addFamCfg.reg);
+    const s = c?.students.find(x => x._id === addFamCfg.id);
     if (!s) return;
     try {
       /* insert a family-tree detail link: treeID = family, applicantsID = student. */
@@ -1510,7 +1513,7 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
     void effectiveDate; // captured for UX; the delete-student API takes only the id
     const src = list.find(c => c.key === inactiveCfg.cKey);
     if (!src) return;
-    const s = src.students.find(x => x.reg === inactiveCfg.reg);
+    const s = src.students.find(x => x._id === inactiveCfg.id);
     if (!s) return;
     if (!reason.trim()) { toast('Please enter a reason', 'error'); return; }
     try {
@@ -1546,14 +1549,20 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
   }, []);
 
   const handleSaveStudent = async (payload) => {
-    const { cKey, mode, reg } = editCfg;
+    const { cKey, mode, id } = editCfg;
     /* Resolve the target grade/section ids from the chosen class+section
        (falls back to the row the modal was opened from). */
     const row = list.find(c => c.cls === payload.cls && c.sec === payload.sec)
              || list.find(c => c.key === cKey);
+    /* Match on the DB id — reg is not a reliable key (can be blank/duplicated),
+       and matching on it could update a different student. */
     const existing = mode === 'edit'
-      ? list.find(c => c.key === cKey)?.students.find(s => s.reg === reg)
+      ? list.find(c => c.key === cKey)?.students.find(s => s._id === id)
       : null;
+    if (mode === 'edit' && !existing?._id) {
+      toast('Could not resolve this student record — please reload and retry', 'error');
+      return;
+    }
     try {
       const resp = await studentService.saveStuStudent({
         id:        existing?._id || 0,
@@ -1767,12 +1776,12 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
             onAdd={() => openAddStudent(c.key)}
             onBulkId={() => openBulkId(c.key)}
             flashReg={flashReg}
-            onStudentEdit={(reg) => openEditStudent(c.key, reg)}
-            onStudentMarkInactive={(reg) => openMarkInactive(c.key, reg)}
-            onStudentProfile={(reg) => openProfilePicker(c.key, reg)}
-            onStudentIdCard={(reg) => openIdCard(c.key, reg)}
-            onStudentCert={(reg, type) => openCert(c.key, reg, type)}
-            onStudentAddFamily={(reg) => openAddToFamily(c.key, reg)}
+            onStudentEdit={(id) => openEditStudent(c.key, id)}
+            onStudentMarkInactive={(id) => openMarkInactive(c.key, id)}
+            onStudentProfile={(id) => openProfilePicker(c.key, id)}
+            onStudentIdCard={(id) => openIdCard(c.key, id)}
+            onStudentCert={(id, type) => openCert(c.key, id, type)}
+            onStudentAddFamily={(id) => openAddToFamily(c.key, id)}
             linkedRegs={linkedRegs}
             canStuCreate={canStuCreate} canStuEdit={canStuEdit} canStuDelete={canStuDelete}
             canStuDownload={canStuDownload} canStuPrint={canStuPrint} canFamCreate={canFamCreate}
@@ -1782,16 +1791,18 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
 
       {editCfg && (
         <StuStudentModal
-          key={`${editCfg.mode}-${editCfg.cKey}-${editCfg.reg || 'new'}`}
+          key={`${editCfg.mode}-${editCfg.cKey}-${editCfg.id || 'new'}`}
           cfg={editCfg}
           activeClass={list.find(c => c.key === editCfg.cKey)}
           student={editCfg.mode === 'edit'
-            ? list.find(c => c.key === editCfg.cKey)?.students.find(s => s.reg === editCfg.reg)
+            ? list.find(c => c.key === editCfg.cKey)?.students.find(s => s._id === editCfg.id)
             : null}
           classList={classListLookup}
           sectionList={sectionList}
           classes={list}
-          existingRegs={list.flatMap(c => c.students.map(s => s.reg))}
+          /* {id, reg} pairs so the modal can reject a reg already taken by a
+             DIFFERENT student (and ignore blanks / its own record on edit). */
+          existingRegs={list.flatMap(c => c.students.map(s => ({ id: s._id, reg: String(s.reg || '').trim().toLowerCase() })))}
           suggestedReg={`${new Date().getFullYear()}-${String(nextReg || 25101).padStart(5, '0')}`}
           suggestedAdm={String(nextAdm || 1100)}
           onClose={() => setEditCfg(null)}
@@ -1814,7 +1825,7 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
       {inactiveCfg && (
         <StuInactiveModal
           cls={list.find(c => c.key === inactiveCfg.cKey)}
-          student={list.find(c => c.key === inactiveCfg.cKey)?.students.find(s => s.reg === inactiveCfg.reg)}
+          student={list.find(c => c.key === inactiveCfg.cKey)?.students.find(s => s._id === inactiveCfg.id)}
           reasons={reasonsLookup}
           onClose={() => setInactiveCfg(null)}
           onSubmit={handleMarkInactive}
@@ -1831,7 +1842,7 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
 
       {idCardCfg && (
         <StuIdCardModal
-          student={list.find(c => c.key === idCardCfg.cKey)?.students.find(s => s.reg === idCardCfg.reg)}
+          student={list.find(c => c.key === idCardCfg.cKey)?.students.find(s => s._id === idCardCfg.id)}
           cls={list.find(c => c.key === idCardCfg.cKey)}
           school={school}
           onClose={() => setIdCardCfg(null)}
@@ -1851,7 +1862,7 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
       {certCfg && (
         <StuCertModal
           cfg={certCfg}
-          student={list.find(c => c.key === certCfg.cKey)?.students.find(s => s.reg === certCfg.reg)}
+          student={list.find(c => c.key === certCfg.cKey)?.students.find(s => s._id === certCfg.id)}
           cls={list.find(c => c.key === certCfg.cKey)}
           school={school}
           onClose={() => setCertCfg(null)}
@@ -1861,7 +1872,7 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
 
       {addFamCfg && (
         <StuAddToFamilyModal
-          student={list.find(c => c.key === addFamCfg.cKey)?.students.find(s => s.reg === addFamCfg.reg)}
+          student={list.find(c => c.key === addFamCfg.cKey)?.students.find(s => s._id === addFamCfg.id)}
           cls={list.find(c => c.key === addFamCfg.cKey)}
           families={famArr}
           setFamilies={setFamilies}
@@ -1962,11 +1973,11 @@ function StuClassRow({ c, idx, isOpen, onToggle, onReport, onPromote, onAdd, onB
                   s={s}
                   i={i + 1}
                   flash={flashReg === s.reg}
-                  onEdit={() => onStudentEdit(s.reg)}
-                  onMarkInactive={() => onStudentMarkInactive(s.reg)}
-                  onProfile={() => onStudentProfile(s.reg)}
-                  onIdCard={() => onStudentIdCard(s.reg)}
-                  onCert={(type) => onStudentCert(s.reg, type)}
+                  onEdit={() => onStudentEdit(s._id)}
+                  onMarkInactive={() => onStudentMarkInactive(s._id)}
+                  onProfile={() => onStudentProfile(s._id)}
+                  onIdCard={() => onStudentIdCard(s._id)}
+                  onCert={(type) => onStudentCert(s._id, type)}
                   onAddFamily={() => onStudentAddFamily(s.reg)}
                   isLinkedToFamily={Boolean(s.family) || linkedRegs?.has(s.reg)}
                   canStuEdit={canStuEdit} canStuDelete={canStuDelete} canStuDownload={canStuDownload}
@@ -2316,8 +2327,13 @@ function StuStudentModal({ cfg, activeClass, student, classList, sectionList, cl
     if (!reg.trim())    { toast('Registration No is required', 'error'); setTab('general'); return; }
     if (!cls)           { toast('Class is required', 'error');           setTab('general'); return; }
     if (!sec)           { toast('Section is required', 'error');         setTab('general'); return; }
-    if (!isEdit && existingRegs.includes(reg)) {
-      toast(`Registration No ${reg} is already taken`, 'error');
+    /* Registration No must be unique across the branch. Compare normalised
+       (trimmed/lower-cased), skip blanks, and ignore this student's own record
+       when editing — so a reg can never be attached to two students. */
+    const regKey = reg.trim().toLowerCase();
+    const clash  = (existingRegs || []).find(r => r.reg && r.reg === regKey && r.id !== cfg.id);
+    if (clash) {
+      toast(`Registration No ${reg.trim()} is already taken by another student`, 'error');
       setTab('general'); return;
     }
     const _disc = {};
