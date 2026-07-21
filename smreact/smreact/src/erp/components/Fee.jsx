@@ -6022,6 +6022,8 @@ function FeeHistoryTab({ toast }) {
 
   const { data: classes = [] }     = useAsync(feeService.getFeeClasses, []);
   const { data: studentsMap = {} } = useAsync(feeService.getTransportFee, []);
+  /* Only used as a fallback when a stored challan carries no detail rows —
+     the reprint itself always prefers the month's own BranchLedger record. */
   const { data: headsMap = {} }    = useAsync(feeService.getFeeHeads, []);
   const { data: settings = {} }    = useAsync(feeService.getFeeSettings, []);
   const { data: branchHeader = null } = useAsync(feeService.getReportHeader, [], null);
@@ -6161,7 +6163,7 @@ function FeeHistoryTab({ toast }) {
   };
   const downloadStudent = (mode, c, s) => {
     const months = historyFor(c, s);
-    const html = buildHistStudentReportHTML({ mode, c, s, months, period: `${appliedFrom} – ${appliedTo} ${appliedYear}`, school: branchHeader });
+    const html = buildHistStudentReportHTML({ mode, c, s, months, period: `${appliedFrom} – ${appliedTo} ${appliedYear}`, year: appliedYear, school: branchHeader });
     printWindow(`${mode === 'detail' ? 'Detailed' : 'Ledger'} History — ${s.name}`, html);
     toast(`${mode === 'detail' ? 'Detailed' : 'Ledger'} history ready — Save as PDF.`, 'success');
   };
@@ -6183,9 +6185,9 @@ function FeeHistoryTab({ toast }) {
      the thermal printSize setting is meant for live counter receipts,
      not archival history records. */
   const downloadMonthChallan = (c, s, mo) => {
-    const html = buildChallanHTML({
-      classMeta: c, students: [s], heads: headsMap[c.key] || [],
-      settings, discountMap: {}, bw: false, size: 'a4',
+    const html = buildHistMonthChallanHTML({
+      c, s, mo, year: appliedYear,
+      heads: headsMap[c.key] || [], settings, school: branchHeader,
     });
     const w = window.open('', '_blank');
     if (!w) { toast('Please allow pop-ups to download the challan', 'error'); return; }
@@ -6195,7 +6197,7 @@ function FeeHistoryTab({ toast }) {
   };
   const downloadMonthSlip = (c, s, mo) => {
     if (mo.received <= 0) { toast('No receipt for this month', 'info'); return; }
-    const html = buildHistMonthSlipHTML({ c, s, mo, year: appliedYear, size: 'a4' });
+    const html = buildHistMonthSlipHTML({ c, s, mo, year: appliedYear, size: 'a4', school: branchHeader });
     const w = window.open('', '_blank');
     if (!w) { toast('Please allow pop-ups to download the slip', 'error'); return; }
     w.document.write(html); w.document.close();
@@ -6785,11 +6787,42 @@ tfoot td.right{text-align:right;}
 .hist-kv .v{text-align:right;font-weight:700;color:#0F172A;}
 .hist-kv .v.green{color:#16A34A;}
 .hist-kv .v.red{color:#DC2626;}
+.hist-mc-wide{grid-column:1 / -1;border-left:0 !important;border-top:1px solid #E5E7EB;}
+.hist-mc-wide table{font-size:10px;}
+.hist-mc-wide thead th{padding:6px 8px;}
+.hist-mc-wide tbody td{padding:5px 8px;}
+.hist-mc-wide tfoot td{padding:6px 8px;font-size:10px;}
 @page{size:A4;margin:14mm;}
 @media print{body{padding:0;}-webkit-print-color-adjust:exact;print-color-adjust:exact;}
 `;
 
 const statBadge = (st) => `<span class="hist-stat ${st === 'full' ? 'full' : st === 'partial' ? 'partial' : 'none'}">${st === 'full' ? 'Fully Received' : st === 'partial' ? 'Partial' : 'Not Received'}</span>`;
+
+/* Every History PDF shares one branded head block — school name, logo and
+   address all come from the branch's /report-header API (feeService), so a
+   report always carries the branch it was generated in, never a hardcoded
+   school. `lines` are the right-hand meta rows specific to each report. */
+function histHeadHtml(meta, title, lines = []) {
+  const today = feeReportDate(meta);
+  const rows = [
+    `Generated: ${today}`,
+    `By: ${escHtml(meta.generatedBy)}`,
+    ...lines.filter(Boolean),
+    meta.session ? `Session: ${escHtml(meta.session)}` : '',
+  ].filter(Boolean).join('<br/>');
+  return `
+  <div class="hist-head">
+    <div class="hist-brand">
+      <div class="hist-logo">${feeReportLogoHtml(meta)}</div>
+      <div>
+        <div class="hist-school">${escHtml(meta.name)}</div>
+        <div class="hist-title">${title}</div>
+        ${meta.address ? `<div class="hist-addr">${escHtml(meta.address)}</div>` : ''}
+      </div>
+    </div>
+    <div class="hist-meta">${rows}</div>
+  </div>`;
+}
 
 function histStudentLedgerRows(months, year) {
   return months.map(mo => `
@@ -6805,19 +6838,17 @@ function histStudentLedgerRows(months, year) {
     </tr>`).join('');
 }
 
-function buildHistStudentReportHTML({ mode, c, s, months, period, school = null }) {
+function buildHistStudentReportHTML({ mode, c, s, months, period, year = '', school = null }) {
   const meta = feeReportSchool(school);
   const t = feeHistTotals(months);
-  const today = feeReportDate(meta);
+  const stLines = [
+    `Reg: ${escHtml(s.reg)} · ${escHtml(c.cls)} / ${escHtml(c.sec)}`,
+    `S/O: ${escHtml(s.father || '—')}`,
+    `Period: ${escHtml(period)}`,
+  ];
   if (mode === 'ledger') {
     return `<style>${HIST_REPORT_CSS}</style><body><div class="hist-page">
-  <div class="hist-head">
-    <div>
-      <div class="hist-school">${escHtml(meta.name)}</div>
-      <div class="hist-title">Fee Ledger Summary — ${escHtml(s.name)}</div>
-    </div>
-    <div class="hist-meta">Generated: ${today}<br/>By: ${escHtml(meta.generatedBy)}<br/>Reg: ${escHtml(s.reg)} · ${escHtml(c.cls)} / ${escHtml(c.sec)}<br/>Period: ${escHtml(period)}${meta.address ? `<br/>${escHtml(meta.address)}` : ''}${meta.session ? `<br/>Session: ${escHtml(meta.session)}` : ''}</div>
-  </div>
+  ${histHeadHtml(meta, `Fee Ledger Summary — ${escHtml(s.name)}`, stLines)}
   <div class="hist-cards">
     <div class="hist-card"><div class="l">Total Fee</div><div class="v">${t.fee.toLocaleString('en-PK')}</div></div>
     <div class="hist-card"><div class="l">Received</div><div class="v green">${t.recv.toLocaleString('en-PK')}</div></div>
@@ -6826,15 +6857,29 @@ function buildHistStudentReportHTML({ mode, c, s, months, period, school = null 
   </div>
   <table>
     <thead><tr><th>Month</th><th class="right">Challan Amount</th><th class="right">Received</th><th class="right">Pending</th><th>Receiving Date</th><th>Received By</th><th>Payment Method</th><th class="center">Status</th></tr></thead>
-    <tbody>${histStudentLedgerRows(months, '')}</tbody>
+    <tbody>${histStudentLedgerRows(months, year)}</tbody>
   </table>
 </div>`;
   }
-  /* Detailed mode — month cards */
-  const cards = months.map(mo => `
+  /* Detailed mode — one card per month carrying the exact challan block, the
+     exact receiving block and every billed head, so the PDF matches the
+     on-screen Detail History card line for line. */
+  const cards = months.map(mo => {
+    const gross = mo.heads.reduce((a, h) => a + h.challan, 0);
+    const disc  = mo.heads.reduce((a, h) => a + h.disc, 0);
+    const headRows = mo.heads.map(h => `
+      <tr>
+        <td>${escHtml(h.head)}</td>
+        <td><b>${escHtml(h.sub)}</b></td>
+        <td class="right">${h.challan.toLocaleString('en-PK')}</td>
+        <td class="right">${h.disc.toLocaleString('en-PK')}</td>
+        <td class="right ${h.unpaid ? '' : 'green'}">${h.unpaid ? '—' : h.recv.toLocaleString('en-PK')}</td>
+        <td class="right ${h.pend > 0 ? 'red' : ''}">${h.pend.toLocaleString('en-PK')}</td>
+      </tr>`).join('');
+    return `
     <div class="hist-mc">
       <div class="hist-mc-head">
-        <div class="hist-mc-title">${escHtml(mo.monthName)}</div>
+        <div class="hist-mc-title">${escHtml(mo.monthName)} ${escHtml(year)}</div>
         ${statBadge(mo.status)}
       </div>
       <div class="hist-mc-body">
@@ -6844,6 +6889,8 @@ function buildHistStudentReportHTML({ mode, c, s, months, period, school = null 
             <span class="k">Challan #</span><span class="v">${escHtml(mo.challanNo)}</span>
             <span class="k">Challan Date</span><span class="v">${escHtml(mo.challanDate)}</span>
             <span class="k">Due Date</span><span class="v">${escHtml(mo.dueDate)}</span>
+            <span class="k">Gross Amount</span><span class="v">${gross.toLocaleString('en-PK')}</span>
+            <span class="k">Discount</span><span class="v">${disc.toLocaleString('en-PK')}</span>
             <span class="k">Total Challan</span><span class="v">${mo.challanAmt.toLocaleString('en-PK')}</span>
           </div>
         </div>
@@ -6852,21 +6899,34 @@ function buildHistStudentReportHTML({ mode, c, s, months, period, school = null 
           <div class="hist-kv">
             <span class="k">Received</span><span class="v green">${mo.received.toLocaleString('en-PK')}</span>
             <span class="k">Pending</span><span class="v ${mo.pending > 0 ? 'red' : ''}">${mo.pending.toLocaleString('en-PK')}</span>
-            <span class="k">Date</span><span class="v">${escHtml(mo.recvDate)}${mo.time !== '—' ? ` · ${escHtml(fmtTime12(mo.time))}` : ''}</span>
+            <span class="k">Receiving Date</span><span class="v">${escHtml(mo.recvDate)}${mo.time !== '—' ? ` · ${escHtml(fmtTime12(mo.time))}` : ''}</span>
             <span class="k">Received By</span><span class="v">${escHtml(mo.recvBy)}</span>
-            <span class="k">Method</span><span class="v">${escHtml(mo.method)}</span>
+            <span class="k">Payment Method</span><span class="v">${escHtml(mo.method)}</span>
+            <span class="k">Status</span><span class="v">${mo.status === 'full' ? 'Fully Received' : mo.status === 'partial' ? 'Partial' : 'Not Received'}</span>
           </div>
         </div>
+        ${mo.heads.length ? `
+        <div class="hist-mc-col hist-mc-wide">
+          <h5>Head-Wise Breakdown</h5>
+          <table>
+            <thead><tr><th>Account Type</th><th>Fee Head</th><th class="right">Challan</th><th class="right">Discount</th><th class="right">Received</th><th class="right">Pending</th></tr></thead>
+            <tbody>${headRows}</tbody>
+            <tfoot>
+              <tr>
+                <td colspan="2">Total</td>
+                <td class="right">${gross.toLocaleString('en-PK')}</td>
+                <td class="right">${disc.toLocaleString('en-PK')}</td>
+                <td class="right">${mo.received.toLocaleString('en-PK')}</td>
+                <td class="right">${mo.pending.toLocaleString('en-PK')}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>` : ''}
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
   return `<style>${HIST_REPORT_CSS}</style><body><div class="hist-page">
-  <div class="hist-head">
-    <div>
-      <div class="hist-school">${escHtml(meta.name)}</div>
-      <div class="hist-title">Detailed Fee History — ${escHtml(s.name)}</div>
-    </div>
-    <div class="hist-meta">Generated: ${today}<br/>By: ${escHtml(meta.generatedBy)}<br/>Reg: ${escHtml(s.reg)} · ${escHtml(c.cls)} / ${escHtml(c.sec)}<br/>Period: ${escHtml(period)}${meta.address ? `<br/>${escHtml(meta.address)}` : ''}${meta.session ? `<br/>Session: ${escHtml(meta.session)}` : ''}</div>
-  </div>
+  ${histHeadHtml(meta, `Detailed Fee History — ${escHtml(s.name)}`, stLines)}
   <div class="hist-cards">
     <div class="hist-card"><div class="l">Total Challans</div><div class="v">${t.challans}</div></div>
     <div class="hist-card"><div class="l">Total Received</div><div class="v green">${t.recv.toLocaleString('en-PK')}</div></div>
@@ -6879,7 +6939,6 @@ function buildHistStudentReportHTML({ mode, c, s, months, period, school = null 
 
 function buildHistClassReportHTML({ mode, c, rows, period, school = null }) {
   const meta = feeReportSchool(school);
-  const today = feeReportDate(meta);
   const totals = rows.reduce((a, { months }) => {
     const t = feeHistTotals(months);
     return { fee: a.fee + t.fee, recv: a.recv + t.recv, pend: a.pend + t.pend };
@@ -6911,13 +6970,10 @@ function buildHistClassReportHTML({ mode, c, rows, period, school = null }) {
   }).join('');
 
   return `<style>${HIST_REPORT_CSS}</style><body><div class="hist-page">
-  <div class="hist-head">
-    <div>
-      <div class="hist-school">${escHtml(meta.name)}</div>
-      <div class="hist-title">Class ${mode === 'detail' ? 'Detailed History' : 'Ledger Summary'} — ${escHtml(c.cls)} (${escHtml(c.sec)})</div>
-    </div>
-    <div class="hist-meta">Generated: ${today}<br/>By: ${escHtml(meta.generatedBy)}<br/>Students: ${rows.length}<br/>Period: ${escHtml(period)}${meta.address ? `<br/>${escHtml(meta.address)}` : ''}${meta.session ? `<br/>Session: ${escHtml(meta.session)}` : ''}</div>
-  </div>
+  ${histHeadHtml(meta, `Class ${mode === 'detail' ? 'Detailed History' : 'Ledger Summary'} — ${escHtml(c.cls)} (${escHtml(c.sec)})`, [
+    `Students: ${rows.length}`,
+    `Period: ${escHtml(period)}`,
+  ])}
   <div class="hist-band">${escHtml(c.cls)} — Section ${escHtml(c.sec)}</div>
   <table>
     <thead>
@@ -6942,7 +6998,6 @@ function buildHistClassReportHTML({ mode, c, rows, period, school = null }) {
 
 function buildHistOverallReportHTML({ mode, blocks, period, school = null }) {
   const meta = feeReportSchool(school);
-  const today = feeReportDate(meta);
   const grand = blocks.reduce((a, b) => {
     const sub = b.rows.reduce((x, { months }) => {
       const t = feeHistTotals(months);
@@ -6955,13 +7010,10 @@ function buildHistOverallReportHTML({ mode, blocks, period, school = null }) {
 
   return `<style>${HIST_REPORT_CSS}</style><body>
   <div class="hist-page">
-    <div class="hist-head">
-      <div>
-        <div class="hist-school">${escHtml(meta.name)}</div>
-        <div class="hist-title">Overall ${mode === 'detail' ? 'Detailed Fee History' : 'Fee Ledger Summary'}</div>
-      </div>
-      <div class="hist-meta">Generated: ${today}<br/>By: ${escHtml(meta.generatedBy)}<br/>Classes: ${blocks.length}<br/>Period: ${escHtml(period)}${meta.address ? `<br/>${escHtml(meta.address)}` : ''}${meta.session ? `<br/>Session: ${escHtml(meta.session)}` : ''}</div>
-    </div>
+    ${histHeadHtml(meta, `Overall ${mode === 'detail' ? 'Detailed Fee History' : 'Fee Ledger Summary'}`, [
+      `Classes: ${blocks.length}`,
+      `Period: ${escHtml(period)}`,
+    ])}
     <div class="hist-band">Grand Totals</div>
     <div class="hist-cards">
       <div class="hist-card"><div class="l">Total Fee</div><div class="v">${grand.fee.toLocaleString('en-PK')}</div></div>
@@ -6973,10 +7025,37 @@ function buildHistOverallReportHTML({ mode, blocks, period, school = null }) {
   ${pages.replace(/<style>[\s\S]*?<\/style><body>/, '')}`;
 }
 
+/* Re-print the very challan that was raised for THIS student in THIS month.
+   It goes through the real challan template (Parent / Bank / School copies)
+   and is driven by that month's own BranchLedger record — `_challan` makes
+   feeSlipHTML print the stored detailRows with their stored discounts, and
+   the period / issue / due dates are the challan's own, not today's. So a
+   reprint is the same challan the parent was handed, for the current student
+   only — never a fresh one generated off the current fee setup. */
+function buildHistMonthChallanHTML({ c, s, mo, year, heads = [], settings = {}, school = null, size = 'a4' }) {
+  const css = size === 'thermal' ? FEE_THERMAL_CHALLAN_CSS : FEE_CHALLAN_CSS_PRINT;
+  const inner = buildChallanInner({
+    classMeta: c,
+    students: [{ ...s, _challan: mo._rec }],
+    heads,
+    settings,
+    discountMap: {},
+    bw: false,
+    size,
+    school,
+    period:   `${mo.monthName} ${year}`,
+    issueISO: mo.challanDate !== '—' ? mo.challanDate : undefined,
+    dueISO:   mo.dueDate     !== '—' ? mo.dueDate     : undefined,
+  });
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escHtml(`Fee Challan ${mo.monthName} ${year} — ${s.name}`)}</title>
+<style>${css}</style></head><body>${inner}</body></html>`;
+}
+
 /* Re-print a single-month receipt slip using the synthesised history row
    (head amounts are not stored for past months, so this is a summary
    slip with the month's total payable / received / remaining). */
-function buildHistMonthSlipHTML({ c, s, mo, year, size = 'a4' }) {
+function buildHistMonthSlipHTML({ c, s, mo, year, size = 'a4', school = null }) {
+  const meta = feeReportSchool(school);
   if (size === 'thermal') {
     return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escHtml(`${mo.monthName} Slip — ${s.name}`)}</title>
 <style>
@@ -6991,7 +7070,8 @@ function buildHistMonthSlipHTML({ c, s, mo, year, size = 'a4' }) {
   @page{size:80mm auto;margin:0;}
 </style></head><body>
 <div class="th-slip">
-  <div class="th-school">${escHtml(FEE_SCHOOL.name)}</div>
+  <div class="th-school">${escHtml(meta.name)}</div>
+  ${meta.address ? `<div class="th-tag" style="border:0;padding:0;margin:0 0 2px;letter-spacing:0;text-transform:none">${escHtml(meta.address)}</div>` : ''}
   <div class="th-tag">Fee Received Slip</div>
   <div class="th-kv">
     <span class="k">Receipt</span><span class="v">${escHtml(mo.challanNo)}</span>
@@ -7030,7 +7110,9 @@ function buildHistMonthSlipHTML({ c, s, mo, year, size = 'a4' }) {
 </style></head><body>
 <div class="fee-slip-doc">
   <div class="fee-slip-head">
-    <div class="fee-slip-school">${escHtml(FEE_SCHOOL.name)}</div>
+    ${meta.logo ? `<img src="${escHtml(meta.logo)}" alt="logo" style="width:46px;height:46px;object-fit:contain;margin-bottom:6px" />` : ''}
+    <div class="fee-slip-school">${escHtml(meta.name)}</div>
+    ${meta.address ? `<div style="font-size:10px;color:#666;margin-top:2px">${escHtml(meta.address)}</div>` : ''}
     <div class="fee-slip-tag">Fee Received Slip</div>
   </div>
   <div class="fee-slip-kv">
@@ -7046,7 +7128,8 @@ function buildHistMonthSlipHTML({ c, s, mo, year, size = 'a4' }) {
   </div>
   <table class="fee-slip-tbl">
     <tbody>
-      <tr><td>Total Challan</td><td>${mo.challanAmt.toLocaleString('en-PK')}</td></tr>
+      ${mo.heads.map(h => `<tr><td>${escHtml(h.sub)}</td><td>${h.unpaid ? '—' : h.recv.toLocaleString('en-PK')}</td></tr>`).join('')}
+      <tr><td><b>Total Challan</b></td><td><b>${mo.challanAmt.toLocaleString('en-PK')}</b></td></tr>
       <tr><td>Pending</td><td>${mo.pending.toLocaleString('en-PK')}</td></tr>
     </tbody>
   </table>
@@ -9085,13 +9168,17 @@ function feeSlipHTML({ copyLabel, classMeta, student, heads, settings, period, i
 </div>`;
 }
 
-function buildChallanInner({ classMeta, students, heads, settings, discountMap, bw = false, size = 'a4', school = null }) {
+/* A fresh challan is stamped with today's dates and the current month, but a
+   History reprint must carry the dates the challan was actually raised with —
+   so callers may override period / issue / due. */
+function buildChallanInner({ classMeta, students, heads, settings, discountMap, bw = false, size = 'a4', school = null,
+                             period: periodOverride, issueISO: issueOverride, dueISO: dueOverride }) {
   const today    = new Date();
-  const issueISO = today.toISOString().slice(0, 10);
   const dueDate  = new Date(today); dueDate.setDate(dueDate.getDate() + 10);
-  const dueISO   = dueDate.toISOString().slice(0, 10);
   const m = ['January','February','March','April','May','June','July','August','September','October','November','December'];
-  const period  = `${m[today.getMonth()]} ${today.getFullYear()}`;
+  const issueISO = issueOverride || today.toISOString().slice(0, 10);
+  const dueISO   = dueOverride   || dueDate.toISOString().slice(0, 10);
+  const period   = periodOverride || `${m[today.getMonth()]} ${today.getFullYear()}`;
   const classDisc = (discountMap && discountMap[classMeta.key]) || {};
   const sch = feeReportSchool(school);
 
