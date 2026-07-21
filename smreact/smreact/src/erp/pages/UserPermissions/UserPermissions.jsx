@@ -2,15 +2,22 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import Tooltip from '../../components/Tooltip';
 import TutorialModal from '../../components/TutorialModal';
 import { getEmployeesByBranch } from '../../services/attendanceService';
+import {
+  getRolesByBranch,
+  saveRole,
+  getUserRole,
+  deleteRole as deleteRoleApi,
+} from '../../services/rolesService';
 import UsersTab from './UsersTab';
 import RolesTab from './RolesTab';
 import PermissionGroupsTab from './PermissionGroupsTab';
 import AuditLogsTab from './AuditLogsTab';
 import { usePermissions } from '../../context/PermissionsContext';
 import {
-  INITIAL_ROLES,
   INITIAL_GROUPS,
   INITIAL_AUDIT,
+  ROLE_COLORS,
+  normalizeApiRole,
   findRole,
   nextAuditEntry,
 } from './permissionsData';
@@ -66,6 +73,21 @@ function mapEmployeeToUser(e) {
   };
 }
 
+/* get-roles-by-branch ka row → Roles-tab card shape. Shared normalizer
+   permissionsData.js me hai (normalizeApiRole) taake modal bhi wahi use kare. */
+
+/* /get-user-role response row → { roleId, roleName, color }. Field naam
+   vary kar sakte hain is liye defensive fallbacks. Kuch na mile to null. */
+function extractUserRole(d) {
+  const row = Array.isArray(d) ? d[0] : d;
+  if (!row) return null;
+  const roleId   = row.roleID ?? row.RoleID ?? row.roleId ?? row.id ?? row.ID ?? null;
+  const roleName = row.roleName ?? row.RoleName ?? row.name ?? '';
+  const color    = row.color ?? row.Color ?? '';
+  if (roleId == null && !roleName) return null;
+  return { roleId, roleName, color };
+}
+
 export default function UserPermissions({ toast = () => {} }) {
   const { can } = usePermissions();
   const visibleTabs = TABS.filter(t => can('User Permissions', t.label, 'View'));
@@ -80,12 +102,15 @@ export default function UserPermissions({ toast = () => {} }) {
   const [tab,      setTab]      = useState('users');
   /* Koi static data nahi — asli staff API se aata hai; tab tak loader chalta hai. */
   const [users,    setUsers]    = useState([]);
-  const [roles,    setRoles]    = useState(INITIAL_ROLES);
+  /* Roles ab API se aate hain (/get-roles-by-branch) — koi static seed nahi. */
+  const [roles,    setRoles]    = useState([]);
   const [groups,   setGroups]   = useState(INITIAL_GROUPS);
   const [auditLog, setAuditLog] = useState(INITIAL_AUDIT);
   const [tutorialOpen, setTutorialOpen] = useState(false);
   const [usersLoaded, setUsersLoaded] = useState(false);
   const [usersLoading, setUsersLoading] = useState(true);
+  const [rolesLoaded, setRolesLoaded] = useState(false);
+  const [rolesLoading, setRolesLoading] = useState(true);
 
   /* Users tab active hote hi real employees API se laa kar map karo (ek dafa). */
   useEffect(() => {
@@ -93,21 +118,60 @@ export default function UserPermissions({ toast = () => {} }) {
     let alive = true;
     setUsersLoading(true);
     getEmployeesByBranch()
-      .then((list) => {
+      .then(async (list) => {
         if (!alive) return;
         const mapped = (list || []).map(mapEmployeeToUser);
+        /* Table foran dikhao (loader band), roles beech me merge karte rahenge. */
         setUsers(mapped);
+        setUsersLoading(false);
+        /* Har user ka assigned role /get-user-role se laa kar Role column
+           bharo. Ek user fail ho to sirf usko chhodo, baaki chalein. */
+        const withRoles = await Promise.all(mapped.map(async (u) => {
+          try {
+            const info = extractUserRole(await getUserRole(u.empId));
+            if (!info) return u;
+            return {
+              ...u,
+              role:      info.roleId ?? u.role,
+              roleLabel: info.roleName || u.roleLabel,
+              roleColor: info.color || u.roleColor,
+            };
+          } catch (err) {
+            return u;
+          }
+        }));
+        if (!alive) return;
+        setUsers(withRoles);
+        /* usersLoaded ab set karo — pehle karte to effect dobara chal kar
+           in-flight role fetch ko cancel kar deta (alive=false). */
         setUsersLoaded(true);
       })
       .catch((err) => {
         console.error('Could not load employees for User Permissions:', err);
-        if (alive) setUsersLoaded(true);
-      })
-      .finally(() => {
-        if (alive) setUsersLoading(false);
+        if (alive) { setUsersLoaded(true); setUsersLoading(false); }
       });
     return () => { alive = false; };
   }, [tab, usersLoaded]);
+
+  /* ─── Roles: branch ke saved roles API se laao (list + card details). ─── */
+  const loadRoles = useCallback(async () => {
+    setRolesLoading(true);
+    try {
+      const list = await getRolesByBranch();
+      setRoles((list || []).map(normalizeApiRole));
+    } catch (err) {
+      console.error('Could not load roles:', err);
+    } finally {
+      setRolesLoaded(true);
+      setRolesLoading(false);
+    }
+  }, []);
+
+  /* Roles tab pehli dafa khulte hi (ya AssignRole ke liye) fetch. */
+  useEffect(() => {
+    if (rolesLoaded) return;
+    loadRoles();
+  }, [rolesLoaded, loadRoles]);
 
   /* ─── Audit helper ─── */
   const logAudit = useCallback((entry) => {
@@ -186,21 +250,60 @@ export default function UserPermissions({ toast = () => {} }) {
   }, [users, logAudit, toast]);
 
   /* ─── Role mutations ─── */
-  const upsertRole = useCallback((payload) => {
-    setRoles(prev => {
-      if (payload.id && prev.find(r => r.id === payload.id)) {
-        return prev.map(r => (r.id === payload.id ? { ...r, ...payload } : r));
-      }
-      const id = payload.id || `r${Date.now()}`;
-      return [...prev, { userCount: 0, ...payload, id }];
-    });
-  }, []);
+  /* Create/Update dono /save-role par jaate hain (id:0 → create).
+     Success par branch roles dobara fetch → cards + modal list refresh.
+     Error par throw taake modal khula rahe. */
+  const handleSaveRole = useCallback(async (formData, mode) => {
+    const payload = {
+      id:          Number(formData.id) || 0,
+      branchID:    Number(sessionStorage.getItem('branchID')) || 0,
+      roleName:    formData.name,
+      description: formData.description || '',
+      color:       formData.color || ROLE_COLORS[0].value,
+      modules:     formData.modules || [],
+      createdBy:   Number(sessionStorage.getItem('UserID')) || 0,
+      modifiedBy:  Number(sessionStorage.getItem('UserID')) || 0,
+    };
+    let res;
+    try {
+      res = await saveRole(payload);
+    } catch (err) {
+      console.error('Could not save role:', err);
+      toast('Could not save role. Please try again.', 'error');
+      throw err;
+    }
+    if (res && (res.status === false || res.success === false)) {
+      toast(res.message || res.Message || 'Could not save role', 'error');
+      throw new Error(res.message || 'Save failed');
+    }
+    toast(
+      mode === 'edit'  ? `Role "${formData.name}" updated`
+      : mode === 'clone' ? `Role "${formData.name}" cloned`
+      : `Role "${formData.name}" created`,
+      'success',
+    );
+    await loadRoles();
+  }, [toast, loadRoles]);
 
-  const deleteRole = useCallback((roleId) => {
+  /* Delete → /delete-role/{id}. Success par branch roles dobara fetch.
+     Error par throw taake confirm dialog khula rahe. */
+  const deleteRole = useCallback(async (roleId) => {
     const role = roles.find(r => r.id === roleId);
-    setRoles(prev => prev.filter(r => r.id !== roleId));
-    if (role) toast(`Role "${role.name}" deleted`, 'success');
-  }, [roles, toast]);
+    let res;
+    try {
+      res = await deleteRoleApi(roleId);
+    } catch (err) {
+      console.error('Could not delete role:', err);
+      toast('Could not delete role. Please try again.', 'error');
+      throw err;
+    }
+    if (res && (res.status === false || res.success === false)) {
+      toast(res.message || res.Message || 'Could not delete role', 'error');
+      throw new Error(res.message || 'Delete failed');
+    }
+    toast(`Role "${role?.name || ''}" deleted`, 'success');
+    await loadRoles();
+  }, [roles, toast, loadRoles]);
 
   const cloneRole = useCallback((roleId) => roles.find(r => r.id === roleId), [roles]);
 
@@ -313,10 +416,11 @@ export default function UserPermissions({ toast = () => {} }) {
         {tab === 'roles'  && (
           <RolesTab
             roles={roles}
-            upsertRole={upsertRole}
+            onSaveRole={handleSaveRole}
             deleteRole={deleteRole}
             cloneRole={cloneRole}
             toast={toast}
+            loading={rolesLoading}
             canCreate={canRolesCreate}
             canEdit={canRolesEdit}
             canDelete={canRolesDelete}

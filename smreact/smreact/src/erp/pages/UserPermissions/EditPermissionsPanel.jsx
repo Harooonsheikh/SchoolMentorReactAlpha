@@ -11,6 +11,7 @@ import {
   permStats,
   findRole,
   permsFromTemplate,
+  permsFromModules,
   getApplicablePerms,
   isPermApplicable,
   getActiveModuleTree,
@@ -99,10 +100,19 @@ export default function EditPermissionsPanel({ user, roles, readOnly, onClose, o
      modules always stay because ModuleContext refuses to flip
      them off. */
   const { moduleState } = useModules();
-  const visibleTree = useMemo(
-    () => getActiveModuleTree(moduleState),
-    [moduleState]
-  );
+  /* Agar user ko role assigned hai jiske modules defined hain, to Edit
+     Permissions ki left menu + matrix sirf UNHI modules tak limit rahein
+     (role ke against jo modules banaye the) — baaki saare modules chhupe.
+     Role ke bina (ya bina modules) → poora active tree dikhao. */
+  const visibleTree = useMemo(() => {
+    const active = getActiveModuleTree(moduleState);
+    if (role && Array.isArray(role.modules) && role.modules.length) {
+      const wanted = new Set(role.modules);
+      const filtered = active.filter((m) => wanted.has(m.id));
+      return filtered.length ? filtered : active;
+    }
+    return active;
+  }, [moduleState, role]);
 
   /* Seed the editable permission map from the user's effective perms. */
   const [perms,     setPerms]     = useState(() => ({ ...effectivePermsForUser(user, roles) }));
@@ -133,6 +143,16 @@ export default function EditPermissionsPanel({ user, roles, readOnly, onClose, o
      seed karo: menuName → module (left), subMenuName → screen (right), action ka
      isAccessable=true → checkbox checked. */
   useEffect(() => {
+    /* Role-based user (role ke modules defined): permissions role ki base
+       par hoti hain — role ke har module ki har applicable action checked.
+       Yahi source of truth hai, is liye purani saved custom perms ko
+       fetch/override NAHI karte (warna sab checked nahi dikhte). */
+    if (role && Array.isArray(role.modules) && role.modules.length) {
+      const seeded = permsFromModules(role.modules);
+      setPerms(seeded);
+      setApiKeys(new Set(Object.keys(seeded)));
+      return undefined;
+    }
     const empId = user.empId;
     if (empId == null) return undefined;
     let alive = true;
@@ -158,7 +178,7 @@ export default function EditPermissionsPanel({ user, roles, readOnly, onClose, o
       })
       .catch((err) => console.error('Could not load user menu permissions:', err));
     return () => { alive = false; };
-  }, [user]);
+  }, [user, role]);
 
   /* If the currently-selected module gets switched off while the
      panel is open, snap to the first visible module instead of

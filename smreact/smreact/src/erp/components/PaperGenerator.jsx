@@ -1735,6 +1735,9 @@ const setSubjLine = (ci, si, l) => {
       : PG_ALL_TYPES;
 
   const qpMasterIDRef = useRef(isEdit ? (initialPaper.qpMasterID || 0) : 0);
+  /* entryIds whose save is currently in flight — a synchronous double-click
+     guard that survives re-renders (the per-tab `saving` flag drives the UI). */
+  const savingRef = useRef(new Set());
 
     /* Reset fetched state when settings change */
     const resetOnChange = () => { 
@@ -2105,6 +2108,8 @@ const setSubjLine = (ci, si, l) => {
 
   const saveTab = async (section, typeKey, entryId) => {
     if (isOtherSession) { toast('Method not allowed', 'error'); return; }
+    /* Ignore repeat clicks while this block's save is already in flight. */
+    if (savingRef.current.has(entryId)) return;
     const block = blocksState[section]?.[typeKey];
     const tab = block?.tabs.find(t => t.entryId === entryId);
     if (!tab) return;
@@ -2141,6 +2146,11 @@ const setSubjLine = (ci, si, l) => {
       return;
     }
 
+    /* Validation passed — NOW show the spinner, only for the network call.
+       (Earlier the spinner covered validation too, so a validation toast left
+       it stuck spinning.) The flag lives on the tab so it survives re-renders. */
+    savingRef.current.add(entryId);
+    updateTab(section, typeKey, entryId, { saving: true });
     try {
       const token = sessionStorage.getItem('token');
       const branchID = sessionStorage.getItem('branchID');
@@ -2213,6 +2223,9 @@ const setSubjLine = (ci, si, l) => {
     } catch (err) {
       console.error('Error saving question block:', err);
       toast('Error saving question block', 'error');
+    } finally {
+      savingRef.current.delete(entryId);
+      updateTab(section, typeKey, entryId, { saving: false });
     }
   };
 
@@ -2990,22 +3003,11 @@ const setSubjLine = (ci, si, l) => {
     const t = (en, ur) => (isUrdu ? ur : en);
     const useApiData = !!apiItems && apiItems.length > 0;
 
-    /* Save/Update is an async API call. Without gating, 2–5 quick clicks fire
-       that many requests (and generate duplicate questions). Hold a local flag
-       until the call resolves; on success the block flips to saved and this
-       panel unmounts, so the flag only ever resets on failure. */
-    const [saving, setSaving] = useState(false);
-    const mountedRef = useRef(true);
-    useEffect(() => () => { mountedRef.current = false; }, []);
-    const handleSave = async () => {
-      if (saving) return;
-      setSaving(true);
-      try {
-        await onSave();
-      } finally {
-        if (mountedRef.current) setSaving(false);
-      }
-    };
+    /* Save/Update is an async API call. The in-flight flag lives on the tab
+       (parent state) so it survives re-renders and only spins during the actual
+       network call — saveTab manages it, plus a synchronous ref guard blocks
+       repeat clicks. */
+    const saving = !!tab.saving;
     
     const unitData = PG_UNIT_DATA[subject] || [];
     const unitsWithType = useApiData ? [] : unitData.filter(u => u.qtypes[typeKey]);
@@ -3437,7 +3439,9 @@ const setSubjLine = (ci, si, l) => {
                       Every consumer coerces with +marks, so a string is safe. */}
                   <input
                     className="pg-q-input" type="text" inputMode="decimal"
-                    value={marks}
+                    /* Bind to the RAW string, not the coerced `marks` number —
+                       otherwise "1." collapses to 1 mid-type and the dot is lost. */
+                    value={tab.marks == null ? '' : tab.marks}
                     onChange={e => {
                       const v = e.target.value;
                       if (v === '' || /^\d*\.?\d*$/.test(v)) onUpdate({ marks: v });
@@ -3505,7 +3509,7 @@ const setSubjLine = (ci, si, l) => {
                     className="pg-btn-primary"
                     disabled={saving}
                     style={{ padding: '8px 20px', fontSize: 12.5, ...(saving ? { opacity: 0.6, cursor: 'wait' } : {}) }}
-                    onClick={handleSave}
+                    onClick={onSave}
                   >
                     {saving ? (
                       <><i className="fa-solid fa-spinner fa-spin"></i> {t('Saving…', 'محفوظ ہو رہا ہے…')}</>

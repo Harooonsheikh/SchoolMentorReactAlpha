@@ -9,6 +9,17 @@ import { findRole } from './permissionsData';
 export default function AssignRoleModal({ user, roles, onClose, onConfirm }) {
   const currentRole = findRole(roles, user.role);
   const [selected, setSelected] = useState(user.role);
+  const [saving, setSaving] = useState(false);
+
+  const onSubmit = async () => {
+    setSaving(true);
+    try {
+      await onConfirm(selected);
+      /* success → parent modal ko unmount kar deta hai. */
+    } catch (err) {
+      setSaving(false);   // fail → modal khula rakho
+    }
+  };
 
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
@@ -97,16 +108,17 @@ export default function AssignRoleModal({ user, roles, onClose, onConfirm }) {
 
         <div className="up-modal-foot">
           <Tooltip text="Cancel without changing the role">
-            <button type="button" className="up-btn up-btn-ghost" onClick={onClose}>Cancel</button>
+            <button type="button" className="up-btn up-btn-ghost" onClick={onClose} disabled={saving}>Cancel</button>
           </Tooltip>
           <Tooltip text={!willChange ? 'Pick a different role to enable' : `Assign ${newRole?.name || ''} to ${user.name}`}>
             <button
               type="button"
               className="up-btn up-btn-primary"
-              disabled={!willChange || !newRole}
-              onClick={() => onConfirm(selected)}
+              disabled={!willChange || !newRole || saving}
+              onClick={onSubmit}
             >
-              <i className="fa-solid fa-user-check" aria-hidden="true"></i> Assign Role
+              <i className={`fa-solid ${saving ? 'fa-spinner fa-spin' : 'fa-user-check'}`} aria-hidden="true"></i>
+              {saving ? ' Assigning…' : ' Assign Role'}
             </button>
           </Tooltip>
         </div>

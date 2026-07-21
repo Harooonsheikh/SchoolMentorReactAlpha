@@ -4,9 +4,12 @@ import Tooltip from '../../components/Tooltip';
 import EditPermissionsPanel from './EditPermissionsPanel';
 import AssignRoleModal from './AssignRoleModal';
 import DashboardTypeModal from './DashboardTypeModal';
+import { assignRoleToUser, saveUserMenuPermissions } from '../../services/rolesService';
 import {
   findRole,
   initialsOf,
+  permsFromModules,
+  apiPermissionsFromPerms,
 } from './permissionsData';
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -67,6 +70,53 @@ export default function UsersTab({
       /* Activation is a low-risk action — no confirm needed. */
       setUserStatus(user.id, 'Active');
     }
+  };
+
+  /* Assign Role → /assign-role-to-user par POST, phir role ke modules ko
+     user ki menu-permissions me sync, phir local state + audit.
+     Error par throw taake modal khula rahe. */
+  const handleAssignRole = async (user, newRoleId) => {
+    const branchID   = Number(sessionStorage.getItem('branchID')) || 0;
+    const employeeID = Number(user.empId ?? user.employeeId) || 0;
+    const payload = {
+      employeeID,
+      roleID:    Number(newRoleId) || 0,
+      branchID,
+      createdBy: Number(sessionStorage.getItem('UserID')) || 0,
+    };
+    let res;
+    try {
+      res = await assignRoleToUser(payload);
+    } catch (err) {
+      console.error('Could not assign role:', err);
+      toast('Could not assign role. Please try again.', 'error');
+      throw err;
+    }
+    if (res && (res.success === false || res.status === false)) {
+      toast(res.message || res.Message || 'Could not assign role', 'error');
+      throw new Error(res.message || 'Assign failed');
+    }
+
+    /* Role change ke baad Edit Permissions me role ke modules hi dikhne
+       chahiye — is liye role ke modules ko user ki menu-permissions me
+       reset kar do (full tree, taake purane custom/removed modules false
+       ho jayein). Fail ho to non-fatal (role assign ho chuka). */
+    const role = findRole(roles, newRoleId);
+    if (role && Array.isArray(role.modules)) {
+      try {
+        const perms = permsFromModules(role.modules);
+        await saveUserMenuPermissions({
+          branchID,
+          employeeID,
+          permissions: apiPermissionsFromPerms(perms),
+        });
+      } catch (err) {
+        console.error('Could not sync menu permissions for assigned role:', err);
+      }
+    }
+
+    /* Local table + audit + success toast (assignRole khud toast karta hai). */
+    assignRole(user.id, newRoleId);
   };
 
   return (
@@ -267,8 +317,8 @@ export default function UsersTab({
           user={assignFor}
           roles={roles}
           onClose={() => setAssignFor(null)}
-          onConfirm={(newRoleId) => {
-            assignRole(assignFor.id, newRoleId);
+          onConfirm={async (newRoleId) => {
+            await handleAssignRole(assignFor, newRoleId);
             setAssignFor(null);
           }}
         />

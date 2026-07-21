@@ -820,6 +820,35 @@ export const ROLE_COLORS = [
   { id: 'teal',   value: '#0F766E' },
 ];
 
+/* ─── get-roles-by-branch → Roles tab/modal shape ───
+   API mixed-case module naam ("Academics", "Fee") deta hai jabke MODULE_TREE
+   ke ids lowercase hain ("academics", "fee"). Case-insensitive match karke
+   canonical id par normalize karo, warna edit modal me sirf exact-case wale
+   modules checked dikhte hain. Unknown modules drop ho jaate hain. */
+const _MODULE_ID_BY_LOWER = MODULE_TREE.reduce((acc, m) => {
+  acc[m.id.toLowerCase()] = m.id;
+  return acc;
+}, {});
+export function apiModulesToIds(m) {
+  const raw = Array.isArray(m) ? m : (typeof m === 'string' ? m.split(',') : []);
+  return raw
+    .map((x) => _MODULE_ID_BY_LOWER[String(x).trim().toLowerCase()])
+    .filter(Boolean);
+}
+/* Ek API role row ko card/modal ke stable shape me lao. Field naam vary
+   kar sakte hain (id/ID, roleName/RoleName…) is liye fallbacks. */
+export function normalizeApiRole(r) {
+  return {
+    id:          r.id ?? r.roleID ?? r.roleId ?? r.ID,
+    name:        r.roleName ?? r.RoleName ?? r.name ?? '',
+    description: r.description ?? r.Description ?? '',
+    color:       r.color ?? r.Color ?? ROLE_COLORS[0].value,
+    modules:     apiModulesToIds(r.modules ?? r.Modules),
+    userCount:   r.userCount ?? r.UserCount ?? 0,
+    _raw:        r,
+  };
+}
+
 /* ─── Seed: Roles ─── */
 export const INITIAL_ROLES = [
   { id: 'r1',  name: 'Super Admin',        description: 'Full access to all ERP modules',  color: '#7C3AED', userCount: 1,  template: 'super_admin'       },
@@ -907,9 +936,26 @@ export function permsFromTemplate(templateKey) {
   return out;
 }
 
+/* Role ke `modules` (MODULE_TREE ids, /get-roles-by-branch se) → editor
+   perm map. Har diye gaye module ke har screen ki har applicable action
+   ko true kar do — yani pura module accessible. Assign-role ke baad user
+   ki Edit Permissions isi se seed hoti hai (role ke against banaye modules). */
+export function permsFromModules(moduleIds) {
+  const out = {};
+  const wanted = new Set((moduleIds || []).map((x) => String(x).trim()));
+  MODULE_TREE.forEach((m) => {
+    if (!wanted.has(m.id)) return;
+    m.children.forEach((c) => {
+      getApplicablePerms(c.id).forEach((a) => { out[`${c.id}.${a}`] = true; });
+    });
+  });
+  return out;
+}
+
 /* For a user, compute the *effective* permissions:
      custom override → user.customPermissions
-     otherwise        → derived from role.template
+     role has modules → derived from role.modules (API roles)
+     otherwise        → derived from role.template (legacy templates)
 */
 export function effectivePermsForUser(user, roles) {
   if (user.permType === 'custom' && user.customPermissions) {
@@ -917,6 +963,9 @@ export function effectivePermsForUser(user, roles) {
   }
   const role = findRole(roles, user.role);
   if (!role) return {};
+  if (Array.isArray(role.modules) && role.modules.length) {
+    return permsFromModules(role.modules);
+  }
   return permsFromTemplate(role.template);
 }
 

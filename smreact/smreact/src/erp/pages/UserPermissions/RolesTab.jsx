@@ -7,11 +7,21 @@ import RoleFormModal from './RoleFormModal';
    ROLES TAB — card grid + Create / Edit / Clone / Delete
    ═══════════════════════════════════════════════════════════════════ */
 export default function RolesTab({
-  roles, upsertRole, deleteRole, toast,
+  roles, onSaveRole, deleteRole, toast, loading = false,
   canCreate = true, canEdit = true, canDelete = true,
 }) {
   const [formCfg,    setFormCfg]    = useState(null);   // { mode, role? }
   const [deleteFor,  setDeleteFor]  = useState(null);
+
+  if (loading) {
+    return (
+      <div className="up-empty">
+        <div className="up-empty-ic"><i className="fa-solid fa-spinner fa-spin" aria-hidden="true"></i></div>
+        <div className="up-empty-title">Loading roles…</div>
+        <div className="up-empty-sub">Fetching configured roles for this branch.</div>
+      </div>
+    );
+  }
 
   return (
     <>
@@ -58,7 +68,9 @@ export default function RolesTab({
                 <Tooltip text="Number of top-level ERP modules this role can access">
                   <span className="up-badge up-badge--blue">
                     <i className="fa-solid fa-bolt" aria-hidden="true"></i>
-                    {moduleCountForTemplate(r.template)} modules
+                    {(Array.isArray(r.modules) && r.modules.length
+                      ? r.modules.length
+                      : moduleCountForTemplate(r.template))} modules
                   </span>
                 </Tooltip>
               </div>
@@ -104,15 +116,12 @@ export default function RolesTab({
         <RoleFormModal
           mode={formCfg.mode}
           role={formCfg.role}
+          existingRoles={roles}
           onClose={() => setFormCfg(null)}
-          onSave={(payload) => {
-            upsertRole(payload);
-            toast(
-              formCfg.mode === 'edit'  ? `Role "${payload.name}" updated`
-              : formCfg.mode === 'clone' ? `Role "${payload.name}" cloned`
-              : `Role "${payload.name}" created`,
-              'success',
-            );
+          onSave={async (payload) => {
+            /* /save-role → success par UserPermissions refetch karta hai.
+               Throw hone par modal khula rehta hai (toast wahin ho chuka). */
+            await onSaveRole(payload, formCfg.mode);
             setFormCfg(null);
           }}
           toast={toast}
@@ -122,8 +131,8 @@ export default function RolesTab({
         <RoleDeleteDialog
           role={deleteFor}
           onCancel={() => setDeleteFor(null)}
-          onConfirm={() => {
-            deleteRole(deleteFor.id);
+          onConfirm={async () => {
+            await deleteRole(deleteFor.id);
             setDeleteFor(null);
           }}
         />
@@ -146,20 +155,33 @@ function moduleCountForTemplate(templateKey) {
 
 /* ─── Role delete confirm dialog ─── */
 function RoleDeleteDialog({ role, onCancel, onConfirm }) {
+  const [deleting, setDeleting] = useState(false);
+
   React.useEffect(() => {
-    const onKey = (e) => { if (e.key === 'Escape') onCancel(); };
+    const onKey = (e) => { if (e.key === 'Escape' && !deleting) onCancel(); };
     document.addEventListener('keydown', onKey);
     document.body.style.overflow = 'hidden';
     return () => {
       document.removeEventListener('keydown', onKey);
       document.body.style.overflow = '';
     };
-  }, [onCancel]);
+  }, [onCancel, deleting]);
+
+  const onDelete = async () => {
+    setDeleting(true);
+    try {
+      await onConfirm();
+      /* success → parent dialog ko unmount kar deta hai. */
+    } catch (err) {
+      setDeleting(false);   // fail → dialog khula rakho
+    }
+  };
+
   return createPortal((
     <div
       className="up-modal-back"
       role="dialog" aria-modal="true"
-      onMouseDown={(e) => { if (e.target === e.currentTarget) onCancel(); }}
+      onMouseDown={(e) => { if (e.target === e.currentTarget && !deleting) onCancel(); }}
     >
       <div className="up-modal up-modal--sm">
         <div className="up-confirm-body">
@@ -172,9 +194,10 @@ function RoleDeleteDialog({ role, onCancel, onConfirm }) {
           </div>
         </div>
         <div className="up-modal-foot up-modal-foot--center">
-          <button type="button" className="up-btn up-btn-ghost" onClick={onCancel}>Cancel</button>
-          <button type="button" className="up-btn up-btn-danger" onClick={onConfirm}>
-            <i className="fa-solid fa-trash" aria-hidden="true"></i> Delete Role
+          <button type="button" className="up-btn up-btn-ghost" onClick={onCancel} disabled={deleting}>Cancel</button>
+          <button type="button" className="up-btn up-btn-danger" onClick={onDelete} disabled={deleting}>
+            <i className={`fa-solid ${deleting ? 'fa-spinner fa-spin' : 'fa-trash'}`} aria-hidden="true"></i>
+            {deleting ? ' Deleting…' : ' Delete Role'}
           </button>
         </div>
       </div>

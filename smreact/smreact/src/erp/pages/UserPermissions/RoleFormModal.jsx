@@ -1,10 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Tooltip from '../../components/Tooltip';
+import { getRolesByBranch } from '../../services/rolesService';
 import {
   MODULE_TREE,
   ROLE_COLORS,
   ROLE_TEMPLATES,
+  normalizeApiRole,
 } from './permissionsData';
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -14,22 +16,43 @@ import {
    (not per sub-item × action). The fine-grained matrix lives in
    EditPermissionsPanel.
    ═══════════════════════════════════════════════════════════════════ */
-export default function RoleFormModal({ mode, role, onClose, onSave, toast }) {
+export default function RoleFormModal({ mode, role, existingRoles = [], onClose, onSave, toast }) {
   const isEdit  = mode === 'edit';
   const isClone = mode === 'clone';
 
+  /* Modules seed: pehle role ke apne saved modules (API), warna template se. */
+  const validModuleIds = (ids) => (ids || []).filter(id => MODULE_TREE.some(m => m.id === id));
   const seedName        = isClone ? `${role?.name || ''} (Copy)` : (role?.name || '');
   const seedDesc        = role?.description || '';
   const seedColor       = role?.color       || ROLE_COLORS[0].value;
   const seedTemplate    = role?.template    || '';
-  const seedModules     = seedTemplate ? modulesFromTemplate(seedTemplate) : [];
+  const seedModules     = role?.modules?.length
+    ? validModuleIds(role.modules)
+    : (seedTemplate ? modulesFromTemplate(seedTemplate) : []);
 
   const [name,        setName]        = useState(seedName);
   const [description, setDescription] = useState(seedDesc);
   const [color,       setColor]       = useState(seedColor);
   const [template,    setTemplate]    = useState(seedTemplate);
   const [modules,     setModules]     = useState(seedModules);
+  const [pickedRole,  setPickedRole]  = useState(null);
   const [touched,     setTouched]     = useState(false);
+  const [saving,      setSaving]      = useState(false);
+
+  /* "Start From Existing Role" list. Parent ke diye roles se turant dikhao,
+     phir modal khulte hi khud fresh fetch bhi karo — taake list hamesha
+     current ho aur parent ki loading-timing par depend na kare. */
+  const [branchRoles, setBranchRoles] = useState(existingRoles);
+  useEffect(() => {
+    let alive = true;
+    getRolesByBranch()
+      .then((list) => { if (alive) setBranchRoles((list || []).map(normalizeApiRole)); })
+      .catch((err) => { console.error('Could not load roles for modal:', err); });
+    return () => { alive = false; };
+  }, []);
+
+  /* Edit mode me khud ko "start from" list se hata do. */
+  const seedRoles = branchRoles.filter(r => r.id !== role?.id);
 
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
@@ -49,27 +72,38 @@ export default function RoleFormModal({ mode, role, onClose, onSave, toast }) {
   }, [name, modules]);
   const hasErr = Object.keys(errors).length > 0;
 
-  /* Apply a template's module list. */
-  const applyTemplate = (key) => {
-    setTemplate(key);
-    setModules(modulesFromTemplate(key));
+  /* Seed modules (+ color) from an already-saved branch role. */
+  const applyExistingRole = (r) => {
+    setTemplate('');
+    setPickedRole(r.id);
+    setModules(validModuleIds(r.modules));
+    if (r.color) setColor(r.color);
   };
 
-  const toggleMod = (id) => setModules(m => m.includes(id) ? m.filter(x => x !== id) : [...m, id]);
+  const toggleMod = (id) => {
+    setPickedRole(null);
+    setModules(m => m.includes(id) ? m.filter(x => x !== id) : [...m, id]);
+  };
   const all = modules.length === MODULE_TREE.length;
 
-  const onSubmit = () => {
+  const onSubmit = async () => {
     setTouched(true);
     if (hasErr) { toast('Please fix the highlighted fields', 'error'); return; }
-    onSave({
-      id:          isEdit ? role?.id : undefined,
-      name:        name.trim(),
-      description: description.trim(),
-      color,
-      template:    template || 'teacher',     // fallback so EditPermissionsPanel can render something
-      modules,                                /* persist directly too — useful for the role card chip count */
-      userCount:   isEdit ? role?.userCount : 0,
-    });
+    setSaving(true);
+    try {
+      await onSave({
+        id:          isEdit ? role?.id : undefined,
+        name:        name.trim(),
+        description: description.trim(),
+        color,
+        template:    template || 'teacher',     // fallback so EditPermissionsPanel can render something
+        modules,                                /* persist directly too — useful for the role card chip count */
+        userCount:   isEdit ? role?.userCount : 0,
+      });
+      /* success → parent modal ko close kar deta hai (unmount). */
+    } catch (err) {
+      setSaving(false);                         // fail → modal khula rakho, dobara try kar sakein
+    }
   };
 
   return createPortal((
@@ -142,21 +176,27 @@ export default function RoleFormModal({ mode, role, onClose, onSave, toast }) {
 
             <div className="up-field span2">
               <label>Start From Template</label>
-              <div className="up-templates">
-                {Object.entries(ROLE_TEMPLATES).map(([key, tpl]) => (
-                  <Tooltip key={key} text={`Seed modules from the ${tpl.label} template`}>
-                    <button
-                      type="button"
-                      className="up-template-pill"
-                      onClick={() => applyTemplate(key)}
-                      style={template === key ? { background: '#EFF6FF', borderColor: '#1E40AF', color: '#1E40AF' } : undefined}
-                    >
-                      <i className="fa-solid fa-wand-magic-sparkles" style={{ marginRight: 6, fontSize: 10 }}></i>
-                      {tpl.label}
-                    </button>
-                  </Tooltip>
-                ))}
-              </div>
+              {seedRoles.length > 0 ? (
+                <div className="up-templates">
+                  {seedRoles.map(r => (
+                    <Tooltip key={r.id} text={`Seed modules from "${r.name}"`}>
+                      <button
+                        type="button"
+                        className="up-template-pill"
+                        onClick={() => applyExistingRole(r)}
+                        style={pickedRole === r.id ? { background: '#EFF6FF', borderColor: '#1E40AF', color: '#1E40AF' } : undefined}
+                      >
+                        <i className="fa-solid fa-wand-magic-sparkles" style={{ marginRight: 6, fontSize: 10 }}></i>
+                        {r.name}
+                      </button>
+                    </Tooltip>
+                  ))}
+                </div>
+              ) : (
+                <div style={{ fontSize: 12, fontWeight: 500, color: '#64748B' }}>
+                  No existing roles to start from yet.
+                </div>
+              )}
             </div>
 
             <div className="up-field span2">
@@ -196,11 +236,12 @@ export default function RoleFormModal({ mode, role, onClose, onSave, toast }) {
 
         <div className="up-modal-foot">
           <Tooltip text="Discard changes and close">
-            <button type="button" className="up-btn up-btn-ghost" onClick={onClose}>Cancel</button>
+            <button type="button" className="up-btn up-btn-ghost" onClick={onClose} disabled={saving}>Cancel</button>
           </Tooltip>
           <Tooltip text={isEdit ? 'Save updates to this role' : isClone ? 'Save the cloned role' : 'Create this role'}>
-            <button type="button" className="up-btn up-btn-primary" onClick={onSubmit}>
-              <i className="fa-solid fa-floppy-disk" aria-hidden="true"></i> Save Role
+            <button type="button" className="up-btn up-btn-primary" onClick={onSubmit} disabled={saving}>
+              <i className={`fa-solid ${saving ? 'fa-spinner fa-spin' : 'fa-floppy-disk'}`} aria-hidden="true"></i>
+              {saving ? ' Saving…' : ' Save Role'}
             </button>
           </Tooltip>
         </div>
