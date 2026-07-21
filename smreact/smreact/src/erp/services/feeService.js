@@ -671,14 +671,22 @@ function buildLedgerChallanPayload({ classMeta = {}, student = {}, heads = [], m
   const dueDate = toApiDate(options.dueDate);
   const classDisc = options.discountMap?.[classMeta.key]?.[student.reg] || {};
 
+  /* Backend in fields ko Int32 (nullable) me leta hai — decimal/NaN/Infinity bhejne par
+     400 "could not be converted to System.Int32" aata hai. Is liye hamesha ek safe
+     WHOLE number bhejo. */
+  const int32 = (v) => {
+    const n = Math.round(Number(v));
+    return Number.isFinite(n) ? n : 0;
+  };
+
   const makeRow = (subHead, amount, discount = 0) => ({
     id: 0,
     blid: 0,
     branchId: branchID,
     head: 'Account Payable',
     subHead: String(subHead || ''),
-    challanAmount: Number(amount) || 0,
-    discount: Number(discount) || 0,
+    challanAmount: int32(amount),
+    discount: int32(discount),
     receivedAmount: 0,
     pendingorAdv: 0,
     createdAt: now,
