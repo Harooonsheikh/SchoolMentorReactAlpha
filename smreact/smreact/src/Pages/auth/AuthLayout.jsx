@@ -12,9 +12,9 @@ const ILLUSTRATIONS = {
   login: {
     badge: '',
     title: "Pakistan's #1\nSchool OS",
-    tagline: 'Trusted by 700+ schools across the nation',
+    tagline: 'Trusted by 800+ schools across the nation',
     stats: [
-      { value: '700+', label: 'Schools' },
+      { value: '800+', label: 'Schools' },
       { value: '50K+', label: 'Students' },
       { value: '99%',  label: 'Uptime'  },
     ],
@@ -160,12 +160,13 @@ function LogoMark({ size = 28, light = false }) {
   return (
     <div className={`auth-logo-mark ${light ? 'auth-logo-mark--light' : ''}`}
       style={{ width: size + 14, height: size + 14 }}>
-      <svg width={size} height={size} viewBox="0 0 32 32" fill="none">
-        <path d="M16 4L28 10V22L16 28L4 22V10L16 4Z"
-          fill={light ? 'white' : '#1565C0'} fillOpacity={0.9}/>
-        <path d="M16 9L23 13V19L16 23L9 19V13L16 9Z"
-          fill={light ? '#1DB88A' : '#1DB88A'}/>
-      </svg>
+      <img
+        src={`${process.env.PUBLIC_URL}/login-logo.png`}
+        alt="SchoolMentor"
+        width={size}
+        height={size}
+        style={{ width: size, height: size, objectFit: 'contain', display: 'block' }}
+      />
     </div>
   );
 }
