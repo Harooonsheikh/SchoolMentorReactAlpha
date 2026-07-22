@@ -186,10 +186,17 @@ export default function App() {
   const { isActive: isModuleActive } = useModules();
   /* Logged-in user ki module-level access (School Head → sab allowed; warna API
      permissions ke hisaab se). Jis module me koi access nahi, wo nav se hat jata hai. */
-  const { canModule, ready: permsReady } = usePermissions();
+  const { canModule, fullAccess, ready: permsReady } = usePermissions();
   const navItemVisible = (navId) => {
     const modId = NAV_TO_MODULE_MAP[navId];
-    if (!modId) return true;                  /* not registry-backed → always show */
+    if (!modId) {
+      /* Registry-backed nahi (Dashboard/Feedback). Dashboard sirf
+         full-access users (School Head / bina permission-data) ko dikhe;
+         jis user ka explicit permission set hai usay sirf granted modules
+         dikhein — Dashboard nahi. */
+      if (navId === 'dashboard') return fullAccess;
+      return true;
+    }
     if (!isModuleActive(modId)) return false; /* school ne module off kiya hua */
     const label = MODULE_ID_TO_LABEL[modId];
     return label ? canModule(label) : true;   /* user ki permission ke hisaab se */
