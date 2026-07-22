@@ -720,22 +720,34 @@ function FeeChallansTab({ toast }) {
 function familyChildFigures(rec) {
   const rows = (rec && rec.detailRows) || [];
   let fee = 0, transport = 0, discount = 0, dues = 0, advance = 0;
+  let totalNet = 0, totalRecv = 0;
   rows.forEach(r => {
     const amt   = Number(r.challanAmount) || 0;
     const disc  = Number(r.discount) || 0;
+    const recv  = Number(r.receivedAmount) || 0;
+    const net   = amt - disc;
+    const out   = Math.max(0, net - recv);   // wasooli ke baad bacha hua
+    totalNet  += net;
+    totalRecv += recv;
     const label = String(r.subHead || r.head || '').toLowerCase().trim();
+    /* Fee / Transport / Dues ab BAQAYA dikhate hain — poora receive ho jaye to 0.
+       Discount billed hi rehta hai (sirf information ke liye). */
     if (/previous|pending|arrear/.test(label)) {
-      if (amt >= 0) dues += amt; else advance += Math.abs(amt);
+      if (amt >= 0) dues += out; else advance += Math.abs(amt);
     } else if (label === 'transport') {
       /* SIRF Transport Fee Setup se auto-add hone wali row ka subHead exactly
          "Transport" hota hai. Class ke apne fee heads (jaise "Transport Fee")
          Fee column me hi ginne chahiyein — warna wo galti se Transport dikhte the. */
-      transport += amt; discount += disc;
+      transport += out; discount += disc;
     } else {
-      fee += amt; discount += disc;
+      fee += out; discount += disc;
     }
   });
-  return { fee, transport, discount, dues, advance, payable: fee + transport - discount };
+  /* Over-receiving (total se zyada wasool) → extra raqam ADVANCE. */
+  advance += Math.max(0, totalRecv - totalNet);
+  /* fee/transport/dues pehle se discount-ke-baad hain, is liye yahan discount dobara
+     minus NAHI hota. Over-payment par ye MINUS me jaata hai = student ka credit. */
+  return { fee, transport, discount, dues, advance, payable: fee + transport + dues - advance };
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -949,7 +961,7 @@ function FamilyTreeChallansList({ toast }) {
     ...f,
     children: (f.children || []).map(ch => {
       const g = childFig(f, ch);
-      return { ...ch, fee: g.fee, transport: g.transport, discount: g.discount };
+      return { ...ch, fee: g.fee, transport: g.transport, discount: g.discount, dues: g.dues, advance: g.advance };
     }),
   });
 
@@ -1367,9 +1379,8 @@ function FamilyTreeChallansList({ toast }) {
             const fig = childFig(f, ch);
             const d = Number(fig.dues) || 0;
             const v = Number(fig.advance) || 0;
-            /* payable me dues/advance bhi — taake family total challan ke total se match kare. */
-            const p = (Number(fig.fee) || 0) + (Number(fig.transport) || 0)
-                    - (Number(fig.discount) || 0) + d - v;
+            /* Row jaisa hi hisaab (discount already fee/transport me shamil). */
+            const p = (Number(fig.fee) || 0) + (Number(fig.transport) || 0) + d - v;
             return {
               fee:       a.fee       + (Number(fig.fee)       || 0),
               transport: a.transport + (Number(fig.transport) || 0),
@@ -1447,13 +1458,12 @@ function FamilyTreeChallansList({ toast }) {
                           <tr><td colSpan="12" className="fee-stbl-empty">No children in this family.</td></tr>
                         ) : f.children.map((ch, j) => {
                           const fig = childFig(f, ch);
-                          /* Challan me "Previous Pending" ek line hoti hai, is liye Total Payable
-                             me bhi dues/advance shamil karo — warna row ka total challan ke
-                             total se kam nikalta tha. */
+                          /* Fee/Transport/Dues ab baqaya (received ke baad) hain aur discount
+                             unme already shamil — is liye yahan discount dobara minus nahi.
+                             Over-payment par pay MINUS me jaata hai = student ka credit. */
                           const dues = Number(fig.dues) || 0;
                           const adv  = Number(fig.advance) || 0;
-                          const pay  = (Number(fig.fee) || 0) + (Number(fig.transport) || 0)
-                                     - (Number(fig.discount) || 0) + dues - adv;
+                          const pay  = (Number(fig.fee) || 0) + (Number(fig.transport) || 0) + dues - adv;
                           const generated = isGen(f.key, ch.reg);
                           return (
                             <tr key={ch.reg}>
@@ -1463,11 +1473,12 @@ function FamilyTreeChallansList({ toast }) {
                               <td>{ch.cls}</td>
                               <td>{ch.sec}</td>
                               <td className="fee-right">{money(dues)}</td>
-                              <td className="fee-right">{money(adv)}</td>
+                              {/* Advance student ke haq me hai → MINUS me dikhao. */}
+                              <td className={`fee-right${adv > 0 ? ' fee-neg' : ''}`}>{money(adv > 0 ? -adv : 0)}</td>
                               <td className="fee-right">{money(fig.transport)}</td>
                               <td className="fee-right">{money(fig.discount)}</td>
                               <td className="fee-right">{money(fig.fee)}</td>
-                              <td className="fee-right"><b>{money(pay)}</b></td>
+                              <td className={`fee-right${pay < 0 ? ' fee-neg' : ''}`}><b>{money(pay)}</b></td>
                               <td className="fee-center fee-st-actions">
                                 {generated ? (
                                   <Tooltip text={`Delete ${appliedMonth} challan for ${ch.name}`}>
@@ -1572,17 +1583,27 @@ function FamilyTreeChallansList({ toast }) {
 function challanFigures(rec) {
   const rows = (rec && rec.detailRows) || [];
   let dues = 0, advance = 0, current = 0;
+  let totalNet = 0, totalRecv = 0;
   rows.forEach(r => {
     const amt   = Number(r.challanAmount) || 0;
     const disc  = Number(r.discount) || 0;
+    const recv  = Number(r.receivedAmount) || 0;
+    const net   = amt - disc;
     const label = String(r.subHead || r.head || '').toLowerCase();
+    totalNet  += net;
+    totalRecv += recv;
+    /* Dues/Current ab WASOOLI KE BAAD ka baqaya hai — challan poora receive ho jaye to
+       ye 0 ho jaate hain (pehle full amount hi dikhta rehta tha). */
     if (/previous|pending|arrear/.test(label)) {
-      if (amt >= 0) dues += amt;
+      if (amt >= 0) dues += Math.max(0, net - recv);
       else advance += Math.abs(amt);
     } else {
-      current += amt - disc;
+      current += Math.max(0, net - recv);
     }
   });
+  /* Challan ke total se ZYADA wasool ho gaya (over-receiving) → extra raqam student ka
+     ADVANCE hai. Isay bhi advance me jodo, warna Fee Challans list par 0 dikhta tha. */
+  advance += Math.max(0, totalRecv - totalNet);
   return { dues, advance, current, payable: current + dues - advance };
 }
 
@@ -2282,10 +2303,11 @@ function FeeChallansList({ toast }) {
                               <td><b>{s.name}</b></td>
                               <td>{s.father}</td>
                               <td className="fee-right">{money(fig.dues)}</td>
-                              <td className="fee-right">{money(fig.advance)}</td>
-                              <td className="fee-right" style={fig.current === 0 ? { color: '#DC2626', fontWeight: 700 } : undefined}>
-                                {money(fig.current)}
+                              {/* Advance student ke haq me hai → MINUS me dikhao. */}
+                              <td className={`fee-right${fig.advance > 0 ? ' fee-neg' : ''}`}>
+                                {money(fig.advance > 0 ? -fig.advance : 0)}
                               </td>
+                              <td className="fee-right">{money(fig.current)}</td>
                               <td className={`fee-right${fig.payable < 0 ? ' fee-neg' : ''}`}>
                                 {money(fig.payable)}
                               </td>
@@ -3196,8 +3218,7 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
     (cfg.model.heads || []).forEach(h => {
       const fromPay     = (cfg.payments || []).reduce((a, p) => a + (+(p.perHead?.[h.name]) || 0), 0);
       const paidPerHead = cfg.challan ? Math.max(+chRecv[h.name] || 0, fromPay) : fromPay;
-      const remHead     = Math.max(0, h.net - paidPerHead);
-      seed[h.name] = remHead;
+      seed[h.name] = Math.max(0, h.net - paidPerHead);
     });
     setPerHeadInput(seed);
   }, [cfg]);
@@ -3240,11 +3261,14 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
 
   /* Build display rows with live recompute */
   let totalChallan = 0, totalDisc = 0, totalAfter = 0;
+  /* NOTE: Over-receiving allowed hai — head ke owed se zyada amount li ja sakti hai.
+     Us case me Pending MINUS (negative) ho jaata hai = utna ADVANCE. Is liye yahan
+     koi upper clamp nahi lagta (pehle lagta tha, jis se extra amount block ho jaata). */
   const rows = model.heads.map(h => {
     const paid    = +perHeadPaid[h.name] || 0;
-    const recvNow = viewOnly ? 0 : Math.max(0, Math.min(+perHeadInput[h.name] || 0, h.net - paid));
+    const recvNow = viewOnly ? 0 : Math.max(0, +perHeadInput[h.name] || 0);
     const after   = h.net;
-    const pending = Math.max(0, after - paid - recvNow);
+    const pending = after - paid - recvNow;      // negative = advance
     totalChallan += h.std;
     totalDisc    += h.disc;
     totalAfter   += after;
@@ -3255,13 +3279,19 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
   const prevKey  = model.prevName || 'Previous Pending';
   const prevPaid = +model.prevPaid || 0;
   const prevOwed = Math.max(0, model.prev - prevPaid);
-  const prevRecv = viewOnly ? 0 : Math.max(0, Math.min(+perHeadInput[prevKey] || 0, prevOwed));
-  const prevPend = Math.max(0, prevOwed - prevRecv);
+  const prevRecv = viewOnly ? 0 : Math.max(0, +perHeadInput[prevKey] || 0);
+  const prevPend = prevOwed - prevRecv;          // negative = advance
 
-  const receivingNow = rows.reduce((a, r) => a + r.recvNow, 0) + prevRecv;
+  /* ADVANCE ek CREDIT line hai — "Received" column me MINUS me dikhti hai aur wahin se
+     kat jaati hai (editable nahi). Utna cash kam lena hota hai. */
+  const headsRecv  = rows.reduce((a, r) => a + r.recvNow, 0) + prevRecv;
+  const advCredit  = Math.max(0, +model.advance || 0);
+  const advApplied = Math.min(advCredit, headsRecv);   // credit se zyada kabhi nahi
+  const receivingNow = headsRecv - advApplied;
   const alreadyPaid  = rows.reduce((a, r) => a + r.paid, 0) + prevPaid;
   const totalAmt     = totalAfter + model.prev - model.advance;
-  const remainAfter  = Math.max(0, totalAmt - alreadyPaid - receivingNow);
+  /* Total se zyada wasool ho to ye MINUS me jaata hai = student ka advance. */
+  const remainAfter  = totalAmt - alreadyPaid - receivingNow;
 
   const setHead = (name, v) => {
     setPerHeadInput(prev => ({ ...prev, [name]: Math.max(0, Number(v) || 0) }));
@@ -3272,8 +3302,9 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
      same perHeadInput state; there is no second source of truth. */
   const setPendingFor = (row, v) => {
     const owed = Math.max(0, row.net - row.paid);
-    const pend = Math.max(0, Math.min(Number(v) || 0, owed));
-    setPerHeadInput(prev => ({ ...prev, [row.name]: owed - pend }));
+    /* Pending MINUS bhi ho sakta hai (advance) — is liye niche clamp nahi. */
+    const pend = Number(v) || 0;
+    setPerHeadInput(prev => ({ ...prev, [row.name]: Math.max(0, owed - pend) }));
   };
 
   const fineTxt = settings?.fineEnabled
@@ -3399,7 +3430,6 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
                         <input
                           type="number"
                           min="0"
-                          max={Math.max(0, r.net - r.paid)}
                           value={perHeadInput[r.name] === 0 ? 0 : (perHeadInput[r.name] || '')}
                           onChange={e => setHead(r.name, e.target.value)}
                           placeholder="0"
@@ -3413,7 +3443,6 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
                         <input
                           type="number"
                           min="0"
-                          max={Math.max(0, r.net - r.paid)}
                           value={r.pending}
                           onChange={e => setPendingFor(r, e.target.value)}
                           placeholder="0"
@@ -3438,7 +3467,6 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
                         <input
                           type="number"
                           min="0"
-                          max={prevOwed}
                           value={perHeadInput[prevKey] === 0 ? 0 : (perHeadInput[prevKey] || '')}
                           onChange={e => setHead(prevKey, e.target.value)}
                           placeholder="0"
@@ -3452,7 +3480,6 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
                         <input
                           type="number"
                           min="0"
-                          max={prevOwed}
                           value={prevPend}
                           onChange={e => {
                             const pend = Math.max(0, Math.min(Number(e.target.value) || 0, prevOwed));
@@ -3464,13 +3491,25 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
                     </td>
                   </tr>
                 )}
+                {/* ADVANCE — Previous Pending jaisi hi ek row, magar "Received" MINUS me
+                    aur read-only (student ke credit se khud kat jaata hai). */}
+                {advCredit > 0 && (
+                  <tr>
+                    <td><b>Advance</b></td>
+                    <td className="fee-right">—</td>
+                    <td className="fee-right">—</td>
+                    <td className="fee-right"><span className="fee-cell-grey">{money(-advCredit)}</span></td>
+                    <td className="fee-right fee-neg"><b>{money(-advApplied)}</b></td>
+                    <td className="fee-right">{money(advCredit - advApplied)}</td>
+                  </tr>
+                )}
               </tbody>
               <tfoot>
                 <tr className="fee-recv-total">
                   <td>Total</td>
                   <td className="fee-right">{money(totalChallan + model.prev)}</td>
                   <td className="fee-right">{money(totalDisc)}</td>
-                  <td className="fee-right">{money(totalAfter + model.prev)}</td>
+                  <td className="fee-right">{money(totalAfter + model.prev - advApplied)}</td>
                   <td className="fee-right">{money(alreadyPaid + receivingNow)}</td>
                   <td className="fee-right">{money(remainAfter)}</td>
                 </tr>
@@ -3899,7 +3938,7 @@ function recStudentModel({ student, headsForClass, generated, classDisc, payment
     : 0;
   const paidFromPayments = (payments || []).reduce((a, p) => a + (+p.amount || 0), 0);
   const paid      = challan ? Math.max(paidFromChallan, paidFromPayments) : paidFromPayments;
-  const remaining = Math.max(0, payable - paid);
+  const remaining = payable - paid;   /* MINUS = advance (total se zyada wasool) */
   let status = 'none';
   if (generated && paid > 0) status = remaining <= 0 ? 'full' : 'partial';
   /* Only payments explicitly tagged as OneLink/bank-pull are protected
@@ -3907,7 +3946,16 @@ function recStudentModel({ student, headsForClass, generated, classDisc, payment
      stays deletable — same as the HTML reference (which keys off the
      `source` field, not the method). */
   const onelink = (payments || []).some(p => p.source === 'onelink' || p.source === 'bank');
-  return { heads, generated, prev, prevName, prevPaid, advance, thisMonth, disc, payable, paid, remaining, status, onelink };
+  /* Per-head ab tak wasool hui raqam (challan ke receivedAmount se) — Bulk modal isi se
+     "Already Received" aur seeding nikaalta hai, warna paid heads dobara seed ho jate the. */
+  const paidPerHead = {};
+  if (challan && Array.isArray(challan.detailRows)) {
+    challan.detailRows.forEach(r => {
+      const n = r.subHead || r.head || '';
+      paidPerHead[n] = (paidPerHead[n] || 0) + (+r.receivedAmount || 0);
+    });
+  }
+  return { heads, generated, prev, prevName, prevPaid, paidPerHead, advance, thisMonth, disc, payable, paid, remaining, status, onelink };
 }
 
 function statusBadge(status) {
@@ -4415,6 +4463,7 @@ function FeeReceivingIndividual({ toast }) {
                           <th>Reg No</th>
                           <th>Name</th>
                           <th className="fee-right">Previous Pending</th>
+                          <th className="fee-right">Advance</th>
                           <th className="fee-right">This Month</th>
                           <th className="fee-center">Discount</th>
                           <th className="fee-right">Received</th>
@@ -4425,7 +4474,7 @@ function FeeReceivingIndividual({ toast }) {
                       </thead>
                       <tbody>
                         {students.length === 0 ? (
-                          <tr><td colSpan="9" className="fee-stbl-empty">No students in this section.</td></tr>
+                          <tr><td colSpan="10" className="fee-stbl-empty">No students in this section.</td></tr>
                         ) : students.map(s => {
                           const m = modelFor(c, s);
                           return (
@@ -4436,6 +4485,11 @@ function FeeReceivingIndividual({ toast }) {
                                 <span className="fee-sub-eq">SO/DO {s.father || '—'}</span>
                               </td>
                               <td className="fee-right">{money(m.prev)}</td>
+                              {/* Advance (student ka credit) — MINUS me, taake dikhe ki
+                                  Remaining/Received me se kitna khud kat gaya. */}
+                              <td className={`fee-right${m.advance > 0 ? ' fee-neg' : ''}`}>
+                                {money(m.advance > 0 ? -m.advance : 0)}
+                              </td>
                               {m.generated ? (
                                 <td className="fee-right">
                                   {money(m.thisMonth)}
@@ -4567,7 +4621,7 @@ function childRecModel({ child, payments }) {
   const disc      = discount;
   const payable   = Math.max(0, prev + thisMonth - disc - advance);
   const paid      = (payments || []).reduce((a, p) => a + (+p.amount || 0), 0);
-  const remaining = Math.max(0, payable - paid);
+  const remaining = payable - paid;   /* MINUS = advance (total se zyada wasool) */
   let status = 'none';
   if (paid > 0) status = remaining <= 0 ? 'full' : 'partial';
   const onelink = (payments || []).some(p => p.source === 'onelink' || p.source === 'bank');
@@ -5190,16 +5244,13 @@ function FamilyTreeReceiving({ toast }) {
                           );
                         })}
                       </tbody>
-                      <tfoot>
-                        <tr className="fee-recv-total">
-                          <td colSpan="4" style={{ textAlign: 'right', fontWeight: 800 }}>Total</td>
-                          <td className="fee-right">{money(totPayable)}</td>
-                          <td className="fee-right">{money(totPaid)}</td>
-                          <td className="fee-right">{money(totRem)}</td>
-                          <td colSpan="2"></td>
-                        </tr>
-                      </tfoot>
+                      {/* Column-wise Total row hata diya — neeche right corner par sirf
+                          Remaining ka total kaafi hai. */}
                     </table>
+                  </div>
+
+                  <div className="fee-family-total">
+                    Total Remaining: <span className={totRem < 0 ? 'fee-neg' : undefined}>{money(totRem)}</span>
                   </div>
                 </div>
               </div>
@@ -5294,8 +5345,14 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
       perHeadPaid[k] = (perHeadPaid[k] || 0) + (+v || 0);
     }));
     m.heads.forEach(h => {
-      seed[h.name] = Math.max(0, h.net - (+perHeadPaid[h.name] || 0));
+      const paid = Math.max(+perHeadPaid[h.name] || 0, +(m.paidPerHead?.[h.name]) || 0);
+      seed[h.name] = Math.max(0, h.net - paid);
     });
+    /* Previous Pending ka bacha hua baqaya bhi seed karo (individual modal jaisa). */
+    if (m.prev > 0) {
+      const pk = m.prevName || 'Previous Pending';
+      seed[pk] = Math.max(0, m.prev - (+m.prevPaid || 0));
+    }
     setPerHeadInput(seed);
     setDate(todayISO()); setMethod('Cash'); setRef(''); setTxn('');
   };
@@ -5307,8 +5364,9 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
      perHeadInput state. */
   const setPendingFor = (row, v) => {
     const owed = Math.max(0, row.net - row.paid);
-    const pend = Math.max(0, Math.min(Number(v) || 0, owed));
-    setPerHeadInput(prev => ({ ...prev, [row.name]: owed - pend }));
+    /* Pending MINUS bhi ho sakta hai (advance) — is liye niche clamp nahi. */
+    const pend = Number(v) || 0;
+    setPerHeadInput(prev => ({ ...prev, [row.name]: Math.max(0, owed - pend) }));
   };
 
   const computeRows = (ch, m, payments) => {
@@ -5316,10 +5374,12 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
     payments.forEach(p => Object.entries(p.perHead || {}).forEach(([k, v]) => {
       perHeadPaid[k] = (perHeadPaid[k] || 0) + (+v || 0);
     }));
+    /* Over-receiving allowed — owed se zyada lene par Pending MINUS (advance) ho jaata hai.
+       `paid` challan ke receivedAmount se bhi liya jata hai (refresh par bhi sahi rahe). */
     return m.heads.map(h => {
-      const paid    = +perHeadPaid[h.name] || 0;
-      const recvNow = m.onelink || m.status === 'full' ? 0 : Math.max(0, Math.min(+perHeadInput[h.name] || 0, h.net - paid));
-      const pending = Math.max(0, h.net - paid - recvNow);
+      const paid    = Math.max(+perHeadPaid[h.name] || 0, +(m.paidPerHead?.[h.name]) || 0);
+      const recvNow = m.onelink || m.status === 'full' ? 0 : Math.max(0, +perHeadInput[h.name] || 0);
+      const pending = h.net - paid - recvNow;   // negative = advance
       return { ...h, paid, recvNow, pending };
     });
   };
@@ -5338,7 +5398,29 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
     });
   }
 
-  const remainAfter = selModel ? Math.max(0, selModel.payable - alreadyPaid - recvNow) : 0;
+  /* Previous Pending — individual modal ki tarah ek alag row (apne input ke saath). */
+  const prevKey   = selModel?.prevName || 'Previous Pending';
+  const prevTotal = Math.max(0, +(selModel?.prev) || 0);
+  const prevPaid  = Math.max(0, +(selModel?.prevPaid) || 0);
+  const prevOwed  = Math.max(0, prevTotal - prevPaid);
+  const prevRecv  = (selModel && !(selModel.onelink || selModel.status === 'full'))
+    ? Math.max(0, +perHeadInput[prevKey] || 0) : 0;
+  const prevPend  = prevOwed - prevRecv;
+  if (selModel && prevTotal > 0) {
+    recvNow     += prevRecv;
+    alreadyPaid += prevPaid;
+    totalAfter  += prevTotal;
+    totalCh     += prevTotal;
+  }
+
+  /* ADVANCE ek CREDIT line hai — "Received" me MINUS me dikhta hai (read-only) aur
+     wahin se kat jaata hai, yani utna cash kam lena hai. */
+  const advCredit  = Math.max(0, +(selModel?.advance) || 0);
+  const advApplied = Math.min(advCredit, recvNow);
+  recvNow = recvNow - advApplied;
+
+  /* Total se zyada wasool ho to MINUS me — yani student ka advance. */
+  const remainAfter = selModel ? (selModel.payable - alreadyPaid - recvNow) : 0;
 
   const handleSaveChild = () => {
     if (!selChild) return;
@@ -5346,6 +5428,8 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
     if (!date) { toast('Receiving date is required', 'error'); return; }
     const perHead = {};
     rowsForSel.forEach(r => { if (r.recvNow > 0) perHead[r.name] = r.recvNow; });
+    /* Previous Pending ki raqam ASLI subHead key par (API perHead ko subHead se match karti hai). */
+    if (prevRecv > 0) perHead[prevKey] = (perHead[prevKey] || 0) + prevRecv;
     onSave({
       famKey: family.key, reg: selChild.reg, monthIdx,
       studentName: selChild.name,
@@ -5472,7 +5556,6 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
                                     <input
                                       type="number"
                                       min="0"
-                                      max={Math.max(0, r.net - r.paid)}
                                       value={perHeadInput[r.name] === 0 ? 0 : (perHeadInput[r.name] || '')}
                                       onChange={e => setHead(r.name, e.target.value)}
                                       placeholder="0"
@@ -5486,7 +5569,6 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
                                     <input
                                       type="number"
                                       min="0"
-                                      max={Math.max(0, r.net - r.paid)}
                                       value={r.pending}
                                       onChange={e => setPendingFor(r, e.target.value)}
                                       placeholder="0"
@@ -5495,13 +5577,62 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
                                 </td>
                               </tr>
                             ))}
+                            {/* PREVIOUS PENDING — individual modal jaisi hi row, apne input ke saath. */}
+                            {prevTotal > 0 && (
+                              <tr>
+                                <td><b>Previous Pending</b></td>
+                                <td className="fee-right">{money(prevTotal)}</td>
+                                <td className="fee-right">0</td>
+                                <td className="fee-right"><span className="fee-cell-grey">{money(prevTotal)}</span></td>
+                                <td className="fee-right">
+                                  {selModel.onelink || selModel.status === 'full' ? (
+                                    <span className="fee-cell-grey">{money(prevPaid)}</span>
+                                  ) : (
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      value={perHeadInput[prevKey] === 0 ? 0 : (perHeadInput[prevKey] || '')}
+                                      onChange={e => setHead(prevKey, e.target.value)}
+                                      placeholder="0"
+                                    />
+                                  )}
+                                </td>
+                                <td className="fee-right">
+                                  {selModel.onelink || selModel.status === 'full' ? (
+                                    <span className="fee-cell-grey">{money(prevPend)}</span>
+                                  ) : (
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      value={prevPend}
+                                      onChange={e => {
+                                        const pend = Number(e.target.value) || 0;
+                                        setHead(prevKey, Math.max(0, prevOwed - pend));
+                                      }}
+                                      placeholder="0"
+                                    />
+                                  )}
+                                </td>
+                              </tr>
+                            )}
+                            {/* ADVANCE — credit line: "Received" MINUS me, read-only. */}
+                            {advCredit > 0 && (
+                              <tr>
+                                <td><b>Advance</b></td>
+                                <td className="fee-right">—</td>
+                                <td className="fee-right">—</td>
+                                <td className="fee-right"><span className="fee-cell-grey">{money(-advCredit)}</span></td>
+                                <td className="fee-right fee-neg"><b>{money(-advApplied)}</b></td>
+                                <td className="fee-right">{money(advCredit - advApplied)}</td>
+                              </tr>
+                            )}
                           </tbody>
                           <tfoot>
                             <tr className="fee-recv-total">
                               <td>Total</td>
                               <td className="fee-right">{money(totalCh)}</td>
                               <td className="fee-right">{money(totalDisc)}</td>
-                              <td className="fee-right">{money(totalAfter)}</td>
+                              <td className="fee-right">{money(totalAfter - advApplied)}</td>
                               <td className="fee-right">{money(alreadyPaid + recvNow)}</td>
                               <td className="fee-right">{money(remainAfter)}</td>
                             </tr>
@@ -5937,15 +6068,44 @@ function buildStudentHistory({ recs, fromIdx, toIdx, year, empNames = {} }) {
   });
 
   const months = [];
+  /* RUNNING-LEDGER model — carry-forward ("Previous Pending") ko double-count na kare.
+     Har mahine ka "Previous Pending" line pichle mahine ka hi unpaid hota hai; agar hum
+     har challan poora jodein to wahi raqam do baar ginn jaati thi (Total Fee/Pending
+     inflated). Is liye:
+       - Sirf PEHLE mahine ka carry-forward "opening balance" ke taur par lo (range se
+         pehle ka baqaya), baaki mahino ke carry-forward chhod do (wo running me already hai).
+       - Har mahine: billed = us mahine ke NAYE charges; running += billed − received.
+     Isse pending hamesha ASLI current outstanding rehta hai (Receiving ke Remaining jaisa). */
+  const isPrevRow = (r) => /previous|pending|arrear/i.test(String(r.subHead || r.head || ''));
+  let running = 0, firstSeen = false;
   for (let m = fromIdx; m <= toIdx; m++) {
     const rec = byMonth.get(m);
     if (!rec) continue;
     const rows = rec.detailRows || [];
 
-    const challanAmt = rows.reduce((a, r) => a + ledgerRowNet(r), 0);
-    const received   = rows.reduce((a, r) => a + ledgerRowRecv(r), 0);
-    const pending    = rows.reduce((a, r) => a + ledgerRowPend(r), 0);
-    const status     = received <= 0 ? 'none' : pending > 0 ? 'partial' : 'full';
+    const carrySigned = rows.filter(isPrevRow)
+      .reduce((a, r) => a + ((+r.challanAmount || 0) - (+r.discount || 0)), 0);   // advance → negative
+    const newBilled   = rows.filter(r => !isPrevRow(r)).reduce((a, r) => a + ledgerRowNet(r), 0);
+    const received    = rows.reduce((a, r) => a + ledgerRowRecv(r), 0);
+
+    /* Pehle mahine ka carry-forward opening balance hai (range se pehle ka baqaya ya
+       advance); baad ke mahino ka carry-forward chhod do (wo running me already hai). */
+    const isFirst = !firstSeen;
+    if (isFirst) { running = carrySigned; firstSeen = true; }
+    const openBal    = running;                                   // month se pehle ki balance (>0 baqaya, <0 advance)
+    const advApplied = openBal < 0 ? Math.min(-openBal, newBilled) : 0;  // pichla ADVANCE is mahine laga
+    /* Challan Amount = is mahine ke naye charges + (SIRF pehle mahine ka) pichla baqaya —
+       taake Total Fee me har fee ek hi baar aaye. Advance ko yahan minus NAHI karte;
+       wo alag "Advance" column me dikhta hai. */
+    const openDebt   = isFirst && openBal > 0 ? openBal : 0;
+    const challanAmt = newBilled + openDebt;
+    running = openBal + newBilled - received;                     // naya balance (advance → negative)
+    const pending    = Math.max(0, running);
+    /* Status sirf ASLI CASH par — advance apne alag column me. Advance ne poora cover
+       kar diya (cash 0, pending 0) to 'full', warna cash aane par running dekho. */
+    const status     = received <= 0
+      ? (advApplied > 0 && running <= 0 ? 'full' : 'none')
+      : running > 0 ? 'partial' : 'full';
 
     /* Receiving a payment stamps modifiedAt, but an untouched challan still
        carries its creation stamp — so it only counts as a receiving date once
@@ -5967,7 +6127,7 @@ function buildStudentHistory({ recs, fromIdx, toIdx, year, empNames = {} }) {
       challanNo:   `CH-${rec.year}${String(rec.month).padStart(2, '0')}-${rec.id}`,
       challanDate: String(rec.dateofCreattion || '').slice(0, 10) || '—',
       dueDate:     String(rec.dueDate || '').slice(0, 10) || '—',
-      challanAmt, received, pending, status,
+      challanAmt, received, pending, status, advApplied,
       method:   received > 0 ? (rec.paymentMethod || 'Cash') : '—',
       recvDate: stamp ? stamp.slice(0, 10) : '—',
       time:     stamp ? stamp.slice(11, 16) : '—',
@@ -6000,16 +6160,19 @@ function buildStudentHistory({ recs, fromIdx, toIdx, year, empNames = {} }) {
 }
 
 function feeHistTotals(months) {
-  let fee = 0, recv = 0, pend = 0, lastDate = '—', lastBy = '—', lastTime = '—';
+  let fee = 0, recv = 0, adv = 0, lastDate = '—', lastBy = '—', lastTime = '—';
   months.forEach(mo => {
     fee  += mo.challanAmt;
     recv += mo.received;
-    pend += mo.pending;
+    adv  += (mo.advApplied || 0);
     if (mo.recvDate !== '—') { lastDate = mo.recvDate; lastBy = mo.recvBy; lastTime = mo.time; }
   });
+  /* Pending = CURRENT outstanding = aakhri mahine ka running balance. Per-mahine `pending`
+     running balance hai (additive nahi) — jodte NAHI, warna carry-forward/advance double count. */
+  const pend = months.length ? months[months.length - 1].pending : 0;
   const paidCount = months.filter(mo => mo.received > 0).length;
   return {
-    challans: months.length, fee, recv, pend,
+    challans: months.length, fee, recv, pend, adv,
     lastDate, lastBy, lastTime,
     paidCount, unpaid: months.length - paidCount,
   };
@@ -6578,6 +6741,9 @@ function FeeHistoryDetailModal({ cfg, onClose, year, onDownloadStudent, onDownlo
               <>
                 <div className="fee-hist-metacard"><div className="l">Total Fee</div><div className="v">{money(totals.fee)}</div></div>
                 <div className="fee-hist-metacard"><div className="l">Received</div><div className="v green">{money(totals.recv)}</div></div>
+                {totals.adv > 0 && (
+                  <div className="fee-hist-metacard"><div className="l">Advance Used</div><div className="v" style={{ color: '#0F766E' }}>{money(-totals.adv)}</div></div>
+                )}
                 <div className="fee-hist-metacard"><div className="l">Pending</div><div className="v red">{money(totals.pend)}</div></div>
                 <div className="fee-hist-metacard"><div className="l">Months</div><div className="v">{totals.challans}</div></div>
               </>
@@ -6598,6 +6764,7 @@ function FeeHistoryDetailModal({ cfg, onClose, year, onDownloadStudent, onDownlo
                   <tr>
                     <th>Month</th>
                     <th className="fee-right">Challan Amount</th>
+                    <th className="fee-right">Advance</th>
                     <th className="fee-right">Received</th>
                     <th className="fee-right">Pending</th>
                     <th>Receiving Date</th>
@@ -6611,6 +6778,8 @@ function FeeHistoryDetailModal({ cfg, onClose, year, onDownloadStudent, onDownlo
                     <tr key={mo.m}>
                       <td><b>{mo.monthName}</b> {year}</td>
                       <td className="fee-right">{money(mo.challanAmt)}</td>
+                      {/* Advance jo is mahine challan par laga (pichhle overpay se) — MINUS me. */}
+                      <td className={`fee-right${mo.advApplied > 0 ? ' fee-neg' : ''}`}>{money(mo.advApplied > 0 ? -mo.advApplied : 0)}</td>
                       <td className="fee-right">{mo.received > 0 ? <span className="fee-paid-amt">{money(mo.received)}</span> : '0'}</td>
                       <td className="fee-right">{mo.pending > 0 ? <span className="fee-neg">{money(mo.pending)}</span> : '0'}</td>
                       <td>
@@ -6829,6 +6998,7 @@ function histStudentLedgerRows(months, year) {
     <tr>
       <td><b>${escHtml(mo.monthName)}</b> ${escHtml(year)}</td>
       <td class="right">${mo.challanAmt.toLocaleString('en-PK')}</td>
+      <td class="right">${mo.advApplied > 0 ? '-' + mo.advApplied.toLocaleString('en-PK') : '0'}</td>
       <td class="right green">${mo.received > 0 ? mo.received.toLocaleString('en-PK') : '0'}</td>
       <td class="right ${mo.pending > 0 ? 'red' : ''}">${mo.pending.toLocaleString('en-PK')}</td>
       <td>${escHtml(mo.recvDate)}${mo.time !== '—' ? `<br/><span style="color:#64748B;font-size:10px">${escHtml(fmtTime12(mo.time))}</span>` : ''}</td>
@@ -6852,11 +7022,12 @@ function buildHistStudentReportHTML({ mode, c, s, months, period, year = '', sch
   <div class="hist-cards">
     <div class="hist-card"><div class="l">Total Fee</div><div class="v">${t.fee.toLocaleString('en-PK')}</div></div>
     <div class="hist-card"><div class="l">Received</div><div class="v green">${t.recv.toLocaleString('en-PK')}</div></div>
+    ${t.adv > 0 ? `<div class="hist-card"><div class="l">Advance Used</div><div class="v">-${t.adv.toLocaleString('en-PK')}</div></div>` : ''}
     <div class="hist-card"><div class="l">Pending</div><div class="v red">${t.pend.toLocaleString('en-PK')}</div></div>
     <div class="hist-card"><div class="l">Months</div><div class="v">${t.challans}</div></div>
   </div>
   <table>
-    <thead><tr><th>Month</th><th class="right">Challan Amount</th><th class="right">Received</th><th class="right">Pending</th><th>Receiving Date</th><th>Received By</th><th>Payment Method</th><th class="center">Status</th></tr></thead>
+    <thead><tr><th>Month</th><th class="right">Challan Amount</th><th class="right">Advance</th><th class="right">Received</th><th class="right">Pending</th><th>Receiving Date</th><th>Received By</th><th>Payment Method</th><th class="center">Status</th></tr></thead>
     <tbody>${histStudentLedgerRows(months, year)}</tbody>
   </table>
 </div>`;
@@ -7423,33 +7594,68 @@ function ledgerPeriods(fromM, fromY, toM, toY) {
    builders expect. `heads` carries one row per fee head across all periods —
    unpaid heads land wholly in `pend`, partly-paid ones only for the shortfall. */
 function ledgerModel(recs) {
+  const isPrev = (r) => /previous|pending|arrear/i.test(String(r.subHead || r.head || ''));
+  /* Mahine-wise sort — running-ledger sahi chalne ke liye. */
+  const list = (recs || []).slice().sort(
+    (a, b) => (Number(a.year) * 12 + Number(a.month)) - (Number(b.year) * 12 + Number(b.month)),
+  );
+
   const heads = new Map();
-  let payable = 0, paid = 0, remaining = 0, disc = 0;
-  (recs || []).forEach(rec => {
-    (rec.detailRows || []).forEach(r => {
-      const net  = ledgerRowNet(r);
-      const recv = ledgerRowRecv(r);
-      const pend = ledgerRowPend(r);
-      payable += net; paid += recv; remaining += pend; disc += (+r.discount || 0);
+  let payable = 0, paid = 0, disc = 0;
+  /* CARRY-FORWARD ke double-count se bachne ke liye running-ledger (Fee History jaisa):
+     "Previous Pending" line pichle mahine ka hi baqaya hota hai — agar hum har mahine ka
+     pending jod dein to wahi raqam do-do baar ginn jaati thi (e.g. 15,500 + 15,500 = 31,000).
+     Is liye sirf PEHLE mahine ka carry opening balance, baaki running me already shaamil. */
+  let running = 0, seen = false, advApplied = 0;
+  list.forEach(rec => {
+    const rows = rec.detailRows || [];
+    const carrySigned = rows.filter(isPrev).reduce((a, r) => a + ((+r.challanAmount || 0) - (+r.discount || 0)), 0);
+    const newBilled   = rows.filter(r => !isPrev(r)).reduce((a, r) => a + ledgerRowNet(r), 0);
+    const received    = rows.reduce((a, r) => a + ledgerRowRecv(r), 0);
+    const isFirst = !seen;
+    if (isFirst) { running = carrySigned; seen = true; }
+    const openDebt = isFirst ? Math.max(0, carrySigned) : 0;   // sirf pehle mahine ka pichla baqaya
+    /* Is mahine laga pichla ADVANCE credit (running < 0 tha) — total advance me jodo. */
+    if (running < 0) advApplied += Math.min(-running, newBilled);
+    payable += newBilled + openDebt;
+    paid    += received;
+    disc    += rows.reduce((a, r) => a + (+r.discount || 0), 0);
+    running += newBilled - received;
+
+    /* Per-head aggregation (Head-Wise report ke liye) — waisa hi. */
+    rows.forEach(r => {
       const sub = r.subHead || r.head || '—';
       const k   = `${r.head || ''}|${sub}`;
       const agg = heads.get(k) || { head: r.head || 'Account Payable', sub, total: 0, disc: 0, recv: 0, pend: 0 };
       agg.total += (+r.challanAmount || 0);
       agg.disc  += (+r.discount || 0);
-      agg.recv  += recv;
-      agg.pend  += pend;
+      agg.recv  += ledgerRowRecv(r);
+      agg.pend  += ledgerRowPend(r);
       heads.set(k, agg);
     });
   });
+  const remaining = Math.max(0, running);   // CURRENT outstanding (de-duped)
+  /* ADVANCE = pichhle overpay se aaya credit jo aage ke challans par laga (running < 0
+     wale mahino se). Head-Wise report is se pending me se minus dikhati hai. */
+  const advance = advApplied;
+
+  /* Unpaid heads — SIRF aakhri (current) challan se, taake purane re-billed heads dobara
+     na aayein. Advance/negative wale skip. */
+  const latest = list[list.length - 1];
+  const unpaidHeads = latest
+    ? Array.from(new Set(
+        (latest.detailRows || [])
+          .filter(r => ledgerRowUnpaid(r) && ((+r.challanAmount || 0) - (+r.discount || 0)) > 0)
+          .map(r => r.subHead || r.head || '—'),
+      ))
+    : [];
+
   return {
-    billed: (recs || []).length > 0,
-    payable, paid, remaining, disc, advance: 0,
+    billed: list.length > 0,
+    payable, paid, remaining, disc, advance,
     heads: Array.from(heads.values()),
-    recs: recs || [],
-    /* Heads still carrying receivedAmount === null — the defaulter evidence. */
-    unpaidHeads: Array.from(new Set(
-      (recs || []).flatMap(rec => (rec.detailRows || []).filter(ledgerRowUnpaid).map(r => r.subHead || r.head || '—')),
-    )),
+    recs: list,
+    unpaidHeads,
   };
 }
 
@@ -7954,7 +8160,7 @@ function ReportPanelHeadwise({ toast }) {
       if (!c) { toast('Select a class first', 'warning'); return; }
       const rows = allStudents
         .filter(x => x.c.key === clsKey && x.m.billed)
-        .map(({ s, m }) => ({ s, heads: ledgerHeadRows(m, head) }))
+        .map(({ s, m }) => ({ s, m, heads: ledgerHeadRows(m, head) }))
         .filter(x => x.heads.length > 0);
       setResult({ kind: 'class', c, rows, from, to });
       toast(rows.length ? 'Class head-wise data loaded' : 'No challans for this class in the selected range', rows.length ? 'info' : 'warning');
@@ -8105,14 +8311,20 @@ function ReportPanelHeadwise({ toast }) {
                     <th className="fee-right">Standard</th>
                     <th className="fee-right">Discount</th>
                     <th className="fee-right">Received</th>
+                    <th className="fee-right">Advance</th>
                     <th className="fee-right">Pending</th>
                   </tr>
                 </thead>
                 <tbody>
                   {result.rows.length === 0 ? (
-                    <tr><td colSpan="7" className="fee-stbl-empty">No students.</td></tr>
-                  ) : result.rows.map(({ s, heads: rows }, j) => {
+                    <tr><td colSpan="8" className="fee-stbl-empty">No students.</td></tr>
+                  ) : result.rows.map(({ s, m, heads: rows }, j) => {
                     const sum = rows.reduce((a, r) => ({ total: a.total + r.total, disc: a.disc + r.disc, recv: a.recv + r.recv, pend: a.pend + r.pend }), { total: 0, disc: 0, recv: 0, pend: 0 });
+                    /* "All Heads" par pura student ka SAHI outstanding (m.remaining, de-duped +
+                       advance) dikhao; kisi khaas head par us head ka apna hisaab. */
+                    const allHeads = head === 'All Heads';
+                    const adv  = allHeads ? (m?.advance || 0) : 0;
+                    const pend = allHeads ? (m?.remaining || 0) : sum.pend;
                     return (
                       <tr key={s.reg}>
                         <td className="fee-num">{j + 1}</td>
@@ -8121,7 +8333,8 @@ function ReportPanelHeadwise({ toast }) {
                         <td className="fee-right">{money(sum.total)}</td>
                         <td className="fee-right">{money(sum.disc)}</td>
                         <td className="fee-right fee-paid-amt">{money(sum.recv)}</td>
-                        <td className="fee-right">{sum.pend > 0 ? <span className="fee-neg">{money(sum.pend)}</span> : '0'}</td>
+                        <td className={`fee-right${adv > 0 ? ' fee-neg' : ''}`}>{money(adv > 0 ? -adv : 0)}</td>
+                        <td className="fee-right">{pend > 0 ? <span className="fee-neg">{money(pend)}</span> : '0'}</td>
                       </tr>
                     );
                   })}
@@ -9078,7 +9291,16 @@ function feeSlipHTML({ copyLabel, classMeta, student, heads, settings, period, i
   const detailRows = student?._challan?.detailRows;
   let rows, arrears;
   if (Array.isArray(detailRows) && detailRows.length) {
-    rows = detailRows.map(r => {
+    /* ADVANCE (negative "Previous Pending") ko head-table se bahar nikaalo — wo Total ke
+       BAAD "Arrears / Advance" me minus hota hai. Warna wo discount column me chala jata
+       tha (Std −1,770 / Disc −1,770 / Net 0) aur Net Payable se ghatta hi nahi tha. */
+    let advOut = 0;
+    const billRows = detailRows.filter(r => {
+      const isPrev = /previous|pending|arrear/i.test(String(r.subHead || r.head || ''));
+      if (isPrev && whole(r.challanAmount) < 0) { advOut += Math.abs(whole(r.challanAmount)); return false; }
+      return true;
+    });
+    rows = billRows.map(r => {
       const name = r.subHead || r.head || '';
       const std  = whole(r.challanAmount);
       /* Har challan apna HI stored discount dikhata hai — jo us mahine generate karte
@@ -9095,7 +9317,7 @@ function feeSlipHTML({ copyLabel, classMeta, student, heads, settings, period, i
       const t = whole(student.transport);
       rows.push({ name: 'Transport', std: t, disc: 0, net: t });
     }
-    arrears = 0; // previous pending / advance is already a line in detailRows
+    arrears = -advOut;   // advance → Total ke baad minus
   } else {
     rows = heads.map(h => {
       const raw   = whole(h.amt);
@@ -9261,7 +9483,16 @@ function feeThermalChallanHTML({ classMeta, student, heads, settings, period, is
   const detailRows = student?._challan?.detailRows;
   let rows, arrears;
   if (Array.isArray(detailRows) && detailRows.length) {
-    rows = detailRows.map(r => {
+    /* ADVANCE (negative "Previous Pending") ko head-table se bahar nikaalo — wo Total ke
+       BAAD "Arrears / Advance" me minus hota hai. Warna wo discount column me chala jata
+       tha (Std −1,770 / Disc −1,770 / Net 0) aur Net Payable se ghatta hi nahi tha. */
+    let advOut = 0;
+    const billRows = detailRows.filter(r => {
+      const isPrev = /previous|pending|arrear/i.test(String(r.subHead || r.head || ''));
+      if (isPrev && whole(r.challanAmount) < 0) { advOut += Math.abs(whole(r.challanAmount)); return false; }
+      return true;
+    });
+    rows = billRows.map(r => {
       const name = r.subHead || r.head || '';
       const std  = whole(r.challanAmount);
       /* Har challan apna HI stored discount dikhata hai — jo us mahine generate karte
@@ -9276,7 +9507,7 @@ function feeThermalChallanHTML({ classMeta, student, heads, settings, period, is
       const t = whole(student.transport);
       rows.push({ name: 'Transport', std: t, disc: 0, net: t });
     }
-    arrears = 0;
+    arrears = -advOut;   // advance → Total ke baad minus
   } else {
     rows = heads.map(h => {
       const raw  = whole(h.amt);
@@ -9353,12 +9584,17 @@ function feeFamilySlipHTML({ copyLabel, family, settings, period, issueISO, dueI
   const showPsd = settings.showPsd !== false;
   /* Whole rupees — list/cards ki tarah, challan par decimal na dikhe. */
   const w = (v) => { const n = Math.round(Number(v)); return Number.isFinite(n) ? n : 0; };
+  /* fee/transport/dues pehle se discount-ke-BAAD ka baqaya hain, is liye Net wahi hai
+     aur Std usme discount wapas jod kar banaya jata hai (warna discount do baar ghat-ta). */
   const rows = family.children.map(ch => {
-    const std  = w(ch.fee) + w(ch.transport);
+    const net  = w(ch.fee) + w(ch.transport) + w(ch.dues);
     const disc = w(ch.discount);
-    return { name: `${ch.name} (${ch.cls}-${ch.sec})`, std, disc, net: std - disc };
+    return { name: `${ch.name} (${ch.cls}-${ch.sec})`, std: net + disc, disc, net };
   });
   const tNet = rows.reduce((a, r) => a + r.net, 0);
+  /* Advance (jama shuda extra) Total ke BAAD minus hota hai. */
+  const famAdv  = family.children.reduce((a, ch) => a + w(ch.advance), 0);
+  const famPay  = tNet - famAdv;
   const psidPlain = FEE_SCHOOL.psid.replace(/[^0-9]/g, '');
 
   return `
@@ -9383,11 +9619,12 @@ function feeFamilySlipHTML({ copyLabel, family, settings, period, issueISO, dueI
       <tbody>
         ${rows.map(r => `<tr><td>${escHtml(r.name)}</td><td>${r.std.toLocaleString('en-PK')}</td><td>${r.disc ? r.disc.toLocaleString('en-PK') : '—'}</td><td>${r.net.toLocaleString('en-PK')}</td></tr>`).join('')}
         <tr class="tr-total"><td colspan="3">Total</td><td>${tNet.toLocaleString('en-PK')}</td></tr>
+        ${famAdv > 0 ? `<tr class="tr-total"><td colspan="3">Less: Advance</td><td>-${famAdv.toLocaleString('en-PK')}</td></tr>` : ''}
       </tbody>
     </table>
   </div>
   <div class="bottom-section">
-    <div class="net-box"><div class="nb-lbl">Total Family Payable</div><div class="nb-val">Rs. ${tNet.toLocaleString('en-PK')}</div></div>
+    <div class="net-box"><div class="nb-lbl">Total Family Payable</div><div class="nb-val">Rs. ${famPay.toLocaleString('en-PK')}</div></div>
     ${showPsd ? `
     <div class="psid-block">
       <div class="psid-top"><div class="psid-dot"></div><span class="psid-tag">1Link PSID — Pay via Any Banking App</span></div>
@@ -9444,12 +9681,17 @@ function feeThermalFamilyChallanHTML({ family, settings, period, issueISO, dueIS
   const showPsd = settings.showPsd !== false;
   /* Whole rupees — list/cards ki tarah, challan par decimal na dikhe. */
   const w = (v) => { const n = Math.round(Number(v)); return Number.isFinite(n) ? n : 0; };
+  /* fee/transport/dues pehle se discount-ke-BAAD ka baqaya hain, is liye Net wahi hai
+     aur Std usme discount wapas jod kar banaya jata hai (warna discount do baar ghat-ta). */
   const rows = family.children.map(ch => {
-    const std  = w(ch.fee) + w(ch.transport);
+    const net  = w(ch.fee) + w(ch.transport) + w(ch.dues);
     const disc = w(ch.discount);
-    return { name: `${ch.name} (${ch.cls}-${ch.sec})`, std, disc, net: std - disc };
+    return { name: `${ch.name} (${ch.cls}-${ch.sec})`, std: net + disc, disc, net };
   });
   const tNet = rows.reduce((a, r) => a + r.net, 0);
+  /* Advance (jama shuda extra) Total ke BAAD minus hota hai. */
+  const famAdv  = family.children.reduce((a, ch) => a + w(ch.advance), 0);
+  const famPay  = tNet - famAdv;
 
   return `
 <div class="th-challan">
@@ -9475,11 +9717,12 @@ function feeThermalFamilyChallanHTML({ family, settings, period, issueISO, dueIS
         <td class="right">${r.net.toLocaleString('en-PK')}</td>
       </tr>`).join('')}
       <tr class="tr-total"><td colspan="3">Total</td><td class="right">${tNet.toLocaleString('en-PK')}</td></tr>
+      ${famAdv > 0 ? `<tr class="tr-total"><td colspan="3">Less: Advance</td><td class="right">-${famAdv.toLocaleString('en-PK')}</td></tr>` : ''}
     </tbody>
   </table>
   <div class="th-net">
     <span>Total Family Payable</span>
-    <span>Rs. ${tNet.toLocaleString('en-PK')}</span>
+    <span>Rs. ${famPay.toLocaleString('en-PK')}</span>
   </div>
   ${showPsd ? `
   <div class="th-psid">
