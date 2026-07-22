@@ -186,7 +186,7 @@ export default function App() {
   const { isActive: isModuleActive } = useModules();
   /* Logged-in user ki module-level access (School Head → sab allowed; warna API
      permissions ke hisaab se). Jis module me koi access nahi, wo nav se hat jata hai. */
-  const { canModule } = usePermissions();
+  const { canModule, ready: permsReady } = usePermissions();
   const navItemVisible = (navId) => {
     const modId = NAV_TO_MODULE_MAP[navId];
     if (!modId) return true;                  /* not registry-backed → always show */
@@ -194,6 +194,20 @@ export default function App() {
     const label = MODULE_ID_TO_LABEL[modId];
     return label ? canModule(label) : true;   /* user ki permission ke hisaab se */
   };
+
+  /* Permissions load hone ke baad, agar current/persisted module is user ko
+     visible hi nahi (e.g. default 'acad' but Academics ki access nahi), to
+     pehle visible nav item par bhej do — warna sidebar me hidden module ka
+     content khul jata hai. */
+  useEffect(() => {
+    if (!permsReady) return;
+    if (navItemVisible(active)) return;
+    for (const section of NAV_SECTIONS) {
+      const found = section.items.find((it) => navItemVisible(it.id));
+      if (found) { setActive(found.id); return; }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [permsReady, active]);
 
   /* ── Academics tab state (lifted so the topbar breadcrumb stays in sync) ── */
   const [l1, setL1] = useState('sos');      // 'sos' | 'lp'

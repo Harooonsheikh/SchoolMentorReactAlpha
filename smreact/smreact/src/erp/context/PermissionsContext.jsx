@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { buildUrl } from '../../utils/apiConfig';
+import { MODULE_REGISTRY } from '../config/moduleConfig';
 
 /* ═══════════════════════════════════════════════════════════════════
    PERMISSIONS CONTEXT — logged-in user ki menu/screen/action access.
@@ -24,6 +25,21 @@ import { buildUrl } from '../../utils/apiConfig';
 
 const PermissionsContext = createContext(null);
 const norm = (s) => String(s ?? '').trim().toLowerCase();
+
+/* ── Module-level allow-list universe (labels normalised) ──────────────
+   EVERY module the app knows about (registry) is permission-gated per
+   user: use dikhega sirf tab jab permission response me us module ki koi
+   action accessible ho. Response me absent = NO access — backend sirf
+   granted rows bhejta hai, poora true/false matrix nahi.
+
+   Note: Settings / User Permissions / Audit Logs permission tree me
+   grantable hain (grant hone par API me aate hain). Launch Setup tree
+   me hai hi nahi → sirf School Head (fullAccess) ko dikhega. School Head
+   aur jin users ka koi permission-data nahi (fail-open) — dono ko poora
+   access milta hai, is liye koi lockout nahi. */
+const GATEABLE_MODULES = new Set(
+  MODULE_REGISTRY.map((m) => norm(m.label)),
+);
 
 const FULL_ACCESS_VALUE = {
   ready: true, fullAccess: true, isSchoolHead: false,
@@ -105,7 +121,10 @@ export function PermissionsProvider({ children }) {
     const canModule = (menu) => {
       if (fullAccess) return true;
       const m = norm(menu);
-      if (!knownModules.has(m)) return true;
+      /* Registry ka koi bhi module → sirf tab dikhao jab response me is
+         module ki koi action accessible ho. Absent = NO access. */
+      if (GATEABLE_MODULES.has(m)) return modules.has(m);
+      if (!knownModules.has(m)) return true;          // truly uncovered → allow (legacy safety)
       return modules.has(m);
     };
     return { ready, fullAccess, isSchoolHead, can, canScreen, canModule };
