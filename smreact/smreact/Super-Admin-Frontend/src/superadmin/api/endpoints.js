@@ -120,7 +120,7 @@ export const EP = {
   /* ── Registration (branch directory — lives on the main ERP API, NOT under
      the superadmin root, so services call it with an absolute URL). ── */
   registration: {
-    branches: () => `/api/Registration/get-all-branches`,
+    branches: () => `/api/Registration/old_MISDBBranch`,
   },
 
   /* ── AI / wallet (per-branch Mentor AI plan + subscription state). ── */

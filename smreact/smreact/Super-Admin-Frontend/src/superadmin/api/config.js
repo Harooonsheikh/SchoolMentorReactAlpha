@@ -43,11 +43,11 @@ const cfg = {
 export let SA_API_BASE = cfg.apiBaseUrl;
 
 /* Main ERP API base — hosts the shared Registration/branch directory, which
-   lives outside the superadmin root (e.g. .../api/Registration/get-all-branches).
+   lives outside the superadmin root (e.g. .../api/Registration/old_MISDBBranch).
 
    Points DIRECTLY at the absolute ERP host on :4100, exactly like the main app's
    src/utils/apiConfig.js (DEFAULT_URL) — so branch calls hit the full URL
-   http://50.190.164.42:4100/api/Registration/get-all-branches in dev and prod,
+   http://50.190.164.42:4100/api/Registration/old_MISDBBranch in dev and prod,
    no proxy needed. Override with REACT_APP_SA_ERP_BASE when the host changes. */
 export const ERP_API_BASE = stripTrailingSlash(env.REACT_APP_SA_ERP_BASE || 'http://50.190.164.42:4100');
 

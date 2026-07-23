@@ -3,8 +3,9 @@
 
    Two live sources, both cross-origin (proxied in dev by src/setupProxy.js):
 
-     1. ERP API   GET /api/Registration/get-all-branches
-        → { data: [ { id, name, address, branchPhone, isActive, ... } ] }
+     1. ERP API   GET /api/Registration/old_MISDBBranch
+        → { success, message, count,
+            data: [ { id, name, address, branchPhone, isActive, ... } ] }
         The branch directory: who the schools/campuses are.
 
      2. AI/wallet API  GET /ai/api/wallet/admin/branches/subscriptions/
