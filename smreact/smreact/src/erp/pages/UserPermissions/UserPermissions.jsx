@@ -2,11 +2,14 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import Tooltip from '../../components/Tooltip';
 import TutorialModal from '../../components/TutorialModal';
 import { getEmployeesByBranch } from '../../services/attendanceService';
+import { deleteHrEmployee, restoreHrEmployee } from '../../services/hrService';
+import { buildUrl } from '../../../utils/apiConfig';
 import {
   getRolesByBranch,
   saveRole,
   getUserRole,
   deleteRole as deleteRoleApi,
+  assignRoleToUser,
 } from '../../services/rolesService';
 import UsersTab from './UsersTab';
 import RolesTab from './RolesTab';
@@ -117,7 +120,20 @@ export default function UserPermissions({ toast = () => {} }) {
     if (tab !== 'users' || usersLoaded) return undefined;
     let alive = true;
     setUsersLoading(true);
-    getEmployeesByBranch()
+    /* Active + inactive dono laao taake deactivate kiya user reload ke baad
+       bhi list me (Inactive badge ke saath) dikhe. Id par dedupe. */
+    Promise.all([
+      getEmployeesByBranch(true),
+      getEmployeesByBranch(false).catch(() => []),
+    ])
+      .then(([act, inact]) => {
+        const seen = new Set();
+        return [...(act || []), ...(inact || [])].filter((e) => {
+          if (seen.has(e.id)) return false;
+          seen.add(e.id);
+          return true;
+        });
+      })
       .then(async (list) => {
         if (!alive) return;
         const mapped = (list || []).map(mapEmployeeToUser);
@@ -234,20 +250,126 @@ export default function UserPermissions({ toast = () => {} }) {
     toast(`${user.name} → ${next} Dashboard`, 'success');
   }, [users, logAudit, toast]);
 
-  const setUserStatus = useCallback((userId, status) => {
+  /* Deactivate par user ki SAARI saved menu-permissions backend par
+     isAccessable:false karke save karo — yani har checked module/screen
+     uncheck ho kar ERP access khatam. Pehle current permissions laao
+     (get-user-menu-permissions-by-branch), phir wahi list false ke saath
+     /save-user-menu-permissions par bhejo. */
+  const revokeAllPermissions = useCallback(async (user) => {
+    const branchId = sessionStorage.getItem('branchID') || '1';
+    const token = sessionStorage.getItem('token');
+    const headers = { Accept: '*/*', ...(token ? { Authorization: `Bearer ${token}` } : {}) };
+    const res = await fetch(buildUrl(`/get-user-menu-permissions-by-branch/${branchId}`), { headers });
+    const json = await res.json().catch(() => null);
+    const entry = (json?.data || []).find(d => String(d.employeeID) === String(user.empId));
+    const current = entry?.permissions || [];
+    if (!current.length) return;                 // kuch granted hi nahi — revoke ki zaroorat nahi
+    const payload = {
+      branchID: Number(branchId) || 0,
+      employeeID: Number(user.empId) || 0,
+      permissions: current.map(p => ({
+        menuName: p.menuName,
+        subMenuName: p.subMenuName,
+        action: p.action,
+        isAccessable: false,
+      })),
+    };
+    const save = await fetch(buildUrl('/save-user-menu-permissions'), {
+      method: 'POST',
+      headers: { ...headers, 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const sj = await save.json().catch(() => null);
+    if (!save.ok || (sj && sj.success === false)) {
+      throw new Error((sj && (sj.message || sj.Message)) || 'Could not revoke permissions');
+    }
+  }, []);
+
+  const setUserStatus = useCallback(async (userId, status) => {
     const user = users.find(u => u.id === userId);
     if (!user) return;
-    setUsers(prev => prev.map(u => (u.id === userId ? { ...u, status } : u)));
+    /* Deactivate → (1) saare permission checks uncheck, (2) assigned role
+       unassign, (3) employee backend par inactive (delete-employee soft
+       delete) — tabhi reload ke baad bhi status Inactive rehta hai.
+       Activate → restore-employee se backend par active. */
+    if (status !== 'Active') {
+      try {
+        await revokeAllPermissions(user);
+      } catch (err) {
+        console.error('Could not revoke permissions on deactivate:', err);
+        toast('Could not revoke permissions. Please try again.', 'error');
+        return;
+      }
+      /* Assigned role hatao (roleID:0 → unassign) taake Assign Role ka
+         check clear ho jaye. Role pehle se empty ho to ye step skip hota
+         hai — aisa user sirf deactivate hota hai. Best-effort: fail par
+         bhi deactivation jari rehti hai (permissions already revoked). */
+      if (user.role != null) {
+        try {
+          const res = await assignRoleToUser({
+            employeeID: Number(user.empId) || 0,
+            roleID:     0,
+            branchID:   Number(sessionStorage.getItem('branchID')) || 0,
+            createdBy:  Number(sessionStorage.getItem('UserID')) || 0,
+          });
+          if (res && (res.success === false || res.status === false)) {
+            throw new Error(res.message || res.Message || 'Unassign failed');
+          }
+        } catch (err) {
+          console.warn('Could not unassign role on deactivate:', err);
+        }
+      }
+      try {
+        await deleteHrEmployee({ id: user.empId });
+      } catch (err) {
+        console.error('Could not mark employee inactive:', err);
+        toast('Permissions revoked, but could not deactivate the account. Please try again.', 'error');
+        return;
+      }
+    } else {
+      try {
+        await restoreHrEmployee({ id: user.empId });
+      } catch (err) {
+        console.error('Could not restore employee:', err);
+        toast('Could not activate the account. Please try again.', 'error');
+        return;
+      }
+    }
+    setUsers(prev => prev.map(u => {
+      if (u.id !== userId) return u;
+      if (status === 'Active') return { ...u, status };
+      /* Deactivate → role wapas employee-flag wale label par (app-role hat
+         gaya), perms clear. */
+      const e = u._employee || {};
+      const flag = e.isPrinciple ? { label: 'Principal', color: '#7C3AED' }
+        : e.isTeacher ? { label: 'Teacher', color: '#1E40AF' }
+        : e.isParent ? { label: 'Parent', color: '#15803D' }
+        : { label: '—', color: '#64748B' };
+      return {
+        ...u,
+        status,
+        role: undefined,
+        roleLabel: flag.label,
+        roleColor: flag.color,
+        customPermissions: {},
+        permType: 'custom',
+      };
+    }));
     logAudit({
       user: user.name,
       action: status === 'Active' ? 'User Activated' : 'User Deactivated',
       detail: status === 'Active'
         ? `User account activated — ${user.employeeId}`
-        : `User account deactivated — ${user.employeeId}`,
+        : `User account deactivated — role unassigned, all module permissions revoked — ${user.employeeId}`,
       type: status === 'Active' ? 'activate' : 'deactivate',
     });
-    toast(status === 'Active' ? `${user.name} activated` : `${user.name} deactivated`, 'success');
-  }, [users, logAudit, toast]);
+    toast(
+      status === 'Active'
+        ? `${user.name} activated`
+        : `${user.name} deactivated — role and module access removed`,
+      'success',
+    );
+  }, [users, logAudit, toast, revokeAllPermissions]);
 
   /* ─── Role mutations ─── */
   /* Create/Update dono /save-role par jaate hain (id:0 → create).

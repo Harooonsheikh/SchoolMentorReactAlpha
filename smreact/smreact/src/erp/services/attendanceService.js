@@ -328,12 +328,14 @@ export async function getStaffAttendance(month) {
 
 // All employees for the branch (with class/section assignments).
 // Used for Staff Attendance rows + Student Attendance class-teacher lookup.
-export async function getEmployeesByBranch() {
+export async function getEmployeesByBranch(isActive) {
   const token = sessionStorage.getItem("token");
   const branchID = sessionStorage.getItem("branchID");
 
+  /* Bina param → default (active) list, boolean do to ?isActive= filter. */
+  const qs = typeof isActive === "boolean" ? `?isActive=${isActive}` : "";
   const response = await fetch(
-    buildUrl(`/api/LaunchSetup/get-employees-by-branch/${branchID}`),
+    buildUrl(`/api/LaunchSetup/get-employees-by-branch/${branchID}${qs}`),
     { method: "GET", headers: { Accept: "*/*", Authorization: `Bearer ${token}` } }
   );
 

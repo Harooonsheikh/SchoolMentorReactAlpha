@@ -223,22 +223,25 @@ export default function UsersTab({
                 <div className="td up-emp-meta">{u.lastLogin}</div>
               </Tooltip>
               <div className="td c up-actions">
-                <Tooltip text={u.roleLabel === 'Principal' ? 'Not available for Principal' : 'View read-only summary'}>
+                {/* Inactive user → sirf Activate button chalta hai; baaki
+                    (View / Edit / Assign) disabled taake pehle account
+                    activate karna pare. */}
+                <Tooltip text={u.roleLabel === 'Principal' ? 'Not available for Principal' : u.status !== 'Active' ? 'User is deactivated — activate first' : 'View read-only summary'}>
                   <button
                     className="up-act"
                     onClick={() => setEditFor({ user: u, readOnly: true })}
-                    disabled={u.roleLabel === 'Principal'}
+                    disabled={u.roleLabel === 'Principal' || u.status !== 'Active'}
                     aria-label="View permissions"
                   >
                     <i className="fa-solid fa-eye" aria-hidden="true"></i>
                   </button>
                 </Tooltip>
                 {canEdit && (
-                  <Tooltip text={u.roleLabel === 'Principal' ? 'Not available for Principal' : 'Edit permissions'}>
+                  <Tooltip text={u.roleLabel === 'Principal' ? 'Not available for Principal' : u.status !== 'Active' ? 'User is deactivated — activate first' : 'Edit permissions'}>
                     <button
                       className="up-act"
                       onClick={() => setEditFor({ user: u, readOnly: false })}
-                      disabled={u.roleLabel === 'Principal'}
+                      disabled={u.roleLabel === 'Principal' || u.status !== 'Active'}
                       aria-label="Edit permissions"
                     >
                       <i className="fa-solid fa-pen-to-square" aria-hidden="true"></i>
@@ -246,8 +249,13 @@ export default function UsersTab({
                   </Tooltip>
                 )}
                 {canAssign && (
-                  <Tooltip text={u.roleLabel === 'Principal' ? 'Not available for Principal' : 'Assign role'}>
-                    <button className="up-act" onClick={() => setAssignFor(u)} disabled={u.roleLabel === 'Principal'} aria-label="Assign role">
+                  <Tooltip text={u.roleLabel === 'Principal' ? 'Not available for Principal' : u.status !== 'Active' ? 'User is deactivated — activate first' : 'Assign role'}>
+                    <button
+                      className="up-act"
+                      onClick={() => setAssignFor(u)}
+                      disabled={u.roleLabel === 'Principal' || u.status !== 'Active'}
+                      aria-label="Assign role"
+                    >
                       <i className="fa-solid fa-user-tag" aria-hidden="true"></i>
                     </button>
                   </Tooltip>
@@ -348,7 +356,7 @@ function DeactivateDialog({ user, onCancel, onConfirm }) {
           </div>
           <div className="up-confirm-title">Deactivate {user.name}?</div>
           <div className="up-confirm-text">
-            This user will lose access to the ERP immediately. Their data will be preserved. You can reactivate at any time.
+            This user will lose access to the ERP immediately — their assigned role and all module permissions will be removed. Their data will be preserved. You can reactivate at any time.
           </div>
         </div>
         <div className="up-modal-foot up-modal-foot--center">
