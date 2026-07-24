@@ -4676,18 +4676,21 @@ function StuAddToFamilyModal({ student, cls, families, setFamilies, onClose, onC
    ═══════════════════════════════════════════════════════════════════ */
 function buildStuFamilyReportHTML(families, classes, school) {
   const color = '#1E3A8A';
-  /* Members derived from active student records (single source of truth). */
-  const memberOf = (famId) => {
+  /* Members come embedded on each family (from get-…→students[], mirroring the
+     on-screen list). Fall back to resolving from class data only when a record
+     lacks an embedded members[] — same rule the UI's `enriched` uses. */
+  const memberOf = (fam) => {
+    if (Array.isArray(fam.members)) return fam.members;
     const out = [];
     classes.forEach(c => c.students.forEach(s => {
-      if (s.family === famId) out.push({ ...s, _cls: c.cls, _sec: c.sec });
+      if (s.family === fam.id) out.push({ ...s, _cls: c.cls, _sec: c.sec });
     }));
     return out;
   };
   const totalFams    = families.length;
-  const totalMembers = families.reduce((a, f) => a + memberOf(f.id).length, 0);
+  const totalMembers = families.reduce((a, f) => a + memberOf(f).length, 0);
   const sections = families.map((f, i) => {
-    const mems = memberOf(f.id);
+    const mems = memberOf(f);
     return `
       <div class="sec-band"><span>${i + 1}. ${stuEsc(f.name)}</span><small>${mems.length} member(s)</small></div>
       <div class="kvgrid">
