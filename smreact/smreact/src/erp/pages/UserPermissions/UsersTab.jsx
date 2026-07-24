@@ -4,10 +4,12 @@ import Tooltip from '../../components/Tooltip';
 import EditPermissionsPanel from './EditPermissionsPanel';
 import AssignRoleModal from './AssignRoleModal';
 import DashboardTypeModal from './DashboardTypeModal';
-import { assignRoleToUser } from '../../services/rolesService';
+import { assignRoleToUser, saveUserMenuPermissions } from '../../services/rolesService';
 import {
   findRole,
   initialsOf,
+  permsFromModules,
+  apiPermissionsFromPerms,
 } from './permissionsData';
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -70,15 +72,17 @@ export default function UsersTab({
     }
   };
 
-  /* Assign Role → /assign-role-to-user par POST, phir local state + audit.
-     (Menu-permissions save NAHI karte — Edit Permissions panel role ke
-     modules se khud seed hoti hai.) Error par throw taake modal khula rahe. */
+  /* Assign Role → /assign-role-to-user par POST, phir role ke modules ko
+     user ki menu-permissions me sync, phir local state + audit.
+     Error par throw taake modal khula rahe. */
   const handleAssignRole = async (user, newRoleId) => {
+    const branchID   = Number(sessionStorage.getItem('branchID')) || 0;
+    const employeeID = Number(user.empId ?? user.employeeId) || 0;
     const payload = {
-      employeeID: Number(user.empId ?? user.employeeId) || 0,
-      roleID:     Number(newRoleId) || 0,
-      branchID:   Number(sessionStorage.getItem('branchID')) || 0,
-      createdBy:  Number(sessionStorage.getItem('UserID')) || 0,
+      employeeID,
+      roleID:    Number(newRoleId) || 0,
+      branchID,
+      createdBy: Number(sessionStorage.getItem('UserID')) || 0,
     };
     let res;
     try {
@@ -92,6 +96,25 @@ export default function UsersTab({
       toast(res.message || res.Message || 'Could not assign role', 'error');
       throw new Error(res.message || 'Assign failed');
     }
+
+    /* Role change ke baad Edit Permissions me role ke modules hi dikhne
+       chahiye — is liye role ke modules ko user ki menu-permissions me
+       reset kar do (full tree, taake purane custom/removed modules false
+       ho jayein). Fail ho to non-fatal (role assign ho chuka). */
+    const role = findRole(roles, newRoleId);
+    if (role && Array.isArray(role.modules)) {
+      try {
+        const perms = permsFromModules(role.modules);
+        await saveUserMenuPermissions({
+          branchID,
+          employeeID,
+          permissions: apiPermissionsFromPerms(perms),
+        });
+      } catch (err) {
+        console.error('Could not sync menu permissions for assigned role:', err);
+      }
+    }
+
     /* Local table + audit + success toast (assignRole khud toast karta hai). */
     assignRole(user.id, newRoleId);
   };
@@ -223,21 +246,18 @@ export default function UsersTab({
                 <div className="td up-emp-meta">{u.lastLogin}</div>
               </Tooltip>
               <div className="td c up-actions">
-                {/* Inactive user → sirf Activate button chalta hai; baaki
-                    (View / Edit / Assign) disabled taake pehle account
-                    activate karna pare. */}
-                <Tooltip text={u.roleLabel === 'Principal' ? 'Not available for Principal' : u.status !== 'Active' ? 'User is deactivated — activate first' : 'View read-only summary'}>
+                <Tooltip text={u.roleLabel === 'Principal' ? 'Not available for Principal' : 'View read-only summary'}>
                   <button
                     className="up-act"
                     onClick={() => setEditFor({ user: u, readOnly: true })}
-                    disabled={u.roleLabel === 'Principal' || u.status !== 'Active'}
+                    disabled={u.roleLabel === 'Principal'}
                     aria-label="View permissions"
                   >
                     <i className="fa-solid fa-eye" aria-hidden="true"></i>
                   </button>
                 </Tooltip>
                 {canEdit && (
-                  <Tooltip text={u.roleLabel === 'Principal' ? 'Not available for Principal' : u.status !== 'Active' ? 'User is deactivated — activate first' : 'Edit permissions'}>
+                  <Tooltip text={u.roleLabel === 'Principal' ? 'Not available for Principal' : u.status !== 'Active' ? 'User is deactivated — activate first to edit permissions' : 'Edit permissions'}>
                     <button
                       className="up-act"
                       onClick={() => setEditFor({ user: u, readOnly: false })}
@@ -249,13 +269,8 @@ export default function UsersTab({
                   </Tooltip>
                 )}
                 {canAssign && (
-                  <Tooltip text={u.roleLabel === 'Principal' ? 'Not available for Principal' : u.status !== 'Active' ? 'User is deactivated — activate first' : 'Assign role'}>
-                    <button
-                      className="up-act"
-                      onClick={() => setAssignFor(u)}
-                      disabled={u.roleLabel === 'Principal' || u.status !== 'Active'}
-                      aria-label="Assign role"
-                    >
+                  <Tooltip text={u.roleLabel === 'Principal' ? 'Not available for Principal' : u.status !== 'Active' ? 'User is deactivated — activate first to assign a role' : 'Assign role'}>
+                    <button className="up-act" onClick={() => setAssignFor(u)} disabled={u.roleLabel === 'Principal' || u.status !== 'Active'} aria-label="Assign role">
                       <i className="fa-solid fa-user-tag" aria-hidden="true"></i>
                     </button>
                   </Tooltip>
@@ -356,7 +371,7 @@ function DeactivateDialog({ user, onCancel, onConfirm }) {
           </div>
           <div className="up-confirm-title">Deactivate {user.name}?</div>
           <div className="up-confirm-text">
-            This user will lose access to the ERP immediately — their assigned role and all module permissions will be removed. Their data will be preserved. You can reactivate at any time.
+            This user will lose access to the ERP immediately. Their data will be preserved. You can reactivate at any time.
           </div>
         </div>
         <div className="up-modal-foot up-modal-foot--center">

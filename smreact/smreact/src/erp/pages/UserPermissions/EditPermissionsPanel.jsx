@@ -114,8 +114,13 @@ export default function EditPermissionsPanel({ user, roles, readOnly, onClose, o
     return active;
   }, [moduleState, role]);
 
+  /* Deactivated (Inactive) user ka ERP access khatam — is liye panel me
+     hamesha sab kuch unchecked dikhao, chahe backend me purani grants pari
+     hon. Sirf View me hi khulta hai (Edit/Assign inactive par disabled). */
+  const isInactive = user.status && user.status !== 'Active';
+
   /* Seed the editable permission map from the user's effective perms. */
-  const [perms,     setPerms]     = useState(() => ({ ...effectivePermsForUser(user, roles) }));
+  const [perms,     setPerms]     = useState(() => (isInactive ? {} : { ...effectivePermsForUser(user, roles) }));
   const [selModId,  setSelModId]  = useState(visibleTree[0]?.id || MODULE_TREE[0].id);
   const [showAdv,   setShowAdv]   = useState(false);
   /* API se aayi permissions ke keys (`${childId}.${action}`). Frontend applicability
@@ -143,6 +148,13 @@ export default function EditPermissionsPanel({ user, roles, readOnly, onClose, o
      seed karo: menuName → module (left), subMenuName → screen (right), action ka
      isAccessable=true → checkbox checked. */
   useEffect(() => {
+    /* Inactive user → koi permission nahi (sab unchecked). Na role se seed,
+       na API se — deactivate ke baad ERP access poora khatam. */
+    if (isInactive) {
+      setPerms({});
+      setApiKeys(new Set());
+      return undefined;
+    }
     /* Role-based user (role ke modules defined): permissions role ki base
        par hoti hain — role ke har module ki har applicable action checked.
        Yahi source of truth hai, is liye purani saved custom perms ko
