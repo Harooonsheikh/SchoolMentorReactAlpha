@@ -3719,8 +3719,23 @@ function FeeSlipModal({ cfg, onClose, toast }) {
   if (!cfg) return null;
 
   const { classMeta, student, period, payment } = cfg;
-  const headRows = Object.entries(payment.perHead || {}).map(([name, amt]) => ({ name, amt: +amt || 0 }));
-  const total    = headRows.reduce((a, r) => a + r.amt, 0);
+  /* Challan ke detailRows se per-head Standard (net) / Discount / Received banao — taake
+     slip me sirf received nahi, poora breakup dikhe. Challan na mile to fallback: sirf
+     received (perHead). */
+  const chRows = cfg.challan && Array.isArray(cfg.challan.detailRows) ? cfg.challan.detailRows : null;
+  const headRows = chRows
+    ? chRows.map(r => {
+        const std  = Math.round(+r.challanAmount || 0);   // ORIGINAL standard fee (discount se pehle)
+        const disc = Math.round(+r.discount || 0);
+        const recv = Math.round(+r.receivedAmount || 0);
+        return { name: r.subHead || r.head || '—', std, disc, recv };
+      })
+    : Object.entries(payment.perHead || {}).map(([name, amt]) => ({ name, std: Math.round(+amt || 0), disc: 0, recv: Math.round(+amt || 0) }));
+  const totStd  = headRows.reduce((a, r) => a + r.std, 0);
+  const totDisc = headRows.reduce((a, r) => a + r.disc, 0);
+  const total   = headRows.reduce((a, r) => a + r.recv, 0);
+  /* Baqaya = (Std − Discount) − Received. > 0 ho to hi slip par dikhega. */
+  const remaining = Math.max(0, (totStd - totDisc) - total);
   const sch      = feeReportSchool(cfg.school);
 
   const doPrint = () => {
@@ -3746,18 +3761,20 @@ function FeeSlipModal({ cfg, onClose, toast }) {
           ${payment.txn ? `<span class="k">Transaction</span><span class="v">${escHtml(payment.txn)}</span>` : ''}
         </div>
         <table class="fee-slip-tbl fee-slip-heads">
-          <thead><tr><th>Head</th><th>Amount</th></tr></thead>
+          <thead><tr><th>Head</th><th>Std. Amount</th><th>Discount</th><th>Received</th></tr></thead>
           <tbody>
-            ${headRows.map(r => `<tr><td>${escHtml(r.name)}</td><td>${r.amt.toLocaleString('en-PK')}</td></tr>`).join('')}
-            <tr class="fee-slip-headtot"><td>Total</td><td>${total.toLocaleString('en-PK')}</td></tr>
+            ${headRows.map(r => `<tr><td>${escHtml(r.name)}</td><td>${r.std.toLocaleString('en-PK')}</td><td>${r.disc ? r.disc.toLocaleString('en-PK') : '—'}</td><td>${r.recv.toLocaleString('en-PK')}</td></tr>`).join('')}
+            <tr class="fee-slip-headtot"><td>Total</td><td>${totStd.toLocaleString('en-PK')}</td><td>${totDisc ? totDisc.toLocaleString('en-PK') : '—'}</td><td>${total.toLocaleString('en-PK')}</td></tr>
           </tbody>
         </table>
         <div class="fee-slip-net">
           <span>Amount Received</span><span>Rs. ${(+payment.amount || 0).toLocaleString('en-PK')}</span>
         </div>
+        ${remaining > 0 ? `<div class="fee-slip-rem"><span>Remaining Amount</span><span>Rs. ${remaining.toLocaleString('en-PK')}</span></div>` : ''}
       </div>`;
     w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Fee Slip — ${escHtml(student.name)}</title>
 <style>
+  html,body,* { -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important; color-adjust:exact !important; }
   body { margin:0; font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif; background:#F1F3F8; padding:18px; }
   .fee-slip-doc { background:#fff; color:#111; border:1px solid #ddd; border-radius:12px; padding:20px; max-width:420px; margin:0 auto; }
   .fee-slip-doc.fee-slip-small { max-width:300px; padding:14px; font-size:11px; }
@@ -3773,6 +3790,7 @@ function FeeSlipModal({ cfg, onClose, toast }) {
   .fee-slip-tbl th { border-bottom:1.5px solid #333; color:#333; }
   .fee-slip-headtot td { border-top:1.5px solid #333; border-bottom:none; font-weight:800; background:#f5f7fb; }
   .fee-slip-net { display:flex; justify-content:space-between; align-items:center; background:#111; color:#fff; padding:8px 12px; border-radius:4px; font-weight:800; }
+  .fee-slip-rem { display:flex; justify-content:space-between; align-items:center; border:1.5px solid #DC2626; color:#DC2626; padding:7px 12px; border-radius:4px; font-weight:800; margin-top:6px; }
   @page { size:A4; margin:14mm; }
   @media print { body { background:#fff; padding:0; } }
 </style></head><body>${slipHtml}</body></html>`);
@@ -3845,19 +3863,25 @@ function FeeSlipModal({ cfg, onClose, toast }) {
             </div>
             <table className="fee-slip-tbl fee-slip-heads">
               <thead>
-                <tr><th>Head</th><th>Amount</th></tr>
+                <tr><th>Head</th><th>Std. Amount</th><th>Discount</th><th>Received</th></tr>
               </thead>
               <tbody>
                 {headRows.map(r => (
-                  <tr key={r.name}><td>{r.name}</td><td>{r.amt.toLocaleString('en-PK')}</td></tr>
+                  <tr key={r.name}><td>{r.name}</td><td>{r.std.toLocaleString('en-PK')}</td><td>{r.disc ? r.disc.toLocaleString('en-PK') : '—'}</td><td>{r.recv.toLocaleString('en-PK')}</td></tr>
                 ))}
-                <tr className="fee-slip-headtot"><td>Total</td><td>{total.toLocaleString('en-PK')}</td></tr>
+                <tr className="fee-slip-headtot"><td>Total</td><td>{totStd.toLocaleString('en-PK')}</td><td>{totDisc ? totDisc.toLocaleString('en-PK') : '—'}</td><td>{total.toLocaleString('en-PK')}</td></tr>
               </tbody>
             </table>
             <div className="fee-slip-net">
               <span>Amount Received</span>
               <span>Rs. {(+payment.amount || 0).toLocaleString('en-PK')}</span>
             </div>
+            {remaining > 0 && (
+              <div className="fee-slip-rem" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', border: '1.5px solid #DC2626', color: '#DC2626', padding: '7px 12px', borderRadius: 4, fontWeight: 800, marginTop: 6 }}>
+                <span>Remaining Amount</span>
+                <span>Rs. {remaining.toLocaleString('en-PK')}</span>
+              </div>
+            )}
           </div>
         </div>
 
@@ -4149,7 +4173,7 @@ function FeeReceivingIndividual({ toast }) {
     const payments = paymentsFor(c.key, s.reg);
     const last = payments[payments.length - 1];
     if (last) {
-      setSlipCtx({ classMeta: c, student: s, period: `${appliedMonth} ${appliedYear}`, payment: last, defaultSize: settings.printSize || 'a4', school: branchHeader });
+      setSlipCtx({ classMeta: c, student: s, period: `${appliedMonth} ${appliedYear}`, payment: last, challan: challanMap[keyOf(c.key, s.reg)], defaultSize: settings.printSize || 'a4', school: branchHeader });
       return;
     }
     const rec  = challanMap[keyOf(c.key, s.reg)];
@@ -4164,6 +4188,7 @@ function FeeReceivingIndividual({ toast }) {
         date:   String(rec.modifiedAt || rec.dateofCreattion || '').slice(0, 10),
         method: rec.paymentMethod || 'Cash', ref: '', txn: '', amount: received, perHead,
       },
+      challan: rec,
       defaultSize: settings.printSize || 'a4', school: branchHeader,
     });
   };
@@ -4775,7 +4800,7 @@ function FamilyTreeReceiving({ toast }) {
     const payments = paymentsFor(f.key, ch.reg);
     const last = payments[payments.length - 1];
     if (last) {
-      setSlipCtx({ classMeta: { key: f.key, cls: ch.cls, sec: ch.sec }, student: ch, period: `${appliedMonth} ${appliedYear}`, payment: last, defaultSize: settings.printSize || 'a4' });
+      setSlipCtx({ classMeta: { key: f.key, cls: ch.cls, sec: ch.sec }, student: ch, period: `${appliedMonth} ${appliedYear}`, payment: last, challan: ch._challan || challanByStudent[String(ch.applicantsID)], defaultSize: settings.printSize || 'a4' });
       return;
     }
     const rec  = ch._challan || challanByStudent[String(ch.applicantsID)];
@@ -4791,6 +4816,7 @@ function FamilyTreeReceiving({ toast }) {
         date:   String(rec.modifiedAt || rec.dateofCreattion || '').slice(0, 10),
         method: rec.paymentMethod || 'Cash', ref: '', txn: '', amount: received, perHead,
       },
+      challan: rec,
       defaultSize: settings.printSize || 'a4',
     });
   };
@@ -5764,6 +5790,7 @@ function buildFamilyReceivingSlipHTML({ family, period, paymentsFor, size = 'a4'
 
     return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escHtml(`Family Receipt — ${family.name}`)}</title>
 <style>
+  html,body,*{-webkit-print-color-adjust:exact !important;print-color-adjust:exact !important;color-adjust:exact !important;}
   *{box-sizing:border-box;margin:0;padding:0}
   body{font-family:'Plus Jakarta Sans','Segoe UI',sans-serif;color:#111;background:#fff;padding:8px;font-size:11.5px;}
   .th-slip{width:80mm;margin:0 auto;padding:6mm 4mm;}
@@ -6099,6 +6126,7 @@ function buildStudentHistory({ recs, fromIdx, toIdx, year, empNames = {} }) {
        wo alag "Advance" column me dikhta hai. */
     const openDebt   = isFirst && openBal > 0 ? openBal : 0;
     const challanAmt = newBilled + openDebt;
+    const monthDisc  = rows.reduce((a, r) => a + (+r.discount || 0), 0);   // is mahine ka total discount
     running = openBal + newBilled - received;                     // naya balance (advance → negative)
     const pending    = Math.max(0, running);
     /* Status sirf ASLI CASH par — advance apne alag column me. Advance ne poora cover
@@ -6127,7 +6155,7 @@ function buildStudentHistory({ recs, fromIdx, toIdx, year, empNames = {} }) {
       challanNo:   `CH-${rec.year}${String(rec.month).padStart(2, '0')}-${rec.id}`,
       challanDate: String(rec.dateofCreattion || '').slice(0, 10) || '—',
       dueDate:     String(rec.dueDate || '').slice(0, 10) || '—',
-      challanAmt, received, pending, status, advApplied,
+      challanAmt, received, pending, status, advApplied, disc: monthDisc,
       method:   received > 0 ? (rec.paymentMethod || 'Cash') : '—',
       recvDate: stamp ? stamp.slice(0, 10) : '—',
       time:     stamp ? stamp.slice(11, 16) : '—',
@@ -6160,11 +6188,12 @@ function buildStudentHistory({ recs, fromIdx, toIdx, year, empNames = {} }) {
 }
 
 function feeHistTotals(months) {
-  let fee = 0, recv = 0, adv = 0, lastDate = '—', lastBy = '—', lastTime = '—';
+  let fee = 0, recv = 0, adv = 0, disc = 0, lastDate = '—', lastBy = '—', lastTime = '—';
   months.forEach(mo => {
     fee  += mo.challanAmt;
     recv += mo.received;
     adv  += (mo.advApplied || 0);
+    disc += (mo.disc || 0);
     if (mo.recvDate !== '—') { lastDate = mo.recvDate; lastBy = mo.recvBy; lastTime = mo.time; }
   });
   /* Pending = CURRENT outstanding = aakhri mahine ka running balance. Per-mahine `pending`
@@ -6172,7 +6201,7 @@ function feeHistTotals(months) {
   const pend = months.length ? months[months.length - 1].pending : 0;
   const paidCount = months.filter(mo => mo.received > 0).length;
   return {
-    challans: months.length, fee, recv, pend, adv,
+    challans: months.length, fee, recv, pend, adv, disc,
     lastDate, lastBy, lastTime,
     paidCount, unpaid: months.length - paidCount,
   };
@@ -6911,6 +6940,8 @@ function FeeHistoryDetailModal({ cfg, onClose, year, onDownloadStudent, onDownlo
 
 /* ─── Print HTML builders ─── */
 const HIST_REPORT_CSS = `
+/* Colorful report ka background/color PDF/print me bhi aaye (browser warna bg drop kar deta hai). */
+html,body,*{-webkit-print-color-adjust:exact !important;print-color-adjust:exact !important;color-adjust:exact !important;}
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif;color:#0F172A;background:#fff;font-size:12px;padding:18px;}
 .hist-page{max-width:1100px;margin:0 auto 14px;padding:0;}
@@ -8823,6 +8854,8 @@ function openPrintReport(html, title, toast, mode = 'preview') {
 
 /* ═══════════ A4 PDF builders for every report ═══════════ */
 const REP_A4_CSS = `
+/* Colorful report ka background/color PDF/print me bhi aaye. */
+html,body,*{-webkit-print-color-adjust:exact !important;print-color-adjust:exact !important;color-adjust:exact !important;}
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{background:#fff}
 body{font-family:'Plus Jakarta Sans',Arial,sans-serif;color:#111;font-size:10.5px;line-height:1.4}
@@ -9182,6 +9215,8 @@ const FEE_BARCODE_SVG = `<svg width="110" height="20" viewBox="0 0 110 20"><rect
 /* Scoped under .fee-challan-doc so it can be embedded in the in-app preview
    without leaking into surrounding styles. */
 const FEE_CHALLAN_CSS_SCOPED = `
+/* Colorful challan ka background/color PDF/print me bhi aaye. */
+html,body,.fee-challan-doc,.fee-challan-doc *{-webkit-print-color-adjust:exact !important;print-color-adjust:exact !important;color-adjust:exact !important;}
 .fee-challan-doc, .fee-challan-doc *{box-sizing:border-box;margin:0;padding:0;color:#111;}
 .fee-challan-doc{font-family:'DM Sans','Plus Jakarta Sans','Segoe UI',sans-serif;color:#111;background:transparent;}
 .fee-challan-doc .challan-page{background:#fff;padding:8mm;margin:0 auto 14px;max-width:1100px;box-shadow:0 4px 18px rgba(15,23,42,.08);border:1px solid #E5E7EB;}
@@ -9362,7 +9397,7 @@ function feeSlipHTML({ copyLabel, classMeta, student, heads, settings, period, i
   </div>
   <div class="bottom-section">
     <div class="two-col">
-      <div class="outline-box"><div class="ob-lbl">Arrears / Advance</div><div class="ob-val">${arrears.toLocaleString('en-PK')}</div></div>
+      <div class="outline-box"><div class="ob-lbl">Advance Amount</div><div class="ob-val">${Math.round(arrears) === 0 ? '0' : arrears.toLocaleString('en-PK')}</div></div>
       ${fine
         ? `<div class="outline-box"><div class="ob-lbl">Fine (${fineType === 'daily' ? 'per day late' : 'after due date'})</div><div class="ob-val">${fineTxt}</div></div>`
         : `<div class="outline-box"><div class="ob-lbl">Fine</div><div class="ob-val">—</div></div>`}
@@ -9556,7 +9591,7 @@ function feeThermalChallanHTML({ classMeta, student, heads, settings, period, is
     </tbody>
   </table>
   <div class="th-kv" style="margin-top:6px">
-    <span class="k">Arrears / Advance</span><span class="v">${arrears.toLocaleString('en-PK')}</span>
+    <span class="k">Advance Amount</span><span class="v">${Math.round(arrears) === 0 ? '0' : arrears.toLocaleString('en-PK')}</span>
     ${fine ? `<span class="k">Fine (${fineType === 'daily' ? 'per day' : 'after due'})</span><span class="v">${fineTxt}</span>` : ''}
   </div>
   <div class="th-net">
