@@ -1981,7 +1981,7 @@ function StuClassRow({ c, idx, isOpen, onToggle, onReport, onPromote, onAdd, onB
                   onProfile={() => onStudentProfile(s._id)}
                   onIdCard={() => onStudentIdCard(s._id)}
                   onCert={(type) => onStudentCert(s._id, type)}
-                  onAddFamily={() => onStudentAddFamily(s.reg)}
+                  onAddFamily={() => onStudentAddFamily(s._id)}
                   isLinkedToFamily={Boolean(s.family) || linkedRegs?.has(s.reg)}
                   canStuEdit={canStuEdit} canStuDelete={canStuDelete} canStuDownload={canStuDownload}
                   canStuPrint={canStuPrint} canFamCreate={canFamCreate}
