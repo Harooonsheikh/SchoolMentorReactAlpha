@@ -25,15 +25,28 @@ const localTodayISO = () => {
      aur abhi tak unpaid hai to AAJ tak ki accrued fine (jo abhi banti hai).
    Isi ek helper se receiving tables, challan list aur modal — sab ek hi
    raqam dikhate hain. */
+/* Is challan par jo late fine LEDGER me bill ho chuki hai (wasool hui ya nahi).
+   > 0 ho to fine ab recStudentModel ke payable/paid dono me shamil hai — us par
+   bahar se dobara fine jodna dohri gin'ti banata hai. */
+function billedFineOf(rec) {
+  return ((rec && rec.detailRows) || [])
+    .filter(feeService.isLateFineRow)
+    .reduce((a, r) => a + (+r.challanAmount || 0), 0);
+}
+
 function challanAccruedFine(rec, settings, asOf) {
   if (!rec || !settings?.fineEnabled) return 0;
-  const billed = (rec.detailRows || [])
-    .filter(r => {
-      const n = String(r?.subHead || r?.head || '').trim().toLowerCase();
-      return n === 'late fine' || n === 'fine';
-    })
-    .reduce((a, r) => a + (+r.challanAmount || 0), 0);
-  if (billed > 0) return billed;
+  const fineRows = (rec.detailRows || []).filter(feeService.isLateFineRow);
+  const billed = billedFineOf(rec);
+  if (billed > 0) {
+    /* Fine ki row maujood hai → wahi authority. Magar sirf BAQAYA lautao, poora
+       billed nahi: callers ise challanFigures() ke payable me jorte hain, aur wo
+       is row ka wasool shuda hissa pehle hi kaat chuka hota hai. Poora billed
+       lautane se poori wasool shuda fine dobara payable ban kar dikhti thi
+       ("Fully Received" ke bawajood Total Payable = fine). */
+    const recvd = fineRows.reduce((a, r) => a + (+r.receivedAmount || 0), 0);
+    return Math.max(0, billed - recvd);
+  }
   const received = (rec.detailRows || []).reduce((a, r) => a + (+r.receivedAmount || 0), 0);
   const base = asOf
     || (received > 0 ? String(rec.modifiedAt || '').slice(0, 10) : '')
@@ -1433,8 +1446,12 @@ function FamilyTreeChallansList({ toast }) {
             const v = Number(fig.advance) || 0;
             /* Row jaisa hi hisaab (discount already fee/transport me shamil). */
             const p = (Number(fig.fee) || 0) + (Number(fig.transport) || 0) + d - v;
-            /* Late fine bhi family ke kul payable ka hissa hai. */
-            const fine = challanAccruedFine(recMap[keyOf(f.key, ch.reg)], settings);
+            /* Late fine bhi family ke kul payable ka hissa hai. Magar jo fine
+               ledger par bill ho chuki hai wo familyChildFigures() ke `fee` me
+               (baqaya ke taur par) pehle se shamil hai — usay dobara na jodo. */
+            const chRec = recMap[keyOf(f.key, ch.reg)];
+            const fine  = challanAccruedFine(chRec, settings);
+            const extraFine = billedFineOf(chRec) > 0 ? 0 : fine;
             return {
               fee:       a.fee       + (Number(fig.fee)       || 0),
               transport: a.transport + (Number(fig.transport) || 0),
@@ -1442,7 +1459,7 @@ function FamilyTreeChallansList({ toast }) {
               dues:      a.dues      + d,
               advance:   a.advance   + v,
               fine:      a.fine      + fine,
-              payable:   a.payable   + p + fine,
+              payable:   a.payable   + p + extraFine,
             };
           }, { fee: 0, transport: 0, discount: 0, dues: 0, advance: 0, fine: 0, payable: 0 });
           const total = sums.payable;
@@ -1522,7 +1539,10 @@ function FamilyTreeChallansList({ toast }) {
                           const generated = isGen(f.key, ch.reg);
                           /* Due date guzarne par banti late fine — Individual Challan List
                              ki tarah yahan bhi Total Payable me shaamil. */
-                          const accFine = challanAccruedFine(recMap[keyOf(f.key, ch.reg)], settings);
+                          const chRec   = recMap[keyOf(f.key, ch.reg)];
+                          const accFine = challanAccruedFine(chRec, settings);
+                          /* Bill ho chuki fine `fig.fee` me pehle se hai. */
+                          const extraFine = billedFineOf(chRec) > 0 ? 0 : accFine;
                           return (
                             <tr key={ch.reg}>
                               <td className="fee-num">{j + 1}</td>
@@ -1536,8 +1556,8 @@ function FamilyTreeChallansList({ toast }) {
                               <td className="fee-right">{money(fig.transport)}</td>
                               <td className="fee-right">{money(fig.discount)}</td>
                               <td className="fee-right">{money(fig.fee)}</td>
-                              <td className={`fee-right${pay + accFine < 0 ? ' fee-neg' : ''}`}>
-                                <b>{money(pay + accFine)}</b>
+                              <td className={`fee-right${pay + extraFine < 0 ? ' fee-neg' : ''}`}>
+                                <b>{money(pay + extraFine)}</b>
                                 {accFine > 0 && <span className="fee-sub-eq fee-fine">incl. fine {money(accFine)}</span>}
                               </td>
                               <td className="fee-center fee-st-actions">
@@ -2367,6 +2387,9 @@ function FeeChallansList({ toast }) {
                              hissa hai — warna list aur receiving modal alag raqam
                              dikhate hain. */
                           const accFine = challanAccruedFine(rec, settings);
+                          /* Bill ho chuki fine challanFigures() ke `current` me
+                             (baqaya ke taur par) pehle se shamil hai. */
+                          const extraFine = billedFineOf(rec) > 0 ? 0 : accFine;
                           return (
                             <tr key={s.reg} id={`fee-st-${c.key}-${s.reg}`}>
                               <td className="fee-num">{j + 1}</td>
@@ -2379,8 +2402,8 @@ function FeeChallansList({ toast }) {
                                 {money(fig.advance > 0 ? -fig.advance : 0)}
                               </td>
                               <td className="fee-right">{money(fig.current)}</td>
-                              <td className={`fee-right${fig.payable + accFine < 0 ? ' fee-neg' : ''}`}>
-                                {money(fig.payable + accFine)}
+                              <td className={`fee-right${fig.payable + extraFine < 0 ? ' fee-neg' : ''}`}>
+                                {money(fig.payable + extraFine)}
                                 {accFine > 0 && (
                                   <span className="fee-sub-eq fee-fine">incl. fine {money(accFine)}</span>
                                 )}
@@ -2505,10 +2528,14 @@ function BulkGenerateModal({
   genSet, keyOf, onClose, onGenerated, toast,
   familyMode = false, singleMode = false,
 }) {
-  const todayISO  = () => new Date().toISOString().slice(0, 10);
+  /* Issue/Due date bhi LOCAL calendar par — challan ki due date hi late fine ka
+     base hai, aur toISOString() (UTC) Pakistan me subah 5 baje se pehle dono ko
+     ek din peechhe kar deta tha. */
+  const todayISO  = localTodayISO;
   const plusDays  = (n) => {
     const d = new Date(); d.setDate(d.getDate() + n);
-    return d.toISOString().slice(0, 10);
+    const p = (x) => String(x).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
   };
 
   const [month, setMonth]         = useState(defaultMonth || FEE_MONTHS[0]);
@@ -3274,8 +3301,12 @@ function DiscountManagerModal({ cfg, onClose, onSave, toast }) {
    a Receive CTA. viewOnly mode hides inputs and the receive button.
    ═══════════════════════════════════════════════════════════════════ */
 function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
-  const todayISO = () => new Date().toISOString().slice(0, 10);
-  const [date, setDate]         = useState(todayISO());
+  /* Receiving Date par late fine ka poora hisaab chalta hai — is liye LOCAL date
+     (localTodayISO), toISOString() nahi: wo UTC me badal kar Pakistan (UTC+5) me
+     subah 5 baje se pehle PICHHLI date deta tha. Us soorat me due-date wale din
+     ki date aa jaati thi, daysLate 0 nikalta, fine 0 banti aur "Late Fine" row
+     kabhi ledger me jaati hi nahi — jabke list aaj tak ki fine dikha rahi hoti. */
+  const [date, setDate]         = useState(localTodayISO());
   const [method, setMethod]     = useState('Cash');
   const [ref, setRef]           = useState('');
   const [txn, setTxn]           = useState('');
@@ -3283,7 +3314,7 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
 
   useEffect(() => {
     if (!cfg) return;
-    setDate(todayISO()); setMethod('Cash'); setRef(''); setTxn('');
+    setDate(localTodayISO()); setMethod('Cash'); setRef(''); setTxn('');
     /* Default: each head's remaining amount auto-filled per row. Count what the
        challan already received (survives refresh) as well as session payments. */
     const chRecv = {};
@@ -3374,15 +3405,20 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
   const fineBaseDate = viewOnly
     ? (String(payments?.[payments.length - 1]?.date || challan?.modifiedAt || '').slice(0, 10) || date)
     : date;
-  const fineDue = feeService.computeFine({
+  const fineRows  = (challan?.detailRows || []).filter(feeService.isLateFineRow);
+  /* Ledger me pehle se mojood (freeze shuda) fine — aur uske khilaf wasooli. */
+  const fineBilled = fineRows.reduce((a, r) => a + (+r.challanAmount || 0), 0);
+  const finePaid   = fineRows.reduce((a, r) => a + (+r.receivedAmount || 0), 0);
+  const fineCalc   = feeService.computeFine({
     dueDate: challan?.dueDate, receivingDate: fineBaseDate, settings,
   });
+  /* Jo fine ledger me likhi ja chuki hai WAHI authority hai — usay dobara compute
+     na karo. Warna settings badalne par (ya view mode me doosri base date par)
+     modal ki fine persisted row se mukhtalif nikalti thi: Total 4,400 magar
+     Already Received 4,450, aur Remaining minus me chala jaata tha.
+     Fine abhi tak billed nahi hui to computed hi lagti hai. */
+  const fineDue  = fineBilled > 0 ? fineBilled : fineCalc;
   const fineDays = feeService.daysLate(challan?.dueDate, fineBaseDate);
-  /* Agar backend ne fine ko apni row me persist kar diya ho to wahi authority hai
-     (dobara na jode). Warna computed fine lagti hai. */
-  const finePaid = (challan?.detailRows || [])
-    .filter(feeService.isLateFineRow)
-    .reduce((a, r) => a + (+r.receivedAmount || 0), 0);
   const fineOwed = Math.max(0, fineDue - finePaid);
 
   const receivingNow = headsRecv - advApplied + (viewOnly ? 0 : fineOwed);
@@ -4083,6 +4119,11 @@ function recStudentModel({ student, headsForClass, generated, classDisc, payment
           if (!prevName) prevName = r.subHead || r.head || '';
           prevPaid += (+r.receivedAmount || 0);
         } else advance += Math.abs(amt);
+      } else if (feeService.isLateFineRow(r)) {
+        /* Late Fine ko aam fee head na banao — receiving modal ki apni LATE FINE
+           line ise alag se dikhati hai (aur `finePaid` isi row se parhti hai).
+           Head bana dene se wo persisted row DOBARA render hoti thi: modal me do
+           "Late Fine" qatarein, aur thisMonth/payable me fine dohri gin'ti. */
       } else {
         heads.push({ name: r.subHead || r.head || '', std: amt, disc: Math.min(d, amt), net: amt - Math.min(d, amt) });
       }
@@ -4100,7 +4141,16 @@ function recStudentModel({ student, headsForClass, generated, classDisc, payment
     thisMonth = generated ? heads.reduce((a, h) => a + h.std, 0) : 0;
     disc      = generated ? heads.reduce((a, h) => a + h.disc, 0) : 0;
   }
-  const payable   = Math.max(0, prev + thisMonth - disc - advance);
+  /* Ledger par bill ho chuki LATE FINE. `heads` me ye shamil nahi (receiving modal
+     usay apni alag line me dikhata hai), magar `paid` niche saari detailRows se
+     banta hai — yani fine ki wasooli us me aati hai. Is liye fine ko payable me
+     bhi jodna zaroori hai, warna dono taraf bay-mail ho jaati thi: 12,000 payable
+     magar 12,400 paid → Remaining −400 (poora receive karne ke bawajood). */
+  const billedFine = (challan && Array.isArray(challan.detailRows))
+    ? challan.detailRows.filter(feeService.isLateFineRow)
+        .reduce((a, r) => a + (+r.challanAmount || 0), 0)
+    : 0;
+  const payable   = Math.max(0, prev + thisMonth - disc - advance) + billedFine;
   /* Paid must survive a page refresh. The local `payments` array is session-only
      (getReceipts is mock), so when a real challan exists take the authoritative
      received total straight from its detailRows' receivedAmount. Math.max keeps
@@ -4695,9 +4745,10 @@ function FeeReceivingIndividual({ toast }) {
                               <td className="fee-center">{m.disc > 0 ? <span className="fee-disc-amt">{money(m.disc)}</span> : '0'}</td>
                               <td className={`fee-right${fine > 0 ? ' fee-fine' : ''}`}>{fine > 0 ? money(fine) : '0'}</td>
                               <td className="fee-right">{m.paid > 0 ? <span className="fee-paid-amt">{money(m.paid)}</span> : '0'}</td>
-                              {/* Remaining me wo fine bhi shamil jo abhi challan par bill nahi hui
-                                  (paid ho chuki fine already `paid` me hai, dobara na jode). */}
-                              <td className="fee-right">{money(m.remaining + (m.paid > 0 ? 0 : fine))}</td>
+                              {/* Bill ho chuki fine `m.remaining` me pehle se hai (payable
+                                  aur paid dono me). Yahan sirf wo fine jodni hai jo abhi
+                                  challan par bill NAHI hui — warna dohri gin'ti ho jaati. */}
+                              <td className="fee-right">{money(m.remaining + (billedFineOf(rec) > 0 ? 0 : fine))}</td>
                               <td className="fee-center">
                                 {!m.generated ? (
                                   <span className="fee-recv-notice">Challan not generated for <b>{appliedMonth}</b> yet.</span>
@@ -5325,11 +5376,13 @@ function FamilyTreeReceiving({ toast }) {
             const m    = modelFor(ch, f.key);
             const rec  = ch._challan || challanByStudent[String(ch.applicantsID)] || null;
             const fine = challanAccruedFine(rec, settings);
+            /* Bill ho chuki fine `m.payable`/`m.remaining` me pehle se shamil hai;
+               sirf abhi tak un-billed fine bahar se jorni hai. */
+            const extraFine = billedFineOf(rec) > 0 ? 0 : fine;
             totFine    += fine;
-            totPayable += m.payable + fine;
+            totPayable += m.payable + extraFine;
             totPaid    += m.paid;
-            /* Late fine bhi baqaya me — jab tak wasool na ho jaaye. */
-            totRem     += m.remaining + (m.paid > 0 ? 0 : fine);
+            totRem     += m.remaining + extraFine;
           });
           return (
             <div key={f.key} className="fee-rowwrap">
@@ -5400,6 +5453,8 @@ function FamilyTreeReceiving({ toast }) {
                           const m = modelFor(ch, f.key);
                           const rec  = ch._challan || challanByStudent[String(ch.applicantsID)] || null;
                           const fine = challanAccruedFine(rec, settings);
+                          /* Bill ho chuki fine m.payable me pehle se hai. */
+                          const extraFine = billedFineOf(rec) > 0 ? 0 : fine;
                           return (
                             <tr key={ch.reg}>
                               <td>{ch.reg}</td>
@@ -5411,7 +5466,7 @@ function FamilyTreeReceiving({ toast }) {
                               <td>{ch.sec}</td>
                               <td className="fee-right">
                                 {/* Late fine bhi payable ka hissa — Challan List jaisa. */}
-                                <b>{money(m.payable + fine)}</b>
+                                <b>{money(m.payable + extraFine)}</b>
                                 {m.disc > 0 && <span className="fee-sub-eq">disc {money(m.disc)}</span>}
                                 {fine > 0 && <span className="fee-sub-eq fee-fine">incl. fine {money(fine)}</span>}
                               </td>
@@ -5533,8 +5588,9 @@ function FamilyTreeReceiving({ toast }) {
 function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, settings, toast }) {
   const [selReg, setSelReg]             = useState(null);
   const [perHeadInput, setPerHeadInput] = useState({});
-  const todayISO = () => new Date().toISOString().slice(0, 10);
-  const [date, setDate]     = useState(todayISO());
+  /* Individual modal jaisi hi wajah — late fine isi date par banti hai, is liye
+     LOCAL date chahiye (toISOString() UTC me ek din peechhe le jaata tha). */
+  const [date, setDate]     = useState(localTodayISO());
   const [method, setMethod] = useState('Cash');
   const [ref, setRef]       = useState('');
   const [txn, setTxn]       = useState('');
@@ -5542,7 +5598,7 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
   useEffect(() => {
     if (!cfg) return;
     setSelReg(null);
-    setDate(todayISO()); setMethod('Cash'); setRef(''); setTxn('');
+    setDate(localTodayISO()); setMethod('Cash'); setRef(''); setTxn('');
     setPerHeadInput({});
   }, [cfg]);
 
@@ -5584,7 +5640,7 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
       seed[pk] = Math.max(0, m.prev - (+m.prevPaid || 0));
     }
     setPerHeadInput(seed);
-    setDate(todayISO()); setMethod('Cash'); setRef(''); setTxn('');
+    setDate(localTodayISO()); setMethod('Cash'); setRef(''); setTxn('');
   };
 
   const setHead = (name, v) => setPerHeadInput(prev => ({ ...prev, [name]: Math.max(0, Number(v) || 0) }));
@@ -5652,13 +5708,14 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
   /* ── LATE FINE ── individual modal jaisi hi: due date ke baad receive karne par
      khud lagti hai, read-only, aur receivable/total dono me judti hai. */
   const selChallan = selChild?._challan || null;
-  const fineDue    = feeService.computeFine({
+  const fineRows   = (selChallan?.detailRows || []).filter(feeService.isLateFineRow);
+  const fineBilled = fineRows.reduce((a, r) => a + (+r.challanAmount || 0), 0);
+  const finePaid   = fineRows.reduce((a, r) => a + (+r.receivedAmount || 0), 0);
+  /* Individual modal jaisa hi: ledger me likhi ja chuki fine hi authority hai. */
+  const fineDue    = fineBilled > 0 ? fineBilled : feeService.computeFine({
     dueDate: selChallan?.dueDate, receivingDate: date, settings,
   });
   const fineDays = feeService.daysLate(selChallan?.dueDate, date);
-  const finePaid = (selChallan?.detailRows || [])
-    .filter(feeService.isLateFineRow)
-    .reduce((a, r) => a + (+r.receivedAmount || 0), 0);
   const fineOwed = Math.max(0, fineDue - finePaid);
   if (selModel && !(selModel.onelink || selModel.status === 'full')) {
     recvNow     += fineOwed;
@@ -9716,8 +9773,23 @@ function feeSlipHTML({ copyLabel, classMeta, student, heads, settings, period, i
   const payable = tNet + arrears;
   const fineTxt = `Rs. ${fineAmt.toLocaleString('en-PK')}`;
   /* Due date guzar chuki ho to AAJ tak banti fine — slip par sirf formula nahi,
-     asli raqam bhi dikhe taake parent ko pata ho ab kitna dena hai. */
-  const accruedFine = fine ? feeService.computeFine({ dueDate: dueISO, receivingDate: localTodayISO(), settings }) : 0;
+     asli raqam bhi dikhe taake parent ko pata ho ab kitna dena hai.
+
+     DO shartein, dono zaroori:
+     1. Fine agar pehle hi ek "Late Fine" row ki soorat me challan par bill ho
+        chuki hai to wo `rows`/`tNet` me shamil hai — dobara compute kar ke jodna
+        usay DOHRA kar deta tha (Total 8,800 magar "After Due Date" 9,600).
+     2. Challan poora wasool ho chuka ho to "Payable After Due Date" ka koi
+        maani nahi — chhapi hui slip par parent se mazeed raqam maangi ja rahi
+        thi jabke uska kuch baqaya tha hi nahi. */
+  const billedFine = (detailRows || []).filter(feeService.isLateFineRow)
+    .reduce((a, r) => a + whole(r.challanAmount), 0);
+  const totalNet   = (detailRows || []).reduce((a, r) => a + whole(r.challanAmount) - whole(r.discount), 0);
+  const totalRecvd = (detailRows || []).reduce((a, r) => a + whole(r.receivedAmount), 0);
+  const settled    = Array.isArray(detailRows) && detailRows.length > 0 && totalRecvd >= totalNet;
+  const accruedFine = (fine && billedFine <= 0 && !settled)
+    ? feeService.computeFine({ dueDate: dueISO, receivingDate: localTodayISO(), settings })
+    : 0;
   const lateDays    = feeService.daysLate(dueISO, localTodayISO());
   const psidPlain = FEE_SCHOOL.psid.replace(/[^0-9]/g, '');
 
@@ -9760,7 +9832,7 @@ function feeSlipHTML({ copyLabel, classMeta, student, heads, settings, period, i
     ${accruedFine > 0
       ? `<div class="net-box"><div class="nb-lbl">Payable After Due Date (incl. ${lateDays} day${lateDays === 1 ? '' : 's'} fine)</div><div class="nb-val">Rs. ${(payable + accruedFine).toLocaleString('en-PK')}</div></div>`
       : ''}
-    ${fine ? `<div class="fine-line">After due date: Rs. ${payable.toLocaleString('en-PK')} + (no. of days × ${fineAmt})</div>` : ''}
+    ${fine && !settled ? `<div class="fine-line">After due date: Rs. ${payable.toLocaleString('en-PK')} + (no. of days × ${fineAmt})</div>` : ''}
     ${showPsd ? `
     <div class="psid-block">
       <div class="psid-top"><div class="psid-dot"></div><span class="psid-tag">1Link PSID — Pay via Any Banking App</span></div>
@@ -9954,8 +10026,23 @@ function feeThermalChallanHTML({ classMeta, student, heads, settings, period, is
   const payable = tNet + arrears;
   const fineTxt = `Rs. ${fineAmt.toLocaleString('en-PK')}`;
   /* Due date guzar chuki ho to AAJ tak banti fine — slip par sirf formula nahi,
-     asli raqam bhi dikhe taake parent ko pata ho ab kitna dena hai. */
-  const accruedFine = fine ? feeService.computeFine({ dueDate: dueISO, receivingDate: localTodayISO(), settings }) : 0;
+     asli raqam bhi dikhe taake parent ko pata ho ab kitna dena hai.
+
+     DO shartein, dono zaroori:
+     1. Fine agar pehle hi ek "Late Fine" row ki soorat me challan par bill ho
+        chuki hai to wo `rows`/`tNet` me shamil hai — dobara compute kar ke jodna
+        usay DOHRA kar deta tha (Total 8,800 magar "After Due Date" 9,600).
+     2. Challan poora wasool ho chuka ho to "Payable After Due Date" ka koi
+        maani nahi — chhapi hui slip par parent se mazeed raqam maangi ja rahi
+        thi jabke uska kuch baqaya tha hi nahi. */
+  const billedFine = (detailRows || []).filter(feeService.isLateFineRow)
+    .reduce((a, r) => a + whole(r.challanAmount), 0);
+  const totalNet   = (detailRows || []).reduce((a, r) => a + whole(r.challanAmount) - whole(r.discount), 0);
+  const totalRecvd = (detailRows || []).reduce((a, r) => a + whole(r.receivedAmount), 0);
+  const settled    = Array.isArray(detailRows) && detailRows.length > 0 && totalRecvd >= totalNet;
+  const accruedFine = (fine && billedFine <= 0 && !settled)
+    ? feeService.computeFine({ dueDate: dueISO, receivingDate: localTodayISO(), settings })
+    : 0;
   const lateDays    = feeService.daysLate(dueISO, localTodayISO());
   const showDiscCol = rows.some(r => r.disc > 0);
 
