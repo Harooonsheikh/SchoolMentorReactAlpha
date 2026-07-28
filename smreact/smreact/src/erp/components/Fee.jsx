@@ -11,6 +11,45 @@ const money = (n) => `Rs. ${(Number(n) || 0).toLocaleString('en-PK')}`;
 const escHtml = (s) => String(s ?? '').replace(/[&<>"']/g, m =>
   ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[m]));
 
+/* Aaj ki LOCAL date (YYYY-MM-DD). toISOString() jaan-boojh kar nahi — wo UTC me
+   badal kar Pakistan (UTC+5) me shaam ko agli/pichhli date de deta hai. */
+const localTodayISO = () => {
+  const n = new Date();
+  const p = (x) => String(x).padStart(2, '0');
+  return `${n.getFullYear()}-${p(n.getMonth() + 1)}-${p(n.getDate())}`;
+};
+
+/* Is challan par is waqt banti LATE FINE.
+   - Agar backend ne "Late Fine" row persist kar di hai to wahi authority.
+   - Warna: paise aa chuke hain to ASLI receiving date tak ki fine (jo li gayi),
+     aur abhi tak unpaid hai to AAJ tak ki accrued fine (jo abhi banti hai).
+   Isi ek helper se receiving tables, challan list aur modal — sab ek hi
+   raqam dikhate hain. */
+function challanAccruedFine(rec, settings, asOf) {
+  if (!rec || !settings?.fineEnabled) return 0;
+  const billed = (rec.detailRows || [])
+    .filter(r => {
+      const n = String(r?.subHead || r?.head || '').trim().toLowerCase();
+      return n === 'late fine' || n === 'fine';
+    })
+    .reduce((a, r) => a + (+r.challanAmount || 0), 0);
+  if (billed > 0) return billed;
+  const received = (rec.detailRows || []).reduce((a, r) => a + (+r.receivedAmount || 0), 0);
+  const base = asOf
+    || (received > 0 ? String(rec.modifiedAt || '').slice(0, 10) : '')
+    || localTodayISO();
+  return feeService.computeFine({ dueDate: rec.dueDate, receivingDate: base, settings });
+}
+
+/* API date/ISO string → dd/mm/yyyy. Khaali ya invalid par '' (caller '—' dikhata
+   hai) — taake kabhi bhi "aaj" ki date ko asli date samajh liya na jaaye. */
+const fmtDMY = (value) => {
+  const s = String(value || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return '';
+  const [y, m, d] = s.split('-');
+  return `${d}/${m}/${y}`;
+};
+
 /* Synthesise a Pakistani-format contact number from the registration
    number (deterministic — same reg always yields the same phone). The
    mock dataset doesn't ship a `phone` field, so callers either use the
@@ -873,12 +912,16 @@ function FamilyTreeChallansList({ toast }) {
   /* BranchLedger record id per child challan — used to delete via
      /api/BranchLedger/delete/{id}. Keyed by keyOf(fam, reg). */
   const [idMap, setIdMap] = useState({});
+  /* Poora BranchLedger record per child (keyOf(fam, reg)) — is se challan ki ASLI
+     Issue/Due date (dateofCreattion / dueDate) print par jaati hai, warna slip par
+     hamesha "aaj + 10 din" chhap jaata tha. */
+  const [recMap, setRecMap] = useState({});
   /* Pichhle mahino ka baqaya / advance — { [studentID]: { dues, advance } }.
      Isse naya challan banane se PEHLE hi bachche ke dues nazar aa jaate hain. */
   const [prevOutMap, setPrevOutMap] = useState({});
   const loadLedgers = useCallback(async () => {
     const fams = families;
-    if (!fams || !fams.length) { setFigMap({}); setIdMap({}); setGenSet(new Set()); return; }
+    if (!fams || !fams.length) { setFigMap({}); setIdMap({}); setRecMap({}); setGenSet(new Set()); return; }
     const mIdx  = FEE_MONTHS.indexOf(appliedMonth);
     const pairs = fams
       .flatMap(f => (f.children || []).map(ch => ({ f, ch })))
@@ -889,17 +932,21 @@ function FamilyTreeChallansList({ toast }) {
         try {
           const rows = await feeService.getStudentChallans(ch.applicantsID, mIdx + 1, appliedYear);
           const rec  = Array.isArray(rows) && rows.length ? rows[0] : null;
-          return { key, fig: rec ? familyChildFigures(rec) : null, id: rec?.id ?? null };
+          return { key, fig: rec ? familyChildFigures(rec) : null, id: rec?.id ?? null, rec };
         } catch (e) {
-          return { key, fig: null, id: null };
+          return { key, fig: null, id: null, rec: null };
         }
       }));
       const fmap = {};
       const imap = {};
+      const rmap = {};
       const gset = new Set();
-      results.forEach(({ key, fig, id }) => { if (fig) { fmap[key] = fig; gset.add(key); if (id != null) imap[key] = id; } });
+      results.forEach(({ key, fig, id, rec }) => {
+        if (fig) { fmap[key] = fig; gset.add(key); if (id != null) imap[key] = id; if (rec) rmap[key] = rec; }
+      });
       setFigMap(fmap);
       setIdMap(imap);
+      setRecMap(rmap);
       setGenSet(gset);
 
       /* ── Pichhle mahino ka baqaya, RUN TIME par ──
@@ -932,6 +979,7 @@ function FamilyTreeChallansList({ toast }) {
       toast(e.message || 'Could not load family ledgers', 'error');
       setFigMap({});
       setIdMap({});
+      setRecMap({});
       setGenSet(new Set());
       setPrevOutMap({});
     }
@@ -961,7 +1009,11 @@ function FamilyTreeChallansList({ toast }) {
     ...f,
     children: (f.children || []).map(ch => {
       const g = childFig(f, ch);
-      return { ...ch, fee: g.fee, transport: g.transport, discount: g.discount, dues: g.dues, advance: g.advance };
+      /* `_challan` bhi saath bhejo — slip is se challan ki asli Issue/Due date leta hai. */
+      return {
+        ...ch, fee: g.fee, transport: g.transport, discount: g.discount, dues: g.dues, advance: g.advance,
+        _challan: ch._challan || recMap[keyOf(f.key, ch.reg)] || null,
+      };
     }),
   });
 
@@ -1381,15 +1433,18 @@ function FamilyTreeChallansList({ toast }) {
             const v = Number(fig.advance) || 0;
             /* Row jaisa hi hisaab (discount already fee/transport me shamil). */
             const p = (Number(fig.fee) || 0) + (Number(fig.transport) || 0) + d - v;
+            /* Late fine bhi family ke kul payable ka hissa hai. */
+            const fine = challanAccruedFine(recMap[keyOf(f.key, ch.reg)], settings);
             return {
               fee:       a.fee       + (Number(fig.fee)       || 0),
               transport: a.transport + (Number(fig.transport) || 0),
               discount:  a.discount  + (Number(fig.discount)  || 0),
               dues:      a.dues      + d,
               advance:   a.advance   + v,
-              payable:   a.payable   + p,
+              fine:      a.fine      + fine,
+              payable:   a.payable   + p + fine,
             };
-          }, { fee: 0, transport: 0, discount: 0, dues: 0, advance: 0, payable: 0 });
+          }, { fee: 0, transport: 0, discount: 0, dues: 0, advance: 0, fine: 0, payable: 0 });
           const total = sums.payable;
           return (
             <div key={f.key} className="fee-rowwrap" id={`fam-row-${f.key}`}>
@@ -1465,6 +1520,9 @@ function FamilyTreeChallansList({ toast }) {
                           const adv  = Number(fig.advance) || 0;
                           const pay  = (Number(fig.fee) || 0) + (Number(fig.transport) || 0) + dues - adv;
                           const generated = isGen(f.key, ch.reg);
+                          /* Due date guzarne par banti late fine — Individual Challan List
+                             ki tarah yahan bhi Total Payable me shaamil. */
+                          const accFine = challanAccruedFine(recMap[keyOf(f.key, ch.reg)], settings);
                           return (
                             <tr key={ch.reg}>
                               <td className="fee-num">{j + 1}</td>
@@ -1478,7 +1536,10 @@ function FamilyTreeChallansList({ toast }) {
                               <td className="fee-right">{money(fig.transport)}</td>
                               <td className="fee-right">{money(fig.discount)}</td>
                               <td className="fee-right">{money(fig.fee)}</td>
-                              <td className={`fee-right${pay < 0 ? ' fee-neg' : ''}`}><b>{money(pay)}</b></td>
+                              <td className={`fee-right${pay + accFine < 0 ? ' fee-neg' : ''}`}>
+                                <b>{money(pay + accFine)}</b>
+                                {accFine > 0 && <span className="fee-sub-eq fee-fine">incl. fine {money(accFine)}</span>}
+                              </td>
                               <td className="fee-center fee-st-actions">
                                 {generated ? (
                                   <Tooltip text={`Delete ${appliedMonth} challan for ${ch.name}`}>
@@ -1519,6 +1580,12 @@ function FamilyTreeChallansList({ toast }) {
                   </div>
 
                   <div className="fee-family-total">
+                    {sums.fine > 0 && (
+                      <>
+                        Total Fine: <span className="fee-fine">{money(sums.fine)}</span>
+                        <span style={{ margin: '0 10px', opacity: 0.4 }}>|</span>
+                      </>
+                    )}
                     Total Family Payable: <span>{money(total)}</span>
                   </div>
                 </div>
@@ -2296,6 +2363,10 @@ function FeeChallansList({ toast }) {
                             current: +s.current || 0,
                             payable: (+s.current || 0) + fbDues - fbAdv,
                           };
+                          /* Due date guzarne par banti late fine bhi Total Payable ka
+                             hissa hai — warna list aur receiving modal alag raqam
+                             dikhate hain. */
+                          const accFine = challanAccruedFine(rec, settings);
                           return (
                             <tr key={s.reg} id={`fee-st-${c.key}-${s.reg}`}>
                               <td className="fee-num">{j + 1}</td>
@@ -2308,8 +2379,11 @@ function FeeChallansList({ toast }) {
                                 {money(fig.advance > 0 ? -fig.advance : 0)}
                               </td>
                               <td className="fee-right">{money(fig.current)}</td>
-                              <td className={`fee-right${fig.payable < 0 ? ' fee-neg' : ''}`}>
-                                {money(fig.payable)}
+                              <td className={`fee-right${fig.payable + accFine < 0 ? ' fee-neg' : ''}`}>
+                                {money(fig.payable + accFine)}
+                                {accFine > 0 && (
+                                  <span className="fee-sub-eq fee-fine">incl. fine {money(accFine)}</span>
+                                )}
                               </td>
                               <td className="fee-center fee-st-actions">
                                 {generated ? (
@@ -2708,6 +2782,8 @@ function BulkGenerateModal({
                 className="fee-input"
                 type="date"
                 value={issueDate}
+                /* Koi bhi date chal sakti hai (past bhi) — bas due date se aage nahi. */
+                max={dueDate || undefined}
                 onChange={e => setIssueDate(e.target.value)}
                 disabled={!!progress}
               />
@@ -2718,6 +2794,7 @@ function BulkGenerateModal({
                 className="fee-input"
                 type="date"
                 value={dueDate}
+                min={issueDate || undefined}
                 onChange={e => setDueDate(e.target.value)}
                 disabled={!!progress}
               />
@@ -3287,9 +3364,30 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
   const headsRecv  = rows.reduce((a, r) => a + r.recvNow, 0) + prevRecv;
   const advCredit  = Math.max(0, +model.advance || 0);
   const advApplied = Math.min(advCredit, headsRecv);   // credit se zyada kabhi nahi
-  const receivingNow = headsRecv - advApplied;
-  const alreadyPaid  = rows.reduce((a, r) => a + r.paid, 0) + prevPaid;
-  const totalAmt     = totalAfter + model.prev - model.advance;
+
+  /* ── LATE FINE ──
+     Challan ki due date ke BAAD wasool karne par jurmana. Base date wahi
+     "Receiving Date" hai jo upar modal me chuni gayi (system ka aaj nahi), is
+     liye date badalte hi fine live update hoti hai. Ye READ-ONLY hai — user
+     isse edit nahi kar sakta — aur receivable/total dono me jud'ti hai.
+     View mode me actual receiving date ke hisaab se dikhti hai. */
+  const fineBaseDate = viewOnly
+    ? (String(payments?.[payments.length - 1]?.date || challan?.modifiedAt || '').slice(0, 10) || date)
+    : date;
+  const fineDue = feeService.computeFine({
+    dueDate: challan?.dueDate, receivingDate: fineBaseDate, settings,
+  });
+  const fineDays = feeService.daysLate(challan?.dueDate, fineBaseDate);
+  /* Agar backend ne fine ko apni row me persist kar diya ho to wahi authority hai
+     (dobara na jode). Warna computed fine lagti hai. */
+  const finePaid = (challan?.detailRows || [])
+    .filter(feeService.isLateFineRow)
+    .reduce((a, r) => a + (+r.receivedAmount || 0), 0);
+  const fineOwed = Math.max(0, fineDue - finePaid);
+
+  const receivingNow = headsRecv - advApplied + (viewOnly ? 0 : fineOwed);
+  const alreadyPaid  = rows.reduce((a, r) => a + r.paid, 0) + prevPaid + finePaid;
+  const totalAmt     = totalAfter + model.prev - model.advance + fineDue;
   /* Total se zyada wasool ho to ye MINUS me jaata hai = student ka advance. */
   const remainAfter  = totalAmt - alreadyPaid - receivingNow;
 
@@ -3325,6 +3423,9 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
       date, method, ref, txn,
       amount: receivingNow,
       perHead,
+      /* Fine alag se — receipt/slip par apni line banti hai, aur `amount` me
+         pehle se shamil hai (receivingNow me joda gaya). */
+      fine: fineOwed,
     };
     if (cfg.kind === 'child') payload.famKey   = cfg.famKey;
     else                      payload.classKey = classMeta.key;
@@ -3392,11 +3493,23 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
             </div>
             <div className="fee-recv-info-item">
               <span className="fee-recv-info-lbl">Due Date</span>
-              <span className="fee-recv-info-val">{new Date().toLocaleDateString('en-GB')}</span>
+              {/* Challan ki apni due date (generate karte waqt chuni gayi) — pehle
+                  yahan hamesha AAJ ki date chhap rahi thi, jo late-fine ke hisaab
+                  ko galat dikhata tha. */}
+              <span className="fee-recv-info-val">{fmtDMY(challan?.dueDate) || '—'}</span>
             </div>
             <div className="fee-recv-info-item">
               <span className="fee-recv-info-lbl">Fine After Due Date</span>
-              <span className="fee-recv-info-val">{fineTxt}</span>
+              {/* Rate ke saath is challan par ACTUAL banti fine bhi — receiving
+                  date due se aage ho to hi. */}
+              <span className="fee-recv-info-val">
+                {fineTxt}
+                {fineDue > 0 && (
+                  <span className="fee-sub-eq fee-fine">
+                    {fineDays} day{fineDays === 1 ? '' : 's'} late = {money(fineDue)}
+                  </span>
+                )}
+              </span>
             </div>
             <div className="fee-recv-info-item">
               <span className="fee-recv-info-lbl">Discount if any</span>
@@ -3503,13 +3616,33 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
                     <td className="fee-right">{money(advCredit - advApplied)}</td>
                   </tr>
                 )}
+                {/* ── LATE FINE ──
+                    Due date ke baad receive karne par khud lagti hai. READ-ONLY —
+                    na waive ho sakti hai na edit; Receiving Date badalne par apne
+                    aap recalculate hoti hai. */}
+                {fineDue > 0 && (
+                  <tr>
+                    <td>
+                      <b>Late Fine</b>
+                      <span className="fee-sub-eq">
+                        {fineDays} day{fineDays === 1 ? '' : 's'} late
+                        {settings?.fineType === 'daily' ? ` × Rs. ${(+settings.fineAmt || 0).toLocaleString('en-PK')}` : ''}
+                      </span>
+                    </td>
+                    <td className="fee-right">{money(fineDue)}</td>
+                    <td className="fee-right">0</td>
+                    <td className="fee-right"><span className="fee-cell-grey">{money(fineDue)}</span></td>
+                    <td className="fee-right"><b>{money(viewOnly ? finePaid : fineDue)}</b></td>
+                    <td className="fee-right">{money(viewOnly ? Math.max(0, fineDue - finePaid) : 0)}</td>
+                  </tr>
+                )}
               </tbody>
               <tfoot>
                 <tr className="fee-recv-total">
                   <td>Total</td>
-                  <td className="fee-right">{money(totalChallan + model.prev)}</td>
+                  <td className="fee-right">{money(totalChallan + model.prev + fineDue)}</td>
                   <td className="fee-right">{money(totalDisc)}</td>
-                  <td className="fee-right">{money(totalAfter + model.prev - advApplied)}</td>
+                  <td className="fee-right">{money(totalAfter + model.prev - advApplied + fineDue)}</td>
                   <td className="fee-right">{money(alreadyPaid + receivingNow)}</td>
                   <td className="fee-right">{money(remainAfter)}</td>
                 </tr>
@@ -3723,7 +3856,7 @@ function FeeSlipModal({ cfg, onClose, toast }) {
      slip me sirf received nahi, poora breakup dikhe. Challan na mile to fallback: sirf
      received (perHead). */
   const chRows = cfg.challan && Array.isArray(cfg.challan.detailRows) ? cfg.challan.detailRows : null;
-  const headRows = chRows
+  const baseRows = chRows
     ? chRows.map(r => {
         const std  = Math.round(+r.challanAmount || 0);   // ORIGINAL standard fee (discount se pehle)
         const disc = Math.round(+r.discount || 0);
@@ -3731,6 +3864,22 @@ function FeeSlipModal({ cfg, onClose, toast }) {
         return { name: r.subHead || r.head || '—', std, disc, recv };
       })
     : Object.entries(payment.perHead || {}).map(([name, amt]) => ({ name, std: Math.round(+amt || 0), disc: 0, recv: Math.round(+amt || 0) }));
+
+  /* ── LATE FINE ki alag line ──
+     Backend fine ko ledger me persist nahi karta, is liye detailRows me nahi
+     aati. Jo fine is receiving me li gayi wo `payment.fine` me hai; na ho to
+     amount aur heads ke farq se nikaal lo — warna slip par "Amount Received"
+     heads ke Total se zyada dikhta hai aur parent ko wajah samajh nahi aati.
+     Agar challan me pehle se Late Fine row maujood ho to dobara na jodo. */
+  const fineAlready = baseRows.some(r => {
+    const n = String(r.name).trim().toLowerCase();
+    return n === 'late fine' || n === 'fine';
+  });
+  const baseRecv  = baseRows.reduce((a, r) => a + r.recv, 0);
+  const slipFine  = Math.max(0, Math.round(+payment.fine || 0) || (Math.round(+payment.amount || 0) - baseRecv));
+  const headRows  = (!fineAlready && slipFine > 0)
+    ? [...baseRows, { name: 'Late Fine', std: slipFine, disc: 0, recv: slipFine }]
+    : baseRows;
   const totStd  = headRows.reduce((a, r) => a + r.std, 0);
   const totDisc = headRows.reduce((a, r) => a + r.disc, 0);
   const total   = headRows.reduce((a, r) => a + r.recv, 0);
@@ -4212,6 +4361,8 @@ function FeeReceivingIndividual({ toast }) {
         txn:    payload.txn,
         amount: payload.amount,
         perHead: payload.perHead,
+        /* Late fine slip par apni line banati hai; `amount` me pehle se shaamil hai. */
+        fine:   payload.fine || 0,
         source: 'counter',
         by:     payload.by || 'Front Desk',
       };
@@ -4225,16 +4376,24 @@ function FeeReceivingIndividual({ toast }) {
 
     /* POST to /api/BranchLedger/receive-payment. ledgerId is the challan id;
        each detailRow carries the running receivedAmount + pendingorAdv. The
-       per-head amounts entered now are matched to detailRows by subHead. */
+       per-head amounts entered now are matched to detailRows by subHead.
+       Is receiving me li gayi late fine bhi apni "Late Fine" row ki soorat me
+       jaati hai — warna wasool shuda fine ledger me kahin record na hoti. */
     const rec = challanMap[keyOf(payload.classKey, payload.reg)];
     if (rec && rec.id) {
       const userID = Number(sessionStorage.getItem('UserID')) || 0;
       const now    = new Date().toISOString();
-      const detailRows = (rec.detailRows || []).map(r => {
+      const baseRows = (rec.detailRows || []).map(r => {
+        /* Fine ki row perHead se update nahi hoti — usay helper handle karta hai. */
+        if (feeService.isLateFineRow(r)) return r;
         const recvNow  = +(payload.perHead?.[r.subHead ?? r.head]) || 0;
         const received = (+r.receivedAmount || 0) + recvNow;
         const net      = (+r.challanAmount || 0) - (+r.discount || 0);
         return { ...r, receivedAmount: received, pendingorAdv: net - received, modifiedAt: now, modifiedBy: userID };
+      });
+      const detailRows = feeService.withLateFineRow(baseRows, payload.fine, {
+        /* Branch challan ke apne record se — API dono spellings me deti hai. */
+        ledgerId: rec.id, branchId: rec.branchID ?? rec.branchId, userId: userID, now,
       });
       feeService.receivePayment({
         ledgerId:      rec.id,
@@ -4254,7 +4413,10 @@ function FeeReceivingIndividual({ toast }) {
     if (c && s) {
       setSlipCtx({
         classMeta: c, student: s, period: receiveCtx.period,
-        payment: { date: payload.date, method: payload.method, ref: payload.ref, txn: payload.txn, amount: payload.amount, perHead: payload.perHead },
+        payment: {
+          date: payload.date, method: payload.method, ref: payload.ref, txn: payload.txn,
+          amount: payload.amount, perHead: payload.perHead, fine: payload.fine || 0,
+        },
         defaultSize: settings.printSize || 'a4',
         school: branchHeader,
       });
@@ -4491,6 +4653,8 @@ function FeeReceivingIndividual({ toast }) {
                           <th className="fee-right">Advance</th>
                           <th className="fee-right">This Month</th>
                           <th className="fee-center">Discount</th>
+                          {/* Due date guzar chuki ho to is student par banti late fine. */}
+                          <th className="fee-right">Fine</th>
                           <th className="fee-right">Received</th>
                           <th className="fee-right">Remaining</th>
                           <th className="fee-center">Status</th>
@@ -4499,9 +4663,11 @@ function FeeReceivingIndividual({ toast }) {
                       </thead>
                       <tbody>
                         {students.length === 0 ? (
-                          <tr><td colSpan="10" className="fee-stbl-empty">No students in this section.</td></tr>
+                          <tr><td colSpan="11" className="fee-stbl-empty">No students in this section.</td></tr>
                         ) : students.map(s => {
                           const m = modelFor(c, s);
+                          const rec  = m.generated ? (challanMap[keyOf(c.key, s.reg)] || null) : null;
+                          const fine = challanAccruedFine(rec, settings);
                           return (
                             <tr key={s.reg} id={`rec-st-${c.key}-${s.reg}`}>
                               <td>{s.reg}</td>
@@ -4527,8 +4693,11 @@ function FeeReceivingIndividual({ toast }) {
                                 </td>
                               )}
                               <td className="fee-center">{m.disc > 0 ? <span className="fee-disc-amt">{money(m.disc)}</span> : '0'}</td>
+                              <td className={`fee-right${fine > 0 ? ' fee-fine' : ''}`}>{fine > 0 ? money(fine) : '0'}</td>
                               <td className="fee-right">{m.paid > 0 ? <span className="fee-paid-amt">{money(m.paid)}</span> : '0'}</td>
-                              <td className="fee-right">{money(m.remaining)}</td>
+                              {/* Remaining me wo fine bhi shamil jo abhi challan par bill nahi hui
+                                  (paid ho chuki fine already `paid` me hai, dobara na jode). */}
+                              <td className="fee-right">{money(m.remaining + (m.paid > 0 ? 0 : fine))}</td>
                               <td className="fee-center">
                                 {!m.generated ? (
                                   <span className="fee-recv-notice">Challan not generated for <b>{appliedMonth}</b> yet.</span>
@@ -4834,7 +5003,10 @@ function FamilyTreeReceiving({ toast }) {
         id: `frcv-${Date.now()}`,
         date: payload.date, time: payload.time || nowHHMM(),
         method: payload.method, ref: payload.ref, txn: payload.txn,
-        amount: payload.amount, perHead: payload.perHead, source: 'counter', by: payload.by || 'Front Desk',
+        amount: payload.amount, perHead: payload.perHead,
+        /* Late fine slip par apni line banati hai; `amount` me pehle se shaamil hai. */
+        fine: payload.fine || 0,
+        source: 'counter', by: payload.by || 'Front Desk',
       };
       if (idx >= 0) next[idx] = { ...next[idx], payments: [...next[idx].payments, pay] };
       else          next.push({ famKey: payload.famKey, reg: payload.reg, monthIdx: payload.monthIdx, payments: [pay] });
@@ -4843,16 +5015,24 @@ function FamilyTreeReceiving({ toast }) {
 
     /* POST to /api/BranchLedger/receive-payment. ledgerId = the child challan id;
        each detailRow carries the running receivedAmount + pendingorAdv. The
-       per-head amounts entered now are matched to detailRows by subHead/head. */
+       per-head amounts entered now are matched to detailRows by subHead/head.
+       Is receiving me li gayi late fine bhi apni "Late Fine" row ki soorat me
+       jaati hai — warna wasool shuda fine ledger me kahin record na hoti. */
     const rec = ledgerRecRef.current[`${payload.famKey}|${payload.reg}`];
     if (rec && rec.id) {
       const userID = Number(sessionStorage.getItem('UserID')) || 0;
       const now    = new Date().toISOString();
-      const detailRows = (rec.detailRows || []).map(r => {
+      const baseRows = (rec.detailRows || []).map(r => {
+        /* Fine ki row perHead se update nahi hoti — usay helper handle karta hai. */
+        if (feeService.isLateFineRow(r)) return r;
         const recvNow  = +(payload.perHead?.[r.subHead ?? r.head]) || 0;
         const received = (+r.receivedAmount || 0) + recvNow;
         const net      = (+r.challanAmount || 0) - (+r.discount || 0);
         return { ...r, receivedAmount: received, pendingorAdv: net - received, modifiedAt: now, modifiedBy: userID };
+      });
+      const detailRows = feeService.withLateFineRow(baseRows, payload.fine, {
+        /* Branch challan ke apne record se — API dono spellings me deti hai. */
+        ledgerId: rec.id, branchId: rec.branchID ?? rec.branchId, userId: userID, now,
       });
       feeService.receivePayment({
         ledgerId:      rec.id,
@@ -4875,7 +5055,10 @@ function FamilyTreeReceiving({ toast }) {
       setSlipCtx({
         classMeta: { key: f.key, cls: ch.cls, sec: ch.sec }, student: ch,
         period,
-        payment: { date: payload.date, method: payload.method, ref: payload.ref, txn: payload.txn, amount: payload.amount, perHead: payload.perHead },
+        payment: {
+          date: payload.date, method: payload.method, ref: payload.ref, txn: payload.txn,
+          amount: payload.amount, perHead: payload.perHead, fine: payload.fine || 0,
+        },
         defaultSize: settings.printSize || 'a4',
       });
     }
@@ -5137,10 +5320,16 @@ function FamilyTreeReceiving({ toast }) {
         ) : list.map((f, i) => {
           const isOpen = openKey === f.key;
           const sm     = familySummary(f);
-          let totPayable = 0, totPaid = 0, totRem = 0;
+          let totPayable = 0, totPaid = 0, totRem = 0, totFine = 0;
           (f.children || []).forEach(ch => {
-            const m = modelFor(ch, f.key);
-            totPayable += m.payable; totPaid += m.paid; totRem += m.remaining;
+            const m    = modelFor(ch, f.key);
+            const rec  = ch._challan || challanByStudent[String(ch.applicantsID)] || null;
+            const fine = challanAccruedFine(rec, settings);
+            totFine    += fine;
+            totPayable += m.payable + fine;
+            totPaid    += m.paid;
+            /* Late fine bhi baqaya me — jab tak wasool na ho jaaye. */
+            totRem     += m.remaining + (m.paid > 0 ? 0 : fine);
           });
           return (
             <div key={f.key} className="fee-rowwrap">
@@ -5198,6 +5387,8 @@ function FamilyTreeReceiving({ toast }) {
                           <th>Class</th>
                           <th>Sec</th>
                           <th className="fee-right">Total Payable</th>
+                          {/* Due date guzar chuki ho to is bachche par banti late fine. */}
+                          <th className="fee-right">Fine</th>
                           <th className="fee-right">Received</th>
                           <th className="fee-right">Remaining</th>
                           <th className="fee-center">Status</th>
@@ -5207,6 +5398,8 @@ function FamilyTreeReceiving({ toast }) {
                       <tbody>
                         {(f.children || []).map(ch => {
                           const m = modelFor(ch, f.key);
+                          const rec  = ch._challan || challanByStudent[String(ch.applicantsID)] || null;
+                          const fine = challanAccruedFine(rec, settings);
                           return (
                             <tr key={ch.reg}>
                               <td>{ch.reg}</td>
@@ -5217,11 +5410,16 @@ function FamilyTreeReceiving({ toast }) {
                               <td>{ch.cls}</td>
                               <td>{ch.sec}</td>
                               <td className="fee-right">
-                                <b>{money(m.payable)}</b>
+                                {/* Late fine bhi payable ka hissa — Challan List jaisa. */}
+                                <b>{money(m.payable + fine)}</b>
                                 {m.disc > 0 && <span className="fee-sub-eq">disc {money(m.disc)}</span>}
+                                {fine > 0 && <span className="fee-sub-eq fee-fine">incl. fine {money(fine)}</span>}
                               </td>
+                              <td className={`fee-right${fine > 0 ? ' fee-fine' : ''}`}>{fine > 0 ? money(fine) : '0'}</td>
                               <td className="fee-right">{m.paid > 0 ? <span className="fee-paid-amt">{money(m.paid)}</span> : '0'}</td>
-                              <td className="fee-right">{money(m.remaining)}</td>
+                              {/* Un-billed accrued fine bhi Remaining me — paid ho chuki fine
+                                  already `paid` me hai, is liye dobara nahi jodte. */}
+                              <td className="fee-right">{money(m.remaining + (m.paid > 0 ? 0 : fine))}</td>
                               <td className="fee-center">
                                 <div className="fee-recv-status">
                                   {statusBadge(m.status)}
@@ -5276,6 +5474,12 @@ function FamilyTreeReceiving({ toast }) {
                   </div>
 
                   <div className="fee-family-total">
+                    {totFine > 0 && (
+                      <>
+                        Total Fine: <span className="fee-fine">{money(totFine)}</span>
+                        <span style={{ margin: '0 10px', opacity: 0.4 }}>|</span>
+                      </>
+                    )}
                     Total Remaining: <span className={totRem < 0 ? 'fee-neg' : undefined}>{money(totRem)}</span>
                   </div>
                 </div>
@@ -5445,8 +5649,26 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
   const advApplied = Math.min(advCredit, recvNow);
   recvNow = recvNow - advApplied;
 
+  /* ── LATE FINE ── individual modal jaisi hi: due date ke baad receive karne par
+     khud lagti hai, read-only, aur receivable/total dono me judti hai. */
+  const selChallan = selChild?._challan || null;
+  const fineDue    = feeService.computeFine({
+    dueDate: selChallan?.dueDate, receivingDate: date, settings,
+  });
+  const fineDays = feeService.daysLate(selChallan?.dueDate, date);
+  const finePaid = (selChallan?.detailRows || [])
+    .filter(feeService.isLateFineRow)
+    .reduce((a, r) => a + (+r.receivedAmount || 0), 0);
+  const fineOwed = Math.max(0, fineDue - finePaid);
+  if (selModel && !(selModel.onelink || selModel.status === 'full')) {
+    recvNow     += fineOwed;
+    totalCh     += fineDue;
+    totalAfter  += fineDue;
+    alreadyPaid += finePaid;
+  }
+
   /* Total se zyada wasool ho to MINUS me — yani student ka advance. */
-  const remainAfter = selModel ? (selModel.payable - alreadyPaid - recvNow) : 0;
+  const remainAfter = selModel ? (selModel.payable + fineDue - alreadyPaid - recvNow) : 0;
 
   const handleSaveChild = () => {
     if (!selChild) return;
@@ -5462,6 +5684,7 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
       date, method, ref, txn,
       amount: recvNow,
       perHead,
+      fine: fineOwed,
     });
     setSelReg(null);
   };
@@ -5652,6 +5875,25 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
                                 <td className="fee-right">{money(advCredit - advApplied)}</td>
                               </tr>
                             )}
+                            {/* LATE FINE — due date ke baad khud lagti hai, read-only. */}
+                            {fineDue > 0 && (
+                              <tr>
+                                <td>
+                                  <b>Late Fine</b>
+                                  <span className="fee-sub-eq">
+                                    {fineDays} day{fineDays === 1 ? '' : 's'} late
+                                    {settings?.fineType === 'daily' ? ` × Rs. ${(+settings.fineAmt || 0).toLocaleString('en-PK')}` : ''}
+                                  </span>
+                                </td>
+                                <td className="fee-right">{money(fineDue)}</td>
+                                <td className="fee-right">0</td>
+                                <td className="fee-right"><span className="fee-cell-grey">{money(fineDue)}</span></td>
+                                <td className="fee-right"><b>{money(selModel.onelink || selModel.status === 'full' ? finePaid : fineDue)}</b></td>
+                                <td className="fee-right">
+                                  {money(selModel.onelink || selModel.status === 'full' ? Math.max(0, fineDue - finePaid) : 0)}
+                                </td>
+                              </tr>
+                            )}
                           </tbody>
                           <tfoot>
                             <tr className="fee-recv-total">
@@ -5669,7 +5911,8 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
                       <div className="fee-recv-paystrip" style={{ marginTop: 14 }}>
                         <div className="fee-recv-paycard">
                           <span className="fee-recv-paylbl">Total Payable</span>
-                          <span className="fee-recv-payval">{money(selModel.payable)}</span>
+                          {/* Late fine bhi payable ka hissa hai. */}
+                          <span className="fee-recv-payval">{money(selModel.payable + fineDue)}</span>
                         </div>
                         <div className="fee-recv-paycard">
                           <span className="fee-recv-paylbl">Already Received</span>
@@ -6087,7 +6330,7 @@ const ledgerRowPend   = (r) => (ledgerRowUnpaid(r) ? ledgerRowNet(r) : Math.max(
    BranchLedger challans. Only months that actually carry a challan appear —
    a month with no challan is not an unpaid challan, so it must not inflate
    the counts. `empNames` maps a login user id to the employee who acted. */
-function buildStudentHistory({ recs, fromIdx, toIdx, year, empNames = {} }) {
+function buildStudentHistory({ recs, fromIdx, toIdx, year, empNames = {}, settings = null }) {
   const byMonth = new Map();
   (recs || []).forEach(rec => {
     if (String(rec.year) !== String(year)) return;
@@ -6125,9 +6368,30 @@ function buildStudentHistory({ recs, fromIdx, toIdx, year, empNames = {} }) {
        taake Total Fee me har fee ek hi baar aaye. Advance ko yahan minus NAHI karte;
        wo alag "Advance" column me dikhta hai. */
     const openDebt   = isFirst && openBal > 0 ? openBal : 0;
-    const challanAmt = newBilled + openDebt;
     const monthDisc  = rows.reduce((a, r) => a + (+r.discount || 0), 0);   // is mahine ka total discount
-    running = openBal + newBilled - received;                     // naya balance (advance → negative)
+
+    /* ── LATE FINE ──
+       Backend fine ko persist nahi karta, is liye yahan dobara banti hai:
+         - Paise aa chuke (received > 0) → ASLI receiving date tak ki fine, jo
+           WASOOL ho gayi: challanAmt aur received DONO me (net asar 0).
+         - Abhi unpaid overdue → AAJ tak accrued fine, jo abhi BAQAYA hai:
+           challanAmt aur running/pending me (received me nahi).
+       Backend ne apni Late Fine row bhej di ho to wo already rows me hai —
+       dobara na jodo. */
+    const billedFine = rows.filter(feeService.isLateFineRow)
+      .reduce((a, r) => a + (+r.challanAmount || 0), 0);
+    let fine = 0, fineReceived = 0;
+    if (settings?.fineEnabled && billedFine <= 0) {
+      const base = received > 0
+        ? String(rec.modifiedAt || rec.dateofCreattion || '').slice(0, 10)
+        : localTodayISO();
+      fine = feeService.computeFine({ dueDate: rec.dueDate, receivingDate: base, settings });
+      fineReceived = received > 0 ? fine : 0;
+    }
+
+    const challanAmt = newBilled + openDebt + fine;
+    /* Wasool shuda fine received me shaamil hai → net 0; un-wasool fine baqaya barhati hai. */
+    running = openBal + newBilled + fine - (received + fineReceived);
     const pending    = Math.max(0, running);
     /* Status sirf ASLI CASH par — advance apne alag column me. Advance ne poora cover
        kar diya (cash 0, pending 0) to 'full', warna cash aane par running dekho. */
@@ -6155,26 +6419,39 @@ function buildStudentHistory({ recs, fromIdx, toIdx, year, empNames = {} }) {
       challanNo:   `CH-${rec.year}${String(rec.month).padStart(2, '0')}-${rec.id}`,
       challanDate: String(rec.dateofCreattion || '').slice(0, 10) || '—',
       dueDate:     String(rec.dueDate || '').slice(0, 10) || '—',
-      challanAmt, received, pending, status, advApplied, disc: monthDisc,
+      challanAmt, pending, status, advApplied, disc: monthDisc,
+      /* Wasool shuda late fine bhi "Received" ka hissa hai. */
+      received: received + fineReceived,
+      fine, fineReceived,
       method:   received > 0 ? (rec.paymentMethod || 'Cash') : '—',
       recvDate: stamp ? stamp.slice(0, 10) : '—',
       time:     stamp ? stamp.slice(11, 16) : '—',
       recvBy,
       createdBy: empNames[String(rec.createdBy)] || `User #${rec.createdBy}`,
       /* Per-head breakdown so Detailed History can show every billed line. */
-      heads: rows.map(r => ({
-        head:    r.head || 'Account Payable',
-        sub:     r.subHead || r.head || '—',
-        challan: +r.challanAmount || 0,
-        disc:    +r.discount || 0,
-        recv:    ledgerRowRecv(r),
-        pend:    ledgerRowPend(r),
-        unpaid:  ledgerRowUnpaid(r),
-      })),
+      heads: [
+        ...rows.map(r => ({
+          head:    r.head || 'Account Payable',
+          sub:     r.subHead || r.head || '—',
+          challan: +r.challanAmount || 0,
+          disc:    +r.discount || 0,
+          recv:    ledgerRowRecv(r),
+          pend:    ledgerRowPend(r),
+          unpaid:  ledgerRowUnpaid(r),
+        })),
+        /* Reconstructed late fine apni alag line ki tarah. */
+        ...(fine > 0 ? [{
+          head: 'Account Payable', sub: feeService.LATE_FINE_HEAD,
+          challan: fine, disc: 0,
+          recv: fineReceived, pend: Math.max(0, fine - fineReceived),
+          unpaid: fineReceived <= 0,
+        }] : []),
+      ],
       /* The ledger stores a cumulative receivedAmount, not per-transaction
          rows, so the slip builder gets one synthetic payment carrying it. */
       payments: received > 0 ? [{
-        amount: received,
+        amount: received + fineReceived,
+        fine:   fineReceived,
         date:   stamp.slice(0, 10),
         time:   stamp.slice(11, 16),
         method: rec.paymentMethod || 'Cash',
@@ -6188,12 +6465,13 @@ function buildStudentHistory({ recs, fromIdx, toIdx, year, empNames = {} }) {
 }
 
 function feeHistTotals(months) {
-  let fee = 0, recv = 0, adv = 0, disc = 0, lastDate = '—', lastBy = '—', lastTime = '—';
+  let fee = 0, recv = 0, adv = 0, disc = 0, fine = 0, lastDate = '—', lastBy = '—', lastTime = '—';
   months.forEach(mo => {
     fee  += mo.challanAmt;
     recv += mo.received;
     adv  += (mo.advApplied || 0);
     disc += (mo.disc || 0);
+    fine += (mo.fine || 0);
     if (mo.recvDate !== '—') { lastDate = mo.recvDate; lastBy = mo.recvBy; lastTime = mo.time; }
   });
   /* Pending = CURRENT outstanding = aakhri mahine ka running balance. Per-mahine `pending`
@@ -6201,7 +6479,7 @@ function feeHistTotals(months) {
   const pend = months.length ? months[months.length - 1].pending : 0;
   const paidCount = months.filter(mo => mo.received > 0).length;
   return {
-    challans: months.length, fee, recv, pend, adv, disc,
+    challans: months.length, fee, recv, pend, adv, disc, fine,
     lastDate, lastBy, lastTime,
     paidCount, unpaid: months.length - paidCount,
   };
@@ -6277,8 +6555,8 @@ function FeeHistoryTab({ toast }) {
   /* Per-student history, built from that student's real challans. */
   const historyFor = useCallback((c, s) => buildStudentHistory({
     recs: recsByStudent.get(String(s.studentID)) || recsByStudent.get(String(s.applicantsID)) || [],
-    fromIdx, toIdx: Math.max(fromIdx, toIdx), year: appliedYear, empNames,
-  }), [recsByStudent, fromIdx, toIdx, appliedYear, empNames]);
+    fromIdx, toIdx: Math.max(fromIdx, toIdx), year: appliedYear, empNames, settings,
+  }), [recsByStudent, fromIdx, toIdx, appliedYear, empNames, settings]);
 
   /* Search */
   const [searchQ, setSearchQ]       = useState('');
@@ -6792,7 +7070,11 @@ function FeeHistoryDetailModal({ cfg, onClose, year, onDownloadStudent, onDownlo
                 <thead>
                   <tr>
                     <th>Month</th>
+                    {/* Challan generate karte waqt chuni gayi dates — report me bhi wahi. */}
+                    <th>Issue Date</th>
+                    <th>Due Date</th>
                     <th className="fee-right">Challan Amount</th>
+                    <th className="fee-right">Fine</th>
                     <th className="fee-right">Advance</th>
                     <th className="fee-right">Received</th>
                     <th className="fee-right">Pending</th>
@@ -6806,7 +7088,10 @@ function FeeHistoryDetailModal({ cfg, onClose, year, onDownloadStudent, onDownlo
                   {months.map(mo => (
                     <tr key={mo.m}>
                       <td><b>{mo.monthName}</b> {year}</td>
+                      <td>{fmtDMY(mo.challanDate) || '—'}</td>
+                      <td>{fmtDMY(mo.dueDate) || '—'}</td>
                       <td className="fee-right">{money(mo.challanAmt)}</td>
+                      <td className={`fee-right${mo.fine > 0 ? ' fee-fine' : ''}`}>{mo.fine > 0 ? money(mo.fine) : '0'}</td>
                       {/* Advance jo is mahine challan par laga (pichhle overpay se) — MINUS me. */}
                       <td className={`fee-right${mo.advApplied > 0 ? ' fee-neg' : ''}`}>{money(mo.advApplied > 0 ? -mo.advApplied : 0)}</td>
                       <td className="fee-right">{mo.received > 0 ? <span className="fee-paid-amt">{money(mo.received)}</span> : '0'}</td>
@@ -6849,8 +7134,8 @@ function FeeHistoryDetailModal({ cfg, onClose, year, onDownloadStudent, onDownlo
                       </h5>
                       <div className="fee-kv">
                         <span className="k">Challan #</span><span className="v">{mo.challanNo}</span>
-                        <span className="k">Challan Date</span><span className="v">{mo.challanDate}</span>
-                        <span className="k">Due Date</span><span className="v">{mo.dueDate}</span>
+                        <span className="k">Issue Date</span><span className="v">{fmtDMY(mo.challanDate) || '—'}</span>
+                        <span className="k">Due Date</span><span className="v">{fmtDMY(mo.dueDate) || '—'}</span>
                         <span className="k">Total Challan</span><span className="v">{money(mo.challanAmt)}</span>
                       </div>
                     </div>
@@ -7028,7 +7313,10 @@ function histStudentLedgerRows(months, year) {
   return months.map(mo => `
     <tr>
       <td><b>${escHtml(mo.monthName)}</b> ${escHtml(year)}</td>
+      <td>${escHtml(fmtDMY(mo.challanDate) || '—')}</td>
+      <td>${escHtml(fmtDMY(mo.dueDate) || '—')}</td>
       <td class="right">${mo.challanAmt.toLocaleString('en-PK')}</td>
+      <td class="right ${mo.fine > 0 ? 'red' : ''}">${(mo.fine || 0).toLocaleString('en-PK')}</td>
       <td class="right">${mo.advApplied > 0 ? '-' + mo.advApplied.toLocaleString('en-PK') : '0'}</td>
       <td class="right green">${mo.received > 0 ? mo.received.toLocaleString('en-PK') : '0'}</td>
       <td class="right ${mo.pending > 0 ? 'red' : ''}">${mo.pending.toLocaleString('en-PK')}</td>
@@ -7058,7 +7346,7 @@ function buildHistStudentReportHTML({ mode, c, s, months, period, year = '', sch
     <div class="hist-card"><div class="l">Months</div><div class="v">${t.challans}</div></div>
   </div>
   <table>
-    <thead><tr><th>Month</th><th class="right">Challan Amount</th><th class="right">Advance</th><th class="right">Received</th><th class="right">Pending</th><th>Receiving Date</th><th>Received By</th><th>Payment Method</th><th class="center">Status</th></tr></thead>
+    <thead><tr><th>Month</th><th>Issue Date</th><th>Due Date</th><th class="right">Challan Amount</th><th class="right">Fine</th><th class="right">Advance</th><th class="right">Received</th><th class="right">Pending</th><th>Receiving Date</th><th>Received By</th><th>Payment Method</th><th class="center">Status</th></tr></thead>
     <tbody>${histStudentLedgerRows(months, year)}</tbody>
   </table>
 </div>`;
@@ -7089,8 +7377,8 @@ function buildHistStudentReportHTML({ mode, c, s, months, period, year = '', sch
           <h5>Challan Details</h5>
           <div class="hist-kv">
             <span class="k">Challan #</span><span class="v">${escHtml(mo.challanNo)}</span>
-            <span class="k">Challan Date</span><span class="v">${escHtml(mo.challanDate)}</span>
-            <span class="k">Due Date</span><span class="v">${escHtml(mo.dueDate)}</span>
+            <span class="k">Issue Date</span><span class="v">${escHtml(fmtDMY(mo.challanDate) || '—')}</span>
+            <span class="k">Due Date</span><span class="v">${escHtml(fmtDMY(mo.dueDate) || '—')}</span>
             <span class="k">Gross Amount</span><span class="v">${gross.toLocaleString('en-PK')}</span>
             <span class="k">Discount</span><span class="v">${disc.toLocaleString('en-PK')}</span>
             <span class="k">Total Challan</span><span class="v">${mo.challanAmt.toLocaleString('en-PK')}</span>
@@ -7624,7 +7912,12 @@ function ledgerPeriods(fromM, fromY, toM, toY) {
 /* Roll one student's challan records into the figures the panels and the A4
    builders expect. `heads` carries one row per fee head across all periods —
    unpaid heads land wholly in `pend`, partly-paid ones only for the shortfall. */
-function ledgerModel(recs) {
+/* `settings` late fine ke liye — backend abhi fine ko apni detailRow me persist
+   nahi karta, is liye jo challan due date ke BAAD receive hua uski fine yahan
+   dobara compute kar ke payable/paid + Head-Wise me shaamil ki jaati hai. Jis din
+   backend row bhejne lage, isLateFineRow match ho jaayegi aur ye reconstruction
+   apne aap skip ho jaayegi (double-count nahi hoga). */
+function ledgerModel(recs, settings = null) {
   const isPrev = (r) => /previous|pending|arrear/i.test(String(r.subHead || r.head || ''));
   /* Mahine-wise sort — running-ledger sahi chalne ke liye. */
   const list = (recs || []).slice().sort(
@@ -7633,6 +7926,8 @@ function ledgerModel(recs) {
 
   const heads = new Map();
   let payable = 0, paid = 0, disc = 0;
+  /* fineTotal = kul late fine (wasool + baqaya); fineRecv = jo wasool ho chuki. */
+  let fineTotal = 0, fineRecv = 0;
   /* CARRY-FORWARD ke double-count se bachne ke liye running-ledger (Fee History jaisa):
      "Previous Pending" line pichle mahine ka hi baqaya hota hai — agar hum har mahine ka
      pending jod dein to wahi raqam do-do baar ginn jaati thi (e.g. 15,500 + 15,500 = 31,000).
@@ -7664,6 +7959,37 @@ function ledgerModel(recs) {
       agg.pend  += ledgerRowPend(r);
       heads.set(k, agg);
     });
+
+    /* ── LATE FINE (reconstructed) ──
+       Backend fine ko apni detailRow me persist nahi karta, is liye yahan dobara
+       banti hai. Do surtein:
+         a) Challan due date ke BAAD receive hua → fine WASOOL ho chuki. Base date
+            ASLI receiving date (modifiedAt) hai, aaj nahi — warna purane challan
+            ki fine roz barhti rehti. payable + paid dono me (net asar 0).
+         b) Challan abhi tak unpaid hai aur due date guzar chuki → fine AAJ tak
+            accrue ho chuki aur ABHI BAQAYA hai. payable + running me (paid me
+            nahi) — isi se Defaulter report ka "Total Outstanding" sahi banta hai.
+       Backend ne apni Late Fine row bhej di ho to kuch na karo (double-count nahi). */
+    if (settings?.fineEnabled && !rows.some(feeService.isLateFineRow)) {
+      const collected = received > 0;
+      const base = collected
+        ? String(rec.modifiedAt || rec.dateofCreattion || '').slice(0, 10)
+        : localTodayISO();
+      const fine = feeService.computeFine({ dueDate: rec.dueDate, receivingDate: base, settings });
+      if (fine > 0) {
+        fineTotal += fine;
+        payable   += fine;
+        if (collected) { paid += fine; fineRecv += fine; }
+        else           { running += fine; }      // baqaya fine outstanding me
+        const k   = `Account Payable|${feeService.LATE_FINE_HEAD}`;
+        const agg = heads.get(k)
+          || { head: 'Account Payable', sub: feeService.LATE_FINE_HEAD, total: 0, disc: 0, recv: 0, pend: 0 };
+        agg.total += fine;
+        if (collected) agg.recv += fine;
+        else           agg.pend += fine;
+        heads.set(k, agg);
+      }
+    }
   });
   const remaining = Math.max(0, running);   // CURRENT outstanding (de-duped)
   /* ADVANCE = pichhle overpay se aaya credit jo aage ke challans par laga (running < 0
@@ -7684,6 +8010,9 @@ function ledgerModel(recs) {
   return {
     billed: list.length > 0,
     payable, paid, remaining, disc, advance,
+    /* Late fine alag se bhi — KPI tiles aur report footers is se "Fine Collected"
+       / "Fine Outstanding" dikhate hain. */
+    fine: fineTotal, fineRecv, finePend: Math.max(0, fineTotal - fineRecv),
     heads: Array.from(heads.values()),
     recs: list,
     unpaidHeads,
@@ -7696,6 +8025,8 @@ function ledgerModel(recs) {
 function useLedgerReportData(periods) {
   const { data: classes = [] }     = useAsync(feeService.getFeeClasses, []);
   const { data: studentsMap = {} } = useAsync(feeService.getTransportFee, []);
+  /* Late fine reports me dikhane ke liye settings chahiye (rate + on/off). */
+  const { data: settings = {} }    = useAsync(feeService.getFeeSettings, []);
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState(null);
@@ -7729,22 +8060,24 @@ function useLedgerReportData(periods) {
     classes.forEach(c => {
       (studentsMap[c.key] || []).forEach(s => {
         const recs = byStudent.get(String(s.studentID)) || byStudent.get(String(s.applicantsID)) || [];
-        out.push({ c, s, m: ledgerModel(recs) });
+        out.push({ c, s, m: ledgerModel(recs, settings) });
       });
     });
     return out;
-  }, [classes, studentsMap, records]);
+  }, [classes, studentsMap, records, settings]);
 
   /* Only billed students count — a student with no challan isn't a defaulter. */
   const totals = useMemo(() => {
     let exp = 0, recv = 0, pend = 0, disc = 0, def = 0, paid = 0, n = 0;
+    let fine = 0, fineRecv = 0, finePend = 0;
     allStudents.forEach(({ m }) => {
       if (!m.billed) return;
       n += 1;
       exp += m.payable; recv += m.paid; pend += m.remaining; disc += m.disc;
+      fine += (m.fine || 0); fineRecv += (m.fineRecv || 0); finePend += (m.finePend || 0);
       if (m.remaining > 0) def += 1; else paid += 1;
     });
-    return { exp, recv, pend, disc, adv: 0, def, paid, n };
+    return { exp, recv, pend, disc, adv: 0, def, paid, n, fine, fineRecv, finePend };
   }, [allStudents]);
 
   return { classes, studentsMap, allStudents, totals, records, loading, error };
@@ -7819,7 +8152,11 @@ function ReportPanelDefaulter({ toast }) {
 
       {repKpiStrip([
         ['k-red',   'fa-user-clock',           'Total Defaulters', `${totals.def} students`, ''],
-        ['k-amber', 'fa-money-bill-trend-up',  'Total Outstanding', fmtRs(totals.pend),       ''],
+        ['k-amber', 'fa-money-bill-trend-up',  'Total Outstanding', fmtRs(totals.pend),
+          totals.finePend > 0 ? `incl. late fine ${fmtRs(totals.finePend)}` : ''],
+        /* Late fine apni tile me — kitni banni aur usme se kitni wasool hui. */
+        ['k-red',   'fa-triangle-exclamation', 'Late Fine',         fmtRs(totals.fine),
+          totals.fine > 0 ? `${fmtRs(totals.fineRecv)} collected · ${fmtRs(totals.finePend)} pending` : 'No overdue challans'],
         ['k-blue',  'fa-users',                'Students Billed',   `${totals.n}`,            ''],
         ['k-green', 'fa-circle-check',         'Fully Cleared',     `${totals.paid} students`, ''],
       ])}
@@ -7894,6 +8231,8 @@ function ReportPanelDefaulter({ toast }) {
                               <th>Reg No</th>
                               <th>Contact</th>
                               <th>Unpaid Heads</th>
+                              {/* Due date guzarne par banti fine — Total Pending me shaamil. */}
+                              <th className="fee-right">Late Fine</th>
                               <th className="fee-right">Total Pending</th>
                             </tr>
                           </thead>
@@ -7906,6 +8245,9 @@ function ReportPanelDefaulter({ toast }) {
                                 <td>{x.s.reg}</td>
                                 <td style={{ fontVariantNumeric: 'tabular-nums' }}>{studentPhone(x.s)}</td>
                                 <td>{x.m.unpaidHeads.length ? x.m.unpaidHeads.join(', ') : '—'}</td>
+                                <td className={`fee-right${x.m.finePend > 0 ? ' fee-fine' : ''}`}>
+                                  {x.m.finePend > 0 ? money(x.m.finePend) : '0'}
+                                </td>
                                 <td className="fee-right fee-neg">{money(x.m.remaining)}</td>
                               </tr>
                             ))}
@@ -8172,8 +8514,11 @@ function ReportPanelHeadwise({ toast }) {
   const allHeads = useMemo(() => {
     const set = new Set();
     records.forEach(rec => (rec.detailRows || []).forEach(r => set.add(r.subHead || r.head || '—')));
+    /* Late Fine ledger me persist nahi hoti (reconstruct hoti hai), is liye wo
+       detailRows se nahi milti — lekin filter me available honi chahiye. */
+    if (allStudents.some(x => (x.m.fine || 0) > 0)) set.add(feeService.LATE_FINE_HEAD);
     return ['All Heads', ...Array.from(set).sort()];
-  }, [records]);
+  }, [records, allStudents]);
   useEffect(() => { if (head !== 'All Heads' && !allHeads.includes(head)) setHead('All Heads'); }, [allHeads, head]);
 
   const fetchResult = () => {
@@ -8953,12 +9298,13 @@ function buildRepDefaulterHTML({ classes, studentsMap, allStudents, totals, mont
       return m && m.remaining > 0 ? { s, m } : null;
     }).filter(Boolean);
     if (!defs.length) return '';
-    const sub = defs.reduce((a, x) => a + x.m.remaining, 0);
+    const sub     = defs.reduce((a, x) => a + x.m.remaining, 0);
+    const subFine = defs.reduce((a, x) => a + (x.m.finePend || 0), 0);
     return `<div class="rep-secttl">${escHtml(c.cls)} — Section ${escHtml(c.sec)} · ${defs.length} defaulter(s)</div>
       <table class="rep-tbl">
-        <thead><tr><th>Sn.</th><th>Student</th><th>Father</th><th>Reg No</th><th>Contact</th><th>Unpaid Heads</th><th class="r">Pending</th></tr></thead>
-        <tbody>${defs.map((x, j) => `<tr><td>${j + 1}</td><td><b>${escHtml(x.s.name)}</b></td><td>${escHtml(x.s.father || '—')}</td><td>${escHtml(x.s.reg)}</td><td>${escHtml(studentPhone(x.s))}</td><td>${escHtml((x.m.unpaidHeads || []).join(', ') || '—')}</td><td class="r neg">${(x.m.remaining).toLocaleString('en-PK')}</td></tr>`).join('')}</tbody>
-        <tfoot><tr class="rep-tot"><td colspan="6">${escHtml(c.cls)}/${escHtml(c.sec)} Subtotal</td><td class="r">${sub.toLocaleString('en-PK')}</td></tr></tfoot>
+        <thead><tr><th>Sn.</th><th>Student</th><th>Father</th><th>Reg No</th><th>Contact</th><th>Unpaid Heads</th><th class="r">Late Fine</th><th class="r">Pending</th></tr></thead>
+        <tbody>${defs.map((x, j) => `<tr><td>${j + 1}</td><td><b>${escHtml(x.s.name)}</b></td><td>${escHtml(x.s.father || '—')}</td><td>${escHtml(x.s.reg)}</td><td>${escHtml(studentPhone(x.s))}</td><td>${escHtml((x.m.unpaidHeads || []).join(', ') || '—')}</td><td class="r ${x.m.finePend > 0 ? 'neg' : ''}">${(x.m.finePend || 0).toLocaleString('en-PK')}</td><td class="r neg">${(x.m.remaining).toLocaleString('en-PK')}</td></tr>`).join('')}</tbody>
+        <tfoot><tr class="rep-tot"><td colspan="6">${escHtml(c.cls)}/${escHtml(c.sec)} Subtotal</td><td class="r">${subFine.toLocaleString('en-PK')}</td><td class="r">${sub.toLocaleString('en-PK')}</td></tr></tfoot>
       </table>`;
   }).filter(Boolean).join('');
 
@@ -8968,6 +9314,7 @@ function buildRepDefaulterHTML({ classes, studentsMap, allStudents, totals, mont
     `<div class="kpi-row">
       <div class="kpi"><div class="l">Total Defaulters</div><div class="v">${totals.def}</div></div>
       <div class="kpi"><div class="l">Outstanding</div><div class="v">Rs. ${totals.pend.toLocaleString('en-PK')}</div></div>
+      <div class="kpi"><div class="l">Late Fine (pending)</div><div class="v">Rs. ${(totals.finePend || 0).toLocaleString('en-PK')}</div></div>
       <div class="kpi"><div class="l">Students Billed</div><div class="v">${totals.n}</div></div>
       <div class="kpi"><div class="l">Fully Cleared</div><div class="v">${totals.paid}</div></div>
     </div>
@@ -9365,6 +9712,10 @@ function feeSlipHTML({ copyLabel, classMeta, student, heads, settings, period, i
   const tNet    = rows.reduce((a, r) => a + r.net, 0);
   const payable = tNet + arrears;
   const fineTxt = `Rs. ${fineAmt.toLocaleString('en-PK')}`;
+  /* Due date guzar chuki ho to AAJ tak banti fine — slip par sirf formula nahi,
+     asli raqam bhi dikhe taake parent ko pata ho ab kitna dena hai. */
+  const accruedFine = fine ? feeService.computeFine({ dueDate: dueISO, receivingDate: localTodayISO(), settings }) : 0;
+  const lateDays    = feeService.daysLate(dueISO, localTodayISO());
   const psidPlain = FEE_SCHOOL.psid.replace(/[^0-9]/g, '');
 
   return `
@@ -9403,6 +9754,9 @@ function feeSlipHTML({ copyLabel, classMeta, student, heads, settings, period, i
         : `<div class="outline-box"><div class="ob-lbl">Fine</div><div class="ob-val">—</div></div>`}
     </div>
     <div class="net-box"><div class="nb-lbl">Net Payable Before Due Date</div><div class="nb-val">Rs. ${payable.toLocaleString('en-PK')}</div></div>
+    ${accruedFine > 0
+      ? `<div class="net-box"><div class="nb-lbl">Payable After Due Date (incl. ${lateDays} day${lateDays === 1 ? '' : 's'} fine)</div><div class="nb-val">Rs. ${(payable + accruedFine).toLocaleString('en-PK')}</div></div>`
+      : ''}
     ${fine ? `<div class="fine-line">After due date: Rs. ${payable.toLocaleString('en-PK')} + (no. of days × ${fineAmt})</div>` : ''}
     ${showPsd ? `
     <div class="psid-block">
@@ -9425,30 +9779,71 @@ function feeSlipHTML({ copyLabel, classMeta, student, heads, settings, period, i
 </div>`;
 }
 
+/* Ek saved BranchLedger challan record se uske ASLI Issue / Due / Fee-Period
+   nikaalta hai. Ye wahi dates hain jo "Generate Challan" modal me chuni gayi thin
+   (dateofCreattion = Issue Date, dueDate = Due Date), is liye preview, download
+   aur report — sab ek hi date dikhate hain. Record na ho ya field khaali ho to
+   caller ka fallback laut-ta hai. */
+function challanDatesOf(rec, fb = {}) {
+  const m = fb.monthNames
+    || ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  const iso = (v) => {
+    const s = String(v || '').slice(0, 10);
+    return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : '';
+  };
+  /* An explicit override (History reprint) always beats the record. */
+  const issueISO = fb.issueOverride || iso(rec?.dateofCreattion) || fb.issueISO;
+  const dueISO   = fb.dueOverride   || iso(rec?.dueDate)         || fb.dueISO;
+
+  let period = fb.periodOverride || '';
+  if (!period) {
+    /* Fee Period challan ke apne month/year se — issue date ke mahine se NAHI,
+       kyunki July ka challan August me bhi generate ho sakta hai. */
+    const mi = Number(rec?.month) - 1;          // API month 1-based
+    const yr = Number(rec?.year);
+    if (mi >= 0 && mi <= 11 && yr) period = `${m[mi]} ${yr}`;
+  }
+  return { issueISO, dueISO, period: period || fb.period };
+}
+
 /* A fresh challan is stamped with today's dates and the current month, but a
-   History reprint must carry the dates the challan was actually raised with —
-   so callers may override period / issue / due. */
+   printed slip must carry the dates the challan was actually GENERATED with —
+   the Issue/Due the user picked in the Generate Challan modal. Those live on the
+   saved BranchLedger record (dateofCreattion / dueDate / month / year), which is
+   attached to each student as `_challan`. Explicit overrides (History reprint)
+   still win; today + 10 days is only the last-resort fallback for a student who
+   has no saved challan yet. */
 function buildChallanInner({ classMeta, students, heads, settings, discountMap, bw = false, size = 'a4', school = null,
                              period: periodOverride, issueISO: issueOverride, dueISO: dueOverride }) {
   const today    = new Date();
   const dueDate  = new Date(today); dueDate.setDate(dueDate.getDate() + 10);
   const m = ['January','February','March','April','May','June','July','August','September','October','November','December'];
-  const issueISO = issueOverride || today.toISOString().slice(0, 10);
-  const dueISO   = dueOverride   || dueDate.toISOString().slice(0, 10);
-  const period   = periodOverride || `${m[today.getMonth()]} ${today.getFullYear()}`;
+  const fbIssueISO = issueOverride || today.toISOString().slice(0, 10);
+  const fbDueISO   = dueOverride   || dueDate.toISOString().slice(0, 10);
+  const fbPeriod   = periodOverride || `${m[today.getMonth()]} ${today.getFullYear()}`;
+  /* Har student ke apne saved challan se Issue/Due/Period nikaalo — bulk print me
+     har bachche ka challan alag din bana ho sakta hai. */
+  const datesFor = (s) => challanDatesOf(s?._challan, {
+    issueISO: fbIssueISO, dueISO: fbDueISO, period: fbPeriod, monthNames: m,
+    issueOverride, dueOverride, periodOverride,
+  });
   const classDisc = (discountMap && discountMap[classMeta.key]) || {};
   const sch = feeReportSchool(school);
 
   if (size === 'thermal') {
-    const slips = students.map(s => feeThermalChallanHTML({
-      classMeta, student: s, heads, settings, period, issueISO, dueISO,
-      studentDisc: classDisc[s.reg] || {}, school: sch,
-    })).join('');
+    const slips = students.map(s => {
+      const { period, issueISO, dueISO } = datesFor(s);
+      return feeThermalChallanHTML({
+        classMeta, student: s, heads, settings, period, issueISO, dueISO,
+        studentDisc: classDisc[s.reg] || {}, school: sch,
+      });
+    }).join('');
     return `<div class="fee-thermal-doc">${slips || '<div style="padding:14px;text-align:center;color:#64748B">Nothing to render.</div>'}</div>`;
   }
 
   const pages = students.map(s => {
     const sd = classDisc[s.reg] || {};
+    const { period, issueISO, dueISO } = datesFor(s);
     return `
     <div class="challan-page">
       <div class="challan-row">
@@ -9555,6 +9950,10 @@ function feeThermalChallanHTML({ classMeta, student, heads, settings, period, is
   const tNet    = rows.reduce((a, r) => a + r.net, 0);
   const payable = tNet + arrears;
   const fineTxt = `Rs. ${fineAmt.toLocaleString('en-PK')}`;
+  /* Due date guzar chuki ho to AAJ tak banti fine — slip par sirf formula nahi,
+     asli raqam bhi dikhe taake parent ko pata ho ab kitna dena hai. */
+  const accruedFine = fine ? feeService.computeFine({ dueDate: dueISO, receivingDate: localTodayISO(), settings }) : 0;
+  const lateDays    = feeService.daysLate(dueISO, localTodayISO());
   const showDiscCol = rows.some(r => r.disc > 0);
 
   return `
@@ -9598,6 +9997,10 @@ function feeThermalChallanHTML({ classMeta, student, heads, settings, period, is
     <span>Net Payable</span>
     <span>Rs. ${payable.toLocaleString('en-PK')}</span>
   </div>
+  ${accruedFine > 0 ? `<div class="th-net">
+    <span>After Due (incl. ${lateDays}d fine)</span>
+    <span>Rs. ${(payable + accruedFine).toLocaleString('en-PK')}</span>
+  </div>` : ''}
   ${fine ? `<div class="th-fine">After due: Rs. ${payable.toLocaleString('en-PK')} + (days × ${fineAmt})</div>` : ''}
   ${showPsd ? `
   <div class="th-psid">
@@ -9630,6 +10033,11 @@ function feeFamilySlipHTML({ copyLabel, family, settings, period, issueISO, dueI
   /* Advance (jama shuda extra) Total ke BAAD minus hota hai. */
   const famAdv  = family.children.reduce((a, ch) => a + w(ch.advance), 0);
   const famPay  = tNet - famAdv;
+  /* Due date guzar chuki ho to poori family par banti late fine (ek hi challan hai). */
+  const famFine     = settings?.fineEnabled
+    ? feeService.computeFine({ dueDate: dueISO, receivingDate: localTodayISO(), settings })
+    : 0;
+  const famLateDays = feeService.daysLate(dueISO, localTodayISO());
   const psidPlain = FEE_SCHOOL.psid.replace(/[^0-9]/g, '');
 
   return `
@@ -9660,6 +10068,9 @@ function feeFamilySlipHTML({ copyLabel, family, settings, period, issueISO, dueI
   </div>
   <div class="bottom-section">
     <div class="net-box"><div class="nb-lbl">Total Family Payable</div><div class="nb-val">Rs. ${famPay.toLocaleString('en-PK')}</div></div>
+    ${famFine > 0
+      ? `<div class="net-box"><div class="nb-lbl">Payable After Due Date (incl. ${famLateDays} day${famLateDays === 1 ? '' : 's'} fine)</div><div class="nb-val">Rs. ${(famPay + famFine).toLocaleString('en-PK')}</div></div>`
+      : ''}
     ${showPsd ? `
     <div class="psid-block">
       <div class="psid-top"><div class="psid-dot"></div><span class="psid-tag">1Link PSID — Pay via Any Banking App</span></div>
@@ -9681,13 +10092,21 @@ function feeFamilySlipHTML({ copyLabel, family, settings, period, issueISO, dueI
 </div>`;
 }
 
-function buildFamilyChallanInner({ family, settings, bw = false, size = 'a4' }) {
+function buildFamilyChallanInner({ family, settings, bw = false, size = 'a4',
+                                   period: periodOverride, issueISO: issueOverride, dueISO: dueOverride }) {
   const today    = new Date();
-  const issueISO = today.toISOString().slice(0, 10);
+  const fbIssue  = today.toISOString().slice(0, 10);
   const dueDate  = new Date(today); dueDate.setDate(dueDate.getDate() + 10);
-  const dueISO   = dueDate.toISOString().slice(0, 10);
+  const fbDue    = dueDate.toISOString().slice(0, 10);
   const m = ['January','February','March','April','May','June','July','August','September','October','November','December'];
-  const period  = `${m[today.getMonth()]} ${today.getFullYear()}`;
+  const fbPeriod = `${m[today.getMonth()]} ${today.getFullYear()}`;
+  /* Combined family slip ek hi challan hota hai, is liye pehle bachche ka saved
+     record (sab ek hi bulk run me bante hain) uski Issue/Due date deta hai. */
+  const famRec = (family.children || []).map(ch => ch._challan).find(Boolean) || null;
+  const { period, issueISO, dueISO } = challanDatesOf(famRec, {
+    issueISO: fbIssue, dueISO: fbDue, period: fbPeriod, monthNames: m,
+    issueOverride, dueOverride, periodOverride,
+  });
 
   if (size === 'thermal') {
     return `<div class="fee-thermal-doc">${feeThermalFamilyChallanHTML({ family, settings, period, issueISO, dueISO })}</div>`;
@@ -9727,6 +10146,11 @@ function feeThermalFamilyChallanHTML({ family, settings, period, issueISO, dueIS
   /* Advance (jama shuda extra) Total ke BAAD minus hota hai. */
   const famAdv  = family.children.reduce((a, ch) => a + w(ch.advance), 0);
   const famPay  = tNet - famAdv;
+  /* Due date guzar chuki ho to poori family par banti late fine. */
+  const famFine     = settings?.fineEnabled
+    ? feeService.computeFine({ dueDate: dueISO, receivingDate: localTodayISO(), settings })
+    : 0;
+  const famLateDays = feeService.daysLate(dueISO, localTodayISO());
 
   return `
 <div class="th-challan">
@@ -9759,6 +10183,10 @@ function feeThermalFamilyChallanHTML({ family, settings, period, issueISO, dueIS
     <span>Total Family Payable</span>
     <span>Rs. ${famPay.toLocaleString('en-PK')}</span>
   </div>
+  ${famFine > 0 ? `<div class="th-net">
+    <span>After Due (incl. ${famLateDays}d fine)</span>
+    <span>Rs. ${(famPay + famFine).toLocaleString('en-PK')}</span>
+  </div>` : ''}
   ${showPsd ? `
   <div class="th-psid">
     <div class="th-psid-top">1Link PSID</div>
@@ -12165,6 +12593,15 @@ const FEE_CSS = `
 
 /* Negative-payable text + row flash */
 .fee-stbl tbody td.fee-neg { color: #16A34A; font-weight: 700; }
+/* LATE FINE hamesha LAAL. Note: fee-neg table ke andar HARA ho jaata hai (wo
+   advance ke liye hai, jo student ke haq me hota hai). Fine ulta ek charge hai,
+   is liye apni class — aur fee-neg ke BAAD define ki gayi taake wo jeete. */
+.fee-fine,
+.fee-stbl tbody td.fee-fine,
+.fee-stbl tbody td .fee-fine { color: #DC2626; font-weight: 700; }
+[data-theme="dark"] .fee-fine,
+[data-theme="dark"] .fee-stbl tbody td.fee-fine,
+[data-theme="dark"] .fee-stbl tbody td .fee-fine { color: #FCA5A5; }
 .fee-st-flash { animation: feeFlash 1.6s ease; }
 @keyframes feeFlash {
   0%   { background: rgba(34,197,94,.2); }

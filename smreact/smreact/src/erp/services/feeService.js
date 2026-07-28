@@ -657,11 +657,133 @@ export async function saveFeeSettings(payload) {
 
   return getFeeSettings();
 }
+/* "YYYY-MM-DD" (date picker) → API datetime string.
+
+   NOTE: toISOString() yahan NAHI chal sakta — wo LOCAL midnight ko UTC me badal
+   deta hai, aur Pakistan (UTC+5) me 27 July 00:00 → "2025-07-26T19:00:00Z" ban
+   jaata tha, yaani challan par ek din PEECHE ki date chhapti thi. Is liye wahi
+   calendar date bina timezone suffix ke bheji jaati hai. */
 const toApiDate = (value) => {
-  if (!value) return new Date().toISOString();
-  const d = new Date(`${value}T00:00:00`);
-  return Number.isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString();
+  const localToday = () => {
+    const n = new Date();
+    const p = (x) => String(x).padStart(2, '0');
+    return `${n.getFullYear()}-${p(n.getMonth() + 1)}-${p(n.getDate())}`;
+  };
+  const s = String(value || '').slice(0, 10);
+  const day = /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : localToday();
+  return `${day}T00:00:00`;
 };
+
+/* ═══════════════════════════════════════════════════════════════════
+   LATE FINE — challan due date ke BAAD receive karne par jurmana.
+
+   Rule: base date = jo Receiving Date modal me DAALI gayi hai (system ka
+   "aaj" nahi). daysLate = receivingDate − dueDate (poore din). Due date
+   khud par 0 din — fine agle din se shuru hoti hai.
+     fixed  → ek baar flat fineAmt
+     daily  → fineAmt × daysLate
+   ═══════════════════════════════════════════════════════════════════ */
+export const LATE_FINE_HEAD = 'Late Fine';
+
+/* Ledger ki wo detailRow jo late fine hai (backend persist kare to isse match ho). */
+export function isLateFineRow(r) {
+  const n = String(r?.subHead || r?.sub || r?.head || r?.name || '').trim().toLowerCase();
+  return n === 'late fine' || n === 'fine';
+}
+
+/* Receiving ke waqt li gayi late fine ko ledger me PERSIST karne ke liye uski
+   apni detailRow. Pehle fine ki row maujood ho (backend ne save ki thi) to usi
+   me amount add hoti hai; warna nayi row (id: 0) bana kar bheji jaati hai.
+
+   Is ke baghair wasool shuda fine kahin record nahi hoti thi: cash drawer aur
+   ledger mismatch ho jaate the, aur reports ko fine har baar dobara compute
+   karni parti thi (jo fine settings badalne par purane challans bhi badal
+   deti thi).
+
+   `blid` = parent challan (ledger) ki id — baaki detailRows ki tarah. Ye 0
+   chala jaaye to row kisi challan se link nahi hoti aur backend usay reject/
+   orphan kar deta hai. */
+export function withLateFineRow(rows, fineAmount, { ledgerId, branchId, userId, now } = {}) {
+  const fine = Math.round(Number(fineAmount) || 0);
+  const list = Array.isArray(rows) ? rows : [];
+  if (fine <= 0) return list;
+
+  const stamp = now || new Date().toISOString();
+  const idx = list.findIndex(isLateFineRow);
+  /* blid caller se, warna kisi maujooda row se (sab ka blid ek hi challan hai). */
+  const blid = Number(ledgerId) || Number(list.find(r => Number(r?.blid))?.blid) || 0;
+  /* Branch bhi USI challan ka — pehle caller, phir uski apni detailRows, aur
+     aakhir me logged-in branch. Multi-branch me sessionStorage par bharosa
+     karna ghalat row bana sakta hai agar challan kisi aur branch ka ho. */
+  const rowBranch = list.find(r => Number(r?.branchId ?? r?.branchID));
+  const branch = Number(branchId)
+    || Number(rowBranch?.branchId ?? rowBranch?.branchID)
+    || Number(sessionStorage.getItem('branchID'))
+    || 1;
+
+  if (idx >= 0) {
+    /* Maujooda fine row — challan aur received dono me abhi wali fine add karo. */
+    const r = list[idx];
+    const billed   = (Number(r.challanAmount) || 0) + fine;
+    const received = (Number(r.receivedAmount) || 0) + fine;
+    const next = [...list];
+    next[idx] = {
+      ...r,
+      challanAmount: billed,
+      receivedAmount: received,
+      pendingorAdv: billed - (Number(r.discount) || 0) - received,
+      modifiedAt: stamp,
+      modifiedBy: userId,
+    };
+    return next;
+  }
+
+  /* id: 0 → backend ke liye "ye nayi row hai, INSERT karo" (challan generate
+     karte waqt bhi rows isi tarah jaati hain). blid parent challan ki id. */
+  return [...list, {
+    id: 0,
+    blid,
+    branchId: branch,
+    head: 'Account Payable',
+    subHead: LATE_FINE_HEAD,
+    challanAmount: fine,
+    discount: 0,
+    receivedAmount: fine,       // fine hamesha poori wasool hoti hai
+    pendingorAdv: 0,
+    createdAt: stamp,
+    createdBy: userId,
+    modifiedAt: stamp,
+    modifiedBy: userId,
+    isActive: true,
+  }];
+}
+
+const dayMs = 24 * 60 * 60 * 1000;
+const dayStart = (v) => {
+  const s = String(v || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+  const [y, m, d] = s.split('-').map(Number);
+  return Date.UTC(y, m - 1, d);
+};
+
+/* Due date ke baad kitne poore din guzre. Due se pehle/us din → 0. */
+export function daysLate(dueDate, receivingDate) {
+  const due = dayStart(dueDate);
+  const rec = dayStart(receivingDate);
+  if (due == null || rec == null) return 0;
+  return Math.max(0, Math.floor((rec - due) / dayMs));
+}
+
+/* Is challan par is receiving date tak banti kul fine. */
+export function computeFine({ dueDate, receivingDate, settings } = {}) {
+  if (!settings?.fineEnabled) return 0;
+  const amt = Number(settings.fineAmt) || 0;
+  if (amt <= 0) return 0;
+  const late = daysLate(dueDate, receivingDate);
+  if (late <= 0) return 0;
+  const total = settings.fineType === 'daily' ? amt * late : amt;
+  return Math.max(0, Math.round(total));
+}
 
 function buildLedgerChallanPayload({ classMeta = {}, student = {}, heads = [], monthIdx = 0, options = {} }) {
   const now = new Date().toISOString();
@@ -775,12 +897,17 @@ export async function generateChallan(classKey, reg, monthIdx, options = {}) {
       monthIdx,
       options,
     });
+    /* Debug: Issue Date backend tak sahi ja rahi hai ya nahi — console me dekho. */
+    console.log('[create-challan] issue picked:', options.issueDate,
+                '→ sent dateofCreattion:', payload.ledger.dateofCreattion,
+                '| dueDate:', payload.ledger.dueDate);
     const res = await fetch(buildUrl('/api/BranchLedger/create-challan'), {
       method: 'POST',
       headers: { Accept: '*/*', 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
     const json = await res.json().catch(() => null);
+    console.log('[create-challan] response:', json);
     if (!res.ok || json?.success === false) {
       throw new Error(apiMessage(json) || `Could not generate challan for ${student.name || student.reg || 'student'}`);
     }
