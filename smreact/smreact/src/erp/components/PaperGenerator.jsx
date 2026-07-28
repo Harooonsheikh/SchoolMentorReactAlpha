@@ -1684,6 +1684,10 @@ const setSubjLine = (ci, si, l) => {
     const [units, setUnits] = useState([]);
     const [selectedUnits, setSelectedUnits] = useState([]);
       const [loading, setLoading] = useState(false); // 👈 Loading state for fetch
+  /* Edit mode: modal khulte hi 3 APIs chalti hain (selection → submission detail →
+     notebook details). Jab tak wo complete na hon, adha bhara form dikhta tha —
+     is liye poore modal par blocking loader. Fresh (non-edit) modal me false. */
+  const [editLoading, setEditLoading] = useState(isEdit);
 
   const [notebookDetails, setNotebookDetails] = useState(null);
 
@@ -1917,6 +1921,9 @@ const setSubjLine = (ci, si, l) => {
         prefillSavedTabs(sections, details, overallType);
       } catch (err) {
         console.error('Edit auto-load failed', err);
+      } finally {
+        /* Har raaste par (early-return, error, success) loader hatna chahiye. */
+        if (alive) setEditLoading(false);
       }
     })();
     return () => { alive = false; };
@@ -2432,7 +2439,21 @@ const setSubjLine = (ci, si, l) => {
         className="pg-modal-overlay open"
         onClick={e => { if (e.target === e.currentTarget) onClose(); }}
       >
-        <div className="pg-modal" style={{ maxWidth: 900 }}>
+        <div className="pg-modal" style={{ maxWidth: 900 }} aria-busy={editLoading || undefined}>
+          {/* Edit mode: saved paper ki APIs load hone tak blocking loader */}
+          {editLoading && (
+            <div className="pg-modal-loading" role="status" aria-live="polite">
+              <div className="pg-modal-loading-spinner" />
+              <div className="pg-modal-loading-text">
+                {medium === 'urdu' ? 'محفوظ شدہ پرچہ لوڈ ہو رہا ہے…' : 'Loading saved paper…'}
+              </div>
+              <div className="pg-modal-loading-sub">
+                {medium === 'urdu'
+                  ? 'سوالات اور ترتیبات حاصل کی جا رہی ہیں'
+                  : 'Fetching questions and settings'}
+              </div>
+            </div>
+          )}
           <div className="pg-modal-header">
             <div>
               <div className="pg-modal-title">Make Paper — {cls.name} ({cls.section})</div>
@@ -2492,7 +2513,7 @@ const setSubjLine = (ci, si, l) => {
                         setBlocksState({ obj: {}, subj: {} });
                       }
                     }}
-                    placeholder="Select units..."
+                    placeholder={medium === 'urdu' ? 'یونٹس منتخب کریں…' : 'Select units...'}
                     isDisabled={!subject}
                     styles={{
                       control: (base) => ({
@@ -2539,7 +2560,9 @@ const setSubjLine = (ci, si, l) => {
 
                 <div className="pg-sc-field pg-sc-field--wide">
                   <div className="pg-field-label">Paper Title</div>
-                  <input className="pg-input" type="text" value={title} onChange={e => setTitle(e.target.value)} placeholder="e.g. Monthly Test 1" />
+                  <input className="pg-input" type="text" value={title} onChange={e => setTitle(e.target.value)}
+                    dir={medium === 'urdu' ? 'rtl' : undefined}
+                    placeholder={medium === 'urdu' ? 'مثلاً: ماہانہ ٹیسٹ 1' : 'e.g. Monthly Test 1'} />
                 </div>
               </div>
 
@@ -3394,7 +3417,8 @@ const setSubjLine = (ci, si, l) => {
     type="text"
     value={tab.instr || ''}
     onChange={e => onUpdate({ instr: e.target.value })}
-    placeholder="e.g. Write the Opposite of the following words"
+    dir={isUrdu ? 'rtl' : undefined}
+    placeholder={t('e.g. Write the Opposite of the following words', 'مثلاً: درج ذیل الفاظ کے متضاد لکھیں')}
     style={{ borderRadius: 'var(--radius-sm)', fontSize: 12.5 }}
   />
                 <div style={{
@@ -3413,7 +3437,7 @@ const setSubjLine = (ci, si, l) => {
                   <div className="pg-q-field-label">{t('No. of Items', 'اشیاء کی تعداد')}</div>
                   <input
                     className="pg-q-input" type="number" min={1}
-                    value={items || ''} placeholder="e.g. 5"
+                    value={items || ''} placeholder={t('e.g. 5', 'مثلاً 5')}
                     onChange={e => onUpdate({ items: Math.max(0, +e.target.value || 0) })}
                   />
                   <div style={{ fontSize: 9.5, color: 'var(--text-muted)', marginTop: 3 }}>
@@ -6196,8 +6220,36 @@ const setSubjLine = (ci, si, l) => {
     transform:scale(.95) translateY(20px);
     transition:all .2s cubic-bezier(.34,1.56,.64,1);
     margin:auto;
+    position:relative;   /* loading overlay ka anchor */
   }
   .pg-modal-overlay.open .pg-modal { transform:scale(1) translateY(0); }
+
+  /* ── Modal loading overlay (Edit mode — saved paper APIs) ── */
+  .pg-modal-loading {
+    position:absolute; inset:0; z-index:20;
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px;
+    background:color-mix(in srgb, var(--bg-card) 88%, transparent);
+    backdrop-filter:blur(2px);
+    border-radius:var(--radius-xl);
+  }
+  @supports not (background: color-mix(in srgb, red 50%, blue)) {
+    .pg-modal-loading { background:rgba(255,255,255,.9); }
+    [data-theme="dark"] .pg-modal-loading { background:rgba(17,24,39,.9); }
+  }
+  .pg-modal-loading-spinner {
+    width:34px; height:34px; border-radius:50%;
+    border:3px solid var(--border-light);
+    border-top-color:#1E40AF;
+    animation:pgModalSpin .7s linear infinite;
+  }
+  .pg-modal-loading-text { font-size:13px; font-weight:700; color:#1E40AF; }
+  .pg-modal-loading-sub  { font-size:11px; color:var(--text-muted); }
+  [data-theme="dark"] .pg-modal-loading-spinner { border-top-color:#3B82F6; }
+  [data-theme="dark"] .pg-modal-loading-text { color:#93C5FD; }
+  @keyframes pgModalSpin { to { transform:rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) {
+    .pg-modal-loading-spinner { animation-duration:2s; }
+  }
   .pg-modal-header {
     padding:18px 22px 14px;
     border-bottom:1px solid var(--border-light);
