@@ -35,13 +35,22 @@ export default function LoginScreen({ onLogin, onSignup }) {
       setError(data?.message || 'Login failed');
       return;
     }
-    /* Parent role ERP me login NAHI kar sakta — chahe credentials sahi hon, "User not found"
-       dikha kar rok do (session store / onLogin se pehle). */
+    /* Sirf PURE parent accounts (parent portal, jinke paas koi employee record nahi) ERP me
+       login NAHI kar sakte. STAFF (teacher/principal/admin) — chahe wo kisi student ke parent
+       bhi hon (isParent:true) — hamesha login kar sakte hain. Pehle `isParent === true` check
+       staff ko bhi galti se block kar deta tha (khaas kar deactivate→reactivate ke baad). */
+    const isEmployee = !!(data?.employee_ID ?? data?.employeeID ?? data?.employee_Id ?? data?.empId);
     const roleStr = String(
       data?.accountType ?? data?.role ?? data?.roleName ?? data?.userType ?? ''
     ).trim().toLowerCase();
-    if (roleStr === 'parent' || data?.isParent === true) {
+    if (!isEmployee && roleStr === 'parent') {
       setError('User not found');
+      return;
+    }
+    /* Belt-and-suspenders: deactivated (inactive) account frontend se bhi block — chahe
+       backend galti se login hone bhi de. Sirf tab jab response saaf-saaf isActive:false de. */
+    if (data?.isActive === false) {
+      setError('This account is deactivated. Please contact your administrator.');
       return;
     }
     if (data?.branchID) {

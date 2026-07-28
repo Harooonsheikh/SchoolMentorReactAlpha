@@ -48,6 +48,13 @@ const cleanVal = (v) => {
   const s = String(v ?? '').trim();
   return EMPTY_TEXT.has(s.toLowerCase()) ? '' : s;
 };
+/* isActive backend se boolean / 0-1 / "true"-"false" — kisi bhi form me aa sakta hai.
+   Sirf saaf-saaf false-ish ko INACTIVE maano, warna active. */
+const empIsActive = (v) => {
+  if (v == null) return true;
+  if (typeof v === 'string') { const s = v.trim().toLowerCase(); return !(s === 'false' || s === '0' || s === 'no'); }
+  return !!v;
+};
 function mapEmployeeToUser(e) {
   const name = `${cleanVal(e.firstName)} ${cleanVal(e.lastName)}`.trim() || 'Unnamed';
   const email = cleanVal(e.email);
@@ -67,7 +74,7 @@ function mapEmployeeToUser(e) {
     employeeId: `EMP-${String(e.id).padStart(3, '0')}`,
     dept: cleanVal(e.departmentName),
     designation: cleanVal(e.designationName),
-    status: e.isActive ? 'Active' : 'Inactive',
+    status: empIsActive(e.isActive) ? 'Active' : 'Inactive',
     lastLogin: '—',
     permType: 'custom',
     /* Teacher (magar principal nahi) → teacher dashboard, warna admin. */
@@ -121,18 +128,30 @@ export default function UserPermissions({ toast = () => {} }) {
     let alive = true;
     setUsersLoading(true);
     /* Active + inactive dono laao taake deactivate kiya user reload ke baad
-       bhi list me (Inactive badge ke saath) dikhe. Id par dedupe. */
+       bhi list me (Inactive badge ke saath) dikhe. Id par dedupe — LEKIN conflict
+       par DEACTIVATED (isActive:false) copy ko jitao. Warna agar active-call stale
+       `isActive:true` laut de (ya employee dono lists me aa jaye) to deactivate
+       refresh par wapas Active dikhne lagta tha — yahi bug tha. */
     Promise.all([
-      getEmployeesByBranch(true),
+      getEmployeesByBranch(true).catch(() => []),
       getEmployeesByBranch(false).catch(() => []),
     ])
       .then(([act, inact]) => {
-        const seen = new Set();
-        return [...(act || []), ...(inact || [])].filter((e) => {
-          if (seen.has(e.id)) return false;
-          seen.add(e.id);
-          return true;
+        /* isActive kabhi boolean false, kabhi 0/"false"/"0" (backend inconsistent) aata
+           hai — sab ko sahi INACTIVE samjho. */
+        const isInactive = (e) => {
+          const v = e?.isActive;
+          if (v == null) return false;                 // missing → default active (na todo)
+          if (typeof v === 'string') { const s = v.trim().toLowerCase(); return s === 'false' || s === '0' || s === 'no'; }
+          return !v;                                   // boolean false / number 0
+        };
+        const byId = new Map();
+        [...(act || []), ...(inact || [])].forEach((e) => {
+          const prev = byId.get(e.id);
+          /* Conflict par DEACTIVATED copy jitao — active-call ki stale copy override na kare. */
+          if (!prev || isInactive(e)) byId.set(e.id, e);
         });
+        return [...byId.values()];
       })
       .then(async (list) => {
         if (!alive) return;
@@ -293,17 +312,24 @@ export default function UserPermissions({ toast = () => {} }) {
        delete) — tabhi reload ke baad bhi status Inactive rehta hai.
        Activate → restore-employee se backend par active. */
     if (status !== 'Active') {
+      /* CORE action PEHLE — employee ko backend par inactive karo (delete-employee soft
+         delete). Yahi isActive=false persist karta hai; refresh par Inactive rehne ke
+         liye zaroori hai. Pehle revoke-permissions pehle chalta tha jo fail hone par
+         EARLY-RETURN kar deta tha aur delete-employee call HI nahi hota tha (bug). */
+      try {
+        await deleteHrEmployee({ id: user.empId });
+      } catch (err) {
+        console.error('Could not mark employee inactive:', err);
+        toast('Could not deactivate the account. Please try again.', 'error');
+        return;
+      }
+      /* Ab BEST-EFFORT: permissions uncheck + role unassign. In me se koi fail ho to bhi
+         deactivation ho chuki hai — isliye rukna nahi (sirf warn). */
       try {
         await revokeAllPermissions(user);
       } catch (err) {
-        console.error('Could not revoke permissions on deactivate:', err);
-        toast('Could not revoke permissions. Please try again.', 'error');
-        return;
+        console.warn('Could not revoke permissions on deactivate (non-fatal):', err);
       }
-      /* Assigned role hatao (roleID:0 → unassign) taake Assign Role ka
-         check clear ho jaye. Role pehle se empty ho to ye step skip hota
-         hai — aisa user sirf deactivate hota hai. Best-effort: fail par
-         bhi deactivation jari rehti hai (permissions already revoked). */
       if (user.role != null) {
         try {
           const res = await assignRoleToUser({
@@ -316,15 +342,8 @@ export default function UserPermissions({ toast = () => {} }) {
             throw new Error(res.message || res.Message || 'Unassign failed');
           }
         } catch (err) {
-          console.warn('Could not unassign role on deactivate:', err);
+          console.warn('Could not unassign role on deactivate (non-fatal):', err);
         }
-      }
-      try {
-        await deleteHrEmployee({ id: user.empId });
-      } catch (err) {
-        console.error('Could not mark employee inactive:', err);
-        toast('Permissions revoked, but could not deactivate the account. Please try again.', 'error');
-        return;
       }
     } else {
       try {
