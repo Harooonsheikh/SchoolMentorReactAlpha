@@ -7956,7 +7956,9 @@ function ledgerModel(recs, settings = null) {
       agg.total += (+r.challanAmount || 0);
       agg.disc  += (+r.discount || 0);
       agg.recv  += ledgerRowRecv(r);
-      agg.pend  += ledgerRowPend(r);
+      /* Pending SIGNED — is head par (net − received). Us head me extra wasool ho (advance)
+         to MINUS aayega, kam ho to bacha hua baqaya. Report me exactly wahi dikhega. */
+      agg.pend  += ledgerRowNet(r) - ledgerRowRecv(r);
       heads.set(k, agg);
     });
 
@@ -8663,7 +8665,8 @@ function ReportPanelHeadwise({ toast }) {
                       <td className="fee-right">{money(r.total)}</td>
                       <td className="fee-right">{money(r.disc)}</td>
                       <td className="fee-right fee-paid-amt">{money(r.recv)}</td>
-                      <td className="fee-right">{r.pend > 0 ? <span className="fee-neg">{money(r.pend)}</span> : '0'}</td>
+                      {/* Pending: baqaya (positive, red) | advance (negative, red) | 0. */}
+                      <td className="fee-right">{r.pend !== 0 ? <span className="fee-neg">{money(r.pend)}</span> : '0'}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -8710,7 +8713,7 @@ function ReportPanelHeadwise({ toast }) {
                         <td className="fee-right">{money(sum.disc)}</td>
                         <td className="fee-right fee-paid-amt">{money(sum.recv)}</td>
                         <td className={`fee-right${adv > 0 ? ' fee-neg' : ''}`}>{money(adv > 0 ? -adv : 0)}</td>
-                        <td className="fee-right">{pend > 0 ? <span className="fee-neg">{money(pend)}</span> : '0'}</td>
+                        <td className="fee-right">{pend !== 0 ? <span className="fee-neg">{money(pend)}</span> : '0'}</td>
                       </tr>
                     );
                   })}
@@ -8819,7 +8822,7 @@ function HeadwisePreviewModal({ cfg, onClose, onDownload }) {
                       <td className="fee-right">{money(r.total)}</td>
                       <td className="fee-right">{money(r.disc)}</td>
                       <td className="fee-right fee-paid-amt">{money(r.recv)}</td>
-                      <td className="fee-right">{r.pend > 0 ? <span className="fee-neg">{money(r.pend)}</span> : '0'}</td>
+                      <td className="fee-right">{r.pend !== 0 ? <span className="fee-neg">{money(r.pend)}</span> : '0'}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -8829,7 +8832,7 @@ function HeadwisePreviewModal({ cfg, onClose, onDownload }) {
                     <td className="fee-right">{money(sum.total)}</td>
                     <td className="fee-right">{money(sum.disc)}</td>
                     <td className="fee-right fee-paid-amt">{money(sum.recv)}</td>
-                    <td className="fee-right">{sum.pend > 0 ? <span className="fee-neg">{money(sum.pend)}</span> : '0'}</td>
+                    <td className="fee-right">{sum.pend !== 0 ? <span className="fee-neg">{money(sum.pend)}</span> : '0'}</td>
                   </tr>
                 </tfoot>
               </table>
@@ -8864,7 +8867,7 @@ function HeadwisePreviewModal({ cfg, onClose, onDownload }) {
                         <td className="fee-right">{money(t.total)}</td>
                         <td className="fee-right">{money(t.disc)}</td>
                         <td className="fee-right fee-paid-amt">{money(t.recv)}</td>
-                        <td className="fee-right">{t.pend > 0 ? <span className="fee-neg">{money(t.pend)}</span> : '0'}</td>
+                        <td className="fee-right">{t.pend !== 0 ? <span className="fee-neg">{money(t.pend)}</span> : '0'}</td>
                       </tr>
                     );
                   })}
@@ -8875,7 +8878,7 @@ function HeadwisePreviewModal({ cfg, onClose, onDownload }) {
                     <td className="fee-right">{money(sum.total)}</td>
                     <td className="fee-right">{money(sum.disc)}</td>
                     <td className="fee-right fee-paid-amt">{money(sum.recv)}</td>
-                    <td className="fee-right">{sum.pend > 0 ? <span className="fee-neg">{money(sum.pend)}</span> : '0'}</td>
+                    <td className="fee-right">{sum.pend !== 0 ? <span className="fee-neg">{money(sum.pend)}</span> : '0'}</td>
                   </tr>
                 </tfoot>
               </table>
@@ -9414,14 +9417,14 @@ function buildRepHeadwiseHTML({ kind, c, s, rows, from, to, head, isBW = false, 
     return repWrap(`Head-Wise Collection — ${s.name}`,
       `<span><b>Class:</b> ${escHtml(c.cls)} / ${escHtml(c.sec)}</span><span><b>Reg:</b> ${escHtml(s.reg)}</span><span><b>Head:</b> ${escHtml(head)}</span><span><b>Range:</b> ${escHtml(from)} → ${escHtml(to)}</span>`,
       `<table class="rep-tbl"><thead><tr><th>Sn.</th><th>Account Type</th><th>Fee Head</th><th class="r">Standard</th><th class="r">Discount</th><th class="r">Received</th><th class="r">Pending</th></tr></thead>
-        <tbody>${rows.map((r, j) => `<tr><td>${j + 1}</td><td>${escHtml(r.head)}</td><td><b>${escHtml(r.sub)}</b></td><td class="r">${r.total.toLocaleString('en-PK')}</td><td class="r">${r.disc.toLocaleString('en-PK')}</td><td class="r pos">${r.recv.toLocaleString('en-PK')}</td><td class="r ${r.pend > 0 ? 'neg' : ''}">${r.pend.toLocaleString('en-PK')}</td></tr>`).join('')}</tbody>
+        <tbody>${rows.map((r, j) => `<tr><td>${j + 1}</td><td>${escHtml(r.head)}</td><td><b>${escHtml(r.sub)}</b></td><td class="r">${r.total.toLocaleString('en-PK')}</td><td class="r">${r.disc.toLocaleString('en-PK')}</td><td class="r pos">${r.recv.toLocaleString('en-PK')}</td><td class="r ${r.pend !== 0 ? 'neg' : ''}">${r.pend.toLocaleString('en-PK')}</td></tr>`).join('')}</tbody>
         <tfoot><tr class="rep-tot"><td colspan="3">Total</td><td class="r">${sum.total.toLocaleString('en-PK')}</td><td class="r">${sum.disc.toLocaleString('en-PK')}</td><td class="r">${sum.recv.toLocaleString('en-PK')}</td><td class="r">${sum.pend.toLocaleString('en-PK')}</td></tr></tfoot>
       </table>`, isBW, school);
   }
   /* class */
   const trs = (rows || []).map(({ s, heads }, j) => {
     const sum = heads.reduce((a, r) => ({ total: a.total + r.total, disc: a.disc + r.disc, recv: a.recv + r.recv, pend: a.pend + r.pend }), { total: 0, disc: 0, recv: 0, pend: 0 });
-    return `<tr><td>${j + 1}</td><td><b>${escHtml(s.name)}</b><br><small>s/o ${escHtml(s.father || '—')}</small></td><td>${escHtml(s.reg)}</td><td class="r">${sum.total.toLocaleString('en-PK')}</td><td class="r">${sum.disc.toLocaleString('en-PK')}</td><td class="r pos">${sum.recv.toLocaleString('en-PK')}</td><td class="r ${sum.pend > 0 ? 'neg' : ''}">${sum.pend.toLocaleString('en-PK')}</td></tr>`;
+    return `<tr><td>${j + 1}</td><td><b>${escHtml(s.name)}</b><br><small>s/o ${escHtml(s.father || '—')}</small></td><td>${escHtml(s.reg)}</td><td class="r">${sum.total.toLocaleString('en-PK')}</td><td class="r">${sum.disc.toLocaleString('en-PK')}</td><td class="r pos">${sum.recv.toLocaleString('en-PK')}</td><td class="r ${sum.pend !== 0 ? 'neg' : ''}">${sum.pend.toLocaleString('en-PK')}</td></tr>`;
   }).join('');
   return repWrap(`Class Head-Wise Collection — ${c.cls} (${c.sec})`,
     `<span><b>Class:</b> ${escHtml(c.cls)} — ${escHtml(c.sec)}</span><span><b>Head:</b> ${escHtml(head)}</span><span><b>Range:</b> ${escHtml(from)} → ${escHtml(to)}</span>`,
