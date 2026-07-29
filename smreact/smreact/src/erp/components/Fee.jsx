@@ -54,6 +54,26 @@ function challanAccruedFine(rec, settings, asOf) {
   return feeService.computeFine({ dueDate: rec.dueDate, receivingDate: base, settings });
 }
 
+/* Receiving tables ke "Fine" column ke liye — sirf WASOOL SHUDA late fine.
+   Jab tak fee (aur us ke saath fine) receive nahi hoti, column 0 rehta hai:
+   accrued fine mahaz ek andaza hai, abhi li nahi gayi. Receive hote hi ledger
+   ki "Late Fine" row ka receivedAmount hi asal wasool shuda raqam hai — wahi
+   dikhai jaati hai. Payable/Remaining ka hisaab is se alag hai — wahan abhi bhi
+   challanAccruedFine() (baqaya) chalta hai. */
+/* Fee head ka UI naam. Ledger/backend me late fine ki row ka naam "Late Fine"
+   hai (feeService.LATE_FINE_HEAD) aur isLateFineRow() usi par match karta hai —
+   is liye DATA me wo naam waisa hi rehta hai. Screen aur print par user ko sirf
+   "Fine" dikhana hai, so render karte waqt ye helper lagao. */
+function headLabel(name) {
+  return feeService.isLateFineRow({ name }) ? 'Fine' : name;
+}
+
+function receivedFineOf(rec) {
+  return ((rec && rec.detailRows) || [])
+    .filter(feeService.isLateFineRow)
+    .reduce((a, r) => a + (+r.receivedAmount || 0), 0);
+}
+
 /* API date/ISO string → dd/mm/yyyy. Khaali ya invalid par '' (caller '—' dikhata
    hai) — taake kabhi bhi "aaj" ki date ko asli date samajh liya na jaaye. */
 const fmtDMY = (value) => {
@@ -2177,7 +2197,7 @@ function FeeChallansList({ toast }) {
             </div>
             <Tooltip text="Load challan data for the selected month and year">
               <button className="fee-btn fee-btn-primary" onClick={apply}>
-                <i className="fa-solid fa-filter"></i> Get Students
+                <i className="fa-solid fa-filter"></i> Fetch Details 
               </button>
             </Tooltip>
             <Tooltip text="Reset filters and search to defaults">
@@ -3659,7 +3679,7 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
                 {fineDue > 0 && (
                   <tr>
                     <td>
-                      <b>Late Fine</b>
+                      <b>Fine</b>
                       <span className="fee-sub-eq">
                         {fineDays} day{fineDays === 1 ? '' : 's'} late
                         {settings?.fineType === 'daily' ? ` × Rs. ${(+settings.fineAmt || 0).toLocaleString('en-PK')}` : ''}
@@ -3914,7 +3934,7 @@ function FeeSlipModal({ cfg, onClose, toast }) {
   const baseRecv  = baseRows.reduce((a, r) => a + r.recv, 0);
   const slipFine  = Math.max(0, Math.round(+payment.fine || 0) || (Math.round(+payment.amount || 0) - baseRecv));
   const headRows  = (!fineAlready && slipFine > 0)
-    ? [...baseRows, { name: 'Late Fine', std: slipFine, disc: 0, recv: slipFine }]
+    ? [...baseRows, { name: 'Fine', std: slipFine, disc: 0, recv: slipFine }]
     : baseRows;
   const totStd  = headRows.reduce((a, r) => a + r.std, 0);
   const totDisc = headRows.reduce((a, r) => a + r.disc, 0);
@@ -3948,7 +3968,7 @@ function FeeSlipModal({ cfg, onClose, toast }) {
         <table class="fee-slip-tbl fee-slip-heads">
           <thead><tr><th>Head</th><th>Std. Amount</th><th>Discount</th><th>Received</th></tr></thead>
           <tbody>
-            ${headRows.map(r => `<tr><td>${escHtml(r.name)}</td><td>${r.std.toLocaleString('en-PK')}</td><td>${r.disc ? r.disc.toLocaleString('en-PK') : '—'}</td><td>${r.recv.toLocaleString('en-PK')}</td></tr>`).join('')}
+            ${headRows.map(r => `<tr><td>${escHtml(headLabel(r.name))}</td><td>${r.std.toLocaleString('en-PK')}</td><td>${r.disc ? r.disc.toLocaleString('en-PK') : '—'}</td><td>${r.recv.toLocaleString('en-PK')}</td></tr>`).join('')}
             <tr class="fee-slip-headtot"><td>Total</td><td>${totStd.toLocaleString('en-PK')}</td><td>${totDisc ? totDisc.toLocaleString('en-PK') : '—'}</td><td>${total.toLocaleString('en-PK')}</td></tr>
           </tbody>
         </table>
@@ -4566,7 +4586,7 @@ function FeeReceivingIndividual({ toast }) {
             </div>
             <Tooltip text="Load receipts for the selected month and year">
               <button className="fee-btn fee-btn-primary" onClick={apply}>
-                <i className="fa-solid fa-filter"></i> Get Students
+                <i className="fa-solid fa-filter"></i> Fetch Details 
               </button>
             </Tooltip>
             <Tooltip text="Reset filters and search to defaults">
@@ -4718,6 +4738,8 @@ function FeeReceivingIndividual({ toast }) {
                           const m = modelFor(c, s);
                           const rec  = m.generated ? (challanMap[keyOf(c.key, s.reg)] || null) : null;
                           const fine = challanAccruedFine(rec, settings);
+                          /* Column me sirf wasool shuda fine — na li gayi ho to 0. */
+                          const shownFine = receivedFineOf(rec);
                           return (
                             <tr key={s.reg} id={`rec-st-${c.key}-${s.reg}`}>
                               <td>{s.reg}</td>
@@ -4743,7 +4765,7 @@ function FeeReceivingIndividual({ toast }) {
                                 </td>
                               )}
                               <td className="fee-center">{m.disc > 0 ? <span className="fee-disc-amt">{money(m.disc)}</span> : '0'}</td>
-                              <td className={`fee-right${fine > 0 ? ' fee-fine' : ''}`}>{fine > 0 ? money(fine) : '0'}</td>
+                              <td className={`fee-right${shownFine > 0 ? ' fee-fine' : ''}`}>{shownFine > 0 ? money(shownFine) : '0'}</td>
                               <td className="fee-right">{m.paid > 0 ? <span className="fee-paid-amt">{money(m.paid)}</span> : '0'}</td>
                               {/* Bill ho chuki fine `m.remaining` me pehle se hai (payable
                                   aur paid dono me). Yahan sirf wo fine jodni hai jo abhi
@@ -5379,7 +5401,8 @@ function FamilyTreeReceiving({ toast }) {
             /* Bill ho chuki fine `m.payable`/`m.remaining` me pehle se shamil hai;
                sirf abhi tak un-billed fine bahar se jorni hai. */
             const extraFine = billedFineOf(rec) > 0 ? 0 : fine;
-            totFine    += fine;
+            /* Fine column ka total — sirf wasool shuda fine. */
+            totFine    += receivedFineOf(rec);
             totPayable += m.payable + extraFine;
             totPaid    += m.paid;
             totRem     += m.remaining + extraFine;
@@ -5455,6 +5478,8 @@ function FamilyTreeReceiving({ toast }) {
                           const fine = challanAccruedFine(rec, settings);
                           /* Bill ho chuki fine m.payable me pehle se hai. */
                           const extraFine = billedFineOf(rec) > 0 ? 0 : fine;
+                          /* Column me sirf wasool shuda fine — na li gayi ho to 0. */
+                          const shownFine = receivedFineOf(rec);
                           return (
                             <tr key={ch.reg}>
                               <td>{ch.reg}</td>
@@ -5470,7 +5495,7 @@ function FamilyTreeReceiving({ toast }) {
                                 {m.disc > 0 && <span className="fee-sub-eq">disc {money(m.disc)}</span>}
                                 {fine > 0 && <span className="fee-sub-eq fee-fine">incl. fine {money(fine)}</span>}
                               </td>
-                              <td className={`fee-right${fine > 0 ? ' fee-fine' : ''}`}>{fine > 0 ? money(fine) : '0'}</td>
+                              <td className={`fee-right${shownFine > 0 ? ' fee-fine' : ''}`}>{shownFine > 0 ? money(shownFine) : '0'}</td>
                               <td className="fee-right">{m.paid > 0 ? <span className="fee-paid-amt">{money(m.paid)}</span> : '0'}</td>
                               {/* Un-billed accrued fine bhi Remaining me — paid ho chuki fine
                                   already `paid` me hai, is liye dobara nahi jodte. */}
@@ -5936,7 +5961,7 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
                             {fineDue > 0 && (
                               <tr>
                                 <td>
-                                  <b>Late Fine</b>
+                                  <b>Fine</b>
                                   <span className="fee-sub-eq">
                                     {fineDays} day{fineDays === 1 ? '' : 's'} late
                                     {settings?.fineType === 'daily' ? ` × Rs. ${(+settings.fineAmt || 0).toLocaleString('en-PK')}` : ''}
@@ -7241,7 +7266,7 @@ function FeeHistoryDetailModal({ cfg, onClose, year, onDownloadStudent, onDownlo
                               {mo.heads.map((h, i) => (
                                 <tr key={`${h.sub}-${i}`}>
                                   <td>{h.head}</td>
-                                  <td><b>{h.sub}</b></td>
+                                  <td><b>{headLabel(h.sub)}</b></td>
                                   <td className="fee-right">{money(h.challan)}</td>
                                   <td className="fee-right">{money(h.disc)}</td>
                                   <td className="fee-right">
@@ -7417,7 +7442,7 @@ function buildHistStudentReportHTML({ mode, c, s, months, period, year = '', sch
     const headRows = mo.heads.map(h => `
       <tr>
         <td>${escHtml(h.head)}</td>
-        <td><b>${escHtml(h.sub)}</b></td>
+        <td><b>${escHtml(headLabel(h.sub))}</b></td>
         <td class="right">${h.challan.toLocaleString('en-PK')}</td>
         <td class="right">${h.disc.toLocaleString('en-PK')}</td>
         <td class="right ${h.unpaid ? '' : 'green'}">${h.unpaid ? '—' : h.recv.toLocaleString('en-PK')}</td>
@@ -7675,7 +7700,7 @@ function buildHistMonthSlipHTML({ c, s, mo, year, size = 'a4', school = null }) 
   </div>
   <table class="fee-slip-tbl">
     <tbody>
-      ${mo.heads.map(h => `<tr><td>${escHtml(h.sub)}</td><td>${h.unpaid ? '—' : h.recv.toLocaleString('en-PK')}</td></tr>`).join('')}
+      ${mo.heads.map(h => `<tr><td>${escHtml(headLabel(h.sub))}</td><td>${h.unpaid ? '—' : h.recv.toLocaleString('en-PK')}</td></tr>`).join('')}
       <tr><td><b>Total Challan</b></td><td><b>${mo.challanAmt.toLocaleString('en-PK')}</b></td></tr>
       <tr><td>Pending</td><td>${mo.pending.toLocaleString('en-PK')}</td></tr>
     </tbody>
@@ -8212,9 +8237,9 @@ function ReportPanelDefaulter({ toast }) {
       {repKpiStrip([
         ['k-red',   'fa-user-clock',           'Total Defaulters', `${totals.def} students`, ''],
         ['k-amber', 'fa-money-bill-trend-up',  'Total Outstanding', fmtRs(totals.pend),
-          totals.finePend > 0 ? `incl. late fine ${fmtRs(totals.finePend)}` : ''],
+          totals.finePend > 0 ? `incl. fine ${fmtRs(totals.finePend)}` : ''],
         /* Late fine apni tile me — kitni banni aur usme se kitni wasool hui. */
-        ['k-red',   'fa-triangle-exclamation', 'Late Fine',         fmtRs(totals.fine),
+        ['k-red',   'fa-triangle-exclamation', 'Fine',              fmtRs(totals.fine),
           totals.fine > 0 ? `${fmtRs(totals.fineRecv)} collected · ${fmtRs(totals.finePend)} pending` : 'No overdue challans'],
         ['k-blue',  'fa-users',                'Students Billed',   `${totals.n}`,            ''],
         ['k-green', 'fa-circle-check',         'Fully Cleared',     `${totals.paid} students`, ''],
@@ -8291,7 +8316,7 @@ function ReportPanelDefaulter({ toast }) {
                               <th>Contact</th>
                               <th>Unpaid Heads</th>
                               {/* Due date guzarne par banti fine — Total Pending me shaamil. */}
-                              <th className="fee-right">Late Fine</th>
+                              <th className="fee-right">Fine</th>
                               <th className="fee-right">Total Pending</th>
                             </tr>
                           </thead>
@@ -8671,7 +8696,9 @@ function ReportPanelHeadwise({ toast }) {
               <span className="fee-label">Select Head</span>
               <div className="fee-select-wrap">
                 <select className="fee-select" value={head} onChange={e => setHead(e.target.value)}>
-                  {allHeads.map(h => <option key={h}>{h}</option>)}
+                  {/* value = asal head naam (filter isi par match karta hai),
+                      label = UI naam — "Late Fine" user ko "Fine" dikhta hai. */}
+                  {allHeads.map(h => <option key={h} value={h}>{headLabel(h)}</option>)}
                 </select>
                 <i className="fa-solid fa-chevron-down"></i>
               </div>
@@ -8718,7 +8745,7 @@ function ReportPanelHeadwise({ toast }) {
                     <tr key={`${r.head}-${j}`}>
                       <td className="fee-num">{j + 1}</td>
                       <td>{r.head}</td>
-                      <td><b>{r.sub}</b></td>
+                      <td><b>{headLabel(r.sub)}</b></td>
                       <td className="fee-right">{money(r.total)}</td>
                       <td className="fee-right">{money(r.disc)}</td>
                       <td className="fee-right fee-paid-amt">{money(r.recv)}</td>
@@ -8875,7 +8902,7 @@ function HeadwisePreviewModal({ cfg, onClose, onDownload }) {
                     <tr key={`${r.head}-${j}`}>
                       <td className="fee-num">{j + 1}</td>
                       <td>{r.head}</td>
-                      <td><b>{r.sub}</b></td>
+                      <td><b>{headLabel(r.sub)}</b></td>
                       <td className="fee-right">{money(r.total)}</td>
                       <td className="fee-right">{money(r.disc)}</td>
                       <td className="fee-right fee-paid-amt">{money(r.recv)}</td>
@@ -9362,7 +9389,7 @@ function buildRepDefaulterHTML({ classes, studentsMap, allStudents, totals, mont
     const subFine = defs.reduce((a, x) => a + (x.m.finePend || 0), 0);
     return `<div class="rep-secttl">${escHtml(c.cls)} — Section ${escHtml(c.sec)} · ${defs.length} defaulter(s)</div>
       <table class="rep-tbl">
-        <thead><tr><th>Sn.</th><th>Student</th><th>Father</th><th>Reg No</th><th>Contact</th><th>Unpaid Heads</th><th class="r">Late Fine</th><th class="r">Pending</th></tr></thead>
+        <thead><tr><th>Sn.</th><th>Student</th><th>Father</th><th>Reg No</th><th>Contact</th><th>Unpaid Heads</th><th class="r">Fine</th><th class="r">Pending</th></tr></thead>
         <tbody>${defs.map((x, j) => `<tr><td>${j + 1}</td><td><b>${escHtml(x.s.name)}</b></td><td>${escHtml(x.s.father || '—')}</td><td>${escHtml(x.s.reg)}</td><td>${escHtml(studentPhone(x.s))}</td><td>${escHtml((x.m.unpaidHeads || []).join(', ') || '—')}</td><td class="r ${x.m.finePend > 0 ? 'neg' : ''}">${(x.m.finePend || 0).toLocaleString('en-PK')}</td><td class="r neg">${(x.m.remaining).toLocaleString('en-PK')}</td></tr>`).join('')}</tbody>
         <tfoot><tr class="rep-tot"><td colspan="6">${escHtml(c.cls)}/${escHtml(c.sec)} Subtotal</td><td class="r">${subFine.toLocaleString('en-PK')}</td><td class="r">${sub.toLocaleString('en-PK')}</td></tr></tfoot>
       </table>`;
@@ -9374,7 +9401,7 @@ function buildRepDefaulterHTML({ classes, studentsMap, allStudents, totals, mont
     `<div class="kpi-row">
       <div class="kpi"><div class="l">Total Defaulters</div><div class="v">${totals.def}</div></div>
       <div class="kpi"><div class="l">Outstanding</div><div class="v">Rs. ${totals.pend.toLocaleString('en-PK')}</div></div>
-      <div class="kpi"><div class="l">Late Fine (pending)</div><div class="v">Rs. ${(totals.finePend || 0).toLocaleString('en-PK')}</div></div>
+      <div class="kpi"><div class="l">Fine (pending)</div><div class="v">Rs. ${(totals.finePend || 0).toLocaleString('en-PK')}</div></div>
       <div class="kpi"><div class="l">Students Billed</div><div class="v">${totals.n}</div></div>
       <div class="kpi"><div class="l">Fully Cleared</div><div class="v">${totals.paid}</div></div>
     </div>
@@ -9474,7 +9501,7 @@ function buildRepHeadwiseHTML({ kind, c, s, rows, from, to, head, isBW = false, 
     return repWrap(`Head-Wise Collection — ${s.name}`,
       `<span><b>Class:</b> ${escHtml(c.cls)} / ${escHtml(c.sec)}</span><span><b>Reg:</b> ${escHtml(s.reg)}</span><span><b>Head:</b> ${escHtml(head)}</span><span><b>Range:</b> ${escHtml(from)} → ${escHtml(to)}</span>`,
       `<table class="rep-tbl"><thead><tr><th>Sn.</th><th>Account Type</th><th>Fee Head</th><th class="r">Standard</th><th class="r">Discount</th><th class="r">Received</th><th class="r">Pending</th></tr></thead>
-        <tbody>${rows.map((r, j) => `<tr><td>${j + 1}</td><td>${escHtml(r.head)}</td><td><b>${escHtml(r.sub)}</b></td><td class="r">${r.total.toLocaleString('en-PK')}</td><td class="r">${r.disc.toLocaleString('en-PK')}</td><td class="r pos">${r.recv.toLocaleString('en-PK')}</td><td class="r ${r.pend !== 0 ? 'neg' : ''}">${r.pend.toLocaleString('en-PK')}</td></tr>`).join('')}</tbody>
+        <tbody>${rows.map((r, j) => `<tr><td>${j + 1}</td><td>${escHtml(r.head)}</td><td><b>${escHtml(headLabel(r.sub))}</b></td><td class="r">${r.total.toLocaleString('en-PK')}</td><td class="r">${r.disc.toLocaleString('en-PK')}</td><td class="r pos">${r.recv.toLocaleString('en-PK')}</td><td class="r ${r.pend !== 0 ? 'neg' : ''}">${r.pend.toLocaleString('en-PK')}</td></tr>`).join('')}</tbody>
         <tfoot><tr class="rep-tot"><td colspan="3">Total</td><td class="r">${sum.total.toLocaleString('en-PK')}</td><td class="r">${sum.disc.toLocaleString('en-PK')}</td><td class="r">${sum.recv.toLocaleString('en-PK')}</td><td class="r">${sum.pend.toLocaleString('en-PK')}</td></tr></tfoot>
       </table>`, isBW, school);
   }
@@ -9816,7 +9843,7 @@ function feeSlipHTML({ copyLabel, classMeta, student, heads, settings, period, i
     <table class="fee-table">
       <thead><tr><th>Fee Head</th><th>Std.</th><th>Disc</th><th>Net</th></tr></thead>
       <tbody>
-        ${rows.map(r => `<tr><td>${escHtml(r.name)}</td><td>${r.std.toLocaleString('en-PK')}</td><td>${r.disc ? r.disc.toLocaleString('en-PK') : '—'}</td><td>${r.net.toLocaleString('en-PK')}</td></tr>`).join('')}
+        ${rows.map(r => `<tr><td>${escHtml(headLabel(r.name))}</td><td>${r.std.toLocaleString('en-PK')}</td><td>${r.disc ? r.disc.toLocaleString('en-PK') : '—'}</td><td>${r.net.toLocaleString('en-PK')}</td></tr>`).join('')}
         <tr class="tr-total"><td colspan="3">Total</td><td>${tNet.toLocaleString('en-PK')}</td></tr>
       </tbody>
     </table>
@@ -10071,7 +10098,7 @@ function feeThermalChallanHTML({ classMeta, student, heads, settings, period, is
     </thead>
     <tbody>
       ${rows.map(r => `<tr>
-        <td>${escHtml(r.name)}</td>
+        <td>${escHtml(headLabel(r.name))}</td>
         <td class="right">${r.std.toLocaleString('en-PK')}</td>
         ${showDiscCol ? `<td class="right">${r.disc ? r.disc.toLocaleString('en-PK') : '—'}</td>` : ''}
         <td class="right">${r.net.toLocaleString('en-PK')}</td>
@@ -10991,7 +11018,7 @@ function buildStudentFeeReportHTML({ cls, sec, heads, school = null }) {
   const rows = heads.map((h, i) => `
     <tr>
       <td style="padding:8px 10px;border-bottom:1px solid #E5E7EB">${i + 1}</td>
-      <td style="padding:8px 10px;border-bottom:1px solid #E5E7EB"><b>${escHtml(h.name)}</b></td>
+      <td style="padding:8px 10px;border-bottom:1px solid #E5E7EB"><b>${escHtml(headLabel(h.name))}</b></td>
       <td style="padding:8px 10px;border-bottom:1px solid #E5E7EB;text-align:right;font-variant-numeric:tabular-nums">Rs. ${(+h.amt || 0).toLocaleString('en-PK')}</td>
     </tr>`).join('');
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escHtml(`${meta.name} — Fee Heads — ${cls} (${sec})`)}</title>
