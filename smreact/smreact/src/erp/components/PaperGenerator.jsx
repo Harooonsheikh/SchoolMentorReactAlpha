@@ -1742,6 +1742,11 @@ const setSubjLine = (ci, si, l) => {
   /* entryIds whose save is currently in flight — a synchronous double-click
      guard that survives re-renders (the per-tab `saving` flag drives the UI). */
   const savingRef = useRef(new Set());
+  /* Fetch in flight? createQuestionPaper() async hai — qpMasterIDRef response ke
+     baad set hota hai, is liye teezi se 2-3 click par saare requests
+     existingMasterID=0 le kar jaate the aur utne hi naye papers insert ho jaate the.
+     Ye synchronous ref guard pehli click ke baad baaki clicks ko rok deta hai. */
+  const fetchingRef = useRef(false);
 
     /* Reset fetched state when settings change */
     const resetOnChange = () => { 
@@ -1772,7 +1777,6 @@ const setSubjLine = (ci, si, l) => {
 
       if (data) {
         setNotebookDetails(data);
-        toast('Questions loaded successfully!', 'success');
         return data;
       } else {
         toast('No question data returned', 'warning');
@@ -2241,7 +2245,7 @@ const setSubjLine = (ci, si, l) => {
     // 👇 NEW: API function to create question paper
     const createQuestionPaper = async () => {
       try {
-        setLoading(true);
+        // NOTE: `loading` ab onFetch manage karta hai (poori fetch sequence ke liye).
         const branchID = sessionStorage.getItem("branchID");
         const token = sessionStorage.getItem("token");
         
@@ -2318,8 +2322,6 @@ const setSubjLine = (ci, si, l) => {
         setFetched(false);
             return false; // 👈 return false on error
 
-      } finally {
-        setLoading(false);
       }
     };
   // API response keys ko PG type keys se map karo
@@ -2376,10 +2378,12 @@ const setSubjLine = (ci, si, l) => {
   };
 
   const onFetch = async () => {
+    // Double-click guard: pehli fetch complete hone se pehle dobara insert na ho.
+    if (fetchingRef.current) return;
     if (isOtherSession) {
             toast('Method not allowed', 'error');
             return;
-        } 
+        }
     if (!canFetch) {
       toast('Please fill all the fields before fetching', 'warning');
       return;
@@ -2390,12 +2394,18 @@ const setSubjLine = (ci, si, l) => {
       return;
     }
 
-
-    const newQpMasterID = await createQuestionPaper(); // 👈 naam badlo
-    if (!newQpMasterID) return;
-    const details = await fetchNotebookDetails(selectedUnits);
-    // qpMasterID ke against jo questions pehle save the unhe dobara dikhao.
-    await reloadSavedTabs(details);
+    fetchingRef.current = true;
+    setLoading(true);
+    try {
+      const newQpMasterID = await createQuestionPaper(); // 👈 naam badlo
+      if (!newQpMasterID) return;
+      const details = await fetchNotebookDetails(selectedUnits);
+      // qpMasterID ke against jo questions pehle save the unhe dobara dikhao.
+      await reloadSavedTabs(details);
+    } finally {
+      fetchingRef.current = false;
+      setLoading(false);
+    }
   };
 
     const onGenerate = () => {
@@ -2607,9 +2617,14 @@ const setSubjLine = (ci, si, l) => {
             {/* Fetch button */}
             <div style={{ textAlign: 'center', margin: '6px 0 14px' }}>
               <Tooltip text={canFetch ? 'Load questions for the selected class and subject' : 'Pick a class and subject first'}>
-                <button className="pg-fetch-btn" onClick={onFetch} disabled={!canFetch || isOtherSession}
-                                style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
-                  <i className="fa-solid fa-magnifying-glass"></i> Fetch Questions
+                <button className="pg-fetch-btn" onClick={onFetch} disabled={!canFetch || isOtherSession || loading}
+                                style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' }
+                                     : loading ? { opacity: .6, cursor: 'wait' } : undefined}>
+                  {loading ? (
+                    <><i className="fa-solid fa-spinner fa-spin"></i> {medium === 'urdu' ? 'سوالات لوڈ ہو رہے ہیں…' : 'Fetching…'}</>
+                  ) : (
+                    <><i className="fa-solid fa-magnifying-glass"></i> Fetch Questions</>
+                  )}
                 </button>
               </Tooltip>
             </div>
