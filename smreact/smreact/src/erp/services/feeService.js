@@ -785,6 +785,10 @@ export function computeFine({ dueDate, receivingDate, settings } = {}) {
   return Math.max(0, Math.round(total));
 }
 
+/* Generate ke waqt select ki hui Issue/Due date ka session cache — key: studentID|month|year.
+   Reload par backend record me date galat aaye to preview/download is se sahi date lete hain. */
+export const challanDateCache = new Map();
+
 function buildLedgerChallanPayload({ classMeta = {}, student = {}, heads = [], monthIdx = 0, options = {} }) {
   const now = new Date().toISOString();
   const branchID = Number(sessionStorage.getItem('branchID')) || 1;
@@ -897,6 +901,21 @@ export async function generateChallan(classKey, reg, monthIdx, options = {}) {
       monthIdx,
       options,
     });
+    /* Selected Issue/Due date ko cache karo — reload par backend record me kabhi-kabhi
+       dateofCreattion galat (server today) aata hai; preview/download tab is cache se
+       ASLI selected date dikhate hain. Key: studentID|month|year. */
+    try {
+      const p = payload.ledger || {};
+      const val = {
+        issueISO: String(p.dateofCreattion || '').slice(0, 10),
+        dueISO:   String(p.dueDate || '').slice(0, 10),
+      };
+      const mo = Number(p.month) || 0, yr = Number(p.year) || 0;
+      /* studentID + registrationNumber dono par store — reload record kis key se
+         match ho ye guarantee ke liye. */
+      if (Number(p.studentID)) challanDateCache.set(`id|${Number(p.studentID)}|${mo}|${yr}`, val);
+      if (p.registrationNumber) challanDateCache.set(`reg|${String(p.registrationNumber)}|${mo}|${yr}`, val);
+    } catch (e) { /* ignore */ }
     /* Debug: Issue Date backend tak sahi ja rahi hai ya nahi — console me dekho. */
     console.log('[create-challan] issue picked:', options.issueDate,
                 '→ sent dateofCreattion:', payload.ledger.dateofCreattion,
