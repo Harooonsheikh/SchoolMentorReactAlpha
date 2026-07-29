@@ -12,6 +12,38 @@ import { buildUrl, apiMessage } from '../../utils/apiConfig';
 
 const pick = (obj, ...keys) => keys.map(k => obj?.[k]).find(v => v !== undefined && v !== null && v !== '');
 
+/* ── 1Link PSID ──────────────────────────────────────────────────────
+   PSID har challan ka apna hota hai — backend `create-challan` par usay
+   generate/store karta hai aur get-by-month / get-all me wapas bhejta hai.
+   Casing backend ke hisaab se badalti rehti hai (plpsid / plPsid / PLPSID),
+   is liye padhte waqt saari shaklein dekho.
+
+   Sirf digits rakhe jaate hain: banking app me PSID digits hi enter hota
+   hai, aur QR/barcode bhi isi plain form par bante hain. */
+export function psidOf(rec) {
+  const raw = pick(rec || {}, 'plpsid', 'plPsid', 'plPSID', 'PLPSID', 'psid', 'PSID');
+  const digits = String(raw ?? '').replace(/\D/g, '');
+  /* Sirf-sifr value (backend kabhi 0 bhejta hai jab PSID set hi nahi hua)
+     asli PSID nahi hai — usay khaali samjho, warna challan par "0" chhap
+     jata aur uska QR/barcode bhi ban jata. */
+  if (!digits || !/[1-9]/.test(digits)) return '';
+  return digits;
+}
+
+/* Chhapne ke liye 4-4 ke groups me — 432198765432 → 4321-9876-5432.
+
+   Grouping DAAYEN se hoti hai, is liye chhota group (agar length 4 ka
+   multiple na ho) shuru me aata hai. 1Link ke asli 17-digit PSID par
+   baayen-se grouping "3000-3260-7166-2408-3" deti thi — aakhir me akela
+   digit parhne/type karne me ghalti karwata hai. Ab: "3-0003-2607-1662-4083". */
+export function formatPsid(psid) {
+  const d = String(psid || '').replace(/\D/g, '');
+  if (!d) return '';
+  const head = d.length % 4;
+  const groups = d.slice(head).match(/.{4}/g) || [];
+  return (head ? [d.slice(0, head), ...groups] : groups).join('-');
+}
+
 export async function getReportHeader() {
   const branchID = Number(sessionStorage.getItem('branchID')) || 1;
   const res = await fetch(buildUrl(`/report-header/${branchID}`), {
@@ -866,6 +898,9 @@ function buildLedgerChallanPayload({ classMeta = {}, student = {}, heads = [], m
       month: Number(monthIdx) + 1,
       year: Number(options.year) || new Date().getFullYear(),
       plApplicantID: '',
+      /* PSID backend generate karta hai (1Link ke consumer number rules ke
+         mutabiq) — frontend khaali bhejta hai aur response/get-by-month se
+         asli value wapas padhta hai. Dekho: psidOf(). */
       plpsid: '',
       createdAt: now,
       createdBy: userID,

@@ -5,6 +5,8 @@ import TutorialModal from './TutorialModal';
 import * as feeService from '../services/feeService';
 import useAsync from '../hooks/useAsync';
 import { downloadDocxFromHtml } from '../../utils/docx';
+import { qrSvg } from '../../utils/qr';
+import { code128Svg } from '../../utils/barcode';
 import { usePermissions } from '../context/PermissionsContext';
 
 const money = (n) => `Rs. ${(Number(n) || 0).toLocaleString('en-PK')}`;
@@ -13,11 +15,14 @@ const escHtml = (s) => String(s ?? '').replace(/[&<>"']/g, m =>
 
 /* Aaj ki LOCAL date (YYYY-MM-DD). toISOString() jaan-boojh kar nahi — wo UTC me
    badal kar Pakistan (UTC+5) me shaam ko agli/pichhli date de deta hai. */
-const localTodayISO = () => {
-  const n = new Date();
+/* Date → 'YYYY-MM-DD' LOCAL calendar par. toISOString() (UTC) Pakistan me subah
+   5 baje se pehle date ek din PEECHHE kar deta hai — challan ki Issue/Due date
+   aur late-fine ka hisaab isi par chalta hai, is liye hamesha ye use karo. */
+const localDateISO = (d) => {
   const p = (x) => String(x).padStart(2, '0');
-  return `${n.getFullYear()}-${p(n.getMonth() + 1)}-${p(n.getDate())}`;
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 };
+const localTodayISO = () => localDateISO(new Date());
 
 /* Is challan par is waqt banti LATE FINE.
    - Agar backend ne "Late Fine" row persist kar di hai to wahi authority.
@@ -2554,8 +2559,7 @@ function BulkGenerateModal({
   const todayISO  = localTodayISO;
   const plusDays  = (n) => {
     const d = new Date(); d.setDate(d.getDate() + n);
-    const p = (x) => String(x).padStart(2, '0');
-    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+    return localDateISO(d);
   };
 
   const [month, setMonth]         = useState(defaultMonth || FEE_MONTHS[0]);
@@ -9639,12 +9643,29 @@ function buildTransportReportHTML({ cls, sec, rows, isBW = false, school = null 
 const FEE_SCHOOL = {
   name:      'The Oxford System, Lahore Campus',
   monogram:  'OS',
-  psid:      '4321-9876-5432',
+};
+
+/* ── 1Link PSID ──────────────────────────────────────────────────────
+   PSID har challan ka apna hota hai aur BranchLedger record par aata hai
+   (`_challan.plpsid`). Pehle yahan ek hardcoded number tha jo HAR bachche
+   ke challan par same chhapta tha — parent kisi ka bhi challan scan karta
+   to paisa ek hi PSID par jata. Ab record se aata hai; na mile to PSID
+   block bilkul nahi chhapta (ghalat number chhapne se behtar hai). */
+const psidOf = (rec) => feeService.psidOf(rec);
+
+/* Challan par dikhne wala grouped form — 432198765432 → 4321-9876-5432. */
+const psidPretty = (psid) => feeService.formatPsid(psid);
+
+/* QR asli PSID se banta hai (pehle ek decorative SVG tha jo kisi bhi
+   scanner me kuch bhi nahi kholta tha). Payload sirf PSID digits — 1Link
+   bill-payment apps yahi expect karte hain. */
+const psidQrSvg = (psid, size = 52) => {
+  const d = String(psid || '').replace(/\D/g, '');
+  if (!d) return '';
+  try { return qrSvg(d, { size, margin: 2 }); } catch { return ''; }
 };
 
 const FEE_LOGO_SVG = `<svg viewBox="0 0 16 16" fill="none"><path d="M8 1L1 5l7 3.5L15 5 8 1z" stroke="#111" stroke-width="1" stroke-linejoin="round"/><path d="M1 9l7 3.5L15 9" stroke="#111" stroke-width="0.8" stroke-linecap="round"/><path d="M1 12l7 3.5L15 12" stroke="#111" stroke-width="0.5" stroke-linecap="round" opacity="0.5"/></svg>`;
-const FEE_QR_SVG   = `<svg width="52" height="52" viewBox="0 0 52 52" xmlns="http://www.w3.org/2000/svg"><rect width="52" height="52" fill="white"/><rect x="2" y="2" width="18" height="18" fill="none" stroke="#222" stroke-width="1.5" rx="1"/><rect x="6" y="6" width="10" height="10" fill="#222" rx="0.5"/><rect x="32" y="2" width="18" height="18" fill="none" stroke="#222" stroke-width="1.5" rx="1"/><rect x="36" y="6" width="10" height="10" fill="#222" rx="0.5"/><rect x="2" y="32" width="18" height="18" fill="none" stroke="#222" stroke-width="1.5" rx="1"/><rect x="6" y="36" width="10" height="10" fill="#222" rx="0.5"/><rect x="32" y="32" width="4" height="4" fill="#222"/><rect x="38" y="32" width="4" height="4" fill="#222"/><rect x="44" y="32" width="6" height="4" fill="#222"/><rect x="32" y="38" width="6" height="4" fill="#222"/><rect x="44" y="38" width="4" height="4" fill="#222"/><rect x="32" y="44" width="4" height="6" fill="#222"/><rect x="38" y="44" width="6" height="4" fill="#222"/><rect x="46" y="44" width="4" height="6" fill="#222"/><rect x="24" y="24" width="4" height="4" fill="#222"/></svg>`;
-const FEE_BARCODE_SVG = `<svg width="110" height="20" viewBox="0 0 110 20"><rect x="0" y="0" width="2" height="20" fill="#444"/><rect x="4" y="0" width="1" height="20" fill="#444"/><rect x="7" y="0" width="3" height="20" fill="#444"/><rect x="12" y="0" width="1" height="20" fill="#444"/><rect x="15" y="0" width="2" height="20" fill="#444"/><rect x="19" y="0" width="4" height="20" fill="#444"/><rect x="25" y="0" width="1" height="20" fill="#444"/><rect x="28" y="0" width="2" height="20" fill="#444"/><rect x="32" y="0" width="3" height="20" fill="#444"/><rect x="37" y="0" width="1" height="20" fill="#444"/><rect x="40" y="0" width="2" height="20" fill="#444"/><rect x="44" y="0" width="4" height="20" fill="#444"/><rect x="50" y="0" width="1" height="20" fill="#444"/><rect x="53" y="0" width="3" height="20" fill="#444"/><rect x="58" y="0" width="2" height="20" fill="#444"/><rect x="62" y="0" width="1" height="20" fill="#444"/><rect x="65" y="0" width="4" height="20" fill="#444"/><rect x="71" y="0" width="2" height="20" fill="#444"/><rect x="75" y="0" width="1" height="20" fill="#444"/><rect x="78" y="0" width="3" height="20" fill="#444"/><rect x="83" y="0" width="2" height="20" fill="#444"/><rect x="87" y="0" width="1" height="20" fill="#444"/><rect x="90" y="0" width="4" height="20" fill="#444"/><rect x="96" y="0" width="2" height="20" fill="#444"/><rect x="100" y="0" width="1" height="20" fill="#444"/><rect x="103" y="0" width="3" height="20" fill="#444"/></svg>`;
 
 /* Scoped under .fee-challan-doc so it can be embedded in the in-app preview
    without leaking into surrounding styles. */
@@ -9818,7 +9839,8 @@ function feeSlipHTML({ copyLabel, classMeta, student, heads, settings, period, i
     ? feeService.computeFine({ dueDate: dueISO, receivingDate: localTodayISO(), settings })
     : 0;
   const lateDays    = feeService.daysLate(dueISO, localTodayISO());
-  const psidPlain = FEE_SCHOOL.psid.replace(/[^0-9]/g, '');
+  /* Is challan ka apna PSID — BranchLedger record se. */
+  const psidPlain = psidOf(student?._challan);
 
   return `
 <div class="slip">
@@ -9860,15 +9882,16 @@ function feeSlipHTML({ copyLabel, classMeta, student, heads, settings, period, i
       ? `<div class="net-box"><div class="nb-lbl">Payable After Due Date (incl. ${lateDays} day${lateDays === 1 ? '' : 's'} fine)</div><div class="nb-val">Rs. ${(payable + accruedFine).toLocaleString('en-PK')}</div></div>`
       : ''}
     ${fine && !settled ? `<div class="fine-line">After due date: Rs. ${payable.toLocaleString('en-PK')} + (no. of days × ${fineAmt})</div>` : ''}
-    ${showPsd ? `
+    ${showPsd && psidPlain ? `
     <div class="psid-block">
       <div class="psid-top"><div class="psid-dot"></div><span class="psid-tag">1Link PSID — Pay via Any Banking App</span></div>
-      <div class="psid-num">${escHtml(FEE_SCHOOL.psid)}</div>
+      <div class="psid-num">${escHtml(psidPretty(psidPlain))}</div>
       <div class="psid-row">
-        <div class="qr-wrap">${FEE_QR_SVG}</div>
+        <div class="qr-wrap">${psidQrSvg(psidPlain)}</div>
         <div class="qr-hint"><strong>Scan QR</strong> with your banking app<br/>OR enter PSID manually.<br/>Works on HBL, MCB, Meezan,<br/>UBL, Sadapay, Easypaisa &amp; more.</div>
       </div>
     </div>` : ''}
+    ${psidPlain ? `
     <div class="steps-block">
       <div class="steps-title">How to pay — 1Link PSID</div>
       <div class="step-row"><div class="sn">1</div><div class="st">Open your <strong>banking app</strong></div></div>
@@ -9876,7 +9899,7 @@ function feeSlipHTML({ copyLabel, classMeta, student, heads, settings, period, i
       <div class="step-row"><div class="sn">3</div><div class="st">Enter PSID — <strong>amount auto-fills</strong></div></div>
       <div class="step-row"><div class="sn">4</div><div class="st"><strong>Confirm &amp; pay</strong> — save your SMS receipt</div></div>
     </div>
-    <div class="barcode-area">${FEE_BARCODE_SVG}<div class="psid-tiny">PSID: ${escHtml(psidPlain)}</div></div>
+    <div class="barcode-area">${code128Svg(psidPlain)}<div class="psid-tiny">PSID: ${escHtml(psidPlain)}</div></div>` : ''}
   </div>
 </div>`;
 }
@@ -9920,8 +9943,10 @@ function buildChallanInner({ classMeta, students, heads, settings, discountMap, 
   const today    = new Date();
   const dueDate  = new Date(today); dueDate.setDate(dueDate.getDate() + 10);
   const m = ['January','February','March','April','May','June','July','August','September','October','November','December'];
-  const fbIssueISO = issueOverride || today.toISOString().slice(0, 10);
-  const fbDueISO   = dueOverride   || dueDate.toISOString().slice(0, 10);
+  /* LOCAL calendar par — toISOString() (UTC) Pakistan me subah 5 baje se pehle
+     date ek din PEECHHE kar deta tha, jis se slip par ghalat Issue/Due chhapti. */
+  const fbIssueISO = issueOverride || localDateISO(today);
+  const fbDueISO   = dueOverride   || localDateISO(dueDate);
   const fbPeriod   = periodOverride || `${m[today.getMonth()]} ${today.getFullYear()}`;
   /* Har student ke apne saved challan se Issue/Due/Period nikaalo — bulk print me
      har bachche ka challan alag din bana ho sakta hai. */
@@ -9990,6 +10015,8 @@ body{font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif;color:#111;back
 .th-psid{border:1px dashed #555;border-radius:3px;padding:5px 8px;margin-top:5px;}
 .th-psid-top{font-size:9px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;color:#333;margin-bottom:3px;}
 .th-psid-num{font-size:11.5px;font-weight:800;color:#111;margin-bottom:3px;letter-spacing:.5px;font-variant-numeric:tabular-nums;}
+.th-psid-qr{margin:4px 0;text-align:center;}
+.th-psid-qr svg{display:block;margin:0 auto;}
 .th-psid-hint{font-size:8.5px;color:#555;line-height:1.4;}
 .th-steps{margin-top:5px;font-size:9px;color:#444;}
 .th-steps .s{display:flex;gap:5px;margin-bottom:1px;}
@@ -10072,6 +10099,8 @@ function feeThermalChallanHTML({ classMeta, student, heads, settings, period, is
     : 0;
   const lateDays    = feeService.daysLate(dueISO, localTodayISO());
   const showDiscCol = rows.some(r => r.disc > 0);
+  /* Is challan ka apna PSID — BranchLedger record se. */
+  const psidPlain   = psidOf(student?._challan);
 
   return `
 <div class="th-challan">
@@ -10119,18 +10148,20 @@ function feeThermalChallanHTML({ classMeta, student, heads, settings, period, is
     <span>Rs. ${(payable + accruedFine).toLocaleString('en-PK')}</span>
   </div>` : ''}
   ${fine ? `<div class="th-fine">After due: Rs. ${payable.toLocaleString('en-PK')} + (days × ${fineAmt})</div>` : ''}
-  ${showPsd ? `
+  ${showPsd && psidPlain ? `
   <div class="th-psid">
     <div class="th-psid-top">1Link PSID</div>
-    <div class="th-psid-num">${escHtml(FEE_SCHOOL.psid)}</div>
+    <div class="th-psid-num">${escHtml(psidPretty(psidPlain))}</div>
+    <div class="th-psid-qr">${psidQrSvg(psidPlain, 88)}</div>
     <div class="th-psid-hint">Scan QR / enter PSID in your banking app. Works on HBL, MCB, Meezan, UBL, Sadapay, Easypaisa &amp; more.</div>
   </div>` : ''}
+  ${psidPlain ? `
   <div class="th-steps">
     <div class="s"><b>1.</b> Open banking app</div>
     <div class="s"><b>2.</b> Tap Bill Payment → Education</div>
     <div class="s"><b>3.</b> Enter PSID — amount auto-fills</div>
     <div class="s"><b>4.</b> Confirm &amp; pay</div>
-  </div>
+  </div>` : ''}
 </div>`;
 }
 
@@ -10155,7 +10186,9 @@ function feeFamilySlipHTML({ copyLabel, family, settings, period, issueISO, dueI
     ? feeService.computeFine({ dueDate: dueISO, receivingDate: localTodayISO(), settings })
     : 0;
   const famLateDays = feeService.daysLate(dueISO, localTodayISO());
-  const psidPlain = FEE_SCHOOL.psid.replace(/[^0-9]/g, '');
+  /* Family challan ek HI challan hota hai — PSID bhi ek, pehle bachche ke
+     saved record se (dates ki tarah, dekho buildFamilyChallanInner). */
+  const psidPlain = psidOf((family.children || []).map(ch => ch._challan).find(Boolean));
 
   return `
 <div class="slip">
@@ -10188,15 +10221,16 @@ function feeFamilySlipHTML({ copyLabel, family, settings, period, issueISO, dueI
     ${famFine > 0
       ? `<div class="net-box"><div class="nb-lbl">Payable After Due Date (incl. ${famLateDays} day${famLateDays === 1 ? '' : 's'} fine)</div><div class="nb-val">Rs. ${(famPay + famFine).toLocaleString('en-PK')}</div></div>`
       : ''}
-    ${showPsd ? `
+    ${showPsd && psidPlain ? `
     <div class="psid-block">
       <div class="psid-top"><div class="psid-dot"></div><span class="psid-tag">1Link PSID — Pay via Any Banking App</span></div>
-      <div class="psid-num">${escHtml(FEE_SCHOOL.psid)}</div>
+      <div class="psid-num">${escHtml(psidPretty(psidPlain))}</div>
       <div class="psid-row">
-        <div class="qr-wrap">${FEE_QR_SVG}</div>
+        <div class="qr-wrap">${psidQrSvg(psidPlain)}</div>
         <div class="qr-hint"><strong>Scan QR</strong> with your banking app<br/>OR enter PSID manually.<br/>Works on HBL, MCB, Meezan,<br/>UBL, Sadapay, Easypaisa &amp; more.</div>
       </div>
     </div>` : ''}
+    ${psidPlain ? `
     <div class="steps-block">
       <div class="steps-title">How to pay — 1Link PSID</div>
       <div class="step-row"><div class="sn">1</div><div class="st">Open your <strong>banking app</strong></div></div>
@@ -10204,7 +10238,7 @@ function feeFamilySlipHTML({ copyLabel, family, settings, period, issueISO, dueI
       <div class="step-row"><div class="sn">3</div><div class="st">Enter PSID — <strong>amount auto-fills</strong></div></div>
       <div class="step-row"><div class="sn">4</div><div class="st"><strong>Confirm &amp; pay</strong></div></div>
     </div>
-    <div class="barcode-area">${FEE_BARCODE_SVG}<div class="psid-tiny">PSID: ${escHtml(psidPlain)}</div></div>
+    <div class="barcode-area">${code128Svg(psidPlain)}<div class="psid-tiny">PSID: ${escHtml(psidPlain)}</div></div>` : ''}
   </div>
 </div>`;
 }
@@ -10212,9 +10246,10 @@ function feeFamilySlipHTML({ copyLabel, family, settings, period, issueISO, dueI
 function buildFamilyChallanInner({ family, settings, bw = false, size = 'a4',
                                    period: periodOverride, issueISO: issueOverride, dueISO: dueOverride }) {
   const today    = new Date();
-  const fbIssue  = today.toISOString().slice(0, 10);
+  /* LOCAL calendar par — warna subah-subah slip par date ek din peechhe chhapti. */
+  const fbIssue  = localDateISO(today);
   const dueDate  = new Date(today); dueDate.setDate(dueDate.getDate() + 10);
-  const fbDue    = dueDate.toISOString().slice(0, 10);
+  const fbDue    = localDateISO(dueDate);
   const m = ['January','February','March','April','May','June','July','August','September','October','November','December'];
   const fbPeriod = `${m[today.getMonth()]} ${today.getFullYear()}`;
   /* Combined family slip ek hi challan hota hai, is liye pehle bachche ka saved
@@ -10268,6 +10303,8 @@ function feeThermalFamilyChallanHTML({ family, settings, period, issueISO, dueIS
     ? feeService.computeFine({ dueDate: dueISO, receivingDate: localTodayISO(), settings })
     : 0;
   const famLateDays = feeService.daysLate(dueISO, localTodayISO());
+  /* Family challan ek HI challan hai — PSID bhi ek (dekho feeFamilySlipHTML). */
+  const psidPlain = psidOf((family.children || []).map(ch => ch._challan).find(Boolean));
 
   return `
 <div class="th-challan">
@@ -10304,18 +10341,20 @@ function feeThermalFamilyChallanHTML({ family, settings, period, issueISO, dueIS
     <span>After Due (incl. ${famLateDays}d fine)</span>
     <span>Rs. ${(famPay + famFine).toLocaleString('en-PK')}</span>
   </div>` : ''}
-  ${showPsd ? `
+  ${showPsd && psidPlain ? `
   <div class="th-psid">
     <div class="th-psid-top">1Link PSID</div>
-    <div class="th-psid-num">${escHtml(FEE_SCHOOL.psid)}</div>
+    <div class="th-psid-num">${escHtml(psidPretty(psidPlain))}</div>
+    <div class="th-psid-qr">${psidQrSvg(psidPlain, 88)}</div>
     <div class="th-psid-hint">Scan QR / enter PSID in your banking app. Works on HBL, MCB, Meezan, UBL, Sadapay, Easypaisa &amp; more.</div>
   </div>` : ''}
+  ${psidPlain ? `
   <div class="th-steps">
     <div class="s"><b>1.</b> Open banking app</div>
     <div class="s"><b>2.</b> Tap Bill Payment → Education</div>
     <div class="s"><b>3.</b> Enter PSID — amount auto-fills</div>
     <div class="s"><b>4.</b> Confirm &amp; pay</div>
-  </div>
+  </div>` : ''}
 </div>`;
 }
 
