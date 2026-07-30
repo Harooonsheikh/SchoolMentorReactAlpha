@@ -1,8 +1,9 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   CORE_PERMS, MODULE_GROUPS, ALL_MODULE_KEYS, SOURCE_BADGE,
-  SCHOOLS, buildInitialPerms,
+  SCHOOLS, buildInitialPerms, defaultPerms,
 } from './permissionsData';
+import { schoolPermissionsApi } from './api';
 
 /* ═══════════════════════════════════════════════════════════════════
    SCHOOL PERMISSIONS — Super Admin module (frontend only)
@@ -15,14 +16,48 @@ import {
    ═══════════════════════════════════════════════════════════════════ */
 
 export default function SchoolPermissions({ toast }) {
-  const [permMap, setPermMap] = useState(buildInitialPerms);
+  const [schools, setSchools] = useState([]);
+  const [permMap, setPermMap] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState('');
   const [erpFilter, setErpFilter] = useState('');     // '' | 'active' | 'inactive'
   const [editId, setEditId] = useState(null);          // school being managed
 
+  /* Latest toast in a ref so the loader doesn't re-fire when the parent
+     re-renders and hands down a fresh function (same trick as MentorAI). */
+  const toastRef = useRef(toast);
+  toastRef.current = toast;
+
+  /* GET /api/SchoolPermissions/get-branch → table rows + the { id: perms }
+     map the modal edits. Runs when the sidebar tab mounts this screen; the
+     bundled demo data is only a fallback so the UI is never empty. */
+  const loadSchools = useCallback(async () => {
+    setLoading(true);
+    try {
+      const { schools: rows, permMap: perms } = await schoolPermissionsApi.listPermissionBranches();
+      if (rows.length) {
+        setSchools(rows);
+        setPermMap(perms);
+      } else {
+        setSchools(SCHOOLS);
+        setPermMap(buildInitialPerms());
+        toastRef.current?.('No schools returned — showing sample data', 'warn');
+      }
+    } catch (err) {
+      setSchools(SCHOOLS);
+      setPermMap(buildInitialPerms());
+      toastRef.current?.(err?.message || 'Could not load schools — showing sample data', 'warn');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { loadSchools(); }, [loadSchools]);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return SCHOOLS.filter((s) => {
+    return schools.filter((s) => {
       const matches = !q || s.name.toLowerCase().includes(q) || (s.principal || '').toLowerCase().includes(q) || (s.contact || '').includes(q);
       if (!matches) return false;
       const on = permMap[s.id]?.erpAccess;
@@ -30,19 +65,32 @@ export default function SchoolPermissions({ toast }) {
       if (erpFilter === 'inactive' && on) return false;
       return true;
     });
-  }, [search, erpFilter, permMap]);
+  }, [schools, search, erpFilter, permMap]);
 
-  const totalAll = SCHOOLS.length;
-  const activeAll = SCHOOLS.filter((s) => permMap[s.id]?.erpAccess).length;
+  const totalAll = schools.length;
+  const activeAll = schools.filter((s) => permMap[s.id]?.erpAccess).length;
 
-  const savePerms = (id, perms) => {
-    setPermMap((prev) => ({ ...prev, [id]: perms }));
-    setEditId(null);
-    const s = SCHOOLS.find((x) => x.id === id);
-    toast?.(`Permissions saved for ${s ? s.name : 'school'}`, 'success');
+  /* Save Permissions → save-modulePermission + toggle-launch-setup (ERP Access)
+     + ToggleBranchStatus (Active Branch). The modal stays open with a spinner
+     until the APIs answer, so a failure can't look like a save. */
+  const savePerms = async (id, perms) => {
+    const s = schools.find((x) => x.id === id);
+    setSaving(true);
+    try {
+      await schoolPermissionsApi.savePermissions(id, perms);
+      setPermMap((prev) => ({ ...prev, [id]: perms }));
+      setEditId(null);
+      toast?.(`Permissions saved for ${s ? s.name : 'school'}`, 'success');
+      /* Re-read so the table shows what the API actually stored. */
+      loadSchools();
+    } catch (err) {
+      toast?.(err?.message || 'Could not save permissions', 'error');
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const editSchool = editId != null ? SCHOOLS.find((s) => s.id === editId) : null;
+  const editSchool = editId != null ? schools.find((s) => s.id === editId) : null;
 
   return (
     <div className="page-content">
@@ -78,6 +126,9 @@ export default function SchoolPermissions({ toast }) {
             <option value="active">ERP Active</option>
             <option value="inactive">ERP Inactive</option>
           </select>
+          <button className="btn-sm" style={{ height: 38 }} onClick={loadSchools} disabled={loading} data-tip="Reload from API">
+            <i className={`fa-solid fa-rotate${loading ? ' fa-spin' : ''}`} /> Refresh
+          </button>
         </div>
 
         <div className="tbl-wrap">
@@ -88,33 +139,48 @@ export default function SchoolPermissions({ toast }) {
                 <th>School Name</th>
                 <th style={{ width: 90 }}>Code / ID</th>
                 <th>Owner &amp; Contact</th>
+                <th style={{ width: 110, textAlign: 'center' }}>Session</th>
                 <th style={{ width: 120, textAlign: 'center' }}>ERP Status</th>
                 <th style={{ width: 130, textAlign: 'center' }}>Permissions</th>
                 <th style={{ width: 140, textAlign: 'center' }}>Action</th>
               </tr>
             </thead>
             <tbody>
-              {filtered.length === 0 ? (
-                <tr><td colSpan={7} style={{ textAlign: 'center', padding: 44, color: 'var(--tm)' }}>
+              {loading ? (
+                <tr><td colSpan={8} style={{ textAlign: 'center', padding: 44, color: 'var(--tm)' }}>
+                  <i className="fa-solid fa-spinner fa-spin" style={{ fontSize: 24, display: 'block', margin: '0 auto 12px', opacity: 0.5 }} />
+                  <div style={{ fontSize: 14, fontWeight: 700 }}>Loading schools…</div>
+                </td></tr>
+              ) : filtered.length === 0 ? (
+                <tr><td colSpan={8} style={{ textAlign: 'center', padding: 44, color: 'var(--tm)' }}>
                   <i className="fa-solid fa-magnifying-glass" style={{ fontSize: 28, display: 'block', margin: '0 auto 12px', opacity: 0.3 }} />
                   <div style={{ fontSize: 14, fontWeight: 700 }}>No schools found</div>
                 </td></tr>
               ) : filtered.map((s, idx) => {
-                const perms = permMap[s.id];
+                const perms = permMap[s.id] || { modules: {} };
                 const erpOn = perms.erpAccess;
-                const modCount = ALL_MODULE_KEYS.filter((k) => perms.modules[k]).length;
+                const modCount = ALL_MODULE_KEYS.filter((k) => perms.modules?.[k]).length;
                 const src = SOURCE_BADGE[s.source] || SOURCE_BADGE.launch;
                 return (
                   <tr key={s.id}>
                     <td className="td-bold" style={{ color: 'var(--tm)' }}>{idx + 1}</td>
                     <td>
                       <div style={{ fontWeight: 700, color: 'var(--t1)', fontSize: 13 }}>{s.name}</div>
+                      {s.address && (
+                        <div style={{ fontSize: 11, color: 'var(--tm)', marginTop: 2 }} title={s.address}>
+                          <i className="fa-solid fa-location-dot" style={{ marginRight: 4, opacity: 0.6 }} />{s.address}
+                        </div>
+                      )}
                       <div style={{ fontSize: 11, color: 'var(--tm)', marginTop: 2 }}><span className={`badge ${src.cls}`} style={{ fontSize: 9.5 }}>{src.label}</span></div>
                     </td>
                     <td><span style={{ fontSize: 12, fontWeight: 700, color: 'var(--brand)' }}>{s.schoolCode}</span></td>
                     <td>
                       <div style={{ fontWeight: 600, color: 'var(--t1)', fontSize: 12.5 }}>{s.principal || '—'}</div>
                       <div style={{ fontSize: 11.5, color: 'var(--tm)' }}>{s.contact || '—'}</div>
+                      {s.email && <div style={{ fontSize: 11, color: 'var(--tm)' }}>{s.email}</div>}
+                    </td>
+                    <td style={{ textAlign: 'center' }}>
+                      <span style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--t1)' }}>{s.session || '—'}</span>
                     </td>
                     <td style={{ textAlign: 'center' }}>
                       {erpOn
@@ -123,7 +189,7 @@ export default function SchoolPermissions({ toast }) {
                     </td>
                     <td style={{ textAlign: 'center' }}>
                       <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--brand)' }}>{modCount}/{ALL_MODULE_KEYS.length}</div>
-                      <div style={{ fontSize: 10, color: 'var(--tm)' }}>modules on</div>
+                      <div style={{ fontSize: 10, color: 'var(--tm)' }}>{s.hasPermissionRow === false ? 'not set yet' : 'modules on'}</div>
                     </td>
                     <td style={{ textAlign: 'center' }}>
                       <button className="btn-sm" style={{ height: 30, fontSize: 11.5 }} onClick={() => setEditId(s.id)}>
@@ -141,7 +207,8 @@ export default function SchoolPermissions({ toast }) {
       {editSchool && (
         <PermModal
           school={editSchool}
-          initial={permMap[editSchool.id]}
+          initial={permMap[editSchool.id] || defaultPerms(editSchool)}
+          saving={saving}
           onClose={() => setEditId(null)}
           onSave={(perms) => savePerms(editSchool.id, perms)}
         />
@@ -162,11 +229,10 @@ function Switch({ checked, onChange }) {
 }
 
 /* ═══════════════════════ PERMISSIONS MODAL ═══════════════════════ */
-function PermModal({ school, initial, onClose, onSave }) {
+function PermModal({ school, initial, saving, onClose, onSave }) {
   const [draft, setDraft] = useState(() => ({
     erpAccess: initial.erpAccess,
-    transport: initial.transport,
-    headFee: initial.headFee,
+    activeBranch: initial.activeBranch,
     modules: { ...initial.modules },
   }));
 
@@ -247,8 +313,10 @@ function PermModal({ school, initial, onClose, onSave }) {
 
         {/* Footer */}
         <div className="pm-foot">
-          <button className="btn-secondary" onClick={onClose}><i className="fa-solid fa-xmark" /> Cancel</button>
-          <button className="btn-primary" onClick={() => onSave(draft)}><i className="fa-solid fa-floppy-disk" /> Save Permissions</button>
+          <button className="btn-secondary" onClick={onClose} disabled={saving}><i className="fa-solid fa-xmark" /> Cancel</button>
+          <button className="btn-primary" onClick={() => onSave(draft)} disabled={saving}>
+            <i className={`fa-solid ${saving ? 'fa-spinner fa-spin' : 'fa-floppy-disk'}`} /> {saving ? 'Saving…' : 'Save Permissions'}
+          </button>
         </div>
       </div>
     </div>

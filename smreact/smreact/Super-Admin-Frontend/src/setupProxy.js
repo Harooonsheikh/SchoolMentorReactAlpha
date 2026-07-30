@@ -27,6 +27,18 @@ module.exports = function (app) {
     }),
   );
 
+  /* SchoolMentorSuperAdminAPI — School Permissions branch directory + toggles
+     (host :4100, own application root). This API sends NO CORS headers at all,
+     so unlike /api/Registration it can ONLY be reached through this proxy in
+     development. */
+  app.use(
+    '/SchoolMentorSuperAdminAPI',
+    createProxyMiddleware({
+      target: ERP_TARGET,
+      changeOrigin: true,
+    }),
+  );
+
   /* AI / wallet API — plan + subscription state per branch (host :8000). */
   app.use(
     '/ai',

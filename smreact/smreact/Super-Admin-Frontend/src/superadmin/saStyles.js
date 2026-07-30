@@ -478,7 +478,7 @@ export const SA_CSS = `
 .sa-root .pm-body::-webkit-scrollbar-thumb{background:var(--bl);border-radius:99px}
 .sa-root .pm-top-section{background:var(--muted);border:1.5px solid var(--bl);border-radius:var(--r-lg);padding:16px;margin-bottom:18px}
 .sa-root .pm-top-title{font-size:11px;font-weight:800;color:var(--brand);letter-spacing:.6px;text-transform:uppercase;margin-bottom:12px;display:flex;align-items:center;gap:6px}
-.sa-root .pm-top-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.sa-root .pm-top-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
 .sa-root .pm-top-card{background:var(--card);border:1.5px solid var(--bl);border-radius:var(--r-md);padding:14px;display:flex;flex-direction:column;gap:8px;transition:var(--tr)}
 .sa-root .pm-top-card.enabled{border-color:rgba(22,163,74,.35);background:rgba(22,163,74,.04)}
 .sa-root .pm-top-card-top{display:flex;align-items:center;justify-content:space-between}

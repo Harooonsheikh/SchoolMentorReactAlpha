@@ -51,6 +51,21 @@ export let SA_API_BASE = cfg.apiBaseUrl;
    no proxy needed. Override with REACT_APP_SA_ERP_BASE when the host changes. */
 export const ERP_API_BASE = stripTrailingSlash(env.REACT_APP_SA_ERP_BASE || 'http://50.190.164.42:4100');
 
+/* SchoolMentorSuperAdminAPI base — the LIVE .NET Super Admin backend
+   (School Permissions: branch directory + feature/module toggles).
+   Swagger: http://50.190.164.42:4100/SchoolMentorSuperAdminAPI/swagger/index.html
+
+   DEFAULTS TO EMPTY on purpose: unlike the ERP branch directory, this API does
+   NOT send Access-Control-Allow-Origin, so a direct cross-origin fetch from the
+   dev server is blocked by the browser. An empty base makes the request go to
+   our OWN origin with the /SchoolMentorSuperAdminAPI/... path, which
+   src/setupProxy.js forwards to the API host server-to-server (dev), and which
+   resolves same-origin when the build is served from that host (prod).
+
+   Set REACT_APP_SA_ADMIN_BASE to an absolute host ONLY once the backend sends
+   CORS headers for the origin the app is served from. */
+export const SA_ADMIN_API_BASE = stripTrailingSlash(env.REACT_APP_SA_ADMIN_BASE || '');
+
 /* AI / wallet API base — hosts per-branch Mentor AI plan + subscription state
    (subscriptions / subscription / status). Points DIRECTLY at the absolute AI
    host on :8000, so calls hit http://50.190.164.42:8000/ai/api/wallet/...
