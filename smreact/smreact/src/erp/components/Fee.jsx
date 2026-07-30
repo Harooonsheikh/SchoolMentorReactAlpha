@@ -6,6 +6,8 @@ import * as feeService from '../services/feeService';
 import { validateSessionDateFromStorage } from '../pages/Settings/settingsStore';
 import useAsync from '../hooks/useAsync';
 import { downloadDocxFromHtml } from '../../utils/docx';
+import { qrSvg } from '../../utils/qr';
+import { code128BSvg } from '../../utils/barcode';
 import { usePermissions } from '../context/PermissionsContext';
 
 const money = (n) => `Rs. ${(Number(n) || 0).toLocaleString('en-PK')}`;
@@ -14,11 +16,14 @@ const escHtml = (s) => String(s ?? '').replace(/[&<>"']/g, m =>
 
 /* Aaj ki LOCAL date (YYYY-MM-DD). toISOString() jaan-boojh kar nahi — wo UTC me
    badal kar Pakistan (UTC+5) me shaam ko agli/pichhli date de deta hai. */
-const localTodayISO = () => {
-  const n = new Date();
+/* Date → 'YYYY-MM-DD' LOCAL calendar par. toISOString() (UTC) Pakistan me subah
+   5 baje se pehle date ek din PEECHHE kar deta hai — challan ki Issue/Due date
+   aur late-fine ka hisaab isi par chalta hai, is liye hamesha ye use karo. */
+const localDateISO = (d) => {
   const p = (x) => String(x).padStart(2, '0');
-  return `${n.getFullYear()}-${p(n.getMonth() + 1)}-${p(n.getDate())}`;
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 };
+const localTodayISO = () => localDateISO(new Date());
 
 /* Is challan par is waqt banti LATE FINE.
    - Agar backend ne "Late Fine" row persist kar di hai to wahi authority.
@@ -2551,8 +2556,7 @@ function BulkGenerateModal({
   const todayISO  = localTodayISO;
   const plusDays  = (n) => {
     const d = new Date(); d.setDate(d.getDate() + n);
-    const p = (x) => String(x).padStart(2, '0');
-    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+    return localDateISO(d);
   };
 
   const [month, setMonth]         = useState(defaultMonth || FEE_MONTHS[0]);
@@ -3338,8 +3342,13 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
   useEffect(() => {
     if (!cfg) return;
     setDate(localTodayISO()); setMethod('Cash'); setRef(''); setTxn('');
-    /* Default: each head's remaining amount auto-filled per row. Count what the
-       challan already received (survives refresh) as well as session payments. */
+    /* "Received" input KUL wasooli dikhata hai (pehle jama shuda + ab ki), na ke
+       sirf ab ki raqam — is liye ye editable rehta hai aur naya paisa
+       `input − paid` hota hai (dekho `recvNow` niche).
+
+       Seed sirf ALREADY PAID hai (net nahi): modal khulte hi baqaya raqam PENDING
+       me nazar aati hai aur Receiving Now 0 rehta hai. Cashier Pending se raqam
+       hataye to wohi Received me chali jaati hai. */
     const chRecv = {};
     (cfg.challan?.detailRows || []).forEach(r => {
       const n = r.subHead || r.head || '';
@@ -3347,9 +3356,8 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
     });
     const seed = {};
     (cfg.model.heads || []).forEach(h => {
-      const fromPay     = (cfg.payments || []).reduce((a, p) => a + (+(p.perHead?.[h.name]) || 0), 0);
-      const paidPerHead = cfg.challan ? Math.max(+chRecv[h.name] || 0, fromPay) : fromPay;
-      seed[h.name] = Math.max(0, h.net - paidPerHead);
+      const fromPay = (cfg.payments || []).reduce((a, p) => a + (+(p.perHead?.[h.name]) || 0), 0);
+      seed[h.name]  = cfg.challan ? Math.max(+chRecv[h.name] || 0, fromPay) : fromPay;
     });
     setPerHeadInput(seed);
   }, [cfg]);
@@ -3397,21 +3405,29 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
      koi upper clamp nahi lagta (pehle lagta tha, jis se extra amount block ho jaata). */
   const rows = model.heads.map(h => {
     const paid    = +perHeadPaid[h.name] || 0;
-    const recvNow = viewOnly ? 0 : Math.max(0, +perHeadInput[h.name] || 0);
+    /* Input KUL wasooli hai (already + new), is liye naya paisa = input − paid.
+       Cashier already-paid se kam kar de to naya paisa 0 — refund yahan se nahi
+       hota, warna receipt minus amount likh deti. */
+    const totalRecv = viewOnly ? paid : Math.max(0, +perHeadInput[h.name] || 0);
+    const recvNow   = viewOnly ? 0 : Math.max(0, totalRecv - paid);
     const after   = h.net;
     const pending = after - paid - recvNow;      // negative = advance
     totalChallan += h.std;
     totalDisc    += h.disc;
     totalAfter   += after;
-    return { ...h, paid, recvNow, after, pending };
+    return { ...h, paid, totalRecv, recvNow, after, pending };
   });
 
-  /* Previous Pending bhi ab ek editable head ki tarah — uska apna received input. */
+  /* Previous Pending bhi ab ek editable head ki tarah — uska apna received input.
+     Heads ki tarah ye input bhi KUL wasooli rakhta hai (already + new). */
   const prevKey  = model.prevName || 'Previous Pending';
   const prevPaid = +model.prevPaid || 0;
-  const prevOwed = Math.max(0, model.prev - prevPaid);
-  const prevRecv = viewOnly ? 0 : Math.max(0, +perHeadInput[prevKey] || 0);
-  const prevPend = prevOwed - prevRecv;          // negative = advance
+  /* Unseeded fallback bhi `prevPaid` — heads ki tarah baqaya Pending me shuru ho. */
+  const prevTotalRecv = viewOnly
+    ? prevPaid
+    : Math.max(0, perHeadInput[prevKey] == null ? prevPaid : (+perHeadInput[prevKey] || 0));
+  const prevRecv = viewOnly ? 0 : Math.max(0, prevTotalRecv - prevPaid);
+  const prevPend = model.prev - prevPaid - prevRecv;   // negative = advance
 
   /* ADVANCE ek CREDIT line hai — "Received" column me MINUS me dikhti hai aur wahin se
      kat jaati hai (editable nahi). Utna cash kam lena hota hai. */
@@ -3454,14 +3470,14 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
     setPerHeadInput(prev => ({ ...prev, [name]: Math.max(0, Number(v) || 0) }));
   };
 
-  /* Pending is the mirror of Received — the two always add up to what is still
-     owed on that head, so typing either one drives the other. Both write to the
-     same perHeadInput state; there is no second source of truth. */
+  /* Pending is the mirror of Received — the two always add up to the head's net,
+     so typing either one drives the other. Both write to the same perHeadInput
+     state; there is no second source of truth. Received KUL wasooli hai, is liye
+     yahan `net` se ghatao (owed se nahi). */
   const setPendingFor = (row, v) => {
-    const owed = Math.max(0, row.net - row.paid);
     /* Pending MINUS bhi ho sakta hai (advance) — is liye niche clamp nahi. */
     const pend = Number(v) || 0;
-    setPerHeadInput(prev => ({ ...prev, [row.name]: Math.max(0, owed - pend) }));
+    setPerHeadInput(prev => ({ ...prev, [row.name]: Math.max(0, row.net - pend) }));
   };
 
   const fineTxt = settings?.fineEnabled
@@ -3605,7 +3621,7 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
                         <input
                           type="number"
                           min="0"
-                          value={perHeadInput[r.name] === 0 ? 0 : (perHeadInput[r.name] || '')}
+                          value={r.totalRecv}
                           onChange={e => setHead(r.name, e.target.value)}
                           placeholder="0"
                         />
@@ -3637,12 +3653,12 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
                     <td className="fee-right"><span className="fee-cell-grey">{money(model.prev)}</span></td>
                     <td className="fee-right">
                       {viewOnly ? (
-                        money(prevRecv)
+                        <span className="fee-paid-amt">{money(prevPaid)}</span>
                       ) : (
                         <input
                           type="number"
                           min="0"
-                          value={perHeadInput[prevKey] === 0 ? 0 : (perHeadInput[prevKey] || '')}
+                          value={prevTotalRecv}
                           onChange={e => setHead(prevKey, e.target.value)}
                           placeholder="0"
                         />
@@ -3650,15 +3666,15 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
                     </td>
                     <td className="fee-right">
                       {viewOnly ? (
-                        money(prevPend)
+                        money(Math.max(0, model.prev - prevPaid))
                       ) : (
                         <input
                           type="number"
                           min="0"
                           value={prevPend}
                           onChange={e => {
-                            const pend = Math.max(0, Math.min(Number(e.target.value) || 0, prevOwed));
-                            setHead(prevKey, prevOwed - pend);
+                            const pend = Number(e.target.value) || 0;
+                            setHead(prevKey, Math.max(0, model.prev - pend));
                           }}
                           placeholder="0"
                         />
@@ -3694,7 +3710,8 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
                     <td className="fee-right">{money(fineDue)}</td>
                     <td className="fee-right">0</td>
                     <td className="fee-right"><span className="fee-cell-grey">{money(fineDue)}</span></td>
-                    <td className="fee-right"><b>{money(viewOnly ? finePaid : fineDue)}</b></td>
+                    {/* Fine read-only — input ki tarah ye bhi KUL wasooli dikhati hai. */}
+                    <td className="fee-right"><b>{money(viewOnly ? finePaid : finePaid + fineOwed)}</b></td>
                     <td className="fee-right">{money(viewOnly ? Math.max(0, fineDue - finePaid) : 0)}</td>
                   </tr>
                 )}
@@ -4456,6 +4473,10 @@ function FeeReceivingIndividual({ toast }) {
        Is receiving me li gayi late fine bhi apni "Late Fine" row ki soorat me
        jaati hai — warna wasool shuda fine ledger me kahin record na hoti. */
     const rec = challanMap[keyOf(payload.classKey, payload.reg)];
+    /* Slip ko is receiving ke BAAD ka challan chahiye — usi se wo per-head
+       Std/Discount/Received aur "Remaining Amount" nikaalti hai. Warna fallback
+       chalta hai (std = recv = jo pay kiya) aur remaining hamesha 0 aati hai. */
+    let slipChallan = rec || null;
     if (rec && rec.id) {
       const userID = Number(sessionStorage.getItem('UserID')) || 0;
       const now    = new Date().toISOString();
@@ -4479,6 +4500,7 @@ function FeeReceivingIndividual({ toast }) {
       })
         .then(() => loadChallans())
         .catch(e => toast(e.message || 'Could not record payment', 'error'));
+      slipChallan = { ...rec, detailRows };
     } else {
       toast('No challan found to receive against', 'warning');
     }
@@ -4493,6 +4515,7 @@ function FeeReceivingIndividual({ toast }) {
           date: payload.date, method: payload.method, ref: payload.ref, txn: payload.txn,
           amount: payload.amount, perHead: payload.perHead, fine: payload.fine || 0,
         },
+        challan: slipChallan,
         defaultSize: settings.printSize || 'a4',
         school: branchHeader,
       });
@@ -5098,6 +5121,9 @@ function FamilyTreeReceiving({ toast }) {
        Is receiving me li gayi late fine bhi apni "Late Fine" row ki soorat me
        jaati hai — warna wasool shuda fine ledger me kahin record na hoti. */
     const rec = ledgerRecRef.current[`${payload.famKey}|${payload.reg}`];
+    /* Slip ko is receiving ke BAAD ka challan chahiye — warna wo fallback par
+       chali jaati hai (std = recv) aur "Remaining Amount" kabhi nahi dikhti. */
+    let slipChallan = rec || null;
     if (rec && rec.id) {
       const userID = Number(sessionStorage.getItem('UserID')) || 0;
       const now    = new Date().toISOString();
@@ -5121,6 +5147,7 @@ function FamilyTreeReceiving({ toast }) {
       })
         .then(() => loadFamilyChallans())   // refresh list so status persists
         .catch(e => toast(e.message || 'Could not record payment', 'error'));
+      slipChallan = { ...rec, detailRows };
     } else {
       toast('No challan found to receive against', 'warning');
     }
@@ -5138,6 +5165,7 @@ function FamilyTreeReceiving({ toast }) {
           date: payload.date, method: payload.method, ref: payload.ref, txn: payload.txn,
           amount: payload.amount, perHead: payload.perHead, fine: payload.fine || 0,
         },
+        challan: slipChallan,
         defaultSize: settings.printSize || 'a4',
       });
     }
@@ -5656,34 +5684,34 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
     setSelReg(ch.reg);
     const m = modelFor(ch, family.key);
     const payments = paymentsFor(family.key, ch.reg);
-    const seed = {};
+    /* "Received" input KUL wasooli rakhta hai (already + new) — editable, aur naya
+       paisa = input − paid (dekho computeRows).
+
+       Seed sirf ALREADY PAID hai: modal khulte hi baqaya PENDING me nazar aata hai
+       aur Receiving Now 0 rehta hai. Pending se raqam hatao to Received me jaati hai. */
     const perHeadPaid = {};
     payments.forEach(p => Object.entries(p.perHead || {}).forEach(([k, v]) => {
       perHeadPaid[k] = (perHeadPaid[k] || 0) + (+v || 0);
     }));
+    const seed = {};
     m.heads.forEach(h => {
-      const paid = Math.max(+perHeadPaid[h.name] || 0, +(m.paidPerHead?.[h.name]) || 0);
-      seed[h.name] = Math.max(0, h.net - paid);
+      seed[h.name] = Math.max(+perHeadPaid[h.name] || 0, +(m.paidPerHead?.[h.name]) || 0);
     });
-    /* Previous Pending ka bacha hua baqaya bhi seed karo (individual modal jaisa). */
-    if (m.prev > 0) {
-      const pk = m.prevName || 'Previous Pending';
-      seed[pk] = Math.max(0, m.prev - (+m.prevPaid || 0));
-    }
+    /* Previous Pending bhi isi tarah — sirf jo pehle wasool hui. */
+    if (m.prev > 0) seed[m.prevName || 'Previous Pending'] = Math.max(0, +m.prevPaid || 0);
     setPerHeadInput(seed);
     setDate(localTodayISO()); setMethod('Cash'); setRef(''); setTxn('');
   };
 
   const setHead = (name, v) => setPerHeadInput(prev => ({ ...prev, [name]: Math.max(0, Number(v) || 0) }));
 
-  /* Pending is the mirror of Received — the two always add up to what is still
-     owed on that head, so typing either one drives the other through the same
-     perHeadInput state. */
+  /* Pending is the mirror of Received — the two always add up to the head's net,
+     so typing either one drives the other through the same perHeadInput state.
+     Received KUL wasooli hai, is liye `net` se ghatao (owed se nahi). */
   const setPendingFor = (row, v) => {
-    const owed = Math.max(0, row.net - row.paid);
     /* Pending MINUS bhi ho sakta hai (advance) — is liye niche clamp nahi. */
     const pend = Number(v) || 0;
-    setPerHeadInput(prev => ({ ...prev, [row.name]: Math.max(0, owed - pend) }));
+    setPerHeadInput(prev => ({ ...prev, [row.name]: Math.max(0, row.net - pend) }));
   };
 
   const computeRows = (ch, m, payments) => {
@@ -5693,11 +5721,14 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
     }));
     /* Over-receiving allowed — owed se zyada lene par Pending MINUS (advance) ho jaata hai.
        `paid` challan ke receivedAmount se bhi liya jata hai (refresh par bhi sahi rahe). */
+    const locked = m.onelink || m.status === 'full';
     return m.heads.map(h => {
-      const paid    = Math.max(+perHeadPaid[h.name] || 0, +(m.paidPerHead?.[h.name]) || 0);
-      const recvNow = m.onelink || m.status === 'full' ? 0 : Math.max(0, +perHeadInput[h.name] || 0);
-      const pending = h.net - paid - recvNow;   // negative = advance
-      return { ...h, paid, recvNow, pending };
+      const paid = Math.max(+perHeadPaid[h.name] || 0, +(m.paidPerHead?.[h.name]) || 0);
+      /* Input KUL wasooli hai (already + new) — naya paisa = input − paid. */
+      const totalRecv = locked ? paid : Math.max(0, +perHeadInput[h.name] || 0);
+      const recvNow   = locked ? 0 : Math.max(0, totalRecv - paid);
+      const pending   = h.net - paid - recvNow;   // negative = advance
+      return { ...h, paid, totalRecv, recvNow, pending };
     });
   };
 
@@ -5719,10 +5750,13 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
   const prevKey   = selModel?.prevName || 'Previous Pending';
   const prevTotal = Math.max(0, +(selModel?.prev) || 0);
   const prevPaid  = Math.max(0, +(selModel?.prevPaid) || 0);
-  const prevOwed  = Math.max(0, prevTotal - prevPaid);
-  const prevRecv  = (selModel && !(selModel.onelink || selModel.status === 'full'))
-    ? Math.max(0, +perHeadInput[prevKey] || 0) : 0;
-  const prevPend  = prevOwed - prevRecv;
+  /* Heads ki tarah ye input bhi KUL wasooli rakhta hai. */
+  const prevLocked    = !selModel || selModel.onelink || selModel.status === 'full';
+  const prevTotalRecv = prevLocked
+    ? prevPaid
+    : Math.max(0, perHeadInput[prevKey] == null ? prevPaid : (+perHeadInput[prevKey] || 0));
+  const prevRecv  = prevLocked ? 0 : Math.max(0, prevTotalRecv - prevPaid);
+  const prevPend  = prevTotal - prevPaid - prevRecv;
   if (selModel && prevTotal > 0) {
     recvNow     += prevRecv;
     alreadyPaid += prevPaid;
@@ -5757,6 +5791,7 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
 
   /* Total se zyada wasool ho to MINUS me — yani student ka advance. */
   const remainAfter = selModel ? (selModel.payable + fineDue - alreadyPaid - recvNow) : 0;
+  const selEditable = !!selModel && !(selModel.onelink || selModel.status === 'full');
 
   const handleSaveChild = () => {
     if (!selChild) return;
@@ -5896,7 +5931,7 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
                                     <input
                                       type="number"
                                       min="0"
-                                      value={perHeadInput[r.name] === 0 ? 0 : (perHeadInput[r.name] || '')}
+                                      value={r.totalRecv}
                                       onChange={e => setHead(r.name, e.target.value)}
                                       placeholder="0"
                                     />
@@ -5931,7 +5966,7 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
                                     <input
                                       type="number"
                                       min="0"
-                                      value={perHeadInput[prevKey] === 0 ? 0 : (perHeadInput[prevKey] || '')}
+                                      value={prevTotalRecv}
                                       onChange={e => setHead(prevKey, e.target.value)}
                                       placeholder="0"
                                     />
@@ -5947,7 +5982,7 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
                                       value={prevPend}
                                       onChange={e => {
                                         const pend = Number(e.target.value) || 0;
-                                        setHead(prevKey, Math.max(0, prevOwed - pend));
+                                        setHead(prevKey, Math.max(0, prevTotal - pend));
                                       }}
                                       placeholder="0"
                                     />
@@ -5979,7 +6014,8 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
                                 <td className="fee-right">{money(fineDue)}</td>
                                 <td className="fee-right">0</td>
                                 <td className="fee-right"><span className="fee-cell-grey">{money(fineDue)}</span></td>
-                                <td className="fee-right"><b>{money(selModel.onelink || selModel.status === 'full' ? finePaid : fineDue)}</b></td>
+                                {/* Fine read-only — input ki tarah KUL wasooli dikhati hai. */}
+                                <td className="fee-right"><b>{money(selEditable ? finePaid + fineOwed : finePaid)}</b></td>
                                 <td className="fee-right">
                                   {money(selModel.onelink || selModel.status === 'full' ? Math.max(0, fineDue - finePaid) : 0)}
                                 </td>
@@ -9662,12 +9698,29 @@ function buildTransportReportHTML({ cls, sec, rows, isBW = false, school = null 
 const FEE_SCHOOL = {
   name:      'The Oxford System, Lahore Campus',
   monogram:  'OS',
-  psid:      '4321-9876-5432',
+};
+
+/* ── 1Link PSID ──────────────────────────────────────────────────────
+   PSID har challan ka apna hota hai aur BranchLedger record par aata hai
+   (`_challan.plpsid`). Pehle yahan ek hardcoded number tha jo HAR bachche
+   ke challan par same chhapta tha — parent kisi ka bhi challan scan karta
+   to paisa ek hi PSID par jata. Ab record se aata hai; na mile to PSID
+   block bilkul nahi chhapta (ghalat number chhapne se behtar hai). */
+const psidOf = (rec) => feeService.psidOf(rec);
+
+/* Challan par dikhne wala grouped form — 432198765432 → 4321-9876-5432. */
+const psidPretty = (psid) => feeService.formatPsid(psid);
+
+/* QR asli PSID se banta hai (pehle ek decorative SVG tha jo kisi bhi
+   scanner me kuch bhi nahi kholta tha). Payload sirf PSID digits — 1Link
+   bill-payment apps yahi expect karte hain. */
+const psidQrSvg = (psid, size = 52) => {
+  const d = String(psid || '').replace(/\D/g, '');
+  if (!d) return '';
+  try { return qrSvg(d, { size, margin: 2 }); } catch { return ''; }
 };
 
 const FEE_LOGO_SVG = `<svg viewBox="0 0 16 16" fill="none"><path d="M8 1L1 5l7 3.5L15 5 8 1z" stroke="#111" stroke-width="1" stroke-linejoin="round"/><path d="M1 9l7 3.5L15 9" stroke="#111" stroke-width="0.8" stroke-linecap="round"/><path d="M1 12l7 3.5L15 12" stroke="#111" stroke-width="0.5" stroke-linecap="round" opacity="0.5"/></svg>`;
-const FEE_QR_SVG   = `<svg width="52" height="52" viewBox="0 0 52 52" xmlns="http://www.w3.org/2000/svg"><rect width="52" height="52" fill="white"/><rect x="2" y="2" width="18" height="18" fill="none" stroke="#222" stroke-width="1.5" rx="1"/><rect x="6" y="6" width="10" height="10" fill="#222" rx="0.5"/><rect x="32" y="2" width="18" height="18" fill="none" stroke="#222" stroke-width="1.5" rx="1"/><rect x="36" y="6" width="10" height="10" fill="#222" rx="0.5"/><rect x="2" y="32" width="18" height="18" fill="none" stroke="#222" stroke-width="1.5" rx="1"/><rect x="6" y="36" width="10" height="10" fill="#222" rx="0.5"/><rect x="32" y="32" width="4" height="4" fill="#222"/><rect x="38" y="32" width="4" height="4" fill="#222"/><rect x="44" y="32" width="6" height="4" fill="#222"/><rect x="32" y="38" width="6" height="4" fill="#222"/><rect x="44" y="38" width="4" height="4" fill="#222"/><rect x="32" y="44" width="4" height="6" fill="#222"/><rect x="38" y="44" width="6" height="4" fill="#222"/><rect x="46" y="44" width="4" height="6" fill="#222"/><rect x="24" y="24" width="4" height="4" fill="#222"/></svg>`;
-const FEE_BARCODE_SVG = `<svg width="110" height="20" viewBox="0 0 110 20"><rect x="0" y="0" width="2" height="20" fill="#444"/><rect x="4" y="0" width="1" height="20" fill="#444"/><rect x="7" y="0" width="3" height="20" fill="#444"/><rect x="12" y="0" width="1" height="20" fill="#444"/><rect x="15" y="0" width="2" height="20" fill="#444"/><rect x="19" y="0" width="4" height="20" fill="#444"/><rect x="25" y="0" width="1" height="20" fill="#444"/><rect x="28" y="0" width="2" height="20" fill="#444"/><rect x="32" y="0" width="3" height="20" fill="#444"/><rect x="37" y="0" width="1" height="20" fill="#444"/><rect x="40" y="0" width="2" height="20" fill="#444"/><rect x="44" y="0" width="4" height="20" fill="#444"/><rect x="50" y="0" width="1" height="20" fill="#444"/><rect x="53" y="0" width="3" height="20" fill="#444"/><rect x="58" y="0" width="2" height="20" fill="#444"/><rect x="62" y="0" width="1" height="20" fill="#444"/><rect x="65" y="0" width="4" height="20" fill="#444"/><rect x="71" y="0" width="2" height="20" fill="#444"/><rect x="75" y="0" width="1" height="20" fill="#444"/><rect x="78" y="0" width="3" height="20" fill="#444"/><rect x="83" y="0" width="2" height="20" fill="#444"/><rect x="87" y="0" width="1" height="20" fill="#444"/><rect x="90" y="0" width="4" height="20" fill="#444"/><rect x="96" y="0" width="2" height="20" fill="#444"/><rect x="100" y="0" width="1" height="20" fill="#444"/><rect x="103" y="0" width="3" height="20" fill="#444"/></svg>`;
 
 /* Scoped under .fee-challan-doc so it can be embedded in the in-app preview
    without leaking into surrounding styles. */
@@ -9841,7 +9894,11 @@ function feeSlipHTML({ copyLabel, classMeta, student, heads, settings, period, i
     ? feeService.computeFine({ dueDate: dueISO, receivingDate: localTodayISO(), settings })
     : 0;
   const lateDays    = feeService.daysLate(dueISO, localTodayISO());
-  const psidPlain = FEE_SCHOOL.psid.replace(/[^0-9]/g, '');
+  /* Is challan ka apna PSID — BranchLedger record se. */
+  const psidPlain = psidOf(student?._challan);
+  /* Barcode ki base = backend ka Student ID (applicantsID), Admn/reg No nahi —
+     scanner se seedha wahi ID milti hai jis par fee APIs kaam karti hain. */
+  const barcodeId = String(student?.applicantsID ?? student?.studentID ?? '');
 
   return `
 <div class="slip">
@@ -9883,23 +9940,25 @@ function feeSlipHTML({ copyLabel, classMeta, student, heads, settings, period, i
       ? `<div class="net-box"><div class="nb-lbl">Payable After Due Date (incl. ${lateDays} day${lateDays === 1 ? '' : 's'} fine)</div><div class="nb-val">Rs. ${(payable + accruedFine).toLocaleString('en-PK')}</div></div>`
       : ''}
     ${fine && !settled ? `<div class="fine-line">After due date: Rs. ${payable.toLocaleString('en-PK')} + (no. of days × ${fineAmt})</div>` : ''}
-    ${showPsd ? `
+    ${showPsd && psidPlain ? `
     <div class="psid-block">
       <div class="psid-top"><div class="psid-dot"></div><span class="psid-tag">1Link PSID — Pay via Any Banking App</span></div>
-      <div class="psid-num">${escHtml(FEE_SCHOOL.psid)}</div>
+      <div class="psid-num">${escHtml(psidPretty(psidPlain))}</div>
       <div class="psid-row">
-        <div class="qr-wrap">${FEE_QR_SVG}</div>
+        <div class="qr-wrap">${psidQrSvg(psidPlain)}</div>
         <div class="qr-hint"><strong>Scan QR</strong> with your banking app<br/>OR enter PSID manually.<br/>Works on HBL, MCB, Meezan,<br/>UBL, Sadapay, Easypaisa &amp; more.</div>
       </div>
     </div>` : ''}
+    ${psidPlain ? `
     <div class="steps-block">
       <div class="steps-title">How to pay — 1Link PSID</div>
       <div class="step-row"><div class="sn">1</div><div class="st">Open your <strong>banking app</strong></div></div>
       <div class="step-row"><div class="sn">2</div><div class="st">Tap <strong>Bill Payment &rarr; Education</strong></div></div>
       <div class="step-row"><div class="sn">3</div><div class="st">Enter PSID — <strong>amount auto-fills</strong></div></div>
       <div class="step-row"><div class="sn">4</div><div class="st"><strong>Confirm &amp; pay</strong> — save your SMS receipt</div></div>
-    </div>
-    <div class="barcode-area">${FEE_BARCODE_SVG}<div class="psid-tiny">PSID: ${escHtml(psidPlain)}</div></div>
+    </div>` : ''}
+    ${barcodeId ? `
+    <div class="barcode-area">${code128BSvg(barcodeId)}<div class="psid-tiny">Student ID: ${escHtml(barcodeId)}</div></div>` : ''}
   </div>
 </div>`;
 }
@@ -9953,8 +10012,10 @@ function buildChallanInner({ classMeta, students, heads, settings, discountMap, 
   const today    = new Date();
   const dueDate  = new Date(today); dueDate.setDate(dueDate.getDate() + 10);
   const m = ['January','February','March','April','May','June','July','August','September','October','November','December'];
-  const fbIssueISO = issueOverride || today.toISOString().slice(0, 10);
-  const fbDueISO   = dueOverride   || dueDate.toISOString().slice(0, 10);
+  /* LOCAL calendar par — toISOString() (UTC) Pakistan me subah 5 baje se pehle
+     date ek din PEECHHE kar deta tha, jis se slip par ghalat Issue/Due chhapti. */
+  const fbIssueISO = issueOverride || localDateISO(today);
+  const fbDueISO   = dueOverride   || localDateISO(dueDate);
   const fbPeriod   = periodOverride || `${m[today.getMonth()]} ${today.getFullYear()}`;
   /* Har student ke apne saved challan se Issue/Due/Period nikaalo — bulk print me
      har bachche ka challan alag din bana ho sakta hai. */
@@ -10023,6 +10084,8 @@ body{font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif;color:#111;back
 .th-psid{border:1px dashed #555;border-radius:3px;padding:5px 8px;margin-top:5px;}
 .th-psid-top{font-size:9px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;color:#333;margin-bottom:3px;}
 .th-psid-num{font-size:11.5px;font-weight:800;color:#111;margin-bottom:3px;letter-spacing:.5px;font-variant-numeric:tabular-nums;}
+.th-psid-qr{margin:4px 0;text-align:center;}
+.th-psid-qr svg{display:block;margin:0 auto;}
 .th-psid-hint{font-size:8.5px;color:#555;line-height:1.4;}
 .th-steps{margin-top:5px;font-size:9px;color:#444;}
 .th-steps .s{display:flex;gap:5px;margin-bottom:1px;}
@@ -10105,6 +10168,8 @@ function feeThermalChallanHTML({ classMeta, student, heads, settings, period, is
     : 0;
   const lateDays    = feeService.daysLate(dueISO, localTodayISO());
   const showDiscCol = rows.some(r => r.disc > 0);
+  /* Is challan ka apna PSID — BranchLedger record se. */
+  const psidPlain   = psidOf(student?._challan);
 
   return `
 <div class="th-challan">
@@ -10152,18 +10217,20 @@ function feeThermalChallanHTML({ classMeta, student, heads, settings, period, is
     <span>Rs. ${(payable + accruedFine).toLocaleString('en-PK')}</span>
   </div>` : ''}
   ${fine ? `<div class="th-fine">After due: Rs. ${payable.toLocaleString('en-PK')} + (days × ${fineAmt})</div>` : ''}
-  ${showPsd ? `
+  ${showPsd && psidPlain ? `
   <div class="th-psid">
     <div class="th-psid-top">1Link PSID</div>
-    <div class="th-psid-num">${escHtml(FEE_SCHOOL.psid)}</div>
+    <div class="th-psid-num">${escHtml(psidPretty(psidPlain))}</div>
+    <div class="th-psid-qr">${psidQrSvg(psidPlain, 88)}</div>
     <div class="th-psid-hint">Scan QR / enter PSID in your banking app. Works on HBL, MCB, Meezan, UBL, Sadapay, Easypaisa &amp; more.</div>
   </div>` : ''}
+  ${psidPlain ? `
   <div class="th-steps">
     <div class="s"><b>1.</b> Open banking app</div>
     <div class="s"><b>2.</b> Tap Bill Payment → Education</div>
     <div class="s"><b>3.</b> Enter PSID — amount auto-fills</div>
     <div class="s"><b>4.</b> Confirm &amp; pay</div>
-  </div>
+  </div>` : ''}
 </div>`;
 }
 
@@ -10188,7 +10255,14 @@ function feeFamilySlipHTML({ copyLabel, family, settings, period, issueISO, dueI
     ? feeService.computeFine({ dueDate: dueISO, receivingDate: localTodayISO(), settings })
     : 0;
   const famLateDays = feeService.daysLate(dueISO, localTodayISO());
-  const psidPlain = FEE_SCHOOL.psid.replace(/[^0-9]/g, '');
+  /* Family challan ek HI challan hota hai — PSID bhi ek, pehle bachche ke
+     saved record se (dates ki tarah, dekho buildFamilyChallanInner). */
+  const psidPlain = psidOf((family.children || []).map(ch => ch._challan).find(Boolean));
+  /* Family challan EK hi bill hai — barcode bhi ek, pehle bachche ke Student ID
+     (applicantsID) par, PSID ki tarah hi convention. */
+  const barcodeId = String((family.children || [])
+    .map(ch => ch.applicantsID ?? ch.studentID)
+    .find(v => v != null && v !== '') ?? '');
 
   return `
 <div class="slip">
@@ -10221,23 +10295,25 @@ function feeFamilySlipHTML({ copyLabel, family, settings, period, issueISO, dueI
     ${famFine > 0
       ? `<div class="net-box"><div class="nb-lbl">Payable After Due Date (incl. ${famLateDays} day${famLateDays === 1 ? '' : 's'} fine)</div><div class="nb-val">Rs. ${(famPay + famFine).toLocaleString('en-PK')}</div></div>`
       : ''}
-    ${showPsd ? `
+    ${showPsd && psidPlain ? `
     <div class="psid-block">
       <div class="psid-top"><div class="psid-dot"></div><span class="psid-tag">1Link PSID — Pay via Any Banking App</span></div>
-      <div class="psid-num">${escHtml(FEE_SCHOOL.psid)}</div>
+      <div class="psid-num">${escHtml(psidPretty(psidPlain))}</div>
       <div class="psid-row">
-        <div class="qr-wrap">${FEE_QR_SVG}</div>
+        <div class="qr-wrap">${psidQrSvg(psidPlain)}</div>
         <div class="qr-hint"><strong>Scan QR</strong> with your banking app<br/>OR enter PSID manually.<br/>Works on HBL, MCB, Meezan,<br/>UBL, Sadapay, Easypaisa &amp; more.</div>
       </div>
     </div>` : ''}
+    ${psidPlain ? `
     <div class="steps-block">
       <div class="steps-title">How to pay — 1Link PSID</div>
       <div class="step-row"><div class="sn">1</div><div class="st">Open your <strong>banking app</strong></div></div>
       <div class="step-row"><div class="sn">2</div><div class="st">Tap <strong>Bill Payment &rarr; Education</strong></div></div>
       <div class="step-row"><div class="sn">3</div><div class="st">Enter PSID — <strong>amount auto-fills</strong></div></div>
       <div class="step-row"><div class="sn">4</div><div class="st"><strong>Confirm &amp; pay</strong></div></div>
-    </div>
-    <div class="barcode-area">${FEE_BARCODE_SVG}<div class="psid-tiny">PSID: ${escHtml(psidPlain)}</div></div>
+    </div>` : ''}
+    ${barcodeId ? `
+    <div class="barcode-area">${code128BSvg(barcodeId)}<div class="psid-tiny">Student ID: ${escHtml(barcodeId)}</div></div>` : ''}
   </div>
 </div>`;
 }
@@ -10245,9 +10321,10 @@ function feeFamilySlipHTML({ copyLabel, family, settings, period, issueISO, dueI
 function buildFamilyChallanInner({ family, settings, bw = false, size = 'a4',
                                    period: periodOverride, issueISO: issueOverride, dueISO: dueOverride }) {
   const today    = new Date();
-  const fbIssue  = today.toISOString().slice(0, 10);
+  /* LOCAL calendar par — warna subah-subah slip par date ek din peechhe chhapti. */
+  const fbIssue  = localDateISO(today);
   const dueDate  = new Date(today); dueDate.setDate(dueDate.getDate() + 10);
-  const fbDue    = dueDate.toISOString().slice(0, 10);
+  const fbDue    = localDateISO(dueDate);
   const m = ['January','February','March','April','May','June','July','August','September','October','November','December'];
   const fbPeriod = `${m[today.getMonth()]} ${today.getFullYear()}`;
   /* Combined family slip ek hi challan hota hai, is liye pehle bachche ka saved
@@ -10301,6 +10378,8 @@ function feeThermalFamilyChallanHTML({ family, settings, period, issueISO, dueIS
     ? feeService.computeFine({ dueDate: dueISO, receivingDate: localTodayISO(), settings })
     : 0;
   const famLateDays = feeService.daysLate(dueISO, localTodayISO());
+  /* Family challan ek HI challan hai — PSID bhi ek (dekho feeFamilySlipHTML). */
+  const psidPlain = psidOf((family.children || []).map(ch => ch._challan).find(Boolean));
 
   return `
 <div class="th-challan">
@@ -10337,18 +10416,20 @@ function feeThermalFamilyChallanHTML({ family, settings, period, issueISO, dueIS
     <span>After Due (incl. ${famLateDays}d fine)</span>
     <span>Rs. ${(famPay + famFine).toLocaleString('en-PK')}</span>
   </div>` : ''}
-  ${showPsd ? `
+  ${showPsd && psidPlain ? `
   <div class="th-psid">
     <div class="th-psid-top">1Link PSID</div>
-    <div class="th-psid-num">${escHtml(FEE_SCHOOL.psid)}</div>
+    <div class="th-psid-num">${escHtml(psidPretty(psidPlain))}</div>
+    <div class="th-psid-qr">${psidQrSvg(psidPlain, 88)}</div>
     <div class="th-psid-hint">Scan QR / enter PSID in your banking app. Works on HBL, MCB, Meezan, UBL, Sadapay, Easypaisa &amp; more.</div>
   </div>` : ''}
+  ${psidPlain ? `
   <div class="th-steps">
     <div class="s"><b>1.</b> Open banking app</div>
     <div class="s"><b>2.</b> Tap Bill Payment → Education</div>
     <div class="s"><b>3.</b> Enter PSID — amount auto-fills</div>
     <div class="s"><b>4.</b> Confirm &amp; pay</div>
-  </div>
+  </div>` : ''}
 </div>`;
 }
 
