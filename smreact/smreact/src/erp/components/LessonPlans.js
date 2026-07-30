@@ -6,7 +6,7 @@ import useAsync from '../hooks/useAsync';
 import { buildUrl, assertSessionPayload, registerSessionToast, apiMessage } from '../../utils/apiConfig';
 import { termsCrud, termsBranchID, termsSessionYearID } from './Academics';
 import { deliverReport } from './reportDelivery';
-import { useModuleReadOnly, useSettings } from '../pages/Settings/settingsStore';
+import { useModuleReadOnly, useSettings, validateSessionDate } from '../pages/Settings/settingsStore';
 import { usePermissions } from '../context/PermissionsContext';
 import 'mathlive';   // registers the <math-field> visual math editor custom element
 import { convertLatexToMarkup } from 'mathlive';  // LaTeX → rendered HTML (editor/view/report)
@@ -1989,6 +1989,19 @@ function VacationEditModal({ open, vacations, session = {}, sessionSummaryId, on
   if (invalidVacs.length > 0) {
     toast(`"${invalidVacs[0].name}" — End date must be after Start date`, 'error');
     return;
+  }
+  /* Session-date guard: har vacation session ki UTC window ke andar ho — session
+     start se PEHLE ya end ke BAAD vacation na bane. Range wahi jo is screen par
+     dikhti hai (session.start / session.end). */
+  if (session.start && session.end) {
+    const sess = { startDate: session.start, endDate: session.end };
+    for (const v of draft) {
+      if (!v.name || !v.name.trim()) continue;
+      const sChk = validateSessionDate(v.start, sess, `"${v.name.trim()}" start date`);
+      if (!sChk.ok) { toast(sChk.message, 'error'); return; }
+      const eChk = validateSessionDate(v.end, sess, `"${v.name.trim()}" end date`);
+      if (!eChk.ok) { toast(eChk.message, 'error'); return; }
+    }
   }
     setSaving(true);
     try {

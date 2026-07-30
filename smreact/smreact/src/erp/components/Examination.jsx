@@ -7,7 +7,7 @@ import * as cbrApi from '../services/combinedAssessmentService';
 import useAsync from '../hooks/useAsync';
 import { buildUrl } from '../../utils/apiConfig';
 import { deliverReport } from './reportDelivery';
-import { useModuleReadOnly } from '../pages/Settings/settingsStore';
+import { useModuleReadOnly, validateSessionDateFromStorage } from '../pages/Settings/settingsStore';
 import { getActiveSessionID } from '../services/attendanceService';
 import { usePermissions } from '../context/PermissionsContext';
 /* ═══════════════════════════════════════════════════════════════════
@@ -2496,11 +2496,18 @@ const dsSaveEdit = async (payload) => {
       timeTo: r.timeTo
     }));
   
-  if (!cleaned.length) { 
-    toast('Please add at least one subject', 'warning'); 
-    return; 
+  if (!cleaned.length) {
+    toast('Please add at least one subject', 'warning');
+    return;
   }
-  
+
+  /* Session-date guard: har exam date current session ki UTC window ke andar honi
+     chahiye. Bahar ho to toaster (session start/end ke saath) aur save block. */
+  for (const r of cleaned) {
+    const check = validateSessionDateFromStorage(r.date, `${r.subject} exam date`);
+    if (!check.ok) { toast(check.message, 'error'); return; }
+  }
+
   try {
     const token = sessionStorage.getItem('token');
     const branchID = sessionStorage.getItem('branchID');
@@ -6910,7 +6917,14 @@ function ExamModal({ data, onClose, onSave, toast, selectedTermId }) {
       toast('Select classes', 'warning');
       return;
     }
-    
+
+    /* Session-date guard: exam ki start/end date current session ki UTC window ke
+       andar honi chahiye — bahar ho to toaster (session range ke saath) + block. */
+    const fromChk = validateSessionDateFromStorage(from, 'exam start date');
+    if (!fromChk.ok) { toast(fromChk.message, 'error'); return; }
+    const toChk = validateSessionDateFromStorage(to, 'exam end date');
+    if (!toChk.ok) { toast(toChk.message, 'error'); return; }
+
     const branchID = sessionStorage.getItem('branchID');
     const token = sessionStorage.getItem('token');
     const currentClassIds = new Set(classes.map(c => String(c.sectionID)));

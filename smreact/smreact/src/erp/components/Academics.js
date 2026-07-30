@@ -6,7 +6,7 @@ import * as academicsService from '../services/academicsService';
 import useAsync from '../hooks/useAsync';
 import { buildUrl, assertSessionPayload, registerSessionToast, apiMessage } from '../../utils/apiConfig';
 import { deliverReport } from './reportDelivery';
-import { useModuleReadOnly } from '../pages/Settings/settingsStore';
+import { useModuleReadOnly, validateSessionDateFromStorage } from '../pages/Settings/settingsStore';
 import { usePermissions } from '../context/PermissionsContext';
 import RouteFallback from '../shared/RouteFallback';
 
@@ -525,6 +525,7 @@ return (
       onClose={() => setCalEditOpen(false)}
       onSave={async () => { await loadCalendar(); setCalEditOpen(false); toast('Academic calendar saved!', 'success'); }}
       onError={() => toast('Could not save key dates', 'error')}
+      toast={toast}
     />
 
     <ActivityModal
@@ -949,7 +950,7 @@ function NoSessionModal({ open, onClose, onGoToSettings }) {
 /* ═══════════════════════════════════════════════════════════════════
    CAL EDIT MODAL — edit Academic Calendar key-date entries per term
    ═══════════════════════════════════════════════════════════════════ */
-function CalEditModal({ open, terms, onClose, onSave, onError }) {
+function CalEditModal({ open, terms, onClose, onSave, onError, toast }) {
   const [draft, setDraft] = useState([]);
   /* Snapshot of saved key dates by id → lets save() diff into insert/update/delete. */
   const [orig, setOrig] = useState({});
@@ -984,6 +985,16 @@ function CalEditModal({ open, terms, onClose, onSave, onError }) {
   /* Diff the draft against the original snapshot and fire one keydatescrud call
      per change: new rows → insert, edited rows → update, removed rows → delete. */
   const save = async () => {
+    /* Session-date guard: har key-date current session ki UTC window ke andar ho —
+       bahar ho to toaster (session range ke saath) + save block. */
+    for (const term of draft) {
+      for (const e of (term.entries || [])) {
+        const value = (e.date || '').trim();
+        if (!value) continue;
+        const chk = validateSessionDateFromStorage(value, e.heading ? `"${e.heading.trim()}" date` : 'key date');
+        if (!chk.ok) { (toast || window.alert)(chk.message, 'error'); return; }
+      }
+    }
     setSaving(true);
     try {
       const ops = [];
@@ -1153,6 +1164,13 @@ function ActivityModal({ open, editing, onClose, onSave, toast }) {
     alert('Start date cannot be after end date.');
     return;
   }
+
+  /* Session-date guard: activity start & end current session ki UTC window ke andar hon —
+     bahar ho to toaster (session range ke saath) + block. */
+  const startChk = validateSessionDateFromStorage(start, 'start date');
+  if (!startChk.ok) { (toast || window.alert)(startChk.message, 'error'); return; }
+  const endChk = validateSessionDateFromStorage(end, 'end date');
+  if (!endChk.ok) { (toast || window.alert)(endChk.message, 'error'); return; }
 
   // Update ke liye real backend id chahiye. Fake/oversized id (Date.now() fallback ~1.7e12)
   // backend ke Int32 me fit nahi hota → "One or more validation errors occurred". Aise me

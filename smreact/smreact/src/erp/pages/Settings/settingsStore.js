@@ -431,6 +431,57 @@ export function useModuleReadOnly(moduleId) {
   return !(currentSession.modules || []).includes(moduleId);
 }
 
+/* ── Session date guard (ERP-wide) ──
+   Koi bhi CREATION/UPDATION date jo academic session se bandhi hai (exam dates,
+   datesheet, attendance date, validation dates, etc. — NATURAL/personal dates
+   jaise DOB, joining date par YE NAHI lagti) current session ki UTC window ke
+   andar honi chahiye. { ok, message } lautata hai — out-of-range par ready toaster
+   message. Hisaab hamesha UTC midnight par taake timezone shift se din na badle. */
+export function validateSessionDate(dateISO, currentSession, label = 'date') {
+  const d = utcMidnightISO(dateISO);
+  if (!d) return { ok: true };                       // khaali/invalid date → check nahi
+  if (!currentSession) {
+    return { ok: false, message: 'No active academic session. Please set a current session from Session Settings first.' };
+  }
+  const s = utcMidnightISO(currentSession.startDate);
+  const e = utcMidnightISO(currentSession.endDate);
+  if (!s || !e) {
+    return { ok: false, message: 'The current session has no start/end date. Please set them from Session Settings.' };
+  }
+  if (d < s || d > e) {
+    return {
+      ok: false,
+      message: `Your session runs ${formatDate(currentSession.startDate)} → ${formatDate(currentSession.endDate)}. Please pick the ${label} within this range, or change the session from Session Settings.`,
+    };
+  }
+  return { ok: true };
+}
+
+/* Hook: live current session se bandha hua validate(dateISO, label) deta hai.
+   Modules isse call karke save se pehle date check karte hain. */
+export function useSessionDateGuard() {
+  const { currentSession } = useSettings();
+  return useCallback(
+    (dateISO, label = 'date') => validateSessionDate(dateISO, currentSession, label),
+    [currentSession],
+  );
+}
+
+/* sessionStorage snapshot (login par set: sessionStartDate/sessionEndDate) se wahi
+   validation — synchronous aur bharosemand, is liye jo modules pehle se isi source
+   par gating karte hain (Examination, Attendance, Accounts, Paper Generator) wo bina
+   context par depend kiye save se pehle date check kar saken. Range hi na mile to
+   block NAHI karte (ok:true) — taake data missing hone par galat block na lage. */
+export function validateSessionDateFromStorage(dateISO, label = 'date') {
+  let start = '', end = '';
+  try {
+    start = String(sessionStorage.getItem('sessionStartDate') || '').slice(0, 10);
+    end   = String(sessionStorage.getItem('sessionEndDate')   || '').slice(0, 10);
+  } catch { /* storage unavailable */ }
+  if (!start || !end) return { ok: true };
+  return validateSessionDate(dateISO, { startDate: start, endDate: end }, label);
+}
+
 export function useSettings() {
   const ctx = useContext(SettingsContext);
   /* If the provider isn't mounted (shouldn't happen since App wraps the
@@ -510,6 +561,16 @@ export function formatDate(iso) {
   try {
     return new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
   } catch { return iso; }
+}
+
+/* Kisi bhi date/ISO string ko UTC midnight Date me badalta hai (sirf YYYY-MM-DD
+   part). Invalid/khaali par null. Session date guard isi se timezone-safe
+   comparison karta hai. */
+export function utcMidnightISO(value) {
+  const s = String(value || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+  const d = new Date(s + 'T00:00:00Z');
+  return isNaN(d.getTime()) ? null : d;
 }
 
 /* Returns progress 0-1 for the given session based on today's date. */

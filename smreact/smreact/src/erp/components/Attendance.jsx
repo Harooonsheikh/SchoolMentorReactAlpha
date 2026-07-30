@@ -4,7 +4,7 @@
   import TutorialModal from "./TutorialModal";
   import * as attendanceService from "../services/attendanceService";
   import useAsync from "../hooks/useAsync";
-  import { useModuleReadOnly } from "../pages/Settings/settingsStore";
+  import { useModuleReadOnly, validateSessionDateFromStorage } from "../pages/Settings/settingsStore";
   import { usePermissions } from "../context/PermissionsContext";
 
   /* ============================================================================
@@ -3664,6 +3664,9 @@ const saveMarkSf = useCallback(async (rows) => {
   const branchID = Number(sessionStorage.getItem("branchID"));
   const employeeID = Number(sessionStorage.getItem("employee_ID")) || 0;
   const attendanceDate = new Date().toISOString().slice(0, 10);
+  // Session-date guard: attendance date current session ki UTC window ke andar ho.
+  const sfDateChk = validateSessionDateFromStorage(attendanceDate, "attendance date");
+  if (!sfDateChk.ok) { toast(sfDateChk.message, "error"); return; }
 
   try {
     // Sirf UNHI staff ko save karo jinhein mark kiya (status set hai). Har staff
@@ -3965,6 +3968,9 @@ const saveMarkSf = useCallback(async (rows) => {
       const employeeID = Number(sessionStorage.getItem("employee_ID")) || 0;
       const sessionID  = await ensureSessionID();
       const attendanceDate = new Date().toISOString().slice(0, 10);
+      // Session-date guard: attendance date current session ki UTC window ke andar ho.
+      const dateChk = validateSessionDateFromStorage(attendanceDate, "attendance date");
+      if (!dateChk.ok) { toast(dateChk.message, "error"); throw new Error("out-of-session"); }
       // Only students that were actually marked (blank = untouched → skip).
       const marked = studentRows.filter((s) => s.status && ST_STATUS_TO_CODE[s.status]);
       if (marked.length === 0) {

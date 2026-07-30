@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import Tooltip from './Tooltip';
 import TutorialModal from './TutorialModal';
 import * as feeService from '../services/feeService';
+import { validateSessionDateFromStorage } from '../pages/Settings/settingsStore';
 import useAsync from '../hooks/useAsync';
 import { downloadDocxFromHtml } from '../../utils/docx';
 import { usePermissions } from '../context/PermissionsContext';
@@ -2625,6 +2626,12 @@ function BulkGenerateModal({
       toast('Due date cannot be before issue date', 'error');
       return false;
     }
+    /* Session-date guard: issue & due date current session ki UTC window ke andar hon —
+       bahar ho to toaster (session range ke saath) + block. */
+    const issueChk = validateSessionDateFromStorage(issueDate, 'issue date');
+    if (!issueChk.ok) { toast(issueChk.message, 'error'); return false; }
+    const dueChk = validateSessionDateFromStorage(dueDate, 'due date');
+    if (!dueChk.ok) { toast(dueChk.message, 'error'); return false; }
     return true;
   };
 
@@ -3464,6 +3471,9 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
   const handleReceive = () => {
     if (receivingNow <= 0) { toast('Enter at least one head amount to receive', 'error'); return; }
     if (!date) { toast('Receiving date is required', 'error'); return; }
+    /* Session-date guard: receiving date current session ki UTC window ke andar ho. */
+    const recvChk = validateSessionDateFromStorage(date, 'receiving date');
+    if (!recvChk.ok) { toast(recvChk.message, 'error'); return; }
     /* Build perHead snapshot of receivingNow values */
     const perHead = {};
     rows.forEach(r => { if (r.recvNow > 0) perHead[r.name] = r.recvNow; });
@@ -5752,6 +5762,9 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
     if (!selChild) return;
     if (recvNow <= 0) { toast('Enter at least one head amount to receive', 'error'); return; }
     if (!date) { toast('Receiving date is required', 'error'); return; }
+    /* Session-date guard: receiving date current session ki UTC window ke andar ho. */
+    const recvChk = validateSessionDateFromStorage(date, 'receiving date');
+    if (!recvChk.ok) { toast(recvChk.message, 'error'); return; }
     const perHead = {};
     rowsForSel.forEach(r => { if (r.recvNow > 0) perHead[r.name] = r.recvNow; });
     /* Previous Pending ki raqam ASLI subHead key par (API perHead ko subHead se match karti hai). */
