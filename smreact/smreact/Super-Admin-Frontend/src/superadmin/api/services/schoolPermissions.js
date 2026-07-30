@@ -23,8 +23,9 @@
 
    modulePermission → the modal's module switches, verbatim: a true flag opens
    its toggle, false closes it. `modulePermission: null` means the branch has
-   no saved row yet → EVERY module reads off (nothing has been granted), which
-   is also what the table's "n/17 modules on" then shows.
+   no saved row yet → EVERY module defaults to ON, matching what the ERP does
+   with the same missing row (module-permission/{branchID} answers 404 there,
+   and the ERP then applies no school-level restriction).
 
    The older get-branch route (branch directory only, no module flags) is still
    mapped by the same code — a plain branch row falls back to the seeded
@@ -84,19 +85,20 @@ function toModuleKey(rawKey) {
   return MODULE_BY_NORM.get(k) || MODULE_ALIAS[k] || null;
 }
 
-const allModulesOff = () => Object.fromEntries(ALL_MODULE_KEYS.map((k) => [k, false]));
+const allModules = (value) => Object.fromEntries(ALL_MODULE_KEYS.map((k) => [k, value]));
 
 /**
  * A saved ModulePermission row → the modal's module switches.
  *
- * The API row is authoritative: a true flag opens its toggle, false closes it,
- * and `null` (no row saved for this branch yet) closes ALL of them — nothing
- * has been granted. The DTO's non-module fields (id, branchID, createdAt,
- * createdBy, …) are ignored by `toModuleKey`.
+ * A saved row is authoritative: a true flag opens its toggle, false closes it.
+ * `null` (no row for this branch yet) opens ALL of them — an unconfigured
+ * school is unrestricted, exactly how the ERP reads the same missing row.
+ * The DTO's non-module fields (id, branchID, createdAt, createdBy, …) are
+ * ignored by `toModuleKey`.
  */
 export function readModulePermission(mp) {
-  const out = allModulesOff();
-  if (!mp || typeof mp !== 'object') return out;
+  if (!mp || typeof mp !== 'object') return allModules(true);
+  const out = allModules(false);
 
   /* Array form: ['Academics', …] or [{ moduleName, isAccessable }, …]. */
   if (Array.isArray(mp)) {

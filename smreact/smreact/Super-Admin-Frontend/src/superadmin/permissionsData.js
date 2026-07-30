@@ -8,13 +8,13 @@
    SCHOOLS with API data and wires save() to a real endpoint.
    ═══════════════════════════════════════════════════════════════════ */
 
-/* Core (top) permissions shown as cards at the top of the modal.
-   Backed by the two branch-level flags the API owns:
-     erpAccess    → launchSetup  (PUT enable-/disable-launch-setup/{id})
-     activeBranch → isActive     (no dedicated route yet — see the service) */
+/* Core (top) permissions shown as cards at the top of the modal, in this
+   order. Backed by the two branch-level flags the API owns:
+     activeBranch → isActive     (PUT ToggleBranchStatus/{id}?isActive=)
+     erpAccess    → launchSetup  (PUT toggle-launch-setup/{id}?launchSetup=) */
 export const CORE_PERMS = [
-  { key: 'erpAccess',    name: 'ERP Access',    icon: 'fa-server',        desc: 'Allow this school to log in and use the main ERP system.' },
   { key: 'activeBranch', name: 'Active Branch', icon: 'fa-circle-check',  desc: 'Keep this branch active. Switching it off suspends the school.' },
+  { key: 'erpAccess',    name: 'ERP Access',    icon: 'fa-server',        desc: 'Allow this school to log in and use the main ERP system.' },
 ];
 
 /* Module permissions, grouped exactly as in the design. */
