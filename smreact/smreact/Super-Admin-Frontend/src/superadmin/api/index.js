@@ -30,6 +30,7 @@ export * as paymentsApi from './services/payments';
 export * as etubeApi from './services/etube';
 export * as notificationsApi from './services/notifications';
 export * as branchesApi from './services/branches';
+export * as schoolPermissionsApi from './services/schoolPermissions';
 
 /* Convenience direct exports for the most-used calls */
 export { fetchDashboard } from './services/dashboard';

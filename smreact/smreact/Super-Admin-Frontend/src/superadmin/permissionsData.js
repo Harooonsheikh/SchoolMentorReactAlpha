@@ -8,11 +8,13 @@
    SCHOOLS with API data and wires save() to a real endpoint.
    ═══════════════════════════════════════════════════════════════════ */
 
-/* Core (top) permissions shown as cards at the top of the modal. */
+/* Core (top) permissions shown as cards at the top of the modal.
+   Backed by the two branch-level flags the API owns:
+     erpAccess    → launchSetup  (PUT enable-/disable-launch-setup/{id})
+     activeBranch → isActive     (no dedicated route yet — see the service) */
 export const CORE_PERMS = [
-  { key: 'erpAccess', name: 'ERP Access',              icon: 'fa-server',             desc: 'Allow this school to log in and use the main ERP system.' },
-  { key: 'transport', name: 'Transport Fee',           icon: 'fa-bus',                desc: 'Enable transport fee management for this school.' },
-  { key: 'headFee',   name: 'Head-wise Fee Receiving', icon: 'fa-money-bill-transfer', desc: 'Enable receiving fee by individual fee heads.' },
+  { key: 'erpAccess',    name: 'ERP Access',    icon: 'fa-server',        desc: 'Allow this school to log in and use the main ERP system.' },
+  { key: 'activeBranch', name: 'Active Branch', icon: 'fa-circle-check',  desc: 'Keep this branch active. Switching it off suspends the school.' },
 ];
 
 /* Module permissions, grouped exactly as in the design. */
@@ -94,8 +96,7 @@ export function defaultPerms(school) {
   const on = school.source === 'erp';
   return {
     erpAccess: on,
-    transport: false,
-    headFee: false,
+    activeBranch: on,
     modules: {
       academics: on, examination: on, papergenerator: on, attendance: on, timetable: on,
       fee: on, accounts: on, inventory: false,

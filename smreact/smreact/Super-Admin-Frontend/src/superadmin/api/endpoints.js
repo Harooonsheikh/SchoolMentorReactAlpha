@@ -15,6 +15,13 @@
 
 const ROOT = '/api/superadmin';
 
+/* The LIVE .NET Super Admin API is hosted under its own application root
+   (swagger: http://<host>:4100/SchoolMentorSuperAdminAPI/swagger/index.html,
+   `servers: [{ url: "/SchoolMentorSuperAdminAPI" }]`), so every real path
+   carries this prefix. Services prepend SA_ADMIN_API_BASE — empty in dev, so
+   the request goes to our own origin and setupProxy.js forwards it. */
+const SA_ROOT = '/SchoolMentorSuperAdminAPI';
+
 export const EP = {
   /* ── Auth (only needed for the standalone app; the host injects a token) ── */
   auth: {
@@ -58,10 +65,26 @@ export const EP = {
     report: () => `${ROOT}/payments/report`,                      // ?month=
   },
 
-  /* ── School Permissions (per-school module toggles) ── */
+  /* ── School Permissions — LIVE SchoolMentorSuperAdminAPI (see SA_ROOT).
+     Mirrors the controller exactly, per its swagger. The two toggle routes
+     take their value as a QUERY parameter, not a body. ── */
   schoolPermissions: {
-    get: (schoolId) => `${ROOT}/school-permissions/${schoolId}`,
-    update: (schoolId) => `${ROOT}/school-permissions/${schoolId}`,
+    /* GET — what the screen loads: every branch WITH its saved module
+       permissions, as [ { branch: {...}, modulePermission: {...} | null } ]. */
+    branchesWithPermissions: () => `${SA_ROOT}/api/SchoolPermissions/get-branches-with-permissions`,
+    /* GET — branch directory only (no module flags); superseded by the above. */
+    branches: () => `${SA_ROOT}/api/SchoolPermissions/get-branch`,
+    /* GET — one branch's saved ModulePermission row. */
+    modulePermission: (branchId) => `${SA_ROOT}/api/SchoolPermissions/module-permission/${branchId}`,
+    /* POST — save every module flag for a branch in one ModulePermission body. */
+    saveModulePermission: () => `${SA_ROOT}/api/SchoolPermissions/save-modulePermission`,
+    /* PUT ?launchSetup=1|0 — the modal's "ERP Access" card. */
+    toggleLaunchSetup: (branchId) => `${SA_ROOT}/api/SchoolPermissions/toggle-launch-setup/${branchId}`,
+    /* PUT ?isActive=true|false — the modal's "Active Branch" card. */
+    toggleBranchStatus: (branchId) => `${SA_ROOT}/api/SchoolPermissions/ToggleBranchStatus/${branchId}`,
+    /* PUT — the older single-purpose launch-setup routes (toggle- replaces them). */
+    enableLaunchSetup: (id) => `${SA_ROOT}/api/SchoolPermissions/enable-launch-setup/${id}`,
+    disableLaunchSetup: (id) => `${SA_ROOT}/api/SchoolPermissions/disable-launch-setup/${id}`,
   },
 
   /* ── E-Tube ── */
