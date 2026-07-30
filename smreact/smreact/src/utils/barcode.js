@@ -25,6 +25,60 @@ const PATTERNS = [
   '114131','311141','411131','211412','211214','211232','2331112',
 ];
 
+/* Widths ki list → SVG markup. Dono encoders (B aur C) isi se guzarte hain. */
+function widthsToSvg(widths, label, { width, height, color }) {
+  const totalModules = widths.reduce((a, b) => a + b, 0);
+  let x = 0;
+  let path = '';
+  widths.forEach((w, i) => {
+    if (i % 2 === 0) path += `M${x} 0h${w}v${height}h-${w}z`;   // even index = bar
+    x += w;
+  });
+
+  return `<svg width="${width}" height="${height}" viewBox="0 0 ${totalModules} ${height}" `
+       + `xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none" `
+       + `shape-rendering="crispEdges" role="img" aria-label="Barcode ${label}">`
+       + `<rect width="${totalModules}" height="${height}" fill="#fff"/>`
+       + `<path d="${path}" fill="${color}"/></svg>`;
+}
+
+/* Code values → checksum lagao aur Stop add karo, phir bar/space widths. */
+function finishCodes(codes) {
+  let sum = codes[0];
+  for (let i = 1; i < codes.length; i++) sum += codes[i] * i;
+  codes.push(sum % 103);
+  codes.push(106);                            // Stop
+
+  const widths = [];
+  for (const c of codes) {
+    for (const ch of PATTERNS[c]) widths.push(Number(ch));
+  }
+  return widths;
+}
+
+/* ── CODE 128 subset B — poora printable ASCII (digits + letters + '-' etc.)
+
+   Student ID / Admission No jaise `245-00119` alphanumeric hote hain, is liye
+   challan ka student barcode subset B use karta hai (subset C sirf digits).
+   Subset B me code value = charCode − 32, yani space(32) → 0, '~'(126) → 94.
+   Start B = 104. Non-ASCII / out-of-range chars drop kar diye jate hain taake
+   scanner ko invalid symbol na mile.                                        */
+export function code128BSvg(value, { width = 110, height = 20, color = '#444' } = {}) {
+  const text = String(value == null ? '' : value)
+    .split('')
+    .filter((ch) => {
+      const c = ch.charCodeAt(0);
+      return c >= 32 && c <= 126;
+    })
+    .join('');
+  if (!text) return '';
+
+  const codes = [104];                        // Start B
+  for (const ch of text) codes.push(ch.charCodeAt(0) - 32);
+
+  return widthsToSvg(finishCodes(codes), text, { width, height, color });
+}
+
 /* Numeric payload → Code 128-C SVG. Odd-length input ko leading 0 se
    pad kiya jata hai (subset C sirf digit PAIRS encode karta hai). */
 export function code128Svg(value, { width = 110, height = 20, color = '#444' } = {}) {
@@ -37,29 +91,5 @@ export function code128Svg(value, { width = 110, height = 20, color = '#444' } =
     codes.push(Number(digits.slice(i, i + 2)));
   }
 
-  /* Checksum = (start + Σ code_i × position) mod 103. */
-  let sum = codes[0];
-  for (let i = 1; i < codes.length; i++) sum += codes[i] * i;
-  codes.push(sum % 103);
-  codes.push(106);                            // Stop
-
-  /* Patterns ko bar/space widths me kholo. */
-  const widths = [];
-  for (const c of codes) {
-    for (const ch of PATTERNS[c]) widths.push(Number(ch));
-  }
-
-  const totalModules = widths.reduce((a, b) => a + b, 0);
-  let x = 0;
-  let path = '';
-  widths.forEach((w, i) => {
-    if (i % 2 === 0) path += `M${x} 0h${w}v${height}h-${w}z`;   // even index = bar
-    x += w;
-  });
-
-  return `<svg width="${width}" height="${height}" viewBox="0 0 ${totalModules} ${height}" `
-       + `xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none" `
-       + `shape-rendering="crispEdges" role="img" aria-label="Barcode ${digits}">`
-       + `<rect width="${totalModules}" height="${height}" fill="#fff"/>`
-       + `<path d="${path}" fill="${color}"/></svg>`;
+  return widthsToSvg(finishCodes(codes), digits, { width, height, color });
 }
