@@ -3,6 +3,20 @@ import { useState } from 'react';
 import { buildUrl } from '../../utils/apiConfig';
 import { normalizePkPhone } from '../../utils/phone';
 
+/* Server ka asli error nikaalo — JSON object ho ya plain text. "Internal Server Error:"
+   jaisa prefix hata do taake user ko sirf matlab ka message dikhe. */
+function serverMessage(data, raw) {
+  const msg =
+    data?.message ??
+    data?.Message ??
+    data?.error ??
+    data?.title ??
+    (typeof data === 'string' ? data : '') ??
+    '';
+  const text = String(msg || raw || '').trim();
+  return text.replace(/^(internal\s+server\s+error|bad\s+request|error)\s*:\s*/i, '').trim();
+}
+
 export default function LoginScreen({ onLogin, onSignup }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -28,11 +42,16 @@ export default function LoginScreen({ onLogin, onSignup }) {
       }),
     });
 
-    const data = await res.json();
-    console.log("Login Response:", data);
+    /* Backend kabhi JSON deta hai aur kabhi plain-text (e.g. "Internal Server Error:
+       This branch is not active."). Pehle text padho, phir JSON parse try karo — warna
+       res.json() throw karke asli message chhupa deta tha aur "Network error" dikhta tha. */
+    const raw = await res.text();
+    let data = null;
+    try { data = raw ? JSON.parse(raw) : null; } catch { /* plain-text response */ }
+    console.log("Login Response:", data ?? raw);
 
     if (!res.ok) {
-      setError(data?.message || 'Login failed');
+      setError(serverMessage(data, raw) || 'Login failed');
       return;
     }
     /* Sirf PURE parent accounts (parent portal, jinke paas koi employee record nahi) ERP me
@@ -80,7 +99,9 @@ export default function LoginScreen({ onLogin, onSignup }) {
     onLogin(data);
 
   } catch (err) {
-    setError('Network error. Please try again.');
+    /* Yahan sirf tab aata hai jab request hi fail ho (server down / CORS / offline) —
+       server ke bheje huay error ab upar handle hotay hain. */
+    setError(err?.message ? `Network error: ${err.message}` : 'Network error. Please try again.');
     console.error(err);
   }
     // onLogin({ username });
