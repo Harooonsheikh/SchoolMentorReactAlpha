@@ -55,15 +55,17 @@ export const ERP_API_BASE = stripTrailingSlash(env.REACT_APP_SA_ERP_BASE || 'htt
    (School Permissions: branch directory + feature/module toggles).
    Swagger: http://50.190.164.42:4100/SchoolMentorSuperAdminAPI/swagger/index.html
 
-   DEFAULTS TO EMPTY on purpose: unlike the ERP branch directory, this API does
-   NOT send Access-Control-Allow-Origin, so a direct cross-origin fetch from the
-   dev server is blocked by the browser. An empty base makes the request go to
-   our OWN origin with the /SchoolMentorSuperAdminAPI/... path, which
-   src/setupProxy.js forwards to the API host server-to-server (dev), and which
-   resolves same-origin when the build is served from that host (prod).
+   DEFAULTS TO EMPTY for development: the API's CORS allow-list covers
+   :4105, :4100 and localhost:3000 — but NOT this app's dev port
+   (localhost:3001), so a direct call from `npm start` is blocked. An empty
+   base sends the request to our OWN origin with the /SchoolMentorSuperAdminAPI
+   path, which src/setupProxy.js forwards server-to-server.
 
-   Set REACT_APP_SA_ADMIN_BASE to an absolute host ONLY once the backend sends
-   CORS headers for the origin the app is served from. */
+   .env.production sets this to http://50.190.164.42:4100, because the API is
+   hosted ONLY there — the :4105 site that serves the build has no
+   /SchoolMentorSuperAdminAPI application and answers 404 for a relative path.
+   Serving the build from a NEW origin means adding that origin to the
+   backend's CORS policy. */
 export const SA_ADMIN_API_BASE = stripTrailingSlash(env.REACT_APP_SA_ADMIN_BASE || '');
 
 /* AI / wallet API base — hosts per-branch Mentor AI plan + subscription state

@@ -28,9 +28,10 @@ module.exports = function (app) {
   );
 
   /* SchoolMentorSuperAdminAPI — School Permissions branch directory + toggles
-     (host :4100, own application root). This API sends NO CORS headers at all,
-     so unlike /api/Registration it can ONLY be reached through this proxy in
-     development. */
+     (host :4100, own application root). Its CORS allow-list does not include
+     this app's dev port (localhost:3001), so in development it can only be
+     reached through this proxy. Production calls :4100 directly — see
+     .env.production. */
   app.use(
     '/SchoolMentorSuperAdminAPI',
     createProxyMiddleware({
