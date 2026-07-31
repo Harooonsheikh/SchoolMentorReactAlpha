@@ -96,8 +96,11 @@ const AQ_CONFIG = {
   long_question:   { title:'Long Question',            layout:'long' },
   paragraph:       { title:'Paragraph Writing',        fields:[{key:'title',label:'Title',ph:'Enter title',rte:true},{key:'body',label:'Paragraph Body',ph:'Write paragraph here…',rte:true}],                          layout:'vertical-expand' },
   comprehension:   { title:'Comprehension Question',   layout:'comprehension' },
-  letter:          { title:'Letter',                   fields:[{key:'subject',label:'Subject',ph:'Enter subject',rte:true},{key:'body',label:'Body',ph:'Write letter body…',rte:true}],                                 layout:'vertical-expand' },
-  application:     { title:'Application',              fields:[{key:'subject',label:'Subject',ph:'Enter subject',rte:true},{key:'body',label:'Body',ph:'Write application body…',rte:true}],                            layout:'vertical-expand' },
+  /* Letter/Application: Subject aur Body ab ek hi field hai — teacher poora
+     khat (subject line samet) ek editor me likhta hai. Backend abhi bhi alag
+     `subject`/`body` leta hai, wo split aqSplitLetter() save par karta hai. */
+  letter:          { title:'Letter',                   fields:[{key:'body',label:'Letter',ph:'Write the letter here…',rte:true}],                                                                                       layout:'vertical-expand' },
+  application:     { title:'Application',              fields:[{key:'body',label:'Application',ph:'Write the application here…',rte:true}],                                                                             layout:'vertical-expand' },
   stories:         { title:'Stories',                  fields:[{key:'title',label:'Title',ph:'Enter story title',rte:true},{key:'body',label:'Story Body',ph:'Write the story…',rte:true},{key:'moral',label:'Moral',ph:'Moral of the story…',rte:true}], layout:'vertical-expand' },
   essays:          { title:'Essays',                   fields:[{key:'title',label:'Title',ph:'Enter essay title',rte:true},{key:'body',label:'Essay Body',ph:'Write the essay…',rte:true},{key:'conclusion',label:'Conclusion',ph:'Write conclusion…',rte:true}], layout:'vertical-expand' },
 };
@@ -180,6 +183,9 @@ const NB_UR = {
   'Enter subject': 'موضوع لکھیں',
   'Write letter body…': 'خط کا متن لکھیں…',
   'Write application body…': 'درخواست کا متن لکھیں…',
+  /* Letter/Application ab single merged field (subject + body ek saath). */
+  'Write the letter here…': 'یہاں خط لکھیں…',
+  'Write the application here…': 'یہاں درخواست لکھیں…',
   'Enter story title': 'کہانی کا عنوان لکھیں',
   'Write the story…': 'کہانی لکھیں…',
   'Moral of the story…': 'کہانی کا سبق…',
@@ -4274,10 +4280,48 @@ const NB_DETAIL_CATEGORIES = [
   { key:'circleCorrectWord',      typeId:'circle_words',    type:'Circle the Correct Words', recTitle:'CircleCorrectWord', map:r=>({ statement:r.question, answer:r.answer }),                                                     preview:r=>`${r.statement||''}` },
   { key:'mdlParagraph',           typeId:'paragraph',       type:'Paragraph Writing',        recTitle:'Paragraph',         map:r=>({ title:r.topic, body:r.paragraph }),                                                           preview:r=>`${r.title||''}` },
   { key:'stories',                typeId:'stories',         type:'Stories',                  recTitle:'stories',           map:r=>({ title:r.subject, body:r.body, moral:r.moral }),                                               preview:r=>`${r.title||''}` },
-  { key:'letters',                typeId:'letter',          type:'Letter',                   recTitle:'letters',           map:r=>({ subject:r.subject, body:r.body }),                                                            preview:r=>`${r.subject||''}` },
-  { key:'applications',           typeId:'application',     type:'Application',              recTitle:'application',       map:r=>({ subject:r.subject, body:r.body }),                                                            preview:r=>`${r.subject||''}` },
+  /* subject+body wapas ek hi merged field me — purane records bhi theek khulte hain. */
+  { key:'letters',                typeId:'letter',          type:'Letter',                   recTitle:'letters',           map:r=>({ body:aqMergeLetter(r.subject, r.body) }),                                                     preview:r=>`${aqSplitLetter(r.body).subject||''}` },
+  { key:'applications',           typeId:'application',     type:'Application',              recTitle:'application',       map:r=>({ body:aqMergeLetter(r.subject, r.body) }),                                                     preview:r=>`${aqSplitLetter(r.body).subject||''}` },
   { key:'essays',                 typeId:'essays',          type:'Essays',                   recTitle:'essays',            map:r=>({ title:r.subject, body:r.body, conclusion:r.conclusion }),                                     preview:r=>`${r.title||''}` },
 ];
+
+/* ── Letter / Application: ek UI field ↔ do API fields ────────────────
+   Modal me ab sirf ek editor hai, lekin backend `subject` aur `body` alag
+   maangta hai. Save par pehli line subject ban jati hai, baaki body; load
+   par dono wapas jur kar ek hi field me aa jate hain. Purane records —
+   jinka subject alag save hua tha — is tarah bilkul theek khulte hain. */
+
+/** Ek merged letter HTML ko { subject, body } me toro (save ke liye). */
+function aqSplitLetter(html) {
+  const full = String(html || '');
+  if (!full.trim()) return { subject: '', body: '' };
+
+  /* Pehla block-level element = subject line. Agar koi block tag hi nahi
+     (plain text / sirf <br>) to pehli line par toro. */
+  const block = full.match(/^\s*<(p|div|h[1-6])\b[^>]*>([\s\S]*?)<\/\1>/i);
+  if (block) {
+    return { subject: block[2].trim(), body: full.slice(block[0].length).trim() };
+  }
+  const br = full.split(/<br\s*\/?>/i);
+  if (br.length > 1) {
+    return { subject: br[0].trim(), body: br.slice(1).join('<br>').trim() };
+  }
+  /* Ek hi line — usay subject maano; body khali rehti hai. Print/preview
+     dono jagah subject hi dikhta hai, is liye content gum nahi hota. */
+  return { subject: full.trim(), body: '' };
+}
+
+/** API ke alag subject+body ko wapas ek field me jodo (load ke liye). */
+function aqMergeLetter(subject, body) {
+  const s = String(subject || '').trim();
+  const b = String(body || '').trim();
+  if (!s) return b;
+  if (!b) return s;
+  /* Subject agar pehle se block element hai to jaisa hai waisa rakho,
+     warna usay apne <p> me daal do taake alag line par rahe. */
+  return /^\s*<(p|div|h[1-6])\b/i.test(s) ? `${s}${b}` : `<p>${s}</p>${b}`;
+}
 
 /* Per-question-type CRUD endpoints. `body(uiRow, i)` turns a modal row back into
    the type-specific API fields; the common id/branchID/notebookID/mainQuestion/
@@ -4297,8 +4341,9 @@ const NB_QTYPE_API = {
   long_question:   { endpoint:'/api/ulpnLongQuestioncrud',          notebookIDString:true, body:r=>({ question:r.question||'', answer:r.answer||'', marks:r.marks||'' }) },
   paragraph:       { endpoint:'/api/ulpnparagraphcrud',             body:r=>({ topic:r.title||'', paragraph:r.body||'', marks:r.marks||'' }) },
   comprehension:   { endpoint:'/api/ulpncomprehensionquestioncrud', body:r=>({ question:r.question||'', answer:r.answer||'', correctAnswer:r.answer||'', marks:r.marks||'' }) },
-  letter:          { endpoint:'/api/ulpnlettercrud',               body:r=>({ subject:r.subject||'', body:r.body||'', regards:r.regards||'', marks:r.marks||'' }) },
-  application:     { endpoint:'/api/ulpnapplicationcrud',           body:r=>({ subject:r.subject||'', body:r.body||'', regards:r.regards||'', marks:r.marks||'' }) },
+  /* Merged field ko wapas subject+body me tor kar bhejte hain — API contract same. */
+  letter:          { endpoint:'/api/ulpnlettercrud',               body:r=>({ ...aqSplitLetter(r.body), regards:r.regards||'', marks:r.marks||'' }) },
+  application:     { endpoint:'/api/ulpnapplicationcrud',           body:r=>({ ...aqSplitLetter(r.body), regards:r.regards||'', marks:r.marks||'' }) },
   stories:         { endpoint:'/api/ulpnstoriescrud',              body:r=>({ subject:r.title||'', body:r.body||'', moral:r.moral||'', marks:r.marks||'' }) },
   essays:          { endpoint:'/api/ulpnessaycrud',               body:r=>({ subject:r.title||'', body:r.body||'', conclusion:r.conclusion||'', marks:r.marks||'' }) },
 };
