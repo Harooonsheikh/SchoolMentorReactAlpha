@@ -40,11 +40,73 @@ export const MODULE_REGISTRY = [
   { id: 'user_permissions', label: 'User Permissions',  icon: 'fa-shield-halved',    group: 'BASICS',         route: '/user-permissions',   coreLocked: true  },
 ];
 
-/* ─── Default activation state — every module enabled.
-       Backend will send the real per-school state on login. */
+/* ─── Default activation state — every module enabled. */
 export const DEFAULT_MODULE_STATE = Object.fromEntries(
   MODULE_REGISTRY.map(m => [m.id, true])
 );
+
+/* ─── Pehla paint (backend response se pehle) ka state: sirf coreLocked on.
+       Agar yahan sab `true` rakhein to jo module school ne off kiya hai wo
+       response aane tak ek pal ke liye sidebar me flash kar jata hai. Isi
+       liye default "kuch nahi" hai — API batayegi kya on karna hai. */
+export const EMPTY_MODULE_STATE = Object.fromEntries(
+  MODULE_REGISTRY.map(m => [m.id, !!m.coreLocked])
+);
+
+/* ─── Mapping: backend `module-permission` response field → MODULE_REGISTRY.id.
+       GET /api/SchoolPermissions/module-permission/{branchID} ek flat object
+       deta hai (academics:true, paperGenerator:false, …). Sirf `true` wale
+       module sidebar me dikhne chahiye. Jo registry entry is map se cover
+       nahi hoti (launch_setup) wo coreLocked hai — hamesha visible. */
+export const API_FIELD_TO_MODULE_MAP = {
+  academics:         'academics',
+  examination:       'examination',
+  paperGenerator:    'paper_generator',
+  attendance:        'attendance',
+  timeTable:         'timetable',
+  fee:               'fee',
+  accounts:          'accounts',
+  inventory:         'inventory',
+  admissionCRM:      'admission_crm',
+  students:          'students',
+  humanResource:     'hr',
+  staffAppraisals:   'appraisals',
+  schoolSOPs:        'school_sops',
+  teacherTrainings:  'teacher_trainings',
+  auditLogs:         'audit_logs',
+  settings:          'settings',
+  userPermissions:   'user_permissions',
+};
+
+/**
+ * Backend ka flat permission object → { moduleId: boolean } state map.
+ * Field names case-insensitive match hote hain (backend kabhi PascalCase
+ * bhejta hai), aur values true/false/1/0/"true" kisi bhi form me ho sakti hain.
+ * coreLocked module (Settings/Audit Logs/User Permissions/Launch Setup) kabhi
+ * off nahi hote — chahe API false hi kyun na de.
+ */
+export function mapApiPermissionsToModuleState(payload) {
+  if (!payload || typeof payload !== 'object') return null;
+
+  /* Response ki keys lowercase index kar lo taake casing mismatch na tootay. */
+  const lowered = {};
+  for (const [k, v] of Object.entries(payload)) lowered[k.toLowerCase()] = v;
+
+  const truthy = (v) =>
+    v === true || v === 1 || String(v).toLowerCase() === 'true' || String(v) === '1';
+
+  const state = {};
+  for (const [field, moduleId] of Object.entries(API_FIELD_TO_MODULE_MAP)) {
+    const raw = lowered[field.toLowerCase()];
+    if (raw === undefined) continue;      /* API ne bheja hi nahi → chhedo mat */
+    state[moduleId] = truthy(raw);
+  }
+
+  /* coreLocked hamesha on. */
+  for (const m of MODULE_REGISTRY) if (m.coreLocked) state[m.id] = true;
+
+  return state;
+}
 
 /* ─── Mapping: MODULE_REGISTRY.id → MODULE_TREE.id prefix
        (used to filter the permission tree by active modules). */

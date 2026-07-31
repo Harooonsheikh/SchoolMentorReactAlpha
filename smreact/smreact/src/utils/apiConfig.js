@@ -37,6 +37,24 @@ export function buildUrl(path = '') {
   return `${base}${path.startsWith('/') ? path : `/${path}`}`;
 }
 
+// ── Super-Admin API ─────────────────────────────────────────────
+// School/branch-level configuration (module activation waghera) alag
+// Super-Admin service par rehti hai, jiska apna base path hai:
+//   {host}/SchoolMentorSuperAdminAPI/api/...
+// Isi liye buildUrl() se ye call nahi ban sakti — wo sirf host lagata hai.
+
+const SUPER_ADMIN_PREFIX = '/SchoolMentorSuperAdminAPI';
+
+/**
+ * Build a Super-Admin API endpoint URL.
+ * @param {string} path – e.g. '/api/SchoolPermissions/module-permission/1'
+ */
+export function buildSuperAdminUrl(path = '') {
+  const base = getBaseUrl();
+  const suffix = path.startsWith('/') ? path : `/${path}`;
+  return `${base}${SUPER_ADMIN_PREFIX}${suffix}`;
+}
+
 // ── Session guard ───────────────────────────────────────────────
 // Many CRUD POSTs are scoped to the active academic session and send it as
 // `sessionID`/`sessionYearID`. If no session is selected, those calls must be

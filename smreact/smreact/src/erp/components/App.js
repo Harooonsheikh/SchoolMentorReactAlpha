@@ -183,11 +183,15 @@ export default function App() {
      gated. Core-locked modules (Settings / Launch Setup / Audit
      Logs / User Permissions) always render regardless of state
      because ModuleContext.toggleModule() refuses to flip them off. */
-  const { isActive: isModuleActive } = useModules();
+  const { isActive: isModuleActive, ready: modulesReady } = useModules();
   /* Logged-in user ki module-level access (School Head → sab allowed; warna API
      permissions ke hisaab se). Jis module me koi access nahi, wo nav se hat jata hai. */
   const { canModule, fullAccess, ready: permsReady } = usePermissions();
   const navItemVisible = (navId) => {
+    /* Jab tak school ka module-activation aur user ki permissions dono na
+       aa jayen, koi bhi nav item render nahi hota. Warna jo module off hai
+       wo pehle paint par ek pal ke liye dikh kar phir ghayab hota hai. */
+    if (!modulesReady || !permsReady) return false;
     const modId = NAV_TO_MODULE_MAP[navId];
     if (!modId) {
       /* Registry-backed nahi (Dashboard/Feedback). Dashboard sirf
@@ -207,14 +211,17 @@ export default function App() {
      pehle visible nav item par bhej do — warna sidebar me hidden module ka
      content khul jata hai. */
   useEffect(() => {
-    if (!permsReady) return;
+    /* Dono cheezein aa jayen — user permissions aur school ka module
+       activation — warna hum aise module par redirect kar dete hain jo
+       response aane ke baad khud hidden ho jata hai. */
+    if (!permsReady || !modulesReady) return;
     if (navItemVisible(active)) return;
     for (const section of NAV_SECTIONS) {
       const found = section.items.find((it) => navItemVisible(it.id));
       if (found) { setActive(found.id); return; }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [permsReady, active]);
+  }, [permsReady, modulesReady, active]);
 
   /* ── Academics tab state (lifted so the topbar breadcrumb stays in sync) ── */
   const [l1, setL1] = useState('sos');      // 'sos' | 'lp'
@@ -309,6 +316,15 @@ export default function App() {
           </div>
 
           <nav className="sidebar-nav">
+            {/* Modules/permissions load hone tak halka placeholder — khaali
+                sidebar se behtar, aur off-module ka flash bhi nahi hota. */}
+            {(!modulesReady || !permsReady) && (
+              <div className="nav-loading" aria-busy="true" aria-label="Loading modules">
+                {Array.from({ length: 7 }).map((_, i) => (
+                  <div key={i} className="nav-skel" />
+                ))}
+              </div>
+            )}
             {NAV_SECTIONS.map((section, sIdx) => {
               /* Filter to only the items whose backing module is
                  active. Items without a registry mapping (e.g.
@@ -898,6 +914,19 @@ body.dark .play-dot::after  { border-color:rgba(59,130,246,.15); }
 .sidebar-nav { flex:1;padding:6px 8px;overflow-y:auto; }
 .nav-section-lbl { font-size:9.5px;letter-spacing:1.2px;text-transform:uppercase;color:#C0CADD;padding:10px 10px 4px;font-weight:700; }
 .nav-divider { height:1px;background:#F0F4FF;margin:4px 0; }
+/* Sidebar skeleton — modules/permissions load hone tak. */
+.nav-loading { padding:6px 2px; }
+.nav-skel {
+  height:34px;border-radius:var(--radius-md);margin-bottom:6px;
+  background:linear-gradient(90deg,#F1F5FB 25%,#E7EDF7 37%,#F1F5FB 63%);
+  background-size:400% 100%;animation:navSkel 1.2s ease-in-out infinite;
+}
+@keyframes navSkel { 0%{background-position:100% 50%} 100%{background-position:0 50%} }
+@media (prefers-reduced-motion: reduce) { .nav-skel { animation:none; } }
+[data-theme="dark"] .nav-skel {
+  background:linear-gradient(90deg,var(--bg-hover) 25%,var(--border-light) 37%,var(--bg-hover) 63%);
+  background-size:400% 100%;
+}
 .nav-item {
   display:flex;align-items:center;gap:9px;padding:8px 10px;
   border-radius:var(--radius-md);cursor:pointer;transition:var(--tr);
