@@ -1601,8 +1601,14 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
          fall back to reloading + matching on the (unique) registration no. */
       const docUploads    = payload.docUploads    || [];
       const removedDocIds = payload.removedDocIds || [];
-      if (docUploads.length || removedDocIds.length) {
-        let studentId = existing?._id || studentService.studentIdFromSaveResponse(resp) || 0;
+      /* Family No dropdown se chuni gayi family tree — link isi id par hota hai. */
+      const famId = famArr.some(f => String(f.id) === String(payload.family))
+        ? Number(payload.family)
+        : 0;
+      /* Id ek hi baar resolve — documents aur family link dono isay use karte hain. */
+      let studentId = 0;
+      if (docUploads.length || removedDocIds.length || famId || mode === 'edit') {
+        studentId = existing?._id || studentService.studentIdFromSaveResponse(resp) || 0;
         if (!studentId) {
           const fresh = await studentService.getStuClasses();
           for (const c of fresh) {
@@ -1610,6 +1616,8 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
             if (found) { studentId = found._id; break; }
           }
         }
+      }
+      if (docUploads.length || removedDocIds.length) {
         if (studentId) {
           for (const id of removedDocIds) {
             try { await studentService.deleteStuStudentDocument(id); }
@@ -1629,6 +1637,41 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
         } else {
           toast('Student saved, but documents could not be attached (no id)', 'error');
         }
+      }
+
+      /* Family No dropdown → family tree link (wahi familytreedetailcrud jo
+         "Add Student to Family Tree" use karta hai). Student ek waqt me ek hi
+         tree me hona chahiye, is liye: pehle kisi DOOSRI family ka purana link
+         hatao, phir nayi family me link karo. Family already sahi ho to kuch
+         nahi. Edit me family "No family" par set karne se link hat jata hai. */
+      if (studentId) {
+        /* Jis bhi tree me ye student abhi linked hai (detailID unlink ke liye). */
+        let currentLink = null;
+        for (const f of famArr) {
+          const m = (f.members || []).find(x => String(x._id) === String(studentId));
+          if (m) { currentLink = { famId: f.id, detailID: m.detailID }; break; }
+        }
+        const changed = String(currentLink?.famId || '') !== String(famId || '');
+        if (changed) {
+          try {
+            if (currentLink?.detailID) {
+              await studentService.unlinkStuFromFamily({ id: currentLink.detailID });
+            }
+            if (famId) {
+              await studentService.linkStuToFamily({
+                treeID:       famId,
+                applicantsID: studentId,
+                gradeID:      row?._gradeId || 0,
+                sectionID:    row?._sectionId || 0,
+              });
+            }
+            setFamilies(await studentService.getStuFamilies());
+          } catch (e) {
+            toast(e.message || 'Student saved, but family tree link failed', 'error');
+          }
+        }
+      } else if (famId) {
+        toast('Student saved, but family tree link failed (no id)', 'error');
       }
 
       await reloadClasses();
@@ -1800,6 +1843,7 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
           classList={classListLookup}
           sectionList={sectionList}
           classes={list}
+          families={famArr}
           /* {id, reg} pairs so the modal can reject a reg already taken by a
              DIFFERENT student (and ignore blanks / its own record on edit). */
           existingRegs={list.flatMap(c => c.students.map(s => ({ id: s._id, reg: String(s.reg || '').trim().toLowerCase() })))}
@@ -2158,7 +2202,7 @@ function StuFormSection({ id, icon, title, open, setOpen, children }) {
   );
 }
 
-function StuStudentModal({ cfg, activeClass, student, classList, sectionList, classes, existingRegs, suggestedReg, suggestedAdm, onClose, onSave, toast }) {
+function StuStudentModal({ cfg, activeClass, student, classList, sectionList, classes, families, existingRegs, suggestedReg, suggestedAdm, onClose, onSave, toast }) {
   const isEdit = cfg.mode === 'edit';
 
   /* Default values: from student if editing, otherwise auto-filled */
@@ -2178,7 +2222,18 @@ function StuStudentModal({ cfg, activeClass, student, classList, sectionList, cl
   const [nat,      setNat]      = useState(init.nat      || 'Pakistani');
   const [reg,      setReg]      = useState(isEdit ? init.reg : suggestedReg);
   const [adm,      setAdm]      = useState(isEdit ? init.adm : suggestedAdm);
-  const [family,   setFamily]   = useState(init.family   || '');
+  /* Family No ab Family Tree ka dropdown hai: value = family tree id (string).
+     Edit par student ki mojooda family pehle tree membership (family.members[])
+     se resolve hoti hai — asli link wahin hota hai — aur agar wahan na mile to
+     record ki stored FamilyNo par fallback. Purani free-text FamilyNo jo kisi
+     tree se match na kare, select me "(existing)" option ban kar dikhti hai
+     taake edit par value na khoye. */
+  const [family,   setFamily]   = useState(() => {
+    if (!isEdit) return '';
+    const linked = (Array.isArray(families) ? families : [])
+      .find(f => (f.members || []).some(m => String(m._id) === String(init._id)));
+    return linked ? String(linked.id) : String(init.family || '');
+  });
   const [admdate,  setAdmdate]  = useState(init.admdate  || new Date().toISOString().slice(0, 10));
   const [father,   setFather]   = useState(init.father   || '');
   const [fcnic,    setFcnic]    = useState(init.fcnic    || '');
@@ -2208,6 +2263,16 @@ function StuStudentModal({ cfg, activeClass, student, classList, sectionList, cl
   const stdDocRef = useRef(null);
   const customDocRef = useRef(null);
   const [pendingStdKey, setPendingStdKey] = useState(null);
+
+  /* Family Tree list for the Family No dropdown. */
+  const famList = useMemo(() => (Array.isArray(families) ? families : []), [families]);
+  /* Chuni gayi family ka record — guardian + siblings dikhane ke liye. */
+  const selectedFam = famList.find(f => String(f.id) === family) || null;
+  /* Purani free-text FamilyNo value jo kisi mojooda tree se match nahi karti. */
+  const isLegacyFamily = Boolean(family) && !selectedFam;
+  /* Us family ke baaki members (khud ko chhod kar) = related siblings. */
+  const famSiblings = (selectedFam?.members || [])
+    .filter(m => String(m._id) !== String(init._id));
 
   /* Fee heads for the selected class — pulled from that grade's fee
      structure (Launch Setup class fee setup) whenever the class changes. */
@@ -2432,8 +2497,46 @@ function StuStudentModal({ cfg, activeClass, student, classList, sectionList, cl
                     <Field label="Admission No">
                       <input className="stu-finput" value={adm} onChange={(e) => setAdm(e.target.value)} placeholder="Enter Here" />
                     </Field>
-                    <Field label="Family No" hint="Links siblings for family billing.">
-                      <input className="stu-finput" value={family} onChange={(e) => setFamily(e.target.value)} placeholder="e.g. 78855" />
+                    <Field
+                      label="Family Tree"
+                      hint={famList.length
+                        ? 'Select a Family Tree to Add Student in related fmaily'
+                        : 'Koi family tree nahi bani. Pehle Family Tree tab se banayein.'}
+                    >
+                      <select
+                        className="stu-finput"
+                        value={family}
+                        onChange={(e) => setFamily(e.target.value)}
+                        disabled={famList.length === 0}
+                      >
+                        <option value="">{famList.length ? 'No family (optional)' : 'No family trees available'}</option>
+                        {famList.map(f => (
+                          <option key={f.id} value={String(f.id)}>
+                            {f.name}{f.guardian ? ` — ${f.guardian}` : ''}
+                          </option>
+                        ))}
+                        {/* Legacy free-text FamilyNo jo kisi tree se match nahi karta */}
+                        {isLegacyFamily && <option value={family}>{family} (existing)</option>}
+                      </select>
+
+                      {/* Chuni gayi family ka guardian + is family ke doosre students */}
+                      {selectedFam && (
+                        <div className="stu-fhelp" style={{ marginTop: 6 }}>
+                          <div>
+                            <i className="fa-solid fa-people-roof" style={{ marginRight: 6, color: '#7C3AED' }}></i>
+                            <b>{selectedFam.name}</b>
+                            {selectedFam.guardian ? ` · Guardian: ${selectedFam.guardian}` : ''}
+                            {selectedFam.contact ? ` · ${selectedFam.contact}` : ''}
+                          </div>
+                          <div style={{ marginTop: 2 }}>
+                            {famSiblings.length === 0
+                              ? 'Is family me abhi koi doosra student nahi.'
+                              : `Related: ${famSiblings
+                                  .map(m => `${[m.first, m.last].filter(Boolean).join(' ')}${m._cls ? ` (${m._cls}${m._sec ? `-${m._sec}` : ''})` : ''}`)
+                                  .join(', ')}`}
+                          </div>
+                        </div>
+                      )}
                     </Field>
                     <Field label="Date of Admission">
                       <input className="stu-finput" type="date" value={admdate} onChange={(e) => setAdmdate(e.target.value)} />
