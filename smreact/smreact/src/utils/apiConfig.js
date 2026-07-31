@@ -6,12 +6,32 @@
 // ══════════════════════════════════════════════════
 
 const STORAGE_KEY = 'sm_api_base_url';
-// const DEFAULT_URL  = 'http://210.56.9.60:1123';
-const DEFAULT_URL  = 'http://50.190.164.42:4100';
 
-/** Read the saved base URL (falls back to '' if not set) */
+const stripSlash = (url) => String(url || '').trim().replace(/\/+$/, '');
+
+// Where the API lives, per build:
+//   dev  (npm start)      → the API box directly over http; nothing in front of it.
+//   prod (npm run build)  → same origin as the site. The site is https, and a
+//     browser blocks an http request made from an https page (mixed content), so
+//     the API cannot be called at http://IP:4100 from production. IIS rewrites
+//     /api/* to the API on localhost:4100 — see the proxy rule in public/web.config.
+//   Override either with REACT_APP_API_BASE_URL (see .env.production).
+// const DEV_URL = 'http://210.56.9.60:1123';
+const DEV_URL  = 'http://50.190.164.42:4100';
+const PROD_URL = 'https://erp.schoolmentor.ai';
+
+const DEFAULT_URL = stripSlash(process.env.REACT_APP_API_BASE_URL)
+  || (process.env.NODE_ENV === 'production' ? PROD_URL : DEV_URL);
+
+/** Read the saved base URL (falls back to the build default) */
 export function getBaseUrl() {
-  return localStorage.getItem(STORAGE_KEY) || DEFAULT_URL;
+  const saved = stripSlash(localStorage.getItem(STORAGE_KEY));
+  // A plain-http override saved before the site moved to https would make every
+  // call fail as mixed content, so it is ignored rather than silently breaking.
+  const insecure = typeof window !== 'undefined'
+    && window.location.protocol === 'https:'
+    && saved.startsWith('http://');
+  return (saved && !insecure) ? saved : DEFAULT_URL;
 }
 
 /** Persist a new base URL */
