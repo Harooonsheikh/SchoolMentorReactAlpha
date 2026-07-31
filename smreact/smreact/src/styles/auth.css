@@ -42,12 +42,11 @@
 .auth-logo-row { display: flex; align-items: center; gap: 10px; position: relative; z-index: 1; }
 .auth-logo-mark {
   border-radius: 12px;
-  background: rgba(255,255,255,.2);
-  backdrop-filter: blur(8px);
+  background: transparent;
   display: flex; align-items: center; justify-content: center;
   border: 1px solid rgba(255,255,255,.3);
 }
-.auth-logo-mark--light { background: rgba(255,255,255,.15); }
+.auth-logo-mark--light { background: transparent; }
 .auth-logo-text { font-size: 18px; font-weight: 800; color: #fff; letter-spacing: -0.3px; }
 
 /* Hero */

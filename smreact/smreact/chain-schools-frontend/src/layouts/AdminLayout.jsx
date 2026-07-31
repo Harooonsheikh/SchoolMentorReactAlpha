@@ -12,12 +12,25 @@ const initials = (name = '') =>
 
 export default function AdminLayout() {
   const location = useLocation()
-  const { user } = useAuth()
+  const { user, logout } = useAuth()
   const { schools, selectedSchool, isViewOnly, switchToSchool, backToHeadOffice } = useView()
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('chain-sidebar-collapsed') === '1')
   const [switcherOpen, setSwitcherOpen] = useState(false)
   const [dark, setDark] = useState(() => localStorage.getItem('chain-theme') === 'dark')
+  const [logoutOpen, setLogoutOpen] = useState(false)
+  const [loggingOut, setLoggingOut] = useState(false)
+
+  /* Sign out and let ProtectedRoute bounce us to /login once the user is null. */
+  const handleLogout = async () => {
+    try {
+      setLoggingOut(true)
+      await logout()
+    } catch {
+      setLoggingOut(false)
+      setLogoutOpen(false)
+    }
+  }
 
   /* Apply + persist theme on the <html> element. */
   useEffect(() => {
@@ -80,6 +93,10 @@ export default function AdminLayout() {
               <div className="sf-role">{user?.role || 'Super Administrator'}</div>
             </div>
           </div>
+          <button className="sf-logout" onClick={() => setLogoutOpen(true)} title="Sign out">
+            <i className="fa-solid fa-right-from-bracket" />
+            <span className="sf-logout-txt">Sign Out</span>
+          </button>
         </div>
       </aside>
 
@@ -157,6 +174,35 @@ export default function AdminLayout() {
           </ErrorBoundary>
         </div>
       </main>
+
+      {/* ═══ SIGN-OUT CONFIRM ═══ */}
+      {logoutOpen && (
+        <div
+          className="stg-ov"
+          onClick={(e) => { if (e.target === e.currentTarget && !loggingOut) setLogoutOpen(false) }}
+        >
+          <div className="stg-modal stg-modal-sm" role="dialog" aria-modal="true" aria-label="Sign out">
+            <div className="stg-confirm-body">
+              <div className="stg-confirm-icon" style={{ background: 'linear-gradient(135deg,#b91c1c,#dc2626)' }}>
+                <i className="fa-solid fa-right-from-bracket" />
+              </div>
+              <div className="stg-confirm-title">Sign out?</div>
+              <div className="stg-confirm-sub">
+                You’ll be returned to the login screen. Any unsaved changes will be lost.
+              </div>
+              <div className="stg-confirm-btns">
+                <button className="btn-secondary" onClick={() => setLogoutOpen(false)} disabled={loggingOut}>
+                  Cancel
+                </button>
+                <button className="btn-danger" onClick={handleLogout} disabled={loggingOut}>
+                  <i className={`fa-solid ${loggingOut ? 'fa-spinner fa-spin' : 'fa-right-from-bracket'}`} />
+                  {loggingOut ? 'Signing out…' : 'Sign out'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
