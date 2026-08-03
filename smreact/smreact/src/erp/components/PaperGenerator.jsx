@@ -4341,9 +4341,26 @@ const setSubjLine = (ci, si, l) => {
     </div>`;
   }
 
-  function buildAnswerSheetSection() {
-    const cells = Array.from({ length: 13 }, (_, i) =>
-      `<div class="ans-cell"><div class="qnum">Q.${i + 1}</div><div class="aline" style="border-bottom:1px solid #94A3B8;margin-top:18px">&nbsp;</div></div>`
+  /* Paper ke body HTML se har sawal ka label nikaalo ("Q.1", "Q.2", … ya Urdu
+    me "سوال نمبر 1"). Har question block theek ek `class="q-header"` deta hai
+    aur uske andar pehla <b> label hota hai — API sections aur static sample
+    dono me. Isi liye ye ginti hamesha wohi hoti hai jo paper me chhapti hai. */
+  function pgExtractQuestionLabels(bodyHTML) {
+    const labels = [];
+    const re = /class="q-header"[\s\S]*?<b>([\s\S]*?)<\/b>/g;
+    let m;
+    while ((m = re.exec(bodyHTML || '')) !== null) labels.push(m[1].trim());
+    return labels;
+  }
+
+  /* Answer sheet me utne hi cells jitne paper me sawal hain, unhi numbers ke
+    saath. Pehle yahan 13 hardcoded thay, is liye 20 ya 50 sawal wale paper par
+    bhi sirf 13 cells (hamesha Q.1–Q.13) aate thay. */
+  function buildAnswerSheetSection(questionLabels) {
+    const labels = Array.isArray(questionLabels) ? questionLabels : [];
+    if (!labels.length) return '';        // koi sawal nahi → khali sheet mat lagao
+    const cells = labels.map((label) =>
+      `<div class="ans-cell"><div class="qnum">${pgEsc(label)}</div><div class="aline" style="border-bottom:1px solid #94A3B8;margin-top:18px">&nbsp;</div></div>`
     ).join('');
     return (
       '<div class="ans-sheet">' +
@@ -4533,7 +4550,12 @@ const setSubjLine = (ci, si, l) => {
     const apiBody     = Array.isArray(sections)
       ? buildApiSectionsHTML(sections, typ, fmt, line, isUrdu ? 'urdu' : 'english')
       : `${showObj ? buildObjSection() : ''}${showSubj ? buildSubjSection() : ''}`;
-    const answerSheet = fmt === 'with' ? buildAnswerSheetSection() : '';
+    /* Answer sheet ab paper ke asal sawalon se banti hai: jo body abhi bani hai
+      usi se har sawal ka label utha kar ek cell banao — 13 sawal → 13 cells,
+      20 → 20, 50 → 50. Urdu paper me labels bhi Urdu hi rehte hain. */
+    const answerSheet = fmt === 'with'
+      ? buildAnswerSheetSection(pgExtractQuestionLabels(apiBody))
+      : '';
 
     /* Two coordinated palettes:
       • Colorful: brand-blue gradient header, blue-tinted info & table heads.
@@ -4583,8 +4605,30 @@ const setSubjLine = (ci, si, l) => {
   .urdu-body .blank { margin:0 4px; }
   * { box-sizing:border-box; margin:0; padding:0; }
   body { font-family:'Plus Jakarta Sans',sans-serif; background:#fff; color:#1E293B; font-size:13px; }
-  @page { size:A4; margin:15mm 18mm; }
-  @media print { .no-print{display:none!important} body{margin:0} }
+  /* Browser ka apna print header/footer (about:blank, URL, date/time, page no.)
+    page ke MARGIN box me chhapta hai — CSS se usay band karne ka koi seedha
+    tareeqa nahi, magar margin 0 ho to browser ke paas usay likhne ki jagah hi
+    nahi bachti aur wo gayab ho jata hai. Isi liye @page margin 0 hai. */
+  @page { size:A4; margin:0; }
+  /* Margin 0 ka nuqsan ye hota ke doosre/teesre safhe par text kaghaz ke bilkul
+    kinare chala jata. Is liye asal hashiye khud banate hain: poora paper ek
+    table me hai jiske thead/tfoot HAR printed page par dohraye jate hain, to
+    upar/neeche ki jagah har safhe par milti hai; daayen/baayen ka hashiya
+    .paper-wrap ki padding se aata hai. */
+  .page-frame { width:100%; border-collapse:collapse; margin:0; }
+  .page-frame > thead > tr > td,
+  .page-frame > tbody > tr > td,
+  .page-frame > tfoot > tr > td { border:0; padding:0; background:transparent; }
+  /* Screen par ye gap dikhna nahi chahiye (preview bilkul pehle jaisa rahe) —
+    sirf print me khulta hai. &nbsp; is liye hai ke khali cell kabhi collapse
+    na ho aur thead/tfoot har page par zaroor render hon. */
+  .page-gap { height:0; overflow:hidden; font-size:0; line-height:0; }
+  @media print {
+    .no-print{display:none!important}
+    body{margin:0}
+    .page-gap { height:14mm; }
+    .paper-wrap { max-width:none; padding:0 18mm; }
+  }
   .paper-wrap { max-width:800px; margin:0 auto; padding:20px; }
   .school-header { background:${headerBg}; color:${headerColor}; border:${headerBorder}; border-bottom:none; text-align:center; padding:14px 20px; border-radius:8px 8px 0 0; }
   .school-name { font-size:18px; font-weight:800; letter-spacing:.03em; }
@@ -4620,20 +4664,26 @@ const setSubjLine = (ci, si, l) => {
   .print-btn:hover { transform:translateY(-1px); }
   </style>
   </head><body>
-  <div class="paper-wrap">
-    ${headerHTML}
+  <table class="page-frame">
+    <thead><tr><td><div class="page-gap">&nbsp;</div></td></tr></thead>
+    <tbody><tr><td>
+      <div class="paper-wrap">
+        ${headerHTML}
 
-    <div dir="${isUrdu ? 'rtl' : 'ltr'}"${isUrdu ? ' class="urdu-body"' : ''}>
-      ${apiBody}
-      ${answerSheet}
-    </div>
+        <div dir="${isUrdu ? 'rtl' : 'ltr'}"${isUrdu ? ' class="urdu-body"' : ''}>
+          ${apiBody}
+          ${answerSheet}
+        </div>
 
-    <div class="paper-footer">
-      <span>Examiner: _______________________</span>
-      <span>Checker: _______________________</span>
-      <span>Re-Checker: _______________________</span>
-    </div>
-  </div>
+        <div class="paper-footer">
+          <span>Examiner: _______________________</span>
+          <span>Checker: _______________________</span>
+          <span>Re-Checker: _______________________</span>
+        </div>
+      </div>
+    </td></tr></tbody>
+    <tfoot><tr><td><div class="page-gap">&nbsp;</div></td></tr></tfoot>
+  </table>
   ${dlButton}
   </body></html>`;
   }
