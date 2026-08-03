@@ -8,7 +8,7 @@ import { useModules } from '../context/ModuleContext';
 import { usePermissions } from '../context/PermissionsContext';
 import { NAV_TO_MODULE_MAP, MODULE_REGISTRY } from '../config/moduleConfig';
 import { logout, goToLaunchSetup } from '../utils/auth';
-import { buildUrl } from '../../utils/apiConfig';
+import { buildUrl, installSessionGuard, setSessionGuardActive, registerSessionToast, resolveMediaUrl } from '../../utils/apiConfig';
 import erpExtraCss from './erpExtraCss';
 
 /* Registry module id → uska label (API menuName se match karta hai). */
@@ -241,6 +241,25 @@ export default function App() {
     setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3000);
   };
 
+  /* Session guard: if the login session is cleared (token / branchID removed
+     from sessionStorage), the next API action anywhere in the ERP shows a
+     "session ended" toast and bounces the user to the login screen. Installed
+     once — it wraps window.fetch, so every module is covered without changes.
+     The toast is given ~1.4s to show before logout() unmounts the ERP. */
+  useEffect(() => {
+    registerSessionToast(pushToast);
+    installSessionGuard({
+      onExpired: () => {
+        pushToast('Your session has ended. Please log in again.', 'error');
+        setTimeout(() => { try { logout(); } catch (e) { /* ignore */ } }, 1400);
+      },
+    });
+    // Disable enforcement when the ERP unmounts (login/signup screens have no
+    // session yet and must not be blocked).
+    return () => setSessionGuardActive(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
     // On unmount (leaving the ERP screen), reset the theme so the ERP's dark
@@ -278,7 +297,7 @@ export default function App() {
           <div className="sidebar-logo">
             <div className="logo-icon" style={branchInfo?.branchLogo ? { overflow: 'hidden', background: '#fff' } : undefined}>
               {branchInfo?.branchLogo ? (
-                <img src={branchInfo.branchLogo} alt="logo" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+                <img src={resolveMediaUrl(branchInfo.branchLogo)} alt="logo" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
               ) : (
               <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
                 <rect width="36" height="36" fill="url(#smg1)" />

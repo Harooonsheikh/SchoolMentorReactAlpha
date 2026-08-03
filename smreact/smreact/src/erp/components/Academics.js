@@ -4,7 +4,7 @@ import Tooltip from './Tooltip';
 import TutorialModal from './TutorialModal';
 import * as academicsService from '../services/academicsService';
 import useAsync from '../hooks/useAsync';
-import { buildUrl, assertSessionPayload, registerSessionToast, apiMessage } from '../../utils/apiConfig';
+import { buildUrl, assertSessionPayload, registerSessionToast, apiMessage, resolveMediaUrl } from '../../utils/apiConfig';
 import { deliverReport } from './reportDelivery';
 import { useModuleReadOnly, validateSessionDateFromStorage } from '../pages/Settings/settingsStore';
 import { usePermissions } from '../context/PermissionsContext';
@@ -1325,7 +1325,7 @@ async function generateReportWindow(name, style, format, ctx, classesData, subje
       schoolName      = json.data.branchName      || schoolName;
       schoolAddress   = json.data.address         || '';
       academicSession = json.data.academicSession || '';
-      branchLogoUrl   = json.data.branchLogo      || null;
+      branchLogoUrl   = resolveMediaUrl(json.data.branchLogo) || null;
     }
   } catch (e) {
     console.error('Error fetching report header:', e);

@@ -9,7 +9,7 @@ import {
   mockStuNextFamId,
 } from '../mock/students';
 import { delay, clone } from './_http';
-import { buildUrl, apiMessage } from '../../utils/apiConfig';
+import { buildUrl, apiMessage, resolveMediaUrl } from '../../utils/apiConfig';
 
 /* ═══════════════════════════════════════════════════════════════════
    Students Module — real API wiring (LaunchSetup).
@@ -445,9 +445,10 @@ export async function getStuStaff() {
 /* Resolve a branch logo to an absolute URL usable inside a print window
    (data URIs / absolute URLs pass through; relative paths get the API base). */
 function branchLogoUrl(raw) {
-  if (!raw) return '';
-  if (/^(https?:|data:)/i.test(raw)) return raw;
-  return buildUrl(raw.startsWith('/') ? raw : `/${raw}`);
+  // Serve the logo from the https media host regardless of what host the API
+  // stamped on it (IP:4100 / app origin), so it isn't blocked as mixed content
+  // and doesn't resolve to the app origin.
+  return resolveMediaUrl(raw);
 }
 
 /* School/branch identity used by EVERY student report (ID cards, certificates,

@@ -4,7 +4,7 @@ import Tooltip from './Tooltip';
 import TutorialModal from './TutorialModal';
 import * as accountsService from '../services/accountsService';
 import useAsync from '../hooks/useAsync';
-import { buildUrl } from '../../utils/apiConfig';
+import { buildUrl, resolveMediaUrl } from '../../utils/apiConfig';
 import { useModuleReadOnly } from '../pages/Settings/settingsStore';
 import { usePermissions } from '../context/PermissionsContext';
 
@@ -36,7 +36,7 @@ function useBranchSchool() {
           address: d.address || '',
           session: d.academicSession || '',
           generatedDate: d.generatedDate || '',
-          logo: d.branchLogo || '',
+          logo: resolveMediaUrl(d.branchLogo),
           generatedBy: sessionStorage.getItem('displayName') || sessionStorage.getItem('userName') || 'Accounts',
         });
       } catch (e) { console.error('Error loading branch header:', e); }

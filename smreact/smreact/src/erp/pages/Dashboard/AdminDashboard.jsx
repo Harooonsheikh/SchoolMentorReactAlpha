@@ -2,13 +2,15 @@ import React, { useMemo, useState } from 'react';
 import Tooltip from '../../components/Tooltip';
 import UniversalSearch from '../../shared/UniversalSearch';
 import {
-  AreaChart, Area, LineChart, Line, BarChart, Bar, ComposedChart,
+  AreaChart, Area, Line, BarChart, Bar, ComposedChart,
   XAxis, YAxis, CartesianGrid, Tooltip as RTooltip, ResponsiveContainer,
 } from 'recharts';
 import { useModules } from '../../context/ModuleContext';
 import { DASH_CSS } from './Dashboard';
 import AnnouncementsModal from './AnnouncementsModal';
 import AppPendingReportModal from './AppPendingReportModal';
+import useAsync from '../../hooks/useAsync';
+import * as accountsService from '../../services/accountsService';
 import {
   STUDENT_STATS,
   HR_STATS,
@@ -233,6 +235,26 @@ const TYPE_COLOR = {
   deadline: { bg: 'rgba(217, 119, 6, .14)', fg: '#D97706' },
 };
 
+/* ─── Monthly Financial Summary helpers ─────────────────────────
+   Mirrors the exact monthly reduce used by Accounts → Reports
+   (src/components/Accounts.jsx), so the numbers shown here always
+   match what Accounts reports for the same month. */
+const FIN_MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+const fmtPKR = (n) => `PKR ${(Number(n) || 0).toLocaleString('en-PK')}`;
+
+/* Gradient stat-tile palette — reuses hex values already present
+   elsewhere in this file (dash-pri / adm-tc gradients) so the new
+   colourful tiles stay inside the existing design system. */
+const TILE_GRADIENT = {
+  students:   ['#1E3A8A', '#2563EB'],
+  hr:         ['#6D28D9', '#7C3AED'],
+  crm:        ['#BE123C', '#E11D48'],
+  exam:       ['#3730A3', '#4F46E5'],
+  activities: ['#B45309', '#D97706'],
+  fee:        ['#15803D', '#22C55E'],
+  audit:      ['#B91C1C', '#DC2626'],
+};
+
 /* ─── Custom tooltip used by every Recharts chart ─────────────── */
 function ChartTooltip({ active, payload, label }) {
   if (!active || !payload?.length) return null;
@@ -261,7 +283,7 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
     students: 'Students', hr: 'Human Resource', crm: 'Admission CRM',
     exam: 'Examination', acad: 'Academics', fee: 'Fee', accounts: 'Accounts',
     inventory: 'Inventory', att: 'Attendance', appraisal: 'Staff Appraisals',
-    audit: 'Audit Logs', tt: 'Timetable', paper: 'Paper Generator',
+    audit: 'Audit Logs', tt: 'Time Table', paper: 'Paper Generator',
   };
   const openModule = (target) => {
     if (!target) return;
@@ -317,6 +339,18 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
   const [paperClass, setPaperClass] = useState('IV');
   const [revenueYear, setRevenueYear] = useState(2026);
   const [birthdayTab, setBirthdayTab] = useState('all');
+
+  /* Monthly Financial Summary — reads the same Accounts transaction
+     ledger as Accounts → Reports (getAccTxns), so Expenses/Income/
+     Net P&L here always match what that module reports. */
+  const { data: financeTxns } = useAsync(accountsService.getAccTxns, [], { rev: [], exp: [] });
+  const [financeMonth, setFinanceMonth] = useState('2026-05');
+  const financeSummary = useMemo(() => {
+    const rev = (financeTxns.rev || []).filter(x => x.month === financeMonth).reduce((a, x) => a + Number(x.amount || 0), 0);
+    const exp = (financeTxns.exp || []).filter(x => x.month === financeMonth).reduce((a, x) => a + Number(x.amount || 0), 0);
+    const [yy, mm] = financeMonth.split('-');
+    return { label: `${FIN_MONTH_NAMES[Number(mm) - 1]} ${yy}`, income: rev, expense: exp, pl: rev - exp };
+  }, [financeTxns, financeMonth]);
 
   /* Top-card modals */
   const [showAnnouncements, setShowAnnouncements] = useState(false);
@@ -493,11 +527,17 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
             <span className="dash-sec-sub">Click any tile to open its module</span>
           </div>
           <div className="dash-tiles">
-            {tiles.map(t => (
+            {tiles.map(t => {
+              const grad = TILE_GRADIENT[t.key];
+              return (
               <Tooltip key={t.key} text={`Open ${t.label}`}>
                 <div
-                  className="dash-tile"
-                  style={{ '--tile-accent': t.accent.stroke, '--tile-soft': t.accent.soft }}
+                  className={`dash-tile${grad ? ' dash-tile--grad' : ''}`}
+                  style={{
+                    '--tile-accent': t.accent.stroke,
+                    '--tile-soft': t.accent.soft,
+                    ...(grad ? { '--tile-grad-a': grad[0], '--tile-grad-b': grad[1] } : {}),
+                  }}
                   role="button" tabIndex={0}
                   onClick={() => openModule(t.target)}
                   onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openModule(t.target); } }}
@@ -511,33 +551,11 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
                   <div className="dash-tile-meta">{t.meta}</div>
                 </div>
               </Tooltip>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
-
-      {/* ═════════ TODAY'S ATTENDANCE ═════════
-          ATTENDANCE INTEGRATION NOTE:
-          These cards currently display mock data sourced from
-          dashboardData.js → STUDENT_ATTENDANCE_TODAY / STAFF_ATTENDANCE_TODAY.
-
-          To connect live data:
-          1. Import attendance store/context when available
-             (e.g. useAttendance from src/services/attendanceService.js)
-          2. Replace STUDENT_ATTENDANCE_TODAY / STAFF_ATTENDANCE_TODAY
-             with data from useAttendance() hook or API response
-          3. Field names used here match the Attendance module schema
-             (constants/attendance.js · mock/attendance.js):
-             - Student class row: { cls, sec, total, present, absent,
-                                    leave, marked, teacher, markedBy,
-                                    markedFrom, markedTime }
-             - Staff row:         { name, empId, desig, dept, status,
-                                    inTime, outTime, from, marked }
-             - status values:     'present' | 'absent' | 'leave' | ''
-             - status constants:  ATTENDANCE_STATUS.{PRESENT,ABSENT,LEAVE,PENDING}
-                                  STAFF_ATTENDANCE_STATUS.{PRESENT,ABSENT,LEAVE}
-       */}
-      {moduleActive('attendance') && <AttendanceSection openModule={openModule} />}
 
       {/* ═════════ 3. FEE ANALYTICS ═════════ */}
       {isActive('fee') && (
@@ -745,6 +763,195 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
 
       <div className="adm-divider" />
 
+      {/* ═════════ ACCOUNTS / REVENUE ═════════ */}
+      {isActive('accounts') && (
+        <div className="dash-sec adm-sec">
+          <div className="dash-sec-h">
+            <div className="dash-sec-title"><i className="fa-solid fa-calculator" aria-hidden="true"></i> Financial Overview</div>
+            <select
+              className="adm-select"
+              value={revenueYear}
+              onChange={(e) => setRevenueYear(Number(e.target.value))}
+              aria-label="Select year"
+            >
+              <option value={2026}>2026</option>
+              <option value={2025}>2025</option>
+              <option value={2024}>2024</option>
+            </select>
+          </div>
+
+          {/* ─── Monthly Financial Summary (NEW) ───
+              Parent card + month selector, 3 sub-cards reading the same
+              Accounts ledger (getAccTxns) that Accounts → Reports uses,
+              via the identical per-month reduce. No new backend calls. */}
+          <div className="fin-summary-card">
+            <div className="fin-summary-head">
+              <div className="fin-summary-head-l">
+                <div className="fin-summary-ic"><i className="fa-solid fa-sack-dollar" aria-hidden="true"></i></div>
+                <div>
+                  <div className="fin-summary-t">Monthly Financial Summary</div>
+                  <div className="fin-summary-s">{financeSummary.label} · from Accounts ledger</div>
+                </div>
+              </div>
+              <Tooltip text="Choose the month to summarise">
+                <label className="fin-summary-month">
+                  <span className="fin-summary-month-lbl">Month</span>
+                  <input
+                    type="month"
+                    className="fin-summary-month-input"
+                    value={financeMonth}
+                    min="2026-01"
+                    max="2026-05"
+                    onChange={(e) => setFinanceMonth(e.target.value)}
+                    aria-label="Select month for financial summary"
+                  />
+                </label>
+              </Tooltip>
+            </div>
+
+            <div className="fin-summary-grid">
+              <div className="fee-card fa-card fc-tone--red fc-bordered fin-summary-sub">
+                <div className="fc-header">
+                  <div className="fc-icon-chip"><i className="fa-solid fa-arrow-trend-down" aria-hidden="true"></i></div>
+                  <div className="fc-title fc-title--red">Overall Expenses</div>
+                </div>
+                <div className="fc-amount fc-amount--red fa-amount--lg">{fmtPKR(financeSummary.expense)}</div>
+                <div className="fc-support">
+                  <i className="fa-solid fa-calendar" aria-hidden="true"></i>
+                  <span>{financeSummary.label}</span>
+                </div>
+              </div>
+
+              <div className="fee-card fa-card fc-tone--green fc-bordered fin-summary-sub">
+                <div className="fc-header">
+                  <div className="fc-icon-chip"><i className="fa-solid fa-arrow-trend-up" aria-hidden="true"></i></div>
+                  <div className="fc-title">Overall Income</div>
+                </div>
+                <div className="fc-amount fc-amount--green fa-amount--lg">{fmtPKR(financeSummary.income)}</div>
+                <div className="fc-support">
+                  <i className="fa-solid fa-calendar" aria-hidden="true"></i>
+                  <span>{financeSummary.label}</span>
+                </div>
+              </div>
+
+              <div className={`fee-card fa-card fc-bordered fin-summary-sub ${financeSummary.pl >= 0 ? 'fc-tone--green' : 'fc-tone--red'}`}>
+                <div className="fc-header">
+                  <div className="fc-icon-chip">
+                    <i className={`fa-solid ${financeSummary.pl >= 0 ? 'fa-scale-balanced' : 'fa-triangle-exclamation'}`} aria-hidden="true"></i>
+                  </div>
+                  <div className={`fc-title${financeSummary.pl < 0 ? ' fc-title--red' : ''}`}>Net Profit / Loss</div>
+                </div>
+                <div className={`fc-amount fa-amount--lg ${financeSummary.pl >= 0 ? 'fc-amount--green' : 'fc-amount--red'}`}>
+                  {financeSummary.pl >= 0 ? '+' : '−'}{fmtPKR(Math.abs(financeSummary.pl))}
+                </div>
+                <div className="fc-support">
+                  <i className="fa-solid fa-calendar" aria-hidden="true"></i>
+                  <span>{financeSummary.label}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="adm-2col">
+            {/* Revenue Streams */}
+            <div className="adm-chart-card">
+              <div className="adm-card-h">
+                <div className="adm-card-h-t">Revenue Streams</div>
+                <span className="adm-card-h-meta">Total: <b>Rs.0.00</b></span>
+              </div>
+              <ResponsiveContainer width="100%" height={200}>
+                <AreaChart data={revenueData} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="revTuition" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#4169E1" stopOpacity={0.28} />
+                      <stop offset="100%" stopColor="#4169E1" stopOpacity={0} />
+                    </linearGradient>
+                    <linearGradient id="revAdmission" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#3DBA8C" stopOpacity={0.26} />
+                      <stop offset="100%" stopColor="#3DBA8C" stopOpacity={0} />
+                    </linearGradient>
+                    <linearGradient id="revTransport" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#F59E0B" stopOpacity={0.24} />
+                      <stop offset="100%" stopColor="#F59E0B" stopOpacity={0} />
+                    </linearGradient>
+                    <linearGradient id="revOther" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#F87171" stopOpacity={0.22} />
+                      <stop offset="100%" stopColor="#F87171" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid stroke="#E2E8F0" strokeDasharray="3 3" />
+                  <XAxis dataKey="m" tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={{ stroke: '#E2E8F0' }} />
+                  <YAxis domain={[0, 1]} tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={false} />
+                  <RTooltip content={<ChartTooltip />} />
+                  <Area type="monotone" dataKey="tuition"   name="Tuition Fees"   stroke="#4169E1" strokeWidth={2.2} fill="url(#revTuition)"   dot={{ r: 3, stroke: '#4169E1', fill: '#fff', strokeWidth: 2 }} />
+                  <Area type="monotone" dataKey="admission" name="Admission Fees" stroke="#3DBA8C" strokeWidth={2.2} fill="url(#revAdmission)" dot={{ r: 3, stroke: '#3DBA8C', fill: '#fff', strokeWidth: 2 }} />
+                  <Area type="monotone" dataKey="transport" name="Transport Fees" stroke="#F59E0B" strokeWidth={2.2} fill="url(#revTransport)" dot={{ r: 3, stroke: '#F59E0B', fill: '#fff', strokeWidth: 2 }} />
+                  <Area type="monotone" dataKey="other"     name="Other Income"   stroke="#F87171" strokeWidth={2.2} fill="url(#revOther)"     dot={{ r: 3, stroke: '#F87171', fill: '#fff', strokeWidth: 2 }} />
+                </AreaChart>
+              </ResponsiveContainer>
+              <div className="adm-legend">
+                <span className="adm-legend-i"><span className="adm-legend-dot" style={{ background: '#4169E1' }} />Tuition Fees</span>
+                <span className="adm-legend-i"><span className="adm-legend-dot" style={{ background: '#3DBA8C' }} />Admission Fees</span>
+                <span className="adm-legend-i"><span className="adm-legend-dot" style={{ background: '#F59E0B' }} />Transport Fees</span>
+                <span className="adm-legend-i"><span className="adm-legend-dot" style={{ background: '#F87171' }} />Other Income</span>
+              </div>
+            </div>
+
+            {/* Profit/Loss */}
+            <div className="adm-chart-card">
+              <div className="adm-card-h">
+                <div className="adm-card-h-t">Profit/Loss Overview <span className="adm-card-h-yr">· {revenueYear}</span></div>
+                <span className="adm-card-h-meta" style={{ color: '#16A34A', fontWeight: 800 }}>Net Profit / Loss: <b>Rs. 7.21M</b></span>
+              </div>
+              <ResponsiveContainer width="100%" height={180}>
+                <ComposedChart data={profitData} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
+                  <CartesianGrid stroke="#E2E8F0" strokeDasharray="3 3" />
+                  <XAxis dataKey="m" tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={{ stroke: '#E2E8F0' }} />
+                  <YAxis domain={[-3, 5]} tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={false} />
+                  <RTooltip content={<ChartTooltip />} />
+                  <Bar dataKey="pl"      name="Profit/Loss" fill="#3DBA8C" fillOpacity={0.6} radius={[6, 6, 0, 0]} />
+                  <Line type="monotone" dataKey="revenue" name="Revenue"   stroke="#4169E1" strokeWidth={2.2} dot={{ r: 3, stroke: '#4169E1', fill: '#fff', strokeWidth: 2 }} />
+                  <Line type="monotone" dataKey="expense" name="Expenses"  stroke="#F87171" strokeWidth={2.2} dot={{ r: 3, stroke: '#F87171', fill: '#fff', strokeWidth: 2 }} />
+                </ComposedChart>
+              </ResponsiveContainer>
+              <div className="adm-legend">
+                <span className="adm-legend-i"><span className="adm-legend-dot" style={{ background: '#4169E1' }} />Revenue</span>
+                <span className="adm-legend-i"><span className="adm-legend-dot" style={{ background: '#F87171' }} />Expenses</span>
+                <span className="adm-legend-i"><span className="adm-legend-dot" style={{ background: '#3DBA8C' }} />Profit/Loss</span>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      )}
+
+      <div className="adm-divider" />
+
+      {/* ═════════ TODAY'S ATTENDANCE ═════════
+          ATTENDANCE INTEGRATION NOTE:
+          These cards currently display mock data sourced from
+          dashboardData.js → STUDENT_ATTENDANCE_TODAY / STAFF_ATTENDANCE_TODAY.
+
+          To connect live data:
+          1. Import attendance store/context when available
+             (e.g. useAttendance from src/services/attendanceService.js)
+          2. Replace STUDENT_ATTENDANCE_TODAY / STAFF_ATTENDANCE_TODAY
+             with data from useAttendance() hook or API response
+          3. Field names used here match the Attendance module schema
+             (constants/attendance.js · mock/attendance.js):
+             - Student class row: { cls, sec, total, present, absent,
+                                    leave, marked, teacher, markedBy,
+                                    markedFrom, markedTime }
+             - Staff row:         { name, empId, desig, dept, status,
+                                    inTime, outTime, from, marked }
+             - status values:     'present' | 'absent' | 'leave' | ''
+             - status constants:  ATTENDANCE_STATUS.{PRESENT,ABSENT,LEAVE,PENDING}
+                                  STAFF_ATTENDANCE_STATUS.{PRESENT,ABSENT,LEAVE}
+       */}
+      {moduleActive('attendance') && <AttendanceSection openModule={openModule} />}
+
+      <div className="adm-divider" />
+
       {/* ═════════ 4. LESSON PLAN ANALYTICS ═════════ */}
       {isActive('academics') && (
         <div className="dash-sec adm-sec">
@@ -859,80 +1066,6 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
               </ResponsiveContainer>
             </div>
           </div>
-        </div>
-      )}
-
-      <div className="adm-divider" />
-
-      {/* ═════════ 6. ACCOUNTS / REVENUE ═════════ */}
-      {isActive('accounts') && (
-        <div className="dash-sec adm-sec">
-          <div className="dash-sec-h">
-            <div className="dash-sec-title"><i className="fa-solid fa-calculator" aria-hidden="true"></i> Financial Overview</div>
-            <select
-              className="adm-select"
-              value={revenueYear}
-              onChange={(e) => setRevenueYear(Number(e.target.value))}
-              aria-label="Select year"
-            >
-              <option value={2026}>2026</option>
-              <option value={2025}>2025</option>
-              <option value={2024}>2024</option>
-            </select>
-          </div>
-
-          <div className="adm-2col">
-            {/* Revenue Streams */}
-            <div className="adm-chart-card">
-              <div className="adm-card-h">
-                <div className="adm-card-h-t">Revenue Streams</div>
-                <span className="adm-card-h-meta">Total: <b>Rs.0.00</b></span>
-              </div>
-              <ResponsiveContainer width="100%" height={180}>
-                <LineChart data={revenueData} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
-                  <CartesianGrid stroke="#E2E8F0" strokeDasharray="3 3" />
-                  <XAxis dataKey="m" tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={{ stroke: '#E2E8F0' }} />
-                  <YAxis domain={[0, 1]} tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={false} />
-                  <RTooltip content={<ChartTooltip />} />
-                  <Line type="monotone" dataKey="tuition"   name="Tuition Fees"   stroke="#4169E1" strokeWidth={2.2} dot={{ r: 3, stroke: '#4169E1', fill: '#fff', strokeWidth: 2 }} />
-                  <Line type="monotone" dataKey="admission" name="Admission Fees" stroke="#3DBA8C" strokeWidth={2.2} dot={{ r: 3, stroke: '#3DBA8C', fill: '#fff', strokeWidth: 2 }} />
-                  <Line type="monotone" dataKey="transport" name="Transport Fees" stroke="#F59E0B" strokeWidth={2.2} dot={{ r: 3, stroke: '#F59E0B', fill: '#fff', strokeWidth: 2 }} />
-                  <Line type="monotone" dataKey="other"     name="Other Income"   stroke="#F87171" strokeWidth={2.2} dot={{ r: 3, stroke: '#F87171', fill: '#fff', strokeWidth: 2 }} />
-                </LineChart>
-              </ResponsiveContainer>
-              <div className="adm-legend">
-                <span className="adm-legend-i"><span className="adm-legend-dot" style={{ background: '#4169E1' }} />Tuition Fees</span>
-                <span className="adm-legend-i"><span className="adm-legend-dot" style={{ background: '#3DBA8C' }} />Admission Fees</span>
-                <span className="adm-legend-i"><span className="adm-legend-dot" style={{ background: '#F59E0B' }} />Transport Fees</span>
-                <span className="adm-legend-i"><span className="adm-legend-dot" style={{ background: '#F87171' }} />Other Income</span>
-              </div>
-            </div>
-
-            {/* Profit/Loss */}
-            <div className="adm-chart-card">
-              <div className="adm-card-h">
-                <div className="adm-card-h-t">Profit/Loss Overview <span className="adm-card-h-yr">· {revenueYear}</span></div>
-                <span className="adm-card-h-meta" style={{ color: '#16A34A', fontWeight: 800 }}>Net Profit / Loss: <b>Rs. 7.21M</b></span>
-              </div>
-              <ResponsiveContainer width="100%" height={180}>
-                <ComposedChart data={profitData} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
-                  <CartesianGrid stroke="#E2E8F0" strokeDasharray="3 3" />
-                  <XAxis dataKey="m" tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={{ stroke: '#E2E8F0' }} />
-                  <YAxis domain={[-3, 5]} tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={false} />
-                  <RTooltip content={<ChartTooltip />} />
-                  <Bar dataKey="pl"      name="Profit/Loss" fill="#3DBA8C" fillOpacity={0.6} radius={[6, 6, 0, 0]} />
-                  <Line type="monotone" dataKey="revenue" name="Revenue"   stroke="#4169E1" strokeWidth={2.2} dot={{ r: 3, stroke: '#4169E1', fill: '#fff', strokeWidth: 2 }} />
-                  <Line type="monotone" dataKey="expense" name="Expenses"  stroke="#F87171" strokeWidth={2.2} dot={{ r: 3, stroke: '#F87171', fill: '#fff', strokeWidth: 2 }} />
-                </ComposedChart>
-              </ResponsiveContainer>
-              <div className="adm-legend">
-                <span className="adm-legend-i"><span className="adm-legend-dot" style={{ background: '#4169E1' }} />Revenue</span>
-                <span className="adm-legend-i"><span className="adm-legend-dot" style={{ background: '#F87171' }} />Expenses</span>
-                <span className="adm-legend-i"><span className="adm-legend-dot" style={{ background: '#3DBA8C' }} />Profit/Loss</span>
-              </div>
-            </div>
-          </div>
-
         </div>
       )}
 
@@ -1473,6 +1606,70 @@ export const ADM_NEW_CSS = `
   .adm-tc-stats { grid-template-columns: 1fr 1fr; }
   .adm-tc-stat:last-child { grid-column: 1 / -1; }
   .adm-tc-foot { flex-direction: column; align-items: stretch; gap: 8px; }
+}
+
+/* ═══ Monthly Financial Summary (NEW) — parent card + month picker,
+   3 sub-cards reusing the existing .fee-card / .fc-* chrome. ═══ */
+.fin-summary-card {
+  background: linear-gradient(135deg, var(--bg-card, #fff) 0%, rgba(15, 118, 110, .035) 100%);
+  border: 1px solid var(--border-light, #E2E8F0);
+  border-radius: var(--dash-radius, 14px);
+  padding: 18px 20px;
+  margin-bottom: 16px;
+  animation: dashRise .35s ease;
+}
+[data-theme="dark"] .fin-summary-card {
+  background: linear-gradient(135deg, #0E1628 0%, rgba(20, 184, 166, .06) 100%);
+  border-color: #1F3158;
+}
+.fin-summary-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; margin-bottom: 16px; flex-wrap: wrap;
+}
+.fin-summary-head-l { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.fin-summary-ic {
+  width: 40px; height: 40px; border-radius: 12px; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 16px; color: #fff;
+  background: linear-gradient(135deg, #0F766E, #14B8A6);
+  box-shadow: 0 8px 18px rgba(15, 118, 110, .28);
+}
+.fin-summary-t { font: 800 15px/1.2 var(--dash-font); color: var(--text-primary); letter-spacing: -0.2px; }
+.fin-summary-s { font: 600 11.5px/1.3 var(--dash-font); color: var(--text-muted, #64748B); margin-top: 3px; }
+.fin-summary-month {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 4px 6px 4px 12px;
+  background: var(--bg-card, #fff);
+  border: 1px solid var(--border-light, #E2E8F0);
+  border-radius: 999px;
+  transition: all .15s;
+}
+.fin-summary-month:hover { border-color: #99D6CB; }
+.fin-summary-month:focus-within { border-color: #0F766E; box-shadow: 0 0 0 3px rgba(15, 118, 110, .16); }
+.fin-summary-month-lbl {
+  font: 800 10.5px/1 var(--dash-font); color: var(--text-muted, #64748B);
+  text-transform: uppercase; letter-spacing: .5px; white-space: nowrap;
+}
+.fin-summary-month-input {
+  border: none; outline: none; background: transparent;
+  font: 700 12.5px/1 var(--dash-font); color: var(--text-primary);
+  padding: 7px 4px; cursor: pointer;
+}
+[data-theme="dark"] .fin-summary-month { background: var(--bg-card, #0E1628); border-color: var(--border-light, #1C2E50); }
+[data-theme="dark"] .fin-summary-month-input { color-scheme: dark; }
+.fin-summary-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+.fin-summary-sub { min-height: 0; padding: 16px 18px; }
+.fin-summary-sub .fc-support { margin-top: 10px; }
+@media (max-width: 900px) { .fin-summary-grid { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 640px) {
+  .fin-summary-grid { grid-template-columns: 1fr; }
+  .fin-summary-head { flex-direction: column; align-items: stretch; }
+  .fin-summary-month { justify-content: space-between; }
+}
+@media (max-width: 600px) {
+  .fin-summary-card { padding: 14px; }
+  .fin-summary-grid { gap: 10px; }
+  .fin-summary-sub { padding: 14px; }
 }
 
 
