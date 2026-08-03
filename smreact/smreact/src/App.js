@@ -138,16 +138,16 @@ setLaunchSetup(launchSetup)
                 { key: 'student', num: 6, icon: 'fa-user-graduate', label: 'Student Details' },
                 // { key: 'timetable', num: 7, icon: 'fa-calendar-alt', label: 'Timetable' },
               ].map(t => (
-                <div
-                  key={t.key}
-                  className={`tab-item${state.activeTab === t.key ? ' active' : ''}`}
-                  onClick={() => state.switchTab(t.key)}
-                  title={t.label}
-                >
-                  <div className="tab-num">{t.num}</div>
-                  <i className={`fas ${t.icon} tab-icon`}></i>
-                  <span className="tab-label">{t.label}</span>
-                </div>
+                <Tooltip key={t.key} text={`Open ${t.label}`}>
+                  <div
+                    className={`tab-item${state.activeTab === t.key ? ' active' : ''}`}
+                    onClick={() => state.switchTab(t.key)}
+                  >
+                    <div className="tab-num">{t.num}</div>
+                    <i className={`fas ${t.icon} tab-icon`}></i>
+                    <span className="tab-label">{t.label}</span>
+                  </div>
+                </Tooltip>
               ))}
             </div>
           </div>

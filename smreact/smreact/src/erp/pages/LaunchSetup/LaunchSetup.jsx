@@ -108,7 +108,7 @@ export default function LaunchSetup({ toast = () => {} }) {
         <div className="ls-card-body">
           {/* Info banner */}
           <div className="ls-info">
-            <Tooltip text="More info about module activation" placement="top">
+            <Tooltip text="More info about module activation">
               <i className="fa-solid fa-circle-info" aria-hidden="true"></i>
             </Tooltip>
             <div>
@@ -121,17 +121,17 @@ export default function LaunchSetup({ toast = () => {} }) {
 
           {/* Summary chips */}
           <div className="ls-chips">
-            <Tooltip text="Modules currently enabled" placement="top">
+            <Tooltip text="Modules currently enabled">
               <span className="ls-chip ls-chip--green">
                 <i className="fa-solid fa-circle-check" aria-hidden="true"></i> {activeCount} Active
               </span>
             </Tooltip>
-            <Tooltip text="Modules currently disabled" placement="top">
+            <Tooltip text="Modules currently disabled">
               <span className="ls-chip ls-chip--gray">
                 <i className="fa-solid fa-circle-minus" aria-hidden="true"></i> {inactiveCount} Inactive
               </span>
             </Tooltip>
-            <Tooltip text="Core ERP modules — always on" placement="top">
+            <Tooltip text="Core ERP modules — always on">
               <span className="ls-chip ls-chip--blue">
                 <i className="fa-solid fa-lock" aria-hidden="true"></i> {lockedCount} Core Locked
               </span>
@@ -155,7 +155,7 @@ export default function LaunchSetup({ toast = () => {} }) {
                       className={`ls-mod${active ? ' on' : ''}${locked ? ' locked' : ''}`}
                     >
                       <div className="ls-mod-l">
-                        <Tooltip text={active ? `${mod.label} is active` : `${mod.label} is inactive`} placement="top">
+                        <Tooltip text={active ? `${mod.label} is active` : `${mod.label} is inactive`}>
                           <div className="ls-mod-ic">
                             <i className={`fa-solid ${mod.icon}`} aria-hidden="true"></i>
                           </div>
@@ -171,13 +171,13 @@ export default function LaunchSetup({ toast = () => {} }) {
                       </div>
 
                       {locked ? (
-                        <Tooltip text="Core ERP modules cannot be disabled" placement="left">
+                        <Tooltip text="Core ERP modules cannot be disabled">
                           <div className="ls-lock-pill" aria-label="Locked">
                             <i className="fa-solid fa-lock" aria-hidden="true"></i>
                           </div>
                         </Tooltip>
                       ) : (
-                        <Tooltip text={active ? `Disable ${mod.label}` : `Enable ${mod.label}`} placement="left">
+                        <Tooltip text={active ? `Disable ${mod.label}` : `Enable ${mod.label}`}>
                           <button
                             type="button"
                             className={`ls-switch${active ? ' on' : ''}`}
@@ -254,15 +254,19 @@ const LAUNCH_CSS = `
 .ls-card-title { font: 800 14px/1.2 var(--ls-font); color: var(--text-primary); }
 .ls-card-sub   { font: 500 11.5px/1.4 var(--ls-font); color: var(--text-muted, #64748B); margin-top: 3px; }
 
+/* Button — ERP ke .btn / .btn-secondary (src/erp/components/App.js) ke same. */
 .ls-btn-ghost {
-  display: inline-flex; align-items: center; gap: 6px;
-  height: 32px; padding: 0 12px;
-  font: 600 11.5px/1 var(--ls-font); color: #475569;
-  background: #fff; border: 1px solid #E2E8F0; border-radius: 9px;
-  cursor: pointer; transition: all .15s; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  height: 40px; padding: 0 18px;
+  font-family: var(--font-body); font-size: 13px; font-weight: 600;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1.5px solid var(--border-light);
+  border-radius: var(--radius-md);
+  cursor: pointer; transition: var(--tr); flex-shrink: 0;
 }
-[data-theme="dark"] .ls-btn-ghost { background: var(--bg-card); color: var(--text-primary); border-color: var(--border-light); }
-.ls-btn-ghost:hover { background: #F1F5F9; border-color: #CBD5E1; color: #1E40AF; }
+.ls-btn-ghost:hover { background: var(--bg-muted); }
+[data-theme="dark"] .ls-btn-ghost { color: var(--text-secondary); border-color: var(--border-light); }
 
 .ls-card-body { padding: 18px; }
 
@@ -403,11 +407,7 @@ const LAUNCH_CSS = `
 }
 [data-theme="dark"] .ls-card-title { color: var(--text-primary); }
 [data-theme="dark"] .ls-card-sub   { color: var(--text-muted); }
-[data-theme="dark"] .ls-btn-ghost:hover {
-  background: rgba(96, 165, 250, .12);
-  border-color: rgba(96, 165, 250, .35);
-  color: #BFDBFE;
-}
+[data-theme="dark"] .ls-btn-ghost:hover { background: var(--bg-muted); }
 [data-theme="dark"] .ls-info {
   background: rgba(96, 165, 250, .08);
   border-color: rgba(96, 165, 250, .25);
