@@ -73,6 +73,29 @@ function teacherDashInitials(name) {
   return clean.split(/\s+/).filter(Boolean).map(p => p[0]).join('').toUpperCase().slice(0, 2) || '?';
 }
 
+/* ─── Compact circular progress ring — sits beside the "X% done" pill
+   in My Performance panel headers (Lesson Plans / Notebook Plans /
+   My Attendance), echoing the same 0-36-viewBox trick as the Fee
+   Analytics donut rings on the Admin Dashboard. */
+function MiniRing({ pct, color = '#1E40AF', track = 'rgba(30,64,175,.15)' }) {
+  const clamped = Math.max(0, Math.min(100, pct));
+  return (
+    <div className="dash-mini-ring" style={{ '--ring-color': color }}>
+      <svg viewBox="0 0 36 36" width="100%" height="100%">
+        <circle cx="18" cy="18" r="15.9" fill="none" stroke={track} strokeWidth="4" />
+        <circle
+          cx="18" cy="18" r="15.9" fill="none"
+          stroke={color} strokeWidth="4" strokeLinecap="round"
+          strokeDasharray="100, 100"
+          strokeDashoffset={100 - clamped}
+          transform="rotate(-90 18 18)"
+        />
+      </svg>
+      <div className="dash-mini-ring-pct">{clamped}%</div>
+    </div>
+  );
+}
+
 /* ─── Teacher search scope. ──────────────────────────────────────
    A teacher is intentionally walled off from modules that fall under
    admin/finance/HR/system. The Universal Search respects this via the
@@ -97,7 +120,7 @@ const TEACHER_SEARCHABLE_MODULES = new Set([
    TEACHER DASHBOARD — premium personal workspace, REAL ERP data only.
 
    Every section maps to a real teacher-scope feature:
-     • Today's Schedule  → Timetable module
+     • Today's Schedule  → Time Table module
      • My Classes        → Students module (filtered)
      • My Lesson Plans   → Academics / Submissions
      • My Homework       → Academics / Homework Diary
@@ -150,7 +173,7 @@ export default function TeacherDashboard({ visibility, toast, navigate = () => {
   const newReminderCount       = PRINCIPAL_REMINDERS.filter(r => r.status === 'new').length;
 
   const NAV_LABELS = {
-    acad: 'Academics', exam: 'Examination', att: 'Attendance', tt: 'Timetable',
+    acad: 'Academics', exam: 'Examination', att: 'Attendance', tt: 'Time Table',
     students: 'Students', appraisal: 'Staff Appraisals', sops: 'School SOPs', trainings: 'Teacher Trainings',
   };
   const openModule = (target) => {
@@ -494,7 +517,10 @@ export default function TeacherDashboard({ visibility, toast, navigate = () => {
                         <div className="dash-panel-h-s">Across all my classes</div>
                       </div>
                     </div>
-                    <span className="dash-panel-pill">{lpPct}% done</span>
+                    <div className="dash-panel-h-r">
+                      <MiniRing pct={lpPct} color={MODULE_COLOR.academics.stroke} track={MODULE_COLOR.academics.soft} />
+                      <span className="dash-panel-pill">{lpPct}% done</span>
+                    </div>
                   </div>
                   <div className="dash-panel-body">
                     <div className="tch-statbox-grid">
@@ -547,7 +573,10 @@ export default function TeacherDashboard({ visibility, toast, navigate = () => {
                         <div className="dash-panel-h-s">Unit-wise notebook submissions</div>
                       </div>
                     </div>
-                    <span className="dash-panel-pill">{npPct}% done</span>
+                    <div className="dash-panel-h-r">
+                      <MiniRing pct={npPct} color={MODULE_COLOR.academics.stroke} track={MODULE_COLOR.academics.soft} />
+                      <span className="dash-panel-pill">{npPct}% done</span>
+                    </div>
                   </div>
                   <div className="dash-panel-body">
                     <div className="tch-statbox-grid">
@@ -597,7 +626,10 @@ export default function TeacherDashboard({ visibility, toast, navigate = () => {
                     <div className="dash-panel-h-s">This month</div>
                   </div>
                 </div>
-                <span className="dash-panel-pill">{scope.attendance.pct}%</span>
+                <div className="dash-panel-h-r">
+                  <MiniRing pct={scope.attendance.pct} color={MODULE_COLOR.attendance.stroke} track={MODULE_COLOR.attendance.soft} />
+                  <span className="dash-panel-pill">{scope.attendance.pct}%</span>
+                </div>
               </div>
               <div className="dash-panel-body" style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 8 }}>
                 <div className="dash-mini">

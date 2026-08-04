@@ -8,7 +8,7 @@ import {
   mockFamilyReceipts,
 } from '../mock/fee';
 import { delay, clone } from './_http';
-import { buildUrl, apiMessage } from '../../utils/apiConfig';
+import { buildUrl, apiMessage, resolveMediaUrl } from '../../utils/apiConfig';
 
 const pick = (obj, ...keys) => keys.map(k => obj?.[k]).find(v => v !== undefined && v !== null && v !== '');
 
@@ -53,7 +53,11 @@ export async function getReportHeader() {
   if (!res.ok || json?.success === false) {
     throw new Error(apiMessage(json) || 'Could not load report header');
   }
-  return json?.data || null;
+  const data = json?.data || null;
+  // Serve the branch logo from the https media host so it loads on the fee
+  // challans / receipts / share regardless of the host the API stamped on it.
+  if (data && data.branchLogo) data.branchLogo = resolveMediaUrl(data.branchLogo);
+  return data;
 }
 
 /* ═══════════════════════════════════════════════════════════════════

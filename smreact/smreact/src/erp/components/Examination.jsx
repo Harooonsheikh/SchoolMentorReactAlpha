@@ -5,7 +5,7 @@ import TutorialModal from './TutorialModal';
 import * as examService from '../services/examService';
 import * as cbrApi from '../services/combinedAssessmentService';
 import useAsync from '../hooks/useAsync';
-import { buildUrl } from '../../utils/apiConfig';
+import { buildUrl, resolveMediaUrl } from '../../utils/apiConfig';
 import { deliverReport } from './reportDelivery';
 import { useModuleReadOnly, validateSessionDateFromStorage } from '../pages/Settings/settingsStore';
 import { getActiveSessionID } from '../services/attendanceService';
@@ -534,7 +534,7 @@ const [subjects, setSubjects] = useState([]);
         const json = await res.json();
         if (!cancelled && json?.success) {
           const d = json.data || {};
-          setBranchSchool({ name: d.branchName || '', logo: d.branchLogo || '', address: d.address || '', session: d.academicSession || '' });
+          setBranchSchool({ name: d.branchName || '', logo: resolveMediaUrl(d.branchLogo), address: d.address || '', session: d.academicSession || '' });
         }
       } catch (e) { console.error('Error loading branch header:', e); }
     })();

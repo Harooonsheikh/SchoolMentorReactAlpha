@@ -4,7 +4,7 @@
   import TutorialModal from './TutorialModal';
   import * as paperService from '../services/paperService';
   import useAsync from '../hooks/useAsync';
-  import { buildUrl } from '../../utils/apiConfig';
+  import { buildUrl, resolveMediaUrl } from '../../utils/apiConfig';
   import Select from 'react-select';
   import { deliverReport } from './reportDelivery';
   import { useModuleReadOnly } from '../pages/Settings/settingsStore';
@@ -4092,7 +4092,7 @@ const setSubjLine = (ci, si, l) => {
     const headerInfo = {
       school:     reportHeader?.branchName || 'The Oxford System',
       campus:     reportHeader?.address || '',
-      logo:       reportHeader?.branchLogo || '',
+      logo:       resolveMediaUrl(reportHeader?.branchLogo),
       examTitle:  paper.title || '',
       subject:    paper.subj || '',
       className:  cls?.name || '',
@@ -4502,7 +4502,7 @@ const setSubjLine = (ci, si, l) => {
 
   function buildFullPaperHTML({ paper, cls, templateId = 1, isBW, sections, reportHeader, fmt: fmtArg, line: lineArg, medium: mediumArg }) {
     const schoolName = reportHeader?.branchName || 'The Oxford System — Lahore Campus';
-    const schoolLogo = reportHeader?.branchLogo || '';
+    const schoolLogo = resolveMediaUrl(reportHeader?.branchLogo);
     const schoolAddress = reportHeader?.address || '';
     /* Prefer the setup-derived fmt/line (from the API submission detail); fall back
       to the paper's own values. */

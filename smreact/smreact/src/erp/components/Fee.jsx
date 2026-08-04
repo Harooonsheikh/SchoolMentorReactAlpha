@@ -3338,10 +3338,15 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
   const [ref, setRef]           = useState('');
   const [txn, setTxn]           = useState('');
   const [perHeadInput, setPerHeadInput] = useState({});
+  /* Fine override. null = auto (due date + settings se computed, receiving date
+     badalne par live update). Cashier ne haath lagaya to number — us ke baad
+     auto-recompute band, taake typed/waived value date change par wapas na aa jaye. */
+  const [fineEdit, setFineEdit] = useState(null);
 
   useEffect(() => {
     if (!cfg) return;
     setDate(localTodayISO()); setMethod('Cash'); setRef(''); setTxn('');
+    setFineEdit(null);
     /* "Received" input KUL wasooli dikhata hai (pehle jama shuda + ab ki), na ke
        sirf ab ki raqam — is liye ye editable rehta hai aur naya paisa
        `input − paid` hota hai (dekho `recvNow` niche).
@@ -3438,9 +3443,10 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
   /* ── LATE FINE ──
      Challan ki due date ke BAAD wasool karne par jurmana. Base date wahi
      "Receiving Date" hai jo upar modal me chuni gayi (system ka aaj nahi), is
-     liye date badalte hi fine live update hoti hai. Ye READ-ONLY hai — user
-     isse edit nahi kar sakta — aur receivable/total dono me jud'ti hai.
-     View mode me actual receiving date ke hisaab se dikhti hai. */
+     liye date badalte hi fine live update hoti hai, aur receivable/total dono
+     me jud'ti hai. Cashier isay table me EDIT (ya 0 kar ke waive) bhi kar sakta
+     hai — dekho `fineEdit`. View mode me actual receiving date ke hisaab se
+     dikhti hai aur edit nahi hoti. */
   const fineBaseDate = viewOnly
     ? (String(payments?.[payments.length - 1]?.date || challan?.modifiedAt || '').slice(0, 10) || date)
     : date;
@@ -3456,7 +3462,11 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
      modal ki fine persisted row se mukhtalif nikalti thi: Total 4,400 magar
      Already Received 4,450, aur Remaining minus me chala jaata tha.
      Fine abhi tak billed nahi hui to computed hi lagti hai. */
-  const fineDue  = fineBilled > 0 ? fineBilled : fineCalc;
+  /* Cashier ka override sab par bhaari — waive (0) ya barhaana dono mumkin.
+     Magar jo fine PEHLE HI wasool ho chuki (finePaid) us se neeche nahi ja sakta,
+     warna Total already-received se kam ho kar Remaining minus me chala jaata. */
+  const fineAuto = fineBilled > 0 ? fineBilled : fineCalc;
+  const fineDue  = (!viewOnly && fineEdit != null) ? Math.max(finePaid, fineEdit) : fineAuto;
   const fineDays = feeService.daysLate(challan?.dueDate, fineBaseDate);
   const fineOwed = Math.max(0, fineDue - finePaid);
 
@@ -3582,7 +3592,15 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
                   date due se aage ho to hi. */}
               <span className="fee-recv-info-val">
                 {fineTxt}
-                {fineDue > 0 && (
+                {/* Cashier ne fine edit ki ho to yahan ASAL (accrued) raqam dikhao —
+                    "N days late = X" lagi hui fine par jhoot bol deta. */}
+                {fineEdit != null && !viewOnly ? (
+                  fineAuto > 0 && (
+                    <span className="fee-sub-eq fee-fine">
+                      {fineDays} day{fineDays === 1 ? '' : 's'} late = {money(fineAuto)} · applied {money(fineDue)}
+                    </span>
+                  )
+                ) : fineDue > 0 && (
                   <span className="fee-sub-eq fee-fine">
                     {fineDays} day{fineDays === 1 ? '' : 's'} late = {money(fineDue)}
                   </span>
@@ -3695,19 +3713,35 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
                   </tr>
                 )}
                 {/* ── LATE FINE ──
-                    Due date ke baad receive karne par khud lagti hai. READ-ONLY —
-                    na waive ho sakti hai na edit; Receiving Date badalne par apne
-                    aap recalculate hoti hai. */}
-                {fineDue > 0 && (
+                    Due date ke baad receive karne par khud lagti hai, magar EDITABLE —
+                    cashier isay kam/zyada ya poori waive (0) kar sakta hai. Haath na
+                    lagaye to Receiving Date badalne par apne aap recalculate hoti hai.
+                    Override ke baad row 0 par bhi dikhti rehti hai (warna edit karte hi
+                    gayab ho jaati aur wapas laane ka koi raasta na hota). */}
+                {(fineDue > 0 || (!viewOnly && fineEdit != null)) && (
                   <tr>
                     <td>
                       <b>Fine</b>
                       <span className="fee-sub-eq">
-                        {fineDays} day{fineDays === 1 ? '' : 's'} late
-                        {settings?.fineType === 'daily' ? ` × Rs. ${(+settings.fineAmt || 0).toLocaleString('en-PK')}` : ''}
+                        {fineEdit != null && !viewOnly
+                          ? (fineEdit === 0 ? 'Waived by cashier' : 'Edited by cashier')
+                          : <>
+                              {fineDays} day{fineDays === 1 ? '' : 's'} late
+                              {settings?.fineType === 'daily' ? ` × Rs. ${(+settings.fineAmt || 0).toLocaleString('en-PK')}` : ''}
+                            </>}
                       </span>
                     </td>
-                    <td className="fee-right">{money(fineDue)}</td>
+                    <td className="fee-right">
+                      {viewOnly ? money(fineDue) : (
+                        <input
+                          type="number"
+                          min={finePaid}
+                          value={fineDue}
+                          onChange={e => setFineEdit(Math.max(0, Number(e.target.value) || 0))}
+                          placeholder="0"
+                        />
+                      )}
+                    </td>
                     <td className="fee-right">0</td>
                     <td className="fee-right"><span className="fee-cell-grey">{money(fineDue)}</span></td>
                     {/* Fine read-only — input ki tarah ye bhi KUL wasooli dikhati hai. */}
@@ -7176,6 +7210,9 @@ function FeeHistoryDetailModal({ cfg, onClose, year, onDownloadStudent, onDownlo
               <>
                 <div className="fee-hist-metacard"><div className="l">Total Fee</div><div className="v">{money(totals.fee)}</div></div>
                 <div className="fee-hist-metacard"><div className="l">Received</div><div className="v green">{money(totals.recv)}</div></div>
+                {totals.disc > 0 && (
+                  <div className="fee-hist-metacard"><div className="l">Discount</div><div className="v" style={{ color: '#0F766E' }}>{money(-totals.disc)}</div></div>
+                )}
                 {totals.adv > 0 && (
                   <div className="fee-hist-metacard"><div className="l">Advance Used</div><div className="v" style={{ color: '#0F766E' }}>{money(-totals.adv)}</div></div>
                 )}
@@ -7202,6 +7239,7 @@ function FeeHistoryDetailModal({ cfg, onClose, year, onDownloadStudent, onDownlo
                     <th>Issue Date</th>
                     <th>Due Date</th>
                     <th className="fee-right">Challan Amount</th>
+                    <th className="fee-right">Discount</th>
                     <th className="fee-right">Fine</th>
                     <th className="fee-right">Advance</th>
                     <th className="fee-right">Received</th>
@@ -7219,6 +7257,9 @@ function FeeHistoryDetailModal({ cfg, onClose, year, onDownloadStudent, onDownlo
                       <td>{fmtDMY(mo.challanDate) || '—'}</td>
                       <td>{fmtDMY(mo.dueDate) || '—'}</td>
                       <td className="fee-right">{money(mo.challanAmt)}</td>
+                      {/* Discount challan amount me se already minus ho chuka (net billed) —
+                          yahan sirf visibility ke liye, Advance ki tarah MINUS me. */}
+                      <td className={`fee-right${mo.disc > 0 ? ' fee-neg' : ''}`}>{money(mo.disc > 0 ? -mo.disc : 0)}</td>
                       <td className={`fee-right${mo.fine > 0 ? ' fee-fine' : ''}`}>{mo.fine > 0 ? money(mo.fine) : '0'}</td>
                       {/* Advance jo is mahine challan par laga (pichhle overpay se) — MINUS me. */}
                       <td className={`fee-right${mo.advApplied > 0 ? ' fee-neg' : ''}`}>{money(mo.advApplied > 0 ? -mo.advApplied : 0)}</td>
@@ -7264,6 +7305,7 @@ function FeeHistoryDetailModal({ cfg, onClose, year, onDownloadStudent, onDownlo
                         <span className="k">Challan #</span><span className="v">{mo.challanNo}</span>
                         <span className="k">Issue Date</span><span className="v">{fmtDMY(mo.challanDate) || '—'}</span>
                         <span className="k">Due Date</span><span className="v">{fmtDMY(mo.dueDate) || '—'}</span>
+                        <span className="k">Discount</span><span className="v">{money(mo.disc || 0)}</span>
                         <span className="k">Total Challan</span><span className="v">{money(mo.challanAmt)}</span>
                       </div>
                     </div>
@@ -7444,6 +7486,7 @@ function histStudentLedgerRows(months, year) {
       <td>${escHtml(fmtDMY(mo.challanDate) || '—')}</td>
       <td>${escHtml(fmtDMY(mo.dueDate) || '—')}</td>
       <td class="right">${mo.challanAmt.toLocaleString('en-PK')}</td>
+      <td class="right">${mo.disc > 0 ? '-' + mo.disc.toLocaleString('en-PK') : '0'}</td>
       <td class="right ${mo.fine > 0 ? 'red' : ''}">${(mo.fine || 0).toLocaleString('en-PK')}</td>
       <td class="right">${mo.advApplied > 0 ? '-' + mo.advApplied.toLocaleString('en-PK') : '0'}</td>
       <td class="right green">${mo.received > 0 ? mo.received.toLocaleString('en-PK') : '0'}</td>
@@ -7469,12 +7512,13 @@ function buildHistStudentReportHTML({ mode, c, s, months, period, year = '', sch
   <div class="hist-cards">
     <div class="hist-card"><div class="l">Total Fee</div><div class="v">${t.fee.toLocaleString('en-PK')}</div></div>
     <div class="hist-card"><div class="l">Received</div><div class="v green">${t.recv.toLocaleString('en-PK')}</div></div>
+    ${t.disc > 0 ? `<div class="hist-card"><div class="l">Discount</div><div class="v">-${t.disc.toLocaleString('en-PK')}</div></div>` : ''}
     ${t.adv > 0 ? `<div class="hist-card"><div class="l">Advance Used</div><div class="v">-${t.adv.toLocaleString('en-PK')}</div></div>` : ''}
     <div class="hist-card"><div class="l">Pending</div><div class="v red">${t.pend.toLocaleString('en-PK')}</div></div>
     <div class="hist-card"><div class="l">Months</div><div class="v">${t.challans}</div></div>
   </div>
   <table>
-    <thead><tr><th>Month</th><th>Issue Date</th><th>Due Date</th><th class="right">Challan Amount</th><th class="right">Fine</th><th class="right">Advance</th><th class="right">Received</th><th class="right">Pending</th><th>Receiving Date</th><th>Received By</th><th>Payment Method</th><th class="center">Status</th></tr></thead>
+    <thead><tr><th>Month</th><th>Issue Date</th><th>Due Date</th><th class="right">Challan Amount</th><th class="right">Discount</th><th class="right">Fine</th><th class="right">Advance</th><th class="right">Received</th><th class="right">Pending</th><th>Receiving Date</th><th>Received By</th><th>Payment Method</th><th class="center">Status</th></tr></thead>
     <tbody>${histStudentLedgerRows(months, year)}</tbody>
   </table>
 </div>`;

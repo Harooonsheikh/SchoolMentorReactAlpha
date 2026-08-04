@@ -1,4 +1,4 @@
-import { buildUrl } from '../../utils/apiConfig';
+import { buildUrl, resolveMediaUrl } from '../../utils/apiConfig';
 import {
   mockWeeklyOff,
   mockHolidays,
@@ -159,7 +159,7 @@ export async function getReportHeader() {
   const d = json?.data || {};
   return {
     name: d.branchName || "",
-    logo: d.branchLogo || "",
+    logo: resolveMediaUrl(d.branchLogo),
     address: d.address || "",
     session: d.academicSession || "",
   };

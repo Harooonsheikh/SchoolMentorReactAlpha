@@ -1,4 +1,4 @@
-import { buildUrl } from '../../utils/apiConfig';
+import { buildUrl, resolveMediaUrl } from '../../utils/apiConfig';
 
 /* ═══════════════════════════════════════════════════════════════════
    TIME TABLE SERVICE — real API (POST /api/branch-timetable)
@@ -134,7 +134,7 @@ export async function getReportHeader() {
     const d = (json && json.data) || {};
     return {
       name: d.branchName || 'School Mentor',
-      logo: d.branchLogo || '',
+      logo: resolveMediaUrl(d.branchLogo),
       address: d.address || '',
       session: d.academicSession || '',
       generatedDate: d.generatedDate || '',

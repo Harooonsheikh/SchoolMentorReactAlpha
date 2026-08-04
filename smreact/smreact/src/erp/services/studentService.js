@@ -9,7 +9,7 @@ import {
   mockStuNextFamId,
 } from '../mock/students';
 import { delay, clone } from './_http';
-import { buildUrl, getBaseUrl, apiMessage } from '../../utils/apiConfig';
+import { buildUrl, getBaseUrl, apiMessage, resolveMediaUrl } from '../../utils/apiConfig';
 
 /* ═══════════════════════════════════════════════════════════════════
    Students Module — real API wiring (LaunchSetup).
@@ -547,10 +547,11 @@ export async function getStuStaff() {
 /* Resolve a branch logo to an absolute URL usable inside a print window
    (data URIs / absolute URLs pass through; relative paths get the API base). */
 function branchLogoUrl(raw) {
-  /* stuFileUrl relative path ko API base par joadta hai AUR backend ke bheje
-     hue localhost URLs ko bhi theek karta hai — warna dusre computer par logo
-     load hi nahi hota (documents/pictures ka wahi masla tha). */
-  return stuFileUrl(raw);
+  // Serve the logo from the https media host regardless of what host the API
+  // stamped on it (IP:4100 / app origin), so it isn't blocked as mixed content
+  // and doesn't resolve to the app origin. (resolveMediaUrl stuFileUrl se ziyada
+  // mukammal hai: mixed-content aur app-origin dono soorton ko sambhalta hai.)
+  return resolveMediaUrl(raw);
 }
 
 /* School/branch identity used by EVERY student report (ID cards, certificates,

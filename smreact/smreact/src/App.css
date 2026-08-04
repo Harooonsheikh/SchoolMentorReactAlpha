@@ -130,22 +130,26 @@ body{font-family:var(--font-body);background:var(--bg-base);color:var(--text-pri
 .erp-launch-btn{display:flex;align-items:center;gap:8px;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.2);border-radius:var(--radius-md);padding:10px 16px;color:#fff;font-size:13px;font-weight:600;cursor:pointer;transition:var(--tr);white-space:nowrap}
 .erp-launch-btn:hover{background:rgba(255,255,255,.2);transform:translateY(-1px)}
 .erp-btn-icon{width:24px;height:24px;background:rgba(255,255,255,.15);border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:11px}
-.setup-tabs-container{background:var(--bg-muted);border-radius:var(--radius-lg);padding:5px;margin-bottom:22px;box-shadow:var(--shadow-sm);border:1px solid var(--border-light);overflow-x:auto;width:100%}
-[data-theme="dark"] .setup-tabs-container{background:#0F1A35;border-color:#1E3055}
-.setup-tabs{display:flex;gap:3px;width:100%}
-.tab-item{display:flex;align-items:center;justify-content:center;gap:8px;padding:8px 15px;border-radius:var(--radius-md);cursor:pointer;white-space:nowrap;user-select:none;transition:all .2s cubic-bezier(.4,0,.2,1);border:1.5px solid transparent;position:relative;overflow:hidden;flex:1}
-.tab-item::before{content:'';position:absolute;inset:0;background:linear-gradient(120deg,transparent 30%,rgba(255,255,255,.18) 50%,transparent 70%);transform:translateX(-100%);transition:transform .45s ease;pointer-events:none}
-.tab-item:hover:not(.locked)::before{transform:translateX(100%)}
-.tab-item:hover:not(.locked):not(.active){background:var(--brand-light);border-color:rgba(30,58,138,.3);transform:translateY(-1px);box-shadow:0 3px 10px rgba(30,58,138,.18)}
-[data-theme="dark"] .tab-item:hover:not(.locked):not(.active){background:rgba(30,58,138,.15);border-color:rgba(37,99,235,.25)}
-.tab-item.active{background:linear-gradient(135deg,#1E3A8A,#1E40AF);border-color:var(--brand-dark);box-shadow:0 4px 14px rgba(30,58,138,.35),inset 0 1px 0 rgba(255,255,255,.15)}
+/* Setup tab bar — Fee module ke .fee-subtabs / .fee-subtab (erp/components/Fee.jsx)
+   ki exact values. Container white card, tab transparent, active par Fee ka
+   3-stop gradient + wahi glow. */
+.setup-tabs-container{background:var(--bg-card);border-radius:var(--radius-lg);padding:5px;margin-bottom:18px;box-shadow:var(--shadow-sm);border:1.5px solid var(--border-light);overflow-x:auto;-webkit-overflow-scrolling:touch;width:100%}
+[data-theme="dark"] .setup-tabs-container{background:var(--bg-card);border-color:var(--border-light)}
+.setup-tabs{display:flex;gap:6px;width:100%;flex-wrap:nowrap}
+.tab-item{display:flex;align-items:center;justify-content:center;gap:8px;padding:11px 18px;border-radius:var(--radius-md);border:none;background:transparent;font-family:var(--font-body);font-size:13px;font-weight:600;color:var(--text-muted);cursor:pointer;transition:var(--tr);white-space:nowrap;user-select:none;flex:1}
+.tab-item:hover:not(.locked):not(.active){background:var(--bg-muted)}
+.tab-item:hover:not(.locked):not(.active) .tab-label,
+.tab-item:hover:not(.locked):not(.active) .tab-icon{color:var(--text-primary)}
+[data-theme="dark"] .tab-item:hover:not(.locked):not(.active){background:var(--bg-muted)}
+.tab-item.active{background:linear-gradient(135deg,#1E3A8A 0%,#1E40AF 60%,#2563EB 100%);color:#fff;box-shadow:0 6px 20px rgba(30,58,138,.4),inset 0 1px 0 rgba(255,255,255,.2)}
 .tab-item.locked{opacity:.4;cursor:not-allowed}
-.tab-num{width:19px;height:19px;border-radius:50%;font-size:9.5px;font-weight:700;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.07);color:var(--text-secondary);transition:all .2s ease;flex-shrink:0}
+.tab-num{width:19px;height:19px;border-radius:50%;font-size:9.5px;font-weight:700;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.07);color:var(--text-secondary);transition:var(--tr);flex-shrink:0}
+[data-theme="dark"] .tab-num{background:rgba(255,255,255,.08);color:var(--text-muted)}
 .tab-item.active .tab-num{background:rgba(255,255,255,.25);color:#fff}
-.tab-icon{font-size:13px;color:var(--text-muted);transition:all .2s ease}
+.tab-icon{font-size:12px;color:var(--text-muted);transition:var(--tr)}
 .tab-item.active .tab-icon{color:rgba(255,255,255,.9)}
-.tab-label{font-size:12.5px;font-weight:500;color:var(--text-secondary);transition:all .2s ease}
-.tab-item.active .tab-label{color:#fff;font-weight:700}
+.tab-label{font-family:var(--font-body);font-size:13px;font-weight:600;color:var(--text-muted);transition:var(--tr)}
+.tab-item.active .tab-label{color:#fff;font-weight:600}
 .tab-panel{display:none;animation:fadeSlide .25s ease}
 .tab-panel.active{display:block}
 @keyframes fadeSlide{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}

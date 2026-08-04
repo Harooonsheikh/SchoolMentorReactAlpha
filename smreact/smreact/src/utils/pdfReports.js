@@ -1,6 +1,6 @@
 // PDF report generation — opens a print-ready window with color/BW choice
 
-import { buildUrl } from './apiConfig';
+import { buildUrl, resolveMediaUrl } from './apiConfig';
 
 /* Fetch the branch report header (name, logo, address, session, generated date)
    for the logged-in branch. Returns the data object, or null on failure so
@@ -11,7 +11,11 @@ export async function fetchReportHeader() {
     if (!branchId) return null;
     const res = await fetch(buildUrl(`/report-header/${branchId}`), { headers: { Accept: '*/*' } });
     const json = await res.json();
-    return json?.success ? (json.data || null) : null;
+    const data = json?.success ? (json.data || null) : null;
+    // Serve the branch logo from the https media host so every report/share that
+    // uses this shared header (HR, Students, Paper Generator, …) loads it.
+    if (data && data.branchLogo) data.branchLogo = resolveMediaUrl(data.branchLogo);
+    return data;
   } catch (e) {
     console.error('Error loading report header:', e);
     return null;
@@ -116,7 +120,7 @@ function header(schoolName, reportLabel, dateStr, timeStr, isBW, branch) {
     : `<div style="width:52px;height:52px;border-radius:14px;background:linear-gradient(135deg,#1E40AF,#0EA5E9);display:flex;align-items:center;justify-content:center;flex-shrink:0"><svg width="30" height="30" viewBox="0 0 30 30"><defs><linearGradient id="g" x1="0" y1="0" x2="30" y2="30"><stop offset="0%" stop-color="#1E40AF"/><stop offset="100%" stop-color="#0EA5E9"/></linearGradient></defs><rect width="30" height="30" rx="7" fill="url(#g)"/><path d="M5 9h20M5 15h13M5 21h16" stroke="white" stroke-width="2" stroke-linecap="round"/></svg></div>`;
   /* Use the branch logo from the report-header API when available. */
   const logo = branch?.branchLogo
-    ? `<div style="width:52px;height:52px;border-radius:${isBW?'6px':'14px'};overflow:hidden;background:#fff;border:${isBW?'2px solid #000':'1px solid rgba(255,255,255,.35)'};display:flex;align-items:center;justify-content:center;flex-shrink:0"><img src="${branch.branchLogo}" alt="logo" style="width:100%;height:100%;object-fit:contain"/></div>`
+    ? `<div style="width:52px;height:52px;border-radius:${isBW?'6px':'14px'};overflow:hidden;background:#fff;border:${isBW?'2px solid #000':'1px solid rgba(255,255,255,.35)'};display:flex;align-items:center;justify-content:center;flex-shrink:0"><img src="${resolveMediaUrl(branch.branchLogo)}" alt="logo" style="width:100%;height:100%;object-fit:contain"/></div>`
     : fallbackLogo;
   const hdrBg = isBW ? 'background:#fff;border-bottom:3px solid #000' : 'background:linear-gradient(135deg,#1E40AF 0%,#1E40AF 100%)';
   const tc = isBW ? '#000' : '#fff';

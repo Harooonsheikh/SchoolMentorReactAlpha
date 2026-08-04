@@ -49,7 +49,7 @@ export let SA_API_BASE = cfg.apiBaseUrl;
    src/utils/apiConfig.js (DEFAULT_URL) — so branch calls hit the full URL
    http://50.190.164.42:4100/api/Registration/old_MISDBBranch in dev and prod,
    no proxy needed. Override with REACT_APP_SA_ERP_BASE when the host changes. */
-export const ERP_API_BASE = stripTrailingSlash(env.REACT_APP_SA_ERP_BASE || 'http://50.190.164.42:4100');
+export const ERP_API_BASE = stripTrailingSlash(env.REACT_APP_SA_ERP_BASE || '');
 
 /* SchoolMentorSuperAdminAPI base — the LIVE .NET Super Admin backend
    (School Permissions: branch directory + feature/module toggles).
@@ -72,7 +72,7 @@ export const SA_ADMIN_API_BASE = stripTrailingSlash(env.REACT_APP_SA_ADMIN_BASE 
    (subscriptions / subscription / status). Points DIRECTLY at the absolute AI
    host on :8000, so calls hit http://50.190.164.42:8000/ai/api/wallet/...
    Override with REACT_APP_SA_AI_BASE when the host changes. */
-export const AI_API_BASE = stripTrailingSlash(env.REACT_APP_SA_AI_BASE || 'http://50.190.164.42:8000');
+export const AI_API_BASE = stripTrailingSlash(env.REACT_APP_SA_AI_BASE || '');
 
 const IDENTITY_KEYS = ['role', 'userId', 'name', 'email'];
 

@@ -11,11 +11,12 @@ const stripSlash = (url) => String(url || '').trim().replace(/\/+$/, '');
 
 // Where the API lives, per build:
 //   dev  (npm start)      → the API box directly over http; nothing in front of it.
-//   prod (npm run build)  → same origin as the site. The site is https, and a
-//     browser blocks an http request made from an https page (mixed content), so
-//     the API cannot be called at http://IP:4100 from production. IIS rewrites
-//     /api/* to the API on localhost:4100 — see the proxy rule in public/web.config.
-//   Override either with REACT_APP_API_BASE_URL (see .env.production).
+//   prod (npm run build)  → the app's OWN origin (https://erp.schoolmentor.ai, set
+//     via REACT_APP_API_BASE_URL in .env.production). The browser blocks calling
+//     http://IP:4100 from an https page (mixed content), and alphaapi sends no CORS
+//     for this origin — so the app calls /api/…, /SchoolMentorSuperAdminAPI/…, /get-…
+//     on its own origin and IIS reverse-proxies those to https://alphaapi.schoolmentor.ai
+//     (see the rewrite rules in public/web.config). No mixed content, no CORS.
 // const DEV_URL = 'http://210.56.9.60:1123';
 const DEV_URL  = 'http://50.190.164.42:4100';
 const PROD_URL = 'https://erp.schoolmentor.ai';
@@ -75,6 +76,28 @@ export function buildSuperAdminUrl(path = '') {
   return `${base}${SUPER_ADMIN_PREFIX}${suffix}`;
 }
 
+// ── Uploaded media (branch logos etc.) ──────────────────────────
+// The API stamps a branch logo URL from the request host, so it can come back
+// as http://IP:4100/UploadedImages/... (blocked as mixed content on our https
+// site) or with the app's OWN origin (which does not serve /UploadedImages, so
+// it 404s / resolves to localhost). resolveMediaUrl() keeps the exact storage
+// path the API returned but serves it from the https media host, so the image
+// always loads. Override the host with REACT_APP_MEDIA_BASE if it ever moves.
+export const MEDIA_BASE = stripSlash(
+  (typeof process !== 'undefined' && process.env && process.env.REACT_APP_MEDIA_BASE)
+  || 'https://alphaapi.schoolmentor.ai',
+);
+
+export function resolveMediaUrl(raw) {
+  if (!raw) return '';
+  const u = String(raw).trim();
+  if (u.startsWith('data:')) return u;                 // inline data URI — leave it
+  const m = u.match(/\/UploadedImages\/.*/i);          // pull the stored path
+  if (m) return `${MEDIA_BASE}${m[0]}`;                // serve it from the media host
+  if (/^https?:\/\//i.test(u)) return u;               // some other absolute URL
+  return `${MEDIA_BASE}${u.startsWith('/') ? u : `/${u}`}`;
+}
+
 // ── Session guard ───────────────────────────────────────────────
 // Many CRUD POSTs are scoped to the active academic session and send it as
 // `sessionID`/`sessionYearID`. If no session is selected, those calls must be
@@ -124,4 +147,75 @@ export function assertSessionPayload(payload) {
     err.isSessionError = true;
     throw err;
   }
+}
+
+// ── Global session guard ──────────────────────────────────────────
+// If the login session is cleared (token / branchID removed from
+// sessionStorage), the ERP must not keep firing identity-less API calls
+// and rendering broken screens. Instead, the next API action bounces the
+// user to login with a "session ended" toast. installSessionGuard() wraps
+// window.fetch ONCE so this covers every module without touching call sites.
+
+// The keys that must exist for a live session. Add 'employee_ID' / 'UserID'
+// here if you want those treated as required too.
+export const SESSION_KEYS = ['token', 'branchID'];
+
+/** True only when every required session key is present. */
+export function hasValidSession() {
+  try { return SESSION_KEYS.every((k) => !!sessionStorage.getItem(k)); }
+  catch (e) { return false; }
+}
+
+/** Does this URL look like an ERP backend call (vs a static asset)? */
+function isApiUrl(url) {
+  const u = String(url || '');
+  const base = getBaseUrl();
+  if (base && u.startsWith(base)) return true;
+  return /(^|\/)(api|SchoolMentorSuperAdminAPI)\//i.test(u)
+    || /(^|\/)((get|save|saveupdate|delete|assign)-|report-header)/i.test(u);
+}
+
+/** Auth / pre-login endpoints — never blocked by the guard (login, signup,
+    token refresh run with no session by definition). */
+function isAuthUrl(url) {
+  return /\/(Auth|Account)\/|\/(login|signin|signup|register|refresh|forgot|reset)-?/i.test(String(url || ''));
+}
+
+/** Turn the guard's enforcement on/off. The ERP switches it OFF when it
+    unmounts so the login/signup screens (no session yet) aren't affected. */
+export function setSessionGuardActive(on) {
+  if (typeof window !== 'undefined') window.__smSessionGuardActive = !!on;
+}
+
+/**
+ * Wrap window.fetch once. While active, an API call attempted with no valid
+ * session — or a 401 from the server — invokes onExpired() (toast + redirect
+ * to login) and aborts the request. Auth endpoints are always allowed. Safe to
+ * call repeatedly: it installs the wrapper once and just re-activates after.
+ */
+export function installSessionGuard({ onExpired } = {}) {
+  if (typeof window === 'undefined') return;
+  window.__smSessionGuardActive = true;
+  if (window.__smSessionGuard) return;   // already wrapped — just re-activated above
+  window.__smSessionGuard = true;
+  const origFetch = window.fetch.bind(window);
+  let firing = false;
+  const trigger = () => {
+    if (firing) return;
+    firing = true;
+    try { if (onExpired) onExpired(); } finally { setTimeout(() => { firing = false; }, 2000); }
+  };
+  window.fetch = async (input, init) => {
+    const url = typeof input === 'string' ? input : (input && input.url) || '';
+    if (window.__smSessionGuardActive && isApiUrl(url) && !isAuthUrl(url) && !hasValidSession()) {
+      trigger();
+      const err = new Error('Your session has ended');
+      err.isSessionExpired = true;
+      throw err;
+    }
+    const res = await origFetch(input, init);
+    try { if (res && res.status === 401 && window.__smSessionGuardActive && isApiUrl(url) && !isAuthUrl(url)) trigger(); }
+    catch (e) { /* ignore */ }
+    return res;
+  };
 }

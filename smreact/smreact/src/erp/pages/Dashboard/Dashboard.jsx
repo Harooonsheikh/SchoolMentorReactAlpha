@@ -430,6 +430,29 @@ export const DASH_CSS = `
   background: var(--tile-soft); color: var(--tile-accent);
 }
 
+/* ─── Gradient tile variant — colourful KPI cards, same markup as
+   .dash-tile, filled with the module's own gradient instead of a
+   white surface + accent stripe. */
+.dash-tile--grad {
+  background: linear-gradient(135deg, var(--tile-grad-a, #1E3A8A), var(--tile-grad-b, #2563EB));
+  border-color: transparent;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, .14);
+}
+.dash-tile--grad::before { background: rgba(255, 255, 255, .35); }
+.dash-tile--grad .dash-tile-ic { background: rgba(255, 255, 255, .22); color: #fff; }
+.dash-tile--grad .dash-tile-lbl { color: rgba(255, 255, 255, .85); }
+.dash-tile--grad .dash-tile-arrow { background: rgba(255, 255, 255, .22); color: #fff; }
+.dash-tile--grad:hover .dash-tile-arrow { background: rgba(255, 255, 255, .36); color: #fff; }
+.dash-tile--grad .dash-tile-val { color: #fff; }
+.dash-tile--grad .dash-tile-val small { color: rgba(255, 255, 255, .72); }
+.dash-tile--grad .dash-tile-meta { color: rgba(255, 255, 255, .88); }
+.dash-tile--grad .dash-tile-meta-pill { background: rgba(255, 255, 255, .22); color: #fff; }
+.dash-tile--grad:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 16px 32px rgba(15, 23, 42, .22);
+}
+[data-theme="dark"] .dash-tile--grad:hover { box-shadow: 0 16px 32px rgba(0, 0, 0, .45); }
+
 /* ═════════ TWO-COLUMN GRID ═════════ */
 .dash-grid-2 { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); }
 .dash-grid-3 { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
@@ -466,6 +489,20 @@ export const DASH_CSS = `
   color: var(--panel-accent, #1E40AF);
 }
 .dash-panel-body { padding: 14px 16px; }
+
+/* ─── Mini progress ring — compact circular gauge used beside the
+   panel-pill percentage (Teacher Dashboard: Lesson Plans, Notebook
+   Plans, My Attendance). Same 0-36-viewBox / 100-unit dash trick as
+   the Fee Analytics .fa-ring, just sized down for a header row. */
+.dash-mini-ring { position: relative; width: 40px; height: 40px; flex-shrink: 0; }
+.dash-mini-ring svg { display: block; transform-origin: center; }
+.dash-mini-ring-pct {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  font: 800 10px/1 var(--dash-font); color: var(--ring-color, #1E40AF);
+  letter-spacing: -0.2px;
+}
+.dash-panel-h-r { display: flex; align-items: center; gap: 8px; }
 
 /* ═════════ ROWS (list items) ═════════ */
 .dash-rows { display: flex; flex-direction: column; gap: 0; }
