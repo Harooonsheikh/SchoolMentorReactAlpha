@@ -3410,11 +3410,13 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
      koi upper clamp nahi lagta (pehle lagta tha, jis se extra amount block ho jaata). */
   const rows = model.heads.map(h => {
     const paid    = +perHeadPaid[h.name] || 0;
-    /* Input KUL wasooli hai (already + new), is liye naya paisa = input − paid.
-       Cashier already-paid se kam kar de to naya paisa 0 — refund yahan se nahi
-       hota, warna receipt minus amount likh deti. */
+    /* Input KUL wasooli hai (already + new), is liye naya paisa = input − paid. */
     const totalRecv = viewOnly ? paid : Math.max(0, +perHeadInput[h.name] || 0);
-    const recvNow   = viewOnly ? 0 : Math.max(0, totalRecv - paid);
+    /* Delta MINUS bhi ho sakta hai: cashier "Already Received" ko theek kar raha
+       hai (5000 galti se lag gaya tha, asal 3000). Us soorat me ye head correction
+       hai — ledger ka receivedAmount neeche aa jaayega. Clamp yahan NAHI, warna
+       edit sirf dikhawa rehta aur save par kuch na hota. */
+    const recvNow   = viewOnly ? 0 : (totalRecv - paid);
     const after   = h.net;
     const pending = after - paid - recvNow;      // negative = advance
     totalChallan += h.std;
@@ -3431,14 +3433,17 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
   const prevTotalRecv = viewOnly
     ? prevPaid
     : Math.max(0, perHeadInput[prevKey] == null ? prevPaid : (+perHeadInput[prevKey] || 0));
-  const prevRecv = viewOnly ? 0 : Math.max(0, prevTotalRecv - prevPaid);
+  /* Heads ki tarah ye delta bhi MINUS ho sakta hai — correction. */
+  const prevRecv = viewOnly ? 0 : (prevTotalRecv - prevPaid);
   const prevPend = model.prev - prevPaid - prevRecv;   // negative = advance
 
   /* ADVANCE ek CREDIT line hai — "Received" column me MINUS me dikhti hai aur wahin se
      kat jaati hai (editable nahi). Utna cash kam lena hota hai. */
   const headsRecv  = rows.reduce((a, r) => a + r.recvNow, 0) + prevRecv;
   const advCredit  = Math.max(0, +model.advance || 0);
-  const advApplied = Math.min(advCredit, headsRecv);   // credit se zyada kabhi nahi
+  /* headsRecv correction ki wajah se MINUS ho sakta hai — advance us par apply
+     nahi hota (0 se neeche na jaye), warna credit ulta barh jaata. */
+  const advApplied = Math.min(advCredit, Math.max(0, headsRecv));
 
   /* ── LATE FINE ──
      Challan ki due date ke BAAD wasool karne par jurmana. Base date wahi
@@ -3495,22 +3500,28 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
     : '—';
 
   const handleReceive = () => {
-    if (receivingNow <= 0) { toast('Enter at least one head amount to receive', 'error'); return; }
+    /* receivingNow MINUS bhi ho sakta hai jab cashier ne already-received ko neeche
+       theek kiya — wo bhi ek valid save hai. Sirf "kuch bhi nahi badla" rokna hai. */
+    if (receivingNow === 0) { toast('Enter at least one head amount to receive', 'error'); return; }
     if (!date) { toast('Receiving date is required', 'error'); return; }
     /* Session-date guard: receiving date current session ki UTC window ke andar ho. */
     const recvChk = validateSessionDateFromStorage(date, 'receiving date');
     if (!recvChk.ok) { toast(recvChk.message, 'error'); return; }
-    /* Build perHead snapshot of receivingNow values */
+    /* Build perHead snapshot of receivingNow values. Non-zero delta bhejo — MINUS
+       wala bhi, warna correction save hi na hoti. */
     const perHead = {};
-    rows.forEach(r => { if (r.recvNow > 0) perHead[r.name] = r.recvNow; });
+    rows.forEach(r => { if (r.recvNow !== 0) perHead[r.name] = r.recvNow; });
     /* Previous dues ki raqam bhi — ASLI subHead key par, taake API sahi row par lagaye. */
-    if (prevRecv > 0) perHead[prevKey] = (perHead[prevKey] || 0) + prevRecv;
+    if (prevRecv !== 0) perHead[prevKey] = (perHead[prevKey] || 0) + prevRecv;
     const payload = {
       reg: student.reg, monthIdx,
       studentName: student.name,
       date, method, ref, txn,
       amount: receivingNow,
       perHead,
+      /* Correction (net minus) — receipt/slip aur history ise adjustment dikhayein,
+         normal wasooli nahi. */
+      isAdjustment: receivingNow < 0,
       /* Fine alag se — receipt/slip par apni line banti hai, aur `amount` me
          pehle se shamil hai (receivingNow me joda gaya). */
       fine: fineOwed,
@@ -3773,8 +3784,9 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
               <span className="fee-recv-payval green">{money(alreadyPaid)}</span>
             </div>
             <div className="fee-recv-paycard">
-              <span className="fee-recv-paylbl">Receiving Now</span>
-              <span className="fee-recv-payval blue">{money(receivingNow)}</span>
+              {/* MINUS = correction, wasooli nahi — label aur rang dono badal jaate hain. */}
+              <span className="fee-recv-paylbl">{receivingNow < 0 ? 'Adjustment' : 'Receiving Now'}</span>
+              <span className={`fee-recv-payval ${receivingNow < 0 ? 'red' : 'blue'}`}>{money(receivingNow)}</span>
             </div>
             <div className="fee-recv-paycard">
               <span className="fee-recv-paylbl">Remaining After</span>
@@ -3829,9 +3841,13 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
             <button className="fee-btn fee-btn-ghost" onClick={onClose}>{viewOnly ? 'Close' : 'Cancel'}</button>
           </Tooltip>
           {!viewOnly && (
-            <Tooltip text={`Record Rs. ${receivingNow.toLocaleString('en-PK')} as received`}>
+            <Tooltip text={receivingNow < 0
+              ? `Reduce recorded received amount by Rs. ${Math.abs(receivingNow).toLocaleString('en-PK')}`
+              : `Record Rs. ${receivingNow.toLocaleString('en-PK')} as received`}>
               <button className="fee-btn fee-btn-primary" onClick={handleReceive}>
-                <i className="fa-solid fa-check"></i> Receive
+                {receivingNow < 0
+                  ? <><i className="fa-solid fa-pen"></i> Update Received</>
+                  : <><i className="fa-solid fa-check"></i> Receive</>}
               </button>
             </Tooltip>
           )}
@@ -4470,9 +4486,10 @@ function FeeReceivingIndividual({ toast }) {
   };
 
   const handleSaveReceipt = (payload) => {
-    /* Sirf tab receive karo jab amount > 0 ho — warna kuch create na karo. */
-    if (!(Number(payload.amount) > 0)) {
-      toast('Receiving amount must be greater than 0', 'warning');
+    /* Amount MINUS bhi ho sakta hai — cashier ne already-received ko neeche theek
+       kiya (adjustment). Sirf 0 (kuch nahi badla) rokna hai. */
+    if (!Number(payload.amount)) {
+      toast('Receiving amount must not be zero', 'warning');
       return;
     }
     /* Append payment to receipts state */
@@ -4490,6 +4507,8 @@ function FeeReceivingIndividual({ toast }) {
         perHead: payload.perHead,
         /* Late fine slip par apni line banati hai; `amount` me pehle se shaamil hai. */
         fine:   payload.fine || 0,
+        /* Correction (minus amount) — history/slip ise adjustment likhein. */
+        isAdjustment: !!payload.isAdjustment,
         source: 'counter',
         by:     payload.by || 'Front Desk',
       };
@@ -4517,8 +4536,10 @@ function FeeReceivingIndividual({ toast }) {
       const baseRows = (rec.detailRows || []).map(r => {
         /* Fine ki row perHead se update nahi hoti — usay helper handle karta hai. */
         if (feeService.isLateFineRow(r)) return r;
+        /* Delta MINUS ho sakta hai jab cashier ne already-received theek kiya.
+           Ledger 0 se neeche kabhi nahi jaata (koi refund ledger yahan nahi hai). */
         const recvNow  = +(payload.perHead?.[r.subHead ?? r.head]) || 0;
-        const received = (+r.receivedAmount || 0) + recvNow;
+        const received = Math.max(0, (+r.receivedAmount || 0) + recvNow);
         const net      = (+r.challanAmount || 0) - (+r.discount || 0);
         return { ...r, receivedAmount: received, pendingorAdv: net - received, modifiedAt: now, modifiedBy: userID };
       });
@@ -4538,7 +4559,9 @@ function FeeReceivingIndividual({ toast }) {
     } else {
       toast('No challan found to receive against', 'warning');
     }
-    toast(`Rs. ${(payload.amount || 0).toLocaleString('en-PK')} received from ${payload.studentName}`, 'success');
+    toast(payload.amount < 0
+      ? `Received amount for ${payload.studentName} reduced by Rs. ${Math.abs(payload.amount).toLocaleString('en-PK')}`
+      : `Rs. ${(payload.amount || 0).toLocaleString('en-PK')} received from ${payload.studentName}`, 'success');
     /* After save: close receive modal and open slip modal for the new payment */
     const c = receiveCtx?.classMeta, s = receiveCtx?.student;
     setReceiveCtx(null);
@@ -4857,6 +4880,7 @@ function FeeReceivingIndividual({ toast }) {
                                       )
                                     ) : (
                                       <>
+                                        {/* Sirf PARTIAL par — fully received row edit nahi hoti. */}
                                         {m.status === 'partial' && canRcvCreate && (
                                           <Tooltip text="Receive remaining balance">
                                             <button type="button" className="fee-recv-link" onClick={() => openReceive(c, s, false)}>
@@ -5127,9 +5151,10 @@ function FamilyTreeReceiving({ toast }) {
   };
 
   const handleSaveReceipt = (payload) => {
-    /* Sirf tab receive karo jab amount > 0 ho — warna kuch create na karo. */
-    if (!(Number(payload.amount) > 0)) {
-      toast('Receiving amount must be greater than 0', 'warning');
+    /* Amount MINUS bhi ho sakta hai — cashier ne already-received ko neeche theek
+       kiya (adjustment). Sirf 0 (kuch nahi badla) rokna hai. */
+    if (!Number(payload.amount)) {
+      toast('Receiving amount must not be zero', 'warning');
       return;
     }
     setReceipts(prev => {
@@ -5142,6 +5167,8 @@ function FamilyTreeReceiving({ toast }) {
         amount: payload.amount, perHead: payload.perHead,
         /* Late fine slip par apni line banati hai; `amount` me pehle se shaamil hai. */
         fine: payload.fine || 0,
+        /* Correction (minus amount) — history/slip ise adjustment likhein. */
+        isAdjustment: !!payload.isAdjustment,
         source: 'counter', by: payload.by || 'Front Desk',
       };
       if (idx >= 0) next[idx] = { ...next[idx], payments: [...next[idx].payments, pay] };
@@ -5164,8 +5191,10 @@ function FamilyTreeReceiving({ toast }) {
       const baseRows = (rec.detailRows || []).map(r => {
         /* Fine ki row perHead se update nahi hoti — usay helper handle karta hai. */
         if (feeService.isLateFineRow(r)) return r;
+        /* Delta MINUS ho sakta hai jab cashier ne already-received theek kiya.
+           Ledger 0 se neeche kabhi nahi jaata (koi refund ledger yahan nahi hai). */
         const recvNow  = +(payload.perHead?.[r.subHead ?? r.head]) || 0;
-        const received = (+r.receivedAmount || 0) + recvNow;
+        const received = Math.max(0, (+r.receivedAmount || 0) + recvNow);
         const net      = (+r.challanAmount || 0) - (+r.discount || 0);
         return { ...r, receivedAmount: received, pendingorAdv: net - received, modifiedAt: now, modifiedBy: userID };
       });
@@ -5187,7 +5216,9 @@ function FamilyTreeReceiving({ toast }) {
     }
 
     feeService.saveFamilyReceipt(payload).catch(() => {});
-    toast(`Rs. ${(payload.amount || 0).toLocaleString('en-PK')} received from ${payload.studentName}`, 'success');
+    toast(payload.amount < 0
+      ? `Received amount for ${payload.studentName} reduced by Rs. ${Math.abs(payload.amount).toLocaleString('en-PK')}`
+      : `Rs. ${(payload.amount || 0).toLocaleString('en-PK')} received from ${payload.studentName}`, 'success');
     const f = receiveCtx?.family, ch = receiveCtx?.student;
     const period = receiveCtx?.period;
     setReceiveCtx(null);
@@ -5584,6 +5615,7 @@ function FamilyTreeReceiving({ toast }) {
                                     </Tooltip>
                                   ) : (
                                     <>
+                                      {/* Sirf PARTIAL par — fully received row edit nahi hoti. */}
                                       {m.status === 'partial' && (
                                         <Tooltip text="Receive remaining balance">
                                           <button type="button" className="fee-recv-link" onClick={() => openReceive(f, ch, false)}>
@@ -5760,7 +5792,9 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
       const paid = Math.max(+perHeadPaid[h.name] || 0, +(m.paidPerHead?.[h.name]) || 0);
       /* Input KUL wasooli hai (already + new) — naya paisa = input − paid. */
       const totalRecv = locked ? paid : Math.max(0, +perHeadInput[h.name] || 0);
-      const recvNow   = locked ? 0 : Math.max(0, totalRecv - paid);
+      /* Delta MINUS bhi ho sakta hai — cashier already-received theek kar raha hai.
+         Clamp yahan NAHI, warna correction save par kuch na karti. */
+      const recvNow   = locked ? 0 : (totalRecv - paid);
       const pending   = h.net - paid - recvNow;   // negative = advance
       return { ...h, paid, totalRecv, recvNow, pending };
     });
@@ -5789,7 +5823,8 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
   const prevTotalRecv = prevLocked
     ? prevPaid
     : Math.max(0, perHeadInput[prevKey] == null ? prevPaid : (+perHeadInput[prevKey] || 0));
-  const prevRecv  = prevLocked ? 0 : Math.max(0, prevTotalRecv - prevPaid);
+  /* Heads ki tarah ye delta bhi MINUS ho sakta hai — correction. */
+  const prevRecv  = prevLocked ? 0 : (prevTotalRecv - prevPaid);
   const prevPend  = prevTotal - prevPaid - prevRecv;
   if (selModel && prevTotal > 0) {
     recvNow     += prevRecv;
@@ -5801,7 +5836,8 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
   /* ADVANCE ek CREDIT line hai — "Received" me MINUS me dikhta hai (read-only) aur
      wahin se kat jaata hai, yani utna cash kam lena hai. */
   const advCredit  = Math.max(0, +(selModel?.advance) || 0);
-  const advApplied = Math.min(advCredit, recvNow);
+  /* recvNow correction ki wajah se MINUS ho sakta hai — advance us par apply nahi hota. */
+  const advApplied = Math.min(advCredit, Math.max(0, recvNow));
   recvNow = recvNow - advApplied;
 
   /* ── LATE FINE ── individual modal jaisi hi: due date ke baad receive karne par
@@ -5829,21 +5865,23 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
 
   const handleSaveChild = () => {
     if (!selChild) return;
-    if (recvNow <= 0) { toast('Enter at least one head amount to receive', 'error'); return; }
+    /* MINUS bhi valid hai (already-received correction) — sirf 0 rokna hai. */
+    if (recvNow === 0) { toast('Enter at least one head amount to receive', 'error'); return; }
     if (!date) { toast('Receiving date is required', 'error'); return; }
     /* Session-date guard: receiving date current session ki UTC window ke andar ho. */
     const recvChk = validateSessionDateFromStorage(date, 'receiving date');
     if (!recvChk.ok) { toast(recvChk.message, 'error'); return; }
     const perHead = {};
-    rowsForSel.forEach(r => { if (r.recvNow > 0) perHead[r.name] = r.recvNow; });
+    rowsForSel.forEach(r => { if (r.recvNow !== 0) perHead[r.name] = r.recvNow; });
     /* Previous Pending ki raqam ASLI subHead key par (API perHead ko subHead se match karti hai). */
-    if (prevRecv > 0) perHead[prevKey] = (perHead[prevKey] || 0) + prevRecv;
+    if (prevRecv !== 0) perHead[prevKey] = (perHead[prevKey] || 0) + prevRecv;
     onSave({
       famKey: family.key, reg: selChild.reg, monthIdx,
       studentName: selChild.name,
       date, method, ref, txn,
       amount: recvNow,
       perHead,
+      isAdjustment: recvNow < 0,
       fine: fineOwed,
     });
     setSelReg(null);
