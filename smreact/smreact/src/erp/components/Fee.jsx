@@ -4012,8 +4012,9 @@ function FeeSlipModal({ cfg, onClose, toast }) {
   const totStd  = headRows.reduce((a, r) => a + r.std, 0);
   const totDisc = headRows.reduce((a, r) => a + r.disc, 0);
   const total   = headRows.reduce((a, r) => a + r.recv, 0);
-  /* Baqaya = (Std − Discount) − Received. > 0 ho to hi slip par dikhega. */
-  const remaining = Math.max(0, (totStd - totDisc) - total);
+  /* Baqaya = (Std − Discount) − Received. > 0 → abhi dena baqaya (baqaya, red);
+     < 0 → student ne zyada de diya = ADVANCE/credit (minus me, green). 0 → line nahi. */
+  const remaining = (totStd - totDisc) - total;
   const sch      = feeReportSchool(cfg.school);
 
   const doPrint = () => {
@@ -4048,7 +4049,7 @@ function FeeSlipModal({ cfg, onClose, toast }) {
         <div class="fee-slip-net">
           <span>Amount Received</span><span>Rs. ${(+payment.amount || 0).toLocaleString('en-PK')}</span>
         </div>
-        ${remaining > 0 ? `<div class="fee-slip-rem"><span>Remaining Amount</span><span>Rs. ${remaining.toLocaleString('en-PK')}</span></div>` : ''}
+        ${remaining !== 0 ? `<div class="fee-slip-rem${remaining < 0 ? ' adv' : ''}"><span>${remaining < 0 ? 'Advance Balance' : 'Remaining Amount'}</span><span>Rs. ${remaining.toLocaleString('en-PK')}</span></div>` : ''}
       </div>`;
     w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Fee Slip — ${escHtml(student.name)}</title>
 <style>
@@ -4069,6 +4070,7 @@ function FeeSlipModal({ cfg, onClose, toast }) {
   .fee-slip-headtot td { border-top:1.5px solid #333; border-bottom:none; font-weight:800; background:#f5f7fb; }
   .fee-slip-net { display:flex; justify-content:space-between; align-items:center; background:#111; color:#fff; padding:8px 12px; border-radius:4px; font-weight:800; }
   .fee-slip-rem { display:flex; justify-content:space-between; align-items:center; border:1.5px solid #DC2626; color:#DC2626; padding:7px 12px; border-radius:4px; font-weight:800; margin-top:6px; }
+  .fee-slip-rem.adv { border-color:#16A34A; color:#16A34A; }
   @page { size:A4; margin:14mm; }
   @media print { body { background:#fff; padding:0; } }
 </style></head><body>${slipHtml}</body></html>`);
@@ -4154,9 +4156,9 @@ function FeeSlipModal({ cfg, onClose, toast }) {
               <span>Amount Received</span>
               <span>Rs. {(+payment.amount || 0).toLocaleString('en-PK')}</span>
             </div>
-            {remaining > 0 && (
-              <div className="fee-slip-rem" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', border: '1.5px solid #DC2626', color: '#DC2626', padding: '7px 12px', borderRadius: 4, fontWeight: 800, marginTop: 6 }}>
-                <span>Remaining Amount</span>
+            {remaining !== 0 && (
+              <div className="fee-slip-rem" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', border: `1.5px solid ${remaining < 0 ? '#16A34A' : '#DC2626'}`, color: remaining < 0 ? '#16A34A' : '#DC2626', padding: '7px 12px', borderRadius: 4, fontWeight: 800, marginTop: 6 }}>
+                <span>{remaining < 0 ? 'Advance Balance' : 'Remaining Amount'}</span>
                 <span>Rs. {remaining.toLocaleString('en-PK')}</span>
               </div>
             )}
