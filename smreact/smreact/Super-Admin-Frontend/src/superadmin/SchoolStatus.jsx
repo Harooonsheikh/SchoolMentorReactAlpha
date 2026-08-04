@@ -1,8 +1,9 @@
-import React, { useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ASSIGNEES, INITIAL_LAUNCH, INITIAL_ERP, INITIAL_INACTIVE,
   buildSchoolDetail, INITIAL_ENQUIRIES, moduleMeta,
 } from './statusData';
+import { schoolProgressApi, schoolPermissionsApi } from './api';
 
 /* ═══════════════════════════════════════════════════════════════════
    SCHOOL STATUS (rendered in the "Schools Progress" tab) — Super Admin.
@@ -28,10 +29,40 @@ function StatePill({ entered }) {
 
 export default function SchoolStatus({ toast }) {
   const [tab, setTab] = useState('launch');
-  const [launch, setLaunch] = useState(INITIAL_LAUNCH);
-  const [erp, setErp] = useState(INITIAL_ERP);
-  const [inactive, setInactive] = useState(INITIAL_INACTIVE);
+  const [launch, setLaunch] = useState([]);
+  const [erp, setErp] = useState([]);
+  const [inactive, setInactive] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [erpSub, setErpSub] = useState('progress');   // 'progress' | 'enquiries'
+
+  /* Toast ka taza reference, taake loader parent ke har render par dobara na chale. */
+  const toastRef = useRef(toast);
+  toastRef.current = toast;
+
+  /* Screen khulte hi (sidebar par "Schools Progress" click) branch-report API:
+       Launch Setup → isActive=true&launchSetup=0
+       ERP          → isActive=true&launchSetup=1
+       Inactive     → isActive=false
+     API na chale to bundled demo data — screen kabhi khali nahi rehti. */
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const { launch: l, erp: e, inactive: i } = await schoolProgressApi.listSchoolProgress();
+      if (l.length || e.length || i.length) {
+        setLaunch(l); setErp(e); setInactive(i);
+      } else {
+        setLaunch(INITIAL_LAUNCH); setErp(INITIAL_ERP); setInactive(INITIAL_INACTIVE);
+        toastRef.current?.('No schools returned — showing sample data', 'warn');
+      }
+    } catch (err) {
+      setLaunch(INITIAL_LAUNCH); setErp(INITIAL_ERP); setInactive(INITIAL_INACTIVE);
+      toastRef.current?.(err?.message || 'Could not load schools — showing sample data', 'warn');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
 
   /* Per-ERP-school detail (lazy-built) + enquiries, lifted so modal edits persist. */
   const [details, setDetails] = useState({});
@@ -58,20 +89,45 @@ export default function SchoolStatus({ toast }) {
     toast?.(`Assigned to: ${val}`, 'success');
   };
 
-  /* ── activate / deactivate ── */
-  const confirmDeactivate = (group, id) => {
+  /* ── activate / deactivate ──
+     Dono ka faisla server par hota hai:
+       PUT /api/SchoolPermissions/ToggleBranchStatus/{branchID}?isActive=true|false
+     API kaamyab ho tab hi row ek group se doosre me jati hai — warna screen
+     kuch aur dikhati aur backend me kuch aur hota. */
+  const [busy, setBusy] = useState(false);
+
+  const confirmDeactivate = async (group, id) => {
     const list = group === 'launch' ? launch : erp;
     const s = list.find((x) => x.id === id);
-    if (s) {
-      (group === 'launch' ? setLaunch : setErp)((prev) => prev.filter((x) => x.id !== id));
-      setInactive((prev) => [...prev, { ...s, staffSignup: s.staffSignup ?? 0, stuSignup: s.stuSignup ?? 0 }]);
+    setBusy(true);
+    try {
+      await schoolPermissionsApi.setBranchStatus(id, false);
+      if (s) {
+        (group === 'launch' ? setLaunch : setErp)((prev) => prev.filter((x) => x.id !== id));
+        setInactive((prev) => [...prev, { ...s, staffSignup: s.staffSignup ?? 0, stuSignup: s.stuSignup ?? 0 }]);
+      }
+      setModal(null);
+      toast?.(`${s?.name || 'School'} moved to Inactive`, 'info');
+    } catch (err) {
+      toast?.(err?.message || 'Could not deactivate this school', 'error');
+    } finally {
+      setBusy(false);
     }
-    setModal(null); toast?.('School moved to Inactive', 'info');
   };
-  const confirmActivate = (id) => {
+
+  const confirmActivate = async (id) => {
     const s = inactive.find((x) => x.id === id);
-    if (s) { setInactive((prev) => prev.filter((x) => x.id !== id)); setLaunch((prev) => [...prev, s]); }
-    setModal(null); toast?.('School reactivated successfully!', 'success');
+    setBusy(true);
+    try {
+      await schoolPermissionsApi.setBranchStatus(id, true);
+      if (s) { setInactive((prev) => prev.filter((x) => x.id !== id)); setLaunch((prev) => [...prev, s]); }
+      setModal(null);
+      toast?.(`${s?.name || 'School'} reactivated successfully!`, 'success');
+    } catch (err) {
+      toast?.(err?.message || 'Could not reactivate this school', 'error');
+    } finally {
+      setBusy(false);
+    }
   };
 
   const counts = { launch: launch.length, erp: erp.length, inactive: inactive.length };
@@ -86,8 +142,18 @@ export default function SchoolStatus({ toast }) {
             <div className="page-title">Schools Progress</div>
             <div className="page-sub">Manage school onboarding, ERP access, and inactive branches from one place.</div>
           </div>
+          <button className="btn-sm" style={{ marginLeft: 'auto', height: 34 }} onClick={load} disabled={loading} data-tip="Reload from API">
+            <i className={`fa-solid fa-rotate${loading ? ' fa-spin' : ''}`} /> Refresh
+          </button>
         </div>
       </div>
+
+      {loading && (
+        <div className="section-card" style={{ textAlign: 'center', padding: 40, color: 'var(--tm)' }}>
+          <i className="fa-solid fa-spinner fa-spin" style={{ fontSize: 24, display: 'block', margin: '0 auto 12px', opacity: 0.5 }} />
+          <div style={{ fontSize: 14, fontWeight: 700 }}>Loading schools…</div>
+        </div>
+      )}
 
       {/* STATS */}
       <div className="stat-grid" style={{ gridTemplateColumns: 'repeat(3,1fr)' }}>
@@ -103,12 +169,12 @@ export default function SchoolStatus({ toast }) {
         <button className={`app-tab${tab === 'inactive' ? ' active' : ''}`} onClick={() => setTab('inactive')}><i className="fa-solid fa-moon" /> Inactive Schools <span className="tab-count">{counts.inactive}</span></button>
       </div>
 
-      {tab === 'launch' && (
+      {!loading && tab === 'launch' && (
         <LaunchPanel rows={launch} onAssign={(id, v) => assign('launch', id, v)}
           onDeactivate={(s) => setModal({ type: 'deactivate', group: 'launch', school: s })}
           onDetails={(s) => setModal({ type: 'details', school: s })} />
       )}
-      {tab === 'erp' && (
+      {!loading && tab === 'erp' && (
         <ErpPanel rows={erp} sub={erpSub} setSub={setErpSub}
           onAssign={(id, v) => assign('erp', id, v)}
           onDeactivate={(s) => setModal({ type: 'deactivate', group: 'erp', school: s })}
@@ -117,7 +183,7 @@ export default function SchoolStatus({ toast }) {
           onEnqAdd={(s) => setModal({ type: 'enqEdit', school: s, bug: null })}
           onEnqDetail={(s) => setModal({ type: 'enqDetail', school: s })} />
       )}
-      {tab === 'inactive' && (
+      {!loading && tab === 'inactive' && (
         <InactivePanel rows={inactive}
           onActivate={(s) => setModal({ type: 'activate', school: s })}
           onDetails={(s) => setModal({ type: 'details', school: s })} />
@@ -129,12 +195,14 @@ export default function SchoolStatus({ toast }) {
         <ConfirmModal tone="warn" icon="fa-triangle-exclamation" title="Are you sure?"
           sub="Do you really want to deactivate this school? It will be moved to Inactive Schools and lose ERP access."
           confirmText="OK, Deactivate" confirmClass="btn-danger" confirmIcon="fa-moon"
+          busy={busy}
           onConfirm={() => confirmDeactivate(modal.group, modal.school.id)} onClose={() => setModal(null)} />
       )}
       {modal?.type === 'activate' && (
         <ConfirmModal tone="green" icon="fa-circle-check" title="Reactivate School?"
           sub="This school will be moved back to active Launch Setup Schools and regain system access."
           confirmText="Make Active" confirmClass="btn-success" confirmIcon="fa-circle-check"
+          busy={busy}
           onConfirm={() => confirmActivate(modal.school.id)} onClose={() => setModal(null)} />
       )}
       {modal?.type === 'erpDetail' && (
@@ -158,9 +226,12 @@ export default function SchoolStatus({ toast }) {
 /* ═══════════════════════ LAUNCH PANEL ═══════════════════════ */
 function FilterBar({ children }) { return <div className="filter-bar">{children}</div>; }
 function AssignSelect({ value, options, onChange }) {
+  /* API se aayi hui value list me na ho (e.g. "User #7") to usay bhi option
+     bana do — warna select chup-chaap pehli option dikhane lagta hai. */
+  const opts = value && !options.includes(value) ? [value, ...options] : options;
   return (
     <select className="assign-select" value={value} onChange={(e) => onChange(e.target.value)}>
-      {options.map((o) => <option key={o}>{o}</option>)}
+      {opts.map((o) => <option key={o}>{o}</option>)}
     </select>
   );
 }
@@ -418,7 +489,7 @@ function BranchDetailsModal({ school: s, onClose }) {
 }
 
 /* ── Confirm (deactivate / activate) ── */
-function ConfirmModal({ tone, icon, title, sub, confirmText, confirmClass, confirmIcon, onConfirm, onClose }) {
+function ConfirmModal({ tone, icon, title, sub, confirmText, confirmClass, confirmIcon, onConfirm, onClose, busy = false }) {
   const toneStyle = tone === 'green'
     ? { background: 'rgba(22,163,74,.1)', border: '2px solid rgba(22,163,74,.25)', color: '#16A34A' }
     : { background: 'rgba(217,119,6,.1)', border: '2px solid rgba(217,119,6,.25)', color: '#D97706' };
@@ -429,8 +500,10 @@ function ConfirmModal({ tone, icon, title, sub, confirmText, confirmClass, confi
         <div className="confirm-title">{title}</div>
         <div className="confirm-sub">{sub}</div>
         <div className="confirm-btns">
-          <button className="btn-secondary" onClick={onClose}>Cancel</button>
-          <button className={confirmClass} onClick={onConfirm}><i className={`fa-solid ${confirmIcon}`} /> {confirmText}</button>
+          <button className="btn-secondary" onClick={onClose} disabled={busy}>Cancel</button>
+          <button className={confirmClass} onClick={onConfirm} disabled={busy}>
+            <i className={`fa-solid ${busy ? 'fa-spinner fa-spin' : confirmIcon}`} /> {busy ? 'Saving…' : confirmText}
+          </button>
         </div>
       </div>
     </Overlay>

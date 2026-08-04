@@ -87,6 +87,24 @@ export const EP = {
     disableLaunchSetup: (id) => `${SA_ROOT}/api/SchoolPermissions/disable-launch-setup/${id}`,
   },
 
+  /* ── Schools Progress — LIVE SchoolMentorSuperAdminAPI.
+     GET branch-report?isActive=&launchSetup= → har branch ka setup progress:
+       { category, branchID, branchName, totalStaff, totalStudents, assignedTo,
+         generalDetails{ principalName, principalPhone, totalStudents, totalStaff,
+                         studentSignUp, staffSignUp, createdAt },
+         stateDetails{ schoolTab, classTab, studentTab, departmentTab, staffTab,
+                       syllabusTab, timeTableTab },
+         compulsionDetails{ staffContact, subjectAssigned, parentContact,
+                            previousDeus } }
+     DONO query params LAAZMI hain — ek bhi chhoot jaye to API 0 rows deti hai.
+     Screen ke teen tabs isi tarah banate hain:
+       Launch Setup → isActive=true&launchSetup=0   (category "LaunchSetup School")
+       ERP          → isActive=true&launchSetup=1   (category "ERP Schools")
+       Inactive     → isActive=false (dono launchSetup) ── */
+  schoolProgress: {
+    branchReport: () => `${SA_ROOT}/api/AHM_School_Progress/branch-report`,
+  },
+
   /* ── E-Tube ── */
   etube: {
     videos: () => `${ROOT}/etube/videos`,                 // GET / POST(multipart)
