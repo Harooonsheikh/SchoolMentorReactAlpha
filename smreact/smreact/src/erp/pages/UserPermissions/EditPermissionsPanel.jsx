@@ -100,19 +100,13 @@ export default function EditPermissionsPanel({ user, roles, readOnly, onClose, o
      modules always stay because ModuleContext refuses to flip
      them off. */
   const { moduleState } = useModules();
-  /* Agar user ko role assigned hai jiske modules defined hain, to Edit
-     Permissions ki left menu + matrix sirf UNHI modules tak limit rahein
-     (role ke against jo modules banaye the) — baaki saare modules chhupe.
-     Role ke bina (ya bina modules) → poora active tree dikhao. */
-  const visibleTree = useMemo(() => {
-    const active = getActiveModuleTree(moduleState);
-    if (role && Array.isArray(role.modules) && role.modules.length) {
-      const wanted = new Set(role.modules);
-      const filtered = active.filter((m) => wanted.has(m.id));
-      return filtered.length ? filtered : active;
-    }
-    return active;
-  }, [moduleState, role]);
+  /* Role assigned ho ya na ho, left menu + matrix me school ke SAARE active
+     modules dikhte hain. Pehle sirf role ke modules dikhte the, is liye ye
+     nahi pata chalta tha ke user ko aur kya kya nahi mila — ab role wale
+     modules ke menus checked aate hain (count ke saath) aur baqi modules
+     unchecked, count 0. Kisi module ki extra permission chahiye to yahin se
+     de di jaye — module dhoondhne ke liye role badalna nahi parta. */
+  const visibleTree = useMemo(() => getActiveModuleTree(moduleState), [moduleState]);
 
   /* Deactivated (Inactive) user ka ERP access khatam — is liye panel me
      hamesha sab kuch unchecked dikhao, chahe backend me purani grants pari

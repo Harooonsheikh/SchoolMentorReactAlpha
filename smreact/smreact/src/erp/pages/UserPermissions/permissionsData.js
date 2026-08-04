@@ -5,7 +5,7 @@
    when wiring a backend; the rest of the module is shape-stable.
    ═══════════════════════════════════════════════════════════════════ */
 
-import { MODULE_TO_TREE_MAP } from '../../config/moduleConfig';
+import { MODULE_TO_TREE_MAP, TREE_TO_MODULE_MAP } from '../../config/moduleConfig';
 
 /* ─── Supported permission actions ─── */
 export const PERMISSION_ACTIONS = [
@@ -34,6 +34,14 @@ export const ACTION_LABELS = {
 
 /* ─── Module tree — every module has a flat list of sub-items (screens). ─── */
 export const MODULE_TREE = [
+  { id: 'dashboard',   label: 'Dashboard',         icon: 'fa-chart-pie',
+    children: [
+      /* ── ERP ka landing screen (Dashboard.jsx → Admin/Teacher view).
+            Ek hi read-only screen hai, is liye sirf View. School level par
+            ye module band nahi hota — sirf role/user permission se milta
+            hai (dekho getActiveModuleTree). */
+      { id: 'dash.overview', label: 'Dashboard' },
+    ] },
   { id: 'academics',   label: 'Academics',         icon: 'fa-book-open-reader',
     children: [
       /* ── Scheme of Studies branch — mirrors the L2 tabs inside the
@@ -237,7 +245,10 @@ export function getActiveModuleTree(moduleState) {
       .map(([id]) => MODULE_TO_TREE_MAP[id])
       .filter(Boolean)
   );
-  return MODULE_TREE.filter(m => activeTreeIds.has(m.id));
+  /* Jis tree module ka koi registry module hi nahi (e.g. Dashboard), wo school
+     level par on/off hota hi nahi — usay filter na karo, warna wo permission
+     screen se poora gaayab ho jata hai. Baqi sab moduleState ke mutabiq. */
+  return MODULE_TREE.filter(m => activeTreeIds.has(m.id) || !TREE_TO_MODULE_MAP[m.id]);
 }
 
 /* ─── Module-wise permission availability map ─────────────────────────
@@ -246,6 +257,10 @@ export function getActiveModuleTree(moduleState) {
    excluded from selections, templates, stats and saved state.
    ─────────────────────────────────────────────────────────────────── */
 export const MODULE_PERMISSIONS = {
+  /* ─── DASHBOARD — sirf padhne wali screen (KPI cards + charts).
+         Koi create/edit/delete nahi, is liye sirf View. */
+  'dash.overview':         ['view'],
+
   /* ─── ACADEMICS — derived from real buttons in Academics.js +
          LessonPlans.js (audited 2026-05-31). Each list contains ONLY
          the actions that have a matching button / handler wired in

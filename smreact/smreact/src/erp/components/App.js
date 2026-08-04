@@ -194,11 +194,12 @@ export default function App() {
     if (!modulesReady || !permsReady) return false;
     const modId = NAV_TO_MODULE_MAP[navId];
     if (!modId) {
-      /* Registry-backed nahi (Dashboard/Feedback). Dashboard sirf
-         full-access users (School Head / bina permission-data) ko dikhe;
-         jis user ka explicit permission set hai usay sirf granted modules
-         dikhein — Dashboard nahi. */
-      if (navId === 'dashboard') return fullAccess;
+      /* Registry-backed nahi (Dashboard/Feedback). Dashboard ab role/user
+         permission se bhi mil sakta hai (MODULE_TREE me "Dashboard" module
+         hai), is liye: full-access users ko hamesha, aur baqi users ko tab
+         jab unki permissions me Dashboard granted ho. Granted na ho to
+         chhupa rahega — pehle jaisa. */
+      if (navId === 'dashboard') return fullAccess || canModule('Dashboard');
       return true;
     }
     if (!isModuleActive(modId)) return false; /* school ne module off kiya hua */

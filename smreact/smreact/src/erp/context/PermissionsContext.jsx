@@ -37,9 +37,15 @@ const norm = (s) => String(s ?? '').trim().toLowerCase();
    me hai hi nahi → sirf School Head (fullAccess) ko dikhega. School Head
    aur jin users ka koi permission-data nahi (fail-open) — dono ko poora
    access milta hai, is liye koi lockout nahi. */
-const GATEABLE_MODULES = new Set(
-  MODULE_REGISTRY.map((m) => norm(m.label)),
-);
+const GATEABLE_MODULES = new Set([
+  ...MODULE_REGISTRY.map((m) => norm(m.label)),
+  /* Dashboard MODULE_REGISTRY me nahi hai (school level par on/off nahi hota),
+     magar ab role/user permission me grantable module hai. Yahan rakhna zaroori
+     hai taake "response me nahi = access nahi" wala usool is par bhi lage —
+     warna canModule('Dashboard') har us user ke liye true ho jata jiske
+     permission set me Dashboard hai hi nahi. */
+  'dashboard',
+]);
 
 const FULL_ACCESS_VALUE = {
   ready: true, fullAccess: true, isSchoolHead: false,
