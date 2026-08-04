@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Tooltip from './Tooltip';
 import TutorialModal from './TutorialModal';
 import * as studentService from '../services/studentService';
@@ -378,7 +378,13 @@ function buildStuProfileHTML(s, cls, school, isBW = false) {
   /* ── Two-column row helper ── */
   const row = (l, v) => `<div style="display:flex;padding:7px 0;border-bottom:1px solid #eef2f9"><div style="width:150px;font-size:11.5px;color:#64748B;font-weight:600">${l}</div><div style="flex:1;font-size:12.5px;font-weight:600;color:#0F172A">${v}</div></div>`;
 
-  /* ── Sample document SVGs (faithful copies from HTML reference) ── */
+  /* ── Sample document SVGs (faithful copies from HTML reference) ──
+     AHEM: in cards ki har value student ke apne record se aani chahiye. Pehle
+     khali field par demo data ("House 12, Model Town, Lahore", jhooti CNIC/
+     B-Form numbers, "Mrs. <father>") chhap jata tha — yani jo address user ne
+     kabhi enter kiya hi nahi tha wo report me student ka address ban kar aa
+     raha tha. Ab na-mojood field par sirf `—` aata hai. */
+  const orDash = (v) => (String(v ?? '').trim() ? stuEsc(v) : '—');
   const sampleBform = () => `
     <svg viewBox="0 0 600 380" width="100%" style="display:block;border-radius:8px;border:1px solid ${isBW ? '#ccc' : '#C7D7F0'};background:#fff">
       <rect width="600" height="380" fill="#fff"/>
@@ -389,7 +395,7 @@ function buildStuProfileHTML(s, cls, school, isBW = false) {
       <text x="30" y="92" fill="#64748B" font-size="11" font-family="Poppins" font-weight="700">CHILD NAME</text>
       <text x="30" y="110" fill="#0F172A" font-size="15" font-family="Poppins" font-weight="700">${stuEsc(fullName)}</text>
       <text x="330" y="92" fill="#64748B" font-size="11" font-family="Poppins" font-weight="700">B-FORM / CRC No</text>
-      <text x="330" y="110" fill="#0F172A" font-size="15" font-family="monospace" font-weight="700">${stuEsc(s.bform || '35202-1234567-1')}</text>
+      <text x="330" y="110" fill="#0F172A" font-size="15" font-family="monospace" font-weight="700">${orDash(s.bform)}</text>
       <text x="30" y="150" fill="#64748B" font-size="11" font-family="Poppins" font-weight="700">FATHER NAME</text>
       <text x="30" y="168" fill="#0F172A" font-size="14" font-family="Poppins" font-weight="600">${stuEsc(s.father || '—')}</text>
       <text x="330" y="150" fill="#64748B" font-size="11" font-family="Poppins" font-weight="700">DATE OF BIRTH</text>
@@ -397,10 +403,10 @@ function buildStuProfileHTML(s, cls, school, isBW = false) {
       <text x="30" y="208" fill="#64748B" font-size="11" font-family="Poppins" font-weight="700">GENDER</text>
       <text x="30" y="226" fill="#0F172A" font-size="14" font-family="Poppins" font-weight="600">${stuEsc(s.gender || '—')}</text>
       <text x="330" y="208" fill="#64748B" font-size="11" font-family="Poppins" font-weight="700">FAMILY No</text>
-      <text x="330" y="226" fill="#0F172A" font-size="14" font-family="monospace" font-weight="600">${stuEsc(s.family || '70123')}</text>
+      <text x="330" y="226" fill="#0F172A" font-size="14" font-family="monospace" font-weight="600">${orDash(s.family)}</text>
       <rect x="30" y="250" width="540" height="1" fill="#E4ECF8"/>
       <text x="30" y="284" fill="#64748B" font-size="11" font-family="Poppins" font-weight="700">PERMANENT ADDRESS</text>
-      <text x="30" y="302" fill="#0F172A" font-size="13" font-family="Poppins" font-weight="600">${stuEsc(s.address || 'House 12, Model Town, Lahore')}</text>
+      <text x="30" y="302" fill="#0F172A" font-size="13" font-family="Poppins" font-weight="600">${orDash(s.address)}</text>
       <rect x="420" y="270" width="150" height="80" rx="6" fill="none" stroke="${isBW ? '#ccc' : '#BFDBFE'}" stroke-dasharray="4 3"/>
       <text x="495" y="315" fill="#94a3b8" font-size="11" text-anchor="middle" font-family="Poppins">QR / Stamp</text>
       <text x="30" y="366" fill="#94a3b8" font-size="9" font-family="Poppins">SAMPLE — for layout visualization only · Government of Pakistan</text>
@@ -420,20 +426,20 @@ function buildStuProfileHTML(s, cls, school, isBW = false) {
         <text x="210" y="220" fill="#64748B" font-size="14" font-family="Poppins" font-weight="700">Identity Number</text>
         <text x="210" y="246" fill="#0F172A" font-size="22" font-family="monospace" font-weight="700">${cnic}</text>
         <text x="210" y="292" fill="#64748B" font-size="14" font-family="Poppins" font-weight="700">Date of Birth</text>
-        <text x="210" y="316" fill="#0F172A" font-size="17" font-family="Poppins" font-weight="600">01-01-1985</text>
+        <text x="210" y="316" fill="#0F172A" font-size="17" font-family="Poppins" font-weight="600">—</text>
         <text x="560" y="292" fill="#64748B" font-size="14" font-family="Poppins" font-weight="700">Gender</text>
         <text x="560" y="316" fill="#0F172A" font-size="17" font-family="Poppins" font-weight="600">${holder === stuEsc(s.mother || '') ? 'F' : 'M'}</text>
         <path d="M150 420 q40 -26 80 0 t80 0 t80 0 t80 0" stroke="${isBW ? '#bbb' : '#93C5FD'}" fill="none" stroke-width="2" opacity=".6"/>
         <text x="28" y="470" fill="#0F172A" font-size="15" font-family="Poppins" font-style="italic" font-weight="600">Signature</text>
       ` : `
         <text x="28" y="140" fill="#64748B" font-size="14" font-family="Poppins" font-weight="700">Present Address</text>
-        <text x="28" y="166" fill="#0F172A" font-size="16" font-family="Poppins" font-weight="600">${stuEsc(s.address || 'House 12, Model Town, Lahore')}</text>
+        <text x="28" y="166" fill="#0F172A" font-size="16" font-family="Poppins" font-weight="600">${orDash(s.address)}</text>
         <text x="28" y="216" fill="#64748B" font-size="14" font-family="Poppins" font-weight="700">Permanent Address</text>
-        <text x="28" y="242" fill="#0F172A" font-size="16" font-family="Poppins" font-weight="600">${stuEsc(s.address || 'House 12, Model Town, Lahore')}</text>
+        <text x="28" y="242" fill="#0F172A" font-size="16" font-family="Poppins" font-weight="600">${orDash(s.address)}</text>
         <text x="28" y="300" fill="#64748B" font-size="14" font-family="Poppins" font-weight="700">Date of Issue</text>
-        <text x="28" y="326" fill="#0F172A" font-size="16" font-family="Poppins" font-weight="600">12-04-2018</text>
+        <text x="28" y="326" fill="#0F172A" font-size="16" font-family="Poppins" font-weight="600">—</text>
         <text x="320" y="300" fill="#64748B" font-size="14" font-family="Poppins" font-weight="700">Date of Expiry</text>
-        <text x="320" y="326" fill="#0F172A" font-size="16" font-family="Poppins" font-weight="600">11-04-2028</text>
+        <text x="320" y="326" fill="#0F172A" font-size="16" font-family="Poppins" font-weight="600">—</text>
         <rect x="600" y="120" width="220" height="220" rx="8" fill="#fff" stroke="${isBW ? '#ccc' : '#BFDBFE'}"/>
         ${Array.from({ length: 8 }).map((_, r) => Array.from({ length: 8 }).map((_, col) => ((r * 7 + col * 3) % 3 === 0) ? `<rect x="${612 + col * 25}" y="${132 + r * 25}" width="22" height="22" fill="#0F172A"/>` : '').join('')).join('')}
         <text x="710" y="370" fill="#94a3b8" font-size="12" text-anchor="middle" font-family="Poppins">Smart Chip / QR</text>
@@ -454,11 +460,11 @@ function buildStuProfileHTML(s, cls, school, isBW = false) {
       <text x="60" y="212" fill="#64748B" font-size="12" font-family="Poppins" font-weight="700">DATE OF BIRTH</text>
       <text x="60" y="232" fill="#0F172A" font-size="15" font-family="Poppins" font-weight="600">${fmtLong(s.dob)}</text>
       <text x="330" y="212" fill="#64748B" font-size="12" font-family="Poppins" font-weight="700">PLACE OF BIRTH</text>
-      <text x="330" y="232" fill="#0F172A" font-size="15" font-family="Poppins" font-weight="600">Lahore, Punjab</text>
+      <text x="330" y="232" fill="#0F172A" font-size="15" font-family="Poppins" font-weight="600">—</text>
       <text x="60" y="272" fill="#64748B" font-size="12" font-family="Poppins" font-weight="700">FATHER'S NAME</text>
       <text x="60" y="292" fill="#0F172A" font-size="15" font-family="Poppins" font-weight="600">${stuEsc(s.father || '—')}</text>
       <text x="330" y="272" fill="#64748B" font-size="12" font-family="Poppins" font-weight="700">MOTHER'S NAME</text>
-      <text x="330" y="292" fill="#0F172A" font-size="15" font-family="Poppins" font-weight="600">${stuEsc(s.mother || ('Mrs. ' + (s.father || 'Khan').split(' ')[0]))}</text>
+      <text x="330" y="292" fill="#0F172A" font-size="15" font-family="Poppins" font-weight="600">${orDash(s.mother)}</text>
       <text x="60" y="332" fill="#64748B" font-size="12" font-family="Poppins" font-weight="700">REGISTRATION No</text>
       <text x="60" y="352" fill="#0F172A" font-size="15" font-family="monospace" font-weight="600">BC-${stuEsc(s.reg || '')}</text>
       <circle cx="470" cy="330" r="40" fill="none" stroke="${isBW ? '#999' : '#C9A227'}" stroke-width="2"/><text x="470" y="334" text-anchor="middle" fill="${isBW ? '#999' : '#C9A227'}" font-size="10" font-family="Cinzel" font-weight="700">SEAL</text>
@@ -491,16 +497,33 @@ function buildStuProfileHTML(s, cls, school, isBW = false) {
       <div style="background:${isBW ? '#fcfcfc' : '#F8FAFC'};border:1px solid ${isBW ? '#e5e5e5' : '#E8EFFB'};border-radius:12px;padding:16px">${bodyHtml}</div>
     </div>`;
 
-  const has = (k) => !!(s.stdDocs || {})[k];
+  const slot = (k) => (s.stdDocs || {})[k] || null;
+  const has  = (k) => !!slot(k);
+
+  /* Jo file user ne waqai upload ki hai WOHI dikhao. Pehle ye report hamesha
+     apni banai hui "SAMPLE" drawing lagati thi, is liye document attach hone ke
+     bawajood asli scan/tasveer kabhi nazar nahi aati thi. Path na ho (purana
+     record) to hi sample drawing fallback ke tor par. */
+  const docImg = (path, alt) => `<img src="${stuEsc(path)}" alt="${stuEsc(alt)}" loading="lazy" style="display:block;width:100%;max-height:520px;object-fit:contain;border-radius:8px;border:1px solid ${isBW ? '#ccc' : '#C7D7F0'};background:#fff"/>`;
+  const docBody = (k, alt, sampleHtml) => {
+    const p = slot(k)?.path;
+    return p ? docImg(p, alt) : sampleHtml;
+  };
+  const cnicPair = (holder, cnic) =>
+    `<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px"><div><div style="font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;margin-bottom:5px">Front</div>${sampleCnic(holder, cnic, 'Front')}</div><div><div style="font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;margin-bottom:5px">Back</div>${sampleCnic(holder, cnic, 'Back')}</div></div>`;
+
   let docSections = '';
-  if (has('bform')) docSections += docSection('B-Form', '&#x1F194;', sampleBform());
+  if (has('bform')) docSections += docSection('B-Form', '&#x1F194;', docBody('bform', 'B-Form', sampleBform()));
   if (has('fcnic')) docSections += docSection('Father CNIC', '&#x1F4B3;',
-    `<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px"><div><div style="font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;margin-bottom:5px">Front</div>${sampleCnic(stuEsc(s.father || 'Father'), stuEsc(s.fcnic || '35202-1234567-1'), 'Front')}</div><div><div style="font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;margin-bottom:5px">Back</div>${sampleCnic(stuEsc(s.father || 'Father'), stuEsc(s.fcnic || '35202-1234567-1'), 'Back')}</div></div>`);
+    docBody('fcnic', 'Father CNIC', cnicPair(orDash(s.father), orDash(s.fcnic))));
   if (has('mcnic')) docSections += docSection('Mother CNIC', '&#x1F4B3;',
-    `<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px"><div><div style="font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;margin-bottom:5px">Front</div>${sampleCnic(stuEsc(s.mother || 'Mother'), stuEsc(s.mcnic || '35202-7654321-2'), 'Front')}</div><div><div style="font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;margin-bottom:5px">Back</div>${sampleCnic(stuEsc(s.mother || 'Mother'), stuEsc(s.mcnic || '35202-7654321-2'), 'Back')}</div></div>`);
-  if (has('birth')) docSections += docSection('Birth Certificate', '&#x1F4DC;', sampleBirth());
-  if (has('prevcert')) docSections += docSection('Previous School Certificate', '&#x1F3EB;', samplePrevCert());
-  (s.docs || []).forEach(d => { docSections += docSection(d.name || 'Document', '&#x1F4CE;', sampleCustom(d.name || 'Document')); });
+    docBody('mcnic', 'Mother CNIC', cnicPair(orDash(s.mother), orDash(s.mcnic))));
+  if (has('birth')) docSections += docSection('Birth Certificate', '&#x1F4DC;', docBody('birth', 'Birth Certificate', sampleBirth()));
+  if (has('prevcert')) docSections += docSection('Previous School Certificate', '&#x1F3EB;', docBody('prevcert', 'Previous School Certificate', samplePrevCert()));
+  (s.docs || []).forEach(d => {
+    const name = d.name || 'Document';
+    docSections += docSection(name, '&#x1F4CE;', d.path ? docImg(d.path, name) : sampleCustom(name));
+  });
   const docsHtml = docSections || '<span style="font-size:12px;color:#94a3b8">No documents uploaded.</span>';
 
   /* ── Fee adjustment table rows ── */
@@ -751,6 +774,16 @@ function buildStuBulkIdHTML(students, cls, school, template, theme, session) {
 function buildStuInactiveReportHTML(list, title, school) {
   const brand = '#1E3A8A';
   const money = (n) => 'Rs. ' + Number(n || 0).toLocaleString('en-PK');
+  /* "Inactive On" — student ko kab inactive kiya gaya (API ka inactiveDate).
+     "31 Jul 2026" ki tarah, baqi report ki tarah hi. */
+  const inactiveOn = (v) => {
+    const raw = String(v || '').trim();
+    if (!raw) return '—';
+    const d = new Date(raw.replace(' ', 'T'));
+    return Number.isNaN(d.getTime())
+      ? raw
+      : d.toLocaleDateString('en-PK', { day: '2-digit', month: 'short', year: 'numeric' });
+  };
   const campus = school?.campus || 'Main Campus';
   const addr   = school?.address || '';
   const phone  = school?.phone || '';
@@ -769,10 +802,11 @@ function buildStuInactiveReportHTML(list, title, school) {
       <td style="padding:8px 10px;border-bottom:1px solid #eef2f9;font-weight:600">${stuEsc(stuFullName(s))}</td>
       <td style="padding:8px 10px;border-bottom:1px solid #eef2f9">${stuEsc(s.father || '—')}</td>
       <td style="padding:8px 10px;border-bottom:1px solid #eef2f9">${stuEsc((s.cls || '—') + ' / ' + (s.sec || '—'))}</td>
+      <td style="padding:8px 10px;border-bottom:1px solid #eef2f9;white-space:nowrap">${stuEsc(inactiveOn(s.inactiveDate))}</td>
       <td style="padding:8px 10px;border-bottom:1px solid #eef2f9">${stuEsc(s.reason || '—')}</td>
       <td style="padding:8px 10px;border-bottom:1px solid #eef2f9;text-align:right">${outCell}</td>
     </tr>`;
-  }).join('') || `<tr><td colspan="7" style="padding:24px;text-align:center;color:#94a3b8;font-style:italic">No inactive students for this selection.</td></tr>`;
+  }).join('') || `<tr><td colspan="8" style="padding:24px;text-align:center;color:#94a3b8;font-style:italic">No inactive students for this selection.</td></tr>`;
 
   return `
     <style>
@@ -803,8 +837,8 @@ function buildStuInactiveReportHTML(list, title, school) {
         </div>
         <table style="width:100%;border-collapse:collapse;font-size:12.5px">
           <thead><tr style="background:#EFF6FF">
-            ${['#', 'Reg No', 'Name', 'Father', 'Last Class/Sec', 'Reason', 'Outstanding']
-              .map((h, idx) => `<th style="text-align:${idx === 6 ? 'right' : 'left'};padding:9px 10px;color:#1E40AF;font-size:11px;text-transform:uppercase;letter-spacing:.4px">${h}</th>`).join('')}
+            ${['#', 'Reg No', 'Name', 'Father', 'Last Class/Sec', 'Inactive On', 'Reason', 'Outstanding']
+              .map((h, idx) => `<th style="text-align:${idx === 7 ? 'right' : 'left'};padding:9px 10px;color:#1E40AF;font-size:11px;text-transform:uppercase;letter-spacing:.4px">${h}</th>`).join('')}
           </tr></thead>
           <tbody>${rows}</tbody>
         </table>
@@ -819,6 +853,7 @@ function buildStuClassReportHTML(c, school, isBW = false) {
     <tr>
       <td class="c">${i + 1}</td>
       <td class="mono">${stuEsc(s.reg)}</td>
+      <td class="mono">${stuEsc(s.adm || '—')}</td>
       <td><b>${stuEsc(stuFullName(s))}</b></td>
       <td>${stuEsc(s.father || '—')}</td>
       <td class="c">${stuFmtDate(s.dob)}</td>
@@ -853,14 +888,14 @@ function buildStuClassReportHTML(c, school, isBW = false) {
         <div class="rlogo">${stuLogoImg(school)}</div>
         <div>
           <div class="rname">${stuEsc(school?.name || 'School')}</div>
-          <div class="rtitle">Class Roster — ${stuEsc(c.cls)} (${stuEsc(c.sec)})</div>
+          <div class="rtitle">Student List — ${stuEsc(c.cls)} (${stuEsc(c.sec)})</div>
         </div>
         <div class="meta">Generated: ${stuFmtDate(new Date().toISOString().slice(0, 10))}<br/>${stuEsc(school?.session || '')}</div>
       </div>
       <div class="sec-band"><span>${stuEsc(c.cls)} — Section ${stuEsc(c.sec)}</span><small>${c.students.length} student(s)</small></div>
       <table class="tbl">
-        <thead><tr><th class="c" style="width:30px">#</th><th style="width:90px">Reg No</th><th>Name</th><th>Father Name</th><th class="c" style="width:80px">DOB</th><th class="c" style="width:55px">Gender</th><th style="width:100px">Contact</th><th class="c" style="width:55px">Disc.</th></tr></thead>
-        <tbody>${rows || '<tr><td colspan="8" style="text-align:center;padding:24px;color:#94A3B8">No students.</td></tr>'}</tbody>
+        <thead><tr><th class="c" style="width:30px">#</th><th style="width:90px">Reg No</th><th style="width:90px">Admission No</th><th>Name</th><th>Father Name</th><th class="c" style="width:80px">DOB</th><th class="c" style="width:55px">Gender</th><th style="width:100px">Contact</th><th class="c" style="width:70px">Discount</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="9" style="text-align:center;padding:24px;color:#94A3B8">No students.</td></tr>'}</tbody>
       </table>
       <div class="rfoot">${stuEsc(school?.name || 'School')} · Class Report · Generated ${stuFmtDate(new Date().toISOString().slice(0, 10))}</div>
     </div>`;
@@ -1006,7 +1041,14 @@ function buildStuCertHTML(s, cls, school, type, style, opts) {
 
   /* ── Decorative SVGs ── */
   const cornerSvg  = (slot) => `<svg class="corner ${slot}" viewBox="0 0 70 70" fill="none"><path d="M4 4 L4 32 Q4 4 32 4 Z" fill="none" stroke="#2D7DD2" stroke-width="2"/><path d="M4 4 L28 4 Q4 4 4 28 Z" fill="rgba(26,188,205,0.15)"/><circle cx="8" cy="8" r="3" fill="#1ABCCD"/><path d="M14 4 L4 4 L4 14" stroke="#F5C842" stroke-width="1.5" fill="none"/></svg>`;
-  const headLogo   = `<svg width="52" height="52" viewBox="0 0 64 64" fill="none"><polygon points="32,10 60,24 32,32 4,24" fill="#1ABCCD"/><ellipse cx="32" cy="24" rx="9" ry="4.5" fill="rgba(255,255,255,0.2)"/><rect x="56" y="24" width="3" height="11" rx="1.5" fill="rgba(255,255,255,0.8)"/><circle cx="57.5" cy="37" r="3" fill="#F5C842"/><rect x="14" y="36" width="36" height="18" rx="5" fill="rgba(255,255,255,0.12)" stroke="rgba(255,255,255,0.4)" stroke-width="2"/></svg>`;
+  /* Certificate header par SCHOOL ka apna logo — wohi jo baqi har report
+     (ID card, profile, class/inactive/family) lagati hai. Pehle yahan ye
+     default mark hardcoded tha, is liye certificates ka logo baqi reports se
+     alag dikhta tha. Branch ka logo na ho to hi ye default mark. */
+  const defaultMark = `<svg width="52" height="52" viewBox="0 0 64 64" fill="none"><polygon points="32,10 60,24 32,32 4,24" fill="#1ABCCD"/><ellipse cx="32" cy="24" rx="9" ry="4.5" fill="rgba(255,255,255,0.2)"/><rect x="56" y="24" width="3" height="11" rx="1.5" fill="rgba(255,255,255,0.8)"/><circle cx="57.5" cy="37" r="3" fill="#F5C842"/><rect x="14" y="36" width="36" height="18" rx="5" fill="rgba(255,255,255,0.12)" stroke="rgba(255,255,255,0.4)" stroke-width="2"/></svg>`;
+  const headLogo   = school?.logo
+    ? `<img src="${school.logo}" alt="${stuEsc(school?.name || 'School')} logo" style="width:62px;height:62px;object-fit:contain;display:block"/>`
+    : defaultMark;
   const sealSvg    = `<svg width="28" height="28" viewBox="0 0 64 64" fill="none"><polygon points="32,10 60,24 32,32 4,24" fill="#2D7DD2"/><rect x="56" y="24" width="3" height="9" rx="1.5" fill="#4FA3E8"/><circle cx="57.5" cy="35" r="2.5" fill="#1ABCCD"/><rect x="16" y="34" width="32" height="16" rx="4" fill="none" stroke="#2D7DD2" stroke-width="2"/></svg>`;
   const sealBlock  = `<div class="seal">${sealSvg}<div class="seal-text">${stuEsc(school?.name || 'School')} Official Seal</div></div>`;
   const sigBlock   = (g) => `<div class="sign-block"><div class="sign-line"></div><div class="sign-label">${stuEsc(g.name)}</div><div class="sign-sub">${stuEsc(g.role)}</div><div class="sign-sub">${stuEsc(school?.name || 'School')}</div></div>`;
@@ -1261,13 +1303,29 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
   const { data: serverNextAdm = 1100 }  = useAsync(studentService.getStuNextAdm, 1100);
   const famArr = families;
 
-  /* Reg numbers of students already linked to any family tree (from the
-     families' embedded members). Used to disable "Add to Family Tree" for
-     students who are already in a family. Students carrying s.family are
-     covered directly in the row. */
-  const linkedRegs = useMemo(
-    () => new Set(famArr.flatMap(f => (f.members || []).map(m => m.reg))),
+  /* Kaun sa student WAQAI kisi family tree me hai — iska wahid sabot trees ke
+     apne members hain (families[].members[]), student ka `familyNo` NAHI.
+     familyNo ek azaad text field hai (e.g. "FAM-3001"); wo likha hona kisi
+     tree me hone ki daleel nahi — usi wajah se aise students ko galti se
+     "Already in a Family Tree" dikha kar unka link button band kar diya jata
+     tha. Match student id par (reg blank/badal sakta hai); jis member ka id
+     na ho sirf usi ke liye reg par fallback. */
+  const linkedIds = useMemo(
+    () => new Set(famArr.flatMap(f => (f.members || [])
+      .map(m => String(m._id || ''))
+      .filter(Boolean))),
     [famArr]
+  );
+  const linkedRegs = useMemo(
+    () => new Set(famArr.flatMap(f => (f.members || [])
+      .filter(m => !m._id)
+      .map(m => String(m.reg || ''))
+      .filter(Boolean))),
+    [famArr]
+  );
+  const isInFamilyTree = useCallback(
+    (s) => linkedIds.has(String(s?._id || '')) || linkedRegs.has(String(s?.reg || '')),
+    [linkedIds, linkedRegs]
   );
 
   const list = classes;
@@ -1410,7 +1468,9 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
       ...school,
       name:    branch?.branchName || school?.name,
       address: branch?.address    || school?.address,
-      logo:    branch?.branchLogo || school?.logo,
+      /* report-header ka logo bhi usi normalizer se (backend kabhi localhost
+         URL bhej deta hai — us surat me image kisi aur machine par na aati). */
+      logo:    studentService.stuFileUrl(branch?.branchLogo) || school?.logo,
     };
     if (rpCfg.kind === 'admission') {
       const html = buildStuAdmissionFormHTML(rptSchool, isBW);
@@ -1825,7 +1885,7 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
             onStudentIdCard={(id) => openIdCard(c.key, id)}
             onStudentCert={(id, type) => openCert(c.key, id, type)}
             onStudentAddFamily={(id) => openAddToFamily(c.key, id)}
-            linkedRegs={linkedRegs}
+            isInFamilyTree={isInFamilyTree}
             canStuCreate={canStuCreate} canStuEdit={canStuEdit} canStuDelete={canStuDelete}
             canStuDownload={canStuDownload} canStuPrint={canStuPrint} canFamCreate={canFamCreate}
           />
@@ -1929,7 +1989,7 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
 }
 
 /* ─── Class header row + collapsible student list ─── */
-function StuClassRow({ c, idx, isOpen, onToggle, onReport, onPromote, onAdd, onBulkId, flashReg, onStudentEdit, onStudentMarkInactive, onStudentProfile, onStudentIdCard, onStudentCert, onStudentAddFamily, linkedRegs,
+function StuClassRow({ c, idx, isOpen, onToggle, onReport, onPromote, onAdd, onBulkId, flashReg, onStudentEdit, onStudentMarkInactive, onStudentProfile, onStudentIdCard, onStudentCert, onStudentAddFamily, isInFamilyTree,
   canStuCreate = true, canStuEdit = true, canStuDelete = true, canStuDownload = true, canStuPrint = true, canFamCreate = true }) {
   return (
     <div className={`stu-clswrap${isOpen ? ' open' : ''}`}>
@@ -2026,7 +2086,7 @@ function StuClassRow({ c, idx, isOpen, onToggle, onReport, onPromote, onAdd, onB
                   onIdCard={() => onStudentIdCard(s._id)}
                   onCert={(type) => onStudentCert(s._id, type)}
                   onAddFamily={() => onStudentAddFamily(s._id)}
-                  isLinkedToFamily={Boolean(s.family) || linkedRegs?.has(s.reg)}
+                  isLinkedToFamily={isInFamilyTree ? isInFamilyTree(s) : false}
                   canStuEdit={canStuEdit} canStuDelete={canStuDelete} canStuDownload={canStuDownload}
                   canStuPrint={canStuPrint} canFamCreate={canFamCreate}
                 />
@@ -2210,6 +2270,10 @@ function StuStudentModal({ cfg, activeClass, student, classList, sectionList, cl
 
   const [tab, setTab] = useState('general');
   const [open, setOpen] = useState({ reg: true, parent: true, prev: false, docs: false });
+  /* Save chalta rahe to dobara submit na ho. onSave (student + documents +
+     family link + reload) kai seconds le sakta hai — us dauran user button par
+     do-teen click kar deta tha aur wohi student kai baar insert ho jata tha. */
+  const [saving, setSaving] = useState(false);
 
   /* Form state */
   const [first,    setFirst]    = useState(init.first    || '');
@@ -2388,7 +2452,8 @@ function StuStudentModal({ cfg, activeClass, student, classList, sectionList, cl
   }, [feeHeads, disc]);
 
   /* Validation + save */
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
+    if (saving) return;                 // pehla save abhi chal raha hai
     if (!first.trim())  { toast('First name is required', 'error');     setTab('general'); return; }
     if (!father.trim()) { toast('Father name is required', 'error');    setTab('general'); return; }
     if (!mobile.trim()) { toast('Mobile number is required', 'error');  setTab('general'); return; }
@@ -2422,19 +2487,29 @@ function StuStudentModal({ cfg, activeClass, student, classList, sectionList, cl
       }
     });
 
-    onSave({
-      first: first.trim(), last: last.trim(), gender, dob,
-      cls, sec, bform, nat, reg, adm, family, admdate,
-      father: father.trim(), fcnic, focc, mobile: mobile.trim(),
-      mother, mcnic, guardian, gcontact, email, address,
-      pschool, pgrade, pcontact,
-      photo, stdDocs, docs: customDocs, _disc,
-      pictureFile, docUploads, removedDocIds,
-    });
+    /* Save ke poora hone tak button lock — warna extra clicks se wohi student
+       kai dafa insert ho jata hai. onSave apni errors khud toast karta hai
+       (reject nahi hota), phir bhi finally me lock khol dete hain. */
+    setSaving(true);
+    try {
+      await onSave({
+        first: first.trim(), last: last.trim(), gender, dob,
+        cls, sec, bform, nat, reg, adm, family, admdate,
+        father: father.trim(), fcnic, focc, mobile: mobile.trim(),
+        mother, mcnic, guardian, gcontact, email, address,
+        pschool, pgrade, pcontact,
+        photo, stdDocs, docs: customDocs, _disc,
+        pictureFile, docUploads, removedDocIds,
+      });
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
-    <div className="stu-modal-overlay open" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    /* Save ke dauran modal band na ho — warna user isay band kar ke dobara
+       khol le aur wohi student dubara add ho jaye. */
+    <div className="stu-modal-overlay open" onClick={(e) => { if (!saving && e.target === e.currentTarget) onClose(); }}>
       <div className="stu-modal">
         <div className="stu-modal-head">
           <div className="stu-modal-head-title">
@@ -2451,7 +2526,7 @@ function StuStudentModal({ cfg, activeClass, student, classList, sectionList, cl
             </div>
           </div>
           <Tooltip text="Close">
-            <button className="stu-modal-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark"></i></button>
+            <button className="stu-modal-close" onClick={onClose} disabled={saving} aria-label="Close"><i className="fa-solid fa-xmark"></i></button>
           </Tooltip>
         </div>
 
@@ -2762,9 +2837,12 @@ function StuStudentModal({ cfg, activeClass, student, classList, sectionList, cl
 
         <div className="stu-modal-foot">
           <div className="stu-modal-foot-hint">Fields marked <strong>*</strong> are required.</div>
-          <button className="stu-btn-ghost" onClick={onClose}>Close</button>
-          <button className="stu-btn-primary" onClick={handleSubmit}>
-            <i className="fa-solid fa-floppy-disk"></i> {isEdit ? 'Update Student' : 'Save Student'}
+          <button className="stu-btn-ghost" onClick={onClose} disabled={saving}>Close</button>
+          <button className="stu-btn-primary" onClick={handleSubmit} disabled={saving} aria-busy={saving}>
+            <i className={`fa-solid ${saving ? 'fa-spinner fa-spin' : 'fa-floppy-disk'}`}></i>{' '}
+            {saving
+              ? (isEdit ? 'Updating…' : 'Saving…')
+              : (isEdit ? 'Update Student' : 'Save Student')}
           </button>
         </div>
       </div>
@@ -2829,6 +2907,12 @@ function InactiveStudents({ classes, setClasses, inactive, setInactive, toast })
     return () => document.removeEventListener('mousedown', onClick);
   }, [searchOpen]);
 
+  /* Classes ki tarteeb wahi jo Launch Setup dikhata hai: school ka apna
+     `orderBy` (Nursery → Prep → 1 → 2 …), naam ki alphabetical tarteeb NAHI —
+     warna "Class 9" seedha "Class 6" ke baad aa jata tha aur "Grade 1" baad me.
+     Wahi grades API (get-grades-by-branch) jo Launch Setup use karta hai. */
+  const { data: gradeOrder = [] } = useAsync(studentService.getStuGrades, []);
+
   /* Group inactive list by `${cls}__${sec}`.
      Base: SAARI classes/sections (Active tab jaisा — `classes` prop se), taake
      har class dikhe chahe us me abhi koi inactive student na ho. Phir inactive
@@ -2844,8 +2928,35 @@ function InactiveStudents({ classes, setClasses, inactive, setInactive, toast })
       if (!map[key]) map[key] = { key, cls: s.cls || 'Unassigned', sec: s.sec || '—', students: [] };
       map[key].students.push(s);
     });
-    return Object.values(map).sort((a, b) => a.cls.localeCompare(b.cls) || a.sec.localeCompare(b.sec));
-  }, [classes, inactive]);
+
+    /* Rank: pehle Launch Setup wali grades API se; wo na mile (loading/fail) to
+       `classes` prop ke apne order se — dono soorton me Active tab jaisa hi
+       nateeja. Jo class dono me na ho wo aakhir me, naam ke hisaab se. */
+    const clsRank = new Map();
+    const secRank = new Map();
+    if (gradeOrder.length) {
+      gradeOrder.forEach((g, gi) => {
+        if (!clsRank.has(g.name)) clsRank.set(g.name, gi);
+        (g.sections || []).forEach((s, si) => {
+          const k = `${g.name}__${s.name}`;
+          if (!secRank.has(k)) secRank.set(k, si);
+        });
+      });
+    } else {
+      (classes || []).forEach(c => {
+        if (!clsRank.has(c.cls)) clsRank.set(c.cls, clsRank.size);
+        const k = `${c.cls}__${c.sec}`;
+        if (!secRank.has(k)) secRank.set(k, secRank.size);
+      });
+    }
+    const rankOf = (m, k) => (m.has(k) ? m.get(k) : Number.MAX_SAFE_INTEGER);
+
+    return Object.values(map).sort((a, b) =>
+      rankOf(clsRank, a.cls) - rankOf(clsRank, b.cls)
+      || a.cls.localeCompare(b.cls)
+      || rankOf(secRank, `${a.cls}__${a.sec}`) - rankOf(secRank, `${b.cls}__${b.sec}`)
+      || a.sec.localeCompare(b.sec));
+  }, [classes, inactive, gradeOrder]);
 
   const filteredGroups = useMemo(() => {
     if (!search.trim()) return groups;
@@ -6506,6 +6617,14 @@ select.stu-finput { appearance: none; padding-right: 32px; cursor: pointer; }
   transition: all .15s ease;
 }
 .stu-btn-primary:hover { transform: translateY(-1px); box-shadow: 0 8px 22px rgba(30,58,138,.40); }
+/* Save chalne ke dauran button lock rehta hai (double-submit se bachne ke liye) —
+   hover ka lift/uthao bhi band, taake wo clickable na lage. */
+.stu-btn-primary:disabled, .stu-btn-ghost:disabled, .stu-modal-close:disabled {
+  opacity: .6;
+  cursor: not-allowed;
+}
+.stu-btn-primary:disabled:hover { transform: none; box-shadow: 0 4px 14px rgba(30,58,138,.28); }
+.stu-btn-ghost:disabled:hover { background: var(--bg-card); border-color: var(--border-light); }
 
 [data-theme="dark"] .stu-modal { background: var(--bg-card); }
 [data-theme="dark"] .stu-modal-foot { background: var(--bg-muted); }

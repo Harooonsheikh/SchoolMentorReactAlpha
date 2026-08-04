@@ -4626,7 +4626,9 @@ const setSubjLine = (ci, si, l) => {
   @media print {
     .no-print{display:none!important}
     body{margin:0}
-    .page-gap { height:14mm; }
+    /* Bilkul wohi hashiya jo pehle @page par tha (15mm upar/neeche, 18mm
+       daayen/baayen) — sirf zariya badla hai, nateeja wahi. */
+    .page-gap { height:15mm; }
     .paper-wrap { max-width:none; padding:0 18mm; }
   }
   .paper-wrap { max-width:800px; margin:0 auto; padding:20px; }

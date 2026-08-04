@@ -9,7 +9,7 @@ import {
   mockStuNextFamId,
 } from '../mock/students';
 import { delay, clone } from './_http';
-import { buildUrl, apiMessage } from '../../utils/apiConfig';
+import { buildUrl, getBaseUrl, apiMessage } from '../../utils/apiConfig';
 
 /* ═══════════════════════════════════════════════════════════════════
    Students Module — real API wiring (LaunchSetup).
@@ -38,6 +38,29 @@ const dateOnly = (v) => {
   return m ? m[0] : s;
 };
 
+/* Uploaded file (picture / document) ka URL browser ke qabil banao.
+
+   Backend absolute URL bhejta hai, magar host WOHI hota hai jahan wo khud chal
+   raha hota hai — is liye records me "http://localhost:4100/UploadedDocuments/…"
+   aa jata hai. User ke browser me wo localhost user ka apna computer hai, jahan
+   koi server nahi — image chup-chaap load hone me nakaam ho jati hai aur screen
+   par kuch nahi aata. Aise loopback URLs ko configured API base par dobara joad
+   dete hain; baqi (sahi host ya data:) jaise hain waise rehte hain. */
+export function stuFileUrl(u) {
+  const v = String(u || '').trim();
+  if (!v) return '';
+  if (/^data:|^blob:/i.test(v)) return v;
+  const base = String(getBaseUrl() || '').replace(/\/+$/, '');
+  if (!/^https?:\/\//i.test(v)) return base ? `${base}${v.startsWith('/') ? v : `/${v}`}` : v;
+  try {
+    const { hostname, pathname, search } = new URL(v);
+    const isLoopback = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+    return (isLoopback && base) ? `${base}${pathname}${search}` : v;
+  } catch {
+    return v;
+  }
+}
+
 /* Standard document slots ↔ backend `documentType` strings. The UI keys its
    five fixed document cards by these short keys; the backend stores/returns the
    PascalCase names on the right. Anything else counts as a custom ("Other")
@@ -63,7 +86,7 @@ function mapStudentDocuments(list) {
   (Array.isArray(list) ? list : []).forEach(d => {
     const id   = pick(d, 'id', 'documentID', 'documentId') || 0;
     const type = pick(d, 'documentType');
-    const path = pick(d, 'documentPath', 'path') || '';
+    const path = stuFileUrl(pick(d, 'documentPath', 'path') || '');
     const key  = DOC_TYPE_TO_KEY[type];
     if (key) stdDocs[key] = { id, path, type };
     else if (type) docs.push({ id, name: type, path });
@@ -99,14 +122,69 @@ function mapStudent(st) {
     pschool:  pick(st, 'previousSchoolName'),
     pgrade:   pick(st, 'previousSchoolPreviousGrade'),
     pcontact: pick(st, 'previousSchoolContactNo'),
-    photo:    pick(st, 'picture') || null,
+    photo:    stuFileUrl(pick(st, 'picture')) || null,
     isActive: st?.isActive !== false,
     reason:   pick(st, 'inactiveReason', 'reason'),   // struck-off reason (Inactive tab)
+    /* Kab inactive kiya gaya. Backend "2026-07-31 12:52:14" bhejta hai; sirf
+       tareekh rakhte hain. `createdAt` ISKE liye ghalat field hai — wo record
+       banne ki tareekh hai (student pehle admit hota hai, inactive baad me
+       hota hai). Na mile to khali — report me `—` dikhega. */
+    inactiveDate: dateOnly(pick(st, 'inactiveDate', 'inActiveDate', 'dateOfInactive')) || '',
+    /* Fee discounts alag API me rehti hain (Fee module wali) — yahan khali
+       shuru hoti hain aur fetchClassSectionStudents() unhein bhar deta hai. */
     _disc:    {},
     stdDocs,
     docs,
     _raw:     st,
   };
+}
+
+/* ─── FEE DISCOUNTS ───────────────────────────────────────────────────
+   Student ke discounts student record ke saath NAHI aate; Fee module ki
+   apni API se aate hain:
+     GET /api/Student/get-fee-discounts-by-grade/{branchId}/{gradeId}
+     → data: [ { id, gradeID, sectionID, headID, headName, discountAmount,
+                 studentID, studentName, isActive } ]
+   Isi liye Students tab ka "Fee Discounts" card hamesha 0 dikhata tha aur
+   students par red-corner nishan bhi nahi aata tha — record me `_disc`
+   khali reh jata tha.
+
+   Per-student wali route (get-fee-discounts-by-student) yahan mehanga
+   parti — har student par ek call. By-grade se ek class ki saari discounts
+   ek hi call me aa jati hain. */
+async function fetchGradeDiscounts(gradeId) {
+  const branchID = sessionStorage.getItem('branchID') || 0;
+  try {
+    const res  = await fetch(buildUrl(`/api/Student/get-fee-discounts-by-grade/${branchID}/${gradeId}`), {
+      headers: { Accept: '*/*' },
+    });
+    if (!res.ok) return [];
+    const json = await res.json().catch(() => null);
+    return Array.isArray(json?.data) ? json.data : (Array.isArray(json) ? json : []);
+  } catch {
+    return [];                 // discounts best-effort — student list phir bhi chale
+  }
+}
+
+/**
+ * Diye gaye grades ki saari fee discounts → { [studentID]: { [headName]: amount } }
+ * (wahi shape jo UI ka `_disc` istemal karta hai: head ke naam par raqam).
+ */
+export async function getStuDiscountMap(gradeIds = []) {
+  const ids = [...new Set(gradeIds.filter(Boolean).map(Number))];
+  if (!ids.length) return {};
+  const lists = await Promise.all(ids.map(fetchGradeDiscounts));
+  const map = {};
+  lists.flat().forEach(r => {
+    if (r?.isActive === false) return;                 // hataayi hui discount
+    const sid    = String(pick(r, 'studentID', 'studentId', 'applicantsID') || '');
+    const amount = Number(pick(r, 'discountAmount', 'amount') || 0);
+    const head   = String(pick(r, 'headName', 'feeHeadName', 'head') || '').trim();
+    if (!sid || !head || !(amount > 0)) return;
+    if (!map[sid]) map[sid] = {};
+    map[sid][head] = (map[sid][head] || 0) + amount;    // ek head par ek se ziyada rows
+  });
+  return map;
 }
 
 /* Fetch grades → sections → students and flatten to class+section rows. */
@@ -141,6 +219,21 @@ async function fetchClassSectionStudents() {
       });
     });
   });
+
+  /* Har class ki fee discounts (Fee module ki API) laa kar students par chipka
+     do — ek call per grade, sab parallel. Isi se "Fee Discounts" KPI, student
+     par red-corner nishan, class report ka ✓ column aur edit modal ka Fee tab
+     sab khud-ba-khud sahi ho jate hain. Discount API fail ho to student list
+     phir bhi normal chalti hai (bas discounts khali). */
+  const discMap = await getStuDiscountMap(rows.map(r => r._gradeId));
+  if (Object.keys(discMap).length) {
+    rows.forEach(r => {
+      r.students = r.students.map(st => {
+        const d = discMap[String(st._id)];
+        return d ? { ...st, _disc: d } : st;
+      });
+    });
+  }
   return rows;
 }
 
@@ -194,7 +287,7 @@ function mapFamilyMember(s) {
     reg:        String(pick(s, 'registerNo', 'regNo') || ''),
     first:      pick(s, 'firstName', 'name'),
     last:       pick(s, 'lastName'),
-    photo:      pick(s, 'picture') || null,
+    photo:      stuFileUrl(pick(s, 'picture')) || null,
     _cls:       pick(s, 'className', 'gradeName') || '',
     _sec:       pick(s, 'sectionName') || '',
     _gradeId:   pick(s, 'gradeID', 'gradeId') || 0,
@@ -335,14 +428,23 @@ export async function getStuGrades() {
   const json = await res.json().catch(() => null);
   if (!res.ok) throw new Error(apiMessage(json) || 'Could not load classes');
   const rows = Array.isArray(json?.data) ? json.data : [];
-  return rows.map(g => ({
-    id:   Number(g.id ?? g.gradeID ?? g.gradeId ?? 0),
-    name: g.name ?? g.gradeName ?? g.className ?? '—',
-    sections: (Array.isArray(g.sections) ? g.sections : []).map(s => ({
-      id:   Number(s.sectionID ?? s.id ?? s.sectionId ?? 0),
-      name: s.sectionName ?? s.name ?? '—',
-    })),
-  }));
+  /* School ki apni tarteeb `orderBy` me hai (Nursery → Prep → 1 → 2 …), naam ki
+     alphabetical tarteeb me NAHI. Launch Setup (src/tabs/ClassesTab.jsx) bhi
+     isi field par sort karta hai — wahi yahan bhi, taake har jagah classes ek
+     hi tarteeb me dikhein. orderBy barabar ho to API ka apna order chalta hai. */
+  return rows
+    .map((g, i) => ({
+      id:      Number(g.id ?? g.gradeID ?? g.gradeId ?? 0),
+      name:    g.name ?? g.gradeName ?? g.className ?? '—',
+      orderBy: Number(g.orderBy ?? 0) || 0,
+      _i:      i,
+      sections: (Array.isArray(g.sections) ? g.sections : []).map(s => ({
+        id:   Number(s.sectionID ?? s.id ?? s.sectionId ?? 0),
+        name: s.sectionName ?? s.name ?? '—',
+      })),
+    }))
+    .sort((a, b) => a.orderBy - b.orderBy || a._i - b._i)
+    .map(({ _i, ...g }) => g);
 }
 
 /* Branch ka ACTIVE academic session (read-only display ke liye) — session yahin
@@ -445,9 +547,10 @@ export async function getStuStaff() {
 /* Resolve a branch logo to an absolute URL usable inside a print window
    (data URIs / absolute URLs pass through; relative paths get the API base). */
 function branchLogoUrl(raw) {
-  if (!raw) return '';
-  if (/^(https?:|data:)/i.test(raw)) return raw;
-  return buildUrl(raw.startsWith('/') ? raw : `/${raw}`);
+  /* stuFileUrl relative path ko API base par joadta hai AUR backend ke bheje
+     hue localhost URLs ko bhi theek karta hai — warna dusre computer par logo
+     load hi nahi hota (documents/pictures ka wahi masla tha). */
+  return stuFileUrl(raw);
 }
 
 /* School/branch identity used by EVERY student report (ID cards, certificates,
