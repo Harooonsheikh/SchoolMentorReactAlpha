@@ -1063,8 +1063,14 @@ export async function getEmployeeNameByLoginUser(loginUserId) {
 }
 
 /* Record a payment against a challan. body:
-   { ledgerId (challan id), paymentMethod, modifiedBy, detailRows:[...] }.
-   The caller fills each detailRow's receivedAmount / pendingorAdv. */
+   { ledgerId (challan id), paymentMethod, receivedDate, modifiedBy, detailRows:[...] }.
+   The caller fills each detailRow's receivedAmount / pendingorAdv.
+
+   receivedDate = cashier ki modal me chuni hui receiving date (YYYY-MM-DD).
+   Ye modifiedAt (server ka "abhi") se ALAG hai: back-dated receiving par dono
+   farq karte hain, aur reports/slip me receiving date wahi dikhni chahiye jo
+   cashier ne chuni. Ledger ise wapas receivedDate par bhejta hai — reports
+   usay padhti hain, modifiedAt sirf fallback hai. */
 export async function receivePayment(body) {
   const res = await fetch(buildUrl('/api/BranchLedger/receive-payment'), {
     method: 'POST',

@@ -55,7 +55,9 @@ function challanAccruedFine(rec, settings, asOf) {
   }
   const received = (rec.detailRows || []).reduce((a, r) => a + (+r.receivedAmount || 0), 0);
   const base = asOf
-    || (received > 0 ? String(rec.modifiedAt || '').slice(0, 10) : '')
+    /* Fine ASLI receiving date tak ginni hai — cashier ki chuni hui date, na ke
+       server ka modifiedAt (back-dated receiving par wo zyada din ginta hai). */
+    || (received > 0 ? String(rec.receivedDate || rec.modifiedAt || '').slice(0, 10) : '')
     || localTodayISO();
   return feeService.computeFine({ dueDate: rec.dueDate, receivingDate: base, settings });
 }
@@ -3453,7 +3455,7 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
      hai — dekho `fineEdit`. View mode me actual receiving date ke hisaab se
      dikhti hai aur edit nahi hoti. */
   const fineBaseDate = viewOnly
-    ? (String(payments?.[payments.length - 1]?.date || challan?.modifiedAt || '').slice(0, 10) || date)
+    ? (String(payments?.[payments.length - 1]?.date || challan?.receivedDate || challan?.modifiedAt || '').slice(0, 10) || date)
     : date;
   const fineRows  = (challan?.detailRows || []).filter(feeService.isLateFineRow);
   /* Ledger me pehle se mojood (freeze shuda) fine — aur uske khilaf wasooli. */
@@ -4479,7 +4481,8 @@ function FeeReceivingIndividual({ toast }) {
     setSlipCtx({
       classMeta: c, student: s, period: `${appliedMonth} ${appliedYear}`,
       payment: {
-        date:   String(rec.modifiedAt || rec.dateofCreattion || '').slice(0, 10),
+        /* Cashier ki chuni hui receiving date pehle — modifiedAt sirf fallback. */
+        date:   String(rec.receivedDate || rec.modifiedAt || rec.dateofCreattion || '').slice(0, 10),
         method: rec.paymentMethod || 'Cash', ref: '', txn: '', amount: received, perHead,
       },
       challan: rec,
@@ -4552,6 +4555,9 @@ function FeeReceivingIndividual({ toast }) {
       feeService.receivePayment({
         ledgerId:      rec.id,
         paymentMethod: payload.method || '',
+        /* Cashier ki chuni hui RECEIVING DATE — server ke "aaj" par mat chhoro,
+           warna back-date receiving reports me ghalat din par aati hai. */
+        receivedDate:  payload.date || '',
         modifiedBy:    userID,
         detailRows,
       })
@@ -5144,7 +5150,8 @@ function FamilyTreeReceiving({ toast }) {
       classMeta: { key: f.key, cls: ch.cls, sec: ch.sec }, student: ch,
       period: `${appliedMonth} ${appliedYear}`,
       payment: {
-        date:   String(rec.modifiedAt || rec.dateofCreattion || '').slice(0, 10),
+        /* Cashier ki chuni hui receiving date pehle — modifiedAt sirf fallback. */
+        date:   String(rec.receivedDate || rec.modifiedAt || rec.dateofCreattion || '').slice(0, 10),
         method: rec.paymentMethod || 'Cash', ref: '', txn: '', amount: received, perHead,
       },
       challan: rec,
@@ -5207,6 +5214,8 @@ function FamilyTreeReceiving({ toast }) {
       feeService.receivePayment({
         ledgerId:      rec.id,
         paymentMethod: payload.method || '',
+        /* Cashier ki chuni hui RECEIVING DATE — dekho handleSaveReceipt. */
+        receivedDate:  payload.date || '',
         modifiedBy:    userID,
         detailRows,
       })
@@ -5362,7 +5371,7 @@ function FamilyTreeReceiving({ toast }) {
       rec.detailRows.forEach(r => { const n = r.subHead || r.head || ''; perHead[n] = (perHead[n] || 0) + (+r.receivedAmount || 0); });
       const _payments = received > 0 ? [{
         amount: received,
-        date:   String(rec.modifiedAt || rec.dateofCreattion || '').slice(0, 10),
+        date:   String(rec.receivedDate || rec.modifiedAt || rec.dateofCreattion || '').slice(0, 10),
         method: rec.paymentMethod || 'Cash', ref: '', txn: '', source: 'counter', perHead,
       }] : [];
       return { ...ch, ...fig, _challan: rec, _payments };
@@ -6603,8 +6612,14 @@ function buildStudentHistory({ recs, fromIdx, toIdx, year, empNames = {}, settin
 
     /* Receiving a payment stamps modifiedAt, but an untouched challan still
        carries its creation stamp — so it only counts as a receiving date once
-       money has actually come in. */
-    const stamp  = received > 0 ? String(rec.modifiedAt || rec.dateofCreattion || '') : '';
+       money has actually come in.
+
+       DATE cashier ki chuni hui `receivedDate` se aati hai (back-dated receiving
+       par modifiedAt "aaj" hoti hai — wo ghalat din dikhati). TIME us date me
+       nahi hoti, is liye waqt hamesha modifiedAt stamp se. */
+    const recvStamp = received > 0 ? String(rec.modifiedAt || rec.dateofCreattion || '') : '';
+    const recvOn    = received > 0 ? String(rec.receivedDate || '').slice(0, 10) : '';
+    const stamp     = recvStamp;
     const recvBy = received > 0
       ? (empNames[String(rec.modifiedBy)] || `User #${rec.modifiedBy}`)
       : '—';
@@ -6626,7 +6641,7 @@ function buildStudentHistory({ recs, fromIdx, toIdx, year, empNames = {}, settin
       received: received + fineReceived,
       fine, fineReceived,
       method:   received > 0 ? (rec.paymentMethod || 'Cash') : '—',
-      recvDate: stamp ? stamp.slice(0, 10) : '—',
+      recvDate: recvOn || (stamp ? stamp.slice(0, 10) : '—'),
       time:     stamp ? stamp.slice(11, 16) : '—',
       recvBy,
       createdBy: empNames[String(rec.createdBy)] || `User #${rec.createdBy}`,
@@ -6654,7 +6669,7 @@ function buildStudentHistory({ recs, fromIdx, toIdx, year, empNames = {}, settin
       payments: received > 0 ? [{
         amount: received + fineReceived,
         fine:   fineReceived,
-        date:   stamp.slice(0, 10),
+        date:   recvOn || stamp.slice(0, 10),
         time:   stamp.slice(11, 16),
         method: rec.paymentMethod || 'Cash',
         ref: '', txn: '', source: 'counter',
@@ -7250,8 +7265,10 @@ function FeeHistoryDetailModal({ cfg, onClose, year, onDownloadStudent, onDownlo
               <>
                 <div className="fee-hist-metacard"><div className="l">Total Fee</div><div className="v">{money(totals.fee)}</div></div>
                 <div className="fee-hist-metacard"><div className="l">Received</div><div className="v green">{money(totals.recv)}</div></div>
+                {/* Discount hamesha MUSBAT dikhta hai — minus sign nahi (wo challan
+                    amount me se already kat chuka hai, yahan sirf visibility hai). */}
                 {totals.disc > 0 && (
-                  <div className="fee-hist-metacard"><div className="l">Discount</div><div className="v" style={{ color: '#0F766E' }}>{money(-totals.disc)}</div></div>
+                  <div className="fee-hist-metacard"><div className="l">Discount</div><div className="v" style={{ color: '#0F766E' }}>{money(totals.disc)}</div></div>
                 )}
                 {totals.adv > 0 && (
                   <div className="fee-hist-metacard"><div className="l">Advance Used</div><div className="v" style={{ color: '#0F766E' }}>{money(-totals.adv)}</div></div>
@@ -7298,8 +7315,8 @@ function FeeHistoryDetailModal({ cfg, onClose, year, onDownloadStudent, onDownlo
                       <td>{fmtDMY(mo.dueDate) || '—'}</td>
                       <td className="fee-right">{money(mo.challanAmt)}</td>
                       {/* Discount challan amount me se already minus ho chuka (net billed) —
-                          yahan sirf visibility ke liye, Advance ki tarah MINUS me. */}
-                      <td className={`fee-right${mo.disc > 0 ? ' fee-neg' : ''}`}>{money(mo.disc > 0 ? -mo.disc : 0)}</td>
+                          yahan sirf visibility ke liye, aur hamesha MUSBAT (no minus sign). */}
+                      <td className={`fee-right${mo.disc > 0 ? ' fee-neg' : ''}`}>{money(mo.disc > 0 ? mo.disc : 0)}</td>
                       <td className={`fee-right${mo.fine > 0 ? ' fee-fine' : ''}`}>{mo.fine > 0 ? money(mo.fine) : '0'}</td>
                       {/* Advance jo is mahine challan par laga (pichhle overpay se) — MINUS me. */}
                       <td className={`fee-right${mo.advApplied > 0 ? ' fee-neg' : ''}`}>{money(mo.advApplied > 0 ? -mo.advApplied : 0)}</td>
@@ -7526,7 +7543,7 @@ function histStudentLedgerRows(months, year) {
       <td>${escHtml(fmtDMY(mo.challanDate) || '—')}</td>
       <td>${escHtml(fmtDMY(mo.dueDate) || '—')}</td>
       <td class="right">${mo.challanAmt.toLocaleString('en-PK')}</td>
-      <td class="right">${mo.disc > 0 ? '-' + mo.disc.toLocaleString('en-PK') : '0'}</td>
+      <td class="right">${mo.disc > 0 ? mo.disc.toLocaleString('en-PK') : '0'}</td>
       <td class="right ${mo.fine > 0 ? 'red' : ''}">${(mo.fine || 0).toLocaleString('en-PK')}</td>
       <td class="right">${mo.advApplied > 0 ? '-' + mo.advApplied.toLocaleString('en-PK') : '0'}</td>
       <td class="right green">${mo.received > 0 ? mo.received.toLocaleString('en-PK') : '0'}</td>
@@ -7552,7 +7569,7 @@ function buildHistStudentReportHTML({ mode, c, s, months, period, year = '', sch
   <div class="hist-cards">
     <div class="hist-card"><div class="l">Total Fee</div><div class="v">${t.fee.toLocaleString('en-PK')}</div></div>
     <div class="hist-card"><div class="l">Received</div><div class="v green">${t.recv.toLocaleString('en-PK')}</div></div>
-    ${t.disc > 0 ? `<div class="hist-card"><div class="l">Discount</div><div class="v">-${t.disc.toLocaleString('en-PK')}</div></div>` : ''}
+    ${t.disc > 0 ? `<div class="hist-card"><div class="l">Discount</div><div class="v">${t.disc.toLocaleString('en-PK')}</div></div>` : ''}
     ${t.adv > 0 ? `<div class="hist-card"><div class="l">Advance Used</div><div class="v">-${t.adv.toLocaleString('en-PK')}</div></div>` : ''}
     <div class="hist-card"><div class="l">Pending</div><div class="v red">${t.pend.toLocaleString('en-PK')}</div></div>
     <div class="hist-card"><div class="l">Months</div><div class="v">${t.challans}</div></div>
@@ -8178,7 +8195,7 @@ function ledgerModel(recs, settings = null) {
        Backend fine ko apni detailRow me persist nahi karta, is liye yahan dobara
        banti hai. Do surtein:
          a) Challan due date ke BAAD receive hua → fine WASOOL ho chuki. Base date
-            ASLI receiving date (modifiedAt) hai, aaj nahi — warna purane challan
+            ASLI receiving date (receivedDate) hai, aaj nahi — warna purane challan
             ki fine roz barhti rehti. payable + paid dono me (net asar 0).
          b) Challan abhi tak unpaid hai aur due date guzar chuki → fine AAJ tak
             accrue ho chuki aur ABHI BAQAYA hai. payable + running me (paid me
@@ -8187,7 +8204,7 @@ function ledgerModel(recs, settings = null) {
     if (settings?.fineEnabled && !rows.some(feeService.isLateFineRow)) {
       const collected = received > 0;
       const base = collected
-        ? String(rec.modifiedAt || rec.dateofCreattion || '').slice(0, 10)
+        ? String(rec.receivedDate || rec.modifiedAt || rec.dateofCreattion || '').slice(0, 10)
         : localTodayISO();
       const fine = feeService.computeFine({ dueDate: rec.dueDate, receivingDate: base, settings });
       if (fine > 0) {
