@@ -1,7 +1,8 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { COLORS } from '../data/initialData';
 import { downloadStaffReport } from '../utils/pdfReports';
 import { buildUrl } from '../utils/apiConfig';
+import staffTemplate from '../BulkStaff_Quick.xlsx';
 
 const STAFF_PER_PAGE = 8;
 
@@ -1041,6 +1042,80 @@ export default function StaffTab({ staffData, setStaffData, deptsData, setDeptsD
   const [deleteTarget, setDeleteTarget] = useState(null);
 const [taskTarget, setTaskTarget] = useState(null);
 
+  /* ── BULK IMPORT WIZARD ── StudentTab jaisa hi 3-step flow:
+     Download Template → Upload File → Preview & Import. Staff ka sirf ek hi
+     format hai, is liye Students wala "Choose Format" step yahan nahi. */
+  const [showImport, setShowImport]       = useState(false);
+  const [importStep, setImportStep]       = useState(1);
+  const [importFile, setImportFile]       = useState(null);   // selected .xlsx File
+  const [importPreview, setImportPreview] = useState(null);   // { headers, rows }
+  const [importing, setImporting]         = useState(false);
+  const importInputRef = useRef(null);
+
+  const closeImport = () => { setShowImport(false); setImportStep(1); setImportFile(null); setImportPreview(null); };
+
+  const downloadStaffTemplate = () => {
+    const a = document.createElement('a');
+    a.href = staffTemplate;
+    a.download = 'BulkStaff_Quick.xlsx';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    showToast('Template downloaded', 'success');
+  };
+
+  /* Step 2: ek .xlsx lo aur uski pehli sheet preview ke liye parse karo. */
+  const handleImportFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (e.target) e.target.value = '';   // wahi file dobara chunne ke liye
+    if (!file) return;
+    if (!/\.xlsx$/i.test(file.name)) { showToast('Please select an .xlsx file', 'error'); return; }
+    setImportFile(file);
+    try {
+      const XLSX = await import('xlsx');
+      const buf  = await file.arrayBuffer();
+      const wb   = XLSX.read(buf, { type: 'array' });
+      const ws   = wb.Sheets[wb.SheetNames[0]];
+      const matrix  = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+      const headers = (matrix[0] || []).map(h => String(h));
+      const rows    = matrix.slice(1).filter(r => r.some(c => String(c).trim() !== ''));
+      setImportPreview({ headers, rows });
+    } catch (err) {
+      console.error('Error parsing file:', err);
+      showToast('Could not read the file', 'error');
+      setImportPreview(null);
+    }
+  };
+
+  /* Step 3: file ko bulk-import endpoint par bhejo. */
+  const confirmImport = async () => {
+    if (!importFile) return;
+    const fd = new FormData();
+    fd.append('branchId',  Number(sessionStorage.getItem('branchID')) || 0);
+    fd.append('createdBy', Number(sessionStorage.getItem('UserID')) || 0);
+    fd.append('file',      importFile);
+    setImporting(true);
+    try {
+      /* Content-Type khud mat lagao — browser multipart boundary add karta hai. */
+      const res  = await fetch(buildUrl('/api/LaunchSetup/bulk-import-employees'), {
+        method: 'POST', headers: { Accept: '*/*' }, body: fd,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        showSuccess('Import Complete!', data?.message || 'Staff data imported successfully.');
+        closeImport();
+        getStaffdata();
+      } else {
+        showToast(data?.message || 'Import failed', 'error');
+      }
+    } catch (err) {
+      console.error(err);
+      showToast('Network error. Please try again.', 'error');
+    } finally {
+      setImporting(false);
+    }
+  };
+
   const filtered = search
     ? staffData.filter(s => `${s.firstName} ${s.lastName}`.toLowerCase().includes(search.toLowerCase())
         || s.dept?.toLowerCase().includes(search.toLowerCase())
@@ -1173,6 +1248,10 @@ const [taskTarget, setTaskTarget] = useState(null);
           </div>
         </div>
         <div className="toolbar-right">
+          <button className="btn btn-md" style={{ background: 'linear-gradient(135deg,#7C3AED,#6D28D9)', color: '#fff' }}
+            onClick={() => { setShowImport(true); setImportStep(1); }}>
+            <i className="fas fa-file-import"></i> Bulk Upload
+          </button>
           <button className="btn btn-pdf btn-md" onClick={() => downloadStaffReport(staffData, schoolInfo || {}, showToast)}>
             <i className="fas fa-file-pdf"></i> Download Report
           </button>
@@ -1382,6 +1461,160 @@ const [taskTarget, setTaskTarget] = useState(null);
               <div className="modal-footer">
                 <button className="btn btn-secondary btn-md" onClick={() => setDeleteTarget(null)}>Cancel</button>
                 <button className="btn btn-danger btn-md" onClick={() => handleDelete(deleteTarget.id)}><i className="fas fa-trash"></i> Delete</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── BULK IMPORT WIZARD ── StudentTab wale modal jaisa hi, magar 3 steps
+          (staff ka ek hi format hai, is liye "Choose Format" step nahi). */}
+      {showImport && (
+        <div className="modal-overlay open" onClick={e => { if (e.target === e.currentTarget && !importing) closeImport(); }}>
+          <div className="modal modal-xl">
+            <div style={{ background: 'linear-gradient(135deg,#4C1D95,#7C3AED)', padding: '18px 24px', borderRadius: '20px 20px 0 0', flexShrink: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+                <div>
+                  <div style={{ color: '#fff', fontWeight: 800, fontSize: 15 }}>Bulk Import Staff</div>
+                  <div style={{ color: 'rgba(255,255,255,.7)', fontSize: 12, marginTop: 4 }}>Add multiple employees from one Excel file</div>
+                </div>
+                <button className="modal-close" style={{ background: 'rgba(255,255,255,.15)', color: '#fff' }} onClick={closeImport}>
+                  <i className="fas fa-times"></i>
+                </button>
+              </div>
+            </div>
+            <div className="modal-body">
+              {/* Step indicators */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 24, flexWrap: 'wrap' }}>
+                {['Download Template', 'Upload File', 'Preview & Import'].map((label, i) => {
+                  const stepNum = i + 1;
+                  const state = importStep === stepNum ? 'active' : importStep > stepNum ? 'done' : 'idle';
+                  return (
+                    <React.Fragment key={i}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 12px', borderRadius: 99, fontSize: 11, fontWeight: 700, border: '1.5px solid', borderColor: state === 'active' ? '#7C3AED' : state === 'done' ? '#16A34A' : 'var(--border-light)', background: state === 'active' ? '#EDE9FE' : state === 'done' ? '#DCFCE7' : 'var(--bg-card)', color: state === 'active' ? '#6D28D9' : state === 'done' ? '#15803D' : 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                        {state === 'done' ? <i className="fas fa-check"></i> : stepNum}
+                        {(state === 'active') && <span style={{ marginLeft: 3 }}>{label}</span>}
+                      </div>
+                      {i < 2 && <div style={{ flex: 1, height: 2, background: state === 'done' ? '#16A34A' : 'var(--border-light)', minWidth: 10 }}></div>}
+                    </React.Fragment>
+                  );
+                })}
+              </div>
+
+              {importStep === 1 && (
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 14 }}>Download Template</div>
+                  <div style={{ background: 'linear-gradient(135deg,#15803D,#166534)', borderRadius: 'var(--radius-md)', padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 14, marginBottom: 16 }}>
+                    <i className="fas fa-file-excel" style={{ color: '#fff', fontSize: 28 }}></i>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ color: '#fff', fontWeight: 700 }}>Staff Import Template.xlsx</div>
+                      <div style={{ color: 'rgba(255,255,255,.7)', fontSize: 11 }}>Excel format · Ready to fill</div>
+                    </div>
+                    <button className="btn btn-md" style={{ background: '#fff', color: '#15803D', fontWeight: 700 }} onClick={downloadStaffTemplate}>
+                      <i className="fas fa-download"></i> Download
+                    </button>
+                  </div>
+                  <div style={{ padding: '10px 14px', background: 'rgba(245,158,11,.06)', border: '1px solid rgba(245,158,11,.2)', borderRadius: 'var(--radius-md)', fontSize: 12, color: 'var(--text-secondary)' }}>
+                    <i className="fas fa-exclamation-triangle" style={{ color: 'var(--warning)', marginRight: 6 }}></i>
+                    <strong>Note:</strong> Do not change column headers. Date format: DD/MM/YYYY. Gender: Male/Female/Other. Columns marked * are required.
+                  </div>
+                </div>
+              )}
+
+              {importStep === 2 && (
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 14 }}>Upload Filled Template</div>
+                  <input
+                    ref={importInputRef}
+                    type="file"
+                    accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    onChange={handleImportFile}
+                    style={{ display: 'none' }}
+                  />
+                  <div onClick={() => importInputRef.current?.click()}
+                    style={{ border: `2px dashed ${importFile ? '#16A34A' : 'var(--border-med)'}`, borderRadius: 'var(--radius-lg)', padding: 40, textAlign: 'center', cursor: 'pointer', background: importFile ? 'rgba(22,163,74,.05)' : 'var(--bg-muted)' }}>
+                    <i className={`fas ${importFile ? 'fa-file-excel' : 'fa-cloud-upload-alt'}`} style={{ fontSize: 40, color: importFile ? '#16A34A' : 'var(--brand-primary)', opacity: importFile ? 1 : .4, display: 'block', marginBottom: 12 }}></i>
+                    {importFile ? (
+                      <>
+                        <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 6 }}>{importFile.name}</div>
+                        <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>
+                          {(importFile.size / 1024).toFixed(1)} KB{importPreview ? ` · ${importPreview.rows.length} row${importPreview.rows.length !== 1 ? 's' : ''} detected` : ''} · click to change
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 6 }}>Click to browse</div>
+                        <div style={{ fontSize: 12.5, color: 'var(--text-muted)', marginBottom: 14 }}>Select your filled template</div>
+                        <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Supported: .xlsx only</div>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {importStep === 3 && (
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 14 }}>
+                    Preview Import Data{importPreview ? ` · ${importPreview.rows.length} row${importPreview.rows.length !== 1 ? 's' : ''}` : ''}
+                  </div>
+                  {!importPreview || importPreview.rows.length === 0 ? (
+                    <div style={{ padding: '40px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                      <i className="fas fa-table" style={{ fontSize: 32, opacity: .3, display: 'block', marginBottom: 12 }}></i>
+                      <div style={{ fontSize: 14, fontWeight: 600 }}>No data to preview</div>
+                      <div style={{ fontSize: 12.5, marginTop: 4 }}>Upload a file in step 2 first</div>
+                    </div>
+                  ) : (
+                    <div style={{ overflow: 'auto', maxHeight: 360, border: '1px solid var(--border-light)', borderRadius: 'var(--radius-md)' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 640 }}>
+                        <thead>
+                          <tr style={{ background: '#4C1D95' }}>
+                            <th style={{ padding: '9px 10px', fontSize: 11, fontWeight: 700, color: '#fff', textAlign: 'left', whiteSpace: 'nowrap' }}>#</th>
+                            {importPreview.headers.map((h, hi) => (
+                              <th key={hi} style={{ padding: '9px 10px', fontSize: 11, fontWeight: 700, color: '#fff', textAlign: 'left', whiteSpace: 'nowrap' }}>{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {importPreview.rows.slice(0, 50).map((r, ri) => (
+                            <tr key={ri} style={{ background: ri % 2 === 0 ? 'var(--bg-card)' : 'var(--bg-muted)' }}>
+                              <td style={{ padding: '8px 10px', borderBottom: '1px solid var(--border-light)', fontSize: 12, fontWeight: 700, color: 'var(--text-muted)' }}>{ri + 1}</td>
+                              {importPreview.headers.map((_, ci) => (
+                                <td key={ci} style={{ padding: '8px 10px', borderBottom: '1px solid var(--border-light)', fontSize: 12.5, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>{String(r[ci] ?? '')}</td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      {importPreview.rows.length > 50 && (
+                        <div style={{ padding: '8px 12px', fontSize: 11.5, color: 'var(--text-muted)', background: 'var(--bg-muted)' }}>
+                          Showing first 50 of {importPreview.rows.length} rows. All rows will be imported.
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 24, paddingTop: 16, borderTop: '1px solid var(--border-light)', flexWrap: 'wrap', gap: 10 }}>
+                <div>{importStep > 1 && <button className="btn btn-secondary btn-md" onClick={() => setImportStep(s => s - 1)} disabled={importing}><i className="fas fa-arrow-left"></i> Back</button>}</div>
+                <div style={{ display: 'flex', gap: 10 }}>
+                  <button className="btn btn-ghost btn-md" onClick={closeImport} disabled={importing}>Cancel</button>
+                  {importStep < 3
+                    ? <button
+                        className="btn btn-md"
+                        style={{ background: 'linear-gradient(135deg,#7C3AED,#6D28D9)', color: '#fff', opacity: (importStep === 2 && !importFile) ? .5 : 1 }}
+                        disabled={importStep === 2 && !importFile}
+                        onClick={() => setImportStep(s => s + 1)}>
+                        Next <i className="fas fa-arrow-right"></i>
+                      </button>
+                    : <button
+                        className="btn btn-md"
+                        style={{ background: 'linear-gradient(135deg,#15803D,#166534)', color: '#fff', opacity: (!importFile || importing) ? .6 : 1 }}
+                        disabled={!importFile || importing}
+                        onClick={confirmImport}>
+                        <i className={`fas ${importing ? 'fa-spinner fa-spin' : 'fa-check'}`}></i> {importing ? 'Importing…' : 'Confirm Import'}
+                      </button>}
+                </div>
               </div>
             </div>
           </div>
