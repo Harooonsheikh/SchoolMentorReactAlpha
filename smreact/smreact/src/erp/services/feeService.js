@@ -758,10 +758,18 @@ export function withLateFineRow(rows, fineAmount, { ledgerId, branchId, userId, 
     || 1;
 
   if (idx >= 0) {
-    /* Maujooda fine row — challan aur received dono me abhi wali fine add karo. */
+    /* Maujooda fine row — abhi wasool ki gayi fine add karo.
+
+       AHEM: `fine` yahan hamesha fineOWED aata hai (= fineDue − finePaid), yani
+       sirf wo hissa jo IS receiving me liya gaya. Jo pehle wasool ho chuki wo
+       row me already mojood hai. Is liye billed ko bhi bara-bar barhana ghalat
+       hai jab row ka challanAmount pehle se poori fine rakhta ho — warna
+       "Receive More" par fine dobara bill ho jaati thi (700 → 1400).
+       challanAmount ko max() par rakho: fine kabhi neeche nahi jaati, magar
+       already-billed hissa dobara nahi jurta. */
     const r = list[idx];
-    const billed   = (Number(r.challanAmount) || 0) + fine;
     const received = (Number(r.receivedAmount) || 0) + fine;
+    const billed   = Math.max(Number(r.challanAmount) || 0, received);
     const next = [...list];
     next[idx] = {
       ...r,

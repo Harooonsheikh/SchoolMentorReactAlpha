@@ -3340,15 +3340,15 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
   const [ref, setRef]           = useState('');
   const [txn, setTxn]           = useState('');
   const [perHeadInput, setPerHeadInput] = useState({});
-  /* Fine override. null = auto (due date + settings se computed, receiving date
-     badalne par live update). Cashier ne haath lagaya to number — us ke baad
-     auto-recompute band, taake typed/waived value date change par wapas na aa jaye. */
-  const [fineEdit, setFineEdit] = useState(null);
+  /* Fine ki WASOOLI ka apna input — baaki heads ke `perHeadInput` jaisa hi KUL
+     wasooli (already + ab ki) rakhta hai. null = cashier ne abhi haath nahi
+     lagaya, to already-paid par hi rehta hai (Received 0, fine Pending me). */
+  const [fineRecvInput, setFineRecvInput] = useState(null);
 
   useEffect(() => {
     if (!cfg) return;
     setDate(localTodayISO()); setMethod('Cash'); setRef(''); setTxn('');
-    setFineEdit(null);
+    setFineRecvInput(null);
     /* "Received" input KUL wasooli dikhata hai (pehle jama shuda + ab ki), na ke
        sirf ab ki raqam — is liye ye editable rehta hai aur naya paisa
        `input − paid` hota hai (dekho `recvNow` niche).
@@ -3451,8 +3451,9 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
      Challan ki due date ke BAAD wasool karne par jurmana. Base date wahi
      "Receiving Date" hai jo upar modal me chuni gayi (system ka aaj nahi), is
      liye date badalte hi fine live update hoti hai, aur receivable/total dono
-     me jud'ti hai. Cashier isay table me EDIT (ya 0 kar ke waive) bhi kar sakta
-     hai — dekho `fineEdit`. View mode me actual receiving date ke hisaab se
+     me jud'ti hai. Challan Amount baaki heads ki tarah read-only hai; cashier
+     kam/zyada lena chahe (ya waive karna ho) to "Received" me karta hai —
+     dekho `fineRecvInput`. View mode me actual receiving date ke hisaab se
      dikhti hai aur edit nahi hoti. */
   const fineBaseDate = viewOnly
     ? (String(payments?.[payments.length - 1]?.date || challan?.receivedDate || challan?.modifiedAt || '').slice(0, 10) || date)
@@ -3460,7 +3461,14 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
   const fineRows  = (challan?.detailRows || []).filter(feeService.isLateFineRow);
   /* Ledger me pehle se mojood (freeze shuda) fine — aur uske khilaf wasooli. */
   const fineBilled = fineRows.reduce((a, r) => a + (+r.challanAmount || 0), 0);
-  const finePaid   = fineRows.reduce((a, r) => a + (+r.receivedAmount || 0), 0);
+  /* Wasool shuda fine. Fine ledger me SIRF wasool hote waqt bill hoti hai —
+     withLateFineRow challanAmount aur receivedAmount dono barabar likhta hai.
+     Is liye "billed" khud is baat ka saboot hai ke wo fine li ja chuki hai.
+     Agar backend receivedAmount drop kar de (ya sirf challanAmount lauta de)
+     to bhi billed hissa PAID hi samjho — warna partial receiving ke baad
+     "Receive More" kholne par wohi fine dobara charge ho jaati thi. */
+  const fineRowPaid = fineRows.reduce((a, r) => a + (+r.receivedAmount || 0), 0);
+  const finePaid    = Math.max(fineRowPaid, fineBilled);
   const fineCalc   = feeService.computeFine({
     dueDate: challan?.dueDate, receivingDate: fineBaseDate, settings,
   });
@@ -3469,15 +3477,20 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
      modal ki fine persisted row se mukhtalif nikalti thi: Total 4,400 magar
      Already Received 4,450, aur Remaining minus me chala jaata tha.
      Fine abhi tak billed nahi hui to computed hi lagti hai. */
-  /* Cashier ka override sab par bhaari — waive (0) ya barhaana dono mumkin.
-     Magar jo fine PEHLE HI wasool ho chuki (finePaid) us se neeche nahi ja sakta,
-     warna Total already-received se kam ho kar Remaining minus me chala jaata. */
-  const fineAuto = fineBilled > 0 ? fineBilled : fineCalc;
-  const fineDue  = (!viewOnly && fineEdit != null) ? Math.max(finePaid, fineEdit) : fineAuto;
+  const fineDue  = fineBilled > 0 ? fineBilled : fineCalc;
   const fineDays = feeService.daysLate(challan?.dueDate, fineBaseDate);
-  const fineOwed = Math.max(0, fineDue - finePaid);
+  /* Fine ki wasooli bilkul baaki heads jaisi: input KUL wasooli rakhta hai, aur
+     ab ka naya paisa = input − pehle se paid. Seed sirf ALREADY PAID hai (banti
+     hui fine nahi) — modal khulte hi fine PENDING me nazar aati hai aur Receiving
+     Now 0 rehta hai, jab tak cashier khud raqam na daale. Baaki heads bhi isi
+     tarah `paid` se shuru hote hain. */
+  const fineTotalRecv = viewOnly
+    ? finePaid
+    : Math.max(0, fineRecvInput == null ? finePaid : fineRecvInput);
+  const fineOwed = viewOnly ? 0 : Math.max(0, fineTotalRecv - finePaid);
+  const finePend = fineDue - finePaid - fineOwed;
 
-  const receivingNow = headsRecv - advApplied + (viewOnly ? 0 : fineOwed);
+  const receivingNow = headsRecv - advApplied + fineOwed;   // fineOwed view mode me 0
   const alreadyPaid  = rows.reduce((a, r) => a + r.paid, 0) + prevPaid + finePaid;
   const totalAmt     = totalAfter + model.prev - model.advance + fineDue;
   /* Total se zyada wasool ho to ye MINUS me jaata hai = student ka advance. */
@@ -3605,15 +3618,7 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
                   date due se aage ho to hi. */}
               <span className="fee-recv-info-val">
                 {fineTxt}
-                {/* Cashier ne fine edit ki ho to yahan ASAL (accrued) raqam dikhao —
-                    "N days late = X" lagi hui fine par jhoot bol deta. */}
-                {fineEdit != null && !viewOnly ? (
-                  fineAuto > 0 && (
-                    <span className="fee-sub-eq fee-fine">
-                      {fineDays} day{fineDays === 1 ? '' : 's'} late = {money(fineAuto)} · applied {money(fineDue)}
-                    </span>
-                  )
-                ) : fineDue > 0 && (
+                {fineDue > 0 && (
                   <span className="fee-sub-eq fee-fine">
                     {fineDays} day{fineDays === 1 ? '' : 's'} late = {money(fineDue)}
                   </span>
@@ -3725,41 +3730,53 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
                     <td className="fee-right">{money(advCredit - advApplied)}</td>
                   </tr>
                 )}
-                {/* ── LATE FINE ──
-                    Due date ke baad receive karne par khud lagti hai, magar EDITABLE —
-                    cashier isay kam/zyada ya poori waive (0) kar sakta hai. Haath na
-                    lagaye to Receiving Date badalne par apne aap recalculate hoti hai.
-                    Override ke baad row 0 par bhi dikhti rehti hai (warna edit karte hi
-                    gayab ho jaati aur wapas laane ka koi raasta na hota). */}
-                {(fineDue > 0 || (!viewOnly && fineEdit != null)) && (
+                {/* ── LATE FINE ── bilkul baaki heads jaisi row: Challan Amount
+                    read-only (settings + din se khud banti hai, Receiving Date
+                    badalne par live update), aur Received/Pending editable —
+                    cashier partial fine le sakta hai ya Received 0 kar ke waive. */}
+                {fineDue > 0 && (
                   <tr>
                     <td>
                       <b>Fine</b>
                       <span className="fee-sub-eq">
-                        {fineEdit != null && !viewOnly
-                          ? (fineEdit === 0 ? 'Waived by cashier' : 'Edited by cashier')
-                          : <>
-                              {fineDays} day{fineDays === 1 ? '' : 's'} late
-                              {settings?.fineType === 'daily' ? ` × Rs. ${(+settings.fineAmt || 0).toLocaleString('en-PK')}` : ''}
-                            </>}
+                        {fineDays} day{fineDays === 1 ? '' : 's'} late
+                        {settings?.fineType === 'daily' ? ` × Rs. ${(+settings.fineAmt || 0).toLocaleString('en-PK')}` : ''}
                       </span>
                     </td>
+                    {/* Challan Amount baaki heads ki tarah plain text — banti hui fine
+                        settings + din se khud nikalti hai, cashier isay yahan edit
+                        nahi karta. Kam/zyada lena ho to "Received" me karta hai. */}
+                    <td className="fee-right">{money(fineDue)}</td>
+                    <td className="fee-right">0</td>
+                    <td className="fee-right"><span className="fee-cell-grey">{money(fineDue)}</span></td>
+                    {/* Received/Pending ab baaki heads ki tarah EDITABLE — input KUL
+                        wasooli rakhta hai, to partial fine bhi li ja sakti hai. */}
                     <td className="fee-right">
-                      {viewOnly ? money(fineDue) : (
+                      {viewOnly ? (
+                        <span className="fee-paid-amt">{money(finePaid)}</span>
+                      ) : (
                         <input
                           type="number"
-                          min={finePaid}
-                          value={fineDue}
-                          onChange={e => setFineEdit(Math.max(0, Number(e.target.value) || 0))}
+                          min="0"
+                          value={fineTotalRecv}
+                          onChange={e => setFineRecvInput(Math.max(0, Number(e.target.value) || 0))}
                           placeholder="0"
                         />
                       )}
                     </td>
-                    <td className="fee-right">0</td>
-                    <td className="fee-right"><span className="fee-cell-grey">{money(fineDue)}</span></td>
-                    {/* Fine read-only — input ki tarah ye bhi KUL wasooli dikhati hai. */}
-                    <td className="fee-right"><b>{money(viewOnly ? finePaid : finePaid + fineOwed)}</b></td>
-                    <td className="fee-right">{money(viewOnly ? Math.max(0, fineDue - finePaid) : 0)}</td>
+                    <td className="fee-right">
+                      {viewOnly ? (
+                        money(Math.max(0, fineDue - finePaid))
+                      ) : (
+                        <input
+                          type="number"
+                          min="0"
+                          value={finePend}
+                          onChange={e => setFineRecvInput(Math.max(0, fineDue - (Number(e.target.value) || 0)))}
+                          placeholder="0"
+                        />
+                      )}
+                    </td>
                   </tr>
                 )}
               </tbody>
@@ -5724,6 +5741,9 @@ function FamilyTreeReceiving({ toast }) {
 function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, settings, toast }) {
   const [selReg, setSelReg]             = useState(null);
   const [perHeadInput, setPerHeadInput] = useState({});
+  /* Individual modal jaisa hi — fine ki wasooli ka apna input (KUL wasooli).
+     null = haath nahi lagaya, to already-paid par rehta hai (Received 0). */
+  const [fineRecvInput, setFineRecvInput] = useState(null);
   /* Individual modal jaisi hi wajah — late fine isi date par banti hai, is liye
      LOCAL date chahiye (toISOString() UTC me ek din peechhe le jaata tha). */
   const [date, setDate]     = useState(localTodayISO());
@@ -5735,8 +5755,11 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
     if (!cfg) return;
     setSelReg(null);
     setDate(localTodayISO()); setMethod('Cash'); setRef(''); setTxn('');
-    setPerHeadInput({});
+    setPerHeadInput({}); setFineRecvInput(null);
   }, [cfg]);
+
+  /* Har child ki apni fine hai — doosre bachche par jaate hi input auto par. */
+  useEffect(() => { setFineRecvInput(null); }, [selReg]);
 
   useEffect(() => {
     if (!cfg) return undefined;
@@ -5856,13 +5879,27 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
   const selChallan = selChild?._challan || null;
   const fineRows   = (selChallan?.detailRows || []).filter(feeService.isLateFineRow);
   const fineBilled = fineRows.reduce((a, r) => a + (+r.challanAmount || 0), 0);
-  const finePaid   = fineRows.reduce((a, r) => a + (+r.receivedAmount || 0), 0);
+  /* Individual modal jaisa hi: billed fine ka matlab hai wo li ja chuki hai, is
+     liye receivedAmount drop ho jaye to bhi usay PAID hi ginna hai — warna
+     "Receive More" par fine dobara charge hoti hai. */
+  const fineRowPaid = fineRows.reduce((a, r) => a + (+r.receivedAmount || 0), 0);
+  const finePaid    = Math.max(fineRowPaid, fineBilled);
   /* Individual modal jaisa hi: ledger me likhi ja chuki fine hi authority hai. */
   const fineDue    = fineBilled > 0 ? fineBilled : feeService.computeFine({
     dueDate: selChallan?.dueDate, receivingDate: date, settings,
   });
   const fineDays = feeService.daysLate(selChallan?.dueDate, date);
-  const fineOwed = Math.max(0, fineDue - finePaid);
+  /* Child ki row edit ho sakti hai ya nahi — fine ka input isi par chalta hai,
+     is liye ye yahin (fine ke hisaab se pehle) banta hai. */
+  const selEditable = !!selModel && !(selModel.onelink || selModel.status === 'full');
+  /* Individual modal jaisa hi: seed sirf ALREADY PAID hai, banti hui fine nahi —
+     Received 0 rehta hai aur fine Pending me dikhti hai jab tak cashier khud
+     raqam na daale. Baaki heads bhi isi tarah kaam karte hain. */
+  const fineTotalRecv = selEditable
+    ? Math.max(0, fineRecvInput == null ? finePaid : fineRecvInput)
+    : finePaid;
+  const fineOwed = Math.max(0, fineTotalRecv - finePaid);
+  const finePend = fineDue - finePaid - fineOwed;
   if (selModel && !(selModel.onelink || selModel.status === 'full')) {
     recvNow     += fineOwed;
     totalCh     += fineDue;
@@ -5872,7 +5909,6 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
 
   /* Total se zyada wasool ho to MINUS me — yani student ka advance. */
   const remainAfter = selModel ? (selModel.payable + fineDue - alreadyPaid - recvNow) : 0;
-  const selEditable = !!selModel && !(selModel.onelink || selModel.status === 'full');
 
   const handleSaveChild = () => {
     if (!selChild) return;
@@ -6097,10 +6133,29 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
                                 <td className="fee-right">{money(fineDue)}</td>
                                 <td className="fee-right">0</td>
                                 <td className="fee-right"><span className="fee-cell-grey">{money(fineDue)}</span></td>
-                                {/* Fine read-only — input ki tarah KUL wasooli dikhati hai. */}
-                                <td className="fee-right"><b>{money(selEditable ? finePaid + fineOwed : finePaid)}</b></td>
+                                {/* Received/Pending baaki heads ki tarah editable — input
+                                    KUL wasooli rakhta hai, partial fine bhi mumkin. */}
                                 <td className="fee-right">
-                                  {money(selModel.onelink || selModel.status === 'full' ? Math.max(0, fineDue - finePaid) : 0)}
+                                  {selEditable ? (
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      value={fineTotalRecv}
+                                      onChange={e => setFineRecvInput(Math.max(0, Number(e.target.value) || 0))}
+                                      placeholder="0"
+                                    />
+                                  ) : <b>{money(finePaid)}</b>}
+                                </td>
+                                <td className="fee-right">
+                                  {selEditable ? (
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      value={finePend}
+                                      onChange={e => setFineRecvInput(Math.max(0, fineDue - (Number(e.target.value) || 0)))}
+                                      placeholder="0"
+                                    />
+                                  ) : money(Math.max(0, fineDue - finePaid))}
                                 </td>
                               </tr>
                             )}
@@ -6588,21 +6643,31 @@ function buildStudentHistory({ recs, fromIdx, toIdx, year, empNames = {}, settin
            challanAmt aur running/pending me (received me nahi).
        Backend ne apni Late Fine row bhej di ho to wo already rows me hai —
        dobara na jodo. */
-    const billedFine = rows.filter(feeService.isLateFineRow)
-      .reduce((a, r) => a + (+r.challanAmount || 0), 0);
+    const fineLedgerRows = rows.filter(feeService.isLateFineRow);
+    const billedFine = fineLedgerRows.reduce((a, r) => a + (+r.challanAmount || 0), 0);
+    /* Ledger me bill ho chuki fine ke khilaf ASLI wasooli — yehi "Fine" column me
+       dikhani hai. Pehle ye hamesha 0 rakhi jaati thi, is liye wasool shuda fine
+       history me kahin nazar hi nahi aati thi (column 0 dikhata tha). */
+    const billedFineRecv = fineLedgerRows.reduce((a, r) => a + (+r.receivedAmount || 0), 0);
     /* PROJECTED (abhi tak bill NA hui) late fine. Ise CHALLAN AMOUNT me NAHI jodte —
        challan amount asal fee (alag column) rehta hai. Magar PENDING me ye shamil hai:
-       unpaid overdue par pending = challan amount + fine (jaise 12,000 + 100 = 12,100).
-       Fee receive hote hi fine ledger me bill ho jaati hai (billedFine>0) aur khud
-       newBilled/received me shamil ho kar hisaab me aa jaati hai. */
-    let fine = 0;
+       unpaid overdue par pending = challan amount + fine (jaise 12,000 + 100 = 12,100). */
+    let projFine = 0;
     if (settings?.fineEnabled && billedFine <= 0 && received <= 0) {
-      fine = feeService.computeFine({ dueDate: rec.dueDate, receivingDate: localTodayISO(), settings });
+      projFine = feeService.computeFine({ dueDate: rec.dueDate, receivingDate: localTodayISO(), settings });
     }
-    const fineReceived = 0;
+    /* "Fine" column: bill ho chuki fine hi asal hai; warna projected (accrued). */
+    const fine = billedFine > 0 ? billedFine : projFine;
+    const fineReceived = billedFineRecv;
 
-    const challanAmt = newBilled + openDebt;          // asal fee (fine alag "Fine" column me)
-    running = openBal + newBilled + fine - received;  // pending = fee + projected fine
+    /* Billed fine `newBilled`/`received` me pehle se shamil hai (wo bhi ek detailRow
+       hai), is liye Challan Amount me se usay nikaal do — warna wohi raqam do baar
+       ginti: ek baar fee me, ek baar apne "Fine" column me. */
+    const challanAmt = newBilled - billedFine + openDebt;   // asal fee (fine alag column me)
+    /* Running balance PROJECTED fine par chalta hai — billed fine `newBilled` me
+       already shamil hai (aur uski wasooli `received` me), is liye yahan `fine`
+       (jo billed ho sakti hai) lagana usay dobara gin leta. */
+    running = openBal + newBilled + projFine - received;
     const pending    = Math.max(0, running);
     /* Status sirf ASLI CASH par — advance apne alag column me. Advance ne poora cover
        kar diya (cash 0, pending 0) to 'full', warna cash aane par running dekho. */
@@ -6637,8 +6702,9 @@ function buildStudentHistory({ recs, fromIdx, toIdx, year, empNames = {}, settin
       challanDate: String(rec.dateofCreattion || '').slice(0, 10) || '—',
       dueDate:     String(rec.dueDate || '').slice(0, 10) || '—',
       challanAmt, pending, status, advApplied, disc: monthDisc,
-      /* Wasool shuda late fine bhi "Received" ka hissa hai. */
-      received: received + fineReceived,
+      /* `received` me billed fine ki wasooli pehle se shamil hai (wo bhi ek
+         detailRow hai) — dobara mat jodo. */
+      received,
       fine, fineReceived,
       method:   received > 0 ? (rec.paymentMethod || 'Cash') : '—',
       recvDate: recvOn || (stamp ? stamp.slice(0, 10) : '—'),
@@ -6656,12 +6722,13 @@ function buildStudentHistory({ recs, fromIdx, toIdx, year, empNames = {}, settin
           pend:    ledgerRowPend(r),
           unpaid:  ledgerRowUnpaid(r),
         })),
-        /* Reconstructed late fine apni alag line ki tarah. */
-        ...(fine > 0 ? [{
+        /* PROJECTED fine apni alag line ki tarah. Billed fine upar `rows` me
+           already apni row rakhti hai — usay dobara mat jodo. */
+        ...(billedFine <= 0 && projFine > 0 ? [{
           head: 'Account Payable', sub: feeService.LATE_FINE_HEAD,
-          challan: fine, disc: 0,
-          recv: fineReceived, pend: Math.max(0, fine - fineReceived),
-          unpaid: fineReceived <= 0,
+          challan: projFine, disc: 0,
+          recv: 0, pend: projFine,
+          unpaid: true,
         }] : []),
       ],
       /* The ledger stores a cumulative receivedAmount, not per-transaction
@@ -6684,7 +6751,11 @@ function buildStudentHistory({ recs, fromIdx, toIdx, year, empNames = {}, settin
 function feeHistTotals(months) {
   let fee = 0, recv = 0, adv = 0, disc = 0, fine = 0, lastDate = '—', lastBy = '—', lastTime = '—';
   months.forEach(mo => {
-    fee  += mo.challanAmt;
+    /* Total Fee me fine bhi shamil — `challanAmt` se wo alag ki ja chuki hai
+       (apna "Fine" column hai), magar summary card KUL waajib raqam dikhata hai
+       aur `recv` me fine ki wasooli pehle se hai. Dono ko match karna zaroori
+       hai, warna poora receive hone par bhi Total Fee < Received nazar aata. */
+    fee  += mo.challanAmt + (mo.fine || 0);
     recv += mo.received;
     adv  += (mo.advApplied || 0);
     disc += (mo.disc || 0);
