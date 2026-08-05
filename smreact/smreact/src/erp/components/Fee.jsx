@@ -830,6 +830,17 @@ function familyChildFigures(rec) {
   return { fee, transport, discount, dues, advance, payable: fee + transport + dues - advance };
 }
 
+/* familyChildFigures + LIVE prior-outstanding override. Challan me stored "Previous
+   Pending" generation-time snapshot hai; pichhle mahine ki receiving baad me ho to stale
+   ho jaata hai. prevLive ({ dues, advance }, running-ledger se) mile to dues/advance usse
+   badal do — warna stored hi. */
+function famFigWithPrev(rec, prevLive) {
+  const fig = familyChildFigures(rec);
+  if (!prevLive) return fig;
+  return { ...fig, dues: prevLive.dues, advance: prevLive.advance,
+    payable: fig.fee + fig.transport + prevLive.dues - prevLive.advance };
+}
+
 /* ═══════════════════════════════════════════════════════════════════
    FAMILY TREE CHALLANS — combines siblings under one guardian. Mirrors
    FeeChallansList structurally: filters, smart search, table, per-row
@@ -995,25 +1006,16 @@ function FamilyTreeChallansList({ toast }) {
          carry-forward already shamil hota hai → double-count nahi), phir uska
          unpaid remainder: Σ (challanAmount − discount − receivedAmount).
          > 0 → Total Dues | < 0 → Advance. */
-      const prevOut = {};
+      let prevOut = {};
       try {
         let toM = mIdx, toY = appliedYear;                 // applied month se ek pehle
         if (toM === 0) { toM = 12; toY = appliedYear - 1; }
         let fromM = toM - 11, fromY = toY;                 // 12-month window
         while (fromM <= 0) { fromM += 12; fromY -= 1; }
         const prevRows = await feeService.getLedgerRange(fromM, fromY, toM, toY);
-        const latest = new Map();
-        (prevRows || []).forEach(r => {
-          const id   = String(r.studentID);
-          const rank = (Number(r.year) || 0) * 12 + (Number(r.month) || 0);
-          const cur  = latest.get(id);
-          if (!cur || rank > cur.rank) latest.set(id, { rank, rec: r });
-        });
-        latest.forEach(({ rec }, id) => {
-          const raw = (rec.detailRows || []).reduce(
-            (a, r) => a + ((+r.challanAmount || 0) - (+r.discount || 0) - (+r.receivedAmount || 0)), 0);
-          if (raw !== 0) prevOut[id] = { dues: raw > 0 ? raw : 0, advance: raw < 0 ? -raw : 0 };
-        });
+        /* Running-ledger — stale stored Previous Pending se bachne ke liye (jaise
+           September ki receiving October ke baad hui to October ka stored 13,850 galat). */
+        prevOut = prevOutFromLedgerRows(prevRows);
       } catch (e) { /* optional — na mile to 0 hi rahenge */ }
       setPrevOutMap(prevOut);
     } catch (e) {
@@ -1031,9 +1033,19 @@ function FamilyTreeChallansList({ toast }) {
      the month, else the family-tree defaults (zeros until one is generated). */
   const childFig = (f, ch) => {
     const real = figMap[keyOf(f.key, ch.reg)];
-    if (real) return real;
+    const prevLive = prevOutMap[String(ch.applicantsID)] || null;
+    if (real) {
+      /* Generated challan ka stored "Previous Pending" GENERATION ke waqt ka snapshot hai;
+         agar us ke baad kisi pichhle mahine ki fee receive ho gayi to stale ho jaata hai.
+         Live prevOut (running-ledger) se dues/advance override — October ka 13,850 → 6,850. */
+      if (prevLive) {
+        return { ...real, dues: prevLive.dues, advance: prevLive.advance,
+          payable: real.fee + real.transport + prevLive.dues - prevLive.advance };
+      }
+      return real;
+    }
     /* Challan abhi nahi bana → pichhle mahino ka LIVE baqaya dikhao (0 ki jagah). */
-    const prev = prevOutMap[String(ch.applicantsID)] || null;
+    const prev = prevLive;
     const dues = prev ? prev.dues    : (+ch.dues    || 0);
     const adv  = prev ? prev.advance : (+ch.advance || 0);
     return {
@@ -1818,25 +1830,15 @@ function FeeChallansList({ toast }) {
            remainder = Σ (challanAmount − discount − receivedAmount)
          remainder > 0 → Total Dues | remainder < 0 → Advance.
          Isse current month ka challan banane se PEHLE hi dues/advance dikh jaate hain. */
-      const prevOut = {};
+      let prevOut = {};
       try {
         let toM = mIdx, toY = appliedYear;                 // applied month se ek pehle
         if (toM === 0) { toM = 12; toY = appliedYear - 1; }
         let fromM = toM - 11, fromY = toY;                 // 12-month window
         while (fromM <= 0) { fromM += 12; fromY -= 1; }
         const prevRows = await feeService.getLedgerRange(fromM, fromY, toM, toY);
-        const latest = new Map();                          // studentID → sabse recent record
-        (prevRows || []).forEach(r => {
-          const id   = String(r.studentID);
-          const rank = (Number(r.year) || 0) * 12 + (Number(r.month) || 0);
-          const cur  = latest.get(id);
-          if (!cur || rank > cur.rank) latest.set(id, { rank, rec: r });
-        });
-        latest.forEach(({ rec }, id) => {
-          const raw = (rec.detailRows || []).reduce(
-            (a, r) => a + ((+r.challanAmount || 0) - (+r.discount || 0) - (+r.receivedAmount || 0)), 0);
-          if (raw !== 0) prevOut[id] = { dues: raw > 0 ? raw : 0, advance: raw < 0 ? -raw : 0 };
-        });
+        /* Running-ledger — stale stored Previous Pending se bachne ke liye. */
+        prevOut = prevOutFromLedgerRows(prevRows);
       } catch (e) { /* previous dues optional — na mile to 0 hi rahenge */ }
       setPrevOutMap(prevOut);
     } catch (e) {
@@ -2031,15 +2033,18 @@ function FeeChallansList({ toast }) {
       ? classFeeStruct[gradeId]
       : (headsMap[c.key] || []);
     if (heads.length === 0) { toast('Configure fee heads for this class first', 'warning'); return; }
-    /* Pehle local mirror; phir by-student API se saved discounts laa kar head
-       ke against dikhao (API sirf isi student ke records deti hai). */
-    let initial = (discountMap[c.key] && discountMap[c.key][s.reg]) || {};
+    /* Is session ke local edits (jinme clear kiya hua 0 bhi shamil) — ye API ki
+       purani value par JEETENGE, warna clear kiya hua discount reopen par phir purana
+       dikhta tha (backend 0 par clear nahi karta). Challan generation bhi isi tarah
+       edits ko preference deti hai, so UI aur challan consistent rehte hain. */
+    const localMirror = (discountMap[c.key] && discountMap[c.key][s.reg]) || {};
+    let initial = { ...localMirror };
     try {
       const rows   = await feeService.getFeeDiscountsByStudent(s.studentID);
       const active = (rows || []).filter(r => r.isActive !== false);
-      /* headID → existing record id yaad rakho (save par update ke liye). */
+      /* headID → { id, amt } yaad rakho — save par update ke liye id chahiye. */
       const idMap = {};
-      active.forEach(r => { idMap[String(r.headID)] = r.id; });
+      active.forEach(r => { idMap[String(r.headID)] = { id: r.id, amt: Number(r.discountAmount) || 0 }; });
       discountIdRef.current[String(s.studentID)] = idMap;
       if (active.length) {
         const fromApi = {};
@@ -2048,7 +2053,8 @@ function FeeChallansList({ toast }) {
           const head = heads.find(h => Number(h.feeStructureID) === Number(r.headID));
           if (head) fromApi[head.name] = Number(r.discountAmount) || 0;
         });
-        if (Object.keys(fromApi).length) initial = fromApi;
+        /* API base, phir is session ke edits (0 clear samet) overlay — edits jeetein. */
+        initial = { ...fromApi, ...localMirror };
       }
     } catch (e) { /* API fail → local mirror hi use hoga */ }
     setDiscountCtx({ classMeta: c, student: s, heads, initial });
@@ -2076,18 +2082,28 @@ function FeeChallansList({ toast }) {
       try {
         for (const [headName, discountAmount] of entries) {
           const head = heads.find(h => h.name === headName);
-          /* Already-added discount ho to uska id bhejo (update); warna 0 (insert). */
-          const existingId = idMap[String(head?.feeStructureID)] || 0;
-          await feeService.saveFeeDiscount({
-            id:             existingId,
-            gradeID:        student.gradeID || cls?._gradeId,
-            sectionID:      student.sectionID || cls?._sectionId,
-            headID:         head?.feeStructureID,
-            headName,
-            discountAmount,
-            studentID:      student.studentID,
-            studentName:    student.name,
-          });
+          /* Already-added discount ka { id, amt } — id se update. */
+          const existing   = idMap[String(head?.feeStructureID)] || {};
+          const existingId = existing.id || 0;
+          const num        = Number(discountAmount) || 0;
+          /* Sirf > 0 discount server par save/update hota hai. 0 (clear) backend par
+             persist NAHI hota — backend 0 reject karta hai aur isActive:false ko ignore
+             kar ke record active + purana amount rakh deta hai (koi delete endpoint nahi).
+             Is liye 0 par koi call nahi bhejte; clear sirf is session ke local mirror se
+             chalta hai (challan generation aur discount box dono use karte hain). */
+          if (num > 0) {
+            await feeService.saveFeeDiscount({
+              id:             existingId,
+              gradeID:        student.gradeID || cls?._gradeId,
+              sectionID:      student.sectionID || cls?._sectionId,
+              headID:         head?.feeStructureID,
+              headName,
+              discountAmount: num,
+              studentID:      student.studentID,
+              studentName:    student.name,
+              isActive:       true,
+            });
+          }
         }
         toast('Discount saved', 'success');
       } catch (e) {
@@ -2409,6 +2425,15 @@ function FeeChallansList({ toast }) {
                             current: +s.current || 0,
                             payable: (+s.current || 0) + fbDues - fbAdv,
                           };
+                          /* Generated challan ka stored "Previous Pending" GENERATION ke
+                             waqt ka snapshot hai — agar us ke baad kisi pichhle mahine ki
+                             fee receive ho gayi to stale ho jaata hai. Live prevOut se
+                             override (October ka 13,850 → sahi 6,850). */
+                          if (rec && prevOut) {
+                            fig.dues    = prevOut.dues;
+                            fig.advance = prevOut.advance;
+                            fig.payable = (fig.current || 0) + fig.dues - fig.advance;
+                          }
                           /* Total Payable = asal challan fee. PROJECTED late fine yahan
                              NAHI jodte — wo challan print/receiving par lagti hai. Sirf
                              bill ho chuki fine (jo `current` me baqaya ke taur par pehle se
@@ -3204,8 +3229,11 @@ function DiscountManagerModal({ cfg, onClose, onSave, toast }) {
      modal itself, so hold the spinner until it resolves. */
   const handleSave = async () => {
     if (saving) return;
+    /* HAR head bhejo — 0 samet. Warna discount clear (0) karne par wo head omit ho
+       jaata tha aur server par purana discount waisa ka waisa reh jaata tha. 0 bhejne
+       se purana saved discount update ho kar clear ho jaata hai. */
     const perHead = {};
-    rows.forEach(r => { if (r.disc > 0) perHead[r.name] = r.disc; });
+    rows.forEach(r => { perHead[r.name] = r.disc; });
     try {
       setSaving(true);
       await onSave(cfg.classMeta.key, cfg.student.reg, perHead);
@@ -3485,7 +3513,11 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
   const fineTotalRecv = viewOnly
     ? finePaid
     : Math.max(0, fineRecvInput == null ? finePaid : fineRecvInput);
-  const fineOwed = viewOnly ? 0 : Math.max(0, fineTotalRecv - finePaid);
+  /* Fine bhi baaki fee heads jaisa POORA editable: input KUL wasooli hai, naya paisa =
+     input − pehle se paid. MINUS bhi ho sakta hai (cashier ne pehle zyada le liya tha,
+     ab kam kar raha = correction), is liye yahan max(0) clamp NAHI — warna fine sirf
+     barh sakti thi, ghata nahi (fee heads ki tarah edit nahi hoti thi). */
+  const fineOwed = viewOnly ? 0 : (fineTotalRecv - finePaid);
   const finePend = fineDue - finePaid - fineOwed;
 
   const receivingNow = headsRecv - advApplied + fineOwed;   // fineOwed view mode me 0
@@ -4005,9 +4037,16 @@ function FeeSlipModal({ cfg, onClose, toast }) {
      slip me sirf received nahi, poora breakup dikhe. Challan na mile to fallback: sirf
      received (perHead). */
   const chRows = cfg.challan && Array.isArray(cfg.challan.detailRows) ? cfg.challan.detailRows : null;
+  /* Stored "Previous Pending" GENERATION-time snapshot hai — pichhle mahine ki receiving
+     baad me ho to stale (jaise 13,850 jabke asal 6,850). Receiving component live value
+     (running-ledger) cfg.prevStd me bhejta hai; mile to prev row ka Std usse override. */
+  const prevStdOverride = (typeof cfg.prevStd === 'number') ? Math.round(cfg.prevStd) : null;
   const baseRows = chRows
     ? chRows.map(r => {
-        const std  = Math.round(+r.challanAmount || 0);   // ORIGINAL standard fee (discount se pehle)
+        const label  = String(r.subHead || r.head || '').toLowerCase();
+        const isPrev = /previous|pending|arrear/.test(label);
+        let std  = Math.round(+r.challanAmount || 0);   // ORIGINAL standard fee (discount se pehle)
+        if (isPrev && prevStdOverride != null) std = prevStdOverride;
         const disc = Math.round(+r.discount || 0);
         const recv = Math.round(+r.receivedAmount || 0);
         return { name: r.subHead || r.head || '—', std, disc, recv };
@@ -4211,8 +4250,41 @@ function FeeSlipModal({ cfg, onClose, toast }) {
    Download Slip (opens FeeSlipModal), Delete manual receipt (confirm).
    ═══════════════════════════════════════════════════════════════════ */
 
+/* Pichhle mahino ka LIVE baqaya/advance per student — RUNNING-LEDGER se (carry-forward
+   de-dup, Fee History jaisa). "Latest prior challan ka net−received" wala tareeqa tab
+   galat hota hai jab kisi purane mahine ki fee BAAD me receive ho: stored "Previous
+   Pending" snapshot stale reh jaata hai aur agla mahina phantom baqaya dikhata hai. Yeh
+   har prior mahine ke SIRF naye charges (non-prev rows) − received chalata hai, is liye
+   October (September ki receiving ke baad) aur November (October me prev pay karne ke
+   baad) dono me sahi baqaya nikalta hai. Returns { [studentID]: { dues, advance } }. */
+function prevOutFromLedgerRows(prevRows) {
+  const isPrev = (r) => /previous|pending|arrear/i.test(String(r.subHead || r.head || ''));
+  const byStudent = new Map();
+  (prevRows || []).forEach(r => {
+    const id = String(r.studentID);
+    if (!byStudent.has(id)) byStudent.set(id, []);
+    byStudent.get(id).push(r);
+  });
+  const out = {};
+  byStudent.forEach((recs, id) => {
+    const sorted = recs.slice().sort(
+      (a, b) => (Number(a.year) * 12 + Number(a.month)) - (Number(b.year) * 12 + Number(b.month)));
+    let running = 0, first = true;
+    sorted.forEach(rec => {
+      const rows = rec.detailRows || [];
+      const carry     = rows.filter(isPrev).reduce((a, r) => a + ((+r.challanAmount || 0) - (+r.discount || 0)), 0);
+      const newBilled = rows.filter(r => !isPrev(r)).reduce((a, r) => a + ((+r.challanAmount || 0) - (+r.discount || 0)), 0);
+      const received  = rows.reduce((a, r) => a + (+r.receivedAmount || 0), 0);
+      if (first) { running = carry; first = false; }   // sirf pehle mahine ka carry opening balance
+      running += newBilled - received;
+    });
+    if (running !== 0) out[id] = { dues: running > 0 ? running : 0, advance: running < 0 ? -running : 0 };
+  });
+  return out;
+}
+
 /* ── Models / helpers ── */
-function recStudentModel({ student, headsForClass, generated, classDisc, payments, challan = null }) {
+function recStudentModel({ student, headsForClass, generated, classDisc, payments, challan = null, prevOverride = null }) {
   let heads, prev, advance, thisMonth, disc;
   /* Previous-dues row ka ASLI subHead (e.g. "Previous Pending") aur uske khilaf ab tak
      wasool hui raqam — receiving modal me us par bhi amount likhi ja sake, aur payment
@@ -4245,6 +4317,17 @@ function recStudentModel({ student, headsForClass, generated, classDisc, payment
     });
     thisMonth = heads.reduce((a, h) => a + h.std, 0);
     disc      = heads.reduce((a, h) => a + h.disc, 0);
+    /* Challan me stored "Previous Pending" GENERATION ke waqt ka snapshot hai. Agar us
+       ke BAAD kisi pichhle mahine ki receiving hui (jaise September ka challan October
+       banne ke baad receive hua), to ye stale ho jaata hai — October phir bhi poora
+       purana 13,850 maang'ta hai, halanki asal baqaya 6,850 hai. LIVE prior-outstanding
+       (prevOverride, prevOutMap se — jo har prior challan ka net−received hai) mile to
+       usay authority maano taake carry-forward sahi (aur overcharge na ho). */
+    if (prevOverride) {
+      prev    = Math.max(0, +prevOverride.dues || 0);
+      advance = Math.max(0, +prevOverride.advance || 0);
+      if (prev > 0 && !prevName) prevName = 'Previous Pending';
+    }
   } else {
     heads = (headsForClass || []).map(h => {
       const std = +h.amt || 0;
@@ -4379,6 +4462,11 @@ function FeeReceivingIndividual({ toast }) {
      real data. */
   const [genSet, setGenSet] = useState(null);
   const [challanMap, setChallanMap] = useState({});
+  /* Pichhle mahino ka LIVE baqaya/advance — { [studentID]: { dues, advance } }.
+     Challan me stored "Previous Pending" GENERATION ke waqt ka snapshot hota hai; agar
+     us ke baad kisi pichhle mahine ki fee receive ho jaye to ye stale ho jaata hai. Live
+     hisaab (har prior challan ka net−received) se receiving ka carry-forward sahi rehta. */
+  const [prevOutMap, setPrevOutMap] = useState({});
   const monthIdx = FEE_MONTHS.indexOf(appliedMonth);
   const keyOf    = (classKey, reg) => `${classKey}|${reg}|${monthIdx}`;
 
@@ -4403,10 +4491,25 @@ function FeeReceivingIndividual({ toast }) {
       });
       setGenSet(set);
       setChallanMap(map);
+
+      /* ── Pichhle mahino ka LIVE baqaya (running-ledger) ──
+         October me September ki receiving (7000) ghata hua sahi baqaya (6,850)
+         carry-forward hota hai, na ke stale stored 13,850. */
+      let prevOut = {};
+      try {
+        let toM = mIdx, toY = appliedYear;                 // applied month se ek pehle
+        if (toM === 0) { toM = 12; toY = appliedYear - 1; }
+        let fromM = toM - 11, fromY = toY;                 // 12-month window
+        while (fromM <= 0) { fromM += 12; fromY -= 1; }
+        const prevRows = await feeService.getLedgerRange(fromM, fromY, toM, toY);
+        prevOut = prevOutFromLedgerRows(prevRows);
+      } catch (e) { /* previous dues optional — na mile to 0 hi rahenge */ }
+      setPrevOutMap(prevOut);
     } catch (e) {
       toast(e.message || 'Could not load challans', 'error');
       setGenSet(new Set());
       setChallanMap({});
+      setPrevOutMap({});
     }
   }, [studentsMap, appliedMonth, appliedYear, toast]);
 
@@ -4434,9 +4537,11 @@ function FeeReceivingIndividual({ toast }) {
       student: s, headsForClass: heads, generated, classDisc,
       payments: paymentsFor(c.key, s.reg),
       challan: generated ? (challanMap[keyOf(c.key, s.reg)] || null) : null,
+      /* Live prior-outstanding — stale stored Previous Pending ki jagah. */
+      prevOverride: prevOutMap[String(s.studentID)] || null,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [genSet, headsMap, paymentsFor, challanMap]);
+  }, [genSet, headsMap, paymentsFor, challanMap, prevOutMap]);
 
   const classSummary = useCallback((c) => {
     const students = studentsMap[c.key] || [];
@@ -4483,11 +4588,18 @@ function FeeReceivingIndividual({ toast }) {
      (e.g. after a page refresh — the local receipts are session-only), rebuild
      the payment from the challan's persisted receivedAmount so the slip still
      opens for an already-received fee. */
+  /* Slip par "Previous Pending" ke liye LIVE prior-outstanding (running-ledger). Na mile
+     to undefined → slip stored value hi rakhega (table jaisa hi — safe). */
+  const prevStdOf = (studentID) => {
+    const p = prevOutMap[String(studentID)];
+    return p ? (p.dues || 0) - (p.advance || 0) : undefined;
+  };
+
   const openReceiptSlip = (c, s) => {
     const payments = paymentsFor(c.key, s.reg);
     const last = payments[payments.length - 1];
     if (last) {
-      setSlipCtx({ classMeta: c, student: s, period: `${appliedMonth} ${appliedYear}`, payment: last, challan: challanMap[keyOf(c.key, s.reg)], defaultSize: settings.printSize || 'a4', school: branchHeader });
+      setSlipCtx({ classMeta: c, student: s, period: `${appliedMonth} ${appliedYear}`, payment: last, challan: challanMap[keyOf(c.key, s.reg)], prevStd: prevStdOf(s.studentID), defaultSize: settings.printSize || 'a4', school: branchHeader });
       return;
     }
     const rec  = challanMap[keyOf(c.key, s.reg)];
@@ -4504,6 +4616,7 @@ function FeeReceivingIndividual({ toast }) {
         method: rec.paymentMethod || 'Cash', ref: '', txn: '', amount: received, perHead,
       },
       challan: rec,
+      prevStd: prevStdOf(s.studentID),
       defaultSize: settings.printSize || 'a4', school: branchHeader,
     });
   };
@@ -4601,6 +4714,7 @@ function FeeReceivingIndividual({ toast }) {
           amount: payload.amount, perHead: payload.perHead, fine: payload.fine || 0,
         },
         challan: slipChallan,
+        prevStd: prevStdOf(s.studentID),
         defaultSize: settings.printSize || 'a4',
         school: branchHeader,
       });
@@ -5045,6 +5159,10 @@ function FamilyTreeReceiving({ toast }) {
      child's received status + amounts survive a page refresh — exactly like the
      Individual tab. One /get-by-month call, matched to children by studentID. */
   const [challanByStudent, setChallanByStudent] = useState({});
+  /* Pichhle mahino ka LIVE baqaya/advance — { [studentID]: { dues, advance } }.
+     Individual tab jaisa: stored "Previous Pending" snapshot stale ho jaata hai jab
+     pichhle mahine ki fee baad me receive ho, is liye carry-forward yahan se lete hain. */
+  const [prevOutMap, setPrevOutMap] = useState({});
   const loadFamilyChallans = useCallback(async () => {
     const mIdx = FEE_MONTHS.indexOf(appliedMonth);
     try {
@@ -5052,7 +5170,20 @@ function FamilyTreeReceiving({ toast }) {
       const map = {};
       rows.forEach(ch => { map[String(ch.studentID)] = ch; });
       setChallanByStudent(map);
-    } catch { setChallanByStudent({}); }
+
+      /* Pichhle mahino ka live baqaya (running-ledger) — October me September ki
+         receiving ghata hua sahi baqaya carry-forward, na ke stale stored value. */
+      let prevOut = {};
+      try {
+        let toM = mIdx, toY = appliedYear;
+        if (toM === 0) { toM = 12; toY = appliedYear - 1; }
+        let fromM = toM - 11, fromY = toY;
+        while (fromM <= 0) { fromM += 12; fromY -= 1; }
+        const prevRows = await feeService.getLedgerRange(fromM, fromY, toM, toY);
+        prevOut = prevOutFromLedgerRows(prevRows);
+      } catch (e) { /* optional */ }
+      setPrevOutMap(prevOut);
+    } catch { setChallanByStudent({}); setPrevOutMap({}); }
   }, [appliedMonth, appliedYear]);
   useEffect(() => { loadFamilyChallans(); }, [loadFamilyChallans]);
 
@@ -5063,10 +5194,14 @@ function FamilyTreeReceiving({ toast }) {
        paid is read from receivedAmount (persists on refresh). */
     const challan = ch._challan || challanByStudent[String(ch.applicantsID)] || null;
     if (challan && Array.isArray(challan.detailRows)) {
-      return recStudentModel({ student: ch, generated: true, payments, challan });
+      return recStudentModel({
+        student: ch, generated: true, payments, challan,
+        /* Live prior-outstanding — stale stored Previous Pending ki jagah. */
+        prevOverride: prevOutMap[String(ch.applicantsID)] || prevOutMap[String(ch.studentID)] || null,
+      });
     }
     return childRecModel({ child: ch, payments });
-  }, [paymentsFor, challanByStudent]);
+  }, [paymentsFor, challanByStudent, prevOutMap]);
 
   const familySummary = useCallback((f) => {
     let total = 0, paid = 0, unpaid = 0, onelink = 0;
@@ -5118,7 +5253,7 @@ function FamilyTreeReceiving({ toast }) {
         const rows = await feeService.getStudentChallans(ch.applicantsID, monthIdx + 1, appliedYear);
         const rec  = Array.isArray(rows) && rows.length ? rows[0] : null;
         if (rec) {
-          const fig = familyChildFigures(rec);
+          const fig = famFigWithPrev(rec, prevOutMap[String(ch.applicantsID)] || null);
           child = {
             ...ch,
             fee:       fig.fee,
@@ -5153,11 +5288,17 @@ function FamilyTreeReceiving({ toast }) {
   /* Open a child's receipt slip — prefer the latest session payment; otherwise
      rebuild it from the child's persisted challan receivedAmount (survives a
      refresh, since the local receipts are session-only). */
+  /* Slip par "Previous Pending" ke liye LIVE prior-outstanding (running-ledger). */
+  const prevStdOf = (ch) => {
+    const p = prevOutMap[String(ch.applicantsID)] || prevOutMap[String(ch.studentID)];
+    return p ? (p.dues || 0) - (p.advance || 0) : undefined;
+  };
+
   const openReceiptSlip = (f, ch) => {
     const payments = paymentsFor(f.key, ch.reg);
     const last = payments[payments.length - 1];
     if (last) {
-      setSlipCtx({ classMeta: { key: f.key, cls: ch.cls, sec: ch.sec }, student: ch, period: `${appliedMonth} ${appliedYear}`, payment: last, challan: ch._challan || challanByStudent[String(ch.applicantsID)], defaultSize: settings.printSize || 'a4' });
+      setSlipCtx({ classMeta: { key: f.key, cls: ch.cls, sec: ch.sec }, student: ch, period: `${appliedMonth} ${appliedYear}`, payment: last, challan: ch._challan || challanByStudent[String(ch.applicantsID)], prevStd: prevStdOf(ch), defaultSize: settings.printSize || 'a4' });
       return;
     }
     const rec  = ch._challan || challanByStudent[String(ch.applicantsID)];
@@ -5175,6 +5316,7 @@ function FamilyTreeReceiving({ toast }) {
         method: rec.paymentMethod || 'Cash', ref: '', txn: '', amount: received, perHead,
       },
       challan: rec,
+      prevStd: prevStdOf(ch),
       defaultSize: settings.printSize || 'a4',
     });
   };
@@ -5264,6 +5406,7 @@ function FamilyTreeReceiving({ toast }) {
           amount: payload.amount, perHead: payload.perHead, fine: payload.fine || 0,
         },
         challan: slipChallan,
+        prevStd: prevStdOf(ch),
         defaultSize: settings.printSize || 'a4',
       });
     }
@@ -5361,7 +5504,7 @@ function FamilyTreeReceiving({ toast }) {
         const rec  = Array.isArray(rows) && rows.length ? rows[0] : null;
         if (!rec) return ch;
         ledgerRecRef.current[`${f.key}|${ch.reg}`] = rec;
-        const fig = familyChildFigures(rec);
+        const fig = famFigWithPrev(rec, prevOutMap[String(ch.applicantsID)] || null);
         return {
           ...ch,
           fee:       fig.fee,
@@ -5387,7 +5530,7 @@ function FamilyTreeReceiving({ toast }) {
     const enriched = (f.children || []).map(ch => {
       const rec = ch._challan || challanByStudent[String(ch.applicantsID)] || null;
       if (!rec || !Array.isArray(rec.detailRows)) return ch;
-      const fig      = familyChildFigures(rec);
+      const fig      = famFigWithPrev(rec, prevOutMap[String(ch.applicantsID)] || null);
       const received = rec.detailRows.reduce((a, r) => a + (+r.receivedAmount || 0), 0);
       const perHead  = {};
       rec.detailRows.forEach(r => { const n = r.subHead || r.head || ''; perHead[n] = (perHead[n] || 0) + (+r.receivedAmount || 0); });
@@ -5901,7 +6044,8 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
   const fineTotalRecv = selEditable
     ? Math.max(0, fineRecvInput == null ? finePaid : fineRecvInput)
     : finePaid;
-  const fineOwed = Math.max(0, fineTotalRecv - finePaid);
+  /* Fine poora editable (fee heads jaisa) — reduce/correction ke liye max(0) clamp nahi. */
+  const fineOwed = selEditable ? (fineTotalRecv - finePaid) : 0;
   const finePend = fineDue - finePaid - fineOwed;
   if (selModel && !(selModel.onelink || selModel.status === 'full')) {
     recvNow     += fineOwed;

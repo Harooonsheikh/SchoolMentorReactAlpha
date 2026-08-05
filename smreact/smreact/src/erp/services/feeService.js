@@ -272,7 +272,7 @@ export async function deleteFeeHead(feeStructureID) {
 
 /* Student-specific fee discount (Fee Challans → Discount Manager → Save).
    One record per fee head: POST /api/Student/save-fee-discount. */
-export async function saveFeeDiscount({ id = 0, gradeID = 0, sectionID = 0, headID = 0, headName = '', discountAmount = 0, studentID = 0, studentName = '' } = {}) {
+export async function saveFeeDiscount({ id = 0, gradeID = 0, sectionID = 0, headID = 0, headName = '', discountAmount = 0, studentID = 0, studentName = '', isActive = true } = {}) {
   const branchID = Number(sessionStorage.getItem('branchID')) || 0;
   const userID   = Number(sessionStorage.getItem('UserID')) || 0;
   const now      = new Date().toISOString();
@@ -290,7 +290,10 @@ export async function saveFeeDiscount({ id = 0, gradeID = 0, sectionID = 0, head
     createdBy:      userID,
     modifiedAt:     now,
     modifiedBy:     userID,
-    isActive:       true,
+    /* isActive:false → discount clear/deactivate (get isActive!==false ko filter kar
+       deta hai). Backend 0 amount reject karta hai, is liye clear karte waqt caller
+       asal (>0) amount ke saath isActive:false bhejta hai. */
+    isActive:       isActive !== false,
   };
   const res = await fetch(buildUrl('/api/Student/save-fee-discount'), {
     method: 'POST',
@@ -775,7 +778,9 @@ export function withLateFineRow(rows, fineAmount, { ledgerId, branchId, userId, 
        challanAmount ko max() par rakho: fine kabhi neeche nahi jaati, magar
        already-billed hissa dobara nahi jurta. */
     const r = list[idx];
-    const received = (Number(r.receivedAmount) || 0) + fine;
+    /* `fine` MINUS bhi ho sakta hai (cashier fine kam kar raha = correction). Received
+       0 se neeche na jaye. */
+    const received = Math.max(0, (Number(r.receivedAmount) || 0) + fine);
     /* Billed kabhi neeche nahi jaati, aur wasooli se kam bhi nahi ho sakti. */
     const rowBilled = Math.max(Number(r.challanAmount) || 0, billed, received);
     const next = [...list];
@@ -798,10 +803,10 @@ export function withLateFineRow(rows, fineAmount, { ledgerId, branchId, userId, 
     branchId: branch,
     head: 'Account Payable',
     subHead: LATE_FINE_HEAD,
-    challanAmount: Math.max(billed, fine),
+    challanAmount: Math.max(billed, fine, 0),
     discount: 0,
-    receivedAmount: fine,       // sirf jitni AB wasool hui
-    pendingorAdv: Math.max(billed, fine) - fine,
+    receivedAmount: Math.max(0, fine),       // sirf jitni AB wasool hui (0 se neeche nahi)
+    pendingorAdv: Math.max(billed, fine, 0) - Math.max(0, fine),
     createdAt: stamp,
     createdBy: userId,
     modifiedAt: stamp,
