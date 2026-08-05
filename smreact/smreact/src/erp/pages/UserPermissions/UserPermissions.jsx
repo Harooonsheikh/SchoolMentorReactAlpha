@@ -251,8 +251,11 @@ export default function UserPermissions({ toast = () => {} }) {
       detail: `Custom permissions updated · ${summary}`,
       type: 'assign',
     });
-    toast(`Permissions updated for ${user.name}`, 'success');
-  }, [users, logAudit, toast]);
+    /* "Permissions updated for …" toast band — modal ka band ho jana hi
+       kaafi ishara hai, aur role badalne par "Role updated to …" pehle hi
+       aa jata hai (do toasts ek saath aate the). Audit log waise hi chalta
+       rahega. */
+  }, [users, logAudit]);
 
   const setDashboardType = useCallback((userId, dashboardType) => {
     const user = users.find(u => u.id === userId);

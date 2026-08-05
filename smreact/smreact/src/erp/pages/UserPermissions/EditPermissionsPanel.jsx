@@ -6,11 +6,9 @@ import {
   PRIMARY_ACTIONS,
   ADVANCED_ACTIONS,
   ACTION_LABELS,
-  ROLE_TEMPLATES,
   effectivePermsForUser,
   permStats,
   findRole,
-  permsFromTemplate,
   permsFromModules,
   getApplicablePerms,
   isPermApplicable,
@@ -19,6 +17,7 @@ import {
   apiPermissionsFromKeys,
 } from './permissionsData';
 import { useModules } from '../../context/ModuleContext';
+import { assignRoleToUser } from '../../services/rolesService';
 import { buildUrl } from '../../../utils/apiConfig';
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -295,22 +294,28 @@ export default function EditPermissionsPanel({ user, roles, readOnly, onClose, o
       return next;
     });
   };
-  const applyTemplate = (templateKey) => {
-    if (!templateKey || !selectedModule) return;
-    const tplPerms = permsFromTemplate(templateKey);
-    /* Merge the template into the current module only — and only at
-       cells that are applicable for the given screen. */
-    setPerms(p => {
-      const next = { ...p };
-      selectedModule.children.forEach(c => {
-        applicableFor(c.id).forEach(a => {
-          const key = `${c.id}.${a}`;
-          next[key] = !!tplPerms[key];
-        });
-      });
-      return next;
-    });
-    toast(`Template applied to ${selectedModule.label}`, 'info');
+  /* ─── Role dropdown ───────────────────────────────────────────────
+     Options branch ke asal roles hain (get-roles-by-branch se — parent
+     yahi `roles` prop me deta hai). Jis user ko role mila hua hai wo role
+     pehle se selected aata hai, baqi roles doosre options ke tor par.
+     Role chunne par us role ke modules ki saari applicable permissions
+     matrix par lag jati hain (wohi seeding jo role assign karne par hoti
+     hai) — sirf mojooda module par nahi, poore matrix par. */
+  const [pickedRoleId, setPickedRoleId] = useState(role?.id != null ? String(role.id) : '');
+  useEffect(() => { setPickedRoleId(role?.id != null ? String(role.id) : ''); }, [role]);
+
+  const applyRole = (roleId) => {
+    setPickedRoleId(roleId);
+    if (!roleId) return;
+    const picked = (roles || []).find((r) => String(r.id) === String(roleId));
+    if (!picked) return;
+    if (!Array.isArray(picked.modules) || !picked.modules.length) {
+      toast(`No modules are set for the "${picked.name}" role`, 'warn');
+      return;
+    }
+    /* Koi toast nahi — matrix ke checkboxes khud badal jate hain, wohi
+       kaafi ishara hai. (Save par bhi ab toast nahi aata.) */
+    setPerms(permsFromModules(picked.modules));
   };
 
   /* Module-level "all" / "any" state for the side tree count —
@@ -359,6 +364,34 @@ export default function EditPermissionsPanel({ user, roles, readOnly, onClose, o
 
     /* Real API save — /save-user-menu-permissions. Payload backend ki shape me. */
     setSaving(true);
+
+    /* Dropdown se koi DOOSRA role chuna gaya ho to pehle wo role user ko
+       assign karo (/assign-role-to-user) — warna permissions to save ho
+       jatin magar user ka role purana hi rehta. Wohi payload jo Users tab
+       ka "Assign Role" bhejta hai. Assign fail ho jaye to permissions save
+       nahi karte, warna dono ka haal alag alag ho jata hai. */
+    const roleChanged = pickedRoleId && String(pickedRoleId) !== String(role?.id ?? '');
+    if (roleChanged) {
+      try {
+        const res = await assignRoleToUser({
+          employeeID: Number(user.empId ?? user.employeeId) || 0,
+          roleID:     Number(pickedRoleId) || 0,
+          branchID:   Number(sessionStorage.getItem('branchID')) || 0,
+          createdBy:  Number(sessionStorage.getItem('UserID')) || 0,
+        });
+        if (res && (res.success === false || res.status === false)) {
+          toast(res.message || res.Message || 'Could not assign role', 'error');
+          setSaving(false);
+          return;
+        }
+      } catch (err) {
+        console.error('Could not assign role:', err);
+        toast('Could not assign role. Please try again.', 'error');
+        setSaving(false);
+        return;
+      }
+    }
+
     try {
       const branchId = sessionStorage.getItem('branchID') || '1';
       const token = sessionStorage.getItem('token');
@@ -394,7 +427,9 @@ export default function EditPermissionsPanel({ user, roles, readOnly, onClose, o
       return;
     }
     setSaving(false);
-    onSave(cleaned, summary);
+    /* Naya role bhi parent ko batao — warna table purana role dikhata rehta
+       hai aur sirf screen refresh par theek hota. Role na badla ho to null. */
+    onSave(cleaned, summary, roleChanged ? pickedRoleId : null);
   };
 
   const modOn = moduleCounts[selModId]?.allOn;
@@ -630,20 +665,20 @@ export default function EditPermissionsPanel({ user, roles, readOnly, onClose, o
                     Select ALL for this Module
                   </button>
                 </Tooltip>
-                <Tooltip text="Apply a preset template to this module's permissions">
+                <Tooltip text={role ? `Currently on the "${role.name}" role — pick another to apply its permissions` : "Apply a role's permissions to this user"}>
                   <select
                     className="up-select"
                     style={{
                       height: 32, padding: '0 28px 0 10px', fontSize: 11.5,
                       whiteSpace: 'nowrap', flexShrink: 0, minWidth: 160,
                     }}
-                    defaultValue=""
-                    onChange={(e) => { applyTemplate(e.target.value); e.target.value = ''; }}
+                    value={pickedRoleId}
+                    onChange={(e) => applyRole(e.target.value)}
                     disabled={readOnly}
                   >
                     <option value="">Apply Role Template…</option>
-                    {Object.entries(ROLE_TEMPLATES).map(([k, t]) => (
-                      <option key={k} value={k}>{t.label}</option>
+                    {(roles || []).map((r) => (
+                      <option key={r.id} value={r.id}>{r.name}</option>
                     ))}
                   </select>
                 </Tooltip>

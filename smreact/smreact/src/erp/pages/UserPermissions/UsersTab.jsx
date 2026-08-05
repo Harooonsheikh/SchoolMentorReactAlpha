@@ -305,7 +305,15 @@ export default function UsersTab({
           roles={roles}
           readOnly={editFor.readOnly}
           onClose={() => setEditFor(null)}
-          onSave={(perms, summary) => {
+          onSave={(perms, summary, newRoleId) => {
+            /* Panel ne role bhi badla ho (assign-role-to-user chal chuki hai)
+               to table + audit ko yahin update kar do; warna row purana role
+               dikhata rehta hai jab tak screen refresh na ho. Role pehle,
+               phir permissions — assignRole customPermissions clear karta hai. */
+            if (newRoleId != null) {
+              const picked = roles.find(r => String(r.id) === String(newRoleId));
+              if (picked) assignRole(editFor.user.id, picked.id);
+            }
             updateUserPermissions(editFor.user.id, perms, summary);
             setEditFor(null);
           }}
