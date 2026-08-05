@@ -9,10 +9,17 @@ import { usePermissions } from '../context/PermissionsContext';
 import { NAV_TO_MODULE_MAP, MODULE_REGISTRY } from '../config/moduleConfig';
 import { logout, goToLaunchSetup } from '../utils/auth';
 import { buildUrl, installSessionGuard, setSessionGuardActive, registerSessionToast, resolveMediaUrl } from '../../utils/apiConfig';
+import * as profileService from '../services/profileService';
+import SupportWidget from '../../components/SupportWidget';
 import erpExtraCss from './erpExtraCss';
 
 /* Registry module id → uska label (API menuName se match karta hai). */
 const MODULE_ID_TO_LABEL = Object.fromEntries(MODULE_REGISTRY.map((m) => [m.id, m.label]));
+
+/* Extra modules that are shown ONLY on the master branch (branchID === 1) and
+   stay hidden on every other branch. On branch 1 they still respect the user's
+   role/permission. Keyed by sidebar nav id. */
+const BRANCH1_ONLY_NAV = new Set(['inventory', 'crm', 'audit', 'appraisal', 'sops', 'trainings', 'etube', 'chat', 'notifications']);
 
 /* ─── Code-split each ERP module ─────────────────────────────────────
    React.lazy() wraps each module so its JS chunk is fetched only when
@@ -100,27 +107,27 @@ const NAV_SECTIONS = [
     items: [
       { id: 'fee',       name: 'Fee',       icon: 'fa-money-bill-wave' },
       { id: 'accounts',  name: 'Accounts',  icon: 'fa-landmark' },
-      // { id: 'inventory', name: 'Inventory', icon: 'fa-boxes-stacked' },
+      { id: 'inventory', name: 'Inventory', icon: 'fa-boxes-stacked' },   /* branchID 1 only */
     ],
   },
   {
     label: 'Administration',
     items: [
-      // { id: 'crm',       name: 'Admission CRM',  icon: 'fa-user-plus' },
+      { id: 'crm',       name: 'Admission CRM',  icon: 'fa-user-plus' },   /* branchID 1 only */
       { id: 'students',  name: 'Students',       icon: 'fa-user-graduate' },
       { id: 'hr',        name: 'Human Resource', icon: 'fa-users' },
-      // { id: 'appraisal', name: 'Staff Appraisals', icon: 'fa-star' },
+      { id: 'appraisal', name: 'Staff Appraisals', icon: 'fa-star' },     /* branchID 1 only */
     ],
   },
   {
     label: 'School Mentor',
     items: [
-      // { id: 'sops',          name: 'School SOPs',       icon: 'fa-book-open' },
-      // { id: 'trainings', name: 'Teacher Trainings', icon: 'fa-chalkboard-user' },
-      // Hidden for now (routes still wired, just not shown in the sidebar):
-      // { id: 'etube',         name: 'e-Tube',            icon: 'fa-play-circle' },
-      // { id: 'chat',          name: 'Chat',              icon: 'fa-comments' },
-      // { id: 'notifications', name: 'Notifications',     icon: 'fa-bell' },
+      { id: 'sops',          name: 'School SOPs',       icon: 'fa-book-open' },          /* branchID 1 only */
+      { id: 'trainings',     name: 'Teacher Trainings', icon: 'fa-chalkboard-user' },   /* branchID 1 only */
+      { id: 'etube',         name: 'e-Tube',            icon: 'fa-play-circle' },        /* branchID 1 only */
+      { id: 'chat',          name: 'Chat',              icon: 'fa-comments' },           /* branchID 1 only */
+      { id: 'notifications', name: 'Notifications',     icon: 'fa-bell' },               /* branchID 1 only */
+      // Feedback has no route block yet — keep hidden until it's wired.
       // { id: 'feedback',  name: 'Feedback',          icon: 'fa-comment-dots' },
     ],
   },
@@ -128,7 +135,7 @@ const NAV_SECTIONS = [
     label: 'Basics',
     items: [
       { id: 'launch',   name: 'Launch Setup',     icon: 'fa-rocket' },
-      // { id: 'audit',    name: 'Audit Logs',       icon: 'fa-clipboard-list' },
+      { id: 'audit',    name: 'Audit Logs',       icon: 'fa-clipboard-list' },   /* branchID 1 only */
       { id: 'settings', name: 'Settings',         icon: 'fa-gear' },
       { id: 'perm',     name: 'User Permissions', icon: 'fa-shield-halved' },
     ],
@@ -176,6 +183,17 @@ export default function App() {
   const userRole = sessionStorage.getItem('accountType') || 'User';
   const userInitials = userName.trim().split(/\s+/).map(w => w[0]).slice(0, 2).join('').toUpperCase() || 'U';
 
+  /* The user's profile photo (empImage) for the sidebar avatar — same source as
+     the My Profile dialog. Empty / failed → the initials fallback shows. */
+  const [userPhoto, setUserPhoto] = useState('');
+  useEffect(() => {
+    let cancelled = false;
+    profileService.getProfile()
+      .then(p => { if (!cancelled && p?.photo) setUserPhoto(p.photo); })
+      .catch(() => { /* keep initials */ });
+    return () => { cancelled = true; };
+  }, []);
+
   /* ─── Module activation engine ───
      Sidebar nav items + section headings are filtered through this.
      Items without a backing module registry entry (e.g. 'dashboard',
@@ -192,6 +210,15 @@ export default function App() {
        aa jayen, koi bhi nav item render nahi hota. Warna jo module off hai
        wo pehle paint par ek pal ke liye dikh kar phir ghayab hota hai. */
     if (!modulesReady || !permsReady) return false;
+    /* Master-branch-only extras: hidden on every branch except branchID 1. On
+       branch 1 they still follow the user's permission (registry-backed ones)
+       or simply show (non-permission extras like Chat / e-Tube / Notifications). */
+    if (BRANCH1_ONLY_NAV.has(navId)) {
+      if (String(sessionStorage.getItem('branchID')) !== '1') return false;
+      const gmod = NAV_TO_MODULE_MAP[navId];
+      const glabel = gmod ? MODULE_ID_TO_LABEL[gmod] : null;
+      return glabel ? (fullAccess || canModule(glabel)) : true;
+    }
     const modId = NAV_TO_MODULE_MAP[navId];
     if (!modId) {
       /* Registry-backed nahi (Dashboard/Feedback). Dashboard ab role/user
@@ -396,10 +423,18 @@ export default function App() {
           </nav>
 
           <div className="sidebar-footer" style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
-            <div className="user-av" style={{ overflow: 'hidden' }}>
-              {branchInfo?.userImage
-                ? <img src={branchInfo.userImage} alt={userName} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                : userInitials}
+            <div className="user-av" style={{ overflow: 'hidden', position: 'relative' }}>
+              {/* Initials are the base; the photo (if any) overlays them and, if it
+                  fails to load, hides itself so the initials show through. */}
+              {userInitials}
+              {userPhoto && (
+                <img
+                  src={resolveMediaUrl(userPhoto)}
+                  alt={userName}
+                  onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                  style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
+                />
+              )}
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -456,6 +491,9 @@ export default function App() {
             </div>
             <div className="topbar-right" style={{ gap: 10 }}>
               <TopbarSessionPill />
+              {/* Global Customer Support chat — trigger on every ERP screen; the
+                  chat window + attachment modals portal to <body> (bottom-right). */}
+              <SupportWidget />
               <Tooltip text={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'} placement="bottom">
                 <button className="tb-btn theme-btn" onClick={toggleTheme}>
                   <i className={`fa-solid ${theme === 'dark' ? 'fa-sun' : 'fa-moon'}`}></i>

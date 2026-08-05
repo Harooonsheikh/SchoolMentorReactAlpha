@@ -21,13 +21,13 @@ export const MODULE_REGISTRY = [
   /* ── ACCOUNTS GROUP ──────────────────────────────────────────── */
   { id: 'fee',              label: 'Fee',               icon: 'fa-money-bill-wave',  group: 'ACCOUNTS',       route: '/fee',                coreLocked: false },
   { id: 'accounts',         label: 'Accounts',          icon: 'fa-calculator',       group: 'ACCOUNTS',       route: '/accounts',           coreLocked: false },
-  // { id: 'inventory',        label: 'Inventory',         icon: 'fa-boxes-stacked',    group: 'ACCOUNTS',       route: '/inventory',          coreLocked: false },
+  { id: 'inventory',        label: 'Inventory',         icon: 'fa-boxes-stacked',    group: 'ACCOUNTS',       route: '/inventory',          coreLocked: false },
 
   /* ── ADMINISTRATION GROUP ────────────────────────────────────── */
-  // { id: 'admission_crm',    label: 'Admission CRM',     icon: 'fa-user-plus',        group: 'ADMINISTRATION', route: '/admission-crm',      coreLocked: false },
+  { id: 'admission_crm',    label: 'Admission CRM',     icon: 'fa-user-plus',        group: 'ADMINISTRATION', route: '/admission-crm',      coreLocked: false },
   { id: 'students',         label: 'Students',          icon: 'fa-user-graduate',    group: 'ADMINISTRATION', route: '/students',           coreLocked: false },
   { id: 'hr',               label: 'Human Resource',    icon: 'fa-users',            group: 'ADMINISTRATION', route: '/hr',                 coreLocked: false },
-  // { id: 'appraisals',       label: 'Staff Appraisals',  icon: 'fa-star-half-stroke', group: 'ADMINISTRATION', route: '/appraisals',         coreLocked: false },
+  { id: 'appraisals',       label: 'Staff Appraisals',  icon: 'fa-star-half-stroke', group: 'ADMINISTRATION', route: '/appraisals',         coreLocked: false },
 
   /* ── SCHOOL MENTOR GROUP ─────────────────────────────────────── */
   { id: 'school_sops',      label: 'School SOPs',       icon: 'fa-book-open',        group: 'SCHOOL MENTOR',  route: '/school-mentor/sops',      coreLocked: false },
