@@ -3461,14 +3461,12 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
   const fineRows  = (challan?.detailRows || []).filter(feeService.isLateFineRow);
   /* Ledger me pehle se mojood (freeze shuda) fine — aur uske khilaf wasooli. */
   const fineBilled = fineRows.reduce((a, r) => a + (+r.challanAmount || 0), 0);
-  /* Wasool shuda fine. Fine ledger me SIRF wasool hote waqt bill hoti hai —
-     withLateFineRow challanAmount aur receivedAmount dono barabar likhta hai.
-     Is liye "billed" khud is baat ka saboot hai ke wo fine li ja chuki hai.
-     Agar backend receivedAmount drop kar de (ya sirf challanAmount lauta de)
-     to bhi billed hissa PAID hi samjho — warna partial receiving ke baad
-     "Receive More" kholne par wohi fine dobara charge ho jaati thi. */
-  const fineRowPaid = fineRows.reduce((a, r) => a + (+r.receivedAmount || 0), 0);
-  const finePaid    = Math.max(fineRowPaid, fineBilled);
+  /* Wasool shuda fine SIRF row ke receivedAmount se. Pehle yahan
+     max(receivedAmount, challanAmount) tha — us waqt fine ya poori jaati ya
+     bilkul nahi, to "billed = paid" maan lena theek tha. Ab cashier fine
+     partial le sakta hai (ya bilkul na le) magar wo phir bhi bill hoti hai,
+     is liye billed ko paid maanna baqaya fine ko chupa deta tha. */
+  const finePaid = fineRows.reduce((a, r) => a + (+r.receivedAmount || 0), 0);
   const fineCalc   = feeService.computeFine({
     dueDate: challan?.dueDate, receivingDate: fineBaseDate, settings,
   });
@@ -3540,6 +3538,9 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
       /* Fine alag se — receipt/slip par apni line banti hai, aur `amount` me
          pehle se shamil hai (receivingNow me joda gaya). */
       fine: fineOwed,
+      /* Kul waajib fine — ab wasool na bhi ho to ledger me bill zaroor honi hai,
+         warna baqaya fine agli baar gayab mil jaati hai. */
+      fineBilled: fineDue,
     };
     if (cfg.kind === 'child') payload.famKey   = cfg.famKey;
     else                      payload.classKey = classMeta.key;
@@ -4568,6 +4569,8 @@ function FeeReceivingIndividual({ toast }) {
       const detailRows = feeService.withLateFineRow(baseRows, payload.fine, {
         /* Branch challan ke apne record se — API dono spellings me deti hai. */
         ledgerId: rec.id, branchId: rec.branchID ?? rec.branchId, userId: userID, now,
+        /* Kul waajib fine — ab wasool na ho to bhi row me bill hoti hai. */
+        billedAmount: payload.fineBilled,
       });
       feeService.receivePayment({
         ledgerId:      rec.id,
@@ -5227,6 +5230,8 @@ function FamilyTreeReceiving({ toast }) {
       const detailRows = feeService.withLateFineRow(baseRows, payload.fine, {
         /* Branch challan ke apne record se — API dono spellings me deti hai. */
         ledgerId: rec.id, branchId: rec.branchID ?? rec.branchId, userId: userID, now,
+        /* Kul waajib fine — ab wasool na ho to bhi row me bill hoti hai. */
+        billedAmount: payload.fineBilled,
       });
       feeService.receivePayment({
         ledgerId:      rec.id,
@@ -5879,11 +5884,9 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
   const selChallan = selChild?._challan || null;
   const fineRows   = (selChallan?.detailRows || []).filter(feeService.isLateFineRow);
   const fineBilled = fineRows.reduce((a, r) => a + (+r.challanAmount || 0), 0);
-  /* Individual modal jaisa hi: billed fine ka matlab hai wo li ja chuki hai, is
-     liye receivedAmount drop ho jaye to bhi usay PAID hi ginna hai — warna
-     "Receive More" par fine dobara charge hoti hai. */
-  const fineRowPaid = fineRows.reduce((a, r) => a + (+r.receivedAmount || 0), 0);
-  const finePaid    = Math.max(fineRowPaid, fineBilled);
+  /* Individual modal jaisa hi: wasooli SIRF receivedAmount se — billed fine ka
+     matlab paid nahi (partial ya bilkul na li gayi fine bhi bill hoti hai). */
+  const finePaid = fineRows.reduce((a, r) => a + (+r.receivedAmount || 0), 0);
   /* Individual modal jaisa hi: ledger me likhi ja chuki fine hi authority hai. */
   const fineDue    = fineBilled > 0 ? fineBilled : feeService.computeFine({
     dueDate: selChallan?.dueDate, receivingDate: date, settings,
@@ -5930,6 +5933,8 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
       perHead,
       isAdjustment: recvNow < 0,
       fine: fineOwed,
+      /* Individual modal jaisa hi — kul waajib fine bill honi hai. */
+      fineBilled: fineDue,
     });
     setSelReg(null);
   };

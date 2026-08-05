@@ -739,10 +739,17 @@ export function isLateFineRow(r) {
    `blid` = parent challan (ledger) ki id — baaki detailRows ki tarah. Ye 0
    chala jaaye to row kisi challan se link nahi hoti aur backend usay reject/
    orphan kar deta hai. */
-export function withLateFineRow(rows, fineAmount, { ledgerId, branchId, userId, now } = {}) {
+export function withLateFineRow(rows, fineAmount, { ledgerId, branchId, userId, now, billedAmount } = {}) {
   const fine = Math.round(Number(fineAmount) || 0);
+  /* BILLED aur RECEIVED alag alag hain: cashier poori fine bill hone ke bawajood
+     us me se kuch hi (ya bilkul nahi) le sakta hai. `fineAmount` = ab li gayi
+     raqam; `billedAmount` = kul waajib fine. billedAmount na aaye to purana
+     behaviour (jitni li, utni hi billed). */
+  const billed = Math.max(0, Math.round(Number(billedAmount ?? fine) || 0));
   const list = Array.isArray(rows) ? rows : [];
-  if (fine <= 0) return list;
+  /* Fine bill honi chahiye chahe ab wasool na ho — warna baqaya fine ledger me
+     kahin darj hi nahi hoti aur agli baar gayab mil jaati hai. */
+  if (fine <= 0 && billed <= 0) return list;
 
   const stamp = now || new Date().toISOString();
   const idx = list.findIndex(isLateFineRow);
@@ -769,13 +776,14 @@ export function withLateFineRow(rows, fineAmount, { ledgerId, branchId, userId, 
        already-billed hissa dobara nahi jurta. */
     const r = list[idx];
     const received = (Number(r.receivedAmount) || 0) + fine;
-    const billed   = Math.max(Number(r.challanAmount) || 0, received);
+    /* Billed kabhi neeche nahi jaati, aur wasooli se kam bhi nahi ho sakti. */
+    const rowBilled = Math.max(Number(r.challanAmount) || 0, billed, received);
     const next = [...list];
     next[idx] = {
       ...r,
-      challanAmount: billed,
+      challanAmount: rowBilled,
       receivedAmount: received,
-      pendingorAdv: billed - (Number(r.discount) || 0) - received,
+      pendingorAdv: rowBilled - (Number(r.discount) || 0) - received,
       modifiedAt: stamp,
       modifiedBy: userId,
     };
@@ -790,10 +798,10 @@ export function withLateFineRow(rows, fineAmount, { ledgerId, branchId, userId, 
     branchId: branch,
     head: 'Account Payable',
     subHead: LATE_FINE_HEAD,
-    challanAmount: fine,
+    challanAmount: Math.max(billed, fine),
     discount: 0,
-    receivedAmount: fine,       // fine hamesha poori wasool hoti hai
-    pendingorAdv: 0,
+    receivedAmount: fine,       // sirf jitni AB wasool hui
+    pendingorAdv: Math.max(billed, fine) - fine,
     createdAt: stamp,
     createdBy: userId,
     modifiedAt: stamp,
