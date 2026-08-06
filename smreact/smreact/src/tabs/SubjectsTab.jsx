@@ -913,8 +913,8 @@ export default function SubjectsTab({ classesData, setClassesData,  subjectsData
             </div>
           ) : rows.map(({ cls, sec }, i) => {
             const bl = bookLists[cls.id] || {};
-            const filled = sec.completeSubjectsDetailCount;
-            const total = sec.totalSubjectsCount;
+            const filled = sec ? sec.completeSubjectsDetailCount : 0;
+            const total = sec ? sec.totalSubjectsCount : 0;
             const expKey = `${cls.id}_${sec ? sec.sectionID : 'null'}`;
             const exp = expandedKey === expKey;
             const clsColor = COLORS[classesData.indexOf(cls) % COLORS.length];
