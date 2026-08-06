@@ -137,7 +137,7 @@ body{font-family:var(--font-body);background:var(--bg-base);color:var(--text-pri
 [data-theme="dark"] .setup-tabs-container{background:var(--bg-card);border-color:var(--border-light)}
 .setup-tabs{display:flex;gap:6px;width:100%;flex-wrap:nowrap}
 .tab-item{display:flex;align-items:center;justify-content:center;gap:8px;padding:11px 18px;border-radius:var(--radius-md);border:none;background:transparent;font-family:var(--font-body);font-size:13px;font-weight:600;color:var(--text-muted);cursor:pointer;transition:var(--tr);white-space:nowrap;user-select:none;flex:1}
-.tab-item:hover:not(.locked):not(.active){background:var(--bg-muted)}
+.tab-item:hover:not(.locked):not(.active){background:#C7D9F7}
 .tab-item:hover:not(.locked):not(.active) .tab-label,
 .tab-item:hover:not(.locked):not(.active) .tab-icon{color:var(--text-primary)}
 [data-theme="dark"] .tab-item:hover:not(.locked):not(.active){background:var(--bg-muted)}

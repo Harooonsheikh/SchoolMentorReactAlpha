@@ -132,8 +132,10 @@ body {
 .setup-tabs { display: flex; gap: 3px; width: 100%; }
 .tab-item { flex: 1; display: flex; align-items: center; justify-content: center; gap: 7px; padding: 10px 12px; border-radius: 10px; cursor: pointer; transition: var(--tr); position: relative; user-select: none; color: var(--text-muted); font-size: 13px; font-weight: 600; white-space: nowrap; }
 [data-theme="dark"] .tab-item { color: #60A5FA; }
-.tab-item:hover:not(.locked) { background: #DBEAFE; color: var(--brand-primary); }
-[data-theme="dark"] .tab-item:hover:not(.locked) { background: #162040; color: #93C5FD; }
+/* Hover sirf non-active tabs par — active tab ka gradient hover par bhi rehna chahiye */
+.tab-item:hover:not(.locked):not(.active) { background: #C7D9F7; color: var(--brand-primary); }
+[data-theme="dark"] .tab-item:hover:not(.locked):not(.active) { background: #162040; color: #93C5FD; }
+.tab-item.active:hover { background: linear-gradient(135deg, #1E3A8A, #1D4ED8); color: #fff; }
 .tab-item.active { background: linear-gradient(135deg, #1D4ED8, #1D4ED8); color: #fff; font-weight: 700; box-shadow: 0 4px 18px rgba(30,58,138,.55), inset 0 1px 0 rgba(255,255,255,.3); }
 .tab-item.locked { opacity: .4; cursor: not-allowed; }
 .tab-num { width: 20px; height: 20px; border-radius: 50%; background: rgba(255,255,255,.2); display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 800; }
