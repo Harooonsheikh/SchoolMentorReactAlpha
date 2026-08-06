@@ -54,15 +54,7 @@ function InputWrap({ icon, children }) {
 function EyeBtn({ show, onToggle }) {
   return (
     <button className="auth-eye-btn" onClick={onToggle} tabIndex={-1}>
-      {show
-        ? <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="#94A3B8" strokeWidth={2} strokeLinecap="round">
-            <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/>
-            <line x1={1} y1={1} x2={23} y2={23}/>
-          </svg>
-        : <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="#94A3B8" strokeWidth={2} strokeLinecap="round">
-            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx={12} cy={12} r={3}/>
-          </svg>
-      }
+      <i className={`fa-solid ${show ? 'fa-eye-slash' : 'fa-eye'}`} style={{ fontSize: 14 }} />
     </button>
   );
 }
@@ -83,15 +75,15 @@ function QA({ q, a }) {
   );
 }
 
-/* SVG icons */
-const ip = { width:17, height:17, viewBox:"0 0 24 24", fill:"none", stroke:"#1565C0", strokeWidth:2, strokeLinecap:"round" };
+/* Icons — Font Awesome (login page ke saath consistent) */
+const fi = { fontSize: 14 };
 const ICONS = {
-  home:   <svg {...ip}><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>,
-  user:   <svg {...ip}><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx={12} cy={7} r={4}/></svg>,
-  phone:  <svg {...ip}><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12 19.79 19.79 0 0 1 1.61 3.4 2 2 0 0 1 3.6 1.22h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L7.91 9a16 16 0 0 0 6 6l.85-.85a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>,
-  email:  <svg {...ip}><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>,
-  lock:   <svg {...ip}><rect x={3} y={11} width={18} height={11} rx={2}/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>,
-  shield: <svg {...ip}><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/></svg>,
+  home:   <i className="fa-solid fa-house"          style={fi} />,
+  user:   <i className="fa-solid fa-user"           style={fi} />,
+  phone:  <i className="fa-solid fa-mobile-screen"  style={fi} />,
+  email:  <i className="fa-solid fa-envelope"       style={fi} />,
+  lock:   <i className="fa-solid fa-lock"           style={fi} />,
+  shield: <i className="fa-solid fa-shield-halved"  style={fi} />,
 };
 
 /* ═══════════════════════════════════
