@@ -2,7 +2,13 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { COLORS } from '../data/initialData';
 import { downloadStaffReport } from '../utils/pdfReports';
 import { buildUrl } from '../utils/apiConfig';
-import staffTemplate from '../BulkStaff_Quick.xlsx';
+/* Bulk-import template `public/` se serve hota hai, src se import NAHI hota.
+   Wajah: import ek build-time dependency hai — file na ho to poori app compile
+   hi nahi hoti ("Can't resolve '../BulkStaff_Quick.xlsx'"). public/ me rakhne
+   se file na hone par sirf ye button aitraaz karta hai, baqi app chalti rehti
+   hai, aur file daalte hi button khud kaam karne lagta hai (koi code change
+   nahi). Students ke templates bhi isi tarah shift kiye ja sakte hain. */
+const STAFF_TEMPLATE_URL = `${process.env.PUBLIC_URL || ''}/BulkStaff_Quick.xlsx`;
 
 const STAFF_PER_PAGE = 8;
 
@@ -1054,9 +1060,19 @@ const [taskTarget, setTaskTarget] = useState(null);
 
   const closeImport = () => { setShowImport(false); setImportStep(1); setImportFile(null); setImportPreview(null); };
 
-  const downloadStaffTemplate = () => {
+  const downloadStaffTemplate = async () => {
+    /* File maujood hai ya nahi — pehle check, warna browser index.html
+       download kar leta hai (SPA fallback) aur user ko toota hua xlsx milta. */
+    try {
+      const res = await fetch(STAFF_TEMPLATE_URL, { method: 'HEAD' });
+      const type = res.headers.get('content-type') || '';
+      if (!res.ok || type.includes('text/html')) throw new Error('missing');
+    } catch {
+      showToast('Template file is not available yet — please add BulkStaff_Quick.xlsx to the public folder', 'error');
+      return;
+    }
     const a = document.createElement('a');
-    a.href = staffTemplate;
+    a.href = STAFF_TEMPLATE_URL;
     a.download = 'BulkStaff_Quick.xlsx';
     document.body.appendChild(a);
     a.click();
