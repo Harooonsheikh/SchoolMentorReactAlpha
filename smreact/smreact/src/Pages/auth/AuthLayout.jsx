@@ -1,57 +1,91 @@
-import { useEffect, useState } from 'react';
 import '../../styles/auth.css';
 
-//FOR tick icon color change show in left side of login and signup page
-const TickIcon = () => (
-  <svg viewBox="0 0 24 24" width="16" height="16" fill="none">
-    <polyline points="20 6 9 17 4 12" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
-  </svg>
-);
+/* Brand lockup: graduation-cap icon + live text wordmark ("SchoolMentor" +
+   "Creating the Future"). Text ab image nahi, real text hai — har screen par
+   sharp rehta hai aur size/color CSS se control hota hai. */
+const BRAND_ICON = `${process.env.PUBLIC_URL}/logo192.png`;
 
+function BrandLockup() {
+  return (
+    <>
+      <img className="auth-brand-icon" src={BRAND_ICON} alt="" aria-hidden="true" />
+      <span className="auth-brand-text">
+        <span className="auth-brand-name">
+          <b>School</b><span>Mentor</span>
+        </span>
+        <span className="auth-brand-tag">Creating the Future</span>
+      </span>
+    </>
+  );
+}
+
+/* Left story panel ka content. `steps` = journey rail. */
 const ILLUSTRATIONS = {
   login: {
-    badge: '',
-    title: "Pakistan's #1\nSchool OS",
-    tagline: 'Trusted by 800+ schools across the nation',
-    stats: [
-      { value: '800+', label: 'Schools' },
-      { value: '50K+', label: 'Students' },
-      { value: '99%',  label: 'Uptime'  },
+    eyebrow: 'Trusted by schools nationwide',
+    headline: <>Pakistan's <span className="auth-hl">Number One</span> School Operating System</>,
+    sub: "School Mentor is a complete school operating system that brings every department, every operation, and every stakeholder's needs together in one powerful, one-stop solution.",
+    journeyHead: 'How it works',
+    steps: [
+      {
+        icon: 'fa-solid fa-rocket',
+        title: 'Launch & Setup',
+        desc: 'Set up your school profile, academic structure, users, permissions, and essential configurations.',
+        chips: [],
+      },
+      {
+        icon: 'fa-solid fa-layer-group',
+        title: 'Activate Your School ERP',
+        desc: 'Activate and manage all essential modules in one platform:',
+        chips: [
+          'Student Management', 'Attendance', 'Academics', 'Lesson Planning',
+          'Question Bank', 'Paper Generator', 'Examination', 'Fee Management',
+          'Accounts', 'HR', 'Payroll', 'Inventory', 'Communication', 'Reports',
+        ],
+      },
+      {
+        icon: 'fa-solid fa-chart-line',
+        title: 'Manage, Automate & Grow',
+        desc: 'Run daily operations, monitor performance, automate routine tasks, and make informed decisions from one centralized platform.',
+        chips: [],
+      },
     ],
-    features: [
-      { icon: <TickIcon />, text: 'Complete ERP system for school management' },
-      { icon: <TickIcon />, text: 'Mobile app for parents, teachers & staff'  },
-      { icon: <TickIcon />, text: 'Mentor AI for smart school insights'        },
-      { icon: <TickIcon />, text: 'Operational manuals & teacher trainings'   },
-    ],
+    foot: 'One connected computer keeps every phone in your school in sync.',
   },
   signup: {
-    badge: '',
-    title: 'Join the\nSchoolMentor\nFamily',
-    tagline: 'Set up your school in under 5 minutes',
-    stats: [
-      { value: '5 min', label: 'Setup'   },
-      { value: 'Free',  label: 'Trial'   },
-      { value: '24/7',  label: 'Support' },
+    eyebrow: 'Free trial — no card required',
+    headline: <>Join the <span className="auth-hl">SchoolMentor</span> family</>,
+    sub: 'Set up your school in under 5 minutes and start running your ERP the same day.',
+    journeyHead: 'What happens next',
+    steps: [
+      {
+        icon: 'fa-solid fa-user-plus',
+        title: 'Create your account',
+        desc: 'Just a phone number to begin — no credit card required.',
+        chips: ['Phone verify', 'Instant access'],
+      },
+      {
+        icon: 'fa-solid fa-shield-halved',
+        title: 'Bank-grade security',
+        desc: 'Your school data is encrypted in transit and at rest.',
+        chips: ['Encrypted', 'Role-based access'],
+      },
+      {
+        icon: 'fa-solid fa-cloud',
+        title: 'Cloud based',
+        desc: 'Accessible from any device, anywhere — nothing to install.',
+        chips: ['Web', 'Mobile', 'Auto-backup'],
+      },
+      {
+        icon: 'fa-solid fa-earth-asia',
+        title: 'Built for your region',
+        desc: 'Pakistan and international schools, with local fee and session cycles.',
+        chips: ['PK curriculum', 'Multi-branch'],
+      },
     ],
-    features: [
-      { icon: <TickIcon />, text: 'No credit card required to get started'    },
-      { icon: <TickIcon />, text: 'Bank-grade security & data encryption'     },
-      { icon: <TickIcon />, text: 'Cloud-based, accessible from anywhere'     },
-      { icon: <TickIcon />, text: 'Pakistan & international schools supported' },
-    ],
+    foot: 'Onboarding assistance and staff training available from day one.',
   },
 };
-
-function useIsMobile(bp = 768) {
-  const [mobile, setMobile] = useState(() => window.innerWidth <= bp);
-  useEffect(() => {
-    const handler = () => setMobile(window.innerWidth <= bp);
-    window.addEventListener('resize', handler);
-    return () => window.removeEventListener('resize', handler);
-  }, [bp]);
-  return mobile;
-}
 
 export default function AuthLayout({
   illustration = 'login',
@@ -61,131 +95,107 @@ export default function AuthLayout({
   step,
   totalSteps,
 }) {
-  const data    = ILLUSTRATIONS[illustration] || ILLUSTRATIONS.login;
-  const isMobile = useIsMobile();
+  const data = ILLUSTRATIONS[illustration] || ILLUSTRATIONS.login;
 
   return (
     <div className="auth-page">
-      {/* ── LEFT PANEL — hidden on mobile via CSS ── */}
-      <div className="auth-left">
+
+      {/* ═══════════ LEFT: STORY / BRAND PANEL ═══════════ */}
+      <div className="auth-story">
         <div className="auth-blob auth-blob-1" />
         <div className="auth-blob auth-blob-2" />
-        <div className="auth-blob auth-blob-3" />
-        <div className="auth-grid" />
+        <i className="fa-solid fa-graduation-cap auth-spark"  style={{ top: '14%', left: '78%', animationDelay: '.5s'  }} />
+        <i className="fa-solid fa-chalkboard-user auth-spark" style={{ top: '62%', left: '6%',  animationDelay: '2.2s' }} />
+        <i className="fa-solid fa-book-open auth-spark"       style={{ top: '38%', left: '88%', animationDelay: '4s'   }} />
 
-        {/* Logo */}
-        <div className="auth-logo-row">
-          <LogoMark size={28} />
-          <span className="auth-logo-text">SchoolMentor</span>
-        </div>
+        <div className="auth-story-content">
 
-        {/* Hero */}
-        <div className="auth-hero">
-          <div className="auth-hero-badge">{data.badge}</div>
-          <h1 className="auth-hero-title">{data.title}</h1>
-          <p className="auth-hero-tagline">{data.tagline}</p>
-
-          <div className="auth-stats-row">
-            {data.stats.map((st, i) => (
-              <div key={i} className="auth-stat-box">
-                <div className="auth-stat-value">{st.value}</div>
-                <div className="auth-stat-label">{st.label}</div>
-              </div>
-            ))}
+          <div className="auth-brand-row">
+            <div className="auth-logo-badge">
+              <BrandLockup />
+            </div>
           </div>
 
-          <div className="auth-feature-list">
-            {data.features.map((f, i) => (
-              <div key={i} className="auth-feature-item">
-                <span className="auth-feature-icon">{f.icon}</span>
-                <span className="auth-feature-text">{f.text}</span>
-              </div>
-            ))}
+          <div className="auth-hero">
+            <div className="auth-eyebrow"><i className="fa-solid fa-circle" /> {data.eyebrow}</div>
+            <h1 className="auth-headline">{data.headline}</h1>
+            <p className="auth-sub">{data.sub}</p>
           </div>
-        </div>
 
-        <div className="auth-building-wrap">
-          <SchoolSVG />
+          <div className="auth-journey">
+            <div className="auth-journey-head">{data.journeyHead}</div>
+            <div className="auth-rail">
+              <div className="auth-rail-line"><div className="auth-rail-glow" /></div>
+              {data.steps.map((s, i) => (
+                <div key={i} className="auth-step">
+                  <div className="auth-step-node">
+                    <i className={s.icon} />
+                    <span className="auth-step-num">{i + 1}</span>
+                  </div>
+                  <div className="auth-step-body">
+                    <div className="auth-step-title">{s.title}</div>
+                    <div className="auth-step-desc">{s.desc}</div>
+                    {s.chips.length > 0 && (
+                      <div className="auth-module-chips">
+                        {s.chips.map((c, j) => <span key={j}>{c}</span>)}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="auth-story-foot">
+            <span className="auth-foot-icons">
+              <i className="fa-solid fa-book" />
+              <i className="fa-solid fa-headset" />
+              <i className="fa-solid fa-certificate" />
+            </span>
+            <span className="auth-story-foot-text">{data.foot}</span>
+          </div>
         </div>
       </div>
 
-      {/* ── RIGHT PANEL ── */}
-      <div className="auth-right">
-        <div className="auth-form-scroll">
+      {/* ═══════════ RIGHT: AUTH PANEL ═══════════ */}
+      <div className="auth-wrap">
+        <div className="auth-card">
 
-          {/* Mobile-only top bar — logo + gradient strip */}
-          {isMobile && (
-            <div className="auth-mobile-header">
-              <div className="auth-mobile-header-bg" />
-              <div className="auth-mobile-header-content">
-                <LogoMark size={22} light />
-                <span className="auth-mobile-logo-text">SchoolMentor</span>
-              </div>
-              {totalSteps && (
-                <p className="auth-mobile-step-hint">Step {step} of {totalSteps}</p>
-              )}
-            </div>
-          )}
+          <div className="auth-card-badge">
+            <BrandLockup />
+          </div>
 
-          {/* Step dots — desktop */}
-          {!isMobile && totalSteps && (
+          {/* Step dots — signup flow */}
+          {totalSteps && (
             <div className="auth-dots-row">
               {Array.from({ length: totalSteps }).map((_, i) => (
                 <div
                   key={i}
                   className="auth-dot"
                   style={{
-                    width:     i + 1 === step ? 24 : 8,
-                    background: i + 1 < step ? '#1DB88A'
-                               : i + 1 === step ? '#1565C0'
-                               : '#E2E8F0',
+                    width:      i + 1 === step ? 24 : 8,
+                    background: i + 1 <  step ? '#16A34A'
+                              : i + 1 === step ? '#2563EB'
+                              : '#BFDBFE',
                   }}
                 />
               ))}
             </div>
           )}
 
-          <h2 className="auth-form-heading">{heading}</h2>
-          <p  className="auth-form-tagline">{tagline}</p>
+          {/* `key` par heading rakhi hai: account type badalne par React ye
+              node remount karta hai, jis se fade-up animation dobara chalti
+              hai — warna text achanak badal jata tha. */}
+          <div className="auth-welcome" key={String(heading)}>
+            <h2 className="auth-welcome-title">{heading}</h2>
+            <p  className="auth-welcome-sub">{tagline}</p>
+          </div>
 
-          {children}
+          <div className="auth-forms">
+            {children}
+          </div>
         </div>
       </div>
     </div>
-  );
-}
-
-/* ── sub-components ── */
-function LogoMark({ size = 28, light = false }) {
-  return (
-    <div className={`auth-logo-mark ${light ? 'auth-logo-mark--light' : ''}`}
-      style={{ width: size + 14, height: size + 14 }}>
-      <img
-        src={`${process.env.PUBLIC_URL}/login-logo.png`}
-        alt="SchoolMentor"
-        width={size}
-        height={size}
-        style={{ width: size, height: size, objectFit: 'contain', display: 'block' }}
-      />
-    </div>
-  );
-}
-
-function SchoolSVG() {
-  return (
-    <svg viewBox="0 0 480 200" width="100%" style={{ opacity: 0.18 }} fill="white">
-      <rect x={0}   y={170} width={480} height={30} rx={4}/>
-      <rect x={100} y={70}  width={280} height={100} rx={4}/>
-      <polygon points="80,70 240,20 400,70"/>
-      <rect x={210} y={130} width={60} height={40} rx={3}/>
-      <rect x={120} y={90}  width={40} height={35} rx={3}/>
-      <rect x={180} y={90}  width={40} height={35} rx={3}/>
-      <rect x={260} y={90}  width={40} height={35} rx={3}/>
-      <rect x={320} y={90}  width={40} height={35} rx={3}/>
-      <rect x={238} y={0}   width={4}  height={22}/>
-      <polygon points="242,0 242,14 262,7"/>
-      <circle cx={50}  cy={140} r={25}/><rect x={46}  y={155} width={8} height={18}/>
-      <circle cx={430} cy={140} r={25}/><rect x={426} y={155} width={8} height={18}/>
-    </svg>
   );
 }

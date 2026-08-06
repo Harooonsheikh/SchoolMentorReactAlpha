@@ -3,6 +3,16 @@ import { useState } from 'react';
 import { buildUrl } from '../../utils/apiConfig';
 import { normalizePkPhone } from '../../utils/phone';
 
+/* Network Head Office login kamyab hone par chain-schools-frontend (alag Vite app)
+   ka portal khulta hai.
+     • local dev  → :3002 (vite.config.js me strictPort)
+     • deployed   → :4106, REACT_APP_CHAIN_URL se (.env.production)
+   Fallback sirf local dev ke liye hai: deployed par host to sahi banta tha magar
+   port 3002 rehta tha, jahan kuch chal hi nahi raha — is liye wahan env var lazmi. */
+const CHAIN_APP_URL = String(
+  process.env.REACT_APP_CHAIN_URL || `${window.location.protocol}//${window.location.hostname}:3002`
+).trim().replace(/\/+$/, '') + '/';   // hamesha ek hi trailing slash, taake "#session" theek lage
+
 /* Server ka asli error nikaalo — JSON object ho ya plain text. "Internal Server Error:"
    jaisa prefix hata do taake user ko sirf matlab ka message dikhe. */
 function serverMessage(data, raw) {
@@ -22,8 +32,20 @@ export default function LoginScreen({ onLogin, onSignup }) {
   const [password, setPassword] = useState('');
   const [showPass, setShowPass] = useState(false);
   const [error,    setError]    = useState('');
+  const [acctType, setAcctType] = useState('individual');
+  const [method,   setMethod]   = useState('phone');
+  const [remember, setRemember] = useState(false);
+
+  const isNetwork = acctType === 'network';
+
+  const isEmailLogin = method === 'email';
 
   async function handleLogin() {
+    /* Email sign-in abhi kisi bhi account type par live nahi hai. */
+    if (isEmailLogin) {
+      setError('Email login is not available yet. Please sign in with your phone number.');
+      return;
+    }
     if (!username.trim() || !password.trim()) {
       setError('Please enter your username and password.');
       return;
@@ -54,6 +76,58 @@ export default function LoginScreen({ onLogin, onSignup }) {
       setError(serverMessage(data, raw) || 'Login failed');
       return;
     }
+    /* Deactivated account har jagah block — network ho ya school ERP. */
+    if (data?.isActive === false) {
+      setError('This account is deactivated. Please contact your administrator.');
+      return;
+    }
+
+    /* Network Head Office: login yahin hota hai, phir chain-schools-frontend ka ERP
+       khul jata hai. Wo app session localStorage me `csp_token`/`csp_user` se padhta
+       hai (uska tokenStorage.js), isliye seedha wahi keys likh dete hain — chain side
+       par koi extra code nahi chahiye aur token URL me expose nahi hota.
+
+       NOTE: ye check ERP-only guards se PEHLE hai. Network head-office account kisi
+       school ka employee nahi hota (koi employee_ID nahi), is liye neeche wala
+       "pure parent" guard use galti se block kar deta tha. */
+    if (isNetwork) {
+      /* Token ke baghair chain portal ko signed-in nahi maana ja sakta — wo apne
+         login screen par bhej dega. Aisi soorat me yahin saaf error dikhaao,
+         warna user ko lagta hai "kuch hua hi nahi". */
+      if (!data?.token) {
+        setError('Login succeeded but no session token was returned. Please contact support.');
+        return;
+      }
+
+      const cspUser = {
+        id:          data?.id          ?? null,
+        userName:    data?.userName    ?? null,
+        displayName: data?.displayName ?? null,
+        accountType: data?.accountType ?? null,
+      };
+
+      /* Same-origin case (prod, jab dono ek hi domain par hon): seedha likh do. */
+      try {
+        localStorage.setItem('csp_token', data.token);
+        localStorage.setItem('csp_user', JSON.stringify(cspUser));
+      } catch (_) { /* private mode / quota — neeche wala hash handoff phir bhi chalega */ }
+
+      /* Cross-origin case (dev: ERP :3000, chain :3002 — localStorage alag hota hai).
+         Session URL ke HASH me jata hai: hash server ko nahi jata, aur chain app
+         boot par ise localStorage me daal kar turant URL se hata deta hai.
+
+         URL chhota rakhne ke liye token ko RAW bhejte hain: JWT pehle se base64url
+         hai (sirf A-Z a-z 0-9 - _ .), is liye encodeURIComponent uspar kuch nahi
+         badalta — magar poore JSON ko encode karne se har `"` `{` `:` %XX ban kar
+         URL bewajah lamba ho jata tha. Sirf user object ko encode karte hain. */
+      const handoff = `t=${data.token}&u=${encodeURIComponent(JSON.stringify(cspUser))}`;
+      /* assign() nahi, replace(): assign history me entry chhorta hai, is liye
+         chain portal par Back dabane par token wala URL dobara aa jata tha.
+         replace() se login page history se hat jata hai aur token kahin nahi bachta. */
+      window.location.replace(`${CHAIN_APP_URL}#${handoff}`);
+      return;
+    }
+
     /* Sirf PURE parent accounts (parent portal, jinke paas koi employee record nahi) ERP me
        login NAHI kar sakte. STAFF (teacher/principal/admin) — chahe wo kisi student ke parent
        bhi hon (isParent:true) — hamesha login kar sakte hain. Pehle `isParent === true` check
@@ -66,12 +140,7 @@ export default function LoginScreen({ onLogin, onSignup }) {
       setError('User not found');
       return;
     }
-    /* Belt-and-suspenders: deactivated (inactive) account frontend se bhi block — chahe
-       backend galti se login hone bhi de. Sirf tab jab response saaf-saaf isActive:false de. */
-    if (data?.isActive === false) {
-      setError('This account is deactivated. Please contact your administrator.');
-      return;
-    }
+
     if (data?.branchID) {
       sessionStorage.setItem("branchID", data.branchID);
     }
@@ -112,60 +181,112 @@ export default function LoginScreen({ onLogin, onSignup }) {
 
 
   return (
-    <AuthLayout illustration="login" heading="Welcome back" tagline="Sign in to your school dashboard">
+    <AuthLayout
+      illustration="login"
+      heading={isNetwork ? 'Network Head Office Login' : 'Welcome to School Mentor'}
+      tagline={isNetwork
+        ? 'Access and manage all schools in your network from one centralized account.'
+        : 'Sign in to manage your school from one centralized platform.'}>
 
       {error && <div className="auth-error-box">{error}</div>}
 
-      <label className="auth-label">Username</label>
-      <div className="auth-input-wrap">
-        <span className="auth-input-icon">
-          <svg width={17} height={17} viewBox="0 0 24 24" fill="none" stroke="#1565C0" strokeWidth={2} strokeLinecap="round">
-            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx={12} cy={7} r={4}/>
-          </svg>
-        </span>
-        <input className="auth-input" type="text" placeholder="Enter your username"
-          value={username} onChange={e => setUsername(normalizePkPhone(e.target.value))}
-          onKeyDown={e => e.key === 'Enter' && handleLogin()} />
+      {/* Account type — Individual School yahin ERP login hai,
+          School Network chain-schools-frontend ke login par bhej deta hai. */}
+      <div className="auth-acct-select">
+        <button type="button"
+          className={`auth-acct-card${acctType === 'individual' ? ' is-active' : ''}`}
+          onClick={() => { setAcctType('individual'); setMethod('phone'); setUsername(''); setError(''); }}>
+          <i className="fa-solid fa-school" />
+          <span>Individual School</span>
+        </button>
+        <button type="button"
+          className={`auth-acct-card${acctType === 'network' ? ' is-active' : ''}`}
+          onClick={() => { setAcctType('network'); setMethod('phone'); setUsername(''); setError(''); }}>
+          <i className="fa-solid fa-building-columns" />
+          <span>Network Head Office</span>
+        </button>
       </div>
+
+      {/* Sign-in method */}
+      <div className="auth-method-select">
+        <button type="button"
+          className={`auth-method-tab${method === 'phone' ? ' is-active' : ''}`}
+          onClick={() => { setMethod('phone'); setUsername(''); setError(''); }}>
+          <i className="fa-solid fa-phone" /> Phone Number
+        </button>
+        <button type="button"
+          className={`auth-method-tab${method === 'email' ? ' is-active' : ''}`}
+          onClick={() => { setMethod('email'); setUsername(''); setError(''); }}>
+          <i className="fa-solid fa-envelope" /> Email
+          <span className="auth-soon-badge">Soon</span>
+        </button>
+      </div>
+
+      {method === 'phone' ? (
+        <>
+          <label className="auth-label">Phone Number</label>
+          <div className="auth-phone-row">
+            <span className="auth-phone-code">+92</span>
+            <div className="auth-input-wrap">
+              <input className="auth-input" type="tel" placeholder="3XX XXXXXXX"
+                value={username} onChange={e => setUsername(normalizePkPhone(e.target.value))}
+                onKeyDown={e => e.key === 'Enter' && handleLogin()} />
+            </div>
+          </div>
+        </>
+      ) : (
+        <>
+          <label className="auth-label">Email Address</label>
+          <div className="auth-input-wrap">
+            <span className="auth-input-icon"><i className="fa-solid fa-envelope" /></span>
+            {/* Email login abhi kisi bhi account type ke liye live nahi —
+                network aur individual school, dono par phone hi chalta hai. */}
+            <input className="auth-input" type="email"
+              placeholder="Enter your official email address"
+              disabled value="" readOnly />
+          </div>
+          <div className="auth-notice-card">
+            <i className="fa-solid fa-circle-info" />
+            Email login and signup will be available soon. Please use your phone number for now.
+          </div>
+        </>
+      )}
 
       <label className="auth-label">Password</label>
       <div className="auth-input-wrap">
-        <span className="auth-input-icon">
-          <svg width={17} height={17} viewBox="0 0 24 24" fill="none" stroke="#1565C0" strokeWidth={2} strokeLinecap="round">
-            <rect x={3} y={11} width={18} height={11} rx={2}/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
-          </svg>
-        </span>
+        <span className="auth-input-icon"><i className="fa-solid fa-lock" /></span>
         <input className="auth-input" type={showPass ? 'text' : 'password'}
           placeholder="Enter your password"
           value={password} onChange={e => setPassword(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && handleLogin()} />
         <button className="auth-eye-btn" onClick={() => setShowPass(p => !p)} tabIndex={-1}>
-          <EyeIcon open={showPass} />
+          <i className={`fa-solid ${showPass ? 'fa-eye-slash' : 'fa-eye'}`} />
         </button>
       </div>
 
-      <button className="auth-btn-primary" onClick={handleLogin}>Sign In →</button>
-
-      <div className="auth-divider">
-        <div className="auth-divider-line" />
-        <span className="auth-divider-text">or</span>
-        <div className="auth-divider-line" />
+      <div className="auth-form-meta">
+        <label className="auth-remember">
+          <input type="checkbox" checked={remember} onChange={e => setRemember(e.target.checked)} />
+          Remember me
+        </label>
+        <button type="button" className="auth-forgot">Forgot password?</button>
       </div>
 
-      <button className="auth-btn-outline" onClick={onSignup}>Create New Account</button>
+      <button className="auth-btn-primary" onClick={handleLogin}>
+        {/* key → account type badalne par label bhi heading ke sath fade ho */}
+        <span className="auth-btn-label" key={acctType}>
+          {isNetwork ? 'Sign In to Network' : 'Sign In'}
+        </span>
+        <i className="fa-solid fa-arrow-right" />
+      </button>
 
-      <p className="auth-foot-note">By signing in you agree to SchoolMentor's Terms of Service</p>
+      <div className="auth-divider">or</div>
+
+      <button className="auth-btn-ghost" onClick={onSignup}>Create New Account</button>
+
+      <p className="auth-terms">
+        By signing in you agree to SchoolMentor's <a href="#terms">Terms of Service</a>
+      </p>
     </AuthLayout>
   );
-}
-
-function EyeIcon({ open }) {
-  return open
-    ? <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="#94A3B8" strokeWidth={2} strokeLinecap="round">
-        <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/>
-        <line x1={1} y1={1} x2={23} y2={23}/>
-      </svg>
-    : <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="#94A3B8" strokeWidth={2} strokeLinecap="round">
-        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx={12} cy={12} r={3}/>
-      </svg>;
 }
