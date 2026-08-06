@@ -127,11 +127,16 @@ export const EP = {
   },
 
   /* ── Operational SOPs ── */
+  /* ── Operational SOPs — LIVE SchoolMentorSuperAdminAPI.
+     Teeno routes POST hain aur ek hi body me `action` se kaam tay hota hai:
+     get | insert | update | delete. ── */
   sops: {
-    categories: () => `${ROOT}/sops/categories`,
-    category: (id) => `${ROOT}/sops/categories/${id}`,
-    manuals: () => `${ROOT}/sops/manuals`,                // GET / POST(multipart)
-    manual: (id) => `${ROOT}/sops/manuals/${id}`,
+    /* Manual Heads (screen par "Category" / manual head) */
+    manualHead: () => `${SA_ROOT}/api/AHM_School_SOPs/manual-head`,
+    /* Ek manual head ke andar ke manuals */
+    manualDetail: () => `${SA_ROOT}/api/AHM_School_SOPs/manual-detail`,
+    /* Manual ke saath attached forms */
+    manualForm: () => `${SA_ROOT}/api/AHM_School_SOPs/manual-form`,
   },
 
   /* ── Quiz Content ── */

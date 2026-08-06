@@ -1,8 +1,9 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Tooltip from '../../components/Tooltip';
 import ModuleTutorialModal from '../../components/TutorialModal';
 import { usePermissions } from '../../context/PermissionsContext';
+import { getManualHeads, getManuals, getForms, getFormsCount } from '../../services/sopsService';
 
 /* ═══════════════════════════════════════════════════════════════════
    SCHOOL SOPs — Centralised SOP & School Manual Library
@@ -22,65 +23,9 @@ import { usePermissions } from '../../context/PermissionsContext';
    of every other ERP module. No global CSS touched.
    ═══════════════════════════════════════════════════════════════════ */
 
-/* ─── Categories ─── */
-const CATEGORY_OPTIONS = [
-  { id: 'Academic',       label: 'Academic Manuals',       icon: 'fa-graduation-cap' },
-  { id: 'Administrative', label: 'Administrative Manuals', icon: 'fa-building'       },
-  { id: 'HR',             label: 'HR Manuals',             icon: 'fa-users'          },
-  { id: 'Others',         label: 'Others',                 icon: 'fa-folder-open'    },
-];
-
-/* ─── Mock data ─── */
-const MANUALS = [
-  /* Academic */
-  { id: 1,  sno: 1, title: 'Orientation Day: Activities and Student Integration',                category: 'Academic',       version: 'v2.1', pages: 28, status: 'Active',
-    hasTutorial: true,  lastUpdated: '15 Jan 2026', description: 'Comprehensive guide for planning and executing orientation day activities for new students and parents.',                pdfUrl: 'https://theschoolmentor.online/SchoolingSOPs' },
-  { id: 2,  sno: 2, title: 'First Day(s) Protocol',                                               category: 'Academic',       version: 'v1.8', pages: 16, status: 'Active',
-    hasTutorial: true,  lastUpdated: '10 Jan 2026', description: 'Step-by-step protocol for teachers and admin on managing the first days of a new academic session.',                       pdfUrl: 'https://theschoolmentor.online/SchoolingSOPs' },
-  { id: 3,  sno: 3, title: 'Positive Classroom Management: Strategies, Procedures and Teacher Well Being', category: 'Academic', version: 'v3.0', pages: 42, status: 'Updated',
-    hasTutorial: true,  lastUpdated: '20 Feb 2026', description: 'Strategies for maintaining a positive classroom environment while supporting teacher wellbeing.',                          pdfUrl: 'https://theschoolmentor.online/SchoolingSOPs' },
-  { id: 4,  sno: 4, title: 'Curriculum Development and Textbook Selection',                       category: 'Academic',       version: 'v2.3', pages: 34, status: 'Active',
-    hasTutorial: true,  lastUpdated: '05 Jan 2026', description: 'Framework for developing curriculum maps and selecting appropriate textbooks per grade.',                                   pdfUrl: 'https://theschoolmentor.online/SchoolingSOPs' },
-  { id: 5,  sno: 5, title: 'Timetable Design for Learning Balance and School Efficiency',         category: 'Academic',       version: 'v1.5', pages: 22, status: 'Active',
-    hasTutorial: true,  lastUpdated: '12 Dec 2025', description: 'Guidelines for designing balanced timetables that optimize learning and resource allocation.',                              pdfUrl: 'https://theschoolmentor.online/SchoolingSOPs' },
-  { id: 6,  sno: 6, title: 'Effective Lesson Planning and Instructional Practices',               category: 'Academic',       version: 'v4.0', pages: 38, status: 'Updated',
-    hasTutorial: true,  lastUpdated: '01 Mar 2026', description: 'SOP for creating effective lesson plans aligned with learning outcomes and assessment criteria.',                          pdfUrl: 'https://theschoolmentor.online/SchoolingSOPs' },
-  { id: 7,  sno: 7, title: 'Holistic Homework Policy, Implementation and Evaluation',             category: 'Academic',       version: 'v2.0', pages: 18, status: 'Active',
-    hasTutorial: true,  lastUpdated: '14 Nov 2025', description: 'Policy framework for assigning, evaluating, and providing feedback on student homework.',                                   pdfUrl: 'https://theschoolmentor.online/SchoolingSOPs' },
-  { id: 8,  sno: 8, title: 'Guidelines for Notebook & Diary Checking',                            category: 'Academic',       version: 'v1.2', pages: 12, status: 'Active',
-    hasTutorial: true,  lastUpdated: '20 Oct 2025', description: 'Standardized procedure for notebook and homework diary checking across all classes.',                                       pdfUrl: 'https://theschoolmentor.online/SchoolingSOPs' },
-  { id: 9,  sno: 9, title: 'Academic Assessment and Examination Framework',                       category: 'Academic',       version: 'v3.1', pages: 46, status: 'Active',
-    hasTutorial: true,  lastUpdated: '08 Feb 2026', description: 'Complete framework for designing, conducting, and evaluating academic assessments.',                                        pdfUrl: 'https://theschoolmentor.online/SchoolingSOPs' },
-  /* Administrative */
-  { id: 10, sno: 1, title: 'Admission SOP',                                                       category: 'Administrative', version: 'v2.5', pages: 30, status: 'Active',
-    hasTutorial: true,  lastUpdated: '11 Jan 2026', description: 'End-to-end admission process including inquiry, registration, and enrollment procedures.',                                  pdfUrl: 'https://theschoolmentor.online/SchoolingSOPs' },
-  { id: 11, sno: 2, title: 'Fee Collection SOP',                                                  category: 'Administrative', version: 'v1.9', pages: 20, status: 'Active',
-    hasTutorial: false, lastUpdated: '05 Dec 2025', description: 'Standardized procedures for fee collection, challan generation, and payment reconciliation.',                               pdfUrl: 'https://theschoolmentor.online/SchoolingSOPs' },
-  { id: 12, sno: 3, title: 'Student Discipline SOP',                                              category: 'Administrative', version: 'v2.2', pages: 24, status: 'Active',
-    hasTutorial: true,  lastUpdated: '19 Jan 2026', description: 'Framework for handling student disciplinary issues with progressive intervention strategies.',                              pdfUrl: 'https://theschoolmentor.online/SchoolingSOPs' },
-  { id: 13, sno: 4, title: 'School Safety & Emergency Procedures',                                category: 'Administrative', version: 'v1.6', pages: 32, status: 'Updated',
-    hasTutorial: true,  lastUpdated: '28 Feb 2026', description: 'Emergency response procedures including fire drills, first aid, and crisis management.',                                    pdfUrl: 'https://theschoolmentor.online/SchoolingSOPs' },
-  { id: 14, sno: 5, title: 'Parent Communication & Engagement Policy',                            category: 'Administrative', version: 'v1.3', pages: 18, status: 'Active',
-    hasTutorial: false, lastUpdated: '10 Nov 2025', description: 'Guidelines for maintaining professional and effective communication with parents and guardians.',                           pdfUrl: 'https://theschoolmentor.online/SchoolingSOPs' },
-  /* HR */
-  { id: 15, sno: 1, title: 'Employee Handbook',                                                   category: 'HR',             version: 'v3.2', pages: 52, status: 'Active',
-    hasTutorial: false, lastUpdated: '01 Aug 2025', description: 'Comprehensive handbook covering employment terms, code of conduct, and HR policies.',                                       pdfUrl: 'https://theschoolmentor.online/SchoolingSOPs' },
-  { id: 16, sno: 2, title: 'Leave Policy & Procedures',                                           category: 'HR',             version: 'v2.0', pages: 16, status: 'Updated',
-    hasTutorial: false, lastUpdated: '15 Feb 2026', description: 'Complete leave policy covering casual, medical, earned, and special leave categories.',                                     pdfUrl: 'https://theschoolmentor.online/SchoolingSOPs' },
-  { id: 17, sno: 3, title: 'Staff Attendance SOP',                                                category: 'HR',             version: 'v1.7', pages: 14, status: 'Active',
-    hasTutorial: true,  lastUpdated: '20 Dec 2025', description: 'Procedures for marking, monitoring, and reporting staff attendance using the ERP system.',                                  pdfUrl: 'https://theschoolmentor.online/SchoolingSOPs' },
-  { id: 18, sno: 4, title: 'Staff Appraisal & Performance Review Policy',                         category: 'HR',             version: 'v2.1', pages: 26, status: 'Active',
-    hasTutorial: true,  lastUpdated: '10 Jan 2026', description: 'Policy framework for conducting fair and structured staff performance appraisals.',                                         pdfUrl: 'https://theschoolmentor.online/SchoolingSOPs' },
-  { id: 19, sno: 5, title: 'Payroll & Salary Processing SOP',                                     category: 'HR',             version: 'v1.4', pages: 20, status: 'Active',
-    hasTutorial: false, lastUpdated: '05 Jan 2026', description: 'Step-by-step procedures for monthly payroll processing, increments, and deductions.',                                       pdfUrl: 'https://theschoolmentor.online/SchoolingSOPs' },
-  /* Others */
-  { id: 20, sno: 1, title: 'IT & Digital Tools Usage Policy',                                     category: 'Others',         version: 'v1.1', pages: 12, status: 'Draft',
-    hasTutorial: false, lastUpdated: '01 Mar 2026', description: 'Policy for appropriate use of school IT resources, ERP system, and digital tools.',                                         pdfUrl: 'https://theschoolmentor.online/SchoolingSOPs' },
-  { id: 21, sno: 2, title: 'Library Management SOP',                                              category: 'Others',         version: 'v1.0', pages: 18, status: 'Active',
-    hasTutorial: false, lastUpdated: '10 Sep 2025', description: 'Procedures for library operations including book issuing, cataloging, and maintenance.',                                    pdfUrl: 'https://theschoolmentor.online/SchoolingSOPs' },
-  { id: 22, sno: 3, title: 'Transport & Conveyance Policy',                                       category: 'Others',         version: 'v1.2', pages: 14, status: 'Active',
-    hasTutorial: false, lastUpdated: '15 Oct 2025', description: 'Rules and procedures governing school transport operations and student safety.',                                            pdfUrl: 'https://theschoolmentor.online/SchoolingSOPs' },
-];
+/* Categories (manual heads), manuals aur unki forms — teeno ab Super Admin
+   ke SOP module se aati hain (src/erp/services/sopsService.js). Pehle yahan
+   CATEGORY_OPTIONS + MANUALS ki hardcoded list thi. */
 
 /* ═══════════════════════════════════════════════════════════════════
    MAIN COMPONENT
@@ -89,31 +34,79 @@ export default function SchoolSOPs({ toast = () => {} }) {
   const { can } = usePermissions();
   const canViewManuals    = can('School SOPs', 'View Manuals', 'View');
   const canWatchTutorials = can('School SOPs', 'Watch Tutorials', 'View');
-  const [cat,    setCat]    = useState('Academic');
+  const [cat,    setCat]    = useState(null);      // selected manual head id
   const [search, setSearch] = useState('');
   const [pdfFor, setPdfFor] = useState(null);
   const [tutFor, setTutFor] = useState(null);
   const [tutorialOpen, setTutorialOpen] = useState(false);
 
-  /* Live-filtered manuals. */
+  /* ── Live data — Super Admin ke SOP module se (sirf padhne ke liye).
+        Manual heads → categories, phir chuni hui head ke manuals. Pehle ye
+        list file me hardcoded thi. ── */
+  const [heads,   setHeads]   = useState([]);
+  const [manuals, setManuals] = useState([]);
+  const [headsLoading,   setHeadsLoading]   = useState(true);
+  const [manualsLoading, setManualsLoading] = useState(false);
+
+  const toastRef = useRef(toast);
+  toastRef.current = toast;
+
+  useEffect(() => {
+    let alive = true;
+    setHeadsLoading(true);
+    getManualHeads()
+      .then((list) => {
+        if (!alive) return;
+        setHeads(list);
+        setCat((cur) => (list.some((h) => h.id === cur) ? cur : (list[0]?.id ?? null)));
+      })
+      .catch((err) => { if (alive) toastRef.current?.(err.message || 'Could not load manual categories', 'error'); })
+      .finally(() => { if (alive) setHeadsLoading(false); });
+    return () => { alive = false; };
+  }, []);
+
+  useEffect(() => {
+    if (!cat) { setManuals([]); return undefined; }
+    let alive = true;
+    setManualsLoading(true);
+    getManuals(cat)
+      .then(async (list) => {
+        if (!alive) return;
+        /* Manual ke saath uski head ka NAAM bhi rakho — API sirf id deti hai,
+           aur modal me badge par id ("4") dikhna bekar lagta hai. */
+        const headName = heads.find((h) => h.id === cat)?.label || '';
+        const withHead = list.map((m) => ({ ...m, categoryLabel: headName }));
+        setManuals(withHead);
+        /* Har manual ke against kitni forms hain — manual-detail ka `forms`
+           array khali aata hai, is liye ginti manual-form se laate hain
+           (sab parallel). Ye table ke Pages column me dikhti hai. */
+        const counts = await Promise.all(list.map((m) => getFormsCount(m.id)));
+        if (!alive) return;
+        setManuals(withHead.map((m, i) => ({ ...m, formsCount: counts[i] })));
+      })
+      .catch((err) => {
+        if (!alive) return;
+        setManuals([]);
+        toastRef.current?.(err.message || 'Could not load manuals', 'error');
+      })
+      .finally(() => { if (alive) setManualsLoading(false); });
+    return () => { alive = false; };
+  }, [cat, heads]);
+
+  /* Live-filtered manuals (list pehle hi chuni hui head ki hai). */
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return MANUALS
-      .filter(m => m.category === cat)
-      .filter(m => {
-        if (!q) return true;
-        const hay = `${m.title} ${m.category}`.toLowerCase();
-        return hay.includes(q);
-      });
-  }, [cat, search]);
+    if (!q) return manuals;
+    return manuals.filter(m => `${m.title} ${m.code} ${m.description}`.toLowerCase().includes(q));
+  }, [manuals, search]);
 
   /* Headline stats. */
   const stats = useMemo(() => ({
-    totalManuals:   MANUALS.length,
-    totalTutorials: MANUALS.filter(m => m.hasTutorial).length,
-    recentlyAdded:  3,
-    mostViewed:     'Lesson Plan SOP',
-  }), []);
+    totalManuals:   heads.reduce((s, h) => s + (h.totalManuals || 0), 0) || manuals.length,
+    totalTutorials: manuals.filter(m => m.hasTutorial).length,
+    recentlyAdded:  manuals.length,
+    mostViewed:     manuals[0]?.title || '—',
+  }), [heads, manuals]);
 
   return (
     <>
@@ -157,7 +150,7 @@ export default function SchoolSOPs({ toast = () => {} }) {
       {/* ── Stat cards ── */}
       <div className="sops-stats">
         <Stat tone="blue"   icon="fa-book-open"        label="Total Manuals"    value={stats.totalManuals}
-              sub={`Across ${CATEGORY_OPTIONS.length} categories`} />
+              sub={`Across ${heads.length} categor${heads.length === 1 ? 'y' : 'ies'}`} />
         <Stat tone="green"  icon="fa-play-circle"      label="Total Tutorials"  value={stats.totalTutorials}
               sub={`${Math.round((stats.totalTutorials / stats.totalManuals) * 100)}% of manuals`} />
         <Stat tone="amber"  icon="fa-clock-rotate-left" label="Recently Added"  value={stats.recentlyAdded}
@@ -168,8 +161,18 @@ export default function SchoolSOPs({ toast = () => {} }) {
 
       {/* ── Category tabs ── */}
       <div className="sops-cats" role="tablist" aria-label="Manual categories">
-        {CATEGORY_OPTIONS.map(c => {
-          const count = MANUALS.filter(m => m.category === c.id).length;
+        {headsLoading && (
+          <span style={{ fontSize: 12.5, fontWeight: 700, color: '#64748B', padding: '8px 4px' }}>
+            <i className="fa-solid fa-spinner fa-spin" style={{ marginRight: 6 }} aria-hidden="true"></i> Loading categories…
+          </span>
+        )}
+        {!headsLoading && heads.length === 0 && (
+          <span style={{ fontSize: 12.5, fontWeight: 700, color: '#64748B', padding: '8px 4px' }}>
+            No manual categories published yet.
+          </span>
+        )}
+        {!headsLoading && heads.map(c => {
+          const count = c.id === cat ? manuals.length : c.totalManuals;
           return (
             <Tooltip key={c.id} text={`Filter by ${c.label} (${count})`}>
               <button
@@ -212,7 +215,12 @@ export default function SchoolSOPs({ toast = () => {} }) {
       </div>
 
       {/* ── Manual list ── */}
-      {filtered.length === 0 ? (
+      {manualsLoading ? (
+        <div className="sops-empty">
+          <div className="sops-empty-ic"><i className="fa-solid fa-spinner fa-spin" aria-hidden="true"></i></div>
+          <div className="sops-empty-title">Loading manuals…</div>
+        </div>
+      ) : filtered.length === 0 ? (
         <div className="sops-empty">
           <div className="sops-empty-ic"><i className="fa-solid fa-magnifying-glass" aria-hidden="true"></i></div>
           <div className="sops-empty-title">No manuals found</div>
@@ -290,8 +298,11 @@ function ManualRow({ manual, onView, onTutorial, canViewManuals = true, canWatch
         <div className="td c sops-sno-cell">{manual.sno}</div>
         <div className="td sops-title-cell">
           <span className="sops-title-text">{manual.title}</span>
+          {manual.code && <span className="sops-badge sops-badge--blue" style={{ marginLeft: 8 }}>{manual.code}</span>}
         </div>
-        <div className="td c sops-pages">{manual.pages}</div>
+        {/* "Pages" column me is manual ki forms ki tadaad aati hai (manual-form
+            API se) — API manual ka page count bhejti hi nahi. Count aane tak `…`. */}
+        <div className="td c sops-pages">{manual.formsCount ?? '…'}</div>
         <div className="td sops-updated">{manual.lastUpdated}</div>
         <div className="td c sops-actions">
           {canViewManuals && (
@@ -333,6 +344,29 @@ function PDFViewerModal({ manual, onClose }) {
   const [loading,    setLoading]    = useState(true);
   const [fullScreen, setFullScreen] = useState(false);
 
+  /* Agar PDF kisi wajah se load hi na ho (galat path, file gayab), to spinner
+     hamesha ke liye ghoomta na rahe — thodi der baad khud hata do. */
+  useEffect(() => {
+    if (!manual.pdfUrl) { setLoading(false); return undefined; }
+    const t = setTimeout(() => setLoading(false), 15000);
+    return () => clearTimeout(t);
+  }, [manual.pdfUrl]);
+
+  /* Is manual ke saath attached forms (manual-form, action:get). Manual ke
+     response me bhi aati hain, magar yahan taza laate hain taake Super Admin
+     me abhi abhi add ki gayi form bhi foran dikhe. */
+  const [forms, setForms] = useState(manual.forms || []);
+  const [formsLoading, setFormsLoading] = useState(true);
+  useEffect(() => {
+    let alive = true;
+    setFormsLoading(true);
+    getForms(manual.id)
+      .then((list) => { if (alive) setForms(list); })
+      .catch(() => { /* forms best-effort — manual phir bhi khulta rahe */ })
+      .finally(() => { if (alive) setFormsLoading(false); });
+    return () => { alive = false; };
+  }, [manual.id]);
+
   useEffect(() => {
     const onKey = (e) => {
       if (e.key !== 'Escape') return;
@@ -362,7 +396,7 @@ function PDFViewerModal({ manual, onClose }) {
             <div>
               <div className="sops-modal-title" id="sops-pdf-title">{manual.title}</div>
               <div className="sops-modal-sub">
-                <span className="sops-badge sops-badge--blue">{manual.category}</span>
+                <span className="sops-badge sops-badge--blue">{manual.categoryLabel || ""}</span>
               </div>
             </div>
           </div>
@@ -374,12 +408,13 @@ function PDFViewerModal({ manual, onClose }) {
         </div>
 
         <div className="sops-modal-body">
-          {/* Meta — only Pages + Last Updated (no version, no status) */}
+          {/* Meta — Pages + Last Updated. "Pages" khane me is manual ki forms
+              ki tadaad aati hai (API page count bhejti hi nahi). */}
           {!fullScreen && (
             <div className="sops-pdf-meta">
               <div className="sops-pdf-meta-item">
                 <span className="sops-pdf-meta-lbl">Pages</span>
-                <span className="sops-pdf-meta-val">{manual.pages}</span>
+                <span className="sops-pdf-meta-val">{forms.length}</span>
               </div>
               <div className="sops-pdf-meta-item">
                 <span className="sops-pdf-meta-lbl">Last Updated</span>
@@ -388,20 +423,67 @@ function PDFViewerModal({ manual, onClose }) {
             </div>
           )}
 
-          {/* PDF area */}
-          <div className="sops-pdf-area">
-            {loading && (
-              <div className="sops-pdf-loading">
-                <div className="sops-spinner" aria-hidden="true"></div>
-                <span>Loading PDF…</span>
+          {/* ── Attached forms (manual-form API) ── */}
+          {!fullScreen && (
+            <div style={{ margin: '0 0 14px' }}>
+              <div style={{ fontSize: 12.5, fontWeight: 800, color: '#0F172A', marginBottom: 8 }}>
+                <i className="fa-solid fa-paperclip" style={{ marginRight: 6, color: '#1E40AF' }} aria-hidden="true"></i>
+                Attached Forms
               </div>
+              {formsLoading ? (
+                <div style={{ fontSize: 12, color: '#64748B' }}>
+                  <i className="fa-solid fa-spinner fa-spin" style={{ marginRight: 6 }} aria-hidden="true"></i> Loading forms…
+                </div>
+              ) : forms.length === 0 ? (
+                <div style={{ fontSize: 12, color: '#64748B' }}>No forms attached to this manual.</div>
+              ) : forms.map(f => (
+                <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', border: '1px solid #E5E7EB', borderRadius: 8, marginBottom: 6, background: '#F8FAFC' }}>
+                  <i className="fa-solid fa-file-lines" style={{ color: '#1E40AF' }} aria-hidden="true"></i>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 12.5, fontWeight: 700, color: '#0F172A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {f.title}{f.code ? ` · ${f.code}` : ''}
+                    </div>
+                    <div style={{ fontSize: 11, color: '#64748B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {f.desc || f.fileName}{f.pageRef ? ` · ${f.pageRef}` : ''}
+                    </div>
+                  </div>
+                  {f.fileUrl && (
+                    <Tooltip text="Open / download this form">
+                      <a className="sops-btn sops-btn-ghost" href={f.fileUrl} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}>
+                        <i className="fa-solid fa-download" aria-hidden="true"></i>
+                      </a>
+                    </Tooltip>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* PDF area — PDF na ho to iframe lagate hi nahi, warna uska `onLoad`
+              kabhi nahi chalta aur spinner hamesha ghoomta rehta hai. */}
+          <div className="sops-pdf-area">
+            {!manual.pdfUrl ? (
+              <div className="sops-pdf-loading">
+                <i className="fa-solid fa-file-circle-xmark" style={{ fontSize: 26, opacity: 0.35 }} aria-hidden="true"></i>
+                <span>No PDF uploaded for this manual yet.</span>
+              </div>
+            ) : (
+              <>
+                {loading && (
+                  <div className="sops-pdf-loading">
+                    <div className="sops-spinner" aria-hidden="true"></div>
+                    <span>Loading PDF…</span>
+                  </div>
+                )}
+                <iframe
+                  className="sops-pdf-frame"
+                  src={manual.pdfUrl}
+                  title={`${manual.title} PDF preview`}
+                  onLoad={() => setLoading(false)}
+                  onError={() => setLoading(false)}
+                />
+              </>
             )}
-            <iframe
-              className="sops-pdf-frame"
-              src={manual.pdfUrl}
-              title={`${manual.title} PDF preview`}
-              onLoad={() => setLoading(false)}
-            />
           </div>
         </div>
 
@@ -466,7 +548,7 @@ function TutorialModal({ manual, onClose }) {
             <div className="sops-modal-icn"><i className="fa-solid fa-play-circle" aria-hidden="true"></i></div>
             <div>
               <div className="sops-modal-title" id="sops-tut-title">{manual.title} — Tutorial</div>
-              <div className="sops-modal-sub">{manual.category} · Video walkthrough</div>
+              <div className="sops-modal-sub">{manual.categoryLabel ? `${manual.categoryLabel} · ` : ""}Video walkthrough</div>
             </div>
           </div>
           <Tooltip text="Close (Esc)">
@@ -481,7 +563,9 @@ function TutorialModal({ manual, onClose }) {
           <div className="sops-video-wrap">
             <iframe
               className="sops-video"
-              src="https://www.youtube.com/embed/dQw4w9WgXcQ"
+              /* Video ka link manual ke apne record se (Super Admin me set hota
+                 hai) — pehle yahan ek fixed demo link laga hua tha. */
+              src={manual.videoUrl}
               title={`${manual.title} tutorial`}
               frameBorder="0"
               allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
@@ -489,15 +573,18 @@ function TutorialModal({ manual, onClose }) {
             />
           </div>
 
-          {/* Below video */}
+          {/* Below video — title/description manual ke apne record se. */}
           <div className="sops-tut-info">
             <div className="sops-tut-h">
-              <span className="sops-tut-title">{manual.title}</span>
-              <span className="sops-tut-chip">12 min</span>
-              <span className="sops-tut-chip sops-tut-chip--auto"><i className="fa-solid fa-bolt" aria-hidden="true"></i> Auto</span>
+              <span className="sops-tut-title">{manual.videoTitle || manual.title}</span>
+              {manual.videoLink && (
+                <a className="sops-tut-chip" href={manual.videoLink} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}>
+                  <i className="fa-solid fa-up-right-from-square" aria-hidden="true"></i> Open on YouTube
+                </a>
+              )}
             </div>
             <div className="sops-tut-body">
-              This tutorial walks you through the complete procedure covered in this manual with practical examples.
+              {manual.videoDesc || 'This tutorial walks you through the procedure covered in this manual.'}
             </div>
           </div>
         </div>

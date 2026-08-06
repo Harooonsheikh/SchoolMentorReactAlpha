@@ -1,5 +1,6 @@
-import React, { useMemo, useRef, useState } from 'react';
-import { INITIAL_SOP, hasPdf, hasVideo, embedUrl, todayISO } from './sopData';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { INITIAL_SOP, hasPdf, hasVideo, embedUrl } from './sopData';
+import { schoolSopsApi } from './api';
 
 /* ═══════════════════════════════════════════════════════════════════
    OPERATIONAL SOPs — Super Admin module (frontend only)
@@ -19,7 +20,55 @@ export default function OperationalSops({ toast }) {
   const [openDd, setOpenDd] = useState(null);          // manualId with open dots menu
   const [modal, setModal] = useState(null);
 
-  const seq = useRef({ cat: INITIAL_SOP.catSeq, manual: INITIAL_SOP.manualSeq, form: INITIAL_SOP.formSeq });
+  /* (Pehle yahan ek local id-counter tha — ab ids server se aati hain.) */
+
+  /* ── Manual Heads (categories) live API se ────────────────────────
+     POST /api/AHM_School_SOPs/manual-head, action = get|insert|update|delete.
+     Manuals aur forms abhi demo data hi hain (unki apni routes alag hain),
+     is liye sirf `cats` ko API se replace karte hain. */
+  const [catsLoading, setCatsLoading] = useState(true);
+  const [savingCat, setSavingCat] = useState(false);
+  const toastRef = useRef(toast);
+  toastRef.current = toast;
+
+  const loadCats = useCallback(async () => {
+    setCatsLoading(true);
+    try {
+      const cats = await schoolSopsApi.listManualHeads();
+      setData((d) => ({ ...d, cats }));
+      /* Jo category khuli hui thi wo ab na ho to pehli par chale jao. */
+      setActiveCat((cur) => (cats.some((c) => c.id === cur) ? cur : (cats[0]?.id ?? null)));
+    } catch (err) {
+      toastRef.current?.(err?.message || 'Could not load manual heads', 'error');
+    } finally {
+      setCatsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { loadCats(); }, [loadCats]);
+
+  /* ── Manuals bhi live API se (manual-detail, action:get) ──
+     Har manual head ke apne manuals hain, is liye category badalte hi
+     dobara load hote hain. `data.manuals` me sirf isi head ke manuals
+     rakhte hain — screen waise hi activeCat par filter karti hai. */
+  const [manualsLoading, setManualsLoading] = useState(false);
+  const [savingManual, setSavingManual] = useState(false);
+
+  const loadManuals = useCallback(async (headId) => {
+    if (!headId) { setData((d) => ({ ...d, manuals: [] })); return; }
+    setManualsLoading(true);
+    try {
+      const manuals = await schoolSopsApi.listManuals(headId);
+      setData((d) => ({ ...d, manuals }));
+    } catch (err) {
+      setData((d) => ({ ...d, manuals: [] }));
+      toastRef.current?.(err?.message || 'Could not load manuals', 'error');
+    } finally {
+      setManualsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { loadManuals(activeCat); }, [activeCat, loadManuals]);
 
   /* ── Stats ── */
   const stats = useMemo(() => ({
@@ -35,56 +84,139 @@ export default function OperationalSops({ toast }) {
     m.catId === activeCat &&
     (m.title.toLowerCase().includes(search.toLowerCase()) || (m.code || '').toLowerCase().includes(search.toLowerCase())));
 
-  /* ── Category CRUD ── */
-  const saveCat = (form, editId) => {
-    if (editId) {
-      setData((d) => ({ ...d, cats: d.cats.map((c) => c.id === editId ? { ...c, ...form } : c) }));
-      toast?.('Category updated', 'success');
-    } else {
-      const id = ++seq.current.cat;
-      setData((d) => ({ ...d, cats: [...d.cats, { id, ...form }] }));
-      setActiveCat(id);
-      toast?.('Category added', 'success');
+  /* ── Category (Manual Head) CRUD — sab kuch API par ──
+     Add → action:insert, Edit → action:update. Kaamyabi par list dobara
+     API se laate hain, taake screen wahi dikhaye jo server par hai. */
+  const saveCat = async (form, editId) => {
+    if (savingCat) return;
+    setSavingCat(true);
+    try {
+      await schoolSopsApi.saveManualHead(form, editId);
+      toast?.(editId ? 'Manual head updated' : 'Manual head added', 'success');
+      setModal(null);
+      await loadCats();
+    } catch (err) {
+      toast?.(err?.message || 'Could not save manual head', 'error');
+    } finally {
+      setSavingCat(false);
     }
-    setModal(null);
   };
 
-  /* ── Manual CRUD ── */
-  const saveManual = (form, editId) => {
-    if (editId) {
-      setData((d) => ({ ...d, manuals: d.manuals.map((m) => m.id === editId ? { ...m, ...form } : m) }));
-      toast?.('Manual updated', 'success');
-    } else {
-      const id = ++seq.current.manual;
-      setData((d) => ({ ...d, manuals: [...d.manuals, { ...form, id, forms: [], createdAt: todayISO() }] }));
-      setActiveCat(form.catId);
-      toast?.('Manual added', 'success');
+  /* ── Manual CRUD — manual-detail API (insert / update) ── */
+  const saveManual = async (form, editId) => {
+    if (savingManual) return;
+    setSavingManual(true);
+    try {
+      await schoolSopsApi.saveManual(form, editId);
+      toast?.(editId ? 'Manual updated' : 'Manual added', 'success');
+      setModal(null);
+      /* Manual doosri category me daala/move kiya gaya ho to wahin chale jao. */
+      if (form.catId && form.catId !== activeCat) setActiveCat(form.catId);
+      else await loadManuals(activeCat);
+      await loadCats();                 // head ka totalManuals refresh
+    } catch (err) {
+      toast?.(err?.message || 'Could not save manual', 'error');
+    } finally {
+      setSavingManual(false);
     }
-    setModal(null);
   };
 
-  /* ── Form CRUD ── */
-  const saveForm = (manualId, form, editId) => {
-    setData((d) => ({ ...d, manuals: d.manuals.map((m) => {
-      if (m.id !== manualId) return m;
-      const forms = m.forms || [];
-      if (editId) return { ...m, forms: forms.map((f) => f.id === editId ? { ...f, ...form } : f) };
-      return { ...m, forms: [...forms, { id: ++seq.current.form, ...form }] };
-    }) }));
-    toast?.(editId ? 'Form updated' : 'Form added', 'success');
-    setModal(null);
+  /* ── Form CRUD — manual-form API (insert / update) ──
+     Forms manual-detail ke get response me embedded aati hain, is liye save
+     ke baad manuals dobara load kar lete hain. */
+  const [savingForm, setSavingForm] = useState(false);
+
+  /* Forms expand karte hi us manual ki forms API se (action:get) — taake
+     list hamesha taza ho, chahe manual-detail ka response purana ho.
+     Band karne par sirf toggle. */
+  const [formsLoading, setFormsLoading] = useState({});   // manualId → bool
+
+  const loadForms = useCallback(async (manualId) => {
+    setFormsLoading((s) => ({ ...s, [manualId]: true }));
+    try {
+      const forms = await schoolSopsApi.listForms(manualId);
+      setData((d) => ({ ...d, manuals: d.manuals.map((m) => m.id === manualId ? { ...m, forms } : m) }));
+    } catch (err) {
+      toastRef.current?.(err?.message || 'Could not load forms', 'error');
+    } finally {
+      setFormsLoading((s) => ({ ...s, [manualId]: false }));
+    }
+  }, []);
+
+  const toggleForms = useCallback((manualId) => {
+    setOpenForms((o) => {
+      const next = !o[manualId];
+      if (next) loadForms(manualId);          // khulte waqt hi fetch
+      return { ...o, [manualId]: next };
+    });
+  }, [loadForms]);
+
+  const saveForm = async (manualId, form, editId) => {
+    if (savingForm) return;
+    setSavingForm(true);
+    try {
+      await schoolSopsApi.saveForm(manualId, form, editId);
+      toast?.(editId ? 'Form updated' : 'Form uploaded', 'success');
+      setModal(null);
+      setOpenForms((o) => ({ ...o, [manualId]: true }));   // list khuli rahe
+      await loadForms(manualId);
+    } catch (err) {
+      toast?.(err?.message || 'Could not save form', 'error');
+    } finally {
+      setSavingForm(false);
+    }
   };
 
-  /* ── Delete ── */
-  const confirmDelete = ({ type, id, parentId }) => {
-    if (type === 'manual') setData((d) => ({ ...d, manuals: d.manuals.filter((m) => m.id !== id) }));
-    else if (type === 'form') setData((d) => ({ ...d, manuals: d.manuals.map((m) => m.id === parentId ? { ...m, forms: m.forms.filter((f) => f.id !== id) } : m) }));
-    else if (type === 'cat') {
-      setData((d) => {
-        const cats = d.cats.filter((c) => c.id !== id);
-        if (activeCat === id && cats.length) setActiveCat(cats[0].id);
-        return { ...d, cats, manuals: d.manuals.filter((m) => m.catId !== id) };
-      });
+  /* ── Delete ──
+     Manual head server par delete hota hai (action:delete) — kaamyabi par
+     list dobara load. Manual/form abhi demo state me hain. */
+  const confirmDelete = async ({ type, id, parentId }) => {
+    if (type === 'cat') {
+      if (savingCat) return;
+      setSavingCat(true);
+      try {
+        await schoolSopsApi.deleteManualHead(id);
+        setData((d) => ({ ...d, manuals: d.manuals.filter((m) => m.catId !== id) }));
+        setModal(null);
+        toast?.('Manual head deleted', 'info');
+        await loadCats();
+      } catch (err) {
+        toast?.(err?.message || 'Could not delete manual head', 'error');
+      } finally {
+        setSavingCat(false);
+      }
+      return;
+    }
+    if (type === 'manual') {
+      if (savingManual) return;
+      setSavingManual(true);
+      try {
+        await schoolSopsApi.deleteManual(id, activeCat);
+        setModal(null);
+        toast?.('Manual deleted', 'info');
+        await loadManuals(activeCat);
+        await loadCats();               // head ka totalManuals refresh
+      } catch (err) {
+        toast?.(err?.message || 'Could not delete manual', 'error');
+      } finally {
+        setSavingManual(false);
+      }
+      return;
+    }
+    if (type === 'form') {
+      if (savingForm) return;
+      setSavingForm(true);
+      try {
+        await schoolSopsApi.deleteForm(id, parentId);
+        setModal(null);
+        toast?.('Form deleted', 'info');
+        await loadForms(parentId);
+      } catch (err) {
+        toast?.(err?.message || 'Could not delete form', 'error');
+      } finally {
+        setSavingForm(false);
+      }
+      return;
     }
     setModal(null); toast?.('Deleted successfully', 'info');
   };
@@ -115,7 +247,17 @@ export default function OperationalSops({ toast }) {
 
       {/* Category bar */}
       <div className="sop-cat-bar">
-        {data.cats.map((c) => {
+        {catsLoading && (
+          <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--tm)', padding: '8px 4px' }}>
+            <i className="fa-solid fa-spinner fa-spin" style={{ marginRight: 6 }} /> Loading manual heads…
+          </span>
+        )}
+        {!catsLoading && data.cats.length === 0 && (
+          <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--tm)', padding: '8px 4px' }}>
+            No manual heads yet — use <b>Add New Manual Head</b> to create one.
+          </span>
+        )}
+        {!catsLoading && data.cats.map((c) => {
           const count = manualCount(c.id);
           const isActive = c.id === activeCat;
           return (
@@ -147,7 +289,9 @@ export default function OperationalSops({ toast }) {
           <table className="sop-table">
             <thead><tr><th style={{ width: 44 }}>S.No.</th><th>Manual Head Title</th><th style={{ width: 140, textAlign: 'center' }}>PDF Manual</th><th style={{ width: 120, textAlign: 'center' }}>Tutorial</th><th style={{ width: 100, textAlign: 'center' }}>Action</th></tr></thead>
             <tbody>
-              {manuals.length === 0 ? (
+              {manualsLoading ? (
+                <tr><td colSpan={5} style={{ textAlign: 'center', padding: 44, color: 'var(--tm)' }}><i className="fa-solid fa-spinner fa-spin" style={{ fontSize: 24, opacity: 0.5, display: 'block', margin: '0 auto 10px' }} /><div style={{ fontSize: 14, fontWeight: 700 }}>Loading manuals…</div></td></tr>
+              ) : manuals.length === 0 ? (
                 <tr><td colSpan={5} style={{ textAlign: 'center', padding: 44, color: 'var(--tm)' }}><i className="fa-solid fa-book" style={{ fontSize: 28, opacity: 0.2, display: 'block', margin: '0 auto 10px' }} /><div style={{ fontSize: 14, fontWeight: 700 }}>No manuals found</div><div style={{ fontSize: 12, marginTop: 4 }}>Click "+ Add New Manual Detail" to add one.</div></td></tr>
               ) : manuals.map((m, idx) => {
                 const pdf = hasPdf(m); const vid = hasVideo(m); const formCount = m.forms ? m.forms.length : 0;
@@ -182,13 +326,13 @@ export default function OperationalSops({ toast }) {
                                 <div className="sop-dd-item" onClick={() => { setOpenDd(null); setModal({ type: 'pdf', manual: m }); }}><i className="fa-solid fa-eye" /> View Manual</div>
                                 <div className="sop-dd-item" onClick={() => { setOpenDd(null); setModal({ type: 'manual', manual: m }); }}><i className="fa-solid fa-pen" /> Edit</div>
                                 <div className="sop-dd-item" onClick={() => { setOpenDd(null); setModal({ type: 'form', manualId: m.id, manualTitle: m.title, form: null }); }}><i className="fa-solid fa-paperclip" /> Add Form</div>
-                                <div className="sop-dd-item" onClick={() => { setOpenDd(null); setOpenForms((o) => ({ ...o, [m.id]: !o[m.id] })); }}><i className="fa-solid fa-list" /> View Forms</div>
+                                <div className="sop-dd-item" onClick={() => { setOpenDd(null); toggleForms(m.id); }}><i className="fa-solid fa-list" /> View Forms</div>
                                 {vid && <div className="sop-dd-item" onClick={() => { setOpenDd(null); setModal({ type: 'video', manual: m }); }}><i className="fa-solid fa-circle-play" /> Watch Tutorial</div>}
                                 <div className="sop-dd-item danger" onClick={() => { setOpenDd(null); setModal({ type: 'del', target: { type: 'manual', id: m.id }, name: m.title, label: 'Manual' }); }}><i className="fa-solid fa-trash-can" /> Delete</div>
                               </div>
                             )}
                           </div>
-                          <button className="det-btn" data-tip="Expand forms" onClick={() => setOpenForms((o) => ({ ...o, [m.id]: !o[m.id] }))}><i className="fa-solid fa-chevron-down" /></button>
+                          <button className="det-btn" data-tip="Expand forms" onClick={() => toggleForms(m.id)}><i className="fa-solid fa-chevron-down" /></button>
                         </div>
                       </td>
                     </tr>
@@ -196,20 +340,36 @@ export default function OperationalSops({ toast }) {
                       <tr className="sop-expand-row"><td colSpan={5}>
                         <div className="sop-forms-box open">
                           <button className="sop-btn-view" style={{ height: 30, fontSize: 11.5, marginBottom: (m.forms && m.forms.length) ? 8 : 0 }} onClick={() => setModal({ type: 'form', manualId: m.id, manualTitle: m.title, form: null })}><i className="fa-solid fa-plus" /> Add Form</button>
-                          {(!m.forms || m.forms.length === 0) ? (
+                          {formsLoading[m.id] ? (
+                            <span style={{ fontSize: 12.5, color: 'var(--tm)', marginLeft: 12 }}><i className="fa-solid fa-spinner fa-spin" style={{ marginRight: 5 }} />Loading forms…</span>
+                          ) : (!m.forms || m.forms.length === 0) ? (
                             <span style={{ fontSize: 12.5, color: 'var(--tm)', marginLeft: 12 }}><i className="fa-solid fa-circle-info" style={{ marginRight: 5 }} />No forms attached yet.</span>
                           ) : m.forms.map((f) => (
                             <div className="sop-form-item" key={f.id}>
                               <div className="sop-form-icon"><i className="fa-solid fa-file" /></div>
                               <div style={{ flex: 1, minWidth: 0 }}>
-                                <div className="sop-form-title">{f.title} <span className="sop-form-code">{f.code || ''}</span></div>
-                                <div style={{ fontSize: 11, color: 'var(--tm)' }}>{f.desc || ''}</div>
+                                {/* displayTitle: naam na ho to file ka naam (sirf dikhane ke
+                                    liye — Edit modal me asli, khali value hi jati hai). */}
+                                <div className="sop-form-title">{f.displayTitle || f.title} <span className="sop-form-code">{f.code || ''}</span></div>
+                                {/* Description na ho to attached file ka naam — API `get` me
+                                    sirf formPath aata hai, is liye row khali na lage. */}
+                                <div style={{ fontSize: 11, color: 'var(--tm)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  {f.desc || (f.fileName ? <><i className="fa-solid fa-paperclip" style={{ marginRight: 4, opacity: 0.7 }} />{f.fileName}</> : '')}
+                                </div>
                               </div>
                               {f.pageRef && <span className="sop-form-ref">{f.pageRef}</span>}
                               <div style={{ display: 'flex', gap: 5 }}>
-                                <button className="btn-sm" data-tip="Download" style={{ height: 26, fontSize: 10.5 }} onClick={() => toast?.('Download available after backend integration', 'info')}><i className="fa-solid fa-download" /></button>
+                                <button
+                                  className="btn-sm"
+                                  data-tip={f.fileUrl ? 'Open / download file' : 'No file attached'}
+                                  style={{ height: 26, fontSize: 10.5, opacity: f.fileUrl ? 1 : 0.45, cursor: f.fileUrl ? 'pointer' : 'not-allowed' }}
+                                  onClick={() => {
+                                    if (!f.fileUrl) { toast?.('No file attached to this form', 'warn'); return; }
+                                    window.open(f.fileUrl, '_blank', 'noopener');
+                                  }}
+                                ><i className="fa-solid fa-download" /></button>
                                 <button className="btn-sm" data-tip="Edit form" style={{ height: 26, fontSize: 10.5 }} onClick={() => setModal({ type: 'form', manualId: m.id, manualTitle: m.title, form: f })}><i className="fa-solid fa-pen" /></button>
-                                <button className="btn-sm" data-tip="Delete form" style={{ height: 26, fontSize: 10.5, borderColor: 'var(--err)', color: 'var(--err)', background: 'rgba(220,38,38,.05)' }} onClick={() => setModal({ type: 'del', target: { type: 'form', id: f.id, parentId: m.id }, name: f.title, label: 'Form' })}><i className="fa-solid fa-trash-can" /></button>
+                                <button className="btn-sm" data-tip="Delete form" style={{ height: 26, fontSize: 10.5, borderColor: 'var(--err)', color: 'var(--err)', background: 'rgba(220,38,38,.05)' }} onClick={() => setModal({ type: 'del', target: { type: 'form', id: f.id, parentId: m.id }, name: f.displayTitle || f.title, label: 'Form' })}><i className="fa-solid fa-trash-can" /></button>
                               </div>
                             </div>
                           ))}
@@ -225,9 +385,9 @@ export default function OperationalSops({ toast }) {
       </div>
 
       {/* ── MODALS ── */}
-      {modal?.type === 'cat' && <CategoryModal cat={modal.cat} onClose={() => setModal(null)} onSave={saveCat} toast={toast} />}
-      {modal?.type === 'manual' && <ManualModal manual={modal.manual} cats={data.cats} activeCat={activeCat} onClose={() => setModal(null)} onSave={saveManual} toast={toast} />}
-      {modal?.type === 'form' && <FormModal manualId={modal.manualId} manualTitle={modal.manualTitle} form={modal.form} onClose={() => setModal(null)} onSave={saveForm} toast={toast} />}
+      {modal?.type === 'cat' && <CategoryModal cat={modal.cat} saving={savingCat} onClose={() => setModal(null)} onSave={saveCat} toast={toast} />}
+      {modal?.type === 'manual' && <ManualModal manual={modal.manual} cats={data.cats} activeCat={activeCat} saving={savingManual} onClose={() => setModal(null)} onSave={saveManual} toast={toast} />}
+      {modal?.type === 'form' && <FormModal manualId={modal.manualId} manualTitle={modal.manualTitle} form={modal.form} saving={savingForm} onClose={() => setModal(null)} onSave={saveForm} toast={toast} />}
       {modal?.type === 'detail' && <DetailModal m={modal.manual} cats={data.cats} onClose={() => setModal(null)} onEdit={() => setModal({ type: 'manual', manual: modal.manual })} onDelete={() => setModal({ type: 'del', target: { type: 'manual', id: modal.manual.id }, name: modal.manual.title, label: 'Manual' })} onPdf={() => setModal({ type: 'pdf', manual: modal.manual })} onVideo={() => setModal({ type: 'video', manual: modal.manual })} toast={toast} />}
       {modal?.type === 'pdf' && <PdfModal m={modal.manual} onClose={() => setModal(null)} onUpload={() => setModal({ type: 'manual', manual: modal.manual })} toast={toast} />}
       {modal?.type === 'video' && <VideoModal m={modal.manual} onClose={() => setModal(null)} />}
@@ -246,18 +406,24 @@ function FileRow({ icon, iconBg, label, sub, fileName, accept, onPick }) {
     <div className="sop-file-row" onClick={() => ref.current?.click()}>
       <div style={{ width: 34, height: 34, borderRadius: 9, background: iconBg, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, flexShrink: 0 }}><i className={`fa-solid ${icon}`} /></div>
       <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--t1)' }}>{fileName || label}</div><div style={{ fontSize: 11, color: 'var(--tm)' }}>{sub}</div></div>
-      <input ref={ref} type="file" accept={accept} style={{ display: 'none' }} onChange={(e) => e.target.files[0] && onPick(e.target.files[0].name)} />
+      {/* Naam ke saath asli File bhi aage bhejo — manual-detail API PDF ko
+          multipart file field (ManualPDF) ke tor par leti hai. */}
+      <input ref={ref} type="file" accept={accept} style={{ display: 'none' }} onChange={(e) => e.target.files[0] && onPick(e.target.files[0].name, e.target.files[0])} />
       <i className="fa-solid fa-upload" style={{ color: 'var(--brand)', fontSize: 14 }} />
     </div>
   );
 }
 
 /* ═══════════════════════ CATEGORY MODAL ═══════════════════════ */
-function CategoryModal({ cat, onClose, onSave, toast }) {
+function CategoryModal({ cat, saving = false, onClose, onSave, toast }) {
   const editing = Boolean(cat);
   const [f, setF] = useState({ title: cat?.title || '', desc: cat?.desc || '', status: cat?.status || 'active' });
   const set = (k, v) => setF((p) => ({ ...p, [k]: v }));
-  const save = () => { if (!f.title.trim()) { toast?.('Please enter a category name', 'warn'); return; } onSave({ title: f.title.trim(), desc: f.desc.trim(), status: f.status }, cat?.id); };
+  const save = () => {
+    if (saving) return;                       // API chal rahi hai — dobara submit nahi
+    if (!f.title.trim()) { toast?.('Please enter a category name', 'warn'); return; }
+    onSave({ title: f.title.trim(), desc: f.desc.trim(), status: f.status }, cat?.id);
+  };
   return (
     <Ov cls="sop-cat-ov" wrap="sop-cat-modal" onClose={onClose}>
       <div className="sop-modal-hdr" style={{ borderRadius: 'var(--r-xl) var(--r-xl) 0 0' }}>
@@ -270,26 +436,36 @@ function CategoryModal({ cat, onClose, onSave, toast }) {
         <div className="sop-field"><label><i className="fa-solid fa-align-left" style={{ color: 'var(--brand)', marginRight: 4 }} /> Description</label><textarea className="sop-textarea" value={f.desc} onChange={(e) => set('desc', e.target.value)} placeholder="Short description of this category…" rows={2} /></div>
         <div className="sop-field"><label>Status</label><select className="sop-input" style={{ cursor: 'pointer' }} value={f.status} onChange={(e) => set('status', e.target.value)}><option value="active">Active</option><option value="inactive">Inactive</option></select></div>
       </div>
-      <div className="sop-modal-foot"><button className="btn-secondary" onClick={onClose}><i className="fa-solid fa-xmark" /> Close</button><button className="btn-primary" onClick={save}><i className="fa-solid fa-floppy-disk" /> {editing ? 'Save Changes' : '+ Add'}</button></div>
+      <div className="sop-modal-foot">
+        <button className="btn-secondary" onClick={onClose} disabled={saving}><i className="fa-solid fa-xmark" /> Close</button>
+        <button className="btn-primary" onClick={save} disabled={saving}>
+          <i className={`fa-solid ${saving ? 'fa-spinner fa-spin' : 'fa-floppy-disk'}`} />
+          {saving ? ' Saving…' : (editing ? ' Save Changes' : ' + Add')}
+        </button>
+      </div>
     </Ov>
   );
 }
 
 /* ═══════════════════════ MANUAL MODAL ═══════════════════════ */
-function ManualModal({ manual, cats, activeCat, onClose, onSave, toast }) {
+function ManualModal({ manual, cats, activeCat, saving = false, onClose, onSave, toast }) {
   const editing = Boolean(manual);
   const [f, setF] = useState({
     catId: manual?.catId || activeCat, code: manual?.code || '', title: manual?.title || '', desc: manual?.desc || '',
     pdfName: manual?.pdfName || '', vidTitle: manual?.vidTitle || '', vidUrl: manual?.vidUrl || '', vidDesc: manual?.vidDesc || '',
     vidStatus: manual?.vidStatus || 'coming_soon', status: manual?.status || 'active',
   });
+  /* Chuni hui asli PDF file (agar is baar upload ki gayi ho). */
+  const [pdfFile, setPdfFile] = useState(null);
   const set = (k, v) => setF((p) => ({ ...p, [k]: v }));
   const save = () => {
+    if (saving) return;                 // API chal rahi hai
     if (!f.catId) { toast?.('Please select a category', 'warn'); return; }
     if (!f.title.trim()) { toast?.('Please enter a manual title', 'warn'); return; }
     onSave({
       catId: Number(f.catId), title: f.title.trim(), code: f.code.trim(), desc: f.desc.trim(),
-      pdfName: f.pdfName, pdfFile: f.pdfName ? 'demo_file' : (manual?.pdfFile || ''),
+      /* Nayi file ho to wo, warna server par pada purana path jyun ka tyun. */
+      pdfFile, pdfName: f.pdfName, pdfPath: pdfFile ? '' : (manual?.pdfPath || ''),
       vidTitle: f.vidTitle.trim(), vidUrl: f.vidUrl.trim(), vidDesc: f.vidDesc.trim(), vidStatus: f.vidStatus, status: f.status,
     }, manual?.id);
   };
@@ -308,7 +484,7 @@ function ManualModal({ manual, cats, activeCat, onClose, onSave, toast }) {
         <div className="sop-field"><label>Manual Title</label><input className="sop-input" value={f.title} onChange={(e) => set('title', e.target.value)} placeholder="e.g. Teacher Recruitment Manual" /></div>
         <div className="sop-field"><label>Short Description</label><textarea className="sop-textarea" value={f.desc} onChange={(e) => set('desc', e.target.value)} placeholder="Brief description of this manual…" rows={2} /></div>
         <div className="sop-section-divider"><i className="fa-solid fa-file-pdf" /> Manual PDF</div>
-        <FileRow icon="fa-file-pdf" iconBg="linear-gradient(135deg,#b91c1c,#dc2626)" label="Click to upload PDF manual (20–30+ pages)" sub="PDF files accepted · Ready for backend integration" fileName={f.pdfName} accept=".pdf" onPick={(n) => set('pdfName', n)} />
+        <FileRow icon="fa-file-pdf" iconBg="linear-gradient(135deg,#b91c1c,#dc2626)" label="Click to upload PDF manual (20–30+ pages)" sub="PDF files accepted" fileName={f.pdfName} accept=".pdf" onPick={(n, file) => { set('pdfName', n); setPdfFile(file || null); }} />
         <div className="sop-section-divider" style={{ marginTop: 16 }}><i className="fa-solid fa-circle-play" /> Tutorial Video</div>
         <div className="sop-field"><label>Video Title</label><input className="sop-input" value={f.vidTitle} onChange={(e) => set('vidTitle', e.target.value)} placeholder="e.g. Teacher Recruitment — Tutorial" /></div>
         <div className="sop-field"><label>YouTube / Video URL</label><input className="sop-input" value={f.vidUrl} onChange={(e) => set('vidUrl', e.target.value)} placeholder="https://youtube.com/embed/..." /></div>
@@ -318,17 +494,33 @@ function ManualModal({ manual, cats, activeCat, onClose, onSave, toast }) {
           <div className="sop-field"><label>Tutorial Status</label><select className="sop-input" style={{ cursor: 'pointer' }} value={f.vidStatus} onChange={(e) => set('vidStatus', e.target.value)}><option value="available">Available</option><option value="coming_soon">Coming Soon</option></select></div>
         </div>
       </div>
-      <div className="sop-modal-foot"><button className="btn-secondary" onClick={onClose}><i className="fa-solid fa-xmark" /> Cancel</button><button className="btn-primary" onClick={save}><i className="fa-solid fa-floppy-disk" /> Save Manual</button></div>
+      <div className="sop-modal-foot">
+        <button className="btn-secondary" onClick={onClose} disabled={saving}><i className="fa-solid fa-xmark" /> Cancel</button>
+        <button className="btn-primary" onClick={save} disabled={saving}>
+          <i className={`fa-solid ${saving ? 'fa-spinner fa-spin' : 'fa-floppy-disk'}`} />
+          {saving ? ' Saving…' : ' Save Manual'}
+        </button>
+      </div>
     </Ov>
   );
 }
 
 /* ═══════════════════════ FORM MODAL ═══════════════════════ */
-function FormModal({ manualId, manualTitle, form, onClose, onSave, toast }) {
+function FormModal({ manualId, manualTitle, form, saving = false, onClose, onSave, toast }) {
   const editing = Boolean(form);
   const [f, setF] = useState({ title: form?.title || '', code: form?.code || '', pageRef: form?.pageRef || '', desc: form?.desc || '', fileName: form?.fileName || '' });
+  /* Chuni hui asli file (Document field ke liye). */
+  const [file, setFile] = useState(null);
   const set = (k, v) => setF((p) => ({ ...p, [k]: v }));
-  const save = () => { if (!f.title.trim()) { toast?.('Please enter a form name', 'warn'); return; } onSave(manualId, { title: f.title.trim(), code: f.code.trim(), pageRef: f.pageRef.trim(), desc: f.desc.trim(), file: f.fileName ? 'demo' : '', fileName: f.fileName }, form?.id); };
+  const save = () => {
+    if (saving) return;
+    if (!f.title.trim()) { toast?.('Please enter a form name', 'warn'); return; }
+    onSave(manualId, {
+      title: f.title.trim(), code: f.code.trim(), pageRef: f.pageRef.trim(), desc: f.desc.trim(),
+      /* Nayi file ho to wo, warna server par pada purana path jyun ka tyun. */
+      file, fileName: f.fileName, formPath: file ? '' : (form?.formPath || ''),
+    }, form?.id);
+  };
   return (
     <Ov cls="sop-form-ov" wrap="sop-form-modal" onClose={onClose}>
       <div className="sop-modal-hdr" style={{ borderRadius: 'var(--r-xl) var(--r-xl) 0 0' }}>
@@ -344,9 +536,15 @@ function FormModal({ manualId, manualTitle, form, onClose, onSave, toast }) {
         </div>
         <div className="sop-field"><label>Description</label><textarea className="sop-textarea" value={f.desc} onChange={(e) => set('desc', e.target.value)} placeholder="Brief description of this form…" rows={2} /></div>
         <div className="sop-section-divider"><i className="fa-solid fa-paperclip" /> Attach Document</div>
-        <FileRow icon="fa-file" iconBg="linear-gradient(135deg,#0369A1,#0284C7)" label="Click to choose file (PDF, DOC, DOCX)" sub="1–2 page form document" fileName={f.fileName} accept=".pdf,.doc,.docx" onPick={(n) => set('fileName', n)} />
+        <FileRow icon="fa-file" iconBg="linear-gradient(135deg,#0369A1,#0284C7)" label="Click to choose file (PDF, DOC, DOCX)" sub="1–2 page form document" fileName={f.fileName} accept=".pdf,.doc,.docx" onPick={(n, picked) => { set('fileName', n); setFile(picked || null); }} />
       </div>
-      <div className="sop-modal-foot"><button className="btn-secondary" onClick={onClose}><i className="fa-solid fa-xmark" /> Close</button><button className="btn-primary" style={{ background: 'linear-gradient(135deg,#0369A1,#0284C7)', boxShadow: '0 4px 14px rgba(3,105,161,.28)' }} onClick={save}><i className="fa-solid fa-upload" /> {editing ? 'Save Changes' : 'Upload'}</button></div>
+      <div className="sop-modal-foot">
+        <button className="btn-secondary" onClick={onClose} disabled={saving}><i className="fa-solid fa-xmark" /> Close</button>
+        <button className="btn-primary" style={{ background: 'linear-gradient(135deg,#0369A1,#0284C7)', boxShadow: '0 4px 14px rgba(3,105,161,.28)' }} onClick={save} disabled={saving}>
+          <i className={`fa-solid ${saving ? 'fa-spinner fa-spin' : 'fa-upload'}`} />
+          {saving ? ' Uploading…' : (editing ? ' Save Changes' : ' Upload')}
+        </button>
+      </div>
     </Ov>
   );
 }
@@ -392,7 +590,7 @@ function DetailModal({ m, cats, onClose, onEdit, onDelete, onPdf, onVideo, toast
           {forms.length ? forms.map((f) => (
             <div className="sop-form-item" key={f.id}>
               <div className="sop-form-icon"><i className="fa-solid fa-file" /></div>
-              <div className="sop-form-title">{f.title} <span className="sop-form-code">{f.code || ''}</span></div>
+              <div className="sop-form-title">{f.displayTitle || f.title} <span className="sop-form-code">{f.code || ''}</span></div>
               {f.pageRef && <span className="sop-form-ref">{f.pageRef}</span>}
               <button className="btn-sm" data-tip="Download" style={{ height: 26, fontSize: 10.5 }} onClick={() => toast?.('Download after backend integration', 'info')}><i className="fa-solid fa-download" /></button>
             </div>
@@ -465,7 +663,7 @@ function PdfModal({ m, onClose, onUpload, toast }) {
             {forms.map((f) => (
               <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 10, background: '#f8fafc', border: '1px solid #e5e7eb', borderRadius: 8, padding: '10px 14px', marginBottom: 7 }}>
                 <div style={{ width: 32, height: 32, borderRadius: 8, background: 'linear-gradient(135deg,#0369A1,#0284C7)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, flexShrink: 0 }}><i className="fa-solid fa-file" /></div>
-                <div style={{ flex: 1 }}><div style={{ fontWeight: 700, fontSize: 12.5, color: '#0F172A' }}>{f.title}</div><div style={{ fontSize: 11, color: '#64748B' }}>{f.code || ''}{f.pageRef ? ` · ${f.pageRef}` : ''}</div></div>
+                <div style={{ flex: 1 }}><div style={{ fontWeight: 700, fontSize: 12.5, color: '#0F172A' }}>{f.displayTitle || f.title}</div><div style={{ fontSize: 11, color: '#64748B' }}>{f.code || ''}{f.pageRef ? ` · ${f.pageRef}` : ''}</div></div>
                 <button onClick={() => toast?.('Form download available after backend integration', 'info')} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, height: 28, padding: '0 12px', borderRadius: 7, background: '#EFF6FF', color: '#1E3A8A', border: '1px solid #BFDBFE', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}><i className="fa-solid fa-download" /> Download</button>
               </div>
             ))}

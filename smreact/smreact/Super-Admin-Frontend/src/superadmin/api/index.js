@@ -32,6 +32,7 @@ export * as notificationsApi from './services/notifications';
 export * as branchesApi from './services/branches';
 export * as schoolPermissionsApi from './services/schoolPermissions';
 export * as schoolProgressApi from './services/schoolProgress';
+export * as schoolSopsApi from './services/schoolSops';
 
 /* Convenience direct exports for the most-used calls */
 export { fetchDashboard } from './services/dashboard';
