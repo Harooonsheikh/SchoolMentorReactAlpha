@@ -1064,6 +1064,19 @@ const [taskTarget, setTaskTarget] = useState(null);
     showToast('Template downloaded', 'success');
   };
 
+  /* Phone number ko standard Pakistani local format (0XXXXXXXXXX) me lao:
+       3246640823    → 03246640823   (0 nahi diya to lag jata)
+       923246640823  → 03246640823   (92 ko 0)
+       +923246640823 → 03246640823   (+92 ko 0)
+     String rehta hai, is liye leading 0 kabhi nahi girta. */
+  const normalizePhone = (raw) => {
+    let s = String(raw ?? '').replace(/[\s-]/g, '');
+    if (s.startsWith('+92'))       s = '0' + s.slice(3);
+    else if (/^92\d{10}$/.test(s)) s = '0' + s.slice(2);
+    else if (/^\d{10}$/.test(s))   s = '0' + s;
+    return s;
+  };
+
   /* Step 2: ek .xlsx lo aur uski pehli sheet preview ke liye parse karo. */
   const handleImportFile = async (e) => {
     const file = e.target.files?.[0];
@@ -1079,6 +1092,9 @@ const [taskTarget, setTaskTarget] = useState(null);
       const matrix  = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
       const headers = (matrix[0] || []).map(h => String(h));
       const rows    = matrix.slice(1).filter(r => r.some(c => String(c).trim() !== ''));
+      /* Phone column ko normalize karo (header naam se dhoondo — index par depend nahi). */
+      const phoneIdx = headers.findIndex(h => /phone/i.test(h));
+      if (phoneIdx >= 0) rows.forEach(r => { r[phoneIdx] = normalizePhone(r[phoneIdx]); });
       setImportPreview({ headers, rows });
     } catch (err) {
       console.error('Error parsing file:', err);
@@ -1093,7 +1109,35 @@ const [taskTarget, setTaskTarget] = useState(null);
     const fd = new FormData();
     fd.append('branchId',  Number(sessionStorage.getItem('branchID')) || 0);
     fd.append('createdBy', Number(sessionStorage.getItem('UserID')) || 0);
-    fd.append('file',      importFile);
+    /* Raw file ki jagah NORMALIZED xlsx bhejo — taake phone (0-less / 92 / +92) sabhi
+       0XXXXXXXXXX format me import hon. Preview rows me phone pehle se normalize hai
+       (dobara normalize se bhi koi harm nahi). Preview na ho to raw file hi jaati hai. */
+    let uploadFile = importFile;
+    try {
+      if (importPreview?.headers?.length) {
+        const XLSX = await import('xlsx');
+        const phoneIdx = importPreview.headers.findIndex(h => /phone/i.test(h));
+        const aoa = [
+          importPreview.headers,
+          ...importPreview.rows.map(r => {
+            const row = [...r];
+            if (phoneIdx >= 0) row[phoneIdx] = normalizePhone(row[phoneIdx]);
+            return row;
+          }),
+        ];
+        const ws = XLSX.utils.aoa_to_sheet(aoa);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
+        const out = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+        uploadFile = new File([out], importFile.name || 'staff.xlsx', {
+          type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        });
+      }
+    } catch (err) {
+      console.error('Could not rebuild normalized file, sending original:', err);
+      uploadFile = importFile;   // fallback: raw file
+    }
+    fd.append('file',      uploadFile);
     setImporting(true);
     try {
       /* Content-Type khud mat lagao — browser multipart boundary add karta hai. */
