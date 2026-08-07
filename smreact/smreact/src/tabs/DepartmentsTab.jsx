@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { downloadDeptReport } from '../utils/pdfReports';
 import { buildUrl } from '../utils/apiConfig';
+import Tooltip from '../erp/shared/Tooltip';
 
 function AddDeptModal({ open, onClose, onAdd, getDeparmentdata, editDept = null }) {
   const [name, setName] = useState('');
@@ -470,9 +471,11 @@ const dept = deptsData.find(d => d.id === deptId);
           <span style={{ fontSize: 12, color: 'var(--text-muted)' }}> {Array.isArray(deptsData) ? deptsData.length : 0} departments · {totalPosts} posts</span>
         </div>
         <div className="toolbar-right">
-          <button className="btn btn-pdf btn-md" onClick={() => downloadDeptReport(deptsData, schoolInfo || {}, showToast)}>
+          <Tooltip text="Download departments report as PDF">
+            <button className="btn btn-pdf btn-md" onClick={() => downloadDeptReport(deptsData, schoolInfo || {}, showToast)}>
             <i className="fas fa-file-pdf"></i> Download Report
           </button>
+          </Tooltip>
           <button className="btn btn-primary btn-md" onClick={() => setShowAddDept(true)}>
             <i className="fas fa-plus"></i> Add New Department
           </button>
@@ -551,9 +554,9 @@ const dept = deptsData.find(d => d.id === deptId);
 
 {/* Details column */}
 <div className="td" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+  <Tooltip text="Edit department name">
   <button
     onClick={e => { e.stopPropagation(); setEditDept(dept); }}
-    title="Edit department name"
     style={{
       width: 38,
       height: 38,
@@ -570,9 +573,10 @@ const dept = deptsData.find(d => d.id === deptId);
   >
     <i className="fas fa-pen"></i>
   </button>
+  </Tooltip>
+  <Tooltip text="Delete department">
   <button
     onClick={e => { e.stopPropagation(); setDeleteTarget(dept); }}
-    title="Delete department"
     style={{
       width: 38,
       height: 38,
@@ -589,6 +593,8 @@ const dept = deptsData.find(d => d.id === deptId);
   >
     <i className="fas fa-trash"></i>
   </button>
+  </Tooltip>
+  <Tooltip text={exp ? 'Hide details' : 'Show details'}>
   <button
     className={`expand-btn${exp ? ' open' : ''}`}
     onClick={e => { e.stopPropagation(); setExpandedId(exp ? null : dept.id); }}
@@ -610,6 +616,7 @@ const dept = deptsData.find(d => d.id === deptId);
   >
     <i className="fas fa-chevron-down"></i>
   </button>
+  </Tooltip>
 </div>
                 </div>
                 {exp && (
@@ -642,9 +649,9 @@ const dept = deptsData.find(d => d.id === deptId);
         </div>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <Tooltip text="Edit designation">
         <button
           onClick={() => handleEditDesig(dept.id, di)}
-          title="Edit designation"
           style={{
             width: 38,
             height: 38,
@@ -661,9 +668,10 @@ const dept = deptsData.find(d => d.id === deptId);
         >
           <i className="fas fa-pen"></i>
         </button>
+        </Tooltip>
+        <Tooltip text="Delete designation">
         <button
           onClick={() => handleDeleteDesig(dept.id, di)}
-          title="Delete designation"
           style={{
             width: 38,
             height: 38,
@@ -680,6 +688,7 @@ const dept = deptsData.find(d => d.id === deptId);
         >
           <i className="fas fa-trash"></i>
         </button>
+        </Tooltip>
       </div>
     </div>
   ))}

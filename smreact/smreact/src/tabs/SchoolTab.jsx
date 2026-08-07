@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { buildUrl } from '../utils/apiConfig';
+import Tooltip from '../erp/shared/Tooltip';
 
 // ─── Validation rules ──────────────────────────────────────────────────────
 const fieldRules = {
@@ -371,6 +372,7 @@ export default function SchoolTab({ schoolInfo, setSchoolInfo, onSave, onSaveDra
             </span>
           </label>
           {/* Square dropzone — centered, 1:1 aspect */}
+          <Tooltip text="Upload a square school logo (1024 × 1024 JPG/PNG)">
           <div
             className="upload-zone"
             style={{ width: 240, height: 240, maxWidth: '100%', margin: '0 auto', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', aspectRatio: '1 / 1' }}
@@ -387,6 +389,7 @@ export default function SchoolTab({ schoolInfo, setSchoolInfo, onSave, onSaveDra
               </>
             )}
           </div>
+          </Tooltip>
           <input id="logoInput" type="file" accept="image/*" style={{ display: 'none' }}
             onChange={e => {
               const file = e.target.files[0];

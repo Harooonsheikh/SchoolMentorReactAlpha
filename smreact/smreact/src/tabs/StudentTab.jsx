@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { COLORS } from '../data/initialData';
 import { downloadStudentReport, downloadSectionStudentsReport } from '../utils/pdfReports';
 import { buildUrl } from '../utils/apiConfig';
+import Tooltip from '../erp/shared/Tooltip';
 import quickTemplate from '../BulkStudents_Quick.xlsx';
 import detailedTemplate from '../BulkStudents_Detailed_Template.xlsx';
 
@@ -638,9 +639,11 @@ export default function StudentTab({ classesData, setClassesData, studentStrengt
           </div>
         </div>
         <div className="toolbar-right">
-          <button className="btn btn-pdf btn-md" onClick={() => downloadStudentReport(classesData, studentStrengths, schoolInfo || {}, showToast)}>
+          <Tooltip text="Download students report as PDF">
+            <button className="btn btn-pdf btn-md" onClick={() => downloadStudentReport(classesData, studentStrengths, schoolInfo || {}, showToast)}>
             <i className="fas fa-file-pdf"></i> <span className="pdf-btn-label">Download Report</span>
           </button>
+          </Tooltip>
         </div>
       </div>
 
@@ -695,29 +698,34 @@ export default function StudentTab({ classesData, setClassesData, studentStrengt
                       style={{ background: 'linear-gradient(135deg,#1E3A8A,#1E40AF)', whiteSpace: 'nowrap' }}>
                       <i className="fas fa-user-plus"></i> Add Student
                     </button>
+                    <Tooltip text={`Bulk import students for ${cls.name}${sec ? ` - Section ${sec.sectionName}` : ''}`}>
                     <button
                       onClick={e => { e.stopPropagation(); setShowImport({ cls, sec }); setImportStep(1); }}
-                      title="Bulk Import"
                       style={{ background: '#1E293B', color: '#fff', border: 'none', borderRadius: 8, padding: '7px 11px', cursor: 'pointer', fontSize: 13, display: 'inline-flex', alignItems: 'center' }}>
                       <i className="fas fa-file-import"></i>
                     </button>
+                    </Tooltip>
+                    <Tooltip text={`Download student list for ${cls.name}${sec ? ` - Section ${sec.sectionName}` : ''} as PDF`}>
                     <button
                       onClick={e => { e.stopPropagation(); downloadSectionStudentsReport(cls, sec, schoolInfo || {}, showToast, 'pdf'); }}
-                      title="Download student list as PDF"
                       style={{ background: '#DC2626', color: '#fff', border: 'none', borderRadius: 8, padding: '7px 12px', cursor: 'pointer', fontSize: 12.5, fontWeight: 700, whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', gap: 5 }}>
                       <i className="fas fa-file-pdf"></i> PDF
                     </button>
+                    </Tooltip>
+                    <Tooltip text={`Download student list for ${cls.name}${sec ? ` - Section ${sec.sectionName}` : ''} as Word`}>
                     <button
                       onClick={e => { e.stopPropagation(); downloadSectionStudentsReport(cls, sec, schoolInfo || {}, showToast, 'word'); }}
-                      title="Download student list as Word"
                       style={{ background: '#2563EB', color: '#fff', border: 'none', borderRadius: 8, padding: '7px 12px', cursor: 'pointer', fontSize: 12.5, fontWeight: 700, whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', gap: 5 }}>
                       <i className="fas fa-file-word"></i> Word
                     </button>
+                    </Tooltip>
                   </div>
                   <div className="td" style={{ justifyContent: 'center' }}>
+                    <Tooltip text={exp ? 'Hide details' : 'Show details'}>
                     <button className={`expand-btn${exp ? ' open' : ''}`} onClick={e => { e.stopPropagation(); setExpandedKey(exp ? null : key); }}>
                       <i className="fas fa-chevron-down"></i>
                     </button>
+                    </Tooltip>
                   </div>
                 </div>
 
@@ -781,14 +789,18 @@ export default function StudentTab({ classesData, setClassesData, studentStrengt
                                   <td style={{ padding: '10px 12px', borderBottom: '1px solid var(--border-light)', fontSize: 13, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{s.dateOfBirth || '—'}</td>
                                   <td style={{ padding: '10px 12px', borderBottom: '1px solid var(--border-light)', fontSize: 13, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{s.mobileNo || '—'}</td>
                                   <td style={{ padding: '10px 12px', borderBottom: '1px solid var(--border-light)', textAlign: 'center', whiteSpace: 'nowrap' }}>
+                                    <Tooltip text="Edit student">
                                     <button onClick={() => openEditStudent(key, s, si)}
                                       style={{ background: 'rgba(30,58,138,.08)', border: '1px solid rgba(30,58,138,.2)', color: 'var(--brand-primary)', borderRadius: 6, padding: '4px 10px', fontSize: 12, cursor: 'pointer', marginRight: 5, fontFamily: 'var(--font-body)', fontWeight: 600 }}>
                                       <i className="fas fa-pen"></i>
                                     </button>
+                                    </Tooltip>
+                                    <Tooltip text="Delete student">
                                     <button onClick={() => setDeleteStuTarget(s)}
                                       style={{ background: 'rgba(220,38,38,.08)', border: '1px solid rgba(220,38,38,.2)', color: '#DC2626', borderRadius: 6, padding: '4px 10px', fontSize: 12, cursor: 'pointer', fontFamily: 'var(--font-body)', fontWeight: 600 }}>
                                       <i className="fas fa-trash"></i>
                                     </button>
+                                    </Tooltip>
                                   </td>
                                 </tr>
                               );
@@ -939,9 +951,11 @@ export default function StudentTab({ classesData, setClassesData, studentStrengt
                       <div style={{ color: '#fff', fontWeight: 700 }}>{importType === 'quick' ? 'Quick' : 'Detailed'} Student Import Template.xlsx</div>
                       <div style={{ color: 'rgba(255,255,255,.7)', fontSize: 11 }}>Excel format · Ready to fill</div>
                     </div>
+                    <Tooltip text="Download the Excel template">
                     <button className="btn btn-md" style={{ background: '#fff', color: '#15803D', fontWeight: 700 }} onClick={downloadTemplate}>
                       <i className="fas fa-download"></i> Download
                     </button>
+                    </Tooltip>
                   </div>
                   <div style={{ padding: '10px 14px', background: 'rgba(245,158,11,.06)', border: '1px solid rgba(245,158,11,.2)', borderRadius: 'var(--radius-md)', fontSize: 12, color: 'var(--text-secondary)' }}>
                     <i className="fas fa-exclamation-triangle" style={{ color: 'var(--warning)', marginRight: 6 }}></i>
@@ -960,6 +974,7 @@ export default function StudentTab({ classesData, setClassesData, studentStrengt
                     onChange={handleImportFile}
                     style={{ display: 'none' }}
                   />
+                  <Tooltip text="Choose an .xlsx file to upload">
                   <div onClick={() => importInputRef.current?.click()}
                     style={{ border: `2px dashed ${importFile ? '#16A34A' : 'var(--border-med)'}`, borderRadius: 'var(--radius-lg)', padding: 40, textAlign: 'center', cursor: 'pointer', background: importFile ? 'rgba(22,163,74,.05)' : 'var(--bg-muted)' }}>
                     <i className={`fas ${importFile ? 'fa-file-excel' : 'fa-cloud-upload-alt'}`} style={{ fontSize: 40, color: importFile ? '#16A34A' : 'var(--brand-primary)', opacity: importFile ? 1 : .4, display: 'block', marginBottom: 12 }}></i>
@@ -978,6 +993,7 @@ export default function StudentTab({ classesData, setClassesData, studentStrengt
                       </>
                     )}
                   </div>
+                  </Tooltip>
                 </div>
               )}
 
@@ -1036,13 +1052,15 @@ export default function StudentTab({ classesData, setClassesData, studentStrengt
                         onClick={() => setImportStep(s => s + 1)}>
                         Next <i className="fas fa-arrow-right"></i>
                       </button>
-                    : <button
+                    : <Tooltip text="Import students from the uploaded file">
+                      <button
                         className="btn btn-md"
                         style={{ background: 'linear-gradient(135deg,#15803D,#166534)', color: '#fff', opacity: (!importFile || importing) ? .6 : 1 }}
                         disabled={!importFile || importing}
                         onClick={confirmImport}>
                         <i className={`fas ${importing ? 'fa-spinner fa-spin' : 'fa-check'}`}></i> {importing ? 'Importing…' : 'Confirm Import'}
-                      </button>}
+                      </button>
+                      </Tooltip>}
                 </div>
               </div>
             </div>

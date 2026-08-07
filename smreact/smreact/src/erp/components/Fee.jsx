@@ -3470,7 +3470,9 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
   /* ADVANCE ek CREDIT line hai — "Received" column me MINUS me dikhti hai aur wahin se
      kat jaati hai (editable nahi). Utna cash kam lena hota hai. */
   const headsRecv  = rows.reduce((a, r) => a + r.recvNow, 0) + prevRecv;
-  const advCredit  = Math.max(0, +model.advance || 0);
+  /* BAAQI advance credit = kul advance − ab tak consume shuda (advPaid). Warna "Receive
+     More" par advance dobara lag jaata (double-apply) aur remaining minus me chala jaata. */
+  const advCredit  = Math.max(0, (+model.advance || 0) - (+model.advPaid || 0));
   /* headsRecv correction ki wajah se MINUS ho sakta hai — advance us par apply
      nahi hota (0 se neeche na jaye), warna credit ulta barh jaata. */
   const advApplied = Math.min(advCredit, Math.max(0, headsRecv));
@@ -3573,6 +3575,13 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
       /* Kul waajib fine — ab wasool na bhi ho to ledger me bill zaroor honi hai,
          warna baqaya fine agli baar gayab mil jaati hai. */
       fineBilled: fineDue,
+      /* Is receiving me laga pichhla ADVANCE credit. Save ise challan me ek negative
+         "Previous Pending" row ke received (-advApplied) ke taur par record karta hai,
+         warna advance sirf cash kam karta magar ledger me consume na hota → fee poora
+         received ho kar remaining minus (over-payment) reh jaata. advName = us row ka
+         subHead (agar pehle se ho), warna default 'Previous Pending'. */
+      advApplied: advApplied,
+      advName:    model.advName || 'Previous Pending',
     };
     if (cfg.kind === 'child') payload.famKey   = cfg.famKey;
     else                      payload.classKey = classMeta.key;
@@ -4289,7 +4298,7 @@ function recStudentModel({ student, headsForClass, generated, classDisc, payment
   /* Previous-dues row ka ASLI subHead (e.g. "Previous Pending") aur uske khilaf ab tak
      wasool hui raqam — receiving modal me us par bhi amount likhi ja sake, aur payment
      sahi detailRow par map ho (API perHead ko subHead se match karta hai). */
-  let prevName = '', prevPaid = 0;
+  let prevName = '', prevPaid = 0, advName = '', advPaid = 0;
   if (challan && Array.isArray(challan.detailRows)) {
     /* Real challan: build heads from its detailRows. A "previous pending" head
        becomes previous dues (positive) or advance (negative); the rest are the
@@ -4305,7 +4314,13 @@ function recStudentModel({ student, headsForClass, generated, classDisc, payment
           prev += amt;
           if (!prevName) prevName = r.subHead || r.head || '';
           prevPaid += (+r.receivedAmount || 0);
-        } else advance += Math.abs(amt);
+        } else {
+          advance += Math.abs(amt);
+          if (!advName) advName = r.subHead || r.head || '';
+          /* Negative prev row ka received (MINUS) = ab tak CONSUME hua advance. Isse
+             receiving modal jaanta hai kitna advance baaki hai (double-apply se bachne). */
+          advPaid += Math.abs(+r.receivedAmount || 0);
+        }
       } else if (feeService.isLateFineRow(r)) {
         /* Late Fine ko aam fee head na banao — receiving modal ki apni LATE FINE
            line ise alag se dikhati hai (aur `finePaid` isi row se parhti hai).
@@ -4376,7 +4391,7 @@ function recStudentModel({ student, headsForClass, generated, classDisc, payment
       paidPerHead[n] = (paidPerHead[n] || 0) + (+r.receivedAmount || 0);
     });
   }
-  return { heads, generated, prev, prevName, prevPaid, paidPerHead, advance, thisMonth, disc, payable, paid, remaining, status, onelink };
+  return { heads, generated, prev, prevName, prevPaid, paidPerHead, advance, advName, advPaid, thisMonth, disc, payable, paid, remaining, status, onelink };
 }
 
 function statusBadge(status) {
@@ -4672,6 +4687,10 @@ function FeeReceivingIndividual({ toast }) {
       const baseRows = (rec.detailRows || []).map(r => {
         /* Fine ki row perHead se update nahi hoti — usay helper handle karta hai. */
         if (feeService.isLateFineRow(r)) return r;
+        /* Negative ADVANCE row bhi perHead se update NAHI — usay withAdvanceRow handle
+           karta hai. Warna neeche Math.max(0,...) uska received 0 kar deta (advance
+           un-consume ho jaata). */
+        if (/previous|pending|arrear/i.test(String(r.subHead || r.head || '')) && (+r.challanAmount || 0) < 0) return r;
         /* Delta MINUS ho sakta hai jab cashier ne already-received theek kiya.
            Ledger 0 se neeche kabhi nahi jaata (koi refund ledger yahan nahi hai). */
         const recvNow  = +(payload.perHead?.[r.subHead ?? r.head]) || 0;
@@ -4679,11 +4698,15 @@ function FeeReceivingIndividual({ toast }) {
         const net      = (+r.challanAmount || 0) - (+r.discount || 0);
         return { ...r, receivedAmount: received, pendingorAdv: net - received, modifiedAt: now, modifiedBy: userID };
       });
-      const detailRows = feeService.withLateFineRow(baseRows, payload.fine, {
+      let detailRows = feeService.withLateFineRow(baseRows, payload.fine, {
         /* Branch challan ke apne record se — API dono spellings me deti hai. */
         ledgerId: rec.id, branchId: rec.branchID ?? rec.branchId, userId: userID, now,
         /* Kul waajib fine — ab wasool na ho to bhi row me bill hoti hai. */
         billedAmount: payload.fineBilled,
+      });
+      /* Advance credit consume — negative Previous Pending row (received -advApplied). */
+      detailRows = feeService.withAdvanceRow(detailRows, payload.advApplied, payload.advName, {
+        ledgerId: rec.id, branchId: rec.branchID ?? rec.branchId, userId: userID, now,
       });
       feeService.receivePayment({
         ledgerId:      rec.id,
@@ -5362,6 +5385,10 @@ function FamilyTreeReceiving({ toast }) {
       const baseRows = (rec.detailRows || []).map(r => {
         /* Fine ki row perHead se update nahi hoti — usay helper handle karta hai. */
         if (feeService.isLateFineRow(r)) return r;
+        /* Negative ADVANCE row bhi perHead se update NAHI — usay withAdvanceRow handle
+           karta hai. Warna neeche Math.max(0,...) uska received 0 kar deta (advance
+           un-consume ho jaata). */
+        if (/previous|pending|arrear/i.test(String(r.subHead || r.head || '')) && (+r.challanAmount || 0) < 0) return r;
         /* Delta MINUS ho sakta hai jab cashier ne already-received theek kiya.
            Ledger 0 se neeche kabhi nahi jaata (koi refund ledger yahan nahi hai). */
         const recvNow  = +(payload.perHead?.[r.subHead ?? r.head]) || 0;
@@ -5369,11 +5396,15 @@ function FamilyTreeReceiving({ toast }) {
         const net      = (+r.challanAmount || 0) - (+r.discount || 0);
         return { ...r, receivedAmount: received, pendingorAdv: net - received, modifiedAt: now, modifiedBy: userID };
       });
-      const detailRows = feeService.withLateFineRow(baseRows, payload.fine, {
+      let detailRows = feeService.withLateFineRow(baseRows, payload.fine, {
         /* Branch challan ke apne record se — API dono spellings me deti hai. */
         ledgerId: rec.id, branchId: rec.branchID ?? rec.branchId, userId: userID, now,
         /* Kul waajib fine — ab wasool na ho to bhi row me bill hoti hai. */
         billedAmount: payload.fineBilled,
+      });
+      /* Advance credit consume — negative Previous Pending row (received -advApplied). */
+      detailRows = feeService.withAdvanceRow(detailRows, payload.advApplied, payload.advName, {
+        ledgerId: rec.id, branchId: rec.branchID ?? rec.branchId, userId: userID, now,
       });
       feeService.receivePayment({
         ledgerId:      rec.id,
@@ -6016,8 +6047,9 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
   }
 
   /* ADVANCE ek CREDIT line hai — "Received" me MINUS me dikhta hai (read-only) aur
-     wahin se kat jaata hai, yani utna cash kam lena hai. */
-  const advCredit  = Math.max(0, +(selModel?.advance) || 0);
+     wahin se kat jaata hai, yani utna cash kam lena hai. BAAQI credit = kul advance −
+     consume shuda (advPaid), warna dobara lag kar remaining minus ho jaata. */
+  const advCredit  = Math.max(0, (+(selModel?.advance) || 0) - (+(selModel?.advPaid) || 0));
   /* recvNow correction ki wajah se MINUS ho sakta hai — advance us par apply nahi hota. */
   const advApplied = Math.min(advCredit, Math.max(0, recvNow));
   recvNow = recvNow - advApplied;
@@ -6079,6 +6111,10 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
       fine: fineOwed,
       /* Individual modal jaisa hi — kul waajib fine bill honi hai. */
       fineBilled: fineDue,
+      /* Is receiving me laga advance credit — save ise negative Previous Pending row
+         ke received (-advApplied) me record karta hai (consume). */
+      advApplied: advApplied,
+      advName:    selModel?.advName || 'Previous Pending',
     });
     setSelReg(null);
   };
@@ -6736,9 +6772,13 @@ const FEE_HIST_YEARS = ['2025', '2026', '2027'];
    was actually received. Discount comes off the billed amount before anything
    is owed, so `net` — not challanAmount — is the real receivable. */
 const ledgerRowNet    = (r) => Math.max((+r.challanAmount || 0) - (+r.discount || 0), 0);
+/* SIGNED net (0 par clamp NAHI) — negative ADVANCE row (challanAmount −3000, received
+   −3000) ka pending sahi 0 nikle. Clamped net use karne se net 0 ban jaata aur
+   pend = 0 − (−3000) = 3000 (galat) aa jaata tha. */
+const ledgerRowNetSigned = (r) => (+r.challanAmount || 0) - (+r.discount || 0);
 const ledgerRowUnpaid = (r) => r.receivedAmount == null;
 const ledgerRowRecv   = (r) => +r.receivedAmount || 0;
-const ledgerRowPend   = (r) => (ledgerRowUnpaid(r) ? ledgerRowNet(r) : Math.max(ledgerRowNet(r) - ledgerRowRecv(r), 0));
+const ledgerRowPend   = (r) => (ledgerRowUnpaid(r) ? ledgerRowNet(r) : Math.max(ledgerRowNetSigned(r) - ledgerRowRecv(r), 0));
 
 /* Build the month-by-month history for one student straight from their real
    BranchLedger challans. Only months that actually carry a challan appear —
@@ -8406,8 +8446,9 @@ function ledgerModel(recs, settings = null) {
       agg.disc  += (+r.discount || 0);
       agg.recv  += ledgerRowRecv(r);
       /* Pending SIGNED — is head par (net − received). Us head me extra wasool ho (advance)
-         to MINUS aayega, kam ho to bacha hua baqaya. Report me exactly wahi dikhega. */
-      agg.pend  += ledgerRowNet(r) - ledgerRowRecv(r);
+         to MINUS aayega, kam ho to bacha hua baqaya. SIGNED net taake negative advance row
+         (net −3000, recv −3000) ka pending 0 aaye, na ke clamped se 3000. */
+      agg.pend  += ledgerRowNetSigned(r) - ledgerRowRecv(r);
       heads.set(k, agg);
     });
 

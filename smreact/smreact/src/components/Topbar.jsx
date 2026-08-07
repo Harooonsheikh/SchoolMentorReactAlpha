@@ -1,4 +1,5 @@
 import React from 'react';
+import Tooltip from '../erp/shared/Tooltip';
 
 const CRUMBS = {
   school:      'School Registration',
@@ -37,18 +38,26 @@ export default function Topbar({ activeTab, theme, onToggleTheme, onOpenSidebar,
         </div>
       </div>
       <div className="topbar-right">
-        <button className="topbar-btn" title="Notifications" onClick={() => showToast('No new notifications', 'info')}>
-          <i className="fas fa-bell"></i>
-        </button>
-        <button className="topbar-btn" title="Help" onClick={() => showToast('Help center coming soon', 'info')}>
-          <i className="fas fa-question-circle"></i>
-        </button>
-        <button className="topbar-btn" onClick={onToggleTheme} title="Toggle theme">
-          <i className={`fas ${theme === 'dark' ? 'fa-sun' : 'fa-moon'}`}></i>
-        </button>
-        <button className="topbar-btn" title="Logout" onClick={() => handleLogout()}>
-          <i className="fas fa-sign-out-alt"></i> 
-        </button>
+        <Tooltip text="Notifications">
+          <button className="topbar-btn" onClick={() => showToast('No new notifications', 'info')}>
+            <i className="fas fa-bell"></i>
+          </button>
+        </Tooltip>
+        <Tooltip text="Help">
+          <button className="topbar-btn" onClick={() => showToast('Help center coming soon', 'info')}>
+            <i className="fas fa-question-circle"></i>
+          </button>
+        </Tooltip>
+        <Tooltip text={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}>
+          <button className="topbar-btn" onClick={onToggleTheme}>
+            <i className={`fas ${theme === 'dark' ? 'fa-sun' : 'fa-moon'}`}></i>
+          </button>
+        </Tooltip>
+        <Tooltip text="Logout">
+          <button className="topbar-btn" onClick={() => handleLogout()}>
+            <i className="fas fa-sign-out-alt"></i>
+          </button>
+        </Tooltip>
       </div>
     </header>
   );

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { COLORS } from '../data/initialData';
 import { downloadStaffReport } from '../utils/pdfReports';
 import { buildUrl } from '../utils/apiConfig';
+import Tooltip from '../erp/shared/Tooltip';
 /* Bulk-import template `public/` se serve hota hai, src se import NAHI hota.
    Wajah: import ek build-time dependency hai — file na ho to poori app compile
    hi nahi hoti ("Can't resolve '../BulkStaff_Quick.xlsx'"). public/ me rakhne
@@ -1308,13 +1309,17 @@ const [taskTarget, setTaskTarget] = useState(null);
           </div>
         </div>
         <div className="toolbar-right">
+          <Tooltip text="Bulk import staff from Excel">
           <button className="btn btn-md" style={{ background: 'linear-gradient(135deg,#7C3AED,#6D28D9)', color: '#fff' }}
             onClick={() => { setShowImport(true); setImportStep(1); }}>
             <i className="fas fa-file-import"></i> Bulk Upload
           </button>
+          </Tooltip>
+          <Tooltip text="Download staff report as PDF">
           <button className="btn btn-pdf btn-md" onClick={() => downloadStaffReport(staffData, schoolInfo || {}, showToast)}>
             <i className="fas fa-file-pdf"></i> Download Report
           </button>
+          </Tooltip>
           <button className="btn btn-primary btn-md" onClick={() => setStaffModalTarget({ ...newStaffTemplate, id: null })}>
             <i className="fas fa-user-plus"></i> Add New Employee
           </button>
@@ -1363,14 +1368,18 @@ const [taskTarget, setTaskTarget] = useState(null);
                       <i className="fas fa-edit"></i> Details
                     </button>
                     <button className="btn-task-staff" onClick={e => { e.stopPropagation(); setTaskTarget(s); }}>Tasks</button>
+                    <Tooltip text="Delete employee">
                     <button className="btn btn-icon btn-danger btn-sm" onClick={e => { e.stopPropagation(); setDeleteTarget(s); }}>
                       <i className="fas fa-trash"></i>
                     </button>
+                    </Tooltip>
                   </div>
                   <div className="td staff-chevron-col">
+                    <Tooltip text={exp ? 'Hide details' : 'Show details'}>
                     <button className={`expand-btn${exp ? ' open' : ''}`} onClick={e => { e.stopPropagation(); setExpandedId(exp ? null : s.id); }}>
                       <i className="fas fa-chevron-down"></i>
                     </button>
+                    </Tooltip>
                   </div>
                 </div>
                 {exp && (() => {
@@ -1570,9 +1579,11 @@ const [taskTarget, setTaskTarget] = useState(null);
                       <div style={{ color: '#fff', fontWeight: 700 }}>Staff Import Template.xlsx</div>
                       <div style={{ color: 'rgba(255,255,255,.7)', fontSize: 11 }}>Excel format · Ready to fill</div>
                     </div>
+                    <Tooltip text="Download the Excel template">
                     <button className="btn btn-md" style={{ background: '#fff', color: '#15803D', fontWeight: 700 }} onClick={downloadStaffTemplate}>
                       <i className="fas fa-download"></i> Download
                     </button>
+                    </Tooltip>
                   </div>
                   <div style={{ padding: '10px 14px', background: 'rgba(245,158,11,.06)', border: '1px solid rgba(245,158,11,.2)', borderRadius: 'var(--radius-md)', fontSize: 12, color: 'var(--text-secondary)' }}>
                     <i className="fas fa-exclamation-triangle" style={{ color: 'var(--warning)', marginRight: 6 }}></i>
@@ -1591,6 +1602,7 @@ const [taskTarget, setTaskTarget] = useState(null);
                     onChange={handleImportFile}
                     style={{ display: 'none' }}
                   />
+                  <Tooltip text="Choose an .xlsx file to upload">
                   <div onClick={() => importInputRef.current?.click()}
                     style={{ border: `2px dashed ${importFile ? '#16A34A' : 'var(--border-med)'}`, borderRadius: 'var(--radius-lg)', padding: 40, textAlign: 'center', cursor: 'pointer', background: importFile ? 'rgba(22,163,74,.05)' : 'var(--bg-muted)' }}>
                     <i className={`fas ${importFile ? 'fa-file-excel' : 'fa-cloud-upload-alt'}`} style={{ fontSize: 40, color: importFile ? '#16A34A' : 'var(--brand-primary)', opacity: importFile ? 1 : .4, display: 'block', marginBottom: 12 }}></i>
@@ -1609,6 +1621,7 @@ const [taskTarget, setTaskTarget] = useState(null);
                       </>
                     )}
                   </div>
+                  </Tooltip>
                 </div>
               )}
 
@@ -1667,13 +1680,15 @@ const [taskTarget, setTaskTarget] = useState(null);
                         onClick={() => setImportStep(s => s + 1)}>
                         Next <i className="fas fa-arrow-right"></i>
                       </button>
-                    : <button
+                    : <Tooltip text="Import staff from the uploaded file">
+                      <button
                         className="btn btn-md"
                         style={{ background: 'linear-gradient(135deg,#15803D,#166534)', color: '#fff', opacity: (!importFile || importing) ? .6 : 1 }}
                         disabled={!importFile || importing}
                         onClick={confirmImport}>
                         <i className={`fas ${importing ? 'fa-spinner fa-spin' : 'fa-check'}`}></i> {importing ? 'Importing…' : 'Confirm Import'}
-                      </button>}
+                      </button>
+                      </Tooltip>}
                 </div>
               </div>
             </div>

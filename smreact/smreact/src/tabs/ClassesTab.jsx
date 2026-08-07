@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { COLORS } from '../data/initialData';
 import { downloadClassesReport } from '../utils/pdfReports';
 import { buildUrl } from '../utils/apiConfig';
+import Tooltip from '../erp/shared/Tooltip';
 
 // Add Class Modal
 function AddClassModal({ open, onClose, getClassesData, onAdd }) {
@@ -983,9 +984,11 @@ const getclassesdata = useCallback(async () => {
           </div>
         </div>
         <div className="toolbar-right">
-          <button className="btn btn-pdf btn-md" onClick={() => downloadClassesReport(classesData, schoolInfo || {}, showToast)}>
-            <i className="fas fa-file-pdf"></i> <span className="pdf-btn-label">Download Report</span>
-          </button>
+          <Tooltip text="Download classes report as PDF">
+            <button className="btn btn-pdf btn-md" onClick={() => downloadClassesReport(classesData, schoolInfo || {}, showToast)}>
+              <i className="fas fa-file-pdf"></i> <span className="pdf-btn-label">Download Report</span>
+            </button>
+          </Tooltip>
           <button className="btn btn-primary btn-md" onClick={() => setShowAddModal(true)}>
             <i className="fas fa-plus"></i> Add New Class
           </button>
@@ -1042,27 +1045,37 @@ const getclassesdata = useCallback(async () => {
           </div>
           <div className="td details-td">
             <div className="row-actions-overlay" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <button title="Update Class" onClick={e => { e.stopPropagation(); setEditTarget(cls); }}
+              <Tooltip text="Update Class">
+                <button onClick={e => { e.stopPropagation(); setEditTarget(cls); }}
   style={{ width: 36, height: 36, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', borderRadius: 9, border: 'none', cursor: 'pointer', fontSize: 14, background: 'rgba(16,185,129,.1)', color: '#10b981' }}>
   <i className="fas fa-pen"></i>
 </button>
-              <button title="Manage Sections" onClick={e => { e.stopPropagation(); setSectionTarget(cls); }}
+              </Tooltip>
+              <Tooltip text="Manage Sections">
+                <button onClick={e => { e.stopPropagation(); setSectionTarget(cls); }}
                 style={{ width: 36, height: 36, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', borderRadius: 9, border: 'none', cursor: 'pointer', fontSize: 14, background: 'rgba(30,58,138,.08)', color: 'var(--brand-primary)' }}>
                 <i className="fas fa-layer-group"></i>
               </button>
-              <button title="Fee Structure" onClick={e => { e.stopPropagation(); setFeeTarget(cls); }}
+              </Tooltip>
+              <Tooltip text="Fee Structure">
+                <button onClick={e => { e.stopPropagation(); setFeeTarget(cls); }}
                 style={{ width: 36, height: 36, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', borderRadius: 9, border: 'none', cursor: 'pointer', fontSize: 14, background: 'rgba(30,58,138,.08)', color: 'var(--brand-primary)' }}>
                 <i className="fas fa-receipt"></i>
               </button>
-              <button title="Delete" onClick={e => { e.stopPropagation(); setDeleteTarget(cls); }}
+              </Tooltip>
+              <Tooltip text="Delete">
+                <button onClick={e => { e.stopPropagation(); setDeleteTarget(cls); }}
                 style={{ width: 36, height: 36, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', borderRadius: 9, border: 'none', cursor: 'pointer', fontSize: 14, background: 'rgba(239,68,68,.1)', color: '#ef4444' }}>
                 <i className="fas fa-trash"></i>
               </button>
+              </Tooltip>
             </div>
-            <button className={`expand-btn${exp ? ' open' : ''}`} onClick={e => { e.stopPropagation(); setExpandedId(exp ? null : cls.id); }}
+            <Tooltip text={exp ? 'Hide details' : 'Show details'}>
+              <button className={`expand-btn${exp ? ' open' : ''}`} onClick={e => { e.stopPropagation(); setExpandedId(exp ? null : cls.id); }}
               style={{ width: 36, height: 36, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', borderRadius: 9, border: '1px solid var(--border-light)', background: 'transparent', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: 13, marginLeft: 8, transition: 'transform .2s', transform: exp ? 'rotate(180deg)' : 'none' , }}>
               <i className="fas fa-chevron-down"></i>
             </button>
+            </Tooltip>
           </div>
         </div>
         {/* Expand panel */}

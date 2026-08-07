@@ -815,6 +815,59 @@ export function withLateFineRow(rows, fineAmount, { ledgerId, branchId, userId, 
   }];
 }
 
+/* Receiving ke waqt laga pichhla ADVANCE credit ko ledger me PERSIST karta hai: ek
+   NEGATIVE "Previous Pending" row jiska received bhi minus (= consume hua advance) hota
+   hai (net 0). Is ke baghair advance sirf cash kam karta magar ledger me consume na hota
+   → fee head poora received ho kar remaining minus (over-payment) reh jaata.
+
+   `advApplied` = IS receiving me laga advance (cumulative, pehle se consume shuda ke
+   ILAWA). Maujooda negative row ho to usme add hota hai (double-count nahi), warna nayi
+   row banti hai. */
+export function withAdvanceRow(rows, advApplied, advName, { ledgerId, branchId, userId, now } = {}) {
+  const applied = Math.round(Number(advApplied) || 0);
+  const list = Array.isArray(rows) ? rows : [];
+  if (applied <= 0) return list;
+  const isAdvRow = (r) =>
+    /previous|pending|arrear/i.test(String(r?.subHead || r?.head || '')) && (Number(r?.challanAmount) || 0) < 0;
+  const stamp = now || new Date().toISOString();
+  const idx = list.findIndex(isAdvRow);
+  if (idx >= 0) {
+    const r = list[idx];
+    const consumed = Math.abs(Number(r.receivedAmount) || 0) + applied;   // cumulative
+    const next = [...list];
+    next[idx] = {
+      ...r,
+      challanAmount: -consumed,
+      receivedAmount: -consumed,
+      pendingorAdv: 0,
+      modifiedAt: stamp,
+      modifiedBy: userId,
+    };
+    return next;
+  }
+  const blid = Number(ledgerId) || Number(list.find(x => Number(x?.blid))?.blid) || 0;
+  const rowBranch = list.find(x => Number(x?.branchId ?? x?.branchID));
+  const branch = Number(branchId)
+    || Number(rowBranch?.branchId ?? rowBranch?.branchID)
+    || Number(sessionStorage.getItem('branchID')) || 1;
+  return [...list, {
+    id: 0,
+    blid,
+    branchId: branch,
+    head: 'Account Payable',
+    subHead: advName || 'Previous Pending',
+    challanAmount: -applied,
+    discount: 0,
+    receivedAmount: -applied,   // consume hua advance (MINUS)
+    pendingorAdv: 0,
+    createdAt: stamp,
+    createdBy: userId,
+    modifiedAt: stamp,
+    modifiedBy: userId,
+    isActive: true,
+  }];
+}
+
 const dayMs = 24 * 60 * 60 * 1000;
 const dayStart = (v) => {
   const s = String(v || '').slice(0, 10);

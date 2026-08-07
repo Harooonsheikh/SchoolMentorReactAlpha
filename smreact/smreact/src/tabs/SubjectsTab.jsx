@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { COLORS } from '../data/initialData';
 import { downloadSubjectsReport } from '../utils/pdfReports';
 import { buildUrl } from '../utils/apiConfig';
+import Tooltip from '../erp/shared/Tooltip';
 
 // ── Book List Modal (full-featured: edit subject, delete, copy-to-all) ──────
 function BookListModal({ open, cls, subjects, setSubjects, getclassesdata, bookLists, setBookLists, classesData, onClose,onAddSubjectClick, showToast, showSuccess }) {
@@ -262,25 +263,33 @@ getclassesdata()
                       {subj.book_Title ? <span className="book-badge">Set</span> : <span className="book-badge empty">Empty</span>}
                       {editSubjId === subj.subjectID ? (
                         <>
-                          <button className="btn btn-icon btn-sm" title="Save name" style={{ width: 26, height: 26, fontSize: 11, background: 'var(--success)', color: '#fff' }}
+                          <Tooltip text="Save name">
+                          <button className="btn btn-icon btn-sm" style={{ width: 26, height: 26, fontSize: 11, background: 'var(--success)', color: '#fff' }}
                             onClick={() => saveEditSubject(subj)}>
                             <i className="fas fa-check"></i>
                           </button>
-                          <button className="btn btn-icon btn-ghost btn-sm" title="Cancel" style={{ width: 26, height: 26, fontSize: 11 }}
+                          </Tooltip>
+                          <Tooltip text="Cancel">
+                          <button className="btn btn-icon btn-ghost btn-sm" style={{ width: 26, height: 26, fontSize: 11 }}
                             onClick={cancelEditSubject}>
                             <i className="fas fa-times"></i>
                           </button>
+                          </Tooltip>
                         </>
                       ) : (
-                        <button className="btn btn-icon btn-ghost btn-sm" title="Rename subject" style={{ width: 26, height: 26, fontSize: 11 }}
+                        <Tooltip text="Rename subject">
+                        <button className="btn btn-icon btn-ghost btn-sm" style={{ width: 26, height: 26, fontSize: 11 }}
                           onClick={() => startEditSubject(subj)}>
                           <i className="fas fa-pen"></i>
                         </button>
+                        </Tooltip>
                       )}
-                      <button className="btn btn-icon btn-danger btn-sm" title="Delete subject" style={{ width: 26, height: 26, fontSize: 11 }}
+                      <Tooltip text="Delete subject">
+                      <button className="btn btn-icon btn-danger btn-sm" style={{ width: 26, height: 26, fontSize: 11 }}
                         onClick={() => handleDeleteSubject(subj)}>
                         <i className="fas fa-trash"></i>
                       </button>
+                      </Tooltip>
                     </div>
                   </div>
                   {/* <input
@@ -332,14 +341,15 @@ getclassesdata()
   }}
 >
   {/* Left: Apply to all */}
+  <Tooltip text="Copy this book list to all empty classes">
   <button
     className="btn btn-ghost btn-md"
     onClick={handleApplyToAll}
-    title="Copy this book list to all empty classes"
     style={{ color: 'var(--brand-primary)' }}
   >
     <i className="fas fa-copy"></i> Apply for All Empty Classes
   </button>
+  </Tooltip>
 
   {/* Right: Close + Add Subject */}
   <div style={{ display: 'flex', gap: 10, marginLeft: 'auto' }}>
@@ -887,9 +897,11 @@ export default function SubjectsTab({ classesData, setClassesData,  subjectsData
           {/* <button className="btn btn-ghost btn-md" onClick={applyToolbarToAll}>
             <i className="fas fa-copy"></i> <span className="add-btn-label">Apply for All Empty Classes</span>
           </button> */}
-          <button className="btn btn-pdf btn-md" onClick={() => downloadSubjectsReport(classesData, subjectsData, bookLists, schoolInfo || {}, showToast)}>
+          <Tooltip text="Download subjects report as PDF">
+            <button className="btn btn-pdf btn-md" onClick={() => downloadSubjectsReport(classesData, subjectsData, bookLists, schoolInfo || {}, showToast)}>
             <i className="fas fa-file-pdf"></i> <span className="pdf-btn-label">Download Report</span>
           </button>
+          </Tooltip>
           <button className="btn btn-primary btn-md" onClick={() => setShowAddSubject(true)}>
             <i className="fas fa-plus"></i> <span className="add-btn-label">Add Subject</span>
           </button>
@@ -952,6 +964,7 @@ export default function SubjectsTab({ classesData, setClassesData,  subjectsData
                     >
                       <i className="fas fa-edit"></i> Update
                     </button>
+                    <Tooltip text={exp ? 'Hide book list' : 'Show book list'}>
                     <button className={`expand-btn${exp ? ' open' : ''}`} onClick={e => {
   e.stopPropagation();
 
@@ -965,6 +978,7 @@ export default function SubjectsTab({ classesData, setClassesData,  subjectsData
 }}>
                       <i className="fas fa-chevron-down"></i>
                     </button>
+                    </Tooltip>
                   </div>
                 </div>
                 {exp && (
