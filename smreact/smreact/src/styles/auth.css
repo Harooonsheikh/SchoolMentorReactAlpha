@@ -541,7 +541,8 @@
 /* ── resend row ── */
 .auth-resend-row{
   display:flex; align-items:center; justify-content:center; gap:8px;
-  margin-top:16px; font-size:12.5px; color:var(--text-muted); font-weight:600;
+  /* neeche wala margin zaroori — warna Verify button resend row se chipak jata hai */
+  margin:16px 0 22px; font-size:12.5px; color:var(--text-muted); font-weight:600;
 }
 .auth-resend-link{
   background:none; border:none; color:var(--brand-mid); font-weight:700;
@@ -549,6 +550,15 @@
 }
 .auth-resend-link:disabled{color:var(--text-muted); cursor:not-allowed;}
 .auth-resend-link:not(:disabled):hover{text-decoration:underline;}
+
+/* ── "Change Phone Number" — OTP screen par Verify button ke neeche ── */
+.auth-change-dest{
+  display:block; width:100%; margin-top:16px;
+  background:none; border:none; cursor:pointer; padding:0;
+  font-family:var(--font-body); font-size:13px; font-weight:700;
+  color:var(--brand-mid); text-align:center; text-decoration:underline;
+}
+.auth-change-dest:hover{color:var(--brand-primary);}
 
 /* ── password hint / strength ── */
 .auth-pw-hint{font-size:11px; color:var(--text-muted); margin-top:7px; line-height:1.5;}
@@ -565,6 +575,19 @@
 }
 .auth-success-title{font-family:var(--font-body); font-weight:800; font-size:20px; color:var(--text-primary); margin-bottom:8px;}
 .auth-success-sub{font-size:13.5px; color:var(--text-muted); line-height:1.6; margin-bottom:24px;}
+
+/* ── inline "coming soon" toast ──
+   Login screen ERP shell se pehle render hota hai, is liye wahan ka
+   ToastContainer yahan available nahi — ye apna halka sa toast hai. */
+.auth-toast{
+  display:flex; align-items:center; gap:9px;
+  background:var(--bg-muted); border:1px solid var(--border-light);
+  border-left:3px solid var(--info);
+  border-radius:var(--radius-md); padding:11px 14px; margin-bottom:16px;
+  font-size:12.5px; font-weight:600; color:var(--text-secondary); line-height:1.45;
+  animation:authSwap .28s cubic-bezier(.2,.7,.2,1);
+}
+.auth-toast i{color:var(--info); font-size:13px; flex-shrink:0;}
 
 .auth-terms, .auth-foot-note{font-size:11.5px; color:var(--text-muted); text-align:center; margin-top:20px; line-height:1.5;}
 .auth-terms a{color:var(--brand-mid); font-weight:600; text-decoration:none;}

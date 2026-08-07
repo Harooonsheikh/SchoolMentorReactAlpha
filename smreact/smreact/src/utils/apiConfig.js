@@ -76,6 +76,29 @@ export function buildSuperAdminUrl(path = '') {
   return `${base}${SUPER_ADMIN_PREFIX}${suffix}`;
 }
 
+// ── Chain Management API (Network Head Office) ──────────────────
+// School-network ka login/signup/OTP ERP ki API par nahi, apni alag service par
+// hai — apne host AUR apne base path ke sath:
+//   https://alphaapi.schoolmentor.ai/SchoolmentorChainManagementAPI/api/...
+// Is liye buildUrl() se ye call nahi ban sakti (wo ERP ka host lagata hai, jahan
+// ye endpoints 404 dete hain). Host override karna ho to REACT_APP_CHAIN_API_BASE.
+
+const CHAIN_API_PREFIX = '/SchoolmentorChainManagementAPI';
+
+export const CHAIN_API_HOST = stripSlash(
+  (typeof process !== 'undefined' && process.env && process.env.REACT_APP_CHAIN_API_BASE)
+  || 'https://alphaapi.schoolmentor.ai',
+);
+
+/**
+ * Build a Chain-Management API endpoint URL.
+ * @param {string} path – e.g. '/api/AHM_Login_Users/network-login'
+ */
+export function buildChainApiUrl(path = '') {
+  const suffix = path.startsWith('/') ? path : `/${path}`;
+  return `${CHAIN_API_HOST}${CHAIN_API_PREFIX}${suffix}`;
+}
+
 // ── Uploaded media (branch logos etc.) ──────────────────────────
 // The API stamps a branch logo URL from the request host, so it can come back
 // as http://IP:4100/UploadedImages/... (blocked as mixed content on our https
@@ -178,7 +201,11 @@ function isApiUrl(url) {
 /** Auth / pre-login endpoints — never blocked by the guard (login, signup,
     token refresh run with no session by definition). */
 function isAuthUrl(url) {
-  return /\/(Auth|Account)\/|\/(login|signin|signup|register|refresh|forgot|reset)-?/i.test(String(url || ''));
+  /* `[/-]` (sirf `/` nahi) — network ke endpoints path ke beech me hyphen ke sath
+     aate hain: /api/AHM_Login_Users/network-login, network-signup, network-send-otp.
+     Purana regex sirf "/login" pakadta tha, is liye guard inhe block kar deta tha
+     aur network login/signup chalte hi nahi thay. */
+  return /\/(Auth|Account)\/|[/-](login|signin|signup|register|refresh|forgot|reset|send-otp)/i.test(String(url || ''));
 }
 
 /** Turn the guard's enforcement on/off. The ERP switches it OFF when it

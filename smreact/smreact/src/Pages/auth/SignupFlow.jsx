@@ -1,10 +1,22 @@
 import { useState, useRef, useEffect } from 'react';
 import AuthLayout from './AuthLayout';
-import { buildUrl } from '../../utils/apiConfig';
+import { buildUrl, buildChainApiUrl } from '../../utils/apiConfig';
 import { normalizePkPhone } from '../../utils/phone';
 import { useApp } from '../../context/AppContext';
 
 
+
+/* ── Endpoints: school vs network ──
+   Network Head Office ka apna users table hai (AHM_Login_Users), is liye uske
+   OTP aur signup endpoints ERP walon se bilkul alag hain. Ek hi jagah rakhe
+   hain taake teeno OTP steps aur signup ek jaisa faisla karein. */
+const OTP_URL = (isNetwork, dest) => (isNetwork
+  ? buildChainApiUrl(`/api/AHM_Login_Users/network-send-otp?PhoneNumber=${encodeURIComponent(dest)}`)
+  : buildUrl(`/api/Auth/send?PhoneNumber=${encodeURIComponent(dest)}`));
+
+const SIGNUP_URL = (isNetwork) => (isNetwork
+  ? buildChainApiUrl('/api/AHM_Login_Users/network-signup')
+  : buildUrl('/api/Registration/signup'));
 
 /* ── Country list ── */
 const COUNTRIES = [
@@ -166,7 +178,7 @@ function StepBranchOwner({ data, onChange, onNext, onBack }) {
   );
 }
 
-function StepPhone({ data, onChange, onNext, onBack }) {
+function StepPhone({ data, onChange, onNext, onBack, isNetwork }) {
   const [error, setError] = useState('');
 const { showToast } = useApp();
 
@@ -183,7 +195,7 @@ const { showToast } = useApp();
 
   try {
     const res = await fetch(
-      buildUrl(`/api/Auth/send?PhoneNumber=${data.phone}`),
+      OTP_URL(isNetwork, data.phone),
       {
         method: 'POST',
         headers: {
@@ -235,7 +247,7 @@ localStorage.setItem('signup_otp', otpFromServer);
 /* ═══════════════════════════════════
    STEP 2b — Email (others)
 ═══════════════════════════════════ */
-function StepEmail({ data, onChange, onNext, onBack }) {
+function StepEmail({ data, onChange, onNext, onBack, isNetwork }) {
   const [error, setError] = useState('');
   // function next() {
   //   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.email)) { setError('Enter a valid email address.'); return; }
@@ -250,7 +262,7 @@ function StepEmail({ data, onChange, onNext, onBack }) {
 
   try {
     const res = await fetch(
-      buildUrl(`/api/Auth/send?PhoneNumber=${data.email}`),
+      OTP_URL(isNetwork, data.email),
       {
         method: 'POST',
         headers: {
@@ -298,7 +310,7 @@ function StepEmail({ data, onChange, onNext, onBack }) {
 /* ═══════════════════════════════════
    STEP 3 — 4-digit OTP
 ═══════════════════════════════════ */
-function StepOTP({ data,onChange,  onNext, onBack }) {
+function StepOTP({ data,onChange,  onNext, onBack, isNetwork }) {
   const [otp,   setOtp]   = useState(['', '', '', '']);
   const [error, setError] = useState('');
   const [timer, setTimer] = useState(30);
@@ -344,7 +356,7 @@ onNext();
       const phone = country.verificationMethod === 'phone' ? data.phone : data.email;
       
       const res = await fetch(
-        buildUrl(`/api/Auth/send?PhoneNumber=${encodeURIComponent(phone)}`),
+        OTP_URL(isNetwork, phone),
         {
           method: 'POST',
           headers: {
@@ -474,7 +486,7 @@ function StepPassword({ data,onChange,  onNext, onBack }) {
 /* ═══════════════════════════════════
    STEP 5 — Terms & Conditions
 ═══════════════════════════════════ */
-function StepTerms({ data, onAccept, onBack }) {
+function StepTerms({ data, onAccept, onBack, isNetwork }) {
   const [agreed, setAgreed] = useState(false);
   const [error,  setError]  = useState('');
 
@@ -485,18 +497,37 @@ function StepTerms({ data, onAccept, onBack }) {
   }
   setError('');
   try {
-    const res = await fetch(buildUrl('/api/Registration/signup'), {
+    /* Dono signup endpoints ka payload bilkul alag hai:
+         school  → { branchName, branchOwnerName, branchPhone, password }
+         network → { schoolNetwork, ownerName, contactNumber, password, ... }
+       Network ke bank/address fields is flow me abhi collect nahi hote, is liye
+       khali jaate hain — backend inhe optional rakhta hai. */
+    const res = await fetch(SIGNUP_URL(isNetwork), {
       method: 'POST',
       headers: {
         'Accept': '*/*',
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-          password: data.password,
-          branchName: data.branchName,
-          branchOwnerName: data.ownerName,
-          branchPhone: data.phone,
-        }),
+      body: JSON.stringify(
+        isNetwork
+          ? {
+              ownerName:     data.ownerName,
+              schoolNetwork: data.branchName,
+              contactNumber: data.phone,
+              password:      data.password,
+              address:       '',
+              accountTitle:  '',
+              bankName:      '',
+              accountNumber: '',
+              isAdmin:       true,
+            }
+          : {
+              password: data.password,
+              branchName: data.branchName,
+              branchOwnerName: data.ownerName,
+              branchPhone: data.phone,
+            }
+      ),
     });
 
     const responseData = await res.json();
@@ -609,7 +640,7 @@ function StepTerms({ data, onAccept, onBack }) {
 /* ═══════════════════════════════════
    SUCCESS
 ═══════════════════════════════════ */
-function StepSuccess({ data, onGoToLogin }) {
+function StepSuccess({ data, onGoToLogin, isNetwork }) {
   const country = getCountrySession();
   const rows = [
     ['🏫', 'Branch',    data.branchName],
@@ -623,7 +654,9 @@ function StepSuccess({ data, onGoToLogin }) {
 
   return (
     <AuthLayout illustration="signup" heading="You're all set! 🎉"
-      tagline="Your school account has been created successfully">
+      tagline={isNetwork
+        ? 'Your school network account has been created successfully'
+        : 'Your school account has been created successfully'}>
       <div style={{textAlign:'center',padding:'8px 0'}}>
         <div style={{width:72,height:72,borderRadius:'50%',background:'linear-gradient(135deg,#1565C0,#1DB88A)',display:'flex',alignItems:'center',justifyContent:'center',margin:'0 auto 16px',boxShadow:'0 8px 24px rgba(29,184,138,.35)'}}>
           <svg width={36} height={36} viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth={2.5} strokeLinecap="round"><polyline points="20 6 9 17 4 12"/></svg>
@@ -649,19 +682,22 @@ function StepSuccess({ data, onGoToLogin }) {
 /* ═══════════════════════════════════
    ORCHESTRATOR
 ═══════════════════════════════════ */
-export default function SignupFlow({ onBack, onComplete }) {
+/* `isNetwork` login screen se aata hai: Network Head Office tab par signup
+   dabaya gaya to poora flow network ke endpoints use karta hai
+   (network-send-otp / network-signup), warna school wale. */
+export default function SignupFlow({ onBack, onComplete, isNetwork = false }) {
   const [step, setStep] = useState(1);
   const [form, setForm] = useState({ branchName:'', ownerName:'', countryCode:'', phone:'', email:'', OTP: '', password: '' });
 
   const update = (k, v) => setForm(d => ({ ...d, [k]: v }));
   const isPK = COUNTRIES.find(c => c.code === form.countryCode)?.method === 'phone';
 
-  if (step === 1) return <StepBranchOwner data={form} onChange={update} onNext={() => setStep(2)} onBack={onBack} />;
+  if (step === 1) return <StepBranchOwner data={form} onChange={update} onNext={() => setStep(2)} onBack={onBack} isNetwork={isNetwork} />;
   if (step === 2) return isPK
-    ? <StepPhone  data={form} onChange={update} onNext={() => setStep(3)} onBack={() => setStep(1)} />
-    : <StepEmail  data={form} onChange={update} onNext={() => setStep(3)} onBack={() => setStep(1)} />;
-  if (step === 3) return <StepOTP      data={form} onChange={update} onNext={() => setStep(4)} onBack={() => setStep(2)} />;
+    ? <StepPhone  data={form} onChange={update} onNext={() => setStep(3)} onBack={() => setStep(1)} isNetwork={isNetwork} />
+    : <StepEmail  data={form} onChange={update} onNext={() => setStep(3)} onBack={() => setStep(1)} isNetwork={isNetwork} />;
+  if (step === 3) return <StepOTP      data={form} onChange={update} onNext={() => setStep(4)} onBack={() => setStep(2)} isNetwork={isNetwork} />;
   if (step === 4) return <StepPassword    data={form}   onChange={update} onNext={() => setStep(5)} onBack={() => setStep(3)} />;
-  if (step === 5) return <StepTerms      data={form}         onAccept={() => setStep(6)} onBack={() => setStep(4)} />;
-  if (step === 6) return <StepSuccess  data={form} onGoToLogin={onComplete} />;
+  if (step === 5) return <StepTerms      data={form}         onAccept={() => setStep(6)} onBack={() => setStep(4)} isNetwork={isNetwork} />;
+  if (step === 6) return <StepSuccess  data={form} onGoToLogin={onComplete} isNetwork={isNetwork} />;
 }

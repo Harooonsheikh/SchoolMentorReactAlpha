@@ -1,6 +1,7 @@
 import AuthLayout from './AuthLayout';
-import { useState } from 'react';
-import { buildUrl } from '../../utils/apiConfig';
+import ForgotPasswordScreen from './ForgotPasswordScreen';
+import { useState, useEffect } from 'react';
+import { buildUrl, buildChainApiUrl } from '../../utils/apiConfig';
 import { normalizePkPhone } from '../../utils/phone';
 
 /* Network Head Office login kamyab hone par chain-schools-frontend (alag Vite app)
@@ -32,9 +33,40 @@ export default function LoginScreen({ onLogin, onSignup }) {
   const [password, setPassword] = useState('');
   const [showPass, setShowPass] = useState(false);
   const [error,    setError]    = useState('');
-  const [acctType, setAcctType] = useState('individual');
+  /* Chain portal se aane wale ko `?acct=network` milta hai (sign-out ya bina
+     session ke koi page kholne par) — us soorat me Network Head Office tab
+     pehle se selected ho, warna wo har baar khud tab badalta. */
+  const [acctType, setAcctType] = useState(() => {
+    try {
+      const p = new URLSearchParams(window.location.search).get('acct');
+      return String(p || '').toLowerCase() === 'network' ? 'network' : 'individual';
+    } catch { return 'individual'; }
+  });
   const [method,   setMethod]   = useState('phone');
   const [remember, setRemember] = useState(false);
+  const [forgot,   setForgot]   = useState(false);
+  const [forgotSoon, setForgotSoon] = useState(false);
+
+  /* `?acct=network` apna kaam kar chuka (tab select ho gaya) — ab URL se hata
+     do, warna user tab badal de to URL ghalat batata rahega, aur refresh par
+     wapas network par chala jayega. replaceState → history me entry nahi. */
+  useEffect(() => {
+    try {
+      if (!window.location.search.includes('acct=')) return;
+      const url = new URL(window.location.href);
+      url.searchParams.delete('acct');
+      window.history.replaceState(null, '', url.pathname + url.search + url.hash);
+    } catch { /* purana browser — URL waisa hi reh jayega, koi nuqsan nahi */ }
+  }, []);
+
+  /* "Coming soon" toast khud-ba-khud 3s me chala jata hai. ERP shell ka
+     ToastContainer yahan available nahi (login us se pehle render hota hai),
+     is liye screen apna toast rakhta hai. */
+  useEffect(() => {
+    if (!forgotSoon) return;
+    const id = setTimeout(() => setForgotSoon(false), 3000);
+    return () => clearTimeout(id);
+  }, [forgotSoon]);
 
   const isNetwork = acctType === 'network';
 
@@ -52,17 +84,30 @@ export default function LoginScreen({ onLogin, onSignup }) {
     }
     setError('');
    try {
-    const res = await fetch(buildUrl('/api/Auth/login'), {
-      method: 'POST',
-      headers: {
-        'Accept': '*/*',
-        'Content-Type': 'application/json',
+    /* Do bilkul alag login endpoints — aur do alag SERVICES:
+         Individual School   → ERP API        /api/Auth/login
+                               { user_Name, password }
+         Network Head Office → Chain Mgmt API /api/AHM_Login_Users/network-login
+                               { contactNumber, password }
+       Network wale endpoints ERP ke host par maujood hi nahi (404 dete hain) —
+       wo alag service par hain, is liye buildChainApiUrl() use hota hai. */
+    const res = await fetch(
+      isNetwork
+        ? buildChainApiUrl('/api/AHM_Login_Users/network-login')
+        : buildUrl('/api/Auth/login'),
+      {
+        method: 'POST',
+        headers: {
+          'Accept': '*/*',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(
+          isNetwork
+            ? { contactNumber: normalizePkPhone(username), password }
+            : { user_Name: normalizePkPhone(username), password }
+        ),
       },
-      body: JSON.stringify({
-        user_Name: normalizePkPhone(username),
-        password: password,
-      }),
-    });
+    );
 
     /* Backend kabhi JSON deta hai aur kabhi plain-text (e.g. "Internal Server Error:
        This branch is not active."). Pehle text padho, phir JSON parse try karo — warna
@@ -73,6 +118,14 @@ export default function LoginScreen({ onLogin, onSignup }) {
     console.log("Login Response:", data ?? raw);
 
     if (!res.ok) {
+      /* 404 = endpoint hi maujood nahi. "Login failed" yahan gumraah karta hai
+         (user samajhta hai password ghalat hai), is liye asli wajah batao. */
+      if (res.status === 404) {
+        setError(isNetwork
+          ? 'Network login is not available on this server yet. The network-login API has not been deployed.'
+          : 'Login service not found on the server. Please contact support.');
+        return;
+      }
       setError(serverMessage(data, raw) || 'Login failed');
       return;
     }
@@ -99,11 +152,37 @@ export default function LoginScreen({ onLogin, onSignup }) {
         return;
       }
 
+      /* Network login ka response ERP se alag shape rakh sakta hai
+         (ownerName / schoolNetwork / contactNumber), is liye har field ke
+         mumkin naam check karte hain. */
+      const netId    = data?.id ?? data?.userID ?? data?.networkID ?? null;
+      const netName  = data?.displayName ?? data?.ownerName ?? data?.schoolNetwork ?? null;
+      const netPhone = data?.contactNumber ?? data?.userName ?? normalizePkPhone(username);
+
+      /* Network session `net_` prefix ke sath rakha jata hai, ERP wali keys se
+         alag. AHEM: yahan plain `token` NAHI likhna — App.js use dekh kar
+         samajhta hai ke school ERP me login ho chuka hai aur chain se wapas
+         aane par login screen ki jagah Launch Setup khol deta tha. Network
+         user school ka member hota hi nahi. */
+      try {
+        /* Kisi purane school-login ka session pada ho to hata do — warna chain
+           se wapas aane par ERP usay live samajh kar Launch Setup khol deta. */
+        ['token', 'branchID', 'UserID', 'employee_ID', 'accountType', 'launchSetup']
+          .forEach((k) => sessionStorage.removeItem(k));
+
+        sessionStorage.setItem('net_token', data.token);
+        sessionStorage.setItem('net_accountType', 'network');
+        if (netId    != null) sessionStorage.setItem('net_UserID', netId);
+        if (netName)          sessionStorage.setItem('net_displayName', netName);
+        if (netPhone)         sessionStorage.setItem('net_userName', netPhone);
+        if (data?.schoolNetwork) sessionStorage.setItem('net_schoolNetwork', data.schoolNetwork);
+      } catch (_) { /* private mode — handoff phir bhi chalega */ }
+
       const cspUser = {
-        id:          data?.id          ?? null,
-        userName:    data?.userName    ?? null,
-        displayName: data?.displayName ?? null,
-        accountType: data?.accountType ?? null,
+        id:          netId,
+        userName:    netPhone,
+        displayName: netName,
+        accountType: data?.accountType ?? 'network',
       };
 
       /* Same-origin case (prod, jab dono ek hi domain par hon): seedha likh do. */
@@ -180,6 +259,12 @@ export default function LoginScreen({ onLogin, onSignup }) {
 
 
 
+  /* Forgot-password apna poora screen hai (phone → OTP → naya password),
+     is liye login form ki jagah wahi render hota hai. */
+  if (forgot) {
+    return <ForgotPasswordScreen onBack={() => { setForgot(false); setError(''); }} />;
+  }
+
   return (
     <AuthLayout
       illustration="login"
@@ -190,18 +275,26 @@ export default function LoginScreen({ onLogin, onSignup }) {
 
       {error && <div className="auth-error-box">{error}</div>}
 
+      {/* Network Head Office ka password reset abhi taiyar nahi. */}
+      {forgotSoon && (
+        <div className="auth-toast" role="status">
+          <i className="fa-solid fa-clock" />
+          Password reset for Network Head Office is coming soon.
+        </div>
+      )}
+
       {/* Account type — Individual School yahin ERP login hai,
           School Network chain-schools-frontend ke login par bhej deta hai. */}
       <div className="auth-acct-select">
         <button type="button"
           className={`auth-acct-card${acctType === 'individual' ? ' is-active' : ''}`}
-          onClick={() => { setAcctType('individual'); setMethod('phone'); setUsername(''); setError(''); }}>
+          onClick={() => { setAcctType('individual'); setMethod('phone'); setUsername(''); setError(''); setForgotSoon(false); }}>
           <i className="fa-solid fa-school" />
           <span>Individual School</span>
         </button>
         <button type="button"
           className={`auth-acct-card${acctType === 'network' ? ' is-active' : ''}`}
-          onClick={() => { setAcctType('network'); setMethod('phone'); setUsername(''); setError(''); }}>
+          onClick={() => { setAcctType('network'); setMethod('phone'); setUsername(''); setError(''); setForgotSoon(false); }}>
           <i className="fa-solid fa-building-columns" />
           <span>Network Head Office</span>
         </button>
@@ -211,7 +304,7 @@ export default function LoginScreen({ onLogin, onSignup }) {
       <div className="auth-method-select">
         <button type="button"
           className={`auth-method-tab${method === 'phone' ? ' is-active' : ''}`}
-          onClick={() => { setMethod('phone'); setUsername(''); setError(''); }}>
+          onClick={() => { setMethod('phone'); setUsername(''); setError(''); setForgotSoon(false); }}>
           <i className="fa-solid fa-phone" /> Phone Number
         </button>
         <button type="button"
@@ -269,7 +362,20 @@ export default function LoginScreen({ onLogin, onSignup }) {
           <input type="checkbox" checked={remember} onChange={e => setRemember(e.target.checked)} />
           Remember me
         </label>
-        <button type="button" className="auth-forgot">Forgot password?</button>
+        {/* Forgot-password ka asli flow abhi sirf Individual School par chalta hai.
+            Network Head Office ka reset baad me lagega jab uski API taiyar ho —
+            tab tak button dikhta hai magar "coming soon" bata deta hai. */}
+        <button type="button" className="auth-forgot"
+          onClick={() => {
+            if (isNetwork) {
+              setError('');
+              setForgotSoon(true);
+              return;
+            }
+            setForgot(true);
+          }}>
+          Forgot password?
+        </button>
       </div>
 
       <button className="auth-btn-primary" onClick={handleLogin}>
@@ -282,7 +388,11 @@ export default function LoginScreen({ onLogin, onSignup }) {
 
       <div className="auth-divider">or</div>
 
-      <button className="auth-btn-ghost" onClick={onSignup}>Create New Account</button>
+      {/* Active tab signup flow ko bata dete hain — network tab par network
+          ke endpoints (network-send-otp / network-signup) use hote hain. */}
+      <button className="auth-btn-ghost" onClick={() => onSignup?.(isNetwork)}>
+        Create New Account
+      </button>
 
       <p className="auth-terms">
         By signing in you agree to SchoolMentor's <a href="#terms">Terms of Service</a>

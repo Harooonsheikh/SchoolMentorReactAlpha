@@ -334,6 +334,9 @@ function AuthGate() {
     return 'app';
   });
 
+  /* Signup network ka hai ya school ka — login screen ke active tab se aata hai. */
+  const [signupIsNetwork, setSignupIsNetwork] = useState(false);
+
   function handleLogin(userData) {
     setUser(userData);
     // Fresh login → koi purana flag/last-module na rahe (default screen/module par jao).
@@ -348,7 +351,9 @@ function AuthGate() {
     return (
       <LoginScreen
         onLogin={handleLogin}
-        onSignup={() => setScreen('signup')}
+        /* Login screen batata hai ke kaunsa tab khula tha, taake signup flow
+           network ke endpoints use kare ya school ke. */
+        onSignup={(isNetwork) => { setSignupIsNetwork(!!isNetwork); setScreen('signup'); }}
       />
     );
   }
@@ -358,6 +363,7 @@ function AuthGate() {
       <SignupFlow
         onBack={() => setScreen('login')}
         onComplete={() => setScreen('login')}
+        isNetwork={signupIsNetwork}
       />
     );
   }
