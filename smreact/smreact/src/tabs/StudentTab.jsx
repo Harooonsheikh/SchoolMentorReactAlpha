@@ -380,9 +380,11 @@ function StudentModal({ open, target, editIdx, editStudent, classesData, onClose
 
         <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', padding: '14px 24px', borderTop: '1px solid var(--border-light)', background: 'var(--bg-card)', borderRadius: '0 0 20px 20px', flexShrink: 0 }}>
           <button className="btn btn-secondary btn-md" onClick={onClose}>Close</button>
-          <button className="btn btn-primary btn-md" onClick={handleSave}>
-            <i className="fas fa-save"></i> Save Changes
-          </button>
+          <Tooltip text={editIdx >= 0 ? 'Save changes to this student' : 'Add a new student'}>
+            <button className="btn btn-primary btn-md" onClick={handleSave}>
+              <i className="fas fa-save"></i> Save Changes
+            </button>
+          </Tooltip>
         </div>
       </div>
     </div>
@@ -692,12 +694,14 @@ export default function StudentTab({ classesData, setClassesData, studentStrengt
                   </div>
                   {/* Action buttons */}
                   <div className="td" style={{ gap: 6, flexWrap: 'wrap' }}>
+                    <Tooltip text="Add a new student">
                     <button
                       className="btn btn-primary btn-sm"
                       onClick={e => { e.stopPropagation(); openAddStudent(key); }}
                       style={{ background: 'linear-gradient(135deg,#1E3A8A,#1E40AF)', whiteSpace: 'nowrap' }}>
                       <i className="fas fa-user-plus"></i> Add Student
                     </button>
+                    </Tooltip>
                     <Tooltip text={`Bulk import students for ${cls.name}${sec ? ` - Section ${sec.sectionName}` : ''}`}>
                     <button
                       onClick={e => { e.stopPropagation(); setShowImport({ cls, sec }); setImportStep(1); }}
@@ -741,10 +745,12 @@ export default function StudentTab({ classesData, setClassesData, studentStrengt
                         <span style={{ background: 'rgba(255,255,255,.18)', color: '#fff', fontSize: 12, fontWeight: 700, padding: '3px 10px', borderRadius: 99 }}>
                           {sec.students.length} student{sec.students.length !== 1 ? 's' : ''}
                         </span>
+                        <Tooltip text="Add a new student">
                         <button onClick={() => openAddStudent(key)}
                           style={{ background: 'rgba(255,255,255,.18)', border: '1.5px solid rgba(255,255,255,.35)', color: '#fff', fontSize: 12, fontWeight: 700, padding: '5px 12px', borderRadius: 8, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, transition: 'background .2s', fontFamily: 'var(--font-body)' }}>
                           <i className="fas fa-user-plus"></i> Add Student
                         </button>
+                        </Tooltip>
                       </div>
                     </div>
 
@@ -757,9 +763,11 @@ export default function StudentTab({ classesData, setClassesData, studentStrengt
                         <div style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 18 }}>
                           Add students to <strong>{cls.name}</strong>{sec ? ` – Section ${sec.sectionName}` : ''}
                         </div>
+                        <Tooltip text="Add the first student">
                         <button className="btn btn-primary btn-md" onClick={() => openAddStudent(key)}>
                           <i className="fas fa-user-plus"></i> Add First Student
                         </button>
+                        </Tooltip>
                       </div>
                     ) : (
                       <div style={{ overflowX: 'auto', border: '1px solid var(--border-light)', borderTop: 'none', borderRadius: '0 0 8px 8px' }}>

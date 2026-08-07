@@ -592,9 +592,11 @@ export default function SchoolTab({ schoolInfo, setSchoolInfo, onSave, onSaveDra
           {/* <button className="btn btn-secondary btn-md" onClick={handleDraft} disabled={saving}>
             {saving ? <><i className="fas fa-spinner fa-spin"></i> Saving...</> : <><i className="fas fa-save"></i> Save Draft</>}
           </button> */}
-          <button className="btn btn-primary btn-md" onClick={handleSave} disabled={saving}>
-            {saving ? <><i className="fas fa-spinner fa-spin"></i> Saving...</> : <>Save &amp; Continue <i className="fas fa-arrow-right"></i></>}
-          </button>
+          <Tooltip text="Save school details and continue">
+            <button className="btn btn-primary btn-md" onClick={handleSave} disabled={saving}>
+              {saving ? <><i className="fas fa-spinner fa-spin"></i> Saving...</> : <>Save &amp; Continue <i className="fas fa-arrow-right"></i></>}
+            </button>
+          </Tooltip>
         </div>
       </div>
 

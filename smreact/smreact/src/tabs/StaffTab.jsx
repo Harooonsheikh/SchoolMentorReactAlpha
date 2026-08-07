@@ -144,22 +144,28 @@ function StaffModal({ open, staff, deptsData, onClose, onSave, setDeptsData, sho
   const footerBtn = () => {
     if (tab === 'personal') {
       return (
-        <button className="btn btn-primary btn-md" onClick={() => [handleSave(), console.log(form)]}>
-          <i className="fas fa-save"></i> Save
-        </button>
+        <Tooltip text="Save employee details">
+          <button className="btn btn-primary btn-md" onClick={() => [handleSave(), console.log(form)]}>
+            <i className="fas fa-save"></i> Save
+          </button>
+        </Tooltip>
       );
     }
     if (subTab === 'official') {
       return (
-        <button className="btn btn-primary btn-md" onClick={() => [handleupdateOffical(), console.log(form)]}>
-          <i className="fas fa-arrow-right"></i> Save & Next
-        </button>
+        <Tooltip text="Save and go to the next step">
+          <button className="btn btn-primary btn-md" onClick={() => [handleupdateOffical(), console.log(form)]}>
+            <i className="fas fa-arrow-right"></i> Save & Next
+          </button>
+        </Tooltip>
       );
     }
     return (
-      <button className="btn btn-primary btn-md" onClick={() => [handleupdatesalary(), console.log(form), ]}>
-        <i className="fas fa-save"></i> Save & Close
-      </button>
+      <Tooltip text="Save and close">
+        <button className="btn btn-primary btn-md" onClick={() => [handleupdatesalary(), console.log(form), ]}>
+          <i className="fas fa-save"></i> Save & Close
+        </button>
+      </Tooltip>
     );
   };
 
@@ -1032,9 +1038,11 @@ function TaskAssignModal({ open, staff, classesData, setClassesData, onClose, on
 
         <div className="modal-footer">
           <button className="btn btn-secondary btn-md" onClick={onClose}>Close</button>
-          <button className="btn btn-primary btn-md" onClick={() => onSave({ ...staff, tasks })}>
-            <i className="fas fa-save"></i> Save Assignment
-          </button>
+          <Tooltip text="Save the assignment">
+            <button className="btn btn-primary btn-md" onClick={() => onSave({ ...staff, tasks })}>
+              <i className="fas fa-save"></i> Save Assignment
+            </button>
+          </Tooltip>
         </div>
       </div>
     </div>
@@ -1320,9 +1328,11 @@ const [taskTarget, setTaskTarget] = useState(null);
             <i className="fas fa-file-pdf"></i> Download Report
           </button>
           </Tooltip>
-          <button className="btn btn-primary btn-md" onClick={() => setStaffModalTarget({ ...newStaffTemplate, id: null })}>
-            <i className="fas fa-user-plus"></i> Add New Employee
-          </button>
+          <Tooltip text="Add a new employee">
+            <button className="btn btn-primary btn-md" onClick={() => setStaffModalTarget({ ...newStaffTemplate, id: null })}>
+              <i className="fas fa-user-plus"></i> Add New Employee
+            </button>
+          </Tooltip>
         </div>
       </div>
 
@@ -1705,9 +1715,11 @@ const [taskTarget, setTaskTarget] = useState(null);
           <span>Draft auto-saved</span>
         </div>
         <div className="save-bar-right">
-          <button className="btn btn-primary btn-md" onClick={() => onContinue?.()}>
-            Save &amp; Continue <i className="fas fa-arrow-right"></i>
-          </button>
+          <Tooltip text="Save and continue">
+            <button className="btn btn-primary btn-md" onClick={() => onContinue?.()}>
+              Save &amp; Continue <i className="fas fa-arrow-right"></i>
+            </button>
+          </Tooltip>
         </div>
       </div>
     </div>

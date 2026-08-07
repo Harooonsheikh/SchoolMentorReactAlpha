@@ -357,12 +357,16 @@ getclassesdata()
 , onClose()]}>
       Close
     </button>
-    <button className="btn btn-primary btn-md" onClick={() => onAddSubjectClick(cls)}>
-      <i className="fas fa-plus"></i> Add Subject
-    </button>
-    <button className="btn btn-primary btn-md" onClick={handleSave}>
-      <i className="fas fa-edit"></i> Update
-    </button>
+    <Tooltip text="Add a new subject to all classes">
+      <button className="btn btn-primary btn-md" onClick={() => onAddSubjectClick(cls)}>
+        <i className="fas fa-plus"></i> Add Subject
+      </button>
+    </Tooltip>
+    <Tooltip text="Save the book list">
+      <button className="btn btn-primary btn-md" onClick={handleSave}>
+        <i className="fas fa-edit"></i> Update
+      </button>
+    </Tooltip>
   </div>
 </div>
         </div>
@@ -797,7 +801,7 @@ useEffect(() => {
           </div>
           <div className="modal-footer">
             <button className="btn btn-secondary btn-md" onClick={() => [setName(''), setSelected({}), setErr(''), setErr2(''),  onClose()]}>Cancel</button>
-            <button className="btn btn-primary btn-md" onClick={handleAdd}><i className="fas fa-plus"></i> Add Subject</button>
+            <Tooltip text="Add a new subject to all classes"><button className="btn btn-primary btn-md" onClick={handleAdd}><i className="fas fa-plus"></i> Add Subject</button></Tooltip>
           </div>
         </div>
       </div>
@@ -902,9 +906,11 @@ export default function SubjectsTab({ classesData, setClassesData,  subjectsData
             <i className="fas fa-file-pdf"></i> <span className="pdf-btn-label">Download Report</span>
           </button>
           </Tooltip>
-          <button className="btn btn-primary btn-md" onClick={() => setShowAddSubject(true)}>
-            <i className="fas fa-plus"></i> <span className="add-btn-label">Add Subject</span>
-          </button>
+          <Tooltip text="Add a new subject to all classes">
+            <button className="btn btn-primary btn-md" onClick={() => setShowAddSubject(true)}>
+              <i className="fas fa-plus"></i> <span className="add-btn-label">Add Subject</span>
+            </button>
+          </Tooltip>
         </div>
       </div>
 
@@ -951,6 +957,7 @@ export default function SubjectsTab({ classesData, setClassesData,  subjectsData
                   </div>
                   <div className="td">{statusBadge}</div>
                   <div className="td" style={{ gap: 5 }}>
+                    <Tooltip text="Update the book list">
                     <button className="btn btn-primary btn-sm" onClick={e => { e.stopPropagation();
                       const key = `${cls.id}_${sec?.sectionID || 'null'}`;
                       setExpandedKey(null)
@@ -964,6 +971,7 @@ export default function SubjectsTab({ classesData, setClassesData,  subjectsData
                     >
                       <i className="fas fa-edit"></i> Update
                     </button>
+                    </Tooltip>
                     <Tooltip text={exp ? 'Hide book list' : 'Show book list'}>
                     <button className={`expand-btn${exp ? ' open' : ''}`} onClick={e => {
   e.stopPropagation();
@@ -1053,9 +1061,11 @@ export default function SubjectsTab({ classesData, setClassesData,  subjectsData
           <span>Draft auto-saved</span>
         </div>
         <div className="save-bar-right">
-          <button className="btn btn-primary btn-md" onClick={() => onContinue?.()}>
-            Save &amp; Continue <i className="fas fa-arrow-right"></i>
-          </button>
+          <Tooltip text="Save and continue">
+            <button className="btn btn-primary btn-md" onClick={() => onContinue?.()}>
+              Save &amp; Continue <i className="fas fa-arrow-right"></i>
+            </button>
+          </Tooltip>
         </div>
       </div>
     </div>

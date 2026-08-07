@@ -107,7 +107,9 @@ setName('');
           </div>
           <div className="modal-footer">
             <button className="btn btn-secondary btn-md" onClick={onClose}>Cancel</button>
-            <button className="btn btn-primary btn-md" onClick={handleAdd}><i className={`fas ${isEdit ? 'fa-save' : 'fa-plus'}`}></i> {isEdit ? 'Save Changes' : 'Add Department'}</button>
+            <Tooltip text={isEdit ? 'Save changes' : 'Add a new department'}>
+              <button className="btn btn-primary btn-md" onClick={handleAdd}><i className={`fas ${isEdit ? 'fa-save' : 'fa-plus'}`}></i> {isEdit ? 'Save Changes' : 'Add Department'}</button>
+            </Tooltip>
           </div>
         </div>
       </div>
@@ -270,9 +272,11 @@ setQual({}),
 setJob(''),
 setErr2(''),
     setErr(''), onClose()]}>Cancel</button>
-        <button className="btn btn-primary btn-md" onClick={handleAdd}>
-          <i className="fas fa-save"></i> Save
-        </button>
+        <Tooltip text="Add a designation to this department">
+          <button className="btn btn-primary btn-md" onClick={handleAdd}>
+            <i className="fas fa-save"></i> Save
+          </button>
+        </Tooltip>
       </div>
     </div>
   </div>
@@ -476,9 +480,11 @@ const dept = deptsData.find(d => d.id === deptId);
             <i className="fas fa-file-pdf"></i> Download Report
           </button>
           </Tooltip>
-          <button className="btn btn-primary btn-md" onClick={() => setShowAddDept(true)}>
-            <i className="fas fa-plus"></i> Add New Department
-          </button>
+          <Tooltip text="Add a new department">
+            <button className="btn btn-primary btn-md" onClick={() => setShowAddDept(true)}>
+              <i className="fas fa-plus"></i> Add New Department
+            </button>
+          </Tooltip>
         </div>
       </div>
 
@@ -495,7 +501,7 @@ const dept = deptsData.find(d => d.id === deptId);
               <div className="empty-icon"><i className="fas fa-building"></i></div>
               <div className="empty-title">No Departments Yet</div>
               <div className="empty-sub">Add your first department to get started.</div>
-              <button className="btn btn-primary btn-md" onClick={() => setShowAddDept(true)}><i className="fas fa-plus"></i> Add Department</button>
+              <Tooltip text="Add a new department"><button className="btn btn-primary btn-md" onClick={() => setShowAddDept(true)}><i className="fas fa-plus"></i> Add Department</button></Tooltip>
             </div>
           ) : filtered.map((dept, i) => {
             const exp = expandedId === dept.id;
@@ -524,6 +530,7 @@ const dept = deptsData.find(d => d.id === deptId);
                   </div> */}
                   {/* Designations column */}
 <div className="td">
+  <Tooltip text="Add a designation to this department">
   <button
     className="btn btn-sm"
     onClick={e => { e.stopPropagation(); setDesigTarget(dept); }}
@@ -545,6 +552,7 @@ const dept = deptsData.find(d => d.id === deptId);
   >
     <i className="fas fa-plus"></i> Designation
   </button>
+  </Tooltip>
   {dept.designations.length > 0 && (
     <span style={{ fontSize: 13, color: 'var(--text-muted)', marginLeft: 12, whiteSpace: 'nowrap' }}>
       {dept.designations.length} post{dept.designations.length !== 1 ? 's' : ''}
@@ -625,9 +633,11 @@ const dept = deptsData.find(d => d.id === deptId);
                       <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--brand-primary)' }}>
                         <i className="fas fa-id-badge" style={{ marginRight: 6 }}></i>{dept.name} — Designations
                       </span>
-                      <button className="btn btn-ghost btn-sm" onClick={() => setDesigTarget(dept)}>
-                        <i className="fas fa-plus"></i> Add
-                      </button>
+                      <Tooltip text="Add a designation to this department">
+                        <button className="btn btn-ghost btn-sm" onClick={() => setDesigTarget(dept)}>
+                          <i className="fas fa-plus"></i> Add
+                        </button>
+                      </Tooltip>
                     </div>
                     <div className="desig-list">
                      <div className="desig-list">
@@ -840,12 +850,14 @@ const dept = deptsData.find(d => d.id === deptId);
             Cancel
           </button>
 
+          <Tooltip text="Save changes">
           <button
             className="btn btn-primary btn-md"
             onClick={saveDesigEdit}
           >
             <i className="fas fa-save"></i> Save Changes
           </button>
+          </Tooltip>
         </div>
       </div>
     </div>
@@ -881,9 +893,11 @@ const dept = deptsData.find(d => d.id === deptId);
           <span>Draft auto-saved</span>
         </div>
         <div className="save-bar-right">
-          <button className="btn btn-primary btn-md" onClick={() => onContinue?.()}>
-            Save &amp; Continue <i className="fas fa-arrow-right"></i>
-          </button>
+          <Tooltip text="Save and continue">
+            <button className="btn btn-primary btn-md" onClick={() => onContinue?.()}>
+              Save &amp; Continue <i className="fas fa-arrow-right"></i>
+            </button>
+          </Tooltip>
         </div>
       </div>
     </div>
