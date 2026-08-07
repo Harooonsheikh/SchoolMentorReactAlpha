@@ -2940,15 +2940,19 @@ if (mapped.length > 0) {
     const loadSubjects = async () => {
   setLoadingSubjects(true);
   try {
+    /* TEACHER-FILTERED subjects — wahi endpoint jo main Term Breakups view use karta
+       hai (/get-subjects_byEmployeeID). Pehle yahan /get-subjects (poore class ke saare
+       subjects) tha, is liye modal me un subjects tak dikhte the jo teacher ko assign
+       nahi the. Ab modal aur list dono ek jaise subjects dikhate hain. */
+    const empID = sessionStorage.getItem('employee_ID');
     const res = await fetch(
-      buildUrl(`/api/LaunchSetup/get-subjects/${gradeId}/${sectionId}`),
+      buildUrl(`/get-subjects_byEmployeeID/${gradeId}/${sectionId}/${empID}`),
       { method: 'GET', headers: { Accept: '*/*' } }
     );
-    console.log('Subjects API status:', res.status);
     const json = await res.json().catch(() => ({}));
-    console.log('Subjects API response:', json);
-    const list = Array.isArray(json) ? json : (json?.data || []);
-    console.log('Subjects list:', list);
+    const list = (json?.success && Array.isArray(json.data))
+      ? json.data
+      : (Array.isArray(json) ? json : (json?.data || []));
     setSubjects(list);
     if (list.length > 0) {
       const firstSubject = list[0].subjectName || list[0].name || '';

@@ -131,6 +131,10 @@ function StudentModal({ open, target, editIdx, editStudent, classesData, onClose
     fd.append('SectionId',                   row.sec?.sectionID ?? 0);
     fd.append('BranchId',                    Number(sessionStorage.getItem('branchID')) || 0);
     fd.append('RegisterNo',                  form.registrationNo || form.regNo || '');
+    /* Manual mode flag — is ke baghair backend RegisterNo ko ignore kar ke apna
+       system-generated number laga deta tha. ON hone par backend user ka diya hua
+       RegisterNo use karta hai (save-school ki tarah, dekho SchoolTab IsManualRegNo). */
+    fd.append('IsManualRegNo',               !!manualReg);
     fd.append('PreviousRegistrationNo',      form.previousRegistrationNo || '');
     fd.append('FamilyNo',                    form.familyNo || '');
     fd.append('DateOfAdmission',             form.dateOfAdmission || '');
@@ -761,7 +765,10 @@ export default function StudentTab({ classesData, setClassesData, studentStrengt
                           </thead>
                           <tbody>
                             {sec.students.map((s, si) => {
-                              const displayRegNo = s.regNo || `245-${String(10001 + si).slice(-4)}`;
+                              /* API `registerNo` deta hai (raw list), `regNo` nahi — is liye
+                                 asal (manual/auto) number yahan dikhao. Sirf `regNo` padhne se
+                                 hamesha 245-index fallback chal jata tha. */
+                              const displayRegNo = s.registerNo || s.RegisterNo || s.regNo || s.registrationNo || `245-${String(10001 + si).slice(-4)}`;
                               const rowBg = si % 2 === 0 ? 'var(--bg-card)' : 'var(--bg-muted)';
                               const TD = 'padding:10px 12px;border-bottom:1px solid var(--border-light);font-size:13px;';
                               const displayname = `${s.firstName} ${s.lastName}` 

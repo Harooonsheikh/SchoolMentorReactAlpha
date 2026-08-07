@@ -1733,7 +1733,7 @@ function PayrollRow({
           <span style={{ fontSize: 10.5, color: 'var(--tm)', fontWeight: 600 }}>{emp.eid}</span>
         </div>
         <div className="td">
-          <span className="badge b-gray" style={{ fontSize: 10.5 }}>{desigName}</span>
+          <span className="badge b-gray emp-cell-badge" style={{ fontSize: 10.5 }}>{desigName}</span>
         </div>
         <div className="td">
           <span className={`pay-status ${status}`}>
@@ -7492,9 +7492,14 @@ export const HR_CSS = `
 /* Cell badge truncation helpers */
 .emp-cell-badge {
   max-width: 100%;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  /* Lambi designation/department ab truncate (…) ki jagah nayi line me WRAP ho. */
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
   display: inline-block;
-  line-height: 1.4;
+  line-height: 1.35;
+  text-align: center;
+  height: auto;
 }
 
 /* Phone cell */
@@ -9308,7 +9313,7 @@ export const HR_CSS = `
 }
 .pay-row:hover { background: rgba(30, 58, 138, .03); }
 .pay-row.open  { background: var(--muted); }
-.pay-row .td   { display: flex; align-items: center; font-size: 12.5px; color: var(--t2); }
+.pay-row .td   { display: flex; align-items: center; font-size: 12.5px; color: var(--t2); min-width: 0; }
 
 /* Payment status pill */
 .pay-status {
