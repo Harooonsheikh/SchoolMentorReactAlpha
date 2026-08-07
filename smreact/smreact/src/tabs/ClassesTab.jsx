@@ -120,7 +120,9 @@ setName('');
           </div> */}
           <div className="modal-footer">
             <button className="btn btn-secondary btn-md" onClick={onClose}>Cancel</button>
-            <button className="btn btn-primary btn-md" onClick={handleAdd}><i className="fas fa-plus"></i> Add Class</button>
+            <Tooltip text="Add a new class">
+              <button className="btn btn-primary btn-md" onClick={handleAdd}><i className="fas fa-plus"></i> Add Class</button>
+            </Tooltip>
           </div>
         </div>
       </div>
@@ -232,9 +234,11 @@ const handleUpdate = async () => {
 </div>
           <div className="modal-footer">
             <button className="btn btn-secondary btn-md" onClick={onClose}>Cancel</button>
-            <button className="btn btn-primary btn-md" onClick={handleUpdate}>
-              <i className="fas fa-save"></i> Update Class
-            </button>
+            <Tooltip text="Save changes to this class">
+              <button className="btn btn-primary btn-md" onClick={handleUpdate}>
+                <i className="fas fa-save"></i> Update Class
+              </button>
+            </Tooltip>
           </div>
         </div>
       </div>
@@ -532,17 +536,21 @@ try {
               <input className="form-input" placeholder="Section name e.g. A, B, Red Group..." value={newSection}
                 onChange={e => setNewSection(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && addSection()} />
-              <button className="btn btn-primary btn-md" onClick={addSection}><i className="fas fa-plus"></i> Add</button>
-              
+              <Tooltip text="Add a section to this class">
+                <button className="btn btn-primary btn-md" onClick={addSection}><i className="fas fa-plus"></i> Add</button>
+              </Tooltip>
+
             </div>
             {err && (
   <div className="field-msg error" style={{ marginTop: 8 }}>
     <i className="fas fa-times-circle"></i> {err}
   </div>
 )}
-            <button className="btn btn-primary btn-md" style={{ justifyContent: 'center' }} onClick={() => { onSave(cls.id, sections); setNewSection(''); setErr('');  onClose();  }}>
-              <i className="fas fa-check"></i> Done
-            </button>
+            <Tooltip text="Save sections and close">
+              <button className="btn btn-primary btn-md" style={{ justifyContent: 'center' }} onClick={() => { onSave(cls.id, sections); setNewSection(''); setErr('');  onClose();  }}>
+                <i className="fas fa-check"></i> Done
+              </button>
+            </Tooltip>
           </div>
         </div>
       </div>
@@ -798,7 +806,9 @@ const updatedSections = (secJson.data || secJson || []).map(item => ({
                 {amtErr && <span className="field-msg error"><i className="fas fa-times-circle"></i> {amtErr}</span>}
               </div>
             )}
-            <button className="btn btn-primary btn-md" style={{ marginTop: 8 }} onClick={addFeeHead}><i className="fas fa-plus"></i> Add Fee Head</button>
+            <Tooltip text="Add a fee head">
+              <button className="btn btn-primary btn-md" style={{ marginTop: 8 }} onClick={addFeeHead}><i className="fas fa-plus"></i> Add Fee Head</button>
+            </Tooltip>
           </div>
           <div className="modal-footer">
 <button
@@ -814,7 +824,9 @@ const updatedSections = (secJson.data || secJson || []).map(item => ({
 >
   Cancel
 </button>
-            <button className="btn btn-primary btn-md" onClick={() => { setEditIdx(null); onSave(cls.id, feeHeads); onClose(); }}><i className="fas fa-save"></i> Save Fee Structure</button>
+            <Tooltip text="Save this class's fee structure">
+              <button className="btn btn-primary btn-md" onClick={() => { setEditIdx(null); onSave(cls.id, feeHeads); onClose(); }}><i className="fas fa-save"></i> Save Fee Structure</button>
+            </Tooltip>
           </div>
         </div>
       </div>
@@ -989,9 +1001,11 @@ const getclassesdata = useCallback(async () => {
               <i className="fas fa-file-pdf"></i> <span className="pdf-btn-label">Download Report</span>
             </button>
           </Tooltip>
-          <button className="btn btn-primary btn-md" onClick={() => setShowAddModal(true)}>
-            <i className="fas fa-plus"></i> Add New Class
-          </button>
+          <Tooltip text="Add a new class">
+            <button className="btn btn-primary btn-md" onClick={() => setShowAddModal(true)}>
+              <i className="fas fa-plus"></i> Add New Class
+            </button>
+          </Tooltip>
         </div>
       </div>
 
@@ -1010,7 +1024,7 @@ const getclassesdata = useCallback(async () => {
       <div className="empty-icon"><i className="fas fa-chalkboard"></i></div>
       <div className="empty-title">No Classes Yet</div>
       <div className="empty-sub">Click "Add New Class" to start configuring your school's classes.</div>
-      <button className="btn btn-primary btn-md" onClick={() => setShowAddModal(true)}><i className="fas fa-plus"></i> Add First Class</button>
+      <Tooltip text="Add your first class"><button className="btn btn-primary btn-md" onClick={() => setShowAddModal(true)}><i className="fas fa-plus"></i> Add First Class</button></Tooltip>
     </div>
   ) : filtered.map((cls, i) => {
     const col = COLORS[i % COLORS.length];
@@ -1085,7 +1099,7 @@ const getclassesdata = useCallback(async () => {
               <div className="detail-block">
                 <div className="detail-block-header">
                   <div className="detail-block-title"><i className="fas fa-layer-group"></i> Section Details</div>
-                  <button className="btn btn-ghost btn-sm" onClick={() => setSectionTarget(cls)}><i className="fas fa-plus"></i> Add</button>
+                  <Tooltip text="Add a section to this class"><button className="btn btn-ghost btn-sm" onClick={() => setSectionTarget(cls)}><i className="fas fa-plus"></i> Add</button></Tooltip>
                 </div>
                 {(cls.sections || []).length ? (
                   <div className="section-list">
@@ -1104,7 +1118,7 @@ const getclassesdata = useCallback(async () => {
               <div className="detail-block">
                 <div className="detail-block-header">
                   <div className="detail-block-title"><i className="fas fa-receipt"></i> Fee Structure</div>
-                  <button className="btn btn-ghost btn-sm" onClick={() => setFeeTarget(cls)}><i className="fas fa-pen"></i> Update</button>
+                  <Tooltip text="Update the fee structure"><button className="btn btn-ghost btn-sm" onClick={() => setFeeTarget(cls)}><i className="fas fa-pen"></i> Update</button></Tooltip>
                 </div>
                 {(cls.feeHeads || []).length ? (
                   <>
@@ -1194,9 +1208,11 @@ const getclassesdata = useCallback(async () => {
           <span>Draft auto-saved</span>
         </div>
         <div className="save-bar-right">
-          <button className="btn btn-primary btn-md" onClick={() => onContinue?.()}>
-            Save &amp; Continue <i className="fas fa-arrow-right"></i>
-          </button>
+          <Tooltip text="Save and continue">
+            <button className="btn btn-primary btn-md" onClick={() => onContinue?.()}>
+              Save &amp; Continue <i className="fas fa-arrow-right"></i>
+            </button>
+          </Tooltip>
         </div>
       </div>
     </div>
