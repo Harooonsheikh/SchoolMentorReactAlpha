@@ -242,8 +242,6 @@ export const SA_AUTH_CSS = `
 .sa-auth .sa-eye-btn:hover{color:var(--brand-mid)}
 
 .sa-auth .sa-form-meta{display:flex;align-items:center;justify-content:space-between;margin:-2px 0 20px}
-.sa-auth .sa-remember{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--tm);font-weight:500;cursor:pointer}
-.sa-auth .sa-remember input{accent-color:var(--brand-mid);cursor:pointer}
 .sa-auth .sa-forgot{font-size:12.5px;font-weight:700;color:var(--brand-mid);background:none;border:none;padding:0}
 .sa-auth .sa-forgot:hover{text-decoration:underline}
 

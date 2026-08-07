@@ -74,7 +74,6 @@ export default function SuperAdminLogin({ onLogin }) {
   const [userName, setUserName] = useState('');
   const [password, setPassword] = useState('');
   const [showPass, setShowPass] = useState(false);
-  const [remember, setRemember] = useState(true);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -95,7 +94,7 @@ export default function SuperAdminLogin({ onLogin }) {
         setError('Signed in, but no session token was returned. Please contact support.');
         return;
       }
-      onLogin(session, { remember });
+      onLogin(session);
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -217,11 +216,10 @@ export default function SuperAdminLogin({ onLogin }) {
               </button>
             </div>
 
-            <div className="sa-form-meta">
-              <label className="sa-remember">
-                <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
-                Keep me signed in
-              </label>
+            {/* "Keep me signed in" yahan se hata diya gaya: session ab bilkul ERP
+                ki tarah sirf sessionStorage me rehti hai (har tab ki apni), is liye
+                aisa koi wada nibhaya hi nahi ja sakta tha. */}
+            <div className="sa-form-meta" style={{ justifyContent: 'flex-end' }}>
               <button type="button" className="sa-forgot" onClick={() => setError('Password resets are handled by the platform team — please contact them.')}>
                 Forgot password?
               </button>

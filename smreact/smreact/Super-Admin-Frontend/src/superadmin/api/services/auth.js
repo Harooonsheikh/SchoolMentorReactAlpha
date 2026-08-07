@@ -73,27 +73,6 @@ export function hasStoredSession() {
 }
 
 /**
- * "Keep me signed in" wali session localStorage me rehti hai, jab ke ye keys
- * sessionStorage me — tab band hote hi wo gum ho jati hain. Boot par unhe
- * mehfooz session se dobara likh dete hain, warna yaad rakha hua user bhi
- * har baar login screen par phenk diya jata.
- * @returns {boolean} keys ab mojood hain ya nahi
- */
-export function restoreStoredSession(session) {
-  const id = session?.user?.id;
-  const token = session?.token;
-  if (id == null || !token) return false;
-  try {
-    sessionStorage.setItem(SA_SESSION_KEYS.id, String(id));
-    sessionStorage.setItem(SA_SESSION_KEYS.token, String(token));
-    if (session.user?.userName) sessionStorage.setItem(SA_SESSION_KEYS.user_Name, String(session.user.userName));
-  } catch {
-    return false;
-  }
-  return true;
-}
-
-/**
  * POST /api/Auth/login
  * @param {{userName: string, password: string}} credentials
  * @returns {Promise<{token: string, user: {id, name, email, role}}>}

@@ -113,6 +113,13 @@ export const EP = {
     /* POST — Training Card ki "School Participation Details".
        Wahi chaar actions: get | add | update | delete. */
     trainingAction: () => `${SA_ROOT}/api/AHM_School_Progress/training-session-action`,
+    /* POST — ERP Schools ka "School Enquiries" (bug tracker) tab.
+       body: { action, id, branchID, module, developer, bugDetail, date,
+               isSolved, userId }
+       `isSolved` hi tay karta hai bug kis list me jayega:
+         false → Open (unsolved)   |   true → Resolved (solved)
+       Wahi chaar actions: get | add | update | delete. */
+    enquiryAction: () => `${SA_ROOT}/api/AHM_School_Progress/school-enquiries-bugs-action`,
   },
 
   /* ── E-Tube ── */

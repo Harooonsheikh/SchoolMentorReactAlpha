@@ -337,10 +337,124 @@ export function deleteTrainingSession(id, branchId) {
   return trainingAction({ action: CARD_ACTIONS.delete, id, branchId }, 'delete this session');
 }
 
+/* ═══════════════════ SCHOOL ENQUIRIES (bug tracker) ═══════════════════
+   POST .../api/AHM_School_Progress/school-enquiries-bugs-action
+     body: { action, id, branchID, module, developer, bugDetail, date,
+             isSolved, userId }
+
+   `isSolved` hi bug ki list tay karta hai:
+     false → Open (unsolved)      true → Resolved (solved)
+
+   Wahi chaar actions: get | add | update | delete.
+   Do baatein live check se:
+     • `get` ke liye branchID LAAZMI hai (0 bheja to "BranchID is required").
+     • module/developer/bugDetail/date model par [Required] hain — inhe kabhi
+       chhodna nahi, warna 400 aata hai; khali string chal jati hai (delete
+       aur get me isi liye "" bhejte hain).
+   `get` PascalCase rows deta hai: ID, BranchID, Module, Developer, BugDetail,
+   Date, IsSolved, CreatedBy, CreatedAt, ModifiedBy, ModifiedAt.
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* Screen ka status lafz ↔ API ka boolean. */
+export const ENQUIRY_STATUS = { open: 'open', resolved: 'resolved' };
+const solvedFlag = (v) => (v === true || v === 1 || String(v).toLowerCase() === 'true');
+
+/** Ek API row → wohi shape jo enquiry cards padhte hain. */
+export function enquiryRowToUi(r) {
+  const solved = solvedFlag(r?.IsSolved ?? r?.isSolved);
+  const by = Number(r?.CreatedBy ?? r?.createdBy) || 0;
+  return {
+    id:        Number(r?.ID ?? r?.id) || 0,
+    branchId:  Number(r?.BranchID ?? r?.branchID) || 0,
+    module:    String(r?.Module ?? r?.module ?? ''),
+    developer: String(r?.Developer ?? r?.developer ?? ''),
+    detail:    String(r?.BugDetail ?? r?.bugDetail ?? ''),
+    /* Date input aur badge dono YYYY-MM-DD par chalte hain. */
+    date:      String(r?.Date ?? r?.date ?? '').slice(0, 10),
+    isSolved:  solved,
+    status:    solved ? ENQUIRY_STATUS.resolved : ENQUIRY_STATUS.open,
+    /* API sirf CreatedBy id deti hai — naam nahi, is liye naam ghadte nahi. */
+    user:      by > 0 ? `User #${by}` : '—',
+    createdBy: by,
+    createdAt: String(r?.CreatedAt ?? r?.createdAt ?? ''),
+    raw: r,
+  };
+}
+
+async function enquiryAction(fields, label) {
+  const token = getSuperAdminToken();
+  const body = {
+    action:    fields.action,
+    id:        Number(fields.id) || 0,
+    branchID:  Number(fields.branchId) || 0,
+    module:    fields.module    || '',
+    developer: fields.developer || '',
+    bugDetail: fields.bugDetail || '',
+    date:      fields.date      || '',
+    isSolved:  Boolean(fields.isSolved),
+    userId:    Number(getSuperAdminIdentity().userId) || 0,
+  };
+  let res;
+  try {
+    res = await fetch(`${SA_ADMIN_API_BASE}${EP.schoolProgress.enquiryAction()}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        accept: '*/*',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(body),
+    });
+  } catch (networkErr) {
+    throw new ApiError(networkErr.message || 'Network error', 0);
+  }
+  const json = await res.json().catch(() => null);
+  if (!res.ok || (json && json.success === false)) {
+    throw new ApiError((json && (json.message || json.Message)) || `Could not ${label}`, res.status);
+  }
+  return json;
+}
+
+/** Add Inquiry / Update — `id` diya ho to update, warna add. */
+export function saveEnquiry({ branchId, module, developer, bugDetail, date, isSolved = false, id = 0 } = {}) {
+  const isEdit = Number(id) > 0;
+  return enquiryAction(
+    { action: isEdit ? CARD_ACTIONS.update : CARD_ACTIONS.add, id, branchId, module, developer, bugDetail, date, isSolved },
+    isEdit ? 'update this enquiry' : 'save this enquiry',
+  );
+}
+
+/** Ek branch ke saare bugs (open + resolved) — mapped. */
+export async function listEnquiries(branchId) {
+  if (!Number(branchId)) return [];      // API branchID ke baghair get nahi karti
+  const json = await enquiryAction({ action: CARD_ACTIONS.get, id: 0, branchId }, 'load enquiries');
+  const rows = Array.isArray(json?.data) ? json.data : [];
+  return rows.map(enquiryRowToUi).filter((r) => r.id);
+}
+
+/** Mark Resolved / Reopen — poora record dobara bhejna hota hai (update). */
+export function setEnquirySolved(bug, isSolved) {
+  return enquiryAction(
+    {
+      action: CARD_ACTIONS.update,
+      id: bug?.id, branchId: bug?.branchId,
+      module: bug?.module, developer: bug?.developer, bugDetail: bug?.detail, date: bug?.date,
+      isSolved,
+    },
+    isSolved ? 'mark this bug resolved' : 'reopen this bug',
+  );
+}
+
+/** Ek bug hatao. */
+export function deleteEnquiry(id, branchId) {
+  return enquiryAction({ action: CARD_ACTIONS.delete, id, branchId }, 'delete this enquiry');
+}
+
 const schoolProgressService = {
   listSchoolProgress, listBranchReport, branchReportToRow,
   saveCardAction, listCardActions, deleteCardAction, cardRowToUi,
   saveTrainingSession, listTrainingSessions, deleteTrainingSession, trainingRowToUi,
-  CARD_HEADS, CARD_ACTIONS,
+  saveEnquiry, listEnquiries, setEnquirySolved, deleteEnquiry, enquiryRowToUi,
+  CARD_HEADS, CARD_ACTIONS, ENQUIRY_STATUS,
 };
 export default schoolProgressService;

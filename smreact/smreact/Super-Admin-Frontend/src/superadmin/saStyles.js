@@ -791,6 +791,8 @@ export const SA_CSS = `
 .sa-root .enq-bug-user{display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--brand);font-weight:700;background:var(--brand-light);border:1px solid var(--bm);border-radius:var(--r-f);padding:2px 8px}
 .sa-root .enq-bug-actions{display:flex;align-items:center;gap:5px;flex-shrink:0;padding-top:1px}
 .sa-root .enq-iact{width:28px;height:28px;border-radius:7px;border:1.5px solid var(--bl);background:var(--muted);color:var(--tm);display:flex;align-items:center;justify-content:center;font-size:10px;cursor:pointer;transition:var(--tr)}
+.sa-root .enq-iact:hover{border-color:var(--brand);color:var(--brand)}
+.sa-root .enq-iact:disabled{opacity:.5;cursor:not-allowed}
 .sa-root .enq-iact.del:hover{border-color:var(--err);color:var(--err);background:rgba(220,38,38,.06)}
 .sa-root .enq-resolve-btn{display:inline-flex;align-items:center;gap:4px;height:26px;padding:0 11px;border-radius:var(--r-sm);border:none;background:linear-gradient(135deg,#15803d,#16a34a);color:#fff;font-family:var(--font);font-size:10.5px;font-weight:700;cursor:pointer;transition:var(--tr)}
 .sa-root .enq-resolve-btn:hover{transform:translateY(-1px);box-shadow:0 2px 8px rgba(22,163,74,.3)}

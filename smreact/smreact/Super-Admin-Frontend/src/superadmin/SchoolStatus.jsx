@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ASSIGNEES, INITIAL_LAUNCH, INITIAL_ERP, INITIAL_INACTIVE,
-  buildSchoolDetail, INITIAL_ENQUIRIES, moduleMeta,
+  buildSchoolDetail, moduleMeta,
 } from './statusData';
 import { schoolProgressApi, schoolPermissionsApi } from './api';
 
@@ -66,8 +66,46 @@ export default function SchoolStatus({ toast }) {
 
   /* Per-ERP-school detail (lazy-built) + enquiries, lifted so modal edits persist. */
   const [details, setDetails] = useState({});
-  const [enquiries, setEnquiries] = useState(INITIAL_ENQUIRIES);
-  const enqSeq = useRef(100);
+
+  /* ── School Enquiries (bug tracker) ──
+     POST .../school-enquiries-bugs-action, action `get`, ek branch ke liye
+     (API branchID ke baghair get nahi karti) — is liye ERP tab ka enquiries
+     sub-tab khulte hi har ERP school ke liye ek call, sab parallel.
+     Har mutation ke baad us branch ki list dobara mangwa lete hain, taake
+     screen wahi dikhaye jo server par hai. */
+  const [enquiries, setEnquiries] = useState({});   // { [branchId]: rows[] }
+  const [enqLoading, setEnqLoading] = useState(false);
+
+  const refreshEnquiries = useCallback(async (branchId) => {
+    try {
+      const rows = await schoolProgressApi.listEnquiries(branchId);
+      setEnquiries((prev) => ({ ...prev, [branchId]: rows }));
+    } catch (err) {
+      toastRef.current?.(err?.message || 'Could not reload enquiries', 'warn');
+    }
+  }, []);
+
+  const loadAllEnquiries = useCallback(async (rows) => {
+    setEnqLoading(true);
+    try {
+      const lists = await Promise.all(rows.map((s) => schoolProgressApi.listEnquiries(s.id).catch(() => [])));
+      const next = {};
+      rows.forEach((s, i) => { next[s.id] = lists[i]; });
+      setEnquiries(next);
+    } finally {
+      setEnqLoading(false);
+    }
+  }, []);
+
+  /* Ek hi ERP list ke liye ek hi baar — sub-tab aage peeche karne par dobara
+     18 calls nahi jaatin (mutations khud apni branch refresh kar leti hain). */
+  const enqLoadedFor = useRef(null);
+  useEffect(() => {
+    if (tab !== 'erp' || erpSub !== 'enquiries' || !erp.length) return;
+    if (enqLoadedFor.current === erp) return;
+    enqLoadedFor.current = erp;
+    loadAllEnquiries(erp);
+  }, [tab, erpSub, erp, loadAllEnquiries]);
 
   const [modal, setModal] = useState(null);   // { type, ... }
 
@@ -179,7 +217,7 @@ export default function SchoolStatus({ toast }) {
           onAssign={(id, v) => assign('erp', id, v)}
           onDeactivate={(s) => setModal({ type: 'deactivate', group: 'erp', school: s })}
           onDetails={(s) => { ensureDetail(s); setModal({ type: 'erpDetail', school: s }); }}
-          enquiries={enquiries}
+          enquiries={enquiries} enqLoading={enqLoading}
           onEnqAdd={(s) => setModal({ type: 'enqEdit', school: s, bug: null })}
           onEnqDetail={(s) => setModal({ type: 'enqDetail', school: s })} />
       )}
@@ -209,14 +247,18 @@ export default function SchoolStatus({ toast }) {
         <ErpDetailModal school={modal.school} detail={ensureDetail(modal.school)} patchDetail={patchDetail}
           toast={toast} onClose={() => setModal(null)} />
       )}
+      {/* onAdd: jo tab khula hai wahi naye bug ka status tay karta hai —
+          Open tab → isSolved false, Resolved tab → isSolved true. */}
       {modal?.type === 'enqDetail' && (
         <EnquiryDetailModal school={modal.school} bugs={enquiries[modal.school.id] || []}
-          setEnquiries={setEnquiries} enqSeq={enqSeq} toast={toast}
-          onAdd={() => setModal({ type: 'enqEdit', school: modal.school, bug: null, back: true })}
+          onRefresh={refreshEnquiries} toast={toast}
+          onAdd={(activeTab) => setModal({ type: 'enqEdit', school: modal.school, bug: null, back: true, solved: activeTab === 'resolved' })}
+          onEdit={(bug) => setModal({ type: 'enqEdit', school: modal.school, bug, back: true })}
           onClose={() => setModal(null)} />
       )}
       {modal?.type === 'enqEdit' && (
-        <EnquiryEditModal school={modal.school} bug={modal.bug} setEnquiries={setEnquiries} enqSeq={enqSeq} toast={toast}
+        <EnquiryEditModal school={modal.school} bug={modal.bug} defaultSolved={Boolean(modal.solved)}
+          onRefresh={refreshEnquiries} toast={toast}
           onClose={() => setModal(modal.back ? { type: 'enqDetail', school: modal.school } : null)} />
       )}
     </div>
@@ -280,7 +322,7 @@ function LaunchPanel({ rows, onAssign, onDeactivate, onDetails }) {
 }
 
 /* ═══════════════════════ ERP PANEL ═══════════════════════ */
-function ErpPanel({ rows, sub, setSub, onAssign, onDeactivate, onDetails, enquiries, onEnqAdd, onEnqDetail }) {
+function ErpPanel({ rows, sub, setSub, onAssign, onDeactivate, onDetails, enquiries, enqLoading, onEnqAdd, onEnqDetail }) {
   const [q, setQ] = useState('');
   const [user, setUser] = useState('');
   const list = rows.filter((s) => (!q || s.name.toLowerCase().includes(q.toLowerCase())) && (!user || s.assigned === user));
@@ -361,7 +403,9 @@ function ErpPanel({ rows, sub, setSub, onAssign, onDeactivate, onDetails, enquir
               <option value="all">All Schools</option><option value="open">Has Open Bugs</option><option value="resolved">Has Resolved Bugs</option>
             </select>
           </div>
-          {enqRows.length === 0 ? (
+          {enqLoading ? (
+            <div className="enq-empty"><i className="fa-solid fa-spinner fa-spin" /><div className="enq-empty-t">Loading enquiries…</div><div className="enq-empty-s">Fetching open and resolved bugs for every ERP school.</div></div>
+          ) : enqRows.length === 0 ? (
             <div className="enq-empty"><i className="fa-solid fa-bug" /><div className="enq-empty-t">No schools found</div><div className="enq-empty-s">Try adjusting your search or filters.</div></div>
           ) : (
             <div className="enq-section-card">
@@ -975,17 +1019,35 @@ function TrainingSection({ branchId, toast }) {
   );
 }
 
-/* ═══════════════════════ ENQUIRIES ═══════════════════════ */
-function EnquiryDetailModal({ school: s, bugs, setEnquiries, enqSeq, toast, onAdd, onClose }) {
+/* ═══════════════════════ ENQUIRIES ═══════════════════════
+   Sab kuch school-enquiries-bugs-action par: `isSolved` false wala bug Open
+   me, true wala Resolved me. Mark Resolved / Reopen dono `update` hain
+   (poora record dobara jata hai, sirf isSolved badalta hai). */
+function EnquiryDetailModal({ school: s, bugs, onRefresh, toast, onAdd, onEdit, onClose }) {
   const [tab, setTab] = useState('open');
   const open = bugs.filter((b) => b.status === 'open');
   const res = bugs.filter((b) => b.status === 'resolved');
   const list = tab === 'open' ? open : res;
 
-  const update = (fn) => setEnquiries((prev) => ({ ...prev, [s.id]: fn(prev[s.id] || []) }));
-  const markResolved = (id) => { update((arr) => arr.map((b) => b.id === id ? { ...b, status: 'resolved' } : b)); toast?.('Bug marked as resolved', 'success'); };
-  const reopen = (id) => { update((arr) => arr.map((b) => b.id === id ? { ...b, status: 'open' } : b)); toast?.('Bug reopened', 'info'); };
-  const del = (id) => { update((arr) => arr.filter((b) => b.id !== id)); toast?.('Bug deleted', 'info'); };
+  /* Kis bug par abhi call chal rahi hai — us card ke buttons band. */
+  const [busyId, setBusyId] = useState(0);
+
+  const run = async (bug, fn, okMsg, tone) => {
+    setBusyId(bug.id);
+    try {
+      await fn();
+      await onRefresh?.(s.id);
+      toast?.(okMsg, tone);
+    } catch (err) {
+      toast?.(err?.message || 'Something went wrong', 'error');
+    } finally {
+      setBusyId(0);
+    }
+  };
+
+  const markResolved = (bug) => run(bug, () => schoolProgressApi.setEnquirySolved(bug, true), 'Bug marked as resolved', 'success');
+  const reopen = (bug) => run(bug, () => schoolProgressApi.setEnquirySolved(bug, false), 'Bug reopened', 'info');
+  const del = (bug) => run(bug, () => schoolProgressApi.deleteEnquiry(bug.id, s.id), 'Bug deleted', 'info');
 
   return (
     <Overlay cls="enq-ov" onClose={onClose} wrapCls="enq-modal">
@@ -995,7 +1057,7 @@ function EnquiryDetailModal({ school: s, bugs, setEnquiries, enqSeq, toast, onAd
           <div className="enq-modal-school-name">{s.name}</div>
           <div className="enq-modal-sub">Assigned: {s.assigned} · {s.staff} Staff · {s.students} Students</div>
         </div>
-        <button className="enq-add-btn" style={{ height: 34, fontSize: 12 }} onClick={onAdd}><i className="fa-solid fa-plus" /> Add Bug</button>
+        <button className="enq-add-btn" style={{ height: 34, fontSize: 12 }} onClick={() => onAdd?.(tab)}><i className="fa-solid fa-plus" /> Add Bug</button>
         <button className="enq-modal-close" data-tip="Close" data-tip-pos="left" style={{ marginLeft: 8 }} onClick={onClose}><i className="fa-solid fa-xmark" /></button>
       </div>
       <div className="enq-modal-body">
@@ -1023,12 +1085,13 @@ function EnquiryDetailModal({ school: s, bugs, setEnquiries, enqSeq, toast, onAd
                       <span className="enq-bug-user"><i className="fa-solid fa-user" style={{ fontSize: 9 }} />{bug.user}</span>
                       <span className="enq-bug-date"><i className="fa-solid fa-code" style={{ fontSize: 9 }} />Dev: {bug.developer}</span>
                       {bug.status === 'open'
-                        ? <button className="enq-resolve-btn" onClick={() => markResolved(bug.id)}><i className="fa-solid fa-circle-check" style={{ fontSize: 9 }} /> Mark Resolved</button>
-                        : <button className="enq-reopen-btn" onClick={() => reopen(bug.id)}><i className="fa-solid fa-rotate-left" style={{ fontSize: 9 }} /> Reopen</button>}
+                        ? <button className="enq-resolve-btn" disabled={busyId === bug.id} onClick={() => markResolved(bug)}><i className={`fa-solid ${busyId === bug.id ? 'fa-spinner fa-spin' : 'fa-circle-check'}`} style={{ fontSize: 9 }} /> Mark Resolved</button>
+                        : <button className="enq-reopen-btn" disabled={busyId === bug.id} onClick={() => reopen(bug)}><i className={`fa-solid ${busyId === bug.id ? 'fa-spinner fa-spin' : 'fa-rotate-left'}`} style={{ fontSize: 9 }} /> Reopen</button>}
                     </div>
                   </div>
                   <div className="enq-bug-actions">
-                    <button className="enq-iact del" data-tip="Delete" data-tip-pos="left" onClick={() => del(bug.id)}><i className="fa-solid fa-trash-can" /></button>
+                    <button className="enq-iact" data-tip="Edit" data-tip-pos="left" disabled={busyId === bug.id} onClick={() => onEdit?.(bug)}><i className="fa-solid fa-pen" /></button>
+                    <button className="enq-iact del" data-tip="Delete" data-tip-pos="left" disabled={busyId === bug.id} onClick={() => del(bug)}><i className="fa-solid fa-trash-can" /></button>
                   </div>
                 </div>
               </div>
@@ -1040,25 +1103,50 @@ function EnquiryDetailModal({ school: s, bugs, setEnquiries, enqSeq, toast, onAd
   );
 }
 
-function EnquiryEditModal({ school: s, bug, setEnquiries, enqSeq, toast, onClose }) {
+function EnquiryEditModal({ school: s, bug, defaultSolved = false, onRefresh, toast, onClose }) {
   const editing = Boolean(bug);
   const [form, setForm] = useState({ module: bug?.module || '', developer: bug?.developer || '', detail: bug?.detail || '', date: bug?.date || '' });
+  const [saving, setSaving] = useState(false);
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
-  const save = () => {
+
+  /* Developer aur Date bhi backend par [Required] hain — khali chhode to 400
+     aata hai, is liye Save se pehle chaaron ki jaanch yahin. */
+  const save = async () => {
     if (!form.module.trim() || !form.detail.trim()) { toast?.('Module and bug detail are required', 'warn'); return; }
-    setEnquiries((prev) => {
-      const arr = prev[s.id] || [];
-      if (editing) return { ...prev, [s.id]: arr.map((b) => b.id === bug.id ? { ...b, module: form.module.trim(), developer: form.developer.trim() || '—', detail: form.detail.trim(), date: form.date || b.date } : b) };
-      const id = enqSeq.current++;
-      return { ...prev, [s.id]: [{ id, module: form.module.trim(), developer: form.developer.trim() || '—', detail: form.detail.trim(), date: form.date || new Date().toLocaleDateString('en-GB'), user: 'schoolmentoradmin', status: 'open' }, ...arr] };
-    });
-    toast?.(editing ? 'Bug updated' : 'Bug added', 'success');
-    onClose();
+    if (!form.developer.trim()) { toast?.('Developer is required', 'warn'); return; }
+    if (!form.date) { toast?.('Date is required', 'warn'); return; }
+    setSaving(true);
+    try {
+      await schoolProgressApi.saveEnquiry({
+        id: editing ? bug.id : 0,
+        branchId: s.id,
+        module: form.module.trim(),
+        developer: form.developer.trim(),
+        bugDetail: form.detail.trim(),
+        date: form.date,
+        /* Naya bug us tab me jata hai jahan se add kiya gaya: Resolved tab
+           khula tha to isSolved true, warna false. Edit par jo tha wahi rehta
+           hai (status sirf Mark Resolved / Reopen se badalta hai). */
+        isSolved: editing ? Boolean(bug.isSolved) : Boolean(defaultSolved),
+      });
+      await onRefresh?.(s.id);
+      toast?.(editing ? 'Bug updated' : 'Bug added', 'success');
+      onClose();
+    } catch (err) {
+      toast?.(err?.message || 'Could not save this enquiry', 'error');
+    } finally {
+      setSaving(false);
+    }
   };
   return (
     <Overlay cls="enq-add-ov" onClose={onClose} wrapCls="enq-add-box">
       <div className="enq-add-hdr">
-        <div className="enq-add-title"><i className={`fa-solid ${editing ? 'fa-pen' : 'fa-plus'}`} /> {editing ? 'Edit' : 'Add'} Bug — {s.name}</div>
+        <div className="enq-add-title">
+          <i className={`fa-solid ${editing ? 'fa-pen' : 'fa-plus'}`} /> {editing ? 'Edit' : 'Add'} Bug — {s.name}
+          {/* Resolved tab se add kiya ja raha hai to yehi batao — save hote hi
+              bug Resolved me jayega, Open me nahi. */}
+          {!editing && defaultSolved && <span className="badge-resolved" style={{ marginLeft: 8 }}><i className="fa-solid fa-circle-check" style={{ fontSize: 9 }} /> Resolved</span>}
+        </div>
         <button className="enq-add-close" data-tip="Close" data-tip-pos="left" onClick={onClose}><i className="fa-solid fa-xmark" /></button>
       </div>
       <div className="enq-add-body">
@@ -1070,8 +1158,10 @@ function EnquiryEditModal({ school: s, bug, setEnquiries, enqSeq, toast, onClose
         <div className="enq-f"><label>Date</label><input type="date" value={form.date} onChange={(e) => set('date', e.target.value)} /></div>
       </div>
       <div className="enq-add-foot">
-        <button className="btn-secondary" onClick={onClose}>Cancel</button>
-        <button className="btn-primary" onClick={save}><i className="fa-regular fa-floppy-disk" /> {editing ? 'Update Bug' : 'Save Bug'}</button>
+        <button className="btn-secondary" onClick={onClose} disabled={saving}>Cancel</button>
+        <button className="btn-primary" onClick={save} disabled={saving}>
+          <i className={saving ? 'fa-solid fa-spinner fa-spin' : 'fa-regular fa-floppy-disk'} /> {saving ? 'Saving…' : (editing ? 'Update Bug' : 'Save Bug')}
+        </button>
       </div>
     </Overlay>
   );

@@ -3,7 +3,7 @@ import SuperAdminShell from './superadmin/SuperAdminShell';
 import SuperAdminLogin from './superadmin/SuperAdminLogin';
 import AgentSupport from './components/AgentSupport';
 import { configureSuperAdmin, setSuperAdminToken } from './superadmin/api';
-import { clearStoredSession, hasStoredSession, restoreStoredSession } from './superadmin/api/services/auth';
+import { clearStoredSession, hasStoredSession } from './superadmin/api/services/auth';
 
 /* Hash routing keeps the Super Admin app and the standalone Support console
    in one bundle:
@@ -21,9 +21,12 @@ function useHashRoute() {
 }
 
 /* ── Session ───────────────────────────────────────────────────────
-   "Keep me signed in" decides the store: localStorage survives a browser
-   restart, sessionStorage dies with the tab. Both are read on boot so the
-   choice made at sign-in is the one that applies.
+   Bilkul ERP ka format (src/App.js ka AuthGate): session SIRF sessionStorage
+   me rehti hai. sessionStorage har tab ki apni hoti hai, is liye:
+     • URL naye tab me paste karo  → login screen (wahan koi session nahi)
+     • tab band                     → session khatam
+   Isi liye "Keep me signed in" (jo session localStorage me rakhta tha aur
+   saari tabs me share ho jati thi) login screen se hata diya gaya hai.
 
    When the console is embedded in a host app the host supplies the token
    through configureSuperAdmin() instead and REACT_APP_SA_TOKEN is set — in
@@ -31,32 +34,25 @@ function useHashRoute() {
 const SESSION_KEY = 'sa-session';
 
 function readSession() {
-  for (const store of [localStorage, sessionStorage]) {
-    try {
-      const raw = store.getItem(SESSION_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (parsed?.token) {
-          /* Signed-in tab hi maana jayega jab sessionStorage me superadminid
-             AUR superadmintoken dono hon. "Keep me signed in" wali session
-             localStorage me hoti hai (tab band hone par sessionStorage keys
-             gum ho jati hain) — is liye pehle unhe session se restore karne
-             ki koshish, aur na ban sakein to sab saaf kar ke login page. */
-          if (hasStoredSession() || restoreStoredSession(parsed)) return parsed;
-          clearSession();
-          return null;
-        }
-      }
-    } catch { /* storage blocked or corrupt entry — treat as signed out */ }
-  }
+  try {
+    const raw = sessionStorage.getItem(SESSION_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      /* Signed-in tab wahi hai jahan sessionStorage me superadminid AUR
+         superadmintoken dono mojood hon — ek bhi na ho to sab saaf aur
+         login screen. */
+      if (parsed?.token && hasStoredSession()) return parsed;
+    }
+  } catch { /* storage blocked or corrupt entry — treat as signed out */ }
+  clearSession();
   return null;
 }
 
-function writeSession(session, remember) {
-  const target = remember ? localStorage : sessionStorage;
-  const other = remember ? sessionStorage : localStorage;
-  try { target.setItem(SESSION_KEY, JSON.stringify(session)); } catch { /* ignore */ }
-  try { other.removeItem(SESSION_KEY); } catch { /* ignore */ }
+function writeSession(session) {
+  try { sessionStorage.setItem(SESSION_KEY, JSON.stringify(session)); } catch { /* ignore */ }
+  /* Purani builds "Keep me signed in" par ise localStorage me rakhti thin —
+     wo baqiya yahan se hamesha ke liye hata do. */
+  try { localStorage.removeItem(SESSION_KEY); } catch { /* ignore */ }
 }
 
 function clearSession() {
@@ -88,8 +84,8 @@ function App() {
     }
   }, [session]);
 
-  const handleLogin = useCallback((next, { remember } = {}) => {
-    writeSession(next, remember);
+  const handleLogin = useCallback((next) => {
+    writeSession(next);
     setSession(next);
   }, []);
 

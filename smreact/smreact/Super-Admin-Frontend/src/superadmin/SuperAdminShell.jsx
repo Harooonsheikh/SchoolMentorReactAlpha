@@ -13,6 +13,7 @@ import UserManagement from './UserManagement';
 import Notifications from './Notifications';
 import AgentSupport from '../components/AgentSupport';
 import { INITIAL_USERS, INITIAL_PERMS } from './userMgmtData';
+import { installSessionGuard, setSessionGuardActive } from './api/sessionGuard';
 
 /* ═══════════════════════════════════════════════════════════════════
    SUPER ADMIN SHELL
@@ -107,6 +108,25 @@ export default function SuperAdminShell({ user, onLogout }) {
 
   /* Remember the theme choice across reloads. */
   useEffect(() => { try { localStorage.setItem('sa-theme', theme); } catch { /* ignore */ } }, [theme]);
+
+  /* Session guard (bilkul ERP jaisa): login ke baad agar sessionStorage se
+     superadminid / superadmintoken ghaayab ho jayein — ya server 401 de — to
+     "session ended" toast dikha kar seedha login screen. Shell unmount hone
+     par pehredaari band, kyunke login screen par session hoti hi nahi.
+     Toast ko ~1.4s milta hai us se pehle ke onLogout shell ko utha le. */
+  const logoutRef = useRef(onLogout);
+  logoutRef.current = onLogout;
+  useEffect(() => {
+    if (!onLogout) return undefined;          // host-embedded: token host deta hai
+    const stop = installSessionGuard({
+      onExpired: () => {
+        toast('Your session has ended. Please log in again.', 'error');
+        setTimeout(() => { try { logoutRef.current?.(); } catch { /* ignore */ } }, 1400);
+      },
+    });
+    return () => { setSessionGuardActive(false); stop(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [Boolean(onLogout)]);
 
   const onNav = (id) => {
     if (id === 'dashboard' || id === 'mentorAI' || id === 'support' || id === 'etube' || id === 'permissions' || id === 'status' || id === 'payments' || id === 'sops' || id === 'quiz' || id === 'trainings' || id === 'notifications' || id === 'users') setActive(id);
