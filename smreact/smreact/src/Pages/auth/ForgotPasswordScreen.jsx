@@ -3,23 +3,7 @@ import AuthLayout from './AuthLayout';
 import { buildUrl } from '../../utils/apiConfig';
 import { normalizePkPhone } from '../../utils/phone';
 
-/* ═══════════════════════════════════════════════════════════════════
-   FORGOT PASSWORD — teen qadam, HTML design ke mutabiq:
-     1) phone   → OTP bhejo
-     2) otp     → 4 boxes me code
-     3) reset   → naya password + confirm
-     4) done    → success screen
 
-   Backend endpoints (Swagger se tasdeeq shuda):
-     POST /api/Auth/ERP-send-otp-forgetpassword?PhoneNumber=03xxxxxxxxx
-          → { success, message, otp }
-     PUT  /api/HR/update-password  { userID, newPassword }
-
-   NOTE: backend me OTP *verify* karne ka koi endpoint nahi hai — send wala
-   endpoint OTP khud response me wapas bhejta hai, is liye milaan yahin
-   frontend par hota hai. Ye mehfooz nahi (OTP DevTools me nazar aata hai);
-   asli fix backend par verify endpoint banana hai.
-   ═══════════════════════════════════════════════════════════════════ */
 
 const OTP_LENGTH = 4;
 const RESEND_SECONDS = 30;
@@ -79,8 +63,11 @@ export default function ForgotPasswordScreen({ onBack }) {
 
   const sendOtp = useCallback(async (targetPhone, isResend) => {
     const clean = normalizePkPhone(targetPhone).trim();
-    if (!/^03\d{9}$/.test(clean)) {
-      setError('Please enter a valid phone number (e.g. 03001234567).');
+    /* Format ki koi pabandi nahi — records me numbers mukhtalif shakl me hain
+       (11 digit, 12 digit, waghera), is liye faisla backend par chhorte hain.
+       Sirf khali field rok dete hain, warna bemani call jati. */
+    if (!clean) {
+      setError('Please enter your phone number.');
       return false;
     }
     setError(''); setNotice(''); setBusy(true);
