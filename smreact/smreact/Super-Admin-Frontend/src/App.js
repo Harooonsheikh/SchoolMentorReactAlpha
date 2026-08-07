@@ -3,6 +3,7 @@ import SuperAdminShell from './superadmin/SuperAdminShell';
 import SuperAdminLogin from './superadmin/SuperAdminLogin';
 import AgentSupport from './components/AgentSupport';
 import { configureSuperAdmin, setSuperAdminToken } from './superadmin/api';
+import { clearStoredSession, hasStoredSession, restoreStoredSession } from './superadmin/api/services/auth';
 
 /* Hash routing keeps the Super Admin app and the standalone Support console
    in one bundle:
@@ -35,7 +36,16 @@ function readSession() {
       const raw = store.getItem(SESSION_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
-        if (parsed?.token) return parsed;
+        if (parsed?.token) {
+          /* Signed-in tab hi maana jayega jab sessionStorage me superadminid
+             AUR superadmintoken dono hon. "Keep me signed in" wali session
+             localStorage me hoti hai (tab band hone par sessionStorage keys
+             gum ho jati hain) — is liye pehle unhe session se restore karne
+             ki koshish, aur na ban sakein to sab saaf kar ke login page. */
+          if (hasStoredSession() || restoreStoredSession(parsed)) return parsed;
+          clearSession();
+          return null;
+        }
       }
     } catch { /* storage blocked or corrupt entry — treat as signed out */ }
   }
@@ -53,6 +63,9 @@ function clearSession() {
   for (const store of [localStorage, sessionStorage]) {
     try { store.removeItem(SESSION_KEY); } catch { /* ignore */ }
   }
+  /* Login ke waqt jo superadmin* keys likhi thin (id/username/token waghera)
+     wo bhi hata do — warna logout ke baad session storage me pari rehti hain. */
+  clearStoredSession();
 }
 
 function App() {

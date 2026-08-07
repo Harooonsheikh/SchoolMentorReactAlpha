@@ -515,18 +515,79 @@ function ErpDetailModal({ school: s, detail, patchDetail, toast, onClose }) {
   const [sect, setSect] = useState('progress');
   const [follow, setFollow] = useState('notes');
   const [addType, setAddType] = useState(null);     // 'note' | 'call' | 'message'
+  const [editItem, setEditItem] = useState(null);   // edit ho rahi entry (warna null)
   const [histIdx, setHistIdx] = useState(null);
+  const [savingCard, setSavingCard] = useState(false);
+
+  /* Follow-up Card aur Onboarding Card dono ek hi API par jate hain:
+       POST /api/AHM_School_Progress/followup/onboarding-card-action
+     headType = kaunsa card, subHeadType = uska sub-tab (Notes/Calls/
+     Messages) ya onboarding module ka naam. branchID isi school ka. */
+  const saveCard = async ({ headType, subHeadType, commentDetail, date, id = 0 }) => {
+    await schoolProgressApi.saveCardAction({
+      branchId: s.id, headType, subHeadType, commentDetail, date, id,
+    });
+  };
+
+  /* Modal khulte hi is school ke saare cards API se — notes/calls/messages
+     aur onboarding comments. Pehle ye demo state se aate the aur refresh par
+     gayab ho jate the. */
+  const loadCards = useCallback(async () => {
+    try {
+      const rows = await schoolProgressApi.listCardActions({ branchId: s.id });
+      const H = schoolProgressApi.CARD_HEADS;
+      const pick = (sub) => rows
+        .filter((r) => r.headType === H.followup && r.subHeadType === sub)
+        .map((r) => ({ id: r.id, text: r.comment, detail: r.comment, date: r.date, dateTime: r.date, user: 'schoolmentoradmin' }));
+      const obRows = rows.filter((r) => r.headType === H.onboarding);
+      patchDetail(s.id, (cur) => ({
+        ...cur,
+        notes:    pick('Notes'),
+        calls:    pick('Calls'),
+        messages: pick('Messages'),
+        /* Har module ka aakhri comment card par, poori list history me. */
+        obModules: cur.obModules.map((m) => {
+          const mine = obRows.filter((r) => r.subHeadType === m.name);
+          if (!mine.length) return { ...m, done: false, comment: '', date: '', history: [] };
+          const last = mine[mine.length - 1];
+          return {
+            ...m,
+            done: true,
+            comment: last.comment,
+            date: last.date,
+            _cardId: last.id,
+            history: mine.map((r) => ({ id: r.id, comment: r.comment, date: r.date, user: 'schoolmentoradmin' })),
+          };
+        }),
+      }));
+    } catch (err) {
+      toast?.(err?.message || 'Could not load follow-up / onboarding cards', 'error');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [s.id]);
+
+  useEffect(() => { loadCards(); }, [loadCards]);
 
   const d = detail;
   const tabKeys = ['school', 'classes', 'student', 'dept', 'staff', 'syllabus', 'timetable'];
   const tabLabels = { school: 'School Tab', classes: 'Classes Tab', student: 'Student Tab', dept: 'Department', staff: 'Staff', syllabus: 'Syllabus', timetable: 'Time Table' };
 
-  const delItem = (type, id) => {
-    patchDetail(s.id, (cur) => {
-      const k = type === 'note' ? 'notes' : type === 'call' ? 'calls' : 'messages';
-      return { ...cur, [k]: cur[k].filter((x) => x.id !== id) };
-    });
-    toast?.('Deleted', 'info');
+  /* Delete server par (action:delete) — kaamyabi par hi list se hatao. */
+  const delItem = async (type, id) => {
+    if (savingCard) return;
+    setSavingCard(true);
+    try {
+      await schoolProgressApi.deleteCardAction(id, s.id);
+      patchDetail(s.id, (cur) => {
+        const k = type === 'note' ? 'notes' : type === 'call' ? 'calls' : 'messages';
+        return { ...cur, [k]: cur[k].filter((x) => x.id !== id) };
+      });
+      toast?.('Deleted', 'info');
+    } catch (err) {
+      toast?.(err?.message || 'Could not delete', 'error');
+    } finally {
+      setSavingCard(false);
+    }
   };
 
   const done = d.obModules.filter((m) => m.done).length;
@@ -598,7 +659,8 @@ function ErpDetailModal({ school: s, detail, patchDetail, toast, onClose }) {
               ))}
             </div>
             <FollowList type={follow} items={follow === 'notes' ? d.notes : follow === 'calls' ? d.calls : d.messages}
-              onAdd={() => setAddType(follow === 'notes' ? 'note' : follow === 'calls' ? 'call' : 'message')}
+              onAdd={() => { setEditItem(null); setAddType(follow === 'notes' ? 'note' : follow === 'calls' ? 'call' : 'message'); }}
+              onEdit={(item) => { setEditItem(item); setAddType(follow === 'notes' ? 'note' : follow === 'calls' ? 'call' : 'message'); }}
               onDelete={(id) => delItem(follow === 'notes' ? 'note' : follow === 'calls' ? 'call' : 'message', id)} toast={toast} />
           </div>
         )}
@@ -618,16 +680,28 @@ function ErpDetailModal({ school: s, detail, patchDetail, toast, onClose }) {
             </div>
             <div className="em-ob-grid">
               {d.obModules.map((m, i) => (
-                <ObCard key={m.key} m={m} idx={i}
-                  onSave={(comment, date) => {
+                <ObCard key={m.key} m={m} idx={i} saving={savingCard}
+                  onSave={async (comment, date) => {
                     if (!comment && !date) { toast?.('Enter comment or date first', 'warn'); return; }
-                    patchDetail(s.id, (cur) => {
-                      const mods = cur.obModules.slice();
-                      const cm = { ...mods[i] };
-                      if (comment && date) { cm.done = true; cm.comment = comment; cm.date = date; cm.history = [...cm.history, { comment, date, user: 'schoolmentoradmin' }]; }
-                      else { cm.comment = comment; cm.date = date; }
-                      mods[i] = cm; return { ...cur, obModules: mods };
-                    });
+                    if (savingCard) return;
+                    setSavingCard(true);
+                    try {
+                      /* Sub-head = isi module ka naam (Academics, Examination, …). */
+                      await saveCard({
+                        headType: schoolProgressApi.CARD_HEADS.onboarding,
+                        subHeadType: m.name,
+                        commentDetail: comment,
+                        date,
+                      });
+                    } catch (err) {
+                      toast?.(err?.message || 'Could not save', 'error');
+                      setSavingCard(false);
+                      return;
+                    }
+                    /* Cards dobara API se — comment/date/history server ke
+                       mutabiq (local copy banane ki zaroorat nahi). */
+                    await loadCards();
+                    setSavingCard(false);
                     toast?.(`${m.name} saved!`, 'success');
                   }}
                   onHistory={() => setHistIdx(i)} />
@@ -637,22 +711,39 @@ function ErpDetailModal({ school: s, detail, patchDetail, toast, onClose }) {
         )}
 
         {/* ── TRAINING ── */}
-        {sect === 'training' && <TrainingSection toast={toast} />}
+        {sect === 'training' && <TrainingSection branchId={s.id} toast={toast} />}
       </div>
 
       {/* Add follow-up popup */}
       {addType && (
-        <AddFollowModal type={addType} onClose={() => setAddType(null)}
-          onSave={(text, dateStr) => {
-            const fmt = dateStr ? dateStr.replace('T', ', ').replace(/-/g, '/').slice(0, 16) : '—';
-            patchDetail(s.id, (cur) => {
-              const id = (cur._seq || 100) + 1;
-              if (addType === 'note') return { ...cur, _seq: id, notes: [{ id, text, date: fmt, user: 'schoolmentoradmin' }, ...cur.notes] };
-              if (addType === 'call') return { ...cur, _seq: id, calls: [{ id, detail: text, dateTime: fmt, user: 'schoolmentoradmin' }, ...cur.calls] };
-              return { ...cur, _seq: id, messages: [{ id, detail: text, dateTime: fmt, user: 'schoolmentoradmin' }, ...cur.messages] };
-            });
+        <AddFollowModal type={addType} saving={savingCard} initial={editItem}
+          onClose={() => { setAddType(null); setEditItem(null); }}
+          onSave={async (text, dateStr) => {
+            if (savingCard) return;
+            setSavingCard(true);
+            try {
+              /* Sub-head wahi jo abhi khula sub-tab hai (Notes/Calls/Messages).
+                 Edit ho to usi entry ka id — API khud `update` kar deti hai. */
+              await saveCard({
+                headType: schoolProgressApi.CARD_HEADS.followup,
+                subHeadType: addType === 'note' ? 'Notes' : addType === 'call' ? 'Calls' : 'Messages',
+                commentDetail: text,
+                date: dateStr,
+                id: editItem?.id || 0,
+              });
+            } catch (err) {
+              toast?.(err?.message || 'Could not save', 'error');
+              setSavingCard(false);
+              return;
+            }
+            /* List dobara API se — taake har entry ka asli id mile (delete/edit
+               usi id par chalte hain). */
+            await loadCards();
+            setSavingCard(false);
+            const wasEdit = Boolean(editItem);
             setAddType(null);
-            toast?.(`${addType.charAt(0).toUpperCase() + addType.slice(1)} added`, 'success');
+            setEditItem(null);
+            toast?.(`${addType.charAt(0).toUpperCase() + addType.slice(1)} ${wasEdit ? 'updated' : 'added'}`, 'success');
           }} />
       )}
 
@@ -697,7 +788,7 @@ function ProgressBlock({ title, titleIcon, logins, time, mods, dimInactive }) {
   );
 }
 
-function FollowList({ type, items, onAdd, onDelete, toast }) {
+function FollowList({ type, items, onAdd, onEdit, onDelete, toast }) {
   const cfg = {
     notes: { icon: 'fa-note-sticky', avatar: 'note', title: 'Notes', sub: 'Internal notes and follow-up reminders', add: 'Add Note', strip: '', tf: 'text', df: 'date' },
     calls: { icon: 'fa-phone', avatar: 'call', title: 'Calls', sub: 'Call logs and phone interaction history', add: 'Add Call', strip: 'call', tf: 'detail', df: 'dateTime' },
@@ -734,7 +825,7 @@ function FollowList({ type, items, onAdd, onDelete, toast }) {
                   </div>
                 </div>
                 <div className="fu-card-actions">
-                  <button className="fu-act-btn edit" data-tip="Edit" onClick={() => toast?.('Edit via ERP backend', 'info')}><i className="fa-solid fa-pen" /></button>
+                  <button className="fu-act-btn edit" data-tip="Edit" onClick={() => onEdit?.(item)}><i className="fa-solid fa-pen" /></button>
                   <button className="fu-act-btn del" data-tip="Delete" onClick={() => onDelete(item.id)}><i className="fa-solid fa-trash-can" /></button>
                 </div>
               </div>
@@ -746,18 +837,21 @@ function FollowList({ type, items, onAdd, onDelete, toast }) {
   );
 }
 
-function AddFollowModal({ type, onClose, onSave }) {
+function AddFollowModal({ type, saving = false, initial = null, onClose, onSave }) {
   const cfg = {
     note: { title: 'Add Note', icon: 'fa-note-sticky', fl: 'Note', dl: 'Date', sl: 'Save Note', dt: 'date', grad: 'linear-gradient(135deg,#1E3A8A,#1E40AF)' },
     call: { title: 'Add Call Log', icon: 'fa-phone', fl: 'Call Detail', dl: 'Date & Time', sl: 'Save Call', dt: 'datetime-local', grad: 'linear-gradient(135deg,#15803D,#16A34A)' },
     message: { title: 'Add Message', icon: 'fa-comment-dots', fl: 'Message Detail', dl: 'Date & Time', sl: 'Save Message', dt: 'datetime-local', grad: 'linear-gradient(135deg,#0369A1,#0284C7)' },
   }[type];
-  const [text, setText] = useState('');
-  const [date, setDate] = useState('');
+  /* Edit ho to mojooda entry se bhar do (text list me `text` ya `detail` me
+     hota hai, aur date `date`/`dateTime` me — dono jagah wahi raw value). */
+  const editing = Boolean(initial);
+  const [text, setText] = useState(initial ? (initial.text ?? initial.detail ?? '') : '');
+  const [date, setDate] = useState(initial ? (initial.date ?? initial.dateTime ?? '') : '');
   return (
     <Overlay cls="em-add-ov" onClose={onClose} wrapCls="em-add-box">
       <div className="em-add-hdr" style={{ background: cfg.grad }}>
-        <div className="em-add-title"><i className={`fa-solid ${cfg.icon}`} /> {cfg.title}</div>
+        <div className="em-add-title"><i className={`fa-solid ${cfg.icon}`} /> {editing ? cfg.title.replace('Add', 'Edit') : cfg.title}</div>
         <button className="em-add-close" data-tip="Close" data-tip-pos="left" onClick={onClose}><i className="fa-solid fa-xmark" /></button>
       </div>
       <div className="em-add-body">
@@ -766,13 +860,13 @@ function AddFollowModal({ type, onClose, onSave }) {
       </div>
       <div className="em-add-foot">
         <button className="btn-secondary" style={{ height: 34, padding: '0 14px', fontSize: 12.5 }} onClick={onClose}>Cancel</button>
-        <button className="btn-primary" style={{ height: 34, padding: '0 16px', fontSize: 12.5 }} onClick={() => { if (!text.trim()) return; onSave(text.trim(), date); }}><i className="fa-regular fa-floppy-disk" /> {cfg.sl}</button>
+        <button className="btn-primary" style={{ height: 34, padding: '0 16px', fontSize: 12.5 }} disabled={saving} onClick={() => { if (saving || !text.trim()) return; onSave(text.trim(), date); }}><i className={`fa-${saving ? 'solid fa-spinner fa-spin' : 'regular fa-floppy-disk'}`} /> {saving ? 'Saving…' : (editing ? 'Update' : cfg.sl)}</button>
       </div>
     </Overlay>
   );
 }
 
-function ObCard({ m, idx, onSave, onHistory }) {
+function ObCard({ m, idx, saving = false, onSave, onHistory }) {
   const [comment, setComment] = useState(m.comment);
   const [date, setDate] = useState(m.date);
   return (
@@ -789,15 +883,68 @@ function ObCard({ m, idx, onSave, onHistory }) {
       </div>
       <div className="em-ob-foot">
         {m.done && m.history.length ? <button className="em-ob-view-btn" onClick={onHistory}><i className="fa-solid fa-eye" /> History</button> : <span />}
-        <button className="em-ob-save-btn" onClick={() => onSave(comment.trim(), date)}><i className="fa-regular fa-floppy-disk" /> Save</button>
+        <button className="em-ob-save-btn" disabled={saving} onClick={() => { if (!saving) onSave(comment.trim(), date); }}><i className={`fa-${saving ? 'solid fa-spinner fa-spin' : 'regular fa-floppy-disk'}`} /> {saving ? 'Saving…' : 'Save'}</button>
       </div>
     </div>
   );
 }
 
-function TrainingSection({ toast }) {
+function TrainingSection({ branchId, toast }) {
   const [form, setForm] = useState({ participants: '', date: '', names: '', certs: '', desc: '' });
+  const [sessionId, setSessionId] = useState(0);     // 0 = naya, warna update
+  const [saving, setSaving] = useState(false);
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+
+  const toastRef = useRef(toast);
+  toastRef.current = toast;
+
+  /* Is school ka pehle se saved participation record (agar ho) — form usi se
+     bhar jata hai, aur agli baar Save `update` karta hai (naya row nahi). */
+  useEffect(() => {
+    if (!branchId) return undefined;
+    let alive = true;
+    schoolProgressApi.listTrainingSessions(branchId)
+      .then((rows) => {
+        if (!alive || !rows.length) return;
+        const last = rows[rows.length - 1];
+        setSessionId(last.id);
+        setForm({
+          participants: last.participants ? String(last.participants) : '',
+          date: last.date, names: last.names, certs: last.certs, desc: last.desc,
+        });
+      })
+      .catch((err) => { if (alive) toastRef.current?.(err?.message || 'Could not load training details', 'error'); });
+    return () => { alive = false; };
+  }, [branchId]);
+
+  const save = async () => {
+    if (saving) return;
+    if (!form.participants && !form.date && !form.names.trim()) {
+      toast?.('Fill participation details first', 'warn');
+      return;
+    }
+    setSaving(true);
+    try {
+      const res = await schoolProgressApi.saveTrainingSession({
+        branchId,
+        participants: form.participants,
+        date: form.date,
+        names: form.names.trim(),
+        certs: form.certs.trim(),
+        desc: form.desc.trim(),
+        id: sessionId,
+      });
+      /* Naya record bana to uska id yaad rakho — agla save update banega. */
+      const newId = Number(res?.data?.id) || 0;
+      if (!sessionId && newId) setSessionId(newId);
+      toast?.('Participation details saved', 'success');
+    } catch (err) {
+      toast?.(err?.message || 'Could not save participation details', 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <div className="em-sect active">
       <div className="em-tr-overview">
@@ -822,7 +969,7 @@ function TrainingSection({ toast }) {
         <div className="em-tr-fg" style={{ marginBottom: 11 }}><label>Certificates / Notes</label><input className="em-tr-input" type="text" placeholder="Certificate issued? Notes..." value={form.certs} onChange={(e) => set('certs', e.target.value)} /></div>
         <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--t2)', display: 'block', marginBottom: 4 }}>Description / Coordination Note</label>
         <textarea className="em-tr-textarea" placeholder="Add coordination notes or follow-up actions..." value={form.desc} onChange={(e) => set('desc', e.target.value)} />
-        <div className="em-tr-save"><button className="em-tr-save-btn" onClick={() => toast?.('Participation details saved', 'success')}><i className="fa-solid fa-floppy-disk" /> Save Participation Details</button></div>
+        <div className="em-tr-save"><button className="em-tr-save-btn" disabled={saving} onClick={save}><i className={`fa-solid ${saving ? 'fa-spinner fa-spin' : 'fa-floppy-disk'}`} /> {saving ? 'Saving…' : 'Save Participation Details'}</button></div>
       </div>
     </div>
   );

@@ -1,33 +1,149 @@
 /* Auth service — sign-in for the standalone Super Admin console.
 
-   When this console is embedded in a host app the host injects a JWT via
-   configureSuperAdmin({ token }) and no login screen is shown. Running on its
-   own (the deployed /superadmin build) it needs its own sign-in, which is what
-   this service backs.
+   Super Admin ka apna endpoint, SchoolMentorSuperAdminAPI ke ANDAR:
+     POST {SA_ADMIN_API_BASE}/SchoolMentorSuperAdminAPI/api/Auth/login
+     body: { user_Name, password }        (schema: MdlAHM_SuperAdmin_Login)
+   Main ERP app ka /api/Auth/login is se alag route hai (ERP host par) —
+   dono ka naam ek jaisa hai, base alag.
 
-   Mock mode (no API base URL configured — see isMockMode) accepts any
-   non-empty credentials and hands back a demo session, exactly like the other
-   services return demo data, so the whole screen is exercisable before the
-   .NET endpoint exists. */
-import { resolve, request } from '../client';
+   Login hamesha ASLI API par jata hai, chahe baqi screens mock mode me hon —
+   demo credentials se andar aa jana aur phir har screen ka khali hona is se
+   behtar hai ke login wahin saaf mana kar de.
+
+   Jab console kisi host app ke andar chalta hai to host khud
+   configureSuperAdmin({ token }) se JWT deta hai aur login screen aati hi
+   nahi. */
+import { ApiError } from '../client';
+import { SA_ADMIN_API_BASE } from '../config';
 import EP from '../endpoints';
 
-const DEMO_SESSION = {
-  token: 'demo-super-admin-token',
-  user: { id: 0, name: 'Super Admin', email: 'admin@schoolmentor.ai', role: 'superadmin' },
+/* Backend kabhi JSON deta hai aur kabhi plain text (e.g. "Internal Server
+   Error: This branch is not active."). Dono se kaam ka message nikaalo.
+
+   Raw text sirf TAB use hota hai jab jawab JSON tha hi nahi — warna user ko
+   error ki jagah poora JSON body dikhne lagta hai. */
+function messageFrom(data, raw, fallback) {
+  const m = data && (data.message || data.Message || data.title || data.error);
+  if (m) return String(m);
+  if (data) return fallback;                 // JSON tha, magar koi message nahi
+  const text = String(raw || '').trim();
+  return text && text.length < 300 ? text : fallback;
+}
+
+/* Login response ki har value sessionStorage me — key hamesha "superadmin"
+   se shuru (baqi app aur koi bhi screen inhi naamon se padh sakti hai).
+   Field na aaye to us key ko haath nahi lagate. */
+export const SA_SESSION_KEYS = {
+  id:              'superadminid',
+  firstName:       'superadminfirstname',
+  lastName:        'superadminlastname',
+  user_Name:       'superadminusername',
+  isAdmin:         'superadminisadmin',
+  signUpDateTime:  'superadminsignupdatetime',
+  token:           'superadmintoken',
 };
 
+function storeSession(data) {
+  try {
+    Object.entries(SA_SESSION_KEYS).forEach(([field, key]) => {
+      const v = data?.[field];
+      if (v === undefined || v === null) return;
+      sessionStorage.setItem(key, String(v));
+    });
+  } catch { /* storage band ho to login phir bhi chalta rahe */ }
+}
+
+/** Logout par ye saari keys hata do. */
+export function clearStoredSession() {
+  try {
+    Object.values(SA_SESSION_KEYS).forEach((key) => sessionStorage.removeItem(key));
+  } catch { /* ignore */ }
+}
+
+/** sessionStorage me sign-in ke do laazmi tukde (id + token) mojood hain? */
+export function hasStoredSession() {
+  try {
+    return Boolean(
+      sessionStorage.getItem(SA_SESSION_KEYS.id)
+      && sessionStorage.getItem(SA_SESSION_KEYS.token),
+    );
+  } catch {
+    return false;
+  }
+}
+
 /**
- * POST /api/superadmin/auth/login
+ * "Keep me signed in" wali session localStorage me rehti hai, jab ke ye keys
+ * sessionStorage me — tab band hote hi wo gum ho jati hain. Boot par unhe
+ * mehfooz session se dobara likh dete hain, warna yaad rakha hua user bhi
+ * har baar login screen par phenk diya jata.
+ * @returns {boolean} keys ab mojood hain ya nahi
+ */
+export function restoreStoredSession(session) {
+  const id = session?.user?.id;
+  const token = session?.token;
+  if (id == null || !token) return false;
+  try {
+    sessionStorage.setItem(SA_SESSION_KEYS.id, String(id));
+    sessionStorage.setItem(SA_SESSION_KEYS.token, String(token));
+    if (session.user?.userName) sessionStorage.setItem(SA_SESSION_KEYS.user_Name, String(session.user.userName));
+  } catch {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * POST /api/Auth/login
  * @param {{userName: string, password: string}} credentials
  * @returns {Promise<{token: string, user: {id, name, email, role}}>}
- * @throws {ApiError} 401 on bad credentials, 0 when the backend is unreachable.
+ * @throws {ApiError} ghalat credentials par server ka apna message, 0 jab
+ *                    backend tak pahuncha hi na ja sake.
  */
-export const login = ({ userName, password }) =>
-  resolve(
-    () => ({ ...DEMO_SESSION, user: { ...DEMO_SESSION.user, name: userName || 'Super Admin' } }),
-    () => request(EP.auth.login(), { method: 'POST', body: { userName, password } }),
-  );
+export async function login({ userName, password }) {
+  let res;
+  let raw;
+  try {
+    res = await fetch(`${SA_ADMIN_API_BASE}${EP.auth.login()}`, {
+      method: 'POST',
+      headers: { Accept: '*/*', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_Name: String(userName || '').trim(), password }),
+    });
+    raw = await res.text();
+  } catch (networkErr) {
+    throw new ApiError(networkErr.message || 'Network error', 0);
+  }
 
-/** GET /api/superadmin/auth/me — validate a restored token on boot. */
-export const me = () => resolve(() => DEMO_SESSION.user, () => request(EP.auth.me()));
+  let data = null;
+  try { data = raw ? JSON.parse(raw) : null; } catch { /* plain-text jawab */ }
+
+  if (!res.ok) {
+    throw new ApiError(messageFrom(data, raw, 'Login failed'), res.status);
+  }
+  /* Band kiya hua account har jagah block. */
+  if (data?.isActive === false) {
+    throw new ApiError('This account is deactivated. Please contact your administrator.', 403);
+  }
+  if (!data?.token) {
+    throw new ApiError(messageFrom(data, raw, 'Login succeeded but no session token was returned.'), res.status);
+  }
+
+  /* Har value sessionStorage me (superadminid / superadminusername /
+     superadmintoken waghera) — dekho SA_SESSION_KEYS. */
+  storeSession(data);
+
+  /* Response me naam do fields me aata hai (firstName/lastName) aur login id
+     `user_Name` me — screen ke liye ek saaf naam bana lete hain. */
+  const fullName = [data.firstName, data.lastName].filter(Boolean).join(' ').trim();
+  return {
+    token: data.token,
+    user: {
+      id:       data.id ?? data.userID ?? null,
+      name:     fullName || data.displayName || data.user_Name || String(userName || '').trim(),
+      userName: data.user_Name || String(userName || '').trim(),
+      email:    data.email || '',
+      role:     data.isAdmin ? 'Super Admin' : (data.accountType || 'superadmin'),
+    },
+    raw: data,
+  };
+}

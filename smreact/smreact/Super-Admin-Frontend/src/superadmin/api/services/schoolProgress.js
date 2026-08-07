@@ -24,7 +24,7 @@
    demo rows deti thin, taake table/modals jaise hain waise chalte rahein.
    ════════════════════════════════════════════════════════════════════ */
 import { ApiError, buildQuery } from '../client';
-import { SA_ADMIN_API_BASE, getSuperAdminToken } from '../config';
+import { SA_ADMIN_API_BASE, getSuperAdminIdentity, getSuperAdminToken } from '../config';
 import EP from '../endpoints';
 
 /* API boolean → wohi lafz jo UI ke StatusBadge/StatePill samajhte hain. */
@@ -159,5 +159,188 @@ export async function listSchoolProgress() {
   return { launch, erp, inactive };
 }
 
-const schoolProgressService = { listSchoolProgress, listBranchReport, branchReportToRow };
+/* ═══════════════════ FOLLOW-UP / ONBOARDING CARD ═══════════════════
+   POST .../api/AHM_School_Progress/followup/onboarding-card-action
+     body: { action, id, branchID, headType, subHeadType, commentDetail,
+             date, userId }
+
+   Ek hi route dono cards ke liye — farq sirf head/sub-head ka:
+     Follow-up Card  → headType 'Follow-up Card',  subHeadType 'Notes' |
+                       'Calls' | 'Messages' (jo sub-tab khula ho)
+     Onboarding Card → headType 'Onboarding Card', subHeadType module ka
+                       naam (Academics, Examination, …)
+   ═══════════════════════════════════════════════════════════════════ */
+export const CARD_HEADS = {
+  followup:   'Follow-up Card',
+  onboarding: 'Onboarding Card',
+};
+
+/* NOTE: is route par naye record ka action "insert" NAHI, `add` hai — API
+   khud batati hai: "Invalid action. Valid actions: get, add, update, delete."
+   (live check kiya gaya). Baqi teen wahi hain. */
+export const CARD_ACTIONS = { add: 'add', get: 'get', update: 'update', delete: 'delete' };
+
+/* `get` PascalCase keys deta hai: ID, BranchID, HeadType, SubHeadType,
+   CommentDetail, Date, CreatedBy, CreatedAt, ModifiedBy, ModifiedAt. */
+export function cardRowToUi(r) {
+  return {
+    id:          Number(r?.ID ?? r?.id) || 0,
+    branchId:    Number(r?.BranchID ?? r?.branchID) || 0,
+    headType:    String(r?.HeadType ?? r?.headType ?? ''),
+    subHeadType: String(r?.SubHeadType ?? r?.subHeadType ?? ''),
+    comment:     String(r?.CommentDetail ?? r?.commentDetail ?? ''),
+    date:        String(r?.Date ?? r?.date ?? ''),
+    createdAt:   String(r?.CreatedAt ?? r?.createdAt ?? ''),
+    createdBy:   Number(r?.CreatedBy ?? r?.createdBy) || 0,
+    raw: r,
+  };
+}
+
+/* Ek hi POST — sirf `action` badalta hai. */
+async function cardAction(fields, label) {
+  const token = getSuperAdminToken();
+  const body = {
+    action:        fields.action,
+    id:            Number(fields.id) || 0,
+    branchID:      Number(fields.branchId) || 0,
+    headType:      fields.headType || '',
+    subHeadType:   fields.subHeadType || '',
+    commentDetail: fields.commentDetail || '',
+    date:          fields.date || '',
+    userId:        Number(getSuperAdminIdentity().userId) || 0,
+  };
+  let res;
+  try {
+    res = await fetch(`${SA_ADMIN_API_BASE}${EP.schoolProgress.cardAction()}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        accept: '*/*',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(body),
+    });
+  } catch (networkErr) {
+    throw new ApiError(networkErr.message || 'Network error', 0);
+  }
+  const json = await res.json().catch(() => null);
+  if (!res.ok || (json && json.success === false)) {
+    throw new ApiError((json && (json.message || json.Message)) || `Could not ${label}`, res.status);
+  }
+  return json;
+}
+
+/**
+ * Save (Save Note / Call / Message / Onboarding Save).
+ * `id` diya ho to update, warna add.
+ */
+export function saveCardAction({ branchId, headType, subHeadType, commentDetail, date, id = 0 } = {}) {
+  const isEdit = Number(id) > 0;
+  return cardAction(
+    { action: isEdit ? CARD_ACTIONS.update : CARD_ACTIONS.add, id, branchId, headType, subHeadType, commentDetail, date },
+    isEdit ? 'update this entry' : 'save this entry',
+  );
+}
+
+/** Ek branch ke saare cards (dono heads) — mapped. */
+export async function listCardActions({ branchId, headType = '', subHeadType = '' } = {}) {
+  const json = await cardAction(
+    { action: CARD_ACTIONS.get, id: 0, branchId, headType, subHeadType },
+    'load cards',
+  );
+  const rows = Array.isArray(json?.data) ? json.data : [];
+  return rows.map(cardRowToUi).filter((r) => r.id);
+}
+
+/** Ek entry hatao. */
+export function deleteCardAction(id, branchId) {
+  return cardAction(
+    { action: CARD_ACTIONS.delete, id, branchId },
+    'delete this entry',
+  );
+}
+
+/* ═══════════════════ TRAINING CARD (participation) ═══════════════════
+   POST .../api/AHM_School_Progress/training-session-action
+     body: { action, id, branchID, numberOfParticipants, trainingDate,
+             participantNames, certificateNotes,
+             descriptionCoordinationNotes, userId }
+   Wahi chaar actions: get | add | update | delete (yahan bhi "insert" nahi).
+   `get` PascalCase rows deta hai. ═══════════════════════════════════ */
+
+export function trainingRowToUi(r) {
+  return {
+    id:           Number(r?.ID ?? r?.id) || 0,
+    branchId:     Number(r?.BranchID ?? r?.branchID) || 0,
+    participants: Number(r?.NumberOfParticipants ?? r?.numberOfParticipants) || 0,
+    date:         String(r?.TrainingDate ?? r?.trainingDate ?? '').slice(0, 10),
+    names:        String(r?.ParticipantNames ?? r?.participantNames ?? ''),
+    certs:        String(r?.CertificateNotes ?? r?.certificateNotes ?? ''),
+    desc:         String(r?.DescriptionCoordinationNotes ?? r?.descriptionCoordinationNotes ?? ''),
+    createdAt:    String(r?.CreatedAt ?? r?.createdAt ?? ''),
+    raw: r,
+  };
+}
+
+async function trainingAction(fields, label) {
+  const token = getSuperAdminToken();
+  const body = {
+    action:   fields.action,
+    id:       Number(fields.id) || 0,
+    branchID: Number(fields.branchId) || 0,
+    numberOfParticipants: Number(fields.participants) || 0,
+    trainingDate:                 fields.date  || '',
+    participantNames:             fields.names || '',
+    certificateNotes:             fields.certs || '',
+    descriptionCoordinationNotes: fields.desc  || '',
+    userId: Number(getSuperAdminIdentity().userId) || 0,
+  };
+  let res;
+  try {
+    res = await fetch(`${SA_ADMIN_API_BASE}${EP.schoolProgress.trainingAction()}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        accept: '*/*',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(body),
+    });
+  } catch (networkErr) {
+    throw new ApiError(networkErr.message || 'Network error', 0);
+  }
+  const json = await res.json().catch(() => null);
+  if (!res.ok || (json && json.success === false)) {
+    throw new ApiError((json && (json.message || json.Message)) || `Could not ${label}`, res.status);
+  }
+  return json;
+}
+
+/** Save Participation Details — id ho to update, warna add. */
+export function saveTrainingSession({ branchId, participants, date, names, certs, desc, id = 0 } = {}) {
+  const isEdit = Number(id) > 0;
+  return trainingAction(
+    { action: isEdit ? CARD_ACTIONS.update : CARD_ACTIONS.add, id, branchId, participants, date, names, certs, desc },
+    isEdit ? 'update participation details' : 'save participation details',
+  );
+}
+
+/** Ek branch ke training sessions. */
+export async function listTrainingSessions(branchId) {
+  const json = await trainingAction({ action: CARD_ACTIONS.get, id: 0, branchId }, 'load training sessions');
+  const rows = Array.isArray(json?.data) ? json.data : [];
+  return rows.map(trainingRowToUi).filter((r) => r.id);
+}
+
+/** Ek session hatao. */
+export function deleteTrainingSession(id, branchId) {
+  return trainingAction({ action: CARD_ACTIONS.delete, id, branchId }, 'delete this session');
+}
+
+const schoolProgressService = {
+  listSchoolProgress, listBranchReport, branchReportToRow,
+  saveCardAction, listCardActions, deleteCardAction, cardRowToUi,
+  saveTrainingSession, listTrainingSessions, deleteTrainingSession, trainingRowToUi,
+  CARD_HEADS, CARD_ACTIONS,
+};
 export default schoolProgressService;
