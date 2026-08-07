@@ -69,7 +69,17 @@ const CRUMB = {
 
 const TOAST_ICON = { success: 'fa-circle-check', info: 'fa-circle-info', warn: 'fa-triangle-exclamation', error: 'fa-circle-xmark' };
 
-export default function SuperAdminShell() {
+/* "Aisha Khan" → "AK", "Super Admin" → "SA". */
+function initials(name) {
+  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return 'SA';
+  return (parts[0][0] + (parts[1]?.[0] || '')).toUpperCase();
+}
+
+/* `user`/`onLogout` come from App when the console runs standalone behind its
+   own sign-in. Embedded in a host app both are absent — the header falls back
+   to the generic label and the Log Out item is hidden. */
+export default function SuperAdminShell({ user, onLogout }) {
   const [theme, setTheme] = useState(() => {
     try {
       const saved = localStorage.getItem('sa-theme');
@@ -134,11 +144,15 @@ export default function SuperAdminShell() {
                 <hr className="nav-divider" />
               </React.Fragment>
             ))}
-            <div className="nav-section-label">Account</div>
-            <button className="nav-item" onClick={() => toast('Logging out…', 'info')}>
-              <div className="nav-iw"><i className="fa-solid fa-arrow-right-from-bracket" /></div>
-              <div><div className="nav-nm">Log Out</div></div>
-            </button>
+            {onLogout && (
+              <>
+                <div className="nav-section-label">Account</div>
+                <button className="nav-item" onClick={onLogout}>
+                  <div className="nav-iw"><i className="fa-solid fa-arrow-right-from-bracket" /></div>
+                  <div><div className="nav-nm">Log Out</div></div>
+                </button>
+              </>
+            )}
           </nav>
         </aside>
 
@@ -158,8 +172,8 @@ export default function SuperAdminShell() {
                 <i className={`fa-solid ${theme === 'dark' ? 'fa-sun' : 'fa-moon'}`} />
               </button>
               <div className="tb-user" data-tip="Account" data-tip-pos="bottom">
-                <div className="tb-avatar">SA</div>
-                <span className="tb-uname">Super Admin</span>
+                <div className="tb-avatar">{initials(user?.name)}</div>
+                <span className="tb-uname">{user?.name || 'Super Admin'}</span>
                 <i className="fa-solid fa-chevron-down" style={{ fontSize: 10, color: 'var(--tm)' }} />
               </div>
             </div>

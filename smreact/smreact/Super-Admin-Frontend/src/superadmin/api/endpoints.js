@@ -25,8 +25,11 @@ const SA_ROOT = '/SchoolMentorSuperAdminAPI';
 export const EP = {
   /* ── Auth (only needed for the standalone app; the host injects a token) ── */
   auth: {
-    login: () => `${ROOT}/auth/login`,
-    me: () => `${ROOT}/auth/me`,
+    /* Super Admin ka apna sign-in — SchoolMentorSuperAdminAPI ke ANDAR:
+         POST {base}/SchoolMentorSuperAdminAPI/api/Auth/login
+         body: { user_Name, password }   (schema: MdlAHM_SuperAdmin_Login)
+       Main ERP app ka /api/Auth/login is se ALAG route hai (ERP host par). */
+    login: () => `${SA_ROOT}/api/Auth/login`,
   },
 
   /* ── Dashboard ── */
@@ -103,6 +106,13 @@ export const EP = {
        Inactive     → isActive=false (dono launchSetup) ── */
   schoolProgress: {
     branchReport: () => `${SA_ROOT}/api/AHM_School_Progress/branch-report`,
+    /* POST — Follow-up Card (Notes/Calls/Messages) aur Onboarding Card, dono
+       ek hi route par; `headType` batata hai kaunsa card hai aur
+       `subHeadType` uska sub-tab / module. */
+    cardAction: () => `${SA_ROOT}/api/AHM_School_Progress/followup/onboarding-card-action`,
+    /* POST — Training Card ki "School Participation Details".
+       Wahi chaar actions: get | add | update | delete. */
+    trainingAction: () => `${SA_ROOT}/api/AHM_School_Progress/training-session-action`,
   },
 
   /* ── E-Tube ── */
