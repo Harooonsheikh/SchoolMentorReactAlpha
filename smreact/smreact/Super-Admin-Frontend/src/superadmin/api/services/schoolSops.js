@@ -176,10 +176,26 @@ async function postForm(fd, label) {
   return json;
 }
 
+/* Khali natija ghalti nahi hai.
+   Jis head me abhi koi manual na ho, us par API 404 + success:false deti hai
+   ("No manual details found."); yehi haal us manual ka hai jiski koi form na
+   ho ("No forms found for the specified manual detail.") — dono live check
+   kiye. Ye sirf khali halat hai, is liye screen ko error toast nahi, khali
+   list milni chahiye. Baqi har nakaami waise hi upar jati hai. */
+function isEmptyResult(err) {
+  return err?.status === 404 || /no .*(found|records)/i.test(String(err?.message || ''));
+}
+
 /** action: get — ek manual head ke saare manuals (mapped). */
 export async function listManuals(manualHeadId) {
   if (!Number(manualHeadId)) return [];
-  const json = await postForm(manualForm('get', { catId: manualHeadId }), 'load manuals');
+  let json;
+  try {
+    json = await postForm(manualForm('get', { catId: manualHeadId }), 'load manuals');
+  } catch (err) {
+    if (isEmptyResult(err)) return [];         // is head me abhi koi manual nahi
+    throw err;
+  }
   const rows = Array.isArray(json?.data) ? json.data : (Array.isArray(json) ? json : []);
   return rows.map(manualToUi).filter((m) => m.id);
 }
@@ -312,7 +328,13 @@ async function postFormRoute(fd, label) {
 /** action: get — ek manual ki saari forms. */
 export async function listForms(manualDetailId) {
   if (!Number(manualDetailId)) return [];
-  const json = await postFormRoute(formBody('get', { manualId: manualDetailId }), 'load forms');
+  let json;
+  try {
+    json = await postFormRoute(formBody('get', { manualId: manualDetailId }), 'load forms');
+  } catch (err) {
+    if (isEmptyResult(err)) return [];         // is manual ki abhi koi form nahi
+    throw err;
+  }
   const rows = Array.isArray(json?.data) ? json.data : (Array.isArray(json) ? json : []);
   return rows.map(formToUi).filter((f) => f.id);
 }
