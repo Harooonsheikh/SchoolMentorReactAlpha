@@ -23,6 +23,7 @@ export { EP } from './endpoints';
 export { useApi } from './useApi';
 
 /* Domain services (namespaced) */
+export * as authApi from './services/auth';
 export * as dashboardApi from './services/dashboard';
 export * as usersApi from './services/users';
 export * as schoolsApi from './services/schools';

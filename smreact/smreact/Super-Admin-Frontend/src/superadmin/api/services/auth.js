@@ -14,7 +14,7 @@
    configureSuperAdmin({ token }) se JWT deta hai aur login screen aati hi
    nahi. */
 import { ApiError } from '../client';
-import { SA_ADMIN_API_BASE } from '../config';
+import { SA_ADMIN_API_BASE, getSuperAdminIdentity, getSuperAdminToken } from '../config';
 import EP from '../endpoints';
 
 /* Backend kabhi JSON deta hai aur kabhi plain text (e.g. "Internal Server
@@ -125,4 +125,64 @@ export async function login({ userName, password }) {
     },
     raw: data,
   };
+}
+
+/**
+ * Abhi kaun logged in hai — uski userId.
+ * Pehle runtime identity (login par configureSuperAdmin se set hoti hai), warna
+ * sessionStorage ka `superadminid`. Reload ke foran baad identity abhi set na
+ * hui ho to bhi API ko 0 nahi jata.
+ * @returns {number} 0 jab koi session hi na ho
+ */
+export function currentUserId() {
+  const fromCfg = Number(getSuperAdminIdentity().userId);
+  if (fromCfg > 0) return fromCfg;
+  try { return Number(sessionStorage.getItem(SA_SESSION_KEYS.id)) || 0; }
+  catch { return 0; }
+}
+
+/* ── Users directory ───────────────────────────────────────────────
+   GET /api/Auth/get-all-users
+     → { success, count, data: [ { id, firstName, lastName, user_Name,
+                                   signUpDateTime, isAdmin } ] }
+   Screens ka har "Assigned To" / "Select User" dropdown isi se banta hai:
+   dikhta naam hai, jaata `id` hai. */
+
+/** Ek API row → dropdown ke liye saaf shape. */
+export function userRowToUi(r) {
+  const first = String(r?.firstName ?? '').trim();
+  const last  = String(r?.lastName ?? '').trim();
+  const login = String(r?.user_Name ?? r?.userName ?? '').trim();
+  const full  = [first, last].filter(Boolean).join(' ').trim();
+  return {
+    id:        Number(r?.id ?? r?.userID) || 0,
+    firstName: first,
+    lastName:  last,
+    userName:  login,
+    /* firstName + lastName; dono khali hon to login id — koi naam ghadte nahi. */
+    name:      full || login || `User #${Number(r?.id) || 0}`,
+    isAdmin:   Boolean(r?.isAdmin),
+    signUpDateTime: String(r?.signUpDateTime ?? ''),
+    raw: r,
+  };
+}
+
+/**
+ * Saare Super Admin users.
+ * @returns {Promise<Array<{id:number,name:string,userName:string}>>}
+ */
+export async function listUsers() {
+  const token = getSuperAdminToken();
+  let res;
+  try {
+    res = await fetch(`${SA_ADMIN_API_BASE}${EP.auth.allUsers()}`, {
+      headers: { accept: '*/*', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    });
+  } catch (networkErr) {
+    throw new ApiError(networkErr.message || 'Network error', 0);
+  }
+  if (!res.ok) throw new ApiError(`Failed to load users (${res.status})`, res.status);
+  const json = await res.json().catch(() => null);
+  const rows = Array.isArray(json?.data) ? json.data : (Array.isArray(json) ? json : []);
+  return rows.map(userRowToUi).filter((u) => u.id);
 }

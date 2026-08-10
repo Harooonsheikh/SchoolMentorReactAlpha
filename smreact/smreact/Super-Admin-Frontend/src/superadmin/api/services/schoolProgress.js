@@ -24,8 +24,11 @@
    demo rows deti thin, taake table/modals jaise hain waise chalte rahein.
    ════════════════════════════════════════════════════════════════════ */
 import { ApiError, buildQuery } from '../client';
-import { SA_ADMIN_API_BASE, getSuperAdminIdentity, getSuperAdminToken } from '../config';
+import { SA_ADMIN_API_BASE, getSuperAdminToken } from '../config';
 import EP from '../endpoints';
+/* Card / training rows par "kis ne banaya" — logged-in Super Admin ki wahi id
+   jo /api/Auth/get-all-users bhi deti hai. */
+import { currentUserId } from './auth';
 
 /* API boolean → wohi lafz jo UI ke StatusBadge/StatePill samajhte hain. */
 const state = (v) => (v === true || v === 1 || String(v).toLowerCase() === 'true' ? 'Entered' : 'Not Entered');
@@ -49,10 +52,12 @@ function signupDate(raw) {
   return Number.isNaN(parsed.getTime()) ? s : parsed.toISOString().slice(0, 10);
 }
 
-/* assignedTo abhi ek id hai (0 = kisi ko nahi di gayi). Naam API me nahi aata,
-   is liye 0 par "-- Unassigned --" aur baqi par "User #id" — koi naam ghadte
-   nahi. Screen ka assign dropdown is value ko option me shaamil kar leta hai. */
-const assignedName = (id) => (Number(id) > 0 ? `User #${Number(id)}` : '-- Unassigned --');
+/* assignedTo ek user id hai (0 = kisi ko nahi di gayi). Naam is API me nahi
+   aata — screen use /api/Auth/get-all-users se milne wali list me se `assignedId`
+   par dhoondti hai. Yahan sirf ek mehfooz fallback label banta hai, jo tab
+   dikhta hai jab wo list abhi load na hui ho. */
+export const UNASSIGNED = '-- Unassigned --';
+const assignedName = (id) => (Number(id) > 0 ? `User #${Number(id)}` : UNASSIGNED);
 
 /** Ek API row → wohi row jo Schools Progress ka table/modal padhte hain. */
 export function branchReportToRow(r) {
@@ -91,6 +96,7 @@ export function branchReportToRow(r) {
     students:    Number(r?.totalStudents ?? g.totalStudents ?? 0),
     status:      tabsDone ? 'Completed' : 'Inserted',
     color:       (tabsDone && compDone) ? 'Green' : 'Red',
+    assignedId:  Number(r?.assignedTo) || 0,
     assigned:    assignedName(r?.assignedTo),
     principal:   g.principalName || '',
     contact:     g.principalPhone || '',
@@ -207,7 +213,7 @@ async function cardAction(fields, label) {
     subHeadType:   fields.subHeadType || '',
     commentDetail: fields.commentDetail || '',
     date:          fields.date || '',
-    userId:        Number(getSuperAdminIdentity().userId) || 0,
+    userId:        currentUserId(),
   };
   let res;
   try {
@@ -293,7 +299,7 @@ async function trainingAction(fields, label) {
     participantNames:             fields.names || '',
     certificateNotes:             fields.certs || '',
     descriptionCoordinationNotes: fields.desc  || '',
-    userId: Number(getSuperAdminIdentity().userId) || 0,
+    userId: currentUserId(),
   };
   let res;
   try {
@@ -392,7 +398,7 @@ async function enquiryAction(fields, label) {
     bugDetail: fields.bugDetail || '',
     date:      fields.date      || '',
     isSolved:  Boolean(fields.isSolved),
-    userId:    Number(getSuperAdminIdentity().userId) || 0,
+    userId:    currentUserId(),
   };
   let res;
   try {
@@ -450,11 +456,104 @@ export function deleteEnquiry(id, branchId) {
   return enquiryAction({ action: CARD_ACTIONS.delete, id, branchId }, 'delete this enquiry');
 }
 
+/* ═══════════════════ ASSIGNED USER (Assigned To dropdown) ═══════════════════
+   POST .../api/AHM_School_Progress/manage_assignedUser
+     body: { action, id, branchID, userID, launchSetup, isActive,
+             createdBy, modifiedBy }
+
+   Live check se teen baatein — inhi par yeh service bani hai:
+     • Actions sirf GET | UPSERT | DELETE hain (insert/update/add nahi):
+       "Invalid @Action value. Use GET, UPSERT, or DELETE."
+     • UPSERT branchID par chalta hai: id 0 bhejo to pehli baar row banti hai
+       aur dobara bhejne par WAHI row update hoti hai (duplicate nahi banti).
+       Jawab me { id } aata hai.
+     • DELETE soft hai — row `isActive:false` ho jati hai magar GET me phir
+       bhi aati hai. Is liye padhte waqt sirf isActive rows lete hain.
+     • GET branchID ko nazarandaaz karta hai — poori list deta hai.
+
+   branch-report ka `assignedTo` isi table se aata hai (live tasdeeq ki gayi),
+   so screen ko refresh karne par wahi user select hua milta hai.
+   ═══════════════════════════════════════════════════════════════════ */
+export const ASSIGN_ACTIONS = { get: 'GET', upsert: 'UPSERT', delete: 'DELETE' };
+
+export function assignedUserRowToUi(r) {
+  return {
+    id:          Number(r?.id ?? r?.ID) || 0,
+    branchId:    Number(r?.branchID ?? r?.BranchID) || 0,
+    userId:      Number(r?.userID ?? r?.UserID) || 0,
+    launchSetup: Number(r?.launchSetup ?? r?.LaunchSetup) || 0,
+    isActive:    r?.isActive !== false,
+    raw: r,
+  };
+}
+
+async function assignedUserAction(fields, label) {
+  const token = getSuperAdminToken();
+  const me = currentUserId();
+  const body = {
+    action:      fields.action,
+    id:          Number(fields.id) || 0,
+    branchID:    Number(fields.branchId) || 0,
+    userID:      Number(fields.userId) || 0,
+    launchSetup: Number(fields.launchSetup) || 0,
+    isActive:    fields.isActive !== false,
+    createdBy:   me,
+    modifiedBy:  me,
+  };
+  let res;
+  try {
+    res = await fetch(`${SA_ADMIN_API_BASE}${EP.schoolProgress.assignedUser()}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        accept: '*/*',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(body),
+    });
+  } catch (networkErr) {
+    throw new ApiError(networkErr.message || 'Network error', 0);
+  }
+  const json = await res.json().catch(() => null);
+  if (!res.ok || (json && json.success === false)) {
+    throw new ApiError((json && (json.message || json.Message)) || `Could not ${label}`, res.status);
+  }
+  return json;
+}
+
+/** Saari zinda assignments (soft-deleted rows chhaant kar). */
+export async function listAssignedUsers() {
+  const json = await assignedUserAction({ action: ASSIGN_ACTIONS.get }, 'load assignments');
+  const rows = Array.isArray(json?.data) ? json.data : [];
+  return rows.map(assignedUserRowToUi).filter((r) => r.id && r.isActive);
+}
+
+/**
+ * Dropdown me user badla — pehli baar insert, agli baar update (dono UPSERT).
+ * @returns {Promise<{id:number}>} banayi/update hui row ki id
+ */
+export async function saveAssignedUser({ branchId, userId, launchSetup = 0, id = 0 } = {}) {
+  const json = await assignedUserAction(
+    { action: ASSIGN_ACTIONS.upsert, id, branchId, userId, launchSetup, isActive: true },
+    'save this assignment',
+  );
+  return { id: Number(json?.data?.id ?? json?.data?.ID) || Number(id) || 0 };
+}
+
+/** Dropdown "-- Unassigned --" par — row soft-delete ho jati hai. */
+export function clearAssignedUser({ id, branchId, launchSetup = 0 } = {}) {
+  return assignedUserAction(
+    { action: ASSIGN_ACTIONS.delete, id, branchId, userId: 0, launchSetup },
+    'clear this assignment',
+  );
+}
+
 const schoolProgressService = {
   listSchoolProgress, listBranchReport, branchReportToRow,
   saveCardAction, listCardActions, deleteCardAction, cardRowToUi,
   saveTrainingSession, listTrainingSessions, deleteTrainingSession, trainingRowToUi,
   saveEnquiry, listEnquiries, setEnquirySolved, deleteEnquiry, enquiryRowToUi,
-  CARD_HEADS, CARD_ACTIONS, ENQUIRY_STATUS,
+  listAssignedUsers, saveAssignedUser, clearAssignedUser, assignedUserRowToUi,
+  CARD_HEADS, CARD_ACTIONS, ENQUIRY_STATUS, ASSIGN_ACTIONS,
 };
 export default schoolProgressService;

@@ -189,6 +189,58 @@ export async function getForms(manualId) {
   return rows.map(mapForm).filter((f) => f.id);
 }
 
+/* Bohat saari calls ek saath na chalein — ek waqt me `limit` se zyada nahi. */
+async function mapLimit(items, limit, fn) {
+  const out = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i], i);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return out;
+}
+
+/**
+ * Poora SOP library ek hi dafa — heads, har head ke manuals, aur har manual
+ * ki forms.
+ *
+ * Pehle har head par click karte waqt uske manuals aur phir har manual ki
+ * forms mangwayi jati thin, is liye tab badalne par har baar intezaar hota
+ * tha. Ab School SOPs khulte hi sab kuch aa jata hai aur tab switch foran.
+ *
+ * @returns {Promise<{ heads: Array, manualsByHead: Object }>}
+ *          manualsByHead[headId] → manuals, har manual par `forms` aur
+ *          `formsCount` pehle se maujood.
+ */
+export async function getAllSops() {
+  const heads = await getManualHeads();
+  if (!heads.length) return { heads, manualsByHead: {} };
+
+  /* Har head ke manuals (ek head fail ho to baqi library phir bhi khule). */
+  const perHead = await mapLimit(heads, 4, (h) => getManuals(h.id).catch(() => []));
+
+  /* Saare manuals ki forms — poori library ke liye ek hi baar. */
+  const flat = [];
+  perHead.forEach((list, hi) => list.forEach((m) => flat.push({ hi, id: m.id })));
+  const formLists = await mapLimit(flat, 6, (x) => getForms(x.id).catch(() => []));
+  const formsById = new Map();
+  flat.forEach((x, i) => formsById.set(x.id, formLists[i] || []));
+
+  const manualsByHead = {};
+  heads.forEach((h, hi) => {
+    manualsByHead[h.id] = perHead[hi].map((m) => {
+      const forms = formsById.get(m.id) || [];
+      /* Head ka NAAM bhi manual par — API sirf id deti hai, aur modal ke
+         badge par id ("4") dikhna bekar lagta hai. */
+      return { ...m, categoryLabel: h.label, forms, formsCount: forms.length };
+    });
+  });
+  return { heads, manualsByHead };
+}
+
 function mapForm(f) {
   const path = String(f?.formPath ?? '');
   const fileName = fileNameFrom(path);

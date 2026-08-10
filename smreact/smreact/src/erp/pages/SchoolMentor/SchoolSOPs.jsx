@@ -3,7 +3,8 @@ import { createPortal } from 'react-dom';
 import Tooltip from '../../components/Tooltip';
 import ModuleTutorialModal from '../../components/TutorialModal';
 import { usePermissions } from '../../context/PermissionsContext';
-import { getManualHeads, getManuals, getForms, getFormsCount } from '../../services/sopsService';
+import RouteFallback from '../../shared/RouteFallback';
+import { getAllSops } from '../../services/sopsService';
 
 /* ═══════════════════════════════════════════════════════════════════
    SCHOOL SOPs — Centralised SOP & School Manual Library
@@ -41,57 +42,35 @@ export default function SchoolSOPs({ toast = () => {} }) {
   const [tutorialOpen, setTutorialOpen] = useState(false);
 
   /* ── Live data — Super Admin ke SOP module se (sirf padhne ke liye).
-        Manual heads → categories, phir chuni hui head ke manuals. Pehle ye
-        list file me hardcoded thi. ── */
-  const [heads,   setHeads]   = useState([]);
-  const [manuals, setManuals] = useState([]);
-  const [headsLoading,   setHeadsLoading]   = useState(true);
-  const [manualsLoading, setManualsLoading] = useState(false);
+        Poori library EK HI DAFA aati hai: heads, har head ke manuals, aur
+        har manual ki forms. Pehle har head par click karte waqt uske manuals
+        aur phir har manual ki forms mangwayi jati thin — is liye har tab par
+        intezaar hota tha. Ab tab badalna sirf pehle se maujood data dikhata
+        hai, koi nayi call nahi. ── */
+  const [heads, setHeads] = useState([]);
+  const [manualsByHead, setManualsByHead] = useState({});
+  const [loading, setLoading] = useState(true);
 
   const toastRef = useRef(toast);
   toastRef.current = toast;
 
   useEffect(() => {
     let alive = true;
-    setHeadsLoading(true);
-    getManualHeads()
-      .then((list) => {
+    setLoading(true);
+    getAllSops()
+      .then(({ heads: list, manualsByHead: byHead }) => {
         if (!alive) return;
         setHeads(list);
+        setManualsByHead(byHead);
         setCat((cur) => (list.some((h) => h.id === cur) ? cur : (list[0]?.id ?? null)));
       })
-      .catch((err) => { if (alive) toastRef.current?.(err.message || 'Could not load manual categories', 'error'); })
-      .finally(() => { if (alive) setHeadsLoading(false); });
+      .catch((err) => { if (alive) toastRef.current?.(err.message || 'Could not load School SOPs', 'error'); })
+      .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
   }, []);
 
-  useEffect(() => {
-    if (!cat) { setManuals([]); return undefined; }
-    let alive = true;
-    setManualsLoading(true);
-    getManuals(cat)
-      .then(async (list) => {
-        if (!alive) return;
-        /* Manual ke saath uski head ka NAAM bhi rakho — API sirf id deti hai,
-           aur modal me badge par id ("4") dikhna bekar lagta hai. */
-        const headName = heads.find((h) => h.id === cat)?.label || '';
-        const withHead = list.map((m) => ({ ...m, categoryLabel: headName }));
-        setManuals(withHead);
-        /* Har manual ke against kitni forms hain — manual-detail ka `forms`
-           array khali aata hai, is liye ginti manual-form se laate hain
-           (sab parallel). Ye table ke Pages column me dikhti hai. */
-        const counts = await Promise.all(list.map((m) => getFormsCount(m.id)));
-        if (!alive) return;
-        setManuals(withHead.map((m, i) => ({ ...m, formsCount: counts[i] })));
-      })
-      .catch((err) => {
-        if (!alive) return;
-        setManuals([]);
-        toastRef.current?.(err.message || 'Could not load manuals', 'error');
-      })
-      .finally(() => { if (alive) setManualsLoading(false); });
-    return () => { alive = false; };
-  }, [cat, heads]);
+  /* Chuni hui head ke manuals — sab pehle se load hain. */
+  const manuals = useMemo(() => manualsByHead[cat] || [], [manualsByHead, cat]);
 
   /* Live-filtered manuals (list pehle hi chuni hui head ki hai). */
   const filtered = useMemo(() => {
@@ -100,13 +79,28 @@ export default function SchoolSOPs({ toast = () => {} }) {
     return manuals.filter(m => `${m.title} ${m.code} ${m.description}`.toLowerCase().includes(q));
   }, [manuals, search]);
 
-  /* Headline stats. */
-  const stats = useMemo(() => ({
-    totalManuals:   heads.reduce((s, h) => s + (h.totalManuals || 0), 0) || manuals.length,
-    totalTutorials: manuals.filter(m => m.hasTutorial).length,
-    recentlyAdded:  manuals.length,
-    mostViewed:     manuals[0]?.title || '—',
-  }), [heads, manuals]);
+  /* Headline stats — ab poori library par (sab kuch load ho chuka hai), sirf
+     chuni hui head par nahi. */
+  const stats = useMemo(() => {
+    const all = Object.values(manualsByHead).flat();
+    return {
+      totalManuals:   all.length || heads.reduce((s, h) => s + (h.totalManuals || 0), 0),
+      totalTutorials: all.filter((m) => m.hasTutorial).length,
+      recentlyAdded:  manuals.length,
+      mostViewed:     manuals[0]?.title || '—',
+    };
+  }, [heads, manualsByHead, manuals]);
+
+  /* 0 manuals par percentage NaN ban jata tha. */
+  const tutorialPct = stats.totalManuals ? Math.round((stats.totalTutorials / stats.totalManuals) * 100) : 0;
+
+  /* Jab tak poori library (heads + manuals + forms) nahi aa jati, wahi module
+     loader jo baqi ERP modules par chalta hai — "Loading Academics…" jaisa.
+     Heads aur manuals ke alag alag spinner nahi: ek hi loader, aur dono API
+     mukammal hote hi screen poori bhari hui aati hai. */
+  if (loading) {
+    return <RouteFallback label="Loading School SOPs…" sub="Loading manuals and forms — please wait." />;
+  }
 
   return (
     <>
@@ -152,7 +146,7 @@ export default function SchoolSOPs({ toast = () => {} }) {
         <Stat tone="blue"   icon="fa-book-open"        label="Total Manuals"    value={stats.totalManuals}
               sub={`Across ${heads.length} categor${heads.length === 1 ? 'y' : 'ies'}`} />
         <Stat tone="green"  icon="fa-play-circle"      label="Total Tutorials"  value={stats.totalTutorials}
-              sub={`${Math.round((stats.totalTutorials / stats.totalManuals) * 100)}% of manuals`} />
+              sub={`${tutorialPct}% of manuals`} />
         <Stat tone="amber"  icon="fa-clock-rotate-left" label="Recently Added"  value={stats.recentlyAdded}
               sub="This month" />
         <Stat tone="indigo" icon="fa-fire"             label="Most Viewed"      value={stats.mostViewed}
@@ -161,18 +155,16 @@ export default function SchoolSOPs({ toast = () => {} }) {
 
       {/* ── Category tabs ── */}
       <div className="sops-cats" role="tablist" aria-label="Manual categories">
-        {headsLoading && (
-          <span style={{ fontSize: 12.5, fontWeight: 700, color: '#64748B', padding: '8px 4px' }}>
-            <i className="fa-solid fa-spinner fa-spin" style={{ marginRight: 6 }} aria-hidden="true"></i> Loading categories…
-          </span>
-        )}
-        {!headsLoading && heads.length === 0 && (
+        {/* Yahan ka apna spinner nahi chahiye — module loader upar hi rok leta
+            hai, is liye is jagah tak sirf load-shuda data pahunchta hai. */}
+        {heads.length === 0 && (
           <span style={{ fontSize: 12.5, fontWeight: 700, color: '#64748B', padding: '8px 4px' }}>
             No manual categories published yet.
           </span>
         )}
-        {!headsLoading && heads.map(c => {
-          const count = c.id === cat ? manuals.length : c.totalManuals;
+        {heads.map(c => {
+          /* Har head ki asli ginti — sab manuals pehle hi aa chuke hain. */
+          const count = manualsByHead[c.id]?.length ?? c.totalManuals;
           return (
             <Tooltip key={c.id} text={`Filter by ${c.label} (${count})`}>
               <button
@@ -215,12 +207,7 @@ export default function SchoolSOPs({ toast = () => {} }) {
       </div>
 
       {/* ── Manual list ── */}
-      {manualsLoading ? (
-        <div className="sops-empty">
-          <div className="sops-empty-ic"><i className="fa-solid fa-spinner fa-spin" aria-hidden="true"></i></div>
-          <div className="sops-empty-title">Loading manuals…</div>
-        </div>
-      ) : filtered.length === 0 ? (
+      {filtered.length === 0 ? (
         <div className="sops-empty">
           <div className="sops-empty-ic"><i className="fa-solid fa-magnifying-glass" aria-hidden="true"></i></div>
           <div className="sops-empty-title">No manuals found</div>
@@ -352,20 +339,10 @@ function PDFViewerModal({ manual, onClose }) {
     return () => clearTimeout(t);
   }, [manual.pdfUrl]);
 
-  /* Is manual ke saath attached forms (manual-form, action:get). Manual ke
-     response me bhi aati hain, magar yahan taza laate hain taake Super Admin
-     me abhi abhi add ki gayi form bhi foran dikhe. */
-  const [forms, setForms] = useState(manual.forms || []);
-  const [formsLoading, setFormsLoading] = useState(true);
-  useEffect(() => {
-    let alive = true;
-    setFormsLoading(true);
-    getForms(manual.id)
-      .then((list) => { if (alive) setForms(list); })
-      .catch(() => { /* forms best-effort — manual phir bhi khulta rahe */ })
-      .finally(() => { if (alive) setFormsLoading(false); });
-    return () => { alive = false; };
-  }, [manual.id]);
+  /* Is manual ke saath attached forms — School SOPs khulte waqt poori library
+     ke saath ye bhi aa chuki hain (getAllSops), is liye modal khulne par koi
+     nayi call nahi jati. */
+  const forms = manual.forms || [];
 
   useEffect(() => {
     const onKey = (e) => {
@@ -430,11 +407,7 @@ function PDFViewerModal({ manual, onClose }) {
                 <i className="fa-solid fa-paperclip" style={{ marginRight: 6, color: '#1E40AF' }} aria-hidden="true"></i>
                 Attached Forms
               </div>
-              {formsLoading ? (
-                <div style={{ fontSize: 12, color: '#64748B' }}>
-                  <i className="fa-solid fa-spinner fa-spin" style={{ marginRight: 6 }} aria-hidden="true"></i> Loading forms…
-                </div>
-              ) : forms.length === 0 ? (
+              {forms.length === 0 ? (
                 <div style={{ fontSize: 12, color: '#64748B' }}>No forms attached to this manual.</div>
               ) : forms.map(f => (
                 <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', border: '1px solid #E5E7EB', borderRadius: 8, marginBottom: 6, background: '#F8FAFC' }}>

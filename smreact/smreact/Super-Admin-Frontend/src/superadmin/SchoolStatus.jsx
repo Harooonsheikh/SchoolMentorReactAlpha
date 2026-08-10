@@ -1,9 +1,12 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ASSIGNEES, INITIAL_LAUNCH, INITIAL_ERP, INITIAL_INACTIVE,
+  INITIAL_LAUNCH, INITIAL_ERP, INITIAL_INACTIVE,
   buildSchoolDetail, moduleMeta,
 } from './statusData';
-import { schoolProgressApi, schoolPermissionsApi } from './api';
+import { schoolProgressApi, schoolPermissionsApi, authApi } from './api';
+
+/* Assign dropdown ka pehla option — branch kisi ko assign na ho to yehi. */
+const UNASSIGNED = '-- Unassigned --';
 
 /* ═══════════════════════════════════════════════════════════════════
    SCHOOL STATUS (rendered in the "Schools Progress" tab) — Super Admin.
@@ -64,6 +67,32 @@ export default function SchoolStatus({ toast }) {
 
   useEffect(() => { load(); }, [load]);
 
+  /* Users directory — GET /api/Auth/get-all-users.
+     Screen ke saare "Assigned To" / "Select User" dropdown isi se bharte hain:
+     dikhta naam (firstName + lastName) hai, aur rows par assignedId wahi `id`
+     rehti hai jo API bhejti/leti hai. */
+  const [users, setUsers] = useState([]);
+  useEffect(() => {
+    let alive = true;
+    authApi.listUsers()
+      .then((rows) => { if (alive) setUsers(rows); })
+      .catch((err) => toastRef.current?.(err?.message || 'Could not load users', 'warn'));
+    return () => { alive = false; };
+  }, []);
+
+  /* id → naam. List abhi na aayi ho to row ka apna label (e.g. "User #4"). */
+  const userName = useCallback((id, fallback) => {
+    const u = users.find((x) => x.id === Number(id));
+    return u ? u.name : (fallback || UNASSIGNED);
+  }, [users]);
+
+  /* Rows par `assigned` ab asli naam — table, ERP card, enquiry modal, sab ek
+     hi jagah se. (Enquiries loader neeche RAW `erp` par chalta hai, taake har
+     naam-resolve par woh dobara na chale.) */
+  const named = useCallback((rows) => rows.map((s) => ({ ...s, assigned: userName(s.assignedId, s.assigned) })), [userName]);
+  const launchRows = useMemo(() => named(launch), [named, launch]);
+  const erpRows = useMemo(() => named(erp), [named, erp]);
+
   /* Per-ERP-school detail (lazy-built) + enquiries, lifted so modal edits persist. */
   const [details, setDetails] = useState({});
 
@@ -120,11 +149,59 @@ export default function SchoolStatus({ toast }) {
     return { ...prev, [id]: updater(cur) };
   });
 
-  /* ── assign ── */
-  const assign = (group, id, val) => {
+  /* ── assign ──
+     Dropdown me user ki `id` chalti hai (wahi jo get-all-users deti hai aur
+     branch-report `assignedTo` me lautati hai); screen par uska naam.
+
+     Har badlav server par jata hai:
+       POST .../manage_assignedUser  action UPSERT  (pehli baar insert, phir
+       update — dono wahi ek action), aur "-- Unassigned --" par DELETE.
+     Screen foran badalti hai, magar call fail ho to purani value wapas — warna
+     dropdown kuch aur dikhata aur database me kuch aur hota. */
+  const [assignMap, setAssignMap] = useState({});   // branchId → { id, userId }
+  const [assignBusy, setAssignBusy] = useState(0);  // branchId jiska save chal raha hai
+
+  useEffect(() => {
+    let alive = true;
+    schoolProgressApi.listAssignedUsers()
+      .then((rows) => {
+        if (!alive) return;
+        const m = {};
+        rows.forEach((r) => { m[r.branchId] = { id: r.id, userId: r.userId }; });
+        setAssignMap(m);
+      })
+      .catch(() => { /* branch-report ka assignedTo phir bhi sahi user dikhata hai */ });
+    return () => { alive = false; };
+  }, []);
+
+  const assign = async (group, branchId, userId) => {
+    const uid = Number(userId) || 0;
+    const launchSetup = group === 'launch' ? 0 : 1;
     const setter = group === 'launch' ? setLaunch : setErp;
-    setter((prev) => prev.map((s) => s.id === id ? { ...s, assigned: val } : s));
-    toast?.(`Assigned to: ${val}`, 'success');
+    const before = (group === 'launch' ? launch : erp).find((s) => s.id === branchId);
+    const row = assignMap[branchId];
+    const label = uid ? userName(uid) : UNASSIGNED;
+
+    setter((prev) => prev.map((s) => s.id === branchId ? { ...s, assignedId: uid, assigned: label } : s));
+    setAssignBusy(branchId);
+    try {
+      if (uid) {
+        const { id } = await schoolProgressApi.saveAssignedUser({ id: row?.id || 0, branchId, userId: uid, launchSetup });
+        setAssignMap((m) => ({ ...m, [branchId]: { id: id || row?.id || 0, userId: uid } }));
+        toast?.(`Assigned to: ${label}`, 'success');
+      } else if (row?.id) {
+        await schoolProgressApi.clearAssignedUser({ id: row.id, branchId, launchSetup });
+        setAssignMap((m) => { const next = { ...m }; delete next[branchId]; return next; });
+        toast?.('Assignment cleared', 'info');
+      }
+    } catch (err) {
+      setter((prev) => prev.map((s) => s.id === branchId
+        ? { ...s, assignedId: before?.assignedId || 0, assigned: before?.assigned || UNASSIGNED }
+        : s));
+      toast?.(err?.message || 'Could not save the assignment', 'error');
+    } finally {
+      setAssignBusy(0);
+    }
   };
 
   /* ── activate / deactivate ──
@@ -208,12 +285,12 @@ export default function SchoolStatus({ toast }) {
       </div>
 
       {!loading && tab === 'launch' && (
-        <LaunchPanel rows={launch} onAssign={(id, v) => assign('launch', id, v)}
+        <LaunchPanel rows={launchRows} users={users} assignBusy={assignBusy} onAssign={(id, v) => assign('launch', id, v)}
           onDeactivate={(s) => setModal({ type: 'deactivate', group: 'launch', school: s })}
           onDetails={(s) => setModal({ type: 'details', school: s })} />
       )}
       {!loading && tab === 'erp' && (
-        <ErpPanel rows={erp} sub={erpSub} setSub={setErpSub}
+        <ErpPanel rows={erpRows} users={users} assignBusy={assignBusy} sub={erpSub} setSub={setErpSub}
           onAssign={(id, v) => assign('erp', id, v)}
           onDeactivate={(s) => setModal({ type: 'deactivate', group: 'erp', school: s })}
           onDetails={(s) => { ensureDetail(s); setModal({ type: 'erpDetail', school: s }); }}
@@ -267,13 +344,29 @@ export default function SchoolStatus({ toast }) {
 
 /* ═══════════════════════ LAUNCH PANEL ═══════════════════════ */
 function FilterBar({ children }) { return <div className="filter-bar">{children}</div>; }
-function AssignSelect({ value, options, onChange }) {
-  /* API se aayi hui value list me na ho (e.g. "User #7") to usay bhi option
-     bana do — warna select chup-chaap pehli option dikhane lagta hai. */
-  const opts = value && !options.includes(value) ? [value, ...options] : options;
+/* Assign dropdown — value hamesha user ki `id` (0 = unassigned), text uska naam.
+   `users` /api/Auth/get-all-users se aati hai. */
+function AssignSelect({ value, users, fallbackLabel, busy, onChange }) {
+  const uid = Number(value) || 0;
+  /* Branch kisi aisi id par assigned ho jo list me na ho (user hata diya gaya,
+     ya list abhi load na hui) to usay bhi ek option bana do — warna select
+     chup-chaap "-- Unassigned --" dikhane lagta hai. */
+  const missing = uid > 0 && !users.some((u) => u.id === uid);
   return (
-    <select className="assign-select" value={value} onChange={(e) => onChange(e.target.value)}>
-      {opts.map((o) => <option key={o}>{o}</option>)}
+    <select className="assign-select" value={uid} disabled={busy} onChange={(e) => onChange(Number(e.target.value) || 0)}>
+      <option value={0}>{UNASSIGNED}</option>
+      {missing && <option value={uid}>{fallbackLabel || `User #${uid}`}</option>}
+      {users.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+    </select>
+  );
+}
+
+/* Filter bar ka "Select User" — value id, "" = sab. */
+function UserFilterSelect({ value, users, onChange }) {
+  return (
+    <select className="f-input" value={value} onChange={(e) => onChange(e.target.value)}>
+      <option value="">Select User or All</option>
+      {users.map((u) => <option key={u.id} value={String(u.id)}>{u.name}</option>)}
     </select>
   );
 }
@@ -281,11 +374,11 @@ function EmptyRow({ cols, icon, msg }) {
   return <tr><td colSpan={cols} style={{ textAlign: 'center', padding: 44, color: 'var(--tm)' }}><i className={`fa-solid fa-${icon}`} style={{ fontSize: 28, display: 'block', margin: '0 auto 12px', opacity: 0.3 }} /><div style={{ fontSize: 14, fontWeight: 700 }}>{msg}</div></td></tr>;
 }
 
-function LaunchPanel({ rows, onAssign, onDeactivate, onDetails }) {
+function LaunchPanel({ rows, users, assignBusy, onAssign, onDeactivate, onDetails }) {
   const [q, setQ] = useState('');
   const [color, setColor] = useState('');
-  const [user, setUser] = useState('');
-  const list = rows.filter((s) => (!q || s.name.toLowerCase().includes(q.toLowerCase())) && (!color || s.color === color) && (!user || s.assigned === user));
+  const [user, setUser] = useState('');   // user id (string), '' = sab
+  const list = rows.filter((s) => (!q || s.name.toLowerCase().includes(q.toLowerCase())) && (!color || s.color === color) && (!user || String(s.assignedId) === user));
   return (
     <div className="ss-panel">
       <div className="section-card">
@@ -293,7 +386,7 @@ function LaunchPanel({ rows, onAssign, onDeactivate, onDetails }) {
           <div className="f-field"><label className="f-label"><i className="fa-solid fa-palette" style={{ color: 'var(--brand)', fontSize: 10 }} /> Select Branches Color</label>
             <select className="f-input" value={color} onChange={(e) => setColor(e.target.value)}><option value="">All Colors</option><option>Red</option><option>Green</option><option>Blue</option></select></div>
           <div className="f-field"><label className="f-label"><i className="fa-solid fa-user" style={{ color: 'var(--brand)', fontSize: 10 }} /> Select User</label>
-            <select className="f-input" value={user} onChange={(e) => setUser(e.target.value)}><option value="">Select User or All</option>{ASSIGNEES.map((a) => <option key={a}>{a}</option>)}</select></div>
+            <UserFilterSelect value={user} users={users} onChange={setUser} /></div>
           <div className="f-field-grow"><label className="f-label"><i className="fa-solid fa-magnifying-glass" style={{ color: 'var(--brand)', fontSize: 10 }} /> Search</label>
             <div className="search-box"><i className="fa-solid fa-magnifying-glass" /><input className="search-input" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search schools…" /></div></div>
         </FilterBar>
@@ -308,7 +401,7 @@ function LaunchPanel({ rows, onAssign, onDeactivate, onDetails }) {
                   <td style={{ textAlign: 'center', fontWeight: 700, color: 'var(--t1)' }}>{s.staff}</td>
                   <td style={{ textAlign: 'center', fontWeight: 700, color: 'var(--t1)' }}>{s.students}</td>
                   <td><StatusBadge status={s.status} /></td>
-                  <td><AssignSelect value={s.assigned} options={['-- Unassigned --', ...ASSIGNEES]} onChange={(v) => onAssign(s.id, v)} /></td>
+                  <td><AssignSelect value={s.assignedId} users={users} fallbackLabel={s.assigned} busy={assignBusy === s.id} onChange={(v) => onAssign(s.id, v)} /></td>
                   <td><button className="btn-danger" style={{ height: 34, fontSize: 12, padding: '0 12px' }} onClick={() => onDeactivate(s)}><i className="fa-solid fa-moon" /> Make InActive</button></td>
                   <td style={{ textAlign: 'center' }}><button className="det-btn" data-tip="Branch Details" data-tip-pos="left" onClick={() => onDetails(s)}><i className="fa-solid fa-chevron-down" /></button></td>
                 </tr>
@@ -322,10 +415,10 @@ function LaunchPanel({ rows, onAssign, onDeactivate, onDetails }) {
 }
 
 /* ═══════════════════════ ERP PANEL ═══════════════════════ */
-function ErpPanel({ rows, sub, setSub, onAssign, onDeactivate, onDetails, enquiries, enqLoading, onEnqAdd, onEnqDetail }) {
+function ErpPanel({ rows, users, assignBusy, sub, setSub, onAssign, onDeactivate, onDetails, enquiries, enqLoading, onEnqAdd, onEnqDetail }) {
   const [q, setQ] = useState('');
-  const [user, setUser] = useState('');
-  const list = rows.filter((s) => (!q || s.name.toLowerCase().includes(q.toLowerCase())) && (!user || s.assigned === user));
+  const [user, setUser] = useState('');   // user id (string), '' = sab
+  const list = rows.filter((s) => (!q || s.name.toLowerCase().includes(q.toLowerCase())) && (!user || String(s.assignedId) === user));
   const [enqQ, setEnqQ] = useState('');
   const [enqFilter, setEnqFilter] = useState('all');
 
@@ -342,7 +435,7 @@ function ErpPanel({ rows, sub, setSub, onAssign, onDeactivate, onDetails, enquir
           <div className="f-field"><label className="f-label"><i className="fa-solid fa-palette" style={{ color: 'var(--brand)', fontSize: 10 }} /> Select Branches Color</label>
             <select className="f-input"><option value="">All Colors</option><option>Red</option><option>Green</option></select></div>
           <div className="f-field"><label className="f-label"><i className="fa-solid fa-user" style={{ color: 'var(--brand)', fontSize: 10 }} /> Select User</label>
-            <select className="f-input" value={user} onChange={(e) => setUser(e.target.value)}><option value="">Select User or All</option>{ASSIGNEES.slice(0, 2).map((a) => <option key={a}>{a}</option>)}</select></div>
+            <UserFilterSelect value={user} users={users} onChange={setUser} /></div>
           <div className="f-field"><label className="f-label"><i className="fa-regular fa-calendar" style={{ color: 'var(--brand)', fontSize: 10 }} /> Select Month</label>
             <select className="f-input"><option>June 2026</option><option>May 2026</option><option>April 2026</option></select></div>
           <div className="f-field-grow"><label className="f-label"><i className="fa-solid fa-magnifying-glass" style={{ color: 'var(--brand)', fontSize: 10 }} /> Search</label>
@@ -369,7 +462,7 @@ function ErpPanel({ rows, sub, setSub, onAssign, onDeactivate, onDetails, enquir
                 <div className="erp-divider" />
                 <div className="erp-stat"><div className="erp-stat-val">{s.students}</div><div className="erp-stat-lbl">Students</div></div>
                 <div className="erp-divider" />
-                <AssignSelect value={s.assigned} options={ASSIGNEES} onChange={(v) => onAssign(s.id, v)} />
+                <AssignSelect value={s.assignedId} users={users} fallbackLabel={s.assigned} busy={assignBusy === s.id} onChange={(v) => onAssign(s.id, v)} />
                 <button className="btn-danger" style={{ height: 34, fontSize: 12, padding: '0 12px', marginLeft: 10 }} onClick={() => onDeactivate(s)}><i className="fa-solid fa-moon" /> Make InActive</button>
                 <button className="det-btn" data-tip="View Details" data-tip-pos="left" style={{ marginLeft: 8 }} onClick={() => onDetails(s)}><i className="fa-solid fa-chevron-down" /></button>
               </div>

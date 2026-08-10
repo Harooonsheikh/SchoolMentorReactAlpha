@@ -30,6 +30,12 @@ export const EP = {
          body: { user_Name, password }   (schema: MdlAHM_SuperAdmin_Login)
        Main ERP app ka /api/Auth/login is se ALAG route hai (ERP host par). */
     login: () => `${SA_ROOT}/api/Auth/login`,
+    /* GET — saare Super Admin users:
+         { success, count, data: [ { id, firstName, lastName, user_Name,
+                                     signUpDateTime, isAdmin } ] }
+       Screens ke "Assigned To" / "Select User" dropdowns isi se bharte hain,
+       aur jahan API ko userId chahiye wahi `id` jata hai. */
+    allUsers: () => `${SA_ROOT}/api/Auth/get-all-users`,
   },
 
   /* ── Dashboard ── */
@@ -120,6 +126,13 @@ export const EP = {
          false → Open (unsolved)   |   true → Resolved (solved)
        Wahi chaar actions: get | add | update | delete. */
     enquiryAction: () => `${SA_ROOT}/api/AHM_School_Progress/school-enquiries-bugs-action`,
+    /* POST — "Assigned To" dropdown (Launch Setup + ERP Schools).
+       body: { action, id, branchID, userID, launchSetup, isActive,
+               createdBy, modifiedBy }
+       Actions sirf teen hain: GET | UPSERT | DELETE (live check —
+       "Invalid @Action value. Use GET, UPSERT, or DELETE."). UPSERT hi
+       pehli baar insert aur baad me update, dono karta hai. */
+    assignedUser: () => `${SA_ROOT}/api/AHM_School_Progress/manage_assignedUser`,
   },
 
   /* ── E-Tube ── */
