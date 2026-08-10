@@ -209,7 +209,7 @@ function reportFooter(C, note, ctx) {
 
 /* ════════════════ SALARY SLIP (Single Month) ════════════════ */
 export function generateSalarySlipHTML(e, monthKey, style, ctx) {
-  const { fmtMoney, fmtDate, getFullName, empPayroll, empLoans } = ctx;
+  const { fmtMoney, fmtDate, getFullName, empPayroll, empLoans, leaveInfo, workInfo } = ctx;
   const C = reportColors(style);
   const [yearStr, monthStr] = monthKey.split('-');
   const monthIdx = parseInt(monthStr, 10);
@@ -217,8 +217,25 @@ export function generateSalarySlipHTML(e, monthKey, style, ctx) {
   const monthName = monthNames[monthIdx] || 'May';
   const year = parseInt(yearStr, 10) || 2026;
   const rec = (empPayroll[e.id] || {})[monthKey];
-  const basic = +e.basicSalary || 0;
-  const allowances = (e.salaryHeads || []).filter(h => h.type === 'allow');
+  /* Earnings shown on the slip come from the payroll SNAPSHOT (rec) so the breakdown
+     always sums to rec.totalGross even if the employee's salary changed after the
+     payroll was generated. A residual line catches anything the buckets miss, so
+     Basic + Allowances + Bonus == Total Gross Earnings exactly. When no payroll exists
+     we fall back to the live employee heads (that path only renders the empty state).  */
+  const basic = rec ? (+rec.basicPay || 0) : (+e.basicSalary || 0);
+  const allowances = rec ? (() => {
+    const heads = [
+      { name: 'House Allowance',     amount: +rec.houseAllowance     || 0 },
+      { name: 'Transport Allowance', amount: +rec.transportAllowance || 0 },
+      { name: 'Medical Allowance',   amount: +rec.medicalAllowance   || 0 },
+      { name: 'Extra Allowances',    amount: +rec.extraAllowances    || 0 },
+      { name: 'Previous Arrears',    amount: +rec.previousArrears    || 0 },
+    ].filter(h => h.amount !== 0);
+    const residual = (+rec.totalGross || 0) - basic - (+rec.bonus || 0)
+                     - heads.reduce((s, h) => s + h.amount, 0);
+    if (Math.abs(residual) >= 1) heads.push({ name: 'Other Allowances', amount: residual });
+    return heads;
+  })() : (e.salaryHeads || []).filter(h => h.type === 'allow');
   const stdDeducts = (e.salaryHeads || []).filter(h => h.type === 'deduct');
   const payMethod = e.payMethod || 'Bank Transfer';
 
@@ -313,23 +330,45 @@ export function generateSalarySlipHTML(e, monthKey, style, ctx) {
     const isFullyPaid = remaining <= 0.01;
 
     const daysInMonth = new Date(year, monthIdx, 0).getDate();
+    /* REAL working days + public holidays (ctx.workInfo — caller ne Attendance ke SAME
+       holiday-setup se compute kiya: weekly-off + monthly holidays). workInfo na mile to
+       purana fallback (Sundays + guessed holidays). */
     let sundays = 0;
     for (let d = 1; d <= daysInMonth; d++) { if (new Date(year, monthIdx - 1, d).getDay() === 0) sundays++; }
-    const workingDays = daysInMonth - sundays;
-    const publicHolidays = (monthName === 'August' || monthName === 'March' || monthName === 'December') ? 2 : 1;
-    const effectiveWorkingDays = workingDays - publicHolidays;
+    const workingDays = Number(workInfo?.workingDays) >= 0 && workInfo
+      ? Number(workInfo.workingDays)
+      : (daysInMonth - sundays);
+    const publicHolidays = workInfo
+      ? (Number(workInfo.publicHolidays) || 0)
+      : ((monthName === 'August' || monthName === 'March' || monthName === 'December') ? 2 : 1);
+    const effectiveWorkingDays = workInfo
+      ? (Number(workInfo.effectiveWorkingDays) || Math.max(0, workingDays - publicHolidays))
+      : (workingDays - publicHolidays);
     const absent = rec.absentCount || 0;
     const leaves = rec.leaveCount || 0;
     const lateDays = (monthName === 'November' || monthName === 'March') ? 2 : 0;
     const daysPresent = Math.max(0, effectiveWorkingDays - absent - leaves);
     const attendancePct = effectiveWorkingDays > 0 ? ((daysPresent / effectiveWorkingDays) * 100).toFixed(1) : '100.0';
 
-    const leavesAllotted = { casual: 10, sick: 8, annual: 14 };
-    const leavesUsedYTD  = { casual:  3, sick: 1, annual:  5 };
-    const leavesBalance  = {
-      casual: leavesAllotted.casual - leavesUsedYTD.casual,
-      sick:   leavesAllotted.sick   - leavesUsedYTD.sick,
-      annual: leavesAllotted.annual - leavesUsedYTD.annual,
+    /* REAL per-employee leave figures (ctx.leaveInfo se — caller ne getHrLeaveSettings +
+       calculateLeaveAbsentDeduction fetch kiya). Pehle ye hardcoded the (har staff same).
+       Settings na mile to sensible defaults par gir jaate hain. */
+    const ls   = leaveInfo?.settings || {};
+    const calc = leaveInfo?.calc || {};
+    const leavesAllotted = {
+      casual: Number(ls.casual) || 0,
+      sick:   Number(ls.sick)   || 0,
+      annual: Number(ls.annual) || 0,
+    };
+    /* Backend per-type leave USAGE track nahi karta — sirf kul YTD (cumulativeLeavesTakenYTD)
+       deta hai. Is liye kul used sirf ANNUAL par lagta hai; casual/sick used 0 rehta hai
+       (jab tak backend per-type usage na de). Card ab "USED / allotted" dikhata hai taake
+       li gayi leave nazar aaye. */
+    const annualUsedYTD = Number(calc.cumulativeLeavesTakenYTD) || 0;
+    const leavesUsed = {
+      casual: 0,
+      sick:   0,
+      annual: annualUsedYTD,
     };
 
     const loanDeductedThisMonth = (Number(rec.loanDeduct) || 0) + (Number(rec.customLoan) || 0);
@@ -404,6 +443,14 @@ export function generateSalarySlipHTML(e, monthKey, style, ctx) {
     else if (rec.status === 'Partially Paid') remarks.push(`Partial payment of PKR ${fmtMoney(totalPaid)} disbursed; PKR ${fmtMoney(remaining)} balance pending.`);
     if (remarks.length === 0) remarks.push(`Standard salary processed for ${monthName} ${year} with no exceptional adjustments.`);
 
+    /* Keep the deductions breakdown summing to rec.totalDeductions (same idea as the
+       earnings residual) so Total Deductions — and therefore Net = Gross − Deductions —
+       always reconciles even if the employee's deduction heads changed after generation. */
+    const dedShownParts = stdDeducts.reduce((s, h) => s + (+h.amount || 0), 0)
+      + (+rec.loanDeduct || 0) + (+rec.customLoan || 0) + (+rec.fineDeduct || 0)
+      + (+rec.leaveDeduct || 0) + (+rec.absentDeduct || 0);
+    const dedResidual = (+rec.totalDeductions || 0) - dedShownParts;
+
     body = `
       <div class="r-title">Salary Slip — ${monthName} ${year}<span class="badge">${e.eid}</span></div>
       ${reportEmpBlock(C, e, ctx)}
@@ -419,9 +466,9 @@ export function generateSalarySlipHTML(e, monthKey, style, ctx) {
           <div class="att-cell neg"><label>Absent Days</label><div class="v">${absent}</div></div>
         </div>
         <div class="slip-fields cols-3" style="margin-top:7px">
-          <div class="slip-field compact"><label>Casual Leave Balance</label><div class="v">${leavesBalance.casual} / ${leavesAllotted.casual} days</div></div>
-          <div class="slip-field compact"><label>Sick Leave Balance</label><div class="v">${leavesBalance.sick} / ${leavesAllotted.sick} days</div></div>
-          <div class="slip-field compact"><label>Annual Leave Balance</label><div class="v">${leavesBalance.annual} / ${leavesAllotted.annual} days</div></div>
+          <div class="slip-field compact"><label>Casual Leave Used</label><div class="v">${leavesUsed.casual} / ${leavesAllotted.casual} days</div></div>
+          <div class="slip-field compact"><label>Sick Leave Used</label><div class="v">${leavesUsed.sick} / ${leavesAllotted.sick} days</div></div>
+          <div class="slip-field compact"><label>Annual Leave Used</label><div class="v">${leavesUsed.annual} / ${leavesAllotted.annual} days</div></div>
         </div>
         ${lateDays>0?`<div class="slip-remarks" style="margin-top:7px"><strong>Late arrivals this month:</strong> ${lateDays} occasion${lateDays>1?'s':''} (within HR grace policy — no deduction applied).</div>`:''}
       </div>
@@ -445,6 +492,7 @@ export function generateSalarySlipHTML(e, monthKey, style, ctx) {
           <div class="slip-field ded"><label>Fine${rec.fineComment?' *':''}</label><div class="v">PKR ${fmtMoney(rec.fineDeduct||0)}</div></div>
           <div class="slip-field ded"><label>Leave Deduction${rec.leaveCount?` (${rec.leaveCount}d)`:''}</label><div class="v">PKR ${fmtMoney(rec.leaveDeduct||0)}</div></div>
           <div class="slip-field ded"><label>Absent Deduction${rec.absentCount?` (${rec.absentCount}d)`:''}</label><div class="v">PKR ${fmtMoney(rec.absentDeduct||0)}</div></div>
+          ${Math.abs(dedResidual) >= 1 ? `<div class="slip-field ded"><label>Other Deductions</label><div class="v">PKR ${fmtMoney(dedResidual)}</div></div>` : ''}
         </div>
         <div class="slip-subtotal"><span>Total Deductions</span><span class="v">PKR ${fmtMoney(rec.totalDeductions||0)}</span></div>
       </div>
@@ -880,13 +928,20 @@ export function generateHrSalaryRegister(ctx, monthKey) {
   const activeEmps = emps.filter(e => e.status === 'Active');
   let gBasic = 0, gAllow = 0, gBonus = 0, gGross = 0, gDed = 0, gNet = 0;
   const rows = activeEmps.map((e, i) => {
-    const rec   = (empPayroll[e.id] || {})[monthKey] || {};
-    const basic = +e.basicSalary || 0;
-    const allow = ctx.getEmpTotalGross(e, 0) - basic;
-    const bonus = rec.bonus || 0;
-    const gross = rec.totalGross || ctx.getEmpTotalGross(e, bonus);
-    const ded   = rec.totalDeductions || ctx.getEmpStdDeductions(e);
-    const net   = rec.netPayable || (gross - ded);
+    const rec    = (empPayroll[e.id] || {})[monthKey] || {};
+    /* When a payroll is generated, use the record's OWN snapshot (basic/bonus/gross/
+       deductions) so the row is internally consistent even if the employee's salary
+       changed afterwards. When it isn't generated, fall back to the live employee.  */
+    const hasRec = !!rec.payrollID;
+    const basic  = hasRec ? (+rec.basicPay || 0) : (+e.basicSalary || 0);
+    const bonus  = hasRec ? (+rec.bonus || 0)    : 0;
+    const gross  = hasRec ? (+rec.totalGross || 0) : ctx.getEmpTotalGross(e, 0);
+    /* Derive Allowances from the gross so Basic + Allowances + Bonus == Gross always
+       (folds house/transport/medical/extra allowances + previous arrears into one col). */
+    const allow  = gross - basic - bonus;
+    const ded    = hasRec ? (+rec.totalDeductions || 0) : ctx.getEmpStdDeductions(e);
+    /* Net is always Gross − Deductions of the values actually shown in the row.        */
+    const net    = gross - ded;
     const status = rec.status || 'Not Generated';
     gBasic += basic; gAllow += allow; gBonus += bonus; gGross += gross; gDed += ded; gNet += net;
     return `<tr><td>${i+1}</td><td><b>${getFullName(e)}</b></td><td>${e.eid}</td>
@@ -1005,7 +1060,11 @@ export function generateHrLeaveRegister(ctx) {
   const activeEmps = emps.filter(e => e.status === 'Active');
   const rows = activeEmps.map((e, i) => {
     const lv  = e.leaves || {};
-    const bal = lv.balance !== undefined ? lv.balance : (lv.annual || 0) + (lv.casual || 0) + (lv.sick || 0);
+    /* Balance = DB ka leaveBalance jab wo asal (>0) ho; warna kul allotted
+       (Annual + Casual + Sick). Pehle leaveApiToForm hamesha 0/'' deta tha (kabhi
+       undefined nahi), is liye fallback chalta hi nahi tha aur Balance 0 dikhta tha. */
+    const totalAllot = (Number(lv.annual) || 0) + (Number(lv.casual) || 0) + (Number(lv.sick) || 0);
+    const bal = (Number(lv.balance) > 0) ? Number(lv.balance) : totalAllot;
     return `<tr><td>${i+1}</td><td><b>${getFullName(e)}</b></td><td>${e.eid}</td>
       <td>${getDeptName(e.dId)||'—'}</td><td>${lv.policy||'Standard'}</td>
       <td class="r">${lv.annual||0}</td><td class="r">${lv.casual||0}</td>

@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import Tooltip from './Tooltip';
 import TutorialModal from './TutorialModal';
 import * as hrService from '../services/hrService';
+import * as attendanceService from '../services/attendanceService';
 import useAsync from '../hooks/useAsync';
 import { buildDocxFromHtml } from '../../utils/docx';
 import {
@@ -18,6 +19,54 @@ import {
 } from './hrReports';
 import { fetchReportHeader } from '../../utils/pdfReports';
 import { usePermissions } from '../context/PermissionsContext';
+
+/* Ek mahine ke ASLI working days + public holidays — Attendance ke SAME holiday-setup
+   (weekly-off + monthly holidays) se. Salary slip me pehle ye hardcoded the (Sundays
+   only + month se guessed holidays). month1 = 1..12.
+   Returns { daysInMonth, workingDays, publicHolidays, effectiveWorkingDays }. */
+const DAYS_ORDER = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+async function computeMonthWorkInfo(year, month1) {
+  const daysInMonth = new Date(year, month1, 0).getDate();
+  /* Weekly-off weekday indices (Mon=0 … Sun=6). */
+  let weeklyOff = [];
+  try {
+    const resp = await attendanceService.getWeeklyOffSetup();
+    weeklyOff = (resp?.data || [])
+      .map((it) => DAYS_ORDER.indexOf(it.WeekDay ?? it.weekDay))
+      .filter((i) => i >= 0);
+  } catch { /* setup na mile to weekly-off 0 */ }
+  /* Is month ke holiday dates. */
+  const holidayDates = new Set();
+  try {
+    const branchID  = Number(sessionStorage.getItem('branchID')) || 0;
+    const sessionID = await attendanceService.getActiveSessionID().catch(() => 0);
+    const res = await attendanceService.monthlySetup({
+      id: 0, branchID, sessionID, holidayTitle: '', description: '',
+      dateFrom: '', dateTo: '', month: month1, action: 'get', createdBy: 0, modifiedBy: 0, classIDs: [],
+    });
+    (res?.data || []).forEach((h) => {
+      const from = String(h.DateFrom ?? h.dateFrom ?? '').slice(0, 10);
+      const to   = String(h.DateTo ?? h.dateTo ?? '').slice(0, 10);
+      if (!from || !to) return;
+      const end = new Date(`${to}T00:00:00`);
+      for (let d = new Date(`${from}T00:00:00`); d <= end; d.setDate(d.getDate() + 1)) {
+        if (d.getFullYear() === year && d.getMonth() === month1 - 1) {
+          holidayDates.add(`${year}-${month1 - 1}-${d.getDate()}`);
+        }
+      }
+    });
+  } catch { /* holidays na mile to 0 */ }
+  /* Weekly-off din ginno; holidays sirf wo jo weekly-off par NAHI (double na gine). */
+  let weeklyOffCount = 0, publicHolidays = 0;
+  for (let day = 1; day <= daysInMonth; day++) {
+    const dowMon0 = (new Date(year, month1 - 1, day).getDay() + 6) % 7;
+    if (weeklyOff.includes(dowMon0)) weeklyOffCount++;
+    else if (holidayDates.has(`${year}-${month1 - 1}-${day}`)) publicHolidays++;
+  }
+  const workingDays = Math.max(0, daysInMonth - weeklyOffCount);
+  const effectiveWorkingDays = Math.max(0, workingDays - publicHolidays);
+  return { daysInMonth, workingDays, publicHolidays, effectiveWorkingDays };
+}
 
 /* ═══════════════════════════════════════════════════════════════════
    HUMAN RESOURCE module — entry point.
@@ -1448,15 +1497,41 @@ function Financials({ emps, depts = [], desigs, toast, canCreate = true, canDele
        Opening the report directly would otherwise show an empty statement
        (all zeros) even for employees who DO have loans — so fetch fresh here. */
     let empLoansForCtx = empLoans;
-    if (type === 'loan') {
+    /* Loan report AUR salary slip dono ko employee ki loan ledger chahiye: report ke
+       liye receiving/outstanding, aur slip ke "Loan / Advance Installment Status" section
+       (Principal/Repaid/Outstanding) ke liye. Pehle sirf loan report fetch karta tha, is
+       liye slip par loan progress khaali reh jata tha. */
+    if (type === 'loan' || type === 'salaryslip') {
       try {
         const loans = await hrService.getHrEmployeeLoans(emp.id);
         empLoansForCtx = { ...empLoans, [emp.id]: loans };
         setEmpLoans(prev => ({ ...prev, [emp.id]: loans }));   // cache for later use
       } catch (err) {
-        toast(err.message || 'Could not load loans for this employee', 'error');
-        return;
+        /* Loan report ke liye fail hona blocking hai; salary slip loan ke baghair bhi
+           ban jaye (baaki cheezein sahi rahengi). */
+        if (type === 'loan') { toast(err.message || 'Could not load loans for this employee', 'error'); return; }
       }
+    }
+
+    /* Salary slip ke leave/attendance cards ke liye REAL per-employee data — allotted
+       (casual/sick/annual) leave settings + is saal ka kul used YTD. Pehle ye slip me
+       hardcoded the (har staff same). Do API calls thodi slow hain magar values exact. */
+    let leaveInfoForCtx = null, workInfoForCtx = null;
+    if (type === 'salaryslip') {
+      const mk = picked.monthKey || '2026-05';
+      const [yStr, mStr] = String(mk).split('-');
+      const yNum = parseInt(yStr, 10) || 0, mNum = parseInt(mStr, 10) || 0;
+      const [settings, calc, workInfo] = await Promise.all([
+        hrService.getHrLeaveSettings(emp.id).catch(() => null),
+        hrService.calculateLeaveAbsentDeduction({
+          employeeID:   emp.id,
+          payrollMonth: mNum,
+          payrollYear:  yNum,
+        }).catch(() => null),
+        computeMonthWorkInfo(yNum, mNum).catch(() => null),
+      ]);
+      leaveInfoForCtx = { settings, calc };
+      workInfoForCtx  = workInfo;
     }
 
     const ctx = {
@@ -1464,6 +1539,8 @@ function Financials({ emps, depts = [], desigs, toast, canCreate = true, canDele
       getDeptName, getDesigName,
       empPayroll, empLoans: empLoansForCtx,
       branch,
+      leaveInfo: leaveInfoForCtx,
+      workInfo:  workInfoForCtx,
     };
     let html = '';
     if      (type === 'salaryslip') html = generateSalarySlipHTML(emp, picked.monthKey || '2026-05', style, ctx);
