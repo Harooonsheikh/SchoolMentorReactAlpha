@@ -85,6 +85,42 @@ const ILLUSTRATIONS = {
     ],
     foot: 'Onboarding assistance and staff training available from day one.',
   },
+  /* Network Head Office signup — same rail, network ki zubaan me. Individual
+     school wala `signup` copy branch/ek campus ki baat karta hai, ye poore
+     network aur uske multiple campuses ki. */
+  signupNetwork: {
+    eyebrow: 'Free trial — no card required',
+    headline: <>Bring your <span className="auth-hl">school network</span> together</>,
+    sub: 'Set up your head office in under 5 minutes and connect every campus under one account.',
+    journeyHead: 'What happens next',
+    steps: [
+      {
+        icon: 'fa-solid fa-user-plus',
+        title: 'Create your head office account',
+        desc: 'Just a phone number to begin — no credit card required.',
+        chips: ['Phone verify', 'Instant access'],
+      },
+      {
+        icon: 'fa-solid fa-building',
+        title: 'Add your campuses',
+        desc: 'Register each branch under the network and manage them from one dashboard.',
+        chips: ['Unlimited branches', 'Central control'],
+      },
+      {
+        icon: 'fa-solid fa-shield-halved',
+        title: 'Bank-grade security',
+        desc: 'Your network data is encrypted in transit and at rest.',
+        chips: ['Encrypted', 'Role-based access'],
+      },
+      {
+        icon: 'fa-solid fa-chart-pie',
+        title: 'Network-wide reporting',
+        desc: 'Compare fee, attendance and results across every campus in real time.',
+        chips: ['Consolidated reports', 'Branch comparison'],
+      },
+    ],
+    foot: 'Dedicated onboarding for head office and every branch team.',
+  },
 };
 
 export default function AuthLayout({

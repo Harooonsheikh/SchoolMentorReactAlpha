@@ -178,11 +178,15 @@ export default function LoginScreen({ onLogin, onSignup }) {
         if (data?.schoolNetwork) sessionStorage.setItem('net_schoolNetwork', data.schoolNetwork);
       } catch (_) { /* private mode — handoff phir bhi chalega */ }
 
+      /* `schoolNetwork` bhi saath bhejte hain: chain portal ka sidebar sabse
+         upar network ka naam dikhata hai, aur uske paas iska koi doosra
+         zariya nahi (wo apna login nahi karta). */
       const cspUser = {
-        id:          netId,
-        userName:    netPhone,
-        displayName: netName,
-        accountType: data?.accountType ?? 'network',
+        id:            netId,
+        userName:      netPhone,
+        displayName:   netName,
+        schoolNetwork: data?.schoolNetwork ?? null,
+        accountType:   data?.accountType ?? 'network',
       };
 
       /* Same-origin case (prod, jab dono ek hi domain par hon): seedha likh do. */
