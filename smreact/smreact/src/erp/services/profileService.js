@@ -1,5 +1,5 @@
 import { mockProfile } from '../mock/profile';
-import { buildUrl } from '../../utils/apiConfig';
+import { buildUrl, resolveMediaUrl } from '../../utils/apiConfig';
 
 const ssGet = (k) => (typeof sessionStorage !== 'undefined' ? sessionStorage.getItem(k) : null);
 
@@ -63,7 +63,7 @@ export async function getProfile() {
     campus:      ssGet('branchName') || ssGet('displayName') || d.departmentName || '',
     cnic:        d.cnic || '',
     language:    'English (UK)',
-    photo:       d.empImage || '',
+    photo:       resolveMediaUrl(d.empImage),
     memberSince: monthYear(d.dateOfJoining) || fallback.memberSince,
     lastLogin:   fallback.lastLogin,
   };

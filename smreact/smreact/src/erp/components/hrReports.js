@@ -15,6 +15,8 @@
 
 /* Local fallbacks — used only when the live /report-header API data is missing.
    The real branch name / logo / session come from ctx.branch (see resolveBranch). */
+import { resolveMediaUrl } from '../../utils/apiConfig';
+
 const SCHOOL = { name: 'School Mentor', tagline: 'Academic Year 2025–2026', monogram: 'SM' };
 
 /* Merge the live branch report-header (fetched from the /report-header API and
@@ -25,7 +27,10 @@ function resolveBranch(ctx) {
   const b = (ctx && ctx.branch) || {};
   return {
     name: b.branchName || SCHOOL.name,
-    logo: b.branchLogo || '',
+    /* Print windows load this over the network, so the API's stamped host
+       (localhost behind the proxy) has to be replaced with the media host —
+       otherwise every printed report comes out with a missing logo. */
+    logo: resolveMediaUrl(b.branchLogo),
     address: b.address || '',
     session: b.academicSession ? `Academic Year ${b.academicSession}` : SCHOOL.tagline,
     generatedDate: b.generatedDate ? String(b.generatedDate).slice(0, 10) : new Date().toISOString().slice(0, 10),

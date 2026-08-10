@@ -9,7 +9,7 @@ import {
   mockStuNextFamId,
 } from '../mock/students';
 import { delay, clone } from './_http';
-import { buildUrl, getBaseUrl, apiMessage, resolveMediaUrl } from '../../utils/apiConfig';
+import { buildUrl, apiMessage, resolveMediaUrl } from '../../utils/apiConfig';
 
 /* ═══════════════════════════════════════════════════════════════════
    Students Module — real API wiring (LaunchSetup).
@@ -48,17 +48,12 @@ const dateOnly = (v) => {
    dete hain; baqi (sahi host ya data:) jaise hain waise rehte hain. */
 export function stuFileUrl(u) {
   const v = String(u || '').trim();
-  if (!v) return '';
-  if (/^data:|^blob:/i.test(v)) return v;
-  const base = String(getBaseUrl() || '').replace(/\/+$/, '');
-  if (!/^https?:\/\//i.test(v)) return base ? `${base}${v.startsWith('/') ? v : `/${v}`}` : v;
-  try {
-    const { hostname, pathname, search } = new URL(v);
-    const isLoopback = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
-    return (isLoopback && base) ? `${base}${pathname}${search}` : v;
-  } catch {
-    return v;
-  }
+  if (/^blob:/i.test(v)) return v;          // just-picked local file, not from the API
+  /* Rewriting a loopback URL onto the API base is not enough: the app's own
+     origin does not serve /UploadedImages or /UploadedDocuments (they fall
+     through to the SPA and come back as index.html). resolveMediaUrl puts them
+     on the media host, the same way branch logos are handled. */
+  return resolveMediaUrl(v);
 }
 
 /* Standard document slots ↔ backend `documentType` strings. The UI keys its

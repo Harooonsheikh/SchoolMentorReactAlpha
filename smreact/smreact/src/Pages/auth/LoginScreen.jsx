@@ -7,12 +7,17 @@ import { normalizePkPhone } from '../../utils/phone';
 /* Network Head Office login kamyab hone par chain-schools-frontend (alag Vite app)
    ka portal khulta hai.
      • local dev  → :3002 (vite.config.js me strictPort)
-     • deployed   → :4106, REACT_APP_CHAIN_URL se (.env.production)
+     • deployed   → https://chain.schoolmentor.ai, REACT_APP_CHAIN_URL se (.env.production)
    Fallback sirf local dev ke liye hai: deployed par host to sahi banta tha magar
    port 3002 rehta tha, jahan kuch chal hi nahi raha — is liye wahan env var lazmi. */
-const CHAIN_APP_URL = String(
+const CHAIN_BASE_URL = String(
   process.env.REACT_APP_CHAIN_URL || `${window.location.protocol}//${window.location.hostname}:3002`
-).trim().replace(/\/+$/, '') + '/';   // hamesha ek hi trailing slash, taake "#session" theek lage
+).trim().replace(/\/+$/, '');
+
+/* Seedha dashboard par bhejte hain — chain app ka "/" waise bhi /dashboard par
+   redirect karta hai, magar us se ek extra navigation hoti hai. */
+const CHAIN_DASHBOARD_URL = `${CHAIN_BASE_URL}/dashboard`;
+
 
 /* Server ka asli error nikaalo — JSON object ho ya plain text. "Internal Server Error:"
    jaisa prefix hata do taake user ko sirf matlab ka message dikhe. */
@@ -178,21 +183,33 @@ export default function LoginScreen({ onLogin, onSignup }) {
         if (data?.schoolNetwork) sessionStorage.setItem('net_schoolNetwork', data.schoolNetwork);
       } catch (_) { /* private mode — handoff phir bhi chalega */ }
 
-      /* `schoolNetwork` bhi saath bhejte hain: chain portal ka sidebar sabse
-         upar network ka naam dikhata hai, aur uske paas iska koi doosra
-         zariya nahi (wo apna login nahi karta). */
+      /* Chain portal `name` render karta hai (sidebar + avatar initials), is liye
+         wo bhi bhejna zaroori hai — sirf displayName bhejne par wahan naam khali
+         aata tha. `schoolNetwork` bhi saath jata hai: sidebar sabse upar network
+         ka naam dikhata hai aur uske paas iska koi doosra zariya nahi (wo apna
+         login nahi karta). Baqi keys superset ke taur par rehti hain taake
+         purane build bhi na tootein. */
       const cspUser = {
         id:            netId,
+        name:          netName || netPhone || 'Head Office',
         userName:      netPhone,
         displayName:   netName,
         schoolNetwork: data?.schoolNetwork ?? null,
+        email:         data?.email || '',
+        role:          data?.accountType || 'Network Head Office',
         accountType:   data?.accountType ?? 'network',
       };
+
+      /* Poora login response bhi saath jata hai, taake chain portal ki koi bhi
+         screen wo field padh sake jo upar wale trimmed object me nahi hai.
+         Token alag ja raha hai, is liye yahan se nikaal dete hain. */
+      const { token: _handoffToken, ...profile } = data;
 
       /* Same-origin case (prod, jab dono ek hi domain par hon): seedha likh do. */
       try {
         localStorage.setItem('csp_token', data.token);
         localStorage.setItem('csp_user', JSON.stringify(cspUser));
+        localStorage.setItem('csp_session', JSON.stringify(profile));
       } catch (_) { /* private mode / quota — neeche wala hash handoff phir bhi chalega */ }
 
       /* Cross-origin case (dev: ERP :3000, chain :3002 — localStorage alag hota hai).
@@ -203,11 +220,13 @@ export default function LoginScreen({ onLogin, onSignup }) {
          hai (sirf A-Z a-z 0-9 - _ .), is liye encodeURIComponent uspar kuch nahi
          badalta — magar poore JSON ko encode karne se har `"` `{` `:` %XX ban kar
          URL bewajah lamba ho jata tha. Sirf user object ko encode karte hain. */
-      const handoff = `t=${data.token}&u=${encodeURIComponent(JSON.stringify(cspUser))}`;
+      const handoff = `t=${data.token}`
+        + `&u=${encodeURIComponent(JSON.stringify(cspUser))}`
+        + `&s=${encodeURIComponent(JSON.stringify(profile))}`;
       /* assign() nahi, replace(): assign history me entry chhorta hai, is liye
          chain portal par Back dabane par token wala URL dobara aa jata tha.
          replace() se login page history se hat jata hai aur token kahin nahi bachta. */
-      window.location.replace(`${CHAIN_APP_URL}#${handoff}`);
+      window.location.replace(`${CHAIN_DASHBOARD_URL}#${handoff}`);
       return;
     }
 

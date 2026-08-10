@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { buildUrl } from '../../../utils/apiConfig';
+import { buildUrl, resolveMediaUrl } from '../../../utils/apiConfig';
 
 /* ═══════════════════════════════════════════════════════════════════
    SETTINGS STORE — sessions + signatures + global current session
@@ -160,7 +160,7 @@ export async function apiGetEmployees() {
       id:          e.id,
       name:        `${e.firstName || ''} ${e.lastName || ''}`.trim() || `Employee #${e.id}`,
       designation: e.designationName || '',
-      image:       e.empImage || '',
+      image:       resolveMediaUrl(e.empImage),
     }));
 }
 

@@ -9,7 +9,7 @@ import {
   mockHrNextPayrollId,
 } from '../mock/hr';
 import { delay, clone } from './_http';
-import { buildUrl, apiMessage, getBaseUrl } from '../../utils/apiConfig';
+import { buildUrl, apiMessage, resolveMediaUrl } from '../../utils/apiConfig';
 
 /* The three allowance heads the backend stores as fixed employee columns
    (basicSalary + these 3 = the "4 basic" salary values). They render as
@@ -39,7 +39,9 @@ function mapEmployeeDocuments(list) {
   (Array.isArray(list) ? list : []).forEach(d => {
     const id   = d.id ?? d.ID ?? d.documentID ?? 0;
     const type = d.documentType ?? '';
-    const path = d.documentPath ?? d.path ?? '';
+    /* The API stamps these as http://localhost:4100/UploadedDocuments/... —
+       unusable in a browser, so re-host them like every other uploaded file. */
+    const path = resolveMediaUrl(d.documentPath ?? d.path ?? '');
     const key  = EMP_DOC_TYPE_TO_KEY[String(type).toLowerCase().trim()];
     if (key) stdDocs[key] = { id, path, type };
     else if (type) docs.push({ id, name: type, path });
@@ -761,7 +763,10 @@ function mapApiEmployeeToEmp(e) {
         .filter(h => h.name && !HR_FIXED_HEADS.includes(h.name)),
     ],
 
-    photo: e.empImage,
+    /* Staff photo — same treatment as the branch logo, otherwise the API's
+       stamped host (localhost behind the proxy) makes every avatar a broken
+       image on the deployed site. */
+    photo: resolveMediaUrl(e.empImage),
 
     /* Existing subject assignments → { "gradeId_sectionId": [subjectId] }, keyed
        and typed exactly like the assignment tree (real numeric ids) so the saved
@@ -918,13 +923,11 @@ export async function deleteHrEmployeeDocument(documentId) {
    employee — no type/subject/ref columns — so the letter's identity is
    carried in the uploaded file name and re-derived on read. */
 
-/* A stored file path → a browser-openable URL (absolute stays as-is; a
-   server-relative path gets the API base prefixed). */
+/* A stored file path → a browser-openable URL. The host the API stamped is
+   never usable (it is the request host — localhost behind the proxy), so this
+   goes through resolveMediaUrl exactly like branch logos do. */
 export function hrFileUrl(path) {
-  if (!path) return '';
-  if (/^https?:/i.test(path)) return path;
-  const base = getBaseUrl();
-  return `${base}${path.startsWith('/') ? '' : '/'}${path}`;
+  return resolveMediaUrl(path);
 }
 
 /* One API issue-letter row → the shape the UI list renders. Field names
