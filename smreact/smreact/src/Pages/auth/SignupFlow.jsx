@@ -18,6 +18,48 @@ const SIGNUP_URL = (isNetwork) => (isNetwork
   ? buildChainApiUrl('/api/AHM_Login_Users/network-signup')
   : buildUrl('/api/Registration/signup'));
 
+/* ── Screen copy: school vs network ──
+   Ek hi flow dono ke liye chalta hai, sirf alfaaz badalte hain. Network wala
+   Head Office banata hai (poora network + owner/chairman), school wala ek
+   branch. Sab text yahin se aata hai taake har step consistent rahe. */
+const COPY = {
+  school: {
+    illustration: 'signup',
+    step1Heading: 'Set up your school',
+    step1Tagline: 'Tell us about your branch and team',
+    nameLabel:    'Branch Name',
+    namePlaceholder: 'e.g. Gulberg Branch, Main Campus',
+    nameRequired: 'Branch name is required.',
+    ownerLabel:   'Owner / Principal Name',
+    ownerPlaceholder: 'e.g. Muhammad Ali',
+    ownerRequired: 'Owner name is required.',
+    emailPlaceholder: 'you@school.com',
+    passwordTagline: 'Choose a strong password to secure your account',
+    successTagline: 'Your school account has been created successfully',
+    successNameLabel: 'Branch',
+    successNameIcon: '🏫',
+    liveSuffix: 'is now live on SchoolMentor.',
+  },
+  network: {
+    illustration: 'signupNetwork',
+    step1Heading: 'Set up your school network',
+    step1Tagline: 'Tell us about your network and head office',
+    nameLabel:    'School Network Name',
+    namePlaceholder: 'e.g. Al-Noor Education Network',
+    nameRequired: 'Network name is required.',
+    ownerLabel:   'Owner / Chairman Name',
+    ownerPlaceholder: 'e.g. Muhammad Ali',
+    ownerRequired: 'Owner name is required.',
+    emailPlaceholder: 'you@network.com',
+    passwordTagline: 'Choose a strong password to secure your network account',
+    successTagline: 'Your school network account has been created successfully',
+    successNameLabel: 'Network',
+    successNameIcon: '🏢',
+    liveSuffix: 'network is now live on SchoolMentor.',
+  },
+};
+const copyFor = (isNetwork) => (isNetwork ? COPY.network : COPY.school);
+
 /* ── Country list ── */
 const COUNTRIES = [
   { code: 'PK', name: 'Pakistan',             flag: '🇵🇰', method: 'phone' },
@@ -91,6 +133,7 @@ function QA({ q, a }) {
 const fi = { fontSize: 14 };
 const ICONS = {
   home:   <i className="fa-solid fa-house"          style={fi} />,
+  network:<i className="fa-solid fa-building"       style={fi} />,
   user:   <i className="fa-solid fa-user"           style={fi} />,
   phone:  <i className="fa-solid fa-mobile-screen"  style={fi} />,
   email:  <i className="fa-solid fa-envelope"       style={fi} />,
@@ -101,10 +144,11 @@ const ICONS = {
 /* ═══════════════════════════════════
    STEP 1 — Branch / Owner / Country
 ═══════════════════════════════════ */
-function StepBranchOwner({ data, onChange, onNext, onBack }) {
+function StepBranchOwner({ data, onChange, onNext, onBack, isNetwork }) {
   const [error,       setError]       = useState('');
   const [dropOpen,    setDropOpen]    = useState(false);
   const dropRef = useRef(null);
+  const c = copyFor(isNetwork);
 
   useEffect(() => {
     function close(e) { if (dropRef.current && !dropRef.current.contains(e.target)) setDropOpen(false); }
@@ -115,27 +159,27 @@ function StepBranchOwner({ data, onChange, onNext, onBack }) {
   const selected = COUNTRIES.find(c => c.code === data.countryCode) || null;
 
   function next() {
-    if (!data.branchName.trim()) { setError('Branch name is required.'); return; }
-    if (!data.ownerName.trim())  { setError('Owner name is required.'); return; }
+    if (!data.branchName.trim()) { setError(c.nameRequired); return; }
+    if (!data.ownerName.trim())  { setError(c.ownerRequired); return; }
     if (!data.countryCode)       { setError('Please select your country.'); return; }
     if (selected) saveCountrySession(selected);
     setError(''); onNext();
   }
 
   return (
-    <AuthLayout illustration="signup" heading="Set up your school"
-      tagline="Tell us about your branch and team" step={1} totalSteps={5}>
+    <AuthLayout illustration={c.illustration} heading={c.step1Heading}
+      tagline={c.step1Tagline} step={1} totalSteps={5}>
       {error && <ErrBox msg={error} />}
 
-      <Label text="Branch Name" />
-      <InputWrap icon={ICONS.home}>
-        <input className="auth-input" placeholder="e.g. Gulberg Branch, Main Campus"
+      <Label text={c.nameLabel} />
+      <InputWrap icon={isNetwork ? ICONS.network : ICONS.home}>
+        <input className="auth-input" placeholder={c.namePlaceholder}
           value={data.branchName} onChange={e => onChange('branchName', e.target.value)} />
       </InputWrap>
 
-      <Label text="Owner / Principal Name" />
+      <Label text={c.ownerLabel} />
       <InputWrap icon={ICONS.user}>
-        <input className="auth-input" placeholder="e.g. Muhammad Ali"
+        <input className="auth-input" placeholder={c.ownerPlaceholder}
           value={data.ownerName} onChange={e => onChange('ownerName', e.target.value)} />
       </InputWrap>
 
@@ -229,7 +273,7 @@ localStorage.setItem('signup_otp', otpFromServer);
 }
 
   return (
-    <AuthLayout illustration="signup" heading="Your phone number"
+    <AuthLayout illustration={copyFor(isNetwork).illustration} heading="Your phone number"
       tagline="We'll send a 4-digit verification code" step={2} totalSteps={5}>
       {error && <ErrBox msg={error} />}
       <Label text="Phone Number" />
@@ -293,12 +337,12 @@ function StepEmail({ data, onChange, onNext, onBack, isNetwork }) {
   }
 }
   return (
-    <AuthLayout illustration="signup" heading="Your email address"
+    <AuthLayout illustration={copyFor(isNetwork).illustration} heading="Your email address"
       tagline="We'll send a 4-digit verification code" step={2} totalSteps={5}>
       {error && <ErrBox msg={error} />}
       <Label text="Email Address" />
       <InputWrap icon={ICONS.email}>
-        <input className="auth-input" type="email" placeholder="you@school.com"
+        <input className="auth-input" type="email" placeholder={copyFor(isNetwork).emailPlaceholder}
           value={data.email} onChange={e => onChange('email', e.target.value)}
           onKeyDown={e => e.key === 'Enter' && next()} />
       </InputWrap>
@@ -389,7 +433,7 @@ localStorage.setItem('signup_otp', otpFromServer);
 
 
   return (
-    <AuthLayout illustration="signup" heading="Verify your account"
+    <AuthLayout illustration={copyFor(isNetwork).illustration} heading="Verify your account"
       tagline={`4-digit code sent to ${dest || 'your contact'}`} step={3} totalSteps={5}>
       {error && <ErrBox msg={error} />}
 
@@ -422,7 +466,8 @@ localStorage.setItem('signup_otp', otpFromServer);
 /* ═══════════════════════════════════
    STEP 4 — Password
 ═══════════════════════════════════ */
-function StepPassword({ data,onChange,  onNext, onBack }) {
+function StepPassword({ data,onChange,  onNext, onBack, isNetwork }) {
+  const c = copyFor(isNetwork);
   const [password, setPassword] = useState('');
   const [confirm,  setConfirm]  = useState('');
   const [showP,    setShowP]    = useState(false);
@@ -444,8 +489,8 @@ function StepPassword({ data,onChange,  onNext, onBack }) {
   }
 
   return (
-    <AuthLayout illustration="signup" heading="Create your password"
-      tagline="Choose a strong password to secure your account" step={4} totalSteps={5}>
+    <AuthLayout illustration={c.illustration} heading="Create your password"
+      tagline={c.passwordTagline} step={4} totalSteps={5}>
       {error && <ErrBox msg={error} />}
 
       <Label text="Password" />
@@ -548,7 +593,7 @@ function StepTerms({ data, onAccept, onBack, isNetwork }) {
   
 
   return (
-    <AuthLayout illustration="signup" heading="Terms & Conditions"
+    <AuthLayout illustration={copyFor(isNetwork).illustration} heading="Terms & Conditions"
       tagline="Please review our privacy policy before continuing" step={5} totalSteps={5}>
       {error && <ErrBox msg={error} />}
 
@@ -642,8 +687,9 @@ function StepTerms({ data, onAccept, onBack, isNetwork }) {
 ═══════════════════════════════════ */
 function StepSuccess({ data, onGoToLogin, isNetwork }) {
   const country = getCountrySession();
+  const c = copyFor(isNetwork);
   const rows = [
-    ['🏫', 'Branch',    data.branchName],
+    [c.successNameIcon, c.successNameLabel, data.branchName],
     ['📍', 'Country',   `${country.flag || ''} ${country.name || ''}`],
     [country.verificationMethod === 'phone' ? '📱' : '📧',
       'Verified via',
@@ -653,16 +699,14 @@ function StepSuccess({ data, onGoToLogin, isNetwork }) {
   ];
 
   return (
-    <AuthLayout illustration="signup" heading="You're all set! 🎉"
-      tagline={isNetwork
-        ? 'Your school network account has been created successfully'
-        : 'Your school account has been created successfully'}>
+    <AuthLayout illustration={c.illustration} heading="You're all set! 🎉"
+      tagline={c.successTagline}>
       <div style={{textAlign:'center',padding:'8px 0'}}>
         <div style={{width:72,height:72,borderRadius:'50%',background:'linear-gradient(135deg,#1565C0,#1DB88A)',display:'flex',alignItems:'center',justifyContent:'center',margin:'0 auto 16px',boxShadow:'0 8px 24px rgba(29,184,138,.35)'}}>
           <svg width={36} height={36} viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth={2.5} strokeLinecap="round"><polyline points="20 6 9 17 4 12"/></svg>
         </div>
         <h3 style={{margin:'0 0 4px',color:'#0F172A',fontSize:18,fontWeight:800}}>Welcome, {data.ownerName}!</h3>
-        <p style={{color:'#64748B',fontSize:13,margin:'0 0 18px'}}>{data.branchName} is now live on SchoolMentor.</p>
+        <p style={{color:'#64748B',fontSize:13,margin:'0 0 18px'}}>{data.branchName} {c.liveSuffix}</p>
       </div>
 
       <div style={{background:'#F0FDF4',border:'1px solid #86EFAC',borderRadius:12,padding:'12px 14px',marginBottom:20,display:'flex',flexDirection:'column',gap:8}}>
@@ -697,7 +741,7 @@ export default function SignupFlow({ onBack, onComplete, isNetwork = false }) {
     ? <StepPhone  data={form} onChange={update} onNext={() => setStep(3)} onBack={() => setStep(1)} isNetwork={isNetwork} />
     : <StepEmail  data={form} onChange={update} onNext={() => setStep(3)} onBack={() => setStep(1)} isNetwork={isNetwork} />;
   if (step === 3) return <StepOTP      data={form} onChange={update} onNext={() => setStep(4)} onBack={() => setStep(2)} isNetwork={isNetwork} />;
-  if (step === 4) return <StepPassword    data={form}   onChange={update} onNext={() => setStep(5)} onBack={() => setStep(3)} />;
+  if (step === 4) return <StepPassword    data={form}   onChange={update} onNext={() => setStep(5)} onBack={() => setStep(3)} isNetwork={isNetwork} />;
   if (step === 5) return <StepTerms      data={form}         onAccept={() => setStep(6)} onBack={() => setStep(4)} isNetwork={isNetwork} />;
   if (step === 6) return <StepSuccess  data={form} onGoToLogin={onComplete} isNetwork={isNetwork} />;
 }
