@@ -30,18 +30,13 @@ export function psidOf(rec) {
   return digits;
 }
 
-/* Chhapne ke liye 4-4 ke groups me — 432198765432 → 4321-9876-5432.
+/* Challan par PSID plain digits me chhapta hai — koi dash/space nahi.
 
-   Grouping DAAYEN se hoti hai, is liye chhota group (agar length 4 ka
-   multiple na ho) shuru me aata hai. 1Link ke asli 17-digit PSID par
-   baayen-se grouping "3000-3260-7166-2408-3" deti thi — aakhir me akela
-   digit parhne/type karne me ghalti karwata hai. Ab: "3-0003-2607-1662-4083". */
+   Pehle yahan 4-4 ke groups (3-0003-2607-1662-4083) bante the, magar banking
+   app me PSID bilkul waise hi enter hota hai jaise hai; dashes dekh kar log
+   unhe bhi type kar dete the ya digits count karne me ghalti karte the. */
 export function formatPsid(psid) {
-  const d = String(psid || '').replace(/\D/g, '');
-  if (!d) return '';
-  const head = d.length % 4;
-  const groups = d.slice(head).match(/.{4}/g) || [];
-  return (head ? [d.slice(0, head), ...groups] : groups).join('-');
+  return String(psid || '').replace(/\D/g, '');
 }
 
 export async function getReportHeader() {

@@ -10070,7 +10070,7 @@ const FEE_SCHOOL = {
    block bilkul nahi chhapta (ghalat number chhapne se behtar hai). */
 const psidOf = (rec) => feeService.psidOf(rec);
 
-/* Challan par dikhne wala grouped form — 432198765432 → 4321-9876-5432. */
+/* Challan par dikhne wala form — plain digits, koi dash nahi. */
 const psidPretty = (psid) => feeService.formatPsid(psid);
 
 /* QR asli PSID se banta hai (pehle ek decorative SVG tha jo kisi bhi
