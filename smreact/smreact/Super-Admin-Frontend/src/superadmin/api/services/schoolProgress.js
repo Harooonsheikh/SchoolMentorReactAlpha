@@ -105,9 +105,12 @@ export function branchReportToRow(r) {
     signupDate:  signupDate(g.createdAt),
     tabs,
     comp,
-    /* ERP card par dikhne wale counters is API me nahi hain — 0 se shuru,
-       taake card ghalat aankday na dikhaye. */
-    logins: 0, workTime: '00:00:00', notes: 0, calls: 0, messages: 0,
+    /* branch-report sirf totalLogins deti hai. Notes/Calls/Messages aur
+       onboarding ka count follow-up/onboarding-card-action se aata hai —
+       SchoolStatus un rows ko load kar ke ye counters bhar deta hai
+       (attachCardCounts). Working Time abhi kisi API me nahi hai. */
+    logins: Number(r?.totalLogins ?? 0),
+    workTime: '00:00:00', notes: 0, calls: 0, messages: 0,
     onboarding: { completed: 0, total: 15 },
     category: r?.category || '',
     raw: r,
@@ -256,6 +259,34 @@ export async function listCardActions({ branchId, headType = '', subHeadType = '
   );
   const rows = Array.isArray(json?.data) ? json.data : [];
   return rows.map(cardRowToUi).filter((r) => r.id);
+}
+
+/**
+ * Ek branch ke cards → wohi counters jo ERP card ke chips par chahiye.
+ * @returns {{ notes: number, calls: number, messages: number, onboardingDone: number }}
+ */
+export function countCardRows(rows = []) {
+  const sub = (name) => rows.filter((r) => r.headType === CARD_HEADS.followup && r.subHeadType === name).length;
+  /* Ek module "done" tab hai jab uske against kam se kam ek comment ho —
+     wahi rule jo detail modal ke obModules par chalta hai. */
+  const doneModules = new Set(
+    rows.filter((r) => r.headType === CARD_HEADS.onboarding && r.subHeadType).map((r) => r.subHeadType),
+  );
+  return { notes: sub('Notes'), calls: sub('Calls'), messages: sub('Messages'), onboardingDone: doneModules.size };
+}
+
+/**
+ * Kai branches ke counters ek saath. branch-report in me se koi bhi nahi deti,
+ * is liye har branch ke cards ek baar padhte hain (sab calls parallel, wahi
+ * tareeqa jo Enquiries loader use karta hai).
+ * @returns {Promise<Object>} { [branchId]: { notes, calls, messages, onboardingDone } }
+ */
+export async function listCardCounts(branchIds = []) {
+  const ids = [...new Set(branchIds.map(Number).filter(Boolean))];
+  const lists = await Promise.all(ids.map((id) => listCardActions({ branchId: id }).catch(() => [])));
+  const out = {};
+  ids.forEach((id, i) => { out[id] = countCardRows(lists[i]); });
+  return out;
 }
 
 /** Ek entry hatao. */

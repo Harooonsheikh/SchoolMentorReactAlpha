@@ -200,6 +200,20 @@ export async function listManuals(manualHeadId) {
   return rows.map(manualToUi).filter((m) => m.id);
 }
 
+/**
+ * Har head ke manuals ki ginti — sidebar ke badges aur "delete empty category"
+ * guard ke liye. Screen ke paas sirf khuli hui head ke manuals hote hain, is
+ * liye baqi heads ki ginti yahan se aati hai (sab calls parallel).
+ * @returns {Promise<Object>} { [manualHeadId]: count }
+ */
+export async function listManualCounts(headIds = []) {
+  const ids = [...new Set(headIds.map(Number).filter(Boolean))];
+  const lists = await Promise.all(ids.map((id) => listManuals(id).catch(() => [])));
+  const out = {};
+  ids.forEach((id, i) => { out[id] = lists[i].length; });
+  return out;
+}
+
 /** action: insert | update — `editId` ho to update. */
 export function saveManual(form, editId) {
   const isEdit = Number(editId) > 0;
@@ -355,7 +369,7 @@ export function deleteForm(id, manualId) {
 
 const schoolSopsService = {
   listManualHeads, saveManualHead, deleteManualHead, headToCategory,
-  listManuals, saveManual, deleteManual, manualToUi,
+  listManuals, listManualCounts, saveManual, deleteManual, manualToUi,
   listForms, saveForm, deleteForm, formToUi,
 };
 export default schoolSopsService;

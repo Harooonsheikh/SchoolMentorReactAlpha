@@ -725,6 +725,15 @@ export const SA_CSS = `
 .sa-root .em-tr-save{display:flex;justify-content:flex-end}
 .sa-root .em-tr-save-btn{display:inline-flex;align-items:center;gap:6px;height:36px;padding:0 18px;border-radius:var(--r-md);border:none;background:linear-gradient(135deg,#1E3A8A,#1E40AF);color:#fff;font-size:13px;font-weight:700;box-shadow:0 3px 10px rgba(30,58,138,.22);transition:var(--tr);cursor:pointer}
 .sa-root .em-tr-save-btn:hover{transform:translateY(-1px)}
+.sa-root .em-tr-save-btn:disabled{opacity:.6;cursor:default;transform:none}
+/* Koi training session add na hua ho (ya list load ho rahi ho) — dashed box. */
+.sa-root .em-tr-empty{background:var(--card);border:1.5px dashed var(--bm);border-radius:var(--r-lg);padding:20px;margin-bottom:16px;text-align:center;font-size:12px;font-weight:600;color:var(--tm)}
+/* Har session card ke edit/delete buttons — header ke daayen kinare par. */
+.sa-root .em-tr-acts{display:flex;gap:6px;margin-left:auto;flex-shrink:0}
+.sa-root .em-tr-act{width:28px;height:28px;border-radius:8px;border:1.5px solid var(--bl);background:var(--card);color:var(--tm);font-size:11px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;transition:var(--tr)}
+.sa-root .em-tr-act:hover{color:var(--t1);border-color:var(--bm)}
+.sa-root .em-tr-act:disabled{opacity:.5;cursor:default}
+.sa-root .em-tr-act.danger:hover{color:#fca5a5;border-color:rgba(220,38,38,.45);background:rgba(220,38,38,.12)}
 
 /* ── ENQUIRIES ── */
 .sa-root .enq-filter-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:16px}
@@ -1081,6 +1090,11 @@ export const SA_CSS = `
 .sa-root .sop-cat-btn.active{background:linear-gradient(135deg,#1E3A8A,#1E40AF);color:#fff;border-color:transparent;box-shadow:0 3px 10px rgba(30,58,138,.28)}
 .sa-root .sop-cat-count{background:rgba(255,255,255,.22);color:#fff;border-radius:99px;padding:1px 7px;font-size:10px;font-weight:800}
 .sa-root .sop-cat-btn:not(.active) .sop-cat-count{background:rgba(30,58,138,.1);color:var(--brand)}
+/* Inactive manual head list me rehta hai (edit/activate karne ke liye), bas
+   dabaa hua dikhta hai aur apna status badge saath rakhta hai. */
+.sa-root .sop-cat-btn.off:not(.active){border-style:dashed;color:var(--tm)}
+.sa-root .sop-cat-state{background:rgba(217,119,6,.14);color:#B45309;border-radius:99px;padding:1px 7px;font-size:9.5px;font-weight:800;letter-spacing:.3px;text-transform:uppercase}
+.sa-root .sop-cat-btn.active .sop-cat-state{background:rgba(255,255,255,.22);color:#fff}
 .sa-root .sop-cat-edit-btn{width:26px;height:26px;border-radius:7px;border:none;background:rgba(255,255,255,.18);color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;cursor:pointer;transition:var(--tr);flex-shrink:0}
 .sa-root .sop-cat-btn:not(.active) .sop-cat-edit-btn{background:rgba(30,58,138,.08);color:var(--brand)}
 .sa-root .sop-cat-edit-btn:hover{background:rgba(255,255,255,.35)}

@@ -31,6 +31,12 @@ export default function OperationalSops({ toast }) {
   const toastRef = useRef(toast);
   toastRef.current = toast;
 
+  /* Har head ke manuals ki ginti — sidebar ke badge par. `data.manuals` me
+     sirf khuli hui head ke manuals hote hain, is liye ginti wahan se lena
+     ghalat tha: doosri head kholte hi pehli ka badge 0 ho jata tha (aur uspar
+     "Delete empty category" bhi khul jata tha, chahe manuals mojood hon). */
+  const [catCounts, setCatCounts] = useState({});   // { [headId]: count }
+
   const loadCats = useCallback(async () => {
     setCatsLoading(true);
     try {
@@ -38,6 +44,9 @@ export default function OperationalSops({ toast }) {
       setData((d) => ({ ...d, cats }));
       /* Jo category khuli hui thi wo ab na ho to pehli par chale jao. */
       setActiveCat((cur) => (cats.some((c) => c.id === cur) ? cur : (cats[0]?.id ?? null)));
+      schoolSopsApi.listManualCounts(cats.map((c) => c.id))
+        .then(setCatCounts)
+        .catch(() => { /* badge optional — list baqi sab dikhati rahe */ });
     } catch (err) {
       toastRef.current?.(err?.message || 'Could not load manual heads', 'error');
     } finally {
@@ -60,6 +69,9 @@ export default function OperationalSops({ toast }) {
     try {
       const manuals = await schoolSopsApi.listManuals(headId);
       setData((d) => ({ ...d, manuals }));
+      /* Khuli head ka badge yahin se taza — add/delete ke baad dobara bulk
+         count mangwane ki zaroorat nahi. */
+      setCatCounts((c) => ({ ...c, [headId]: manuals.length }));
     } catch (err) {
       setData((d) => ({ ...d, manuals: [] }));
       toastRef.current?.(err?.message || 'Could not load manuals', 'error');
@@ -221,7 +233,7 @@ export default function OperationalSops({ toast }) {
     setModal(null); toast?.('Deleted successfully', 'info');
   };
 
-  const manualCount = (catId) => data.manuals.filter((m) => m.catId === catId).length;
+  const manualCount = (catId) => catCounts[catId] ?? 0;
 
   return (
     <div className="page-content" onClick={() => setOpenDd(null)}>
@@ -261,8 +273,11 @@ export default function OperationalSops({ toast }) {
           const count = manualCount(c.id);
           const isActive = c.id === activeCat;
           return (
-            <button key={c.id} className={`sop-cat-btn${isActive ? ' active' : ''}`} onClick={() => setActiveCat(c.id)}>
+            <button key={c.id} className={`sop-cat-btn${isActive ? ' active' : ''}${c.status === 'inactive' ? ' off' : ''}`} onClick={() => setActiveCat(c.id)}>
               <i className={`fa-solid fa-folder${isActive ? '-open' : ''}`} /> {c.title}
+              {/* Inactive head list se ghayab nahi hota — sirf badge se pata
+                  chalta hai, taake usay khol kar edit bhi kiya ja sake. */}
+              {c.status === 'inactive' && <span className="sop-cat-state" data-tip="This manual head is inactive">Inactive</span>}
               <span className="sop-cat-count">{count}</span>
               <span className="sop-cat-edit-btn" data-tip="Edit category" onClick={(e) => { e.stopPropagation(); setModal({ type: 'cat', cat: c }); }}><i className="fa-solid fa-pen" /></span>
               {count === 0
@@ -287,12 +302,12 @@ export default function OperationalSops({ toast }) {
         </div>
         <div className="tbl-wrap">
           <table className="sop-table">
-            <thead><tr><th style={{ width: 44 }}>S.No.</th><th>Manual Head Title</th><th style={{ width: 140, textAlign: 'center' }}>PDF Manual</th><th style={{ width: 120, textAlign: 'center' }}>Tutorial</th><th style={{ width: 100, textAlign: 'center' }}>Action</th></tr></thead>
+            <thead><tr><th style={{ width: 44 }}>S.No.</th><th>Manual Head Title</th><th style={{ width: 140, textAlign: 'center' }}>PDF Manual</th><th style={{ width: 120, textAlign: 'center' }}>Tutorial</th><th style={{ width: 100, textAlign: 'center' }}>Status</th><th style={{ width: 100, textAlign: 'center' }}>Action</th></tr></thead>
             <tbody>
               {manualsLoading ? (
-                <tr><td colSpan={5} style={{ textAlign: 'center', padding: 44, color: 'var(--tm)' }}><i className="fa-solid fa-spinner fa-spin" style={{ fontSize: 24, opacity: 0.5, display: 'block', margin: '0 auto 10px' }} /><div style={{ fontSize: 14, fontWeight: 700 }}>Loading manuals…</div></td></tr>
+                <tr><td colSpan={6} style={{ textAlign: 'center', padding: 44, color: 'var(--tm)' }}><i className="fa-solid fa-spinner fa-spin" style={{ fontSize: 24, opacity: 0.5, display: 'block', margin: '0 auto 10px' }} /><div style={{ fontSize: 14, fontWeight: 700 }}>Loading manuals…</div></td></tr>
               ) : manuals.length === 0 ? (
-                <tr><td colSpan={5} style={{ textAlign: 'center', padding: 44, color: 'var(--tm)' }}><i className="fa-solid fa-book" style={{ fontSize: 28, opacity: 0.2, display: 'block', margin: '0 auto 10px' }} /><div style={{ fontSize: 14, fontWeight: 700 }}>No manuals found</div><div style={{ fontSize: 12, marginTop: 4 }}>Click "+ Add New Manual Detail" to add one.</div></td></tr>
+                <tr><td colSpan={6} style={{ textAlign: 'center', padding: 44, color: 'var(--tm)' }}><i className="fa-solid fa-book" style={{ fontSize: 28, opacity: 0.2, display: 'block', margin: '0 auto 10px' }} /><div style={{ fontSize: 14, fontWeight: 700 }}>No manuals found</div><div style={{ fontSize: 12, marginTop: 4 }}>Click "+ Add New Manual Detail" to add one.</div></td></tr>
               ) : manuals.map((m, idx) => {
                 const pdf = hasPdf(m); const vid = hasVideo(m); const formCount = m.forms ? m.forms.length : 0;
                 return (
@@ -316,6 +331,12 @@ export default function OperationalSops({ toast }) {
                       <td data-label="Tutorial" style={{ textAlign: 'center' }}>
                         {vid ? <button className="sop-btn-view" style={{ background: 'linear-gradient(135deg,#15803d,#16a34a)' }} onClick={() => setModal({ type: 'video', manual: m })}><i className="fa-solid fa-circle-play" /> Watch</button> : <span className="sop-badge-soon">Coming Soon</span>}
                       </td>
+                      {/* API ka `isActive` — manualToUi ise status me badal deta hai. */}
+                      <td data-label="Status" style={{ textAlign: 'center' }}>
+                        {m.status === 'inactive'
+                          ? <span className="badge b-red"><i className="fa-solid fa-circle-xmark" /> Inactive</span>
+                          : <span className="badge b-green"><i className="fa-solid fa-circle-check" /> Active</span>}
+                      </td>
                       <td data-label="Action" style={{ textAlign: 'center' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 5, justifyContent: 'center' }}>
                           <div style={{ position: 'relative' }}>
@@ -337,7 +358,7 @@ export default function OperationalSops({ toast }) {
                       </td>
                     </tr>
                     {openForms[m.id] && (
-                      <tr className="sop-expand-row"><td colSpan={5}>
+                      <tr className="sop-expand-row"><td colSpan={6}>
                         <div className="sop-forms-box open">
                           <button className="sop-btn-view" style={{ height: 30, fontSize: 11.5, marginBottom: (m.forms && m.forms.length) ? 8 : 0 }} onClick={() => setModal({ type: 'form', manualId: m.id, manualTitle: m.title, form: null })}><i className="fa-solid fa-plus" /> Add Form</button>
                           {formsLoading[m.id] ? (

@@ -91,7 +91,39 @@ export default function SchoolStatus({ toast }) {
      naam-resolve par woh dobara na chale.) */
   const named = useCallback((rows) => rows.map((s) => ({ ...s, assigned: userName(s.assignedId, s.assigned) })), [userName]);
   const launchRows = useMemo(() => named(launch), [named, launch]);
-  const erpRows = useMemo(() => named(erp), [named, erp]);
+
+  /* ── ERP card ke counters ──
+     branch-report sirf totalLogins deti hai; Notes/Calls/Messages aur
+     onboarding ka "completed" follow-up/onboarding-card-action se aate hain.
+     Ye map wahan se bharta hai — bulk loader se (list khulte hi) aur detail
+     modal se (har save/delete ke baad), taake card foran sahi ginti dikhaye. */
+  const [cardCounts, setCardCounts] = useState({});   // { [branchId]: { notes, calls, messages, onboardingDone } }
+  const setCountsFor = useCallback((branchId, counts) => {
+    setCardCounts((prev) => ({ ...prev, [branchId]: counts }));
+  }, []);
+
+  const erpRows = useMemo(() => named(erp).map((s) => {
+    const c = cardCounts[s.id];
+    if (!c) return s;
+    return {
+      ...s,
+      notes: c.notes,
+      calls: c.calls,
+      messages: c.messages,
+      onboarding: { ...s.onboarding, completed: c.onboardingDone },
+    };
+  }), [named, erp, cardCounts]);
+
+  /* Ek hi ERP list ke liye ek hi baar — 18 calls baar baar nahi jaatin. */
+  const cardsLoadedFor = useRef(null);
+  useEffect(() => {
+    if (tab !== 'erp' || !erp.length) return;
+    if (cardsLoadedFor.current === erp) return;
+    cardsLoadedFor.current = erp;
+    schoolProgressApi.listCardCounts(erp.map((s) => s.id))
+      .then(setCardCounts)
+      .catch(() => { /* counters optional — card baqi sab kuch dikhata rahe */ });
+  }, [tab, erp]);
 
   /* Per-ERP-school detail (lazy-built) + enquiries, lifted so modal edits persist. */
   const [details, setDetails] = useState({});
@@ -322,7 +354,7 @@ export default function SchoolStatus({ toast }) {
       )}
       {modal?.type === 'erpDetail' && (
         <ErpDetailModal school={modal.school} detail={ensureDetail(modal.school)} patchDetail={patchDetail}
-          toast={toast} onClose={() => setModal(null)} />
+          onCounts={setCountsFor} toast={toast} onClose={() => setModal(null)} />
       )}
       {/* onAdd: jo tab khula hai wahi naye bug ka status tay karta hai —
           Open tab → isSolved false, Resolved tab → isSolved true. */}
@@ -648,13 +680,17 @@ function ConfirmModal({ tone, icon, title, sub, confirmText, confirmClass, confi
 }
 
 /* ═══════════════════════ ERP DETAIL MODAL ═══════════════════════ */
-function ErpDetailModal({ school: s, detail, patchDetail, toast, onClose }) {
+function ErpDetailModal({ school: s, detail, patchDetail, onCounts, toast, onClose }) {
   const [sect, setSect] = useState('progress');
   const [follow, setFollow] = useState('notes');
   const [addType, setAddType] = useState(null);     // 'note' | 'call' | 'message'
   const [editItem, setEditItem] = useState(null);   // edit ho rahi entry (warna null)
   const [histIdx, setHistIdx] = useState(null);
   const [savingCard, setSavingCard] = useState(false);
+  /* Onboarding grid me 15 cards hain — spinner sirf usi module par chale jo
+     abhi save ho raha hai, is liye yahan boolean nahi, module ki key rakhi
+     jati hai (savingCard sab par ek saath spinner chala deta tha). */
+  const [savingOb, setSavingOb] = useState(null);
 
   /* Follow-up Card aur Onboarding Card dono ek hi API par jate hain:
        POST /api/AHM_School_Progress/followup/onboarding-card-action
@@ -672,6 +708,9 @@ function ErpDetailModal({ school: s, detail, patchDetail, toast, onClose }) {
   const loadCards = useCallback(async () => {
     try {
       const rows = await schoolProgressApi.listCardActions({ branchId: s.id });
+      /* Wahi rows list ke chips bhi chalate hain — har save/delete ke baad
+         card ki ginti server ke sath sync ho jati hai. */
+      onCounts?.(s.id, schoolProgressApi.countCardRows(rows));
       const H = schoolProgressApi.CARD_HEADS;
       const pick = (sub) => rows
         .filter((r) => r.headType === H.followup && r.subHeadType === sub)
@@ -719,6 +758,9 @@ function ErpDetailModal({ school: s, detail, patchDetail, toast, onClose }) {
         const k = type === 'note' ? 'notes' : type === 'call' ? 'calls' : 'messages';
         return { ...cur, [k]: cur[k].filter((x) => x.id !== id) };
       });
+      /* Upar wala patch sirf foran ka feedback hai; asli ginti (aur list ke
+         chips) server se dobara padh kar hi set hoti hai — jaise save karta hai. */
+      await loadCards();
       toast?.('Deleted', 'info');
     } catch (err) {
       toast?.(err?.message || 'Could not delete', 'error');
@@ -817,11 +859,11 @@ function ErpDetailModal({ school: s, detail, patchDetail, toast, onClose }) {
             </div>
             <div className="em-ob-grid">
               {d.obModules.map((m, i) => (
-                <ObCard key={m.key} m={m} idx={i} saving={savingCard}
+                <ObCard key={m.key} m={m} idx={i} saving={savingOb === m.key}
                   onSave={async (comment, date) => {
                     if (!comment && !date) { toast?.('Enter comment or date first', 'warn'); return; }
-                    if (savingCard) return;
-                    setSavingCard(true);
+                    if (savingOb) return;
+                    setSavingOb(m.key);
                     try {
                       /* Sub-head = isi module ka naam (Academics, Examination, …). */
                       await saveCard({
@@ -832,13 +874,13 @@ function ErpDetailModal({ school: s, detail, patchDetail, toast, onClose }) {
                       });
                     } catch (err) {
                       toast?.(err?.message || 'Could not save', 'error');
-                      setSavingCard(false);
+                      setSavingOb(null);
                       return;
                     }
                     /* Cards dobara API se — comment/date/history server ke
                        mutabiq (local copy banane ki zaroorat nahi). */
                     await loadCards();
-                    setSavingCard(false);
+                    setSavingOb(null);
                     toast?.(`${m.name} saved!`, 'success');
                   }}
                   onHistory={() => setHistIdx(i)} />
@@ -962,8 +1004,11 @@ function FollowList({ type, items, onAdd, onEdit, onDelete, toast }) {
                   </div>
                 </div>
                 <div className="fu-card-actions">
-                  <button className="fu-act-btn edit" data-tip="Edit" onClick={() => onEdit?.(item)}><i className="fa-solid fa-pen" /></button>
-                  <button className="fu-act-btn del" data-tip="Delete" onClick={() => onDelete(item.id)}><i className="fa-solid fa-trash-can" /></button>
+                  {/* tip-pos="left": .fu-card is overflow:hidden, so the
+                      default upward tooltip gets clipped inside the card —
+                      same reason every other action button here points left. */}
+                  <button className="fu-act-btn edit" data-tip="Edit" data-tip-pos="left" onClick={() => onEdit?.(item)}><i className="fa-solid fa-pen" /></button>
+                  <button className="fu-act-btn del" data-tip="Delete" data-tip-pos="left" onClick={() => onDelete(item.id)}><i className="fa-solid fa-trash-can" /></button>
                 </div>
               </div>
             </div>
@@ -1026,78 +1071,192 @@ function ObCard({ m, idx, saving = false, onSave, onHistory }) {
   );
 }
 
+/* Khali form ki halat — add ke baad aur Cancel par isi par wapas jate hain. */
+const BLANK_TRAINING = { participants: '', date: '', names: '', certs: '', desc: '' };
+
+/* '2026-06-14' → '14 June 2026'. Khali/galat value par khali string, taake
+   card me "Invalid Date" na chhape. */
+function trainingDate(iso) {
+  const d = new Date(`${String(iso || '').slice(0, 10)}T00:00:00`);
+  return Number.isNaN(d.getTime())
+    ? ''
+    : `${d.getDate()} ${d.toLocaleString('en-US', { month: 'long' })} ${d.getFullYear()}`;
+}
+
+/* Session ki editing modal me hoti hai — bilkul Follow-up card wali tarz par
+   (dekhein AddFollowModal). Neeche wala form sirf NAYA session add karta hai,
+   is liye add aur update aapas me nahi ulajhte. */
+function TrainingModal({ session, saving = false, onClose, onSave }) {
+  const [form, setForm] = useState({
+    participants: session.participants ? String(session.participants) : '',
+    date: session.date || '',
+    names: session.names || '',
+    certs: session.certs || '',
+    desc: session.desc || '',
+  });
+  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+  return (
+    <Overlay cls="em-add-ov" onClose={onClose} wrapCls="em-add-box">
+      <div className="em-add-hdr">
+        <div className="em-add-title"><i className="fa-solid fa-chalkboard-user" /> Edit Training Session</div>
+        <button className="em-add-close" data-tip="Close" data-tip-pos="left" onClick={onClose}><i className="fa-solid fa-xmark" /></button>
+      </div>
+      <div className="em-add-body">
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div className="em-add-f"><label>Number of Participants</label><input type="number" placeholder="e.g. 5" value={form.participants} onChange={(e) => set('participants', e.target.value)} /></div>
+          <div className="em-add-f"><label>Training Date</label><input type="date" value={form.date} onChange={(e) => set('date', e.target.value)} /></div>
+        </div>
+        <div className="em-add-f"><label>Participant Names</label><input type="text" placeholder="e.g. Mr. Ahmed, Ms. Sara" value={form.names} onChange={(e) => set('names', e.target.value)} /></div>
+        <div className="em-add-f"><label>Certificates / Notes</label><input type="text" placeholder="Certificate issued? Notes..." value={form.certs} onChange={(e) => set('certs', e.target.value)} /></div>
+        <div className="em-add-f"><label>Description / Coordination Note</label><textarea placeholder="Add coordination notes or follow-up actions..." value={form.desc} onChange={(e) => set('desc', e.target.value)} /></div>
+      </div>
+      <div className="em-add-foot">
+        <button className="btn-secondary" style={{ height: 34, padding: '0 14px', fontSize: 12.5 }} onClick={onClose}>Cancel</button>
+        <button className="btn-primary" style={{ height: 34, padding: '0 16px', fontSize: 12.5 }} disabled={saving} onClick={() => { if (!saving) onSave(form); }}>
+          <i className={`fa-${saving ? 'solid fa-spinner fa-spin' : 'regular fa-floppy-disk'}`} /> {saving ? 'Saving…' : 'Update'}
+        </button>
+      </div>
+    </Overlay>
+  );
+}
+
+/* ── Training ────────────────────────────────────────────────────────
+   Pehle upar ek hardcoded "Monthly Training Topic" block tha (topic,
+   trainer, bio, description — sab JSX me likhe hue) aur neeche ka form
+   hamesha usi ek record ko update karta tha, is liye doosra session add
+   ho hi nahi sakta tha.
+
+   Ab: upar sirf wahi sessions dikhte hain jo is school ke liye add kiye gaye
+   (training-session-action, action:get), neeche ka form SIRF naya session
+   add karta hai, aur kisi card par Edit dabane se TrainingModal khulta hai
+   jahan se update hota hai. */
 function TrainingSection({ branchId, toast }) {
-  const [form, setForm] = useState({ participants: '', date: '', names: '', certs: '', desc: '' });
-  const [sessionId, setSessionId] = useState(0);     // 0 = naya, warna update
+  const [sessions, setSessions] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [form, setForm] = useState(BLANK_TRAINING);
+  const [editSession, setEditSession] = useState(null);  // modal khuli ho to wo session
+  const [savingEdit, setSavingEdit] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [busyId, setBusyId] = useState(0);      // jis card par delete chal rahi hai
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
   const toastRef = useRef(toast);
   toastRef.current = toast;
 
-  /* Is school ka pehle se saved participation record (agar ho) — form usi se
-     bhar jata hai, aur agli baar Save `update` karta hai (naya row nahi). */
-  useEffect(() => {
-    if (!branchId) return undefined;
-    let alive = true;
-    schoolProgressApi.listTrainingSessions(branchId)
-      .then((rows) => {
-        if (!alive || !rows.length) return;
-        const last = rows[rows.length - 1];
-        setSessionId(last.id);
-        setForm({
-          participants: last.participants ? String(last.participants) : '',
-          date: last.date, names: last.names, certs: last.certs, desc: last.desc,
-        });
-      })
-      .catch((err) => { if (alive) toastRef.current?.(err?.message || 'Could not load training details', 'error'); });
-    return () => { alive = false; };
+  const load = useCallback(async () => {
+    if (!branchId) { setSessions([]); return; }
+    setLoading(true);
+    try {
+      setSessions(await schoolProgressApi.listTrainingSessions(branchId));
+    } catch (err) {
+      toastRef.current?.(err?.message || 'Could not load training sessions', 'error');
+    } finally {
+      setLoading(false);
+    }
   }, [branchId]);
 
-  const save = async () => {
+  useEffect(() => { load(); }, [load]);
+
+  /* Add aur update dono yahin se jate hain — farq sirf `id` ka hai (0 → add). */
+  const persist = (values, id) => schoolProgressApi.saveTrainingSession({
+    branchId,
+    participants: values.participants,
+    date: values.date,
+    names: (values.names || '').trim(),
+    certs: (values.certs || '').trim(),
+    desc: (values.desc || '').trim(),
+    id,
+  });
+
+  const isBlank = (v) => !v.participants && !v.date && !(v.names || '').trim();
+
+  /* Neeche wala form — hamesha NAYA session (id: 0). */
+  const add = async () => {
     if (saving) return;
-    if (!form.participants && !form.date && !form.names.trim()) {
-      toast?.('Fill participation details first', 'warn');
-      return;
-    }
+    if (isBlank(form)) { toast?.('Fill participation details first', 'warn'); return; }
     setSaving(true);
     try {
-      const res = await schoolProgressApi.saveTrainingSession({
-        branchId,
-        participants: form.participants,
-        date: form.date,
-        names: form.names.trim(),
-        certs: form.certs.trim(),
-        desc: form.desc.trim(),
-        id: sessionId,
-      });
-      /* Naya record bana to uska id yaad rakho — agla save update banega. */
-      const newId = Number(res?.data?.id) || 0;
-      if (!sessionId && newId) setSessionId(newId);
-      toast?.('Participation details saved', 'success');
+      await persist(form, 0);
+      toast?.('Training session added', 'success');
+      setForm(BLANK_TRAINING);      // form khali, taake agla naya add ho
+      await load();
     } catch (err) {
-      toast?.(err?.message || 'Could not save participation details', 'error');
+      toast?.(err?.message || 'Could not add training session', 'error');
     } finally {
       setSaving(false);
     }
   };
 
+  /* Modal se update — mojooda session ki id ke sath. */
+  const saveEdit = async (values) => {
+    if (savingEdit || !editSession) return;
+    if (isBlank(values)) { toast?.('Fill participation details first', 'warn'); return; }
+    setSavingEdit(true);
+    try {
+      await persist(values, editSession.id);
+      toast?.('Training session updated', 'success');
+      setEditSession(null);
+      await load();
+    } catch (err) {
+      toast?.(err?.message || 'Could not update training session', 'error');
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  const del = async (s) => {
+    if (busyId) return;
+    setBusyId(s.id);
+    try {
+      await schoolProgressApi.deleteTrainingSession(s.id, branchId);
+      toast?.('Training session deleted', 'info');
+      await load();
+    } catch (err) {
+      toast?.(err?.message || 'Could not delete this session', 'error');
+    } finally {
+      setBusyId(0);
+    }
+  };
+
   return (
     <div className="em-sect active">
-      <div className="em-tr-overview">
-        <div className="em-tr-header">
-          <div className="em-tr-icon"><i className="fa-solid fa-chalkboard-user" /></div>
-          <div><div className="em-tr-title">Monthly Training Topic</div><div className="em-tr-sub">June 2026 · School Mentor ERP Training</div></div>
+      {loading && (
+        <div className="em-tr-empty"><i className="fa-solid fa-spinner fa-spin" /> Loading training sessions…</div>
+      )}
+      {!loading && !sessions.length && (
+        <div className="em-tr-empty">
+          <i className="fa-solid fa-chalkboard-user" style={{ marginRight: 5 }} />
+          No training session added yet — use the form below to add the first one.
         </div>
-        <div className="em-tr-meta">
-          <div className="em-tr-field"><div className="em-tr-fl"><i className="fa-solid fa-book" style={{ color: 'var(--brand)', marginRight: 3 }} /> Topic</div><div className="em-tr-fv">ERP Advanced Features — Fee &amp; Accounts Module</div></div>
-          <div className="em-tr-field"><div className="em-tr-fl"><i className="fa-solid fa-user-tie" style={{ color: 'var(--brand)', marginRight: 3 }} /> Trainer</div><div className="em-tr-fv">Dua Rizvi</div></div>
-          <div className="em-tr-field" style={{ gridColumn: 'span 2' }}><div className="em-tr-fl"><i className="fa-solid fa-id-card" style={{ color: 'var(--brand)', marginRight: 3 }} /> Trainer Profile</div><div className="em-tr-fv" style={{ fontWeight: 500, fontSize: 12, color: 'var(--tm)' }}>Senior ERP Trainer · School Mentor Customer Success Team · 3 years experience</div></div>
-          <div className="em-tr-field" style={{ gridColumn: 'span 2' }}><div className="em-tr-fl"><i className="fa-solid fa-align-left" style={{ color: 'var(--brand)', marginRight: 3 }} /> Training Description</div><div className="em-tr-fv" style={{ fontWeight: 500, fontSize: 12, color: 'var(--tm)', lineHeight: 1.55 }}>This month covers advanced Fee and Accounts modules including challan generation, online payments, receipt management, and financial reporting. Schools will learn automated fee reminders and defaulter tracking.</div></div>
+      )}
+      {!loading && sessions.map((s) => (
+        <div className="em-tr-overview" key={s.id}>
+          <div className="em-tr-header">
+            <div className="em-tr-icon"><i className="fa-solid fa-chalkboard-user" /></div>
+            <div style={{ minWidth: 0 }}>
+              <div className="em-tr-title">{trainingDate(s.date) || 'Training Session'}</div>
+              <div className="em-tr-sub">{s.participants || 0} participant{s.participants === 1 ? '' : 's'}</div>
+            </div>
+            <div className="em-tr-acts">
+              <button className="em-tr-act" data-tip="Edit this session" disabled={busyId === s.id} onClick={() => setEditSession(s)}>
+                <i className="fa-solid fa-pen" />
+              </button>
+              <button className="em-tr-act danger" data-tip="Delete this session" disabled={busyId === s.id} onClick={() => del(s)}>
+                <i className={`fa-solid ${busyId === s.id ? 'fa-spinner fa-spin' : 'fa-trash-can'}`} />
+              </button>
+            </div>
+          </div>
+          <div className="em-tr-meta">
+            <div className="em-tr-field"><div className="em-tr-fl"><i className="fa-solid fa-calendar-day" style={{ color: 'var(--brand)', marginRight: 3 }} /> Training Date</div><div className="em-tr-fv">{trainingDate(s.date) || '—'}</div></div>
+            <div className="em-tr-field"><div className="em-tr-fl"><i className="fa-solid fa-users" style={{ color: 'var(--brand)', marginRight: 3 }} /> Participants</div><div className="em-tr-fv">{s.participants || '—'}</div></div>
+            <div className="em-tr-field" style={{ gridColumn: 'span 2' }}><div className="em-tr-fl"><i className="fa-solid fa-user-tie" style={{ color: 'var(--brand)', marginRight: 3 }} /> Participant Names</div><div className="em-tr-fv">{s.names || '—'}</div></div>
+            <div className="em-tr-field" style={{ gridColumn: 'span 2' }}><div className="em-tr-fl"><i className="fa-solid fa-certificate" style={{ color: 'var(--brand)', marginRight: 3 }} /> Certificates / Notes</div><div className="em-tr-fv" style={{ fontWeight: 500, fontSize: 12, color: 'var(--tm)' }}>{s.certs || '—'}</div></div>
+            <div className="em-tr-field" style={{ gridColumn: 'span 2' }}><div className="em-tr-fl"><i className="fa-solid fa-align-left" style={{ color: 'var(--brand)', marginRight: 3 }} /> Description / Coordination Note</div><div className="em-tr-fv" style={{ fontWeight: 500, fontSize: 12, color: 'var(--tm)', lineHeight: 1.55 }}>{s.desc || '—'}</div></div>
+          </div>
         </div>
-      </div>
+      ))}
       <div className="em-tr-part">
-        <div className="em-tr-part-title"><i className="fa-solid fa-users" /> School Participation Details</div>
+        <div className="em-tr-part-title"><i className="fa-solid fa-plus" /> Add Training Session</div>
         <div className="em-tr-row">
           <div className="em-tr-fg"><label>Number of Participants</label><input className="em-tr-input" type="number" placeholder="e.g. 5" value={form.participants} onChange={(e) => set('participants', e.target.value)} /></div>
           <div className="em-tr-fg"><label>Training Date</label><input className="em-tr-input" type="date" value={form.date} onChange={(e) => set('date', e.target.value)} /></div>
@@ -1106,8 +1265,22 @@ function TrainingSection({ branchId, toast }) {
         <div className="em-tr-fg" style={{ marginBottom: 11 }}><label>Certificates / Notes</label><input className="em-tr-input" type="text" placeholder="Certificate issued? Notes..." value={form.certs} onChange={(e) => set('certs', e.target.value)} /></div>
         <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--t2)', display: 'block', marginBottom: 4 }}>Description / Coordination Note</label>
         <textarea className="em-tr-textarea" placeholder="Add coordination notes or follow-up actions..." value={form.desc} onChange={(e) => set('desc', e.target.value)} />
-        <div className="em-tr-save"><button className="em-tr-save-btn" disabled={saving} onClick={save}><i className={`fa-solid ${saving ? 'fa-spinner fa-spin' : 'fa-floppy-disk'}`} /> {saving ? 'Saving…' : 'Save Participation Details'}</button></div>
+        <div className="em-tr-save">
+          <button className="em-tr-save-btn" disabled={saving} onClick={add}>
+            <i className={`fa-solid ${saving ? 'fa-spinner fa-spin' : 'fa-plus'}`} />
+            {saving ? ' Adding…' : ' Add Session'}
+          </button>
+        </div>
       </div>
+
+      {editSession && (
+        <TrainingModal
+          session={editSession}
+          saving={savingEdit}
+          onClose={() => { if (!savingEdit) setEditSession(null); }}
+          onSave={saveEdit}
+        />
+      )}
     </div>
   );
 }
