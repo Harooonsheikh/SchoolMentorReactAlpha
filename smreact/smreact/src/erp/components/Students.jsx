@@ -2894,6 +2894,7 @@ function InactiveStudents({ classes, setClasses, inactive, setInactive, toast })
   const [openKey, setOpenKey] = useState(null);
   const [flashReg, setFlashReg] = useState(null);
   const [reactCfg, setReactCfg] = useState(null);
+  const [delCfg, setDelCfg]     = useState(null);   // student pending permanent delete
   const [duesCfg, setDuesCfg]   = useState(null);
   const [certCfg, setCertCfg]   = useState(null);   // { type, student, cls } — certificate modal
 
@@ -3004,6 +3005,20 @@ function InactiveStudents({ classes, setClasses, inactive, setInactive, toast })
       toast(err.message || 'Could not restore student', 'error');
     }
     setReactCfg(null);
+  };
+
+  /* Permanent delete — hard-delete an inactive student on the server, then refresh
+     the Inactive list from the API. This CANNOT be undone (no restore). */
+  const permanentDelete = async (student) => {
+    try {
+      await studentService.permanentDeleteStuStudent(student._id);
+      const freshInactive = await studentService.getStuInactive();
+      setInactive(Array.isArray(freshInactive) ? freshInactive : []);
+      toast(`${stuFullName(student)} permanently deleted`, 'success');
+    } catch (err) {
+      toast(err.message || 'Could not permanently delete student', 'error');
+    }
+    setDelCfg(null);
   };
 
   /* Settle pending dues — appends to history, drops total. PDF receipt
@@ -3173,6 +3188,7 @@ function InactiveStudents({ classes, setClasses, inactive, setInactive, toast })
             onGroupReport={() => downloadGroup(g)}
             flashReg={flashReg}
             onReactivate={(student) => setReactCfg(student)}
+            onDelete={(student) => setDelCfg(student)}
             onPendingDues={(student) => setDuesCfg(student)}
             onCert={(student, type) => {
               if ((student.dues?.total || 0) > 0) {
@@ -3189,6 +3205,8 @@ function InactiveStudents({ classes, setClasses, inactive, setInactive, toast })
       </div>
 
       <CrmConfirmStyleReactivate cfg={reactCfg} onClose={() => setReactCfg(null)} onConfirm={reactivate} />
+
+      <CrmConfirmStyleDeleteStudent cfg={delCfg} onClose={() => setDelCfg(null)} onConfirm={permanentDelete} />
 
       {duesCfg && (
         <StuDuesModal
@@ -3221,7 +3239,7 @@ function InactiveStudents({ classes, setClasses, inactive, setInactive, toast })
 }
 
 /* ─── Inactive group row + expanded student list ─── */
-function StuInactiveGroup({ g, idx, isOpen, onToggle, onGroupReport, flashReg, onReactivate, onPendingDues, onCert, onProfileDownload, canInEdit = true, canInDownload = true }) {
+function StuInactiveGroup({ g, idx, isOpen, onToggle, onGroupReport, flashReg, onReactivate, onDelete, onPendingDues, onCert, onProfileDownload, canInEdit = true, canInDownload = true }) {
   return (
     <div className={`stu-clswrap${isOpen ? ' open' : ''}`}>
       <div className="stu-cls-row" style={{ gridTemplateColumns: '54px 1.4fr 1fr 110px 90px 70px' }} onClick={onToggle}>
@@ -3278,6 +3296,7 @@ function StuInactiveGroup({ g, idx, isOpen, onToggle, onGroupReport, flashReg, o
               i={i + 1}
               flash={flashReg === s.reg}
               onReactivate={() => onReactivate(s)}
+              onDelete={() => onDelete(s)}
               onPendingDues={() => onPendingDues(s)}
               onCert={(type) => onCert(s, type)}
               onProfileDownload={() => onProfileDownload(s)}
@@ -3291,7 +3310,7 @@ function StuInactiveGroup({ g, idx, isOpen, onToggle, onGroupReport, flashReg, o
 }
 
 /* ─── Per-inactive-student row + 3-dot menu ─── */
-function StuInactiveRow({ s, i, flash, onReactivate, onPendingDues, onCert, onProfileDownload, canInEdit = true, canInDownload = true }) {
+function StuInactiveRow({ s, i, flash, onReactivate, onDelete, onPendingDues, onCert, onProfileDownload, canInEdit = true, canInDownload = true }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuUp, setMenuUp] = useState(false);
   const anchorRef = useRef(null);
@@ -3391,6 +3410,15 @@ function StuInactiveRow({ s, i, flash, onReactivate, onPendingDues, onCert, onPr
               </div>
             </button>
             )}
+            {canInEdit && (
+            <button className="stu-actitem stu-actitem--danger" onClick={() => fire(onDelete)}>
+              <i className="fa-solid fa-trash" style={{ color: '#DC2626' }}></i>
+              <div className="stu-act-text">
+                <div>Delete Permanently</div>
+                <div className="stu-act-sub">Remove this student for good — cannot be undone</div>
+              </div>
+            </button>
+            )}
           </div>
         )}
       </div>
@@ -3439,6 +3467,46 @@ function CrmConfirmStyleReactivate({ cfg, onClose, onConfirm }) {
             onClick={() => onConfirm(cfg)}
           >
             <i className="fa-solid fa-user-check"></i> Yes, Reactivate
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─── Permanent-delete confirm — hero-ring CRM-style dialog (danger) ─── */
+function CrmConfirmStyleDeleteStudent({ cfg, onClose, onConfirm }) {
+  useEffect(() => {
+    if (!cfg) return undefined;
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    document.body.style.overflow = 'hidden';
+    return () => { window.removeEventListener('keydown', onKey); document.body.style.overflow = ''; };
+  }, [cfg, onClose]);
+  if (!cfg) return null;
+  return (
+    <div className="stu-confirm-overlay" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="stu-confirm-dialog">
+        <div className="stu-confirm-glow" style={{ background: 'radial-gradient(circle,rgba(220,38,38,.18),transparent 70%)' }} />
+        <div className="stu-confirm-hero">
+          <div className="stu-confirm-ring" style={{ borderColor: 'rgba(220,38,38,.25)' }}>
+            <div className="stu-confirm-icon-wrap" style={{ background: '#fff', border: '1px solid rgba(220,38,38,.25)' }}><i className="fa-solid fa-trash" style={{ color: '#DC2626' }}></i></div>
+          </div>
+        </div>
+        <div className="stu-confirm-body">
+          <div className="stu-confirm-title">Delete student permanently?</div>
+          <div className="stu-confirm-msg">
+            "<strong>{stuFullName(cfg)}</strong>" ({cfg.cls} {cfg.sec ? `(${cfg.sec})` : ''}) will be <strong>permanently removed</strong> from the system.
+          </div>
+        </div>
+        <div className="stu-confirm-footer">
+          <button className="stu-btn-ghost" onClick={onClose}>Cancel</button>
+          <button
+            className="stu-btn-primary"
+            style={{ background: 'linear-gradient(135deg,#DC2626,#B91C1C)', boxShadow: '0 4px 14px rgba(220,38,38,.28)' }}
+            onClick={() => onConfirm(cfg)}
+          >
+            <i className="fa-solid fa-trash"></i> Delete
           </button>
         </div>
       </div>

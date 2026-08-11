@@ -758,6 +758,18 @@ export async function restoreStuStudent(id) {
   if (!res.ok) throw new Error(apiMessage(json) || 'Could not restore student');
   return json;
 }
+/* Permanently delete an (already-inactive) student — hard delete on the server,
+   the record is gone for good (no restore). Called from the Inactive tab's row
+   menu. DELETE /api/LaunchSetup/delete-student-permanent/{id}. id 0 is a no-op. */
+export async function permanentDeleteStuStudent(id) {
+  const res  = await fetch(buildUrl(`/api/LaunchSetup/delete-student-permanent/${id || 0}`), {
+    method: 'DELETE',
+    headers: { Accept: '*/*' },
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(apiMessage(json) || 'Could not permanently delete student');
+  return json;
+}
 export async function deleteStuStudent({ reg }) { await delay(); return { reg, deleted: true }; }
 export async function promoteStuStudents(payload) { await delay(); return clone({ ...payload, ok: true }); }
 export async function inactivateStuStudent(payload) { await delay(); return clone({ ...payload, ok: true }); }
