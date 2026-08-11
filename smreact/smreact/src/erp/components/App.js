@@ -41,6 +41,7 @@ const Inventory      = lazy(() => import(/* webpackChunkName: "mod-inventory" */
 const AdmissionCrm   = lazy(() => import(/* webpackChunkName: "mod-admissioncrm" */  './AdmissionCrm.jsx'));
 const Students       = lazy(() => import(/* webpackChunkName: "mod-students" */      './Students.jsx'));
 const HumanResource  = lazy(() => import(/* webpackChunkName: "mod-hr" */            './HumanResource.jsx'));
+const Networks       = lazy(() => import(/* webpackChunkName: "mod-networks" */      './Networks.jsx'));
 const StaffAppraisalPage = lazy(() => import(/* webpackChunkName: "mod-appraisal" */ './StaffAppraisalPage.jsx'));
 const SettingsModule = lazy(() => import(/* webpackChunkName: "mod-settings" */      '../pages/Settings/SettingsModule.jsx'));
 const SchoolSOPs     = lazy(() => import(/* webpackChunkName: "mod-sops" */          '../pages/SchoolMentor/SchoolSOPs.jsx'));
@@ -70,6 +71,7 @@ const NAV_LABELS = {
   inventory: 'Inventory',
   students: 'Students',
   hr: 'Human Resource',
+  networks: 'Networks',
   appraisal: 'Staff Appraisals',
   crm: 'Admission CRM',
   sops: 'School SOPs',
@@ -116,6 +118,7 @@ const NAV_SECTIONS = [
       { id: 'crm',       name: 'Admission CRM',  icon: 'fa-user-plus' },   /* branchID 1 only */
       { id: 'students',  name: 'Students',       icon: 'fa-user-graduate' },
       { id: 'hr',        name: 'Human Resource', icon: 'fa-users' },
+      { id: 'networks',  name: 'Networks',       icon: 'fa-circle-nodes' },
       { id: 'appraisal', name: 'Staff Appraisals', icon: 'fa-star' },     /* branchID 1 only */
     ],
   },
@@ -536,6 +539,11 @@ export default function App() {
             {active === 'tt' && (
               <Suspense fallback={<RouteFallback label="Loading Timetable…" />}>
                 <TimeTable toast={pushToast} />
+              </Suspense>
+            )}
+            {active === 'networks' && (
+              <Suspense fallback={<RouteFallback label="Loading Networks…" />}>
+                <Networks toast={pushToast} />
               </Suspense>
             )}
             {active === 'fee' && (

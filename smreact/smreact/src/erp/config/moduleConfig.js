@@ -27,6 +27,7 @@ export const MODULE_REGISTRY = [
   { id: 'admission_crm',    label: 'Admission CRM',     icon: 'fa-user-plus',        group: 'ADMINISTRATION', route: '/admission-crm',      coreLocked: false },
   { id: 'students',         label: 'Students',          icon: 'fa-user-graduate',    group: 'ADMINISTRATION', route: '/students',           coreLocked: false },
   { id: 'hr',               label: 'Human Resource',    icon: 'fa-users',            group: 'ADMINISTRATION', route: '/hr',                 coreLocked: false },
+  { id: 'networks',         label: 'Networks',          icon: 'fa-circle-nodes',     group: 'ADMINISTRATION', route: '/networks',           coreLocked: true  },
   { id: 'appraisals',       label: 'Staff Appraisals',  icon: 'fa-star-half-stroke', group: 'ADMINISTRATION', route: '/appraisals',         coreLocked: false },
 
   /* ── SCHOOL MENTOR GROUP ─────────────────────────────────────── */
@@ -156,6 +157,7 @@ export const MODULE_TO_NAV_MAP = {
   appraisals:        'appraisal',
   school_sops:       'sops',
   teacher_trainings: 'trainings',
+  networks:          'networks',
   audit_logs:        'audit',
   user_permissions:  'perm',
   settings:          'settings',

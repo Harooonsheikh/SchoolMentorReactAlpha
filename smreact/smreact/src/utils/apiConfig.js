@@ -77,17 +77,31 @@ export function buildSuperAdminUrl(path = '') {
 }
 
 // ── Chain Management API (Network Head Office) ──────────────────
-// School-network ka login/signup/OTP ERP ki API par nahi, apni alag service par
-// hai — apne host AUR apne base path ke sath:
-//   https://alphaapi.schoolmentor.ai/SchoolmentorChainManagementAPI/api/...
-// Is liye buildUrl() se ye call nahi ban sakti (wo ERP ka host lagata hai, jahan
-// ye endpoints 404 dete hain). Host override karna ho to REACT_APP_CHAIN_API_BASE.
+// School-network ka login/signup/OTP ERP ki API ke base path par nahi, apne
+// alag base path par hai:
+//   {host}/SchoolmentorChainManagementAPI/api/...
+// Is liye buildUrl() se ye call nahi ban sakti — wo sirf host lagata hai.
+//
+// HOST kaun sa:
+//   dev  → seedha alphaapi.
+//   prod → apna hi origin (khali string), bilkul baqi APIs ki tarah. Yahan
+//     alphaapi ko SEEDHA call karna kaam NAHI karta: wo host is origin ke liye
+//     koi CORS header nahi bhejta (preflight 204 aata hai magar bina
+//     Access-Control-Allow-Origin ke), is liye browser network-login ki request
+//     block kar deta hai. IIS /SchoolmentorChainManagementAPI/* ko usi API par
+//     forward karta hai — dekho public/web.config. Same origin, koi CORS nahi.
+// Kisi khaas host par bhejna ho to REACT_APP_CHAIN_API_BASE set kar do.
 
 const CHAIN_API_PREFIX = '/SchoolmentorChainManagementAPI';
 
+const CHAIN_API_ENV = (typeof process !== 'undefined' && process.env)
+  ? process.env.REACT_APP_CHAIN_API_BASE
+  : undefined;
+
 export const CHAIN_API_HOST = stripSlash(
-  (typeof process !== 'undefined' && process.env && process.env.REACT_APP_CHAIN_API_BASE)
-  || 'https://alphaapi.schoolmentor.ai',
+  CHAIN_API_ENV != null && CHAIN_API_ENV !== ''
+    ? CHAIN_API_ENV
+    : (process.env.NODE_ENV === 'production' ? '' : 'https://alphaapi.schoolmentor.ai'),
 );
 
 /**
@@ -99,23 +113,35 @@ export function buildChainApiUrl(path = '') {
   return `${CHAIN_API_HOST}${CHAIN_API_PREFIX}${suffix}`;
 }
 
-// ── Uploaded media (branch logos etc.) ──────────────────────────
-// The API stamps a branch logo URL from the request host, so it can come back
-// as http://IP:4100/UploadedImages/... (blocked as mixed content on our https
-// site) or with the app's OWN origin (which does not serve /UploadedImages, so
-// it 404s / resolves to localhost). resolveMediaUrl() keeps the exact storage
-// path the API returned but serves it from the https media host, so the image
-// always loads. Override the host with REACT_APP_MEDIA_BASE if it ever moves.
+// ── Uploaded media (branch logos, staff photos, documents) ──────
+// The API stamps every file URL from the REQUEST host, so what comes back is
+// only ever right by accident:
+//   • called directly at the IP  → http://IP:4100/UploadedImages/...
+//                                  (blocked as mixed content on our https site)
+//   • called through the IIS proxy → http://localhost:4100/UploadedImages/...
+//                                  (in a browser "localhost" is the user's OWN
+//                                   machine — nothing is there, so it 404s)
+// resolveMediaUrl() throws the stamped host away and keeps only the storage
+// path, serving it from the https media host — so the file loads whatever the
+// API stamped. EVERY file path from the API must go through it.
+// Override the host with REACT_APP_MEDIA_BASE if it ever moves.
 export const MEDIA_BASE = stripSlash(
   (typeof process !== 'undefined' && process.env && process.env.REACT_APP_MEDIA_BASE)
   || 'https://alphaapi.schoolmentor.ai',
 );
 
+/* Every folder the API serves uploads from. /UploadedImages holds branch logos
+   and staff/student photos; /UploadedDocuments holds employee documents and
+   issue letters. Matching on the folder (not just the host) is what makes this
+   work no matter which host the API stamped — IP, localhost, or our own origin. */
+const UPLOAD_FOLDERS = /\/(UploadedImages|UploadedDocuments|Uploads)\/.*/i;
+
 export function resolveMediaUrl(raw) {
   if (!raw) return '';
   const u = String(raw).trim();
+  if (!u || u.toUpperCase() === 'N/A') return '';      // API's "no file" placeholder
   if (u.startsWith('data:')) return u;                 // inline data URI — leave it
-  const m = u.match(/\/UploadedImages\/.*/i);          // pull the stored path
+  const m = u.match(UPLOAD_FOLDERS);                   // pull the stored path
   if (m) return `${MEDIA_BASE}${m[0]}`;                // serve it from the media host
   if (/^https?:\/\//i.test(u)) return u;               // some other absolute URL
   return `${MEDIA_BASE}${u.startsWith('/') ? u : `/${u}`}`;
