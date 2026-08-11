@@ -865,12 +865,17 @@ function ErpDetailModal({ school: s, detail, patchDetail, onCounts, toast, onClo
                     if (savingOb) return;
                     setSavingOb(m.key);
                     try {
-                      /* Sub-head = isi module ka naam (Academics, Examination, …). */
+                      /* Sub-head = isi module ka naam (Academics, Examination, …).
+                         `id` isi module ki mojooda entry ka — loadCards use
+                         `_cardId` me rakhta hai. Iske baghair saveCardAction har
+                         baar action 'add' bhejta tha, is liye edit karne par
+                         entry update hone ki jagah nayi row ban jati thi. */
                       await saveCard({
                         headType: schoolProgressApi.CARD_HEADS.onboarding,
                         subHeadType: m.name,
                         commentDetail: comment,
                         date,
+                        id: m._cardId || 0,
                       });
                     } catch (err) {
                       toast?.(err?.message || 'Could not save', 'error');
@@ -1042,7 +1047,11 @@ function AddFollowModal({ type, saving = false, initial = null, onClose, onSave 
       </div>
       <div className="em-add-foot">
         <button className="btn-secondary" style={{ height: 34, padding: '0 14px', fontSize: 12.5 }} onClick={onClose}>Cancel</button>
-        <button className="btn-primary" style={{ height: 34, padding: '0 16px', fontSize: 12.5 }} disabled={saving} onClick={() => { if (saving || !text.trim()) return; onSave(text.trim(), date); }}><i className={`fa-${saving ? 'solid fa-spinner fa-spin' : 'regular fa-floppy-disk'}`} /> {saving ? 'Saving…' : (editing ? 'Update' : cfg.sl)}</button>
+        {/* Sirf bilkul khali entry rukti hai. Detail khali chhod kar sirf date
+            badalna bhi ek valid edit hai (pehle `!text.trim()` har aisi save ko
+            chupchaap gira deta tha — button dabta tha aur kuch hota hi nahi),
+            wahi rule jo onboarding card par chalta hai: comment ya date, koi ek. */}
+        <button className="btn-primary" style={{ height: 34, padding: '0 16px', fontSize: 12.5 }} disabled={saving} onClick={() => { if (saving || (!text.trim() && !date)) return; onSave(text.trim(), date); }}><i className={`fa-${saving ? 'solid fa-spinner fa-spin' : 'regular fa-floppy-disk'}`} /> {saving ? 'Saving…' : (editing ? 'Update' : cfg.sl)}</button>
       </div>
     </Overlay>
   );

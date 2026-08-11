@@ -84,16 +84,23 @@ export function buildSchoolDetail(s) {
     })),
     todayLogins: 0, todayTime: '00:00:00',
     monthLogins: s.logins || 0, monthTime: s.workTime || '00:00:00',
-    todayMods: {
-      academics: { l: 0, t: '00:00:00' }, exam: { l: 0, t: '00:00:00' }, attendance: { l: 0, t: '00:00:00' },
-      fee: { l: 0, t: '00:00:00' }, accounts: { l: 0, t: '00:00:00' }, students: { l: 0, t: '00:00:00' },
-      hr: { l: 0, t: '00:00:00' }, timetable: { l: 0, t: '00:00:00' }, launch: { l: 0, t: '00:00:00' },
-    },
-    monthMods: {
-      academics: { l: 1, t: '0:00:10' }, exam: { l: 0, t: '00:00:00' }, attendance: { l: 0, t: '00:00:00' },
-      fee: { l: 5, t: '0:06:05' }, accounts: { l: 4, t: '0:00:52' }, students: { l: 2, t: '0:00:23' },
-      hr: { l: 0, t: '00:00:00' }, timetable: { l: 2, t: '0:00:12' }, launch: { l: s.logins || 16, t: s.workTime || '0:12:41' },
-    },
+    /* Per-module usage (time + logins) kisi API se nahi aata — na branch-report
+       me hai, na card-action me. Pehle yahan monthly grid me demo numbers pade
+       the (Academics 0:00:10 / 1 login, Fee 0:06:05 / 5 logins, waghera), jo
+       har school par wahi ke wahi dikhte the aur asli usage lagte the. Jab tak
+       backend ye data na de, dono grids zero rehti hain. */
+    todayMods: zeroMods(),
+    monthMods: zeroMods(),
+  };
+}
+
+/* Progress grid ke module rows — sab 00:00:00 / 0 logins. */
+function zeroMods() {
+  const blank = () => ({ l: 0, t: '00:00:00' });
+  return {
+    academics: blank(), exam: blank(), attendance: blank(),
+    fee: blank(), accounts: blank(), students: blank(),
+    hr: blank(), timetable: blank(), launch: blank(),
   };
 }
 

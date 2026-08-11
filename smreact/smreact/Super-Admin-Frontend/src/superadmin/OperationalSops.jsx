@@ -613,7 +613,15 @@ function DetailModal({ m, cats, onClose, onEdit, onDelete, onPdf, onVideo, toast
               <div className="sop-form-icon"><i className="fa-solid fa-file" /></div>
               <div className="sop-form-title">{f.displayTitle || f.title} <span className="sop-form-code">{f.code || ''}</span></div>
               {f.pageRef && <span className="sop-form-ref">{f.pageRef}</span>}
-              <button className="btn-sm" data-tip="Download" style={{ height: 26, fontSize: 10.5 }} onClick={() => toast?.('Download after backend integration', 'info')}><i className="fa-solid fa-download" /></button>
+              <button
+                className="btn-sm"
+                data-tip={f.fileUrl ? 'Open / download file' : 'No file attached'}
+                style={{ height: 26, fontSize: 10.5, opacity: f.fileUrl ? 1 : 0.45, cursor: f.fileUrl ? 'pointer' : 'not-allowed' }}
+                onClick={() => {
+                  if (!f.fileUrl) { toast?.('No file attached to this form', 'warn'); return; }
+                  window.open(f.fileUrl, '_blank', 'noopener');
+                }}
+              ><i className="fa-solid fa-download" /></button>
             </div>
           )) : <div style={{ textAlign: 'center', padding: 12, color: 'var(--tm)', fontSize: 12.5 }}>No forms attached.</div>}
         </div>
@@ -639,14 +647,48 @@ function DetailModal({ m, cats, onClose, onEdit, onDelete, onPdf, onVideo, toast
   );
 }
 
-/* ═══════════════════════ PDF READER MODAL ═══════════════════════ */
+/* ═══════════════════════ PDF READER MODAL ═══════════════════════
+   Read / Download / Print teenon asli file par chalte hain. Uploaded manual ka
+   URL manualToUi → sopFileUrl se `pdfUrl` me aata hai (SA root ke saath), aur
+   base khali hone ki wajah se wo apni hi origin ka relative URL hota hai —
+   is liye iframe me khulta hai, `download` attribute chalta hai, aur print
+   bhi usi frame se ho jata hai. Pehle teenon jagah sirf toast tha. */
 function PdfModal({ m, onClose, onUpload, toast }) {
-  const pdf = hasPdf(m); const forms = m.forms || [];
+  const forms = m.forms || [];
+  const url = m.pdfUrl || '';
+  /* Naam to ho magar file ka path na aaye — tab bhi "koi PDF nahi" hi kehna
+     hai, warna khali viewer khul jata. */
+  const pdf = Boolean(url) || (hasPdf(m) && !m.pdfPath);
+  const fileName = m.pdfName || `${m.title}.pdf`;
+  const frameRef = useRef(null);
+
+  const openInTab = () => {
+    if (!url) { toast?.('This manual has no PDF file uploaded yet', 'warn'); return; }
+    window.open(url, '_blank', 'noopener');
+  };
+
+  /* Embedded viewer se print — kisi wajah se block ho (browser ka PDF plugin
+     har jagah contentWindow.print() nahi deta) to nayi tab me khol dete hain,
+     wahan se browser ka apna print chalta hai. */
+  const printPdf = () => {
+    if (!url) { toast?.('This manual has no PDF file uploaded yet', 'warn'); return; }
+    const frame = frameRef.current;
+    try {
+      if (frame && frame.contentWindow) {
+        frame.contentWindow.focus();
+        frame.contentWindow.print();
+        return;
+      }
+    } catch (e) { /* print blocked — neeche wala rasta */ }
+    openInTab();
+    toast?.('PDF opened in a new tab — print from there', 'info');
+  };
+
   return (
     <Ov cls="sop-pdf-ov" wrap="sop-pdf-wrap" onClose={onClose}>
       <div className="sop-pdf-toolbar">
         <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--t1)', display: 'flex', alignItems: 'center', gap: 7 }}><i className="fa-solid fa-file-pdf" style={{ color: '#DC2626' }} /> {m.title}</div>
-        <div style={{ display: 'flex', gap: 8 }}><button className="btn-primary" style={{ height: 32, fontSize: 12 }} onClick={() => window.print()}><i className="fa-solid fa-print" /> Print</button><button className="pm-close" data-tip="Close" data-tip-pos="left" onClick={onClose}><i className="fa-solid fa-xmark" /></button></div>
+        <div style={{ display: 'flex', gap: 8 }}><button className="btn-primary" style={{ height: 32, fontSize: 12, opacity: url ? 1 : 0.5 }} onClick={printPdf}><i className="fa-solid fa-print" /> Print</button><button className="pm-close" data-tip="Close" data-tip-pos="left" onClick={onClose}><i className="fa-solid fa-xmark" /></button></div>
       </div>
       <div style={{ background: '#fff', maxHeight: '78vh', overflowY: 'auto' }}>
         <div style={{ background: 'linear-gradient(135deg,#1E3A8A,#1E40AF)', color: '#fff', padding: '20px 28px', display: 'flex', alignItems: 'center', gap: 14 }}>
@@ -661,8 +703,10 @@ function PdfModal({ m, onClose, onUpload, toast }) {
               <div style={{ width: 44, height: 44, borderRadius: 10, background: 'linear-gradient(135deg,#b91c1c,#dc2626)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, flexShrink: 0 }}><i className="fa-solid fa-file-pdf" /></div>
               <div style={{ flex: 1, minWidth: 160 }}><div style={{ fontWeight: 700, fontSize: 13, color: '#0F172A' }}>{m.pdfName || `${m.title}.pdf`}</div><div style={{ fontSize: 11.5, color: '#64748B', marginTop: 2 }}>Detailed manual · 20–30+ pages · School Mentor</div></div>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <button onClick={() => toast?.('PDF opens when a real file is uploaded. Ready for backend.', 'info')} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, height: 34, padding: '0 14px', borderRadius: 8, background: 'linear-gradient(135deg,#b91c1c,#dc2626)', color: '#fff', border: 'none', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}><i className="fa-solid fa-eye" /> Read PDF</button>
-                <button onClick={() => toast?.('Download available after backend integration', 'info')} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, height: 34, padding: '0 14px', borderRadius: 8, background: '#f1f5f9', color: '#1E3A8A', border: '1.5px solid #e2e8f0', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}><i className="fa-solid fa-download" /> Download</button>
+                <button onClick={openInTab} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, height: 34, padding: '0 14px', borderRadius: 8, background: 'linear-gradient(135deg,#b91c1c,#dc2626)', color: '#fff', border: 'none', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}><i className="fa-solid fa-eye" /> Read PDF</button>
+                {/* Asli download — file apni hi origin se aati hai (base khali),
+                    is liye `download` attribute browser mana nahi karta. */}
+                <a href={url || undefined} download={fileName} target="_blank" rel="noopener noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, height: 34, padding: '0 14px', borderRadius: 8, background: '#f1f5f9', color: '#1E3A8A', border: '1.5px solid #e2e8f0', fontSize: 12, fontWeight: 700, cursor: 'pointer', textDecoration: 'none' }}><i className="fa-solid fa-download" /> Download</a>
               </div>
             </div>
           ) : (
@@ -672,6 +716,17 @@ function PdfModal({ m, onClose, onUpload, toast }) {
               <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 4 }}>Upload a PDF manual to enable reading.</div>
               <button onClick={onUpload} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, height: 34, padding: '0 16px', borderRadius: 8, background: 'linear-gradient(135deg,#1E3A8A,#1E40AF)', color: '#fff', border: 'none', fontSize: 12, fontWeight: 700, cursor: 'pointer', marginTop: 14 }}><i className="fa-solid fa-upload" /> Upload Manual PDF</button>
             </div>
+          )}
+          {/* Reader — file yahin parhi jaati hai (Print isi frame se chalta hai).
+              #toolbar=0 sirf ek hint hai; jo browser na maane, apna viewer
+              dikhata rahega. */}
+          {url && (
+            <iframe
+              ref={frameRef}
+              title={fileName}
+              src={`${url}#toolbar=1&view=FitH`}
+              style={{ width: '100%', height: '62vh', minHeight: 320, border: '1px solid #e5e7eb', borderRadius: 10, marginTop: 14, background: '#fff' }}
+            />
           )}
         </div>
         <div style={{ padding: '18px 28px', borderBottom: '1px solid #e5e7eb' }}>
@@ -685,7 +740,13 @@ function PdfModal({ m, onClose, onUpload, toast }) {
               <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 10, background: '#f8fafc', border: '1px solid #e5e7eb', borderRadius: 8, padding: '10px 14px', marginBottom: 7 }}>
                 <div style={{ width: 32, height: 32, borderRadius: 8, background: 'linear-gradient(135deg,#0369A1,#0284C7)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, flexShrink: 0 }}><i className="fa-solid fa-file" /></div>
                 <div style={{ flex: 1 }}><div style={{ fontWeight: 700, fontSize: 12.5, color: '#0F172A' }}>{f.displayTitle || f.title}</div><div style={{ fontSize: 11, color: '#64748B' }}>{f.code || ''}{f.pageRef ? ` · ${f.pageRef}` : ''}</div></div>
-                <button onClick={() => toast?.('Form download available after backend integration', 'info')} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, height: 28, padding: '0 12px', borderRadius: 7, background: '#EFF6FF', color: '#1E3A8A', border: '1px solid #BFDBFE', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}><i className="fa-solid fa-download" /> Download</button>
+                <button
+                  onClick={() => {
+                    if (!f.fileUrl) { toast?.('No file attached to this form', 'warn'); return; }
+                    window.open(f.fileUrl, '_blank', 'noopener');
+                  }}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 4, height: 28, padding: '0 12px', borderRadius: 7, background: '#EFF6FF', color: '#1E3A8A', border: '1px solid #BFDBFE', fontSize: 11, fontWeight: 700, cursor: f.fileUrl ? 'pointer' : 'not-allowed', opacity: f.fileUrl ? 1 : 0.5 }}
+                ><i className="fa-solid fa-download" /> Download</button>
               </div>
             ))}
           </div>
