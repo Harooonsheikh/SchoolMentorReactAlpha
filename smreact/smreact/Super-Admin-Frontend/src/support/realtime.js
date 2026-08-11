@@ -9,7 +9,7 @@ import {
   HttpTransportType,
   LogLevel,
 } from '@microsoft/signalr';
-import { SUPPORT_HUB_URL } from './config';
+import { supportHubUrl } from './config';
 
 /* Server → client event names (mirror Application/Contracts/RealTime). */
 export const Events = {
@@ -28,7 +28,8 @@ export const Events = {
 
 export function createConnection(getAccessToken) {
   return new HubConnectionBuilder()
-    .withUrl(SUPPORT_HUB_URL, {
+    // Resolved per connection — the base only settles after login / init().
+    .withUrl(supportHubUrl(), {
       accessTokenFactory: getAccessToken,
       // Allow SSE/long-polling fallback when WebSockets are blocked.
       transport:

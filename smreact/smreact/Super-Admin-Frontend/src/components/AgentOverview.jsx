@@ -1,11 +1,23 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import * as supportApi from '../support/api';
+import { MessageType, SenderType } from '../support/config';
 
 /* ═══════════════════════════════════════════════════════════════════
-   CUSTOMER SUPPORT — OVERVIEW (frontend only)
+   CUSTOMER SUPPORT — OVERVIEW
    A read-only dashboard rendered as the "Overview" tab of the Customer
-   Support module. 100% static/demo data — no APIs, no backend, no DB.
-   Reuses the support module's design system (colours, typography, cards,
-   buttons, modals). Professional icons only (no emoji).
+   Support module. Reuses the support module's design system (colours,
+   typography, cards, buttons, modals). Professional icons only (no emoji).
+
+   Data is LIVE (see useOverviewData below) and comes off the same
+   /api/support routes the inbox uses:
+     /schools                      → school directory + active/inactive state
+     /agents                       → agent roster
+     /sessions                     → currently open conversations
+     /sessions/{id}                → last message + a session's transcript
+     /sessions/history/schools/{id}/closed → per-school closed sessions
+   The bundled demo rows below are the OFFLINE fallback: if the API cannot be
+   reached the screen keeps rendering instead of going blank, exactly like the
+   agent inbox does.
    ═══════════════════════════════════════════════════════════════════ */
 
 const SUMMARY = [
@@ -64,32 +76,305 @@ const DEMO_TRANSCRIPT = [
 const statusClass = (s) =>
   s === 'Active' ? 'ov-bdg-green' : s === 'Pending' ? 'ov-bdg-amber' : 'ov-bdg-slate';
 
+/* ═══════════════════════ LIVE DATA ═══════════════════════ */
+
+/* Har school ki history alag call hai (koi "saari sessions" wala route nahi —
+   swagger par sirf /sessions/history/schools/{id} hai), aur schools 50+ hain.
+   Sab ek saath chhodne se browser 50 parallel requests khol deta hai, is liye
+   thodi thodi kar ke. */
+const CONCURRENCY = 6;
+
+async function mapLimit(items, limit, fn) {
+  const out = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next; next += 1;
+      out[i] = await fn(items[i], i);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return out;
+}
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+function fmtDate(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  return `${String(d.getDate()).padStart(2, '0')} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+}
+
+function fmtClock(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+}
+
+/* "2 min ago" — list me last activity isi tarah dikhti hai. */
+function sinceLabel(iso) {
+  if (!iso) return '—';
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return '—';
+  const mins = Math.floor((Date.now() - then) / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins} min ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs} hr ago`;
+  const days = Math.floor(hrs / 24);
+  return days === 1 ? 'yesterday' : `${days} days ago`;
+}
+
+function fmtDuration(sec) {
+  const s = Math.max(0, Math.floor(sec || 0));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
+/* Attachment wale message ka list-preview (text nahi hota to kya likhein). */
+const TYPE_LABEL = {
+  [MessageType.Image]: 'Image', [MessageType.Screenshot]: 'Screenshot',
+  [MessageType.Document]: 'Document', [MessageType.Pdf]: 'PDF',
+  [MessageType.VoiceNote]: 'Voice note', [MessageType.Video]: 'Video',
+};
+
+const messagePreview = (m) =>
+  (m?.messageBody || '').trim() || TYPE_LABEL[m?.messageType] || '';
+
+/* API message → transcript row (wahi shape jo TranscriptRow padhta hai). */
+function toTranscriptRow(m) {
+  const out = m.senderType === SenderType.Agent;
+  const row = {
+    type: out ? 'out' : 'in',
+    sender: m.senderName || (out ? 'Support Agent' : 'School'),
+    time: fmtClock(m.createdAt),
+    text: (m.messageBody || '').trim(),
+    mediaName: m.attachmentName || '',
+    mediaSub: m.attachmentSize ? `${Math.max(1, Math.round(m.attachmentSize / 1024))} KB` : '',
+    duration: fmtDuration(m.voiceDuration),
+  };
+  switch (m.messageType) {
+    case MessageType.Image:
+    case MessageType.Screenshot: return { ...row, media: 'image' };
+    case MessageType.Video:      return { ...row, media: 'video' };
+    case MessageType.VoiceNote:  return { ...row, media: 'voice' };
+    case MessageType.Document:
+    case MessageType.Pdf:        return { ...row, media: 'document' };
+    default:                     return row;
+  }
+}
+
+/**
+ * Overview ka saara live data. Do marhale:
+ *   1. schools + agents + khuli sessions (teen calls) → cards aur Active table
+ *      foran ban jate hain.
+ *   2. har khuli session ka aakhri message, aur har school ki closed history →
+ *      Inactive table aur "Total Sessions". Ye der lagti hai, is liye pehli
+ *      render ko rokti nahi; tab tak `historyLoading` chalta hai.
+ * API tak na pahunche to `live:false` — screen demo rows par gir jati hai.
+ */
+function useOverviewData() {
+  const [s, setS] = useState({
+    loading: true, live: false, error: null, historyLoading: false,
+    schools: [], agents: [], open: [], history: {},
+  });
+
+  const load = useCallback(async () => {
+    setS((p) => ({ ...p, loading: true, error: null }));
+    let schools = []; let agents = []; let open = [];
+    try {
+      const [sc, ag, sess] = await Promise.all([
+        supportApi.getSchools(),
+        supportApi.getAgents(),
+        supportApi.getActiveSessions(1, 100),
+      ]);
+      schools = sc || []; agents = ag || []; open = sess.items || [];
+    } catch (err) {
+      setS((p) => ({ ...p, loading: false, live: false, error: err?.message || 'Support API unreachable' }));
+      return;
+    }
+    setS((p) => ({ ...p, loading: false, live: true, schools, agents, open, historyLoading: true }));
+
+    /* Sessions list me sirf lastMessageAt aata hai, message ka matn nahi —
+       "Last Message" column ke liye har khuli conversation ek baar kholni
+       parti hai. Ye chand hi hoti hain. */
+    const enriched = await mapLimit(open, CONCURRENCY, async (row) => {
+      try {
+        const detail = await supportApi.getSessionDetail(row.sessionId);
+        const msgs = detail.messages || [];
+        const last = msgs[msgs.length - 1];
+        return { ...row, lastText: messagePreview(last), lastAt: last?.createdAt || row.lastMessageAt };
+      } catch (err) {
+        return { ...row, lastText: '', lastAt: row.lastMessageAt };
+      }
+    });
+
+    const lists = await mapLimit(schools, CONCURRENCY, (sch) =>
+      supportApi.getClosedHistory(sch.schoolId, 1, 100).then((r) => r.items || []).catch(() => []));
+    const history = {};
+    schools.forEach((sch, i) => { history[sch.schoolId] = lists[i]; });
+
+    setS((p) => ({ ...p, open: enriched, history, historyLoading: false }));
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  /* Khuli conversations — Active table ki rows. */
+  const activeRows = useMemo(() => {
+    const byId = new Map(s.schools.map((x) => [x.schoolId, x]));
+    return s.open.map((row) => {
+      const sch = byId.get(row.schoolId) || {};
+      return {
+        school: row.schoolName || sch.schoolName || `School #${row.schoolId}`,
+        campus: row.campusName || sch.campusName || '—',
+        principal: sch.principalName || '—',
+        agent: row.agentName || 'Unassigned',
+        last: row.lastText || '—',
+        activity: sinceLabel(row.lastAt || row.lastMessageAt),
+        /* Unread ka matlab school ka message pada hai jiska jawab baqi hai. */
+        status: row.unreadCount > 0 ? 'Pending' : 'Active',
+      };
+    });
+  }, [s.open, s.schools]);
+
+  /* Jin schools ki band (closed) sessions mojood hain — chahe unka koi chat is
+     waqt khula bhi ho. Khuli session wali school ko yahan se nikal dena galat
+     tha: uski purani sessions kahin se bhi nahi khulti thin. */
+  const inactiveRows = useMemo(() => {
+    const openIds = new Set(s.open.map((r) => r.schoolId));
+    return s.schools
+      .filter((sch) => (s.history[sch.schoolId] || []).length)
+      .map((sch) => {
+        const rows = s.history[sch.schoolId];
+        const latest = rows[0];            // API newest-first deti hai
+        return {
+          schoolId: sch.schoolId,
+          school: sch.schoolName || `School #${sch.schoolId}`,
+          campus: sch.campusName || '—',
+          principal: sch.principalName || '—',
+          contact: sch.contactNumber || '—',
+          agent: latest?.agentName || 'Unassigned',
+          lastSession: fmtDate(latest?.closedAt || latest?.createdAt),
+          sessions: rows.length,
+          schoolState: sch.isActive === false ? 'Inactive' : 'Active',
+          /* Is school ka koi chat abhi khula hai ya sab band ho chuke. */
+          status: openIds.has(sch.schoolId) ? 'Active' : 'Closed',
+          /* History modal isi list se chalti hai — dobara call ki zaroorat nahi. */
+          items: rows.map((r) => ({
+            sessionId: r.sessionId,
+            number: r.sessionNumber ?? r.sessionId,
+            date: fmtDate(r.closedAt || r.createdAt),
+            handledBy: r.agentName || 'Support',
+            totalMessages: r.totalMessages ?? 0,
+            attachments: r.totalAttachments ?? 0,
+            closingRemarks: r.closingRemarks || 'No remarks recorded.',
+          })),
+        };
+      })
+      .sort((a, b) => b.sessions - a.sessions);
+  }, [s.schools, s.open, s.history]);
+
+  /* Dono cards ek hi cheez ginte hain — conversations, schools nahi:
+     active = abhi khuli, inactive = band ho chuki. */
+  const closedSessions = useMemo(
+    () => Object.values(s.history).reduce((n, rows) => n + rows.length, 0),
+    [s.history],
+  );
+
+  return { ...s, activeRows, inactiveRows, closedSessions, totalSessions: s.open.length + closedSessions, reload: load };
+}
+
+/* Live counts — wahi cards, wahi rang, sirf numbers asli. */
+function liveCards(d) {
+  return [
+    { key: 'schools',  label: 'Total Schools',          value: d.schools.length,                          icon: 'fa-school',        c1: '#1E3A8A', c2: '#2563EB' },
+    { key: 'active',   label: 'Active Conversations',   value: d.open.length,                             icon: 'fa-comments',      c1: '#0F766E', c2: '#14B8A6' },
+    { key: 'inactive', label: 'Inactive Conversations', value: d.closedSessions,                          icon: 'fa-comment-slash', c1: 'var(--ag-t3)', c2: 'var(--ag-tm)' },
+    { key: 'agents',   label: 'Total Agents',           value: d.agents.length,                           icon: 'fa-headset',       c1: '#6D28D9', c2: '#7C3AED' },
+    { key: 'pending',  label: 'Pending Replies',        value: d.open.filter((r) => r.unreadCount > 0).length, icon: 'fa-reply-all', c1: '#B45309', c2: '#D97706' },
+    /* Demo me yahan "Today's Messages" tha — per-din message count kisi API me
+       nahi hai, is liye wo jagah ab kul sessions ko di hai (khuli + closed). */
+    { key: 'sessions', label: 'Total Sessions',         value: d.totalSessions,                           icon: 'fa-clock-rotate-left', c1: '#0369A1', c2: '#0EA5E9' },
+  ];
+}
+
 export default function AgentOverview() {
   const [search, setSearch] = useState('');
   const [historyFor, setHistoryFor] = useState(null);   // inactive row
   const [openSession, setOpenSession] = useState(null);  // selected history session
+  const [transcript, setTranscript] = useState(null);    // { loading, rows, error }
+
+  const d = useOverviewData();
+  const { live } = d;
+
+  /* Pehli load par kuch bhi na dikhao — na demo rows, na khali tables.
+     Warna screen pehle sample numbers dikhati thi aur ek lamhe baad chup-chaap
+     asli numbers par badal jati thi (yehi baaqi modules ka tareeqa hai:
+     spinner pehle, data baad me). Demo rows sirf tab aati hain jab API se
+     baat hi na ho sake. */
+  const cards = live ? liveCards(d) : SUMMARY;
+  const activeRows = live ? d.activeRows : ACTIVE;
+  const inactiveRows = live ? d.inactiveRows : INACTIVE;
+  /* Live me har row apni closed sessions saath laati hai; offline demo me wahi
+     ek static list sab ke liye. */
+  const sessionList = historyFor ? (live ? (historyFor.items || []) : HISTORY_SESSIONS) : [];
 
   const filteredInactive = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return INACTIVE;
-    return INACTIVE.filter(r =>
-      [r.school, r.campus, r.principal, r.contact, r.agent].some(v => v.toLowerCase().includes(q)));
-  }, [search]);
+    if (!q) return inactiveRows;
+    return inactiveRows.filter(r =>
+      [r.school, r.campus, r.principal, r.contact, r.agent]
+        .some(v => String(v || '').toLowerCase().includes(q)));
+  }, [search, inactiveRows]);
+
+  /* Session kholte hi uski asli transcript — /sessions/{id} se. */
+  const openTranscript = async (sess) => {
+    setOpenSession(sess);
+    if (!live || !sess.sessionId) { setTranscript(null); return; }
+    setTranscript({ loading: true, rows: [] });
+    try {
+      const detail = await supportApi.getSessionDetail(sess.sessionId);
+      setTranscript({ loading: false, rows: (detail.messages || []).map(toTranscriptRow) });
+    } catch (err) {
+      setTranscript({ loading: false, rows: [], error: err?.message || 'Could not load this session' });
+    }
+  };
 
   return (
     <div className="ov-root">
       <style>{OVERVIEW_CSS}</style>
 
-      <div className="ov-head">
+      <div className="ov-head" style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
         <div>
           <div className="ov-crumb"><i className="fa-solid fa-headset" aria-hidden="true" /> Customer Support <i className="fa-solid fa-chevron-right ov-crumb-sep" aria-hidden="true" /> Overview</div>
           <h1 className="ov-title">Support Overview</h1>
         </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          {/* Screen par saaf rahe ke numbers live hain ya demo — warna offline
+              fallback asli data lagta hai. */}
+          {d.loading
+            ? <span className="ov-bdg ov-bdg-slate"><i className="fa-solid fa-spinner fa-spin" aria-hidden="true" /> Loading</span>
+            : live
+              ? <span className="ov-bdg ov-bdg-green"><i className="fa-solid fa-circle" style={{ fontSize: 7 }} aria-hidden="true" /> Live</span>
+              : <span className="ov-bdg ov-bdg-amber" title={d.error || ''}><i className="fa-solid fa-triangle-exclamation" aria-hidden="true" /> Sample data</span>}
+          {live && d.historyLoading && <span className="ov-muted" style={{ fontSize: 11.5 }}><i className="fa-solid fa-spinner fa-spin" aria-hidden="true" /> loading history…</span>}
+          <button className="ov-btn-ghost" onClick={d.reload} disabled={d.loading}>
+            <i className="fa-solid fa-rotate" aria-hidden="true" /> Refresh
+          </button>
+        </div>
       </div>
 
+      {d.loading ? (
+        <div className="ov-section" style={{ textAlign: 'center', padding: 48, color: 'var(--ag-tm)' }}>
+          <i className="fa-solid fa-spinner fa-spin" style={{ fontSize: 26, display: 'block', margin: '0 auto 12px', opacity: 0.55 }} aria-hidden="true" />
+          <div style={{ fontSize: 14, fontWeight: 700 }}>Loading support overview…</div>
+          <div style={{ fontSize: 12, marginTop: 4 }}>Fetching schools, agents and conversations.</div>
+        </div>
+      ) : (
+      <>
       {/* Summary cards */}
       <div className="ov-cards">
-        {SUMMARY.map(c => (
+        {cards.map(c => (
           <div className="ov-card" key={c.key}>
             <div className="ov-card-ic" style={{ background: `linear-gradient(135deg,${c.c1},${c.c2})` }}>
               <i className={`fa-solid ${c.icon}`} aria-hidden="true" />
@@ -103,7 +388,7 @@ export default function AgentOverview() {
       </div>
 
       {/* Active conversations */}
-      <Section icon="fa-comments" title="Active Conversations" count={ACTIVE.length}>
+      <Section icon="fa-comments" title="Active Conversations" count={activeRows.length}>
         <div className="ov-tablewrap" style={{ maxHeight: 320 }}>
           <table className="ov-table">
             <thead>
@@ -113,7 +398,7 @@ export default function AgentOverview() {
               </tr>
             </thead>
             <tbody>
-              {ACTIVE.map((r, i) => (
+              {activeRows.map((r, i) => (
                 <tr key={i}>
                   <td className="ov-strong">{r.school}</td>
                   <td>{r.campus}</td>
@@ -124,6 +409,9 @@ export default function AgentOverview() {
                   <td><span className={`ov-bdg ${statusClass(r.status)}`}>{r.status}</span></td>
                 </tr>
               ))}
+              {!activeRows.length && (
+                <tr><td colSpan={7} className="ov-empty">{d.loading ? 'Loading conversations…' : 'No open conversations right now.'}</td></tr>
+              )}
             </tbody>
           </table>
         </div>
@@ -131,7 +419,7 @@ export default function AgentOverview() {
 
       {/* Inactive conversations */}
       <Section
-        icon="fa-comment-slash" title="Inactive Conversations" count={INACTIVE.length}
+        icon="fa-comment-slash" title="Inactive Conversations" count={inactiveRows.length}
         action={(
           <div className="ov-search">
             <i className="fa-solid fa-magnifying-glass" aria-hidden="true" />
@@ -144,34 +432,42 @@ export default function AgentOverview() {
           <table className="ov-table">
             <thead>
               <tr>
-                <th>School Name</th><th>Campus</th><th>Principal</th><th>Assigned Agent</th>
+                <th>School Name</th><th>Campus</th><th>Principal</th><th>School State</th><th>Assigned Agent</th>
                 <th>Last Session</th><th>Total Sessions</th><th>Status</th><th></th>
               </tr>
             </thead>
             <tbody>
               {filteredInactive.map((r, i) => (
-                <tr key={i}>
+                <tr key={r.schoolId || i}>
                   <td className="ov-strong">{r.school}</td>
                   <td>{r.campus}</td>
                   <td>{r.principal}</td>
+                  {/* School ka apna active/inactive flag (/support/schools → isActive) */}
+                  <td><span className={`ov-bdg ${(r.schoolState || 'Active') === 'Active' ? 'ov-bdg-green' : 'ov-bdg-slate'}`}>{r.schoolState || 'Active'}</span></td>
                   <td><span className="ov-agent"><i className="fa-solid fa-user-tie" aria-hidden="true" /> {r.agent}</span></td>
                   <td className="ov-muted">{r.lastSession}</td>
                   <td><span className="ov-pill">{r.sessions}</span></td>
                   <td><span className={`ov-bdg ${statusClass(r.status)}`}>{r.status}</span></td>
                   <td>
-                    <button className="ov-btn-ghost" onClick={() => { setHistoryFor(r); setOpenSession(null); }}>
+                    <button className="ov-btn-ghost" onClick={() => { setHistoryFor(r); setOpenSession(null); setTranscript(null); }}>
                       <i className="fa-solid fa-clock-rotate-left" aria-hidden="true" /> View History
                     </button>
                   </td>
                 </tr>
               ))}
               {filteredInactive.length === 0 && (
-                <tr><td colSpan={8} className="ov-empty">No conversations match “{search}”.</td></tr>
+                <tr><td colSpan={9} className="ov-empty">
+                  {d.historyLoading ? 'Loading school history…'
+                    : search ? `No conversations match “${search}”.`
+                      : 'No closed conversations yet.'}
+                </td></tr>
               )}
             </tbody>
           </table>
         </div>
       </Section>
+      </>
+      )}
 
       {/* View History modal */}
       {historyFor && !openSession && (
@@ -182,8 +478,9 @@ export default function AgentOverview() {
           onClose={() => setHistoryFor(null)}
         >
           <div className="ov-sess-list">
-            {HISTORY_SESSIONS.map(s => (
-              <button className="ov-sess" key={s.number} onClick={() => setOpenSession(s)}>
+            {!sessionList.length && <div className="ov-empty" style={{ padding: 18 }}>No closed sessions for this school.</div>}
+            {sessionList.map(s => (
+              <button className="ov-sess" key={s.sessionId || s.number} onClick={() => openTranscript(s)}>
                 <div className="ov-sess-no">#{s.number}</div>
                 <div className="ov-sess-main">
                   <div className="ov-sess-top">
@@ -211,8 +508,8 @@ export default function AgentOverview() {
           title={`Session #${openSession.number} · ${historyFor.school}`}
           sub={`${openSession.date} · Handled by ${openSession.handledBy}`}
           icon="fa-comments"
-          onBack={() => setOpenSession(null)}
-          onClose={() => { setHistoryFor(null); setOpenSession(null); }}
+          onBack={() => { setOpenSession(null); setTranscript(null); }}
+          onClose={() => { setHistoryFor(null); setOpenSession(null); setTranscript(null); }}
         >
           <div className="ov-trans-meta">
             <span><i className="fa-regular fa-comment" aria-hidden="true" /> {openSession.totalMessages} messages</span>
@@ -220,7 +517,20 @@ export default function AgentOverview() {
             <span className="ov-bdg ov-bdg-slate">Closed</span>
           </div>
           <div className="ov-chat">
-            {DEMO_TRANSCRIPT.map((m, i) => <TranscriptRow key={i} m={m} />)}
+            {/* Live par asli messages (/sessions/{id}); offline demo par wahi
+                static transcript. */}
+            {!live && DEMO_TRANSCRIPT.map((m, i) => <TranscriptRow key={i} m={m} />)}
+            {live && transcript?.loading && (
+              <div className="ov-empty" style={{ padding: 24 }}><i className="fa-solid fa-spinner fa-spin" aria-hidden="true" /> Loading transcript…</div>
+            )}
+            {live && transcript?.error && (
+              <div className="ov-empty" style={{ padding: 24 }}><i className="fa-solid fa-triangle-exclamation" aria-hidden="true" /> {transcript.error}</div>
+            )}
+            {live && transcript && !transcript.loading && !transcript.error && (
+              transcript.rows.length
+                ? transcript.rows.map((m, i) => <TranscriptRow key={i} m={m} />)
+                : <div className="ov-empty" style={{ padding: 24 }}>No messages in this session.</div>
+            )}
             <div className="ov-closed">
               <i className="fa-solid fa-circle-check" aria-hidden="true" /> Session closed by {openSession.handledBy} · {openSession.date}
               <div className="ov-closed-rmk">“{openSession.closingRemarks}”</div>
@@ -255,17 +565,17 @@ function TranscriptRow({ m }) {
       <div className="ov-bbl-wrap">
         {!out && <div className="ov-sndr">{m.sender}</div>}
         <div className={`ov-bbl ${out ? 'ov-bbl-out' : 'ov-bbl-in'}`}>
-          {m.media === 'image' && <MediaPlaceholder icon="fa-image" label="screenshot.png" tone="#0EA5E9" box />}
-          {m.media === 'video' && <MediaPlaceholder icon="fa-play" label="recording.mp4" tone="#7C3AED" box />}
+          {m.media === 'image' && <MediaPlaceholder icon="fa-image" label={m.mediaName || 'screenshot.png'} tone="#0EA5E9" box />}
+          {m.media === 'video' && <MediaPlaceholder icon="fa-play" label={m.mediaName || 'recording.mp4'} tone="#7C3AED" box />}
           {m.media === 'voice' && (
             <div className="ov-voice">
               <span className="ov-voice-play"><i className="fa-solid fa-play" aria-hidden="true" /></span>
               <div className="ov-voice-bar"><span style={{ width: '40%' }} /></div>
-              <span className="ov-voice-dur">0:14</span>
+              <span className="ov-voice-dur">{m.duration || '0:14'}</span>
               <i className="fa-solid fa-microphone ov-voice-mic" aria-hidden="true" />
             </div>
           )}
-          {m.media === 'document' && <MediaPlaceholder icon="fa-file-pdf" label="guide.pdf" sub="310 KB · PDF" tone="#DC2626" />}
+          {m.media === 'document' && <MediaPlaceholder icon="fa-file-pdf" label={m.mediaName || 'guide.pdf'} sub={m.mediaSub || '310 KB · PDF'} tone="#DC2626" />}
           {m.text && <div className="ov-bbl-txt">{m.text}</div>}
           <div className="ov-bbl-meta">{m.time}{out && <i className="fa-solid fa-check-double ov-ticks" aria-hidden="true" />}</div>
         </div>

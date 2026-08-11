@@ -1,27 +1,49 @@
 /* ════════════════════════════════════════════════════════════════════
-   Support frontend configuration + runtime bridge.
+   Support frontend configuration + runtime bridge — SUPER ADMIN (agent) side.
 
-   The support UI runs in three ways, all served by the SAME components:
-     1. Inside the CRA dev app  → values come from REACT_APP_* env vars
-                                   (or the localhost defaults below).
-     2. Embedded in ASP.NET MVC → the host page calls
-                                   window.SchoolMentorSupportWidget.init({...})
-                                   / SchoolMentorSupportAdmin.init({...}),
-                                   which calls configureSupport(opts) to inject
-                                   apiBaseUrl / signalRHubUrl / token / identity
-                                   at runtime — NO hardcoded URLs, NO re-login.
+   The Support module lives INSIDE SchoolMentor.API (same host as the rest of
+   the ERP), not in a standalone service any more: endpoints hang off
+   {apiHost}/api/support/... and the SignalR hub off {apiHost}/hubs/support.
+   There is no Support login — the console's own JWT (sessionStorage
+   `superadmintoken`, written by SuperAdminLogin) is what identifies the agent.
+   The API reads its claims: a `BranchID` claim means "school user", anything
+   else is an agent/super-admin, and the agent's own id comes off the
+   nameidentifier claim (that is what /agents/me/assigned resolves).
 
-   The exported SUPPORT_API_BASE / SUPPORT_HUB_URL / SUPPORT_BACKEND_ENABLED are
-   declared with `let` so configureSupport() can update them; ES module live
-   bindings propagate the new values to every importer (api.js, realtime.js,
-   the components) the next time they read them.
+   Where the values come from, in priority order:
+     1. configureSupport({...}) — a host page injecting apiBaseUrl / hub / token
+        at runtime (the .NET MVC embed).
+     2. REACT_APP_SUPPORT_* env vars — for pointing the CRA dev app somewhere
+        else.
+     3. The defaults below + the console's own session token.
+
+   Base URL, dev vs prod:
+     dev  (npm start on :3001) → the API host directly. Its CORS policy echoes
+       the caller's Origin, so localhost:3001 is allowed — no proxy needed
+       (unlike SchoolMentorSuperAdminAPI, which has a fixed allow-list).
+     prod (npm run build)      → OWN origin (empty base). The site is https and
+       cannot call http://IP:4100 (mixed content), so IIS reverse-proxies
+       /api/... to the API — see the "API Proxy" rule in public/web.config.
+
+   The base URL / token are resolved lazily on every call because the session
+   token only appears after login.
    ════════════════════════════════════════════════════════════════════ */
 
 const env = (typeof process !== 'undefined' && process.env) ? process.env : {};
 
-/* Mutable runtime config — defaults from env / localhost, overridden by init(). */
+const stripTrailingSlash = (u) => (typeof u === 'string' ? u.replace(/\/+$/, '') : u);
+
+/* Host the Support API is served from. '' → this app's own origin. */
+const DEV_API_BASE = 'http://50.190.164.42:4100';
+const PROD_API_BASE = '';
+
+const DEFAULT_API_BASE = env.REACT_APP_SUPPORT_API
+  ? stripTrailingSlash(env.REACT_APP_SUPPORT_API)
+  : (env.NODE_ENV === 'production' ? PROD_API_BASE : DEV_API_BASE);
+
+/* Mutable runtime config. null → fall back to the defaults / session token. */
 const cfg = {
-  apiBaseUrl: env.REACT_APP_SUPPORT_API || 'http://localhost:5150',
+  apiBaseUrl: null,
   hubUrl: env.REACT_APP_SUPPORT_HUB || null,   // null → derived from apiBaseUrl
   token: env.REACT_APP_SUPPORT_TOKEN || null,  // bridge JWT from the host app
   identity: {
@@ -37,12 +59,36 @@ const cfg = {
   },
 };
 
-const deriveHub = () => cfg.hubUrl || `${cfg.apiBaseUrl}/hubs/support`;
+/** Host origin the Support API is served from. */
+export function supportApiBase() {
+  return cfg.apiBaseUrl != null ? cfg.apiBaseUrl : DEFAULT_API_BASE;
+}
 
-/* Live-binding exports (updated by configureSupport). */
-export let SUPPORT_API_BASE = cfg.apiBaseUrl;
-export let SUPPORT_HUB_URL = deriveHub();
-export let SUPPORT_BACKEND_ENABLED = Boolean(cfg.apiBaseUrl);
+/** Every Support REST route sits under this prefix. */
+export const SUPPORT_API_PREFIX = '/api/support';
+
+/** Absolute SignalR hub URL — {host}/hubs/support unless the host overrides it. */
+export function supportHubUrl() {
+  return cfg.hubUrl || `${supportApiBase()}/hubs/support`;
+}
+
+/* Support is always "enabled" now that it shares the ERP API host + token; when
+   the API is unreachable the components fall back to offline demo behaviour. */
+export const SUPPORT_BACKEND_ENABLED = true;
+
+/**
+ * Is the SignalR hub live?
+ *
+ * OFF by default, exactly as on the school side: `app.MapHub<SupportHub>
+ * ("/hubs/support")` is not deployed yet, so every attempt just fires a
+ * negotiate request that 404s. With this off no socket is opened at all and
+ * useSupportChat polls the open conversation instead. Note that the super-admin
+ * site's web.config has no /hubs rewrite either — add one before flipping this
+ * on for a production build.
+ *
+ * Turn it on with REACT_APP_SUPPORT_REALTIME=true the day the hub ships.
+ */
+export const SUPPORT_REALTIME_ENABLED = env.REACT_APP_SUPPORT_REALTIME === 'true';
 
 const IDENTITY_KEYS = [
   'role', 'userId', 'schoolId', 'schoolName', 'campusName',
@@ -51,7 +97,7 @@ const IDENTITY_KEYS = [
 
 /**
  * Apply host-supplied configuration at runtime. Called by the embed entry
- * points (window.SchoolMentorSupport*.init). Safe to call more than once.
+ * point (window.SchoolMentorSupportAdmin.init). Safe to call more than once.
  *
  *   configureSupport({
  *     apiBaseUrl, signalRHubUrl, token,
@@ -59,42 +105,45 @@ const IDENTITY_KEYS = [
  *   })
  */
 export function configureSupport(opts = {}) {
-  if (opts.apiBaseUrl) cfg.apiBaseUrl = stripTrailingSlash(opts.apiBaseUrl);
+  if (opts.apiBaseUrl != null) cfg.apiBaseUrl = stripTrailingSlash(opts.apiBaseUrl);
   if (opts.signalRHubUrl) cfg.hubUrl = opts.signalRHubUrl;
   if (opts.token) cfg.token = opts.token;
 
   for (const k of IDENTITY_KEYS) {
     if (opts[k] != null) cfg.identity[k] = opts[k];
   }
-
-  SUPPORT_API_BASE = cfg.apiBaseUrl;
-  SUPPORT_HUB_URL = deriveHub();
-  SUPPORT_BACKEND_ENABLED = Boolean(cfg.apiBaseUrl);
   return { ...cfg };
 }
 
-const stripTrailingSlash = (u) => (typeof u === 'string' ? u.replace(/\/+$/, '') : u);
+const readSession = (key) => {
+  try { return sessionStorage.getItem(key); } catch (e) { return null; }
+};
 
-/** Bridge JWT issued by the host ERP / Super Admin backend (null in demo mode). */
-export const getSupportToken = () => cfg.token;
+/**
+ * The JWT to send on Support calls. The Super Admin console's own login stores
+ * it as `superadmintoken` (SA_SESSION_KEYS.token in superadmin/api/services/auth).
+ * A host-injected bridge token (configureSupport) wins when present.
+ */
+export const getSupportToken = () => cfg.token || readSession('superadmintoken');
+
 /** Identity claims the host passed alongside the token (display only). */
 export const getSupportIdentity = () => ({ ...cfg.identity });
-/** True when the host injected a token → skip the demo login flow. */
-export const hasBridgeToken = () => Boolean(cfg.token);
+/** True when a token is available at all — otherwise stay in offline demo mode. */
+export const hasBridgeToken = () => Boolean(getSupportToken());
 
-/* Backend is "enabled" whenever a base URL is configured. When the API is
-   unreachable the components fall back to their offline demo behaviour. */
+/** Only meaningful on the school side; kept so the shared hook stays identical. */
+export const getSupportSchoolId = () => cfg.identity.schoolId || null;
 
-/* Demo credentials matching the seeded accounts (DbSeeder). Used ONLY when no
-   bridge token is supplied (i.e. the standalone CRA dev app). In production the
-   host app injects a real token via init() and these are never touched. */
-export const DEMO_SCHOOL_LOGIN = {
-  usernameOrEmail: env.REACT_APP_SUPPORT_SCHOOL_USER || 'daffodil',
-  password: env.REACT_APP_SUPPORT_SCHOOL_PASS || 'Password123!',
-};
-export const DEMO_AGENT_LOGIN = {
-  usernameOrEmail: env.REACT_APP_SUPPORT_AGENT_USER || 'admin@schoolmentor.app',
-  password: env.REACT_APP_SUPPORT_AGENT_PASS || 'Password123!',
+/**
+ * The logged-in agent's id, sent as `closedByAgentID` when a session is closed.
+ * The console writes it to sessionStorage as `superadminid` at login — the same
+ * id the /support/agents list is keyed by.
+ */
+export const getSupportUserId = () => {
+  const id = cfg.identity.agentId || cfg.identity.userId || readSession('superadminid');
+  if (id == null || id === '') return null;
+  const n = Number(id);
+  return Number.isFinite(n) ? n : id;
 };
 
 /* Backend enum values (mirror SchoolMentor.Support.Domain.Enums). */
@@ -109,10 +158,21 @@ export const MessageType = {
 /* Max files per single send, by category (frontend-enforced). */
 export const ATTACH_LIMITS = { image: 10, document: 10, video: 5 };
 
-/* Build an absolute URL for a stored attachment (backend returns "/files/..."). */
+/* Uploaded attachments live in the API's own wwwroot (/SupportAttachments/...)
+   and come back stamped with whatever host served the request — the IP on :4100
+   (blocked as mixed content from an https page) or localhost:4100 behind the
+   proxy (nothing there in the user's browser). Keep the stored path, serve it
+   from the media host. Same reasoning as the school-side copy. */
+export const MEDIA_BASE = stripTrailingSlash(
+  env.REACT_APP_MEDIA_BASE || 'https://alphaapi.schoolmentor.ai',
+);
+
 export const fileUrl = (relativeOrAbsolute) => {
   if (!relativeOrAbsolute) return '';
-  return /^https?:\/\//i.test(relativeOrAbsolute)
-    ? relativeOrAbsolute
-    : `${cfg.apiBaseUrl}${relativeOrAbsolute}`;
+  const u = String(relativeOrAbsolute).trim();
+  if (u.startsWith('data:')) return u;
+  const m = u.match(/\/SupportAttachments\/.*/i);
+  if (m) return `${MEDIA_BASE}${m[0]}`;
+  if (/^https?:\/\//i.test(u)) return u;
+  return `${MEDIA_BASE}${u.startsWith('/') ? u : `/${u}`}`;
 };

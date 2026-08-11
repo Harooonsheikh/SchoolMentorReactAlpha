@@ -9,12 +9,16 @@
    ════════════════════════════════════════════════════════════════════ */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  DEMO_AGENT_LOGIN, DEMO_SCHOOL_LOGIN, SenderType, MessageStatus, MessageType, fileUrl,
-  getSupportToken,
+  SenderType, MessageStatus, MessageType, SessionStatus, fileUrl,
+  getSupportToken, getSupportIdentity, getSupportUserId, SUPPORT_REALTIME_ENABLED,
 } from './config';
 import * as api from './api';
+import { ApiError } from './api';
 import { createConnection, Events, joinSession, leaveSession, sendTyping } from './realtime';
 import { playIncomingChime } from './sound';
+
+/* How often to re-read the open conversation when the SignalR hub is down. */
+const POLL_INTERVAL_MS = 8000;
 
 export function formatTime(iso) {
   if (!iso) return '';
@@ -32,7 +36,8 @@ export function useSupportChat({
   onSessionClosed,    // (sessionId)
   onError,            // (err)
 } = {}) {
-  const [status, setStatus] = useState('idle'); // idle|connecting|connected|reconnecting|offline|error
+  const [status, setStatus] = useState('idle'); // idle|connecting|connected|offline|error — REST reachability
+  const [realtime, setRealtime] = useState(false); // SignalR hub up?
   const [me, setMe] = useState(null);
   const [sessionId, setSessionId] = useState(null);
   const [activeSessions, setActiveSessions] = useState([]);
@@ -44,6 +49,7 @@ export function useSupportChat({
   const startedRef = useRef(false);
   const typingTimerRef = useRef(null);
   const typingActiveRef = useRef(false);
+  const seenRef = useRef(new Set());  // message ids already handed to the caller
 
   // Keep callbacks fresh without re-subscribing handlers.
   const cb = useRef({});
@@ -84,7 +90,11 @@ export function useSupportChat({
 
   /* ── Wire SignalR event handlers (once per connection) ── */
   const registerHandlers = useCallback((conn) => {
-    conn.on(Events.MessageReceived, (dto) => {
+    conn.on(Events.MessageReceived, (payload) => {
+      // Hub payloads come off the same SPs as the REST results, so run them
+      // through the same normaliser instead of trusting one casing.
+      const dto = api.normalizeMessage(payload);
+      if (!dto) return;
       const isIncoming = dto.senderType !== outSenderType;
       // Keep inbox ordering fresh; bump unread when it's a school message in a
       // conversation we're not currently viewing.
@@ -93,6 +103,7 @@ export function useSupportChat({
       // Notification sound for incoming messages only (never our own).
       if (isIncoming) playIncomingChime();
       if (dto.sessionId === sessionRef.current) {
+        seenRef.current.add(dto.messageId);
         cb.current.onInbound?.(toUi(dto));
         // We're actively viewing this conversation, so acknowledge the other
         // side's message as read right away. The server broadcasts MessageRead
@@ -118,8 +129,8 @@ export function useSupportChat({
     conn.on(Events.TypingStopped, (sid) => {
       if (sid === sessionRef.current) cb.current.onTyping?.(null);
     });
-    conn.on(Events.SessionOpened, (sess) => setActiveSessions((p) => upsertSession(p, sess)));
-    conn.on(Events.SessionAssigned, (sess) => setActiveSessions((p) => upsertSession(p, sess)));
+    conn.on(Events.SessionOpened, (sess) => setActiveSessions((p) => upsertSession(p, api.normalizeSession(sess))));
+    conn.on(Events.SessionAssigned, (sess) => setActiveSessions((p) => upsertSession(p, api.normalizeSession(sess))));
     conn.on(Events.SessionClosed, (sid) => {
       setActiveSessions((p) => p.filter((s) => s.sessionId !== sid));
       if (sid === sessionRef.current) cb.current.onSessionClosed?.(sid);
@@ -132,12 +143,14 @@ export function useSupportChat({
       });
     });
 
-    conn.onreconnecting(() => setStatus('reconnecting'));
+    /* Socket health is tracked separately from `status`: REST is what persists
+       messages, so losing the hub degrades us to polling rather than offline. */
+    conn.onreconnecting(() => setRealtime(false));
     conn.onreconnected(async () => {
-      setStatus('connected');
+      setRealtime(true);
       if (sessionRef.current) { try { await joinSession(conn, sessionRef.current); } catch { /* ignore */ } }
     });
-    conn.onclose(() => setStatus('offline'));
+    conn.onclose(() => setRealtime(false));
   }, [toUi, outSenderType]);
 
   /* ── Login + connect ── */
@@ -146,38 +159,51 @@ export function useSupportChat({
     startedRef.current = true;
     setStatus('connecting');
     try {
-      /* Token bridge: when the host app (ERP / Super Admin) injects a JWT via
-         init(), use it directly — the user is already authenticated there, so
-         we never show a second login. Only the standalone CRA dev app falls
-         back to the seeded demo credentials. */
-      let auth;
-      const bridgeToken = getSupportToken();
-      if (bridgeToken) {
-        auth = { accessToken: bridgeToken };
-      } else {
-        const creds = credentials || (role === 'agent' ? DEMO_AGENT_LOGIN : DEMO_SCHOOL_LOGIN);
-        auth = role === 'agent'
-          ? await api.agentLogin(creds.usernameOrEmail, creds.password)
-          : await api.schoolLogin(creds.usernameOrEmail, creds.password);
-      }
+      /* Support has no login of its own. The caller is already authenticated in
+         the host app, and that same JWT carries the claims SupportAuthHelper
+         reads — BranchID for a school user, IsAdmin for an agent/super admin.
+         An explicit `credentials.token` (or configureSupport) overrides it. */
+      const token = credentials?.token || getSupportToken();
+      if (!token) throw new ApiError('No session token — Support stays offline', 401);
 
-      tokenRef.current = auth.accessToken;
-      api.setToken(auth.accessToken);
-      setMe(auth);
+      tokenRef.current = token;
+      api.setToken(token);
+      setMe({ accessToken: token, ...getSupportIdentity() });
 
-      const conn = createConnection(() => tokenRef.current);
-      registerHandlers(conn);
-      connRef.current = conn;
-      await conn.start();
+      /* REST first — it is what actually persists messages, and reaching it is
+         what "live" means. The hub is an enhancement: /hubs/support is not
+         mapped on every deployment, and a missing socket must not knock a
+         working chat back into offline demo mode. */
+      const sessions = await api.getActiveSessions();
+      setActiveSessions(sessions.items || []);
       setStatus('connected');
 
-      // Prime the UI with existing data.
-      const sessions = await api.getActiveSessions().catch(() => ({ items: [] }));
-      setActiveSessions(sessions.items || []);
-      if (role !== 'agent' && sessions.items?.length) {
-        await openSession(sessions.items[0].sessionId);
+      /* Socket only when the hub is actually deployed — otherwise we would fire
+         a negotiate request that 404s on every open. Polling covers it. */
+      if (SUPPORT_REALTIME_ENABLED) {
+        try {
+          const conn = createConnection(() => tokenRef.current);
+          registerHandlers(conn);
+          await conn.start();
+          connRef.current = conn;
+          setRealtime(true);
+        } catch (hubErr) {
+          connRef.current = null;
+          setRealtime(false);   // fall back to polling
+        }
       }
-      return conn;
+
+      if (role !== 'agent') {
+        if (sessions.items?.length) {
+          await openSession(sessions.items[0].sessionId);
+        } else {
+          // No open conversation yet. Still hand back an empty history so the
+          // caller drops its offline demo transcript — otherwise a live user
+          // would keep looking at seeded sample messages.
+          cb.current.onHistory?.([]);
+        }
+      }
+      return connRef.current;
     } catch (err) {
       startedRef.current = false;
       setStatus(err?.status === 401 ? 'error' : 'offline');
@@ -195,28 +221,65 @@ export function useSupportChat({
     // Opening a conversation clears its unread badge.
     setActiveSessions((prev) => prev.map((s) => s.sessionId === id ? { ...s, unreadCount: 0 } : s));
     if (connRef.current) { try { await joinSession(connRef.current, id); } catch { /* ignore */ } }
-    const uiMsgs = (detail.messages || []).map(toUi);
-    cb.current.onHistory?.(uiMsgs);
+    const rows = detail.messages || [];
+    // Everything in the history is already on screen — the poller must not
+    // re-announce it as newly arrived.
+    seenRef.current = new Set(rows.map((m) => m.messageId));
+    cb.current.onHistory?.(rows.map(toUi));
 
     // Mark the other side's unread messages as read.
-    const unread = (detail.messages || [])
+    const unread = rows
       .filter((m) => m.senderType !== outSenderType && m.messageStatus < MessageStatus.Read)
       .map((m) => m.messageId);
     if (unread.length) api.markRead(id, unread).catch(() => {});
     return detail;
   }, [toUi, outSenderType, setSession]);
 
+  /* ── Polling fallback ──────────────────────────────────────────────
+     Only runs while REST is up but the hub is not (e.g. /hubs/support is not
+     mapped on this deployment). Without it a reply would never appear until
+     the user reopened the chat. Stops the moment SignalR connects. */
+  useEffect(() => {
+    if (status !== 'connected' || realtime || !sessionId) return undefined;
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const detail = await api.getSessionDetail(sessionId);
+        if (cancelled) return;
+        const fresh = (detail.messages || []).filter((m) => !seenRef.current.has(m.messageId));
+        // Without the hub there is no SessionClosed event, so notice it here.
+        if (detail.sessionStatus === SessionStatus.Closed) {
+          fresh.forEach((m) => { seenRef.current.add(m.messageId); cb.current.onInbound?.(toUi(m)); });
+          cb.current.onSessionClosed?.(sessionId);
+          return;
+        }
+        if (!fresh.length) return;
+        const unread = [];
+        for (const m of fresh) {
+          seenRef.current.add(m.messageId);
+          cb.current.onInbound?.(toUi(m));
+          if (m.senderType !== outSenderType && m.messageStatus < MessageStatus.Read) unread.push(m.messageId);
+        }
+        if (unread.length) api.markRead(sessionId, unread).catch(() => {});
+      } catch (e) { /* transient — retry on the next tick */ }
+    };
+    const timer = setInterval(tick, POLL_INTERVAL_MS);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [status, realtime, sessionId, toUi, outSenderType]);
+
   /* ── Send a text message ── */
   const sendText = useCallback(async (body) => {
     const text = (body || '').trim();
     if (!text) return null;
     const result = await api.sendMessage(sessionRef.current, text);
-    if (result.sessionCreated && result.message?.sessionId) {
+    const newId = result.sessionId || result.message?.sessionId;
+    if (result.sessionCreated && newId) {
       // First school message created a session — adopt + join it now.
-      setSession(result.message.sessionId);
-      if (connRef.current) { try { await joinSession(connRef.current, result.message.sessionId); } catch { /* ignore */ } }
+      setSession(newId);
+      if (connRef.current) { try { await joinSession(connRef.current, newId); } catch { /* ignore */ } }
     }
     // Echo immediately; SignalR may also deliver it → caller dedupes by id.
+    if (result.message?.messageId != null) seenRef.current.add(result.message.messageId);
     cb.current.onInbound?.(toUi(result.message));
     return result;
   }, [toUi, setSession]);
@@ -226,10 +289,12 @@ export function useSupportChat({
     const result = await api.sendAttachment({
       sessionId: sessionRef.current, category, file, fileName, voiceDuration, caption,
     });
-    if (result.sessionCreated && result.message?.sessionId) {
-      setSession(result.message.sessionId);
-      if (connRef.current) { try { await joinSession(connRef.current, result.message.sessionId); } catch { /* ignore */ } }
+    const newId = result.sessionId || result.message?.sessionId;
+    if (result.sessionCreated && newId) {
+      setSession(newId);
+      if (connRef.current) { try { await joinSession(connRef.current, newId); } catch { /* ignore */ } }
     }
+    if (result.message?.messageId != null) seenRef.current.add(result.message.messageId);
     cb.current.onInbound?.(toUi(result.message));
     return result;
   }, [toUi, setSession]);
@@ -253,9 +318,11 @@ export function useSupportChat({
     }
   }, []);
 
+  /* The API records who closed the session. Both sides send the logged-in
+     user's id (sessionStorage UserID) as closedByAgentID. */
   const closeSession = useCallback(async (remarks) => {
     if (!sessionRef.current) return null;
-    return api.closeSession(sessionRef.current, remarks || null);
+    return api.closeSession(sessionRef.current, remarks || null, getSupportUserId());
   }, []);
 
   /* Detach from the (closed) session so the next message starts a fresh one.
@@ -263,6 +330,7 @@ export function useSupportChat({
   const newConversation = useCallback(() => {
     const conn = connRef.current;
     if (conn && sessionRef.current) leaveSession(conn, sessionRef.current).catch(() => {});
+    seenRef.current = new Set();
     setSession(null);
   }, [setSession]);
 
@@ -283,9 +351,11 @@ export function useSupportChat({
   }, []);
 
   return {
-    status, me, sessionId, activeSessions, online,
+    status, realtime, me, sessionId, activeSessions, online,
     start, openSession, sendText, sendAttachment, setTyping, closeSession, newConversation, refreshInbox, toUi,
-    connected: status === 'connected' || status === 'reconnecting',
+    /* "connected" = the REST API is reachable, i.e. messages really persist.
+       `realtime` says whether the SignalR hub is also up. */
+    connected: status === 'connected',
   };
 }
 
@@ -306,6 +376,7 @@ function extOf(name) {
 
 /* ── helpers for inbox list maintenance ── */
 function upsertSession(list, sess) {
+  if (!sess?.sessionId) return list;
   const without = list.filter((s) => s.sessionId !== sess.sessionId);
   return [sess, ...without];
 }

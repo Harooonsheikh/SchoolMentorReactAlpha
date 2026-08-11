@@ -1,27 +1,30 @@
 /* ════════════════════════════════════════════════════════════════════
    Support frontend configuration + runtime bridge.
 
-   The support UI runs in three ways, all served by the SAME components:
-     1. Inside the CRA dev app  → values come from REACT_APP_* env vars
-                                   (or the localhost defaults below).
-     2. Embedded in ASP.NET MVC → the host page calls
-                                   window.SchoolMentorSupportWidget.init({...})
-                                   / SchoolMentorSupportAdmin.init({...}),
-                                   which calls configureSupport(opts) to inject
-                                   apiBaseUrl / signalRHubUrl / token / identity
-                                   at runtime — NO hardcoded URLs, NO re-login.
+   The Support module lives INSIDE SchoolMentor.API (same host, same JWT as the
+   rest of the ERP) — it is no longer a standalone service with its own login.
+   Endpoints hang off {erpBase}/api/support/... and the SignalR hub off
+   {erpBase}/hubs/support. See README_ClaudeCode_Implementation §6.
 
-   The exported SUPPORT_API_BASE / SUPPORT_HUB_URL / SUPPORT_BACKEND_ENABLED are
-   declared with `let` so configureSupport() can update them; ES module live
-   bindings propagate the new values to every importer (api.js, realtime.js,
-   the components) the next time they read them.
+   Where the values come from, in priority order:
+     1. configureSupport({...}) — the host page injects apiBaseUrl / hub / token
+        at runtime (ASP.NET MVC embed, or a future micro-frontend host).
+     2. REACT_APP_SUPPORT_* env vars — only for pointing the CRA dev app at a
+        local API instance.
+     3. The ERP's own API base (src/utils/apiConfig getBaseUrl) + the ERP's
+        session token. This is the normal in-app path: the user is already
+        logged in, so Support never asks for credentials again.
+
+   The base URL / token are resolved lazily on every call because getBaseUrl()
+   reads localStorage and the session token only appears after login.
    ════════════════════════════════════════════════════════════════════ */
+import { getBaseUrl, MEDIA_BASE } from '../utils/apiConfig';
 
 const env = (typeof process !== 'undefined' && process.env) ? process.env : {};
 
-/* Mutable runtime config — defaults from env / localhost, overridden by init(). */
+/* Mutable runtime config. null → fall back to the ERP's own base / token. */
 const cfg = {
-  apiBaseUrl: env.REACT_APP_SUPPORT_API || 'http://localhost:5150',
+  apiBaseUrl: env.REACT_APP_SUPPORT_API || null,
   hubUrl: env.REACT_APP_SUPPORT_HUB || null,   // null → derived from apiBaseUrl
   token: env.REACT_APP_SUPPORT_TOKEN || null,  // bridge JWT from the host app
   identity: {
@@ -37,12 +40,35 @@ const cfg = {
   },
 };
 
-const deriveHub = () => cfg.hubUrl || `${cfg.apiBaseUrl}/hubs/support`;
+/** Host origin the Support API is served from (ERP's own API host by default). */
+export function supportApiBase() {
+  return cfg.apiBaseUrl || stripTrailingSlash(getBaseUrl());
+}
 
-/* Live-binding exports (updated by configureSupport). */
-export let SUPPORT_API_BASE = cfg.apiBaseUrl;
-export let SUPPORT_HUB_URL = deriveHub();
-export let SUPPORT_BACKEND_ENABLED = Boolean(cfg.apiBaseUrl);
+/** Every Support REST route sits under this prefix. */
+export const SUPPORT_API_PREFIX = '/api/support';
+
+/** Absolute SignalR hub URL — {host}/hubs/support unless the host overrides it. */
+export function supportHubUrl() {
+  return cfg.hubUrl || `${supportApiBase()}/hubs/support`;
+}
+
+/* Support is always "enabled" now that it shares the ERP's host + token; when
+   the API is unreachable the components fall back to offline demo behaviour. */
+export const SUPPORT_BACKEND_ENABLED = true;
+
+/**
+ * Is the SignalR hub live?
+ *
+ * OFF by default: `app.MapHub<SupportHub>("/hubs/support")` (README §3) is not
+ * deployed yet, so every connection attempt just fires a negotiate request that
+ * 404s. With this off we never open the socket at all and useSupportChat polls
+ * the open conversation instead — same result, no failing requests.
+ *
+ * Flip it on with REACT_APP_SUPPORT_REALTIME=true (or edit this default) the
+ * day the hub ships; nothing else needs to change.
+ */
+export const SUPPORT_REALTIME_ENABLED = env.REACT_APP_SUPPORT_REALTIME === 'true';
 
 const IDENTITY_KEYS = [
   'role', 'userId', 'schoolId', 'schoolName', 'campusName',
@@ -66,35 +92,42 @@ export function configureSupport(opts = {}) {
   for (const k of IDENTITY_KEYS) {
     if (opts[k] != null) cfg.identity[k] = opts[k];
   }
-
-  SUPPORT_API_BASE = cfg.apiBaseUrl;
-  SUPPORT_HUB_URL = deriveHub();
-  SUPPORT_BACKEND_ENABLED = Boolean(cfg.apiBaseUrl);
   return { ...cfg };
 }
 
 const stripTrailingSlash = (u) => (typeof u === 'string' ? u.replace(/\/+$/, '') : u);
 
-/** Bridge JWT issued by the host ERP / Super Admin backend (null in demo mode). */
-export const getSupportToken = () => cfg.token;
+const readSession = (key) => {
+  try { return sessionStorage.getItem(key); } catch (e) { return null; }
+};
+
+/**
+ * The JWT to send on Support calls. No Support-specific login exists: the ERP's
+ * branch login already issues a token carrying the `BranchID` claim, which
+ * SupportAuthHelper reads to identify the school user. A host-injected bridge
+ * token (configureSupport) wins when present.
+ */
+export const getSupportToken = () => cfg.token || readSession('token');
+
 /** Identity claims the host passed alongside the token (display only). */
 export const getSupportIdentity = () => ({ ...cfg.identity });
-/** True when the host injected a token → skip the demo login flow. */
-export const hasBridgeToken = () => Boolean(cfg.token);
+/** True when a token is available at all — otherwise stay in offline demo mode. */
+export const hasBridgeToken = () => Boolean(getSupportToken());
 
-/* Backend is "enabled" whenever a base URL is configured. When the API is
-   unreachable the components fall back to their offline demo behaviour. */
+/** The caller's branch, used for the school-side history endpoints. */
+export const getSupportSchoolId = () =>
+  cfg.identity.schoolId || readSession('branchID') || null;
 
-/* Demo credentials matching the seeded accounts (DbSeeder). Used ONLY when no
-   bridge token is supplied (i.e. the standalone CRA dev app). In production the
-   host app injects a real token via init() and these are never touched. */
-export const DEMO_SCHOOL_LOGIN = {
-  usernameOrEmail: env.REACT_APP_SUPPORT_SCHOOL_USER || 'daffodil',
-  password: env.REACT_APP_SUPPORT_SCHOOL_PASS || 'Password123!',
-};
-export const DEMO_AGENT_LOGIN = {
-  usernameOrEmail: env.REACT_APP_SUPPORT_AGENT_USER || 'admin@schoolmentor.app',
-  password: env.REACT_APP_SUPPORT_AGENT_PASS || 'Password123!',
+/**
+ * The logged-in user's id, sent as `closedByAgentID` when a session is closed.
+ * The ERP writes it to sessionStorage as `UserID` at login; a host-injected
+ * identity (configureSupport) wins when present.
+ */
+export const getSupportUserId = () => {
+  const id = cfg.identity.agentId || cfg.identity.userId || readSession('UserID');
+  if (id == null || id === '') return null;
+  const n = Number(id);
+  return Number.isFinite(n) ? n : id;
 };
 
 /* Backend enum values (mirror SchoolMentor.Support.Domain.Enums). */
@@ -109,10 +142,20 @@ export const MessageType = {
 /* Max files per single send, by category (frontend-enforced). */
 export const ATTACH_LIMITS = { image: 10, document: 10, video: 5 };
 
-/* Build an absolute URL for a stored attachment (backend returns "/files/..."). */
+/* Build an absolute URL for a stored attachment. The API saves uploads under
+   its own wwwroot (/SupportAttachments/...) and returns that relative path, so
+   it must be served from the MEDIA host — not the ERP origin, which has no
+   rewrite rule for it (same reasoning as resolveMediaUrl in utils/apiConfig). */
 export const fileUrl = (relativeOrAbsolute) => {
   if (!relativeOrAbsolute) return '';
-  return /^https?:\/\//i.test(relativeOrAbsolute)
-    ? relativeOrAbsolute
-    : `${cfg.apiBaseUrl}${relativeOrAbsolute}`;
+  const u = String(relativeOrAbsolute).trim();
+  if (u.startsWith('data:')) return u;
+  /* The API stamps the URL from the request host, so it comes back as
+     http://50.190.164.42:4100/SupportAttachments/... — plain http, which an
+     https page blocks as mixed content, and localhost:4100 behind the IIS
+     proxy. Keep the stored path, serve it from the media host. */
+  const m = u.match(/\/SupportAttachments\/.*/i);
+  if (m) return `${MEDIA_BASE}${m[0]}`;
+  if (/^https?:\/\//i.test(u)) return u;
+  return `${MEDIA_BASE}${u.startsWith('/') ? u : `/${u}`}`;
 };

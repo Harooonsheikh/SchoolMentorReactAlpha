@@ -334,12 +334,21 @@ export default function SupportWidget() {
   };
 
   /* ── Session controls ── */
-  /* The customer can end their own support session. Live: ask the backend to
-     close it (staff get the real-time SessionClosed event); offline/demo: just
-     flip the local UI. Optional closing remarks become the customer's feedback. */
+  /* Ask the backend to close the session (staff get the real-time SessionClosed
+     event); offline/demo just flips the local UI. Optional closing remarks
+     become the customer's feedback.
+
+     A failure must NOT flip the UI to "closed": the API only lets an
+     agent/super-admin close a session (README §6), so a school token gets 403.
+     Showing the chat as ended while the agent still has it open is worse than
+     saying so plainly. */
   const closeSession = (remarks) => {
     if (liveConnected && chat.sessionId) {
-      chat.closeSession(remarks).then(() => setSession('closed')).catch(() => setSession('closed'));
+      chat.closeSession(remarks)
+        .then(() => setSession('closed'))
+        .catch((err) => appendSystem(err?.status === 403
+          ? 'Only a support agent can end this chat. Please ask the agent to close it.'
+          : 'Could not end the chat right now. Please try again.'));
     } else {
       setSession('closed');
     }

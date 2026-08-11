@@ -65,7 +65,10 @@ const SEED = [
    `onTab`. Standalone (#agent) usage passes nothing and keeps local
    tab state plus the built-in top bar. */
 export default function AgentSupport({ embedded = false, tab, onTab, showBack = true }) {
-  const [messages, setMessages] = useState(SEED);
+  /* Khali se shuru — SEED sirf tab aata hai jab API tak pahuncha hi na ja sake
+     (onError). Pehle ye demo guftagu foran render ho jati thi aur API ka jawab
+     aate hi ghayab ho jati thi; ab pehle loader chalta hai, phir asli data. */
+  const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [modal, setModal] = useState(null); // 'note'|'bug'|'improv'|'image'|'doc'|'video'|null
   const [toast, setToast] = useState(null);  // { msg, type }
@@ -136,9 +139,13 @@ export default function AgentSupport({ embedded = false, tab, onTab, showBack = 
     // A session closed in real time → its inbox row is removed by the hook; we
     // refresh this school's Previous Sessions so it appears in history at once.
     onSessionClosed: () => { setRemoteTyping(null); loadPrevSessions(); },
-    onError: () => { /* stay in offline demo mode */ },
+    /* Backend tak pahunch hi na ho → offline demo par gir jao, taake console
+       khali na baithe (wahi behaviour jo school-side widget ka hai). */
+    onError: () => setMessages(SEED),
   });
   const liveConnected = chat.connected;
+  /* Pehli load: na connect hua, na koi error — sirf spinner. */
+  const chatLoading = chat.status === 'idle' || chat.status === 'connecting';
   const liveSession = chat.activeSessions.find(s => s.sessionId === chat.sessionId) || null;
 
   /* Track which school's conversation is open (kept even after it closes, so
@@ -220,8 +227,10 @@ export default function AgentSupport({ embedded = false, tab, onTab, showBack = 
   /* Open a real closed session's full transcript from history. */
   const openPrevTranscript = async (row) => {
     try {
+      /* getSessionDetail flattens the API's { session, messages } into one
+         object — the head fields sit on `detail` itself, alongside .messages. */
       const detail = await supportApi.getSessionDetail(row.sessionId);
-      const s = detail.session;
+      const s = detail;
       setPrevSession({
         subject: `Session #${row.sessionNumber || '—'} · ${row.schoolName}`,
         schoolName: row.schoolName,
@@ -449,7 +458,9 @@ export default function AgentSupport({ embedded = false, tab, onTab, showBack = 
           <div className="ag-inbox-list">
             {chat.activeSessions.length === 0 && (
               <div className="ag-inbox-empty">
-                {liveConnected ? 'No active conversations yet.' : 'Offline — start the API to load conversations.'}
+                {chatLoading
+                  ? <><i className="fa-solid fa-spinner fa-spin" aria-hidden="true"></i> Loading conversations…</>
+                  : liveConnected ? 'No active conversations yet.' : 'Offline — start the API to load conversations.'}
               </div>
             )}
             {chat.activeSessions.map((s) => (
@@ -498,6 +509,20 @@ export default function AgentSupport({ embedded = false, tab, onTab, showBack = 
 
           {/* Messages */}
           <div className="ag-msgs" ref={msgsRef}>
+            {chatLoading && !messages.length && (
+              <div className="ag-msgs-state">
+                <i className="fa-solid fa-spinner fa-spin" aria-hidden="true"></i>
+                <div className="ag-msgs-state-t">Loading conversation…</div>
+              </div>
+            )}
+            {!chatLoading && !messages.length && (
+              <div className="ag-msgs-state">
+                <i className="fa-regular fa-comments" aria-hidden="true"></i>
+                <div className="ag-msgs-state-t">
+                  {chat.activeSessions.length ? 'Select a conversation from the inbox' : 'No conversation open'}
+                </div>
+              </div>
+            )}
             {groupChatItems(messages).map(m => <AgMsg key={m.id} m={m} onToast={showToast} />)}
             {remoteTyping && <AgMsg m={{ id: 'remote-typing', kind: 'typing' }} onToast={showToast} />}
           </div>
@@ -1243,6 +1268,11 @@ const AGENT_CSS = `
 .ag-inbox-count { background: var(--ag-tint); color: #1E3A8A; font-size: 11px; font-weight: 800; border-radius: 99px; padding: 2px 8px; }
 .ag-inbox-list { flex: 1; overflow-y: auto; padding: 6px; }
 .ag-inbox-empty { padding: 24px 14px; text-align: center; color: var(--ag-tm2); font-size: 12.5px; line-height: 1.5; }
+
+/* Chat pane ki loading / khali halat — data aane se pehle yahi dikhta hai. */
+.ag-msgs-state { margin: auto; text-align: center; color: var(--ag-tm2); padding: 30px 16px; }
+.ag-msgs-state i { font-size: 24px; opacity: .5; display: block; margin-bottom: 10px; }
+.ag-msgs-state-t { font-size: 13px; font-weight: 700; }
 .ag-inbox-row { width: 100%; display: flex; gap: 10px; align-items: center; padding: 10px; border: none; background: transparent; border-radius: 11px; cursor: pointer; text-align: left; font-family: inherit; transition: background .15s; }
 .ag-inbox-row:hover { background: var(--ag-soft); }
 .ag-inbox-active, .ag-inbox-active:hover { background: var(--ag-tint); box-shadow: inset 3px 0 0 #1E3A8A; }
