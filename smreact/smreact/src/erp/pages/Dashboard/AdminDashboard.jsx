@@ -11,6 +11,7 @@ import AnnouncementsModal from './AnnouncementsModal';
 import AppPendingReportModal from './AppPendingReportModal';
 import useAsync from '../../hooks/useAsync';
 import * as accountsService from '../../services/accountsService';
+import * as feeService from '../../services/feeService';
 import {
   STUDENT_STATS,
   HR_STATS,
@@ -763,6 +764,11 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
 
       <div className="adm-divider" />
 
+      {/* ═════════ 3b. ONELINK PAYMENTS ═════════ */}
+      {isActive('fee') && <OneLinkPaymentSection openModule={openModule} toast={toast} />}
+
+      <div className="adm-divider" />
+
       {/* ═════════ ACCOUNTS / REVENUE ═════════ */}
       {isActive('accounts') && (
         <div className="dash-sec adm-sec">
@@ -1348,6 +1354,238 @@ function AttendanceCard({ icon, tone, title, data, unitSingular, unitPlural, uni
   );
 }
 
+/* ─── OneLink Payments card ───────────────────────────────────
+   Reads the same fee receipts ledger (feeService.getReceipts) as
+   Fee → Reports → OneLink Payment Report, filtered to
+   p.source === 'onelink' (legacy 'bank' alias included), so the
+   dashboard figures always match that report. Supports the same
+   three period filters — Month / Date Range / Single Date — and
+   the download icon opens the identical detailed report. */
+const OL_MONTH_NAMES = FIN_MONTH_NAMES;
+
+function OneLinkPaymentSection({ openModule, toast }) {
+  const { data: classes = [] }     = useAsync(feeService.getFeeClasses, []);
+  const { data: studentsMap = {} } = useAsync(feeService.getTransportFee, []);
+  const { data: receipts = [] }    = useAsync(feeService.getReceipts, []);
+
+  const [seg, setSeg]     = useState('month');
+  const [month, setMonth] = useState('2026-05');
+  const [from, setFrom]   = useState('2026-05-01');
+  const [to, setTo]       = useState('2026-05-31');
+  const today = new Date().toISOString().slice(0, 10);
+  const [single, setSingle] = useState(today);
+
+  const studentLookup = useMemo(() => {
+    const map = {};
+    classes.forEach(c => (studentsMap[c.key] || []).forEach(s => { map[`${c.key}|${s.reg}`] = s; }));
+    return map;
+  }, [classes, studentsMap]);
+
+  const transactions = useMemo(() => {
+    const out = [];
+    (receipts || []).forEach(rec => {
+      (rec.payments || []).forEach(p => {
+        if (p.source !== 'onelink' && p.source !== 'bank') return;
+        const d = p.date;
+        if (!d) return;
+        const inPeriod = seg === 'month' ? d.slice(0, 7) === month
+          : seg === 'range' ? (d >= from && d <= to)
+          : d === single;
+        if (!inPeriod) return;
+        out.push({ ...p, classKey: rec.classKey, reg: rec.reg, student: studentLookup[`${rec.classKey}|${rec.reg}`] });
+      });
+    });
+    return out;
+  }, [receipts, studentLookup, seg, month, from, to, single]);
+
+  const totalTxns = transactions.length;
+  const totalAmt  = transactions.reduce((a, x) => a + (+x.amount || 0), 0);
+  const modeBreak = useMemo(() => {
+    const map = {};
+    transactions.forEach(x => { const k = x.method || 'Bank Transfer'; map[k] = (map[k] || 0) + (+x.amount || 0); });
+    return Object.keys(map).map(k => ({ name: k, amt: map[k] }));
+  }, [transactions]);
+
+  const periodLabel = seg === 'month'
+    ? `${OL_MONTH_NAMES[Number(month.split('-')[1]) - 1]} ${month.split('-')[0]}`
+    : seg === 'range' ? `${from} to ${to}` : single;
+
+  const downloadReport = (mode) => {
+    const html = buildOneLinkDashboardReportHTML({ transactions, totalTxns, totalAmt, modeBreak, periodLabel });
+    const w = window.open('', '_blank');
+    if (!w) { toast('Please allow pop-ups to view the report', 'error'); return; }
+    w.document.write(html);
+    w.document.close();
+    w.onload = () => { try { w.focus(); if (mode === 'pdf') w.print(); } catch (e) { /* ignore */ } };
+    toast(`OneLink Payment Report — ${mode === 'pdf' ? 'sent to print' : 'preview opened'}.`, 'success');
+  };
+
+  return (
+    <div className="dash-sec adm-sec">
+      <div className="dash-sec-h">
+        <div className="dash-sec-title"><i className="fa-solid fa-building-columns" aria-hidden="true"></i> OneLink Payments</div>
+        <button type="button" className="dash-sec-link" onClick={() => openModule('fee')}>
+          Open Fee <i className="fa-solid fa-arrow-right" aria-hidden="true"></i>
+        </button>
+      </div>
+
+      <div className="fin-summary-card ol-card">
+        <div className="fin-summary-head">
+          <div className="fin-summary-head-l">
+            <div className="fin-summary-ic fin-summary-ic--purple"><i className="fa-solid fa-building-columns" aria-hidden="true"></i></div>
+            <div>
+              <div className="fin-summary-t">OneLink / Bank Payments</div>
+              <div className="fin-summary-s">{periodLabel} · payments received through OneLink</div>
+            </div>
+          </div>
+
+          <div className="ol-controls">
+            <div className="adm-seg" role="tablist" aria-label="OneLink period filter">
+              <button type="button" className={`adm-seg-btn${seg === 'month' ? ' on' : ''}`} role="tab" aria-selected={seg === 'month'} onClick={() => setSeg('month')}>Month</button>
+              <button type="button" className={`adm-seg-btn${seg === 'range' ? ' on' : ''}`} role="tab" aria-selected={seg === 'range'} onClick={() => setSeg('range')}>From – To</button>
+              <button type="button" className={`adm-seg-btn${seg === 'single' ? ' on' : ''}`} role="tab" aria-selected={seg === 'single'} onClick={() => setSeg('single')}>Single Date</button>
+            </div>
+
+            {seg === 'month' && (
+              <label className="fin-summary-month">
+                <span className="fin-summary-month-lbl">Month</span>
+                <input type="month" className="fin-summary-month-input" value={month} min="2026-01" max="2026-05" onChange={(e) => setMonth(e.target.value)} aria-label="Select month" />
+              </label>
+            )}
+            {seg === 'range' && (
+              <>
+                <label className="fin-summary-month">
+                  <span className="fin-summary-month-lbl">From</span>
+                  <input type="date" className="fin-summary-month-input" value={from} onChange={(e) => setFrom(e.target.value)} aria-label="From date" />
+                </label>
+                <label className="fin-summary-month">
+                  <span className="fin-summary-month-lbl">To</span>
+                  <input type="date" className="fin-summary-month-input" value={to} onChange={(e) => setTo(e.target.value)} aria-label="To date" />
+                </label>
+              </>
+            )}
+            {seg === 'single' && (
+              <label className="fin-summary-month">
+                <span className="fin-summary-month-lbl">Date</span>
+                <input type="date" className="fin-summary-month-input" value={single} onChange={(e) => setSingle(e.target.value)} aria-label="Select date" />
+              </label>
+            )}
+
+            <Tooltip text="Download the detailed OneLink payment report for this period">
+              <button type="button" className="ol-dl-btn" onClick={() => downloadReport('pdf')} aria-label="Download OneLink payment report">
+                <i className="fa-solid fa-download" aria-hidden="true"></i>
+              </button>
+            </Tooltip>
+          </div>
+        </div>
+
+        <div className="fin-summary-grid ol-grid">
+          <div className="fee-card fa-card fc-tone--purple fc-bordered fin-summary-sub">
+            <div className="fc-header">
+              <div className="fc-icon-chip"><i className="fa-solid fa-receipt" aria-hidden="true"></i></div>
+              <div className="fc-title">OneLink Transactions</div>
+            </div>
+            <div className="fc-amount fa-amount--lg">{totalTxns}</div>
+            <div className="fc-support">
+              <i className="fa-solid fa-calendar" aria-hidden="true"></i>
+              <span>{periodLabel}</span>
+            </div>
+          </div>
+
+          <div className="fee-card fa-card fc-tone--green fc-bordered fin-summary-sub">
+            <div className="fc-header">
+              <div className="fc-icon-chip"><i className="fa-solid fa-sack-dollar" aria-hidden="true"></i></div>
+              <div className="fc-title">Total Received</div>
+            </div>
+            <div className="fc-amount fc-amount--green fa-amount--lg">{fmtPKR(totalAmt)}</div>
+            <div className="fc-support">
+              <i className="fa-solid fa-calendar" aria-hidden="true"></i>
+              <span>{periodLabel}</span>
+            </div>
+          </div>
+
+          <div className="fee-card fa-card fc-tone--purple fc-bordered fin-summary-sub">
+            <div className="fc-header">
+              <div className="fc-icon-chip"><i className="fa-solid fa-chart-pie" aria-hidden="true"></i></div>
+              <div className="fc-title">Payment Collection Summary</div>
+            </div>
+            {modeBreak.length === 0 ? (
+              <div className="fc-support"><i className="fa-solid fa-circle-info" aria-hidden="true"></i><span>No OneLink payments in this period</span></div>
+            ) : (
+              <div className="fa-meta-rows">
+                {modeBreak.map(m => (
+                  <div key={m.name} className="fa-meta-row">
+                    <span className="fa-meta-lbl"><i className="fa-solid fa-building-columns" aria-hidden="true"></i> {m.name}</span>
+                    <span className="fa-meta-val">{fmtPKR(m.amt)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function buildOneLinkDashboardReportHTML({ transactions, totalTxns, totalAmt, modeBreak, periodLabel }) {
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const rows = transactions.map((x, i) => `
+    <tr>
+      <td>${i + 1}</td>
+      <td><small>${esc(x.txn || x.ref || '—')}</small></td>
+      <td><b>${esc(x.student?.name || '—')}</b></td>
+      <td>${esc(x.reg)}</td>
+      <td>${esc(x.date || '—')}${x.time ? `<br><small>${esc(x.time)}</small>` : ''}</td>
+      <td>${esc(x.method || 'Bank Transfer')}</td>
+      <td style="text-align:right;font-weight:700;color:#16A34A">${(+x.amount || 0).toLocaleString('en-PK')}</td>
+    </tr>`).join('');
+  const modeKpis = modeBreak.map(m => `<div class="kpi"><div class="l">${esc(m.name)}</div><div class="v">Rs. ${m.amt.toLocaleString('en-PK')}</div></div>`).join('');
+  const today = new Date().toLocaleDateString('en-GB');
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>OneLink Payment Report — ${esc(periodLabel)}</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:#fff}
+body{font-family:'Plus Jakarta Sans',Arial,sans-serif;color:#111;font-size:10.5px;line-height:1.4}
+.rep-page{width:210mm;min-height:297mm;margin:0 auto;padding:14mm;background:#fff}
+.rep-head{display:flex;align-items:center;gap:14px;border-bottom:2px solid #7C3AED;padding-bottom:10px;margin-bottom:10px}
+.rep-logo{width:42px;height:42px;border:2px solid #7C3AED;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:#7C3AED;font-weight:800}
+.rep-name{font-size:18px;font-weight:800;color:#7C3AED;line-height:1.1}
+.rep-title{font-size:12px;font-weight:600;color:#444;margin-top:3px}
+.rep-filters{display:flex;flex-wrap:wrap;gap:6px 22px;font-size:10.5px;color:#333;margin-bottom:12px;background:#F5F3FF;padding:9px 13px;border-radius:6px}
+.rep-secttl{font-size:12px;font-weight:800;color:#7C3AED;margin:14px 0 6px;padding-bottom:4px;border-bottom:1px solid #DDD6FE}
+.rep-tbl{width:100%;border-collapse:collapse;font-size:10px;margin-bottom:4px}
+.rep-tbl th{background:#7C3AED;color:#fff;padding:6px 7px;text-align:left;font-size:10px;font-weight:700}
+.rep-tbl td{padding:5px 7px;border-bottom:1px solid #e5e9f2;vertical-align:top}
+.rep-foot{margin-top:16px;text-align:center;font-size:9px;color:#999;border-top:1px solid #e5e9f2;padding-top:8px}
+.kpi-row{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px}
+.kpi{border:1px solid #E5E7EB;border-radius:6px;padding:9px 11px;background:#F8FAFF}
+.kpi .l{font-size:9.5px;font-weight:700;color:#64748B;text-transform:uppercase;letter-spacing:.3px}
+.kpi .v{font-size:14px;font-weight:800;color:#0F172A;margin-top:2px}
+@page{size:A4 portrait;margin:14mm}
+@media print{.rep-page{width:auto;min-height:0;margin:0;padding:0}body{font-size:10px}}
+</style></head><body><div class="rep-page">
+  <div class="rep-head">
+    <div class="rep-logo">OS</div>
+    <div><div class="rep-name">The Oxford System, Lahore Campus</div><div class="rep-title">OneLink Payment Report</div></div>
+  </div>
+  <div class="rep-filters"><span><b>Period:</b> ${esc(periodLabel)}</span><span><b>Transactions:</b> ${totalTxns}</span><span><b>Total Received:</b> Rs. ${totalAmt.toLocaleString('en-PK')}</span></div>
+  <div class="kpi-row">
+    <div class="kpi"><div class="l">Total Transactions</div><div class="v">${totalTxns}</div></div>
+    <div class="kpi"><div class="l">Total Received</div><div class="v">Rs. ${totalAmt.toLocaleString('en-PK')}</div></div>
+    <div class="kpi"><div class="l">Period</div><div class="v">${esc(periodLabel)}</div></div>
+    <div class="kpi"><div class="l">Generated</div><div class="v">${esc(today)}</div></div>
+  </div>
+  ${modeBreak.length ? `<div class="rep-secttl">Payment Collection Summary</div><div class="kpi-row">${modeKpis}</div>` : ''}
+  <div class="rep-secttl">Transaction Details</div>
+  <table class="rep-tbl">
+    <thead><tr><th>Sn.</th><th>Txn / Ref No</th><th>Student</th><th>Reg No</th><th>Date &amp; Time</th><th>Method</th><th style="text-align:right">Amount</th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="7" style="text-align:center;color:#94A3B8;padding:20px">No OneLink payments in this period.</td></tr>'}</tbody>
+  </table>
+  <div class="rep-foot">Computer generated report — The Oxford System, Lahore Campus · OneLink Payment Report · ${esc(today)}</div>
+</div></body></html>`;
+}
+
 /* ─── Reusable App-status card (Teachers / Parents variants) ─── */
 function AppStatusCard({ tone, title, subtitle, icon, data, ctaLabel, ctaIcon = 'fa-arrow-right', onCta }) {
   return (
@@ -1634,6 +1872,10 @@ export const ADM_NEW_CSS = `
   background: linear-gradient(135deg, #0F766E, #14B8A6);
   box-shadow: 0 8px 18px rgba(15, 118, 110, .28);
 }
+.fin-summary-ic--purple {
+  background: linear-gradient(135deg, #6D28D9, #7C3AED);
+  box-shadow: 0 8px 18px rgba(124, 58, 237, .28);
+}
 .fin-summary-t { font: 800 15px/1.2 var(--dash-font); color: var(--text-primary); letter-spacing: -0.2px; }
 .fin-summary-s { font: 600 11.5px/1.3 var(--dash-font); color: var(--text-muted, #64748B); margin-top: 3px; }
 .fin-summary-month {
@@ -1672,6 +1914,29 @@ export const ADM_NEW_CSS = `
   .fin-summary-sub { padding: 14px; }
 }
 
+/* ─── OneLink Payments card — period controls + download icon ─── */
+.ol-card { background: linear-gradient(135deg, var(--bg-card, #fff) 0%, rgba(124, 58, 237, .035) 100%); }
+[data-theme="dark"] .ol-card { background: linear-gradient(135deg, #0E1628 0%, rgba(124, 58, 237, .07) 100%); }
+.ol-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ol-dl-btn {
+  width: 34px; height: 34px; flex-shrink: 0;
+  border-radius: 999px;
+  border: 1.5px solid var(--border-light, #E2E8F0);
+  background: var(--bg-card, #fff);
+  color: #7C3AED;
+  cursor: pointer;
+  font-size: 13px;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: all .15s ease;
+}
+.ol-dl-btn:hover {
+  background: linear-gradient(135deg, #6D28D9, #7C3AED);
+  border-color: #7C3AED;
+  color: #fff;
+  transform: translateY(-1px);
+  box-shadow: 0 6px 14px rgba(124, 58, 237, .28);
+}
+@media (max-width: 640px) { .ol-controls { justify-content: flex-start; } }
 
 /* ─── Generic header helpers ─── */
 .adm-h-right { display: inline-flex; align-items: center; gap: 10px; flex-wrap: wrap; }
@@ -1790,6 +2055,7 @@ export const ADM_NEW_CSS = `
 .fc-tone--red   .fc-icon-chip { background: rgba(220, 38, 38, .15);  color: #DC2626; }
 .fc-tone--green .fc-icon-chip { background: rgba(22, 163, 74, .15);  color: #16A34A; }
 .fc-tone--brand .fc-icon-chip { background: rgba(30, 64, 175, .14);  color: #1E40AF; }
+.fc-tone--purple .fc-icon-chip { background: rgba(124, 58, 237, .15); color: #7C3AED; }
 
 /* ─── Amount ─── */
 .fc-amount {
