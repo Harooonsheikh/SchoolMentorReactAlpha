@@ -2185,6 +2185,24 @@ function PayRollModal({
     }
     setSavingSetup(false);
 
+    /* Backend apna Net Payable / deductions KHUD (re)compute karke store karta hai —
+       frontend ka computed net us se thoda alag ho sakta hai (e.g. scheduled loan
+       installment ya rounding), jis se payment par "Amount exceeds remaining payable"
+       aata hai. Is liye save ke turant baad wahi authoritative record dobara fetch
+       karke use karte hain, taake displayed Net Payable + remaining server se match karein. */
+    try {
+      const mNum   = PAY_MONTHS.indexOf(month) + 1;
+      const fresh  = await hrService.getHrPayrollByBranch(mNum, Number(year));
+      const key    = `${Number(year)}-${String(mNum).padStart(2, '0')}`;
+      const serverRec = fresh?.[emp.id]?.[key];
+      if (serverRec && serverRec.netPayable != null) {
+        onSaveSetup({ month, year, ...serverRec });
+        toast('Payroll saved — proceed to Make Payment', 'success');
+        setTab(1);
+        return;
+      }
+    } catch { /* refetch fail → neeche wali local build par gir jao */ }
+
     const status =
       existingRec?.status === 'Paid'
         ? 'Paid'
@@ -2746,8 +2764,6 @@ function AdvLoanModal({
     }
   };
 
-  const installmentDisabled = repayType !== 'Installment';
-
   return createPortal((
     <div
       className="ov open"
@@ -2860,7 +2876,7 @@ function AdvLoanModal({
                       }}
                     >
                       <option value="">Select here</option>
-                      <option value="OneTime">One Time</option>
+                      <option value="One Time">One Time</option>
                       <option value="Installment">Installment</option>
                     </select>
                   </div>
@@ -2872,11 +2888,14 @@ function AdvLoanModal({
                       onChange={(e) => setDeductDate(e.target.value)}
                     />
                   </div>
+                  {/* Installment Type + Amount sirf "Installment" repayment par — One Time
+                      (ya kuch select na ho) par ye fields hide rehti hain. */}
+                  {repayType === 'Installment' && (
+                  <>
                   <div className="pr-field">
                     <label>Installment Type</label>
                     <select
                       value={installmentType}
-                      disabled={installmentDisabled}
                       onChange={(e) => setInstallmentType(e.target.value)}
                     >
                       <option value="">Select here</option>
@@ -2893,11 +2912,12 @@ function AdvLoanModal({
                       type="number"
                       min={0}
                       placeholder="0.00"
-                      disabled={installmentDisabled}
                       value={installmentAmount}
                       onChange={(e) => setInstallmentAmount(e.target.value)}
                     />
                   </div>
+                  </>
+                  )}
                 </div>
               </div>
             </div>
