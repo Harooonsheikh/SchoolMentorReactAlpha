@@ -1597,7 +1597,7 @@ const [taskTarget, setTaskTarget] = useState(null);
                   </div>
                   <div style={{ padding: '10px 14px', background: 'rgba(245,158,11,.06)', border: '1px solid rgba(245,158,11,.2)', borderRadius: 'var(--radius-md)', fontSize: 12, color: 'var(--text-secondary)' }}>
                     <i className="fas fa-exclamation-triangle" style={{ color: 'var(--warning)', marginRight: 6 }}></i>
-                    <strong>Note:</strong> Do not change column headers. Date format: DD/MM/YYYY. Gender: Male/Female/Other. Columns marked * are required.
+                    <strong>Note:</strong> Do not change column headers. Dates (DateOfBirth, DateOfJoining): DD/MM/YYYY. Gender: Male/Female/Other. CountryID, ProvinceID, CityID, DepartmentID, DesignationID, QualificationID must be the numeric IDs from the setup lists. IsPrinciple / IsTeacher / IsParent: 1 or 0. Columns marked * are required.
                   </div>
                 </div>
               )}
