@@ -5,7 +5,12 @@ import { useVoiceRecorder } from '../support/useVoiceRecorder';
 import { toUploadableVoice } from '../support/audio';
 import { VoicePlayer, VideoBubble, ImageGallery } from '../support/MediaBits';
 import { groupChatItems } from '../support/grouping';
-import { SUPPORT_BACKEND_ENABLED, ATTACH_LIMITS, VOICE_NOTE_CAPTION } from '../support/config';
+import {
+  SUPPORT_BACKEND_ENABLED, ATTACH_LIMITS, VOICE_NOTE_CAPTION,
+  SenderType, MessageStatus, SessionStatus, hasBridgeToken,
+} from '../support/config';
+import * as api from '../support/api';
+import { playIncomingChime } from '../support/sound';
 
 let _attId = 1;
 const attId = () => `att${_attId++}`;
@@ -43,6 +48,13 @@ const newId = () => `m${_msgIdSeed++}`;
    Backend na mile to farzi baat-cheet ki jagah saaf system line dikhti hai. */
 const CONNECT_FAILED_MESSAGE =
   'Support is unavailable right now. Please check your connection and try again.';
+
+/* Widget band ho to unread ginti kitni der baad dobara dekhi jaye — 2 second,
+   taake agent ka jawab aate hi badge lag jaye. Har tick par sirf sessions ki
+   chhoti si list padhti hai; poori conversation tab hi jab `lastMessageAt`
+   badla ho. Chhupi hui tab par poll ruk jata hai aur wapas aate hi foran ek
+   check ho jata hai. */
+const UNREAD_POLL_MS = 2000;
 
 
 /* `toast` ERP shell se aata hai (App.js ka pushToast) — attachment modals ke
@@ -87,6 +99,9 @@ export default function SupportWidget({ toast }) {
 
   const chat = useSupportChat({
     role: 'school',
+    /* Chat band ho to aane wale message ko "read" na kiya jaye — connection
+       band karne ke baad bhi zinda rehta hai. */
+    viewing: open,
     onHistory: (msgs) => setMessages(
       msgs.length ? msgs : [
         { id: newId(), kind: 'daylabel', text: todayLabel() },
@@ -121,6 +136,93 @@ export default function SupportWidget({ toast }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
+  /* ── Unread badge jab widget BAND ho ───────────────────────────────
+     Chat khuli na ho to hook chalta hi nahi, is liye agent ka jawab aane par
+     school ko kuch pata nahi chalta tha. Yahan halke se poll kar ke trigger
+     par ginti laga dete hain — 1, 2, 3 — taake user ko maloom ho ke jawab aaya
+     hai aur kholna hai.
+
+     Ginti KHUD karte hain: API ka `unreadCount` agent ke liye hai (us me
+     school ke apne bheje hue message ginte hain — live check par apni hi ek
+     message wali session par 1 aa raha tha). School ke liye "unread" wo agent
+     messages hain jo abhi Read nahi huye. */
+  const pollSessionRef = useRef(null);
+  const lastUnreadRef = useRef(0);
+  const lastStampRef = useRef(null);   // aakhri maloom lastMessageAt
+  useEffect(() => {
+    /* Khula ho to hook khud sab sambhalta hai (aur khulte hi sab read ho jata
+       hai), aur bina token ke koi call bhejne ka faida nahi.
+
+       Hook connected ho (yani chat ek baar khul chuki hai) to wo khud hi is
+       session ko poll kar raha hota hai aur naye message onInbound se aa jate
+       hain — us soorat me ginti `messages` se hoti hai, warna do poller ek hi
+       conversation par chalte rehte. */
+    if (!SUPPORT_BACKEND_ENABLED || open || chat.connected || !hasBridgeToken()) return undefined;
+    let cancelled = false;
+
+    const tick = async () => {
+      try {
+        /* Sasta check pehle: sessions list ek chhoti row deti hai. Poora
+           transcript sirf tab maangte hain jab `lastMessageAt` badla ho —
+           warna har 2 second par poori conversation kheenchni parti. */
+        const { items } = await api.getActiveSessions(1, 5);
+        if (cancelled) return;
+        const row = items?.[0];
+        if (!row) { pollSessionRef.current = null; setUnread(0); return; }
+        pollSessionRef.current = row.sessionId;
+        if (row.lastMessageAt && row.lastMessageAt === lastStampRef.current) return;
+        lastStampRef.current = row.lastMessageAt || null;
+
+        const detail = await api.getSessionDetail(row.sessionId);
+        if (cancelled) return;
+        if (detail.sessionStatus === SessionStatus.Closed) {
+          /* Band session par badge nahi; agli dafa nayi session dhoondo. */
+          pollSessionRef.current = null;
+          setUnread(0);
+          return;
+        }
+        const count = (detail.messages || []).filter(
+          (m) => m.senderType === SenderType.Agent && m.messageStatus < MessageStatus.Read,
+        ).length;
+        /* Ginti barhe to ek halki si aawaz — sirf tab jab kuch naya aaya ho. */
+        if (count > lastUnreadRef.current) playIncomingChime();
+        lastUnreadRef.current = count;
+        setUnread(count);
+      } catch (e) { /* transient — agle tick par phir sahi */ }
+    };
+
+    /* Sirf timer par chhorna kaafi nahi tha: agent doosri tab me jawab deta
+       hai, user ERP ki tab par wapas aata hai, aur agle tick ka intezaar karta
+       rehta hai — is liye refresh karne par hi badge dikhta tha. Tab par wapas
+       aate hi (ya window focus hote hi) foran check kar lete hain, aur tab
+       chhupi ho to poll rok dete hain (be-faida requests nahi jatin). */
+    const check = () => { if (!document.hidden) tick(); };
+    check();
+    const timer = setInterval(check, UNREAD_POLL_MS);
+    document.addEventListener('visibilitychange', check);
+    window.addEventListener('focus', check);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', check);
+      window.removeEventListener('focus', check);
+    };
+  }, [open, chat.connected]);
+
+  /* Hook chal raha ho to ginti wahin se: `in` bubbles jo abhi Read nahi huye.
+     (Ab ye Read hote hi nahi jab tak chat khuli na ho.) */
+  const liveUnread = messages.filter(
+    (m) => m.kind === 'in' && (m.status ?? MessageStatus.Read) < MessageStatus.Read,
+  ).length;
+  const unreadCount = open ? 0 : (chat.connected ? liveUnread : unread);
+
+  /* Nayi ginti barhe to wahi halki si aawaz jo poll wale raste par bajti hai. */
+  useEffect(() => {
+    if (!chat.connected || open) return;
+    if (liveUnread > lastUnreadRef.current) playIncomingChime();
+    lastUnreadRef.current = liveUnread;
+  }, [liveUnread, chat.connected, open]);
+
   /* Body scroll lock while widget is open */
   useEffect(() => {
     if (!open) return undefined;
@@ -142,8 +244,14 @@ export default function SupportWidget({ toast }) {
     if (el) requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
   }, [messages, open]);
 
-  /* Clear unread when opened */
-  useEffect(() => { if (open) setUnread(0); }, [open]);
+  /* Kholte hi badge saaf — andar jaate hi sab read ho jata hai (openSession
+     markRead bhejti hai), aur poll ka pichla count bhi reset kar do warna
+     dobara band karne par chime ka hisaab purani ginti par chalta rehta. */
+  useEffect(() => {
+    if (!open) return;
+    setUnread(0);
+    lastUnreadRef.current = 0;
+  }, [open]);
 
   /* ESC closes whichever surface is on top */
   useEffect(() => {
@@ -394,8 +502,8 @@ export default function SupportWidget({ toast }) {
         <i className="fa-solid fa-headset" aria-hidden="true"></i>
         <span className="sc-hdr-trigger-lbl">Support</span>
         {!isClosed && <span className="sc-hdr-trigger-dot" aria-hidden="true"></span>}
-        {unread > 0 && !isClosed && (
-          <span className="sc-hdr-trigger-badge">{unread}</span>
+        {unreadCount > 0 && !isClosed && (
+          <span className="sc-hdr-trigger-badge">{unreadCount}</span>
         )}
       </button>
 

@@ -17,22 +17,35 @@ import * as api from './api';
 import { ApiError } from './api';
 import { createConnection, Events, joinSession, leaveSession, sendTyping } from './realtime';
 import { playIncomingChime } from './sound';
+import { formatServerTime } from './time';
 
-/* How often to re-read the open conversation when the SignalR hub is down. */
-const POLL_INTERVAL_MS = 8000;
-/* How often the agent inbox re-lists its sessions in that same state. Slower:
-   it is a whole-list read, and a new chat arriving 15s late is acceptable. */
-const INBOX_POLL_INTERVAL_MS = 15000;
+/* Hub band hone par khuli conversation kitni jaldi dobara dekhi jaye.
+   2 second — school ka message aate hi bubble/badge aa jata hai. Har tick par
+   poora transcript kheenchna is raftaar par faltu hoga, is liye pehle sasta
+   check (sessions list ka `lastMessageAt`) aur poora detail sirf tab jab
+   waqai kuch naya ho — dekho tick() neeche. */
+const POLL_INTERVAL_MS = 2000;
+/* Ticks/receipts (delivered → read) lastMessageAt nahi badalte, is liye har
+   itne tick baad ek poora sync waise bhi kar lete hain. */
+const FULL_SYNC_EVERY = 5;
+/* Agent inbox apni list kitni jaldi dobara padhe — nayi conversation aane par
+   agent ko jaldi pata chale. */
+const INBOX_POLL_INTERVAL_MS = 5000;
 
+/* Waqt seedha `new Date(iso)` se nahi banta: API 12-ghante ki clock me likhti
+   hai aur AM/PM gira deti hai (dekho support/time.js). */
 export function formatTime(iso) {
-  if (!iso) return '';
-  const d = new Date(iso);
-  return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+  return formatServerTime(iso);
 }
 
 export function useSupportChat({
   role = 'school',
   credentials = null,
+  /* Conversation is abhi user ke saamne khuli hai? Sirf tab hi aane wale
+     message "read" hote hain. Console kisi doosre tab par ho (e.g. Overview)
+     to `false` bhejo — warna connection zinda hone ki wajah se school ke
+     messages bina dekhe read ho jate hain aur unread badge saaf ho jata hai. */
+  viewing = true,
   onInbound,          // (uiMsg)  — append (idempotent by id on the caller side)
   onHistory,          // (uiMsg[]) — replace list with a loaded session
   onTyping,           // (name|null)
@@ -54,6 +67,11 @@ export function useSupportChat({
   const typingTimerRef = useRef(null);
   const typingActiveRef = useRef(false);
   const seenRef = useRef(new Set());  // message ids already handed to the caller
+
+  /* Handlers dobara subscribe kiye baghair taza halat — poll aur SignalR dono
+     isi ref se dekhte hain ke user saamne hai ya nahi. */
+  const viewingRef = useRef(viewing);
+  viewingRef.current = viewing;
 
   // Keep callbacks fresh without re-subscribing handlers.
   const cb = useRef({});
@@ -97,6 +115,19 @@ export function useSupportChat({
 
   const setSession = useCallback((id) => { sessionRef.current = id; setSessionId(id); }, []);
 
+  /* Apni taraf se "read" karte waqt local bubbles bhi read kar do.
+     Server ko markRead bhej dena kaafi nahi: caller ke paas maujood messages ka
+     status purana (Sent/Delivered) para rehta hai, jis se unread ginti message
+     dekh lene ke baad bhi barqarar rehti hai. onReceipt wahi raasta hai jisse
+     caller apni list ke status badalta hai. */
+  const markReadNow = useCallback((id, messageIds) => {
+    if (!id || !messageIds?.length) return;
+    api.markRead(id, messageIds).catch(() => {});
+    cb.current.onReceipt?.({
+      type: 'read', sessionId: id, messageIds, at: new Date().toISOString(),
+    });
+  }, []);
+
   /* ── Wire SignalR event handlers (once per connection) ── */
   const registerHandlers = useCallback((conn) => {
     conn.on(Events.MessageReceived, (payload) => {
@@ -118,7 +149,17 @@ export function useSupportChat({
         // side's message as read right away. The server broadcasts MessageRead
         // back to the sender → their bubble flips to the blue double tick.
         if (isIncoming && dto.messageStatus < MessageStatus.Read) {
-          api.markRead(dto.sessionId, [dto.messageId]).catch(() => {});
+          /* Connection zinda hona "dekh liya" nahi hai — dekho viewingRef. */
+          if (viewingRef.current) {
+            api.markRead(dto.sessionId, [dto.messageId]).catch(() => {});
+            /* Local bubble bhi read — warna tab badalte hi ye dobara "unread"
+               gina jata hai. */
+            cb.current.onReceipt?.({
+              type: 'read', sessionId: dto.sessionId, messageIds: [dto.messageId], at: new Date().toISOString(),
+            });
+          } else if (dto.messageStatus < MessageStatus.Delivered) {
+            api.markDelivered(dto.sessionId, dto.messageId).catch(() => {});
+          }
         }
       } else if (isIncoming && dto.messageStatus < MessageStatus.Delivered) {
         // Connected but viewing a different conversation → mark delivered so the
@@ -240,9 +281,32 @@ export function useSupportChat({
     const unread = rows
       .filter((m) => m.senderType !== outSenderType && m.messageStatus < MessageStatus.Read)
       .map((m) => m.messageId);
-    if (unread.length) api.markRead(id, unread).catch(() => {});
+    markReadNow(id, unread);
     return detail;
-  }, [toUi, outSenderType, setSession]);
+  }, [toUi, outSenderType, setSession, markReadNow]);
+
+  /* ── Conversation wapas saamne aane par read ───────────────────────
+     `start()` sirf pehli martaba chalta hai (startedRef), aur markRead usi ke
+     openSession me hai — is liye Inbox tab par wapas aane par kuch bhi read
+     nahi hota tha aur unread badge lagta rehta tha, halanke agent parh chuka
+     hota. Ab jab bhi conversation saamne aati hai, us waqt tak ke un-read
+     messages read kar diye jate hain. */
+  useEffect(() => {
+    if (!viewing || status !== 'connected' || !sessionId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const detail = await api.getSessionDetail(sessionId);
+        if (cancelled) return;
+        const unread = (detail.messages || [])
+          .filter((m) => m.senderType !== outSenderType && m.messageStatus < MessageStatus.Read)
+          .map((m) => m.messageId);
+        markReadNow(sessionId, unread);
+      } catch (e) { /* agli dafa sahi */ }
+    })();
+    // eslint-disable-next-line consistent-return
+    return () => { cancelled = true; };
+  }, [viewing, status, sessionId, outSenderType, markReadNow]);
 
   /* ── Polling fallback ──────────────────────────────────────────────
      Only runs while REST is up but the hub is not (e.g. /hubs/support is not
@@ -251,10 +315,26 @@ export function useSupportChat({
   useEffect(() => {
     if (status !== 'connected' || realtime || !sessionId) return undefined;
     let cancelled = false;
+    let ticks = 0;
+    let lastStamp = null;   // aakhri maloom lastMessageAt
+
     const tick = async () => {
       try {
+        ticks += 1;
+        /* Sasta check: sessions list chhoti rows deti hai. Jab tak
+           lastMessageAt na badle, poora transcript maangne ka faida nahi. */
+        if (ticks % FULL_SYNC_EVERY !== 0) {
+          const { items } = await api.getActiveSessions(1, 25);
+          if (cancelled) return;
+          const row = (items || []).find((s) => s.sessionId === sessionId);
+          const stamp = row?.lastMessageAt || null;
+          /* List se ghayab (band ho gayi?) ho to poora dekhna hi parega. */
+          if (row && stamp && stamp === lastStamp) return;
+          lastStamp = stamp;
+        }
         const detail = await api.getSessionDetail(sessionId);
         if (cancelled) return;
+        lastStamp = detail.lastMessageAt || lastStamp;
         const fresh = (detail.messages || []).filter((m) => !seenRef.current.has(m.messageId));
         // Without the hub there is no SessionClosed event, so notice it here.
         if (detail.sessionStatus === SessionStatus.Closed) {
@@ -263,18 +343,27 @@ export function useSupportChat({
           return;
         }
         if (!fresh.length) return;
-        const unread = [];
+        const incoming = [];
         for (const m of fresh) {
           seenRef.current.add(m.messageId);
           cb.current.onInbound?.(toUi(m));
-          if (m.senderType !== outSenderType && m.messageStatus < MessageStatus.Read) unread.push(m.messageId);
+          if (m.senderType !== outSenderType && m.messageStatus < MessageStatus.Read) incoming.push(m.messageId);
         }
-        if (unread.length) api.markRead(sessionId, unread).catch(() => {});
+        if (!incoming.length) return;
+        /* "Read" tab hi jab conversation waqai screen par ho — ye poll tab bhi
+           chalta rehta hai jab console kisi aur tab par ho, aur pehle yehi har
+           naye message ko chup-chaap read kar deta tha. Na dekha ho to sirf
+           "delivered": bhejne wale ko double tick mile, blue nahi. */
+        if (viewingRef.current) {
+          markReadNow(sessionId, incoming);
+        } else {
+          incoming.forEach((id) => api.markDelivered(sessionId, id).catch(() => {}));
+        }
       } catch (e) { /* transient — retry on the next tick */ }
     };
     const timer = setInterval(tick, POLL_INTERVAL_MS);
     return () => { cancelled = true; clearInterval(timer); };
-  }, [status, realtime, sessionId, toUi, outSenderType]);
+  }, [status, realtime, sessionId, toUi, outSenderType, markReadNow]);
 
   /* ── Inbox polling (agent side only) ───────────────────────────────
      The block above watches the conversation that is already open. Without the

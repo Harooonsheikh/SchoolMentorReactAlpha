@@ -1,10 +1,20 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useSupportChat, formatTime } from '../support/useSupportChat';
 import { useVoiceRecorder } from '../support/useVoiceRecorder';
+import { toUploadableVoice } from '../support/audio';
+import { serverDate } from '../support/time';
 import { VoicePlayer, VideoBubble, ImageGallery } from '../support/MediaBits';
 import { groupChatItems } from '../support/grouping';
-import { SUPPORT_BACKEND_ENABLED, ATTACH_LIMITS } from '../support/config';
+import { SUPPORT_BACKEND_ENABLED, ATTACH_LIMITS, VOICE_NOTE_CAPTION } from '../support/config';
 import * as supportApi from '../support/api';
+/* Notes aur Bug/Improvement Support ki apni API par nahi jate — wahi
+   Super-Admin routes hain jo Schools Progress screen use karti hai, taake ek hi
+   school ka record dono jagah se ek jaisa dikhe:
+     Notes            → AHM_School_Progress/followup/onboarding-card-action
+     Bug/Improvement  → AHM_School_Progress/school-enquiries-bugs-action
+   Support session ka `schoolID` wahi BranchID hai jo ye routes maangte hain
+   (live tasdeeq shuda). */
+import { schoolProgressApi, authApi } from '../superadmin/api';
 import AgentOverview from './AgentOverview';
 
 let _agAttId = 1;
@@ -22,7 +32,10 @@ const agAttId = () => `aatt${_agAttId++}`;
    so it can be viewed without touching the school ERP shell.
    ═══════════════════════════════════════════════════════════════════ */
 
-const ASSIGNEES = ['Ahmed Khan', 'Bilal Ahmed', 'Sara Ali', 'Usman Tariq'];
+/* "Assign To" ke naam ab API se aate hain (GET /api/Auth/get-all-users) — wahi
+   directory jo Schools Progress ke Assigned-To dropdown chalati hai. Pehle
+   yahan chaar naam hard-coded thay jo kisi asli user se mail nahi khate thay,
+   aur bug us naam par assign ho jata tha jo system me hota hi nahi. */
 const BUG_PRIO_COLOR = { Low: '#16A34A', Medium: '#D97706', High: '#DC2626', Critical: '#7C3AED' };
 
 const QUICK_REPLIES = [
@@ -87,8 +100,8 @@ export default function AgentSupport({ embedded = false, tab, onTab, showBack = 
 
   /* Tray forms */
   const [noteForm,   setNoteForm]   = useState({ title: '', details: '' });
-  const [bugForm,    setBugForm]    = useState({ title: '', desc: '', priority: 'High',   assignee: ASSIGNEES[0] });
-  const [improvForm, setImprovForm] = useState({ title: '', desc: '', priority: 'Medium', assignee: ASSIGNEES[0] });
+  const [bugForm,    setBugForm]    = useState({ title: '', desc: '', module: '', priority: 'High',   assignee: '' });
+  const [improvForm, setImprovForm] = useState({ title: '', desc: '', module: '', priority: 'Medium', assignee: '' });
 
   /* Attachment modals — multi-select (arrays) */
   const [imgItems,   setImgItems]   = useState([]);
@@ -128,6 +141,9 @@ export default function AgentSupport({ embedded = false, tab, onTab, showBack = 
 
   const chat = useSupportChat({
     role: 'agent',
+    /* School ke messages tab hi "read" hon jab agent Inbox par ho — Overview
+       tab par baithe rehne se unread khud saaf nahi hona chahiye. */
+    viewing: activeTab === 'inbox',
     onHistory: (msgs) => setMessages(msgs.length ? msgs : [
       { id: newId(), kind: 'daylabel', text: 'Today' },
     ]),
@@ -186,6 +202,90 @@ export default function AgentSupport({ embedded = false, tab, onTab, showBack = 
     loadPrevSessions();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewSchool, liveConnected]);
+
+  /* ─── Right sidebar ka data ───────────────────────────────────────
+     Session sirf schoolName / campusName / agent deta hai; principal, contact
+     aur school ki active-inactive halat /support/schools se aati hai, is liye
+     wo directory ek baar utha kar id par lookup kar lete hain. */
+  const [schoolDir, setSchoolDir] = useState([]);
+  useEffect(() => {
+    if (!liveConnected) return;
+    supportApi.getSchools().then(setSchoolDir).catch(() => setSchoolDir([]));
+  }, [liveConnected]);
+
+  /* Bug / Improvement ke "Assign To" ke liye asli users. */
+  const [users, setUsers] = useState([]);
+  useEffect(() => {
+    let alive = true;
+    authApi.listUsers()
+      .then((rows) => { if (alive) setUsers(rows || []); })
+      .catch(() => { if (alive) setUsers([]); });
+    return () => { alive = false; };
+  }, []);
+
+  const openSchoolId = liveSession?.schoolId || viewSchool?.schoolId || 0;
+  const schoolInfo = schoolDir.find((s) => s.schoolId === openSchoolId) || null;
+
+  /* Agent Notes — wahi Follow-up Card > Notes jo Schools Progress me hain.
+     Panel khulte hi is school ka aakhri note dikh jata hai (pehle yahan ek
+     jumla hard-coded pada tha). */
+  const [sideNote, setSideNote] = useState('');
+  const [noteSaving, setNoteSaving] = useState(false);
+  const [lastNote, setLastNote] = useState(null);
+
+  const loadNotes = useCallback(async (branchId) => {
+    if (!branchId) { setLastNote(null); return; }
+    try {
+      const rows = await schoolProgressApi.listCardActions({
+        branchId,
+        headType: schoolProgressApi.CARD_HEADS.followup,
+        subHeadType: 'Notes',
+      });
+      setLastNote(rows.length ? rows[rows.length - 1] : null);
+    } catch (err) {
+      setLastNote(null);
+    }
+  }, []);
+
+  useEffect(() => { loadNotes(openSchoolId); }, [openSchoolId, loadNotes]);
+
+  const schoolName = liveSession?.schoolName || viewSchool?.schoolName || schoolInfo?.schoolName || 'No school selected';
+
+  /* Aaj ki tareekh — dono routes par `date` [Required] hai. */
+  const todayISO = () => new Date().toISOString().slice(0, 10);
+
+  /* Koi conversation khuli na ho to in dono routes ke liye BranchID hi nahi
+     hota — tab likhne se rok dena behtar hai bajaye 0 bhej kar 400 lene ke. */
+  const requireSchool = () => {
+    if (openSchoolId) return true;
+    showToast('Open a conversation first — the school is taken from it', 'warn');
+    return false;
+  };
+
+  /* Sidebar ka note → Follow-up Card > Notes (wahi record jo Schools Progress
+     ke View Details me dikhta hai). */
+  const saveSideNote = async () => {
+    const text = sideNote.trim();
+    if (!text) { showToast('Write a note first', 'warn'); return; }
+    if (!requireSchool() || noteSaving) return;
+    setNoteSaving(true);
+    try {
+      await schoolProgressApi.saveCardAction({
+        branchId: openSchoolId,
+        headType: schoolProgressApi.CARD_HEADS.followup,
+        subHeadType: 'Notes',
+        commentDetail: text,
+        date: todayISO(),
+      });
+      setSideNote('');
+      await loadNotes(openSchoolId);
+      showToast('Note saved to School Progress', 'success');
+    } catch (err) {
+      showToast(err?.message || 'Could not save this note', 'error');
+    } finally {
+      setNoteSaving(false);
+    }
+  };
 
   /* ── Send a text message (live, or simulated reply when offline) ── */
   const sendMsg = () => {
@@ -270,46 +370,114 @@ export default function AgentSupport({ embedded = false, tab, onTab, showBack = 
   };
 
   /* ── Note / Bug / Improvement (internal cards, no reply) ── */
-  const saveNote = () => {
+  /* Tray ka "Note" bhi wahin jata hai jahan sidebar ka — Follow-up Card >
+     Notes. Card chat me sirf agent ko dikhne wala local record hai; asli
+     mehfooz shuda cheez API par jati hai. */
+  const [savingNote, setSavingNote] = useState(false);
+  const saveNote = async () => {
     const title = noteForm.title.trim();
     const details = noteForm.details.trim();
     if (!title && !details) { showToast('Please add a note before saving', 'warn'); return; }
-    append({ kind: 'note', title: title || 'Internal Note', details });
-    setNoteForm({ title: '', details: '' });
-    setModal(null);
-    showToast('Internal note saved', 'success');
+    if (!requireSchool() || savingNote) return;
+    setSavingNote(true);
+    try {
+      await schoolProgressApi.saveCardAction({
+        branchId: openSchoolId,
+        headType: schoolProgressApi.CARD_HEADS.followup,
+        subHeadType: 'Notes',
+        /* Ek hi CommentDetail column hai, is liye title aur tafseel jori jati hai. */
+        commentDetail: [title, details].filter(Boolean).join(' — '),
+        date: todayISO(),
+      });
+      append({ kind: 'note', title: title || 'Internal Note', details });
+      setNoteForm({ title: '', details: '' });
+      setModal(null);
+      await loadNotes(openSchoolId);
+      showToast('Note saved to School Progress', 'success');
+    } catch (err) {
+      showToast(err?.message || 'Could not save this note', 'error');
+    } finally {
+      setSavingNote(false);
+    }
   };
 
-  const submitBug = () => {
-    const title = bugForm.title.trim();
-    if (!title) { showToast('Please enter a bug title', 'warn'); return; }
-    append({ kind: 'bug', title, priority: bugForm.priority, assignee: bugForm.assignee });
-    showToast('Bug reported and assigned to ' + bugForm.assignee, 'success');
-    setBugForm({ title: '', desc: '', priority: 'High', assignee: ASSIGNEES[0] });
-    setModal(null);
+  /* ── Bug / Improvement — dono school-enquiries-bugs-action par ──────
+     Wahi table jo Schools Progress → View Details → Enquiries dikhata hai, is
+     liye yahan se bheja hua bug wahan bhi nazar aata hai.
+       developer ← "Assign To"      bugDetail ← title + tafseel (+ priority)
+       date      ← aaj              isSolved  ← false (naya bug hamesha Open)
+     Us table me bug aur improvement ka koi alag khana nahi hai, is liye
+     improvement ki tafseel ke aage nishani laga dete hain — warna dono ek
+     jaise dikhte hain. */
+  const [savingEnquiry, setSavingEnquiry] = useState(false);
+
+  const submitEnquiry = async ({ form, kind, label }) => {
+    const title = form.title.trim();
+    if (!title) { showToast(`Please enter ${kind === 'bug' ? 'a bug' : 'an improvement'} title`, 'warn'); return; }
+    if (!form.module.trim()) { showToast('Module is required', 'warn'); return; }
+    /* Developer bhi API par [Required] hai — khali bheja to 400. */
+    if (!form.assignee.trim()) { showToast('Please choose who to assign this to', 'warn'); return; }
+    if (!requireSchool() || savingEnquiry) return;
+    setSavingEnquiry(true);
+    const detail = [
+      kind === 'improv' ? `[Improvement] ${title}` : title,
+      form.desc.trim(),
+      `Priority: ${form.priority}`,
+    ].filter(Boolean).join('\n');
+    try {
+      await schoolProgressApi.saveEnquiry({
+        branchId: openSchoolId,
+        module: form.module.trim(),
+        developer: form.assignee,
+        bugDetail: detail,
+        date: todayISO(),
+        isSolved: false,
+      });
+      /* Chat me kuch nahi jorna — bug/improvement guftagu ka hissa nahi, wo
+         Enquiries record hai. Pehle yahan ek rangeen card transcript me lag
+         jata tha jo school ki chat me be-mauqa lagta tha. */
+      showToast(`${label} submitted to ${form.assignee}`, 'success');
+      setModal(null);
+      return true;
+    } catch (err) {
+      showToast(err?.message || `Could not submit this ${label.toLowerCase()}`, 'error');
+      return false;
+    } finally {
+      setSavingEnquiry(false);
+    }
   };
 
-  const submitImprov = () => {
-    const title = improvForm.title.trim();
-    if (!title) { showToast('Please enter an improvement title', 'warn'); return; }
-    append({ kind: 'improv', title, priority: improvForm.priority, assignee: improvForm.assignee });
-    showToast('Improvement request submitted to ' + improvForm.assignee, 'success');
-    setImprovForm({ title: '', desc: '', priority: 'Medium', assignee: ASSIGNEES[0] });
-    setModal(null);
+  const submitBug = async () => {
+    const ok = await submitEnquiry({ form: bugForm, kind: 'bug', label: 'Bug' });
+    if (ok) setBugForm({ title: '', desc: '', module: '', priority: 'High', assignee: '' });
   };
 
-  /* Upload a batch as individual messages (grouped at render time). */
+  const submitImprov = async () => {
+    const ok = await submitEnquiry({ form: improvForm, kind: 'improv', label: 'Improvement request' });
+    if (ok) setImprovForm({ title: '', desc: '', module: '', priority: 'Medium', assignee: '' });
+  };
+
+  /* Upload a batch as individual messages (grouped at render time).
+     Caption HAR file ke saath jata hai — upload route par wo [Required] hai
+     (khali par 400 "The caption field is required"), is liye pehle sirf pehli
+     file jati thi aur baqi chup-chaap fail ho jati thin. Agent ne kuch na
+     likha ho to file ka naam chala jata hai. Screen par dohrao nahi hota:
+     groupChatItems poore group ka ek hi text dikhata hai. */
   const sendItemsTogether = (category, items, caption, demoShape, label) => {
     if (liveConnected) {
       (async () => {
         let ok = true;
+        let lastError = null;
         for (let i = 0; i < items.length; i++) {
+          const it = items[i];
           try {
             // eslint-disable-next-line no-await-in-loop
-            await chat.sendAttachment({ category, file: items[i].file, caption: i === 0 ? (caption.trim() || undefined) : undefined });
-          } catch { ok = false; }
+            await chat.sendAttachment({
+              category, file: it.file, caption: caption.trim() || it.name || label,
+            });
+          } catch (err) { ok = false; lastError = err; }
         }
-        showToast(ok ? `${label} sent` : 'Some uploads failed', ok ? 'success' : 'warn');
+        showToast(ok ? `${label} sent` : (lastError?.message || 'Some uploads failed'), ok ? 'success' : 'warn');
       })();
     } else {
       items.forEach((it, i) => append({ kind: 'out', text: i === 0 ? (caption.trim() || null) : null, ...demoShape(it), time: nowTime() }));
@@ -399,12 +567,24 @@ export default function AgentSupport({ embedded = false, tab, onTab, showBack = 
     const res = await voice.stop();
     if (res && res.blob && res.durationSec > 0) finishVoice(res);
   };
-  const finishVoice = (res) => {
-    const file = new File([res.blob], `voice-${Date.now()}.${mimeToExt(res.mimeType)}`, { type: res.mimeType });
+  const finishVoice = async (res) => {
+    /* Chrome sirf WebM record karta hai aur upload route voice ke liye WebM
+       leti nahi ("File type '.webm' is not allowed for voice" — .mp3/.wav/
+       .m4a/.ogg chalti hain), is liye zaroorat par recording WAV me badal kar
+       bhejte hain. Caption bhi laazmi hai: khali bhejne par API 400 deti hai
+       ("The caption field is required"), aur voice ka apna caption box nahi. */
+    let out = { blob: res.blob, ext: mimeToExt(res.mimeType) };
+    try {
+      out = await toUploadableVoice(res.blob, res.mimeType);
+    } catch (e) { /* convert na ho saka — asli blob ke saath aage barho */ }
+    const file = new File([out.blob], `voice-${Date.now()}.${out.ext}`, { type: out.blob.type || res.mimeType });
     if (liveConnected) {
-      chat.sendAttachment({ category: 'voice', file, voiceDuration: res.durationSec })
+      chat.sendAttachment({ category: 'voice', file, voiceDuration: res.durationSec, caption: VOICE_NOTE_CAPTION })
         .then(() => showToast('Voice message sent', 'success'))
-        .catch(() => append({ kind: 'out', audio: { duration: fmtSec(res.durationSec), seconds: res.durationSec, src: URL.createObjectURL(res.blob) }, time: nowTime() }));
+        .catch((err) => {
+          showToast(err?.message || 'Voice message could not be sent', 'warn');
+          append({ kind: 'out', audio: { duration: fmtSec(res.durationSec), seconds: res.durationSec, src: URL.createObjectURL(res.blob) }, time: nowTime() });
+        });
     } else {
       append({ kind: 'out', audio: { duration: fmtSec(res.durationSec), seconds: res.durationSec, src: URL.createObjectURL(res.blob) }, time: nowTime() });
       showToast('Voice message sent', 'success');
@@ -580,24 +760,45 @@ export default function AgentSupport({ embedded = false, tab, onTab, showBack = 
         {/* Right sidebar */}
         <aside className="ag-side">
           <div className="ag-side-hero">
-            <div className="ag-av ag-av-xl">{initials(liveSession?.schoolName || 'Daffodil Schools')}</div>
-            <div className="ag-side-nm">{liveSession?.schoolName || 'Daffodil Schools'}</div>
-            <div className="ag-side-sub">{liveSession?.campusName || 'Tarnol Campus, Islamabad'}</div>
+            <div className="ag-av ag-av-xl">{initials(schoolName)}</div>
+            <div className="ag-side-nm">{schoolName}</div>
+            <div className="ag-side-sub">{liveSession?.campusName || schoolInfo?.campusName || '—'}</div>
             <div className="ag-side-badges">
-              <span className="ag-badge ag-badge-green"><i className="fa-solid fa-circle" style={{ fontSize: 7 }} aria-hidden="true"></i> Active</span>
+              {schoolInfo && (
+                <span className={`ag-badge ${schoolInfo.isActive === false ? 'ag-badge-closed' : 'ag-badge-green'}`}>
+                  <i className="fa-solid fa-circle" style={{ fontSize: 7 }} aria-hidden="true"></i>
+                  {schoolInfo.isActive === false ? ' Inactive' : ' Active'}
+                </span>
+              )}
             </div>
           </div>
+          {/* Sab kuch API se: school ki tafseel /support/schools se, session ki
+              /support/sessions se. Pehle yahan poore ke poore static naam pade
+              thay (Dr. Asif Khan, Tariq Ahmed, "Premium" plan). */}
           <SideSection title="School Info" icon="fa-circle-info" rows={[
-            ['Principal', 'Dr. Asif Khan'], ['Contact', '0349-8327846'],
+            ['School ID', openSchoolId || '—'],
+            ['Principal', schoolInfo?.principalName || '—'],
+            ['Contact', schoolInfo?.contactNumber || '—'],
+            ['Campus', liveSession?.campusName || schoolInfo?.campusName || '—'],
           ]} />
           <SideSection title="Support" icon="fa-headset" rows={[
-            ['Agent', 'Tariq Ahmed'], ['Mentor AI Plan', 'Premium'], ['Last Contact', 'Today 9:41 AM'],
+            ['Agent', liveSession?.agentName || 'Unassigned'],
+            ['Session', liveSession?.sessionId ? `#${liveSession.sessionId}` : '—'],
+            ['Opened', liveSession?.createdAt ? fmtDate(liveSession.createdAt) : '—'],
+            ['Last Contact', liveSession?.lastMessageAt ? formatTime(liveSession.lastMessageAt) : '—'],
+            ['Previous Sessions', prevSessions.length],
           ]} />
           <div className="ag-side-block">
             <div className="ag-side-lbl"><i className="fa-solid fa-note-sticky" aria-hidden="true"></i> Agent Notes</div>
-            <textarea className="ag-side-ta" defaultValue="School has recurring fee module issues. Dr. Asif prefers WhatsApp contact only." />
-            <button className="ag-btn ag-btn-success ag-side-save" onClick={() => showToast('Notes saved', 'success')}>
-              <i className="fa-solid fa-floppy-disk" aria-hidden="true"></i> Save Notes
+            <textarea
+              className="ag-side-ta"
+              value={sideNote}
+              placeholder={lastNote ? `Last note: ${lastNote.comment}` : 'Write an internal note for this school…'}
+              onChange={e => setSideNote(e.target.value)}
+            />
+            <button className="ag-btn ag-btn-success ag-side-save" disabled={noteSaving} onClick={saveSideNote}>
+              <i className={`fa-solid ${noteSaving ? 'fa-spinner fa-spin' : 'fa-floppy-disk'}`} aria-hidden="true"></i>
+              {noteSaving ? ' Saving…' : ' Save Notes'}
             </button>
           </div>
         </aside>
@@ -609,10 +810,10 @@ export default function AgentSupport({ embedded = false, tab, onTab, showBack = 
         <NoteModal form={noteForm} setForm={setNoteForm} onSave={saveNote} onClose={() => { setModal(null); setNoteForm({ title: '', details: '' }); }} />
       )}
       {modal === 'bug' && (
-        <BugModal form={bugForm} setForm={setBugForm} onSubmit={submitBug} onClose={() => { setModal(null); setBugForm({ title: '', desc: '', priority: 'High', assignee: ASSIGNEES[0] }); }} />
+        <BugModal users={users} form={bugForm} setForm={setBugForm} onSubmit={submitBug} onClose={() => { setModal(null); setBugForm({ title: '', desc: '', module: '', priority: 'High', assignee: '' }); }} />
       )}
       {modal === 'improv' && (
-        <ImprovModal form={improvForm} setForm={setImprovForm} onSubmit={submitImprov} onClose={() => { setModal(null); setImprovForm({ title: '', desc: '', priority: 'Medium', assignee: ASSIGNEES[0] }); }} />
+        <ImprovModal users={users} form={improvForm} setForm={setImprovForm} onSubmit={submitImprov} onClose={() => { setModal(null); setImprovForm({ title: '', desc: '', module: '', priority: 'Medium', assignee: '' }); }} />
       )}
       {modal === 'image' && (
         <ImageModal items={imgItems} onRemove={removeImg} caption={imgCaption} setCaption={setImgCaption}
@@ -849,7 +1050,7 @@ function NoteModal({ form, setForm, onSave, onClose }) {
   );
 }
 
-function BugModal({ form, setForm, onSubmit, onClose }) {
+function BugModal({ users, form, setForm, onSubmit, onClose }) {
   return (
     <Modal size="lg"
       title={{ icon: 'fa-bug', text: 'Report Bug', sub: 'Report a software issue identified during this support session' }}
@@ -863,6 +1064,10 @@ function BugModal({ form, setForm, onSubmit, onClose }) {
       <input className="ag-input" placeholder="Short, clear description of the bug…" value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} />
       <label className="ag-lbl">Bug Description <span className="ag-req">*</span></label>
       <textarea className="ag-textarea" rows={4} placeholder="Steps to reproduce, expected vs actual behavior…" value={form.desc} onChange={e => setForm(f => ({ ...f, desc: e.target.value }))} />
+      {/* Module Enquiries table par [Required] hai — wahi column jo Schools
+          Progress → Enquiries me dikhta hai. */}
+      <label className="ag-lbl">Module <span className="ag-req">*</span></label>
+      <input className="ag-input" placeholder="e.g. Fee, Attendance, Examination…" value={form.module} onChange={e => setForm(f => ({ ...f, module: e.target.value }))} />
       <div className="ag-grid">
         <div>
           <label className="ag-lbl">Priority <span className="ag-req">*</span></label>
@@ -873,7 +1078,10 @@ function BugModal({ form, setForm, onSubmit, onClose }) {
         <div>
           <label className="ag-lbl">Assign To</label>
           <select className="ag-input" value={form.assignee} onChange={e => setForm(f => ({ ...f, assignee: e.target.value }))}>
-            {ASSIGNEES.map(a => <option key={a}>{a}</option>)}
+            {/* Naam API se — id nahi, naam bhejte hain kyunki Enquiries table ka
+                Developer column text hai (Schools Progress bhi wahi likhti hai). */}
+            <option value="">{users.length ? 'Select user…' : 'Loading users…'}</option>
+            {users.map(u => <option key={u.id} value={u.name}>{u.name}</option>)}
           </select>
         </div>
       </div>
@@ -885,7 +1093,7 @@ function BugModal({ form, setForm, onSubmit, onClose }) {
   );
 }
 
-function ImprovModal({ form, setForm, onSubmit, onClose }) {
+function ImprovModal({ users, form, setForm, onSubmit, onClose }) {
   return (
     <Modal size="lg"
       title={{ icon: 'fa-lightbulb', text: 'Submit Improvement Request', sub: 'Suggest an enhancement based on this support conversation' }}
@@ -899,6 +1107,9 @@ function ImprovModal({ form, setForm, onSubmit, onClose }) {
       <input className="ag-input" placeholder="Short title for the improvement…" value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} />
       <label className="ag-lbl">Improvement Description <span className="ag-req ag-req-p">*</span></label>
       <textarea className="ag-textarea" rows={4} placeholder="Describe what should be improved and why it matters to schools…" value={form.desc} onChange={e => setForm(f => ({ ...f, desc: e.target.value }))} />
+      {/* Bug ki tarah, Enquiries table par Module [Required] hai. */}
+      <label className="ag-lbl">Module <span className="ag-req ag-req-p">*</span></label>
+      <input className="ag-input" placeholder="e.g. Fee, Attendance, Examination…" value={form.module} onChange={e => setForm(f => ({ ...f, module: e.target.value }))} />
       <div className="ag-grid">
         <div>
           <label className="ag-lbl">Priority</label>
@@ -909,7 +1120,10 @@ function ImprovModal({ form, setForm, onSubmit, onClose }) {
         <div>
           <label className="ag-lbl">Assign To</label>
           <select className="ag-input" value={form.assignee} onChange={e => setForm(f => ({ ...f, assignee: e.target.value }))}>
-            {ASSIGNEES.map(a => <option key={a}>{a}</option>)}
+            {/* Naam API se — id nahi, naam bhejte hain kyunki Enquiries table ka
+                Developer column text hai (Schools Progress bhi wahi likhti hai). */}
+            <option value="">{users.length ? 'Select user…' : 'Loading users…'}</option>
+            {users.map(u => <option key={u.id} value={u.name}>{u.name}</option>)}
           </select>
         </div>
       </div>
@@ -1083,10 +1297,12 @@ function SessionTranscriptModal({ session, onClose }) {
 function initials(name) {
   return (name || '?').split(' ').filter(Boolean).slice(0, 2).map((w) => w[0]).join('').toUpperCase() || '?';
 }
+/* API 12-ghante ki clock me waqt likhti hai (AM/PM gira kar), is liye har
+   timestamp serverDate se guzarta hai — dekho support/time.js. */
 function fmtDate(iso) {
-  if (!iso) return '';
-  try { return new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }); }
-  catch { return ''; }
+  const d = serverDate(iso);
+  if (!d) return '';
+  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 /* Delivery/read ticks: Sent = single, Delivered = double grey, Read = double blue. */
 function Ticks({ status }) {

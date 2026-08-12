@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import * as supportApi from '../support/api';
 import { MessageType, SenderType, VOICE_NOTE_CAPTION } from '../support/config';
+import { formatServerDate, formatServerTime, serverSince } from '../support/time';
 
 /* ═══════════════════════════════════════════════════════════════════
    CUSTOMER SUPPORT — OVERVIEW
@@ -97,34 +98,11 @@ async function mapLimit(items, limit, fn) {
   return out;
 }
 
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-
-function fmtDate(iso) {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '—';
-  return `${String(d.getDate()).padStart(2, '0')} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
-}
-
-function fmtClock(iso) {
-  if (!iso) return '';
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-}
-
-/* "2 min ago" — list me last activity isi tarah dikhti hai. */
-function sinceLabel(iso) {
-  if (!iso) return '—';
-  const then = new Date(iso).getTime();
-  if (Number.isNaN(then)) return '—';
-  const mins = Math.floor((Date.now() - then) / 60000);
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins} min ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs} hr ago`;
-  const days = Math.floor(hrs / 24);
-  return days === 1 ? 'yesterday' : `${days} days ago`;
-}
+/* Waqt seedha `new Date(iso)` se nahi lete: API 12-ghante ki clock me likhti
+   hai aur AM/PM gira deti hai — tafseel support/time.js me. */
+const fmtDate = formatServerDate;
+const fmtClock = formatServerTime;
+const sinceLabel = serverSince;
 
 function fmtDuration(sec) {
   const s = Math.max(0, Math.floor(sec || 0));
