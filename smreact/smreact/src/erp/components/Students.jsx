@@ -368,8 +368,10 @@ function buildStuProfileHTML(s, cls, school, isBW = false) {
     ? `<img src="${school.logo}" alt="logo" width="46" height="46" style="object-fit:contain;border-radius:9px"/>`
     : `<svg width="46" height="46" viewBox="0 0 36 36"><rect width="36" height="36" rx="9" fill="${brand}"/><path d="M18 9 L26 13 L18 17 L10 13 Z" fill="rgba(255,255,255,.95)"/><path d="M12 15 L12 21 C12 21 15 23 18 23 C21 23 24 21 24 21 L24 15" fill="none" stroke="rgba(255,255,255,.9)" stroke-width="1.4"/><line x1="26" y1="13" x2="26" y2="19" stroke="rgba(255,255,255,.9)" stroke-width="1.2"/></svg>`;
 
-  /* ── Compact QR placeholder used at top-right of hero strip ── */
-  const QR_SVG = `<svg viewBox="0 0 44 44" width="100%" height="100%"><rect width="44" height="44" fill="#fff"/><rect x="2" y="2" width="14" height="14" fill="none" stroke="#111" stroke-width="2"/><rect x="6" y="6" width="6" height="6" fill="#111"/><rect x="28" y="2" width="14" height="14" fill="none" stroke="#111" stroke-width="2"/><rect x="32" y="6" width="6" height="6" fill="#111"/><rect x="2" y="28" width="14" height="14" fill="none" stroke="#111" stroke-width="2"/><rect x="6" y="32" width="6" height="6" fill="#111"/><rect x="22" y="22" width="4" height="4" fill="#111"/><rect x="30" y="24" width="4" height="4" fill="#111"/><rect x="36" y="30" width="4" height="4" fill="#111"/><rect x="24" y="34" width="4" height="4" fill="#111"/><rect x="40" y="22" width="2" height="4" fill="#111"/><rect x="22" y="40" width="4" height="2" fill="#111"/></svg>`;
+  /* ── Hero strip ke top-right ka QR — asli hai, student id encode karta hai.
+       Pehle yahan sirf QR ki shakl (chand rectangles) bani hui thi jo kisi
+       scanner se parhi nahi ja sakti thi. ── */
+  const QR_SVG = stuQrSVG(stuQrValue(s));
 
   /* ── Hero photo ── */
   const photoBlock = s.photo
@@ -569,7 +571,7 @@ function buildStuProfileHTML(s, cls, school, isBW = false) {
               <span style="font-size:12px;font-weight:700;color:${isBW ? '#333' : '#1E40AF'};background:${isBW ? '#f1f5f9' : '#EFF6FF'};border:1px solid ${isBW ? '#ddd' : '#BFDBFE'};border-radius:20px;padding:5px 14px">Adm# ${dash(s.adm)}</span>
             </div>
           </div>
-          <div style="width:84px;height:84px;flex-shrink:0">${QR_SVG}</div>
+          <div style="width:84px;height:84px;flex-shrink:0;background:#fff">${QR_SVG ? QR_SVG.replace('<svg ', '<svg width="84" height="84" ') : ''}</div>
         </div>
 
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 30px">
