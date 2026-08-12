@@ -1377,10 +1377,24 @@ function Financials({ emps, depts = [], desigs, toast, canCreate = true, canDele
   const getActiveLoanCount   = (empId) => getActiveLoans(empId).length;
   const getLoanTotalReturned = (empId) =>
     getEmpLoans(empId).reduce((s, l) => s + (l.received || []).reduce((a, r) => a + (Number(r.amount) || 0), 0), 0);
+  /* Is mahine kitni loan deduction banti hai — Pay Roll ka "Loan Deduction this
+     Month" isi se bharta hai.
+       Installment  → tay shuda installment, magar baqi raqam se zyada nahi.
+       One Time     → poori baqi raqam isi mahine (yehi to "one time" ka matlab
+                      hai). Pehle yahan sirf Installment wale loans ginte thay,
+                      is liye One Time loan set karne par payroll me deduction
+                      0 hi rehti thi.
+     repaymentType API se 'One Time' bhi aa sakta hai aur 'OneTime' bhi, is liye
+     shart Installment par lagai hai — baqi sab one-time samjha jata hai. */
   const getMonthlyLoanDeduct = (empId) =>
-    getActiveLoans(empId)
-      .filter(l => l.repaymentType === 'Installment')
-      .reduce((s, l) => s + (Number(l.installmentAmount) || 0), 0);
+    getActiveLoans(empId).reduce((s, l) => {
+      const remaining = Number(l.remaining) || 0;
+      if (remaining <= 0) return s;
+      const due = l.repaymentType === 'Installment'
+        ? (Number(l.installmentAmount) || 0)
+        : remaining;
+      return s + Math.min(due, remaining);
+    }, 0);
 
   /* Loan mutators — persist to the backend, then refresh the employee's loans. */
   const saveNewLoan = async (empId, payload) => {
@@ -2439,7 +2453,7 @@ function PayRollModal({
                   <div className="pr-field">
                     <label>Loan Deduction this Month</label>
                     <input type="number" min={0} value={loanDeduct} onChange={(e) => { loanDeductTouched.current = true; setLoanDeduct(e.target.value); }} />
-                    <div className="pr-field-hint">Scheduled monthly repayment (auto-filled from active installment loan)</div>
+                    <div className="pr-field-hint">Auto-filled from the active loan — installment amount, or the full balance for a one-time loan</div>
                   </div>
                   <div className="pr-field">
                     <label>Custom Loan Amount Receiving</label>
