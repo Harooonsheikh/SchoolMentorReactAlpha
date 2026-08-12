@@ -112,11 +112,14 @@ function EyeBtn({ show, onToggle }) {
     </button>
   );
 }
-function NavBtns({ onBack, onNext, backLabel = '← Back', nextLabel = 'Next →' }) {
+function NavBtns({ onBack, onNext, backLabel = '← Back', nextLabel = 'Next →', busy = false, busyLabel = 'Please wait…' }) {
   return (
     <div className="auth-btn-row">
-      <button className="auth-btn-back" onClick={onBack}>{backLabel}</button>
-      <button className="auth-btn-next" onClick={onNext}>{nextLabel}</button>
+      <button className="auth-btn-back" onClick={onBack} disabled={busy}>{backLabel}</button>
+      <button className="auth-btn-next" onClick={onNext} disabled={busy}
+        style={busy ? { opacity:.6, cursor:'not-allowed' } : undefined}>
+        {busy ? busyLabel : nextLabel}
+      </button>
     </div>
   );
 }
@@ -224,11 +227,13 @@ function StepBranchOwner({ data, onChange, onNext, onBack, isNetwork }) {
 
 function StepPhone({ data, onChange, onNext, onBack, isNetwork }) {
   const [error, setError] = useState('');
+  const [busy,  setBusy]  = useState(false);
+  const inFlight = useRef(false);   // double-click guard (state update async hota hai)
 const { showToast } = useApp();
 
 
   async function next() {
-  debugger;
+  if (inFlight.current) return;
 
   if (data.phone.replace(/\D/g, '').length < 10) {
     setError('Enter a valid phone number.');
@@ -236,6 +241,8 @@ const { showToast } = useApp();
   }
 
   setError('');
+  inFlight.current = true;
+  setBusy(true);
 
   try {
     const res = await fetch(
@@ -269,6 +276,9 @@ localStorage.setItem('signup_otp', otpFromServer);
   } catch (err) {
     setError('Network error. Please try again.');
     console.error(err);
+  } finally {
+    inFlight.current = false;
+    setBusy(false);
   }
 }
 
@@ -280,10 +290,11 @@ localStorage.setItem('signup_otp', otpFromServer);
       <InputWrap icon={ICONS.phone}>
         <input className="auth-input" type="tel" placeholder="+92 300 0000000"
           value={data.phone} onChange={e => onChange('phone', normalizePkPhone(e.target.value))}
+          disabled={busy}
           onKeyDown={e => e.key === 'Enter' && next()} />
       </InputWrap>
       <p style={{fontSize:12,color:'#64748B',marginTop:-8,marginBottom:16}}>🇵🇰 Format: 03XX-XXXXXXX or +92-3XX-XXXXXXX</p>
-      <NavBtns onBack={onBack} onNext={next} nextLabel="Send OTP →" />
+      <NavBtns onBack={onBack} onNext={next} nextLabel="Send OTP →" busy={busy} busyLabel="Sending OTP…" />
     </AuthLayout>
   );
 }
@@ -293,16 +304,21 @@ localStorage.setItem('signup_otp', otpFromServer);
 ═══════════════════════════════════ */
 function StepEmail({ data, onChange, onNext, onBack, isNetwork }) {
   const [error, setError] = useState('');
+  const [busy,  setBusy]  = useState(false);
+  const inFlight = useRef(false);   // double-click guard
   // function next() {
   //   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.email)) { setError('Enter a valid email address.'); return; }
   //   setPhoneNo(data.email)
   //   setError(''); onNext();
   // }
   async function next() {
+  if (inFlight.current) return;
 
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.email)) { setError('Enter a valid email address.'); return; }
 
   setError('');
+  inFlight.current = true;
+  setBusy(true);
 
   try {
     const res = await fetch(
@@ -334,6 +350,9 @@ function StepEmail({ data, onChange, onNext, onBack, isNetwork }) {
   } catch (err) {
     setError('Network error. Please try again.');
     console.error(err);
+  } finally {
+    inFlight.current = false;
+    setBusy(false);
   }
 }
   return (
@@ -344,9 +363,10 @@ function StepEmail({ data, onChange, onNext, onBack, isNetwork }) {
       <InputWrap icon={ICONS.email}>
         <input className="auth-input" type="email" placeholder={copyFor(isNetwork).emailPlaceholder}
           value={data.email} onChange={e => onChange('email', e.target.value)}
+          disabled={busy}
           onKeyDown={e => e.key === 'Enter' && next()} />
       </InputWrap>
-      <NavBtns onBack={onBack} onNext={next} nextLabel="Send OTP →" />
+      <NavBtns onBack={onBack} onNext={next} nextLabel="Send OTP →" busy={busy} busyLabel="Sending OTP…" />
     </AuthLayout>
   );
 }
@@ -358,6 +378,8 @@ function StepOTP({ data,onChange,  onNext, onBack, isNetwork }) {
   const [otp,   setOtp]   = useState(['', '', '', '']);
   const [error, setError] = useState('');
   const [timer, setTimer] = useState(30);
+  const [busy,  setBusy]  = useState(false);
+  const resending = useRef(false);   // double-click guard
   const refs = useRef([]);
   const country = getCountrySession();
   const dest = country.verificationMethod === 'phone' ? data.phone : data.email;
@@ -393,9 +415,11 @@ onNext();
 
 
   async function resendOTP() {
-    
+    if (resending.current) return;
     setError('');
-    
+    resending.current = true;
+    setBusy(true);
+
     try {
       const phone = country.verificationMethod === 'phone' ? data.phone : data.email;
       
@@ -428,6 +452,8 @@ localStorage.setItem('signup_otp', otpFromServer);
       showToast('Network error. Please try again.', 'error');
       console.error(err);
     } finally {
+      resending.current = false;
+      setBusy(false);
     }
   }
 
@@ -451,9 +477,9 @@ localStorage.setItem('signup_otp', otpFromServer);
       <div style={{textAlign:'center',fontSize:13,color:'#64748B',marginBottom:20}}>
         {timer > 0
           ? <span>Resend in <strong style={{color:'#1565C0'}}>{timer}s</strong></span>
-          : <button onClick={() => resendOTP()}
-              style={{background:'none',border:'none',color:'#1565C0',fontWeight:700,cursor:'pointer',fontSize:13,fontFamily:"'Plus Jakarta Sans',sans-serif"}}>
-              Resend OTP
+          : <button onClick={() => resendOTP()} disabled={busy}
+              style={{background:'none',border:'none',color:'#1565C0',fontWeight:700,cursor: busy ? 'not-allowed' : 'pointer',opacity: busy ? .6 : 1,fontSize:13,fontFamily:"'Plus Jakarta Sans',sans-serif"}}>
+              {busy ? 'Sending…' : 'Resend OTP'}
             </button>
         }
       </div>
@@ -534,13 +560,23 @@ function StepPassword({ data,onChange,  onNext, onBack, isNetwork }) {
 function StepTerms({ data, onAccept, onBack, isNetwork }) {
   const [agreed, setAgreed] = useState(false);
   const [error,  setError]  = useState('');
+  const [busy,   setBusy]   = useState(false);
+  /* Ref se guard karte hain kyunki setBusy async hai — tez double-click par
+     dono clicks purani state parh kar do POST bhej dete the (duplicate branches). */
+  const inFlight = useRef(false);
 
   async function accept() {
+  if (inFlight.current) {
+    setError('Branch is being created, please wait…');
+    return;
+  }
   if (!agreed) {
     setError('Please accept the Terms & Conditions to proceed.');
     return;
   }
   setError('');
+  inFlight.current = true;
+  setBusy(true);
   try {
     /* Dono signup endpoints ka payload bilkul alag hai:
          school  → { branchName, branchOwnerName, branchPhone, password }
@@ -579,14 +615,20 @@ function StepTerms({ data, onAccept, onBack, isNetwork }) {
 
     if (!res.ok) {
       setError(responseData?.message || 'Signup failed');
+      inFlight.current = false;
+      setBusy(false);
       return;
     }
 
+    /* Success par guard jaan bujh kar release nahi karte — step 6 par jaate waqt
+       koi late click dobara branch create na kar de. */
     onAccept();
 
   } catch (err) {
     setError('Network error. Please try again.');
     console.error(err);
+    inFlight.current = false;
+    setBusy(false);
   }
 }
 
@@ -656,21 +698,24 @@ function StepTerms({ data, onAccept, onBack, isNetwork }) {
         </span>
       </label>
 
+      {/* Button jaan bujh kar disabled nahi — taake dobara click par user ko
+          "please wait" message dikhe; asli guard `inFlight` ref hai. */}
       <button onClick={accept} style={{
         width:'100%', padding:'13px',
         background: agreed ? 'linear-gradient(135deg,#1565C0,#1DB88A)' : '#E2E8F0',
         color: agreed ? '#fff' : '#94A3B8',
         border:'none', borderRadius:12,
         fontSize:15, fontWeight:700,
-        cursor: agreed ? 'pointer' : 'not-allowed',
+        cursor: (agreed && !busy) ? 'pointer' : 'not-allowed',
+        opacity: busy ? .7 : 1,
         fontFamily:"'Plus Jakarta Sans',sans-serif",
         boxShadow: agreed ? '0 4px 14px rgba(21,101,192,.3)' : 'none',
         transition:'all .2s', marginBottom:10,
       }}>
-        ✓ Accept & Create Account
+        {busy ? 'Creating account…' : '✓ Accept & Create Account'}
       </button>
 
-      <button onClick={onBack} style={{
+      <button onClick={onBack} disabled={busy} style={{
         width:'100%', padding:'11px', background:'transparent',
         color:'#64748B', border:'1.5px solid #E2E8F0',
         borderRadius:12, fontSize:14, fontWeight:600,
