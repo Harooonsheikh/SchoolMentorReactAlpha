@@ -11,6 +11,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   SenderType, MessageStatus, MessageType, SessionStatus, fileUrl,
   getSupportToken, getSupportIdentity, getSupportUserId, SUPPORT_REALTIME_ENABLED,
+  VOICE_NOTE_CAPTION,
 } from './config';
 import * as api from './api';
 import { ApiError } from './api';
@@ -62,7 +63,12 @@ export function useSupportChat({
 
   const toUi = useCallback((dto) => {
     const isOut = dto.senderType === outSenderType;
-    const caption = dto.messageBody ? dto.messageBody : null;
+    /* Voice note ka caption sirf API ki [Required] shart poori karta hai
+       (VOICE_NOTE_CAPTION) — usay bubble ke neeche matn ban kar nahi dikhna
+       chahiye, warna har voice note par "Voice note" likha aata hai. */
+    const isPlaceholder = dto.messageType === MessageType.VoiceNote
+      && dto.messageBody === VOICE_NOTE_CAPTION;
+    const caption = (dto.messageBody && !isPlaceholder) ? dto.messageBody : null;
     const base = {
       id: dto.messageId,
       kind: isOut ? 'out' : 'in',

@@ -4,15 +4,26 @@
    - cancel(): stop + discard
    - stop(): stop + resolve { blob, durationSec, mimeType }
    - auto-stops at MAX_SECONDS (5 minutes) and fires onAutoStop
-   Produces audio/webm (Opus) where supported, falling back to the browser
-   default. localhost is a secure context so getUserMedia works in dev.
+   Prefers a container the Support API accepts for voice (see pickMimeType),
+   falling back to the browser default. localhost is a secure context so
+   getUserMedia works in dev.
    ════════════════════════════════════════════════════════════════════ */
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 export const MAX_VOICE_SECONDS = 300; // 5 minutes
 
+/* Tarteeb jaan-boojh kar aisi: pehle wo containers jinhe Support API voice ke
+   liye qubool karti hai (.m4a / .ogg), WebM sab se aakhir me. Chrome sirf WebM
+   deta hai — us soorat me upload se pehle recording WAV me badli jati hai
+   (support/audio.js), kyunki API '.webm is not allowed for voice' kehti hai. */
 function pickMimeType() {
-  const candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4'];
+  const candidates = [
+    'audio/mp4',                // → .m4a (Safari, naya Edge)
+    'audio/ogg;codecs=opus',    // → .ogg (Firefox)
+    'audio/ogg',
+    'audio/webm;codecs=opus',   // → .webm (Chrome/Edge) — convert karna parega
+    'audio/webm',
+  ];
   if (typeof MediaRecorder === 'undefined') return '';
   return candidates.find((t) => MediaRecorder.isTypeSupported?.(t)) || '';
 }

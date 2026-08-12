@@ -2,9 +2,10 @@ import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useSupportChat } from '../support/useSupportChat';
 import { useVoiceRecorder } from '../support/useVoiceRecorder';
+import { toUploadableVoice } from '../support/audio';
 import { VoicePlayer, VideoBubble, ImageGallery } from '../support/MediaBits';
 import { groupChatItems } from '../support/grouping';
-import { SUPPORT_BACKEND_ENABLED, ATTACH_LIMITS } from '../support/config';
+import { SUPPORT_BACKEND_ENABLED, ATTACH_LIMITS, VOICE_NOTE_CAPTION } from '../support/config';
 
 let _attId = 1;
 const attId = () => `att${_attId++}`;
@@ -24,12 +25,6 @@ const SESSION_CLOSED_MESSAGE =
    Demo-only — no backend integration. State lives in component state.
    ═══════════════════════════════════════════════════════════════════ */
 
-const REPLIES = [
-  'Thank you for contacting School Mentor Support. We will respond shortly.',
-  'We have received your message. Our team is reviewing it now.',
-  'Our support agent has been notified. Expected response in about 15 minutes.',
-];
-
 const nowTime = () =>
   new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
 
@@ -41,40 +36,31 @@ const todayLabel = () => {
 let _msgIdSeed = 1;
 const newId = () => `m${_msgIdSeed++}`;
 
-const SEED_MESSAGES = [
-  { id: newId(), kind: 'daylabel', text: todayLabel() },
-  { id: newId(), kind: 'system',   text: 'Welcome to School Mentor Support. We are here to help!' },
-  { id: newId(), kind: 'in', sender: 'School Mentor Support',
-    text: 'Assalam o Alaikum! How can we help you today? Please describe your issue and we will assist you shortly.',
-    time: '9:00 AM' },
-  { id: newId(), kind: 'out',
-    text: 'Fee challan is not generating for Class 8 since yesterday.',
-    time: '9:12 AM' },
-  { id: newId(), kind: 'out',
-    text: 'Here is the screenshot:',
-    image: { name: 'error_screenshot.jpg', size: '1.2 MB · Image' },
-    time: '9:15 AM' },
-  { id: newId(), kind: 'in', sender: 'Agent Tariq',
-    text: 'Thank you for the screenshot. I can see the issue — there is a date conflict in your academic session settings. Working on it now.',
-    time: '9:22 AM' },
-  { id: newId(), kind: 'in', sender: 'Agent Tariq',
-    text: 'Please follow this guide to fix the issue:',
-    doc: { name: 'challan_fix_guide.pdf', size: '310 KB · PDF', ext: 'pdf' },
-    time: '9:25 AM' },
-  { id: newId(), kind: 'out', audio: { duration: '0:18' }, time: '9:34 AM' },
-  { id: newId(), kind: 'in', sender: 'Agent Tariq',
-    text: 'The issue has been resolved! Challan generation should now work correctly. Please let us know if you need anything else.',
-    time: '9:41 AM' },
-];
+/* Chat kholte hi jo transcript dikhta hai wo POORA API se aata hai
+   (useSupportChat → onHistory). Yahan pehle ek seeded demo guftagu padi thi
+   (Agent Tariq, challan screenshot waghera) jo har school ko apni hi chat lagti
+   thi aur API ka jawab aate hi ghayab ho jati thi — is liye hata di gayi.
+   Backend na mile to farzi baat-cheet ki jagah saaf system line dikhti hai. */
+const CONNECT_FAILED_MESSAGE =
+  'Support is unavailable right now. Please check your connection and try again.';
 
-export default function SupportWidget() {
+
+/* `toast` ERP shell se aata hai (App.js ka pushToast) — attachment modals ke
+   upar dikhta hai, is liye caption jaisi validation wahin se batai jati hai.
+   Prop na mile to chup-chaap kuch na karo (widget kahin aur bhi mount ho sakta
+   hai). */
+export default function SupportWidget({ toast }) {
+  const notify = (msg, type = 'error') => toast?.(msg, type);
   /* Open/close + session state */
   const [open, setOpen]         = useState(false);
   const [sessionState, setSession] = useState('active'); // 'active' | 'closed'
-  const [unread, setUnread]     = useState(1);
+  /* Trigger par badge tab hi lage jab sach much koi na-para message ho —
+     pehle yahan 1 pada tha, to har user ko bina kisi guftagu ke ek unread
+     dikhta tha. */
+  const [unread, setUnread]     = useState(0);
 
-  /* Messages list */
-  const [messages, setMessages] = useState(SEED_MESSAGES);
+  /* Messages list — khali se shuru; transcript API se aata hai. */
+  const [messages, setMessages] = useState([]);
 
   /* Composer */
   const [input, setInput] = useState('');
@@ -122,9 +108,12 @@ export default function SupportWidget() {
       setRemoteTyping(null);
       setSession('closed');
     },
-    onError: () => { /* stay in offline demo mode */ },
+    /* API tak pahunch hi na ho → sirf ek system line, koi banawati guftagu nahi. */
+    onError: () => setMessages([{ id: newId(), kind: 'system', text: CONNECT_FAILED_MESSAGE }]),
   });
   const liveConnected = chat.connected;
+  /* Widget khulne ke baad, jab tak na connect hua na koi error aaya — loader. */
+  const chatLoading = open && (chat.status === 'idle' || chat.status === 'connecting');
 
   /* Open the live connection the first time the widget is opened. */
   useEffect(() => {
@@ -175,31 +164,27 @@ export default function SupportWidget() {
     el.style.height = Math.min(el.scrollHeight, 78) + 'px';
   };
 
-  const appendOut = (payload) => {
+  /* Sirf apna bheja hua message screen par. Yahan pehle 2.2 second baad ek
+     banawata "support" jawab bhi aa jata tha (random REPLIES me se) — school ke
+     liye wo asli agent ka reply lagta tha jab ke jawab dene wala koi tha hi
+     nahi. Ab jo bhi aata hai server se aata hai. */
+  const appendOut = (payload) =>
     setMessages(prev => [...prev, { id: newId(), kind: 'out', time: nowTime(), ...payload }]);
-    /* Demo: simulated reply with typing dots after 2.2 s */
-    setTimeout(() => {
-      setMessages(prev => [...prev, { id: newId(), kind: 'typing' }]);
-      setTimeout(() => {
-        setMessages(prev => prev.filter(m => m.kind !== 'typing').concat({
-          id: newId(),
-          kind: 'in',
-          sender: 'School Mentor Support',
-          text: REPLIES[Math.floor(Math.random() * REPLIES.length)],
-          time: nowTime(),
-        }));
-      }, 2200);
-    }, 80);
-  };
 
   const sendText = () => {
     const txt = input.trim();
     if (!txt) return;
     if (liveConnected) {
-      // Live: POST → server persists → SignalR broadcast (echoed via onInbound).
-      chat.sendText(txt).catch(() => appendOut({ text: txt }));
+      /* Live: POST → server persists → SignalR broadcast (echoed via onInbound).
+         Nakaam ho to bubble to dikha do (jo likha wo gum na ho) magar saath
+         batao ke gaya nahi — warna school samajhti hai message chala gaya. */
+      chat.sendText(txt).catch(() => {
+        appendOut({ text: txt });
+        appendSystem('Message could not be sent. Please try again.');
+      });
     } else {
       appendOut({ text: txt });
+      appendSystem('Not connected to support — this message was not sent.');
     }
     setInput('');
     setTimeout(autoResize, 0);
@@ -231,11 +216,25 @@ export default function SupportWidget() {
     const res = await voice.stop();
     if (res && res.blob && res.durationSec > 0) finishVoice(res);
   };
-  const finishVoice = (res) => {
-    const file = new File([res.blob], `voice-${Date.now()}.${mimeToExt(res.mimeType)}`, { type: res.mimeType });
+  const finishVoice = async (res) => {
+    /* Chrome sirf WebM record karta hai aur API voice ke liye WebM leti nahi
+       ("File type '.webm' is not allowed for voice"), is liye zaroorat par
+       recording yahin WAV me badalti hai. Nakaam ho to jo hai wahi bhej do —
+       server ka apna message user ko dikh jayega. */
+    let out = { blob: res.blob, ext: mimeToExt(res.mimeType) };
+    try {
+      out = await toUploadableVoice(res.blob, res.mimeType);
+    } catch (e) { /* convert na ho saka — asli blob ke saath aage barho */ }
+    const file = new File([out.blob], `voice-${Date.now()}.${out.ext}`, { type: out.blob.type || res.mimeType });
     if (liveConnected) {
-      chat.sendAttachment({ category: 'voice', file, voiceDuration: res.durationSec })
-        .catch(() => appendOut({ audio: { duration: fmtSec(res.durationSec), seconds: res.durationSec, src: URL.createObjectURL(res.blob) } }));
+      /* Voice note ka apna koi caption box nahi hai (record karke seedha chala
+         jata hai), is liye yahan yeh tay-shuda caption jata hai — warna
+         doosri taraf message bilkul bina matn ke pahunchta hai. */
+      chat.sendAttachment({ category: 'voice', file, voiceDuration: res.durationSec, caption: VOICE_NOTE_CAPTION })
+        .catch(() => {
+          notify('Voice note could not be sent. Please try again.');
+          appendOut({ audio: { duration: fmtSec(res.durationSec), seconds: res.durationSec, src: URL.createObjectURL(res.blob) } });
+        });
     } else {
       appendOut({ audio: { duration: fmtSec(res.durationSec), seconds: res.durationSec, src: URL.createObjectURL(res.blob) } });
     }
@@ -314,7 +313,14 @@ export default function SupportWidget() {
   };
 
   /* Upload a batch of files as individual messages (grouped at render time).
-     Caption rides on the first file only. Falls back to local demo bubbles. */
+     Caption HAR file ke saath jata hai: upload route par wo [Required] hai
+     (khali bhejne par 400 "The caption field is required"), is liye pehle jab
+     sirf pehli file ke saath jata tha to baqi files chup-chaap fail ho kar
+     local bubble ban jati thin. Screen par dohrao nahi hota — groupChatItems
+     poore group ka ek hi text dikhata hai.
+
+     User ne kuch na likha ho to file ka apna naam chala jata hai — wahi tareeqa
+     jo agent console par hai (user ko rok kar caption maangne se behtar). */
   const sendItemsTogether = (category, items, caption, demoShape) => {
     if (liveConnected) {
       (async () => {
@@ -322,8 +328,15 @@ export default function SupportWidget() {
           const it = items[i];
           try {
             // eslint-disable-next-line no-await-in-loop
-            await chat.sendAttachment({ category, file: it.file, caption: i === 0 ? (caption.trim() || undefined) : undefined });
-          } catch {
+            await chat.sendAttachment({
+              category, file: it.file, caption: caption.trim() || it.name || category,
+            });
+          } catch (err) {
+            /* Upload nakaam — bubble to dikhao (jo chuna wo gum na ho) magar
+               chup na raho, warna user samajhta hai file chali gayi. Server ka
+               apna message (e.g. "File type '.x' is not allowed") zyada kaam ka
+               hai, is liye wahi dikhate hain. */
+            notify(err?.message || `${it.name || 'File'} could not be sent. Please try again.`);
             appendOut({ text: i === 0 ? (caption.trim() || null) : null, ...demoShape(it) });
           }
         }
@@ -389,6 +402,7 @@ export default function SupportWidget() {
       {open && createPortal(
         <ChatOverlay
           messages={messages}
+          loading={chatLoading}
           msgsRef={msgsRef}
           isClosed={isClosed}
           onClose={() => setOpen(false)}
@@ -451,7 +465,7 @@ export default function SupportWidget() {
    CHAT OVERLAY
    ───────────────────────────────────────────────────────────────── */
 function ChatOverlay({
-  messages, msgsRef, isClosed, onClose, remoteTyping,
+  messages, msgsRef, isClosed, onClose, remoteTyping, loading = false,
   input, setInput, taRef, onKeyDownTa, onAutoResize, onSendText, onComposerType,
   openAttachModal,
   recording, recSec, onStartRec, onCancelRec, onSendRec,
@@ -505,6 +519,12 @@ function ChatOverlay({
 
         {/* Messages */}
         <div className="sc-msgs" ref={msgsRef}>
+          {loading && !messages.length && (
+            <div className="sc-msgs-state">
+              <i className="fa-solid fa-spinner fa-spin" aria-hidden="true"></i>
+              <div className="sc-msgs-state-t">Connecting to support…</div>
+            </div>
+          )}
           {groupChatItems(messages).map(m => <MessageNode key={m.id} m={m} />)}
           {remoteTyping && !isClosed && <MessageNode m={{ id: 'remote-typing', kind: 'typing' }} />}
           {isClosed && (
@@ -1002,6 +1022,11 @@ const SUPPORT_CSS = `
 
 /* Messages */
 .sc-msgs { flex: 1; overflow-y: auto; padding: 11px 11px 8px; background: #E8EEF7; display: flex; flex-direction: column; gap: 3px; scrollbar-width: thin; scrollbar-color: rgba(30,58,138,.14) transparent; }
+
+/* Transcript aane se pehle wali halat (connect ho raha hai). */
+.sc-msgs-state { margin: auto; text-align: center; color: #64748B; padding: 26px 14px; }
+.sc-msgs-state i { font-size: 22px; opacity: .5; display: block; margin-bottom: 9px; }
+.sc-msgs-state-t { font-size: 12.5px; font-weight: 700; }
 [data-theme="dark"] .sc-msgs { background: #0D1523; }
 .sc-daylbl { text-align: center; margin: 9px 0; }
 .sc-daylbl span { background: rgba(255,255,255,.76); border: 1px solid rgba(30,58,138,.12); border-radius: 99px; padding: 3px 11px; font-size: 10.5px; font-weight: 700; color: #64748B; }

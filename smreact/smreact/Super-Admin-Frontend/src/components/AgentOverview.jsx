@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import * as supportApi from '../support/api';
-import { MessageType, SenderType } from '../support/config';
+import { MessageType, SenderType, VOICE_NOTE_CAPTION } from '../support/config';
 
 /* ═══════════════════════════════════════════════════════════════════
    CUSTOMER SUPPORT — OVERVIEW
@@ -144,11 +144,16 @@ const messagePreview = (m) =>
 /* API message → transcript row (wahi shape jo TranscriptRow padhta hai). */
 function toTranscriptRow(m) {
   const out = m.senderType === SenderType.Agent;
+  /* Voice note ka body sirf API ka laazmi caption hota hai — transcript me
+     bubble ke saath "Voice note" likha nahi aana chahiye (wahi rule jo live
+     chat me toUi lagata hai). */
+  const body = (m.messageBody || '').trim();
+  const isVoicePlaceholder = m.messageType === MessageType.VoiceNote && body === VOICE_NOTE_CAPTION;
   const row = {
     type: out ? 'out' : 'in',
     sender: m.senderName || (out ? 'Support Agent' : 'School'),
     time: fmtClock(m.createdAt),
-    text: (m.messageBody || '').trim(),
+    text: isVoicePlaceholder ? '' : body,
     mediaName: m.attachmentName || '',
     mediaSub: m.attachmentSize ? `${Math.max(1, Math.round(m.attachmentSize / 1024))} KB` : '',
     duration: fmtDuration(m.voiceDuration),
@@ -169,8 +174,10 @@ function toTranscriptRow(m) {
  *   1. schools + agents + khuli sessions (teen calls) → cards aur Active table
  *      foran ban jate hain.
  *   2. har khuli session ka aakhri message, aur har school ki closed history →
- *      Inactive table aur "Total Sessions". Ye der lagti hai, is liye pehli
- *      render ko rokti nahi; tab tak `historyLoading` chalta hai.
+ *      Inactive table aur "Total Sessions". Yeh der lagta hai aur `historyLoading`
+ *      isi ka pata deta hai.
+ * Screen dono marhalon ke baad ek saath dikhti hai (component `busy` par loader
+ * chalata hai) — aadhi bhari, aadhi loading wali screen se behtar.
  * API tak na pahunche to `live:false` — screen demo rows par gir jati hai.
  */
 function useOverviewData() {
@@ -241,7 +248,6 @@ function useOverviewData() {
      waqt khula bhi ho. Khuli session wali school ko yahan se nikal dena galat
      tha: uski purani sessions kahin se bhi nahi khulti thin. */
   const inactiveRows = useMemo(() => {
-    const openIds = new Set(s.open.map((r) => r.schoolId));
     return s.schools
       .filter((sch) => (s.history[sch.schoolId] || []).length)
       .map((sch) => {
@@ -257,8 +263,11 @@ function useOverviewData() {
           lastSession: fmtDate(latest?.closedAt || latest?.createdAt),
           sessions: rows.length,
           schoolState: sch.isActive === false ? 'Inactive' : 'Active',
-          /* Is school ka koi chat abhi khula hai ya sab band ho chuke. */
-          status: openIds.has(sch.schoolId) ? 'Active' : 'Closed',
+          /* Is table ki har row band ho chuki conversations ki hai — status
+             hamesha Closed. (Us school ka koi chat abhi khula ho to wo upar
+             Active Conversations me alag row banti hai; yahan 'Active' dikhana
+             sirf confusion tha.) */
+          status: 'Closed',
           /* History modal isi list se chalti hai — dobara call ki zaroorat nahi. */
           items: rows.map((r) => ({
             sessionId: r.sessionId,
@@ -272,7 +281,7 @@ function useOverviewData() {
         };
       })
       .sort((a, b) => b.sessions - a.sessions);
-  }, [s.schools, s.open, s.history]);
+  }, [s.schools, s.history]);
 
   /* Dono cards ek hi cheez ginte hain — conversations, schools nahi:
      active = abhi khuli, inactive = band ho chuki. */
@@ -306,6 +315,13 @@ export default function AgentOverview() {
 
   const d = useOverviewData();
   const { live } = d;
+
+  /* Loader tab tak chalta hai jab tak DONO marhale mukammal na ho jayein —
+     pehla (schools/agents/sessions) aur school history dono. Pehle sirf pehle
+     marhale par loader hatta tha, phir Inactive table apne andar alag se
+     "Loading school history…" dikhata rehta tha: aadhi screen tayyar, aadhi
+     load hoti hui. Ek hi baar mukammal screen dikhana behtar hai. */
+  const busy = d.loading || d.historyLoading;
 
   /* Pehli load par kuch bhi na dikhao — na demo rows, na khali tables.
      Warna screen pehle sample numbers dikhati thi aur ek lamhe baad chup-chaap
@@ -352,23 +368,26 @@ export default function AgentOverview() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           {/* Screen par saaf rahe ke numbers live hain ya demo — warna offline
               fallback asli data lagta hai. */}
-          {d.loading
+          {busy
             ? <span className="ov-bdg ov-bdg-slate"><i className="fa-solid fa-spinner fa-spin" aria-hidden="true" /> Loading</span>
             : live
               ? <span className="ov-bdg ov-bdg-green"><i className="fa-solid fa-circle" style={{ fontSize: 7 }} aria-hidden="true" /> Live</span>
               : <span className="ov-bdg ov-bdg-amber" title={d.error || ''}><i className="fa-solid fa-triangle-exclamation" aria-hidden="true" /> Sample data</span>}
-          {live && d.historyLoading && <span className="ov-muted" style={{ fontSize: 11.5 }}><i className="fa-solid fa-spinner fa-spin" aria-hidden="true" /> loading history…</span>}
-          <button className="ov-btn-ghost" onClick={d.reload} disabled={d.loading}>
+          <button className="ov-btn-ghost" onClick={d.reload} disabled={busy}>
             <i className="fa-solid fa-rotate" aria-hidden="true" /> Refresh
           </button>
         </div>
       </div>
 
-      {d.loading ? (
+      {busy ? (
         <div className="ov-section" style={{ textAlign: 'center', padding: 48, color: 'var(--ag-tm)' }}>
           <i className="fa-solid fa-spinner fa-spin" style={{ fontSize: 26, display: 'block', margin: '0 auto 12px', opacity: 0.55 }} aria-hidden="true" />
           <div style={{ fontSize: 14, fontWeight: 700 }}>Loading support overview…</div>
-          <div style={{ fontSize: 12, marginTop: 4 }}>Fetching schools, agents and conversations.</div>
+          <div style={{ fontSize: 12, marginTop: 4 }}>
+            {d.historyLoading
+              ? 'Reading session history for every school…'
+              : 'Fetching schools, agents and conversations.'}
+          </div>
         </div>
       ) : (
       <>
@@ -433,7 +452,7 @@ export default function AgentOverview() {
             <thead>
               <tr>
                 <th>School Name</th><th>Campus</th><th>Principal</th><th>School State</th><th>Assigned Agent</th>
-                <th>Last Session</th><th>Total Sessions</th><th>Status</th><th></th>
+                <th>Last Session</th><th>Closed Sessions</th><th>Status</th><th></th>
               </tr>
             </thead>
             <tbody>
@@ -455,11 +474,12 @@ export default function AgentOverview() {
                   </td>
                 </tr>
               ))}
+              {/* History yahan tak pahunchne se pehle hi load ho chuki hoti hai
+                  (screen `busy` tak loader par rehti hai), is liye yahan sirf
+                  "kuch mila hi nahi" wali soorat bachti hai. */}
               {filteredInactive.length === 0 && (
                 <tr><td colSpan={9} className="ov-empty">
-                  {d.historyLoading ? 'Loading school history…'
-                    : search ? `No conversations match “${search}”.`
-                      : 'No closed conversations yet.'}
+                  {search ? `No conversations match “${search}”.` : 'No closed conversations yet.'}
                 </td></tr>
               )}
             </tbody>

@@ -496,7 +496,7 @@ export default function App() {
               <TopbarSessionPill />
               {/* Global Customer Support chat — trigger on every ERP screen; the
                   chat window + attachment modals portal to <body> (bottom-right). */}
-              <SupportWidget />
+              <SupportWidget toast={pushToast} />
               <Tooltip text={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'} placement="bottom">
                 <button className="tb-btn theme-btn" onClick={toggleTheme}>
                   <i className={`fa-solid ${theme === 'dark' ? 'fa-sun' : 'fa-moon'}`}></i>

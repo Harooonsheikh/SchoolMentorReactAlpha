@@ -158,6 +158,14 @@ export const MessageType = {
 /* Max files per single send, by category (frontend-enforced). */
 export const ATTACH_LIMITS = { image: 10, document: 10, video: 5 };
 
+/* Voice note ke saath jane wala tay-shuda caption.
+   Upload route par `caption` [Required] hai (khali par 400 "The caption field
+   is required") aur voice bubble me user ka apna koi matn hota hi nahi — is
+   liye ye bhejte hain. Sirf API ki shart poori karne ke liye hai, is liye
+   chat me dikhaya NAHI jata: toUi voice message ka body isi se milata hai aur
+   barabar ho to text gira deta hai. */
+export const VOICE_NOTE_CAPTION = 'Voice note';
+
 /* Uploaded attachments live in the API's own wwwroot (/SupportAttachments/...)
    and come back stamped with whatever host served the request — the IP on :4100
    (blocked as mixed content from an https page) or localhost:4100 behind the
