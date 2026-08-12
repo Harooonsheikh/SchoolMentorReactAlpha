@@ -6,6 +6,7 @@ import useAsync from '../hooks/useAsync';
 import { usePermissions } from '../context/PermissionsContext';
 import { fetchReportHeader } from '../../utils/pdfReports';
 import { deliverReport } from './reportDelivery';
+import { qrSVG } from '../utils/qrcode';
 
 /* ─── Module-wide helpers ─── */
 const MONTHS_SHORT_STU = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -609,6 +610,22 @@ function buildStuProfileHTML(s, cls, school, isBW = false) {
     </div>`;
 }
 
+/* ID card ke QR me kya encode hota hai — student ka DB id.
+   `_id` blank/0 ho (freshly added student) to reg ya adm no par gir jaate
+   hain, warna QR bilkul khali reh jaata. */
+function stuQrValue(s) {
+  const id = String(s?._id ?? '').trim();
+  if (id && id !== '0') return id;
+  return String(s?.reg || s?.adm || '').trim();
+}
+
+/* Wrapper — SVG markup string, preview aur print HTML dono me lagta hai. */
+function stuQrSVG(value) {
+  /* quiet = 4 modules — ISO ka required quiet zone, warna chhote print size
+     par scanner QR ke kinare nahi parh pata. */
+  return qrSVG(value, { quiet: 4 });
+}
+
 /* ─── Single ID Card (front + back) on A4 ─── */
 function buildStuIdCardHTML(s, cls, school, template, theme, session, role) {
   const initials = stuInitials(s);
@@ -638,7 +655,7 @@ function buildStuIdCardHTML(s, cls, school, template, theme, session, role) {
         <div class="face-lbl">Back</div>
       </div>
       <div class="card-body card-body-back">
-        <div class="qr-strip-back"><div class="qr-big" style="box-shadow:0 0 0 0.5mm ${theme.c1}"></div><div class="qr-meta"><div class="qr-l">Scan to verify</div><div class="qr-reg" style="color:${theme.c1}">${stuEsc(s.reg)}</div><div class="qr-s">Valid for ${stuEsc(session || '2026-2027')}</div></div></div>
+        <div class="qr-strip-back"><div class="qr-big" style="box-shadow:0 0 0 0.5mm ${theme.c1}">${stuQrSVG(stuQrValue(s))}</div><div class="qr-meta"><div class="qr-l">Scan to verify</div><div class="qr-reg" style="color:${theme.c1}">${stuEsc(s.reg)}</div><div class="qr-s">Valid for ${stuEsc(session || '2026-2027')}</div></div></div>
         <div class="back-rows">
           <div class="back-row"><span class="lbl">Guardian</span><b>${stuEsc(s.father || '—')}</b></div>
           <div class="back-row"><span class="lbl">Mobile</span><b class="mono">${stuEsc(s.mobile || '—')}</b></div>
@@ -678,7 +695,8 @@ function buildStuIdCardHTML(s, cls, school, template, theme, session, role) {
     .card-foot{color:#fff;padding:1.5mm 3mm;font-size:6.5px;font-weight:700;text-align:center;letter-spacing:.3px}
     .card-body-back{justify-content:flex-start;flex-direction:column !important}
     .qr-strip-back{display:flex;align-items:center;gap:3mm;padding:1mm 0 2mm}
-    .qr-big{width:18mm;height:18mm;background:repeating-linear-gradient(0deg, #111 0 0.7mm, transparent 0.7mm 1.4mm),repeating-linear-gradient(90deg, #111 0 0.7mm, transparent 0.7mm 1.4mm);background-blend-mode:multiply;border:0.7mm solid #fff;border-radius:1mm;flex-shrink:0}
+    .qr-big{width:18mm;height:18mm;background:#fff;border:0.7mm solid #fff;border-radius:1mm;flex-shrink:0;overflow:hidden}
+    .qr-big svg{display:block;width:100%;height:100%}
     .qr-reg{font-size:10px;font-weight:800;margin-top:0.6mm;font-family:ui-monospace,Menlo,monospace;letter-spacing:.3px}
     .back-rows{display:grid;grid-template-columns:1fr 1fr;gap:1.4mm 3mm;margin-top:1mm;padding-top:1.5mm;border-top:0.6px dashed #CBD5E1}
     .back-row{display:flex;flex-direction:column;gap:0.3mm}
@@ -721,7 +739,7 @@ function buildStuBulkIdHTML(students, cls, school, template, theme, session) {
           <div class="face-lbl">Back</div>
         </div>
         <div class="card-body card-body-back">
-          <div class="qr-strip-back"><div class="qr-big"></div><div class="qr-meta"><div class="qr-l">Scan to verify</div><div class="qr-reg" style="color:${theme.c1}">${stuEsc(s.reg)}</div></div></div>
+          <div class="qr-strip-back"><div class="qr-big">${stuQrSVG(stuQrValue(s))}</div><div class="qr-meta"><div class="qr-l">Scan to verify</div><div class="qr-reg" style="color:${theme.c1}">${stuEsc(s.reg)}</div></div></div>
           <div class="back-rows">
             <div class="back-row"><span class="lbl">Guardian</span><b>${stuEsc(s.father || '—')}</b></div>
             <div class="back-row"><span class="lbl">Mobile</span><b class="mono">${stuEsc(s.mobile || '—')}</b></div>
@@ -754,7 +772,8 @@ function buildStuBulkIdHTML(students, cls, school, template, theme, session) {
     .card-foot{color:#fff;padding:1mm 2mm;font-size:5.5px;font-weight:700;text-align:center}
     .card-body-back{flex-direction:column !important}
     .qr-strip-back{display:flex;align-items:center;gap:2.5mm;padding:0.5mm 0 1.5mm}
-    .qr-big{width:${isV ? '15mm' : '13mm'};height:${isV ? '15mm' : '13mm'};background:repeating-linear-gradient(0deg,#111 0 0.6mm,transparent 0.6mm 1.2mm),repeating-linear-gradient(90deg,#111 0 0.6mm,transparent 0.6mm 1.2mm);background-blend-mode:multiply;border:0.6mm solid #fff;border-radius:1mm;flex-shrink:0;box-shadow:0 0 0 0.3mm ${theme.c1}}
+    .qr-big{width:${isV ? '15mm' : '13mm'};height:${isV ? '15mm' : '13mm'};background:#fff;border:0.6mm solid #fff;border-radius:1mm;flex-shrink:0;overflow:hidden;box-shadow:0 0 0 0.3mm ${theme.c1}}
+    .qr-big svg{display:block;width:100%;height:100%}
     .qr-meta{flex:1;min-width:0}
     .qr-l{font-size:5.5px;font-weight:800;color:#0F172A;text-transform:uppercase;letter-spacing:.3px}
     .qr-reg{font-size:8.5px;font-weight:800;margin-top:0.4mm;font-family:ui-monospace,Menlo,monospace;letter-spacing:.3px}
@@ -4207,7 +4226,9 @@ function StuIdCardPreview({ student: s, cls, school, template, theme, session, r
       {isBack ? (
         <div className="stu-id-card-back">
           <div className="stu-id-card-qr">
-            <div className="stu-id-card-qr-mock" style={{ borderColor: theme.c1 }} />
+            {/* Asli QR — student id encode hota hai (pehle sirf CSS mock tha). */}
+            <div className="stu-id-card-qr-mock" style={{ borderColor: theme.c1 }}
+              dangerouslySetInnerHTML={{ __html: stuQrSVG(stuQrValue(s)) }} />
             <div className="stu-id-card-qr-text">
               <div className="stu-id-card-qr-lbl">Scan to verify</div>
               <div className="stu-id-card-qr-reg" style={{ color: theme.c1 }}>{s.reg}</div>
@@ -7292,12 +7313,11 @@ select.stu-finput { appearance: none; padding-right: 32px; cursor: pointer; }
   width: 56px; height: 56px;
   border: 2.5px solid;
   border-radius: 4px;
-  background:
-    repeating-linear-gradient(0deg, currentColor 0 2px, transparent 2px 4px),
-    repeating-linear-gradient(90deg, currentColor 0 2px, transparent 2px 4px);
-  background-blend-mode: multiply;
+  background: #fff;
   flex-shrink: 0;
+  overflow: hidden;
 }
+.stu-id-card-qr-mock svg { display: block; width: 100%; height: 100%; }
 .stu-id-card-qr-text { flex: 1; min-width: 0; }
 .stu-id-card-qr-lbl {
   font-size: 8px;
