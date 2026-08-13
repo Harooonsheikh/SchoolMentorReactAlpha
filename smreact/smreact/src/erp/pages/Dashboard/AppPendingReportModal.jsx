@@ -1,7 +1,10 @@
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Tooltip from '../../components/Tooltip';
-import { SCHOOL_BRAND, TEACHER_APP_PENDING, PARENT_APP_PENDING } from './dashboardData';
+import { buildUrl, resolveMediaUrl } from '../../../utils/apiConfig';
+import * as hrService from '../../services/hrService';
+import * as studentService from '../../services/studentService';
+import { SCHOOL_BRAND } from './dashboardData';
 import { DASH_MODAL_CSS } from './dashModalCss';
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -17,7 +20,7 @@ import { DASH_MODAL_CSS } from './dashModalCss';
    Print isolation in PRT_CSS hides everything except the A4 surfaces
    when window.print() fires.
    ═══════════════════════════════════════════════════════════════════ */
-export default function AppPendingReportModal({ mode = 'teachers', onClose, toast = () => {} }) {
+export default function AppPendingReportModal({ mode = 'teachers', counts = null, onClose, toast = () => {} }) {
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
     document.addEventListener('keydown', onKey);
@@ -28,8 +31,89 @@ export default function AppPendingReportModal({ mode = 'teachers', onClose, toas
     };
   }, [onClose]);
 
-  /* ─── Resolve dataset + meta per mode ─── */
+  /* Report header/footer ki asli school identity — wahi report-header API jo
+     baaki reports use karti hain (logo + branchName + address + academicSession).
+     Jab tak load na ho, SCHOOL_BRAND (mock) par fallback. */
+  const [brand, setBrand] = useState(null);
+  useEffect(() => {
+    const branchId = sessionStorage.getItem('branchID');
+    if (!branchId) return undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res  = await fetch(buildUrl(`/report-header/${branchId}`), { headers: { Accept: '*/*' } });
+        const json = await res.json().catch(() => null);
+        if (!cancelled && json?.success) setBrand(json.data || null);
+      } catch { /* ignore — niche fallback */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+  /* ── Report ki ASLI rows ──
+     Teachers → HR employees (getHrEmployees) + designation/department lookups.
+     Parents  → students class-wise (getStuClasses) with parent + contact.
+     Per-person app DOWNLOAD status koi API nahi deti (sirf kul counts), is liye
+     status "Not Downloaded" — jab tak per-user app-status API na aaye. */
   const isTeacher = mode === 'teachers';
+  const [teacherRows, setTeacherRows] = useState([]);
+  const [parentRows,  setParentRows]  = useState([]);
+  const [loadingData, setLoadingData] = useState(true);
+  useEffect(() => {
+    let alive = true;
+    setLoadingData(true);
+    (async () => {
+      try {
+        if (isTeacher) {
+          const [emps, desigs, depts] = await Promise.all([
+            hrService.getHrEmployees(),
+            hrService.getHrDesigs().catch(() => []),
+            hrService.getHrDepts().catch(() => []),
+          ]);
+          const dMap = {}; (desigs || []).forEach(d => { dMap[d.id] = d.name; });
+          const pMap = {}; (depts  || []).forEach(d => { pMap[d.id] = d.name; });
+          const rows = (Array.isArray(emps) ? emps : [])
+            .filter(e => e.status === 'Active')
+            .map(e => ({
+              name:        `${e.firstName || ''} ${e.lastName || ''}`.trim() || '—',
+              designation: dMap[e.desId] || '—',
+              dept:        pMap[e.dId] || '—',
+              contact:     e.phone || '—',
+              status:      'Not Downloaded',
+            }));
+          if (alive) setTeacherRows(rows);
+        } else {
+          const classes = await studentService.getStuClasses();
+          const rows = [];
+          (Array.isArray(classes) ? classes : []).forEach(cl => {
+            (cl.students || []).forEach(s => {
+              rows.push({
+                cls:     `${cl.cls || ''}${cl.sec ? ' ' + cl.sec : ''}`.trim() || '—',
+                student: `${s.first || ''} ${s.last || ''}`.trim() || '—',
+                parent:  s.father || s.guardian || '—',
+                contact: s.mobile || s.gcontact || '—',
+                status:  'Not Downloaded',
+              });
+            });
+          });
+          if (alive) setParentRows(rows);
+        }
+      } catch (err) {
+        if (alive) toast('Could not load report data', 'error');
+      } finally {
+        if (alive) setLoadingData(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, [isTeacher, toast]);
+
+  /* Real app-adoption counts (dashboard AppAdoption se) — report ke summary me. */
+  /* App-adoption me sirf "downloaded" real per-person nahi milta — kul count aata
+     hai. Report ko ANDAR-BAHIR consistent rakhne ke liye Total/Pending report ki
+     APNI list se lete hain (jitne rows dikh rahe utne hi total/pending), downloaded
+     dashboard ki real value se. */
+  const c = counts || {};
+  const cDownloaded = Number(c.Downloaded) || 0;
+
+  /* ─── Meta per mode ─── */
   const title = isTeacher
     ? 'Teachers Mobile App Pending Download Report'
     : 'Parents Mobile App Pending Download Report';
@@ -41,16 +125,23 @@ export default function AppPendingReportModal({ mode = 'teachers', onClose, toas
   const parentGroups = useMemo(() => {
     if (isTeacher) return [];
     const map = new Map();
-    PARENT_APP_PENDING.forEach(p => {
+    parentRows.forEach(p => {
       if (!map.has(p.cls)) map.set(p.cls, []);
       map.get(p.cls).push(p);
     });
     return [...map.entries()].map(([cls, rows]) => ({ cls, rows }));
-  }, [isTeacher]);
+  }, [isTeacher, parentRows]);
 
-  const totalRows = isTeacher
-    ? TEACHER_APP_PENDING.length
-    : PARENT_APP_PENDING.length;
+  const totalRows = isTeacher ? teacherRows.length : parentRows.length;
+
+  /* A4 header summary — Total/Pending report ki apni list se (self-consistent). */
+  const summary = {
+    label:      isTeacher ? 'Teachers' : 'Parents',
+    total:      totalRows,
+    downloaded: cDownloaded,
+    pending:    Math.max(0, totalRows - cDownloaded),
+    pct:        totalRows > 0 ? Math.round((cDownloaded / totalRows) * 100) : 0,
+  };
 
   /* Rows per A4 page — split for proper page breaks. Sized so the
      header + table fit on one A4 surface; first page fits less to
@@ -64,13 +155,13 @@ export default function AppPendingReportModal({ mode = 'teachers', onClose, toas
     if (!isTeacher) return [];
     const out = [];
     let i = 0;
-    while (i < TEACHER_APP_PENDING.length) {
+    while (i < teacherRows.length) {
       const cap = out.length === 0 ? ROWS_FIRST_PAGE : ROWS_OTHER_PAGES;
-      out.push(TEACHER_APP_PENDING.slice(i, i + cap));
+      out.push(teacherRows.slice(i, i + cap));
       i += cap;
     }
     return out.length ? out : [[]];
-  }, [isTeacher, ROWS_FIRST_PAGE, ROWS_OTHER_PAGES]);
+  }, [isTeacher, teacherRows, ROWS_FIRST_PAGE, ROWS_OTHER_PAGES]);
 
   /* For parent groups we lay rows out group-by-group across pages. */
   const parentPages = useMemo(() => {
@@ -116,7 +207,7 @@ export default function AppPendingReportModal({ mode = 'teachers', onClose, toas
             <div>
               <div className="up-modal-title" id="rpt-modal-title">{title}</div>
               <div className="up-modal-sub">
-                <span>{totalRows} {isTeacher ? 'teachers' : 'parents'}</span>
+                <span>{loadingData ? 'Loading…' : `${totalRows} ${isTeacher ? 'teachers' : 'parents'}`}</span>
                 <span>·</span>
                 <span>{totalPages} page{totalPages !== 1 ? 's' : ''}</span>
               </div>
@@ -141,6 +232,8 @@ export default function AppPendingReportModal({ mode = 'teachers', onClose, toas
                 subtitle={subtitle}
                 generated={generated}
                 showHeader={pi === 0}
+                brand={brand}
+                summary={summary}
               >
                 <table className="rpt-table">
                   <thead>
@@ -190,6 +283,8 @@ export default function AppPendingReportModal({ mode = 'teachers', onClose, toas
                   subtitle={subtitle}
                   generated={generated}
                   showHeader={pi === 0}
+                  brand={brand}
+                  summary={summary}
                 >
                   <table className="rpt-table">
                     <thead>
@@ -261,7 +356,13 @@ export default function AppPendingReportModal({ mode = 'teachers', onClose, toas
 }
 
 /* ─── A4 page wrapper ─────────────────────────────────────────── */
-function A4Page({ pageNum, totalPages, title, subtitle, generated, showHeader, children }) {
+function A4Page({ pageNum, totalPages, title, subtitle, generated, showHeader, brand, summary, children }) {
+  /* Report identity ab report-header API se (brand). API values me trailing space
+     aate hain — trim. Logo na mile to purana crest, brand na mile to SCHOOL_BRAND. */
+  const schoolName = (brand?.branchName || SCHOOL_BRAND.name || '').trim();
+  const address    = (brand?.address || SCHOOL_BRAND.address || '').trim();
+  const sessionTxt = (brand?.academicSession || '').trim();
+  const logoUrl    = brand?.branchLogo ? resolveMediaUrl(brand.branchLogo) : '';
   return (
     <div className="rpt-a4">
       {showHeader ? (
@@ -269,29 +370,28 @@ function A4Page({ pageNum, totalPages, title, subtitle, generated, showHeader, c
           <header className="rpt-head">
             <div className="rpt-head-l">
               <div className="rpt-logo">
-                {/* School crest — same shape as the sidebar logo */}
-                <svg width="56" height="56" viewBox="0 0 36 36" fill="none" aria-hidden="true">
-                  <rect width="36" height="36" fill="url(#rpt-grad)" />
-                  <defs>
-                    <linearGradient id="rpt-grad" x1="0" y1="0" x2="36" y2="36">
-                      <stop stopColor="#1E3A8A" />
-                      <stop offset="1" stopColor="#1E40AF" />
-                    </linearGradient>
-                  </defs>
-                  <path d="M18 10C14 10 10 11.5 10 11.5L10 26C10 26 14 24.5 18 24.5C22 24.5 26 26 26 26L26 11.5C26 11.5 22 10 18 10Z" fill="rgba(255,255,255,0.15)" stroke="rgba(255,255,255,0.4)" strokeWidth="0.8" />
-                  <path d="M18 10L18 24.5" stroke="rgba(255,255,255,0.5)" strokeWidth="0.8" />
-                  <path d="M13 9L15 6L18 8L21 6L23 9" stroke="#FCD34D" strokeWidth="1.2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
+                {logoUrl ? (
+                  <img src={logoUrl} alt="School logo" style={{ width: '100%', height: '100%', objectFit: 'contain', background: '#fff' }} />
+                ) : (
+                  /* School crest fallback — same shape as the sidebar logo */
+                  <svg width="56" height="56" viewBox="0 0 36 36" fill="none" aria-hidden="true">
+                    <rect width="36" height="36" fill="url(#rpt-grad)" />
+                    <defs>
+                      <linearGradient id="rpt-grad" x1="0" y1="0" x2="36" y2="36">
+                        <stop stopColor="#1E3A8A" />
+                        <stop offset="1" stopColor="#1E40AF" />
+                      </linearGradient>
+                    </defs>
+                    <path d="M18 10C14 10 10 11.5 10 11.5L10 26C10 26 14 24.5 18 24.5C22 24.5 26 26 26 26L26 11.5C26 11.5 22 10 18 10Z" fill="rgba(255,255,255,0.15)" stroke="rgba(255,255,255,0.4)" strokeWidth="0.8" />
+                    <path d="M18 10L18 24.5" stroke="rgba(255,255,255,0.5)" strokeWidth="0.8" />
+                    <path d="M13 9L15 6L18 8L21 6L23 9" stroke="#FCD34D" strokeWidth="1.2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                )}
               </div>
               <div className="rpt-school">
-                <div className="rpt-school-n">{SCHOOL_BRAND.name}</div>
-                <div className="rpt-school-c">{SCHOOL_BRAND.campus}</div>
-                <div className="rpt-school-addr">{SCHOOL_BRAND.address}</div>
-                <div className="rpt-school-contact">
-                  <i className="fa-solid fa-phone" aria-hidden="true"></i> {SCHOOL_BRAND.phone}
-                  <span className="rpt-sep">·</span>
-                  <i className="fa-solid fa-envelope" aria-hidden="true"></i> {SCHOOL_BRAND.email}
-                </div>
+                <div className="rpt-school-n">{schoolName}</div>
+                {address && <div className="rpt-school-addr">{address}</div>}
+                {sessionTxt && <div className="rpt-school-c">Academic Session: {sessionTxt}</div>}
               </div>
             </div>
             <div className="rpt-head-r">
@@ -304,11 +404,19 @@ function A4Page({ pageNum, totalPages, title, subtitle, generated, showHeader, c
           <div className="rpt-title-block">
             <div className="rpt-title">{title}</div>
             <div className="rpt-subtitle">{subtitle}</div>
+            {summary && (summary.total > 0 || summary.pending > 0) && (
+              <div className="rpt-summary">
+                <span className="rpt-sum-chip"><b>{summary.total}</b> Total {summary.label}</span>
+                <span className="rpt-sum-chip rpt-sum-chip--green"><b>{summary.downloaded}</b> Downloaded</span>
+                <span className="rpt-sum-chip rpt-sum-chip--red"><b>{summary.pending}</b> Pending</span>
+                <span className="rpt-sum-chip rpt-sum-chip--blue"><b>{summary.pct}%</b> Adopted</span>
+              </div>
+            )}
           </div>
         </>
       ) : (
         <header className="rpt-head rpt-head--cont">
-          <div className="rpt-head-cont-l">{SCHOOL_BRAND.name} · {SCHOOL_BRAND.campus}</div>
+          <div className="rpt-head-cont-l">{schoolName}</div>
           <div className="rpt-head-cont-r">{title} (continued)</div>
         </header>
       )}
@@ -316,7 +424,7 @@ function A4Page({ pageNum, totalPages, title, subtitle, generated, showHeader, c
       {children}
 
       <footer className="rpt-foot">
-        <span>{SCHOOL_BRAND.name} · {SCHOOL_BRAND.campus}</span>
+        <span>{schoolName}{sessionTxt ? ` · Session ${sessionTxt}` : ''}</span>
         <span>Page {pageNum} of {totalPages}</span>
       </footer>
     </div>
@@ -400,6 +508,17 @@ const PRT_CSS = `
   font: 600 11.5px/1.4 'Plus Jakarta Sans', sans-serif;
   color: #475569; margin-top: 4px;
 }
+.rpt-summary { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.rpt-sum-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 5px 12px; border-radius: 999px;
+  background: #EFF6FF; border: 1px solid #BFDBFE;
+  font: 600 10.5px/1 'Plus Jakarta Sans', sans-serif; color: #1E3A8A;
+}
+.rpt-sum-chip b { font-weight: 800; font-size: 12px; }
+.rpt-sum-chip--green { background: #ECFDF5; border-color: #A7F3D0; color: #047857; }
+.rpt-sum-chip--red   { background: #FEF2F2; border-color: #FECACA; color: #B91C1C; }
+.rpt-sum-chip--blue  { background: #EFF6FF; border-color: #BFDBFE; color: #1E40AF; }
 
 /* ─── Table ─── */
 .rpt-table {
@@ -466,30 +585,37 @@ const PRT_CSS = `
 [data-theme="dark"] .rpt-group-row td { background: #EFF6FF !important; color: #1E40AF !important; }
 [data-theme="dark"] .rpt-foot { color: #64748B !important; border-top-color: #E2E8F0 !important; }
 
-/* ─── Print isolation ─── */
+/* ─── Print isolation ───
+   Pehle visibility:hidden use hota tha — wo app ko sirf invisible karta tha par
+   uska poora LAYOUT rehta tha, is liye background app ki height blank extra pages
+   bana deti thi (1-page report 6+ pages print hoti thi). Ab report modal ke ilawa
+   har body child ko display:none — koi blank page nahi. */
 @media print {
-  body * { visibility: hidden !important; }
-  .rpt-print, .rpt-print * { visibility: visible !important; }
-  .rpt-print {
-    position: absolute !important; inset: 0 !important;
-    width: 100% !important; height: auto !important;
-    max-height: none !important;
-    background: #fff !important;
-    border-radius: 0 !important;
-    box-shadow: none !important;
+  body > *:not(.up-modal-back) { display: none !important; }
+  .up-modal-back {
+    position: static !important; inset: auto !important;
+    display: block !important; padding: 0 !important;
+    background: #fff !important; overflow: visible !important;
+  }
+  .up-modal-back .up-modal {
+    position: static !important;
+    width: 100% !important; max-width: none !important;
+    height: auto !important; max-height: none !important;
+    box-shadow: none !important; border-radius: 0 !important;
+    overflow: visible !important;
   }
   .rpt-no-print { display: none !important; }
   .rpt-stage {
+    display: block !important;
     overflow: visible !important;
     padding: 0 !important;
     background: #fff !important;
     gap: 0 !important;
-    align-items: stretch !important;
   }
   .rpt-a4 {
     box-shadow: none !important;
     border-radius: 0 !important;
-    margin: 0 !important;
+    margin: 0 auto !important;
     width: 100% !important;
     min-height: auto !important;
     page-break-after: always;

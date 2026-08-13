@@ -1,12 +1,13 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import Tooltip from '../../components/Tooltip';
 import TutorialModal from '../../components/TutorialModal';
 import { useModules } from '../../context/ModuleContext';
+import { buildUrl } from '../../../utils/apiConfig';
+import { useSettings } from '../Settings/settingsStore';
 import { INITIAL_USERS, INITIAL_ROLES, findRole, initialsOf } from '../UserPermissions/permissionsData';
 import { CURRENT_SESSION, dashboardTypeFor } from './dashboardData';
 import AdminDashboard from './AdminDashboard';
 import TeacherDashboard from './TeacherDashboard';
-import SystemDialogs from '../../shared/SystemDialogs';
 
 /* ═══════════════════════════════════════════════════════════════════
    DASHBOARD SHELL — picks Admin or Teacher based on the impersonated
@@ -19,8 +20,54 @@ export default function Dashboard({
   openActivityCalendar = () => {},
 }) {
   const { isActive } = useModules();
-  const [currentUserId, setCurrentUserId] = useState('u1');
+  const [currentUserId] = useState('u1');
   const [tutorialOpen, setTutorialOpen] = useState(false);
+
+  /* Logged-in owner (real account) ka naam — sidebar/profile jaisa hi source.
+     Pehle yahan ek demo user-switcher dropdown tha; ab sirf owner (Principal) dikhta hai. */
+  const ownerName = (() => {
+    try { return sessionStorage.getItem('displayName') || sessionStorage.getItem('userName') || 'Principal'; }
+    catch { return 'Principal'; }
+  })();
+
+  /* Real school/branch identity (sidebar jaisa hi source: report-header API) —
+     header card ke "Live operations across ..." me asli school naam + address. */
+  const [branchInfo, setBranchInfo] = useState(null);
+  useEffect(() => {
+    const branchId = sessionStorage.getItem('branchID');
+    if (!branchId) return undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res  = await fetch(buildUrl(`/report-header/${branchId}`), { headers: { Accept: '*/*' } });
+        const json = await res.json().catch(() => null);
+        if (!cancelled && json?.success) setBranchInfo(json.data || null);
+      } catch { /* ignore — niche fallback label chal jayega */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+  const schoolLabel = [branchInfo?.branchName, branchInfo?.address].filter(Boolean).join(' — ') || 'your campus';
+
+  /* Real active session (Settings → Sessions se — wahi jo top-right pill dikhati hai).
+     Pehle CURRENT_SESSION (mock: "2025-26 · 61d left") tha. Label = session name,
+     daysLeft = end-date tak baqi din. currentSession na mile to mock par fallback. */
+  const { currentSession } = useSettings();
+  const session = useMemo(() => {
+    if (!currentSession) return CURRENT_SESSION;
+    let daysLeft = null;
+    if (currentSession.endDate) {
+      const end = new Date(`${currentSession.endDate}T00:00:00`);
+      const diff = Math.ceil((end.getTime() - Date.now()) / 86400000);
+      daysLeft = diff > 0 ? diff : 0;
+    }
+    return {
+      id:        currentSession.id,
+      label:     currentSession.name || CURRENT_SESSION.label,
+      startDate: currentSession.startDate,
+      endDate:   currentSession.endDate,
+      daysLeft,
+    };
+  }, [currentSession]);
 
   const currentUser = useMemo(
     () => INITIAL_USERS.find(u => u.id === currentUserId) || INITIAL_USERS[0],
@@ -34,10 +81,12 @@ export default function Dashboard({
 
   const visibility = useMemo(() => ({
     moduleActive: (modId) => !modId || isActive(modId),
-    session:      CURRENT_SESSION,
+    session,
     user:         currentUser,
     role:         currentRole,
-  }), [isActive, currentUser, currentRole]);
+    ownerName,
+    schoolName:   branchInfo?.branchName || '',
+  }), [isActive, session, currentUser, currentRole, ownerName, branchInfo]);
 
   return (
     <>
@@ -56,36 +105,26 @@ export default function Dashboard({
             <div className="dash-head-s">
               {dashType === 'teacher'
                 ? `Personal dashboard scoped to ${currentUser.name.replace(/Dr\.|Mr\.|Ms\.|Mrs\./, '').trim()}'s classes`
-                : `Live operations across The Oxford System, Lahore Campus`}
+                : `Live operations across ${schoolLabel}`}
             </div>
           </div>
         </div>
         <div className="dash-head-r">
-          <Tooltip text={`Active academic session — ${CURRENT_SESSION.label}`}>
+          <Tooltip text={`Active academic session — ${session.label}`}>
             <div className="dash-session">
               <i className="fa-solid fa-calendar-day" aria-hidden="true"></i>
-              <span>Session {CURRENT_SESSION.label}</span>
-              <span className="dash-session-days">{CURRENT_SESSION.daysLeft}d left</span>
+              <span>Session {session.label}</span>
+              {session.daysLeft != null && (
+                <span className="dash-session-days">{session.daysLeft}d left</span>
+              )}
             </div>
           </Tooltip>
-          <Tooltip text="Switch perspective to another user (demo)">
-            <div className="dash-impersonate">
-              <span className="up-avatar dash-impersonate-av">{initialsOf(currentUser.name)}</span>
-              <select
-                value={currentUserId}
-                onChange={(e) => setCurrentUserId(e.target.value)}
-                className="dash-impersonate-sel"
-                aria-label="View dashboard as another user"
-              >
-                {INITIAL_USERS.map(u => (
-                  <option key={u.id} value={u.id}>
-                    {u.name} — {findRole(INITIAL_ROLES, u.role)?.name || '—'}
-                  </option>
-                ))}
-              </select>
-              <i className="fa-solid fa-chevron-down" aria-hidden="true"></i>
-            </div>
-          </Tooltip>
+          {/* Logged-in owner — pehle yahan demo user-switcher dropdown tha (hata diya). */}
+          <div className="dash-impersonate">
+            <span className="up-avatar dash-impersonate-av">{initialsOf(ownerName)}</span>
+            <span className="dash-owner-name">{ownerName}</span>
+            <span className="dash-owner-role">Principal</span>
+          </div>
           <Tooltip text="Open Dashboard tutorials">
             <button
               className="dash-tutorial"
@@ -103,10 +142,8 @@ export default function Dashboard({
         ? <TeacherDashboard visibility={visibility} toast={toast} navigate={navigate} openActivityCalendar={openActivityCalendar} />
         : <AdminDashboard   visibility={visibility} toast={toast} navigate={navigate} openActivityCalendar={openActivityCalendar} />}
 
-      {/* ─── Demo system surfaces (slow / offline banners + server / session /
-            confirm dialogs) — driven by the floating bottom-right trigger
-            bar. 1:1 port of the HTML demo. */}
-      <SystemDialogs toast={toast} />
+      {/* System surfaces (slow / offline / server-500) ab ERP shell (App.js) me
+          mount hain taake poore ERP par dikhein — yahan se hata diye. */}
 
       <TutorialModal
         open={tutorialOpen}
@@ -180,6 +217,12 @@ export const DASH_CSS = `
   appearance: none; -webkit-appearance: none; max-width: 220px;
 }
 .dash-impersonate > i { font-size: 9px; color: var(--text-muted, #94A3B8); }
+.dash-owner-name { font: 700 12px/1 var(--dash-font); color: var(--text-primary); white-space: nowrap; }
+.dash-owner-role {
+  font: 700 9.5px/1 var(--dash-font); color: #1E40AF; text-transform: uppercase; letter-spacing: .4px;
+  background: rgba(30, 64, 175, .10); border: 1px solid rgba(30, 64, 175, .20);
+  padding: 3px 8px; border-radius: 9999px; white-space: nowrap;
+}
 
 .dash-tutorial {
   width: 36px; height: 36px; border-radius: var(--dash-radius-sm);
