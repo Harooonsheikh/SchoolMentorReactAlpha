@@ -18,7 +18,7 @@ const stripSlash = (url) => String(url || '').trim().replace(/\/+$/, '');
 //     on its own origin and IIS reverse-proxies those to https://alphaapi.schoolmentor.ai
 //     (see the rewrite rules in public/web.config). No mixed content, no CORS.
 // const DEV_URL = 'http://210.56.9.60:1123';
-const DEV_URL  = 'http://50.190.164.42:4100';
+const DEV_URL  =  'http://50.190.164.42:4100';
 const PROD_URL = 'https://erp.schoolmentor.ai';
 
 const DEFAULT_URL = stripSlash(process.env.REACT_APP_API_BASE_URL)
@@ -209,6 +209,10 @@ export function assertSessionPayload(payload) {
 // here if you want those treated as required too.
 export const SESSION_KEYS = ['token', 'branchID'];
 
+// Kitni der (ms) baad kisi ERP API call ko "slow" samjha jaye — is par window
+// par `sm:slow` event fire hota hai (SystemDialogs use kar ke slow banner dikhata).
+const SM_SLOW_MS = 6000;
+
 /** True only when every required session key is present. */
 export function hasValidSession() {
   try { return SESSION_KEYS.every((k) => !!sessionStorage.getItem(k)); }
@@ -266,9 +270,49 @@ export function installSessionGuard({ onExpired } = {}) {
       err.isSessionExpired = true;
       throw err;
     }
-    const res = await origFetch(input, init);
-    try { if (res && res.status === 401 && window.__smSessionGuardActive && isApiUrl(url) && !isAuthUrl(url)) trigger(); }
-    catch (e) { /* ignore */ }
-    return res;
+    /* Network monitor — sirf ERP API calls par. Agar response SM_SLOW_MS se zyada
+       le to `sm:slow` event, aur agar 5xx aaye to `sm:server-error` event fire karo.
+       SystemDialogs (ERP shell me mounted) inhe sun kar real slow/500 surfaces dikhata. */
+    const monitored = isApiUrl(url);
+    const isOffline = () => typeof navigator !== 'undefined' && navigator.onLine === false;
+    let slowTimer = null;
+    if (monitored) {
+      slowTimer = setTimeout(() => {
+        try {
+          /* Offline par fetch der tak hang karta hai — is soorat me Slow ke bajaye
+             Offline event bhejo (warna galti se "Slow internet" dikh jata hai). */
+          window.dispatchEvent(new CustomEvent(isOffline() ? 'sm:offline' : 'sm:slow'));
+        } catch (e) { /* ignore */ }
+      }, SM_SLOW_MS);
+    }
+    try {
+      const res = await origFetch(input, init);
+      if (slowTimer) { clearTimeout(slowTimer); slowTimer = null; }
+      try {
+        if (res && res.status === 401 && window.__smSessionGuardActive && isApiUrl(url) && !isAuthUrl(url)) trigger();
+        if (monitored && res && res.status >= 500) {
+          window.dispatchEvent(new CustomEvent('sm:server-error', { detail: { status: res.status } }));
+        }
+        /* Pehle offline the aur ab koi API kamyab ho gayi → connection wapas aa gaya,
+           Offline surface hata do (browser 'online' event kabhi na aaye tab bhi). */
+        if (monitored && res && window.__smWasOffline) {
+          window.__smWasOffline = false;
+          window.dispatchEvent(new CustomEvent('sm:online'));
+        }
+      } catch (e) { /* ignore */ }
+      return res;
+    } catch (err) {
+      if (slowTimer) { clearTimeout(slowTimer); slowTimer = null; }
+      /* Fetch reject = API tak request pahunchi hi nahi (network down / server band).
+         navigator.onLine bharosemand nahi, is liye kisi bhi monitored API ki
+         network-failure par Offline surface dikhao (abort ko chhod kar). */
+      try {
+        if (monitored && err && err.name !== 'AbortError' && !err.isSessionExpired) {
+          window.__smWasOffline = true;
+          window.dispatchEvent(new CustomEvent('sm:offline'));
+        }
+      } catch (e) { /* ignore */ }
+      throw err;
+    }
   };
 }
