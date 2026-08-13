@@ -1,5 +1,6 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import Tooltip from './Tooltip';
+import { buildChainApiUrl } from '../../utils/apiConfig';
 
 /* ═══════════════════════════════════════════════════════════════════
    NETWORKS — join / manage the school's network memberships.
@@ -8,23 +9,11 @@ import Tooltip from './Tooltip';
      • Join a Network  → pick a network, send a join invite, track the
                           request status (Pending / Accepted / Rejected).
      • My Networks     → the networks this school already belongs to.
-   Mock data for now — swap the two arrays / handlers for a real API later.
+
+   Dropdown ki list ab Chain-Management API se aati hai (pehle hard-coded
+   naamon ki list thi). Join-request bhejne ka apna endpoint abhi nahi hai,
+   is liye requests filhal sirf is screen par rehti hain.
    ═══════════════════════════════════════════════════════════════════ */
-
-/* Networks the school can request to join (the dropdown source). */
-const AVAILABLE_NETWORKS = [
-  'Punjab Group Of Colleges',
-  'Beaconhouse School System',
-  'The City School',
-  'Allied Schools',
-  'Dar-e-Arqam Schools',
-  'Roots International Schools',
-];
-
-/* Seed requests — matches the old screen's example row. */
-const INITIAL_REQUESTS = [
-  { id: 1, name: 'Punjab Group Of Colleges', status: 'Accepted', date: '24 Nov 2025' },
-];
 
 const STATUS_TONE = {
   Accepted: { bg: 'rgba(22,163,74,.10)',  fg: '#15803D', bd: 'rgba(22,163,74,.28)',  ic: 'fa-circle-check' },
@@ -32,11 +21,46 @@ const STATUS_TONE = {
   Rejected: { bg: 'rgba(220,38,38,.10)',  fg: '#B91C1C', bd: 'rgba(220,38,38,.28)',  ic: 'fa-circle-xmark' },
 };
 
-const todayLabel = () => {
-  const d = new Date();
-  const m = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  return `${d.getDate()} ${m[d.getMonth()]} ${d.getFullYear()}`;
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/* API se aane wali date-time ko "24 Nov 2025" bana do. */
+const fmtDate = (iso) => {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return String(iso);
+  return `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
 };
+
+/* API ke error messages "Error in ManageNetworkSchoolAsync: …" ki shakl me aate
+   hain — method ka naam user ke kaam ki cheez nahi, sirf asal jumla dikhao. */
+const cleanApiMessage = (raw, fallback) => {
+  const msg = String(raw || '').replace(/^\s*error in\s+\w+\s*:\s*/i, '').trim();
+  if (!msg) return fallback;
+  return msg.charAt(0).toUpperCase() + msg.slice(1);
+};
+
+/* network-schools/manage — add / update / delete / getbybranch / getbynetwork.
+   (Swagger ka sample "insert" likhta hai, magar API sirf "add" leta hai.) */
+const manageNetworkSchool = async (payload) => {
+  const res  = await fetch(buildChainApiUrl('/api/Network_Setup/network-schools/manage'), {
+    method: 'POST',
+    headers: { Accept: '*/*', 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || json?.success === false) {
+    throw new Error(json?.message || json?.title || 'Request failed');
+  }
+  return json;
+};
+
+/* API row → screen row. isAccepted/isRejected se status banta hai. */
+const toRequest = (r) => ({
+  id:        r.id,
+  networkId: r.networkID,
+  status:    r.isAccepted ? 'Accepted' : (r.isRejected ? 'Rejected' : 'Pending'),
+  date:      fmtDate(r.acceptedOrRejectedDateTime || r.requestedDateTime),
+});
 
 const TABS = [
   { id: 'mine', label: 'My Networks',    icon: 'fa-diagram-project' },
@@ -45,27 +69,156 @@ const TABS = [
 
 export default function Networks({ toast = () => {} }) {
   const [tab, setTab] = useState('mine');
-  const [requests, setRequests] = useState(INITIAL_REQUESTS);
-  const [selected, setSelected] = useState('');
+  const [requests, setRequests] = useState([]);
+  const [selected, setSelected] = useState('');          // selected network id (string)
 
-  const requestedNames = useMemo(() => new Set(requests.map((r) => r.name)), [requests]);
+  /* Saare networks — Chain-Management API se. */
+  const [networks, setNetworks] = useState([]);
+  const [loading,  setLoading]  = useState(true);
+  const [loadErr,  setLoadErr]  = useState('');
+
+  const loadNetworks = useCallback(async () => {
+    setLoading(true);
+    setLoadErr('');
+    try {
+      const res  = await fetch(buildChainApiUrl('/api/Network_Setup/get_all_networks'), {
+        headers: { Accept: '*/*' },
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || json?.success === false) throw new Error(json?.message || 'Could not load networks');
+      /* API row: { id, schoolNetwork, ownerName, contactNumber, isActive, … }.
+         Naam schoolNetwork me hai; be-naam ya inactive rows dropdown me nahi
+         dikhani chahiyen. */
+      const list = (Array.isArray(json?.data) ? json.data : [])
+        .filter((n) => n && n.isActive !== false && String(n.schoolNetwork || '').trim())
+        .map((n) => ({
+          id:      n.id,
+          name:    String(n.schoolNetwork).trim(),
+          owner:   String(n.ownerName || '').trim(),
+          contact: String(n.contactNumber || '').trim(),
+        }));
+      setNetworks(list);
+    } catch (err) {
+      console.error('Networks load failed:', err);
+      setNetworks([]);
+      setLoadErr(cleanApiMessage(err?.message, 'Could not load networks'));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  /* Is branch ki join-requests. */
+  const branchId = Number(sessionStorage.getItem('branchID')) || 0;
+  const [sending,  setSending]  = useState(false);
+  const [busyId,   setBusyId]   = useState(null);   // jis request par delete chal rahi hai
+
+  /* API ka `getbybranch` sirf ACCEPTED rows lautata hai — abhi bheji hui pending
+     request us list me nahi aati (pending sirf network ki taraf `getbynetwork`
+     se dikhti hai). Is liye pending rows ki asli id yahan cache hoti hai, warna
+     user ko apni bheji hui request hi nazar na aaye aur delete bhi na kar sake.
+     Jaise hi network accept kar de, wo server list me aa jaati hai aur yahan se
+     hat jaati hai. */
+  const pendingKey = `sm_net_pending_${branchId}`;
+  const readPending = useCallback(() => {
+    try { const v = JSON.parse(localStorage.getItem(pendingKey) || '[]'); return Array.isArray(v) ? v : []; }
+    catch { return []; }
+  }, [pendingKey]);
+  const writePending = useCallback((list) => {
+    try { localStorage.setItem(pendingKey, JSON.stringify(list)); } catch { /* storage full / blocked */ }
+  }, [pendingKey]);
+
+  const loadRequests = useCallback(async () => {
+    if (!branchId) { setRequests([]); return; }
+    try {
+      const json   = await manageNetworkSchool({ action: 'getbybranch', branchID: branchId });
+      const server = (Array.isArray(json?.data) ? json.data : []).map(toRequest);
+      /* Jo pending server par accept ho chuki, wo ab server list me hai — cache se nikal do. */
+      const pending = readPending().filter(
+        (p) => !server.some((s) => String(s.networkId) === String(p.networkId)),
+      );
+      writePending(pending);
+      setRequests([...pending, ...server]);
+    } catch (err) {
+      console.error('Network requests load failed:', err);
+      setRequests(readPending());
+    }
+  }, [branchId, readPending, writePending]);
+
+  useEffect(() => { loadNetworks(); loadRequests(); }, [loadNetworks, loadRequests]);
+
+  /* Request rows me sirf networkID aata hai — naam networks list se milta hai. */
+  const nameOf = useCallback(
+    (networkId) => networks.find((n) => String(n.id) === String(networkId))?.name || `Network #${networkId}`,
+    [networks],
+  );
+
+  const requestedIds = useMemo(() => new Set(requests.map((r) => String(r.networkId))), [requests]);
   const options = useMemo(
-    () => AVAILABLE_NETWORKS.filter((n) => !requestedNames.has(n)),
-    [requestedNames],
+    () => networks.filter((n) => !requestedIds.has(String(n.id))),
+    [networks, requestedIds],
   );
   const mine = useMemo(() => requests.filter((r) => r.status === 'Accepted'), [requests]);
 
-  const sendInvite = () => {
+  const sendInvite = async () => {
     if (!selected) { toast('Please select a network first', 'warning'); return; }
-    if (requestedNames.has(selected)) { toast('You already have a request for this network', 'info'); return; }
-    setRequests((prev) => [{ id: Date.now(), name: selected, status: 'Pending', date: todayLabel() }, ...prev]);
-    setSelected('');
-    toast('Invite sent — awaiting the network’s approval', 'success');
+    if (requestedIds.has(String(selected))) { toast('You already have a request for this network', 'info'); return; }
+    if (!branchId) { toast('No branch is selected — please sign in again', 'error'); return; }
+    const net = networks.find((n) => String(n.id) === String(selected));
+    if (!net) { toast('Please select a network first', 'warning'); return; }
+
+    setSending(true);
+    try {
+      const json = await manageNetworkSchool({
+        action:            'add',
+        id:                0,
+        networkID:         net.id,
+        branchID:          branchId,
+        networkPermission: true,
+        isActive:          true,
+        isAccepted:        false,   // network ka admin accept karega
+      });
+      /* Server jo row banata hai wohi (asli id ke sath) cache karo — delete isi id se hota hai. */
+      const created = json?.data;
+      if (created?.id) writePending([toRequest(created), ...readPending()]);
+      setSelected('');
+      await loadRequests();
+      toast('Invite sent — awaiting the network’s approval', 'success');
+    } catch (err) {
+      console.error('Send invite failed:', err);
+      toast(cleanApiMessage(err?.message, 'Could not send the invite'), 'error');
+    } finally {
+      setSending(false);
+    }
   };
 
-  const removeRequest = (id) => {
-    setRequests((prev) => prev.filter((r) => r.id !== id));
-    toast('Request removed', 'success');
+  /* Network apni taraf se request accept/reject karta hai (action:"update",
+     isAccepted:true). Wo yahan tabhi dikhta hai jab list dobara maangi jaye —
+     is liye manual refresh. */
+  const [refreshing, setRefreshing] = useState(false);
+  const refreshAll = async () => {
+    setRefreshing(true);
+    try { await Promise.all([loadNetworks(), loadRequests()]); }
+    finally { setRefreshing(false); }
+  };
+
+  /* Server par se record hat jaata hai — accepted membership bhi khatam ho
+     jaati hai, is liye pehle tasdeeq (browser ka confirm() nahi, ERP ka apna modal). */
+  const [confirmRow, setConfirmRow] = useState(null);
+
+  const removeRequest = async (row) => {
+    setConfirmRow(null);
+    setBusyId(row.id);
+    try {
+      await manageNetworkSchool({ action: 'delete', id: row.id });
+      writePending(readPending().filter((p) => String(p.id) !== String(row.id)));
+      await loadRequests();
+      toast('Request removed', 'success');
+    } catch (err) {
+      console.error('Delete request failed:', err);
+      toast(cleanApiMessage(err?.message, 'Could not remove the request'), 'error');
+    } finally {
+      setBusyId(null);
+    }
   };
 
   return (
@@ -103,7 +256,14 @@ export default function Networks({ toast = () => {} }) {
         <div className="net-section">
           <div className="net-sec-head">
             <div className="net-sec-title"><i className="fa-solid fa-diagram-project" /> My Networks</div>
-            <span className="net-count">{mine.length} joined</span>
+            <div className="net-sec-actions">
+              <span className="net-count">{mine.length} joined</span>
+              <Tooltip text="Check for newly accepted networks">
+                <button className="net-refresh" onClick={refreshAll} disabled={refreshing}>
+                  <i className={`fa-solid fa-rotate-right${refreshing ? ' fa-spin' : ''}`} /> Refresh
+                </button>
+              </Tooltip>
+            </div>
           </div>
           <div className="net-info">
             <i className="fa-solid fa-circle-info" />
@@ -121,9 +281,9 @@ export default function Networks({ toast = () => {} }) {
             <div className="net-cards">
               {mine.map((n) => (
                 <div key={n.id} className="net-card">
-                  <div className="net-card-ic">{n.name.split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase()}</div>
+                  <div className="net-card-ic">{nameOf(n.networkId).split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase()}</div>
                   <div className="net-card-body">
-                    <div className="net-card-name">{n.name}</div>
+                    <div className="net-card-name">{nameOf(n.networkId)}</div>
                     <div className="net-card-sub">Member since {n.date}</div>
                   </div>
                   <span className="net-badge" style={{ background: STATUS_TONE.Accepted.bg, color: STATUS_TONE.Accepted.fg, borderColor: STATUS_TONE.Accepted.bd }}>
@@ -147,20 +307,48 @@ export default function Networks({ toast = () => {} }) {
               <i className="fa-solid fa-circle-info" />
               <span>Select a network and send a join request. The network’s admin will accept or reject it.</span>
             </div>
+            {loadErr && (
+              <div className="net-error">
+                <i className="fa-solid fa-triangle-exclamation" />
+                <span>{loadErr}</span>
+                <button className="net-retry" onClick={loadNetworks}>
+                  <i className="fa-solid fa-rotate-right" /> Retry
+                </button>
+              </div>
+            )}
             <div className="net-join-row">
               <div className="net-field">
-                <span className="net-label">Select Network</span>
+                <span className="net-label">
+                  Select Network
+                  {!loading && !loadErr && <span className="net-label-hint"> · {networks.length} available</span>}
+                </span>
                 <div className="net-select-wrap">
-                  <select className="net-select" value={selected} onChange={(e) => setSelected(e.target.value)}>
-                    <option value="">— Select Network —</option>
-                    {options.map((n) => <option key={n} value={n}>{n}</option>)}
+                  <select
+                    className="net-select"
+                    value={selected}
+                    disabled={loading || !!loadErr || networks.length === 0}
+                    onChange={(e) => setSelected(e.target.value)}
+                  >
+                    <option value="">
+                      {loading ? 'Loading networks…'
+                        : loadErr ? 'Networks unavailable'
+                        : networks.length === 0 ? 'No networks found'
+                        : options.length === 0 ? 'All networks already requested'
+                        : '— Select Network —'}
+                    </option>
+                    {options.map((n) => (
+                      <option key={n.id} value={n.id}>
+                        {n.name}{n.owner ? ` — ${n.owner}` : ''}
+                      </option>
+                    ))}
                   </select>
-                  <i className="fa-solid fa-chevron-down" />
+                  <i className={`fa-solid ${loading ? 'fa-spinner fa-spin' : 'fa-chevron-down'}`} />
                 </div>
               </div>
               <Tooltip text="Send a join request to the selected network">
-                <button className="net-btn net-btn-primary" onClick={sendInvite}>
-                  <i className="fa-solid fa-paper-plane" /> Send Invite
+                <button className="net-btn net-btn-primary" onClick={sendInvite} disabled={loading || sending || !selected}>
+                  <i className={`fa-solid ${sending ? 'fa-spinner fa-spin' : 'fa-paper-plane'}`} />
+                  {sending ? 'Sending…' : 'Send Invite'}
                 </button>
               </Tooltip>
             </div>
@@ -169,7 +357,14 @@ export default function Networks({ toast = () => {} }) {
           <div className="net-section">
             <div className="net-sec-head">
               <div className="net-sec-title"><i className="fa-solid fa-list-check" /> Network Requests</div>
-              <span className="net-count">{requests.length} total</span>
+              <div className="net-sec-actions">
+                <span className="net-count">{requests.length} total</span>
+                <Tooltip text="Check for accepted / updated requests">
+                  <button className="net-refresh" onClick={refreshAll} disabled={refreshing}>
+                    <i className={`fa-solid fa-rotate-right${refreshing ? ' fa-spin' : ''}`} /> Refresh
+                  </button>
+                </Tooltip>
+              </div>
             </div>
             <div className="net-table-wrap">
               <table className="net-table">
@@ -188,7 +383,7 @@ export default function Networks({ toast = () => {} }) {
                     const tone = STATUS_TONE[r.status] || STATUS_TONE.Pending;
                     return (
                       <tr key={r.id}>
-                        <td><b>{r.name}</b></td>
+                        <td><b>{nameOf(r.networkId)}</b></td>
                         <td className="net-center">
                           <span className="net-badge" style={{ background: tone.bg, color: tone.fg, borderColor: tone.bd }}>
                             <i className={`fa-solid ${tone.ic}`} /> {r.status}
@@ -196,9 +391,14 @@ export default function Networks({ toast = () => {} }) {
                         </td>
                         <td className="net-center">{r.date}</td>
                         <td className="net-center">
-                          <Tooltip text="Remove this request">
-                            <button className="net-iconbtn danger" onClick={() => removeRequest(r.id)} aria-label="Remove request">
-                              <i className="fa-solid fa-trash-can" />
+                          <Tooltip text={r.status === 'Accepted' ? 'Leave this network' : 'Remove this request'}>
+                            <button
+                              className="net-iconbtn danger"
+                              onClick={() => setConfirmRow(r)}
+                              disabled={busyId === r.id}
+                              aria-label="Remove request"
+                            >
+                              <i className={`fa-solid ${busyId === r.id ? 'fa-spinner fa-spin' : 'fa-trash-can'}`} />
                             </button>
                           </Tooltip>
                         </td>
@@ -210,6 +410,30 @@ export default function Networks({ toast = () => {} }) {
             </div>
           </div>
         </>
+      )}
+
+      {/* ── Confirm dialog — leave network / remove request ── */}
+      {confirmRow && (
+        <div className="net-modal-back" onClick={() => setConfirmRow(null)}>
+          <div className="net-modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+            <div className="net-modal-ic"><i className="fa-solid fa-triangle-exclamation" /></div>
+            <div className="net-modal-t">
+              {confirmRow.status === 'Accepted' ? 'Leave this network?' : 'Remove this request?'}
+            </div>
+            <div className="net-modal-s">
+              {confirmRow.status === 'Accepted'
+                ? <>Your school will be removed from <b>{nameOf(confirmRow.networkId)}</b>. To rejoin, you’ll have to send a new request and wait for approval.</>
+                : <>The pending join request for <b>{nameOf(confirmRow.networkId)}</b> will be withdrawn. You can send it again later.</>}
+            </div>
+            <div className="net-modal-btns">
+              <button className="net-btn net-btn-ghost" onClick={() => setConfirmRow(null)}>Cancel</button>
+              <button className="net-btn net-btn-danger" onClick={() => removeRequest(confirmRow)}>
+                <i className="fa-solid fa-trash-can" />
+                {confirmRow.status === 'Accepted' ? 'Leave Network' : 'Remove Request'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </>
   );
@@ -233,6 +457,10 @@ const NET_CSS = `
 .net-sec-head { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:14px; flex-wrap:wrap; }
 .net-sec-title { display:flex; align-items:center; gap:9px; font-size:15px; font-weight:800; color:var(--text-primary,#0F172A); }
 .net-sec-title i { color:var(--brand-mid,#2563EB); }
+.net-sec-actions { display:flex; align-items:center; gap:8px; }
+.net-refresh { display:inline-flex; align-items:center; gap:6px; border:1.5px solid var(--border-light,#BFDBFE); background:var(--bg-card,#fff); color:var(--text-secondary,#1E3A5F); font-family:inherit; font-size:12px; font-weight:700; padding:5px 12px; border-radius:8px; cursor:pointer; transition:all .2s; }
+.net-refresh:hover:not(:disabled) { background:var(--bg-muted,#EFF6FF); border-color:#2563EB; color:#1E40AF; }
+.net-refresh:disabled { opacity:.6; cursor:not-allowed; }
 .net-count { font-size:12px; font-weight:700; color:var(--brand-mid,#2563EB); background:rgba(37,99,235,.08); border:1px solid rgba(37,99,235,.2); padding:3px 10px; border-radius:999px; }
 
 .net-info { display:flex; align-items:center; gap:10px; background:rgba(2,132,199,.07); border:1.5px solid rgba(2,132,199,.22); border-radius:10px; padding:11px 14px; font-size:12.5px; color:var(--text-secondary,#1E3A5F); font-weight:500; margin-bottom:16px; }
@@ -246,6 +474,15 @@ const NET_CSS = `
 .net-select:focus { border-color:#2563EB; box-shadow:0 0 0 3px rgba(37,99,235,.12); }
 .net-select-wrap i { position:absolute; right:14px; top:50%; transform:translateY(-50%); color:var(--text-muted,#64748B); font-size:12px; pointer-events:none; }
 
+.net-label-hint { font-weight:600; color:var(--text-muted,#64748B); }
+.net-select:disabled { background:var(--bg-muted,#F1F5F9); color:var(--text-muted,#64748B); cursor:not-allowed; }
+
+.net-error { display:flex; align-items:center; gap:10px; background:rgba(220,38,38,.07); border:1.5px solid rgba(220,38,38,.25); border-radius:10px; padding:11px 14px; font-size:12.5px; color:#B91C1C; font-weight:600; margin-bottom:14px; }
+.net-error i { color:#DC2626; }
+.net-retry { margin-left:auto; display:inline-flex; align-items:center; gap:6px; border:1.5px solid rgba(220,38,38,.35); background:#fff; color:#B91C1C; font-family:inherit; font-size:12px; font-weight:700; padding:5px 12px; border-radius:8px; cursor:pointer; }
+.net-retry:hover { background:rgba(220,38,38,.06); }
+
+.net-btn:disabled { opacity:.55; cursor:not-allowed; transform:none; box-shadow:none; }
 .net-btn { display:inline-flex; align-items:center; justify-content:center; gap:8px; height:42px; padding:0 20px; border-radius:10px; border:none; font-family:inherit; font-size:13.5px; font-weight:700; cursor:pointer; transition:all .2s cubic-bezier(.4,0,.2,1); white-space:nowrap; }
 .net-btn-primary { background:linear-gradient(135deg,#1E3A8A,#1E40AF,#2563EB); color:#fff; box-shadow:0 4px 14px rgba(30,58,138,.30); }
 .net-btn-primary:hover { transform:translateY(-1px); box-shadow:0 8px 22px rgba(30,58,138,.38); }
@@ -265,6 +502,21 @@ const NET_CSS = `
 
 .net-iconbtn { width:34px; height:34px; border-radius:9px; border:1.5px solid var(--border-light,#BFDBFE); background:var(--bg-card,#fff); color:var(--text-muted,#64748B); display:inline-flex; align-items:center; justify-content:center; font-size:13px; cursor:pointer; transition:all .2s; }
 .net-iconbtn.danger:hover { border-color:#DC2626; color:#DC2626; background:rgba(220,38,38,.06); }
+
+.net-modal-back { position:fixed; inset:0; z-index:1200; background:rgba(15,23,42,.55); backdrop-filter:blur(2px); display:flex; align-items:center; justify-content:center; padding:20px; animation:netFade .15s ease; }
+.net-modal { width:100%; max-width:420px; background:var(--bg-card,#fff); border-radius:16px; padding:24px 22px 18px; text-align:center; box-shadow:0 24px 60px rgba(15,23,42,.35); animation:netPop .18s cubic-bezier(.4,0,.2,1); }
+.net-modal-ic { width:52px; height:52px; margin:0 auto 14px; border-radius:14px; display:flex; align-items:center; justify-content:center; font-size:22px; color:#DC2626; background:rgba(220,38,38,.10); border:1.5px solid rgba(220,38,38,.22); }
+.net-modal-t { font-size:17px; font-weight:800; color:var(--text-primary,#0F172A); margin-bottom:7px; }
+.net-modal-s { font-size:13px; line-height:1.55; color:var(--text-muted,#64748B); margin-bottom:20px; }
+.net-modal-s b { color:var(--text-primary,#0F172A); font-weight:700; }
+.net-modal-btns { display:flex; gap:10px; }
+.net-modal-btns .net-btn { flex:1; }
+.net-btn-ghost { background:var(--bg-card,#fff); color:var(--text-secondary,#1E3A5F); border:1.5px solid var(--border-light,#BFDBFE); }
+.net-btn-ghost:hover { background:var(--bg-muted,#EFF6FF); }
+.net-btn-danger { background:linear-gradient(135deg,#DC2626,#B91C1C); color:#fff; box-shadow:0 4px 14px rgba(220,38,38,.30); }
+.net-btn-danger:hover { transform:translateY(-1px); box-shadow:0 8px 22px rgba(220,38,38,.38); }
+@keyframes netFade { from { opacity:0 } to { opacity:1 } }
+@keyframes netPop { from { opacity:0; transform:translateY(10px) scale(.97) } to { opacity:1; transform:none } }
 
 .net-cards { display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:12px; }
 .net-card { display:flex; align-items:center; gap:12px; padding:14px; border:1.5px solid var(--border-light,#BFDBFE); border-radius:12px; background:var(--bg-card,#fff); }

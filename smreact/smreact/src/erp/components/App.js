@@ -643,7 +643,7 @@ export default function App() {
                 />
               </Suspense>
             )}
-            {active !== 'acad' && active !== 'exam' && active !== 'paper' && active !== 'att' && active !== 'tt' && active !== 'fee' && active !== 'accounts' && active !== 'inventory' && active !== 'crm' && active !== 'students' && active !== 'hr' && active !== 'appraisal' && active !== 'settings' && active !== 'sops' && active !== 'trainings' && active !== 'etube' && active !== 'chat' && active !== 'notifications' && active !== 'perm' && active !== 'audit' && active !== 'launch' && active !== 'dashboard' && (
+            {active !== 'acad' && active !== 'exam' && active !== 'paper' && active !== 'att' && active !== 'tt' && active !== 'fee' && active !== 'accounts' && active !== 'inventory' && active !== 'crm' && active !== 'students' && active !== 'hr' && active !== 'networks' && active !== 'appraisal' && active !== 'settings' && active !== 'sops' && active !== 'trainings' && active !== 'etube' && active !== 'chat' && active !== 'notifications' && active !== 'perm' && active !== 'audit' && active !== 'launch' && active !== 'dashboard' && (
               <NavComingSoon label={NAV_LABELS[active] || 'This module'} />
             )}
           </main>
