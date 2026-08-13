@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import Tooltip from '../../components/Tooltip';
 import UniversalSearch from '../../shared/UniversalSearch';
 import {
@@ -12,6 +12,8 @@ import AppPendingReportModal from './AppPendingReportModal';
 import useAsync from '../../hooks/useAsync';
 import * as accountsService from '../../services/accountsService';
 import * as feeService from '../../services/feeService';
+import * as dashboardService from '../../services/dashboardService';
+import * as attendanceService from '../../services/attendanceService';
 import {
   STUDENT_STATS,
   HR_STATS,
@@ -241,6 +243,7 @@ const TYPE_COLOR = {
    (src/components/Accounts.jsx), so the numbers shown here always
    match what Accounts reports for the same month. */
 const FIN_MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+const SHORT_MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 const fmtPKR = (n) => `PKR ${(Number(n) || 0).toLocaleString('en-PK')}`;
 
 /* Gradient stat-tile palette — reuses hex values already present
@@ -277,7 +280,7 @@ function ChartTooltip({ active, payload, label }) {
 }
 
 export default function AdminDashboard({ visibility, toast, navigate = () => {}, openActivityCalendar = () => {} }) {
-  const { moduleActive, user, session } = visibility;
+  const { moduleActive, user, session, ownerName } = visibility;
   const { isActive } = useModules();      /* per-spec: explicit useModules guard for new sections */
 
   const NAV_LABELS = {
@@ -292,82 +295,221 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
     toast(`Opening ${NAV_LABELS[target] || target.toUpperCase()}…`, 'info');
   };
 
-  /* ─── Existing top sections (kept) ──────────────────────────── */
+  /* ─── Real dashboard data — ek hi API se poora dashboard ────────
+     null = loading; fail hone par {} taake koi section crash na ho. */
+  const [dash, setDash] = useState(null);
+  const [dashErr, setDashErr] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    const { month, year } = dashboardService.currentMonthYear();
+    dashboardService.getDashboard(month, year)
+      .then(d => { if (alive) setDash(d || {}); })
+      .catch(() => { if (alive) { setDash({}); setDashErr(true); } });
+    return () => { alive = false; };
+  }, []);
+
+  /* Safe accessors — har section 0/[] fallback ke sath real data padhta hai. */
+  const D   = dash || {};
+  const kpi = D.Kpi || {};
+  const snap = D.ModuleSnapshot || {};
+  const fee  = D.FeeAnalytics || {};
+  const app  = Array.isArray(D.AppAdoption) ? D.AppAdoption : [];
+  const appOf = (t) => app.find(a => a.AccountType === t) || { Total: 0, Downloaded: 0, Pending: 0 };
+  const todaysAtt = D.TodaysAttendance || { Students: {}, Staff: {} };
+  const stuAtt = todaysAtt.Students || {}; const staffAtt = todaysAtt.Staff || {};
+  const lessonPlans = Array.isArray(D.LessonPlanAnalytics) ? D.LessonPlanAnalytics : [];
+  const paperStats  = Array.isArray(D.PaperGeneratorStats) ? D.PaperGeneratorStats : [];
+  const stuBdays   = Array.isArray(D.StudentBirthdays) ? D.StudentBirthdays : [];
+  const staffBdays = Array.isArray(D.StaffBirthdays) ? D.StaffBirthdays : [];
+  const upActivities = Array.isArray(D.UpcomingActivities) ? D.UpcomingActivities : [];
+  const actSummary = D.ActivitiesSummary || {};
+  const announcements = Array.isArray(D.Announcements) ? D.Announcements : [];
+  const finOverview = D.FinancialOverview || {};
+  const revenueStreams = Array.isArray(D.RevenueStreams) ? D.RevenueStreams : [];
+  const plTrend = Array.isArray(D.ProfitLossTrend) ? D.ProfitLossTrend : [];
+  const pctOf = (n, d) => (Number(d) > 0 ? Math.round((Number(n) / Number(d)) * 100) : 0);
+
+  /* Fee ring/progress percentages — real data se compute. */
+  const feePaidPct = pctOf(fee.FeeReceived, fee.CurrentMonthFeePosition);
+  const feePendingPct = 100 - feePaidPct;
+
+  /* Teachers / Parents mobile-app adoption cards.
+     Total ab REAL active counts se (Kpi.ActiveStaff / Kpi.ActiveStudents) — wahi jo
+     hero KPIs aur report dikhate hain — taake sab consistent rahe (pehle AppAdoption
+     ka alag total 10/17 aata tha jo 12 staff / 15 students se match nahi karta tha).
+     Downloaded dashboard ki asli value se; Pending = Total − Downloaded. */
+  const teacherApp = appOf('Teacher');
+  const parentApp  = appOf('Parent');
+  const teacherTotal = Number(kpi.ActiveStaff)    || Number(teacherApp.Total) || 0;
+  const parentTotal  = Number(kpi.ActiveStudents) || Number(parentApp.Total)  || 0;
+  const teacherDl    = Number(teacherApp.Downloaded) || 0;
+  const parentDl     = Number(parentApp.Downloaded)  || 0;
+  const teacherAppData = { total: teacherTotal, downloaded: teacherDl, pending: Math.max(0, teacherTotal - teacherDl), pct: pctOf(teacherDl, teacherTotal) };
+  const parentAppData  = { total: parentTotal,  downloaded: parentDl,  pending: Math.max(0, parentTotal - parentDl),   pct: pctOf(parentDl, parentTotal) };
+
+  /* Today's Attendance — get-dashboard ka TodaysAttendance aksar 0 deta hai, is liye
+     Attendance module ke SAME endpoint se AAJ ke records khud fetch kar ke count karte
+     hain (branch-wide: classID/sectionID = 0). Status codes: 1=present 2=absent 3=leave
+     4=late (late ko present gina). Fail/khaali ho to get-dashboard values par fallback. */
+  const [todayAtt, setTodayAtt] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const branchID  = Number(sessionStorage.getItem('branchID')) || 0;
+        const sessionID = Number(await attendanceService.getActiveSessionID()) || 0;
+        const now = new Date();
+        const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+        const codeToStatus = { '1': 'present', '2': 'absent', '3': 'leave', '4': 'late' };
+        const tally = (arr) => {
+          const out = { present: 0, absent: 0, leave: 0 };
+          (Array.isArray(arr) ? arr : []).forEach(r => {
+            if (String(r.AttendanceDate ?? r.attendanceDate ?? '').slice(0, 10) !== today) return;
+            const raw = r.Status ?? r.status;
+            const st  = codeToStatus[String(raw)] || (typeof raw === 'string' ? raw.toLowerCase() : '');
+            if (st === 'present' || st === 'late') out.present += 1;
+            else if (st === 'absent') out.absent += 1;
+            else if (st === 'leave')  out.leave  += 1;
+          });
+          return out;
+        };
+        const [sRes, fRes] = await Promise.all([
+          attendanceService.studentAttendance({
+            id: 0, branchID, studentID: 0, sessionID, classID: 0, sectionID: 0,
+            attendanceDate: today, status: '', platform: 'ERP',
+            isNotificationGen: false, action: 'get', createdBy: 0, modifiedBy: 0,
+          }).catch(() => ({ data: [] })),
+          attendanceService.staffAttendance({
+            id: 0, staffID: 0, branchID, attendanceDate: today,
+            checkInTime: '', checkOutTime: '', status: '', platform: '',
+            isNotificationGen: false, action: 'get', createdBy: 0, modifiedBy: 0,
+          }).catch(() => ({ data: [] })),
+        ]);
+        if (alive) setTodayAtt({ student: tally(sRes?.data), staff: tally(fRes?.data) });
+      } catch { if (alive) setTodayAtt(null); }
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  /* Percentage POORE enrolled (roster) ke against — sirf "marked" par nahi. Warna
+     aik hi class (sab present) mark karne par galti se 100% aa jata tha. Ab denominator
+     = kul active students/staff, is liye jab tak sari classes mark na hon % kam rahega
+     (jo sahi hai — abhi tak itne hi confirmed present hain). Cap 100%. */
+  const mkAtt = (live, enrolled, fb) => {
+    if (live) {
+      const total = enrolled > 0 ? enrolled : (live.present + live.absent + live.leave);
+      return {
+        present: live.present, absent: live.absent, leave: live.leave, total,
+        percentage: Math.min(100, pctOf(live.present, total)),
+      };
+    }
+    return fb;
+  };
+  const studentAttData = mkAtt(todayAtt?.student, Number(kpi.ActiveStudents) || Number(snap.TotalStudents) || 0, {
+    total: stuAtt.StudentTotal || 0, present: stuAtt.StudentPresent || 0,
+    absent: stuAtt.StudentAbsent || 0, leave: stuAtt.StudentLeave || 0,
+    percentage: pctOf(stuAtt.StudentPresent, stuAtt.StudentTotal),
+  });
+  const staffAttData = mkAtt(todayAtt?.staff, Number(kpi.ActiveStaff) || Number(snap.TotalEmployees) || 0, {
+    total: staffAtt.StaffTotal || 0, present: staffAtt.StaffPresent || 0,
+    absent: staffAtt.StaffAbsent || 0, leave: staffAtt.StaffLeave || 0,
+    percentage: pctOf(staffAtt.StaffPresent, staffAtt.StaffTotal),
+  });
+
+  /* Revenue Streams — API [{Month, Head, Amount}] ko month-wise total me. */
+  const revenueChart = useMemo(() => {
+    const byMonth = {};
+    revenueStreams.forEach(r => { const m = Number(r.Month); byMonth[m] = (byMonth[m] || 0) + (Number(r.Amount) || 0); });
+    return Object.keys(byMonth).sort((a, b) => a - b).map(m => ({ m: SHORT_MONTHS[Number(m) - 1] || m, amount: byMonth[m] }));
+  }, [revenueStreams]);
+  const revenueTotal = useMemo(() => revenueStreams.reduce((s, r) => s + (Number(r.Amount) || 0), 0), [revenueStreams]);
+
+  /* Profit/Loss trend — API [{Month, Income, Expenses, ProfitLoss}]. */
+  const profitChart = useMemo(() => plTrend.map(p => ({
+    m: SHORT_MONTHS[Number(p.Month) - 1] || p.Month,
+    revenue: Number(p.Income) || 0, expense: Number(p.Expenses) || 0, pl: Number(p.ProfitLoss) || 0,
+  })), [plTrend]);
+  const plNet = useMemo(() => plTrend.reduce((s, p) => s + (Number(p.ProfitLoss) || 0), 0), [plTrend]);
+
+  /* ─── Module tiles — sirf wahi jinke liye API data hai ─────────
+     REMOVED: CRM/Active Leads, Exams Scheduled, Today's Activity (audit)
+     kyunke get-dashboard in ka data nahi deta. */
   const tiles = [
     moduleActive('students') && { key: 'students', accent: MODULE_COLOR.students, label: 'Students', icon: 'fa-user-graduate',
-      value: STUDENT_STATS.activeStudents,
-      meta: <><span className="dash-tile-meta-pill">+{STUDENT_STATS.recentAdmissions.length} this week</span><span>{STUDENT_STATS.inactiveStudents} inactive</span></>,
+      value: snap.TotalStudents || 0,
+      meta: <><span className="dash-tile-meta-pill">+{snap.NewStudentsThisWeek || 0} this week</span><span>{snap.InactiveStudents || 0} inactive</span></>,
       target: 'students' },
     moduleActive('hr') && { key: 'hr', accent: MODULE_COLOR.hr, label: 'Employees', icon: 'fa-users',
-      value: HR_STATS.activeEmployees,
-      meta: <><span className="dash-tile-meta-pill">{HR_STATS.departments.length} depts</span><span>{HR_STATS.inactiveEmployees} inactive</span></>,
+      value: snap.TotalEmployees || 0,
+      meta: <><span className="dash-tile-meta-pill">{snap.TotalDepartments || 0} depts</span><span>{snap.InactiveEmployees || 0} inactive</span></>,
       target: 'hr' },
-    moduleActive('admissions') && { key: 'crm', accent: MODULE_COLOR.admissions, label: 'Active Leads', icon: 'fa-handshake',
-      value: CRM_STATS.totalLeads,
-      meta: <><span className="dash-tile-meta-pill">{CRM_STATS.followups.today} today</span><span>{CRM_STATS.followups.overdue} overdue</span></>,
-      target: 'crm' },
-    moduleActive('examination') && { key: 'exam', accent: MODULE_COLOR.examination, label: 'Exams Scheduled', icon: 'fa-file-pen',
-      value: EXAM_STATS.totalExams,
-      meta: <><span className="dash-tile-meta-pill">{EXAM_STATS.currentTermExams} current term</span><span>{EXAM_STATS.pendingResults} results pending</span></>,
-      target: 'exam' },
     moduleActive('academics') && { key: 'activities', accent: MODULE_COLOR.academics, label: 'Activities', icon: 'fa-calendar-days',
-      value: ACADEMICS_STATS.activities.completed + ACADEMICS_STATS.activities.ongoing + ACADEMICS_STATS.activities.upcoming,
-      meta: <><span className="dash-tile-meta-pill">{ACADEMICS_STATS.activities.upcoming} upcoming</span><span>{ACADEMICS_STATS.activities.ongoing} ongoing</span></>,
+      value: actSummary.TotalActivities || 0,
+      meta: <><span className="dash-tile-meta-pill">{actSummary.UpcomingCount || 0} upcoming</span><span>{actSummary.OngoingCount || 0} ongoing</span></>,
       target: 'acad' },
     moduleActive('fee') && { key: 'fee', accent: MODULE_COLOR.fee, label: 'Fee Collection', icon: 'fa-money-bill-wave',
-      value: <>{FEE_STATS.collectionPct}<small>%</small></>,
-      meta: <><span className="dash-tile-meta-pill">{FEE_STATS.defaulters} defaulters</span><span>PKR {(FEE_STATS.outstandingTotal / 100000).toFixed(1)}L outstanding</span></>,
+      value: <>{feePaidPct}<small>%</small></>,
+      meta: <><span className="dash-tile-meta-pill">{fee.StudentsPending || 0} pending</span></>,
       target: 'fee' },
-    moduleActive('auditlogs') && { key: 'audit', accent: MODULE_COLOR.auditlogs, label: "Today's Activity", icon: 'fa-clipboard-list',
-      value: AUDIT_STATS.today,
-      meta: <><span className="dash-tile-meta-pill">{AUDIT_STATS.activeUsersToday} users</span><span>{AUDIT_STATS.thisWeek} this week</span></>,
-      target: 'audit' },
   ].filter(Boolean);
 
-  /* Newest announcement surfaces in the top card; sender + count of
-     remaining new ones are computed for the pill + footer line. */
-  const latestAnnouncement = SCHOOL_MENTOR_ANNOUNCEMENTS[0];
-  const newAnnouncementCount = SCHOOL_MENTOR_ANNOUNCEMENTS.filter(a => a.status === 'new').length;
+  /* Announcements — API array khaali hai to empty-state; pill sirf 'new' par. */
+  const latestAnnouncement = announcements[0] || null;
+  const newAnnouncementCount = announcements.filter(a => a.status === 'new').length;
 
   /* Greeting */
   const hour = new Date().getHours();
   const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
   const todayLabel = new Date().toLocaleDateString('en-PK', { weekday: 'long', day: 'numeric', month: 'long' });
-  const firstName = user.name.replace(/Dr\.|Mr\.|Ms\.|Mrs\./, '').trim().split(' ')[0];
+  /* Greeting me asli logged-in owner ka pehla naam (visibility.ownerName), mock user nahi. */
+  const firstName = ((ownerName || user.name || '').replace(/Dr\.|Mr\.|Ms\.|Mrs\./, '').trim().split(' ')[0]) || 'there';
 
   /* ─── New section local state ──────────────────────────────── */
-  const [lpClass,    setLpClass]    = useState('II-Pre');
-  const [paperClass, setPaperClass] = useState('IV');
-  const [revenueYear, setRevenueYear] = useState(2026);
   const [birthdayTab, setBirthdayTab] = useState('all');
 
   /* Monthly Financial Summary — reads the same Accounts transaction
      ledger as Accounts → Reports (getAccTxns), so Expenses/Income/
      Net P&L here always match what that module reports. */
-  const { data: financeTxns } = useAsync(accountsService.getAccTxns, [], { rev: [], exp: [] });
-  const [financeMonth, setFinanceMonth] = useState('2026-05');
+  /* Monthly Financial Summary — ab get-dashboard ke FinancialOverview
+     se aata hai (current month/year). Label current month ka. */
   const financeSummary = useMemo(() => {
-    const rev = (financeTxns.rev || []).filter(x => x.month === financeMonth).reduce((a, x) => a + Number(x.amount || 0), 0);
-    const exp = (financeTxns.exp || []).filter(x => x.month === financeMonth).reduce((a, x) => a + Number(x.amount || 0), 0);
-    const [yy, mm] = financeMonth.split('-');
-    return { label: `${FIN_MONTH_NAMES[Number(mm) - 1]} ${yy}`, income: rev, expense: exp, pl: rev - exp };
-  }, [financeTxns, financeMonth]);
+    const cmy = dashboardService.currentMonthYear();
+    return {
+      label: `${FIN_MONTH_NAMES[cmy.month - 1]} ${cmy.year}`,
+      income: Number(finOverview.OverallIncome) || 0,
+      expense: Number(finOverview.OverallExpenses) || 0,
+      pl: Number(finOverview.NetProfitLoss) || 0,
+    };
+  }, [finOverview]);
 
   /* Top-card modals */
   const [showAnnouncements, setShowAnnouncements] = useState(false);
   const [showReport,        setShowReport]        = useState(null); /* 'teachers' | 'parents' | null */
 
-  const lpData    = LP_DATA_BY_CLASS[lpClass]    || LP_DATA_BY_CLASS['II-Pre'];
-  const paperData = PAPER_DATA_BY_CLASS[paperClass] || PAPER_DATA_BY_CLASS['IV'];
-  const revenueData = REVENUE_DATA_BY_YEAR[revenueYear] || REVENUE_DATA_BY_YEAR[2026];
-  const profitData  = PROFIT_LOSS_BY_YEAR[revenueYear]  || PROFIT_LOSS_BY_YEAR[2026];
-  const lpMaxCw = useMemo(() => Math.max(...lpData.map(d => d.classwork)), [lpData]);
-  const paperTotal = useMemo(() => paperData.reduce((s, p) => s + p.count, 0), [paperData]);
+  /* Lesson Plan + Paper Generator — ab poore API arrays se (class-wise
+     mock hata diya, kyunke API sirf subject-wise data deta hai). */
+  const lpData    = lessonPlans; /* [{SubjectName, ClassworkCount, NotebookCount}] */
+  const paperData = paperStats;  /* [{SubjectName, TotalGenerated}] */
+  const lpMaxCw = useMemo(() => (lpData.length ? Math.max(...lpData.map(d => Number(d.ClassworkCount) || 0)) : 0), [lpData]);
+  const paperTotal = useMemo(() => paperData.reduce((s, p) => s + (Number(p.TotalGenerated) || 0), 0), [paperData]);
 
-  const studentBdays = isActive('students') ? STUDENT_BIRTHDAYS : [];
-  const teacherBdays = isActive('hr') ? TEACHER_BIRTHDAYS : [];
+  const studentBdays = isActive('students') ? stuBdays : [];
+  const teacherBdays = isActive('hr') ? staffBdays : [];
   const showStudents = birthdayTab === 'all' || birthdayTab === 'students';
   const showTeachers = birthdayTab === 'all' || birthdayTab === 'teachers';
+
+  /* Birthday helpers — API item {FirstName, LastName, DateOfBirth, PersonType}. */
+  const realTodayDay = new Date().getDate();
+  const bdayName  = (b) => `${b.FirstName || ''} ${b.LastName || ''}`.trim() || '—';
+  const bdayDay   = (iso) => { const d = new Date(iso); return isNaN(d.getTime()) ? 0 : d.getDate(); };
+  const bdayLabel = (iso) => { const d = new Date(iso); return isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-PK', { day: '2-digit', month: 'short' }); };
+
+  /* Current month/year label — banners aur activity headers ke liye. */
+  const cmyLabel = (() => { const c = dashboardService.currentMonthYear(); return `${FIN_MONTH_NAMES[c.month - 1]} ${c.year}`; })();
+
+  /* Upcoming Activities helpers — API {Title, StartAt, EndAt}. */
+  const actDateLabel = (iso) => { const d = new Date(iso); return isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-PK', { day: '2-digit', month: 'short', year: 'numeric' }); };
+  const actDaysAway  = (iso) => { const d = new Date(iso); if (isNaN(d.getTime())) return 0; return Math.round((d.setHours(0, 0, 0, 0) - new Date().setHours(0, 0, 0, 0)) / 86400000); };
 
   return (
     <>
@@ -401,28 +543,26 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
             {greeting}, {firstName}
           </div>
           <div className="dash-hero-sub">
-            <b>{todayLabel}</b> · Session {session.label}. You have{' '}
-            {moduleActive('admissions') && <><b>{CRM_STATS.followups.overdue + CRM_STATS.followups.today}</b> follow-ups</>}
-            {moduleActive('admissions') && moduleActive('academics') && ' and '}
-            {moduleActive('academics') && <><b>{ACADEMICS_STATS.lessonPlans.pending}</b> lesson plans pending</>}.
+            <b>{todayLabel}</b> · Session {session.label}.
+            {moduleActive('academics') && <> You have <b>{actSummary.UpcomingCount || 0}</b> upcoming activities.</>}
           </div>
         </div>
         <div className="dash-hero-r">
           {moduleActive('students') && (
             <div className="dash-hero-stat">
-              <div className="dash-hero-stat-val">{STUDENT_STATS.activeStudents}</div>
+              <div className="dash-hero-stat-val">{kpi.ActiveStudents || 0}</div>
               <div className="dash-hero-stat-lbl">Active Students</div>
             </div>
           )}
           {moduleActive('hr') && (
             <div className="dash-hero-stat">
-              <div className="dash-hero-stat-val">{HR_STATS.activeEmployees}<small>/{HR_STATS.totalEmployees}</small></div>
+              <div className="dash-hero-stat-val">{kpi.ActiveStaff || 0}<small>/{snap.TotalEmployees || 0}</small></div>
               <div className="dash-hero-stat-lbl">Staff Active</div>
             </div>
           )}
           {moduleActive('attendance') && (
             <div className="dash-hero-stat">
-              <div className="dash-hero-stat-val">{ATTENDANCE_STATS.todayStudentPct}<small>%</small></div>
+              <div className="dash-hero-stat-val">{studentAttData.percentage}<small>%</small></div>
               <div className="dash-hero-stat-lbl">Attendance Today</div>
             </div>
           )}
@@ -444,7 +584,7 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
               </div>
               <div>
                 <div className="adm-tc-t">School Mentor Announcements</div>
-                <div className="adm-tc-s">{latestAnnouncement.sender}</div>
+                <div className="adm-tc-s">{latestAnnouncement ? latestAnnouncement.sender : 'School Mentor — HQ'}</div>
               </div>
             </div>
             {/* Only show pill when there are actual unread items */}
@@ -458,14 +598,23 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
           </div>
 
           <div className="adm-tc-body">
-            <div className="adm-tc-an-title">{latestAnnouncement.title}</div>
-            <div className="adm-tc-an-preview">{latestAnnouncement.preview}</div>
+            {latestAnnouncement ? (
+              <>
+                <div className="adm-tc-an-title">{latestAnnouncement.title}</div>
+                <div className="adm-tc-an-preview">{latestAnnouncement.preview}</div>
+              </>
+            ) : (
+              <>
+                <div className="adm-tc-an-title">No announcements yet</div>
+                <div className="adm-tc-an-preview">New announcements from School Mentor will appear here.</div>
+              </>
+            )}
           </div>
 
           <div className="adm-tc-foot">
             <span className="adm-tc-meta">
               <i className="fa-solid fa-clock" aria-hidden="true"></i>
-              {latestAnnouncement.date} · {latestAnnouncement.time}
+              {latestAnnouncement ? `${latestAnnouncement.date} · ${latestAnnouncement.time}` : '—'}
             </span>
             <Tooltip text="View all announcements">
               <button
@@ -485,7 +634,7 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
           title="Teachers Mobile App"
           subtitle="Adoption status"
           icon="fa-chalkboard-user"
-          data={TEACHER_APP_STATUS}
+          data={teacherAppData}
           ctaLabel="Download Report"
           ctaIcon="fa-file-pdf"
           onCta={() => setShowReport('teachers')}
@@ -497,7 +646,7 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
           title="Parents Mobile App"
           subtitle="Adoption status"
           icon="fa-people-roof"
-          data={PARENT_APP_STATUS}
+          data={parentAppData}
           ctaLabel="Download Report"
           ctaIcon="fa-file-pdf"
           onCta={() => setShowReport('parents')}
@@ -507,6 +656,7 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
       {/* ─── Modals (rendered on demand) ─── */}
       {showAnnouncements && (
         <AnnouncementsModal
+          announcements={announcements}
           onClose={() => setShowAnnouncements(false)}
           toast={toast}
         />
@@ -514,6 +664,7 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
       {showReport && (
         <AppPendingReportModal
           mode={showReport}
+          counts={showReport === 'teachers' ? appOf('Teacher') : appOf('Parent')}
           onClose={() => setShowReport(null)}
           toast={toast}
         />
@@ -579,21 +730,21 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
                 </div>
                 <div className="fc-title">Current Month Fee Position</div>
               </div>
-              <div className="fc-amount fa-amount--lg">PKR 3,464,162</div>
+              <div className="fc-amount fa-amount--lg">{fmtPKR(fee.CurrentMonthFeePosition)}</div>
               <div className="fc-divider" />
               <div className="fa-meta-rows">
                 <div className="fa-meta-row">
                   <span className="fa-meta-lbl">
                     <i className="fa-solid fa-tag" aria-hidden="true"></i> Discount Given
                   </span>
-                  <span className="fa-meta-val fa-meta-val--amber">PKR 183,088</span>
+                  <span className="fa-meta-val fa-meta-val--amber">{fmtPKR(fee.DiscountGiven)}</span>
                 </div>
                 <div className="fa-meta-row">
                   <span className="fa-meta-lbl">
                     <i className="fa-solid fa-file-invoice" aria-hidden="true"></i> Challans Generated
                   </span>
                   <span className="fa-meta-val">
-                    <span className="fc-highlight">597</span><span className="fa-meta-div">/</span><span className="fa-meta-total">612</span>
+                    <span className="fc-highlight">{fee.ChallansGenerated || 0}</span><span className="fa-meta-div">/</span><span className="fa-meta-total">{fee.TotalStudentsForChallanRatio || 0}</span>
                   </span>
                 </div>
               </div>
@@ -607,14 +758,14 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
                 </div>
                 <div className="fc-title fc-title--red">Previous Dues</div>
               </div>
-              <div className="fc-amount fc-amount--red fa-amount--lg">PKR 9,797,608</div>
+              <div className="fc-amount fc-amount--red fa-amount--lg">{fmtPKR(fee.PreviousDues)}</div>
               <div className="fc-divider" />
               <div className="fa-meta-rows">
                 <div className="fa-meta-row">
                   <span className="fa-meta-lbl">
                     <i className="fa-solid fa-users" aria-hidden="true"></i> Students with Dues
                   </span>
-                  <span className="fa-meta-val fa-meta-val--red">38</span>
+                  <span className="fa-meta-val fa-meta-val--red">{fee.StudentsPending || 0}</span>
                 </div>
                 <div className="fa-meta-row fa-meta-row--muted">
                   <i className="fa-solid fa-clock" aria-hidden="true"></i>
@@ -631,7 +782,7 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
                 </div>
                 <div className="fc-title">Total Net Receivable</div>
               </div>
-              <div className="fc-amount fa-amount--lg">PKR 13,261,770</div>
+              <div className="fc-amount fa-amount--lg">{fmtPKR(fee.TotalNetReceivable)}</div>
               <div className="fa-formula">
                 <i className="fa-solid fa-circle-info" aria-hidden="true"></i>
                 <span>Current Month Net Receivable + Previous Dues</span>
@@ -640,12 +791,12 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
               <div className="fa-formula-breakdown">
                 <div>
                   <span className="fa-bd-lbl">This Month</span>
-                  <span className="fa-bd-val">PKR 3,464,162</span>
+                  <span className="fa-bd-val">{fmtPKR(fee.CurrentMonthFeePosition)}</span>
                 </div>
                 <span className="fa-bd-op">+</span>
                 <div>
                   <span className="fa-bd-lbl">Previous</span>
-                  <span className="fa-bd-val fa-bd-val--red">PKR 9,797,608</span>
+                  <span className="fa-bd-val fa-bd-val--red">{fmtPKR(fee.PreviousDues)}</span>
                 </div>
               </div>
             </div>
@@ -664,27 +815,27 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
                     </div>
                     <div className="fc-title">Fee Received</div>
                   </div>
-                  <div className="fc-amount fc-amount--green fa-amount--xl">PKR 4,850,000</div>
+                  <div className="fc-amount fc-amount--green fa-amount--xl">{fmtPKR(fee.FeeReceived)}</div>
                   <div className="fa-status-meta">
                     <i className="fa-solid fa-user-check" aria-hidden="true"></i>
                     <span>Students Paid:&nbsp;</span>
-                    <span className="fa-status-strong">425<span className="fa-meta-div">/</span>612</span>
+                    <span className="fa-status-strong">{fee.StudentsPaid || 0}<span className="fa-meta-div">/</span>{fee.TotalStudentsWithChallan || 0}</span>
                   </div>
                 </div>
                 <div className="fa-large-r">
-                  <div className="fa-ring fa-ring--green" style={{ '--ring-pct': 69 }}>
+                  <div className="fa-ring fa-ring--green" style={{ '--ring-pct': feePaidPct }}>
                     <svg viewBox="0 0 36 36" width="100%" height="100%">
                       <circle cx="18" cy="18" r="15.9" fill="none" stroke="rgba(22,163,74,.15)" strokeWidth="3" />
                       <circle
                         cx="18" cy="18" r="15.9" fill="none"
                         stroke="#16A34A" strokeWidth="3" strokeLinecap="round"
                         strokeDasharray="100, 100"
-                        strokeDashoffset="31"
+                        strokeDashoffset={100 - feePaidPct}
                         transform="rotate(-90 18 18)"
                       />
                     </svg>
                     <div className="fa-ring-text">
-                      <div className="fa-ring-pct">69%</div>
+                      <div className="fa-ring-pct">{feePaidPct}%</div>
                       <div className="fa-ring-lbl">Paid</div>
                     </div>
                   </div>
@@ -693,10 +844,10 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
               <div className="fa-progress">
                 <div className="fa-progress-h">
                   <span>Collection Progress</span>
-                  <span><b>425</b> of 612 students</span>
+                  <span><b>{fee.StudentsPaid || 0}</b> of {fee.TotalStudentsWithChallan || 0} students</span>
                 </div>
                 <div className="fa-progress-track">
-                  <div className="fa-progress-fill fa-progress-fill--green" style={{ width: '69%' }} />
+                  <div className="fa-progress-fill fa-progress-fill--green" style={{ width: `${feePaidPct}%` }} />
                 </div>
               </div>
             </div>
@@ -711,27 +862,27 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
                     </div>
                     <div className="fc-title fc-title--red">Pending Fee</div>
                   </div>
-                  <div className="fc-amount fc-amount--red fa-amount--xl">PKR 1,250,000</div>
+                  <div className="fc-amount fc-amount--red fa-amount--xl">{fmtPKR(fee.FeePending)}</div>
                   <div className="fa-status-meta">
                     <i className="fa-solid fa-user-clock" aria-hidden="true"></i>
                     <span>Students Pending:&nbsp;</span>
-                    <span className="fa-status-strong fa-status-strong--red">187<span className="fa-meta-div">/</span>612</span>
+                    <span className="fa-status-strong fa-status-strong--red">{fee.StudentsPending || 0}<span className="fa-meta-div">/</span>{fee.TotalStudentsWithChallan || 0}</span>
                   </div>
                 </div>
                 <div className="fa-large-r">
-                  <div className="fa-ring fa-ring--red">
+                  <div className="fa-ring fa-ring--red" style={{ '--ring-pct': feePendingPct }}>
                     <svg viewBox="0 0 36 36" width="100%" height="100%">
                       <circle cx="18" cy="18" r="15.9" fill="none" stroke="rgba(220,38,38,.15)" strokeWidth="3" />
                       <circle
                         cx="18" cy="18" r="15.9" fill="none"
                         stroke="#DC2626" strokeWidth="3" strokeLinecap="round"
                         strokeDasharray="100, 100"
-                        strokeDashoffset="69"
+                        strokeDashoffset={100 - feePendingPct}
                         transform="rotate(-90 18 18)"
                       />
                     </svg>
                     <div className="fa-ring-text">
-                      <div className="fa-ring-pct">31%</div>
+                      <div className="fa-ring-pct">{feePendingPct}%</div>
                       <div className="fa-ring-lbl">Pending</div>
                     </div>
                   </div>
@@ -740,10 +891,10 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
               <div className="fa-progress">
                 <div className="fa-progress-h">
                   <span>Recovery Action Needed</span>
-                  <span><b>187</b> of 612 students</span>
+                  <span><b>{fee.StudentsPending || 0}</b> of {fee.TotalStudentsWithChallan || 0} students</span>
                 </div>
                 <div className="fa-progress-track">
-                  <div className="fa-progress-fill fa-progress-fill--red" style={{ width: '31%' }} />
+                  <div className="fa-progress-fill fa-progress-fill--red" style={{ width: `${feePendingPct}%` }} />
                 </div>
               </div>
             </div>
@@ -764,26 +915,15 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
 
       <div className="adm-divider" />
 
-      {/* ═════════ 3b. ONELINK PAYMENTS ═════════ */}
-      {isActive('fee') && <OneLinkPaymentSection openModule={openModule} toast={toast} />}
-
-      <div className="adm-divider" />
+      {/* OneLink Payments section hata diya — get-dashboard API OneLink/bank
+          payment data nahi deti, is liye dummy card show nahi karte. */}
 
       {/* ═════════ ACCOUNTS / REVENUE ═════════ */}
       {isActive('accounts') && (
         <div className="dash-sec adm-sec">
           <div className="dash-sec-h">
             <div className="dash-sec-title"><i className="fa-solid fa-calculator" aria-hidden="true"></i> Financial Overview</div>
-            <select
-              className="adm-select"
-              value={revenueYear}
-              onChange={(e) => setRevenueYear(Number(e.target.value))}
-              aria-label="Select year"
-            >
-              <option value={2026}>2026</option>
-              <option value={2025}>2025</option>
-              <option value={2024}>2024</option>
-            </select>
+            <span className="adm-h-meta">{cmyLabel}</span>
           </div>
 
           {/* ─── Monthly Financial Summary (NEW) ───
@@ -796,23 +936,10 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
                 <div className="fin-summary-ic"><i className="fa-solid fa-sack-dollar" aria-hidden="true"></i></div>
                 <div>
                   <div className="fin-summary-t">Monthly Financial Summary</div>
-                  <div className="fin-summary-s">{financeSummary.label} · from Accounts ledger</div>
+                  <div className="fin-summary-s">{financeSummary.label} · financial overview</div>
                 </div>
               </div>
-              <Tooltip text="Choose the month to summarise">
-                <label className="fin-summary-month">
-                  <span className="fin-summary-month-lbl">Month</span>
-                  <input
-                    type="month"
-                    className="fin-summary-month-input"
-                    value={financeMonth}
-                    min="2026-01"
-                    max="2026-05"
-                    onChange={(e) => setFinanceMonth(e.target.value)}
-                    aria-label="Select month for financial summary"
-                  />
-                </label>
-              </Tooltip>
+              <span className="fin-summary-month-lbl">{financeSummary.label}</span>
             </div>
 
             <div className="fin-summary-grid">
@@ -863,57 +990,39 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
             <div className="adm-chart-card">
               <div className="adm-card-h">
                 <div className="adm-card-h-t">Revenue Streams</div>
-                <span className="adm-card-h-meta">Total: <b>Rs.0.00</b></span>
+                <span className="adm-card-h-meta">Total: <b>{fmtPKR(revenueTotal)}</b></span>
               </div>
               <ResponsiveContainer width="100%" height={200}>
-                <AreaChart data={revenueData} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
+                <AreaChart data={revenueChart} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
                   <defs>
                     <linearGradient id="revTuition" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="0%" stopColor="#4169E1" stopOpacity={0.28} />
                       <stop offset="100%" stopColor="#4169E1" stopOpacity={0} />
                     </linearGradient>
-                    <linearGradient id="revAdmission" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#3DBA8C" stopOpacity={0.26} />
-                      <stop offset="100%" stopColor="#3DBA8C" stopOpacity={0} />
-                    </linearGradient>
-                    <linearGradient id="revTransport" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#F59E0B" stopOpacity={0.24} />
-                      <stop offset="100%" stopColor="#F59E0B" stopOpacity={0} />
-                    </linearGradient>
-                    <linearGradient id="revOther" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#F87171" stopOpacity={0.22} />
-                      <stop offset="100%" stopColor="#F87171" stopOpacity={0} />
-                    </linearGradient>
                   </defs>
                   <CartesianGrid stroke="#E2E8F0" strokeDasharray="3 3" />
                   <XAxis dataKey="m" tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={{ stroke: '#E2E8F0' }} />
-                  <YAxis domain={[0, 1]} tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={false} />
+                  <YAxis domain={[0, 'auto']} tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={false} />
                   <RTooltip content={<ChartTooltip />} />
-                  <Area type="monotone" dataKey="tuition"   name="Tuition Fees"   stroke="#4169E1" strokeWidth={2.2} fill="url(#revTuition)"   dot={{ r: 3, stroke: '#4169E1', fill: '#fff', strokeWidth: 2 }} />
-                  <Area type="monotone" dataKey="admission" name="Admission Fees" stroke="#3DBA8C" strokeWidth={2.2} fill="url(#revAdmission)" dot={{ r: 3, stroke: '#3DBA8C', fill: '#fff', strokeWidth: 2 }} />
-                  <Area type="monotone" dataKey="transport" name="Transport Fees" stroke="#F59E0B" strokeWidth={2.2} fill="url(#revTransport)" dot={{ r: 3, stroke: '#F59E0B', fill: '#fff', strokeWidth: 2 }} />
-                  <Area type="monotone" dataKey="other"     name="Other Income"   stroke="#F87171" strokeWidth={2.2} fill="url(#revOther)"     dot={{ r: 3, stroke: '#F87171', fill: '#fff', strokeWidth: 2 }} />
+                  <Area type="monotone" dataKey="amount" name="Revenue" stroke="#4169E1" strokeWidth={2.2} fill="url(#revTuition)" dot={{ r: 3, stroke: '#4169E1', fill: '#fff', strokeWidth: 2 }} />
                 </AreaChart>
               </ResponsiveContainer>
               <div className="adm-legend">
-                <span className="adm-legend-i"><span className="adm-legend-dot" style={{ background: '#4169E1' }} />Tuition Fees</span>
-                <span className="adm-legend-i"><span className="adm-legend-dot" style={{ background: '#3DBA8C' }} />Admission Fees</span>
-                <span className="adm-legend-i"><span className="adm-legend-dot" style={{ background: '#F59E0B' }} />Transport Fees</span>
-                <span className="adm-legend-i"><span className="adm-legend-dot" style={{ background: '#F87171' }} />Other Income</span>
+                <span className="adm-legend-i"><span className="adm-legend-dot" style={{ background: '#4169E1' }} />Revenue</span>
               </div>
             </div>
 
             {/* Profit/Loss */}
             <div className="adm-chart-card">
               <div className="adm-card-h">
-                <div className="adm-card-h-t">Profit/Loss Overview <span className="adm-card-h-yr">· {revenueYear}</span></div>
-                <span className="adm-card-h-meta" style={{ color: '#16A34A', fontWeight: 800 }}>Net Profit / Loss: <b>Rs. 7.21M</b></span>
+                <div className="adm-card-h-t">Profit/Loss Overview</div>
+                <span className="adm-card-h-meta" style={{ color: plNet >= 0 ? '#16A34A' : '#DC2626', fontWeight: 800 }}>Net Profit / Loss: <b>{plNet >= 0 ? '+' : '−'}{fmtPKR(Math.abs(plNet))}</b></span>
               </div>
               <ResponsiveContainer width="100%" height={180}>
-                <ComposedChart data={profitData} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
+                <ComposedChart data={profitChart} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
                   <CartesianGrid stroke="#E2E8F0" strokeDasharray="3 3" />
                   <XAxis dataKey="m" tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={{ stroke: '#E2E8F0' }} />
-                  <YAxis domain={[-3, 5]} tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={false} />
+                  <YAxis domain={['auto', 'auto']} tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={false} />
                   <RTooltip content={<ChartTooltip />} />
                   <Bar dataKey="pl"      name="Profit/Loss" fill="#3DBA8C" fillOpacity={0.6} radius={[6, 6, 0, 0]} />
                   <Line type="monotone" dataKey="revenue" name="Revenue"   stroke="#4169E1" strokeWidth={2.2} dot={{ r: 3, stroke: '#4169E1', fill: '#fff', strokeWidth: 2 }} />
@@ -954,7 +1063,7 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
              - status constants:  ATTENDANCE_STATUS.{PRESENT,ABSENT,LEAVE,PENDING}
                                   STAFF_ATTENDANCE_STATUS.{PRESENT,ABSENT,LEAVE}
        */}
-      {moduleActive('attendance') && <AttendanceSection openModule={openModule} />}
+      {moduleActive('attendance') && <AttendanceSection openModule={openModule} studentData={studentAttData} staffData={staffAttData} />}
 
       <div className="adm-divider" />
 
@@ -963,14 +1072,7 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
         <div className="dash-sec adm-sec">
           <div className="dash-sec-h">
             <div className="dash-sec-title"><i className="fa-solid fa-book-open-reader" aria-hidden="true"></i> Lesson Plan Analytics</div>
-            <select
-              className="adm-select"
-              value={lpClass}
-              onChange={(e) => setLpClass(e.target.value)}
-              aria-label="Select class"
-            >
-              {LP_CLASSES.map(c => <option key={c} value={c}>{c}</option>)}
-            </select>
+            <span className="adm-h-meta">All Subjects</span>
           </div>
 
           <div className="adm-2col">
@@ -988,11 +1090,11 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
                     </linearGradient>
                   </defs>
                   <CartesianGrid stroke="#E2E8F0" strokeDasharray="3 3" />
-                  <XAxis dataKey="subject" tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={{ stroke: '#E2E8F0' }} />
-                  <YAxis domain={[0, 20]} tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={false} />
+                  <XAxis dataKey="SubjectName" tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={{ stroke: '#E2E8F0' }} />
+                  <YAxis domain={[0, 'auto']} tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={false} />
                   <RTooltip content={<ChartTooltip />} />
-                  <Area type="monotone" dataKey="classwork" name="Classwork" stroke="#1E40AF" strokeWidth={2.2} fill="url(#lpClasswork)" dot={{ r: 3, stroke: '#1E40AF', fill: '#fff', strokeWidth: 2 }} />
-                  <Area type="monotone" dataKey="notebook"  name="Notebook"  stroke="#16A34A" strokeWidth={2.2} fill="url(#lpNotebook)"  dot={{ r: 3, stroke: '#16A34A', fill: '#fff', strokeWidth: 2 }} />
+                  <Area type="monotone" dataKey="ClassworkCount" name="Classwork" stroke="#1E40AF" strokeWidth={2.2} fill="url(#lpClasswork)" dot={{ r: 3, stroke: '#1E40AF', fill: '#fff', strokeWidth: 2 }} />
+                  <Area type="monotone" dataKey="NotebookCount"  name="Notebook"  stroke="#16A34A" strokeWidth={2.2} fill="url(#lpNotebook)"  dot={{ r: 3, stroke: '#16A34A', fill: '#fff', strokeWidth: 2 }} />
                 </AreaChart>
               </ResponsiveContainer>
               <div className="adm-legend">
@@ -1004,11 +1106,14 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
             <div className="adm-side-card">
               <div className="adm-side-title">Subject-wise Completion</div>
               <div className="adm-bars">
+                {lpData.length === 0 && (
+                  <div className="adm-bar-row"><div className="adm-bar-lbl">No lesson plan data yet</div></div>
+                )}
                 {lpData.map(d => {
-                  const pct = lpMaxCw > 0 ? (d.classwork / lpMaxCw) * 100 : 0;
+                  const pct = lpMaxCw > 0 ? ((Number(d.ClassworkCount) || 0) / lpMaxCw) * 100 : 0;
                   return (
-                    <div key={d.subject} className="adm-bar-row">
-                      <div className="adm-bar-lbl">{d.subject}</div>
+                    <div key={d.SubjectName} className="adm-bar-row">
+                      <div className="adm-bar-lbl">{d.SubjectName}</div>
                       <div className="adm-bar-track">
                         <div className="adm-bar-fill" style={{ width: `${pct}%` }} />
                       </div>
@@ -1030,14 +1135,6 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
             <div className="dash-sec-title"><i className="fa-solid fa-scroll" aria-hidden="true"></i> Question Paper Generator</div>
             <div className="adm-h-right">
               <span className="adm-h-meta">Total: <b>{paperTotal} Papers</b></span>
-              <select
-                className="adm-select"
-                value={paperClass}
-                onChange={(e) => setPaperClass(e.target.value)}
-                aria-label="Select class"
-              >
-                {PAPER_CLASSES.map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
             </div>
           </div>
 
@@ -1049,10 +1146,12 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
                   <tr><th>Subject</th><th>Total Generated Question Papers</th></tr>
                 </thead>
                 <tbody>
-                  {paperData.map(p => (
-                    <tr key={p.subject}>
-                      <td><b>{p.subject}</b></td>
-                      <td>{p.count} Question Papers</td>
+                  {paperData.length === 0 ? (
+                    <tr><td colSpan={2}>No question papers generated yet</td></tr>
+                  ) : paperData.map(p => (
+                    <tr key={p.SubjectName}>
+                      <td><b>{p.SubjectName}</b></td>
+                      <td>{p.TotalGenerated} Question Papers</td>
                     </tr>
                   ))}
                 </tbody>
@@ -1064,10 +1163,10 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
               <ResponsiveContainer width="100%" height={180}>
                 <BarChart data={paperData} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
                   <CartesianGrid stroke="#E2E8F0" strokeDasharray="3 3" vertical={false} />
-                  <XAxis dataKey="subject" tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={{ stroke: '#E2E8F0' }} />
+                  <XAxis dataKey="SubjectName" tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={{ stroke: '#E2E8F0' }} />
                   <YAxis tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={false} />
                   <RTooltip content={<ChartTooltip />} />
-                  <Bar dataKey="count" name="Papers" radius={[6, 6, 0, 0]} fill="#4169E1" />
+                  <Bar dataKey="TotalGenerated" name="Papers" radius={[6, 6, 0, 0]} fill="#4169E1" />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -1105,7 +1204,7 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
 
           <div className="adm-info-banner">
             <i className="fa-solid fa-calendar" aria-hidden="true"></i>
-            <span>Showing birthdays for May 2026</span>
+            <span>Showing birthdays for {cmyLabel}</span>
           </div>
 
           <div className="adm-bday-row">
@@ -1116,25 +1215,29 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
                   <span className="adm-pill-blue">{studentBdays.length}</span>
                 </div>
                 <div className="adm-bday-list">
+                  {studentBdays.length === 0 && (
+                    <div className="adm-bday-meta">No student birthdays this month</div>
+                  )}
                   {studentBdays.map(b => {
-                    const isToday = b.dob === TODAY_DAY;
-                    const isTomorrow = b.dob === TODAY_DAY + 1;
+                    const day = bdayDay(b.DateOfBirth);
+                    const isToday = day === realTodayDay;
+                    const isTomorrow = day === realTodayDay + 1;
                     return (
                       <div
-                        key={b.name}
+                        key={b.ID ?? bdayName(b)}
                         className={`adm-bday-card${isToday ? ' today' : ''}`}
                       >
-                        <div className="adm-bday-av">{initials(b.name)}</div>
+                        <div className="adm-bday-av">{initials(bdayName(b))}</div>
                         <div className="adm-bday-info">
-                          <div className="adm-bday-name">{b.name}</div>
-                          <div className="adm-bday-meta">{b.grade}</div>
+                          <div className="adm-bday-name">{bdayName(b)}</div>
+                          <div className="adm-bday-meta">{b.PersonType || 'Student'}</div>
                         </div>
                         {isToday ? (
                           <span className="adm-pill-green">Today! 🎂</span>
                         ) : isTomorrow ? (
                           <span className="adm-pill-amber">Tomorrow</span>
                         ) : (
-                          <span className="adm-pill-blue">{b.date}</span>
+                          <span className="adm-pill-blue">{bdayLabel(b.DateOfBirth)}</span>
                         )}
                       </div>
                     );
@@ -1150,25 +1253,29 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
                   <span className="adm-pill-blue">{teacherBdays.length}</span>
                 </div>
                 <div className="adm-bday-list">
+                  {teacherBdays.length === 0 && (
+                    <div className="adm-bday-meta">No staff birthdays this month</div>
+                  )}
                   {teacherBdays.map(b => {
-                    const isToday = b.dob === TODAY_DAY;
-                    const isTomorrow = b.dob === TODAY_DAY + 1;
+                    const day = bdayDay(b.DateOfBirth);
+                    const isToday = day === realTodayDay;
+                    const isTomorrow = day === realTodayDay + 1;
                     return (
                       <div
-                        key={b.name}
+                        key={b.ID ?? bdayName(b)}
                         className={`adm-bday-card${isToday ? ' today' : ''}`}
                       >
-                        <div className="adm-bday-av adm-bday-av--purple">{initials(b.name)}</div>
+                        <div className="adm-bday-av adm-bday-av--purple">{initials(bdayName(b))}</div>
                         <div className="adm-bday-info">
-                          <div className="adm-bday-name">{b.name}</div>
-                          <div className="adm-bday-meta">{b.role}</div>
+                          <div className="adm-bday-name">{bdayName(b)}</div>
+                          <div className="adm-bday-meta">{b.PersonType || 'Staff'}</div>
                         </div>
                         {isToday ? (
                           <span className="adm-pill-green">Today! 🎂</span>
                         ) : isTomorrow ? (
                           <span className="adm-pill-amber">Tomorrow</span>
                         ) : (
-                          <span className="adm-pill-blue">{b.date}</span>
+                          <span className="adm-pill-blue">{bdayLabel(b.DateOfBirth)}</span>
                         )}
                       </div>
                     );
@@ -1189,18 +1296,25 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
             <span className="adm-h-ic adm-h-ic--star"><i className="fa-solid fa-calendar-day" aria-hidden="true"></i></span>
             Upcoming Activities
           </div>
-          <span className="adm-h-meta">May 2026</span>
+          <span className="adm-h-meta">{cmyLabel}</span>
         </div>
         <div className="adm-info-banner">
           <i className="fa-solid fa-circle-info" aria-hidden="true"></i>
           <span>School events, exams, and important dates for this month.</span>
         </div>
 
+        {upActivities.length === 0 ? (
+          <div className="adm-info-banner">
+            <i className="fa-solid fa-calendar-xmark" aria-hidden="true"></i>
+            <span>No upcoming activities scheduled.</span>
+          </div>
+        ) : (
         <div className="adm-act-grid">
-          {ACTIVITIES.map(a => {
-            const c = TYPE_COLOR[a.type] || TYPE_COLOR.event;
-            const daysLabel = a.daysAway === 1 ? 'Tomorrow' : `In ${a.daysAway} days`;
-            const daysTone = a.daysAway === 1 ? 'amber' : (a.daysAway <= 7 ? 'brand' : 'muted');
+          {upActivities.map(a => {
+            const c = TYPE_COLOR.event;
+            const daysAway = actDaysAway(a.StartAt);
+            const daysLabel = daysAway === 0 ? 'Today' : daysAway === 1 ? 'Tomorrow' : daysAway > 0 ? `In ${daysAway} days` : 'Past';
+            const daysTone = daysAway <= 1 ? 'amber' : (daysAway <= 7 ? 'brand' : 'muted');
             /* Every card now lands on Academics → Scheme of Studies →
                Calendar → Activity Calendar via the openActivityCalendar
                callback hoisted from App.js. */
@@ -1209,7 +1323,7 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
               toast('Opening Activity Calendar…', 'info');
             };
             return (
-              <Tooltip key={a.id} text="Open Academics → Activity Calendar">
+              <Tooltip key={a.ID} text="Open Academics → Activity Calendar">
                 <div
                   className="adm-act-card clickable"
                   style={{ '--act-bar': c.fg }}
@@ -1221,14 +1335,13 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
                   <div className="adm-act-h">
                     <span className="adm-act-chip" style={{ background: c.bg, color: c.fg }}>
                       <i className="fa-solid fa-calendar-day" aria-hidden="true"></i>
-                      {a.date}
+                      {actDateLabel(a.StartAt)}
                     </span>
                     <span className={`adm-act-days adm-act-days--${daysTone}`}>{daysLabel}</span>
                   </div>
-                  <div className="adm-act-title">{a.title}</div>
-                  <div className="adm-act-desc">{a.desc}</div>
+                  <div className="adm-act-title">{a.Title}</div>
+                  <div className="adm-act-desc">{a.Description}</div>
                   <div className="adm-act-foot">
-                    <span className="adm-act-cat" style={{ background: c.bg, color: c.fg }}>{a.category}</span>
                     <span className="adm-act-mod">
                       <i className="fa-solid fa-calendar-plus" aria-hidden="true"></i>
                       Activity Calendar
@@ -1239,6 +1352,7 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
             );
           })}
         </div>
+        )}
       </div>
     </>
   );
@@ -1249,7 +1363,7 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
    Renders the 2-card row with the same `.fee-card` chrome used by
    the Fee Analytics section. Field names match the Attendance
    module schema (present / absent / leave / total / percentage). */
-function AttendanceSection({ openModule }) {
+function AttendanceSection({ openModule, studentData, staffData }) {
   const todayDateLabel = new Date().toLocaleDateString('en-PK', {
     weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
   });
@@ -1278,7 +1392,7 @@ function AttendanceSection({ openModule }) {
           icon="fa-user-graduate"
           tone="brand"
           title="Student Attendance Today"
-          data={STUDENT_ATTENDANCE_TODAY}
+          data={studentData}
           unitSingular="student"
           unitPlural="students"
           unitSuffix="enrolled"
@@ -1290,7 +1404,7 @@ function AttendanceSection({ openModule }) {
           icon="fa-chalkboard-user"
           tone="purple"
           title="Staff Attendance Today"
-          data={STAFF_ATTENDANCE_TODAY}
+          data={staffData}
           unitSingular="staff member"
           unitPlural="staff members"
           unitSuffix=""
@@ -1627,7 +1741,7 @@ function AppStatusCard({ tone, title, subtitle, icon, data, ctaLabel, ctaIcon = 
             />
           </div>
           <div className="adm-tc-bar-meta">
-            <span><i className="fa-solid fa-arrow-trend-up" aria-hidden="true"></i> +{data.newThisMonth} this month</span>
+            <span><i className="fa-solid fa-mobile-screen-button" aria-hidden="true"></i> {(data.downloaded || 0).toLocaleString('en-PK')} downloaded</span>
             <span className="adm-tc-bar-pct">{data.pct}% adopted</span>
           </div>
         </div>

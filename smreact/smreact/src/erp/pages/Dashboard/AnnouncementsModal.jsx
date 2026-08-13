@@ -11,8 +11,11 @@ import { DASH_MODAL_CSS } from './dashModalCss';
    read" toggle that mutates the in-memory list (would be persisted
    to backend in production).
    ═══════════════════════════════════════════════════════════════════ */
-export default function AnnouncementsModal({ onClose, toast = () => {} }) {
-  const [items, setItems] = useState(SCHOOL_MENTOR_ANNOUNCEMENTS);
+export default function AnnouncementsModal({ onClose, toast = () => {}, announcements }) {
+  /* Real announcements (API se) prop me aate hain — jab pass hon (khaali array bhi)
+     to wahi dikhao; na aayein (purane callers) to fallback mock list. Is se dummy
+     announcements khatam (API khaali → "No announcements" empty state). */
+  const [items, setItems] = useState(Array.isArray(announcements) ? announcements : SCHOOL_MENTOR_ANNOUNCEMENTS);
 
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };

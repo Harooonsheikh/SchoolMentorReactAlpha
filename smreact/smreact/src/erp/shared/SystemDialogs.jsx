@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Tooltip from './Tooltip';
-import { logout } from '../utils/auth';
 
 /* ═══════════════════════════════════════════════════════════════════
    SYSTEM DIALOGS — 1:1 port from "ERP_Home Final.html".
@@ -26,26 +25,13 @@ import { logout } from '../utils/auth';
    ═══════════════════════════════════════════════════════════════════ */
 
 export default function SystemDialogs({ toast = () => {} }) {
-  /* Banner visibility */
-  const [showSlow,    setShowSlow]    = useState(false);
-  const [showNoNet,   setShowNoNet]   = useState(false);
-
-  /* Dialog visibility */
-  const [showServer,  setShowServer]  = useState(false);
-  const [showSession, setShowSession] = useState(false);
-  const [showSure,    setShowSure]    = useState(false);
-
-  /* Session countdown (seconds) */
-  const [sessionSec,  setSessionSec]  = useState(300);
-  const sessionTickRef = useRef(null);
-
-  /* "Are you sure" payload */
-  const [sureCfg, setSureCfg] = useState({
-    title:  'Are you sure?',
-    msg:    'This action cannot be undone. Please confirm you want to proceed.',
-    hint:   'Once confirmed, this change will take effect immediately.',
-    onConfirm: null,
-  });
+  /* Banner / dialog visibility — sirf REAL conditions: offline / slow API / 500.
+     (Session-timeout aur "Are you sure" demo surfaces hata diye gaye.) */
+  const [showSlow,   setShowSlow]   = useState(false);
+  const [showNoNet,  setShowNoNet]  = useState(typeof navigator !== 'undefined' && navigator.onLine === false);
+  const slowTimerRef       = useRef(null);
+  const offlineShownRef    = useRef(false);   // offline toast ek hi baar (transition par)
+  const lastServerToastRef = useRef(0);       // 500 toast debounce (spam se bachne ke liye)
 
   /* Push <main> down while a banner is open so the page content
      never sits behind the fixed strip. The HTML reference does the
@@ -53,104 +39,77 @@ export default function SystemDialogs({ toast = () => {} }) {
   useEffect(() => {
     const main = document.querySelector('.main-content');
     if (!main) return undefined;
-    if (showSlow)       main.style.paddingTop = '60px';
-    else if (showNoNet) main.style.paddingTop = '60px';
-    else                main.style.paddingTop = '';
+    main.style.paddingTop = (showSlow || showNoNet) ? '60px' : '';
     return () => { if (main) main.style.paddingTop = ''; };
   }, [showSlow, showNoNet]);
 
-  /* Esc closes any open dialog (HTML parity). */
+  /* REAL network conditions — browser offline/online + slow API + server 500.
+     `sm:slow` / `sm:server-error` events apiConfig ke fetch-wrapper se aate hain
+     (poore ERP par har API call monitor hoti hai). */
   useEffect(() => {
-    const onKey = (e) => {
-      if (e.key !== 'Escape') return;
-      if (showServer)  setShowServer(false);
-      if (showSession) closeSession();
-      if (showSure)    setShowSure(false);
+    const isOffline = () => typeof navigator !== 'undefined' && navigator.onLine === false;
+    /* Offline hote hi Slow banner hata do — dono ek saath nahi. Banner ke saath ek
+       toast bhi (sirf online→offline transition par), taake feedback saaf nazar aaye. */
+    const goOffline = () => {
+      setShowSlow(false);
+      setShowNoNet(true);
+      if (!offlineShownRef.current) {
+        offlineShownRef.current = true;
+        toast('You are offline — please check your internet connection.', 'error');
+      }
     };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showServer, showSession, showSure]);
+    const goOnline = () => {
+      setShowNoNet(false);
+      if (offlineShownRef.current) {
+        offlineShownRef.current = false;
+        toast('Back online — connection restored.', 'success');
+      }
+    };
+    /* Slow event tabhi maano jab internet chal raha ho. Agar offline hai to
+       (kyunki offline par fetch pehle hang hota hai) Slow ke bajaye Offline dikhao. */
+    const onSlow = () => {
+      if (isOffline()) { goOffline(); return; }
+      setShowSlow(true);
+      if (slowTimerRef.current) clearTimeout(slowTimerRef.current);
+      slowTimerRef.current = setTimeout(() => setShowSlow(false), 5000);
+    };
+    /* 500 ab BLOCKING modal nahi — sirf ek non-blocking toast (app chalti rahe).
+       Baar-baar 500 par spam na ho, is liye 8s ka debounce. */
+    const onServerError = () => {
+      const now = Date.now();
+      if (now - lastServerToastRef.current < 8000) return;
+      lastServerToastRef.current = now;
+      toast('Server error (500) — something went wrong. Please try again in a moment.', 'error');
+    };
+    window.addEventListener('offline', goOffline);
+    window.addEventListener('online',  goOnline);
+    window.addEventListener('sm:slow', onSlow);
+    window.addEventListener('sm:offline', goOffline);
+    window.addEventListener('sm:online', goOnline);
+    window.addEventListener('sm:server-error', onServerError);
+    return () => {
+      window.removeEventListener('offline', goOffline);
+      window.removeEventListener('online',  goOnline);
+      window.removeEventListener('sm:slow', onSlow);
+      window.removeEventListener('sm:offline', goOffline);
+      window.removeEventListener('sm:online', goOnline);
+      window.removeEventListener('sm:server-error', onServerError);
+      if (slowTimerRef.current) clearTimeout(slowTimerRef.current);
+    };
+  }, []);
 
-  /* Body-scroll lock while any dialog is open. */
-  useEffect(() => {
-    const anyOpen = showServer || showSession || showSure;
-    if (anyOpen) {
-      const prev = document.body.style.overflow;
-      document.body.style.overflow = 'hidden';
-      return () => { document.body.style.overflow = prev; };
-    }
-    return undefined;
-  }, [showServer, showSession, showSure]);
-
-  /* ── Slow / Offline banners ───────────────────────────────────── */
+  /* Offline banner ka Retry — sach me connection wapas aaya to hi banner hatao. */
   const retryConnection = useCallback(() => {
     toast('Checking connection…', 'info');
     setTimeout(() => {
-      setShowNoNet(false);
-      toast('Connection restored!', 'success');
-    }, 1800);
-  }, [toast]);
-
-  /* ── Session timeout countdown ────────────────────────────────── */
-  const startSessionTimeout = useCallback((seconds = 300) => {
-    setSessionSec(seconds);
-    setShowSession(true);
-  }, []);
-  function closeSession() {
-    if (sessionTickRef.current) {
-      clearInterval(sessionTickRef.current);
-      sessionTickRef.current = null;
-    }
-    setShowSession(false);
-  }
-  const extendSession = useCallback(() => {
-    closeSession();
-    toast('Session extended! You’re still signed in.', 'success');
-  }, [toast]);
-  const signOutNow = useCallback(() => {
-    closeSession();
-    toast('Signed out successfully.', 'info');
-    logout();
-  }, [toast]);
-
-  useEffect(() => {
-    if (!showSession) return undefined;
-    if (sessionTickRef.current) clearInterval(sessionTickRef.current);
-    sessionTickRef.current = setInterval(() => {
-      setSessionSec((s) => {
-        if (s <= 1) {
-          clearInterval(sessionTickRef.current);
-          sessionTickRef.current = null;
-          setShowSession(false);
-          toast('Session expired. Please sign in again.', 'error');
-          return 0;
-        }
-        return s - 1;
-      });
-    }, 1000);
-    return () => {
-      if (sessionTickRef.current) {
-        clearInterval(sessionTickRef.current);
-        sessionTickRef.current = null;
+      if (typeof navigator !== 'undefined' && navigator.onLine) {
+        setShowNoNet(false);
+        toast('Connection restored!', 'success');
+      } else {
+        toast('Still offline — check your network.', 'error');
       }
-    };
-  }, [showSession, toast]);
-
-  /* ── Are You Sure helper ──────────────────────────────────────── */
-  const showAreYouSure = useCallback((title, msg, hint, onConfirm) => {
-    setSureCfg({
-      title: title || 'Are you sure?',
-      msg:   msg   || 'This action cannot be undone. Please confirm you want to proceed.',
-      hint:  hint  || 'Once confirmed, this change will take effect immediately.',
-      onConfirm: onConfirm || null,
-    });
-    setShowSure(true);
-  }, []);
-  const confirmAction = useCallback(() => {
-    setShowSure(false);
-    if (sureCfg.onConfirm) sureCfg.onConfirm();
-  }, [sureCfg]);
+    }, 1200);
+  }, [toast]);
 
   /* ── Render ───────────────────────────────────────────────────── */
   return (
@@ -205,172 +164,13 @@ export default function SystemDialogs({ toast = () => {} }) {
         document.body
       )}
 
-      {/* 3. Server Error dialog */}
-      {showServer && createPortal(
-        <div
-          className="sys-overlay open"
-          onMouseDown={(e) => { if (e.target === e.currentTarget) setShowServer(false); }}
-          role="dialog" aria-modal="true" aria-labelledby="sysServerTitle"
-        >
-          <div className="sys-dialog">
-            <div className="sys-dialog-glow sys-glow-red"></div>
-            <div className="sys-dialog-hero">
-              <div className="sys-dialog-ring sys-ring-red">
-                <div className="sys-dialog-icon-wrap sys-icon-red">
-                  <i className="fa-solid fa-server" aria-hidden="true"></i>
-                </div>
-              </div>
-              <div className="sys-err-code">500</div>
-            </div>
-            <div className="sys-dialog-body">
-              <div className="sys-dialog-title" id="sysServerTitle">Server Error</div>
-              <div className="sys-dialog-msg">
-                Something went wrong on our end. Our team has been notified and is working on a fix.
-              </div>
-              <div className="sys-dialog-detail sys-detail-red">
-                <i className="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>
-                <span>Error Code: <strong>INTERNAL_SERVER_ERROR</strong> · Please try again in a few moments.</span>
-              </div>
-            </div>
-            <div className="sys-dialog-footer">
-              <button
-                className="sys-btn sys-btn-primary"
-                onClick={() => { setShowServer(false); toast('Retrying…', 'info'); }}
-              >
-                <i className="fa-solid fa-rotate-right" aria-hidden="true"></i> Try Again
-              </button>
-              <button className="sys-btn sys-btn-ghost" onClick={() => setShowServer(false)}>
-                Dismiss
-              </button>
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
-
-      {/* 4. Session Timeout dialog */}
-      {showSession && createPortal(
-        <div className="sys-overlay open" role="dialog" aria-modal="true" aria-labelledby="sysSessionTitle">
-          <div className="sys-dialog">
-            <div className="sys-dialog-glow sys-glow-amber"></div>
-            <div className="sys-dialog-hero">
-              <div className="sys-dialog-ring sys-ring-amber">
-                <div className="sys-dialog-icon-wrap sys-icon-amber">
-                  <i className="fa-solid fa-clock" aria-hidden="true"></i>
-                </div>
-              </div>
-              <div className="sys-session-timer">{fmtMMSS(sessionSec)}</div>
-            </div>
-            <div className="sys-dialog-body">
-              <div className="sys-dialog-title" id="sysSessionTitle">Session Expiring Soon</div>
-              <div className="sys-dialog-msg">
-                You've been inactive for a while. For your security, your session will expire automatically.
-              </div>
-              <div className="sys-dialog-detail sys-detail-amber">
-                <i className="fa-solid fa-shield-halved" aria-hidden="true"></i>
-                <span>Your unsaved changes will be preserved. You'll need to sign in again after timeout.</span>
-              </div>
-            </div>
-            <div className="sys-dialog-footer">
-              <button className="sys-btn sys-btn-primary" onClick={extendSession}>
-                <i className="fa-solid fa-rotate-right" aria-hidden="true"></i> Stay Signed In
-              </button>
-              <button className="sys-btn sys-btn-ghost sys-btn-danger" onClick={signOutNow}>
-                <i className="fa-solid fa-right-from-bracket" aria-hidden="true"></i> Sign Out Now
-              </button>
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
-
-      {/* 5. Are You Sure dialog */}
-      {showSure && createPortal(
-        <div
-          className="sys-overlay open"
-          onMouseDown={(e) => { if (e.target === e.currentTarget) setShowSure(false); }}
-          role="dialog" aria-modal="true" aria-labelledby="sysSureTitle"
-        >
-          <div className="sys-dialog sys-dialog-sm">
-            <div className="sys-dialog-glow sys-glow-blue"></div>
-            <div className="sys-dialog-hero">
-              <div className="sys-dialog-ring sys-ring-blue">
-                <div className="sys-dialog-icon-wrap sys-icon-blue">
-                  <i className="fa-solid fa-circle-question" aria-hidden="true"></i>
-                </div>
-              </div>
-            </div>
-            <div className="sys-dialog-body">
-              <div className="sys-dialog-title" id="sysSureTitle">{sureCfg.title}</div>
-              <div className="sys-dialog-msg">{sureCfg.msg}</div>
-              <div className="sys-dialog-detail sys-detail-blue">
-                <i className="fa-solid fa-circle-info" aria-hidden="true"></i>
-                <span>{sureCfg.hint}</span>
-              </div>
-            </div>
-            <div className="sys-dialog-footer">
-              <button className="sys-btn sys-btn-primary" onClick={confirmAction}>
-                <i className="fa-solid fa-check" aria-hidden="true"></i> Yes, Confirm
-              </button>
-              <button className="sys-btn sys-btn-ghost" onClick={() => setShowSure(false)}>
-                <i className="fa-solid fa-xmark" aria-hidden="true"></i> Cancel
-              </button>
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
-
-      {/* 6. Floating Demo Trigger bar */}
-      {createPortal(
-        <div className="demo-trigger-bar" role="group" aria-label="Demo system dialogs">
-          <div className="demo-trigger-label">Demo Dialogs</div>
-          <Tooltip text="Slow Internet" placement="top">
-            <button className="demo-btn demo-btn-amber" onClick={() => setShowSlow(true)}>
-              <i className="fa-solid fa-wifi" aria-hidden="true"></i> Slow
-            </button>
-          </Tooltip>
-          <Tooltip text="No Internet" placement="top">
-            <button className="demo-btn demo-btn-red" onClick={() => setShowNoNet(true)}>
-              <i className="fa-solid fa-wifi-slash" aria-hidden="true"></i> Offline
-            </button>
-          </Tooltip>
-          <Tooltip text="Server Error (500)" placement="top">
-            <button className="demo-btn demo-btn-red" onClick={() => setShowServer(true)}>
-              <i className="fa-solid fa-server" aria-hidden="true"></i> 500
-            </button>
-          </Tooltip>
-          <Tooltip text="Session Timeout" placement="top">
-            <button className="demo-btn demo-btn-amber" onClick={() => startSessionTimeout(300)}>
-              <i className="fa-solid fa-clock" aria-hidden="true"></i> Session
-            </button>
-          </Tooltip>
-          <Tooltip text="Are You Sure?" placement="top">
-            <button
-              className="demo-btn demo-btn-blue"
-              onClick={() => showAreYouSure(
-                'Delete Record',
-                'Are you sure you want to delete this record? All associated data will be permanently removed.',
-                'This action is irreversible.',
-                () => toast('Record deleted', 'success'),
-              )}
-            >
-              <i className="fa-solid fa-circle-question" aria-hidden="true"></i> Confirm
-            </button>
-          </Tooltip>
-        </div>,
-        document.body
-      )}
+      {/* 500 Server Error ab blocking dialog nahi — non-blocking toast dikhta hai
+          (onServerError me), taake ek endpoint 500 de to bhi baaki app chalti rahe.
+          Session Timeout + "Are You Sure" demo dialogs aur Demo Trigger bar bhi hata diye. */}
     </>
   );
 }
 
-function fmtMMSS(total) {
-  const t = Math.max(0, total | 0);
-  const m = Math.floor(t / 60);
-  const s = t % 60;
-  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-}
 
 /* ─── One-time stylesheet (1:1 port of HTML's CSS) ────────────── */
 if (typeof document !== 'undefined' && !document.getElementById('sys-dialog-style')) {

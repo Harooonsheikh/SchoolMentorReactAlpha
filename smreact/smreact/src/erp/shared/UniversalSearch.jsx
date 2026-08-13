@@ -109,11 +109,15 @@ export default function UniversalSearch({
     return () => document.removeEventListener('keydown', onKey);
   }, []);
 
-  /* ─── Keep activeIndex sane as the flat list changes. */
-  useEffect(() => { setActiveIndex(0); }, [results.length, open]);
-
-  /* ─── Flatten visible results (top-N flat list across all groups). */
+  /* ─── hasQuery + visible results + empty-state chips (Recent/Suggested/Popular)
+         ka flat list. Jab query khaali ho to keyboard nav inhi chips par chalta hai. */
+  const hasQuery = (query || '').trim().length > 0;
   const visibleResults = results.slice(0, 20);
+  const flatChips = hasQuery ? [] : [...recentSearches, ...suggestedSearches, ...popularSearches];
+  const navLen = hasQuery ? visibleResults.length : flatChips.length;
+
+  /* activeIndex ko list badalne par 0 par reset rakho. */
+  useEffect(() => { setActiveIndex(0); }, [results.length, flatChips.length, hasQuery, open]);
 
   /* ─── Result click handler. */
   const handleSelect = useCallback((res) => {
@@ -124,11 +128,30 @@ export default function UniversalSearch({
     toast?.(`Opening ${res.title}…`, 'info');
   }, [onNavigate, recordVisit, toast]);
 
-  /* ─── Keyboard navigation while panel is open. */
+  /* ─── Chip click (Recent / Suggested / Popular). Agar chip kisi module se
+         map hota hai (e.g. "Active Students" → Students) to SEEDHA us module par
+         redirect kar do; warna purana behaviour (usay search query bana kar chalao). */
+  const handleChip = useCallback((q) => {
+    const target = chipTarget(q);
+    if (target) {
+      setOpen(false);
+      onNavigate?.(target);
+      toast?.(`Opening ${q}…`, 'info');
+    } else {
+      submit(q);
+      inputRef.current?.focus();
+    }
+  }, [onNavigate, submit, toast]);
+
+  /* ─── Keyboard navigation while panel is open.
+         Esc  = search band + input blur
+         ↑/↓  = active item badlo (query ho to results, warna chips)
+         Enter = active item kholo (chip → redirect / result → open) */
   const handleInputKey = (e) => {
     if (e.key === 'Escape') {
       e.preventDefault();
-      if (query) clear(); else setOpen(false);
+      setOpen(false);
+      inputRef.current?.blur();
       return;
     }
     if (!open) {
@@ -140,21 +163,20 @@ export default function UniversalSearch({
     }
     if (e.key === 'ArrowDown') {
       e.preventDefault();
-      setActiveIndex(i => Math.min(visibleResults.length - 1, i + 1));
+      setActiveIndex(i => Math.min(navLen - 1, i + 1));
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
       setActiveIndex(i => Math.max(0, i - 1));
     } else if (e.key === 'Enter') {
       e.preventDefault();
-      if (visibleResults.length > 0 && activeIndex >= 0) {
-        handleSelect(visibleResults[activeIndex]);
-      } else {
-        submit();
+      if (hasQuery) {
+        if (visibleResults.length > 0 && activeIndex >= 0) handleSelect(visibleResults[activeIndex]);
+        else submit();
+      } else if (flatChips.length > 0 && activeIndex >= 0) {
+        handleChip(flatChips[activeIndex]);
       }
     }
   };
-
-  const hasQuery = (query || '').trim().length > 0;
 
   /* ──────────────────────────────────────────────────────────────── */
   return (
@@ -217,12 +239,13 @@ export default function UniversalSearch({
                     </Tooltip>
                   </div>
                   <div className="uvs-chips">
-                    {recentSearches.map(q => (
+                    {recentSearches.map((q, i) => (
                       <button
                         key={q}
                         type="button"
-                        className="uvs-chip"
-                        onClick={() => { submit(q); inputRef.current?.focus(); }}
+                        className={`uvs-chip${activeIndex === i ? ' uvs-chip--active' : ''}`}
+                        onMouseEnter={() => setActiveIndex(i)}
+                        onClick={() => handleChip(q)}
                       >
                         <i className="fa-solid fa-arrow-rotate-left" aria-hidden="true"></i> {q}
                       </button>
@@ -237,16 +260,20 @@ export default function UniversalSearch({
                   </span>
                 </div>
                 <div className="uvs-chips">
-                  {suggestedSearches.map(q => (
+                  {suggestedSearches.map((q, i) => {
+                    const idx = recentSearches.length + i;
+                    return (
                     <button
                       key={q}
                       type="button"
-                      className="uvs-chip"
-                      onClick={() => { submit(q); inputRef.current?.focus(); }}
+                      className={`uvs-chip${activeIndex === idx ? ' uvs-chip--active' : ''}`}
+                      onMouseEnter={() => setActiveIndex(idx)}
+                      onClick={() => handleChip(q)}
                     >
                       <i className="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i> {q}
                     </button>
-                  ))}
+                    );
+                  })}
                 </div>
               </section>
               <section className="uvs-sec">
@@ -256,16 +283,20 @@ export default function UniversalSearch({
                   </span>
                 </div>
                 <div className="uvs-chips">
-                  {popularSearches.map(q => (
+                  {popularSearches.map((q, i) => {
+                    const idx = recentSearches.length + suggestedSearches.length + i;
+                    return (
                     <button
                       key={q}
                       type="button"
-                      className="uvs-chip uvs-chip--ghost"
-                      onClick={() => { submit(q); inputRef.current?.focus(); }}
+                      className={`uvs-chip uvs-chip--ghost${activeIndex === idx ? ' uvs-chip--active' : ''}`}
+                      onMouseEnter={() => setActiveIndex(idx)}
+                      onClick={() => handleChip(q)}
                     >
                       {q}
                     </button>
-                  ))}
+                    );
+                  })}
                 </div>
               </section>
               <div className="uvs-foot">
@@ -370,6 +401,27 @@ export default function UniversalSearch({
 }
 
 /* ─── helpers ─────────────────────────────────────────────────── */
+
+/* Ek quick-search chip label ko ERP module (App.js NAV key) se map karta hai,
+   taake chip par click seedha us module par le jaye. Match keyword-based +
+   case-insensitive hai. Koi match na ho to null (phir normal search chalta hai). */
+function chipTarget(label) {
+  const s = String(label || '').toLowerCase();
+  if (s.includes('student') || s.includes('admission'))                 return 'students';
+  if (s.includes('lesson plan') || s.includes('homework') || s.includes('academic')) return 'acad';
+  if (s.includes('attendance'))                                          return 'att';
+  if (s.includes('fee') || s.includes('defaulter') || s.includes('challan')) return 'fee';
+  if (s.includes('audit'))                                               return 'audit';
+  if (s.includes('exam'))                                                return 'exam';
+  if (s.includes('paper'))                                               return 'paper';
+  if (s.includes('timetable') || s.includes('time table'))              return 'tt';
+  if (s.includes('account') || s.includes('revenue') || s.includes('expense')) return 'accounts';
+  if (s.includes('inventory') || s.includes('stock'))                   return 'inventory';
+  if (s.includes('lead') || s.includes('crm'))                          return 'crm';
+  if (s.includes('staff') || s.includes('employee') || s.includes('leave') || s.includes('payroll') || s.includes('hr')) return 'hr';
+  return null;
+}
+
 function hexToBgTint(hex) {
   /* Cheap tint: hex → rgba(.,.,.,.12). Falls back to brand if parse fails. */
   if (!hex || !/^#[0-9a-f]{6}$/i.test(hex)) return 'rgba(30, 64, 175, .12)';
@@ -517,10 +569,12 @@ if (typeof document !== 'undefined' && !document.getElementById('uvs-style')) {
   cursor: pointer; transition: all .15s;
 }
 .uvs-chip i { color: var(--brand-primary, #1E40AF); font-size: 10px; }
-.uvs-chip:hover {
+.uvs-chip:hover,
+.uvs-chip--active {
   background: var(--brand-light, #DBEAFE);
   border-color: var(--brand-primary, #1E40AF);
 }
+.uvs-chip--active { box-shadow: 0 0 0 2px rgba(30, 64, 175, .18); }
 .uvs-chip--ghost {
   background: var(--bg-card, #fff);
   color: var(--text-secondary, #475569);
@@ -770,7 +824,8 @@ if (typeof document !== 'undefined' && !document.getElementById('uvs-style')) {
   color: #E2E8F8;
 }
 [data-theme="dark"] .uvs-panel .uvs-chip i         { color: #93C5FD; }
-[data-theme="dark"] .uvs-panel .uvs-chip:hover     {
+[data-theme="dark"] .uvs-panel .uvs-chip:hover,
+[data-theme="dark"] .uvs-panel .uvs-chip--active   {
   background: rgba(59, 130, 246, .18);
   border-color: #3B82F6;
 }
