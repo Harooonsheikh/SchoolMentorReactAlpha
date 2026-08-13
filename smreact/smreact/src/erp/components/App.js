@@ -1,6 +1,7 @@
 import React, { lazy, Suspense, useEffect, useState } from 'react';
 import Tooltip from './Tooltip';
 import RouteFallback from '../shared/RouteFallback';
+import SystemDialogs from '../shared/SystemDialogs';
 // eslint-disable-next-line no-unused-vars
 import ComingSoon from '../shared/ComingSoon';
 import { SettingsProvider, TopbarSessionPill } from '../pages/Settings/settingsStore';
@@ -148,10 +149,11 @@ const NAV_SECTIONS = [
 export default function App() {
   const [theme, setTheme] = useState('light');
   /* Active ERP module localStorage me yaad rakho — refresh par usi module par wapas
-     aao (default 'acad' = Academics). */
+     aao. Fresh login par koi saved module nahi hota → default 'dashboard'
+     (pehle 'acad' = Academics tha, is liye login karte hi Academics khulta tha). */
   const [active, setActive] = useState(() => {
-    try { return sessionStorage.getItem('erp_active_module') || 'acad'; }
-    catch (e) { return 'acad'; }
+    try { return sessionStorage.getItem('erp_active_module') || 'dashboard'; }
+    catch (e) { return 'dashboard'; }
   });
   /* Jab bhi module badle, sessionStorage me save — agli refresh isay padh legi.
      (sessionStorage: sirf isi tab ke liye, tab band hote hi apne aap clear.) */
@@ -659,6 +661,10 @@ export default function App() {
         <div className="toast-container">
           {toasts.map(t => <Toast key={t.id} {...t} />)}
         </div>
+
+        {/* System surfaces (slow / offline / server-500) — poore ERP par, real
+            network conditions par khud dikhte hain (fetch-wrapper events). */}
+        <SystemDialogs toast={pushToast} />
 
         {/* ═════════ PROFILE MODAL (lazy-loaded on first open) ═════════ */}
         {/* The lazy ProfileModal chunk is fetched only when the user
