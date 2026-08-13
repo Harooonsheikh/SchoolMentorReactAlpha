@@ -322,12 +322,17 @@ export default function SchoolTab({ schoolInfo, setSchoolInfo, onSave, onSaveDra
           </FG>
 
           <FG fieldErrors={fe} label="Branch Code" id="branchCode">
-            <div className="input-wrapper">
-              <i className="fas fa-id-card input-icon"></i>
-              <input className="form-input has-icon" placeholder="e.g. 5790"
-                value={s('branchCode')}
-                onChange={e => handleChange('branchCode', e.target.value)} />
-            </div>
+            {/* Branch code system-assigned hai — read-only. Hover par wahi dark tooltip
+                (jaise Logout button ka) dikhata hai; background baaki fields jaisa. */}
+            <Tooltip text="Branch code is auto-assigned and cannot be edited">
+              <div className="input-wrapper">
+                <i className="fas fa-id-card input-icon"></i>
+                <input className="form-input has-icon" placeholder="e.g. 5790"
+                  value={s('branchCode')}
+                  readOnly
+                  style={{ background: 'var(--input-bg)', color: 'var(--text-primary)', WebkitTextFillColor: 'var(--text-primary)', opacity: 1, cursor: 'not-allowed' }} />
+              </div>
+            </Tooltip>
           </FG>
 
           <FG fieldErrors={fe} label="School Email" id="branchEmail1" required>

@@ -14,6 +14,7 @@ import * as accountsService from '../../services/accountsService';
 import * as feeService from '../../services/feeService';
 import * as dashboardService from '../../services/dashboardService';
 import * as attendanceService from '../../services/attendanceService';
+import * as hrService from '../../services/hrService';
 import {
   STUDENT_STATS,
   HR_STATS,
@@ -416,6 +417,31 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
     percentage: pctOf(staffAtt.StaffPresent, staffAtt.StaffTotal),
   });
 
+  /* Employees tile ke DEPARTMENT + inactive counts HR module ke SAME source se
+     (getHrDepts / getHrEmployees) — get-dashboard ka ModuleSnapshot.TotalDepartments
+     HR se match nahi karta tha (e.g. dashboard 4 vs HR 3). Load hone tak snap.* fallback. */
+  const [hrCounts, setHrCounts] = useState(null);
+  useEffect(() => {
+    if (!moduleActive('hr')) return undefined;
+    let alive = true;
+    (async () => {
+      try {
+        const [depts, emps] = await Promise.all([
+          hrService.getHrDepts().catch(() => []),
+          hrService.getHrEmployees().catch(() => []),
+        ]);
+        const list = Array.isArray(emps) ? emps : [];
+        if (alive) setHrCounts({
+          depts:    (Array.isArray(depts) ? depts : []).length,
+          active:   list.filter(e => e.status === 'Active').length,
+          inactive: list.filter(e => e.status !== 'Active').length,
+        });
+      } catch { if (alive) setHrCounts(null); }
+    })();
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   /* Revenue Streams — API [{Month, Head, Amount}] ko month-wise total me. */
   const revenueChart = useMemo(() => {
     const byMonth = {};
@@ -440,8 +466,8 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
       meta: <><span className="dash-tile-meta-pill">+{snap.NewStudentsThisWeek || 0} this week</span><span>{snap.InactiveStudents || 0} inactive</span></>,
       target: 'students' },
     moduleActive('hr') && { key: 'hr', accent: MODULE_COLOR.hr, label: 'Employees', icon: 'fa-users',
-      value: snap.TotalEmployees || 0,
-      meta: <><span className="dash-tile-meta-pill">{snap.TotalDepartments || 0} depts</span><span>{snap.InactiveEmployees || 0} inactive</span></>,
+      value: (hrCounts?.active ?? snap.TotalEmployees) || 0,
+      meta: <><span className="dash-tile-meta-pill">{(hrCounts?.depts ?? snap.TotalDepartments) || 0} depts</span><span>{(hrCounts?.inactive ?? snap.InactiveEmployees) || 0} inactive</span></>,
       target: 'hr' },
     moduleActive('academics') && { key: 'activities', accent: MODULE_COLOR.academics, label: 'Activities', icon: 'fa-calendar-days',
       value: actSummary.TotalActivities || 0,
