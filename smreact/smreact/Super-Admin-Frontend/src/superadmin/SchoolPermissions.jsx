@@ -165,7 +165,12 @@ export default function SchoolPermissions({ toast }) {
                   <tr key={s.id}>
                     <td className="td-bold" style={{ color: 'var(--tm)' }}>{idx + 1}</td>
                     <td>
-                      <div style={{ fontWeight: 700, color: 'var(--t1)', fontSize: 13 }}>{s.name}</div>
+                      {/* Hover par branch id — wahi id jo har API (module
+                          permissions, toggle-launch-setup, school progress)
+                          maangti hai, is liye testing me kaam aati hai. */}
+                      <div style={{ fontWeight: 700, color: 'var(--t1)', fontSize: 13 }} title={`Branch ID: ${s.id}`}>
+                        {s.name}
+                      </div>
                       {s.address && (
                         <div style={{ fontSize: 11, color: 'var(--tm)', marginTop: 2 }} title={s.address}>
                           <i className="fa-solid fa-location-dot" style={{ marginRight: 4, opacity: 0.6 }} />{s.address}
@@ -250,7 +255,7 @@ function PermModal({ school, initial, saving, onClose, onSave }) {
         <div className="pm-hdr">
           <div className="pm-av">{school.initials}</div>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div className="pm-school-name">{school.name}</div>
+            <div className="pm-school-name" title={`Branch ID: ${school.id}`}>{school.name}</div>
             <div className="pm-school-meta">
               <span><i className="fa-solid fa-hashtag" style={{ color: 'var(--brand)' }} />{school.schoolCode}</span>
               <span><i className="fa-solid fa-user" style={{ color: 'var(--brand)' }} />{school.principal || '—'}</span>

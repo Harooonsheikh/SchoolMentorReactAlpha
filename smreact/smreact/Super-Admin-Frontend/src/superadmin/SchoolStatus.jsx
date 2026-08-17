@@ -632,7 +632,10 @@ function BranchDetailsModal({ school: s, onClose }) {
             <Row label="Sign Up Date"><span className="detail-val-pill">{s.signupDate || '—'}</span></Row>
           </div>
           <div className="detail-card">
-            <div className="detail-card-title"><i className="fa-solid fa-calendar-check" /> Date &amp; State</div>
+            {/* Card ke andar Launch Setup ke tabs ki halat hai, is liye title
+                bhi wahi — pehle "Date & State" likha tha jo kisi tareekh ya
+                state ki taraf ishara karta tha, jo yahan hai hi nahi. */}
+            <div className="detail-card-title"><i className="fa-solid fa-rocket" /> Launch Setup Data</div>
             <Row label="School Tab"><StatusBadge status={tabs.school} /></Row>
             <Row label="Classes Tab"><StatusBadge status={tabs.classes} /></Row>
             <Row label="Student Tab"><StatusBadge status={tabs.student} /></Row>
@@ -811,7 +814,9 @@ function ErpDetailModal({ school: s, detail, patchDetail, onCounts, toast, onClo
                 <InfoRow label="Sign Up Date"><span className="em-pill-blue">{s.signupDate || '—'}</span></InfoRow>
               </div>
               <div className="em-info-card">
-                <div className="em-ic-title"><i className="fa-solid fa-calendar-check" /> Date &amp; State</div>
+                {/* Yahan bhi Launch Setup hi ke tabs hain (School Tab, Classes,
+                    Student, Department, Staff, Syllabus, Time Table). */}
+                <div className="em-ic-title"><i className="fa-solid fa-rocket" /> Launch Setup Data</div>
                 {tabKeys.map((k) => <InfoRow key={k} label={tabLabels[k]}><StatePill entered={(s.tabs || {})[k] || 'Not Entered'} /></InfoRow>)}
               </div>
             </div>
