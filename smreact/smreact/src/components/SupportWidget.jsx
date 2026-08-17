@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { useSupportChat } from '../support/useSupportChat';
 import { useVoiceRecorder } from '../support/useVoiceRecorder';
 import { toUploadableVoice } from '../support/audio';
+import { downloadKey, isDownloaded, markDownloaded } from '../support/downloads';
 import { VoicePlayer, VideoBubble, ImageGallery } from '../support/MediaBits';
 import { groupChatItems } from '../support/grouping';
 import {
@@ -63,6 +64,10 @@ const UNREAD_POLL_MS = 2000;
    hai). */
 export default function SupportWidget({ toast }) {
   const notify = (msg, type = 'error') => toast?.(msg, type);
+  /* Attachment ke sath caption laazmi hai — upload route par bhi wo [Required]
+     hai. Pehle khali chhodne par file ka naam khud caption ban jata tha, jo
+     user ka likha hua matn nahi tha; ab saaf mana kar dete hain. */
+  const CAPTION_REQUIRED = 'Caption is required';
   /* Open/close + session state */
   const [open, setOpen]         = useState(false);
   const [sessionState, setSession] = useState('active'); // 'active' | 'closed'
@@ -277,7 +282,12 @@ export default function SupportWidget({ toast }) {
      liye wo asli agent ka reply lagta tha jab ke jawab dene wala koi tha hi
      nahi. Ab jo bhi aata hai server se aata hai. */
   const appendOut = (payload) =>
-    setMessages(prev => [...prev, { id: newId(), kind: 'out', time: nowTime(), ...payload }]);
+    setMessages(prev => [...prev, {
+      id: newId(), kind: 'out', time: nowTime(),
+      /* Locally bana bubble hamesha "Sent" — server ne abhi kuch kaha hi nahi. */
+      status: MessageStatus.Sent,
+      ...payload,
+    }]);
 
   const sendText = () => {
     const txt = input.trim();
@@ -371,6 +381,7 @@ export default function SupportWidget({ toast }) {
   const removeImg = (id) => setImgItems(prev => prev.filter(it => it.id !== id));
   const sendImages = () => {
     if (!imgItems.length) return;
+    if (!imgCaption.trim()) { notify(CAPTION_REQUIRED); return; }
     sendItemsTogether('image', imgItems, imgCaption, (it) => ({ image: { name: it.name, src: it.src } }));
     setImgItems([]); setImgCaption(''); setAttachModal(null);
   };
@@ -394,6 +405,7 @@ export default function SupportWidget({ toast }) {
   const removeDoc = (id) => setDocItems(prev => prev.filter(it => it.id !== id));
   const sendDocs = () => {
     if (!docItems.length) return;
+    if (!docMsg.trim()) { notify(CAPTION_REQUIRED); return; }
     sendItemsTogether('document', docItems, docMsg, (it) => ({ doc: { name: it.name, size: it.sizeLabel, ext: it.ext } }));
     setDocItems([]); setDocMsg(''); setAttachModal(null);
   };
@@ -416,6 +428,7 @@ export default function SupportWidget({ toast }) {
   const removeVideo = (id) => setVideoItems(prev => prev.filter(it => it.id !== id));
   const sendVideos = () => {
     if (!videoItems.length) return;
+    if (!videoCaption.trim()) { notify(CAPTION_REQUIRED); return; }
     sendItemsTogether('video', videoItems, videoCaption, (it) => ({ video: { name: it.name, src: it.src } }));
     setVideoItems([]); setVideoCaption(''); setAttachModal(null);
   };
@@ -427,8 +440,9 @@ export default function SupportWidget({ toast }) {
      local bubble ban jati thin. Screen par dohrao nahi hota — groupChatItems
      poore group ka ek hi text dikhata hai.
 
-     User ne kuch na likha ho to file ka apna naam chala jata hai — wahi tareeqa
-     jo agent console par hai (user ko rok kar caption maangne se behtar). */
+     Caption khali ho to yahan tak aate hi nahi — bhejne se pehle rok diya jata
+     hai (CAPTION_REQUIRED). Pehle khali hone par file ka naam khud caption ban
+     jata tha, magar wo user ka likha hua matn nahi hota tha. */
   const sendItemsTogether = (category, items, caption, demoShape) => {
     if (liveConnected) {
       (async () => {
@@ -437,7 +451,7 @@ export default function SupportWidget({ toast }) {
           try {
             // eslint-disable-next-line no-await-in-loop
             await chat.sendAttachment({
-              category, file: it.file, caption: caption.trim() || it.name || category,
+              category, file: it.file, caption: caption.trim(),
             });
           } catch (err) {
             /* Upload nakaam — bubble to dikhao (jo chuna wo gum na ho) magar
@@ -775,11 +789,7 @@ function MessageNode({ m }) {
           )}
           {m._group === 'doc' && (
             <div className="sc-dgroup">{m.items.map((it, i) => (
-              it.url
-                ? <a key={i} href={it.url} target="_blank" rel="noreferrer" download={it.name} style={{ textDecoration: 'none' }}>
-                    <Attachment ico={docIcon(it.ext)} iconBg={docColor(it.ext)} name={it.name} sub={it.size || 'Document'} trailingIcon="fa-download" />
-                  </a>
-                : <Attachment key={i} ico={docIcon(it.ext)} iconBg={docColor(it.ext)} name={it.name} sub={it.size || 'Document'} trailingIcon="fa-download" />
+              <DocAttachment key={i} url={it.url} name={it.name} size={it.size} ext={it.ext} />
             ))}</div>
           )}
           {m.text && <div className="sc-bbl-txt">{m.text}</div>}
@@ -808,15 +818,7 @@ function MessageNode({ m }) {
           <VideoBubble src={m.video.src} name={m.video.name} />
         )}
         {m.doc && (
-          m.doc.url ? (
-            <a href={m.doc.url} target="_blank" rel="noreferrer" download={m.doc.name} style={{ textDecoration: 'none' }}>
-              <Attachment ico={docIcon(m.doc.ext)} iconBg={docColor(m.doc.ext)}
-                name={m.doc.name} sub={m.doc.size || 'Document'} trailingIcon="fa-download" />
-            </a>
-          ) : (
-            <Attachment ico={docIcon(m.doc.ext)} iconBg={docColor(m.doc.ext)}
-              name={m.doc.name} sub={m.doc.size || 'Document'} trailingIcon="fa-download" />
-          )
+          <DocAttachment url={m.doc.url} name={m.doc.name} size={m.doc.size} ext={m.doc.ext} />
         )}
         {m.audio && (
           <VoicePlayer src={m.audio.src} duration={m.audio.seconds || 0} />
@@ -824,7 +826,12 @@ function MessageNode({ m }) {
         {m.text && <div className="sc-bbl-txt">{m.text}</div>}
         <div className="sc-bbl-meta">
           {m.time}
-          {outRow && <i className="fa-solid fa-check-double sc-ticks" aria-hidden="true"></i>}
+          {/* Yahan pehle hard-coded blue double tick laga hua tha — m.status
+              dekha hi nahi jata tha, is liye HAR apna message (saada text aur
+              single attachment) bhejte hi "seen" dikhta tha. Grouped bubble
+              (upar) hamesha se Ticks use karta tha, isi liye farq nazar aata
+              tha. Ab dono ek hi jagah se. */}
+          {outRow && <Ticks status={m.status} />}
         </div>
       </div>
     </div>
@@ -833,10 +840,16 @@ function MessageNode({ m }) {
 
 /* Delivery/read ticks (school side): Sent = single grey, Delivered = double
    grey, Read = double blue. Demo/offline messages have no status → blue. */
+/* Sent = single, Delivered = double grey, Read = double blue.
+   Default JAAN BUJH KAR single hai: pehle yahan default blue tha, is liye jis
+   bubble ke paas status hota hi nahi (locally bana hua echo — attachment,
+   voice note, ya nakaam send) wo foran "seen" dikhta tha halanke doosri taraf
+   ne dekha tak nahi hota tha. Blue sirf tab jab server khud Read kahe. */
 function Ticks({ status }) {
-  if (status === 1) return <i className="fa-solid fa-check sc-tick-sent" aria-hidden="true"></i>;
-  if (status === 2) return <i className="fa-solid fa-check-double sc-tick-deliv" aria-hidden="true"></i>;
-  return <i className="fa-solid fa-check-double sc-ticks" aria-hidden="true"></i>; // Read / default
+  const s = Number(status) || MessageStatus.Sent;
+  if (s >= MessageStatus.Read) return <i className="fa-solid fa-check-double sc-ticks" aria-hidden="true"></i>;
+  if (s === MessageStatus.Delivered) return <i className="fa-solid fa-check-double sc-tick-deliv" aria-hidden="true"></i>;
+  return <i className="fa-solid fa-check sc-tick-sent" aria-hidden="true"></i>;
 }
 
 function Attachment({ ico, iconBg, name, sub, trailingIcon }) {
@@ -853,6 +866,31 @@ function Attachment({ ico, iconBg, name, sub, trailingIcon }) {
         <i className={`fa-solid ${trailingIcon} sc-att-tr`} aria-hidden="true"></i>
       )}
     </div>
+  );
+}
+
+/* Document bubble. Download ho jane par teer hat jata hai (refresh ke baad
+   bhi) — pehle hamesha laga rehta tha, chahe file kai baar utar chuki ho. */
+function DocAttachment({ url, name, size, ext }) {
+  const key = downloadKey(url, name);
+  const [done, setDone] = useState(() => isDownloaded(key));
+  const body = (
+    <Attachment
+      ico={docIcon(ext)} iconBg={docColor(ext)}
+      name={name} sub={size || 'Document'}
+      trailingIcon={done ? null : 'fa-download'}
+    />
+  );
+  if (!url) return body;
+  return (
+    <a
+      href={url} target="_blank" rel="noreferrer" download={name}
+      title={done ? 'Downloaded — click to open again' : 'Download'}
+      onClick={() => { markDownloaded(key); setDone(true); }}
+      style={{ textDecoration: 'none' }}
+    >
+      {body}
+    </a>
   );
 }
 
@@ -1140,7 +1178,9 @@ const SUPPORT_CSS = `
 .sc-daylbl span { background: rgba(255,255,255,.76); border: 1px solid rgba(30,58,138,.12); border-radius: 99px; padding: 3px 11px; font-size: 10.5px; font-weight: 700; color: #64748B; }
 [data-theme="dark"] .sc-daylbl span { background: rgba(14,22,40,.82); color: #6B82A8; border-color: #1C2E50; }
 
-.sc-row { display: flex; gap: 5px; align-items: flex-end; margin-bottom: 4px; }
+/* Avatar bubble ke UPAR se align — pehle flex-end tha, is liye lambi message
+   par "SM" neeche ja kar chipak jata tha aur bhadda lagta tha. */
+.sc-row { display: flex; gap: 5px; align-items: flex-start; margin-bottom: 4px; }
 .sc-row.sc-out { justify-content: flex-end; }
 .sc-av { width: 23px; height: 23px; border-radius: 50%; background: linear-gradient(135deg,#1E3A8A,#2563EB); color: #fff; font-size: 8.5px; font-weight: 800; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import * as supportApi from '../support/api';
-import { MessageType, SenderType, VOICE_NOTE_CAPTION } from '../support/config';
+import { MessageType, SenderType, VOICE_NOTE_CAPTION, fileUrl } from '../support/config';
+import { VoicePlayer, VideoBubble } from '../support/MediaBits';
 import { formatServerDate, formatServerTime, serverSince } from '../support/time';
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -119,7 +120,11 @@ const TYPE_LABEL = {
 const messagePreview = (m) =>
   (m?.messageBody || '').trim() || TYPE_LABEL[m?.messageType] || '';
 
-/* API message → transcript row (wahi shape jo TranscriptRow padhta hai). */
+const extOf = (name) => ((name && name.includes('.')) ? name.split('.').pop().toLowerCase() : '');
+
+/* API message → transcript row (wahi shape jo TranscriptRow padhta hai).
+   Attachment ka chalne wala URL bhi saath — history me file waqai khulni
+   chahiye, sirf uska naam dikhana kaafi nahi. */
 function toTranscriptRow(m) {
   const out = m.senderType === SenderType.Agent;
   /* Voice note ka body sirf API ka laazmi caption hota hai — transcript me
@@ -135,6 +140,11 @@ function toTranscriptRow(m) {
     mediaName: m.attachmentName || '',
     mediaSub: m.attachmentSize ? `${Math.max(1, Math.round(m.attachmentSize / 1024))} KB` : '',
     duration: fmtDuration(m.voiceDuration),
+    /* Asli file — image/video khulti hai, voice bajti hai, document utarta
+       hai. Pehle transcript sirf naam wale placeholders dikhata tha. */
+    src: fileUrl(m.attachmentUrl),
+    seconds: Number(m.voiceDuration) || 0,
+    ext: extOf(m.attachmentName),
   };
   switch (m.messageType) {
     case MessageType.Image:
@@ -563,17 +573,36 @@ function TranscriptRow({ m }) {
       <div className="ov-bbl-wrap">
         {!out && <div className="ov-sndr">{m.sender}</div>}
         <div className={`ov-bbl ${out ? 'ov-bbl-out' : 'ov-bbl-in'}`}>
-          {m.media === 'image' && <MediaPlaceholder icon="fa-image" label={m.mediaName || 'screenshot.png'} tone="#0EA5E9" box />}
-          {m.media === 'video' && <MediaPlaceholder icon="fa-play" label={m.mediaName || 'recording.mp4'} tone="#7C3AED" box />}
-          {m.media === 'voice' && (
-            <div className="ov-voice">
-              <span className="ov-voice-play"><i className="fa-solid fa-play" aria-hidden="true" /></span>
-              <div className="ov-voice-bar"><span style={{ width: '40%' }} /></div>
-              <span className="ov-voice-dur">{m.duration || '0:14'}</span>
-              <i className="fa-solid fa-microphone ov-voice-mic" aria-hidden="true" />
-            </div>
-          )}
-          {m.media === 'document' && <MediaPlaceholder icon="fa-file-pdf" label={m.mediaName || 'guide.pdf'} sub={m.mediaSub || '310 KB · PDF'} tone="#DC2626" />}
+          {/* Asli file mojood ho to wahi chalti/khulti hai; placeholders sirf
+              offline demo transcript ke liye bache hain. */}
+          {m.media === 'image' && (m.src
+            ? <a href={m.src} target="_blank" rel="noreferrer"><img src={m.src} alt={m.mediaName || ''} className="ov-media-img" /></a>
+            : <MediaPlaceholder icon="fa-image" label={m.mediaName || 'screenshot.png'} tone="#0EA5E9" box />)}
+          {m.media === 'video' && (m.src
+            ? <VideoBubble src={m.src} name={m.mediaName} />
+            : <MediaPlaceholder icon="fa-play" label={m.mediaName || 'recording.mp4'} tone="#7C3AED" box />)}
+          {m.media === 'voice' && (m.src
+            ? <VoicePlayer src={m.src} duration={m.seconds} />
+            : (
+              <div className="ov-voice">
+                <span className="ov-voice-play"><i className="fa-solid fa-play" aria-hidden="true" /></span>
+                <div className="ov-voice-bar"><span style={{ width: '40%' }} /></div>
+                <span className="ov-voice-dur">{m.duration || '0:14'}</span>
+                <i className="fa-solid fa-microphone ov-voice-mic" aria-hidden="true" />
+              </div>
+            ))}
+          {m.media === 'document' && (m.src
+            ? (
+              <a href={m.src} target="_blank" rel="noreferrer" download={m.mediaName} className="ov-media-doc">
+                <span className="ov-media-doc-ico"><i className="fa-solid fa-file-lines" aria-hidden="true" /></span>
+                <span className="ov-media-doc-tx">
+                  <span className="ov-media-doc-nm">{m.mediaName || 'Document'}</span>
+                  <span className="ov-media-doc-sz">{[m.mediaSub, (m.ext || '').toUpperCase()].filter(Boolean).join(' · ')}</span>
+                </span>
+                <i className="fa-solid fa-download" aria-hidden="true" />
+              </a>
+            )
+            : <MediaPlaceholder icon="fa-file-pdf" label={m.mediaName || 'guide.pdf'} sub={m.mediaSub || '310 KB · PDF'} tone="#DC2626" />)}
           {m.text && <div className="ov-bbl-txt">{m.text}</div>}
           <div className="ov-bbl-meta">{m.time}{out && <i className="fa-solid fa-check-double ov-ticks" aria-hidden="true" />}</div>
         </div>
@@ -728,6 +757,16 @@ const OVERVIEW_CSS = `
 .ov-mbox-ico { font-size: 26px; }
 .ov-mbox-lbl { font-size: 10.5px; color: var(--ag-tm); font-weight: 600; }
 .ov-mcard { display: flex; align-items: center; gap: 9px; background: var(--ag-soft2); border: 1.5px solid var(--ag-bd); border-radius: 9px; padding: 8px 10px; min-width: 180px; margin-bottom: 5px; }
+
+/* History transcript ki ASLI files (image / video / voice / document) — ye
+   placeholders nahi, inhe khola, chalaya aur utara ja sakta hai. */
+.ov-media-img { max-width: 240px; max-height: 220px; width: auto; border-radius: 9px; display: block; margin-bottom: 5px; cursor: zoom-in; }
+.ov-media-doc { display: flex; align-items: center; gap: 9px; text-decoration: none; color: inherit; background: var(--ag-soft2); border: 1.5px solid var(--ag-bd); border-radius: 9px; padding: 8px 10px; min-width: 200px; margin-bottom: 5px; }
+.ov-media-doc:hover { border-color: var(--ag-bd2); }
+.ov-media-doc-ico { width: 30px; height: 30px; border-radius: 8px; flex-shrink: 0; background: linear-gradient(135deg,#b91c1c,#dc2626); color: #fff; font-size: 12px; display: flex; align-items: center; justify-content: center; }
+.ov-media-doc-tx { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.ov-media-doc-nm { font-size: 12px; font-weight: 700; color: var(--ag-t1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ov-media-doc-sz { font-size: 10.5px; color: var(--ag-tm); }
 .ov-mcard-ico { width: 32px; height: 32px; border-radius: 8px; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 13px; flex-shrink: 0; }
 .ov-mcard-nm { font-size: 12px; font-weight: 700; }
 .ov-mcard-sz { font-size: 10px; color: var(--ag-tm); }

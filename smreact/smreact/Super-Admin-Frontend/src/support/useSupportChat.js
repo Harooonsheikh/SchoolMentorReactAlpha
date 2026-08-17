@@ -67,11 +67,41 @@ export function useSupportChat({
   const typingTimerRef = useRef(null);
   const typingActiveRef = useRef(false);
   const seenRef = useRef(new Set());  // message ids already handed to the caller
+  /* Apne bheje hue messages ka aakhri maloom status (messageId -> 1|2|3).
+     Ticks isi se chalte hain: server par status Sent -> Delivered -> Read hota
+     rehta hai magar message "naya" nahi hota, is liye poll usay chhod deta tha
+     aur bubble hamesha single tick par atka rehta tha. */
+  const outStatusRef = useRef(new Map());
+  /* Koi apna message abhi tak Read nahi hua? Tab tak poora sync har tick par
+     karo taake tick foran double/blue ho jaye. */
+  const awaitingAckRef = useRef(false);
+  /* Kis session ke band hone ka elaan ho chuka — dobara na ho. */
+  const closedAnnouncedRef = useRef(null);
+
+  /* "Dekh liya" ke liye conversation ka khula hona kaafi nahi — window par
+     nazar bhi honi chahiye. Do window saath saath khuli hon (ERP ek taraf,
+     console doosri taraf) to sirf `viewing` dekhne par school ka message aate
+     hi read ho jata tha aur usay foran blue tick mil jata tha, halanke agent
+     ne dekha tak nahi hota tha. Tab chhupi ho ya window focus me na ho to ab
+     sirf "delivered"; focus wapas aate hi read. */
+  const [pageActive, setPageActive] = useState(() => isPageActive());
+  useEffect(() => {
+    const update = () => setPageActive(isPageActive());
+    document.addEventListener('visibilitychange', update);
+    window.addEventListener('focus', update);
+    window.addEventListener('blur', update);
+    return () => {
+      document.removeEventListener('visibilitychange', update);
+      window.removeEventListener('focus', update);
+      window.removeEventListener('blur', update);
+    };
+  }, []);
+  const isViewing = viewing && pageActive;
 
   /* Handlers dobara subscribe kiye baghair taza halat — poll aur SignalR dono
      isi ref se dekhte hain ke user saamne hai ya nahi. */
-  const viewingRef = useRef(viewing);
-  viewingRef.current = viewing;
+  const viewingRef = useRef(isViewing);
+  viewingRef.current = isViewing;
 
   // Keep callbacks fresh without re-subscribing handlers.
   const cb = useRef({});
@@ -114,6 +144,28 @@ export function useSupportChat({
   }, [outSenderType]);
 
   const setSession = useCallback((id) => { sessionRef.current = id; setSessionId(id); }, []);
+
+  /* Server ke taza rows dekh kar apne bubbles ke ticks aage barhao. Sirf wo
+     ids bhejte hain jinka status waqai barha ho — warna har sync par be-wajah
+     re-render hota. */
+  const syncOutTicks = useCallback((id, rows) => {
+    const delivered = [];
+    const read = [];
+    let pending = false;
+    (rows || []).forEach((m) => {
+      if (m.senderType !== outSenderType) return;
+      const st = Number(m.messageStatus) || MessageStatus.Sent;
+      if (st < MessageStatus.Read) pending = true;
+      const prev = outStatusRef.current.get(m.messageId) || 0;
+      if (st <= prev) return;
+      outStatusRef.current.set(m.messageId, st);
+      if (st >= MessageStatus.Read) read.push(m.messageId);
+      else if (st === MessageStatus.Delivered) delivered.push(m.messageId);
+    });
+    awaitingAckRef.current = pending;
+    if (delivered.length) cb.current.onReceipt?.({ type: 'delivered', sessionId: id, messageIds: delivered });
+    if (read.length) cb.current.onReceipt?.({ type: 'read', sessionId: id, messageIds: read });
+  }, [outSenderType]);
 
   /* Apni taraf se "read" karte waqt local bubbles bhi read kar do.
      Server ko markRead bhej dena kaafi nahi: caller ke paas maujood messages ka
@@ -275,6 +327,15 @@ export function useSupportChat({
     // Everything in the history is already on screen — the poller must not
     // re-announce it as newly arrived.
     seenRef.current = new Set(rows.map((m) => m.messageId));
+    /* History sahi statuses laati hai — unhi ko ticks ka baseline maano, warna
+       pehle sync par har purana message dobara "receipt" ban jata. */
+    outStatusRef.current = new Map(
+      rows.filter((m) => m.senderType === outSenderType)
+        .map((m) => [m.messageId, Number(m.messageStatus) || MessageStatus.Sent]),
+    );
+    awaitingAckRef.current = rows.some(
+      (m) => m.senderType === outSenderType && (Number(m.messageStatus) || 1) < MessageStatus.Read,
+    );
     cb.current.onHistory?.(rows.map(toUi));
 
     // Mark the other side's unread messages as read.
@@ -292,12 +353,15 @@ export function useSupportChat({
      hota. Ab jab bhi conversation saamne aati hai, us waqt tak ke un-read
      messages read kar diye jate hain. */
   useEffect(() => {
-    if (!viewing || status !== 'connected' || !sessionId) return;
+    if (!isViewing || status !== 'connected' || !sessionId) return;
     let cancelled = false;
     (async () => {
       try {
         const detail = await api.getSessionDetail(sessionId);
         if (cancelled) return;
+        /* Apne bubbles ke ticks bhi yahin taza — conversation par wapas aate
+           waqt purana (single/grey) tick para rehta tha. */
+        syncOutTicks(sessionId, detail.messages);
         const unread = (detail.messages || [])
           .filter((m) => m.senderType !== outSenderType && m.messageStatus < MessageStatus.Read)
           .map((m) => m.messageId);
@@ -306,7 +370,7 @@ export function useSupportChat({
     })();
     // eslint-disable-next-line consistent-return
     return () => { cancelled = true; };
-  }, [viewing, status, sessionId, outSenderType, markReadNow]);
+  }, [isViewing, status, sessionId, outSenderType, markReadNow, syncOutTicks]);
 
   /* ── Polling fallback ──────────────────────────────────────────────
      Only runs while REST is up but the hub is not (e.g. /hubs/support is not
@@ -317,13 +381,18 @@ export function useSupportChat({
     let cancelled = false;
     let ticks = 0;
     let lastStamp = null;   // aakhri maloom lastMessageAt
+    let timer = null;
+    /* Band ho chuki session par poll ka koi kaam nahi — rok do. */
+    const stopPolling = () => { cancelled = true; if (timer) clearInterval(timer); };
 
     const tick = async () => {
       try {
         ticks += 1;
         /* Sasta check: sessions list chhoti rows deti hai. Jab tak
            lastMessageAt na badle, poora transcript maangne ka faida nahi. */
-        if (ticks % FULL_SYNC_EVERY !== 0) {
+        /* Apna koi message abhi Read na hua ho to sasta check kaafi nahi:
+           status badalne se lastMessageAt nahi badalta. */
+        if (ticks % FULL_SYNC_EVERY !== 0 && !awaitingAckRef.current) {
           const { items } = await api.getActiveSessions(1, 25);
           if (cancelled) return;
           const row = (items || []).find((s) => s.sessionId === sessionId);
@@ -335,11 +404,19 @@ export function useSupportChat({
         const detail = await api.getSessionDetail(sessionId);
         if (cancelled) return;
         lastStamp = detail.lastMessageAt || lastStamp;
+        /* Apne bubbles ke ticks — "fresh" messages se pehle. */
+        syncOutTicks(sessionId, detail.messages);
         const fresh = (detail.messages || []).filter((m) => !seenRef.current.has(m.messageId));
         // Without the hub there is no SessionClosed event, so notice it here.
         if (detail.sessionStatus === SessionStatus.Closed) {
           fresh.forEach((m) => { seenRef.current.add(m.messageId); cb.current.onInbound?.(toUi(m)); });
-          cb.current.onSessionClosed?.(sessionId);
+          /* Band hone ka elaan SIRF EK BAAR — warna har tick par dobara chalta
+             hai (session to band hi rehti hai) aur poll bhi be-wajah jari. */
+          if (closedAnnouncedRef.current !== sessionId) {
+            closedAnnouncedRef.current = sessionId;
+            cb.current.onSessionClosed?.(sessionId);
+          }
+          stopPolling();
           return;
         }
         if (!fresh.length) return;
@@ -361,9 +438,9 @@ export function useSupportChat({
         }
       } catch (e) { /* transient — retry on the next tick */ }
     };
-    const timer = setInterval(tick, POLL_INTERVAL_MS);
-    return () => { cancelled = true; clearInterval(timer); };
-  }, [status, realtime, sessionId, toUi, outSenderType, markReadNow]);
+    timer = setInterval(tick, POLL_INTERVAL_MS);
+    return stopPolling;
+  }, [status, realtime, sessionId, toUi, outSenderType, markReadNow, syncOutTicks]);
 
   /* ── Inbox polling (agent side only) ───────────────────────────────
      The block above watches the conversation that is already open. Without the
@@ -403,8 +480,19 @@ export function useSupportChat({
       if (connRef.current) { try { await joinSession(connRef.current, newId); } catch { /* ignore */ } }
     }
     // Echo immediately; SignalR may also deliver it → caller dedupes by id.
-    if (result.message?.messageId != null) seenRef.current.add(result.message.messageId);
-    cb.current.onInbound?.(toUi(result.message));
+    if (result.message?.messageId != null) {
+      seenRef.current.add(result.message.messageId);
+      /* Abhi bheja hai → hamesha "Sent". Send ke response ke status par
+         bharosa nahi: kabhi wo pehle se Read (3) de deta hai, jis se apna
+         message bhejte hi blue ho jata tha halanke doosri taraf ne dekha bhi
+         nahi hota. Asli status GET se aata hai (syncOutTicks), jo sirf AAGE
+         barhata hai — is liye baseline yahin Sent rakhna zaroori hai. */
+      outStatusRef.current.set(result.message.messageId, MessageStatus.Sent);
+      awaitingAckRef.current = true;
+    }
+    /* Bubble bhi "Sent" par — response ka status galat ho to bhi tick
+       galat na ho; asli haal poll/GET se aayega. */
+    cb.current.onInbound?.({ ...toUi(result.message), status: MessageStatus.Sent });
     return result;
   }, [toUi, setSession]);
 
@@ -418,8 +506,19 @@ export function useSupportChat({
       setSession(newId);
       if (connRef.current) { try { await joinSession(connRef.current, newId); } catch { /* ignore */ } }
     }
-    if (result.message?.messageId != null) seenRef.current.add(result.message.messageId);
-    cb.current.onInbound?.(toUi(result.message));
+    if (result.message?.messageId != null) {
+      seenRef.current.add(result.message.messageId);
+      /* Abhi bheja hai → hamesha "Sent". Send ke response ke status par
+         bharosa nahi: kabhi wo pehle se Read (3) de deta hai, jis se apna
+         message bhejte hi blue ho jata tha halanke doosri taraf ne dekha bhi
+         nahi hota. Asli status GET se aata hai (syncOutTicks), jo sirf AAGE
+         barhata hai — is liye baseline yahin Sent rakhna zaroori hai. */
+      outStatusRef.current.set(result.message.messageId, MessageStatus.Sent);
+      awaitingAckRef.current = true;
+    }
+    /* Bubble bhi "Sent" par — response ka status galat ho to bhi tick
+       galat na ho; asli haal poll/GET se aayega. */
+    cb.current.onInbound?.({ ...toUi(result.message), status: MessageStatus.Sent });
     return result;
   }, [toUi, setSession]);
 
@@ -455,6 +554,10 @@ export function useSupportChat({
     const conn = connRef.current;
     if (conn && sessionRef.current) leaveSession(conn, sessionRef.current).catch(() => {});
     seenRef.current = new Set();
+    /* Nayi guftagu — ticks aur "band ho gayi" wala guard dono naye sire se. */
+    outStatusRef.current = new Map();
+    awaitingAckRef.current = false;
+    closedAnnouncedRef.current = null;
     setSession(null);
   }, [setSession]);
 
@@ -481,6 +584,14 @@ export function useSupportChat({
        `realtime` says whether the SignalR hub is also up. */
     connected: status === 'connected',
   };
+}
+
+/* Screen par nazar hai? Tab chhupi ho ya window focus me na ho to aane wale
+   message ko "read" nahi kehna chahiye — sirf delivered. */
+function isPageActive() {
+  if (typeof document === 'undefined') return true;
+  if (document.visibilityState === 'hidden') return false;
+  return typeof document.hasFocus === 'function' ? document.hasFocus() : true;
 }
 
 /* ── attachment display helpers ── */

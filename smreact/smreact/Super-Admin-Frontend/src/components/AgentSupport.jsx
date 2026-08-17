@@ -3,9 +3,10 @@ import { useSupportChat, formatTime } from '../support/useSupportChat';
 import { useVoiceRecorder } from '../support/useVoiceRecorder';
 import { toUploadableVoice } from '../support/audio';
 import { serverDate } from '../support/time';
+import { downloadKey, isDownloaded, markDownloaded } from '../support/downloads';
 import { VoicePlayer, VideoBubble, ImageGallery } from '../support/MediaBits';
 import { groupChatItems } from '../support/grouping';
-import { SUPPORT_BACKEND_ENABLED, ATTACH_LIMITS, VOICE_NOTE_CAPTION } from '../support/config';
+import { SUPPORT_BACKEND_ENABLED, ATTACH_LIMITS, VOICE_NOTE_CAPTION, MessageStatus } from '../support/config';
 import * as supportApi from '../support/api';
 /* Notes aur Bug/Improvement Support ki apni API par nahi jate — wahi
    Super-Admin routes hain jo Schools Progress screen use karti hai, taake ek hi
@@ -31,6 +32,10 @@ const agAttId = () => `aatt${_agAttId++}`;
    Mounted full-screen when the URL hash is #agent (see components/App.js)
    so it can be viewed without touching the school ERP shell.
    ═══════════════════════════════════════════════════════════════════ */
+
+/* Attachment ke sath caption laazmi — upload route par bhi wo [Required] hai,
+   aur file ka naam khud caption bana dena user ka likha hua matn nahi hota. */
+const CAPTION_REQUIRED = 'Caption is required';
 
 /* "Assign To" ke naam ab API se aate hain (GET /api/Auth/get-all-users) — wahi
    directory jo Schools Progress ke Assigned-To dropdown chalati hai. Pehle
@@ -132,7 +137,13 @@ export default function AgentSupport({ embedded = false, tab, onTab, showBack = 
     setTimeout(() => setToast(null), 2600);
   };
 
-  const append = (payload) => setMessages(prev => [...prev, { id: newId(), ...payload }]);
+  /* Locally bana hua apna bubble hamesha "Sent" — server ne abhi kuch kaha hi
+     nahi, is liye tick single rehna chahiye (blue sirf server ke Read par). */
+  const append = (payload) => setMessages(prev => [...prev, {
+    id: newId(),
+    ...(payload.kind === 'out' ? { status: MessageStatus.Sent } : null),
+    ...payload,
+  }]);
 
   /* ─── Live backend wiring (REST + SignalR), agent perspective.
          Note / Bug / Improvement cards stay client-side (internal, Phase 2
@@ -460,9 +471,11 @@ export default function AgentSupport({ embedded = false, tab, onTab, showBack = 
   /* Upload a batch as individual messages (grouped at render time).
      Caption HAR file ke saath jata hai — upload route par wo [Required] hai
      (khali par 400 "The caption field is required"), is liye pehle sirf pehli
-     file jati thi aur baqi chup-chaap fail ho jati thin. Agent ne kuch na
-     likha ho to file ka naam chala jata hai. Screen par dohrao nahi hota:
-     groupChatItems poore group ka ek hi text dikhata hai. */
+     file jati thi aur baqi chup-chaap fail ho jati thin. Caption khali ho to
+     yahan tak aate hi nahi — bhejne se pehle rok diya jata hai
+     (CAPTION_REQUIRED); pehle file ka naam khud caption ban jata tha, magar wo
+     likha hua matn nahi hota tha. Screen par dohrao nahi hota: groupChatItems
+     poore group ka ek hi text dikhata hai. */
   const sendItemsTogether = (category, items, caption, demoShape, label) => {
     if (liveConnected) {
       (async () => {
@@ -473,7 +486,7 @@ export default function AgentSupport({ embedded = false, tab, onTab, showBack = 
           try {
             // eslint-disable-next-line no-await-in-loop
             await chat.sendAttachment({
-              category, file: it.file, caption: caption.trim() || it.name || label,
+              category, file: it.file, caption: caption.trim(),
             });
           } catch (err) { ok = false; lastError = err; }
         }
@@ -507,6 +520,7 @@ export default function AgentSupport({ embedded = false, tab, onTab, showBack = 
   const removeImg = (id) => setImgItems(prev => prev.filter(it => it.id !== id));
   const sendImages = () => {
     if (!imgItems.length) return;
+    if (!imgCaption.trim()) { showToast(CAPTION_REQUIRED, 'warn'); return; }
     sendItemsTogether('image', imgItems, imgCaption, (it) => ({ image: { name: it.name, src: it.src, size: 'Image' } }), 'Images');
     setImgItems([]); setImgCaption(''); setModal(null);
   };
@@ -530,6 +544,7 @@ export default function AgentSupport({ embedded = false, tab, onTab, showBack = 
   const removeDoc = (id) => setDocItems(prev => prev.filter(it => it.id !== id));
   const sendDocs = () => {
     if (!docItems.length) return;
+    if (!docMsg.trim()) { showToast(CAPTION_REQUIRED, 'warn'); return; }
     sendItemsTogether('document', docItems, docMsg, (it) => ({ doc: { name: it.name, size: it.sizeLabel, ext: it.ext } }), 'Documents');
     setDocItems([]); setDocMsg(''); setModal(null);
   };
@@ -552,6 +567,7 @@ export default function AgentSupport({ embedded = false, tab, onTab, showBack = 
   const removeVideo = (id) => setVideoItems(prev => prev.filter(it => it.id !== id));
   const sendVideos = () => {
     if (!videoItems.length) return;
+    if (!videoCaption.trim()) { showToast(CAPTION_REQUIRED, 'warn'); return; }
     sendItemsTogether('video', videoItems, videoCaption, (it) => ({ video: { name: it.name, src: it.src } }), 'Videos');
     setVideoItems([]); setVideoCaption(''); setModal(null);
   };
@@ -942,16 +958,7 @@ function AgMsg({ m, onToast }) {
             {m._group === 'video' && <div className="ag-vgroup">{m.items.map((it, i) => <VideoBubble key={i} src={it.src} name={it.name} />)}</div>}
             {m._group === 'doc' && (
               <div className="ag-dgroup">{m.items.map((it, i) => (
-                it.url
-                  ? <a key={i} href={it.url} target="_blank" rel="noreferrer" download={it.name} className="ag-att" style={{ textDecoration: 'none' }}>
-                      <div className="ag-att-ico" style={{ background: docColor(it.ext) }}><i className={`fa-solid ${docIcon(it.ext)}`} aria-hidden="true" /></div>
-                      <div className="ag-att-tx"><div className="ag-att-nm">{it.name}</div><div className="ag-att-sz">{it.size}</div></div>
-                      <i className="fa-solid fa-download ag-att-dl" aria-hidden="true" />
-                    </a>
-                  : <div key={i} className="ag-att" onClick={() => onToast('Downloading…', 'info')}>
-                      <div className="ag-att-ico" style={{ background: docColor(it.ext) }}><i className={`fa-solid ${docIcon(it.ext)}`} aria-hidden="true" /></div>
-                      <div className="ag-att-tx"><div className="ag-att-nm">{it.name}</div><div className="ag-att-sz">{it.size}</div></div>
-                    </div>
+                <DocAttachment key={i} url={it.url} name={it.name} size={it.size} ext={it.ext} onToast={onToast} />
               ))}</div>
             )}
             {m.text && <div className="ag-bbl-txt">{m.text}</div>}
@@ -979,18 +986,7 @@ function AgMsg({ m, onToast }) {
             </div>
           )}
           {m.doc && (
-            m.doc.url ? (
-              <a href={m.doc.url} target="_blank" rel="noreferrer" download={m.doc.name} className="ag-att" style={{ textDecoration: 'none' }}>
-                <div className="ag-att-ico" style={{ background: docColor(m.doc.ext) }}><i className={`fa-solid ${docIcon(m.doc.ext)}`} aria-hidden="true"></i></div>
-                <div className="ag-att-tx"><div className="ag-att-nm">{m.doc.name}</div><div className="ag-att-sz">{m.doc.size}</div></div>
-                <i className="fa-solid fa-download ag-att-dl" aria-hidden="true"></i>
-              </a>
-            ) : (
-              <div className="ag-att" onClick={() => onToast('Downloading…', 'info')}>
-                <div className="ag-att-ico" style={{ background: docColor(m.doc.ext) }}><i className={`fa-solid ${docIcon(m.doc.ext)}`} aria-hidden="true"></i></div>
-                <div className="ag-att-tx"><div className="ag-att-nm">{m.doc.name}</div><div className="ag-att-sz">{m.doc.size}</div></div>
-              </div>
-            )
+            <DocAttachment url={m.doc.url} name={m.doc.name} size={m.doc.size} ext={m.doc.ext} onToast={onToast} />
           )}
           {m.audio && (
             <VoicePlayer src={m.audio.src} duration={m.audio.seconds || 0} accent="#1E3A8A" />
@@ -1304,11 +1300,47 @@ function fmtDate(iso) {
   if (!d) return '';
   return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
 }
-/* Delivery/read ticks: Sent = single, Delivered = double grey, Read = double blue. */
+/* Document bubble. Download ho jane par teer hat jata hai (refresh ke baad
+   bhi) — pehle hamesha laga rehta tha, chahe file kai baar utar chuki ho. */
+function DocAttachment({ url, name, size, ext, onToast }) {
+  const key = downloadKey(url, name);
+  const [done, setDone] = useState(() => isDownloaded(key));
+  const inner = (
+    <>
+      <div className="ag-att-ico" style={{ background: docColor(ext) }}><i className={`fa-solid ${docIcon(ext)}`} aria-hidden="true" /></div>
+      <div className="ag-att-tx"><div className="ag-att-nm">{name}</div><div className="ag-att-sz">{size}</div></div>
+      {!done && <i className="fa-solid fa-download ag-att-dl" aria-hidden="true" />}
+    </>
+  );
+  if (!url) {
+    return (
+      <div className="ag-att" onClick={() => onToast?.('File not available', 'warn')}>
+        <div className="ag-att-ico" style={{ background: docColor(ext) }}><i className={`fa-solid ${docIcon(ext)}`} aria-hidden="true" /></div>
+        <div className="ag-att-tx"><div className="ag-att-nm">{name}</div><div className="ag-att-sz">{size}</div></div>
+      </div>
+    );
+  }
+  return (
+    <a
+      href={url} target="_blank" rel="noreferrer" download={name} className="ag-att"
+      title={done ? 'Downloaded — click to open again' : 'Download'}
+      onClick={() => { markDownloaded(key); setDone(true); }}
+      style={{ textDecoration: 'none' }}
+    >
+      {inner}
+    </a>
+  );
+}
+
+/* Delivery/read ticks: Sent = single, Delivered = double grey, Read = double blue.
+   Default JAAN BUJH KAR single hai: pehle default blue tha, is liye jis bubble
+   ke paas status hota hi nahi (locally bana hua echo) wo foran "seen" dikhta
+   tha halanke school ne dekha tak nahi hota tha. */
 function Ticks({ status }) {
-  if (status === 1) return <i className="fa-solid fa-check ag-tick-sent" aria-hidden="true" />;
-  if (status === 2) return <i className="fa-solid fa-check-double ag-tick-deliv" aria-hidden="true" />;
-  return <i className="fa-solid fa-check-double ag-ticks" aria-hidden="true" />; // Read / default
+  const s = Number(status) || MessageStatus.Sent;
+  if (s >= MessageStatus.Read) return <i className="fa-solid fa-check-double ag-ticks" aria-hidden="true" />;
+  if (s === MessageStatus.Delivered) return <i className="fa-solid fa-check-double ag-tick-deliv" aria-hidden="true" />;
+  return <i className="fa-solid fa-check ag-tick-sent" aria-hidden="true" />;
 }
 function liveStatusLabel(status) {
   switch (status) {
@@ -1395,7 +1427,9 @@ const AGENT_CSS = `
 .ag-msgs { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 4px; background: var(--ag-msg-bg); }
 .ag-day { text-align: center; margin: 12px 0; }
 .ag-day span { background: var(--ag-daypill); border: 1px solid var(--ag-bd2); border-radius: 99px; padding: 4px 14px; font-size: 11px; font-weight: 700; color: var(--ag-tm); }
-.ag-row { display: flex; gap: 8px; align-items: flex-end; margin-bottom: 8px; }
+/* Avatar bubble ke UPAR se align — flex-end par lambi message ke sath neeche
+   ja kar chipakta tha, jo dekhne me theek nahi lagta. */
+.ag-row { display: flex; gap: 8px; align-items: flex-start; margin-bottom: 8px; }
 .ag-row.ag-out { justify-content: flex-end; }
 .ag-bbl-wrap { max-width: 66%; }
 .ag-sndr { font-size: 10.5px; font-weight: 800; color: #1E3A8A; margin-bottom: 3px; }

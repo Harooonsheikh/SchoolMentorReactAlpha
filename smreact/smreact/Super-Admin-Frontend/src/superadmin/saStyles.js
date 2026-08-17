@@ -283,6 +283,30 @@ export const SA_CSS = `
    that so it flows within the page content under the header + tabs. */
 .sa-root .sa-support-embed{min-height:560px;display:flex;flex-direction:column}
 .sa-root .sa-support-embed .ag-root{position:static;inset:auto;z-index:auto;flex:1;min-height:560px;border:1px solid var(--bl);border-radius:var(--r-xl);overflow:hidden}
+/* Agent Inbox ki bulandi bandhi honi chahiye, warna uske andar ka apna scroll
+   chalta hi nahi. Standalone console position:fixed hone ki wajah se screen
+   jitna bulanda hota hai; yahan position:static kar dene se koi had nahi
+   rehti, is liye conversation lambi hoti chali jati thi — message area ka
+   overflow-y kabhi kaam hi nahi aata tha aur reply box tak pahunchne ke liye
+   poora page neeche karna parta tha.
+
+   Tareeqa: page ke content area ko flex column bana kar embed ko baqi bachi
+   hui SAARI bulandi de dete hain (koi magic number nahi). Us se console utna
+   hi bulanda hota hai jitni jagah header + tabs ke neeche bachti hai, teenon
+   columns barabar rehte hain, aur har ek apna vertical scroll dikhata hai:
+   conversation (.ag-msgs), inbox list (.ag-inbox-list), sidebar (.ag-side).
+
+   :has() na chalne wali soorat me neeche wali max-height fallback ka kaam
+   deti hai. Ye had poori row par hai, sirf chat par nahi — pehle sirf chat par
+   thi to teenon columns ki bulandi alag alag ho jati thi (chat chhota, side
+   panels apne content jitne lambe). Aur saada height shell par chalta nahi:
+   wo column-flex ka item hai jispar flex:1 hai, aur flex-basis height ko
+   override kar deta hai; max-height flex resolve hone ke BAAD lagti hai.
+   Sirf Inbox par asar; Overview (.ov-root) pehle ki tarah page ke sath. */
+.sa-root .page-content:has(.sa-support-embed){display:flex;flex-direction:column}
+.sa-root .sa-support-embed{flex:1;min-height:460px}
+.sa-root .sa-support-embed .ag-root{min-height:0}
+.sa-root .sa-support-embed .ag-shell{max-height:calc(100vh - 170px);min-height:0}
 
 /* ══════════ E-TUBE MODULE ══════════ */
 .sa-root .et-ph{display:flex;align-items:flex-start;gap:16px;margin-bottom:22px}
