@@ -1052,6 +1052,7 @@ function TaskAssignModal({ open, staff, classesData, setClassesData, onClose, on
 export default function StaffTab({ staffData, setStaffData, deptsData, setDeptsData, schoolInfo, showToast, showSuccess, classesData, setClassesData, onContinue }) {
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
+  const [perPage, setPerPage] = useState(STAFF_PER_PAGE);   // rows per page (10 / 20 / 50 / 100)
   const [expandedId, setExpandedId] = useState(null);
   const [staffModalTarget, setStaffModalTarget] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
@@ -1191,9 +1192,9 @@ const [taskTarget, setTaskTarget] = useState(null);
         || s.designation?.toLowerCase().includes(search.toLowerCase()))
     : staffData;
 
-  const pages = Math.ceil(filtered.length / STAFF_PER_PAGE) || 1;
+  const pages = Math.ceil(filtered.length / perPage) || 1;
   const currentPage = Math.min(page, pages);
-  const paged = filtered.slice((currentPage - 1) * STAFF_PER_PAGE, currentPage * STAFF_PER_PAGE);
+  const paged = filtered.slice((currentPage - 1) * perPage, currentPage * perPage);
 
   const handleSave = (form) => {
     if (form.id && staffData.find(s => s.id === form.id)) {
@@ -1353,14 +1354,14 @@ const [taskTarget, setTaskTarget] = useState(null);
               <div className="empty-sub">Add your first employee to get started.</div>
             </div>
           ) : paged.map((s, i) => {
-            const globalIdx = (currentPage - 1) * STAFF_PER_PAGE + i + 1;
+            const globalIdx = (currentPage - 1) * perPage + i + 1;
             const exp = expandedId === s.id;
             const col = COLORS[i % COLORS.length];
             return (
               <div key={s.id} className="staff-row-wrap">
                 <div className={`staff-row${exp ? ' expanded-row' : ''}`} onClick={() => setExpandedId(exp ? null : s.id)}>
                   <div className="td" onClick={e => e.stopPropagation()}>
-                    <input className="seq-input" type="number" value={globalIdx} readOnly />
+                    <input className="seq-input" type="number" value={globalIdx} readOnly style={{ width: 46 }} />
                   </div>
                   <div className="td">
                     <div style={{ width: 30, height: 30, borderRadius: 8, background: col, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, color: '#fff', marginRight: 9, flexShrink: 0 }}>
@@ -1494,7 +1495,19 @@ const [taskTarget, setTaskTarget] = useState(null);
           })}
         </div>
         <div className="pagination">
-          <div className="pagination-info">Showing <strong>{paged.length}</strong> of <strong>{filtered.length}</strong> staff</div>
+          <div className="pagination-info">
+            Showing <strong>{paged.length}</strong> of <strong>{filtered.length}</strong> staff
+            <span className="per-page-wrap">
+              <select
+                title="Rows per page"
+                className="per-page-select"
+                value={perPage}
+                onChange={e => { setPerPage(Number(e.target.value)); setPage(1); }}
+              >
+                {[8, 10, 20, 50, 100].map(n => <option key={n} value={n}>{n}</option>)}
+              </select>
+            </span>
+          </div>
           <div className="pagination-pages">
             <button className="page-btn" onClick={() => setPage(p => Math.max(1, p - 1))} disabled={currentPage === 1}>
               <i className="fas fa-chevron-left"></i>

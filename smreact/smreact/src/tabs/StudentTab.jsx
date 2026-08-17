@@ -397,6 +397,7 @@ export default function StudentTab({ classesData, setClassesData, studentStrengt
   const [search, setSearch] = useState('');
   const [expandedKey, setExpandedKey] = useState(null);
   const [page, setPage] = useState(1);
+  const [perPage, setPerPage] = useState(8);   // rows per page — pagination dropdown
   const [students, setStudents] = useState({}); // { key: [student...] }
   const [showStudentModal, setShowStudentModal] = useState(false);
   const [stuTarget, setStuTarget] = useState(null);
@@ -413,7 +414,7 @@ export default function StudentTab({ classesData, setClassesData, studentStrengt
   const [importing, setImporting] = useState(false);
   const importInputRef = useRef(null);
 
-  const STU_PER_PAGE = 8;
+  const STU_PER_PAGE = 8;   // default rows per page
 
   const buildRows = () => {
     const rows = [];
@@ -431,9 +432,9 @@ export default function StudentTab({ classesData, setClassesData, studentStrengt
         (sec?.sectionName && sec.sectionName.toLowerCase().includes(search.toLowerCase())))
     : allRows;
 
-  const pages = Math.ceil(filtered.length / STU_PER_PAGE) || 1;
+  const pages = Math.ceil(filtered.length / perPage) || 1;
   const currentPage = Math.min(page, pages);
-  const paged = filtered.slice((currentPage - 1) * STU_PER_PAGE, currentPage * STU_PER_PAGE);
+  const paged = filtered.slice((currentPage - 1) * perPage, currentPage * perPage);
 
   const getKey = (clsId, sec) => `${clsId}_${sec?.sectionID ?? 'null'}`;
   const normalizeStudent = (st) => ({
@@ -671,7 +672,7 @@ export default function StudentTab({ classesData, setClassesData, studentStrengt
             const exp = expandedKey === key;
             const strength = getStrength(cls.id, sec);
             const stuList = getStudents(cls.id, sec);
-            const globalIdx = (currentPage - 1) * STU_PER_PAGE + i + 1;
+            const globalIdx = (currentPage - 1) * perPage + i + 1;
             return (
               <div key={key} className="student-row-wrap">
                 <div className={`student-row${exp ? ' expanded-row' : ''}`} onClick={() => setExpandedKey(exp ? null : key)}>
@@ -833,7 +834,19 @@ export default function StudentTab({ classesData, setClassesData, studentStrengt
           })}
         </div>
         <div className="pagination">
-          <div className="pagination-info">Showing <strong>{paged.length}</strong> of <strong>{filtered.length}</strong> rows</div>
+          <div className="pagination-info">
+            Showing <strong>{paged.length}</strong> of <strong>{filtered.length}</strong> rows
+            <span className="per-page-wrap">
+              <select
+                title="Rows per page"
+                className="per-page-select"
+                value={perPage}
+                onChange={e => { setPerPage(Number(e.target.value)); setPage(1); }}
+              >
+                {[8, 10, 20, 50, 100].map(n => <option key={n} value={n}>{n}</option>)}
+              </select>
+            </span>
+          </div>
           <div className="pagination-pages">
             <button className="page-btn" onClick={() => setPage(p => Math.max(1, p - 1))} disabled={currentPage === 1}>
               <i className="fas fa-chevron-left"></i>
