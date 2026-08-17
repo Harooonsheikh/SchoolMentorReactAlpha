@@ -11958,7 +11958,13 @@ const FEE_CSS = `
 /* Action icons hamesha EK line me — wrap ho kar doosri line par na jayein. */
 .fee-st-actions { display: flex; gap: 4px; justify-content: center; align-items: center; flex-wrap: nowrap; white-space: nowrap; }
 
-/* Detail panel (animated expand) */
+/* Detail panel (animated expand)
+
+   Khuli halat ki max-height sirf animation chalane ke liye hai — clipping ke
+   liye NAHIN. Pehle yahan 1200px thi, aur overflow hidden hone ki wajah se
+   jitni rows us me aa jatin (taqreeban 20) bas wohi nazar aati thin; 30
+   students wali class me baqi 10 KAT jati thin (scroll bhi nahi hoti thi).
+   Ab itni rakhi hai ke kisi bhi class ki poori list aa jaye. */
 .fee-detail {
   max-height: 0;
   overflow: hidden;
@@ -11967,7 +11973,7 @@ const FEE_CSS = `
   transition: max-height .3s ease, border-color .3s ease;
 }
 .fee-detail.open {
-  max-height: 1200px;
+  max-height: 20000px;
   border-top-color: var(--border-light);
 }
 .fee-detail-inner { padding: 16px 18px; }
