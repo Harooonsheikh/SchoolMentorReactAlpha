@@ -74,6 +74,7 @@
 @keyframes tIn { from { opacity: 0; transform: translateX(40px); } to { opacity: 1; transform: none; } }
 .sp-toast.success i { color: var(--success); }
 .sp-toast.info i { color: var(--info); }
+.sp-toast.error i { color: var(--err); }
 
 @media (max-width: 900px) {
   .pm-mod-grid { grid-template-columns: repeat(2,1fr); }

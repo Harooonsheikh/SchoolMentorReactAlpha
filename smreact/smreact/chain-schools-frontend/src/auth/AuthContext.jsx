@@ -1,5 +1,7 @@
 import { createContext, useCallback, useEffect, useState } from 'react'
 import * as authApi from '../api/authApi'
+import { USE_MOCK } from '../config/env'
+import { clearLastPath } from '../routes/lastPath'
 import {
   getToken,
   setToken,
@@ -21,7 +23,10 @@ export const AuthContext = createContext(null)
    Consume via the useAuth() hook.
    ═══════════════════════════════════════════════════════════════════ */
 export function AuthProvider({ children }) {
-  const [user, setUser] = useState(() => getStoredUser())
+  /* Session sirf tab valid hai jab token AUR user dono maujood hon. Sirf user
+     (bina token ke) ek adhoora handoff hai — usay signed-in nahi maana jayega,
+     warna app dashboard dikha deta hai aur har API call 401 par girti hai. */
+  const [user, setUser] = useState(() => (getToken() ? getStoredUser() : null))
   const [booting, setBooting] = useState(true)
 
   /* On first load: if a token exists, confirm who we are with the API.
@@ -30,6 +35,15 @@ export function AuthProvider({ children }) {
     let active = true
     ;(async () => {
       if (!getToken()) {
+        clearToken()          // adhoora csp_user bhi saaf, warna wo agli baar confuse karega
+        setUser(null)
+        setBooting(false)
+        return
+      }
+      /* Mock mode me /auth/me abhi live nahi — wo hamesha MOCK_USER deta hai aur
+         ERP se aaya asli head-office user overwrite kar deta. Jab tak real API
+         nahi lagti, stored user ko hi sach maanein. */
+      if (USE_MOCK && getStoredUser()) {
         setBooting(false)
         return
       }
@@ -64,6 +78,7 @@ export function AuthProvider({ children }) {
   const logout = useCallback(async () => {
     await authApi.logout()
     clearToken()
+    clearLastPath()   // agla user pichhle wale ke page par na khule
     setUser(null)
   }, [])
 

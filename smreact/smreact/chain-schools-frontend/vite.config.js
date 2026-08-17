@@ -25,6 +25,22 @@ export default defineConfig({
         changeOrigin: true,
         secure: false,
       },
+      /* Chain-Management API (networks, network-schools). Seedha alphaapi call
+         nahi kar sakte: uska CORS allowlist sirf localhost:3000 (ERP) rakhta
+         hai, ye app 3002 par chalti hai — browser block kar deta. Proxy se
+         request same-origin ho jaati hai, koi CORS nahi.
+         Deploy par bhi yahi rewrite chahiye (ERP ke public/web.config jaisa). */
+      '/SchoolmentorChainManagementAPI': {
+        target: 'https://alphaapi.schoolmentor.ai',
+        changeOrigin: true,
+        secure: false,
+      },
+      /* Super-Admin API (school module permissions) — wahi CORS wajah. */
+      '/SchoolMentorSuperAdminAPI': {
+        target: 'https://alphaapi.schoolmentor.ai',
+        changeOrigin: true,
+        secure: false,
+      },
     },
   },
   // `vite preview` (npm run preview) serves the production build on the same

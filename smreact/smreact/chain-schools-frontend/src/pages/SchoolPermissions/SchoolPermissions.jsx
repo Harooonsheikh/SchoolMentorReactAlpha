@@ -2,37 +2,44 @@ import { useEffect, useMemo, useState } from 'react'
 import TutorialButton from '../../components/TutorialButton'
 import { createPortal } from 'react-dom'
 import {
-  getAllSchools, getDefaultPerms, getSchoolPerms,
-  loadPermStore, savePermStore,
+  toPermissionRows, getSchoolPerms,
   CORE_PERMS, MODULE_SECTIONS, MODULE_KEYS,
 } from './data'
+import { useView } from '../../config/viewContext'
+import {
+  fetchModulePermissionsFor, saveModulePermissions,
+  fetchLaunchSetupFor, setLaunchSetup,
+} from '../../api/schoolPermissionsApi'
 import './SchoolPermissions.css'
 
-const SOURCE_BADGE = {
-  erp: { cls: 'b-blue', label: 'ERP' },
-  inactive: { cls: 'b-gray', label: 'Inactive' },
-  launch: { cls: 'b-warn', label: 'Launch' },
-}
-
 export default function SchoolPermissions() {
-  const allSchools = useMemo(() => getAllSchools(), [])
+  /* Network me shamil ho chuke schools — Chain-Management API se. */
+  const { schools: connectedSchools, schoolsLoading, schoolsError } = useView()
+  const allSchools = useMemo(() => toPermissionRows(connectedSchools), [connectedSchools])
 
   const [search, setSearch] = useState('')
   const [erpFilter, setErpFilter] = useState('')
+  /* branchID → modules object (Super-Admin API se). */
   const [store, setStore] = useState({})
+  /* branchID → ERP access (launch setup: 1 = on, 0 = off). */
+  const [erpStore, setErpStore] = useState({})
+  const [modsLoading, setModsLoading] = useState(true)
   const [modalSchool, setModalSchool] = useState(null)
+  const [saving, setSaving] = useState(false)
   const [toast, setToast] = useState(null)
 
-  /* Seed defaults for any school missing from the saved store. */
+  /* Har school ki module permissions + ERP access (launch setup) API se. */
   useEffect(() => {
-    const s = loadPermStore()
-    let changed = false
-    allSchools.forEach((sc) => {
-      if (!s[sc.id]) { s[sc.id] = getDefaultPerms(sc); changed = true }
-    })
-    if (changed) savePermStore(s)
-    setStore(s)
-  }, [allSchools])
+    let alive = true
+    if (!allSchools.length) { setStore({}); setErpStore({}); setModsLoading(schoolsLoading); return undefined }
+    const ids = allSchools.map((s) => s.id)
+    setModsLoading(true)
+    Promise.all([fetchModulePermissionsFor(ids), fetchLaunchSetupFor(ids)])
+      .then(([mods, erp]) => { if (alive) { setStore(mods); setErpStore(erp) } })
+      .catch((err) => { console.error('Permissions load failed:', err); if (alive) { setStore({}); setErpStore({}) } })
+      .finally(() => { if (alive) setModsLoading(false) })
+    return () => { alive = false }
+  }, [allSchools, schoolsLoading])
 
   useEffect(() => {
     if (!toast) return undefined
@@ -40,32 +47,54 @@ export default function SchoolPermissions() {
     return () => clearTimeout(t)
   }, [toast])
 
+  /* Dono cheezein Super-Admin API se: ERP access launch-setup se, modules
+     module-permission se. */
+  const erpOnFor = (s) => !!erpStore[s.id]
+  const permsFor = (s) => getSchoolPerms(store, s, erpOnFor(s))
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
     return allSchools.filter((s) => {
-      const matchQ = !q || s.name.toLowerCase().includes(q) || (s.principal || '').toLowerCase().includes(q) || (s.contact || '').includes(q)
+      const matchQ = !q
+        || s.name.toLowerCase().includes(q)
+        || (s.email || '').toLowerCase().includes(q)
+        || (s.contact || '').includes(q)
+        || String(s.schoolCode).includes(q)
       if (!matchQ) return false
-      const perms = store[s.id]
-      if (!perms) return true
-      if (erpFilter === 'active' && !perms.erpAccess) return false
-      if (erpFilter === 'inactive' && perms.erpAccess) return false
+      if (erpFilter === 'active' && !erpStore[s.id]) return false
+      if (erpFilter === 'inactive' && erpStore[s.id]) return false
       return true
     })
-  }, [allSchools, store, search, erpFilter])
+  }, [allSchools, erpStore, search, erpFilter])
 
   const stats = useMemo(() => {
     const total = allSchools.length
-    const active = allSchools.filter((s) => store[s.id]?.erpAccess).length
+    const active = allSchools.filter((s) => erpStore[s.id]).length
     return { total, active, inactive: total - active }
-  }, [allSchools, store])
+  }, [allSchools, erpStore])
 
-  const savePerms = (schoolId, perms) => {
-    const next = { ...store, [schoolId]: perms }
-    setStore(next)
-    savePermStore(next)
-    const s = allSchools.find((x) => x.id === schoolId)
-    setModalSchool(null)
-    setToast({ type: 'success', text: `Permissions saved for ${s ? s.name : 'school'}` })
+  /* Dono Super-Admin API par jaate hain:
+       modules    → POST save-modulePermission (type: chain)
+       ERP access → PUT  toggle-launch-setup?launchSetup=1|0  */
+  const savePerms = async (school, perms) => {
+    if (saving) return
+    setSaving(true)
+    try {
+      await saveModulePermissions(school.id, perms.modules)
+      setStore((prev) => ({ ...prev, [school.id]: { ...perms.modules } }))
+
+      if (perms.erpAccess !== erpOnFor(school)) {
+        await setLaunchSetup(school.id, perms.erpAccess)
+        setErpStore((prev) => ({ ...prev, [school.id]: !!perms.erpAccess }))
+      }
+      setModalSchool(null)
+      setToast({ type: 'success', text: `Permissions saved for ${school.name}` })
+    } catch (err) {
+      console.error('Permissions save failed:', err)
+      setToast({ type: 'error', text: err?.message || 'Could not save permissions' })
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
@@ -123,13 +152,27 @@ export default function SchoolPermissions() {
               <th style={{ width: 44 }}>#</th>
               <th>School Name</th>
               <th style={{ width: 90 }}>Code / ID</th>
-              <th>Owner &amp; Contact</th>
+              <th>Email &amp; Contact</th>
               <th style={{ width: 120, textAlign: 'center' }}>ERP Status</th>
               <th style={{ width: 130, textAlign: 'center' }}>Permissions</th>
               <th style={{ width: 140, textAlign: 'center' }}>Action</th>
             </tr></thead>
             <tbody>
-              {filtered.length === 0 ? (
+              {schoolsLoading || modsLoading ? (
+                <tr>
+                  <td colSpan={7} style={{ textAlign: 'center', padding: 44, color: 'var(--tm)' }}>
+                    <i className="fa-solid fa-spinner fa-spin" style={{ fontSize: 24, display: 'block', margin: '0 auto 12px', color: 'var(--brand)' }} />
+                    <div style={{ fontSize: 13.5, fontWeight: 700 }}>Loading schools…</div>
+                  </td>
+                </tr>
+              ) : schoolsError ? (
+                <tr>
+                  <td colSpan={7} style={{ textAlign: 'center', padding: 44, color: 'var(--err)' }}>
+                    <i className="fa-solid fa-triangle-exclamation" style={{ fontSize: 26, display: 'block', margin: '0 auto 12px' }} />
+                    <div style={{ fontSize: 13.5, fontWeight: 700 }}>{schoolsError}</div>
+                  </td>
+                </tr>
+              ) : filtered.length === 0 ? (
                 <tr>
                   <td colSpan={7} style={{ textAlign: 'center', padding: 44, color: 'var(--tm)' }}>
                     <i className="fa-solid fa-magnifying-glass" style={{ fontSize: 28, display: 'block', margin: '0 auto 12px', opacity: 0.3 }} />
@@ -137,23 +180,22 @@ export default function SchoolPermissions() {
                   </td>
                 </tr>
               ) : filtered.map((s, idx) => {
-                const perms = store[s.id] || getDefaultPerms(s)
-                const erpOn = perms.erpAccess
+                const perms = permsFor(s)
+                const erpOn = erpOnFor(s)
                 const modCount = Object.values(perms.modules).filter(Boolean).length
                 const totalMods = Object.keys(perms.modules).length
-                const sb = SOURCE_BADGE[s.source]
                 return (
                   <tr key={s.id}>
                     <td className="td-bold" style={{ color: 'var(--tm)' }}>{idx + 1}</td>
                     <td>
                       <div style={{ fontWeight: 700, color: 'var(--t1)', fontSize: 13 }}>{s.name}</div>
                       <div style={{ fontSize: 11, color: 'var(--tm)', marginTop: 2 }}>
-                        <span className={`badge ${sb.cls}`} style={{ fontSize: 9.5 }}>{sb.label}</span>
+                        <span className="badge b-blue" style={{ fontSize: 9.5 }}>Connected</span>
                       </div>
                     </td>
                     <td><span style={{ fontSize: 12, fontWeight: 700, color: 'var(--brand)' }}>{s.schoolCode}</span></td>
                     <td>
-                      <div style={{ fontWeight: 600, color: 'var(--t1)', fontSize: 12.5 }}>{s.principal || '—'}</div>
+                      <div style={{ fontWeight: 600, color: 'var(--t1)', fontSize: 12.5 }}>{s.email || '—'}</div>
                       <div style={{ fontSize: 11.5, color: 'var(--tm)' }}>{s.contact || '—'}</div>
                     </td>
                     <td style={{ textAlign: 'center' }}>
@@ -181,7 +223,8 @@ export default function SchoolPermissions() {
       {modalSchool && (
         <PermissionsModal
           school={modalSchool}
-          perms={getSchoolPerms(store, modalSchool)}
+          perms={permsFor(modalSchool)}
+          saving={saving}
           onClose={() => setModalSchool(null)}
           onSave={savePerms}
         />
@@ -190,7 +233,7 @@ export default function SchoolPermissions() {
       {toast && createPortal(
         <div className="sp-toast-wrap">
           <div className={`sp-toast ${toast.type}`}>
-            <i className="fa-solid fa-circle-check" /> {toast.text}
+            <i className={`fa-solid ${toast.type === 'error' ? 'fa-circle-exclamation' : 'fa-circle-check'}`} /> {toast.text}
           </div>
         </div>,
         document.body,
@@ -211,10 +254,8 @@ function Switch({ checked, onChange }) {
 }
 
 /* ── Permissions modal ── */
-function PermissionsModal({ school, perms, onClose, onSave }) {
+function PermissionsModal({ school, perms, saving, onClose, onSave }) {
   const [erpAccess, setErpAccess] = useState(perms.erpAccess)
-  const [transport, setTransport] = useState(perms.transport)
-  const [headFee, setHeadFee] = useState(perms.headFee)
   const [modules, setModules] = useState({ ...perms.modules })
 
   useEffect(() => {
@@ -228,7 +269,7 @@ function PermissionsModal({ school, perms, onClose, onSave }) {
   const setModule = (key, val) => setModules((m) => ({ ...m, [key]: val }))
   const toggleAll = (val) => setModules(Object.fromEntries(MODULE_KEYS.map((k) => [k, val])))
 
-  const core = { erpAccess: [erpAccess, setErpAccess], transport: [transport, setTransport], headFee: [headFee, setHeadFee] }
+  const core = { erpAccess: [erpAccess, setErpAccess] }
 
   return createPortal(
     <div className="perm-ov" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
@@ -240,7 +281,7 @@ function PermissionsModal({ school, perms, onClose, onSave }) {
             <div className="pm-school-name">{school.name}</div>
             <div className="pm-school-meta">
               <span><i className="fa-solid fa-hashtag" style={{ color: 'var(--brand)' }} />{school.schoolCode}</span>
-              <span><i className="fa-solid fa-user" style={{ color: 'var(--brand)' }} />{school.principal || '—'}</span>
+              <span><i className="fa-solid fa-envelope" style={{ color: 'var(--brand)' }} />{school.email || '—'}</span>
               <span><i className="fa-solid fa-phone" style={{ color: 'var(--brand)' }} />{school.contact || '—'}</span>
             </div>
           </div>
@@ -303,8 +344,12 @@ function PermissionsModal({ school, perms, onClose, onSave }) {
 
         {/* Footer */}
         <div className="pm-foot">
-          <button className="btn-secondary" onClick={onClose}><i className="fa-solid fa-xmark" /> Cancel</button>
-          <button className="btn-primary" onClick={() => onSave(school.id, { erpAccess, transport, headFee, modules })}><i className="fa-solid fa-floppy-disk" /> Save Permissions</button>
+          <button className="btn-secondary" onClick={onClose} disabled={saving}><i className="fa-solid fa-xmark" /> Cancel</button>
+          <button className="btn-primary" disabled={saving} onClick={() => onSave(school, { erpAccess, modules })}>
+            {saving
+              ? <><i className="fa-solid fa-spinner fa-spin" /> Saving…</>
+              : <><i className="fa-solid fa-floppy-disk" /> Save Permissions</>}
+          </button>
         </div>
       </div>
     </div>,

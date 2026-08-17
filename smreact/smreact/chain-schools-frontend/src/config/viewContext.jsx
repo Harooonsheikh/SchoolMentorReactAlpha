@@ -1,4 +1,5 @@
-import { createContext, useContext, useEffect, useMemo, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
+import { fetchConnectedSchools } from '../api/networkSchoolsApi'
 
 /* ═══════════════════════════════════════════════════════════════════
    Head Office / School view switcher.
@@ -12,20 +13,9 @@ import { createContext, useContext, useEffect, useMemo, useState } from 'react'
      selectedSchool  null | school object
      isViewOnly      true while a school is selected
 
-   Static demo data for now — ready for backend/API integration later.
+   Connected schools ab Chain-Management API se aate hain (accepted rows) —
+   pehle yahan 10 static demo schools ki list thi.
    ═══════════════════════════════════════════════════════════════════ */
-export const CONNECTED_SCHOOLS = [
-  { id: 1, name: 'Allied Grammar School', city: 'Lahore', status: 'Connected' },
-  { id: 2, name: 'City Scholars School', city: 'Karachi', status: 'Connected' },
-  { id: 3, name: 'Green Valley School', city: 'Islamabad', status: 'Connected' },
-  { id: 4, name: 'The Knowledge Campus', city: 'Faisalabad', status: 'Connected' },
-  { id: 5, name: 'Future Stars School', city: 'Rawalpindi', status: 'Connected' },
-  { id: 6, name: 'Bright Learners Academy', city: 'Multan', status: 'Connected' },
-  { id: 7, name: 'Iqra Model School', city: 'Peshawar', status: 'Connected' },
-  { id: 8, name: 'Smart Kids School', city: 'Sialkot', status: 'Connected' },
-  { id: 9, name: 'National Grammar School', city: 'Gujranwala', status: 'Connected' },
-  { id: 10, name: 'Rising Star School', city: 'Hyderabad', status: 'Connected' },
-]
 
 const KEY = 'chain-active-view'
 const ViewContext = createContext(null)
@@ -35,19 +25,45 @@ export function ViewProvider({ children }) {
     try { const d = JSON.parse(localStorage.getItem(KEY)); return d?.id ? d : null } catch { return null }
   })
 
+  /* Network me shamil ho chuke schools. */
+  const [schools, setSchools] = useState([])
+  const [schoolsLoading, setSchoolsLoading] = useState(true)
+  const [schoolsError, setSchoolsError] = useState('')
+
+  const reloadSchools = useCallback(async () => {
+    setSchoolsLoading(true)
+    setSchoolsError('')
+    try {
+      /* `id` branchID rakhte hain — school ka data isi id se aata hai. */
+      const rows = await fetchConnectedSchools()
+      setSchools(rows.map((s) => ({ ...s, rowId: s.id, id: s.branchId })))
+    } catch (err) {
+      console.error('Connected schools load failed:', err)
+      setSchools([])
+      setSchoolsError(err?.message || 'Could not load connected schools')
+    } finally {
+      setSchoolsLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { reloadSchools() }, [reloadSchools])
+
   useEffect(() => {
     if (selectedSchool) localStorage.setItem(KEY, JSON.stringify(selectedSchool))
     else localStorage.removeItem(KEY)
   }, [selectedSchool])
 
   const value = useMemo(() => ({
-    schools: CONNECTED_SCHOOLS,
+    schools,
+    schoolsLoading,
+    schoolsError,
+    reloadSchools,
     selectedSchool,
     currentView: selectedSchool ? 'school' : 'headOffice',
     isViewOnly: !!selectedSchool,
     switchToSchool: (school) => setSelectedSchool(school),
     backToHeadOffice: () => setSelectedSchool(null),
-  }), [selectedSchool])
+  }), [schools, schoolsLoading, schoolsError, reloadSchools, selectedSchool])
 
   return <ViewContext.Provider value={value}>{children}</ViewContext.Provider>
 }

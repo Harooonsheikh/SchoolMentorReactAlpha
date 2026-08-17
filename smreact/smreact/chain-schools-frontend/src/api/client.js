@@ -1,5 +1,5 @@
 import axios from 'axios'
-import { API_BASE_URL } from '../config/env'
+import { API_BASE_URL, ERP_LOGIN_URL } from '../config/env'
 import { getToken, clearToken } from '../auth/tokenStorage'
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -29,9 +29,10 @@ api.interceptors.response.use(
     const status = error.response?.status
     if (status === 401) {
       clearToken()
-      if (!window.location.pathname.startsWith('/login')) {
-        window.location.assign('/login')
-      }
+      /* Is portal ka apna /login use nahi hota — session ERP ke Network Head
+         Office login se aata hai. Session expire ho to wahin wapas bhejo,
+         warna user ek bemani login form par atak jata tha. */
+      window.location.replace(ERP_LOGIN_URL)
     }
     const body = error.response?.data
     return Promise.reject({

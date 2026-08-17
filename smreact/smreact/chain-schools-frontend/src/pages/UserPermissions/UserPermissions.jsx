@@ -3,8 +3,9 @@ import TutorialButton from '../../components/TutorialButton'
 import { createPortal } from 'react-dom'
 import {
   loadPerms, savePerms, loadAssign, saveAssign,
-  UM_MENUS, ERP_SCHOOLS, INACTIVE_SCHOOLS,
+  UM_MENUS, splitSchools,
 } from './data'
+import { useView } from '../../config/viewContext'
 import { loadHr, fullName } from '../HumanResource/data'
 import './UserPermissions.css'
 
@@ -60,6 +61,10 @@ export default function UserPermissions() {
 
 /* ════════ ASSIGN SCHOOL ════════ */
 function AssignTab({ users, assignStore, commit, fire }) {
+  /* Schools API se (connected schools), ERP / Inactive me batay hue. */
+  const { schools: connectedSchools, schoolsLoading } = useView()
+  const { erp: ERP_SCHOOLS, inactive: INACTIVE_SCHOOLS } = useMemo(() => splitSchools(connectedSchools), [connectedSchools])
+
   const [userId, setUserId] = useState('')
   const [type, setType] = useState('erp')
   const [search, setSearch] = useState('')
@@ -113,6 +118,8 @@ function AssignTab({ users, assignStore, commit, fire }) {
             <tbody>
               {!userId ? (
                 <tr><td colSpan={3} style={{ textAlign: 'center', padding: 28, color: 'var(--tm)' }}>Select a user to assign schools.</td></tr>
+              ) : schoolsLoading ? (
+                <tr><td colSpan={3} style={{ textAlign: 'center', padding: 28, color: 'var(--tm)' }}>Loading schools…</td></tr>
               ) : slice.length === 0 ? (
                 <tr><td colSpan={3} style={{ textAlign: 'center', padding: 28, color: 'var(--tm)' }}>No schools found</td></tr>
               ) : slice.map((s, i) => (

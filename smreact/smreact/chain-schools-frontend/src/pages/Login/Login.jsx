@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../../auth/useAuth'
+import { readLastPath } from '../../routes/lastPath'
 import { USE_MOCK } from '../../config/env'
 import './Login.css'
 
@@ -27,7 +28,9 @@ export default function Login() {
     setLoading(true)
     try {
       await login({ email, password })
-      const dest = location.state?.from?.pathname || '/'
+      /* Tarteeb: jahan jaana chah rahe the (ProtectedRoute ne roka) → warna
+         is tab ka aakhri path → warna root. */
+      const dest = location.state?.from?.pathname || readLastPath() || '/'
       navigate(dest, { replace: true })
     } catch (err) {
       setError(err.message || 'Login failed.')

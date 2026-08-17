@@ -1,35 +1,49 @@
 /* ═══════════════════════════════════════════════════════════════════
-   SCHOOL STATUS (School Progress) — demo data + helpers.
-   Ported from the Super Admin design. Only the ERP and Inactive buckets
-   are used here (Launch Setup is intentionally omitted). Ready to be
-   swapped for API calls later.
+   SCHOOL STATUS (School Progress) — helpers.
+   Schools wahi hain jo School Permissions par hain: Chain-Management API
+   (network-schools/manage → getbynetwork, accepted rows) se ViewProvider
+   ke zariye. ERP bucket = networkPermission true, Inactive = false.
+   Usage metrics (logins / staff / students / onboarding) abhi is endpoint
+   me nahi aatin, is liye 0 dikhti hain jab tak unka API na aa jaye.
    ═══════════════════════════════════════════════════════════════════ */
 
 const tabs = (school, classes, student, dept, staff, syllabus, timetable) => ({ school, classes, student, dept, staff, syllabus, timetable })
 const comp = (staffContact, parentContact, subjectAssigned, prevDues) => ({ staffContact, parentContact, subjectAssigned, prevDues })
-const E = 'Entered', N = 'Not Entered'
+const N = 'Not Entered'
 
-export const INITIAL_ERP = [
-  { id: 201, name: 'AES School System', initials: 'AS', staff: 2, students: 4, assigned: 'Dua Rizvi', color: 'Red', logins: 31, workTime: '0:20:30', notes: 0, calls: 0, messages: 0, onboarding: { completed: 0, total: 15 }, principal: 'AES Admin', contact: '03001234001', stuSignup: 4, staffSignup: 2, signupDate: '2025-09-10', tabs: tabs(E, E, E, E, E, N, N), comp: comp(E, E, N, N) },
-  { id: 202, name: 'Jinnah Educational Complex School', initials: 'JE', staff: 6, students: 18, assigned: 'Dua Rizvi', color: 'Red', logins: 69, workTime: '4:36:35', notes: 0, calls: 0, messages: 0, onboarding: { completed: 5, total: 15 }, principal: 'JE Admin', contact: '03009876543', stuSignup: 18, staffSignup: 6, signupDate: '2025-10-15', tabs: tabs(E, E, E, E, E, E, N), comp: comp(E, E, E, N) },
-  { id: 203, name: 'The Creative School', initials: 'TC', staff: 12, students: 89, assigned: 'Neha Bukhari', color: 'Green', logins: 142, workTime: '12:45:00', notes: 3, calls: 2, messages: 7, onboarding: { completed: 10, total: 15 }, principal: 'Creative Admin', contact: '03112233445', stuSignup: 89, staffSignup: 12, signupDate: '2025-08-01', tabs: tabs(E, E, E, E, E, E, E), comp: comp(E, E, E, E) },
-  { id: 204, name: 'Beaconhouse School System Gulberg', initials: 'BG', staff: 18, students: 210, assigned: 'Dua Rizvi', color: 'Green', logins: 95, workTime: '8:10:22', notes: 1, calls: 0, messages: 2, onboarding: { completed: 12, total: 15 }, principal: 'Tariq Mahmood', contact: '03214567890', stuSignup: 210, staffSignup: 18, signupDate: '2025-07-15', tabs: tabs(E, E, E, E, E, E, E), comp: comp(E, E, E, E) },
-  { id: 205, name: 'The City School Johar Town', initials: 'CJ', staff: 22, students: 345, assigned: 'Neha Bukhari', color: 'Green', logins: 188, workTime: '15:44:00', notes: 4, calls: 3, messages: 9, onboarding: { completed: 14, total: 15 }, principal: 'Sana Malik', contact: '03321122334', stuSignup: 345, staffSignup: 22, signupDate: '2025-06-01', tabs: tabs(E, E, E, E, E, E, E), comp: comp(E, E, E, E) },
-  { id: 206, name: 'Roots International School F-10', initials: 'RF', staff: 15, students: 180, assigned: 'Dua Rizvi', color: 'Green', logins: 72, workTime: '6:30:15', notes: 2, calls: 1, messages: 3, onboarding: { completed: 9, total: 15 }, principal: 'Faisal Qureshi', contact: '03451234567', stuSignup: 180, staffSignup: 15, signupDate: '2025-08-20', tabs: tabs(E, E, E, E, E, E, N), comp: comp(E, E, E, N) },
-  { id: 207, name: 'Lahore Grammar School DHA', initials: 'LD', staff: 30, students: 420, assigned: 'Nimra Fatima', color: 'Green', logins: 210, workTime: '22:15:40', notes: 6, calls: 4, messages: 11, onboarding: { completed: 15, total: 15 }, principal: 'Ayesha Raza', contact: '03001112222', stuSignup: 420, staffSignup: 30, signupDate: '2025-05-10', tabs: tabs(E, E, E, E, E, E, E), comp: comp(E, E, E, E) },
-  { id: 208, name: 'Allied School Gulshan Campus', initials: 'AG', staff: 11, students: 155, assigned: 'Neha Bukhari', color: 'Red', logins: 44, workTime: '3:50:10', notes: 0, calls: 1, messages: 2, onboarding: { completed: 7, total: 15 }, principal: 'Usman Ghani', contact: '03339988776', stuSignup: 155, staffSignup: 11, signupDate: '2025-09-30', tabs: tabs(E, E, E, E, E, N, N), comp: comp(E, E, N, N) },
-  { id: 209, name: 'Divisional Public School Rawalpindi', initials: 'DR', staff: 25, students: 380, assigned: 'Dua Rizvi', color: 'Green', logins: 130, workTime: '11:20:00', notes: 3, calls: 2, messages: 5, onboarding: { completed: 13, total: 15 }, principal: 'Khalid Mehmood', contact: '03125556677', stuSignup: 380, staffSignup: 25, signupDate: '2025-07-01', tabs: tabs(E, E, E, E, E, E, E), comp: comp(E, E, E, E) },
-  { id: 210, name: 'Fazaia Inter College Risalpur', initials: 'FR', staff: 20, students: 290, assigned: 'Nimra Fatima', color: 'Green', logins: 88, workTime: '7:45:30', notes: 1, calls: 2, messages: 4, onboarding: { completed: 11, total: 15 }, principal: 'Brig Imran Shah', contact: '03009887766', stuSignup: 290, staffSignup: 20, signupDate: '2025-08-05', tabs: tabs(E, E, E, E, E, E, E), comp: comp(E, E, E, E) },
-  { id: 211, name: 'Army Public School Nowshera', initials: 'AN', staff: 14, students: 198, assigned: 'Dua Rizvi', color: 'Green', logins: 61, workTime: '5:10:45', notes: 0, calls: 1, messages: 1, onboarding: { completed: 8, total: 15 }, principal: 'Col Asad Khan', contact: '03337654321', stuSignup: 198, staffSignup: 14, signupDate: '2025-10-01', tabs: tabs(E, E, E, E, E, E, N), comp: comp(E, E, E, N) },
-  { id: 212, name: 'Pak-Turk Maarif International School', initials: 'PT', staff: 17, students: 240, assigned: 'Neha Bukhari', color: 'Green', logins: 102, workTime: '9:30:00', notes: 2, calls: 1, messages: 6, onboarding: { completed: 13, total: 15 }, principal: 'Hasan Yilmaz', contact: '03214433221', stuSignup: 240, staffSignup: 17, signupDate: '2025-06-15', tabs: tabs(E, E, E, E, E, E, E), comp: comp(E, E, E, E) },
-]
+/* ISO datetime → YYYY-MM-DD (sign-up date ke liye). */
+const dateOnly = (iso) => (typeof iso === 'string' && iso.length >= 10 ? iso.slice(0, 10) : '')
 
-export const INITIAL_INACTIVE = [
-  { id: 301, name: 'Daffodils School', staff: 1, students: 0, staffSignup: 0, stuSignup: 0, principal: 'Ali Ahmed', contact: '03001111111', signupDate: '2026-01-10', tabs: tabs(E, N, N, N, N, N, N), comp: comp(N, N, N, N) },
-  { id: 302, name: 'Saeed Public School (High Section)', staff: 0, students: 0, staffSignup: 0, stuSignup: 0, principal: 'Saeed Khan', contact: '03012222222', signupDate: '2026-02-05', tabs: tabs(E, N, N, N, N, N, N), comp: comp(N, N, N, N) },
-  { id: 303, name: 'SPS- Middle Branch', staff: 0, students: 0, staffSignup: 0, stuSignup: 0, principal: 'Saba Perveen', contact: '03023333333', signupDate: '2026-03-12', tabs: tabs(N, N, N, N, N, N, N), comp: comp(N, N, N, N) },
-  { id: 304, name: 'SPS- Middle Section', staff: 0, students: 0, staffSignup: 0, stuSignup: 0, principal: 'Nadia Butt', contact: '03034444444', signupDate: '2026-03-15', tabs: tabs(N, N, N, N, N, N, N), comp: comp(N, N, N, N) },
-]
+/* ViewContext ka connected-school row → School Progress ki row. */
+export function toProgressRow(s) {
+  const name = s.name || `Branch #${s.id}`
+  return {
+    id: s.id,                    // branchID
+    rowId: s.rowId,              // network-school row id (activate/deactivate isi se)
+    branchId: s.id,
+    name,
+    initials: name.slice(0, 2).toUpperCase(),
+    code: s.code || '',
+    principal: '',
+    contact: s.phone || '',
+    email: s.email || '',
+    address: s.address || '',
+    erpActive: !!s.networkPermission,
+    isActive: s.isActive !== false,
+    signupDate: dateOnly(s.decidedAt || s.requestedAt),
+    /* API se abhi na aane wale metrics. */
+    staff: 0, students: 0, staffSignup: 0, stuSignup: 0,
+    logins: 0, workTime: '00:00:00', notes: 0, calls: 0, messages: 0,
+    color: 'Red',
+    onboarding: { completed: 0, total: 15 },
+    tabs: tabs(N, N, N, N, N, N, N),
+    comp: comp(N, N, N, N),
+  }
+}
+
+export function toProgressRows(schools) {
+  return (schools || []).map(toProgressRow)
+}
 
 export const USERS = ['Dua Rizvi', 'Neha Bukhari', 'Nimra Fatima']
 export const MONTHS = ['June 2026', 'May 2026', 'April 2026']

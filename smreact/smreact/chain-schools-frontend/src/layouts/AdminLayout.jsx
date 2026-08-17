@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { NAV_SECTIONS, NAV_BY_PATH } from '../config/nav'
 import { useAuth } from '../auth/useAuth'
 import { useView } from '../config/viewContext'
+import { ERP_LOGIN_URL } from '../config/env'
+import { decideSchoolRequest, fetchSchoolRequests } from '../api/networkSchoolsApi'
 import ErrorBoundary from '../components/ErrorBoundary'
 import '../styles/admin.css'
 
@@ -13,7 +15,7 @@ const initials = (name = '') =>
 export default function AdminLayout() {
   const location = useLocation()
   const { user, logout } = useAuth()
-  const { schools, selectedSchool, isViewOnly, switchToSchool, backToHeadOffice } = useView()
+  const { schools, schoolsLoading, schoolsError, reloadSchools, selectedSchool, isViewOnly, switchToSchool, backToHeadOffice } = useView()
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('chain-sidebar-collapsed') === '1')
   const [switcherOpen, setSwitcherOpen] = useState(false)
@@ -21,14 +23,19 @@ export default function AdminLayout() {
   const [logoutOpen, setLogoutOpen] = useState(false)
   const [loggingOut, setLoggingOut] = useState(false)
 
-  /* Sign out and let ProtectedRoute bounce us to /login once the user is null. */
+  /* Sign out → session clear karke ERP ke login par wapas. Is portal ka apna
+     login form use nahi hota (session ERP se aata hai), is liye /login par
+     bhejna user ko ek bemani screen dikhata tha. */
   const handleLogout = async () => {
+    setLoggingOut(true)
     try {
-      setLoggingOut(true)
       await logout()
     } catch {
-      setLoggingOut(false)
-      setLogoutOpen(false)
+      /* Server-side logout fail ho jaye to bhi local session saaf ho chuka —
+         user ko yahan rokna bemani hai, aage barho. */
+    } finally {
+      /* `finally` me: har soorat me ERP par wapas. */
+      window.location.replace(ERP_LOGIN_URL)
     }
   }
 
@@ -45,7 +52,11 @@ export default function AdminLayout() {
   useEffect(() => { setSidebarOpen(false); setSwitcherOpen(false) }, [location.pathname])
 
   const current = NAV_BY_PATH[location.pathname]?.label || 'Dashboard'
-  const userName = user?.name || 'Chain Admin'
+  /* ERP handoff `displayName` bhejta hai, mock/real API `name` — dono chalein. */
+  const userName = user?.displayName || user?.name || 'Chain Admin'
+  /* Sidebar ka top: network ka naam. Handoff se aata hai; na mile to
+     neutral fallback taake header kabhi khaali na dikhe. */
+  const networkName = user?.schoolNetwork || 'School Network'
   const viewingName = isViewOnly ? selectedSchool.name : 'Head Office'
 
   return (
@@ -59,7 +70,10 @@ export default function AdminLayout() {
       <aside className={`sidebar${sidebarOpen ? ' open' : ''}`}>
         <div className="sidebar-logo">
           <div className="logo-icon"><i className="fa-solid fa-link" /></div>
-          <div className="logo-name">SCHOOL MENTOR<br />CHAIN ADMIN <span>Multi-School Control Panel</span></div>
+          <div className="logo-name" title={networkName}>
+            <span className="logo-network">{networkName}</span>
+            <span>Chain Admin · Multi-School Control Panel</span>
+          </div>
           <button className="sidebar-collapse-btn" onClick={() => setCollapsed(true)} title="Collapse sidebar" aria-label="Collapse sidebar">
             <i className="fa-solid fa-angles-left" />
           </button>
@@ -88,8 +102,8 @@ export default function AdminLayout() {
         <div className="sidebar-footer">
           <div className="sidebar-footer-user">
             <div className="sf-avatar">{initials(userName)}</div>
-            <div>
-              <div className="sf-name">{userName}</div>
+            <div className="sf-meta">
+              <div className="sf-name" title={userName}>{userName}</div>
               <div className="sf-role">{user?.role || 'Super Administrator'}</div>
             </div>
           </div>
@@ -150,6 +164,9 @@ export default function AdminLayout() {
               {switcherOpen && (
                 <SchoolSwitcher
                   schools={schools}
+                  schoolsLoading={schoolsLoading}
+                  schoolsError={schoolsError}
+                  onReloadSchools={reloadSchools}
                   selectedSchool={selectedSchool}
                   onClose={() => setSwitcherOpen(false)}
                   onPickSchool={(s) => { switchToSchool(s); setSwitcherOpen(false) }}
@@ -188,7 +205,7 @@ export default function AdminLayout() {
               </div>
               <div className="stg-confirm-title">Sign out?</div>
               <div className="stg-confirm-sub">
-                You’ll be returned to the login screen. Any unsaved changes will be lost.
+                You’ll be returned to the School Mentor sign-in page. Any unsaved changes will be lost.
               </div>
               <div className="stg-confirm-btns">
                 <button className="btn-secondary" onClick={() => setLogoutOpen(false)} disabled={loggingOut}>
@@ -208,13 +225,67 @@ export default function AdminLayout() {
 }
 
 /* ═══ School switcher dropdown / mobile drawer ═══ */
-function SchoolSwitcher({ schools, selectedSchool, onClose, onPickSchool, onHeadOffice }) {
+function SchoolSwitcher({ schools, schoolsLoading, schoolsError, onReloadSchools, selectedSchool, onClose, onPickSchool, onHeadOffice }) {
   const [q, setQ] = useState('')
   const list = useMemo(() => {
     const s = q.trim().toLowerCase()
     if (!s) return schools
-    return schools.filter((x) => x.name.toLowerCase().includes(s) || (x.city || '').toLowerCase().includes(s))
+    return schools.filter((x) => x.name.toLowerCase().includes(s) || (x.phone || '').includes(s))
   }, [q, schools])
+
+  /* Jo schools is network me shamil hone ki request bhej chuke hain aur abhi
+     tak accept nahi hue — Chain-Management API se. */
+  const [requested, setRequested] = useState([])
+  const [rejected, setRejected] = useState([])
+  const [reqLoading, setReqLoading] = useState(true)
+  const [reqError, setReqError] = useState('')
+  const [decidingId, setDecidingId] = useState(null)   // jis row par accept/reject chal raha hai
+
+  const loadRequested = useCallback(async () => {
+    setReqLoading(true)
+    setReqError('')
+    try {
+      const { pending, rejected: rej } = await fetchSchoolRequests()
+      setRequested(pending)
+      setRejected(rej)
+    } catch (err) {
+      console.error('Requested schools load failed:', err)
+      setRequested([])
+      setRejected([])
+      setReqError(err?.message || 'Could not load requests')
+    } finally {
+      setReqLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { loadRequested() }, [loadRequested])
+
+  /* Accept aur Reject dono `update` hain — sirf isAccepted true/false badalta hai. */
+  const decide = async (row, accepted) => {
+    setDecidingId(row.id)
+    try {
+      await decideSchoolRequest(row, accepted)
+      /* Faisle ke baad row pending se nikal jaati hai: accept hui to Connected
+         Schools me, reject hui to Rejected me. */
+      setRequested((prev) => prev.filter((r) => r.id !== row.id))
+      if (accepted) onReloadSchools?.()
+      else setRejected((prev) => [{ ...row, status: 'Rejected' }, ...prev])
+    } catch (err) {
+      console.error('Decide request failed:', err)
+      setReqError(err?.message || 'Could not update the request')
+    } finally {
+      setDecidingId(null)
+    }
+  }
+
+  const byQuery = useCallback((rows) => {
+    const s = q.trim().toLowerCase()
+    if (!s) return rows
+    return rows.filter((x) => x.name.toLowerCase().includes(s) || (x.phone || '').includes(s))
+  }, [q])
+
+  const reqList = useMemo(() => byQuery(requested), [byQuery, requested])
+  const rejList = useMemo(() => byQuery(rejected), [byQuery, rejected])
 
   return (
     <>
@@ -242,9 +313,62 @@ function SchoolSwitcher({ schools, selectedSchool, onClose, onPickSchool, onHead
             : <span className="sw-row-go">Switch</span>}
         </button>
 
-        <div className="sw-section-lbl">Connected Schools <span className="sw-count">{schools.length}</span></div>
+        {/* Pending join-requests — Connected Schools se upar */}
+        <div className="sw-section-lbl">
+          Requested Schools
+          {!reqLoading && !reqError && <span className="sw-count">{requested.length}</span>}
+        </div>
+        {reqLoading ? (
+          <div className="sw-empty"><i className="fa-solid fa-spinner fa-spin" /> Loading requests…</div>
+        ) : reqError ? (
+          <div className="sw-empty sw-empty--err"><i className="fa-solid fa-triangle-exclamation" /> {reqError}</div>
+        ) : reqList.length === 0 ? (
+          <div className="sw-empty">{q ? `No requests match “${q}”.` : 'No pending join requests.'}</div>
+        ) : (
+          <div className="sw-list sw-list--req">
+            {reqList.map((s) => {
+              const busy = decidingId === s.id
+              return (
+                <div key={s.id} className="sw-row sw-row--req">
+                  <div className="sw-row-ic req"><i className="fa-solid fa-school-circle-exclamation" /></div>
+                  <div className="sw-row-info">
+                    <div className="sw-row-name">{s.name}</div>
+                    <div className="sw-row-sub">
+                      <i className="fa-solid fa-phone" /> {s.phone || '—'}
+                    </div>
+                  </div>
+                  <div className="sw-req-btns">
+                    <button
+                      className="sw-btn-accept"
+                      onClick={() => decide(s, true)}
+                      disabled={busy}
+                      title={`Accept ${s.name}`}
+                    >
+                      <i className={`fa-solid ${busy ? 'fa-spinner fa-spin' : 'fa-check'}`} /> Accept
+                    </button>
+                    <button
+                      className="sw-btn-reject"
+                      onClick={() => decide(s, false)}
+                      disabled={busy}
+                      title={`Reject ${s.name}`}
+                    >
+                      <i className="fa-solid fa-xmark" /> Reject
+                    </button>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+
+        <div className="sw-section-lbl">
+          Connected Schools
+          {!schoolsLoading && !schoolsError && <span className="sw-count">{schools.length}</span>}
+        </div>
         <div className="sw-list">
-          {list.length === 0 ? <div className="sw-empty">No schools match “{q}”.</div>
+          {schoolsLoading ? <div className="sw-empty"><i className="fa-solid fa-spinner fa-spin" /> Loading schools…</div>
+            : schoolsError ? <div className="sw-empty sw-empty--err"><i className="fa-solid fa-triangle-exclamation" /> {schoolsError}</div>
+            : list.length === 0 ? <div className="sw-empty">{q ? `No schools match “${q}”.` : 'No schools have joined this network yet.'}</div>
             : list.map((s) => {
               const active = selectedSchool?.id === s.id
               return (
@@ -252,7 +376,11 @@ function SchoolSwitcher({ schools, selectedSchool, onClose, onPickSchool, onHead
                   <div className="sw-row-ic"><i className="fa-solid fa-school" /></div>
                   <div className="sw-row-info">
                     <div className="sw-row-name">{s.name}</div>
-                    <div className="sw-row-sub"><i className="fa-solid fa-location-dot" /> {s.city} <span className="sw-status"><span className="sw-dot" /> {s.status}</span></div>
+                    {/* Phone aur status alag alag line par — aik line me tang lagte the */}
+                    <div className="sw-row-sub sw-row-sub--stack">
+                      <span><i className="fa-solid fa-phone" /> {s.phone || '—'}</span>
+                      <span className="sw-status"><span className="sw-dot" /> {s.status}</span>
+                    </div>
                   </div>
                   {active ? <span className="sw-row-cur"><i className="fa-solid fa-eye" /> Viewing</span>
                     : <button className="sw-row-btn" onClick={() => onPickSchool(s)}>Switch to View</button>}
@@ -260,6 +388,29 @@ function SchoolSwitcher({ schools, selectedSchool, onClose, onPickSchool, onHead
               )
             })}
         </div>
+
+        {/* Reject ki hui requests — sirf record ke liye, koi action nahi */}
+        {rejList.length > 0 && (
+          <>
+            <div className="sw-section-lbl">
+              Rejected <span className="sw-count sw-count--rej">{rejected.length}</span>
+            </div>
+            <div className="sw-list sw-list--rej">
+              {rejList.map((s) => (
+                <div key={s.id} className="sw-row sw-row--rej">
+                  <div className="sw-row-ic rej"><i className="fa-solid fa-school-circle-xmark" /></div>
+                  <div className="sw-row-info">
+                    <div className="sw-row-name">{s.name}</div>
+                    <div className="sw-row-sub sw-row-sub--stack">
+                      <span><i className="fa-solid fa-phone" /> {s.phone || '—'}</span>
+                      <span className="sw-status sw-status--rej"><span className="sw-dot" /> {s.status}</span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
 
         <div className="sw-foot"><i className="fa-solid fa-circle-info" /> Schools open in <strong>View Only Mode</strong>.</div>
       </div>

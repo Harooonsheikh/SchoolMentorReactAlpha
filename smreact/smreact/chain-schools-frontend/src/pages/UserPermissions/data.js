@@ -5,7 +5,6 @@
    • school assignment uses this chain's ERP + Inactive schools
    ═══════════════════════════════════════════════════════════════════ */
 import { NAV_SECTIONS } from '../../config/nav'
-import { INITIAL_ERP, INITIAL_INACTIVE } from '../SchoolStatus/data'
 
 const KEY_USERS = 'csp_um_users'
 const KEY_PERMS = 'csp_um_perms'
@@ -14,9 +13,15 @@ const KEY_ASSIGN = 'csp_um_assign'
 /* Menus available for permission — this app's actual modules. */
 export const UM_MENUS = NAV_SECTIONS.flatMap((s) => s.items).map((i) => i.label)
 
-/* Schools available for assignment, split by ERP / Inactive. */
-export const ERP_SCHOOLS = INITIAL_ERP.map((s) => ({ id: s.id, name: s.name }))
-export const INACTIVE_SCHOOLS = INITIAL_INACTIVE.map((s) => ({ id: s.id, name: s.name }))
+/* Schools available for assignment — connected schools (API) ko ERP /
+   Inactive me baanta hai, wahi taqseem jo School Progress par hai. */
+export function splitSchools(connected) {
+  const rows = (connected || []).map((s) => ({ id: s.id, name: s.name, erpActive: !!s.networkPermission }))
+  return {
+    erp: rows.filter((s) => s.erpActive),
+    inactive: rows.filter((s) => !s.erpActive),
+  }
+}
 
 const SEED_USERS = [
   { id: 1, fullName: 'Romana Shabir', userName: 'romana', phone: '03030498528', address: 'Rawalpindi', password: 'pass123', active: true, pic: '' },

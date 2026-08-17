@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import TutorialButton from '../../components/TutorialButton'
 import { createPortal } from 'react-dom'
-import { INITIAL_ERP, INITIAL_INACTIVE, USERS, MONTHS, getDetailData } from './data'
+import { toProgressRows, USERS, MONTHS, getDetailData } from './data'
+import { useView } from '../../config/viewContext'
+import { setSchoolErpAccess } from '../../api/networkSchoolsApi'
 import './SchoolStatus.css'
 
 const StatusBadge = ({ v }) => (v === 'Entered'
@@ -11,9 +13,20 @@ const StatusBadge = ({ v }) => (v === 'Entered'
 const initialsOf = (s) => (s.initials || s.name.slice(0, 2)).toUpperCase()
 
 export default function SchoolStatus() {
+  /* Wahi connected schools jo School Permissions par hain. */
+  const { schools: connectedSchools, schoolsLoading, schoolsError, reloadSchools } = useView()
   const [mainTab, setMainTab] = useState('erp')
-  const [erp, setErp] = useState(INITIAL_ERP)
-  const [inactive, setInactive] = useState(INITIAL_INACTIVE)
+
+  /* Assign-to-user abhi sirf screen par (API me is ka field nahi). */
+  const [assigned, setAssigned] = useState({})
+
+  const rows = useMemo(
+    () => toProgressRows(connectedSchools).map((s) => ({ ...s, assigned: assigned[s.id] || USERS[0] })),
+    [connectedSchools, assigned],
+  )
+  /* ERP = network ne access di hui; Inactive = access band. */
+  const erp = useMemo(() => rows.filter((s) => s.erpActive), [rows])
+  const inactive = useMemo(() => rows.filter((s) => !s.erpActive), [rows])
 
   const [eColor, setEColor] = useState('')
   const [eUser, setEUser] = useState('')
@@ -22,7 +35,8 @@ export default function SchoolStatus() {
   const [iQ, setIQ] = useState('')
 
   const [detail, setDetail] = useState(null)    // { school, isErp }
-  const [confirm, setConfirm] = useState(null)   // { action, id }
+  const [confirm, setConfirm] = useState(null)   // { action, school }
+  const [busy, setBusy] = useState(false)
   const [toast, setToast] = useState(null)
 
   useEffect(() => {
@@ -42,34 +56,29 @@ export default function SchoolStatus() {
   }, [inactive, iQ])
 
   const assignUser = (id, val) => {
-    setErp((prev) => prev.map((s) => (s.id === id ? { ...s, assigned: val } : s)))
+    setAssigned((prev) => ({ ...prev, [id]: val }))
     setToast({ type: 'success', text: `Assigned to: ${val}` })
   }
 
-  const runConfirm = () => {
-    if (!confirm) return
-    const { action, id } = confirm
-    if (action === 'deactivate') {
-      const s = erp.find((x) => x.id === id)
-      if (s) {
-        setErp((prev) => prev.filter((x) => x.id !== id))
-        setInactive((prev) => [...prev, { ...s, staffSignup: s.staffSignup ?? 0, stuSignup: s.stuSignup ?? 0 }])
-      }
-      setToast({ type: 'info', text: 'School moved to Inactive' })
-    } else {
-      const s = inactive.find((x) => x.id === id)
-      if (s) {
-        setInactive((prev) => prev.filter((x) => x.id !== id))
-        // Reactivated schools rejoin the ERP list with a fresh slate.
-        setErp((prev) => [...prev, {
-          ...s, initials: initialsOf(s), assigned: USERS[0], color: 'Red',
-          logins: 0, workTime: '00:00:00', notes: 0, calls: 0, messages: 0,
-          onboarding: { completed: 0, total: 15 },
-        }])
-      }
-      setToast({ type: 'success', text: 'School reactivated successfully!' })
+  /* Active/Inactive = API par networkPermission on/off; phir list dobara load. */
+  const runConfirm = async () => {
+    if (!confirm || busy) return
+    const { action, school } = confirm
+    const activate = action !== 'deactivate'
+    setBusy(true)
+    try {
+      await setSchoolErpAccess(school, activate)
+      await reloadSchools()
+      setConfirm(null)
+      setToast(activate
+        ? { type: 'success', text: 'School reactivated successfully!' }
+        : { type: 'info', text: 'School moved to Inactive' })
+    } catch (err) {
+      console.error('ERP access update failed:', err)
+      setToast({ type: 'warn', text: err?.message || 'Could not update school status' })
+    } finally {
+      setBusy(false)
     }
-    setConfirm(null)
   }
 
   return (
@@ -140,7 +149,11 @@ export default function SchoolStatus() {
             </div>
           </div>
 
-          {erpFiltered.length === 0 ? (
+          {schoolsLoading ? (
+            <div className="section-card"><div className="ss-empty"><i className="fa-solid fa-spinner fa-spin" /><div className="ss-empty-t">Loading schools…</div></div></div>
+          ) : schoolsError ? (
+            <div className="section-card"><div className="ss-empty"><i className="fa-solid fa-triangle-exclamation" /><div className="ss-empty-t">{schoolsError}</div></div></div>
+          ) : erpFiltered.length === 0 ? (
             <div className="section-card"><div className="ss-empty"><i className="fa-solid fa-server" /><div className="ss-empty-t">No ERP schools found</div></div></div>
           ) : erpFiltered.map((s) => {
               const pct = s.onboarding.total ? Math.round(s.onboarding.completed / s.onboarding.total * 100) : 0
@@ -156,7 +169,7 @@ export default function SchoolStatus() {
                     <select className="assign-select" style={{ width: 150 }} value={s.assigned} onChange={(e) => assignUser(s.id, e.target.value)}>
                       {USERS.map((u) => <option key={u}>{u}</option>)}
                     </select>
-                    <button className="btn-danger" style={{ height: 34, fontSize: 12, padding: '0 12px', marginLeft: 10 }} onClick={() => setConfirm({ action: 'deactivate', id: s.id })}><i className="fa-solid fa-moon" /> Make InActive</button>
+                    <button className="btn-danger" style={{ height: 34, fontSize: 12, padding: '0 12px', marginLeft: 10 }} onClick={() => setConfirm({ action: 'deactivate', school: s })}><i className="fa-solid fa-moon" /> Make InActive</button>
                     <button className="det-btn" style={{ marginLeft: 8 }} onClick={() => setDetail({ school: s, isErp: true })}><i className="fa-solid fa-chevron-down" /></button>
                   </div>
                   <div className="erp-meta">
@@ -207,7 +220,11 @@ export default function SchoolStatus() {
                   <th style={{ width: 75, textAlign: 'center' }}>Details</th>
                 </tr></thead>
                 <tbody>
-                  {inactiveFiltered.length === 0 ? (
+                  {schoolsLoading ? (
+                    <tr><td colSpan={8}><div className="ss-empty"><i className="fa-solid fa-spinner fa-spin" /><div className="ss-empty-t">Loading schools…</div></div></td></tr>
+                  ) : schoolsError ? (
+                    <tr><td colSpan={8}><div className="ss-empty"><i className="fa-solid fa-triangle-exclamation" /><div className="ss-empty-t">{schoolsError}</div></div></td></tr>
+                  ) : inactiveFiltered.length === 0 ? (
                     <tr><td colSpan={8}><div className="ss-empty"><i className="fa-solid fa-moon" /><div className="ss-empty-t">No inactive schools</div></div></td></tr>
                   ) : inactiveFiltered.map((s, i) => (
                     <tr key={s.id}>
@@ -217,7 +234,7 @@ export default function SchoolStatus() {
                       <td data-label="Students" style={{ textAlign: 'center', fontWeight: 700, color: 'var(--t1)' }}>{s.students}</td>
                       <td data-label="Staff Sign Up" style={{ textAlign: 'center', fontWeight: 700, color: 'var(--t1)' }}>{s.staffSignup}</td>
                       <td data-label="Student Sign Up" style={{ textAlign: 'center', fontWeight: 700, color: 'var(--t1)' }}>{s.stuSignup}</td>
-                      <td data-label="Action"><button className="btn-success" style={{ height: 34, fontSize: 12, padding: '0 12px' }} onClick={() => setConfirm({ action: 'activate', id: s.id })}><i className="fa-solid fa-circle-check" /> Make Active</button></td>
+                      <td data-label="Action"><button className="btn-success" style={{ height: 34, fontSize: 12, padding: '0 12px' }} onClick={() => setConfirm({ action: 'activate', school: s })}><i className="fa-solid fa-circle-check" /> Make Active</button></td>
                       <td data-label="Details" style={{ textAlign: 'center' }}><button className="det-btn" onClick={() => setDetail({ school: s, isErp: false })}><i className="fa-solid fa-chevron-down" /></button></td>
                     </tr>
                   ))}
@@ -232,7 +249,7 @@ export default function SchoolStatus() {
       {detail && (detail.isErp
         ? <ErpDetailModal school={detail.school} month={eMonth} onToast={(text, type = 'success') => setToast({ text, type })} onClose={() => setDetail(null)} />
         : <BranchDetailModal school={detail.school} onClose={() => setDetail(null)} />)}
-      {confirm && <ConfirmModal action={confirm.action} onClose={() => setConfirm(null)} onConfirm={runConfirm} />}
+      {confirm && <ConfirmModal action={confirm.action} busy={busy} onClose={() => { if (!busy) setConfirm(null) }} onConfirm={runConfirm} />}
 
       {toast && createPortal(
         <div className="ss-toast-wrap"><div className={`ss-toast ${toast.type}`}><i className={`fa-solid ${toast.type === 'success' ? 'fa-circle-check' : toast.type === 'warn' ? 'fa-triangle-exclamation' : 'fa-circle-info'}`} /> {toast.text}</div></div>,
@@ -492,7 +509,7 @@ function AddPopup({ type, onClose, onSave }) {
 }
 
 /* ── Confirm (deactivate / activate) ── */
-function ConfirmModal({ action, onClose, onConfirm }) {
+function ConfirmModal({ action, busy, onClose, onConfirm }) {
   const cfg = action === 'deactivate'
     ? { iconBg: 'rgba(217,119,6,.1)', iconBorder: 'rgba(217,119,6,.25)', iconColor: '#D97706', icon: 'fa-triangle-exclamation', title: 'Are you sure?', sub: 'Do you really want to deactivate this school? It will be moved to Inactive Schools and lose ERP access.', btnClass: 'btn-danger', btnIcon: 'fa-moon', btnLabel: 'OK, Deactivate' }
     : { iconBg: 'rgba(22,163,74,.1)', iconBorder: 'rgba(22,163,74,.25)', iconColor: '#16A34A', icon: 'fa-circle-check', title: 'Reactivate School?', sub: 'This school will be moved back to active ERP schools and regain system access.', btnClass: 'btn-success', btnIcon: 'fa-circle-check', btnLabel: 'Make Active' }
@@ -505,8 +522,12 @@ function ConfirmModal({ action, onClose, onConfirm }) {
           <div className="confirm-title">{cfg.title}</div>
           <div className="confirm-sub">{cfg.sub}</div>
           <div className="confirm-btns">
-            <button className="btn-secondary" onClick={onClose}>Cancel</button>
-            <button className={cfg.btnClass} onClick={onConfirm}><i className={`fa-solid ${cfg.btnIcon}`} /> {cfg.btnLabel}</button>
+            <button className="btn-secondary" onClick={onClose} disabled={busy}>Cancel</button>
+            <button className={cfg.btnClass} onClick={onConfirm} disabled={busy}>
+              {busy
+                ? <><i className="fa-solid fa-spinner fa-spin" /> Saving…</>
+                : <><i className={`fa-solid ${cfg.btnIcon}`} /> {cfg.btnLabel}</>}
+            </button>
           </div>
         </div>
       </div>

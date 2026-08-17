@@ -3,7 +3,7 @@ import TutorialButton from '../../components/TutorialButton'
 import { createPortal } from 'react-dom'
 import { loadAcademics, saveAcademics, className, subjectName, subjectsOfClass, LP_SECTIONS, AQ_TYPES, AQ_CONFIG, aqLabel, sessionStats, vacationSpan, loadResources, saveResources, RES_CATEGORIES, RES_STATUS, resCategory, nextResourceId } from '../../config/academicsStore'
 import { loadChainProfile, chainInitials } from '../../config/chainProfile'
-import { CONNECTED_SCHOOLS } from '../../config/viewContext'
+import { useView } from '../../config/viewContext'
 import './Academics.css'
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
@@ -26,6 +26,7 @@ const GROUPS = {
 }
 
 export default function Academics() {
+  const { schools: connectedSchools } = useView()
   const [a, setA] = useState(null)
   const [group, setGroup] = useState('scheme')
   const [sub, setSub] = useState('act-cal')
@@ -71,7 +72,7 @@ export default function Academics() {
     const seq = (a.releaseSeq || 0) + 1
     const nowISO = new Date().toISOString()
     const title = `${type === 'master' ? 'Master' : 'Sub'} Release ${number}`
-    const allIds = CONNECTED_SCHOOLS.map((s) => s.id)
+    const allIds = connectedSchools.map((s) => s.id)
     const snapshot = {
       lessonPlans: JSON.parse(JSON.stringify(content.a.lessonPlans || [])),
       notebookPlans: JSON.parse(JSON.stringify(content.a.notebookPlans || [])),
@@ -358,9 +359,15 @@ function ReleaseModal({ a, type, releases, baseContent, baseLabel, onClose, onRe
   const t = summary.totals
   const noContent = (t.lessons + t.notebooks + t.resourceFiles + t.activities) === 0
 
+  /* Schools ab API se aate hain (ViewProvider), is liye list async bharti hai —
+     master release ka "sab select" schools aane par set hota hai. */
+  const { schools: connectedSchools } = useView()
   const [days, setDays] = useState('30')
   const [dueDate, setDueDate] = useState(() => addDaysISO(30))
-  const [schoolSel, setSchoolSel] = useState(() => new Set(isSub ? [] : CONNECTED_SCHOOLS.map((s) => s.id)))
+  const [schoolSel, setSchoolSel] = useState(() => new Set())
+  useEffect(() => {
+    if (!isSub) setSchoolSel(new Set(connectedSchools.map((s) => s.id)))
+  }, [isSub, connectedSchools])
   const [schoolQ, setSchoolQ] = useState('')
   const [confirm, setConfirm] = useState(false)
   const [open, setOpen] = useState({})
@@ -372,10 +379,10 @@ function ReleaseModal({ a, type, releases, baseContent, baseLabel, onClose, onRe
   const validUntil = validDays ? addDaysISO(dn) : null
   const shortValidity = validDays && dn < 7
 
-  const schoolList = CONNECTED_SCHOOLS.filter((s) => { const q = schoolQ.trim().toLowerCase(); return !q || s.name.toLowerCase().includes(q) || (s.city || '').toLowerCase().includes(q) })
-  const allSchools = schoolSel.size === CONNECTED_SCHOOLS.length
+  const schoolList = connectedSchools.filter((s) => { const q = schoolQ.trim().toLowerCase(); return !q || s.name.toLowerCase().includes(q) || (s.phone || '').includes(q) })
+  const allSchools = connectedSchools.length > 0 && schoolSel.size === connectedSchools.length
   const toggleSchool = (id) => setSchoolSel((p) => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n })
-  const toggleAllSchools = () => setSchoolSel(allSchools ? new Set() : new Set(CONNECTED_SCHOOLS.map((s) => s.id)))
+  const toggleAllSchools = () => setSchoolSel(allSchools ? new Set() : new Set(connectedSchools.map((s) => s.id)))
   const canRelease = validDays && confirm && !noContent && (!isSub || schoolSel.size > 0)
   const nextNo = releases.filter((r) => r.releaseType === (isSub ? 'SUB_RELEASE' : 'MASTER_RELEASE')).length + 1
   const nextBatch = `${isSub ? 'SR' : 'MR'}-${new Date().getFullYear()}-${String(nextNo).padStart(3, '0')}`
@@ -464,7 +471,7 @@ function ReleaseModal({ a, type, releases, baseContent, baseLabel, onClose, onRe
                       <label key={s.id} className={`rel-school${schoolSel.has(s.id) ? ' on' : ''}`}>
                         <input type="checkbox" checked={schoolSel.has(s.id)} onChange={() => toggleSchool(s.id)} />
                         <span className="rel-school-name">{s.name}</span>
-                        <span className="rel-school-city"><i className="fa-solid fa-location-dot" /> {s.city}</span>
+                        <span className="rel-school-city"><i className="fa-solid fa-phone" /> {s.phone || '—'}</span>
                       </label>
                     ))}
                     {schoolList.length === 0 && <div className="rel-empty-note">No schools match “{schoolQ}”.</div>}

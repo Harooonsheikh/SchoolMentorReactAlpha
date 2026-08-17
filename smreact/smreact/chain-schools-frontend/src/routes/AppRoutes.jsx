@@ -1,7 +1,9 @@
-import { Routes, Route, Navigate } from 'react-router-dom'
+import { useEffect } from 'react'
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import ProtectedRoute from '../auth/ProtectedRoute'
+import { saveLastPath, readLastPath } from './lastPath'
 import AdminLayout from '../layouts/AdminLayout'
-import Login from '../pages/Login/Login'
+import { ERP_LOGIN_URL } from '../config/env'
 import Dashboard from '../pages/Dashboard/Dashboard'
 import Settings from '../pages/Settings/Settings'
 import SchoolPermissions from '../pages/SchoolPermissions/SchoolPermissions'
@@ -25,10 +27,31 @@ import { COMING_SOON_MODULES } from '../config/nav'
    AdminLayout (sidebar + topbar). Add real module screens by swapping a
    ComingSoon route for the built component.
    ═══════════════════════════════════════════════════════════════════ */
+/* Har navigation par mojooda path sessionStorage me likh deta hai, taake
+   reload ya ERP se wapsi par wahi screen khule. Router ke andar hona zaroori
+   hai — useLocation isi ke baghair kaam nahi karta. */
+function LastPathTracker() {
+  const { pathname } = useLocation()
+  useEffect(() => { saveLastPath(pathname) }, [pathname])
+  return null
+}
+
+/* /login ab is app me nahi khulta — ERP par bhej deta hai. */
+function RedirectToErp() {
+  useEffect(() => { window.location.replace(ERP_LOGIN_URL) }, [])
+  return <div className="app-loading">Redirecting…</div>
+}
+
 export default function AppRoutes() {
   return (
+    <>
+    <LastPathTracker />
     <Routes>
-      <Route path="/login" element={<Login />} />
+      {/* Is portal ka apna login form use nahi hota — session ERP ke Network
+          Head Office login se aata hai. /login par aane wale ko (bookmark,
+          purana link) seedha ERP par bhej dete hain. Login component abhi
+          codebase me hai taake baad me chahiye to wapas laga sakein. */}
+      <Route path="/login" element={<RedirectToErp />} />
 
       <Route
         element={
@@ -37,7 +60,8 @@ export default function AppRoutes() {
           </ProtectedRoute>
         }
       >
-        <Route index element={<Navigate to="/dashboard" replace />} />
+        {/* Root par aane wale ko wahin bhejo jahan wo aakhri baar tha. */}
+        <Route index element={<Navigate to={readLastPath() || '/dashboard'} replace />} />
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/school-permissions" element={<SchoolPermissions />} />
@@ -61,5 +85,6 @@ export default function AppRoutes() {
 
       <Route path="*" element={<NotFound />} />
     </Routes>
+    </>
   )
 }

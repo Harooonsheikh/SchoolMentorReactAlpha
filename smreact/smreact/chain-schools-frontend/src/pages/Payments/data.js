@@ -1,9 +1,32 @@
 /* ═══════════════════════════════════════════════════════════════════
    PAYMENTS — schools + billing helpers + localStorage-backed stores.
-   Ported from the Super Admin design. Reuses the ERP + Inactive school
-   lists from the School Status module.
+   Ported from the Super Admin design. Ye page abhi demo par hai: neeche
+   ke billing seeds inhi demo ids (201-212 / 301-304) se bandhe hain, is
+   liye school list bhi yahin rehti hai. School Permissions / School
+   Progress ki tarah API par lene ke liye pehle billing ka API chahiye.
    ═══════════════════════════════════════════════════════════════════ */
-import { INITIAL_ERP, INITIAL_INACTIVE } from '../SchoolStatus/data'
+
+const DEMO_ERP = [
+  { id: 201, name: 'AES School System', initials: 'AS', principal: 'AES Admin', contact: '03001234001', students: 4 },
+  { id: 202, name: 'Jinnah Educational Complex School', initials: 'JE', principal: 'JE Admin', contact: '03009876543', students: 18 },
+  { id: 203, name: 'The Creative School', initials: 'TC', principal: 'Creative Admin', contact: '03112233445', students: 89 },
+  { id: 204, name: 'Beaconhouse School System Gulberg', initials: 'BG', principal: 'Tariq Mahmood', contact: '03214567890', students: 210 },
+  { id: 205, name: 'The City School Johar Town', initials: 'CJ', principal: 'Sana Malik', contact: '03321122334', students: 345 },
+  { id: 206, name: 'Roots International School F-10', initials: 'RF', principal: 'Faisal Qureshi', contact: '03451234567', students: 180 },
+  { id: 207, name: 'Lahore Grammar School DHA', initials: 'LD', principal: 'Ayesha Raza', contact: '03001112222', students: 420 },
+  { id: 208, name: 'Allied School Gulshan Campus', initials: 'AG', principal: 'Usman Ghani', contact: '03339988776', students: 155 },
+  { id: 209, name: 'Divisional Public School Rawalpindi', initials: 'DR', principal: 'Khalid Mehmood', contact: '03125556677', students: 380 },
+  { id: 210, name: 'Fazaia Inter College Risalpur', initials: 'FR', principal: 'Brig Imran Shah', contact: '03009887766', students: 290 },
+  { id: 211, name: 'Army Public School Nowshera', initials: 'AN', principal: 'Col Asad Khan', contact: '03337654321', students: 198 },
+  { id: 212, name: 'Pak-Turk Maarif International School', initials: 'PT', principal: 'Hasan Yilmaz', contact: '03214433221', students: 240 },
+]
+
+const DEMO_INACTIVE = [
+  { id: 301, name: 'Daffodils School', principal: 'Ali Ahmed', contact: '03001111111', students: 0 },
+  { id: 302, name: 'Saeed Public School (High Section)', principal: 'Saeed Khan', contact: '03012222222', students: 0 },
+  { id: 303, name: 'SPS- Middle Branch', principal: 'Saba Perveen', contact: '03023333333', students: 0 },
+  { id: 304, name: 'SPS- Middle Section', principal: 'Nadia Butt', contact: '03034444444', students: 0 },
+]
 
 export function getAllSchools() {
   const withMeta = (s) => ({
@@ -11,7 +34,7 @@ export function getAllSchools() {
     schoolCode: String(s.id).padStart(6, '0'),
     initials: (s.initials || s.name.slice(0, 2)).toUpperCase(),
   })
-  return [...INITIAL_ERP.map(withMeta), ...INITIAL_INACTIVE.map(withMeta)]
+  return [...DEMO_ERP.map(withMeta), ...DEMO_INACTIVE.map(withMeta)]
 }
 
 /* Seed payment setup for the ERP schools (so the tabs have data to work with). */
