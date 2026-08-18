@@ -4,7 +4,6 @@ import Tooltip from '../../components/Tooltip';
 import { buildUrl, resolveMediaUrl } from '../../../utils/apiConfig';
 import * as hrService from '../../services/hrService';
 import * as studentService from '../../services/studentService';
-import { SCHOOL_BRAND } from './dashboardData';
 import { DASH_MODAL_CSS } from './dashModalCss';
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -33,18 +32,20 @@ export default function AppPendingReportModal({ mode = 'teachers', counts = null
 
   /* Report header/footer ki asli school identity — wahi report-header API jo
      baaki reports use karti hain (logo + branchName + address + academicSession).
-     Jab tak load na ho, SCHOOL_BRAND (mock) par fallback. */
+     Jab tak load na ho, header par DUMMY nahi — ek loader dikhta hai (brandLoading). */
   const [brand, setBrand] = useState(null);
+  const [brandLoading, setBrandLoading] = useState(true);
   useEffect(() => {
     const branchId = sessionStorage.getItem('branchID');
-    if (!branchId) return undefined;
+    if (!branchId) { setBrandLoading(false); return undefined; }
     let cancelled = false;
     (async () => {
       try {
         const res  = await fetch(buildUrl(`/report-header/${branchId}`), { headers: { Accept: '*/*' } });
         const json = await res.json().catch(() => null);
         if (!cancelled && json?.success) setBrand(json.data || null);
-      } catch { /* ignore — niche fallback */ }
+      } catch { /* ignore — header khaali reh jayega, dummy nahi */ }
+      finally { if (!cancelled) setBrandLoading(false); }
     })();
     return () => { cancelled = true; };
   }, []);
@@ -233,6 +234,7 @@ export default function AppPendingReportModal({ mode = 'teachers', counts = null
                 generated={generated}
                 showHeader={pi === 0}
                 brand={brand}
+                brandLoading={brandLoading}
                 summary={summary}
               >
                 <table className="rpt-table">
@@ -284,6 +286,7 @@ export default function AppPendingReportModal({ mode = 'teachers', counts = null
                   generated={generated}
                   showHeader={pi === 0}
                   brand={brand}
+                  brandLoading={brandLoading}
                   summary={summary}
                 >
                   <table className="rpt-table">
@@ -356,11 +359,12 @@ export default function AppPendingReportModal({ mode = 'teachers', counts = null
 }
 
 /* ─── A4 page wrapper ─────────────────────────────────────────── */
-function A4Page({ pageNum, totalPages, title, subtitle, generated, showHeader, brand, summary, children }) {
-  /* Report identity ab report-header API se (brand). API values me trailing space
-     aate hain — trim. Logo na mile to purana crest, brand na mile to SCHOOL_BRAND. */
-  const schoolName = (brand?.branchName || SCHOOL_BRAND.name || '').trim();
-  const address    = (brand?.address || SCHOOL_BRAND.address || '').trim();
+function A4Page({ pageNum, totalPages, title, subtitle, generated, showHeader, brand, brandLoading, summary, children }) {
+  /* Report identity SIRF report-header API se (brand). Koi dummy fallback nahi —
+     jab tak load na ho brandLoading true rehta hai aur header par loader dikhta hai.
+     API values me trailing space aate hain — trim. */
+  const schoolName = (brand?.branchName || '').trim();
+  const address    = (brand?.address || '').trim();
   const sessionTxt = (brand?.academicSession || '').trim();
   const logoUrl    = brand?.branchLogo ? resolveMediaUrl(brand.branchLogo) : '';
   return (
@@ -370,7 +374,9 @@ function A4Page({ pageNum, totalPages, title, subtitle, generated, showHeader, b
           <header className="rpt-head">
             <div className="rpt-head-l">
               <div className="rpt-logo">
-                {logoUrl ? (
+                {brandLoading ? (
+                  <span className="rpt-logo-spin" aria-label="Loading school details" />
+                ) : logoUrl ? (
                   <img src={logoUrl} alt="School logo" style={{ width: '100%', height: '100%', objectFit: 'contain', background: '#fff' }} />
                 ) : (
                   /* School crest fallback — same shape as the sidebar logo */
@@ -389,9 +395,19 @@ function A4Page({ pageNum, totalPages, title, subtitle, generated, showHeader, b
                 )}
               </div>
               <div className="rpt-school">
-                <div className="rpt-school-n">{schoolName}</div>
-                {address && <div className="rpt-school-addr">{address}</div>}
-                {sessionTxt && <div className="rpt-school-c">Academic Session: {sessionTxt}</div>}
+                {brandLoading ? (
+                  <>
+                    <span className="rpt-skel rpt-skel-n" />
+                    <span className="rpt-skel rpt-skel-a" />
+                    <span className="rpt-loading-txt">Loading school details…</span>
+                  </>
+                ) : (
+                  <>
+                    <div className="rpt-school-n">{schoolName}</div>
+                    {address && <div className="rpt-school-addr">{address}</div>}
+                    {sessionTxt && <div className="rpt-school-c">Academic Session: {sessionTxt}</div>}
+                  </>
+                )}
               </div>
             </div>
             <div className="rpt-head-r">
@@ -472,6 +488,24 @@ const PRT_CSS = `
   border-radius: 10px; overflow: hidden;
   box-shadow: 0 2px 6px rgba(30, 58, 138, .25);
 }
+/* ─── Header loader (jab tak report-header API load na ho — dummy ke bajaye) ─── */
+.rpt-logo-spin {
+  display: block; width: 100%; height: 100%; box-sizing: border-box;
+  border: 3px solid #DBEAFE; border-top-color: #1E3A8A; border-radius: 50%;
+  animation: rpt-spin .7s linear infinite;
+}
+@keyframes rpt-spin { to { transform: rotate(360deg); } }
+.rpt-skel {
+  display: block; border-radius: 6px;
+  background: linear-gradient(90deg, #E9EEF6 25%, #F4F7FB 37%, #E9EEF6 63%);
+  background-size: 400% 100%;
+  animation: rpt-shimmer 1.3s ease infinite;
+}
+.rpt-skel-n { width: 210px; height: 18px; }
+.rpt-skel-a { width: 150px; height: 11px; margin-top: 6px; }
+.rpt-loading-txt { font: 600 10px/1.4 'Plus Jakarta Sans', sans-serif; color: #94A3B8; margin-top: 6px; }
+@keyframes rpt-shimmer { 0% { background-position: 100% 0; } 100% { background-position: 0 0; } }
+
 .rpt-school-n { font: 800 18px/1.1 'Plus Jakarta Sans', sans-serif; color: #1E3A8A; letter-spacing: -0.3px; }
 .rpt-school-c { font: 700 12px/1.2 'Plus Jakarta Sans', sans-serif; color: #475569; margin-top: 3px; }
 .rpt-school-addr { font: 500 10.5px/1.4 'Plus Jakarta Sans', sans-serif; color: #64748B; margin-top: 4px; }

@@ -13,8 +13,6 @@ import useAsync from '../../hooks/useAsync';
 import * as accountsService from '../../services/accountsService';
 import * as feeService from '../../services/feeService';
 import * as dashboardService from '../../services/dashboardService';
-import * as attendanceService from '../../services/attendanceService';
-import * as hrService from '../../services/hrService';
 import {
   STUDENT_STATS,
   HR_STATS,
@@ -334,6 +332,13 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
   const feePaidPct = pctOf(fee.FeeReceived, fee.CurrentMonthFeePosition);
   const feePendingPct = 100 - feePaidPct;
 
+  /* Previous Dues / Students-with-Dues / Total Net Receivable — sab SEEDHA
+     get-dashboard ke FeeAnalytics se (koi extra API nahi). Backend jab in fields
+     ko sahi bharega (abhi PreviousDues 0 aata hai) to yahan khud aa jayega. */
+  const previousDuesVal = fee.PreviousDues || 0;
+  const studentsWithDuesVal = fee.StudentsPending || 0;
+  const totalNetReceivableVal = fee.TotalNetReceivable;
+
   /* Teachers / Parents mobile-app adoption cards.
      Total ab REAL active counts se (Kpi.ActiveStaff / Kpi.ActiveStudents) — wahi jo
      hero KPIs aur report dikhate hain — taake sab consistent rahe (pehle AppAdoption
@@ -348,99 +353,18 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
   const teacherAppData = { total: teacherTotal, downloaded: teacherDl, pending: Math.max(0, teacherTotal - teacherDl), pct: pctOf(teacherDl, teacherTotal) };
   const parentAppData  = { total: parentTotal,  downloaded: parentDl,  pending: Math.max(0, parentTotal - parentDl),   pct: pctOf(parentDl, parentTotal) };
 
-  /* Today's Attendance — get-dashboard ka TodaysAttendance aksar 0 deta hai, is liye
-     Attendance module ke SAME endpoint se AAJ ke records khud fetch kar ke count karte
-     hain (branch-wide: classID/sectionID = 0). Status codes: 1=present 2=absent 3=leave
-     4=late (late ko present gina). Fail/khaali ho to get-dashboard values par fallback. */
-  const [todayAtt, setTodayAtt] = useState(null);
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      try {
-        const branchID  = Number(sessionStorage.getItem('branchID')) || 0;
-        const sessionID = Number(await attendanceService.getActiveSessionID()) || 0;
-        const now = new Date();
-        const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-        const codeToStatus = { '1': 'present', '2': 'absent', '3': 'leave', '4': 'late' };
-        const tally = (arr) => {
-          const out = { present: 0, absent: 0, leave: 0 };
-          (Array.isArray(arr) ? arr : []).forEach(r => {
-            if (String(r.AttendanceDate ?? r.attendanceDate ?? '').slice(0, 10) !== today) return;
-            const raw = r.Status ?? r.status;
-            const st  = codeToStatus[String(raw)] || (typeof raw === 'string' ? raw.toLowerCase() : '');
-            if (st === 'present' || st === 'late') out.present += 1;
-            else if (st === 'absent') out.absent += 1;
-            else if (st === 'leave')  out.leave  += 1;
-          });
-          return out;
-        };
-        const [sRes, fRes] = await Promise.all([
-          attendanceService.studentAttendance({
-            id: 0, branchID, studentID: 0, sessionID, classID: 0, sectionID: 0,
-            attendanceDate: today, status: '', platform: 'ERP',
-            isNotificationGen: false, action: 'get', createdBy: 0, modifiedBy: 0,
-          }).catch(() => ({ data: [] })),
-          attendanceService.staffAttendance({
-            id: 0, staffID: 0, branchID, attendanceDate: today,
-            checkInTime: '', checkOutTime: '', status: '', platform: '',
-            isNotificationGen: false, action: 'get', createdBy: 0, modifiedBy: 0,
-          }).catch(() => ({ data: [] })),
-        ]);
-        if (alive) setTodayAtt({ student: tally(sRes?.data), staff: tally(fRes?.data) });
-      } catch { if (alive) setTodayAtt(null); }
-    })();
-    return () => { alive = false; };
-  }, []);
-
-  /* Percentage POORE enrolled (roster) ke against — sirf "marked" par nahi. Warna
-     aik hi class (sab present) mark karne par galti se 100% aa jata tha. Ab denominator
-     = kul active students/staff, is liye jab tak sari classes mark na hon % kam rahega
-     (jo sahi hai — abhi tak itne hi confirmed present hain). Cap 100%. */
-  const mkAtt = (live, enrolled, fb) => {
-    if (live) {
-      const total = enrolled > 0 ? enrolled : (live.present + live.absent + live.leave);
-      return {
-        present: live.present, absent: live.absent, leave: live.leave, total,
-        percentage: Math.min(100, pctOf(live.present, total)),
-      };
-    }
-    return fb;
-  };
-  const studentAttData = mkAtt(todayAtt?.student, Number(kpi.ActiveStudents) || Number(snap.TotalStudents) || 0, {
+  /* Today's Attendance — SEEDHA get-dashboard ke TodaysAttendance se (koi extra
+     attendance API nahi). Present/Absent/Leave + Total wahi backend deta hai. */
+  const studentAttData = {
     total: stuAtt.StudentTotal || 0, present: stuAtt.StudentPresent || 0,
     absent: stuAtt.StudentAbsent || 0, leave: stuAtt.StudentLeave || 0,
     percentage: pctOf(stuAtt.StudentPresent, stuAtt.StudentTotal),
-  });
-  const staffAttData = mkAtt(todayAtt?.staff, Number(kpi.ActiveStaff) || Number(snap.TotalEmployees) || 0, {
+  };
+  const staffAttData = {
     total: staffAtt.StaffTotal || 0, present: staffAtt.StaffPresent || 0,
     absent: staffAtt.StaffAbsent || 0, leave: staffAtt.StaffLeave || 0,
     percentage: pctOf(staffAtt.StaffPresent, staffAtt.StaffTotal),
-  });
-
-  /* Employees tile ke DEPARTMENT + inactive counts HR module ke SAME source se
-     (getHrDepts / getHrEmployees) — get-dashboard ka ModuleSnapshot.TotalDepartments
-     HR se match nahi karta tha (e.g. dashboard 4 vs HR 3). Load hone tak snap.* fallback. */
-  const [hrCounts, setHrCounts] = useState(null);
-  useEffect(() => {
-    if (!moduleActive('hr')) return undefined;
-    let alive = true;
-    (async () => {
-      try {
-        const [depts, emps] = await Promise.all([
-          hrService.getHrDepts().catch(() => []),
-          hrService.getHrEmployees().catch(() => []),
-        ]);
-        const list = Array.isArray(emps) ? emps : [];
-        if (alive) setHrCounts({
-          depts:    (Array.isArray(depts) ? depts : []).length,
-          active:   list.filter(e => e.status === 'Active').length,
-          inactive: list.filter(e => e.status !== 'Active').length,
-        });
-      } catch { if (alive) setHrCounts(null); }
-    })();
-    return () => { alive = false; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  };
 
   /* Revenue Streams — API [{Month, Head, Amount}] ko month-wise total me. */
   const revenueChart = useMemo(() => {
@@ -466,8 +390,8 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
       meta: <><span className="dash-tile-meta-pill">+{snap.NewStudentsThisWeek || 0} this week</span><span>{snap.InactiveStudents || 0} inactive</span></>,
       target: 'students' },
     moduleActive('hr') && { key: 'hr', accent: MODULE_COLOR.hr, label: 'Employees', icon: 'fa-users',
-      value: (hrCounts?.active ?? snap.TotalEmployees) || 0,
-      meta: <><span className="dash-tile-meta-pill">{(hrCounts?.depts ?? snap.TotalDepartments) || 0} depts</span><span>{(hrCounts?.inactive ?? snap.InactiveEmployees) || 0} inactive</span></>,
+      value: snap.TotalEmployees || 0,
+      meta: <><span className="dash-tile-meta-pill">{snap.TotalDepartments || 0} depts</span><span>{snap.InactiveEmployees || 0} inactive</span></>,
       target: 'hr' },
     moduleActive('academics') && { key: 'activities', accent: MODULE_COLOR.academics, label: 'Activities', icon: 'fa-calendar-days',
       value: actSummary.TotalActivities || 0,
@@ -784,14 +708,14 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
                 </div>
                 <div className="fc-title fc-title--red">Previous Dues</div>
               </div>
-              <div className="fc-amount fc-amount--red fa-amount--lg">{fmtPKR(fee.PreviousDues)}</div>
+              <div className="fc-amount fc-amount--red fa-amount--lg">{fmtPKR(previousDuesVal)}</div>
               <div className="fc-divider" />
               <div className="fa-meta-rows">
                 <div className="fa-meta-row">
                   <span className="fa-meta-lbl">
                     <i className="fa-solid fa-users" aria-hidden="true"></i> Students with Dues
                   </span>
-                  <span className="fa-meta-val fa-meta-val--red">{fee.StudentsPending || 0}</span>
+                  <span className="fa-meta-val fa-meta-val--red">{studentsWithDuesVal}</span>
                 </div>
                 <div className="fa-meta-row fa-meta-row--muted">
                   <i className="fa-solid fa-clock" aria-hidden="true"></i>
@@ -808,7 +732,7 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
                 </div>
                 <div className="fc-title">Total Net Receivable</div>
               </div>
-              <div className="fc-amount fa-amount--lg">{fmtPKR(fee.TotalNetReceivable)}</div>
+              <div className="fc-amount fa-amount--lg">{fmtPKR(totalNetReceivableVal)}</div>
               <div className="fa-formula">
                 <i className="fa-solid fa-circle-info" aria-hidden="true"></i>
                 <span>Current Month Net Receivable + Previous Dues</span>
@@ -822,7 +746,7 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
                 <span className="fa-bd-op">+</span>
                 <div>
                   <span className="fa-bd-lbl">Previous</span>
-                  <span className="fa-bd-val fa-bd-val--red">{fmtPKR(fee.PreviousDues)}</span>
+                  <span className="fa-bd-val fa-bd-val--red">{fmtPKR(previousDuesVal)}</span>
                 </div>
               </div>
             </div>
