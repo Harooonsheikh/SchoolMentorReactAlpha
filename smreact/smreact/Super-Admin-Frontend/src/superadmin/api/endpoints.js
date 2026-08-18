@@ -23,6 +23,17 @@ const ROOT = '/api/superadmin';
 const SA_ROOT = '/SchoolMentorSuperAdminAPI';
 
 export const EP = {
+
+  /* ── 1LINK / 1Bill Transaction Monitoring ── */
+  transactions: {
+    list: () => `${ROOT}/transactions`,                             // ?from=&to=&month=&schoolId=&status=
+    summary: () => `${ROOT}/transactions/summary`,                  // ?from=&to=&month=  -> network-wide KPIs
+    schoolWise: () => `${ROOT}/transactions/school-wise`,           // ?from=&to=&month=  -> per-school breakdown
+    rateConfig: () => `${ROOT}/transactions/rate-config`,           // GET / PUT { customerCharge, providerCost, effectiveFrom }
+    report: () => `${ROOT}/transactions/report`,                    // ?from=&to=&month=  -> detailed transaction report (download)
+    revenueReport: () => `${ROOT}/transactions/revenue-report`,     // ?from=&to=&month=  -> revenue report (download)
+  },
+
   /* ── Auth (only needed for the standalone app; the host injects a token) ── */
   auth: {
     /* Super Admin ka apna sign-in — SchoolMentorSuperAdminAPI ke ANDAR:

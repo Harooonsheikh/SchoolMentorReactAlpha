@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { fmt } from './dashboardData';
 import { DASHBOARD_GATES } from './userMgmtData';
 import { fetchDashboard } from './api';
+import OneLinkOverviewSection from './OneLinkSection';
 
 /* ═══════════════════════════════════════════════════════════════════
    DASHBOARD — platform overview (permission-aware)
@@ -68,7 +69,7 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
 
   const hidden = [];
   if (canDashboard && !accountInactive) {
-    if (!canPay) hidden.push('Fee Analytics');
+    if (!canPay) hidden.push('Fee Analytics', '1LINK Overview');
     if (!canProgress) hidden.push('School Overview & Details');
     if (!canVideo) hidden.push('Video Details');
   }
@@ -206,6 +207,9 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
           </div>
         </>
       )}
+
+      {/* ─── 1LINK / 1BILL TRANSACTION MONITORING & REVENUE ─── */}
+      {canPay && <OneLinkOverviewSection toast={toast} />}
 
       {/* ─── SCHOOL OVERVIEW ─── */}
       {canProgress && (
