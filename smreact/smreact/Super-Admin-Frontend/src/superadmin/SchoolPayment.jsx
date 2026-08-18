@@ -1,17 +1,29 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   PAY_SCHOOLS, INITIAL_PAY_SETUP, RECEIVING_METHODS,
   monthlyCharge, pkr, kfmt, fmtDateLong, fmtDateShort, plusDays, todayISO, deriveRow,
 } from './paymentData';
+import { paymentsApi, schoolProgressApi, schoolPermissionsApi } from './api';
 
 /* ═══════════════════════════════════════════════════════════════════
-   SCHOOLS PAYMENT (Payment Status) — Super Admin module (frontend only)
+   SCHOOLS PAYMENT (Payment Status) — Super Admin module
 
    Four tabs: Payment Setup · Challans · Receiving · Reports.
    Setup defines a billing formula per school; challans bill it; receiving
    records payments; reports roll everything up (summary / outstanding /
-   received / challan) with PDF export. All state is in-component demo
-   state (see ./paymentData). No backend.
+   received / challan) with PDF export.
+
+   Teeno tabs LIVE hain (AHM_School_Payments — see api/services/payments), aur
+   har tab SIRF apni API chalata hai — mount par chaaron nahi:
+     • mount         → branch directory (branch-report) hi
+     • Payment Setup → GET /summary?branchId=&type= (per branch) → payStore;
+       Set Up / Edit ka Save → POST /manage (ADD pehli baar, phir UPDATE)
+     • Challans      → /manage_payment_ledger, action GET; Generate / Delete
+       usi route par ADD | UPDATE | DELETE
+     • Receiving     → /manage_payment_receiving, action GET; Add Payment /
+       Delete usi route par ADD | UPDATE | DELETE
+     • Reports       → apna endpoint nahi; challan + receiving stores se banti
+   API na chale to bundled demo rows (see ./paymentData).
    ═══════════════════════════════════════════════════════════════════ */
 
 const TABS = [
@@ -21,81 +33,281 @@ const TABS = [
   { id: 'report',    name: 'Reports',       icon: 'fa-chart-bar' },
 ];
 
+/* branch-report ki row → wohi school shape jo yeh screen padhti hai. */
+const branchToPaySchool = (b) => ({
+  id: b.id,
+  name: b.name,
+  principal: b.principal || '',
+  contact: b.contact || '',
+  students: b.students || 0,
+  initials: b.initials || 'SM',
+  schoolCode: String(b.id).padStart(6, '0'),
+});
+
 export default function SchoolPayment({ toast }) {
   const [tab, setTab] = useState('setup');
-  const [payStore, setPayStore] = useState(INITIAL_PAY_SETUP);
+  const [schools, setSchools] = useState([]);
+  const [payStore, setPayStore] = useState({});
   const [chStore, setChStore] = useState({});
   const [recvStore, setRecvStore] = useState({});
+  /* { [branchId]: { bankName, accountTitle, accountNo, branchName, iban, note } }
+     — challan slip ke "Payment Method" block ke liye. */
+  const [bankStore, setBankStore] = useState({});
   const [modal, setModal] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
 
-  const charge = (s) => monthlyCharge(s, payStore[s.id]);
+  /* toast prop har render par naya function ho sakta hai — loader ko dobara
+     chalane se rokne ke liye ref me rakha hai (wahi tareeqa SchoolStatus ka). */
+  const toastRef = useRef(toast);
+  useEffect(() => { toastRef.current = toast; }, [toast]);
+
+  /* ── Loading — har tab SIRF apni API chalata hai ─────────────────────
+     Screen khulte hi sirf branch directory aati hai (branch-report), taake
+     branchID bilkul wahi jaye jo backend samajhta hai. Uske baad jo tab khula
+     ho bas usi ki call jati hai:
+       Payment Setup → GET  /summary?branchId=&type=
+       Challans      → POST /manage_payment_ledger      (action: GET)
+       Receiving     → POST /manage_payment_receiving   (action: GET)
+     Har tab ka data ek hi baar aata hai (loadedRef) — dobara switch karne par
+     koi nayi call nahi, is liye intezar bhi nahi. API na chale to bundled demo
+     data — screen kabhi khali nahi rehti. */
+  const loadedRef = useRef({ setup: false, challans: false, receiving: false, banks: false });
+  const inflightRef = useRef({});
+  /* payStore ka mirror — ensureChallans ko setups turant chahiye hote hain
+     (setState ka naya value usi tick me nahi milta). */
+  const payRef = useRef({});
+  const [tabBusy, setTabBusy] = useState({ setup: false, challans: false, receiving: false, banks: false });
+
+  useEffect(() => { payRef.current = payStore; }, [payStore]);
+
+  /* Ek key ka kaam sirf EK baar; chal raha ho to doosra caller usi promise par
+     wait karta hai (React ke double-effect par bhi ek hi call jati hai). */
+  const runOnce = useCallback((key, work, errMsg) => {
+    if (loadedRef.current[key]) return Promise.resolve();
+    if (inflightRef.current[key]) return inflightRef.current[key];
+    setTabBusy((prev) => ({ ...prev, [key]: true }));
+    const job = work()
+      .then(() => { loadedRef.current[key] = true; })
+      .catch((err) => { toastRef.current?.(err?.message || errMsg, 'warn'); })
+      .finally(() => {
+        inflightRef.current[key] = null;
+        setTabBusy((prev) => ({ ...prev, [key]: false }));
+      });
+    inflightRef.current[key] = job;
+    return job;
+  }, []);
+
+  /* Payment Setup tab → har branch ka GET /summary */
+  const ensureSetups = useCallback(async (rows) => {
+    await runOnce('setup', async () => {
+      const setups = await paymentsApi.listPaymentSummaries(rows.map((s) => s.id));
+      payRef.current = setups;
+      setPayStore(setups);
+    }, 'Could not load payment setups');
+    return payRef.current;
+  }, [runOnce]);
+
+  /* Challans tab → ledger GET. Ledger row par sirf totalAmount hota hai;
+     monthly / previous-dues ka split setup se nikalta hai, is liye setups
+     pehle — pehle se load hon to koi nayi call nahi jati. */
+  const ensureChallans = useCallback(async (rows) => {
+    if (loadedRef.current.challans) return;
+    const setups = await ensureSetups(rows);
+    await runOnce('challans', async () => {
+      setChStore(await paymentsApi.listChallans(rows, setups));
+    }, 'Could not load challans');
+  }, [ensureSetups, runOnce]);
+
+  /* Receiving tab → receiving GET.
+     Sirf receiving kaafi nahi: table ka "Total Dues" aur "Prev Month
+     Remaining" challan se aate hain, monthly setup se, aur Add Payment save
+     karte waqt schoolPaymentID / paymentLedgerID bhi unhi rows ki id hoti hai.
+     Is liye user seedha Receiving par aaye tab bhi setup + challan pehle —
+     jo pehle se load ho chuke hon un par koi nayi call nahi jati. */
+  const ensureReceivings = useCallback(async (rows) => {
+    if (loadedRef.current.receiving) return;
+    await ensureChallans(rows);
+    await runOnce('receiving', async () => {
+      setRecvStore(await paymentsApi.listReceivings(rows.map((s) => s.id)));
+    }, 'Could not load receiving records');
+  }, [ensureChallans, runOnce]);
+
+  /* Challan slip ka Download → branch ki apni bank details.
+     Yeh AHM_School_Payments par nahi hain (us model me koi bank column hi
+     nahi), balke School Permissions wali get-branches-with-permissions par
+     aati hain — ek hi call sab branches ke liye, aur wo bhi tabhi jab pehli
+     slip khule. */
+  const ensureBanks = useCallback(() => runOnce('banks', async () => {
+    setBankStore(await schoolPermissionsApi.listBranchBanks());
+  }, 'Could not load bank details'), [runOnce]);
+
+  /* Mount par sirf branch directory — koi payment API nahi. */
+  const load = useCallback(async () => {
+    setLoading(true);
+    let rows = [];
+    try {
+      const { launch, erp, inactive } = await schoolProgressApi.listSchoolProgress();
+      const seen = new Set();
+      rows = [...launch, ...erp, ...inactive]
+        .filter((b) => b.id && !seen.has(b.id) && seen.add(b.id))
+        .map(branchToPaySchool);
+    } catch (err) {
+      toastRef.current?.(err?.message || 'Could not load schools — showing sample data', 'warn');
+    }
+    if (!rows.length) {
+      /* Demo mode — in ids ka backend par koi record nahi, is liye teeno tabs
+         "load ho chuke" mark hain aur koi payment API nahi chalti. */
+      loadedRef.current = { setup: true, challans: true, receiving: true, banks: true };
+      payRef.current = INITIAL_PAY_SETUP;
+      setSchools(PAY_SCHOOLS);
+      setPayStore(INITIAL_PAY_SETUP);
+      setLoading(false);
+      return;
+    }
+    setSchools(rows);
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  /* Tab khulte hi usi tab ki API. Reports ka apna endpoint nahi — wo challan +
+     receiving stores par banti hai (jo pehle se load hon wo skip ho jate hain). */
+  useEffect(() => {
+    if (!schools.length) return;
+    if (tab === 'setup') ensureSetups(schools);
+    else if (tab === 'challans') ensureChallans(schools);
+    else if (tab === 'receiving') ensureReceivings(schools);
+    else if (tab === 'report') { ensureChallans(schools); ensureReceivings(schools); }
+  }, [tab, schools, ensureSetups, ensureChallans, ensureReceivings]);
 
   /* Stats (header) */
   const stats = useMemo(() => {
-    const total = PAY_SCHOOLS.length;
-    const done = PAY_SCHOOLS.filter((s) => payStore[s.id]).length;
-    const revenue = PAY_SCHOOLS.reduce((sum, s) => sum + charge(s), 0);
+    const total = schools.length;
+    const done = schools.filter((s) => payStore[s.id]).length;
+    const revenue = schools.reduce((sum, s) => sum + setupMonthly(s, payStore[s.id]), 0);
     return { total, done, pending: total - done, revenue };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [payStore]);
+  }, [schools, payStore]);
 
-  /* ── Setup ── */
-  const saveSetup = (id, setup) => {
-    setPayStore((prev) => ({ ...prev, [id]: setup }));
-    setModal(null);
-    const s = PAY_SCHOOLS.find((x) => x.id === id);
-    toast?.(`Payment setup saved for ${s ? s.name : 'school'}`, 'success');
-  };
-
-  /* ── Challans ── */
-  const generateChallan = (id, { dueDate, prevDues }) => {
-    const s = PAY_SCHOOLS.find((x) => x.id === id);
-    const setup = payStore[id];
-    const monthly = monthlyCharge(s, setup);
-    setChStore((prev) => ({ ...prev, [id]: {
-      schoolId: id, formula: setup.formula, monthly, prevDues, total: monthly + prevDues,
-      dueDate: fmtDateLong(dueDate), dueDateRaw: dueDate, issueDate: fmtDateLong(todayISO()),
-      studentCount: parseInt(setup.studentCount || s.students || 0, 10), perStudentRate: parseFloat(setup.perStudentRate || 0),
-      lumpAmount: parseFloat(setup.lumpAmount || 0),
-    } }));
-    setModal(null); toast?.(`Challan generated for ${s.name}`, 'success');
-  };
-  const bulkGenerate = (ids, dueDate) => {
-    setChStore((prev) => {
-      const next = { ...prev };
-      ids.forEach((id) => {
-        const s = PAY_SCHOOLS.find((x) => x.id === id); const setup = payStore[id];
-        if (!s || !setup) return;
-        const monthly = monthlyCharge(s, setup);
-        next[id] = { schoolId: id, formula: setup.formula, monthly, prevDues: 0, total: monthly,
-          dueDate: fmtDateLong(dueDate), dueDateRaw: dueDate, issueDate: fmtDateLong(todayISO()),
-          studentCount: parseInt(setup.studentCount || s.students || 0, 10), perStudentRate: parseFloat(setup.perStudentRate || 0),
-          lumpAmount: parseFloat(setup.lumpAmount || 0) };
+  /* ── Setup ── POST /manage, phir usi branch ka taaza summary payStore me. */
+  const saveSetup = async (id, setup) => {
+    const s = schools.find((x) => x.id === id);
+    setSaving(true);
+    try {
+      const saved = await paymentsApi.savePaymentSetup({
+        branchId: id, setup, school: s, id: payStore[id]?.id || 0,
       });
-      return next;
-    });
-    setModal(null); toast?.(`Challans generated for ${ids.length} school${ids.length !== 1 ? 's' : ''}`, 'success');
-  };
-  const deleteChallan = (id) => {
-    setChStore((prev) => { const n = { ...prev }; delete n[id]; return n; });
-    setModal(null); toast?.('Challan deleted', 'info');
+      setPayStore((prev) => ({ ...prev, [id]: saved }));
+      setModal(null);
+      toast?.(`Payment setup saved for ${s ? s.name : 'school'}`, 'success');
+    } catch (err) {
+      toast?.(err?.message || 'Could not save payment setup', 'error');
+    } finally {
+      setSaving(false);
+    }
   };
 
-  /* ── Receiving ── */
-  const saveReceiving = (id, rec) => {
-    setRecvStore((prev) => {
-      const existing = prev[id];
-      const history = existing && existing.history ? [...existing.history] : [];
-      history.push({ amount: rec.receivedAmount, via: rec.via, date: rec.date });
-      return { ...prev, [id]: { ...rec, history } };
-    });
-    setModal(null);
-    const s = PAY_SCHOOLS.find((x) => x.id === id);
-    toast?.(`Payment recorded for ${s ? s.name : 'school'}`, 'success');
+  /* ── Challans ── POST /manage_payment_ledger (ADD pehli baar, phir UPDATE). */
+  const generateChallan = async (id, { dueDate, prevDues }) => {
+    const s = schools.find((x) => x.id === id);
+    const setup = payStore[id];
+    const monthly = setupMonthly(s, setup);
+    setSaving(true);
+    try {
+      const saved = await paymentsApi.saveChallan({
+        branchId: id, school: s, setup, dueDate,
+        total: monthly + prevDues, issueDate: todayISO(),
+        id: chStore[id]?.id || 0,
+      });
+      setChStore((prev) => ({ ...prev, [id]: saved }));
+      setModal(null);
+      toast?.(`Challan generated for ${s.name}`, 'success');
+    } catch (err) {
+      toast?.(err?.message || 'Could not generate challan', 'error');
+    } finally {
+      setSaving(false);
+    }
   };
-  const deleteReceiving = (id) => {
-    setRecvStore((prev) => { const n = { ...prev }; delete n[id]; return n; });
-    setModal(null); toast?.('Receiving record deleted', 'info');
+
+  /* Bulk — har branch ka apna ledger row, sab calls parallel. Jo fail ho wo
+     alag se gina jata hai taake toast sach bole. */
+  const bulkGenerate = async (ids, dueDate) => {
+    setSaving(true);
+    const results = await Promise.all(ids.map(async (id) => {
+      const s = schools.find((x) => x.id === id); const setup = payStore[id];
+      if (!s || !setup) return null;
+      try {
+        return await paymentsApi.saveChallan({
+          branchId: id, school: s, setup, dueDate,
+          total: setupMonthly(s, setup), issueDate: todayISO(),
+          id: chStore[id]?.id || 0,
+        });
+      } catch {
+        return null;
+      }
+    }));
+    const next = {};
+    ids.forEach((id, i) => { if (results[i]) next[id] = results[i]; });
+    setChStore((prev) => ({ ...prev, ...next }));
+    setSaving(false);
+    setModal(null);
+    const done = Object.keys(next).length;
+    const failed = ids.length - done;
+    if (!done) toast?.('Could not generate any challans', 'error');
+    else toast?.(`Challans generated for ${done} school${done !== 1 ? 's' : ''}${failed ? ` · ${failed} failed` : ''}`, failed ? 'warn' : 'success');
+  };
+
+  const deleteChallan = async (id) => {
+    const rowId = chStore[id]?.id || 0;
+    try {
+      if (rowId) await paymentsApi.deleteChallan({ branchId: id, id: rowId });
+      setChStore((prev) => { const n = { ...prev }; delete n[id]; return n; });
+      setModal(null); toast?.('Challan deleted', 'info');
+    } catch (err) {
+      toast?.(err?.message || 'Could not delete challan', 'error');
+    }
+  };
+
+  /* ── Receiving ── POST /manage_payment_receiving (ADD pehli baar, phir UPDATE).
+     Payment Via ab `paymentVia` column me save hota hai. API har branch ka
+     sirf AAKHRI record rakhti hai, is liye purani history (jo screen par thi)
+     nayi API row ke aage laga di jati hai. */
+  const saveReceiving = async (id, rec) => {
+    const s = schools.find((x) => x.id === id);
+    const prevHistory = recvStore[id]?.history || [];
+    setSaving(true);
+    try {
+      const saved = await paymentsApi.saveReceiving({
+        branchId: id, rec,
+        setupId: payStore[id]?.id || 0,
+        challanId: chStore[id]?.id || 0,
+        id: recvStore[id]?.id || 0,
+      });
+      setRecvStore((prev) => ({ ...prev, [id]: {
+        ...saved,
+        /* Save ke baad API se padha hua `paymentVia` hi sach hai; kisi purane
+           record par khali ho to jo abhi chuna gaya wo dikh jata hai. */
+        via: saved.via || rec.via || '',
+        history: [...prevHistory, { amount: rec.receivedAmount, via: rec.via, date: rec.date }],
+      } }));
+      setModal(null);
+      toast?.(`Payment recorded for ${s ? s.name : 'school'}`, 'success');
+    } catch (err) {
+      toast?.(err?.message || 'Could not record payment', 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const deleteReceiving = async (id) => {
+    const rowId = recvStore[id]?.id || 0;
+    try {
+      if (rowId) await paymentsApi.deleteReceiving({ branchId: id, id: rowId });
+      setRecvStore((prev) => { const n = { ...prev }; delete n[id]; return n; });
+      setModal(null); toast?.('Receiving record deleted', 'info');
+    } catch (err) {
+      toast?.(err?.message || 'Could not delete receiving record', 'error');
+    }
   };
 
   return (
@@ -123,40 +335,59 @@ export default function SchoolPayment({ toast }) {
         ))}
       </div>
 
-      {tab === 'setup' && <SetupTab payStore={payStore} onEdit={(s) => setModal({ type: 'setup', school: s })} />}
+      {tab === 'setup' && <SetupTab schools={schools} payStore={payStore} loading={loading || tabBusy.setup} onEdit={(s) => setModal({ type: 'setup', school: s })} />}
       {tab === 'challans' && (
-        <ChallansTab payStore={payStore} chStore={chStore}
+        <ChallansTab schools={schools} payStore={payStore} chStore={chStore} loading={loading || tabBusy.setup || tabBusy.challans}
           onGenerate={(s) => setModal({ type: 'genChallan', school: s })}
-          onDownload={(s) => setModal({ type: 'slip', school: s })}
+          onDownload={(s) => { ensureBanks(); setModal({ type: 'slip', school: s }); }}
           onDelete={(s) => setModal({ type: 'delChallan', school: s })}
           onBulk={() => setModal({ type: 'bulk' })} />
       )}
       {tab === 'receiving' && (
-        <ReceivingTab payStore={payStore} chStore={chStore} recvStore={recvStore}
+        <ReceivingTab schools={schools} payStore={payStore} chStore={chStore} recvStore={recvStore} loading={loading || tabBusy.setup || tabBusy.challans || tabBusy.receiving}
           onReceive={(s) => setModal({ type: 'receive', school: s })}
           onDelete={(s) => setModal({ type: 'delRecv', school: s })}
           toast={toast} />
       )}
-      {tab === 'report' && <ReportTab payStore={payStore} chStore={chStore} recvStore={recvStore} />}
+      {tab === 'report' && <ReportTab schools={schools} payStore={payStore} chStore={chStore} recvStore={recvStore} loading={loading || tabBusy.setup || tabBusy.challans || tabBusy.receiving} />}
 
       {/* ── MODALS ── */}
-      {modal?.type === 'setup' && <SetupModal school={modal.school} setup={payStore[modal.school.id]} onClose={() => setModal(null)} onSave={saveSetup} toast={toast} />}
-      {modal?.type === 'genChallan' && <GenChallanModal school={modal.school} setup={payStore[modal.school.id]} onClose={() => setModal(null)} onGenerate={generateChallan} toast={toast} />}
-      {modal?.type === 'bulk' && <BulkChallanModal payStore={payStore} onClose={() => setModal(null)} onGenerate={bulkGenerate} toast={toast} />}
-      {modal?.type === 'slip' && <SlipModal school={modal.school} setup={payStore[modal.school.id]} challan={chStore[modal.school.id]} onClose={() => setModal(null)} />}
+      {modal?.type === 'setup' && <SetupModal school={modal.school} setup={payStore[modal.school.id]} saving={saving} onClose={() => setModal(null)} onSave={saveSetup} toast={toast} />}
+      {modal?.type === 'genChallan' && <GenChallanModal school={modal.school} setup={payStore[modal.school.id]} challan={chStore[modal.school.id]} saving={saving} onClose={() => setModal(null)} onGenerate={generateChallan} toast={toast} />}
+      {modal?.type === 'bulk' && <BulkChallanModal schools={schools} payStore={payStore} saving={saving} onClose={() => setModal(null)} onGenerate={bulkGenerate} toast={toast} />}
+      {modal?.type === 'slip' && <SlipModal school={modal.school} setup={payStore[modal.school.id]} challan={chStore[modal.school.id]} bank={bankStore[modal.school.id]} bankBusy={tabBusy.banks} onClose={() => setModal(null)} />}
       {modal?.type === 'delChallan' && <ConfirmDel title="Delete Challan?" sub="This will permanently delete the generated challan for this school." confirmText="Delete Challan" onConfirm={() => deleteChallan(modal.school.id)} onClose={() => setModal(null)} />}
-      {modal?.type === 'receive' && <ReceiveModal school={modal.school} setup={payStore[modal.school.id]} challan={chStore[modal.school.id]} prevRecv={recvStore[modal.school.id]} onClose={() => setModal(null)} onSave={saveReceiving} toast={toast} />}
+      {modal?.type === 'receive' && <ReceiveModal school={modal.school} setup={payStore[modal.school.id]} challan={chStore[modal.school.id]} prevRecv={recvStore[modal.school.id]} saving={saving} onClose={() => setModal(null)} onSave={saveReceiving} toast={toast} />}
       {modal?.type === 'delRecv' && <ConfirmDel title="Delete Receiving Record?" sub={`This will permanently delete the payment receiving record for "${modal.school.name}". This action cannot be undone.`} confirmText="Delete" onConfirm={() => deleteReceiving(modal.school.id)} onClose={() => setModal(null)} />}
     </div>
   );
 }
 
 /* ── shared bits ── */
+
+/* Monthly bill. Summary API apna hisaab `totalAmount` me deti hai — jab wo
+   maujood ho wahi dikhta hai (screen aur DB kabhi alag na batayein), warna
+   formula se nikala jata hai (demo rows / abhi type ho raha setup). */
+const setupMonthly = (school, setup) => {
+  const fromApi = Number(setup?.totalAmount);
+  return fromApi > 0 ? fromApi : monthlyCharge(school, setup);
+};
+
+/* "2026-08-18T00:41:53.23" → "18 August 2026" (khali/kharab par ''). */
+const fmtStamp = (raw) => {
+  if (!raw) return '';
+  const d = new Date(raw);
+  return Number.isNaN(d.getTime()) ? '' : fmtDateLong(d.toISOString().slice(0, 10));
+};
+
 function FormulaBadge({ setup }) {
   if (!setup) return <span className="badge b-gray" style={{ fontSize: 9.5 }}>—</span>;
   return setup.formula === 'lumpsum'
     ? <span className="badge b-blue"><i className="fa-solid fa-money-bill-wave" style={{ fontSize: 8 }} /> Lump Sum</span>
     : <span className="badge b-green"><i className="fa-solid fa-user-graduate" style={{ fontSize: 8 }} /> Per Student</span>;
+}
+function LoadingRow({ cols, msg = 'Loading…' }) {
+  return <tr><td colSpan={cols} style={{ textAlign: 'center', padding: 44, color: 'var(--tm)' }}><i className="fa-solid fa-circle-notch fa-spin" style={{ fontSize: 24, display: 'block', margin: '0 auto 12px', color: 'var(--brand)' }} /><div style={{ fontSize: 13, fontWeight: 700 }}>{msg}</div></td></tr>;
 }
 function NoResults({ cols, msg = 'No schools found' }) {
   return <tr><td colSpan={cols} style={{ textAlign: 'center', padding: 44, color: 'var(--tm)' }}><i className="fa-solid fa-magnifying-glass" style={{ fontSize: 28, display: 'block', margin: '0 auto 12px', opacity: 0.3 }} /><div style={{ fontSize: 14, fontWeight: 700 }}>{msg}</div></td></tr>;
@@ -179,11 +410,11 @@ function Search({ value, onChange, placeholder, width = 220 }) {
 }
 
 /* ═══════════════════════ SETUP TAB ═══════════════════════ */
-function SetupTab({ payStore, onEdit }) {
+function SetupTab({ schools, payStore, loading, onEdit }) {
   const [q, setQ] = useState('');
   const [filter, setFilter] = useState('');
   const [expanded, setExpanded] = useState({});
-  const list = PAY_SCHOOLS.filter((s) => {
+  const list = schools.filter((s) => {
     const m = s.name.toLowerCase().includes(q.toLowerCase()) || (s.principal || '').toLowerCase().includes(q.toLowerCase());
     if (!m) return false;
     if (filter === 'done' && !payStore[s.id]) return false;
@@ -203,9 +434,10 @@ function SetupTab({ payStore, onEdit }) {
           <table className="psetup-table">
             <thead><tr><th style={{ width: 44 }}>#</th><th>Branch Name</th><th style={{ width: 130 }}>Formula</th><th style={{ width: 110 }}>Free Trial</th><th style={{ width: 120, textAlign: 'center' }}>Monthly Charge</th><th style={{ width: 110, textAlign: 'center' }}>Status</th><th style={{ width: 80, textAlign: 'center' }}>Action</th><th style={{ width: 60, textAlign: 'center' }}>Details</th></tr></thead>
             <tbody>
-              {list.length === 0 ? <NoResults cols={8} /> : list.map((s, i) => {
+              {loading ? <LoadingRow cols={8} msg="Loading payment setups…" />
+                : list.length === 0 ? <NoResults cols={8} /> : list.map((s, i) => {
                 const setup = payStore[s.id];
-                const monthly = monthlyCharge(s, setup);
+                const monthly = setupMonthly(s, setup);
                 const hasTrial = setup && setup.freeTrial && setup.trialDays;
                 return (
                   <React.Fragment key={s.id}>
@@ -223,12 +455,19 @@ function SetupTab({ payStore, onEdit }) {
                       <tr className="psetup-expand-row"><td colSpan={8}>
                         <div className="psetup-detail-box open">{setup ? (() => {
                           const annual = monthly * 12;
+                          /* Yeh chaar seedha summary API se aate hain — jab
+                             record live ho tabhi dikhte hain. */
+                          const updated = fmtStamp(setup.modifiedAt || setup.createdAt);
                           return (
                             <div className="psetup-detail-grid">
                               <div className="psetup-detail-card"><div className="pdc-lbl">Formula</div><div className="pdc-val" style={{ fontSize: 13 }}>{setup.formula === 'lumpsum' ? 'Lump Sum' : 'Per Student'}</div></div>
-                              <div className="psetup-detail-card"><div className="pdc-lbl">Monthly Bill</div><div className="pdc-val">{pkr(monthly)}</div></div>
+                              <div className="psetup-detail-card"><div className="pdc-lbl">Monthly Bill</div><div className="pdc-val">{pkr(monthly)}</div>{setup.formula === 'perstudent' && <div className="pdc-sub">{setup.perStudentRate} × {setup.studentCount || s.students} students</div>}</div>
                               <div className="psetup-detail-card"><div className="pdc-lbl">Annual Revenue</div><div className="pdc-val">{pkr(annual)}</div><div className="pdc-sub">projected</div></div>
                               <div className="psetup-detail-card"><div className="pdc-lbl">Free Trial</div><div className="pdc-val" style={{ fontSize: 13 }}>{setup.freeTrial && setup.trialDays ? `${setup.trialDays} days` : 'None'}</div></div>
+                              <div className="psetup-detail-card"><div className="pdc-lbl">Total Students</div><div className="pdc-val" style={{ fontSize: 13 }}>{setup.studentCount || s.students || 0}</div></div>
+                              <div className="psetup-detail-card"><div className="pdc-lbl">Previous Amount</div><div className="pdc-val" style={{ fontSize: 13 }}>{pkr(setup.previousAmount || 0)}</div></div>
+                              <div className="psetup-detail-card"><div className="pdc-lbl">Setup ID</div><div className="pdc-val" style={{ fontSize: 13 }}>{setup.id ? `#${setup.id}` : '—'}</div>{setup.type && <div className="pdc-sub">{setup.type}</div>}</div>
+                              <div className="psetup-detail-card"><div className="pdc-lbl">Last Updated</div><div className="pdc-val" style={{ fontSize: 13 }}>{updated || '—'}</div></div>
                               {setup.notes && <div className="psetup-detail-card" style={{ gridColumn: 'span 4', textAlign: 'left' }}><div className="pdc-lbl">Notes</div><div style={{ fontSize: 12.5, color: 'var(--t2)', marginTop: 4 }}>{setup.notes}</div></div>}
                             </div>
                           );
@@ -247,10 +486,10 @@ function SetupTab({ payStore, onEdit }) {
 }
 
 /* ═══════════════════════ CHALLANS TAB ═══════════════════════ */
-function ChallansTab({ payStore, chStore, onGenerate, onDownload, onDelete, onBulk }) {
+function ChallansTab({ schools, payStore, chStore, loading, onGenerate, onDownload, onDelete, onBulk }) {
   const [q, setQ] = useState('');
   const [filter, setFilter] = useState('');
-  const list = PAY_SCHOOLS.filter((s) => {
+  const list = schools.filter((s) => {
     const m = s.name.toLowerCase().includes(q.toLowerCase()) || (s.principal || '').toLowerCase().includes(q.toLowerCase());
     if (!m) return false;
     if (filter === 'generated' && !chStore[s.id]) return false;
@@ -271,8 +510,9 @@ function ChallansTab({ payStore, chStore, onGenerate, onDownload, onDelete, onBu
           <table className="ch-table">
             <thead><tr><th style={{ width: 44 }}>#</th><th>Branch Name</th><th style={{ width: 110 }}>Formula</th><th style={{ width: 120, textAlign: 'center' }}>Monthly Amount</th><th style={{ width: 130, textAlign: 'center' }}>Challan Status</th><th style={{ width: 200, textAlign: 'center' }}>Actions</th></tr></thead>
             <tbody>
-              {list.length === 0 ? <NoResults cols={6} /> : list.map((s, i) => {
-                const setup = payStore[s.id]; const challan = chStore[s.id]; const monthly = monthlyCharge(s, setup);
+              {loading ? <LoadingRow cols={6} msg="Loading challans…" />
+                : list.length === 0 ? <NoResults cols={6} /> : list.map((s, i) => {
+                const setup = payStore[s.id]; const challan = chStore[s.id]; const monthly = setupMonthly(s, setup);
                 return (
                   <tr key={s.id}>
                     <td style={{ color: 'var(--tm)', fontWeight: 700 }}>{i + 1}</td>
@@ -299,10 +539,10 @@ function ChallansTab({ payStore, chStore, onGenerate, onDownload, onDelete, onBu
 }
 
 /* ═══════════════════════ RECEIVING TAB ═══════════════════════ */
-function ReceivingTab({ payStore, chStore, recvStore, onReceive, onDelete, toast }) {
+function ReceivingTab({ schools, payStore, chStore, recvStore, loading, onReceive, onDelete, toast }) {
   const [q, setQ] = useState('');
   const [expanded, setExpanded] = useState({});
-  const list = PAY_SCHOOLS.filter((s) => s.name.toLowerCase().includes(q.toLowerCase()) || (s.principal || '').toLowerCase().includes(q.toLowerCase()));
+  const list = schools.filter((s) => s.name.toLowerCase().includes(q.toLowerCase()) || (s.principal || '').toLowerCase().includes(q.toLowerCase()));
   const Dues = ({ v }) => v === 0 ? <span className="dues-zero">0</span> : v > 0 ? <span className="dues-pos">{v.toLocaleString()}</span> : <span className="dues-neg">{v.toLocaleString()}</span>;
   return (
     <div className="ss-panel">
@@ -314,11 +554,14 @@ function ReceivingTab({ payStore, chStore, recvStore, onReceive, onDelete, toast
           <table className="recv-table">
             <thead><tr><th style={{ width: 44 }}>#</th><th>Branch Name</th><th style={{ width: 110, textAlign: 'center' }}>Total Dues</th><th style={{ width: 145, textAlign: 'center' }}>Prev Month Remaining</th><th style={{ width: 120, textAlign: 'center' }}>Receiving Dues</th><th style={{ width: 120, textAlign: 'center' }}>Remaining Dues</th><th style={{ width: 90, textAlign: 'center' }}>Download</th><th style={{ width: 80, textAlign: 'center' }}>Delete</th><th style={{ width: 100, textAlign: 'center' }}>Receiving</th><th style={{ width: 60, textAlign: 'center' }}>Detail</th></tr></thead>
             <tbody>
-              {list.length === 0 ? <NoResults cols={10} /> : list.map((s, i) => {
+              {loading ? <LoadingRow cols={10} msg="Loading receiving records…" />
+                : list.length === 0 ? <NoResults cols={10} /> : list.map((s, i) => {
                 const setup = payStore[s.id]; const challan = chStore[s.id]; const recv = recvStore[s.id];
-                const monthly = setup ? monthlyCharge(s, setup) : 0;
+                const monthly = setup ? setupMonthly(s, setup) : 0;
                 const totalDues = challan ? challan.total : monthly;
-                const prevRemaining = recv ? (recv.remainingAmount || 0) : 0;
+                /* Pichhle mahine ka bacha hua = wahi previous dues jo is challan
+                   me joda gaya tha (ledger total − mahaana charge). */
+                const prevRemaining = challan ? (challan.prevDues || 0) : 0;
                 const receivingDues = recv ? (recv.receivedAmount || 0) : 0;
                 const remainingDues = recv ? (recv.remainingAmount || 0) : totalDues;
                 return (
@@ -390,22 +633,22 @@ function RptStatusBadge({ status }) {
   const [cls, lbl] = map[status] || ['rpt-pending', 'No Setup'];
   return <span className={cls}>{lbl}</span>;
 }
-function ReportTab({ payStore, chStore, recvStore }) {
+function ReportTab({ schools, payStore, chStore, recvStore, loading }) {
   const [sub, setSub] = useState('summary');
   const [q, setQ] = useState('');
   const [status, setStatus] = useState('');
 
-  const rows = useMemo(() => PAY_SCHOOLS.map((s) => {
+  const rows = useMemo(() => schools.map((s) => {
     const setup = payStore[s.id]; const challan = chStore[s.id]; const recv = recvStore[s.id];
     const d = deriveRow(s, setup, challan, recv);
     return { s, setup, challan, recv, ...d, lastPayDate: recv ? recv.date : null };
-  }), [payStore, chStore, recvStore]);
+  }), [schools, payStore, chStore, recvStore]);
 
   const overview = useMemo(() => {
     let payable = 0, received = 0, outstanding = 0, paid = 0, unpaid = 0;
     rows.forEach((r) => { payable += r.payable; received += r.received; outstanding += r.outstanding; if (r.received >= r.payable && r.payable > 0) paid++; else if (r.payable > 0) unpaid++; });
-    return { total: PAY_SCHOOLS.length, payable, received, outstanding, paid, unpaid };
-  }, [rows]);
+    return { total: schools.length, payable, received, outstanding, paid, unpaid };
+  }, [rows, schools]);
 
   const filtered = rows.filter(({ s, status: st }) => {
     const m = s.name.toLowerCase().includes(q.toLowerCase()) || (s.principal || '').toLowerCase().includes(q.toLowerCase());
@@ -414,8 +657,24 @@ function ReportTab({ payStore, chStore, recvStore }) {
     return true;
   });
 
+  /* Reports ka apna endpoint nahi — yeh teeno stores (setup / challan /
+     receiving) par banti hai. Un me se koi abhi aa raha ho to zero-bhare
+     tiles dikhana jhoot hoga, is liye tab tak spinner. */
+  if (loading) {
+    return (
+      <div className="ss-panel">
+        <div className="section-card">
+          <div className="rpt-loading">
+            <i className="fa-solid fa-circle-notch fa-spin" />
+            <div>Loading reports…</div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="ss-panel">
+    <div className="ss-panel sa-print-area">
       <div className="rpt-stat-grid">
         <div className="rpt-stat"><div className="rpt-stat-val">{overview.total}</div><div className="rpt-stat-lbl">Total Schools</div></div>
         <div className="rpt-stat s-info"><div className="rpt-stat-val" style={{ fontSize: 14 }}>PKR {kfmt(overview.payable)}</div><div className="rpt-stat-lbl">Total Payable</div></div>
@@ -426,7 +685,7 @@ function ReportTab({ payStore, chStore, recvStore }) {
       </div>
 
       <div className="section-card">
-        <div className="rpt-filter-bar">
+        <div className="rpt-filter-bar sa-no-print">
           <div className="f-field-grow"><Search value={q} onChange={setQ} placeholder="Search by school name…" width="100%" /></div>
           <div className="f-field"><select className="f-input" value={status} onChange={(e) => setStatus(e.target.value)} style={{ height: 38, width: 150 }}><option value="">All Statuses</option><option value="paid">Paid</option><option value="partial">Partial</option><option value="unpaid">Unpaid</option><option value="no-setup">No Setup</option></select></div>
           <button className="btn-secondary" style={{ height: 38 }} onClick={() => { setQ(''); setStatus(''); }}><i className="fa-solid fa-rotate-left" /> Reset</button>
@@ -496,7 +755,7 @@ function ReceivedReport({ rows }) {
         <tr key={s.id}>
           <td>{i + 1}</td><td><div style={{ fontWeight: 700, color: 'var(--t1)' }}>{s.name}</div></td>
           <td style={{ textAlign: 'right', fontWeight: 800, color: 'var(--success)' }}>{pkr(received)}</td>
-          <td>{recv ? recv.date : '—'}</td><td>{recv ? recv.via : '—'}</td>
+          <td>{recv ? recv.date : '—'}</td><td>{(recv && recv.via) || '—'}</td>
           <td style={{ textAlign: 'right', fontWeight: 700, color: outstanding > 0 ? 'var(--err)' : 'var(--success)' }}>{pkr(outstanding)}</td>
         </tr>
       ))}
@@ -529,16 +788,85 @@ function Ov({ cls, children, onClose, wrap, wrapStyle }) {
   return <div className={`${cls} open`} onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}><div className={wrap} style={wrapStyle}>{children}</div></div>;
 }
 
-function SetupModal({ school: s, setup: existing, onClose, onSave, toast }) {
+/* Modal ke sar par saved record ka khulasa — seedha summary API se. */
+function SetupSummaryStrip({ school, summary, loading }) {
+  if (loading) {
+    return (
+      <div className="pay-setup-summary" style={{ color: 'var(--tm)', fontSize: 12.5, fontWeight: 600 }}>
+        <i className="fa-solid fa-circle-notch fa-spin" style={{ marginRight: 6, color: 'var(--brand)' }} /> Loading saved setup…
+      </div>
+    );
+  }
+  if (!summary) {
+    return (
+      <div className="pay-setup-summary" style={{ color: 'var(--tm)', fontSize: 12.5, fontWeight: 600 }}>
+        <i className="fa-solid fa-circle-info" style={{ marginRight: 6, color: 'var(--brand)' }} /> No setup saved for this branch yet — fill the form below and save.
+      </div>
+    );
+  }
+  const updated = fmtStamp(summary.modifiedAt || summary.createdAt);
+  const cell = (lbl, val, sub) => (
+    <div style={{ minWidth: 0 }}>
+      <div style={{ fontSize: 10, fontWeight: 800, color: 'var(--tm)', letterSpacing: '.5px', textTransform: 'uppercase' }}>{lbl}</div>
+      <div style={{ fontSize: 13.5, fontWeight: 800, color: 'var(--t1)', marginTop: 2 }}>{val}</div>
+      {sub ? <div style={{ fontSize: 10.5, color: 'var(--tm)', marginTop: 1 }}>{sub}</div> : null}
+    </div>
+  );
+  return (
+    <div className="pay-setup-summary">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
+        <span style={{ fontSize: 11, fontWeight: 800, color: 'var(--brand)', letterSpacing: '.6px', textTransform: 'uppercase' }}>
+          <i className="fa-solid fa-receipt" /> Saved Setup
+        </span>
+        <span className="badge b-green" style={{ fontSize: 9.5 }}>#{summary.id} · {summary.type}</span>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(110px,1fr))', gap: 12 }}>
+        {cell('Formula', summary.formula === 'lumpsum' ? 'Lump Sum' : 'Per Student',
+          summary.formula === 'perstudent' ? `rate ${summary.perStudentRate}` : null)}
+        {cell('Monthly Bill', pkr(setupMonthly(school, summary)))}
+        {cell('Students', summary.studentCount || school.students || 0)}
+        {cell('Free Trial', summary.freeTrial && summary.trialDays ? `${summary.trialDays} days` : 'None')}
+        {cell('Last Updated', updated || '—')}
+      </div>
+    </div>
+  );
+}
+
+function SetupModal({ school: s, setup: existing, saving, onClose, onSave, toast }) {
   const init = existing || { formula: 'lumpsum', freeTrial: false, trialDays: '', lumpAmount: '', perStudentRate: '', studentCount: s.students || 0, notes: '' };
   const [f, setF] = useState({ ...init });
-  const set = (k, v) => setF((p) => ({ ...p, [k]: v }));
+  const [summary, setSummary] = useState(existing || null);
+  const [loadingSummary, setLoadingSummary] = useState(true);
+  /* Form sirf tab tak API se bharta hai jab tak user ne khud kuch na chhua ho —
+     slow response beech me typing na kha jaye. */
+  const dirty = useRef(false);
+  const set = (k, v) => { dirty.current = true; setF((p) => ({ ...p, [k]: v })); };
+
+  /* Modal khulte hi usi branch ka TAAZA summary: GET /summary?branchId=&type=.
+     payStore purana ho sakta hai (kisi aur ne backend par badla ho), aur upar
+     ki strip isi record se banti hai. */
+  useEffect(() => {
+    let alive = true;
+    setLoadingSummary(true);
+    paymentsApi.getPaymentSummary(s.id)
+      .then((live) => {
+        if (!alive || !live) return;
+        setSummary(live);
+        if (!dirty.current) setF({ ...live });
+      })
+      .catch(() => { /* strip optional — form phir bhi bhara ja sakta hai */ })
+      .finally(() => { if (alive) setLoadingSummary(false); });
+    return () => { alive = false; };
+  }, [s.id]);
+
   const preview = (parseFloat(f.perStudentRate) || 0) * (parseInt(f.studentCount, 10) || 0);
   const save = () => {
+    if (saving) return;
     if (f.formula === 'lumpsum' && !f.lumpAmount) { toast?.('Please enter the monthly lump sum amount', 'warn'); return; }
     if (f.formula === 'perstudent' && !f.perStudentRate) { toast?.('Please enter the per student rate', 'warn'); return; }
     if (f.freeTrial && !f.trialDays) { toast?.('Please enter trial duration in days', 'warn'); return; }
-    onSave(s.id, { ...f, notes: (f.notes || '').trim() });
+    /* id saath jata hai — mojood ho to UPDATE, warna ADD (branchID+type unique). */
+    onSave(s.id, { ...f, id: summary?.id || 0, notes: (f.notes || '').trim() });
   };
   return (
     <Ov cls="pay-ov" onClose={onClose} wrap="pay-modal">
@@ -548,6 +876,7 @@ function SetupModal({ school: s, setup: existing, onClose, onSave, toast }) {
         <button className="pm-close" data-tip="Close" data-tip-pos="bottom" onClick={onClose}><i className="fa-solid fa-xmark" /></button>
       </div>
       <div className="pay-modal-body">
+        <SetupSummaryStrip school={s} summary={summary} loading={loadingSummary} />
         <div style={{ marginBottom: 18 }}>
           <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--brand)', letterSpacing: '.6px', textTransform: 'uppercase', marginBottom: 10 }}><i className="fa-solid fa-calculator" /> Billing Formula</div>
           <div className="pay-formula-grid">
@@ -583,15 +912,22 @@ function SetupModal({ school: s, setup: existing, onClose, onSave, toast }) {
         )}
         <div className="pay-field" style={{ marginTop: 16, marginBottom: 0 }}><label><i className="fa-regular fa-note-sticky" style={{ color: 'var(--brand)', marginRight: 4 }} /> Notes (optional)</label><textarea className="pay-input" rows={2} style={{ height: 'auto', padding: '10px 14px', resize: 'vertical' }} value={f.notes} onChange={(e) => set('notes', e.target.value)} placeholder="Add any billing notes or special instructions…" /></div>
       </div>
-      <div className="pay-modal-foot"><button className="btn-secondary" onClick={onClose}><i className="fa-solid fa-xmark" /> Cancel</button><button className="btn-primary" onClick={save}><i className="fa-solid fa-floppy-disk" /> Save Setup</button></div>
+      <div className="pay-modal-foot">
+        <button className="btn-secondary" onClick={onClose} disabled={saving}><i className="fa-solid fa-xmark" /> Cancel</button>
+        <button className="btn-primary" onClick={save} disabled={saving}>
+          <i className={`fa-solid ${saving ? 'fa-circle-notch fa-spin' : 'fa-floppy-disk'}`} /> {saving ? 'Saving…' : 'Save Setup'}
+        </button>
+      </div>
     </Ov>
   );
 }
 
-function GenChallanModal({ school: s, setup, onClose, onGenerate, toast }) {
-  const monthly = monthlyCharge(s, setup);
-  const [dueDate, setDueDate] = useState(plusDays(7));
-  const [prevDues, setPrevDues] = useState('');
+function GenChallanModal({ school: s, setup, challan, saving, onClose, onGenerate, toast }) {
+  const monthly = setupMonthly(s, setup);
+  /* Challan pehle se ho to wahi due date / previous dues prefill hote hain —
+     dobara Generate karna usi ledger row ka UPDATE hai, naya record nahi. */
+  const [dueDate, setDueDate] = useState(challan?.dueDateRaw || plusDays(7));
+  const [prevDues, setPrevDues] = useState(challan?.prevDues ? String(challan.prevDues) : '');
   const prev = parseFloat(prevDues) || 0;
   return (
     <Ov cls="ch-gen-ov" onClose={onClose} wrap="ch-gen-modal">
@@ -603,7 +939,7 @@ function GenChallanModal({ school: s, setup, onClose, onGenerate, toast }) {
       <div className="ch-gen-body">
         <div className="ch-gen-info">
           <div className="ch-gen-info-row"><span className="ch-gen-info-lbl">Formula</span><span className="ch-gen-info-val">{setup.formula === 'lumpsum' ? 'Lump Sum / Month' : `Per Student (${setup.perStudentRate} × ${setup.studentCount || s.students || 0} students)`}</span></div>
-          <div className="ch-gen-info-row"><span className="ch-gen-info-lbl">Students</span><span className="ch-gen-info-val">{s.students || setup.studentCount || 0}</span></div>
+          <div className="ch-gen-info-row"><span className="ch-gen-info-lbl">Students</span><span className="ch-gen-info-val">{setup.studentCount || s.students || 0}</span></div>
           <div className="ch-gen-info-row"><span className="ch-gen-info-lbl">Previous Dues</span><span className="ch-gen-info-val" style={{ color: 'var(--err)', fontWeight: 800 }}>{pkr(prev)}</span></div>
         </div>
         <div className="ch-gen-amount-preview"><div><div style={{ fontSize: 11, fontWeight: 700, color: 'var(--tm)', textTransform: 'uppercase', letterSpacing: '.4px' }}>Estimated Challan Amount</div><div style={{ fontSize: 10, color: 'var(--tm)', marginTop: 2 }}>Current month charges</div></div><div style={{ fontSize: 24, fontWeight: 800, color: 'var(--brand)' }}>{pkr(monthly)}</div></div>
@@ -611,20 +947,26 @@ function GenChallanModal({ school: s, setup, onClose, onGenerate, toast }) {
         <div className="ch-gen-field"><label><i className="fa-solid fa-triangle-exclamation" style={{ color: 'var(--warn)', marginRight: 4 }} /> Previous Dues (PKR)</label><input className="ch-gen-input" type="number" value={prevDues} onChange={(e) => setPrevDues(e.target.value)} placeholder="0" /></div>
         <div style={{ background: 'linear-gradient(135deg,rgba(30,58,138,.08),rgba(30,64,175,.04))', border: '1.5px solid var(--bl)', borderRadius: 'var(--r-md)', padding: '14px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}><div><div style={{ fontSize: 11, fontWeight: 700, color: 'var(--tm)', textTransform: 'uppercase', letterSpacing: '.4px' }}>Total Net Payable</div><div style={{ fontSize: 10, color: 'var(--tm)', marginTop: 1 }}>Current charges + previous dues</div></div><div style={{ fontSize: 22, fontWeight: 800, color: 'var(--success)' }}>{pkr(monthly + prev)}</div></div>
       </div>
-      <div className="ch-gen-foot"><button className="btn-secondary" onClick={onClose}><i className="fa-solid fa-xmark" /> Close</button><button className="btn-primary" style={{ background: 'linear-gradient(135deg,#15803d,#16a34a)', boxShadow: '0 4px 14px rgba(22,163,74,.28)' }} onClick={() => { if (!dueDate) { toast?.('Please select a due date', 'warn'); return; } onGenerate(s.id, { dueDate, prevDues: prev }); }}><i className="fa-solid fa-file-invoice-dollar" /> Generate Challan</button></div>
+      <div className="ch-gen-foot">
+        <button className="btn-secondary" onClick={onClose} disabled={saving}><i className="fa-solid fa-xmark" /> Close</button>
+        <button className="btn-primary" style={{ background: 'linear-gradient(135deg,#15803d,#16a34a)', boxShadow: '0 4px 14px rgba(22,163,74,.28)' }} disabled={saving}
+          onClick={() => { if (saving) return; if (!dueDate) { toast?.('Please select a due date', 'warn'); return; } onGenerate(s.id, { dueDate, prevDues: prev }); }}>
+          <i className={`fa-solid ${saving ? 'fa-circle-notch fa-spin' : 'fa-file-invoice-dollar'}`} /> {saving ? 'Generating…' : challan ? 'Update Challan' : 'Generate Challan'}
+        </button>
+      </div>
     </Ov>
   );
 }
 
-function BulkChallanModal({ payStore, onClose, onGenerate, toast }) {
+function BulkChallanModal({ schools, payStore, saving, onClose, onGenerate, toast }) {
   const [selected, setSelected] = useState(new Set());
   const [dueDate, setDueDate] = useState(plusDays(7));
   const [search, setSearch] = useState('');
   const [ddOpen, setDdOpen] = useState(false);
-  const withSetup = PAY_SCHOOLS.filter((s) => payStore[s.id]);
+  const withSetup = schools.filter((s) => payStore[s.id]);
   const opts = withSetup.filter((s) => s.name.toLowerCase().includes(search.toLowerCase()));
   const toggle = (id) => setSelected((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
-  const total = [...selected].reduce((sum, id) => { const s = PAY_SCHOOLS.find((x) => x.id === id); return sum + monthlyCharge(s, payStore[id]); }, 0);
+  const total = [...selected].reduce((sum, id) => { const s = schools.find((x) => x.id === id); return sum + setupMonthly(s, payStore[id]); }, 0);
   return (
     <Ov cls="ch-bulk-ov" onClose={onClose} wrap="ch-bulk-modal">
       <div className="ch-bulk-hdr">
@@ -637,7 +979,7 @@ function BulkChallanModal({ payStore, onClose, onGenerate, toast }) {
           <label style={{ display: 'block', fontSize: 11.5, fontWeight: 700, color: 'var(--t2)', marginBottom: 6 }}><i className="fa-solid fa-school" style={{ color: 'var(--brand)', marginRight: 4 }} /> Select Branches</label>
           <div className="ch-branch-selector">
             <div className="ch-tags">
-              {[...selected].map((id) => { const s = PAY_SCHOOLS.find((x) => x.id === id); return <span className="ch-tag" key={id}>{s.name}<span className="ch-tag-x" data-tip="Remove" onClick={() => toggle(id)}>×</span></span>; })}
+              {[...selected].map((id) => { const s = schools.find((x) => x.id === id); return s ? <span className="ch-tag" key={id}>{s.name}<span className="ch-tag-x" data-tip="Remove" onClick={() => toggle(id)}>×</span></span> : null; })}
             </div>
             <input className="ch-branch-input" value={search} onChange={(e) => { setSearch(e.target.value); setDdOpen(true); }} onFocus={() => setDdOpen(true)} placeholder="Select Branches…" />
           </div>
@@ -675,23 +1017,33 @@ function BulkChallanModal({ payStore, onClose, onGenerate, toast }) {
         <div className="ch-gen-field"><label><i className="fa-regular fa-calendar" style={{ color: 'var(--brand)', marginRight: 4 }} /> Due Date for All Challans</label><input className="ch-gen-input" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} /></div>
         <div style={{ background: 'var(--muted)', border: '1.5px solid var(--bl)', borderRadius: 'var(--r-md)', padding: '14px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}><div style={{ fontSize: 12, color: 'var(--tm)', fontWeight: 600 }}>Total Estimated Revenue</div><div style={{ fontSize: 18, fontWeight: 800, color: 'var(--brand)' }}>{pkr(total)}</div></div>
       </div>
-      <div className="ch-bulk-foot"><button className="btn-secondary" onClick={onClose}><i className="fa-solid fa-xmark" /> Cancel</button><button className="btn-primary" onClick={() => { if (selected.size === 0) { toast?.('Select at least one branch', 'warn'); return; } if (!dueDate) { toast?.('Select a due date', 'warn'); return; } onGenerate([...selected], dueDate); }}><i className="fa-solid fa-bolt" /> Generate for Selected</button></div>
+      <div className="ch-bulk-foot">
+        <button className="btn-secondary" onClick={onClose} disabled={saving}><i className="fa-solid fa-xmark" /> Cancel</button>
+        <button className="btn-primary" disabled={saving}
+          onClick={() => { if (saving) return; if (selected.size === 0) { toast?.('Select at least one branch', 'warn'); return; } if (!dueDate) { toast?.('Select a due date', 'warn'); return; } onGenerate([...selected], dueDate); }}>
+          <i className={`fa-solid ${saving ? 'fa-circle-notch fa-spin' : 'fa-bolt'}`} /> {saving ? 'Generating…' : 'Generate for Selected'}
+        </button>
+      </div>
     </Ov>
   );
 }
 
-function SlipModal({ school: s, setup, challan, onClose }) {
+function SlipModal({ school: s, setup, challan, bank, bankBusy, onClose }) {
   if (!challan) return null;
+  /* Bank details branch ke apne record se aati hain; jis branch ne bhari hi
+     nahi, us par grid ki jagah ek saaf note. */
+  const b = bank || {};
+  const hasBank = Boolean(b.bankName || b.accountTitle || b.accountNo || b.iban || b.branchName);
   return (
     <Ov cls="ch-slip-ov" onClose={onClose} wrap="ch-slip-wrap">
-      <div className="ch-slip-toolbar">
+      <div className="ch-slip-toolbar sa-no-print">
         <div className="ch-slip-toolbar-title"><i className="fa-solid fa-file-invoice-dollar" /> Challan Slip Preview</div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn-primary" style={{ height: 34, fontSize: 12 }} onClick={() => window.print()}><i className="fa-solid fa-print" /> Print / Download PDF</button>
           <button className="pm-close" data-tip="Close" data-tip-pos="bottom" onClick={onClose}><i className="fa-solid fa-xmark" /></button>
         </div>
       </div>
-      <div className="ch-slip-paper">
+      <div className="ch-slip-paper sa-print-area">
         <div className="ch-slip-band" />
         <div className="ch-slip-header">
           <div className="ch-slip-logo-area"><div className="ch-slip-logo-circle">{s.initials}</div><div><div className="ch-slip-school-name">{s.name}</div><div className="ch-slip-school-city">{s.principal}</div><div className="ch-slip-school-addr">School Mentor App Pvt Ltd</div></div></div>
@@ -724,13 +1076,20 @@ function SlipModal({ school: s, setup, challan, onClose }) {
         </div>
         <div className="ch-slip-bank">
           <div className="ch-slip-bank-title"><i className="fa-solid fa-building-columns" /> Payment Method — Bank Transfer</div>
-          <div className="ch-slip-bank-grid">
-            <div className="ch-slip-bank-row"><div className="ch-slip-bank-key">Bank Name</div><div className="ch-slip-bank-val">Soneri Bank</div></div>
-            <div className="ch-slip-bank-row"><div className="ch-slip-bank-key">A/C Title</div><div className="ch-slip-bank-val">School Mentor App (Private) Limited</div></div>
-            <div className="ch-slip-bank-row"><div className="ch-slip-bank-key">A/C No</div><div className="ch-slip-bank-val">20014183265</div></div>
-            <div className="ch-slip-bank-row"><div className="ch-slip-bank-key">Branch Code</div><div className="ch-slip-bank-val">0387</div></div>
-            <div className="ch-slip-bank-row" style={{ gridColumn: 'span 2' }}><div className="ch-slip-bank-key">IBAN</div><div className="ch-slip-bank-val">PK15SONE0038720014183265</div></div>
-          </div>
+          {bankBusy && !hasBank ? (
+            <div className="ch-slip-bank-empty"><i className="fa-solid fa-circle-notch fa-spin" /> Loading bank details…</div>
+          ) : hasBank ? (
+            <div className="ch-slip-bank-grid">
+              <div className="ch-slip-bank-row"><div className="ch-slip-bank-key">Bank Name</div><div className="ch-slip-bank-val">{b.bankName || '—'}</div></div>
+              <div className="ch-slip-bank-row"><div className="ch-slip-bank-key">A/C Title</div><div className="ch-slip-bank-val">{b.accountTitle || '—'}</div></div>
+              <div className="ch-slip-bank-row"><div className="ch-slip-bank-key">A/C No</div><div className="ch-slip-bank-val">{b.accountNo || '—'}</div></div>
+              <div className="ch-slip-bank-row"><div className="ch-slip-bank-key">Bank Branch</div><div className="ch-slip-bank-val">{b.branchName || '—'}</div></div>
+              <div className="ch-slip-bank-row" style={{ gridColumn: 'span 2' }}><div className="ch-slip-bank-key">IBAN</div><div className="ch-slip-bank-val">{b.iban || '—'}</div></div>
+              {b.note && <div className="ch-slip-bank-row" style={{ gridColumn: 'span 2' }}><div className="ch-slip-bank-key">Note</div><div className="ch-slip-bank-val">{b.note}</div></div>}
+            </div>
+          ) : (
+            <div className="ch-slip-bank-empty"><i className="fa-solid fa-circle-info" /> No bank details saved for this school — add them on the branch profile (School Permissions).</div>
+          )}
         </div>
         <div className="ch-slip-instructions"><div className="ch-slip-instr-title"><i className="fa-solid fa-circle-info" /> Payment Instructions</div><div className="ch-slip-instr-text">Please pay your bill on or before the due date using the methods mentioned above. Late payment may result in service disruption. For queries, contact School Mentor support.</div></div>
         <div className="ch-slip-bottom-band" />
@@ -739,20 +1098,28 @@ function SlipModal({ school: s, setup, challan, onClose }) {
   );
 }
 
-function ReceiveModal({ school: s, setup, challan, prevRecv, onClose, onSave, toast }) {
-  const monthly = setup ? monthlyCharge(s, setup) : 0;
+function ReceiveModal({ school: s, setup, challan, prevRecv, saving, onClose, onSave, toast }) {
+  const monthly = setup ? setupMonthly(s, setup) : 0;
   const totalDues = challan ? challan.total : monthly;
-  const prevRemaining = prevRecv ? (prevRecv.remainingAmount || 0) : 0;
-  const [discount, setDiscount] = useState('');
-  const [received, setReceived] = useState('');
-  const [via, setVia] = useState(RECEIVING_METHODS[0]);
-  const [date, setDate] = useState(todayISO());
+  /* Pichhle mahine ka bacha hua — challan me joda gaya previous dues. */
+  const prevRemaining = challan ? (challan.prevDues || 0) : 0;
+  /* Pehle se record ho to wahi values prefill — dobara save karna usi row ka
+     UPDATE hai (currentBranchID + type unique hai), naya record nahi. */
+  const [discount, setDiscount] = useState(prevRecv?.discount ? String(prevRecv.discount) : '');
+  const [received, setReceived] = useState(prevRecv?.receivedAmount ? String(prevRecv.receivedAmount) : '');
+  const [via, setVia] = useState(prevRecv?.via || RECEIVING_METHODS[0]);
+  const [date, setDate] = useState(prevRecv?.dateRaw || todayISO());
   const net = Math.max(0, totalDues - (parseFloat(discount) || 0));
   const remaining = net - (parseFloat(received) || 0);
   const save = () => {
+    if (saving) return;
     if (!received) { toast?.('Please enter the received amount', 'warn'); return; }
     if (!date) { toast?.('Please select a payment date', 'warn'); return; }
-    onSave(s.id, { discount: parseFloat(discount) || 0, netPayable: net, receivedAmount: parseFloat(received) || 0, remainingAmount: remaining, via, date: fmtDateShort(date) });
+    onSave(s.id, {
+      discount: parseFloat(discount) || 0, netPayable: net,
+      receivedAmount: parseFloat(received) || 0, remainingAmount: remaining,
+      payableAmount: totalDues, via, dateRaw: date, date: fmtDateShort(date),
+    });
   };
   return (
     <Ov cls="recv-ov" onClose={onClose} wrap="recv-modal">
@@ -775,7 +1142,12 @@ function ReceiveModal({ school: s, setup, challan, prevRecv, onClose, onSave, to
         <div className="recv-field"><label><i className="fa-regular fa-calendar" style={{ color: '#0284C7', marginRight: 4 }} /> Payment Receiving Date</label><input className="recv-input" type="date" value={date} onChange={(e) => setDate(e.target.value)} /></div>
         <div className="recv-remaining-live"><div><div style={{ fontSize: 11, fontWeight: 700, color: 'var(--tm)', textTransform: 'uppercase', letterSpacing: '.4px' }}>Remaining Amount</div><div style={{ fontSize: 10, color: 'var(--tm)', marginTop: 1 }}>Net Payable − Received Amount</div></div><div style={{ fontSize: 22, fontWeight: 800, color: remaining > 0 ? 'var(--err)' : remaining < 0 ? 'var(--success)' : 'var(--tm)' }}>{pkr(remaining)}</div></div>
       </div>
-      <div className="recv-modal-foot"><button className="btn-secondary" onClick={onClose}><i className="fa-solid fa-xmark" /> Close</button><button className="btn-primary" style={{ background: 'linear-gradient(135deg,#0369A1,#0284C7)', boxShadow: '0 4px 14px rgba(3,105,161,.28)' }} onClick={save}><i className="fa-solid fa-circle-check" /> Add Payment</button></div>
+      <div className="recv-modal-foot">
+        <button className="btn-secondary" onClick={onClose} disabled={saving}><i className="fa-solid fa-xmark" /> Close</button>
+        <button className="btn-primary" style={{ background: 'linear-gradient(135deg,#0369A1,#0284C7)', boxShadow: '0 4px 14px rgba(3,105,161,.28)' }} onClick={save} disabled={saving}>
+          <i className={`fa-solid ${saving ? 'fa-circle-notch fa-spin' : 'fa-circle-check'}`} /> {saving ? 'Saving…' : prevRecv ? 'Update Payment' : 'Add Payment'}
+        </button>
+      </div>
     </Ov>
   );
 }

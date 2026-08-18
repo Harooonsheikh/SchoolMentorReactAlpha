@@ -1,4 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { INITIAL_SOP, hasPdf, hasVideo, embedUrl } from './sopData';
 import { schoolSopsApi } from './api';
 
@@ -12,12 +13,78 @@ import { schoolSopsApi } from './api';
    (see ./sopData). No backend / file storage.
    ═══════════════════════════════════════════════════════════════════ */
 
+/**
+ * Dots menu jo table ke BAHAR khulta hai.
+ *
+ * Pehle menu us hi `<td>` ke andar position:absolute tha. Table `.tbl-wrap`
+ * me hai — ek scroll container — is liye jo hissa table ki hadd se bahar
+ * jata wo kat jata tha: aakhri rows par to poora menu hi nazar nahi aata,
+ * halanke click kaam kar raha hota tha.
+ *
+ * Ab menu `.sa-root` par portal hota hai (taake theme aur CSS wahi rahe) aur
+ * position:fixed le kar button ke rect par baithta hai — kisi overflow ki
+ * hadd me nahi aata. Neeche jagah kam ho to khud upar khul jata hai, aur
+ * scroll / resize / bahar click par band ho jata hai.
+ */
+function DropMenu({ anchor, onClose, children }) {
+  const boxRef = useRef(null);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  const [style, setStyle] = useState(null);
+
+  useLayoutEffect(() => {
+    if (!anchor) return undefined;
+    const place = () => {
+      const r = anchor.getBoundingClientRect();
+      const h = boxRef.current ? boxRef.current.offsetHeight : 240;
+      /* neeche poora na sama raha ho aur upar jagah ho → upar khol do */
+      const up = r.bottom + 6 + h > window.innerHeight && r.top - 6 - h > 0;
+      setStyle({
+        position: 'fixed',
+        right: Math.max(8, window.innerWidth - r.right),
+        top: up ? 'auto' : r.bottom + 6,
+        bottom: up ? window.innerHeight - r.top + 6 : 'auto',
+        zIndex: 1400,
+      });
+    };
+    place();
+    const onDocDown = (e) => {
+      if (boxRef.current && boxRef.current.contains(e.target)) return;
+      if (anchor.contains(e.target)) return;      // button khud toggle karta hai
+      closeRef.current?.();
+    };
+    /* capture:true — table/page ke andar ka scroll bhi pakda jaye */
+    window.addEventListener('scroll', place, true);
+    window.addEventListener('resize', place);
+    document.addEventListener('mousedown', onDocDown);
+    return () => {
+      window.removeEventListener('scroll', place, true);
+      window.removeEventListener('resize', place);
+      document.removeEventListener('mousedown', onDocDown);
+    };
+  }, [anchor]);
+
+  if (typeof document === 'undefined') return null;
+  const host = document.querySelector('.sa-root') || document.body;
+  return createPortal(
+    /* style aane se pehle ek render hota hai — usi me height nap li jati hai,
+       is liye tab tak chhupa rehta hai (warna top-left par jhalak marta). */
+    <div ref={boxRef} className="sop-dropdown open" onClick={(e) => e.stopPropagation()}
+      style={style || { position: 'fixed', top: 0, right: 0, visibility: 'hidden' }}>
+      {children}
+    </div>,
+    host,
+  );
+}
+
 export default function OperationalSops({ toast }) {
   const [data, setData] = useState(() => JSON.parse(JSON.stringify(INITIAL_SOP)));
   const [activeCat, setActiveCat] = useState(1);
   const [search, setSearch] = useState('');
   const [openForms, setOpenForms] = useState({});      // manualId → bool
-  const [openDd, setOpenDd] = useState(null);          // manualId with open dots menu
+  /* { id, el } — kaun sa manual khula hai aur uska dots button (menu usi ke
+     rect par lagta hai, kyunki wo ab portal me jata hai). */
+  const [openDd, setOpenDd] = useState(null);
   const [modal, setModal] = useState(null);
 
   /* (Pehle yahan ek local id-counter tha — ab ids server se aati hain.) */
@@ -340,9 +407,9 @@ export default function OperationalSops({ toast }) {
                       <td data-label="Action" style={{ textAlign: 'center' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 5, justifyContent: 'center' }}>
                           <div style={{ position: 'relative' }}>
-                            <button className="sop-dots-btn" data-tip="More actions" onClick={(e) => { e.stopPropagation(); setOpenDd(openDd === m.id ? null : m.id); }}><i className="fa-solid fa-ellipsis-vertical" /></button>
-                            {openDd === m.id && (
-                              <div className="sop-dropdown open" onClick={(e) => e.stopPropagation()}>
+                            <button className="sop-dots-btn" data-tip="More actions" onClick={(e) => { e.stopPropagation(); const el = e.currentTarget; setOpenDd((d) => d?.id === m.id ? null : { id: m.id, el }); }}><i className="fa-solid fa-ellipsis-vertical" /></button>
+                            {openDd?.id === m.id && (
+                              <DropMenu anchor={openDd.el} onClose={() => setOpenDd(null)}>
                                 <div className="sop-dd-item" onClick={() => { setOpenDd(null); setModal({ type: 'detail', manual: m }); }}><i className="fa-solid fa-circle-info" /> Manual Details</div>
                                 <div className="sop-dd-item" onClick={() => { setOpenDd(null); setModal({ type: 'pdf', manual: m }); }}><i className="fa-solid fa-eye" /> View Manual</div>
                                 <div className="sop-dd-item" onClick={() => { setOpenDd(null); setModal({ type: 'manual', manual: m }); }}><i className="fa-solid fa-pen" /> Edit</div>
@@ -350,7 +417,7 @@ export default function OperationalSops({ toast }) {
                                 <div className="sop-dd-item" onClick={() => { setOpenDd(null); toggleForms(m.id); }}><i className="fa-solid fa-list" /> View Forms</div>
                                 {vid && <div className="sop-dd-item" onClick={() => { setOpenDd(null); setModal({ type: 'video', manual: m }); }}><i className="fa-solid fa-circle-play" /> Watch Tutorial</div>}
                                 <div className="sop-dd-item danger" onClick={() => { setOpenDd(null); setModal({ type: 'del', target: { type: 'manual', id: m.id }, name: m.title, label: 'Manual' }); }}><i className="fa-solid fa-trash-can" /> Delete</div>
-                              </div>
+                              </DropMenu>
                             )}
                           </div>
                           <button className="det-btn" data-tip="Expand forms" onClick={() => toggleForms(m.id)}><i className="fa-solid fa-chevron-down" /></button>

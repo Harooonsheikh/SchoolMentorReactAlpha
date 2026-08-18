@@ -64,14 +64,23 @@ export const EP = {
     updateEnquiry: (id) => `${ROOT}/enquiries/${id}`,     // { status, ... }
   },
 
-  /* ── Schools Payment ── */
+  /* ── Schools Payment — LIVE SchoolMentorSuperAdminAPI (see SA_ROOT).
+     Poora AHM_School_Payments controller: setup, challan ledger aur receiving.
+     Reports ka apna endpoint nahi — wo inhi teeno se bante hain. ── */
   payments: {
-    schools: () => `${ROOT}/payments/schools`,
-    setup: (schoolId) => `${ROOT}/payments/setup/${schoolId}`,    // GET/PUT
-    challans: () => `${ROOT}/payments/challans`,                  // GET ?month= / POST
-    bulkChallans: () => `${ROOT}/payments/challans/bulk`,
-    receiving: () => `${ROOT}/payments/receiving`,                // POST
-    report: () => `${ROOT}/payments/report`,                      // ?month=
+    /* POST — Payment Setup save (action: ADD | UPDATE | DELETE; INSERT bhi
+       chalta hai magar record maujood ho to error deta hai, is liye ADD/UPDATE.
+       Is route par GET NAHI hai — padhne ke liye summary() hai).
+       body: Mdl_AHM_NetworkSchoolPaymentAction. */
+    manage: () => `${SA_ROOT}/api/AHM_School_Payments/manage`,
+    /* GET ?branchId=&type= — ek branch ka saved setup wapas (dono LAAZMI;
+       type chhoot jaye to 400, record na ho to 404). */
+    summary: () => `${SA_ROOT}/api/AHM_School_Payments/summary`,
+    /* POST — challan (payment ledger): GET | INSERT | ADD | UPDATE | DELETE.
+       GET branchID par filter karta hai aur rows ki list deta hai. */
+    ledgerAction: () => `${SA_ROOT}/api/AHM_School_Payments/manage_payment_ledger`,
+    /* POST — fee receiving: wahi paanch actions, GET currentBranchID par. */
+    receivingAction: () => `${SA_ROOT}/api/AHM_School_Payments/manage_payment_receiving`,
   },
 
   /* ── School Permissions — LIVE SchoolMentorSuperAdminAPI (see SA_ROOT).

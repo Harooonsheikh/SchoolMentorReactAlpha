@@ -295,13 +295,6 @@ export default function SchoolStatus({ toast }) {
         </div>
       </div>
 
-      {loading && (
-        <div className="section-card" style={{ textAlign: 'center', padding: 40, color: 'var(--tm)' }}>
-          <i className="fa-solid fa-spinner fa-spin" style={{ fontSize: 24, display: 'block', margin: '0 auto 12px', opacity: 0.5 }} />
-          <div style={{ fontSize: 14, fontWeight: 700 }}>Loading schools…</div>
-        </div>
-      )}
-
       {/* STATS */}
       <div className="stat-grid" style={{ gridTemplateColumns: 'repeat(3,1fr)' }}>
         <div className="stat-card"><div className="stat-icon"><i className="fa-solid fa-rocket" /></div><div className="stat-val">{counts.launch}</div><div className="stat-lbl">Launch Setup Schools</div></div>
@@ -316,13 +309,13 @@ export default function SchoolStatus({ toast }) {
         <button className={`app-tab${tab === 'inactive' ? ' active' : ''}`} onClick={() => setTab('inactive')}><i className="fa-solid fa-moon" /> Inactive Schools <span className="tab-count">{counts.inactive}</span></button>
       </div>
 
-      {!loading && tab === 'launch' && (
-        <LaunchPanel rows={launchRows} users={users} assignBusy={assignBusy} onAssign={(id, v) => assign('launch', id, v)}
+      {tab === 'launch' && (
+        <LaunchPanel rows={launchRows} users={users} assignBusy={assignBusy} loading={loading} onAssign={(id, v) => assign('launch', id, v)}
           onDeactivate={(s) => setModal({ type: 'deactivate', group: 'launch', school: s })}
           onDetails={(s) => setModal({ type: 'details', school: s })} />
       )}
-      {!loading && tab === 'erp' && (
-        <ErpPanel rows={erpRows} users={users} assignBusy={assignBusy} sub={erpSub} setSub={setErpSub}
+      {tab === 'erp' && (
+        <ErpPanel rows={erpRows} users={users} assignBusy={assignBusy} loading={loading} sub={erpSub} setSub={setErpSub}
           onAssign={(id, v) => assign('erp', id, v)}
           onDeactivate={(s) => setModal({ type: 'deactivate', group: 'erp', school: s })}
           onDetails={(s) => { ensureDetail(s); setModal({ type: 'erpDetail', school: s }); }}
@@ -330,8 +323,8 @@ export default function SchoolStatus({ toast }) {
           onEnqAdd={(s) => setModal({ type: 'enqEdit', school: s, bug: null })}
           onEnqDetail={(s) => setModal({ type: 'enqDetail', school: s })} />
       )}
-      {!loading && tab === 'inactive' && (
-        <InactivePanel rows={inactive}
+      {tab === 'inactive' && (
+        <InactivePanel rows={inactive} loading={loading}
           onActivate={(s) => setModal({ type: 'activate', school: s })}
           onDetails={(s) => setModal({ type: 'details', school: s })} />
       )}
@@ -405,8 +398,14 @@ function UserFilterSelect({ value, users, onChange }) {
 function EmptyRow({ cols, icon, msg }) {
   return <tr><td colSpan={cols} style={{ textAlign: 'center', padding: 44, color: 'var(--tm)' }}><i className={`fa-solid fa-${icon}`} style={{ fontSize: 28, display: 'block', margin: '0 auto 12px', opacity: 0.3 }} /><div style={{ fontSize: 14, fontWeight: 700 }}>{msg}</div></td></tr>;
 }
+/* Loading TABLE ke andar dikhta hai — bilkul wahi shakl jo School Permissions
+   par hai. Pehle poori screen ki jagah ek card aa jata tha aur table ghayab
+   ho jati thi; ab headers apni jagah rehte hain aur sirf body badalti hai. */
+function LoadingRow({ cols, msg = 'Loading schools…' }) {
+  return <tr><td colSpan={cols} style={{ textAlign: 'center', padding: 44, color: 'var(--tm)' }}><i className="fa-solid fa-spinner fa-spin" style={{ fontSize: 24, display: 'block', margin: '0 auto 12px', opacity: 0.5 }} /><div style={{ fontSize: 14, fontWeight: 700 }}>{msg}</div></td></tr>;
+}
 
-function LaunchPanel({ rows, users, assignBusy, onAssign, onDeactivate, onDetails }) {
+function LaunchPanel({ rows, users, assignBusy, loading, onAssign, onDeactivate, onDetails }) {
   const [q, setQ] = useState('');
   const [color, setColor] = useState('');
   const [user, setUser] = useState('');   // user id (string), '' = sab
@@ -426,7 +425,8 @@ function LaunchPanel({ rows, users, assignBusy, onAssign, onDeactivate, onDetail
           <table className="mentor-table">
             <thead><tr><th style={{ width: 48 }}>#</th><th>Branch Name</th><th style={{ width: 90, textAlign: 'center' }}>Total Staff</th><th style={{ width: 100, textAlign: 'center' }}>Total Students</th><th style={{ width: 130 }}>Data Status</th><th style={{ width: 190 }}>Assigned To</th><th style={{ width: 145 }}>Action</th><th style={{ width: 75, textAlign: 'center' }}>Details</th></tr></thead>
             <tbody>
-              {list.length === 0 ? <EmptyRow cols={8} icon="school" msg="No schools found" /> : list.map((s, i) => (
+              {loading ? <LoadingRow cols={8} />
+                : list.length === 0 ? <EmptyRow cols={8} icon="school" msg="No schools found" /> : list.map((s, i) => (
                 <tr key={s.id}>
                   <td style={{ fontWeight: 700, color: 'var(--tm)', textAlign: 'center' }}>{i + 1}</td>
                   <td className="td-bold">{s.name}</td>
@@ -447,7 +447,7 @@ function LaunchPanel({ rows, users, assignBusy, onAssign, onDeactivate, onDetail
 }
 
 /* ═══════════════════════ ERP PANEL ═══════════════════════ */
-function ErpPanel({ rows, users, assignBusy, sub, setSub, onAssign, onDeactivate, onDetails, enquiries, enqLoading, onEnqAdd, onEnqDetail }) {
+function ErpPanel({ rows, users, assignBusy, loading, sub, setSub, onAssign, onDeactivate, onDetails, enquiries, enqLoading, onEnqAdd, onEnqDetail }) {
   const [q, setQ] = useState('');
   const [user, setUser] = useState('');   // user id (string), '' = sab
   const list = rows.filter((s) => (!q || s.name.toLowerCase().includes(q.toLowerCase())) && (!user || String(s.assignedId) === user));
@@ -481,7 +481,9 @@ function ErpPanel({ rows, users, assignBusy, sub, setSub, onAssign, onDeactivate
       </div>
 
       {sub === 'progress' && (
-        list.length === 0 ? (
+        loading ? (
+          <div style={{ padding: 44, textAlign: 'center', color: 'var(--tm)' }}><i className="fa-solid fa-spinner fa-spin" style={{ fontSize: 24, display: 'block', margin: '0 auto 12px', opacity: 0.5 }} /><div style={{ fontSize: 14, fontWeight: 700 }}>Loading schools…</div></div>
+        ) : list.length === 0 ? (
           <div className="section-card" style={{ padding: 44, textAlign: 'center', color: 'var(--tm)' }}><i className="fa-solid fa-server" style={{ fontSize: 28, display: 'block', margin: '0 auto 12px', opacity: 0.3 }} /><div style={{ fontSize: 14, fontWeight: 700 }}>No ERP schools found</div></div>
         ) : list.map((s) => {
           const pct = s.onboarding.total ? Math.round(s.onboarding.completed / s.onboarding.total * 100) : 0;
@@ -563,7 +565,7 @@ function ErpPanel({ rows, users, assignBusy, sub, setSub, onAssign, onDeactivate
 }
 
 /* ═══════════════════════ INACTIVE PANEL ═══════════════════════ */
-function InactivePanel({ rows, onActivate, onDetails }) {
+function InactivePanel({ rows, loading, onActivate, onDetails }) {
   const [q, setQ] = useState('');
   const list = rows.filter((s) => !q || s.name.toLowerCase().includes(q.toLowerCase()));
   return (
@@ -579,7 +581,8 @@ function InactivePanel({ rows, onActivate, onDetails }) {
           <table className="mentor-table">
             <thead><tr><th style={{ width: 48 }}>#</th><th>Branch Name</th><th style={{ width: 100, textAlign: 'center' }}>Total Staff</th><th style={{ width: 110, textAlign: 'center' }}>Total Students</th><th style={{ width: 110, textAlign: 'center' }}>Staff Sign Up</th><th style={{ width: 120, textAlign: 'center' }}>Student Sign Up</th><th style={{ width: 130 }}>Action</th><th style={{ width: 75, textAlign: 'center' }}>Details</th></tr></thead>
             <tbody>
-              {list.length === 0 ? <EmptyRow cols={8} icon="moon" msg="No inactive schools" /> : list.map((s, i) => (
+              {loading ? <LoadingRow cols={8} />
+                : list.length === 0 ? <EmptyRow cols={8} icon="moon" msg="No inactive schools" /> : list.map((s, i) => (
                 <tr key={s.id}>
                   <td style={{ fontWeight: 700, color: 'var(--tm)', textAlign: 'center' }}>{i + 1}</td>
                   <td className="td-bold">{s.name}</td>
