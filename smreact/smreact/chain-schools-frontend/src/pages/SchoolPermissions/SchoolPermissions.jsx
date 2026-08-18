@@ -7,8 +7,9 @@ import {
 } from './data'
 import { useView } from '../../config/viewContext'
 import {
-  fetchModulePermissionsFor, saveModulePermissions,
-  fetchLaunchSetupFor, setLaunchSetup,
+  fetchModulePermissions, fetchModulePermissionsEach, saveModulePermissions,
+  fetchLaunchSetup, fetchLaunchSetupEach, setLaunchSetup,
+  cachedPermissions, cachePermissions,
 } from '../../api/schoolPermissionsApi'
 import './SchoolPermissions.css'
 
@@ -19,27 +20,35 @@ export default function SchoolPermissions() {
 
   const [search, setSearch] = useState('')
   const [erpFilter, setErpFilter] = useState('')
+  /* Dono store isi tab ke cache se shuru hote hain — dobara is screen par
+     aane par purani values foran dikhti hain, phir background me taza. */
   /* branchID → modules object (Super-Admin API se). */
-  const [store, setStore] = useState({})
+  const [store, setStore] = useState(() => cachedPermissions().mods)
   /* branchID → ERP access (launch setup: 1 = on, 0 = off). */
-  const [erpStore, setErpStore] = useState({})
-  const [modsLoading, setModsLoading] = useState(true)
+  const [erpStore, setErpStore] = useState(() => cachedPermissions().erp)
   const [modalSchool, setModalSchool] = useState(null)
+  /* Manage khulte hi us aik school ki permissions aati hain — tab tak loading. */
+  const [modalLoading, setModalLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [toast, setToast] = useState(null)
 
-  /* Har school ki module permissions + ERP access (launch setup) API se. */
+  /* Table sirf schools ki call par render hoti hai — permissions ka intezaar
+     nahi karti. ERP access aur modules uske BAAD background me aate hain
+     (cache se jo pehle se maloom ho wo foran dikh jaata hai), har school ki
+     row apna jawab aate hi bhar jaati hai. Manage khulne par jo abhi tak na
+     aaya ho wo foran mangwa liya jaata hai — dekhein openManage. */
   useEffect(() => {
     let alive = true
-    if (!allSchools.length) { setStore({}); setErpStore({}); setModsLoading(schoolsLoading); return undefined }
+    if (!allSchools.length) return undefined
     const ids = allSchools.map((s) => s.id)
-    setModsLoading(true)
-    Promise.all([fetchModulePermissionsFor(ids), fetchLaunchSetupFor(ids)])
-      .then(([mods, erp]) => { if (alive) { setStore(mods); setErpStore(erp) } })
-      .catch((err) => { console.error('Permissions load failed:', err); if (alive) { setStore({}); setErpStore({}) } })
-      .finally(() => { if (alive) setModsLoading(false) })
+    fetchLaunchSetupEach(ids, (id, on) => {
+      if (alive) setErpStore((prev) => ({ ...prev, [id]: !!on }))
+    }).catch((err) => console.error('ERP access load failed:', err))
+    fetchModulePermissionsEach(ids, (id, mods) => {
+      if (alive) setStore((prev) => ({ ...prev, [id]: mods }))
+    }).catch((err) => console.error('Module permissions load failed:', err))
     return () => { alive = false }
-  }, [allSchools, schoolsLoading])
+  }, [allSchools])
 
   useEffect(() => {
     if (!toast) return undefined
@@ -50,7 +59,33 @@ export default function SchoolPermissions() {
   /* Dono cheezein Super-Admin API se: ERP access launch-setup se, modules
      module-permission se. */
   const erpOnFor = (s) => !!erpStore[s.id]
+  const erpKnown = (s) => Object.prototype.hasOwnProperty.call(erpStore, s.id)
+  const modsKnown = (s) => Object.prototype.hasOwnProperty.call(store, s.id)
   const permsFor = (s) => getSchoolPerms(store, s, erpOnFor(s))
+
+  /* Manage — is school ki permissions abhi mangwate hain (aik dafa; baad me
+     cache se foran khul jaata hai). ERP access bhi agar background abhi tak
+     yahan na pohncha ho to sath hi le aate hain. */
+  const openManage = async (school) => {
+    setModalSchool(school)
+    if (modsKnown(school) && erpKnown(school)) return
+    setModalLoading(true)
+    try {
+      const [mods, erp] = await Promise.all([
+        modsKnown(school) ? store[school.id] : fetchModulePermissions(school.id),
+        erpKnown(school) ? erpStore[school.id] : fetchLaunchSetup(school.id),
+      ])
+      setStore((prev) => ({ ...prev, [school.id]: mods }))
+      setErpStore((prev) => ({ ...prev, [school.id]: !!erp }))
+      cachePermissions(school.id, { modules: mods, erpAccess: !!erp })
+    } catch (err) {
+      console.error('Permissions load failed:', err)
+      setToast({ type: 'error', text: 'Could not load permissions for this school' })
+      setModalSchool(null)
+    } finally {
+      setModalLoading(false)
+    }
+  }
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
@@ -61,16 +96,25 @@ export default function SchoolPermissions() {
         || (s.contact || '').includes(q)
         || String(s.schoolCode).includes(q)
       if (!matchQ) return false
-      if (erpFilter === 'active' && !erpStore[s.id]) return false
-      if (erpFilter === 'inactive' && erpStore[s.id]) return false
+      /* Jis school ka ERP status abhi load ho raha hai, use filter par
+         ghalat khane me nahi daalte — jawab aane tak chhupa dete hain. */
+      if (erpFilter) {
+        const known = Object.prototype.hasOwnProperty.call(erpStore, s.id)
+        if (!known) return false
+        if (erpFilter === 'active' && !erpStore[s.id]) return false
+        if (erpFilter === 'inactive' && erpStore[s.id]) return false
+      }
       return true
     })
   }, [allSchools, erpStore, search, erpFilter])
 
+  /* Inactive un hi schools ka ginte hain jin ka jawab aa chuka hai — warna
+     background load ke dauran sab "Inactive" dikhne lagte hain. */
   const stats = useMemo(() => {
     const total = allSchools.length
-    const active = allSchools.filter((s) => erpStore[s.id]).length
-    return { total, active, inactive: total - active }
+    const known = allSchools.filter((s) => Object.prototype.hasOwnProperty.call(erpStore, s.id))
+    const active = known.filter((s) => erpStore[s.id]).length
+    return { total, active, inactive: known.length - active }
   }, [allSchools, erpStore])
 
   /* Dono Super-Admin API par jaate hain:
@@ -82,10 +126,12 @@ export default function SchoolPermissions() {
     try {
       await saveModulePermissions(school.id, perms.modules)
       setStore((prev) => ({ ...prev, [school.id]: { ...perms.modules } }))
+      cachePermissions(school.id, { modules: { ...perms.modules } })
 
       if (perms.erpAccess !== erpOnFor(school)) {
         await setLaunchSetup(school.id, perms.erpAccess)
         setErpStore((prev) => ({ ...prev, [school.id]: !!perms.erpAccess }))
+        cachePermissions(school.id, { erpAccess: !!perms.erpAccess })
       }
       setModalSchool(null)
       setToast({ type: 'success', text: `Permissions saved for ${school.name}` })
@@ -158,7 +204,7 @@ export default function SchoolPermissions() {
               <th style={{ width: 140, textAlign: 'center' }}>Action</th>
             </tr></thead>
             <tbody>
-              {schoolsLoading || modsLoading ? (
+              {schoolsLoading ? (
                 <tr>
                   <td colSpan={7} style={{ textAlign: 'center', padding: 44, color: 'var(--tm)' }}>
                     <i className="fa-solid fa-spinner fa-spin" style={{ fontSize: 24, display: 'block', margin: '0 auto 12px', color: 'var(--brand)' }} />
@@ -182,8 +228,10 @@ export default function SchoolPermissions() {
               ) : filtered.map((s, idx) => {
                 const perms = permsFor(s)
                 const erpOn = erpOnFor(s)
+                const erpReady = erpKnown(s)
+                const modsReady = modsKnown(s)
                 const modCount = Object.values(perms.modules).filter(Boolean).length
-                const totalMods = Object.keys(perms.modules).length
+                const totalMods = MODULE_KEYS.length
                 return (
                   <tr key={s.id}>
                     <td className="td-bold" style={{ color: 'var(--tm)' }}>{idx + 1}</td>
@@ -199,16 +247,31 @@ export default function SchoolPermissions() {
                       <div style={{ fontSize: 11.5, color: 'var(--tm)' }}>{s.contact || '—'}</div>
                     </td>
                     <td style={{ textAlign: 'center' }}>
-                      {erpOn
-                        ? <span className="badge b-green"><i className="fa-solid fa-circle-check" style={{ fontSize: 8 }} /> Active</span>
-                        : <span className="badge b-red"><i className="fa-solid fa-ban" style={{ fontSize: 8 }} /> Inactive</span>}
+                      {/* Background load — jawab aate hi asli status. */}
+                      {!erpReady
+                        ? <span className="badge b-gray"><i className="fa-solid fa-spinner fa-spin" style={{ fontSize: 8 }} /> Loading</span>
+                        : erpOn
+                          ? <span className="badge b-green"><i className="fa-solid fa-circle-check" style={{ fontSize: 8 }} /> Active</span>
+                          : <span className="badge b-red"><i className="fa-solid fa-ban" style={{ fontSize: 8 }} /> Inactive</span>}
                     </td>
                     <td style={{ textAlign: 'center' }}>
-                      <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--brand)' }}>{modCount}/{totalMods}</div>
-                      <div style={{ fontSize: 10, color: 'var(--tm)' }}>modules on</div>
+                      {/* Count background load se bharta hai — tab tak spinner. */}
+                      {modsReady ? (
+                        <>
+                          <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--brand)' }}>{modCount}/{totalMods}</div>
+                          <div style={{ fontSize: 10, color: 'var(--tm)' }}>modules on</div>
+                        </>
+                      ) : (
+                        <>
+                          <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--tm)' }}>
+                            <i className="fa-solid fa-spinner fa-spin" style={{ fontSize: 10 }} /> /{totalMods}
+                          </div>
+                          <div style={{ fontSize: 10, color: 'var(--tm)' }}>modules on</div>
+                        </>
+                      )}
                     </td>
                     <td style={{ textAlign: 'center' }}>
-                      <button className="btn-sm" style={{ height: 30, fontSize: 11.5 }} onClick={() => setModalSchool(s)}>
+                      <button className="btn-sm" style={{ height: 30, fontSize: 11.5 }} onClick={() => openManage(s)}>
                         <i className="fa-solid fa-sliders" /> Manage
                       </button>
                     </td>
@@ -220,7 +283,18 @@ export default function SchoolPermissions() {
         </div>
       </div>
 
-      {modalSchool && (
+      {modalSchool && modalLoading && createPortal(
+        <div className="perm-ov">
+          <div className="perm-modal" style={{ maxWidth: 380, padding: 40, textAlign: 'center' }}>
+            <i className="fa-solid fa-spinner fa-spin" style={{ fontSize: 26, color: 'var(--brand)' }} />
+            <div style={{ marginTop: 12, fontSize: 13.5, fontWeight: 700 }}>Loading permissions…</div>
+            <div style={{ marginTop: 4, fontSize: 12, color: 'var(--tm)' }}>{modalSchool.name}</div>
+          </div>
+        </div>,
+        document.body,
+      )}
+
+      {modalSchool && !modalLoading && (
         <PermissionsModal
           school={modalSchool}
           perms={permsFor(modalSchool)}
