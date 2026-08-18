@@ -1279,6 +1279,9 @@ function Transactions({ toast, isOtherSession }) {
                 </td></tr>
               ) : monthList.map(x => {
                 const isOpen = openRow === x.id;
+                /* Salary head (HR Payroll se aane wale expenditure — head "Salary Payment")
+                   yahan se edit/delete NAHI ho sakta; payroll HR module se manage hota hai. */
+                const isSalaryLocked = /salary/i.test(x.head || '');
                 return (
                   <React.Fragment key={x.id}>
                     <tr id={`acctxn-${x.id}`} className={`acc-txn-tr${isOpen ? ' open' : ''}`} onClick={() => setOpenRow(isOpen ? null : x.id)}>
@@ -1306,26 +1309,42 @@ function Transactions({ toast, isOtherSession }) {
                       <td className="c" onClick={e => e.stopPropagation()}>
                         <div className="acc-txn-actions">
                           {canTxnDelete && (
-                          <Tooltip text="Delete entry">
+                          <Tooltip text={isSalaryLocked ? 'This entry can only be deleted from the HR module’s Financial tab' : 'Delete entry'}>
                             <button
                               className="fee-iconbtn danger"
-                              onClick={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } requestDelete(x); }}
+                              onClick={() => {
+                                if (isSalaryLocked) { toast('This entry can only be deleted from the HR module’s Financial tab', 'error'); return; }
+                                if (isOtherSession) { toast('Method not allowed', 'error'); return; }
+                                requestDelete(x);
+                              }}
+                              /* isSalaryLocked par `disabled` NAHI lagate — warna disabled button
+                                 hover events fire na karne ki wajah se Tooltip show hi nahi hota.
+                                 Sirf visually greyed + onClick guard (upar) se block karte hain. */
                               disabled={isOtherSession}
-                              title={isOtherSession ? 'Editing is only allowed for the current session' : undefined}
-                              style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                              aria-disabled={isOtherSession || isSalaryLocked}
+                              title={isSalaryLocked ? 'This entry can only be deleted from the HR module’s Financial tab' : (isOtherSession ? 'Editing is only allowed for the current session' : undefined)}
+                              style={(isOtherSession || isSalaryLocked) ? { opacity: .45, cursor: 'not-allowed' } : undefined}
                             >
                               <i className="fa-solid fa-trash-can"></i>
                             </button>
                           </Tooltip>
                           )}
                           {canTxnEdit && (
-                          <Tooltip text="Edit entry">
+                          <Tooltip text={isSalaryLocked ? 'This entry can only be deleted from the HR module’s Financial tab' : 'Edit entry'}>
                             <button
                               className="fee-iconbtn"
-                              onClick={() => { if (isOtherSession) { toast('Method not allowed', 'error'); return; } openEdit(x); }}
+                              onClick={() => {
+                                if (isSalaryLocked) { toast('This entry can only be edited from the HR module’s Financial tab', 'error'); return; }
+                                if (isOtherSession) { toast('Method not allowed', 'error'); return; }
+                                openEdit(x);
+                              }}
+                              /* isSalaryLocked par `disabled` NAHI lagate — warna disabled button
+                                 hover events fire na karne ki wajah se Tooltip show hi nahi hota.
+                                 Sirf visually greyed + onClick guard (upar) se block karte hain. */
                               disabled={isOtherSession}
-                              title={isOtherSession ? 'Editing is only allowed for the current session' : undefined}
-                              style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                              aria-disabled={isOtherSession || isSalaryLocked}
+                              title={isSalaryLocked ? 'This entry can only be deleted from the HR module’s Financial tab' : (isOtherSession ? 'Editing is only allowed for the current session' : undefined)}
+                              style={(isOtherSession || isSalaryLocked) ? { opacity: .45, cursor: 'not-allowed' } : undefined}
                             >
                               <i className="fa-solid fa-pen"></i>
                             </button>
