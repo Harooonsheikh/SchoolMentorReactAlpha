@@ -151,8 +151,42 @@ export const SA_CSS = `
 /* EXPORT ROW */
 .sa-root .export-row{display:flex;gap:8px;justify-content:flex-end;padding:0 20px 16px;flex-wrap:wrap}
 
+/* PRINT — "Download PDF" / "Print" window.print() chalate hain, jo POORA
+   document chhapta hai: sidebar, tabs, filter bar, sab. Is liye jo cheez
+   sach me kaagaz par jani hai us par .sa-print-area lagta hai (Reports ka
+   panel, challan slip ka paper) aur baaqi sab chhup jata hai.
+   display:none ke bajaye visibility isliye ke display hatane se table ka
+   column layout toot jata hai; visibility jagah chhorti hai magar chhapti
+   nahi, aur print-area ko top-left par utha diya jata hai. */
+@media print{
+  body *{visibility:hidden !important}
+  .sa-print-area,.sa-print-area *{visibility:visible !important}
+  .sa-print-area{position:absolute !important;left:0;top:0;width:100%;margin:0;border:none;box-shadow:none;
+    -webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .sa-no-print{display:none !important}
+  /* Shell ke scroll boxes print-area ko pehle safhe par kaat dete hain —
+     chhapte waqt sab kuch seedha block aur visible. */
+  .sa-root .app-layout,.sa-root .main-content,.sa-root .page-content{
+    display:block !important;overflow:visible !important;height:auto !important;
+    min-height:0 !important;padding:0 !important}
+  /* Slip ka overlay bhi fixed + scrollable hai — usay bhi khol dete hain. */
+  .sa-root .ch-slip-ov,.sa-root .ch-slip-wrap{
+    position:static !important;overflow:visible !important;background:none !important;
+    backdrop-filter:none !important;padding:0 !important;box-shadow:none !important;
+    max-width:none !important;animation:none !important}
+  /* chhapte waqt scroll ka koi matlab nahi — poori table dikhni chahiye */
+  .sa-root .tbl-wrap{overflow:visible !important}
+}
+
 /* TABLE */
-.sa-root .tbl-wrap{overflow-x:auto}
+/* overflow-x:auto akela likha jaye to CSS doosre axis ko bhi khud 'auto' kar
+   deta hai — phir jab horizontal bar aata hai to andar ki height ghat jati hai
+   aur uske saath ek be-matlab VERTICAL bar bhi aa jata hai (aur data badalte hi
+   aata-jata rehta hai). Page khud scroll karta hai, is liye yahan vertical
+   scroll chahiye hi nahi — overflow-y saaf hidden. Jis table ko sach me apni
+   height chahiye (QuizContent ka picker) wo inline maxHeight + overflowY deta
+   hai, jo is rule ko override kar deta hai. */
+.sa-root .tbl-wrap{overflow-x:auto;overflow-y:hidden}
 .sa-root .mentor-table{width:100%;border-collapse:collapse;min-width:1100px}
 .sa-root .mentor-table thead tr{background:linear-gradient(135deg,#1E3A8A,#1E40AF)}
 .sa-root .mentor-table th{padding:12px 12px;text-align:left;font-size:10.5px;font-weight:800;color:#fff;letter-spacing:.5px;text-transform:uppercase;white-space:nowrap}
@@ -902,6 +936,8 @@ export const SA_CSS = `
 .sa-root .pay-modal-title{font-size:14px;font-weight:800;color:var(--t1)}
 .sa-root .pay-modal-sub{font-size:11.5px;color:var(--tm);margin-top:3px}
 .sa-root .pay-modal-body{padding:22px}
+/* Setup modal ke sar par saved record ka khulasa (GET /summary se). */
+.sa-root .pay-setup-summary{background:var(--muted);border:1.5px solid var(--bl);border-left:3px solid var(--brand);border-radius:var(--r-md);padding:12px 16px;margin-bottom:18px}
 .sa-root .pay-modal-foot{display:flex;align-items:center;justify-content:flex-end;gap:10px;padding:16px 22px;border-top:1px solid var(--bl);border-radius:0 0 var(--r-xl) var(--r-xl)}
 .sa-root .pay-formula-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:20px}
 .sa-root .pay-formula-card{border:2px solid var(--bl);border-radius:var(--r-lg);padding:16px;cursor:pointer;transition:var(--tr);position:relative;background:var(--card)}
@@ -1010,6 +1046,7 @@ export const SA_CSS = `
 .sa-root .ch-slip-net-val{flex:1;padding:5px 12px;font-size:14px;font-weight:800;color:#0284C7;margin-left:8px}
 .sa-root .ch-slip-bank{padding:16px 28px 0;border-bottom:1px solid #e5e7eb}
 .sa-root .ch-slip-bank-title{font-size:11px;font-weight:800;color:#0284C7;letter-spacing:.5px;text-transform:uppercase;margin-bottom:10px;display:flex;align-items:center;gap:6px}
+.sa-root .ch-slip-bank-empty{display:flex;align-items:center;gap:8px;padding:10px 2px;font-size:12.5px;color:#64748B}
 .sa-root .ch-slip-bank-grid{display:grid;grid-template-columns:1fr 1fr;gap:0}
 .sa-root .ch-slip-bank-row{display:flex;align-items:center;margin-bottom:10px}
 .sa-root .ch-slip-bank-key{background:#334155;color:#fff;font-size:9px;font-weight:700;letter-spacing:.3px;text-transform:uppercase;padding:5px 8px;border-radius:4px;flex-shrink:0;min-width:90px;text-align:center}
@@ -1069,6 +1106,8 @@ export const SA_CSS = `
 .sa-root .recv-modal-foot{display:flex;align-items:center;justify-content:flex-end;gap:10px;padding:16px 22px;border-top:1px solid var(--bl);border-radius:0 0 var(--r-xl) var(--r-xl)}
 
 /* Reports */
+.sa-root .rpt-loading{display:flex;flex-direction:column;align-items:center;gap:12px;padding:56px 20px;color:var(--tm);font-size:13px;font-weight:700}
+.sa-root .rpt-loading i{font-size:26px;color:var(--brand)}
 .sa-root .rpt-stat-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:18px}
 .sa-root .rpt-stat{background:var(--card);border:1px solid var(--bl);border-radius:var(--r-lg);padding:13px 14px;box-shadow:var(--s-xs);border-left:3px solid var(--brand);text-align:center}
 .sa-root .rpt-stat-val{font-size:20px;font-weight:800;color:var(--t1);letter-spacing:-.02em;line-height:1}

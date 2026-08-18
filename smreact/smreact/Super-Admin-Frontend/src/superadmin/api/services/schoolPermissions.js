@@ -172,6 +172,17 @@ export function branchToSchoolPerm(entry) {
     logo: pick(row, ['branchLogo'], ''),
     /* whether this branch has a saved permission row at all */
     hasPermissionRow: wrapped ? Boolean(entry.modulePermission) : undefined,
+    /* Branch ki apni bank details — yeh isi route par aati hain, aur Schools
+       Payment ki challan slip ("Payment Method — Bank Transfer") inhi ko
+       dikhati hai. Khali fields '' rehti hain; slip un par '—' dikhata hai. */
+    bank: {
+      bankName: pick(row, ['bankName'], ''),
+      accountTitle: pick(row, ['accountTitle'], ''),
+      accountNo: String(pick(row, ['bankAccountno', 'bankAccountNo', 'accountNo'], '') || ''),
+      branchName: pick(row, ['bankBranchName'], ''),
+      iban: pick(row, ['iban'], ''),
+      note: pick(row, ['accountDesc'], ''),
+    },
     raw: row,
   };
 
@@ -233,6 +244,19 @@ export async function listPermissionBranches() {
     permMap[school.id] = perms;
   });
   return { schools, permMap };
+}
+
+/**
+ * Sirf bank details, branch id se keyed — Schools Payment ki challan slip ke
+ * liye (wahi get-branches-with-permissions call, koi naya endpoint nahi).
+ * @returns {Promise<Object>} { [branchId]: { bankName, accountTitle,
+ *   accountNo, branchName, iban, note } }
+ */
+export async function listBranchBanks() {
+  const { schools } = await listPermissionBranches();
+  const out = {};
+  schools.forEach((s) => { if (s.bank) out[s.id] = s.bank; });
+  return out;
 }
 
 /* ── save ───────────────────────────────────────────────────────── */

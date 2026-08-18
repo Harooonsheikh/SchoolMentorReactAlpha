@@ -67,7 +67,12 @@ export const todayISO = () => new Date().toISOString().slice(0, 10);
 
 /* Derive the full payment row state for a school (used by reports + receiving). */
 export function deriveRow(school, setup, challan, recv) {
-  const monthly = setup ? monthlyCharge(school, setup) : 0;
+  /* Summary API apna hisaab `totalAmount` me khud deti hai — jab wo maujood
+     ho wahi sach hai, warna formula se nikala jata hai (demo rows / abhi type
+     ho raha setup). Wahi qaida Setup tab aur challan slip par bhi hai, taake
+     Reports un se kabhi alag na batayein. */
+  const fromApi = Number(setup?.totalAmount);
+  const monthly = setup ? (fromApi > 0 ? fromApi : monthlyCharge(school, setup)) : 0;
   const payable = challan ? challan.total : monthly;
   const received = recv ? (recv.receivedAmount || 0) : 0;
   const outstanding = recv ? (recv.remainingAmount || 0) : payable;
