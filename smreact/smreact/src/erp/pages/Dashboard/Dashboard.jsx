@@ -5,7 +5,7 @@ import { useModules } from '../../context/ModuleContext';
 import { buildUrl } from '../../../utils/apiConfig';
 import { useSettings } from '../Settings/settingsStore';
 import { INITIAL_USERS, INITIAL_ROLES, findRole, initialsOf } from '../UserPermissions/permissionsData';
-import { CURRENT_SESSION, dashboardTypeFor } from './dashboardData';
+import { CURRENT_SESSION } from './dashboardData';
 import AdminDashboard from './AdminDashboard';
 import TeacherDashboard from './TeacherDashboard';
 
@@ -77,16 +77,34 @@ export default function Dashboard({
     () => findRole(INITIAL_ROLES, currentUser.role),
     [currentUser]
   );
-  const dashType = dashboardTypeFor(currentUser);
+
+  /* Kaunsa dashboard — REAL logged-in user ke accountType se (login par
+     sessionStorage me set hota hai), na ke pehle wale hardcoded mock 'u1' se.
+     accountType me "teacher" ho to Teacher Dashboard; warna Admin (Principal /
+     School Head / Admin). */
+  const accountType = (() => {
+    try { return (sessionStorage.getItem('accountType') || '').trim(); }
+    catch { return ''; }
+  })();
+  const dashType = /teacher/i.test(accountType) ? 'teacher' : 'admin';
+
+  /* visibility.user — asli logged-in identity: naam ownerName (displayName) se,
+     role accountType se. Mock user ke baqi fields fallback rehte hain. */
+  const dashUser = useMemo(() => ({
+    ...currentUser,
+    name:          ownerName || currentUser.name,
+    role:          accountType || currentUser.role,
+    dashboardType: dashType,
+  }), [currentUser, ownerName, accountType, dashType]);
 
   const visibility = useMemo(() => ({
     moduleActive: (modId) => !modId || isActive(modId),
     session,
-    user:         currentUser,
+    user:         dashUser,
     role:         currentRole,
     ownerName,
     schoolName:   branchInfo?.branchName || '',
-  }), [isActive, session, currentUser, currentRole, ownerName, branchInfo]);
+  }), [isActive, session, dashUser, currentRole, ownerName, branchInfo]);
 
   return (
     <>
@@ -104,7 +122,7 @@ export default function Dashboard({
             </div>
             <div className="dash-head-s">
               {dashType === 'teacher'
-                ? `Personal dashboard scoped to ${currentUser.name.replace(/Dr\.|Mr\.|Ms\.|Mrs\./, '').trim()}'s classes`
+                ? `Personal dashboard scoped to ${dashUser.name.replace(/Dr\.|Mr\.|Ms\.|Mrs\./, '').trim()}'s classes`
                 : `Live operations across ${schoolLabel}`}
             </div>
           </div>

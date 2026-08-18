@@ -134,7 +134,11 @@ const TEACHER_SEARCHABLE_MODULES = new Set([
    ═══════════════════════════════════════════════════════════════════ */
 export default function TeacherDashboard({ visibility, toast, navigate = () => {}, openActivityCalendar = () => {} }) {
   const { moduleActive, user, session } = visibility;
-  const scope = TEACHER_SCOPES[user?.id];
+  /* Real logged-in teacher abhi mock TEACHER_SCOPES me nahi hota (wo Xi/Pi jaise
+     mock users se keyed hai). Is liye jab tak per-teacher assignment API set nahi
+     hoti, POORA teacher dashboard dikhane ke liye pehle available scope par fall
+     back kar dete hain — warna "No class assignments" empty state aa jata tha. */
+  const scope = TEACHER_SCOPES[user?.id] || Object.values(TEACHER_SCOPES)[0] || null;
 
   /* Expandable list state for the three Exam-Task cards
      (now includes the Current Exam card). */
@@ -202,6 +206,9 @@ export default function TeacherDashboard({ visibility, toast, navigate = () => {
   }
 
   const firstName = user.name.replace(/Dr\.|Mr\.|Ms\.|Mrs\./, '').trim().split(' ')[0];
+  /* Abhi POORA teacher dashboard dikhta hai (sirf school-level module ON/OFF ke
+     hisaab se). Jab per-teacher assignment API set ho jayegi, tab yahan canModule
+     (user permissions) ki condition laga kar sirf ASSIGNED cards dikhayenge. */
   const showSchedule    = moduleActive('timetable');
   const showLessonPlans = moduleActive('academics');
   const showHomework    = moduleActive('academics');
