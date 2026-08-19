@@ -259,6 +259,15 @@ export default function SchoolPayment({ toast }) {
 
   const deleteChallan = async (id) => {
     const rowId = chStore[id]?.id || 0;
+    /* Challan par receiving bani ho to DB usay hatane hi nahi deti (foreign
+       key). Wo record pehle se load ho chuka ho to API par jaane se pehle hi
+       yahi baat bata dete hain; warna wahi jumla API ke jawab se aata hai
+       (services/payments.js → friendlyError). */
+    if (recvStore[id]?.id) {
+      setModal(null);
+      toast?.('This challan has a receiving record against it. Delete the receiving record first, then delete the challan.', 'warn');
+      return;
+    }
     try {
       if (rowId) await paymentsApi.deleteChallan({ branchId: id, id: rowId });
       setChStore((prev) => { const n = { ...prev }; delete n[id]; return n; });
@@ -356,7 +365,7 @@ export default function SchoolPayment({ toast }) {
       {modal?.type === 'genChallan' && <GenChallanModal school={modal.school} setup={payStore[modal.school.id]} challan={chStore[modal.school.id]} saving={saving} onClose={() => setModal(null)} onGenerate={generateChallan} toast={toast} />}
       {modal?.type === 'bulk' && <BulkChallanModal schools={schools} payStore={payStore} saving={saving} onClose={() => setModal(null)} onGenerate={bulkGenerate} toast={toast} />}
       {modal?.type === 'slip' && <SlipModal school={modal.school} setup={payStore[modal.school.id]} challan={chStore[modal.school.id]} bank={bankStore[modal.school.id]} bankBusy={tabBusy.banks} onClose={() => setModal(null)} />}
-      {modal?.type === 'delChallan' && <ConfirmDel title="Delete Challan?" sub="This will permanently delete the generated challan for this school." confirmText="Delete Challan" onConfirm={() => deleteChallan(modal.school.id)} onClose={() => setModal(null)} />}
+      {modal?.type === 'delChallan' && <ConfirmDel title="Delete Challan?" sub="This will permanently delete the generated challan for this school. If a payment receiving is recorded against it, delete that receiving record first." confirmText="Delete Challan" onConfirm={() => deleteChallan(modal.school.id)} onClose={() => setModal(null)} />}
       {modal?.type === 'receive' && <ReceiveModal school={modal.school} setup={payStore[modal.school.id]} challan={chStore[modal.school.id]} prevRecv={recvStore[modal.school.id]} saving={saving} onClose={() => setModal(null)} onSave={saveReceiving} toast={toast} />}
       {modal?.type === 'delRecv' && <ConfirmDel title="Delete Receiving Record?" sub={`This will permanently delete the payment receiving record for "${modal.school.name}". This action cannot be undone.`} confirmText="Delete" onConfirm={() => deleteReceiving(modal.school.id)} onClose={() => setModal(null)} />}
     </div>

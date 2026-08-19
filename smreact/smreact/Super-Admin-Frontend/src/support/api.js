@@ -275,6 +275,11 @@ export const getSchools = async () => {
     schoolName: pick(s, 'schoolName', 'SchoolName', 'name', 'Name'),
     campusName: pick(s, 'campusName', 'CampusName', 'address', 'Address'),
     principalName: pick(s, 'principalName', 'PrincipalName'),
+    /* School ka malik — chat me school-side bubbles par yahi naam lagta hai
+       (API sender ke tor par ERP ka login, yani rabta number, bhejti hai).
+       Route har build par ek hi key nahi deta, is liye sab dekh lete hain. */
+    ownerName: pick(s, 'ownerName', 'OwnerName', 'branchOwner', 'BranchOwner', 'owner', 'Owner',
+                    'principalName', 'PrincipalName'),
     contactNumber: pick(s, 'contactNumber', 'ContactNumber'),
     isActive: pick(s, 'isActive', 'IsActive'),
   }));

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSupportChat, formatTime } from '../support/useSupportChat';
 import { useVoiceRecorder } from '../support/useVoiceRecorder';
 import { toUploadableVoice } from '../support/audio';
@@ -6,7 +6,7 @@ import { serverDate } from '../support/time';
 import { downloadKey, isDownloaded, markDownloaded } from '../support/downloads';
 import { VoicePlayer, VideoBubble, ImageGallery } from '../support/MediaBits';
 import { groupChatItems } from '../support/grouping';
-import { SUPPORT_BACKEND_ENABLED, ATTACH_LIMITS, VOICE_NOTE_CAPTION, MessageStatus } from '../support/config';
+import { SUPPORT_BACKEND_ENABLED, ATTACH_LIMITS, VOICE_NOTE_CAPTION, MessageStatus, looksLikePhoneNumber } from '../support/config';
 import * as supportApi from '../support/api';
 /* Notes aur Bug/Improvement Support ki apni API par nahi jate — wahi
    Super-Admin routes hain jo Schools Progress screen use karti hai, taake ek hi
@@ -52,40 +52,25 @@ const QUICK_REPLIES = [
 
 let _id = 1;
 const newId = () => `a${_id++}`;
+/* Har "send" ka apna nishan (sirf is screen ke liye — API par nahi jata). */
+let _batchSeq = 0;
+const nextBatchId = () => `snd${++_batchSeq}`;
+
 const nowTime = () =>
   new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
 
-const SEED = [
-  { id: newId(), kind: 'daylabel', text: 'Today, June 13 2026' },
-  { id: newId(), kind: 'in', sender: 'Dr. Asif · Principal',
-    text: 'Assalam o alaikum. Fee challan is not generating for class 8 students. We are trying since yesterday. Please help urgently.',
-    time: '9:12 AM' },
-  { id: newId(), kind: 'out',
-    text: "Walaikum Assalam Dr. Asif. I'm looking into this right now. Can you share the student IDs or class section?",
-    time: '9:15 AM' },
-  { id: newId(), kind: 'in', sender: 'Dr. Asif · Principal',
-    text: 'Here is the screenshot of the error:',
-    image: { name: 'error_screenshot.jpg', size: '1.2 MB · Tap to view' },
-    time: '9:18 AM' },
-  { id: newId(), kind: 'sysnote', text: 'System Note · Agent Tariq assigned at 9:20 AM' },
-  { id: newId(), kind: 'out',
-    text: 'Please use this manual challan template meanwhile:',
-    doc: { name: 'manual_challan_template.pdf', size: '245 KB · PDF', ext: 'pdf' },
-    time: '9:26 AM' },
-  { id: newId(), kind: 'in', sender: 'Dr. Asif · Principal', audio: { duration: '0:23' }, time: '9:31 AM' },
-  { id: newId(), kind: 'in', sender: 'Dr. Asif · Principal',
-    text: 'Fee challan is still not generating. Can someone call us?', time: '9:41 AM' },
-];
-
+/* Yahan pehle SEED tha: Daffodil Schools ki ek static guftagu jo API tak
+   baat na ho sakne par chat me chal jati thi. Super Admin ko banawati chat
+   dikhna galat hai (asli lagti hai), is liye ab aisi surat me chat khali
+   rehti hai aur wajah likhi aati hai. */
 /* When `embedded` is true the component renders without its own top bar
    (logo + tabs + "Back to ERP"); the host — e.g. the Super Admin shell —
    provides the page chrome and drives the active tab through `tab` /
    `onTab`. Standalone (#agent) usage passes nothing and keeps local
    tab state plus the built-in top bar. */
 export default function AgentSupport({ embedded = false, tab, onTab, showBack = true }) {
-  /* Khali se shuru — SEED sirf tab aata hai jab API tak pahuncha hi na ja sake
-     (onError). Pehle ye demo guftagu foran render ho jati thi aur API ka jawab
-     aate hi ghayab ho jati thi; ab pehle loader chalta hai, phir asli data. */
+  /* Khali se shuru: pehle loader, phir asli data. Yahan koi demo guftagu
+     nahi girti — API tak baat na ho to chat khali rehti hai. */
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [modal, setModal] = useState(null); // 'note'|'bug'|'improv'|'image'|'doc'|'video'|null
@@ -165,10 +150,11 @@ export default function AgentSupport({ embedded = false, tab, onTab, showBack = 
       messageIds.includes(m.id) ? { ...m, status: type === 'read' ? 3 : 2 } : m)),
     // A session closed in real time → its inbox row is removed by the hook; we
     // refresh this school's Previous Sessions so it appears in history at once.
-    onSessionClosed: () => { setRemoteTyping(null); loadPrevSessions(); },
-    /* Backend tak pahunch hi na ho → offline demo par gir jao, taake console
-       khali na baithe (wahi behaviour jo school-side widget ka hai). */
-    onError: () => setMessages(SEED),
+    onSessionClosed: () => { clearChatPane(); loadPrevSessions(); },
+    /* Backend tak pahunch hi na ho → chat khali; neeche wali khali haalat
+       khud bata deti hai ke API se baat nahi ho rahi. Pehle yahan static
+       demo guftagu aa jati thi. */
+    onError: () => setMessages([]),
   });
   const liveConnected = chat.connected;
   /* Pehli load: na connect hua, na koi error — sirf spinner. */
@@ -177,6 +163,21 @@ export default function AgentSupport({ embedded = false, tab, onTab, showBack = 
 
   /* Track which school's conversation is open (kept even after it closes, so
      "Previous Sessions" knows which school to show). */
+  /* Session band hote hi chat ka rukh khali. Pehle sirf typing ka nishan
+     hatta tha: inbox se row nikal jati thi (Conversations 0) magar band shuda
+     guftagu, uska header aur reply box screen par jyun ke tyun khade rehte
+     thay — dekhne wale ko chat khuli lagti thi. newConversation() session se
+     alag bhi kar deta hai, is liye koi aur khuli conversation ho to wo khud
+     khul jati hai (neeche wala effect), warna khali haalat.
+
+     viewSchool jaan bujh kar rehne diya jata hai — Previous Sessions aur
+     sidebar ko abhi bhi yehi school chahiye. */
+  const clearChatPane = () => {
+    setMessages([]);
+    setRemoteTyping(null);
+    chat.newConversation();
+  };
+
   const rememberSchool = (sess) => {
     if (sess) setViewSchool({ schoolId: sess.schoolId, schoolName: sess.schoolName, campusName: sess.campusName });
   };
@@ -262,6 +263,35 @@ export default function AgentSupport({ embedded = false, tab, onTab, showBack = 
 
   const schoolName = liveSession?.schoolName || viewSchool?.schoolName || schoolInfo?.schoolName || 'No school selected';
 
+  /* Chat me school-side bubble par naam API ke senderName se aata hai, aur
+     wahan ERP ka login chala aata hai — yani rabta number (03xx…). Aisi surat
+     me school ke malik ka naam dikhate hain; agar sender waqai koi naam ho to
+     usay haath nahi lagate. Malik /support/schools se aata hai. */
+  const ownerName = schoolInfo?.ownerName || schoolInfo?.principalName || '';
+  const senderLabel = useCallback((name) => {
+    const raw = String(name ?? '').trim();
+    return (!raw || looksLikePhoneNumber(raw)) ? (ownerName || 'School') : raw;
+  }, [ownerName]);
+
+  /* Bubble ka avatar bhi usi school ka — pehle har jagah "DS" (Daffodil
+     Schools) hard-coded tha. */
+  const chatAvatar = initials(liveSession?.schoolName || viewSchool?.schoolName || 'School');
+  const campusName = liveSession?.campusName || viewSchool?.campusName || schoolInfo?.campusName || '';
+
+  /* Koi guftagu khuli hai ya nahi — isi par chat ka header, Close Session
+     aur reply box chalte hain. Band hone ke baad chat.sessionId null ho jata
+     hai (clearChatPane), is liye poora chat column khali haalat me chala
+     jata hai. */
+  const sessionOpen = Boolean(chat.sessionId);
+
+  /* Sender ka naam grouping ki kunji bhi hai, is liye group banane se PEHLE
+     badla jata hai — warna ek hi shakhs ke bubbles do alag naamon me bat kar
+     album tootta. */
+  const chatItems = useMemo(
+    () => groupChatItems(messages.map((m) => (m.kind === 'in' ? { ...m, sender: senderLabel(m.sender) } : m))),
+    [messages, senderLabel],
+  );
+
   /* Aaj ki tareekh — dono routes par `date` [Required] hai. */
   const todayISO = () => new Date().toISOString().slice(0, 10);
 
@@ -298,28 +328,21 @@ export default function AgentSupport({ embedded = false, tab, onTab, showBack = 
     }
   };
 
-  /* ── Send a text message (live, or simulated reply when offline) ── */
+  /* ── Send a text message ── */
   const sendMsg = () => {
     const txt = input.trim();
     if (!txt) return;
-    if (liveConnected) {
-      chat.sendText(txt).catch(() => append({ kind: 'out', text: txt, time: nowTime() }));
-      setInput('');
-      setTimeout(() => { if (taRef.current) taRef.current.style.height = 'auto'; }, 0);
+    /* API tak baat na ho rahi ho to paighaam kahin mehfooz nahi hota. Pehle
+       yahan wo bubble bhi lag jata tha aur 1.8 second baad ek banawati jawab
+       ("Dr. Asif · Principal") bhi chat me aa jata tha — chat asli lagti thi
+       jabke kuch bheja hi nahi gaya tha. */
+    if (!liveConnected) {
+      showToast('Support API is not reachable — message not sent', 'warn');
       return;
     }
-    append({ kind: 'out', text: txt, time: nowTime() });
+    chat.sendText(txt).catch((err) => showToast(err?.message || 'Message could not be sent', 'warn'));
     setInput('');
     setTimeout(() => { if (taRef.current) taRef.current.style.height = 'auto'; }, 0);
-    setTimeout(() => {
-      setMessages(prev => [...prev, { id: newId(), kind: 'typing' }]);
-      setTimeout(() => {
-        setMessages(prev => prev.filter(m => m.kind !== 'typing').concat({
-          id: newId(), kind: 'in', sender: 'Dr. Asif · Principal',
-          text: 'JazakAllah, please keep us updated.', time: nowTime(),
-        }));
-      }, 1800);
-    }, 120);
   };
 
   const onComposerType = () => { if (liveConnected) chat.setTyping(true); };
@@ -362,13 +385,20 @@ export default function AgentSupport({ embedded = false, tab, onTab, showBack = 
   /* Open the closing-remarks confirmation (keeps existing close behaviour). */
   const closeCurrentSession = () => {
     if (liveConnected && chat.sessionId) { setCloseRemarks(''); setCloseOpen(true); }
-    else showToast('Session closed', 'success');
+    /* Pehle yahan "Session closed" ka kamyabi wala toast tha halanke API tak
+       baat hi nahi ho rahi thi — session kahin band nahi hota tha. */
+    else showToast('Support API is not reachable — session not closed', 'warn');
   };
   const confirmClose = () => {
     const remarks = closeRemarks.trim() || 'Issue resolved.';
     setCloseOpen(false);
     chat.closeSession(remarks)
-      .then(() => showToast('Session closed & moved to history', 'success'))
+      .then(() => {
+        /* Poll/SignalR ka intezar nahi — band ho gayi to screen abhi saaf. */
+        clearChatPane();
+        loadPrevSessions();
+        showToast('Session closed & moved to history', 'success');
+      })
       .catch(() => showToast('Could not close session', 'warn'));
     setCloseRemarks('');
   };
@@ -477,6 +507,9 @@ export default function AgentSupport({ embedded = false, tab, onTab, showBack = 
      likha hua matn nahi hota tha. Screen par dohrao nahi hota: groupChatItems
      poore group ka ek hi text dikhata hai. */
   const sendItemsTogether = (category, items, caption, demoShape, label) => {
+    /* Is ek send ka apna nishan — screen par sirf inhi files ka album banta
+       hai (waqt ka faasla kaafi nahi tha). */
+    const batchId = nextBatchId();
     if (liveConnected) {
       (async () => {
         let ok = true;
@@ -486,14 +519,14 @@ export default function AgentSupport({ embedded = false, tab, onTab, showBack = 
           try {
             // eslint-disable-next-line no-await-in-loop
             await chat.sendAttachment({
-              category, file: it.file, caption: caption.trim(),
+              category, file: it.file, caption: caption.trim(), batchId,
             });
           } catch (err) { ok = false; lastError = err; }
         }
         showToast(ok ? `${label} sent` : (lastError?.message || 'Some uploads failed'), ok ? 'success' : 'warn');
       })();
     } else {
-      items.forEach((it, i) => append({ kind: 'out', text: i === 0 ? (caption.trim() || null) : null, ...demoShape(it), time: nowTime() }));
+      items.forEach((it, i) => append({ kind: 'out', text: i === 0 ? (caption.trim() || null) : null, ...demoShape(it), time: nowTime(), _batch: batchId }));
       showToast(`${label} sent`, 'success');
     }
   };
@@ -686,10 +719,14 @@ export default function AgentSupport({ embedded = false, tab, onTab, showBack = 
           {/* Header */}
           <div className="ag-hdr">
             <div className="ag-hdr-l">
-              <div className="ag-av ag-av-lg">{initials(liveSession?.schoolName || 'Daffodil Schools')}</div>
+              {/* Naam/campus sirf khuli conversation se. Pehle yahan
+                  "Daffodil Schools · Tarnol Campus" hard-coded gir jata tha,
+                  is liye koi chat khuli na hone par bhi ek school ka naam
+                  screen par nazar aata tha. */}
+              <div className="ag-av ag-av-lg">{sessionOpen ? chatAvatar : '—'}</div>
               <div>
-                <div className="ag-hdr-nm">{liveSession?.schoolName || 'Daffodil Schools'}</div>
-                <div className="ag-hdr-st"><i className="fa-solid fa-circle" style={{ fontSize: 7 }} aria-hidden="true"></i> {liveStatusLabel(chat.status)} · {liveSession?.campusName || 'Tarnol Campus'}</div>
+                <div className="ag-hdr-nm">{sessionOpen ? schoolName : 'No conversation open'}</div>
+                <div className="ag-hdr-st"><i className="fa-solid fa-circle" style={{ fontSize: 7 }} aria-hidden="true"></i> {liveStatusLabel(chat.status)}{sessionOpen && campusName ? ' · ' + campusName : ''}</div>
               </div>
             </div>
             <div className="ag-hdr-r">
@@ -697,9 +734,11 @@ export default function AgentSupport({ embedded = false, tab, onTab, showBack = 
                 <i className="fa-solid fa-clock-rotate-left" aria-hidden="true"></i>
                 {prevSessions.length > 0 && <span className="ag-hdr-badge">{prevSessions.length}</span>}
               </button>
-              <button className="ag-btn ag-btn-danger" onClick={closeCurrentSession}>
-                <i className="fa-solid fa-circle-xmark" aria-hidden="true"></i> Close Session
-              </button>
+              {sessionOpen && (
+                <button className="ag-btn ag-btn-danger" onClick={closeCurrentSession}>
+                  <i className="fa-solid fa-circle-xmark" aria-hidden="true"></i> Close Session
+                </button>
+              )}
             </div>
           </div>
 
@@ -715,15 +754,26 @@ export default function AgentSupport({ embedded = false, tab, onTab, showBack = 
               <div className="ag-msgs-state">
                 <i className="fa-regular fa-comments" aria-hidden="true"></i>
                 <div className="ag-msgs-state-t">
-                  {chat.activeSessions.length ? 'Select a conversation from the inbox' : 'No conversation open'}
+                  {!liveConnected
+                    ? 'Support API is not reachable — no conversation can be loaded.'
+                    : chat.activeSessions.length ? 'Select a conversation from the inbox' : 'No conversation open'}
                 </div>
               </div>
             )}
-            {groupChatItems(messages).map(m => <AgMsg key={m.id} m={m} onToast={showToast} />)}
-            {remoteTyping && <AgMsg m={{ id: 'remote-typing', kind: 'typing' }} onToast={showToast} />}
+            {chatItems.map(m => <AgMsg key={m.id} m={m} av={chatAvatar} onToast={showToast} />)}
+            {remoteTyping && <AgMsg m={{ id: 'remote-typing', kind: 'typing' }} av={chatAvatar} onToast={showToast} />}
           </div>
 
-          {/* Reply box */}
+          {/* Reply box — sirf khuli guftagu par. Band shuda session par yeh
+              khada rehta tha aur agent likh kar bhejta reh sakta tha. */}
+          {!sessionOpen ? (
+            <div className="ag-reply ag-reply-off">
+              <i className="fa-solid fa-comment-slash" aria-hidden="true"></i>
+              {chat.activeSessions.length
+                ? ' Select a conversation from the inbox to reply.'
+                : ' No open conversation. New messages from schools will appear in the inbox.'}
+            </div>
+          ) : (
           <div className="ag-reply">
             <div className="ag-quick">
               {QUICK_REPLIES.map(([label, text]) => (
@@ -771,6 +821,7 @@ export default function AgentSupport({ embedded = false, tab, onTab, showBack = 
               </div>
             )}
           </div>
+          )}
         </div>
 
         {/* Right sidebar */}
@@ -903,7 +954,7 @@ function SideSection({ title, icon, rows }) {
   );
 }
 
-function AgMsg({ m, onToast }) {
+function AgMsg({ m, av = "SM", onToast }) {
   if (m.kind === 'daylabel') return <div className="ag-day"><span>{m.text}</span></div>;
   if (m.kind === 'sysnote') {
     return (
@@ -915,7 +966,7 @@ function AgMsg({ m, onToast }) {
   if (m.kind === 'typing') {
     return (
       <div className="ag-row">
-        <div className="ag-av">DS</div>
+        <div className="ag-av">{av}</div>
         <div className="ag-bbl ag-in" style={{ padding: '8px 12px' }}>
           <div className="ag-typing"><span /><span /><span /></div>
         </div>
@@ -950,7 +1001,7 @@ function AgMsg({ m, onToast }) {
   if (m._group) {
     return (
       <div className={`ag-row${isOut ? ' ag-out' : ''}`}>
-        {!isOut && <div className="ag-av">DS</div>}
+        {!isOut && <div className="ag-av">{av}</div>}
         <div className="ag-bbl-wrap">
           {!isOut && m.sender && <div className="ag-sndr">{m.sender}</div>}
           <div className={`ag-bbl ${isOut ? 'ag-out' : 'ag-in'}`}>
@@ -971,13 +1022,17 @@ function AgMsg({ m, onToast }) {
 
   return (
     <div className={`ag-row${isOut ? ' ag-out' : ''}`}>
-      {!isOut && <div className="ag-av">DS</div>}
+      {!isOut && <div className="ag-av">{av}</div>}
       <div className="ag-bbl-wrap">
         {!isOut && m.sender && <div className="ag-sndr">{m.sender}</div>}
         <div className={`ag-bbl ${isOut ? 'ag-out' : 'ag-in'}`}>
+          {/* Attachment pehle, uska matn (caption) neeche — wahi tarteeb jo
+              gallery/grouped bubble ki hai aur jo school-side widget dikhati
+              hai. Pehle yahan text upar aur document neeche aata tha, is liye
+              document ke saath bheja gaya paighaam attachment se pehle nazar
+              aata tha. */}
           {m.image && m.image.src && <img src={m.image.src} alt="" className="ag-bbl-img" />}
           {m.video && m.video.src && <VideoBubble src={m.video.src} name={m.video.name} />}
-          {m.text && <div className="ag-bbl-txt">{m.text}</div>}
           {m.image && !m.image.src && (
             <div className="ag-att" onClick={() => onToast('Opening image…', 'info')}>
               <div className="ag-att-ico" style={{ background: 'linear-gradient(135deg,#0284C7,#0EA5E9)' }}><i className="fa-solid fa-image" aria-hidden="true"></i></div>
@@ -991,6 +1046,7 @@ function AgMsg({ m, onToast }) {
           {m.audio && (
             <VoicePlayer src={m.audio.src} duration={m.audio.seconds || 0} accent="#1E3A8A" />
           )}
+          {m.text && <div className="ag-bbl-txt">{m.text}</div>}
           <div className="ag-meta">{m.time}{isOut && <Ticks status={m.status} />}</div>
         </div>
       </div>
@@ -1160,7 +1216,7 @@ function ImageModal({ items, onRemove, caption, setCaption, onPick, onSend, inpu
           </div>
         </>
       )}
-      <label className="ag-lbl">Caption (Optional)</label>
+      <label className="ag-lbl">Caption</label>
       <textarea className="ag-textarea" rows={2} placeholder="Add a caption…" value={caption} onChange={e => setCaption(e.target.value)} />
     </Modal>
   );
@@ -1194,7 +1250,7 @@ function VideoModal({ items, onRemove, caption, setCaption, onPick, onSend, inpu
           ))}
         </>
       )}
-      <label className="ag-lbl">Caption (Optional)</label>
+      <label className="ag-lbl">Caption</label>
       <textarea className="ag-textarea" rows={2} placeholder="Add a caption…" value={caption} onChange={e => setCaption(e.target.value)} />
     </Modal>
   );
@@ -1226,7 +1282,7 @@ function DocModal({ items, onRemove, msg, setMsg, onPick, onSend, inputRef, onCl
           ))}
         </>
       )}
-      <label className="ag-lbl">Message (Optional)</label>
+      <label className="ag-lbl">Message</label>
       <textarea className="ag-textarea" rows={2} placeholder="Add a message…" value={msg} onChange={e => setMsg(e.target.value)} />
     </Modal>
   );
@@ -1347,7 +1403,7 @@ function liveStatusLabel(status) {
     case 'connected': return 'Online';
     case 'connecting': return 'Connecting…';
     case 'reconnecting': return 'Reconnecting…';
-    case 'offline': return 'Offline (demo)';
+    case 'offline': return 'Offline';
     case 'error': return 'Auth error';
     default: return 'Online';
   }
@@ -1480,6 +1536,7 @@ const AGENT_CSS = `
 
 /* Reply box */
 .ag-reply { flex-shrink: 0; border-top: 1px solid var(--ag-bd); background: var(--ag-panel); padding: 10px 14px; }
+.ag-reply-off { display: flex; align-items: center; gap: 8px; justify-content: center; color: var(--ag-tm); font-size: 12.5px; font-weight: 600; }
 .ag-quick { display: flex; gap: 6px; margin-bottom: 8px; overflow-x: auto; padding-bottom: 2px; }
 .ag-chip { flex-shrink: 0; height: 28px; padding: 0 12px; border-radius: 99px; border: 1.5px solid var(--ag-bd); background: var(--ag-soft2); color: var(--ag-t3); font-size: 11.5px; font-weight: 600; cursor: pointer; white-space: nowrap; font-family: inherit; transition: all .15s; }
 .ag-chip:hover { border-color: #1E3A8A; color: #1E3A8A; background: var(--ag-tint); }

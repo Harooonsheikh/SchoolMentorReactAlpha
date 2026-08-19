@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useSupportChat } from '../support/useSupportChat';
 import { useVoiceRecorder } from '../support/useVoiceRecorder';
@@ -8,12 +8,16 @@ import { VoicePlayer, VideoBubble, ImageGallery } from '../support/MediaBits';
 import { groupChatItems } from '../support/grouping';
 import {
   SUPPORT_BACKEND_ENABLED, ATTACH_LIMITS, VOICE_NOTE_CAPTION,
-  SenderType, MessageStatus, SessionStatus, hasBridgeToken,
+  SenderType, MessageStatus, SessionStatus, hasBridgeToken, looksLikePhoneNumber,
 } from '../support/config';
 import * as api from '../support/api';
 import { playIncomingChime } from '../support/sound';
 
 let _attId = 1;
+/* Har "send" ka apna nishan (sirf is screen ke liye — API par nahi jata). */
+let _batchSeq = 0;
+const nextBatchId = () => `snd${++_batchSeq}`;
+
 const attId = () => `att${_attId++}`;
 
 /* Shown to the school user the instant an agent closes the session. */
@@ -433,6 +437,31 @@ export default function SupportWidget({ toast }) {
     setVideoItems([]); setVideoCaption(''); setAttachModal(null);
   };
 
+  /* ── Aane wale bubble par kis ka naam likha jaye ──
+     API `senderName` me support user ka LOGIN bhejti hai, jo rabta number
+     hota hai — chat me "03006677888" likha aata tha. Number ki jagah wahi
+     naam dikhate hain jo is guftagu ka agent hai (session se), aur wo bhi
+     na mile to screen ka apna unwan. Asli naam aaye to usay haath nahi
+     lagate. */
+  const liveSession = chat.activeSessions.find((x) => x.sessionId === chat.sessionId)
+    || chat.activeSessions[0] || null;
+  const agentDisplayName = (() => {
+    const n = String(liveSession?.agentName || '').trim();
+    return (!n || looksLikePhoneNumber(n)) ? '' : n;
+  })();
+  const senderLabel = useCallback((name) => {
+    const raw = String(name ?? '').trim();
+    return (!raw || looksLikePhoneNumber(raw)) ? (agentDisplayName || 'School Mentor Support') : raw;
+  }, [agentDisplayName]);
+
+  /* Naam grouping ki kunji bhi hai (ek hi bhejne wale ke consecutive
+     attachments ek album bante hain), is liye group banne se PEHLE badalta
+     hai — warna ek hi shakhs ke bubbles do naamon me bat jate. */
+  const chatMessages = useMemo(
+    () => messages.map((m) => (m.kind === 'in' ? { ...m, sender: senderLabel(m.sender) } : m)),
+    [messages, senderLabel],
+  );
+
   /* Upload a batch of files as individual messages (grouped at render time).
      Caption HAR file ke saath jata hai: upload route par wo [Required] hai
      (khali bhejne par 400 "The caption field is required"), is liye pehle jab
@@ -444,6 +473,10 @@ export default function SupportWidget({ toast }) {
      hai (CAPTION_REQUIRED). Pehle khali hone par file ka naam khud caption ban
      jata tha, magar wo user ka likha hua matn nahi hota tha. */
   const sendItemsTogether = (category, items, caption, demoShape) => {
+    /* Is ek send ka apna nishan — screen par sirf inhi files ka album banta
+       hai. Pehle grouping waqt ke faasle par chalti thi, is liye baad me
+       bheji gayi nayi tasveer pichhle album me ja girti thi. */
+    const batchId = nextBatchId();
     if (liveConnected) {
       (async () => {
         for (let i = 0; i < items.length; i++) {
@@ -451,7 +484,7 @@ export default function SupportWidget({ toast }) {
           try {
             // eslint-disable-next-line no-await-in-loop
             await chat.sendAttachment({
-              category, file: it.file, caption: caption.trim(),
+              category, file: it.file, caption: caption.trim(), batchId,
             });
           } catch (err) {
             /* Upload nakaam — bubble to dikhao (jo chuna wo gum na ho) magar
@@ -459,12 +492,12 @@ export default function SupportWidget({ toast }) {
                apna message (e.g. "File type '.x' is not allowed") zyada kaam ka
                hai, is liye wahi dikhate hain. */
             notify(err?.message || `${it.name || 'File'} could not be sent. Please try again.`);
-            appendOut({ text: i === 0 ? (caption.trim() || null) : null, ...demoShape(it) });
+            appendOut({ text: i === 0 ? (caption.trim() || null) : null, ...demoShape(it), _batch: batchId });
           }
         }
       })();
     } else {
-      items.forEach((it, i) => appendOut({ text: i === 0 ? (caption.trim() || null) : null, ...demoShape(it) }));
+      items.forEach((it, i) => appendOut({ text: i === 0 ? (caption.trim() || null) : null, ...demoShape(it), _batch: batchId }));
     }
   };
 
@@ -523,7 +556,7 @@ export default function SupportWidget({ toast }) {
 
       {open && createPortal(
         <ChatOverlay
-          messages={messages}
+          messages={chatMessages}
           loading={chatLoading}
           msgsRef={msgsRef}
           isClosed={isClosed}
@@ -943,7 +976,7 @@ function ImageModal({ items, onRemove, caption, setCaption, onPick, onSend, onCl
               </div>
             </>
           )}
-          <div className="sc-flbl">Caption (Optional)</div>
+          <div className="sc-flbl">Caption</div>
           <textarea className="sc-ftxta" rows={2} placeholder="Add a caption…" value={caption} onChange={e => setCaption(e.target.value)} />
         </div>
         <div className="sc-md-ft">
@@ -990,7 +1023,7 @@ function DocModal({ items, onRemove, msg, setMsg, onPick, onSend, onClose, input
               ))}
             </>
           )}
-          <div className="sc-flbl">Message (Optional)</div>
+          <div className="sc-flbl">Message</div>
           <textarea className="sc-ftxta" rows={2} placeholder="Add a message…" value={msg} onChange={e => setMsg(e.target.value)} />
         </div>
         <div className="sc-md-ft">
@@ -1042,7 +1075,7 @@ function VideoModal({ items, onRemove, caption, setCaption, onPick, onSend, onCl
               ))}
             </>
           )}
-          <div className="sc-flbl">Caption (Optional)</div>
+          <div className="sc-flbl">Caption</div>
           <textarea className="sc-ftxta" rows={2} placeholder="Add a caption…" value={caption} onChange={e => setCaption(e.target.value)} />
         </div>
         <div className="sc-md-ft">

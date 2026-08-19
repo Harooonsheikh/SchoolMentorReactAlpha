@@ -155,12 +155,21 @@ export const EP = {
     assignedUser: () => `${SA_ROOT}/api/AHM_School_Progress/manage_assignedUser`,
   },
 
-  /* ── E-Tube ── */
+  /* ── E-Tube — LIVE SchoolMentorSuperAdminAPI
+     (swagger: .../Schoolmentorsuperadminapi/swagger/index.html).
+
+     SOPs ki tarah dono routes POST hain aur kaam ek hi body ke `action` se
+     tay hota hai: get | insert | update | delete.
+       manage_categories → application/json     (camelCase fields)
+       manage_videos     → multipart/form-data  (PascalCase + file fields)
+
+     Reviews aur school-videos ki abhi koi API nahi hai — wo screens demo
+     data par chalti hain (etubeData.js), is liye unke purane paths waise hi
+     rakhe hain. ── */
   etube: {
-    videos: () => `${ROOT}/etube/videos`,                 // GET / POST(multipart)
-    video: (id) => `${ROOT}/etube/videos/${id}`,          // PUT / DELETE
-    categories: () => `${ROOT}/etube/categories`,
-    category: (id) => `${ROOT}/etube/categories/${id}`,
+    categories: () => `${SA_ROOT}/api/AHM_Etube/manage_categories`,
+    videos: () => `${SA_ROOT}/api/AHM_Etube/manage_videos`,
+    /* abhi backend me nahi — demo data */
     reviews: () => `${ROOT}/etube/reviews`,
     review: (id) => `${ROOT}/etube/reviews/${id}`,        // PUT { status }
     schoolVideos: () => `${ROOT}/etube/school-videos`,
