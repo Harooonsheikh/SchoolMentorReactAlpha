@@ -1,59 +1,116 @@
 /* ═══════════════════════════════════════════════════════════════════
-   Network schools API — connected schools + join requests for the Head
-   Office (Chain Admin) portal.
+   NETWORK SCHOOLS — is network me shamil hone ki requests aur shamil ho
+   chuke schools.
 
-   NOTE: the pushed build referenced this module but did not include it, so
-   this is a mock stand-in that keeps the UI working on demo data. When the
-   real Chain-Management wiring (network-schools/manage → getbynetwork /
-   accept / reject / setup) lands, it replaces this file. Shapes here match
-   what viewContext.jsx, AdminLayout.jsx and SchoolStatus.jsx consume.
+   Sab kuch aik endpoint se:
+     POST {chain}/api/Network_Setup/network-schools/manage
+       action: getbynetwork | update | delete
+   Response me branch ki tafseel (branchName / branchPhone / branchAddress …)
+   sath hi aati hai, is liye school ka naam lene ke liye ERP API ko alag call
+   karne ki zaroorat nahi.
+
+   Ye axios client se nahi jaata: wo `/api` par .NET backend ki taraf jaata hai
+   aur apna Bearer token lagata hai, jabke ye endpoint alag base par hai.
    ═══════════════════════════════════════════════════════════════════ */
-import { USE_MOCK } from '../config/env'
 
-const clone = (v) => (typeof structuredClone === 'function' ? structuredClone(v) : JSON.parse(JSON.stringify(v)))
-const wait  = (ms = 220) => new Promise((r) => setTimeout(r, ms))
+import { CHAIN_API_BASE } from '@/config/env'
+import { getStoredUser } from '@/auth/tokenStorage'
 
-/* Connected schools — accepted network members. `id` = network-school row id
-   (used to activate/deactivate), `branchId` = the school's ERP branch id. */
-const MOCK_CONNECTED = [
-  { id: 1, branchId: 1,  name: 'Beacon Public School',        code: '5790', phone: '03008411045', email: 'beacon@school.pk',   address: 'Chunian',        city: 'Chunian', status: 'ERP',      networkPermission: true  },
-  { id: 2, branchId: 12, name: 'Milford Sounds Grammar',      code: '6021', phone: '03211234567', email: 'milford@school.pk',  address: 'Gulberg, Lahore', city: 'Lahore',  status: 'ERP',      networkPermission: true  },
-  { id: 3, branchId: 18, name: 'The Creative School',         code: '6044', phone: '03009876543', email: 'creative@school.pk', address: 'Model Town',      city: 'Lahore',  status: 'Inactive', networkPermission: false },
-]
+const MANAGE_URL = `${CHAIN_API_BASE}/api/Network_Setup/network-schools/manage`
 
-/* Pending / rejected join requests. Fields used by AdminLayout: id, name,
-   phone (search), plus status / date for display. */
-const MOCK_REQUESTS = {
-  pending: [
-    { id: 101, branchId: 21, name: 'Punjab Group Of Colleges', phone: '04299203000', code: '7010', city: 'Lahore', status: 'Pending', date: new Date().toISOString().slice(0, 10) },
-    { id: 102, branchId: 22, name: 'Allied Schools',           phone: '04235870000', code: '7022', city: 'Lahore', status: 'Pending', date: new Date().toISOString().slice(0, 10) },
-  ],
-  rejected: [
-    { id: 103, branchId: 23, name: 'City School (Test)',       phone: '04236000000', code: '7031', city: 'Lahore', status: 'Rejected', date: '2025-11-24' },
-  ],
+/* Logged-in network ki id. ERP handoff `csp_user` me network id `id` par aati
+   hai (dekhein main.jsx / LoginScreen ka handoff). */
+export function currentNetworkId() {
+  const u = getStoredUser()
+  const id = u?.id ?? u?.networkID ?? u?.networkId
+  return Number(id) || 0
 }
 
-/* Connected schools for the view-switcher + School Status screens. */
-export async function fetchConnectedSchools() {
-  if (USE_MOCK) { await wait(); return clone(MOCK_CONNECTED) }
-  await wait(); return clone(MOCK_CONNECTED)   // TODO: live network-schools/manage getbynetwork
+async function manage(payload) {
+  const res = await fetch(MANAGE_URL, {
+    method: 'POST',
+    headers: { Accept: '*/*', 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const json = await res.json().catch(() => ({}))
+  if (!res.ok || json?.success === false) {
+    throw new Error(json?.message || json?.title || 'Request failed')
+  }
+  return json
 }
 
-/* Join requests, split into pending + rejected. */
-export async function fetchSchoolRequests() {
-  if (USE_MOCK) { await wait(); return clone(MOCK_REQUESTS) }
-  await wait(); return clone(MOCK_REQUESTS)    // TODO: live network-schools/manage requests
+/* API row → screen row. isAccepted/isRejected se status banta hai:
+   accepted → Connected, rejected → Rejected, warna abhi Pending. */
+const toSchool = (r) => ({
+  id:          r.id,                 // network-school row ki id (accept/reject/delete isi se)
+  branchId:    r.branchID,
+  name:        r.branchName || `Branch #${r.branchID}`,
+  code:        r.branchCode || '',
+  phone:       r.branchPhone || '',
+  email:       r.branchEmail1 || '',
+  address:     r.branchAddress || '',
+  logo:        r.branchLogo || '',
+  /* Permissions screen ke liye: network ki taraf se di gayi ERP access. */
+  networkPermission: !!r.networkPermission,
+  isActive:      r.isActive !== false,
+  branchIsActive: r.branchIsActive !== false,
+  status:      r.isAccepted ? 'Connected' : (r.isRejected ? 'Rejected' : 'Pending'),
+  requestedAt: r.requestedDateTime || null,
+  decidedAt:   r.acceptedOrRejectedDateTime || null,
+})
+
+/* getbynetwork ko isAccepted lazmi chahiye: true = accepted list,
+   false = baqi (pending + rejected). */
+async function listByNetwork(accepted, networkId) {
+  if (!networkId) return []
+  const json = await manage({ action: 'getbynetwork', networkID: networkId, isAccepted: !!accepted })
+  return (Array.isArray(json?.data) ? json.data : []).map(toSchool)
 }
 
-/* Accept / reject a join request. `accepted` true → the school joins the
-   network; false → the request is rejected. */
-export async function decideSchoolRequest(row, accepted) {
-  await wait()
-  return { ok: true, id: row?.id, accepted: !!accepted }   // TODO: live accept/reject
+/** Wo schools jo network me shamil ho chuke hain. */
+export function fetchConnectedSchools(networkId = currentNetworkId()) {
+  return listByNetwork(true, networkId)
 }
 
-/* Turn a connected school's ERP access on/off (School Status card). */
-export async function setSchoolErpAccess(school, activate) {
-  await wait()
-  return { ok: true, id: school?.id ?? school?.rowId, active: !!activate }   // TODO: live setup
+/** Abhi faisla na hui requests, aur reject ki hui requests — aik hi call se. */
+export async function fetchSchoolRequests(networkId = currentNetworkId()) {
+  const rows = await listByNetwork(false, networkId)
+  return {
+    pending:  rows.filter((r) => r.status === 'Pending'),
+    rejected: rows.filter((r) => r.status === 'Rejected'),
+  }
+}
+
+/**
+ * Request ka faisla — dono aik hi `update` call hain, farq sirf isAccepted ka:
+ *   accepted = true  → school network me shamil (Connected list me chala jaata hai)
+ *   accepted = false → request reject
+ */
+/**
+ * ERP access on/off — wahi `update` call, sirf networkPermission badalta hai.
+ * `row` me network-school row ki id (rowId) aur branchID chahiye; school pehle
+ * se accepted hai is liye isAccepted true rehta hai.
+ */
+export function setSchoolErpAccess(row, allowed, networkId = currentNetworkId()) {
+  return manage({
+    action:            'update',
+    id:                row.rowId ?? row.id,
+    networkID:         networkId,
+    branchID:          row.branchId ?? row.id,
+    networkPermission: !!allowed,
+    isActive:          row.isActive !== false,
+    isAccepted:        true,
+  })
+}
+
+export function decideSchoolRequest(row, accepted, networkId = currentNetworkId()) {
+  return manage({
+    action:            'update',
+    id:                row.id,
+    networkID:         networkId,
+    branchID:          row.branchId,
+    networkPermission: true,
+    isActive:          true,
+    isAccepted:        !!accepted,
+  })
 }
