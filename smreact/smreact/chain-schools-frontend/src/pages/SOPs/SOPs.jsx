@@ -1,15 +1,30 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import TutorialButton from '../../components/TutorialButton'
 import { createPortal } from 'react-dom'
-import { loadSop, saveSop, toEmbed } from './data'
+import { toEmbed } from './data'
+import {
+  listManualHeads, saveManualHead, deleteManualHead,
+  listManuals, listForms, saveManual as saveManualApi, deleteManual,
+  saveManualFormDoc, deleteManualFormDoc,
+} from '../../api/sopsApi'
 import ContentSourceBar from '../../components/ContentSourceBar'
 import { loadSource, saveSource } from '../../config/contentSource'
 import { loadChainProfile, chainInitials } from '../../config/chainProfile'
 import './SOPs.css'
 
 export default function SOPs() {
-  const [data, setData] = useState(() => loadSop())
-  const [activeCat, setActiveCat] = useState(() => loadSop().cats[0]?.id ?? null)
+  /* Heads, manuals aur unki forms — sab API se (localStorage store nahi). */
+  const [cats, setCats] = useState([])
+  const [catsLoading, setCatsLoading] = useState(true)
+  const [activeCat, setActiveCat] = useState(null)
+  const [catBusy, setCatBusy] = useState(false)
+  /* Cascade: head chunne par usi ke manuals, aur manual khulne par usi ki
+     forms. Dono cache me rehte hain taake wapas aane par dobara call na ho. */
+  const [manualsByCat, setManualsByCat] = useState({})   // { [catId]: manual[] }
+  const [manualsLoading, setManualsLoading] = useState(false)
+  const [formsByManual, setFormsByManual] = useState({}) // { [manualId]: form[] }
+  const [formsLoading, setFormsLoading] = useState({})   // { [manualId]: true }
+  const [rowBusy, setRowBusy] = useState(false)
   const [search, setSearch] = useState('')
   const [expanded, setExpanded] = useState({})
   const [openDd, setOpenDd] = useState(null)
@@ -25,77 +40,184 @@ export default function SOPs() {
   const readOnly = source === 'mentor'
 
   const fire = (text, type = 'success') => setToast({ text, type })
-  const commit = (next) => { setData(next); saveSop(next) }
   const changeSource = (v) => {
     setSource(v); saveSource('sops', v)
     fire(v === 'mentor' ? "Now showing School Mentor's SOPs to your schools" : 'Now showing your own SOPs to your schools')
   }
 
+  /* Heads dobara load kar ke active selection sambhal lete hain — jo head
+     abhi khula hai wo agar reh gaya to wahi rehta hai, warna pehla. */
+  const reloadCats = async (preferId) => {
+    const rows = await listManualHeads()
+    setCats(rows)
+    setActiveCat((cur) => {
+      const want = Number(preferId) || cur
+      return rows.some((c) => c.id === want) ? want : (rows[0]?.id ?? null)
+    })
+    return rows
+  }
+
   useEffect(() => { setSource(loadSource('sops')) }, [])
+  useEffect(() => {
+    let alive = true
+    setCatsLoading(true)
+    listManualHeads()
+      .then((rows) => { if (!alive) return; setCats(rows); setActiveCat((cur) => cur ?? rows[0]?.id ?? null) })
+      .catch((err) => { if (alive) fire(err.message || 'Could not load manual heads', 'warn') })
+      .finally(() => { if (alive) setCatsLoading(false) })
+    return () => { alive = false }
+  }, [])
+  /* Manual head ki base par manuals — jo head khula hai sirf usi ke. */
+  const reloadManuals = async (catId = activeCat) => {
+    if (!catId) return []
+    const rows = await listManuals(catId)
+    setManualsByCat((c) => ({ ...c, [catId]: rows }))
+    return rows
+  }
+  useEffect(() => {
+    if (!activeCat || manualsByCat[activeCat]) return undefined
+    let alive = true
+    setManualsLoading(true)
+    listManuals(activeCat)
+      .then((rows) => { if (alive) setManualsByCat((c) => ({ ...c, [activeCat]: rows })) })
+      .catch((err) => { if (alive) fire(err.message || 'Could not load manuals', 'warn') })
+      .finally(() => { if (alive) setManualsLoading(false) })
+    return () => { alive = false }
+  }, [activeCat, manualsByCat])
+
+  /* Manual detail ki base par forms — row khulne (ya viewer/Add Form) par. */
+  const formsOf = (manualId) => formsByManual[manualId] || []
+  const loadForms = async (manualId, force = false) => {
+    if (!manualId || (!force && formsByManual[manualId])) return formsOf(manualId)
+    setFormsLoading((f) => ({ ...f, [manualId]: true }))
+    try {
+      const rows = await listForms(manualId)
+      setFormsByManual((f) => ({ ...f, [manualId]: rows }))
+      return rows
+    } catch (err) {
+      fire(err.message || 'Could not load forms', 'warn')
+      return []
+    } finally {
+      setFormsLoading((f) => ({ ...f, [manualId]: false }))
+    }
+  }
+
   useEffect(() => { if (!toast) return undefined; const t = setTimeout(() => setToast(null), 3000); return () => clearTimeout(t) }, [toast])
   useEffect(() => { const h = () => setOpenDd(null); document.addEventListener('click', h); return () => document.removeEventListener('click', h) }, [])
 
-  /* ── stats ── */
+  /* ── stats ──
+     Manuals ka total heads ke apne `totalManuals` se banta hai (har head ka
+     data load kiye baghair). Baqi teen tiles wahi ginte hain jo abhi tak
+     load hua hai — head/manual kholte jayein, ye barhte jayenge. */
+  const loadedManuals = useMemo(() => Object.values(manualsByCat).flat(), [manualsByCat])
   const stats = useMemo(() => ({
-    cats: data.cats.length,
-    manuals: data.manuals.length,
-    pdfs: data.manuals.filter((m) => m.pdfFile || m.pdfName).length,
-    forms: data.manuals.reduce((s, m) => s + (m.forms?.length || 0), 0),
-    vids: data.manuals.filter((m) => m.vidUrl && m.vidStatus === 'available').length,
-  }), [data])
+    cats: cats.length,
+    manuals: cats.reduce((s, c) => s + (manualsByCat[c.id]?.length ?? c.totalManuals ?? 0), 0),
+    pdfs: loadedManuals.filter((m) => m.pdfPath).length,
+    forms: Object.values(formsByManual).reduce((s, f) => s + f.length, 0),
+    vids: loadedManuals.filter((m) => m.vidUrl && m.vidStatus === 'available').length,
+  }), [cats, manualsByCat, loadedManuals, formsByManual])
 
-  const cat = data.cats.find((c) => c.id === activeCat)
+  const cat = cats.find((c) => c.id === activeCat)
   const manuals = useMemo(() => {
     const q = search.trim().toLowerCase()
-    return data.manuals.filter((m) => m.catId === activeCat && (!q || m.title.toLowerCase().includes(q) || (m.code || '').toLowerCase().includes(q)))
-  }, [data.manuals, activeCat, search])
+    const rows = manualsByCat[activeCat] || []
+    return rows.filter((m) => !q || m.title.toLowerCase().includes(q) || (m.code || '').toLowerCase().includes(q))
+  }, [manualsByCat, activeCat, search])
 
   /* ── actions ── */
-  const saveCat = (payload) => {
-    if (catModal.mode === 'edit') {
-      commit({ ...data, cats: data.cats.map((c) => (c.id === catModal.cat.id ? { ...c, ...payload } : c)) })
-      fire('Category updated')
-    } else {
-      const id = data.catSeq + 1
-      commit({ ...data, catSeq: id, cats: [...data.cats, { id, ...payload }] })
-      setActiveCat(id); fire('Category added')
+  /* action: insert | update — id ho to update. Server ki list hi sach hai,
+     is liye save ke baad heads dobara padhte hain. */
+  const saveCat = async (payload) => {
+    const editId = catModal.mode === 'edit' ? catModal.cat.id : 0
+    setCatBusy(true)
+    try {
+      const totalManuals = manualsByCat[editId]?.length ?? cats.find((c) => c.id === editId)?.totalManuals ?? 0
+      await saveManualHead({ ...payload, totalManuals }, editId)
+      /* Naya head list me sab se aakhir me aata hai — usi ko khol dete hain. */
+      const rows = await reloadCats(editId)
+      if (!editId) {
+        const added = rows.find((c) => c.title === payload.title)
+        if (added) setActiveCat(added.id)
+      }
+      fire(editId ? 'Manual head updated' : 'Manual head added')
+      setCatModal(null)
+    } catch (err) {
+      fire(err.message || 'Could not save this manual head', 'warn')
+    } finally {
+      setCatBusy(false)
     }
-    setCatModal(null)
   }
-  const saveManual = (payload) => {
-    if (manualModal.mode === 'edit') {
-      commit({ ...data, manuals: data.manuals.map((m) => (m.id === manualModal.manual.id ? { ...m, ...payload } : m)) })
-      fire('Manual updated')
-    } else {
-      const id = data.manualSeq + 1
-      commit({ ...data, manualSeq: id, manuals: [...data.manuals, { ...payload, id, forms: [], createdAt: new Date().toISOString().slice(0, 10) }] })
-      setActiveCat(payload.catId); fire('Manual added')
+  /* manual-detail — action: insert | update. PDF sirf tab jaata hai jab nayi
+     file chuni ho; warna purana PDFPath waapis bhej kar file barqarar. */
+  const saveManual = async (payload) => {
+    const editId = manualModal.mode === 'edit' ? manualModal.manual.id : 0
+    const fromCat = manualModal.manual?.catId
+    setRowBusy(true)
+    try {
+      await saveManualApi(payload, editId)
+      /* Head badal gaya ho to purana bhi refresh — warna wahan bhoot reh jata. */
+      if (fromCat && fromCat !== payload.catId) await reloadManuals(fromCat)
+      await reloadManuals(payload.catId)
+      setActiveCat(payload.catId)
+      fire(editId ? 'Manual updated' : 'Manual added')
+      setManualModal(null)
+    } catch (err) {
+      fire(err.message || 'Could not save this manual', 'warn')
+    } finally {
+      setRowBusy(false)
     }
-    setManualModal(null)
   }
-  const saveForm = (payload) => {
+  /* manual-form — wahi chaar actions, manual ke andar attached forms. */
+  const saveForm = async (payload) => {
     const { manualId, mode, form } = formModal
-    if (mode === 'edit') {
-      commit({ ...data, manuals: data.manuals.map((m) => (m.id === manualId ? { ...m, forms: m.forms.map((x) => (x.id === form.id ? { ...x, ...payload } : x)) } : m)) })
-      fire('Form updated')
-    } else {
-      const id = data.formSeq + 1
-      commit({ ...data, formSeq: id, manuals: data.manuals.map((m) => (m.id === manualId ? { ...m, forms: [...(m.forms || []), { id, ...payload }] } : m)) })
-      fire('Form added')
+    setRowBusy(true)
+    try {
+      await saveManualFormDoc({ ...payload, manualId }, mode === 'edit' ? form.id : 0)
+      await loadForms(manualId, true)
+      fire(mode === 'edit' ? 'Form updated' : 'Form added')
+      setFormModal(null)
+    } catch (err) {
+      fire(err.message || 'Could not save this form', 'warn')
+    } finally {
+      setRowBusy(false)
     }
-    setFormModal(null)
   }
-  const doDelete = () => {
+  /* Teenon delete aik hi confirm se — sirf route badalta hai. */
+  const doDelete = async () => {
     const { type, id, parentId } = del
-    if (type === 'manual') commit({ ...data, manuals: data.manuals.filter((m) => m.id !== id) })
-    else if (type === 'form') commit({ ...data, manuals: data.manuals.map((m) => (m.id === parentId ? { ...m, forms: m.forms.filter((f) => f.id !== id) } : m)) })
-    else if (type === 'cat') {
-      const next = { ...data, cats: data.cats.filter((c) => c.id !== id), manuals: data.manuals.filter((m) => m.catId !== id) }
-      commit(next); if (activeCat === id && next.cats.length) setActiveCat(next.cats[0].id)
+    const busy = type === 'cat' ? setCatBusy : setRowBusy
+    busy(true)
+    try {
+      if (type === 'cat') {
+        await deleteManualHead(id)
+        setManualsByCat((c) => { const n = { ...c }; delete n[id]; return n })
+        await reloadCats(activeCat === id ? 0 : activeCat)
+      } else if (type === 'manual') {
+        await deleteManual(id, parentId)
+        await reloadManuals(parentId)
+        setFormsByManual((f) => { const n = { ...f }; delete n[id]; return n })
+      } else {
+        await deleteManualFormDoc(id, parentId)
+        await loadForms(parentId, true)
+      }
+      setDel(null); fire('Deleted successfully', 'info')
+    } catch (err) {
+      fire(err.message || 'Could not delete this record', 'warn')
+      setDel(null)
+    } finally {
+      busy(false)
     }
-    setDel(null); fire('Deleted successfully', 'info')
   }
-  const toggleExpand = (id) => setExpanded((e) => ({ ...e, [id]: !e[id] }))
+  /* Row khulte hi usi manual ki forms mangwa lete hain (aik hi dafa). */
+  const openForms = (id) => { setExpanded((e) => ({ ...e, [id]: true })); loadForms(id) }
+  /* Viewer bhi forms dikhata hai — kholte waqt wo bhi le aate hain. */
+  const openManual = (mn) => { setPdfView(mn); loadForms(mn.id) }
+  const toggleExpand = (id) => {
+    const next = !expanded[id]
+    setExpanded((e) => ({ ...e, [id]: next }))
+    if (next) loadForms(id)
+  }
 
   return (
     <>
@@ -127,8 +249,11 @@ export default function SOPs() {
 
       {/* Category bar */}
       <div className="sop-cat-bar">
-        {data.cats.map((c) => {
-          const count = data.manuals.filter((m) => m.catId === c.id).length
+        {catsLoading && <span style={{ fontSize: 12.5, color: 'var(--tm)' }}><i className="fa-solid fa-spinner fa-spin" /> Loading manual heads…</span>}
+        {!catsLoading && cats.length === 0 && <span style={{ fontSize: 12.5, color: 'var(--tm)' }}><i className="fa-solid fa-circle-info" style={{ marginRight: 5 }} />No manual heads yet.</span>}
+        {cats.map((c) => {
+          /* Load ho chuka ho to asli ginti, warna head ka apna totalManuals. */
+          const count = manualsByCat[c.id]?.length ?? c.totalManuals ?? 0
           const isActive = c.id === activeCat
           return (
             <button key={c.id} className={`sop-cat-btn${isActive ? ' active' : ''}`} onClick={() => setActiveCat(c.id)}>
@@ -161,29 +286,32 @@ export default function SOPs() {
           <table className="sop-table">
             <thead><tr><th>S.No.</th><th>Manual Head Title</th><th style={{ width: 140, textAlign: 'center' }}>PDF Manual</th><th style={{ width: 120, textAlign: 'center' }}>Tutorial</th><th style={{ width: 100, textAlign: 'center' }}>Action</th></tr></thead>
             <tbody>
-              {manuals.length === 0 ? (
+              {manualsLoading ? (
+                <tr><td colSpan={5}><div style={{ textAlign: 'center', padding: 44, color: 'var(--tm)' }}><i className="fa-solid fa-spinner fa-spin" style={{ fontSize: 22, display: 'block', margin: '0 auto 10px' }} /><div style={{ fontSize: 13, fontWeight: 700 }}>Loading manuals…</div></div></td></tr>
+              ) : manuals.length === 0 ? (
                 <tr><td colSpan={5}><div style={{ textAlign: 'center', padding: 44, color: 'var(--tm)' }}><i className="fa-solid fa-book" style={{ fontSize: 28, opacity: 0.2, display: 'block', margin: '0 auto 10px' }} /><div style={{ fontSize: 14, fontWeight: 700 }}>No manuals found</div><div style={{ fontSize: 12, marginTop: 4 }}>Click "+ Add New Manual Detail" to add one.</div></div></td></tr>
               ) : manuals.map((mn, idx) => {
-                const hasPdf = !!(mn.pdfFile || mn.pdfName)
-                const hasForms = mn.forms?.length > 0
+                const hasPdf = !!mn.pdfPath
+                const rowForms = formsOf(mn.id)
+                const hasForms = rowForms.length > 0
                 const hasVid = !!(mn.vidUrl && mn.vidStatus === 'available')
                 return (
                   <Fragment key={mn.id}>
                     <tr>
                       <td data-label="S.No." style={{ color: 'var(--tm)', fontWeight: 700 }}>{idx + 1}</td>
                       <td data-label="Title">
-                        <div className="sop-manual-title" onClick={() => setPdfView(mn)}>
+                        <div className="sop-manual-title" onClick={() => openManual(mn)}>
                           <i className="fa-solid fa-book" style={{ color: 'var(--brand)', fontSize: 11, flexShrink: 0 }} />
                           {mn.title}
                           {mn.code && <span style={{ fontSize: 10, color: 'var(--tm)', fontWeight: 600 }}>{mn.code}</span>}
-                          {hasForms && <span className="sop-badge-form"><i className="fa-solid fa-paperclip" style={{ fontSize: 8 }} /> {mn.forms.length}</span>}
+                          {hasForms && <span className="sop-badge-form"><i className="fa-solid fa-paperclip" style={{ fontSize: 8 }} /> {rowForms.length}</span>}
                         </div>
                         {mn.desc && <div style={{ fontSize: 11, color: 'var(--tm)', marginTop: 3, maxWidth: 480, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{mn.desc}</div>}
                       </td>
                       <td data-label="PDF Manual" style={{ textAlign: 'center' }}>
                         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5 }}>
                           {hasPdf ? <span className="sop-badge-pdf"><i className="fa-solid fa-file-pdf" style={{ fontSize: 8 }} /> PDF Uploaded</span> : <span className="sop-badge-soon">No PDF</span>}
-                          <button className="sop-btn-view" style={{ background: 'linear-gradient(135deg,#b91c1c,#dc2626)', height: 27 }} onClick={() => setPdfView(mn)}><i className="fa-solid fa-eye" /> View</button>
+                          <button className="sop-btn-view" style={{ background: 'linear-gradient(135deg,#b91c1c,#dc2626)', height: 27 }} onClick={() => openManual(mn)}><i className="fa-solid fa-eye" /> View</button>
                         </div>
                       </td>
                       <td data-label="Tutorial" style={{ textAlign: 'center' }}>
@@ -195,12 +323,12 @@ export default function SOPs() {
                             <i className="fa-solid fa-ellipsis-vertical" />
                             {openDd === mn.id && (
                               <div className="sop-dropdown" onClick={(e) => e.stopPropagation()}>
-                                <div className="sop-dd-item" onClick={() => { setOpenDd(null); setPdfView(mn) }}><i className="fa-solid fa-eye" /> View Manual</div>
+                                <div className="sop-dd-item" onClick={() => { setOpenDd(null); openManual(mn) }}><i className="fa-solid fa-eye" /> View Manual</div>
                                 {!readOnly && <div className="sop-dd-item" onClick={() => { setOpenDd(null); setManualModal({ mode: 'edit', manual: mn }) }}><i className="fa-solid fa-pen" /> Edit</div>}
                                 {!readOnly && <div className="sop-dd-item" onClick={() => { setOpenDd(null); setFormModal({ mode: 'add', manualId: mn.id }) }}><i className="fa-solid fa-paperclip" /> Add Form</div>}
-                                <div className="sop-dd-item" onClick={() => { setOpenDd(null); setExpanded((e) => ({ ...e, [mn.id]: true })) }}><i className="fa-solid fa-list" /> View Forms</div>
+                                <div className="sop-dd-item" onClick={() => { setOpenDd(null); openForms(mn.id) }}><i className="fa-solid fa-list" /> View Forms</div>
                                 {hasVid && <div className="sop-dd-item" onClick={() => { setOpenDd(null); setVidView(mn) }}><i className="fa-solid fa-circle-play" /> Watch Tutorial</div>}
-                                {!readOnly && <div className="sop-dd-item danger" onClick={() => { setOpenDd(null); setDel({ type: 'manual', id: mn.id, name: mn.title }) }}><i className="fa-solid fa-trash-can" /> Delete</div>}
+                                {!readOnly && <div className="sop-dd-item danger" onClick={() => { setOpenDd(null); setDel({ type: 'manual', id: mn.id, parentId: mn.catId, name: mn.title }) }}><i className="fa-solid fa-trash-can" /> Delete</div>}
                               </div>
                             )}
                           </button>
@@ -210,7 +338,7 @@ export default function SOPs() {
                     </tr>
                     {expanded[mn.id] && (
                       <tr key={`${mn.id}-forms`}><td colSpan={5} style={{ padding: 0 }}>
-                        <div className="sop-expand-box"><InlineForms manual={mn} readOnly={readOnly} onAdd={() => setFormModal({ mode: 'add', manualId: mn.id })} onEdit={(form) => setFormModal({ mode: 'edit', manualId: mn.id, form })} onDel={(form) => setDel({ type: 'form', id: form.id, parentId: mn.id, name: form.title })} onToast={fire} /></div>
+                        <div className="sop-expand-box"><InlineForms manual={mn} forms={rowForms} loading={!!formsLoading[mn.id]} readOnly={readOnly} onAdd={() => setFormModal({ mode: 'add', manualId: mn.id })} onEdit={(form) => setFormModal({ mode: 'edit', manualId: mn.id, form })} onDel={(form) => setDel({ type: 'form', id: form.id, parentId: mn.id, name: form.title })} onToast={fire} /></div>
                       </td></tr>
                     )}
                   </Fragment>
@@ -222,12 +350,12 @@ export default function SOPs() {
       </div>
 
       {/* ── MODALS ── */}
-      {catModal && <CatModal modal={catModal} onClose={() => setCatModal(null)} onSave={saveCat} onToast={fire} />}
-      {manualModal && <ManualModal modal={manualModal} cats={data.cats} activeCat={activeCat} onClose={() => setManualModal(null)} onSave={saveManual} onToast={fire} />}
-      {formModal && <FormModal modal={formModal} onClose={() => setFormModal(null)} onSave={saveForm} onToast={fire} />}
-      {pdfView && <PdfViewer manual={pdfView} readOnly={readOnly} onClose={() => setPdfView(null)} onEdit={() => { const m = pdfView; setPdfView(null); setManualModal({ mode: 'edit', manual: m }) }} onToast={fire} />}
+      {catModal && <CatModal modal={catModal} busy={catBusy} onClose={() => setCatModal(null)} onSave={saveCat} onToast={fire} />}
+      {manualModal && <ManualModal modal={manualModal} busy={rowBusy} cats={cats} activeCat={activeCat} onClose={() => setManualModal(null)} onSave={saveManual} onToast={fire} />}
+      {formModal && <FormModal modal={formModal} busy={rowBusy} onClose={() => setFormModal(null)} onSave={saveForm} onToast={fire} />}
+      {pdfView && <PdfViewer manual={pdfView} forms={formsOf(pdfView.id)} readOnly={readOnly} onClose={() => setPdfView(null)} onEdit={() => { const m = pdfView; setPdfView(null); setManualModal({ mode: 'edit', manual: m }) }} onToast={fire} />}
       {vidView && <VideoModal manual={vidView} onClose={() => setVidView(null)} />}
-      {del && <DeleteModal del={del} onClose={() => setDel(null)} onConfirm={doDelete} />}
+      {del && <DeleteModal del={del} busy={del.type === 'cat' ? catBusy : rowBusy} onClose={() => setDel(null)} onConfirm={doDelete} />}
 
       {toast && createPortal(
         <div className="ss-toast-wrap"><div className={`ss-toast ${toast.type}`}><i className={`fa-solid ${toast.type === 'success' ? 'fa-circle-check' : toast.type === 'warn' ? 'fa-triangle-exclamation' : 'fa-circle-info'}`} /> {toast.text}</div></div>,
@@ -247,9 +375,9 @@ function Stat({ cls = '', icon, iconBg, val, lbl }) {
   )
 }
 
-function InlineForms({ manual, readOnly, onAdd, onEdit, onDel, onToast }) {
-  const forms = manual.forms || []
+function InlineForms({ manual, forms = [], loading, readOnly, onAdd, onEdit, onDel, onToast }) {
   const addBtn = readOnly ? null : <button className="sop-btn-view" style={{ height: 30, fontSize: 11.5, marginBottom: forms.length ? 8 : 0 }} onClick={onAdd}><i className="fa-solid fa-plus" /> Add Form</button>
+  if (loading) return <div style={{ fontSize: 12.5, color: 'var(--tm)' }}><i className="fa-solid fa-spinner fa-spin" style={{ marginRight: 6 }} />Loading forms…</div>
   if (!forms.length) return <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}><div style={{ fontSize: 12.5, color: 'var(--tm)' }}><i className="fa-solid fa-circle-info" style={{ marginRight: 5 }} />No forms attached yet.</div>{addBtn}</div>
   return (
     <div>
@@ -258,13 +386,13 @@ function InlineForms({ manual, readOnly, onAdd, onEdit, onDel, onToast }) {
         <div className="sop-form-item" key={f.id}>
           <div className="sop-form-icon"><i className="fa-solid fa-file" /></div>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div className="sop-form-title">{f.title} <span className="sop-form-code">{f.code || ''}</span></div>
+            <div className="sop-form-title">{f.displayTitle || f.title} <span className="sop-form-code">{f.code || ''}</span></div>
             <div style={{ fontSize: 11, color: 'var(--tm)' }}>{f.desc || ''}</div>
           </div>
           {f.pageRef && <span className="sop-form-ref">{f.pageRef}</span>}
           <div style={{ display: 'flex', gap: 5 }}>
-            <button className="btn-sm" style={{ height: 26, fontSize: 10.5, borderColor: 'var(--info)', color: 'var(--info)', background: 'rgba(2,132,199,.06)' }} title="View form" onClick={() => openSopDoc(formPdfHTML(f, manual), onToast)}><i className="fa-solid fa-eye" /> View</button>
-            <button className="btn-sm" style={{ height: 26, fontSize: 10.5 }} title="Download / print PDF" onClick={() => openSopDoc(formPdfHTML(f, manual), onToast)}><i className="fa-solid fa-download" /></button>
+            <button className="btn-sm" style={{ height: 26, fontSize: 10.5, borderColor: 'var(--info)', color: 'var(--info)', background: 'rgba(2,132,199,.06)' }} title="View form" onClick={() => openSopFile(f.fileUrl, formPdfHTML(f, manual), onToast)}><i className="fa-solid fa-eye" /> View</button>
+            <button className="btn-sm" style={{ height: 26, fontSize: 10.5 }} title="Download / print PDF" onClick={() => openSopFile(f.fileUrl, formPdfHTML(f, manual), onToast)}><i className="fa-solid fa-download" /></button>
             {!readOnly && <button className="btn-sm" style={{ height: 26, fontSize: 10.5 }} onClick={() => onEdit(f)}><i className="fa-solid fa-pen" /></button>}
             {!readOnly && <button className="btn-sm" style={{ height: 26, fontSize: 10.5, borderColor: 'var(--err)', color: 'var(--err)', background: 'rgba(220,38,38,.05)' }} onClick={() => onDel(f)}><i className="fa-solid fa-trash-can" /></button>}
           </div>
@@ -275,15 +403,15 @@ function InlineForms({ manual, readOnly, onAdd, onEdit, onDel, onToast }) {
 }
 
 /* ── Category modal ── */
-function CatModal({ modal, onClose, onSave, onToast }) {
+function CatModal({ modal, busy, onClose, onSave, onToast }) {
   const cat = modal.cat
   const [name, setName] = useState(cat?.title || '')
   const [desc, setDesc] = useState(cat?.desc || '')
   const [status, setStatus] = useState(cat?.status || 'active')
-  const save = () => { if (!name.trim()) return onToast('Please enter a category name', 'warn'); onSave({ title: name.trim(), desc: desc.trim(), status }) }
+  const save = () => { if (busy) return; if (!name.trim()) return onToast('Please enter a category name', 'warn'); onSave({ title: name.trim(), desc: desc.trim(), status }) }
   return (
     <PayModal title={modal.mode === 'edit' ? 'Edit Manual Head' : 'Add Manual Head'} icon="fa-layer-group" onClose={onClose} maxWidth={460}
-      foot={<><button className="btn-secondary" onClick={onClose}>Cancel</button><button className="btn-primary" onClick={save}><i className="fa-solid fa-floppy-disk" /> {modal.mode === 'edit' ? 'Save Changes' : 'Add'}</button></>}>
+      foot={<><button className="btn-secondary" onClick={onClose} disabled={busy}>Cancel</button><button className="btn-primary" onClick={save} disabled={busy}><i className={`fa-solid ${busy ? 'fa-spinner fa-spin' : 'fa-floppy-disk'}`} /> {busy ? 'Saving…' : modal.mode === 'edit' ? 'Save Changes' : 'Add'}</button></>}>
       <div className="pay-field"><label>Category Name</label><input className="pay-input" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Academic Manuals" /></div>
       <div className="pay-field"><label>Description</label><input className="pay-input" value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Short description" /></div>
       <div className="pay-field" style={{ marginBottom: 0 }}><label>Status</label><select className="pay-input" value={status} onChange={(e) => setStatus(e.target.value)}><option value="active">Active</option><option value="inactive">Inactive</option></select></div>
@@ -292,13 +420,15 @@ function CatModal({ modal, onClose, onSave, onToast }) {
 }
 
 /* ── Manual modal ── */
-function ManualModal({ modal, cats, activeCat, onClose, onSave, onToast }) {
+function ManualModal({ modal, busy, cats, activeCat, onClose, onSave, onToast }) {
   const mn = modal.manual
   const [catId, setCatId] = useState(mn?.catId || activeCat || '')
   const [code, setCode] = useState(mn?.code || '')
   const [title, setTitle] = useState(mn?.title || '')
   const [desc, setDesc] = useState(mn?.desc || '')
   const [pdfName, setPdfName] = useState(mn?.pdfName || '')
+  /* Nayi chuni hui file — na chuni ho to purana PDFPath hi waapis jaata hai. */
+  const [pdfFile, setPdfFile] = useState(null)
   const [vidTitle, setVidTitle] = useState(mn?.vidTitle || '')
   const [vidUrl, setVidUrl] = useState(mn?.vidUrl || '')
   const [vidDesc, setVidDesc] = useState(mn?.vidDesc || '')
@@ -306,13 +436,14 @@ function ManualModal({ modal, cats, activeCat, onClose, onSave, onToast }) {
   const [status, setStatus] = useState(mn?.status || 'active')
   const pdfRef = useRef(null)
   const save = () => {
+    if (busy) return
     if (!catId) return onToast('Please select a category', 'warn')
     if (!title.trim()) return onToast('Please enter a manual title', 'warn')
-    onSave({ catId: Number(catId), title: title.trim(), code: code.trim(), desc: desc.trim(), pdfName, pdfFile: pdfName ? 'demo_file' : (mn?.pdfFile || ''), vidTitle: vidTitle.trim(), vidUrl: vidUrl.trim(), vidDesc: vidDesc.trim(), vidStatus, status })
+    onSave({ catId: Number(catId), title: title.trim(), code: code.trim(), desc: desc.trim(), pdfFile, pdfPath: mn?.pdfPath || '', vidTitle: vidTitle.trim(), vidUrl: vidUrl.trim(), vidDesc: vidDesc.trim(), vidStatus, status })
   }
   return (
     <PayModal title={modal.mode === 'edit' ? 'Edit Manual' : 'Add Manual'} sub={modal.mode === 'edit' ? mn.title : 'Create a new manual under the selected category'} icon="fa-book" onClose={onClose} maxWidth={560}
-      foot={<><button className="btn-secondary" onClick={onClose}>Cancel</button><button className="btn-primary" onClick={save}><i className="fa-solid fa-floppy-disk" /> Save Manual</button></>}>
+      foot={<><button className="btn-secondary" onClick={onClose} disabled={busy}>Cancel</button><button className="btn-primary" onClick={save} disabled={busy}><i className={`fa-solid ${busy ? 'fa-spinner fa-spin' : 'fa-floppy-disk'}`} /> {busy ? 'Saving…' : 'Save Manual'}</button></>}>
       <div className="pay-input-row">
         <div className="pay-field"><label>Category</label><select className="pay-input" value={catId} onChange={(e) => setCatId(e.target.value)}><option value="">Select Category</option>{cats.map((c) => <option key={c.id} value={c.id}>{c.title}</option>)}</select></div>
         <div className="pay-field"><label>Manual Code</label><input className="pay-input" value={code} onChange={(e) => setCode(e.target.value)} placeholder="e.g. ACD-001" /></div>
@@ -324,7 +455,7 @@ function ManualModal({ modal, cats, activeCat, onClose, onSave, onToast }) {
           <i className="fa-solid fa-cloud-arrow-up" style={{ display: 'block' }} />
           <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--t1)' }}>Click to upload PDF manual</div>
           <div className="sop-upload-name">{pdfName || '20–30+ pages · PDF'}</div>
-          <input ref={pdfRef} type="file" accept=".pdf" style={{ display: 'none' }} onChange={(e) => setPdfName(e.target.files?.[0]?.name || pdfName)} />
+          <input ref={pdfRef} type="file" accept=".pdf" style={{ display: 'none' }} onChange={(e) => { const f = e.target.files?.[0]; if (f) { setPdfFile(f); setPdfName(f.name) } }} />
         </div>
       </div>
       <div className="pay-info-box" style={{ marginBottom: 14 }}><i className="fa-solid fa-circle-play" /><p style={{ margin: 0 }}>Tutorial video (optional) — paste a YouTube link and set its availability.</p></div>
@@ -339,18 +470,23 @@ function ManualModal({ modal, cats, activeCat, onClose, onSave, onToast }) {
 }
 
 /* ── Form modal ── */
-function FormModal({ modal, onClose, onSave, onToast }) {
+function FormModal({ modal, busy, onClose, onSave, onToast }) {
   const fm = modal.form
   const [name, setName] = useState(fm?.title || '')
   const [code, setCode] = useState(fm?.code || '')
   const [page, setPage] = useState(fm?.pageRef || '')
   const [desc, setDesc] = useState(fm?.desc || '')
   const [fileName, setFileName] = useState(fm?.fileName || '')
+  const [file, setFile] = useState(null)
   const fileRef = useRef(null)
-  const save = () => { if (!name.trim()) return onToast('Please enter a form name', 'warn'); onSave({ title: name.trim(), code: code.trim(), pageRef: page.trim(), desc: desc.trim(), file: fileName ? 'demo' : (fm?.file || ''), fileName }) }
+  const save = () => {
+    if (busy) return
+    if (!name.trim()) return onToast('Please enter a form name', 'warn')
+    onSave({ title: name.trim(), code: code.trim(), pageRef: page.trim(), desc: desc.trim(), file, formPath: fm?.formPath || '' })
+  }
   return (
     <PayModal title={modal.mode === 'edit' ? 'Edit Form' : 'Upload Form'} sub={modal.mode === 'edit' ? 'Update form details' : 'Attach a form to this manual'} icon="fa-paperclip" onClose={onClose} maxWidth={480}
-      foot={<><button className="btn-secondary" onClick={onClose}>Cancel</button><button className="btn-primary" onClick={save}><i className="fa-solid fa-floppy-disk" /> Save Form</button></>}>
+      foot={<><button className="btn-secondary" onClick={onClose} disabled={busy}>Cancel</button><button className="btn-primary" onClick={save} disabled={busy}><i className={`fa-solid ${busy ? 'fa-spinner fa-spin' : 'fa-floppy-disk'}`} /> {busy ? 'Saving…' : 'Save Form'}</button></>}>
       <div className="pay-field"><label>Form Name</label><input className="pay-input" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Student Registration Form" /></div>
       <div className="pay-input-row">
         <div className="pay-field"><label>Form Code</label><input className="pay-input" value={code} onChange={(e) => setCode(e.target.value)} placeholder="e.g. FORM-001" /></div>
@@ -362,7 +498,7 @@ function FormModal({ modal, onClose, onSave, onToast }) {
           <i className="fa-solid fa-file-arrow-up" style={{ display: 'block' }} />
           <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--t1)' }}>Click to choose file</div>
           <div className="sop-upload-name">{fileName || 'PDF, DOC, DOCX'}</div>
-          <input ref={fileRef} type="file" accept=".pdf,.doc,.docx" style={{ display: 'none' }} onChange={(e) => setFileName(e.target.files?.[0]?.name || fileName)} />
+          <input ref={fileRef} type="file" accept=".pdf,.doc,.docx" style={{ display: 'none' }} onChange={(e) => { const f = e.target.files?.[0]; if (f) { setFile(f); setFileName(f.name) } }} />
         </div>
       </div>
     </PayModal>
@@ -370,9 +506,8 @@ function FormModal({ modal, onClose, onSave, onToast }) {
 }
 
 /* ── PDF viewer ── */
-function PdfViewer({ manual, readOnly, onClose, onEdit, onToast }) {
-  const hasPdf = !!(manual.pdfFile || manual.pdfName)
-  const forms = manual.forms || []
+function PdfViewer({ manual, forms = [], readOnly, onClose, onEdit, onToast }) {
+  const hasPdf = !!manual.pdfPath
   return createPortal(
     <div className="pay-ov" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
       <div className="pay-modal" style={{ maxWidth: 720 }}>
@@ -388,8 +523,8 @@ function PdfViewer({ manual, readOnly, onClose, onEdit, onToast }) {
               <div style={{ width: 44, height: 44, borderRadius: 10, background: 'linear-gradient(135deg,#b91c1c,#dc2626)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, flexShrink: 0 }}><i className="fa-solid fa-file-pdf" /></div>
               <div style={{ flex: 1, minWidth: 160 }}><div style={{ fontWeight: 700, fontSize: 13, color: 'var(--t1)' }}>{manual.pdfName || `${manual.title}.pdf`}</div><div style={{ fontSize: 11.5, color: 'var(--tm)', marginTop: 2 }}>Detailed manual · 20–30+ pages</div></div>
               <div style={{ display: 'flex', gap: 8 }}>
-                <button className="btn-primary" style={{ height: 34, background: 'linear-gradient(135deg,#b91c1c,#dc2626)' }} onClick={() => openSopDoc(manualPdfHTML(manual), onToast)}><i className="fa-solid fa-eye" /> Read PDF</button>
-                <button className="btn-secondary" style={{ height: 34 }} onClick={() => openSopDoc(manualPdfHTML(manual), onToast)}><i className="fa-solid fa-download" /> Download</button>
+                <button className="btn-primary" style={{ height: 34, background: 'linear-gradient(135deg,#b91c1c,#dc2626)' }} onClick={() => openSopFile(manual.pdfUrl, manualPdfHTML(manual, forms), onToast)}><i className="fa-solid fa-eye" /> Read PDF</button>
+                <button className="btn-secondary" style={{ height: 34 }} onClick={() => openSopFile(manual.pdfUrl, manualPdfHTML(manual, forms), onToast)}><i className="fa-solid fa-download" /> Download</button>
               </div>
             </div>
           ) : (
@@ -398,7 +533,7 @@ function PdfViewer({ manual, readOnly, onClose, onEdit, onToast }) {
               <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--t2)' }}>No PDF Uploaded Yet</div>
               <div style={{ fontSize: 12, color: 'var(--tm)', marginTop: 4 }}>{readOnly ? 'This manual has no PDF yet.' : 'Upload a PDF manual, or preview the sample document below.'}</div>
               <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginTop: 14, flexWrap: 'wrap' }}>
-                <button className="btn-primary" onClick={() => openSopDoc(manualPdfHTML(manual), onToast)}><i className="fa-solid fa-eye" /> Preview Sample Document</button>
+                <button className="btn-primary" onClick={() => openSopDoc(manualPdfHTML(manual, forms), onToast)}><i className="fa-solid fa-eye" /> Preview Sample Document</button>
                 {!readOnly && <button className="btn-secondary" onClick={onEdit}><i className="fa-solid fa-upload" /> Upload Manual PDF</button>}
               </div>
             </div>
@@ -413,9 +548,9 @@ function PdfViewer({ manual, readOnly, onClose, onEdit, onToast }) {
               {forms.map((f) => (
                 <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 10, background: 'var(--muted)', border: '1px solid var(--bl)', borderRadius: 8, padding: '10px 14px', marginBottom: 7 }}>
                   <div style={{ width: 32, height: 32, borderRadius: 8, background: 'linear-gradient(135deg,#0369A1,#0284C7)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, flexShrink: 0 }}><i className="fa-solid fa-file" /></div>
-                  <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontWeight: 700, fontSize: 12.5, color: 'var(--t1)' }}>{f.title}</div><div style={{ fontSize: 11, color: 'var(--tm)' }}>{f.code || ''}{f.pageRef ? ` · ${f.pageRef}` : ''}</div></div>
-                  <button className="btn-sm" style={{ height: 28, borderColor: 'var(--info)', color: 'var(--info)', background: 'rgba(2,132,199,.06)' }} onClick={() => openSopDoc(formPdfHTML(f, manual), onToast)}><i className="fa-solid fa-eye" /> View</button>
-                  <button className="btn-sm" style={{ height: 28 }} onClick={() => openSopDoc(formPdfHTML(f, manual), onToast)}><i className="fa-solid fa-download" /> Download</button>
+                  <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontWeight: 700, fontSize: 12.5, color: 'var(--t1)' }}>{f.displayTitle || f.title}</div><div style={{ fontSize: 11, color: 'var(--tm)' }}>{f.code || ''}{f.pageRef ? ` · ${f.pageRef}` : ''}</div></div>
+                  <button className="btn-sm" style={{ height: 28, borderColor: 'var(--info)', color: 'var(--info)', background: 'rgba(2,132,199,.06)' }} onClick={() => openSopFile(f.fileUrl, formPdfHTML(f, manual), onToast)}><i className="fa-solid fa-eye" /> View</button>
+                  <button className="btn-sm" style={{ height: 28 }} onClick={() => openSopFile(f.fileUrl, formPdfHTML(f, manual), onToast)}><i className="fa-solid fa-download" /> Download</button>
                 </div>
               ))}
             </div>
@@ -445,7 +580,7 @@ function VideoModal({ manual, onClose }) {
 }
 
 /* ── Delete confirm ── */
-function DeleteModal({ del, onClose, onConfirm }) {
+function DeleteModal({ del, busy, onClose, onConfirm }) {
   const label = del.type === 'cat' ? 'Category' : del.type === 'manual' ? 'Manual' : 'Form'
   return createPortal(
     <div className="ov" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
@@ -455,8 +590,8 @@ function DeleteModal({ del, onClose, onConfirm }) {
           <div className="confirm-title">Delete {label}?</div>
           <div className="confirm-sub">“{del.name}” will be permanently deleted. This action cannot be undone.</div>
           <div className="confirm-btns">
-            <button className="btn-secondary" onClick={onClose}>Cancel</button>
-            <button className="btn-danger" onClick={onConfirm}><i className="fa-solid fa-trash-can" /> Delete</button>
+            <button className="btn-secondary" onClick={onClose} disabled={busy}>Cancel</button>
+            <button className="btn-danger" onClick={() => { if (!busy) onConfirm() }} disabled={busy}><i className={`fa-solid ${busy ? 'fa-spinner fa-spin' : 'fa-trash-can'}`} /> {busy ? 'Deleting…' : 'Delete'}</button>
           </div>
         </div>
       </div>
@@ -529,17 +664,27 @@ function sopHead(chain, tag, title, code) {
   <div class="dh-meta"><div class="dh-tag">${sopEsc(tag)}</div><div class="dh-title">${sopEsc(title)}</div><div class="dh-code">${sopEsc(code)}</div></div></div>`
 }
 
+/* Asli uploaded file ho to wahi kholte hain; warna neeche wala branded
+   sample document (jo pehle se banta aa raha hai). */
+function openSopFile(url, fallbackHtml, onToast) {
+  if (url) {
+    const w = window.open(url, '_blank', 'noopener')
+    if (!w) onToast?.('Allow pop-ups to open the document', 'warn')
+    return
+  }
+  openSopDoc(fallbackHtml, onToast)
+}
+
 function openSopDoc(html, onToast) {
   const w = window.open('', '_blank')
   if (!w) { onToast?.('Allow pop-ups to view / download the document', 'warn'); return }
   w.document.open(); w.document.write(html); w.document.close()
 }
 
-function manualPdfHTML(manual) {
+function manualPdfHTML(manual, forms = []) {
   const chain = loadChainProfile()
   const dateStr = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' })
   const code = manual.code || `SOP-${String(manual.id).padStart(3, '0')}`
-  const forms = manual.forms || []
   const intro = manual.desc || 'This Standard Operating Procedure (SOP) defines the standardised process to be followed across all member schools to ensure consistency, quality and compliance with head-office policy.'
   const formsRows = forms.length
     ? forms.map((f, i) => `<tr><td>${i + 1}</td><td>${sopEsc(f.title)}</td><td>${sopEsc(f.code || '—')}</td><td>${sopEsc(f.pageRef || '—')}</td></tr>`).join('')

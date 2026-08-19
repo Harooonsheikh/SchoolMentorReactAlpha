@@ -2,9 +2,18 @@
    SCHOOL STATUS (School Progress) — helpers.
    Schools wahi hain jo School Permissions par hain: Chain-Management API
    (network-schools/manage → getbynetwork, accepted rows) se ViewProvider
-   ke zariye. ERP bucket = networkPermission true, Inactive = false.
-   Usage metrics (logins / staff / students / onboarding) abhi is endpoint
-   me nahi aatin, is liye 0 dikhti hain jab tak unka API na aa jaye.
+   ke zariye.
+
+   ERP bucket = launch setup on, Inactive = off — bilkul wahi cheez jo School
+   Permissions ke "ERP Access" toggle par chalti hai (Super-Admin API ka
+   launchsetup / toggle-launch-setup). Ye value schools wali call me nahi
+   aati, is liye screen khud mangwa kar `erpActive` set karti hai (dekhein
+   SchoolStatus.jsx) — yahan default off rakhte hain.
+   Principal, staff/students, sign-ups, logins, tabs ki state aur compulsions
+   AHM_School_Progress/branch-report se aate hain (api/schoolProgressApi.js) —
+   yahan sirf khali default rakhte hain, screen unhe branchID par merge kar
+   deti hai. Onboarding / working-time / notes-calls-messages ka abhi API
+   nahi, wo abhi bhi 0 ya demo hain.
    ═══════════════════════════════════════════════════════════════════ */
 
 const tabs = (school, classes, student, dept, staff, syllabus, timetable) => ({ school, classes, student, dept, staff, syllabus, timetable })
@@ -28,7 +37,7 @@ export function toProgressRow(s) {
     contact: s.phone || '',
     email: s.email || '',
     address: s.address || '',
-    erpActive: !!s.networkPermission,
+    erpActive: false,            // screen launch setup se bharti hai
     isActive: s.isActive !== false,
     signupDate: dateOnly(s.decidedAt || s.requestedAt),
     /* API se abhi na aane wale metrics. */
@@ -98,19 +107,10 @@ export function getDetailData(s) {
     onboarding: EM_MODULES.map((m, i) => ({
       ...m,
       done: i < completed,
-      comment: i < completed ? 'Training completed successfully.' : '',
-      date: i < completed ? `2026-06-${String(i + 1).padStart(2, '0')}` : '',
+      comment: '',
+      date: '',
     })),
-    notes: [
-      { id: 1, text: 'Called regarding ERP follow-up and discussed fee module configuration.', date: '06/06/2026', user: 'schoolmentoradmin' },
-    ],
-    calls: [
-      { id: 1, detail: 'Call them for challan payment — no response at 10am.', dateTime: '20/06/2026, 10:28 AM', user: 'Muniba Ijaz' },
-      { id: 2, detail: 'No response on call.', dateTime: '22/06/2026, 12:06 PM', user: 'Muniba Ijaz' },
-    ],
-    messages: [
-      { id: 1, detail: 'Discussion via messages regarding ERP onboarding timeline.', dateTime: '06/06/2026, 10:22 AM', user: 'schoolmentoradmin' },
-      { id: 2, detail: 'Sent reminder for challan payment and account setup.', dateTime: '20/06/2026, 10:29 AM', user: 'Muniba Ijaz' },
-    ],
+    /* Notes / Calls / Messages ab API se aate hain (followup/onboarding-card-
+       action) — modal khud load karta hai, yahan koi list nahi. */
   }
 }

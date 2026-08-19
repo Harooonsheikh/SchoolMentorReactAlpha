@@ -1,9 +1,16 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import TutorialButton from '../../components/TutorialButton'
 import { createPortal } from 'react-dom'
 import { toProgressRows, USERS, MONTHS, getDetailData } from './data'
 import { useView } from '../../config/viewContext'
-import { setSchoolErpAccess } from '../../api/networkSchoolsApi'
+import {
+  setLaunchSetup, fetchLaunchSetupEach,
+  cachedPermissions, cachePermissions,
+} from '../../api/schoolPermissionsApi'
+import {
+  fetchBranchReportAll, listCardActions, saveCardAction, deleteCardAction,
+  fetchCardCountsEach, CARD_SUBS,
+} from '../../api/schoolProgressApi'
 import './SchoolStatus.css'
 
 const StatusBadge = ({ v }) => (v === 'Entered'
@@ -14,17 +21,77 @@ const initialsOf = (s) => (s.initials || s.name.slice(0, 2)).toUpperCase()
 
 export default function SchoolStatus() {
   /* Wahi connected schools jo School Permissions par hain. */
-  const { schools: connectedSchools, schoolsLoading, schoolsError, reloadSchools } = useView()
+  const { schools: connectedSchools, schoolsLoading, schoolsError } = useView()
   const [mainTab, setMainTab] = useState('erp')
 
   /* Assign-to-user abhi sirf screen par (API me is ka field nahi). */
   const [assigned, setAssigned] = useState({})
 
+  /* branchID → ERP access (launch setup) — wahi source jo School Permissions
+     ke "ERP Access" toggle ka hai. Schools wali call me ye field nahi aati,
+     is liye list render hone ke BAAD background me aati hai; jo pehle se
+     cache me ho wo foran mil jaati hai. */
+  const [erpStore, setErpStore] = useState(() => cachedPermissions().erp)
+
+  useEffect(() => {
+    let alive = true
+    if (!connectedSchools.length) return undefined
+    fetchLaunchSetupEach(connectedSchools.map((s) => s.id), (id, on) => {
+      if (alive) setErpStore((prev) => ({ ...prev, [id]: !!on }))
+    }).catch((err) => console.error('ERP access load failed:', err))
+    return () => { alive = false }
+  }, [connectedSchools])
+
+  /* branchID → progress row (principal, staff/students, logins, tabs,
+     compulsions). Aik hi call me sab aa jaata hai. */
+  const [report, setReport] = useState({})
+
+  useEffect(() => {
+    let alive = true
+    fetchBranchReportAll()
+      .then((map) => { if (alive) setReport(map) })
+      .catch((err) => console.error('Branch report load failed:', err))
+    return () => { alive = false }
+  }, [])
+
+  /* branchID → { notes, calls, messages } — chips ke counters. Follow-up
+     cards ki call se aate hain (branch-report in ko nahi deti). */
+  const [cardCounts, setCardCounts] = useState({})
+
+  useEffect(() => {
+    let alive = true
+    if (!connectedSchools.length) return undefined
+    fetchCardCountsEach(connectedSchools.map((s) => s.id), (id, counts) => {
+      if (alive) setCardCounts((prev) => ({ ...prev, [id]: counts }))
+    }).catch((err) => console.error('Follow-up card counts load failed:', err))
+    return () => { alive = false }
+  }, [connectedSchools])
+
+  /* Modal jab bhi cards load/save/delete kare, wahi taza counts yahan bhi. */
+  const applyCardCounts = useCallback((id, counts) => {
+    setCardCounts((prev) => ({ ...prev, [id]: counts }))
+  }, [])
+
+  /* Report ka data school ki row par branchID se chipak jaata hai; jis branch
+     ki report na ho uske liye data.js wali khali values reh jaati hain.
+     Naam/id report se nahi lete — wo network wali list ka hi rehta hai. */
   const rows = useMemo(
-    () => toProgressRows(connectedSchools).map((s) => ({ ...s, assigned: assigned[s.id] || USERS[0] })),
-    [connectedSchools, assigned],
+    () => toProgressRows(connectedSchools).map((s) => {
+      const { name: _n, branchId: _b, ...metrics } = report[s.id] || {}
+      const counts = cardCounts[s.id] || {}
+      return {
+        ...s,
+        ...metrics,
+        notes: counts.notes ?? 0,
+        calls: counts.calls ?? 0,
+        messages: counts.messages ?? 0,
+        erpActive: !!erpStore[s.id],
+        assigned: assigned[s.id] || USERS[0],
+      }
+    }),
+    [connectedSchools, assigned, erpStore, report, cardCounts],
   )
-  /* ERP = network ne access di hui; Inactive = access band. */
+  /* ERP = launch setup on; Inactive = off. */
   const erp = useMemo(() => rows.filter((s) => s.erpActive), [rows])
   const inactive = useMemo(() => rows.filter((s) => !s.erpActive), [rows])
 
@@ -55,20 +122,28 @@ export default function SchoolStatus() {
     return inactive.filter((s) => !q || s.name.toLowerCase().includes(q))
   }, [inactive, iQ])
 
+  /* Stable identity — detail modal ise apne load effect me deps par rakhta
+     hai, har render par nayi function banti to load loop me chala jaata. */
+  const showToast = useCallback((text, type = 'success') => setToast({ text, type }), [])
+
   const assignUser = (id, val) => {
     setAssigned((prev) => ({ ...prev, [id]: val }))
     setToast({ type: 'success', text: `Assigned to: ${val}` })
   }
 
-  /* Active/Inactive = API par networkPermission on/off; phir list dobara load. */
+  /* Make Active / Make InActive = wahi call jo School Permissions ke ERP
+     Access toggle ki hai: PUT toggle-launch-setup/{branchID}?launchSetup=1|0.
+     Dono screens aik hi cache par chalti hain, is liye status wahan bhi
+     foran wahi dikhta hai. */
   const runConfirm = async () => {
     if (!confirm || busy) return
     const { action, school } = confirm
     const activate = action !== 'deactivate'
     setBusy(true)
     try {
-      await setSchoolErpAccess(school, activate)
-      await reloadSchools()
+      await setLaunchSetup(school.id, activate)
+      setErpStore((prev) => ({ ...prev, [school.id]: activate }))
+      cachePermissions(school.id, { erpAccess: activate })
       setConfirm(null)
       setToast(activate
         ? { type: 'success', text: 'School reactivated successfully!' }
@@ -247,7 +322,7 @@ export default function SchoolStatus() {
 
       {/* ── MODALS ── */}
       {detail && (detail.isErp
-        ? <ErpDetailModal school={detail.school} month={eMonth} onToast={(text, type = 'success') => setToast({ text, type })} onClose={() => setDetail(null)} />
+        ? <ErpDetailModal school={detail.school} month={eMonth} onToast={showToast} onCounts={applyCardCounts} onClose={() => setDetail(null)} />
         : <BranchDetailModal school={detail.school} onClose={() => setDetail(null)} />)}
       {confirm && <ConfirmModal action={confirm.action} busy={busy} onClose={() => { if (!busy) setConfirm(null) }} onConfirm={runConfirm} />}
 
@@ -336,31 +411,92 @@ const ADD_CFG = {
   message: { title: 'Add Message', icon: 'fa-comment-dots', fieldLabel: 'Message Detail', dateLabel: 'Date & Time', saveLabel: 'Save Message', dateType: 'datetime-local', grad: 'linear-gradient(135deg,#0369A1,#0284C7)' },
 }
 const FOLLOW_META = {
-  notes: { type: 'note', icon: 'fa-note-sticky', grad: 'linear-gradient(135deg,#1E3A8A,#1E40AF)', title: 'Notes', sub: 'Internal notes and follow-up reminders', addLabel: 'Add Note', textField: 'text', dateField: 'date', tip: 'Add notes to track important information, tasks, or follow-up actions for this school.' },
-  calls: { type: 'call', icon: 'fa-phone', grad: 'linear-gradient(135deg,#15803D,#16A34A)', title: 'Calls', sub: 'Call logs and phone interaction history', addLabel: 'Add Call', textField: 'detail', dateField: 'dateTime', tip: 'Log phone calls to keep a record of all communication with this school.' },
-  messages: { type: 'message', icon: 'fa-comment-dots', grad: 'linear-gradient(135deg,#0369A1,#0284C7)', title: 'Messages', sub: 'WhatsApp, SMS, and written message logs', addLabel: 'Add Message', textField: 'detail', dateField: 'dateTime', tip: 'Record WhatsApp, SMS, or written messages exchanged with this school.' },
+  notes: { type: 'note', icon: 'fa-note-sticky', grad: 'linear-gradient(135deg,#1E3A8A,#1E40AF)', title: 'Notes', sub: 'Internal notes and follow-up reminders', addLabel: 'Add Note', tip: 'Add notes to track important information, tasks, or follow-up actions for this school.' },
+  calls: { type: 'call', icon: 'fa-phone', grad: 'linear-gradient(135deg,#15803D,#16A34A)', title: 'Calls', sub: 'Call logs and phone interaction history', addLabel: 'Add Call', tip: 'Log phone calls to keep a record of all communication with this school.' },
+  messages: { type: 'message', icon: 'fa-comment-dots', grad: 'linear-gradient(135deg,#0369A1,#0284C7)', title: 'Messages', sub: 'WhatsApp, SMS, and written message logs', addLabel: 'Add Message', tip: 'Record WhatsApp, SMS, or written messages exchanged with this school.' },
+}
+/* screen ka sub-tab → API ka subHeadType */
+const SUB_HEAD = { notes: CARD_SUBS.notes, calls: CARD_SUBS.calls, messages: CARD_SUBS.messages }
+
+/* API ki date ("2026-06-20T10:28:00" ya "6/20/2026 10:28:00 AM") → card par
+   dikhne wali shakal. Samajh na aaye to jaisi hai waisi dikha dete hain. */
+function showDate(v) {
+  if (!v) return '—'
+  const s = String(v).replace('T', ' ')
+  const [d, ...rest] = s.split(' ')
+  const iso = d.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  const day = iso ? `${iso[3]}/${iso[2]}/${iso[1]}` : d
+  const time = rest.join(' ').slice(0, 8).replace(/:00$/, '')
+  return time && !/^00:00/.test(time) ? `${day}, ${time}` : day
 }
 
-function ErpDetailModal({ school, month, onToast, onClose }) {
+function ErpDetailModal({ school, month, onToast, onCounts, onClose }) {
   const seed = useMemo(() => getDetailData(school), [school])
   const [tab, setTab] = useState('progress')
   const [followSub, setFollowSub] = useState('notes')
-  const [follow, setFollow] = useState({ notes: seed.notes, calls: seed.calls, messages: seed.messages })
+  const [follow, setFollow] = useState({ notes: [], calls: [], messages: [] })
+  const [followLoading, setFollowLoading] = useState(true)
   const [addType, setAddType] = useState(null)
+  const [cardBusy, setCardBusy] = useState(false)
 
-  const delItem = (sub, id) => {
-    setFollow((f) => ({ ...f, [sub]: f[sub].filter((x) => x.id !== id) }))
-    onToast('Deleted', 'info')
+  /* Follow-up cards API se — sub-head par baant kar rakh lete hain. */
+  const loadCards = useCallback(async () => {
+    try {
+      const rows = await listCardActions({ branchId: school.id })
+      const pick = (name) => rows
+        .filter((r) => r.subHeadType === name)
+        .map((r) => ({ id: r.id, text: r.comment, date: showDate(r.date), user: r.user }))
+      const next = { notes: pick(CARD_SUBS.notes), calls: pick(CARD_SUBS.calls), messages: pick(CARD_SUBS.messages) }
+      setFollow(next)
+      /* Peeche card ke chips bhi wahi ginti dikhayein. */
+      onCounts(school.id, { notes: next.notes.length, calls: next.calls.length, messages: next.messages.length })
+    } catch (err) {
+      console.error('Follow-up cards load failed:', err)
+      onToast(err?.message || 'Could not load follow-up cards', 'warn')
+    } finally {
+      setFollowLoading(false)
+    }
+  }, [school.id, onToast, onCounts])
+
+  useEffect(() => { setFollowLoading(true); loadCards() }, [loadCards])
+
+  const delItem = async (sub, id) => {
+    if (cardBusy) return
+    setCardBusy(true)
+    try {
+      await deleteCardAction(id, school.id)
+      const next = { ...follow, [sub]: follow[sub].filter((x) => x.id !== id) }
+      setFollow(next)
+      onCounts(school.id, { notes: next.notes.length, calls: next.calls.length, messages: next.messages.length })
+      onToast('Deleted', 'info')
+    } catch (err) {
+      console.error('Follow-up card delete failed:', err)
+      onToast(err?.message || 'Could not delete this entry', 'warn')
+    } finally {
+      setCardBusy(false)
+    }
   }
-  const saveAdd = (text, date) => {
+
+  const saveAdd = async (text, date) => {
+    if (cardBusy) return
     const sub = SUB_MAP[addType]
-    const fmt = date ? date.replace('T', ', ').replace(/-/g, '/').slice(0, 16) : '—'
-    const item = addType === 'note'
-      ? { id: Date.now(), text, date: fmt, user: 'schoolmentoradmin' }
-      : { id: Date.now(), detail: text, dateTime: fmt, user: 'schoolmentoradmin' }
-    setFollow((f) => ({ ...f, [sub]: [item, ...f[sub]] }))
-    onToast(`${ADD_CFG[addType].title.replace('Add ', '')} added`, 'success')
-    setAddType(null)
+    setCardBusy(true)
+    try {
+      await saveCardAction({
+        branchId: school.id,
+        subHeadType: SUB_HEAD[sub],
+        commentDetail: text,
+        date,
+      })
+      await loadCards()
+      onToast(`${ADD_CFG[addType].title.replace('Add ', '')} added`, 'success')
+      setAddType(null)
+    } catch (err) {
+      console.error('Follow-up card save failed:', err)
+      onToast(err?.message || 'Could not save this entry', 'warn')
+    } finally {
+      setCardBusy(false)
+    }
   }
   return createPortal(
     <div className="ov" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
@@ -383,11 +519,11 @@ function ErpDetailModal({ school, month, onToast, onClose }) {
 
         <div className="modal-body">
           {tab === 'progress' && <ProgressTab school={school} seed={seed} month={month} />}
-          {tab === 'followup' && <FollowupTab follow={follow} sub={followSub} setSub={setFollowSub} onAdd={setAddType} onDel={delItem} />}
+          {tab === 'followup' && <FollowupTab follow={follow} loading={followLoading} busy={cardBusy} sub={followSub} setSub={setFollowSub} onAdd={setAddType} onDel={delItem} />}
         </div>
       </div>
 
-      {addType && <AddPopup type={addType} onClose={() => setAddType(null)} onSave={saveAdd} />}
+      {addType && <AddPopup type={addType} busy={cardBusy} onClose={() => setAddType(null)} onSave={saveAdd} />}
     </div>,
     document.body,
   )
@@ -427,7 +563,7 @@ function ProgressTab({ school, seed, month }) {
   )
 }
 
-function FollowupTab({ follow, sub, setSub, onAdd, onDel }) {
+function FollowupTab({ follow, loading, busy, sub, setSub, onAdd, onDel }) {
   const meta = FOLLOW_META[sub]
   const list = follow[sub]
   return (
@@ -452,7 +588,12 @@ function FollowupTab({ follow, sub, setSub, onAdd, onDel }) {
         <button className="fu-add-btn" onClick={() => onAdd(meta.type)}><i className="fa-solid fa-plus" /> {meta.addLabel}</button>
       </div>
 
-      {list.length === 0 ? (
+      {loading ? (
+        <div className="fu-empty">
+          <div className="fu-empty-icon"><i className="fa-solid fa-spinner fa-spin" /></div>
+          <div className="fu-empty-title">Loading {meta.title.toLowerCase()}…</div>
+        </div>
+      ) : list.length === 0 ? (
         <div className="fu-empty">
           <div className="fu-empty-icon"><i className={`fa-solid ${meta.icon}`} /></div>
           <div className="fu-empty-title">No {meta.title} yet</div>
@@ -466,14 +607,14 @@ function FollowupTab({ follow, sub, setSub, onAdd, onDel }) {
               <div className="fu-card-top">
                 <div className={`fu-card-avatar ${meta.type}`}><i className={`fa-solid ${meta.icon}`} /></div>
                 <div className="fu-card-body">
-                  <div className="fu-card-text">{item[meta.textField]}</div>
+                  <div className="fu-card-text">{item.text}</div>
                   <div className="fu-card-meta">
-                    <span className="fu-meta-date"><i className="fa-regular fa-calendar" />{item[meta.dateField]}</span>
+                    <span className="fu-meta-date"><i className="fa-regular fa-calendar" />{item.date}</span>
                     <span className="fu-meta-user"><i className="fa-solid fa-user" />{item.user}</span>
                   </div>
                 </div>
                 <div className="fu-card-actions">
-                  <button className="fu-act-btn del" title="Delete" onClick={() => onDel(sub, item.id)}><i className="fa-solid fa-trash-can" /></button>
+                  <button className="fu-act-btn del" title="Delete" disabled={busy} onClick={() => onDel(sub, item.id)}><i className="fa-solid fa-trash-can" /></button>
                 </div>
               </div>
             </div>
@@ -484,7 +625,7 @@ function FollowupTab({ follow, sub, setSub, onAdd, onDel }) {
   )
 }
 
-function AddPopup({ type, onClose, onSave }) {
+function AddPopup({ type, busy, onClose, onSave }) {
   const cfg = ADD_CFG[type]
   const [text, setText] = useState('')
   const [date, setDate] = useState('')
@@ -500,8 +641,12 @@ function AddPopup({ type, onClose, onSave }) {
           <div className="em-add-f"><label>{cfg.dateLabel}</label><input type={cfg.dateType} value={date} onChange={(e) => setDate(e.target.value)} /></div>
         </div>
         <div className="em-add-foot">
-          <button className="btn-secondary" style={{ height: 34, padding: '0 14px', fontSize: 12.5 }} onClick={onClose}>Cancel</button>
-          <button className="btn-primary" style={{ height: 34, padding: '0 16px', fontSize: 12.5 }} onClick={() => { if (!text.trim()) return; onSave(text.trim(), date) }}><i className="fa-regular fa-floppy-disk" /> {cfg.saveLabel}</button>
+          <button className="btn-secondary" style={{ height: 34, padding: '0 14px', fontSize: 12.5 }} disabled={busy} onClick={onClose}>Cancel</button>
+          <button className="btn-primary" style={{ height: 34, padding: '0 16px', fontSize: 12.5 }} disabled={busy} onClick={() => { if (!text.trim()) return; onSave(text.trim(), date) }}>
+            {busy
+              ? <><i className="fa-solid fa-spinner fa-spin" /> Saving…</>
+              : <><i className="fa-regular fa-floppy-disk" /> {cfg.saveLabel}</>}
+          </button>
         </div>
       </div>
     </div>

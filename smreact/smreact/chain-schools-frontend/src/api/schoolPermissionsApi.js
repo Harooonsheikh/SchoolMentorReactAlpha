@@ -60,6 +60,21 @@ export function cachePermissions(branchID, { modules, erpAccess } = {}) {
   if (erpAccess !== undefined) writeCache('erp', branchID, !!erpAccess)
 }
 
+/* ── Aik hi call do dafa nahi ──
+   Ye screen React StrictMode me effect do baar chalati hai, aur Manage
+   khulte waqt bhi wahi id dobara maangi ja sakti hai. Jab tak aik request
+   chal rahi hai, usi id ki dusri request nayi fetch nahi karti — wahi
+   promise share ho jaata hai (Network tab me duplicate rows khatam). */
+const inFlight = new Map()
+
+function once(key, fn) {
+  const running = inFlight.get(key)
+  if (running) return running
+  const p = fn().finally(() => inFlight.delete(key))
+  inFlight.set(key, p)
+  return p
+}
+
 /** Sab modules off — jab branch ki koi row hi na ho. */
 export function emptyModules() {
   return Object.fromEntries(UI_KEYS.map((k) => [k, false]))
@@ -74,8 +89,12 @@ function toModules(row) {
  * Aik branch ki module permissions.
  * Row na ho (ya call nakaam ho) to sab off — screen khali nahi tootti.
  */
-export async function fetchModulePermissions(branchID) {
-  if (!branchID) return emptyModules()
+export function fetchModulePermissions(branchID) {
+  if (!branchID) return Promise.resolve(emptyModules())
+  return once(`mods:${branchID}`, () => fetchModulePermissionsNow(branchID))
+}
+
+async function fetchModulePermissionsNow(branchID) {
   const res = await fetch(`${BASE}/module-permission/${branchID}?type=chain`, {
     headers: { Accept: '*/*' },
   })
@@ -129,8 +148,12 @@ async function mapLimit(ids, limit, worker, onResult) {
    1 = access on, 0 = off. */
 
 /** Aik branch ka ERP access (launch setup) — na milay to off. */
-export async function fetchLaunchSetup(branchID) {
-  if (!branchID) return false
+export function fetchLaunchSetup(branchID) {
+  if (!branchID) return Promise.resolve(false)
+  return once(`erp:${branchID}`, () => fetchLaunchSetupNow(branchID))
+}
+
+async function fetchLaunchSetupNow(branchID) {
   const res = await fetch(`${BASE}/launchsetup?branchId=${branchID}`, { headers: { Accept: '*/*' } })
   if (!res.ok) return false
   const json = await res.json().catch(() => null)

@@ -1,23 +1,38 @@
 /* ═══════════════════════════════════════════════════════════════════
-   Remembers the last real route the user was on, so a full reload or an
-   ERP → portal handoff lands them back where they were instead of always
-   on /dashboard. Stored per-browser in localStorage. Login / handoff /
-   root paths are never saved, and it's cleared on sign-out.
+   LAST VISITED PATH — sessionStorage me rakha jata hai.
+
+   Maqsad: reload karne par ya ERP se dobara aane par user wahin wapas
+   pohanche jahan wo tha, /dashboard par nahi.
+
+   sessionStorage (localStorage nahi) is liye ke ye sirf isi tab ke liye
+   hai — naya tab ya browser band karne ke baad taza shuruaat honi chahiye.
    ═══════════════════════════════════════════════════════════════════ */
 const KEY = 'csp_last_path'
 
-/** Save the current path — skips the root and the login route. */
+/* Ye raaste kabhi yaad nahi rakhne — login par wapas bhejna bemani hai,
+   aur 404 par bhejna ghalat. */
+const SKIP = ['/login', '/logout']
+
 export function saveLastPath(path) {
-  if (!path || path === '/' || path.startsWith('/login')) return
-  try { localStorage.setItem(KEY, path) } catch { /* storage unavailable */ }
+  try {
+    if (!path || SKIP.includes(path)) return
+    sessionStorage.setItem(KEY, path)
+  } catch {
+    /* private mode / quota — path yaad na rakhna koi khata nahi */
+  }
 }
 
-/** The saved path, or '' if none. */
 export function readLastPath() {
-  try { return localStorage.getItem(KEY) || '' } catch { return '' }
+  try {
+    const p = sessionStorage.getItem(KEY)
+    // Sirf app-internal path hi qubool — "//evil.com" jaisa kuch nahi.
+    if (!p || !p.startsWith('/') || p.startsWith('//')) return null
+    return SKIP.includes(p) ? null : p
+  } catch {
+    return null
+  }
 }
 
-/** Forget the saved path (called on sign-out). */
 export function clearLastPath() {
-  try { localStorage.removeItem(KEY) } catch { /* storage unavailable */ }
+  try { sessionStorage.removeItem(KEY) } catch { /* ignore */ }
 }
