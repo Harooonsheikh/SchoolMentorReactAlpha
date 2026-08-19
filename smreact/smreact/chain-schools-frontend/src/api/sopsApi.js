@@ -16,14 +16,22 @@
    `manualHeadName` har call me lazmi hai — get par bhi khali chalega magar
    field bheja zaroor jaata hai, warna API 400 deti hai.
 
-   Chain portal hamesha `type: "chain"` bhejta hai, taake ye heads sirf isi
-   portal ke rahein.
+   ── Scoping: type + networkID ──
+   Chain portal hamesha `type: "chain"` bhejta hai (taake ye heads sirf isi
+   portal ke rahein) AUR logged-in network ki `networkID` — warna har chain
+   admin doosre networks ke SOPs dekhta. `type` chhoot jaye to `get` bhi
+   girta hai ("GetManualHeadsWithTotalManualsAsync: NetworkID"), is liye
+   dono hamesha saath jaate hain.
+
+   Manuals aur forms par networkID nahi hoti aur na chahiye: wo hamesha kisi
+   head ke andar hote hain, aur head khud network par scoped hai.
 
    Baqi Super-Admin calls ki tarah ye bhi axios client se nahi jaati.
    ═══════════════════════════════════════════════════════════════════ */
 
 import { SUPERADMIN_API_BASE } from '@/config/env'
 import { getStoredUser } from '@/auth/tokenStorage'
+import { currentNetworkId } from './networkSchoolsApi'
 
 const HEAD_URL = `${SUPERADMIN_API_BASE}/api/AHM_School_SOPs/manual-head`
 const DETAIL_URL = `${SUPERADMIN_API_BASE}/api/AHM_School_SOPs/manual-detail`
@@ -55,6 +63,9 @@ function body(action, { id = 0, title = '', desc = '', status = 'active', totalM
     description: desc,
     isActive: status !== 'inactive',
     type: 'chain',
+    /* Logged-in network — heads isi ke against bante aur isi ke against
+       padhe jaate hain. */
+    networkID: currentNetworkId(),
     totalManuals: Number(totalManuals) || 0,
     createdBy: userId(),
     modifiedBy: userId(),

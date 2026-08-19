@@ -2,9 +2,15 @@ import { useEffect, useMemo, useState } from 'react'
 import TutorialButton from '../../components/TutorialButton'
 import { createPortal } from 'react-dom'
 import {
-  getAllSchools, loadSetup, saveSetup, loadChallans, saveChallans, loadRecv, saveRecv,
-  monthlyCharge, PKR, todayPlus, PAY_METHODS, getSchoolFeeHeads, royaltyCount,
+  toPaymentRows,
+  monthlyCharge, PKR, todayPlus, PAY_METHODS, royaltyCount,
 } from './data'
+import { useView } from '../../config/viewContext'
+import {
+  fetchSetupEach, saveSetup as saveSetupApi, deleteSetup as deleteSetupApi, fetchBranchClasses,
+  fetchChallanEach, saveChallan as saveChallanApi, deleteChallan as deleteChallanApi,
+  fetchReceivingEach, saveReceiving as saveReceivingApi, deleteReceiving as deleteReceivingApi,
+} from '../../api/schoolPaymentsApi'
 import { loadChainProfile, chainInitials } from '../../config/chainProfile'
 import './Payments.css'
 
@@ -29,9 +35,20 @@ const FormulaBadge = ({ setup }) => {
 }
 
 export default function Payments() {
-  const schools = useMemo(() => getAllSchools(), [])
+  /* Network me shamil ho chuke schools — Chain-Management API se, wahi source
+     jo School Permissions / School Progress use karte hain. */
+  const { schools: connectedSchools, schoolsLoading, schoolsError } = useView()
+  const schools = useMemo(() => toPaymentRows(connectedSchools), [connectedSchools])
+
   const [tab, setTab] = useState('setup')
   const [setupStore, setSetupStore] = useState({})
+  /* Setup har branch par alag call se aata hai, is liye table pehle render
+     hoti hai aur rows jaise jaise jawab aate hain bharti jaati hain. Jab tak
+     kisi branch ka jawab nahi aaya, usay "Pending" dikhana ghalat hoga — is
+     liye counts sirf un schools ke ginte hain jin ka jawab aa chuka hai. */
+  const [setupLoaded, setSetupLoaded] = useState({})
+  const [chLoaded, setChLoaded] = useState({})
+  const [recvLoaded, setRecvLoaded] = useState({})
   const [chStore, setChStore] = useState({})
   const [recvStore, setRecvStore] = useState({})
   const [toast, setToast] = useState(null)
@@ -48,38 +65,207 @@ export default function Payments() {
   const [recvModal, setRecvModal] = useState(null)
   const [confirm, setConfirm] = useState(null)
 
-  useEffect(() => { setSetupStore(loadSetup()); setChStore(loadChallans()); setRecvStore(loadRecv()) }, [])
-  useEffect(() => { if (!toast) return undefined; const t = setTimeout(() => setToast(null), 3000); return () => clearTimeout(t) }, [toast])
+  /* Warn/error me aksar batana hota hai ke "pehle challan hatao" — 3 second
+     me wo padha hi nahi jaata, is liye un ko zyada waqt milta hai. */
+  useEffect(() => {
+    if (!toast) return undefined
+    const t = setTimeout(() => setToast(null), toast.type === 'warn' ? 7000 : 3000)
+    return () => clearTimeout(t)
+  }, [toast])
 
-  const persistSetup = (s) => { setSetupStore(s); saveSetup(s) }
-  const persistCh = (s) => { setChStore(s); saveChallans(s) }
-  const persistRecv = (s) => { setRecvStore(s); saveRecv(s) }
+  /* Har connected school ka payment setup aur mojooda challan — table render
+     hone ke baad, dono background me. Ye per-branch calls hain (dono APIs aik
+     waqt me aik hi branch deti hain), is liye 12 at a time. */
+  useEffect(() => {
+    const ids = schools.map((s) => s.id).filter(Boolean)
+    if (!ids.length) return undefined
+    let alive = true
+    fetchSetupEach(ids, (id, setup) => {
+      if (!alive) return
+      setSetupStore((m) => ({ ...m, [id]: setup }))
+      setSetupLoaded((m) => ({ ...m, [id]: true }))
+    })
+    fetchChallanEach(ids, (id, challan) => {
+      if (!alive) return
+      setChStore((m) => ({ ...m, [id]: challan }))
+      setChLoaded((m) => ({ ...m, [id]: true }))
+    })
+    fetchReceivingEach(ids, (id, recv) => {
+      if (!alive) return
+      setRecvStore((m) => ({ ...m, [id]: recv }))
+      setRecvLoaded((m) => ({ ...m, [id]: true }))
+    })
+    return () => { alive = false }
+  }, [schools])
+
   const fire = (text, type = 'success') => setToast({ text, type })
   const toggleExpand = (key) => setExpanded((e) => ({ ...e, [key]: !e[key] }))
 
-  /* ── stats ── */
+  /* ── stats ──
+     "Pending" sirf un schools ka ginte hain jin ka jawab aa chuka hai, warna
+     load hote waqt har school lamha bhar ke liye pending dikhta. */
   const stats = useMemo(() => {
     const total = schools.length
-    const done = schools.filter((s) => setupStore[s.id]).length
+    const answered = schools.filter((s) => setupLoaded[s.id])
+    const done = answered.filter((s) => setupStore[s.id]).length
     const revenue = schools.reduce((sum, s) => sum + monthlyCharge(s, setupStore[s.id]), 0)
-    return { total, done, pending: total - done, revenue }
-  }, [schools, setupStore])
+    return { total, done, pending: answered.length - done, revenue }
+  }, [schools, setupStore, setupLoaded])
 
   /* ── actions ── */
-  const saveSetupFor = (id, setup) => { persistSetup({ ...setupStore, [id]: setup }); setSetupModal(null); fire(`Payment setup saved for ${schools.find((s) => s.id === id)?.name || 'school'}`) }
-  const generateChallan = (id, prevDues, dueDate) => {
-    const s = schools.find((x) => x.id === id); const monthly = monthlyCharge(s, setupStore[id])
-    persistCh({ ...chStore, [id]: { amount: monthly, prevDues, total: monthly + prevDues, dueDate } })
-    setGenModal(null); fire('Challan generated successfully')
+  const [savingSetup, setSavingSetup] = useState(false)
+  const [deletingSetup, setDeletingSetup] = useState(false)
+
+  const saveSetupFor = async (id, setup) => {
+    const name = schools.find((s) => s.id === id)?.name || 'school'
+    setSavingSetup(true)
+    try {
+      /* id sath bhejna zaroori hai: mojood ho to `update`, warna `insert`. */
+      const saved = await saveSetupApi(id, { ...setup, id: setupStore[id]?.id || 0 })
+      setSetupStore((m) => ({ ...m, [id]: saved }))
+      setSetupLoaded((m) => ({ ...m, [id]: true }))
+      setSetupModal(null)
+      fire(`Payment setup saved for ${name}`)
+    } catch (err) {
+      fire(err?.message || `Could not save payment setup for ${name}`, 'warn')
+    } finally {
+      setSavingSetup(false)
+    }
   }
-  const bulkGenerate = (ids, dueDate) => {
-    const next = { ...chStore }
-    ids.forEach((id) => { const s = schools.find((x) => x.id === id); const setup = setupStore[id]; if (setup) { const m = monthlyCharge(s, setup); next[id] = { amount: m, prevDues: next[id]?.prevDues || 0, total: m + (next[id]?.prevDues || 0), dueDate } } })
-    persistCh(next); setBulkModal(false); fire(ids.length ? `${ids.length} challan${ids.length !== 1 ? 's' : ''} generated` : 'No schools selected', ids.length ? 'success' : 'info')
+
+  const removeSetupFor = async (id) => {
+    const name = schools.find((s) => s.id === id)?.name || 'school'
+    setDeletingSetup(true)
+    try {
+      await deleteSetupApi(id, setupStore[id])
+      setSetupStore((m) => ({ ...m, [id]: null }))
+      setConfirm(null)
+      fire(`Payment setup removed for ${name}`, 'info')
+    } catch (err) {
+      /* Nakaam hone par dialog khula rehta hai — user dobara koshish kar sake. */
+      fire(err?.message || 'Could not remove payment setup', 'warn')
+    } finally {
+      setDeletingSetup(false)
+    }
   }
-  const delChallan = (id) => { const next = { ...chStore }; delete next[id]; persistCh(next); setConfirm(null); fire('Challan deleted', 'info') }
-  const recordReceiving = (id, payload) => { persistRecv({ ...recvStore, [id]: payload }); setRecvModal(null); fire('Payment recorded successfully') }
-  const delRecv = (id) => { const next = { ...recvStore }; delete next[id]; persistRecv(next); setConfirm(null); fire('Receiving record deleted', 'info') }
+  /* Challan setup ke bagair nahi banta — uski `paymentID` hi ledger row ko
+     school ke billing setup se jorti hai. */
+  const [genBusy, setGenBusy] = useState(false)
+  const [deletingCh, setDeletingCh] = useState(false)
+
+  const putChallan = (id, challan) => {
+    setChStore((m) => ({ ...m, [id]: challan }))
+    setChLoaded((m) => ({ ...m, [id]: true }))
+  }
+
+  const generateChallan = async (id, prevDues, dueDate) => {
+    const s = schools.find((x) => x.id === id)
+    const setup = setupStore[id]
+    if (!setup?.id) return fire('This school has no payment setup yet', 'warn')
+    setGenBusy(true)
+    try {
+      const saved = await saveChallanApi(id, {
+        paymentID: setup.id,
+        amount: monthlyCharge(s, setup),
+        prevDues,
+        dueDate,
+        existingId: chStore[id]?.id || 0,
+      })
+      putChallan(id, saved)
+      setGenModal(null)
+      fire('Challan generated successfully')
+    } catch (err) {
+      fire(err?.message || 'Could not generate challan', 'warn')
+    } finally {
+      setGenBusy(false)
+    }
+    return undefined
+  }
+
+  const bulkGenerate = async (ids, dueDate) => {
+    if (!ids.length) return fire('No schools selected', 'info')
+    setGenBusy(true)
+    /* Har school apni call — aik ki nakami baqi ko nahi rokti, is liye
+       allSettled, aur aakhir me ginti ke sath sach bataya jaata hai. */
+    const results = await Promise.allSettled(ids.map(async (id) => {
+      const s = schools.find((x) => x.id === id)
+      const setup = setupStore[id]
+      if (!setup?.id) throw new Error('no setup')
+      const saved = await saveChallanApi(id, {
+        paymentID: setup.id,
+        amount: monthlyCharge(s, setup),
+        prevDues: chStore[id]?.prevDues || 0,
+        dueDate,
+        existingId: chStore[id]?.id || 0,
+      })
+      return { id, saved }
+    }))
+    results.forEach((r) => { if (r.status === 'fulfilled') putChallan(r.value.id, r.value.saved) })
+    setGenBusy(false)
+    setBulkModal(false)
+    const ok = results.filter((r) => r.status === 'fulfilled').length
+    const failed = results.length - ok
+    fire(
+      failed ? `${ok} challan${ok !== 1 ? 's' : ''} generated, ${failed} failed` : `${ok} challan${ok !== 1 ? 's' : ''} generated`,
+      failed ? 'warn' : 'success',
+    )
+    return undefined
+  }
+
+  const delChallan = async (id) => {
+    setDeletingCh(true)
+    try {
+      await deleteChallanApi(chStore[id])
+      putChallan(id, null)
+      setConfirm(null)
+      fire('Challan deleted', 'info')
+    } catch (err) {
+      fire(err?.message || 'Could not delete challan', 'warn')
+    } finally {
+      setDeletingCh(false)
+    }
+  }
+  const [recvBusy, setRecvBusy] = useState(false)
+  const [deletingRecv, setDeletingRecv] = useState(false)
+
+  const putRecv = (id, recv) => {
+    setRecvStore((m) => ({ ...m, [id]: recv }))
+    setRecvLoaded((m) => ({ ...m, [id]: true }))
+  }
+
+  const recordReceiving = async (id, payload) => {
+    setRecvBusy(true)
+    try {
+      /* Challan aur setup ki ids sath jaati hain — wasooli inhi se juri hai. */
+      const saved = await saveReceivingApi(id, {
+        ...payload,
+        id: recvStore[id]?.id || 0,
+        schoolPaymentID: setupStore[id]?.id || 0,
+        paymentLedgerID: chStore[id]?.id || 0,
+      })
+      putRecv(id, saved)
+      setRecvModal(null)
+      fire('Payment recorded successfully')
+    } catch (err) {
+      fire(err?.message || 'Could not record payment', 'warn')
+    } finally {
+      setRecvBusy(false)
+    }
+  }
+
+  const delRecv = async (id) => {
+    setDeletingRecv(true)
+    try {
+      await deleteReceivingApi(recvStore[id])
+      putRecv(id, null)
+      setConfirm(null)
+      fire('Receiving record deleted', 'info')
+    } catch (err) {
+      fire(err?.message || 'Could not delete receiving record', 'warn')
+    } finally {
+      setDeletingRecv(false)
+    }
+  }
 
   return (
     <>
@@ -124,7 +310,19 @@ export default function Payments() {
               <table className="pay-table">
                 <thead><tr><th>#</th><th>Branch Name</th><th>Formula</th><th>Free Trial</th><th style={{ textAlign: 'center' }}>Monthly Charge</th><th style={{ textAlign: 'center' }}>Status</th><th style={{ textAlign: 'center' }}>Action</th><th style={{ textAlign: 'center' }}>Details</th></tr></thead>
                 <tbody>
-                  {schools.filter((s) => {
+                  {schoolsLoading ? (
+                    <tr><td colSpan={8} style={{ textAlign: 'center', padding: 28, color: 'var(--tm)' }}>
+                      <i className="fa-solid fa-spinner fa-spin" style={{ marginRight: 8 }} />Loading schools…
+                    </td></tr>
+                  ) : schoolsError ? (
+                    <tr><td colSpan={8} style={{ textAlign: 'center', padding: 28, color: 'var(--err)' }}>
+                      <i className="fa-solid fa-triangle-exclamation" style={{ marginRight: 8 }} />{schoolsError}
+                    </td></tr>
+                  ) : schools.length === 0 ? (
+                    <tr><td colSpan={8} style={{ textAlign: 'center', padding: 28, color: 'var(--tm)' }}>
+                      <i className="fa-solid fa-circle-info" style={{ marginRight: 8 }} />No connected schools in this network yet.
+                    </td></tr>
+                  ) : schools.filter((s) => {
                     const q = setupQ.trim().toLowerCase()
                     if (q && !s.name.toLowerCase().includes(q) && !(s.principal || '').toLowerCase().includes(q)) return false
                     if (setupFilter === 'done' && !setupStore[s.id]) return false
@@ -140,8 +338,13 @@ export default function Payments() {
                         <td data-label="Formula"><FormulaBadge setup={setup} /></td>
                         <td data-label="Free Trial">{setup?.freeTrial && setup?.trialDays ? <span className="badge b-blue" style={{ fontSize: 9.5 }}><i className="fa-solid fa-gift" style={{ fontSize: 8 }} /> {setup.trialDays}d trial</span> : '—'}</td>
                         <td data-label="Monthly" style={{ textAlign: 'center' }}>{!setup ? '—' : setup.formula === 'percentage' ? <><span style={{ fontWeight: 800, color: '#7C3AED' }}>Royalty %</span><div style={{ fontSize: 10, color: 'var(--tm)' }}>{royaltyCount(setup)} head{royaltyCount(setup) !== 1 ? 's' : ''}</div></> : <><span style={{ fontWeight: 800, color: 'var(--t1)' }}>{PKR(charge)}</span><div style={{ fontSize: 10, color: 'var(--tm)' }}>/ month</div></>}</td>
-                        <td data-label="Status" style={{ textAlign: 'center' }}>{setup ? <span className="badge ps-badge-setup"><i className="fa-solid fa-circle-check" style={{ fontSize: 8 }} /> Set Up</span> : <span className="badge ps-badge-pending"><i className="fa-solid fa-hourglass-half" style={{ fontSize: 8 }} /> Pending</span>}</td>
-                        <td data-label="Action" style={{ textAlign: 'center' }}><button className="btn-sm" style={{ height: 30 }} onClick={() => setSetupModal(s.id)}><i className={`fa-solid ${setup ? 'fa-pen' : 'fa-plus'}`} /> {setup ? 'Edit' : 'Set Up'}</button></td>
+                        <td data-label="Status" style={{ textAlign: 'center' }}>{!setupLoaded[s.id] ? <span className="badge b-gray"><i className="fa-solid fa-spinner fa-spin" style={{ fontSize: 8 }} /> Loading</span> : setup ? <span className="badge ps-badge-setup"><i className="fa-solid fa-circle-check" style={{ fontSize: 8 }} /> Set Up</span> : <span className="badge ps-badge-pending"><i className="fa-solid fa-hourglass-half" style={{ fontSize: 8 }} /> Pending</span>}</td>
+                        <td data-label="Action" style={{ textAlign: 'center' }}>
+                          <div className="ch-actions" style={{ justifyContent: 'center' }}>
+                            <button className="btn-sm" style={{ height: 30 }} disabled={!setupLoaded[s.id]} onClick={() => setSetupModal(s.id)}><i className={`fa-solid ${setup ? 'fa-pen' : 'fa-plus'}`} /> {setup ? 'Edit' : 'Set Up'}</button>
+                            <button className="ch-btn ch-btn-del" disabled={!setup} title={setup ? 'Remove payment setup' : ''} onClick={() => setConfirm({ kind: 'delSetup', id: s.id, name: s.name })}><i className="fa-solid fa-trash-can" /></button>
+                          </div>
+                        </td>
                         <td data-label="Details" style={{ textAlign: 'center' }}><button className="det-btn" onClick={() => toggleExpand(`ps-${s.id}`)}><i className="fa-solid fa-chevron-down" /></button></td>
                       </FragmentRows>
                     )
@@ -171,7 +374,19 @@ export default function Payments() {
               <table className="pay-table">
                 <thead><tr><th>#</th><th>Branch Name</th><th>Formula</th><th style={{ textAlign: 'center' }}>Monthly Amount</th><th style={{ textAlign: 'center' }}>Challan Status</th><th style={{ textAlign: 'center' }}>Actions</th></tr></thead>
                 <tbody>
-                  {schools.filter((s) => {
+                  {schoolsLoading ? (
+                    <tr><td colSpan={6} style={{ textAlign: 'center', padding: 28, color: 'var(--tm)' }}>
+                      <i className="fa-solid fa-spinner fa-spin" style={{ marginRight: 8 }} />Loading schools…
+                    </td></tr>
+                  ) : schoolsError ? (
+                    <tr><td colSpan={6} style={{ textAlign: 'center', padding: 28, color: 'var(--err)' }}>
+                      <i className="fa-solid fa-triangle-exclamation" style={{ marginRight: 8 }} />{schoolsError}
+                    </td></tr>
+                  ) : schools.length === 0 ? (
+                    <tr><td colSpan={6} style={{ textAlign: 'center', padding: 28, color: 'var(--tm)' }}>
+                      <i className="fa-solid fa-circle-info" style={{ marginRight: 8 }} />No connected schools in this network yet.
+                    </td></tr>
+                  ) : schools.filter((s) => {
                     const q = chQ.trim().toLowerCase()
                     if (q && !s.name.toLowerCase().includes(q) && !(s.principal || '').toLowerCase().includes(q)) return false
                     if (chFilter === 'generated' && !chStore[s.id]) return false
@@ -185,10 +400,10 @@ export default function Payments() {
                         <td data-label="Branch"><div style={{ fontWeight: 700, color: 'var(--t1)' }}>{s.name}</div><div style={{ fontSize: 11, color: 'var(--tm)', marginTop: 2 }}>{s.principal}</div></td>
                         <td data-label="Formula"><FormulaBadge setup={setup} /></td>
                         <td data-label="Amount" style={{ textAlign: 'center' }}>{setup ? <><div style={{ fontWeight: 800, color: 'var(--t1)' }}>{PKR(monthly)}</div><div style={{ fontSize: 10, color: 'var(--tm)' }}>/ month</div></> : '—'}</td>
-                        <td data-label="Status" style={{ textAlign: 'center' }}>{challan ? <div><span className="badge b-green"><i className="fa-solid fa-circle-check" style={{ fontSize: 8 }} /> Generated</span><div style={{ fontSize: 10, color: 'var(--tm)', marginTop: 3 }}>Due: {challan.dueDate || '—'}</div></div> : <span className="badge b-gray"><i className="fa-solid fa-clock" style={{ fontSize: 8 }} /> Not Generated</span>}</td>
+                        <td data-label="Status" style={{ textAlign: 'center' }}>{!chLoaded[s.id] ? <span className="badge b-gray"><i className="fa-solid fa-spinner fa-spin" style={{ fontSize: 8 }} /> Loading</span> : challan ? <div><span className="badge b-green"><i className="fa-solid fa-circle-check" style={{ fontSize: 8 }} /> Generated</span><div style={{ fontSize: 10, color: 'var(--tm)', marginTop: 3 }}>Due: {challan.dueDate || '—'}</div></div> : <span className="badge b-gray"><i className="fa-solid fa-clock" style={{ fontSize: 8 }} /> Not Generated</span>}</td>
                         <td data-label="Actions" style={{ textAlign: 'center' }}>
                           <div className="ch-actions" style={{ justifyContent: 'center' }}>
-                            <button className="ch-btn ch-btn-gen" disabled={!setup} title={!setup ? 'Set up payment first' : ''} onClick={() => setGenModal(s.id)}><i className="fa-solid fa-file-invoice-dollar" /> Generate</button>
+                            <button className="ch-btn ch-btn-gen" disabled={!setup || !chLoaded[s.id] || genBusy || !!challan} title={!setup ? 'Set up payment first' : challan ? 'Challan already generated — delete it first to generate a new one' : ''} onClick={() => setGenModal(s.id)}><i className="fa-solid fa-file-invoice-dollar" /> Generate</button>
                             <button className="ch-btn ch-btn-dl" disabled={!challan} onClick={() => openSlip(challanSlipHTML(s, challan, setup), fire)}><i className="fa-solid fa-download" /> Download</button>
                             <button className="ch-btn ch-btn-del" disabled={!challan} onClick={() => setConfirm({ kind: 'delChallan', id: s.id, name: s.name })}><i className="fa-solid fa-trash-can" /></button>
                           </div>
@@ -220,7 +435,19 @@ export default function Payments() {
               <table className="pay-table">
                 <thead><tr><th>#</th><th>Branch Name</th><th style={{ textAlign: 'center' }}>Total Dues</th><th style={{ textAlign: 'center' }}>Prev Remaining</th><th style={{ textAlign: 'center' }}>Receiving</th><th style={{ textAlign: 'center' }}>Remaining</th><th style={{ textAlign: 'center' }}>Download</th><th style={{ textAlign: 'center' }}>Delete</th><th style={{ textAlign: 'center' }}>Receiving</th><th style={{ textAlign: 'center' }}>Detail</th></tr></thead>
                 <tbody>
-                  {schools.filter((s) => { const q = recvQ.trim().toLowerCase(); return !q || s.name.toLowerCase().includes(q) || (s.principal || '').toLowerCase().includes(q) }).map((s, i) => {
+                  {schoolsLoading ? (
+                    <tr><td colSpan={10} style={{ textAlign: 'center', padding: 28, color: 'var(--tm)' }}>
+                      <i className="fa-solid fa-spinner fa-spin" style={{ marginRight: 8 }} />Loading schools…
+                    </td></tr>
+                  ) : schoolsError ? (
+                    <tr><td colSpan={10} style={{ textAlign: 'center', padding: 28, color: 'var(--err)' }}>
+                      <i className="fa-solid fa-triangle-exclamation" style={{ marginRight: 8 }} />{schoolsError}
+                    </td></tr>
+                  ) : schools.length === 0 ? (
+                    <tr><td colSpan={10} style={{ textAlign: 'center', padding: 28, color: 'var(--tm)' }}>
+                      <i className="fa-solid fa-circle-info" style={{ marginRight: 8 }} />No connected schools in this network yet.
+                    </td></tr>
+                  ) : schools.filter((s) => { const q = recvQ.trim().toLowerCase(); return !q || s.name.toLowerCase().includes(q) || (s.principal || '').toLowerCase().includes(q) }).map((s, i) => {
                     const setup = setupStore[s.id]; const challan = chStore[s.id]; const recv = recvStore[s.id]
                     const totalDues = totalDuesFor(s, setup, challan)
                     const prevRemaining = recv ? recv.remainingAmount || 0 : 0
@@ -233,11 +460,11 @@ export default function Payments() {
                         <td data-label="Branch"><div style={{ fontWeight: 700, color: 'var(--t1)' }}>{s.name}</div><div style={{ fontSize: 11, color: 'var(--tm)', marginTop: 2 }}>{s.principal}</div></td>
                         <td data-label="Total Dues" style={{ textAlign: 'center' }}>{fmt(totalDues)}</td>
                         <td data-label="Prev Remaining" style={{ textAlign: 'center' }}>{fmt(prevRemaining)}</td>
-                        <td data-label="Receiving" style={{ textAlign: 'center' }}>{recv ? <span style={{ color: 'var(--success)', fontWeight: 800 }}>{(recv.receivedAmount || 0).toLocaleString()}</span> : <span className="dues-zero">—</span>}</td>
+                        <td data-label="Receiving" style={{ textAlign: 'center' }}>{!recvLoaded[s.id] ? <i className="fa-solid fa-spinner fa-spin" style={{ color: 'var(--tm)', fontSize: 11 }} /> : recv ? <span style={{ color: 'var(--success)', fontWeight: 800 }}>{(recv.receivedAmount || 0).toLocaleString()}</span> : <span className="dues-zero">—</span>}</td>
                         <td data-label="Remaining" style={{ textAlign: 'center' }}>{fmt(remaining)}</td>
                         <td data-label="Download" style={{ textAlign: 'center' }}><button className="recv-btn recv-btn-dl" disabled={!recv} onClick={() => openSlip(recvSlipHTML(s, recv, challan, setup), fire)}><i className="fa-solid fa-download" /> Download</button></td>
-                        <td data-label="Delete" style={{ textAlign: 'center' }}><button className="recv-btn recv-btn-del" disabled={!recv} onClick={() => setConfirm({ kind: 'delRecv', id: s.id, name: s.name })}><i className="fa-solid fa-trash-can" /> Delete</button></td>
-                        <td data-label="Receiving" style={{ textAlign: 'center' }}><button className="recv-btn recv-btn-recv" onClick={() => setRecvModal(s.id)}><i className="fa-solid fa-hand-holding-dollar" /> Receiving</button></td>
+                        <td data-label="Delete" style={{ textAlign: 'center' }}><button className="recv-btn recv-btn-del" disabled={!recv || deletingRecv} onClick={() => setConfirm({ kind: 'delRecv', id: s.id, name: s.name })}><i className="fa-solid fa-trash-can" /> Delete</button></td>
+                        <td data-label="Receiving" style={{ textAlign: 'center' }}><button className="recv-btn recv-btn-recv" disabled={!recvLoaded[s.id] || !setup || recvBusy || (!!recv && remaining <= 0)} title={!setup ? 'Set up payment first' : (recv && remaining <= 0) ? 'Fully paid' : ''} onClick={() => setRecvModal(s.id)}><i className="fa-solid fa-hand-holding-dollar" /> Receiving</button></td>
                         <td data-label="Detail" style={{ textAlign: 'center' }}><button className="det-btn" onClick={() => toggleExpand(`rv-${s.id}`)}><i className="fa-solid fa-chevron-down" /></button></td>
                       </FragmentRows>
                     )
@@ -256,11 +483,14 @@ export default function Payments() {
       )}
 
       {/* ── MODALS ── */}
-      {setupModal != null && <SetupModal school={schools.find((s) => s.id === setupModal)} setup={setupStore[setupModal]} onClose={() => setSetupModal(null)} onSave={saveSetupFor} onToast={fire} />}
-      {genModal != null && <GenModal school={schools.find((s) => s.id === genModal)} setup={setupStore[genModal]} onClose={() => setGenModal(null)} onSave={generateChallan} />}
-      {bulkModal && <BulkGenModal schools={schools} setupStore={setupStore} chStore={chStore} onClose={() => setBulkModal(false)} onGenerate={bulkGenerate} />}
-      {recvModal != null && <RecvModal school={schools.find((s) => s.id === recvModal)} setup={setupStore[recvModal]} challan={chStore[recvModal]} recv={recvStore[recvModal]} onClose={() => setRecvModal(null)} onSave={recordReceiving} onToast={fire} />}
-      {confirm && <ConfirmDelete name={confirm.name} kind={confirm.kind} onClose={() => setConfirm(null)} onConfirm={() => (confirm.kind === 'delChallan' ? delChallan(confirm.id) : delRecv(confirm.id))} />}
+      {setupModal != null && <SetupModal school={schools.find((s) => s.id === setupModal)} setup={setupStore[setupModal]} saving={savingSetup} onClose={() => setSetupModal(null)} onSave={saveSetupFor} onToast={fire} />}
+      {genModal != null && <GenModal school={schools.find((s) => s.id === genModal)} setup={setupStore[genModal]} busy={genBusy} onClose={() => setGenModal(null)} onSave={generateChallan} />}
+      {bulkModal && <BulkGenModal schools={schools} setupStore={setupStore} chStore={chStore} busy={genBusy} onClose={() => setBulkModal(false)} onGenerate={bulkGenerate} />}
+      {recvModal != null && <RecvModal school={schools.find((s) => s.id === recvModal)} setup={setupStore[recvModal]} challan={chStore[recvModal]} recv={recvStore[recvModal]} busy={recvBusy} onClose={() => setRecvModal(null)} onSave={recordReceiving} onToast={fire} />}
+      {confirm && <ConfirmDelete name={confirm.name} kind={confirm.kind} busy={deletingSetup || deletingCh || deletingRecv} onClose={() => setConfirm(null)} onConfirm={() => {
+        if (confirm.kind === 'delSetup') return removeSetupFor(confirm.id)
+        return confirm.kind === 'delChallan' ? delChallan(confirm.id) : delRecv(confirm.id)
+      }} />}
 
       {toast && createPortal(
         <div className="ss-toast-wrap"><div className={`ss-toast ${toast.type}`}><i className={`fa-solid ${toast.type === 'success' ? 'fa-circle-check' : toast.type === 'warn' ? 'fa-triangle-exclamation' : 'fa-circle-info'}`} /> {toast.text}</div></div>,
@@ -294,14 +524,17 @@ function FragmentRows({ open, detail, colSpan, children }) {
 function SetupDetail({ s, setup }) {
   if (!setup) return <div style={{ textAlign: 'center', padding: 16, color: 'var(--tm)', fontSize: 13 }}><i className="fa-solid fa-circle-info" style={{ marginRight: 6 }} />No payment setup configured yet. Click Set Up to begin.</div>
   if (setup.formula === 'percentage') {
-    const applied = []
-    Object.entries(setup.royalty || {}).forEach(([cls, heads]) => Object.entries(heads).forEach(([h, v]) => { if (parseFloat(v) > 0) applied.push({ cls, h, v }) }))
+    const applied = (setup.royaltyRows || []).filter((r) => Number(r.pct) > 0)
     return (
       <div>
         <div style={{ fontSize: 11.5, fontWeight: 800, color: 'var(--brand)', textTransform: 'uppercase', letterSpacing: '.4px', marginBottom: 8 }}><i className="fa-solid fa-percent" style={{ marginRight: 6 }} />Royalty on Fee Heads</div>
         {applied.length === 0
           ? <div style={{ fontSize: 12.5, color: 'var(--tm)' }}>No royalty % applied to any fee head yet.</div>
-          : <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>{applied.map((a, i) => <span key={i} className="badge b-purple" style={{ fontSize: 11 }}>{a.cls} · {a.h}: {a.v}%</span>)}</div>}
+          : <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>{applied.map((r, i) => (
+            <span key={i} className="badge b-purple" style={{ fontSize: 11 }}>
+              {r.headName}: {r.pct}%{r.headAmount > 0 ? ` · ${PKR(Math.round((r.headAmount * r.pct) / 100))}` : ''}
+            </span>
+          ))}</div>}
         {setup.notes && <div style={{ marginTop: 10, fontSize: 12.5, color: 'var(--t2)' }}><span style={{ fontWeight: 700, color: 'var(--tm)' }}>Notes: </span>{setup.notes}</div>}
       </div>
     )
@@ -335,54 +568,95 @@ function RecvDetail({ s, setup, challan, recv }) {
         <div className="recv-dc"><div className="recv-dc-lbl">Remaining</div><div className="recv-dc-val" style={{ color: remaining > 0 ? 'var(--err)' : 'var(--success)' }}>{PKR(remaining)}</div></div>
       </div>
       {recv ? (
-        <>
-          <div style={{ marginBottom: 8 }}><span className="badge b-green" style={{ fontSize: 11 }}><i className="fa-solid fa-circle-check" style={{ fontSize: 8 }} /> Payment Via: {recv.via || '—'}</span> <span className="badge b-blue" style={{ fontSize: 11, marginLeft: 4 }}><i className="fa-regular fa-calendar" style={{ fontSize: 8 }} /> {recv.date || '—'}</span></div>
-          {recv.history?.length > 0 && (
-            <div style={{ borderTop: '1.5px solid var(--bl)', paddingTop: 10, marginTop: 4 }}>
-              <div className="recv-history-title"><i className="fa-solid fa-clock-rotate-left" /> Payment History</div>
-              {recv.history.map((h, i) => (
-                <div className="recv-hist-item" key={i}><div className="recv-hist-dot" /><div className="recv-hist-amount">{PKR(h.amount)}</div><div className="recv-hist-via">{h.via || '—'}</div><div className="recv-hist-date">{h.date || '—'}</div></div>
-              ))}
-            </div>
-          )}
-        </>
+        /* API har adaigi ka alag record nahi rakhti (aik hi row per branch),
+           is liye yahan poori history nahi — sirf aakhri adaigi ki tafseel
+           aur upar chalta hisaab dikhaya jaata hai. */
+        <div style={{ marginBottom: 8 }}>
+          <div className="recv-history-title" style={{ marginBottom: 6 }}><i className="fa-solid fa-clock-rotate-left" /> Last Payment</div>
+          <span className="badge b-green" style={{ fontSize: 11 }}><i className="fa-solid fa-circle-check" style={{ fontSize: 8 }} /> Via: {recv.via || '—'}</span>
+          <span className="badge b-blue" style={{ fontSize: 11, marginLeft: 4 }}><i className="fa-regular fa-calendar" style={{ fontSize: 8 }} /> {recv.date || '—'}</span>
+          {recv.month > 0 && <span className="badge b-gray" style={{ fontSize: 11, marginLeft: 4 }}>Period: {String(recv.month).padStart(2, '0')}/{recv.year}</span>}
+        </div>
       ) : <div style={{ textAlign: 'center', color: 'var(--tm)', fontSize: 12.5, padding: '8px 0' }}><i className="fa-solid fa-circle-info" style={{ marginRight: 6 }} />No receiving record yet. Click <strong>Receiving</strong> to record a payment.</div>}
     </>
   )
 }
 
-/* ── Payment Setup modal ── */
-function SetupModal({ school, setup, onClose, onSave, onToast }) {
-  const feeClasses = useMemo(() => getSchoolFeeHeads(school.id), [school.id])
+/* ── Payment Setup modal ──
+   Teen formulay aik dusre ko kaat dete hain (API par bhi yehi hai: isLumpSum
+   aur percentage dono booleans hain). Is liye jo formula chuna jaata hai
+   sirf usi ke fields bharte aur save hote hain — baqi do ki value chhoot
+   jaati hai, taake purani lump-sum raqam per-student setup ke sath chup-chaap
+   save na ho jaaye. */
+function SetupModal({ school, setup, saving, onClose, onSave, onToast }) {
   const [formula, setFormula] = useState(setup?.formula || 'lumpsum')
   const [lumpAmount, setLumpAmount] = useState(setup?.lumpAmount || '')
   const [perStudentRate, setPerStudentRate] = useState(setup?.perStudentRate || '')
   const [studentCount, setStudentCount] = useState(setup?.studentCount || school.students || 0)
-  const [royalty, setRoyalty] = useState(() => {
-    const init = {}
-    feeClasses.forEach((c) => { init[c.name] = {}; c.heads.forEach((h) => { const v = setup?.royalty?.[c.name]?.[h]; init[c.name][h] = v ? String(v) : '' }) })
-    return init
-  })
   const [freeTrial, setFreeTrial] = useState(!!setup?.freeTrial)
   const [trialDays, setTrialDays] = useState(setup?.trialDays || '')
   const [notes, setNotes] = useState(setup?.notes || '')
 
+  /* Classes + unke apne fee heads — sirf Percentage ke liye chahiye, is liye
+     tabhi mangaate hain jab wo formula chuna jaaye (aur aik hi dafa). */
+  const [feeClasses, setFeeClasses] = useState(null)
+  const [classesErr, setClassesErr] = useState('')
+
+  useEffect(() => {
+    if (formula !== 'percentage' || feeClasses || classesErr) return undefined
+    let alive = true
+    fetchBranchClasses(school.id)
+      .then((rows) => { if (alive) setFeeClasses(rows) })
+      .catch((err) => { if (alive) setClassesErr(err?.message || 'Could not load classes') })
+    return () => { alive = false }
+  }, [formula, school.id, feeClasses, classesErr])
+
+  /* Royalty % `${classID}:${headID}` par rakhi jaati hai — head ka naam school
+     kabhi bhi badal sakta hai, id nahi. */
+  const rowKey = (classID, headID) => `${classID}:${headID}`
+  const [royalty, setRoyalty] = useState(() => {
+    const init = {}
+    ;(setup?.royaltyRows || []).forEach((r) => { init[rowKey(r.classID, r.headID)] = r.pct ? String(r.pct) : '' })
+    return init
+  })
+  const setRoyaltyVal = (classID, headID, val) => setRoyalty((r) => ({ ...r, [rowKey(classID, headID)]: val }))
+
   const preview = (parseFloat(perStudentRate) || 0) * (parseInt(studentCount, 10) || 0)
-  const setRoyaltyVal = (cls, head, val) => setRoyalty((r) => ({ ...r, [cls]: { ...r[cls], [head]: val } }))
 
   const save = () => {
+    if (saving) return undefined
     if (freeTrial && !trialDays) return onToast('Please enter trial duration in days', 'warn')
+    const common = {
+      id: setup?.id || 0,
+      previousAmount: setup?.previousAmount || 0,   // backend ka pichla balance chhoot na jaaye
+      formula, freeTrial, trialDays, notes: notes.trim(),
+    }
+
     if (formula === 'lumpsum') {
       if (!lumpAmount) return onToast('Please enter the monthly lump sum amount', 'warn')
-      return onSave(school.id, { formula, lumpAmount, freeTrial, trialDays, notes: notes.trim() })
+      return onSave(school.id, { ...common, lumpAmount })
     }
     if (formula === 'perstudent') {
       if (!perStudentRate) return onToast('Please enter the per student rate', 'warn')
-      return onSave(school.id, { formula, perStudentRate, studentCount, freeTrial, trialDays, notes: notes.trim() })
+      return onSave(school.id, { ...common, perStudentRate, studentCount })
     }
-    const royaltyClean = {}
-    feeClasses.forEach((c) => { royaltyClean[c.name] = {}; c.heads.forEach((h) => { royaltyClean[c.name][h] = parseFloat(royalty[c.name][h]) || 0 }) })
-    return onSave(school.id, { formula, royalty: royaltyClean, freeTrial, trialDays, notes: notes.trim() })
+    if (!feeClasses) return onToast('Classes are still loading — please wait', 'info')
+    /* Sirf wohi heads bhejte hain jin par % lagi hai. Detail ids yahan bhejne
+       ka faida nahi: backend har update par purani rows gira kar nayi bana
+       deta hai (id 3,4 → 5,6), magar rows duplicate nahi hotin. Save ke baad
+       screen wapas padh leti hai, is liye store phir bhi taza rehta hai. */
+    const rows = []
+    feeClasses.forEach((c) => c.heads.forEach((h) => {
+      const pct = parseFloat(royalty[rowKey(c.id, h.headID)]) || 0
+      if (pct <= 0) return
+      rows.push({
+        classID: c.id, className: c.name,
+        headID: h.headID, headName: h.name, headAmount: h.amount,
+        pct,
+      })
+    }))
+    if (!rows.length) return onToast('Enter a royalty % on at least one fee head', 'warn')
+    return onSave(school.id, { ...common, royaltyRows: rows })
   }
 
   return createPortal(
@@ -433,21 +707,40 @@ function SetupModal({ school, setup, onClose, onSave, onToast }) {
               </div>
               <div className="pay-field" style={{ marginBottom: 16 }}>
                 <label>Class-wise Fee Heads &amp; Royalty %</label>
-                {feeClasses.map((c) => (
-                  <div className="royalty-class" key={c.name}>
-                    <div className="royalty-class-hdr"><i className="fa-solid fa-chalkboard" /> {c.name}<span className="royalty-class-cnt">{c.heads.length} heads</span></div>
-                    {c.heads.map((h) => {
-                      const v = royalty[c.name][h]
-                      return (
-                        <div className={`royalty-head-row${parseFloat(v) > 0 ? ' on' : ''}`} key={h}>
-                          <span className="royalty-head-name">{h}</span>
-                          <div className="royalty-pct">
-                            <input type="number" min="0" max="100" placeholder="0" value={v} onChange={(e) => setRoyaltyVal(c.name, h, e.target.value)} />
-                            <span className="royalty-pct-sign">%</span>
+                {classesErr ? (
+                  <div style={{ padding: 16, textAlign: 'center', color: 'var(--err)', fontSize: 12.5 }}>
+                    <i className="fa-solid fa-triangle-exclamation" style={{ marginRight: 6 }} />{classesErr}
+                  </div>
+                ) : !feeClasses ? (
+                  <div style={{ padding: 16, textAlign: 'center', color: 'var(--tm)', fontSize: 12.5 }}>
+                    <i className="fa-solid fa-spinner fa-spin" style={{ marginRight: 6 }} />Loading this school’s classes…
+                  </div>
+                ) : feeClasses.length === 0 ? (
+                  <div style={{ padding: 16, textAlign: 'center', color: 'var(--tm)', fontSize: 12.5 }}>
+                    <i className="fa-solid fa-circle-info" style={{ marginRight: 6 }} />This school has no classes set up yet.
+                  </div>
+                ) : feeClasses.map((c) => (
+                  <div className="royalty-class" key={c.id}>
+                    <div className="royalty-class-hdr"><i className="fa-solid fa-chalkboard" /> {c.name}<span className="royalty-class-cnt">{c.heads.length} head{c.heads.length !== 1 ? 's' : ''}</span></div>
+                    {c.heads.length === 0
+                      ? <div style={{ padding: '8px 10px', fontSize: 12, color: 'var(--tm)' }}>No fee heads defined for this class yet.</div>
+                      : c.heads.map((h) => {
+                        const v = royalty[`${c.id}:${h.headID}`] || ''
+                        const pct = parseFloat(v) || 0
+                        return (
+                          <div className={`royalty-head-row${pct > 0 ? ' on' : ''}`} key={h.headID}>
+                            <span className="royalty-head-name">
+                              {h.name}
+                              <span style={{ color: 'var(--tm)', fontWeight: 600, marginLeft: 6 }}>· {PKR(h.amount)}</span>
+                              {pct > 0 && <span style={{ color: '#7C3AED', fontWeight: 800, marginLeft: 6 }}>→ {PKR(Math.round((h.amount * pct) / 100))}</span>}
+                            </span>
+                            <div className="royalty-pct">
+                              <input type="number" min="0" max="100" placeholder="0" value={v} onChange={(e) => setRoyaltyVal(c.id, h.headID, e.target.value)} />
+                              <span className="royalty-pct-sign">%</span>
+                            </div>
                           </div>
-                        </div>
-                      )
-                    })}
+                        )
+                      })}
                   </div>
                 ))}
               </div>
@@ -463,8 +756,10 @@ function SetupModal({ school, setup, onClose, onSave, onToast }) {
           <div className="pay-field" style={{ marginBottom: 0 }}><label>Notes (optional)</label><input className="pay-input" placeholder="Any billing notes…" value={notes} onChange={(e) => setNotes(e.target.value)} /></div>
         </div>
         <div className="pay-modal-foot">
-          <button className="btn-secondary" onClick={onClose}><i className="fa-solid fa-xmark" /> Cancel</button>
-          <button className="btn-primary" onClick={save}><i className="fa-solid fa-floppy-disk" /> Save Setup</button>
+          <button className="btn-secondary" onClick={onClose} disabled={saving}><i className="fa-solid fa-xmark" /> Cancel</button>
+          <button className="btn-primary" onClick={save} disabled={saving}>
+            <i className={`fa-solid ${saving ? 'fa-spinner fa-spin' : 'fa-floppy-disk'}`} /> {saving ? 'Saving…' : 'Save Setup'}
+          </button>
         </div>
       </div>
     </div>,
@@ -473,13 +768,16 @@ function SetupModal({ school, setup, onClose, onSave, onToast }) {
 }
 
 /* ── Generate Challan modal ── */
-function GenModal({ school, setup, onClose, onSave }) {
+/* Ye modal sirf us school ke liye khulta hai jiska challan abhi bana hi nahi
+   (bana hua ho to Generate band rehta hai), is liye maidan hamesha khali se
+   shuru hote hain. */
+function GenModal({ school, setup, busy, onClose, onSave }) {
   const monthly = monthlyCharge(school, setup)
   const [prevDues, setPrevDues] = useState('')
   const [dueDate, setDueDate] = useState(todayPlus(7))
   const total = monthly + (parseFloat(prevDues) || 0)
   return createPortal(
-    <div className="pay-ov" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
+    <div className="pay-ov" onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) onClose() }}>
       <div className="pay-modal" style={{ maxWidth: 460 }}>
         <div className="pay-modal-hdr">
           <div className="pay-modal-av" style={{ background: 'linear-gradient(135deg,#15803d,#16a34a)' }}><i className="fa-solid fa-file-invoice-dollar" /></div>
@@ -494,8 +792,10 @@ function GenModal({ school, setup, onClose, onSave }) {
           <div className="pay-preview"><span className="pay-preview-lbl">Total Challan</span><span className="pay-preview-val">{PKR(total)}</span></div>
         </div>
         <div className="pay-modal-foot">
-          <button className="btn-secondary" onClick={onClose}><i className="fa-solid fa-xmark" /> Cancel</button>
-          <button className="btn-success" onClick={() => onSave(school.id, parseFloat(prevDues) || 0, dueDate)}><i className="fa-solid fa-file-invoice-dollar" /> Generate Challan</button>
+          <button className="btn-secondary" onClick={onClose} disabled={busy}><i className="fa-solid fa-xmark" /> Cancel</button>
+          <button className="btn-success" onClick={() => onSave(school.id, parseFloat(prevDues) || 0, dueDate)} disabled={busy}>
+            <i className={`fa-solid ${busy ? 'fa-spinner fa-spin' : 'fa-file-invoice-dollar'}`} /> {busy ? 'Generating…' : 'Generate Challan'}
+          </button>
         </div>
       </div>
     </div>,
@@ -504,7 +804,10 @@ function GenModal({ school, setup, onClose, onSave }) {
 }
 
 /* ── Receiving modal ── */
-function RecvModal({ school, setup, challan, recv, onClose, onSave, onToast }) {
+/* API har adaigi ka alag record nahi rakhti — aik hi row chalte hisaab ki
+   soorat me rehti hai. Is liye nayi raqam purani me jama kar ke bheji jaati
+   hai, aur `via`/`date` aakhri adaigi ke ban jaate hain. */
+function RecvModal({ school, setup, challan, recv, busy, onClose, onSave, onToast }) {
   const totalDues = challan ? challan.total : (setup ? monthlyCharge(school, setup) : 0)
   const [discount, setDiscount] = useState(recv?.discount || '')
   const [received, setReceived] = useState('')
@@ -515,14 +818,23 @@ function RecvModal({ school, setup, challan, recv, onClose, onSave, onToast }) {
   const remaining = netPayable - prevReceived - (parseFloat(received) || 0)
 
   const save = () => {
+    if (busy) return undefined
     const recvAmt = parseFloat(received) || 0
     if (recvAmt <= 0) return onToast('Please enter the received amount', 'warn')
-    const history = [...(recv?.history || []), { amount: recvAmt, via, date }]
-    onSave(school.id, { discount: parseFloat(discount) || 0, netPayable, receivedAmount: prevReceived + recvAmt, remainingAmount: Math.max(0, remaining), via, date, history })
+    if (remaining < 0) return onToast('Received amount is more than what is payable', 'warn')
+    return onSave(school.id, {
+      payableAmount: totalDues,
+      discount: parseFloat(discount) || 0,
+      netPayable,
+      receivedAmount: prevReceived + recvAmt,
+      remainingAmount: Math.max(0, remaining),
+      via,
+      date,
+    })
   }
 
   return createPortal(
-    <div className="pay-ov" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
+    <div className="pay-ov" onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) onClose() }}>
       <div className="pay-modal" style={{ maxWidth: 480 }}>
         <div className="pay-modal-hdr">
           <div className="pay-modal-av" style={{ background: 'linear-gradient(135deg,#0369A1,#0284C7)' }}><i className="fa-solid fa-hand-holding-dollar" /></div>
@@ -542,8 +854,10 @@ function RecvModal({ school, setup, challan, recv, onClose, onSave, onToast }) {
           <div className="pay-preview"><span className="pay-preview-lbl">Remaining After Payment</span><span className="pay-preview-val" style={{ color: remaining > 0 ? 'var(--err)' : 'var(--success)' }}>{PKR(Math.max(0, remaining))}</span></div>
         </div>
         <div className="pay-modal-foot">
-          <button className="btn-secondary" onClick={onClose}><i className="fa-solid fa-xmark" /> Cancel</button>
-          <button className="btn-primary" onClick={save}><i className="fa-solid fa-circle-check" /> Record Payment</button>
+          <button className="btn-secondary" onClick={onClose} disabled={busy}><i className="fa-solid fa-xmark" /> Cancel</button>
+          <button className="btn-primary" onClick={save} disabled={busy}>
+            <i className={`fa-solid ${busy ? 'fa-spinner fa-spin' : 'fa-circle-check'}`} /> {busy ? 'Recording…' : 'Record Payment'}
+          </button>
         </div>
       </div>
     </div>,
@@ -552,17 +866,22 @@ function RecvModal({ school, setup, challan, recv, onClose, onSave, onToast }) {
 }
 
 /* ── Delete confirm ── */
-function ConfirmDelete({ name, kind, onClose, onConfirm }) {
+function ConfirmDelete({ name, kind, busy, onClose, onConfirm }) {
+  const what = kind === 'delChallan' ? 'Challan' : kind === 'delSetup' ? 'Payment Setup' : 'Receiving Record'
   return createPortal(
-    <div className="ov" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
+    /* Delete chalte waqt bahar click karne par dialog band nahi hota — warna
+       call adhoori chalti rehti aur user ko pata hi na chalta ke hua kya. */
+    <div className="ov" onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) onClose() }}>
       <div className="modal" style={{ maxWidth: 420 }}>
         <div className="modal-body" style={{ textAlign: 'center', padding: '40px 30px' }}>
           <div className="confirm-icon" style={{ background: 'rgba(220,38,38,.1)', border: '2px solid rgba(220,38,38,.25)', color: '#DC2626' }}><i className="fa-solid fa-trash-can" /></div>
-          <div className="confirm-title">Delete {kind === 'delChallan' ? 'Challan' : 'Receiving Record'}?</div>
-          <div className="confirm-sub">This will remove the {kind === 'delChallan' ? 'challan' : 'receiving record'} for <strong>{name}</strong>. This cannot be undone.</div>
+          <div className="confirm-title">Delete {what}?</div>
+          <div className="confirm-sub">This will remove the {what.toLowerCase()} for <strong>{name}</strong>. This cannot be undone.</div>
           <div className="confirm-btns">
-            <button className="btn-secondary" onClick={onClose}>Cancel</button>
-            <button className="btn-danger" onClick={onConfirm}><i className="fa-solid fa-trash-can" /> Delete</button>
+            <button className="btn-secondary" onClick={onClose} disabled={busy}>Cancel</button>
+            <button className="btn-danger" onClick={onConfirm} disabled={busy}>
+              <i className={`fa-solid ${busy ? 'fa-spinner fa-spin' : 'fa-trash-can'}`} /> {busy ? 'Deleting…' : 'Delete'}
+            </button>
           </div>
         </div>
       </div>
@@ -834,19 +1153,22 @@ td.empty{text-align:center;padding:34px;color:#94a3b8;font-weight:600}
 }
 
 /* ── Generate-in-Bulk modal ── */
-function BulkGenModal({ schools, setupStore, chStore, onClose, onGenerate }) {
-  const eligible = schools.filter((s) => setupStore[s.id])
+function BulkGenModal({ schools, setupStore, chStore, busy, onClose, onGenerate }) {
+  /* Jis school ka challan pehle se bana hua hai wo bulk me bhi nahi chalta —
+     row wala Generate bhi usi tarah band rehta hai. Naya challan banane se
+     pehle purana delete karna parta hai. */
+  const eligible = schools.filter((s) => setupStore[s.id] && !chStore[s.id])
+  const already = schools.filter((s) => setupStore[s.id] && chStore[s.id])
   const noSetup = schools.filter((s) => !setupStore[s.id])
   const [dueDate, setDueDate] = useState(todayPlus(7))
-  const [sel, setSel] = useState(() => new Set(eligible.filter((s) => !chStore[s.id]).map((s) => s.id)))
+  const [sel, setSel] = useState(() => new Set(eligible.map((s) => s.id)))
   const toggle = (id) => setSel((p) => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n })
   const allOn = eligible.length > 0 && eligible.every((s) => sel.has(s.id))
   const toggleAll = () => setSel(allOn ? new Set() : new Set(eligible.map((s) => s.id)))
   const totalAmt = eligible.filter((s) => sel.has(s.id)).reduce((sum, s) => sum + monthlyCharge(s, setupStore[s.id]), 0)
-  const existing = eligible.filter((s) => chStore[s.id] && sel.has(s.id)).length
 
   return createPortal(
-    <div className="pay-ov" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
+    <div className="pay-ov" onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) onClose() }}>
       <div className="pay-modal" style={{ maxWidth: 580 }}>
         <div className="pay-modal-hdr">
           <div className="pay-modal-av" style={{ background: 'linear-gradient(135deg,#15803d,#16a34a)' }}><i className="fa-solid fa-bolt" /></div>
@@ -854,7 +1176,7 @@ function BulkGenModal({ schools, setupStore, chStore, onClose, onGenerate }) {
           <button className="pay-modal-x" onClick={onClose}><i className="fa-solid fa-xmark" /></button>
         </div>
         <div className="pay-modal-body">
-          <div className="pay-info-box"><i className="fa-solid fa-circle-info" /><p><strong>{eligible.length}</strong> school{eligible.length !== 1 ? 's' : ''} ready{existing > 0 ? ` · ${existing} already have a challan (will be re-generated)` : ''}{noSetup.length > 0 ? ` · ${noSetup.length} need payment setup` : ''}.</p></div>
+          <div className="pay-info-box"><i className="fa-solid fa-circle-info" /><p><strong>{eligible.length}</strong> school{eligible.length !== 1 ? 's' : ''} ready{already.length > 0 ? ` · ${already.length} already have a challan (skipped)` : ''}{noSetup.length > 0 ? ` · ${noSetup.length} need payment setup` : ''}.</p></div>
 
           <div className="pay-field"><label>Due Date (applies to all)</label><input className="pay-input" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} /></div>
 
@@ -871,8 +1193,15 @@ function BulkGenModal({ schools, setupStore, chStore, onClose, onGenerate }) {
                 <input type="checkbox" checked={sel.has(s.id)} onChange={() => toggle(s.id)} />
                 <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontWeight: 700, color: 'var(--t1)', fontSize: 13 }}>{s.name}</div><div style={{ fontSize: 11, color: 'var(--tm)' }}>{s.principal}</div></div>
                 <span style={{ fontSize: 12.5, fontWeight: 800, color: 'var(--t1)' }}>{PKR(monthlyCharge(s, setupStore[s.id]))}</span>
-                {chStore[s.id] ? <span className="badge b-green" style={{ flexShrink: 0 }}>Generated</span> : <span className="badge b-gray" style={{ flexShrink: 0 }}>Pending</span>}
+                <span className="badge b-gray" style={{ flexShrink: 0 }}>Pending</span>
               </label>
+            ))}
+            {already.map((s) => (
+              <div key={s.id} title="Challan already generated — delete it first to generate a new one" style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', borderBottom: '1px solid var(--bl)', opacity: 0.55 }}>
+                <input type="checkbox" disabled />
+                <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontWeight: 700, color: 'var(--t1)', fontSize: 13 }}>{s.name}</div><div style={{ fontSize: 11, color: 'var(--tm)' }}>Due: {chStore[s.id]?.dueDate || '—'}</div></div>
+                <span className="badge b-green" style={{ flexShrink: 0 }}>Generated</span>
+              </div>
             ))}
             {noSetup.map((s) => (
               <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', borderBottom: '1px solid var(--bl)', opacity: 0.55 }}>
@@ -881,14 +1210,22 @@ function BulkGenModal({ schools, setupStore, chStore, onClose, onGenerate }) {
                 <span className="badge b-warn" style={{ flexShrink: 0 }}>Setup required</span>
               </div>
             ))}
-            {eligible.length === 0 && <div style={{ padding: 24, textAlign: 'center', color: 'var(--tm)', fontSize: 13 }}>No schools have payment setup yet.</div>}
+            {eligible.length === 0 && (
+              <div style={{ padding: 24, textAlign: 'center', color: 'var(--tm)', fontSize: 13 }}>
+                {already.length > 0 && noSetup.length === 0
+                  ? 'Every school already has a challan.'
+                  : 'No schools are ready for a new challan.'}
+              </div>
+            )}
           </div>
 
           <div className="pay-preview" style={{ marginTop: 14 }}><span className="pay-preview-lbl">Total of selected challans</span><span className="pay-preview-val">{PKR(totalAmt)}</span></div>
         </div>
         <div className="pay-modal-foot">
-          <button className="btn-secondary" onClick={onClose}><i className="fa-solid fa-xmark" /> Cancel</button>
-          <button className="btn-success" disabled={sel.size === 0} onClick={() => onGenerate([...sel], dueDate)}><i className="fa-solid fa-bolt" /> Generate {sel.size} Challan{sel.size !== 1 ? 's' : ''}</button>
+          <button className="btn-secondary" onClick={onClose} disabled={busy}><i className="fa-solid fa-xmark" /> Cancel</button>
+          <button className="btn-success" disabled={sel.size === 0 || busy} onClick={() => onGenerate([...sel], dueDate)}>
+            <i className={`fa-solid ${busy ? 'fa-spinner fa-spin' : 'fa-bolt'}`} /> {busy ? 'Generating…' : `Generate ${sel.size} Challan${sel.size !== 1 ? 's' : ''}`}
+          </button>
         </div>
       </div>
     </div>,

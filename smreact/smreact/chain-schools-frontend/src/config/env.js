@@ -23,6 +23,16 @@ export const CHAIN_API_BASE = trimEnd(import.meta.env.VITE_CHAIN_API_BASE) + '/S
    khali = apna origin → dev me Vite proxy, deploy par server rewrite. */
 export const SUPERADMIN_API_BASE = trimEnd(import.meta.env.VITE_SUPERADMIN_API_BASE) + '/SchoolMentorSuperAdminAPI'
 
+/* ERP ka apna API (LaunchSetup — school ki classes, sections, fee heads).
+   Chain portal ise sirf padhne ke liye chhoota hai: School Payments par
+   royalty % lagane ke liye school ke apne class-wise fee heads chahiye.
+
+   Upar wale do ki tarah iska koi apna prefix NAHI hai — ye seedha `/api` par
+   baitha hai (jaise ERP khud use karta hai), is liye base khali rehta hai aur
+   raste `${ERP_API_BASE}/api/...` bante hain. Khali = apna origin → dev me
+   Vite proxy (`/api` → alphaapi), deploy par server rewrite. */
+export const ERP_API_BASE = trimEnd(import.meta.env.VITE_ERP_API_BASE)
+
 /* ERP ka login page. Is portal me apna login form nahi chalta — session hamesha
    ERP ke Network Head Office login se aata hai (URL hash handoff, dekhein
    main.jsx). Is liye sign-out aur "no session" dono wahin wapas bhejte hain.
