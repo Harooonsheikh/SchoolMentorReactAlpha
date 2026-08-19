@@ -192,6 +192,22 @@ export const MessageType = {
 /* Max files per single send, by category (frontend-enforced). */
 export const ATTACH_LIMITS = { image: 10, document: 10, video: 5 };
 
+/* Kya ye "naam" asal me rabta number hai?
+
+   API har message ke saath `senderName` bhejti hai, magar wahan us user ka
+   LOGIN hota hai — aur ERP/Super Admin dono me login rabta number hota hai.
+   Chat me "03006677888" likha aana bhadda hai aur batata bhi kuch nahi, is
+   liye har screen aisi soorat me apna behtar naam laga deti hai (school ki
+   taraf: support agent ka naam; agent ki taraf: school ke malik ka naam).
+
+   Pehchan: sirf hindse / space / () / + / - se bana ho aur kam az kam 7
+   hindse hon. Asli naam (jis me harf hote hain) kabhi is me nahi aata. */
+export const looksLikePhoneNumber = (value) => {
+  const raw = String(value ?? '').trim();
+  if (!raw) return false;
+  return raw.replace(/[^0-9]/g, '').length >= 7 && /^[0-9 ()+-]+$/.test(raw);
+};
+
 /* Voice note ke saath jane wala tay-shuda caption.
    Upload route par `caption` [Required] hai (khali par 400 "The caption field
    is required") aur voice bubble me user ka apna koi matn hota hi nahi — is

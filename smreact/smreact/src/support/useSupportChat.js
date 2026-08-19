@@ -477,7 +477,13 @@ export function useSupportChat({
   }, [toUi, setSession]);
 
   /* ── Send a voice / image / video / document attachment ── */
-  const sendAttachment = useCallback(async ({ category, file, fileName, voiceDuration, caption }) => {
+  /* `batchId` — ek hi "send" ke saare files ka mushtarak nishan. Ek send me
+     har file apna alag message banti hai; render par unhe ek album me jorna
+     hota hai, magar SIRF usi send ke files ko. Waqt se andaza lagana kaafi
+     nahi tha (do alag sends thori der ke faasle par ek hi bubble ban jate
+     thay), is liye bhejne wala khud nishan laga deta hai. Sirf screen ke
+     liye hai — API/DB par kuch nahi jata. */
+  const sendAttachment = useCallback(async ({ category, file, fileName, voiceDuration, caption, batchId }) => {
     const result = await api.sendAttachment({
       sessionId: sessionRef.current, category, file, fileName, voiceDuration, caption,
     });
@@ -498,7 +504,7 @@ export function useSupportChat({
     }
     /* Bubble bhi "Sent" par — response ka status galat ho to bhi tick
        galat na ho; asli haal poll/GET se aayega. */
-    cb.current.onInbound?.({ ...toUi(result.message), status: MessageStatus.Sent });
+    cb.current.onInbound?.({ ...toUi(result.message), status: MessageStatus.Sent, _batch: batchId || undefined });
     return result;
   }, [toUi, setSession]);
 

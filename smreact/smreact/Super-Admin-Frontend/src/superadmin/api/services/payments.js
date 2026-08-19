@@ -46,6 +46,43 @@ export const PAYMENT_TYPE = 'admin';
 /* API sirf yeh chaar actions manti hai. */
 export const PAYMENT_ACTIONS = { insert: 'INSERT', add: 'ADD', update: 'UPDATE', delete: 'DELETE' };
 
+/* ── API ka paighaam → wo baat jo user ke kaam ki ho ──
+   Teeno tables ek zanjeer me bandhe hain:
+       payment setup  ←  challan (ledger)  ←  receiving
+   Upar wala record tab tak nahi mitta jab tak neeche wala mojood hai — DB
+   ki foreign key rok deti hai. Us soorat me API poora SQL error wapas
+   karti hai:
+     "Error in ManageNetworkSchoolPaymentLedgerAsync: The DELETE statement
+      conflicted with the REFERENCE constraint
+      FK_NetworkSchoolPayment_Receiving_PaymentLedgerID …"
+   Toast me yeh daalna bekaar hai — user ko constraint ka naam nahi, yeh
+   jaanna hai ke pehle kya hataana parega. Constraint ke naam se wahi bata
+   dete hain. Jo paighaam pehchana na jaye wo jyun ka tyun aage jata hai;
+   chupana nuqsan-deh hoga. (Wahi mapping Chain-Schools-Frontend
+   src/api/schoolPaymentsApi.js me bhi hai — dono jagah ek jaisa jumla.) */
+function friendlyError(raw, label) {
+  const msg = String(raw || '').trim();
+  if (!msg) return `Could not ${label}`;
+
+  if (/Receiving_PaymentLedgerID/i.test(msg)) {
+    return 'This challan has a receiving record against it. Delete the receiving record first, then delete the challan.';
+  }
+  if (/Ledger_PaymentID/i.test(msg)) {
+    return 'This school has a challan against its payment setup. Delete the challan first, then delete the setup.';
+  }
+  /* Koi aur FK — asal naam nahi jaante, magar wajah wahi hai. */
+  if (/REFERENCE constraint|FOREIGN KEY|conflicted with the DELETE/i.test(msg)) {
+    return 'This record is linked to other payment records. Remove those first, then try again.';
+  }
+
+  /* API har paighaam ke aage apni method ka naam laga deti hai
+     ("Error in ManageNetworkSchoolPaymentAsync: …") — wo user ke liye shor
+     hai, hata dete hain. */
+  const cut = msg.indexOf('Async: ');
+  const clean = (cut > 0 && msg.startsWith('Error in ')) ? msg.slice(cut + 'Async: '.length) : msg;
+  return clean.trim() || `Could not ${label}`;
+}
+
 const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 const bool = (v) => v === true || v === 1 || String(v).toLowerCase() === 'true';
 
@@ -146,7 +183,7 @@ async function manageAction(body, label) {
   }
   const json = await res.json().catch(() => null);
   if (!res.ok || (json && json.success === false)) {
-    throw new ApiError((json && (json.message || json.title || json.Message)) || `Could not ${label}`, res.status);
+    throw new ApiError(friendlyError(json && (json.message || json.title || json.Message), label), res.status);
   }
   return json;
 }
@@ -264,7 +301,7 @@ function actionPoster(pathFn, label) {
     }
     const json = await res.json().catch(() => null);
     if (!res.ok || (json && json.success === false)) {
-      throw new ApiError((json && (json.message || json.title || json.Message)) || `Could not ${what || label}`, res.status);
+      throw new ApiError(friendlyError(json && (json.message || json.title || json.Message), what || label), res.status);
     }
     return json;
   };

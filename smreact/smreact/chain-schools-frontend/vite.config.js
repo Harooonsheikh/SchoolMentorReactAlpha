@@ -16,12 +16,17 @@ export default defineConfig({
     strictPort: true,
     open: false,
     proxy: {
-      // Dev proxy: the browser calls "/api/..." (same origin) and Vite
-      // forwards it to the .NET backend — no CORS setup needed in dev.
-      // ▶ Change `target` to wherever your .NET API runs (e.g. the
-      //   Kestrel http/https port from launchSettings.json).
+      /* ERP ka API — LaunchSetup (school ki classes + fee heads) isi par hai,
+         School Payments ka royalty setup wahin se banta hai. ERP ke apne API
+         ka koi prefix nahi, wo seedha `/api` par baitha hai.
+
+         Pehle ye localhost:5000 par jaata tha (us waqt koi call thi hi nahi).
+         Ab alphaapi par hai — wahi host jahan baqi dono APIs hain — kyunke
+         seedha alphaapi call karne par CORS block karta hai (uska allowlist
+         sirf localhost:3000 rakhta hai, ye app 3002 par chalti hai).
+         ▶ Local .NET backend par kaam karna ho to yahan target badal lein. */
       '/api': {
-        target: 'http://localhost:5000',
+        target: 'https://alphaapi.schoolmentor.ai',
         changeOrigin: true,
         secure: false,
       },

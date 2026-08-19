@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import * as supportApi from '../support/api';
-import { MessageType, SenderType, VOICE_NOTE_CAPTION, fileUrl } from '../support/config';
+import { MessageType, SenderType, VOICE_NOTE_CAPTION, fileUrl, looksLikePhoneNumber } from '../support/config';
 import { VoicePlayer, VideoBubble } from '../support/MediaBits';
 import { formatServerDate, formatServerTime, serverSince } from '../support/time';
 
@@ -17,64 +17,16 @@ import { formatServerDate, formatServerTime, serverSince } from '../support/time
      /sessions                     → currently open conversations
      /sessions/{id}                → last message + a session's transcript
      /sessions/history/schools/{id}/closed → per-school closed sessions
-   The bundled demo rows below are the OFFLINE fallback: if the API cannot be
-   reached the screen keeps rendering instead of going blank, exactly like the
-   agent inbox does.
+   Koi demo/sample row nahi: API tak baat na ho sake to tables khali rehti hain
+   aur upar wajah dikh jati hai — asli record ki jagah banawati record dikhana
+   Super Admin ke liye galat faisle ki wajah banta hai.
    ═══════════════════════════════════════════════════════════════════ */
 
-const SUMMARY = [
-  { key: 'schools',  label: 'Total Schools',          value: 48,  icon: 'fa-school',             c1: '#1E3A8A', c2: '#2563EB' },
-  { key: 'active',   label: 'Active Conversations',   value: 12,  icon: 'fa-comments',           c1: '#0F766E', c2: '#14B8A6' },
-  { key: 'inactive', label: 'Inactive Conversations', value: 36,  icon: 'fa-comment-slash',      c1: 'var(--ag-t3)', c2: 'var(--ag-tm)' },
-  { key: 'agents',   label: 'Total Agents',           value: 6,   icon: 'fa-headset',            c1: '#6D28D9', c2: '#7C3AED' },
-  { key: 'pending',  label: 'Pending Replies',        value: 4,   icon: 'fa-reply-all',          c1: '#B45309', c2: '#D97706' },
-  { key: 'today',    label: "Today's Messages",       value: 318, icon: 'fa-envelope-open-text', c1: '#0369A1', c2: '#0EA5E9' },
-];
-
-const ACTIVE = [
-  { school: 'Daffodil Schools',    campus: 'Tarnol Campus',   principal: 'Dr. Asif Khan',     agent: 'Tariq Ahmed', last: 'We have another query today.',        activity: '2 min ago',  status: 'Active' },
-  { school: 'City Grammar School', campus: 'North Campus',    principal: 'Mr. Imran Yousaf',  agent: 'Sara Ali',    last: 'OTP is not arriving for parents.',     activity: '8 min ago',  status: 'Pending' },
-  { school: 'Beacon House',        campus: 'Gulberg Campus',  principal: 'Ms. Ayesha Raza',   agent: 'Tariq Ahmed', last: 'Result cards margin is cut off.',       activity: '21 min ago', status: 'Active' },
-  { school: 'MPS School System',   campus: 'Main Branch',     principal: 'Mr. Bilal Ahmed',   agent: 'Usman Tariq', last: 'Biometric sync stopped working.',      activity: '34 min ago', status: 'Active' },
-  { school: 'The Spirit School',   campus: 'Main Campus',     principal: 'Mrs. Hina Pervaiz',  agent: 'Sara Ali',    last: 'Fee challan not generating for Class 5.', activity: '47 min ago', status: 'Pending' },
-  { school: 'Smart School',        campus: 'City Campus',     principal: 'Mr. Kamran Akmal',  agent: 'Ahmed Khan',  last: 'Timetable clashes after update.',       activity: '1 hr ago',   status: 'Active' },
-  { school: 'Concept School',      campus: 'North Campus',    principal: 'Ms. Sana Mir',      agent: 'Tariq Ahmed', last: 'Need help adding a new section.',       activity: '2 hr ago',   status: 'Active' },
-];
-
-const INACTIVE = [
-  { school: 'Faith Montessori',     campus: 'Junior Branch',  principal: 'Mrs. Nadia Khan',    contact: '0301-2345678', agent: 'Sara Ali',    lastSession: '02 Jun 2026', sessions: 7, status: 'Closed' },
-  { school: 'Roots School',         campus: 'DHA Campus',     principal: 'Mr. Faisal Iqbal',   contact: '0302-3456789', agent: 'Tariq Ahmed', lastSession: '28 May 2026', sessions: 4, status: 'Closed' },
-  { school: 'The Educators',        campus: 'Model Town',     principal: 'Ms. Rabia Anwar',    contact: '0303-4567890', agent: 'Usman Tariq', lastSession: '21 May 2026', sessions: 9, status: 'Closed' },
-  { school: 'Allied School',        campus: 'Satellite Town', principal: 'Mr. Tariq Mehmood',  contact: '0304-5678901', agent: 'Ahmed Khan',  lastSession: '14 May 2026', sessions: 3, status: 'Closed' },
-  { school: 'Dar-e-Arqam',          campus: 'Township',       principal: 'Mrs. Saima Akhtar',  contact: '0305-6789012', agent: 'Sara Ali',    lastSession: '07 May 2026', sessions: 6, status: 'Closed' },
-  { school: 'Lahore Grammar',       campus: 'Johar Town',     principal: 'Mr. Asad Raza',      contact: '0306-7890123', agent: 'Tariq Ahmed', lastSession: '30 Apr 2026', sessions: 5, status: 'Closed' },
-  { school: 'Beaconhouse Newlands', campus: 'Phase 1',        principal: 'Ms. Hira Shah',      contact: '0307-8901234', agent: 'Usman Tariq', lastSession: '22 Apr 2026', sessions: 2, status: 'Closed' },
-  { school: 'Froebel\'s School',    campus: 'Main Campus',    principal: 'Mr. Junaid Ali',     contact: '0308-9012345', agent: 'Ahmed Khan',  lastSession: '15 Apr 2026', sessions: 8, status: 'Closed' },
-];
-
-/* Demo "last 5 sessions" for the View History modal (same for every school). */
-const HISTORY_SESSIONS = [
-  { number: 5, date: '02 Jun 2026', handledBy: 'Sara Ali',    totalMessages: 14, attachments: 4, closingRemarks: 'Attendance register date filter reset; saving correctly now.' },
-  { number: 4, date: '24 May 2026', handledBy: 'Tariq Ahmed', totalMessages: 9,  attachments: 2, closingRemarks: 'Challan generation date conflict corrected from settings.' },
-  { number: 3, date: '16 May 2026', handledBy: 'Usman Tariq', totalMessages: 18, attachments: 6, closingRemarks: 'SMS sender ID reconfigured; parent OTP login fixed.' },
-  { number: 2, date: '09 May 2026', handledBy: 'Sara Ali',    totalMessages: 11, attachments: 3, closingRemarks: 'Result card A4 margins corrected; export aligned.' },
-  { number: 1, date: '30 Apr 2026', handledBy: 'Ahmed Khan',  totalMessages: 7,  attachments: 1, closingRemarks: 'Biometric device time-zone drift fixed; sync restored.' },
-];
-
-/* Demo chat transcript (static) used for the session-detail preview. */
-const DEMO_TRANSCRIPT = [
-  { type: 'day', text: 'Session opened' },
-  { type: 'in',  sender: 'Dr. Asif · Principal', time: '9:05 AM', text: 'Assalam o Alaikum. Attendance is not saving for Class 6.' },
-  { type: 'out', sender: 'Agent Sara',            time: '9:07 AM', text: 'Walaikum Assalam. Could you share a screenshot of the error?' },
-  { type: 'in',  sender: 'Dr. Asif · Principal', time: '9:09 AM', media: 'image' },
-  { type: 'in',  sender: 'Dr. Asif · Principal', time: '9:10 AM', media: 'voice' },
-  { type: 'out', sender: 'Agent Sara',            time: '9:22 AM', text: 'Thanks — here is a quick reference guide:' },
-  { type: 'out', sender: 'Agent Sara',            time: '9:23 AM', media: 'document' },
-  { type: 'in',  sender: 'Dr. Asif · Principal', time: '9:30 AM', media: 'video' },
-  { type: 'out', sender: 'Agent Sara',            time: '9:33 AM', text: 'The date filter was reset. Please try saving now.' },
-  { type: 'in',  sender: 'Dr. Asif · Principal', time: '9:34 AM', text: 'It works now. JazakAllah!' },
-];
-
+/* Yahan pehle SUMMARY / ACTIVE / INACTIVE / HISTORY_SESSIONS / DEMO_TRANSCRIPT
+   ke static rows (Daffodil Schools waghera) pade thay, jo API tak baat na ho
+   sakne par screen par aa jate thay. Super Admin ko sample record dikhna
+   bilkul nahi chahiye — asli record na ho to khali haalat (empty state)
+   dikhti hai. */
 const statusClass = (s) =>
   s === 'Active' ? 'ov-bdg-green' : s === 'Pending' ? 'ov-bdg-amber' : 'ov-bdg-slate';
 
@@ -122,10 +74,11 @@ const messagePreview = (m) =>
 
 const extOf = (name) => ((name && name.includes('.')) ? name.split('.').pop().toLowerCase() : '');
 
+
 /* API message → transcript row (wahi shape jo TranscriptRow padhta hai).
    Attachment ka chalne wala URL bhi saath — history me file waqai khulni
    chahiye, sirf uska naam dikhana kaafi nahi. */
-function toTranscriptRow(m) {
+function toTranscriptRow(m, ownerName) {
   const out = m.senderType === SenderType.Agent;
   /* Voice note ka body sirf API ka laazmi caption hota hai — transcript me
      bubble ke saath "Voice note" likha nahi aana chahiye (wahi rule jo live
@@ -134,7 +87,12 @@ function toTranscriptRow(m) {
   const isVoicePlaceholder = m.messageType === MessageType.VoiceNote && body === VOICE_NOTE_CAPTION;
   const row = {
     type: out ? 'out' : 'in',
-    sender: m.senderName || (out ? 'Support Agent' : 'School'),
+    /* senderName me API user ka login bhejti hai, jo rabta number hota hai
+       (03xx…) — number ki jagah school ka malik / support agent likha jata
+       hai. Asli naam aaye to wahi rehta hai. */
+    sender: (looksLikePhoneNumber(m.senderName) || !m.senderName)
+      ? (out ? 'Support Agent' : (ownerName || 'School'))
+      : m.senderName,
     time: fmtClock(m.createdAt),
     text: isVoicePlaceholder ? '' : body,
     mediaName: m.attachmentName || '',
@@ -166,7 +124,7 @@ function toTranscriptRow(m) {
  *      isi ka pata deta hai.
  * Screen dono marhalon ke baad ek saath dikhti hai (component `busy` par loader
  * chalata hai) — aadhi bhari, aadhi loading wali screen se behtar.
- * API tak na pahunche to `live:false` — screen demo rows par gir jati hai.
+ * API tak na pahunche to `live:false` — tables khali rehti hain (koi demo row nahi).
  */
 function useOverviewData() {
   const [s, setS] = useState({
@@ -246,6 +204,8 @@ function useOverviewData() {
           school: sch.schoolName || `School #${sch.schoolId}`,
           campus: sch.campusName || '—',
           principal: sch.principalName || '—',
+          /* Transcript me school-side bubbles par yahi naam lagta hai. */
+          owner: sch.ownerName || sch.principalName || '',
           contact: sch.contactNumber || '—',
           agent: latest?.agentName || 'Unassigned',
           lastSession: fmtDate(latest?.closedAt || latest?.createdAt),
@@ -311,17 +271,15 @@ export default function AgentOverview() {
      load hoti hui. Ek hi baar mukammal screen dikhana behtar hai. */
   const busy = d.loading || d.historyLoading;
 
-  /* Pehli load par kuch bhi na dikhao — na demo rows, na khali tables.
-     Warna screen pehle sample numbers dikhati thi aur ek lamhe baad chup-chaap
-     asli numbers par badal jati thi (yehi baaqi modules ka tareeqa hai:
-     spinner pehle, data baad me). Demo rows sirf tab aati hain jab API se
-     baat hi na ho sake. */
-  const cards = live ? liveCards(d) : SUMMARY;
-  const activeRows = live ? d.activeRows : ACTIVE;
-  const inactiveRows = live ? d.inactiveRows : INACTIVE;
-  /* Live me har row apni closed sessions saath laati hai; offline demo me wahi
-     ek static list sab ke liye. */
-  const sessionList = historyFor ? (live ? (historyFor.items || []) : HISTORY_SESSIONS) : [];
+  /* Pehli load par kuch bhi na dikhao — screen `busy` tak loader par rehti
+     hai (yehi baaqi modules ka tareeqa hai: spinner pehle, data baad me).
+     API tak baat na ho sake to yeh sab khali rehte hain — koi demo row
+     nahi girti. */
+  const cards = liveCards(d);
+  const activeRows = d.activeRows;
+  const inactiveRows = d.inactiveRows;
+  /* Har row apni closed sessions saath laati hai. */
+  const sessionList = historyFor ? (historyFor.items || []) : [];
 
   const filteredInactive = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -334,11 +292,15 @@ export default function AgentOverview() {
   /* Session kholte hi uski asli transcript — /sessions/{id} se. */
   const openTranscript = async (sess) => {
     setOpenSession(sess);
-    if (!live || !sess.sessionId) { setTranscript(null); return; }
+    if (!sess.sessionId) {
+      setTranscript({ loading: false, rows: [], error: 'This session has no transcript on the server.' });
+      return;
+    }
     setTranscript({ loading: true, rows: [] });
     try {
       const detail = await supportApi.getSessionDetail(sess.sessionId);
-      setTranscript({ loading: false, rows: (detail.messages || []).map(toTranscriptRow) });
+      const owner = historyFor?.owner || '';
+      setTranscript({ loading: false, rows: (detail.messages || []).map((m) => toTranscriptRow(m, owner)) });
     } catch (err) {
       setTranscript({ loading: false, rows: [], error: err?.message || 'Could not load this session' });
     }
@@ -354,13 +316,13 @@ export default function AgentOverview() {
           <h1 className="ov-title">Support Overview</h1>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          {/* Screen par saaf rahe ke numbers live hain ya demo — warna offline
-              fallback asli data lagta hai. */}
+          {/* Screen par saaf rahe ke numbers API se aaye hain ya API tak baat hi
+              nahi ho saki — us surat me har table khali hoti hai. */}
           {busy
             ? <span className="ov-bdg ov-bdg-slate"><i className="fa-solid fa-spinner fa-spin" aria-hidden="true" /> Loading</span>
             : live
               ? <span className="ov-bdg ov-bdg-green"><i className="fa-solid fa-circle" style={{ fontSize: 7 }} aria-hidden="true" /> Live</span>
-              : <span className="ov-bdg ov-bdg-amber" title={d.error || ''}><i className="fa-solid fa-triangle-exclamation" aria-hidden="true" /> Sample data</span>}
+              : <span className="ov-bdg ov-bdg-amber" title={d.error || ''}><i className="fa-solid fa-triangle-exclamation" aria-hidden="true" /> Not connected</span>}
           <button className="ov-btn-ghost" onClick={d.reload} disabled={busy}>
             <i className="fa-solid fa-rotate" aria-hidden="true" /> Refresh
           </button>
@@ -525,16 +487,14 @@ export default function AgentOverview() {
             <span className="ov-bdg ov-bdg-slate">Closed</span>
           </div>
           <div className="ov-chat">
-            {/* Live par asli messages (/sessions/{id}); offline demo par wahi
-                static transcript. */}
-            {!live && DEMO_TRANSCRIPT.map((m, i) => <TranscriptRow key={i} m={m} />)}
-            {live && transcript?.loading && (
+            {/* Sirf asli messages (/sessions/{id}) — koi static transcript nahi. */}
+            {transcript?.loading && (
               <div className="ov-empty" style={{ padding: 24 }}><i className="fa-solid fa-spinner fa-spin" aria-hidden="true" /> Loading transcript…</div>
             )}
-            {live && transcript?.error && (
+            {transcript?.error && (
               <div className="ov-empty" style={{ padding: 24 }}><i className="fa-solid fa-triangle-exclamation" aria-hidden="true" /> {transcript.error}</div>
             )}
-            {live && transcript && !transcript.loading && !transcript.error && (
+            {transcript && !transcript.loading && !transcript.error && (
               transcript.rows.length
                 ? transcript.rows.map((m, i) => <TranscriptRow key={i} m={m} />)
                 : <div className="ov-empty" style={{ padding: 24 }}>No messages in this session.</div>
