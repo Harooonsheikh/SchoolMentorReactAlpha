@@ -11,9 +11,18 @@
         at runtime (ASP.NET MVC embed, or a future micro-frontend host).
      2. REACT_APP_SUPPORT_* env vars — only for pointing the CRA dev app at a
         local API instance.
-     3. The ERP's own API base (src/utils/apiConfig getBaseUrl) + the ERP's
-        session token. This is the normal in-app path: the user is already
-        logged in, so Support never asks for credentials again.
+     3. Support ka apna host + ERP ka session token. This is the normal in-app
+        path: the user is already logged in, so Support never asks for
+        credentials again.
+
+   Base URL, dev vs prod:
+     dev  → seedha https://alphaapi.schoolmentor.ai (Customer Support ka swagger
+       wahin hai: /swagger/index.html). Support ka CORS caller ka Origin echo
+       karta hai, is liye localhost se seedhi call chalti hai.
+     prod → ERP ka apna origin (getBaseUrl), kyunki https page ke liye IIS
+       /api/support/... ko usi API par forward karta hai — cross-origin jaane
+       par CORS block kar deta hai. Dekho public/web.config.
+     REACT_APP_SUPPORT_API set ho to wo dono par ghalib hai.
 
    The base URL / token are resolved lazily on every call because getBaseUrl()
    reads localStorage and the session token only appears after login.
@@ -40,9 +49,16 @@ const cfg = {
   },
 };
 
-/** Host origin the Support API is served from (ERP's own API host by default). */
+/* Customer Support API ka host — swagger: https://alphaapi.schoolmentor.ai/swagger/index.html */
+const SUPPORT_DEV_API = 'https://alphaapi.schoolmentor.ai';
+
+/** Host origin the Support API is served from. */
 export function supportApiBase() {
-  return cfg.apiBaseUrl || stripTrailingSlash(getBaseUrl());
+  if (cfg.apiBaseUrl) return stripTrailingSlash(cfg.apiBaseUrl);
+  /* prod me apna hi origin (IIS proxy), dev me seedha alphaapi. */
+  return env.NODE_ENV === 'production'
+    ? stripTrailingSlash(getBaseUrl())
+    : SUPPORT_DEV_API;
 }
 
 /** Every Support REST route sits under this prefix. */
