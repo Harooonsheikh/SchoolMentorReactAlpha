@@ -18,11 +18,12 @@
      3. The defaults below + the console's own session token.
 
    Base URL, dev vs prod:
-     dev  (npm start on :3001) → the API host directly. Its CORS policy echoes
-       the caller's Origin, so localhost:3001 is allowed — no proxy needed
-       (unlike SchoolMentorSuperAdminAPI, which has a fixed allow-list).
+     dev  (npm start on :3001) → the API host directly: https://alphaapi.schoolmentor.ai
+       (uska swagger /swagger/index.html par hai). Support ka CORS caller ka
+       Origin echo karta hai, so localhost:3001 chalta hai — koi proxy nahi
+       chahiye (SchoolMentorSuperAdminAPI ke bar-aks, jiski fixed allow-list hai).
      prod (npm run build)      → OWN origin (empty base). The site is https and
-       cannot call http://IP:4100 (mixed content), so IIS reverse-proxies
+       cannot call the API host cross-origin, so IIS reverse-proxies
        /api/... to the API — see the "API Proxy" rule in public/web.config.
 
    The base URL / token are resolved lazily on every call because the session
@@ -33,8 +34,10 @@ const env = (typeof process !== 'undefined' && process.env) ? process.env : {};
 
 const stripTrailingSlash = (u) => (typeof u === 'string' ? u.replace(/\/+$/, '') : u);
 
-/* Host the Support API is served from. '' → this app's own origin. */
-const DEV_API_BASE = 'http://50.190.164.42:4100';
+/* Host the Support API is served from. '' → this app's own origin.
+   Dev me seedha alphaapi — Customer Support ka swagger wahin hai:
+   https://alphaapi.schoolmentor.ai/swagger/index.html */
+const DEV_API_BASE = 'https://alphaapi.schoolmentor.ai';
 const PROD_API_BASE = '';
 
 const DEFAULT_API_BASE = env.REACT_APP_SUPPORT_API
