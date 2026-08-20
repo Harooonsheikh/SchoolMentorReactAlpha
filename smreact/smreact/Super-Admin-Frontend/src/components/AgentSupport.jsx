@@ -726,7 +726,21 @@ export default function AgentSupport({ embedded = false, tab, onTab, showBack = 
               <div className="ag-av ag-av-lg">{sessionOpen ? chatAvatar : '—'}</div>
               <div>
                 <div className="ag-hdr-nm">{sessionOpen ? schoolName : 'No conversation open'}</div>
-                <div className="ag-hdr-st"><i className="fa-solid fa-circle" style={{ fontSize: 7 }} aria-hidden="true"></i> {liveStatusLabel(chat.status)}{sessionOpen && campusName ? ' · ' + campusName : ''}</div>
+                {/* Yeh lakeer CONNECTION ki halat batati hai, school ki
+                    nahi. Pehle yahan har waqt "Online" chamakta tha — school
+                    ke naam ke neeche wo aisa lagta tha jaise school khud
+                    online baithi ho (jab ke presence ka hub abhi band hai),
+                    aur koi chat khuli na hone par bhi "Online" hi likha aata
+                    tha. Ab: connect na ho to asli wajah, warna wahi jo is
+                    waqt saamne hai. */}
+                <div className="ag-hdr-st">
+                  <i className="fa-solid fa-circle" style={{ fontSize: 7, color: chat.status === 'connected' ? '#16A34A' : '#F59E0B' }} aria-hidden="true"></i>{' '}
+                  {chat.status !== 'connected'
+                    ? liveStatusLabel(chat.status)
+                    : sessionOpen
+                      ? (campusName || 'Support session')
+                      : 'Waiting for a conversation'}
+                </div>
               </div>
             </div>
             <div className="ag-hdr-r">
@@ -1398,6 +1412,8 @@ function Ticks({ status }) {
   if (s === MessageStatus.Delivered) return <i className="fa-solid fa-check-double ag-tick-deliv" aria-hidden="true" />;
   return <i className="fa-solid fa-check ag-tick-sent" aria-hidden="true" />;
 }
+/* Connection ka haal. `default` par pehle "Online" tha — yani abhi connect
+   hua hi na ho (status: idle) tab bhi screen "Online" keh deti thi. */
 function liveStatusLabel(status) {
   switch (status) {
     case 'connected': return 'Online';
@@ -1405,7 +1421,7 @@ function liveStatusLabel(status) {
     case 'reconnecting': return 'Reconnecting…';
     case 'offline': return 'Offline';
     case 'error': return 'Auth error';
-    default: return 'Online';
+    default: return 'Connecting…';
   }
 }
 function fmtSec(s) { const m = Math.floor(s / 60); const ss = s % 60; return `${m}:${ss < 10 ? '0' : ''}${ss}`; }
