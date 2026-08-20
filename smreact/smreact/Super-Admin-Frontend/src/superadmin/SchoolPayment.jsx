@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   PAY_SCHOOLS, INITIAL_PAY_SETUP, RECEIVING_METHODS,
-  monthlyCharge, pkr, kfmt, fmtDateLong, fmtDateShort, plusDays, todayISO, deriveRow,
+  monthlyCharge, pkr, kfmt, fmtDateLong, fmtDateShort, plusDays, todayISO, deriveRow, trialInfo,
 } from './paymentData';
 import { paymentsApi, schoolProgressApi, schoolPermissionsApi } from './api';
 
@@ -409,6 +409,47 @@ function FormulaBadge({ setup }) {
     ? <span className="badge b-blue"><i className="fa-solid fa-money-bill-wave" style={{ fontSize: 8 }} /> Lump Sum</span>
     : <span className="badge b-green"><i className="fa-solid fa-user-graduate" style={{ fontSize: 8 }} /> Per Student</span>;
 }
+/* Free trial ka haal. Pehle yahan sirf "30d trial" likha aata tha — yeh
+   batata hi nahi tha ke muddat guzar chuki hai. Ab teen soortein hain:
+   khatam ho chuka (kis din), chal raha hai (kitne din baqi), aur wo naya
+   setup jo abhi API se aaya hi nahi (sirf muddat maloom). */
+function TrialCell({ trial }) {
+  if (!trial) return <span style={{ color: 'var(--tm)' }}>—</span>;
+
+  if (trial.daysLeft == null) {
+    return (
+      <span className="badge b-blue" style={{ fontSize: 9.5 }}>
+        <i className="fa-solid fa-gift" style={{ fontSize: 8 }} /> {trial.days}d trial
+      </span>
+    );
+  }
+
+  if (trial.ended) {
+    return (
+      <>
+        <span className="badge b-red" style={{ fontSize: 9.5 }}>
+          <i className="fa-solid fa-hourglass-end" style={{ fontSize: 8 }} /> Trial ended
+        </span>
+        <div style={{ fontSize: 10, color: 'var(--tm)', marginTop: 2 }}>
+          {trial.days}d · ended {trial.endLabel}
+        </div>
+      </>
+    );
+  }
+
+  /* Aakhri hafte me rang badal jata hai taake nazar me aa jaye. */
+  const cls = trial.daysLeft <= 7 ? 'b-warn' : 'b-blue';
+  return (
+    <>
+      <span className={`badge ${cls}`} style={{ fontSize: 9.5 }}>
+        <i className="fa-solid fa-gift" style={{ fontSize: 8 }} /> {trial.daysLeft}d left
+      </span>
+      <div style={{ fontSize: 10, color: 'var(--tm)', marginTop: 2 }}>
+        {trial.days}d · ends {trial.endLabel}
+      </div>
+    </>
+  );
+}
 function LoadingRow({ cols, msg = 'Loading…' }) {
   return <tr><td colSpan={cols} style={{ textAlign: 'center', padding: 44, color: 'var(--tm)' }}><i className="fa-solid fa-circle-notch fa-spin" style={{ fontSize: 24, display: 'block', margin: '0 auto 12px', color: 'var(--brand)' }} /><div style={{ fontSize: 13, fontWeight: 700 }}>{msg}</div></td></tr>;
 }
@@ -442,6 +483,16 @@ function SetupTab({ schools, payStore, loading, onEdit }) {
     if (!m) return false;
     if (filter === 'done' && !payStore[s.id]) return false;
     if (filter === 'pending' && payStore[s.id]) return false;
+    /* 50+ schools me nazar se dhoondna mushkil hai, is liye khatam ho chuke
+       trials ki apni chhanni. */
+    if (filter === 'trial-ended') {
+      const t = trialInfo(payStore[s.id]);
+      if (!t || !t.ended) return false;
+    }
+    if (filter === 'trial-active') {
+      const t = trialInfo(payStore[s.id]);
+      if (!t || t.ended || t.daysLeft == null) return false;
+    }
     return true;
   });
   return (
@@ -451,6 +502,7 @@ function SetupTab({ schools, payStore, loading, onEdit }) {
           <Search value={q} onChange={setQ} placeholder="Search schools…" />
           <select className="f-input" value={filter} onChange={(e) => setFilter(e.target.value)} style={{ width: 150, height: 38 }}>
             <option value="">All Status</option><option value="done">Setup Done</option><option value="pending">Pending</option>
+            <option value="trial-active">Trial Running</option><option value="trial-ended">Trial Ended</option>
           </select>
         </CardHeader>
         <div className="tbl-wrap">
@@ -461,14 +513,14 @@ function SetupTab({ schools, payStore, loading, onEdit }) {
                 : list.length === 0 ? <NoResults cols={8} /> : list.map((s, i) => {
                 const setup = payStore[s.id];
                 const monthly = setupMonthly(s, setup);
-                const hasTrial = setup && setup.freeTrial && setup.trialDays;
+                const trial = trialInfo(setup);
                 return (
                   <React.Fragment key={s.id}>
                     <tr>
                       <td style={{ color: 'var(--tm)', fontWeight: 700 }}>{i + 1}</td>
                       <td><div style={{ fontWeight: 700, color: 'var(--t1)' }}>{s.name}</div><div style={{ fontSize: 11, color: 'var(--tm)', marginTop: 2 }}>{s.principal} · {s.contact}</div></td>
                       <td><FormulaBadge setup={setup} /></td>
-                      <td>{hasTrial ? <span className="badge b-blue" style={{ fontSize: 9.5 }}><i className="fa-solid fa-gift" style={{ fontSize: 8 }} /> {setup.trialDays}d trial</span> : '—'}</td>
+                      <td><TrialCell trial={trial} /></td>
                       <td style={{ textAlign: 'center' }}>{setup ? <><span style={{ fontWeight: 800, color: 'var(--t1)' }}>{pkr(monthly)}</span><div style={{ fontSize: 10, color: 'var(--tm)' }}>{setup.formula === 'perstudent' ? `${setup.perStudentRate} × ${setup.studentCount || s.students} students` : '/ month'}</div></> : '—'}</td>
                       <td style={{ textAlign: 'center' }}>{setup ? <span className="badge ps-badge-setup"><i className="fa-solid fa-circle-check" style={{ fontSize: 8 }} /> Set Up</span> : <span className="badge ps-badge-pending"><i className="fa-solid fa-hourglass-half" style={{ fontSize: 8 }} /> Pending</span>}</td>
                       <td style={{ textAlign: 'center' }}><button className={`ps-action-btn${setup ? ' is-edit' : ' is-setup'}`} onClick={() => onEdit(s)}><i className={`fa-solid fa-${setup ? 'pen' : 'plus'}`} /> {setup ? 'Edit' : 'Set Up'}</button></td>
@@ -486,7 +538,15 @@ function SetupTab({ schools, payStore, loading, onEdit }) {
                               <div className="psetup-detail-card"><div className="pdc-lbl">Formula</div><div className="pdc-val" style={{ fontSize: 13 }}>{setup.formula === 'lumpsum' ? 'Lump Sum' : 'Per Student'}</div></div>
                               <div className="psetup-detail-card"><div className="pdc-lbl">Monthly Bill</div><div className="pdc-val">{pkr(monthly)}</div>{setup.formula === 'perstudent' && <div className="pdc-sub">{setup.perStudentRate} × {setup.studentCount || s.students} students</div>}</div>
                               <div className="psetup-detail-card"><div className="pdc-lbl">Annual Revenue</div><div className="pdc-val">{pkr(annual)}</div><div className="pdc-sub">projected</div></div>
-                              <div className="psetup-detail-card"><div className="pdc-lbl">Free Trial</div><div className="pdc-val" style={{ fontSize: 13 }}>{setup.freeTrial && setup.trialDays ? `${setup.trialDays} days` : 'None'}</div></div>
+                              <div className="psetup-detail-card">
+                                <div className="pdc-lbl">Free Trial</div>
+                                <div className="pdc-val" style={{ fontSize: 13, color: trial && trial.ended ? 'var(--err)' : undefined }}>
+                                  {!trial ? 'None' : trial.ended ? 'Ended' : `${trial.days} days`}
+                                </div>
+                                {trial && trial.daysLeft != null && (
+                                  <div className="pdc-sub">{trial.ended ? `${trial.days}d · ended ${trial.endLabel}` : `${trial.daysLeft} days left · ends ${trial.endLabel}`}</div>
+                                )}
+                              </div>
                               <div className="psetup-detail-card"><div className="pdc-lbl">Total Students</div><div className="pdc-val" style={{ fontSize: 13 }}>{setup.studentCount || s.students || 0}</div></div>
                               <div className="psetup-detail-card"><div className="pdc-lbl">Previous Amount</div><div className="pdc-val" style={{ fontSize: 13 }}>{pkr(setup.previousAmount || 0)}</div></div>
                               <div className="psetup-detail-card"><div className="pdc-lbl">Setup ID</div><div className="pdc-val" style={{ fontSize: 13 }}>{setup.id ? `#${setup.id}` : '—'}</div>{setup.type && <div className="pdc-sub">{setup.type}</div>}</div>
@@ -832,6 +892,9 @@ function SetupSummaryStrip({ school, summary, loading }) {
     );
   }
   const updated = fmtStamp(summary.modifiedAt || summary.createdAt);
+  /* Trial ki muddat setup ke banne ke din se ginti hai — dekho
+     paymentData.trialInfo. */
+  const trial = trialInfo(summary);
   const cell = (lbl, val, sub) => (
     <div style={{ minWidth: 0 }}>
       <div style={{ fontSize: 10, fontWeight: 800, color: 'var(--tm)', letterSpacing: '.5px', textTransform: 'uppercase' }}>{lbl}</div>
@@ -852,7 +915,15 @@ function SetupSummaryStrip({ school, summary, loading }) {
           summary.formula === 'perstudent' ? `rate ${summary.perStudentRate}` : null)}
         {cell('Monthly Bill', pkr(setupMonthly(school, summary)))}
         {cell('Students', summary.studentCount || school.students || 0)}
-        {cell('Free Trial', summary.freeTrial && summary.trialDays ? `${summary.trialDays} days` : 'None')}
+        {cell(
+          'Free Trial',
+          !trial ? 'None' : trial.ended ? 'Ended' : `${trial.days} days`,
+          trial && trial.daysLeft != null
+            ? (trial.ended
+              ? `${trial.days}d · ended ${trial.endLabel}`
+              : `${trial.daysLeft} days left · ends ${trial.endLabel}`)
+            : null,
+        )}
         {cell('Last Updated', updated || '—')}
       </div>
     </div>

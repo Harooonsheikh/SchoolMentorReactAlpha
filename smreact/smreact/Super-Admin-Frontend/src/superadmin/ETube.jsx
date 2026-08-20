@@ -1,21 +1,44 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ET_CM, catMeta, INITIAL_CATS, INITIAL_VIDS, INITIAL_REVS, INITIAL_SCHOOL_VIDS,
-  UPLOAD_CATEGORIES, REJECT_REASONS, CATEGORY_COLORS, todayLabel,
+  ET_CM, catMeta, INITIAL_REVS, INITIAL_SCHOOL_VIDS,
+  UPLOAD_CATEGORIES, REJECT_REASONS, CATEGORY_COLORS,
 } from './etubeData';
+import { etubeApi } from './api';
 
 /* ═══════════════════════════════════════════════════════════════════
-   E-TUBE — Super Admin module (frontend only)
+   E-TUBE — Super Admin module
 
-   Head Office educational video studio. Five inner tabs:
-     Dashboard · Reviews · Videos · Upload · Categories
-   All data is in-component demo state (see ./etubeData). No backend.
-   Faithful port of "Super_admin_with_ETube (17).html".
+   Head Office educational video studio. Inner tabs:
+     Videos · Upload · Categories
+   (Dashboard aur Reviews filhaal band hain — dekho SHOW_DASHBOARD_REVIEWS.)
+
+   Videos aur Categories ab LIVE SchoolMentorSuperAdminAPI par hain
+   (api/services/etube.js):
+     Categories tab  → /api/AHM_Etube/manage_categories  (get/insert/update/delete)
+     Upload + Videos → /api/AHM_Etube/manage_videos      (multipart, wohi actions)
+
+   Reviews aur "Other Schools" videos ki abhi koi API nahi — wo do screens
+   demo data par hi hain (./etubeData). Baqi UI wohi hai jo
+   "Super_admin_with_ETube (17).html" me tha.
    ═══════════════════════════════════════════════════════════════════ */
 
+/* ── Dashboard + Reviews filhaal band ──────────────────────────────────
+   Dono screens abhi mukammal nahi hain (Reviews ki to koi API bhi nahi, wo
+   demo data par chal rahi thi), is liye tab bar se hata di gayi hain. Unka
+   saara code — Dashboard / Reviews components, review modals, approve /
+   reject ka amal — jyun ka tyun mojood hai; wapas laane ke liye sirf yeh
+   ek line true kar dein, aur kuch nahi badalna parega.
+
+   (Comment kar ke hatane ke bajaye switch is liye rakha hai ke un dono
+   components ka code bhi "istemal me" gina jata rahe — warna build par
+   "defined but never used" warnings aa jate hain.) */
+const SHOW_DASHBOARD_REVIEWS = false;
+
 const TABS = [
-  { id: 'dashboard',  name: 'Dashboard',  icon: 'fa-gauge-high' },
-  { id: 'reviews',    name: 'Reviews',    icon: 'fa-star-half-stroke', badge: true },
+  ...(SHOW_DASHBOARD_REVIEWS ? [
+    { id: 'dashboard',  name: 'Dashboard',  icon: 'fa-gauge-high' },
+    { id: 'reviews',    name: 'Reviews',    icon: 'fa-star-half-stroke', badge: true },
+  ] : []),
   { id: 'videos',     name: 'Videos',     icon: 'fa-photo-film' },
   { id: 'upload',     name: 'Upload',     icon: 'fa-cloud-arrow-up' },
   { id: 'categories', name: 'Categories', icon: 'fa-layer-group' },
@@ -57,23 +80,63 @@ function Thumb({ cls, cat, dotCls }) {
 }
 
 export default function ETube({ toast }) {
-  const [tab, setTab] = useState('dashboard');
+  const [tab, setTab] = useState(SHOW_DASHBOARD_REVIEWS ? 'dashboard' : 'videos');
 
-  const [vids, setVids] = useState(INITIAL_VIDS);
-  const [cats, setCats] = useState(INITIAL_CATS);
+  /* Videos + categories API se aate hain; reviews aur school videos ki abhi
+     koi API nahi, is liye wo demo data par hain. */
+  const [vids, setVids] = useState([]);
+  const [cats, setCats] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);          // ek waqt me ek write
   const [revs, setRevs] = useState(INITIAL_REVS);
   const [schoolVids, setSchoolVids] = useState(INITIAL_SCHOOL_VIDS);
-  const catSeq = useRef(8);
-  const vidSeq = useRef(11);
 
   const [modal, setModal] = useState(null);   // { type, ... }
+
+  const toastRef = useRef(toast);
+  toastRef.current = toast;
+
+  /* ── Live load ── */
+  const loadCats = useCallback(async () => {
+    try {
+      const rows = await etubeApi.listCategories();
+      /* CatBadge / Thumb apna icon-rang ET_CM se uthate hain, is liye live
+         categories wahan register kar dete hain — warna har nayi category
+         default icon par gir jati hai. */
+      rows.forEach((c) => { ET_CM[c.name] = { i: c.icon, c: c.color, bg: `${c.color}22` }; });
+      setCats(rows);
+    } catch (err) {
+      toastRef.current?.(err?.message || 'Could not load categories', 'error');
+    }
+  }, []);
+
+  const loadVids = useCallback(async () => {
+    try {
+      setVids(await etubeApi.listVideos());
+    } catch (err) {
+      toastRef.current?.(err?.message || 'Could not load videos', 'error');
+    }
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      setLoading(true);
+      await Promise.all([loadCats(), loadVids()]);
+      if (alive) setLoading(false);
+    })();
+    return () => { alive = false; };
+  }, [loadCats, loadVids]);
 
   /* ── Derived stats ── */
   const stats = useMemo(() => {
     const live = vids.filter((v) => v.status === 'Live').length;
     const proc = vids.filter((v) => v.status === 'Processing').length;
-    const views = vids.reduce((a, v) => a + v.views, 0);
-    const mon = vids.filter((v) => v.date.includes('Jun 2026')).length;
+    const views = vids.reduce((a, v) => a + (v.views || 0), 0);
+    /* "This month" ab chalte mahine se — pehle 'Jun 2026' hardcoded tha,
+       jo live dates ke saath hamesha 0 deta. */
+    const thisMonth = new Date().toISOString().slice(0, 7);
+    const mon = vids.filter((v) => String(v.createdAt || '').slice(0, 7) === thisMonth).length;
     const pending = revs.filter((r) => r.status === 'Pending').length;
     return {
       total: vids.length, live, proc, views, mon, pending,
@@ -83,35 +146,70 @@ export default function ETube({ toast }) {
     };
   }, [vids, revs, schoolVids]);
 
-  /* ── Video CRUD ── */
-  const saveEdit = (id, patch) => {
-    setVids((prev) => prev.map((v) => v.id === id ? { ...v, ...patch } : v));
-    setModal(null); toast?.('Video updated', 'success');
-  };
-  const deleteVid = (id) => {
-    setVids((prev) => prev.filter((v) => v.id !== id));
-    setModal(null); toast?.('Video deleted', 'info');
-  };
-  const publishVid = (data) => {
-    setVids((prev) => [{ id: vidSeq.current++, ...data, vis: 'all', status: 'Live', date: todayLabel(), views: 0 }, ...prev]);
-    toast?.('Video published live on the School Mentor app!', 'success');
-  };
-
-  /* ── Category CRUD ── */
-  const saveCat = (form, editId) => {
-    if (editId) {
-      setCats((prev) => prev.map((c) => c.id === editId ? { ...c, ...form } : c));
-      toast?.('Category updated', 'success');
-    } else {
-      ET_CM[form.name] = { i: form.icon, c: form.color, bg: `${form.color}22` };
-      setCats((prev) => [...prev, { id: catSeq.current++, ...form }]);
-      toast?.('Category added', 'success');
+  /* ── Video CRUD — manage_videos (update / delete) ──
+     Update par poora row wapas jata hai (sirf badla hua hissa nahi), warna
+     Thumbnail / VideoFile ke stored paths khali chale jate aur file gum ho
+     jati — wohi usool jo SOP ke PDFPath par hai. */
+  const saveEdit = async (id, patch) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const cur = vids.find((v) => v.id === id) || {};
+      await etubeApi.saveVideo({ ...cur, ...patch }, id);
+      toast?.('Video updated', 'success');
+      setModal(null);
+      await loadVids();
+    } catch (err) {
+      toast?.(err?.message || 'Could not update video', 'error');
+    } finally {
+      setBusy(false);
     }
-    setModal(null);
   };
-  const deleteCat = (id) => {
-    setCats((prev) => prev.filter((c) => c.id !== id));
-    setModal(null); toast?.('Category deleted', 'info');
+  const deleteVid = async (id) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await etubeApi.deleteVideo(id);
+      toast?.('Video deleted', 'info');
+      setModal(null);
+      await loadVids();
+    } catch (err) {
+      toast?.(err?.message || 'Could not delete video', 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+  /* Upload panel khud API par file bhejta hai; yahan sirf list taza karni hai. */
+  const onUploaded = async () => { await loadVids(); };
+
+  /* ── Category CRUD — manage_categories (insert / update / delete) ── */
+  const saveCat = async (form, editId) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await etubeApi.saveCategory(form, editId);
+      toast?.(editId ? 'Category updated' : 'Category added', 'success');
+      setModal(null);
+      await loadCats();
+    } catch (err) {
+      toast?.(err?.message || 'Could not save category', 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+  const deleteCat = async (id) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await etubeApi.deleteCategory(id);
+      toast?.('Category deleted', 'info');
+      setModal(null);
+      await loadCats();
+    } catch (err) {
+      toast?.(err?.message || 'Could not delete category', 'error');
+    } finally {
+      setBusy(false);
+    }
   };
 
   /* ── Reviews ── */
@@ -157,28 +255,28 @@ export default function ETube({ toast }) {
         ))}
       </div>
 
-      {tab === 'dashboard' && (
+      {SHOW_DASHBOARD_REVIEWS && tab === 'dashboard' && (
         <Dashboard stats={stats} vids={vids} revs={revs} goReviews={goReviews} setTab={setTab} />
       )}
-      {tab === 'reviews' && (
+      {SHOW_DASHBOARD_REVIEWS && tab === 'reviews' && (
         <Reviews stats={stats} revs={revs} setModal={setModal} />
       )}
       {tab === 'videos' && (
-        <Videos vids={vids} schoolVids={schoolVids} setModal={setModal} goUpload={goUpload} />
+        <Videos vids={vids} cats={cats} schoolVids={schoolVids} loading={loading} setModal={setModal} goUpload={goUpload} />
       )}
       {tab === 'upload' && (
-        <Upload onPublish={publishVid} toast={toast} />
+        <Upload cats={cats} onUploaded={onUploaded} toast={toast} />
       )}
       {tab === 'categories' && (
-        <Categories cats={cats} vids={vids} setModal={setModal} />
+        <Categories cats={cats} vids={vids} loading={loading} setModal={setModal} />
       )}
 
       {/* ── MODALS ── */}
       {modal?.type === 'viewVid' && <ViewVideoModal vid={modal.vid} onClose={() => setModal(null)} />}
-      {modal?.type === 'editVid' && <EditVideoModal vid={modal.vid} onSave={saveEdit} onClose={() => setModal(null)} />}
-      {modal?.type === 'delVid' && <DeleteVideoModal vid={modal.vid} onConfirm={() => deleteVid(modal.vid.id)} onClose={() => setModal(null)} />}
-      {modal?.type === 'cat' && <CategoryModal cat={modal.cat} onSave={saveCat} onClose={() => setModal(null)} />}
-      {modal?.type === 'delCat' && <DeleteCategoryModal cat={modal.cat} onConfirm={() => deleteCat(modal.cat.id)} onClose={() => setModal(null)} />}
+      {modal?.type === 'editVid' && <EditVideoModal vid={modal.vid} cats={cats} busy={busy} onSave={saveEdit} onClose={() => setModal(null)} />}
+      {modal?.type === 'delVid' && <DeleteVideoModal vid={modal.vid} busy={busy} onConfirm={() => deleteVid(modal.vid.id)} onClose={() => setModal(null)} />}
+      {modal?.type === 'cat' && <CategoryModal cat={modal.cat} busy={busy} onSave={saveCat} onClose={() => setModal(null)} />}
+      {modal?.type === 'delCat' && <DeleteCategoryModal cat={modal.cat} busy={busy} onConfirm={() => deleteCat(modal.cat.id)} onClose={() => setModal(null)} />}
       {modal?.type === 'revDetails' && <ReviewDetailsModal rev={modal.rev} onApprove={() => setModal({ type: 'approveRev', rev: modal.rev })} onReject={() => setModal({ type: 'rejectRev', rev: modal.rev })} onClose={() => setModal(null)} />}
       {modal?.type === 'approveRev' && <ApproveModal rev={modal.rev} onConfirm={() => approveRev(modal.rev.id)} onClose={() => setModal(null)} />}
       {modal?.type === 'rejectRev' && <RejectModal rev={modal.rev} onConfirm={(reason, note) => rejectRev(modal.rev.id, reason, note)} onClose={() => setModal(null)} />}
@@ -346,8 +444,12 @@ function RvStat({ icon, iColor, iBg, val, lbl }) {
 }
 
 /* ═══════════════════════ VIDEOS ═══════════════════════ */
-function Videos({ vids, schoolVids, setModal, goUpload }) {
+function Videos({ vids, cats, schoolVids, loading, setModal, goUpload }) {
   const [sub, setSub] = useState('ho');     // 'ho' | 'schools'
+
+  /* Filter dropdowns live categories se; API se abhi kuch na aaya ho to
+     purani tay-shuda list par gir jate hain taake filter khali na lage. */
+  const catNames = cats?.length ? cats.map((c) => c.name) : UPLOAD_CATEGORIES;
 
   /* HO filters */
   const [hSearch, setHSearch] = useState('');
@@ -376,14 +478,18 @@ function Videos({ vids, schoolVids, setModal, goUpload }) {
         <div className="et-card">
           <div className="et-toolbar">
             <div className="et-srch"><i className="fa-solid fa-magnifying-glass" /><input value={hSearch} onChange={(e) => setHSearch(e.target.value)} placeholder="Search by title or description…" /></div>
-            <select className="et-sel" value={hCat} onChange={(e) => setHCat(e.target.value)}><option value="">All Categories</option>{UPLOAD_CATEGORIES.map((c) => <option key={c}>{c}</option>)}</select>
+            <select className="et-sel" value={hCat} onChange={(e) => setHCat(e.target.value)}><option value="">All Categories</option>{catNames.map((c) => <option key={c}>{c}</option>)}</select>
             <select className="et-sel" value={hStatus} onChange={(e) => setHStatus(e.target.value)}><option value="">All Status</option><option value="Live">Live</option><option value="Processing">Processing</option><option value="Draft">Draft</option></select>
             <button className="btn-primary" onClick={goUpload}><i className="fa-solid fa-cloud-arrow-up" /> Upload</button>
           </div>
           <div className="et-vth"><div className="et-th">Thumb</div><div className="et-th">Title &amp; Desc</div><div className="et-th">Category</div><div className="et-th">Status</div><div className="et-th" style={{ textAlign: 'right' }}>Views</div><div className="et-th" style={{ textAlign: 'right' }}>Actions</div></div>
           <div>
             {hoRows.length === 0 ? (
-              <div className="et-empty"><div className="et-ei"><i className="fa-solid fa-photo-film" /></div><div className="et-et">No videos found</div><div className="et-es">Try a different filter or upload a new video.</div><button className="btn-primary" style={{ marginTop: 12 }} onClick={goUpload}><i className="fa-solid fa-cloud-arrow-up" /> Upload Video</button></div>
+              loading ? (
+                <div className="et-empty"><div className="et-ei"><i className="fa-solid fa-spinner fa-spin" /></div><div className="et-et">Loading videos…</div><div className="et-es">Fetching from E-Tube API.</div></div>
+              ) : (
+                <div className="et-empty"><div className="et-ei"><i className="fa-solid fa-photo-film" /></div><div className="et-et">No videos found</div><div className="et-es">Try a different filter or upload a new video.</div><button className="btn-primary" style={{ marginTop: 12 }} onClick={goUpload}><i className="fa-solid fa-cloud-arrow-up" /> Upload Video</button></div>
+              )
             ) : hoRows.map((v) => (
               <div className="et-vr" key={v.id}>
                 <div className="et-td"><Thumb cls="et-vth2" cat={v.cat} dotCls="et-vp" /></div>
@@ -406,7 +512,7 @@ function Videos({ vids, schoolVids, setModal, goUpload }) {
         <div className="et-card">
           <div className="et-toolbar">
             <div className="et-srch" style={{ flex: 1.5 }}><i className="fa-solid fa-magnifying-glass" /><input value={sSearch} onChange={(e) => setSSearch(e.target.value)} placeholder="Search by school name, video title…" /></div>
-            <select className="et-sel" value={sCat} onChange={(e) => setSCat(e.target.value)}><option value="">All Categories</option>{UPLOAD_CATEGORIES.map((c) => <option key={c}>{c}</option>)}</select>
+            <select className="et-sel" value={sCat} onChange={(e) => setSCat(e.target.value)}><option value="">All Categories</option>{catNames.map((c) => <option key={c}>{c}</option>)}</select>
             <select className="et-sel" value={sStatus} onChange={(e) => setSStatus(e.target.value)}><option value="">All Status</option><option value="Approved">Approved</option><option value="Pending">Pending</option><option value="Rejected">Rejected</option></select>
           </div>
           <div className="et-vth" style={{ gridTemplateColumns: '80px 2fr 1.2fr 1fr 1fr 80px 90px' }}>
@@ -440,46 +546,94 @@ function Videos({ vids, schoolVids, setModal, goUpload }) {
 }
 
 /* ═══════════════════════ UPLOAD ═══════════════════════ */
-function Upload({ onPublish, toast }) {
+/* Asli upload — POST /api/AHM_Etube/manage_videos (Action: insert).
+
+   Purana panel sirf setTimeout se "uploading → processing" ka natak karta
+   tha. Ab char qadam asli haal dikhate hain:
+     1 Upload      → bytes ja rahe hain (xhr.upload.onprogress ka %)
+     2 Processing  → sab bytes chale gaye, ab API ke jawab ka intezaar
+     3 Publish     → API ne kaamyabi di
+     4 Live on App → row list me aa gayi (Status=true ke saath insert hui)
+
+   HO videos seedha live jati hain — koi approval nahi — is liye Status
+   hamesha true bhejte hain. */
+function Upload({ cats, onUploaded, toast }) {
   const [title, setTitle] = useState('');
   const [desc, setDesc] = useState('');
-  const [cat, setCat] = useState('School Mentor');
-  const [phase, setPhase] = useState('idle');   // idle | uploading | processing | ready | publishing | published
-  const timers = useRef([]);
+  const [catId, setCatId] = useState(0);
+  const [thumbFile, setThumbFile] = useState(null);
+  const [videoFile, setVideoFile] = useState(null);
+  const [phase, setPhase] = useState('idle');   // idle | uploading | processing | published
+  const [pct, setPct] = useState(0);
+  const thumbRef = useRef(null);
+  const videoRef = useRef(null);
 
-  const after = (ms, fn) => { const id = setTimeout(fn, ms); timers.current.push(id); };
+  /* Pehli category default — cats API se aate hain, is liye load hone par. */
+  useEffect(() => {
+    if (!catId && cats?.length) setCatId(cats[0].id);
+  }, [cats, catId]);
+
+  const cat = cats?.find((c) => c.id === Number(catId)) || null;
+  const busy = phase === 'uploading' || phase === 'processing';
 
   const stepState = (n) => {
-    // returns 'done' | 'cur' | ''
     const map = {
-      idle:       { 1: 'done', 2: 'cur', 3: '', 4: '' },
-      uploading:  { 1: 'done', 2: 'cur', 3: '', 4: '' },
-      processing: { 1: 'done', 2: 'cur', 3: '', 4: '' },
-      ready:      { 1: 'done', 2: 'done', 3: 'cur', 4: '' },
-      publishing: { 1: 'done', 2: 'done', 3: 'done', 4: 'cur' },
+      idle:       { 1: 'cur',  2: '',     3: '',     4: '' },
+      uploading:  { 1: 'cur',  2: '',     3: '',     4: '' },
+      processing: { 1: 'done', 2: 'cur',  3: '',     4: '' },
       published:  { 1: 'done', 2: 'done', 3: 'done', 4: 'done' },
     };
     return map[phase][n] || '';
   };
 
-  const doUpload = () => {
+  const pickThumb = (f) => {
+    if (!f) return;
+    if (!/^image\//i.test(f.type)) { toast?.('Thumbnail must be a JPG or PNG image', 'warn'); return; }
+    setThumbFile(f);
+  };
+  const pickVideo = (f) => {
+    if (!f) return;
+    /* UI ka apna wada: MP4 / MOV / WEBM, max 500 MB. */
+    if (f.size > 500 * 1024 * 1024) { toast?.('Video is larger than 500 MB', 'warn'); return; }
+    setVideoFile(f);
+  };
+
+  const doUpload = async () => {
+    if (busy) return;
     if (!title.trim()) { toast?.('Please enter a video title', 'warn'); return; }
-    setPhase('uploading');
-    after(2000, () => {
-      setPhase('processing');
-      after(3000, () => setPhase('ready'));
-    });
+    if (!cat) { toast?.('Please add a category first', 'warn'); return; }
+    if (!videoFile) { toast?.('Please choose a video file', 'warn'); return; }
+
+    setPhase('uploading'); setPct(0);
+    try {
+      await etubeApi.saveVideo(
+        {
+          title: title.trim(),
+          desc: desc.trim() || 'No description.',
+          catId: cat.id,
+          cat: cat.name,
+          status: 'Live',                 // HO video seedha live
+          thumbFile,
+          videoUpload: videoFile,
+        },
+        0,                                 // insert
+        (p) => { setPct(p); if (p >= 100) setPhase('processing'); },
+      );
+      setPhase('published');
+      toast?.('Video published live on the School Mentor app!', 'success');
+      await onUploaded?.();
+      /* Form khali, taake agli video foran upload ho sake. */
+      setTitle(''); setDesc(''); setThumbFile(null); setVideoFile(null); setPct(0);
+      if (thumbRef.current) thumbRef.current.value = '';
+      if (videoRef.current) videoRef.current.value = '';
+      setTimeout(() => setPhase('idle'), 1500);
+    } catch (err) {
+      setPhase('idle'); setPct(0);
+      toast?.(err?.message || 'Could not upload video', 'error');
+    }
   };
 
-  const doPublish = () => {
-    onPublish({ title: title.trim() || 'Untitled Video', desc: desc.trim() || 'No description.', cat });
-    setPhase('publishing');
-    after(1200, () => {
-      setPhase('idle'); setTitle(''); setDesc('');
-    });
-  };
-
-  const dot = (n, content) => {
+  const dot = (n) => {
     const st = stepState(n);
     return (
       <div className={`et-step${st ? ` ${st}` : ''}`}>
@@ -490,8 +644,7 @@ function Upload({ onPublish, toast }) {
     );
   };
 
-  const uploading = phase === 'uploading' || phase === 'processing';
-  const showPub = phase === 'ready' || phase === 'publishing';
+  const fileHint = (f, fallback) => (f ? `${f.name} · ${(f.size / (1024 * 1024)).toFixed(1)} MB` : fallback);
 
   return (
     <div className="et-panel active">
@@ -502,23 +655,46 @@ function Upload({ onPublish, toast }) {
             <div className="et-hlp"><i className="fa-solid fa-circle-info" style={{ color: 'var(--brand)', flexShrink: 0, marginTop: 1 }} /> Head Office videos are published directly after processing. No approval workflow.</div>
             <div className="et-fg"><label className="et-fl">Video Title <span style={{ color: 'var(--err)' }}>*</span></label><input className="et-fi" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Introduction to the Solar System" /></div>
             <div className="et-fg"><label className="et-fl">Description</label><textarea className="et-fta" value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Short description students will see below the video…" /></div>
-            <div className="et-fg"><label className="et-fl">Category <span style={{ color: 'var(--err)' }}>*</span></label><select className="et-fi" value={cat} onChange={(e) => setCat(e.target.value)}>{UPLOAD_CATEGORIES.map((c) => <option key={c}>{c}</option>)}</select></div>
+            <div className="et-fg">
+              <label className="et-fl">Category <span style={{ color: 'var(--err)' }}>*</span></label>
+              <select className="et-fi" value={catId} onChange={(e) => setCatId(Number(e.target.value))}>
+                {!cats?.length && <option value={0}>No categories yet — add one first</option>}
+                {cats?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
           </div>
           <div>
-            <div className="et-fg"><label className="et-fl">Thumbnail</label><div className="et-dz" onClick={() => toast?.('Thumbnail picker — demo', 'info')}><i className="fa-solid fa-image" /><div className="et-dz-t">Upload Thumbnail</div><div className="et-dz-s">JPG or PNG · 1280×720</div></div></div>
-            <div className="et-fg"><label className="et-fl">Video File <span style={{ color: 'var(--err)' }}>*</span></label><div className="et-dz" onClick={() => toast?.('Video picker — demo', 'info')}><i className="fa-solid fa-film" /><div className="et-dz-t">Drag &amp; drop or click to upload</div><div className="et-dz-s">MP4 / MOV / WEBM · max 500 MB</div></div></div>
+            <div className="et-fg">
+              <label className="et-fl">Thumbnail</label>
+              <input ref={thumbRef} type="file" accept="image/png,image/jpeg" style={{ display: 'none' }} onChange={(e) => pickThumb(e.target.files?.[0])} />
+              <div className="et-dz" onClick={() => !busy && thumbRef.current?.click()} style={thumbFile ? { borderColor: 'var(--brand)' } : undefined}>
+                <i className={`fa-solid ${thumbFile ? 'fa-circle-check' : 'fa-image'}`} />
+                <div className="et-dz-t">{thumbFile ? 'Thumbnail selected' : 'Upload Thumbnail'}</div>
+                <div className="et-dz-s">{fileHint(thumbFile, 'JPG or PNG · 1280×720')}</div>
+              </div>
+            </div>
+            <div className="et-fg">
+              <label className="et-fl">Video File <span style={{ color: 'var(--err)' }}>*</span></label>
+              <input ref={videoRef} type="file" accept="video/mp4,video/quicktime,video/webm,video/*" style={{ display: 'none' }} onChange={(e) => pickVideo(e.target.files?.[0])} />
+              <div className="et-dz" onClick={() => !busy && videoRef.current?.click()} style={videoFile ? { borderColor: 'var(--brand)' } : undefined}>
+                <i className={`fa-solid ${videoFile ? 'fa-circle-check' : 'fa-film'}`} />
+                <div className="et-dz-t">{videoFile ? 'Video selected' : 'Drag & drop or click to upload'}</div>
+                <div className="et-dz-s">{fileHint(videoFile, 'MP4 / MOV / WEBM · max 500 MB')}</div>
+              </div>
+            </div>
             <div className="et-fg"><label className="et-fl" style={{ marginBottom: 8 }}>HO Publish Flow</label>
               <div className="et-step-wrap">{dot(1)}{dot(2)}{dot(3)}{dot(4)}</div>
             </div>
-            {!showPub && (
-              <button className="et-up-btn" disabled={uploading} onClick={doUpload}>
-                {uploading ? <><i className="fa-solid fa-spinner fa-spin" /> {phase === 'processing' ? 'Uploaded' : 'Uploading…'}</> : <><i className="fa-solid fa-cloud-arrow-up" /> Upload Video</>}
-              </button>
-            )}
-            {showPub && (
-              <button className="et-pub-btn" disabled={phase === 'publishing'} onClick={doPublish}>
-                {phase === 'publishing' ? <><i className="fa-solid fa-check" /> Published!</> : <><i className="fa-solid fa-rocket" /> Publish Live</>}
-              </button>
+            <button className="et-up-btn" disabled={busy} onClick={doUpload}>
+              {phase === 'uploading' && <><i className="fa-solid fa-spinner fa-spin" /> Uploading… {pct}%</>}
+              {phase === 'processing' && <><i className="fa-solid fa-spinner fa-spin" /> Processing…</>}
+              {phase === 'published' && <><i className="fa-solid fa-check" /> Published!</>}
+              {phase === 'idle' && <><i className="fa-solid fa-cloud-arrow-up" /> Upload &amp; Publish Live</>}
+            </button>
+            {phase === 'uploading' && (
+              <div style={{ marginTop: 10, height: 6, borderRadius: 999, background: 'var(--muted)', overflow: 'hidden' }}>
+                <div style={{ width: `${pct}%`, height: '100%', background: 'linear-gradient(90deg,#1E40AF,#0284C7)', transition: 'width .2s' }} />
+              </div>
             )}
             {phase === 'processing' && (
               <div style={{ marginTop: 10, padding: '9px 12px', borderRadius: 'var(--r-md)', background: 'rgba(2,132,199,.08)', border: '1px solid rgba(2,132,199,.2)', fontSize: 12, color: '#0284C7', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 7 }}><i className="fa-solid fa-spinner fa-spin" /> Processing video… please wait.</div>
@@ -529,9 +705,11 @@ function Upload({ onPublish, toast }) {
     </div>
   );
 }
-
 /* ═══════════════════════ CATEGORIES ═══════════════════════ */
-function Categories({ cats, vids, setModal }) {
+function Categories({ cats, vids, loading, setModal }) {
+  /* Ginti CategoryID par — naam badal jaye to bhi videos apni category ke
+     saath rehti hain. Purani rows jinme ID na ho, naam par gin li jati hain. */
+  const ofCat = (c) => vids.filter((v) => (v.catId ? v.catId === c.id : v.cat === c.name));
   return (
     <div className="et-panel active">
       <div className="et-card">
@@ -539,11 +717,15 @@ function Categories({ cats, vids, setModal }) {
           <div className="et-chl"><div className="et-ci" style={{ background: 'rgba(30,58,138,.1)', color: '#1E40AF' }}><i className="fa-solid fa-layer-group" /></div><div><div className="et-ct">Video Categories</div><div className="et-cs">These appear as tabs in the School Mentor mobile app</div></div></div>
           <button className="btn-primary" onClick={() => setModal({ type: 'cat', cat: null })}><i className="fa-solid fa-plus" /> Add Category</button>
         </div>
+        {loading && !cats.length && (
+          <div className="et-empty"><div className="et-ei"><i className="fa-solid fa-spinner fa-spin" /></div><div className="et-et">Loading categories…</div></div>
+        )}
         <div className="et-cg">
           {cats.map((c) => {
-            const tot = vids.filter((v) => v.cat === c.name).length;
-            const lv = vids.filter((v) => v.cat === c.name && v.status === 'Live').length;
-            const pr = vids.filter((v) => v.cat === c.name && v.status === 'Processing').length;
+            const mine = ofCat(c);
+            const tot = mine.length;
+            const lv = mine.filter((v) => v.status === 'Live').length;
+            const pr = mine.filter((v) => v.status === 'Processing').length;
             return (
               <div className="et-cc" key={c.id}>
                 <div className="et-ctx"><div className="et-cci" style={{ background: `${c.color}22`, color: c.color }}><i className={`fa-solid ${c.icon}`} /></div><div><div className="et-ccn">{c.name}</div><div className="et-ccd">{c.desc || '—'}</div></div></div>
@@ -604,22 +786,40 @@ function ViewVideoModal({ vid, onClose }) {
   );
 }
 
-function EditVideoModal({ vid, onSave, onClose }) {
-  const [form, setForm] = useState({ title: vid.title, desc: vid.desc, cat: vid.cat });
+function EditVideoModal({ vid, cats, busy, onSave, onClose }) {
+  /* Category id se chalti hai (naam sirf dikhane ke liye) — API ko CategoryID
+     aur CategoryName dono chahiye, aur naam badal jane par bhi link na toote. */
+  const [form, setForm] = useState({
+    title: vid.title, desc: vid.desc,
+    catId: vid.catId || cats?.find((c) => c.name === vid.cat)?.id || 0,
+  });
+  const save = () => {
+    const cat = cats?.find((c) => c.id === Number(form.catId));
+    onSave(vid.id, {
+      title: form.title.trim() || vid.title,
+      desc: form.desc.trim(),
+      catId: cat ? cat.id : vid.catId,
+      cat: cat ? cat.name : vid.cat,
+    });
+  };
   return (
     <Modal title="Edit Video" icon="fa-pen" onClose={onClose}
-      footer={<><button className="btn-secondary" onClick={onClose}>Cancel</button><button className="btn-primary" onClick={() => onSave(vid.id, { title: form.title.trim() || vid.title, desc: form.desc.trim(), cat: form.cat })}><i className="fa-solid fa-floppy-disk" /> Save</button></>}>
+      footer={<><button className="btn-secondary" onClick={onClose}>Cancel</button><button className="btn-primary" disabled={busy} onClick={save}><i className={`fa-solid ${busy ? 'fa-spinner fa-spin' : 'fa-floppy-disk'}`} /> {busy ? 'Saving…' : 'Save'}</button></>}>
       <div className="f-field"><label className="f-label">Title</label><input className="f-input" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></div>
       <div className="f-field" style={{ marginTop: 12 }}><label className="f-label">Description</label><textarea className="f-textarea" value={form.desc} onChange={(e) => setForm({ ...form, desc: e.target.value })} /></div>
-      <div className="f-field" style={{ marginTop: 12 }}><label className="f-label">Category</label><select className="f-input" value={form.cat} onChange={(e) => setForm({ ...form, cat: e.target.value })}>{UPLOAD_CATEGORIES.map((c) => <option key={c}>{c}</option>)}</select></div>
+      <div className="f-field" style={{ marginTop: 12 }}><label className="f-label">Category</label>
+        <select className="f-input" value={form.catId} onChange={(e) => setForm({ ...form, catId: Number(e.target.value) })}>
+          {!cats?.length && <option value={0}>{vid.cat || 'No categories'}</option>}
+          {cats?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+      </div>
     </Modal>
   );
 }
-
-function DeleteVideoModal({ vid, onConfirm, onClose }) {
+function DeleteVideoModal({ vid, busy, onConfirm, onClose }) {
   return (
     <Modal title="Delete Video" icon="fa-trash-can" iconColor="var(--err)" maxWidth={460} onClose={onClose}
-      footer={<><button className="btn-secondary" onClick={onClose}>Cancel</button><button className="btn-danger" onClick={onConfirm}><i className="fa-solid fa-trash-can" /> Delete</button></>}
+      footer={<><button className="btn-secondary" onClick={onClose}>Cancel</button><button className="btn-danger" disabled={busy} onClick={onConfirm}><i className={`fa-solid ${busy ? "fa-spinner fa-spin" : "fa-trash-can"}`} /> {busy ? "Deleting…" : "Delete"}</button></>}
       bodyStyle={{ textAlign: 'center', padding: '26px 22px' }}>
       <div style={{ width: 52, height: 52, borderRadius: 14, background: 'rgba(220,38,38,.1)', color: 'var(--err)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, margin: '0 auto 12px' }}><i className="fa-solid fa-trash-can" /></div>
       <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--t1)', marginBottom: 6 }}>Delete this video?</div>
@@ -632,7 +832,7 @@ function DeleteVideoModal({ vid, onConfirm, onClose }) {
   );
 }
 
-function CategoryModal({ cat, onSave, onClose }) {
+function CategoryModal({ cat, busy, onSave, onClose }) {
   const editing = Boolean(cat);
   const [form, setForm] = useState({
     name: cat?.name || '', desc: cat?.desc || '',
@@ -645,7 +845,7 @@ function CategoryModal({ cat, onSave, onClose }) {
   return (
     <Modal title={editing ? 'Edit Category' : 'Add Category'} sub={editing ? 'Update category details' : 'Create a new E-Tube category'}
       icon={editing ? 'fa-pen' : 'fa-layer-group'} maxWidth={500} onClose={onClose}
-      footer={<><button className="btn-secondary" onClick={onClose}>Cancel</button><button className="btn-primary" onClick={submit}><i className="fa-solid fa-floppy-disk" /> {editing ? 'Update' : 'Save Category'}</button></>}>
+      footer={<><button className="btn-secondary" onClick={onClose}>Cancel</button><button className="btn-primary" disabled={busy} onClick={submit}><i className={`fa-solid ${busy ? "fa-spinner fa-spin" : "fa-floppy-disk"}`} /> {busy ? "Saving…" : (editing ? "Update" : "Save Category")}</button></>}>
       <div className="f-field"><label className="f-label">Category Name <span style={{ color: 'var(--err)' }}>*</span></label><input className="f-input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. Mathematics" style={{ marginTop: 4 }} /></div>
       <div className="f-field" style={{ marginTop: 12 }}><label className="f-label">Description</label><textarea className="f-textarea" value={form.desc} onChange={(e) => setForm({ ...form, desc: e.target.value })} placeholder="Short description…" style={{ marginTop: 4, minHeight: 65 }} /></div>
       <div className="modal-grid" style={{ marginTop: 12 }}>
@@ -656,10 +856,10 @@ function CategoryModal({ cat, onSave, onClose }) {
   );
 }
 
-function DeleteCategoryModal({ cat, onConfirm, onClose }) {
+function DeleteCategoryModal({ cat, busy, onConfirm, onClose }) {
   return (
     <Modal title="Delete Category" icon="fa-trash-can" iconColor="var(--err)" maxWidth={420} onClose={onClose}
-      footer={<><button className="btn-secondary" onClick={onClose}>Cancel</button><button className="btn-danger" onClick={onConfirm}><i className="fa-solid fa-trash-can" /> Delete</button></>}
+      footer={<><button className="btn-secondary" onClick={onClose}>Cancel</button><button className="btn-danger" disabled={busy} onClick={onConfirm}><i className={`fa-solid ${busy ? "fa-spinner fa-spin" : "fa-trash-can"}`} /> {busy ? "Deleting…" : "Delete"}</button></>}
       bodyStyle={{ textAlign: 'center', padding: 22 }}>
       <div style={{ width: 48, height: 48, borderRadius: 12, background: 'rgba(220,38,38,.1)', color: 'var(--err)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, margin: '0 auto 10px' }}><i className="fa-solid fa-trash-can" /></div>
       <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--t1)', marginBottom: 6 }}>Delete "{cat.name}"?</div>
@@ -781,10 +981,10 @@ function SchoolVideoModal({ vid, onDelete, onClose }) {
   );
 }
 
-function DeleteSchoolVideoModal({ vid, onConfirm, onClose }) {
+function DeleteSchoolVideoModal({ vid, busy = false, onConfirm, onClose }) {
   return (
     <Modal title="Delete School Video" icon="fa-trash-can" iconColor="var(--err)" maxWidth={460} onClose={onClose}
-      footer={<><button className="btn-secondary" onClick={onClose}>Cancel</button><button className="btn-danger" onClick={onConfirm}><i className="fa-solid fa-trash-can" /> Delete</button></>}
+      footer={<><button className="btn-secondary" onClick={onClose}>Cancel</button><button className="btn-danger" disabled={busy} onClick={onConfirm}><i className={`fa-solid ${busy ? "fa-spinner fa-spin" : "fa-trash-can"}`} /> {busy ? "Deleting…" : "Delete"}</button></>}
       bodyStyle={{ textAlign: 'center', padding: '26px 22px' }}>
       <div style={{ width: 52, height: 52, borderRadius: 14, background: 'rgba(220,38,38,.1)', color: 'var(--err)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, margin: '0 auto 12px' }}><i className="fa-solid fa-trash-can" /></div>
       <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--t1)', marginBottom: 6 }}>Delete this school video?</div>

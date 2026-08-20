@@ -65,6 +65,63 @@ export const fmtDateShort = (iso) =>
 export const plusDays = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
 export const todayISO = () => new Date().toISOString().slice(0, 10);
 
+/* ── Free trial kab tak hai / kab khatam hua ──────────────────────────
+   API par trial ki apni koi tareekh nahi — sirf `duration` (kitne din) hai.
+   Is liye ginti setup banne ke din se hoti hai (summary ka `createdAt`):
+   trial usi din shuru hota hai jab setup pehli baar save hua.
+
+   Sirf TAREEKH li jati hai, waqt nahi — din ginne hain, ghante nahi. Warna
+   subah 10 baje save kiya hua 30-din ka trial 30-wein din shaam tak "abhi
+   baqi hai" dikhata rehta.
+
+   Wapsi: null (koi trial nahi), warna
+     { days, startISO, endISO, endLabel, daysLeft, ended }
+   `daysLeft` null tab hota hai jab setup abhi API se aaya hi na ho (naya
+   form) — us waqt sirf muddat maloom hoti hai, shuru ki tareekh nahi. */
+export function trialInfo(setup) {
+  if (!setup || !setup.freeTrial) return null;
+  const days = parseInt(setup.trialDays, 10) || 0;
+  if (days <= 0) return null;
+
+  const start = dayStart(setup.createdAt);
+  if (!start) return { days, startISO: '', endISO: '', endLabel: '', daysLeft: null, ended: false };
+
+  const end = new Date(start.getTime());
+  end.setDate(end.getDate() + days);
+  const today = dayStart(new Date());
+  const daysLeft = Math.round((end.getTime() - today.getTime()) / 86400000);
+  const endISO = isoDay(end);
+  return {
+    days,
+    startISO: isoDay(start),
+    endISO,
+    endLabel: fmtDateShort(endISO),
+    daysLeft,
+    ended: daysLeft <= 0,
+  };
+}
+
+/* "2026-08-19T14:03:11" ya Date → usi din ki aadhi raat (local). Sirf date
+   ka hissa padha jata hai, is liye timestamp ka format/timezone maayne nahi
+   rakhta. */
+function dayStart(value) {
+  if (!value) return null;
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime())
+      ? null
+      : new Date(value.getFullYear(), value.getMonth(), value.getDate());
+  }
+  const m = String(value).match(/^([0-9]{4})-([0-9]{2})-([0-9]{2})/);
+  if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  const d = new Date(value);
+  return Number.isNaN(d.getTime())
+    ? null
+    : new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
+const isoDay = (d) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
 /* Derive the full payment row state for a school (used by reports + receiving). */
 export function deriveRow(school, setup, challan, recv) {
   /* Summary API apna hisaab `totalAmount` me khud deti hai — jab wo maujood
