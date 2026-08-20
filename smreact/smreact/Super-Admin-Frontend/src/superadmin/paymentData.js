@@ -73,14 +73,21 @@ export function deriveRow(school, setup, challan, recv) {
      Reports un se kabhi alag na batayein. */
   const fromApi = Number(setup?.totalAmount);
   const monthly = setup ? (fromApi > 0 ? fromApi : monthlyCharge(school, setup)) : 0;
-  const payable = challan ? challan.total : monthly;
+  /* Payable sirf challan se banta hai. Pehle challan na hone par setup ka
+     mahaana charge payable ban jata tha, is liye Receiving/Reports un
+     schools ke saamne bhi dues dikhate thay jinka challan generate hi nahi
+     hua tha. Challan nahi = kuch maanga hi nahi gaya = 0. */
+  const payable = challan ? challan.total : 0;
   const received = recv ? (recv.receivedAmount || 0) : 0;
   const outstanding = recv ? (recv.remainingAmount || 0) : payable;
   let status;
   if (!setup) status = 'no-setup';
+  /* Setup to hai magar challan nahi — ye "Unpaid" nahi hai (abhi bill hi
+     nahi bheja) aur "No Setup" bhi nahi. */
+  else if (!challan) status = 'no-challan';
   else if (received >= payable && payable > 0) status = 'paid';
   else if (received > 0) status = 'partial';
   else if (payable > 0) status = 'unpaid';
-  else status = 'no-setup';
+  else status = 'no-challan';
   return { monthly, payable, received, outstanding, status };
 }

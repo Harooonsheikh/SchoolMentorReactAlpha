@@ -260,10 +260,24 @@ export default function SchoolPayment({ toast }) {
   const deleteChallan = async (id) => {
     const rowId = chStore[id]?.id || 0;
     /* Challan par receiving bani ho to DB usay hatane hi nahi deti (foreign
-       key). Wo record pehle se load ho chuka ho to API par jaane se pehle hi
-       yahi baat bata dete hain; warna wahi jumla API ke jawab se aata hai
-       (services/payments.js → friendlyError). */
-    if (recvStore[id]?.id) {
+       key FK_NetworkSchoolPayment_Receiving_PaymentLedgerID). DELETE bhej kar
+       SQL ka error paana bekaar hai — pehle dekh lete hain.
+
+       Challans tab par recvStore load hi nahi hota (har tab apni API chalata
+       hai), is liye sirf store dekhna kaafi nahi tha aur guard chup-chaap
+       gir jata tha. Us ek school ka record yahin utha lete hain — ek call,
+       sirf delete par, aur poori sooratehaal saaf. */
+    let hasReceiving = Boolean(recvStore[id]?.id);
+    if (!hasReceiving) {
+      try {
+        const recv = await paymentsApi.getReceiving(id);
+        hasReceiving = Boolean(recv?.id);
+      } catch (err) {
+        /* Pata na chal sake to rukte nahi — API ka apna jawab (friendlyError
+           se guzra hua) khud bata dega ke receiving pehle hatani hai. */
+      }
+    }
+    if (hasReceiving) {
       setModal(null);
       toast?.('This challan has a receiving record against it. Delete the receiving record first, then delete the challan.', 'warn');
       return;
@@ -567,7 +581,11 @@ function ReceivingTab({ schools, payStore, chStore, recvStore, loading, onReceiv
                 : list.length === 0 ? <NoResults cols={10} /> : list.map((s, i) => {
                 const setup = payStore[s.id]; const challan = chStore[s.id]; const recv = recvStore[s.id];
                 const monthly = setup ? setupMonthly(s, setup) : 0;
-                const totalDues = challan ? challan.total : monthly;
+                /* Challan hi na bana ho to kuch payable hai hi nahi — na total,
+                   na remaining. Pehle yahan setup ka mahaana charge gir jata
+                   tha, is liye un schools ke saamne bhi dues likhe aate thay
+                   jinka challan generate hi nahi hua tha. */
+                const totalDues = challan ? challan.total : 0;
                 /* Pichhle mahine ka bacha hua = wahi previous dues jo is challan
                    me joda gaya tha (ledger total − mahaana charge). */
                 const prevRemaining = challan ? (challan.prevDues || 0) : 0;
@@ -638,7 +656,7 @@ const RPT_SUBTABS = [
   { id: 'challan', name: 'Challan', icon: 'fa-file-invoice-dollar' },
 ];
 function RptStatusBadge({ status }) {
-  const map = { paid: ['rpt-paid', 'Paid'], partial: ['rpt-partial', 'Partial'], unpaid: ['rpt-unpaid', 'Unpaid'] };
+  const map = { paid: ['rpt-paid', 'Paid'], partial: ['rpt-partial', 'Partial'], unpaid: ['rpt-unpaid', 'Unpaid'], 'no-challan': ['rpt-pending', 'No Challan'] };
   const [cls, lbl] = map[status] || ['rpt-pending', 'No Setup'];
   return <span className={cls}>{lbl}</span>;
 }
@@ -696,7 +714,7 @@ function ReportTab({ schools, payStore, chStore, recvStore, loading }) {
       <div className="section-card">
         <div className="rpt-filter-bar sa-no-print">
           <div className="f-field-grow"><Search value={q} onChange={setQ} placeholder="Search by school name…" width="100%" /></div>
-          <div className="f-field"><select className="f-input" value={status} onChange={(e) => setStatus(e.target.value)} style={{ height: 38, width: 150 }}><option value="">All Statuses</option><option value="paid">Paid</option><option value="partial">Partial</option><option value="unpaid">Unpaid</option><option value="no-setup">No Setup</option></select></div>
+          <div className="f-field"><select className="f-input" value={status} onChange={(e) => setStatus(e.target.value)} style={{ height: 38, width: 150 }}><option value="">All Statuses</option><option value="paid">Paid</option><option value="partial">Partial</option><option value="unpaid">Unpaid</option><option value="no-challan">No Challan</option><option value="no-setup">No Setup</option></select></div>
           <button className="btn-secondary" style={{ height: 38 }} onClick={() => { setQ(''); setStatus(''); }}><i className="fa-solid fa-rotate-left" /> Reset</button>
           <button className="rpt-pdf-btn" onClick={() => window.print()}><i className="fa-solid fa-file-pdf" /> Download PDF</button>
         </div>
@@ -1108,8 +1126,10 @@ function SlipModal({ school: s, setup, challan, bank, bankBusy, onClose }) {
 }
 
 function ReceiveModal({ school: s, setup, challan, prevRecv, saving, onClose, onSave, toast }) {
-  const monthly = setup ? setupMonthly(s, setup) : 0;
-  const totalDues = challan ? challan.total : monthly;
+  /* Payable wahi jo challan par likha hai; challan na ho to kuch payable
+     nahi (wahi qaida jo Receiving table aur Reports par hai). Setup ka
+     mahaana charge yahan ab nahi aata — wo bill nahi, sirf formula hai. */
+  const totalDues = challan ? challan.total : 0;
   /* Pichhle mahine ka bacha hua — challan me joda gaya previous dues. */
   const prevRemaining = challan ? (challan.prevDues || 0) : 0;
   /* Pehle se record ho to wahi values prefill — dobara save karna usi row ka
