@@ -150,7 +150,7 @@ export default function AgentSupport({ embedded = false, tab, onTab, showBack = 
       messageIds.includes(m.id) ? { ...m, status: type === 'read' ? 3 : 2 } : m)),
     // A session closed in real time → its inbox row is removed by the hook; we
     // refresh this school's Previous Sessions so it appears in history at once.
-    onSessionClosed: () => { clearChatPane(); loadPrevSessions(); },
+    onSessionClosed: () => { clearChatPane(); },
     /* Backend tak pahunch hi na ho → chat khali; neeche wali khali haalat
        khud bata deti hai ke API se baat nahi ho rahi. Pehle yahan static
        demo guftagu aa jati thi. */
@@ -175,6 +175,21 @@ export default function AgentSupport({ embedded = false, tab, onTab, showBack = 
   const clearChatPane = () => {
     setMessages([]);
     setRemoteTyping(null);
+    /* Daayen side bhi khali. `viewSchool` pehle jaan bujh kar rakha jata tha
+       (Previous Sessions ke liye), magar us se school ki tafseel, notes aur
+       history sab band ho chuki guftagu ki screen par khare rehte thay —
+       page refresh tak. Jab chat aur inbox saaf ho jate hain to sidebar ka
+       khara rehna sirf uljhan hai.
+
+       Sab kuch khud ba khud saaf ho jata hai: viewSchool null hote hi
+       openSchoolId 0 ho jata hai, jis par School Info ke khane "—" par aa
+       jate hain, notes wala effect lastNote null kar deta hai, aur
+       loadPrevSessions wala effect previous sessions khali kar deta hai. */
+    setViewSchool(null);
+    setPrevSessions([]);
+    setPrevOpen(false);
+    setPrevSession(null);
+    setSideNote('');
     chat.newConversation();
   };
 
@@ -396,7 +411,6 @@ export default function AgentSupport({ embedded = false, tab, onTab, showBack = 
       .then(() => {
         /* Poll/SignalR ka intezar nahi — band ho gayi to screen abhi saaf. */
         clearChatPane();
-        loadPrevSessions();
         showToast('Session closed & moved to history', 'success');
       })
       .catch(() => showToast('Could not close session', 'warn'));
@@ -841,7 +855,7 @@ export default function AgentSupport({ embedded = false, tab, onTab, showBack = 
         {/* Right sidebar */}
         <aside className="ag-side">
           <div className="ag-side-hero">
-            <div className="ag-av ag-av-xl">{initials(schoolName)}</div>
+            <div className="ag-av ag-av-xl">{sessionOpen ? initials(schoolName) : '—'}</div>
             <div className="ag-side-nm">{schoolName}</div>
             <div className="ag-side-sub">{liveSession?.campusName || schoolInfo?.campusName || '—'}</div>
             <div className="ag-side-badges">

@@ -558,6 +558,7 @@ export default function SupportWidget({ toast }) {
         <ChatOverlay
           messages={chatMessages}
           loading={chatLoading}
+          status={chat.status}
           msgsRef={msgsRef}
           isClosed={isClosed}
           onClose={() => setOpen(false)}
@@ -619,13 +620,28 @@ export default function SupportWidget({ toast }) {
 /* ─────────────────────────────────────────────────────────────────
    CHAT OVERLAY
    ───────────────────────────────────────────────────────────────── */
+/* Header ka status. Pehle yahan hara nuqta aur "Online" HARD-CODED tha —
+   API band ho, token na ho, kuch bhi ho, school ko hamesha "Online" hi
+   dikhta tha. Ab yeh useSupportChat ke apne haal se banta hai. */
+function connState(status) {
+  switch (status) {
+    case 'connected':    return { label: 'Online',        dot: '#25D366' };
+    case 'connecting':   return { label: 'Connecting…',   dot: '#F59E0B' };
+    case 'reconnecting': return { label: 'Reconnecting…', dot: '#F59E0B' };
+    case 'error':        return { label: 'Sign-in needed', dot: '#EF4444' };
+    case 'offline':      return { label: 'Offline',       dot: '#94A3B8' };
+    default:             return { label: 'Connecting…',   dot: '#F59E0B' };
+  }
+}
+
 function ChatOverlay({
-  messages, msgsRef, isClosed, onClose, remoteTyping, loading = false,
+  messages, msgsRef, isClosed, onClose, remoteTyping, loading = false, status,
   input, setInput, taRef, onKeyDownTa, onAutoResize, onSendText, onComposerType,
   openAttachModal,
   recording, recSec, onStartRec, onCancelRec, onSendRec,
   onCloseSession, onNewSession,
 }) {
+  const conn = connState(status);
   const [confirmEnd, setConfirmEnd] = useState(false);
   const [endRemarks, setEndRemarks] = useState('');
   const submitEnd = () => { onCloseSession(endRemarks.trim() || null); setConfirmEnd(false); setEndRemarks(''); };
@@ -638,8 +654,8 @@ function ChatOverlay({
           <div>
             <div className="sc-hdr-nm">School Mentor Support</div>
             <div className="sc-hdr-st">
-              <div className="sc-hdr-stdo"></div>
-              <span>Online</span>
+              <div className="sc-hdr-stdo" style={{ background: conn.dot }}></div>
+              <span>{conn.label}</span>
             </div>
             <div className="sc-hdr-resp">Avg. response: ~15 min</div>
           </div>
@@ -665,7 +681,7 @@ function ChatOverlay({
           ) : (
             <>
               <span className="sc-sbadge sc-s-online">
-                <i className="fa-solid fa-circle" style={{ fontSize: 6 }}></i> Support Online
+                <i className="fa-solid fa-circle" style={{ fontSize: 6, color: conn.dot }}></i> Support {conn.label}
               </span>
               <span className="sc-slbl">Active Session</span>
             </>
