@@ -22,6 +22,14 @@ const MODULE_ID_TO_LABEL = Object.fromEntries(MODULE_REGISTRY.map((m) => [m.id, 
    role/permission. Keyed by sidebar nav id. */
 const BRANCH1_ONLY_NAV = new Set(['inventory', 'crm', 'audit', 'appraisal', 'sops', 'trainings', 'etube', 'chat', 'notifications']);
 
+/* Wo nav ids jo ab apna module nahi rahe (screen kahin aur chali gayi).
+   Sirf sidebar se hata dena kaafi nahi: `active` localStorage me mehfooz
+   rehta hai, to jis user ne aakhri baar Networks khola tha uske paas
+   nav item bhi na hota aur content bhi na — khali screen. Yahan false
+   dene se wo khud pehle mojood module par chala jaata hai.
+     networks → ab Settings › Networks tab me. */
+const RETIRED_NAV = new Set(['networks']);
+
 /* ─── Code-split each ERP module ─────────────────────────────────────
    React.lazy() wraps each module so its JS chunk is fetched only when
    the user navigates to that module. Combined with the <Suspense
@@ -42,7 +50,9 @@ const Inventory      = lazy(() => import(/* webpackChunkName: "mod-inventory" */
 const AdmissionCrm   = lazy(() => import(/* webpackChunkName: "mod-admissioncrm" */  './AdmissionCrm.jsx'));
 const Students       = lazy(() => import(/* webpackChunkName: "mod-students" */      './Students.jsx'));
 const HumanResource  = lazy(() => import(/* webpackChunkName: "mod-hr" */            './HumanResource.jsx'));
-const Networks       = lazy(() => import(/* webpackChunkName: "mod-networks" */      './Networks.jsx'));
+// Networks ab yahan se lazy-load nahi hota — Settings us screen ko seedha
+// import karta hai (pages/Settings/SettingsModule.jsx):
+// const Networks = lazy(() => import('./Networks.jsx'));
 const StaffAppraisalPage = lazy(() => import(/* webpackChunkName: "mod-appraisal" */ './StaffAppraisalPage.jsx'));
 const SettingsModule = lazy(() => import(/* webpackChunkName: "mod-settings" */      '../pages/Settings/SettingsModule.jsx'));
 const SchoolSOPs     = lazy(() => import(/* webpackChunkName: "mod-sops" */          '../pages/SchoolMentor/SchoolSOPs.jsx'));
@@ -119,7 +129,7 @@ const NAV_SECTIONS = [
       { id: 'crm',       name: 'Admission CRM',  icon: 'fa-user-plus' },   /* branchID 1 only */
       { id: 'students',  name: 'Students',       icon: 'fa-user-graduate' },
       { id: 'hr',        name: 'Human Resource', icon: 'fa-users' },
-      { id: 'networks',  name: 'Networks',       icon: 'fa-circle-nodes' },
+      /* { id: 'networks',  name: 'Networks',       icon: 'fa-circle-nodes' }, — ab Settings › Networks tab me */
       { id: 'appraisal', name: 'Staff Appraisals', icon: 'fa-star' },     /* branchID 1 only */
     ],
   },
@@ -215,6 +225,9 @@ export default function App() {
        aa jayen, koi bhi nav item render nahi hota. Warna jo module off hai
        wo pehle paint par ek pal ke liye dikh kar phir ghayab hota hai. */
     if (!modulesReady || !permsReady) return false;
+    /* Retire ho chuke modules kabhi visible nahi — chahe permission aur
+       module-activation dono allow karti hon. */
+    if (RETIRED_NAV.has(navId)) return false;
     /* Master-branch-only extras: hidden on every branch except branchID 1. On
        branch 1 they still follow the user's permission (registry-backed ones)
        or simply show (non-permission extras like Chat / e-Tube / Notifications). */
@@ -543,11 +556,12 @@ export default function App() {
                 <TimeTable toast={pushToast} />
               </Suspense>
             )}
+            {/* Networks ab apna module nahi — Settings › Networks tab se chalta hai.
             {active === 'networks' && (
               <Suspense fallback={<RouteFallback label="Loading Networks…" />}>
                 <Networks toast={pushToast} />
               </Suspense>
-            )}
+            )} */}
             {active === 'fee' && (
               <Suspense fallback={<RouteFallback label="Loading Fee…" />}>
                 <Fee toast={pushToast} />

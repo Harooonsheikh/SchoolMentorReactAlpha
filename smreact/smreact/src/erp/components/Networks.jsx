@@ -67,7 +67,11 @@ const TABS = [
   { id: 'join', label: 'Join a Network', icon: 'fa-circle-nodes' },
 ];
 
-export default function Networks({ toast = () => {} }) {
+/* `embedded` — jab ye screen Settings ke "Networks" tab ke andar khulti hai.
+   Wahan Settings ka apna page header pehle se mojood hai, is liye apna
+   header nahi dikhate; alag module ke taur par khule to poora header aata
+   hai (filhal wo raasta band hai — dekhein App.js ka RETIRED_NAV). */
+export default function Networks({ toast = () => {}, embedded = false }) {
   const [tab, setTab] = useState('mine');
   const [requests, setRequests] = useState([]);
   const [selected, setSelected] = useState('');          // selected network id (string)
@@ -225,16 +229,18 @@ export default function Networks({ toast = () => {} }) {
     <>
       <style>{NET_CSS}</style>
 
-      {/* ── Page header ── */}
-      <div className="net-head">
-        <div className="net-head-l">
-          <div className="net-head-ic"><i className="fa-solid fa-circle-nodes" /></div>
-          <div>
-            <div className="net-head-t">Networks</div>
-            <div className="net-head-s">Join school networks and manage your memberships &amp; requests</div>
+      {/* ── Page header — Settings ke andar nahi, wahan Settings ka apna hai ── */}
+      {!embedded && (
+        <div className="net-head">
+          <div className="net-head-l">
+            <div className="net-head-ic"><i className="fa-solid fa-circle-nodes" /></div>
+            <div>
+              <div className="net-head-t">Networks</div>
+              <div className="net-head-s">Join school networks and manage your memberships &amp; requests</div>
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       {/* ── Tab bar ── */}
       <div className="net-tabs-row" role="tablist">

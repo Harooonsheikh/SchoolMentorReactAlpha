@@ -3,6 +3,7 @@ import Tooltip from '../../components/Tooltip';
 import TutorialModal from '../../components/TutorialModal';
 import SessionManagement from './SessionManagement';
 import SignatureManagement from './SignatureManagement';
+import Networks from '../../components/Networks.jsx';
 import { usePermissions } from '../../context/PermissionsContext';
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -11,8 +12,12 @@ import { usePermissions } from '../../context/PermissionsContext';
    Layout:
      • Page header (gear icon + title + subtitle + Tutorial button)
      • Two-column shell: left vertical sub-tabs / right content panel
-     • Sub-tabs: Academic Sessions, Signature Management
+     • Sub-tabs: Academic Sessions, Signature Management, Networks
      • Default opens to Academic Sessions
+
+   Networks pehle sidebar par apna module tha; ab wo yahin se chalta hai
+   (dekhein App.js ka RETIRED_NAV). Screen wahi hai, sirf `embedded` mode
+   me — apna page header nahi dikhati.
 
    Styling is fully self-contained via the SETTINGS_CSS template at the
    bottom of this file. Mirrors the brand-blue / Plus Jakarta Sans
@@ -24,6 +29,8 @@ const SETTINGS_SUBTABS = [
     desc: 'Manage academic years that drive data visibility across the ERP.' },
   { id: 'signatures', label: 'Signature Management', icon: 'fa-signature',
     desc: 'Upload authorised signatures used across reports, certificates and letters.' },
+  { id: 'networks',   label: 'Networks',             icon: 'fa-circle-nodes',
+    desc: 'Join school networks and manage your memberships & requests.' },
 ];
 
 export default function SettingsModule({ toast = () => {} }) {
@@ -91,6 +98,7 @@ export default function SettingsModule({ toast = () => {} }) {
       <div role="tabpanel">
         {sub === 'sessions'   && <SessionManagement   toast={toast} />}
         {sub === 'signatures' && <SignatureManagement toast={toast} />}
+        {sub === 'networks'   && <Networks            toast={toast} embedded />}
       </div>
 
       <TutorialModal
