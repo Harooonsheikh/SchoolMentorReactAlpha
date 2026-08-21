@@ -2152,7 +2152,7 @@
     const row = studentData[classIdx];
     const today = new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" });
     const [rows, setRows] = useState(() =>
-      (row ? rosterForClass(row) : []).map((s) => ({ ...s, status: s.status || "", inTime: s.inTime || "", outTime: s.outTime || "" }))
+      (row ? rosterForClass(row) : []).map((s) => ({ ...s, status: s.status || "present", inTime: s.inTime || "", outTime: s.outTime || "" }))
     );
     const [loading, setLoading]   = useState(true);
     const [saving, setSaving]     = useState(false);
@@ -2171,11 +2171,11 @@
         setLoading(true);
         const map = await onLoadMarks(classIdx);
         if (!alive) return;
-        setRows((prev) => prev.map((s) => {
+          setRows((prev) => prev.map((s) => {
           const m = map[s.id];
           return m
-            ? { ...s, status: m.status || s.status || "", inTime: m.inTime || "", outTime: m.outTime || "" }
-            : { ...s, status: s.status || "" };
+            ? { ...s, status: m.status || s.status || "present", inTime: m.inTime || "", outTime: m.outTime || "" }
+            : { ...s, status: s.status || "present" };
         }));
         // "Update" mode only if a student in THIS class actually has a status.
         setHasSaved((row.students || []).some((s) => map[s.id]));
@@ -2636,12 +2636,11 @@
 // MarkStaffModal component mein (already working)
 const [rows, setRows] = useState(() => staffData.map((s) => ({
   empId:   s.empId,
-  status:  s.status || "",         // koi circle active nahi jab tak saved/selected na ho
+  status:  s.status || "present",  // ab by default Present active
   inTime:  s.inTime  || "",        // Saved inTime pre-filled
   outTime: s.outTime || "",        // Saved outTime pre-filled
   from:    s.from    || "ERP",     // Saved platform pre-filled
 })));
-
     useEffect(() => {
       const onKey = (e) => { if (e.key === "Escape") onClose(); };
       document.addEventListener("keydown", onKey);
