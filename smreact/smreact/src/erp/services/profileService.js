@@ -1,4 +1,3 @@
-import { mockProfile } from '../mock/profile';
 import { buildUrl, resolveMediaUrl } from '../../utils/apiConfig';
 
 const ssGet = (k) => (typeof sessionStorage !== 'undefined' ? sessionStorage.getItem(k) : null);
@@ -11,22 +10,27 @@ function monthYear(iso) {
   return d.toLocaleString('default', { month: 'long', year: 'numeric' });
 }
 
-/* Whatever we can build from sessionStorage alone — used before the API resolves
-   and as the fallback if the request fails. */
+/* Jo kuch sessionStorage se khud bana sakte hain — API ka jawab aane se
+   pehle, aur request nakaam hone par bhi wahi.
+
+   Pehle yahan mock/profile.js ke naam bhar jate thay: "The Oxford System,
+   Lahore Campus", "admin@schoolmentor.app", "Member since May 2024",
+   "Last login Today, 1:02 PM". Ye kisi asli user ka data nahi tha, magar
+   profile par bilkul asli lagta tha. Ab jo maloom nahi wo khali rehta hai. */
 function sessionFallback() {
   const displayName = ssGet('displayName') || ssGet('userName') || '';
   return {
-    name:        displayName || mockProfile.name,
+    name:        displayName,
     displayName,
-    role:        ssGet('accountType') || mockProfile.role,
+    role:        ssGet('accountType') || '',
     email:       ssGet('email') || '',
     phone:       ssGet('userName') || '',
     campus:      ssGet('branchName') || displayName || '',
     cnic:        '',
     language:    'English (UK)',
     photo:       '',
-    memberSince: mockProfile.memberSince,
-    lastLogin:   mockProfile.lastLogin,
+    memberSince: '',
+    lastLogin:   '',
   };
 }
 
@@ -57,7 +61,7 @@ export async function getProfile() {
     employeeId:  d.id,
     name:        fullName || fallback.name,
     displayName: fullName || fallback.displayName,
-    role:        d.designationName || ssGet('accountType') || mockProfile.role,
+    role:        d.designationName || ssGet('accountType') || '',
     email:       d.email || '',
     phone:       d.phone || '',
     campus:      ssGet('branchName') || ssGet('displayName') || d.departmentName || '',

@@ -1,12 +1,3 @@
-import {
-  mockFeeSettings,
-  mockChallans,
-  mockReceipts,
-  mockFeeHistory,
-  mockGeneratedChallans,
-  mockGeneratedFamilyChallans,
-  mockFamilyReceipts,
-} from '../mock/fee';
 import { delay, clone } from './_http';
 import { buildUrl, apiMessage, resolveMediaUrl } from '../../utils/apiConfig';
 
@@ -326,9 +317,6 @@ export async function getFeeHeads() {
     grades.map(g => [g.key, clone(g.heads || [])])
   );
 }
-export async function getChallans()     { await delay(); return clone(mockChallans); }
-export async function getReceipts()     { await delay(); return clone(mockReceipts); }
-export async function getFeeHistory()   { await delay(); return clone(mockFeeHistory); }
 
 const transportFeeBranchID = () => Number(sessionStorage.getItem('branchID')) || 1;
 const transportFeeUserID = () => Number(sessionStorage.getItem('UserID')) || 1;
@@ -437,23 +425,42 @@ const apiPrintSizeToUi = (size) => (
   String(size || '').toLowerCase().includes('thermal') ? 'thermal' : 'a4'
 );
 
+/* ── Fee settings ke default ──────────────────────────────────────────
+   Ye data nahi, SETTINGS ka dhancha hai: kaunse toggle mojood hain aur
+   kis shakl ke hain. Asli qadrein API se aati hain; koi field na aaye to
+   yahan se bhar jati hai.
+
+   Har toggle OFF se shuru hota hai. Pehle ye mock/fee.js me sab ON thay,
+   is liye jis branch ka record abhi bana hi nahi tha uski screen features
+   ko "on" dikha deti thi jo server ne kabhi suna hi nahi. */
+const FEE_SETTINGS_DEFAULTS = {
+  showDiscount:     false,
+  showPsd:          false,
+  prevMonthChallan: false,
+  nextMonthChallan: false,
+  fineEnabled:      false,
+  fineType:         'fixed',
+  fineAmt:          0,
+  printSize:        'a4',
+};
+
 const uiPrintSizeToApi = (size) => (
   size === 'thermal' ? 'Thermal' : 'A4'
 );
 
 function mapFeeSettingsFromApi(row = {}) {
   return {
-    ...clone(mockFeeSettings),
+    ...clone(FEE_SETTINGS_DEFAULTS),
     id:                 Number(row.id ?? row.ID ?? 0) || 0,
     branchID:           Number(row.branchID ?? row.branchId ?? feeSettingsBranchID()) || 0,
-    showDiscount:       row.showDiscount ?? mockFeeSettings.showDiscount,
-    showPsd:            row.showPSDCode ?? row.showPsd ?? mockFeeSettings.showPsd,
-    prevMonthChallan:   row.previousMonthFeeChallan ?? row.prevMonthChallan ?? mockFeeSettings.prevMonthChallan,
-    nextMonthChallan:   row.nextMonthFeeChallan ?? row.nextMonthChallan ?? mockFeeSettings.nextMonthChallan,
-    fineEnabled:        row.fineStatusEnabled ?? row.fineEnabled ?? mockFeeSettings.fineEnabled,
-    fineType:           apiFineToUi(row.fineType ?? mockFeeSettings.fineType),
-    fineAmt:            Number(row.fineAmountRs ?? row.fineAmt ?? mockFeeSettings.fineAmt) || 0,
-    printSize:          apiPrintSizeToUi(row.defaultPrintSize ?? row.printSize ?? mockFeeSettings.printSize),
+    showDiscount:       row.showDiscount ?? FEE_SETTINGS_DEFAULTS.showDiscount,
+    showPsd:            row.showPSDCode ?? row.showPsd ?? FEE_SETTINGS_DEFAULTS.showPsd,
+    prevMonthChallan:   row.previousMonthFeeChallan ?? row.prevMonthChallan ?? FEE_SETTINGS_DEFAULTS.prevMonthChallan,
+    nextMonthChallan:   row.nextMonthFeeChallan ?? row.nextMonthChallan ?? FEE_SETTINGS_DEFAULTS.nextMonthChallan,
+    fineEnabled:        row.fineStatusEnabled ?? row.fineEnabled ?? FEE_SETTINGS_DEFAULTS.fineEnabled,
+    fineType:           apiFineToUi(row.fineType ?? FEE_SETTINGS_DEFAULTS.fineType),
+    fineAmt:            Number(row.fineAmountRs ?? row.fineAmt ?? FEE_SETTINGS_DEFAULTS.fineAmt) || 0,
+    printSize:          apiPrintSizeToUi(row.defaultPrintSize ?? row.printSize ?? FEE_SETTINGS_DEFAULTS.printSize),
     createdDate:        row.createdDate ?? null,
     modifiedDate:       row.modifiedDate ?? null,
     createdBy:          row.createdBy ?? null,
@@ -467,7 +474,7 @@ function mapFeeSettingsFromApi(row = {}) {
    enabled that the server has never been told about. */
 function blankFeeSettings() {
   return {
-    ...clone(mockFeeSettings),
+    ...clone(FEE_SETTINGS_DEFAULTS),
     id:               0,
     branchID:         feeSettingsBranchID(),
     showDiscount:     false,
@@ -523,11 +530,12 @@ export async function getFeeSettings() {
   return rows.length ? mapFeeSettingsFromApi(rows[0]) : blankFeeSettings();
 }
 
-/* Generated-challans set is returned as a fresh Set so callers can
-   add / delete locally without disturbing the seed. */
+/* Kaunse challan ban chuke hain — ye khali Set se shuru hota hai aur screen
+   apne live data se bharti hai. Pehle yahan mock ka seed tha, is liye kuch
+   classon par "challan generated" ka nishan lagta tha jab ke bana hi nahi
+   hota tha. */
 export async function getGeneratedChallans() {
-  await delay();
-  return new Set(mockGeneratedChallans);
+  return new Set();
 }
 
 /* Family-tree challan readers.
@@ -592,9 +600,9 @@ export async function getFamilies() {
   const data = Array.isArray(json?.data) ? json.data : [];
   return data.map(mapFamilyFromApi);
 }
+/* Wahi baat family challans ke liye. */
 export async function getGeneratedFamilyChallans() {
-  await delay();
-  return new Set(mockGeneratedFamilyChallans);
+  return new Set();
 }
 
 /* Class-wise fee heads for the branch — used to populate the Family Tree
@@ -1232,8 +1240,18 @@ export async function sendFeeReminder(payload) {
   await delay();
   return clone({ ok: true, sentAt: new Date().toISOString(), ...payload });
 }
-export async function getFamilyReceipts() { await delay(); return clone(mockFamilyReceipts); }
 export async function saveFamilyReceipt(payload) {
   await delay();
   return clone({ id: `frcv-${Date.now()}`, ...payload });
 }
+
+/* ─── Receipts ───────────────────────────────────────────────────────
+   Pehle ye mock/fee.js ki bani banai rasidein lautate thay, jo Fee ki teen
+   screenon par aur Admin Dashboard par asli rasidon jaisi nazar aati thin.
+
+   Asli rasidein screen apne live calls se lati hai (receivePayment /
+   getLedgerRange / getStudentChallans). Ye do sirf ibtidai list dete hain,
+   is liye ab khali. */
+
+export async function getReceipts() { return []; }
+export async function getFamilyReceipts() { return []; }

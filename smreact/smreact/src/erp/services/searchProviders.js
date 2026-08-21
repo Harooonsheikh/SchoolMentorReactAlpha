@@ -2,9 +2,10 @@
    DEFAULT SEARCH PROVIDERS — one per ERP module.
 
    Each provider is a small object that knows how to search its
-   module's data. Today these read from the mock seed files; backend
-   integration is a one-file change per provider: replace the body of
-   `search()` with an HTTP call to the corresponding service.
+   module's data. Students / HR / Fee / Accounts / Attendance / TimeTable /
+   Roles / Examination LIVE API se chalte hain; jo baqi hain wo abhi mock
+   seed files par hain aur ek ek kar ke live kiye ja rahe hain (Academics
+   filhaal khali natija deta hai — dekho neeche).
 
    Registered eagerly via `registerAllDefaultProviders()` (called from
    the UniversalSearch component on mount). Backend developers can:
@@ -22,6 +23,7 @@ import * as accountsService from './accountsService';
 import * as attendanceService from './attendanceService';
 import * as timeTableService from './timeTableService';
 import * as rolesService from './rolesService';
+import * as examService from './examService';
 
 /* ─── Tiny lazy-load helpers — avoid bundling every mock until a real
        search runs. CRA's webpack hoists these into the main chunk
@@ -67,14 +69,12 @@ const loadRealAccTxns    = cachedApi(() => accountsService.getAccTxns());
 const loadRealAttClasses = cachedApi(() => attendanceService.getClassesForBranch());
 const loadRealTTClasses  = cachedApi(() => timeTableService.getTimeTableClasses());
 const loadRealRoles      = cachedApi(() => rolesService.getRolesByBranch());
+const loadRealExams      = cachedApi(() => examService.getTermsAndExams());
 
-const loadLP       = lazyMock(() => import('../mock/lessonPlans'));
-const loadExams    = lazyMock(() => import('../mock/exams'));
 const loadInv      = lazyMock(() => import('../mock/inventory'));
 const loadCrm      = lazyMock(() => import('../mock/admissionCrm'));
 const loadAppraisal= lazyMock(() => import('../mock/appraisal'));
 const loadPapers   = lazyMock(() => import('../mock/papers'));
-const loadAcad     = lazyMock(() => import('../mock/academics'));
 
 /* ─── STUDENTS ────────────────────────────────────────────────── */
 const studentsProvider = {
@@ -174,7 +174,19 @@ const hrProvider = {
   },
 };
 
-/* ─── ACADEMICS — lesson plans + notebook plans + activities ──── */
+/* ─── ACADEMICS ───────────────────────────────────────────────────────
+   Filhaal koi natija nahi deta.
+
+   Pehle ye provider mock/lessonPlans aur mock/academics me se dhoondta tha,
+   yani search me banawate lesson plans aur activities ("Science Olympiad",
+   "Sports Day" waghera) asli natije ban kar aate thay — jab ke un ka school
+   ke data se koi taalluq nahi tha.
+
+   Academics ka asli data mahine/class/subject ke hisaab se aata hai
+   (/api/getactivitycalendarbymonthandyear, /api/getulpforclassdetail…) —
+   in me se koi bhi "poore module me talash" wala route nahi hai. Jab
+   backend aisa route de dega (ya yahan class/month ka context aa jayega)
+   to search wahin se lagegi; tab tak khali natija hi sach hai. */
 const academicsProvider = {
   moduleId:    'academics',
   navTarget:   'acad',
@@ -182,54 +194,8 @@ const academicsProvider = {
   icon:        'fa-book-open-reader',
   accent:      '#1E40AF',
   priority:    80,
-  async search(query, ctx) {
-    const lp   = await loadLP();
-    const acad = await loadAcad();
-    const out  = [];
-    /* Lesson-plan units */
-    for (const u of (lp.mockUnits || [])) {
-      if (matchAny(query, u.title, u.cls, u.subject, u.topic)) {
-        out.push({
-          id:       `lp-${u.id || u.title}`,
-          title:    u.title || u.topic,
-          subtitle: [u.cls, u.subject].filter(Boolean).join(' · ') || 'Lesson Plan',
-          path:     ['Academics', 'Lesson Plans'],
-          icon:     'fa-book-open',
-        });
-        if (out.length >= ctx.limit) return out;
-      }
-    }
-    /* Notebook-plan units */
-    for (const u of (lp.mockNbUnits || [])) {
-      if (matchAny(query, u.title, u.cls, u.subject, u.topic)) {
-        out.push({
-          id:       `nb-${u.id || u.title}`,
-          title:    u.title || u.topic,
-          subtitle: [u.cls, u.subject].filter(Boolean).join(' · ') || 'Notebook Plan',
-          path:     ['Academics', 'Notebook Plans'],
-          icon:     'fa-pen-clip',
-        });
-        if (out.length >= ctx.limit) return out;
-      }
-    }
-    /* Activities */
-    for (const a of (acad.mockActivities || [])) {
-      if (matchAny(query, a.title, a.name, a.desc, a.category)) {
-        out.push({
-          id:       `act-${a.id || a.title || a.name}`,
-          title:    a.title || a.name,
-          subtitle: a.category || 'Activity',
-          preview:  a.desc || '',
-          path:     ['Academics', 'Activity Calendar'],
-          icon:     'fa-calendar-day',
-        });
-        if (out.length >= ctx.limit) return out;
-      }
-    }
-    return out;
-  },
+  async search() { return []; },
 };
-
 /* ─── EXAMINATION ─────────────────────────────────────────────── */
 const examinationProvider = {
   moduleId:    'examination',
@@ -238,16 +204,20 @@ const examinationProvider = {
   icon:        'fa-file-pen',
   accent:      '#4F46E5',
   priority:    70,
+  /* LIVE — /api/gettermsandexamsbybranchid se is branch ke asli terms +
+     exams. Pehle ye mock/exams.js me se dhoondta tha, is liye search me
+     aise imtehanat ke natije aate thay jo school me hain hi nahi. */
   async search(query, ctx) {
-    const m = await loadExams();
+    const rows = await loadRealExams().catch(() => []);
     const out = [];
-    for (const ex of (m.mockExams || [])) {
-      if (matchAny(query, ex.name, ex.term, ex.session)) {
+    for (const ex of (rows || [])) {
+      if (matchAny(query, ex.examName, ex.termName)) {
         out.push({
-          id:       `exam-${ex.id || ex.name}`,
-          title:    ex.name,
-          subtitle: [ex.term, ex.session].filter(Boolean).join(' · '),
+          id:       `exam-${ex.examID || ex.examName}`,
+          title:    ex.examName,
+          subtitle: ex.termName || 'Examination',
           path:     ['Examination'],
+          navParams:{ termId: ex.termID, examId: ex.examID },
         });
         if (out.length >= ctx.limit) return out;
       }

@@ -2,8 +2,6 @@ import React, { useEffect, useMemo, useState } from 'react';
 import LessonPlans from './LessonPlans';
 import Tooltip from './Tooltip';
 import TutorialModal from './TutorialModal';
-import * as academicsService from '../services/academicsService';
-import useAsync from '../hooks/useAsync';
 import { buildUrl, assertSessionPayload, registerSessionToast, apiMessage, resolveMediaUrl } from '../../utils/apiConfig';
 import { deliverReport } from './reportDelivery';
 import { useModuleReadOnly, validateSessionDateFromStorage } from '../pages/Settings/settingsStore';
@@ -12,9 +10,10 @@ import RouteFallback from '../shared/RouteFallback';
 
 
 
-/* Terms, term metadata, and activity events now load via academicsService
-   (src/services/academicsService.js). CRUD stays in-memory until backend wires
-   the matching endpoints. */
+/* Terms, key dates aur activity events sab LIVE API se aate hain
+   (/api/termscrud, /api/getkeydatesybranchidandterms,
+   /api/activitycalendarcrud waghera — dekho loadCalendar).
+   Koi mock/seed data yahan nahi: API kuch na de to screen khali rehti hai. */
 
 
 const MONTHS_FULL  = ['January','February','March','April','May','June','July','August','September','October','November','December'];
@@ -83,7 +82,9 @@ export default function Academics({ l1, setL1, l2, setL2, l3, setL3, toast }) {
   /* Academic-calendar terms are built live from termscrud + key dates (see loadCalendar).
      Start empty so the modal never opens against id-less seed data. */
   const [terms, setTerms] = useState([]);
-  const { data: termData = [], setData: setTermData } = useAsync(academicsService.getTermData,   []);
+  /* Khali se shuru. Pehle yahan mock se ek khali placeholder row girti thi
+     (mockTermData); asli terms /api/termscrud + key dates se aate hain. */
+  const [termData, setTermData] = useState([]);
   const [events, setEvents] = useState([]);
   const reportSubjectsRef = React.useRef(null);
   /* Activity report ka current-view scope: { events: filtered, label: 'July 2026' | ... }.

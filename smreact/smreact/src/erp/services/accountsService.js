@@ -1,10 +1,3 @@
-import {
-  mockAccNextHeadNo,
-  mockAccTxns,
-  mockAccUsers,
-  mockAccCurrentUser,
-  mockAccSchool,
-} from '../mock/accounts';
 import { delay, clone } from './_http';
 import { buildUrl, apiMessage } from '../../utils/apiConfig';
 
@@ -66,7 +59,6 @@ export async function getAccTypes() {
     return { key, id, name, heads };
   }));
 }
-export async function getAccNextHeadNo()  { await delay(); return mockAccNextHeadNo; }
 export async function getAccEntriesByMonth(seg, ym) {
   const branchID = Number(sessionStorage.getItem('branchID')) || 0;
   const [y, m] = String(ym || '').split('-');
@@ -90,16 +82,13 @@ export async function getAccEntriesForMonths(months = []) {
   return { rev: revRows.flat(), exp: expRows.flat() };
 }
 
+/* Is mahine ki entries (Universal Search ke liye). API na chale to KHALI —
+   pehle yahan mock ke voucher gir jate thay aur search me aise entries aati
+   thin jo kisi khaate me hain hi nahi. */
 export async function getAccTxns() {
   const ym = new Date().toISOString().slice(0, 7);
-  return getAccEntriesForMonths([ym]).catch(async () => {
-    await delay();
-    return clone(mockAccTxns);
-  });
+  return getAccEntriesForMonths([ym]).catch(() => ({ rev: [], exp: [] }));
 }
-export async function getAccUsers()       { await delay(); return clone(mockAccUsers); }
-export async function getAccCurrentUser() { await delay(); return mockAccCurrentUser; }
-export async function getAccSchool()      { await delay(); return clone(mockAccSchool); }
 
 /* Write APIs — in-memory only until backend wires real endpoints. */
 export async function saveAccHead({ typeKey, no, name, desc }) {
@@ -269,4 +258,25 @@ export async function deleteAccBookTxn(txnId) {
   const json = await res.json().catch(() => null);
   if (!res.ok) throw new Error(apiMessage(json) || 'Could not delete transaction');
   return json;
+}
+
+/* ─── Day Book ka "Created By" ───────────────────────────────────────
+   Users ki list aur mojooda user pehle mock/accounts.js se aate thay
+   (banawate naam). Ab mojooda user login se aata hai — jo sach hai — aur
+   list me bhi wahi ek naam, taake dropdown khali na rahe aur koi ajnabi
+   naam bhi na dikhe. */
+
+export async function getAccCurrentUser() {
+  try {
+    return sessionStorage.getItem('displayName')
+      || sessionStorage.getItem('userName')
+      || '';
+  } catch (e) {
+    return '';
+  }
+}
+
+export async function getAccUsers() {
+  const me = await getAccCurrentUser();
+  return me ? [me] : [];
 }

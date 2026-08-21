@@ -1,16 +1,6 @@
 import { buildUrl, resolveMediaUrl } from '../../utils/apiConfig';
-import {
-  mockWeeklyOff,
-  mockHolidays,
-  mockStudentAttendanceClasses,
-  mockStaffAttendance,
-} from '../mock/attendance';
 import { delay, clone } from './_http';
 
-export async function getWeeklyOff() {
-  await delay();
-  return clone(mockWeeklyOff);
-}
 // src/services/attendanceService.js
 
 export async function getWeeklyOffSetup() {
@@ -250,10 +240,6 @@ export async function staffAttendance(payload) {
 
   return await response.json();
 }
-export async function getHolidays() {
-  await delay();
-  return clone(mockHolidays);
-}
 
 export async function createHoliday(payload) {
   await delay();
@@ -270,10 +256,6 @@ export async function deleteHoliday(id) {
   return { id, deleted: true };
 }
 
-export async function getStudentAttendance(month) {
-  await delay();
-  return clone(mockStudentAttendanceClasses);
-}
 
 // Real class → section → student list for the branch.
 // Flattens each grade×section into one row with its student roster
@@ -321,10 +303,6 @@ export async function getClassStudentList() {
   return rows;
 }
 
-export async function getStaffAttendance(month) {
-  await delay();
-  return clone(mockStaffAttendance);
-}
 
 // All employees for the branch (with class/section assignments).
 // Used for Staff Attendance rows + Student Attendance class-teacher lookup.

@@ -2,9 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Tooltip from './Tooltip';
 import TutorialModal from './TutorialModal';
-import * as examService from '../services/examService';
 import * as cbrApi from '../services/combinedAssessmentService';
-import useAsync from '../hooks/useAsync';
 import { buildUrl, resolveMediaUrl } from '../../utils/apiConfig';
 import { deliverReport } from './reportDelivery';
 import { useModuleReadOnly, validateSessionDateFromStorage } from '../pages/Settings/settingsStore';
@@ -38,7 +36,7 @@ const ALL_SUBJECTS = [
   'Pak Studies', 'Arabic', 'History', 'Geography', 'Art & Drawing',
 ];
 /* ── Syllabus seed (HTML #syllabusData) ── */
-/* Syllabus now loads via examService.getSyllabus(). */
+/* Syllabus poora API se aata hai — koi seed nahi. */
 function sylClassStatus(data) {
   if (!data || !data.length) return { label:'Not Added', cls:'notadded', icon:'fa-circle-xmark' };
   const withContent = data.filter(s => s.content && s.content.replace(/<[^>]+>/g,'').trim().length > 0);
@@ -47,7 +45,7 @@ function sylClassStatus(data) {
   return                                          { label:'Partially Added', cls:'partial',  icon:'fa-circle-half-stroke' };
 }
 
-/* Date sheets now load via examService.getDateSheets(). */
+/* Date sheets poori API se aati hain — koi seed nahi. */
 
 /* ── Helpers ── */
 function parseDDMMYYYY(s) {
@@ -122,7 +120,8 @@ function calcDuration(from, to) {
   
   return days + ' Day' + (days !== 1 ? 's' : '');
 }
-/* Result Setup grades / signatures / remarks now load via examService. */
+/* Grade / condition ki lists SCREEN ka dhancha hain (dropdown ke options),
+   data nahi — asli grades aur remarks API se aate hain. */
 const RS_GRADE_LIST = ['A+','A','B+','B','C+','C','D+','D','E+','E','F'];
 const RS_COND_LIST = [
   { v:'gte',     l:'Greater than or equal to (>=)' },
@@ -138,7 +137,33 @@ const RS_GRADE_COLORS = {
   'C+':'#7C3AED', 'C':'#D97706', 'D':'#EA580C',  'E':'#9333EA', 'F':'#DC2626',
 };
 
-/* Result Card Options now load via examService.getRcoGeneral() / getRcoSig(). */
+/* ── Result Card Options ki lakeerein ─────────────────────────────────
+   Ye DATA nahi, SCREEN ka dhancha hai: kaunse toggle result card par
+   mojood hain, aur har ek ka icon. On/off ki asli halat API se aati hai
+   (examselectionsettings → RCO_GENERAL_FIELD / RCO_SIG_FIELD se map hoti
+   hai), is liye yahan sab `off` se shuru hote hain — warna API ka jawab
+   aane se pehle screen wo toggle "on" dikha deti thi jo shayad on tha hi
+   nahi. Pehle ye list mock/exams.js me thi, jahan iska koi kaam nahi tha. */
+const RCO_GENERAL_OPTIONS = [
+  { label: 'Show School Logo',         icon: 'fa-school',         on: false },
+  { label: 'Show School Name',         icon: 'fa-heading',        on: false },
+  { label: 'Show Student Photo',       icon: 'fa-user',           on: false },
+  { label: 'Show Student Roll Number', icon: 'fa-hashtag',        on: false },
+  { label: 'Show Class and Section',   icon: 'fa-chalkboard',     on: false },
+  { label: 'Show Subject-wise Marks',  icon: 'fa-book',           on: false },
+  { label: 'Show Total Marks',         icon: 'fa-calculator',     on: false },
+  { label: 'Show Obtained Marks',      icon: 'fa-circle-check',   on: false },
+  { label: 'Show Percentage',          icon: 'fa-percent',        on: false },
+  { label: 'Show Grade',               icon: 'fa-star',           on: false },
+  { label: 'Show Position in Class',   icon: 'fa-trophy',         on: false },
+  { label: 'Show Attendance',          icon: 'fa-calendar-check', on: false },
+];
+
+const RCO_SIG_OPTIONS = [
+  { label: 'Show Principal Signature', icon: 'fa-pen-nib',      on: false },
+  { label: 'Show Parent Signature',    icon: 'fa-handshake',    on: false },
+  { label: 'Show Final Remarks',       icon: 'fa-comment-dots', on: false },
+];
 
 /* Result Card toggle label → examselectionsettings API field name.
    GET (getexamselectionsettingsbybranchid) ke boolean fields se toggles set hote hain,
@@ -257,38 +282,25 @@ const SAMPLE_RC_RD = {
   },
 };
 const SAMPLE_RC_EX = { name: 'Term Examination', classes: ['Class V (A)'] };
-/* ── Single Assessment Result — sample seed ── */
-const RES_DEFAULT_TOTALS = {
-  English:20, Urdu:20, Mathematics:20, Science:20, Islamiyat:20,
-  Computer:20, 'Social Studies':20, Quran:20, 'Art & Craft':20, 'Physical Education':20,
-};
-const RES_SAMPLE_STUDENTS = [
-  { id:1, rollNo:'245-00072', name:'Ali Khan',      father:'Ahmed Khan',
-    obtained:{ English:18, Urdu:16, Mathematics:20, Science:17, Islamiyat:14, Computer:0, 'Social Studies':0, Quran:16, 'Art & Craft':18, 'Physical Education':19 },
-    absentSubjects:['Computer','Social Studies'], attendance:'92%' },
-  { id:2, rollNo:'245-00073', name:'Haroon Sheikh', father:'Abdul Rauf',
-    obtained:{ English:15, Urdu:12, Mathematics:18, Science:14, Islamiyat:13 },
-    absentSubjects:[], attendance:'88%' },
-  { id:3, rollNo:'245-00074', name:'Amna Malik',    father:'Tariq Malik',
-    obtained:{}, absentSubjects:[], attendance:'95%' },
-  { id:4, rollNo:'245-00075', name:'Zara Ahmed',    father:'Imran Ahmed',
-    obtained:{}, absentSubjects:[], attendance:'90%' },
-  { id:5, rollNo:'245-00076', name:'Bilal Hussain', father:'Riaz Hussain',
-    obtained:{}, absentSubjects:[], attendance:'91%' },
-];
+/* ── Single Assessment Result ─────────────────────────────────────────
+   Yahan pehle do seed pade thay:
+     RES_SAMPLE_STUDENTS — paanch banawate bachche apne marks ke saath
+                           ("Ali Khan", "Haroon Sheikh"…). Jis class ka
+                           natija abhi bana hi na ho, uska grid inhi se
+                           bhar jata tha — asli bachchon jaisa.
+     RES_DEFAULT_TOTALS  — das mazameen ke fixed total marks, jo asli
+                           totals na milne par gir jate thay.
+
+   Dono khali kar diye. Natija na ho to grid khali rehta hai; mazameen aur
+   bachche wahi dikhte hain jo API deti hai. */
+const RES_DEFAULT_TOTALS = {};
+
 function freshStudents() {
-  return RES_SAMPLE_STUDENTS.map(s => ({
-    ...s,
-    obtained: { ...s.obtained },
-    absentSubjects: [...(s.absentSubjects || [])],
-    finalRemarks: '',
-    manualRemarks: {},
-    absent: false,
-  }));
+  return [];
 }
 
-/* Combined Assessment results scaffold now loads via examService.getCbrResults().
-   The pre-computed shape (including ranks and grades) lives in mock/exams.js. */
+/* Combined Assessment ke nataij API se aate hain. Pehle yahan mock/exams.js
+   ka bana banaya scaffold (ranks aur grades samet) girta tha. */
 
 const CBR_CLASS_OPTIONS = [
   'Grade 1 - Section A', 'Grade 2 - Section A', 'Grade 3 - Section A',
@@ -486,7 +498,9 @@ const [exams, setExams] = useState([]);
   const [dsTerm, setDsTerm]           = useState('2nd');
   const [dsExamId, setDsExamId]       = useState(null);
   const [dsOpenKey, setDsOpenKey]     = useState(null);
-  const { data: dateSheets = {}, setData: setDateSheets } = useAsync(examService.getDateSheets, []);
+  /* Khali se shuru — date sheets API se aati hain. Pehle yahan mock ki
+     bani banai date sheets (subject + tareekh + waqt) padi hoti thin. */
+  const [dateSheets, setDateSheets] = useState({});
   const [dsEditing, setDsEditing]     = useState(null);   // { examId, classKey, className, rows }
   const [dsConfirmDel, setDsConfirmDel] = useState(null); // { examId, classKey, className }
   const [dsConfirmCopy, setDsConfirmCopy] = useState(null); // { examId, sourceKey, count, examName }
@@ -509,7 +523,8 @@ const [subjects, setSubjects] = useState([]);
   const [resTerm, setResTerm]           = useState('2nd');
   const [resExamId, setResExamId]       = useState(null);
   const [resOpenKey, setResOpenKey]     = useState(null);
-  const { data: resultData = {}, setData: setResultData } = useAsync(examService.getResultData, []);
+  /* Khali se shuru — nataij API se aate hain, koi seed scaffold nahi. */
+  const [resultData, setResultData] = useState({});
   const [resUpdateCtx, setResUpdateCtx] = useState(null); // { examId, key, studentId }
   const [resCardCtx, setResCardCtx]     = useState(null); // { examId, key, studentId }
   const [resCardMarks, setResCardMarks] = useState(null); // real per-subject marks for the single card
@@ -1388,8 +1403,8 @@ const [subjects, setSubjects] = useState([]);
 
   /* ── Result Card Options state ── */
   const [rcTemplate, setRcTemplate]     = useState('classic'); // classic | insight | portfolio
-  const { data: rcoGeneral = [], setData: setRcoGeneral } = useAsync(examService.getRcoGeneral, []);
-  const { data: rcoSig = [],     setData: setRcoSig }     = useAsync(examService.getRcoSig,     []);
+  const [rcoGeneral, setRcoGeneral] = useState(RCO_GENERAL_OPTIONS);
+  const [rcoSig, setRcoSig] = useState(RCO_SIG_OPTIONS);
   const [rcoSettings, setRcoSettings]   = useState(null);      // loaded examselectionsettings record (id, includeX, signatures)
   const [rcPreviewId, setRcPreviewId]   = useState(null);      // template id being previewed
 
@@ -1397,7 +1412,9 @@ const [subjects, setSubjects] = useState([]);
   const [sylTerm, setSylTerm]               = useState('2nd');
   const [sylExamId, setSylExamId]           = useState(null);
   const [sylOpenKey, setSylOpenKey]         = useState(null);
-  const { data: syllabusData = {}, setData: setSyllabusData } = useAsync(examService.getSyllabus, []);
+  /* Khali se shuru — syllabus API se aata hai. Pehle mock me har class ka
+     banawata syllabus para tha ("Unit 1: Grammar & Comprehension"). */
+  const [syllabusData, setSyllabusData] = useState({});
   const [sylEditing, setSylEditing]         = useState(null);   // { examId, classKey, className, subjects }
   const [sylConfirmDel, setSylConfirmDel]   = useState(null);   // { examId, classKey, className }
   const [sylReportReq, setSylReportReq]     = useState(null);   // { classKey, name }

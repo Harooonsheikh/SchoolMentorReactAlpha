@@ -1,8 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Tooltip from './Tooltip';
-import * as academicsService from '../services/academicsService';
-import useAsync from '../hooks/useAsync';
 import { buildUrl, assertSessionPayload, registerSessionToast, apiMessage } from '../../utils/apiConfig';
 import { termsCrud, termsBranchID, termsSessionYearID } from './Academics';
 import { deliverReport } from './reportDelivery';
@@ -18,40 +16,14 @@ import 'mathlive/static.css';                     // static render CSS (fraction
    (panel-lp, ss-card-*, tb-*, clp2-*, clpm-*, umgr-*, nb-*)
    ═══════════════════════════════════════════════════════════════════ */
 
-const LP_CLASSES = [
-  'Nursery', 'KG-1', 'KG-2',
-  'Class I', 'Class II', 'Class III', 'Class IV', 'Class V',
-  'Class VI', 'Class VII', 'Class VIII',
-  'Class IX Sci', 'Class IX Arts', 'Class X Sci', 'Class X Arts',
-  'FSc I Pre-Med', 'FSc I Pre-Eng', 'FSc II Pre-Med', 'FSc II Pre-Eng',
-  'O-Levels',
-];
 
-const LP_SUBJECTS_BY_CLASS = {
-  default: ['English', 'Urdu', 'Mathematics', 'Science', 'Social Studies', 'Islamiat'],
-  'Nursery': ['English', 'Urdu', 'Numeracy', 'Rhymes'],
-  'KG-1': ['English', 'Urdu', 'Numeracy', 'Activities'],
-  'KG-2': ['English', 'Urdu', 'Numeracy', 'Activities'],
-};
 
-/* Academic session + vacations now load via academicsService
-   (src/services/academicsService.js). Edits stay in-memory until backend
-   wires the matching endpoints. */
 
-const PER_WEEK_BY_CLASS = {
-  'Class I':   [{s:'English', n:5}, {s:'Urdu', n:5}, {s:'Mathematics', n:5}, {s:'Science', n:3}, {s:'Islamiat', n:2}],
-  'Class II':  [{s:'English', n:5}, {s:'Urdu', n:5}, {s:'Mathematics', n:5}, {s:'Science', n:3}, {s:'SST', n:2}, {s:'Islamiat', n:2}],
-  'Class III': [{s:'English', n:6}, {s:'Urdu', n:5}, {s:'Mathematics', n:5}, {s:'Science', n:4}, {s:'SST', n:3}, {s:'Islamiat', n:2}],
-  'Class IX Sci': [{s:'Physics', n:5}, {s:'Chemistry', n:5}, {s:'Biology', n:5}, {s:'Maths', n:5}, {s:'English', n:5}, {s:'Urdu', n:4}, {s:'Islamiat', n:2}],
-};
 
-/* Term breakup classes, units, notebook units, and sub-screen seeds now load
-   via academicsService.{getTermBreakupClasses, getUnits, getNbUnits,
-   getSubLpData, getSubNbData}. Edits stay in-memory until backend wires
-   the matching endpoints. */
+/* Units, notebook units aur Submissions ka data poora API se aata hai
+   (getulpforclassdetail… / getulpfornotebookdetailsNew / lesson-plan status).
+   Koi seed yahan nahi — API kuch na de to screen khali. */
 
-const TERM_BREAKUP_TERMS = ['Term 1', 'Term 2', 'Term 3'];
-const TERM_BREAKUP_SUBJECTS = ['English', 'Urdu', 'Mathematics', 'Science', 'Islamiat'];
 
 
 
@@ -633,9 +605,6 @@ const SUB_NB_QTYPE_META = {
   essays:          { label:'Essays',                     icon:'fa-feather-pointed',   color:'linear-gradient(135deg,#16A34A,#1E40AF)' },
 };
 
-const SUB_CLASSES  = ['Class-I','Class-II','Class-III','Class-IV','Class-V','Class-VI','Class-VII','Class-VIII','Class-IX','Class-X'];
-const SUB_SECTIONS = ['A','B','C'];
-const SUB_SUBJECTS = ['English','Urdu','Mathematics','Science','Social Studies','Islamiat'];
 
 /* Rich-text editor sections — verbatim from HTML CLPM_SECTIONS / CLPM_SECTIONS_URDU */
 const LESSON_SECTIONS_EN = [
@@ -822,9 +791,17 @@ const [tbRefreshKey, setTbRefreshKey] = useState(0);
   /* Bumped when a lesson/unit modal closes so CreateLessonPlans re-fetches. */
   const [clpRefresh, setClpRefresh] = useState(0);
   const bumpClpRefresh = () => setClpRefresh(n => n + 1);
-  const { data: units = [],   setData: setUnits }   = useAsync(academicsService.getUnits,   []);
-  const { data: nbUnits = [], setData: setNbUnits } = useAsync(academicsService.getNbUnits, []);
-  const { data: termBreakupClasses = [] } = useAsync(academicsService.getTermBreakupClasses, []);
+  /* Khali se shuru. Pehle ye teeno mock (src/erp/mock/lessonPlans.js) se
+     bharte thay, is liye screen khulte hi banawati unit/lesson rows nazar
+     aati thin aur API ka jawab aane par chup-chaap badal jati thin. Asli
+     data /api/getulpforclassdetailbytermsubjectandclass aur
+     /api/getulpfornotebookdetailsNew se aata hai — wahi setUnits/setNbUnits
+     bharta hai. Kuch na mile to kuch dikhta bhi nahi.
+
+     `termBreakupClasses` sirf mock se aati thi aur kahin istemal hi nahi
+     hoti thi — hata di. */
+  const [units, setUnits] = useState([]);
+  const [nbUnits, setNbUnits] = useState([]);
 
   const [unitMgrSource, setUnitMgrSource] = useState(null); // 'lesson' | 'notebook' | null
   const [lessonEdit,    setLessonEdit]    = useState(null); // { unitId, lessonId, lesson }
@@ -2869,8 +2846,6 @@ console.log('json2 FULL:', JSON.stringify(json2).slice(0, 500));
 /* ═══════════════════════════════════════════════════════════════════
    TERM BREAKUP UPDATE MODAL — EXACT copy of HTML's .tbm-modal popup
    ═══════════════════════════════════════════════════════════════════ */
-const TBM_TERMS    = ['2nd', '3rd Term', '5th Term', 'testing', 'combined'];
-const TBM_SUBJECTS = ['English', 'Urdu', 'Mathematics', 'Science', 'Islamiat'];
 
 function TermBreakupModal({ cls, gradeId, sectionId,onSaved, onClose, toast }) {
   const [termTab, setTermTab] = useState('');
@@ -4790,8 +4765,12 @@ function Submissions({ toast, classesData = [] }) {
   const [availableSubjects, setAvailableSubjects] = useState([]);
   const [loadingSubjects, setLoadingSubjects] = useState(false);
   
-  const { data: lpData = [], setData: setLpData } = useAsync(academicsService.getSubLpData, []);
-  const { data: nbData = [], setData: setNbData } = useAsync(academicsService.getSubNbData, []);
+  /* Khali se shuru — class/section/subject chun kar Fetch karne par asli
+     data aata hai (loadLpSubmissionData / loadNbSubmissionData). Pehle
+     yahan mock rows bhari hoti thin ("Unit 1 — Living Things" waghera),
+     jo Submissions kholte hi asli lagti thin. */
+  const [lpData, setLpData] = useState([]);
+  const [nbData, setNbData] = useState([]);
 
   const [lpUnitOpen, setLpUnitOpen] = useState({});
   const [nbUnitOpen, setNbUnitOpen] = useState({});
@@ -9272,51 +9251,8 @@ function LpReportPicker({ cfg, onClose, onGenerate }) {
    (tbGenerateReport, generateCardReport, lpOpenReport)
    ═══════════════════════════════════════════════════════════════════ */
 
-/* LP_SUBJECTS map — verbatim from HTML (keys re-mapped to React class labels) */
-const LP_SUBJECTS = {
-  'Nursery':         [{ name:'English', lessons:20 },{ name:'Urdu', lessons:18 },{ name:'Math', lessons:16 },{ name:'Drawing', lessons:8 }],
-  'KG-1':            [{ name:'English', lessons:22 },{ name:'Urdu', lessons:20 },{ name:'Math', lessons:18 },{ name:'Science', lessons:10 },{ name:'Drawing', lessons:6 }],
-  'KG-2':            [{ name:'English', lessons:22 },{ name:'Urdu', lessons:20 },{ name:'Math', lessons:18 },{ name:'Science', lessons:12 },{ name:'SST', lessons:8 }],
-  'Class I':         [{ name:'English', lessons:24 },{ name:'Urdu', lessons:22 },{ name:'Math', lessons:20 },{ name:'Science', lessons:14 },{ name:'SST', lessons:10 },{ name:'Islamiat', lessons:6 }],
-  'Class II':        [{ name:'English', lessons:24 },{ name:'Urdu', lessons:22 },{ name:'Math', lessons:20 },{ name:'Science', lessons:14 },{ name:'SST', lessons:10 },{ name:'Islamiat', lessons:6 }],
-  'Class III':       [{ name:'English', lessons:22 },{ name:'Urdu', lessons:20 },{ name:'Math', lessons:18 },{ name:'Science', lessons:16 },{ name:'SST', lessons:12 },{ name:'Islamiat', lessons:6 },{ name:'Computer', lessons:4 }],
-  'Class IV':        [{ name:'English', lessons:22 },{ name:'Urdu', lessons:20 },{ name:'Math', lessons:18 },{ name:'Science', lessons:16 },{ name:'SST', lessons:12 },{ name:'Islamiat', lessons:6 },{ name:'Computer', lessons:4 }],
-  'Class V':         [{ name:'English', lessons:22 },{ name:'Urdu', lessons:20 },{ name:'Math', lessons:18 },{ name:'Science', lessons:16 },{ name:'SST', lessons:12 },{ name:'Islamiat', lessons:6 },{ name:'Computer', lessons:4 }],
-  'Class VI':        [{ name:'English', lessons:20 },{ name:'Urdu', lessons:18 },{ name:'Math', lessons:20 },{ name:'Science', lessons:18 },{ name:'SST', lessons:14 },{ name:'Islamiat', lessons:8 },{ name:'Computer', lessons:6 }],
-  'Class VII':       [{ name:'English', lessons:20 },{ name:'Urdu', lessons:18 },{ name:'Math', lessons:20 },{ name:'Science', lessons:18 },{ name:'SST', lessons:14 },{ name:'Islamiat', lessons:8 },{ name:'Computer', lessons:6 }],
-  'Class VIII':      [{ name:'English', lessons:20 },{ name:'Urdu', lessons:18 },{ name:'Math', lessons:20 },{ name:'Science', lessons:18 },{ name:'SST', lessons:14 },{ name:'Islamiat', lessons:8 },{ name:'Computer', lessons:6 }],
-  'Class IX Sci':    [{ name:'English', lessons:18 },{ name:'Urdu', lessons:16 },{ name:'Math', lessons:20 },{ name:'Physics', lessons:18 },{ name:'Chemistry', lessons:18 },{ name:'Biology', lessons:18 },{ name:'Computer', lessons:6 },{ name:'Islamiat', lessons:6 }],
-  'Class IX Arts':   [{ name:'English', lessons:18 },{ name:'Urdu', lessons:18 },{ name:'Math', lessons:18 },{ name:'History', lessons:16 },{ name:'Civics', lessons:14 },{ name:'Islamiat', lessons:8 },{ name:'Pak-Studies', lessons:8 }],
-  'Class X Sci':     [{ name:'English', lessons:18 },{ name:'Urdu', lessons:16 },{ name:'Math', lessons:20 },{ name:'Physics', lessons:18 },{ name:'Chemistry', lessons:18 },{ name:'Biology', lessons:18 },{ name:'Computer', lessons:6 }],
-  'Class X Arts':    [{ name:'English', lessons:18 },{ name:'Urdu', lessons:18 },{ name:'Math', lessons:18 },{ name:'History', lessons:16 },{ name:'Civics', lessons:14 },{ name:'Islamiat', lessons:8 },{ name:'Pak-Studies', lessons:8 }],
-  'FSc I Pre-Med':   [{ name:'English', lessons:16 },{ name:'Urdu', lessons:14 },{ name:'Physics', lessons:20 },{ name:'Chemistry', lessons:20 },{ name:'Biology', lessons:20 },{ name:'Math', lessons:14 }],
-  'FSc I Pre-Eng':   [{ name:'English', lessons:16 },{ name:'Urdu', lessons:14 },{ name:'Physics', lessons:20 },{ name:'Chemistry', lessons:20 },{ name:'Math', lessons:22 },{ name:'Computer', lessons:12 }],
-  'FSc II Pre-Med':  [{ name:'English', lessons:16 },{ name:'Urdu', lessons:14 },{ name:'Physics', lessons:20 },{ name:'Chemistry', lessons:20 },{ name:'Biology', lessons:20 },{ name:'Math', lessons:14 }],
-  'FSc II Pre-Eng':  [{ name:'English', lessons:16 },{ name:'Urdu', lessons:14 },{ name:'Physics', lessons:20 },{ name:'Chemistry', lessons:20 },{ name:'Math', lessons:22 },{ name:'Computer', lessons:12 }],
-  'O-Levels':        [{ name:'English', lessons:18 },{ name:'Math', lessons:20 },{ name:'Physics', lessons:18 },{ name:'Chemistry', lessons:18 },{ name:'Biology', lessons:18 },{ name:'Computer', lessons:10 },{ name:'Pak-Studies', lessons:8 },{ name:'Islamiat', lessons:6 }],
-};
 
-/* TB_DATA lazy init — verbatim from HTML */
-const TB_DATA = {};
-function tbInit() {
-  if (Object.keys(TB_DATA).length) return;
-  Object.keys(LP_SUBJECTS).forEach(cls => {
-    TB_DATA[cls] = {};
-    ['2nd','3rd Term','5th Term','testing','combined'].forEach(term => {
-      TB_DATA[cls][term] = {};
-      (LP_SUBJECTS[cls]||[]).forEach(s => {
-        TB_DATA[cls][term][s.name] = [
-          { unitNum:'1', unitName:'Unit 1 – '+s.name, weeksRequired:'2', topics:[
-            { subTopic:'Introduction to '+s.name, periodsRequired:'12' },
-            { subTopic:'Core Concepts', periodsRequired:'10' },
-          ]},
-        ];
-      });
-    });
-  });
-}
-
-/* ─── School branding helpers — verbatim from HTML ─── */
+/* TB_DATA / tbInit yahan se hata diye gaye: wo sirf mock report banate thay. */
 function getSchoolName(){
   return document.querySelector('.school-name')?.textContent?.trim() || 'The Oxford System, Lahore Campus';
 }
@@ -9414,7 +9350,6 @@ function getReportLogo(style, reportHeader = null) {
    TERM BREAKUP REPORT — verbatim from HTML tbGenerateReport
    ═══════════════════════════════════════════════════════════════════ */
 function tbGenerateReport(cls, style, reportHeader = null, format = null, data = null) {
-  tbInit();
   const isColor = style === 'color' || style === 'word-color';
   const isWord  = format ? (format === 'word') : (style === 'word-color' || style === 'word-bw');
   const styleLabel = isColor ? 'Colorful' : 'Colorless';
@@ -9569,90 +9504,14 @@ function tbGenerateReport(cls, style, reportHeader = null, format = null, data =
         ${unitTables || `<p style="color:${textM};text-align:center;padding:30px">No units found for this term &amp; subject.</p>`}
       </div>`;
   } else {
-    /* ── Mock seed fallback (no live data passed) ── */
-    const terms = ['2nd', '3rd Term', '5th Term', 'testing', 'combined'];
-    subjectsHtml = (LP_SUBJECTS[cls] || []).map(s => {
-      const termSections = terms.map(term => {
-        const units = TB_DATA[cls]?.[term]?.[s.name] || [];
-        if (!units.length) return '';
+    /* Live data na mile to report KHALI banti hai.
 
-        const unitTables = units.map((u, ui) => {
-          const totalPeriods = u.topics.reduce((a, tp) => a + (parseInt(tp.periodsRequired)||0), 0);
-          const rows = u.topics.map((tp, ti) => `
-            <tr style="background:${ti%2===0?'white':rowAlt}">
-              <td style="padding:9px 13px;border:1px solid ${border};color:${textM};text-align:center;font-weight:600">${ti+1}</td>
-              <td style="padding:9px 13px;border:1px solid ${border};color:${textM}">${tp.subTopic}</td>
-              <td style="padding:9px 13px;border:1px solid ${border};color:${textD};font-weight:800;text-align:center;font-size:14px">${tp.periodsRequired}</td>
-            </tr>`).join('');
-
-          return `
-            <div style="margin-bottom:14px;border-radius:10px;overflow:hidden;border:1px solid ${border}">
-              <div style="background:${unitHdr};padding:10px 16px;display:flex;align-items:center;justify-content:space-between">
-                <div style="display:flex;align-items:center;gap:12px">
-                  <div style="width:28px;height:28px;border-radius:7px;background:rgba(255,255,255,.2);display:flex;align-items:center;justify-content:center;color:#fff;font-size:13px;font-weight:800">${u.unitNum||ui+1}</div>
-                  <div style="font-size:14px;font-weight:800;color:#fff">${u.unitName}</div>
-                </div>
-                <div style="display:flex;gap:16px">
-                  <div style="text-align:center">
-                    <div style="font-size:16px;font-weight:800;color:#fff">${u.weeksRequired}</div>
-                    <div style="font-size:9px;color:rgba(255,255,255,.65);text-transform:uppercase;letter-spacing:.6px;margin-top:2px">Weeks</div>
-                  </div>
-                  <div style="text-align:center">
-                    <div style="font-size:16px;font-weight:800;color:#fff">${totalPeriods}</div>
-                    <div style="font-size:9px;color:rgba(255,255,255,.65);text-transform:uppercase;letter-spacing:.6px;margin-top:2px">Total Periods</div>
-                  </div>
-                  <div style="text-align:center">
-                    <div style="font-size:16px;font-weight:800;color:#fff">${u.topics.length}</div>
-                    <div style="font-size:9px;color:rgba(255,255,255,.65);text-transform:uppercase;letter-spacing:.6px;margin-top:2px">Topics</div>
-                  </div>
-                </div>
-              </div>
-              <table style="width:100%;border-collapse:collapse;font-size:13px">
-                <thead><tr style="background:${tHead}">
-                  <th style="padding:8px 13px;border:1px solid ${border};color:${textM};font-size:10px;text-transform:uppercase;letter-spacing:.6px;width:50px">#</th>
-                  <th style="padding:8px 13px;border:1px solid ${border};color:${textM};font-size:10px;text-transform:uppercase;letter-spacing:.6px">Sub Topic</th>
-                  <th style="padding:8px 13px;border:1px solid ${border};color:${textM};font-size:10px;text-transform:uppercase;letter-spacing:.6px;width:130px">Periods Required</th>
-                </tr></thead>
-                <tbody>${rows}</tbody>
-                <tfoot>
-                  <tr style="background:${isColor?'rgba(30,58,138,.04)':'#F0F0F0'}">
-                    <td colspan="2" style="padding:9px 13px;border:1px solid ${border};font-weight:700;color:${textD}">Total</td>
-                    <td style="padding:9px 13px;border:1px solid ${border};font-weight:800;color:${accent};text-align:center;font-size:16px">${totalPeriods}</td>
-                  </tr>
-                </tfoot>
-              </table>
-            </div>`;
-        }).join('');
-
-        return `
-          <div style="margin-bottom:18px">
-            <div style="font-size:11px;font-weight:800;letter-spacing:.9px;text-transform:uppercase;
-              color:${accent};margin-bottom:10px;display:flex;align-items:center;gap:8px">
-              <span style="display:inline-block;width:3px;height:14px;background:${accent};border-radius:2px"></span>
-              ${term} — ${units.length} unit${units.length>1?'s':''}
-            </div>
-            ${unitTables}
-          </div>`;
-      }).filter(Boolean).join('');
-
-      if (!termSections) return '';
-
-      return `
-        <div style="margin-bottom:32px;page-break-inside:avoid">
-          <div style="display:flex;align-items:center;gap:12px;padding:12px 16px;
-            background:${isColor?'linear-gradient(135deg,rgba(30,58,138,.07),rgba(30,64,175,.04))':'#F2F2F2'};
-            border-radius:10px;border-left:5px solid ${accent};margin-bottom:16px">
-            <div style="font-size:17px;font-weight:800;color:${textD}">${s.name}</div>
-            <div style="margin-left:auto;background:${isColor?'rgba(30,64,175,.1)':'#E5E5E5'};color:${accent};
-              padding:3px 12px;border-radius:99px;font-size:11px;font-weight:700">${s.lessons} lessons/week</div>
-          </div>
-          ${termSections}
-        </div>`;
-    }).join('');
-
-    totalUnits    = Object.values(TB_DATA[cls]||{}).flatMap(t=>Object.values(t)).flat().length;
-    totalSubjects = (LP_SUBJECTS[cls]||[]).length;
-    totalLessons  = (LP_SUBJECTS[cls]||[]).reduce((a,s)=>a+s.lessons,0);
+       Pehle yahan ek poora mock seed para tha (LP_SUBJECTS + TB_DATA se
+       banaya hua) — class, subjects, terms, units, topics, sab banawate.
+       Report bilkul asli lagti thi aur kisi ko pata nahi chalta tha ke ye
+       school ka data hai hi nahi. Ab neeche wala "No breakup data
+       available." wala jumla chhapta hai. */
+    subjectsHtml = '';
   }
 
   const summaryStrip = `
@@ -10064,11 +9923,10 @@ async function lpOpenReport(type, style, selectedClass, ctx = {}, reportHeader =
           return { ...opt, subjects: [] };
         }
       }))
-    : Object.keys(LP_SUBJECTS).map(key => ({
-        key,
-        label: key,
-        subjects: (LP_SUBJECTS[key] || []).map(s => ({ name: s.name, lessons: Number(s.lessons) || 0 })),
-      }));
+    /* Branch ki koi class hi na mile to report me kuch nahi — pehle yahan
+       LP_SUBJECTS ka static naqsha gir jata tha aur report banawati classon
+       se bhar jati thi. */
+    : [];
 
   const title = `All Classes — Weekly Lesson Plan Report`;
 

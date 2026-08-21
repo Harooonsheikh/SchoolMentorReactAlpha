@@ -1,13 +1,3 @@
-import {
-  mockStudents,
-  mockStudentStats,
-  mockRecentAdmissions,
-  mockStuInactive,
-  mockStuInactiveReasons,
-  mockStuNextReg,
-  mockStuNextAdm,
-  mockStuNextFamId,
-} from '../mock/students';
 import { delay, clone } from './_http';
 import { buildUrl, apiMessage, resolveMediaUrl } from '../../utils/apiConfig';
 
@@ -387,15 +377,6 @@ export async function unlinkStuFromFamily({ id } = {}) {
   return familyDetailCrud({ action: 'delete', id: Number(id) || 0 });
 }
 
-/* ─── Legacy APIs (Dashboard, etc.) — kept unchanged ─── */
-export async function getRecentAdmissions() { await delay(); return clone(mockRecentAdmissions); }
-export async function getStudents()         { await delay(); return clone(mockStudents); }
-export async function getStudentStats()     { await delay(); return clone(mockStudentStats); }
-export async function getStudentById(id)    {
-  await delay();
-  const found = mockStudents.find(s => s.id === id);
-  return found ? clone(found) : null;
-}
 
 /* ─── Students Module APIs ─── */
 export async function getStuClasses() { return fetchClassSectionStudents(); }
@@ -513,7 +494,6 @@ export async function getStuFeeHeads(gradeId) {
     freq:   h.frequency ?? '',
   }));
 }
-export async function getStuInactiveReasons() { await delay(); return clone(mockStuInactiveReasons); }
 
 /* Branch staff — used to auto-fill certificate signatures: the Principal
    (isPrinciple) and the teacher assigned to a given class/section.
@@ -577,9 +557,6 @@ export async function getStuSchool() {
     _raw:     d,
   };
 }
-export async function getStuNextReg()         { await delay(); return mockStuNextReg; }
-export async function getStuNextAdm()         { await delay(); return mockStuNextAdm; }
-export async function getStuNextFamId()       { await delay(); return mockStuNextFamId; }
 
 /* ─── Write APIs ─── */
 /* Create / update a student. The backend expects multipart FormData
@@ -793,3 +770,22 @@ export async function saveStuFamily(payload = {}) {
 export async function deleteStuFamily({ id } = {}) {
   return familyCrud({ action: 'delete', id: Number(id) || 0 });
 }
+
+/* ─── Screen ko chahiye, magar in ke apne endpoint abhi nahi ─────────
+   Ye teeno pehle mock/students.js se jawab dete thay: banawate wajuhat ki
+   list aur agla registration / admission number. Number ghalat hona bura
+   hai — form us number par khul jata tha jo kisi aur bachche ka ho sakta
+   hai. Ab khali/sifar lautate hain: screen apna default rakhti hai aur
+   asli number user khud daalta hai (ya save par backend khud deta hai).
+
+   Backend jab lookup/next-number ke route de dega, sirf in teen functions
+   ke andar call lagani hogi — screen ko haath nahi lagega. */
+
+/** Inactive karne ki wajuhat ki lookup list. */
+export async function getStuInactiveReasons() { return []; }
+
+/** Agla registration number (0 = maloom nahi). */
+export async function getStuNextReg() { return 0; }
+
+/** Agla admission number (0 = maloom nahi). */
+export async function getStuNextAdm() { return 0; }

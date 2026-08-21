@@ -23,51 +23,7 @@ export const CURRENT_SESSION = {
        7 classes seeded; full population approximated for the demo
        (each section averages ~25-30 students). Inactive list has 3
        seeded rows with pending-dues breakdown. */
-export const STUDENT_STATS = {
-  activeStudents:   612,        /* totals across all 7 classes */
-  inactiveStudents: 18,         /* extrapolated from mock + pending */
-  totalFamilies:    134,        /* matches mock seed pattern */
-  classes: [
-    { cls: 'Nursery',  sec: 'A', students: 24 },
-    { cls: 'Nursery',  sec: 'B', students: 22 },
-    { cls: 'Prep',     sec: 'A', students: 26 },
-    { cls: 'Class 1',  sec: 'A', students: 28 },
-    { cls: 'Class 1',  sec: 'B', students: 27 },
-    { cls: 'Class 3',  sec: 'A', students: 30 },
-    { cls: 'Class 5',  sec: 'A', students: 32 },
-  ],
-  recentAdmissions: [
-    { name: 'Ayesha Khalid', cls: 'Grade 9 – A',  date: '15 May 2026', status: 'Active'  },
-    { name: 'Hamza Raza',    cls: 'Grade 8 – B',  date: '16 May 2026', status: 'Active'  },
-    { name: 'Sara Malik',    cls: 'Grade 10 – A', date: '18 May 2026', status: 'Pending' },
-    { name: 'Ali Usman',     cls: 'Grade 7 – C',  date: '20 May 2026', status: 'Active'  },
-    { name: 'Zainab Tariq',  cls: 'Grade 11 – A', date: '22 May 2026', status: 'Pending' },
-  ],
-  inactiveWithDues: 2,          /* mock has 2 inactive rows with dues > 0 */
-};
 
-/* ─── HR module — mock/hr.js
-       26 employees seeded, 5 departments, 9 designations. */
-export const HR_STATS = {
-  totalEmployees:   26,
-  activeEmployees:  24,
-  inactiveEmployees: 2,
-  departments: [
-    { name: 'Administration', count: 4 },
-    { name: 'Science',        count: 6 },
-    { name: 'English',        count: 5 },
-    { name: 'Mathematics',    count: 5 },
-    { name: 'Accounts',       count: 3 },
-  ],
-  designations: 9,
-  /* Payroll run for May 2026 — mock pattern (paid vs pending). */
-  payroll: { period: 'May 2026', total: 26, paid: 19, pending: 7, totalPayable: 4860000 },
-  recentLetters: [
-    { type: 'Experience Letter', employee: 'Mr. Faisal Ahmed', date: '28 May 2026' },
-    { type: 'Appointment Letter', employee: 'Ms. Nadia Iqbal',  date: '24 May 2026' },
-    { type: 'Salary Certificate', employee: 'Mr. Tariq Aslam',  date: '22 May 2026' },
-  ],
-};
 
 /* ─── ADMISSION CRM — mock/admissionCrm.js
        18 leads seeded with status, source, officer, followup. */
@@ -100,57 +56,13 @@ export const CRM_STATS = {
   ],
 };
 
-/* ─── EXAMINATION — mock/exams.js
-       11 exams seeded across 5 terms. */
-export const EXAM_STATS = {
-  totalExams: 11,
-  byTerm: [
-    { term: '2nd',      count: 5 },
-    { term: '3rd Term', count: 3 },
-    { term: '5th Term', count: 1 },
-    { term: 'testing',  count: 1 },
-    { term: 'combined', count: 1 },
-  ],
-  currentTermExams: 5,         /* Term '2nd' is the current one */
-  upcomingExam: { name: 'Mid Term — Grade 1 to 5', from: '01/05/2026', to: '05/05/2026' },
-  publishedResults: 2,
-  pendingResults:   3,
-};
 
 /* ─── ACADEMICS — mock/academics.js + mock/lessonPlans.js
        25 activity calendar events with status (completed/ongoing/
        upcoming), 5 terms, lesson plan submission rows. */
-export const ACADEMICS_STATS = {
-  terms:        5,             /* mock/academics.js → mockTermData */
-  activities: { completed: 8, ongoing: 1, upcoming: 16 },
-  lessonPlans: {
-    submitted: 14,
-    pending:    2,
-    approved:  11,
-  },
-  homework: {
-    assigned:  18,
-    pending:    1,
-    submitted: 17,
-  },
-  upcomingActivities: [
-    { id: 10, name: 'Sports Day',           start: 'May 17, 2026',  color: '#7C3AED' },
-    { id: 11, name: 'Book Fair',            start: 'May 26, 2026',  color: '#1E40AF' },
-    { id: 12, name: 'Mid-Year Exams',       start: 'Jun 1, 2026',   color: '#DC2626' },
-    { id: 13, name: 'Talent Show',          start: 'Jun 24, 2026',  color: '#E11D48' },
-  ],
-};
 
 /* ─── ATTENDANCE — mock/attendance.js
        Weekly off + holidays + per-class attendance records. */
-export const ATTENDANCE_STATS = {
-  holidays:           12,
-  weeklyOffDays:      [5, 6],  /* Fri, Sat */
-  todayStudentPct:    91,
-  todayStaffPct:      94,
-  classesMarkedToday: 18,
-  classesPendingToday: 4,
-};
 
 /* ─── ATTENDANCE TODAY — aggregated from the schema used inside
        mock/attendance.js. We mirror the exact field names so the
@@ -169,62 +81,15 @@ export const ATTENDANCE_STATS = {
        Percentages align with the existing ATTENDANCE_STATS values
        (todayStudentPct=91, todayStaffPct=94) so the section header
        totals stay consistent with the rest of the dashboard. */
-export const STUDENT_ATTENDANCE_TODAY = {
-  total:      612,
-  present:    557,
-  absent:     38,
-  leave:      17,
-  percentage: 91,
-};
-export const STAFF_ATTENDANCE_TODAY = {
-  total:      47,
-  present:    44,
-  absent:     2,
-  leave:      1,
-  percentage: 94,
-};
 
 /* ─── TIME TABLE — mock/timetable.js
        Day-wise periods per class. */
-export const TIMETABLE_STATS = {
-  classesConfigured: 22,
-  totalPeriods:      176,      /* approx — 22 classes × 8 periods */
-};
 
 /* ─── FEE — mock/fee.js + audit log entries
        Fee structures, generated challans, receipts. */
-export const FEE_STATS = {
-  monthlyCollection:    8460000,   /* PKR — cumulative MTD */
-  monthlyTarget:       10300000,
-  collectionPct:       82,
-  defaulters:          38,
-  outstandingTotal:    1184000,    /* PKR */
-  totalChallansIssued: 612,
-  paidChallans:        502,
-  pendingChallans:     110,
-  recentReceipts: [
-    { id: 'FR-2026-1042', name: 'STU-0231 — Grade 7-A',  amount: 18500, mode: 'Cash',   time: '03:50 PM' },
-    { id: 'FR-2026-1041', name: 'STU-0212 — Grade 8-A',  amount: 21000, mode: 'Online', time: '02:30 PM' },
-    { id: 'FR-2026-1040', name: 'STU-0198 — Grade 5-B',  amount: 16800, mode: 'Cash',   time: '01:10 PM' },
-    { id: 'FR-2026-1039', name: 'STU-0181 — Grade 9-A',  amount: 22000, mode: 'Online', time: '12:45 PM' },
-  ],
-};
 
 /* ─── ACCOUNTS — mock/accounts.js
        Chart of accounts, revenue + expenditure entries. */
-export const ACCOUNTS_STATS = {
-  monthlyRevenue:     12480000,
-  monthlyExpense:      9620000,
-  netSurplus:          2860000,
-  revenueEntries:      48,
-  expenseEntries:      62,
-  recentTransactions: [
-    { type: 'rev', label: 'Fee Collection — May Batch 4', amount: 480000, date: '31 May' },
-    { type: 'exp', label: 'Utility Bills — May 2026',      amount: 188000, date: '30 May' },
-    { type: 'rev', label: 'Transport Fee — May',           amount: 220000, date: '30 May' },
-    { type: 'exp', label: 'Stationery + Lab Supplies',     amount:  62000, date: '29 May' },
-  ],
-};
 
 /* ─── INVENTORY — mock/inventory.js
        11 items, POS sales, products. */
@@ -259,27 +124,7 @@ export const APPRAISAL_STATS = {
 function todayIso() { return '2026-05-31'; }
 function weekAgoIso() { return '2026-05-25'; }
 
-export const AUDIT_STATS = (() => {
-  const today    = INITIAL_LOGS.filter(l => l.date === todayIso());
-  const thisWeek = INITIAL_LOGS.filter(l => l.date >= weekAgoIso());
-  const activeUsers = new Set(today.map(l => l.userId)).size;
-  return {
-    today:        today.length,
-    thisWeek:     thisWeek.length,
-    total:        INITIAL_LOGS.length,
-    activeUsersToday: activeUsers,
-    recent: INITIAL_LOGS.slice(0, 5).map(hydrateLog),
-  };
-})();
 
-/* ─── USER PERMISSIONS — pages/UserPermissions/permissionsData.js */
-export const PERMISSIONS_STATS = {
-  totalUsers:       INITIAL_USERS.length,
-  activeUsers:      INITIAL_USERS.filter(u => u.status === 'Active').length,
-  inactiveUsers:    INITIAL_USERS.filter(u => u.status === 'Inactive').length,
-  totalRoles:       INITIAL_ROLES.length,
-  permissionGroups: INITIAL_GROUPS.length,
-};
 
 /* ─── Per-teacher scope + KPIs (Teacher dashboard) ─────────────
        Built from the same mock vocabulary: classes from Students,
@@ -664,108 +509,13 @@ export const PRINCIPAL_REMINDERS = [
   },
 ];
 
-/* ─── TEACHER MOBILE APP STATUS ─────────────────────────────── */
-export const TEACHER_APP_STATUS = {
-  total:        47,
-  downloaded:   31,    /* installed + logged in */
-  pending:      16,    /* not downloaded yet */
-  newThisMonth: 5,
-  pct:          66,    /* downloaded / total × 100 */
-};
 
-/* ─── Pending list for the Teachers App report (16 entries). */
-export const TEACHER_APP_PENDING = [
-  { name: 'Mr. Faisal Ahmed',       designation: 'Principal',           dept: 'Administration', contact: '0300-1234567', status: 'Not Downloaded' },
-  { name: 'Ms. Nadia Iqbal',        designation: 'Sr. Teacher',         dept: 'Science',        contact: '0301-2345678', status: 'Not Logged In'  },
-  { name: 'Ms. Amna Farooq',        designation: 'Accountant',          dept: 'Accounts',       contact: '0302-3456789', status: 'Not Downloaded' },
-  { name: 'Mr. Bilal Khan',         designation: 'Math Teacher',        dept: 'Mathematics',    contact: '0303-4567890', status: 'Not Downloaded' },
-  { name: 'Ms. Hira Saleem',        designation: 'English Teacher',     dept: 'English',        contact: '0304-5678901', status: 'Not Downloaded' },
-  { name: 'Mr. Tariq Aslam',        designation: 'Science Coordinator', dept: 'Science',        contact: '0305-6789012', status: 'Not Logged In'  },
-  { name: 'Ms. Sana Mirza',         designation: 'Urdu Teacher',        dept: 'Languages',      contact: '0306-7890123', status: 'Not Downloaded' },
-  { name: 'Mr. Asad Mehmood',       designation: 'PE Instructor',       dept: 'Sports',         contact: '0307-8901234', status: 'Not Downloaded' },
-  { name: 'Ms. Zoya Hashmi',        designation: 'Islamiat Teacher',    dept: 'Languages',      contact: '0308-9012345', status: 'Not Logged In'  },
-  { name: 'Mr. Imran Bashir',       designation: 'Computer Lab Lead',   dept: 'Computer Sci.',  contact: '0309-0123456', status: 'Not Downloaded' },
-  { name: 'Ms. Farah Naseem',       designation: 'Art Teacher',         dept: 'Arts',           contact: '0310-1234567', status: 'Not Downloaded' },
-  { name: 'Mr. Adeel Hussain',      designation: 'Vice Principal',      dept: 'Administration', contact: '0311-2345678', status: 'Not Logged In'  },
-  { name: 'Ms. Mariyam Riaz',       designation: 'Coordinator — Primary', dept: 'Administration', contact: '0312-3456789', status: 'Not Downloaded' },
-  { name: 'Mr. Junaid Anwar',       designation: 'Social Studies',      dept: 'Humanities',     contact: '0313-4567890', status: 'Not Downloaded' },
-  { name: 'Ms. Saima Tariq',        designation: 'Early Years Teacher', dept: 'Pre-School',     contact: '0314-5678901', status: 'Not Logged In'  },
-  { name: 'Mr. Waqas Bhatti',       designation: 'Maintenance Lead',    dept: 'Operations',     contact: '0315-6789012', status: 'Not Downloaded' },
-];
 
-/* ─── PARENT MOBILE APP STATUS ─────────────────────────────── */
-export const PARENT_APP_STATUS = {
-  total:        612,   /* same as active students */
-  downloaded:   410,
-  pending:      202,
-  newThisMonth: 38,
-  pct:          67,
-};
 
 /* ─── Pending list for the Parents App report — class-wise.
        Demo subset (40 rows across 8 classes). Real backend would
        return the full 202 pending parents. */
-export const PARENT_APP_PENDING = [
-  /* Nursery A */
-  { cls: 'Nursery A',  student: 'Ali Hassan',      parent: 'Hassan Khan',    contact: '0301-1111101', status: 'Not Downloaded' },
-  { cls: 'Nursery A',  student: 'Maria Ahmed',     parent: 'Ahmed Raza',     contact: '0301-1111102', status: 'Not Downloaded' },
-  { cls: 'Nursery A',  student: 'Zayd Tariq',      parent: 'Tariq Bashir',   contact: '0301-1111103', status: 'Not Logged In'  },
-  { cls: 'Nursery A',  student: 'Aisha Bilal',     parent: 'Bilal Saleem',   contact: '0301-1111104', status: 'Not Downloaded' },
-  /* Nursery B */
-  { cls: 'Nursery B',  student: 'Hamza Sajid',     parent: 'Sajid Iqbal',    contact: '0301-1111201', status: 'Not Downloaded' },
-  { cls: 'Nursery B',  student: 'Eman Faisal',     parent: 'Faisal Mehmood', contact: '0301-1111202', status: 'Not Logged In'  },
-  { cls: 'Nursery B',  student: 'Yusuf Asad',      parent: 'Asad Khan',      contact: '0301-1111203', status: 'Not Downloaded' },
-  /* Prep A */
-  { cls: 'Prep A',     student: 'Sara Mahmood',    parent: 'Mahmood Akhtar', contact: '0301-1112201', status: 'Not Downloaded' },
-  { cls: 'Prep A',     student: 'Hassan Junaid',   parent: 'Junaid Ahmed',   contact: '0301-1112202', status: 'Not Downloaded' },
-  { cls: 'Prep A',     student: 'Zara Adeel',      parent: 'Adeel Hussain',  contact: '0301-1112203', status: 'Not Logged In'  },
-  /* Class 1 A */
-  { cls: 'Class 1 A',  student: 'Anaya Imran',     parent: 'Imran Bashir',   contact: '0301-1113101', status: 'Not Downloaded' },
-  { cls: 'Class 1 A',  student: 'Mustafa Bilal',   parent: 'Bilal Tariq',    contact: '0301-1113102', status: 'Not Downloaded' },
-  { cls: 'Class 1 A',  student: 'Hadia Farooq',    parent: 'Farooq Ahmed',   contact: '0301-1113103', status: 'Not Logged In'  },
-  { cls: 'Class 1 A',  student: 'Daniyal Kashif',  parent: 'Kashif Khan',    contact: '0301-1113104', status: 'Not Downloaded' },
-  /* Class 1 B */
-  { cls: 'Class 1 B',  student: 'Mahnoor Tariq',   parent: 'Tariq Hashmi',   contact: '0301-1113201', status: 'Not Downloaded' },
-  { cls: 'Class 1 B',  student: 'Rayyan Anwar',    parent: 'Anwar Saleem',   contact: '0301-1113202', status: 'Not Logged In'  },
-  { cls: 'Class 1 B',  student: 'Fatima Asim',     parent: 'Asim Mehmood',   contact: '0301-1113203', status: 'Not Downloaded' },
-  /* Class 3 A */
-  { cls: 'Class 3 A',  student: 'Ahmed Saqib',     parent: 'Saqib Hussain',  contact: '0301-1114101', status: 'Not Downloaded' },
-  { cls: 'Class 3 A',  student: 'Rabia Naveed',    parent: 'Naveed Khan',    contact: '0301-1114102', status: 'Not Logged In'  },
-  { cls: 'Class 3 A',  student: 'Bilal Usman',     parent: 'Usman Ahmed',    contact: '0301-1114103', status: 'Not Downloaded' },
-  { cls: 'Class 3 A',  student: 'Sana Hamza',      parent: 'Hamza Tariq',    contact: '0301-1114104', status: 'Not Downloaded' },
-  { cls: 'Class 3 A',  student: 'Yumna Ibrahim',   parent: 'Ibrahim Saeed',  contact: '0301-1114105', status: 'Not Logged In'  },
-  /* Class 5 A */
-  { cls: 'Class 5 A',  student: 'Ayesha Junaid',   parent: 'Junaid Mirza',   contact: '0301-1115101', status: 'Not Downloaded' },
-  { cls: 'Class 5 A',  student: 'Talha Faisal',    parent: 'Faisal Bhatti',  contact: '0301-1115102', status: 'Not Logged In'  },
-  { cls: 'Class 5 A',  student: 'Hira Adeel',      parent: 'Adeel Saleem',   contact: '0301-1115103', status: 'Not Downloaded' },
-  { cls: 'Class 5 A',  student: 'Saad Wajahat',    parent: 'Wajahat Khan',   contact: '0301-1115104', status: 'Not Downloaded' },
-  /* Class 7 B */
-  { cls: 'Class 7 B',  student: 'Hadi Imran',      parent: 'Imran Mahmood',  contact: '0301-1117201', status: 'Not Downloaded' },
-  { cls: 'Class 7 B',  student: 'Maham Tariq',     parent: 'Tariq Saleem',   contact: '0301-1117202', status: 'Not Logged In'  },
-  { cls: 'Class 7 B',  student: 'Hamza Saleem',    parent: 'Saleem Hussain', contact: '0301-1117203', status: 'Not Downloaded' },
-  { cls: 'Class 7 B',  student: 'Zoha Faraz',      parent: 'Faraz Ali',      contact: '0301-1117204', status: 'Not Downloaded' },
-  { cls: 'Class 7 B',  student: 'Rohan Asif',      parent: 'Asif Mehmood',   contact: '0301-1117205', status: 'Not Logged In'  },
-  /* Class 9 A */
-  { cls: 'Class 9 A',  student: 'Hasham Bilal',    parent: 'Bilal Tariq',    contact: '0301-1119101', status: 'Not Downloaded' },
-  { cls: 'Class 9 A',  student: 'Sara Atif',       parent: 'Atif Khan',      contact: '0301-1119102', status: 'Not Logged In'  },
-  { cls: 'Class 9 A',  student: 'Ayan Mehboob',    parent: 'Mehboob Ali',    contact: '0301-1119103', status: 'Not Downloaded' },
-  { cls: 'Class 9 A',  student: 'Mahin Faraz',     parent: 'Faraz Saleem',   contact: '0301-1119104', status: 'Not Downloaded' },
-  /* Class 10 A */
-  { cls: 'Class 10 A', student: 'Daniyal Anwar',   parent: 'Anwar Khan',     contact: '0301-1110101', status: 'Not Downloaded' },
-  { cls: 'Class 10 A', student: 'Aima Wajahat',    parent: 'Wajahat Iqbal',  contact: '0301-1110102', status: 'Not Logged In'  },
-  { cls: 'Class 10 A', student: 'Burhan Saleem',   parent: 'Saleem Tariq',   contact: '0301-1110103', status: 'Not Downloaded' },
-  { cls: 'Class 10 A', student: 'Mariyam Hassan',  parent: 'Hassan Bashir',  contact: '0301-1110104', status: 'Not Downloaded' },
-  { cls: 'Class 10 A', student: 'Hadiqa Naveed',   parent: 'Naveed Ahmed',   contact: '0301-1110105', status: 'Not Logged In'  },
-];
 
-/* ─── School branding for the A4 print header. */
-export const SCHOOL_BRAND = {
-  name:     'The Oxford System',
-  campus:   'Lahore Campus',
-  address:  '12-A Model Town Boulevard, Lahore — 54000',
-  phone:    '+92-42-3500-9111',
-  email:    'info@oxford.edu.pk',
-};
 
 /* ─── Helper: dashboardType from user record. */
 export function dashboardTypeFor(user) {

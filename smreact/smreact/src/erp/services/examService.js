@@ -1,61 +1,45 @@
-import {
-  mockExams, mockClasses, mockSubjects,
-  mockSyllabus, mockDateSheets,
-  mockRsGrades, mockRsSigs, mockRsRemarks,
-  mockRcoGeneral, mockRcoSig,
-  mockResultData,
-  mockCbrResults,
-} from '../mock/exams';
-import { delay, clone } from './_http';
+import { buildUrl } from '../../utils/apiConfig';
 
-export async function getResultData()  { await delay(); return clone(mockResultData); }
-export async function getCbrResults()  { await delay(); return clone(mockCbrResults); }
+/* ═══════════════════════════════════════════════════════════════════
+   EXAM SERVICE — LIVE.
 
-export async function getSyllabus()    { await delay(); return clone(mockSyllabus); }
-export async function getDateSheets()  { await delay(); return clone(mockDateSheets); }
-export async function getRsGrades()    { await delay(); return clone(mockRsGrades); }
-export async function getRsSigs()      { await delay(); return clone(mockRsSigs); }
-export async function getRsRemarks()   { await delay(); return clone(mockRsRemarks); }
-export async function getRcoGeneral()  { await delay(); return clone(mockRcoGeneral); }
-export async function getRcoSig()      { await delay(); return clone(mockRcoSig); }
+   Pehle ye poori file mock/exams.js lautati thi (exams, classes, subjects,
+   syllabus, date sheets, result scaffolds…). Us se do nuqsan thay: screen
+   khulte hi banawata data asli lagta tha, aur Universal Search me aise
+   imtehanat ke natije aate thay jo school me hain hi nahi.
 
-export async function getExams() {
-  await delay();
-  return clone(mockExams);
-}
+   Ab yahan sirf wo ek cheez hai jo waqai API deti hai aur jiska koi live
+   caller hai — branch ke saare terms + exams, ek hi call me:
 
-export async function getExamById(id) {
-  await delay();
-  const found = mockExams.find(e => e.id === id);
-  return found ? clone(found) : null;
-}
+     GET /api/gettermsandexamsbybranchid?branchID=
+       → [{ branchID, termID, examID, termName, examName }]
 
-export async function getExamsByTerm(term) {
-  await delay();
-  return clone(mockExams.filter(e => e.term === term));
-}
+   Examination screen apna baqi data khud seedha API se lati hai
+   (/api/getexamsbybranchidtermid, /api/getexamsyllabus…, /api/getdatesheet…
+   waghera) — us ke liye yahan kuch rakhne ki zaroorat nahi.
+   ═══════════════════════════════════════════════════════════════════ */
 
-export async function createExam(payload) {
-  await delay();
-  return clone({ ...payload, id: Date.now() });
-}
+/** Is branch ke saare terms + exams (search aur pickers ke liye). */
+export async function getTermsAndExams() {
+  const token = sessionStorage.getItem('token');
+  const branchID = sessionStorage.getItem('branchID');
+  if (!branchID) return [];
 
-export async function updateExam(id, payload) {
-  await delay();
-  return clone({ ...payload, id });
-}
+  const response = await fetch(
+    buildUrl(`/api/gettermsandexamsbybranchid?branchID=${branchID}`),
+    {
+      method: 'GET',
+      headers: {
+        Accept: '*/*',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    },
+  );
 
-export async function deleteExam(id) {
-  await delay();
-  return { id, deleted: true };
-}
+  if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
 
-export async function getClasses() {
-  await delay();
-  return clone(mockClasses);
-}
-
-export async function getSubjects() {
-  await delay();
-  return clone(mockSubjects);
+  /* API kabhi seedha array deti hai, kabhi { data: [...] } — dono chalte hain. */
+  const json = await response.json();
+  const rows = Array.isArray(json) ? json : (json?.data || []);
+  return Array.isArray(rows) ? rows : [];
 }

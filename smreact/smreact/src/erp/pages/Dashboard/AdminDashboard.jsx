@@ -10,24 +10,10 @@ import { DASH_CSS } from './Dashboard';
 import AnnouncementsModal from './AnnouncementsModal';
 import AppPendingReportModal from './AppPendingReportModal';
 import useAsync from '../../hooks/useAsync';
-import * as accountsService from '../../services/accountsService';
 import * as feeService from '../../services/feeService';
 import * as dashboardService from '../../services/dashboardService';
 import {
-  STUDENT_STATS,
-  HR_STATS,
-  CRM_STATS,
-  EXAM_STATS,
-  ACADEMICS_STATS,
-  ATTENDANCE_STATS,
-  FEE_STATS,
-  AUDIT_STATS,
   MODULE_COLOR,
-  SCHOOL_MENTOR_ANNOUNCEMENTS,
-  TEACHER_APP_STATUS,
-  PARENT_APP_STATUS,
-  STUDENT_ATTENDANCE_TODAY,
-  STAFF_ATTENDANCE_TODAY,
 } from './dashboardData';
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -56,179 +42,13 @@ import {
 
 /* ─── Mock data for the new sections (matches spec exactly) ─────── */
 
-const LP_DATA_BY_CLASS = {
-  'II-Pre': [
-    { subject: 'Math',           classwork: 1,  notebook: 1 },
-    { subject: 'English',        classwork: 1,  notebook: 1 },
-    { subject: 'Science',        classwork: 3,  notebook: 2 },
-    { subject: 'Social Studies', classwork: 13, notebook: 6 },
-    { subject: 'Urdu',           classwork: 1,  notebook: 0 },
-    { subject: 'DLL',            classwork: 1,  notebook: 1 },
-  ],
-  'I': [
-    { subject: 'Math', classwork: 8, notebook: 6 }, { subject: 'English', classwork: 9, notebook: 7 },
-    { subject: 'Science', classwork: 6, notebook: 5 }, { subject: 'Social Studies', classwork: 10, notebook: 8 },
-    { subject: 'Urdu', classwork: 7, notebook: 6 }, { subject: 'DLL', classwork: 4, notebook: 3 },
-  ],
-  'II': [
-    { subject: 'Math', classwork: 12, notebook: 10 }, { subject: 'English', classwork: 14, notebook: 11 },
-    { subject: 'Science', classwork: 9, notebook: 7 }, { subject: 'Social Studies', classwork: 15, notebook: 12 },
-    { subject: 'Urdu', classwork: 11, notebook: 9 }, { subject: 'DLL', classwork: 6, notebook: 4 },
-  ],
-  'III': [
-    { subject: 'Math', classwork: 16, notebook: 13 }, { subject: 'English', classwork: 18, notebook: 15 },
-    { subject: 'Science', classwork: 12, notebook: 10 }, { subject: 'Social Studies', classwork: 17, notebook: 14 },
-    { subject: 'Urdu', classwork: 14, notebook: 11 }, { subject: 'DLL', classwork: 8, notebook: 6 },
-  ],
-  'IV': [
-    { subject: 'Math', classwork: 18, notebook: 15 }, { subject: 'English', classwork: 19, notebook: 16 },
-    { subject: 'Science', classwork: 15, notebook: 12 }, { subject: 'Social Studies', classwork: 18, notebook: 15 },
-    { subject: 'Urdu', classwork: 16, notebook: 13 }, { subject: 'DLL', classwork: 9, notebook: 7 },
-  ],
-  'V':    [{ subject: 'Math', classwork: 19, notebook: 17 }, { subject: 'English', classwork: 20, notebook: 18 }, { subject: 'Science', classwork: 17, notebook: 14 }, { subject: 'Social Studies', classwork: 19, notebook: 17 }, { subject: 'Urdu', classwork: 17, notebook: 14 }, { subject: 'DLL', classwork: 10, notebook: 8 }],
-  'VI':   [{ subject: 'Math', classwork: 20, notebook: 18 }, { subject: 'English', classwork: 19, notebook: 16 }, { subject: 'Science', classwork: 18, notebook: 15 }, { subject: 'Social Studies', classwork: 20, notebook: 18 }, { subject: 'Urdu', classwork: 18, notebook: 16 }, { subject: 'DLL', classwork: 11, notebook: 9 }],
-  'VII':  [{ subject: 'Math', classwork: 17, notebook: 15 }, { subject: 'English', classwork: 18, notebook: 15 }, { subject: 'Science', classwork: 16, notebook: 13 }, { subject: 'Social Studies', classwork: 17, notebook: 14 }, { subject: 'Urdu', classwork: 15, notebook: 12 }, { subject: 'DLL', classwork: 10, notebook: 8 }],
-  'VIII': [{ subject: 'Math', classwork: 14, notebook: 12 }, { subject: 'English', classwork: 16, notebook: 13 }, { subject: 'Science', classwork: 13, notebook: 11 }, { subject: 'Social Studies', classwork: 15, notebook: 12 }, { subject: 'Urdu', classwork: 12, notebook: 10 }, { subject: 'DLL', classwork: 8, notebook: 6 }],
-};
-const LP_CLASSES = ['II-Pre', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII'];
 
-const PAPER_DATA_BY_CLASS = {
-  'IV': [{ subject: 'English', count: 14 }, { subject: 'Science', count: 8 }],
-  'I':  [{ subject: 'English', count: 6 },  { subject: 'Science', count: 3 }],
-  'II': [{ subject: 'English', count: 9 },  { subject: 'Science', count: 5 }],
-  'III':[{ subject: 'English', count: 11 }, { subject: 'Science', count: 6 }],
-  'V':  [{ subject: 'English', count: 12 }, { subject: 'Science', count: 9 }],
-  'VI': [{ subject: 'English', count: 10 }, { subject: 'Science', count: 7 }],
-};
-const PAPER_CLASSES = ['IV', 'I', 'II', 'III', 'V', 'VI'];
 
-const REVENUE_DATA_BY_YEAR = {
-  2026: [
-    { m: 'Jan', tuition: 0.86, admission: 0.12, transport: 0.18, other: 0.04 },
-    { m: 'Feb', tuition: 0.04, admission: 0.01, transport: 0.02, other: 0.00 },
-    { m: 'Mar', tuition: 0.03, admission: 0.00, transport: 0.02, other: 0.01 },
-    { m: 'Apr', tuition: 0.03, admission: 0.00, transport: 0.02, other: 0.00 },
-    { m: 'May', tuition: 0.02, admission: 0.00, transport: 0.01, other: 0.00 },
-    { m: 'Jun', tuition: 0.00, admission: 0.00, transport: 0.00, other: 0.00 },
-    { m: 'Jul', tuition: 0.00, admission: 0.00, transport: 0.00, other: 0.00 },
-    { m: 'Aug', tuition: 0.00, admission: 0.00, transport: 0.00, other: 0.00 },
-    { m: 'Sep', tuition: 0.00, admission: 0.00, transport: 0.00, other: 0.00 },
-    { m: 'Oct', tuition: 0.00, admission: 0.00, transport: 0.00, other: 0.00 },
-    { m: 'Nov', tuition: 0.00, admission: 0.00, transport: 0.00, other: 0.00 },
-    { m: 'Dec', tuition: 0.00, admission: 0.00, transport: 0.00, other: 0.00 },
-  ],
-  2025: [
-    { m: 'Jan', tuition: 0.78, admission: 0.10, transport: 0.16, other: 0.03 },
-    { m: 'Feb', tuition: 0.82, admission: 0.09, transport: 0.17, other: 0.04 },
-    { m: 'Mar', tuition: 0.80, admission: 0.11, transport: 0.16, other: 0.03 },
-    { m: 'Apr', tuition: 0.85, admission: 0.08, transport: 0.18, other: 0.05 },
-    { m: 'May', tuition: 0.88, admission: 0.09, transport: 0.18, other: 0.04 },
-    { m: 'Jun', tuition: 0.40, admission: 0.04, transport: 0.08, other: 0.02 },
-    { m: 'Jul', tuition: 0.10, admission: 0.02, transport: 0.03, other: 0.01 },
-    { m: 'Aug', tuition: 0.91, admission: 0.42, transport: 0.20, other: 0.06 },
-    { m: 'Sep', tuition: 0.92, admission: 0.18, transport: 0.20, other: 0.05 },
-    { m: 'Oct', tuition: 0.90, admission: 0.12, transport: 0.19, other: 0.05 },
-    { m: 'Nov', tuition: 0.88, admission: 0.10, transport: 0.19, other: 0.04 },
-    { m: 'Dec', tuition: 0.86, admission: 0.10, transport: 0.18, other: 0.04 },
-  ],
-  2024: [
-    { m: 'Jan', tuition: 0.70, admission: 0.09, transport: 0.14, other: 0.03 },
-    { m: 'Feb', tuition: 0.72, admission: 0.08, transport: 0.14, other: 0.03 },
-    { m: 'Mar', tuition: 0.71, admission: 0.10, transport: 0.14, other: 0.04 },
-    { m: 'Apr', tuition: 0.75, admission: 0.07, transport: 0.15, other: 0.04 },
-    { m: 'May', tuition: 0.78, admission: 0.08, transport: 0.16, other: 0.04 },
-    { m: 'Jun', tuition: 0.36, admission: 0.04, transport: 0.07, other: 0.02 },
-    { m: 'Jul', tuition: 0.08, admission: 0.02, transport: 0.02, other: 0.01 },
-    { m: 'Aug', tuition: 0.83, admission: 0.38, transport: 0.18, other: 0.05 },
-    { m: 'Sep', tuition: 0.84, admission: 0.16, transport: 0.18, other: 0.05 },
-    { m: 'Oct', tuition: 0.81, admission: 0.10, transport: 0.17, other: 0.04 },
-    { m: 'Nov', tuition: 0.79, admission: 0.09, transport: 0.17, other: 0.04 },
-    { m: 'Dec', tuition: 0.76, admission: 0.09, transport: 0.16, other: 0.03 },
-  ],
-};
 
-const PROFIT_LOSS_BY_YEAR = {
-  2026: [
-    { m: 'Jan', revenue: 3.20, expense: -2.80, pl:  0.80 },
-    { m: 'Feb', revenue: 1.00, expense: -0.80, pl:  0.20 },
-    { m: 'Mar', revenue: 1.05, expense: -0.78, pl:  0.27 },
-    { m: 'Apr', revenue: 1.10, expense: -0.85, pl:  0.25 },
-    { m: 'May', revenue: 1.02, expense: -0.82, pl:  0.20 },
-    { m: 'Jun', revenue: 0.95, expense: -0.80, pl:  0.15 },
-    { m: 'Jul', revenue: 0.92, expense: -0.78, pl:  0.14 },
-    { m: 'Aug', revenue: 1.08, expense: -0.86, pl:  0.22 },
-    { m: 'Sep', revenue: 1.10, expense: -0.88, pl:  0.22 },
-    { m: 'Oct', revenue: 1.06, expense: -0.84, pl:  0.22 },
-    { m: 'Nov', revenue: 1.02, expense: -0.82, pl:  0.20 },
-    { m: 'Dec', revenue: 1.00, expense: -0.80, pl:  0.20 },
-  ],
-  2025: [
-    { m: 'Jan', revenue: 2.80, expense: -2.30, pl:  0.50 }, { m: 'Feb', revenue: 2.90, expense: -2.40, pl:  0.50 },
-    { m: 'Mar', revenue: 2.85, expense: -2.35, pl:  0.50 }, { m: 'Apr', revenue: 3.00, expense: -2.45, pl:  0.55 },
-    { m: 'May', revenue: 3.10, expense: -2.50, pl:  0.60 }, { m: 'Jun', revenue: 1.40, expense: -1.20, pl:  0.20 },
-    { m: 'Jul', revenue: 0.50, expense: -0.40, pl:  0.10 }, { m: 'Aug', revenue: 3.40, expense: -2.70, pl:  0.70 },
-    { m: 'Sep', revenue: 3.20, expense: -2.55, pl:  0.65 }, { m: 'Oct', revenue: 3.05, expense: -2.45, pl:  0.60 },
-    { m: 'Nov', revenue: 3.00, expense: -2.40, pl:  0.60 }, { m: 'Dec', revenue: 2.85, expense: -2.30, pl:  0.55 },
-  ],
-  2024: [
-    { m: 'Jan', revenue: 2.40, expense: -2.00, pl:  0.40 }, { m: 'Feb', revenue: 2.45, expense: -2.05, pl:  0.40 },
-    { m: 'Mar', revenue: 2.50, expense: -2.10, pl:  0.40 }, { m: 'Apr', revenue: 2.60, expense: -2.15, pl:  0.45 },
-    { m: 'May', revenue: 2.65, expense: -2.20, pl:  0.45 }, { m: 'Jun', revenue: 1.20, expense: -1.05, pl:  0.15 },
-    { m: 'Jul', revenue: 0.40, expense: -0.35, pl:  0.05 }, { m: 'Aug', revenue: 2.95, expense: -2.35, pl:  0.60 },
-    { m: 'Sep', revenue: 2.80, expense: -2.25, pl:  0.55 }, { m: 'Oct', revenue: 2.65, expense: -2.15, pl:  0.50 },
-    { m: 'Nov', revenue: 2.60, expense: -2.10, pl:  0.50 }, { m: 'Dec', revenue: 2.50, expense: -2.05, pl:  0.45 },
-  ],
-};
 
-const STUDENT_BIRTHDAYS = [
-  { name: 'Ayaan Raza',     grade: 'Grade 2',  date: '01 May', dob: 1  },
-  { name: 'Sara Ahmed',     grade: 'Grade 5',  date: '04 May', dob: 4  },
-  { name: 'Hassan Ali',     grade: 'Grade 7',  date: '08 May', dob: 8  },
-  { name: 'Zara Khan',      grade: 'Grade 3',  date: '12 May', dob: 12 },
-  { name: 'Bilal Tariq',    grade: 'Grade 8',  date: '15 May', dob: 15 },
-  { name: 'Maha Siddiqui',  grade: 'Grade 1',  date: '18 May', dob: 18 },
-  { name: 'Usman Farooq',   grade: 'Grade 6',  date: '22 May', dob: 22 },
-  { name: 'Nadia Malik',    grade: 'Grade 4',  date: '25 May', dob: 25 },
-  { name: 'Hamza Irfan',    grade: 'Grade 9',  date: '28 May', dob: 28 },
-  { name: 'Fatima Saleem',  grade: 'Grade 10', date: '31 May', dob: 31 },
-];
 
-const TEACHER_BIRTHDAYS = [
-  { name: 'Mr. Usman Khalid',   role: 'Math Teacher',     date: '05 May', dob: 5  },
-  { name: 'Ms. Ayesha Raza',    role: 'Science Teacher',  date: '13 May', dob: 13 },
-  { name: 'Dr. Hira Noor',      role: 'English Teacher',  date: '19 May', dob: 19 },
-  { name: 'Mr. Bilal Ahmed',    role: 'HR Officer',       date: '24 May', dob: 24 },
-  { name: 'Ms. Sana Mirza',     role: 'Coordinator',      date: '30 May', dob: 30 },
-];
 
-const TODAY_DAY = 31;        /* Mock "today" — matches CURRENT_SESSION's daysLeft pivot */
 
-const ACTIVITIES = [
-  { id: 1, date: '01 Jun 2026', title: 'Final Term Exams Begin',
-    desc: 'Final term examinations start for all classes Grade 1–10.',
-    category: 'Examination',   type: 'exam',     module: 'exam',     daysAway: 1 },
-  { id: 2, date: '03 Jun 2026', title: 'PTM — All Classes',
-    desc: 'Parent-Teacher Meeting for Q3 result discussion.',
-    category: 'School Event',  type: 'event',    module: 'students', daysAway: 3 },
-  { id: 3, date: '05 Jun 2026', title: 'World Environment Day Activity',
-    desc: 'Tree plantation drive and environment awareness program.',
-    category: 'School Event',  type: 'event',    module: null,        daysAway: 5 },
-  { id: 4, date: '10 Jun 2026', title: 'Sports Day',
-    desc: 'Annual sports day with inter-house competitions.',
-    category: 'School Event',  type: 'event',    module: null,        daysAway: 10 },
-  { id: 5, date: '15 Jun 2026', title: 'Result Cards Distribution',
-    desc: 'Final term result cards distributed to parents.',
-    category: 'Examination',   type: 'exam',     module: 'exam',     daysAway: 15 },
-  { id: 6, date: '20 Jun 2026', title: 'Summer Vacation Begins',
-    desc: 'School closes for summer vacation until August 2026.',
-    category: 'Holiday',       type: 'holiday',  module: null,        daysAway: 20 },
-  { id: 7, date: '25 Jun 2026', title: 'Staff Training Day',
-    desc: 'Professional development session for all teaching staff.',
-    category: 'HR',            type: 'event',    module: 'hr',       daysAway: 25 },
-  { id: 8, date: '30 Jun 2026', title: 'Monthly Fee Deadline',
-    desc: 'Last date for submission of July 2026 fee challans.',
-    category: 'Fee',           type: 'deadline', module: 'fee',      daysAway: 30 },
-];
 
 const TYPE_COLOR = {
   exam:     { bg: 'rgba(220, 38, 38, .12)', fg: '#DC2626' },
