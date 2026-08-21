@@ -141,22 +141,30 @@ export default function Payments() {
   }, [recvAll, applied])
 
   /* ── Pichla baqaya ──
-     Zer-e-nazar mahine se PEHLE ke har mahine ka bacha hua: us mahine ka
-     net payable (discount ke baad, jo wasooli row par likha hota hai —
-     warna challan ka total) minus jitna us mahine me wasool hua.
+     Zer-e-nazar mahine se PEHLE jitna charge hua, minus jitna wasool ya
+     maaf hua. Bas — har mahine ka apna baqaya alag jama NAHI kiya jaata.
 
-     Yehi raqam Generate modal ke "Previous Dues" me khud bhar jaati hai aur
-     Receiving table ke "Prev Remaining" khaane me dikhti hai, taake baqaya
-     mahine dar mahine aage chalta rahe. */
+     WAJAH (yahin ek bug tha): challan ka `total` apne andar pichla baqaya
+     bhi rakhta hai. August 12k, phir September ka challan 12k + 12k carry =
+     24k. Dono ke total jama karne par 36k banta tha, jabke asal baqaya 24k
+     hai — carry do dafa gin liya jaata tha. Is liye hisaab sirf har mahine
+     ke APNE charge (`amount`) par hota hai, total par nahi.
+
+     Yehi raqam Generate modal ke "Previous Dues" me khud bhar jaati hai. */
   const pendingBefore = useCallback((id, m, y) => {
     const cutoff = (Number(y) * 12) + Number(m)
-    const recvs = recvAll[id] || []
-    return (chAll[id] || []).reduce((sum, c) => {
-      if (!c.month || (c.year * 12 + c.month) >= cutoff) return sum
-      const r = recvs.find((x) => x.month === c.month && x.year === c.year)
-      const due = r ? (r.netPayable || 0) : c.total
-      return sum + Math.max(0, due - (r?.receivedAmount || 0))
-    }, 0)
+    const before = (row) => row.month && (row.year * 12 + row.month) < cutoff
+
+    const billed = (chAll[id] || [])
+      .filter(before)
+      .reduce((sum, c) => sum + (c.amount || 0), 0)
+
+    /* Discount bhi baqaya kam karta hai — wo raqam ab kabhi wasool nahi hogi. */
+    const settled = (recvAll[id] || [])
+      .filter(before)
+      .reduce((sum, r) => sum + (r.receivedAmount || 0) + (r.discount || 0), 0)
+
+    return Math.max(0, billed - settled)
   }, [chAll, recvAll])
 
   /* "Load" — chune hue mahine ke challans aur wasooliyan taza padho. Rows API
