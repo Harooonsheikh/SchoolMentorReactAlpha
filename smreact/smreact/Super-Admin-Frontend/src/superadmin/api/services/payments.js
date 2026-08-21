@@ -64,6 +64,16 @@ function friendlyError(raw, label) {
   const msg = String(raw || '').trim();
   if (!msg) return `Could not ${label}`;
 
+  /* Us mahine ka challan pehle se maujood hai — backend ki unique key
+     (BranchID + Type + month) par. Ye ghalti nahi, sirf ittila hai, is liye
+     saada jumla; DB ki zubaan screen par nahi jani chahiye. */
+  if (/ledger entry.*already exists|already exists.*and month/i.test(msg)) {
+    return 'Challan already generated for this month.';
+  }
+  /* Wahi baat receiving ki taraf. */
+  if (/receiving entry.*already exists/i.test(msg)) {
+    return 'Payment already received for this month.';
+  }
   if (/Receiving_PaymentLedgerID/i.test(msg)) {
     return 'This challan has a receiving record against it. Delete the receiving record first, then delete the challan.';
   }
@@ -271,6 +281,34 @@ export const CHALLAN_TYPE = 'Monthly';
 /* Ledger/Receiving dono par yeh paanch actions hain (setup par GET nahi hai). */
 export const LEDGER_ACTIONS = { get: 'GET', insert: 'INSERT', add: 'ADD', update: 'UPDATE', delete: 'DELETE' };
 
+/* ── Challan ka mahina ───────────────────────────────────────────────
+   ERP ke fee challans ka usool: har challan EK mahine ka hota hai. Wahan
+   row par `month` (1-based) + `year` likhe jate hain aur list
+   GET /api/BranchLedger/get-by-month?branchId=&month=&year= se aati hai
+   (dekho MdlAHM_Branch_Ledger — swagger par tasdeeq shuda).
+
+   Yahan bhi wahi chalta hai: mahina challan ki DUE DATE se aata hai, taake
+   ek hi jagah se tay ho aur user ko do cheezein na bharni parein. */
+export const periodOf = (dateLike) => {
+  const d = isoDay(dateLike);
+  if (!d) { const n = new Date(); return { month: n.getMonth() + 1, year: n.getFullYear() }; }
+  return { month: Number(d.slice(5, 7)), year: Number(d.slice(0, 4)) };
+};
+
+/* Isse pichhla mahina (January se pehle December, aur saal ek kam). */
+export const previousPeriod = (p) => {
+  const now = periodOf(null);
+  const m = Number(p?.month) || now.month;
+  const y = Number(p?.year) || now.year;
+  return m <= 1 ? { month: 12, year: y - 1 } : { month: m - 1, year: y };
+};
+
+/* Do periods barabar hain? (koi ek na ho to "haan" — filter lagta hi nahi.) */
+const samePeriod = (a, b) => {
+  if (!a || !b || !a.month || !b.month) return true;
+  return Number(a.month) === Number(b.month) && Number(a.year) === Number(b.year);
+};
+
 /* "2026-09-01T00:00:00" → "2026-09-01" (khali/kharab par ''). */
 const isoDay = (raw) => {
   const s = String(raw || '').trim();
@@ -322,6 +360,10 @@ export function ledgerRowToChallan(r, school, setup) {
   const total = num(r?.totalAmount ?? r?.debit);
   const monthly = setup ? monthlyCharge(school, setup) : total;
   const dueRaw = isoDay(r?.dueDate);
+  const issueRaw = isoDay(r?.creationDate);
+  /* Mahina issue date se; kisi bohat purani row par wo na ho to due date se
+     (aakhri chara), warna mojooda mahina. */
+  const rowPeriod = periodOf(issueRaw || dueRaw);
   return {
     id: num(r?.id),
     schoolId: num(r?.branchID),
@@ -332,8 +374,24 @@ export function ledgerRowToChallan(r, school, setup) {
     total,
     dueDate: dueRaw ? fmtDateLong(dueRaw) : '',
     dueDateRaw: dueRaw,
-    issueDate: fmtDateLong(isoDay(r?.creationDate) || todayISO()),
+    /* Issue date = API ka `creationDate`. Dikhane ke liye lamba format, aur
+       `issueDateRaw` (YYYY-MM-DD) taake edit par date input me wapas bhara
+       ja sake — bilkul dueDate/dueDateRaw ki tarah. */
+    issueDate: fmtDateLong(issueRaw || todayISO()),
+    issueDateRaw: issueRaw,
     challanType: r?.challanType || CHALLAN_TYPE,
+    /* Challan KIS mahine ka hai.
+       Row par month/year aayein to wahi. Warna ISSUE DATE (creationDate) se —
+       due date se NAHI.
+
+       Ye ek asli kharabi thi: 21 August ko jari kiya gaya challan jiski due
+       date 10 September ho, backend August ka ginta hai magar yahan due date
+       ki wajah se September ban jata tha. Nateeja — August ki list me wo
+       challan dikhta hi nahi tha, Generate ka button khula rehta tha, aur
+       dabate hi API "already exists" keh deti thi. Ab dono taraf ek hi qaida
+       (dekho challanToBody). */
+    month: num(r?.month) || rowPeriod.month,
+    year: num(r?.year) || rowPeriod.year,
     studentCount: parseInt(setup?.studentCount || school?.students || 0, 10) || 0,
     perStudentRate: parseFloat(setup?.perStudentRate || 0) || 0,
     lumpAmount: parseFloat(setup?.lumpAmount || 0) || 0,
@@ -345,6 +403,13 @@ export function ledgerRowToChallan(r, school, setup) {
 
 function challanToBody({ action, id = 0, branchId, paymentId = 0, dueDate, issueDate, total }) {
   const me = currentUserId();
+  /* Mahina ISSUE DATE se — creationDate se, due date se nahi.
+     Backend bhi yahi karta hai: 21 Aug ko jari kiya gaya challan August ka
+     ginta hai chahe uski due date 10 September ho ("A ledger entry for this
+     BranchID, Type, and month already exists" isi par aata hai). Pehle yahan
+     due date se mahina nikalta tha, is liye screen September samajhti aur
+     backend August — dono ka hisaab alag ho jata tha. */
+  const period = periodOf(issueDate);
   return {
     action,
     id: num(id),
@@ -353,6 +418,12 @@ function challanToBody({ action, id = 0, branchId, paymentId = 0, dueDate, issue
     dueDate: dueDate ? `${isoDay(dueDate)}T00:00:00` : null,
     creationDate: `${isoDay(issueDate) || todayISO()}T00:00:00`,
     challanType: CHALLAN_TYPE,          // [Required]
+    /* Kis mahine ka challan hai — wahi jodi (month, year) jo ERP ka
+       BranchLedger rakhta hai. Backend ab in par unique key lagata hai
+       ("A ledger entry for this BranchID, Type, and month already exists"),
+       is liye ye issue date ke mahine se hi nikalne chahiye. */
+    month: period.month,
+    year: period.year,
     /* Challan issue hona = school par charge → debit. Credit receiving ki taraf
        se aata hai, is liye yahan 0. */
     credit: 0,
@@ -365,27 +436,45 @@ function challanToBody({ action, id = 0, branchId, paymentId = 0, dueDate, issue
   };
 }
 
-/** Ek branch ka challan (ya null). */
-export async function getChallan(branchId, school, setup) {
+/**
+ * Ek branch ka challan (ya null) — ek MAHINE ka.
+ *
+ * `period` ({ month, year }) do jagah lagta hai:
+ *   1. request me — jis din backend month/year se filter karne lage, kaam
+ *      wahin server par ho jayega (ERP ka get-by-month wala tareeqa).
+ *   2. jawab par — abhi backend saari rows deta hai, is liye us mahine wali
+ *      row yahan chhaan li jati hai. Dono chalne se aaj bhi sahi mahina
+ *      dikhta hai aur kal bhi.
+ *
+ * `period` na do to filter lagta hi nahi — jo pehli row mile wahi.
+ */
+export async function getChallan(branchId, school, setup, period) {
   if (!num(branchId)) return null;
   const json = await ledgerPost(
-    { action: LEDGER_ACTIONS.get, id: 0, branchID: num(branchId), type: PAYMENT_TYPE, challanType: CHALLAN_TYPE },
+    {
+      action: LEDGER_ACTIONS.get, id: 0, branchID: num(branchId),
+      type: PAYMENT_TYPE, challanType: CHALLAN_TYPE,
+      month: period?.month ? Number(period.month) : null,
+      year: period?.year ? Number(period.year) : null,
+    },
     'load this challan',
   );
   const rows = Array.isArray(json?.data) ? json.data : [];
-  const row = rows.find((r) => num(r?.id));
-  return row ? ledgerRowToChallan(row, school, setup) : null;
+  const mapped = rows.filter((r) => num(r?.id)).map((r) => ledgerRowToChallan(r, school, setup));
+  const hit = mapped.find((c) => samePeriod(period, { month: c.month, year: c.year }));
+  return hit || null;
 }
 
 /**
  * Kai branches ke challans ek saath (sab calls parallel).
  * @param {Array} schools  live school rows (branchID + students ke liye)
  * @param {Object} setups  { [branchId]: setup } — monthly/prevDues split ke liye
+ * @param {Object} [period] { month, year } — kis mahine ke challans chahiye
  * @returns {Promise<Object>} { [branchId]: challan }
  */
-export async function listChallans(schools = [], setups = {}) {
+export async function listChallans(schools = [], setups = {}, period) {
   const rows = await Promise.all(
-    schools.map((s) => getChallan(s.id, s, setups[s.id]).catch(() => null)),
+    schools.map((s) => getChallan(s.id, s, setups[s.id], period).catch(() => null)),
   );
   const out = {};
   schools.forEach((s, i) => { if (rows[i]) out[s.id] = rows[i]; });
@@ -405,8 +494,64 @@ export async function saveChallan({ branchId, school, setup, dueDate, total, iss
     }),
     rowId > 0 ? 'update this challan' : 'generate this challan',
   );
-  const fresh = await getChallan(branchId, school, setup).catch(() => null);
+  /* Save ke baad usi mahine ka taaza record — warna kisi aur mahine ki row
+     uthai ja sakti hai. Mahina issue date se (wahi jo body me gaya). */
+  const fresh = await getChallan(branchId, school, setup, periodOf(issueDate)).catch(() => null);
   return fresh || ledgerRowToChallan({ id: rowId, branchID: branchId, totalAmount: total, dueDate, creationDate: issueDate }, school, setup);
+}
+
+/**
+ * Pichhle mahine ka bacha hua — yehi is mahine ke challan ka "previous
+ * dues" banta hai (ERP ka wahi usool: har challan me pichhla baqaya jud
+ * kar aata hai).
+ *
+ * Hisaab:
+ *   pichhle mahine ka challan hi na bana ho      → 0 (kuch maanga hi nahi gaya)
+ *   challan bana aur receiving bhi hui           → us receiving ka remaining
+ *   challan bana magar koi receiving nahi hui    → poora challan baqi hai
+ *
+ * @returns {Promise<number>} baqaya (kabhi manfi nahi)
+ */
+export async function getPreviousDues(branchId, school, setup, period) {
+  if (!num(branchId)) return 0;
+  const prev = previousPeriod(period);
+  const [challan, recv] = await Promise.all([
+    getChallan(branchId, school, setup, prev).catch(() => null),
+    getReceiving(branchId, prev).catch(() => null),
+  ]);
+  if (!challan) return 0;
+  const left = recv ? num(recv.remainingAmount) : num(challan.total);
+  return Math.max(0, left);
+}
+
+/**
+ * Kai branches ka pichhle mahine ka baqaya ek saath — Receiving tab ka
+ * "Total Dues" column isi par chalta hai (August khula ho to July ka baqaya,
+ * September khula ho to August ka).
+ *
+ * Ek ek branch par getPreviousDues chalane ke bajaye do batch calls: pichhle
+ * mahine ke saare challans, aur pichhle mahine ki saari receivings. Isi liye
+ * ye Receiving tab ke apne load ke barabar hai, teen guna nahi.
+ *
+ * @returns {Promise<Object>} { [branchId]: baqaya }
+ */
+export async function listPreviousDues(schools = [], setups = {}, period) {
+  const prev = previousPeriod(period);
+  const ids = schools.map((s) => s.id).filter(Boolean);
+  const [challans, receivings] = await Promise.all([
+    listChallans(schools, setups, prev).catch(() => ({})),
+    listReceivings(ids, prev).catch(() => ({})),
+  ]);
+  const out = {};
+  for (const s of schools) {
+    const challan = challans[s.id];
+    if (!challan) { out[s.id] = 0; continue; }
+    const recv = receivings[s.id];
+    /* Receiving hui to uska remaining sach hai; na hui to poora challan baqi. */
+    const left = recv ? num(recv.remainingAmount) : num(challan.total);
+    out[s.id] = Math.max(0, left);
+  }
+  return out;
 }
 
 /** Challan hatao. */
@@ -467,18 +612,24 @@ export function receivingRowToUi(r) {
   };
 }
 
-function receivingToBody({ action, id = 0, branchId, setupId = 0, challanId = 0, rec }) {
+function receivingToBody({ action, id = 0, branchId, setupId = 0, challanId = 0, rec, period }) {
   const me = currentUserId();
   const day = isoDay(rec?.dateRaw || rec?.date) || todayISO();
-  const [y, m] = day.split('-');
+  /* month/year wo mahina hai JIS KA challan bhara ja raha hai — payment ki
+     tareekh ka mahina nahi. August ka challan 2 September ko bhara jaye to
+     bhi record August ka hi hai (ERP ka wahi usool: ledger row ka mahina).
+     Period na mile to purana tareeqa — tareekh se nikal lo. */
+  const fallback = periodOf(day);
+  const month = Number(period?.month) || fallback.month;
+  const year = Number(period?.year) || fallback.year;
   return {
     action,
     id: num(id),
     schoolPaymentID: num(setupId),
     paymentLedgerID: num(challanId),
     currentBranchID: num(branchId),
-    month: Number(m) || 0,
-    year: Number(y) || 0,
+    month,
+    year,
     payableAmount: num(rec?.payableAmount),
     discount: num(rec?.discount),
     netPayable: num(rec?.netPayable),
@@ -494,25 +645,37 @@ function receivingToBody({ action, id = 0, branchId, setupId = 0, challanId = 0,
   };
 }
 
-/** Ek branch ka receiving record (ya null). */
-export async function getReceiving(branchId) {
+/**
+ * Ek branch ka receiving record (ya null) — ek MAHINE ka.
+ *
+ * Wahi do-tarfa tareeqa jo getChallan par hai: month/year request me bhi
+ * jate hain (jis din backend filter karne lage) aur jawab par bhi lagte
+ * hain (abhi API saari rows deti hai). Receiving model par month + year
+ * pehle se mojood hain — swagger par tasdeeq shuda.
+ */
+export async function getReceiving(branchId, period) {
   if (!num(branchId)) return null;
   const json = await receivingPost(
-    { action: LEDGER_ACTIONS.get, id: 0, currentBranchID: num(branchId), type: PAYMENT_TYPE },
+    {
+      action: LEDGER_ACTIONS.get, id: 0, currentBranchID: num(branchId), type: PAYMENT_TYPE,
+      month: period?.month ? Number(period.month) : null,
+      year: period?.year ? Number(period.year) : null,
+    },
     'load this receiving record',
   );
   const rows = Array.isArray(json?.data) ? json.data : [];
-  const row = rows.find((r) => num(r?.id));
-  return row ? receivingRowToUi(row) : null;
+  const mapped = rows.filter((r) => num(r?.id)).map(receivingRowToUi);
+  const hit = mapped.find((x) => samePeriod(period, { month: x.month, year: x.year }));
+  return hit || null;
 }
 
 /**
  * Kai branches ke receiving records ek saath (sab calls parallel).
  * @returns {Promise<Object>} { [branchId]: receiving }
  */
-export async function listReceivings(branchIds = []) {
+export async function listReceivings(branchIds = [], period) {
   const ids = [...new Set(branchIds.map(Number).filter(Boolean))];
-  const rows = await Promise.all(ids.map((id) => getReceiving(id).catch(() => null)));
+  const rows = await Promise.all(ids.map((id) => getReceiving(id, period).catch(() => null)));
   const out = {};
   ids.forEach((id, i) => { if (rows[i]) out[id] = rows[i]; });
   return out;
@@ -522,16 +685,16 @@ export async function listReceivings(branchIds = []) {
  * Add Payment — pehli baar ADD, dobara UPDATE (currentBranchID+type unique hai).
  * @returns {Promise<Object>} taaza mapped record (save ke baad GET se padha hua)
  */
-export async function saveReceiving({ branchId, rec, setupId = 0, challanId = 0, id = 0 } = {}) {
+export async function saveReceiving({ branchId, rec, setupId = 0, challanId = 0, id = 0, period } = {}) {
   const rowId = num(id);
   await receivingPost(
     receivingToBody({
       action: rowId > 0 ? LEDGER_ACTIONS.update : LEDGER_ACTIONS.add,
-      id: rowId, branchId, setupId, challanId, rec,
+      id: rowId, branchId, setupId, challanId, rec, period,
     }),
     rowId > 0 ? 'update this payment' : 'record this payment',
   );
-  const fresh = await getReceiving(branchId).catch(() => null);
+  const fresh = await getReceiving(branchId, period).catch(() => null);
   return fresh || { ...rec, id: rowId, branchId: num(branchId) };
 }
 
