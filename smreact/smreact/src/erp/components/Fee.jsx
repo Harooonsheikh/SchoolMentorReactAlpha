@@ -1190,7 +1190,7 @@ function FamilyTreeChallansList({ toast }) {
       title:    'Family Challan Preview',
       sub:      `${f.name} — ${f.guardian} · ${f.children.length} child${f.children.length === 1 ? '' : 'ren'} · Parent · Bank · School copies`,
       family:   f,
-      innerHtml: buildFamilyChallanInner({ family: famWithFigs(f), settings, bw: false }),
+      innerHtml: buildFamilyChallanInner({ family: famWithFigs(f), settings, bw: false, school: branchHeader }),
     });
   };
   const openDownload = (f) => {
@@ -1276,7 +1276,7 @@ function FamilyTreeChallansList({ toast }) {
   };
   const runDownload = (family, { theme, fmt, size = 'a4' }) => {
     const bw   = theme === 'bw';
-    const html = buildFamilyChallanHTML({ family: famWithFigs(family), settings, bw, size });
+    const html = buildFamilyChallanHTML({ family: famWithFigs(family), settings, bw, size, school: branchHeader });
     const sizeT = size === 'thermal' ? 'Thermal 80mm' : 'A4';
     toast(`Generating ${sizeT} · ${bw ? 'B&W' : 'Color'} ${fmt === 'word' ? 'Word' : 'PDF'} — family challan…`, 'info');
     /* Word needs no pop-up — the .docx is built and downloaded in place. */
@@ -5148,6 +5148,9 @@ function childRecModel({ child, payments }) {
 }
 
 function FamilyTreeReceiving({ toast }) {
+  /* Slip ka header (school ka naam, address, logo) — wahi API jo baqi fee
+     reports/challans use karte hain. */
+  const { data: branchHeader = null }    = useAsync(feeService.getReportHeader, [], null);
   const { data: serverFams = [] }        = useAsync(feeService.getFamilies, []);
   const { data: settings = {} }          = useAsync(feeService.getFeeSettings, []);
   const { data: serverReceipts = [] }    = useAsync(feeService.getFamilyReceipts, []);
@@ -5906,6 +5909,7 @@ function FamilyTreeReceiving({ toast }) {
         onClose={() => setFamilySlipCtx(null)}
         paymentsFor={paymentsFor}
         toast={toast}
+        school={branchHeader}
       />
     </>
   );
@@ -6408,7 +6412,11 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
 /* Build a print-ready family fee receiving slip — combined summary
    of all children's payments under one guardian. Accepts size:
    'a4' (default — full A4) or 'small' (80mm thermal receipt). */
-function buildFamilyReceivingSlipHTML({ family, period, paymentsFor, size = 'a4' }) {
+function buildFamilyReceivingSlipHTML({ family, period, paymentsFor, size = 'a4', school = null }) {
+  /* Naam/address report-header API se — pehle yahan FEE_SCHOOL ka hardcoded
+     naam chhapta tha, is liye har school ki receipt par ek hi campus ka naam
+     aa jata tha. */
+  const sch = feeReportSchool(school);
   const today = new Date().toLocaleDateString('en-GB');
   const rows  = family.children.map(ch => {
     const pays = paymentsFor(family.key, ch.reg);
@@ -6510,7 +6518,8 @@ function buildFamilyReceivingSlipHTML({ family, period, paymentsFor, size = 'a4'
   @media print{ body{padding:0;} }
 </style></head><body>
 <div class="th-slip">
-  <div class="th-school">${escHtml(FEE_SCHOOL.name)}</div>
+  <div class="th-school">${escHtml(sch.name)}</div>
+  ${sch.address ? `<div style="font-size:9.5px;color:#555;text-align:center;">${escHtml(sch.address)}</div>` : ''}
   <div class="th-tag">Family Fee Receipt</div>
   <div class="th-meta">
     <span>Family</span><span>${escHtml(family.name)}</span>
@@ -6569,7 +6578,8 @@ function buildFamilyReceivingSlipHTML({ family, period, paymentsFor, size = 'a4'
 <div class="page">
   <div class="header">
     <div>
-      <div class="school">${escHtml(FEE_SCHOOL.name)}</div>
+      <div class="school">${escHtml(sch.name)}</div>
+      ${sch.address ? `<div class="school-addr" style="font-size:11px;color:#555;margin-top:2px;">${escHtml(sch.address)}</div>` : ''}
       <div class="title">Family Fee Receiving Slip — ${escHtml(family.name)}</div>
     </div>
     <div class="meta">Generated: ${today}<br/>Guardian: ${escHtml(family.guardian)}<br/>Period: ${escHtml(period)}</div>
@@ -6605,7 +6615,7 @@ function buildFamilyReceivingSlipHTML({ family, period, paymentsFor, size = 'a4'
    FAMILY FEE SLIP MODAL — wraps the family receipt download with an
    A4 / Small (thermal) size picker, mirroring the per-student slip.
    ═══════════════════════════════════════════════════════════════════ */
-function FamilyFeeSlipModal({ cfg, onClose, paymentsFor, toast }) {
+function FamilyFeeSlipModal({ cfg, onClose, paymentsFor, toast, school = null }) {
   const [size, setSize] = useState('a4');
 
   useEffect(() => { if (cfg) setSize(cfg.defaultSize || 'a4'); }, [cfg]);
@@ -6622,6 +6632,7 @@ function FamilyFeeSlipModal({ cfg, onClose, paymentsFor, toast }) {
 
   if (!cfg) return null;
   const { family, period } = cfg;
+  const sch = feeReportSchool(school);
 
   /* Prefer the child's enriched payments (built from the persisted challan) so
      the slip reflects real received amounts even after a refresh; fall back to
@@ -6643,7 +6654,7 @@ function FamilyFeeSlipModal({ cfg, onClose, paymentsFor, toast }) {
   }), { paid: 0, payable: 0, rem: 0 });
 
   const doPrint = () => {
-    const html = buildFamilyReceivingSlipHTML({ family, period, paymentsFor: slipPaymentsFor, size });
+    const html = buildFamilyReceivingSlipHTML({ family, period, paymentsFor: slipPaymentsFor, size, school });
     const w = window.open('', '_blank');
     if (!w) { toast('Please allow pop-ups to download the slip', 'error'); return; }
     w.document.write(html);
@@ -6698,7 +6709,8 @@ function FamilyFeeSlipModal({ cfg, onClose, paymentsFor, toast }) {
           <div className="fee-dl-label" style={{ marginTop: 16 }}>Preview</div>
           <div className="fee-slip-doc" style={{ maxWidth: size === 'small' ? 300 : 640 }}>
             <div className="fee-slip-head">
-              <div className="fee-slip-school">{FEE_SCHOOL.name}</div>
+              <div className="fee-slip-school">{sch.name}</div>
+              {sch.address && <div style={{ fontSize: 11, color: '#555', marginTop: 2 }}>{sch.address}</div>}
               <div className="fee-slip-tag">Family Fee Receipt</div>
             </div>
             <div className="fee-slip-kv">
@@ -10597,7 +10609,7 @@ function feeThermalChallanHTML({ classMeta, student, heads, settings, period, is
 }
 
 /* ── Family combined challan: one slip lists every child as a row ── */
-function feeFamilySlipHTML({ copyLabel, family, settings, period, issueISO, dueISO }) {
+function feeFamilySlipHTML({ copyLabel, family, settings, period, issueISO, dueISO, school }) {
   const showPsd = settings.showPsd !== false;
   /* Whole rupees — list/cards ki tarah, challan par decimal na dikhe. */
   const w = (v) => { const n = Math.round(Number(v)); return Number.isFinite(n) ? n : 0; };
@@ -10626,12 +10638,17 @@ function feeFamilySlipHTML({ copyLabel, family, settings, period, issueISO, dueI
     .map(ch => ch.applicantsID ?? ch.studentID)
     .find(v => v != null && v !== '') ?? '');
 
+  const logoHtml = school?.logo
+    ? `<img src="${escHtml(school.logo)}" alt="${escHtml(school?.name || '')} logo" style="width:100%;height:100%;object-fit:contain;border-radius:50%;" />`
+    : FEE_LOGO_SVG;
+
   return `
 <div class="slip">
   <div class="slip-header">
-    <div class="logo-circle">${FEE_LOGO_SVG}</div>
+    <div class="logo-circle">${logoHtml}</div>
     <div>
-      <div class="school-name">${escHtml(FEE_SCHOOL.name)}</div>
+      <div class="school-name">${escHtml(school?.name || FEE_SCHOOL.name)}</div>
+      ${school?.address ? `<div class="school-addr" style="font-size:9px;color:#555;margin-top:1px;">${escHtml(school.address)}</div>` : ''}
       <span class="copy-tag">${escHtml(copyLabel)}</span>
     </div>
   </div>
@@ -10680,8 +10697,13 @@ function feeFamilySlipHTML({ copyLabel, family, settings, period, issueISO, dueI
 </div>`;
 }
 
-function buildFamilyChallanInner({ family, settings, bw = false, size = 'a4',
+function buildFamilyChallanInner({ family, settings, bw = false, size = 'a4', school = null,
                                    period: periodOverride, issueISO: issueOverride, dueISO: dueOverride }) {
+  /* Header (naam, address, logo) report-header API se aata hai — bilkul waise
+     hi jaise per-child challan me (dekhein buildChallanInner). Pehle yahan
+     FEE_SCHOOL ka hardcoded naam chhapta tha, is liye har school ke family
+     challan par "The Oxford System, Lahore Campus" aa jata tha. */
+  const sch = feeReportSchool(school);
   const today    = new Date();
   /* LOCAL calendar par — warna subah-subah slip par date ek din peechhe chhapti. */
   const fbIssue  = localDateISO(today);
@@ -10698,15 +10720,15 @@ function buildFamilyChallanInner({ family, settings, bw = false, size = 'a4',
   });
 
   if (size === 'thermal') {
-    return `<div class="fee-thermal-doc">${feeThermalFamilyChallanHTML({ family, settings, period, issueISO, dueISO })}</div>`;
+    return `<div class="fee-thermal-doc">${feeThermalFamilyChallanHTML({ family, settings, period, issueISO, dueISO, school: sch })}</div>`;
   }
 
   const page = `
     <div class="challan-page">
       <div class="challan-row">
-        ${feeFamilySlipHTML({ copyLabel: 'Parent Copy', family, settings, period, issueISO, dueISO })}
-        ${feeFamilySlipHTML({ copyLabel: 'Bank Copy',   family, settings, period, issueISO, dueISO })}
-        ${feeFamilySlipHTML({ copyLabel: 'School Copy', family, settings, period, issueISO, dueISO })}
+        ${feeFamilySlipHTML({ copyLabel: 'Parent Copy', family, settings, period, issueISO, dueISO, school: sch })}
+        ${feeFamilySlipHTML({ copyLabel: 'Bank Copy',   family, settings, period, issueISO, dueISO, school: sch })}
+        ${feeFamilySlipHTML({ copyLabel: 'School Copy', family, settings, period, issueISO, dueISO, school: sch })}
       </div>
     </div>`;
 
@@ -10720,7 +10742,7 @@ function buildFamilyChallanHTML(opts) {
 <style>${css}</style></head><body>${buildFamilyChallanInner(opts)}</body></html>`;
 }
 
-function feeThermalFamilyChallanHTML({ family, settings, period, issueISO, dueISO }) {
+function feeThermalFamilyChallanHTML({ family, settings, period, issueISO, dueISO, school }) {
   const showPsd = settings.showPsd !== false;
   /* Whole rupees — list/cards ki tarah, challan par decimal na dikhe. */
   const w = (v) => { const n = Math.round(Number(v)); return Number.isFinite(n) ? n : 0; };
@@ -10745,7 +10767,8 @@ function feeThermalFamilyChallanHTML({ family, settings, period, issueISO, dueIS
 
   return `
 <div class="th-challan">
-  <div class="th-school">${escHtml(FEE_SCHOOL.name)}</div>
+  <div class="th-school">${escHtml(school?.name || FEE_SCHOOL.name)}</div>
+  ${school?.address ? `<div style="font-size:9.5px;color:#555;text-align:center;">${escHtml(school.address)}</div>` : ''}
   <div class="th-tag">Family Fee Challan</div>
   <div class="th-kv">
     <span class="k">Period</span><span class="v">${escHtml(period)}</span>
