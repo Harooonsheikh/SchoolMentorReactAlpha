@@ -163,9 +163,28 @@ export default function Networks({ toast = () => {}, embedded = false }) {
   );
   const mine = useMemo(() => requests.filter((r) => r.status === 'Accepted'), [requests]);
 
+  /* ── Aik waqt me sirf AIK khuli request ──
+     School aik saath kai networks ko request nahi bhej sakta: jab tak aik
+     request ka faisla na ho jaye (Pending), doosri nahi jaati; aur jis
+     network me shamil ho chuka ho (Accepted), us haalat me nayi request ka
+     matlab hi nahi banta — pehle wo taluq khatam karna parega.
+
+     Ye rok yahan (screen par) lagti hai — API khud rokti nahi, is liye
+     button band karne ke saath sendInvite me bhi check hai. */
+  const openReq = useMemo(
+    () => requests.find((r) => r.status === 'Pending') || requests.find((r) => r.status === 'Accepted') || null,
+    [requests],
+  );
+  const blockedMsg = openReq && (openReq.status === 'Pending'
+    ? `You already have a pending request with ${nameOf(openReq.networkId)}. Wait for its decision, or remove it to request another network.`
+    : `This school is already part of ${nameOf(openReq.networkId)}. Leave that network first to join another one.`);
+
   const sendInvite = async () => {
     if (!selected) { toast('Please select a network first', 'warning'); return; }
     if (requestedIds.has(String(selected))) { toast('You already have a request for this network', 'info'); return; }
+    /* Aik hi khuli request ki hadd — button band hone ke bawajood dobara
+       check, kyunke list background me badal sakti hai. */
+    if (openReq) { toast(blockedMsg, 'warning'); return; }
     if (!branchId) { toast('No branch is selected — please sign in again', 'error'); return; }
     const net = networks.find((n) => String(n.id) === String(selected));
     if (!net) { toast('Please select a network first', 'warning'); return; }
@@ -311,8 +330,14 @@ export default function Networks({ toast = () => {}, embedded = false }) {
             </div>
             <div className="net-info">
               <i className="fa-solid fa-circle-info" />
-              <span>Select a network and send a join request. The network’s admin will accept or reject it.</span>
+              <span>Select a network and send a join request. The network’s admin will accept or reject it. Only one request can be open at a time.</span>
             </div>
+            {blockedMsg && (
+              <div className="net-error">
+                <i className="fa-solid fa-circle-exclamation" />
+                <span>{blockedMsg}</span>
+              </div>
+            )}
             {loadErr && (
               <div className="net-error">
                 <i className="fa-solid fa-triangle-exclamation" />
@@ -332,13 +357,14 @@ export default function Networks({ toast = () => {}, embedded = false }) {
                   <select
                     className="net-select"
                     value={selected}
-                    disabled={loading || !!loadErr || networks.length === 0}
+                    disabled={loading || !!loadErr || networks.length === 0 || !!openReq}
                     onChange={(e) => setSelected(e.target.value)}
                   >
                     <option value="">
                       {loading ? 'Loading networks…'
                         : loadErr ? 'Networks unavailable'
                         : networks.length === 0 ? 'No networks found'
+                        : openReq ? (openReq.status === 'Pending' ? 'A request is already pending' : 'Already in a network')
                         : options.length === 0 ? 'All networks already requested'
                         : '— Select Network —'}
                     </option>
@@ -351,8 +377,8 @@ export default function Networks({ toast = () => {}, embedded = false }) {
                   <i className={`fa-solid ${loading ? 'fa-spinner fa-spin' : 'fa-chevron-down'}`} />
                 </div>
               </div>
-              <Tooltip text="Send a join request to the selected network">
-                <button className="net-btn net-btn-primary" onClick={sendInvite} disabled={loading || sending || !selected}>
+              <Tooltip text={blockedMsg || 'Send a join request to the selected network'}>
+                <button className="net-btn net-btn-primary" onClick={sendInvite} disabled={loading || sending || !selected || !!openReq}>
                   <i className={`fa-solid ${sending ? 'fa-spinner fa-spin' : 'fa-paper-plane'}`} />
                   {sending ? 'Sending…' : 'Send Invite'}
                 </button>
