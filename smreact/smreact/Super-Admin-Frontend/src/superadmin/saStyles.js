@@ -964,7 +964,7 @@ export const SA_CSS = `
 .sa-root .ch-actions{display:flex;align-items:center;gap:6px;flex-wrap:nowrap}
 .sa-root .ch-btn{display:inline-flex;align-items:center;gap:5px;height:32px;padding:0 13px;border-radius:var(--r-md);font-family:var(--font);font-size:11.5px;font-weight:700;cursor:pointer;transition:var(--tr);border:none;white-space:nowrap}
 .sa-root .ch-btn-gen{background:linear-gradient(135deg,#15803d,#16a34a);color:#fff;box-shadow:0 2px 8px rgba(22,163,74,.25)}
-.sa-root .ch-btn-gen:hover{transform:translateY(-1px);box-shadow:0 4px 12px rgba(22,163,74,.35)}
+.sa-root .ch-btn-gen:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 4px 12px rgba(22,163,74,.35)}
 .sa-root .ch-btn-dl{background:linear-gradient(135deg,#1E3A8A,#1E40AF);color:#fff;box-shadow:0 2px 8px rgba(30,58,138,.22)}
 .sa-root .ch-btn-dl:hover{transform:translateY(-1px)}
 .sa-root .ch-btn-del{background:linear-gradient(135deg,#b91c1c,#dc2626);color:#fff;box-shadow:0 2px 8px rgba(220,38,38,.22)}
@@ -1082,7 +1082,10 @@ export const SA_CSS = `
 .sa-root .recv-btn-del{display:inline-flex;align-items:center;gap:5px;height:30px;padding:0 12px;border-radius:var(--r-md);font-family:var(--font);font-size:11.5px;font-weight:700;cursor:pointer;transition:var(--tr);background:rgba(220,38,38,.07);color:var(--err);border:1px solid rgba(220,38,38,.2)}
 .sa-root .recv-btn-del:hover{background:rgba(220,38,38,.14)}
 .sa-root .recv-btn-recv{display:inline-flex;align-items:center;gap:5px;height:30px;padding:0 13px;border-radius:var(--r-md);font-family:var(--font);font-size:11.5px;font-weight:700;cursor:pointer;transition:var(--tr);border:none;background:linear-gradient(135deg,#0369A1,#0284C7);color:#fff;box-shadow:0 2px 8px rgba(3,105,161,.25)}
-.sa-root .recv-btn-recv:hover{transform:translateY(-1px);box-shadow:0 4px 12px rgba(3,105,161,.35)}
+.sa-root .recv-btn-recv:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 4px 12px rgba(3,105,161,.35)}
+/* Us mahine ki receiving ho chuki ho to button band — wahi shakl jo Challans
+   ke Generate button ki hai (.ch-btn:disabled). */
+.sa-root .recv-btn-recv:disabled{background:#94a3b8;box-shadow:none;cursor:not-allowed;transform:none}
 .sa-root .recv-btn-dl:disabled,.sa-root .recv-btn-del:disabled{opacity:.4;cursor:not-allowed}
 
 /* Receiving modal */

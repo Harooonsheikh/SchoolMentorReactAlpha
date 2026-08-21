@@ -69,12 +69,33 @@ function RevBadge({ status }) {
   if (status === 'Rejected') return <span className="rv-badge-rejected"><i className="fa-solid fa-ban" style={{ fontSize: 8 }} /> Rejected</span>;
   return null;
 }
-function Thumb({ cls, cat, dotCls }) {
+/* Views ka number.
+
+   manage_videos par views ka koi column HAI HI NAHI — jo rows aati hain un
+   me `views` field hoti hi nahi, is liye har video ke saamne pakka 0 lagta
+   tha. Sifar ek asli ginti lagti hai ("kisi ne dekha hi nahi"), jab ke sach
+   ye hai ke ginti rakhi hi nahi ja rahi. Is liye 0 par "—" — jis din API
+   asli count bhejne lagegi, wahi apne aap dikhne lagega. */
+const viewsLabel = (n) => (Number(n) > 0 ? Number(n).toLocaleString() : '—');
+
+/* Video ka thumbnail. `src` ho to asli tasveer, warna wahi purana
+   category-rang wala khaka (demo HTML se aaya hua) — jo ab tak HAR row par
+   lagta tha, chahe API ne asli thumbnail bheji ho. */
+function Thumb({ cls, cat, dotCls, src }) {
   const m = catMeta(cat);
   return (
     <div className={cls} style={{ background: 'linear-gradient(135deg,#DBEAFE,#BFDBFE)' }}>
+      {src && (
+        <img
+          src={src}
+          alt=""
+          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
+          /* File gayab ho to khaka wapas — toota hua icon se behtar hai. */
+          onError={(e) => { e.currentTarget.style.display = 'none'; }}
+        />
+      )}
       <div className={dotCls}><i className="fa-solid fa-play" /></div>
-      <i className={`fa-solid ${m.i}`} style={{ color: m.c, opacity: 0.5, fontSize: 12 }} />
+      {!src && <i className={`fa-solid ${m.i}`} style={{ color: m.c, opacity: 0.5, fontSize: 12 }} />}
     </div>
   );
 }
@@ -297,7 +318,7 @@ function Dashboard({ stats, vids, revs, goReviews, setTab }) {
         <Stat icon="fa-photo-film" iColor="#1E40AF" iBg="rgba(30,58,138,.1)" val={stats.total} lbl="Total Videos" />
         <Stat icon="fa-circle-check" iColor="#16A34A" iBg="rgba(22,163,74,.1)" val={stats.live} lbl="Live Videos" />
         <Stat icon="fa-hourglass-half" iColor="#0284C7" iBg="rgba(2,132,199,.1)" val={stats.proc} lbl="Processing" />
-        <Stat icon="fa-eye" iColor="#1E40AF" iBg="rgba(30,58,138,.1)" val={stats.views.toLocaleString()} lbl="Total Views" />
+        <Stat icon="fa-eye" iColor="#1E40AF" iBg="rgba(30,58,138,.1)" val={viewsLabel(stats.views)} lbl="Total Views" />
       </div>
 
       <div className="et-stats">
@@ -315,7 +336,7 @@ function Dashboard({ stats, vids, revs, goReviews, setTab }) {
             <div className="et-mr" key={v.id}>
               <Thumb cls="et-mt" cat={v.cat} dotCls="et-mp" />
               <div className="et-mb"><div className="et-mtitle">{v.title}</div><div className="et-mmeta">{v.cat} · {v.date}</div></div>
-              <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--brand)', display: 'flex', alignItems: 'center', gap: 3, flexShrink: 0 }}><i className="fa-solid fa-eye" /> {v.views.toLocaleString()}</div>
+              <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--brand)', display: 'flex', alignItems: 'center', gap: 3, flexShrink: 0 }}><i className="fa-solid fa-eye" /> {viewsLabel(v.views)}</div>
             </div>
           ))}
         </div>
@@ -482,7 +503,7 @@ function Videos({ vids, cats, schoolVids, loading, setModal, goUpload }) {
             <select className="et-sel" value={hStatus} onChange={(e) => setHStatus(e.target.value)}><option value="">All Status</option><option value="Live">Live</option><option value="Processing">Processing</option><option value="Draft">Draft</option></select>
             <button className="btn-primary" onClick={goUpload}><i className="fa-solid fa-cloud-arrow-up" /> Upload</button>
           </div>
-          <div className="et-vth"><div className="et-th">Thumb</div><div className="et-th">Title &amp; Desc</div><div className="et-th">Category</div><div className="et-th">Status</div><div className="et-th" style={{ textAlign: 'right' }}>Views</div><div className="et-th" style={{ textAlign: 'right' }}>Actions</div></div>
+          <div className="et-vth"><div className="et-th">Thumb</div><div className="et-th">Title &amp; Desc</div><div className="et-th">Category</div><div className="et-th">Status</div><div className="et-th" style={{ textAlign: 'right' }}>Actions</div></div>
           <div>
             {hoRows.length === 0 ? (
               loading ? (
@@ -492,11 +513,10 @@ function Videos({ vids, cats, schoolVids, loading, setModal, goUpload }) {
               )
             ) : hoRows.map((v) => (
               <div className="et-vr" key={v.id}>
-                <div className="et-td"><Thumb cls="et-vth2" cat={v.cat} dotCls="et-vp" /></div>
+                <div className="et-td"><Thumb cls="et-vth2" cat={v.cat} dotCls="et-vp" src={v.thumbUrl} /></div>
                 <div className="et-td" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 0 }}><div className="et-vtt">{v.title}</div><div className="et-vtd">{v.desc}</div></div>
                 <div className="et-td"><CatBadge cat={v.cat} /></div>
                 <div className="et-td"><StatusBadge status={v.status} /></div>
-                <div className="et-td" style={{ justifyContent: 'flex-end', fontWeight: 800, color: 'var(--brand)' }}>{v.views.toLocaleString()}</div>
                 <div className="et-td et-va">
                   <button className="et-ab" data-tip="View" data-tip-pos="left" onClick={() => setModal({ type: 'viewVid', vid: v })}><i className="fa-solid fa-eye" /></button>
                   <button className="et-ab" data-tip="Edit" data-tip-pos="left" onClick={() => setModal({ type: 'editVid', vid: v })}><i className="fa-solid fa-pen" /></button>
@@ -531,7 +551,7 @@ function Videos({ vids, cats, schoolVids, loading, setModal, goUpload }) {
                 <div className="et-td"><span className="rv-school" style={{ fontSize: 10 }}><i className="fa-solid fa-school" style={{ fontSize: 9 }} /> {v.school}</span></div>
                 <div className="et-td"><CatBadge cat={v.cat} /></div>
                 <div className="et-td"><SchoolStatusBadge status={v.status} /></div>
-                <div className="et-td" style={{ justifyContent: 'flex-end', fontWeight: 800, color: 'var(--brand)' }}>{v.views.toLocaleString()}</div>
+                <div className="et-td" style={{ justifyContent: 'flex-end', fontWeight: 800, color: 'var(--brand)' }}>{viewsLabel(v.views)}</div>
                 <div className="et-td et-va">
                   <button className="et-ab" data-tip="View" data-tip-pos="left" onClick={() => setModal({ type: 'schVid', vid: v })}><i className="fa-solid fa-eye" /></button>
                   <button className="et-ab d" data-tip="Delete" data-tip-pos="left" onClick={() => setModal({ type: 'delSchVid', vid: v })}><i className="fa-solid fa-trash-can" /></button>
@@ -770,17 +790,47 @@ function Modal({ title, sub, icon, iconColor, titleColor, maxWidth, onClose, foo
 }
 
 function ViewVideoModal({ vid, onClose }) {
+  /* File server par mojood na ho to <video> chup-chaap kaala box bana kar
+     baith jata hai — 0:00, koi paighaam nahi — aur dekhne wale ko lagta hai
+     player toota hua hai, jab ke asal me file hi nahi mil rahi. */
+  const [videoFailed, setVideoFailed] = useState(false);
+  const showPlayer = Boolean(vid.videoUrl) && !videoFailed;
   return (
     <Modal title={vid.title} sub="Video details" icon="fa-circle-play" onClose={onClose}
       footer={<button className="btn-secondary" onClick={onClose}>Close</button>}>
-      <div style={{ borderRadius: 'var(--r-lg)', height: 160, background: 'linear-gradient(135deg,#1E3A8A,#0284C7)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 14 }}>
-        <div style={{ width: 46, height: 46, borderRadius: '50%', background: 'rgba(0,191,165,.9)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16 }}><i className="fa-solid fa-play" /></div>
-      </div>
+      {/* Yahan pehle sirf ek khaka tha — neela box aur play ka nishan — is
+          liye "View" par video kabhi chalti hi nahi thi. Ab asli player
+          lagta hai; thumbnail poster ban jati hai. Purani rows par
+          videoFile null bhi ho sakta hai (upload se pehle wali), un par
+          wohi khaka rehta hai. */}
+      {showPlayer ? (
+        <video
+          src={vid.videoUrl}
+          poster={vid.thumbUrl || undefined}
+          controls
+          preload="metadata"
+          onError={() => setVideoFailed(true)}
+          style={{ width: '100%', maxHeight: 320, borderRadius: 'var(--r-lg)', background: '#000', marginBottom: 14, display: 'block' }}
+        >
+          Your browser cannot play this video.
+        </video>
+      ) : (
+        <div style={{ borderRadius: 'var(--r-lg)', height: 160, background: 'linear-gradient(135deg,#1E3A8A,#0284C7)', display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'center', justifyContent: 'center', marginBottom: 14, color: '#fff' }}>
+          <div style={{ width: 46, height: 46, borderRadius: '50%', background: 'rgba(255,255,255,.18)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16 }}><i className="fa-solid fa-video-slash" /></div>
+          <div style={{ fontSize: 12.5, fontWeight: 700, opacity: .9 }}>
+            {vid.videoUrl
+              ? 'Video file could not be loaded from the server'
+              : 'No video file on this record'}
+          </div>
+          {vid.videoUrl && (
+            <div style={{ fontSize: 10.5, opacity: .7, wordBreak: 'break-all', textAlign: 'center', padding: '0 16px' }}>
+              {vid.videoUrl}
+            </div>
+          )}
+        </div>
+      )}
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}><CatBadge cat={vid.cat} /> <StatusBadge status={vid.status} /></div>
-      <div className="modal-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
         <div className="f-field"><label className="f-label">Upload Date</label><input className="f-input" readOnly value={vid.date} /></div>
-        <div className="f-field"><label className="f-label">Views</label><input className="f-input" readOnly value={vid.views.toLocaleString()} /></div>
-      </div>
       <div className="f-field" style={{ marginTop: 12 }}><label className="f-label">Description</label><div style={{ fontSize: 13, color: 'var(--t2)', padding: 10, borderRadius: 'var(--r-md)', background: 'var(--muted)', border: '1px solid var(--bl)', lineHeight: 1.6, marginTop: 4 }}>{vid.desc}</div></div>
     </Modal>
   );
@@ -969,7 +1019,7 @@ function SchoolVideoModal({ vid, onDelete, onClose }) {
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 16 }}>
         <InfoBox icon="fa-calendar-day" label="Upload Date" value={vid.date} />
-        <InfoBox icon="fa-eye" label="Views" value={vid.views.toLocaleString()} />
+        <InfoBox icon="fa-eye" label="Views" value={viewsLabel(vid.views)} />
         <InfoBox icon="fa-school" label="School" value={vid.school} />
       </div>
       <div style={{ marginBottom: 14, fontSize: 12.5, color: 'var(--tm)', display: 'flex', alignItems: 'center', gap: 6 }}>

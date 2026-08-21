@@ -143,24 +143,51 @@ const REQ = (v) => {
   return s || '-';
 };
 
+/* Optional int fields (ID / CategoryID) — koi asli id na ho to KHALI jata
+   hai, 0 nahi.
+
+   Wajah: 0 aur khali ka matlab backend par alag hai. SP ka filter
+   (@ID IS NULL OR ID = @ID) khali ko "sab do" samajhta hai, jab ke 0 ek
+   asli id samajh kar dhoondta hai — aur 0 naam ki koi row hoti nahi, is
+   liye GET hamesha khali list deta tha. Isi liye Videos tab khali rehti
+   thi (pehle ise backend ka bug samjha gaya tha). */
+const OPT_ID = (v) => {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? String(n) : '';
+};
+
 /** Uploaded file (thumbnail / video) ka chalne wala URL.
 
-    SOP files ki tarah API jo path deti hai us me application root chhoot
-    sakta hai ("/Etube/Videos/x.mp4" jab ke file
-    "/SchoolMentorSuperAdminAPI/Etube/Videos/x.mp4" par milti hai), is liye
-    host hata kar tail ko SA root ke saath dobara jorte hain.
+    WAHI USOOL JO MANUALS / SOP FILES KA HAI — dekho
+    services/schoolSops.js → sopFileUrl.
+
+    API file ka URL apne REQUEST host se banati hai aur us me application
+    root CHHOOT jata hai. Manuals par ye live tasdeeq shuda hai:
+
+      API deti hai : http://50.190.164.42:4100/Manuals/Forms/f77c….pdf   → 404
+      file milti hai: /SchoolMentorSuperAdminAPI/Manuals/Forms/f77c….pdf → 200
+
+    Is liye yahan bhi: jo bhi host API ne lagaya ho use phenk do, path ka
+    /Etube/... wala hissa lo, aur usay app root ke saath dobara joro.
+
     SA_ADMIN_API_BASE khali hai (dev + prod) → relative URL banta hai, jise
-    setupProxy / IIS rewrite khud aage bhej dete hain: na CORS, na https par
-    mixed-content. */
+    dev par setupProxy aur prod par IIS rewrite khud aage bhej dete hain —
+    na CORS ka masla, na https par mixed-content ka. */
 export function etubeFileUrl(path) {
   const raw = String(path ?? '').trim();
   if (!raw || raw === '-') return '';
   if (/^data:|^blob:/i.test(raw)) return raw;
+
   let rel = raw;
   try { rel = new URL(raw).pathname; } catch { /* pehle se relative */ }
-  const m = rel.match(/\/SchoolMentorSuperAdminAPI(\/.*)$/i);
-  const tail = m ? m[1] : (rel.startsWith('/') ? rel : `/${rel}`);
-  return `${SA_ADMIN_API_BASE}/SchoolMentorSuperAdminAPI${tail}`;
+
+  /* Path me app root pehle se ho to dobara na lage. */
+  const ROOT = '/SchoolMentorSuperAdminAPI';
+  const at = rel.toLowerCase().indexOf(ROOT.toLowerCase());
+  const tail = at >= 0
+    ? rel.slice(at + ROOT.length)
+    : (rel.startsWith('/') ? rel : `/${rel}`);
+  return `${SA_ADMIN_API_BASE}${ROOT}${tail}`;
 }
 
 /** '2026-08-19T03:28:14.667' → '19 Aug 2026' (screen isi format me dikhati hai). */
@@ -208,10 +235,10 @@ function videoForm(action, v = {}) {
   const now = nowIso();
   const fd = new FormData();
   fd.append('Action', action);
-  fd.append('ID', String(Number(v.id) || 0));
+  fd.append('ID', OPT_ID(v.id));
   fd.append('VideoTitle', REQ(v.title));
   fd.append('Description', REQ(v.desc));
-  fd.append('CategoryID', String(Number(v.catId) || 0));
+  fd.append('CategoryID', OPT_ID(v.catId));
   fd.append('CategoryName', REQ(v.cat));
   fd.append('Thumbnail', REQ(v.thumbnail));
   fd.append('VideoFile', REQ(v.videoFile));
@@ -267,14 +294,10 @@ function postVideoForm(fd, label, onProgress) {
 /**
  * action: get — videos (mapped).
  *
- * ⚠ BACKEND BUG (19 Aug 2026 ko live verify kiya): manage_videos ka GET
- * sirf EK id par chalta hai. ID=0 bhejo to hamesha `data: []` aata hai,
- * chahe rows mojood hon — CategoryID se filter karne par bhi wahi khali
- * jawab. Sirf ID=<asli id> par row wapas aati hai. manage_categories me
- * yehi id=0 "sab do" ka matlab rakhta hai, is liye SP ka `WHERE ID = @ID`
- * wahi (@ID = 0 OR ID = @ID) wala branch maangta hai.
- * Jab tak wo theek nahi hota, Videos tab khali rahegi — code sahi hai,
- * data hi wapas nahi aata.
+ * ID KHALI jata hai, 0 nahi — 0 ek asli id samjhi jati hai aur GET hamesha
+ * khali list deta tha (isi wajah se Videos tab khali rehti thi; pehle ise
+ * backend ka bug likha gaya tha). Wahi baat CategoryID par bhi lagti hai:
+ * koi category chuni na ho to khali. Dekho OPT_ID.
  *
  * @param {number} [categoryId] sirf ek category ke videos chahiye to.
  */
