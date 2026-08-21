@@ -1,10 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { NAV_SECTIONS, NAV_BY_PATH } from '../config/nav'
 import { useAuth } from '../auth/useAuth'
 import { useView } from '../config/viewContext'
 import { ERP_LOGIN_URL } from '../config/env'
-import { decideSchoolRequest, fetchSchoolRequests } from '../api/networkSchoolsApi'
 import ErrorBoundary from '../components/ErrorBoundary'
 import '../styles/admin.css'
 
@@ -15,7 +14,7 @@ const initials = (name = '') =>
 export default function AdminLayout() {
   const location = useLocation()
   const { user, logout } = useAuth()
-  const { schools, schoolsLoading, schoolsError, reloadSchools, selectedSchool, isViewOnly, switchToSchool, backToHeadOffice } = useView()
+  const { schools, schoolsLoading, schoolsError, selectedSchool, isViewOnly, switchToSchool, backToHeadOffice } = useView()
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('chain-sidebar-collapsed') === '1')
   const [switcherOpen, setSwitcherOpen] = useState(false)
@@ -166,7 +165,6 @@ export default function AdminLayout() {
                   schools={schools}
                   schoolsLoading={schoolsLoading}
                   schoolsError={schoolsError}
-                  onReloadSchools={reloadSchools}
                   selectedSchool={selectedSchool}
                   onClose={() => setSwitcherOpen(false)}
                   onPickSchool={(s) => { switchToSchool(s); setSwitcherOpen(false) }}
@@ -225,67 +223,13 @@ export default function AdminLayout() {
 }
 
 /* ═══ School switcher dropdown / mobile drawer ═══ */
-function SchoolSwitcher({ schools, schoolsLoading, schoolsError, onReloadSchools, selectedSchool, onClose, onPickSchool, onHeadOffice }) {
+function SchoolSwitcher({ schools, schoolsLoading, schoolsError, selectedSchool, onClose, onPickSchool, onHeadOffice }) {
   const [q, setQ] = useState('')
   const list = useMemo(() => {
     const s = q.trim().toLowerCase()
     if (!s) return schools
     return schools.filter((x) => x.name.toLowerCase().includes(s) || (x.phone || '').includes(s))
   }, [q, schools])
-
-  /* Jo schools is network me shamil hone ki request bhej chuke hain aur abhi
-     tak accept nahi hue — Chain-Management API se. */
-  const [requested, setRequested] = useState([])
-  const [rejected, setRejected] = useState([])
-  const [reqLoading, setReqLoading] = useState(true)
-  const [reqError, setReqError] = useState('')
-  const [decidingId, setDecidingId] = useState(null)   // jis row par accept/reject chal raha hai
-
-  const loadRequested = useCallback(async () => {
-    setReqLoading(true)
-    setReqError('')
-    try {
-      const { pending, rejected: rej } = await fetchSchoolRequests()
-      setRequested(pending)
-      setRejected(rej)
-    } catch (err) {
-      console.error('Requested schools load failed:', err)
-      setRequested([])
-      setRejected([])
-      setReqError(err?.message || 'Could not load requests')
-    } finally {
-      setReqLoading(false)
-    }
-  }, [])
-
-  useEffect(() => { loadRequested() }, [loadRequested])
-
-  /* Accept aur Reject dono `update` hain — sirf isAccepted true/false badalta hai. */
-  const decide = async (row, accepted) => {
-    setDecidingId(row.id)
-    try {
-      await decideSchoolRequest(row, accepted)
-      /* Faisle ke baad row pending se nikal jaati hai: accept hui to Connected
-         Schools me, reject hui to Rejected me. */
-      setRequested((prev) => prev.filter((r) => r.id !== row.id))
-      if (accepted) onReloadSchools?.()
-      else setRejected((prev) => [{ ...row, status: 'Rejected' }, ...prev])
-    } catch (err) {
-      console.error('Decide request failed:', err)
-      setReqError(err?.message || 'Could not update the request')
-    } finally {
-      setDecidingId(null)
-    }
-  }
-
-  const byQuery = useCallback((rows) => {
-    const s = q.trim().toLowerCase()
-    if (!s) return rows
-    return rows.filter((x) => x.name.toLowerCase().includes(s) || (x.phone || '').includes(s))
-  }, [q])
-
-  const reqList = useMemo(() => byQuery(requested), [byQuery, requested])
-  const rejList = useMemo(() => byQuery(rejected), [byQuery, rejected])
 
   return (
     <>
@@ -312,54 +256,6 @@ function SchoolSwitcher({ schools, schoolsLoading, schoolsError, onReloadSchools
           {!selectedSchool ? <span className="sw-row-cur"><i className="fa-solid fa-circle-check" /> Active</span>
             : <span className="sw-row-go">Switch</span>}
         </button>
-
-        {/* Pending join-requests — Connected Schools se upar */}
-        <div className="sw-section-lbl">
-          Requested Schools
-          {!reqLoading && !reqError && <span className="sw-count">{requested.length}</span>}
-        </div>
-        {reqLoading ? (
-          <div className="sw-empty"><i className="fa-solid fa-spinner fa-spin" /> Loading requests…</div>
-        ) : reqError ? (
-          <div className="sw-empty sw-empty--err"><i className="fa-solid fa-triangle-exclamation" /> {reqError}</div>
-        ) : reqList.length === 0 ? (
-          <div className="sw-empty">{q ? `No requests match “${q}”.` : 'No pending join requests.'}</div>
-        ) : (
-          <div className="sw-list sw-list--req">
-            {reqList.map((s) => {
-              const busy = decidingId === s.id
-              return (
-                <div key={s.id} className="sw-row sw-row--req">
-                  <div className="sw-row-ic req"><i className="fa-solid fa-school-circle-exclamation" /></div>
-                  <div className="sw-row-info">
-                    <div className="sw-row-name">{s.name}</div>
-                    <div className="sw-row-sub">
-                      <i className="fa-solid fa-phone" /> {s.phone || '—'}
-                    </div>
-                  </div>
-                  <div className="sw-req-btns">
-                    <button
-                      className="sw-btn-accept"
-                      onClick={() => decide(s, true)}
-                      disabled={busy}
-                      title={`Accept ${s.name}`}
-                    >
-                      <i className={`fa-solid ${busy ? 'fa-spinner fa-spin' : 'fa-check'}`} /> Accept
-                    </button>
-                    <button
-                      className="sw-btn-reject"
-                      onClick={() => decide(s, false)}
-                      disabled={busy}
-                      title={`Reject ${s.name}`}
-                    >
-                      <i className="fa-solid fa-xmark" /> Reject
-                    </button>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        )}
 
         <div className="sw-section-lbl">
           Connected Schools
@@ -388,29 +284,6 @@ function SchoolSwitcher({ schools, schoolsLoading, schoolsError, onReloadSchools
               )
             })}
         </div>
-
-        {/* Reject ki hui requests — sirf record ke liye, koi action nahi */}
-        {rejList.length > 0 && (
-          <>
-            <div className="sw-section-lbl">
-              Rejected <span className="sw-count sw-count--rej">{rejected.length}</span>
-            </div>
-            <div className="sw-list sw-list--rej">
-              {rejList.map((s) => (
-                <div key={s.id} className="sw-row sw-row--rej">
-                  <div className="sw-row-ic rej"><i className="fa-solid fa-school-circle-xmark" /></div>
-                  <div className="sw-row-info">
-                    <div className="sw-row-name">{s.name}</div>
-                    <div className="sw-row-sub sw-row-sub--stack">
-                      <span><i className="fa-solid fa-phone" /> {s.phone || '—'}</span>
-                      <span className="sw-status sw-status--rej"><span className="sw-dot" /> {s.status}</span>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </>
-        )}
 
         <div className="sw-foot"><i className="fa-solid fa-circle-info" /> Schools open in <strong>View Only Mode</strong>.</div>
       </div>

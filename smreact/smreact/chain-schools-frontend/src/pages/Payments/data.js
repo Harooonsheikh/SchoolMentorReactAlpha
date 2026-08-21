@@ -42,8 +42,16 @@ export function monthlyCharge(school, setup) {
     const count = parseInt(setup.studentCount || school?.students || 0, 10)
     return rate * count
   }
-  // 'percentage' (royalty) is collection-based → no fixed monthly figure.
-  return 0
+  /* 'percentage' (royalty): har chune hue fee head par uski royalty banti
+     hai (headAmount × pct / 100 — backend ise `calculatedHeadAmount` par
+     save karta hai). Mahana raqam un sab ka jama hai.
+
+     Pehle yahan 0 return hota tha "collection-based hai" keh kar — us se
+     Monthly Amount aur challan dono PKR 0 bante the, jabke setup me raqam
+     mehfooz thi. */
+  return (setup.royaltyRows || [])
+    .filter((r) => Number(r.pct) > 0)
+    .reduce((sum, r) => sum + (Number(r.amount) || Math.round(((Number(r.headAmount) || 0) * (Number(r.pct) || 0)) / 100)), 0)
 }
 
 /* Kitne class/fee-head jodon par royalty % lagi hai.
@@ -60,3 +68,36 @@ export const todayPlus = (days) => {
   return d.toISOString().slice(0, 10)
 }
 export const PAY_METHODS = ['Bank Transfer', 'Cash', 'Cheque', 'JazzCash / Easypaisa', 'Online']
+
+/* ── Challan ka mahina ──
+   Ledger table me month/year ka apna koi khana nahi hai (receiving me hai),
+   is liye challan ka mahina do jagah rehta hai: `challanType` par
+   "monthly-YYYY-MM" ki soorat me, aur issue/due dates usi mahine ke andar.
+   Screen har jagah yahi label dikhati hai. */
+export const MONTHS = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+]
+
+const pad2 = (n) => String(n).padStart(2, '0')
+
+export const monthLabel = (m, y) => (m ? `${MONTHS[Number(m) - 1] || ''} ${y || ''}`.trim() : '')
+
+/* Chune hue mahine ka pehla / aakhri din — date inputs ki hadd bhi yahi hai,
+   taake challan ki tareekh kisi aur mahine me na chali jaye. */
+export const monthStart = (m, y) => `${y}-${pad2(m)}-01`
+export const monthEnd = (m, y) => `${y}-${pad2(m)}-${pad2(new Date(Number(y), Number(m), 0).getDate())}`
+
+/* Mahine ke andar rehte hue nth din — mahina chhota ho to aakhri din par ruk
+   jaata hai (February me 30 tareekh nahi hoti). */
+export const monthDay = (m, y, day) => {
+  const last = new Date(Number(y), Number(m), 0).getDate()
+  return `${y}-${pad2(m)}-${pad2(Math.min(Math.max(1, day), last))}`
+}
+
+/* Year dropdown — pichla saal, mojooda, aur agle do. Guzre mahine ka challan
+   banana aam hai, is liye pichla saal bhi list me rehta hai. */
+export function challanYears(now = new Date()) {
+  const y = now.getFullYear()
+  return [y - 1, y, y + 1, y + 2]
+}

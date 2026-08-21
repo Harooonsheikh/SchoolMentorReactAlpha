@@ -114,3 +114,18 @@ export function decideSchoolRequest(row, accepted, networkId = currentNetworkId(
     isAccepted:        !!accepted,
   })
 }
+
+/**
+ * School ko network se nikal dena — `update` nahi, poora row `delete`.
+ * (School dobara request bhej sakta hai; ye sirf mojooda taluq khatam
+ * karta hai.) Row us se juri hui payment records ki wajah se bandhi ho to
+ * API foreign-key ka paighaam wapas karti hai — wahi user tak jaata hai.
+ */
+export function removeSchoolFromNetwork(row, networkId = currentNetworkId()) {
+  return manage({
+    action:    'delete',
+    id:        row.rowId ?? row.id,
+    networkID: networkId,
+    branchID:  row.branchId ?? row.id,
+  })
+}

@@ -120,15 +120,24 @@ export function toSetup(row) {
     notes:           String(row.notes ?? '').trim(),
     /* Royalty rows flat rakhe jaate hain — details[] ki shakl bilkul yahi hai,
        is liye save par mapping ka kaam nahi bachta. */
-    royaltyRows: (Array.isArray(row.details) ? row.details : []).map((d) => ({
-      detailId:   Number(d.id) || 0,
-      classID:    Number(d.classID) || 0,
-      className:  '',                        // grades load hone par bhar jaata hai
-      headID:     Number(d.headID) || 0,
-      headName:   String(d.headName ?? ''),
-      headAmount: Number(d.headAmount) || 0,
-      pct:        Number(d.reqPercentage) || 0,
-    })),
+    royaltyRows: (Array.isArray(row.details) ? row.details : []).map((d) => {
+      const headAmount = Number(d.headAmount) || 0
+      const pct = Number(d.reqPercentage) || 0
+      return {
+        detailId:   Number(d.id) || 0,
+        classID:    Number(d.classID) || 0,
+        className:  '',                      // grades load hone par bhar jaata hai
+        headID:     Number(d.headID) || 0,
+        headName:   String(d.headName ?? ''),
+        headAmount,
+        pct,
+        /* Is head par banti hui royalty. Backend ise `calculatedHeadAmount`
+           par save karta hai; kisi purani row me na ho to wahi hisaab yahan
+           dobara laga lete hain. Challan ki raqam inhi ke jama se banti hai
+           (dekhein monthlyCharge). */
+        amount: Number(d.calculatedHeadAmount) || Math.round((headAmount * pct) / 100),
+      }
+    }),
   }
 }
 
@@ -315,6 +324,11 @@ const toDateInput = (v) => (v ? String(v).slice(0, 10) : '')
 const toApiDate = (v) => (v ? `${String(v).slice(0, 10)}T00:00:00` : null)
 
 function ledgerBody(action, { id = 0, paymentID = 0, branchID = 0, dueDate = '', creationDate = '', challanType = 'monthly', amount = 0, received = 0, total = 0 } = {}, networkID = currentNetworkId()) {
+  /* Do alag tareekhein hain, gaddmadd na karein:
+       creationDate = challan kis din JARI hua (user Issue Date se chunta hai)
+       createdAt    = row DB me kab bani (audit stamp, hamesha abhi ka waqt)
+     Backend `createdAt` maangta hai, is liye dono bhejte hain. */
+  const now = new Date().toISOString()
   return {
     action,
     id:           Number(id) || 0,
@@ -329,7 +343,9 @@ function ledgerBody(action, { id = 0, paymentID = 0, branchID = 0, dueDate = '',
     totalAmount:  Number(total) || 0,
     type:         TYPE,
     createdBy:    userId(),
+    createdAt:    now,
     modifiedBy:   userId(),
+    modifiedAt:   now,
   }
 }
 
@@ -344,6 +360,23 @@ async function ledger(body) {
     throw new Error(friendlyError(json?.message || json?.title) || 'Challan request failed')
   }
   return json
+}
+
+/* ── Challan ka mahina ──
+   Ledger table me month/year ke apne khaane NAHI hain (receiving me hain),
+   is liye mahina `challanType` par likha jaata hai: "monthly-YYYY-MM".
+   Purane rows par sirf "monthly" hai — un ka mahina creationDate se le lete
+   hain, taake wo bhi screen par sahi mahine me nazar aayein. */
+export const challanTypeFor = (month, year) => (
+  month && year ? `monthly-${year}-${String(month).padStart(2, '0')}` : 'monthly'
+)
+
+function monthOf(row) {
+  const m = /^monthly-(\d{4})-(\d{2})$/.exec(String(row?.challanType || ''))
+  if (m) return { month: Number(m[2]), year: Number(m[1]) }
+  const d = String(row?.creationDate || row?.createdAt || '')
+  if (d.length >= 7) return { month: Number(d.slice(5, 7)), year: Number(d.slice(0, 4)) }
+  return { month: 0, year: 0 }
 }
 
 /** Ledger row → screen ka challan object. */
@@ -362,30 +395,34 @@ function toChallan(row) {
     dueDate:   toDateInput(row.dueDate),
     createdOn: toDateInput(row.creationDate || row.createdAt),
     challanType: String(row.challanType || 'monthly'),
+    ...monthOf(row),
   }
 }
 
 /**
- * Aik branch ka mojooda challan — na ho to `null`.
+ * Aik branch ke SAARE challans — screen mahina chun kar dikhati hai, is liye
+ * usay poori list chahiye, sirf aakhri row nahi.
  *
- * Backend aik hi row rakhta hai, magar `get` phir bhi array deta hai. Sab se
- * naya (sab se bari id) liya jaata hai — agar kabhi wo pabandi hat gayi to ye
- * khud-ba-khud aakhri challan dikhata rahega.
+ * `get` par koi filter nahi chalta (challanType bheja jaye to bhi nazarandaaz
+ * hota hai), is liye chhantai yahin, mahine ke hisaab se ulti tarteeb me —
+ * naya challan pehle.
  */
-export function fetchChallan(branchID) {
-  if (!branchID) return Promise.resolve(null)
-  return once(`challan:${branchID}`, async () => {
-    const json = await ledger(ledgerBody('get', { branchID, challanType: '' }))
-    const rows = Array.isArray(json?.data) ? json.data : []
-    if (!rows.length) return null
-    const latest = rows.reduce((a, b) => ((Number(b.id) || 0) > (Number(a.id) || 0) ? b : a))
-    return toChallan(latest)
-  })
+export function fetchChallans(branchID) {
+  if (!branchID) return Promise.resolve([])
+  return once(`challans:${branchID}`, () => fetchChallansNow(branchID))
 }
 
-/** Kai branches ke challans — setup ki tarah background me, 12 at a time. */
-export function fetchChallanEach(branchIDs, onResult) {
-  return mapLimit(branchIDs, 12, (id) => fetchChallan(id).catch(() => null), onResult)
+async function fetchChallansNow(branchID) {
+  const json = await ledger(ledgerBody('get', { branchID, challanType: '' }))
+  const rows = Array.isArray(json?.data) ? json.data : []
+  return rows
+    .map(toChallan)
+    .sort((a, b) => (b.year * 12 + b.month) - (a.year * 12 + a.month) || b.id - a.id)
+}
+
+/** Kai branches ke saare challans — 12 at a time, har jawab alag se. */
+export function fetchChallansEach(branchIDs, onResult) {
+  return mapLimit(branchIDs, 12, (id) => fetchChallans(id).catch(() => []), onResult)
 }
 
 /**
@@ -399,14 +436,20 @@ export function fetchChallanEach(branchIDs, onResult) {
  * hua tha) to insert isi paighaam par gir sakta hai — us soorat me row taza
  * padh kar update par palat jaate hain, taake user ko be-wajah error na mile.
  */
-export async function saveChallan(branchID, { paymentID, amount, prevDues = 0, dueDate, existingId = 0, createdOn }) {
+export async function saveChallan(branchID, { paymentID, amount, prevDues = 0, dueDate, existingId = 0, createdOn, month = 0, year = 0 }) {
   const total = (Number(amount) || 0) + (Number(prevDues) || 0)
+  const creationDate = createdOn || new Date().toISOString().slice(0, 10)
   const payload = {
     id: existingId,
     paymentID,
     branchID,
     dueDate,
-    creationDate: createdOn || new Date().toISOString().slice(0, 10),
+    creationDate,
+    /* Mahina yahin tay hota hai — na diya jaye to issue date ka mahina. */
+    challanType: challanTypeFor(
+      month || Number(creationDate.slice(5, 7)),
+      year || Number(creationDate.slice(0, 4)),
+    ),
     amount,
     total,
   }
@@ -419,8 +462,11 @@ export async function saveChallan(branchID, { paymentID, amount, prevDues = 0, d
     if (!current?.id) throw err
     await ledger(ledgerBody('update', { ...payload, id: current.id }))
   }
-  /* Wapas padh lete hain taake id aur backend ke apne defaults sahi aayen. */
-  return fetchChallanNow(branchID)
+  /* Wapas padh lete hain taake id aur backend ke apne defaults sahi aayen —
+     aur usi mahine ki row wapas karte hain jo abhi bani, kyunke branch par
+     purane mahinon ki rows bhi ho sakti hain. */
+  const rows = await fetchChallansNow(branchID)
+  return rows.find((c) => c.challanType === payload.challanType) || rows[0] || null
 }
 
 async function fetchChallanNow(branchID) {
@@ -445,14 +491,14 @@ export async function deleteChallan(challan) {
    Ledger ki tarah `get` mojood hai aur `currentBranchID` par filter karta
    hai (branchID nahi — is table me khana `currentBranchID` kehlata hai).
 
-   AHEM: yahan bhi har (currentBranchID, type) par SIRF AIK row banti hai.
-   Yaani API har adaigi ka alag record NAHI rakhti — aik hi row chalte
-   hisaab ki soorat me rehti hai:
-     receivingAmount  = ab tak kul jitna wasool hua
+   Ledger ke bar-aks yahan aik branch par KAI rows ban sakti hain — koi
+   unique pabandi nahi (live test se tasdeeq shuda). Is liye har mahine ki
+   apni row rehti hai, `month`/`year` khaanon ke sath:
+     receivingAmount  = us mahine me ab tak kul jitna wasool hua
      remainingAmount  = netPayable − receivingAmount
-     receivingDate / paymentVia = AAKHRI adaigi ki tafseel
-   Is liye nayi adaigi purani raqam me jama ho kar `update` jaati hai, naya
-   row nahi banta (dekhein saveReceiving).
+     receivingDate / paymentVia = us mahine ki AAKHRI adaigi ki tafseel
+   Aik hi mahine me dobara wasooli purani raqam me jama ho kar `update`
+   jaati hai (dekhein saveReceiving) — naya mahina nayi row.
 
    networkID har call me jaati hai — wasooli usi network ke khaate me lagti
    hai jis se user logged in hai.
@@ -468,7 +514,9 @@ function recvBody(action, r = {}, networkID = currentNetworkId()) {
     schoolPaymentID: Number(r.schoolPaymentID) || 0,
     paymentLedgerID: Number(r.paymentLedgerID) || 0,
     currentBranchID: Number(r.branchID) || 0,
-    /* Kis mahine ki wasooli hai — adaigi ki tareekh se li jaati hai. */
+    /* Kis mahine ki wasooli hai — challan ka mahina, adaigi ki tareekh ka
+       nahi: August ka challan September me wasool ho to bhi wo August ki
+       wasooli hai. Screen se na aaye to tareekh se nikal lete hain. */
     month:           Number(r.month) || (r.date ? Number(String(r.date).slice(5, 7)) : now.getMonth() + 1),
     year:            Number(r.year) || (r.date ? Number(String(r.date).slice(0, 4)) : now.getFullYear()),
     payableAmount:   Number(r.payableAmount) || 0,
@@ -516,44 +564,47 @@ function toReceiving(row) {
   }
 }
 
-async function fetchReceivingNow(branchID) {
+/**
+ * Aik branch ki SAARI wasooliyan — har mahine ki apni row. Naya mahina
+ * pehle, taake pichle mahinon ka baqaya seedha upar se milta rahe.
+ */
+export function fetchReceivings(branchID) {
+  if (!branchID) return Promise.resolve([])
+  return once(`recvs:${branchID}`, () => fetchReceivingsNow(branchID))
+}
+
+async function fetchReceivingsNow(branchID) {
   const json = await receiving(recvBody('get', { branchID }))
   const rows = Array.isArray(json?.data) ? json.data : []
-  if (!rows.length) return null
-  return toReceiving(rows.reduce((a, b) => ((Number(b.id) || 0) > (Number(a.id) || 0) ? b : a)))
+  return rows
+    .map(toReceiving)
+    .sort((a, b) => (b.year * 12 + b.month) - (a.year * 12 + a.month) || b.id - a.id)
 }
 
-/** Aik branch ka receiving record — na ho to `null`. */
-export function fetchReceiving(branchID) {
-  if (!branchID) return Promise.resolve(null)
-  return once(`recv:${branchID}`, () => fetchReceivingNow(branchID))
-}
-
-/** Kai branches ke receiving records — background me, 12 at a time. */
-export function fetchReceivingEach(branchIDs, onResult) {
-  return mapLimit(branchIDs, 12, (id) => fetchReceiving(id).catch(() => null), onResult)
+/** Kai branches ki saari wasooliyan — background me, 12 at a time. */
+export function fetchReceivingsEach(branchIDs, onResult) {
+  return mapLimit(branchIDs, 12, (id) => fetchReceivings(id).catch(() => []), onResult)
 }
 
 /**
- * Nayi adaigi darj karna.
+ * Nayi adaigi darj karna — hamesha kisi aik mahine ke khaate me.
  *
- * `receivedAmount` chalta hisaab hai (purani + nayi), is liye screen ise
- * pehle hi jama kar ke bhejti hai. Row mojood ho to update, warna insert —
- * aur ledger ki tarah yahan bhi insert "already exists" par gire to taza
- * padh kar update par palat jaate hain (basi state / doosra tab).
+ * `receivedAmount` us mahine ka chalta hisaab hai (purani + nayi), is liye
+ * screen ise pehle hi jama kar ke bhejti hai. Us mahine ki row mojood ho to
+ * update, warna nayi row.
+ *
+ * Wapas wohi row aati hai jo abhi likhi gayi (sab se nayi nahi) — branch par
+ * doosre mahinon ki rows bhi hoti hain.
  */
 export async function saveReceiving(branchID, payload) {
   const body = { ...payload, branchID }
   const existingId = Number(payload?.id) || 0
-  try {
-    await receiving(recvBody(existingId ? 'update' : 'insert', body))
-  } catch (err) {
-    if (existingId || !/already exists/i.test(err?.message || '')) throw err
-    const current = await fetchReceivingNow(branchID)
-    if (!current?.id) throw err
-    await receiving(recvBody('update', { ...body, id: current.id }))
-  }
-  return fetchReceivingNow(branchID)
+  await receiving(recvBody(existingId ? 'update' : 'insert', body))
+
+  const rows = await fetchReceivingsNow(branchID)
+  const m = Number(body.month) || 0
+  const y = Number(body.year) || 0
+  return rows.find((r) => r.month === m && r.year === y) || rows[0] || null
 }
 
 /** Receiving record hata dena — school wapas "koi adaigi nahi" par. */

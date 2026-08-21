@@ -1,12 +1,24 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import TutorialButton from '../../components/TutorialButton'
 import { loadChainProfile, saveChainProfile } from '../../config/chainProfile'
+import { useView } from '../../config/viewContext'
+import { fetchSchoolRequests, decideSchoolRequest, removeSchoolFromNetwork } from '../../api/networkSchoolsApi'
 import ClassesSubjects from './ClassesSubjects'
 
 /* ═══════════════════════════════════════════════════════════════════
    SETTINGS — Chain/Franchise Profile + Connected Schools.
-   Ported from chain-school-admin.html. All data is in-component demo
-   state, ready to be swapped for API calls later.
+
+   Schools ka data Chain-Management API se aata hai, wahi source jo Switch
+   View aur baqi screens use karti hain:
+     • Pending Invitations = jin schools ne network me shamil hone ki request
+       bheji aur abhi faisla nahi hua (fetchSchoolRequests)
+     • Connected Schools   = shamil ho chuke schools (ViewProvider ka store,
+       taake accept karte hi poori app ki list aik saath taza ho jaye)
+
+   Join-requests pehle Switch View me thi — ab wahan sirf view badalna hai
+   aur faisla yahan hota hai.
+
+   Chain profile abhi bhi localStorage par hai (dekhein config/chainProfile).
    ═══════════════════════════════════════════════════════════════════ */
 
 const INITIAL_PROFILE = {
@@ -25,27 +37,24 @@ const INITIAL_PROFILE = {
     'Please mention your School Name and Invoice Number in the payment reference. Send proof of payment to accounts@mentoredu.pk within 24 hours of transfer.',
 }
 
-const INITIAL_PENDING = [
-  { id: 1, name: 'Al-Noor Public School', owner: 'Muhammad Tariq', address: 'Street 5, Satellite Town, Rawalpindi', contact: '+92 333 5678901', email: 'alnoor@school.pk', date: '12 Jun 2026', msg: 'We are a 700-student school running since 2015. We want to benefit from your ERP and training support by joining the Mentor chain network.', status: 'Pending' },
-  { id: 2, name: 'Bright Future Academy', owner: 'Mrs. Sadia Iqbal', address: 'Block C, Gulshan-e-Ravi, Lahore', contact: '+92 321 9876543', email: 'bfa@gmail.com', date: '18 Jun 2026', msg: 'Our academy has 3 branches in Lahore. We are very interested in your ERP system and would like to connect our schools under your chain.', status: 'Pending' },
-  { id: 3, name: 'Stars International School', owner: 'Imran Khalid', address: 'Main GT Road, Gujranwala', contact: '+92 311 2345678', email: 'stars.int@edu.pk', date: '22 Jun 2026', msg: 'We have heard great reviews about School Mentor ERP from other school owners. We want to formally join your network.', status: 'Pending' },
-]
-
-const INITIAL_CONNECTED = [
-  { id: 1, name: 'Beacon House Model School', owner: 'Ali Hassan', city: 'Islamabad', address: 'F-7/1, Islamabad', contact: '+92 300 1112233', email: 'beacon@school.pk', since: 'Jan 2025', erp: 'Active', notes: 'Early adopter. Full ERP enabled.' },
-  { id: 2, name: 'Roots Academy Rawalpindi', owner: 'Dr. Nadia Aziz', city: 'Rawalpindi', address: 'Saddar, Rawalpindi', contact: '+92 345 6677889', email: 'roots@edu.pk', since: 'Mar 2025', erp: 'Active', notes: 'Training completed. All modules live.' },
-  { id: 3, name: 'City Grammar School', owner: 'Usman Malik', city: 'Faisalabad', address: 'D-Ground, Faisalabad', contact: '+92 301 5544332', email: 'cgs@school.pk', since: 'May 2025', erp: 'Inactive', notes: 'ERP setup pending. Follow-up scheduled.' },
-  { id: 4, name: 'The Educators Lahore', owner: 'Ayesha Rauf', city: 'Lahore', address: 'Johar Town, Lahore', contact: '+92 322 9900112', email: 'educators.lhr@edu.pk', since: 'Jun 2025', erp: 'Active', notes: '' },
-  { id: 5, name: 'Oxford Model School', owner: 'Kamran Javed', city: 'Multan', address: 'Bosan Road, Multan', contact: '+92 312 8800991', email: 'oxford@school.pk', since: 'Nov 2025', erp: 'Active', notes: 'Onboarding complete.' },
-]
-
 const CONFIRM_CFG = {
   accept: { title: 'Accept Invitation?', sub: 'Are you sure you want to accept this school into your chain network?', icon: 'fa-circle-check', iconBg: 'linear-gradient(135deg,#15803d,#16a34a)', btnClass: 'btn-primary', btnLabel: 'Yes, Accept', btnIcon: 'fa-check' },
   reject: { title: 'Reject Invitation?', sub: 'Are you sure you want to reject this invitation?', icon: 'fa-ban', iconBg: 'linear-gradient(135deg,#b91c1c,#dc2626)', btnClass: 'btn-danger', btnLabel: 'Yes, Reject', btnIcon: 'fa-ban' },
   remove: { title: 'Remove School?', sub: 'Are you sure you want to remove this school from your chain network?', icon: 'fa-link-slash', iconBg: 'linear-gradient(135deg,#b91c1c,#dc2626)', btnClass: 'btn-danger', btnLabel: 'Yes, Remove', btnIcon: 'fa-link-slash' },
 }
 
-const cityOf = (address) => address.split(',').pop().trim()
+/* Address ka aakhri hissa hi shehar hota hai ("Block C, Gulshan-e-Ravi,
+   Lahore" → "Lahore"). API alag city field nahi deti. */
+const cityOf = (address) => String(address || '').split(',').pop().trim()
+
+/* API ki ISO tareekh → "12 Jun 2026". Na ho to dash. */
+const fmtDate = (v) => {
+  if (!v) return '—'
+  const d = new Date(v)
+  return Number.isNaN(d.getTime()) ? '—' : d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+}
+
+const erpLabel = (s) => (s.networkPermission ? 'Active' : 'Inactive')
 
 export default function Settings() {
   const [mainTab, setMainTab] = useState('profile')
@@ -53,8 +62,17 @@ export default function Settings() {
   const [schoolsTab, setSchoolsTab] = useState('pending')
 
   const [profile, setProfile] = useState(() => ({ ...INITIAL_PROFILE, ...loadChainProfile() }))
-  const [pending, setPending] = useState(INITIAL_PENDING)
-  const [connected, setConnected] = useState(INITIAL_CONNECTED)
+
+  /* Shamil ho chuke schools poori app ke sath share hote hain — accept ya
+     remove ke baad reloadSchools se har screen ki list aik saath taza hoti
+     hai (Switch View, Payments, Permissions …). */
+  const { schools: connected, schoolsLoading: connLoading, schoolsError: connError, reloadSchools } = useView()
+
+  /* Abhi faisla na hui requests — ye sirf isi screen ko chahiye. */
+  const [pending, setPending] = useState([])
+  const [pendLoading, setPendLoading] = useState(true)
+  const [pendError, setPendError] = useState('')
+  const [busyId, setBusyId] = useState(null)   // jis row par accept/reject/remove chal raha hai
   const [logoSrc, setLogoSrc] = useState(() => loadChainProfile().logo || null)
 
   const [invite, setInvite] = useState(null)     // invitation being viewed
@@ -63,6 +81,23 @@ export default function Settings() {
   const [toast, setToast] = useState(null)        // { type, icon, text }
 
   const logoInputRef = useRef(null)
+
+  const loadPending = useCallback(async () => {
+    setPendLoading(true)
+    setPendError('')
+    try {
+      const { pending: rows } = await fetchSchoolRequests()
+      setPending(rows)
+    } catch (err) {
+      console.error('Pending invitations load failed:', err)
+      setPending([])
+      setPendError(err?.message || 'Could not load pending invitations')
+    } finally {
+      setPendLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { loadPending() }, [loadPending])
 
   /* Auto-dismiss toast. */
   useEffect(() => {
@@ -100,23 +135,38 @@ export default function Settings() {
   /* Open confirm dialog (also closes the invite modal if open). */
   const askConfirm = (action, id) => { setInvite(null); setConfirm({ action, id }) }
 
-  const executeAction = () => {
+  /* Accept / Reject aik hi `update` call hain (sirf isAccepted ka farq),
+     Remove alag `delete` hai. Teenon ke baad list wahin se taza hoti hai
+     jahan se aayi thi — local state se andaza nahi lagaya jaata. */
+  const executeAction = async () => {
     if (!confirm) return
     const { action, id } = confirm
     setConfirm(null)
-    if (action === 'accept') {
-      const inv = pending.find((x) => x.id === id)
-      if (inv) {
-        setConnected((prev) => [...prev, { id: Date.now(), name: inv.name, owner: inv.owner, city: cityOf(inv.address), address: inv.address, contact: inv.contact, email: inv.email, since: 'Jun 2026', erp: 'Inactive', notes: 'Newly connected.' }])
+    setBusyId(id)
+    try {
+      if (action === 'accept' || action === 'reject') {
+        const inv = pending.find((x) => x.id === id)
+        if (!inv) return
+        await decideSchoolRequest(inv, action === 'accept')
         setPending((prev) => prev.filter((x) => x.id !== id))
+        if (action === 'accept') {
+          await reloadSchools()
+          setToast({ type: 'success', icon: 'fa-circle-check', text: `${inv.name} connected successfully.` })
+        } else {
+          setToast({ type: 'error', icon: 'fa-ban', text: 'Invitation rejected.' })
+        }
+      } else if (action === 'remove') {
+        const school = connected.find((x) => (x.rowId ?? x.id) === id)
+        if (!school) return
+        await removeSchoolFromNetwork(school)
+        await reloadSchools()
+        setToast({ type: 'error', icon: 'fa-link-slash', text: `${school.name} removed from network.` })
       }
-      setToast({ type: 'success', icon: 'fa-circle-check', text: 'School connected successfully.' })
-    } else if (action === 'reject') {
-      setPending((prev) => prev.filter((x) => x.id !== id))
-      setToast({ type: 'error', icon: 'fa-ban', text: 'Invitation rejected.' })
-    } else if (action === 'remove') {
-      setConnected((prev) => prev.filter((x) => x.id !== id))
-      setToast({ type: 'error', icon: 'fa-link-slash', text: 'School removed from network.' })
+    } catch (err) {
+      console.error('Settings action failed:', err)
+      setToast({ type: 'error', icon: 'fa-triangle-exclamation', text: err?.message || 'Could not complete that action.' })
+    } finally {
+      setBusyId(null)
     }
   }
 
@@ -282,7 +332,18 @@ export default function Settings() {
                     <div className="card-sub">Schools requesting to join your chain network</div>
                   </div>
                 </div>
-                {pending.length === 0 ? (
+                {pendLoading ? (
+                  <div className="stg-empty">
+                    <i className="fa-solid fa-spinner fa-spin" />
+                    <div className="stg-empty-t">Loading invitations…</div>
+                  </div>
+                ) : pendError ? (
+                  <div className="stg-empty">
+                    <i className="fa-solid fa-triangle-exclamation" />
+                    <div className="stg-empty-t">Could not load invitations</div>
+                    <div className="stg-empty-s">{pendError}</div>
+                  </div>
+                ) : pending.length === 0 ? (
                   <div className="stg-empty">
                     <i className="fa-solid fa-envelope-open" />
                     <div className="stg-empty-t">No Pending Invitations</div>
@@ -292,23 +353,23 @@ export default function Settings() {
                   <div className="stg-tbl-wrap">
                     <table className="stg-table">
                       <thead><tr>
-                        <th>#</th><th>School Name</th><th>Owner / Principal</th><th>City</th><th>Contact</th><th>Invited On</th><th>Status</th><th style={{ textAlign: 'center' }}>Actions</th>
+                        <th>#</th><th>School Name</th><th>Email</th><th>City</th><th>Contact</th><th>Requested On</th><th>Status</th><th style={{ textAlign: 'center' }}>Actions</th>
                       </tr></thead>
                       <tbody>
                         {pending.map((inv, i) => (
                           <tr key={inv.id}>
                             <td data-label="#">{i + 1}</td>
                             <td data-label="School" className="stg-td-bold">{inv.name}</td>
-                            <td data-label="Owner">{inv.owner}</td>
-                            <td data-label="City">{cityOf(inv.address)}</td>
-                            <td data-label="Contact">{inv.contact}</td>
-                            <td data-label="Date">{inv.date}</td>
+                            <td data-label="Email">{inv.email || '—'}</td>
+                            <td data-label="City">{cityOf(inv.address) || '—'}</td>
+                            <td data-label="Contact">{inv.phone || '—'}</td>
+                            <td data-label="Date">{fmtDate(inv.requestedAt)}</td>
                             <td data-label="Status"><span className="stg-badge-pending">Pending</span></td>
                             <td data-label="Actions">
                               <div className="stg-act-row">
                                 <button className="stg-btn-view" onClick={() => setInvite(inv)}><i className="fa-solid fa-eye" /> View</button>
-                                <button className="stg-btn-accept" onClick={() => askConfirm('accept', inv.id)}><i className="fa-solid fa-check" /> Accept</button>
-                                <button className="stg-btn-reject" onClick={() => askConfirm('reject', inv.id)}><i className="fa-solid fa-ban" /> Reject</button>
+                                <button className="stg-btn-accept" disabled={busyId === inv.id} onClick={() => askConfirm('accept', inv.id)}><i className={`fa-solid ${busyId === inv.id ? 'fa-spinner fa-spin' : 'fa-check'}`} /> Accept</button>
+                                <button className="stg-btn-reject" disabled={busyId === inv.id} onClick={() => askConfirm('reject', inv.id)}><i className="fa-solid fa-ban" /> Reject</button>
                               </div>
                             </td>
                           </tr>
@@ -328,7 +389,18 @@ export default function Settings() {
                     <div className="card-sub">Schools currently part of your chain network</div>
                   </div>
                 </div>
-                {connected.length === 0 ? (
+                {connLoading ? (
+                  <div className="stg-empty">
+                    <i className="fa-solid fa-spinner fa-spin" />
+                    <div className="stg-empty-t">Loading schools…</div>
+                  </div>
+                ) : connError ? (
+                  <div className="stg-empty">
+                    <i className="fa-solid fa-triangle-exclamation" />
+                    <div className="stg-empty-t">Could not load connected schools</div>
+                    <div className="stg-empty-s">{connError}</div>
+                  </div>
+                ) : connected.length === 0 ? (
                   <div className="stg-empty">
                     <i className="fa-solid fa-link-slash" />
                     <div className="stg-empty-t">No Connected Schools Yet</div>
@@ -338,26 +410,31 @@ export default function Settings() {
                   <div className="stg-tbl-wrap">
                     <table className="stg-table">
                       <thead><tr>
-                        <th>#</th><th>School Name</th><th>Owner / Principal</th><th>City</th><th>Contact</th><th>Connected Since</th><th>ERP Status</th><th style={{ textAlign: 'center' }}>Actions</th>
+                        <th>#</th><th>School Name</th><th>Email</th><th>City</th><th>Contact</th><th>Connected Since</th><th>ERP Status</th><th style={{ textAlign: 'center' }}>Actions</th>
                       </tr></thead>
                       <tbody>
-                        {connected.map((s, i) => (
-                          <tr key={s.id}>
-                            <td data-label="#">{i + 1}</td>
-                            <td data-label="School" className="stg-td-bold">{s.name}</td>
-                            <td data-label="Owner">{s.owner}</td>
-                            <td data-label="City">{s.city}</td>
-                            <td data-label="Contact">{s.contact}</td>
-                            <td data-label="Since">{s.since}</td>
-                            <td data-label="ERP"><span className={s.erp === 'Active' ? 'stg-badge-erp-on' : 'stg-badge-erp-off'}>{s.erp}</span></td>
-                            <td data-label="Actions">
-                              <div className="stg-act-row">
-                                <button className="stg-btn-view" onClick={() => setConn(s)}><i className="fa-solid fa-eye" /> View</button>
-                                <button className="stg-btn-remove" onClick={() => askConfirm('remove', s.id)}><i className="fa-solid fa-link-slash" /> Remove</button>
-                              </div>
-                            </td>
-                          </tr>
-                        ))}
+                        {connected.map((s, i) => {
+                          /* Accept / Remove network-school row ki id par chalte
+                             hain (rowId), branchID par nahi. */
+                          const rowId = s.rowId ?? s.id
+                          return (
+                            <tr key={rowId}>
+                              <td data-label="#">{i + 1}</td>
+                              <td data-label="School" className="stg-td-bold">{s.name}</td>
+                              <td data-label="Email">{s.email || '—'}</td>
+                              <td data-label="City">{cityOf(s.address) || '—'}</td>
+                              <td data-label="Contact">{s.phone || '—'}</td>
+                              <td data-label="Since">{fmtDate(s.decidedAt || s.requestedAt)}</td>
+                              <td data-label="ERP"><span className={s.networkPermission ? 'stg-badge-erp-on' : 'stg-badge-erp-off'}>{erpLabel(s)}</span></td>
+                              <td data-label="Actions">
+                                <div className="stg-act-row">
+                                  <button className="stg-btn-view" onClick={() => setConn(s)}><i className="fa-solid fa-eye" /> View</button>
+                                  <button className="stg-btn-remove" disabled={busyId === rowId} onClick={() => askConfirm('remove', rowId)}><i className={`fa-solid ${busyId === rowId ? 'fa-spinner fa-spin' : 'fa-link-slash'}`} /> Remove</button>
+                                </div>
+                              </td>
+                            </tr>
+                          )
+                        })}
                       </tbody>
                     </table>
                   </div>
@@ -430,16 +507,12 @@ function InviteModal({ inv, onClose, onConfirm }) {
         <div className="stg-modal-body">
           <div className="stg-det-grid">
             <DetRow label="School Name" value={inv.name} />
-            <DetRow label="Owner / Principal" value={inv.owner} />
-            <DetRow label="Address" value={inv.address} />
-            <DetRow label="Contact" value={inv.contact} />
-            <DetRow label="Email" value={inv.email} />
-            <DetRow label="Invitation Date" value={inv.date} />
+            <DetRow label="School Code" value={inv.code || '—'} />
+            <DetRow label="Address" value={inv.address || '—'} />
+            <DetRow label="Contact" value={inv.phone || '—'} />
+            <DetRow label="Email" value={inv.email || '—'} />
+            <DetRow label="Requested On" value={fmtDate(inv.requestedAt)} />
             <DetRow label="Status" value={<span className="stg-badge-pending">Pending</span>} />
-          </div>
-          <div style={{ marginTop: 14 }}>
-            <div className="stg-det-lbl" style={{ marginBottom: 6 }}>Message / Request Note</div>
-            <div className="stg-msg-box">{inv.msg}</div>
           </div>
         </div>
         <div className="stg-modal-foot">
@@ -471,22 +544,21 @@ function ConnModal({ s, onClose, onRemove }) {
             <div className="stg-school-logo-ph"><i className="fa-solid fa-school" /></div>
             <div>
               <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--t1)' }}>{s.name}</div>
-              <div style={{ fontSize: 12, color: 'var(--tm)', marginTop: 3 }}>{s.city}</div>
+              <div style={{ fontSize: 12, color: 'var(--tm)', marginTop: 3 }}>{cityOf(s.address) || '—'}</div>
             </div>
           </div>
           <div className="stg-det-grid" style={{ marginTop: 14 }}>
-            <DetRow label="Owner / Principal" value={s.owner} />
-            <DetRow label="Address" value={s.address} />
-            <DetRow label="Contact" value={s.contact} />
-            <DetRow label="Email" value={s.email} />
-            <DetRow label="Connected Since" value={s.since} />
-            <DetRow label="ERP Status" value={<span className={s.erp === 'Active' ? 'stg-badge-erp-on' : 'stg-badge-erp-off'}>{s.erp}</span>} />
-            <DetRow label="Notes" value={s.notes || '—'} />
+            <DetRow label="School Code" value={s.code || '—'} />
+            <DetRow label="Address" value={s.address || '—'} />
+            <DetRow label="Contact" value={s.phone || '—'} />
+            <DetRow label="Email" value={s.email || '—'} />
+            <DetRow label="Connected Since" value={fmtDate(s.decidedAt || s.requestedAt)} />
+            <DetRow label="ERP Status" value={<span className={s.networkPermission ? 'stg-badge-erp-on' : 'stg-badge-erp-off'}>{erpLabel(s)}</span>} />
           </div>
         </div>
         <div className="stg-modal-foot">
           <button className="btn-secondary" onClick={onClose}><i className="fa-solid fa-xmark" /> Close</button>
-          <button className="btn-danger" onClick={() => onRemove(s.id)}><i className="fa-solid fa-link-slash" /> Remove from Network</button>
+          <button className="btn-danger" onClick={() => onRemove(s.rowId ?? s.id)}><i className="fa-solid fa-link-slash" /> Remove from Network</button>
         </div>
       </div>
     </Overlay>
