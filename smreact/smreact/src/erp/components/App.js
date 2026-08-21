@@ -341,30 +341,22 @@ export default function App() {
         {/* ═════════ SIDEBAR ═════════ */}
         <aside className={`sidebar${mobileOpen ? ' open' : ''}${collapsed ? ' collapsed' : ''}`}>
           <div className="sidebar-logo">
-            <div className="logo-icon" style={branchInfo?.branchLogo ? { overflow: 'hidden', background: '#fff' } : undefined}>
-              {branchInfo?.branchLogo ? (
+            {/* Logo SIRF branch ka apna. Pehle branchLogo na hone par ek
+                bana-banaya SVG (kitab wala nishan) chhap jata tha — wo kisi
+                school ka logo nahi tha, bas ek khaka tha. Ab logo na ho to
+                jagah hi nahi banti. */}
+            {branchInfo?.branchLogo && (
+              <div className="logo-icon" style={{ overflow: 'hidden', background: '#fff' }}>
                 <img src={resolveMediaUrl(branchInfo.branchLogo)} alt="logo" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
-              ) : (
-              <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
-                <rect width="36" height="36" fill="url(#smg1)" />
-                <defs>
-                  <linearGradient id="smg1" x1="0" y1="0" x2="36" y2="36">
-                    <stop stopColor="#1a237e" />
-                    <stop offset="1" stopColor="#283593" />
-                  </linearGradient>
-                </defs>
-                <path d="M18 10C14 10 10 11.5 10 11.5L10 26C10 26 14 24.5 18 24.5C22 24.5 26 26 26 26L26 11.5C26 11.5 22 10 18 10Z" fill="rgba(255,255,255,0.15)" stroke="rgba(255,255,255,0.4)" strokeWidth="0.8" />
-                <path d="M18 10L18 24.5" stroke="rgba(255,255,255,0.5)" strokeWidth="0.8" />
-                <path d="M13 9L15 6L18 8L21 6L23 9" stroke="#FCD34D" strokeWidth="1.2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
-                <line x1="12" y1="15" x2="17" y2="14.2" stroke="rgba(255,255,255,0.35)" strokeWidth="0.7" />
-                <line x1="12" y1="18" x2="17" y2="17.2" stroke="rgba(255,255,255,0.35)" strokeWidth="0.7" />
-                <line x1="19" y1="14.2" x2="24" y2="15" stroke="rgba(255,255,255,0.35)" strokeWidth="0.7" />
-                <line x1="19" y1="17.2" x2="24" y2="18" stroke="rgba(255,255,255,0.35)" strokeWidth="0.7" />
-              </svg>
-              )}
-            </div>
+              </div>
+            )}
+            {/* Branch ka naam SIRF API se. Pehle yahan fallback me "The Oxford
+                System, Lahore Campus" likha tha, is liye har login par sidebar
+                pehle ek ajnabi school ka naam dikhata tha aur branchInfo aane
+                par asli naam par badal jata tha. Ab jab tak naam na aaye,
+                jagah khali rehti hai — koi ghalat naam nahi. */}
             <div className="logo-name">
-              <div>{branchInfo?.branchName || 'The Oxford System, Lahore Campus'}</div>
+              <div>{branchInfo?.branchName || ''}</div>
               {branchInfo?.address && (
                 <div style={{ fontSize: 9.5, fontWeight: 500, color: '#9CA3AF', marginTop: 2, lineHeight: 1.3 }}>{branchInfo.address}</div>
               )}
