@@ -329,6 +329,8 @@ function mapTransportSetupFromApi(row = {}) {
     gradeID:      Number(row.gradeID ?? row.gradeId ?? 0) || 0,
     sectionID:    Number(row.sectionID ?? row.sectionId ?? 0) || 0,
     amount:       Number(row.amount ?? row.transport ?? 0) || 0,
+    route:        row.route ?? '',
+    vehicleID:    Number(row.vehicleID ?? row.vehicleId ?? 0) || 0,
     createdDate:  row.createdDate ?? null,
     modifiedDate: row.modifiedDate ?? null,
     createdBy:    row.createdBy ?? null,
@@ -353,6 +355,8 @@ function mapTransportSetupToApi(payload = {}) {
     createdBy:    Number(payload.createdBy) || userID,
     modifiedBy:   userID,
     amount:       Number(payload.amount ?? payload.transport) || 0,
+    route:        payload.route ?? '',
+    vehicleID:    Number(payload.vehicleId ?? payload.vehicleID ?? 0) || 0,
     isActive:     payload.isActive !== false,
   };
 }
@@ -404,10 +408,75 @@ export async function getTransportFee() {
         ...st,
         transportSetupId: setup.id,
         transport: setup.amount,
+        route: setup.route || '',
+        vehicleId: setup.vehicleID ? String(setup.vehicleID) : '',
         transportSetup: setup,
       };
     }),
   ]));
+}
+
+// ── Transport vehicles (fleet) ──────────────────────────────────────
+// Ek hi endpoint sab kaam karta hai — action se:
+//   POST /api/TransportFeeSetup/manage_vehicle
+//   { action: 'insert'|'update'|'delete'|'get', id, branchID,
+//     vehicleName, vehicleNumber, assignRoute, createdBy, modifiedBy }
+//   • insert → id 0. update/delete → id bhejo. get → branchID ke saare vehicle.
+// UI ka vehicle shape { id, name, regNo, route } — mapping neeche.
+function mapVehicleFromApi(row = {}) {
+  return {
+    id:    Number(row.id ?? row.ID ?? row.vehicleID ?? row.vehicleId ?? 0) || 0,
+    name:  row.vehicleName ?? row.VehicleName ?? row.name ?? '',
+    regNo: row.vehicleNumber ?? row.VehicleNumber ?? row.regNo ?? '',
+    route: row.assignRoute ?? row.AssignRoute ?? row.route ?? '',
+  };
+}
+
+async function manageVehicle(payload) {
+  const res = await fetch(buildUrl('/api/TransportFeeSetup/manage_vehicle'), {
+    method: 'POST',
+    headers: { Accept: '*/*', 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok || json?.success === false) {
+    throw new Error(apiMessage(json) || 'Vehicle request failed');
+  }
+  return json;
+}
+
+export async function getVehicles() {
+  const json = await manageVehicle({
+    action: 'get', id: 0, branchID: transportFeeBranchID(),
+    vehicleName: '', vehicleNumber: '', assignRoute: '', createdBy: 0, modifiedBy: 0,
+  });
+  const rows = Array.isArray(json?.data) ? json.data : (Array.isArray(json) ? json : []);
+  return rows.map(mapVehicleFromApi);
+}
+
+export async function saveVehicle(vehicle) {
+  const userID = transportFeeUserID();
+  const numId  = Number(vehicle.id) || 0;              // temp `veh-…` id → 0 (insert)
+  const isNew  = !numId;
+  const json = await manageVehicle({
+    action: isNew ? 'insert' : 'update',
+    id: numId,
+    branchID: transportFeeBranchID(),
+    vehicleName: vehicle.name || '',
+    vehicleNumber: vehicle.regNo || '',
+    assignRoute: vehicle.route || '',
+    createdBy: userID,
+    modifiedBy: userID,
+  });
+  return json?.data ? mapVehicleFromApi(json.data) : { ...vehicle, id: numId };
+}
+
+export async function deleteVehicle(id) {
+  await manageVehicle({
+    action: 'delete', id: Number(id) || 0, branchID: transportFeeBranchID(),
+    vehicleName: '', vehicleNumber: '', assignRoute: '', createdBy: 0, modifiedBy: transportFeeUserID(),
+  });
+  return { id, deleted: true };
 }
 
 const feeSettingsBranchID = () => Number(sessionStorage.getItem('branchID')) || 1;
@@ -683,7 +752,11 @@ export async function saveStudentTransport(classKey, reg, payload) {
     returnedId = match?.id || 0;
   }
   const saved = returnedId ? await getTransportFeeSetup(returnedId) : mapTransportSetupFromApi(json?.data || body);
-  return { classKey, reg, ...saved };
+  return {
+    classKey, reg, ...saved,
+    route: saved.route || payload.route || '',
+    vehicleId: saved.vehicleID ? String(saved.vehicleID) : (payload.vehicleId || ''),
+  };
 }
 export async function saveFeeSettings(payload) {
   const body = mapFeeSettingsToApi(payload);
