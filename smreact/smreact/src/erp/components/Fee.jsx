@@ -9138,7 +9138,25 @@ function ReportPanelVehicle({ toast }) {
     return { v, count: list.length, fee: list.reduce((a, s) => a + (+s.transport || 0), 0) };
   }), [vehicles, withVeh]);
 
+  /* Vehicle picker — koi ek vehicle chuna to neeche ki TABLE aur report DONO sirf
+     usi vehicle ki dikhti hain; warna (— All vehicles —) sab kuch jaisa pehle. */
+  const [vehKey, setVehKey] = useState('');
+
+  /* On-screen table ke liye filtered view. */
+  const shownRows       = vehKey ? rows.filter(r => String(r.v.id) === String(vehKey)) : rows;
+  const shownUnassigned = vehKey ? [] : unassigned;
+  const shownTotal      = vehKey ? shownRows.reduce((a, r) => a + r.fee, 0) : totalFee;
+
   const downloadReport = (mode) => {
+    const v = vehKey ? vehicles.find(x => String(x.id) === String(vehKey)) : null;
+    if (v) {
+      /* Sirf is vehicle ke students bhejo — is liye "No vehicle assigned" block nahi
+         aata aur grand total bhi isi vehicle ka hota hai. */
+      const vStudents = students.filter(s => String(s.vehicleId) === String(v.id));
+      const html = buildVehicleReportHTML({ vehicles: [v], students: vStudents, school });
+      openPrintReport(html, `Vehicle-Wise Transport — ${v.name}`, toast, mode);
+      return;
+    }
     const html = buildVehicleReportHTML({ vehicles, students, school });
     openPrintReport(html, 'Vehicle-Wise Transport', toast, mode);
   };
@@ -9170,6 +9188,20 @@ function ReportPanelVehicle({ toast }) {
       <div className="fee-section fee-section--overflow">
         <div className="fee-section-body">
           <div className="fee-filters">
+            <div className="fee-field fee-field--grow">
+              <span className="fee-label">Select Vehicle</span>
+              <div className="fee-select-wrap">
+                <select className="fee-select" value={vehKey} onChange={e => setVehKey(e.target.value)}>
+                  <option value="">— All vehicles —</option>
+                  {vehicles.map(v => (
+                    <option key={v.id} value={v.id}>
+                      {v.name} — {v.regNo}{v.route ? ` (${v.route})` : ''}
+                    </option>
+                  ))}
+                </select>
+                <i className="fa-solid fa-chevron-down"></i>
+              </div>
+            </div>
             <RepActions onPreview={() => downloadReport('preview')} onPdf={() => downloadReport('pdf')} />
           </div>
         </div>
@@ -9190,9 +9222,9 @@ function ReportPanelVehicle({ toast }) {
                 </tr>
               </thead>
               <tbody>
-                {rows.length === 0 ? (
-                  <tr><td colSpan="6" className="fee-stbl-empty">No vehicles added yet.</td></tr>
-                ) : rows.map((r, i) => (
+                {shownRows.length === 0 && shownUnassigned.length === 0 ? (
+                  <tr><td colSpan="6" className="fee-stbl-empty">{vehKey ? 'No data for the selected vehicle.' : 'No vehicles added yet.'}</td></tr>
+                ) : shownRows.map((r, i) => (
                   <tr key={r.v.id}>
                     <td className="fee-num">{i + 1}</td>
                     <td><b>{r.v.name}</b></td>
@@ -9202,18 +9234,18 @@ function ReportPanelVehicle({ toast }) {
                     <td className="fee-right">{r.fee > 0 ? <b>{money(r.fee)}</b> : <span className="fee-muted-dash">—</span>}</td>
                   </tr>
                 ))}
-                {unassigned.length > 0 && (
+                {shownUnassigned.length > 0 && (
                   <tr>
                     <td className="fee-num">—</td>
                     <td colSpan="3"><b>No vehicle assigned</b></td>
-                    <td className="fee-center">{unassigned.length}</td>
-                    <td className="fee-right"><b>{money(unassigned.reduce((a, s) => a + (+s.transport || 0), 0))}</b></td>
+                    <td className="fee-center">{shownUnassigned.length}</td>
+                    <td className="fee-right"><b>{money(shownUnassigned.reduce((a, s) => a + (+s.transport || 0), 0))}</b></td>
                   </tr>
                 )}
-                {(rows.length > 0 || unassigned.length > 0) && (
+                {(shownRows.length > 0 || shownUnassigned.length > 0) && (
                   <tr className="fee-stbl-foot">
-                    <td colSpan="5"><b>Total monthly transport collection</b></td>
-                    <td className="fee-right"><b>{money(totalFee)}</b></td>
+                    <td colSpan="5"><b>{vehKey ? 'Monthly transport collection' : 'Total monthly transport collection'}</b></td>
+                    <td className="fee-right"><b>{money(shownTotal)}</b></td>
                   </tr>
                 )}
               </tbody>

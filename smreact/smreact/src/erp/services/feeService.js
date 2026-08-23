@@ -451,7 +451,11 @@ export async function getVehicles() {
     vehicleName: '', vehicleNumber: '', assignRoute: '', createdBy: 0, modifiedBy: 0,
   });
   const rows = Array.isArray(json?.data) ? json.data : (Array.isArray(json) ? json : []);
-  return rows.map(mapVehicleFromApi);
+  /* id ke hisaab se ASCENDING — nayi entry (sabse bari id) hamesha LIST ke AAKHIR me
+     aaye, warna API newest-first deta hai to naya vehicle upar chala jaata tha. */
+  return rows
+    .map(mapVehicleFromApi)
+    .sort((a, b) => (Number(a.id) || 0) - (Number(b.id) || 0));
 }
 
 export async function saveVehicle(vehicle) {
