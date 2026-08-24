@@ -301,15 +301,21 @@ export default function Payments() {
       const s = schools.find((x) => x.id === id)
       const setup = setupStore[id]
       if (!setup?.id) throw new Error('no setup')
+      /* Pichla baqaya wahi jo row-wale Generate modal me bharta hai. Pehle
+         yahan sirf MOJOODA mahine ke challan ka carry uthaya jaata tha — naya
+         mahina ho to wo row hoti hi nahi, is liye bulk me previous dues
+         hamesha 0 chala jaata tha. Ab: challan pehle se ho to uska apna carry
+         (dobara generate par raqam na badle), warna pichle mahinon ka hisaab. */
+      const existing = challanOf(id, month, year)
       const saved = await saveChallanApi(id, {
         paymentID: setup.id,
         amount: monthlyCharge(s, setup),
-        prevDues: challanOf(id, month, year)?.prevDues || 0,
+        prevDues: existing ? (existing.prevDues || 0) : pendingBefore(id, month, year),
         dueDate,
         createdOn: issueDate,
         month,
         year,
-        existingId: challanOf(id, month, year)?.id || 0,
+        existingId: existing?.id || 0,
       })
       return { id, saved }
     }))
@@ -637,7 +643,7 @@ export default function Payments() {
       {/* ── MODALS ── */}
       {setupModal != null && <SetupModal school={schools.find((s) => s.id === setupModal)} setup={setupStore[setupModal]} saving={savingSetup} onClose={() => setSetupModal(null)} onSave={saveSetupFor} onToast={fire} />}
       {genModal != null && <GenModal school={schools.find((s) => s.id === genModal)} setup={setupStore[genModal]} busy={genBusy} defaultMonth={applied.month} defaultYear={applied.year} pendingFor={(m, y) => pendingBefore(genModal, m, y)} onClose={() => setGenModal(null)} onSave={generateChallan} onToast={fire} />}
-      {bulkModal && <BulkGenModal schools={schools} setupStore={setupStore} chStore={chStore} busy={genBusy} defaultMonth={applied.month} defaultYear={applied.year} onClose={() => setBulkModal(false)} onGenerate={bulkGenerate} onToast={fire} />}
+      {bulkModal && <BulkGenModal schools={schools} setupStore={setupStore} chStore={chStore} busy={genBusy} defaultMonth={applied.month} defaultYear={applied.year} pendingFor={pendingBefore} onClose={() => setBulkModal(false)} onGenerate={bulkGenerate} onToast={fire} />}
       {recvModal != null && <RecvModal school={schools.find((s) => s.id === recvModal)} setup={setupStore[recvModal]} challan={chStore[recvModal]} recv={recvStore[recvModal]} period={monthLabel(applied.month, applied.year)} busy={recvBusy} onClose={() => setRecvModal(null)} onSave={recordReceiving} onToast={fire} />}
       {confirm && <ConfirmDelete name={confirm.name} kind={confirm.kind} busy={deletingSetup || deletingCh || deletingRecv} onClose={() => setConfirm(null)} onConfirm={() => {
         if (confirm.kind === 'delSetup') return removeSetupFor(confirm.id)
@@ -1397,7 +1403,7 @@ td.empty{text-align:center;padding:34px;color:#94a3b8;font-weight:600}
 }
 
 /* ── Generate-in-Bulk modal ── */
-function BulkGenModal({ schools, setupStore, chStore, busy, defaultMonth, defaultYear, onClose, onGenerate, onToast }) {
+function BulkGenModal({ schools, setupStore, chStore, busy, defaultMonth, defaultYear, pendingFor, onClose, onGenerate, onToast }) {
   /* Jis school ka challan pehle se bana hua hai wo bulk me bhi nahi chalta —
      row wala Generate bhi usi tarah band rehta hai. Naya challan banane se
      pehle purana delete karna parta hai. */
@@ -1420,7 +1426,11 @@ function BulkGenModal({ schools, setupStore, chStore, busy, defaultMonth, defaul
   const toggle = (id) => setSel((p) => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n })
   const allOn = eligible.length > 0 && eligible.every((s) => sel.has(s.id))
   const toggleAll = () => setSel(allOn ? new Set() : new Set(eligible.map((s) => s.id)))
-  const totalAmt = eligible.filter((s) => sel.has(s.id)).reduce((sum, s) => sum + monthlyCharge(s, setupStore[s.id]), 0)
+  /* Har school ka is mahine ka charge + uska pichla baqaya — wahi hisaab jo
+     save par jaata hai, taake list aur total wahi dikhayein jo banega. */
+  const duesOf = (s) => (pendingFor ? pendingFor(s.id, month, year) : 0)
+  const totalOf = (s) => monthlyCharge(s, setupStore[s.id]) + duesOf(s)
+  const totalAmt = eligible.filter((s) => sel.has(s.id)).reduce((sum, s) => sum + totalOf(s), 0)
 
   return createPortal(
     <div className="pay-ov" onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) onClose() }}>
@@ -1462,8 +1472,15 @@ function BulkGenModal({ schools, setupStore, chStore, busy, defaultMonth, defaul
             {eligible.map((s) => (
               <label key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', borderBottom: '1px solid var(--bl)', cursor: 'pointer' }}>
                 <input type="checkbox" checked={sel.has(s.id)} onChange={() => toggle(s.id)} />
-                <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontWeight: 700, color: 'var(--t1)', fontSize: 13 }}>{s.name}</div><div style={{ fontSize: 11, color: 'var(--tm)' }}>{s.principal}</div></div>
-                <span style={{ fontSize: 12.5, fontWeight: 800, color: 'var(--t1)' }}>{PKR(monthlyCharge(s, setupStore[s.id]))}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 700, color: 'var(--t1)', fontSize: 13 }}>{s.name}</div>
+                  <div style={{ fontSize: 11, color: 'var(--tm)' }}>
+                    {duesOf(s) > 0
+                      ? `${PKR(monthlyCharge(s, setupStore[s.id]))} + ${PKR(duesOf(s))} previous dues`
+                      : s.principal}
+                  </div>
+                </div>
+                <span style={{ fontSize: 12.5, fontWeight: 800, color: 'var(--t1)' }}>{PKR(totalOf(s))}</span>
                 <span className="badge b-gray" style={{ flexShrink: 0 }}>Pending</span>
               </label>
             ))}

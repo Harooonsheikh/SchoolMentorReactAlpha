@@ -1,35 +1,4 @@
-/* ═══════════════════════════════════════════════════════════════════
-   SCHOOL PAYMENTS — har connected school ka billing setup.
 
-   Do alag APIs:
-
-   1) Setup padhna/likhna — Super-Admin API
-        GET  {sa}/api/AHM_School_Payments/summary?branchId={id}&type=chain
-        POST {sa}/api/AHM_School_Payments/manage   → action: insert|update|delete
-
-      KHABARDAR: `manage` par koi READ action nahi hai. Uska error message
-      "Use INSERT, ADD, UPDATE, or DELETE" kehta hai aur is baar sach kehta
-      hai — get/getall/getbybranch sab 500 dete hain. Padhne ka rasta sirf
-      `summary` hai, aur wo aik waqt me aik hi branch deta hai; is liye list
-      ke liye har branch par alag call jaati hai (dekhein fetchSetupEach).
-
-      Record na ho to `summary` success:false + "No payment record found"
-      deta hai — ye khata nahi, sirf "abhi setup nahi hua" hai.
-
-   2) Classes aur unke fee heads — ERP API
-        GET {erp}/api/LaunchSetup/get-grades-by-branch/{branchID}
-
-      Percentage (royalty) formula ke liye school ki apni classes aur unke
-      apne fee heads chahiye. Yehi aik call dono deti hai: har grade ke sath
-      `feeHeads: [{ feeStructureID, headName, amount }]` bhi aata hai, is liye
-      heads ke liye alag call ki zaroorat nahi. feeStructureID hi wo `headID`
-      hai jo details[] me wapas bheja jaata hai.
-
-   Chain portal hamesha `type: "chain"` bhejta hai (SOPs / permissions ki
-   tarah), taake ye rows sirf isi portal ki rahein.
-
-   Baqi Super-Admin calls ki tarah ye bhi axios client se nahi jaatin.
-   ═══════════════════════════════════════════════════════════════════ */
 
 import { SUPERADMIN_API_BASE, ERP_API_BASE } from '@/config/env'
 import { getStoredUser } from '@/auth/tokenStorage'
@@ -43,21 +12,15 @@ const userId = () => {
   return Number(u?.id ?? u?.userID ?? u?.userId) || 0
 }
 
-/* ── API ka paighaam → wo baat jo user ke kaam ki ho ──
-   Ye teen tables aik zanjeer me bandhe hain:
-       payment setup  ←  challan (ledger)  ←  receiving
-   Upar wala record tab tak nahi mitta jab tak neeche wala mojood hai — DB
-   foreign key rok deti hai. Us soorat me API poora SQL error wapas karti
-   hai ("The DELETE statement conflicted with the REFERENCE constraint
-   FK_NetworkSchoolPayment_Ledger_PaymentID…"), jo toast me daalna bekaar
-   hai: user ko constraint ka naam nahi, ye jaanna hai ke pehle kya hataana
-   parega. Constraint ke naam se wahi bata dete hain.
-
-   Jo paighaam pehchana na jaye wo jyun ka tyun aage jaata hai — chupana
-   nuqsan-deh hoga. */
 function friendlyError(raw) {
   const msg = String(raw || '').trim()
 
+  /* Har (branch + mahina) par sirf aik wasooli row banti hai — dobara insert
+     par API yehi kehti hai. User ke liye iska matlab: us mahine ka record
+     pehle se hai, nayi raqam usi me jurni chahiye. */
+  if (/receiving entry for this/i.test(msg) && /already exists/i.test(msg)) {
+    return 'A receiving record already exists for this school and month. Reload the page and add the new payment to it.'
+  }
   if (/Receiving_PaymentLedgerID/i.test(msg)) {
     return 'This challan has a receiving record against it. Delete the receiving record first, then delete the challan.'
   }
@@ -75,17 +38,7 @@ function friendlyError(raw) {
   return msg.replace(/^Error in \w+Async:\s*/i, '').trim() || 'Request failed'
 }
 
-/* ── Formula ↔ API flags ──
-   API par formula do booleans se banta hai, is liye teenon aik dusre ko kaat
-   dete hain — aik on hote hi baqi dono lazman off:
 
-     lumpsum     → isLumpSum: true,  percentage: false
-     perstudent  → isLumpSum: false, percentage: false
-     percentage  → isLumpSum: false, percentage: true
-
-   `amount` ka matlab formula ke sath badalta hai: lump sum me poora mahana
-   charge, per-student me aik student ka rate. `totalAmount` hamesha wo raqam
-   hai jo asal me charge hogi. */
 export const FORMULAS = ['lumpsum', 'perstudent', 'percentage']
 
 export function toApiFlags(formula) {
@@ -245,15 +198,7 @@ async function fetchSetupNow(branchID) {
   return toSetup(json.data)
 }
 
-/**
- * Kai branches ka setup — list ke rows, stats aur filter ke liye.
- *
- * `summary` per-branch hai, is liye ye N calls hain. Table pehle render hoti
- * hai aur har jawab alag se `onResult(branchID, setup)` par aata hai, taake
- * har school ki row apna jawab aate hi bhar jaaye — poori list ka intezaar
- * nahi hota. Aik waqt me 12 se zyada calls nahi, warna bara network (100+
- * schools) browser ki request queue block kar deta.
- */
+
 export function fetchSetupEach(branchIDs, onResult) {
   return mapLimit(branchIDs, 12, (id) => fetchSetup(id).catch(() => null), onResult)
 }
@@ -294,28 +239,6 @@ export async function deleteSetup(branchID, setup) {
   await manage(toBody('delete', branchID, { ...setup, id }))
 }
 
-/* ═══════════════════════════════════════════════════════════════════
-   CHALLANS — payment ledger
-     POST {sa}/api/AHM_School_Payments/manage_payment_ledger
-       action: get | insert | update | delete
-
-   Setup wale `manage` ke bar-aks yahan `get` MOJOOD hai, aur wo branchID par
-   filter karta hai (paymentID par nahi — usay `get` nazarandaaz kar deta
-   hai; id par filter chalta hai). Khali branchID (0) kuch nahi deta, is liye
-   har branch ki apni call jaati hai.
-
-   `challanType` field `get` par bhi REQUIRED hai — khali string chalti hai,
-   bilkul na bhejein to 400 aata hai.
-
-   Har (branchID, type) par backend sirf AIK row rehne deta hai — is liye
-   "dobara generate" hamesha update hai, naya row nahi (dekhein saveChallan).
-
-   Ledger me raqam do khaano me hai:
-     debit  = is challan ka charge (school par jo bana)
-     credit = us ke against jo wasool hua
-   `totalAmount` = is challan ka charge + pichla baqaya. Screen `prevDues`
-   dikhati hai, wo isi farq se nikalta hai.
-   ═══════════════════════════════════════════════════════════════════ */
 
 const LEDGER_URL = `${BASE}/manage_payment_ledger`
 
@@ -425,17 +348,6 @@ export function fetchChallansEach(branchIDs, onResult) {
   return mapLimit(branchIDs, 12, (id) => fetchChallans(id).catch(() => []), onResult)
 }
 
-/**
- * Challan banana / dobara banana.
- *
- * Backend har (branchID, type) par SIRF AIK ledger row rehne deta hai —
- * dusra insert "A ledger entry for this BranchID and Type already exists"
- * de kar rad ho jaata hai. Is liye mojood ho to wahi row `update` hoti hai.
- *
- * Agar screen ka data basi ho (dusra tab, ya wo challan jo abhi load hi nahi
- * hua tha) to insert isi paighaam par gir sakta hai — us soorat me row taza
- * padh kar update par palat jaate hain, taake user ko be-wajah error na mile.
- */
 export async function saveChallan(branchID, { paymentID, amount, prevDues = 0, dueDate, existingId = 0, createdOn, month = 0, year = 0 }) {
   const total = (Number(amount) || 0) + (Number(prevDues) || 0)
   const creationDate = createdOn || new Date().toISOString().slice(0, 10)
@@ -483,31 +395,13 @@ export async function deleteChallan(challan) {
   await ledger(ledgerBody('delete', { id, challanType: '' }))
 }
 
-/* ═══════════════════════════════════════════════════════════════════
-   RECEIVING — school se wasooli
-     POST {sa}/api/AHM_School_Payments/manage_payment_receiving
-       action: get | insert | update | delete
-
-   Ledger ki tarah `get` mojood hai aur `currentBranchID` par filter karta
-   hai (branchID nahi — is table me khana `currentBranchID` kehlata hai).
-
-   Ledger ke bar-aks yahan aik branch par KAI rows ban sakti hain — koi
-   unique pabandi nahi (live test se tasdeeq shuda). Is liye har mahine ki
-   apni row rehti hai, `month`/`year` khaanon ke sath:
-     receivingAmount  = us mahine me ab tak kul jitna wasool hua
-     remainingAmount  = netPayable − receivingAmount
-     receivingDate / paymentVia = us mahine ki AAKHRI adaigi ki tafseel
-   Aik hi mahine me dobara wasooli purani raqam me jama ho kar `update`
-   jaati hai (dekhein saveReceiving) — naya mahina nayi row.
-
-   networkID har call me jaati hai — wasooli usi network ke khaate me lagti
-   hai jis se user logged in hai.
-   ═══════════════════════════════════════════════════════════════════ */
 
 const RECV_URL = `${BASE}/manage_payment_receiving`
 
 function recvBody(action, r = {}, networkID = currentNetworkId()) {
-  const now = new Date()
+  const month = Number(r.month) || (r.date ? Number(String(r.date).slice(5, 7)) : 0)
+  const year  = Number(r.year) || (r.date ? Number(String(r.date).slice(0, 4)) : 0)
+
   return {
     action,
     id:              Number(r.id) || 0,
@@ -516,9 +410,8 @@ function recvBody(action, r = {}, networkID = currentNetworkId()) {
     currentBranchID: Number(r.branchID) || 0,
     /* Kis mahine ki wasooli hai — challan ka mahina, adaigi ki tareekh ka
        nahi: August ka challan September me wasool ho to bhi wo August ki
-       wasooli hai. Screen se na aaye to tareekh se nikal lete hain. */
-    month:           Number(r.month) || (r.date ? Number(String(r.date).slice(5, 7)) : now.getMonth() + 1),
-    year:            Number(r.year) || (r.date ? Number(String(r.date).slice(0, 4)) : now.getFullYear()),
+       wasooli hai. */
+    ...(month && year ? { month, year } : {}),
     payableAmount:   Number(r.payableAmount) || 0,
     discount:        Number(r.discount) || 0,
     netPayable:      Number(r.netPayable) || 0,
@@ -585,25 +478,30 @@ async function fetchReceivingsNow(branchID) {
 export function fetchReceivingsEach(branchIDs, onResult) {
   return mapLimit(branchIDs, 12, (id) => fetchReceivings(id).catch(() => []), onResult)
 }
-
-/**
- * Nayi adaigi darj karna — hamesha kisi aik mahine ke khaate me.
- *
- * `receivedAmount` us mahine ka chalta hisaab hai (purani + nayi), is liye
- * screen ise pehle hi jama kar ke bhejti hai. Us mahine ki row mojood ho to
- * update, warna nayi row.
- *
- * Wapas wohi row aati hai jo abhi likhi gayi (sab se nayi nahi) — branch par
- * doosre mahinon ki rows bhi hoti hain.
- */
 export async function saveReceiving(branchID, payload) {
   const body = { ...payload, branchID }
-  const existingId = Number(payload?.id) || 0
-  await receiving(recvBody(existingId ? 'update' : 'insert', body))
-
-  const rows = await fetchReceivingsNow(branchID)
   const m = Number(body.month) || 0
   const y = Number(body.year) || 0
+  const existingId = Number(payload?.id) || 0
+
+  try {
+    await receiving(recvBody(existingId ? 'update' : 'insert', body))
+  } catch (err) {
+   
+    if (existingId || !/already exists/i.test(err?.message || '')) throw err
+    const current = (await fetchReceivingsNow(branchID)).find((r) => r.month === m && r.year === y)
+    if (!current?.id) throw err
+    const added = Math.max(0, Number(body.receivedAmount) || 0)
+    const merged = Math.max(added, (Number(current.receivedAmount) || 0))
+    await receiving(recvBody('update', {
+      ...body,
+      id: current.id,
+      receivedAmount:  merged,
+      remainingAmount: Math.max(0, (Number(body.netPayable) || 0) - merged),
+    }))
+  }
+
+  const rows = await fetchReceivingsNow(branchID)
   return rows.find((r) => r.month === m && r.year === y) || rows[0] || null
 }
 
@@ -614,18 +512,6 @@ export async function deleteReceiving(recv) {
   await receiving(recvBody('delete', { id }))
 }
 
-/* ── Classes + fee heads (Percentage formula ke liye) ──
-   Har school apne fee heads khud rakhta hai aur unhe apni marzi ka naam deta
-   hai, aur heads class se class alag hote hain — is liye royalty % school ke
-   apne asli heads par lagti hai, kisi tay-shuda list par nahi. */
-
-/**
- * Aik branch ki classes, har class ke apne fee heads ke sath.
- * Shape: [{ id, name, heads: [{ headID, name, amount }] }]
- *
- * Jis class ka koi fee head set nahi, wo bhi list me rehti hai (khali) —
- * taake head office ko nazar aaye ke us class ka structure abhi banna hai.
- */
 export async function fetchBranchClasses(branchID) {
   if (!branchID) return []
   return once(`classes:${branchID}`, async () => {

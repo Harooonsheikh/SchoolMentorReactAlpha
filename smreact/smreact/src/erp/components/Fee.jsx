@@ -438,7 +438,42 @@ function StudentFeeSetup({ toast }) {
    student roster with per-student transport fee editor. Route and
    amount can be edited per student via a small modal.
    ═══════════════════════════════════════════════════════════════════ */
+/* Transport Fee Setup = do sub-tabs:
+     • Transport Fee Assignment — har student ka route/vehicle/fee.
+     • Vehicles — transport fleet ka register (add/edit/delete). */
 function TransportFeeSetup({ toast }) {
+  const [transSeg, setTransSeg] = useState('assignment');
+  return (
+    <>
+      <div className="fee-seg">
+        <Tooltip text="Assign route, vehicle & transport fee to individual students">
+          <button
+            className={`fee-seg-btn${transSeg === 'assignment' ? ' active' : ''}`}
+            onClick={() => setTransSeg('assignment')}
+          >
+            <i className="fa-solid fa-user-graduate"></i> Transport Fee Assignment
+          </button>
+        </Tooltip>
+        <Tooltip text="Add & manage the transport vehicle fleet">
+          <button
+            className={`fee-seg-btn${transSeg === 'vehicles' ? ' active' : ''}`}
+            onClick={() => setTransSeg('vehicles')}
+          >
+            <i className="fa-solid fa-bus-simple"></i> Vehicles
+          </button>
+        </Tooltip>
+      </div>
+
+      {transSeg === 'assignment'
+        ? <TransportFeeAssignment toast={toast} />
+        : <VehicleManagement toast={toast} />}
+    </>
+  );
+}
+
+/* Transport Fee Assignment — class+section table, per-row expandable
+   student roster with per-student route / vehicle / transport-fee editor. */
+function TransportFeeAssignment({ toast }) {
   const { can } = usePermissions();
   const canTfEdit     = can('Fee', 'Transport Fee Setup', 'Edit');
   const canTfDownload = can('Fee', 'Transport Fee Setup', 'Download');
@@ -453,7 +488,7 @@ function TransportFeeSetup({ toast }) {
   const openEdit  = useCallback((classKey, student) => setEditing({ classKey, student }), []);
   const closeEdit = useCallback(() => setEditing(null), []);
 
-  const saveStudent = useCallback(async ({ amount }) => {
+  const saveStudent = useCallback(async ({ route, amount, vehicleId }) => {
     if (!editing) return;
     const { classKey, student } = editing;
     const classMeta = classes.find(c => c.key === classKey) || {};
@@ -464,6 +499,8 @@ function TransportFeeSetup({ toast }) {
         gradeID: student.gradeID || classMeta._gradeId,
         sectionID: student.sectionID || classMeta._sectionId,
         amount,
+        route,
+        vehicleId,
         createdDate: student.transportSetup?.createdDate,
         createdBy: student.transportSetup?.createdBy,
         isActive: true,
@@ -474,6 +511,8 @@ function TransportFeeSetup({ toast }) {
               ...s,
               transportSetupId: saved.id || s.transportSetupId,
               transport: Math.max(0, Number(saved.amount ?? amount) || 0),
+              route: (route || '').trim(),
+              vehicleId: vehicleId || '',
               transportSetup: saved,
             }
           : s
@@ -492,6 +531,49 @@ function TransportFeeSetup({ toast }) {
     setReportHtml({ title: `Transport Fee — ${c.cls} (${c.sec})`, html });
   }, [transportMap, branchHeader]);
 
+  /* ── Smart search (name / father name / reg) — FeeChallans wali search jaisi.
+     Result par us student ki class khul jaati hai aur uski row tak scroll + flash. */
+  const [searchQ, setSearchQ]       = useState('');
+  const [searchOpen, setSearchOpen] = useState(false);
+  const searchAnchorRef             = useRef(null);
+  useEffect(() => {
+    if (!searchOpen) return undefined;
+    const onDown = (e) => {
+      if (searchAnchorRef.current && !searchAnchorRef.current.contains(e.target)) setSearchOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [searchOpen]);
+
+  const matches = (() => {
+    const q = searchQ.trim().toLowerCase();
+    if (!q) return [];
+    const out = [];
+    classes.forEach(c => {
+      (transportMap[c.key] || []).forEach(s => {
+        const hay = `${s.name} ${s.father || ''} ${s.reg}`.toLowerCase();
+        if (hay.includes(q)) out.push({ c, s });
+      });
+    });
+    return out.slice(0, 8);
+  })();
+
+  const clearSearch = () => { setSearchQ(''); setSearchOpen(false); };
+
+  const focusOnStudent = (c, s) => {
+    setOpenKey(c.key);          // us student ki class expand karo
+    clearSearch();
+    toast('Jumped to student', 'info');
+    setTimeout(() => {
+      const el = document.getElementById(`fee-tst-${c.key}-${s.reg}`);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.classList.add('fee-st-flash');
+        setTimeout(() => el.classList.remove('fee-st-flash'), 1700);
+      }
+    }, 380);
+  };
+
   return (
     <>
       <div className="fee-info">
@@ -500,6 +582,77 @@ function TransportFeeSetup({ toast }) {
           Transport fee can be different for each student. Open a class to set or update
           individual transport charges.
         </span>
+      </div>
+
+      {/* Student smart-search */}
+      <div className="fee-section fee-section--overflow">
+        <div className="fee-section-body">
+          <div className="fee-searchrow">
+            <div className="fee-field" style={{ width: '100%' }}>
+              <span className="fee-label">Search Student</span>
+              <div className="fee-search-anchor" ref={searchAnchorRef}>
+                <div className="fee-search-box">
+                  <i className="fa-solid fa-magnifying-glass"></i>
+                  <input
+                    value={searchQ}
+                    autoComplete="off"
+                    onChange={e => { setSearchQ(e.target.value); setSearchOpen(true); }}
+                    onFocus={() => setSearchOpen(true)}
+                    placeholder="Search by Name, Father Name or Registration Number"
+                  />
+                  {searchQ && (
+                    <Tooltip text="Clear search">
+                      <button
+                        type="button"
+                        className="fee-search-clear"
+                        onClick={clearSearch}
+                        aria-label="Clear search"
+                      >
+                        <i className="fa-solid fa-xmark"></i>
+                      </button>
+                    </Tooltip>
+                  )}
+                </div>
+                <div className={`fee-search-results${searchOpen && searchQ ? ' open' : ''}`}>
+                  {matches.length === 0 ? (
+                    <div className="fee-sr-empty">No students found for "<b>{searchQ}</b>"</div>
+                  ) : matches.map(({ c, s }) => {
+                    const initial = (s.name || '').trim()[0] || '?';
+                    return (
+                      <button
+                        type="button"
+                        key={`${c.key}-${s.reg}`}
+                        className="fee-sr-item"
+                        onClick={() => focusOnStudent(c, s)}
+                      >
+                        <div className="fee-sr-av">{initial.toUpperCase()}</div>
+                        <div className="fee-sr-main">
+                          <div className="fee-sr-name">
+                            {s.name}
+                            {+s.transport > 0
+                              ? <span className="fee-chip fee-chip-active"><i className="fa-solid fa-bus"></i> {money(s.transport)}</span>
+                              : <span className="fee-chip fee-chip-due"><i className="fa-solid fa-circle-exclamation"></i> No transport</span>}
+                          </div>
+                          <div className="fee-sr-meta">
+                            <span><b>Father:</b> {s.father || '—'}</span>
+                            <span><b>Class:</b> {c.cls}</span>
+                            <span><b>Section:</b> {c.sec}</span>
+                            <span><b>Reg:</b> {s.reg}</span>
+                          </div>
+                        </div>
+                        <div className="fee-sr-go"><i className="fa-solid fa-arrow-right"></i></div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              <div className="fee-hint">
+                <i className="fa-solid fa-circle-info"></i>
+                <span>Search any student by name, father name, or registration number.</span>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div className="fee-section">
@@ -565,19 +718,21 @@ function TransportFeeSetup({ toast }) {
                           <th>Reg No</th>
                           <th>Name</th>
                           <th>Father Name</th>
+                          <th>Route / Area</th>
                           <th className="fee-right">Transport Fee</th>
                           <th className="fee-center">Action</th>
                         </tr>
                       </thead>
                       <tbody>
                         {students.length === 0 ? (
-                          <tr><td colSpan="6" className="fee-stbl-empty">No students enrolled in this section.</td></tr>
+                          <tr><td colSpan="7" className="fee-stbl-empty">No students enrolled in this section.</td></tr>
                         ) : students.map((s, j) => (
-                          <tr key={s.reg || s.studentID || `${s.name}-${j}`}>
+                          <tr key={s.reg || s.studentID || `${s.name}-${j}`} id={`fee-tst-${c.key}-${s.reg}`}>
                             <td className="fee-num">{j + 1}</td>
                             <td>{s.reg}</td>
                             <td><b>{s.name}</b></td>
                             <td>{s.father}</td>
+                            <td>{s.route ? s.route : <span className="fee-muted-dash">—</span>}</td>
                             <td className="fee-right">
                               {+s.transport > 0
                                 ? <b>{money(s.transport)}</b>
@@ -595,7 +750,7 @@ function TransportFeeSetup({ toast }) {
                         ))}
                         {students.length > 0 && (
                           <tr className="fee-stbl-foot">
-                            <td colSpan="4"><b>Monthly transport collection</b></td>
+                            <td colSpan="5"><b>Monthly transport collection</b></td>
                             <td className="fee-right">
                               <b>{money(students.reduce((s, x) => s + (+x.transport || 0), 0))}</b>
                             </td>
@@ -635,11 +790,18 @@ function TransportFeeSetup({ toast }) {
 
 /* ─── Update Transport Fee modal ─── */
 function TransportEditModal({ open, classMeta, student, onClose, onSave, toast }) {
-  const [amount, setAmount] = useState('0');
+  /* Modal khulte hi is branch ki poori vehicle list dobara load — taake abhi
+     abhi add hui gaari bhi dropdown me aa jaye. */
+  const { data: vehicles = [] } = useAsync(feeService.getVehicles, [open]);
+  const [route, setRoute]         = useState('');
+  const [amount, setAmount]       = useState('0');
+  const [vehicleId, setVehicleId] = useState('');
 
   useEffect(() => {
     if (open && student) {
+      setRoute(student.route || '');
       setAmount(String(student.transport ?? 0));
+      setVehicleId(student.vehicleId || '');
     }
   }, [open, student]);
 
@@ -662,7 +824,11 @@ function TransportEditModal({ open, classMeta, student, onClose, onSave, toast }
       toast('Transport fee must be a non-negative number', 'error');
       return;
     }
-    onSave({ amount: num });
+    if (num > 0 && !route.trim()) {
+      toast('Enter a route / area when transport fee is set', 'error');
+      return;
+    }
+    onSave({ route, amount: num, vehicleId });
   };
 
   return createPortal(
@@ -690,9 +856,37 @@ function TransportEditModal({ open, classMeta, student, onClose, onSave, toast }
             <i className="fa-solid fa-circle-info"></i>
             <span>
               Setting an amount of <strong>0</strong> means this student doesn't use transport.
+              When an amount is set, enter the route or area name.
             </span>
           </div>
 
+          <div className="fee-field-stack">
+            <label className="fee-label">Transport Area / Route</label>
+            <input
+              className="fee-input"
+              value={route}
+              placeholder="e.g. Route 4 — Satellite Town"
+              onChange={e => setRoute(e.target.value)}
+            />
+          </div>
+          <div className="fee-field-stack">
+            <label className="fee-label">Vehicle</label>
+            <div className="fee-select-wrap">
+              <select className="fee-select" value={vehicleId} onChange={e => setVehicleId(e.target.value)}>
+                {vehicles.length === 0 ? (
+                  <option value="">No vehicles available. Please add a vehicle first.</option>
+                ) : (
+                  <>
+                    <option value="">— No vehicle assigned —</option>
+                    {vehicles.map(v => (
+                      <option key={v.id} value={v.id}>{v.name} — {v.regNo}</option>
+                    ))}
+                  </>
+                )}
+              </select>
+              <i className="fa-solid fa-chevron-down"></i>
+            </div>
+          </div>
           <div className="fee-field-stack">
             <label className="fee-label">Transport Fee Amount (Rs.)</label>
             <input
@@ -720,6 +914,326 @@ function TransportEditModal({ open, classMeta, student, onClose, onSave, toast }
     </div>,
     document.body
   );
+}
+
+/* ─── Vehicle Management (Transport Fee Setup → Vehicles sub-tab) ───
+   Transport fleet ka register: add / edit / delete vehicles. Vehicle
+   kisi student ko "Transport Fee Assignment" ke edit modal se assign
+   hoti hai — yahan se vehicle delete karne par student ka route/fee
+   nahi chhinta, bas agli baar naya vehicle chunna padta hai.
+   NOTE: backend endpoints aane tak fleet localStorage me hai (dekhein
+   feeService getVehicles/saveVehicle/deleteVehicle). */
+function VehicleManagement({ toast }) {
+  const { data: vehicles = [], loading, error, refetch } = useAsync(feeService.getVehicles, []);
+  const [editing, setEditing]   = useState(null); // {} = new, {...vehicle} = edit
+  const [confirm, setConfirm]   = useState(null);
+
+  const openAdd   = useCallback(() => setEditing({}), []);
+  const openEdit  = useCallback((v) => setEditing(v), []);
+  const closeEdit = useCallback(() => setEditing(null), []);
+
+  const saveVehicle = useCallback(async (payload) => {
+    const isNew = !editing?.id;
+    try {
+      await feeService.saveVehicle({ id: editing?.id, ...payload });
+      await refetch();          // server se real id ke saath dobara load
+      closeEdit();
+      toast(isNew ? 'Vehicle added' : 'Vehicle updated', 'success');
+    } catch (e) {
+      toast(e.message || 'Could not save vehicle', 'error');
+    }
+  }, [editing, refetch, closeEdit, toast]);
+
+  const requestDelete = (v) => {
+    setConfirm({
+      title:   'Delete this vehicle?',
+      message: <span><strong>{v.name}</strong> ({v.regNo}) will be removed from the fleet.</span>,
+      hint:    "Students already assigned to this vehicle keep their route & transport fee — they'll just need a new vehicle picked next time their record is edited.",
+      onConfirm: async () => {
+        try {
+          await feeService.deleteVehicle(v.id);
+          await refetch();
+          toast('Vehicle removed', 'success');
+        } catch (e) {
+          toast(e.message || 'Could not delete vehicle', 'error');
+        }
+      },
+    });
+  };
+
+  return (
+    <>
+      <div className="fee-info">
+        <i className="fa-solid fa-circle-info"></i>
+        <span>
+          Add the vehicles used for student transport here, then assign one to each student
+          from <strong>Transport Fee Assignment</strong>.
+        </span>
+      </div>
+
+      <RepLoadState loading={loading} error={error && (error.message || 'Could not load vehicles')} />
+
+      <div className="fee-section">
+        <div className="fee-section-header">
+          <div className="fee-section-title">
+            <div className="fee-section-icon"><i className="fa-solid fa-bus-simple"></i></div>
+            <div>
+              <div className="fee-section-name">Vehicle Fleet</div>
+              <div className="fee-section-sub">{vehicles.length} vehicle{vehicles.length === 1 ? '' : 's'} added</div>
+            </div>
+          </div>
+          <Tooltip text="Add a new vehicle to the fleet">
+            <button className="fee-btn fee-btn-primary fee-btn-sm" onClick={openAdd}>
+              <i className="fa-solid fa-plus"></i> Add New Vehicle
+            </button>
+          </Tooltip>
+        </div>
+
+        <div className="fee-section-body">
+          <div className="fee-stbl-wrap">
+            <table className="fee-stbl">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Vehicle Name / Type</th>
+                  <th>Registration No.</th>
+                  <th>Assigned Route</th>
+                  <th className="fee-center">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {vehicles.length === 0 ? (
+                  <tr><td colSpan="5" className="fee-stbl-empty">No vehicles added yet. Click <strong>Add New Vehicle</strong> to get started.</td></tr>
+                ) : vehicles.map((v, i) => (
+                  <tr key={v.id}>
+                    <td className="fee-num">{i + 1}</td>
+                    <td><b>{v.name}</b></td>
+                    <td>{v.regNo}</td>
+                    <td>{v.route ? v.route : <span className="fee-muted-dash">—</span>}</td>
+                    <td className="fee-center fee-st-actions">
+                      <Tooltip text={`Edit ${v.name}`}>
+                        <button className="fee-iconbtn" onClick={() => openEdit(v)}>
+                          <i className="fa-solid fa-pen"></i>
+                        </button>
+                      </Tooltip>
+                      <Tooltip text={`Delete ${v.name}`}>
+                        <button className="fee-iconbtn danger" onClick={() => requestDelete(v)}>
+                          <i className="fa-solid fa-trash-can"></i>
+                        </button>
+                      </Tooltip>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <VehicleEditModal
+        open={!!editing}
+        vehicle={editing}
+        onClose={closeEdit}
+        onSave={saveVehicle}
+        toast={toast}
+      />
+
+      <FeeConfirmDialog cfg={confirm} onClose={() => setConfirm(null)} />
+    </>
+  );
+}
+
+/* ─── Add / Edit Vehicle modal ─── */
+function VehicleEditModal({ open, vehicle, onClose, onSave, toast }) {
+  const [name, setName]   = useState('');
+  const [regNo, setRegNo] = useState('');
+  const [route, setRoute] = useState('');
+
+  useEffect(() => {
+    if (open) {
+      setName(vehicle?.name || '');
+      setRegNo(vehicle?.regNo || '');
+      setRoute(vehicle?.route || '');
+    }
+  }, [open, vehicle]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onKey = e => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    document.body.style.overflow = 'hidden';
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.body.style.overflow = '';
+    };
+  }, [open, onClose]);
+
+  if (!open) return null;
+  const isNew = !vehicle?.id;
+
+  const validateAndSave = () => {
+    if (!name.trim()) { toast('Enter a vehicle name or type', 'error'); return; }
+    if (!regNo.trim()) { toast('Enter the vehicle registration number', 'error'); return; }
+    onSave({ name: name.trim(), regNo: regNo.trim(), route: route.trim() });
+  };
+
+  return createPortal(
+    <div className="fee-overlay open" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="fee-modal sm">
+        <div className="fee-modal-head">
+          <div className="fee-modal-head-title">
+            <div className="fee-modal-head-icon"><i className="fa-solid fa-bus-simple"></i></div>
+            <div>
+              <div className="fee-modal-title">{isNew ? 'Add New Vehicle' : 'Update Vehicle'}</div>
+              <div className="fee-modal-sub">Transport fleet record</div>
+            </div>
+          </div>
+          <Tooltip text="Close">
+            <button className="fee-modal-close" onClick={onClose} aria-label="Close">
+              <i className="fa-solid fa-xmark"></i>
+            </button>
+          </Tooltip>
+        </div>
+
+        <div className="fee-modal-body">
+          <div className="fee-field-stack">
+            <label className="fee-label">Vehicle Name / Type</label>
+            <input
+              className="fee-input"
+              value={name}
+              placeholder="e.g. Bus 1 — Hino"
+              onChange={e => setName(e.target.value)}
+            />
+          </div>
+          <div className="fee-field-stack">
+            <label className="fee-label">Registration Number</label>
+            <input
+              className="fee-input"
+              value={regNo}
+              placeholder="e.g. LEA-4021"
+              onChange={e => setRegNo(e.target.value)}
+            />
+          </div>
+          <div className="fee-field-stack">
+            <label className="fee-label">Assigned Route</label>
+            <input
+              className="fee-input"
+              value={route}
+              placeholder="e.g. Route 1 — Main Road"
+              onChange={e => setRoute(e.target.value)}
+            />
+          </div>
+        </div>
+
+        <div className="fee-modal-foot">
+          <Tooltip text="Discard changes and close">
+            <button className="fee-btn fee-btn-ghost" onClick={onClose}>Cancel</button>
+          </Tooltip>
+          <Tooltip text={isNew ? 'Add this vehicle to the fleet' : 'Save changes to this vehicle'}>
+            <button className="fee-btn fee-btn-primary" onClick={validateAndSave}>
+              <i className="fa-solid fa-floppy-disk"></i> Save
+            </button>
+          </Tooltip>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+/* Vehicle-wise transport report — har vehicle ke neeche uske assigned
+   students, phir jinke paas vehicle nahi. Style buildTransportReportHTML
+   se milta-julta (feeReportSchool/feeReportLogoHtml helpers reuse). */
+function buildVehicleReportHTML({ vehicles = [], students = [], school = null }) {
+  const meta = feeReportSchool(school);
+  const today = meta.generatedDate
+    ? feeReportDate(meta)
+    : new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
+
+  const cell = 'padding:8px 10px;border-bottom:1px solid #E5E7EB';
+  const rowsFor = (list) => list.map((s, i) => `
+    <tr>
+      <td style="${cell}">${i + 1}</td>
+      <td style="${cell}">${escHtml(s.reg)}</td>
+      <td style="${cell}"><b>${escHtml(s.name)}</b></td>
+      <td style="${cell}">${escHtml(s.route || '—')}</td>
+      <td style="${cell};text-align:right;font-variant-numeric:tabular-nums">${+s.transport > 0 ? `Rs. ${(+s.transport).toLocaleString('en-PK')}` : '<span style="color:#94A3B8">—</span>'}</td>
+    </tr>`).join('');
+
+  const withVeh = students.filter(s => s.vehicleId);
+  const unassigned = students.filter(s => !s.vehicleId && +s.transport > 0);
+
+  const blocks = vehicles.map(v => {
+    const list = withVeh.filter(s => String(s.vehicleId) === String(v.id));
+    const subtotal = list.reduce((a, s) => a + (+s.transport || 0), 0);
+    return `
+    <div style="margin-top:16px">
+      <div style="font-size:13px;font-weight:800;color:#1E3A8A;margin-bottom:4px">
+        <span style="display:inline-block;padding:2px 8px;border:1px solid #BFDBFE;border-radius:8px;background:#EFF6FF">${escHtml(v.name)} — ${escHtml(v.regNo)}</span>
+        ${v.route ? `<span style="font-weight:600;color:#64748B;font-size:11px"> · ${escHtml(v.route)}</span>` : ''}
+        <span style="font-weight:600;color:#64748B;font-size:11px"> · ${list.length} student${list.length === 1 ? '' : 's'}</span>
+      </div>
+      <table><thead><tr>
+        <th style="width:48px">#</th><th style="width:130px">Reg No</th><th>Name</th><th>Route / Area</th><th class="right" style="width:140px">Transport Fee</th>
+      </tr></thead>
+      <tbody>${rowsFor(list) || `<tr><td colspan="5" style="text-align:center;padding:14px;color:#64748B">No students assigned to this vehicle.</td></tr>`}</tbody>
+      ${list.length ? `<tfoot><tr><td colspan="4">Monthly collection</td><td class="right">Rs. ${subtotal.toLocaleString('en-PK')}</td></tr></tfoot>` : ''}
+      </table>
+    </div>`;
+  }).join('');
+
+  const unassignedBlock = unassigned.length ? `
+    <div style="margin-top:16px">
+      <div style="font-size:13px;font-weight:800;color:#B45309;margin-bottom:4px">
+        <span style="display:inline-block;padding:2px 8px;border:1px solid #FDE68A;border-radius:8px;background:#FFFBEB">No vehicle assigned</span>
+        <span style="font-weight:600;color:#64748B;font-size:11px"> · ${unassigned.length} student${unassigned.length === 1 ? '' : 's'}</span>
+      </div>
+      <table><thead><tr>
+        <th style="width:48px">#</th><th style="width:130px">Reg No</th><th>Name</th><th>Route / Area</th><th class="right" style="width:140px">Transport Fee</th>
+      </tr></thead><tbody>${rowsFor(unassigned)}</tbody></table>
+    </div>` : '';
+
+  const grand = withVeh.concat(unassigned).reduce((a, s) => a + (+s.transport || 0), 0);
+
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escHtml(`${meta.name} — Vehicle-wise Transport`)}</title>
+<style>
+  body { margin:0; font-family:'Segoe UI',Arial,sans-serif; color:#0F172A; background:#fff; font-size:13px; }
+  .page { width:210mm; margin:0 auto; padding:18mm 14mm; box-sizing:border-box; }
+  .header { display:flex; justify-content:space-between; align-items:flex-end; border-bottom:2px solid #1E3A8A; padding-bottom:14px; margin-bottom:8px; }
+  .brand { display:flex; align-items:center; gap:12px; }
+  .logo { width:44px; height:44px; border:1px solid #BFDBFE; border-radius:12px; display:flex; align-items:center; justify-content:center; overflow:hidden; color:#1E3A8A; font-weight:800; background:#fff; }
+  .logo img { width:100%; height:100%; object-fit:contain; }
+  .school { font-size:18px; font-weight:800; color:#1E3A8A; letter-spacing:-.01em; }
+  .title  { font-size:14px; font-weight:700; color:#1E40AF; margin-top:6px; }
+  .addr { font-size:10px; color:#64748B; margin-top:3px; max-width:360px; }
+  .meta   { font-size:11px; color:#64748B; text-align:right; line-height:1.55; }
+  table { width:100%; border-collapse:collapse; margin-top:4px; }
+  thead th { background:#EFF6FF; color:#1E3A5F; font-weight:800; text-align:left; padding:8px 10px; border-bottom:2px solid #BFDBFE; font-size:11px; text-transform:uppercase; letter-spacing:.4px; }
+  thead th.right { text-align:right; }
+  tfoot td { padding:8px 10px; font-weight:800; background:#F8FAFF; border-top:2px solid #1E3A8A; }
+  tfoot td.right { text-align:right; }
+  .grand { margin-top:18px; padding:10px 12px; background:#F8FAFF; border:2px solid #1E3A8A; border-radius:10px; font-weight:800; display:flex; justify-content:space-between; }
+  @media print { @page { size:A4; margin:14mm; } body { -webkit-print-color-adjust:exact; print-color-adjust:exact; } }
+</style></head><body>
+<div class="page">
+  <div class="header">
+    <div class="brand">
+      <div class="logo">${feeReportLogoHtml(meta)}</div>
+      <div>
+        <div class="school">${escHtml(meta.name)}</div>
+        <div class="title">Vehicle-wise Transport Report</div>
+        ${meta.address ? `<div class="addr">${escHtml(meta.address)}</div>` : ''}
+        ${meta.session ? `<div class="addr">Academic Session: ${escHtml(meta.session)}</div>` : ''}
+      </div>
+    </div>
+    <div class="meta">Generated: ${escHtml(today)}<br/>By: ${escHtml(meta.generatedBy)}<br/>${vehicles.length} vehicle${vehicles.length === 1 ? '' : 's'} · ${withVeh.length + unassigned.length} student${(withVeh.length + unassigned.length) === 1 ? '' : 's'}</div>
+  </div>
+  ${vehicles.length === 0 && unassigned.length === 0
+    ? '<div style="text-align:center;padding:40px;color:#64748B">No vehicles or transport students yet.</div>'
+    : blocks + unassignedBlock}
+  <div class="grand"><span>Total monthly transport collection</span><span>Rs. ${grand.toLocaleString('en-PK')}</span></div>
+</div>
+</body></html>`;
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -8148,6 +8662,7 @@ function buildHistMonthSlipHTML({ c, s, mo, year, size = 'a4', school = null }) 
 const FEE_REPORT_CATS = [
   { id: 'defaulter',  ic: 'fa-user-clock',          name: 'Fee Defaulter List',       desc: 'All & monthly defaulters, class-wise' },
   { id: 'headwise',   ic: 'fa-layer-group',         name: 'Head-Wise Fee Collection', desc: 'Student-wise & class-wise by fee head' },
+  { id: 'vehicle',    ic: 'fa-bus',                 name: 'Vehicle-Wise Transport',   desc: 'Students, fee & outstanding per vehicle' },
   /* Hidden per request — restore any entry to bring the tab back:
   { id: 'collection', ic: 'fa-hand-holding-dollar', name: 'General Fee Collections',  desc: 'Daily, monthly & paid-student lists' },
   { id: 'aging',      ic: 'fa-hourglass-half',      name: 'Aging / Outstanding',      desc: '30 / 60 / 90+ day overdue analysis' },
@@ -8300,6 +8815,7 @@ function FeeReportsTab({ toast }) {
         {current === 'defaulter' && <ReportPanelDefaulter toast={toast} />}
         {current === 'collection' && <ReportPanelCollection toast={toast} />}
         {current === 'headwise'   && <ReportPanelHeadwise toast={toast} />}
+        {current === 'vehicle'    && <ReportPanelVehicle toast={toast} />}
         {current === 'aging'      && <ReportPanelAging toast={toast} />}
         {current === 'summary'    && <ReportPanelSummary toast={toast} />}
       </FeeReportBranchContext.Provider>
@@ -8602,6 +9118,143 @@ function RepLoadState({ loading, error, empty, emptyText }) {
   if (error)   return <div className="fee-info" style={{ color: '#B91C1C' }}><i className="fa-solid fa-triangle-exclamation"></i> <span>{error}</span></div>;
   if (empty)   return <div className="fee-info"><i className="fa-solid fa-circle-info"></i> <span>{emptyText}</span></div>;
   return null;
+}
+
+/* ════════════ VEHICLE-WISE TRANSPORT ════════════ */
+function ReportPanelVehicle({ toast }) {
+  const school = useContext(FeeReportBranchContext);
+  const { data: vehicles = [], loading: vLoading } = useAsync(feeService.getVehicles, []);
+  const { data: transportMap = {}, loading: tLoading } = useAsync(feeService.getTransportFee, []);
+
+  const students   = useMemo(() => Object.values(transportMap).flat(), [transportMap]);
+  const withVeh    = useMemo(() => students.filter(s => s.vehicleId), [students]);
+  const unassigned = useMemo(() => students.filter(s => !s.vehicleId && +s.transport > 0), [students]);
+  const totalFee   = useMemo(
+    () => withVeh.concat(unassigned).reduce((a, s) => a + (+s.transport || 0), 0),
+    [withVeh, unassigned],
+  );
+  const rows = useMemo(() => vehicles.map(v => {
+    const list = withVeh.filter(s => String(s.vehicleId) === String(v.id));
+    return { v, count: list.length, fee: list.reduce((a, s) => a + (+s.transport || 0), 0) };
+  }), [vehicles, withVeh]);
+
+  /* Vehicle picker — koi ek vehicle chuna to neeche ki TABLE aur report DONO sirf
+     usi vehicle ki dikhti hain; warna (— All vehicles —) sab kuch jaisa pehle. */
+  const [vehKey, setVehKey] = useState('');
+
+  /* On-screen table ke liye filtered view. */
+  const shownRows       = vehKey ? rows.filter(r => String(r.v.id) === String(vehKey)) : rows;
+  const shownUnassigned = vehKey ? [] : unassigned;
+  const shownTotal      = vehKey ? shownRows.reduce((a, r) => a + r.fee, 0) : totalFee;
+
+  const downloadReport = (mode) => {
+    const v = vehKey ? vehicles.find(x => String(x.id) === String(vehKey)) : null;
+    if (v) {
+      /* Sirf is vehicle ke students bhejo — is liye "No vehicle assigned" block nahi
+         aata aur grand total bhi isi vehicle ka hota hai. */
+      const vStudents = students.filter(s => String(s.vehicleId) === String(v.id));
+      const html = buildVehicleReportHTML({ vehicles: [v], students: vStudents, school });
+      openPrintReport(html, `Vehicle-Wise Transport — ${v.name}`, toast, mode);
+      return;
+    }
+    const html = buildVehicleReportHTML({ vehicles, students, school });
+    openPrintReport(html, 'Vehicle-Wise Transport', toast, mode);
+  };
+
+  return (
+    <>
+      <div className="fee-info">
+        <i className="fa-solid fa-circle-info"></i>
+        <span>
+          Students grouped by their assigned vehicle, with per-vehicle transport-fee totals.
+          Manage the fleet from <strong>Fee Setup &amp; Settings › Transport Fee Setup › Vehicles</strong>,
+          and assign a vehicle to each student from <strong>Transport Fee Assignment</strong>.
+        </span>
+      </div>
+
+      <RepLoadState
+        loading={vLoading || tLoading}
+        empty={!vLoading && !tLoading && vehicles.length === 0 && unassigned.length === 0}
+        emptyText="No vehicles or transport students yet."
+      />
+
+      {repKpiStrip([
+        ['k-blue',  'fa-bus',                  'Vehicles',              `${vehicles.length}`, ''],
+        ['k-green', 'fa-user-graduate',        'Students on Transport', `${withVeh.length + unassigned.length}`, ''],
+        ['k-amber', 'fa-money-bill-wave',      'Monthly Transport Fee', fmtRs(totalFee), ''],
+        ['k-red',   'fa-triangle-exclamation', 'No Vehicle Assigned',   `${unassigned.length} students`, ''],
+      ])}
+
+      <div className="fee-section fee-section--overflow">
+        <div className="fee-section-body">
+          <div className="fee-filters">
+            <div className="fee-field fee-field--grow">
+              <span className="fee-label">Select Vehicle</span>
+              <div className="fee-select-wrap">
+                <select className="fee-select" value={vehKey} onChange={e => setVehKey(e.target.value)}>
+                  <option value="">— All vehicles —</option>
+                  {vehicles.map(v => (
+                    <option key={v.id} value={v.id}>
+                      {v.name} — {v.regNo}{v.route ? ` (${v.route})` : ''}
+                    </option>
+                  ))}
+                </select>
+                <i className="fa-solid fa-chevron-down"></i>
+              </div>
+            </div>
+            <RepActions onPreview={() => downloadReport('preview')} onPdf={() => downloadReport('pdf')} />
+          </div>
+        </div>
+      </div>
+
+      <div className="fee-section">
+        <div className="fee-section-body">
+          <div className="fee-stbl-wrap">
+            <table className="fee-stbl">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Vehicle</th>
+                  <th>Registration No.</th>
+                  <th>Route</th>
+                  <th className="fee-center">Students</th>
+                  <th className="fee-right">Monthly Fee</th>
+                </tr>
+              </thead>
+              <tbody>
+                {shownRows.length === 0 && shownUnassigned.length === 0 ? (
+                  <tr><td colSpan="6" className="fee-stbl-empty">{vehKey ? 'No data for the selected vehicle.' : 'No vehicles added yet.'}</td></tr>
+                ) : shownRows.map((r, i) => (
+                  <tr key={r.v.id}>
+                    <td className="fee-num">{i + 1}</td>
+                    <td><b>{r.v.name}</b></td>
+                    <td>{r.v.regNo}</td>
+                    <td>{r.v.route ? r.v.route : <span className="fee-muted-dash">—</span>}</td>
+                    <td className="fee-center">{r.count}</td>
+                    <td className="fee-right">{r.fee > 0 ? <b>{money(r.fee)}</b> : <span className="fee-muted-dash">—</span>}</td>
+                  </tr>
+                ))}
+                {shownUnassigned.length > 0 && (
+                  <tr>
+                    <td className="fee-num">—</td>
+                    <td colSpan="3"><b>No vehicle assigned</b></td>
+                    <td className="fee-center">{shownUnassigned.length}</td>
+                    <td className="fee-right"><b>{money(shownUnassigned.reduce((a, s) => a + (+s.transport || 0), 0))}</b></td>
+                  </tr>
+                )}
+                {(shownRows.length > 0 || shownUnassigned.length > 0) && (
+                  <tr className="fee-stbl-foot">
+                    <td colSpan="5"><b>{vehKey ? 'Monthly transport collection' : 'Total monthly transport collection'}</b></td>
+                    <td className="fee-right"><b>{money(shownTotal)}</b></td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </>
+  );
 }
 
 /* ════════════ 1. DEFAULTER LIST ════════════ */
@@ -9764,7 +10417,67 @@ function feeReportSchool(school) {
     session: school?.academicSession || school?.session || '',
     generatedDate: school?.generatedDate || null,
     generatedBy: school?.generatedBy || sessionStorage.getItem('displayName') || sessionStorage.getItem('userName') || 'Fee',
+    /* Bank fields pass-through — challan "Show Bank Details On challan" toggle in
+       fields ko feeBankDetails() se padhta hai. feeReportSchool stripped object
+       banata hai, is liye inhe carry karna zaroori hai (warna bank block khaali). */
+    branchBankName:      school?.branchBankName,
+    branchAccountTitle:  school?.branchAccountTitle,
+    branchAccountNumber: school?.branchAccountNumber,
+    branchIBAN:          school?.branchIBAN,
+    branchbankCity:      school?.branchbankCity,
+    branchAccountDesc:   school?.branchAccountDesc,
   };
+}
+
+/* Report-header API (getReportHeader) ka RAW branch object bank fields rakhta hai
+   (branchBankName / branchAccountTitle / branchAccountNumber / branchIBAN /
+   branchbankCity / branchAccountDesc). Yahan se defensive nikaalte hain; koi bhi
+   field na ho to null. feeReportSchool in fields ko drop kar deta hai, is liye
+   challan builders ko RAW school object milta hai (branchHeader). */
+function feeBankDetails(school) {
+  if (!school || typeof school !== 'object') return null;
+  const bankName = school.branchBankName    || school.bankName      || '';
+  const title    = school.branchAccountTitle|| school.accountTitle  || '';
+  const acctNo   = school.branchAccountNumber|| school.accountNumber || '';
+  const iban     = school.branchIBAN        || school.iban          || '';
+  const city     = school.branchbankCity    || school.branchBankCity || school.bankCity || '';
+  const desc     = school.branchAccountDesc || '';
+  if (!(bankName || title || acctNo || iban || city || desc)) return null;
+  return { bankName, title, acctNo, iban, city, desc };
+}
+
+/* Bank-details block for challans — PSID ke neeche chhapta hai jab "Show Bank Details
+   On challan" toggle ON ho. `thermal` true par 80mm receipt ke liye compact. Bank
+   details na ho to khaali string (kuch print nahi hota). */
+function feeBankBlockHtml(school, { thermal = false } = {}) {
+  const b = feeBankDetails(school);
+  if (!b) return '';
+  const rows = [
+    ['Bank', b.bankName],
+    ['Title', b.title],
+    ['Account #', b.acctNo],
+    ['IBAN', b.iban],
+    ['Branch', b.city],
+  ].filter(([, v]) => v);
+  if (!rows.length) return '';
+  if (thermal) {
+    return `
+  <div class="th-psid" style="margin-top:5px;">
+    <div class="th-psid-top">Bank Transfer Details</div>
+    <div style="display:grid;grid-template-columns:auto 1fr;column-gap:6px;row-gap:1px;font-size:9.5px;">
+      ${rows.map(([k, v]) => `<span style="color:#666;">${escHtml(k)}</span><span style="text-align:right;font-weight:700;color:#111;">${escHtml(String(v))}</span>`).join('')}
+    </div>
+    ${b.desc ? `<div style="font-size:8.5px;color:#555;margin-top:3px;">${escHtml(b.desc)}</div>` : ''}
+  </div>`;
+  }
+  return `
+    <div class="psid-block" style="margin-top:5px;">
+      <div class="psid-top"><div class="psid-dot"></div><span class="psid-tag">Bank Transfer Details</span></div>
+      <div style="display:grid;grid-template-columns:auto 1fr;column-gap:10px;row-gap:2px;font-size:10.5px;margin-top:4px;">
+        ${rows.map(([k, v]) => `<span style="color:#666;">${escHtml(k)}</span><span style="text-align:right;font-weight:700;color:#111;">${escHtml(String(v))}</span>`).join('')}
+      </div>
+      ${b.desc ? `<div style="font-size:9.5px;color:#555;margin-top:4px;">${escHtml(b.desc)}</div>` : ''}
+    </div>`;
 }
 
 function feeReportDate(school) {
@@ -10323,6 +11036,7 @@ function feeSlipHTML({ copyLabel, classMeta, student, heads, settings, period, i
         <div class="qr-hint"><strong>Scan QR</strong> with your banking app<br/>OR enter PSID manually.<br/>Works on HBL, MCB, Meezan,<br/>UBL, Sadapay, Easypaisa &amp; more.</div>
       </div>
     </div>` : ''}
+    ${settings.showBankDetails === true ? feeBankBlockHtml(school, {}) : ''}
     ${psidPlain ? `
     <div class="steps-block">
       <div class="steps-title">How to pay — 1Link PSID</div>
@@ -10598,6 +11312,7 @@ function feeThermalChallanHTML({ classMeta, student, heads, settings, period, is
     <div class="th-psid-qr">${psidQrSvg(psidPlain, 88)}</div>
     <div class="th-psid-hint">Scan QR / enter PSID in your banking app. Works on HBL, MCB, Meezan, UBL, Sadapay, Easypaisa &amp; more.</div>
   </div>` : ''}
+  ${settings.showBankDetails === true ? feeBankBlockHtml(school, { thermal: true }) : ''}
   ${psidPlain ? `
   <div class="th-steps">
     <div class="s"><b>1.</b> Open banking app</div>
@@ -10683,6 +11398,7 @@ function feeFamilySlipHTML({ copyLabel, family, settings, period, issueISO, dueI
         <div class="qr-hint"><strong>Scan QR</strong> with your banking app<br/>OR enter PSID manually.<br/>Works on HBL, MCB, Meezan,<br/>UBL, Sadapay, Easypaisa &amp; more.</div>
       </div>
     </div>` : ''}
+    ${settings.showBankDetails === true ? feeBankBlockHtml(school, {}) : ''}
     ${psidPlain ? `
     <div class="steps-block">
       <div class="steps-title">How to pay — 1Link PSID</div>
@@ -10808,6 +11524,7 @@ function feeThermalFamilyChallanHTML({ family, settings, period, issueISO, dueIS
     <div class="th-psid-qr">${psidQrSvg(psidPlain, 88)}</div>
     <div class="th-psid-hint">Scan QR / enter PSID in your banking app. Works on HBL, MCB, Meezan, UBL, Sadapay, Easypaisa &amp; more.</div>
   </div>` : ''}
+  ${settings.showBankDetails === true ? feeBankBlockHtml(school, { thermal: true }) : ''}
   ${psidPlain ? `
   <div class="th-steps">
     <div class="s"><b>1.</b> Open banking app</div>
@@ -10820,7 +11537,7 @@ function feeThermalFamilyChallanHTML({ family, settings, period, issueISO, dueIS
 
 /* ═══════════════════════════════════════════════════════════════════
    FEE CHALLAN SETTINGS — master toggles + dependent fine config.
-   Discount / PSD code show on every challan; Previous / Next Month
+   Discount / PSID code show on every challan; Previous / Next Month
    Challan Receiving gate which months the counter may receive against;
    Fine is conditional, with fine type (Fixed / Per Day) and amount.
    All values persist via feeService.saveFeeSettings().
@@ -10953,12 +11670,20 @@ function FeeChallanSettings({ toast }) {
               onToggle={() => set({ showDiscount: !value.showDiscount })}
             />
 
-            {/* Show PSD */}
+            {/* Show PSID */}
             <SettingCard
-              name="Show PSD Code on Challan"
+              name="Show PSID Code on Challan"
               desc="Print the PSID / bank payment code so parents can pay via bank or app."
               on={value.showPsd}
               onToggle={() => set({ showPsd: !value.showPsd })}
+            />
+
+            {/* Show Bank Details */}
+            <SettingCard
+              name="Show Bank Details On challan"
+              desc="Print the school's bank account details on every challan so parents can pay by bank transfer."
+              on={value.showBankDetails}
+              onToggle={() => set({ showBankDetails: !value.showBankDetails })}
             />
 
             {/* Previous month receiving */}
@@ -11086,7 +11811,7 @@ function FeeChallanSettings({ toast }) {
                 </strong>
               </li>
               <li>
-                PSD / bank code on challan: {' '}
+                PSID / bank code on challan: {' '}
                 <strong className={value.showPsd ? 'fee-pos' : 'fee-neg'}>
                   {value.showPsd ? 'Printed' : 'Not printed'}
                 </strong>
@@ -11113,7 +11838,7 @@ function FeeChallanSettings({ toast }) {
   );
 }
 
-/* ─── Reusable toggle card (Show Discount / Show PSD / etc.) ─── */
+/* ─── Reusable toggle card (Show Discount / Show PSID / etc.) ─── */
 function SettingCard({ name, desc, on, onToggle }) {
   return (
     <div className="fee-set-card">

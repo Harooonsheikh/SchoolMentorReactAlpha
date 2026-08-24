@@ -329,6 +329,8 @@ function mapTransportSetupFromApi(row = {}) {
     gradeID:      Number(row.gradeID ?? row.gradeId ?? 0) || 0,
     sectionID:    Number(row.sectionID ?? row.sectionId ?? 0) || 0,
     amount:       Number(row.amount ?? row.transport ?? 0) || 0,
+    route:        row.route ?? '',
+    vehicleID:    Number(row.vehicleID ?? row.vehicleId ?? 0) || 0,
     createdDate:  row.createdDate ?? null,
     modifiedDate: row.modifiedDate ?? null,
     createdBy:    row.createdBy ?? null,
@@ -353,6 +355,8 @@ function mapTransportSetupToApi(payload = {}) {
     createdBy:    Number(payload.createdBy) || userID,
     modifiedBy:   userID,
     amount:       Number(payload.amount ?? payload.transport) || 0,
+    route:        payload.route ?? '',
+    vehicleID:    Number(payload.vehicleId ?? payload.vehicleID ?? 0) || 0,
     isActive:     payload.isActive !== false,
   };
 }
@@ -404,10 +408,79 @@ export async function getTransportFee() {
         ...st,
         transportSetupId: setup.id,
         transport: setup.amount,
+        route: setup.route || '',
+        vehicleId: setup.vehicleID ? String(setup.vehicleID) : '',
         transportSetup: setup,
       };
     }),
   ]));
+}
+
+// ── Transport vehicles (fleet) ──────────────────────────────────────
+// Ek hi endpoint sab kaam karta hai — action se:
+//   POST /api/TransportFeeSetup/manage_vehicle
+//   { action: 'insert'|'update'|'delete'|'get', id, branchID,
+//     vehicleName, vehicleNumber, assignRoute, createdBy, modifiedBy }
+//   • insert → id 0. update/delete → id bhejo. get → branchID ke saare vehicle.
+// UI ka vehicle shape { id, name, regNo, route } — mapping neeche.
+function mapVehicleFromApi(row = {}) {
+  return {
+    id:    Number(row.id ?? row.ID ?? row.vehicleID ?? row.vehicleId ?? 0) || 0,
+    name:  row.vehicleName ?? row.VehicleName ?? row.name ?? '',
+    regNo: row.vehicleNumber ?? row.VehicleNumber ?? row.regNo ?? '',
+    route: row.assignRoute ?? row.AssignRoute ?? row.route ?? '',
+  };
+}
+
+async function manageVehicle(payload) {
+  const res = await fetch(buildUrl('/api/TransportFeeSetup/manage_vehicle'), {
+    method: 'POST',
+    headers: { Accept: '*/*', 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok || json?.success === false) {
+    throw new Error(apiMessage(json) || 'Vehicle request failed');
+  }
+  return json;
+}
+
+export async function getVehicles() {
+  const json = await manageVehicle({
+    action: 'get', id: 0, branchID: transportFeeBranchID(),
+    vehicleName: '', vehicleNumber: '', assignRoute: '', createdBy: 0, modifiedBy: 0,
+  });
+  const rows = Array.isArray(json?.data) ? json.data : (Array.isArray(json) ? json : []);
+  /* id ke hisaab se ASCENDING — nayi entry (sabse bari id) hamesha LIST ke AAKHIR me
+     aaye, warna API newest-first deta hai to naya vehicle upar chala jaata tha. */
+  return rows
+    .map(mapVehicleFromApi)
+    .sort((a, b) => (Number(a.id) || 0) - (Number(b.id) || 0));
+}
+
+export async function saveVehicle(vehicle) {
+  const userID = transportFeeUserID();
+  const numId  = Number(vehicle.id) || 0;              // temp `veh-…` id → 0 (insert)
+  const isNew  = !numId;
+  const json = await manageVehicle({
+    action: isNew ? 'insert' : 'update',
+    id: numId,
+    branchID: transportFeeBranchID(),
+    vehicleName: vehicle.name || '',
+    vehicleNumber: vehicle.regNo || '',
+    assignRoute: vehicle.route || '',
+    createdBy: userID,
+    modifiedBy: userID,
+  });
+  return json?.data ? mapVehicleFromApi(json.data) : { ...vehicle, id: numId };
+}
+
+export async function deleteVehicle(id) {
+  await manageVehicle({
+    action: 'delete', id: Number(id) || 0, branchID: transportFeeBranchID(),
+    vehicleName: '', vehicleNumber: '', assignRoute: '', createdBy: 0, modifiedBy: transportFeeUserID(),
+  });
+  return { id, deleted: true };
 }
 
 const feeSettingsBranchID = () => Number(sessionStorage.getItem('branchID')) || 1;
@@ -436,6 +509,7 @@ const apiPrintSizeToUi = (size) => (
 const FEE_SETTINGS_DEFAULTS = {
   showDiscount:     false,
   showPsd:          false,
+  showBankDetails:  false,
   prevMonthChallan: false,
   nextMonthChallan: false,
   fineEnabled:      false,
@@ -455,6 +529,15 @@ function mapFeeSettingsFromApi(row = {}) {
     branchID:           Number(row.branchID ?? row.branchId ?? feeSettingsBranchID()) || 0,
     showDiscount:       row.showDiscount ?? FEE_SETTINGS_DEFAULTS.showDiscount,
     showPsd:            row.showPSDCode ?? row.showPsd ?? FEE_SETTINGS_DEFAULTS.showPsd,
+    /* Show Bank Details On challan — backend get-all me ye field "bankDetails" ke
+       naam se aata hai (bool). Sirf ASLI boolean ko authority maano; abhi tak wo
+       null aata hai (backend ne save wire nahi kiya) is liye us soorat me niche
+       localStorage fallback lagta hai. */
+    showBankDetails:    (typeof row.bankDetails === 'boolean' ? row.bankDetails
+                         : typeof row.showBankDetails === 'boolean' ? row.showBankDetails
+                         : typeof row.showBankDetailsOnChallan === 'boolean' ? row.showBankDetailsOnChallan
+                         : typeof row.showBankDetail === 'boolean' ? row.showBankDetail
+                         : FEE_SETTINGS_DEFAULTS.showBankDetails),
     prevMonthChallan:   row.previousMonthFeeChallan ?? row.prevMonthChallan ?? FEE_SETTINGS_DEFAULTS.prevMonthChallan,
     nextMonthChallan:   row.nextMonthFeeChallan ?? row.nextMonthChallan ?? FEE_SETTINGS_DEFAULTS.nextMonthChallan,
     fineEnabled:        row.fineStatusEnabled ?? row.fineEnabled ?? FEE_SETTINGS_DEFAULTS.fineEnabled,
@@ -479,6 +562,7 @@ function blankFeeSettings() {
     branchID:         feeSettingsBranchID(),
     showDiscount:     false,
     showPsd:          false,
+    showBankDetails:  false,
     prevMonthChallan: false,
     nextMonthChallan: false,
     fineEnabled:      false,
@@ -501,6 +585,11 @@ function mapFeeSettingsToApi(settings = {}) {
     branchID:          Number(settings.branchID ?? feeSettingsBranchID()) || 0,
     showDiscount:      settings.showDiscount !== false,
     showPSDCode:       settings.showPsd !== false,
+    /* Bank details toggle — backend field ka naam "bankDetails" hai (get-all me
+       wahi aata hai), is liye usi naam se bhejte hain. Purana naam bhi saath rakha
+       (harmless) taake dono soorton me chale. Default OFF → explicit true par hi. */
+    bankDetails:       settings.showBankDetails === true,
+    showBankDetails:   settings.showBankDetails === true,
     previousMonthFeeChallan: settings.prevMonthChallan !== false,
     nextMonthFeeChallan:     settings.nextMonthChallan !== false,
     fineStatusEnabled: settings.fineEnabled !== false,
@@ -515,6 +604,27 @@ function mapFeeSettingsToApi(settings = {}) {
   };
 }
 
+/* "Show Bank Details On challan" toggle — backend FeeChallanSettings me abhi ye
+   field nahi hai. Jab tak backend add na kare, iska value localStorage me rakhte
+   hain (per-branch) taake toggle persist ho aur challan tak pahunche. Backend jab
+   ye field bhejne lage to WAHI authority hoga (LS overlay skip ho jaata hai). */
+function bankDetailsLsKey() { return `fee.showBankDetails.${feeSettingsBranchID()}`; }
+function readBankDetailsLs() {
+  try { const v = localStorage.getItem(bankDetailsLsKey()); return v == null ? null : (v === '1' || v === 'true'); }
+  catch { return null; }
+}
+function writeBankDetailsLs(on) {
+  try { localStorage.setItem(bankDetailsLsKey(), on ? '1' : '0'); } catch { /* ignore */ }
+}
+function apiRowHasBankField(row) {
+  if (!row) return false;
+  /* Sirf ASLI boolean ko backend-authority maano — `bankDetails: null` (jab tak
+     backend save wire nahi karta) ko nahi, warna localStorage fallback nazar-andaaz
+     ho kar toggle hamesha OFF padh jaata. */
+  return [row.bankDetails, row.showBankDetails, row.showBankDetailsOnChallan, row.showBankDetail]
+    .some(v => typeof v === 'boolean');
+}
+
 export async function getFeeSettings() {
   const branchID = feeSettingsBranchID();
   const res = await fetch(buildUrl(`/api/FeeChallanSettings/get-all?branchId=${branchID}`), {
@@ -527,7 +637,13 @@ export async function getFeeSettings() {
 
   const rows = Array.isArray(json?.data) ? json.data : [];
   /* Empty data = branch has never saved its challan settings → everything off. */
-  return rows.length ? mapFeeSettingsFromApi(rows[0]) : blankFeeSettings();
+  const settings = rows.length ? mapFeeSettingsFromApi(rows[0]) : blankFeeSettings();
+  /* Bank-details toggle: backend field na ho to localStorage se overlay. */
+  if (!rows.length || !apiRowHasBankField(rows[0])) {
+    const ls = readBankDetailsLs();
+    if (ls != null) settings.showBankDetails = ls;
+  }
+  return settings;
 }
 
 /* Kaunse challan ban chuke hain — ye khali Set se shuru hota hai aur screen
@@ -683,9 +799,15 @@ export async function saveStudentTransport(classKey, reg, payload) {
     returnedId = match?.id || 0;
   }
   const saved = returnedId ? await getTransportFeeSetup(returnedId) : mapTransportSetupFromApi(json?.data || body);
-  return { classKey, reg, ...saved };
+  return {
+    classKey, reg, ...saved,
+    route: saved.route || payload.route || '',
+    vehicleId: saved.vehicleID ? String(saved.vehicleID) : (payload.vehicleId || ''),
+  };
 }
 export async function saveFeeSettings(payload) {
+  /* Bank-details toggle localStorage me bhi save — backend field aane tak persist rahe. */
+  writeBankDetailsLs(payload?.showBankDetails === true);
   const body = mapFeeSettingsToApi(payload);
   const res = await fetch(buildUrl('/api/FeeChallanSettings/save'), {
     method: 'POST',
