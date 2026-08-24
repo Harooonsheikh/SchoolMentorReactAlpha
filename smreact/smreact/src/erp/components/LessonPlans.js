@@ -3388,24 +3388,74 @@ onClose();
   }
 };
 
+/* Weeks Required update karta hai — POST /api/lpupdateweekrequired.
+
+   Swagger par is route ka body SIRF teen field leta hai:
+       { branchID: 0, unitName: "string", weekRequired: "string" }
+
+   Yahi asal kharabi thi. Pehle hum bhej rahe thay:
+       { id, termBreakupID, unitNumber, unitName, weekRequired, action }
+   Yani jis EK field par yeh API row dhoondti hai — `branchID` — wohi payload
+   me tha hi nahi (API ki taraf 0 ban jata tha), aur baqi saara kuch API
+   padhti hi nahi. Is liye call "chalti" thi magar koi row match hi nahi hoti
+   thi aur weeks jyun ke tyun rehte thay.
+
+   Doosri baat: jawab kabhi dekha hi nahi jata tha (`await fetch(...)` ka
+   nateeja phenk diya jata tha), is liye "Weeks required updated" har haal me
+   green dikhta tha — nakaami bhi kaamyabi lagti thi. Ab readApiJson se guzarta
+   hai, wahi jo is file ki baqi calls par hai.
+
+   NOTE — API sirf branchID + unitName par chalti hai: na class, na section, na
+   term, na subject, na unit number. Yani ek hi branch me agar do units ka naam
+   ek jaisa hai to dono ke weeks badal jayenge. Yeh backend ka faisla hai; jis
+   din route me baqi filters aa jayein, sirf yeh payload barhana hoga. */
 const updateWeekRequired = async unit => {
-  const breakupId = await ensureTermBreakupID();
+  const unitName = String(unit.unitName || '').trim();
 
-  await fetch(buildUrl('/api/lpupdateweekrequired'), {
-    method: 'POST',
-    headers: getAuthHeaders(),
-    body: JSON.stringify({
-      id: unit.detailID || 0,
-      termBreakupID: breakupId,
-      unitNumber: unit.unitNum,
-      unitName: unit.unitName,
-      weekRequired: unit.weeksRequired,
-      action: 'update',
-    }),
-  });
+  if (!unitName) {
+    toast('Unit Name is required', 'error');
+    return;
+  }
+  if (Number(unit.weeksRequired) <= 0) {
+    toast('Weeks Required must be greater than 0', 'error');
+    return;
+  }
+  /* Jo unit abhi save hi na hui ho uski DB me koi row hai hi nahi — update
+     karne ko kuch nahi milega. */
+  const saved = Boolean(Number(unit.detailID) || (unit.topics || []).some(t => Number(t.detailID)));
+  if (!saved) {
+    toast('Save the unit first, then update weeks', 'error');
+    return;
+  }
 
-  toast('Weeks required updated', 'success');
-  await loadTermBreakup();
+  /* Bilkul wahi teen field jo swagger maangta hai — na kam, na zyada. */
+  const payload = {
+    branchID: Number(termsBranchID()) || 0,
+    unitName,
+    weekRequired: String(unit.weeksRequired ?? '0'),
+  };
+
+  console.log('lpupdateweekrequired payload:', payload);
+
+  setSavingBreakup(true);
+  try {
+    const res = await fetch(buildUrl('/api/lpupdateweekrequired'), {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(payload),
+    });
+
+    const json = await readApiJson(res);
+    console.log('lpupdateweekrequired response:', json);
+
+    toast('Weeks required updated', 'success');
+    await loadTermBreakup();
+  } catch (e) {
+    console.error('Error updating weeks required:', e);
+    if (!e.isSessionError) toast(e.serverMessage || e.message || 'Could not update weeks required', 'error');
+  } finally {
+    setSavingBreakup(false);
+  }
 };
 
 const deleteDetail = async ({ unit, topic }) => {
@@ -3542,41 +3592,20 @@ const deleteDetail = async ({ unit, topic }) => {
                       style={{ textAlign: 'center' }}
                       onChange={e => updateUnit(u.id, 'weeksRequired', e.target.value)} />
                   </div>
+                  {/* Upar sirf Update Week Required — "Save unit" ab neeche
+                      topic row me Delete topic ke saath hai. */}
                   <div className="tbm-unit-top-btns">
-                   <Tooltip text={
-  !String(u.unitNum || '').trim() ? 'Unit Number is required' :
-  !String(u.unitName || '').trim() ? 'Unit Name is required' :
-  Number(u.weeksRequired) <= 0 ? 'Weeks Required must be greater than 0' :
-  'Save unit'
-}>
-  <button
-    className="tbm-unit-save-btn"
-    disabled={
-      savingBreakup ||
-      !String(u.unitNum || '').trim() ||
-      !String(u.unitName || '').trim() ||
-      Number(u.weeksRequired) <= 0
-    }
-    style={{
-      opacity: (
-        !String(u.unitNum || '').trim() ||
-        !String(u.unitName || '').trim() ||
-        Number(u.weeksRequired) <= 0
-      ) ? 0.4 : 1,
-      cursor: (
-        !String(u.unitNum || '').trim() ||
-        !String(u.unitName || '').trim() ||
-        Number(u.weeksRequired) <= 0
-      ) ? 'not-allowed' : 'pointer',
-    }}
-    onClick={() => saveUnitDetails(u)}
-  >
-    <i className="fa-solid fa-floppy-disk"></i>
-  </button>
-</Tooltip>
-                    <Tooltip text="Update Week Required"><button className="tbm-unit-save-btn"
-                      style={{ borderColor: 'rgba(30,58,138,.25)', background: 'rgba(30,58,138,.07)', color: '#1E3A8A' }}
-                     //delete button replace with update button
+                    <Tooltip text={
+                      Number(u.weeksRequired) <= 0
+                        ? 'Weeks Required must be greater than 0'
+                        : 'Update Week Required'
+                    }><button className="tbm-unit-save-btn"
+                      disabled={savingBreakup || Number(u.weeksRequired) <= 0}
+                      style={{
+                        borderColor: 'rgba(30,58,138,.25)', background: 'rgba(30,58,138,.07)', color: '#1E3A8A',
+                        opacity: Number(u.weeksRequired) <= 0 ? 0.4 : 1,
+                        cursor: Number(u.weeksRequired) <= 0 ? 'not-allowed' : 'pointer',
+                      }}
                       onClick={() => updateWeekRequired(u)}>
                       <i className="fa-solid fa-pen"></i>
                     </button></Tooltip>
@@ -3601,6 +3630,41 @@ const deleteDetail = async ({ unit, topic }) => {
                           onChange={e => updateTopic(u.id, t.id, 'periodsRequired', e.target.value)} />
                       </div>
                       <div className="tbm-topic-action-cell">
+                        {/* save unit — pehle upar unit row me tha, ab yahan
+                            Delete topic se PEHLE. Kaam wahi hai: poori unit
+                            (uske saare topics) save karta hai, sirf ek topic
+                            nahi. */}
+                        <Tooltip text={
+                          !String(u.unitNum || '').trim() ? 'Unit Number is required' :
+                          !String(u.unitName || '').trim() ? 'Unit Name is required' :
+                          Number(u.weeksRequired) <= 0 ? 'Weeks Required must be greater than 0' :
+                          'Save unit'
+                        }>
+                          <button
+                            className="tbm-unit-save-btn"
+                            disabled={
+                              savingBreakup ||
+                              !String(u.unitNum || '').trim() ||
+                              !String(u.unitName || '').trim() ||
+                              Number(u.weeksRequired) <= 0
+                            }
+                            style={{
+                              opacity: (
+                                !String(u.unitNum || '').trim() ||
+                                !String(u.unitName || '').trim() ||
+                                Number(u.weeksRequired) <= 0
+                              ) ? 0.4 : 1,
+                              cursor: (
+                                !String(u.unitNum || '').trim() ||
+                                !String(u.unitName || '').trim() ||
+                                Number(u.weeksRequired) <= 0
+                              ) ? 'not-allowed' : 'pointer',
+                            }}
+                            onClick={() => saveUnitDetails(u)}
+                          >
+                            <i className="fa-solid fa-floppy-disk"></i>
+                          </button>
+                        </Tooltip>
                         {/* delete topics */}
                         <Tooltip text="Delete topic"><button className="tbm-topic-del-btn"
                         disabled={savingBreakup}
@@ -11145,6 +11209,8 @@ const LP_CSS = `
   display: flex;
   align-items: flex-end;
   justify-content: center;
+  /* Delete topic + Save unit — do button, is liye beech me thodi jagah. */
+  gap: 6px;
   height: 100%;
   padding-top: 18px;
 }
@@ -11196,7 +11262,7 @@ const LP_CSS = `
   }
   .tbm-unit-top > div { width:100% !important; }
   .tbm-unit-top-btns { flex-direction:row; gap:8px; width:100%; }
-  .tbm-unit-save-btn { flex:1; width:auto; border-radius:var(--radius-md); }
+  .tbm-unit-top-btns .tbm-unit-save-btn { flex:1; width:auto; border-radius:var(--radius-md); }
 
   .tbm-topic-row { grid-template-columns:1fr auto !important; gap:8px; }
   .tbm-topic-row > div:nth-child(2) { display:none; }
