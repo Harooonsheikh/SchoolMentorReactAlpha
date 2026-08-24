@@ -132,20 +132,41 @@ export default function SchoolPayment({ toast }) {
   useEffect(() => { payRef.current = payStore; }, [payStore]);
 
   /* Ek key ka kaam sirf EK baar; chal raha ho to doosra caller usi promise par
-     wait karta hai (React ke double-effect par bhi ek hi call jati hai). */
-  const runOnce = useCallback((key, work, errMsg) => {
+     wait karta hai (React ke double-effect par bhi ek hi call jati hai).
+
+     `stamp` batata hai ke jo call chal rahi hai wo KIS cheez ki hai —
+     challans aur receiving par yeh chuna hua MAHINA hai (setup / banks par
+     mahina lagta hi nahi, is liye wahan khali).
+
+     Yeh laazmi hai: pehle sirf "koi call chal rahi hai?" dekha jata tha. August
+     ki call abhi chal rahi ho aur user September kar de, to naya caller USI
+     August wali call par lag jata tha — September ka kaam kabhi chalta hi nahi
+     tha, August ka jawab September ki table me bhar jata, aur loadedRef "load ho
+     chuka" mark kar deta, is liye dobara koi call bhi nahi jati thi. Wahi wajah
+     thi ke August ki receiving delete karne ke baad bhi September par wahi
+     Total Dues aur Received Amount dikhte rehte thay.
+
+     Ab stamp alag ho to purani call chhor kar nayi chalti hai, aur purani ka
+     jawab (jo ab kisi aur mahine ka hai) chup-chaap phenk diya jata hai. */
+  const runOnce = useCallback((key, work, errMsg, stamp = '') => {
     if (loadedRef.current[key]) return Promise.resolve();
-    if (inflightRef.current[key]) return inflightRef.current[key];
+    const running = inflightRef.current[key];
+    if (running && running.stamp === stamp) return running.job;
     setTabBusy((prev) => ({ ...prev, [key]: true }));
-    const job = work()
-      .then(() => { loadedRef.current[key] = true; })
-      .catch((err) => { toastRef.current?.(err?.message || errMsg, 'warn'); })
+    /* `entry` hi is call ki shanakht hai — har jagah pehle yeh dekha jata hai
+       ke abhi bhi yehi taaza call hai, warna uska jawab bekaar hai. */
+    const entry = { stamp };
+    const mine = () => inflightRef.current[key] === entry;
+    entry.job = work()
+      .then(() => { if (mine()) loadedRef.current[key] = true; })
+      .catch((err) => { if (mine()) toastRef.current?.(err?.message || errMsg, 'warn'); })
       .finally(() => {
+        if (!mine()) return;
         inflightRef.current[key] = null;
         setTabBusy((prev) => ({ ...prev, [key]: false }));
       });
-    inflightRef.current[key] = job;
-    return job;
+    inflightRef.current[key] = entry;
+    return entry.job;
   }, []);
 
   /* Payment Setup tab → har branch ka GET /summary */
@@ -174,8 +195,12 @@ export default function SchoolPayment({ toast }) {
     if (loadedRef.current.challans) return;
     const setups = await ensureSetups(rows);
     await runOnce('challans', async () => {
-      setChStore(await paymentsApi.listChallans(rows, setups, period));
-    }, 'Could not load challans');
+      const fresh = await paymentsApi.listChallans(rows, setups, period);
+      /* Jawab aane tak mahina badal gaya ho to yeh rows us naye mahine ki
+         nahi hain — store me daalna sirf ghalat aadad dikhata hai. */
+      if (challanPeriodRef.current !== key) return;
+      setChStore(fresh);
+    }, 'Could not load challans', key);
   }, [ensureSetups, runOnce, period]);
 
   /* Receiving tab → receiving GET.
@@ -204,9 +229,12 @@ export default function SchoolPayment({ toast }) {
         /* "Total Dues" column ke liye — pichhle mahine ka bacha hua. */
         paymentsApi.listPreviousDues(rows, setups, period).catch(() => ({})),
       ]);
+      /* Challans wali baat yahan bhi: mahina badal chuka ho to yeh August ka
+         jawab hai, September ki table ka nahi. */
+      if (recvPeriodRef.current !== key) return;
       setRecvStore(recvs);
       setPrevDuesStore(prevDues);
-    }, 'Could not load receiving records');
+    }, 'Could not load receiving records', key);
   }, [ensureChallans, runOnce, period]);
 
   /* Challan slip ka Download → branch ki apni bank details.

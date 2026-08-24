@@ -590,13 +590,22 @@ export function deleteChallan({ branchId, id }) {
 /** Ek receiving row → wohi shape jo Receiving tab / slip padhte hain. */
 export function receivingRowToUi(r) {
   const day = isoDay(r?.receivingDate);
+  /* Row KIS mahine ki hai — bilkul ledgerRowToChallan wala qaida.
+     Row par month/year aayein to wahi; na aayein to receiving date se.
+
+     Fallback laazmi hai: samePeriod ka usool hai "mahina maloom na ho to
+     filter mat lagao", is liye month = 0 wali row HAR mahine me match kar
+     jati thi — August ki receiving September (aur baqi har mahine) ki table
+     me bhi dikhti rehti thi. Ab har row ka mahina hamesha maloom hota hai,
+     is liye wo sirf apne mahine me aati hai. */
+  const rowPeriod = periodOf(day);
   return {
     id: num(r?.id),
     schoolPaymentId: num(r?.schoolPaymentID),
     paymentLedgerId: num(r?.paymentLedgerID),
     branchId: num(r?.currentBranchID),
-    month: num(r?.month),
-    year: num(r?.year),
+    month: num(r?.month) || rowPeriod.month,
+    year: num(r?.year) || rowPeriod.year,
     payableAmount: num(r?.payableAmount),
     discount: num(r?.discount),
     netPayable: num(r?.netPayable),
