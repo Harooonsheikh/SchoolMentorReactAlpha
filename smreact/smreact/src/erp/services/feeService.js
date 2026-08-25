@@ -993,6 +993,62 @@ export function withAdvanceRow(rows, advApplied, advName, { ledgerId, branchId, 
   }];
 }
 
+/* Jab kisi head par receiving hui magar wo head challan ke detailRows me MAUJOOD NAHI
+   (e.g. Transport jo Transport Setup fallback se receiving modal me aata hai) — us ki
+   wasooli kahin persist nahi hoti thi (baseRows sirf maujooda rows map karta hai), is
+   liye transaction details me us head ka Received 0 reh jaata. Yahan aisi har missing
+   head ke liye ek NAYI detailRow (id:0 → backend INSERT) banate hain taake receiving
+   ledger me record ho jaye. `newHeads` = [{ name, std, disc, recv }]. */
+export function withNewHeadRows(rows, newHeads, { ledgerId, branchId, userId, now } = {}) {
+  const list = Array.isArray(rows) ? rows : [];
+  const adds = (Array.isArray(newHeads) ? newHeads : []).filter(h => h && Math.round(Number(h.recv) || 0) > 0);
+  if (!adds.length) return list;
+  const stamp = now || new Date().toISOString();
+  const blid = Number(ledgerId) || Number(list.find(x => Number(x?.blid))?.blid) || 0;
+  const rowBranch = list.find(x => Number(x?.branchId ?? x?.branchID));
+  const branch = Number(branchId)
+    || Number(rowBranch?.branchId ?? rowBranch?.branchID)
+    || Number(sessionStorage.getItem('branchID')) || 1;
+  const norm = (s) => String(s || '').toLowerCase().trim();
+  const out = [...list];
+  adds.forEach(h => {
+    const name = String(h.name || '').trim();
+    if (!name) return;
+    /* Agar is naam ki row is dauran ban chuki (ya pehle se thi) to dobara na banao —
+       uske badle usi row me received add kar do. */
+    const idx = out.findIndex(r => norm(r.subHead || r.head) === norm(name));
+    const std  = Math.max(0, Math.round(Number(h.std) || 0));
+    const disc = Math.max(0, Math.round(Number(h.disc) || 0));
+    const recv = Math.round(Number(h.recv) || 0);
+    if (idx >= 0) {
+      const r = out[idx];
+      const received = Math.max(0, (Number(r.receivedAmount) || 0) + recv);
+      out[idx] = { ...r, receivedAmount: received, pendingorAdv: (Number(r.challanAmount) || 0) - (Number(r.discount) || 0) - received, modifiedAt: stamp, modifiedBy: userId };
+      return;
+    }
+    const received = Math.max(0, recv);
+    out.push({
+      id: 0,
+      blid,
+      branchId: branch,
+      /* Fee head ka `head` hamesha "Account Payable" hota hai (challan generation jaisa),
+         subHead me asal head ka naam (e.g. Transport). */
+      head: 'Account Payable',
+      subHead: name,
+      challanAmount: std,
+      discount: disc,
+      receivedAmount: received,
+      pendingorAdv: (std - disc) - received,
+      createdAt: stamp,
+      createdBy: userId,
+      modifiedAt: stamp,
+      modifiedBy: userId,
+      isActive: true,
+    });
+  });
+  return out;
+}
+
 const dayMs = 24 * 60 * 60 * 1000;
 const dayStart = (v) => {
   const s = String(v || '').slice(0, 10);

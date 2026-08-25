@@ -438,42 +438,7 @@ function StudentFeeSetup({ toast }) {
    student roster with per-student transport fee editor. Route and
    amount can be edited per student via a small modal.
    ═══════════════════════════════════════════════════════════════════ */
-/* Transport Fee Setup = do sub-tabs:
-     • Transport Fee Assignment — har student ka route/vehicle/fee.
-     • Vehicles — transport fleet ka register (add/edit/delete). */
 function TransportFeeSetup({ toast }) {
-  const [transSeg, setTransSeg] = useState('assignment');
-  return (
-    <>
-      <div className="fee-seg">
-        <Tooltip text="Assign route, vehicle & transport fee to individual students">
-          <button
-            className={`fee-seg-btn${transSeg === 'assignment' ? ' active' : ''}`}
-            onClick={() => setTransSeg('assignment')}
-          >
-            <i className="fa-solid fa-user-graduate"></i> Transport Fee Assignment
-          </button>
-        </Tooltip>
-        <Tooltip text="Add & manage the transport vehicle fleet">
-          <button
-            className={`fee-seg-btn${transSeg === 'vehicles' ? ' active' : ''}`}
-            onClick={() => setTransSeg('vehicles')}
-          >
-            <i className="fa-solid fa-bus-simple"></i> Vehicles
-          </button>
-        </Tooltip>
-      </div>
-
-      {transSeg === 'assignment'
-        ? <TransportFeeAssignment toast={toast} />
-        : <VehicleManagement toast={toast} />}
-    </>
-  );
-}
-
-/* Transport Fee Assignment — class+section table, per-row expandable
-   student roster with per-student route / vehicle / transport-fee editor. */
-function TransportFeeAssignment({ toast }) {
   const { can } = usePermissions();
   const canTfEdit     = can('Fee', 'Transport Fee Setup', 'Edit');
   const canTfDownload = can('Fee', 'Transport Fee Setup', 'Download');
@@ -488,7 +453,7 @@ function TransportFeeAssignment({ toast }) {
   const openEdit  = useCallback((classKey, student) => setEditing({ classKey, student }), []);
   const closeEdit = useCallback(() => setEditing(null), []);
 
-  const saveStudent = useCallback(async ({ route, amount, vehicleId }) => {
+  const saveStudent = useCallback(async ({ amount }) => {
     if (!editing) return;
     const { classKey, student } = editing;
     const classMeta = classes.find(c => c.key === classKey) || {};
@@ -499,8 +464,6 @@ function TransportFeeAssignment({ toast }) {
         gradeID: student.gradeID || classMeta._gradeId,
         sectionID: student.sectionID || classMeta._sectionId,
         amount,
-        route,
-        vehicleId,
         createdDate: student.transportSetup?.createdDate,
         createdBy: student.transportSetup?.createdBy,
         isActive: true,
@@ -511,8 +474,6 @@ function TransportFeeAssignment({ toast }) {
               ...s,
               transportSetupId: saved.id || s.transportSetupId,
               transport: Math.max(0, Number(saved.amount ?? amount) || 0),
-              route: (route || '').trim(),
-              vehicleId: vehicleId || '',
               transportSetup: saved,
             }
           : s
@@ -531,49 +492,6 @@ function TransportFeeAssignment({ toast }) {
     setReportHtml({ title: `Transport Fee — ${c.cls} (${c.sec})`, html });
   }, [transportMap, branchHeader]);
 
-  /* ── Smart search (name / father name / reg) — FeeChallans wali search jaisi.
-     Result par us student ki class khul jaati hai aur uski row tak scroll + flash. */
-  const [searchQ, setSearchQ]       = useState('');
-  const [searchOpen, setSearchOpen] = useState(false);
-  const searchAnchorRef             = useRef(null);
-  useEffect(() => {
-    if (!searchOpen) return undefined;
-    const onDown = (e) => {
-      if (searchAnchorRef.current && !searchAnchorRef.current.contains(e.target)) setSearchOpen(false);
-    };
-    document.addEventListener('mousedown', onDown);
-    return () => document.removeEventListener('mousedown', onDown);
-  }, [searchOpen]);
-
-  const matches = (() => {
-    const q = searchQ.trim().toLowerCase();
-    if (!q) return [];
-    const out = [];
-    classes.forEach(c => {
-      (transportMap[c.key] || []).forEach(s => {
-        const hay = `${s.name} ${s.father || ''} ${s.reg}`.toLowerCase();
-        if (hay.includes(q)) out.push({ c, s });
-      });
-    });
-    return out.slice(0, 8);
-  })();
-
-  const clearSearch = () => { setSearchQ(''); setSearchOpen(false); };
-
-  const focusOnStudent = (c, s) => {
-    setOpenKey(c.key);          // us student ki class expand karo
-    clearSearch();
-    toast('Jumped to student', 'info');
-    setTimeout(() => {
-      const el = document.getElementById(`fee-tst-${c.key}-${s.reg}`);
-      if (el) {
-        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        el.classList.add('fee-st-flash');
-        setTimeout(() => el.classList.remove('fee-st-flash'), 1700);
-      }
-    }, 380);
-  };
-
   return (
     <>
       <div className="fee-info">
@@ -582,77 +500,6 @@ function TransportFeeAssignment({ toast }) {
           Transport fee can be different for each student. Open a class to set or update
           individual transport charges.
         </span>
-      </div>
-
-      {/* Student smart-search */}
-      <div className="fee-section fee-section--overflow">
-        <div className="fee-section-body">
-          <div className="fee-searchrow">
-            <div className="fee-field" style={{ width: '100%' }}>
-              <span className="fee-label">Search Student</span>
-              <div className="fee-search-anchor" ref={searchAnchorRef}>
-                <div className="fee-search-box">
-                  <i className="fa-solid fa-magnifying-glass"></i>
-                  <input
-                    value={searchQ}
-                    autoComplete="off"
-                    onChange={e => { setSearchQ(e.target.value); setSearchOpen(true); }}
-                    onFocus={() => setSearchOpen(true)}
-                    placeholder="Search by Name, Father Name or Registration Number"
-                  />
-                  {searchQ && (
-                    <Tooltip text="Clear search">
-                      <button
-                        type="button"
-                        className="fee-search-clear"
-                        onClick={clearSearch}
-                        aria-label="Clear search"
-                      >
-                        <i className="fa-solid fa-xmark"></i>
-                      </button>
-                    </Tooltip>
-                  )}
-                </div>
-                <div className={`fee-search-results${searchOpen && searchQ ? ' open' : ''}`}>
-                  {matches.length === 0 ? (
-                    <div className="fee-sr-empty">No students found for "<b>{searchQ}</b>"</div>
-                  ) : matches.map(({ c, s }) => {
-                    const initial = (s.name || '').trim()[0] || '?';
-                    return (
-                      <button
-                        type="button"
-                        key={`${c.key}-${s.reg}`}
-                        className="fee-sr-item"
-                        onClick={() => focusOnStudent(c, s)}
-                      >
-                        <div className="fee-sr-av">{initial.toUpperCase()}</div>
-                        <div className="fee-sr-main">
-                          <div className="fee-sr-name">
-                            {s.name}
-                            {+s.transport > 0
-                              ? <span className="fee-chip fee-chip-active"><i className="fa-solid fa-bus"></i> {money(s.transport)}</span>
-                              : <span className="fee-chip fee-chip-due"><i className="fa-solid fa-circle-exclamation"></i> No transport</span>}
-                          </div>
-                          <div className="fee-sr-meta">
-                            <span><b>Father:</b> {s.father || '—'}</span>
-                            <span><b>Class:</b> {c.cls}</span>
-                            <span><b>Section:</b> {c.sec}</span>
-                            <span><b>Reg:</b> {s.reg}</span>
-                          </div>
-                        </div>
-                        <div className="fee-sr-go"><i className="fa-solid fa-arrow-right"></i></div>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-              <div className="fee-hint">
-                <i className="fa-solid fa-circle-info"></i>
-                <span>Search any student by name, father name, or registration number.</span>
-              </div>
-            </div>
-          </div>
-        </div>
       </div>
 
       <div className="fee-section">
@@ -718,21 +565,19 @@ function TransportFeeAssignment({ toast }) {
                           <th>Reg No</th>
                           <th>Name</th>
                           <th>Father Name</th>
-                          <th>Route / Area</th>
                           <th className="fee-right">Transport Fee</th>
                           <th className="fee-center">Action</th>
                         </tr>
                       </thead>
                       <tbody>
                         {students.length === 0 ? (
-                          <tr><td colSpan="7" className="fee-stbl-empty">No students enrolled in this section.</td></tr>
+                          <tr><td colSpan="6" className="fee-stbl-empty">No students enrolled in this section.</td></tr>
                         ) : students.map((s, j) => (
-                          <tr key={s.reg || s.studentID || `${s.name}-${j}`} id={`fee-tst-${c.key}-${s.reg}`}>
+                          <tr key={s.reg || s.studentID || `${s.name}-${j}`}>
                             <td className="fee-num">{j + 1}</td>
                             <td>{s.reg}</td>
                             <td><b>{s.name}</b></td>
                             <td>{s.father}</td>
-                            <td>{s.route ? s.route : <span className="fee-muted-dash">—</span>}</td>
                             <td className="fee-right">
                               {+s.transport > 0
                                 ? <b>{money(s.transport)}</b>
@@ -750,7 +595,7 @@ function TransportFeeAssignment({ toast }) {
                         ))}
                         {students.length > 0 && (
                           <tr className="fee-stbl-foot">
-                            <td colSpan="5"><b>Monthly transport collection</b></td>
+                            <td colSpan="4"><b>Monthly transport collection</b></td>
                             <td className="fee-right">
                               <b>{money(students.reduce((s, x) => s + (+x.transport || 0), 0))}</b>
                             </td>
@@ -790,18 +635,11 @@ function TransportFeeAssignment({ toast }) {
 
 /* ─── Update Transport Fee modal ─── */
 function TransportEditModal({ open, classMeta, student, onClose, onSave, toast }) {
-  /* Modal khulte hi is branch ki poori vehicle list dobara load — taake abhi
-     abhi add hui gaari bhi dropdown me aa jaye. */
-  const { data: vehicles = [] } = useAsync(feeService.getVehicles, [open]);
-  const [route, setRoute]         = useState('');
-  const [amount, setAmount]       = useState('0');
-  const [vehicleId, setVehicleId] = useState('');
+  const [amount, setAmount] = useState('0');
 
   useEffect(() => {
     if (open && student) {
-      setRoute(student.route || '');
       setAmount(String(student.transport ?? 0));
-      setVehicleId(student.vehicleId || '');
     }
   }, [open, student]);
 
@@ -824,11 +662,7 @@ function TransportEditModal({ open, classMeta, student, onClose, onSave, toast }
       toast('Transport fee must be a non-negative number', 'error');
       return;
     }
-    if (num > 0 && !route.trim()) {
-      toast('Enter a route / area when transport fee is set', 'error');
-      return;
-    }
-    onSave({ route, amount: num, vehicleId });
+    onSave({ amount: num });
   };
 
   return createPortal(
@@ -856,37 +690,9 @@ function TransportEditModal({ open, classMeta, student, onClose, onSave, toast }
             <i className="fa-solid fa-circle-info"></i>
             <span>
               Setting an amount of <strong>0</strong> means this student doesn't use transport.
-              When an amount is set, enter the route or area name.
             </span>
           </div>
 
-          <div className="fee-field-stack">
-            <label className="fee-label">Transport Area / Route</label>
-            <input
-              className="fee-input"
-              value={route}
-              placeholder="e.g. Route 4 — Satellite Town"
-              onChange={e => setRoute(e.target.value)}
-            />
-          </div>
-          <div className="fee-field-stack">
-            <label className="fee-label">Vehicle</label>
-            <div className="fee-select-wrap">
-              <select className="fee-select" value={vehicleId} onChange={e => setVehicleId(e.target.value)}>
-                {vehicles.length === 0 ? (
-                  <option value="">No vehicles available. Please add a vehicle first.</option>
-                ) : (
-                  <>
-                    <option value="">— No vehicle assigned —</option>
-                    {vehicles.map(v => (
-                      <option key={v.id} value={v.id}>{v.name} — {v.regNo}</option>
-                    ))}
-                  </>
-                )}
-              </select>
-              <i className="fa-solid fa-chevron-down"></i>
-            </div>
-          </div>
           <div className="fee-field-stack">
             <label className="fee-label">Transport Fee Amount (Rs.)</label>
             <input
@@ -914,326 +720,6 @@ function TransportEditModal({ open, classMeta, student, onClose, onSave, toast }
     </div>,
     document.body
   );
-}
-
-/* ─── Vehicle Management (Transport Fee Setup → Vehicles sub-tab) ───
-   Transport fleet ka register: add / edit / delete vehicles. Vehicle
-   kisi student ko "Transport Fee Assignment" ke edit modal se assign
-   hoti hai — yahan se vehicle delete karne par student ka route/fee
-   nahi chhinta, bas agli baar naya vehicle chunna padta hai.
-   NOTE: backend endpoints aane tak fleet localStorage me hai (dekhein
-   feeService getVehicles/saveVehicle/deleteVehicle). */
-function VehicleManagement({ toast }) {
-  const { data: vehicles = [], loading, error, refetch } = useAsync(feeService.getVehicles, []);
-  const [editing, setEditing]   = useState(null); // {} = new, {...vehicle} = edit
-  const [confirm, setConfirm]   = useState(null);
-
-  const openAdd   = useCallback(() => setEditing({}), []);
-  const openEdit  = useCallback((v) => setEditing(v), []);
-  const closeEdit = useCallback(() => setEditing(null), []);
-
-  const saveVehicle = useCallback(async (payload) => {
-    const isNew = !editing?.id;
-    try {
-      await feeService.saveVehicle({ id: editing?.id, ...payload });
-      await refetch();          // server se real id ke saath dobara load
-      closeEdit();
-      toast(isNew ? 'Vehicle added' : 'Vehicle updated', 'success');
-    } catch (e) {
-      toast(e.message || 'Could not save vehicle', 'error');
-    }
-  }, [editing, refetch, closeEdit, toast]);
-
-  const requestDelete = (v) => {
-    setConfirm({
-      title:   'Delete this vehicle?',
-      message: <span><strong>{v.name}</strong> ({v.regNo}) will be removed from the fleet.</span>,
-      hint:    "Students already assigned to this vehicle keep their route & transport fee — they'll just need a new vehicle picked next time their record is edited.",
-      onConfirm: async () => {
-        try {
-          await feeService.deleteVehicle(v.id);
-          await refetch();
-          toast('Vehicle removed', 'success');
-        } catch (e) {
-          toast(e.message || 'Could not delete vehicle', 'error');
-        }
-      },
-    });
-  };
-
-  return (
-    <>
-      <div className="fee-info">
-        <i className="fa-solid fa-circle-info"></i>
-        <span>
-          Add the vehicles used for student transport here, then assign one to each student
-          from <strong>Transport Fee Assignment</strong>.
-        </span>
-      </div>
-
-      <RepLoadState loading={loading} error={error && (error.message || 'Could not load vehicles')} />
-
-      <div className="fee-section">
-        <div className="fee-section-header">
-          <div className="fee-section-title">
-            <div className="fee-section-icon"><i className="fa-solid fa-bus-simple"></i></div>
-            <div>
-              <div className="fee-section-name">Vehicle Fleet</div>
-              <div className="fee-section-sub">{vehicles.length} vehicle{vehicles.length === 1 ? '' : 's'} added</div>
-            </div>
-          </div>
-          <Tooltip text="Add a new vehicle to the fleet">
-            <button className="fee-btn fee-btn-primary fee-btn-sm" onClick={openAdd}>
-              <i className="fa-solid fa-plus"></i> Add New Vehicle
-            </button>
-          </Tooltip>
-        </div>
-
-        <div className="fee-section-body">
-          <div className="fee-stbl-wrap">
-            <table className="fee-stbl">
-              <thead>
-                <tr>
-                  <th>#</th>
-                  <th>Vehicle Name / Type</th>
-                  <th>Registration No.</th>
-                  <th>Assigned Route</th>
-                  <th className="fee-center">Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {vehicles.length === 0 ? (
-                  <tr><td colSpan="5" className="fee-stbl-empty">No vehicles added yet. Click <strong>Add New Vehicle</strong> to get started.</td></tr>
-                ) : vehicles.map((v, i) => (
-                  <tr key={v.id}>
-                    <td className="fee-num">{i + 1}</td>
-                    <td><b>{v.name}</b></td>
-                    <td>{v.regNo}</td>
-                    <td>{v.route ? v.route : <span className="fee-muted-dash">—</span>}</td>
-                    <td className="fee-center fee-st-actions">
-                      <Tooltip text={`Edit ${v.name}`}>
-                        <button className="fee-iconbtn" onClick={() => openEdit(v)}>
-                          <i className="fa-solid fa-pen"></i>
-                        </button>
-                      </Tooltip>
-                      <Tooltip text={`Delete ${v.name}`}>
-                        <button className="fee-iconbtn danger" onClick={() => requestDelete(v)}>
-                          <i className="fa-solid fa-trash-can"></i>
-                        </button>
-                      </Tooltip>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-
-      <VehicleEditModal
-        open={!!editing}
-        vehicle={editing}
-        onClose={closeEdit}
-        onSave={saveVehicle}
-        toast={toast}
-      />
-
-      <FeeConfirmDialog cfg={confirm} onClose={() => setConfirm(null)} />
-    </>
-  );
-}
-
-/* ─── Add / Edit Vehicle modal ─── */
-function VehicleEditModal({ open, vehicle, onClose, onSave, toast }) {
-  const [name, setName]   = useState('');
-  const [regNo, setRegNo] = useState('');
-  const [route, setRoute] = useState('');
-
-  useEffect(() => {
-    if (open) {
-      setName(vehicle?.name || '');
-      setRegNo(vehicle?.regNo || '');
-      setRoute(vehicle?.route || '');
-    }
-  }, [open, vehicle]);
-
-  useEffect(() => {
-    if (!open) return undefined;
-    const onKey = e => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', onKey);
-    document.body.style.overflow = 'hidden';
-    return () => {
-      window.removeEventListener('keydown', onKey);
-      document.body.style.overflow = '';
-    };
-  }, [open, onClose]);
-
-  if (!open) return null;
-  const isNew = !vehicle?.id;
-
-  const validateAndSave = () => {
-    if (!name.trim()) { toast('Enter a vehicle name or type', 'error'); return; }
-    if (!regNo.trim()) { toast('Enter the vehicle registration number', 'error'); return; }
-    onSave({ name: name.trim(), regNo: regNo.trim(), route: route.trim() });
-  };
-
-  return createPortal(
-    <div className="fee-overlay open" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="fee-modal sm">
-        <div className="fee-modal-head">
-          <div className="fee-modal-head-title">
-            <div className="fee-modal-head-icon"><i className="fa-solid fa-bus-simple"></i></div>
-            <div>
-              <div className="fee-modal-title">{isNew ? 'Add New Vehicle' : 'Update Vehicle'}</div>
-              <div className="fee-modal-sub">Transport fleet record</div>
-            </div>
-          </div>
-          <Tooltip text="Close">
-            <button className="fee-modal-close" onClick={onClose} aria-label="Close">
-              <i className="fa-solid fa-xmark"></i>
-            </button>
-          </Tooltip>
-        </div>
-
-        <div className="fee-modal-body">
-          <div className="fee-field-stack">
-            <label className="fee-label">Vehicle Name / Type</label>
-            <input
-              className="fee-input"
-              value={name}
-              placeholder="e.g. Bus 1 — Hino"
-              onChange={e => setName(e.target.value)}
-            />
-          </div>
-          <div className="fee-field-stack">
-            <label className="fee-label">Registration Number</label>
-            <input
-              className="fee-input"
-              value={regNo}
-              placeholder="e.g. LEA-4021"
-              onChange={e => setRegNo(e.target.value)}
-            />
-          </div>
-          <div className="fee-field-stack">
-            <label className="fee-label">Assigned Route</label>
-            <input
-              className="fee-input"
-              value={route}
-              placeholder="e.g. Route 1 — Main Road"
-              onChange={e => setRoute(e.target.value)}
-            />
-          </div>
-        </div>
-
-        <div className="fee-modal-foot">
-          <Tooltip text="Discard changes and close">
-            <button className="fee-btn fee-btn-ghost" onClick={onClose}>Cancel</button>
-          </Tooltip>
-          <Tooltip text={isNew ? 'Add this vehicle to the fleet' : 'Save changes to this vehicle'}>
-            <button className="fee-btn fee-btn-primary" onClick={validateAndSave}>
-              <i className="fa-solid fa-floppy-disk"></i> Save
-            </button>
-          </Tooltip>
-        </div>
-      </div>
-    </div>,
-    document.body
-  );
-}
-
-/* Vehicle-wise transport report — har vehicle ke neeche uske assigned
-   students, phir jinke paas vehicle nahi. Style buildTransportReportHTML
-   se milta-julta (feeReportSchool/feeReportLogoHtml helpers reuse). */
-function buildVehicleReportHTML({ vehicles = [], students = [], school = null }) {
-  const meta = feeReportSchool(school);
-  const today = meta.generatedDate
-    ? feeReportDate(meta)
-    : new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
-
-  const cell = 'padding:8px 10px;border-bottom:1px solid #E5E7EB';
-  const rowsFor = (list) => list.map((s, i) => `
-    <tr>
-      <td style="${cell}">${i + 1}</td>
-      <td style="${cell}">${escHtml(s.reg)}</td>
-      <td style="${cell}"><b>${escHtml(s.name)}</b></td>
-      <td style="${cell}">${escHtml(s.route || '—')}</td>
-      <td style="${cell};text-align:right;font-variant-numeric:tabular-nums">${+s.transport > 0 ? `Rs. ${(+s.transport).toLocaleString('en-PK')}` : '<span style="color:#94A3B8">—</span>'}</td>
-    </tr>`).join('');
-
-  const withVeh = students.filter(s => s.vehicleId);
-  const unassigned = students.filter(s => !s.vehicleId && +s.transport > 0);
-
-  const blocks = vehicles.map(v => {
-    const list = withVeh.filter(s => String(s.vehicleId) === String(v.id));
-    const subtotal = list.reduce((a, s) => a + (+s.transport || 0), 0);
-    return `
-    <div style="margin-top:16px">
-      <div style="font-size:13px;font-weight:800;color:#1E3A8A;margin-bottom:4px">
-        <span style="display:inline-block;padding:2px 8px;border:1px solid #BFDBFE;border-radius:8px;background:#EFF6FF">${escHtml(v.name)} — ${escHtml(v.regNo)}</span>
-        ${v.route ? `<span style="font-weight:600;color:#64748B;font-size:11px"> · ${escHtml(v.route)}</span>` : ''}
-        <span style="font-weight:600;color:#64748B;font-size:11px"> · ${list.length} student${list.length === 1 ? '' : 's'}</span>
-      </div>
-      <table><thead><tr>
-        <th style="width:48px">#</th><th style="width:130px">Reg No</th><th>Name</th><th>Route / Area</th><th class="right" style="width:140px">Transport Fee</th>
-      </tr></thead>
-      <tbody>${rowsFor(list) || `<tr><td colspan="5" style="text-align:center;padding:14px;color:#64748B">No students assigned to this vehicle.</td></tr>`}</tbody>
-      ${list.length ? `<tfoot><tr><td colspan="4">Monthly collection</td><td class="right">Rs. ${subtotal.toLocaleString('en-PK')}</td></tr></tfoot>` : ''}
-      </table>
-    </div>`;
-  }).join('');
-
-  const unassignedBlock = unassigned.length ? `
-    <div style="margin-top:16px">
-      <div style="font-size:13px;font-weight:800;color:#B45309;margin-bottom:4px">
-        <span style="display:inline-block;padding:2px 8px;border:1px solid #FDE68A;border-radius:8px;background:#FFFBEB">No vehicle assigned</span>
-        <span style="font-weight:600;color:#64748B;font-size:11px"> · ${unassigned.length} student${unassigned.length === 1 ? '' : 's'}</span>
-      </div>
-      <table><thead><tr>
-        <th style="width:48px">#</th><th style="width:130px">Reg No</th><th>Name</th><th>Route / Area</th><th class="right" style="width:140px">Transport Fee</th>
-      </tr></thead><tbody>${rowsFor(unassigned)}</tbody></table>
-    </div>` : '';
-
-  const grand = withVeh.concat(unassigned).reduce((a, s) => a + (+s.transport || 0), 0);
-
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escHtml(`${meta.name} — Vehicle-wise Transport`)}</title>
-<style>
-  body { margin:0; font-family:'Segoe UI',Arial,sans-serif; color:#0F172A; background:#fff; font-size:13px; }
-  .page { width:210mm; margin:0 auto; padding:18mm 14mm; box-sizing:border-box; }
-  .header { display:flex; justify-content:space-between; align-items:flex-end; border-bottom:2px solid #1E3A8A; padding-bottom:14px; margin-bottom:8px; }
-  .brand { display:flex; align-items:center; gap:12px; }
-  .logo { width:44px; height:44px; border:1px solid #BFDBFE; border-radius:12px; display:flex; align-items:center; justify-content:center; overflow:hidden; color:#1E3A8A; font-weight:800; background:#fff; }
-  .logo img { width:100%; height:100%; object-fit:contain; }
-  .school { font-size:18px; font-weight:800; color:#1E3A8A; letter-spacing:-.01em; }
-  .title  { font-size:14px; font-weight:700; color:#1E40AF; margin-top:6px; }
-  .addr { font-size:10px; color:#64748B; margin-top:3px; max-width:360px; }
-  .meta   { font-size:11px; color:#64748B; text-align:right; line-height:1.55; }
-  table { width:100%; border-collapse:collapse; margin-top:4px; }
-  thead th { background:#EFF6FF; color:#1E3A5F; font-weight:800; text-align:left; padding:8px 10px; border-bottom:2px solid #BFDBFE; font-size:11px; text-transform:uppercase; letter-spacing:.4px; }
-  thead th.right { text-align:right; }
-  tfoot td { padding:8px 10px; font-weight:800; background:#F8FAFF; border-top:2px solid #1E3A8A; }
-  tfoot td.right { text-align:right; }
-  .grand { margin-top:18px; padding:10px 12px; background:#F8FAFF; border:2px solid #1E3A8A; border-radius:10px; font-weight:800; display:flex; justify-content:space-between; }
-  @media print { @page { size:A4; margin:14mm; } body { -webkit-print-color-adjust:exact; print-color-adjust:exact; } }
-</style></head><body>
-<div class="page">
-  <div class="header">
-    <div class="brand">
-      <div class="logo">${feeReportLogoHtml(meta)}</div>
-      <div>
-        <div class="school">${escHtml(meta.name)}</div>
-        <div class="title">Vehicle-wise Transport Report</div>
-        ${meta.address ? `<div class="addr">${escHtml(meta.address)}</div>` : ''}
-        ${meta.session ? `<div class="addr">Academic Session: ${escHtml(meta.session)}</div>` : ''}
-      </div>
-    </div>
-    <div class="meta">Generated: ${escHtml(today)}<br/>By: ${escHtml(meta.generatedBy)}<br/>${vehicles.length} vehicle${vehicles.length === 1 ? '' : 's'} · ${withVeh.length + unassigned.length} student${(withVeh.length + unassigned.length) === 1 ? '' : 's'}</div>
-  </div>
-  ${vehicles.length === 0 && unassigned.length === 0
-    ? '<div style="text-align:center;padding:40px;color:#64748B">No vehicles or transport students yet.</div>'
-    : blocks + unassignedBlock}
-  <div class="grand"><span>Total monthly transport collection</span><span>Rs. ${grand.toLocaleString('en-PK')}</span></div>
-</div>
-</body></html>`;
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -1350,9 +836,14 @@ function familyChildFigures(rec) {
    badal do — warna stored hi. */
 function famFigWithPrev(rec, prevLive) {
   const fig = familyChildFigures(rec);
+  /* Poora settle (credit head/advance samet) → sab 0 dikhao (phantom −550 / net-0 nahi). */
+  if (challanFullyPaid(rec)) return { ...fig, dues: 0, advance: 0, fee: 0, transport: 0, payable: 0 };
   if (!prevLive) return fig;
-  return { ...fig, dues: prevLive.dues, advance: prevLive.advance,
-    payable: fig.fee + fig.transport + prevLive.dues - prevLive.advance };
+  /* prevLive.advance sirf pichhle mahino ka — is challan me consume ho chuka advance ghata do
+     (warna fully-received par bhi phantom −550 baqaya reh jaata tha). */
+  const advance = Math.max(0, prevLive.advance - advConsumedOf(rec));
+  return { ...fig, dues: prevLive.dues, advance,
+    payable: fig.fee + fig.transport + prevLive.dues - advance };
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -1549,12 +1040,16 @@ function FamilyTreeChallansList({ toast }) {
     const real = figMap[keyOf(f.key, ch.reg)];
     const prevLive = prevOutMap[String(ch.applicantsID)] || null;
     if (real) {
+      /* Poora settle (credit head/advance samet) → sab 0 dikhao (phantom −550 nahi). */
+      if (challanFullyPaid(real)) return { ...real, dues: 0, advance: 0, fee: 0, transport: 0, payable: 0 };
       /* Generated challan ka stored "Previous Pending" GENERATION ke waqt ka snapshot hai;
          agar us ke baad kisi pichhle mahine ki fee receive ho gayi to stale ho jaata hai.
          Live prevOut (running-ledger) se dues/advance override — October ka 13,850 → 6,850. */
       if (prevLive) {
-        return { ...real, dues: prevLive.dues, advance: prevLive.advance,
-          payable: real.fee + real.transport + prevLive.dues - prevLive.advance };
+        /* prevLive.advance sirf pichhle mahino ka — is challan me consume ho chuka advance ghata do. */
+        const advance = Math.max(0, prevLive.advance - advConsumedOf(real));
+        return { ...real, dues: prevLive.dues, advance,
+          payable: real.fee + real.transport + prevLive.dues - advance };
       }
       return real;
     }
@@ -1704,7 +1199,7 @@ function FamilyTreeChallansList({ toast }) {
       title:    'Family Challan Preview',
       sub:      `${f.name} — ${f.guardian} · ${f.children.length} child${f.children.length === 1 ? '' : 'ren'} · Parent · Bank · School copies`,
       family:   f,
-      innerHtml: buildFamilyChallanInner({ family: famWithFigs(f), settings, bw: false, school: branchHeader }),
+      innerHtml: buildFamilyChallanInner({ family: famWithFigs(f), settings, bw: false }),
     });
   };
   const openDownload = (f) => {
@@ -1790,7 +1285,7 @@ function FamilyTreeChallansList({ toast }) {
   };
   const runDownload = (family, { theme, fmt, size = 'a4' }) => {
     const bw   = theme === 'bw';
-    const html = buildFamilyChallanHTML({ family: famWithFigs(family), settings, bw, size, school: branchHeader });
+    const html = buildFamilyChallanHTML({ family: famWithFigs(family), settings, bw, size });
     const sizeT = size === 'thermal' ? 'Thermal 80mm' : 'A4';
     toast(`Generating ${sizeT} · ${bw ? 'B&W' : 'Color'} ${fmt === 'word' ? 'Word' : 'PDF'} — family challan…`, 'info');
     /* Word needs no pop-up — the .docx is built and downloaded in place. */
@@ -2221,19 +1716,26 @@ function FamilyTreeChallansList({ toast }) {
    + Total Dues − Advance. */
 function challanFigures(rec) {
   const rows = (rec && rec.detailRows) || [];
+  const isPrevRow = (r) => /previous|pending|arrear/.test(String(r.subHead || r.head || '').toLowerCase());
+  /* Head-wise: kisi non-prev head par per-head previousPendingorAdv ho to previous PER-HEAD me
+     hai — aise me aggregate "Previous Pending" rows ko SKIP karte hain (warna previous DO baar
+     ginta: ek per-head, ek aggregate row → fully-paid par bhi Total Dues 1,500 dikhता tha). */
+  const hasHeadPrev = rows.some(r => !isPrevRow(r) && (Number(r.previousPendingorAdv ?? r.previousPendingOrAdv) || 0) !== 0);
   let dues = 0, advance = 0, current = 0;
   let totalNet = 0, totalRecv = 0;
   rows.forEach(r => {
     const amt   = Number(r.challanAmount) || 0;
     const disc  = Number(r.discount) || 0;
     const recv  = Number(r.receivedAmount) || 0;
-    const net   = amt - disc;
-    const label = String(r.subHead || r.head || '').toLowerCase();
+    const isPrev = isPrevRow(r);
+    if (hasHeadPrev && isPrev) return;   // head-wise: aggregate prev row skip (per-head me hai)
+    const hp    = hasHeadPrev ? (Number(r.previousPendingorAdv ?? r.previousPendingOrAdv) || 0) : 0;
+    const net   = (amt - disc) + hp;     // head-wise: previous head ke net me shamil
     totalNet  += net;
     totalRecv += recv;
     /* Dues/Current ab WASOOLI KE BAAD ka baqaya hai — challan poora receive ho jaye to
        ye 0 ho jaate hain (pehle full amount hi dikhta rehta tha). */
-    if (/previous|pending|arrear/.test(label)) {
+    if (isPrev) {
       if (amt >= 0) dues += Math.max(0, net - recv);
       else advance += Math.abs(amt);
     } else {
@@ -2244,6 +1746,38 @@ function challanFigures(rec) {
      ADVANCE hai. Isay bhi advance me jodo, warna Fee Challans list par 0 dikhta tha. */
   advance += Math.max(0, totalRecv - totalNet);
   return { dues, advance, current, payable: current + dues - advance };
+}
+
+/* IS challan me PEHLE SE consume ho chuka advance — negative "Previous Pending"/advance rows
+   ke received (minus) ka jama. running-ledger ka prevOut.advance sirf PICHHLE mahino ka hai,
+   is mahine ki consumption nahi jaanta — is liye card use karta hai (warna −550 phantom). */
+function advConsumedOf(rec) {
+  if (!rec || !Array.isArray(rec.detailRows)) return 0;
+  return rec.detailRows
+    .filter(r => /previous|pending|arrear/i.test(String(r.subHead || r.head || '')) && (Number(r.challanAmount) || 0) < 0)
+    .reduce((a, r) => a + Math.abs(Number(r.receivedAmount) || 0), 0);
+}
+
+/* Kya ye challan POORA settle ho chuka — har head ka (challanAmount − discount +
+   previousPendingorAdv) − received ka jama <= 0 aur koi receiving hui ho. Advance jab head
+   ki fee se zyada ho to Others net minus (−550) reh jaata tha "Fully Received" ke bawajood;
+   aise settled challan par card sab (Dues/Advance/Current/Payable) 0 dikhata hai — clean. */
+function challanFullyPaid(rec) {
+  if (!rec || !Array.isArray(rec.detailRows) || !rec.detailRows.length) return false;
+  const isPrevRow = (r) => /previous|pending|arrear/i.test(String(r.subHead || r.head || ''));
+  /* Head-wise: previous per-head hai to aggregate "Previous Pending" row SKIP (double-count na
+     ho — warna fully-paid ke bawajood us row ki wajah se outstanding 1,500 reh jaata tha). */
+  const hasHeadPrev = rec.detailRows.some(r => !isPrevRow(r) && (Number(r.previousPendingorAdv ?? r.previousPendingOrAdv) || 0) !== 0);
+  let outstanding = 0, anyRecv = 0;
+  rec.detailRows.forEach(r => {
+    if (hasHeadPrev && isPrevRow(r)) return;   // head-wise: aggregate prev row skip
+    const hp   = Number(r.previousPendingorAdv ?? r.previousPendingOrAdv) || 0;
+    const net  = (Number(r.challanAmount) || 0) - (Number(r.discount) || 0) + hp;
+    const recv = Number(r.receivedAmount) || 0;
+    outstanding += net - recv;
+    anyRecv     += recv;
+  });
+  return anyRecv !== 0 && Math.round(outstanding) <= 0;
 }
 
 function FeeChallansList({ toast }) {
@@ -2496,8 +2030,14 @@ function FeeChallansList({ toast }) {
     const r = resolveCtx(ctx);
     if (!r) { toast('Nothing to preview', 'info'); return; }
     const dMap  = await fetchStudentDiscounts(r.classMeta, r.students);
+    /* Running-ledger dues/advance/byHead students par lagao — challan ka previous card ke
+       barabar rahe aur advance Net me sahi minus ho. */
+    const students = r.students.map(s => {
+      const p = prevOutMap[String(s.studentID)] || prevOutMap[String(s.applicantsID)] || null;
+      return p ? { ...s, dues: p.dues, advance: p.advance, prevByHead: p.byHead || null } : s;
+    });
     const inner = buildChallanInner({
-      classMeta: r.classMeta, students: r.students, heads: r.heads,
+      classMeta: r.classMeta, students, heads: r.heads,
       settings, discountMap: dMap, bw: false, school: branchHeader,
     });
     setChallanPreview({
@@ -2517,8 +2057,12 @@ function FeeChallansList({ toast }) {
     if (!r) { toast('Nothing to download', 'info'); return; }
     const bw   = theme === 'bw';
     const dMap = await fetchStudentDiscounts(r.classMeta, r.students);
+    const students = r.students.map(s => {
+      const p = prevOutMap[String(s.studentID)] || prevOutMap[String(s.applicantsID)] || null;
+      return p ? { ...s, dues: p.dues, advance: p.advance, prevByHead: p.byHead || null } : s;
+    });
     const html = buildChallanHTML({
-      classMeta: r.classMeta, students: r.students, heads: r.heads,
+      classMeta: r.classMeta, students, heads: r.heads,
       settings, discountMap: dMap, bw, size, school: branchHeader,
     });
     const cnt    = r.students.length;
@@ -2943,9 +2487,16 @@ function FeeChallansList({ toast }) {
                              waqt ka snapshot hai — agar us ke baad kisi pichhle mahine ki
                              fee receive ho gayi to stale ho jaata hai. Live prevOut se
                              override (October ka 13,850 → sahi 6,850). */
-                          if (rec && prevOut) {
+                          if (rec && challanFullyPaid(rec)) {
+                            /* Poora settle — credit head (advance > fee) bhi consume ho chuka.
+                               Sab 0 (Current 1,220 / Advance −1,220 ka phantom net-0 nahi). */
+                            fig.dues = 0; fig.advance = 0; fig.current = 0; fig.payable = 0;
+                          } else if (rec && prevOut) {
+                            /* prevOut.advance sirf pichhle mahino ka — is challan me consume ho
+                               chuka advance ghata do (warna fully-received par −550 phantom). */
+                            const consumed = advConsumedOf(rec);
                             fig.dues    = prevOut.dues;
-                            fig.advance = prevOut.advance;
+                            fig.advance = Math.max(0, prevOut.advance - consumed);
                             fig.payable = (fig.current || 0) + fig.dues - fig.advance;
                           }
                           /* Total Payable = asal challan fee. PROJECTED late fine yahan
@@ -3952,44 +3503,68 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
   /* NOTE: Over-receiving allowed hai — head ke owed se zyada amount li ja sakti hai.
      Us case me Pending MINUS (negative) ho jaata hai = utna ADVANCE. Is liye yahan
      koi upper clamp nahi lagta (pehle lagta tha, jis se extra amount block ho jaata). */
+  const useHeadPrev = !!model.headWisePrev;
   const rows = model.heads.map(h => {
     const paid    = +perHeadPaid[h.name] || 0;
-    /* Input KUL wasooli hai (already + new), is liye naya paisa = input − paid. */
-    const totalRecv = viewOnly ? paid : Math.max(0, +perHeadInput[h.name] || 0);
-    /* Delta MINUS bhi ho sakta hai: cashier "Already Received" ko theek kar raha
-       hai (5000 galti se lag gaya tha, asal 3000). Us soorat me ye head correction
-       hai — ledger ka receivedAmount neeche aa jaayega. Clamp yahan NAHI, warna
-       edit sirf dikhawa rehta aur save par kuch na hota. */
-    const recvNow   = viewOnly ? 0 : (totalRecv - paid);
     const after   = h.net;
-    const pending = after - paid - recvNow;      // negative = advance
+    const headPrev = useHeadPrev ? (+h.prev || 0) : 0;   // us head ka previous (owed me shamil)
+    const owed     = after + headPrev;
+    /* Head ka owed MINUS ho (advance/credit — this-month magar previous bara advance) to wo
+       CREDIT head hai: yahan collect NAHI karte; credit total par advApplied se apply hota. */
+    const isCredit = useHeadPrev && owed < 0;
+    /* Input KUL wasooli hai (already + new); credit head par collect nahi (paid par rehta). */
+    const totalRecv = (viewOnly || isCredit) ? paid : Math.max(0, +perHeadInput[h.name] || 0);
+    const recvNow   = (viewOnly || isCredit) ? 0 : (totalRecv - paid);
+    const pending   = owed - paid - recvNow;      // credit head par = owed (minus)
     totalChallan += h.std;
     totalDisc    += h.disc;
     totalAfter   += after;
-    return { ...h, paid, totalRecv, recvNow, after, pending };
+    return { ...h, paid, totalRecv, recvNow, after, headPrev, owed, pending, isCredit };
   });
+
+  /* Prev Amount column — head-wise: >0 baqaya, <0 advance (minus), 0/na-ho → "—". */
+  const prevDisp  = (v) => (typeof v === 'number' && v !== 0) ? money(v) : '—';
+  const totalPrev = rows.reduce((a, r) => a + (typeof r.prev === 'number' ? r.prev : 0), 0);
 
   /* Previous Pending bhi ab ek editable head ki tarah — uska apna received input.
      Heads ki tarah ye input bhi KUL wasooli rakhta hai (already + new). */
   const prevKey  = model.prevName || 'Previous Pending';
-  const prevPaid = +model.prevPaid || 0;
-  /* Unseeded fallback bhi `prevPaid` — heads ki tarah baqaya Pending me shuru ho. */
-  const prevTotalRecv = viewOnly
+  /* Head-wise me aggregate "Previous Pending" row use nahi hoti — sab 0. */
+  const prevPaid = useHeadPrev ? 0 : (+model.prevPaid || 0);
+  const prevTotalRecv = (viewOnly || useHeadPrev)
     ? prevPaid
     : Math.max(0, perHeadInput[prevKey] == null ? prevPaid : (+perHeadInput[prevKey] || 0));
-  /* Heads ki tarah ye delta bhi MINUS ho sakta hai — correction. */
-  const prevRecv = viewOnly ? 0 : (prevTotalRecv - prevPaid);
-  const prevPend = model.prev - prevPaid - prevRecv;   // negative = advance
+  const prevRecv = (viewOnly || useHeadPrev) ? 0 : (prevTotalRecv - prevPaid);
+  const prevPend = useHeadPrev ? 0 : (model.prev - prevPaid - prevRecv);   // negative = advance
 
-  /* ADVANCE ek CREDIT line hai — "Received" column me MINUS me dikhti hai aur wahin se
-     kat jaati hai (editable nahi). Utna cash kam lena hota hai. */
   const headsRecv  = rows.reduce((a, r) => a + r.recvNow, 0) + prevRecv;
-  /* BAAQI advance credit = kul advance − ab tak consume shuda (advPaid). Warna "Receive
-     More" par advance dobara lag jaata (double-apply) aur remaining minus me chala jaata. */
-  const advCredit  = Math.max(0, (+model.advance || 0) - (+model.advPaid || 0));
-  /* headsRecv correction ki wajah se MINUS ho sakta hai — advance us par apply
-     nahi hota (0 se neeche na jaye), warna credit ulta barh jaata. */
+  /* Head-wise credit — jin heads ka owed MINUS hai (advance) un ke |owed| ka jama. */
+  const headAdvCredit = rows.reduce((a, r) => a + (r.owed < 0 ? -r.owed : 0), 0);
+  /* BAAQI advance credit = kul advance − consume shuda (advPaid) + head-wise credit. */
+  const advCredit  = Math.max(0, (+model.advance || 0) - (+model.advPaid || 0)) + headAdvCredit;
+  /* Pehle se CONSUME ho chuka advance — challan ki negative advance rows ke received (minus).
+     viewOnly me naya advApplied 0 hota hai, is liye credit head yahin se settle hota (warna
+     fully-received par bhi −550 atka reh jaata tha). */
+  const advConsumed = useHeadPrev
+    ? (challan?.detailRows || [])
+        .filter(r => /previous|pending|arrear/i.test(String(r.subHead || r.head || '')) && (+r.challanAmount || 0) < 0)
+        .reduce((a, r) => a + Math.abs(+r.receivedAmount || 0), 0)
+    : 0;
   const advApplied = Math.min(advCredit, Math.max(0, headsRecv));
+  /* Credit heads ka DISPLAYED Pending advance (naya + pehle consume shuda) ke hisaab se kam
+     karo: jaise-jaise baaki heads receive hote (ya ho chuke) hain, credit consume ho kar
+     Pending −550 → 0 ki taraf jaata hai (naya head banaye baghair). */
+  const advTotalApplied = advApplied + advConsumed;
+  if (useHeadPrev && advTotalApplied > 0) {
+    let toApply = advTotalApplied;
+    rows.forEach(r => {
+      if (!r.isCredit) return;
+      const credit  = -r.owed;
+      const applied = Math.min(credit, Math.max(0, toApply));
+      toApply -= applied;
+      r.pending = r.owed + applied;
+    });
+  }
 
   /* ── LATE FINE ──
      Challan ki due date ke BAAD wasool karne par jurmana. Base date wahi
@@ -4037,7 +3612,10 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
   const finePend = fineDue - finePaid - fineOwed;
 
   const receivingNow = headsRecv - advApplied + fineOwed;   // fineOwed view mode me 0
-  const alreadyPaid  = rows.reduce((a, r) => a + r.paid, 0) + prevPaid + finePaid;
+  /* alreadyPaid me se pehle CONSUME ho chuka advance ghatao — heads ke received me wo cash
+     shamil hai jise advance ne kam kiya tha (alag negative row me −advance), warna Already
+     Received aur Remaining dono galat (−550) aate the. */
+  const alreadyPaid  = rows.reduce((a, r) => a + r.paid, 0) + prevPaid + finePaid - advConsumed;
   const totalAmt     = totalAfter + model.prev - model.advance + fineDue;
   /* Total se zyada wasool ho to ye MINUS me jaata hai = student ka advance. */
   const remainAfter  = totalAmt - alreadyPaid - receivingNow;
@@ -4051,9 +3629,11 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
      state; there is no second source of truth. Received KUL wasooli hai, is liye
      yahan `net` se ghatao (owed se nahi). */
   const setPendingFor = (row, v) => {
-    /* Pending MINUS bhi ho sakta hai (advance) — is liye niche clamp nahi. */
+    /* Pending MINUS bhi ho sakta hai (advance) — clamp nahi. Received = owed − pending
+       (owed = After Discount + head-wise Prev). */
     const pend = Number(v) || 0;
-    setPerHeadInput(prev => ({ ...prev, [row.name]: Math.max(0, row.net - pend) }));
+    const owed = (typeof row.owed === 'number') ? row.owed : row.net;
+    setPerHeadInput(prev => ({ ...prev, [row.name]: Math.max(0, owed - pend) }));
   };
 
   const fineTxt = settings?.fineEnabled
@@ -4074,6 +3654,16 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
     rows.forEach(r => { if (r.recvNow !== 0) perHead[r.name] = r.recvNow; });
     /* Previous dues ki raqam bhi — ASLI subHead key par, taake API sahi row par lagaye. */
     if (prevRecv !== 0) perHead[prevKey] = (perHead[prevKey] || 0) + prevRecv;
+    /* Jo heads challan ke detailRows me NAHI (e.g. Transport setup fallback) magar receive
+       hue — inhe alag bhejo taake save unki NAYI ledger row bana kar wasooli persist kare. */
+    const existingHeads = new Set((challan?.detailRows || []).map(r => String(r.subHead || r.head || '').toLowerCase().trim()));
+    const newHeads = rows
+      .filter(r => !r.isCredit && r.recvNow > 0 && !existingHeads.has(String(r.name).toLowerCase().trim()))
+      .map(r => ({ name: r.name, std: r.std, disc: r.disc, recv: r.recvNow }));
+    /* Receiving ke WAQT ka per-head previous (running-ledger se) — slip is se sahi Remaining
+       nikalti hai (fully-paid head ka backend previousPendingorAdv baad me 0 ho jaata hai). */
+    const prevByHead = {};
+    (model.heads || []).forEach(h => { if (h.prev) prevByHead[h.name] = h.prev; });
     const payload = {
       reg: student.reg, monthIdx,
       studentName: student.name,
@@ -4096,6 +3686,10 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
          subHead (agar pehle se ho), warna default 'Previous Pending'. */
       advApplied: advApplied,
       advName:    model.advName || 'Previous Pending',
+      /* Missing (fallback) heads jinki receiving persist honi hai — e.g. Transport. */
+      newHeads,
+      /* Slip ke liye receiving-time ka per-head previous. */
+      prevByHead,
     };
     if (cfg.kind === 'child') payload.famKey   = cfg.famKey;
     else                      payload.classKey = classMeta.key;
@@ -4195,6 +3789,7 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
                   <th className="fee-right">Challan Amount</th>
                   <th className="fee-right">Discount</th>
                   <th className="fee-right">After Discount</th>
+                  <th className="fee-right">Prev Amount</th>
                   <th className="fee-right">Received</th>
                   <th className="fee-right">Pending</th>
                 </tr>
@@ -4206,9 +3801,13 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
                     <td className="fee-right">{money(r.std)}</td>
                     <td className="fee-right">{r.disc > 0 ? money(r.disc) : '0'}</td>
                     <td className="fee-right"><span className="fee-cell-grey">{money(r.net)}</span></td>
+                    <td className="fee-right">{prevDisp(r.prev)}</td>
                     <td className="fee-right">
                       {viewOnly ? (
                         <span className="fee-paid-amt">{money(r.paid)}</span>
+                      ) : r.isCredit ? (
+                        /* Credit head — yahan collect nahi hota; credit total se apply hota. */
+                        <span className="fee-cell-grey">—</span>
                       ) : (
                         <input
                           type="number"
@@ -4222,6 +3821,10 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
                     <td className="fee-right">
                       {viewOnly ? (
                         money(r.pending)
+                      ) : r.isCredit ? (
+                        /* Credit head ka baqaya (advance, minus) — baaki heads receive hote hi
+                           consume ho kar 0 ki taraf jaata hai. */
+                        <span className={r.pending < 0 ? 'fee-neg' : undefined}>{money(r.pending)}</span>
                       ) : (
                         <input
                           type="number"
@@ -4237,12 +3840,13 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
                 {/* Family child ke model me "Previous Pending" pehle se ek head hota hai (upar
                     rows me apne input ke saath aata hai) — us case me ye row skip karo,
                     warna duplicate dikhega. */}
-                {model.prev > 0 && !(model.heads || []).some(h => /previous|pending|arrear/i.test(h.name)) && (
+                {!useHeadPrev && model.prev > 0 && !(model.heads || []).some(h => /previous|pending|arrear/i.test(h.name)) && (
                   <tr>
                     <td><b>Previous Pending</b></td>
                     <td className="fee-right">{money(model.prev)}</td>
                     <td className="fee-right">0</td>
                     <td className="fee-right"><span className="fee-cell-grey">{money(model.prev)}</span></td>
+                    <td className="fee-right">—</td>
                     <td className="fee-right">
                       {viewOnly ? (
                         <span className="fee-paid-amt">{money(prevPaid)}</span>
@@ -4274,14 +3878,15 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
                     </td>
                   </tr>
                 )}
-                {/* ADVANCE — Previous Pending jaisi hi ek row, magar "Received" MINUS me
-                    aur read-only (student ke credit se khud kat jaata hai). */}
-                {advCredit > 0 && (
+                {/* ADVANCE — non-head-wise me aggregate advance row. Head-wise me credit har
+                    head ke Prev/owed me hota hai, is liye ye row nahi. */}
+                {!useHeadPrev && advCredit > 0 && (
                   <tr>
                     <td><b>Advance</b></td>
                     <td className="fee-right">—</td>
                     <td className="fee-right">—</td>
                     <td className="fee-right"><span className="fee-cell-grey">{money(-advCredit)}</span></td>
+                    <td className="fee-right">—</td>
                     <td className="fee-right fee-neg"><b>{money(-advApplied)}</b></td>
                     <td className="fee-right">{money(advCredit - advApplied)}</td>
                   </tr>
@@ -4305,6 +3910,7 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
                     <td className="fee-right">{money(fineDue)}</td>
                     <td className="fee-right">0</td>
                     <td className="fee-right"><span className="fee-cell-grey">{money(fineDue)}</span></td>
+                    <td className="fee-right">—</td>
                     {/* Received/Pending ab baaki heads ki tarah EDITABLE — input KUL
                         wasooli rakhta hai, to partial fine bhi li ja sakti hai. */}
                     <td className="fee-right">
@@ -4339,9 +3945,10 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
               <tfoot>
                 <tr className="fee-recv-total">
                   <td>Total</td>
-                  <td className="fee-right">{money(totalChallan + model.prev + fineDue)}</td>
+                  <td className="fee-right">{money(totalChallan + (useHeadPrev ? 0 : model.prev) + fineDue)}</td>
                   <td className="fee-right">{money(totalDisc)}</td>
-                  <td className="fee-right">{money(totalAfter + model.prev - advApplied + fineDue)}</td>
+                  <td className="fee-right">{money(totalAfter + (useHeadPrev ? 0 : (model.prev - advApplied)) + fineDue)}</td>
+                  <td className="fee-right">{totalPrev !== 0 ? money(totalPrev) : '—'}</td>
                   <td className="fee-right">{money(alreadyPaid + receivingNow)}</td>
                   <td className="fee-right">{money(remainAfter)}</td>
                 </tr>
@@ -4564,17 +4171,58 @@ function FeeSlipModal({ cfg, onClose, toast }) {
      baad me ho to stale (jaise 13,850 jabke asal 6,850). Receiving component live value
      (running-ledger) cfg.prevStd me bhejta hai; mile to prev row ka Std usse override. */
   const prevStdOverride = (typeof cfg.prevStd === 'number') ? Math.round(cfg.prevStd) : null;
+  const isPrevLabel = (r) => /previous|pending|arrear/.test(String(r.subHead || r.head || '').toLowerCase());
+  /* Per-head previous (previousPendingorAdv) available ho to slip HEAD-WISE: aggregate
+     "Previous Pending" row hata kar har head ka previous "Pending" me jodte hain (challan jaisa). */
+  const hasHeadPrev = Array.isArray(chRows) && chRows.some(r => !isPrevLabel(r) && (feeHeadPrev(r) || 0) !== 0);
   const baseRows = chRows
-    ? chRows.map(r => {
-        const label  = String(r.subHead || r.head || '').toLowerCase();
-        const isPrev = /previous|pending|arrear/.test(label);
-        let std  = Math.round(+r.challanAmount || 0);   // ORIGINAL standard fee (discount se pehle)
-        if (isPrev && prevStdOverride != null) std = prevStdOverride;
-        const disc = Math.round(+r.discount || 0);
-        const recv = Math.round(+r.receivedAmount || 0);
-        return { name: r.subHead || r.head || '—', std, disc, recv };
-      })
-    : Object.entries(payment.perHead || {}).map(([name, amt]) => ({ name, std: Math.round(+amt || 0), disc: 0, recv: Math.round(+amt || 0) }));
+    ? chRows
+        .filter(r => !(hasHeadPrev && isPrevLabel(r)))
+        .map(r => {
+          const isPrev = isPrevLabel(r);
+          let std  = Math.round(+r.challanAmount || 0);   // ORIGINAL standard fee (discount se pehle)
+          if (isPrev && prevStdOverride != null) std = prevStdOverride;
+          const disc = Math.round(+r.discount || 0);
+          const recv = Math.round(+r.receivedAmount || 0);
+          const prev = hasHeadPrev ? Math.round(+(feeHeadPrev(r)) || 0) : 0;
+          return { name: r.subHead || r.head || '—', std, disc, recv, prev };
+        })
+    : Object.entries(payment.perHead || {}).map(([name, amt]) => ({ name, std: Math.round(+amt || 0), disc: 0, recv: Math.round(+amt || 0), prev: 0 }));
+
+  /* Slip par per-head previous = challan ki apni `previousPendingorAdv` (feeHeadPrev) — ye
+     RECEIPT hai, is liye jitna previous BILL hua tha (aur ab received me shamil) wahi sahi
+     source hai. Running-ledger byHead post-receiving 0 ho jaati hai (previous pay ho gaya),
+     is liye slip par use NAHI karte — warna Tuition/Transport ka Received me previous to hai
+     magar Prev 0 ho kar Remaining ghalat minus (−3,000) dikhta tha. Phir credit heads
+     (advance ne fee cover ki) ko "covered" + ek "Advance Applied" (minus) line. */
+  if (hasHeadPrev && Array.isArray(chRows)) {
+    /* Fully-paid head ka backend previousPendingorAdv 0 ho jaata hai, magar uska Received me
+       previous (jo BILL hua tha) shamil hota hai → Remaining ghalat minus (−3,000). Is liye
+       receiving ke WAQT ka original per-head previous (payment.prevByHead — save ke waqt model
+       se store hua) mile to us head ka Prev usi se set karo. Jahan mile wahi override — warna
+       feeHeadPrev jaisा hai waisा (kabhi zero nahi). */
+    const srcByHead = (payment && payment.prevByHead && typeof payment.prevByHead === 'object' && Object.keys(payment.prevByHead).length)
+      ? payment.prevByHead
+      : ((cfg.prevByHead && typeof cfg.prevByHead === 'object') ? cfg.prevByHead : null);
+    if (srcByHead) {
+      const norm = (s) => String(s || '').toLowerCase().trim();
+      const keys = Object.keys(srcByHead);
+      baseRows.forEach(r => {
+        const key = keys.find(k => norm(k) === norm(r.name));
+        if (key != null) r.prev = Math.round(srcByHead[key]);   // mile → use; warna feeHeadPrev
+      });
+    }
+    let hasCredit = false;
+    baseRows.forEach(r => {
+      if (((r.std - r.disc) + (r.prev || 0)) < 0 && (r.prev || 0) < 0) { r.recv = r.std - r.disc; hasCredit = true; }
+    });
+    if (hasCredit) {
+      const coveredRecv = baseRows.reduce((a, r) => a + r.recv, 0);
+      const feeCash     = Math.round(+payment.amount || 0) - Math.max(0, Math.round(+payment.fine || 0));
+      const advApplied  = coveredRecv - feeCash;
+      if (advApplied > 0) baseRows.push({ name: 'Advance Applied', std: 0, disc: 0, recv: -advApplied, prev: 0, isAdvance: true });
+    }
+  }
 
   /* ── LATE FINE ki alag line ──
      Backend fine ko ledger me persist nahi karta, is liye detailRows me nahi
@@ -4589,14 +4237,20 @@ function FeeSlipModal({ cfg, onClose, toast }) {
   const baseRecv  = baseRows.reduce((a, r) => a + r.recv, 0);
   const slipFine  = Math.max(0, Math.round(+payment.fine || 0) || (Math.round(+payment.amount || 0) - baseRecv));
   const headRows  = (!fineAlready && slipFine > 0)
-    ? [...baseRows, { name: 'Fine', std: slipFine, disc: 0, recv: slipFine }]
+    ? [...baseRows, { name: 'Fine', std: slipFine, disc: 0, recv: slipFine, prev: 0 }]
     : baseRows;
   const totStd  = headRows.reduce((a, r) => a + r.std, 0);
   const totDisc = headRows.reduce((a, r) => a + r.disc, 0);
   const total   = headRows.reduce((a, r) => a + r.recv, 0);
-  /* Baqaya = (Std − Discount) − Received. > 0 → abhi dena baqaya (baqaya, red);
-     < 0 → student ne zyada de diya = ADVANCE/credit (minus me, green). 0 → line nahi. */
-  const remaining = (totStd - totDisc) - total;
+  /* Pending per head = OWED − Received, jahan owed = (Std − Disc) + us head ka previous.
+     > 0 → baqaya; = 0 → poora paid (current + previous dono); < 0 → owed se bhi zyada liya =
+     ADVANCE. Pehle yahan galti thi: dueRem 0 (poora paid) par bhi neeche `overAdv` (−4,000)
+     return ho jaata tha — is liye fully-paid head par galat minus dikhta tha. */
+  const pendingOf = (r) => r.isAdvance ? 0 : ((r.std - r.disc) - r.recv + (r.prev || 0));
+  const remaining = headRows.reduce((a, r) => a + pendingOf(r), 0);
+  const rowRem   = pendingOf;
+  const remCell  = (r) => { const x = pendingOf(r); return x !== 0 ? x.toLocaleString('en-PK') : '—'; };
+  const totRemTxt = remaining !== 0 ? remaining.toLocaleString('en-PK') : '—';
   const sch      = feeReportSchool(cfg.school);
 
   const doPrint = () => {
@@ -4622,16 +4276,15 @@ function FeeSlipModal({ cfg, onClose, toast }) {
           ${payment.txn ? `<span class="k">Transaction</span><span class="v">${escHtml(payment.txn)}</span>` : ''}
         </div>
         <table class="fee-slip-tbl fee-slip-heads">
-          <thead><tr><th>Head</th><th>Std. Amount</th><th>Discount</th><th>Received</th></tr></thead>
+          <thead><tr><th>Head</th><th>Std. Amount</th><th>Discount</th><th>Received</th><th>Remaining</th></tr></thead>
           <tbody>
-            ${headRows.map(r => `<tr><td>${escHtml(headLabel(r.name))}</td><td>${r.std.toLocaleString('en-PK')}</td><td>${r.disc ? r.disc.toLocaleString('en-PK') : '—'}</td><td>${r.recv.toLocaleString('en-PK')}</td></tr>`).join('')}
-            <tr class="fee-slip-headtot"><td>Total</td><td>${totStd.toLocaleString('en-PK')}</td><td>${totDisc ? totDisc.toLocaleString('en-PK') : '—'}</td><td>${total.toLocaleString('en-PK')}</td></tr>
+            ${headRows.map(r => `<tr><td>${escHtml(headLabel(r.name))}</td><td>${r.isAdvance ? '—' : r.std.toLocaleString('en-PK')}</td><td>${r.isAdvance ? '—' : (r.disc ? r.disc.toLocaleString('en-PK') : '—')}</td><td>${r.recv.toLocaleString('en-PK')}</td><td>${remCell(r)}</td></tr>`).join('')}
+            <tr class="fee-slip-headtot"><td>Total</td><td>${totStd.toLocaleString('en-PK')}</td><td>${totDisc ? totDisc.toLocaleString('en-PK') : '—'}</td><td>${total.toLocaleString('en-PK')}</td><td>${totRemTxt}</td></tr>
           </tbody>
         </table>
         <div class="fee-slip-net">
           <span>Amount Received</span><span>Rs. ${(+payment.amount || 0).toLocaleString('en-PK')}</span>
         </div>
-        ${remaining !== 0 ? `<div class="fee-slip-rem${remaining < 0 ? ' adv' : ''}"><span>${remaining < 0 ? 'Advance Balance' : 'Remaining Amount'}</span><span>Rs. ${remaining.toLocaleString('en-PK')}</span></div>` : ''}
       </div>`;
     w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Fee Slip — ${escHtml(student.name)}</title>
 <style>
@@ -4725,25 +4378,19 @@ function FeeSlipModal({ cfg, onClose, toast }) {
             </div>
             <table className="fee-slip-tbl fee-slip-heads">
               <thead>
-                <tr><th>Head</th><th>Std. Amount</th><th>Discount</th><th>Received</th></tr>
+                <tr><th>Head</th><th>Std. Amount</th><th>Discount</th><th>Received</th><th>Remaining</th></tr>
               </thead>
               <tbody>
                 {headRows.map(r => (
-                  <tr key={r.name}><td>{r.name}</td><td>{r.std.toLocaleString('en-PK')}</td><td>{r.disc ? r.disc.toLocaleString('en-PK') : '—'}</td><td>{r.recv.toLocaleString('en-PK')}</td></tr>
+                  <tr key={r.name}><td>{r.name}</td><td>{r.isAdvance ? '—' : r.std.toLocaleString('en-PK')}</td><td>{r.isAdvance ? '—' : (r.disc ? r.disc.toLocaleString('en-PK') : '—')}</td><td>{r.recv.toLocaleString('en-PK')}</td><td>{remCell(r)}</td></tr>
                 ))}
-                <tr className="fee-slip-headtot"><td>Total</td><td>{totStd.toLocaleString('en-PK')}</td><td>{totDisc ? totDisc.toLocaleString('en-PK') : '—'}</td><td>{total.toLocaleString('en-PK')}</td></tr>
+                <tr className="fee-slip-headtot"><td>Total</td><td>{totStd.toLocaleString('en-PK')}</td><td>{totDisc ? totDisc.toLocaleString('en-PK') : '—'}</td><td>{total.toLocaleString('en-PK')}</td><td>{totRemTxt}</td></tr>
               </tbody>
             </table>
             <div className="fee-slip-net">
               <span>Amount Received</span>
               <span>Rs. {(+payment.amount || 0).toLocaleString('en-PK')}</span>
             </div>
-            {remaining !== 0 && (
-              <div className="fee-slip-rem" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', border: `1.5px solid ${remaining < 0 ? '#16A34A' : '#DC2626'}`, color: remaining < 0 ? '#16A34A' : '#DC2626', padding: '7px 12px', borderRadius: 4, fontWeight: 800, marginTop: 6 }}>
-                <span>{remaining < 0 ? 'Advance Balance' : 'Remaining Amount'}</span>
-                <span>Rs. {remaining.toLocaleString('en-PK')}</span>
-              </div>
-            )}
           </div>
         </div>
 
@@ -4793,66 +4440,163 @@ function prevOutFromLedgerRows(prevRows) {
     const sorted = recs.slice().sort(
       (a, b) => (Number(a.year) * 12 + Number(a.month)) - (Number(b.year) * 12 + Number(b.month)));
     let running = 0, first = true;
+    /* HEAD-WISE previous: har prior mahine ke non-previous heads ka (billed − disc − received)
+       head ke naam se jama — pichhla baqaya apne asli heads me taqseem ho kar carry ho.
+       Aggregate "Previous Pending" rows skip (warna double-count). Negative = advance. */
+    const headNet = new Map();
     sorted.forEach(rec => {
       const rows = rec.detailRows || [];
       const carry     = rows.filter(isPrev).reduce((a, r) => a + ((+r.challanAmount || 0) - (+r.discount || 0)), 0);
       const newBilled = rows.filter(r => !isPrev(r)).reduce((a, r) => a + ((+r.challanAmount || 0) - (+r.discount || 0)), 0);
       const received  = rows.reduce((a, r) => a + (+r.receivedAmount || 0), 0);
+      rows.forEach(r => {
+        if (isPrev(r)) return;
+        const nm  = String(r.subHead || r.head || '').trim();
+        if (!nm) return;
+        const net = (+r.challanAmount || 0) - (+r.discount || 0) - (+r.receivedAmount || 0);
+        headNet.set(nm, (headNet.get(nm) || 0) + net);
+      });
       if (first) { running = carry; first = false; }   // sirf pehle mahine ka carry opening balance
       running += newBilled - received;
     });
-    if (running !== 0) out[id] = { dues: running > 0 ? running : 0, advance: running < 0 ? -running : 0 };
+    const byHead = {};
+    headNet.forEach((v, k) => { const n = Math.round(v); if (n !== 0) byHead[k] = n; });
+    /* HAMESHA emit karo (net 0 ho tab bhi) — kyunke ye student ke PRIOR challans hain. Aise
+       students ke liye prevOverride = {dues:0, advance:0, byHead:{}} banta hai, jo agle mahine
+       ke challan par AUTHORITY hai: agar previous poora pay ho chuka to backend ke STALE
+       "Previous Pending" (gross snapshot) ko nazar-andaaz kar ke 0 dikhata hai. */
+    out[id] = { dues: running > 0 ? running : 0, advance: running < 0 ? -running : 0, byHead };
   });
   return out;
 }
 
 /* ── Models / helpers ── */
+
+/* Per-head PREVIOUS amount (us head ka pichhle periods se aaya baqaya) — API detailRow
+   me jis bhi naam se aaye, yahan se defensive tareeqe se padhte hain. Jab tak backend
+   ye field na bheje, `null` (UI me "—" dikhta hai). Advance/0 par bhi null → "—".
+   NOTE: field ka asli naam API response se confirm hone par yahan pin kar denge. */
+function feeHeadPrev(row) {
+  if (!row || typeof row !== 'object') return null;
+  /* Backend detailRow me per-head previous ka ASLI field: `previousPendingorAdv`
+     (negative = us head ka advance). Baaki naam fallback ke taur par. */
+  const v = row.previousPendingorAdv ?? row.previousPendingOrAdv
+    ?? row.previousAmount ?? row.previousBalance ?? row.prevAmount ?? row.prevBalance
+    ?? row.previousPending ?? row.prevPending ?? row.previousDue ?? row.previousDues
+    ?? row.openingBalance ?? row.arrearAmount ?? null;
+  if (v == null || v === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+/* Head-wise previous DISTRIBUTE karta hai (challan/slip builders ke liye). Agar
+   student.prevByHead ({ headName: baqaya }, running-ledger se) mile to har row ka Prev usi
+   head ke asli baqaya se set hota hai (na ke poora lump ek head me). byHead ke wo heads jo
+   is challan me nahi, apni row me aa jaate hain. Jo total phir bhi map na ho (opening
+   aggregate) wo pehli row me. `whole` = builder ka rounding helper. Return true = laga. */
+function applyPrevByHead(rows, student, whole) {
+  const byHead = (student && student.prevByHead && typeof student.prevByHead === 'object') ? student.prevByHead : null;
+  if (!byHead || !Object.keys(byHead).length) return false;
+  const norm = (s) => String(s || '').toLowerCase().trim();
+  const keys = Object.keys(byHead);
+  const used = new Set();
+  rows.forEach(r => {
+    const key = keys.find(k => norm(k) === norm(r.name));
+    const p = key != null ? Math.round(byHead[key]) : 0;
+    if (key != null) used.add(key);
+    r.prev = p;
+    r.net  = r.std - r.disc + p;
+  });
+  keys.forEach(k => {
+    if (used.has(k)) return;
+    const p = Math.round(byHead[k]);
+    rows.push({ name: k, std: 0, disc: 0, prev: p, net: p });
+    used.add(k);
+  });
+  const runningPrev = (student && (student.dues != null || student.advance != null))
+    ? (whole(student.dues) - whole(student.advance)) : null;
+  const mapped   = keys.reduce((a, k) => a + Math.round(byHead[k] || 0), 0);
+  const leftover = (runningPrev != null) ? (runningPrev - mapped) : 0;
+  if (leftover > 0 && rows.length > 0) { rows[0].prev += leftover; rows[0].net += leftover; }
+  return true;
+}
+
 function recStudentModel({ student, headsForClass, generated, classDisc, payments, challan = null, prevOverride = null }) {
   let heads, prev, advance, thisMonth, disc;
   /* Previous-dues row ka ASLI subHead (e.g. "Previous Pending") aur uske khilaf ab tak
      wasool hui raqam — receiving modal me us par bhi amount likhi ja sake, aur payment
      sahi detailRow par map ho (API perHead ko subHead se match karta hai). */
-  let prevName = '', prevPaid = 0, advName = '', advPaid = 0;
+  let prevName = '', prevPaid = 0, advName = '', advPaid = 0, headWisePrev = false;
   if (challan && Array.isArray(challan.detailRows)) {
-    /* Real challan: build heads from its detailRows. A "previous pending" head
-       becomes previous dues (positive) or advance (negative); the rest are the
-       current-month fee heads. Mirrors the Challans screen split. */
+    /* Backend HAR head ke saath uska `previousPendingorAdv` (per-head previous) bhejta hai.
+       Aise me previous HEAD-WISE dikhate/wasoolte hain aur aggregate "Previous Pending" row
+       ko nazar-andaaz karte hain (challan jaisa). */
+    headWisePrev = challan.detailRows.some(r => r.previousPendingorAdv != null || r.previousPendingOrAdv != null);
     heads = [];
     prev = 0; advance = 0;
+    let prevRowTotal = 0;   // aggregate "Previous Pending" ka total (residual ke liye)
     challan.detailRows.forEach(r => {
       const amt   = +r.challanAmount || 0;
       const d     = +r.discount || 0;
       const label = String(r.subHead || r.head || '').toLowerCase();
       if (/previous|pending|arrear/.test(label)) {
-        if (amt >= 0) {
+        if (headWisePrev) {
+          if (amt >= 0) prevRowTotal += Math.max(0, amt - Math.min(d, amt));
+        } else if (amt >= 0) {
           prev += amt;
           if (!prevName) prevName = r.subHead || r.head || '';
           prevPaid += (+r.receivedAmount || 0);
         } else {
           advance += Math.abs(amt);
           if (!advName) advName = r.subHead || r.head || '';
-          /* Negative prev row ka received (MINUS) = ab tak CONSUME hua advance. Isse
-             receiving modal jaanta hai kitna advance baaki hai (double-apply se bachne). */
           advPaid += Math.abs(+r.receivedAmount || 0);
         }
       } else if (feeService.isLateFineRow(r)) {
-        /* Late Fine ko aam fee head na banao — receiving modal ki apni LATE FINE
-           line ise alag se dikhati hai (aur `finePaid` isi row se parhti hai).
-           Head bana dene se wo persisted row DOBARA render hoti thi: modal me do
-           "Late Fine" qatarein, aur thisMonth/payable me fine dohri gin'ti. */
+        /* Late Fine skip — modal apni alag line me dikhata hai. */
       } else {
-        heads.push({ name: r.subHead || r.head || '', std: amt, disc: Math.min(d, amt), net: amt - Math.min(d, amt) });
+        heads.push({ name: r.subHead || r.head || '', std: amt, disc: Math.min(d, amt), net: amt - Math.min(d, amt), prev: feeHeadPrev(r) });
       }
     });
+    /* Transport fallback — challan me na ho magar setup amount ho to add karo. */
+    const hasTransport = challan.detailRows.some(r => String(r.subHead || r.head || '').toLowerCase().trim() === 'transport');
+    if (!hasTransport && (+student.transport || 0) > 0) {
+      const t = +student.transport || 0;
+      heads.push({ name: 'Transport', std: t, disc: 0, net: t, prev: 0 });
+    }
     thisMonth = heads.reduce((a, h) => a + h.std, 0);
     disc      = heads.reduce((a, h) => a + h.disc, 0);
-    /* Challan me stored "Previous Pending" GENERATION ke waqt ka snapshot hai. Agar us
-       ke BAAD kisi pichhle mahine ki receiving hui (jaise September ka challan October
-       banne ke baad receive hua), to ye stale ho jaata hai — October phir bhi poora
-       purana 13,850 maang'ta hai, halanki asal baqaya 6,850 hai. LIVE prior-outstanding
-       (prevOverride, prevOutMap se — jo har prior challan ka net−received hai) mile to
-       usay authority maano taake carry-forward sahi (aur overcharge na ho). */
-    if (prevOverride) {
+    if (headWisePrev) {
+      /* Har head ka Prev running-ledger ke byHead se (na ke lump); byHead ke extra heads
+         apni row me; leftover pehli head me. */
+      const byHead = (prevOverride && prevOverride.byHead && typeof prevOverride.byHead === 'object') ? prevOverride.byHead : null;
+      if (byHead && Object.keys(byHead).length) {
+        const norm = (s) => String(s || '').toLowerCase().trim();
+        const keys = Object.keys(byHead);
+        const used = new Set();
+        heads.forEach(h => {
+          const key = keys.find(k => norm(k) === norm(h.name));
+          h.prev = key != null ? Math.round(byHead[key]) : 0;
+          if (key != null) used.add(key);
+        });
+        keys.forEach(k => { if (used.has(k)) return; heads.push({ name: k, std: 0, disc: 0, net: 0, prev: Math.round(byHead[k]) }); used.add(k); });
+        const runningPrev = prevOverride ? (Math.round(+prevOverride.dues || 0) - Math.round(+prevOverride.advance || 0)) : null;
+        const mapped      = keys.reduce((a, k) => a + Math.round(byHead[k] || 0), 0);
+        const leftover    = (runningPrev != null) ? (runningPrev - mapped) : 0;
+        if (leftover > 0 && heads.length > 0) heads[0].prev = (+heads[0].prev || 0) + leftover;
+      } else {
+        const sumHeadPrev  = heads.reduce((a, h) => a + (+h.prev || 0), 0);
+        const runningPrev  = prevOverride ? (Math.round(+prevOverride.dues || 0) - Math.round(+prevOverride.advance || 0)) : null;
+        const totalPrevTarget = (runningPrev != null) ? runningPrev : prevRowTotal;
+        const residualPrev = Math.max(0, Math.round(totalPrevTarget - sumHeadPrev));
+        if (residualPrev > 0) {
+          if (heads.length > 0) heads[0].prev = (+heads[0].prev || 0) + residualPrev;
+          else heads.push({ name: 'Previous Pending', std: 0, disc: 0, net: 0, prev: residualPrev });
+        }
+      }
+      prev    = heads.reduce((a, h) => a + (+h.prev || 0), 0);
+      advance = 0;
+    } else if (prevOverride) {
+      /* Non-head-wise: LIVE prior-outstanding (running-ledger) authority. */
       prev    = Math.max(0, +prevOverride.dues || 0);
       advance = Math.max(0, +prevOverride.advance || 0);
       if (prev > 0 && !prevName) prevName = 'Previous Pending';
@@ -4861,7 +4605,7 @@ function recStudentModel({ student, headsForClass, generated, classDisc, payment
     heads = (headsForClass || []).map(h => {
       const std = +h.amt || 0;
       const d   = +(classDisc?.[h.name]) || 0;
-      return { name: h.name, std, disc: Math.min(d, std), net: std - Math.min(d, std) };
+      return { name: h.name, std, disc: Math.min(d, std), net: std - Math.min(d, std), prev: feeHeadPrev(h) };
     });
     prev      = +student.dues || 0;
     advance   = +student.advance || 0;
@@ -4905,7 +4649,7 @@ function recStudentModel({ student, headsForClass, generated, classDisc, payment
       paidPerHead[n] = (paidPerHead[n] || 0) + (+r.receivedAmount || 0);
     });
   }
-  return { heads, generated, prev, prevName, prevPaid, paidPerHead, advance, advName, advPaid, thisMonth, disc, payable, paid, remaining, status, onelink };
+  return { heads, generated, prev, prevName, prevPaid, paidPerHead, advance, advName, advPaid, thisMonth, disc, payable, paid, remaining, status, onelink, headWisePrev };
 }
 
 function statusBadge(status) {
@@ -5123,12 +4867,17 @@ function FeeReceivingIndividual({ toast }) {
     const p = prevOutMap[String(studentID)];
     return p ? (p.dues || 0) - (p.advance || 0) : undefined;
   };
+  /* Slip par head-wise previous (running-ledger se) — na mile to null. */
+  const prevByHeadOf = (studentID) => {
+    const p = prevOutMap[String(studentID)];
+    return (p && p.byHead) ? p.byHead : null;
+  };
 
   const openReceiptSlip = (c, s) => {
     const payments = paymentsFor(c.key, s.reg);
     const last = payments[payments.length - 1];
     if (last) {
-      setSlipCtx({ classMeta: c, student: s, period: `${appliedMonth} ${appliedYear}`, payment: last, challan: challanMap[keyOf(c.key, s.reg)], prevStd: prevStdOf(s.studentID), defaultSize: settings.printSize || 'a4', school: branchHeader });
+      setSlipCtx({ classMeta: c, student: s, period: `${appliedMonth} ${appliedYear}`, payment: last, challan: challanMap[keyOf(c.key, s.reg)], prevStd: prevStdOf(s.studentID), prevByHead: prevByHeadOf(s.studentID), defaultSize: settings.printSize || 'a4', school: branchHeader });
       return;
     }
     const rec  = challanMap[keyOf(c.key, s.reg)];
@@ -5145,7 +4894,7 @@ function FeeReceivingIndividual({ toast }) {
         method: rec.paymentMethod || 'Cash', ref: '', txn: '', amount: received, perHead,
       },
       challan: rec,
-      prevStd: prevStdOf(s.studentID),
+      prevStd: prevStdOf(s.studentID), prevByHead: prevByHeadOf(s.studentID),
       defaultSize: settings.printSize || 'a4', school: branchHeader,
     });
   };
@@ -5170,6 +4919,7 @@ function FeeReceivingIndividual({ toast }) {
         txn:    payload.txn,
         amount: payload.amount,
         perHead: payload.perHead,
+        prevByHead: payload.prevByHead,
         /* Late fine slip par apni line banati hai; `amount` me pehle se shaamil hai. */
         fine:   payload.fine || 0,
         /* Correction (minus amount) — history/slip ise adjustment likhein. */
@@ -5209,7 +4959,11 @@ function FeeReceivingIndividual({ toast }) {
            Ledger 0 se neeche kabhi nahi jaata (koi refund ledger yahan nahi hai). */
         const recvNow  = +(payload.perHead?.[r.subHead ?? r.head]) || 0;
         const received = Math.max(0, (+r.receivedAmount || 0) + recvNow);
-        const net      = (+r.challanAmount || 0) - (+r.discount || 0);
+        /* net me is head ka previousPendingorAdv BHI shamil — warna pendingorAdv galat aata:
+           after-disc 5,000 + prev −1,000 (owed 4,000), received 4,000 par 1,000 dikhता tha,
+           asal me 0. previous shamil karne se pendingorAdv sahi (owed − received) hota hai. */
+        const hp       = +r.previousPendingorAdv || +r.previousPendingOrAdv || 0;
+        const net      = (+r.challanAmount || 0) - (+r.discount || 0) + hp;
         return { ...r, receivedAmount: received, pendingorAdv: net - received, modifiedAt: now, modifiedBy: userID };
       });
       let detailRows = feeService.withLateFineRow(baseRows, payload.fine, {
@@ -5220,6 +4974,11 @@ function FeeReceivingIndividual({ toast }) {
       });
       /* Advance credit consume — negative Previous Pending row (received -advApplied). */
       detailRows = feeService.withAdvanceRow(detailRows, payload.advApplied, payload.advName, {
+        ledgerId: rec.id, branchId: rec.branchID ?? rec.branchId, userId: userID, now,
+      });
+      /* Fallback heads (jaise Transport) jo challan me nahi the magar receive hue —
+         unki nayi detailRow bana kar wasooli persist karo. */
+      detailRows = feeService.withNewHeadRows(detailRows, payload.newHeads, {
         ledgerId: rec.id, branchId: rec.branchID ?? rec.branchId, userId: userID, now,
       });
       feeService.receivePayment({
@@ -5248,10 +5007,10 @@ function FeeReceivingIndividual({ toast }) {
         classMeta: c, student: s, period: receiveCtx.period,
         payment: {
           date: payload.date, method: payload.method, ref: payload.ref, txn: payload.txn,
-          amount: payload.amount, perHead: payload.perHead, fine: payload.fine || 0,
+          amount: payload.amount, perHead: payload.perHead, fine: payload.fine || 0, prevByHead: payload.prevByHead,
         },
         challan: slipChallan,
-        prevStd: prevStdOf(s.studentID),
+        prevStd: prevStdOf(s.studentID), prevByHead: prevByHeadOf(s.studentID),
         defaultSize: settings.printSize || 'a4',
         school: branchHeader,
       });
@@ -5662,9 +5421,6 @@ function childRecModel({ child, payments }) {
 }
 
 function FamilyTreeReceiving({ toast }) {
-  /* Slip ka header (school ka naam, address, logo) — wahi API jo baqi fee
-     reports/challans use karte hain. */
-  const { data: branchHeader = null }    = useAsync(feeService.getReportHeader, [], null);
   const { data: serverFams = [] }        = useAsync(feeService.getFamilies, []);
   const { data: settings = {} }          = useAsync(feeService.getFeeSettings, []);
   const { data: serverReceipts = [] }    = useAsync(feeService.getFamilyReceipts, []);
@@ -5833,12 +5589,17 @@ function FamilyTreeReceiving({ toast }) {
     const p = prevOutMap[String(ch.applicantsID)] || prevOutMap[String(ch.studentID)];
     return p ? (p.dues || 0) - (p.advance || 0) : undefined;
   };
+  /* Slip par head-wise previous (running-ledger se) — na mile to null. */
+  const prevByHeadOf = (ch) => {
+    const p = prevOutMap[String(ch.applicantsID)] || prevOutMap[String(ch.studentID)];
+    return (p && p.byHead) ? p.byHead : null;
+  };
 
   const openReceiptSlip = (f, ch) => {
     const payments = paymentsFor(f.key, ch.reg);
     const last = payments[payments.length - 1];
     if (last) {
-      setSlipCtx({ classMeta: { key: f.key, cls: ch.cls, sec: ch.sec }, student: ch, period: `${appliedMonth} ${appliedYear}`, payment: last, challan: ch._challan || challanByStudent[String(ch.applicantsID)], prevStd: prevStdOf(ch), defaultSize: settings.printSize || 'a4' });
+      setSlipCtx({ classMeta: { key: f.key, cls: ch.cls, sec: ch.sec }, student: ch, period: `${appliedMonth} ${appliedYear}`, payment: last, challan: ch._challan || challanByStudent[String(ch.applicantsID)], prevStd: prevStdOf(ch), prevByHead: prevByHeadOf(ch), defaultSize: settings.printSize || 'a4' });
       return;
     }
     const rec  = ch._challan || challanByStudent[String(ch.applicantsID)];
@@ -5856,7 +5617,7 @@ function FamilyTreeReceiving({ toast }) {
         method: rec.paymentMethod || 'Cash', ref: '', txn: '', amount: received, perHead,
       },
       challan: rec,
-      prevStd: prevStdOf(ch),
+      prevStd: prevStdOf(ch), prevByHead: prevByHeadOf(ch),
       defaultSize: settings.printSize || 'a4',
     });
   };
@@ -5875,7 +5636,7 @@ function FamilyTreeReceiving({ toast }) {
         id: `frcv-${Date.now()}`,
         date: payload.date, time: payload.time || nowHHMM(),
         method: payload.method, ref: payload.ref, txn: payload.txn,
-        amount: payload.amount, perHead: payload.perHead,
+        amount: payload.amount, perHead: payload.perHead, prevByHead: payload.prevByHead,
         /* Late fine slip par apni line banati hai; `amount` me pehle se shaamil hai. */
         fine: payload.fine || 0,
         /* Correction (minus amount) — history/slip ise adjustment likhein. */
@@ -5910,7 +5671,11 @@ function FamilyTreeReceiving({ toast }) {
            Ledger 0 se neeche kabhi nahi jaata (koi refund ledger yahan nahi hai). */
         const recvNow  = +(payload.perHead?.[r.subHead ?? r.head]) || 0;
         const received = Math.max(0, (+r.receivedAmount || 0) + recvNow);
-        const net      = (+r.challanAmount || 0) - (+r.discount || 0);
+        /* net me is head ka previousPendingorAdv BHI shamil — warna pendingorAdv galat aata:
+           after-disc 5,000 + prev −1,000 (owed 4,000), received 4,000 par 1,000 dikhता tha,
+           asal me 0. previous shamil karne se pendingorAdv sahi (owed − received) hota hai. */
+        const hp       = +r.previousPendingorAdv || +r.previousPendingOrAdv || 0;
+        const net      = (+r.challanAmount || 0) - (+r.discount || 0) + hp;
         return { ...r, receivedAmount: received, pendingorAdv: net - received, modifiedAt: now, modifiedBy: userID };
       });
       let detailRows = feeService.withLateFineRow(baseRows, payload.fine, {
@@ -5921,6 +5686,11 @@ function FamilyTreeReceiving({ toast }) {
       });
       /* Advance credit consume — negative Previous Pending row (received -advApplied). */
       detailRows = feeService.withAdvanceRow(detailRows, payload.advApplied, payload.advName, {
+        ledgerId: rec.id, branchId: rec.branchID ?? rec.branchId, userId: userID, now,
+      });
+      /* Fallback heads (jaise Transport) jo challan me nahi the magar receive hue —
+         unki nayi detailRow bana kar wasooli persist karo. */
+      detailRows = feeService.withNewHeadRows(detailRows, payload.newHeads, {
         ledgerId: rec.id, branchId: rec.branchID ?? rec.branchId, userId: userID, now,
       });
       feeService.receivePayment({
@@ -5951,10 +5721,10 @@ function FamilyTreeReceiving({ toast }) {
         period,
         payment: {
           date: payload.date, method: payload.method, ref: payload.ref, txn: payload.txn,
-          amount: payload.amount, perHead: payload.perHead, fine: payload.fine || 0,
+          amount: payload.amount, perHead: payload.perHead, fine: payload.fine || 0, prevByHead: payload.prevByHead,
         },
         challan: slipChallan,
-        prevStd: prevStdOf(ch),
+        prevStd: prevStdOf(ch), prevByHead: prevByHeadOf(ch),
         defaultSize: settings.printSize || 'a4',
       });
     }
@@ -6423,7 +6193,6 @@ function FamilyTreeReceiving({ toast }) {
         onClose={() => setFamilySlipCtx(null)}
         paymentsFor={paymentsFor}
         toast={toast}
-        school={branchHeader}
       />
     </>
   );
@@ -6506,9 +6275,11 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
      so typing either one drives the other through the same perHeadInput state.
      Received KUL wasooli hai, is liye `net` se ghatao (owed se nahi). */
   const setPendingFor = (row, v) => {
-    /* Pending MINUS bhi ho sakta hai (advance) — is liye niche clamp nahi. */
+    /* Pending MINUS bhi ho sakta hai (advance) — clamp nahi. Received = owed − pending
+       (owed = After Discount + head-wise Prev). */
     const pend = Number(v) || 0;
-    setPerHeadInput(prev => ({ ...prev, [row.name]: Math.max(0, row.net - pend) }));
+    const owed = (typeof row.owed === 'number') ? row.owed : row.net;
+    setPerHeadInput(prev => ({ ...prev, [row.name]: Math.max(0, owed - pend) }));
   };
 
   const computeRows = (ch, m, payments) => {
@@ -6544,6 +6315,9 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
       totalCh     += r.std;
     });
   }
+  /* Prev Amount column — head-wise pichhla baqaya (API se). Advance/0/missing → "—". */
+  const prevDisp  = (v) => (typeof v === 'number' && v > 0) ? money(v) : '—';
+  const totalPrev = rowsForSel.reduce((a, r) => a + (typeof r.prev === 'number' && r.prev > 0 ? r.prev : 0), 0);
 
   /* Previous Pending — individual modal ki tarah ek alag row (apne input ke saath). */
   const prevKey   = selModel?.prevName || 'Previous Pending';
@@ -6619,12 +6393,16 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
     rowsForSel.forEach(r => { if (r.recvNow !== 0) perHead[r.name] = r.recvNow; });
     /* Previous Pending ki raqam ASLI subHead key par (API perHead ko subHead se match karti hai). */
     if (prevRecv !== 0) perHead[prevKey] = (perHead[prevKey] || 0) + prevRecv;
+    /* Slip ke liye receiving-time ka per-head previous. */
+    const prevByHead = {};
+    (selModel?.heads || []).forEach(h => { if (h.prev) prevByHead[h.name] = h.prev; });
     onSave({
       famKey: family.key, reg: selChild.reg, monthIdx,
       studentName: selChild.name,
       date, method, ref, txn,
       amount: recvNow,
       perHead,
+      prevByHead,
       isAdjustment: recvNow < 0,
       fine: fineOwed,
       /* Individual modal jaisa hi — kul waajib fine bill honi hai. */
@@ -6735,6 +6513,7 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
                               <th className="fee-right">Challan</th>
                               <th className="fee-right">Discount</th>
                               <th className="fee-right">After Discount</th>
+                              <th className="fee-right">Prev Amount</th>
                               <th className="fee-right">Received</th>
                               <th className="fee-right">Pending</th>
                             </tr>
@@ -6746,6 +6525,7 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
                                 <td className="fee-right"><span className="fee-cell-grey">{money(r.std)}</span></td>
                                 <td className="fee-right"><span className="fee-cell-grey">{money(r.disc)}</span></td>
                                 <td className="fee-right"><span className="fee-cell-grey">{money(r.net)}</span></td>
+                                <td className="fee-right">{prevDisp(r.prev)}</td>
                                 <td className="fee-right">
                                   {selModel.onelink || selModel.status === 'full' ? (
                                     <span className="fee-cell-grey">{money(r.paid)}</span>
@@ -6781,6 +6561,7 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
                                 <td className="fee-right">{money(prevTotal)}</td>
                                 <td className="fee-right">0</td>
                                 <td className="fee-right"><span className="fee-cell-grey">{money(prevTotal)}</span></td>
+                                <td className="fee-right">—</td>
                                 <td className="fee-right">
                                   {selModel.onelink || selModel.status === 'full' ? (
                                     <span className="fee-cell-grey">{money(prevPaid)}</span>
@@ -6819,6 +6600,7 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
                                 <td className="fee-right">—</td>
                                 <td className="fee-right">—</td>
                                 <td className="fee-right"><span className="fee-cell-grey">{money(-advCredit)}</span></td>
+                                <td className="fee-right">—</td>
                                 <td className="fee-right fee-neg"><b>{money(-advApplied)}</b></td>
                                 <td className="fee-right">{money(advCredit - advApplied)}</td>
                               </tr>
@@ -6836,6 +6618,7 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
                                 <td className="fee-right">{money(fineDue)}</td>
                                 <td className="fee-right">0</td>
                                 <td className="fee-right"><span className="fee-cell-grey">{money(fineDue)}</span></td>
+                                <td className="fee-right">—</td>
                                 {/* Received/Pending baaki heads ki tarah editable — input
                                     KUL wasooli rakhta hai, partial fine bhi mumkin. */}
                                 <td className="fee-right">
@@ -6869,6 +6652,7 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
                               <td className="fee-right">{money(totalCh)}</td>
                               <td className="fee-right">{money(totalDisc)}</td>
                               <td className="fee-right">{money(totalAfter - advApplied)}</td>
+                              <td className="fee-right">{totalPrev > 0 ? money(totalPrev) : '—'}</td>
                               <td className="fee-right">{money(alreadyPaid + recvNow)}</td>
                               <td className="fee-right">{money(remainAfter)}</td>
                             </tr>
@@ -6926,11 +6710,7 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
 /* Build a print-ready family fee receiving slip — combined summary
    of all children's payments under one guardian. Accepts size:
    'a4' (default — full A4) or 'small' (80mm thermal receipt). */
-function buildFamilyReceivingSlipHTML({ family, period, paymentsFor, size = 'a4', school = null }) {
-  /* Naam/address report-header API se — pehle yahan FEE_SCHOOL ka hardcoded
-     naam chhapta tha, is liye har school ki receipt par ek hi campus ka naam
-     aa jata tha. */
-  const sch = feeReportSchool(school);
+function buildFamilyReceivingSlipHTML({ family, period, paymentsFor, size = 'a4' }) {
   const today = new Date().toLocaleDateString('en-GB');
   const rows  = family.children.map(ch => {
     const pays = paymentsFor(family.key, ch.reg);
@@ -7032,8 +6812,7 @@ function buildFamilyReceivingSlipHTML({ family, period, paymentsFor, size = 'a4'
   @media print{ body{padding:0;} }
 </style></head><body>
 <div class="th-slip">
-  <div class="th-school">${escHtml(sch.name)}</div>
-  ${sch.address ? `<div style="font-size:9.5px;color:#555;text-align:center;">${escHtml(sch.address)}</div>` : ''}
+  <div class="th-school">${escHtml(FEE_SCHOOL.name)}</div>
   <div class="th-tag">Family Fee Receipt</div>
   <div class="th-meta">
     <span>Family</span><span>${escHtml(family.name)}</span>
@@ -7092,8 +6871,7 @@ function buildFamilyReceivingSlipHTML({ family, period, paymentsFor, size = 'a4'
 <div class="page">
   <div class="header">
     <div>
-      <div class="school">${escHtml(sch.name)}</div>
-      ${sch.address ? `<div class="school-addr" style="font-size:11px;color:#555;margin-top:2px;">${escHtml(sch.address)}</div>` : ''}
+      <div class="school">${escHtml(FEE_SCHOOL.name)}</div>
       <div class="title">Family Fee Receiving Slip — ${escHtml(family.name)}</div>
     </div>
     <div class="meta">Generated: ${today}<br/>Guardian: ${escHtml(family.guardian)}<br/>Period: ${escHtml(period)}</div>
@@ -7129,7 +6907,7 @@ function buildFamilyReceivingSlipHTML({ family, period, paymentsFor, size = 'a4'
    FAMILY FEE SLIP MODAL — wraps the family receipt download with an
    A4 / Small (thermal) size picker, mirroring the per-student slip.
    ═══════════════════════════════════════════════════════════════════ */
-function FamilyFeeSlipModal({ cfg, onClose, paymentsFor, toast, school = null }) {
+function FamilyFeeSlipModal({ cfg, onClose, paymentsFor, toast }) {
   const [size, setSize] = useState('a4');
 
   useEffect(() => { if (cfg) setSize(cfg.defaultSize || 'a4'); }, [cfg]);
@@ -7146,7 +6924,6 @@ function FamilyFeeSlipModal({ cfg, onClose, paymentsFor, toast, school = null })
 
   if (!cfg) return null;
   const { family, period } = cfg;
-  const sch = feeReportSchool(school);
 
   /* Prefer the child's enriched payments (built from the persisted challan) so
      the slip reflects real received amounts even after a refresh; fall back to
@@ -7168,7 +6945,7 @@ function FamilyFeeSlipModal({ cfg, onClose, paymentsFor, toast, school = null })
   }), { paid: 0, payable: 0, rem: 0 });
 
   const doPrint = () => {
-    const html = buildFamilyReceivingSlipHTML({ family, period, paymentsFor: slipPaymentsFor, size, school });
+    const html = buildFamilyReceivingSlipHTML({ family, period, paymentsFor: slipPaymentsFor, size });
     const w = window.open('', '_blank');
     if (!w) { toast('Please allow pop-ups to download the slip', 'error'); return; }
     w.document.write(html);
@@ -7223,8 +7000,7 @@ function FamilyFeeSlipModal({ cfg, onClose, paymentsFor, toast, school = null })
           <div className="fee-dl-label" style={{ marginTop: 16 }}>Preview</div>
           <div className="fee-slip-doc" style={{ maxWidth: size === 'small' ? 300 : 640 }}>
             <div className="fee-slip-head">
-              <div className="fee-slip-school">{sch.name}</div>
-              {sch.address && <div style={{ fontSize: 11, color: '#555', marginTop: 2 }}>{sch.address}</div>}
+              <div className="fee-slip-school">{FEE_SCHOOL.name}</div>
               <div className="fee-slip-tag">Family Fee Receipt</div>
             </div>
             <div className="fee-slip-kv">
@@ -8662,7 +8438,6 @@ function buildHistMonthSlipHTML({ c, s, mo, year, size = 'a4', school = null }) 
 const FEE_REPORT_CATS = [
   { id: 'defaulter',  ic: 'fa-user-clock',          name: 'Fee Defaulter List',       desc: 'All & monthly defaulters, class-wise' },
   { id: 'headwise',   ic: 'fa-layer-group',         name: 'Head-Wise Fee Collection', desc: 'Student-wise & class-wise by fee head' },
-  { id: 'vehicle',    ic: 'fa-bus',                 name: 'Vehicle-Wise Transport',   desc: 'Students, fee & outstanding per vehicle' },
   /* Hidden per request — restore any entry to bring the tab back:
   { id: 'collection', ic: 'fa-hand-holding-dollar', name: 'General Fee Collections',  desc: 'Daily, monthly & paid-student lists' },
   { id: 'aging',      ic: 'fa-hourglass-half',      name: 'Aging / Outstanding',      desc: '30 / 60 / 90+ day overdue analysis' },
@@ -8815,7 +8590,6 @@ function FeeReportsTab({ toast }) {
         {current === 'defaulter' && <ReportPanelDefaulter toast={toast} />}
         {current === 'collection' && <ReportPanelCollection toast={toast} />}
         {current === 'headwise'   && <ReportPanelHeadwise toast={toast} />}
-        {current === 'vehicle'    && <ReportPanelVehicle toast={toast} />}
         {current === 'aging'      && <ReportPanelAging toast={toast} />}
         {current === 'summary'    && <ReportPanelSummary toast={toast} />}
       </FeeReportBranchContext.Provider>
@@ -9118,143 +8892,6 @@ function RepLoadState({ loading, error, empty, emptyText }) {
   if (error)   return <div className="fee-info" style={{ color: '#B91C1C' }}><i className="fa-solid fa-triangle-exclamation"></i> <span>{error}</span></div>;
   if (empty)   return <div className="fee-info"><i className="fa-solid fa-circle-info"></i> <span>{emptyText}</span></div>;
   return null;
-}
-
-/* ════════════ VEHICLE-WISE TRANSPORT ════════════ */
-function ReportPanelVehicle({ toast }) {
-  const school = useContext(FeeReportBranchContext);
-  const { data: vehicles = [], loading: vLoading } = useAsync(feeService.getVehicles, []);
-  const { data: transportMap = {}, loading: tLoading } = useAsync(feeService.getTransportFee, []);
-
-  const students   = useMemo(() => Object.values(transportMap).flat(), [transportMap]);
-  const withVeh    = useMemo(() => students.filter(s => s.vehicleId), [students]);
-  const unassigned = useMemo(() => students.filter(s => !s.vehicleId && +s.transport > 0), [students]);
-  const totalFee   = useMemo(
-    () => withVeh.concat(unassigned).reduce((a, s) => a + (+s.transport || 0), 0),
-    [withVeh, unassigned],
-  );
-  const rows = useMemo(() => vehicles.map(v => {
-    const list = withVeh.filter(s => String(s.vehicleId) === String(v.id));
-    return { v, count: list.length, fee: list.reduce((a, s) => a + (+s.transport || 0), 0) };
-  }), [vehicles, withVeh]);
-
-  /* Vehicle picker — koi ek vehicle chuna to neeche ki TABLE aur report DONO sirf
-     usi vehicle ki dikhti hain; warna (— All vehicles —) sab kuch jaisa pehle. */
-  const [vehKey, setVehKey] = useState('');
-
-  /* On-screen table ke liye filtered view. */
-  const shownRows       = vehKey ? rows.filter(r => String(r.v.id) === String(vehKey)) : rows;
-  const shownUnassigned = vehKey ? [] : unassigned;
-  const shownTotal      = vehKey ? shownRows.reduce((a, r) => a + r.fee, 0) : totalFee;
-
-  const downloadReport = (mode) => {
-    const v = vehKey ? vehicles.find(x => String(x.id) === String(vehKey)) : null;
-    if (v) {
-      /* Sirf is vehicle ke students bhejo — is liye "No vehicle assigned" block nahi
-         aata aur grand total bhi isi vehicle ka hota hai. */
-      const vStudents = students.filter(s => String(s.vehicleId) === String(v.id));
-      const html = buildVehicleReportHTML({ vehicles: [v], students: vStudents, school });
-      openPrintReport(html, `Vehicle-Wise Transport — ${v.name}`, toast, mode);
-      return;
-    }
-    const html = buildVehicleReportHTML({ vehicles, students, school });
-    openPrintReport(html, 'Vehicle-Wise Transport', toast, mode);
-  };
-
-  return (
-    <>
-      <div className="fee-info">
-        <i className="fa-solid fa-circle-info"></i>
-        <span>
-          Students grouped by their assigned vehicle, with per-vehicle transport-fee totals.
-          Manage the fleet from <strong>Fee Setup &amp; Settings › Transport Fee Setup › Vehicles</strong>,
-          and assign a vehicle to each student from <strong>Transport Fee Assignment</strong>.
-        </span>
-      </div>
-
-      <RepLoadState
-        loading={vLoading || tLoading}
-        empty={!vLoading && !tLoading && vehicles.length === 0 && unassigned.length === 0}
-        emptyText="No vehicles or transport students yet."
-      />
-
-      {repKpiStrip([
-        ['k-blue',  'fa-bus',                  'Vehicles',              `${vehicles.length}`, ''],
-        ['k-green', 'fa-user-graduate',        'Students on Transport', `${withVeh.length + unassigned.length}`, ''],
-        ['k-amber', 'fa-money-bill-wave',      'Monthly Transport Fee', fmtRs(totalFee), ''],
-        ['k-red',   'fa-triangle-exclamation', 'No Vehicle Assigned',   `${unassigned.length} students`, ''],
-      ])}
-
-      <div className="fee-section fee-section--overflow">
-        <div className="fee-section-body">
-          <div className="fee-filters">
-            <div className="fee-field fee-field--grow">
-              <span className="fee-label">Select Vehicle</span>
-              <div className="fee-select-wrap">
-                <select className="fee-select" value={vehKey} onChange={e => setVehKey(e.target.value)}>
-                  <option value="">— All vehicles —</option>
-                  {vehicles.map(v => (
-                    <option key={v.id} value={v.id}>
-                      {v.name} — {v.regNo}{v.route ? ` (${v.route})` : ''}
-                    </option>
-                  ))}
-                </select>
-                <i className="fa-solid fa-chevron-down"></i>
-              </div>
-            </div>
-            <RepActions onPreview={() => downloadReport('preview')} onPdf={() => downloadReport('pdf')} />
-          </div>
-        </div>
-      </div>
-
-      <div className="fee-section">
-        <div className="fee-section-body">
-          <div className="fee-stbl-wrap">
-            <table className="fee-stbl">
-              <thead>
-                <tr>
-                  <th>#</th>
-                  <th>Vehicle</th>
-                  <th>Registration No.</th>
-                  <th>Route</th>
-                  <th className="fee-center">Students</th>
-                  <th className="fee-right">Monthly Fee</th>
-                </tr>
-              </thead>
-              <tbody>
-                {shownRows.length === 0 && shownUnassigned.length === 0 ? (
-                  <tr><td colSpan="6" className="fee-stbl-empty">{vehKey ? 'No data for the selected vehicle.' : 'No vehicles added yet.'}</td></tr>
-                ) : shownRows.map((r, i) => (
-                  <tr key={r.v.id}>
-                    <td className="fee-num">{i + 1}</td>
-                    <td><b>{r.v.name}</b></td>
-                    <td>{r.v.regNo}</td>
-                    <td>{r.v.route ? r.v.route : <span className="fee-muted-dash">—</span>}</td>
-                    <td className="fee-center">{r.count}</td>
-                    <td className="fee-right">{r.fee > 0 ? <b>{money(r.fee)}</b> : <span className="fee-muted-dash">—</span>}</td>
-                  </tr>
-                ))}
-                {shownUnassigned.length > 0 && (
-                  <tr>
-                    <td className="fee-num">—</td>
-                    <td colSpan="3"><b>No vehicle assigned</b></td>
-                    <td className="fee-center">{shownUnassigned.length}</td>
-                    <td className="fee-right"><b>{money(shownUnassigned.reduce((a, s) => a + (+s.transport || 0), 0))}</b></td>
-                  </tr>
-                )}
-                {(shownRows.length > 0 || shownUnassigned.length > 0) && (
-                  <tr className="fee-stbl-foot">
-                    <td colSpan="5"><b>{vehKey ? 'Monthly transport collection' : 'Total monthly transport collection'}</b></td>
-                    <td className="fee-right"><b>{money(shownTotal)}</b></td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-    </>
-  );
 }
 
 /* ════════════ 1. DEFAULTER LIST ════════════ */
@@ -10417,67 +10054,7 @@ function feeReportSchool(school) {
     session: school?.academicSession || school?.session || '',
     generatedDate: school?.generatedDate || null,
     generatedBy: school?.generatedBy || sessionStorage.getItem('displayName') || sessionStorage.getItem('userName') || 'Fee',
-    /* Bank fields pass-through — challan "Show Bank Details On challan" toggle in
-       fields ko feeBankDetails() se padhta hai. feeReportSchool stripped object
-       banata hai, is liye inhe carry karna zaroori hai (warna bank block khaali). */
-    branchBankName:      school?.branchBankName,
-    branchAccountTitle:  school?.branchAccountTitle,
-    branchAccountNumber: school?.branchAccountNumber,
-    branchIBAN:          school?.branchIBAN,
-    branchbankCity:      school?.branchbankCity,
-    branchAccountDesc:   school?.branchAccountDesc,
   };
-}
-
-/* Report-header API (getReportHeader) ka RAW branch object bank fields rakhta hai
-   (branchBankName / branchAccountTitle / branchAccountNumber / branchIBAN /
-   branchbankCity / branchAccountDesc). Yahan se defensive nikaalte hain; koi bhi
-   field na ho to null. feeReportSchool in fields ko drop kar deta hai, is liye
-   challan builders ko RAW school object milta hai (branchHeader). */
-function feeBankDetails(school) {
-  if (!school || typeof school !== 'object') return null;
-  const bankName = school.branchBankName    || school.bankName      || '';
-  const title    = school.branchAccountTitle|| school.accountTitle  || '';
-  const acctNo   = school.branchAccountNumber|| school.accountNumber || '';
-  const iban     = school.branchIBAN        || school.iban          || '';
-  const city     = school.branchbankCity    || school.branchBankCity || school.bankCity || '';
-  const desc     = school.branchAccountDesc || '';
-  if (!(bankName || title || acctNo || iban || city || desc)) return null;
-  return { bankName, title, acctNo, iban, city, desc };
-}
-
-/* Bank-details block for challans — PSID ke neeche chhapta hai jab "Show Bank Details
-   On challan" toggle ON ho. `thermal` true par 80mm receipt ke liye compact. Bank
-   details na ho to khaali string (kuch print nahi hota). */
-function feeBankBlockHtml(school, { thermal = false } = {}) {
-  const b = feeBankDetails(school);
-  if (!b) return '';
-  const rows = [
-    ['Bank', b.bankName],
-    ['Title', b.title],
-    ['Account #', b.acctNo],
-    ['IBAN', b.iban],
-    ['Branch', b.city],
-  ].filter(([, v]) => v);
-  if (!rows.length) return '';
-  if (thermal) {
-    return `
-  <div class="th-psid" style="margin-top:5px;">
-    <div class="th-psid-top">Bank Transfer Details</div>
-    <div style="display:grid;grid-template-columns:auto 1fr;column-gap:6px;row-gap:1px;font-size:9.5px;">
-      ${rows.map(([k, v]) => `<span style="color:#666;">${escHtml(k)}</span><span style="text-align:right;font-weight:700;color:#111;">${escHtml(String(v))}</span>`).join('')}
-    </div>
-    ${b.desc ? `<div style="font-size:8.5px;color:#555;margin-top:3px;">${escHtml(b.desc)}</div>` : ''}
-  </div>`;
-  }
-  return `
-    <div class="psid-block" style="margin-top:5px;">
-      <div class="psid-top"><div class="psid-dot"></div><span class="psid-tag">Bank Transfer Details</span></div>
-      <div style="display:grid;grid-template-columns:auto 1fr;column-gap:10px;row-gap:2px;font-size:10.5px;margin-top:4px;">
-        ${rows.map(([k, v]) => `<span style="color:#666;">${escHtml(k)}</span><span style="text-align:right;font-weight:700;color:#111;">${escHtml(String(v))}</span>`).join('')}
-      </div>
-      ${b.desc ? `<div style="font-size:9.5px;color:#555;margin-top:4px;">${escHtml(b.desc)}</div>` : ''}
-    </div>`;
 }
 
 function feeReportDate(school) {
@@ -10926,39 +10503,53 @@ function feeSlipHTML({ copyLabel, classMeta, student, heads, settings, period, i
     /* ADVANCE (negative "Previous Pending") ko head-table se bahar nikaalo — wo Total ke
        BAAD "Arrears / Advance" me minus hota hai. Warna wo discount column me chala jata
        tha (Std −1,770 / Disc −1,770 / Net 0) aur Net Payable se ghatta hi nahi tha. */
-    let advOut = 0;
-    const billRows = detailRows.filter(r => {
-      const isPrev = /previous|pending|arrear/i.test(String(r.subHead || r.head || ''));
-      if (isPrev && whole(r.challanAmount) < 0) { advOut += Math.abs(whole(r.challanAmount)); return false; }
-      return true;
-    });
+    const isPrevRow = (r) => /previous\s*pending|arrear/i.test(String(r.subHead || r.head || ''));
+    /* Late Fine ko challan par NAHI dikhate — fine sirf RECEIVING time par (user ke mutabiq).
+       Aggregate "Previous Pending" row bhi nahi — previous har head ke Prev column me. */
+    const billRows = detailRows.filter(r => !isPrevRow(r) && !feeService.isLateFineRow(r));
     rows = billRows.map(r => {
       const name = r.subHead || r.head || '';
       const std  = whole(r.challanAmount);
-      /* Har challan apna HI stored discount dikhata hai — jo us mahine generate karte
-         waqt laga tha. Discount baad me badalne se PURANE mahino ke challan nahi
-         badalne chahiye; naya discount sirf aage banne wale challan par lagta hai. */
       const raw  = whole(r.discount);
       const disc = showDisc ? Math.min(raw, std) : 0;
-      return { name, std, disc, net: std - disc };
+      const prev = whole(feeHeadPrev(r));   // us head ka pichhla baqaya (negative = advance)
+      return { name, std, disc, prev, net: std - disc + prev };
     });
-    /* If the challan didn't carry a transport line, fall back to the student's
-       Transport Setup amount so the download always reflects transport. */
+    /* Transport fallback — challan me na ho magar setup amount ho to add karo. */
     const hasTransport = detailRows.some(r => String(r.subHead || r.head || '').toLowerCase().trim() === 'transport');
     if (!hasTransport && whole(student.transport) > 0) {
       const t = whole(student.transport);
-      rows.push({ name: 'Transport', std: t, disc: 0, net: t });
+      rows.push({ name: 'Transport', std: t, disc: 0, prev: 0, net: t });
     }
-    arrears = -advOut;   // advance → Total ke baad minus
+    /* Head-wise previous (running-ledger byHead) — har head ka apna baqaya usi head par. */
+    if (!applyPrevByHead(rows, student, whole)) {
+      const sumHeadPrev  = rows.reduce((a, r) => a + (r.prev || 0), 0);
+      const runningPrev  = (student && (student.dues != null || student.advance != null))
+        ? (whole(student.dues) - whole(student.advance)) : null;
+      const residualPrev = (runningPrev != null) ? Math.max(0, runningPrev - sumHeadPrev) : 0;
+      if (residualPrev > 0) {
+        if (rows.length > 0) { rows[0].prev = (rows[0].prev || 0) + residualPrev; rows[0].net += residualPrev; }
+        else rows.push({ name: 'Previous Pending', std: 0, disc: 0, prev: residualPrev, net: residualPrev });
+      }
+    }
+    /* Negative prev (ADVANCE) ko head ke Net se bahar nikaal kar "Advance" (arrears) me —
+       warna Net minus (−550) dikhata tha. Positive prev head-wise Net me rehta hai; Total
+       wahi (advance Net Payable se minus, Advance box me). */
+    let advNeg = 0;
+    rows.forEach(r => { if ((r.prev || 0) < 0) { advNeg += r.prev; r.net -= r.prev; r.prev = 0; } });
+    arrears = advNeg;   // advance → Total ke baad minus
   } else {
     rows = heads.map(h => {
       const raw   = whole(h.amt);
       const dRaw  = whole(disMap[h.name]);
       const disc  = showDisc ? Math.min(dRaw, raw) : 0;
-      return { name: h.name, std: raw, disc, net: raw - disc };
+      return { name: h.name, std: raw, disc, net: raw - disc, prev: feeHeadPrev(h) };
     });
     arrears = whole(student.dues) - whole(student.advance);
   }
+  /* Prev (Previous Pending) column — head-wise pichhla baqaya, API se. >0 par raqam,
+     warna "—". Values API wiring par aayengi; abhi "—". */
+  const prevCol = (r) => (typeof r.prev === 'number' && r.prev > 0) ? r.prev.toLocaleString('en-PK') : '—';
   const tNet    = rows.reduce((a, r) => a + r.net, 0);
   const payable = tNet + arrears;
   const fineTxt = `Rs. ${fineAmt.toLocaleString('en-PK')}`;
@@ -11008,10 +10599,10 @@ function feeSlipHTML({ copyLabel, classMeta, student, heads, settings, period, i
   </div>
   <div class="fee-wrap">
     <table class="fee-table">
-      <thead><tr><th>Fee Head</th><th>Std.</th><th>Disc</th><th>Net</th></tr></thead>
+      <thead><tr><th>Fee Head</th><th>Std.</th><th>Disc</th><th>Prev</th><th>Net</th></tr></thead>
       <tbody>
-        ${rows.map(r => `<tr><td>${escHtml(headLabel(r.name))}</td><td>${r.std.toLocaleString('en-PK')}</td><td>${r.disc ? r.disc.toLocaleString('en-PK') : '—'}</td><td>${r.net.toLocaleString('en-PK')}</td></tr>`).join('')}
-        <tr class="tr-total"><td colspan="3">Total</td><td>${tNet.toLocaleString('en-PK')}</td></tr>
+        ${rows.map(r => `<tr><td>${escHtml(headLabel(r.name))}</td><td>${r.std.toLocaleString('en-PK')}</td><td>${r.disc ? r.disc.toLocaleString('en-PK') : '—'}</td><td>${prevCol(r)}</td><td>${r.net.toLocaleString('en-PK')}</td></tr>`).join('')}
+        <tr class="tr-total"><td colspan="4">Total</td><td>${tNet.toLocaleString('en-PK')}</td></tr>
       </tbody>
     </table>
   </div>
@@ -11036,7 +10627,6 @@ function feeSlipHTML({ copyLabel, classMeta, student, heads, settings, period, i
         <div class="qr-hint"><strong>Scan QR</strong> with your banking app<br/>OR enter PSID manually.<br/>Works on HBL, MCB, Meezan,<br/>UBL, Sadapay, Easypaisa &amp; more.</div>
       </div>
     </div>` : ''}
-    ${settings.showBankDetails === true ? feeBankBlockHtml(school, {}) : ''}
     ${psidPlain ? `
     <div class="steps-block">
       <div class="steps-title">How to pay — 1Link PSID</div>
@@ -11216,7 +10806,7 @@ function feeThermalChallanHTML({ classMeta, student, heads, settings, period, is
          badalne chahiye; naya discount sirf aage banne wale challan par lagta hai. */
       const raw  = whole(r.discount);
       const disc = showDisc ? Math.min(raw, std) : 0;
-      return { name, std, disc, net: std - disc };
+      return { name, std, disc, net: std - disc, prev: feeHeadPrev(r) };
     });
     const hasTransport = detailRows.some(r => String(r.subHead || r.head || '').toLowerCase().trim() === 'transport');
     if (!hasTransport && whole(student.transport) > 0) {
@@ -11229,13 +10819,16 @@ function feeThermalChallanHTML({ classMeta, student, heads, settings, period, is
       const raw  = whole(h.amt);
       const dRaw = whole(disMap[h.name]);
       const disc = showDisc ? Math.min(dRaw, raw) : 0;
-      return { name: h.name, std: raw, disc, net: raw - disc };
+      return { name: h.name, std: raw, disc, net: raw - disc, prev: feeHeadPrev(h) };
     });
     arrears = whole(student.dues) - whole(student.advance);
   }
   const tNet    = rows.reduce((a, r) => a + r.net, 0);
   const payable = tNet + arrears;
   const fineTxt = `Rs. ${fineAmt.toLocaleString('en-PK')}`;
+  /* Prev column thermal par sirf tab jab kisi head ka previous ho (compact receipt). */
+  const showPrevCol = rows.some(r => typeof r.prev === 'number' && r.prev > 0);
+  const prevCol     = (r) => (typeof r.prev === 'number' && r.prev > 0) ? r.prev.toLocaleString('en-PK') : '—';
   /* Due date guzar chuki ho to AAJ tak banti fine — slip par sirf formula nahi,
      asli raqam bhi dikhe taake parent ko pata ho ab kitna dena hai.
 
@@ -11279,6 +10872,7 @@ function feeThermalChallanHTML({ classMeta, student, heads, settings, period, is
         <th>Head</th>
         <th class="right">Std.</th>
         ${showDiscCol ? '<th class="right">Disc</th>' : ''}
+        ${showPrevCol ? '<th class="right">Prev</th>' : ''}
         <th class="right">Net</th>
       </tr>
     </thead>
@@ -11287,9 +10881,10 @@ function feeThermalChallanHTML({ classMeta, student, heads, settings, period, is
         <td>${escHtml(headLabel(r.name))}</td>
         <td class="right">${r.std.toLocaleString('en-PK')}</td>
         ${showDiscCol ? `<td class="right">${r.disc ? r.disc.toLocaleString('en-PK') : '—'}</td>` : ''}
+        ${showPrevCol ? `<td class="right">${prevCol(r)}</td>` : ''}
         <td class="right">${r.net.toLocaleString('en-PK')}</td>
       </tr>`).join('')}
-      <tr class="tr-total"><td colspan="${showDiscCol ? 3 : 2}">Total</td><td class="right">${tNet.toLocaleString('en-PK')}</td></tr>
+      <tr class="tr-total"><td colspan="${1 + (showDiscCol ? 1 : 0) + (showPrevCol ? 1 : 0) + 1}">Total</td><td class="right">${tNet.toLocaleString('en-PK')}</td></tr>
     </tbody>
   </table>
   <div class="th-kv" style="margin-top:6px">
@@ -11312,7 +10907,6 @@ function feeThermalChallanHTML({ classMeta, student, heads, settings, period, is
     <div class="th-psid-qr">${psidQrSvg(psidPlain, 88)}</div>
     <div class="th-psid-hint">Scan QR / enter PSID in your banking app. Works on HBL, MCB, Meezan, UBL, Sadapay, Easypaisa &amp; more.</div>
   </div>` : ''}
-  ${settings.showBankDetails === true ? feeBankBlockHtml(school, { thermal: true }) : ''}
   ${psidPlain ? `
   <div class="th-steps">
     <div class="s"><b>1.</b> Open banking app</div>
@@ -11324,7 +10918,7 @@ function feeThermalChallanHTML({ classMeta, student, heads, settings, period, is
 }
 
 /* ── Family combined challan: one slip lists every child as a row ── */
-function feeFamilySlipHTML({ copyLabel, family, settings, period, issueISO, dueISO, school }) {
+function feeFamilySlipHTML({ copyLabel, family, settings, period, issueISO, dueISO }) {
   const showPsd = settings.showPsd !== false;
   /* Whole rupees — list/cards ki tarah, challan par decimal na dikhe. */
   const w = (v) => { const n = Math.round(Number(v)); return Number.isFinite(n) ? n : 0; };
@@ -11333,7 +10927,7 @@ function feeFamilySlipHTML({ copyLabel, family, settings, period, issueISO, dueI
   const rows = family.children.map(ch => {
     const net  = w(ch.fee) + w(ch.transport) + w(ch.dues);
     const disc = w(ch.discount);
-    return { name: `${ch.name} (${ch.cls}-${ch.sec})`, std: net + disc, disc, net };
+    return { name: `${ch.name} (${ch.cls}-${ch.sec})`, std: net + disc, disc, net, prev: feeHeadPrev(ch) };
   });
   const tNet = rows.reduce((a, r) => a + r.net, 0);
   /* Advance (jama shuda extra) Total ke BAAD minus hota hai. */
@@ -11353,17 +10947,12 @@ function feeFamilySlipHTML({ copyLabel, family, settings, period, issueISO, dueI
     .map(ch => ch.applicantsID ?? ch.studentID)
     .find(v => v != null && v !== '') ?? '');
 
-  const logoHtml = school?.logo
-    ? `<img src="${escHtml(school.logo)}" alt="${escHtml(school?.name || '')} logo" style="width:100%;height:100%;object-fit:contain;border-radius:50%;" />`
-    : FEE_LOGO_SVG;
-
   return `
 <div class="slip">
   <div class="slip-header">
-    <div class="logo-circle">${logoHtml}</div>
+    <div class="logo-circle">${FEE_LOGO_SVG}</div>
     <div>
-      <div class="school-name">${escHtml(school?.name || FEE_SCHOOL.name)}</div>
-      ${school?.address ? `<div class="school-addr" style="font-size:9px;color:#555;margin-top:1px;">${escHtml(school.address)}</div>` : ''}
+      <div class="school-name">${escHtml(FEE_SCHOOL.name)}</div>
       <span class="copy-tag">${escHtml(copyLabel)}</span>
     </div>
   </div>
@@ -11376,11 +10965,11 @@ function feeFamilySlipHTML({ copyLabel, family, settings, period, issueISO, dueI
   </div>
   <div class="fee-wrap">
     <table class="fee-table">
-      <thead><tr><th>Child (Class)</th><th>Std.</th><th>Disc</th><th>Net</th></tr></thead>
+      <thead><tr><th>Child (Class)</th><th>Std.</th><th>Disc</th><th>Prev</th><th>Net</th></tr></thead>
       <tbody>
-        ${rows.map(r => `<tr><td>${escHtml(r.name)}</td><td>${r.std.toLocaleString('en-PK')}</td><td>${r.disc ? r.disc.toLocaleString('en-PK') : '—'}</td><td>${r.net.toLocaleString('en-PK')}</td></tr>`).join('')}
-        <tr class="tr-total"><td colspan="3">Total</td><td>${tNet.toLocaleString('en-PK')}</td></tr>
-        ${famAdv > 0 ? `<tr class="tr-total"><td colspan="3">Less: Advance</td><td>-${famAdv.toLocaleString('en-PK')}</td></tr>` : ''}
+        ${rows.map(r => `<tr><td>${escHtml(r.name)}</td><td>${r.std.toLocaleString('en-PK')}</td><td>${r.disc ? r.disc.toLocaleString('en-PK') : '—'}</td><td>${(typeof r.prev === 'number' && r.prev > 0) ? r.prev.toLocaleString('en-PK') : '—'}</td><td>${r.net.toLocaleString('en-PK')}</td></tr>`).join('')}
+        <tr class="tr-total"><td colspan="4">Total</td><td>${tNet.toLocaleString('en-PK')}</td></tr>
+        ${famAdv > 0 ? `<tr class="tr-total"><td colspan="4">Less: Advance</td><td>-${famAdv.toLocaleString('en-PK')}</td></tr>` : ''}
       </tbody>
     </table>
   </div>
@@ -11398,7 +10987,6 @@ function feeFamilySlipHTML({ copyLabel, family, settings, period, issueISO, dueI
         <div class="qr-hint"><strong>Scan QR</strong> with your banking app<br/>OR enter PSID manually.<br/>Works on HBL, MCB, Meezan,<br/>UBL, Sadapay, Easypaisa &amp; more.</div>
       </div>
     </div>` : ''}
-    ${settings.showBankDetails === true ? feeBankBlockHtml(school, {}) : ''}
     ${psidPlain ? `
     <div class="steps-block">
       <div class="steps-title">How to pay — 1Link PSID</div>
@@ -11413,13 +11001,8 @@ function feeFamilySlipHTML({ copyLabel, family, settings, period, issueISO, dueI
 </div>`;
 }
 
-function buildFamilyChallanInner({ family, settings, bw = false, size = 'a4', school = null,
+function buildFamilyChallanInner({ family, settings, bw = false, size = 'a4',
                                    period: periodOverride, issueISO: issueOverride, dueISO: dueOverride }) {
-  /* Header (naam, address, logo) report-header API se aata hai — bilkul waise
-     hi jaise per-child challan me (dekhein buildChallanInner). Pehle yahan
-     FEE_SCHOOL ka hardcoded naam chhapta tha, is liye har school ke family
-     challan par "The Oxford System, Lahore Campus" aa jata tha. */
-  const sch = feeReportSchool(school);
   const today    = new Date();
   /* LOCAL calendar par — warna subah-subah slip par date ek din peechhe chhapti. */
   const fbIssue  = localDateISO(today);
@@ -11436,15 +11019,15 @@ function buildFamilyChallanInner({ family, settings, bw = false, size = 'a4', sc
   });
 
   if (size === 'thermal') {
-    return `<div class="fee-thermal-doc">${feeThermalFamilyChallanHTML({ family, settings, period, issueISO, dueISO, school: sch })}</div>`;
+    return `<div class="fee-thermal-doc">${feeThermalFamilyChallanHTML({ family, settings, period, issueISO, dueISO })}</div>`;
   }
 
   const page = `
     <div class="challan-page">
       <div class="challan-row">
-        ${feeFamilySlipHTML({ copyLabel: 'Parent Copy', family, settings, period, issueISO, dueISO, school: sch })}
-        ${feeFamilySlipHTML({ copyLabel: 'Bank Copy',   family, settings, period, issueISO, dueISO, school: sch })}
-        ${feeFamilySlipHTML({ copyLabel: 'School Copy', family, settings, period, issueISO, dueISO, school: sch })}
+        ${feeFamilySlipHTML({ copyLabel: 'Parent Copy', family, settings, period, issueISO, dueISO })}
+        ${feeFamilySlipHTML({ copyLabel: 'Bank Copy',   family, settings, period, issueISO, dueISO })}
+        ${feeFamilySlipHTML({ copyLabel: 'School Copy', family, settings, period, issueISO, dueISO })}
       </div>
     </div>`;
 
@@ -11458,7 +11041,7 @@ function buildFamilyChallanHTML(opts) {
 <style>${css}</style></head><body>${buildFamilyChallanInner(opts)}</body></html>`;
 }
 
-function feeThermalFamilyChallanHTML({ family, settings, period, issueISO, dueISO, school }) {
+function feeThermalFamilyChallanHTML({ family, settings, period, issueISO, dueISO }) {
   const showPsd = settings.showPsd !== false;
   /* Whole rupees — list/cards ki tarah, challan par decimal na dikhe. */
   const w = (v) => { const n = Math.round(Number(v)); return Number.isFinite(n) ? n : 0; };
@@ -11467,7 +11050,7 @@ function feeThermalFamilyChallanHTML({ family, settings, period, issueISO, dueIS
   const rows = family.children.map(ch => {
     const net  = w(ch.fee) + w(ch.transport) + w(ch.dues);
     const disc = w(ch.discount);
-    return { name: `${ch.name} (${ch.cls}-${ch.sec})`, std: net + disc, disc, net };
+    return { name: `${ch.name} (${ch.cls}-${ch.sec})`, std: net + disc, disc, net, prev: feeHeadPrev(ch) };
   });
   const tNet = rows.reduce((a, r) => a + r.net, 0);
   /* Advance (jama shuda extra) Total ke BAAD minus hota hai. */
@@ -11480,11 +11063,13 @@ function feeThermalFamilyChallanHTML({ family, settings, period, issueISO, dueIS
   const famLateDays = feeService.daysLate(dueISO, localTodayISO());
   /* Family challan ek HI challan hai — PSID bhi ek (dekho feeFamilySlipHTML). */
   const psidPlain = psidOf((family.children || []).map(ch => ch._challan).find(Boolean));
+  /* Prev column thermal par sirf jab kisi bachche ka previous ho (compact receipt). */
+  const showPrevCol = rows.some(r => typeof r.prev === 'number' && r.prev > 0);
+  const prevCol     = (r) => (typeof r.prev === 'number' && r.prev > 0) ? r.prev.toLocaleString('en-PK') : '—';
 
   return `
 <div class="th-challan">
-  <div class="th-school">${escHtml(school?.name || FEE_SCHOOL.name)}</div>
-  ${school?.address ? `<div style="font-size:9.5px;color:#555;text-align:center;">${escHtml(school.address)}</div>` : ''}
+  <div class="th-school">${escHtml(FEE_SCHOOL.name)}</div>
   <div class="th-tag">Family Fee Challan</div>
   <div class="th-kv">
     <span class="k">Period</span><span class="v">${escHtml(period)}</span>
@@ -11496,17 +11081,18 @@ function feeThermalFamilyChallanHTML({ family, settings, period, issueISO, dueIS
   <div class="th-section">Children &amp; Fees</div>
   <table class="th-tbl">
     <thead>
-      <tr><th>Child (Class)</th><th class="right">Std.</th><th class="right">Disc</th><th class="right">Net</th></tr>
+      <tr><th>Child (Class)</th><th class="right">Std.</th><th class="right">Disc</th>${showPrevCol ? '<th class="right">Prev</th>' : ''}<th class="right">Net</th></tr>
     </thead>
     <tbody>
       ${rows.map(r => `<tr>
         <td>${escHtml(r.name)}</td>
         <td class="right">${r.std.toLocaleString('en-PK')}</td>
         <td class="right">${r.disc ? r.disc.toLocaleString('en-PK') : '—'}</td>
+        ${showPrevCol ? `<td class="right">${prevCol(r)}</td>` : ''}
         <td class="right">${r.net.toLocaleString('en-PK')}</td>
       </tr>`).join('')}
-      <tr class="tr-total"><td colspan="3">Total</td><td class="right">${tNet.toLocaleString('en-PK')}</td></tr>
-      ${famAdv > 0 ? `<tr class="tr-total"><td colspan="3">Less: Advance</td><td class="right">-${famAdv.toLocaleString('en-PK')}</td></tr>` : ''}
+      <tr class="tr-total"><td colspan="${showPrevCol ? 4 : 3}">Total</td><td class="right">${tNet.toLocaleString('en-PK')}</td></tr>
+      ${famAdv > 0 ? `<tr class="tr-total"><td colspan="${showPrevCol ? 4 : 3}">Less: Advance</td><td class="right">-${famAdv.toLocaleString('en-PK')}</td></tr>` : ''}
     </tbody>
   </table>
   <div class="th-net">
@@ -11524,7 +11110,6 @@ function feeThermalFamilyChallanHTML({ family, settings, period, issueISO, dueIS
     <div class="th-psid-qr">${psidQrSvg(psidPlain, 88)}</div>
     <div class="th-psid-hint">Scan QR / enter PSID in your banking app. Works on HBL, MCB, Meezan, UBL, Sadapay, Easypaisa &amp; more.</div>
   </div>` : ''}
-  ${settings.showBankDetails === true ? feeBankBlockHtml(school, { thermal: true }) : ''}
   ${psidPlain ? `
   <div class="th-steps">
     <div class="s"><b>1.</b> Open banking app</div>
@@ -11537,7 +11122,7 @@ function feeThermalFamilyChallanHTML({ family, settings, period, issueISO, dueIS
 
 /* ═══════════════════════════════════════════════════════════════════
    FEE CHALLAN SETTINGS — master toggles + dependent fine config.
-   Discount / PSID code show on every challan; Previous / Next Month
+   Discount / PSD code show on every challan; Previous / Next Month
    Challan Receiving gate which months the counter may receive against;
    Fine is conditional, with fine type (Fixed / Per Day) and amount.
    All values persist via feeService.saveFeeSettings().
@@ -11678,14 +11263,6 @@ function FeeChallanSettings({ toast }) {
               onToggle={() => set({ showPsd: !value.showPsd })}
             />
 
-            {/* Show Bank Details */}
-            <SettingCard
-              name="Show Bank Details On challan"
-              desc="Print the school's bank account details on every challan so parents can pay by bank transfer."
-              on={value.showBankDetails}
-              onToggle={() => set({ showBankDetails: !value.showBankDetails })}
-            />
-
             {/* Previous month receiving */}
             <SettingCard
               name="Previous Month Challan Receiving"
@@ -11811,7 +11388,7 @@ function FeeChallanSettings({ toast }) {
                 </strong>
               </li>
               <li>
-                PSID / bank code on challan: {' '}
+                PSD / bank code on challan: {' '}
                 <strong className={value.showPsd ? 'fee-pos' : 'fee-neg'}>
                   {value.showPsd ? 'Printed' : 'Not printed'}
                 </strong>
@@ -11838,7 +11415,7 @@ function FeeChallanSettings({ toast }) {
   );
 }
 
-/* ─── Reusable toggle card (Show Discount / Show PSID / etc.) ─── */
+/* ─── Reusable toggle card (Show Discount / Show PSD / etc.) ─── */
 function SettingCard({ name, desc, on, onToggle }) {
   return (
     <div className="fee-set-card">
