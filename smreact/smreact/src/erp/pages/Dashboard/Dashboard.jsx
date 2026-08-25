@@ -6,6 +6,7 @@ import { buildUrl } from '../../../utils/apiConfig';
 import { useSettings } from '../Settings/settingsStore';
 import { INITIAL_USERS, INITIAL_ROLES, findRole, initialsOf } from '../UserPermissions/permissionsData';
 import { CURRENT_SESSION } from './dashboardData';
+import { getUserRole } from '../../services/rolesService';
 import AdminDashboard from './AdminDashboard';
 import TeacherDashboard from './TeacherDashboard';
 
@@ -29,6 +30,25 @@ export default function Dashboard({
     try { return sessionStorage.getItem('displayName') || sessionStorage.getItem('userName') || 'Principal'; }
     catch { return 'Principal'; }
   })();
+
+  /* Logged-in user ka assigned ROLE — wahi source jo User Permissions ka
+     Role column use karta hai (GET /get-user-role/{employeeId}/{branchId}).
+     Pehle yahan hardcoded "Principal" likha tha. Field naam vary karte hain
+     is liye defensive fallbacks; API fail ho to accountType par gir jate hain. */
+  const [ownerRole, setOwnerRole] = useState('');
+  useEffect(() => {
+    const empId = sessionStorage.getItem('employee_ID');
+    if (!empId) return undefined;
+    let alive = true;
+    getUserRole(empId)
+      .then((d) => {
+        const row = Array.isArray(d) ? d[0] : d;
+        const name = row ? (row.roleName ?? row.RoleName ?? row.name ?? '') : '';
+        if (alive) setOwnerRole(name);
+      })
+      .catch(() => { if (alive) setOwnerRole(''); });
+    return () => { alive = false; };
+  }, []);
 
   /* Real school/branch identity (sidebar jaisa hi source: report-header API) —
      header card ke "Live operations across ..." me asli school naam + address. */
@@ -141,7 +161,7 @@ export default function Dashboard({
           <div className="dash-impersonate">
             <span className="up-avatar dash-impersonate-av">{initialsOf(ownerName)}</span>
             <span className="dash-owner-name">{ownerName}</span>
-            <span className="dash-owner-role">Principal</span>
+            <span className="dash-owner-role">{ownerRole || accountType || '—'}</span>
           </div>
           <Tooltip text="Open Dashboard tutorials">
             <button
