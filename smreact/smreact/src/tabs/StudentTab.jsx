@@ -562,6 +562,10 @@ export default function StudentTab({ classesData, setClassesData, studentStrengt
     fd.append('branchId',  Number(branchID) || 0);
     fd.append('createdBy', Number(sessionStorage.getItem('UserID')) || 0);
     fd.append('file',      importFile);
+    /* Manual Registration Number toggle ON ho to backend ko batao — tab wo file ki
+       RegistrationNumber column use karta hai (auto-generate nahi), aur wahi number
+       screen par dikhता hai. OFF par backend khud number generate karta hai. */
+    fd.append('isManualRegNo', !!manualReg);
     setImporting(true);
     try {
       // NOTE: don't set Content-Type — the browser adds the multipart boundary.
