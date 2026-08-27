@@ -34,6 +34,19 @@ import { etubeApi } from './api';
    "defined but never used" warnings aa jate hain.) */
 const SHOW_DASHBOARD_REVIEWS = false;
 
+/* ── Videos ▸ "Other Schools" sub-tab filhaal band ────────────────────
+   Wahi wajah jo Reviews ki thi: is screen ki koi API nahi hai. Poori list
+   etubeData ke INITIAL_SCHOOL_VIDS (demo rows) se banti hai, aur View /
+   Delete sirf screen par asar karte hain — backend par kuch nahi jata. Live
+   module me banawati videos dikhana ghalat fehmi paida karta hai, is liye
+   sub-tab bar se hata di gayi hai.
+
+   Sirf yeh line true kar dein aur sub-tab wapas aa jayega — panel, filters,
+   modals sab jyun ke tyun mojood hain. (SHOW_DASHBOARD_REVIEWS ki tarah
+   switch hi rakha hai, comment kar ke nahi hataya: warna Thumb/CatBadge
+   jaise components "defined but never used" ban jate hain.) */
+const SHOW_OTHER_SCHOOLS = false;
+
 const TABS = [
   ...(SHOW_DASHBOARD_REVIEWS ? [
     { id: 'dashboard',  name: 'Dashboard',  icon: 'fa-gauge-high' },
@@ -490,10 +503,14 @@ function Videos({ vids, cats, schoolVids, loading, setModal, goUpload }) {
 
   return (
     <div className="et-panel active">
-      <div className="et-vid-subtabs">
-        <button className={`et-vid-stab${sub === 'ho' ? ' active' : ''}`} onClick={() => setSub('ho')}><i className="fa-solid fa-building-shield" /> School Mentor's Videos</button>
-        <button className={`et-vid-stab${sub === 'schools' ? ' active' : ''}`} onClick={() => setSub('schools')}><i className="fa-solid fa-school" /> Other Schools</button>
-      </div>
+      {/* Other Schools band ho to sirf ek hi sub-tab bachta hai — akela tab
+          dikhana bemani hai, is liye poora bar chhupa dete hain. */}
+      {SHOW_OTHER_SCHOOLS && (
+        <div className="et-vid-subtabs">
+          <button className={`et-vid-stab${sub === 'ho' ? ' active' : ''}`} onClick={() => setSub('ho')}><i className="fa-solid fa-building-shield" /> School Mentor's Videos</button>
+          <button className={`et-vid-stab${sub === 'schools' ? ' active' : ''}`} onClick={() => setSub('schools')}><i className="fa-solid fa-school" /> Other Schools</button>
+        </div>
+      )}
 
       {sub === 'ho' && (
         <div className="et-card">
@@ -528,7 +545,7 @@ function Videos({ vids, cats, schoolVids, loading, setModal, goUpload }) {
         </div>
       )}
 
-      {sub === 'schools' && (
+      {SHOW_OTHER_SCHOOLS && sub === 'schools' && (
         <div className="et-card">
           <div className="et-toolbar">
             <div className="et-srch" style={{ flex: 1.5 }}><i className="fa-solid fa-magnifying-glass" /><input value={sSearch} onChange={(e) => setSSearch(e.target.value)} placeholder="Search by school name, video title…" /></div>

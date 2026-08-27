@@ -232,6 +232,15 @@ export default function SchoolPayment({ toast }) {
       /* Challans wali baat yahan bhi: mahina badal chuka ho to yeh August ka
          jawab hai, September ki table ka nahi. */
       if (recvPeriodRef.current !== key) return;
+      /* API ki ek jama line ki jagah is browser ki mehfooz line-by-line
+         history — usi jama par fit ki hui (see reconcileRecvHistory). */
+      const savedHist = readRecvHistStore();
+      Object.keys(recvs).forEach((bid) => {
+        const row = recvs[bid];
+        row.history = reconcileRecvHistory(
+          savedHist[recvHistKey(bid, period)], row.receivedAmount, row.history,
+        );
+      });
       setRecvStore(recvs);
       setPrevDuesStore(prevDues);
     }, 'Could not load receiving records', key);
@@ -284,6 +293,29 @@ export default function SchoolPayment({ toast }) {
     else if (tab === 'receiving') ensureReceivings(schools);
     else if (tab === 'report') { ensureChallans(schools); ensureReceivings(schools); }
   }, [tab, schools, ensureSetups, ensureChallans, ensureReceivings]);
+
+  /* Tab badalte hi mahina wapas CHALTE mahine par.
+
+     `period` teenon tabs ka sanjha hai (Challans / Receiving / Reports). Pehle
+     jo mahina ek tab par chuna jata wo doosre tab par bhi chipka reh jata tha:
+     Challans par September chun kar Receiving par jao, phir wapas Challans par
+     aao, to wahan bhi September hi khada milta — halanke screen kholne wale ko
+     taqreeban hamesha CHALTE mahine ka kaam karna hota hai, aur us purane mahine
+     ke challan/receiving dekh kar lagta ke is mahine ka data hi nahi hai.
+
+     Ab har tab is mahine se khulta hai aur usi mahine ke challan + receiving
+     mangwaye jate hain. Usi tab par rehte hue mahina badalna pehle ki tarah
+     chalta hai — reset sirf tab badalne par hota hai.
+
+     setPeriod tabhi chalta hai jab mahina waqai alag ho, warna har click par
+     naya object banta aur ek bemaqsad render/load ka chakkar shuru ho jata. */
+  const switchTab = (id) => {
+    setTab(id);
+    setPeriod((p) => {
+      const now = thisPeriod();
+      return (p.month === now.month && p.year === now.year) ? p : now;
+    });
+  };
 
   /* Stats (header) */
   const stats = useMemo(() => {
@@ -463,6 +495,9 @@ export default function SchoolPayment({ toast }) {
   const saveReceiving = async (id, rec) => {
     const s = schools.find((x) => x.id === id);
     const prevHistory = recvStore[id]?.history || [];
+    /* Row par pehle se kitna JAMA tha — nayi history line isi ke farq se
+       banti hai (see appendRecvHistory). */
+    const prevTotal = Number(recvStore[id]?.receivedAmount) || 0;
     setSaving(true);
     try {
       const saved = await paymentsApi.saveReceiving({
@@ -474,12 +509,16 @@ export default function SchoolPayment({ toast }) {
            ki tareekh ka mahina isse alag ho sakta hai. */
         period,
       });
+      const history = appendRecvHistory(prevHistory, prevTotal, rec.receivedAmount, rec);
+      /* Tab badal kar wapas aane par yeh lines dobara API ki ek jama line me
+         nahi badlengi (see saveRecvHistory). */
+      saveRecvHistory(id, period, history);
       setRecvStore((prev) => ({ ...prev, [id]: {
         ...saved,
         /* Save ke baad API se padha hua `paymentVia` hi sach hai; kisi purane
            record par khali ho to jo abhi chuna gaya wo dikh jata hai. */
         via: saved.via || rec.via || '',
-        history: [...prevHistory, { amount: rec.receivedAmount, via: rec.via, date: rec.date }],
+        history,
       } }));
       setModal(null);
       toast?.(`Payment recorded for ${s ? s.name : 'school'}`, 'success');
@@ -494,6 +533,8 @@ export default function SchoolPayment({ toast }) {
     const rowId = recvStore[id]?.id || 0;
     try {
       if (rowId) await paymentsApi.deleteReceiving({ branchId: id, id: rowId });
+      /* Record hi nahi raha to uski mehfooz history bhi nahi rehni chahiye. */
+      saveRecvHistory(id, period, []);
       setRecvStore((prev) => { const n = { ...prev }; delete n[id]; return n; });
       setModal(null); toast?.('Receiving record deleted', 'info');
     } catch (err) {
@@ -522,7 +563,7 @@ export default function SchoolPayment({ toast }) {
 
       <div className="pay-tabs">
         {TABS.map((t) => (
-          <button key={t.id} className={`pay-tab${tab === t.id ? ' active' : ''}`} onClick={() => setTab(t.id)}><i className={`fa-solid ${t.icon}`} /> {t.name}</button>
+          <button key={t.id} className={`pay-tab${tab === t.id ? ' active' : ''}`} onClick={() => switchTab(t.id)}><i className={`fa-solid ${t.icon}`} /> {t.name}</button>
         ))}
       </div>
 
@@ -561,6 +602,95 @@ export default function SchoolPayment({ toast }) {
 /* Monthly bill. Summary API apna hisaab `totalAmount` me deti hai — jab wo
    maujood ho wahi dikhta hai (screen aur DB kabhi alag na batayein), warna
    formula se nikala jata hai (demo rows / abhi type ho raha setup). */
+/* ── Receiving history ki ek line ───────────────────────────────────
+   API ek hi row rakhti hai aur us par `receivingAmount` JAMA raqam hoti hai:
+   6000 lene ke baad row par 6000 likha jata hai, phir 9000 aur lein to row par
+   15000 chala jata hai (9000 nahi). Modal ka "Received Amount" khana bhi isi
+   liye pehle se bhara aata hai aur user usay barha kar 15000 kar deta hai.
+
+   Magar HISTORY me har line EK wasooli hoti hai. Pehle yahan seedha
+   `rec.receivedAmount` daal diya jata tha, is liye doosri line par 15000 likha
+   aata tha — yani list 6000 + 15000 = 21000 batati, halanke aaye sirf 15000
+   thay. Ab line par JAMA ka farq jata hai:
+       pehli baar :  6000 − 0    =  6000
+       doosri baar: 15000 − 6000 =  9000
+
+   Raqam ghatai jaye (ghalti ki durusti) ya bilkul na badle (sirf Payment Via /
+   tareekh badli ho) to nayi line nahi banti — wo pichhli line ki durusti hai,
+   is liye aakhri line hi theek kar di jati hai. Durusti se line sifar ya manfi
+   ho jaye to wo line hat jati hai. */
+/* ── History browser me mehfooz ────────────────────────────────────────
+   API har branch + mahine ka EK row rakhti hai, aur us par `receivingAmount`
+   JAMA raqam hoti hai. Yani "kaun si wasooli kab hui" backend kahin rakhta hi
+   nahi — GET par sirf 1900 wapas aata hai, 1000 aur 900 alag alag nahi.
+
+   Tab badalte hi store dobara API se bharta hai, is liye screen par bani hui
+   line-by-line history gayab ho jati thi aur ek hi line "PKR 1,900" ki reh
+   jati thi. Ab lines yahan sessionStorage me rakhi jati hain, branch + mahine
+   ke naam par, aur load hote waqt wapas laga di jati hain.
+
+   AHEM — sach hamesha API ka JAMA hai. Mehfooz lines usi jama se milai jati
+   hain (see reconcileRecvHistory): kam pad jayein to farq ki ek line jur jati
+   hai, zyada hon to trim ho jati hain. Is tarah screen kabhi server se ulta
+   nahi bolti, chahe kisi doosre user ne raqam badal di ho.
+
+   Yeh ASLI record nahi, sirf isi browser ki soolat hai: doosre computer par
+   wahi ek jama line dikhegi. Poori history tabhi sab ke liye ho sakti hai jab
+   API har wasooli ki apni row rakhe. */
+const RECV_HIST_KEY = 'sm-sa-recv-history';
+const recvHistKey = (branchId, period) => `${branchId}-${period?.year}-${period?.month}`;
+
+function readRecvHistStore() {
+  try { return JSON.parse(sessionStorage.getItem(RECV_HIST_KEY) || '{}') || {}; }
+  catch { return {}; }          /* storage band / kharab ho to bas yaad na rahe */
+}
+
+function saveRecvHistory(branchId, period, lines) {
+  try {
+    const all = readRecvHistStore();
+    const k = recvHistKey(branchId, period);
+    if (Array.isArray(lines) && lines.length > 1) all[k] = lines;
+    else delete all[k];          /* ek hi line ho to API khud bata deti hai */
+    sessionStorage.setItem(RECV_HIST_KEY, JSON.stringify(all));
+  } catch { /* ignore */ }
+}
+
+/* Mehfooz lines ko API ke JAMA (`total`) par fit karo. `fallback` API row ki
+   apni line hai (uska via/date), jo tab kaam aati hai jab mehfooz kuch na ho. */
+function reconcileRecvHistory(saved, total, fallback = []) {
+  const t = Number(total) || 0;
+  if (t <= 0) return [];
+  const list = (Array.isArray(saved) ? saved : []).filter((l) => Number(l?.amount) > 0);
+
+  const out = [];
+  let sum = 0;
+  for (const l of list) {
+    if (sum >= t) break;
+    const amount = Math.min(Number(l.amount) || 0, t - sum);
+    if (amount > 0) { out.push({ ...l, amount }); sum += amount; }
+  }
+  /* Jama pura na hua — baqi raqam ki ek line, API wali tafseel ke saath. */
+  if (sum < t) {
+    const last = fallback[fallback.length - 1] || {};
+    out.push({ amount: t - sum, via: last.via || '', date: last.date || '' });
+  }
+  /* Ek hi line bani to API ki apni line behtar hai (us par via/date mojood). */
+  return out.length > 1 ? out : (fallback.length ? fallback : out);
+}
+
+function appendRecvHistory(prevHistory, prevTotal, newTotal, rec) {
+  const list = Array.isArray(prevHistory) ? prevHistory : [];
+  const line = (amount) => ({ amount, via: rec.via, date: rec.date });
+  const delta = (Number(newTotal) || 0) - (Number(prevTotal) || 0);
+
+  if (delta > 0) return [...list, line(delta)];
+  if (!list.length) return (Number(newTotal) || 0) > 0 ? [line(Number(newTotal) || 0)] : [];
+
+  const last = list[list.length - 1];
+  const fixed = (Number(last.amount) || 0) + delta;
+  return fixed > 0 ? [...list.slice(0, -1), line(fixed)] : list.slice(0, -1);
+}
+
 const setupMonthly = (school, setup) => {
   const fromApi = Number(setup?.totalAmount);
   return fromApi > 0 ? fromApi : monthlyCharge(school, setup);
@@ -851,8 +981,10 @@ function ReceivingTab({ schools, payStore, chStore, recvStore, prevDuesStore = {
                                   challan bana ho ya na bana ho, ye phir
                                   bhi dikhta hai.
                 Current Month   — is mahine ka apna charge
-                Received Amount — is mahine jitna paisa mila
-                Total Payable   — pichhla baqaya + is mahine ka charge   */}
+                Received Amount — is mahine jitna paisa mila (discount ho
+                                  to usi khane ke neeche "disc ..." bhi)
+                Total Payable   — Total Dues + Current Month − Received
+                                  Amount − Discount, yani abhi kitna baqi hai */}
             <thead><tr><th style={{ width: 44 }}>#</th><th>Branch Name</th><th style={{ width: 120, textAlign: 'center' }}>Total Dues</th><th style={{ width: 125, textAlign: 'center' }}>Current Month</th><th style={{ width: 135, textAlign: 'center' }}>Received Amount</th><th style={{ width: 125, textAlign: 'center' }}>Total Payable</th><th style={{ width: 90, textAlign: 'center' }}>Download</th><th style={{ width: 80, textAlign: 'center' }}>Delete</th><th style={{ width: 110, textAlign: 'center' }}>Receiving</th><th style={{ width: 60, textAlign: 'center' }}>Detail</th></tr></thead>
             <tbody>
               {loading ? <LoadingRow cols={10} msg="Loading receiving records…" />
@@ -871,13 +1003,32 @@ function ReceivingTab({ schools, payStore, chStore, recvStore, prevDuesStore = {
                    maujood hota tha. */
                 const totalDues = Number(prevDuesStore[s.id]) || 0;
                 const currentMonth = challan ? (challan.monthly || 0) : 0;
-                /* Total Payable = pichhla baqaya + is mahine ka charge.
-                   Challan bana ho to wahi uska total hai; na bana ho to
-                   bhi ginti dikhai ja sakti hai taake pata rahe kitna
-                   banega. */
-                const totalPayable = challan ? challan.total : totalDues;
                 const receivingDues = recv ? (recv.receivedAmount || 0) : 0;
                 const discount = recv ? (recv.discount || 0) : 0;
+                /* Total Payable
+                     Total Dues + Current Month − Received Amount − Discount
+
+                   Yani wohi column jo isi row me saath hi dikhte hain: pichhla
+                   baqaya, is mahine ka charge, aur jitna is mahine mil chuka.
+                   Screen par jama-tafreeq karne wala wahi jawab nikale jo yahan
+                   likha hai.
+
+                   Discount bhi ghata diya jata hai: rely di gayi raqam school se
+                   maangi hi nahi jani, is liye wo baqaya me nahi rehni chahiye.
+                   Wo Received Amount ke neeche "disc ..." ke tor par isi row me
+                   dikhti hai (aur modal ka Net Payable bhi yehi ghata kar banta
+                   hai), is liye dono jagah ek hi hisaab chalta hai.
+
+                   Pehle yeh `challan.total` tha. Us me na receiving ka hisaab
+                   hota hai na discount ka (wo challan bante waqt ki raqam hai),
+                   is liye poora paisa aa jane ke baad bhi Total Payable utna hi
+                   khada rehta tha — aur jis mahine ka challan abhi bana hi na ho
+                   uska is mahine ka charge is column me aata hi nahi tha.
+
+                   Zyada wasooli par jawab manfi aata hai (Dues khud usay
+                   `dues-neg` me dikhata hai) — yeh chhupaya nahi jata, kyunke
+                   wo school ka credit hai aur nazar aana chahiye. */
+                const totalPayable = totalDues + currentMonth - receivingDues - discount;
                 const remainingDues = recv ? (recv.remainingAmount || 0) : totalPayable;
                 /* ── Receiving ki halat — wahi teen soortein jo ERP ke Fee
                       module me hain (components/Fee.jsx → fee-recv-acts):
