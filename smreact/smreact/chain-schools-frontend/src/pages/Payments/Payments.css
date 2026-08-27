@@ -42,6 +42,8 @@
 /* Receiving */
 .dues-pos { color: var(--err); font-weight: 800; }
 .dues-zero { color: var(--tm); font-weight: 600; }
+/* Manfi = zyada wasooli, yani school ka credit — surkh nahi, sabz. */
+.dues-neg { color: var(--success); font-weight: 800; }
 .recv-detail-grid { display: grid; grid-template-columns: repeat(5,1fr); gap: 10px; margin-bottom: 12px; }
 .recv-dc { background: var(--card); border: 1px solid var(--bl); border-radius: var(--r-md); padding: 10px 14px; text-align: center; }
 .recv-dc-lbl { font-size: 10.5px; color: var(--tm); font-weight: 600; margin-bottom: 4px; }

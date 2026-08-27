@@ -614,7 +614,18 @@ export default function Payments() {
             </div>
             <div className="tbl-wrap">
               <table className="pay-table">
-                <thead><tr><th>#</th><th>Branch Name</th><th style={{ textAlign: 'center' }}>Total Dues</th><th style={{ textAlign: 'center' }}>Prev Remaining</th><th style={{ textAlign: 'center' }}>Receiving</th><th style={{ textAlign: 'center' }}>Remaining</th><th style={{ textAlign: 'center' }}>Download</th><th style={{ textAlign: 'center' }}>Delete</th><th style={{ textAlign: 'center' }}>Receiving</th><th style={{ textAlign: 'center' }}>Detail</th></tr></thead>
+                {/* ── Columns ka matlab ─────────────────────────────────────
+                    Total Dues      — PICHHLE mahinon ka bacha hua baqaya
+                                      (August khula ho to July tak ka). Is
+                                      mahine ka challan bana ho ya na bana ho,
+                                      ye phir bhi dikhta hai.
+                    Current Month   — is mahine ka apna charge (challan se)
+                    Received Amount — is mahine jitna paisa mila (rely di gayi
+                                      ho to usi khane ke neeche "disc ...")
+                    Total Payable   — Total Dues + Current Month − Received
+                                      Amount − Discount, yani abhi kitna baqi
+                    Wahi tarteeb Super-Admin ke School Payment par bhi hai. */}
+                <thead><tr><th>#</th><th>Branch Name</th><th style={{ textAlign: 'center' }}>Total Dues</th><th style={{ textAlign: 'center' }}>Current Month</th><th style={{ textAlign: 'center' }}>Received Amount</th><th style={{ textAlign: 'center' }}>Total Payable</th><th style={{ textAlign: 'center' }}>Download</th><th style={{ textAlign: 'center' }}>Delete</th><th style={{ textAlign: 'center' }}>Receiving</th><th style={{ textAlign: 'center' }}>Detail</th></tr></thead>
                 <tbody>
                   {schoolsLoading ? (
                     <tr><td colSpan={10} style={{ textAlign: 'center', padding: 28, color: 'var(--tm)' }}>
@@ -630,27 +641,49 @@ export default function Payments() {
                     </td></tr>
                   ) : schools.filter((s) => { const q = recvQ.trim().toLowerCase(); return !q || s.name.toLowerCase().includes(q) || (s.principal || '').toLowerCase().includes(q) }).map((s, i) => {
                     const setup = setupStore[s.id]; const challan = chStore[s.id]; const recv = recvStore[s.id]
-                    const totalDues = totalDuesFor(s, setup, challan)
-                    /* Jo baqaya is mahine ke challan me aage laya gaya — wo
-                       Total Dues me pehle se shaamil hai, is liye yahan wahi
-                       raqam dikhti hai, dobara hisaab nahi hota. Challan na
-                       bana ho to pichle mahinon ka bacha hua dikha dete hain. */
-                    const prevRemaining = challan ? (challan.prevDues || 0) : pendingBefore(s.id, applied.month, applied.year)
-                    const remaining = recv ? recv.remainingAmount : totalDues
+                    /* Total Dues — pichhle mahinon ka bacha hua baqaya. Is
+                       mahine ka challan bana ho to wahi raqam us me aage laayi
+                       ja chuki hai (prevDues), warna khud ginte hain. */
+                    const totalDues = challan ? (challan.prevDues || 0) : pendingBefore(s.id, applied.month, applied.year)
+                    /* Current Month — sirf challan se. Challan na bana ho to
+                       is mahine kuch maanga hi nahi gaya = 0. */
+                    const currentMonth = challan ? (challan.amount || 0) : 0
+                    const received = recv ? (recv.receivedAmount || 0) : 0
+                    const discount = recv ? (recv.discount || 0) : 0
+                    /* Total Payable = Total Dues + Current Month − Received − Discount.
+                       Yani wohi teen column jo isi row me saath dikhte hain —
+                       screen par jama-tafreeq karne wala wahi jawab nikale.
+                       Discount bhi ghatta hai: rely di gayi raqam school se
+                       maangi hi nahi jani. Zyada wasooli par jawab manfi aata
+                       hai — wo school ka credit hai, chhupaya nahi jaata. */
+                    const totalPayable = totalDues + currentMonth - received - discount
+                    const remaining = recv ? recv.remainingAmount : totalPayable
                     /* Kuch raqam aa chuki hai magar poori nahi — button "Receiving"
                        nahi, "Receive More" kehta hai: entry nayi nahi banti, usi
                        mahine ke record me juri jaati hai. */
-                    const partial = !!recv && (recv.receivedAmount || 0) > 0 && remaining > 0
-                    const fmt = (v) => v === 0 ? <span className="dues-zero">0</span> : <span className="dues-pos">{Number(v).toLocaleString()}</span>
+                    const partial = !!recv && remaining > 0
+                    const fmt = (v) => (v === 0
+                      ? <span className="dues-zero">0</span>
+                      : <span className={v < 0 ? 'dues-neg' : 'dues-pos'}>{Number(v).toLocaleString()}</span>)
                     const open = expanded[`rv-${s.id}`]
                     return (
                       <FragmentRows key={s.id} open={open} detail={<RecvDetail s={s} setup={setup} challan={challan} recv={recv} />} colSpan={10}>
                         <td data-label="#" style={{ color: 'var(--tm)', fontWeight: 700 }}>{i + 1}</td>
                         <td data-label="Branch"><div style={{ fontWeight: 700, color: 'var(--t1)' }}>{s.name}</div><div style={{ fontSize: 11, color: 'var(--tm)', marginTop: 2 }}>{s.principal}</div></td>
+                        {/* Total Dues — pichhle mahinon ka bacha hua baqaya. */}
                         <td data-label="Total Dues" style={{ textAlign: 'center' }}>{fmt(totalDues)}</td>
-                        <td data-label="Prev Remaining" style={{ textAlign: 'center' }}>{fmt(prevRemaining)}</td>
-                        <td data-label="Receiving" style={{ textAlign: 'center' }}>{!recvLoaded[s.id] ? <i className="fa-solid fa-spinner fa-spin" style={{ color: 'var(--tm)', fontSize: 11 }} /> : recv ? <span style={{ color: 'var(--success)', fontWeight: 800 }}>{(recv.receivedAmount || 0).toLocaleString()}</span> : <span className="dues-zero">—</span>}</td>
-                        <td data-label="Remaining" style={{ textAlign: 'center' }}>{fmt(remaining)}</td>
+                        {/* Current Month — is mahine ka apna charge. */}
+                        <td data-label="Current Month" style={{ textAlign: 'center' }}>{fmt(currentMonth)}</td>
+                        {/* Received Amount — is mahine jitna mila; rely di gayi
+                            ho to neeche "disc ..." bhi. */}
+                        <td data-label="Received Amount" style={{ textAlign: 'center' }}>{!recvLoaded[s.id] ? <i className="fa-solid fa-spinner fa-spin" style={{ color: 'var(--tm)', fontSize: 11 }} /> : recv ? (
+                          <>
+                            <span style={{ color: 'var(--success)', fontWeight: 800 }}>{received.toLocaleString()}</span>
+                            {discount > 0 && <div style={{ fontSize: 10, color: 'var(--tm)', marginTop: 2 }}>disc {discount.toLocaleString()}</div>}
+                          </>
+                        ) : <span className="dues-zero">—</span>}</td>
+                        {/* Total Payable — abhi kitna baqi hai. */}
+                        <td data-label="Total Payable" style={{ textAlign: 'center' }}>{fmt(totalPayable)}</td>
                         <td data-label="Download" style={{ textAlign: 'center' }}><button className="recv-btn recv-btn-dl" disabled={!recv} onClick={() => openSlip(recvSlipHTML(s, recv, challan, setup), fire)}><i className="fa-solid fa-download" /> Download</button></td>
                         <td data-label="Delete" style={{ textAlign: 'center' }}><button className="recv-btn recv-btn-del" disabled={!recv || deletingRecv} onClick={() => setConfirm({ kind: 'delRecv', id: s.id, name: s.name })}><i className="fa-solid fa-trash-can" /> Delete</button></td>
                         <td data-label="Receiving" style={{ textAlign: 'center' }}><button className="recv-btn recv-btn-recv" disabled={!recvLoaded[s.id] || !setup || !challan || recvBusy || (!!recv && remaining <= 0)} title={!setup ? 'Set up payment first' : !challan ? `Generate the ${monthLabel(applied.month, applied.year)} challan first` : (recv && remaining <= 0) ? 'Fully paid' : partial ? `Partially paid — ${PKR(remaining)} still remaining` : ''} onClick={() => setRecvModal(s.id)}><i className={`fa-solid ${partial ? 'fa-circle-plus' : 'fa-hand-holding-dollar'}`} /> {partial ? 'Receive More' : 'Receiving'}</button></td>

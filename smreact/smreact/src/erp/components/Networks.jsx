@@ -54,13 +54,24 @@ const manageNetworkSchool = async (payload) => {
   return json;
 };
 
-/* API row → screen row. isAccepted/isRejected se status banta hai. */
-const toRequest = (r) => ({
-  id:        r.id,
-  networkId: r.networkID,
-  status:    r.isAccepted ? 'Accepted' : (r.isRejected ? 'Rejected' : 'Pending'),
-  date:      fmtDate(r.acceptedOrRejectedDateTime || r.requestedDateTime),
-});
+/* API row → screen row.
+
+   Abhi faisla na hui request par teenon khaane khali hote hain (isAccepted:
+   null, isRejected: null, acceptedOrRejectedDateTime: null). Reject hone par
+   backend `isRejected` lagata hai — magar kuch rows par sirf isAccepted=false
+   aur faisle ka waqt milta hai, is liye dono soortein reject ginte hain.
+   Sirf `isAccepted === false` par bharosa nahi karte: pending row me bhi wo
+   khali (false jaisa) aa sakta hai, aur tab tak koi faisla hua hi nahi. */
+const toRequest = (r) => {
+  const decidedAt = r.acceptedOrRejectedDateTime;
+  const rejected  = !!r.isRejected || (r.isAccepted === false && !!decidedAt);
+  return {
+    id:        r.id,
+    networkId: r.networkID,
+    status:    r.isAccepted ? 'Accepted' : (rejected ? 'Rejected' : 'Pending'),
+    date:      fmtDate(decidedAt || r.requestedDateTime),
+  };
+};
 
 const TABS = [
   { id: 'mine', label: 'My Networks',    icon: 'fa-diagram-project' },
@@ -131,22 +142,53 @@ export default function Networks({ toast = () => {}, embedded = false }) {
     try { localStorage.setItem(pendingKey, JSON.stringify(list)); } catch { /* storage full / blocked */ }
   }, [pendingKey]);
 
+  /* Aik cache ki hui request ka asli haal network ki apni list se.
+       getbynetwork + isAccepted:false = us network ki wo rows jo abhi
+       accepted nahi (yani pending AUR rejected dono).
+     Wapsi:
+       row  → wahi taza status (Pending ya Rejected)
+       null → row ab wahan hai hi nahi, network ne hata di */
+  const statusFromNetwork = useCallback(async (req) => {
+    const json = await manageNetworkSchool({
+      action:     'getbynetwork',
+      networkID:  req.networkId,
+      isAccepted: false,
+    });
+    const row = (Array.isArray(json?.data) ? json.data : [])
+      .find((r) => String(r.branchID) === String(branchId));
+    return row ? toRequest(row) : null;
+  }, [branchId]);
+
   const loadRequests = useCallback(async () => {
     if (!branchId) { setRequests([]); return; }
     try {
       const json   = await manageNetworkSchool({ action: 'getbybranch', branchID: branchId });
       const server = (Array.isArray(json?.data) ? json.data : []).map(toRequest);
       /* Jo pending server par accept ho chuki, wo ab server list me hai — cache se nikal do. */
-      const pending = readPending().filter(
+      let pending = readPending().filter(
         (p) => !server.some((s) => String(s.networkId) === String(p.networkId)),
       );
-      writePending(pending);
+
+      /* Baqi cached rows ka faisla abhi ho sakta hai — reject bhi.
+         `getbybranch` sirf ACCEPTED rows deta hai, is liye rejected row kabhi
+         wapas nahi aati thi aur screen par hamesha "Pending" hi likha rehta
+         tha. Ab har cached request ka haal us network ki apni list se pooch
+         lete hain. (Aik waqt me sirf aik khuli request hoti hai, is liye ye
+         aam tor par aik hi extra call hai.) */
+      if (pending.length) {
+        const checked = await Promise.all(pending.map(
+          (p) => statusFromNetwork(p).catch(() => p),   // call nakaam → jo maloom tha wahi
+        ));
+        pending = checked.filter(Boolean);
+        writePending(pending);
+      }
+
       setRequests([...pending, ...server]);
     } catch (err) {
       console.error('Network requests load failed:', err);
       setRequests(readPending());
     }
-  }, [branchId, readPending, writePending]);
+  }, [branchId, readPending, writePending, statusFromNetwork]);
 
   useEffect(() => { loadNetworks(); loadRequests(); }, [loadNetworks, loadRequests]);
 
