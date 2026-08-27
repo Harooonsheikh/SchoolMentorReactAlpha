@@ -132,6 +132,20 @@ export const EP = {
        Inactive     → isActive=false (dono launchSetup) ── */
   schoolProgress: {
     branchReport: () => `${SA_ROOT}/api/AHM_School_Progress/branch-report`,
+    /* GET  Dashboard ka poora overview EK call me (swagger par is route ka
+       koi parameter nahi):
+         { ActiveSchools, ERP_Schools, LaunchSetup_Schools, InActiveSchools,
+           Active_Login_Schools,
+           TotalStudents { Overall, NewSignUp }, TotalStaff { Overall, NewSignUp },
+           OnboardingStatus { FullyTrained, InProcess },
+           BugSummary { TotalBugs, ResolvedBugs, PendingBugs },
+           Bugs [ { ID, BranchID, Module, Developer, BugDetail, Date, IsSolved } ],
+           TotalVideos, VideoCategories [ { CategoryID, CategoryName, VideoCount } ],
+           ThisMonthProgress { ERPSchools, LaunchSetupSchools },
+           CurrentMonthDetails [ { SchoolName, PreviousAmount, FeeChallan,
+                                   FeeDiscount, Receivable, ReceivedAmount,
+                                   TotalPending } ] } */
+    adminDashboard: () => `${SA_ROOT}/api/AHM_School_Progress/admin_dashboard`,
     /* POST — Follow-up Card (Notes/Calls/Messages) aur Onboarding Card, dono
        ek hi route par; `headType` batata hai kaunsa card hai aur
        `subHeadType` uska sub-tab / module. */

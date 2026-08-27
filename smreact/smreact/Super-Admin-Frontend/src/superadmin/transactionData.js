@@ -1,124 +1,37 @@
 /* ═══════════════════════════════════════════════════════════════════
-   1LINK / 1BILL TRANSACTION MONITORING — demo data + helpers (frontend only)
+   1LINK / 1BILL TRANSACTION MONITORING — period model + calculations
 
-   Reuses the same combined school roster as Schools Payment (PAY_SCHOOLS)
-   rather than inventing a parallel school list, so every figure this
-   module shows stays consistent with School Details / Schools Payment
-   elsewhere in the dashboard. In production this scales to the full
-   School Mentor network (800+ schools) via the same API — see
-   api/services/transactions.js + SUPERADMIN_API_GUIDE.md.
+   Yahan koi DATA nahi hai, sirf hisaab. Poori screen us ledger par
+   chalti hai jo api/services/transactions.js laata hai
+   (GET {root}/transactions).
 
-   Mock data only — the integrating developer swaps INITIAL_TRANSACTIONS /
-   TXN_RATE_CONFIG_INITIAL for real API responses (resolve() already
-   picks live vs mock automatically once a backend is configured).
+   Pehle yahan ek generated demo ledger tha — 70 din × har school ke
+   jhoote payments — jis se dashboard par lakhon rupay ki "collection"
+   aur "revenue" dikhti thi jiska koi wujood nahi tha. Wo hata diya
+   gaya: jab tak backend transaction route nahi deta, ledger khali
+   rehta hai aur har aankra saaf 0 dikhata hai.
+
+   School roster bhi yahan se nahi banta. School-Wise Performance wahi
+   LIVE branch directory dikhati hai jo School Permissions screen use
+   karti hai (get-branches-with-permissions) — dekhein OneLinkSection.jsx
+   aur calculateSchoolWiseSummary() ka teesra parameter.
    ═══════════════════════════════════════════════════════════════════ */
-import { PAY_SCHOOLS } from './paymentData';
-
-/* Only schools with active students plausibly collect fees online —
-   mirrors how Schools Payment / Fee Analytics already scope themselves. */
-export const TXN_SCHOOLS = PAY_SCHOOLS.filter((s) => (s.students || 0) > 0);
 
 export const TXN_STATUS = { SUCCESS: 'Successful', FAILED: 'Failed', REVERSED: 'Reversed' };
 export const TXN_CHANNELS = ['1LINK', '1Bill'];
 
-const FEE_TYPES = [
-  { name: 'Monthly Fee', min: 2500, max: 6000 },
-  { name: 'Tuition Fee', min: 3000, max: 7000 },
-  { name: 'Admission Fee', min: 8000, max: 25000 },
-  { name: 'Transport Fee', min: 800, max: 2500 },
-  { name: 'Examination Fee', min: 1000, max: 3000 },
-  { name: 'Annual Charges', min: 1500, max: 4000 },
-];
-const CLASS_NAMES = ['Play Group', 'Nursery', 'KG', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X'];
-const FIRST_NAMES = ['Ali', 'Hamza', 'Bilal', 'Zainab', 'Ayesha', 'Fatima', 'Hassan', 'Sara', 'Usman', 'Areeba', 'Talha', 'Nimra', 'Hira', 'Danyal', 'Iqra', 'Omar', 'Mahnoor', 'Rohaan', 'Khadija', 'Sana'];
-const LAST_NAMES = ['Ahmed', 'Khan', 'Malik', 'Siddiqui', 'Raza', 'Iqbal', 'Hassan', 'Sheikh', 'Farooq', 'Butt', 'Mehmood', 'Noor', 'Bano', 'Aslam', 'Javed'];
+/* Koi bundled ledger nahi — transactions sirf API se aati hain. */
+export const INITIAL_TRANSACTIONS = [];
 
-/* Deterministic PRNG (mulberry32) so the demo dataset — and every KPI
-   derived from it — is stable across reloads instead of reshuffling
-   every time the module is re-imported. */
-function mulberry32(seed) {
-  let a = seed;
-  return function rand() {
-    a |= 0; a = (a + 0x6D2B79F5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-const rand = mulberry32(20260801);
-const pick = (arr) => arr[Math.floor(rand() * arr.length)];
-const randInt = (min, max) => Math.floor(rand() * (max - min + 1)) + min;
-
-const DAYS_BACK = 70; // covers Today / Yesterday / This Month / Last Month / any custom range within it
-
-function generateTransactions() {
-  const out = [];
-  let seq = 1;
-  const today = new Date();
-  for (let dayOffset = 0; dayOffset < DAYS_BACK; dayOffset++) {
-    const d = new Date(today);
-    d.setDate(d.getDate() - dayOffset);
-    const dateStr = d.toISOString().slice(0, 10);
-    for (const s of TXN_SCHOOLS) {
-      const weight = Math.max(1, Math.round((s.students || 10) / 25));
-      const activityChance = 0.5 + Math.min(weight, 6) * 0.05;
-      if (rand() > activityChance) continue; // school had no 1LINK activity that day
-      const count = randInt(1, Math.min(6, weight + 1));
-      for (let i = 0; i < count; i++) {
-        const ft = pick(FEE_TYPES);
-        const amount = randInt(ft.min, ft.max);
-        const statusRoll = rand();
-        const status = statusRoll < 0.05 ? TXN_STATUS.FAILED : statusRoll < 0.08 ? TXN_STATUS.REVERSED : TXN_STATUS.SUCCESS;
-        const hh = randInt(8, 19);
-        const mm = randInt(0, 59);
-        const ampm = hh >= 12 ? 'PM' : 'AM';
-        const hh12 = ((hh + 11) % 12) + 1;
-        out.push({
-          id: `OLTX${String(seq).padStart(6, '0')}`,
-          schoolId: s.id,
-          schoolName: s.name,
-          branch: 'Main Campus',
-          schoolCode: s.schoolCode,
-          date: dateStr,
-          time: `${String(hh12).padStart(2, '0')}:${String(mm).padStart(2, '0')} ${ampm}`,
-          txnId: `TXN${String(seq).padStart(6, '0')}`,
-          oneLinkRef: `1L-${100000 + seq}`,
-          studentName: `${pick(FIRST_NAMES)} ${pick(LAST_NAMES)}`,
-          admissionNo: String(1000 + (seq % 4000)),
-          className: pick(CLASS_NAMES),
-          feeType: ft.name,
-          invoiceNo: `INV-${dateStr.replace(/-/g, '')}-${String(seq).padStart(4, '0')}`,
-          amount,
-          channel: rand() < 0.7 ? '1LINK' : '1Bill',
-          status,
-        });
-        seq++;
-      }
-    }
-  }
-  return out;
-}
-
-/* Demo transaction ledger — one row per 1LINK/1Bill payment attempt
-   (successful, failed or reversed) across the last 70 days. */
-export const INITIAL_TRANSACTIONS = generateTransactions();
-
-/* Commercial rate the parent is charged vs what School Mentor pays the
-   API/payment provider. NOT hardcoded into calculations anywhere below —
-   every revenue figure is derived from this config so Super Admin can
-   update it if commercial terms change (see RateConfigModal).
-
-   `effectiveFrom` demonstrates the "rate changes shouldn't rewrite old
-   financial history" requirement conceptually: a real backend would
-   store a list of {customerCharge, providerCost, effectiveFrom} rows and
-   pick the one in force on each transaction's date. This prototype keeps
-   a single active rate (the common case — rates rarely change) and
-   surfaces effectiveFrom in the UI so the concept is visible; wiring true
-   date-versioned rates is a backend/API task noted in the guide. */
+/* Commercial rate: parent se kitna charge hota hai vs provider ko kitna
+   jata hai. Yeh API se aati hai (GET/PUT {root}/transactions/rate-config)
+   aur Super Admin "Rates" modal se set kar sakta hai. Jab tak API na de,
+   ZERO rehti hai — pehle yahan 40 / 22.5 likha tha, jo screen par asli
+   margin (PKR 17.50/txn) ban kar dikhta tha. */
 export const TXN_RATE_CONFIG_INITIAL = {
-  customerCharge: 40,
-  providerCost: 22.5,
-  effectiveFrom: '2026-08-01',
+  customerCharge: 0,
+  providerCost: 0,
+  effectiveFrom: '',
 };
 
 export const marginOf = (rateConfig) => Number(rateConfig.customerCharge || 0) - Number(rateConfig.providerCost || 0);
@@ -221,8 +134,32 @@ export function calculateProviderPayable(rows, rateConfig) { return rows.length 
 export function calculateCustomerCharges(rows, rateConfig) { return rows.length * Number(rateConfig.customerCharge || 0); }
 export function calculateSchoolMentorRevenue(rows, rateConfig) { return rows.length * marginOf(rateConfig); }
 
-export function calculateSchoolWiseSummary(rows, rateConfig) {
+/**
+ * Per-school breakdown for the School-Wise Performance table.
+ *
+ * @param rows       is period ki successful transactions
+ * @param rateConfig customerCharge / providerCost
+ * @param schools    POORA network roster (live branch directory). Diya ho to
+ *                   har school pehle 0 se bhar diya jata hai, taake table me
+ *                   network ki SARI schools nazar aayen — sirf wo nahi jinki
+ *                   is period me koi transaction thi. Na diya jaye to purana
+ *                   behaviour (sirf jin schools ki rows hain).
+ */
+export function calculateSchoolWiseSummary(rows, rateConfig, schools) {
   const map = new Map();
+
+  (schools || []).forEach((s) => {
+    if (!s || s.id == null) return;
+    map.set(s.id, {
+      schoolId: s.id,
+      schoolName: String(s.name || s.school || 'Unnamed Branch'),
+      branch: String(s.address || s.campus || '—'),
+      schoolCode: String(s.schoolCode ?? s.id),
+      transactions: 0,
+      collection: 0,
+    });
+  });
+
   rows.forEach((t) => {
     if (!map.has(t.schoolId)) {
       map.set(t.schoolId, {

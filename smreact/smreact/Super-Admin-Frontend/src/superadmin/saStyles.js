@@ -1075,6 +1075,7 @@ export const SA_CSS = `
 .sa-root .recv-hist-item:last-child{border-bottom:none}
 .sa-root .recv-hist-dot{width:8px;height:8px;border-radius:50%;background:var(--success);flex-shrink:0}
 .sa-root .recv-hist-amount{font-size:13px;font-weight:800;color:var(--success);min-width:90px}
+.sa-root .recv-hist-disc{font-size:10.5px;font-weight:700;color:#0284C7;background:rgba(2,132,199,.09);border:1px solid rgba(2,132,199,.22);border-radius:6px;padding:1px 7px;flex-shrink:0}
 .sa-root .recv-hist-via{font-size:11.5px;color:var(--tm);flex:1}
 .sa-root .recv-hist-date{font-size:11px;color:var(--tm)}
 .sa-root .recv-btn-dl{display:inline-flex;align-items:center;gap:5px;height:30px;padding:0 12px;border-radius:var(--r-md);font-family:var(--font);font-size:11.5px;font-weight:700;cursor:pointer;transition:var(--tr);background:rgba(30,58,138,.08);color:var(--brand);border:1px solid var(--bl)}

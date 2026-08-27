@@ -614,8 +614,12 @@ export function receivingRowToUi(r) {
     date: day ? fmtDateShort(day) : '',
     dateRaw: day,
     via: r?.paymentVia || '',
+    /* Row par discount bhi hota hai (poore challan ke against JAMA rely).
+       History ki line usay saath rakhti hai, warna "Payment History" me sirf
+       raqam dikhti thi aur di gayi rely gayab ho jati thi — halanke Received
+       Amount column aur Total Payable dono usay ginte hain. */
     history: day || num(r?.receivingAmount)
-      ? [{ amount: num(r?.receivingAmount), via: r?.paymentVia || '', date: day ? fmtDateShort(day) : '' }]
+      ? [{ amount: num(r?.receivingAmount), discount: num(r?.discount), via: r?.paymentVia || '', date: day ? fmtDateShort(day) : '' }]
       : [],
     raw: r,
   };

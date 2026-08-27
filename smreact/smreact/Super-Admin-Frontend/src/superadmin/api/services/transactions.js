@@ -12,6 +12,10 @@ import { resolve, request } from '../client';
 import EP from '../endpoints';
 import { INITIAL_TRANSACTIONS, TXN_RATE_CONFIG_INITIAL } from '../../transactionData';
 
+/* NOTE: dono mock factories ab KHALI hain — INITIAL_TRANSACTIONS = [] aur
+   rates 0/0. Pehle yahan ek generated demo ledger aata tha jis se dashboard
+   par lakhon ki collection/revenue dikhti thi. Ab backend na hone par screen
+   saaf 0 dikhati hai, aur base URL set karte hi live route chal padta hai. */
 export const listTransactions = (filters) =>
   resolve(() => INITIAL_TRANSACTIONS, () => request(EP.transactions.list(), { query: filters }));
 

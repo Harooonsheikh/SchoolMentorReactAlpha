@@ -1,5 +1,4 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
-import { PAY_SCHOOLS } from './paymentData';
 import {
   TXN_RATE_CONFIG_INITIAL, marginOf, pkr, pkr2,
   periodFromQuick, periodFromCustom, previousPeriodOf, percentChange,
@@ -8,7 +7,7 @@ import {
   calculateCustomerCharges, calculateProviderPayable, calculateSchoolMentorRevenue,
   calculateSchoolWiseSummary, todayISO,
 } from './transactionData';
-import { useApi, transactionsApi } from './api';
+import { useApi, transactionsApi, schoolPermissionsApi } from './api';
 import { TransactionReport, RevenueReport } from './OneLinkReports';
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -41,6 +40,15 @@ export default function OneLinkOverviewSection({ toast }) {
   const load = useCallback(() => transactionsApi.listTransactions(), []);
   const { data: allTransactions, loading } = useApi(load);
   const transactions = useMemo(() => allTransactions || [], [allTransactions]);
+
+  /* School roster — wohi LIVE branch directory jo School Permissions screen
+     dikhati hai (GET .../SchoolPermissions/get-branches-with-permissions).
+     Pehle yahan paymentData ki PAY_SCHOOLS (demo list) thi, is liye
+     School-Wise Performance aur "out of N schools" dono ek jhoote roster par
+     chal rahe thay. Ab poora network isi aik live source se aata hai. */
+  const loadSchools = useCallback(() => schoolPermissionsApi.listPermissionBranches(), []);
+  const { data: branchData } = useApi(loadSchools);
+  const schools = useMemo(() => branchData?.schools || [], [branchData]);
 
   /* ── Global period filter (shared by both cards + reports) ── */
   const today = todayISO();
@@ -75,7 +83,9 @@ export default function OneLinkOverviewSection({ toast }) {
   const smRevenue = calculateSchoolMentorRevenue(rows, rateConfig);
   const margin = marginOf(rateConfig);
 
-  const schoolWise = useMemo(() => calculateSchoolWiseSummary(rows, rateConfig), [rows, rateConfig]);
+  /* Roster pass karne se network ki HAR school ka row banta hai — jis school
+     ki is period me koi transaction nahi, wo bhi 0 ke saath table me aati hai. */
+  const schoolWise = useMemo(() => calculateSchoolWiseSummary(rows, rateConfig, schools), [rows, rateConfig, schools]);
 
   /* ── Modals / drill-down state ── */
   const [showBreakdown, setShowBreakdown] = useState(false);
@@ -154,7 +164,7 @@ export default function OneLinkOverviewSection({ toast }) {
                 <div className="rpt-stat-lbl">Total Collection</div>
                 <Comparison val={collectionChange} />
               </div>
-              <ClickableStat label="Schools Receiving Payments" val={`${activeSchools} / ${PAY_SCHOOLS.length}`} onClick={() => setShowBreakdown(true)} tone="s-info" />
+              <ClickableStat label="Schools Receiving Payments" val={`${activeSchools} / ${schools.length}`} onClick={() => setShowBreakdown(true)} tone="s-info" />
               <div className="rpt-stat s-warn">
                 <div className="rpt-stat-val">{pkr2(avgTxn)}</div>
                 <div className="rpt-stat-lbl">Avg. Transaction Value</div>
@@ -162,7 +172,7 @@ export default function OneLinkOverviewSection({ toast }) {
             </div>
             <div style={{ fontSize: 11.5, color: 'var(--tm)' }}>
               <i className="fa-solid fa-school" style={{ marginRight: 5, color: 'var(--brand)' }} />
-              {activeSchools} school{activeSchools === 1 ? '' : 's'} received online fee payments during this period, out of {PAY_SCHOOLS.length} schools in the network.
+              {activeSchools} school{activeSchools === 1 ? '' : 's'} received online fee payments during this period, out of {schools.length} schools in the network.
             </div>
           </div>
         </div>
@@ -325,7 +335,7 @@ function SchoolWiseTable({ schoolWise, onSelectSchool, embedded }) {
           </thead>
           <tbody>
             {rows.length === 0 ? (
-              <tr><td colSpan={7} style={{ textAlign: 'center', padding: 34, color: 'var(--tm)' }}><i className="fa-solid fa-school" style={{ fontSize: 24, opacity: 0.25, display: 'block', margin: '0 auto 10px' }} />No schools received 1LINK payments in this period.</td></tr>
+              <tr><td colSpan={7} style={{ textAlign: 'center', padding: 34, color: 'var(--tm)' }}><i className="fa-solid fa-school" style={{ fontSize: 24, opacity: 0.25, display: 'block', margin: '0 auto 10px' }} />{q.trim() ? 'No school matches your search.' : 'No schools loaded yet.'}</td></tr>
             ) : rows.map((r, i) => (
               <tr key={r.schoolId} style={{ cursor: 'pointer' }} onClick={() => onSelectSchool(r)}>
                 <td>{i + 1}</td>
@@ -359,7 +369,7 @@ function SchoolWiseTable({ schoolWise, onSelectSchool, embedded }) {
     <div className="section-card">
       <div className="card-header">
         <div className="card-title"><i className="fa-solid fa-ranking-star" /> School-Wise Performance</div>
-        <div style={{ fontSize: 11.5, color: 'var(--tm)' }}>Click a row for transaction-level detail</div>
+        <div style={{ fontSize: 11.5, color: 'var(--tm)' }}>Poora network · click a row for transaction-level detail</div>
       </div>
       {body}
     </div>
@@ -445,7 +455,9 @@ function RateConfigModal({ rateConfig, onClose, onSave }) {
   );
 }
 
-function Modal({ title, sub, icon, large, onClose, footer, children, bodyStyle }) {
+/* Dashboard bhi isi modal me Bugs / Improvements report kholta hai, is liye
+   export hai — har report ek hi chrome me khule. */
+export function Modal({ title, sub, icon, large, onClose, footer, children, bodyStyle }) {
   return (
     <div className="ov" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className={`modal${large ? ' lg' : ''}`}>

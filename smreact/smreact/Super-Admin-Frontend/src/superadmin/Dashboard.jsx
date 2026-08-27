@@ -1,8 +1,9 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { fmt } from './dashboardData';
 import { DASHBOARD_GATES } from './userMgmtData';
-import { fetchDashboard } from './api';
-import OneLinkOverviewSection from './OneLinkSection';
+import { fetchDashboard, schoolPermissionsApi } from './api';
+import OneLinkOverviewSection, { Modal } from './OneLinkSection';
+import BugsReport from './BugsReport';
 
 /* ═══════════════════════════════════════════════════════════════════
    DASHBOARD — platform overview (permission-aware)
@@ -17,14 +18,102 @@ import OneLinkOverviewSection from './OneLinkSection';
    Super Admin (default) sees everything.
    ═══════════════════════════════════════════════════════════════════ */
 
-const VIDEO_CATS = ['School Mentor', 'Science', 'Technology', 'Business', 'Books', 'Universe', 'History'];
-
 /* "Jun 25, 2026" for the badge dates. */
 const todayLabel = () => {
   const d = new Date();
   const m = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   return `${m[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
 };
+
+/* "August 2026" — admin_dashboard hamesha CHALTE mahine ka overview deta hai,
+   is liye heading bhi wahi mahina dikhati hai (pehle "June 2026" jama hua
+   tha aur data kisi aur mahine ka hota tha). */
+const monthLabel = () => new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+
+/* ── Bugs / Improvements ka period filter ────────────────────────────
+   Pehle yahan do saade <select> thay jinki options hardcoded thin
+   ("June 2026", "May 2026", "April 2026") aur jinhen badalne se kuch
+   hota hi nahi tha — cards hamesha ek hi aankra dikhate rehte thay.
+
+   Ab yeh asal filter hai: admin_dashboard ke jawab me poori `Bugs` list
+   aati hai (har entry par `Date`), aur cards usi list ko chune hue
+   arse par gin kar dikhate hain. */
+const BI_PERIODS = [
+  { id: 'today', label: 'Today' },
+  { id: 'yesterday', label: 'Yesterday' },
+  { id: 'thisMonth', label: 'This Month' },
+  { id: 'lastMonth', label: 'Last Month' },
+  { id: 'all', label: 'All Time' },
+];
+const biLabel = (id) => (BI_PERIODS.find((p) => p.id === id) || BI_PERIODS[2]).label;
+
+/* Fee ka apna period bar — yahan "All Time" ka koi matlab nahi (API sirf
+   chalte mahine ka fee data deti hai), is liye wo option nahi. */
+const FEE_PERIODS = BI_PERIODS.filter((p) => p.id !== 'all');
+
+/* ── Fee Analytics ke chhe card ────────────────────────────────────────
+   Faisla (Super Admin ka): ye cards abhi 0 par park hain.
+
+   Wajah yeh hai ke admin_dashboard koi period parameter nahi leta — wo
+   hamesha SIRF chalte mahine ka `CurrentMonthDetails` deta hai. Yaani
+   Today / Yesterday / Last Month ka fee data mojood hi nahi, aur upar
+   lagay period bar ke bawajood cards har arse ka sach nahi bata sakte.
+   Aisi soorat me jhoota (ya adhoora) aankra dikhane ke bajaye saaf 0
+   dikhaya jata hai.
+
+   JIS DIN backend period-wise fee route de (ya admin_dashboard from/to
+   lena shuru kare): sirf yahan `d.feeTotals.<field>` wapas laga dein —
+   mapping api/services/dashboard.js me pehle se mojood hai. */
+const FEE_CARD_VALUE = 0;
+
+/* ── Improvements Summary ke teen card ────────────────────────────────
+   Faisla (Super Admin ka): ye bhi abhi 0 par park hain.
+
+   admin_dashboard me improvements ka apna koi aankra hai hi nahi —
+   BugSummary sirf TotalBugs / ResolvedBugs / PendingBugs deti hai, aur
+   `Bugs` list me "[Improvement]" tag wali entries bugs ke saath hi
+   milti hain. Un se khud gin kar aankra banaya ja sakta hai, magar wo
+   API ka apna record nahi — is liye card 0 dikhate hain.
+
+   "View Report" phir bhi asal entries kholta hai (wo API me mojood
+   hain), aur jis din API apna improvements block de, sirf yahan wo
+   values laga deni hongi. */
+const IMPROVEMENT_CARD_VALUE = 0;
+
+/* Local YYYY-MM-DD — toISOString() UTC me badal deta hai, jis se Pakistan
+   ke waqt raat ke waqt "Today" ek din peeche chala jata. */
+const isoOf = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+function inBiPeriod(date, periodId) {
+  if (periodId === 'all') return true;
+  if (!date) return false;
+  const now = new Date();
+  if (periodId === 'today') return date === isoOf(now);
+  if (periodId === 'yesterday') {
+    const y = new Date(now); y.setDate(y.getDate() - 1);
+    return date === isoOf(y);
+  }
+  if (periodId === 'thisMonth') return date.slice(0, 7) === isoOf(now).slice(0, 7);
+  if (periodId === 'lastMonth') {
+    const l = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    return date.slice(0, 7) === isoOf(l).slice(0, 7);
+  }
+  return false;
+}
+
+/* API ki Bugs list → { total, resolved, pending } for one kind + period.
+   `kind` mapping api/services/dashboard.js me hoti hai: jis entry ka
+   BugDetail "[Improvement] …" se shuru ho wo improvement hai, baqi bug. */
+function countBi(list, kind, periodId) {
+  const rows = (list || []).filter((b) => b.kind === kind && inBiPeriod(b.date, periodId));
+  const resolved = rows.filter((b) => b.solved).length;
+  return { total: rows.length, resolved, pending: rows.length - resolved, rows };
+}
+
+/* Card ka "View Report" kis daayre ki report kholta hai. */
+const reportRows = (rows, status) => (status === 'resolved' ? rows.filter((r) => r.solved)
+  : status === 'pending' ? rows.filter((r) => !r.solved)
+    : rows);
 
 export default function Dashboard({ toast, users = [], perms = {} }) {
   const [d, setD] = useState(null);
@@ -33,11 +122,21 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
   const [viewAs, setViewAs] = useState('');   // '' = Super Admin; else a user id
+  const [feePeriod, setFeePeriod] = useState('thisMonth');
+  /* Khuli hui report: { kind, status } — null matlab koi nahi. */
+  const [report, setReport] = useState(null);
+  /* branchId → school ka naam, report ki "School" column ke liye. Yeh
+     directory sirf tab mangwai jati hai jab pehli report khulti hai —
+     dashboard ke apne load par ek extra call nahi jati. */
+  const [branchNames, setBranchNames] = useState(null);
+  /* Default "All Time" — is par cards API ki apni BugSummary dikhate hain. */
+  const [bugPeriod, setBugPeriod] = useState('all');
+  const [impPeriod, setImpPeriod] = useState('all');
   const today = todayLabel();
 
-  /* Load the overview through the API service. In mock mode this resolves
-     the bundled demo data; once a .NET base URL is configured it calls
-     GET /api/superadmin/dashboard. See ./api + SUPERADMIN_API_GUIDE.md. */
+  /* Poora overview EK live call se:
+     GET .../api/AHM_School_Progress/admin_dashboard (see api/services/dashboard).
+     Us call ka mapping wahi shape deta hai jo neeche ka poora JSX padhta hai. */
   useEffect(() => {
     let on = true;
     setLoadErr(null);
@@ -47,12 +146,43 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
     return () => { on = false; };
   }, []);
 
-  /* Fee table source — safe to compute before data arrives. */
+  /* Bugs / Improvements — dono API ki EK hi `Bugs` list se bante hain, kind
+     par bant kar aur chune hue arse par chaan kar. (BugSummary bhi jawab me
+     aati hai, magar wo all-time hai aur improvements ko bhi bugs me ginti
+     hai — is liye cards yeh derived aankre dikhate hain taake dono section
+     aapas me mel khayen.) */
+  const bugStats = useMemo(() => countBi(d?.bugList, 'bug', bugPeriod), [d, bugPeriod]);
+  const impStats = useMemo(() => countBi(d?.bugList, 'improvement', impPeriod), [d, impPeriod]);
+
+  /* Report kholte hi (pehli baar) branch directory — wahi live list jo
+     School Permissions screen dikhati hai. Na mile to report BranchID par
+     gir jati hai, khulti phir bhi hai. */
+  const openReport = useCallback((kind, status) => {
+    setReport({ kind, status });
+    setBranchNames((cur) => {
+      if (cur) return cur;
+      schoolPermissionsApi.listPermissionBranches()
+        .then(({ schools }) => {
+          const map = {};
+          schools.forEach((s) => { map[s.id] = s.name; });
+          setBranchNames(map);
+        })
+        .catch(() => setBranchNames({}));
+      return cur;
+    });
+  }, []);
+
+  /* Current Month Details ki rows — pehle period, phir search.
+
+     API sirf CHALTE mahine ki rows deti hai (route par koi from/to nahi),
+     is liye kisi bhi doosre arse par table khali rehti hai: us arse ka
+     record API ke paas hai hi nahi. Purani rows ko "Last Month" ke naam
+     se dikhana galat hota. */
   const filtered = useMemo(() => {
-    const rows = d?.feeRows || [];
+    const rows = feePeriod === 'thisMonth' ? (d?.feeRows || []) : [];
     const q = search.trim().toLowerCase();
     return q ? rows.filter((r) => r.name.toLowerCase().includes(q)) : rows;
-  }, [d, search]);
+  }, [d, search, feePeriod]);
 
   /* ── Resolve the viewer and which sections their permissions allow ── */
   const viewUser = viewAs ? users.find((u) => String(u.id) === String(viewAs)) : null;
@@ -95,7 +225,7 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
         <div className="page-icon"><i className="fa-solid fa-gauge-high" /></div>
         <div>
           <div className="page-title">Dashboard</div>
-          <div className="page-sub">Platform overview &amp; analytics — June 2026</div>
+          <div className="page-sub">Platform overview &amp; analytics — {monthLabel()}</div>
         </div>
       </div>
       {viewBar}
@@ -141,6 +271,18 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
     receivable: t.receivable + r.receivable, received: t.received + r.received, pending: t.pending + r.pending,
   }), { prevDues: 0, challan: 0, discount: 0, receivable: 0, received: 0, pending: 0 });
   const totalStudents = d.students.total, totalStaff = d.staff.total;
+
+  /* Bugs Summary ke cards:
+       • "All Time" par API ki APNI BugSummary chhapti hai — bilkul wahi
+         teen aankre jo jawab me aate hain (TotalBugs / ResolvedBugs /
+         PendingBugs). Yeh default hai, taake screen kholte hi wo dikhe
+         jo API kehti hai.
+       • Kisi doosre arse par BugSummary kaam nahi de sakti (us par koi
+         period hai hi nahi), is liye aankre `Bugs` list se tareekh par
+         chhaan kar nikale jate hain.
+     Dono ke beech ka farq waja rakhta hai: BugSummary improvements ko
+     bhi bug ginti hai, chhani hui list nahi. */
+  const bugCards = bugPeriod === 'all' ? d.bugs : bugStats;
 
   /* ── Account inactive → nothing is shown ── */
   if (accountInactive) {
@@ -191,19 +333,33 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
       {/* ─── FEE ANALYTICS ─── */}
       {canPay && (
         <>
-          <div className="section-hdr">
-            <div className="section-hdr-icon"><i className="fa-solid fa-chart-bar" /></div>
-            <div className="section-hdr-title">Fee Analytics</div>
+          <div className="section-hdr" style={{ justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <div className="section-hdr-icon"><i className="fa-solid fa-chart-bar" /></div>
+              <div className="section-hdr-title">Fee Analytics</div>
+            </div>
+            <div className="bi-period-bar">
+              <span className="bi-period-lbl">PERIOD:</span>
+              <select className="bi-period-sel" value={feePeriod} onChange={(e) => { setFeePeriod(e.target.value); setPage(1); }}>
+                {FEE_PERIODS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+              </select>
+            </div>
           </div>
           <div className="fee-grid">
-            <FeeCard tone="red"    icon="fa-circle-exclamation" label="Previous Dues"           val={`${fmt(d.feeTotals.prevDues)} PKR`} />
-            <FeeCard tone="teal"   icon="fa-file-invoice"       label="Fee Challan This Month"  val={`${fmt(d.feeTotals.challan)} PKR`} />
-            <FeeCard tone="orange" icon="fa-percent"            label="Fee Discount This Month" val={`${fmt(d.feeTotals.discount)} PKR`} />
+            <FeeCard tone="red"    icon="fa-circle-exclamation" label="Previous Dues"           val={`${fmt(FEE_CARD_VALUE)} PKR`} />
+            <FeeCard tone="teal"   icon="fa-file-invoice"       label="Fee Challan This Month"  val={`${fmt(FEE_CARD_VALUE)} PKR`} />
+            <FeeCard tone="orange" icon="fa-percent"            label="Fee Discount This Month" val={`${fmt(FEE_CARD_VALUE)} PKR`} />
           </div>
           <div className="fee-grid-2">
-            <FeeCard tone="slate" icon="fa-percent"           label="Fee Challan After Discount" val={`${fmt(d.feeTotals.receivable)} PKR`} />
-            <FeeCard tone="green" icon="fa-money-bill-wave"    label="Fee Received"               val={`${fmt(d.feeTotals.received)} PKR`} />
-            <FeeCard tone="red2"  icon="fa-circle-exclamation" label="Total Pending"              val={`${fmt(d.feeTotals.pending)} PKR`} />
+            <FeeCard tone="slate" icon="fa-percent"           label="Fee Challan After Discount" val={`${fmt(FEE_CARD_VALUE)} PKR`} />
+            <FeeCard tone="green" icon="fa-money-bill-wave"    label="Fee Received"               val={`${fmt(FEE_CARD_VALUE)} PKR`} />
+            <FeeCard tone="red2"  icon="fa-circle-exclamation" label="Total Pending"              val={`${fmt(FEE_CARD_VALUE)} PKR`} />
+          </div>
+          {/* Cards 0 kyun hain — screen par bhi likha ho, warna "toota hua"
+              lagta hai. Neeche wali table apni asal rows dikhati hai. */}
+          <div className="db-locked" style={{ marginTop: -8 }}>
+            <i className="fa-solid fa-circle-info" />
+            <span>Fee figures are parked at <b>0</b>: <code>admin_dashboard</code> takes no period parameter, so no Today / Yesterday / Last Month fee data exists to report. The Current Month Details table below still lists the current month's rows as the API returns them.</span>
           </div>
         </>
       )}
@@ -251,7 +407,11 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
                 </div>
                 <div className="onboard-num-divider" />
                 <div className="onboard-num-block" style={{ textAlign: 'right' }}>
-                  <div className="onboard-num-val" style={{ color: 'var(--t1)' }}>{d.onboarding.totalModules}</div>
+                  {/* admin_dashboard sirf FullyTrained/InProcess deti hai —
+                      Total Modules us jawab me hai hi nahi, is liye "—". */}
+                  <div className="onboard-num-val" style={{ color: 'var(--t1)' }}>
+                    {d.onboarding.totalModules == null ? '—' : d.onboarding.totalModules}
+                  </div>
                   <div className="onboard-num-lbl">Total Modules</div>
                 </div>
               </div>
@@ -278,14 +438,15 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
             </div>
             <div className="bi-period-bar">
               <span className="bi-period-lbl">PERIOD:</span>
-              <select className="bi-period-sel" defaultValue="This Month"><option>This Month</option><option>Last Month</option><option>All Time</option></select>
-              <select className="bi-period-sel" defaultValue="June 2026"><option>June 2026</option><option>May 2026</option><option>April 2026</option></select>
+              <select className="bi-period-sel" value={bugPeriod} onChange={(e) => setBugPeriod(e.target.value)}>
+                {BI_PERIODS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+              </select>
             </div>
           </div>
           <div className="bi-grid" style={{ marginBottom: 28 }}>
-            <BiCard tone="red"    icon="fa-bug"          label="Total Bug(s)"          val={d.bugs.total}    date={today} hi="red"    hiText="reported"           pre="Total bugs " post=" from 1st of this month to today" onReport={() => toast('Opening bugs report…', 'info')} />
-            <BiCard tone="green"  icon="fa-circle-check" label="Total Resolved Bug(s)" val={d.bugs.resolved} date={today} hi="green"  hiText="resolved & closed"  pre="Bugs successfully " post=" this month"                  onReport={() => toast('Opening resolved bugs report…', 'info')} />
-            <BiCard tone="orange" icon="fa-clock"        label="Total Pending Bug(s)"  val={d.bugs.pending}  date={today} hi="orange" hiText="awaiting resolution" pre="Bugs currently " post=" this month"                    onReport={() => toast('Opening pending bugs report…', 'info')} />
+            <BiCard tone="red"    icon="fa-bug"          label="Total Bug(s)"          val={bugCards.total}    date={today} hi="red"    hiText="reported"           pre="Total bugs " post={` — ${biLabel(bugPeriod)}`} onReport={() => openReport('bug', 'all')} />
+            <BiCard tone="green"  icon="fa-circle-check" label="Total Resolved Bug(s)" val={bugCards.resolved} date={today} hi="green"  hiText="resolved & closed"  pre="Bugs successfully " post={` — ${biLabel(bugPeriod)}`} onReport={() => openReport('bug', 'resolved')} />
+            <BiCard tone="orange" icon="fa-clock"        label="Total Pending Bug(s)"  val={bugCards.pending}  date={today} hi="orange" hiText="awaiting resolution" pre="Bugs currently " post={` — ${biLabel(bugPeriod)}`} onReport={() => openReport('bug', 'pending')} />
           </div>
 
           {/* ─── IMPROVEMENTS SUMMARY ─── */}
@@ -296,14 +457,21 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
             </div>
             <div className="bi-period-bar">
               <span className="bi-period-lbl">PERIOD:</span>
-              <select className="bi-period-sel" defaultValue="This Month"><option>This Month</option><option>Last Month</option></select>
-              <select className="bi-period-sel" defaultValue="June 2026"><option>June 2026</option><option>May 2026</option></select>
+              <select className="bi-period-sel" value={impPeriod} onChange={(e) => setImpPeriod(e.target.value)}>
+                {BI_PERIODS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+              </select>
             </div>
           </div>
+          {/* Cards 0 kyun hain — screen par bhi likha ho. "View Report"
+              phir bhi API ki asal improvement entries kholta hai. */}
+          <div className="db-locked" style={{ marginBottom: 10 }}>
+            <i className="fa-solid fa-circle-info" />
+            <span>Improvement figures are parked at <b>0</b>: <code>admin_dashboard</code> has no improvements block — only <code>BugSummary</code>. Open <b>View Report</b> to see the improvement entries the <code>Bugs</code> list does carry.</span>
+          </div>
           <div className="bi-grid" style={{ marginBottom: 28 }}>
-            <BiCard tone="blue"   icon="fa-arrow-up"       label="Total New Improvements"       val={d.improvements.total}     date={today} hi="blue"   hiText="submitted"              pre="New improvements " post=" this month" onReport={() => toast('Opening improvements report…', 'info')} />
-            <BiCard tone="green"  icon="fa-circle-check"   label="Total Completed Improvements" val={d.improvements.completed} date={today} hi="green"  hiText="completed & deployed"   pre="Improvements " post=" this month"      onReport={() => toast('Opening completed improvements report…', 'info')} />
-            <BiCard tone="orange" icon="fa-hourglass-half" label="Total Pending Improvements"   val={d.improvements.pending}   date={today} hi="orange" hiText="pending implementation" pre="Improvements " post=" this month"      onReport={() => toast('Opening pending improvements report…', 'info')} />
+            <BiCard tone="blue"   icon="fa-arrow-up"       label="Total New Improvements"       val={IMPROVEMENT_CARD_VALUE}    date={today} hi="blue"   hiText="submitted"              pre="New improvements " post={` — ${biLabel(impPeriod)}`} onReport={() => openReport('improvement', 'all')} />
+            <BiCard tone="green"  icon="fa-circle-check"   label="Total Completed Improvements" val={IMPROVEMENT_CARD_VALUE} date={today} hi="green"  hiText="completed & deployed"   pre="Improvements " post={` — ${biLabel(impPeriod)}`} onReport={() => openReport('improvement', 'resolved')} />
+            <BiCard tone="orange" icon="fa-hourglass-half" label="Total Pending Improvements"   val={IMPROVEMENT_CARD_VALUE}  date={today} hi="orange" hiText="pending implementation" pre="Improvements " post={` — ${biLabel(impPeriod)}`} onReport={() => openReport('improvement', 'pending')} />
           </div>
         </>
       )}
@@ -312,7 +480,10 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
       {canPay && (
         <div className="section-card">
           <div className="card-header">
-            <div className="card-title"><i className="fa-solid fa-table-list" /> Current Month Details</div>
+            <div>
+              <div className="card-title"><i className="fa-solid fa-table-list" /> Current Month Details</div>
+              <div className="card-sub" style={{ fontSize: 11.5, color: 'var(--tm)', marginTop: 3 }}>{biLabel(feePeriod)} · Fee Analytics ke period selector se chalti hai</div>
+            </div>
             <div className="card-header-right">
               <div className="tbl-show-row">
                 Show <select className="tbl-show-sel" value={pageSize} onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}>
@@ -340,7 +511,11 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
               </thead>
               <tbody>
                 {pageRows.length === 0 ? (
-                  <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--tm)', padding: '24px' }}>No schools match your search.</td></tr>
+                  <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--tm)', padding: '24px' }}>
+                    {feePeriod !== 'thisMonth'
+                      ? `The dashboard API only returns the current month — no fee records for ${biLabel(feePeriod)}.`
+                      : 'No schools match your search.'}
+                  </td></tr>
                 ) : pageRows.map((r) => (
                   <tr key={r.id}>
                     <td>{r.name}</td>
@@ -420,8 +595,12 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
                 <div className="db-detail-card-title">Video Details</div>
               </div>
               <VideoRow label="Total Videos:" val={d.videos.total} />
-              {VIDEO_CATS.map((c) => (
-                <VideoRow key={c} label={`${c}:`} val={d.videos.byCat[c] || 0} />
+              {/* Categories ab E-Tube ki asal categories hain (API ka
+                  VideoCategories), pehle saat naam yahan hardcoded thay. */}
+              {Object.keys(d.videos.byCat || {}).length === 0 ? (
+                <div className="db-detail-row" style={{ color: 'var(--tm)' }}>No video categories yet.</div>
+              ) : Object.entries(d.videos.byCat).map(([c, n]) => (
+                <VideoRow key={c} label={`${c}:`} val={n} />
               ))}
             </div>
           )}
@@ -440,6 +619,42 @@ export default function Dashboard({ toast, users = [], perms = {} }) {
           )}
         </div>
       )}
+
+      {/* ─── BUGS / IMPROVEMENTS REPORT ───
+          Chhe "View Report" buttons isi ek modal ko kholte hain; kis card se
+          khula, wo `report` me hai. Rows wahi hain jo card ne ginin — koi
+          alag call nahi jati. */}
+      {report && (() => {
+        const isBug = report.kind === 'bug';
+        const stats = isBug ? bugStats : impStats;
+        const periodId = isBug ? bugPeriod : impPeriod;
+        const rows = reportRows(stats.rows, report.status);
+        return (
+          <Modal
+            title={`${isBug ? 'Bugs' : 'Improvements'} Report`}
+            sub={`${biLabel(periodId)} · ${rows.length} record${rows.length === 1 ? '' : 's'}`}
+            icon={isBug ? 'fa-bug' : 'fa-lightbulb'}
+            large
+            bodyStyle={{ padding: 0, background: '#F0F4FF' }}
+            onClose={() => setReport(null)}
+            footer={<>
+              <button className="btn-secondary" onClick={() => setReport(null)}>Close</button>
+              <button className="btn-primary" onClick={() => window.print()}><i className="fa-solid fa-print" /> Print / Save</button>
+            </>}
+          >
+            <div style={{ padding: 20 }}>
+              <BugsReport
+                kind={report.kind}
+                status={report.status}
+                period={{ label: biLabel(periodId) }}
+                rows={rows}
+                allOfKind={stats.rows}
+                schoolName={(id) => (branchNames ? branchNames[id] : '') || ''}
+              />
+            </div>
+          </Modal>
+        );
+      })()}
     </div>
   );
 }

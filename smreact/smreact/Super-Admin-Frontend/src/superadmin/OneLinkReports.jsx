@@ -9,9 +9,12 @@ import { pkr, pkr2, fmtDateLong } from './transactionData';
    the modal footer prints/saves it. No PDF library needed.
    ═══════════════════════════════════════════════════════════════════ */
 
-const generated = () => new Date().toLocaleString('en-PK', { dateStyle: 'long', timeStyle: 'short' });
+export const generated = () => new Date().toLocaleString('en-PK', { dateStyle: 'long', timeStyle: 'short' });
 
-function ReportShell({ icon, title, period, meta, children }) {
+/* Shared A4 report chrome. `footNote` batata hai report kis module ki hai —
+   Bugs / Improvements report bhi isi shell par banti hai (see BugsReport.jsx),
+   taake har report ek jaisi print ho. */
+export function ReportShell({ icon, title, period, meta, children, footNote = 'School Mentor · Super Admin · 1LINK / 1Bill Monitoring' }) {
   return (
     <div style={{ background: '#fff', width: 794, maxWidth: '100%', margin: '0 auto', fontFamily: "'Plus Jakarta Sans',Arial,sans-serif", color: '#0F172A', fontSize: 12 }}>
       <div style={{ background: 'linear-gradient(135deg,#1E3A8A,#1E40AF,#2563EB)', padding: '32px 40px 28px', position: 'relative', overflow: 'hidden' }}>
@@ -42,7 +45,7 @@ function ReportShell({ icon, title, period, meta, children }) {
       <div style={{ padding: '28px 40px' }}>{children}</div>
       <div style={{ padding: '0 40px 28px' }}>
         <div style={{ marginTop: 8, paddingTop: 12, borderTop: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', fontSize: 9, color: '#94A3B8', flexWrap: 'wrap', gap: 8 }}>
-          <span>School Mentor · Super Admin · 1LINK / 1Bill Monitoring</span>
+          <span>{footNote}</span>
           <span>Generated: {generated()}</span>
           <span>CONFIDENTIAL — Internal Use Only</span>
         </div>
@@ -51,11 +54,11 @@ function ReportShell({ icon, title, period, meta, children }) {
   );
 }
 
-const sectionTtl = { fontSize: 13, fontWeight: 800, color: '#1E3A8A', borderLeft: '4px solid #1E3A8A', paddingLeft: 10, marginBottom: 14, textTransform: 'uppercase', letterSpacing: '.5px' };
-const th = { padding: '8px 9px', textAlign: 'left', color: '#fff', fontWeight: 800, fontSize: 9, letterSpacing: '.5px', textTransform: 'uppercase', whiteSpace: 'nowrap' };
-const td = { padding: '7px 9px', borderBottom: '1px solid #E2E8F0', fontSize: 10.5 };
+export const sectionTtl = { fontSize: 13, fontWeight: 800, color: '#1E3A8A', borderLeft: '4px solid #1E3A8A', paddingLeft: 10, marginBottom: 14, textTransform: 'uppercase', letterSpacing: '.5px' };
+export const th = { padding: '8px 9px', textAlign: 'left', color: '#fff', fontWeight: 800, fontSize: 9, letterSpacing: '.5px', textTransform: 'uppercase', whiteSpace: 'nowrap' };
+export const td = { padding: '7px 9px', borderBottom: '1px solid #E2E8F0', fontSize: 10.5 };
 
-function KpiRow({ items }) {
+export function KpiRow({ items }) {
   return (
     <div style={{ display: 'grid', gridTemplateColumns: `repeat(${items.length},1fr)`, gap: 12, marginBottom: 24 }}>
       {items.map(([label, val, tone], i) => (

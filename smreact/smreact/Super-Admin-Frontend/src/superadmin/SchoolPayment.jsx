@@ -76,7 +76,7 @@ const TABS = [
   { id: 'report',    name: 'Reports',       icon: 'fa-chart-bar' },
 ];
 
-/* branch-report ki row → wohi school shape jo yeh screen padhti hai. */
+/* Branch directory ki row → wohi school shape jo yeh screen padhti hai. */
 const branchToPaySchool = (b) => ({
   id: b.id,
   name: b.name,
@@ -238,7 +238,7 @@ export default function SchoolPayment({ toast }) {
       Object.keys(recvs).forEach((bid) => {
         const row = recvs[bid];
         row.history = reconcileRecvHistory(
-          savedHist[recvHistKey(bid, period)], row.receivedAmount, row.history,
+          savedHist[recvHistKey(bid, period)], row.receivedAmount, row.history, row.discount,
         );
       });
       setRecvStore(recvs);
@@ -260,11 +260,35 @@ export default function SchoolPayment({ toast }) {
     setLoading(true);
     let rows = [];
     try {
-      const { launch, erp, inactive } = await schoolProgressApi.listSchoolProgress();
+      /* SCHOOL LIST = wahi directory jo School Permissions dikhati hai
+         (get-branches-with-permissions).
+
+         Pehle list branch-report ke chaar group (isActive × launchSetup) jama
+         kar ke banti thi. Wo route ek branch chhor deta hai — Beacon Public
+         School (id 1) directory me isActive + launchSetup=1 ke saath mojood
+         hai, magar branch-report?isActive=true&launchSetup=1 use wapas nahi
+         karta (37 rows deta hai, 38 nahi). Is wajah se School Payment 73
+         schools dikhata tha jab School Permissions 74 dikhati thi.
+
+         STUDENT COUNTS phir bhi branch-report se hi aate hain — permissions
+         route par yeh hain hi nahi, aur Payment Setup ka "Total Students"
+         inhi par gir kar bharta hai. Jis branch ka progress row na ho uska
+         count 0 rehta hai (pehle bhi aisa hi tha, ab wo branch list se
+         gayab nahi hoti). Progress call fail ho to sirf counts jaate hain,
+         list nahi. */
+      const [{ schools: directory }, progress] = await Promise.all([
+        schoolPermissionsApi.listPermissionBranches(),
+        schoolProgressApi.listSchoolProgress()
+          .catch(() => ({ launch: [], erp: [], inactive: [] })),
+      ]);
+      const students = {};
+      [...progress.launch, ...progress.erp, ...progress.inactive].forEach((b) => {
+        if (b.id != null && students[b.id] == null) students[b.id] = b.students || 0;
+      });
       const seen = new Set();
-      rows = [...launch, ...erp, ...inactive]
+      rows = directory
         .filter((b) => b.id && !seen.has(b.id) && seen.add(b.id))
-        .map(branchToPaySchool);
+        .map((b) => branchToPaySchool({ ...b, students: students[b.id] || 0 }));
     } catch (err) {
       toastRef.current?.(err?.message || 'Could not load schools — showing sample data', 'warn');
     }
@@ -498,6 +522,8 @@ export default function SchoolPayment({ toast }) {
     /* Row par pehle se kitna JAMA tha — nayi history line isi ke farq se
        banti hai (see appendRecvHistory). */
     const prevTotal = Number(recvStore[id]?.receivedAmount) || 0;
+    /* Rely bhi row par jama rehti hai — nayi line par sirf is baar ka izafa. */
+    const prevDiscount = Number(recvStore[id]?.discount) || 0;
     setSaving(true);
     try {
       const saved = await paymentsApi.saveReceiving({
@@ -509,7 +535,7 @@ export default function SchoolPayment({ toast }) {
            ki tareekh ka mahina isse alag ho sakta hai. */
         period,
       });
-      const history = appendRecvHistory(prevHistory, prevTotal, rec.receivedAmount, rec);
+      const history = appendRecvHistory(prevHistory, prevTotal, rec.receivedAmount, rec, prevDiscount);
       /* Tab badal kar wapas aane par yeh lines dobara API ki ek jama line me
          nahi badlengi (see saveRecvHistory). */
       saveRecvHistory(id, period, history);
@@ -657,38 +683,61 @@ function saveRecvHistory(branchId, period, lines) {
 
 /* Mehfooz lines ko API ke JAMA (`total`) par fit karo. `fallback` API row ki
    apni line hai (uska via/date), jo tab kaam aati hai jab mehfooz kuch na ho. */
-function reconcileRecvHistory(saved, total, fallback = []) {
+function reconcileRecvHistory(saved, total, fallback = [], totalDiscount = 0) {
   const t = Number(total) || 0;
   if (t <= 0) return [];
   const list = (Array.isArray(saved) ? saved : []).filter((l) => Number(l?.amount) > 0);
+  /* Rely bhi row par JAMA rehti hai. Lines par uska batwara isi tarah fit
+     hota hai jaise raqam ka: lines ka jama kabhi API ke discount se ooper
+     nahi ja sakta, aur jo bach jaye wo aakhri line par chala jata hai. */
+  const totalDisc = Number(totalDiscount) || 0;
 
   const out = [];
   let sum = 0;
+  let disc = 0;
   for (const l of list) {
     if (sum >= t) break;
     const amount = Math.min(Number(l.amount) || 0, t - sum);
-    if (amount > 0) { out.push({ ...l, amount }); sum += amount; }
+    if (amount > 0) {
+      const d = Math.min(Math.max(0, Number(l.discount) || 0), Math.max(0, totalDisc - disc));
+      out.push({ ...l, amount, discount: d });
+      sum += amount; disc += d;
+    }
   }
   /* Jama pura na hua — baqi raqam ki ek line, API wali tafseel ke saath. */
   if (sum < t) {
     const last = fallback[fallback.length - 1] || {};
-    out.push({ amount: t - sum, via: last.via || '', date: last.date || '' });
+    out.push({ amount: t - sum, discount: Math.max(0, totalDisc - disc), via: last.via || '', date: last.date || '' });
   }
   /* Ek hi line bani to API ki apni line behtar hai (us par via/date mojood). */
   return out.length > 1 ? out : (fallback.length ? fallback : out);
 }
 
-function appendRecvHistory(prevHistory, prevTotal, newTotal, rec) {
+function appendRecvHistory(prevHistory, prevTotal, newTotal, rec, prevDiscount = 0) {
   const list = Array.isArray(prevHistory) ? prevHistory : [];
-  const line = (amount) => ({ amount, via: rec.via, date: rec.date });
-  const delta = (Number(newTotal) || 0) - (Number(prevTotal) || 0);
+  const total = Number(newTotal) || 0;
+  const totalDisc = Number(rec.discount) || 0;
+  const line = (amount, discount) => ({ amount, discount, via: rec.via, date: rec.date });
+  const delta = total - (Number(prevTotal) || 0);
 
-  if (delta > 0) return [...list, line(delta)];
-  if (!list.length) return (Number(newTotal) || 0) > 0 ? [line(Number(newTotal) || 0)] : [];
+  /* Discount bhi raqam ki tarah JAMA hai — modal usay pichhle record se
+     bhar deta hai aur user usay barha deta hai. Is liye nayi line par sirf
+     IS BAAR di gayi rely jati hai, poori jama nahi:
+         pehli baar : 500 − 0   = 500
+         doosri baar: 800 − 500 = 300  */
+  const discDelta = Math.max(0, totalDisc - (Number(prevDiscount) || 0));
 
+  if (delta > 0) return [...list, line(delta, discDelta)];
+  if (!list.length) return total > 0 ? [line(total, totalDisc)] : [];
+
+  /* Durusti — aakhri line hi badalti hai. Us par wo rely jati hai jo baqi
+     lines ke baad bachti hai, taake lines ka jama hamesha row ke discount
+     ke barabar rahe. */
+  const earlier = list.slice(0, -1);
+  const earlierDisc = earlier.reduce((a, l) => a + (Number(l.discount) || 0), 0);
   const last = list[list.length - 1];
   const fixed = (Number(last.amount) || 0) + delta;
-  return fixed > 0 ? [...list.slice(0, -1), line(fixed)] : list.slice(0, -1);
+  return fixed > 0 ? [...earlier, line(fixed, Math.max(0, totalDisc - earlierDisc))] : earlier;
 }
 
 const setupMonthly = (school, setup) => {
@@ -1118,7 +1167,15 @@ function RecvDetail({ s, monthly, totalDues, recv }) {
         <div style={{ borderTop: '1.5px solid var(--bl)', paddingTop: 10, marginTop: 4 }}>
           <div className="recv-history-title"><i className="fa-solid fa-clock-rotate-left" /> Payment History</div>
           {recv.history.map((h, j) => (
-            <div className="recv-hist-item" key={j}><div className="recv-hist-dot" /><div className="recv-hist-amount">{pkr(h.amount)}</div><div className="recv-hist-via">{h.via || '—'}</div><div className="recv-hist-date">{h.date || '—'}</div></div>
+            <div className="recv-hist-item" key={j}>
+              <div className="recv-hist-dot" />
+              <div className="recv-hist-amount">{pkr(h.amount)}</div>
+              {/* Is wasooli par di gayi rely — Received Amount column aur
+                  Net Payable dono usay ginte hain, is liye line par bhi. */}
+              {Number(h.discount) > 0 && <div className="recv-hist-disc" data-tip="Discount applied with this payment">disc {pkr(h.discount)}</div>}
+              <div className="recv-hist-via">{h.via || '—'}</div>
+              <div className="recv-hist-date">{h.date || '—'}</div>
+            </div>
           ))}
         </div>
       )}
