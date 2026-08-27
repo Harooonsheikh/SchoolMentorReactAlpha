@@ -430,6 +430,31 @@ function showDate(v) {
   return time && !/^00:00/.test(time) ? `${day}, ${time}` : day
 }
 
+/* API ki date → <input type="date"> / <input type="datetime-local"> ki shakal.
+   Edit par purani date pehle se bhari honi chahiye, warna save karte waqt
+   khali ja kar record ki date urr jaati thi. */
+function toInputDate(v, type) {
+  if (!v) return ''
+  const s = String(v).trim().replace('T', ' ')
+  const [datePart, timePart = ''] = s.split(' ')
+  let ymd = ''
+  const iso = datePart.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/)
+  const us = datePart.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
+  if (iso) ymd = `${iso[1]}-${iso[2].padStart(2, '0')}-${iso[3].padStart(2, '0')}`
+  else if (us) ymd = `${us[3]}-${us[1].padStart(2, '0')}-${us[2].padStart(2, '0')}`
+  else return ''
+  if (type !== 'datetime-local') return ymd
+
+  /* Waqt 24-ghanton me chahiye; API kabhi "10:28:00 AM" bhejti hai. */
+  const t = timePart.match(/^(\d{1,2}):(\d{2})/)
+  if (!t) return `${ymd}T00:00`
+  let hh = Number(t[1])
+  const pm = /pm/i.test(s)
+  if (pm && hh < 12) hh += 12
+  if (/am/i.test(s) && hh === 12) hh = 0
+  return `${ymd}T${String(hh).padStart(2, '0')}:${t[2]}`
+}
+
 function ErpDetailModal({ school, month, onToast, onCounts, onClose }) {
   const seed = useMemo(() => getDetailData(school), [school])
   const [tab, setTab] = useState('progress')
@@ -437,6 +462,8 @@ function ErpDetailModal({ school, month, onToast, onCounts, onClose }) {
   const [follow, setFollow] = useState({ notes: [], calls: [], messages: [] })
   const [followLoading, setFollowLoading] = useState(true)
   const [addType, setAddType] = useState(null)
+  /* Tarmeem: { sub, item } — popup wahi hai, sirf `action` update ban jaata hai. */
+  const [editing, setEditing] = useState(null)
   const [cardBusy, setCardBusy] = useState(false)
 
   /* Follow-up cards API se — sub-head par baant kar rakh lete hain. */
@@ -445,7 +472,9 @@ function ErpDetailModal({ school, month, onToast, onCounts, onClose }) {
       const rows = await listCardActions({ branchId: school.id })
       const pick = (name) => rows
         .filter((r) => r.subHeadType === name)
-        .map((r) => ({ id: r.id, text: r.comment, date: showDate(r.date), user: r.user }))
+        /* `raw` bhi rakhte hain: edit popup ke date input ko API wali asal
+           date chahiye, card par dikhne wali formatted shakal nahi. */
+        .map((r) => ({ id: r.id, text: r.comment, date: showDate(r.date), raw: r.date, user: r.user }))
       const next = { notes: pick(CARD_SUBS.notes), calls: pick(CARD_SUBS.calls), messages: pick(CARD_SUBS.messages) }
       setFollow(next)
       /* Peeche card ke chips bhi wahi ginti dikhayein. */
@@ -477,20 +506,26 @@ function ErpDetailModal({ school, month, onToast, onCounts, onClose }) {
     }
   }
 
-  const saveAdd = async (text, date) => {
+  /* Add aur edit dono yahan se — saveCardAction id hone par `update` bhejti
+     hai, warna `add`. */
+  const saveEntry = async (text, date) => {
     if (cardBusy) return
-    const sub = SUB_MAP[addType]
+    const sub = editing ? editing.sub : SUB_MAP[addType]
+    const type = FOLLOW_META[sub].type
     setCardBusy(true)
     try {
       await saveCardAction({
+        id: editing?.item.id ?? 0,
         branchId: school.id,
         subHeadType: SUB_HEAD[sub],
         commentDetail: text,
         date,
       })
       await loadCards()
-      onToast(`${ADD_CFG[addType].title.replace('Add ', '')} added`, 'success')
+      const label = ADD_CFG[type].title.replace('Add ', '')
+      onToast(`${label} ${editing ? 'updated' : 'added'}`, 'success')
       setAddType(null)
+      setEditing(null)
     } catch (err) {
       console.error('Follow-up card save failed:', err)
       onToast(err?.message || 'Could not save this entry', 'warn')
@@ -498,6 +533,10 @@ function ErpDetailModal({ school, month, onToast, onCounts, onClose }) {
       setCardBusy(false)
     }
   }
+
+  const closePopup = () => { setAddType(null); setEditing(null) }
+  /* Popup add mode me `addType` se chalta hai, edit me chuni hui entry se. */
+  const popupType = editing ? FOLLOW_META[editing.sub].type : addType
   return createPortal(
     <div className="ov" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
       <div className="modal lg">
@@ -519,11 +558,21 @@ function ErpDetailModal({ school, month, onToast, onCounts, onClose }) {
 
         <div className="modal-body">
           {tab === 'progress' && <ProgressTab school={school} seed={seed} month={month} />}
-          {tab === 'followup' && <FollowupTab follow={follow} loading={followLoading} busy={cardBusy} sub={followSub} setSub={setFollowSub} onAdd={setAddType} onDel={delItem} />}
+          {tab === 'followup' && <FollowupTab follow={follow} loading={followLoading} busy={cardBusy} sub={followSub} setSub={setFollowSub} onAdd={setAddType} onEdit={(s, item) => setEditing({ sub: s, item })} onDel={delItem} />}
         </div>
       </div>
 
-      {addType && <AddPopup type={addType} busy={cardBusy} onClose={() => setAddType(null)} onSave={saveAdd} />}
+      {popupType && (
+        <EntryPopup
+          /* key: doosri entry par jaate hi form ki purani values na reh jayein */
+          key={editing ? `edit-${editing.item.id}` : `add-${popupType}`}
+          type={popupType}
+          entry={editing?.item || null}
+          busy={cardBusy}
+          onClose={closePopup}
+          onSave={saveEntry}
+        />
+      )}
     </div>,
     document.body,
   )
@@ -563,7 +612,7 @@ function ProgressTab({ school, seed, month }) {
   )
 }
 
-function FollowupTab({ follow, loading, busy, sub, setSub, onAdd, onDel }) {
+function FollowupTab({ follow, loading, busy, sub, setSub, onAdd, onEdit, onDel }) {
   const meta = FOLLOW_META[sub]
   const list = follow[sub]
   return (
@@ -614,6 +663,7 @@ function FollowupTab({ follow, loading, busy, sub, setSub, onAdd, onDel }) {
                   </div>
                 </div>
                 <div className="fu-card-actions">
+                  <button className="fu-act-btn edit" title="Edit" disabled={busy} onClick={() => onEdit(sub, item)}><i className="fa-solid fa-pen" /></button>
                   <button className="fu-act-btn del" title="Delete" disabled={busy} onClick={() => onDel(sub, item.id)}><i className="fa-solid fa-trash-can" /></button>
                 </div>
               </div>
@@ -625,15 +675,18 @@ function FollowupTab({ follow, loading, busy, sub, setSub, onAdd, onDel }) {
   )
 }
 
-function AddPopup({ type, busy, onClose, onSave }) {
+/* Add aur Edit dono isi popup se — `entry` mile to maujooda values bhar kar
+   update mode, warna khali form. */
+function EntryPopup({ type, entry, busy, onClose, onSave }) {
   const cfg = ADD_CFG[type]
-  const [text, setText] = useState('')
-  const [date, setDate] = useState('')
+  const isEdit = !!entry
+  const [text, setText] = useState(entry?.text || '')
+  const [date, setDate] = useState(() => toInputDate(entry?.raw, cfg.dateType))
   return (
     <div className="em-add-ov" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
       <div className="em-add-box">
         <div className="em-add-hdr" style={{ background: cfg.grad }}>
-          <div className="em-add-title"><i className={`fa-solid ${cfg.icon}`} /> {cfg.title}</div>
+          <div className="em-add-title"><i className={`fa-solid ${isEdit ? 'fa-pen' : cfg.icon}`} /> {isEdit ? cfg.title.replace('Add ', 'Edit ') : cfg.title}</div>
           <button className="em-add-close" onClick={onClose}><i className="fa-solid fa-xmark" /></button>
         </div>
         <div className="em-add-body">
@@ -645,7 +698,7 @@ function AddPopup({ type, busy, onClose, onSave }) {
           <button className="btn-primary" style={{ height: 34, padding: '0 16px', fontSize: 12.5 }} disabled={busy} onClick={() => { if (!text.trim()) return; onSave(text.trim(), date) }}>
             {busy
               ? <><i className="fa-solid fa-spinner fa-spin" /> Saving…</>
-              : <><i className="fa-regular fa-floppy-disk" /> {cfg.saveLabel}</>}
+              : <><i className="fa-regular fa-floppy-disk" /> {isEdit ? 'Update' : cfg.saveLabel}</>}
           </button>
         </div>
       </div>

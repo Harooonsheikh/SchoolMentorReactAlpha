@@ -70,6 +70,10 @@ export function toSetup(row) {
     previousAmount:  Number(row.previousAmount) || 0,
     freeTrial:       !!row.freeTrial,
     trialDays:       row.duration ? String(row.duration) : '',
+    /* Trial ki apni koi tareekh API par nahi — ginti setup banne ke din se
+       hoti hai, is liye createdAt sath rakhna zaroori hai (dekhein
+       pages/Payments/data.js ka trialInfo). */
+    createdAt:       String(row.createdAt ?? ''),
     notes:           String(row.notes ?? '').trim(),
     /* Royalty rows flat rakhe jaate hain — details[] ki shakl bilkul yahi hai,
        is liye save par mapping ka kaam nahi bachta. */

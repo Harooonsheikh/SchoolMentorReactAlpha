@@ -3,7 +3,7 @@ import TutorialButton from '../../components/TutorialButton'
 import { createPortal } from 'react-dom'
 import {
   toPaymentRows,
-  monthlyCharge, PKR, todayPlus, PAY_METHODS, royaltyCount,
+  monthlyCharge, PKR, todayPlus, PAY_METHODS, royaltyCount, trialInfo,
   MONTHS, monthLabel, monthStart, monthEnd, monthDay, challanYears,
 } from './data'
 import { useView } from '../../config/viewContext'
@@ -43,6 +43,35 @@ const FormulaBadge = ({ setup }) => {
   if (setup.formula === 'lumpsum') return <span className="badge b-blue"><i className="fa-solid fa-money-bill-wave" style={{ fontSize: 8 }} /> Lump Sum</span>
   if (setup.formula === 'percentage') return <span className="badge b-purple"><i className="fa-solid fa-percent" style={{ fontSize: 8 }} /> Percentage</span>
   return <span className="badge b-green"><i className="fa-solid fa-user-graduate" style={{ fontSize: 8 }} /> Per Student</span>
+}
+
+/* Free trial ka haal. Pehle yahan sirf "30d trial" likha aata tha — yeh
+   batata hi nahi tha ke muddat guzar chuki hai. Ab teen soortein hain:
+   khatam ho chuka (kis din), chal raha hai (kitne din baqi), aur wo naya
+   setup jo abhi API se dobara padha nahi gaya (sirf muddat maloom). */
+function TrialCell({ trial }) {
+  if (!trial) return <span style={{ color: 'var(--tm)' }}>—</span>
+
+  if (trial.daysLeft == null) {
+    return <span className="badge b-blue" style={{ fontSize: 9.5 }}><i className="fa-solid fa-gift" style={{ fontSize: 8 }} /> {trial.days}d trial</span>
+  }
+
+  if (trial.ended) {
+    return (
+      <>
+        <span className="badge b-red" style={{ fontSize: 9.5 }}><i className="fa-solid fa-hourglass-end" style={{ fontSize: 8 }} /> Trial ended</span>
+        <div style={{ fontSize: 10, color: 'var(--tm)', marginTop: 2 }}>{trial.days}d · ended {trial.endLabel}</div>
+      </>
+    )
+  }
+
+  /* Aakhri hafte me rang badal jata hai taake nazar me aa jaye. */
+  return (
+    <>
+      <span className={`badge ${trial.daysLeft <= 7 ? 'b-warn' : 'b-blue'}`} style={{ fontSize: 9.5 }}><i className="fa-solid fa-gift" style={{ fontSize: 8 }} /> {trial.daysLeft}d left</span>
+      <div style={{ fontSize: 10, color: 'var(--tm)', marginTop: 2 }}>{trial.days}d · ends {trial.endLabel}</div>
+    </>
+  )
 }
 
 export default function Payments() {
@@ -470,7 +499,7 @@ export default function Payments() {
                         <td data-label="#" style={{ color: 'var(--tm)', fontWeight: 700 }}>{i + 1}</td>
                         <td data-label="Branch"><div style={{ fontWeight: 700, color: 'var(--t1)' }}>{s.name}</div><div style={{ fontSize: 11, color: 'var(--tm)', marginTop: 2 }}>{s.principal} · {s.contact}</div></td>
                         <td data-label="Formula"><FormulaBadge setup={setup} /></td>
-                        <td data-label="Free Trial">{setup?.freeTrial && setup?.trialDays ? <span className="badge b-blue" style={{ fontSize: 9.5 }}><i className="fa-solid fa-gift" style={{ fontSize: 8 }} /> {setup.trialDays}d trial</span> : '—'}</td>
+                        <td data-label="Free Trial"><TrialCell trial={trialInfo(setup)} /></td>
                         <td data-label="Monthly" style={{ textAlign: 'center' }}>{!setup ? '—' : setup.formula === 'percentage' ? <><span style={{ fontWeight: 800, color: '#7C3AED' }}>{PKR(charge)}</span><div style={{ fontSize: 10, color: 'var(--tm)' }}>royalty · {royaltyCount(setup)} head{royaltyCount(setup) !== 1 ? 's' : ''}</div></> :<><span style={{ fontWeight: 800, color: 'var(--t1)' }}>{PKR(charge)}</span><div style={{ fontSize: 10, color: 'var(--tm)' }}>/ month</div></>}</td>
                         <td data-label="Status" style={{ textAlign: 'center' }}>{!setupLoaded[s.id] ? <span className="badge b-gray"><i className="fa-solid fa-spinner fa-spin" style={{ fontSize: 8 }} /> Loading</span> : setup ? <span className="badge ps-badge-setup"><i className="fa-solid fa-circle-check" style={{ fontSize: 8 }} /> Set Up</span> : <span className="badge ps-badge-pending"><i className="fa-solid fa-hourglass-half" style={{ fontSize: 8 }} /> Pending</span>}</td>
                         <td data-label="Action" style={{ textAlign: 'center' }}>
@@ -608,6 +637,10 @@ export default function Payments() {
                        bana ho to pichle mahinon ka bacha hua dikha dete hain. */
                     const prevRemaining = challan ? (challan.prevDues || 0) : pendingBefore(s.id, applied.month, applied.year)
                     const remaining = recv ? recv.remainingAmount : totalDues
+                    /* Kuch raqam aa chuki hai magar poori nahi — button "Receiving"
+                       nahi, "Receive More" kehta hai: entry nayi nahi banti, usi
+                       mahine ke record me juri jaati hai. */
+                    const partial = !!recv && (recv.receivedAmount || 0) > 0 && remaining > 0
                     const fmt = (v) => v === 0 ? <span className="dues-zero">0</span> : <span className="dues-pos">{Number(v).toLocaleString()}</span>
                     const open = expanded[`rv-${s.id}`]
                     return (
@@ -620,7 +653,7 @@ export default function Payments() {
                         <td data-label="Remaining" style={{ textAlign: 'center' }}>{fmt(remaining)}</td>
                         <td data-label="Download" style={{ textAlign: 'center' }}><button className="recv-btn recv-btn-dl" disabled={!recv} onClick={() => openSlip(recvSlipHTML(s, recv, challan, setup), fire)}><i className="fa-solid fa-download" /> Download</button></td>
                         <td data-label="Delete" style={{ textAlign: 'center' }}><button className="recv-btn recv-btn-del" disabled={!recv || deletingRecv} onClick={() => setConfirm({ kind: 'delRecv', id: s.id, name: s.name })}><i className="fa-solid fa-trash-can" /> Delete</button></td>
-                        <td data-label="Receiving" style={{ textAlign: 'center' }}><button className="recv-btn recv-btn-recv" disabled={!recvLoaded[s.id] || !setup || !challan || recvBusy || (!!recv && remaining <= 0)} title={!setup ? 'Set up payment first' : !challan ? `Generate the ${monthLabel(applied.month, applied.year)} challan first` : (recv && remaining <= 0) ? 'Fully paid' : ''} onClick={() => setRecvModal(s.id)}><i className="fa-solid fa-hand-holding-dollar" /> Receiving</button></td>
+                        <td data-label="Receiving" style={{ textAlign: 'center' }}><button className="recv-btn recv-btn-recv" disabled={!recvLoaded[s.id] || !setup || !challan || recvBusy || (!!recv && remaining <= 0)} title={!setup ? 'Set up payment first' : !challan ? `Generate the ${monthLabel(applied.month, applied.year)} challan first` : (recv && remaining <= 0) ? 'Fully paid' : partial ? `Partially paid — ${PKR(remaining)} still remaining` : ''} onClick={() => setRecvModal(s.id)}><i className={`fa-solid ${partial ? 'fa-circle-plus' : 'fa-hand-holding-dollar'}`} /> {partial ? 'Receive More' : 'Receiving'}</button></td>
                         <td data-label="Detail" style={{ textAlign: 'center' }}><button className="det-btn" onClick={() => toggleExpand(`rv-${s.id}`)}><i className="fa-solid fa-chevron-down" /></button></td>
                       </FragmentRows>
                     )
@@ -698,12 +731,23 @@ function SetupDetail({ s, setup }) {
     )
   }
   const monthly = monthlyCharge(s, setup)
+  const trial = trialInfo(setup)
   return (
     <div className="psetup-detail-grid">
       <div className="psetup-detail-card"><div className="pdc-lbl">Formula</div><div className="pdc-val" style={{ fontSize: 13 }}>{setup.formula === 'lumpsum' ? 'Lump Sum' : 'Per Student'}</div></div>
       <div className="psetup-detail-card"><div className="pdc-lbl">Monthly Bill</div><div className="pdc-val">{PKR(monthly)}</div></div>
       <div className="psetup-detail-card"><div className="pdc-lbl">Annual Revenue</div><div className="pdc-val">{PKR(monthly * 12)}</div><div className="pdc-sub">projected</div></div>
-      <div className="psetup-detail-card"><div className="pdc-lbl">Free Trial</div><div className="pdc-val" style={{ fontSize: 13 }}>{setup.freeTrial && setup.trialDays ? `${setup.trialDays} days` : 'None'}</div></div>
+      <div className="psetup-detail-card">
+        <div className="pdc-lbl">Free Trial</div>
+        <div className="pdc-val" style={{ fontSize: 13 }}>{trial ? (trial.ended ? 'Ended' : `${trial.days} days`) : 'None'}</div>
+        {trial && trial.daysLeft != null && (
+          <div className="pdc-sub">
+            {trial.ended
+              ? `${trial.days}d · ended ${trial.endLabel}`
+              : `${trial.daysLeft} days left · ends ${trial.endLabel}`}
+          </div>
+        )}
+      </div>
       {setup.notes && <div className="psetup-detail-card" style={{ gridColumn: 'span 4', textAlign: 'left' }}><div className="pdc-lbl">Notes</div><div style={{ fontSize: 12.5, color: 'var(--t2)', marginTop: 4 }}>{setup.notes}</div></div>}
     </div>
   )
@@ -755,6 +799,13 @@ function SetupModal({ school, setup, saving, onClose, onSave, onToast }) {
   const [freeTrial, setFreeTrial] = useState(!!setup?.freeTrial)
   const [trialDays, setTrialDays] = useState(setup?.trialDays || '')
   const [notes, setNotes] = useState(setup?.notes || '')
+
+  /* Abhi type ki hui muddat par trial kab khatam hoga — ginti purane setup ke
+     createdAt se hoti hai, is liye naye setup par kuch nahi dikhta. */
+  const editTrial = useMemo(
+    () => trialInfo({ freeTrial, trialDays, createdAt: setup?.createdAt }),
+    [freeTrial, trialDays, setup?.createdAt],
+  )
 
   /* Classes + unke apne fee heads — sirf Percentage ke liye chahiye, is liye
      tabhi mangaate hain jab wo formula chuna jaaye (aur aik hi dafa). */
@@ -910,7 +961,22 @@ function SetupModal({ school, setup, saving, onClose, onSave, onToast }) {
             <div><div className="pay-toggle-label">Free Trial</div><div className="pay-toggle-sub">Offer a free trial period before billing starts.</div></div>
             <label className="sw"><input type="checkbox" checked={freeTrial} onChange={(e) => setFreeTrial(e.target.checked)} /><div className="sw-track" /><div className="sw-thumb" /></label>
           </div>
-          {freeTrial && <div className="pay-field"><label>Trial Duration (days)</label><input className="pay-input" type="number" placeholder="e.g. 30" value={trialDays} onChange={(e) => setTrialDays(e.target.value)} /></div>}
+          {freeTrial && (
+            <div className="pay-field">
+              <label>Trial Duration (days)</label>
+              <input className="pay-input" type="number" placeholder="e.g. 30" value={trialDays} onChange={(e) => setTrialDays(e.target.value)} />
+              {/* Muddat setup banne ke din se ginti hai — edit karte waqt nayi
+                  tareekh saamne rahe to andaza lagana asaan hai. */}
+              {editTrial && editTrial.daysLeft != null && (
+                <div style={{ fontSize: 11, color: 'var(--tm)', marginTop: 5 }}>
+                  <i className={`fa-solid ${editTrial.ended ? 'fa-hourglass-end' : 'fa-gift'}`} style={{ fontSize: 9, marginRight: 4 }} />
+                  {editTrial.ended
+                    ? `Trial ended on ${editTrial.endLabel}`
+                    : `Trial ends ${editTrial.endLabel} · ${editTrial.daysLeft} day${editTrial.daysLeft === 1 ? '' : 's'} left`}
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="pay-field" style={{ marginBottom: 0 }}><label>Notes (optional)</label><input className="pay-input" placeholder="Any billing notes…" value={notes} onChange={(e) => setNotes(e.target.value)} /></div>
         </div>
@@ -1071,7 +1137,9 @@ function RecvModal({ school, setup, challan, recv, period, busy, onClose, onSave
       <div className="pay-modal" style={{ maxWidth: 480 }}>
         <div className="pay-modal-hdr">
           <div className="pay-modal-av" style={{ background: 'linear-gradient(135deg,#0369A1,#0284C7)' }}><i className="fa-solid fa-hand-holding-dollar" /></div>
-          <div><div className="pay-modal-title">Receive Payment</div><div className="pay-modal-sub">{school.name}{period ? ` · ${period}` : ''}</div></div>
+          {/* Jahan pehle se kuch wasool ho chuka hai, wahan ye nayi wasooli
+              nahi — usi record me izafa hai. Unwan bhi wahi kehta hai. */}
+          <div><div className="pay-modal-title">{prevReceived > 0 ? 'Receive More' : 'Receive Payment'}</div><div className="pay-modal-sub">{school.name}{period ? ` · ${period}` : ''}</div></div>
           <button className="pay-modal-x" onClick={onClose}><i className="fa-solid fa-xmark" /></button>
         </div>
         <div className="pay-modal-body">

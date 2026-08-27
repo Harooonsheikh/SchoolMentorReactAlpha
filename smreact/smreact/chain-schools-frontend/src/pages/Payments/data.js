@@ -62,6 +62,67 @@ export function royaltyCount(setup) {
   return (setup?.royaltyRows || []).filter((r) => Number(r.pct) > 0).length
 }
 
+/* ── Free trial kab tak hai / kab khatam hua ──────────────────────────
+   API par trial ki apni koi tareekh nahi — sirf `duration` (kitne din) hai.
+   Is liye ginti setup banne ke din se hoti hai (summary ka `createdAt`):
+   trial usi din shuru hota hai jab setup pehli baar save hua.
+
+   `createdAt` na ho (abhi abhi modal se save hua setup, jo API se dobara
+   padha nahi gaya) to sirf muddat maloom hoti hai — us soorat me daysLeft
+   null rehta hai aur screen purani tarah "Nd trial" dikhati hai.
+
+   Wahi hisaab Super-Admin ke School Payment par bhi hai, taake dono screenein
+   ek hi din ko trial ka aakhri din kahein. */
+export function trialInfo(setup) {
+  if (!setup || !setup.freeTrial) return null
+  const days = parseInt(setup.trialDays, 10) || 0
+  if (days <= 0) return null
+
+  const start = dayStart(setup.createdAt)
+  if (!start) return { days, startISO: '', endISO: '', endLabel: '', daysLeft: null, ended: false }
+
+  const end = new Date(start.getTime())
+  end.setDate(end.getDate() + days)
+  const today = dayStart(new Date())
+  const daysLeft = Math.round((end.getTime() - today.getTime()) / 86400000)
+  const endISO = isoDay(end)
+  return {
+    days,
+    startISO: isoDay(start),
+    endISO,
+    endLabel: fmtDateShort(endISO),
+    daysLeft,
+    /* Aakhri din guzar gaya = trial khatam. */
+    ended: daysLeft <= 0,
+    /* Khatam hue kitne din ho gaye (card par "X days ago"). */
+    daysAgo: daysLeft <= 0 ? Math.abs(daysLeft) : 0,
+  }
+}
+
+/* "2026-08-19T14:03:11" ya Date → usi din ki aadhi raat (local). Sirf date
+   ka hissa padha jata hai, is liye timestamp ka format/timezone maayne nahi
+   rakhta. */
+function dayStart(value) {
+  if (!value) return null
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime())
+      ? null
+      : new Date(value.getFullYear(), value.getMonth(), value.getDate())
+  }
+  const m = String(value).match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
+  const d = new Date(value)
+  return Number.isNaN(d.getTime())
+    ? null
+    : new Date(d.getFullYear(), d.getMonth(), d.getDate())
+}
+
+const isoDay = (d) =>
+  `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`
+
+export const fmtDateShort = (iso) =>
+  (iso ? new Date(iso).toLocaleDateString('en-GB', { year: 'numeric', month: '2-digit', day: '2-digit' }) : '')
+
 export const PKR = (n) => `PKR ${Number(n || 0).toLocaleString()}`
 export const todayPlus = (days) => {
   const d = new Date(); d.setDate(d.getDate() + days)

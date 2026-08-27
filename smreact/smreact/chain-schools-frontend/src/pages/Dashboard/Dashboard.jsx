@@ -1,11 +1,25 @@
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useView } from '../../config/viewContext'
 import TutorialButton from '../../components/TutorialButton'
-import {
-  SCHOOLS, schoolById, chainAggregates, MODULE_USAGE, CHAIN_GROWTH,
-  fmtMoney, fmtShort,
-} from '../../config/dashboardData'
+import { fetchChainDashboard } from '../../api/chainDashboardApi'
 import './Dashboard.css'
+
+/* Ye screen ab poori tarah Network_Setup/GetDashboard se chalti hai —
+   pehle config/dashboardData.js ke dummy schools istemal hote thay. */
+
+const fmtMoney = (n) => 'Rs. ' + Number(n || 0).toLocaleString('en-PK')
+const fmtShort = (n) => {
+  const v = Number(n) || 0
+  return v >= 1e7 ? (v / 1e7).toFixed(2) + ' Cr'
+    : v >= 1e5 ? (v / 1e5).toFixed(2) + ' L'
+    : v >= 1e3 ? (v / 1e3).toFixed(1) + 'k'
+    : String(v)
+}
+const fmtNum = (n) => Number(n || 0).toLocaleString()
+const fmtPct = (n) => `${Math.round((Number(n) || 0) * 100) / 100}%`
+/* Card par poora naam nahi samata — pehla lafz kaafi hai, tooltip me poora. */
+const firstWord = (name) => String(name || '—').split(' ')[0]
 
 /* ── Shared building blocks ─────────────────────────────────────── */
 function SectionHead({ icon, title, sub }) {
@@ -31,7 +45,12 @@ function MiniCard({ accent = '', icon, val, lbl, delta, tip }) {
   )
 }
 
+const EmptyNote = ({ text }) => (
+  <div style={{ padding: '18px 4px', fontSize: 13, color: 'var(--tm)', textAlign: 'center' }}>{text}</div>
+)
+
 function BarChart({ rows }) {
+  if (!rows.length) return <EmptyNote text="No data yet" />
   const max = Math.max(...rows.map((r) => r.pct), 100)
   return (
     <div>
@@ -83,6 +102,8 @@ function Legend({ items }) {
 }
 
 function LineChart({ id, values, labels, color = 'var(--brand)', height = 120 }) {
+  /* Aik hi point ho to line ban hi nahi sakti. */
+  if (values.length < 2) return <EmptyNote text="Not enough data to plot a trend yet" />
   const W = 320; const H = height; const pad = 10
   const max = Math.max(...values); const min = Math.min(...values, 0)
   const range = (max - min) || 1
@@ -113,17 +134,56 @@ const ChartCard = ({ icon, title, right, scroll, children }) => (
 /* ════════════════════════════════════════════════════════════════ */
 export default function Dashboard() {
   const { isViewOnly, selectedSchool } = useView()
-  if (isViewOnly && selectedSchool) return <SchoolDashboard school={schoolById(selectedSchool.id) || selectedSchool} />
-  return <HeadOfficeDashboard />
+  const [data, setData] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError('')
+    try {
+      setData(await fetchChainDashboard())
+    } catch (err) {
+      console.error('Chain dashboard load failed:', err)
+      setData(null)
+      setError(err?.message || 'Could not load dashboard')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  if (loading) {
+    return (
+      <div className="empty-state">
+        <div className="empty-icon"><i className="fa-solid fa-spinner fa-spin" /></div>
+        <div className="empty-title">Loading dashboard…</div>
+        <div className="empty-sub">Fetching network-wide usage, finance and attendance figures.</div>
+      </div>
+    )
+  }
+
+  if (error || !data) {
+    return (
+      <div className="empty-state">
+        <div className="empty-icon"><i className="fa-solid fa-triangle-exclamation" /></div>
+        <div className="empty-title">Dashboard unavailable</div>
+        <div className="empty-sub">{error || 'No dashboard data returned for this network.'}</div>
+        <button className="empty-badge" onClick={load}><i className="fa-solid fa-rotate-right" /> Try again</button>
+      </div>
+    )
+  }
+
+  if (isViewOnly && selectedSchool) return <SchoolDashboard school={selectedSchool} d={data} />
+  return <HeadOfficeDashboard d={data} />
 }
 
 /* ── Head Office (chain-wide) ───────────────────────────────────── */
-function HeadOfficeDashboard() {
+function HeadOfficeDashboard({ d }) {
   const navigate = useNavigate()
-  const a = chainAggregates()
-  const absentStudents = a.students - Math.round(a.students * a.attStudent / 100)
-  const absentStaff = a.staff - Math.round(a.staff * a.attStaff / 100)
-  const teaching = Math.round(a.staff * 0.68)
+  const { usage, chain, finance, hr, ranking, modules, studentTrend, growth } = d
+  const schoolCount = usage.totalSchools || chain.totalSchools
 
   return (
     <>
@@ -133,7 +193,7 @@ function HeadOfficeDashboard() {
           <div className="hero-text">
             <div className="hero-badge"><i className="fa-solid fa-building-shield" /> Head Office · Chain Admin</div>
             <div className="hero-title">Network Executive Overview</div>
-            <div className="hero-sub">Aggregated platform usage and operational performance across all {a.totalSchools} connected schools — usage analytics, finances, HR and attendance at a glance.</div>
+            <div className="hero-sub">Aggregated platform usage and operational performance across all {schoolCount} connected schools — usage analytics, finances, HR and attendance at a glance.</div>
             <div className="hero-actions">
               <button className="hero-btn-white" onClick={() => navigate('/school-progress')}><i className="fa-solid fa-chart-line" /> School Progress</button>
               <button className="hero-btn-outline" onClick={() => navigate('/school-payments')}><i className="fa-solid fa-credit-card" /> Payments</button>
@@ -141,10 +201,10 @@ function HeadOfficeDashboard() {
             </div>
           </div>
           <div className="hero-stats-row" style={{ alignSelf: 'flex-end', marginTop: 16 }}>
-            <div className="hero-stat"><div className="hero-stat-val">{a.totalSchools}</div><div className="hero-stat-lbl">Schools</div></div>
-            <div className="hero-stat"><div className="hero-stat-val">{fmtShort(a.students)}</div><div className="hero-stat-lbl">Students</div></div>
-            <div className="hero-stat"><div className="hero-stat-val">{a.staff}</div><div className="hero-stat-lbl">Staff</div></div>
-            <div className="hero-stat"><div className="hero-stat-val">{a.erpActive}</div><div className="hero-stat-lbl">ERP Active</div></div>
+            <div className="hero-stat"><div className="hero-stat-val">{schoolCount}</div><div className="hero-stat-lbl">Schools</div></div>
+            <div className="hero-stat"><div className="hero-stat-val">{fmtShort(chain.students)}</div><div className="hero-stat-lbl">Students</div></div>
+            <div className="hero-stat"><div className="hero-stat-val">{chain.staff}</div><div className="hero-stat-lbl">Staff</div></div>
+            <div className="hero-stat"><div className="hero-stat-val">{usage.erpActive}</div><div className="hero-stat-lbl">ERP Active</div></div>
           </div>
         </div>
       </div>
@@ -152,84 +212,94 @@ function HeadOfficeDashboard() {
       {/* ══ PLATFORM USAGE ANALYTICS ══ */}
       <SectionHead icon="fa-chart-pie" title="Platform Usage Analytics" sub="How connected schools are using the ERP this month" />
       <div className="mini-grid">
-        <MiniCard accent="m-info" icon="fa-school" val={a.totalSchools} lbl="Total Connected Schools" />
-        <MiniCard accent="m-green" icon="fa-circle-check" val={a.erpActive} lbl="ERP Active Schools" delta={{ dir: 'up', text: '+1' }} />
-        <MiniCard accent="m-red" icon="fa-circle-xmark" val={a.erpInactive} lbl="ERP Inactive Schools" />
-        <MiniCard accent="m-purple" icon="fa-right-to-bracket" val={a.loggedInToday} lbl="Schools Logged In Today" />
-        <MiniCard accent="" icon="fa-arrow-right-to-bracket" val={a.loginsMonth.toLocaleString()} lbl="Total Logins This Month" delta={{ dir: 'up', text: '8%' }} />
-        <MiniCard accent="m-teal" icon="fa-clock" val={`${a.workingHrs.toLocaleString()}h`} lbl="Working Time This Month" />
-        <MiniCard accent="m-green" icon="fa-trophy" val={(a.mostActive?.name || '—').split(' ')[0]} lbl={`Most Active · ${a.mostActive?.erpUsage ?? 0}%`} />
-        <MiniCard accent="m-amber" icon="fa-triangle-exclamation" val={(a.leastActive?.name || '—').split(' ')[0]} lbl={`Least Active · ${a.leastActive?.erpUsage ?? 0}%`} />
+        <MiniCard accent="m-info" icon="fa-school" val={usage.totalSchools} lbl="Total Connected Schools" />
+        <MiniCard accent="m-green" icon="fa-circle-check" val={usage.erpActive} lbl="ERP Active Schools" />
+        <MiniCard accent="m-red" icon="fa-circle-xmark" val={usage.erpInactive} lbl="ERP Inactive Schools" />
+        <MiniCard accent="" icon="fa-arrow-right-to-bracket" val={fmtNum(usage.loginsMonth)} lbl="Total Logins This Month" />
+        <MiniCard accent="m-green" icon="fa-trophy" val={firstWord(d.mostActive?.name)} lbl={`Most Active · ${fmtPct(d.mostActive?.usagePct)}`} tip={d.mostActive ? `Most active — ${d.mostActive.name} · ${fmtPct(d.mostActive.usagePct)} ERP usage` : 'No activity recorded yet'} />
+        <MiniCard accent="m-amber" icon="fa-triangle-exclamation" val={firstWord(d.leastActive?.name)} lbl={`Least Active · ${fmtPct(d.leastActive?.usagePct)}`} tip={d.leastActive ? `Least active — ${d.leastActive.name} · ${fmtPct(d.leastActive.usagePct)} ERP usage` : 'No activity recorded yet'} />
       </div>
 
       <div className="chart-grid c-21" style={{ marginTop: 16 }}>
-        <ChartCard icon="fa-chart-column" title="Module Usage Across Chain" right={<span className="badge b-blue">{SCHOOLS.length} schools</span>} scroll>
-          <BarChart rows={MODULE_USAGE.map((m) => ({ name: m.label, icon: m.icon, pct: m.usagePct, val: `${m.schoolsUsing}/${SCHOOLS.length} · ${m.usagePct}%`, sub: `${m.visits.toLocaleString()} visits · avg ${m.avgTime}`, color: m.usagePct >= 80 ? 'green' : m.usagePct >= 50 ? '' : 'amber' }))} />
+        <ChartCard icon="fa-chart-column" title="Module Usage Across Chain" right={<span className="badge b-blue">{schoolCount} schools</span>} scroll>
+          <BarChart rows={modules.map((m) => ({
+            name: m.label,
+            icon: m.icon,
+            pct: m.usagePct,
+            val: `${m.schoolsUsing}/${m.totalSchools} · ${m.usagePct}%`,
+            color: m.usagePct >= 80 ? 'green' : m.usagePct >= 50 ? '' : 'amber',
+          }))} />
         </ChartCard>
-        <ChartCard icon="fa-ranking-star" title="School Activity Ranking" right={<span className="badge b-blue">{SCHOOLS.length} schools</span>} scroll>
-          {[...SCHOOLS].sort((a, b) => b.erpUsage - a.erpUsage).map((s, i) => (
-            <div className="rank-row" key={s.id} title={`#${i + 1} ${s.name} · ${s.city} — ERP usage ${s.erpUsage}% · ${s.loginsMonth} logins this month`} tabIndex={0}>
+        <ChartCard icon="fa-ranking-star" title="School Activity Ranking" right={<span className="badge b-blue">{ranking.length} schools</span>} scroll>
+          {ranking.length === 0 ? <EmptyNote text="No school activity recorded yet" /> : ranking.map((s, i) => (
+            <div className="rank-row" key={`${s.name}-${i}`} title={`#${i + 1} ${s.name} — ERP usage ${fmtPct(s.usagePct)}`} tabIndex={0}>
               <div className={`rank-no${i === 0 ? ' top' : ''}`}>{i + 1}</div>
-              <div className="rank-main"><div className="rank-name">{s.name}</div><div className="rank-city">{s.city}</div></div>
-              <div className="rank-bar"><div className="bar-track"><div className="bar-fill green" style={{ width: `${s.erpUsage}%` }} /></div></div>
-              <span className="bar-val">{s.erpUsage}%</span>
+              <div className="rank-main"><div className="rank-name">{s.name}</div></div>
+              <div className="rank-bar"><div className="bar-track"><div className="bar-fill green" style={{ width: `${Math.min(s.usagePct, 100)}%` }} /></div></div>
+              <span className="bar-val">{fmtPct(s.usagePct)}</span>
             </div>
           ))}
         </ChartCard>
       </div>
 
       <div style={{ marginTop: 16 }}>
-        <ChartCard icon="fa-school-flag" title="Schools & Students Trend" right={<span className="badge b-blue">{SCHOOLS.length} schools</span>} scroll>
-          <BarChart rows={[...SCHOOLS].sort((x, y) => y.students - x.students).map((s) => ({ name: s.name, pct: s.students, val: s.students.toLocaleString(), color: '' }))} />
+        <ChartCard icon="fa-school-flag" title="Schools & Students Trend" right={<span className="badge b-blue">{studentTrend.length} schools</span>} scroll>
+          <BarChart rows={studentTrend.map((s) => ({ name: s.name, pct: s.students, val: fmtNum(s.students), color: '' }))} />
         </ChartCard>
       </div>
 
       {/* ══ CHAIN OVERVIEW ══ */}
       <SectionHead icon="fa-network-wired" title="Chain Overview" sub="Network-wide students, staff and ERP status" />
       <div className="mini-grid">
-        <MiniCard accent="m-info" icon="fa-school" val={a.totalSchools} lbl="Total Schools" />
-        <MiniCard accent="" icon="fa-user-graduate" val={a.students.toLocaleString()} lbl="Total Students" delta={{ dir: 'up', text: '6%' }} />
-        <MiniCard accent="m-teal" icon="fa-users-gear" val={a.staff} lbl="Total Staff" />
-        <MiniCard accent="m-green" icon="fa-user-check" val={a.activeStudents.toLocaleString()} lbl="Active Students" />
-        <MiniCard accent="m-slate" icon="fa-user-xmark" val={a.inactiveStudents.toLocaleString()} lbl="Inactive Students" />
-        <MiniCard accent="m-info" icon="fa-person" val={a.male.toLocaleString()} lbl="Male Students" />
-        <MiniCard accent="m-pink" icon="fa-person-dress" val={a.female.toLocaleString()} lbl="Female Students" />
-        <MiniCard accent="m-green" icon="fa-user-tie" val={a.activeStaff} lbl="Active Staff" />
-        <MiniCard accent="m-slate" icon="fa-user-slash" val={a.inactiveStaff} lbl="Inactive Staff" />
-        <MiniCard accent="m-green" icon="fa-plug-circle-check" val={a.erpActive} lbl="ERP Active Schools" />
-        <MiniCard accent="m-red" icon="fa-plug-circle-xmark" val={a.erpInactive} lbl="ERP Inactive Schools" />
+        <MiniCard accent="m-info" icon="fa-school" val={chain.totalSchools} lbl="Total Schools" />
+        <MiniCard accent="" icon="fa-user-graduate" val={fmtNum(chain.students)} lbl="Total Students" />
+        <MiniCard accent="m-teal" icon="fa-users-gear" val={chain.staff} lbl="Total Staff" />
+        <MiniCard accent="m-green" icon="fa-user-check" val={fmtNum(chain.activeStudents)} lbl="Active Students" />
+        <MiniCard accent="m-slate" icon="fa-user-xmark" val={fmtNum(chain.inactiveStudents)} lbl="Inactive Students" />
+        <MiniCard accent="m-info" icon="fa-person" val={fmtNum(chain.male)} lbl="Male Students" />
+        <MiniCard accent="m-pink" icon="fa-person-dress" val={fmtNum(chain.female)} lbl="Female Students" />
+        <MiniCard accent="m-green" icon="fa-user-tie" val={chain.activeStaff} lbl="Active Staff" />
+        <MiniCard accent="m-slate" icon="fa-user-slash" val={chain.inactiveStaff} lbl="Inactive Staff" />
+        <MiniCard accent="m-green" icon="fa-plug-circle-check" val={chain.erpActive} lbl="ERP Active Schools" />
+        <MiniCard accent="m-red" icon="fa-plug-circle-xmark" val={chain.erpInactive} lbl="ERP Inactive Schools" />
       </div>
 
       <div className="chart-grid" style={{ marginTop: 16 }}>
         <ChartCard icon="fa-venus-mars" title="Gender Distribution">
           <div className="donut-wrap">
-            <Donut big={fmtShort(a.students)} cap="Students" segments={[{ value: a.male, color: '#0284c7' }, { value: a.female, color: '#db2777' }]} />
-            <Legend items={[{ name: 'Male', val: a.male.toLocaleString(), color: '#0284c7' }, { name: 'Female', val: a.female.toLocaleString(), color: '#db2777' }]} />
+            <Donut big={fmtShort(chain.students)} cap="Students" segments={[{ value: chain.male, color: '#0284c7' }, { value: chain.female, color: '#db2777' }]} />
+            <Legend items={[{ name: 'Male', val: fmtNum(chain.male), color: '#0284c7' }, { name: 'Female', val: fmtNum(chain.female), color: '#db2777' }]} />
           </div>
         </ChartCard>
-        <ChartCard icon="fa-arrow-trend-up" title="Chain Growth (Students)">
-          <LineChart id="growth" values={CHAIN_GROWTH.map((m) => m.students)} labels={CHAIN_GROWTH.map((m) => m.m)} color="var(--success)" />
+        <ChartCard icon="fa-arrow-trend-up" title="Chain Growth (Monthly Logins)">
+          <LineChart id="growth" values={growth.map((m) => m.value)} labels={growth.map((m) => m.month)} color="var(--success)" />
         </ChartCard>
       </div>
 
       {/* ══ FINANCIAL OVERVIEW ══ */}
       <SectionHead icon="fa-sack-dollar" title="Financial Overview" sub="School payments & royalty collection this month" />
       <div className="mini-grid">
-        <MiniCard accent="m-info" icon="fa-file-invoice" val={a.totalSchools} lbl="Challans Generated This Month" />
-        <MiniCard accent="" icon="fa-money-check-dollar" val={`Rs ${fmtShort(a.payable)}`} lbl="Total Payable This Month" />
-        <MiniCard accent="m-green" icon="fa-hand-holding-dollar" val={`Rs ${fmtShort(a.received)}`} lbl="Total Received This Month" delta={{ dir: 'up', text: '12%' }} />
-        <MiniCard accent="m-red" icon="fa-clock-rotate-left" val={`Rs ${fmtShort(a.pending)}`} lbl="Total Pending This Month" />
-        <MiniCard accent="m-green" icon="fa-circle-check" val={a.paidSchools} lbl="Paid Schools" />
-        <MiniCard accent="m-amber" icon="fa-circle-exclamation" val={a.unpaidSchools} lbl="Unpaid / Partial Schools" />
-        <MiniCard accent="m-red" icon="fa-triangle-exclamation" val={`Rs ${fmtShort(a.pending)}`} lbl="Outstanding Amount" />
-        <MiniCard accent="m-teal" icon="fa-receipt" val="Rs 1.64 Cr" lbl="Last Payment · City Scholars" />
+        <MiniCard accent="m-info" icon="fa-file-invoice" val={finance.challans} lbl="Challans Generated This Month" />
+        <MiniCard accent="" icon="fa-money-check-dollar" val={`Rs ${fmtShort(finance.payable)}`} lbl="Total Payable This Month" tip={`Total payable this month — ${fmtMoney(finance.payable)}`} />
+        <MiniCard accent="m-green" icon="fa-hand-holding-dollar" val={`Rs ${fmtShort(finance.received)}`} lbl="Total Received This Month" tip={`Total received this month — ${fmtMoney(finance.received)}`} />
+        <MiniCard accent="m-red" icon="fa-clock-rotate-left" val={`Rs ${fmtShort(finance.pending)}`} lbl="Total Pending This Month" tip={`Pending this month — ${fmtMoney(finance.pending)}`} />
+        <MiniCard accent="m-green" icon="fa-circle-check" val={finance.paidSchools} lbl="Paid Schools" />
+        <MiniCard accent="m-amber" icon="fa-circle-exclamation" val={finance.unpaidSchools} lbl="Unpaid / Partial Schools" />
+        <MiniCard accent="m-red" icon="fa-triangle-exclamation" val={`Rs ${fmtShort(finance.outstanding)}`} lbl="Outstanding Amount" tip={`Outstanding — ${fmtMoney(finance.outstanding)}`} />
+        <MiniCard
+          accent="m-teal"
+          icon="fa-receipt"
+          val={finance.lastPayment ? `Rs ${fmtShort(finance.lastPayment.amount)}` : '—'}
+          lbl={finance.lastPayment ? `Last Payment · ${finance.lastPayment.name}` : 'Last Payment'}
+          tip={finance.lastPayment ? `Last payment — ${fmtMoney(finance.lastPayment.amount)} from ${finance.lastPayment.name}` : 'No payment received yet'}
+        />
       </div>
       <div style={{ marginTop: 16 }}>
-        <ChartCard icon="fa-chart-column" title="Payment Collection" right={<span className="badge b-blue">{fmtMoney(a.payable)}</span>} scroll>
+        <ChartCard icon="fa-chart-column" title="Payment Collection" right={<span className="badge b-blue">{fmtMoney(finance.payable)}</span>} scroll>
           <BarChart rows={[
-            { name: 'Payable', pct: 100, val: fmtMoney(a.payable), color: '' },
-            { name: 'Received', pct: a.payable ? Math.round(a.received / a.payable * 100) : 0, val: fmtMoney(a.received), color: 'green' },
-            { name: 'Pending', pct: a.payable ? Math.round(a.pending / a.payable * 100) : 0, val: fmtMoney(a.pending), color: 'red' },
+            { name: 'Payable', pct: 100, val: fmtMoney(finance.payable), color: '' },
+            { name: 'Received', pct: finance.payable ? Math.round(finance.received / finance.payable * 100) : 0, val: fmtMoney(finance.received), color: 'green' },
+            { name: 'Pending', pct: finance.payable ? Math.round(finance.pending / finance.payable * 100) : 0, val: fmtMoney(finance.pending), color: 'red' },
           ]} />
         </ChartCard>
       </div>
@@ -237,26 +307,26 @@ function HeadOfficeDashboard() {
       {/* ══ HR & ATTENDANCE ══ */}
       <SectionHead icon="fa-users-between-lines" title="HR & Attendance Overview" sub="Workforce and today's attendance across the chain" />
       <div className="mini-grid">
-        <MiniCard accent="m-teal" icon="fa-id-badge" val={a.staff} lbl="Total Employees" />
-        <MiniCard accent="m-info" icon="fa-person-chalkboard" val={teaching} lbl="Teaching Staff" />
-        <MiniCard accent="m-slate" icon="fa-user-gear" val={a.staff - teaching} lbl="Non-Teaching Staff" />
-        <MiniCard accent="m-green" icon="fa-user-check" val={a.activeStaff} lbl="Active Employees" />
-        <MiniCard accent="m-red" icon="fa-user-xmark" val={a.inactiveStaff} lbl="Inactive Employees" />
-        <MiniCard accent="m-purple" icon="fa-user-plus" val={a.newJoinings} lbl="New Joinings This Month" />
-        <MiniCard accent="m-green" icon="fa-percent" val={`${a.attStaff}%`} lbl="Staff Attendance Rate" />
-        <MiniCard accent="" icon="fa-user-clock" val={`${a.attStudent}%`} lbl="Today's Student Attendance" />
+        <MiniCard accent="m-teal" icon="fa-id-badge" val={hr.employees} lbl="Total Employees" />
+        <MiniCard accent="m-info" icon="fa-person-chalkboard" val={hr.teaching} lbl="Teaching Staff" />
+        <MiniCard accent="m-slate" icon="fa-user-gear" val={hr.nonTeaching} lbl="Non-Teaching Staff" />
+        <MiniCard accent="m-green" icon="fa-user-check" val={hr.activeStaff} lbl="Active Employees" />
+        <MiniCard accent="m-red" icon="fa-user-xmark" val={hr.inactiveStaff} lbl="Inactive Employees" />
+        <MiniCard accent="m-purple" icon="fa-user-plus" val={hr.newJoinings} lbl="New Joinings This Month" />
+        <MiniCard accent="m-green" icon="fa-percent" val={fmtPct(hr.attStaff)} lbl="Today's Staff Attendance" />
+        <MiniCard accent="" icon="fa-user-clock" val={fmtPct(hr.attStudent)} lbl="Today's Student Attendance" />
       </div>
       <div className="mini-grid" style={{ marginTop: 13 }}>
-        <MiniCard accent="m-green" icon="fa-arrow-up" val={(a.highestAtt?.name || '—').split(' ')[0]} lbl={`Highest Attendance · ${a.highestAtt?.attStudent ?? 0}%`} />
-        <MiniCard accent="m-red" icon="fa-arrow-down" val={(a.lowestAtt?.name || '—').split(' ')[0]} lbl={`Lowest Attendance · ${a.lowestAtt?.attStudent ?? 0}%`} />
-        <MiniCard accent="m-amber" icon="fa-user-large-slash" val={absentStudents.toLocaleString()} lbl="Absent Students Today" />
-        <MiniCard accent="m-amber" icon="fa-user-slash" val={absentStaff} lbl="Absent Staff Today" />
+        <MiniCard accent="m-green" icon="fa-arrow-up" val={firstWord(hr.highestAtt?.name)} lbl={`Highest Attendance · ${fmtPct(hr.highestAtt?.pct)}`} tip={hr.highestAtt ? `Highest attendance — ${hr.highestAtt.name} · ${fmtPct(hr.highestAtt.pct)}` : 'No attendance recorded yet'} />
+        <MiniCard accent="m-red" icon="fa-arrow-down" val={firstWord(hr.lowestAtt?.name)} lbl={`Lowest Attendance · ${fmtPct(hr.lowestAtt?.pct)}`} tip={hr.lowestAtt ? `Lowest attendance — ${hr.lowestAtt.name} · ${fmtPct(hr.lowestAtt.pct)}` : 'No attendance recorded yet'} />
+        <MiniCard accent="m-amber" icon="fa-user-large-slash" val={fmtNum(hr.absentStudents)} lbl="Absent Students Today" />
+        <MiniCard accent="m-amber" icon="fa-user-slash" val={hr.absentStaff} lbl="Absent Staff Today" />
       </div>
       <div style={{ marginTop: 16 }}>
         <ChartCard icon="fa-user-check" title="Attendance Overview (Today)">
           <BarChart rows={[
-            { name: 'Student Attendance', pct: a.attStudent, val: `${a.attStudent}%`, color: 'green' },
-            { name: 'Staff Attendance', pct: a.attStaff, val: `${a.attStaff}%`, color: '' },
+            { name: 'Student Attendance', pct: hr.attStudent, val: fmtPct(hr.attStudent), color: 'green' },
+            { name: 'Staff Attendance', pct: hr.attStaff, val: fmtPct(hr.attStaff), color: '' },
           ]} />
         </ChartCard>
       </div>
@@ -264,12 +334,19 @@ function HeadOfficeDashboard() {
   )
 }
 
-/* ── Selected School (view-only, school-level) ──────────────────── */
-function SchoolDashboard({ school: s }) {
-  const pending = s.payable - s.received
-  const inactiveStudents = s.students - s.activeStudents
-  const usedModules = Object.entries(s.modules).filter(([, v]) => v).length
-  const MOD_LABELS = { academics: 'Academics', attendance: 'Attendance', payments: 'Payments', accounts: 'Accounts', inventory: 'Inventory', trainings: 'Trainings', hr: 'HR', sops: 'SOPs' }
+/* ── Selected School (view-only, school-level) ──────────────────────
+   Chain dashboard API school-wise sirf do cheezein bhejti hai: students
+   (School&StudentTrend) aur ERP usage % (SchoolsActivityRanking). Naam se
+   milaate hain — school ke apne aankron ka koi alag endpoint abhi nahi hai,
+   is liye yahan sirf wahi dikhta hai jo waqai API se aata hai. */
+function SchoolDashboard({ school: s, d }) {
+  const same = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase()
+  const stats = useMemo(() => ({
+    students: d.studentTrend.find((r) => same(r.name, s.name))?.students ?? null,
+    usagePct: d.ranking.find((r) => same(r.name, s.name))?.usagePct ?? null,
+  }), [d, s.name])
+
+  const isErpActive = s.status === 'Connected' && s.networkPermission !== false
 
   return (
     <>
@@ -278,73 +355,50 @@ function SchoolDashboard({ school: s }) {
           <div className="hero-text">
             <div className="hero-badge"><i className="fa-solid fa-eye" /> View Only · School Dashboard</div>
             <div className="hero-title">{s.name}</div>
-            <div className="hero-sub"><i className="fa-solid fa-location-dot" /> {s.city} · ERP {s.status === 'active' ? 'Active' : 'Inactive'} · Last login {s.lastLogin}. You are viewing this school in read-only mode — switch back to Head Office to make changes.</div>
+            <div className="hero-sub">
+              {s.address ? <><i className="fa-solid fa-location-dot" /> {s.address} · </> : null}
+              ERP {isErpActive ? 'Active' : 'Inactive'}. You are viewing this school in read-only mode — switch back to Head Office to make changes.
+            </div>
           </div>
           <div className="hero-stats-row" style={{ alignSelf: 'flex-end', marginTop: 16 }}>
-            <div className="hero-stat"><div className="hero-stat-val">{fmtShort(s.students)}</div><div className="hero-stat-lbl">Students</div></div>
-            <div className="hero-stat"><div className="hero-stat-val">{s.staff}</div><div className="hero-stat-lbl">Staff</div></div>
-            <div className="hero-stat"><div className="hero-stat-val">{s.erpUsage}%</div><div className="hero-stat-lbl">ERP Usage</div></div>
-            <div className="hero-stat"><div className="hero-stat-val">{s.attStudent}%</div><div className="hero-stat-lbl">Attendance</div></div>
+            <div className="hero-stat"><div className="hero-stat-val">{stats.students == null ? '—' : fmtShort(stats.students)}</div><div className="hero-stat-lbl">Students</div></div>
+            <div className="hero-stat"><div className="hero-stat-val">{stats.usagePct == null ? '—' : fmtPct(stats.usagePct)}</div><div className="hero-stat-lbl">ERP Usage</div></div>
           </div>
         </div>
       </div>
 
-      <SectionHead icon="fa-chart-pie" title="School Overview" sub={`${s.name} · students, staff and ERP usage`} />
+      <SectionHead icon="fa-chart-pie" title="School Overview" sub={`${s.name} · figures reported by the chain dashboard`} />
       <div className="mini-grid">
-        <MiniCard accent="" icon="fa-user-graduate" val={s.students.toLocaleString()} lbl="Total Students" />
-        <MiniCard accent="m-green" icon="fa-user-check" val={s.activeStudents.toLocaleString()} lbl="Active Students" />
-        <MiniCard accent="m-info" icon="fa-person" val={s.male.toLocaleString()} lbl="Male Students" />
-        <MiniCard accent="m-pink" icon="fa-person-dress" val={s.female.toLocaleString()} lbl="Female Students" />
-        <MiniCard accent="m-teal" icon="fa-users-gear" val={s.staff} lbl="Total Staff" />
-        <MiniCard accent="m-green" icon="fa-user-tie" val={s.activeStaff} lbl="Active Staff" />
-        <MiniCard accent="m-purple" icon="fa-arrow-right-to-bracket" val={s.loginsMonth} lbl="Logins This Month" />
-        <MiniCard accent="m-info" icon="fa-clock" val={`${s.workingHrs}h`} lbl="Working Time" />
+        <MiniCard accent="" icon="fa-user-graduate" val={stats.students == null ? '—' : fmtNum(stats.students)} lbl="Total Students" />
+        <MiniCard accent="m-green" icon="fa-gauge-high" val={stats.usagePct == null ? '—' : fmtPct(stats.usagePct)} lbl="ERP Usage" />
+        <MiniCard accent={isErpActive ? 'm-green' : 'm-red'} icon={isErpActive ? 'fa-plug-circle-check' : 'fa-plug-circle-xmark'} val={isErpActive ? 'Active' : 'Inactive'} lbl="ERP Status" />
+        <MiniCard accent="m-info" icon="fa-hashtag" val={s.code || '—'} lbl="School Code" />
       </div>
 
-      <div className="chart-grid c-3" style={{ marginTop: 16 }}>
-        <ChartCard icon="fa-venus-mars" title="Gender Distribution">
-          <div className="donut-wrap">
-            <Donut big={fmtShort(s.students)} cap="Students" segments={[{ value: s.male, color: '#0284c7' }, { value: s.female, color: '#db2777' }]} />
-            <Legend items={[{ name: 'Male', val: s.male.toLocaleString(), color: '#0284c7' }, { name: 'Female', val: s.female.toLocaleString(), color: '#db2777' }]} />
-          </div>
-        </ChartCard>
-        <ChartCard icon="fa-user-check" title="Student Status">
-          <div className="donut-wrap">
-            <Donut big={`${Math.round(s.activeStudents / s.students * 100)}%`} cap="Active" segments={[{ value: s.activeStudents, color: 'var(--success)' }, { value: inactiveStudents, color: '#cbd5e1' }]} />
-            <Legend items={[{ name: 'Active', val: s.activeStudents.toLocaleString(), color: 'var(--success)' }, { name: 'Inactive', val: inactiveStudents.toLocaleString(), color: '#cbd5e1' }]} />
-          </div>
-        </ChartCard>
-        <ChartCard icon="fa-user-clock" title="Attendance & Onboarding">
-          <BarChart rows={[
-            { name: 'Student Attendance', pct: s.attStudent, val: `${s.attStudent}%`, color: 'green' },
-            { name: 'Staff Attendance', pct: s.attStaff, val: `${s.attStaff}%`, color: '' },
-            { name: 'Onboarding', pct: s.onboarding, val: `${s.onboarding}%`, color: s.onboarding >= 90 ? 'green' : 'amber' },
-            { name: 'ERP Usage', pct: s.erpUsage, val: `${s.erpUsage}%`, color: s.erpUsage >= 60 ? '' : 'red' },
-          ]} />
-        </ChartCard>
-      </div>
-
-      <SectionHead icon="fa-sack-dollar" title="Financial Summary" sub="Royalty / payment status for this school" />
-      <div className="mini-grid">
-        <MiniCard accent="" icon="fa-money-check-dollar" val={`Rs ${fmtShort(s.payable)}`} lbl="Payable This Month" />
-        <MiniCard accent="m-green" icon="fa-hand-holding-dollar" val={`Rs ${fmtShort(s.received)}`} lbl="Received" />
-        <MiniCard accent="m-red" icon="fa-clock-rotate-left" val={`Rs ${fmtShort(pending)}`} lbl="Pending" />
-        <MiniCard accent={s.paymentStatus === 'paid' ? 'm-green' : 'm-amber'} icon="fa-receipt" val={s.paymentStatus === 'paid' ? 'Paid' : s.paymentStatus === 'partial' ? 'Partial' : 'Unpaid'} lbl="Payment Status" />
-      </div>
       <div className="chart-grid c-21" style={{ marginTop: 16 }}>
-        <ChartCard icon="fa-chart-column" title="Payment Collection" scroll>
-          <BarChart rows={[
-            { name: 'Payable', pct: 100, val: fmtMoney(s.payable), color: '' },
-            { name: 'Received', pct: s.payable ? Math.round(s.received / s.payable * 100) : 0, val: fmtMoney(s.received), color: 'green' },
-            { name: 'Pending', pct: s.payable ? Math.round(pending / s.payable * 100) : 0, val: fmtMoney(pending), color: 'red' },
-          ]} />
+        <ChartCard icon="fa-ranking-star" title="Position in Chain (ERP Usage)" scroll>
+          {d.ranking.length === 0 ? <EmptyNote text="No school activity recorded yet" /> : d.ranking.map((r, i) => {
+            const isMe = same(r.name, s.name)
+            return (
+              <div className="rank-row" key={`${r.name}-${i}`} title={`#${i + 1} ${r.name} — ERP usage ${fmtPct(r.usagePct)}`} tabIndex={0}>
+                <div className={`rank-no${isMe ? ' top' : ''}`}>{i + 1}</div>
+                <div className="rank-main"><div className="rank-name">{r.name}{isMe ? ' · this school' : ''}</div></div>
+                <div className="rank-bar"><div className="bar-track"><div className={`bar-fill ${isMe ? 'green' : ''}`} style={{ width: `${Math.min(r.usagePct, 100)}%` }} /></div></div>
+                <span className="bar-val">{fmtPct(r.usagePct)}</span>
+              </div>
+            )
+          })}
         </ChartCard>
-        <ChartCard icon="fa-grip" title={`Modules Adopted · ${usedModules}/8`} scroll>
-          {Object.entries(MOD_LABELS).map(([k, lbl]) => (
-            <div className="rank-row" key={k} title={`${lbl} — ${s.modules[k] ? 'In use at this school' : 'Not adopted yet'}`} tabIndex={0}>
-              <div className={`feed-ic ${s.modules[k] ? 'success' : 'red'}`} style={{ width: 28, height: 28, fontSize: 11 }}><i className={`fa-solid ${s.modules[k] ? 'fa-check' : 'fa-xmark'}`} /></div>
-              <div className="rank-main"><div className="rank-name">{lbl}</div></div>
-              <span className={`badge ${s.modules[k] ? 'b-green' : 'b-gray'}`}>{s.modules[k] ? 'In Use' : 'Not Used'}</span>
+        <ChartCard icon="fa-address-card" title="School Details" scroll>
+          {[
+            { icon: 'fa-phone', lbl: 'Phone', val: s.phone || '—' },
+            { icon: 'fa-envelope', lbl: 'Email', val: s.email || '—' },
+            { icon: 'fa-location-dot', lbl: 'Address', val: s.address || '—' },
+            { icon: 'fa-link', lbl: 'Network Status', val: s.status || '—' },
+          ].map((row) => (
+            <div className="rank-row" key={row.lbl} title={`${row.lbl}: ${row.val}`} tabIndex={0}>
+              <div className="feed-ic" style={{ width: 28, height: 28, fontSize: 11 }}><i className={`fa-solid ${row.icon}`} /></div>
+              <div className="rank-main"><div className="rank-name">{row.val}</div><div className="rank-city">{row.lbl}</div></div>
             </div>
           ))}
         </ChartCard>

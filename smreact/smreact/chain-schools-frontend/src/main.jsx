@@ -3,9 +3,20 @@ import { createRoot } from 'react-dom/client'
 import App from './App.jsx'
 import './styles/responsive.css' // loaded last so the mobile layer refines every module
 
+/* ─── Purane build ka bacha hua session ───
+   Pehle token/user localStorage me rakhe jaate thay. Ab sessionStorage par
+   hain, is liye purani copy sirf ek bhoola hua credential hai — pehli hi
+   load par hata dete hain. */
+;(() => {
+  try {
+    localStorage.removeItem('csp_token')
+    localStorage.removeItem('csp_user')
+  } catch { /* storage band ho to koi baat nahi */ }
+})()
+
 /* ─── Session handoff from the ERP's Network Head Office login ───
-   The ERP (different origin in dev: :3000 vs :3002, so localStorage is NOT
-   shared) redirects here with the session in the URL hash. A hash is never
+   The ERP (different origin in dev: :3000 vs :3002, so browser storage is
+   NOT shared) redirects here with the session in the URL hash. A hash is never
    sent to the server; we consume it before React mounts and strip it from
    the URL immediately so the token doesn't linger in the address bar or in
    history. Runs before AuthProvider reads storage, so the session is ready. */
@@ -31,8 +42,10 @@ import './styles/responsive.css' // loaded last so the mobile layer refines ever
     }
     // Dono ek saath — sirf user (bina token) ek adhoora session hai.
     if (token && user) {
-      localStorage.setItem('csp_token', token)
-      localStorage.setItem('csp_user', JSON.stringify(user))
+      /* sessionStorage — dekhein auth/tokenStorage.js. Poori app wahin se
+         padhti hai, is liye handoff bhi wahin likhta hai. */
+      sessionStorage.setItem('csp_token', token)
+      sessionStorage.setItem('csp_user', JSON.stringify(user))
     }
   } catch {
     /* malformed handoff — chain app apna login screen dikha dega */
