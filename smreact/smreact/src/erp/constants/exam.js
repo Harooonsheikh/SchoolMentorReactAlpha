@@ -1,4 +1,5 @@
-export const EXAM_TERMS = ['2nd', '3rd Term', '5th Term', 'testing', 'combined'];
+/* EXAM_TERMS yahan se hata di gayi: terms API se aate hain
+   (POST /api/termscrud), kisi bani banai list se nahi. */
 
 export const EXAM_STATUS = {
   UPCOMING: 'upcoming',

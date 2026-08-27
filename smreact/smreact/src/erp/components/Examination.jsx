@@ -14,7 +14,14 @@ import { usePermissions } from '../context/PermissionsContext';
    Source: ~/Desktop/ERP-HTML/Final_Submissions_with_Examination_3 (43).html
    ═══════════════════════════════════════════════════════════════════ */
 
-const EXAM_TERMS = ['2nd', '3rd Term', '5th Term', 'testing', 'combined'];
+/* Term chips har tab par API se aate hain (POST /api/termscrud, getTerms()) —
+   `terms` khali array se shuru hoti hai aur error par bhi khali hi rehti hai,
+   yani screen par kabhi banaya hua term nahi dikhta.
+
+   Yahan pehle EXAM_TERMS ki ek list padi thi ('2nd', '3rd Term', '5th Term',
+   'testing', 'combined'). Wo kahin istemal nahi hoti thi — kisi ne API ka
+   jawab copy kar ke rakh diya tha — magar dekhne me lagta tha ke chips isi
+   se ban rahe hain. Hata di gayi hai. */
 
 const ALL_CLASSES = [
   'class 1A (B)', 'class 1A (C)', 'class 1A (D)', 'class 1A (Green f)',
@@ -282,6 +289,24 @@ const SAMPLE_RC_RD = {
   },
 };
 const SAMPLE_RC_EX = { name: 'Term Examination', classes: ['Class V (A)'] };
+
+/* SAMPLE_RC_* sirf TEMPLATE PREVIEW ke liye hain (Result Card Options ka
+   gallery, jahan koi asli bachcha chuna hi nahi gaya — card ko dikhane ke
+   liye kuch to chahiye).
+
+   Asli result card par yeh kabhi nahi girne chahiye. Pehle teeno template
+   `student || SAMPLE_RC_STUDENT` likhte thay, is liye jab API se data na aata
+   (ya khali aata) to asli card par bhi "Term Examination", "Class V (A)" aur
+   "Ali Khan" ke banaye hue marks chhap jate thay — dekhne wale ko lagta ke
+   yeh us bachche ka natija hai.
+
+   Ab `preview` prop faisla karta hai: gallery preview par sample, asli card
+   par yeh khali shapes (khali naam / khali marks), taake ghalat aankra kabhi
+   asli natije ki jagah na le. */
+const EMPTY_RC_STUDENT  = { id: 0, rollNo: '', name: '', father: '', obtained: {}, absentSubjects: [], attendance: '' };
+const EMPTY_RC_RD       = { totalMarks: {} };
+const EMPTY_RC_EX       = { name: '', classes: [] };
+const EMPTY_RC_COMBINED = { grandTotal: 0, grandObt: 0, ovPct: 0, mainExName: '', mainTotal: 0, mainObt: 0, subBreakdown: [] };
 /* ── Single Assessment Result ─────────────────────────────────────────
    Yahan pehle do seed pade thay:
      RES_SAMPLE_STUDENTS — paanch banawate bachche apne marks ke saath
@@ -8725,16 +8750,17 @@ function TemplateHero({ id, large = false }) {
   );
 }
 
-function ClassicResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 'single', student, rd: rdProp, ex: exProp, school, grades, remarks = [] }) {
+function ClassicResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 'single', preview = false, student, rd: rdProp, ex: exProp, school, grades, remarks = [] }) {
   const opt = {};
   rcoGeneral.forEach(o => { opt[o.label] = o.on; });
   rcoSig.forEach(o => { opt[o.label] = o.on; });
 
-  const st = student || SAMPLE_RC_STUDENT;
-  const rd = rdProp  || SAMPLE_RC_RD;
-  const ex = exProp  || SAMPLE_RC_EX;
+  /* Sample sirf preview par; asli card par khali shapes (see EMPTY_RC_*). */
+  const st = student || (preview ? SAMPLE_RC_STUDENT : EMPTY_RC_STUDENT);
+  const rd = rdProp  || (preview ? SAMPLE_RC_RD : EMPTY_RC_RD);
+  const ex = exProp  || (preview ? SAMPLE_RC_EX : EMPTY_RC_EX);
   const isCombined = mode === 'combined';
-  const cb = isCombined ? (st._combined || SAMPLE_RC_COMBINED) : null;
+  const cb = isCombined ? (st._combined || (preview ? SAMPLE_RC_COMBINED : EMPTY_RC_COMBINED)) : null;
 
   // Color palette (Color version)
   const accent     = '#1E40AF';
@@ -9058,16 +9084,17 @@ const mc  = (!isAbs ? ((st.manualRemarks && st.manualRemarks[s]) || ((grades && 
   );
 }
 
-function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 'single', student, rd: rdProp, ex: exProp, school, grades, remarks = [] }) {
+function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 'single', preview = false, student, rd: rdProp, ex: exProp, school, grades, remarks = [] }) {
   const opt = {};
   rcoGeneral.forEach(o => { opt[o.label] = o.on; });
   rcoSig.forEach(o => { opt[o.label] = o.on; });
 
-  const st = student || SAMPLE_RC_STUDENT;
-  const rd = rdProp  || SAMPLE_RC_RD;
-  const ex = exProp  || SAMPLE_RC_EX;
+  /* Sample sirf preview par; asli card par khali shapes (see EMPTY_RC_*). */
+  const st = student || (preview ? SAMPLE_RC_STUDENT : EMPTY_RC_STUDENT);
+  const rd = rdProp  || (preview ? SAMPLE_RC_RD : EMPTY_RC_RD);
+  const ex = exProp  || (preview ? SAMPLE_RC_EX : EMPTY_RC_EX);
   const isCombined = mode === 'combined';
-  const cb = isCombined ? (st._combined || SAMPLE_RC_COMBINED) : null;
+  const cb = isCombined ? (st._combined || (preview ? SAMPLE_RC_COMBINED : EMPTY_RC_COMBINED)) : null;
 
   const accent     = '#1E40AF';
   const accentBg   = '#EFF6FF';
@@ -9300,16 +9327,17 @@ function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
   );
 }
 
-function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 'single', student, rd: rdProp, ex: exProp, school, grades, remarks = [] }) {
+function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 'single', preview = false, student, rd: rdProp, ex: exProp, school, grades, remarks = [] }) {
   const opt = {};
   rcoGeneral.forEach(o => { opt[o.label] = o.on; });
   rcoSig.forEach(o => { opt[o.label] = o.on; });
 
-  const st = student || SAMPLE_RC_STUDENT;
-  const rd = rdProp  || SAMPLE_RC_RD;
-  const ex = exProp  || SAMPLE_RC_EX;
+  /* Sample sirf preview par; asli card par khali shapes (see EMPTY_RC_*). */
+  const st = student || (preview ? SAMPLE_RC_STUDENT : EMPTY_RC_STUDENT);
+  const rd = rdProp  || (preview ? SAMPLE_RC_RD : EMPTY_RC_RD);
+  const ex = exProp  || (preview ? SAMPLE_RC_EX : EMPTY_RC_EX);
   const isCombined = mode === 'combined';
-  const cb = isCombined ? (st._combined || SAMPLE_RC_COMBINED) : null;
+  const cb = isCombined ? (st._combined || (preview ? SAMPLE_RC_COMBINED : EMPTY_RC_COMBINED)) : null;
 
   const C = {
     p1bg:  'linear-gradient(150deg,#1A0533 0%,#2D1B69 40%,#1A3A5C 100%)',
@@ -12748,6 +12776,7 @@ function TemplatePreviewModal({ templateId, rcoGeneral, rcoSig, rsSigs, rsAbsent
                 rsSigs={rsSigs}
                 rsAbsentMode={rsAbsentMode}
                 mode={mode}
+                preview
               />
             )}
             {t.id === 'insight' && (
@@ -12757,6 +12786,7 @@ function TemplatePreviewModal({ templateId, rcoGeneral, rcoSig, rsSigs, rsAbsent
                 rsSigs={rsSigs}
                 rsAbsentMode={rsAbsentMode}
                 mode={mode}
+                preview
               />
             )}
             {t.id === 'portfolio' && (
@@ -12766,6 +12796,7 @@ function TemplatePreviewModal({ templateId, rcoGeneral, rcoSig, rsSigs, rsAbsent
                 rsSigs={rsSigs}
                 rsAbsentMode={rsAbsentMode}
                 mode={mode}
+                preview
               />
             )}
           </div>
