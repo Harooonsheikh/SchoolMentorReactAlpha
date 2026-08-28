@@ -450,6 +450,58 @@ function TransportFeeSetup({ toast }) {
   const [editing, setEditing]       = useState(null); // { classKey, student }
   const [reportHtml, setReportHtml] = useState(null);
 
+  /* ── Smart search (mirrors Fee Challans) ── */
+  const [searchQ, setSearchQ]       = useState('');
+  const [searchOpen, setSearchOpen] = useState(false);
+  const searchAnchorRef             = useRef(null);
+  useEffect(() => {
+    if (!searchOpen) return undefined;
+    const onDown = (e) => {
+      if (searchAnchorRef.current && !searchAnchorRef.current.contains(e.target)) setSearchOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('touchstart', onDown);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('touchstart', onDown);
+    };
+  }, [searchOpen]);
+  useEffect(() => {
+    if (!searchOpen) return undefined;
+    const onKey = (e) => { if (e.key === 'Escape') setSearchOpen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [searchOpen]);
+
+  const matches = useCallback(() => {
+    const q = searchQ.trim().toLowerCase();
+    if (!q) return [];
+    const out = [];
+    classes.forEach(c => {
+      (transportMap[c.key] || []).forEach(s => {
+        const hay = `${s.name} ${s.father || ''} ${s.reg}`.toLowerCase();
+        if (hay.includes(q)) out.push({ c, s });
+      });
+    });
+    return out.slice(0, 8);
+  }, [searchQ, classes, transportMap])();
+
+  const clearSearch = () => { setSearchQ(''); setSearchOpen(false); };
+
+  const focusOnStudent = (c, s) => {
+    setOpenKey(c.key);
+    clearSearch();
+    toast('Jumped to student', 'info');
+    setTimeout(() => {
+      const el = document.getElementById(`fee-trans-st-${c.key}-${s.reg}`);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.classList.add('fee-st-flash');
+        setTimeout(() => el.classList.remove('fee-st-flash'), 1700);
+      }
+    }, 380);
+  };
+
   const openEdit  = useCallback((classKey, student) => setEditing({ classKey, student }), []);
   const closeEdit = useCallback(() => setEditing(null), []);
 
@@ -500,6 +552,72 @@ function TransportFeeSetup({ toast }) {
           Transport fee can be different for each student. Open a class to set or update
           individual transport charges.
         </span>
+      </div>
+
+      {/* Smart search */}
+      <div className="fee-section fee-section--overflow">
+        <div className="fee-section-body">
+          <div className="fee-searchrow" style={{ marginTop: 0 }}>
+            <div className="fee-field" style={{ width: '100%' }}>
+              <span className="fee-label">Search Student</span>
+              <div className="fee-search-anchor" ref={searchAnchorRef}>
+                <div className="fee-search-box">
+                  <i className="fa-solid fa-magnifying-glass"></i>
+                  <input
+                    value={searchQ}
+                    autoComplete="off"
+                    onChange={e => { setSearchQ(e.target.value); setSearchOpen(true); }}
+                    onFocus={() => setSearchOpen(true)}
+                    placeholder="Search by Name, Father Name or Registration Number"
+                  />
+                  {searchQ && (
+                    <Tooltip text="Clear search">
+                      <button type="button" className="fee-search-clear" onClick={clearSearch} aria-label="Clear search">
+                        <i className="fa-solid fa-xmark"></i>
+                      </button>
+                    </Tooltip>
+                  )}
+                </div>
+                <div className={`fee-search-results${searchOpen && searchQ ? ' open' : ''}`}>
+                  {matches.length === 0 ? (
+                    <div className="fee-sr-empty">No students found for "<b>{searchQ}</b>"</div>
+                  ) : matches.map(({ c, s }) => {
+                    const initial = (s.name || '?').trim()[0] || '?';
+                    return (
+                      <button
+                        type="button"
+                        key={`${c.key}-${s.reg}`}
+                        className="fee-sr-item"
+                        onClick={() => focusOnStudent(c, s)}
+                      >
+                        <div className="fee-sr-av">{initial.toUpperCase()}</div>
+                        <div className="fee-sr-main">
+                          <div className="fee-sr-name">
+                            {s.name}
+                            {+s.transport > 0
+                              ? <span className="fee-chip fee-chip-active"><i className="fa-solid fa-bus"></i> Using Transport</span>
+                              : <span className="fee-chip fee-chip-due"><i className="fa-solid fa-circle-minus"></i> Not Set</span>}
+                          </div>
+                          <div className="fee-sr-meta">
+                            <span><b>Father:</b> {s.father || '—'}</span>
+                            <span><b>Class:</b> {c.cls}</span>
+                            <span><b>Section:</b> {c.sec}</span>
+                            <span><b>Reg:</b> {s.reg}</span>
+                          </div>
+                        </div>
+                        <div className="fee-sr-go"><i className="fa-solid fa-arrow-right"></i></div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              <div className="fee-hint">
+                <i className="fa-solid fa-circle-info"></i>
+                <span>Search any student by name, father name, or registration number, then click to jump to their class.</span>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div className="fee-section">
@@ -573,7 +691,7 @@ function TransportFeeSetup({ toast }) {
                         {students.length === 0 ? (
                           <tr><td colSpan="6" className="fee-stbl-empty">No students enrolled in this section.</td></tr>
                         ) : students.map((s, j) => (
-                          <tr key={s.reg || s.studentID || `${s.name}-${j}`}>
+                          <tr key={s.reg || s.studentID || `${s.name}-${j}`} id={`fee-trans-st-${c.key}-${s.reg}`}>
                             <td className="fee-num">{j + 1}</td>
                             <td>{s.reg}</td>
                             <td><b>{s.name}</b></td>
