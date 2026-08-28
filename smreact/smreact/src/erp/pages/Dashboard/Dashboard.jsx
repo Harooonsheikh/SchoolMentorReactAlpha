@@ -147,7 +147,18 @@ export default function Dashboard({
             </div>
           </div>
         </div>
-        <div className="dash-head-r">
+<div className="dash-head-r">
+
+  <button
+    type="button"
+    className="dash-back-chain"
+    onClick={() => navigate('/')}
+    aria-label="Back to Chain"
+  >
+    <i className="fa-solid fa-arrow-left" aria-hidden="true"></i>
+    <span>Back to Chain</span>
+  </button>
+
           <Tooltip text={`Active academic session — ${session.label}`}>
             <div className="dash-session">
               <i className="fa-solid fa-calendar-day" aria-hidden="true"></i>
@@ -227,7 +238,31 @@ export const DASH_CSS = `
 .dash-head-t { font: 800 22px/1.05 var(--dash-font); color: var(--text-primary); letter-spacing: -0.4px; }
 .dash-head-s { font: 500 12.5px/1.3 var(--dash-font); color: var(--text-muted, #64748B); margin-top: 4px; }
 .dash-head-r { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.dash-back-chain {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid rgba(30, 64, 175, .22);
+  border-radius: var(--dash-radius-sm);
+  background: var(--bg-card, #fff);
+  color: #1E40AF;
+  font: 700 11.5px/1 var(--dash-font);
+  cursor: pointer;
+  transition: all .18s ease;
+}
 
+.dash-back-chain:hover {
+  background: rgba(30, 64, 175, .08);
+  border-color: rgba(30, 64, 175, .35);
+  transform: translateY(-1px);
+}
+
+.dash-back-chain i {
+  font-size: 10px;
+}
 .dash-session {
   display: inline-flex; align-items: center; gap: 7px;
   height: 36px; padding: 0 10px 0 12px;
