@@ -438,7 +438,43 @@ function StudentFeeSetup({ toast }) {
    student roster with per-student transport fee editor. Route and
    amount can be edited per student via a small modal.
    ═══════════════════════════════════════════════════════════════════ */
+/* Transport Fee Setup = do sub-tabs:
+     • Transport Fee Assignment — har student ka route/vehicle/fee.
+     • Vehicles — transport fleet ka register (add/edit/delete). */
 function TransportFeeSetup({ toast }) {
+  const [transSeg, setTransSeg] = useState('assignment');
+  return (
+    <>
+      <div className="fee-seg">
+        <Tooltip text="Assign route, vehicle & transport fee to individual students">
+          <button
+            className={`fee-seg-btn${transSeg === 'assignment' ? ' active' : ''}`}
+            onClick={() => setTransSeg('assignment')}
+          >
+            <i className="fa-solid fa-user-graduate"></i> Transport Fee Assignment
+          </button>
+        </Tooltip>
+        <Tooltip text="Add & manage the transport vehicle fleet">
+          <button
+            className={`fee-seg-btn${transSeg === 'vehicles' ? ' active' : ''}`}
+            onClick={() => setTransSeg('vehicles')}
+          >
+            <i className="fa-solid fa-bus-simple"></i> Vehicles
+          </button>
+        </Tooltip>
+      </div>
+
+      {transSeg === 'assignment'
+        ? <TransportFeeAssignment toast={toast} />
+        : <VehicleManagement toast={toast} />}
+    </>
+  );
+}
+
+/* Transport Fee Assignment — class+section table, per-row expandable
+   student roster with per-student route / vehicle / transport-fee editor.
+   (Search Student bar + smart jump colleague ne add kiya — as-is rakha.) */
+function TransportFeeAssignment({ toast }) {
   const { can } = usePermissions();
   const canTfEdit     = can('Fee', 'Transport Fee Setup', 'Edit');
   const canTfDownload = can('Fee', 'Transport Fee Setup', 'Download');
@@ -505,7 +541,7 @@ function TransportFeeSetup({ toast }) {
   const openEdit  = useCallback((classKey, student) => setEditing({ classKey, student }), []);
   const closeEdit = useCallback(() => setEditing(null), []);
 
-  const saveStudent = useCallback(async ({ amount }) => {
+  const saveStudent = useCallback(async ({ route, amount, vehicleId }) => {
     if (!editing) return;
     const { classKey, student } = editing;
     const classMeta = classes.find(c => c.key === classKey) || {};
@@ -516,6 +552,8 @@ function TransportFeeSetup({ toast }) {
         gradeID: student.gradeID || classMeta._gradeId,
         sectionID: student.sectionID || classMeta._sectionId,
         amount,
+        route,
+        vehicleId,
         createdDate: student.transportSetup?.createdDate,
         createdBy: student.transportSetup?.createdBy,
         isActive: true,
@@ -526,6 +564,8 @@ function TransportFeeSetup({ toast }) {
               ...s,
               transportSetupId: saved.id || s.transportSetupId,
               transport: Math.max(0, Number(saved.amount ?? amount) || 0),
+              route: saved.route ?? (route || '').trim(),
+              vehicleId: saved.vehicleId ?? (vehicleId || ''),
               transportSetup: saved,
             }
           : s
@@ -683,19 +723,21 @@ function TransportFeeSetup({ toast }) {
                           <th>Reg No</th>
                           <th>Name</th>
                           <th>Father Name</th>
+                          <th>Route / Area</th>
                           <th className="fee-right">Transport Fee</th>
                           <th className="fee-center">Action</th>
                         </tr>
                       </thead>
                       <tbody>
                         {students.length === 0 ? (
-                          <tr><td colSpan="6" className="fee-stbl-empty">No students enrolled in this section.</td></tr>
+                          <tr><td colSpan="7" className="fee-stbl-empty">No students enrolled in this section.</td></tr>
                         ) : students.map((s, j) => (
                           <tr key={s.reg || s.studentID || `${s.name}-${j}`} id={`fee-trans-st-${c.key}-${s.reg}`}>
                             <td className="fee-num">{j + 1}</td>
                             <td>{s.reg}</td>
                             <td><b>{s.name}</b></td>
                             <td>{s.father}</td>
+                            <td>{s.route ? s.route : <span className="fee-muted-dash">—</span>}</td>
                             <td className="fee-right">
                               {+s.transport > 0
                                 ? <b>{money(s.transport)}</b>
@@ -713,7 +755,7 @@ function TransportFeeSetup({ toast }) {
                         ))}
                         {students.length > 0 && (
                           <tr className="fee-stbl-foot">
-                            <td colSpan="4"><b>Monthly transport collection</b></td>
+                            <td colSpan="5"><b>Monthly transport collection</b></td>
                             <td className="fee-right">
                               <b>{money(students.reduce((s, x) => s + (+x.transport || 0), 0))}</b>
                             </td>
@@ -753,11 +795,18 @@ function TransportFeeSetup({ toast }) {
 
 /* ─── Update Transport Fee modal ─── */
 function TransportEditModal({ open, classMeta, student, onClose, onSave, toast }) {
-  const [amount, setAmount] = useState('0');
+  /* Modal khulte hi is branch ki poori vehicle list load — taake abhi abhi
+     add hui gaari bhi dropdown me aa jaye. */
+  const { data: vehicles = [] } = useAsync(feeService.getVehicles, [open]);
+  const [route, setRoute]         = useState('');
+  const [amount, setAmount]       = useState('0');
+  const [vehicleId, setVehicleId] = useState('');
 
   useEffect(() => {
     if (open && student) {
+      setRoute(student.route || '');
       setAmount(String(student.transport ?? 0));
+      setVehicleId(student.vehicleId || '');
     }
   }, [open, student]);
 
@@ -780,7 +829,11 @@ function TransportEditModal({ open, classMeta, student, onClose, onSave, toast }
       toast('Transport fee must be a non-negative number', 'error');
       return;
     }
-    onSave({ amount: num });
+    if (num > 0 && !route.trim()) {
+      toast('Enter a route / area when transport fee is set', 'error');
+      return;
+    }
+    onSave({ route, amount: num, vehicleId });
   };
 
   return createPortal(
@@ -808,9 +861,37 @@ function TransportEditModal({ open, classMeta, student, onClose, onSave, toast }
             <i className="fa-solid fa-circle-info"></i>
             <span>
               Setting an amount of <strong>0</strong> means this student doesn't use transport.
+              When an amount is set, enter the route or area name.
             </span>
           </div>
 
+          <div className="fee-field-stack">
+            <label className="fee-label">Transport Area / Route</label>
+            <input
+              className="fee-input"
+              value={route}
+              placeholder="e.g. Route 4 — Satellite Town"
+              onChange={e => setRoute(e.target.value)}
+            />
+          </div>
+          <div className="fee-field-stack">
+            <label className="fee-label">Vehicle</label>
+            <div className="fee-select-wrap">
+              <select className="fee-select" value={vehicleId} onChange={e => setVehicleId(e.target.value)}>
+                {vehicles.length === 0 ? (
+                  <option value="">No vehicles available. Please add a vehicle first.</option>
+                ) : (
+                  <>
+                    <option value="">— No vehicle assigned —</option>
+                    {vehicles.map(v => (
+                      <option key={v.id} value={v.id}>{v.name} — {v.regNo}</option>
+                    ))}
+                  </>
+                )}
+              </select>
+              <i className="fa-solid fa-chevron-down"></i>
+            </div>
+          </div>
           <div className="fee-field-stack">
             <label className="fee-label">Transport Fee Amount (Rs.)</label>
             <input
@@ -829,6 +910,229 @@ function TransportEditModal({ open, classMeta, student, onClose, onSave, toast }
             <button className="fee-btn fee-btn-ghost" onClick={onClose}>Cancel</button>
           </Tooltip>
           <Tooltip text={`Save transport fee for ${student.name}`}>
+            <button className="fee-btn fee-btn-primary" onClick={validateAndSave}>
+              <i className="fa-solid fa-floppy-disk"></i> Save
+            </button>
+          </Tooltip>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+/* ─── Vehicle Management (Transport Fee Setup → Vehicles sub-tab) ───
+   Transport fleet ka register: add / edit / delete vehicles. Vehicle
+   kisi student ko "Transport Fee Assignment" ke edit modal se assign
+   hoti hai. Backend: feeService.getVehicles/saveVehicle/deleteVehicle
+   → POST /api/TransportFeeSetup/manage_vehicle (action get/insert/update/delete). */
+function VehicleManagement({ toast }) {
+  const { data: vehicles = [], loading, error, refetch } = useAsync(feeService.getVehicles, []);
+  const [editing, setEditing]   = useState(null); // {} = new, {...vehicle} = edit
+  const [confirm, setConfirm]   = useState(null);
+
+  const openAdd   = useCallback(() => setEditing({}), []);
+  const openEdit  = useCallback((v) => setEditing(v), []);
+  const closeEdit = useCallback(() => setEditing(null), []);
+
+  const saveVehicle = useCallback(async (payload) => {
+    const isNew = !editing?.id;
+    try {
+      await feeService.saveVehicle({ id: editing?.id, ...payload });
+      await refetch();          // server se real id ke saath dobara load
+      closeEdit();
+      toast(isNew ? 'Vehicle added' : 'Vehicle updated', 'success');
+    } catch (e) {
+      toast(e.message || 'Could not save vehicle', 'error');
+    }
+  }, [editing, refetch, closeEdit, toast]);
+
+  const requestDelete = (v) => {
+    setConfirm({
+      title:   'Delete this vehicle?',
+      message: <span><strong>{v.name}</strong> ({v.regNo}) will be removed from the fleet.</span>,
+      hint:    "Students already assigned to this vehicle keep their route & transport fee — they'll just need a new vehicle picked next time their record is edited.",
+      onConfirm: async () => {
+        try {
+          await feeService.deleteVehicle(v.id);
+          await refetch();
+          toast('Vehicle removed', 'success');
+        } catch (e) {
+          toast(e.message || 'Could not delete vehicle', 'error');
+        }
+      },
+    });
+  };
+
+  return (
+    <>
+      <div className="fee-info">
+        <i className="fa-solid fa-circle-info"></i>
+        <span>
+          Add the vehicles used for student transport here, then assign one to each student
+          from <strong>Transport Fee Assignment</strong>.
+        </span>
+      </div>
+
+      <RepLoadState loading={loading} error={error && (error.message || 'Could not load vehicles')} />
+
+      <div className="fee-section">
+        <div className="fee-section-header">
+          <div className="fee-section-title">
+            <div className="fee-section-icon"><i className="fa-solid fa-bus-simple"></i></div>
+            <div>
+              <div className="fee-section-name">Vehicle Fleet</div>
+              <div className="fee-section-sub">{vehicles.length} vehicle{vehicles.length === 1 ? '' : 's'} added</div>
+            </div>
+          </div>
+          <Tooltip text="Add a new vehicle to the fleet">
+            <button className="fee-btn fee-btn-primary fee-btn-sm" onClick={openAdd}>
+              <i className="fa-solid fa-plus"></i> Add New Vehicle
+            </button>
+          </Tooltip>
+        </div>
+
+        <div className="fee-section-body">
+          <div className="fee-stbl-wrap">
+            <table className="fee-stbl">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Vehicle Name / Type</th>
+                  <th>Registration No.</th>
+                  <th>Assigned Route</th>
+                  <th className="fee-center">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {vehicles.length === 0 ? (
+                  <tr><td colSpan="5" className="fee-stbl-empty">No vehicles added yet. Click <strong>Add New Vehicle</strong> to get started.</td></tr>
+                ) : vehicles.map((v, i) => (
+                  <tr key={v.id}>
+                    <td className="fee-num">{i + 1}</td>
+                    <td><b>{v.name}</b></td>
+                    <td>{v.regNo}</td>
+                    <td>{v.route ? v.route : <span className="fee-muted-dash">—</span>}</td>
+                    <td className="fee-center fee-st-actions">
+                      <Tooltip text={`Edit ${v.name}`}>
+                        <button className="fee-iconbtn" onClick={() => openEdit(v)}>
+                          <i className="fa-solid fa-pen"></i>
+                        </button>
+                      </Tooltip>
+                      <Tooltip text={`Delete ${v.name}`}>
+                        <button className="fee-iconbtn danger" onClick={() => requestDelete(v)}>
+                          <i className="fa-solid fa-trash-can"></i>
+                        </button>
+                      </Tooltip>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <VehicleEditModal
+        open={!!editing}
+        vehicle={editing}
+        onClose={closeEdit}
+        onSave={saveVehicle}
+        toast={toast}
+      />
+
+      <FeeConfirmDialog cfg={confirm} onClose={() => setConfirm(null)} />
+    </>
+  );
+}
+
+/* ─── Add / Edit Vehicle modal ─── */
+function VehicleEditModal({ open, vehicle, onClose, onSave, toast }) {
+  const [name, setName]   = useState('');
+  const [regNo, setRegNo] = useState('');
+  const [route, setRoute] = useState('');
+
+  useEffect(() => {
+    if (open) {
+      setName(vehicle?.name || '');
+      setRegNo(vehicle?.regNo || '');
+      setRoute(vehicle?.route || '');
+    }
+  }, [open, vehicle]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onKey = e => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    document.body.style.overflow = 'hidden';
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.body.style.overflow = '';
+    };
+  }, [open, onClose]);
+
+  if (!open) return null;
+  const isNew = !vehicle?.id;
+
+  const validateAndSave = () => {
+    if (!name.trim()) { toast('Enter a vehicle name or type', 'error'); return; }
+    if (!regNo.trim()) { toast('Enter the vehicle registration number', 'error'); return; }
+    onSave({ name: name.trim(), regNo: regNo.trim(), route: route.trim() });
+  };
+
+  return createPortal(
+    <div className="fee-overlay open" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="fee-modal sm">
+        <div className="fee-modal-head">
+          <div className="fee-modal-head-title">
+            <div className="fee-modal-head-icon"><i className="fa-solid fa-bus-simple"></i></div>
+            <div>
+              <div className="fee-modal-title">{isNew ? 'Add New Vehicle' : 'Update Vehicle'}</div>
+              <div className="fee-modal-sub">Transport fleet record</div>
+            </div>
+          </div>
+          <Tooltip text="Close">
+            <button className="fee-modal-close" onClick={onClose} aria-label="Close">
+              <i className="fa-solid fa-xmark"></i>
+            </button>
+          </Tooltip>
+        </div>
+
+        <div className="fee-modal-body">
+          <div className="fee-field-stack">
+            <label className="fee-label">Vehicle Name / Type</label>
+            <input
+              className="fee-input"
+              value={name}
+              placeholder="e.g. Bus 1 — Hino"
+              onChange={e => setName(e.target.value)}
+            />
+          </div>
+          <div className="fee-field-stack">
+            <label className="fee-label">Registration Number</label>
+            <input
+              className="fee-input"
+              value={regNo}
+              placeholder="e.g. LEA-4021"
+              onChange={e => setRegNo(e.target.value)}
+            />
+          </div>
+          <div className="fee-field-stack">
+            <label className="fee-label">Assigned Route</label>
+            <input
+              className="fee-input"
+              value={route}
+              placeholder="e.g. Route 1 — Main Road"
+              onChange={e => setRoute(e.target.value)}
+            />
+          </div>
+        </div>
+
+        <div className="fee-modal-foot">
+          <Tooltip text="Discard changes and close">
+            <button className="fee-btn fee-btn-ghost" onClick={onClose}>Cancel</button>
+          </Tooltip>
+          <Tooltip text={isNew ? 'Add this vehicle to the fleet' : 'Save changes to this vehicle'}>
             <button className="fee-btn fee-btn-primary" onClick={validateAndSave}>
               <i className="fa-solid fa-floppy-disk"></i> Save
             </button>
@@ -8556,6 +8860,7 @@ function buildHistMonthSlipHTML({ c, s, mo, year, size = 'a4', school = null }) 
 const FEE_REPORT_CATS = [
   { id: 'defaulter',  ic: 'fa-user-clock',          name: 'Fee Defaulter List',       desc: 'All & monthly defaulters, class-wise' },
   { id: 'headwise',   ic: 'fa-layer-group',         name: 'Head-Wise Fee Collection', desc: 'Student-wise & class-wise by fee head' },
+  { id: 'vehicle',    ic: 'fa-bus',                 name: 'Vehicle-Wise Transport',   desc: 'Students, fee & outstanding per vehicle' },
   /* Hidden per request — restore any entry to bring the tab back:
   { id: 'collection', ic: 'fa-hand-holding-dollar', name: 'General Fee Collections',  desc: 'Daily, monthly & paid-student lists' },
   { id: 'aging',      ic: 'fa-hourglass-half',      name: 'Aging / Outstanding',      desc: '30 / 60 / 90+ day overdue analysis' },
@@ -8708,6 +9013,7 @@ function FeeReportsTab({ toast }) {
         {current === 'defaulter' && <ReportPanelDefaulter toast={toast} />}
         {current === 'collection' && <ReportPanelCollection toast={toast} />}
         {current === 'headwise'   && <ReportPanelHeadwise toast={toast} />}
+        {current === 'vehicle'    && <ReportPanelVehicle toast={toast} />}
         {current === 'aging'      && <ReportPanelAging toast={toast} />}
         {current === 'summary'    && <ReportPanelSummary toast={toast} />}
       </FeeReportBranchContext.Provider>
@@ -9013,6 +9319,110 @@ function RepLoadState({ loading, error, empty, emptyText }) {
 }
 
 /* ════════════ 1. DEFAULTER LIST ════════════ */
+function ReportPanelVehicle({ toast }) {
+  const school = useContext(FeeReportBranchContext);
+  const { data: vehicles = [], loading: vLoading } = useAsync(feeService.getVehicles, []);
+  const { data: transportMap = {}, loading: tLoading } = useAsync(feeService.getTransportFee, []);
+
+  const students   = useMemo(() => Object.values(transportMap).flat(), [transportMap]);
+  const withVeh    = useMemo(() => students.filter(s => s.vehicleId), [students]);
+  const unassigned = useMemo(() => students.filter(s => !s.vehicleId && +s.transport > 0), [students]);
+  const totalFee   = useMemo(
+    () => withVeh.concat(unassigned).reduce((a, s) => a + (+s.transport || 0), 0),
+    [withVeh, unassigned],
+  );
+  const rows = useMemo(() => vehicles.map(v => {
+    const list = withVeh.filter(s => String(s.vehicleId) === String(v.id));
+    return { v, count: list.length, fee: list.reduce((a, s) => a + (+s.transport || 0), 0) };
+  }), [vehicles, withVeh]);
+
+  const downloadReport = (mode) => {
+    const html = buildVehicleReportHTML({ vehicles, students, school });
+    openPrintReport(html, 'Vehicle-Wise Transport', toast, mode);
+  };
+
+  return (
+    <>
+      <div className="fee-info">
+        <i className="fa-solid fa-circle-info"></i>
+        <span>
+          Students grouped by their assigned vehicle, with per-vehicle transport-fee totals.
+          Manage the fleet from <strong>Fee Setup &amp; Settings › Transport Fee Setup › Vehicles</strong>,
+          and assign a vehicle to each student from <strong>Transport Fee Assignment</strong>.
+        </span>
+      </div>
+
+      <RepLoadState
+        loading={vLoading || tLoading}
+        empty={!vLoading && !tLoading && vehicles.length === 0 && unassigned.length === 0}
+        emptyText="No vehicles or transport students yet."
+      />
+
+      {repKpiStrip([
+        ['k-blue',  'fa-bus',                  'Vehicles',              `${vehicles.length}`, ''],
+        ['k-green', 'fa-user-graduate',        'Students on Transport', `${withVeh.length + unassigned.length}`, ''],
+        ['k-amber', 'fa-money-bill-wave',      'Monthly Transport Fee', fmtRs(totalFee), ''],
+        ['k-red',   'fa-triangle-exclamation', 'No Vehicle Assigned',   `${unassigned.length} students`, ''],
+      ])}
+
+      <div className="fee-section fee-section--overflow">
+        <div className="fee-section-body">
+          <div className="fee-filters">
+            <RepActions onPreview={() => downloadReport('preview')} onPdf={() => downloadReport('pdf')} />
+          </div>
+        </div>
+      </div>
+
+      <div className="fee-section">
+        <div className="fee-section-body">
+          <div className="fee-stbl-wrap">
+            <table className="fee-stbl">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Vehicle</th>
+                  <th>Registration No.</th>
+                  <th>Route</th>
+                  <th className="fee-center">Students</th>
+                  <th className="fee-right">Monthly Fee</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.length === 0 ? (
+                  <tr><td colSpan="6" className="fee-stbl-empty">No vehicles added yet.</td></tr>
+                ) : rows.map((r, i) => (
+                  <tr key={r.v.id}>
+                    <td className="fee-num">{i + 1}</td>
+                    <td><b>{r.v.name}</b></td>
+                    <td>{r.v.regNo}</td>
+                    <td>{r.v.route ? r.v.route : <span className="fee-muted-dash">—</span>}</td>
+                    <td className="fee-center">{r.count}</td>
+                    <td className="fee-right">{r.fee > 0 ? <b>{money(r.fee)}</b> : <span className="fee-muted-dash">—</span>}</td>
+                  </tr>
+                ))}
+                {unassigned.length > 0 && (
+                  <tr>
+                    <td className="fee-num">—</td>
+                    <td colSpan="3"><b>No vehicle assigned</b></td>
+                    <td className="fee-center">{unassigned.length}</td>
+                    <td className="fee-right"><b>{money(unassigned.reduce((a, s) => a + (+s.transport || 0), 0))}</b></td>
+                  </tr>
+                )}
+                {(rows.length > 0 || unassigned.length > 0) && (
+                  <tr className="fee-stbl-foot">
+                    <td colSpan="5"><b>Total monthly transport collection</b></td>
+                    <td className="fee-right"><b>{money(totalFee)}</b></td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
 function ReportPanelDefaulter({ toast }) {
   const repStyle              = useContext(FeeReportStyleContext);
   const school                = useContext(FeeReportBranchContext);
@@ -10467,6 +10877,101 @@ function buildTransportReportHTML({ cls, sec, rows, isBW = false, school = null 
     <tbody>${trs || `<tr><td colspan="5" style="text-align:center;padding:18px;color:#64748B">No students enrolled.</td></tr>`}</tbody>
     ${rows.length > 0 ? `<tfoot><tr><td colspan="4">Monthly transport collection</td><td class="right">Rs. ${subtotal.toLocaleString('en-PK')}</td></tr></tfoot>` : ''}
   </table>
+</div>
+</body></html>`;
+}
+
+/* Vehicle-wise transport report — har vehicle ke neeche uske assigned
+   students, phir jinke paas vehicle nahi. Style buildTransportReportHTML
+   se milta-julta (feeReportSchool/feeReportLogoHtml helpers reuse). */
+function buildVehicleReportHTML({ vehicles = [], students = [], school = null }) {
+  const meta = feeReportSchool(school);
+  const today = meta.generatedDate
+    ? feeReportDate(meta)
+    : new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
+
+  const cell = 'padding:8px 10px;border-bottom:1px solid #E5E7EB';
+  const rowsFor = (list) => list.map((s, i) => `
+    <tr>
+      <td style="${cell}">${i + 1}</td>
+      <td style="${cell}">${escHtml(s.reg)}</td>
+      <td style="${cell}"><b>${escHtml(s.name)}</b></td>
+      <td style="${cell}">${escHtml(s.route || '—')}</td>
+      <td style="${cell};text-align:right;font-variant-numeric:tabular-nums">${+s.transport > 0 ? `Rs. ${(+s.transport).toLocaleString('en-PK')}` : '<span style="color:#94A3B8">—</span>'}</td>
+    </tr>`).join('');
+
+  const withVeh = students.filter(s => s.vehicleId);
+  const unassigned = students.filter(s => !s.vehicleId && +s.transport > 0);
+
+  const blocks = vehicles.map(v => {
+    const list = withVeh.filter(s => String(s.vehicleId) === String(v.id));
+    const subtotal = list.reduce((a, s) => a + (+s.transport || 0), 0);
+    return `
+    <div style="margin-top:16px">
+      <div style="font-size:13px;font-weight:800;color:#1E3A8A;margin-bottom:4px">
+        <span style="display:inline-block;padding:2px 8px;border:1px solid #BFDBFE;border-radius:8px;background:#EFF6FF">${escHtml(v.name)} — ${escHtml(v.regNo)}</span>
+        ${v.route ? `<span style="font-weight:600;color:#64748B;font-size:11px"> · ${escHtml(v.route)}</span>` : ''}
+        <span style="font-weight:600;color:#64748B;font-size:11px"> · ${list.length} student${list.length === 1 ? '' : 's'}</span>
+      </div>
+      <table><thead><tr>
+        <th style="width:48px">#</th><th style="width:130px">Reg No</th><th>Name</th><th>Route / Area</th><th class="right" style="width:140px">Transport Fee</th>
+      </tr></thead>
+      <tbody>${rowsFor(list) || `<tr><td colspan="5" style="text-align:center;padding:14px;color:#64748B">No students assigned to this vehicle.</td></tr>`}</tbody>
+      ${list.length ? `<tfoot><tr><td colspan="4">Monthly collection</td><td class="right">Rs. ${subtotal.toLocaleString('en-PK')}</td></tr></tfoot>` : ''}
+      </table>
+    </div>`;
+  }).join('');
+
+  const unassignedBlock = unassigned.length ? `
+    <div style="margin-top:16px">
+      <div style="font-size:13px;font-weight:800;color:#B45309;margin-bottom:4px">
+        <span style="display:inline-block;padding:2px 8px;border:1px solid #FDE68A;border-radius:8px;background:#FFFBEB">No vehicle assigned</span>
+        <span style="font-weight:600;color:#64748B;font-size:11px"> · ${unassigned.length} student${unassigned.length === 1 ? '' : 's'}</span>
+      </div>
+      <table><thead><tr>
+        <th style="width:48px">#</th><th style="width:130px">Reg No</th><th>Name</th><th>Route / Area</th><th class="right" style="width:140px">Transport Fee</th>
+      </tr></thead><tbody>${rowsFor(unassigned)}</tbody></table>
+    </div>` : '';
+
+  const grand = withVeh.concat(unassigned).reduce((a, s) => a + (+s.transport || 0), 0);
+
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escHtml(`${meta.name} — Vehicle-wise Transport`)}</title>
+<style>
+  body { margin:0; font-family:'Segoe UI',Arial,sans-serif; color:#0F172A; background:#fff; font-size:13px; }
+  .page { width:210mm; margin:0 auto; padding:18mm 14mm; box-sizing:border-box; }
+  .header { display:flex; justify-content:space-between; align-items:flex-end; border-bottom:2px solid #1E3A8A; padding-bottom:14px; margin-bottom:8px; }
+  .brand { display:flex; align-items:center; gap:12px; }
+  .logo { width:44px; height:44px; border:1px solid #BFDBFE; border-radius:12px; display:flex; align-items:center; justify-content:center; overflow:hidden; color:#1E3A8A; font-weight:800; background:#fff; }
+  .logo img { width:100%; height:100%; object-fit:contain; }
+  .school { font-size:18px; font-weight:800; color:#1E3A8A; letter-spacing:-.01em; }
+  .title  { font-size:14px; font-weight:700; color:#1E40AF; margin-top:6px; }
+  .addr { font-size:10px; color:#64748B; margin-top:3px; max-width:360px; }
+  .meta   { font-size:11px; color:#64748B; text-align:right; line-height:1.55; }
+  table { width:100%; border-collapse:collapse; margin-top:4px; }
+  thead th { background:#EFF6FF; color:#1E3A5F; font-weight:800; text-align:left; padding:8px 10px; border-bottom:2px solid #BFDBFE; font-size:11px; text-transform:uppercase; letter-spacing:.4px; }
+  thead th.right { text-align:right; }
+  tfoot td { padding:8px 10px; font-weight:800; background:#F8FAFF; border-top:2px solid #1E3A8A; }
+  tfoot td.right { text-align:right; }
+  .grand { margin-top:18px; padding:10px 12px; background:#F8FAFF; border:2px solid #1E3A8A; border-radius:10px; font-weight:800; display:flex; justify-content:space-between; }
+  @media print { @page { size:A4; margin:14mm; } body { -webkit-print-color-adjust:exact; print-color-adjust:exact; } }
+</style></head><body>
+<div class="page">
+  <div class="header">
+    <div class="brand">
+      <div class="logo">${feeReportLogoHtml(meta)}</div>
+      <div>
+        <div class="school">${escHtml(meta.name)}</div>
+        <div class="title">Vehicle-wise Transport Report</div>
+        ${meta.address ? `<div class="addr">${escHtml(meta.address)}</div>` : ''}
+        ${meta.session ? `<div class="addr">Academic Session: ${escHtml(meta.session)}</div>` : ''}
+      </div>
+    </div>
+    <div class="meta">Generated: ${escHtml(today)}<br/>By: ${escHtml(meta.generatedBy)}<br/>${vehicles.length} vehicle${vehicles.length === 1 ? '' : 's'} · ${withVeh.length + unassigned.length} student${(withVeh.length + unassigned.length) === 1 ? '' : 's'}</div>
+  </div>
+  ${vehicles.length === 0 && unassigned.length === 0
+    ? '<div style="text-align:center;padding:40px;color:#64748B">No vehicles or transport students yet.</div>'
+    : blocks + unassignedBlock}
+  <div class="grand"><span>Total monthly transport collection</span><span>Rs. ${grand.toLocaleString('en-PK')}</span></div>
 </div>
 </body></html>`;
 }

@@ -71,6 +71,19 @@ export function ModuleProvider({ children }) {
     const branchID = sessionStorage.getItem('branchID');
     if (!branchID) { setReady(true); return; }
 
+    /* ── Dev/demo override: branch 220941 ko poora sidebar dikhao ──────
+       Is branch par module-permission API ko bypass kar ke har module on
+       kar dete hain — chahe backend kuch bhi bheje. Sirf isi branch ke
+       liye; baqi sab branchen normal API flow par chalti hain. Hataana ho
+       to poora block nikaal do. */
+    if (String(branchID) === '220941') {
+      const allOn = Object.fromEntries(MODULE_REGISTRY.map(m => [m.id, true]));
+      setModuleState(allOn);
+      writeCache(allOn);
+      setReady(true);
+      return;
+    }
+
     let cancelled = false;
     (async () => {
       try {
