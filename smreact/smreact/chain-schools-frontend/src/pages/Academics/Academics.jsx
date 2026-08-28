@@ -1,9 +1,16 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import TutorialButton from '../../components/TutorialButton'
 import { createPortal } from 'react-dom'
-import { loadAcademics, saveAcademics, className, subjectName, subjectsOfClass, LP_SECTIONS, AQ_TYPES, AQ_CONFIG, aqLabel, sessionStats, vacationSpan, loadResources, saveResources, RES_CATEGORIES, RES_STATUS, resCategory, nextResourceId } from '../../config/academicsStore'
+import { loadAcademics, saveAcademics, className, subjectName, subjectsOfClass, sessionStats, vacationSpan, loadResources, saveResources, RES_CATEGORIES, RES_STATUS, resCategory, nextResourceId } from '../../config/academicsStore'
 import { loadChainProfile, chainInitials } from '../../config/chainProfile'
 import { useView } from '../../config/viewContext'
+/* Activity Calendar LIVE hai — network ki activities ERP ke API se. */
+import { currentNetworkId, activityStatus, fetchNetworkActivities, fetchNetworkActivitiesByMonth, saveNetworkActivity, deleteNetworkActivity } from '../../api/activityCalendarApi'
+/* Lesson + Notebook Plans bhi LIVE hain — poori screen ERP ke "Create Lesson
+   Plans" jaisi hai aur networkID ki base par chalti hai. */
+import CreateLessonPlans from './CreateLessonPlans'
+/* A4 branded PDF / Word shell — sab Academics reports isi se bante hain. */
+import { esc, exportReport } from './reportEngine'
 import './Academics.css'
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
@@ -16,9 +23,10 @@ const GROUPS = {
   scheme: { label: 'Activity Calendar', icon: 'fa-calendar-week', subs: [
     ['act-cal', 'Activity Calendar', 'fa-calendar-week'],
   ] },
+  /* Ek hi screen — Lesson Plans aur Notebook Plans ke subtabs uske andar
+     hain (bilkul ERP ke Create Lesson Plans jaise), is liye yahan ek sub. */
   lessons: { label: 'Lesson Plans', icon: 'fa-list-ul', subs: [
-    ['lesson-plans', 'Lesson Plans', 'fa-list-ul'],
-    ['notebook-plans', 'Notebook Plans', 'fa-book-open'],
+    ['create-lp', 'Create Lesson Plan', 'fa-list-ul'],
   ] },
   resources: { label: 'Resource Library', icon: 'fa-folder-open', subs: [
     ['resources', 'Resource Library', 'fa-folder-open'],
@@ -168,9 +176,10 @@ export default function Academics() {
       )}
 
       <div key={view} className={isLiveView ? 'ac-readonly' : undefined}>
-        {sub === 'act-cal' && <ActivityCalendar a={aView} commit={commitView} fire={fire} />}
-        {sub === 'lesson-plans' && <LessonPlans a={aView} commit={commitView} fire={fire} />}
-        {sub === 'notebook-plans' && <NotebookPlans a={aView} commit={commitView} fire={fire} />}
+        {sub === 'act-cal' && <ActivityCalendar a={aView} commit={commitView} fire={fire} live={!viewedRelease} />}
+        {/* LIVE — apna data khud API se lati hai (networkID par), is liye
+            release-snapshot wale aView/commitView isay nahi milte. */}
+        {sub === 'create-lp' && <CreateLessonPlans toast={fire} />}
         {sub === 'resources' && <OtherResources a={aView} fire={fire} resources={resourcesView} onResources={onResourcesView} />}
         {/* legacy screens (kept for data; no tabs render these now) */}
         {sub === 'textbooks' && <Textbooks a={aView} commit={commitView} fire={fire} />}
@@ -769,7 +778,19 @@ function SsModal({ a, onClose, onSave, onToast }) {
   const setPw = (sid, val) => setPerWeek((p) => ({ ...p, [pwClass]: { ...(p[pwClass] || {}), [sid]: Number(val) || 0 } }))
   const save = () => {
     if (v.start && v.end && new Date(v.end) <= new Date(v.start)) return onToast('Session end must be after start', 'warn')
-    onSave({ ...s, start: v.start, end: v.end, wpw: Number(v.wpw) || 5, vacations: vacs.filter((x) => x.name.trim()), perWeek })
+    /* Har vacation ki apni window bhi jaanchi jaye — warna ulti (end < start)
+       ya session se bahar wali chhutti chupke se save ho jati thi, aur working
+       days ka hisaab (sessionStats) ghalat nikalta tha. */
+    const named = vacs.filter((x) => x.name.trim())
+    for (const vac of named) {
+      const label = vac.name.trim()
+      if (!vac.start || !vac.end) return onToast(`“${label}” — pick both start and end date`, 'warn')
+      if (vac.end < vac.start) return onToast(`“${label}” — vacation end must be on or after start`, 'warn')
+      if (v.start && v.end && (vac.start < v.start || vac.end > v.end)) {
+        return onToast(`“${label}” — vacation dates must fall within the session period`, 'warn')
+      }
+    }
+    onSave({ ...s, start: v.start, end: v.end, wpw: Number(v.wpw) || 5, vacations: named, perWeek })
   }
   return createPortal(
     <div className="ss-overlay open" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
@@ -795,8 +816,8 @@ function SsModal({ a, onClose, onSave, onToast }) {
               {vacs.map((vac, i) => (
                 <div className="ss-vacation-block" key={vac.id ?? i}>
                   <div className="ss-field"><label className="ss-field-label">Vacation Name</label><input className="ss-input" value={vac.name} onChange={(e) => setVac(i, 'name', e.target.value)} placeholder="e.g. Eid Holiday" /></div>
-                  <div className="ss-field"><label className="ss-field-label">Vacation Start</label><input className="ss-input" type="date" value={vac.start} onChange={(e) => setVac(i, 'start', e.target.value)} /></div>
-                  <div className="ss-field" style={{ marginBottom: 6 }}><label className="ss-field-label">Vacation End</label><input className="ss-input" type="date" value={vac.end} onChange={(e) => setVac(i, 'end', e.target.value)} /></div>
+                  <div className="ss-field"><label className="ss-field-label">Vacation Start</label><input className="ss-input" type="date" value={vac.start} min={v.start || undefined} max={vac.end || v.end || undefined} onChange={(e) => setVac(i, 'start', e.target.value)} /></div>
+                  <div className="ss-field" style={{ marginBottom: 6 }}><label className="ss-field-label">Vacation End</label><input className="ss-input" type="date" value={vac.end} min={vac.start || v.start || undefined} max={v.end || undefined} onChange={(e) => setVac(i, 'end', e.target.value)} /></div>
                   <div className="ss-vacation-actions">
                     <span className="ss-vac-span">{vacationSpan(vac)} days</span>
                     <button className="ss-vac-btn delete" title="Delete vacation" onClick={() => rmVac(i)}><i className="fa-solid fa-trash" /></button>
@@ -960,35 +981,146 @@ function EntryModal({ modal, onClose, onSave, onToast }) {
   )
 }
 
-/* ── Activity Calendar ── */
-function ActivityCalendar({ a, commit, fire }) {
-  const [calY, setCalY] = useState(2026)
-  const [calM, setCalM] = useState(4) // May
+/* ── Activity Calendar ──
+   Ab localStorage par nahi: chain ki activities ERP ke Activity Calendar API
+   par LIVE hain — sab networkID ki base par, har call me branchID aur
+   sessionYearID 0 (dekhein src/api/activityCalendarApi.js).
+
+   `live` sirf mojooda draft ke liye true hai. Koi purana release dekhte waqt
+   uska snapshot dikhta hai — wo tareekhi record hai, us par API ko haath
+   nahi lagaya jata aur purana localStorage rasta hi chalta hai. */
+function ActivityCalendar({ a, commit, fire, live = true }) {
+  const networkId = live ? currentNetworkId() : 0
+  const now = new Date()
+  const [calY, setCalY] = useState(now.getFullYear())
+  const [calM, setCalM] = useState(now.getMonth())
   const [filter, setFilter] = useState('all')
+  const [search, setSearch] = useState('')
   const [modal, setModal] = useState(null)
   const [del, setDel] = useState(null)
-  const acts = a.activityCalendar || []
+
+  const [rows, setRows] = useState([])            // server ki poori list (live mode)
+  const [monthRows, setMonthRows] = useState([])  // sirf khule hue mahine ka call
+  const [loading, setLoading] = useState(live)
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [tick, setTick] = useState(0)             // save/delete ke baad month call dobara
+
+  const acts = live ? rows : (a.activityCalendar || [])
+
+  const reload = useCallback(async () => {
+    const list = await fetchNetworkActivities(networkId)
+    setRows(list)
+    return list
+  }, [networkId])
+
+  useEffect(() => {
+    if (!live) { setLoading(false); setError(''); return undefined }
+    if (!networkId) {
+      setLoading(false)
+      setError('No network session found — sign in again from the ERP.')
+      return undefined
+    }
+    let alive = true
+    setLoading(true)
+    setError('')
+    reload()
+      .catch((err) => { if (alive) setError(err?.message || 'Could not load activities') })
+      .finally(() => { if (alive) setLoading(false) })
+    return () => { alive = false }
+  }, [live, networkId, reload])
+
+  /* Grid ke liye us mahine ka apna call — ERP bhi yahi karta hai. Na chale to
+     grid poori list se hi ban jata hai, is liye khamoshi se nazarandaz. */
+  useEffect(() => {
+    if (!live || !networkId) { setMonthRows([]); return undefined }
+    let alive = true
+    fetchNetworkActivitiesByMonth(calM + 1, calY, networkId)
+      .then((list) => { if (alive) setMonthRows(list) })
+      .catch(() => { if (alive) setMonthRows([]) })
+    return () => { alive = false }
+  }, [live, networkId, calY, calM, tick])
+
+  /* Release ka snapshot parent ke `a` se banta hai, is liye server ki list
+     wahan mirror karna zaroori hai — warna release khali chala jata. Barabari
+     ka check loop rok deta hai: commit ke baad dono aik hi array hote hain. */
+  useEffect(() => {
+    if (!live || loading || error) return
+    if (JSON.stringify(a.activityCalendar || []) === JSON.stringify(rows)) return
+    commit({ ...a, activityCalendar: rows })
+  }, [live, loading, error, rows, a, commit])
 
   const stats = useMemo(() => {
     const ym = `${calY}-${String(calM + 1).padStart(2, '0')}`
     return { total: acts.length, upcoming: acts.filter((x) => x.status === 'upcoming').length, month: acts.filter((x) => (x.start || '').startsWith(ym)).length, completed: acts.filter((x) => x.status === 'completed').length }
   }, [acts, calY, calM])
 
-  const save = (data, id) => {
-    if (id) commit({ ...a, activityCalendar: acts.map((x) => (x.id === id ? { ...x, ...data } : x)) })
-    else commit({ ...a, nextId: a.nextId + 1, activityCalendar: [...acts, { id: a.nextId, ...data }] })
-    setModal(null); fire(id ? 'Activity updated' : 'Activity added')
+  /* Poori list + month API — jo rows sirf month call me aayen wo bhi grid me
+     nazar aayen. Stats aur side-list sirf poori list par rehti hain. */
+  const gridActs = useMemo(() => {
+    if (!live) return acts
+    const seen = new Set(acts.map((x) => x.id))
+    return [...acts, ...monthRows.filter((x) => !seen.has(x.id))]
+  }, [live, acts, monthRows])
+
+  const save = async (data, id) => {
+    if (!live) {
+      if (id) commit({ ...a, activityCalendar: acts.map((x) => (x.id === id ? { ...x, ...data } : x)) })
+      else commit({ ...a, nextId: a.nextId + 1, activityCalendar: [...acts, { id: a.nextId, ...data }] })
+      setModal(null); fire(id ? 'Activity updated' : 'Activity added')
+      return
+    }
+    setBusy(true)
+    try {
+      await saveNetworkActivity({ ...data, id: id || 0 }, networkId)
+      await reload()
+      setTick((t) => t + 1)
+      setModal(null)
+      fire(id ? 'Activity updated' : 'Activity added')
+    } catch (err) {
+      fire(err?.message || 'Could not save activity', 'warn')
+    } finally {
+      setBusy(false)
+    }
   }
-  const doDel = () => { commit({ ...a, activityCalendar: acts.filter((x) => x.id !== del.id) }); setDel(null); fire('Activity removed', 'info') }
+
+  const doDel = async () => {
+    if (!live) { commit({ ...a, activityCalendar: acts.filter((x) => x.id !== del.id) }); setDel(null); fire('Activity removed', 'info'); return }
+    setBusy(true)
+    try {
+      await deleteNetworkActivity(del, networkId)
+      await reload()
+      setTick((t) => t + 1)
+      setDel(null)
+      fire('Activity removed', 'info')
+    } catch (err) {
+      fire(err?.message || 'Could not remove activity', 'warn')
+    } finally {
+      setBusy(false)
+    }
+  }
 
   const prev = () => { if (calM === 0) { setCalM(11); setCalY((y) => y - 1) } else setCalM((m) => m - 1) }
   const next = () => { if (calM === 11) { setCalM(0); setCalY((y) => y + 1) } else setCalM((m) => m + 1) }
   const firstDow = new Date(calY, calM, 1).getDay()
   const dim = new Date(calY, calM + 1, 0).getDate()
   const ym = `${calY}-${String(calM + 1).padStart(2, '0')}`
-  const actsOnDay = (day) => acts.filter((x) => { const ds = `${ym}-${String(day).padStart(2, '0')}`; return ds >= x.start && ds <= x.end })
+  const actsOnDay = (day) => gridActs.filter((x) => { const ds = `${ym}-${String(day).padStart(2, '0')}`; return ds >= x.start && ds <= x.end })
 
-  const visible = acts.filter((x) => filter === 'all' || x.status === filter).slice().sort((x, y) => (x.start < y.start ? -1 : 1))
+  /* Search + status filter (ERP ke Activity Calendar panel jaisa) — status ka
+     ek hi "cycle" button hai, chaar alag pills nahi. */
+  const q = search.trim().toLowerCase()
+  const visible = acts
+    .filter((x) => filter === 'all' || x.status === filter)
+    .filter((x) => !q || `${x.name} ${x.purpose || ''}`.toLowerCase().includes(q))
+    .slice()
+    .sort((x, y) => (x.start < y.start ? -1 : 1))
+
+  const cycleFilter = () => {
+    const order = ['all', 'upcoming', 'ongoing', 'completed']
+    setFilter(order[(order.indexOf(filter) + 1) % order.length])
+  }
+  const filterLabel = filter === 'all' ? 'All' : (ACT_STATUS[filter]?.label || filter)
 
   const report = () => ({
     title: 'Activity Calendar', period: a.sessionSettings?.academicYear ? `Academic Year ${a.sessionSettings.academicYear}` : '',
@@ -996,8 +1128,25 @@ function ActivityCalendar({ a, commit, fire }) {
     sections: [{ columns: [{ label: '#', a: 'c' }, { label: 'Activity', a: 'l' }, { label: 'From', a: 'l' }, { label: 'To', a: 'l' }, { label: 'Status', a: 'l' }, { label: 'Purpose', a: 'l' }], rows: acts.slice().sort((x, y) => (x.start < y.start ? -1 : 1)).map((x, i) => [i + 1, x.name, fmtDate(x.start), fmtDate(x.end), ACT_STATUS[x.status]?.label || x.status, x.purpose || '—']), totals: null }],
   })
 
+  if (loading) {
+    return (
+      <div style={{ textAlign: 'center', padding: 60, color: 'var(--tm)' }}>
+        <i className="fa-solid fa-spinner fa-spin" style={{ fontSize: 22, display: 'block', margin: '0 auto 10px' }} />
+        <div style={{ fontSize: 13, fontWeight: 700 }}>Loading activity calendar…</div>
+      </div>
+    )
+  }
+
   return (
     <>
+      {error && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', marginBottom: 14, borderRadius: 'var(--r-md)', background: 'rgba(220,38,38,.06)', border: '1px solid rgba(220,38,38,.25)', fontSize: 13, fontWeight: 600, color: 'var(--t1)' }}>
+          <i className="fa-solid fa-triangle-exclamation" style={{ color: 'var(--err)' }} />
+          <div style={{ flex: 1 }}>{error}</div>
+          {!!networkId && <button className="btn-sm" style={{ height: 30 }} onClick={() => { setLoading(true); setError(''); reload().catch((err) => setError(err?.message || 'Could not load activities')).finally(() => setLoading(false)) }}><i className="fa-solid fa-rotate-right" /> Retry</button>}
+        </div>
+      )}
+
       <div className="ac-stats">
         {[['fa-calendar-days', '#1E40AF', stats.total, 'Total Activities'], ['fa-circle-check', '#16A34A', stats.upcoming, 'Scheduled'], ['fa-clock', '#D97706', stats.month, 'This Month'], ['fa-flag', '#7C3AED', stats.completed, 'Completed']].map(([ic, col, val, lbl]) => (
           <div className="ac-stat" key={lbl}><div className="ac-stat-ic" style={{ background: `${col}1a`, color: col }}><i className={`fa-solid ${ic}`} /></div><div><div className="ac-stat-val">{val}</div><div className="ac-stat-lbl">{lbl}</div></div></div>
@@ -1038,59 +1187,103 @@ function ActivityCalendar({ a, commit, fire }) {
         </div>
 
         <div className="section-card">
-          <div className="card-header"><div className="card-title"><i className="fa-solid fa-list" /> Activities</div><button className="btn-primary" onClick={() => setModal({ mode: 'add' })}><i className="fa-solid fa-plus" /> Add</button></div>
-          <div style={{ padding: 14 }}>
-            <div className="ac-evt-filters">
-              {['all', 'upcoming', 'ongoing', 'completed'].map((f) => <button key={f} className={`ac-evt-filter${filter === f ? ' active' : ''}`} onClick={() => setFilter(f)}>{f === 'all' ? 'All' : ACT_STATUS[f].label}</button>)}
+          <div className="card-header">
+            <div>
+              <div className="card-title"><i className="fa-solid fa-list" /> Activities</div>
+              <div className="card-sub">{acts.length} activit{acts.length === 1 ? 'y' : 'ies'} scheduled</div>
             </div>
-            {visible.length === 0 ? <div className="ac-empty"><i className="fa-solid fa-calendar-plus" /><div style={{ fontSize: 13, fontWeight: 700 }}>No activities</div></div>
-              : visible.map((x) => (
-                <div className="ac-evt" key={x.id} style={{ borderLeftColor: ACT_STATUS[x.status]?.color }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                    <div className="ac-evt-name">{x.name}</div>
-                    <span className="badge" style={{ background: `${ACT_STATUS[x.status]?.color}1a`, color: ACT_STATUS[x.status]?.color }}>{ACT_STATUS[x.status]?.label}</span>
+            <button className="btn-primary" onClick={() => setModal({ mode: 'add' })} disabled={busy}><i className="fa-solid fa-plus" /> Add Activity</button>
+          </div>
+
+          {/* Search + ek cycling status filter — ERP ke act-search-row jaisa. */}
+          <div className="act-search-row">
+            <div className="act-search-box">
+              <i className="fa-solid fa-magnifying-glass" />
+              <input type="text" placeholder="Search activities…" value={search} onChange={(e) => setSearch(e.target.value)} />
+            </div>
+            <button
+              className={`act-filter-btn${filter !== 'all' ? ' on' : ''}`}
+              title="Cycle activity filter (All → Scheduled → Ongoing → Completed)"
+              onClick={cycleFilter}
+            >
+              <i className="fa-solid fa-sliders" />
+              <span>{filterLabel}</span>
+            </button>
+          </div>
+
+          <div className="act-events-list">
+            {visible.length === 0 ? (
+              <div className="act-empty">
+                <div className="act-empty-icon"><i className="fa-solid fa-calendar-xmark" /></div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--t1)', marginBottom: 4 }}>No activities found</div>
+                <div style={{ fontSize: 11.5, color: 'var(--tm)' }}>{acts.length ? 'Try adjusting the filter or search' : 'Click “Add Activity” to schedule one'}</div>
+              </div>
+            ) : visible.map((x) => {
+              const st = ACT_STATUS[x.status] || ACT_STATUS.upcoming
+              return (
+                <div className="act-event-item" key={x.id}>
+                  <div className="act-event-strip" style={{ background: st.color }} />
+                  <div className="act-event-body">
+                    <div className="act-event-name">{x.name}</div>
+                    <div className="act-event-dates">
+                      <i className="fa-solid fa-calendar" />{fmtDate(x.start)}{x.end !== x.start ? ` — ${fmtDate(x.end)}` : ''}
+                    </div>
+                    <div className="act-event-badge" style={{ background: `${st.color}1a`, color: st.color }}>
+                      <i className={`fa-solid ${x.status === 'completed' ? 'fa-circle-check' : x.status === 'ongoing' ? 'fa-spinner' : 'fa-clock'}`} style={{ fontSize: 9 }} /> {st.label}
+                    </div>
+                    {x.purpose && <div className="ac-evt-purpose">{x.purpose}</div>}
                   </div>
-                  <div className="ac-evt-date"><i className="fa-regular fa-calendar" /> {fmtDate(x.start)}{x.end !== x.start ? ` → ${fmtDate(x.end)}` : ''}</div>
-                  {x.purpose && <div className="ac-evt-purpose">{x.purpose}</div>}
-                  <div className="ac-evt-actions"><button className="btn-sm" style={{ height: 28 }} onClick={() => setModal({ mode: 'edit', act: x })}><i className="fa-solid fa-pen" /> Edit</button><button className="btn-sm" style={{ height: 28, borderColor: 'var(--err)', color: 'var(--err)', background: 'rgba(220,38,38,.05)' }} onClick={() => setDel(x)}><i className="fa-solid fa-trash-can" /></button></div>
+                  <div className="act-event-actions">
+                    <button className="btn-sm" style={{ height: 28 }} title="Edit activity" disabled={busy} onClick={() => setModal({ mode: 'edit', act: x })}><i className="fa-solid fa-pen" /></button>
+                    <button className="btn-sm" style={{ height: 28, borderColor: 'var(--err)', color: 'var(--err)', background: 'rgba(220,38,38,.05)' }} title="Delete activity" disabled={busy} onClick={() => setDel(x)}><i className="fa-solid fa-trash-can" /></button>
+                  </div>
                 </div>
-              ))}
+              )
+            })}
           </div>
         </div>
       </div>
 
-      {modal && <ActivityModal modal={modal} onClose={() => setModal(null)} onSave={save} onToast={fire} />}
-      {del && <ConfirmModal title="Remove Activity?" body={`“${del.name}” will be removed.`} onClose={() => setDel(null)} onConfirm={doDel} />}
+      {modal && <ActivityModal modal={modal} busy={busy} ss={a.sessionSettings || {}} onClose={() => setModal(null)} onSave={save} onToast={fire} />}
+      {del && <ConfirmModal title="Remove Activity?" body={`“${del.name}” will be removed.`} busy={busy} onClose={() => setDel(null)} onConfirm={doDel} />}
     </>
   )
 }
 
-function ActivityModal({ modal, onClose, onSave, onToast }) {
+function ActivityModal({ modal, busy, ss = {}, onClose, onSave, onToast }) {
   const x = modal.act
-  const [v, setV] = useState({ name: x?.name || '', start: x?.start || '', end: x?.end || '', status: x?.status || 'upcoming', purpose: x?.purpose || '', development: x?.development || '', resource: x?.resource || '' })
+  const [v, setV] = useState({ name: x?.name || '', start: x?.start || '', end: x?.end || '', purpose: x?.purpose || '', development: x?.development || '', resource: x?.resource || '' })
   const set = (k) => (e) => setV((s) => ({ ...s, [k]: e.target.value }))
   const save = () => {
     if (!v.name.trim()) return onToast('Enter activity name', 'warn')
     if (!v.start) return onToast('Pick a start date', 'warn')
     const end = v.end || v.start
-    if (end < v.start) return onToast('End date must be after start', 'warn')
-    onSave({ name: v.name.trim(), start: v.start, end, status: v.status, purpose: v.purpose.trim(), development: v.development.trim(), resource: v.resource.trim() }, x?.id)
+    if (end < v.start) return onToast('End date must be on or after the start date', 'warn')
+    /* Session-window guard (ERP jaisa) — activity academic session ke andar hi
+       rehni chahiye. Session set na ho to block nahi karte. */
+    if (ss.start && ss.end && (v.start < ss.start || end > ss.end)) {
+      return onToast(`Session runs ${ss.start} → ${ss.end}. Pick activity dates within this range.`, 'warn')
+    }
+    /* Status backend me store nahi hota — dates se banta hai (ERP jaisa hi). */
+    onSave({ name: v.name.trim(), start: v.start, end, status: activityStatus(v.start, end), purpose: v.purpose.trim(), development: v.development.trim(), resource: v.resource.trim() }, x?.id)
   }
   return createPortal(
-    <div className="pay-ov" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
+    <div className="pay-ov" onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) onClose() }}>
       <div className="pay-modal" style={{ maxWidth: 560 }}>
-        <div className="pay-modal-hdr"><div className="pay-modal-av"><i className="fa-solid fa-calendar-plus" /></div><div><div className="pay-modal-title">{x ? 'Edit Activity' : 'Add Activity'}</div></div><button className="pay-modal-x" onClick={onClose}><i className="fa-solid fa-xmark" /></button></div>
+        <div className="pay-modal-hdr"><div className="pay-modal-av"><i className="fa-solid fa-calendar-plus" /></div><div><div className="pay-modal-title">{x ? 'Edit Activity' : 'Add Activity'}</div></div><button className="pay-modal-x" onClick={onClose} disabled={busy}><i className="fa-solid fa-xmark" /></button></div>
         <div className="pay-modal-body">
           <div className="ac-field" style={{ marginBottom: 12 }}><label>Activity Name</label><input className="ac-input" value={v.name} onChange={set('name')} placeholder="e.g. Science Fair" /></div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
-            <div className="ac-field"><label>From</label><input className="ac-input" type="date" value={v.start} onChange={set('start')} /></div>
-            <div className="ac-field"><label>To</label><input className="ac-input" type="date" value={v.end} onChange={set('end')} /></div>
+            {/* min/max se picker khud hi ghalat range nahi chunne deta — toast
+                sirf aakhri safety net hai (manual typing / purana record). */}
+            <div className="ac-field"><label>From</label><input className="ac-input" type="date" value={v.start} min={ss.start || undefined} max={v.end || ss.end || undefined} onChange={set('start')} /></div>
+            <div className="ac-field"><label>To</label><input className="ac-input" type="date" value={v.end} min={v.start || ss.start || undefined} max={ss.end || undefined} onChange={set('end')} /></div>
           </div>
           <div className="ac-field" style={{ marginBottom: 12 }}><label>Purpose</label><textarea className="ac-input" rows={2} value={v.purpose} onChange={set('purpose')} placeholder="Purpose of the activity" /></div>
           <div className="ac-field" style={{ marginBottom: 12 }}><label>Development / Plan</label><input className="ac-input" value={v.development} onChange={set('development')} placeholder="Preparation steps" /></div>
           <div className="ac-field"><label>Resources Required</label><input className="ac-input" value={v.resource} onChange={set('resource')} placeholder="Equipment, materials…" /></div>
         </div>
-        <div className="pay-modal-foot"><button className="btn-secondary" onClick={onClose}>Cancel</button><button className="btn-primary" onClick={save}><i className="fa-solid fa-floppy-disk" /> Save Activity</button></div>
+        <div className="pay-modal-foot"><button className="btn-secondary" onClick={onClose} disabled={busy}>Cancel</button><button className="btn-primary" onClick={save} disabled={busy}><i className={`fa-solid ${busy ? 'fa-spinner fa-spin' : 'fa-floppy-disk'}`} /> {busy ? 'Saving…' : 'Save Activity'}</button></div>
       </div>
     </div>,
     document.body,
@@ -1214,518 +1407,6 @@ function BreakupModal({ cls, a, onClose, onSave, onToast }) {
           <button className="btn-primary" onClick={addUnit}><i className="fa-solid fa-plus" /> Add Unit</button>
         </div>
         <div className="pay-modal-foot"><button className="btn-secondary" onClick={onClose}>Cancel</button><button className="btn-primary" onClick={save}><i className="fa-solid fa-floppy-disk" /> Save Breakup</button></div>
-      </div>
-    </div>,
-    document.body,
-  )
-}
-
-/* ── Class + Subject selector (shared) ── */
-function ClassSubjectBar({ a, classId, setClassId, subjectId, setSubjectId, children }) {
-  const subs = subjectsOfClass(a, Number(classId))
-  return (
-    <div className="ac-bar">
-      <div className="ac-field"><label>Class</label><select className="ac-input" value={classId} onChange={(e) => { setClassId(e.target.value); setSubjectId(String(subjectsOfClass(a, Number(e.target.value))[0]?.id || '')) }}>{a.classes.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
-      <div className="ac-field"><label>Subject</label><select className="ac-input" value={subjectId} onChange={(e) => setSubjectId(e.target.value)}>{subs.length === 0 ? <option value="">No subjects</option> : subs.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></div>
-      {children}
-    </div>
-  )
-}
-
-const SRC = { manual: { label: 'Manual', icon: 'fa-pen-nib' }, ai: { label: 'Mentor AI', icon: 'fa-wand-magic-sparkles' } }
-
-/* ════════ LESSON PLANS (units → lessons → sections) ════════ */
-function LessonPlans({ a, commit, fire }) {
-  const [classId, setClassId] = useState(String(a.classes[0]?.id || ''))
-  const [subjectId, setSubjectId] = useState(String(subjectsOfClass(a, a.classes[0]?.id)[0]?.id || ''))
-  const [openId, setOpenId] = useState(null)
-  const [unitModal, setUnitModal] = useState(null)
-  const [lessonModal, setLessonModal] = useState(null)
-  const [view, setView] = useState(null)
-  const [del, setDel] = useState(null)
-
-  const units = a.lessonPlans.filter((u) => u.classId === Number(classId) && u.subjectId === Number(subjectId)).map((u) => ({ ...u, lessons: u.lessons || [] }))
-
-  const saveUnit = (data, id) => {
-    if (id) commit({ ...a, lessonPlans: a.lessonPlans.map((u) => (u.id === id ? { ...u, ...data } : u)) })
-    else { const nid = a.nextId; commit({ ...a, nextId: nid + 1, lessonPlans: [...a.lessonPlans, { id: nid, classId: Number(classId), subjectId: Number(subjectId), lessons: [], ...data }] }) }
-    setUnitModal(null); fire(id ? 'Unit updated' : 'Unit added')
-  }
-  const saveLesson = (unitId, lesson, lessonId) => {
-    commit({ ...a, lessonPlans: a.lessonPlans.map((u) => (u.id !== unitId ? u : { ...u, lessons: lessonId ? (u.lessons || []).map((l) => (l.id === lessonId ? { ...l, ...lesson } : l)) : [...(u.lessons || []), { id: Date.now(), num: (u.lessons || []).length + 1, ...lesson }] })) })
-    setLessonModal(null); fire(lessonId ? 'Lesson plan updated' : 'Lesson plan added')
-  }
-  const delUnit = (id) => { commit({ ...a, lessonPlans: a.lessonPlans.filter((u) => u.id !== id) }); setDel(null); fire('Unit removed', 'info') }
-  const delLesson = (unitId, lessonId) => { commit({ ...a, lessonPlans: a.lessonPlans.map((u) => (u.id === unitId ? { ...u, lessons: (u.lessons || []).filter((l) => l.id !== lessonId) } : u)) }); setDel(null); fire('Lesson removed', 'info') }
-
-  const lessonReport = (u, l) => ({
-    title: 'Lesson Plan', period: `${className(a, Number(classId))} · ${subjectName(a, Number(subjectId))}`,
-    filters: [['Class', className(a, Number(classId))], ['Subject', subjectName(a, Number(subjectId))], ['Unit', `${u.unitNo} — ${u.unitName}`], ['Lesson', l.topic], ['Duration', `${l.duration || 45} min`], ['Source', SRC[l.source]?.label || 'Manual']],
-    sections: l.sections.map((s) => ({ title: `${s.title}  (${s.mins} min)`, html: s.content || '—' })),
-  })
-  const unitReport = (u) => ({
-    title: `Lesson Plans — Unit ${u.unitNo}`, period: `${className(a, Number(classId))} · ${subjectName(a, Number(subjectId))}`,
-    filters: [['Class', className(a, Number(classId))], ['Subject', subjectName(a, Number(subjectId))], ['Unit', u.unitName], ['Lessons', String(u.lessons.length)]],
-    sections: u.lessons.map((l) => ({ title: `Lesson ${l.num}: ${l.topic}  (${SRC[l.source]?.label})`, html: l.sections.map((s) => `<h4 style="color:#1E3A8A;margin:8px 0 3px;font-size:11px">${s.title} (${s.mins} min)</h4>${s.content || '—'}`).join('') })),
-  })
-
-  return (
-    <div className="section-card">
-      <div className="card-header"><div><div className="card-title"><i className="fa-solid fa-list-ul" /> Lesson Plans</div><div className="card-sub">Create unit-wise lesson plans for every class and subject.</div></div></div>
-      <div style={{ padding: '14px 16px 0' }}>
-        <ClassSubjectBar a={a} classId={classId} setClassId={setClassId} subjectId={subjectId} setSubjectId={setSubjectId}>
-          <button className="btn-primary" style={{ marginLeft: 'auto' }} onClick={() => setUnitModal({ mode: 'add' })}><i className="fa-solid fa-plus" /> Add Unit</button>
-        </ClassSubjectBar>
-      </div>
-      <div style={{ padding: 16 }}>
-        {units.length === 0 ? <div className="ac-empty"><i className="fa-solid fa-book-open-reader" /><div style={{ fontSize: 13, fontWeight: 700 }}>No lesson plans yet</div><div style={{ fontSize: 12, marginTop: 4 }}>Click “Add Unit” for {className(a, Number(classId))} · {subjectName(a, Number(subjectId))}.</div></div>
-          : units.map((u, ui) => {
-            const isOpen = openId === u.id
-            const manual = u.lessons.filter((l) => l.source === 'manual').length
-            const ai = u.lessons.filter((l) => l.source === 'ai').length
-            return (
-              <div className={`clpr-unit-card${isOpen ? ' open' : ''}`} key={u.id}>
-                <div className="clpr-unit-header" onClick={() => setOpenId(isOpen ? null : u.id)}>
-                  <div className="clpr-unit-left">
-                    <div className="clpr-unit-sno">{ui + 1}</div>
-                    <div className="clpr-unit-icon-wrap"><i className="fa-solid fa-book-open" /></div>
-                    <div><div className="clpr-unit-name">{u.unitName}</div><div className="clpr-unit-sub">Unit {u.unitNo}</div></div>
-                  </div>
-                  <div className="clpr-unit-stats">
-                    <span className="clpr-stat clpr-stat--total"><i className="fa-solid fa-book" /> {u.lessons.length} lesson{u.lessons.length !== 1 ? 's' : ''}</span>
-                    <span className="clpr-stat-sep">·</span><span className="clpr-stat clpr-stat--manual"><i className="fa-solid fa-pen-to-square" /> {manual} manual</span>
-                    <span className="clpr-stat-sep">·</span><span className="clpr-stat clpr-stat--ai"><i className="fa-solid fa-robot" /> {ai} AI</span>
-                  </div>
-                  <div className="clpr-unit-right" onClick={(e) => e.stopPropagation()}>
-                    <button className="clpr-icon-btn clpr-icon-btn--pdf" title="PDF" onClick={() => (u.lessons.length ? exportReport(unitReport(u), 'pdf', fire) : fire('No lessons to export', 'warn'))}><i className="fa-solid fa-file-pdf" /></button>
-                    <button className="clpr-icon-btn" title="Edit Unit" onClick={() => setUnitModal({ mode: 'edit', unit: u })}><i className="fa-solid fa-pen" /></button>
-                    <button className="clpr-icon-btn clpr-icon-btn--del" title="Delete" onClick={() => setDel({ kind: 'unit', id: u.id, name: u.unitName })}><i className="fa-solid fa-trash-can" /></button>
-                    <button className={`clpr-icon-btn clpr-icon-btn--expand${isOpen ? ' open' : ''}`} onClick={() => setOpenId(isOpen ? null : u.id)}><i className="fa-solid fa-chevron-down" /></button>
-                  </div>
-                </div>
-                {isOpen && (
-                  <div className="clpr-lessons-panel">
-                    {u.lessons.length === 0 ? <div className="clpr-no-lessons"><i className="fa-solid fa-plus-circle" style={{ color: 'var(--brand)', opacity: 0.4 }} /> No lessons yet</div>
-                      : u.lessons.map((l, li) => (
-                        <div className="clpr-lesson-card" key={l.id}>
-                          <div className="clpr-lesson-meta">
-                            <span className="clpr-lesson-num">#{li + 1}</span><span className="clpr-lesson-num-tag">{l.num}</span>
-                            <i className="fa-regular fa-file-lines clpr-lesson-file-icon" /><span className="clpr-lesson-name">{l.topic}</span>
-                          </div>
-                          <span className={`clp-src-badge ${l.source}`}><i className={`fa-solid ${SRC[l.source]?.icon}`} /> {SRC[l.source]?.label}</span>
-                          <div className="clpr-lesson-actions">
-                            <button className="clpr-action-btn" onClick={() => setView({ unit: u, lesson: l })}><i className="fa-solid fa-eye" /> View</button>
-                            <button className="clpr-action-btn clpr-action-edit" onClick={() => setLessonModal({ unitId: u.id, lesson: l })}><i className="fa-solid fa-pen" /> Edit</button>
-                            <button className="clpr-action-btn clpr-action-pdf" onClick={() => exportReport(lessonReport(u, l), 'pdf', fire)}><i className="fa-solid fa-file-pdf" /> PDF</button>
-                            <button className="clpr-action-btn clpr-action-del" onClick={() => setDel({ kind: 'lesson', unitId: u.id, id: l.id, name: l.topic })}><i className="fa-solid fa-trash-can" /></button>
-                          </div>
-                        </div>
-                      ))}
-                    <button className="clpr-action-btn clpr-action-edit" style={{ marginTop: 4 }} onClick={() => setLessonModal({ unitId: u.id })}><i className="fa-solid fa-plus" /> Add Lesson Plan</button>
-                  </div>
-                )}
-              </div>
-            )
-          })}
-      </div>
-      {unitModal && <UnitModal modal={unitModal} onClose={() => setUnitModal(null)} onSave={saveUnit} onToast={fire} />}
-      {lessonModal && <LessonModal modal={lessonModal} onClose={() => setLessonModal(null)} onSave={saveLesson} onToast={fire} />}
-      {view && <LessonViewer view={view} a={a} onClose={() => setView(null)} />}
-      {del && <ConfirmModal title={`Remove ${del.kind === 'unit' ? 'Unit' : 'Lesson'}?`} body={`“${del.name}” will be removed.`} onClose={() => setDel(null)} onConfirm={() => (del.kind === 'unit' ? delUnit(del.id) : delLesson(del.unitId, del.id))} />}
-    </div>
-  )
-}
-
-function UnitModal({ modal, onClose, onSave, onToast }) {
-  const u = modal.unit
-  const [unitNo, setUnitNo] = useState(u?.unitNo || '')
-  const [unitName, setUnitName] = useState(u?.unitName || '')
-  const save = () => { if (!unitName.trim()) return onToast('Enter the unit name', 'warn'); onSave({ unitNo: unitNo.trim() || '1', unitName: unitName.trim() }, u?.id) }
-  return (
-    <ModalShell title={u ? 'Edit Unit' : 'Add Unit'} icon="fa-layer-group" maxWidth={460} onClose={onClose} foot={<><button className="btn-secondary" onClick={onClose}>Cancel</button><button className="btn-primary" onClick={save}><i className="fa-solid fa-floppy-disk" /> Save</button></>}>
-      <div style={{ display: 'grid', gridTemplateColumns: '90px 1fr', gap: 12 }}>
-        <div className="ac-field"><label>Unit No.</label><input className="ac-input" value={unitNo} onChange={(e) => setUnitNo(e.target.value)} placeholder="1" /></div>
-        <div className="ac-field"><label>Unit Name</label><input className="ac-input" value={unitName} onChange={(e) => setUnitName(e.target.value)} placeholder="e.g. Fizza's Family" /></div>
-      </div>
-    </ModalShell>
-  )
-}
-
-const SEC_DOT = ['#1E40AF', '#0284C7', '#7C3AED', '#16A34A']
-function LessonModal({ modal, onClose, onSave, onToast }) {
-  const l = modal.lesson
-  const [topic, setTopic] = useState(l?.topic || '')
-  const [num, setNum] = useState(l?.num || '')
-  const [source, setSource] = useState(l?.source || 'manual')
-  const [duration, setDuration] = useState(l?.duration || 45)
-  const [sections, setSections] = useState(() => l?.sections ? JSON.parse(JSON.stringify(l.sections)) : LP_SECTIONS.map((s) => ({ title: s.title, mins: s.mins, content: '' })))
-  const setSec = (i, k, v) => setSections((s) => s.map((x, j) => (j === i ? { ...x, [k]: v } : x)))
-  const save = () => { if (!topic.trim()) return onToast('Enter the lesson topic', 'warn'); onSave(modal.unitId, { topic: topic.trim(), num: Number(num) || undefined, source, duration: Number(duration) || 45, sections }, l?.id) }
-  return (
-    <ModalShell title={l ? 'Edit Lesson Plan' : 'Create Lesson Plan'} icon="fa-file-lines" maxWidth={920} onClose={onClose} foot={<><div style={{ fontSize: 12, color: 'var(--tm)', marginRight: 'auto' }}><i className="fa-solid fa-circle-info" /> Fill all sections before saving</div><button className="btn-secondary" onClick={onClose}>Close</button><button className="btn-primary" onClick={save}><i className="fa-solid fa-floppy-disk" /> Save &amp; Close</button></>}>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 90px 130px 150px', gap: 12, marginBottom: 16 }}>
-        <div className="ac-field"><label>Lesson Topic *</label><input className="ac-input" value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="Enter lesson plan topic" /></div>
-        <div className="ac-field"><label>Lesson No.</label><input className="ac-input" value={num} onChange={(e) => setNum(e.target.value)} placeholder="auto" /></div>
-        <div className="ac-field"><label>Duration (min)</label><input className="ac-input" type="number" value={duration} onChange={(e) => setDuration(e.target.value)} /></div>
-        <div className="ac-field"><label>Source</label><select className="ac-input" value={source} onChange={(e) => setSource(e.target.value)}><option value="manual">Manual</option><option value="ai">Mentor AI</option></select></div>
-      </div>
-      <div style={{ fontSize: 12.5, fontWeight: 800, color: 'var(--brand)', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 10 }}>Lesson Plan Sections</div>
-      {sections.map((s, i) => (
-        <div className="clp-sec" key={i}>
-          <div className="clp-sec-hd">
-            <div className="clp-sec-dot" style={{ background: SEC_DOT[i] || '#1E40AF' }} />
-            <div><div className="clp-sec-title">{LP_SECTIONS[i]?.icon} {s.title}</div>{LP_SECTIONS[i]?.hint && <div className="clp-sec-hint">{LP_SECTIONS[i].hint}</div>}</div>
-            <span className="clp-sec-mins"><i className="fa-regular fa-clock" /><input type="number" value={s.mins} onChange={(e) => setSec(i, 'mins', Number(e.target.value) || 0)} /> mins</span>
-          </div>
-          <RichEditor value={s.content} onChange={(html) => setSec(i, 'content', html)} placeholder={`Write the ${s.title.toLowerCase()}…`} />
-        </div>
-      ))}
-    </ModalShell>
-  )
-}
-
-/* ── Rich text editor (contentEditable + toolbar) ── */
-function RichEditor({ value, onChange, placeholder, minHeight }) {
-  const ref = useRef(null)
-  useEffect(() => { if (ref.current && ref.current.innerHTML !== (value || '')) ref.current.innerHTML = value || '' }, []) // eslint-disable-line react-hooks/exhaustive-deps
-  const cmd = (c, v) => { ref.current?.focus(); document.execCommand(c, false, v); onChange(ref.current.innerHTML) }
-  const color = () => { const c = window.prompt('Text colour (name or #hex):', '#DC2626'); if (c) cmd('foreColor', c) }
-  const link = () => { const u = window.prompt('Link URL:', 'https://'); if (u) cmd('createLink', u) }
-  const table = () => { const r = +window.prompt('Rows:', '2') || 2; const cc = +window.prompt('Columns:', '2') || 2; let h = '<table>'; for (let i = 0; i < r; i += 1) { h += '<tr>'; for (let j = 0; j < cc; j += 1) h += '<td>&nbsp;</td>'; h += '</tr>' } h += '</table>'; cmd('insertHTML', h) }
-  return (
-    <div className="rte">
-      <div className="rte-toolbar" onMouseDown={(e) => e.preventDefault()}>
-        <button className="rte-btn" title="Undo" onClick={() => cmd('undo')}><i className="fa-solid fa-rotate-left" /></button>
-        <button className="rte-btn" title="Redo" onClick={() => cmd('redo')}><i className="fa-solid fa-rotate-right" /></button>
-        <div className="rte-div" />
-        <select className="rte-sel" title="Font size" defaultValue="" onChange={(e) => { cmd('fontSize', e.target.value); e.target.value = '' }}><option value="" disabled>Size</option><option value="1">Small</option><option value="3">Normal</option><option value="4">Large</option><option value="5">X-Large</option></select>
-        <div className="rte-div" />
-        <button className="rte-btn" title="Bold" onClick={() => cmd('bold')}><b>B</b></button>
-        <button className="rte-btn" title="Underline" onClick={() => cmd('underline')}><u>U</u></button>
-        <button className="rte-btn" title="Italic" onClick={() => cmd('italic')}><i>I</i></button>
-        <button className="rte-btn" title="Strikethrough" onClick={() => cmd('strikeThrough')}><s>S</s></button>
-        <button className="rte-btn" title="Text colour" onClick={color} style={{ color: '#DC2626', fontWeight: 800, textDecoration: 'underline' }}>A</button>
-        <div className="rte-div" />
-        <button className="rte-btn" title="Align left" onClick={() => cmd('justifyLeft')}><i className="fa-solid fa-align-left" /></button>
-        <button className="rte-btn" title="Align center" onClick={() => cmd('justifyCenter')}><i className="fa-solid fa-align-center" /></button>
-        <button className="rte-btn" title="Align right" onClick={() => cmd('justifyRight')}><i className="fa-solid fa-align-right" /></button>
-        <div className="rte-div" />
-        <button className="rte-btn" title="Numbered list" onClick={() => cmd('insertOrderedList')}><i className="fa-solid fa-list-ol" /></button>
-        <button className="rte-btn" title="Bullet list" onClick={() => cmd('insertUnorderedList')}><i className="fa-solid fa-list-ul" /></button>
-        <button className="rte-btn" title="Insert table" onClick={table}><i className="fa-solid fa-table-cells" /></button>
-        <button className="rte-btn" title="Insert link" onClick={link}><i className="fa-solid fa-link" /></button>
-        <div className="rte-div" />
-        <button className="rte-btn" title="Clear formatting" onClick={() => cmd('removeFormat')} style={{ fontSize: 11, fontWeight: 700, color: 'var(--tm)' }}>Clear</button>
-      </div>
-      <div className="rte-editor" contentEditable suppressContentEditableWarning ref={ref} data-ph={placeholder} style={minHeight ? { minHeight } : undefined} onInput={() => onChange(ref.current.innerHTML)} onBlur={() => onChange(ref.current.innerHTML)} />
-    </div>
-  )
-}
-
-function LessonViewer({ view, a, onClose }) {
-  const { unit, lesson } = view
-  return createPortal(
-    <div className="pay-ov" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
-      <div className="pay-modal" style={{ maxWidth: 680 }}>
-        <div className="pay-modal-hdr" style={{ background: 'linear-gradient(135deg,#1E3A8A,#1E40AF)' }}>
-          <div className="pay-modal-av" style={{ background: 'rgba(255,255,255,.15)' }}><i className="fa-solid fa-book-open" /></div>
-          <div><div className="pay-modal-title" style={{ color: '#fff' }}>{lesson.topic}</div><div className="pay-modal-sub" style={{ color: 'rgba(255,255,255,.85)' }}>Unit {unit.unitNo} — {unit.unitName} · {className(a, unit.classId)} · {subjectName(a, unit.subjectId)} · {lesson.duration || 45} min · {SRC[lesson.source]?.label}</div></div>
-          <button className="pay-modal-x" style={{ background: 'rgba(255,255,255,.12)', borderColor: 'rgba(255,255,255,.3)', color: '#fff' }} onClick={onClose}><i className="fa-solid fa-xmark" /></button>
-        </div>
-        <div className="pay-modal-body">
-          {lesson.sections.map((s, i) => (
-            <div className="clp-view-sec" key={i}>
-              <div className="clp-view-sec-title">{LP_SECTIONS[i]?.icon} {s.title} <span style={{ marginLeft: 'auto', fontWeight: 600, color: 'var(--tm)', fontSize: 11 }}>{s.mins} min</span></div>
-              <div className="clp-view-sec-content" dangerouslySetInnerHTML={{ __html: s.content || '—' }} />
-            </div>
-          ))}
-        </div>
-        <div className="pay-modal-foot"><button className="btn-secondary" onClick={onClose}>Close</button></div>
-      </div>
-    </div>,
-    document.body,
-  )
-}
-
-/* ════════ NOTEBOOK PLANS (units → question sets by type) ════════ */
-const stripHtml = (h) => (h || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
-const aqOrdinal = (n) => (n === 1 ? '1st' : n === 2 ? '2nd' : n === 3 ? '3rd' : `${n}th`)
-function blankItem(type) {
-  const cfg = AQ_CONFIG[type] || {}
-  switch (cfg.layout) {
-    case 'two': return { a: '', b: '' }
-    case 'match': return { colA: '', colB: '' }
-    case 'word-sentence': return { word: '', sentence: '' }
-    case 'mcq': return { question: '', opt1: '', opt2: '', opt3: '', opt4: '', correct: '' }
-    case 'fill-blanks': return { question: '', answer: '' }
-    case 'true-false': return { question: '', answer: '' }
-    case 'qa-rte': return { question: '', answer: '' }
-    case 'circle': return { statement: '', answer: '' }
-    case 'punctuation': return { question: '', answer: '' }
-    case 'rte': return Object.fromEntries(cfg.fields.map((f) => [f.key, '']))
-    default: return { text: '' }
-  }
-}
-function itemPreview(type, it) {
-  const cfg = AQ_CONFIG[type] || {}
-  switch (cfg.layout) {
-    case 'two': return `${it.a || '—'}  ${cfg.arrow}  ${it.b || '—'}`
-    case 'match': return `${it.colA || '—'}  ↔  ${it.colB || '—'}`
-    case 'word-sentence': return `${it.word || '—'} → ${it.sentence || '—'}`
-    case 'mcq': return `${it.question || '—'} (Ans: ${it.correct || '—'})`
-    case 'fill-blanks': return `${it.question || '—'} (Ans: ${it.answer || '—'})`
-    case 'true-false': return `${it.question || '—'} (Ans: ${it.answer ? (it.answer === 'true' ? 'True' : 'False') : '—'})`
-    case 'qa-rte': return `${stripHtml(it.question) || '—'}${stripHtml(it.answer) ? `  →  ${stripHtml(it.answer)}` : ''}`
-    case 'circle': return `${it.statement || '—'} (Circle: ${it.answer || '—'})`
-    case 'punctuation': return `${it.question || '—'} → ${it.answer || '—'}`
-    case 'rte': return stripHtml(it[cfg.fields[0].key]) || '—'
-    default: return it.text || '—'
-  }
-}
-const aqRowFilled = (cfg, it) => {
-  switch (cfg.layout) {
-    case 'two': return it.a.trim() || it.b.trim()
-    case 'match': return it.colA.trim() || it.colB.trim()
-    case 'word-sentence': return it.word.trim() || it.sentence.trim()
-    case 'mcq': return it.question.trim()
-    case 'fill-blanks': return it.question.trim()
-    case 'true-false': return it.question.trim()
-    case 'qa-rte': return stripHtml(it.question) || stripHtml(it.answer)
-    case 'circle': return it.statement.trim()
-    case 'punctuation': return it.question.trim()
-    case 'rte': return cfg.fields.some((f) => stripHtml(it[f.key]))
-    default: return (it.text || '').trim()
-  }
-}
-
-function NotebookPlans({ a, commit, fire }) {
-  const [classId, setClassId] = useState(String(a.classes[0]?.id || ''))
-  const [subjectId, setSubjectId] = useState(String(subjectsOfClass(a, a.classes[0]?.id)[0]?.id || ''))
-  const [openId, setOpenId] = useState(null)
-  const [openSet, setOpenSet] = useState({})
-  const [unitModal, setUnitModal] = useState(null)
-  const [aq, setAq] = useState(null)
-  const [del, setDel] = useState(null)
-
-  // Normalise defensively: any unit from older saved data may lack `questions`.
-  const units = a.notebookPlans.filter((u) => u.classId === Number(classId) && u.subjectId === Number(subjectId)).map((u) => ({ ...u, questions: u.questions || [] }))
-  const saveUnit = (data, id) => {
-    if (id) commit({ ...a, notebookPlans: a.notebookPlans.map((u) => (u.id === id ? { ...u, ...data } : u)) })
-    else { const nid = a.nextId; commit({ ...a, nextId: nid + 1, notebookPlans: [...a.notebookPlans, { id: nid, classId: Number(classId), subjectId: Number(subjectId), questions: [], ...data }] }) }
-    setUnitModal(null); fire(id ? 'Unit updated' : 'Unit added')
-  }
-  const saveQuestions = (unitId, type, mainQuestion, items, setId) => {
-    commit({ ...a, notebookPlans: a.notebookPlans.map((u) => (u.id !== unitId ? u : { ...u, questions: setId ? (u.questions || []).map((q) => (q.id === setId ? { ...q, type, mainQuestion, items } : q)) : [...(u.questions || []), { id: Date.now(), type, mainQuestion, items }] })) })
-    setAq(null); fire(setId ? 'Questions updated' : 'Questions added')
-  }
-  const delUnit = (id) => { commit({ ...a, notebookPlans: a.notebookPlans.filter((u) => u.id !== id) }); setDel(null); fire('Unit removed', 'info') }
-  const delSet = (unitId, setId) => { commit({ ...a, notebookPlans: a.notebookPlans.map((u) => (u.id === unitId ? { ...u, questions: (u.questions || []).filter((q) => q.id !== setId) } : u)) }); setDel(null); fire('Question field removed', 'info') }
-
-  const setReport = (u, q) => ({
-    title: `Notebook — ${aqLabel(q.type)}`, period: `${className(a, Number(classId))} · ${subjectName(a, Number(subjectId))}`,
-    filters: [['Unit', `${u.unitNo} — ${u.unitName}`], ['Question Type', aqLabel(q.type)], ['Items', String(q.items.length)]],
-    sections: [{ title: aqLabel(q.type), html: `${q.mainQuestion ? `<p style="font-weight:700;color:#1E3A8A;margin-bottom:6px">${esc(q.mainQuestion)}</p>` : ''}<ol style="padding-left:18px">${q.items.map((it) => `<li style="margin:4px 0">${esc(itemPreview(q.type, it))}</li>`).join('')}</ol>` }],
-  })
-  const unitReport = (u) => ({
-    title: `Notebook Plan — Unit ${u.unitNo}`, period: `${className(a, Number(classId))} · ${subjectName(a, Number(subjectId))}`,
-    filters: [['Class', className(a, Number(classId))], ['Subject', subjectName(a, Number(subjectId))], ['Unit', u.unitName], ['Question Fields', String(u.questions.length)]],
-    sections: u.questions.map((q) => ({ title: `${aqLabel(q.type)} (${q.items.length})`, html: `${q.mainQuestion ? `<p style="font-weight:700;color:#1E3A8A;margin-bottom:6px">${esc(q.mainQuestion)}</p>` : ''}<ol style="padding-left:18px">${q.items.map((it) => `<li style="margin:4px 0">${esc(itemPreview(q.type, it))}</li>`).join('')}</ol>` })),
-  })
-
-  return (
-    <div className="section-card">
-      <div className="card-header"><div><div className="card-title"><i className="fa-solid fa-book" /> Notebook Plans</div><div className="card-sub">Add notebook question fields, unit-wise, for every class and subject.</div></div></div>
-      <div style={{ padding: '14px 16px 0' }}>
-        <ClassSubjectBar a={a} classId={classId} setClassId={setClassId} subjectId={subjectId} setSubjectId={setSubjectId}>
-          <button className="btn-primary" style={{ marginLeft: 'auto' }} onClick={() => setUnitModal({ mode: 'add' })}><i className="fa-solid fa-plus" /> Add Unit</button>
-        </ClassSubjectBar>
-      </div>
-      <div style={{ padding: 16 }}>
-        {units.length === 0 ? <div className="ac-empty"><i className="fa-solid fa-book" /><div style={{ fontSize: 13, fontWeight: 700 }}>No notebook plans yet</div><div style={{ fontSize: 12, marginTop: 4 }}>Click “Add Unit”.</div></div>
-          : units.map((u, ui) => {
-            const isOpen = openId === u.id
-            const items = u.questions.reduce((n, q) => n + q.items.length, 0)
-            return (
-              <div className={`clpr-unit-card${isOpen ? ' open' : ''}`} key={u.id}>
-                <div className="clpr-unit-header" onClick={() => setOpenId(isOpen ? null : u.id)}>
-                  <div className="clpr-unit-left">
-                    <div className="clpr-unit-sno">{ui + 1}</div>
-                    <div className="clpr-unit-icon-wrap" style={{ background: 'linear-gradient(135deg,#0369A1,#0284C7)' }}><i className="fa-solid fa-book" /></div>
-                    <div><div className="clpr-unit-name">{u.unitName}</div><div className="clpr-unit-sub">Unit {u.unitNo}</div></div>
-                  </div>
-                  <div className="clpr-unit-stats">
-                    <span className="clpr-stat clpr-stat--total"><i className="fa-solid fa-layer-group" /> {u.questions.length} field{u.questions.length !== 1 ? 's' : ''}</span>
-                    <span className="clpr-stat-sep">·</span><span className="clpr-stat clpr-stat--ai"><i className="fa-solid fa-list-ol" /> {items} item{items !== 1 ? 's' : ''}</span>
-                  </div>
-                  <div className="clpr-unit-right" onClick={(e) => e.stopPropagation()}>
-                    <button className="clpr-icon-btn clpr-icon-btn--pdf" title="PDF" onClick={() => (u.questions.length ? exportReport(unitReport(u), 'pdf', fire) : fire('No questions to export', 'warn'))}><i className="fa-solid fa-file-pdf" /></button>
-                    <button className="clpr-icon-btn" title="Edit Unit" onClick={() => setUnitModal({ mode: 'edit', unit: u })}><i className="fa-solid fa-pen" /></button>
-                    <button className="clpr-icon-btn clpr-icon-btn--del" title="Delete" onClick={() => setDel({ kind: 'unit', id: u.id, name: u.unitName })}><i className="fa-solid fa-trash-can" /></button>
-                    <button className={`clpr-icon-btn clpr-icon-btn--expand${isOpen ? ' open' : ''}`} onClick={() => setOpenId(isOpen ? null : u.id)}><i className="fa-solid fa-chevron-down" /></button>
-                  </div>
-                </div>
-                {isOpen && (
-                  <div className="clpr-lessons-panel">
-                    {u.questions.length === 0 ? <div className="clpr-no-lessons"><i className="fa-solid fa-plus-circle" style={{ color: 'var(--brand)', opacity: 0.4 }} /> No question fields yet</div>
-                      : u.questions.map((q) => {
-                        const so = openSet[q.id]
-                        return (
-                          <div className="nbq-row" key={q.id}>
-                            <div className="nbq-head" onClick={() => setOpenSet((s) => ({ ...s, [q.id]: !s[q.id] }))}>
-                              <div className="nbq-ic"><i className={`fa-solid ${AQ_CONFIG[q.type]?.icon || 'fa-circle-question'}`} /></div>
-                              <div style={{ flex: 1, minWidth: 0 }}><div className="nbq-name">{aqLabel(q.type)}</div><div className="nbq-count">{q.mainQuestion ? `${q.mainQuestion} · ` : ''}{q.items.length} item{q.items.length !== 1 ? 's' : ''}</div></div>
-                              <button className="clpr-action-btn clpr-action-edit" onClick={(e) => { e.stopPropagation(); setAq({ unitId: u.id, set: q }) }}><i className="fa-solid fa-pen" /> Edit</button>
-                              <button className="clpr-action-btn clpr-action-pdf" onClick={(e) => { e.stopPropagation(); exportReport(setReport(u, q), 'pdf', fire) }}><i className="fa-solid fa-file-pdf" /> Report</button>
-                              <button className="clpr-action-btn clpr-action-del" onClick={(e) => { e.stopPropagation(); setDel({ kind: 'set', unitId: u.id, id: q.id, name: aqLabel(q.type) }) }}><i className="fa-solid fa-trash-can" /></button>
-                              <i className={`fa-solid fa-chevron-${so ? 'up' : 'down'}`} style={{ color: 'var(--tm)', marginLeft: 4 }} />
-                            </div>
-                            {so && <div className="nbq-body">{q.mainQuestion && <div className="nbq-mainq"><i className="fa-solid fa-quote-left" style={{ fontSize: 9, marginRight: 6, opacity: 0.5 }} />{q.mainQuestion}</div>}{q.items.map((it, i) => <div className="nbq-item" key={i}><span className="nbq-item-num">{i + 1}.</span><span>{itemPreview(q.type, it)}</span></div>)}</div>}
-                          </div>
-                        )
-                      })}
-                    <button className="clpr-action-btn clpr-action-edit" style={{ marginTop: 4 }} onClick={() => setAq({ unitId: u.id })}><i className="fa-solid fa-plus" /> Add Questions</button>
-                  </div>
-                )}
-              </div>
-            )
-          })}
-      </div>
-      {unitModal && <UnitModal modal={unitModal} onClose={() => setUnitModal(null)} onSave={saveUnit} onToast={fire} />}
-      {aq && <AQModal aq={aq} unitName={a.notebookPlans.find((u) => u.id === aq.unitId)?.unitName} onClose={() => setAq(null)} onSave={saveQuestions} onToast={fire} />}
-      {del && <ConfirmModal title={`Remove ${del.kind === 'unit' ? 'Unit' : 'Question Field'}?`} body={`“${del.name}” will be removed.`} onClose={() => setDel(null)} onConfirm={() => (del.kind === 'unit' ? delUnit(del.id) : delSet(del.unitId, del.id))} />}
-    </div>
-  )
-}
-
-/* ── Add Questions modal (type grid → per-type form → rows) ── */
-function AQModal({ aq, unitName, onClose, onSave, onToast }) {
-  const editing = aq.set
-  const [type, setType] = useState(editing?.type || null)
-  const [mainQ, setMainQ] = useState(editing?.mainQuestion || '')
-  const [items, setItems] = useState(() => (editing ? JSON.parse(JSON.stringify(editing.items)) : []))
-  const cfg = type ? AQ_CONFIG[type] : null
-  const isComp = type === 'comprehension'
-  const pickType = (t) => { setType(t); setItems([blankItem(t)]); setMainQ('') }
-  const addRow = () => setItems((s) => [...s, blankItem(type)])
-  const rmRow = (i) => setItems((s) => s.filter((_, j) => j !== i))
-  const setRow = (i, patch) => setItems((s) => s.map((it, j) => (j === i ? { ...it, ...patch } : it)))
-  const save = () => {
-    if (!type) return onToast('Select a question type', 'warn')
-    if (!mainQ.trim()) return onToast(isComp ? 'Enter the comprehension statement' : 'Enter the main question', 'warn')
-    const clean = items.filter((it) => aqRowFilled(cfg, it))
-    if (!clean.length) return onToast('Add at least one item', 'warn')
-    onSave(aq.unitId, type, mainQ.trim(), clean, editing?.id)
-  }
-  const rowTitle = (i) => {
-    if (cfg.layout === 'qa-rte') return `${aqOrdinal(i + 1)} Question`
-    if (cfg.layout === 'rte') return `${cfg.title} ${i + 1}`
-    return `Row ${i + 1}`
-  }
-  return createPortal(
-    <div className="pay-ov" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
-      <div className="pay-modal" style={{ maxWidth: type && ['rte', 'qa-rte'].includes(cfg.layout) ? 760 : 660 }}>
-        <div className="pay-modal-hdr" style={{ background: 'linear-gradient(135deg,#0369A1,#0284C7)' }}>
-          <div className="pay-modal-av" style={{ background: 'rgba(255,255,255,.15)' }}><i className="fa-solid fa-circle-question" /></div>
-          <div><div className="pay-modal-title" style={{ color: '#fff' }}>Add Questions</div><div className="pay-modal-sub" style={{ color: 'rgba(255,255,255,.85)' }}>{unitName || 'Select a question type'}</div></div>
-          <button className="pay-modal-x" style={{ background: 'rgba(255,255,255,.12)', borderColor: 'rgba(255,255,255,.3)', color: '#fff' }} onClick={onClose}><i className="fa-solid fa-xmark" /></button>
-        </div>
-        <div className="pay-modal-body">
-          <div style={{ fontSize: 11.5, fontWeight: 800, color: 'var(--t2)', textTransform: 'uppercase', letterSpacing: '.4px', marginBottom: 8 }}>Select Question Field</div>
-          <div className="aq-types-grid">
-            {AQ_TYPES.map((t) => <button key={t.id} className={`aq-type-btn${type === t.id ? ' active' : ''}`} onClick={() => { if (!editing) pickType(t.id) }} disabled={!!editing && editing.type !== t.id}><i className={`fa-solid ${t.icon}`} /> {t.label}</button>)}
-          </div>
-          {type && (
-            <div className="aq-form">
-              <div className="aq-form-title"><i className={`fa-solid ${cfg.icon}`} /> {cfg.title}</div>
-              <div className="aq-mq">
-                <label className="aq-mq-label">{isComp ? 'Comprehension Statement' : 'Main Question'} <span style={{ color: 'var(--err)' }}>*</span></label>
-                {isComp
-                  ? <textarea className="aq-mq-input" rows={5} value={mainQ} onChange={(e) => setMainQ(e.target.value)} placeholder="Enter the comprehension statement / passage…" />
-                  : <input className="aq-mq-input" value={mainQ} onChange={(e) => setMainQ(e.target.value)} placeholder="Enter main question (e.g. Write the opposites of the following words)" />}
-              </div>
-              <div className="aq-items-label">{isComp ? 'Questions' : 'Items'}</div>
-              {items.map((it, i) => (
-                <div className="aq-card" key={i}>
-                  <div className="aq-card-top">
-                    <span className="aq-row-num">{i + 1}</span>
-                    <span className="aq-card-ttl">{rowTitle(i)}</span>
-                    <button className="aq-card-del" title="Remove" onClick={() => rmRow(i)}><i className="fa-solid fa-trash-can" /></button>
-                  </div>
-
-                  {cfg.layout === 'two' && (
-                    <div className="aq-two">
-                      <div className="aq-fld"><label>{cfg.a}</label><input className="ac-input" value={it.a} onChange={(e) => setRow(i, { a: e.target.value })} placeholder={cfg.a} /></div>
-                      <span className="aq-two-arrow">{cfg.arrow}</span>
-                      <div className="aq-fld"><label>{cfg.b}</label><input className="ac-input" value={it.b} onChange={(e) => setRow(i, { b: e.target.value })} placeholder={cfg.b} /></div>
-                    </div>
-                  )}
-
-                  {cfg.layout === 'match' && (<>
-                    <div className="aq-two">
-                      <div className="aq-fld"><label style={{ color: '#0369A1' }}>Column A</label><input className="ac-input" value={it.colA} onChange={(e) => setRow(i, { colA: e.target.value })} placeholder="e.g. Apple, Cat, Big…" /></div>
-                      <span className="aq-two-arrow">↔</span>
-                      <div className="aq-fld"><label style={{ color: '#6D28D9' }}>Column B (Correct Match)</label><input className="ac-input" value={it.colB} onChange={(e) => setRow(i, { colB: e.target.value })} placeholder="e.g. Fruit, Animal, Small…" /></div>
-                    </div>
-                    <div className="aq-note"><i className="fa-solid fa-circle-info" /> Correct matching shown here for setup. While writing on the board, shuffle Column B manually.</div>
-                  </>)}
-
-                  {cfg.layout === 'word-sentence' && (
-                    <div className="aq-ws">
-                      <div className="aq-fld" style={{ flex: '0 0 160px' }}><label>Word</label><input className="ac-input" value={it.word} onChange={(e) => setRow(i, { word: e.target.value })} placeholder="Enter word" /></div>
-                      <span className="aq-two-arrow" style={{ alignSelf: 'flex-end', paddingBottom: 9 }}>→</span>
-                      <div className="aq-fld" style={{ flex: 1 }}><label>Sentence</label><textarea className="ac-input" rows={2} value={it.sentence} onChange={(e) => setRow(i, { sentence: e.target.value })} placeholder="Write a sentence using this word…" /></div>
-                    </div>
-                  )}
-
-                  {cfg.layout === 'mcq' && (<>
-                    <div className="aq-fld"><label>Question</label><input className="ac-input" value={it.question} onChange={(e) => setRow(i, { question: e.target.value })} placeholder="Enter question text…" /></div>
-                    <div className="aq-mcq-grid">
-                      {[['opt1', 'A'], ['opt2', 'B'], ['opt3', 'C'], ['opt4', 'D']].map(([key, ltr]) => (
-                        <div className="aq-opt" key={key}><span className="aq-opt-badge">{ltr}</span><input value={it[key]} onChange={(e) => setRow(i, { [key]: e.target.value })} placeholder={`Option ${ltr}`} /></div>
-                      ))}
-                    </div>
-                    <div className="aq-correct"><i className="fa-solid fa-circle-check" /><span>CORRECT ANSWER</span><input value={it.correct} onChange={(e) => setRow(i, { correct: e.target.value })} placeholder="A / B / C / D or exact text" /></div>
-                  </>)}
-
-                  {cfg.layout === 'fill-blanks' && (<>
-                    <div className="aq-fld"><label>Statement (use ___ for blank)</label><textarea className="ac-input" rows={2} value={it.question} onChange={(e) => setRow(i, { question: e.target.value })} placeholder="Write the statement here. Use ___ where the blank should be…" /></div>
-                    <div className="aq-answer-strip"><i className="fa-solid fa-key" /><label>Blank Answer:</label><input className="ac-input" style={{ maxWidth: 240 }} value={it.answer} onChange={(e) => setRow(i, { answer: e.target.value })} placeholder="One word…" /></div>
-                  </>)}
-
-                  {cfg.layout === 'true-false' && (<>
-                    <div className="aq-fld"><label>Statement</label><input className="ac-input" value={it.question} onChange={(e) => setRow(i, { question: e.target.value })} placeholder="Write the statement — students mark True or False…" /></div>
-                    <div className="aq-tf">
-                      <button className={`aq-tf-btn t${it.answer === 'true' ? ' sel' : ''}`} onClick={() => setRow(i, { answer: 'true' })}><i className="fa-solid fa-check" /> True</button>
-                      <button className={`aq-tf-btn f${it.answer === 'false' ? ' sel' : ''}`} onClick={() => setRow(i, { answer: 'false' })}><i className="fa-solid fa-xmark" /> False</button>
-                    </div>
-                    <div className="aq-tf-hint">{it.answer ? <>Answer marked: <strong>{it.answer === 'true' ? 'True' : 'False'}</strong></> : 'Click True or False to mark the correct answer'}</div>
-                  </>)}
-
-                  {cfg.layout === 'qa-rte' && (<>
-                    <div className="aq-rte-field"><label>{cfg.qLabel || 'Question'}</label><RichEditor value={it.question} onChange={(html) => setRow(i, { question: html })} placeholder="Write the question here…" minHeight={80} /></div>
-                    <div className="aq-rte-field" style={{ marginTop: 12 }}><label>{cfg.aLabel || 'Answer'}</label><RichEditor value={it.answer} onChange={(html) => setRow(i, { answer: html })} placeholder="Write the answer here…" minHeight={80} /></div>
-                  </>)}
-
-                  {cfg.layout === 'circle' && (<>
-                    <div className="aq-fld"><label>Statement / Sentence with word choices</label><input className="ac-input" value={it.statement} onChange={(e) => setRow(i, { statement: e.target.value })} placeholder="e.g. The cat is (big / small / tall)." /></div>
-                    <div className="aq-answer-strip"><i className="fa-regular fa-circle-dot" /><label>Correct Word to Circle:</label><input className="ac-input" style={{ maxWidth: 240 }} value={it.answer} onChange={(e) => setRow(i, { answer: e.target.value })} placeholder="Type the correct word…" /></div>
-                  </>)}
-
-                  {cfg.layout === 'punctuation' && (<>
-                    <div className="aq-fld"><label>Unpunctuated Sentence</label><textarea className="ac-input" rows={2} value={it.question} onChange={(e) => setRow(i, { question: e.target.value })} placeholder="Write the sentence without punctuation (e.g. the cat sat on the mat it was happy)" /></div>
-                    <div className="aq-fld" style={{ marginTop: 10 }}><label><i className="fa-solid fa-pen-nib" style={{ marginRight: 5, color: '#0891B2' }} />Correctly Punctuated (Answer)</label><textarea className="ac-input" rows={2} value={it.answer} onChange={(e) => setRow(i, { answer: e.target.value })} placeholder="Write the correctly punctuated sentence…" /></div>
-                  </>)}
-
-                  {cfg.layout === 'rte' && cfg.fields.map((f) => (
-                    <div className="aq-rte-field" key={f.key}><label>{f.label}</label><RichEditor value={it[f.key]} onChange={(html) => setRow(i, { [f.key]: html })} placeholder={`Write the ${f.label.toLowerCase()}…`} minHeight={90} /></div>
-                  ))}
-                </div>
-              ))}
-              <button className="aq-add-more" onClick={addRow}><i className="fa-solid fa-plus" /> {type === 'stories' ? 'Add More Stories' : type === 'essays' ? 'Add More Essays' : 'Add More'}</button>
-            </div>
-          )}
-        </div>
-        <div className="pay-modal-foot"><button className="btn-secondary" onClick={onClose}>Cancel</button><button className="btn-primary" onClick={save}><i className="fa-solid fa-floppy-disk" /> Save Questions</button></div>
       </div>
     </div>,
     document.body,
@@ -1948,56 +1629,6 @@ function ResourceModal({ a, modal, onClose, onSave, onToast }) {
   )
 }
 
-/* ── A4 branded export (PDF print / Word download) ── */
-const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
-function buildReportHTML(report) {
-  const chain = loadChainProfile()
-  const now = new Date()
-  const dateStr = now.toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' }) + ' · ' + now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
-  const logo = chain.logo ? `<img class="rep-logo-img" src="${chain.logo}" alt="">` : `<div class="rep-logo">${esc(chainInitials(chain.chainName))}</div>`
-  const filters = (report.filters || []).map(([l, v]) => `<span><b>${esc(l)}:</b> ${esc(v)}</span>`).join('')
-  const sectionsHtml = report.sections.map((sec) => {
-    if (sec.html != null) return `<div class="rep-secttl">${esc(sec.title || '')}</div><div class="rep-html">${sec.html}</div>`
-    const thead = sec.columns.map((c) => `<th class="${c.a === 'r' ? 'r' : c.a === 'c' ? 'c' : ''}">${esc(c.label)}</th>`).join('')
-    const tbody = sec.rows.length ? sec.rows.map((row) => `<tr>${row.map((cell, i) => `<td class="${sec.columns[i].a === 'r' ? 'r' : sec.columns[i].a === 'c' ? 'c' : ''}">${esc(cell)}</td>`).join('')}</tr>`).join('') : `<tr><td colspan="${sec.columns.length}" style="text-align:center;color:#999;padding:14px">No records.</td></tr>`
-    return `${sec.title ? `<div class="rep-secttl">${esc(sec.title)}</div>` : ''}<table class="data"><thead><tr>${thead}</tr></thead><tbody>${tbody}</tbody></table>`
-  }).join('')
-  const header = `<div class="rep-head">${logo}<div class="rep-head-txt"><div class="rep-name">${esc(chain.chainName)}</div><div class="rep-org-line">${esc(chain.address || '')}</div><div class="rep-org-line">${esc(chain.contact || '')}${chain.email ? ' · ' + esc(chain.email) : ''}</div></div><div class="rep-meta"><div class="rep-title">${esc(report.title)}</div><div class="rep-period">${esc(report.period || '')}</div></div></div>${filters ? `<div class="rep-filters">${filters}</div>` : ''}`
-  const footer = `<div class="rep-foot"><span>${esc(chain.chainName)}${chain.contact ? ' · ' + esc(chain.contact) : ''}</span><span>Computer-generated · ${esc(report.title)} · ${esc(dateStr)}</span></div>`
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${esc(chain.chainName)} — ${esc(report.title)}</title>
-<style>*{box-sizing:border-box;margin:0;padding:0}html,body{background:#e9eef6}body{font-family:'Plus Jakarta Sans',Arial,sans-serif;color:#111;font-size:10.5px;line-height:1.4}
-.a4{width:210mm;min-height:297mm;margin:14px auto;background:#fff;padding:13mm;box-shadow:0 6px 28px rgba(15,23,42,.18)}
-.wrap{width:100%;border-collapse:collapse}.wrap > thead{display:table-header-group}.wrap > tfoot{display:table-footer-group}
-.rep-head{display:flex;align-items:flex-start;gap:13px;border-bottom:2.5px solid #1E3A8A;padding-bottom:10px;margin-bottom:10px}
-.rep-logo{width:48px;height:48px;border:2px solid #1E3A8A;border-radius:12px;display:flex;align-items:center;justify-content:center;font-weight:800;color:#1E3A8A;font-size:15px;flex-shrink:0}
-.rep-logo-img{width:48px;height:48px;border-radius:12px;object-fit:cover;flex-shrink:0;border:1px solid #e2e8f0}
-.rep-head-txt{flex:1}.rep-name{font-size:18px;font-weight:800;color:#1E3A8A;line-height:1.1}.rep-org-line{font-size:10.5px;color:#555;margin-top:2px}
-.rep-meta{text-align:right}.rep-title{font-size:13px;font-weight:800;color:#1E3A8A}.rep-period{font-size:11px;color:#555;margin-top:2px}
-.rep-filters{display:flex;flex-wrap:wrap;gap:5px 20px;font-size:10.5px;color:#333;margin-bottom:12px;background:#F1F5FB;padding:9px 13px;border-radius:6px}
-.rep-secttl{font-size:12px;font-weight:800;color:#1E3A8A;margin:14px 0 6px;padding-bottom:4px;border-bottom:1px solid #cdd7ea}
-.data{width:100%;border-collapse:collapse;font-size:10px;margin-bottom:4px}
-.data th{background:#1E3A8A;color:#fff;padding:6px 8px;text-align:left;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.4px}
-.data th.r,.data td.r{text-align:right}.data th.c,.data td.c{text-align:center}
-.data td{padding:5px 8px;border-bottom:1px solid #e5e9f2;vertical-align:top}.data tbody tr:nth-child(even) td{background:#f8fafc}
-.rep-foot{display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-top:14px;font-size:9px;color:#888;border-top:1px solid #e5e9f2;padding-top:8px}
-.rep-html{font-size:11px;color:#333;line-height:1.6;margin-bottom:8px}.rep-html ul,.rep-html ol{padding-left:20px;margin:5px 0}.rep-html table{border-collapse:collapse;margin:6px 0;width:100%}.rep-html td,.rep-html th{border:1px solid #cdd7ea;padding:4px 7px;font-size:10px}.rep-html p{margin:4px 0}
-@media print{html,body{background:#fff}.a4{width:auto;min-height:0;margin:0;padding:0;box-shadow:none}@page{size:A4 portrait;margin:13mm}}</style></head>
-<body><div class="a4"><table class="wrap"><thead><tr><td>${header}</td></tr></thead><tfoot><tr><td>${footer}</td></tr></tfoot><tbody><tr><td>${sectionsHtml}</td></tr></tbody></table></div>__SCRIPT__</body></html>`
-}
-function exportReport(report, fmt, onToast, bw) {
-  let html = buildReportHTML(report)
-  if (bw) html = html.replace(/#1E3A8A/g, '#333').replace(/#1E40AF/g, '#555').replace(/#F1F5FB/g, '#f1f1f1').replace(/#cdd7ea/g, '#ccc')
-  if (fmt === 'word') {
-    const blob = new Blob([html.replace('__SCRIPT__', '')], { type: 'application/msword' })
-    const url = URL.createObjectURL(blob); const aEl = document.createElement('a')
-    aEl.href = url; aEl.download = `${report.title.replace(/[^\w]+/g, '_')}.doc`; document.body.appendChild(aEl); aEl.click(); document.body.removeChild(aEl)
-    setTimeout(() => URL.revokeObjectURL(url), 1500); onToast?.('Word document downloaded', 'success'); return
-  }
-  const w = window.open('', '_blank')
-  if (!w) { onToast?.('Allow pop-ups to download / print the report', 'warn'); return }
-  w.document.open(); w.document.write(html.replace('__SCRIPT__', '<script>window.onload=function(){setTimeout(function(){window.focus();window.print();},300);};<\/script>')); w.document.close()
-}
-
 function ComingNext({ label }) {
   return (
     <div className="section-card">
@@ -2010,15 +1641,15 @@ function ComingNext({ label }) {
   )
 }
 
-function ConfirmModal({ title, body, onClose, onConfirm }) {
+function ConfirmModal({ title, body, busy, onClose, onConfirm }) {
   return createPortal(
-    <div className="ov" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
+    <div className="ov" onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) onClose() }}>
       <div className="modal" style={{ maxWidth: 420 }}>
         <div className="modal-body" style={{ textAlign: 'center', padding: '40px 30px' }}>
           <div className="confirm-icon" style={{ background: 'rgba(220,38,38,.1)', border: '2px solid rgba(220,38,38,.25)', color: '#DC2626' }}><i className="fa-solid fa-trash-can" /></div>
           <div className="confirm-title">{title}</div>
           <div className="confirm-sub">{body}</div>
-          <div className="confirm-btns"><button className="btn-secondary" onClick={onClose}>Cancel</button><button className="btn-danger" onClick={onConfirm}><i className="fa-solid fa-trash-can" /> Delete</button></div>
+          <div className="confirm-btns"><button className="btn-secondary" onClick={onClose} disabled={busy}>Cancel</button><button className="btn-danger" onClick={onConfirm} disabled={busy}><i className={`fa-solid ${busy ? 'fa-spinner fa-spin' : 'fa-trash-can'}`} /> {busy ? 'Deleting…' : 'Delete'}</button></div>
         </div>
       </div>
     </div>,

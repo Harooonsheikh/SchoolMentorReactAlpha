@@ -57,7 +57,7 @@ const fmtDate = (v) => {
 const erpLabel = (s) => (s.networkPermission ? 'Active' : 'Inactive')
 
 export default function Settings() {
-  const [mainTab, setMainTab] = useState('profile')
+  const [mainTab, setMainTab] = useState('classes')
   const [editing, setEditing] = useState(false)
   const [schoolsTab, setSchoolsTab] = useState('pending')
 

@@ -256,3 +256,82 @@ export function saveResources(list) {
   try { localStorage.setItem(RES_KEY, JSON.stringify(list)); return true } catch { return false }
 }
 export const nextResourceId = (list) => (list.reduce((m, r) => Math.max(m, r.id), 0) || 0) + 1
+
+/* ═══════════════ Network ka asli dhancha (LaunchSetup API) ═══════════════
+   Classes & Subjects ab Settings me localStorage par nahi banti — wo
+   networkID ki base par ERP ke LaunchSetup par save hoti hain (dekhein
+   src/api/academicsSetupApi.js). Baqi Academics module abhi bhi isi store
+   se classes/subjects padhta hai, is liye load hote hi server ka dhancha
+   yahan mirror kar diya jata hai. Content slices (lesson plans, textbooks
+   waghera) ko haath nahi lagta. */
+
+export const subjectKey = (name) => String(name ?? '').trim().toLowerCase()
+
+/* Subject ka local id uske NAAM se banta hai, server ki subjectID se nahi:
+   aik hi subject har class ke neeche apni alag row rakhta hai, jabke
+   Academics module ko poore chain me aik hi id chahiye. Naam se bana id
+   sthir rehta hai — row delete ho kar dobara bane tab bhi wahi id. */
+export function subjectIdOf(name) {
+  const k = subjectKey(name)
+  let h = 0x811c9dc5
+  for (let i = 0; i < k.length; i += 1) {
+    h ^= k.charCodeAt(i)
+    h = Math.imul(h, 0x01000193)
+  }
+  return ((h >>> 0) % 1000000000) + 1
+}
+
+/* API rows → wahi shape jo screen aur store use karte hain.
+   staged = wo subject naam jo abhi kisi class ko assign nahi hue (server par
+   gradeless subject rakhne ki koi jagah nahi, is liye wo local rehte hain). */
+export function buildAcademicStructure({ classes = [], subjectRows = [], staged = [] } = {}) {
+  const byKey = new Map()
+  const push = (name) => {
+    const k = subjectKey(name)
+    if (k && !byKey.has(k)) byKey.set(k, String(name).trim())
+  }
+  subjectRows.forEach((r) => push(r.name))
+  staged.forEach(push)
+
+  const subjects = [...byKey.values()]
+    .sort((x, y) => x.localeCompare(y))
+    .map((name) => ({ id: subjectIdOf(name), name }))
+
+  const classSubjects = {}
+  classes.forEach((c) => { classSubjects[c.id] = [] })
+  subjectRows.forEach((r) => {
+    const list = classSubjects[r.classId] || (classSubjects[r.classId] = [])
+    const id = subjectIdOf(r.name)
+    if (!list.includes(id)) list.push(id)
+  })
+  return { subjects, classSubjects }
+}
+
+/** Server ka dhancha store me likh do — Academics module wahin se padhta hai. */
+export function mirrorAcademicStructure({ classes = [], subjects = [], classSubjects = {} } = {}) {
+  const a = loadAcademics()
+  saveAcademics({
+    ...a,
+    classes: classes.map((c) => ({ id: c.id, name: c.name })),
+    subjects,
+    classSubjects,
+  })
+}
+
+/* Subject catalog (local) — wo subject naam jo add to ho gaye magar abhi kisi
+   class ko assign nahi hue. API me gradeless subject rakhne ki koi jagah nahi
+   (har subject row aik gradeID ke neeche hoti hai), is liye ye naam network ke
+   hisab se yahan rehte hain aur assign hote hi asli row ban jate hain. */
+const SUBJ_CATALOG_KEY = 'csp_subject_catalog'
+const catalogKey = (networkId) => `${SUBJ_CATALOG_KEY}_${Number(networkId) || 0}`
+
+export function loadSubjectCatalog(networkId) {
+  try {
+    const d = JSON.parse(localStorage.getItem(catalogKey(networkId)))
+    return Array.isArray(d) ? d.filter((n) => subjectKey(n)) : []
+  } catch { return [] }
+}
+
+export function saveSubjectCatalog(networkId, names) {
+  try { localStorage.setItem(catalogKey(networkId), JSON.stringify(names)) } catch { /* quota */ }
+}

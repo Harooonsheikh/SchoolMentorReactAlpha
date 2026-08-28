@@ -111,4 +111,32 @@ export const ENDPOINTS = {
     connectedSchools: '/settings/connected-schools',
     contentSource: '/settings/content-source',
   },
+
+  /* ERP ka LaunchSetup — Settings ▸ Classes & Subjects yahan LIVE hai.
+     Ye raste ERP_API_BASE par jate hain (axios client par nahi), dekhein
+     src/api/academicsSetupApi.js. Classes/subjects networkID ki base par
+     save aur load hoti hain; branchID wale raste school ke apne data ke
+     liye hain (School Payments ka fee-head setup). */
+  launchSetup: {
+    saveGrade: '/api/LaunchSetup/save-grade',
+    gradesByNetwork: (networkId) => `/api/LaunchSetup/get-grades-by-network/${networkId}`,
+    gradesByBranch: (branchId) => `/api/LaunchSetup/get-grades-by-branch/${branchId}`,
+    deleteGrade: (id) => `/api/LaunchSetup/delete-grade/${id}`,
+    saveSubject: '/api/LaunchSetup/save-subject',
+    subjectsByNetworkGrade: (networkId, gradeId) => `/api/LaunchSetup/get-subjects-by-network-grade/${networkId}/${gradeId}`,
+    deleteSubject: (id) => `/api/LaunchSetup/delete-subject/${id}`,
+  },
+
+  /* ERP ka Activity Calendar — Academics ▸ Activity Calendar yahan LIVE hai.
+     Ye raste bhi ERP_API_BASE par jate hain (axios client par nahi), dekhein
+     src/api/activityCalendarApi.js. Chain ki activities networkID ki base par
+     chalti hain: har call me branchID aur sessionYearID 0 jate hain, aur
+     parhne ke liye `...network` wale GET raste. branchID/SessionYearID wale
+     raste school ke apne calendar ke liye hain (ERP khud unhi ko use karta hai). */
+  activityCalendar: {
+    crud: '/api/activitycalendarcrud',
+    byNetwork: (networkId, sessionYearId = 0, pageNo = 1) => `/api/getactivitycalendarbynetwork?NetworkID=${networkId}&SessionYearID=${sessionYearId}&pageNo=${pageNo}`,
+    byMonthNetwork: (networkId, month, sessionYearId = 0, pageNo = 1) => `/api/getactivitycalendarbymonthnetwork?NetworkID=${networkId}&month=${month}&SessionYearID=${sessionYearId}&pageNo=${pageNo}`,
+    byMonthAndYearNetwork: (networkId, month, year, sessionYearId = 0, pageNo = 1) => `/api/getactivitycalendarbymonthandyearnetwork?NetworkID=${networkId}&month=${month}&year=${year}&SessionYearID=${sessionYearId}&pageNo=${pageNo}`,
+  },
 }
