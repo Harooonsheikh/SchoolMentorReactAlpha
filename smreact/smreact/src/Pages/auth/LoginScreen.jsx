@@ -241,6 +241,19 @@ export default function LoginScreen({ onLogin, onSignup }) {
       return;
     }
 
+    /* Isi tab me pehle koi NETWORK login hua ho to uski `net_` keys pari reh
+       jati hain. School user ke liye wo sirf gumraah karti hain — aur ERP ka
+       view-only guard (dekhein apiConfig ka isViewOnlyAccount) unhe dekh kar
+       school user ko bhi read-only samajh leta. Is liye pehle saaf karo.
+       (Network wala raasta bhi isi tarah ERP ki keys hata deta hai.) */
+    try {
+      ['net_token', 'net_accountType', 'net_UserID', 'net_displayName', 'net_userName', 'net_schoolNetwork']
+        .forEach((k) => sessionStorage.removeItem(k));
+      /* Pichhli branch ka chain-membership jawab bhi hata do — nayi branch ka
+         apna hisaab hoga (dekhein erp/services/chainBranch.js). */
+      sessionStorage.removeItem('sm_chain_branch');
+    } catch (_) { /* private mode */ }
+
     if (data?.branchID) {
       sessionStorage.setItem("branchID", data.branchID);
     }

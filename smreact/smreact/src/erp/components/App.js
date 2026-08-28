@@ -1,7 +1,8 @@
-import React, { lazy, Suspense, useEffect, useState } from 'react';
+import React, { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import Tooltip from './Tooltip';
 import RouteFallback from '../shared/RouteFallback';
 import SystemDialogs from '../shared/SystemDialogs';
+import ViewOnlyGuard, { VIEW_ONLY_TIP } from '../shared/ViewOnlyGuard';
 // eslint-disable-next-line no-unused-vars
 import ComingSoon from '../shared/ComingSoon';
 import { SettingsProvider, TopbarSessionPill } from '../pages/Settings/settingsStore';
@@ -219,7 +220,7 @@ export default function App() {
   const { isActive: isModuleActive, ready: modulesReady } = useModules();
   /* Logged-in user ki module-level access (School Head → sab allowed; warna API
      permissions ke hisaab se). Jis module me koi access nahi, wo nav se hat jata hai. */
-  const { canModule, fullAccess, ready: permsReady } = usePermissions();
+  const { canModule, fullAccess, ready: permsReady, readOnly } = usePermissions();
   const navItemVisible = (navId) => {
     /* Jab tak school ka module-activation aur user ki permissions dono na
        aa jayen, koi bhi nav item render nahi hota. Warna jo module off hai
@@ -286,6 +287,21 @@ export default function App() {
     setToasts(prev => [...prev, { id, msg, type }]);
     setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3000);
   };
+
+  /* View-only (chain) account ka toast. Callback ka pata BADALNA nahi chahiye
+     — ViewOnlyGuard ka effect isi par chalta hai, aur har render par naya
+     function dene se wo DOM observer baar baar utaarta-lagata rehta. Is liye
+     ref ke zariye hamesha taza pushToast, aur khud callback sthir.
+     Ek dabane par ek hi toast — 1.5s me dobara nahi. */
+  const toastRef = useRef(pushToast);
+  toastRef.current = pushToast;
+  const lastViewOnlyToast = useRef(0);
+  const notifyViewOnly = useCallback(() => {
+    const now = Date.now();
+    if (now - lastViewOnlyToast.current < 1500) return;
+    lastViewOnlyToast.current = now;
+    if (toastRef.current) toastRef.current(VIEW_ONLY_TIP, 'error');
+  }, []);
 
   /* Session guard: if the login session is cleared (token / branchID removed
      from sessionStorage), the next API action anywhere in the ERP shows a
@@ -451,6 +467,12 @@ export default function App() {
                 {userName}
               </div>
               <div style={{ fontSize: 9.5, color: '#9CA3AF' }}>{userRole}</div>
+              {/* Chain account — buttons kyun band hain, user ko yahin nazar aa jaye. */}
+              {readOnly && (
+                <div style={{ marginTop: 3, display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 6px', borderRadius: 999, fontSize: 8.5, fontWeight: 800, letterSpacing: '.02em', color: '#B45309', background: 'rgba(217,119,6,.12)', border: '1px solid rgba(217,119,6,.28)' }}>
+                  <i className="fa-solid fa-eye" style={{ fontSize: 7.5 }}></i> VIEW ONLY
+                </div>
+              )}
             </div>
           </div>
 
@@ -671,6 +693,9 @@ export default function App() {
         {/* System surfaces (slow / offline / server-500) — poore ERP par, real
             network conditions par khud dikhte hain (fetch-wrapper events). */}
         <SystemDialogs toast={pushToast} />
+
+        {/* Chain account — poore ERP ke action buttons band (sirf dekhna). */}
+        <ViewOnlyGuard active={readOnly} onBlocked={notifyViewOnly} />
 
         {/* ═════════ PROFILE MODAL (lazy-loaded on first open) ═════════ */}
         {/* The lazy ProfileModal chunk is fetched only when the user

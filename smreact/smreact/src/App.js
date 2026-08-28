@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import './App.css';
 import { useAppState } from './hooks/useAppState';
 import Sidebar from './components/Sidebar';
@@ -18,11 +18,25 @@ import LoginScreen from './Pages/auth/LoginScreen';
 import SignupFlow from './Pages/auth/SignupFlow';
 import { isErpUnlocked } from './utils/erp';
 import ErpApp from './erp/App';
+import ViewOnlyGuard, { VIEW_ONLY_TIP, useViewOnly } from './erp/shared/ViewOnlyGuard';
 import './styles/globals.css';
 import './styles/tokens.css';
 import Tooltip from '../src/erp/components/Tooltip';
 function AppShell({ user, onLogout, onOpenErp }) {
   const state = useAppState();
+  /* Chain ka hissa? To Launch Setup par bhi kuch save/delete nahi hoga. */
+  const viewOnly = useViewOnly();
+  const showToastRef = useRef(state.showToast);
+  showToastRef.current = state.showToast;
+  const lastViewOnlyToast = useRef(0);
+  /* Callback ka pata sthir rehna chahiye — ViewOnlyGuard ka DOM observer isi
+     par chalta hai. Ek dabane par ek hi toast (1.5s ki rok). */
+  const notifyViewOnly = useCallback(() => {
+    const now = Date.now();
+    if (now - lastViewOnlyToast.current < 1500) return;
+    lastViewOnlyToast.current = now;
+    if (showToastRef.current) showToastRef.current(VIEW_ONLY_TIP, 'error');
+  }, []);
   const [erpOpen, setErpOpen] = useState(false);
   const [successState, setSuccessState] = useState({ open: false, title: '', msg: '', detail: '' });
   const [errorState, setErrorState] = useState({ open: false, fields: [] });
@@ -239,6 +253,9 @@ setLaunchSetup(launchSetup)
       </main>
 
       {/* Global components */}
+      {/* Chain wale school par Launch Setup bhi sirf dekhne ke liye — ye screen
+          ERP shell se bahar hai, is liye guard yahan alag se lagta hai. */}
+      <ViewOnlyGuard active={viewOnly} onBlocked={notifyViewOnly} />
       <ToastContainer toasts={state.toasts} />
       <ERPDialog open={erpOpen} onClose={() => setErpOpen(false)} showToast={state.showToast} onOpenErp={onOpenErp} />
       <SuccessDialog

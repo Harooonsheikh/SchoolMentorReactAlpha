@@ -238,6 +238,60 @@ function isAuthUrl(url) {
   return /\/(Auth|Account)\/|[/-](login|signin|signup|register|refresh|forgot|reset|send-otp)/i.test(String(url || ''));
 }
 
+// ── Chain (view-only) account ─────────────────────────────────────
+// Chain / network ka account poora ERP DEKH sakta hai, magar us me koi
+// tabdeeli nahi kar sakta. Rok do jagah lagti hai:
+//   1. UI par  — PermissionsContext ka `readOnly` (buttons band)
+//   2. Yahan   — koi bhi likhne wali API call chalti hi nahi, chahe kisi
+//                screen ka button permission check kiye baghair chalta ho.
+// Doosri parat is liye zaroori hai ke ERP ke saare modules abhi permission
+// gating par nahi aaye — un par bhi "koi action perform na ho" pura ho.
+
+export const READ_ONLY_MSG = 'View only — a chain account cannot make changes here.';
+
+/** Kya mojooda session view-only hai? Do soortein: */
+export function isViewOnlyAccount() {
+  try {
+    /* 1. BRANCH chain ka hissa hai — asal wajah. Chain-Management API se
+          pata chalta hai aur session me sambhal liya jata hai (dekhein
+          erp/services/chainBranch.js). Branch ke apne record me is ka koi
+          khana nahi, is liye `accountType` par bharosa nahi kiya ja sakta:
+          chain wale school ka user bhi "School Head" hi hota hai. */
+    if (sessionStorage.getItem('sm_chain_branch') === '1') return true;
+
+    /* 2. Khud chain/network ka account ERP me aa jaye. */
+    const acct = String(sessionStorage.getItem('accountType') || '').trim().toLowerCase();
+    if (/\b(chain|network)\b/.test(acct)) return true;
+    /* Network login apni keys `net_` prefix ke sath rakhta hai (dekhein LoginScreen). */
+    return String(sessionStorage.getItem('net_accountType') || '').trim().toLowerCase() === 'network';
+  } catch (e) { return false; }
+}
+
+/* Padhne wale POST — har POST likhta nahi hai. ERP ke kai "manage" endpoints
+   POST par `action:"get"` bhejte hain, aur kuch reports filters POST karti hain.
+   Inhe rokna view-only user ko khali screen dikha deta, is liye teen soorton
+   me POST bhi guzarne diya jaata hai. */
+const READ_ACTIONS = /^(get|getall|getbyid|getbybranch|getbynetwork|list|search|view|report|load|fetch|summary)/i;
+/* Sirf tab jab raste ka koi HISSA in lafzon se SHURU ho — `/get-…`, `/report-header`.
+   Beech me aane wala lafz nahi ginta, warna `/save-fee-report` jaisa likhne wala
+   endpoint bhi "read" ban jata. */
+const READ_URLS = /(^|\/)(get|report|search|list|summary|dashboard|view|export|print|download)[a-z0-9_-]*(\/|\?|$)/i;
+
+function isReadRequest(url, init) {
+  const method = String((init && init.method) || 'GET').toUpperCase();
+  if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return true;
+  if (READ_URLS.test(String(url || ''))) return true;
+  const body = init && init.body;
+  if (typeof body === 'string' && body.length < 100000) {
+    try {
+      const parsed = JSON.parse(body);
+      const action = parsed && parsed.action;
+      if (action && READ_ACTIONS.test(String(action))) return true;
+    } catch (e) { /* JSON nahi (FormData / plain text) → likhne wali samjho */ }
+  }
+  return false;
+}
+
 /** Turn the guard's enforcement on/off. The ERP switches it OFF when it
     unmounts so the login/signup screens (no session yet) aren't affected. */
 export function setSessionGuardActive(on) {
@@ -253,14 +307,39 @@ export function setSessionGuardActive(on) {
 export function installSessionGuard({ onExpired } = {}) {
   if (typeof window === 'undefined') return;
   window.__smSessionGuardActive = true;
-  if (window.__smSessionGuard) return;   // already wrapped — just re-activated above
+  if (onExpired) _onExpired = onExpired;
+  ensureFetchWrapper();
+}
+
+/**
+ * View-only rok ko alag se on/off karna.
+ *
+ * Ye session guard se JUDA hai kyunke Launch Setup ERP shell se BAHAR chalta
+ * hai — wahan session guard band hota hai (`setSessionGuardActive(false)` ERP
+ * ke unmount par), magar chain wale school par likhne ki rok wahan bhi lagni
+ * chahiye.
+ */
+export function setViewOnlyActive(on) {
+  if (typeof window === 'undefined') return;
+  window.__smViewOnlyActive = !!on;
+  if (on) ensureFetchWrapper();
+}
+
+/* Session khatam hone par kya karna hai — install ke waqt nahi, module par
+   rakha jata hai. Wrapper ek hi dafa lagta hai (chahe pehle view-only ne
+   lagaya ho), aur ERP baad me apna handler yahan de deta hai. */
+let _onExpired = null;
+
+function ensureFetchWrapper() {
+  if (typeof window === 'undefined') return;
+  if (window.__smSessionGuard) return;   // pehle se wrapped
   window.__smSessionGuard = true;
   const origFetch = window.fetch.bind(window);
   let firing = false;
   const trigger = () => {
     if (firing) return;
     firing = true;
-    try { if (onExpired) onExpired(); } finally { setTimeout(() => { firing = false; }, 2000); }
+    try { if (_onExpired) _onExpired(); } finally { setTimeout(() => { firing = false; }, 2000); }
   };
   window.fetch = async (input, init) => {
     const url = typeof input === 'string' ? input : (input && input.url) || '';
@@ -268,6 +347,15 @@ export function installSessionGuard({ onExpired } = {}) {
       trigger();
       const err = new Error('Your session has ended');
       err.isSessionExpired = true;
+      throw err;
+    }
+    /* Chain account — dekhna sab kuch, badalna kuch nahi. Likhne wali har call
+       yahin ruk jaati hai (toast ke sath), server tak jaati hi nahi. */
+    if (window.__smViewOnlyActive && isApiUrl(url) && !isAuthUrl(url)
+        && !isReadRequest(url, init) && isViewOnlyAccount()) {
+      try { if (_sessionToast) _sessionToast(READ_ONLY_MSG, 'error'); } catch (e) { /* ignore */ }
+      const err = new Error(READ_ONLY_MSG);
+      err.isReadOnly = true;
       throw err;
     }
     /* Network monitor — sirf ERP API calls par. Agar response SM_SLOW_MS se zyada
