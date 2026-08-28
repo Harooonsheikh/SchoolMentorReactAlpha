@@ -96,7 +96,7 @@ export default function SchoolStatus() {
   const inactive = useMemo(() => rows.filter((s) => !s.erpActive), [rows])
 
   const [eColor, setEColor] = useState('')
-  const [eUser, setEUser] = useState('')
+  // const [eUser, setEUser] = useState('') // User filter temporarily disabled
   const [eMonth, setEMonth] = useState(MONTHS[0])
   const [eQ, setEQ] = useState('')
   const [iQ, setIQ] = useState('')
@@ -114,8 +114,10 @@ export default function SchoolStatus() {
 
   const erpFiltered = useMemo(() => {
     const q = eQ.trim().toLowerCase()
-    return erp.filter((s) => (!q || s.name.toLowerCase().includes(q)) && (!eColor || s.color === eColor) && (!eUser || s.assigned === eUser))
-  }, [erp, eQ, eColor, eUser])
+    // User filter temporarily disabled:
+    // return erp.filter((s) => (!q || s.name.toLowerCase().includes(q)) && (!eColor || s.color === eColor) && (!eUser || s.assigned === eUser))
+    return erp.filter((s) => (!q || s.name.toLowerCase().includes(q)) && (!eColor || s.color === eColor))
+  }, [erp, eQ, eColor])
 
   const inactiveFiltered = useMemo(() => {
     const q = iQ.trim().toLowerCase()
@@ -205,12 +207,14 @@ export default function SchoolStatus() {
                   <option value="">All Colors</option><option value="Red">Red</option><option value="Green">Green</option>
                 </select>
               </div>
+{/*               
               <div className="f-field">
                 <label className="f-label"><i className="fa-solid fa-user" style={{ color: 'var(--brand)', fontSize: 10 }} /> User</label>
                 <select className="f-input" value={eUser} onChange={(e) => setEUser(e.target.value)}>
                   <option value="">All Users</option>{USERS.map((u) => <option key={u}>{u}</option>)}
                 </select>
               </div>
+              */}
               <div className="f-field">
                 <label className="f-label"><i className="fa-regular fa-calendar" style={{ color: 'var(--brand)', fontSize: 10 }} /> Month</label>
                 <select className="f-input" value={eMonth} onChange={(e) => setEMonth(e.target.value)}>

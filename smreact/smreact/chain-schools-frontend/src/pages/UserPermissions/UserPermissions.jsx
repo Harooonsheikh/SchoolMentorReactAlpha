@@ -95,12 +95,12 @@ function AssignTab({ users, assignStore, commit, fire }) {
     <div className="section-card">
       <div className="card-header"><div className="card-title"><i className="fa-solid fa-school" /> Assign School</div></div>
       <div style={{ padding: 20 }}>
-        <div style={{ marginBottom: 18 }}>
+        {/* <div style={{ marginBottom: 18 }}>
           <label className="um-label" style={{ display: 'block', marginBottom: 6 }}><i className="fa-solid fa-user" style={{ color: 'var(--brand)', marginRight: 4 }} /> Assign User</label>
           <select className="um-user-select" value={userId} onChange={(e) => { setUserId(e.target.value); setPage(1) }}>
             <option value="">Select User</option>{users.map((u) => <option key={u.id} value={u.id}>{u.fullName}</option>)}
           </select>
-        </div>
+        </div> */}
 
         <div className="um-school-tabs">
           <button className={`um-stab${type === 'erp' ? ' active' : ''}`} onClick={() => { setType('erp'); setPage(1) }}><i className="fa-solid fa-server" /> ERP ({ERP_SCHOOLS.length})</button>
