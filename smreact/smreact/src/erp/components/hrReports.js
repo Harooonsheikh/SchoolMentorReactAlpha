@@ -214,7 +214,7 @@ function reportFooter(C, note, ctx) {
 
 /* ════════════════ SALARY SLIP (Single Month) ════════════════ */
 export function generateSalarySlipHTML(e, monthKey, style, ctx) {
-  const { fmtMoney, fmtDate, getFullName, empPayroll, empLoans, leaveInfo, workInfo } = ctx;
+  const { fmtMoney, fmtDate, getFullName, empPayroll, empLoans, leaveInfo, workInfo, attInfo } = ctx;
   const C = reportColors(style);
   const [yearStr, monthStr] = monthKey.split('-');
   const monthIdx = parseInt(monthStr, 10);
@@ -252,6 +252,7 @@ export function generateSalarySlipHTML(e, monthKey, style, ctx) {
     .slip-fields{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
     .slip-fields.cols-2{grid-template-columns:repeat(2,1fr)}
     .slip-fields.cols-3{grid-template-columns:repeat(3,1fr)}
+    .slip-fields.cols-4{grid-template-columns:repeat(4,1fr)}
     .slip-fields.cols-5{grid-template-columns:repeat(5,1fr)}
     .slip-fields.cols-6{grid-template-columns:repeat(6,1fr)}
     .slip-field{background:${C.panelBg};border:${C.panelBorder};border-radius:${style==='bw'?'4px':'5px'};padding:8px 11px}
@@ -343,17 +344,33 @@ export function generateSalarySlipHTML(e, monthKey, style, ctx) {
     const workingDays = Number(workInfo?.workingDays) >= 0 && workInfo
       ? Number(workInfo.workingDays)
       : (daysInMonth - sundays);
-    const publicHolidays = workInfo
-      ? (Number(workInfo.publicHolidays) || 0)
-      : ((monthName === 'August' || monthName === 'March' || monthName === 'December') ? 2 : 1);
+    /* Holiday setup na mile to 0 — pehle yahan mahine ke naam par andaza lagta
+       tha (August/March/December → 2, warna 1). Official slip par farzi adad
+       nahi jaana chahiye; jo maloom nahi wo 0 rahega. */
+    const publicHolidays = workInfo ? (Number(workInfo.publicHolidays) || 0) : 0;
     const effectiveWorkingDays = workInfo
       ? (Number(workInfo.effectiveWorkingDays) || Math.max(0, workingDays - publicHolidays))
-      : (workingDays - publicHolidays);
-    const absent = rec.absentCount || 0;
-    const leaves = rec.leaveCount || 0;
-    const lateDays = (monthName === 'November' || monthName === 'March') ? 2 : 0;
-    const daysPresent = Math.max(0, effectiveWorkingDays - absent - leaves);
-    const attendancePct = effectiveWorkingDays > 0 ? ((daysPresent / effectiveWorkingDays) * 100).toFixed(1) : '100.0';
+      : Math.max(0, workingDays - publicHolidays);
+
+    /* ── Haaziri: ASAL attendance se, payroll ke counts se nahi ──
+       Pehle Days Present = effective − absent − leave hota tha, jahan absent/leave
+       payroll record se aate the. Jis mahine payroll me wo 0 hote (aam baat), slip
+       hamesha "poori haaziri, 100%" chhaap deti thi — chahe staff ki attendance
+       lagi hi na ho. Ab month ki asal staff-attendance ginti hai; attendance lagi
+       hi na ho (marked === 0) to hum koi dawa nahi karte. */
+    const attMarked = Number(attInfo?.marked) || 0;
+    const hasAtt    = attMarked > 0;
+    const absent   = hasAtt ? (Number(attInfo.absent) || 0)  : (rec.absentCount || 0);
+    const leaves   = hasAtt ? (Number(attInfo.leave) || 0)   : (rec.leaveCount || 0);
+    /* Late aaya wo bhi haazir hai — present me pehle se shaamil, alag se dikhta hai. */
+    const lateDays = hasAtt ? (Number(attInfo.late) || 0) : 0;
+    const daysPresent = hasAtt
+      ? (Number(attInfo.present) || 0)
+      : Math.max(0, effectiveWorkingDays - absent - leaves);
+    /* Faisla-kun adad wo din hain jin ka record maujood hai; attendance adhoori
+       lagi ho to us par %age nikalna galat tasveer deta hai. */
+    const attBase = hasAtt ? Math.max(attMarked, daysPresent + absent + leaves) : effectiveWorkingDays;
+    const attendancePct = attBase > 0 ? ((daysPresent / attBase) * 100).toFixed(1) : '0.0';
 
     /* REAL per-employee leave figures (ctx.leaveInfo se — caller ne getHrLeaveSettings +
        calculateLeaveAbsentDeduction fetch kiya). Pehle ye hardcoded the (har staff same).
@@ -365,16 +382,13 @@ export function generateSalarySlipHTML(e, monthKey, style, ctx) {
       sick:   Number(ls.sick)   || 0,
       annual: Number(ls.annual) || 0,
     };
-    /* Backend per-type leave USAGE track nahi karta — sirf kul YTD (cumulativeLeavesTakenYTD)
-       deta hai. Is liye kul used sirf ANNUAL par lagta hai; casual/sick used 0 rehta hai
-       (jab tak backend per-type usage na de). Card ab "USED / allotted" dikhata hai taake
-       li gayi leave nazar aaye. */
-    const annualUsedYTD = Number(calc.cumulativeLeavesTakenYTD) || 0;
-    const leavesUsed = {
-      casual: 0,
-      sick:   0,
-      annual: annualUsedYTD,
-    };
+    /* Backend per-type leave USAGE track nahi karta — sirf is saal ki KUL
+       (cumulativeLeavesTakenYTD) deta hai. Pehle ye kul adad "Annual Leave Used"
+       ke khane me chala jata tha aur casual/sick hamesha "0 / n" dikhte the —
+       is se slip par do ghalat baatein aa jati thin: ke saari chhuttiyan annual
+       thin, aur ke casual/sick li hi nahi gayi. Ab quota alag dikhta hai aur kul
+       used alag, saaf likha hua ke ye YTD hai. */
+    const leavesUsedYTD = Number(calc.cumulativeLeavesTakenYTD) || 0;
 
     const loanDeductedThisMonth = (Number(rec.loanDeduct) || 0) + (Number(rec.customLoan) || 0);
     const empLoanList = empLoans[e.id] || [];
@@ -461,7 +475,7 @@ export function generateSalarySlipHTML(e, monthKey, style, ctx) {
       ${reportEmpBlock(C, e, ctx)}
 
       <div class="slip-sec">
-        <div class="slip-sec-title"><i class="fa-solid fa-calendar-check"></i> Pay Period &amp; Attendance Summary<span class="right">Attendance: ${attendancePct}%</span></div>
+        <div class="slip-sec-title"><i class="fa-solid fa-calendar-check"></i> Pay Period &amp; Attendance Summary<span class="right">${hasAtt ? `Attendance: ${attendancePct}%` : 'Attendance not marked'}</span></div>
         <div class="att-row">
           <div class="att-cell info"><label>Working Days</label><div class="v">${workingDays}</div></div>
           <div class="att-cell warn"><label>Public Holidays</label><div class="v">${publicHolidays}</div></div>
@@ -470,12 +484,14 @@ export function generateSalarySlipHTML(e, monthKey, style, ctx) {
           <div class="att-cell warn"><label>Leaves Taken</label><div class="v">${leaves}</div></div>
           <div class="att-cell neg"><label>Absent Days</label><div class="v">${absent}</div></div>
         </div>
-        <div class="slip-fields cols-3" style="margin-top:7px">
-          <div class="slip-field compact"><label>Casual Leave Used</label><div class="v">${leavesUsed.casual} / ${leavesAllotted.casual} days</div></div>
-          <div class="slip-field compact"><label>Sick Leave Used</label><div class="v">${leavesUsed.sick} / ${leavesAllotted.sick} days</div></div>
-          <div class="slip-field compact"><label>Annual Leave Used</label><div class="v">${leavesUsed.annual} / ${leavesAllotted.annual} days</div></div>
+        <div class="slip-fields cols-4" style="margin-top:7px">
+          <div class="slip-field compact"><label>Casual Leave Quota</label><div class="v">${leavesAllotted.casual} days</div></div>
+          <div class="slip-field compact"><label>Sick Leave Quota</label><div class="v">${leavesAllotted.sick} days</div></div>
+          <div class="slip-field compact"><label>Annual Leave Quota</label><div class="v">${leavesAllotted.annual} days</div></div>
+          <div class="slip-field compact"><label>Leaves Used (${year} to date)</label><div class="v">${leavesUsedYTD} days</div></div>
         </div>
-        ${lateDays>0?`<div class="slip-remarks" style="margin-top:7px"><strong>Late arrivals this month:</strong> ${lateDays} occasion${lateDays>1?'s':''} (within HR grace policy — no deduction applied).</div>`:''}
+        ${lateDays>0?`<div class="slip-remarks" style="margin-top:7px"><strong>Late arrivals this month:</strong> ${lateDays} occasion${lateDays>1?'s':''} — counted as present (within HR grace policy, no deduction applied).</div>`:''}
+        ${!hasAtt?`<div class="slip-remarks" style="margin-top:7px"><strong>Note:</strong> No staff attendance was marked for ${monthName} ${year}. The days shown above are derived from the payroll record, not from marked attendance.</div>`:(attMarked < effectiveWorkingDays ? `<div class="slip-remarks" style="margin-top:7px"><strong>Note:</strong> Attendance is marked for ${attMarked} of ${effectiveWorkingDays} effective working days; the percentage is calculated on the marked days only.</div>`:'')}
       </div>
 
       <div class="slip-sec">

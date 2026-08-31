@@ -967,6 +967,19 @@ function HrReports({ emps, depts, desigs, toast, canDownload = true }) {
   const generate = async (style, monthKey) => {
     if (!picker) return;
     const { type } = picker;
+
+    /* Window PEHLE — data baad me. Wajah RspModal wale generateReport par likhi
+       hai: await ke baad `window.open` browser ke liye user-click ka jawab nahi
+       rehta, is liye pehli click par popup block ho jata tha. */
+    const w = window.open('', '_blank');
+    if (!w) { toast('Pop-up blocked — please allow pop-ups for this site', 'error'); return; }
+    try {
+      w.document.write('<!doctype html><meta charset="utf-8"><title>Preparing report…</title>'
+        + '<style>body{margin:0;display:flex;align-items:center;justify-content:center;height:100vh;'
+        + 'font:600 14px/1.5 system-ui,Segoe UI,sans-serif;color:#475569;background:#f8fafc}</style>'
+        + '<div>Preparing report… please wait.</div>');
+    } catch { /* noop */ }
+    const failReport = (msg) => { try { w.close(); } catch { /* noop */ } if (msg) toast(msg, 'error'); };
     /* Live branch header (name, logo, address, session, generated date) from the
        /report-header API — replaces the old hardcoded school details. */
     const branch = await fetchReportHeader();
@@ -1002,7 +1015,7 @@ function HrReports({ emps, depts, desigs, toast, canDownload = true }) {
         empsForCtx = emps.map(e => byId[e.id] ? { ...e, leaves: { ...e.leaves, ...byId[e.id] } } : e);
       }
     } catch (err) {
-      toast(err.message || 'Could not load report data', 'error');
+      failReport(err.message || 'Could not load report data');
       return;
     }
 
@@ -1014,9 +1027,9 @@ function HrReports({ emps, depts, desigs, toast, canDownload = true }) {
     else if (type === 'dept-summary')    html = generateHrDeptSummary(ctx);
     else if (type === 'leave-register')  html = generateHrLeaveRegister(ctx);
     else if (type === 'payroll-summary') html = generateHrPayrollSummary(ctx, monthKey);
-    if (!html) return;
-    const w = window.open('', '_blank');
-    if (!w) { toast('Pop-up blocked — please allow pop-ups for this site', 'error'); return; }
+    if (!html) { failReport('Could not build this report'); return; }
+    /* Placeholder mita kar asal report likh do — window pehle hi khul chuki hai. */
+    w.document.open();
     w.document.write(html);
     w.document.close();
     setTimeout(() => { try { w.print(); } catch {} }, 400);
@@ -1078,6 +1091,16 @@ function HrRptModal({ type, onClose, onGenerate, canDownload = true }) {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
   });
+  /* Style pehle CHUNI jaati hai, report footer ke button se banti hai — wajah
+     RspModal ke wahi comment me hai (card-click par pehli dafa popup block ho
+     jata tha, is liye user ko dobara click karna parta). */
+  const [style, setStyle] = useState('color');
+  const [busy, setBusy] = useState(false);
+  const generate = async () => {
+    if (busy) return;
+    setBusy(true);
+    try { await onGenerate(style, monthKey); } finally { setBusy(false); }
+  };
 
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
@@ -1133,12 +1156,17 @@ function HrRptModal({ type, onClose, onGenerate, canDownload = true }) {
           )}
 
           <div style={{ fontSize: 12, color: 'var(--tm)', marginBottom: 6, lineHeight: 1.5 }}>
-            Select one of the two report styles below. Both versions are A4-formatted and ready to print or save as PDF.
+            Pick a report style, then click <strong>Generate Report</strong>. Both versions are A4-formatted and ready to print or save as PDF.
           </div>
 
           <div className="style-pick-grid">
             {canDownload && (
-            <div className="style-pick-card" onClick={() => onGenerate('color', monthKey)}>
+            <div
+              className={`style-pick-card${style === 'color' ? ' selected' : ''}`}
+              role="radio" aria-checked={style === 'color'} tabIndex={0}
+              onClick={() => setStyle('color')}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setStyle('color'); } }}
+            >
               <span className="style-pick-tag">Recommended</span>
               <div className="style-pick-preview color">
                 <div className="ppl-head"><i className="fa-solid fa-building" aria-hidden="true"></i> SCHOOL MENTOR</div>
@@ -1154,7 +1182,12 @@ function HrRptModal({ type, onClose, onGenerate, canDownload = true }) {
             </div>
             )}
             {canDownload && (
-            <div className="style-pick-card bw-card" onClick={() => onGenerate('bw', monthKey)}>
+            <div
+              className={`style-pick-card bw-card${style === 'bw' ? ' selected' : ''}`}
+              role="radio" aria-checked={style === 'bw'} tabIndex={0}
+              onClick={() => setStyle('bw')}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setStyle('bw'); } }}
+            >
               <span className="style-pick-tag">Low Ink</span>
               <div className="style-pick-preview bw">
                 <div className="ppl-head"><i className="fa-solid fa-building" aria-hidden="true"></i> SCHOOL MENTOR</div>
@@ -1173,7 +1206,12 @@ function HrRptModal({ type, onClose, onGenerate, canDownload = true }) {
         </div>
 
         <div className="modal-foot">
-          <button type="button" className="btn-secondary" onClick={onClose}>Cancel</button>
+          <button type="button" className="btn-secondary" onClick={onClose} disabled={busy}>Cancel</button>
+          {/* Download ki ijazat na ho to styles dikhti hi nahi — button bhi band. */}
+          <button type="button" className="btn-primary" onClick={generate} disabled={busy || !canDownload}>
+            <i className={`fa-solid ${busy ? 'fa-spinner fa-spin' : 'fa-file-arrow-down'}`} aria-hidden="true"></i>
+            {busy ? ' Generating…' : ' Generate Report'}
+          </button>
         </div>
       </div>
     </div>
@@ -1348,6 +1386,29 @@ function Financials({ emps, depts = [], desigs, toast, canCreate = true, canDele
   };
   const getRec = (empId, m = month, y = year) => empPayroll[empId]?.[monthKey(m, y)] || null;
 
+  /* ── SIRF pichhle mahine ka bacha hua baqaya ──
+     Backend har payroll par `PreviousArrears` khud lagata hai: pichhle mahine
+     ka Remaining is mahine ke Total Gross me jor deta hai (frontend ye field
+     bhejta hi nahi). Model isi tarah chalta hai — har mahina apne se pehle
+     wale mahine ka baqaya uthata hai, aur wo baqaya khud pehle se us se
+     purane arrears samet hota hai.
+
+     Is liye yahan SAARE pichhle mahine jama karna GHALAT hoga — wahi raqam
+     do dafa gin li jaati. Sirf theek pehla mahina dekhte hain.
+
+     Jis mahine ka payroll ban chuka ho, wahan hum apna hisaab dikhate hi
+     nahi — server ka `previousArrears` hi sach hai (dekhein PayRollModal). */
+  const getPrevMonthDue = (empId, m = month, y = year) => {
+    const idx = PAY_MONTHS.indexOf(m) + 1;                 // 1-12
+    const prevIdx = idx === 1 ? 12 : idx - 1;
+    const prevYear = idx === 1 ? Number(y) - 1 : Number(y);
+    const key = `${prevYear}-${String(prevIdx).padStart(2, '0')}`;
+    const r = (empPayroll[empId] || {})[key];
+    if (!r) return { total: 0, key: '' };                  // us mahine ka payroll bana hi nahi
+    const paid = (r.payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0);
+    return { total: Math.max(0, (Number(r.netPayable) || 0) - paid), key };
+  };
+
   const upsertRec = (empId, m, y, partial) => {
     setEmpPayroll(prev => {
       const key  = monthKey(m, y);
@@ -1502,6 +1563,25 @@ function Financials({ emps, depts = [], desigs, toast, canCreate = true, canDele
   const generateReport = async (style, picked) => {
     if (!rspFor) return;
     const { emp, type } = rspFor;
+
+    /* ── Window PEHLE kholo, data baad me ──
+       Browser `window.open` sirf usi waqt allow karta hai jab wo user ke click
+       ke seedha jawab me ho. Pehle yahan report ka saara data (branch header,
+       loans, leave settings, attendance) await hota tha aur window uske BAAD
+       khulti thi — tab tak click ka "gesture" khatam ho chuka hota, is liye
+       pehli click par popup block ho jata aur user ko dobara click karna parta.
+       Ab khali window foran khulti hai aur data aane par usi me likh dete hain. */
+    const w = window.open('', '_blank');
+    if (!w) { toast('Pop-up blocked — please allow pop-ups for this site', 'error'); return; }
+    try {
+      w.document.write('<!doctype html><meta charset="utf-8"><title>Preparing report…</title>'
+        + '<style>body{margin:0;display:flex;align-items:center;justify-content:center;height:100vh;'
+        + 'font:600 14px/1.5 system-ui,Segoe UI,sans-serif;color:#475569;background:#f8fafc}</style>'
+        + '<div>Preparing report… please wait.</div>');
+    } catch { /* about:blank likhne na de to bhi report neeche likh jayegi */ }
+    /* Data lete waqt kuch bhi bigde to khali tab peeche na reh jaye. */
+    const failReport = (msg) => { try { w.close(); } catch { /* noop */ } if (msg) toast(msg, 'error'); };
+
     /* Live branch header (name, logo, address, session, generated date) from the
        /report-header API — replaces the old hardcoded school details. */
     const branch = await fetchReportHeader();
@@ -1523,19 +1603,19 @@ function Financials({ emps, depts = [], desigs, toast, canCreate = true, canDele
       } catch (err) {
         /* Loan report ke liye fail hona blocking hai; salary slip loan ke baghair bhi
            ban jaye (baaki cheezein sahi rahengi). */
-        if (type === 'loan') { toast(err.message || 'Could not load loans for this employee', 'error'); return; }
+        if (type === 'loan') { failReport(err.message || 'Could not load loans for this employee'); return; }
       }
     }
 
     /* Salary slip ke leave/attendance cards ke liye REAL per-employee data — allotted
        (casual/sick/annual) leave settings + is saal ka kul used YTD. Pehle ye slip me
        hardcoded the (har staff same). Do API calls thodi slow hain magar values exact. */
-    let leaveInfoForCtx = null, workInfoForCtx = null;
+    let leaveInfoForCtx = null, workInfoForCtx = null, attInfoForCtx = null;
     if (type === 'salaryslip') {
       const mk = picked.monthKey || '2026-05';
       const [yStr, mStr] = String(mk).split('-');
       const yNum = parseInt(yStr, 10) || 0, mNum = parseInt(mStr, 10) || 0;
-      const [settings, calc, workInfo] = await Promise.all([
+      const [settings, calc, workInfo, att] = await Promise.all([
         hrService.getHrLeaveSettings(emp.id).catch(() => null),
         hrService.calculateLeaveAbsentDeduction({
           employeeID:   emp.id,
@@ -1543,9 +1623,14 @@ function Financials({ emps, depts = [], desigs, toast, canCreate = true, canDele
           payrollYear:  yNum,
         }).catch(() => null),
         computeMonthWorkInfo(yNum, mNum).catch(() => null),
+        /* Us mahine ki ASAL haaziri — slip pehle Days Present payroll ke
+           counts se nikalti thi, is liye jis mahine wo 0 hote wahan hamesha
+           100% chhap jaati thi. */
+        hrService.getHrStaffMonthAttendance(emp.id, yNum, mNum).catch(() => null),
       ]);
       leaveInfoForCtx = { settings, calc };
       workInfoForCtx  = workInfo;
+      attInfoForCtx   = att;
     }
 
     const ctx = {
@@ -1555,14 +1640,15 @@ function Financials({ emps, depts = [], desigs, toast, canCreate = true, canDele
       branch,
       leaveInfo: leaveInfoForCtx,
       workInfo:  workInfoForCtx,
+      attInfo:   attInfoForCtx,
     };
     let html = '';
     if      (type === 'salaryslip') html = generateSalarySlipHTML(emp, picked.monthKey || '2026-05', style, ctx);
     else if (type === 'history')    html = generatePayHistoryReportHTML(emp, picked.fromKey || '2026-01', picked.toKey || '2026-06', style, ctx);
     else if (type === 'loan')       html = generateLoanReportHTML(emp, style, ctx);
-    if (!html) return;
-    const w = window.open('', '_blank');
-    if (!w) { toast('Pop-up blocked — please allow pop-ups for this site', 'error'); return; }
+    if (!html) { failReport('Could not build this report'); return; }
+    /* Placeholder mita kar asal report likh do — window pehle hi khul chuki hai. */
+    w.document.open();
     w.document.write(html);
     w.document.close();
     setTimeout(() => { try { w.print(); } catch {} }, 400);
@@ -1735,6 +1821,7 @@ function Financials({ emps, depts = [], desigs, toast, canCreate = true, canDele
           rec={getRec(prFor.id)}
           loanRemaining={getLoanRemaining(prFor.id)}
           monthlyLoanDeduct={getMonthlyLoanDeduct(prFor.id)}
+          prevMonthDue={getPrevMonthDue(prFor.id)}
           onClose={() => setPrFor(null)}
           onSaveSetup={(rec) => upsertRec(prFor.id, month, year, rec)}
           onRecordPayment={(rec) => upsertRec(prFor.id, month, year, rec)}
@@ -1945,6 +2032,42 @@ function PayrollRow({
    PAYROLL DETAIL PANEL — 4-col KV grid + payment transactions list.
    Renders inside the expand chevron of each .pay-row.
    ═══════════════════════════════════════════════════════════════════ */
+/* Pichhla baqaya — payroll modal ke dono tabs par yehi note.
+     included → server ne wo raqam is mahine ke Total Gross me jor di hai
+     incoming → payroll abhi bana nahi; save karte waqt backend jor dega */
+function PrevPendingNote({ arrears, fmtMoney }) {
+  if (!arrears || !arrears.total) return null;
+  const label = (key) => {
+    const [y, m] = String(key).split('-');
+    return `${PAY_MONTHS[Number(m) - 1] || key} ${y}`;
+  };
+  return (
+    <div className="pr-prev-note">
+      <i className="fa-solid fa-clock-rotate-left" aria-hidden="true"></i>
+      <div>
+        {arrears.mode === 'included' ? (
+          <>
+            <strong>Includes previous arrears: PKR {fmtMoney(arrears.total)}</strong>
+            <div className="pr-prev-hint">
+              Carried forward by the system and already added to this month&apos;s Total Gross —
+              paying this month settles it too.
+            </div>
+          </>
+        ) : (
+          <>
+            <strong>
+              {arrears.key ? `${label(arrears.key)} still unpaid` : 'Previous month still unpaid'}: PKR {fmtMoney(arrears.total)}
+            </strong>
+            <div className="pr-prev-hint">
+              This amount will be carried into this payroll&apos;s Total Gross when you save it.
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function PayrollDetailPanel({ emp, month, year, rec, loanRemaining = 0 }) {
   rec = rec || {};
   const basic       = Number(emp.basicSalary) || 0;
@@ -2048,6 +2171,7 @@ function PdItem({ k, v, valClass }) {
 function PayRollModal({
   emp, month, year, rec: existingRec,
   loanRemaining = 0, monthlyLoanDeduct = 0,
+  prevMonthDue = { total: 0, key: '' },
   onClose, onSaveSetup, onRecordPayment, onDelete, toast,
   canCreate = true, canApprove = true, canDelete = true,
 }) {
@@ -2062,6 +2186,20 @@ function PayRollModal({
 
   /* ── Setup form state (seeded from existing rec if any) ── */
   const seed = existingRec || {};
+
+  /* ── Pichhla baqaya: kaunsa adad dikhana hai ──
+     Payroll ban chuka ho  → server ka `previousArrears`. Wo raqam Total Gross
+       me PEHLE SE shaamil hai (backend jorta hai), is liye usay alag se jama
+       nahi karna — sirf batana hai ke gross me ye kyun jura hua hai.
+     Payroll abhi bana hi na ho → pichhle mahine ka bacha hua, is ittila ke
+       tor par ke save karte waqt backend ise gross me jor dega. */
+  const savedArrears = Number(seed.previousArrears) || 0;
+  const arrears = savedArrears > 0
+    ? { mode: 'included', total: savedArrears, key: '' }
+    : (!existingRec && prevMonthDue.total > 0
+      ? { mode: 'incoming', total: prevMonthDue.total, key: prevMonthDue.key }
+      : null);
+
   const [bonus,         setBonus]         = useState(seed.bonus || 0);
   const [loanDeduct,    setLoanDeduct]    = useState(seed.loanDeduct !== undefined ? seed.loanDeduct : monthlyLoanDeduct);
   const [customLoan,    setCustomLoan]    = useState(seed.customLoan || 0);
@@ -2154,6 +2292,21 @@ function PayRollModal({
   const recNet       = existingRec?.netPayable ?? netPayable;
   const remaining    = Math.max(0, recNet - totalPaid);
   const isFullyPaid  = remaining <= 0.01;
+
+  /* ── Pay Amount Now ki live jaanch ──
+     Pehle raqam ki ghalati sirf "Make Payment" dabane par toast me pata chalti
+     thi — aur toast modal ke peeche chhup jata tha, is liye lagta tha ke button
+     kaam hi nahi kar raha. Ab likhte hi khane ke neeche wajah likh jaati hai
+     aur button band ho jata hai. */
+  const payAmt   = Number(payAmount) || 0;
+  const payError = isFullyPaid ? '' : (
+    payAmount === '' || payAmt <= 0
+      ? 'Enter the amount you are paying now.'
+      : payAmt > remaining + 0.01
+        ? `Amount is more than the remaining balance (PKR ${fmtMoney(remaining)}). Reduce it to PKR ${fmtMoney(remaining)} or less.`
+        : ''
+  );
+  const payAfter = Math.max(0, remaining - payAmt);
 
   /* When switching to MP tab, seed Pay Amount with the remaining balance. */
   useEffect(() => {
@@ -2323,7 +2476,9 @@ function PayRollModal({
       label: payingNow ? 'Processing…' : (totalPaid > 0 ? 'Record Additional Payment' : 'Make Payment'),
       icon:  payingNow ? 'fa-spinner fa-spin' : 'fa-money-bill-wave',
       onClick: makePayment,
-      disabled: payingNow,
+      /* Raqam ghalat ho to button hi band — pehle click par sirf toast aata tha
+         jo modal ke peeche chhup jata, aur user ko lagta ke kuch hua hi nahi. */
+      disabled: payingNow || !!payError,
     };
   })();
 
@@ -2514,6 +2669,8 @@ function PayRollModal({
                 </div>
               </div>
 
+              <PrevPendingNote arrears={arrears} fmtMoney={fmtMoney} />
+
               <div className="pr-net-card">
                 <div>
                   <div className="pr-net-label"><i className="fa-solid fa-wallet" aria-hidden="true"></i> Net Payable</div>
@@ -2522,6 +2679,12 @@ function PayRollModal({
                 <div className="pr-net-side">
                   <div className="row"><span>Total Gross</span><strong>PKR <span>{fmtMoney(totalGross)}</span></strong></div>
                   <div className="row"><span>Total Deductions</span><strong>– PKR <span>{fmtMoney(totalDeductions)}</span></strong></div>
+                  {arrears && (
+                    <div className="row">
+                      <span>{arrears.mode === 'included' ? 'Previous Arrears (in gross)' : 'Previous Month Due'}</span>
+                      <strong className="pr-prev-amt">PKR <span>{fmtMoney(arrears.total)}</span></strong>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -2585,7 +2748,17 @@ function PayRollModal({
                     <div className="lbl"><i className="fa-solid fa-clock" aria-hidden="true"></i> Remaining</div>
                     <div className="val">PKR <span>{fmtMoney(remaining)}</span></div>
                   </div>
+                  {/* Pichhla baqaya — Net Payable me pehle se shaamil hai
+                      (backend jorta hai), yahan sirf saaf dikhta hai. */}
+                  {arrears && (
+                    <div className="settle-tile remaining">
+                      <div className="lbl"><i className="fa-solid fa-clock-rotate-left" aria-hidden="true"></i> Previous Arrears</div>
+                      <div className="val">PKR <span>{fmtMoney(arrears.total)}</span></div>
+                    </div>
+                  )}
                 </div>
+
+                <PrevPendingNote arrears={arrears} fmtMoney={fmtMoney} />
 
                 <div className="pr-grid">
                   <div className="pr-field pr-field-wide">
@@ -2596,12 +2769,12 @@ function PayRollModal({
                       readOnly={isFullyPaid}
                       onChange={(e) => setPayAmount(e.target.value)}
                     />
-                    <div className="pr-field-hint">
+                    <div className={`pr-field-hint${payError ? ' pr-field-err' : ''}`}>
                       {isFullyPaid
                         ? (<><i className="fa-solid fa-circle-check" style={{ color: '#16A34A' }} aria-hidden="true"></i> This payroll is fully settled — no further payments needed</>)
-                        : totalPaid > 0
-                          ? `Previously paid PKR ${fmtMoney(totalPaid)}. You can pay the full remaining PKR ${fmtMoney(remaining)} or a partial amount.`
-                          : 'Defaults to full net payable — reduce for partial payment'}
+                        : payError
+                          ? (<><i className="fa-solid fa-circle-exclamation" aria-hidden="true"></i> {payError}</>)
+                          : (<><i className="fa-solid fa-circle-check" style={{ color: '#16A34A' }} aria-hidden="true"></i> Remaining after this payment: PKR {fmtMoney(payAfter)}{totalPaid > 0 ? ` · already paid PKR ${fmtMoney(totalPaid)}` : ''}</>)}
                     </div>
                   </div>
                   <div className="pr-field pr-field-wide">
@@ -3175,10 +3348,24 @@ function RspModal({ emp, type, month, year, onClose, onGenerate }) {
     };
   }, [onClose]);
 
-  const handlePick = (style) => {
-    if (meta.range === 'single')      onGenerate(style, { monthKey: rspMonth });
-    else if (meta.range === 'period') onGenerate(style, { fromKey: rspFrom, toKey: rspTo });
-    else                              onGenerate(style, {});
+  /* Style ab pehle CHUNI jaati hai aur report footer ke button se banti hai.
+     Pehle card par click seedha report bana deta tha — magar report ka data
+     await hone ki wajah se browser popup block kar deta tha, is liye user ko
+     dobara click karna parta tha (aur usay lagta tha ke double-click chahiye).
+     Ab niyat saaf hai: chuno, phir "Generate Report". */
+  const [style, setStyle] = useState('color');
+  const [busy, setBusy] = useState(false);
+
+  const generate = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      if (meta.range === 'single')      await onGenerate(style, { monthKey: rspMonth });
+      else if (meta.range === 'period') await onGenerate(style, { fromKey: rspFrom, toKey: rspTo });
+      else                              await onGenerate(style, {});
+    } finally {
+      setBusy(false);
+    }
   };
 
   return createPortal((
@@ -3231,11 +3418,16 @@ function RspModal({ emp, type, month, year, onClose, onGenerate }) {
           )}
 
           <div style={{ fontSize: 12, color: 'var(--tm)', marginBottom: 6, lineHeight: 1.5 }}>
-            Select one of the two report styles below. Both versions are A4-formatted and ready to print or save as PDF.
+            Pick a report style, then click <strong>Generate Report</strong>. Both versions are A4-formatted and ready to print or save as PDF.
           </div>
 
           <div className="style-pick-grid">
-            <div className="style-pick-card" onClick={() => handlePick('color')}>
+            <div
+              className={`style-pick-card${style === 'color' ? ' selected' : ''}`}
+              role="radio" aria-checked={style === 'color'} tabIndex={0}
+              onClick={() => setStyle('color')}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setStyle('color'); } }}
+            >
               <span className="style-pick-tag">Recommended</span>
               <div className="style-pick-preview color">
                 <div className="ppl-head"><i className="fa-solid fa-building" aria-hidden="true"></i> SCHOOL MENTOR</div>
@@ -3249,7 +3441,12 @@ function RspModal({ emp, type, month, year, onClose, onGenerate }) {
                 <div className="style-pick-desc">ERP theme colors, professional header, color-coded badges and highlights.</div>
               </div>
             </div>
-            <div className="style-pick-card bw-card" onClick={() => handlePick('bw')}>
+            <div
+              className={`style-pick-card bw-card${style === 'bw' ? ' selected' : ''}`}
+              role="radio" aria-checked={style === 'bw'} tabIndex={0}
+              onClick={() => setStyle('bw')}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setStyle('bw'); } }}
+            >
               <span className="style-pick-tag">Low Ink</span>
               <div className="style-pick-preview bw">
                 <div className="ppl-head"><i className="fa-solid fa-building" aria-hidden="true"></i> SCHOOL MENTOR</div>
@@ -3267,7 +3464,11 @@ function RspModal({ emp, type, month, year, onClose, onGenerate }) {
         </div>
 
         <div className="modal-foot">
-          <button type="button" className="btn-secondary" onClick={onClose}>Cancel</button>
+          <button type="button" className="btn-secondary" onClick={onClose} disabled={busy}>Cancel</button>
+          <button type="button" className="btn-primary" onClick={generate} disabled={busy}>
+            <i className={`fa-solid ${busy ? 'fa-spinner fa-spin' : 'fa-file-arrow-down'}`} aria-hidden="true"></i>
+            {busy ? ' Generating…' : ' Generate Report'}
+          </button>
         </div>
       </div>
     </div>
@@ -8535,7 +8736,14 @@ export const HR_CSS = `
   position: relative;
   overflow: hidden;
   background: linear-gradient(140deg, #1E3A8A 0%, #274CAB 55%, #1E40AF 100%);
-  padding: 16px 12px 40px;
+  padding: 12px 12px 38px;
+  /* Card ki height tay hai (368px) aur ye flex column hai — default flex-shrink 1
+     ki wajah se content zyada hone par header sikud jata tha, uski neechay wali
+     jagah khatam ho jaati aur photo "Staff Identification" par chadh jaati.
+     flex:none = header apni poori height rakhega, kam jagah kahin aur se aayegi.
+     (Yaad rahe: ye CSS ek JS template literal ke andar hai — comment me backtick
+     likhne se string wahin toot jaati hai.) */
+  flex: none;
 }
 .idc-render--v .idc-r-head::before {
   content: ""; position: absolute; top: -45%; right: -18%;
@@ -8548,13 +8756,13 @@ export const HR_CSS = `
   background: linear-gradient(90deg, #F59E0B, #FBBF24);
 }
 .idc-r-logo {
-  width: 40px; height: 40px;
+  width: 34px; height: 34px;
   border-radius: 50%;
   background: rgba(255,255,255,.18);
   box-shadow: 0 0 0 2px rgba(255,255,255,.35), 0 4px 10px rgba(0,0,0,.18);
   display: inline-flex; align-items: center; justify-content: center;
-  font-size: 16px;
-  margin-bottom: 8px;
+  font-size: 15px;
+  margin-bottom: 6px;
   overflow: hidden;
   position: relative; z-index: 1;
 }
@@ -8564,17 +8772,20 @@ export const HR_CSS = `
 .idc-r-tag    { font: 600 8.5px/1 var(--hr-font); letter-spacing: 1px; text-transform: uppercase; opacity: .82; margin-top: 5px; position: relative; z-index: 1; }
 
 .idc-r-photo-v {
-  width: 88px; height: 88px;
+  width: 76px; height: 76px;
   border-radius: 50%;
   border: 3px solid #fff;
   background: linear-gradient(135deg, #DBEAFE, #BFDBFE);
   color: #1E40AF;
   display: inline-flex; align-items: center; justify-content: center;
   font: 800 24px/1 var(--hr-font);
-  margin: -32px auto 8px;
+  margin: -30px auto 6px;
   overflow: hidden;
   box-shadow: 0 6px 16px rgba(15,23,42,.22);
   position: relative; z-index: 2;
+  /* Gol hi rehni chahiye — flex column me sikud kar bezawi (oval) ho jaati thi. */
+  flex: none;
+  box-sizing: content-box;
 }
 .idc-r-photo-v img { width: 100%; height: 100%; object-fit: cover; }
 .idc-r-name {
@@ -8599,7 +8810,7 @@ export const HR_CSS = `
   border: 1px solid rgba(30,64,175,.18);
   border-radius: 9999px;
   padding: 4px 12px;
-  margin: 6px auto 12px;
+  margin: 5px auto 8px;
   font: 700 9px/1 var(--hr-font);
   text-transform: uppercase;
   letter-spacing: .5px;
@@ -8613,12 +8824,12 @@ export const HR_CSS = `
   color: #64748B;
 }
 .idc-r-kv > div { display: flex; flex-direction: column; gap: 2px; }
-.idc-render--v .idc-r-kv { gap: 8px; padding: 2px 16px 14px; }
+.idc-render--v .idc-r-kv { gap: 6px; padding: 2px 15px 8px; }
 .idc-render--v .idc-r-kv > div {
   background: #F8FAFC;
   border: 1px solid #EEF2F7;
   border-radius: 8px;
-  padding: 6px 9px;
+  padding: 5px 9px;
 }
 .idc-r-kv span { font: 700 8px/1 var(--hr-font); text-transform: uppercase; letter-spacing: .35px; color: #94A3B8; }
 .idc-r-kv b    { color: #0F172A; font-weight: 800; }
@@ -8626,14 +8837,15 @@ export const HR_CSS = `
 .idc-r-kv--h   { grid-template-columns: repeat(3, 1fr); gap: 4px 8px; padding: 0; margin-top: 4px; }
 .idc-r-foot {
   margin-top: auto;
+  flex: none;
   background: linear-gradient(180deg, #F8FAFC, #F1F5F9);
   border-top: 1px solid #E2E8F0;
-  padding: 9px 12px;
+  padding: 8px 12px;
   display: flex; align-items: center; justify-content: space-between;
   gap: 8px;
 }
 .idc-r-qr {
-  width: 40px; height: 40px;
+  width: 36px; height: 36px;
   background: #fff;
   border: 1px solid #E2E8F0;
   border-radius: 7px;
@@ -9651,6 +9863,8 @@ export const HR_CSS = `
 .pr-field-wide { grid-column: span 2; }
 .pr-field-full { grid-column: 1 / -1; }
 .pr-field-hint { font: 500 10px/1.3 var(--hr-font); color: var(--tm); font-style: italic; margin-top: 2px; }
+/* Pay Amount ghalat ho to wajah surkh — toast modal ke peeche chhup jata tha. */
+.pr-field-hint.pr-field-err { color: var(--err); font-weight: 700; font-style: normal; font-size: 10.5px; }
 
 /* Brand-blue Net Payable hero */
 .pr-net-card {
@@ -9688,10 +9902,28 @@ export const HR_CSS = `
 /* Settlement tiles (Make Payment) */
 .settle-tiles {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  /* auto-fit — Previous Pending wali chauthi tile aane par khud adjust ho jaye. */
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 10px;
   margin-bottom: 14px;
 }
+
+/* ── Pichhle mahinon ka baqaya ── */
+.pr-prev-note {
+  display: flex; gap: 9px; align-items: flex-start;
+  background: rgba(217,119,6,.08);
+  border: 1px solid rgba(217,119,6,.24);
+  border-radius: var(--r-md);
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  font: 500 12px/1.5 var(--hr-font);
+  color: var(--t2);
+}
+.pr-prev-note > i { color: #B45309; font-size: 12px; margin-top: 2px; }
+.pr-prev-note strong { color: #B45309; font-weight: 800; }
+.pr-prev-list { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 3px; font-size: 11.5px; }
+.pr-prev-hint { margin-top: 3px; font-size: 11px; color: var(--tm); }
+.pr-prev-amt { color: #FCD34D; }
 .settle-tile {
   background: var(--card);
   border: 1.5px solid var(--bl);
@@ -9981,6 +10213,20 @@ export const HR_CSS = `
 }
 .style-pick-card:hover  { border-color: var(--brand); transform: translateY(-3px); box-shadow: var(--s-md); }
 .style-pick-card:active { transform: translateY(-1px) scale(.98); }
+/* Chuni hui style — card ab report banata nahi, sirf chunta hai, is liye
+   chunaav ka nazar aana zaroori hai. */
+.style-pick-card.selected {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px rgba(30,58,138,.14), var(--s-md);
+}
+.style-pick-card.selected::after {
+  content: '\\f00c';
+  font-family: 'Font Awesome 6 Free'; font-weight: 900;
+  position: absolute; top: 10px; left: 10px;
+  width: 20px; height: 20px; border-radius: 50%;
+  background: var(--brand); color: #fff;
+  font-size: 10px; display: flex; align-items: center; justify-content: center;
+}
 
 .style-pick-preview {
   border-radius: var(--r-md);

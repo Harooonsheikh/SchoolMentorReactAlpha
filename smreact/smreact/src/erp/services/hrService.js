@@ -293,21 +293,46 @@ export async function getHrLeaveSettings(employeeId) {
    one call per day, returning every staff record for that date). Heavy, so
    callers should show a loading state. Returns { absent, leave, present }. */
 export async function getHrStaffYearlyAttendance(staffId, year) {
-  const branchID = Number(sessionStorage.getItem('branchID')) || 0;
-  const token    = sessionStorage.getItem('token');
-  const CODE     = { '1': 'present', '2': 'absent', '3': 'leave', '4': 'late' };
-  const yr       = Number(year) || new Date().getFullYear();
-
+  const yr = Number(year) || new Date().getFullYear();
   const dates = [];
   for (let m = 0; m < 12; m++) {
     const days = new Date(yr, m + 1, 0).getDate();
     for (let d = 1; d <= days; d++) dates.push(`${yr}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`);
   }
+  return countStaffAttendance(staffId, dates);
+}
 
-  let absent = 0, leave = 0, present = 0;
+/**
+ * Wahi ginti, magar SIRF ek mahine ki — saal wali 365 calls ke bajaye 28-31.
+ * Salary slip ka "Pay Period & Attendance Summary" isi par chalta hai: wahan
+ * pehle Days Present asal attendance se nahi, payroll ke counts se nikala
+ * jaata tha (effective − absent − leave), is liye jis mahine payroll me counts
+ * 0 hote the wahan hamesha 100% attendance chhap jaati thi.
+ */
+export async function getHrStaffMonthAttendance(staffId, year, month1) {
+  const yr = Number(year) || new Date().getFullYear();
+  const mo = Number(month1) || 1;
+  const days = new Date(yr, mo, 0).getDate();
+  const dates = [];
+  for (let d = 1; d <= days; d++) dates.push(`${yr}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`);
+  return countStaffAttendance(staffId, dates);
+}
+
+/* Di gayi tareekhon par ek staff ka record ginno.
+   `marked` = jitne dinon ka koi bhi record mila — is se pata chalta hai ke
+   attendance lagi bhi thi ya nahi (0 = kabhi lagi hi nahi, is liye 0 absent
+   ko "poori haaziri" nahi samajhna chahiye). */
+async function countStaffAttendance(staffId, dates) {
+  const branchID = Number(sessionStorage.getItem('branchID')) || 0;
+  const token    = sessionStorage.getItem('token');
+
+  /* Counters ek object me — pehle ye alag alag `let` the aur unhe loop ke
+     andar bani callback badalti thi (no-loop-func). */
+  const acc = { absent: 0, leave: 0, present: 0, late: 0, marked: 0 };
   const CHUNK = 12;   // limit concurrency so we don't hammer the server
   for (let i = 0; i < dates.length; i += CHUNK) {
     const chunk = dates.slice(i, i + CHUNK);
+    // eslint-disable-next-line no-await-in-loop
     const results = await Promise.all(chunk.map(async (dateStr) => {
       try {
         const res  = await fetch(buildUrl('/api/staff-attendance'), {
@@ -319,19 +344,28 @@ export async function getHrStaffYearlyAttendance(staffId, year) {
         return { dateStr, recs: json?.data || [] };
       } catch { return { dateStr, recs: [] }; }
     }));
-    results.forEach(({ dateStr, recs }) => {
-      const found = (recs || []).find(r =>
-        String(r.StaffID ?? r.staffID) === String(staffId) &&
-        String(r.AttendanceDate ?? r.attendanceDate ?? '').slice(0, 10) === dateStr);
-      if (!found) return;
-      const raw = String((found.Status ?? found.status) ?? '').toLowerCase();
-      const st  = CODE[raw] || raw;
-      if (st === 'absent') absent++;
-      else if (st === 'leave') leave++;
-      else if (st === 'present') present++;
-    });
+    tallyStaffDays(results, staffId, acc);
   }
-  return { absent, leave, present };
+  return { ...acc };
+}
+
+/* Ek chunk ke jawabon me se is staff ka din ginno. */
+const ATT_CODE = { 1: 'present', 2: 'absent', 3: 'leave', 4: 'late' };
+
+function tallyStaffDays(results, staffId, acc) {
+  results.forEach(({ dateStr, recs }) => {
+    const found = (recs || []).find(r =>
+      String(r.StaffID ?? r.staffID) === String(staffId) &&
+      String(r.AttendanceDate ?? r.attendanceDate ?? '').slice(0, 10) === dateStr);
+    if (!found) return;
+    acc.marked += 1;
+    const raw = String((found.Status ?? found.status) ?? '').toLowerCase();
+    const st  = ATT_CODE[raw] || raw;
+    if (st === 'absent') acc.absent += 1;
+    else if (st === 'leave') acc.leave += 1;
+    else if (st === 'late') { acc.late += 1; acc.present += 1; }   // late aaya = haazir hi hai
+    else if (st === 'present') acc.present += 1;
+  });
 }
 
 /* Calculate this month's chargeable leave/absent counts + deduction amounts for
