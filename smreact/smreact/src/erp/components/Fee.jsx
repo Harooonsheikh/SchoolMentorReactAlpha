@@ -4678,12 +4678,19 @@ function FeeSlipModal({ cfg, onClose, toast }) {
   const doPrint = () => {
     const w = window.open('', '_blank');
     if (!w) { toast('Please allow pop-ups to download the slip', 'error'); return; }
-    const slipHtml = `
+       const slipHtml = `
       <div class="fee-slip-doc fee-slip-${size}">
-        <div class="fee-slip-head">
-          <div class="fee-slip-school">${escHtml(sch.name)}</div>
-          ${sch.address ? `<div class="fee-slip-addr" style="font-size:11px;color:#555;margin-top:2px;">${escHtml(sch.address)}</div>` : ''}
-          <div class="fee-slip-tag">Fee Received Slip</div>
+        <div class="fee-slip-brandhead">
+          <div class="fee-slip-brand">
+            <div class="fee-slip-logo">${feeReportLogoHtml(sch)}</div>
+            <div>
+              <div class="fee-slip-school">${escHtml(sch.name)}</div>
+              <div class="fee-slip-tag">Fee Received Slip</div>
+              ${sch.address ? `<div class="fee-slip-addr">${escHtml(sch.address)}</div>` : ''}
+              ${sch.session ? `<div class="fee-slip-addr">Academic Session: ${escHtml(sch.session)}</div>` : ''}
+            </div>
+          </div>
+          <div class="fee-slip-meta">Generated: ${escHtml(feeReportDate(sch))}<br/>By: ${escHtml(sch.generatedBy)}</div>
         </div>
         <div class="fee-slip-kv">
           <span class="k">Receipt No</span><span class="v">${escHtml(payment.id || `RCV-${Date.now()}`)}</span>
@@ -4704,9 +4711,10 @@ function FeeSlipModal({ cfg, onClose, toast }) {
             <tr class="fee-slip-headtot"><td>Total</td><td>${totStd.toLocaleString('en-PK')}</td><td>${totDisc ? totDisc.toLocaleString('en-PK') : '—'}</td><td>${total.toLocaleString('en-PK')}</td><td>${totRemTxt}</td></tr>
           </tbody>
         </table>
-        <div class="fee-slip-net">
+            <div class="fee-slip-net">
           <span>Amount Received</span><span>Rs. ${(+payment.amount || 0).toLocaleString('en-PK')}</span>
         </div>
+        <div class="fee-slip-foot">Computer generated receipt — ${escHtml(sch.name)} · Fee Received Slip · ${escHtml(feeReportDate(sch))} · By: ${escHtml(sch.generatedBy)}</div>
       </div>`;
     w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Fee Slip — ${escHtml(student.name)}</title>
 <style>
@@ -4714,9 +4722,14 @@ function FeeSlipModal({ cfg, onClose, toast }) {
   body { margin:0; font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif; background:#F1F3F8; padding:18px; }
   .fee-slip-doc { background:#fff; color:#111; border:1px solid #ddd; border-radius:12px; padding:20px; max-width:420px; margin:0 auto; }
   .fee-slip-doc.fee-slip-small { max-width:300px; padding:14px; font-size:11px; }
-  .fee-slip-head { text-align:center; border-bottom:1.5px solid #111; padding-bottom:10px; margin-bottom:12px; }
-  .fee-slip-school { font-size:16px; font-weight:800; }
-  .fee-slip-tag { font-size:11px; color:#555; letter-spacing:1px; text-transform:uppercase; margin-top:3px; }
+  .fee-slip-brandhead { display:flex; justify-content:space-between; align-items:flex-start; gap:10px; border-bottom:1.5px solid #111; padding-bottom:10px; margin-bottom:12px; }
+  .fee-slip-brand { display:flex; align-items:center; gap:10px; text-align:left; }
+  .fee-slip-logo { width:38px; height:38px; border:1px solid #ddd; border-radius:10px; display:flex; align-items:center; justify-content:center; overflow:hidden; color:#1E3A8A; font-weight:800; background:#fff; flex-shrink:0; }
+  .fee-slip-logo img { width:100%; height:100%; object-fit:contain; }
+  .fee-slip-school { font-size:15px; font-weight:800; }
+  .fee-slip-tag { font-size:10.5px; color:#555; letter-spacing:1px; text-transform:uppercase; margin-top:2px; }
+  .fee-slip-addr { font-size:10.5px; color:#666; margin-top:2px; }
+  .fee-slip-meta { font-size:10px; color:#666; text-align:right; line-height:1.55; white-space:nowrap; }
   .fee-slip-kv { display:grid; grid-template-columns:auto 1fr; gap:4px 10px; font-size:12px; margin-bottom:12px; }
   .fee-slip-kv .k { color:#666; }
   .fee-slip-kv .v { text-align:right; font-weight:700; }
@@ -4726,8 +4739,7 @@ function FeeSlipModal({ cfg, onClose, toast }) {
   .fee-slip-tbl th { border-bottom:1.5px solid #333; color:#333; }
   .fee-slip-headtot td { border-top:1.5px solid #333; border-bottom:none; font-weight:800; background:#f5f7fb; }
   .fee-slip-net { display:flex; justify-content:space-between; align-items:center; background:#111; color:#fff; padding:8px 12px; border-radius:4px; font-weight:800; }
-  .fee-slip-rem { display:flex; justify-content:space-between; align-items:center; border:1.5px solid #DC2626; color:#DC2626; padding:7px 12px; border-radius:4px; font-weight:800; margin-top:6px; }
-  .fee-slip-rem.adv { border-color:#16A34A; color:#16A34A; }
+  .fee-slip-foot { margin-top:14px; text-align:center; font-size:9px; color:#999; border-top:1px solid #eee; padding-top:8px; }
   @page { size:A4; margin:14mm; }
   @media print { body { background:#fff; padding:0; } }
 </style></head><body>${slipHtml}</body></html>`);
@@ -4781,10 +4793,21 @@ function FeeSlipModal({ cfg, onClose, toast }) {
 
           <div className="fee-dl-label" style={{ marginTop: 16 }}>Preview</div>
           <div className={`fee-slip-doc fee-slip-${size}`}>
-            <div className="fee-slip-head">
-              <div className="fee-slip-school">{sch.name}</div>
-              {sch.address && <div className="fee-slip-addr" style={{ fontSize: 11, color: '#555', marginTop: 2 }}>{sch.address}</div>}
-              <div className="fee-slip-tag">Fee Received Slip</div>
+            <div className="fee-slip-brandhead">
+              <div className="fee-slip-brand">
+                <div className="fee-slip-logo">
+                  {sch.logo
+                    ? <img src={sch.logo} alt={`${sch.name} logo`} />
+                    : sch.monogram}
+                </div>
+                <div>
+                  <div className="fee-slip-school">{sch.name}</div>
+                  <div className="fee-slip-tag">Fee Received Slip</div>
+                  {sch.address && <div className="fee-slip-addr">{sch.address}</div>}
+                  {sch.session && <div className="fee-slip-addr">Academic Session: {sch.session}</div>}
+                </div>
+              </div>
+              <div className="fee-slip-meta">Generated: {feeReportDate(sch)}<br/>By: {sch.generatedBy}</div>
             </div>
             <div className="fee-slip-kv">
               <span className="k">Receipt No</span><span className="v">{payment.id || `RCV-${Date.now()}`}</span>
@@ -4809,10 +4832,11 @@ function FeeSlipModal({ cfg, onClose, toast }) {
                 <tr className="fee-slip-headtot"><td>Total</td><td>{totStd.toLocaleString('en-PK')}</td><td>{totDisc ? totDisc.toLocaleString('en-PK') : '—'}</td><td>{total.toLocaleString('en-PK')}</td><td>{totRemTxt}</td></tr>
               </tbody>
             </table>
-            <div className="fee-slip-net">
+                    <div className="fee-slip-net">
               <span>Amount Received</span>
               <span>Rs. {(+payment.amount || 0).toLocaleString('en-PK')}</span>
             </div>
+            <div className="fee-slip-foot">Computer generated receipt — {sch.name} · Fee Received Slip · {feeReportDate(sch)} · By: {sch.generatedBy}</div>
           </div>
         </div>
 
@@ -5842,11 +5866,17 @@ function childRecModel({ child, payments }) {
   return { heads, generated: true, prev, advance, thisMonth, disc, payable, paid, remaining, status, onelink };
 }
 
+// function FamilyTreeReceiving({ toast }) {
+//   const { data: serverFams = [] }        = useAsync(feeService.getFamilies, []);
+//   const { data: settings = {} }          = useAsync(feeService.getFeeSettings, []);
+//   const { data: serverReceipts = [] }    = useAsync(feeService.getFamilyReceipts, []);
 function FamilyTreeReceiving({ toast }) {
   const { data: serverFams = [] }        = useAsync(feeService.getFamilies, []);
   const { data: settings = {} }          = useAsync(feeService.getFeeSettings, []);
   const { data: serverReceipts = [] }    = useAsync(feeService.getFamilyReceipts, []);
-
+  /* Branch header (name / address / logo / session) — every report needs this;
+     the family slip previously fell back to the hardcoded FEE_SCHOOL constant. */
+  const { data: branchHeader = null }    = useAsync(feeService.getReportHeader, [], null);
   const today = new Date();
   const [month, setMonth] = useState(FEE_MONTHS[today.getMonth()]);
   const [year, setYear]   = useState(String(today.getFullYear()));
@@ -6021,7 +6051,7 @@ function FamilyTreeReceiving({ toast }) {
     const payments = paymentsFor(f.key, ch.reg);
     const last = payments[payments.length - 1];
     if (last) {
-      setSlipCtx({ classMeta: { key: f.key, cls: ch.cls, sec: ch.sec }, student: ch, period: `${appliedMonth} ${appliedYear}`, payment: last, challan: ch._challan || challanByStudent[String(ch.applicantsID)], prevStd: prevStdOf(ch), prevByHead: prevByHeadOf(ch), defaultSize: settings.printSize || 'a4' });
+      setSlipCtx({ classMeta: { key: f.key, cls: ch.cls, sec: ch.sec }, student: ch, period: `${appliedMonth} ${appliedYear}`, payment: last, challan: ch._challan || challanByStudent[String(ch.applicantsID)], prevStd: prevStdOf(ch), prevByHead: prevByHeadOf(ch), defaultSize: settings.printSize || 'a4', school: branchHeader });
       return;
     }
     const rec  = ch._challan || challanByStudent[String(ch.applicantsID)];
@@ -6030,7 +6060,31 @@ function FamilyTreeReceiving({ toast }) {
     if (received <= 0) { toast('No payment recorded for this student yet', 'info'); return; }
     const perHead = {};
     rows.forEach(r => { const n = r.subHead || r.head || ''; perHead[n] = (perHead[n] || 0) + (+r.receivedAmount || 0); });
-    setSlipCtx({
+  //   setSlipCtx({
+  //     classMeta: { key: f.key, cls: ch.cls, sec: ch.sec }, student: ch,
+  //     period: `${appliedMonth} ${appliedYear}`,
+  //     payment: {
+  //       /* Cashier ki chuni hui receiving date pehle — modifiedAt sirf fallback. */
+  //       date:   String(rec.receivedDate || rec.modifiedAt || rec.dateofCreattion || '').slice(0, 10),
+  //       method: rec.paymentMethod || 'Cash', ref: '', txn: '', amount: received, perHead,
+  //     },
+  //     challan: rec,
+  //     prevStd: prevStdOf(ch), prevByHead: prevByHeadOf(ch),
+  //     defaultSize: settings.printSize || 'a4',
+  //   });
+  // };
+
+  // const handleSaveReceipt = (payload) => {
+  //   /* Amount MINUS bhi ho sakta hai — cashier ne already-received ko neeche theek
+  //      kiya (adjustment). Sirf 0 (kuch nahi badla) rokna hai. */
+  //   if (!Number(payload.amount)) {
+  //     toast('Receiving amount must not be zero', 'warning');
+  //     return;
+  //   }
+  //   setReceipts(prev => {
+  //     const next = [...(prev || [])];
+  //     const idx  = next.findIndex(r => r.famKey === payload.famKey && r.reg === payload.reg && r.monthIdx === payload.monthIdx);
+      setSlipCtx({
       classMeta: { key: f.key, cls: ch.cls, sec: ch.sec }, student: ch,
       period: `${appliedMonth} ${appliedYear}`,
       payment: {
@@ -6041,6 +6095,7 @@ function FamilyTreeReceiving({ toast }) {
       challan: rec,
       prevStd: prevStdOf(ch), prevByHead: prevByHeadOf(ch),
       defaultSize: settings.printSize || 'a4',
+      school: branchHeader,
     });
   };
 
@@ -6053,8 +6108,9 @@ function FamilyTreeReceiving({ toast }) {
     }
     setReceipts(prev => {
       const next = [...(prev || [])];
-      const idx  = next.findIndex(r => r.famKey === payload.famKey && r.reg === payload.reg && r.monthIdx === payload.monthIdx);
-      const pay  = {
+      const idx  = next.findIndex(r => r.famKey === payload.famKey && r.reg === payload.reg && r.monthIdx === payload.monthIdx);    
+  
+  const pay  = {
         id: `frcv-${Date.now()}`,
         date: payload.date, time: payload.time || nowHHMM(),
         method: payload.method, ref: payload.ref, txn: payload.txn,
@@ -6137,7 +6193,22 @@ function FamilyTreeReceiving({ toast }) {
     const f = receiveCtx?.family, ch = receiveCtx?.student;
     const period = receiveCtx?.period;
     setReceiveCtx(null);
-    if (f && ch) {
+  //   if (f && ch) {
+  //     setSlipCtx({
+  //       classMeta: { key: f.key, cls: ch.cls, sec: ch.sec }, student: ch,
+  //       period,
+  //       payment: {
+  //         date: payload.date, method: payload.method, ref: payload.ref, txn: payload.txn,
+  //         amount: payload.amount, perHead: payload.perHead, fine: payload.fine || 0, prevByHead: payload.prevByHead,
+  //       },
+  //       challan: slipChallan,
+  //       prevStd: prevStdOf(ch), prevByHead: prevByHeadOf(ch),
+  //       defaultSize: settings.printSize || 'a4',
+  //     });
+  //   }
+  // };
+
+      if (f && ch) {
       setSlipCtx({
         classMeta: { key: f.key, cls: ch.cls, sec: ch.sec }, student: ch,
         period,
@@ -6148,9 +6219,12 @@ function FamilyTreeReceiving({ toast }) {
         challan: slipChallan,
         prevStd: prevStdOf(ch), prevByHead: prevByHeadOf(ch),
         defaultSize: settings.printSize || 'a4',
+        school: branchHeader,
       });
     }
   };
+
+  /* One child's ledger id for the applied month
 
   /* One child's ledger id for the applied month — from the row's own challan,
      the preloaded get-by-month map, or whatever openReceive last cached. */
@@ -6281,7 +6355,7 @@ function FamilyTreeReceiving({ toast }) {
       }] : [];
       return { ...ch, ...fig, _challan: rec, _payments };
     });
-    setFamilySlipCtx({ family: { ...f, children: enriched }, period: `${appliedMonth} ${appliedYear}`, defaultSize: settings.printSize || 'a4' });
+    setFamilySlipCtx({ family: { ...f, children: enriched }, period: `${appliedMonth} ${appliedYear}`, defaultSize: settings.printSize || 'a4', school: branchHeader });
   };
 
   const matches = useMemo(() => {
@@ -7132,8 +7206,9 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
 /* Build a print-ready family fee receiving slip — combined summary
    of all children's payments under one guardian. Accepts size:
    'a4' (default — full A4) or 'small' (80mm thermal receipt). */
-function buildFamilyReceivingSlipHTML({ family, period, paymentsFor, size = 'a4' }) {
-  const today = new Date().toLocaleDateString('en-GB');
+function buildFamilyReceivingSlipHTML({ family, period, paymentsFor, size = 'a4', school = null }) {
+  const meta  = feeReportSchool(school);
+  const today = feeReportDate(meta);
   const rows  = family.children.map(ch => {
     const pays = paymentsFor(family.key, ch.reg);
     const paid = pays.reduce((a, p) => a + (+p.amount || 0), 0);
@@ -7233,8 +7308,10 @@ function buildFamilyReceivingSlipHTML({ family, period, paymentsFor, size = 'a4'
   @page{size:80mm auto;margin:0;}
   @media print{ body{padding:0;} }
 </style></head><body>
+
 <div class="th-slip">
-  <div class="th-school">${escHtml(FEE_SCHOOL.name)}</div>
+  <div class="th-school">${escHtml(meta.name)}</div>
+  ${meta.address ? `<div class="th-tag" style="border:0;padding:0;margin:0 0 2px;letter-spacing:0;text-transform:none">${escHtml(meta.address)}</div>` : ''}
   <div class="th-tag">Family Fee Receipt</div>
   <div class="th-meta">
     <span>Family</span><span>${escHtml(family.name)}</span>
@@ -7245,25 +7322,32 @@ function buildFamilyReceivingSlipHTML({ family, period, paymentsFor, size = 'a4'
   </div>
   <div class="th-band">Children — ${family.children.length}</div>
   ${smallChildren}
+
   <div class="th-foot">
     <div class="th-kv"><span>Total Payable</span><b>Rs. ${totals.payable.toLocaleString('en-PK')}</b></div>
     <div class="th-kv"><span>Total Received</span><b class="green">Rs. ${totals.paid.toLocaleString('en-PK')}</b></div>
     <div class="th-kv"><span>Total Remaining</span><b class="red">Rs. ${totals.rem.toLocaleString('en-PK')}</b></div>
   </div>
+  <div class="th-genfoot" style="margin-top:6px;font-size:8.5px;color:#999;text-align:center;border-top:1px dashed #ccc;padding-top:4px;">Generated ${escHtml(today)} · By ${escHtml(meta.generatedBy)}</div>
 </div>
 </body></html>`;
   }
 
-  /* Default — A4 layout with per-child transaction sub-tables. */
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escHtml(`Family Receipt — ${family.name}`)}</title>
+   /* Default — A4 layout with per-child transaction sub-tables. */
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escHtml(`${meta.name} — Family Receipt — ${family.name}`)}</title>
 <style>
   body { margin:0; font-family:'Plus Jakarta Sans','Segoe UI',sans-serif; color:#0F172A; background:#fff; font-size:13px; }
   .page { width:210mm; margin:0 auto; padding:18mm 14mm; box-sizing:border-box; }
   .header { display:flex; justify-content:space-between; align-items:flex-end; border-bottom:2px solid #1E3A8A; padding-bottom:14px; margin-bottom:18px; }
+  .brand { display:flex; align-items:center; gap:12px; }
+  .logo { width:44px; height:44px; border:1px solid #BFDBFE; border-radius:12px; display:flex; align-items:center; justify-content:center; overflow:hidden; color:#1E3A8A; font-weight:800; background:#fff; flex-shrink:0; }
+  .logo img { width:100%; height:100%; object-fit:contain; }
   .school { font-size:18px; font-weight:800; color:#1E3A8A; }
   .title  { font-size:14px; font-weight:700; color:#1E40AF; margin-top:6px; }
+  .addr   { font-size:10px; color:#64748B; margin-top:2px; max-width:360px; }
   .meta   { font-size:11px; color:#64748B; text-align:right; line-height:1.55; }
   .band   { background:linear-gradient(135deg,#1E3A8A,#1E40AF); color:#fff; padding:10px 14px; border-radius:6px; font-weight:800; margin-bottom:14px; }
+  .foot   { margin-top:16px; text-align:center; font-size:9px; color:#999; border-top:1px solid #E5E7EB; padding-top:8px; }
   table { width:100%; border-collapse:collapse; margin-top:8px; }
   thead th { background:#EFF6FF; color:#1E3A5F; font-weight:800; text-align:left; padding:9px 10px; border-bottom:2px solid #BFDBFE; font-size:11px; text-transform:uppercase; letter-spacing:.4px; }
   thead th.right { text-align:right; }
@@ -7292,11 +7376,16 @@ function buildFamilyReceivingSlipHTML({ family, period, paymentsFor, size = 'a4'
 </style></head><body>
 <div class="page">
   <div class="header">
-    <div>
-      <div class="school">${escHtml(FEE_SCHOOL.name)}</div>
-      <div class="title">Family Fee Receiving Slip — ${escHtml(family.name)}</div>
+    <div class="brand">
+      <div class="logo">${feeReportLogoHtml(meta)}</div>
+      <div>
+        <div class="school">${escHtml(meta.name)}</div>
+        <div class="title">Family Fee Receiving Slip — ${escHtml(family.name)}</div>
+        ${meta.address ? `<div class="addr">${escHtml(meta.address)}</div>` : ''}
+        ${meta.session ? `<div class="addr">Academic Session: ${escHtml(meta.session)}</div>` : ''}
+      </div>
     </div>
-    <div class="meta">Generated: ${today}<br/>Guardian: ${escHtml(family.guardian)}<br/>Period: ${escHtml(period)}</div>
+    <div class="meta">Generated: ${escHtml(today)}<br/>By: ${escHtml(meta.generatedBy)}<br/>Guardian: ${escHtml(family.guardian)}<br/>Period: ${escHtml(period)}</div>
   </div>
   <div class="band">${escHtml(family.name)} — ${family.children.length} child${family.children.length === 1 ? '' : 'ren'}</div>
   <table>
@@ -7318,12 +7407,14 @@ function buildFamilyReceivingSlipHTML({ family, period, paymentsFor, size = 'a4'
         <td class="right">${totals.payable.toLocaleString('en-PK')}</td>
         <td class="right">${totals.paid.toLocaleString('en-PK')}</td>
         <td class="right">${totals.rem.toLocaleString('en-PK')}</td>
-      </tr>
+          </tr>
     </tfoot>
   </table>
+  <div class="foot">Computer generated report — ${escHtml(meta.name)} · Family Fee Receiving Slip · ${escHtml(today)} · By: ${escHtml(meta.generatedBy)}</div>
 </div>
 </body></html>`;
 }
+
 
 /* ═══════════════════════════════════════════════════════════════════
    FAMILY FEE SLIP MODAL — wraps the family receipt download with an
@@ -7345,7 +7436,8 @@ function FamilyFeeSlipModal({ cfg, onClose, paymentsFor, toast }) {
   }, [cfg, onClose]);
 
   if (!cfg) return null;
-  const { family, period } = cfg;
+  const { family, period, school } = cfg;
+  const meta = feeReportSchool(school);
 
   /* Prefer the child's enriched payments (built from the persisted challan) so
      the slip reflects real received amounts even after a refresh; fall back to
@@ -7367,7 +7459,7 @@ function FamilyFeeSlipModal({ cfg, onClose, paymentsFor, toast }) {
   }), { paid: 0, payable: 0, rem: 0 });
 
   const doPrint = () => {
-    const html = buildFamilyReceivingSlipHTML({ family, period, paymentsFor: slipPaymentsFor, size });
+    const html = buildFamilyReceivingSlipHTML({ family, period, paymentsFor: slipPaymentsFor, size, school });
     const w = window.open('', '_blank');
     if (!w) { toast('Please allow pop-ups to download the slip', 'error'); return; }
     w.document.write(html);
@@ -7420,10 +7512,22 @@ function FamilyFeeSlipModal({ cfg, onClose, paymentsFor, toast }) {
           </div>
 
           <div className="fee-dl-label" style={{ marginTop: 16 }}>Preview</div>
-          <div className="fee-slip-doc" style={{ maxWidth: size === 'small' ? 300 : 640 }}>
-            <div className="fee-slip-head">
-              <div className="fee-slip-school">{FEE_SCHOOL.name}</div>
-              <div className="fee-slip-tag">Family Fee Receipt</div>
+                <div className="fee-slip-doc" style={{ maxWidth: size === 'small' ? 300 : 640 }}>
+            <div className="fee-slip-brandhead">
+              <div className="fee-slip-brand">
+                <div className="fee-slip-logo">
+                  {meta.logo
+                    ? <img src={meta.logo} alt={`${meta.name} logo`} />
+                    : meta.monogram}
+                </div>
+                <div>
+                  <div className="fee-slip-school">{meta.name}</div>
+                  <div className="fee-slip-tag">Family Fee Receipt</div>
+                  {meta.address && <div className="fee-slip-addr">{meta.address}</div>}
+                  {meta.session && <div className="fee-slip-addr">Academic Session: {meta.session}</div>}
+                </div>
+              </div>
+              <div className="fee-slip-meta">Generated: {feeReportDate(meta)}<br/>By: {meta.generatedBy}</div>
             </div>
             <div className="fee-slip-kv">
               <span className="k">Family</span><span className="v">{family.name}</span>
@@ -7453,10 +7557,11 @@ function FamilyFeeSlipModal({ cfg, onClose, paymentsFor, toast }) {
                 )}
               </div>
             ))}
-            <div className="fee-slip-net" style={{ marginTop: 10 }}>
+               <div className="fee-slip-net" style={{ marginTop: 10 }}>
               <span>Total Received</span>
               <span>Rs. {totals.paid.toLocaleString('en-PK')}</span>
             </div>
+            <div className="fee-slip-foot">Computer generated receipt — {meta.name} · Family Fee Receipt · {feeReportDate(meta)} · By: {meta.generatedBy}</div>
           </div>
         </div>
 
@@ -15248,8 +15353,16 @@ const FEE_CSS = `
 }
 .fee-slip-doc.fee-slip-small { max-width: 300px; padding: 14px; font-size: 11px; }
 .fee-slip-head { text-align: center; border-bottom: 1.5px solid #111; padding-bottom: 10px; margin-bottom: 12px; }
+.fee-slip-brandhead { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; border-bottom: 1.5px solid #111; padding-bottom: 10px; margin-bottom: 12px; }
+.fee-slip-brand { display: flex; align-items: center; gap: 10px; text-align: left; }
+.fee-slip-logo { width: 38px; height: 38px; border: 1px solid #ddd; border-radius: 10px; display: flex; align-items: center; justify-content: center; overflow: hidden; color: #1E3A8A; font-weight: 800; background: #fff; flex-shrink: 0; }
+.fee-slip-logo img { width: 100%; height: 100%; object-fit: contain; }
+.fee-slip-meta { font-size: 10px; color: #666; text-align: right; line-height: 1.55; white-space: nowrap; }
+.fee-slip-foot { margin-top: 14px; text-align: center; font-size: 9px; color: #999; border-top: 1px solid #eee; padding-top: 8px; }
+.fee-slip-addr { font-size: 10.5px; color: #666; margin-top: 2px; }
 .fee-slip-school { font-size: 16px; font-weight: 800; color: #111; }
-.fee-slip-tag { font-size: 11px; color: #555; letter-spacing: 1px; text-transform: uppercase; margin-top: 3px; }
+.fee-slip-tag { font-size: 11px; color: #555; letter-spac
+ing: 1px; text-transform: uppercase; margin-top: 3px; }
 .fee-slip-kv {
   display: grid;
   grid-template-columns: auto 1fr;
