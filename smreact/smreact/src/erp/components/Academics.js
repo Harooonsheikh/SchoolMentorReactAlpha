@@ -56,14 +56,15 @@ export default function Academics({ l1, setL1, l2, setL2, l3, setL3, toast }) {
   const showCal       = showAcadCal || showActCal;
   const showSos       = showTextbooks || showTerms || showCal;
   const showLp        = ['Session Settings', 'Term Breakups', 'Create Lesson Plans', 'Submissions'].some(acadView);
+  const showRl        = acadView('Resource Library');
 
   /* Agar active tab ka View nahi to pehle visible tab par snap karo (L1/L2/L3). */
   useEffect(() => {
-    const vis = { sos: showSos, lp: showLp };
+    const vis = { sos: showSos, lp: showLp, rl: showRl };
     if (vis[l1]) return;
-    const first = ['sos', 'lp'].find((k) => vis[k]);
+    const first = ['sos', 'lp', 'rl'].find((k) => vis[k]);
     if (first && first !== l1) setL1(first);
-  }, [showSos, showLp, l1, setL1]);
+  }, [showSos, showLp, showRl, l1, setL1]);
   useEffect(() => {
     if (l1 !== 'sos') return;
     const vis = { tb: showTextbooks, terms: showTerms, cal: showCal };
@@ -391,6 +392,15 @@ return (
         Lesson Plans
       </button>
       )}
+      {showRl && (
+      <button
+        className={`l1-tab${l1 === 'rl' ? ' active' : ''}`}
+        onClick={() => setL1('rl')}
+      >
+        <div className="l1-tab-icon"><i className="fa-solid fa-folder-open"></i></div>
+        Resource Library
+      </button>
+      )}
     </div>
 
     {l1 === 'sos' ? (
@@ -493,8 +503,10 @@ return (
           </>
         )}
       </>
-    ) : (
+    ) : l1 === 'lp' ? (
       <LessonPlans toast={toast} openConfirm={openConfirm} />
+    ) : (
+      <ResourceLibrary toast={toast} openConfirm={openConfirm} classesData={classesData} />
     )}
 
     {/* ─── MODALS ─── */}
@@ -3196,6 +3208,346 @@ const deleteTerm = id => {
 /* ═══════════════════════════════════════════════════════════════════
    TEXT BOOKS PANEL — class rows with expand/collapse
    ═══════════════════════════════════════════════════════════════════ */
+/* ═══════════════════════════════════════════════════════════════════
+   RESOURCE LIBRARY — per-school academic file library (worksheets, summer
+   packs, question papers, others). Browser ke localStorage me branch-scoped
+   rehta hai (backend endpoint abhi nahi) — class/subject sirf tag hain aur
+   PDF data-URL ke taur par store hoti hai. Class/subject live API se aate
+   hain (wahi source jo Textbooks use karta hai). Jab backend aaye, rlLoad/
+   rlSave/save/removeRes ko us se jod dena — UI waisa ka waisa.
+   ═══════════════════════════════════════════════════════════════════ */
+const rlKey = () => `sm_resource_library_${sessionStorage.getItem('branchID') || '0'}`;
+const RL_CATEGORIES = [
+  { key: 'worksheet', label: 'Worksheets',      icon: 'fa-file-lines',           color: '#1E40AF' },
+  { key: 'summer',    label: 'Summer Packs',    icon: 'fa-umbrella-beach',       color: '#D97706' },
+  { key: 'qpaper',    label: 'Question Papers', icon: 'fa-file-circle-question', color: '#7C3AED' },
+  { key: 'other',     label: 'Others',          icon: 'fa-folder',               color: '#16A34A' },
+];
+const rlCat = k => RL_CATEGORIES.find(c => c.key === k) || RL_CATEGORIES[3];
+const rlFmtDate = d => { if (!d) return '—'; try { return new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }); } catch { return d; } };
+const rlToday = () => new Date().toISOString().slice(0, 10);
+const rlLoad = () => { try { const d = JSON.parse(localStorage.getItem(rlKey())); if (Array.isArray(d)) return d; } catch { /* empty */ } return []; };
+const rlSave = list => { try { localStorage.setItem(rlKey(), JSON.stringify(list)); return true; } catch { return false; } };
+const rlNextId = list => list.reduce((m, r) => Math.max(m, r.id || 0), 0) + 1;
+
+/* Ek class (grade) ke subjects — us class ki pehli section se (Textbooks wala
+   hi endpoint). Section/subjects na milen to khali — modal free-text par gir
+   jata hai. */
+async function rlFetchSubjects(gradeId, sectionId) {
+  if (!gradeId || !sectionId) return [];
+  try {
+    const res = await fetch(buildUrl(`/api/LaunchSetup/get-subjects/${gradeId}/${sectionId}`), { headers: { Accept: '*/*' } });
+    const json = await res.json();
+    const arr = json?.data || (Array.isArray(json) ? json : []);
+    return Array.from(new Set(arr.map(s => s.subjectName || s.name).filter(Boolean)));
+  } catch { return []; }
+}
+
+function ResourceLibrary({ toast, openConfirm, classesData = [] }) {
+  const [list, setList] = useState(rlLoad);
+  const [q, setQ] = useState('');
+  const [fClass, setFClass] = useState('all');
+  const [fSubject, setFSubject] = useState('all');
+  const [fCat, setFCat] = useState('all');
+  const [modal, setModal] = useState(null); // { mode:'add' } | { mode:'edit', resource }
+
+  const persist = next => { setList(next); if (!rlSave(next)) toast('Kept in memory — file too large to store locally', 'info'); };
+
+  const counts = useMemo(() => {
+    const c = { total: list.length };
+    RL_CATEGORIES.forEach(cat => { c[cat.key] = list.filter(r => r.category === cat.key).length; });
+    return c;
+  }, [list]);
+
+  /* Filter ka subject dropdown ab saved resources ke subjects se banta hai
+     (live subject-fetch sirf modal me hoti hai jab class chunte hain). */
+  const subjectsInUse = useMemo(
+    () => Array.from(new Set(list.map(r => r.subjectName).filter(Boolean))).sort(),
+    [list],
+  );
+
+  const filtered = useMemo(() => list.filter(r => {
+    const term = q.trim().toLowerCase();
+    if (term && !(r.title || '').toLowerCase().includes(term)) return false;
+    if (fClass !== 'all' && String(r.classId) !== String(fClass)) return false;
+    if (fSubject !== 'all' && r.subjectName !== fSubject) return false;
+    if (fCat !== 'all' && r.category !== fCat) return false;
+    return true;
+  }), [list, q, fClass, fSubject, fCat]);
+
+  const anyFilter = q.trim() || fClass !== 'all' || fSubject !== 'all' || fCat !== 'all';
+  const reset = () => { setQ(''); setFClass('all'); setFSubject('all'); setFCat('all'); };
+
+  const save = payload => {
+    if (modal?.mode === 'edit') {
+      persist(list.map(r => (r.id === modal.resource.id ? { ...r, ...payload, updatedAt: rlToday() } : r)));
+      toast('Resource updated', 'success');
+    } else {
+      const now = rlToday();
+      const rec = { id: rlNextId(list), ...payload, uploadedBy: 'School', uploadedAt: now, createdAt: now, updatedAt: now };
+      persist([rec, ...list]);
+      toast('Resource added', 'success');
+    }
+    setModal(null);
+  };
+
+  const viewFile = r => { if (r.fileUrl) window.open(r.fileUrl, '_blank'); else toast('No file attached to preview', 'info'); };
+  const downloadFile = r => {
+    if (!r.fileUrl) { toast('No file attached to download', 'info'); return; }
+    const a = document.createElement('a');
+    a.href = r.fileUrl; a.download = r.fileName || 'resource.pdf';
+    document.body.appendChild(a); a.click(); a.remove();
+  };
+  const removeRes = r => openConfirm({
+    title: 'Delete Resource?',
+    message: `"<strong>${r.title}</strong>" will be permanently removed. This cannot be undone.`,
+    hint: `${r.className} · ${r.subjectName}`,
+    confirmLabel: 'Yes, Delete', confirmStyle: 'danger',
+    icon: 'fa-trash', iconBg: 'rgba(220,38,38,.1)', iconColor: '#DC2626',
+    onConfirm: () => { persist(list.filter(x => x.id !== r.id)); toast('Resource deleted', 'success'); },
+  });
+
+  return (
+    <>
+      {/* Header row */}
+      <div className="rl-head">
+        <div>
+          <div className="rl-head-title"><i className="fa-solid fa-folder-open"></i> Resource Library</div>
+          <div className="rl-head-sub">Upload class-wise and subject-wise academic resources for your school.</div>
+        </div>
+        <Tooltip text="Upload a new academic resource">
+          <button className="btn btn-primary" onClick={() => setModal({ mode: 'add' })}>
+            <i className="fa-solid fa-plus"></i> Add Resource
+          </button>
+        </Tooltip>
+      </div>
+
+      {/* Summary cards */}
+      <div className="rl-stats">
+        <div className="rl-stat" style={{ '--accent': '#1E3A8A' }}>
+          <div className="rl-stat-icon" style={{ background: 'rgba(30,58,138,.1)', color: '#1E3A8A' }}><i className="fa-solid fa-folder-open"></i></div>
+          <div><div className="rl-stat-val">{counts.total}</div><div className="rl-stat-lbl">Total Resources</div></div>
+        </div>
+        {RL_CATEGORIES.map(cat => (
+          <div className="rl-stat" key={cat.key} style={{ '--accent': cat.color }}>
+            <div className="rl-stat-icon" style={{ background: cat.color + '1a', color: cat.color }}><i className={`fa-solid ${cat.icon}`}></i></div>
+            <div><div className="rl-stat-val">{counts[cat.key]}</div><div className="rl-stat-lbl">{cat.label}</div></div>
+          </div>
+        ))}
+      </div>
+
+      {/* Filters */}
+      <div className="section-card rl-filter-card">
+        <div className="rl-filters">
+          <div className="rl-search">
+            <i className="fa-solid fa-magnifying-glass"></i>
+            <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search by title…" />
+          </div>
+          <select className="form-input rl-fsel" value={fClass} onChange={e => setFClass(e.target.value)}>
+            <option value="all">All Classes</option>
+            {classesData.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+          <select className="form-input rl-fsel" value={fSubject} onChange={e => setFSubject(e.target.value)}>
+            <option value="all">All Subjects</option>
+            {subjectsInUse.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+          <select className="form-input rl-fsel" value={fCat} onChange={e => setFCat(e.target.value)}>
+            <option value="all">All Categories</option>
+            {RL_CATEGORIES.map(c => <option key={c.key} value={c.key}>{c.label}</option>)}
+          </select>
+          <Tooltip text="Clear all filters">
+            <button className="btn btn-secondary rl-reset" onClick={reset} disabled={!anyFilter}>
+              <i className="fa-solid fa-rotate-left"></i> Reset
+            </button>
+          </Tooltip>
+        </div>
+      </div>
+
+      {/* List / empty state */}
+      {filtered.length === 0 ? (
+        <div className="section-card rl-empty">
+          <div className="rl-empty-icon"><i className="fa-solid fa-folder-open"></i></div>
+          <div className="rl-empty-title">No resources found</div>
+          <div className="rl-empty-sub">{anyFilter ? 'Try adjusting your search or filters.' : 'Click “Add Resource” to upload your first academic resource.'}</div>
+          {anyFilter
+            ? <button className="btn btn-secondary" onClick={reset}><i className="fa-solid fa-rotate-left"></i> Reset Filters</button>
+            : <button className="btn btn-primary" onClick={() => setModal({ mode: 'add' })}><i className="fa-solid fa-plus"></i> Add Resource</button>}
+        </div>
+      ) : (
+        <div className="rl-grid">
+          {filtered.map(r => {
+            const cat = rlCat(r.category);
+            return (
+              <div className="rl-card" key={r.id}>
+                <div className="rl-card-top">
+                  <div className="rl-card-icon" style={{ background: cat.color + '1a', color: cat.color }}><i className={`fa-solid ${cat.icon}`}></i></div>
+                  <div className="rl-card-headings">
+                    <div className="rl-card-title">{r.title}</div>
+                    <div className="rl-card-meta">
+                      <span><i className="fa-solid fa-chalkboard"></i> {r.className}</span>
+                      <span><i className="fa-solid fa-book"></i> {r.subjectName}</span>
+                    </div>
+                  </div>
+                  <span className="rl-badge" style={{ background: cat.color + '14', color: cat.color }}>{cat.label}</span>
+                </div>
+                {r.description && <div className="rl-card-desc">{r.description}</div>}
+                <div className="rl-card-file">
+                  <span className="rl-card-fname"><i className="fa-solid fa-file-pdf"></i> {r.fileName || 'No file attached'}</span>
+                  <span className="rl-card-date"><i className="fa-regular fa-calendar"></i> {rlFmtDate(r.uploadedAt)}</span>
+                </div>
+                <div className="rl-card-actions">
+                  <Tooltip text="View file"><button className="rl-act" onClick={() => viewFile(r)}><i className="fa-solid fa-eye"></i> View</button></Tooltip>
+                  <Tooltip text="Download file"><button className="rl-act" onClick={() => downloadFile(r)}><i className="fa-solid fa-download"></i> Download</button></Tooltip>
+                  <Tooltip text="Edit resource"><button className="rl-act" onClick={() => setModal({ mode: 'edit', resource: r })}><i className="fa-solid fa-pen"></i> Edit</button></Tooltip>
+                  <Tooltip text="Delete resource"><button className="rl-act rl-act-danger" onClick={() => removeRes(r)}><i className="fa-solid fa-trash"></i> Delete</button></Tooltip>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <ResourceModal
+        open={!!modal}
+        mode={modal?.mode}
+        resource={modal?.resource}
+        classesData={classesData}
+        onClose={() => setModal(null)}
+        onSave={save}
+      />
+    </>
+  );
+}
+
+function ResourceModal({ open, mode, resource, classesData = [], onClose, onSave }) {
+  const [classId, setClassId] = useState('');
+  const [subjectName, setSubjectName] = useState('');
+  const [category, setCategory] = useState('worksheet');
+  const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
+  const [fileName, setFileName] = useState('');
+  const [fileUrl, setFileUrl] = useState('');
+  const [fileType, setFileType] = useState('');
+  const [subjects, setSubjects] = useState([]);
+  const [subjLoading, setSubjLoading] = useState(false);
+  const [err, setErr] = useState('');
+
+  useEffect(() => {
+    if (!open) return;
+    const r = mode === 'edit' ? resource : null;
+    setClassId(r ? String(r.classId || '') : '');
+    setSubjectName(r?.subjectName || '');
+    setCategory(r?.category || 'worksheet');
+    setTitle(r?.title || '');
+    setDescription(r?.description || '');
+    setFileName(r?.fileName || '');
+    setFileUrl(r?.fileUrl || '');
+    setFileType(r?.fileType || '');
+    setSubjects([]);
+    setErr('');
+  }, [open, mode, resource]);
+
+  /* Class chunte hi us class ke subjects (pehli section se) laao. */
+  useEffect(() => {
+    if (!open || !classId) { setSubjects([]); return undefined; }
+    const cls = classesData.find(c => String(c.id) === String(classId));
+    const sectionId = cls?.sections?.[0]?.sectionID;
+    let alive = true;
+    setSubjLoading(true);
+    rlFetchSubjects(classId, sectionId)
+      .then(subs => { if (alive) setSubjects(subs); })
+      .finally(() => { if (alive) setSubjLoading(false); });
+    return () => { alive = false; };
+  }, [open, classId, classesData]);
+
+  const onFile = e => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    if (f.type !== 'application/pdf') { setErr('Please upload a PDF file.'); return; }
+    setErr(''); setFileName(f.name); setFileType(f.type);
+    const reader = new FileReader();
+    reader.onload = () => setFileUrl(reader.result);
+    reader.readAsDataURL(f);
+  };
+
+  const submit = () => {
+    if (!classId) { setErr('Please select a class.'); return; }
+    if (!subjectName.trim()) { setErr('Please select or enter a subject.'); return; }
+    if (!title.trim()) { setErr('Please enter a resource title.'); return; }
+    const cls = classesData.find(x => String(x.id) === String(classId));
+    onSave({ classId: Number(classId) || classId, className: cls ? cls.name : '', subjectName: subjectName.trim(), category, title: title.trim(), description: description.trim(), fileName, fileUrl, fileType });
+  };
+
+  if (!open) return null;
+  return (
+    <div className="modal-overlay open" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="modal modal-md" style={{ maxWidth: 580 }}>
+        <div className="modal-header">
+          <div>
+            <div className="modal-title">
+              <i className={`fa-solid ${mode === 'edit' ? 'fa-pen' : 'fa-folder-plus'}`} style={{ marginRight: 8 }}></i>
+              {mode === 'edit' ? 'Edit Resource' : 'Add Resource'}
+            </div>
+            <div className="modal-sub">Class-wise &amp; subject-wise academic resource for your school</div>
+          </div>
+          <Tooltip text="Close"><button className="modal-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark"></i></button></Tooltip>
+        </div>
+        <div className="modal-body">
+          <div className="form-row" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+            <div className="form-group">
+              <label className="form-label">Class <span className="req-star">*</span></label>
+              <select className="form-input" value={classId} onChange={e => { setClassId(e.target.value); setSubjectName(''); }}>
+                <option value="">Select class</option>
+                {classesData.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Subject <span className="req-star">*</span></label>
+              {subjects.length > 0 ? (
+                <select className="form-input" value={subjectName} onChange={e => setSubjectName(e.target.value)} disabled={!classId}>
+                  <option value="">{classId ? 'Select subject' : 'Select class first'}</option>
+                  {subjects.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              ) : (
+                <input className="form-input" value={subjectName} onChange={e => setSubjectName(e.target.value)} disabled={!classId}
+                  placeholder={!classId ? 'Select class first' : (subjLoading ? 'Loading subjects…' : 'Type subject name')} />
+              )}
+            </div>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Category <span className="req-star">*</span></label>
+            <select className="form-input" value={category} onChange={e => setCategory(e.target.value)}>
+              {RL_CATEGORIES.map(c => <option key={c.key} value={c.key}>{c.label}</option>)}
+            </select>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Resource Title <span className="req-star">*</span></label>
+            <input className="form-input" value={title} onChange={e => setTitle(e.target.value)} placeholder="e.g. English Grammar Worksheet — Nouns" />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Resource Description</label>
+            <textarea className="form-input" style={{ height: 'auto', padding: 12, minHeight: 70, resize: 'vertical' }} value={description} onChange={e => setDescription(e.target.value)} placeholder="Short description of this resource…" />
+          </div>
+          <div className="form-group" style={{ marginBottom: 0 }}>
+            <label className="form-label">Upload PDF</label>
+            <label className="rl-upload">
+              <input type="file" accept="application/pdf" onChange={onFile} hidden />
+              <i className="fa-solid fa-cloud-arrow-up"></i>
+              <span>{fileName ? fileName : 'Choose a PDF file to upload'}</span>
+            </label>
+            {fileName && <div className="rl-upload-note"><i className="fa-solid fa-circle-check"></i> {fileUrl ? 'File ready' : 'Existing file kept'} — {fileName}</div>}
+          </div>
+          {err && <div className="rl-err"><i className="fa-solid fa-circle-exclamation"></i> {err}</div>}
+        </div>
+        <div className="modal-footer">
+          <Tooltip text="Discard and close"><button className="btn btn-secondary" onClick={onClose}>Cancel</button></Tooltip>
+          <Tooltip text="Save this resource"><button className="btn btn-primary" onClick={submit}><i className="fa-solid fa-floppy-disk"></i> Save Resource</button></Tooltip>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function TextBooks({ onReport, toast, classesData }) {
   const { can: canTb } = usePermissions();
   const canTbDownload = canTb('Academics', 'Textbooks', 'Download');
@@ -5118,5 +5470,94 @@ const ACADEMICS_CSS = `
   .act-stats-strip { grid-template-columns: repeat(2, 1fr); }
   .activity-layout-v2 { grid-template-columns: 1fr; gap: 14px; }
   .subject-grid { grid-template-columns: repeat(3, 1fr); }
+}
+
+/* ══════════ RESOURCE LIBRARY ══════════ */
+.rl-head { display:flex; align-items:flex-end; justify-content:space-between; gap:16px; flex-wrap:wrap; margin-bottom:18px; }
+.rl-head-title { font-size:17px; font-weight:800; color:var(--text-primary); display:flex; align-items:center; gap:9px; }
+.rl-head-title i { color:var(--brand-primary); }
+.rl-head-sub { font-size:12.5px; color:var(--text-muted); margin-top:3px; }
+
+.rl-stats { display:grid; grid-template-columns:repeat(5,1fr); gap:12px; margin-bottom:18px; }
+.rl-stat {
+  background:var(--bg-card); border:1.5px solid var(--border-light);
+  border-radius:var(--radius-lg); padding:14px 15px; box-shadow:var(--shadow-sm);
+  display:flex; align-items:center; gap:12px; position:relative; overflow:hidden;
+  transition:transform .2s ease, box-shadow .2s ease;
+}
+.rl-stat::before { content:''; position:absolute; left:0; top:0; bottom:0; width:4px; background:var(--accent); }
+.rl-stat:hover { transform:translateY(-2px); box-shadow:var(--shadow-md); }
+.rl-stat-icon { width:40px; height:40px; border-radius:11px; display:flex; align-items:center; justify-content:center; font-size:16px; flex-shrink:0; }
+.rl-stat-val { font-size:22px; font-weight:800; color:var(--text-primary); line-height:1.1; }
+.rl-stat-lbl { font-size:11px; font-weight:600; color:var(--text-muted); margin-top:2px; }
+
+.rl-filter-card { padding:14px 16px; margin-bottom:18px; }
+.rl-filters { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.rl-search { position:relative; flex:1 1 220px; min-width:180px; }
+.rl-search i { position:absolute; left:12px; top:50%; transform:translateY(-50%); color:var(--text-muted); font-size:12px; }
+.rl-search input {
+  width:100%; height:40px; padding:0 12px 0 34px; font-size:13px; font-family:var(--font-body);
+  border:1.5px solid var(--border-light); border-radius:var(--radius-md);
+  background:var(--input-bg, var(--bg-card)); color:var(--text-primary); outline:none; transition:border-color .2s ease;
+}
+.rl-search input:focus { border-color:var(--brand-primary); }
+.rl-fsel { height:40px; flex:0 1 150px; min-width:130px; }
+.rl-reset { height:40px; white-space:nowrap; }
+.rl-reset:disabled { opacity:.5; cursor:not-allowed; }
+
+.rl-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:14px; }
+.rl-card {
+  background:var(--bg-card); border:1.5px solid var(--border-light);
+  border-radius:var(--radius-lg); padding:15px 16px; box-shadow:var(--shadow-sm);
+  display:flex; flex-direction:column; transition:transform .2s ease, box-shadow .2s ease;
+}
+.rl-card:hover { transform:translateY(-3px); box-shadow:var(--shadow-md); }
+.rl-card-top { display:flex; align-items:flex-start; gap:11px; }
+.rl-card-icon { width:38px; height:38px; border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:15px; flex-shrink:0; }
+.rl-card-headings { flex:1; min-width:0; }
+.rl-card-title { font-size:14px; font-weight:800; color:var(--text-primary); line-height:1.35; margin-bottom:5px; }
+.rl-card-meta { display:flex; flex-wrap:wrap; gap:10px; font-size:11px; color:var(--text-muted); font-weight:600; }
+.rl-card-meta i { margin-right:3px; opacity:.8; }
+.rl-badge { flex-shrink:0; font-size:10px; font-weight:800; padding:4px 9px; border-radius:var(--radius-full); white-space:nowrap; }
+.rl-card-desc { font-size:12px; color:var(--text-secondary); line-height:1.5; margin:11px 0 0; }
+.rl-card-file {
+  display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;
+  margin-top:12px; padding-top:11px; border-top:1px dashed var(--border-light);
+  font-size:11.5px; color:var(--text-muted);
+}
+.rl-card-fname { display:inline-flex; align-items:center; gap:6px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:170px; font-weight:600; }
+.rl-card-fname i { color:#DC2626; }
+.rl-card-date { display:inline-flex; align-items:center; gap:5px; white-space:nowrap; }
+.rl-card-actions { display:flex; gap:7px; margin-top:13px; flex-wrap:wrap; }
+.rl-act {
+  flex:1; min-width:64px; display:inline-flex; align-items:center; justify-content:center; gap:5px;
+  height:33px; padding:0 8px; font-size:11.5px; font-weight:700; font-family:var(--font-body);
+  border:1.5px solid var(--border-light); border-radius:var(--radius-md);
+  background:var(--bg-card); color:var(--text-secondary); cursor:pointer; transition:all .18s ease;
+}
+.rl-act:hover { border-color:var(--brand-primary); color:var(--brand-primary); background:rgba(30,58,138,.05); }
+.rl-act-danger:hover { border-color:#DC2626; color:#DC2626; background:rgba(220,38,38,.05); }
+
+.rl-empty { text-align:center; padding:46px 20px; }
+.rl-empty-icon { width:62px; height:62px; margin:0 auto 14px; border-radius:50%; background:var(--bg-muted); display:flex; align-items:center; justify-content:center; font-size:26px; color:var(--text-muted); }
+.rl-empty-title { font-size:15px; font-weight:800; color:var(--text-primary); }
+.rl-empty-sub { font-size:12.5px; color:var(--text-muted); margin:6px 0 16px; }
+
+.rl-upload {
+  display:flex; align-items:center; gap:10px; padding:13px 15px; cursor:pointer;
+  border:1.5px dashed var(--border-med, var(--border-light)); border-radius:var(--radius-md);
+  background:var(--bg-muted); color:var(--text-secondary); font-size:12.5px; font-weight:600; transition:all .2s ease;
+}
+.rl-upload:hover { border-color:var(--brand-primary); color:var(--brand-primary); background:rgba(30,58,138,.04); }
+.rl-upload i { font-size:16px; color:var(--brand-primary); }
+.rl-upload-note { font-size:11.5px; color:var(--success); font-weight:600; margin-top:8px; display:flex; align-items:center; gap:6px; }
+.rl-err { font-size:12px; color:var(--error); font-weight:600; margin-top:12px; display:flex; align-items:center; gap:7px; }
+
+@media (max-width:980px) { .rl-stats { grid-template-columns:repeat(3,1fr); } }
+@media (max-width:620px) {
+  .rl-stats { grid-template-columns:repeat(2,1fr); }
+  .rl-filters { flex-direction:column; align-items:stretch; }
+  .rl-search, .rl-fsel, .rl-reset { flex:1 1 auto; width:100%; }
+  .rl-grid { grid-template-columns:1fr; }
 }
 `;
