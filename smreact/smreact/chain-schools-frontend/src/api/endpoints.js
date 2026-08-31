@@ -139,4 +139,15 @@ export const ENDPOINTS = {
     byMonthNetwork: (networkId, month, sessionYearId = 0, pageNo = 1) => `/api/getactivitycalendarbymonthnetwork?NetworkID=${networkId}&month=${month}&SessionYearID=${sessionYearId}&pageNo=${pageNo}`,
     byMonthAndYearNetwork: (networkId, month, year, sessionYearId = 0, pageNo = 1) => `/api/getactivitycalendarbymonthandyearnetwork?NetworkID=${networkId}&month=${month}&year=${year}&SessionYearID=${sessionYearId}&pageNo=${pageNo}`,
   },
+
+  /* ERP ka Resource Library — Academics ▸ Resource Library yahan LIVE hai.
+     Poora CRUD aik hi multipart route par hai; kaam `Action` field se tay
+     hota hai: insert | update | delete | getbynetwork | getbybranch |
+     getbyid (dekhein src/api/resourceLibraryApi.js). Chain ki rows networkID
+     ki base par chalti hain: har call me BranchID aur SectionID 0 jate hain
+     aur parhne ke liye `getbynetwork`. `getbybranch` wala rasta school ke
+     apne resources ke liye hai. */
+  resourceLibrary: {
+    manage: '/api/manage-resource-library',
+  },
 }

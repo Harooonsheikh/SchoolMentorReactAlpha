@@ -48,3 +48,14 @@ export const ERP_URL = String(
    signup bhi network wala chalta hai). Warna chain ka user har baar khud tab
    badalta — jabke wo aaya hi network se hai. */
 export const ERP_LOGIN_URL = `${ERP_URL}?acct=network`
+
+/* Uploaded files (Resource Library ke PDF waghera) ka host. API jo path
+   stamp karti hai us ka host uska apna hota hai — aksar `localhost:4100`
+   (IIS proxy ke peeche) — jo user ke browser me uska apna computer hai,
+   yaani wahan kuch nahi. Is liye stamped host phenk kar sirf storage path
+   liya jata hai aur usay isi host se serve kiya jata hai (bilkul ERP ke
+   resolveMediaUrl jaisa, dekhein src/utils/apiConfig.js).
+   ERP_API_BASE yahan kaam nahi aata: wo khali reh kar apne origin par
+   girta hai, aur apna origin /Uploads… serve nahi karta (SPA ka index.html
+   wapas aa jata hai). */
+export const MEDIA_BASE = trimEnd(import.meta.env.VITE_MEDIA_BASE) || 'https://alphaapi.schoolmentor.ai'

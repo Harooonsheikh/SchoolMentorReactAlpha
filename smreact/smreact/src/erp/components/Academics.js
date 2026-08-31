@@ -7,6 +7,13 @@ import { deliverReport } from './reportDelivery';
 import { useModuleReadOnly, validateSessionDateFromStorage } from '../pages/Settings/settingsStore';
 import { usePermissions } from '../context/PermissionsContext';
 import RouteFallback from '../shared/RouteFallback';
+/* Resource Library LIVE hai — school ke apne PDF resources branchID ki base
+   par (/api/manage-resource-library). Wahi table chain portal bhi use karta
+   hai, wahan scope networkID ka hota hai. */
+import {
+  fetchBranchResources, saveBranchResource, deleteBranchResource,
+  fetchClassSubjects as rlFetchClassSubjects,
+} from '../services/resourceLibraryService';
 
 
 
@@ -3210,13 +3217,22 @@ const deleteTerm = id => {
    ═══════════════════════════════════════════════════════════════════ */
 /* ═══════════════════════════════════════════════════════════════════
    RESOURCE LIBRARY — per-school academic file library (worksheets, summer
-   packs, question papers, others). Browser ke localStorage me branch-scoped
-   rehta hai (backend endpoint abhi nahi) — class/subject sirf tag hain aur
-   PDF data-URL ke taur par store hoti hai. Class/subject live API se aate
-   hain (wahi source jo Textbooks use karta hai). Jab backend aaye, rlLoad/
-   rlSave/save/removeRes ko us se jod dena — UI waisa ka waisa.
+   packs, question papers, others).
+
+   Ab LIVE hai: /api/manage-resource-library par, branchID ki base par
+   (dekhein src/erp/services/resourceLibraryService.js). Pehle ye
+   localStorage me baitha tha aur PDF data-URL ki shakal me rehti thi —
+   ab file asal me server par jati hai aur uska URL row ke sath aata hai.
+
+   Wahi table chain portal bhi use karta hai (Academics ▸ Resource Library),
+   farq sirf scope ka hai: wahan rows networkID se bandhi hoti hain, yahan
+   branchID se. Server 0 ko null rakh deta hai, is liye dono aapas me nahi
+   milte — is school ki list me sirf isi branch ki rows aati hain.
+
+   Class/subject live API se aate hain (wahi source jo Textbooks use karta
+   hai), aur ab subject ka asli subjectID bhi sath jata hai — API par
+   ClassID/SubjectID/SectionID par foreign keys lagti hain.
    ═══════════════════════════════════════════════════════════════════ */
-const rlKey = () => `sm_resource_library_${sessionStorage.getItem('branchID') || '0'}`;
 const RL_CATEGORIES = [
   { key: 'worksheet', label: 'Worksheets',      icon: 'fa-file-lines',           color: '#1E40AF' },
   { key: 'summer',    label: 'Summer Packs',    icon: 'fa-umbrella-beach',       color: '#D97706' },
@@ -3225,33 +3241,31 @@ const RL_CATEGORIES = [
 ];
 const rlCat = k => RL_CATEGORIES.find(c => c.key === k) || RL_CATEGORIES[3];
 const rlFmtDate = d => { if (!d) return '—'; try { return new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }); } catch { return d; } };
-const rlToday = () => new Date().toISOString().slice(0, 10);
-const rlLoad = () => { try { const d = JSON.parse(localStorage.getItem(rlKey())); if (Array.isArray(d)) return d; } catch { /* empty */ } return []; };
-const rlSave = list => { try { localStorage.setItem(rlKey(), JSON.stringify(list)); return true; } catch { return false; } };
-const rlNextId = list => list.reduce((m, r) => Math.max(m, r.id || 0), 0) + 1;
-
-/* Ek class (grade) ke subjects — us class ki pehli section se (Textbooks wala
-   hi endpoint). Section/subjects na milen to khali — modal free-text par gir
-   jata hai. */
-async function rlFetchSubjects(gradeId, sectionId) {
-  if (!gradeId || !sectionId) return [];
-  try {
-    const res = await fetch(buildUrl(`/api/LaunchSetup/get-subjects/${gradeId}/${sectionId}`), { headers: { Accept: '*/*' } });
-    const json = await res.json();
-    const arr = json?.data || (Array.isArray(json) ? json : []);
-    return Array.from(new Set(arr.map(s => s.subjectName || s.name).filter(Boolean)));
-  } catch { return []; }
-}
 
 function ResourceLibrary({ toast, openConfirm, classesData = [] }) {
-  const [list, setList] = useState(rlLoad);
+  const [list, setList] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [loadErr, setLoadErr] = useState('');
+  const [busy, setBusy] = useState(false);
   const [q, setQ] = useState('');
   const [fClass, setFClass] = useState('all');
   const [fSubject, setFSubject] = useState('all');
   const [fCat, setFCat] = useState('all');
   const [modal, setModal] = useState(null); // { mode:'add' } | { mode:'edit', resource }
 
-  const persist = next => { setList(next); if (!rlSave(next)) toast('Kept in memory — file too large to store locally', 'info'); };
+  const reload = React.useCallback(async () => {
+    setLoading(true);
+    try {
+      setList(await fetchBranchResources());
+      setLoadErr('');
+    } catch (e) {
+      setLoadErr(e?.message || 'Could not load resources');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { reload(); }, [reload]);
 
   const counts = useMemo(() => {
     const c = { total: list.length };
@@ -3259,7 +3273,7 @@ function ResourceLibrary({ toast, openConfirm, classesData = [] }) {
     return c;
   }, [list]);
 
-  /* Filter ka subject dropdown ab saved resources ke subjects se banta hai
+  /* Filter ka subject dropdown saved resources ke subjects se banta hai
      (live subject-fetch sirf modal me hoti hai jab class chunte hain). */
   const subjectsInUse = useMemo(
     () => Array.from(new Set(list.map(r => r.subjectName).filter(Boolean))).sort(),
@@ -3278,24 +3292,27 @@ function ResourceLibrary({ toast, openConfirm, classesData = [] }) {
   const anyFilter = q.trim() || fClass !== 'all' || fSubject !== 'all' || fCat !== 'all';
   const reset = () => { setQ(''); setFClass('all'); setFSubject('all'); setFCat('all'); };
 
-  const save = payload => {
-    if (modal?.mode === 'edit') {
-      persist(list.map(r => (r.id === modal.resource.id ? { ...r, ...payload, updatedAt: rlToday() } : r)));
-      toast('Resource updated', 'success');
-    } else {
-      const now = rlToday();
-      const rec = { id: rlNextId(list), ...payload, uploadedBy: 'School', uploadedAt: now, createdAt: now, updatedAt: now };
-      persist([rec, ...list]);
-      toast('Resource added', 'success');
+  const save = async payload => {
+    const isEdit = modal?.mode === 'edit';
+    setBusy(true);
+    try {
+      await saveBranchResource({ ...payload, id: isEdit ? modal.resource.id : 0 });
+      setModal(null);
+      toast(isEdit ? 'Resource updated' : 'Resource added', 'success');
+      await reload();
+    } catch (e) {
+      toast(e?.message || 'Could not save the resource', 'error');
+    } finally {
+      setBusy(false);
     }
-    setModal(null);
   };
 
-  const viewFile = r => { if (r.fileUrl) window.open(r.fileUrl, '_blank'); else toast('No file attached to preview', 'info'); };
+  const viewFile = r => { if (r.fileUrl) window.open(r.fileUrl, '_blank', 'noopener'); else toast('No file attached to preview', 'info'); };
   const downloadFile = r => {
     if (!r.fileUrl) { toast('No file attached to download', 'info'); return; }
     const a = document.createElement('a');
     a.href = r.fileUrl; a.download = r.fileName || 'resource.pdf';
+    a.target = '_blank'; a.rel = 'noopener';
     document.body.appendChild(a); a.click(); a.remove();
   };
   const removeRes = r => openConfirm({
@@ -3304,7 +3321,18 @@ function ResourceLibrary({ toast, openConfirm, classesData = [] }) {
     hint: `${r.className} · ${r.subjectName}`,
     confirmLabel: 'Yes, Delete', confirmStyle: 'danger',
     icon: 'fa-trash', iconBg: 'rgba(220,38,38,.1)', iconColor: '#DC2626',
-    onConfirm: () => { persist(list.filter(x => x.id !== r.id)); toast('Resource deleted', 'success'); },
+    onConfirm: async () => {
+      setBusy(true);
+      try {
+        await deleteBranchResource(r);
+        toast('Resource deleted', 'success');
+        await reload();
+      } catch (e) {
+        toast(e?.message || 'Could not delete the resource', 'error');
+      } finally {
+        setBusy(false);
+      }
+    },
   });
 
   return (
@@ -3315,14 +3343,13 @@ function ResourceLibrary({ toast, openConfirm, classesData = [] }) {
           <div className="rl-head-title"><i className="fa-solid fa-folder-open"></i> Resource Library</div>
           <div className="rl-head-sub">Upload class-wise and subject-wise academic resources for your school.</div>
         </div>
-        <Tooltip text="Upload a new academic resource">
-          <button className="btn btn-primary" onClick={() => setModal({ mode: 'add' })}>
+        <Tooltip text="Upload a new resource">
+          <button className="btn btn-primary" disabled={loading || busy} onClick={() => setModal({ mode: 'add' })}>
             <i className="fa-solid fa-plus"></i> Add Resource
           </button>
         </Tooltip>
       </div>
 
-      {/* Summary cards */}
       <div className="rl-stats">
         <div className="rl-stat" style={{ '--accent': '#1E3A8A' }}>
           <div className="rl-stat-icon" style={{ background: 'rgba(30,58,138,.1)', color: '#1E3A8A' }}><i className="fa-solid fa-folder-open"></i></div>
@@ -3336,12 +3363,11 @@ function ResourceLibrary({ toast, openConfirm, classesData = [] }) {
         ))}
       </div>
 
-      {/* Filters */}
       <div className="section-card rl-filter-card">
         <div className="rl-filters">
           <div className="rl-search">
             <i className="fa-solid fa-magnifying-glass"></i>
-            <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search by title…" />
+            <input className="form-input" value={q} onChange={e => setQ(e.target.value)} placeholder="Search by resource title…" />
           </div>
           <select className="form-input rl-fsel" value={fClass} onChange={e => setFClass(e.target.value)}>
             <option value="all">All Classes</option>
@@ -3363,15 +3389,24 @@ function ResourceLibrary({ toast, openConfirm, classesData = [] }) {
         </div>
       </div>
 
-      {/* List / empty state */}
-      {filtered.length === 0 ? (
+      {loading ? (
+        <div className="section-card rl-empty">
+          <div className="rl-empty-icon"><i className="fa-solid fa-spinner fa-spin"></i></div>
+          <div className="rl-empty-title">Loading resources…</div>
+        </div>
+      ) : loadErr ? (
+        <div className="section-card rl-empty">
+          <div className="rl-empty-icon"><i className="fa-solid fa-triangle-exclamation"></i></div>
+          <div className="rl-empty-title">{loadErr}</div>
+          <div className="rl-empty-sub" style={{ marginTop: 12 }}>
+            <button className="btn btn-secondary" onClick={reload}><i className="fa-solid fa-rotate-right"></i> Try again</button>
+          </div>
+        </div>
+      ) : filtered.length === 0 ? (
         <div className="section-card rl-empty">
           <div className="rl-empty-icon"><i className="fa-solid fa-folder-open"></i></div>
           <div className="rl-empty-title">No resources found</div>
           <div className="rl-empty-sub">{anyFilter ? 'Try adjusting your search or filters.' : 'Click “Add Resource” to upload your first academic resource.'}</div>
-          {anyFilter
-            ? <button className="btn btn-secondary" onClick={reset}><i className="fa-solid fa-rotate-left"></i> Reset Filters</button>
-            : <button className="btn btn-primary" onClick={() => setModal({ mode: 'add' })}><i className="fa-solid fa-plus"></i> Add Resource</button>}
         </div>
       ) : (
         <div className="rl-grid">
@@ -3384,8 +3419,8 @@ function ResourceLibrary({ toast, openConfirm, classesData = [] }) {
                   <div className="rl-card-headings">
                     <div className="rl-card-title">{r.title}</div>
                     <div className="rl-card-meta">
-                      <span><i className="fa-solid fa-chalkboard"></i> {r.className}</span>
-                      <span><i className="fa-solid fa-book"></i> {r.subjectName}</span>
+                      <span><i className="fa-solid fa-chalkboard"></i> {r.className || '—'}</span>
+                      <span><i className="fa-solid fa-book"></i> {r.subjectName || '—'}</span>
                     </div>
                   </div>
                   <span className="rl-badge" style={{ background: cat.color + '14', color: cat.color }}>{cat.label}</span>
@@ -3393,13 +3428,13 @@ function ResourceLibrary({ toast, openConfirm, classesData = [] }) {
                 {r.description && <div className="rl-card-desc">{r.description}</div>}
                 <div className="rl-card-file">
                   <span className="rl-card-fname"><i className="fa-solid fa-file-pdf"></i> {r.fileName || 'No file attached'}</span>
-                  <span className="rl-card-date"><i className="fa-regular fa-calendar"></i> {rlFmtDate(r.uploadedAt)}</span>
+                  {r.uploadedAt && <span className="rl-card-date"><i className="fa-regular fa-calendar"></i> {rlFmtDate(r.uploadedAt)}</span>}
                 </div>
                 <div className="rl-card-actions">
                   <Tooltip text="View file"><button className="rl-act" onClick={() => viewFile(r)}><i className="fa-solid fa-eye"></i> View</button></Tooltip>
                   <Tooltip text="Download file"><button className="rl-act" onClick={() => downloadFile(r)}><i className="fa-solid fa-download"></i> Download</button></Tooltip>
-                  <Tooltip text="Edit resource"><button className="rl-act" onClick={() => setModal({ mode: 'edit', resource: r })}><i className="fa-solid fa-pen"></i> Edit</button></Tooltip>
-                  <Tooltip text="Delete resource"><button className="rl-act rl-act-danger" onClick={() => removeRes(r)}><i className="fa-solid fa-trash"></i> Delete</button></Tooltip>
+                  <Tooltip text="Edit resource"><button className="rl-act" disabled={busy} onClick={() => setModal({ mode: 'edit', resource: r })}><i className="fa-solid fa-pen"></i> Edit</button></Tooltip>
+                  <Tooltip text="Delete resource"><button className="rl-act rl-act-danger" disabled={busy} onClick={() => removeRes(r)}><i className="fa-solid fa-trash"></i> Delete</button></Tooltip>
                 </div>
               </div>
             );
@@ -3412,22 +3447,23 @@ function ResourceLibrary({ toast, openConfirm, classesData = [] }) {
         mode={modal?.mode}
         resource={modal?.resource}
         classesData={classesData}
-        onClose={() => setModal(null)}
+        busy={busy}
+        onClose={() => { if (!busy) setModal(null); }}
         onSave={save}
       />
     </>
   );
 }
 
-function ResourceModal({ open, mode, resource, classesData = [], onClose, onSave }) {
+function ResourceModal({ open, mode, resource, classesData = [], busy, onClose, onSave }) {
   const [classId, setClassId] = useState('');
-  const [subjectName, setSubjectName] = useState('');
+  const [subjectId, setSubjectId] = useState('');
   const [category, setCategory] = useState('worksheet');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [fileName, setFileName] = useState('');
-  const [fileUrl, setFileUrl] = useState('');
-  const [fileType, setFileType] = useState('');
+  const [filePath, setFilePath] = useState('');
+  const [pdfFile, setPdfFile] = useState(null);
   const [subjects, setSubjects] = useState([]);
   const [subjLoading, setSubjLoading] = useState(false);
   const [err, setErr] = useState('');
@@ -3436,26 +3472,32 @@ function ResourceModal({ open, mode, resource, classesData = [], onClose, onSave
     if (!open) return;
     const r = mode === 'edit' ? resource : null;
     setClassId(r ? String(r.classId || '') : '');
-    setSubjectName(r?.subjectName || '');
+    setSubjectId(r ? String(r.subjectId || '') : '');
     setCategory(r?.category || 'worksheet');
     setTitle(r?.title || '');
     setDescription(r?.description || '');
     setFileName(r?.fileName || '');
-    setFileUrl(r?.fileUrl || '');
-    setFileType(r?.fileType || '');
+    setFilePath(r?.filePath || '');
+    setPdfFile(null);
     setSubjects([]);
     setErr('');
   }, [open, mode, resource]);
 
-  /* Class chunte hi us class ke subjects (pehli section se) laao. */
+  /* Class chunte hi us class ke subjects (pehli section se) laao — naam ke
+     sath subjectID bhi, kyunke API par SubjectID ki FK lagti hai. Edit par
+     mojooda subject rehne dete hain agar wo isi class me ho. */
   useEffect(() => {
     if (!open || !classId) { setSubjects([]); return undefined; }
     const cls = classesData.find(c => String(c.id) === String(classId));
     const sectionId = cls?.sections?.[0]?.sectionID;
     let alive = true;
     setSubjLoading(true);
-    rlFetchSubjects(classId, sectionId)
-      .then(subs => { if (alive) setSubjects(subs); })
+    rlFetchClassSubjects(classId, sectionId)
+      .then(subs => {
+        if (!alive) return;
+        setSubjects(subs);
+        setSubjectId(cur => (subs.some(s => String(s.id) === String(cur)) ? cur : ''));
+      })
       .finally(() => { if (alive) setSubjLoading(false); });
     return () => { alive = false; };
   }, [open, classId, classesData]);
@@ -3463,24 +3505,40 @@ function ResourceModal({ open, mode, resource, classesData = [], onClose, onSave
   const onFile = e => {
     const f = e.target.files?.[0];
     if (!f) return;
-    if (f.type !== 'application/pdf') { setErr('Please upload a PDF file.'); return; }
-    setErr(''); setFileName(f.name); setFileType(f.type);
-    const reader = new FileReader();
-    reader.onload = () => setFileUrl(reader.result);
-    reader.readAsDataURL(f);
+    if (f.type !== 'application/pdf' && !f.name.toLowerCase().endsWith('.pdf')) { setErr('Please upload a PDF file.'); return; }
+    setErr(''); setFileName(f.name); setPdfFile(f);
   };
 
   const submit = () => {
     if (!classId) { setErr('Please select a class.'); return; }
-    if (!subjectName.trim()) { setErr('Please select or enter a subject.'); return; }
+    if (!subjectId) { setErr('Please select a subject.'); return; }
     if (!title.trim()) { setErr('Please enter a resource title.'); return; }
     const cls = classesData.find(x => String(x.id) === String(classId));
-    onSave({ classId: Number(classId) || classId, className: cls ? cls.name : '', subjectName: subjectName.trim(), category, title: title.trim(), description: description.trim(), fileName, fileUrl, fileType });
+    const sec = cls?.sections?.[0];
+    const sub = subjects.find(s => String(s.id) === String(subjectId));
+    onSave({
+      classId: Number(classId),
+      subjectId: Number(subjectId),
+      /* Network ke bar-aks school ki rows section ke sath jati hain — modal
+         me section ka apna picker nahi, class ki pehli section wahi hai
+         jahan se subjects bhi aate hain. */
+      sectionId: Number(sec?.sectionID) || 0,
+      className: cls?.name || '',
+      subjectName: sub?.name || '',
+      sectionName: sec?.sectionName || '',
+      category,
+      title: title.trim(),
+      description: description.trim(),
+      pdfFile,
+      /* Nayi file na chuni ho to purana path wapas — warna edit par PDF gum
+         ho jati hai. */
+      filePath: pdfFile ? '' : filePath,
+    });
   };
 
   if (!open) return null;
   return (
-    <div className="modal-overlay open" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+    <div className="modal-overlay open" onClick={e => { if (e.target === e.currentTarget && !busy) onClose(); }}>
       <div className="modal modal-md" style={{ maxWidth: 580 }}>
         <div className="modal-header">
           <div>
@@ -3496,22 +3554,19 @@ function ResourceModal({ open, mode, resource, classesData = [], onClose, onSave
           <div className="form-row" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
             <div className="form-group">
               <label className="form-label">Class <span className="req-star">*</span></label>
-              <select className="form-input" value={classId} onChange={e => { setClassId(e.target.value); setSubjectName(''); }}>
+              <select className="form-input" value={classId} onChange={e => { setClassId(e.target.value); setSubjectId(''); }}>
                 <option value="">Select class</option>
                 {classesData.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
             </div>
             <div className="form-group">
               <label className="form-label">Subject <span className="req-star">*</span></label>
-              {subjects.length > 0 ? (
-                <select className="form-input" value={subjectName} onChange={e => setSubjectName(e.target.value)} disabled={!classId}>
-                  <option value="">{classId ? 'Select subject' : 'Select class first'}</option>
-                  {subjects.map(s => <option key={s} value={s}>{s}</option>)}
-                </select>
-              ) : (
-                <input className="form-input" value={subjectName} onChange={e => setSubjectName(e.target.value)} disabled={!classId}
-                  placeholder={!classId ? 'Select class first' : (subjLoading ? 'Loading subjects…' : 'Type subject name')} />
-              )}
+              <select className="form-input" value={subjectId} onChange={e => setSubjectId(e.target.value)} disabled={!classId || subjLoading}>
+                <option value="">
+                  {!classId ? 'Select class first' : (subjLoading ? 'Loading subjects…' : (subjects.length ? 'Select subject' : 'No subjects in this class'))}
+                </option>
+                {subjects.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
             </div>
           </div>
           <div className="form-group">
@@ -3535,13 +3590,17 @@ function ResourceModal({ open, mode, resource, classesData = [], onClose, onSave
               <i className="fa-solid fa-cloud-arrow-up"></i>
               <span>{fileName ? fileName : 'Choose a PDF file to upload'}</span>
             </label>
-            {fileName && <div className="rl-upload-note"><i className="fa-solid fa-circle-check"></i> {fileUrl ? 'File ready' : 'Existing file kept'} — {fileName}</div>}
+            {fileName && <div className="rl-upload-note"><i className="fa-solid fa-circle-check"></i> {pdfFile ? 'Ready to upload' : 'Existing file kept'} — {fileName}</div>}
           </div>
           {err && <div className="rl-err"><i className="fa-solid fa-circle-exclamation"></i> {err}</div>}
         </div>
         <div className="modal-footer">
-          <Tooltip text="Discard and close"><button className="btn btn-secondary" onClick={onClose}>Cancel</button></Tooltip>
-          <Tooltip text="Save this resource"><button className="btn btn-primary" onClick={submit}><i className="fa-solid fa-floppy-disk"></i> Save Resource</button></Tooltip>
+          <Tooltip text="Discard and close"><button className="btn btn-secondary" onClick={onClose} disabled={busy}>Cancel</button></Tooltip>
+          <Tooltip text="Save this resource">
+            <button className="btn btn-primary" onClick={submit} disabled={busy}>
+              <i className={`fa-solid ${busy ? 'fa-spinner fa-spin' : 'fa-floppy-disk'}`}></i> {busy ? 'Saving…' : 'Save Resource'}
+            </button>
+          </Tooltip>
         </div>
       </div>
     </div>
@@ -3780,8 +3839,16 @@ const ACADEMICS_CSS = `
 .page-tutorial-btn { flex-shrink: 0; }
 
 /* ── L1 TABS ── */
+/* Teenon tabs (Scheme of Studies · Lesson Plans · Resource Library) aik hi
+   row me, barabar chaurai ke. grid-template-columns fix nahi kiya jata: har
+   tab View permission ke hisaab se dikhta hai (showSos/showLp/showRl), is
+   liye 1, 2 ya 3 — jitne bhi render hon, auto-flow unhe khud barabar baant
+   deta hai. Pehle yahan do columns fix the, is liye teesra tab (Resource
+   Library) toot kar dusri line par chala jata tha.
+   NOTE: ye poora CSS aik template literal ke andar hai — yahan comments me
+   backtick mat likhna, wo literal ko wahin khatam kar deta hai. */
 .l1-tabs {
-  display:grid; grid-template-columns:1fr 1fr;
+  display:grid; grid-auto-flow:column; grid-auto-columns:1fr;
   background:var(--bg-muted);
   border:1.5px solid var(--border-light);
   border-radius:var(--radius-lg);
@@ -4814,7 +4881,8 @@ const ACADEMICS_CSS = `
   .ts-actions { justify-content:flex-end; }
 }
 @media (max-width:768px) {
-  .l1-tabs { grid-template-columns:1fr 1fr; padding:3px; gap:3px; }
+  /* Row wahi rehti hai (base ka auto-flow) — sirf padding chhoti. */
+  .l1-tabs { padding:3px; gap:3px; }
   .l1-tab { padding:9px 8px; font-size:12px; gap:6px; }
   .l1-tab-icon { width:20px; height:20px; font-size:10px; }
   .l2-tabs { display:flex; overflow-x:auto; }
@@ -5218,20 +5286,24 @@ const ACADEMICS_CSS = `
   .page-title { font-size: 18px; }
   .page-sub { font-size: 11.5px; }
 
-  /* ─── L1 main tabs (Scheme of Studies / Lesson Plans) — compact ─── */
+  /* ─── L1 main tabs (Scheme of Studies / Lesson Plans / Resource Library) ───
+     Yahan bhi aik hi row — teen tabs ke liye label chhota aur padding kam,
+     taake phone par bhi teenon barabar samaa jayein. */
   .l1-tabs {
-    grid-template-columns: 1fr 1fr;
     display: grid !important;
+    grid-auto-flow: column;
+    grid-auto-columns: 1fr;
     gap: 4px;
     padding: 4px;
     margin-bottom: 12px;
   }
   .l1-tab {
-    padding: 8px 12px !important;
+    padding: 8px 6px !important;
     min-height: unset;
     height: auto;
-    font-size: 12.5px;
-    gap: 6px;
+    font-size: 11px;
+    gap: 5px;
+    line-height: 1.25;
   }
   .l1-tab-icon {
     width: 20px !important;

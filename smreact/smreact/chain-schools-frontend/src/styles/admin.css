@@ -30,17 +30,49 @@
   --bl: #1c2e50; --bm: #243858;
 }
 
-.app-layout { display: flex; min-height: 100vh; width: 100%; font-family: var(--font); background: var(--bg); color: var(--t1); }
+/* ── APP SHELL ──
+   Ye app-shell scroll hai: sidebar aur topbar apni jagah jamay rehte hain
+   aur SIRF .page-content scroll hoti hai. Is ke chalne ke liye teen cheezein
+   zaroori hain, teenon aapas me judi hui:
+
+     1. .app-layout ki height viewport par BANDHI ho (min-height nahi).
+        min-height ke saath container content ke saath barhta rehta hai, phir
+        .page-content ka overflow kabhi trigger hi nahi hota aur body scroll
+        karne lagti hai. Us surat me sidebar (jiska sticky viewport par hota
+        hai) to jama rehta hai magar topbar — jiska sticky .main-content ke
+        `overflow: hidden` wale box me qaid hai — sath sath upar khisak kar
+        gayab ho jata hai. Yehi wo "screen phatna" tha jo lambi screens
+        (Academics) par scroll karte hi nazar aata tha.
+     2. flex items par min-height: 0 — warna flex item apne content se chhota
+        hone se inkar karta hai aur andar ka scroll box ban hi nahi pata.
+     3. sidebar ki height 100% (100vh nahi) — ab shell khud viewport jitni hai.
+
+   Mobile par sidebar `position: fixed` ho jata hai (neeche media query);
+   fixed element ko .app-layout ka overflow clip nahi karta, is liye drawer
+   jaisa tha waisa hi chalta hai. */
+.app-layout { display: flex; height: 100vh; overflow: hidden; width: 100%; font-family: var(--font); background: var(--bg); color: var(--t1); }
+/* Mobile browsers ki address bar ke sath viewport badalta hai — dvh us ko
+   follow karta hai, is liye neeche ka hissa kabhi kat-ta nahi. */
+@supports (height: 100dvh) { .app-layout { height: 100dvh; } }
 .app-layout button { font-family: var(--font); cursor: pointer; }
 .app-layout input, .app-layout select, .app-layout textarea { font-family: var(--font); }
 
 @keyframes sFd { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
 
 /* ── LAYOUT ── */
-.sidebar { width: var(--sidebar-w); flex-shrink: 0; background: var(--card); border-right: 1px solid var(--bl); display: flex; flex-direction: column; position: sticky; top: 0; height: 100vh; box-shadow: 2px 0 12px rgba(30,58,138,.08); z-index: 100; transition: transform .28s cubic-bezier(.4,0,.2,1); }
-.main-content { flex: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
-.topbar { height: 60px; background: var(--card); border-bottom: 1px solid var(--bl); display: flex; align-items: center; justify-content: space-between; padding: 0 24px; position: sticky; top: 0; z-index: 90; box-shadow: var(--s-xs); flex-shrink: 0; }
-.page-content { flex: 1; padding: 24px; overflow-y: auto; overflow-x: hidden; background: var(--bg); animation: sFd .2s ease both; }
+.sidebar { width: var(--sidebar-w); flex-shrink: 0; background: var(--card); border-right: 1px solid var(--bl); display: flex; flex-direction: column; position: relative; height: 100%; box-shadow: 2px 0 12px rgba(30,58,138,.08); z-index: 100; transition: transform .28s cubic-bezier(.4,0,.2,1); }
+/* Yahan `overflow: hidden` nahi chahiye (aur ab nuqsaan-deh hai): scroll to
+   .page-content khud karti hai, jabke topbar ke dropdown (school switcher)
+   absolute position se topbar ke neeche khulte hain — hidden unhein kaat
+   deta. Sirf x ya sirf y hide karna bhi kaam nahi deta: aik axis hide ho to
+   doosri khud-ba-khud auto ban jati hai aur aik aur scroll box ban jata hai. */
+.main-content { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.topbar { height: 60px; background: var(--card); border-bottom: 1px solid var(--bl); display: flex; align-items: center; justify-content: space-between; padding: 0 24px; z-index: 90; box-shadow: var(--s-xs); flex-shrink: 0; }
+/* `both` fill-mode animation ko khatam hone ke baad bhi element par lagaye
+   rakhta hai; scroll container par ye compositing ki gharbar aur scroll ke
+   doran phat-phat paida karta hai. `backwards` sirf shuru me lagta hai —
+   fade-in wahi rehta hai, scroll saaf ho jata hai. */
+.page-content { flex: 1; min-height: 0; padding: 24px; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; background: var(--bg); animation: sFd .2s ease backwards; }
 
 /* ── SIDEBAR ── */
 .sidebar-logo { padding: 14px 16px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--bl); min-height: 62px; flex-shrink: 0; }
@@ -433,7 +465,9 @@ button.sw-row { cursor: pointer; }
 .sw-foot i { color: var(--brand); }
 
 /* View Only banner */
-.vo-banner { display: flex; align-items: center; gap: 10px; padding: 10px 24px; background: linear-gradient(90deg,rgba(245,158,11,.14),rgba(245,158,11,.05)); border-bottom: 1px solid rgba(245,158,11,.3); color: #92400e; font-size: 12.5px; }
+/* Topbar ki tarah ye bhi shell ka hissa hai — sikurna nahi chahiye, warna
+   lambi screen par patli lakeer ban jata hai. */
+.vo-banner { flex-shrink: 0; display: flex; align-items: center; gap: 10px; padding: 10px 24px; background: linear-gradient(90deg,rgba(245,158,11,.14),rgba(245,158,11,.05)); border-bottom: 1px solid rgba(245,158,11,.3); color: #92400e; font-size: 12.5px; }
 .vo-banner > i { color: #d97706; }
 .vo-banner span { flex: 1; }
 .vo-banner-btn { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border-radius: var(--r-md); border: 1.5px solid #d97706; background: rgba(255,255,255,.6); color: #b45309; font-family: var(--font); font-size: 11.5px; font-weight: 700; cursor: pointer; white-space: nowrap; }

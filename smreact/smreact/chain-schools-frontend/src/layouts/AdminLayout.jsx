@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { NAV_SECTIONS, NAV_BY_PATH } from '../config/nav'
 import { useAuth } from '../auth/useAuth'
@@ -45,6 +45,7 @@ export default function AdminLayout() {
   const [dark, setDark] = useState(() => localStorage.getItem('chain-theme') === 'dark')
   const [logoutOpen, setLogoutOpen] = useState(false)
   const [loggingOut, setLoggingOut] = useState(false)
+  const pageRef = useRef(null)
 
   /* Sign out → session clear karke ERP ke login par wapas. Is portal ka apna
      login form use nahi hota (session ERP se aata hai), is liye /login par
@@ -75,6 +76,12 @@ export default function AdminLayout() {
 
   /* Close the mobile drawer + switcher whenever the route changes. */
   useEffect(() => { setSidebarOpen(false); setSwitcherOpen(false) }, [location.pathname])
+
+  /* Scroll ab body ka nahi, .page-content ka hai (dekhein admin.css ka app
+     shell) — aur wo DOM node route badalne par dobara nahi banta. Is liye
+     har naye safhe ko upar se shuru karna khud karna parta hai, warna nayi
+     screen wahin se khulti hai jahan pichli chhori thi. */
+  useEffect(() => { pageRef.current?.scrollTo({ top: 0 }) }, [location.pathname])
 
   const current = NAV_BY_PATH[location.pathname]?.label || 'Dashboard'
   /* ERP handoff `displayName` bhejta hai, mock/real API `name` — dono chalein. */
@@ -209,7 +216,7 @@ export default function AdminLayout() {
           </div>
         )}
 
-        <div className={`page-content${isViewOnly ? ' view-only' : ''}`}>
+        <div ref={pageRef} className={`page-content${isViewOnly ? ' view-only' : ''}`}>
           <ErrorBoundary key={location.pathname}>
             <Outlet />
           </ErrorBoundary>

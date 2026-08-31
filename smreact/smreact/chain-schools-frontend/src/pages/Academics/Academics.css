@@ -547,7 +547,12 @@ textarea.ac-input { height: auto; padding: 9px 12px; resize: vertical; }
 .act-filter-btn:hover,
 .act-filter-btn.on { border-color: var(--brand); color: var(--brand); background: var(--brand-light); }
 
-.act-events-list { max-height: 520px; overflow-y: auto; }
+/* Pehle yahan `max-height: 520px; overflow-y: auto` tha (ERP se port hua).
+   Ye card safhe ke bilkul aakhir me poori chaurai me baitha hai — kisi
+   parosi column ki height match nahi karta — is liye us andar wale scroll
+   box ka koi faida nahi tha, ulta wo scroll ko phansa leta tha: neeche
+   scroll karte hue cursor list par aata aur wheel safhe ke bajaye list ko
+   chalane lagta. Ab poora safha aik hi scroll me chalta hai. */
 .act-event-item {
   padding: 12px 14px; display: flex; align-items: flex-start; gap: 10px;
   transition: var(--tr); position: relative;

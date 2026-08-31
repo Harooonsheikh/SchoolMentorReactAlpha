@@ -9,6 +9,12 @@ import { currentNetworkId, activityStatus, fetchNetworkActivities, fetchNetworkA
 /* Lesson + Notebook Plans bhi LIVE hain — poori screen ERP ke "Create Lesson
    Plans" jaisi hai aur networkID ki base par chalti hai. */
 import CreateLessonPlans from './CreateLessonPlans'
+/* Resource Library bhi LIVE hai — network ke PDF resources ERP ke
+   /api/manage-resource-library par. Class/subject dropdowns LaunchSetup ki
+   ASLI ids se bharte hain (store ki subject id naam se bani hoti hai, wo
+   API par nahi chalti — dekhein academicsStore ka subjectIdOf). */
+import { fetchNetworkResources, saveNetworkResource, deleteNetworkResource } from '../../api/resourceLibraryApi'
+import { fetchNetworkClasses, fetchClassSubjects } from '../../api/academicsSetupApi'
 /* A4 branded PDF / Word shell — sab Academics reports isi se bante hain. */
 import { esc, exportReport } from './reportEngine'
 import './Academics.css'
@@ -1459,11 +1465,23 @@ ${r.desc ? `<div class="desc">${esc(r.desc)}</div>` : ''}
   w.document.open(); w.document.write(html); w.document.close()
 }
 
+/* Resource Library LIVE hai — network ke resources ERP ke
+   /api/manage-resource-library par (dekhein src/api/resourceLibraryApi.js).
+
+   Do modes:
+     • live (resources prop nahi aaya) → sab kuch API par, class/subject
+       dropdowns bhi LaunchSetup ki asli ids se bharte hain.
+     • snapshot (release ka frozen copy) → wahi purana local behaviour;
+       release ka data jama hua hai, use API par nahi le jate. */
 function OtherResources({ a, fire, resources, onResources }) {
-  // resources prop + onResources → editable snapshot; resources prop only → read-only; neither → live store
+  // resources prop + onResources → editable snapshot; resources prop only → read-only; neither → live API
   const snapshot = resources !== undefined
+  const live = !snapshot
   const readOnly = snapshot && !onResources
   const [list, setList] = useState(() => (snapshot ? resources : []))
+  const [loading, setLoading] = useState(live)
+  const [loadErr, setLoadErr] = useState('')
+  const [busy, setBusy] = useState(false)
   const [q, setQ] = useState('')
   const [fClass, setFClass] = useState('all')
   const [fSubject, setFSubject] = useState('all')
@@ -1471,21 +1489,92 @@ function OtherResources({ a, fire, resources, onResources }) {
   const [fStatus, setFStatus] = useState('all')
   const [modal, setModal] = useState(null)
   const [del, setDel] = useState(null)
+  /* Asli server ids — store ki `a.subjects` naam se bana hua id rakhti hai
+     (dekhein academicsStore ka subjectIdOf), wo API par nahi chalta. Is liye
+     dropdowns LaunchSetup se seedha aate hain, bilkul Create Lesson Plans
+     jaise. */
+  const [apiClasses, setApiClasses] = useState([])
+  const subjCache = useRef({})
 
-  useEffect(() => { if (!snapshot) setList(loadResources()) }, [snapshot])
-  const persist = (next) => {
+  /* Class ke subjects — aik dafa laa kar cache; modal aur filter dono isi se. */
+  const loadSubjects = useCallback(async (classId) => {
+    const key = Number(classId) || 0
+    if (!key) return []
+    if (subjCache.current[key]) return subjCache.current[key]
+    const subs = await fetchClassSubjects(key).catch(() => [])
+    subjCache.current[key] = subs
+    return subs
+  }, [])
+
+  const reload = useCallback(async () => {
+    setLoading(true)
+    try {
+      const rows = await fetchNetworkResources()
+      setList(rows)
+      setLoadErr('')
+      /* Local mirror: Releases wali screen resource count synchronously
+         padhti hai (loadResources). Rows me file ka sirf path hota hai, is
+         liye ye mirror chhota rehta hai — quota ka masla nahi. */
+      saveResources(rows)
+    } catch (e) {
+      setLoadErr(e?.message || 'Could not load resources')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  /* Snapshot ki list initial state se aati hai (aur wahin edit hoti hai) —
+     `resources` par depend karna theek nahi, parent har render par nayi
+     array deta hai. Live mode hi API se load hota hai. */
+  useEffect(() => {
+    if (snapshot) return
+    reload()
+    fetchNetworkClasses().then(setApiClasses).catch(() => setApiClasses([]))
+  }, [snapshot, reload])
+
+  /* Snapshot mode ka purana rasta — sab kuch local. */
+  const persistLocal = (next) => {
     if (readOnly) return
     setList(next)
     if (onResources) { onResources(next); return }
     if (!saveResources(next)) fire('Kept in memory — file too large to store locally', 'warn')
   }
 
-  const save = (payload) => {
-    if (modal.mode === 'edit') { persist(list.map((r) => (r.id === modal.resource.id ? { ...r, ...payload } : r))); fire('Resource updated') }
-    else { persist([{ id: nextResourceId(list), uploadDate: todayISO(), ...payload }, ...list]); fire('Resource uploaded') }
-    setModal(null)
+  const save = async (payload) => {
+    if (!live) {
+      if (modal.mode === 'edit') { persistLocal(list.map((r) => (r.id === modal.resource.id ? { ...r, ...payload } : r))); fire('Resource updated') }
+      else { persistLocal([{ id: nextResourceId(list), uploadDate: todayISO(), ...payload }, ...list]); fire('Resource uploaded') }
+      setModal(null)
+      return
+    }
+    const isEdit = modal.mode === 'edit'
+    setBusy(true)
+    try {
+      await saveNetworkResource({ ...payload, id: isEdit ? modal.resource.id : 0 })
+      setModal(null)
+      fire(isEdit ? 'Resource updated' : 'Resource uploaded')
+      await reload()
+    } catch (e) {
+      fire(e?.message || 'Could not save the resource', 'warn')
+    } finally {
+      setBusy(false)
+    }
   }
-  const doDelete = () => { persist(list.filter((r) => r.id !== del.id)); setDel(null); fire('Resource deleted', 'info') }
+
+  const doDelete = async () => {
+    if (!live) { persistLocal(list.filter((r) => r.id !== del.id)); setDel(null); fire('Resource deleted', 'info'); return }
+    setBusy(true)
+    try {
+      await deleteNetworkResource(del)
+      setDel(null)
+      fire('Resource deleted', 'info')
+      await reload()
+    } catch (e) {
+      fire(e?.message || 'Could not delete the resource', 'warn')
+    } finally {
+      setBusy(false)
+    }
+  }
 
   const counts = useMemo(() => ({
     total: list.length,
@@ -1494,6 +1583,17 @@ function OtherResources({ a, fire, resources, onResources }) {
     qpaper: list.filter((r) => r.category === 'qpaper').length,
     other: list.filter((r) => r.category === 'other').length,
   }), [list])
+
+  /* Filter ke options: live me classes LaunchSetup se, aur subjects unhi
+     rows se jo mil chuki hain (poore network ka subject master nahi hota —
+     har subject kisi class ke neeche hi rehta hai). */
+  const classOptions = live ? apiClasses : a.classes
+  const subjectOptions = useMemo(() => {
+    if (!live) return a.subjects
+    const byId = new Map()
+    list.forEach((r) => { if (r.subjectId && !byId.has(r.subjectId)) byId.set(r.subjectId, { id: r.subjectId, name: r.subName || subjectName(a, r.subjectId) }) })
+    return [...byId.values()].sort((x, y) => x.name.localeCompare(y.name))
+  }, [live, list, a])
 
   const filtered = list.filter((r) => {
     const s = q.trim().toLowerCase()
@@ -1507,20 +1607,23 @@ function OtherResources({ a, fire, resources, onResources }) {
   const anyFilter = q || fClass !== 'all' || fSubject !== 'all' || fCat !== 'all' || fStatus !== 'all'
   const reset = () => { setQ(''); setFClass('all'); setFSubject('all'); setFCat('all'); setFStatus('all') }
 
+  /* Live rows par server ka URL hota hai, snapshot rows par inline data URI. */
   const viewPdf = (r) => {
-    if (r.fileData) { const w = window.open('', '_blank'); if (!w) return fire('Allow pop-ups to view the PDF', 'warn'); w.document.write(`<title>${r.fileName || r.title}</title><iframe src="${r.fileData}" style="border:0;position:fixed;inset:0;width:100%;height:100%"></iframe>`); w.document.close() }
-    else openResourceSample(r, a, fire)
+    if (r.fileUrl) { if (!window.open(r.fileUrl, '_blank', 'noopener')) fire('Allow pop-ups to view the PDF', 'warn'); return }
+    if (r.fileData) { const w = window.open('', '_blank'); if (!w) return fire('Allow pop-ups to view the PDF', 'warn'); w.document.write(`<title>${r.fileName || r.title}</title><iframe src="${r.fileData}" style="border:0;position:fixed;inset:0;width:100%;height:100%"></iframe>`); w.document.close(); return }
+    openResourceSample(r, a, fire)
   }
   const downloadPdf = (r) => {
-    if (r.fileData) { const el = document.createElement('a'); el.href = r.fileData; el.download = r.fileName || `${r.title}.pdf`; document.body.appendChild(el); el.click(); el.remove(); fire('Download started') }
-    else openResourceSample(r, a, fire)
+    const href = r.fileUrl || r.fileData
+    if (href) { const el = document.createElement('a'); el.href = href; el.download = r.fileName || `${r.title}.pdf`; el.target = '_blank'; el.rel = 'noopener'; document.body.appendChild(el); el.click(); el.remove(); fire('Download started'); return }
+    openResourceSample(r, a, fire)
   }
 
   return (
     <div className="section-card">
       <div className="card-header">
         <div><div className="card-title"><i className="fa-solid fa-folder-open" /> Resource Library</div><div className="card-sub">Upload class-wise &amp; subject-wise PDF resources for connected schools.</div></div>
-        {!readOnly && <button className="btn-primary" onClick={() => setModal({ mode: 'add' })}><i className="fa-solid fa-upload" /> Add Resource</button>}
+        {!readOnly && <button className="btn-primary" disabled={live && (loading || busy)} onClick={() => setModal({ mode: 'add' })}><i className="fa-solid fa-upload" /> Add Resource</button>}
       </div>
       <div style={{ padding: 16 }}>
         <div className="ac-info-strip"><i className="fa-solid fa-circle-info" /><span>Upload class-wise and subject-wise academic resources such as worksheets, summer vacation work, question papers, or other PDF documents. These resources can later be viewed by connected schools.</span></div>
@@ -1535,15 +1638,17 @@ function OtherResources({ a, fire, resources, onResources }) {
 
         <div className="res-filters">
           <div className="res-search"><i className="fa-solid fa-magnifying-glass" /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by title…" /></div>
-          <select className="ac-input" value={fClass} onChange={(e) => setFClass(e.target.value)}><option value="all">All Classes</option>{a.classes.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
-          <select className="ac-input" value={fSubject} onChange={(e) => setFSubject(e.target.value)}><option value="all">All Subjects</option>{a.subjects.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select>
+          <select className="ac-input" value={fClass} onChange={(e) => setFClass(e.target.value)}><option value="all">All Classes</option>{classOptions.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
+          <select className="ac-input" value={fSubject} onChange={(e) => setFSubject(e.target.value)}><option value="all">All Subjects</option>{subjectOptions.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select>
           <select className="ac-input" value={fCat} onChange={(e) => setFCat(e.target.value)}><option value="all">All Categories</option>{RES_CATEGORIES.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}</select>
           <select className="ac-input" value={fStatus} onChange={(e) => setFStatus(e.target.value)}><option value="all">All Status</option>{Object.entries(RES_STATUS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}</select>
           <button className="btn-secondary" onClick={reset} disabled={!anyFilter}><i className="fa-solid fa-rotate-left" /> Reset</button>
         </div>
 
-        {filtered.length === 0 ? <div className="ac-empty"><i className="fa-solid fa-folder-open" /><div style={{ fontSize: 13, fontWeight: 700 }}>No resources found</div><div style={{ fontSize: 12, marginTop: 4 }}>{anyFilter ? 'Try adjusting the filters.' : 'Click “Add Resource” to upload your first PDF.'}</div></div>
-          : (
+        {loading ? <div className="ac-empty"><i className="fa-solid fa-spinner fa-spin" /><div style={{ fontSize: 13, fontWeight: 700 }}>Loading resources…</div></div>
+          : loadErr ? <div className="ac-empty"><i className="fa-solid fa-triangle-exclamation" /><div style={{ fontSize: 13, fontWeight: 700 }}>{loadErr}</div><div style={{ marginTop: 10 }}><button className="btn-secondary" onClick={reload}><i className="fa-solid fa-rotate-right" /> Try again</button></div></div>
+          : filtered.length === 0 ? <div className="ac-empty"><i className="fa-solid fa-folder-open" /><div style={{ fontSize: 13, fontWeight: 700 }}>No resources found</div><div style={{ fontSize: 12, marginTop: 4 }}>{anyFilter ? 'Try adjusting the filters.' : 'Click “Add Resource” to upload your first PDF.'}</div></div>
+            : (
             <div className="res-grid">
               {filtered.map((r) => {
                 const cat = resCategory(r.category)
@@ -1554,7 +1659,7 @@ function OtherResources({ a, fire, resources, onResources }) {
                       <div className={`res-cat-ic c-${cat.color}`}><i className={`fa-solid ${cat.icon}`} /></div>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div className="res-card-title">{r.title}</div>
-                        <div className="res-card-meta"><span><i className="fa-solid fa-chalkboard" /> {className(a, r.classId)}</span><span><i className="fa-solid fa-book" /> {subjectName(a, r.subjectId)}</span></div>
+                        <div className="res-card-meta"><span><i className="fa-solid fa-chalkboard" /> {r.clsName || className(a, r.classId)}</span><span><i className="fa-solid fa-book" /> {r.subName || subjectName(a, r.subjectId)}</span></div>
                       </div>
                       <span className={`badge ${st.badge}`}>{st.label}</span>
                     </div>
@@ -1564,8 +1669,8 @@ function OtherResources({ a, fire, resources, onResources }) {
                     <div className="res-card-actions">
                       <button className="btn-sm res-keep" onClick={() => viewPdf(r)}><i className="fa-solid fa-eye" /> View</button>
                       <button className="btn-sm res-keep" onClick={() => downloadPdf(r)}><i className="fa-solid fa-download" /> Download</button>
-                      {!readOnly && <button className="btn-sm" onClick={() => setModal({ mode: 'edit', resource: r })}><i className="fa-solid fa-pen" /> Edit</button>}
-                      {!readOnly && <button className="btn-sm" style={{ borderColor: 'var(--err)', color: 'var(--err)', background: 'rgba(220,38,38,.05)' }} onClick={() => setDel(r)}><i className="fa-solid fa-trash-can" /></button>}
+                      {!readOnly && <button className="btn-sm" disabled={busy} onClick={() => setModal({ mode: 'edit', resource: r })}><i className="fa-solid fa-pen" /> Edit</button>}
+                      {!readOnly && <button className="btn-sm" disabled={busy} style={{ borderColor: 'var(--err)', color: 'var(--err)', background: 'rgba(220,38,38,.05)' }} onClick={() => setDel(r)}><i className="fa-solid fa-trash-can" /></button>}
                     </div>
                   </div>
                 )
@@ -1573,29 +1678,53 @@ function OtherResources({ a, fire, resources, onResources }) {
             </div>
           )}
       </div>
-      {modal && <ResourceModal a={a} modal={modal} onClose={() => setModal(null)} onSave={save} onToast={fire} />}
-      {del && <ConfirmModal title="Delete Resource?" body={`“${del.title}” will be permanently removed.`} onClose={() => setDel(null)} onConfirm={doDelete} />}
+      {modal && <ResourceModal a={a} live={live} classes={classOptions} loadSubjects={loadSubjects} busy={busy} modal={modal} onClose={() => { if (!busy) setModal(null) }} onSave={save} onToast={fire} />}
+      {del && <ConfirmModal title="Delete Resource?" body={`“${del.title}” will be permanently removed.`} busy={busy} onClose={() => setDel(null)} onConfirm={doDelete} />}
     </div>
   )
 }
 
-function ResourceModal({ a, modal, onClose, onSave, onToast }) {
+function ResourceModal({ a, live, classes, loadSubjects, busy, modal, onClose, onSave, onToast }) {
   const r = modal.resource
-  const [classId, setClassId] = useState(String(r?.classId || a.classes[0]?.id || ''))
-  const [subjectId, setSubjectId] = useState(String(r?.subjectId || subjectsOfClass(a, a.classes[0]?.id)[0]?.id || ''))
+  const first = classes[0]?.id || ''
+  const [classId, setClassId] = useState(String(r?.classId || first || ''))
+  /* Live me subjects server se aate hain (asli subjectID chahiye), snapshot
+     me store se — wahan wahi purani name-hash wali ids chalti hain. */
+  const [subs, setSubs] = useState(() => (live ? [] : subjectsOfClass(a, Number(r?.classId || first))))
+  const [subjectId, setSubjectId] = useState(String(r?.subjectId || ''))
   const [category, setCategory] = useState(r?.category || 'worksheet')
   const [title, setTitle] = useState(r?.title || '')
   const [desc, setDesc] = useState(r?.desc || '')
   const status = r?.status || 'published'
   const [fileName, setFileName] = useState(r?.fileName || '')
   const [fileData, setFileData] = useState(r?.fileData || null)
+  const [pdfFile, setPdfFile] = useState(null)
   const fileRef = useRef(null)
-  const subs = subjectsOfClass(a, Number(classId))
+
+  /* Class badalte hi uske subjects. Edit par pehli dafa mojooda subject
+     rehne dete hain (agar us class me hai), warna pehla chun lete hain. */
+  useEffect(() => {
+    let alive = true
+    const apply = (rows) => {
+      if (!alive) return
+      setSubs(rows)
+      setSubjectId((cur) => (rows.some((s) => String(s.id) === String(cur)) ? cur : String(rows[0]?.id || '')))
+    }
+    if (!live) { apply(subjectsOfClass(a, Number(classId))); return undefined }
+    setSubs([])
+    loadSubjects(Number(classId)).then(apply).catch(() => apply([]))
+    return () => { alive = false }
+  }, [classId, live, a, loadSubjects])
 
   const onFile = (e) => {
     const f = e.target.files?.[0]; if (!f) return
     if (f.type !== 'application/pdf' && !f.name.toLowerCase().endsWith('.pdf')) { onToast('Please select a PDF file', 'warn'); return }
     setFileName(f.name)
+    setPdfFile(f)
+    /* Snapshot mode file ko inline data URI ki shakal me rakhta hai; live
+       mode me asli File upload hoti hai, is liye wahan padhne ki zaroorat
+       nahi (aur baray PDF par ye mehnga bhi hai). */
+    if (live) { setFileData(null); return }
     const reader = new FileReader()
     reader.onload = () => setFileData(reader.result)
     reader.onerror = () => onToast('Could not read the file', 'warn')
@@ -1605,14 +1734,27 @@ function ResourceModal({ a, modal, onClose, onSave, onToast }) {
     if (!classId) return onToast('Select a class', 'warn')
     if (!subjectId) return onToast('Select a subject', 'warn')
     if (!title.trim()) return onToast('Enter a resource title', 'warn')
-    onSave({ classId: Number(classId), subjectId: Number(subjectId), category, title: title.trim(), desc: desc.trim(), status, fileName: fileName || null, fileData })
+    const base = { classId: Number(classId), subjectId: Number(subjectId), category, title: title.trim(), desc: desc.trim(), status, fileName: fileName || null }
+    if (!live) return onSave({ ...base, fileData })
+    return onSave({
+      ...base,
+      /* Denormalized naam bhi jate hain — API inhi columns par list wapas
+         karti hai, is liye card ko lookup nahi karna parta. */
+      clsName: classes.find((c) => String(c.id) === String(classId))?.name || '',
+      subName: subs.find((s) => String(s.id) === String(subjectId))?.name || '',
+      secName: '',
+      pdfFile,
+      /* Nayi file na chuni ho to purana path wapas — warna edit par PDF
+         gum ho jati hai. */
+      filePath: pdfFile ? '' : (r?.filePath || ''),
+    })
   }
 
   return (
-    <ModalShell title={r ? 'Edit Resource' : 'Add Resource'} icon="fa-folder-open" maxWidth={560} onClose={onClose} foot={<><button className="btn-secondary" onClick={onClose}>Cancel</button><button className="btn-primary" onClick={save}><i className="fa-solid fa-floppy-disk" /> Save Resource</button></>}>
+    <ModalShell title={r ? 'Edit Resource' : 'Add Resource'} icon="fa-folder-open" maxWidth={560} onClose={onClose} foot={<><button className="btn-secondary" onClick={onClose} disabled={busy}>Cancel</button><button className="btn-primary" onClick={save} disabled={busy}><i className={`fa-solid ${busy ? 'fa-spinner fa-spin' : 'fa-floppy-disk'}`} /> {busy ? 'Saving…' : 'Save Resource'}</button></>}>
       <div className="ac-info-strip" style={{ marginBottom: 14 }}><i className="fa-solid fa-circle-info" /><span>Upload class-wise and subject-wise academic resources such as worksheets, summer vacation work, question papers, or other PDF documents. These resources can later be viewed by connected schools.</span></div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
-        <div className="ac-field"><label>Class *</label><select className="ac-input" value={classId} onChange={(e) => { setClassId(e.target.value); setSubjectId(String(subjectsOfClass(a, Number(e.target.value))[0]?.id || '')) }}>{a.classes.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
+        <div className="ac-field"><label>Class *</label><select className="ac-input" value={classId} onChange={(e) => setClassId(e.target.value)}>{classes.length === 0 ? <option value="">No classes</option> : classes.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
         <div className="ac-field"><label>Subject *</label><select className="ac-input" value={subjectId} onChange={(e) => setSubjectId(e.target.value)}>{subs.length === 0 ? <option value="">No subjects</option> : subs.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></div>
         <div className="ac-field" style={{ gridColumn: '1/-1' }}><label>Category *</label><select className="ac-input" value={category} onChange={(e) => setCategory(e.target.value)}>{RES_CATEGORIES.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}</select></div>
       </div>
@@ -1620,9 +1762,9 @@ function ResourceModal({ a, modal, onClose, onSave, onToast }) {
       <div className="ac-field" style={{ marginBottom: 12 }}><label>Resource Description</label><textarea className="ac-input" rows={3} value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Short description of this resource…" /></div>
       <div className="ac-field"><label>Upload PDF</label>
         <input ref={fileRef} type="file" accept="application/pdf,.pdf" style={{ display: 'none' }} onChange={onFile} />
-        <div className="res-upload" onClick={() => fileRef.current?.click()}>
+        <div className="res-upload" onClick={() => { if (!busy) fileRef.current?.click() }}>
           <i className="fa-solid fa-file-arrow-up" />
-          <div>{fileName ? <strong>{fileName}</strong> : 'Click to select a PDF file'}<div className="res-upload-sub">{fileName ? (fileData ? 'Ready to save · click to replace' : 'Existing file') : 'PDF documents only'}</div></div>
+          <div>{fileName ? <strong>{fileName}</strong> : 'Click to select a PDF file'}<div className="res-upload-sub">{fileName ? (pdfFile || fileData ? 'Ready to save · click to replace' : 'Existing file') : 'PDF documents only'}</div></div>
         </div>
       </div>
     </ModalShell>
