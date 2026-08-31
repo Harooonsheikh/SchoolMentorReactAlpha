@@ -14,6 +14,22 @@ import './styles/responsive.css' // loaded last so the mobile layer refines ever
   } catch { /* storage band ho to koi baat nahi */ }
 })()
 
+/* ─── Cross-app logout (FROM the ERP) ───
+   ERP se logout hone par (jab session chain ke "Switch to View" se aaya tha) wo
+   chain portal ko `#logout` ke sath kholta hai taake chain ka session bhi saaf
+   ho jaye. Clear karne ke baad ProtectedRoute khud ERP ke login par bhej deta
+   hai. Handoff-in se PEHLE chalna zaroori hai. */
+;(() => {
+  if (!/[#&]logout(\b|=)/.test(window.location.hash)) return;
+  try {
+    sessionStorage.removeItem('csp_token');
+    sessionStorage.removeItem('csp_user');
+    sessionStorage.removeItem('csp_session');
+    localStorage.removeItem('chain-active-view');
+  } catch { /* storage band — koi baat nahi */ }
+  try { window.history.replaceState(null, '', window.location.pathname + window.location.search); } catch { /* noop */ }
+})();
+
 /* ─── Session handoff from the ERP's Network Head Office login ───
    The ERP (different origin in dev: :3000 vs :3002, so browser storage is
    NOT shared) redirects here with the session in the URL hash. A hash is never

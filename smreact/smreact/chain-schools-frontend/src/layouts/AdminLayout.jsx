@@ -3,7 +3,8 @@ import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { NAV_SECTIONS, NAV_BY_PATH } from '../config/nav'
 import { useAuth } from '../auth/useAuth'
 import { useView } from '../config/viewContext'
-import { ERP_LOGIN_URL } from '../config/env'
+import { ERP_LOGIN_URL, ERP_URL } from '../config/env'
+import { getToken, getStoredUser } from '../auth/tokenStorage'
 import ErrorBoundary from '../components/ErrorBoundary'
 import '../styles/admin.css'
 
@@ -11,10 +12,33 @@ import '../styles/admin.css'
 const initials = (name = '') =>
   name.split(' ').map((w) => w[0]).join('').toUpperCase().slice(0, 2) || 'CA'
 
+/* "Switch to View" → school ka ERP kholo (View-Only). Network session (token +
+   user) aur target branchID ko ERP ke URL hash me bhejte hain; ERP use padh kar
+   seedha us branch me View-Only login kar leta hai (dekhein ERP ka index.js
+   handoff-in). Koi password/login-API nahi — wahi network token branch ke reads
+   ke liye chalta hai. Same tab me jate hain taake Back-to-Chain par chain ka
+   apna session (isi origin ki sessionStorage) waise ka waisa mil jaye.
+   Dev: ERP :3000 · Prod: VITE_ERP_URL — dono config se (env.js). */
+function openSchoolInErp(school) {
+  const token = getToken()
+  if (!token) { window.location.assign(ERP_LOGIN_URL); return }
+  const u = getStoredUser() || {}
+  const payload = {
+    token,
+    branchID:    school.branchId ?? school.id,
+    accountType: u.accountType || u.role || 'network',
+    displayName: u.displayName || u.name || '',
+    userName:    u.userName || '',
+    id:          u.id ?? null,
+    schoolName:  school.name || '',
+  }
+  window.location.assign(`${ERP_URL}#sm=${encodeURIComponent(JSON.stringify(payload))}`)
+}
+
 export default function AdminLayout() {
   const location = useLocation()
   const { user, logout } = useAuth()
-  const { schools, schoolsLoading, schoolsError, selectedSchool, isViewOnly, switchToSchool, backToHeadOffice } = useView()
+  const { schools, schoolsLoading, schoolsError, selectedSchool, isViewOnly, backToHeadOffice } = useView()
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('chain-sidebar-collapsed') === '1')
   const [switcherOpen, setSwitcherOpen] = useState(false)
@@ -33,8 +57,10 @@ export default function AdminLayout() {
       /* Server-side logout fail ho jaye to bhi local session saaf ho chuka —
          user ko yahan rokna bemani hai, aage barho. */
     } finally {
-      /* `finally` me: har soorat me ERP par wapas. */
-      window.location.replace(ERP_LOGIN_URL)
+      /* `finally` me: har soorat me ERP par wapas — aur `#logout` ke sath, taake
+         agar chain admin kisi school ke ERP me "Switch to View" se gaya tha to us
+         ERP-origin ka session bhi saaf ho jaye (dono taraf logout). */
+      window.location.replace(`${ERP_LOGIN_URL}#logout`)
     }
   }
 
@@ -167,7 +193,7 @@ export default function AdminLayout() {
                   schoolsError={schoolsError}
                   selectedSchool={selectedSchool}
                   onClose={() => setSwitcherOpen(false)}
-                  onPickSchool={(s) => { switchToSchool(s); setSwitcherOpen(false) }}
+                  onPickSchool={(s) => { setSwitcherOpen(false); openSchoolInErp(s) }}
                   onHeadOffice={() => { backToHeadOffice(); setSwitcherOpen(false) }}
                 />
               )}
