@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import { isViewOnlyAccount, setViewOnlyActive } from '../../utils/apiConfig';
-import { checkChainBranch } from '../services/chainBranch';
 
 /* ═══════════════════════════════════════════════════════════════════
    VIEW-ONLY GUARD — chain account ke liye poore ERP ke action buttons
@@ -97,17 +96,12 @@ function isWriteControl(el) {
  * kiya ja sakta hai.
  */
 export function useViewOnly() {
-  const [viewOnly, setViewOnly] = useState(() => isViewOnlyAccount());
-
-  useEffect(() => {
-    if (viewOnly) return undefined;
-    let alive = true;
-    checkChainBranch()
-      .then((isChain) => { if (alive && isChain) setViewOnly(true); })
-      .catch(() => { /* chain API na chale to school apna kaam karta rahe */ });
-    return () => { alive = false; };
-  }, [viewOnly]);
-
+  /* View-only SIRF chain/network head ke session me (dekhein isViewOnlyAccount).
+     Pehle yahan checkChainBranch se bhi read-only lag jata tha jab branch chain
+     ka hissa hoti — is se chain-school ka apna School Head bhi read-only ho jata
+     tha. Wo hata diya. Session index.js/login me pehle set ho chuka hota hai, is
+     liye mount par isViewOnlyAccount() sahi jawab deta hai. */
+  const [viewOnly] = useState(() => isViewOnlyAccount());
   return viewOnly;
 }
 

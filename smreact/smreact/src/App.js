@@ -22,6 +22,15 @@ import ViewOnlyGuard, { VIEW_ONLY_TIP, useViewOnly } from './erp/shared/ViewOnly
 import './styles/globals.css';
 import './styles/tokens.css';
 import Tooltip from '../src/erp/components/Tooltip';
+
+/* Chain portal ka logout URL — ERP se logout hote waqt, agar session Chain
+   "Switch to View" se aaya tha, to chain ko bhi `#logout` ke sath kholte hain
+   taake dono taraf session khatam ho (dono alag origin par hain). Dev :3002,
+   prod REACT_APP_CHAIN_URL — wahi jo LoginScreen ka handoff use karta hai. */
+const CHAIN_LOGOUT_URL = `${String(
+  process.env.REACT_APP_CHAIN_URL || `${window.location.protocol}//${window.location.hostname}:3002`,
+).trim().replace(/\/+$/, '')}/dashboard#logout`;
+
 function AppShell({ user, onLogout, onOpenErp }) {
   const state = useAppState();
   /* Chain ka hissa? To Launch Setup par bhi kuch save/delete nahi hoga. */
@@ -364,6 +373,20 @@ function AuthGate() {
     setScreen('app');
   }
 
+  /* Cross-app logout: agar ye session Chain Portal ke "Switch to View" se aaya
+     tha (sm_from_chain), to ERP saaf karne ke baad chain portal ko bhi `#logout`
+     ke sath kholte hain — taake dono taraf logout ho jaye. Warna aam school
+     logout: seedha ERP login. */
+  function doLogout() {
+    let fromChain = false;
+    try { fromChain = sessionStorage.getItem('sm_from_chain') === '1'; } catch (e) { /* ignore */ }
+    try { sessionStorage.clear(); } catch (e) { /* ignore */ }
+    try { sessionStorage.removeItem('erp_active_module'); } catch (e) { /* ignore */ }
+    setUser(null);
+    if (fromChain) { window.location.replace(CHAIN_LOGOUT_URL); return; }
+    setScreen('login');
+  }
+
   if (screen === 'login') {
     return (
       <LoginScreen
@@ -389,7 +412,7 @@ function AuthGate() {
     return (
       <ErpApp
         onExitToSetup={() => { sessionStorage.setItem('forceSetup', '1'); setScreen('app'); }}
-        onLogout={() => { sessionStorage.clear(); sessionStorage.removeItem('erp_active_module'); setUser(null); setScreen('login'); }}
+        onLogout={doLogout}
       />
     );
   }
@@ -397,7 +420,7 @@ function AuthGate() {
   return (
     <AppShell
       user={user}
-      onLogout={() => { sessionStorage.clear(); sessionStorage.removeItem('erp_active_module'); setUser(null); setScreen('login'); }}
+      onLogout={doLogout}
       /* ERP me wapas jaate waqt 'forceSetup' clear karo — warna refresh par ye flag
          reh jata hai aur user ko galti se dubara Launch Setup par le jata hai. */
       onOpenErp={() => { sessionStorage.removeItem('forceSetup'); setScreen('erp'); }}

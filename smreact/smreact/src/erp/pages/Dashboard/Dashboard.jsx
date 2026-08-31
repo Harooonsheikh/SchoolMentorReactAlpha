@@ -108,6 +108,31 @@ export default function Dashboard({
   })();
   const dashType = /teacher/i.test(accountType) ? 'teacher' : 'admin';
 
+  /* "Back to Chain" button SIRF us user ko dikhta hai jo Chain Portal ke
+     "Switch to View" se aaya (Chain/Network head). `sm_from_chain` flag ERP ke
+     handoff-in (index.js) me set hota hai. Seedhe login karne wale school head
+     ko ye NAHI dikhta — chahe uski branch bhi kisi chain ka hissa ho (is liye
+     sm_chain_branch par gate nahi karte, wo har chain-school user ke liye true
+     hota hai). */
+  const fromChain = (() => {
+    try {
+      /* Chain "Switch to View" se aaya (handoff flag) — asal signal. */
+      if (sessionStorage.getItem('sm_from_chain') === '1') return true;
+      /* Ya account type khud chain/network head ka ho (e.g. "Chain Head",
+         "Chain Admin", "Network Head Office"). School Head par ye false rehta
+         hai — is liye school head ko button NAHI dikhta. */
+      return /chain|network/.test(accountType.toLowerCase());
+    } catch { return false; }
+  })();
+  /* Chain portal ka dashboard — dev :3002, prod REACT_APP_CHAIN_URL (wahi jo
+     LoginScreen ERP→chain handoff ke liye use karta hai). */
+  const chainDashboardUrl = (() => {
+    const base = String(
+      process.env.REACT_APP_CHAIN_URL || `${window.location.protocol}//${window.location.hostname}:3002`,
+    ).trim().replace(/\/+$/, '');
+    return `${base}/dashboard`;
+  })();
+
   /* visibility.user — asli logged-in identity: naam ownerName (displayName) se,
      role accountType se. Mock user ke baqi fields fallback rehte hain. */
   const dashUser = useMemo(() => ({
@@ -149,15 +174,17 @@ export default function Dashboard({
         </div>
 <div className="dash-head-r">
 
+  {fromChain && (
   <button
     type="button"
     className="dash-back-chain"
-    onClick={() => navigate('/')}
+    onClick={() => { window.location.assign(chainDashboardUrl); }}
     aria-label="Back to Chain"
   >
     <i className="fa-solid fa-arrow-left" aria-hidden="true"></i>
     <span>Back to Chain</span>
   </button>
+  )}
 
           <Tooltip text={`Active academic session — ${session.label}`}>
             <div className="dash-session">

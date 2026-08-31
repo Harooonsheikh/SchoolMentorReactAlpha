@@ -1,6 +1,5 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { buildUrl, isViewOnlyAccount } from '../../utils/apiConfig';
-import { checkChainBranch } from '../services/chainBranch';
 import { MODULE_REGISTRY } from '../config/moduleConfig';
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -66,20 +65,12 @@ const VIEW_ACTIONS = new Set(['view', 'download', 'print']);
 export function PermissionsProvider({ children }) {
   const accountType = (sessionStorage.getItem('accountType') || '').trim();
   const isSchoolHead = accountType.toLowerCase() === 'school head';
-  /* Chain ka pata do tarah se chalta hai:
-       • foran — session me pehle se maloom ho (ya account hi chain ka ho)
-       • zara der me — Chain-Management API se, pehli load par
-     Is liye ye state hai, sirf ek shart nahi. */
-  const [readOnly, setReadOnly] = useState(() => isViewOnlyAccount());
-
-  useEffect(() => {
-    if (readOnly) return undefined;         // pehle se maloom — dobara poochna bekaar
-    let alive = true;
-    checkChainBranch()
-      .then((isChain) => { if (alive && isChain) setReadOnly(true); })
-      .catch(() => { /* chain API na chale to school apna ERP chalata rahe */ });
-    return () => { alive = false; };
-  }, [readOnly]);
+  /* View-only SIRF chain/network head ke session me — dekhein isViewOnlyAccount.
+     Pehle yahan Chain-Management API (checkChainBranch) se bhi read-only lag
+     jata tha jab branch chain ka hissa hoti — is se chain-school ka apna School
+     Head bhi read-only ho jata tha. Wo hata diya: ab school ke apne users poora
+     edit access rakhte hain; sirf chain head view-only rehta hai. */
+  const readOnly = isViewOnlyAccount();
 
   const [state, setState] = useState(() => ({
     ready: isSchoolHead || isViewOnlyAccount(),        // School Head / chain → foran ready (no fetch)

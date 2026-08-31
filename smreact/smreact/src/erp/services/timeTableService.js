@@ -56,8 +56,14 @@ function normTime(t) {
    { id: classID, name, sectionID, section }. */
 export async function getTimeTableClasses() {
   try {
+    /* Branch-scoped class list — Fee wala hi endpoint. Purana
+       /get-classlist-sectionlist-studentlist-by-branch/{branch}/{empID}
+       tab 0 classes deta tha jab logged-in user (admin/school-head) ka
+       employee_ID khaali/0 hota — is se timetable ki table poori khaali
+       reh jati thi. Ye branch-only endpoint har account type ke liye
+       classes deta hai, employee_ID ki zarurat nahi. */
     const res = await fetch(
-      buildUrl(`/get-classlist-sectionlist-studentlist-by-branch/${branchID()}/${empID()}`),
+      buildUrl(`/api/LaunchSetup/get-class-section-studentlist-by-branch/${branchID()}`),
       { headers: authHeaders() },
     );
     const json = await res.json();

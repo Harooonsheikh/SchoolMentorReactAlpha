@@ -249,19 +249,26 @@ function isAuthUrl(url) {
 
 export const READ_ONLY_MSG = 'View only — a chain account cannot make changes here.';
 
-/** Kya mojooda session view-only hai? Do soortein: */
+/** Kya mojooda session view-only hai?
+ *  View-only SIRF chain/network head ke liye — jab chain admin kisi school ko
+ *  Chain Portal ke "Switch to View" se dekhta hai. School ke apne users (School
+ *  Head waghera) ka POORA edit access rehta hai, chahe unki branch kisi chain ka
+ *  hissa ho.
+ *
+ *  NOTE: pehle yahan `sm_chain_branch === '1'` bhi view-only bana deta tha —
+ *  yaani har chain-school ka apna School Head bhi read-only ho jata tha. Ab wo
+ *  shart hata di gayi hai; view-only sirf tab jab account KHUD chain/network ka
+ *  ho (ya "Switch to View" handoff se aaya ho). */
 export function isViewOnlyAccount() {
   try {
-    /* 1. BRANCH chain ka hissa hai — asal wajah. Chain-Management API se
-          pata chalta hai aur session me sambhal liya jata hai (dekhein
-          erp/services/chainBranch.js). Branch ke apne record me is ka koi
-          khana nahi, is liye `accountType` par bharosa nahi kiya ja sakta:
-          chain wale school ka user bhi "School Head" hi hota hai. */
-    if (sessionStorage.getItem('sm_chain_branch') === '1') return true;
+    /* 1. Chain Portal ke "Switch to View" se aaya (handoff sm_from_chain='1' +
+          net_accountType='network' set karta hai). */
+    if (sessionStorage.getItem('sm_from_chain') === '1') return true;
 
-    /* 2. Khud chain/network ka account ERP me aa jaye. */
+    /* 2. Account KHUD chain/network head ka ho. */
     const acct = String(sessionStorage.getItem('accountType') || '').trim().toLowerCase();
     if (/\b(chain|network)\b/.test(acct)) return true;
+
     /* Network login apni keys `net_` prefix ke sath rakhta hai (dekhein LoginScreen). */
     return String(sessionStorage.getItem('net_accountType') || '').trim().toLowerCase() === 'network';
   } catch (e) { return false; }
