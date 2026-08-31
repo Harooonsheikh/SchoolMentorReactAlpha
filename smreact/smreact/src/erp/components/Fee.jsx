@@ -1621,7 +1621,7 @@ function FamilyTreeChallansList({ toast }) {
       title:    'Family Challan Preview',
       sub:      `${f.name} — ${f.guardian} · ${f.children.length} child${f.children.length === 1 ? '' : 'ren'} · Parent · Bank · School copies`,
       family:   f,
-      innerHtml: buildFamilyChallanInner({ family: famWithFigs(f), settings, bw: false }),
+      innerHtml: buildFamilyChallanInner({ family: famWithFigs(f), settings, bw: false, school: branchHeader }),
     });
   };
   const openDownload = (f) => {
@@ -1707,7 +1707,7 @@ function FamilyTreeChallansList({ toast }) {
   };
   const runDownload = (family, { theme, fmt, size = 'a4' }) => {
     const bw   = theme === 'bw';
-    const html = buildFamilyChallanHTML({ family: famWithFigs(family), settings, bw, size });
+    const html = buildFamilyChallanHTML({ family: famWithFigs(family), settings, bw, size, school: branchHeader });
     const sizeT = size === 'thermal' ? 'Thermal 80mm' : 'A4';
     toast(`Generating ${sizeT} · ${bw ? 'B&W' : 'Color'} ${fmt === 'word' ? 'Word' : 'PDF'} — family challan…`, 'info');
     /* Word needs no pop-up — the .docx is built and downloaded in place. */
@@ -11646,8 +11646,17 @@ function feeThermalChallanHTML({ classMeta, student, heads, settings, period, is
 }
 
 /* ── Family combined challan: one slip lists every child as a row ── */
-function feeFamilySlipHTML({ copyLabel, family, settings, period, issueISO, dueISO }) {
+function feeFamilySlipHTML({ copyLabel, family, settings, period, issueISO, dueISO, school = null }) {
   const showPsd = settings.showPsd !== false;
+  /* Asli school header — report-header API `branchName`/`branchLogo` bhejti hai (na ke
+     name/logo), is liye feeReportSchool() se map karna zaroori hai. Warna school.name
+     undefined ho kar dummy "The Oxford System, Lahore Campus" chhapta tha. */
+  const sch      = feeReportSchool(school);
+  const schName  = sch.name;
+  const schAddr  = sch.address;
+  const logoHtml = sch.logo
+    ? `<img src="${escHtml(sch.logo)}" alt="${escHtml(schName)} logo" style="width:100%;height:100%;object-fit:contain;border-radius:50%;" />`
+    : FEE_LOGO_SVG;
   /* Whole rupees — list/cards ki tarah, challan par decimal na dikhe. */
   const w = (v) => { const n = Math.round(Number(v)); return Number.isFinite(n) ? n : 0; };
   /* fee/transport/dues pehle se discount-ke-BAAD ka baqaya hain, is liye Net wahi hai
@@ -11678,9 +11687,10 @@ function feeFamilySlipHTML({ copyLabel, family, settings, period, issueISO, dueI
   return `
 <div class="slip">
   <div class="slip-header">
-    <div class="logo-circle">${FEE_LOGO_SVG}</div>
+    <div class="logo-circle">${logoHtml}</div>
     <div>
-      <div class="school-name">${escHtml(FEE_SCHOOL.name)}</div>
+      <div class="school-name">${escHtml(schName)}</div>
+      ${schAddr ? `<div class="school-addr" style="font-size:9px;color:#555;margin-top:1px;">${escHtml(schAddr)}</div>` : ''}
       <span class="copy-tag">${escHtml(copyLabel)}</span>
     </div>
   </div>
@@ -11729,7 +11739,7 @@ function feeFamilySlipHTML({ copyLabel, family, settings, period, issueISO, dueI
 </div>`;
 }
 
-function buildFamilyChallanInner({ family, settings, bw = false, size = 'a4',
+function buildFamilyChallanInner({ family, settings, bw = false, size = 'a4', school = null,
                                    period: periodOverride, issueISO: issueOverride, dueISO: dueOverride }) {
   const today    = new Date();
   /* LOCAL calendar par — warna subah-subah slip par date ek din peechhe chhapti. */
@@ -11747,15 +11757,15 @@ function buildFamilyChallanInner({ family, settings, bw = false, size = 'a4',
   });
 
   if (size === 'thermal') {
-    return `<div class="fee-thermal-doc">${feeThermalFamilyChallanHTML({ family, settings, period, issueISO, dueISO })}</div>`;
+    return `<div class="fee-thermal-doc">${feeThermalFamilyChallanHTML({ family, settings, period, issueISO, dueISO, school })}</div>`;
   }
 
   const page = `
     <div class="challan-page">
       <div class="challan-row">
-        ${feeFamilySlipHTML({ copyLabel: 'Parent Copy', family, settings, period, issueISO, dueISO })}
-        ${feeFamilySlipHTML({ copyLabel: 'Bank Copy',   family, settings, period, issueISO, dueISO })}
-        ${feeFamilySlipHTML({ copyLabel: 'School Copy', family, settings, period, issueISO, dueISO })}
+        ${feeFamilySlipHTML({ copyLabel: 'Parent Copy', family, settings, period, issueISO, dueISO, school })}
+        ${feeFamilySlipHTML({ copyLabel: 'Bank Copy',   family, settings, period, issueISO, dueISO, school })}
+        ${feeFamilySlipHTML({ copyLabel: 'School Copy', family, settings, period, issueISO, dueISO, school })}
       </div>
     </div>`;
 
@@ -11769,8 +11779,9 @@ function buildFamilyChallanHTML(opts) {
 <style>${css}</style></head><body>${buildFamilyChallanInner(opts)}</body></html>`;
 }
 
-function feeThermalFamilyChallanHTML({ family, settings, period, issueISO, dueISO }) {
+function feeThermalFamilyChallanHTML({ family, settings, period, issueISO, dueISO, school = null }) {
   const showPsd = settings.showPsd !== false;
+  const schName = feeReportSchool(school).name;   // branchName ko map kar ke asli naam (na mile to fallback)
   /* Whole rupees — list/cards ki tarah, challan par decimal na dikhe. */
   const w = (v) => { const n = Math.round(Number(v)); return Number.isFinite(n) ? n : 0; };
   /* fee/transport/dues pehle se discount-ke-BAAD ka baqaya hain, is liye Net wahi hai
@@ -11797,7 +11808,7 @@ function feeThermalFamilyChallanHTML({ family, settings, period, issueISO, dueIS
 
   return `
 <div class="th-challan">
-  <div class="th-school">${escHtml(FEE_SCHOOL.name)}</div>
+  <div class="th-school">${escHtml(schName)}</div>
   <div class="th-tag">Family Fee Challan</div>
   <div class="th-kv">
     <span class="k">Period</span><span class="v">${escHtml(period)}</span>
