@@ -3418,8 +3418,11 @@ function ResourceLibrary({ toast, openConfirm, classesData = [] }) {
                   <div className="rl-card-icon" style={{ background: cat.color + '1a', color: cat.color }}><i className={`fa-solid ${cat.icon}`}></i></div>
                   <div className="rl-card-headings">
                     <div className="rl-card-title">{r.title}</div>
+                    {/* Section bhi dikhta hai: resource ab class + section +
+                        subject par bandha hai, is liye sirf class+subject se
+                        do alag sections ki rows aik jaisi lagti thin. */}
                     <div className="rl-card-meta">
-                      <span><i className="fa-solid fa-chalkboard"></i> {r.className || '—'}</span>
+                      <span><i className="fa-solid fa-chalkboard"></i> {r.className || '—'}{r.sectionName ? ` · ${r.sectionName}` : ''}</span>
                       <span><i className="fa-solid fa-book"></i> {r.subjectName || '—'}</span>
                     </div>
                   </div>
@@ -3457,6 +3460,7 @@ function ResourceLibrary({ toast, openConfirm, classesData = [] }) {
 
 function ResourceModal({ open, mode, resource, classesData = [], busy, onClose, onSave }) {
   const [classId, setClassId] = useState('');
+  const [sectionId, setSectionId] = useState('');
   const [subjectId, setSubjectId] = useState('');
   const [category, setCategory] = useState('worksheet');
   const [title, setTitle] = useState('');
@@ -3472,6 +3476,7 @@ function ResourceModal({ open, mode, resource, classesData = [], busy, onClose, 
     if (!open) return;
     const r = mode === 'edit' ? resource : null;
     setClassId(r ? String(r.classId || '') : '');
+    setSectionId(r ? String(r.sectionId || '') : '');
     setSubjectId(r ? String(r.subjectId || '') : '');
     setCategory(r?.category || 'worksheet');
     setTitle(r?.title || '');
@@ -3483,13 +3488,31 @@ function ResourceModal({ open, mode, resource, classesData = [], busy, onClose, 
     setErr('');
   }, [open, mode, resource]);
 
-  /* Class chunte hi us class ke subjects (pehli section se) laao — naam ke
-     sath subjectID bhi, kyunke API par SubjectID ki FK lagti hai. Edit par
-     mojooda subject rehne dete hain agar wo isi class me ho. */
+  /* Chuni hui class ki sections — LaunchSetup inhe grade ke sath hi bhej
+     deta hai (classesData me), is liye koi alag call nahi chahiye. */
+  const sections = useMemo(
+    () => classesData.find(c => String(c.id) === String(classId))?.sections || [],
+    [classesData, classId],
+  );
+
+  /* Class badalte hi section reset — agar us class me sirf aik section ho to
+     wahi khud chun lete hain (user ke liye aik kam click). Edit par mojooda
+     section rehne dete hain agar wo isi class ka ho. */
   useEffect(() => {
-    if (!open || !classId) { setSubjects([]); return undefined; }
-    const cls = classesData.find(c => String(c.id) === String(classId));
-    const sectionId = cls?.sections?.[0]?.sectionID;
+    if (!open) return;
+    setSectionId(cur => {
+      if (sections.some(s => String(s.sectionID) === String(cur))) return cur;
+      return sections.length === 1 ? String(sections[0].sectionID) : '';
+    });
+  }, [open, sections]);
+
+  /* Subjects class ke nahi, SECTION ke neeche hote hain — endpoint bhi
+     gradeId + sectionId dono par chalta hai. Is liye subject list section
+     chunne ke baad hi bharti hai. Naam ke sath subjectID bhi aata hai,
+     kyunke API par SubjectID ki FK lagti hai. Edit par mojooda subject
+     rehne dete hain agar wo isi section me ho. */
+  useEffect(() => {
+    if (!open || !classId || !sectionId) { setSubjects([]); return undefined; }
     let alive = true;
     setSubjLoading(true);
     rlFetchClassSubjects(classId, sectionId)
@@ -3500,7 +3523,7 @@ function ResourceModal({ open, mode, resource, classesData = [], busy, onClose, 
       })
       .finally(() => { if (alive) setSubjLoading(false); });
     return () => { alive = false; };
-  }, [open, classId, classesData]);
+  }, [open, classId, sectionId]);
 
   const onFile = e => {
     const f = e.target.files?.[0];
@@ -3511,21 +3534,21 @@ function ResourceModal({ open, mode, resource, classesData = [], busy, onClose, 
 
   const submit = () => {
     if (!classId) { setErr('Please select a class.'); return; }
+    if (!sectionId) { setErr('Please select a section.'); return; }
     if (!subjectId) { setErr('Please select a subject.'); return; }
     if (!title.trim()) { setErr('Please enter a resource title.'); return; }
     const cls = classesData.find(x => String(x.id) === String(classId));
-    const sec = cls?.sections?.[0];
+    const sec = sections.find(s => String(s.sectionID) === String(sectionId));
     const sub = subjects.find(s => String(s.id) === String(subjectId));
     onSave({
       classId: Number(classId),
+      /* Network ke bar-aks school ki rows section ke sath jati hain — teenon
+         (class + section + subject) par API par foreign keys lagti hain. */
+      sectionId: Number(sectionId),
       subjectId: Number(subjectId),
-      /* Network ke bar-aks school ki rows section ke sath jati hain — modal
-         me section ka apna picker nahi, class ki pehli section wahi hai
-         jahan se subjects bhi aate hain. */
-      sectionId: Number(sec?.sectionID) || 0,
       className: cls?.name || '',
-      subjectName: sub?.name || '',
       sectionName: sec?.sectionName || '',
+      subjectName: sub?.name || '',
       category,
       title: title.trim(),
       description: description.trim(),
@@ -3551,19 +3574,30 @@ function ResourceModal({ open, mode, resource, classesData = [], busy, onClose, 
           <Tooltip text="Close"><button className="modal-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark"></i></button></Tooltip>
         </div>
         <div className="modal-body">
-          <div className="form-row" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+          {/* Class → Section → Subject: har agla dropdown pichle par mabni
+              hai, kyunke subjects section ke neeche rehte hain. */}
+          <div className="form-row" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 14 }}>
             <div className="form-group">
               <label className="form-label">Class <span className="req-star">*</span></label>
-              <select className="form-input" value={classId} onChange={e => { setClassId(e.target.value); setSubjectId(''); }}>
+              <select className="form-input" value={classId} onChange={e => { setClassId(e.target.value); setSectionId(''); setSubjectId(''); }}>
                 <option value="">Select class</option>
                 {classesData.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
             </div>
             <div className="form-group">
-              <label className="form-label">Subject <span className="req-star">*</span></label>
-              <select className="form-input" value={subjectId} onChange={e => setSubjectId(e.target.value)} disabled={!classId || subjLoading}>
+              <label className="form-label">Section <span className="req-star">*</span></label>
+              <select className="form-input" value={sectionId} onChange={e => { setSectionId(e.target.value); setSubjectId(''); }} disabled={!classId}>
                 <option value="">
-                  {!classId ? 'Select class first' : (subjLoading ? 'Loading subjects…' : (subjects.length ? 'Select subject' : 'No subjects in this class'))}
+                  {!classId ? 'Select class first' : (sections.length ? 'Select section' : 'No sections in this class')}
+                </option>
+                {sections.map(s => <option key={s.sectionID} value={s.sectionID}>{s.sectionName}</option>)}
+              </select>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Subject <span className="req-star">*</span></label>
+              <select className="form-input" value={subjectId} onChange={e => setSubjectId(e.target.value)} disabled={!sectionId || subjLoading}>
+                <option value="">
+                  {!classId ? 'Select class first' : !sectionId ? 'Select section first' : (subjLoading ? 'Loading subjects…' : (subjects.length ? 'Select subject' : 'No subjects in this section'))}
                 </option>
                 {subjects.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>

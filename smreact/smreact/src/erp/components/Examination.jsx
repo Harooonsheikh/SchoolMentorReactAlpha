@@ -23,6 +23,44 @@ import { usePermissions } from '../context/PermissionsContext';
    jawab copy kar ke rakh diya tha — magar dekhne me lagta tha ke chips isi
    se ban rahe hain. Hata di gayi hai. */
 
+/* Term rows ko chips me badalne se pehle saaf karna.
+
+   Screen par darjanon chips aa jate the — un me purane sessions ke term bhi
+   shamil hote the aur aik hi naam kai baar. Wo "mock data" nahi tha: har chip
+   /api/termscrud ki asli row hai. Masla ye tha ke jab `sessionYearID` khali
+   jata hai to API branch ke SAARE term wapas kar deti hai, chahe wo kisi bhi
+   session ke hon.
+
+   Is liye yahan:
+     • bina id/naam wali rows chhoot jati hain,
+     • aik hi id dobara nahi aati,
+     • aur agar row apna session id lekar aaye to sirf chalte session ki rows
+       rakhi jati hain. Row me session ka koi field na ho to chhaanta kuch
+       nahi jata — warna aisi API par jo ye column nahi bhejti, chips bilkul
+       ghayab ho jate. */
+const termSessionOf = (t) =>
+  t?.sessionYearID ?? t?.SessionYearID ?? t?.sessionYearId
+  ?? t?.sessionID ?? t?.SessionID ?? t?.sessionId ?? null;
+
+function normalizeTerms(rows, activeSessionId) {
+  const list = (Array.isArray(rows) ? rows : [])
+    .map((t) => ({ ...t, id: t?.id ?? t?.ID ?? t?.termID ?? t?.termId, term: String(t?.term ?? t?.Term ?? t?.termName ?? '').trim() }))
+    .filter((t) => t.id != null && t.term);
+
+  const seen = new Set();
+  const unique = list.filter((t) => (seen.has(String(t.id)) ? false : (seen.add(String(t.id)), true)));
+
+  const active = String(activeSessionId ?? '').trim();
+  if (!active) return unique;
+  /* Sirf tab chhaanto jab rows waqai session id lekar aa rahi hon. */
+  const carries = unique.some((t) => termSessionOf(t) != null && String(termSessionOf(t)).trim() !== '');
+  if (!carries) return unique;
+  return unique.filter((t) => {
+    const s = termSessionOf(t);
+    return s == null || String(s).trim() === '' || String(s).trim() === active;
+  });
+}
+
 const ALL_CLASSES = [
   'class 1A (B)', 'class 1A (C)', 'class 1A (D)', 'class 1A (Green f)',
   'class 1A (New)', 'II-Pre (A)', 'III-Pre (2)', 'Marketing Class (A)',
@@ -751,8 +789,10 @@ const [subjects, setSubjects] = useState([]);
         body: JSON.stringify({ id: 0, branchID: Number(bID), term: '', sessionYearID: termsSessionYearID(), action: 'get' }),
       });
       const tJson = await tRes.json();
-      const termArr = Array.isArray(tJson) ? tJson : (tJson?.data || []);
-      const termIds = termArr.map(t => t.id ?? t.ID ?? t.termID).filter(v => v != null);
+      /* Wahi chhaant jo chips par lagti hai — warna Combined Assessment purane
+         sessions ke terms ke exams bhi samet leta hai. */
+      const termArr = normalizeTerms(Array.isArray(tJson) ? tJson : (tJson?.data || []), termsSessionYearID());
+      const termIds = termArr.map(t => t.id).filter(v => v != null);
       const lists = await Promise.all(termIds.map(tid =>
         fetch(buildUrl(`/api/getexamsbybranchidtermid?branchID=${bID}&termID=${tid}&empID=${empID}`), { headers })
           .then(r => r.json()).catch(() => []),
@@ -1660,20 +1700,15 @@ async function getTerms() {
 
     const data = await response.json();
 
-    // FIX: Ensure data is an array before setting state
-    if (Array.isArray(data)) {
-      setTerms(data);
-    } else if (data && Array.isArray(data.data)) {
-      // If API returns { data: [...] }
-      setTerms(data.data);
-    } else if (data && data.length !== undefined) {
-      // If data is array-like
-      setTerms(Array.from(data));
-    } else {
-      // Fallback to empty array
-      console.warn('Unexpected terms data format:', data);
-      setTerms([]);
-    }
+    // API kabhi seedha array deti hai, kabhi { data: [...] } — dono chalein.
+    let rows = [];
+    if (Array.isArray(data)) rows = data;
+    else if (data && Array.isArray(data.data)) rows = data.data;
+    else if (data && data.length !== undefined) rows = Array.from(data);
+    else console.warn('Unexpected terms data format:', data);
+
+    /* Chalte session ki, be-dohrai chips — upar normalizeTerms ki sharh dekhein. */
+    setTerms(normalizeTerms(rows, termsSessionYearID()));
   } catch (error) {
     console.log('Could not load terms', error);
     setTerms([]); // Set empty array on error

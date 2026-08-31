@@ -407,10 +407,40 @@ const PAYROLL_MONTH_NAMES = [
    NetPayable) are trusted as-is rather than recomputed. `empHeads` are the
    employee's custom salary heads returned alongside the payroll. Advance/loan
    fields are left to the separate empLoans flow. */
+/* API aur app ki status ki lughat aik nahi hai:
+
+     API  →  "Pending"   |  "Partial"        |  "Paid"
+     app  →  "Generated" |  "Partially Paid" |  "Paid"
+
+   Pehle API ka lafz jaisa ka waisa aage bhej diya jata tha. Nateeja: Payroll
+   screen har jagah `rec.status === 'Partially Paid'` se moqabla karti hai, jo
+   "Partial" par kabhi match hi nahi karta — is liye aik aadhi-adhoori paid row
+   screen par "Generated" dikhti thi jabke Salary Register report usi row par
+   "Partial" chhaapti thi. Aik hi row, do jagah do status — yahi "status khud
+   se badal raha hai" wala masla tha.
+
+   Lafz na pehchana jaye (ya khali aaye) to raqam se faisla hota hai. Purana
+   fallback sirf `paid > 0 ? 'Partially Paid'` tha, yaani poori tankhwah ada
+   hone par bhi "Partially Paid" hi likhta — ab paid >= net ko "Paid" gina
+   jata hai. */
+const PAYROLL_STATUS_ALIASES = {
+  paid: 'Paid', 'fully paid': 'Paid',
+  partial: 'Partially Paid', 'partially paid': 'Partially Paid', 'part paid': 'Partially Paid',
+  pending: 'Generated', generated: 'Generated', unpaid: 'Generated', 'not paid': 'Generated',
+};
+
+export function normalizePayrollStatus(raw, paid = 0, net = 0) {
+  const known = PAYROLL_STATUS_ALIASES[String(raw ?? '').trim().toLowerCase()];
+  if (known) return known;
+  if (paid > 0 && net > 0 && paid >= net) return 'Paid';
+  if (paid > 0) return 'Partially Paid';
+  return 'Generated';
+}
+
 function mapApiPayrollRecord(p, empHeads = []) {
   const paid    = Number(p.PaidSoFar) || 0;
   const payDate = dateOnly(p.ModifiedAt || p.CreatedAt);
-  const status  = p.PaymentStatus || (paid > 0 ? 'Partially Paid' : 'Generated');
+  const status  = normalizePayrollStatus(p.PaymentStatus, paid, Number(p.NetPayable) || 0);
   return {
     payrollID:          p.PayrollID,
     month:              PAYROLL_MONTH_NAMES[(Number(p.PayrollMonth) || 1) - 1] || '',

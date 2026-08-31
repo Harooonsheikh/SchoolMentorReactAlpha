@@ -947,7 +947,7 @@ export function generateHrSalaryRegister(ctx, monthKey) {
   const MNAMES = ['', 'January','February','March','April','May','June','July','August','September','October','November','December'];
   const monthName = MNAMES[parseInt(monthVal, 10)];
   const activeEmps = emps.filter(e => e.status === 'Active');
-  let gBasic = 0, gAllow = 0, gBonus = 0, gGross = 0, gDed = 0, gNet = 0;
+  let gBasic = 0, gAllow = 0, gBonus = 0, gGross = 0, gDed = 0, gNet = 0, gPaid = 0, gBal = 0;
   const rows = activeEmps.map((e, i) => {
     const rec    = (empPayroll[e.id] || {})[monthKey] || {};
     /* When a payroll is generated, use the record's OWN snapshot (basic/bonus/gross/
@@ -964,20 +964,31 @@ export function generateHrSalaryRegister(ctx, monthKey) {
     /* Net is always Gross − Deductions of the values actually shown in the row.        */
     const net    = gross - ded;
     const status = rec.status || 'Not Generated';
+    /* Status ke saath uski WAJAH bhi chhapti hai. Pehle sirf status likha jata
+       tha, is liye "Partially Paid" bilkul be-wajah lagta tha: row par Gross,
+       Deductions aur Net to dikhte the magar ye kahin nazar nahi aata tha ke
+       net me se kitna ada ho chuka hai. Ab Paid Amount aur Remaining Balance columns saath hain,
+       to status khud apni tasdeeq kar deta hai. */
+    const paid   = hasRec ? (+rec.paidAmount || 0) : 0;
+    const balance = Math.max(0, net - paid);
     gBasic += basic; gAllow += allow; gBonus += bonus; gGross += gross; gDed += ded; gNet += net;
+    gPaid += paid; gBal += balance;
     return `<tr><td>${i+1}</td><td><b>${getFullName(e)}</b></td><td>${e.eid}</td>
       <td>${getDeptName(e.dId)||'—'}</td>
       <td class="r">${hrFmtMoney(basic)}</td><td class="r">${hrFmtMoney(allow)}</td>
       <td class="r">${hrFmtMoney(bonus)}</td><td class="r"><b>${hrFmtMoney(gross)}</b></td>
       <td class="r">${hrFmtMoney(ded)}</td><td class="r"><b>${hrFmtMoney(net)}</b></td>
+      <td class="r">${hasRec ? hrFmtMoney(paid) : '—'}</td>
+      <td class="r">${hasRec ? hrFmtMoney(balance) : '—'}</td>
       <td>${e.payMethod||'—'}</td><td>${status}</td></tr>`;
   }).join('');
-  const filters = `<span><b>Period:</b> ${monthName} ${yearVal}</span><span><b>Employees:</b> ${activeEmps.length}</span><span><b>Gross:</b> PKR ${hrFmtMoney(gGross)}</span><span><b>Net Payable:</b> PKR ${hrFmtMoney(gNet)}</span><span><b>Generated:</b> ${hrGenLabel(ctx)}</span>`;
+  const filters = `<span><b>Period:</b> ${monthName} ${yearVal}</span><span><b>Employees:</b> ${activeEmps.length}</span><span><b>Gross:</b> PKR ${hrFmtMoney(gGross)}</span><span><b>Net Payable:</b> PKR ${hrFmtMoney(gNet)}</span><span><b>Paid Amount:</b> PKR ${hrFmtMoney(gPaid)}</span><span><b>Remaining Balance:</b> PKR ${hrFmtMoney(gBal)}</span><span><b>Generated:</b> ${hrGenLabel(ctx)}</span>`;
   const inner = `<div class="rep-secttl">Monthly Salary Register — ${monthName} ${yearVal}</div>
     <table class="rep-tbl"><thead><tr>
       <th>#</th><th>Name</th><th>ID</th><th>Department</th>
       <th class="r">Basic</th><th class="r">Allowances</th><th class="r">Bonus</th>
       <th class="r">Gross</th><th class="r">Deductions</th><th class="r">Net Pay</th>
+      <th class="r">Paid Amount</th><th class="r">Remaining Balance</th>
       <th>Pay Method</th><th>Status</th>
     </tr></thead><tbody>${rows}</tbody>
     <tfoot>
@@ -985,9 +996,10 @@ export function generateHrSalaryRegister(ctx, monthKey) {
         <td class="r">${hrFmtMoney(gBasic)}</td><td class="r">${hrFmtMoney(gAllow)}</td>
         <td class="r">${hrFmtMoney(gBonus)}</td><td class="r"><b>${hrFmtMoney(gGross)}</b></td>
         <td class="r">${hrFmtMoney(gDed)}</td><td class="r"><b>${hrFmtMoney(gNet)}</b></td>
+        <td class="r">${hrFmtMoney(gPaid)}</td><td class="r"><b>${hrFmtMoney(gBal)}</b></td>
         <td colspan="2"></td></tr>
       <tr class="rep-grandtot"><td colspan="9">TOTAL NET PAYABLE — ${monthName} ${yearVal}</td>
-        <td class="r"><b>PKR ${hrFmtMoney(gNet)}</b></td><td colspan="2"></td></tr>
+        <td class="r"><b>PKR ${hrFmtMoney(gNet)}</b></td><td colspan="4"></td></tr>
     </tfoot></table>`;
   return hrBuildReportHTML(`Salary Register — ${monthName} ${yearVal}`, `Human Resource — Salary Register · ${monthName} ${yearVal}`, filters, inner, ctx);
 }

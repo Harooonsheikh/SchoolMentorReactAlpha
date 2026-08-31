@@ -5390,6 +5390,24 @@ function AddEmployeeModal({ mode = 'add', emp, depts, desigs, nextEmpId, onClose
    ═══════════════════════════════════════════════════════════════════ */
 function EmployeeDetailPanel({ emp, deptName, desigName, onViewLetter, onDeleteLetter, canDelete = true }) {
   const [viewDoc, setViewDoc] = useState(null);   // uploaded document to preview in-modal
+
+  /* Leave settings apne endpoint par rehti hain (get-leave-settings-by-employee)
+     — wahi source jo edit modal use karta hai. Employee list bhi `leaveSettings`
+     bhejti hai, magar us par akela bharosa nahi kiya ja sakta: kuch rows par wo
+     null aati hai, aur list panel khulne se pehle ki loaded hui ho sakti hai —
+     us surat me abhi abhi save ki hui leave details yahan dikhti hi nahi thin.
+     Is liye panel khulte hi taaza record khud mangwa lete hain; jab tak wo na
+     aaye, list wali value hi dikhti rehti hai (koi khali jhatka nahi). */
+  const [liveLeaves, setLiveLeaves] = useState(null);
+  useEffect(() => {
+    if (!emp?.id) return undefined;
+    let alive = true;
+    hrService.getHrLeaveSettings(emp.id)
+      .then(l => { if (alive && l) setLiveLeaves(l); })
+      .catch(() => { /* list wali value par gir jao */ });
+    return () => { alive = false; };
+  }, [emp?.id]);
+  const leaves = liveLeaves || emp.leaves || {};
   const allow  = (emp.salaryHeads || []).filter(h => h.type === 'allow').reduce((s, h) => s + (Number(h.amount) || 0), 0);
   const deduct = (emp.salaryHeads || []).filter(h => h.type === 'deduct').reduce((s, h) => s + (Number(h.amount) || 0), 0);
   const basic  = Number(emp.basicSalary) || 0;
@@ -5474,14 +5492,18 @@ function EmployeeDetailPanel({ emp, deptName, desigName, onViewLetter, onDeleteL
       )}
 
       <ProfSection title="Leave Details" icon="fa-calendar-minus">
-        <ProfKv k="Annual"        v={emp.leaves?.annual} />
-        <ProfKv k="Casual"        v={emp.leaves?.casual} />
-        <ProfKv k="Sick"          v={emp.leaves?.sick} />
-        <ProfKv k="Maternity"     v={emp.leaves?.maternity} />
-        <ProfKv k="Balance"       v={emp.leaves?.balance} />
-        <ProfKv k="Policy"        v={emp.leaves?.policy} />
-        <ProfKv k="Absent Ded."   v={emp.leaves?.absentDed ? fmt(emp.leaves.absentDed) : '—'} />
-        <ProfKv k="Unpaid Ded."   v={emp.leaves?.unpaidDed ? fmt(emp.leaves.unpaidDed) : '—'} />
+        <ProfKv k="Annual"        v={leaves.annual} />
+        <ProfKv k="Casual"        v={leaves.casual} />
+        <ProfKv k="Sick"          v={leaves.sick} />
+        <ProfKv k="Maternity"     v={leaves.maternity} />
+        <ProfKv k="Balance"       v={leaves.balance} />
+        <ProfKv k="Policy"        v={leaves.policy} />
+        {/* 0 bhi asli value hai — is liye `? :` se dash nahi lagate, warna
+            "koi deduction nahi" aur "set hi nahi" aik jaise dikhte hain. */}
+        <ProfKv k="Absent Ded."   v={leaves.absentDed === '' || leaves.absentDed == null ? '' : fmt(leaves.absentDed)} />
+        <ProfKv k="Unpaid Ded."   v={leaves.unpaidDed === '' || leaves.unpaidDed == null ? '' : fmt(leaves.unpaidDed)} />
+        {/* Modal me ye toggle set hota hai magar details me kabhi dikhta nahi tha. */}
+        <ProfKv k="Deduction"     v={leaves.deductEn === false ? 'Disabled' : 'Enabled'} span={2} />
       </ProfSection>
 
       <div className="emp-detail-cols">
@@ -5622,10 +5644,16 @@ function ProfSection({ title, icon, children }) {
   );
 }
 function ProfKv({ k, v, span, highlight }) {
+  /* Sirf khali value par dash — `v || '—'` NAHI. Leave ke saare khaane
+     numbers hain aur 0 unke liye bilkul jaiz value hai (0 casual leaves,
+     0 deduction); `||` use karne se saved 0 bhi "—" dikhta tha, yaani
+     poora Leave Details block khali lagta tha. Profile report pehle se
+     `?? '—'` karti hai — ab dono jagah aik jaisa. */
+  const empty = v === null || v === undefined || v === '';
   return (
     <div className={`prof-kv${highlight ? ' is-hl' : ''}`} style={span ? { gridColumn: `span ${span}` } : undefined}>
       <div className="prof-kv-k">{k}</div>
-      <div className="prof-kv-v">{v || '—'}</div>
+      <div className="prof-kv-v">{empty ? '—' : v}</div>
     </div>
   );
 }
