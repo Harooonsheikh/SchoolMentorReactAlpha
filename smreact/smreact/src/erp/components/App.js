@@ -14,6 +14,7 @@ import { buildUrl, installSessionGuard, setSessionGuardActive, registerSessionTo
 import * as profileService from '../services/profileService';
 import SupportWidget from '../../components/SupportWidget';
 import erpExtraCss from './erpExtraCss';
+import feeReferenceAlignment from './feeReferenceAlignment';
 
 /* Registry module id → uska label (API menuName se match karta hai). */
 const MODULE_ID_TO_LABEL = Object.fromEntries(MODULE_REGISTRY.map((m) => [m.id, m.label]));
@@ -754,6 +755,8 @@ export default function App() {
             </div>
           </div>
         </div>
+        {/* Fee module is the ERP visual source of truth. This style is intentionally last. */}
+        <style>{feeReferenceAlignment}</style>
       </div>
     </SettingsProvider>
   );

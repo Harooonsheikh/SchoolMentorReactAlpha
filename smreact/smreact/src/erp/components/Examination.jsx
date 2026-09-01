@@ -23,44 +23,6 @@ import { usePermissions } from '../context/PermissionsContext';
    jawab copy kar ke rakh diya tha — magar dekhne me lagta tha ke chips isi
    se ban rahe hain. Hata di gayi hai. */
 
-/* Term rows ko chips me badalne se pehle saaf karna.
-
-   Screen par darjanon chips aa jate the — un me purane sessions ke term bhi
-   shamil hote the aur aik hi naam kai baar. Wo "mock data" nahi tha: har chip
-   /api/termscrud ki asli row hai. Masla ye tha ke jab `sessionYearID` khali
-   jata hai to API branch ke SAARE term wapas kar deti hai, chahe wo kisi bhi
-   session ke hon.
-
-   Is liye yahan:
-     • bina id/naam wali rows chhoot jati hain,
-     • aik hi id dobara nahi aati,
-     • aur agar row apna session id lekar aaye to sirf chalte session ki rows
-       rakhi jati hain. Row me session ka koi field na ho to chhaanta kuch
-       nahi jata — warna aisi API par jo ye column nahi bhejti, chips bilkul
-       ghayab ho jate. */
-const termSessionOf = (t) =>
-  t?.sessionYearID ?? t?.SessionYearID ?? t?.sessionYearId
-  ?? t?.sessionID ?? t?.SessionID ?? t?.sessionId ?? null;
-
-function normalizeTerms(rows, activeSessionId) {
-  const list = (Array.isArray(rows) ? rows : [])
-    .map((t) => ({ ...t, id: t?.id ?? t?.ID ?? t?.termID ?? t?.termId, term: String(t?.term ?? t?.Term ?? t?.termName ?? '').trim() }))
-    .filter((t) => t.id != null && t.term);
-
-  const seen = new Set();
-  const unique = list.filter((t) => (seen.has(String(t.id)) ? false : (seen.add(String(t.id)), true)));
-
-  const active = String(activeSessionId ?? '').trim();
-  if (!active) return unique;
-  /* Sirf tab chhaanto jab rows waqai session id lekar aa rahi hon. */
-  const carries = unique.some((t) => termSessionOf(t) != null && String(termSessionOf(t)).trim() !== '');
-  if (!carries) return unique;
-  return unique.filter((t) => {
-    const s = termSessionOf(t);
-    return s == null || String(s).trim() === '' || String(s).trim() === active;
-  });
-}
-
 const ALL_CLASSES = [
   'class 1A (B)', 'class 1A (C)', 'class 1A (D)', 'class 1A (Green f)',
   'class 1A (New)', 'II-Pre (A)', 'III-Pre (2)', 'Marketing Class (A)',
@@ -789,10 +751,8 @@ const [subjects, setSubjects] = useState([]);
         body: JSON.stringify({ id: 0, branchID: Number(bID), term: '', sessionYearID: termsSessionYearID(), action: 'get' }),
       });
       const tJson = await tRes.json();
-      /* Wahi chhaant jo chips par lagti hai — warna Combined Assessment purane
-         sessions ke terms ke exams bhi samet leta hai. */
-      const termArr = normalizeTerms(Array.isArray(tJson) ? tJson : (tJson?.data || []), termsSessionYearID());
-      const termIds = termArr.map(t => t.id).filter(v => v != null);
+      const termArr = Array.isArray(tJson) ? tJson : (tJson?.data || []);
+      const termIds = termArr.map(t => t.id ?? t.ID ?? t.termID).filter(v => v != null);
       const lists = await Promise.all(termIds.map(tid =>
         fetch(buildUrl(`/api/getexamsbybranchidtermid?branchID=${bID}&termID=${tid}&empID=${empID}`), { headers })
           .then(r => r.json()).catch(() => []),
@@ -1700,15 +1660,20 @@ async function getTerms() {
 
     const data = await response.json();
 
-    // API kabhi seedha array deti hai, kabhi { data: [...] } — dono chalein.
-    let rows = [];
-    if (Array.isArray(data)) rows = data;
-    else if (data && Array.isArray(data.data)) rows = data.data;
-    else if (data && data.length !== undefined) rows = Array.from(data);
-    else console.warn('Unexpected terms data format:', data);
-
-    /* Chalte session ki, be-dohrai chips — upar normalizeTerms ki sharh dekhein. */
-    setTerms(normalizeTerms(rows, termsSessionYearID()));
+    // FIX: Ensure data is an array before setting state
+    if (Array.isArray(data)) {
+      setTerms(data);
+    } else if (data && Array.isArray(data.data)) {
+      // If API returns { data: [...] }
+      setTerms(data.data);
+    } else if (data && data.length !== undefined) {
+      // If data is array-like
+      setTerms(Array.from(data));
+    } else {
+      // Fallback to empty array
+      console.warn('Unexpected terms data format:', data);
+      setTerms([]);
+    }
   } catch (error) {
     console.log('Could not load terms', error);
     setTerms([]); // Set empty array on error
@@ -18468,5 +18433,194 @@ body.dark .rh-filter { background:var(--bg-card); color:var(--text-primary); }
   .student-stats { grid-template-columns: repeat(2, 1fr); }
   .rco-grid,
   .rct-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+
+/* ═══════════════════════════════════════════════════════════════
+   ERP DESIGN SYSTEM ALIGNMENT — Examination
+   Canonical references: Fee / Attendance / Inventory
+   ═══════════════════════════════════════════════════════════════ */
+.exam-tabs-row,
+.res-sub-tabs {
+  display:flex;
+  gap:6px;
+  background:var(--bg-card);
+  border:1.5px solid var(--border-light);
+  border-radius:var(--radius-lg);
+  padding:5px;
+  margin-bottom:18px;
+  box-shadow:var(--shadow-sm);
+  overflow-x:auto;
+  flex-wrap:nowrap;
+  -webkit-overflow-scrolling:touch;
+}
+.exam-tab,
+.res-sub-tab {
+  flex:1;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap:8px;
+  padding:11px 18px;
+  border:none;
+  border-radius:var(--radius-md);
+  background:transparent;
+  color:var(--text-muted);
+  font-family:var(--font-body);
+  font-size:13px;
+  font-weight:600;
+  cursor:pointer;
+  transition:var(--tr);
+  white-space:nowrap;
+}
+.exam-tab:hover:not(.active),
+.res-sub-tab:hover:not(.active) {
+  background:var(--bg-muted);
+  color:var(--text-primary);
+}
+.exam-tab.active,
+.res-sub-tab.active {
+  background:linear-gradient(135deg,#1E3A8A 0%,#1E40AF 60%,#2563EB 100%);
+  color:#fff;
+  border-color:transparent;
+  box-shadow:0 6px 20px rgba(30,58,138,.4),inset 0 1px 0 rgba(255,255,255,.2);
+}
+
+/* Secondary/tertiary sub-navigation uses canonical ERP pill segments */
+.exam-term-chips,
+.rs-l2-tabs,
+.rs-modal-tabs,
+.syl-subj-tabs {
+  display:flex;
+  width:100%;
+  gap:4px;
+  background:var(--bg-card);
+  border:1.5px solid var(--border-light);
+  border-radius:var(--radius-full);
+  padding:5px;
+  margin-bottom:18px;
+  box-shadow:var(--shadow-sm);
+  overflow-x:auto;
+  flex-wrap:nowrap;
+}
+.exam-term-chip,
+.rs-l2-tab,
+.rs-modal-tab,
+.syl-subj-tab {
+  flex:1;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap:7px;
+  padding:9px 14px;
+  margin:0;
+  border:none;
+  border-radius:var(--radius-full);
+  background:transparent;
+  color:var(--text-muted);
+  font-family:var(--font-body);
+  font-size:12.5px;
+  font-weight:600;
+  cursor:pointer;
+  transition:var(--tr);
+  white-space:nowrap;
+}
+.exam-term-chip:hover:not(.active),
+.rs-l2-tab:hover:not(.active),
+.rs-modal-tab:hover:not(.active),
+.syl-subj-tab:hover:not(.active) {
+  background:var(--bg-muted);
+  color:var(--text-primary);
+  border-color:transparent;
+}
+.exam-term-chip.active,
+.rs-l2-tab.active,
+.rs-modal-tab.active,
+.syl-subj-tab.active {
+  background:linear-gradient(135deg,#1E3A8A,#1E40AF);
+  color:#fff;
+  border-color:transparent;
+  font-weight:600;
+  box-shadow:0 4px 12px rgba(30,58,138,.3);
+}
+
+/* Exam-specific selector buttons now follow the same tertiary control theme */
+.cbr-tab,
+.ds-exam-btn {
+  min-height:38px;
+  padding:8px 14px;
+  border:1.5px solid var(--border-light);
+  border-radius:var(--radius-md);
+  background:var(--bg-card);
+  color:var(--text-muted);
+  font-family:var(--font-body);
+  font-size:12.5px;
+  font-weight:600;
+  box-shadow:none;
+  transition:var(--tr);
+}
+.cbr-tab:hover:not(.active),
+.ds-exam-btn:hover:not(.active) {
+  background:var(--bg-muted);
+  border-color:var(--border-med);
+  color:var(--text-primary);
+  transform:none;
+  box-shadow:none;
+}
+.cbr-tab.active,
+.ds-exam-btn.active {
+  background:linear-gradient(135deg,#1E3A8A,#1E40AF);
+  color:#fff;
+  border-color:transparent;
+  box-shadow:0 4px 12px rgba(30,58,138,.3);
+}
+
+/* Canonical ERP primary/secondary action buttons */
+.exam-submit-btn,
+.exam-add-btn {
+  height:40px;
+  padding:0 20px;
+  border:none;
+  border-radius:var(--radius-md);
+  background:linear-gradient(135deg,#1E40AF,#1E3A8A);
+  color:#fff;
+  font-family:var(--font-body);
+  font-size:13px;
+  font-weight:600;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  gap:7px;
+  box-shadow:0 4px 14px rgba(30,58,138,.28);
+  transition:var(--tr);
+}
+.exam-submit-btn:hover,
+.exam-add-btn:hover {
+  transform:translateY(-1px);
+  box-shadow:0 8px 20px rgba(30,58,138,.38);
+}
+.exam-cancel-btn {
+  height:40px;
+  padding:0 20px;
+  border:1.5px solid var(--border-light);
+  border-radius:var(--radius-md);
+  background:var(--bg-card);
+  color:var(--text-secondary);
+  font-family:var(--font-body);
+  font-size:13px;
+  font-weight:600;
+}
+.exam-cancel-btn:hover {
+  background:var(--bg-muted);
+  border-color:var(--border-med);
+  color:var(--text-primary);
+}
+
+@media (max-width:768px) {
+  .exam-tabs-row,.res-sub-tabs { padding:4px; gap:3px; margin-bottom:14px; }
+  .exam-tab,.res-sub-tab { flex:0 0 auto; padding:9px 12px; font-size:11.5px; gap:5px; }
+  .exam-term-chips,.rs-l2-tabs,.rs-modal-tabs,.syl-subj-tabs { padding:4px; gap:3px; border-radius:14px; }
+  .exam-term-chip,.rs-l2-tab,.rs-modal-tab,.syl-subj-tab { flex:0 0 auto; padding:8px 11px; font-size:11.5px; }
+  .exam-submit-btn,.exam-add-btn,.exam-cancel-btn { height:38px; padding:0 14px; font-size:12px; }
 }
 `;

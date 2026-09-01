@@ -3418,11 +3418,8 @@ function ResourceLibrary({ toast, openConfirm, classesData = [] }) {
                   <div className="rl-card-icon" style={{ background: cat.color + '1a', color: cat.color }}><i className={`fa-solid ${cat.icon}`}></i></div>
                   <div className="rl-card-headings">
                     <div className="rl-card-title">{r.title}</div>
-                    {/* Section bhi dikhta hai: resource ab class + section +
-                        subject par bandha hai, is liye sirf class+subject se
-                        do alag sections ki rows aik jaisi lagti thin. */}
                     <div className="rl-card-meta">
-                      <span><i className="fa-solid fa-chalkboard"></i> {r.className || '—'}{r.sectionName ? ` · ${r.sectionName}` : ''}</span>
+                      <span><i className="fa-solid fa-chalkboard"></i> {r.className || '—'}</span>
                       <span><i className="fa-solid fa-book"></i> {r.subjectName || '—'}</span>
                     </div>
                   </div>
@@ -3460,7 +3457,6 @@ function ResourceLibrary({ toast, openConfirm, classesData = [] }) {
 
 function ResourceModal({ open, mode, resource, classesData = [], busy, onClose, onSave }) {
   const [classId, setClassId] = useState('');
-  const [sectionId, setSectionId] = useState('');
   const [subjectId, setSubjectId] = useState('');
   const [category, setCategory] = useState('worksheet');
   const [title, setTitle] = useState('');
@@ -3476,7 +3472,6 @@ function ResourceModal({ open, mode, resource, classesData = [], busy, onClose, 
     if (!open) return;
     const r = mode === 'edit' ? resource : null;
     setClassId(r ? String(r.classId || '') : '');
-    setSectionId(r ? String(r.sectionId || '') : '');
     setSubjectId(r ? String(r.subjectId || '') : '');
     setCategory(r?.category || 'worksheet');
     setTitle(r?.title || '');
@@ -3488,31 +3483,13 @@ function ResourceModal({ open, mode, resource, classesData = [], busy, onClose, 
     setErr('');
   }, [open, mode, resource]);
 
-  /* Chuni hui class ki sections — LaunchSetup inhe grade ke sath hi bhej
-     deta hai (classesData me), is liye koi alag call nahi chahiye. */
-  const sections = useMemo(
-    () => classesData.find(c => String(c.id) === String(classId))?.sections || [],
-    [classesData, classId],
-  );
-
-  /* Class badalte hi section reset — agar us class me sirf aik section ho to
-     wahi khud chun lete hain (user ke liye aik kam click). Edit par mojooda
-     section rehne dete hain agar wo isi class ka ho. */
+  /* Class chunte hi us class ke subjects (pehli section se) laao — naam ke
+     sath subjectID bhi, kyunke API par SubjectID ki FK lagti hai. Edit par
+     mojooda subject rehne dete hain agar wo isi class me ho. */
   useEffect(() => {
-    if (!open) return;
-    setSectionId(cur => {
-      if (sections.some(s => String(s.sectionID) === String(cur))) return cur;
-      return sections.length === 1 ? String(sections[0].sectionID) : '';
-    });
-  }, [open, sections]);
-
-  /* Subjects class ke nahi, SECTION ke neeche hote hain — endpoint bhi
-     gradeId + sectionId dono par chalta hai. Is liye subject list section
-     chunne ke baad hi bharti hai. Naam ke sath subjectID bhi aata hai,
-     kyunke API par SubjectID ki FK lagti hai. Edit par mojooda subject
-     rehne dete hain agar wo isi section me ho. */
-  useEffect(() => {
-    if (!open || !classId || !sectionId) { setSubjects([]); return undefined; }
+    if (!open || !classId) { setSubjects([]); return undefined; }
+    const cls = classesData.find(c => String(c.id) === String(classId));
+    const sectionId = cls?.sections?.[0]?.sectionID;
     let alive = true;
     setSubjLoading(true);
     rlFetchClassSubjects(classId, sectionId)
@@ -3523,7 +3500,7 @@ function ResourceModal({ open, mode, resource, classesData = [], busy, onClose, 
       })
       .finally(() => { if (alive) setSubjLoading(false); });
     return () => { alive = false; };
-  }, [open, classId, sectionId]);
+  }, [open, classId, classesData]);
 
   const onFile = e => {
     const f = e.target.files?.[0];
@@ -3534,21 +3511,21 @@ function ResourceModal({ open, mode, resource, classesData = [], busy, onClose, 
 
   const submit = () => {
     if (!classId) { setErr('Please select a class.'); return; }
-    if (!sectionId) { setErr('Please select a section.'); return; }
     if (!subjectId) { setErr('Please select a subject.'); return; }
     if (!title.trim()) { setErr('Please enter a resource title.'); return; }
     const cls = classesData.find(x => String(x.id) === String(classId));
-    const sec = sections.find(s => String(s.sectionID) === String(sectionId));
+    const sec = cls?.sections?.[0];
     const sub = subjects.find(s => String(s.id) === String(subjectId));
     onSave({
       classId: Number(classId),
-      /* Network ke bar-aks school ki rows section ke sath jati hain — teenon
-         (class + section + subject) par API par foreign keys lagti hain. */
-      sectionId: Number(sectionId),
       subjectId: Number(subjectId),
+      /* Network ke bar-aks school ki rows section ke sath jati hain — modal
+         me section ka apna picker nahi, class ki pehli section wahi hai
+         jahan se subjects bhi aate hain. */
+      sectionId: Number(sec?.sectionID) || 0,
       className: cls?.name || '',
-      sectionName: sec?.sectionName || '',
       subjectName: sub?.name || '',
+      sectionName: sec?.sectionName || '',
       category,
       title: title.trim(),
       description: description.trim(),
@@ -3574,30 +3551,19 @@ function ResourceModal({ open, mode, resource, classesData = [], busy, onClose, 
           <Tooltip text="Close"><button className="modal-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark"></i></button></Tooltip>
         </div>
         <div className="modal-body">
-          {/* Class → Section → Subject: har agla dropdown pichle par mabni
-              hai, kyunke subjects section ke neeche rehte hain. */}
-          <div className="form-row" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 14 }}>
+          <div className="form-row" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
             <div className="form-group">
               <label className="form-label">Class <span className="req-star">*</span></label>
-              <select className="form-input" value={classId} onChange={e => { setClassId(e.target.value); setSectionId(''); setSubjectId(''); }}>
+              <select className="form-input" value={classId} onChange={e => { setClassId(e.target.value); setSubjectId(''); }}>
                 <option value="">Select class</option>
                 {classesData.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
             </div>
             <div className="form-group">
-              <label className="form-label">Section <span className="req-star">*</span></label>
-              <select className="form-input" value={sectionId} onChange={e => { setSectionId(e.target.value); setSubjectId(''); }} disabled={!classId}>
-                <option value="">
-                  {!classId ? 'Select class first' : (sections.length ? 'Select section' : 'No sections in this class')}
-                </option>
-                {sections.map(s => <option key={s.sectionID} value={s.sectionID}>{s.sectionName}</option>)}
-              </select>
-            </div>
-            <div className="form-group">
               <label className="form-label">Subject <span className="req-star">*</span></label>
-              <select className="form-input" value={subjectId} onChange={e => setSubjectId(e.target.value)} disabled={!sectionId || subjLoading}>
+              <select className="form-input" value={subjectId} onChange={e => setSubjectId(e.target.value)} disabled={!classId || subjLoading}>
                 <option value="">
-                  {!classId ? 'Select class first' : !sectionId ? 'Select section first' : (subjLoading ? 'Loading subjects…' : (subjects.length ? 'Select subject' : 'No subjects in this section'))}
+                  {!classId ? 'Select class first' : (subjLoading ? 'Loading subjects…' : (subjects.length ? 'Select subject' : 'No subjects in this class'))}
                 </option>
                 {subjects.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
@@ -3883,24 +3849,23 @@ const ACADEMICS_CSS = `
    backtick mat likhna, wo literal ko wahin khatam kar deta hai. */
 .l1-tabs {
   display:grid; grid-auto-flow:column; grid-auto-columns:1fr;
-  background:var(--bg-muted);
+  background:var(--bg-card);
   border:1.5px solid var(--border-light);
   border-radius:var(--radius-lg);
-  padding:4px; margin-bottom:20px;
+  padding:5px; margin-bottom:20px;
   box-shadow:var(--shadow-sm); gap:4px;
 }
 .l1-tab {
-  padding:10px 18px; text-align:center; cursor:pointer;
-  font-size:13px; font-weight:700; transition:all .25s cubic-bezier(.4,0,.2,1);
+  padding:11px 18px; text-align:center; cursor:pointer;
+  font-size:13px; font-weight:600; transition:var(--tr);
   background:transparent; color:var(--text-muted);
   border:none; font-family:var(--font-body);
   border-radius:var(--radius-md);
-  display:flex; align-items:center; justify-content:center; gap:8px;
+  display:flex; align-items:center; justify-content:center; gap:7px;
   position:relative; overflow:hidden;
 }
 .l1-tab:hover:not(.active) {
-  background:var(--bg-card); color:var(--brand-primary);
-  box-shadow:var(--shadow-xs);
+  background:var(--bg-muted); color:var(--text-primary);
 }
 .l1-tab.active {
   background:linear-gradient(135deg,#1E3A8A 0%,#1E40AF 60%,#2563EB 100%);
@@ -3938,9 +3903,9 @@ const ACADEMICS_CSS = `
   transform:scaleX(0); transition:transform .25s cubic-bezier(.4,0,.2,1);
 }
 .l2-tab:not(:last-child) { border-right:1.5px solid var(--border-light); }
-.l2-tab:hover:not(.active) { background:var(--bg-muted); color:var(--brand-primary); }
+.l2-tab:hover:not(.active) { background:var(--bg-muted); color:var(--text-primary); }
 .l2-tab.active {
-  color:var(--brand-primary); font-weight:800;
+  color:var(--brand-primary); font-weight:700;
   background:linear-gradient(180deg,transparent,rgba(30,58,138,.04));
 }
 .l2-tab.active::after { transform:scaleX(1); }
@@ -3955,24 +3920,22 @@ const ACADEMICS_CSS = `
 /* ── L3 TABS ── */
 .l3-tabs { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:20px; }
 .l3-tab {
-  padding:14px 20px; cursor:pointer;
+  padding:12px 18px; cursor:pointer;
   font-size:13px; font-weight:600; transition:all .22s cubic-bezier(.4,0,.2,1);
   background:var(--bg-card); color:var(--text-muted);
-  border:2px solid var(--border-light); font-family:var(--font-body);
+  border:1.5px solid var(--border-light); font-family:var(--font-body);
   border-radius:var(--radius-lg);
   display:flex; align-items:center; gap:12px;
   box-shadow:var(--shadow-xs); text-align:left;
 }
 .l3-tab:hover:not(.active) {
   border-color:var(--border-med); background:var(--bg-muted);
-  color:var(--brand-primary); transform:translateY(-1px);
-  box-shadow:var(--shadow-sm);
+  color:var(--text-primary);
 }
 .l3-tab.active {
-  background:linear-gradient(135deg,#1E3A8A,#1E40AF);
+  background:linear-gradient(135deg,#1E3A8A 0%,#1E40AF 60%,#2563EB 100%);
   border-color:transparent; color:#fff;
-  box-shadow:0 6px 20px rgba(30,58,138,.35), inset 0 1px 0 rgba(255,255,255,.15);
-  transform:translateY(-1px);
+  box-shadow:0 6px 20px rgba(30,58,138,.4), inset 0 1px 0 rgba(255,255,255,.2);
 }
 .l3-tab-icon {
   width:36px; height:36px; border-radius:10px;
@@ -5665,5 +5628,214 @@ const ACADEMICS_CSS = `
   .rl-filters { flex-direction:column; align-items:stretch; }
   .rl-search, .rl-fsel, .rl-reset { flex:1 1 auto; width:100%; }
   .rl-grid { grid-template-columns:1fr; }
+}
+
+
+/* ═══════════════════════════════════════════════════════════════
+   ERP DESIGN SYSTEM ALIGNMENT — Academics
+   Canonical references: Fee / Attendance / Inventory
+   ═══════════════════════════════════════════════════════════════ */
+.l1-tabs,
+.l2-tabs {
+  display:flex;
+  gap:6px;
+  background:var(--bg-card);
+  border:1.5px solid var(--border-light);
+  border-radius:var(--radius-lg);
+  padding:5px;
+  margin-bottom:18px;
+  box-shadow:var(--shadow-sm);
+  overflow-x:auto;
+  flex-wrap:nowrap;
+  -webkit-overflow-scrolling:touch;
+}
+.l1-tab,
+.l2-tab {
+  flex:1;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap:8px;
+  padding:11px 18px;
+  border-radius:var(--radius-md);
+  border:none;
+  background:transparent;
+  color:var(--text-muted);
+  font-family:var(--font-body);
+  font-size:13px;
+  font-weight:600;
+  cursor:pointer;
+  transition:var(--tr);
+  white-space:nowrap;
+}
+.l1-tab:hover:not(.active),
+.l2-tab:hover:not(.active) {
+  background:var(--bg-muted);
+  color:var(--text-primary);
+  box-shadow:none;
+}
+.l1-tab.active,
+.l2-tab.active {
+  background:linear-gradient(135deg,#1E3A8A 0%,#1E40AF 60%,#2563EB 100%);
+  color:#fff;
+  font-weight:600;
+  box-shadow:0 6px 20px rgba(30,58,138,.4),inset 0 1px 0 rgba(255,255,255,.2);
+}
+.l2-tab::after,
+.l2-tab.active::after,
+.l2-tab-dot { display:none; }
+
+/* Level 3 = canonical ERP segmented/pill navigation */
+.l3-tabs {
+  display:flex;
+  width:100%;
+  gap:4px;
+  background:var(--bg-card);
+  border:1.5px solid var(--border-light);
+  border-radius:var(--radius-full);
+  padding:5px;
+  margin-bottom:18px;
+  box-shadow:var(--shadow-sm);
+  overflow-x:auto;
+}
+.l3-tab {
+  flex:1;
+  min-width:0;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap:7px;
+  padding:10px 16px;
+  border:none;
+  border-radius:var(--radius-full);
+  background:transparent;
+  color:var(--text-muted);
+  box-shadow:none;
+  font-family:var(--font-body);
+  font-size:13px;
+  font-weight:700;
+  text-align:center;
+  cursor:pointer;
+  transition:var(--tr);
+  white-space:nowrap;
+}
+.l3-tab:hover:not(.active) {
+  background:var(--bg-muted);
+  color:var(--text-primary);
+  border-color:transparent;
+  box-shadow:none;
+  transform:none;
+}
+.l3-tab.active {
+  background:linear-gradient(135deg,#1E3A8A,#1E40AF);
+  color:#fff;
+  border-color:transparent;
+  box-shadow:0 4px 12px rgba(30,58,138,.3);
+  transform:none;
+}
+.l3-tab-icon {
+  width:auto;
+  height:auto;
+  min-width:0;
+  border-radius:0;
+  background:transparent;
+  color:inherit;
+  font-size:12px;
+}
+.l3-tab-text { display:flex; align-items:center; }
+.l3-tab-desc { display:none; }
+
+/* In-screen subtabs use the same ERP segmented control language */
+.ts-subtab-row,
+.act-view-pills {
+  display:flex;
+  gap:4px;
+  background:var(--bg-card);
+  border:1.5px solid var(--border-light);
+  border-radius:var(--radius-full);
+  padding:5px;
+  box-shadow:var(--shadow-sm);
+  overflow-x:auto;
+}
+.ts-subtab,
+.act-view-pill {
+  flex:1;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap:7px;
+  padding:9px 14px;
+  border:none;
+  border-radius:var(--radius-full);
+  background:transparent;
+  color:var(--text-muted);
+  font-family:var(--font-body);
+  font-size:12.5px;
+  font-weight:600;
+  cursor:pointer;
+  transition:var(--tr);
+  white-space:nowrap;
+}
+.ts-subtab:hover:not(.active),
+.act-view-pill:hover:not(.active) {
+  background:var(--bg-muted);
+  color:var(--text-primary);
+}
+.ts-subtab.active,
+.act-view-pill.active {
+  background:linear-gradient(135deg,#1E3A8A,#1E40AF);
+  color:#fff;
+  box-shadow:0 4px 12px rgba(30,58,138,.3);
+}
+
+/* Canonical ERP action buttons */
+.ts-btn-primary,
+.act-add-btn {
+  height:40px;
+  padding:0 20px;
+  border:none;
+  border-radius:var(--radius-md);
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  gap:7px;
+  background:linear-gradient(135deg,#1E40AF,#1E3A8A);
+  color:#fff;
+  font-family:var(--font-body);
+  font-size:13px;
+  font-weight:600;
+  cursor:pointer;
+  transition:var(--tr);
+  box-shadow:0 4px 14px rgba(30,58,138,.28);
+}
+.ts-btn-primary:hover,
+.act-add-btn:hover {
+  transform:translateY(-1px);
+  box-shadow:0 8px 20px rgba(30,58,138,.38);
+}
+.ts-btn-ghost {
+  height:40px;
+  padding:0 20px;
+  border:1.5px solid var(--border-light);
+  border-radius:var(--radius-md);
+  background:var(--bg-card);
+  color:var(--text-secondary);
+  font-family:var(--font-body);
+  font-size:13px;
+  font-weight:600;
+}
+.ts-btn-ghost:hover {
+  background:var(--bg-muted);
+  border-color:var(--border-med);
+  color:var(--text-primary);
+}
+
+@media (max-width:768px) {
+  .l1-tabs,.l2-tabs { padding:4px; gap:3px; margin-bottom:14px; }
+  .l1-tab,.l2-tab { flex:0 0 auto; padding:9px 12px; font-size:11.5px; gap:5px; }
+  .l3-tabs { padding:4px; gap:3px; border-radius:14px; }
+  .l3-tab { flex:0 0 auto; padding:8px 12px; font-size:11.5px; }
+  .ts-subtab-row,.act-view-pills { padding:4px; }
+  .ts-subtab,.act-view-pill { flex:0 0 auto; padding:8px 11px; font-size:11.5px; }
 }
 `;

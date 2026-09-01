@@ -1,5 +1,9 @@
 import React from 'react';
 import Tooltip from '../erp/shared/Tooltip';
+/* Wahi real SupportWidget jo ERP topbar me lagta hai — apna trigger
+   button (green dot ke saath) khud render karta hai, aur chat panel
+   ko document.body me portal karta hai. Koi extra wiring nahi. */
+import SupportWidget from './SupportWidget';
 
 const CRUMBS = {
   school:      'School Registration',
@@ -14,12 +18,12 @@ const CRUMBS = {
 export default function Topbar({ activeTab, theme, onToggleTheme, onOpenSidebar, onOpenERP, showToast }) {
 
   const handleLogout = () => {
-  sessionStorage.clear();
-  showToast('Logged out successfully', 'success');
-   setTimeout(() => {
-    window.location.href = '/LoginScreen.jsx'; 
-  }, 300);
-};
+    sessionStorage.clear();
+    showToast('Logged out successfully', 'success');
+    setTimeout(() => {
+      window.location.href = '/LoginScreen.jsx';
+    }, 300);
+  };
 
   return (
     <header className="topbar">
@@ -37,7 +41,15 @@ export default function Topbar({ activeTab, theme, onToggleTheme, onOpenSidebar,
           <span className="breadcrumb-item current">{CRUMBS[activeTab] || activeTab}</span>
         </div>
       </div>
+
       <div className="topbar-right">
+        {/* Real Customer Support chat — bilkul wahi trigger jo ERP topbar me
+            hai. Yeh khud apna pill button (headset + green dot + unread badge)
+            render karta hai, aur click par asli chat panel kholta hai
+            (portal via document.body). Toast prop attachment validation
+            waghera ke liye. */}
+        <SupportWidget toast={showToast} />
+
         <Tooltip text="Notifications">
           <button className="topbar-btn" onClick={() => showToast('No new notifications', 'info')}>
             <i className="fas fa-bell"></i>

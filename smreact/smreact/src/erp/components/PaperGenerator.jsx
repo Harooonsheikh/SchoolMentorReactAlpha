@@ -5354,20 +5354,20 @@ const setSubjLine = (ci, si, l) => {
   /* ── Paper Generator — module styles ── */
   .pg-tabs-row {
     display:grid; grid-template-columns:1fr 1fr; gap:4px;
-    background:var(--bg-muted); border:1px solid var(--border-light);
-    border-radius:var(--radius-lg); padding:4px;
-    margin-bottom:20px;
+    background:var(--bg-card); border:1.5px solid var(--border-light);
+    border-radius:var(--radius-lg); padding:5px;
+    margin-bottom:20px; box-shadow:var(--shadow-sm);
   }
   .pg-tab {
-    display:flex; align-items:center; justify-content:center; gap:8px;
-    padding:10px 20px; font-family:inherit; font-size:13px; font-weight:600;
+    display:flex; align-items:center; justify-content:center; gap:7px;
+    padding:11px 18px; font-family:var(--font-body); font-size:13px; font-weight:600;
     color:var(--text-muted); background:transparent; border:none;
-    border-radius:var(--radius-md); cursor:pointer; transition:.18s ease;
+    border-radius:var(--radius-md); cursor:pointer; transition:var(--tr); white-space:nowrap;
   }
-  .pg-tab:hover { color:#1E40AF; background:var(--bg-card); }
+  .pg-tab:hover:not(.active) { background:var(--bg-muted); color:var(--text-primary); }
   .pg-tab.active {
-    background:#1E40AF; color:#fff;
-    box-shadow:0 2px 8px rgba(30,64,175,.25);
+    background:linear-gradient(135deg,#1E3A8A 0%,#1E40AF 60%,#2563EB 100%); color:#fff;
+    box-shadow:0 6px 20px rgba(30,58,138,.4), inset 0 1px 0 rgba(255,255,255,.2);
   }
 
   .pg-card-head {
@@ -5518,25 +5518,26 @@ const setSubjLine = (ci, si, l) => {
 
   /* ── Footer buttons ── */
   .pg-btn-primary {
-    display:inline-flex; align-items:center; gap:7px;
-    padding:10px 22px;
-    background:#1E40AF; color:#fff;
+    height:40px; display:inline-flex; align-items:center; justify-content:center; gap:7px;
+    padding:0 20px;
+    background:linear-gradient(135deg,#1E3A8A 0%,#1E40AF 60%,#2563EB 100%); color:#fff;
     border:none; border-radius:var(--radius-md);
-    font-family:inherit; font-size:13px; font-weight:700;
-    cursor:pointer; transition:.18s ease;
+    font-family:var(--font-body); font-size:13px; font-weight:600;
+    cursor:pointer; transition:var(--tr);
+    box-shadow:0 4px 12px rgba(30,58,138,.25), inset 0 1px 0 rgba(255,255,255,.15);
   }
-  .pg-btn-primary:hover { background:#1E3A8A; box-shadow:0 4px 14px rgba(30,64,175,.3); }
+  .pg-btn-primary:hover { box-shadow:0 6px 18px rgba(30,58,138,.32), inset 0 1px 0 rgba(255,255,255,.18); }
   .pg-btn-secondary {
-    display:inline-flex; align-items:center; gap:7px;
-    padding:10px 22px;
-    background:transparent; color:var(--text-secondary);
+    height:40px; display:inline-flex; align-items:center; justify-content:center; gap:7px;
+    padding:0 20px;
+    background:var(--bg-card); color:var(--text-secondary);
     border:1.5px solid var(--border-light);
     border-radius:var(--radius-md);
-    font-family:inherit; font-size:13px; font-weight:600;
-    cursor:pointer; transition:.18s ease;
+    font-family:var(--font-body); font-size:13px; font-weight:600;
+    cursor:pointer; transition:var(--tr);
   }
   .pg-btn-secondary:hover {
-    border-color:#1E40AF; color:#1E40AF; background:var(--bg-muted);
+    border-color:var(--border-med); color:var(--text-primary); background:var(--bg-muted);
   }
 
   /* ── Template Preview modal shell ── */
@@ -7410,7 +7411,7 @@ const setSubjLine = (ci, si, l) => {
     .page-title-icon { width: 40px; height: 40px; font-size: 17px; }
 
     /* Top tabs (Saved Papers / Question Bank / Templates / Settings) — scroll */
-    .pg-tabs-row { overflow-x: auto; flex-wrap: nowrap; scrollbar-width: none; -ms-overflow-style: none; gap: 4px; padding: 4px; }
+    .pg-tabs-row { overflow-x: auto; flex-wrap: nowrap; scrollbar-width: none; -ms-overflow-style: none; gap: 4px; padding: 5px; }
     .pg-tabs-row::-webkit-scrollbar { display: none; }
     .pg-tabs-row > * { flex: 0 0 auto; white-space: nowrap; font-size: 12px; padding: 8px 12px; }
 
@@ -7855,4 +7856,184 @@ const setSubjLine = (ci, si, l) => {
     .pg-pc-actions > .pg-action-icon { width: 30px; height: 30px; }
     .page-title { font-size: 18px; }
   }
-  `;
+  
+
+/* ═══════════════════════════════════════════════════════════════
+   ERP DESIGN SYSTEM ALIGNMENT — Paper Generator
+   Canonical references: Fee / Attendance / Inventory
+   ═══════════════════════════════════════════════════════════════ */
+.pg-tabs-row,
+.pg-qtype-tabs {
+  display:flex;
+  gap:6px;
+  background:var(--bg-card);
+  border:1.5px solid var(--border-light);
+  border-radius:var(--radius-lg);
+  padding:5px;
+  margin-bottom:18px;
+  box-shadow:var(--shadow-sm);
+  overflow-x:auto;
+  flex-wrap:nowrap;
+  -webkit-overflow-scrolling:touch;
+}
+.pg-tab,
+.pg-qtype-tab {
+  flex:1;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap:8px;
+  padding:11px 18px;
+  border:none;
+  border-radius:var(--radius-md);
+  background:transparent;
+  color:var(--text-muted);
+  font-family:var(--font-body);
+  font-size:13px;
+  font-weight:600;
+  cursor:pointer;
+  transition:var(--tr);
+  white-space:nowrap;
+}
+.pg-tab:hover:not(.active),
+.pg-qtype-tab:hover:not(.active) {
+  background:var(--bg-muted);
+  color:var(--text-primary);
+}
+.pg-tab.active,
+.pg-qtype-tab.active {
+  background:linear-gradient(135deg,#1E3A8A 0%,#1E40AF 60%,#2563EB 100%);
+  color:#fff;
+  box-shadow:0 6px 20px rgba(30,58,138,.4),inset 0 1px 0 rgba(255,255,255,.2);
+}
+
+/* Secondary segmented controls */
+.pg-global-defaults-controls,
+.pg-subj-toggle,
+.pg-seg,
+.pg-qtab-nav {
+  background:var(--bg-card);
+  border:1.5px solid var(--border-light);
+  border-radius:var(--radius-full);
+  padding:5px;
+  gap:4px;
+  box-shadow:var(--shadow-sm);
+}
+.pg-seg-btn,
+.pg-subj-toggle-btn,
+.pg-qtab-pill {
+  border:none;
+  border-radius:var(--radius-full);
+  background:transparent;
+  color:var(--text-muted);
+  font-family:var(--font-body);
+  font-size:12.5px;
+  font-weight:600;
+  padding:9px 14px;
+  transition:var(--tr);
+}
+.pg-seg-btn:hover:not(.active),
+.pg-subj-toggle-btn:hover,
+.pg-qtab-pill:hover:not(.active) {
+  background:var(--bg-muted);
+  color:var(--text-primary);
+  border-color:transparent;
+}
+.pg-seg-btn.active,
+.pg-qtab-pill.active,
+.pg-qtab-pill.saved.active,
+.pg-subj-toggle-btn.active-fmt,
+.pg-subj-toggle-btn.active-line {
+  background:linear-gradient(135deg,#1E3A8A,#1E40AF);
+  color:#fff;
+  border-color:transparent;
+  box-shadow:0 4px 12px rgba(30,58,138,.3);
+}
+
+/* Tertiary option/toggle controls */
+.pg-toggle-btn,
+.pg-tmpl-prev-btn,
+.pg-cls-chip {
+  border:1.5px solid var(--border-light);
+  background:var(--bg-card);
+  color:var(--text-muted);
+  border-radius:var(--radius-md);
+  font-family:var(--font-body);
+  font-weight:600;
+  transition:var(--tr);
+}
+.pg-toggle-btn { min-height:36px; padding:8px 14px; font-size:12.5px; }
+.pg-tmpl-prev-btn { min-height:34px; padding:7px 14px; font-size:12px; }
+.pg-cls-chip { padding:6px 10px; font-size:11px; border-radius:var(--radius-full); }
+.pg-toggle-btn:hover:not(:disabled),
+.pg-tmpl-prev-btn:hover,
+.pg-cls-chip:hover {
+  border-color:var(--border-med);
+  background:var(--bg-muted);
+  color:var(--text-primary);
+}
+.pg-toggle-btn.active,
+.pg-cls-chip.active-fmt,
+.pg-cls-chip.active-line {
+  background:linear-gradient(135deg,#1E3A8A,#1E40AF);
+  border-color:transparent;
+  color:#fff;
+  box-shadow:0 3px 10px rgba(30,58,138,.25);
+}
+.pg-toggle-btn:disabled {
+  opacity:.5;
+  cursor:not-allowed;
+}
+
+/* Canonical ERP action buttons */
+.pg-btn-primary,
+.pg-fetch-btn,
+.pg-make-paper-btn {
+  min-height:40px;
+  padding:0 20px;
+  border:none;
+  border-radius:var(--radius-md);
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  gap:7px;
+  background:linear-gradient(135deg,#1E40AF,#1E3A8A);
+  color:#fff;
+  font-family:var(--font-body);
+  font-size:13px;
+  font-weight:600;
+  cursor:pointer;
+  transition:var(--tr);
+  box-shadow:0 4px 14px rgba(30,58,138,.28);
+}
+.pg-btn-primary:hover,
+.pg-fetch-btn:hover:not(:disabled),
+.pg-make-paper-btn:hover {
+  transform:translateY(-1px);
+  box-shadow:0 8px 20px rgba(30,58,138,.38);
+}
+.pg-btn-secondary {
+  height:40px;
+  padding:0 20px;
+  border:1.5px solid var(--border-light);
+  border-radius:var(--radius-md);
+  background:var(--bg-card);
+  color:var(--text-secondary);
+  font-family:var(--font-body);
+  font-size:13px;
+  font-weight:600;
+}
+.pg-btn-secondary:hover {
+  background:var(--bg-muted);
+  border-color:var(--border-med);
+  color:var(--text-primary);
+}
+
+@media (max-width:768px) {
+  .pg-tabs-row,.pg-qtype-tabs { padding:4px; gap:3px; margin-bottom:14px; }
+  .pg-tab,.pg-qtype-tab { flex:0 0 auto; padding:9px 12px; font-size:11.5px; gap:5px; }
+  .pg-global-defaults-controls,.pg-subj-toggle,.pg-seg,.pg-qtab-nav { padding:4px; gap:3px; }
+  .pg-seg-btn,.pg-subj-toggle-btn,.pg-qtab-pill { padding:8px 11px; font-size:11.5px; }
+  .pg-btn-primary,.pg-btn-secondary,.pg-fetch-btn,.pg-make-paper-btn { min-height:38px; height:38px; padding:0 14px; font-size:12px; }
+}
+`;

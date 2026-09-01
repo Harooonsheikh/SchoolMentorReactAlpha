@@ -1653,12 +1653,12 @@ function PointOfSale({ toast }) {
         </div>
       </div>
 
-      {/* POS sub-tabs */}
-      <div className="fee-subtabs">
+      {/* POS sub-tabs — L2 hierarchy uses Fee segmented-pill reference */}
+      <div className="fee-seg">
         {POS_SUBTABS.map(t => (
           <Tooltip key={t.id} text={t.label}>
             <button
-              className={`fee-subtab${sub === t.id ? ' active' : ''}`}
+              className={`fee-seg-btn${sub === t.id ? ' active' : ''}`}
               onClick={() => setSub(t.id)}
             >
               <i className={`fa-solid ${t.icon}`}></i> {t.label}
