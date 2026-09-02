@@ -14,6 +14,11 @@ import {
   fetchBranchResources, saveBranchResource, deleteBranchResource,
   fetchClassSubjects as rlFetchClassSubjects,
 } from '../services/resourceLibraryService';
+/* "Releases from Head Office" sirf un schools ke liye hai jo kisi chain
+   (network) me shamil ho chuke hain — akela school kisi Head Office se juda
+   hi nahi, us ke liye ye banner bemani hai. Jawab sessionStorage me sambhal
+   jata hai, is liye poore app me ek hi call. */
+import { checkChainBranch, cachedChainBranch } from '../services/chainBranch';
 
 
 
@@ -122,6 +127,10 @@ const [sessionLoading, setSessionLoading] = useState(() => !acadLoadedOnce || ac
   const [tutorialOpen, setTutorialOpen] = useState(false);
   const [activityModal, setActivityModal] = useState({ open: false, editing: null });
   const [releasesOpen, setReleasesOpen] = useState(false); // Releases from Head Office full-screen panel
+  /* Ye school chain ka hissa hai ya nahi. Pehle se maloom jawab (session) se
+     shuru hota hai taake banner jhilmilaye nahi; pata na ho to niche wala
+     effect poochta hai. Shak ki soorat me banner CHHUPA rehta hai. */
+  const [isChainBranch, setIsChainBranch] = useState(() => cachedChainBranch() === '1');
   const [activityReload, setActivityReload] = useState(0); // bump → ActivityCalendar apne month-events dobara laaye
   const [classesData, setClassesData] = useState(acadClassesCache);
   const [monthApiEnabled, setMonthApiEnabled] = useState(false);
@@ -262,6 +271,14 @@ const closeReport = () => setReportPicker(r => ({ ...r, open: false }));  // ←
   };
 
 
+  /* Chain membership — banner sirf chain wali branches par. Jawab pehle se
+     session me ho to checkChainBranch() bina call ke wahi de deta hai. */
+  useEffect(() => {
+    let alive = true;
+    checkChainBranch().then(ok => { if (alive) setIsChainBranch(!!ok); });
+    return () => { alive = false; };
+  }, []);
+
   /* Load once on mount and refresh each time the Calendar tab is opened. */
   useEffect(() => { loadCalendar(); }, []);
   useEffect(() => { if (l2 === 'cal') loadCalendar(); }, [l2]);
@@ -380,7 +397,8 @@ return (
       </Tooltip>
     </div>
 
-    {/* ─── RELEASES FROM HEAD OFFICE ─── */}
+    {/* ─── RELEASES FROM HEAD OFFICE ─── (sirf chain wali branches par) */}
+    {isChainBranch && (
     <button className="ho-banner" onClick={() => setReleasesOpen(true)}>
       <div className="ho-banner-icon"><i className="fa-solid fa-cloud-arrow-down"></i></div>
       <div className="ho-banner-text">
@@ -389,6 +407,7 @@ return (
       </div>
       {hoVisibleReleases().length > 0 && <span className="ho-banner-badge"><i className="fa-solid fa-circle" style={{ fontSize: 6 }}></i> {hoVisibleReleases().length} Live</span>}
     </button>
+    )}
 
     {/* ─── LEVEL 1 TABS ─── (View permission ke hisaab se) */}
     <div className="l1-tabs">
@@ -583,7 +602,7 @@ return (
     <ConfirmDialog cfg={confirmCfg} onClose={closeConfirm} />
 
     <HeadOfficeReleases
-      open={releasesOpen}
+      open={releasesOpen && isChainBranch}
       onClose={() => setReleasesOpen(false)}
       toast={toast}
       classesData={classesData}
