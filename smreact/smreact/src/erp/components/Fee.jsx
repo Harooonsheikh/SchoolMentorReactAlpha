@@ -7594,6 +7594,16 @@ function FamilyFeeSlipModal({ cfg, onClose, paymentsFor, toast }) {
 
 const FEE_HIST_YEARS = ['2025', '2026', '2027'];
 
+/* Purana ERP August 2026 par khatam hota hai — us ke baad ka sab kuch naye
+   ledger me hai. Is liye Old ERP tab ke dropdown September 2026 se aage ka
+   month dikhate hi nahi; warna user aise mahine maangta rehta jinka wahan
+   record ho hi nahi sakta. */
+const OLD_ERP_LAST = { year: 2026, monthIdx: FEE_MONTHS.indexOf('August') };
+const oldErpMonths = (y) => (Number(y) >= OLD_ERP_LAST.year
+  ? FEE_MONTHS.slice(0, OLD_ERP_LAST.monthIdx + 1)
+  : FEE_MONTHS);
+const OLD_ERP_YEARS = FEE_HIST_YEARS.filter(y => Number(y) <= OLD_ERP_LAST.year);
+
 /* Old ERP summary row ka hisaab. Discount billed amount se pehle katta hai, is
    liye asal receivable challanAmount nahi balke (challan − discount) hai —
    wahi hisaab naye ledger ka bhi hai (ledgerRowNet dekho). */
@@ -7851,50 +7861,58 @@ function FeeHistoryTab({ toast }) {
     return () => { alive = false; };
   }, [seg, appliedFrom, appliedTo, appliedYear]);
 
-  /* ── Old ERP ledger — apna endpoint, apna month ──
-     Ye tab month/year badalte hi khud load hota hai; "Get History" dabane ki
-     zaroorat nahi, kyunke yahan range hai hi nahi — ek hi month hota hai. */
+  /* ── Old ERP ledger ──
+     Ye tab khud se kuch load nahi karta; user "Fetch Detail" dabata hai to
+     chune hue month ka purana ledger aata hai. `oldPeriod` wo month/year rakhta
+     hai jiska data screen par hai — dropdown badal jaye to labels aur report
+     jhoot na bolein. */
   const [oldSummary, setOldSummary] = useState([]);
+  const [oldPeriod, setOldPeriod]   = useState(null);
   const [oldLoading, setOldLoading] = useState(false);
   const [oldError, setOldError]     = useState(null);
-  useEffect(() => {
-    if (seg !== 'olderp') return undefined;
-    let alive = true;
+  /* applicantID → studentID ka pul: old ERP summary sirf apna purana
+     `applicantID` deti hai, aur migration ne wahi id naye BranchLedger ke
+     `plApplicantID` column me rakhi hai. Map poori history par banta hai (sirf
+     chune hue month par nahi) — misal branch 220867 ke 2026 rows me ye column
+     khali hai, magar 2025 ke rows se 132 me se 119 naam mil jaate hain. Ek baar
+     ban kar reh jaata hai; agli fetch par dobara nahi banta. */
+  const [plToStudentId, setPlToStudentId] = useState(null);
+
+  const fetchOldErp = useCallback(() => {
+    const m = FEE_MONTHS.indexOf(toMonth) + 1;
+    const thisYear = new Date().getFullYear();
     setOldLoading(true);
     setOldError(null);
-    feeService.getOldErpLedger(FEE_MONTHS.indexOf(toMonth) + 1, year)
-      .then(({ summary }) => { if (alive) { setOldSummary(summary); setOldLoading(false); } })
-      .catch(e => { if (alive) { setOldSummary([]); setOldError(e.message || 'Could not load old ERP ledger'); setOldLoading(false); } });
-    return () => { alive = false; };
-  }, [seg, toMonth, year]);
-
-  /* ── applicantID → studentID ka pul ──
-     Old ERP summary sirf apna purana `applicantID` deti hai. Migration ne wahi
-     id naye BranchLedger ke `plApplicantID` column me rakhi hai, to us se hamara
-     studentID (aur us se naam/reg/section) nikal aata hai.
-
-     Ye map poori history par banta hai, sirf chune hue month par nahi — misal
-     branch 220867 ke 2026 wale rows me plApplicantID khali hai, lekin 2025 ke
-     rows se 132 me se 119 naam mil jaate hain. Ek hi baar chalta hai (tab khulne
-     par), month badalne se dobara nahi. */
-  const [plToStudentId, setPlToStudentId] = useState(null);
-  useEffect(() => {
-    if (seg !== 'olderp' || plToStudentId) return undefined;
-    let alive = true;
-    const thisYear = new Date().getFullYear();
-    feeService.getLedgerRange(1, String(thisYear - 1), 12, String(thisYear))
-      .then(rows => {
-        if (!alive) return;
-        const map = new Map();
-        rows.forEach(r => {
-          const pl = String(r.plApplicantID || '').trim();
-          if (pl && r.studentID != null && !map.has(pl)) map.set(pl, String(r.studentID));
-        });
-        setPlToStudentId(map);
+    Promise.all([
+      feeService.getOldErpLedger(m, year),
+      /* naam na milen to bhi ledger dikhna chahiye — is liye ye call fail ho
+         to khali map par guzara */
+      plToStudentId
+        ? Promise.resolve(null)
+        : feeService.getLedgerRange(1, String(thisYear - 1), 12, String(thisYear)).catch(() => []),
+    ])
+      .then(([{ summary }, plRows]) => {
+        if (plRows) {
+          const map = new Map();
+          plRows.forEach(r => {
+            const pl = String(r.plApplicantID || '').trim();
+            if (pl && r.studentID != null && !map.has(pl)) map.set(pl, String(r.studentID));
+          });
+          setPlToStudentId(map);
+        }
+        setOldSummary(summary);
+        setOldPeriod(`${toMonth} ${year}`);
+        setOldLoading(false);
+        toast(summary.length
+          ? `Loaded ${summary.length} old ERP record${summary.length === 1 ? '' : 's'} for ${toMonth} ${year}`
+          : `No old ERP records for ${toMonth} ${year}`, summary.length ? 'success' : 'info');
       })
-      .catch(() => { if (alive) setPlToStudentId(new Map()); });   // naam na milen to bhi ledger dikhta rahe
-    return () => { alive = false; };
-  }, [seg, plToStudentId]);
+      .catch(e => {
+        setOldSummary([]); setOldPeriod(`${toMonth} ${year}`);
+        setOldError(e.message || 'Could not load old ERP ledger');
+        setOldLoading(false);
+      });
+  }, [toMonth, year, plToStudentId, toast]);
 
   /* createdBy / modifiedBy are login user ids — resolve each distinct one to
      its employee name once, then reuse across every row. */
@@ -8051,14 +8069,28 @@ function FeeHistoryTab({ toast }) {
   const switchSeg = (next) => {
     if (next === seg) return;
     const one = next === 'olderp';
-    const from = one ? toMonth : FEE_MONTHS[0];
+    /* Old ERP par jaate hue month/year ko cutoff (July 2026) ke andar le aao —
+       September 2026 par khare user ko wahan khali dropdown na mile. */
+    const y = one && Number(year) > OLD_ERP_LAST.year ? String(OLD_ERP_LAST.year) : year;
+    const allowed = oldErpMonths(y);
+    const m = one && !allowed.includes(toMonth) ? allowed[allowed.length - 1] : toMonth;
+    const from = one ? m : FEE_MONTHS[0];
     setSeg(next);
-    setFromMonth(from);
-    setAppliedFrom(from); setAppliedTo(toMonth); setAppliedYear(year);
+    setYear(y);
+    setFromMonth(from); setToMonth(m);
+    setAppliedFrom(from); setAppliedTo(m); setAppliedYear(y);
   };
   /* Old ERP mode me month ka ek hi dropdown hota hai — wo range ke dono
      sirey (from aur to) ek saath set karta hai. */
   const setSingleMonth = (m) => { setFromMonth(m); setToMonth(m); };
+  /* Year badla to month bhi cutoff me rehna chahiye: 2026 chunte hi September
+     jaisa month ghayab ho jaata hai, to us surat me aakhri jaiz month par le
+     aate hain. */
+  const setOldErpYear = (y) => {
+    setYear(y);
+    const allowed = oldErpMonths(y);
+    if (!allowed.includes(toMonth)) setSingleMonth(allowed[allowed.length - 1]);
+  };
 
   const matches = useMemo(() => {
     const q = searchQ.trim().toLowerCase();
@@ -8121,6 +8153,14 @@ function FeeHistoryTab({ toast }) {
     printWindow(`Overall ${mode === 'detail' ? 'Detailed History' : 'Ledger Summary'}`, html);
     toast(`Overall ${mode === 'detail' ? 'detailed history' : 'ledger summary'} ready — Save as PDF.`, 'success');
   };
+  const downloadOldErp = () => {
+    if (!oldSummary.length) { toast('Fetch the old ERP ledger first', 'info'); return; }
+    const blocks = oldClasses.map(oc => ({ ...oc, resolve: resolveOldStudent }));
+    const html = buildOldErpReportHTML({ blocks, period: oldPeriod || `${toMonth} ${year}`, school: branchHeader });
+    printWindow('Old ERP Ledger', html);
+    toast('Old ERP ledger report ready — Save as PDF.', 'success');
+  };
+
   /* History tab's reports + month reprints always render as A4 PDFs —
      the thermal printSize setting is meant for live counter receipts,
      not archival history records. */
@@ -8166,8 +8206,7 @@ function FeeHistoryTab({ toast }) {
         </Tooltip>
       </div>
 
-      {/* Old ERP Ledger — abhi sirf tab ka dhaancha: month + year chunne ka
-          filter mojood hai, data ki wiring baad me lagegi. */}
+      {/* Old ERP Ledger — month + year chuno, Fetch Detail dabao. */}
       {seg === 'olderp' ? (
         <>
           <div className="fee-section fee-section--overflow">
@@ -8177,7 +8216,7 @@ function FeeHistoryTab({ toast }) {
                   <span className="fee-label">Month</span>
                   <div className="fee-select-wrap">
                     <select className="fee-select" value={toMonth} onChange={e => setSingleMonth(e.target.value)}>
-                      {FEE_MONTHS.map(m => <option key={m}>{m}</option>)}
+                      {oldErpMonths(year).map(m => <option key={m}>{m}</option>)}
                     </select>
                     <i className="fa-solid fa-chevron-down"></i>
                   </div>
@@ -8185,29 +8224,52 @@ function FeeHistoryTab({ toast }) {
                 <div className="fee-field">
                   <span className="fee-label">Year</span>
                   <div className="fee-select-wrap">
-                    <select className="fee-select" value={year} onChange={e => setYear(e.target.value)}>
-                      {FEE_HIST_YEARS.map(y => <option key={y}>{y}</option>)}
+                    <select className="fee-select" value={year} onChange={e => setOldErpYear(e.target.value)}>
+                      {OLD_ERP_YEARS.map(y => <option key={y}>{y}</option>)}
                     </select>
                     <i className="fa-solid fa-chevron-down"></i>
                   </div>
                 </div>
+                <Tooltip text="Load the old ERP ledger for the selected month">
+                  <button className="fee-btn fee-btn-primary" onClick={fetchOldErp} disabled={oldLoading}>
+                    <i className={`fa-solid ${oldLoading ? 'fa-spinner fa-spin' : 'fa-magnifying-glass'}`}></i> Fetch Detail
+                  </button>
+                </Tooltip>
+                {canHistDownload && (
+                  <Tooltip text="Download the old ERP ledger report (A4)">
+                    <button className="fee-btn fee-btn-ghost" onClick={downloadOldErp} disabled={!oldSummary.length}>
+                      <i className="fa-solid fa-file-lines"></i> Report
+                      <i className="fa-solid fa-download" style={{ marginLeft: 8 }}></i>
+                    </button>
+                  </Tooltip>
+                )}
               </div>
             </div>
           </div>
 
-          <RepLoadState
-            loading={oldLoading}
-            error={oldError}
-            empty={!oldLoading && !oldError && oldSummary.length === 0}
-            emptyText={`No old ERP ledger records exist for ${toMonth} ${year}.`}
-          />
+          {oldPeriod === null && !oldLoading && !oldError ? (
+            <div className="fee-info">
+              <i className="fa-solid fa-circle-info"></i>
+              <span>Select a month and year, then click <strong>Fetch Detail</strong> to load the old ERP ledger.</span>
+            </div>
+          ) : (
+            <RepLoadState
+              loading={oldLoading}
+              error={oldError}
+              empty={!oldLoading && !oldError && oldSummary.length === 0}
+              emptyText={`No old ERP ledger records exist for ${oldPeriod}.`}
+            />
+          )}
 
+          {oldPeriod !== null && (
           <div className="fee-section">
-            <div className="fee-table-head fee-hist-row">
+            <div className="fee-table-head fee-hist-row fee-hist-row--nodl">
               <div className="fee-th">S. No.</div>
               <div className="fee-th">Class / Section</div>
               <div className="fee-th fee-center">Total Students</div>
-              <div className="fee-th fee-center">Download</div>
+              {/* Per-class download filhaal band — poori class ka report upar
+                  "Report" button se banta hai.
+              <div className="fee-th fee-center">Download</div> */}
               <div className="fee-th fee-center">Details</div>
             </div>
 
@@ -8222,7 +8284,7 @@ function FeeHistoryTab({ toast }) {
               return (
                 <div key={oc.key} className="fee-rowwrap">
                   <div
-                    className={`fee-row fee-hist-row${isOpen ? ' open' : ''}`}
+                    className={`fee-row fee-hist-row fee-hist-row--nodl${isOpen ? ' open' : ''}`}
                     onClick={() => setOpenKey(isOpen ? null : oc.key)}
                   >
                     <div className="fee-td" data-label="S. No."><span className="fee-row-icon">{i + 1}</span></div>
@@ -8232,9 +8294,9 @@ function FeeHistoryTab({ toast }) {
                     <div className="fee-td fee-center" data-label="Total Students">
                       <span className="fee-count">{oc.rows.length}</span>
                     </div>
-                    <div className="fee-td fee-center" data-label="Download">
+                    {/* <div className="fee-td fee-center" data-label="Download">
                       <span style={{ color: 'var(--text-muted)' }}>—</span>
-                    </div>
+                    </div> */}
                     <div className="fee-td fee-center" data-label="Details">
                       <Tooltip text={isOpen ? 'Hide students' : 'Show students'}>
                         <span className={`fee-chevbtn${isOpen ? ' open' : ''}`}>
@@ -8261,7 +8323,7 @@ function FeeHistoryTab({ toast }) {
                           </thead>
                           <tbody>
                             {oc.rows.length === 0 ? (
-                              <tr><td colSpan="7" className="fee-stbl-empty">No old ERP records for this class in {toMonth} {year}.</td></tr>
+                              <tr><td colSpan="7" className="fee-stbl-empty">No old ERP records for this class in {oldPeriod}.</td></tr>
                             ) : oc.rows.map(row => {
                               const hit = resolveOldStudent(row.applicantID);
                               const t = oldErpRowTotals(row);
@@ -8311,6 +8373,7 @@ function FeeHistoryTab({ toast }) {
               );
             })}
           </div>
+          )}
         </>
       ) : (
       <>
@@ -9153,6 +9216,92 @@ function buildHistOverallReportHTML({ mode, blocks, period, school = null }) {
     </div>
   </div>
   ${pages.replace(/<style>[\s\S]*?<\/style><body>/, '')}`;
+}
+
+/* Old ERP ledger ka A4 report — design bilkul wahi jo Ledger Summary /
+   Detailed History reports ka hai: cover page par grand totals ke cards, phir
+   har class apne page par. Rows purane ERP ki summary se aati hain, is liye
+   columns bhi wahi (challan / discount / received / pending) — koi "Last
+   Receiving" nahi, wo us payload me hota hi nahi. */
+function buildOldErpReportHTML({ blocks, period, school = null }) {
+  const meta = feeReportSchool(school);
+  const sumRows = (rows) => rows.reduce((a, r) => {
+    const t = oldErpRowTotals(r);
+    return { challan: a.challan + t.challan, disc: a.disc + t.discount, recv: a.recv + t.recv, pend: a.pend + t.pend };
+  }, { challan: 0, disc: 0, recv: 0, pend: 0 });
+
+  const grand = blocks.reduce((a, b) => {
+    const s = sumRows(b.rows);
+    return { challan: a.challan + s.challan, disc: a.disc + s.disc, recv: a.recv + s.recv, pend: a.pend + s.pend, n: a.n + b.rows.length };
+  }, { challan: 0, disc: 0, recv: 0, pend: 0, n: 0 });
+
+  const pages = blocks.filter(b => b.rows.length).map(b => {
+    const t = sumRows(b.rows);
+    const body = b.rows.map((r, i) => {
+      const v = oldErpRowTotals(r);
+      const hit = b.resolve(r.applicantID);
+      const sec = hit ? hit.c.sec : (b.onlySec || '—');
+      return `<tr>
+        <td>${i + 1}</td>
+        <td>${hit ? escHtml(hit.s.reg) : '—'}</td>
+        <td>${hit
+          ? `<b>${escHtml(hit.s.name)}</b><br/><span style="color:#64748B;font-size:10px">s/o ${escHtml(hit.s.father || '—')}</span>`
+          : `<b>Applicant #${escHtml(String(r.applicantID))}</b><br/><span style="color:#64748B;font-size:10px">old ERP record</span>`}</td>
+        <td>${escHtml(sec)}</td>
+        <td class="right">${v.challan.toLocaleString('en-PK')}</td>
+        <td class="right">${v.discount > 0 ? v.discount.toLocaleString('en-PK') : '0'}</td>
+        <td class="right green">${v.recv.toLocaleString('en-PK')}</td>
+        <td class="right ${v.pend > 0 ? 'red' : ''}">${v.pend.toLocaleString('en-PK')}</td>
+      </tr>`;
+    }).join('');
+
+    return `<div class="hist-page">
+    ${histHeadHtml(meta, `Old ERP Ledger — ${escHtml(b.cls)}`, [
+      `Students: ${b.rows.length}`,
+      `Period: ${escHtml(period)}`,
+    ])}
+    <div class="hist-band">${escHtml(b.cls)} — Section ${escHtml(b.sec)}</div>
+    <table>
+      <thead>
+        <tr>
+          <th style="width:36px">#</th><th style="width:110px">Reg No</th><th>Name</th>
+          <th style="width:70px">Section</th>
+          <th class="right" style="width:110px">Challan</th>
+          <th class="right" style="width:100px">Discount</th>
+          <th class="right" style="width:110px">Received</th>
+          <th class="right" style="width:110px">Pending</th>
+        </tr>
+      </thead>
+      <tbody>${body}</tbody>
+      <tfoot>
+        <tr>
+          <td colspan="4">Total</td>
+          <td class="right">${t.challan.toLocaleString('en-PK')}</td>
+          <td class="right">${t.disc.toLocaleString('en-PK')}</td>
+          <td class="right">${t.recv.toLocaleString('en-PK')}</td>
+          <td class="right">${t.pend.toLocaleString('en-PK')}</td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>`;
+  }).join('');
+
+  return `<style>${HIST_REPORT_CSS}</style><body>
+  <div class="hist-page">
+    ${histHeadHtml(meta, 'Old ERP Ledger', [
+      `Classes: ${blocks.filter(b => b.rows.length).length}`,
+      `Students: ${grand.n}`,
+      `Period: ${escHtml(period)}`,
+    ])}
+    <div class="hist-band">Grand Totals</div>
+    <div class="hist-cards">
+      <div class="hist-card"><div class="l">Challan</div><div class="v">${grand.challan.toLocaleString('en-PK')}</div></div>
+      <div class="hist-card"><div class="l">Discount</div><div class="v">${grand.disc.toLocaleString('en-PK')}</div></div>
+      <div class="hist-card"><div class="l">Received</div><div class="v green">${grand.recv.toLocaleString('en-PK')}</div></div>
+      <div class="hist-card"><div class="l">Pending</div><div class="v red">${grand.pend.toLocaleString('en-PK')}</div></div>
+    </div>
+  </div>
+  ${pages}`;
 }
 
 /* Re-print the very challan that was raised for THIS student in THIS month.
@@ -13301,6 +13450,9 @@ const FEE_CSS = `
   transition: var(--tr);
   white-space: nowrap;
 }
+/* Disabled button ko dekhne se hi pata chale ke dabta nahi — warna sirf
+   cursor badalta tha aur button chaalu lagta rehta tha. */
+.fee-btn:disabled { opacity: .5; cursor: not-allowed; box-shadow: none; }
 .fee-btn-xs { padding: 6px 11px; font-size: 11px; }
 .fee-btn-sm { padding: 7px 13px; font-size: 12px; }
 .fee-btn-primary {
@@ -14765,6 +14917,8 @@ const FEE_CSS = `
 .fee-recind-row { grid-template-columns: 70px 1.1fr 1.4fr 220px 70px; }
 .fee-recfam-row { grid-template-columns: 60px 1fr 1.3fr 130px 220px 70px; }
 .fee-hist-row   { grid-template-columns: 70px 1.4fr 150px 110px 70px; }
+/* Old ERP Ledger — wahi row, magar Download column ke baghair (4 cells). */
+.fee-hist-row--nodl { grid-template-columns: 70px 1.4fr 150px 70px; }
 .fee-rep-clsrow-grid { grid-template-columns: 60px 1fr 1fr 150px 80px; }
 
 /* Reports tab — category chips */
@@ -16287,6 +16441,12 @@ ing: 1px; text-transform: uppercase; margin-top: 3px; }
   .fee-row.fee-hist-row > .fee-td:nth-of-type(4) { flex: 0 0 auto; }
   .fee-row.fee-hist-row > .fee-td:nth-of-type(5) {
     flex: 0 0 auto;
+    margin-left: auto !important;
+    justify-content: flex-end !important;
+  }
+  /* Download column band hone par Details chautha cell hai — chevron ko phir
+     bhi dayen kinaare par rehna chahiye. */
+  .fee-row.fee-hist-row--nodl > .fee-td:nth-of-type(4) {
     margin-left: auto !important;
     justify-content: flex-end !important;
   }
