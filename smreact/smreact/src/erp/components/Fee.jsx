@@ -7594,6 +7594,16 @@ function FamilyFeeSlipModal({ cfg, onClose, paymentsFor, toast }) {
 
 const FEE_HIST_YEARS = ['2025', '2026', '2027'];
 
+/* Old ERP summary row ka hisaab. Discount billed amount se pehle katta hai, is
+   liye asal receivable challanAmount nahi balke (challan − discount) hai —
+   wahi hisaab naye ledger ka bhi hai (ledgerRowNet dekho). */
+const oldErpRowTotals = (r) => {
+  const challan  = +r.challanAmount || 0;
+  const discount = +r.discount || 0;
+  const recv     = +r.receivedAmount || 0;
+  return { challan, discount, recv, pend: Math.max(challan - discount - recv, 0) };
+};
+
 /* ═══════════ BranchLedger row maths — shared by History and Reports ═══════════
 
    detailRow.receivedAmount is the paid/unpaid signal the ledger gives us:
@@ -7815,6 +7825,11 @@ function FeeHistoryTab({ toast }) {
 
   const fromIdx = FEE_MONTHS.indexOf(appliedFrom);
   const toIdx   = FEE_MONTHS.indexOf(appliedTo);
+  /* Old ERP mode ka range hamesha ek hi month hota hai — "September – September
+     2026" chhapna bad-numa lagta hai, is liye label wahan sirf "September 2026". */
+  const periodLabel = appliedFrom === appliedTo
+    ? `${appliedTo} ${appliedYear}`
+    : `${appliedFrom} – ${appliedTo} ${appliedYear}`;
 
   /* The applied range's challans — one /api/BranchLedger/get-by-month-range
      call covers every student in the branch across the whole range. */
@@ -7823,6 +7838,9 @@ function FeeHistoryTab({ toast }) {
   const [histError, setError]     = useState(null);
   useEffect(() => {
     let alive = true;
+    /* Old ERP tab abhi sirf shell hai — koi data nahi uthata, is liye us par
+       BranchLedger ko be-wajah call karne ki zaroorat nahi. */
+    if (seg === 'olderp') { setRecords([]); setLoading(false); setError(null); return undefined; }
     const f = FEE_MONTHS.indexOf(appliedFrom) + 1;
     const t = FEE_MONTHS.indexOf(appliedTo) + 1;
     setLoading(true);
@@ -7831,7 +7849,24 @@ function FeeHistoryTab({ toast }) {
       .then(rows => { if (alive) { setRecords(rows); setLoading(false); } })
       .catch(e => { if (alive) { setRecords([]); setError(e.message || 'Could not load fee history'); setLoading(false); } });
     return () => { alive = false; };
-  }, [appliedFrom, appliedTo, appliedYear]);
+  }, [seg, appliedFrom, appliedTo, appliedYear]);
+
+  /* ── Old ERP ledger — apna endpoint, apna month ──
+     Ye tab month/year badalte hi khud load hota hai; "Get History" dabane ki
+     zaroorat nahi, kyunke yahan range hai hi nahi — ek hi month hota hai. */
+  const [oldSummary, setOldSummary] = useState([]);
+  const [oldLoading, setOldLoading] = useState(false);
+  const [oldError, setOldError]     = useState(null);
+  useEffect(() => {
+    if (seg !== 'olderp') return undefined;
+    let alive = true;
+    setOldLoading(true);
+    setOldError(null);
+    feeService.getOldErpLedger(FEE_MONTHS.indexOf(toMonth) + 1, year)
+      .then(({ summary }) => { if (alive) { setOldSummary(summary); setOldLoading(false); } })
+      .catch(e => { if (alive) { setOldSummary([]); setOldError(e.message || 'Could not load old ERP ledger'); setOldLoading(false); } });
+    return () => { alive = false; };
+  }, [seg, toMonth, year]);
 
   /* createdBy / modifiedBy are login user ids — resolve each distinct one to
      its employee name once, then reuse across every row. */
@@ -7847,6 +7882,69 @@ function FeeHistoryTab({ toast }) {
       .then(pairs => { if (alive) setEmpNames(prev => ({ ...prev, ...Object.fromEntries(pairs) })); });
     return () => { alive = false; };
   }, [records, empNames]);
+
+  /* ── Old ERP rows ko class me baantna ──
+     Purane ERP ke gradeID hamare hi grade ids hain (verify: branch 220867 ke
+     13 me se 12 grade match karte hain), magar sectionID uske apne purane ids
+     hain — hamari section 1661425 wahan 1659330 hai. Is liye class row GRADE
+     par banti hai aur section har student row me alag se dikhta hai. */
+  const oldClasses = useMemo(() => {
+    const byGrade = new Map();
+    oldSummary.forEach(row => {
+      const g = String(row.gradeID);
+      if (!byGrade.has(g)) byGrade.set(g, []);
+      byGrade.get(g).push(row);
+    });
+    byGrade.forEach(rows => rows.sort((a, b) => a.applicantID - b.applicantID));
+
+    const out = [];
+    const seen = new Map();                       // gradeId → us grade ki sections
+    classes.forEach(c => {
+      const g = String(c._gradeId);
+      if (!seen.has(g)) seen.set(g, []);
+      seen.get(g).push(c);
+    });
+    seen.forEach((secs, g) => {
+      out.push({
+        key:  `oldg${g}`,
+        cls:  secs[0].cls,
+        sec:  secs.map(x => x.sec).join(', '),
+        /* Grade me sirf ek section ho to har row wahi section hai — old ERP ki
+           purani section id se hamara naam nahi milta, magar yahan shak ki
+           gunjaish hi nahi. */
+        onlySec: secs.length === 1 ? secs[0].sec : null,
+        rows: byGrade.get(g) || [],
+      });
+    });
+    /* Jo grade hamari mojooda list me nahi (band ho chuki class) usay chhupana
+       nahi — warna uska purana ledger kahin nazar hi na aata. */
+    byGrade.forEach((rows, g) => {
+      if (seen.has(g)) return;
+      out.push({ key: `oldg${g}`, cls: `Grade #${g}`, sec: 'Not in current setup', onlySec: null, rows });
+    });
+    return out;
+  }, [oldSummary, classes]);
+
+  /* Section ka naam apne id se — kabhi old ERP hamari hi section id bhej deta
+     hai, to us surat me asal naam dikha dete hain. */
+  const sectionNameById = useMemo(() => {
+    const map = new Map();
+    classes.forEach(c => map.set(String(c._sectionId), c.sec));
+    return map;
+  }, [classes]);
+
+  /* applicantID purane ERP ka id hai. Agar backend kabhi `studentID` bhejne
+     lage to naam khud-ba-khud aa jayenge — index dono par bana hua hai. */
+  const studentByApplicant = useMemo(() => {
+    const map = new Map();
+    classes.forEach(c => (studentsMap[c.key] || []).forEach(s => {
+      [s.applicantsID, s.studentID].forEach(id => {
+        const k = String(id || '');
+        if (k && !map.has(k)) map.set(k, { c, s });
+      });
+    }));
+    return map;
+  }, [classes, studentsMap]);
 
   const recsByStudent = useMemo(() => {
     const map = new Map();
@@ -7886,15 +7984,37 @@ function FeeHistoryTab({ toast }) {
       toast('"From" month must be on or before "To"', 'error'); return;
     }
     setAppliedFrom(fromMonth); setAppliedTo(toMonth); setAppliedYear(year);
-    toast(`Loaded ${fromMonth} – ${toMonth} ${year} history`, 'info');
+    toast(
+      seg === 'olderp'
+        ? `Loaded ${toMonth} ${year} ledger`
+        : `Loaded ${fromMonth} – ${toMonth} ${year} history`,
+      'info',
+    );
   };
   const resetFilters = () => {
     const nowM = FEE_MONTHS[new Date().getMonth()];
     const nowY = String(new Date().getFullYear());
-    setFromMonth(FEE_MONTHS[0]); setToMonth(nowM); setYear(nowY);
-    setAppliedFrom(FEE_MONTHS[0]); setAppliedTo(nowM); setAppliedYear(nowY);
+    const from = seg === 'olderp' ? nowM : FEE_MONTHS[0];
+    setFromMonth(from); setToMonth(nowM); setYear(nowY);
+    setAppliedFrom(from); setAppliedTo(nowM); setAppliedYear(nowY);
     setSearchQ('');
   };
+
+  /* Old ERP Ledger sirf EK month dikhata tha, jabke naye Ledger/Detailed tabs
+     range par chalte hain. Isi liye tab badalte hi range ko us shakal me le
+     aate hain aur foran apply kar dete hain — warna user ko dobara "Get
+     History" dabana parta aur purana range wahin ka wahin nazar aata. */
+  const switchSeg = (next) => {
+    if (next === seg) return;
+    const one = next === 'olderp';
+    const from = one ? toMonth : FEE_MONTHS[0];
+    setSeg(next);
+    setFromMonth(from);
+    setAppliedFrom(from); setAppliedTo(toMonth); setAppliedYear(year);
+  };
+  /* Old ERP mode me month ka ek hi dropdown hota hai — wo range ke dono
+     sirey (from aur to) ek saath set karta hai. */
+  const setSingleMonth = (m) => { setFromMonth(m); setToMonth(m); };
 
   const matches = useMemo(() => {
     const q = searchQ.trim().toLowerCase();
@@ -7925,7 +8045,7 @@ function FeeHistoryTab({ toast }) {
 
   const openDetail = (mode, c, s) => {
     const months = historyFor(c, s);
-    setDetail({ mode, c, s, months, totals: feeHistTotals(months), period: `${appliedFrom} – ${appliedTo} ${appliedYear}` });
+    setDetail({ mode, c, s, months, totals: feeHistTotals(months), period: periodLabel });
   };
 
   /* PDF downloads — student / class / overall */
@@ -7939,13 +8059,13 @@ function FeeHistoryTab({ toast }) {
   };
   const downloadStudent = (mode, c, s) => {
     const months = historyFor(c, s);
-    const html = buildHistStudentReportHTML({ mode, c, s, months, period: `${appliedFrom} – ${appliedTo} ${appliedYear}`, year: appliedYear, school: branchHeader });
+    const html = buildHistStudentReportHTML({ mode, c, s, months, period: periodLabel, year: appliedYear, school: branchHeader });
     printWindow(`${mode === 'detail' ? 'Detailed' : 'Ledger'} History — ${s.name}`, html);
     toast(`${mode === 'detail' ? 'Detailed' : 'Ledger'} history ready — Save as PDF.`, 'success');
   };
   const downloadClass = (c) => {
     const rows = (studentsMap[c.key] || []).map(s => ({ s, months: historyFor(c, s) }));
-    const html = buildHistClassReportHTML({ mode: seg, c, rows, period: `${appliedFrom} – ${appliedTo} ${appliedYear}`, school: branchHeader });
+    const html = buildHistClassReportHTML({ mode: seg === 'detail' ? 'detail' : 'ledger', c, rows, period: periodLabel, school: branchHeader });
     printWindow(`Class ${seg === 'detail' ? 'Detailed' : 'Ledger'} — ${c.cls} (${c.sec})`, html);
     toast(`Class ${seg === 'detail' ? 'detailed history' : 'ledger summary'} ready — Save as PDF.`, 'success');
   };
@@ -7953,7 +8073,7 @@ function FeeHistoryTab({ toast }) {
     const blocks = classes.map(c => ({
       c, rows: (studentsMap[c.key] || []).map(s => ({ s, months: historyFor(c, s) })),
     }));
-    const html = buildHistOverallReportHTML({ mode, blocks, period: `${appliedFrom} – ${appliedTo} ${appliedYear}`, school: branchHeader });
+    const html = buildHistOverallReportHTML({ mode, blocks, period: periodLabel, school: branchHeader });
     printWindow(`Overall ${mode === 'detail' ? 'Detailed History' : 'Ledger Summary'}`, html);
     toast(`Overall ${mode === 'detail' ? 'detailed history' : 'ledger summary'} ready — Save as PDF.`, 'success');
   };
@@ -7985,23 +8105,176 @@ function FeeHistoryTab({ toast }) {
     <>
       {/* Sub-segments */}
       <div className="fee-seg">
+        <Tooltip text="Legacy ERP style ledger — one month at a time">
+          <button className={`fee-seg-btn${seg === 'olderp' ? ' active' : ''}`} onClick={() => switchSeg('olderp')}>
+            <i className="fa-solid fa-clock-rotate-left"></i> Old ERP Ledger
+          </button>
+        </Tooltip>
         <Tooltip text="Month-wise ledger summary with last receiving">
-          <button className={`fee-seg-btn${seg === 'ledger' ? ' active' : ''}`} onClick={() => setSeg('ledger')}>
+          <button className={`fee-seg-btn${seg === 'ledger' ? ' active' : ''}`} onClick={() => switchSeg('ledger')}>
             <i className="fa-solid fa-book"></i> Ledger Summary
           </button>
         </Tooltip>
         <Tooltip text="Detailed month-wise challan and receiving breakdown">
-          <button className={`fee-seg-btn${seg === 'detail' ? ' active' : ''}`} onClick={() => setSeg('detail')}>
+          <button className={`fee-seg-btn${seg === 'detail' ? ' active' : ''}`} onClick={() => switchSeg('detail')}>
             <i className="fa-solid fa-list-check"></i> Detailed History
           </button>
         </Tooltip>
       </div>
 
+      {/* Old ERP Ledger — abhi sirf tab ka dhaancha: month + year chunne ka
+          filter mojood hai, data ki wiring baad me lagegi. */}
+      {seg === 'olderp' ? (
+        <>
+          <div className="fee-section fee-section--overflow">
+            <div className="fee-section-body">
+              <div className="fee-filters">
+                <div className="fee-field">
+                  <span className="fee-label">Month</span>
+                  <div className="fee-select-wrap">
+                    <select className="fee-select" value={toMonth} onChange={e => setSingleMonth(e.target.value)}>
+                      {FEE_MONTHS.map(m => <option key={m}>{m}</option>)}
+                    </select>
+                    <i className="fa-solid fa-chevron-down"></i>
+                  </div>
+                </div>
+                <div className="fee-field">
+                  <span className="fee-label">Year</span>
+                  <div className="fee-select-wrap">
+                    <select className="fee-select" value={year} onChange={e => setYear(e.target.value)}>
+                      {FEE_HIST_YEARS.map(y => <option key={y}>{y}</option>)}
+                    </select>
+                    <i className="fa-solid fa-chevron-down"></i>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <RepLoadState
+            loading={oldLoading}
+            error={oldError}
+            empty={!oldLoading && !oldError && oldSummary.length === 0}
+            emptyText={`No old ERP ledger records exist for ${toMonth} ${year}.`}
+          />
+
+          <div className="fee-section">
+            <div className="fee-table-head fee-hist-row">
+              <div className="fee-th">S. No.</div>
+              <div className="fee-th">Class / Section</div>
+              <div className="fee-th fee-center">Total Students</div>
+              <div className="fee-th fee-center">Download</div>
+              <div className="fee-th fee-center">Details</div>
+            </div>
+
+            {oldClasses.length === 0 ? (
+              <div className="fee-empty">No classes available.</div>
+            ) : oldClasses.map((oc, i) => {
+              const isOpen = openKey === oc.key;
+              const tot = oc.rows.reduce((a, r) => {
+                const t = oldErpRowTotals(r);
+                return { challan: a.challan + t.challan, disc: a.disc + t.discount, recv: a.recv + t.recv, pend: a.pend + t.pend };
+              }, { challan: 0, disc: 0, recv: 0, pend: 0 });
+              return (
+                <div key={oc.key} className="fee-rowwrap">
+                  <div
+                    className={`fee-row fee-hist-row${isOpen ? ' open' : ''}`}
+                    onClick={() => setOpenKey(isOpen ? null : oc.key)}
+                  >
+                    <div className="fee-td" data-label="S. No."><span className="fee-row-icon">{i + 1}</span></div>
+                    <div className="fee-td" data-label="Class / Section">
+                      <div className="fee-recv-clssec"><b>{oc.cls}</b><span>Section {oc.sec}</span></div>
+                    </div>
+                    <div className="fee-td fee-center" data-label="Total Students">
+                      <span className="fee-count">{oc.rows.length}</span>
+                    </div>
+                    <div className="fee-td fee-center" data-label="Download">
+                      <span style={{ color: 'var(--text-muted)' }}>—</span>
+                    </div>
+                    <div className="fee-td fee-center" data-label="Details">
+                      <Tooltip text={isOpen ? 'Hide students' : 'Show students'}>
+                        <span className={`fee-chevbtn${isOpen ? ' open' : ''}`}>
+                          <i className="fa-solid fa-chevron-down fee-chev"></i>
+                        </span>
+                      </Tooltip>
+                    </div>
+                  </div>
+
+                  <div className={`fee-detail${isOpen ? ' open' : ''}`}>
+                    <div className="fee-detail-inner">
+                      <div className="fee-stbl-wrap">
+                        <table className="fee-stbl">
+                          <thead>
+                            <tr>
+                              <th>Reg No</th>
+                              <th>Name</th>
+                              <th>Class / Sec</th>
+                              <th className="fee-right">Challan Amount</th>
+                              <th className="fee-right">Discount</th>
+                              <th className="fee-right">Received</th>
+                              <th className="fee-right">Pending</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {oc.rows.length === 0 ? (
+                              <tr><td colSpan="7" className="fee-stbl-empty">No old ERP records for this class in {toMonth} {year}.</td></tr>
+                            ) : oc.rows.map(row => {
+                              const hit = studentByApplicant.get(String(row.applicantID));
+                              const t = oldErpRowTotals(row);
+                              const secName = hit ? hit.c.sec
+                                : (sectionNameById.get(String(row.sectionID)) || oc.onlySec || '—');
+                              return (
+                                <tr key={row.applicantID}>
+                                  <td>{hit ? hit.s.reg : <span style={{ color: 'var(--text-muted)' }}>—</span>}</td>
+                                  <td>
+                                    {hit ? (
+                                      <>
+                                        <b>{hit.s.name}</b>
+                                        <span className="fee-sub-eq">s/o {hit.s.father || '—'}</span>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <b>Applicant #{row.applicantID}</b>
+                                        <span className="fee-sub-eq">old ERP record</span>
+                                      </>
+                                    )}
+                                  </td>
+                                  <td>{oc.cls} / {secName}</td>
+                                  <td className="fee-right">{money(t.challan)}</td>
+                                  <td className="fee-right">{t.discount > 0 ? money(t.discount) : '0'}</td>
+                                  <td className="fee-right"><span className="fee-paid-amt">{money(t.recv)}</span></td>
+                                  <td className="fee-right">{t.pend > 0 ? <span className="fee-neg">{money(t.pend)}</span> : '0'}</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                          {oc.rows.length > 0 && (
+                            <tfoot>
+                              <tr>
+                                <td colSpan="3"><b>Total</b></td>
+                                <td className="fee-right"><b>{money(tot.challan)}</b></td>
+                                <td className="fee-right"><b>{tot.disc > 0 ? money(tot.disc) : '0'}</b></td>
+                                <td className="fee-right"><b className="fee-paid-amt">{money(tot.recv)}</b></td>
+                                <td className="fee-right"><b>{tot.pend > 0 ? <span className="fee-neg">{money(tot.pend)}</span> : '0'}</b></td>
+                              </tr>
+                            </tfoot>
+                          )}
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      ) : (
+      <>
       <RepLoadState
         loading={histLoading}
         error={histError}
         empty={!histLoading && !histError && records.length === 0}
-        emptyText={`No challans exist for ${appliedFrom} – ${appliedTo} ${appliedYear}.`}
+        emptyText={`No challans exist for ${periodLabel}.`}
       />
 
       {/* Filters + universal search */}
@@ -8163,7 +8436,10 @@ function FeeHistoryTab({ toast }) {
               >
                 <div className="fee-td" data-label="S. No."><span className="fee-row-icon">{i + 1}</span></div>
                 <div className="fee-td" data-label="Class / Section">
-                  <div className="fee-recv-clssec"><b>{c.cls}</b><span>Section {c.sec}</span></div>
+                  <div className="fee-recv-clssec">
+                    <b>{c.cls}</b>
+                    <span>Section {c.sec}</span>
+                  </div>
                 </div>
                 <div className="fee-td fee-center" data-label="Total Students">
                   <span className="fee-count">{students.length}</span>
@@ -8296,6 +8572,8 @@ function FeeHistoryTab({ toast }) {
           );
         })}
       </div>
+      </>
+      )}
 
       <FeeHistoryDetailModal
         cfg={detail}
