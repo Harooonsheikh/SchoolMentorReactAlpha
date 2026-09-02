@@ -19,6 +19,8 @@ import {
    hi nahi, us ke liye ye banner bemani hai. Jawab sessionStorage me sambhal
    jata hai, is liye poore app me ek hi call. */
 import { checkChainBranch, cachedChainBranch } from '../services/chainBranch';
+/* Head Office ki asli releases — sirf wahi jo is branch ko bheji gayi hain. */
+import { fetchHeadOfficeReleases } from '../services/headOfficeReleases';
 
 
 
@@ -68,7 +70,16 @@ export default function Academics({ l1, setL1, l2, setL2, l3, setL3, toast }) {
   const showCal       = showAcadCal || showActCal;
   const showSos       = showTextbooks || showTerms || showCal;
   const showLp        = ['Session Settings', 'Term Breakups', 'Create Lesson Plans', 'Submissions'].some(acadView);
-  const showRl        = acadView('Resource Library');
+  /* ── HIDDEN FOR NOW: Resource Library ──────────────────────────────
+     Filhaal ye tab chhupi hui hai (user ki farmaish par, waqti taur par).
+     Wapas chalu karne ke liye: neeche wali `false` line hata dein, upar
+     wali asli line se comment utaar dein, aur L1 tabs me "HIDDEN FOR NOW"
+     wala button block bhi wapas khol dein (dekhein <div className="l1-tabs">).
+     Sirf button chhupana kaafi nahi tha: showRl true rehta to tab-snap
+     wala effect l1 ko 'rl' par le ja sakta tha aur panel bina button ke
+     khul jata. */
+  // const showRl        = acadView('Resource Library');
+  const showRl        = false;
 
   /* Agar active tab ka View nahi to pehle visible tab par snap karo (L1/L2/L3). */
   useEffect(() => {
@@ -131,6 +142,11 @@ const [sessionLoading, setSessionLoading] = useState(() => !acadLoadedOnce || ac
      shuru hota hai taake banner jhilmilaye nahi; pata na ho to niche wala
      effect poochta hai. Shak ki soorat me banner CHHUPA rehta hai. */
   const [isChainBranch, setIsChainBranch] = useState(() => cachedChainBranch() === '1');
+  /* Head Office ki releases — banner ka badge aur poora panel dono isi par. */
+  const [hoReleases, setHoReleases] = useState([]);
+  const [hoName, setHoName] = useState('');
+  const [hoLoading, setHoLoading] = useState(false);
+  const [hoError, setHoError] = useState('');
   const [activityReload, setActivityReload] = useState(0); // bump → ActivityCalendar apne month-events dobara laaye
   const [classesData, setClassesData] = useState(acadClassesCache);
   const [monthApiEnabled, setMonthApiEnabled] = useState(false);
@@ -279,6 +295,25 @@ const closeReport = () => setReportPicker(r => ({ ...r, open: false }));  // ←
     return () => { alive = false; };
   }, []);
 
+  /* Releases sirf chain wali branch par mangwate hain — akele school ke liye
+     ye call bemani hai. Nakaam ho to banner chhup jata hai aur panel wajah
+     bata deta hai. */
+  useEffect(() => {
+    if (!isChainBranch) { setHoReleases([]); setHoError(''); return undefined; }
+    let alive = true;
+    setHoLoading(true);
+    setHoError('');
+    fetchHeadOfficeReleases()
+      .then(({ releases, headOfficeName }) => {
+        if (!alive) return;
+        setHoReleases(releases.filter(hoIsLive));   // expire ho chuki releases nahi
+        setHoName(headOfficeName || '');
+      })
+      .catch(err => { if (alive) setHoError(err?.message || 'Could not load releases from Head Office'); })
+      .finally(() => { if (alive) setHoLoading(false); });
+    return () => { alive = false; };
+  }, [isChainBranch]);
+
   /* Load once on mount and refresh each time the Calendar tab is opened. */
   useEffect(() => { loadCalendar(); }, []);
   useEffect(() => { if (l2 === 'cal') loadCalendar(); }, [l2]);
@@ -403,7 +438,7 @@ return (
       <div className="ho-banner-icon"><i className="fa-solid fa-cloud-arrow-down"></i></div>
       <div className="ho-banner-text">
         <div className="ho-banner-title">Releases from Head Office <i className="fa-solid fa-arrow-right ho-banner-arrow"></i></div>
-        <div className="ho-banner-sub">View academic releases shared by {HO_NAME}.</div>
+        <div className="ho-banner-sub">View academic releases shared by {hoName || HO_NAME}.</div>
       </div>
       {hoVisibleReleases().length > 0 && <span className="ho-banner-badge"><i className="fa-solid fa-circle" style={{ fontSize: 6 }}></i> {hoVisibleReleases().length} Live</span>}
     </button>
@@ -429,6 +464,9 @@ return (
         Lesson Plans
       </button>
       )}
+      {/* ── HIDDEN FOR NOW: Resource Library tab ─────────────────────────
+          Waqti taur par band. Wapas chalu karne ke liye ye block un-comment
+          karein aur upar `showRl` wali asli line bhi bahal karein. ──
       {showRl && (
       <button
         className={`l1-tab${l1 === 'rl' ? ' active' : ''}`}
@@ -438,6 +476,7 @@ return (
         Resource Library
       </button>
       )}
+      */}
     </div>
 
     {l1 === 'sos' ? (
@@ -606,6 +645,10 @@ return (
       onClose={() => setReleasesOpen(false)}
       toast={toast}
       classesData={classesData}
+      releases={hoReleases}
+      hoName={hoName}
+      loading={hoLoading}
+      error={hoError}
       addActivity={ev => setEvents(prev => [ev, ...prev])}
     />
 
@@ -3877,99 +3920,25 @@ function TextBooks({ onReport, toast, classesData }) {
    shared by the Head Office and manually save selected content into the
    school's own local ERP (Activity Calendar / Lesson Plans / Notebook
    Plans / Resource Library) with class/subject/category mapping.
-   Mock/local implementation (no backend yet); duplicate-safe via a saved
-   tracker in localStorage. Class/subject dropdowns use the SAME live
-   source as the ERP Resource Library (classesData + rlFetchClassSubjects).
+   Releases ab LIVE hain — Head Office ki asli releases Chain-Management
+   API se aati hain aur sirf wahi jo IS branch ko bheji gayi hain (dekhein
+   services/headOfficeReleases.js). Portal me "Save" karna abhi bhi local
+   hai: duplicate-safe tracker localStorage me, aur class/subject dropdowns
+   wahi live source jo ERP Resource Library use karti hai (classesData +
+   rlFetchClassSubjects).
    ═══════════════════════════════════════════════════════════════════ */
-const HO_NAME = 'Mentor School Head Office';
-/* Sentinel used inside HO_RELEASES.selectedSchoolIds to mean "this branch".
-   hoVisibleReleases() treats it as always matching the current school so the
-   demo sub-release stays visible regardless of the live branchID. */
-const HO_THIS_SCHOOL = 'THIS_SCHOOL';
+/* Head Office ka asli naam API se aata hai; ye sirf tab tak ka sahara hai
+   jab tak wo naam na mile. */
+const HO_NAME = 'Head Office';
 const hoBranchId = () => sessionStorage.getItem('branchID') || '0';
-
-/* Demo releases shared by Head Office. Visibility is filtered below so the
-   school only ever sees ACTIVE master releases + ACTIVE subs assigned to it. */
-const HO_RELEASES = [
-  {
-    id: 'MR-2026-001', no: 1, title: 'Release 1', type: 'MASTER_RELEASE',
-    releasedBy: HO_NAME, releasedOn: '2026-06-26', validUntil: '2026-07-26', status: 'ACTIVE',
-    appliesToAllSchools: true, selectedSchoolIds: [],
-    activities: [
-      { id: 'a1', title: 'Annual Science Fair', from: '2026-07-05', to: '2026-07-06', purpose: 'Showcase student science projects.', development: 'Form committees, assign mentors, prepare stalls.', resource: 'Charts, lab equipment, prize kits', status: 'upcoming' },
-      { id: 'a2', title: 'Independence Day Assembly', from: '2026-08-14', to: '2026-08-14', purpose: 'Celebrate national day with students.', development: 'Tableau, speeches, flag hoisting.', resource: 'Sound system, flags, stage', status: 'upcoming' },
-      { id: 'a3', title: 'Parent–Teacher Meeting', from: '2026-07-20', to: '2026-07-20', purpose: 'Share term progress with parents.', development: 'Schedule slots, prepare report cards.', resource: 'Report cards, meeting hall', status: 'upcoming' },
-    ],
-    lessonPlans: [
-      { id: 'lp1', unitTitle: 'Unit 1 — Nouns & Verbs', lessonTitle: 'Identifying Nouns', hoClass: 'class 1A', hoSubject: 'English', lessonCount: 6, mode: 'Manual' },
-      { id: 'lp2', unitTitle: 'Unit 2 — Numbers 1–100', lessonTitle: 'Counting & Place Value', hoClass: 'II-Pre', hoSubject: 'Math', lessonCount: 8, mode: 'AI' },
-      { id: 'lp3', unitTitle: 'Unit 1 — Living Things', lessonTitle: 'Plants Around Us', hoClass: 'III-Pre', hoSubject: 'Science', lessonCount: 6, mode: 'Manual' },
-    ],
-    notebookPlans: [
-      { id: 'nb1', unitTitle: 'Unit 1 — Handwriting', questionType: 'Word Sentences', itemCount: 12, hoClass: 'class 1A', hoSubject: 'English' },
-      { id: 'nb2', unitTitle: 'Unit 2 — Addition Practice', questionType: 'Fill in the Blanks', itemCount: 15, hoClass: 'II-Pre', hoSubject: 'Math' },
-    ],
-    resources: [
-      { id: 'r1', title: 'English Nouns Worksheet', category: 'worksheet', fileName: 'english-nouns.pdf', description: 'Practice worksheet on common & proper nouns.', hoClass: 'class 1A', hoSubject: 'English' },
-      { id: 'r2', title: 'Maths Place-Value Sheet', category: 'worksheet', fileName: 'maths-place-value.pdf', description: 'Place value up to hundreds.', hoClass: 'II-Pre', hoSubject: 'Math' },
-      { id: 'r3', title: 'Science Question Paper — Term 1', category: 'qpaper', fileName: 'science-term1-qp.pdf', description: 'Term 1 sample question paper.', hoClass: 'III-Pre', hoSubject: 'Science' },
-    ],
-  },
-  {
-    id: 'MR-2026-002', no: 2, title: 'Release 2', type: 'MASTER_RELEASE',
-    releasedBy: HO_NAME, releasedOn: '2026-06-20', validUntil: '2026-08-20', status: 'ACTIVE',
-    appliesToAllSchools: true, selectedSchoolIds: [],
-    activities: [
-      { id: 'a4', title: 'Sports Gala', from: '2026-09-10', to: '2026-09-12', purpose: 'Promote physical fitness & teamwork.', development: 'House teams, track events, medals.', resource: 'Ground, medals, refreshments', status: 'upcoming' },
-    ],
-    lessonPlans: [
-      { id: 'lp4', unitTitle: 'Unit 3 — Reading Comprehension', lessonTitle: 'Short Stories', hoClass: 'I', hoSubject: 'English', lessonCount: 5, mode: 'Manual' },
-    ],
-    notebookPlans: [
-      { id: 'nb3', unitTitle: 'Unit 1 — Urdu Imla', questionType: 'Two Words', itemCount: 10, hoClass: 'III-Pre', hoSubject: 'Urdu' },
-    ],
-    resources: [
-      { id: 'r4', title: 'Summer Pack — Urdu', category: 'summer', fileName: 'urdu-summer.pdf', description: 'Holiday assignment booklet for Urdu.', hoClass: 'III-Pre', hoSubject: 'Urdu' },
-      { id: 'r5', title: 'Reference Notes — Physics', category: 'other', fileName: 'physics-notes.pdf', description: 'Quick revision notes.', hoClass: '11', hoSubject: 'Physics' },
-    ],
-  },
-  {
-    id: 'SR-2026-001', no: 3, title: 'Release 3', type: 'SUB_RELEASE',
-    releasedBy: HO_NAME, releasedOn: '2026-06-24', validUntil: '2026-07-24', status: 'ACTIVE',
-    appliesToAllSchools: false, selectedSchoolIds: [HO_THIS_SCHOOL, 'SCHOOL-004'],
-    activities: [
-      { id: 'a5', title: 'Remedial Class Drive (Selected Schools)', from: '2026-07-01', to: '2026-07-15', purpose: 'Extra support for weak students.', development: 'Identify students, extra periods.', resource: 'Worksheets, evaluation sheets', status: 'ongoing' },
-    ],
-    lessonPlans: [
-      { id: 'lp5', unitTitle: 'Unit 2 — Chemistry Basics', lessonTitle: 'States of Matter', hoClass: '11', hoSubject: 'Chemistry', lessonCount: 4, mode: 'AI' },
-    ],
-    notebookPlans: [],
-    resources: [
-      { id: 'r6', title: 'Missed Question Paper — Chemistry', category: 'qpaper', fileName: 'chemistry-missed-qp.pdf', description: 'Additional question paper for selected schools.', hoClass: '11', hoSubject: 'Chemistry' },
-    ],
-  },
-  /* Filtered out (demonstrate visibility logic): sub for OTHER schools + an expired master. */
-  {
-    id: 'SR-2026-002', no: 99, title: 'Sub Release (Other Schools)', type: 'SUB_RELEASE',
-    releasedBy: HO_NAME, releasedOn: '2026-06-22', validUntil: '2026-07-30', status: 'ACTIVE',
-    appliesToAllSchools: false, selectedSchoolIds: ['SCHOOL-002', 'SCHOOL-003'],
-    activities: [], lessonPlans: [], notebookPlans: [], resources: [],
-  },
-  {
-    id: 'MR-2025-009', no: 98, title: 'Expired Release', type: 'MASTER_RELEASE',
-    releasedBy: HO_NAME, releasedOn: '2025-12-01', validUntil: '2025-12-31', status: 'ACTIVE',
-    appliesToAllSchools: true, selectedSchoolIds: [],
-    activities: [], lessonPlans: [], notebookPlans: [], resources: [],
-  },
-];
 
 const hoDaysRemaining = validUntil => { try { const ms = new Date(`${validUntil}T23:59:59`) - new Date(); return Math.ceil(ms / 86400000); } catch { return null; } };
 const hoIsLive = r => r.status === 'ACTIVE' && hoDaysRemaining(r.validUntil) >= 0;
-/* Only ACTIVE master releases + ACTIVE subs assigned to THIS school, not expired/revoked/draft. */
-const hoVisibleReleases = () => HO_RELEASES.filter(r => hoIsLive(r) && (r.appliesToAllSchools || (r.selectedSchoolIds || []).includes(HO_THIS_SCHOOL)));
+/* Head Office ki har ULP master row EK lesson hoti hai (aur har notebook
+   master row ek notebook plan), is liye ginti seedhi rows ki hai. */
 const hoSummary = r => ({
   activities: r.activities.length,
-  lessons: r.lessonPlans.reduce((n, lp) => n + (lp.lessonCount || 1), 0),
+  lessons: r.lessonPlans.length,
   notebooks: r.notebookPlans.length,
   resources: r.resources.length,
 });
@@ -3987,10 +3956,10 @@ const hoResKey = () => `sm_resource_library_${hoBranchId()}`;
 const hoLoadList = key => { try { const d = JSON.parse(localStorage.getItem(key)); if (Array.isArray(d)) return d; } catch { /* empty */ } return []; };
 const hoPushList = (key, rec) => { const l = hoLoadList(key); l.unshift(rec); try { localStorage.setItem(key, JSON.stringify(l)); } catch { /* ignore */ } };
 
-function HeadOfficeReleases({ open, onClose, toast, classesData = [], addActivity }) {
+function HeadOfficeReleases({ open, onClose, toast, classesData = [], releases = [], hoName = '', loading = false, error = '', addActivity }) {
   const [saved, setSaved] = useState(hoLoadSaved);
   const [detail, setDetail] = useState(null); // release object
-  const releases = useMemo(() => hoVisibleReleases(), []);
+  const ho = hoName || HO_NAME;
 
   const isSaved = (relId, itemId) => saved.some(s => s.headOfficeReleaseId === relId && s.headOfficeItemId === itemId);
   const record = rec => { const next = [...saved, rec]; setSaved(next); hoSaveSaved(next); };
@@ -4012,7 +3981,7 @@ function HeadOfficeReleases({ open, onClose, toast, classesData = [], addActivit
   const saveLessonPlan = (rel, lp, classId, subjectName) => {
     if (isSaved(rel.id, lp.id)) return;
     const cls = classesData.find(c => String(c.id) === String(classId));
-    hoPushList(HO_LP_KEY, { id: `ho-${rel.id}-${lp.id}`, classId: Number(classId), className: cls ? cls.name : '', subjectName, unitTitle: lp.unitTitle, lessonTitle: lp.lessonTitle, lessonCount: lp.lessonCount, mode: lp.mode, source: 'HEAD_OFFICE', hoReleaseId: rel.id, hoItemId: lp.id, savedAt: new Date().toISOString() });
+    hoPushList(HO_LP_KEY, { id: `ho-${rel.id}-${lp.id}`, classId: Number(classId), className: cls ? cls.name : '', subjectName, unitNo: lp.unitNo, unitTitle: lp.unitTitle, lessonTitle: lp.lessonTitle, medium: lp.medium, source: 'HEAD_OFFICE', hoReleaseId: rel.id, hoItemId: lp.id, savedAt: new Date().toISOString() });
     record({ headOfficeReleaseId: rel.id, headOfficeItemId: lp.id, itemType: 'LESSON_PLAN', savedToSchoolId: hoBranchId(), savedAt: new Date().toISOString(), savedBy: 'School', localTargetModule: 'LESSON_PLANS', localClassId: classId, localSubjectId: subjectName, localCategory: null });
     toast('Lesson plan saved to your portal.', 'success');
   };
@@ -4020,7 +3989,7 @@ function HeadOfficeReleases({ open, onClose, toast, classesData = [], addActivit
   const saveNotebookPlan = (rel, nb, classId, subjectName) => {
     if (isSaved(rel.id, nb.id)) return;
     const cls = classesData.find(c => String(c.id) === String(classId));
-    hoPushList(HO_NB_KEY, { id: `ho-${rel.id}-${nb.id}`, classId: Number(classId), className: cls ? cls.name : '', subjectName, unitTitle: nb.unitTitle, questionType: nb.questionType, itemCount: nb.itemCount, source: 'HEAD_OFFICE', hoReleaseId: rel.id, hoItemId: nb.id, savedAt: new Date().toISOString() });
+    hoPushList(HO_NB_KEY, { id: `ho-${rel.id}-${nb.id}`, classId: Number(classId), className: cls ? cls.name : '', subjectName, unitNo: nb.unitNo, unitTitle: nb.unitTitle, lessonTitle: nb.lessonTitle, medium: nb.medium, source: 'HEAD_OFFICE', hoReleaseId: rel.id, hoItemId: nb.id, savedAt: new Date().toISOString() });
     record({ headOfficeReleaseId: rel.id, headOfficeItemId: nb.id, itemType: 'NOTEBOOK_PLAN', savedToSchoolId: hoBranchId(), savedAt: new Date().toISOString(), savedBy: 'School', localTargetModule: 'NOTEBOOK_PLANS', localClassId: classId, localSubjectId: subjectName, localCategory: null });
     toast('Notebook plan saved to your portal.', 'success');
   };
@@ -4046,18 +4015,30 @@ function HeadOfficeReleases({ open, onClose, toast, classesData = [], addActivit
           <div className="ho-screen-icon"><i className="fa-solid fa-cloud-arrow-down"></i></div>
           <div>
             <div className="ho-screen-title">Releases from Head Office</div>
-            <div className="ho-screen-sub">Academic content shared by {HO_NAME} for your school.</div>
+            <div className="ho-screen-sub">Academic content shared by {ho} for your school.</div>
           </div>
         </div>
         <Tooltip text="Close"><button className="ho-screen-close" onClick={onClose} aria-label="Close releases"><i className="fa-solid fa-xmark"></i></button></Tooltip>
       </div>
 
       <div className="ho-screen-body">
-        {releases.length === 0 ? (
+        {loading ? (
+          <div className="section-card rl-empty">
+            <div className="rl-empty-icon"><i className="fa-solid fa-spinner fa-spin"></i></div>
+            <div className="rl-empty-title">Loading releases…</div>
+            <div className="rl-empty-sub">Fetching academic content shared by {ho}.</div>
+          </div>
+        ) : error ? (
+          <div className="section-card rl-empty">
+            <div className="rl-empty-icon"><i className="fa-solid fa-triangle-exclamation"></i></div>
+            <div className="rl-empty-title">Could not load releases</div>
+            <div className="rl-empty-sub">{error}</div>
+          </div>
+        ) : releases.length === 0 ? (
           <div className="section-card rl-empty">
             <div className="rl-empty-icon"><i className="fa-solid fa-inbox"></i></div>
             <div className="rl-empty-title">No live releases from Head Office</div>
-            <div className="rl-empty-sub">There are currently no academic releases available from {HO_NAME}.</div>
+            <div className="rl-empty-sub">There are currently no academic releases available from {ho}.</div>
           </div>
         ) : (
           <div className="ho-rel-grid">
@@ -4076,7 +4057,9 @@ function HeadOfficeReleases({ open, onClose, toast, classesData = [], addActivit
                   </div>
                   <div className="ho-rel-by"><i className="fa-solid fa-building-columns"></i> Released by {r.releasedBy}</div>
                   <div className="ho-rel-dates">
-                    <div><span>Released on</span><strong>{rlFmtDate(r.releasedOn)}</strong></div>
+                    {/* Head Office release ki tareekh nahi rakhta (sirf due date
+                        + validity), is liye pehla khana validity dikhata hai. */}
+                    <div><span>Validity</span><strong>{r.validityDays ? `${r.validityDays} days` : '—'}</strong></div>
                     <div><span>Valid until</span><strong>{rlFmtDate(r.validUntil)}</strong></div>
                     <div><span>Days left</span><strong className="ho-days">{days} {days === 1 ? 'day' : 'days'}</strong></div>
                   </div>
@@ -4099,6 +4082,7 @@ function HeadOfficeReleases({ open, onClose, toast, classesData = [], addActivit
         <ReleaseDetailsModal
           release={detail}
           classesData={classesData}
+          hoName={ho}
           onClose={() => setDetail(null)}
           isSaved={isSaved}
           onSaveActivity={saveActivity}
@@ -4112,7 +4096,7 @@ function HeadOfficeReleases({ open, onClose, toast, classesData = [], addActivit
   );
 }
 
-function ReleaseDetailsModal({ release: r, classesData = [], onClose, isSaved, onSaveActivity, onSaveLessonPlan, onSaveNotebookPlan, onSaveResource, toast }) {
+function ReleaseDetailsModal({ release: r, classesData = [], hoName = HO_NAME, onClose, isSaved, onSaveActivity, onSaveLessonPlan, onSaveNotebookPlan, onSaveResource, toast }) {
   const [tab, setTab] = useState('activities');
   const [mapping, setMapping] = useState(null); // { kind, item }
   const [preview, setPreview] = useState(null); // { kind, item }
@@ -4139,7 +4123,7 @@ function ReleaseDetailsModal({ release: r, classesData = [], onClose, isSaved, o
         <div className="modal-header">
           <div>
             <div className="modal-title"><i className="fa-solid fa-box-open" style={{ marginRight: 8 }}></i> Release Details — {r.title}</div>
-            <div className="modal-sub">Review content shared by {HO_NAME} and save it to your school portal.</div>
+            <div className="modal-sub">Review content shared by {hoName} and save it to your school portal.</div>
           </div>
           <Tooltip text="Close"><button className="modal-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark"></i></button></Tooltip>
         </div>
@@ -4208,8 +4192,8 @@ function ReleaseDetailsModal({ release: r, classesData = [], onClose, isSaved, o
                       <div className="ho-item-meta">
                         <span><i className="fa-solid fa-chalkboard"></i> {lp.hoClass}</span>
                         <span><i className="fa-solid fa-book"></i> {lp.hoSubject}</span>
-                        <span><i className="fa-solid fa-list-ol"></i> {lp.lessonCount} lessons</span>
-                        {lp.mode && <span className="ho-item-tag">{lp.mode}</span>}
+                        {lp.unitNo && <span><i className="fa-solid fa-list-ol"></i> Unit {lp.unitNo}</span>}
+                        {lp.medium && <span className="ho-item-tag">{lp.medium}</span>}
                       </div>
                     </div>
                     <div className="ho-item-actions">
@@ -4232,10 +4216,10 @@ function ReleaseDetailsModal({ release: r, classesData = [], onClose, isSaved, o
                     <div className="ho-item-main">
                       <div className="ho-item-title">{nb.unitTitle}</div>
                       <div className="ho-item-meta">
-                        <span className="ho-item-tag">{nb.questionType}</span>
-                        <span><i className="fa-solid fa-list-ol"></i> {nb.itemCount} questions</span>
                         <span><i className="fa-solid fa-chalkboard"></i> {nb.hoClass}</span>
                         <span><i className="fa-solid fa-book"></i> {nb.hoSubject}</span>
+                        {nb.unitNo && <span><i className="fa-solid fa-list-ol"></i> Unit {nb.unitNo}</span>}
+                        {nb.medium && <span className="ho-item-tag">{nb.medium}</span>}
                       </div>
                     </div>
                     <div className="ho-item-actions">
@@ -4296,7 +4280,7 @@ function ReleaseDetailsModal({ release: r, classesData = [], onClose, isSaved, o
         />
       )}
 
-      {preview && <PreviewModal kind={preview.kind} item={preview.item} onClose={() => setPreview(null)} />}
+      {preview && <PreviewModal kind={preview.kind} item={preview.item} hoName={hoName} onClose={() => setPreview(null)} />}
     </div>
   );
 }
@@ -4384,14 +4368,14 @@ function SaveMappingModal({ kind, item, classesData = [], onClose, onSave }) {
   );
 }
 
-function PreviewModal({ kind, item, onClose }) {
+function PreviewModal({ kind, item, hoName = HO_NAME, onClose }) {
   return (
     <div className="modal-overlay open" style={{ zIndex: 10050 }} onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="modal modal-sm">
         <div className="modal-header">
           <div>
             <div className="modal-title"><i className="fa-solid fa-eye" style={{ marginRight: 8 }}></i> Preview</div>
-            <div className="modal-sub">Read-only preview from {HO_NAME}</div>
+            <div className="modal-sub">Read-only preview from {hoName}</div>
           </div>
           <Tooltip text="Close"><button className="modal-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark"></i></button></Tooltip>
         </div>
@@ -4402,15 +4386,15 @@ function PreviewModal({ kind, item, onClose }) {
               <div className="ho-prev-row"><span>Lesson</span><strong>{item.lessonTitle}</strong></div>
               <div className="ho-prev-row"><span>Class</span><strong>{item.hoClass}</strong></div>
               <div className="ho-prev-row"><span>Subject</span><strong>{item.hoSubject}</strong></div>
-              <div className="ho-prev-row"><span>Lessons</span><strong>{item.lessonCount}</strong></div>
-              <div className="ho-prev-row"><span>Mode</span><strong>{item.mode}</strong></div>
+              <div className="ho-prev-row"><span>Unit No</span><strong>{item.unitNo || String.fromCharCode(8212)}</strong></div>
+              <div className="ho-prev-row"><span>Medium</span><strong>{item.medium}</strong></div>
             </div>
           )}
           {kind === 'notebook' && (
             <div className="ho-prev">
               <div className="ho-prev-row"><span>Unit</span><strong>{item.unitTitle}</strong></div>
-              <div className="ho-prev-row"><span>Question Type</span><strong>{item.questionType}</strong></div>
-              <div className="ho-prev-row"><span>Questions</span><strong>{item.itemCount}</strong></div>
+              <div className="ho-prev-row"><span>Unit No</span><strong>{item.unitNo || String.fromCharCode(8212)}</strong></div>
+              <div className="ho-prev-row"><span>Medium</span><strong>{item.medium}</strong></div>
               <div className="ho-prev-row"><span>Class</span><strong>{item.hoClass}</strong></div>
               <div className="ho-prev-row"><span>Subject</span><strong>{item.hoSubject}</strong></div>
             </div>
