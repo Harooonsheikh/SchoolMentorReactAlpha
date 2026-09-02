@@ -1,7 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import Tooltip from './Tooltip';
 import TutorialModal from './TutorialModal';
 import * as studentService from '../services/studentService';
+import * as preEnrollmentService from '../services/preEnrollmentService';
 import useAsync from '../hooks/useAsync';
 import { usePermissions } from '../context/PermissionsContext';
 import { fetchReportHeader } from '../../utils/pdfReports';
@@ -22,6 +24,8 @@ const stuInitials = (s) => {
   return (a + b).toUpperCase() || ((s.name || '?')[0] || '?').toUpperCase();
 };
 const stuFullName = (s) => s.name || `${s.first || ''} ${s.last || ''}`.trim();
+const stuMoney = (n) => 'Rs. ' + Number(n || 0).toLocaleString('en-PK');
+const STU_PRE_MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const stuHasDiscount = (s) => {
   if (!s._disc) return false;
   return Object.values(s._disc).some(v => Number(v) > 0);
@@ -1184,6 +1188,7 @@ function buildStuCertHTML(s, cls, school, type, style, opts) {
 }
 
 const STU_TABS = [
+  { id: 'preenroll', icon: 'fa-user-clock',  label: 'Pre-Enrollment' },
   { id: 'active',   icon: 'fa-user-check',  label: 'Active Students' },
   { id: 'inactive', icon: 'fa-user-slash',  label: 'Inactive Students' },
   { id: 'family',   icon: 'fa-people-roof', label: 'Family Tree' },
@@ -1259,7 +1264,16 @@ export default function Students({ toast }) {
         ))}
       </div>
 
-      {tab === 'active' ? (
+      {tab === 'preenroll' ? (
+        <PreEnrolledStudents
+          classes={classList}
+          setClasses={setClasses}
+          inactive={inactList}
+          setInactive={setInactive}
+          school={school}
+          toast={toast}
+        />
+      ) : tab === 'active' ? (
         <ActiveStudents
           classes={classList}
           setClasses={setClasses}
@@ -2283,7 +2297,7 @@ function StuFormSection({ id, icon, title, open, setOpen, children }) {
   );
 }
 
-function StuStudentModal({ cfg, activeClass, student, classList, sectionList, classes, families, existingRegs, suggestedReg, suggestedAdm, onClose, onSave, toast }) {
+function StuStudentModal({ cfg, activeClass, student, classList, sectionList, classes, families, existingRegs, suggestedReg, suggestedAdm, onClose, onSave, toast, allowNewClassSection = false, requireAdmissionFields = true }) {
   const isEdit = cfg.mode === 'edit';
 
   /* Default values: from student if editing, otherwise auto-filled */
@@ -2303,10 +2317,19 @@ function StuStudentModal({ cfg, activeClass, student, classList, sectionList, cl
   const [dob,      setDob]      = useState(init.dob      || '');
   const [cls,      setCls]      = useState(init.cls || activeClass?.cls || '');
   const [sec,      setSec]      = useState(init.sec || activeClass?.sec || '');
+  /* Pre-Enrollment only (allowNewClassSection): let the front desk type a
+     brand new class/section right in this form instead of being limited
+     to the existing dropdown lists. */
+  const [customClasses, setCustomClasses] = useState(init.cls && !(classList || []).includes(init.cls) ? [init.cls] : []);
+  const [customSections, setCustomSections] = useState(init.sec && !(sectionList || []).includes(init.sec) ? [init.sec] : []);
+  const [newClassInput, setNewClassInput] = useState(null);
+  const [newSectionInput, setNewSectionInput] = useState(null);
+  const allClasses = useMemo(() => [...(classList || []), ...customClasses.filter(c => !(classList || []).includes(c))], [classList, customClasses]);
+  const allSections = useMemo(() => [...(sectionList || []), ...customSections.filter(s => !(sectionList || []).includes(s))], [sectionList, customSections]);
   const [bform,    setBform]    = useState(init.bform    || '');
   const [nat,      setNat]      = useState(init.nat      || 'Pakistani');
-  const [reg,      setReg]      = useState(isEdit ? init.reg : suggestedReg);
-  const [adm,      setAdm]      = useState(isEdit ? init.adm : suggestedAdm);
+  const [reg,      setReg]      = useState(isEdit ? (init.reg || '') : (requireAdmissionFields ? suggestedReg : ''));
+  const [adm,      setAdm]      = useState(isEdit ? (init.adm || '') : (requireAdmissionFields ? suggestedAdm : ''));
   /* Family No ab Family Tree ka dropdown hai: value = family tree id (string).
      Edit par student ki mojooda family pehle tree membership (family.members[])
      se resolve hoti hai — asli link wahin hota hai — aur agar wahan na mile to
@@ -2319,7 +2342,7 @@ function StuStudentModal({ cfg, activeClass, student, classList, sectionList, cl
       .find(f => (f.members || []).some(m => String(m._id) === String(init._id)));
     return linked ? String(linked.id) : String(init.family || '');
   });
-  const [admdate,  setAdmdate]  = useState(init.admdate  || new Date().toISOString().slice(0, 10));
+  const [admdate,  setAdmdate]  = useState(init.admdate  || (requireAdmissionFields ? new Date().toISOString().slice(0, 10) : ''));
   const [father,   setFather]   = useState(init.father   || '');
   const [fcnic,    setFcnic]    = useState(init.fcnic    || '');
   const [focc,     setFocc]     = useState(init.focc     || '');
@@ -2478,7 +2501,7 @@ function StuStudentModal({ cfg, activeClass, student, classList, sectionList, cl
     if (!first.trim())  { toast('First name is required', 'error');     setTab('general'); return; }
     if (!father.trim()) { toast('Father name is required', 'error');    setTab('general'); return; }
     if (!mobile.trim()) { toast('Mobile number is required', 'error');  setTab('general'); return; }
-    if (!reg.trim())    { toast('Registration No is required', 'error'); setTab('general'); return; }
+    if (requireAdmissionFields && !reg.trim()) { toast('Registration No is required', 'error'); setTab('general'); return; }
     if (!cls)           { toast('Class is required', 'error');           setTab('general'); return; }
     if (!sec)           { toast('Section is required', 'error');         setTab('general'); return; }
     /* Registration No must be unique across the branch. Compare normalised
@@ -2526,6 +2549,71 @@ function StuStudentModal({ cfg, activeClass, student, classList, sectionList, cl
       setSaving(false);
     }
   };
+
+  /* Class / Section fields — rendered at the top of the form (in place of
+     Reg/Adm/Family/Admission Date) when those are hidden (Pre-Enrollment),
+     otherwise kept in their original spot in the main grid. Shared so there's
+     exactly one definition regardless of where they render. */
+  const classField = (
+    <Field label="Class *">
+      {newClassInput !== null ? (
+        <div style={{ display: 'flex', gap: 6 }}>
+          <input
+            className="stu-finput" autoFocus value={newClassInput}
+            onChange={(e) => setNewClassInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); const v = newClassInput.trim(); if (!v) return; setCustomClasses((prev) => (prev.includes(v) ? prev : [...prev, v])); setCls(v); setNewClassInput(null); } }}
+            placeholder="Type new class name"
+          />
+          <Tooltip text="Add this class">
+            <button type="button" className="stu-btn-primary" style={{ padding: '0 12px' }} onClick={() => { const v = newClassInput.trim(); if (!v) { toast('Enter a class name', 'error'); return; } setCustomClasses((prev) => (prev.includes(v) ? prev : [...prev, v])); setCls(v); setNewClassInput(null); }}>
+              <i className="fa-solid fa-check"></i>
+            </button>
+          </Tooltip>
+          <Tooltip text="Cancel">
+            <button type="button" className="stu-btn-ghost" style={{ padding: '0 12px' }} onClick={() => setNewClassInput(null)}>
+              <i className="fa-solid fa-xmark"></i>
+            </button>
+          </Tooltip>
+        </div>
+      ) : (
+        <select className="stu-finput" value={cls} onChange={(e) => (e.target.value === '__new__' ? setNewClassInput('') : setCls(e.target.value))}>
+          <option value="">Select</option>
+          {allClasses.map(c => <option key={c}>{c}</option>)}
+          {allowNewClassSection && <option value="__new__">+ Add New Class…</option>}
+        </select>
+      )}
+    </Field>
+  );
+  const sectionField = (
+    <Field label="Section *">
+      {newSectionInput !== null ? (
+        <div style={{ display: 'flex', gap: 6 }}>
+          <input
+            className="stu-finput" autoFocus value={newSectionInput}
+            onChange={(e) => setNewSectionInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); const v = newSectionInput.trim(); if (!v) return; setCustomSections((prev) => (prev.includes(v) ? prev : [...prev, v])); setSec(v); setNewSectionInput(null); } }}
+            placeholder="Type new section name"
+          />
+          <Tooltip text="Add this section">
+            <button type="button" className="stu-btn-primary" style={{ padding: '0 12px' }} onClick={() => { const v = newSectionInput.trim(); if (!v) { toast('Enter a section name', 'error'); return; } setCustomSections((prev) => (prev.includes(v) ? prev : [...prev, v])); setSec(v); setNewSectionInput(null); }}>
+              <i className="fa-solid fa-check"></i>
+            </button>
+          </Tooltip>
+          <Tooltip text="Cancel">
+            <button type="button" className="stu-btn-ghost" style={{ padding: '0 12px' }} onClick={() => setNewSectionInput(null)}>
+              <i className="fa-solid fa-xmark"></i>
+            </button>
+          </Tooltip>
+        </div>
+      ) : (
+        <select className="stu-finput" value={sec} onChange={(e) => (e.target.value === '__new__' ? setNewSectionInput('') : setSec(e.target.value))}>
+          <option value="">Select</option>
+          {allSections.map(s => <option key={s}>{s}</option>)}
+          {allowNewClassSection && <option value="__new__">+ Add New Section…</option>}
+        </select>
+      )}
+    </Field>
+  );
 
   return (
     /* Save ke dauran modal band na ho — warna user isay band kar ke dobara
@@ -2587,6 +2675,7 @@ function StuStudentModal({ cfg, activeClass, student, classList, sectionList, cl
                   </div>
 
                   <div className="stu-fgrid stu-fgrid-2">
+                    {requireAdmissionFields ? (<>
                     <Field label="Registration No *" hint="Auto-suggested; must be unique.">
                       <input className="stu-finput" value={reg} onChange={(e) => setReg(e.target.value)} placeholder="245-00000" />
                     </Field>
@@ -2637,6 +2726,7 @@ function StuStudentModal({ cfg, activeClass, student, classList, sectionList, cl
                     <Field label="Date of Admission">
                       <input className="stu-finput" type="date" value={admdate} onChange={(e) => setAdmdate(e.target.value)} />
                     </Field>
+                    </>) : (<>{classField}{sectionField}</>)}
                   </div>
                 </div>
 
@@ -2658,18 +2748,7 @@ function StuStudentModal({ cfg, activeClass, student, classList, sectionList, cl
                   <Field label="Date of Birth">
                     <input className="stu-finput" type="date" value={dob} onChange={(e) => setDob(e.target.value)} />
                   </Field>
-                  <Field label="Class *">
-                    <select className="stu-finput" value={cls} onChange={(e) => setCls(e.target.value)}>
-                      <option value="">Select</option>
-                      {classList.map(c => <option key={c}>{c}</option>)}
-                    </select>
-                  </Field>
-                  <Field label="Section *">
-                    <select className="stu-finput" value={sec} onChange={(e) => setSec(e.target.value)}>
-                      <option value="">Select</option>
-                      {sectionList.map(s => <option key={s}>{s}</option>)}
-                    </select>
-                  </Field>
+                  {requireAdmissionFields && <>{classField}{sectionField}</>}
                   <Field label="B-Form / CNIC">
                     <input className="stu-finput" value={bform} onChange={(e) => setBform(e.target.value)} placeholder="00000-0000000-0" />
                   </Field>
@@ -5532,6 +5611,1008 @@ function CrmConfirmStyleDeleteFam({ cfg, onClose, onConfirm }) {
 }
 
 /* ─── Coming Soon placeholder used for every not-yet-built screen ──── */
+/* ═══════════════════════════════════════════════════════════════════
+   PRE-ENROLLMENT — a simple flat list, ahead of Active Students. "Add
+   New Student" opens the exact same direct-admission StuStudentModal in
+   its pre-enroll mode (allowNewClassSection + requireAdmissionFields=false).
+   Each row gets Challan + Receiving (copies of the Fee module's own
+   Bulk-Generate / Receiving modals, minus the date fields on Challan per
+   spec) plus Enroll (→ Active Students, with confirm) and Send to Inactive
+   (→ Inactive Students, with confirm).
+   ═══════════════════════════════════════════════════════════════════ */
+function PreEnrolledStudents({ classes, setClasses, inactive, setInactive, school, toast }) {
+  const { data: serverStudents = [] }  = useAsync(preEnrollmentService.getPreEnrollStudents, []);
+  const { data: feeHeads = [] }        = useAsync(preEnrollmentService.getPreEnrollFeeHeads, []);
+  const { data: classListLookup = [] } = useAsync(studentService.getStuClassList, []);
+  const { data: sectionList = [] }     = useAsync(studentService.getStuSectionList, []);
+  const { data: serverNextReg = 25101 } = useAsync(studentService.getStuNextReg, 25101);
+  const { data: serverNextAdm = 1100 }  = useAsync(studentService.getStuNextAdm, 1100);
+
+  void inactive; // accepted for parity; only setInactive is used here
+
+  const [students, setStudents] = useState(null);
+  useEffect(() => { if (serverStudents.length && students == null) setStudents(serverStudents); }, [serverStudents, students]);
+  const list = useMemo(() => students || [], [students]);
+
+  /* Registration / Admission No counters — seeded from the same server
+     values Active Students uses, so Enroll can auto-assign a running number. */
+  const [nextReg, setNextReg] = useState(null);
+  const [nextAdm, setNextAdm] = useState(null);
+  useEffect(() => { if (nextReg == null && serverNextReg) setNextReg(serverNextReg); }, [serverNextReg, nextReg]);
+  useEffect(() => { if (nextAdm == null && serverNextAdm) setNextAdm(serverNextAdm); }, [serverNextAdm, nextAdm]);
+
+  const [addOpen, setAddOpen] = useState(false);
+  const [editCfg, setEditCfg] = useState(null);         // { student }
+  const [challanCfg, setChallanCfg] = useState(null);   // { student }
+  const [receivingCfg, setReceivingCfg] = useState(null); // { student }
+  const [confirmCfg, setConfirmCfg] = useState(null);   // { kind: 'enroll'|'reject', student }
+  const [reportOpen, setReportOpen] = useState(false);
+  const [slipCfg, setSlipCfg] = useState(null);         // { kind: 'challan'|'receiving', student, payment? }
+
+  const handleSaveStudent = (payload) => {
+    const newStudent = {
+      ...payload,
+      preId: `PRE-${new Date().getFullYear()}-${String(list.length + 1).padStart(4, '0')}`,
+      name: `${payload.first || ''} ${payload.last || ''}`.trim(),
+      createdAt: new Date().toISOString().slice(0, 10),
+      challan: null, payments: [],
+    };
+    preEnrollmentService.savePreEnrollStudent(newStudent).catch(() => {});
+    setStudents(prev => [...(prev || []), newStudent]);
+    toast(`${newStudent.name} pre-enrolled successfully`, 'success');
+    setAddOpen(false);
+  };
+
+  const handleEditStudent = (payload) => {
+    const preId = editCfg.student.preId;
+    const updated = { ...editCfg.student, ...payload, preId, name: `${payload.first || ''} ${payload.last || ''}`.trim() };
+    preEnrollmentService.savePreEnrollStudent(updated).catch(() => {});
+    setStudents(prev => prev.map(s => (s.preId === preId ? updated : s)));
+    toast(`${stuFullName(updated)} updated`, 'success');
+    setEditCfg(null);
+  };
+
+  const handleChallanSave = (challan) => {
+    const student = challanCfg.student;
+    preEnrollmentService.savePreEnrollChallan({ preId: student.preId, challan }).catch(() => {});
+    const updated = { ...student, challan };
+    setStudents(prev => prev.map(s => s.preId === student.preId ? updated : s));
+    toast('Challan generated', 'success');
+    setChallanCfg(null);
+    setSlipCfg({ kind: 'challan', student: updated });
+  };
+
+  const handleReceivingSave = (payment) => {
+    const student = receivingCfg.student;
+    preEnrollmentService.savePreEnrollReceiving({ preId: student.preId, payment }).catch(() => {});
+    const updated = { ...student, payments: [...(student.payments || []), payment] };
+    setStudents(prev => prev.map(s => s.preId === student.preId ? updated : s));
+    toast('Payment received', 'success');
+    setReceivingCfg(null);
+    setSlipCfg({ kind: 'receiving', student: updated, payment });
+  };
+
+  const handleConfirm = (cfg) => {
+    const { kind, student } = cfg;
+    if (kind === 'enroll') {
+      const typedReg = (cfg.reg || '').trim();
+      const typedAdm = (cfg.adm || '').trim();
+      const finalReg = typedReg || `${new Date().getFullYear()}-${String(nextReg || 25101).padStart(5, '0')}`;
+      const finalAdm = typedAdm || String(nextAdm || 1100);
+      if (!typedReg) setNextReg((nextReg || 25101) + 1);
+      if (!typedAdm) setNextAdm((nextAdm || 1100) + 1);
+      const enrolled = {
+        ...student, _id: student._id || student.preId, reg: finalReg, adm: finalAdm,
+        family: (cfg.family || '').trim() || student.family || '',
+        admdate: cfg.admdate || new Date().toISOString().slice(0, 10),
+        name: stuFullName(student),
+      };
+      setClasses(prev => {
+        const idx = (prev || []).findIndex(c => c.cls === student.cls && c.sec === student.sec);
+        if (idx >= 0) return prev.map((c, i) => (i === idx ? { ...c, students: [...c.students, enrolled] } : c));
+        return [...(prev || []), { key: `${student.cls}-${student.sec}-${finalReg}`, cls: student.cls, sec: student.sec, students: [enrolled] }];
+      });
+      toast(`${stuFullName(student)} enrolled into ${student.cls} (${student.sec}) · Reg ${finalReg}`, 'success');
+    } else {
+      setInactive(prev => [{
+        reg: student.reg, first: student.first, last: student.last, father: student.father,
+        gender: student.gender, dob: student.dob, mobile: student.mobile,
+        cls: student.cls, sec: student.sec,
+        reason: 'Did not proceed after pre-enrollment',
+        inactiveDate: new Date().toISOString().slice(0, 10),
+        dues: { total: 0, heads: [], session: '', months: '', history: [] },
+      }, ...(prev || [])]);
+      toast(`${stuFullName(student)} moved to Inactive Students`, 'info');
+    }
+    preEnrollmentService.removePreEnrollStudent(student.preId).catch(() => {});
+    setStudents(prev => prev.filter(s => s.preId !== student.preId));
+    setConfirmCfg(null);
+  };
+
+  return (
+    <>
+      <div className="stu-toolbar">
+        <div style={{ flex: 1 }} />
+        <div className="stu-toolbar-actions">
+          <Tooltip text="Filter and view pre-enrollment income by month or date range">
+            <button className="stu-iconbtn" onClick={() => setReportOpen(true)} aria-label="Reporting">
+              <i className="fa-solid fa-chart-column"></i>
+            </button>
+          </Tooltip>
+          <Tooltip text="Pre-register a new student using the standard admission form">
+            <button className="stu-rowbtn add" onClick={() => setAddOpen(true)}>
+              <i className="fa-solid fa-user-plus"></i> Add New Student
+            </button>
+          </Tooltip>
+        </div>
+      </div>
+
+      <div className="fee-section stu-section">
+        <div className="stu-list-head">
+          <div className="th c">#</div>
+          <div className="th c">Photo</div>
+          <div className="th">Reg No / Pre ID</div>
+          <div className="th">Name</div>
+          <div className="th">Father Name</div>
+          <div className="th">Class</div>
+          <div className="th">Contact No</div>
+          <div className="th c">Actions</div>
+        </div>
+        {list.length === 0 ? (
+          <div className="stu-list-empty">
+            <i className="fa-solid fa-user-plus"></i>
+            No pre-enrolled students yet. Use <strong>Add New Student</strong> to register one.
+          </div>
+        ) : list.map((s, i) => (
+          <PreEnrollStudentRow
+            key={s.preId}
+            s={s}
+            i={i + 1}
+            onChallan={() => setChallanCfg({ student: s })}
+            onReceiving={() => {
+              if (!s.challan) { toast('Generate a challan first', 'error'); return; }
+              setReceivingCfg({ student: s });
+            }}
+            onEnroll={() => setConfirmCfg({ kind: 'enroll', student: s })}
+            onReject={() => setConfirmCfg({ kind: 'reject', student: s })}
+            onSlip={(kind) => setSlipCfg({ kind, student: s })}
+            onEdit={() => setEditCfg({ student: s })}
+          />
+        ))}
+      </div>
+
+      {addOpen && (
+        <StuStudentModal
+          cfg={{ mode: 'add' }}
+          activeClass={null}
+          student={null}
+          classList={classListLookup}
+          sectionList={sectionList}
+          classes={[]}
+          families={[]}
+          existingRegs={[]}
+          suggestedReg={`${new Date().getFullYear()}-${String(nextReg || 25101).padStart(5, '0')}`}
+          suggestedAdm={String(nextAdm || 1100)}
+          onClose={() => setAddOpen(false)}
+          onSave={handleSaveStudent}
+          toast={toast}
+          allowNewClassSection
+          requireAdmissionFields={false}
+        />
+      )}
+
+      {editCfg && (
+        <StuStudentModal
+          cfg={{ mode: 'edit' }}
+          activeClass={null}
+          student={editCfg.student}
+          classList={classListLookup}
+          sectionList={sectionList}
+          classes={[]}
+          families={[]}
+          existingRegs={[]}
+          suggestedReg=""
+          suggestedAdm=""
+          onClose={() => setEditCfg(null)}
+          onSave={handleEditStudent}
+          toast={toast}
+          allowNewClassSection
+          requireAdmissionFields={false}
+        />
+      )}
+
+      {challanCfg && (
+        <PreEnrollChallanModal
+          student={challanCfg.student}
+          feeHeads={feeHeads}
+          onClose={() => setChallanCfg(null)}
+          onSave={handleChallanSave}
+          toast={toast}
+        />
+      )}
+
+      {receivingCfg && (
+        <PreEnrollReceivingModal
+          student={receivingCfg.student}
+          onClose={() => setReceivingCfg(null)}
+          onSave={handleReceivingSave}
+          toast={toast}
+        />
+      )}
+
+      {confirmCfg && (
+        <PreEnrollConfirm
+          cfg={confirmCfg}
+          suggestedReg={`${new Date().getFullYear()}-${String(nextReg || 25101).padStart(5, '0')}`}
+          suggestedAdm={String(nextAdm || 1100)}
+          onClose={() => setConfirmCfg(null)}
+          onConfirm={handleConfirm}
+        />
+      )}
+
+      {reportOpen && (
+        <PreEnrollReportPanel students={list} school={school} onClose={() => setReportOpen(false)} toast={toast} />
+      )}
+
+      {slipCfg && (
+        <PreEnrollSlipModal cfg={slipCfg} school={school} onClose={() => setSlipCfg(null)} toast={toast} />
+      )}
+    </>
+  );
+}
+
+function PreEnrollStudentRow({ s, i, onChallan, onReceiving, onEnroll, onReject, onSlip, onEdit }) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [menuUp, setMenuUp] = useState(false);
+  const anchorRef = useRef(null);
+
+  useEffect(() => {
+    if (!menuOpen) return undefined;
+    if (anchorRef.current) {
+      const r = anchorRef.current.getBoundingClientRect();
+      const vh = window.innerHeight || document.documentElement.clientHeight;
+      setMenuUp(vh - r.bottom < 280 && r.top > 280);
+    }
+    const onClick = (e) => { if (anchorRef.current && !anchorRef.current.contains(e.target)) setMenuOpen(false); };
+    document.addEventListener('mousedown', onClick);
+    return () => document.removeEventListener('mousedown', onClick);
+  }, [menuOpen]);
+
+  const fire = (fn) => { setMenuOpen(false); fn(); };
+  const total = s.challan?.total || 0;
+  const paid = (s.payments || []).reduce((a, p) => a + Number(p.amount || 0), 0);
+  const statusLabel = !s.challan ? 'No Challan' : paid >= total ? 'Paid' : `${stuMoney(total - paid)} due`;
+
+  return (
+    <div className="stu-srow">
+      <div className="td c"><div className="stu-srow-sn">{i}</div></div>
+      <div className="td c">
+        <div className="stu-avatar">{s.photo ? <img src={s.photo} alt={stuFullName(s)} /> : stuInitials(s)}</div>
+      </div>
+      <div className="td stu-reg-cell">{s.reg || s.preId}</div>
+      <div className="td stu-name-cell">
+        <div className="stu-srow-name">{stuFullName(s)}</div>
+        <div className="stu-srow-sub">{statusLabel}</div>
+      </div>
+      <div className="td stu-father-cell">{s.father || '—'}</div>
+      <div className="td">{s.cls}{s.sec ? ` (${s.sec})` : ''}</div>
+      <div className="td stu-contact-cell">{s.mobile || '—'}</div>
+      <div className="td c" ref={anchorRef}>
+        <Tooltip text="More actions">
+          <button className="stu-dots" onClick={() => setMenuOpen(!menuOpen)}>
+            <i className="fa-solid fa-ellipsis-vertical"></i>
+          </button>
+        </Tooltip>
+        {menuOpen && (
+          <div className={`stu-actmenu${menuUp ? ' stu-actmenu--up' : ''}`}>
+            <div className="stu-actmenu-lbl">{stuFullName(s)}{s.reg ? ` · ${s.reg}` : ''}</div>
+            <button className="stu-actitem" onClick={() => fire(onEdit)}>
+              <i className="fa-solid fa-pen" style={{ color: '#1E40AF' }}></i> Edit Student Details
+            </button>
+            <button className="stu-actitem" onClick={() => fire(onChallan)}>
+              <i className="fa-solid fa-file-invoice-dollar" style={{ color: '#1E40AF' }}></i> Challan
+            </button>
+            <button
+              className="stu-actitem"
+              disabled={!s.challan}
+              style={!s.challan ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+              onClick={() => { if (!s.challan) return; fire(onReceiving); }}
+            >
+              <i className="fa-solid fa-hand-holding-dollar" style={{ color: '#16A34A' }}></i> Receiving{!s.challan ? ' (generate challan first)' : ''}
+            </button>
+            <button className="stu-actitem" disabled={!s.challan} style={!s.challan ? { opacity: .45, cursor: 'not-allowed' } : undefined} onClick={() => { if (!s.challan) return; fire(() => onSlip('challan')); }}>
+              <i className="fa-solid fa-print" style={{ color: '#0E7490' }}></i> Print Challan Slip
+            </button>
+            <button className="stu-actitem" disabled={!(s.payments || []).length} style={!(s.payments || []).length ? { opacity: .45, cursor: 'not-allowed' } : undefined} onClick={() => { if (!(s.payments || []).length) return; fire(() => onSlip('receiving')); }}>
+              <i className="fa-solid fa-receipt" style={{ color: '#0E7490' }}></i> Print Receiving Slip
+            </button>
+            <div className="stu-actmenu-div"></div>
+            <button className="stu-actitem" onClick={() => fire(onEnroll)}>
+              <i className="fa-solid fa-user-check" style={{ color: '#16A34A' }}></i> Enroll to Active Students
+            </button>
+            <button className="stu-actitem stu-actitem--danger" onClick={() => fire(onReject)}>
+              <i className="fa-solid fa-user-slash"></i> Send to Inactive
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ─── Challan — copy of Fee.jsx's BulkGenerateModal, minus Issue/Due Date ── */
+function PreEnrollChallanModal({ student, feeHeads, onClose, onSave, toast }) {
+  const month = STU_PRE_MONTHS[new Date().getMonth()];
+  const type = '1';
+  const [picked, setPicked] = useState(() => (student.challan?.heads || []).map(h => h.name));
+  const [msOpen, setMsOpen] = useState(false);
+  const msAnchorRef = useRef(null);
+
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    document.body.style.overflow = 'hidden';
+    return () => { window.removeEventListener('keydown', onKey); document.body.style.overflow = ''; };
+  }, [onClose]);
+  useEffect(() => {
+    if (!msOpen) return undefined;
+    const onDown = (e) => { if (msAnchorRef.current && !msAnchorRef.current.contains(e.target)) setMsOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [msOpen]);
+
+  const toggleHead = (name) => setPicked(prev => (prev.includes(name) ? prev.filter(n => n !== name) : [...prev, name]));
+  const headsLabel = picked.length === 0 ? 'Select Heads' : `${picked.length} head${picked.length === 1 ? '' : 's'} selected`;
+  const pickedHeads = feeHeads.filter(h => picked.includes(h.name));
+  const total = pickedHeads.reduce((a, h) => a + Number(h.amt || 0), 0);
+
+  const handleGenerate = () => {
+    if (picked.length === 0) { toast('Select at least one fee head', 'error'); return; }
+    onSave({ heads: pickedHeads.map(h => ({ name: h.name, amt: h.amt })), month, type, total, generatedAt: new Date().toISOString() });
+  };
+
+  const initials = (stuFullName(student) || '?').trim().split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase() || '?';
+
+  return createPortal(
+    <div className="fee-overlay open" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="fee-modal">
+        <div className="fee-modal-head">
+          <div className="fee-modal-head-title">
+            <div className="fee-modal-head-icon"><i className="fa-solid fa-file-circle-plus"></i></div>
+            <div>
+              <div className="fee-modal-title">Generate Challan</div>
+              <div className="fee-modal-sub">{stuFullName(student)} · child of {student.father || '—'}</div>
+            </div>
+          </div>
+          <Tooltip text="Close"><button className="fee-modal-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark"></i></button></Tooltip>
+        </div>
+
+        <div className="fee-modal-body">
+          <div className="fee-stud-card">
+            <div className="fee-stud-logo">{initials}</div>
+            <div className="fee-stud-meta">
+              <div><b>Name</b> {stuFullName(student)}</div>
+              <div><b>Father Name</b> {student.father || '—'}</div>
+              <div><b>Class</b> {student.cls} ({student.sec})</div>
+              <div><b>Reg No</b> {student.reg || student.preId}</div>
+            </div>
+          </div>
+
+          <div className="fee-filters" style={{ alignItems: 'flex-start', marginTop: 18 }}>
+            <div className="fee-field fee-field--grow">
+              <span className="fee-label">Select Fee Heads</span>
+              <div className={`fee-ms${msOpen ? ' open' : ''}`} ref={msAnchorRef}>
+                <button type="button" className="fee-ms-toggle" onClick={() => setMsOpen(o => !o)}>
+                  <span>{headsLabel}</span>
+                  <i className="fa-solid fa-chevron-down"></i>
+                </button>
+                {msOpen && (
+                  <div className="fee-ms-menu">
+                    {feeHeads.length === 0 ? <div className="fee-ms-empty">No fee heads configured.</div> : feeHeads.map(h => (
+                      <button type="button" key={h.name} className={`fee-ms-opt${picked.includes(h.name) ? ' sel' : ''}`} onClick={() => toggleHead(h.name)}>
+                        <span className="fee-ms-check"><i className="fa-solid fa-check"></i></span>
+                        <span className="fee-ms-name">{h.name}</span>
+                        <span className="fee-ms-amt">{stuMoney(h.amt)}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="fee-info" style={{ marginTop: 16 }}>
+            <i className="fa-solid fa-circle-info"></i>
+            <span>Total challan amount: <strong>{stuMoney(total)}</strong>. Use <strong>Receiving</strong> afterwards to collect payment against this challan.</span>
+          </div>
+        </div>
+
+        <div className="fee-modal-foot">
+          <button className="fee-btn fee-btn-ghost" onClick={onClose}>Cancel</button>
+          <button className="fee-btn fee-btn-primary" onClick={handleGenerate}>
+            <i className="fa-solid fa-bolt"></i> Generate Challan
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+/* ─── Receiving — copy of Fee.jsx's FeeReceivingModal, for a one-time challan ── */
+function PreEnrollReceivingModal({ student, onClose, onSave, toast }) {
+  const todayISO = () => new Date().toISOString().slice(0, 10);
+  const [date, setDate] = useState(todayISO());
+  const [method, setMethod] = useState('Cash');
+  const [ref, setRef] = useState('');
+  const [txn, setTxn] = useState('');
+  const heads = student.challan?.heads || [];
+  const alreadyPerHead = {};
+  (student.payments || []).forEach(p => {
+    Object.entries(p.perHead || {}).forEach(([n, v]) => { alreadyPerHead[n] = (alreadyPerHead[n] || 0) + (+v || 0); });
+  });
+  const [perHeadInput, setPerHeadInput] = useState(() => {
+    const seed = {};
+    heads.forEach(h => { seed[h.name] = Math.max(0, h.amt - (alreadyPerHead[h.name] || 0)); });
+    return seed;
+  });
+
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    document.body.style.overflow = 'hidden';
+    return () => { window.removeEventListener('keydown', onKey); document.body.style.overflow = ''; };
+  }, [onClose]);
+
+  const setHead = (name, v) => setPerHeadInput(prev => ({ ...prev, [name]: Math.max(0, Number(v) || 0) }));
+
+  const rows = heads.map(h => {
+    const paid = +alreadyPerHead[h.name] || 0;
+    const recvNow = Math.max(0, Math.min(+perHeadInput[h.name] || 0, h.amt - paid));
+    const pending = Math.max(0, h.amt - paid - recvNow);
+    return { ...h, paid, recvNow, pending };
+  });
+  const totalChallan = heads.reduce((a, h) => a + Number(h.amt || 0), 0);
+  const alreadyPaid = rows.reduce((a, r) => a + r.paid, 0);
+  const receivingNow = rows.reduce((a, r) => a + r.recvNow, 0);
+  const remainAfter = Math.max(0, totalChallan - alreadyPaid - receivingNow);
+
+  const handleReceive = () => {
+    if (receivingNow <= 0) { toast('Enter at least one head amount to receive', 'error'); return; }
+    if (!date) { toast('Receiving date is required', 'error'); return; }
+    const perHead = {};
+    rows.forEach(r => { if (r.recvNow > 0) perHead[r.name] = r.recvNow; });
+    onSave({ id: `pep-${Date.now()}`, date, method, ref: ref.trim(), txn: txn.trim(), amount: receivingNow, perHead, createdAt: new Date().toISOString() });
+  };
+
+  return createPortal(
+    <div className="fee-overlay open" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="fee-modal lg">
+        <div className="fee-modal-head">
+          <div className="fee-modal-head-title">
+            <div className="fee-modal-head-icon"><i className="fa-solid fa-hand-holding-dollar"></i></div>
+            <div>
+              <div className="fee-modal-title">Receiving Fee of <em>{stuFullName(student)}</em></div>
+              <div className="fee-modal-sub">{student.cls} ({student.sec}) · {student.challan?.month}</div>
+            </div>
+          </div>
+          <Tooltip text="Close"><button className="fee-modal-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark"></i></button></Tooltip>
+        </div>
+
+        <div className="fee-modal-body">
+          <div className="fee-filters">
+            <div className="fee-field">
+              <span className="fee-label">Custom Reference #</span>
+              <input className="fee-input" value={ref} onChange={(e) => setRef(e.target.value)} placeholder="Optional" />
+            </div>
+            <div className="fee-field">
+              <span className="fee-label">Receiving Date</span>
+              <input className="fee-input" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+            </div>
+            <div className="fee-field">
+              <span className="fee-label">Payment Method</span>
+              <div className="fee-select-wrap">
+                <select className="fee-select" value={method} onChange={(e) => setMethod(e.target.value)}>
+                  <option>Cash</option><option>Bank Transfer</option><option>Cheque</option><option>Card</option><option>Online / App</option>
+                </select>
+                <i className="fa-solid fa-chevron-down"></i>
+              </div>
+            </div>
+            <div className="fee-field">
+              <span className="fee-label">Transaction #</span>
+              <input className="fee-input" value={txn} onChange={(e) => setTxn(e.target.value)} placeholder="Optional" />
+            </div>
+          </div>
+
+          <div className="fee-stbl-wrap" style={{ marginTop: 14 }}>
+            <table className="fee-stbl fee-recv-table">
+              <thead>
+                <tr><th>Head</th><th className="fee-right">Challan Amount</th><th className="fee-right">Received</th><th className="fee-right">Pending</th></tr>
+              </thead>
+              <tbody>
+                {rows.map(r => (
+                  <tr key={r.name}>
+                    <td><b>{r.name}</b></td>
+                    <td className="fee-right">{stuMoney(r.amt)}</td>
+                    <td className="fee-right">
+                      <input type="number" min="0" max={Math.max(0, r.amt - r.paid)} value={perHeadInput[r.name] === 0 ? 0 : (perHeadInput[r.name] || '')} onChange={(e) => setHead(r.name, e.target.value)} placeholder="0" />
+                    </td>
+                    <td className="fee-right">{stuMoney(r.pending)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="fee-recv-total">
+                  <td>Total</td>
+                  <td className="fee-right">{stuMoney(totalChallan)}</td>
+                  <td className="fee-right">{stuMoney(alreadyPaid + receivingNow)}</td>
+                  <td className="fee-right">{stuMoney(remainAfter)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+
+          <div className="fee-recv-paystrip">
+            <div className="fee-recv-paycard"><span className="fee-recv-paylbl">Total Amount</span><span className="fee-recv-payval">{stuMoney(totalChallan)}</span></div>
+            <div className="fee-recv-paycard"><span className="fee-recv-paylbl">Already Received</span><span className="fee-recv-payval green">{stuMoney(alreadyPaid)}</span></div>
+            <div className="fee-recv-paycard"><span className="fee-recv-paylbl">Receiving Now</span><span className="fee-recv-payval blue">{stuMoney(receivingNow)}</span></div>
+            <div className="fee-recv-paycard"><span className="fee-recv-paylbl">Remaining After</span><span className="fee-recv-payval red">{stuMoney(remainAfter)}</span></div>
+          </div>
+
+          {student.payments && student.payments.length > 0 && (
+            <div style={{ marginTop: 18 }}>
+              <div className="fee-recv-hist-title"><i className="fa-solid fa-clock-rotate-left"></i> Payment History</div>
+              <div className="fee-stbl-wrap" style={{ marginTop: 8 }}>
+                <table className="fee-stbl">
+                  <thead><tr><th>#</th><th>Date</th><th>Method</th><th>Reference</th><th className="fee-right">Amount</th></tr></thead>
+                  <tbody>
+                    {student.payments.map((p, i) => (
+                      <tr key={p.id || i}>
+                        <td className="fee-num">{i + 1}</td>
+                        <td>{p.date}</td>
+                        <td>{p.method}</td>
+                        <td>{p.ref || p.txn || '—'}</td>
+                        <td className="fee-right"><b>{stuMoney(p.amount)}</b></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="fee-modal-foot">
+          <button className="fee-btn fee-btn-ghost" onClick={onClose}>Cancel</button>
+          <button className="fee-btn fee-btn-primary" onClick={handleReceive}>
+            <i className="fa-solid fa-check"></i> Receive
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+/* ─── Enroll / Send to Inactive confirm dialog (same hero-ring style as the rest of Students) ── */
+function PreEnrollConfirm({ cfg, suggestedReg, suggestedAdm, onClose, onConfirm }) {
+  const isEnroll = cfg?.kind === 'enroll';
+  const [reg, setReg] = useState('');
+  const [adm, setAdm] = useState('');
+  const [family, setFamily] = useState('');
+  const [admdate, setAdmdate] = useState(new Date().toISOString().slice(0, 10));
+
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    document.body.style.overflow = 'hidden';
+    return () => { window.removeEventListener('keydown', onKey); document.body.style.overflow = ''; };
+  }, [onClose]);
+  if (!cfg) return null;
+  const name = stuFullName(cfg.student);
+  const tone = isEnroll ? '#16A34A' : '#DC2626';
+  return (
+    <div className="stu-confirm-overlay" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="stu-confirm-dialog">
+        <div className="stu-confirm-glow" style={{ background: `linear-gradient(90deg,${tone},${tone})` }} />
+        <div className="stu-confirm-hero" style={{ background: `linear-gradient(180deg, ${isEnroll ? 'rgba(22,163,74,.05)' : 'rgba(220,38,38,.05)'}, transparent)` }}>
+          <div className="stu-confirm-ring" style={{ '--ring': tone }}>
+            <div className="stu-confirm-icon-wrap" style={{ background: isEnroll ? 'rgba(22,163,74,.10)' : 'rgba(220,38,38,.10)', color: tone, boxShadow: `0 8px 24px ${isEnroll ? 'rgba(22,163,74,.18)' : 'rgba(220,38,38,.18)'}` }}>
+              <i className={`fa-solid ${isEnroll ? 'fa-user-check' : 'fa-user-slash'}`}></i>
+            </div>
+          </div>
+        </div>
+        <div className="stu-confirm-body">
+          <div className="stu-confirm-title">{isEnroll ? 'Enroll Student?' : 'Send to Inactive?'}</div>
+          <div className="stu-confirm-msg">
+            {isEnroll
+              ? <>Confirm enrollment of "<strong>{name}</strong>" — {cfg.student.cls} ({cfg.student.sec}). They will move into <strong>Active Students</strong> immediately.</>
+              : <>"<strong>{name}</strong>" will be moved to <strong>Inactive Students</strong> and removed from the pre-enrollment list.</>}
+          </div>
+          {isEnroll && (
+            <>
+              <div className="stu-confirm-hint-row" style={{ marginBottom: 10 }}>
+                <i className="fa-solid fa-circle-info"></i> Optional — fill these in now, or leave blank to auto-assign.
+              </div>
+              <div className="stu-fgrid stu-fgrid-2">
+                <Field label="Registration No" hint={`Leave blank to auto-assign ${suggestedReg}`}>
+                  <input className="stu-finput" value={reg} onChange={(e) => setReg(e.target.value)} placeholder={suggestedReg} />
+                </Field>
+                <Field label="Admission No" hint={`Leave blank to auto-assign ${suggestedAdm}`}>
+                  <input className="stu-finput" value={adm} onChange={(e) => setAdm(e.target.value)} placeholder={suggestedAdm} />
+                </Field>
+                <Field label="Family No" hint="Links siblings for family billing.">
+                  <input className="stu-finput" value={family} onChange={(e) => setFamily(e.target.value)} placeholder="e.g. 78855" />
+                </Field>
+                <Field label="Date of Admission">
+                  <input className="stu-finput" type="date" value={admdate} onChange={(e) => setAdmdate(e.target.value)} />
+                </Field>
+              </div>
+            </>
+          )}
+        </div>
+        <div className="stu-confirm-footer">
+          <button className="stu-btn-ghost" onClick={onClose}>Cancel</button>
+          <button
+            className="stu-btn-primary"
+            style={{ background: `linear-gradient(135deg,${tone},${tone})`, boxShadow: `0 4px 14px ${isEnroll ? 'rgba(22,163,74,.35)' : 'rgba(220,38,38,.35)'}` }}
+            onClick={() => onConfirm(isEnroll ? { ...cfg, reg, adm, family, admdate } : cfg)}
+          >
+            <i className={`fa-solid ${isEnroll ? 'fa-user-check' : 'fa-user-slash'}`}></i> {isEnroll ? 'Yes, Enroll' : 'Yes, Move'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─── Reporting download — same A4 report convention as the other Students
+   reports (rhead/rlogo/kpi-row/tbl/rfoot), school-branded via stuSchoolLogoSVG(). ── */
+function buildPreEnrollReportHTML({ rows, total, enrolledCount, periodLabel, school }) {
+  const genDate = stuFmtDate(new Date().toISOString().slice(0, 10));
+  const body = rows.length === 0
+    ? '<tr><td colspan="6" style="text-align:center;padding:18px;color:#94A3B8">No collections in this period.</td></tr>'
+    : rows.map((p, i) => `<tr><td class="c">${i + 1}</td><td>${stuFmtDate(p.date)}</td><td><b>${stuEsc(p.studentName)}</b></td><td class="mono">${stuEsc(p.reg)}</td><td>${stuEsc(p.cls)}${p.sec ? ` (${stuEsc(p.sec)})` : ''}</td><td>${stuEsc(p.method)}</td><td class="r">${stuMoney(p.amount)}</td></tr>`).join('');
+  return {
+    css: `
+      *{box-sizing:border-box;margin:0;padding:0;font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif}
+      html,body{background:#F1F3F8}body{padding:18px 0;font-size:10.5px}
+      .page{width:210mm;min-height:297mm;margin:0 auto;padding:14mm;background:#fff;box-shadow:0 10px 30px rgba(15,23,42,.12)}
+      .rhead{display:flex;align-items:center;gap:14px;border-bottom:2px solid #1E3A8A;padding-bottom:10px;margin-bottom:14px}
+      .rlogo{width:46px;height:46px;flex-shrink:0}
+      .rname{font-size:17px;font-weight:800;color:#0F172A}
+      .rtitle{font-size:12px;font-weight:700;color:#1E3A8A;margin-top:3px}
+      .meta{margin-left:auto;font-size:9.5px;color:#64748B;text-align:right;line-height:1.55}
+      .kpi-row{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin-bottom:14px}
+      .kpi{border:1px solid #E5E7EB;border-radius:8px;padding:10px 12px;background:#F8FAFF;position:relative;overflow:hidden}
+      .kpi::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;background:#1E3A8A}
+      .kpi .l{font-size:9px;font-weight:700;color:#64748B;text-transform:uppercase;letter-spacing:.3px}
+      .kpi .v{font-size:18px;font-weight:800;color:#0F172A;margin-top:2px}
+      .tbl{width:100%;border-collapse:separate;border-spacing:0;border:1px solid #E5E7EB;border-radius:8px;overflow:hidden;font-size:10.5px}
+      .tbl thead th{background:#1E3A8A;color:#fff;padding:7px 9px;text-align:left;font-size:9.5px;text-transform:uppercase;letter-spacing:.3px;font-weight:800}
+      .tbl th.c,.tbl td.c{text-align:center}
+      .tbl th.r,.tbl td.r{text-align:right}
+      .tbl td{padding:7px 9px;border-bottom:1px solid #F1F3F8;vertical-align:top}
+      .tbl tbody tr:nth-child(even) td{background:#FBFCFF}
+      .tbl tfoot td{font-weight:800;background:#F8FAFF;border-top:1.5px solid #E5E7EB}
+      .mono{font-family:ui-monospace,Menlo,monospace;color:#1E3A8A;font-weight:800}
+      .rfoot{margin-top:14px;text-align:center;font-size:9px;color:#94A3B8;border-top:1px solid #e5e9f2;padding-top:8px}
+      @page{size:A4 portrait;margin:0}
+      @media print{body{background:#fff;padding:0}.page{width:auto;min-height:0;margin:0;padding:14mm;box-shadow:none}.tbl tr{page-break-inside:avoid}}
+    `,
+    html: `
+      <div class="page">
+        <div class="rhead">
+          <div class="rlogo">${stuSchoolLogoSVG()}</div>
+          <div><div class="rname">${stuEsc(school?.name || 'School')}</div><div class="rtitle">Pre-Enrollment Report — ${stuEsc(periodLabel)}</div></div>
+          <div class="meta">Generated: ${genDate}<br/>${stuEsc(school?.session || '')}</div>
+        </div>
+        <div class="kpi-row">
+          <div class="kpi"><div class="l">Pre-Enrolled In Period</div><div class="v">${enrolledCount}</div></div>
+          <div class="kpi"><div class="l">Collections</div><div class="v">${rows.length}</div></div>
+          <div class="kpi"><div class="l">Total Revenue</div><div class="v">${stuMoney(total)}</div></div>
+        </div>
+        <table class="tbl">
+          <thead><tr><th class="c" style="width:30px">#</th><th style="width:80px">Date</th><th>Student</th><th style="width:100px">Reg No</th><th>Class</th><th style="width:90px">Method</th><th class="r" style="width:100px">Amount</th></tr></thead>
+          <tbody>${body}</tbody>
+          <tfoot><tr><td colspan="6">Total</td><td class="r">${stuMoney(total)}</td></tr></tfoot>
+        </table>
+        <div class="rfoot">${stuEsc(school?.name || 'School')} · Pre-Enrollment Report · Generated ${genDate}</div>
+      </div>
+    `,
+  };
+}
+
+/* ─── Reporting — pre-enrollment income by month or a custom date range ── */
+function PreEnrollReportPanel({ students, school, onClose, toast }) {
+  const [mode, setMode] = useState('month'); // 'month' | 'range'
+  const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [from, setFrom] = useState(new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10));
+  const [to, setTo] = useState(new Date().toISOString().slice(0, 10));
+
+  useEffect(() => {
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = ''; };
+  }, []);
+
+  const rows = useMemo(() => {
+    const all = students.flatMap(s => (s.payments || []).map(p => ({ ...p, studentName: stuFullName(s), cls: s.cls, sec: s.sec, reg: s.reg })));
+    return all.filter(p => (mode === 'month' ? (p.date || '').slice(0, 7) === month : p.date >= from && p.date <= to))
+      .sort((a, b) => (a.date < b.date ? 1 : -1));
+  }, [students, mode, month, from, to]);
+
+  const total = rows.reduce((a, p) => a + Number(p.amount || 0), 0);
+  const enrolledCount = students.filter(s => (mode === 'month' ? (s.createdAt || '').slice(0, 7) === month : (s.createdAt || '') >= from && (s.createdAt || '') <= to)).length;
+  const periodLabel = mode === 'month'
+    ? new Date(`${month}-01`).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })
+    : `${stuFmtDate(from)} — ${stuFmtDate(to)}`;
+
+  const handleDownload = () => {
+    const { css, html } = buildPreEnrollReportHTML({ rows, total, enrolledCount, periodLabel, school });
+    stuOpenPrintWindow(`Pre-Enrollment Report — ${periodLabel}`, css, html, toast);
+  };
+
+  return createPortal(
+    <div className="fee-overlay open" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="fee-modal lg">
+        <div className="fee-modal-head">
+          <div className="fee-modal-head-title">
+            <div className="fee-modal-head-icon"><i className="fa-solid fa-chart-column"></i></div>
+            <div>
+              <div className="fee-modal-title">Pre-Enrollment Reporting</div>
+              <div className="fee-modal-sub">Filter income collected from pre-enrolled students by month or a custom date range</div>
+            </div>
+          </div>
+          <Tooltip text="Close"><button className="fee-modal-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark"></i></button></Tooltip>
+        </div>
+
+        <div className="fee-modal-body">
+          <div className="fee-subtabs" style={{ marginBottom: 14 }}>
+            <button className={`fee-subtab${mode === 'month' ? ' active' : ''}`} onClick={() => setMode('month')}>
+              <i className="fa-solid fa-calendar-days"></i> Monthly
+            </button>
+            <button className={`fee-subtab${mode === 'range' ? ' active' : ''}`} onClick={() => setMode('range')}>
+              <i className="fa-solid fa-calendar-week"></i> Custom Date Range
+            </button>
+          </div>
+
+          <div className="fee-filters">
+            {mode === 'month' ? (
+              <div className="fee-field">
+                <span className="fee-label">Month</span>
+                <input className="fee-input" type="month" value={month} onChange={(e) => setMonth(e.target.value)} />
+              </div>
+            ) : (
+              <>
+                <div className="fee-field">
+                  <span className="fee-label">From Date</span>
+                  <input className="fee-input" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+                </div>
+                <div className="fee-field">
+                  <span className="fee-label">To Date</span>
+                  <input className="fee-input" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+                </div>
+              </>
+            )}
+          </div>
+
+          <div className="stu-kpis" style={{ margin: '16px 0' }}>
+            <div className="stu-stat">
+              <div className="stu-stat-icon blue"><i className="fa-solid fa-user-clock"></i></div>
+              <div><div className="stu-stat-val">{enrolledCount}</div><div className="stu-stat-lbl">Pre-Enrolled In Period</div></div>
+            </div>
+            <div className="stu-stat">
+              <div className="stu-stat-icon green"><i className="fa-solid fa-receipt"></i></div>
+              <div><div className="stu-stat-val">{rows.length}</div><div className="stu-stat-lbl">Collections</div></div>
+            </div>
+            <div className="stu-stat">
+              <div className="stu-stat-icon violet"><i className="fa-solid fa-sack-dollar"></i></div>
+              <div><div className="stu-stat-val">{stuMoney(total)}</div><div className="stu-stat-lbl">Total Revenue</div></div>
+            </div>
+          </div>
+
+          <div className="fee-stbl-wrap">
+            <table className="fee-stbl fee-recv-table">
+              <thead>
+                <tr><th>Date</th><th>Student</th><th>Reg No</th><th>Class</th><th>Method</th><th className="fee-right">Amount</th></tr>
+              </thead>
+              <tbody>
+                {rows.length === 0 ? (
+                  <tr><td colSpan={6} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>No collections in this period</td></tr>
+                ) : rows.map(p => (
+                  <tr key={p.id}>
+                    <td>{stuFmtDate(p.date)}</td>
+                    <td>{p.studentName}</td>
+                    <td>{p.reg}</td>
+                    <td>{p.cls}{p.sec ? ` (${p.sec})` : ''}</td>
+                    <td>{p.method}</td>
+                    <td className="fee-right">{stuMoney(p.amount)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="fee-recv-total">
+                  <td colSpan={5}>Total</td>
+                  <td className="fee-right">{stuMoney(total)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+
+        <div className="fee-modal-foot">
+          <button className="fee-btn fee-btn-ghost" onClick={onClose}>Close</button>
+          <button className="fee-btn fee-btn-primary" onClick={handleDownload} disabled={rows.length === 0}>
+            <i className="fa-solid fa-file-arrow-down"></i> Download Report
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+/* ─── Challan / Receiving slip print documents — A4 uses this file's own
+   report-print convention (stuSchoolLogoSVG + school name), Thermal is an
+   80mm receipt layout. ── */
+function buildPreEnrollSlipHTML({ kind, student, payment, school, size }) {
+  const isChallan = kind === 'challan';
+  const title = isChallan ? 'Pre-Enrollment Challan' : 'Payment Receipt';
+  const genDate = stuFmtDate(new Date().toISOString().slice(0, 10));
+  const rows = isChallan
+    ? (student.challan?.heads || []).map(h => `<tr><td>${stuEsc(h.name)}</td><td class="r">${stuMoney(h.amt)}</td></tr>`).join('')
+    : Object.entries(payment?.perHead || {}).map(([n, v]) => `<tr><td>${stuEsc(n)}</td><td class="r">${stuMoney(v)}</td></tr>`).join('');
+  const total = isChallan ? (student.challan?.total || 0) : (payment?.amount || 0);
+  const totalLabel = isChallan ? 'Total Challan Amount' : 'Amount Received';
+
+  if (size === 'thermal') {
+    return {
+      css: `
+        *{box-sizing:border-box;margin:0;padding:0;font-family:'Segoe UI',Arial,sans-serif}
+        body{padding:0}
+        .slip{width:76mm;margin:0 auto;padding:4mm}
+        .th-head{text-align:center;margin-bottom:6px}
+        .th-logo{width:28px;height:28px;margin:0 auto 4px}
+        .th-name{font-size:12px;font-weight:800;color:#111}
+        .th-addr{font-size:8.5px;color:#555;margin-top:1px}
+        .th-title{font-size:10.5px;font-weight:800;margin-top:6px;border-top:1px dashed #888;border-bottom:1px dashed #888;padding:4px 0;text-align:center}
+        .th-kv{display:flex;justify-content:space-between;font-size:9.5px;margin:2px 0}
+        table{width:100%;border-collapse:collapse;margin-top:6px;font-size:9.5px}
+        td{padding:2px 0}
+        td.r{text-align:right}
+        .th-total{display:flex;justify-content:space-between;font-weight:800;font-size:11px;border-top:1px dashed #888;margin-top:6px;padding-top:4px}
+        .th-foot{text-align:center;font-size:8px;color:#888;margin-top:8px}
+        @page{size:80mm auto;margin:0}
+        @media print{body{padding:0}}
+      `,
+      html: `
+        <div class="slip">
+          <div class="th-head">
+            <div class="th-logo">${stuSchoolLogoSVG()}</div>
+            <div class="th-name">${stuEsc(school?.name || 'School')}</div>
+            ${school?.address ? `<div class="th-addr">${stuEsc(school.address)}</div>` : ''}
+          </div>
+          <div class="th-title">${title}</div>
+          <div class="th-kv"><span>Student</span><b>${stuEsc(stuFullName(student))}</b></div>
+          <div class="th-kv"><span>Reg No</span><b>${stuEsc(student.reg || student.preId)}</b></div>
+          <div class="th-kv"><span>Class</span><b>${stuEsc(student.cls)} (${stuEsc(student.sec)})</b></div>
+          <div class="th-kv"><span>Date</span><b>${genDate}</b></div>
+          ${!isChallan ? `<div class="th-kv"><span>Method</span><b>${stuEsc(payment?.method || '')}</b></div>` : ''}
+          <table><tbody>${rows}</tbody></table>
+          <div class="th-total"><span>${totalLabel}</span><span>${stuMoney(total)}</span></div>
+          <div class="th-foot">Powered by School Mentor&reg;</div>
+        </div>
+      `,
+    };
+  }
+
+  return {
+    css: `
+      *{box-sizing:border-box;margin:0;padding:0;font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif}
+      html,body{background:#F1F3F8}
+      body{padding:18px 0;font-size:11px}
+      .page{width:210mm;min-height:297mm;margin:0 auto;padding:16mm;background:#fff;box-shadow:0 10px 30px rgba(15,23,42,.12)}
+      .rhead{display:flex;align-items:center;gap:14px;border-bottom:2px solid #1E3A8A;padding-bottom:12px;margin-bottom:16px}
+      .rlogo{width:46px;height:46px;flex-shrink:0}
+      .rname{font-size:18px;font-weight:800;color:#0F172A}
+      .rtitle{font-size:12.5px;font-weight:700;color:#1E3A8A;margin-top:3px}
+      .meta{margin-left:auto;font-size:10px;color:#64748B;text-align:right;line-height:1.6}
+      .sec-band{background:#1E3A8A;color:#fff;padding:7px 13px;border-radius:6px;font-weight:800;font-size:11.5px;margin:16px 0 9px}
+      .tbl{width:100%;border-collapse:separate;border-spacing:0;border:1px solid #E5E7EB;border-radius:8px;overflow:hidden;font-size:11px}
+      .tbl thead th{background:#1E3A8A;color:#fff;padding:8px 10px;text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.3px;font-weight:800}
+      .tbl th.r,.tbl td.r{text-align:right}
+      .tbl td{padding:8px 10px;border-bottom:1px solid #F1F3F8}
+      .tbl tbody tr:nth-child(even) td{background:#FBFCFF}
+      .tbl tfoot td{font-weight:800;background:#F8FAFF;border-top:1.5px solid #E5E7EB}
+      .rfoot{margin-top:18px;text-align:center;font-size:9.5px;color:#94A3B8;border-top:1px solid #e5e9f2;padding-top:9px}
+      @page{size:A4 portrait;margin:0}
+      @media print{body{background:#fff;padding:0}.page{width:auto;min-height:0;margin:0;padding:14mm;box-shadow:none}}
+    `,
+    html: `
+      <div class="page">
+        <div class="rhead">
+          <div class="rlogo">${stuSchoolLogoSVG()}</div>
+          <div><div class="rname">${stuEsc(school?.name || 'School')}</div><div class="rtitle">${title}</div></div>
+          <div class="meta">Generated: ${genDate}<br/>${stuEsc(school?.session || '')}</div>
+        </div>
+        <div class="sec-band">Student Details</div>
+        <table class="tbl">
+          <tbody>
+            <tr><td><b>Name</b></td><td>${stuEsc(stuFullName(student))}</td><td><b>Reg No</b></td><td>${stuEsc(student.reg || student.preId)}</td></tr>
+            <tr><td><b>Father Name</b></td><td>${stuEsc(student.father || '—')}</td><td><b>Class</b></td><td>${stuEsc(student.cls)} (${stuEsc(student.sec)})</td></tr>
+            <tr><td><b>Contact</b></td><td>${stuEsc(student.mobile || '—')}</td><td><b>Date</b></td><td>${genDate}</td></tr>
+          </tbody>
+        </table>
+        <div class="sec-band">${isChallan ? 'Challan Details' : 'Payment Details'}</div>
+        <table class="tbl">
+          <thead><tr><th>Fee Head</th><th class="r">Amount</th></tr></thead>
+          <tbody>${rows}</tbody>
+          <tfoot><tr><td>${totalLabel}</td><td class="r">${stuMoney(total)}</td></tr></tfoot>
+        </table>
+        ${!isChallan && payment ? `<div style="margin-top:10px;font-size:10.5px;color:#475569">Method: <b>${stuEsc(payment.method)}</b>${payment.ref ? ` &middot; Ref: <b>${stuEsc(payment.ref)}</b>` : ''}${payment.txn ? ` &middot; Txn: <b>${stuEsc(payment.txn)}</b>` : ''}</div>` : ''}
+        <div class="rfoot">${stuEsc(school?.name || 'School')} · ${title} · Generated ${genDate}</div>
+      </div>
+    `,
+  };
+}
+
+function PreEnrollSlipModal({ cfg, school, onClose, toast }) {
+  const [size, setSize] = useState('a4');
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    document.body.style.overflow = 'hidden';
+    return () => { window.removeEventListener('keydown', onKey); document.body.style.overflow = ''; };
+  }, [onClose]);
+
+  const { kind, student, payment } = cfg;
+  const title = kind === 'challan' ? 'Print Challan Slip' : 'Print Receiving Slip';
+
+  const handlePrint = () => {
+    const { css, html } = buildPreEnrollSlipHTML({ kind, student, payment, school, size });
+    stuOpenPrintWindow(`${kind === 'challan' ? 'Challan' : 'Receipt'} — ${stuFullName(student)}`, css, html, toast);
+    onClose();
+  };
+
+  return createPortal(
+    <div className="fee-overlay open" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="fee-modal sm">
+        <div className="fee-modal-head">
+          <div className="fee-modal-head-title">
+            <div className="fee-modal-head-icon"><i className="fa-solid fa-print"></i></div>
+            <div>
+              <div className="fee-modal-title">{title}</div>
+              <div className="fee-modal-sub">{stuFullName(student)} · {student.reg || student.preId}</div>
+            </div>
+          </div>
+          <Tooltip text="Close"><button className="fee-modal-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark"></i></button></Tooltip>
+        </div>
+        <div className="fee-modal-body">
+          <div className="fee-dl-label">Paper Size</div>
+          <div className="fee-dl-fmt-grid">
+            <button type="button" className={`fee-dl-fmt${size === 'a4' ? ' sel' : ''}`} onClick={() => setSize('a4')}>
+              <div className="fee-dl-fmt-ic" style={{ background: 'rgba(30,58,138,.1)', color: '#1E3A8A' }}><i className="fa-solid fa-file-lines"></i></div>
+              <div><div className="fee-dl-fmt-name">A4 Size</div><div className="fee-dl-desc">Full page, with school header</div></div>
+            </button>
+            <button type="button" className={`fee-dl-fmt${size === 'thermal' ? ' sel' : ''}`} onClick={() => setSize('thermal')}>
+              <div className="fee-dl-fmt-ic" style={{ background: 'rgba(22,163,74,.1)', color: '#16A34A' }}><i className="fa-solid fa-receipt"></i></div>
+              <div><div className="fee-dl-fmt-name">Thermal</div><div className="fee-dl-desc">80mm receipt printer</div></div>
+            </button>
+          </div>
+        </div>
+        <div className="fee-modal-foot">
+          <button className="fee-btn fee-btn-ghost" onClick={onClose}>Cancel</button>
+          <button className="fee-btn fee-btn-primary" onClick={handlePrint}>
+            <i className="fa-solid fa-print"></i> Print
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+/* ─── Coming Soon placeholder used for every not-yet-built screen ──── */
 function StuComingSoon({ label, icon }) {
   return (
     <div className="fee-section">
@@ -8169,5 +9250,377 @@ select.stu-finput { appearance: none; padding-right: 32px; cursor: pointer; }
   .stu-cls-row { padding: 8px 10px; }
   .stu-cls-actions .stu-rowbtn span,
   .stu-cls-actions .stu-rowbtn-text { display: none; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Pre-Enrollment — Challan / Receiving / Reporting / Slip modals reuse
+   the Fee module's own modal/table/multi-select conventions verbatim
+   (copied subset of Fee.jsx's FEE_CSS, same pattern already used above
+   for .fee-subtabs/.fee-section) so they render pixel-identical.
+   ═══════════════════════════════════════════════════════════════════ */
+.fee-overlay {
+  position: fixed; inset: 0;
+  z-index: 9000;
+  background: rgba(15,23,42,.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .18s ease;
+}
+.fee-overlay.open { opacity: 1; pointer-events: auto; animation: feeOverIn .15s ease; }
+@keyframes feeOverIn { from { opacity: 0; } to { opacity: 1; } }
+.fee-modal {
+  background: var(--bg-card);
+  border: 1.5px solid var(--border-light);
+  border-radius: var(--radius-lg);
+  width: 100%;
+  max-width: 760px;
+  max-height: calc(100vh - 40px);
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 20px 60px rgba(15,23,42,.25);
+  overflow: hidden;
+  animation: feeModIn .2s cubic-bezier(.4,0,.2,1);
+}
+.fee-modal.lg { max-width: 900px; }
+.fee-modal.sm { max-width: 520px; }
+@keyframes feeModIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@media (max-width: 640px) {
+  .fee-overlay { padding: 8px; }
+  .fee-modal, .fee-modal.lg, .fee-modal.sm { max-width: 96vw; }
+}
+.fee-modal-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border-light);
+  background: linear-gradient(135deg, rgba(30,58,138,.04), transparent);
+}
+.fee-modal-head-title { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; }
+.fee-modal-head-icon {
+  width: 38px; height: 38px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #1E3A8A, #1E40AF);
+  color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 15px;
+  flex-shrink: 0;
+}
+.fee-modal-title { font-size: 15px; font-weight: 800; color: var(--text-primary); }
+.fee-modal-sub { font-size: 11.5px; color: var(--text-muted); margin-top: 2px; }
+.fee-modal-close {
+  width: 32px; height: 32px;
+  border: none;
+  background: var(--bg-muted);
+  color: var(--text-muted);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: var(--tr);
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.fee-modal-close:hover { background: rgba(220,38,38,.1); color: #DC2626; }
+.fee-modal-body { flex: 1; overflow-y: auto; padding: 18px 20px; }
+.fee-modal-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 14px 20px;
+  border-top: 1px solid var(--border-light);
+  background: var(--bg-muted);
+}
+
+.fee-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border: 1.5px solid transparent;
+  border-radius: var(--radius-md);
+  font-family: var(--font-body);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: var(--tr);
+  white-space: nowrap;
+}
+.fee-btn-primary {
+  background: linear-gradient(135deg, #1E3A8A, #1E40AF);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(30,58,138,.28);
+}
+.fee-btn-primary:hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(30,58,138,.38); }
+.fee-btn-ghost {
+  background: var(--bg-card);
+  border-color: var(--border-light);
+  color: var(--text-secondary);
+}
+.fee-btn-ghost:hover { background: var(--bg-muted); border-color: var(--border-med); color: var(--text-primary); }
+
+.fee-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .4px;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+.fee-input {
+  width: 100%;
+  border: 1.5px solid var(--border-light);
+  border-radius: 8px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  padding: 9px 12px;
+  font-family: var(--font-body);
+  font-size: 12.5px;
+  outline: none;
+  transition: border-color .15s ease, box-shadow .15s ease;
+  box-sizing: border-box;
+}
+.fee-input:focus { border-color: var(--brand-primary); box-shadow: 0 0 0 3px rgba(30,58,138,.1); }
+.fee-input::placeholder { color: var(--text-muted); }
+.fee-select {
+  height: 42px;
+  border: 1.5px solid var(--border-light);
+  border-radius: var(--radius-md);
+  padding: 0 36px 0 12px;
+  font-family: var(--font-body);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  background: var(--bg-card);
+  outline: none;
+  transition: var(--tr);
+  width: 100%;
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+}
+.fee-select:focus { border-color: var(--brand-primary); box-shadow: 0 0 0 3px rgba(30,58,138,.1); }
+.fee-select-wrap { position: relative; }
+.fee-select-wrap > i {
+  position: absolute;
+  right: 12px; top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-muted);
+  pointer-events: none;
+  font-size: 11px;
+}
+.fee-filters {
+  display: flex;
+  gap: 14px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+.fee-filters .fee-field { display: flex; flex-direction: column; min-width: 0; flex: 0 0 auto; }
+.fee-field--grow { flex: 1; min-width: 240px; }
+.fee-info {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 11px 14px;
+  background: rgba(30,58,138,.05);
+  border: 1px solid rgba(30,58,138,.15);
+  border-radius: var(--radius-md);
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+.fee-info > i { color: #1E40AF; margin-top: 2px; flex-shrink: 0; }
+.fee-stud-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  background: var(--bg-muted);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+}
+.fee-stud-logo {
+  width: 44px; height: 44px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #1E3A8A, #1E40AF);
+  color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 800;
+  font-size: 15px;
+  flex-shrink: 0;
+}
+.fee-stud-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 18px; font-size: 12.5px; color: var(--text-secondary); }
+.fee-stud-meta b { color: var(--text-muted); font-weight: 700; margin-right: 4px; }
+
+.fee-ms { position: relative; }
+.fee-ms-toggle {
+  height: 42px;
+  border: 1.5px solid var(--border-light);
+  border-radius: 10px;
+  padding: 0 12px;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  cursor: pointer;
+  background: var(--bg-card);
+  font-family: var(--font-body);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  transition: var(--tr, all .2s ease);
+}
+.fee-ms-toggle:hover:not(:disabled) { border-color: var(--border-med); }
+.fee-ms-toggle > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fee-ms-toggle i { color: var(--text-muted); font-size: 11px; transition: transform .2s ease; }
+.fee-ms.open .fee-ms-toggle { border-color: #1E3A8A; box-shadow: 0 0 0 3px rgba(30,58,138,.08); }
+.fee-ms.open .fee-ms-toggle i { transform: rotate(180deg); }
+.fee-ms-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0; right: 0;
+  min-width: 280px;
+  background: var(--bg-card);
+  border: 1.5px solid var(--border-light);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(15,23,42,.15);
+  z-index: 30;
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 6px;
+  animation: feeMsIn .18s ease;
+}
+@keyframes feeMsIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+.fee-ms-opt {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  width: 100%;
+  text-align: left;
+  font-family: var(--font-body);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  transition: var(--tr, all .15s ease);
+  min-width: 0;
+}
+.fee-ms-opt:hover { background: var(--bg-muted); }
+.fee-ms-check {
+  width: 18px; height: 18px;
+  border-radius: 5px;
+  border: 1.5px solid var(--border-med);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 10px;
+  color: transparent;
+  flex-shrink: 0;
+  transition: var(--tr, all .2s ease);
+}
+.fee-ms-opt.sel .fee-ms-check { background: #1E3A8A; border-color: #1E3A8A; color: #fff; }
+.fee-ms-name { flex: 1 1 auto; min-width: 0; white-space: normal; word-break: break-word; line-height: 1.35; color: inherit; }
+.fee-ms-amt { font-size: 12px; font-weight: 700; color: var(--text-muted); font-variant-numeric: tabular-nums; flex-shrink: 0; margin-left: 6px; white-space: nowrap; }
+.fee-ms-opt.sel .fee-ms-amt { color: #1E3A8A; }
+.fee-ms-empty { padding: 14px 10px; text-align: center; font-size: 12px; color: var(--text-muted); }
+
+.fee-stbl-wrap {
+  background: var(--bg-card);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.fee-stbl { width: 100%; border-collapse: collapse; font-size: 12.5px; color: var(--text-primary); }
+.fee-stbl thead th {
+  background: var(--bg-muted);
+  color: var(--text-secondary);
+  padding: 9px 10px;
+  text-align: left;
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: .4px;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--border-light);
+}
+.fee-stbl thead th.fee-right  { text-align: right; }
+.fee-stbl thead th.fee-center { text-align: center; }
+.fee-stbl tbody td { padding: 9px 10px; border-bottom: 1px solid var(--border-light); }
+.fee-stbl tbody tr:last-child td { border-bottom: none; }
+.fee-stbl .fee-num   { color: var(--text-muted); font-weight: 700; width: 36px; }
+.fee-stbl .fee-right { text-align: right; font-variant-numeric: tabular-nums; }
+.fee-stbl .fee-center { text-align: center; }
+.fee-recv-table th  { white-space: nowrap; }
+.fee-recv-table input {
+  width: 110px;
+  height: 34px;
+  border: 1.5px solid var(--border-light);
+  border-radius: 8px;
+  padding: 0 10px;
+  font-family: var(--font-body);
+  font-size: 12.5px;
+  font-weight: 600;
+  text-align: right;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  outline: none;
+  transition: all .15s ease;
+}
+.fee-recv-table input:focus { border-color: #1E3A8A; box-shadow: 0 0 0 3px rgba(30,58,138,.08); }
+.fee-recv-table .fee-recv-total td {
+  background: var(--bg-muted);
+  font-weight: 800;
+  border-bottom: none;
+  border-top: 1.5px solid var(--border-light);
+}
+.fee-recv-table .fee-cell-grey {
+  background: var(--bg-muted);
+  border-radius: 6px;
+  padding: 6px 10px;
+  display: inline-block;
+  min-width: 80px;
+  text-align: right;
+  font-weight: 600;
+}
+.fee-paid-amt { font-weight: 700; color: #16A34A; }
+.fee-recv-paystrip { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 18px; }
+.fee-recv-paycard {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 16px;
+  border: 1.5px solid var(--border-light);
+  border-radius: 12px;
+  background: var(--bg-card);
+}
+.fee-recv-paylbl { font-size: 11px; font-weight: 700; color: var(--text-muted); letter-spacing: .3px; text-transform: uppercase; }
+.fee-recv-payval { font-size: 18px; font-weight: 800; font-variant-numeric: tabular-nums; color: var(--text-primary); }
+.fee-recv-payval.green { color: #16A34A; }
+.fee-recv-payval.blue  { color: #1E3A8A; }
+.fee-recv-payval.red   { color: #DC2626; }
+.fee-recv-hist-title { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 800; color: var(--text-secondary); text-transform: uppercase; letter-spacing: .3px; }
+.fee-recv-hist-title i { color: var(--text-muted); }
+.fee-chip { display: inline-flex; align-items: center; padding: 2px 9px; border-radius: 999px; font-size: 10.5px; font-weight: 800; background: var(--bg-muted); color: var(--text-muted); }
+.fee-chip-active { background: rgba(30,58,138,.1); color: #1E40AF; }
+.fee-dl-label { font-size: 11px; font-weight: 800; letter-spacing: .6px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 10px; display: flex; align-items: center; gap: 10px; }
+.fee-dl-label::after { content: ''; flex: 1; height: 1px; background: var(--border-light); }
+.fee-dl-fmt-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.fee-dl-fmt { display: flex; align-items: center; gap: 11px; border: 1.5px solid var(--border-light); border-radius: 12px; padding: 12px 14px; cursor: pointer; transition: all .2s ease; background: var(--bg-card); font-family: var(--font-body); text-align: left; width: 100%; }
+.fee-dl-fmt:hover { border-color: var(--border-med); transform: translateY(-2px); box-shadow: 0 8px 24px rgba(15,23,42,.10); }
+.fee-dl-fmt.sel { border-color: #1E3A8A; box-shadow: 0 0 0 3px rgba(30,58,138,.12); }
+.fee-dl-fmt-ic { width: 38px; height: 38px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 17px; flex-shrink: 0; }
+.fee-dl-fmt-name { font-size: 13.5px; font-weight: 800; color: var(--text-primary); }
+.fee-dl-desc { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+@media (max-width: 520px) { .fee-dl-fmt-grid { grid-template-columns: 1fr; gap: 8px; } }
+@media (max-width: 640px) {
+  .fee-recv-paystrip { grid-template-columns: 1fr 1fr; }
+  .fee-filters { flex-direction: column; align-items: stretch; }
+  .fee-stud-meta { grid-template-columns: 1fr; }
 }
 `;

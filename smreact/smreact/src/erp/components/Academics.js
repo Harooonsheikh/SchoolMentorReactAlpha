@@ -121,6 +121,7 @@ const [sessionLoading, setSessionLoading] = useState(() => !acadLoadedOnce || ac
   const [calEditOpen, setCalEditOpen] = useState(false);
   const [tutorialOpen, setTutorialOpen] = useState(false);
   const [activityModal, setActivityModal] = useState({ open: false, editing: null });
+  const [releasesOpen, setReleasesOpen] = useState(false); // Releases from Head Office full-screen panel
   const [activityReload, setActivityReload] = useState(0); // bump → ActivityCalendar apne month-events dobara laaye
   const [classesData, setClassesData] = useState(acadClassesCache);
   const [monthApiEnabled, setMonthApiEnabled] = useState(false);
@@ -379,6 +380,16 @@ return (
       </Tooltip>
     </div>
 
+    {/* ─── RELEASES FROM HEAD OFFICE ─── */}
+    <button className="ho-banner" onClick={() => setReleasesOpen(true)}>
+      <div className="ho-banner-icon"><i className="fa-solid fa-cloud-arrow-down"></i></div>
+      <div className="ho-banner-text">
+        <div className="ho-banner-title">Releases from Head Office <i className="fa-solid fa-arrow-right ho-banner-arrow"></i></div>
+        <div className="ho-banner-sub">View academic releases shared by {HO_NAME}.</div>
+      </div>
+      {hoVisibleReleases().length > 0 && <span className="ho-banner-badge"><i className="fa-solid fa-circle" style={{ fontSize: 6 }}></i> {hoVisibleReleases().length} Live</span>}
+    </button>
+
     {/* ─── LEVEL 1 TABS ─── (View permission ke hisaab se) */}
     <div className="l1-tabs">
       {showSos && (
@@ -570,6 +581,14 @@ return (
     />
 
     <ConfirmDialog cfg={confirmCfg} onClose={closeConfirm} />
+
+    <HeadOfficeReleases
+      open={releasesOpen}
+      onClose={() => setReleasesOpen(false)}
+      toast={toast}
+      classesData={classesData}
+      addActivity={ev => setEvents(prev => [ev, ...prev])}
+    />
 
        <TutorialModal
       open={tutorialOpen}
@@ -3834,6 +3853,569 @@ function TextBooks({ onReport, toast, classesData }) {
 /* ═══════════════════════════════════════════════════════════════════
    ACADEMICS CSS — extracted from the HTML prototype
    ═══════════════════════════════════════════════════════════════════ */
+/* ═══════════════════════════════════════════════════════════════════
+   RELEASES FROM HEAD OFFICE — school side. View live academic releases
+   shared by the Head Office and manually save selected content into the
+   school's own local ERP (Activity Calendar / Lesson Plans / Notebook
+   Plans / Resource Library) with class/subject/category mapping.
+   Mock/local implementation (no backend yet); duplicate-safe via a saved
+   tracker in localStorage. Class/subject dropdowns use the SAME live
+   source as the ERP Resource Library (classesData + rlFetchClassSubjects).
+   ═══════════════════════════════════════════════════════════════════ */
+const HO_NAME = 'Mentor School Head Office';
+/* Sentinel used inside HO_RELEASES.selectedSchoolIds to mean "this branch".
+   hoVisibleReleases() treats it as always matching the current school so the
+   demo sub-release stays visible regardless of the live branchID. */
+const HO_THIS_SCHOOL = 'THIS_SCHOOL';
+const hoBranchId = () => sessionStorage.getItem('branchID') || '0';
+
+/* Demo releases shared by Head Office. Visibility is filtered below so the
+   school only ever sees ACTIVE master releases + ACTIVE subs assigned to it. */
+const HO_RELEASES = [
+  {
+    id: 'MR-2026-001', no: 1, title: 'Release 1', type: 'MASTER_RELEASE',
+    releasedBy: HO_NAME, releasedOn: '2026-06-26', validUntil: '2026-07-26', status: 'ACTIVE',
+    appliesToAllSchools: true, selectedSchoolIds: [],
+    activities: [
+      { id: 'a1', title: 'Annual Science Fair', from: '2026-07-05', to: '2026-07-06', purpose: 'Showcase student science projects.', development: 'Form committees, assign mentors, prepare stalls.', resource: 'Charts, lab equipment, prize kits', status: 'upcoming' },
+      { id: 'a2', title: 'Independence Day Assembly', from: '2026-08-14', to: '2026-08-14', purpose: 'Celebrate national day with students.', development: 'Tableau, speeches, flag hoisting.', resource: 'Sound system, flags, stage', status: 'upcoming' },
+      { id: 'a3', title: 'Parent–Teacher Meeting', from: '2026-07-20', to: '2026-07-20', purpose: 'Share term progress with parents.', development: 'Schedule slots, prepare report cards.', resource: 'Report cards, meeting hall', status: 'upcoming' },
+    ],
+    lessonPlans: [
+      { id: 'lp1', unitTitle: 'Unit 1 — Nouns & Verbs', lessonTitle: 'Identifying Nouns', hoClass: 'class 1A', hoSubject: 'English', lessonCount: 6, mode: 'Manual' },
+      { id: 'lp2', unitTitle: 'Unit 2 — Numbers 1–100', lessonTitle: 'Counting & Place Value', hoClass: 'II-Pre', hoSubject: 'Math', lessonCount: 8, mode: 'AI' },
+      { id: 'lp3', unitTitle: 'Unit 1 — Living Things', lessonTitle: 'Plants Around Us', hoClass: 'III-Pre', hoSubject: 'Science', lessonCount: 6, mode: 'Manual' },
+    ],
+    notebookPlans: [
+      { id: 'nb1', unitTitle: 'Unit 1 — Handwriting', questionType: 'Word Sentences', itemCount: 12, hoClass: 'class 1A', hoSubject: 'English' },
+      { id: 'nb2', unitTitle: 'Unit 2 — Addition Practice', questionType: 'Fill in the Blanks', itemCount: 15, hoClass: 'II-Pre', hoSubject: 'Math' },
+    ],
+    resources: [
+      { id: 'r1', title: 'English Nouns Worksheet', category: 'worksheet', fileName: 'english-nouns.pdf', description: 'Practice worksheet on common & proper nouns.', hoClass: 'class 1A', hoSubject: 'English' },
+      { id: 'r2', title: 'Maths Place-Value Sheet', category: 'worksheet', fileName: 'maths-place-value.pdf', description: 'Place value up to hundreds.', hoClass: 'II-Pre', hoSubject: 'Math' },
+      { id: 'r3', title: 'Science Question Paper — Term 1', category: 'qpaper', fileName: 'science-term1-qp.pdf', description: 'Term 1 sample question paper.', hoClass: 'III-Pre', hoSubject: 'Science' },
+    ],
+  },
+  {
+    id: 'MR-2026-002', no: 2, title: 'Release 2', type: 'MASTER_RELEASE',
+    releasedBy: HO_NAME, releasedOn: '2026-06-20', validUntil: '2026-08-20', status: 'ACTIVE',
+    appliesToAllSchools: true, selectedSchoolIds: [],
+    activities: [
+      { id: 'a4', title: 'Sports Gala', from: '2026-09-10', to: '2026-09-12', purpose: 'Promote physical fitness & teamwork.', development: 'House teams, track events, medals.', resource: 'Ground, medals, refreshments', status: 'upcoming' },
+    ],
+    lessonPlans: [
+      { id: 'lp4', unitTitle: 'Unit 3 — Reading Comprehension', lessonTitle: 'Short Stories', hoClass: 'I', hoSubject: 'English', lessonCount: 5, mode: 'Manual' },
+    ],
+    notebookPlans: [
+      { id: 'nb3', unitTitle: 'Unit 1 — Urdu Imla', questionType: 'Two Words', itemCount: 10, hoClass: 'III-Pre', hoSubject: 'Urdu' },
+    ],
+    resources: [
+      { id: 'r4', title: 'Summer Pack — Urdu', category: 'summer', fileName: 'urdu-summer.pdf', description: 'Holiday assignment booklet for Urdu.', hoClass: 'III-Pre', hoSubject: 'Urdu' },
+      { id: 'r5', title: 'Reference Notes — Physics', category: 'other', fileName: 'physics-notes.pdf', description: 'Quick revision notes.', hoClass: '11', hoSubject: 'Physics' },
+    ],
+  },
+  {
+    id: 'SR-2026-001', no: 3, title: 'Release 3', type: 'SUB_RELEASE',
+    releasedBy: HO_NAME, releasedOn: '2026-06-24', validUntil: '2026-07-24', status: 'ACTIVE',
+    appliesToAllSchools: false, selectedSchoolIds: [HO_THIS_SCHOOL, 'SCHOOL-004'],
+    activities: [
+      { id: 'a5', title: 'Remedial Class Drive (Selected Schools)', from: '2026-07-01', to: '2026-07-15', purpose: 'Extra support for weak students.', development: 'Identify students, extra periods.', resource: 'Worksheets, evaluation sheets', status: 'ongoing' },
+    ],
+    lessonPlans: [
+      { id: 'lp5', unitTitle: 'Unit 2 — Chemistry Basics', lessonTitle: 'States of Matter', hoClass: '11', hoSubject: 'Chemistry', lessonCount: 4, mode: 'AI' },
+    ],
+    notebookPlans: [],
+    resources: [
+      { id: 'r6', title: 'Missed Question Paper — Chemistry', category: 'qpaper', fileName: 'chemistry-missed-qp.pdf', description: 'Additional question paper for selected schools.', hoClass: '11', hoSubject: 'Chemistry' },
+    ],
+  },
+  /* Filtered out (demonstrate visibility logic): sub for OTHER schools + an expired master. */
+  {
+    id: 'SR-2026-002', no: 99, title: 'Sub Release (Other Schools)', type: 'SUB_RELEASE',
+    releasedBy: HO_NAME, releasedOn: '2026-06-22', validUntil: '2026-07-30', status: 'ACTIVE',
+    appliesToAllSchools: false, selectedSchoolIds: ['SCHOOL-002', 'SCHOOL-003'],
+    activities: [], lessonPlans: [], notebookPlans: [], resources: [],
+  },
+  {
+    id: 'MR-2025-009', no: 98, title: 'Expired Release', type: 'MASTER_RELEASE',
+    releasedBy: HO_NAME, releasedOn: '2025-12-01', validUntil: '2025-12-31', status: 'ACTIVE',
+    appliesToAllSchools: true, selectedSchoolIds: [],
+    activities: [], lessonPlans: [], notebookPlans: [], resources: [],
+  },
+];
+
+const hoDaysRemaining = validUntil => { try { const ms = new Date(`${validUntil}T23:59:59`) - new Date(); return Math.ceil(ms / 86400000); } catch { return null; } };
+const hoIsLive = r => r.status === 'ACTIVE' && hoDaysRemaining(r.validUntil) >= 0;
+/* Only ACTIVE master releases + ACTIVE subs assigned to THIS school, not expired/revoked/draft. */
+const hoVisibleReleases = () => HO_RELEASES.filter(r => hoIsLive(r) && (r.appliesToAllSchools || (r.selectedSchoolIds || []).includes(HO_THIS_SCHOOL)));
+const hoSummary = r => ({
+  activities: r.activities.length,
+  lessons: r.lessonPlans.reduce((n, lp) => n + (lp.lessonCount || 1), 0),
+  notebooks: r.notebookPlans.length,
+  resources: r.resources.length,
+});
+
+/* Saved-items tracker — duplicate prevention + Saved badges (localStorage). */
+const HO_SAVED_KEY = 'sm_ho_saved_items';
+const hoLoadSaved = () => { try { const d = JSON.parse(localStorage.getItem(HO_SAVED_KEY)); if (Array.isArray(d)) return d; } catch { /* empty */ } return []; };
+const hoSaveSaved = list => { try { localStorage.setItem(HO_SAVED_KEY, JSON.stringify(list)); } catch { /* ignore */ } };
+/* Local imported stores (the school's own copy) — mock/local, no backend.
+   Lesson/Notebook plans have no live ERP store yet, so they stay localStorage.
+   Resources mirror the Resource Library row shape under a branch-scoped key. */
+const HO_LP_KEY = 'sm_local_lesson_plans';
+const HO_NB_KEY = 'sm_local_notebook_plans';
+const hoResKey = () => `sm_resource_library_${hoBranchId()}`;
+const hoLoadList = key => { try { const d = JSON.parse(localStorage.getItem(key)); if (Array.isArray(d)) return d; } catch { /* empty */ } return []; };
+const hoPushList = (key, rec) => { const l = hoLoadList(key); l.unshift(rec); try { localStorage.setItem(key, JSON.stringify(l)); } catch { /* ignore */ } };
+
+function HeadOfficeReleases({ open, onClose, toast, classesData = [], addActivity }) {
+  const [saved, setSaved] = useState(hoLoadSaved);
+  const [detail, setDetail] = useState(null); // release object
+  const releases = useMemo(() => hoVisibleReleases(), []);
+
+  const isSaved = (relId, itemId) => saved.some(s => s.headOfficeReleaseId === relId && s.headOfficeItemId === itemId);
+  const record = rec => { const next = [...saved, rec]; setSaved(next); hoSaveSaved(next); };
+
+  const saveActivity = (rel, act) => {
+    if (isSaved(rel.id, act.id)) return;
+    addActivity({
+      id: `ho-${rel.id}-${act.id}`,
+      name: act.title,
+      start: act.from ? new Date(act.from).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : 'TBD',
+      end: act.to ? new Date(act.to).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : 'TBD',
+      color: '#1E40AF', status: act.status || 'upcoming',
+      purpose: act.purpose, development: act.development, resource: act.resource,
+    });
+    record({ headOfficeReleaseId: rel.id, headOfficeItemId: act.id, itemType: 'ACTIVITY', savedToSchoolId: hoBranchId(), savedAt: new Date().toISOString(), savedBy: 'School', localTargetModule: 'ACTIVITY_CALENDAR', localClassId: null, localSubjectId: null, localCategory: null });
+    toast('Activity saved to your Activity Calendar', 'success');
+  };
+
+  const saveLessonPlan = (rel, lp, classId, subjectName) => {
+    if (isSaved(rel.id, lp.id)) return;
+    const cls = classesData.find(c => String(c.id) === String(classId));
+    hoPushList(HO_LP_KEY, { id: `ho-${rel.id}-${lp.id}`, classId: Number(classId), className: cls ? cls.name : '', subjectName, unitTitle: lp.unitTitle, lessonTitle: lp.lessonTitle, lessonCount: lp.lessonCount, mode: lp.mode, source: 'HEAD_OFFICE', hoReleaseId: rel.id, hoItemId: lp.id, savedAt: new Date().toISOString() });
+    record({ headOfficeReleaseId: rel.id, headOfficeItemId: lp.id, itemType: 'LESSON_PLAN', savedToSchoolId: hoBranchId(), savedAt: new Date().toISOString(), savedBy: 'School', localTargetModule: 'LESSON_PLANS', localClassId: classId, localSubjectId: subjectName, localCategory: null });
+    toast('Lesson plan saved to your portal.', 'success');
+  };
+
+  const saveNotebookPlan = (rel, nb, classId, subjectName) => {
+    if (isSaved(rel.id, nb.id)) return;
+    const cls = classesData.find(c => String(c.id) === String(classId));
+    hoPushList(HO_NB_KEY, { id: `ho-${rel.id}-${nb.id}`, classId: Number(classId), className: cls ? cls.name : '', subjectName, unitTitle: nb.unitTitle, questionType: nb.questionType, itemCount: nb.itemCount, source: 'HEAD_OFFICE', hoReleaseId: rel.id, hoItemId: nb.id, savedAt: new Date().toISOString() });
+    record({ headOfficeReleaseId: rel.id, headOfficeItemId: nb.id, itemType: 'NOTEBOOK_PLAN', savedToSchoolId: hoBranchId(), savedAt: new Date().toISOString(), savedBy: 'School', localTargetModule: 'NOTEBOOK_PLANS', localClassId: classId, localSubjectId: subjectName, localCategory: null });
+    toast('Notebook plan saved to your portal.', 'success');
+  };
+
+  const saveResource = (rel, res, classId, subjectName, category) => {
+    if (isSaved(rel.id, res.id)) return;
+    const cls = classesData.find(c => String(c.id) === String(classId));
+    const now = new Date().toISOString();
+    const key = hoResKey();
+    const list = hoLoadList(key);
+    const nextId = list.reduce((m, r) => Math.max(m, Number(r.id) || 0), 0) + 1;
+    list.unshift({ id: nextId, branchId: hoBranchId(), classId: Number(classId), className: cls ? cls.name : '', subjectName, category, title: res.title, description: res.description || '', fileName: res.fileName || '', fileUrl: res.fileUrl || '', fileType: 'application/pdf', uploadedBy: 'Head Office Import', uploadedAt: now, createdAt: now, updatedAt: now, source: 'HEAD_OFFICE' });
+    try { localStorage.setItem(key, JSON.stringify(list)); } catch { /* ignore */ }
+    record({ headOfficeReleaseId: rel.id, headOfficeItemId: res.id, itemType: 'RESOURCE', savedToSchoolId: hoBranchId(), savedAt: new Date().toISOString(), savedBy: 'School', localTargetModule: 'RESOURCE_LIBRARY', localClassId: classId, localSubjectId: subjectName, localCategory: category });
+    toast('Resource saved to your Resource Library', 'success');
+  };
+
+  if (!open) return null;
+  return (
+    <div className="ho-screen">
+      <div className="ho-screen-head">
+        <div className="ho-screen-head-left">
+          <div className="ho-screen-icon"><i className="fa-solid fa-cloud-arrow-down"></i></div>
+          <div>
+            <div className="ho-screen-title">Releases from Head Office</div>
+            <div className="ho-screen-sub">Academic content shared by {HO_NAME} for your school.</div>
+          </div>
+        </div>
+        <Tooltip text="Close"><button className="ho-screen-close" onClick={onClose} aria-label="Close releases"><i className="fa-solid fa-xmark"></i></button></Tooltip>
+      </div>
+
+      <div className="ho-screen-body">
+        {releases.length === 0 ? (
+          <div className="section-card rl-empty">
+            <div className="rl-empty-icon"><i className="fa-solid fa-inbox"></i></div>
+            <div className="rl-empty-title">No live releases from Head Office</div>
+            <div className="rl-empty-sub">There are currently no academic releases available from {HO_NAME}.</div>
+          </div>
+        ) : (
+          <div className="ho-rel-grid">
+            {releases.map(r => {
+              const s = hoSummary(r);
+              const days = hoDaysRemaining(r.validUntil);
+              const isSub = r.type === 'SUB_RELEASE';
+              return (
+                <div className={`ho-rel-card ${isSub ? 'sub' : 'master'}`} key={r.id}>
+                  <div className="ho-rel-card-top">
+                    <div>
+                      <div className="ho-rel-card-name">{r.title}</div>
+                      <span className={`ho-type-badge ${isSub ? 'sub' : 'master'}`}><i className={`fa-solid ${isSub ? 'fa-code-branch' : 'fa-globe'}`}></i> {isSub ? 'Sub Release' : 'Master Release'}</span>
+                    </div>
+                    <span className="ho-live-badge"><i className="fa-solid fa-circle" style={{ fontSize: 6 }}></i> Live</span>
+                  </div>
+                  <div className="ho-rel-by"><i className="fa-solid fa-building-columns"></i> Released by {r.releasedBy}</div>
+                  <div className="ho-rel-dates">
+                    <div><span>Released on</span><strong>{rlFmtDate(r.releasedOn)}</strong></div>
+                    <div><span>Valid until</span><strong>{rlFmtDate(r.validUntil)}</strong></div>
+                    <div><span>Days left</span><strong className="ho-days">{days} {days === 1 ? 'day' : 'days'}</strong></div>
+                  </div>
+                  <div className="ho-rel-inc">Includes</div>
+                  <div className="ho-rel-chips">
+                    <span><i className="fa-solid fa-calendar-week"></i> {s.activities} Activities</span>
+                    <span><i className="fa-solid fa-list-ul"></i> {s.lessons} Lesson Plans</span>
+                    <span><i className="fa-solid fa-book-open"></i> {s.notebooks} Notebook Plans</span>
+                    <span><i className="fa-solid fa-folder-open"></i> {s.resources} Resource Files</span>
+                  </div>
+                  <button className="btn btn-primary ho-rel-view" onClick={() => setDetail(r)}><i className="fa-solid fa-eye"></i> View Details</button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {detail && (
+        <ReleaseDetailsModal
+          release={detail}
+          classesData={classesData}
+          onClose={() => setDetail(null)}
+          isSaved={isSaved}
+          onSaveActivity={saveActivity}
+          onSaveLessonPlan={saveLessonPlan}
+          onSaveNotebookPlan={saveNotebookPlan}
+          onSaveResource={saveResource}
+          toast={toast}
+        />
+      )}
+    </div>
+  );
+}
+
+function ReleaseDetailsModal({ release: r, classesData = [], onClose, isSaved, onSaveActivity, onSaveLessonPlan, onSaveNotebookPlan, onSaveResource, toast }) {
+  const [tab, setTab] = useState('activities');
+  const [mapping, setMapping] = useState(null); // { kind, item }
+  const [preview, setPreview] = useState(null); // { kind, item }
+  const s = hoSummary(r);
+
+  const SavedBadge = () => <span className="ho-saved-badge"><i className="fa-solid fa-circle-check"></i> Saved</span>;
+
+  const saveAllActivities = () => {
+    const pending = r.activities.filter(a => !isSaved(r.id, a.id));
+    if (!pending.length) { toast('All activities already saved', 'info'); return; }
+    pending.forEach(a => onSaveActivity(r, a));
+  };
+
+  const TABS = [
+    { key: 'activities', label: 'Activities', icon: 'fa-calendar-week', n: s.activities },
+    { key: 'lessons', label: 'Lesson Plans', icon: 'fa-list-ul', n: r.lessonPlans.length },
+    { key: 'notebooks', label: 'Notebook Plans', icon: 'fa-book-open', n: r.notebookPlans.length },
+    { key: 'resources', label: 'Resource Library', icon: 'fa-folder-open', n: s.resources },
+  ];
+
+  return (
+    <div className="modal-overlay open" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="modal ho-detail-modal">
+        <div className="modal-header">
+          <div>
+            <div className="modal-title"><i className="fa-solid fa-box-open" style={{ marginRight: 8 }}></i> Release Details — {r.title}</div>
+            <div className="modal-sub">Review content shared by {HO_NAME} and save it to your school portal.</div>
+          </div>
+          <Tooltip text="Close"><button className="modal-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark"></i></button></Tooltip>
+        </div>
+        <div className="modal-body">
+          {/* summary cards */}
+          <div className="ho-sum-grid">
+            <div className="ho-sum" style={{ '--accent': '#1E40AF' }}><i className="fa-solid fa-calendar-week"></i><div><div className="ho-sum-v">{s.activities}</div><div className="ho-sum-l">Activities</div></div></div>
+            <div className="ho-sum" style={{ '--accent': '#16A34A' }}><i className="fa-solid fa-list-ul"></i><div><div className="ho-sum-v">{s.lessons}</div><div className="ho-sum-l">Lesson Plans</div></div></div>
+            <div className="ho-sum" style={{ '--accent': '#7C3AED' }}><i className="fa-solid fa-book-open"></i><div><div className="ho-sum-v">{s.notebooks}</div><div className="ho-sum-l">Notebook Plans</div></div></div>
+            <div className="ho-sum" style={{ '--accent': '#D97706' }}><i className="fa-solid fa-folder-open"></i><div><div className="ho-sum-v">{s.resources}</div><div className="ho-sum-l">Resource Files</div></div></div>
+          </div>
+
+          {/* section tabs */}
+          <div className="ho-sec-tabs">
+            {TABS.map(t => (
+              <button key={t.key} className={`ho-sec-tab${tab === t.key ? ' active' : ''}`} onClick={() => setTab(t.key)}>
+                <i className={`fa-solid ${t.icon}`}></i> {t.label} <span className="ho-sec-n">{t.n}</span>
+              </button>
+            ))}
+          </div>
+
+          {/* ── Activities ── */}
+          {tab === 'activities' && (
+            <div className="ho-sec">
+              {r.activities.length === 0 ? <div className="ho-none">No activities in this release.</div> : (
+                <>
+                  <div className="ho-sec-bar">
+                    <span>{r.activities.length} activities — general, no class/subject needed.</span>
+                    <button className="btn btn-secondary ho-saveall" onClick={saveAllActivities}><i className="fa-solid fa-layer-group"></i> Save All Activities</button>
+                  </div>
+                  {r.activities.map(a => {
+                    const done = isSaved(r.id, a.id);
+                    return (
+                      <div className="ho-item" key={a.id}>
+                        <div className="ho-item-main">
+                          <div className="ho-item-title">{a.title}</div>
+                          <div className="ho-item-meta">
+                            <span><i className="fa-regular fa-calendar"></i> {rlFmtDate(a.from)} → {rlFmtDate(a.to)}</span>
+                            {a.status && <span className="ho-item-tag">{a.status}</span>}
+                          </div>
+                          {a.purpose && <div className="ho-item-line"><b>Purpose:</b> {a.purpose}</div>}
+                          {a.development && <div className="ho-item-line"><b>Development:</b> {a.development}</div>}
+                          {a.resource && <div className="ho-item-line"><b>Resources:</b> {a.resource}</div>}
+                        </div>
+                        <div className="ho-item-actions">
+                          {done ? <SavedBadge /> : <button className="btn btn-primary ho-save-btn" onClick={() => onSaveActivity(r, a)}><i className="fa-solid fa-calendar-plus"></i> Save to Activity Calendar</button>}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </>
+              )}
+            </div>
+          )}
+
+          {/* ── Lesson Plans ── */}
+          {tab === 'lessons' && (
+            <div className="ho-sec">
+              {r.lessonPlans.length === 0 ? <div className="ho-none">No lesson plans in this release.</div> : r.lessonPlans.map(lp => {
+                const done = isSaved(r.id, lp.id);
+                return (
+                  <div className="ho-item" key={lp.id}>
+                    <div className="ho-item-main">
+                      <div className="ho-item-title">{lp.unitTitle}</div>
+                      <div className="ho-item-sub">{lp.lessonTitle}</div>
+                      <div className="ho-item-meta">
+                        <span><i className="fa-solid fa-chalkboard"></i> {lp.hoClass}</span>
+                        <span><i className="fa-solid fa-book"></i> {lp.hoSubject}</span>
+                        <span><i className="fa-solid fa-list-ol"></i> {lp.lessonCount} lessons</span>
+                        {lp.mode && <span className="ho-item-tag">{lp.mode}</span>}
+                      </div>
+                    </div>
+                    <div className="ho-item-actions">
+                      <button className="rl-act" onClick={() => setPreview({ kind: 'lesson', item: lp })}><i className="fa-solid fa-eye"></i> View Preview</button>
+                      {done ? <SavedBadge /> : <button className="btn btn-primary ho-save-btn" onClick={() => setMapping({ kind: 'lesson', item: lp })}><i className="fa-solid fa-download"></i> Save to Portal</button>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* ── Notebook Plans ── */}
+          {tab === 'notebooks' && (
+            <div className="ho-sec">
+              {r.notebookPlans.length === 0 ? <div className="ho-none">No notebook plans in this release.</div> : r.notebookPlans.map(nb => {
+                const done = isSaved(r.id, nb.id);
+                return (
+                  <div className="ho-item" key={nb.id}>
+                    <div className="ho-item-main">
+                      <div className="ho-item-title">{nb.unitTitle}</div>
+                      <div className="ho-item-meta">
+                        <span className="ho-item-tag">{nb.questionType}</span>
+                        <span><i className="fa-solid fa-list-ol"></i> {nb.itemCount} questions</span>
+                        <span><i className="fa-solid fa-chalkboard"></i> {nb.hoClass}</span>
+                        <span><i className="fa-solid fa-book"></i> {nb.hoSubject}</span>
+                      </div>
+                    </div>
+                    <div className="ho-item-actions">
+                      <button className="rl-act" onClick={() => setPreview({ kind: 'notebook', item: nb })}><i className="fa-solid fa-eye"></i> View Preview</button>
+                      {done ? <SavedBadge /> : <button className="btn btn-primary ho-save-btn" onClick={() => setMapping({ kind: 'notebook', item: nb })}><i className="fa-solid fa-download"></i> Save to Portal</button>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* ── Resource Library ── */}
+          {tab === 'resources' && (
+            <div className="ho-sec">
+              {r.resources.length === 0 ? <div className="ho-none">No resources in this release.</div> : r.resources.map(res => {
+                const done = isSaved(r.id, res.id);
+                const cat = rlCat(res.category);
+                return (
+                  <div className="ho-item" key={res.id}>
+                    <div className="ho-item-main">
+                      <div className="ho-item-title">{res.title} <span className="rl-badge" style={{ background: cat.color + '14', color: cat.color }}>{cat.label}</span></div>
+                      {res.description && <div className="ho-item-sub">{res.description}</div>}
+                      <div className="ho-item-meta">
+                        <span><i className="fa-solid fa-file-pdf"></i> {res.fileName}</span>
+                        <span><i className="fa-solid fa-chalkboard"></i> {res.hoClass}</span>
+                        <span><i className="fa-solid fa-book"></i> {res.hoSubject}</span>
+                      </div>
+                    </div>
+                    <div className="ho-item-actions">
+                      <button className="rl-act" onClick={() => setPreview({ kind: 'resource', item: res })}><i className="fa-solid fa-eye"></i> View</button>
+                      <button className="rl-act" onClick={() => res.fileUrl ? window.open(res.fileUrl, '_blank') : toast('Demo file — no PDF attached', 'info')}><i className="fa-solid fa-download"></i> Download</button>
+                      {done ? <SavedBadge /> : <button className="btn btn-primary ho-save-btn" onClick={() => setMapping({ kind: 'resource', item: res })}><i className="fa-solid fa-download"></i> Save to Portal</button>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+        <div className="modal-footer">
+          <Tooltip text="Close"><button className="btn btn-secondary" onClick={onClose}>Close</button></Tooltip>
+        </div>
+      </div>
+
+      {mapping && (
+        <SaveMappingModal
+          kind={mapping.kind}
+          item={mapping.item}
+          classesData={classesData}
+          onClose={() => setMapping(null)}
+          onSave={(classId, subjectName, category) => {
+            if (mapping.kind === 'lesson') onSaveLessonPlan(r, mapping.item, classId, subjectName);
+            else if (mapping.kind === 'notebook') onSaveNotebookPlan(r, mapping.item, classId, subjectName);
+            else onSaveResource(r, mapping.item, classId, subjectName, category);
+            setMapping(null);
+          }}
+        />
+      )}
+
+      {preview && <PreviewModal kind={preview.kind} item={preview.item} onClose={() => setPreview(null)} />}
+    </div>
+  );
+}
+
+function SaveMappingModal({ kind, item, classesData = [], onClose, onSave }) {
+  const isResource = kind === 'resource';
+  const [classId, setClassId] = useState('');
+  const [subjectId, setSubjectId] = useState('');
+  const [subjects, setSubjects] = useState([]);
+  const [subjLoading, setSubjLoading] = useState(false);
+  const [category, setCategory] = useState(isResource ? (item.category || 'worksheet') : '');
+  const [err, setErr] = useState('');
+
+  /* Class chunte hi us class ke subjects (pehli section se) live laao — wahi
+     source jo ERP Resource Library modal use karta hai (rlFetchClassSubjects). */
+  useEffect(() => {
+    if (!classId) { setSubjects([]); setSubjectId(''); return undefined; }
+    const cls = classesData.find(c => String(c.id) === String(classId));
+    const sectionId = cls?.sections?.[0]?.sectionID;
+    let alive = true;
+    setSubjLoading(true);
+    rlFetchClassSubjects(classId, sectionId)
+      .then(subs => {
+        if (!alive) return;
+        setSubjects(subs);
+        setSubjectId(cur => (subs.some(x => String(x.id) === String(cur)) ? cur : ''));
+      })
+      .finally(() => { if (alive) setSubjLoading(false); });
+    return () => { alive = false; };
+  }, [classId, classesData]);
+
+  const title = kind === 'lesson' ? 'Save Lesson Plan to Portal' : kind === 'notebook' ? 'Save Notebook Plan to Portal' : 'Save Resource to Portal';
+  const btn = kind === 'lesson' ? 'Save Lesson Plan' : kind === 'notebook' ? 'Save Notebook Plan' : 'Save Resource';
+
+  const submit = () => {
+    if (!classId) { setErr('Please select a class.'); return; }
+    if (!subjectId) { setErr('Please select a subject.'); return; }
+    if (isResource && !category) { setErr('Please select a category.'); return; }
+    const sub = subjects.find(x => String(x.id) === String(subjectId));
+    onSave(classId, sub ? sub.name : '', category);
+  };
+
+  return (
+    <div className="modal-overlay open" style={{ zIndex: 10050 }} onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="modal modal-sm">
+        <div className="modal-header">
+          <div>
+            <div className="modal-title"><i className="fa-solid fa-download" style={{ marginRight: 8 }}></i> {title}</div>
+            <div className="modal-sub">Choose where this should be saved in your school portal.</div>
+          </div>
+          <Tooltip text="Close"><button className="modal-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark"></i></button></Tooltip>
+        </div>
+        <div className="modal-body">
+          <div className="ho-map-from"><i className="fa-solid fa-building-columns"></i> Head Office: <strong>{item.hoClass || '—'}</strong> · <strong>{item.hoSubject || '—'}</strong></div>
+          <div className="form-group">
+            <label className="form-label">Select Class <span className="req-star">*</span></label>
+            <select className="form-input" value={classId} onChange={e => { setClassId(e.target.value); setSubjectId(''); }}>
+              <option value="">Select class</option>
+              {classesData.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Select Subject <span className="req-star">*</span></label>
+            <select className="form-input" value={subjectId} onChange={e => setSubjectId(e.target.value)} disabled={!classId || subjLoading}>
+              <option value="">{!classId ? 'Select class first' : (subjLoading ? 'Loading subjects…' : (subjects.length ? 'Select subject' : 'No subjects in this class'))}</option>
+              {subjects.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          </div>
+          {isResource && (
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label className="form-label">Select Category <span className="req-star">*</span></label>
+              <select className="form-input" value={category} onChange={e => setCategory(e.target.value)}>
+                {RL_CATEGORIES.map(c => <option key={c.key} value={c.key}>{c.label}</option>)}
+              </select>
+            </div>
+          )}
+          {err && <div className="rl-err"><i className="fa-solid fa-circle-exclamation"></i> {err}</div>}
+        </div>
+        <div className="modal-footer">
+          <Tooltip text="Cancel"><button className="btn btn-secondary" onClick={onClose}>Cancel</button></Tooltip>
+          <Tooltip text="Save to your portal"><button className="btn btn-primary" onClick={submit}><i className="fa-solid fa-floppy-disk"></i> {btn}</button></Tooltip>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PreviewModal({ kind, item, onClose }) {
+  return (
+    <div className="modal-overlay open" style={{ zIndex: 10050 }} onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="modal modal-sm">
+        <div className="modal-header">
+          <div>
+            <div className="modal-title"><i className="fa-solid fa-eye" style={{ marginRight: 8 }}></i> Preview</div>
+            <div className="modal-sub">Read-only preview from {HO_NAME}</div>
+          </div>
+          <Tooltip text="Close"><button className="modal-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark"></i></button></Tooltip>
+        </div>
+        <div className="modal-body">
+          {kind === 'lesson' && (
+            <div className="ho-prev">
+              <div className="ho-prev-row"><span>Unit</span><strong>{item.unitTitle}</strong></div>
+              <div className="ho-prev-row"><span>Lesson</span><strong>{item.lessonTitle}</strong></div>
+              <div className="ho-prev-row"><span>Class</span><strong>{item.hoClass}</strong></div>
+              <div className="ho-prev-row"><span>Subject</span><strong>{item.hoSubject}</strong></div>
+              <div className="ho-prev-row"><span>Lessons</span><strong>{item.lessonCount}</strong></div>
+              <div className="ho-prev-row"><span>Mode</span><strong>{item.mode}</strong></div>
+            </div>
+          )}
+          {kind === 'notebook' && (
+            <div className="ho-prev">
+              <div className="ho-prev-row"><span>Unit</span><strong>{item.unitTitle}</strong></div>
+              <div className="ho-prev-row"><span>Question Type</span><strong>{item.questionType}</strong></div>
+              <div className="ho-prev-row"><span>Questions</span><strong>{item.itemCount}</strong></div>
+              <div className="ho-prev-row"><span>Class</span><strong>{item.hoClass}</strong></div>
+              <div className="ho-prev-row"><span>Subject</span><strong>{item.hoSubject}</strong></div>
+            </div>
+          )}
+          {kind === 'resource' && (
+            <div className="ho-prev">
+              <div className="ho-prev-row"><span>Title</span><strong>{item.title}</strong></div>
+              <div className="ho-prev-row"><span>Category</span><strong>{rlCat(item.category).label}</strong></div>
+              <div className="ho-prev-row"><span>File</span><strong>{item.fileName}</strong></div>
+              <div className="ho-prev-row"><span>Class</span><strong>{item.hoClass}</strong></div>
+              <div className="ho-prev-row"><span>Subject</span><strong>{item.hoSubject}</strong></div>
+              {item.description && <div className="ho-prev-desc">{item.description}</div>}
+            </div>
+          )}
+        </div>
+        <div className="modal-footer">
+          <Tooltip text="Close"><button className="btn btn-secondary" onClick={onClose}>Close</button></Tooltip>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 const ACADEMICS_CSS = `
 /* ── Page header tutorial button (uses existing .tutorial-btn from App.js CSS) ── */
 .page-tutorial-btn { flex-shrink: 0; }
@@ -5837,5 +6419,105 @@ const ACADEMICS_CSS = `
   .l3-tab { flex:0 0 auto; padding:8px 12px; font-size:11.5px; }
   .ts-subtab-row,.act-view-pills { padding:4px; }
   .ts-subtab,.act-view-pill { flex:0 0 auto; padding:8px 11px; font-size:11.5px; }
+}
+
+/* ══════════ RELEASES FROM HEAD OFFICE ══════════ */
+.ho-banner {
+  display:flex; align-items:center; gap:14px; width:100%; text-align:left; cursor:pointer;
+  background:linear-gradient(135deg,rgba(30,58,138,.06),rgba(37,99,235,.03));
+  border:1.5px solid var(--border-light); border-left:4px solid var(--brand-primary);
+  border-radius:var(--radius-lg); padding:14px 18px; margin-bottom:18px;
+  box-shadow:var(--shadow-sm); font-family:var(--font-body); transition:all .2s ease;
+}
+.ho-banner:hover { box-shadow:var(--shadow-md); transform:translateY(-1px); border-left-color:#2563EB; }
+.ho-banner-icon { width:44px; height:44px; border-radius:12px; flex-shrink:0; display:flex; align-items:center; justify-content:center; font-size:18px; color:#fff; background:linear-gradient(135deg,#1E3A8A,#2563EB); }
+.ho-banner-text { flex:1; min-width:0; }
+.ho-banner-title { font-size:14.5px; font-weight:800; color:var(--text-primary); display:flex; align-items:center; gap:8px; }
+.ho-banner-arrow { font-size:11px; color:var(--brand-primary); transition:transform .2s ease; }
+.ho-banner:hover .ho-banner-arrow { transform:translateX(4px); }
+.ho-banner-sub { font-size:12px; color:var(--text-muted); margin-top:2px; }
+.ho-banner-badge { flex-shrink:0; display:inline-flex; align-items:center; gap:6px; font-size:11px; font-weight:800; color:#16A34A; background:rgba(22,163,74,.12); padding:5px 11px; border-radius:var(--radius-full); }
+
+/* full-screen releases panel */
+.ho-screen { position:fixed; inset:0; z-index:10000; background:var(--bg-page, #F1F5F9); display:flex; flex-direction:column; animation:hoFade .2s ease; }
+[data-theme="dark"] .ho-screen { background:var(--bg-page, #0F172A); }
+@keyframes hoFade { from{opacity:0} to{opacity:1} }
+.ho-screen-head { display:flex; align-items:center; justify-content:space-between; gap:14px; padding:18px 26px; background:linear-gradient(135deg,#1E3A8A,#1E40AF); color:#fff; flex-shrink:0; box-shadow:0 4px 16px rgba(30,58,138,.25); }
+.ho-screen-head-left { display:flex; align-items:center; gap:14px; min-width:0; }
+.ho-screen-icon { width:46px; height:46px; border-radius:13px; background:rgba(255,255,255,.16); display:flex; align-items:center; justify-content:center; font-size:19px; flex-shrink:0; }
+.ho-screen-title { font-size:18px; font-weight:800; }
+.ho-screen-sub { font-size:12.5px; color:rgba(255,255,255,.85); margin-top:2px; }
+.ho-screen-close { width:38px; height:38px; border-radius:10px; border:1.5px solid rgba(255,255,255,.3); background:rgba(255,255,255,.12); color:#fff; cursor:pointer; font-size:16px; transition:all .2s ease; flex-shrink:0; }
+.ho-screen-close:hover { background:rgba(255,255,255,.24); }
+.ho-screen-body { flex:1; overflow:auto; padding:24px 26px; }
+
+.ho-rel-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(330px,1fr)); gap:18px; max-width:1200px; margin:0 auto; }
+.ho-rel-card { background:var(--bg-card); border:1.5px solid var(--border-light); border-radius:var(--radius-xl); padding:18px 19px; box-shadow:var(--shadow-sm); display:flex; flex-direction:column; transition:transform .2s ease, box-shadow .2s ease; }
+.ho-rel-card:hover { transform:translateY(-3px); box-shadow:var(--shadow-lg); }
+.ho-rel-card.master { border-top:3px solid #1E40AF; }
+.ho-rel-card.sub { border-top:3px solid #7C3AED; }
+.ho-rel-card-top { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; margin-bottom:12px; }
+.ho-rel-card-name { font-size:17px; font-weight:800; color:var(--text-primary); margin-bottom:7px; }
+.ho-type-badge { display:inline-flex; align-items:center; gap:6px; font-size:10.5px; font-weight:800; padding:3px 9px; border-radius:var(--radius-full); }
+.ho-type-badge.master { background:rgba(30,64,175,.1); color:#1E40AF; }
+.ho-type-badge.sub { background:rgba(124,58,237,.1); color:#7C3AED; }
+.ho-live-badge { display:inline-flex; align-items:center; gap:5px; font-size:10.5px; font-weight:800; color:#16A34A; background:rgba(22,163,74,.12); padding:4px 9px; border-radius:var(--radius-full); flex-shrink:0; }
+.ho-rel-by { font-size:11.5px; color:var(--text-muted); font-weight:600; display:flex; align-items:center; gap:7px; margin-bottom:12px; }
+.ho-rel-by i { color:var(--brand-primary); }
+.ho-rel-dates { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; padding:12px; background:var(--bg-muted); border-radius:var(--radius-md); margin-bottom:14px; }
+.ho-rel-dates > div { display:flex; flex-direction:column; gap:2px; }
+.ho-rel-dates span { font-size:9.5px; font-weight:700; text-transform:uppercase; letter-spacing:.4px; color:var(--text-muted); }
+.ho-rel-dates strong { font-size:12px; font-weight:800; color:var(--text-primary); }
+.ho-rel-dates .ho-days { color:#16A34A; }
+.ho-rel-inc { font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:.5px; color:var(--text-muted); margin-bottom:8px; }
+.ho-rel-chips { display:flex; flex-direction:column; gap:7px; margin-bottom:16px; }
+.ho-rel-chips span { display:flex; align-items:center; gap:9px; font-size:12.5px; font-weight:600; color:var(--text-secondary); }
+.ho-rel-chips i { width:16px; text-align:center; color:var(--brand-primary); }
+.ho-rel-view { margin-top:auto; justify-content:center; }
+
+/* details modal */
+.ho-detail-modal { max-width:780px; width:96%; }
+.ho-sum-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:11px; margin-bottom:18px; }
+.ho-sum { display:flex; align-items:center; gap:11px; padding:13px 14px; border:1.5px solid var(--border-light); border-radius:var(--radius-lg); background:var(--bg-card); position:relative; overflow:hidden; }
+.ho-sum::before { content:''; position:absolute; left:0; top:0; bottom:0; width:4px; background:var(--accent); }
+.ho-sum > i { font-size:17px; color:var(--accent); }
+.ho-sum-v { font-size:19px; font-weight:800; color:var(--text-primary); line-height:1; }
+.ho-sum-l { font-size:11px; font-weight:600; color:var(--text-muted); margin-top:3px; }
+.ho-sec-tabs { display:flex; gap:7px; flex-wrap:wrap; border-bottom:1.5px solid var(--border-light); padding-bottom:12px; margin-bottom:14px; }
+.ho-sec-tab { display:inline-flex; align-items:center; gap:7px; height:36px; padding:0 13px; font-size:12.5px; font-weight:700; font-family:var(--font-body); border:1.5px solid var(--border-light); border-radius:var(--radius-md); background:var(--bg-card); color:var(--text-secondary); cursor:pointer; transition:all .18s ease; }
+.ho-sec-tab:hover { border-color:var(--brand-primary); color:var(--brand-primary); }
+.ho-sec-tab.active { background:linear-gradient(135deg,#1E3A8A,#1E40AF); color:#fff; border-color:transparent; box-shadow:0 4px 12px rgba(30,58,138,.3); }
+.ho-sec-n { font-size:10.5px; font-weight:800; background:rgba(0,0,0,.08); padding:1px 7px; border-radius:var(--radius-full); }
+.ho-sec-tab.active .ho-sec-n { background:rgba(255,255,255,.25); }
+.ho-sec { display:flex; flex-direction:column; gap:10px; }
+.ho-sec-bar { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; font-size:12px; color:var(--text-muted); margin-bottom:2px; }
+.ho-saveall { height:34px; }
+.ho-none { text-align:center; padding:26px; color:var(--text-muted); font-size:13px; font-style:italic; }
+.ho-item { display:flex; align-items:flex-start; justify-content:space-between; gap:14px; flex-wrap:wrap; padding:14px 15px; border:1.5px solid var(--border-light); border-radius:var(--radius-lg); background:var(--bg-card); transition:border-color .18s ease; }
+.ho-item:hover { border-color:var(--border-med, var(--border-light)); }
+.ho-item-main { flex:1; min-width:200px; }
+.ho-item-title { font-size:14px; font-weight:800; color:var(--text-primary); display:flex; align-items:center; gap:9px; flex-wrap:wrap; }
+.ho-item-sub { font-size:12.5px; color:var(--text-secondary); margin-top:3px; }
+.ho-item-meta { display:flex; flex-wrap:wrap; gap:12px; font-size:11.5px; color:var(--text-muted); font-weight:600; margin-top:8px; }
+.ho-item-meta i { margin-right:4px; opacity:.85; }
+.ho-item-tag { background:rgba(30,64,175,.1); color:#1E40AF; padding:1px 8px; border-radius:var(--radius-full); font-size:10.5px; font-weight:800; text-transform:capitalize; }
+.ho-item-line { font-size:12px; color:var(--text-secondary); margin-top:6px; line-height:1.45; }
+.ho-item-line b { color:var(--text-primary); font-weight:700; }
+.ho-item-actions { display:flex; flex-direction:column; gap:8px; align-items:flex-end; flex-shrink:0; }
+.ho-save-btn { white-space:nowrap; }
+.ho-saved-badge { display:inline-flex; align-items:center; gap:6px; font-size:12px; font-weight:800; color:#16A34A; background:rgba(22,163,74,.12); padding:7px 13px; border-radius:var(--radius-md); white-space:nowrap; }
+.ho-map-from { font-size:12px; color:var(--text-muted); background:var(--bg-muted); padding:9px 12px; border-radius:var(--radius-md); margin-bottom:14px; }
+.ho-map-from i { color:var(--brand-primary); margin-right:5px; }
+.ho-map-from strong { color:var(--text-primary); }
+.ho-prev { display:flex; flex-direction:column; gap:9px; }
+.ho-prev-row { display:flex; align-items:center; justify-content:space-between; gap:12px; font-size:12.5px; padding-bottom:9px; border-bottom:1px dashed var(--border-light); }
+.ho-prev-row span { color:var(--text-muted); font-weight:600; }
+.ho-prev-row strong { color:var(--text-primary); font-weight:800; text-align:right; }
+.ho-prev-desc { font-size:12.5px; color:var(--text-secondary); line-height:1.5; background:var(--bg-muted); padding:11px; border-radius:var(--radius-md); margin-top:4px; }
+
+@media (max-width:760px) {
+  .ho-sum-grid { grid-template-columns:repeat(2,1fr); }
+  .ho-rel-grid { grid-template-columns:1fr; }
+  .ho-item-actions { flex-direction:row; align-items:center; width:100%; flex-wrap:wrap; }
 }
 `;
