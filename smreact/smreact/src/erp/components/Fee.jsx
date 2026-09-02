@@ -7868,6 +7868,34 @@ function FeeHistoryTab({ toast }) {
     return () => { alive = false; };
   }, [seg, toMonth, year]);
 
+  /* ── applicantID → studentID ka pul ──
+     Old ERP summary sirf apna purana `applicantID` deti hai. Migration ne wahi
+     id naye BranchLedger ke `plApplicantID` column me rakhi hai, to us se hamara
+     studentID (aur us se naam/reg/section) nikal aata hai.
+
+     Ye map poori history par banta hai, sirf chune hue month par nahi — misal
+     branch 220867 ke 2026 wale rows me plApplicantID khali hai, lekin 2025 ke
+     rows se 132 me se 119 naam mil jaate hain. Ek hi baar chalta hai (tab khulne
+     par), month badalne se dobara nahi. */
+  const [plToStudentId, setPlToStudentId] = useState(null);
+  useEffect(() => {
+    if (seg !== 'olderp' || plToStudentId) return undefined;
+    let alive = true;
+    const thisYear = new Date().getFullYear();
+    feeService.getLedgerRange(1, String(thisYear - 1), 12, String(thisYear))
+      .then(rows => {
+        if (!alive) return;
+        const map = new Map();
+        rows.forEach(r => {
+          const pl = String(r.plApplicantID || '').trim();
+          if (pl && r.studentID != null && !map.has(pl)) map.set(pl, String(r.studentID));
+        });
+        setPlToStudentId(map);
+      })
+      .catch(() => { if (alive) setPlToStudentId(new Map()); });   // naam na milen to bhi ledger dikhta rahe
+    return () => { alive = false; };
+  }, [seg, plToStudentId]);
+
   /* createdBy / modifiedBy are login user ids — resolve each distinct one to
      its employee name once, then reuse across every row. */
   const [empNames, setEmpNames] = useState({});
@@ -7883,6 +7911,35 @@ function FeeHistoryTab({ toast }) {
     return () => { alive = false; };
   }, [records, empNames]);
 
+  /* Section ka naam apne id se — kabhi old ERP hamari hi section id bhej deta
+     hai, to us surat me asal naam dikha dete hain. */
+  const sectionNameById = useMemo(() => {
+    const map = new Map();
+    classes.forEach(c => map.set(String(c._sectionId), c.sec));
+    return map;
+  }, [classes]);
+
+  /* Student index — apne studentID (aur applicantsID) dono par, taake backend
+     kabhi seedha hamara id bhejne lage to bhi mapping chalti rahe. */
+  const studentById = useMemo(() => {
+    const map = new Map();
+    classes.forEach(c => (studentsMap[c.key] || []).forEach(s => {
+      [s.studentID, s.applicantsID].forEach(id => {
+        const k = String(id || '');
+        if (k && !map.has(k)) map.set(k, { c, s });
+      });
+    }));
+    return map;
+  }, [classes, studentsMap]);
+
+  /* Old ERP ka applicantID → hamara student: pehle plApplicantID ke zariye,
+     warna seedha (agar id hamari hi nikle). */
+  const resolveOldStudent = useCallback((applicantID) => {
+    const key = String(applicantID || '');
+    const sid = plToStudentId?.get(key);
+    return (sid ? studentById.get(sid) : null) || studentById.get(key) || null;
+  }, [plToStudentId, studentById]);
+
   /* ── Old ERP rows ko class me baantna ──
      Purane ERP ke gradeID hamare hi grade ids hain (verify: branch 220867 ke
      13 me se 12 grade match karte hain), magar sectionID uske apne purane ids
@@ -7895,7 +7952,14 @@ function FeeHistoryTab({ toast }) {
       if (!byGrade.has(g)) byGrade.set(g, []);
       byGrade.get(g).push(row);
     });
-    byGrade.forEach(rows => rows.sort((a, b) => a.applicantID - b.applicantID));
+    /* Naam wale students pehle (naam ke hisaab se), phir wo rows jinka
+       applicant id kisi mojooda student se link nahi hua. */
+    byGrade.forEach(rows => rows.sort((a, b) => {
+      const na = resolveOldStudent(a.applicantID)?.s.name || '';
+      const nb = resolveOldStudent(b.applicantID)?.s.name || '';
+      if (!na !== !nb) return na ? -1 : 1;
+      return na ? na.localeCompare(nb) : a.applicantID - b.applicantID;
+    }));
 
     const out = [];
     const seen = new Map();                       // gradeId → us grade ki sections
@@ -7923,28 +7987,8 @@ function FeeHistoryTab({ toast }) {
       out.push({ key: `oldg${g}`, cls: `Grade #${g}`, sec: 'Not in current setup', onlySec: null, rows });
     });
     return out;
-  }, [oldSummary, classes]);
+  }, [oldSummary, classes, resolveOldStudent]);
 
-  /* Section ka naam apne id se — kabhi old ERP hamari hi section id bhej deta
-     hai, to us surat me asal naam dikha dete hain. */
-  const sectionNameById = useMemo(() => {
-    const map = new Map();
-    classes.forEach(c => map.set(String(c._sectionId), c.sec));
-    return map;
-  }, [classes]);
-
-  /* applicantID purane ERP ka id hai. Agar backend kabhi `studentID` bhejne
-     lage to naam khud-ba-khud aa jayenge — index dono par bana hua hai. */
-  const studentByApplicant = useMemo(() => {
-    const map = new Map();
-    classes.forEach(c => (studentsMap[c.key] || []).forEach(s => {
-      [s.applicantsID, s.studentID].forEach(id => {
-        const k = String(id || '');
-        if (k && !map.has(k)) map.set(k, { c, s });
-      });
-    }));
-    return map;
-  }, [classes, studentsMap]);
 
   const recsByStudent = useMemo(() => {
     const map = new Map();
@@ -8219,7 +8263,7 @@ function FeeHistoryTab({ toast }) {
                             {oc.rows.length === 0 ? (
                               <tr><td colSpan="7" className="fee-stbl-empty">No old ERP records for this class in {toMonth} {year}.</td></tr>
                             ) : oc.rows.map(row => {
-                              const hit = studentByApplicant.get(String(row.applicantID));
+                              const hit = resolveOldStudent(row.applicantID);
                               const t = oldErpRowTotals(row);
                               const secName = hit ? hit.c.sec
                                 : (sectionNameById.get(String(row.sectionID)) || oc.onlySec || '—');
