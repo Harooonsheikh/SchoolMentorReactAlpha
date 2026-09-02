@@ -440,7 +440,9 @@ return (
         <div className="ho-banner-title">Releases from Head Office <i className="fa-solid fa-arrow-right ho-banner-arrow"></i></div>
         <div className="ho-banner-sub">View academic releases shared by {hoName || HO_NAME}.</div>
       </div>
-      {hoVisibleReleases().length > 0 && <span className="ho-banner-badge"><i className="fa-solid fa-circle" style={{ fontSize: 6 }}></i> {hoVisibleReleases().length} Live</span>}
+      {hoLoading
+        ? <span className="ho-banner-badge"><i className="fa-solid fa-spinner fa-spin"></i></span>
+        : hoReleases.length > 0 && <span className="ho-banner-badge"><i className="fa-solid fa-circle" style={{ fontSize: 6 }}></i> {hoReleases.length} Live</span>}
     </button>
     )}
 
