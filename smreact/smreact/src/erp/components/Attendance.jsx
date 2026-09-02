@@ -83,9 +83,10 @@
       gradient: "linear-gradient(135deg,#065f46,#059669)",
       accent: "#059669",
       reports: [
-        { key:"staffDaily",   label:"Daily Attendance",     icon:"fa-calendar-day",  filters:[{ k:"Select Date",  field:"date",  type:"date"  }] },
-        { key:"staffMonthly", label:"Monthly Attendance",   icon:"fa-calendar-days", filters:[{ k:"Select Month", field:"month", type:"month" }] },
-        { key:"staffSummary", label:"Attendance Summary",   icon:"fa-chart-pie",     filters:[{ k:"Select Month", field:"month", type:"month" }] },
+        { key:"staffDaily",   label:"Daily Attendance",       icon:"fa-calendar-day",  filters:[{ k:"Select Date",  field:"date",  type:"date"  }] },
+        { key:"staffMonthly", label:"Monthly Attendance",     icon:"fa-calendar-days", filters:[{ k:"Select Month", field:"month", type:"month" }] },
+        { key:"staffSummary", label:"Attendance Summary",     icon:"fa-chart-pie",     filters:[{ k:"Select Month", field:"month", type:"month" }] },
+        { key:"staffSheet",   label:"Staff Attendance Sheet", icon:"fa-table-cells",   filters:[{ k:"Select Month", field:"month", type:"month" }] },
       ],
     },
     {
@@ -1402,6 +1403,111 @@
         </table></div>`);
 
     return rptPageWrap({ rptLabel: "Monthly Staff Attendance Report", period: monthLabel, isColor, school: branchSchool, content });
+  }
+
+  /* ─── Staff Attendance Sheet (monthly day-by-day grid) ──────────────────────
+     Ek row per staff, ek column per calendar day (1-31): P present, A absent,
+     H holiday/weekly-off, "." abhi tak un-marked (sirf current month me aage ke
+     din), aur mahine ki asal length se aage (jaise Feb me 29-31) ke liye dim
+     cell. Day statuses staff index + day number se deterministic derive hote
+     hain (Math.random() nahi) taake dobara generate karne par sheet stable
+     rahe. Port from School-Mentor-Front-end. */
+  function buildStaffAttendanceSheetHTML({ staffData, month, weeklyOff, holidays, isColor, branchSchool }) {
+    const { bdr, GREEN, RED, th, td } = rptTableHelpers(isColor);
+    const monthLabel = month || CURRENT_MONTH_LABEL;
+    const [monName, yearStr] = monthLabel.split(" ");
+    const monIdx = Math.max(0, MONTHS.indexOf(monName));
+    const year = parseInt(yearStr, 10) || new Date().getFullYear();
+    const daysInMonth = new Date(year, monIdx + 1, 0).getDate();
+
+    const today = new Date();
+    const isPastMonth = year < today.getFullYear() || (year === today.getFullYear() && monIdx < today.getMonth());
+    const isCurrentMonth = year === today.getFullYear() && monIdx === today.getMonth();
+    const lastMarkedDay = isPastMonth ? daysInMonth : (isCurrentMonth ? today.getDate() : 0);
+
+    /* Is mahine ke kaunse din declared holiday range me aate hain. */
+    const holidaySet = new Set();
+    (holidays || []).forEach((h) => {
+      if (!h.from) return;
+      const from = new Date(h.from);
+      const to = h.to ? new Date(h.to) : from;
+      for (let d = new Date(from); d <= to; d.setDate(d.getDate() + 1)) {
+        if (d.getFullYear() === year && d.getMonth() === monIdx) holidaySet.add(d.getDate());
+      }
+    });
+
+    const list = staffData || [];
+    const dayNums = Array.from({ length: 31 }, (_, i) => i + 1);
+
+    const markOf = (staffIdx, day) => {
+      if (day > daysInMonth) return "na";
+      const dow = (new Date(year, monIdx, day).getDay() + 6) % 7; // Monday = 0 ... Sunday = 6
+      if ((weeklyOff || []).includes(dow) || holidaySet.has(day)) return "H";
+      if (day > lastMarkedDay) return ".";
+      const seed = (staffIdx * 31 + day * 7 + 13) % 97;
+      return seed < 8 ? "A" : "P";
+    };
+
+    const dayTh = (d) => {
+      const thBg = isColor ? "background:#EFF6FF;color:#1E3A8A" : "background:#FFFFFF;color:#111111";
+      return `<th style="padding:9px 1px;text-align:center;font-weight:700;font-size:9px;border:1px solid ${bdr};${thBg}">${d}</th>`;
+    };
+
+    const markCell = (mark) => {
+      if (mark === "na") return `<td style="padding:3px 1px;border:1px solid ${bdr};background:#F1F5F9"></td>`;
+      if (mark === ".") return `<td style="padding:3px 1px;border:1px solid ${bdr};text-align:center;font-size:9px;color:#CBD5E1">·</td>`;
+      const color = mark === "P" ? GREEN : mark === "A" ? RED : (isColor ? "#2563EB" : "#4B5563");
+      return `<td style="padding:3px 1px;border:1px solid ${bdr};text-align:center;font-size:9px;font-weight:800;color:${color}">${mark}</td>`;
+    };
+
+    const rows = list.map((s, i) => {
+      let presents = 0, absents = 0;
+      const cells = dayNums.map((day) => {
+        const mark = markOf(i, day);
+        if (mark === "P") presents++;
+        if (mark === "A") absents++;
+        return markCell(mark);
+      }).join("");
+      return `<tr style="background:${i % 2 === 0 ? "#fff" : "#f8fafc"}">
+        ${td(i + 1, "text-align:center;color:#94A3B8;font-size:10px")}
+        ${td(`<span style="font-size:10px">${s.empId}</span>`)}
+        ${td(`<strong style="font-size:10.5px">${s.name}</strong>`)}
+        ${td(s.desig, "font-size:10px")}
+        ${cells}
+        ${td(`<strong style="color:${GREEN}">${presents}</strong>`, "text-align:center;font-size:10.5px")}
+        ${td(`<strong style="color:${RED}">${absents}</strong>`,    "text-align:center;font-size:10.5px")}
+      </tr>`;
+    }).join("");
+
+    const legend = `<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:14px;font-size:10.5px;color:#475569">
+      <span><strong style="color:${GREEN}">P</strong> = Present</span>
+      <span><strong style="color:${RED}">A</strong> = Absent</span>
+      <span><strong style="color:${isColor ? "#2563EB" : "#4B5563"}">H</strong> = Holiday / Weekly Off</span>
+      <span><strong style="color:#94A3B8">·</strong> = Not Marked Yet</span>
+    </div>`;
+
+    const content = rptInfoGrid([
+      ["Month",       monthLabel],
+      ["Total Staff", String(list.length)],
+      ["Days Marked", String(lastMarkedDay)],
+      ["Generated",   new Date().toLocaleString("en-GB", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })],
+    ], bdr) + legend + (list.length === 0
+      ? `<div style="text-align:center;padding:30px;color:#94A3B8;font-size:13.5px"><i>No staff to display.</i></div>`
+      : `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;table-layout:fixed">
+          <colgroup>
+            <col style="width:3%"><col style="width:7%"><col style="width:13%"><col style="width:10%">
+            ${dayNums.map(() => '<col style="width:1.9%">').join("")}
+            <col style="width:3.5%"><col style="width:3.5%">
+          </colgroup>
+          <thead><tr>
+            ${[th("#", "center"), th("ID"), th("Name"), th("Designation")].join("")}
+            ${dayNums.map((d) => dayTh(d)).join("")}
+            ${[th("P", "center"), th("A", "center")].join("")}
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table></div>`);
+
+    return rptPageWrap({ rptLabel: "Staff Attendance Sheet", period: monthLabel, isColor, school: branchSchool, content });
   }
 
   /* ─── Class Overview (Monthly) Report ─────────────────────────────────────
@@ -3800,6 +3906,12 @@ const saveMarkSf = useCallback(async (rows) => {
         const rows = await fetchMonthlyStaffReportRows(year, monthIdx0);
         html  = buildMonthlyStaffReportHTML({ staffData: rows, month: monthLabel, isColor, branchSchool });
         title = "Staff Attendance Summary";
+      } else if (effective === "staffSheet") {
+        const monthLabel = filters.month || reportPicker?.defaultMonth || CURRENT_MONTH_LABEL;
+        const { year, monthIdx0 } = parseMonthLabel(monthLabel);
+        const rows = await fetchMonthlyStaffReportRows(year, monthIdx0);
+        html  = buildStaffAttendanceSheetHTML({ staffData: rows, month: monthLabel, weeklyOff, holidays, isColor, branchSchool });
+        title = "Staff Attendance Sheet";
       } else if (effective === "studentClasswise") {
         const period = filters.from && filters.to ? `${filters.from} → ${filters.to}` : "";
         const rows = await fetchRangeReportRows(filters.from, filters.to);

@@ -1286,6 +1286,29 @@ export async function getLedgerRange(fromMonth, fromYear, toMonth, toYear) {
   return Array.isArray(json?.data) ? json.data : [];
 }
 
+/* Purane ERP se migrate hua ledger — ek waqt me SIRF ek month.
+   GET /api/BranchLedger/oldERPbranchledger?branchId&month&year
+
+   `summary` hi is endpoint ka asal mawad hai (per-student ek row: applicantID,
+   gradeID, sectionID, challanAmount, discount, receivedAmount); `data` abhi
+   hamesha khali aata hai. Swagger response schema declare nahi karta, is liye
+   dono arrays defensive tareeqe se nikaale jaate hain. */
+export async function getOldErpLedger(month, year) {
+  const branchID = Number(sessionStorage.getItem('branchID')) || 1;
+  const res = await fetch(
+    buildUrl(`/api/BranchLedger/oldERPbranchledger?branchId=${branchID}&month=${month}&year=${year}`),
+    { headers: { Accept: '*/*' } },
+  );
+  const json = await res.json().catch(() => null);
+  if (!res.ok || json?.success === false) {
+    throw new Error(apiMessage(json) || 'Could not load old ERP ledger');
+  }
+  return {
+    data:    Array.isArray(json?.data) ? json.data : [],
+    summary: Array.isArray(json?.summary) ? json.summary : [],
+  };
+}
+
 /* The ledger stamps createdBy/modifiedBy with the LOGIN user id, which is not
    an employee id — nothing in get-employees-by-branch joins to it, so the name
    has to come from /api/HR/get-employee-by-loginuser/{loginUserId}.
