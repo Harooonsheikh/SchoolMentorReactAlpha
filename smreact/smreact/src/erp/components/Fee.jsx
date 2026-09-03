@@ -4721,7 +4721,7 @@ function FeeSlipModal({ cfg, onClose, toast }) {
   html,body,* { -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important; color-adjust:exact !important; }
   body { margin:0; font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif; background:#F1F3F8; padding:18px; }
   .fee-slip-doc { background:#fff; color:#111; border:1px solid #ddd; border-radius:12px; padding:20px; max-width:420px; margin:0 auto; }
-  .fee-slip-doc.fee-slip-small { max-width:300px; padding:14px; font-size:11px; }
+  .fee-slip-doc.fee-slip-small { max-width:302px; padding:14px 12px; font-size:11px; }
   .fee-slip-brandhead { display:flex; justify-content:space-between; align-items:flex-start; gap:10px; border-bottom:1.5px solid #111; padding-bottom:10px; margin-bottom:12px; }
   .fee-slip-brand { display:flex; align-items:center; gap:10px; text-align:left; }
   .fee-slip-logo { width:38px; height:38px; border:1px solid #ddd; border-radius:10px; display:flex; align-items:center; justify-content:center; overflow:hidden; color:#1E3A8A; font-weight:800; background:#fff; flex-shrink:0; }
@@ -4740,8 +4740,29 @@ function FeeSlipModal({ cfg, onClose, toast }) {
   .fee-slip-headtot td { border-top:1.5px solid #333; border-bottom:none; font-weight:800; background:#f5f7fb; }
   .fee-slip-net { display:flex; justify-content:space-between; align-items:center; background:#111; color:#fff; padding:8px 12px; border-radius:4px; font-weight:800; }
   .fee-slip-foot { margin-top:14px; text-align:center; font-size:9px; color:#999; border-top:1px solid #eee; padding-top:8px; }
-  @page { size:A4; margin:14mm; }
-  @media print { body { background:#fff; padding:0; } }
+
+  /* Small Receipt — 80mm par header side-by-side nahi samaata, is liye sab
+     center me ek ke neeche ek (bilkul wahi jo preview me dikhta hai). */
+  .fee-slip-small .fee-slip-brandhead { flex-direction:column; align-items:center; text-align:center; gap:6px; padding-bottom:8px; margin-bottom:10px; }
+  .fee-slip-small .fee-slip-brand { flex-direction:column; align-items:center; text-align:center; gap:6px; }
+  .fee-slip-small .fee-slip-logo { width:34px; height:34px; border-radius:8px; }
+  .fee-slip-small .fee-slip-school { font-size:13.5px; line-height:1.25; }
+  .fee-slip-small .fee-slip-tag { font-size:9.5px; letter-spacing:.5px; margin-top:2px; }
+  .fee-slip-small .fee-slip-addr { font-size:9.5px; line-height:1.35; }
+  .fee-slip-small .fee-slip-meta { text-align:center; white-space:normal; font-size:9.5px; line-height:1.4; }
+  .fee-slip-small .fee-slip-kv { font-size:10.5px; gap:3px 8px; margin-bottom:10px; }
+  .fee-slip-small .fee-slip-tbl { font-size:9.5px; }
+  .fee-slip-small .fee-slip-tbl th, .fee-slip-small .fee-slip-tbl td { padding:4px 2px; }
+  .fee-slip-small .fee-slip-tbl th { font-size:8.5px; line-height:1.2; }
+  .fee-slip-small .fee-slip-tbl td:first-child { word-break:break-word; }
+  .fee-slip-small .fee-slip-net { padding:7px 10px; font-size:11.5px; }
+  .fee-slip-small .fee-slip-foot { font-size:8px; margin-top:10px; padding-top:6px; }
+
+  /* Thermal roll par A4 page size receipt ko beech me chhota sa chhaap kar
+     baaki safha zaya kar deta tha — 80mm par page bhi 80mm ka. */
+  ${size === 'small'
+    ? '@page { size:80mm auto; margin:0; }\n  @media print { body { background:#fff; padding:0; } .fee-slip-doc.fee-slip-small { max-width:none; width:80mm; border:0; border-radius:0; margin:0; padding:4mm 3mm; } }'
+    : '@page { size:A4; margin:14mm; }\n  @media print { body { background:#fff; padding:0; } }'}
 </style></head><body>${slipHtml}</body></html>`);
     w.document.close();
     w.onload = () => { try { w.focus(); w.print(); } catch (e) { /* ignore */ } };
@@ -7512,7 +7533,7 @@ function FamilyFeeSlipModal({ cfg, onClose, paymentsFor, toast }) {
           </div>
 
           <div className="fee-dl-label" style={{ marginTop: 16 }}>Preview</div>
-                <div className="fee-slip-doc" style={{ maxWidth: size === 'small' ? 300 : 640 }}>
+                <div className={`fee-slip-doc${size === 'small' ? ' fee-slip-small' : ''}`} style={{ maxWidth: size === 'small' ? 302 : 640 }}>
             <div className="fee-slip-brandhead">
               <div className="fee-slip-brand">
                 <div className="fee-slip-logo">
@@ -15838,7 +15859,6 @@ const FEE_CSS = `
   max-width: 420px;
   margin: 0 auto;
 }
-.fee-slip-doc.fee-slip-small { max-width: 300px; padding: 14px; font-size: 11px; }
 .fee-slip-head { text-align: center; border-bottom: 1.5px solid #111; padding-bottom: 10px; margin-bottom: 12px; }
 .fee-slip-brandhead { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; border-bottom: 1.5px solid #111; padding-bottom: 10px; margin-bottom: 12px; }
 .fee-slip-brand { display: flex; align-items: center; gap: 10px; text-align: left; }
@@ -15848,8 +15868,7 @@ const FEE_CSS = `
 .fee-slip-foot { margin-top: 14px; text-align: center; font-size: 9px; color: #999; border-top: 1px solid #eee; padding-top: 8px; }
 .fee-slip-addr { font-size: 10.5px; color: #666; margin-top: 2px; }
 .fee-slip-school { font-size: 16px; font-weight: 800; color: #111; }
-.fee-slip-tag { font-size: 11px; color: #555; letter-spac
-ing: 1px; text-transform: uppercase; margin-top: 3px; }
+.fee-slip-tag { font-size: 11px; color: #555; letter-spacing: 1px; text-transform: uppercase; margin-top: 3px; }
 .fee-slip-kv {
   display: grid;
   grid-template-columns: auto 1fr;
@@ -15877,6 +15896,33 @@ ing: 1px; text-transform: uppercase; margin-top: 3px; }
   border-radius: 4px;
   font-weight: 800;
 }
+
+/* ── Small Receipt (thermal / 80mm) ──
+   80mm me side-by-side header ki jagah hai hi nahi: brand aur "Generated"
+   block ek doosre ko nichor dete the, jis se school ka naam ek-ek lafz par
+   toot jaata tha aur logo naam ke neeche chala jaata tha. Asli counter
+   receipt ki tarah ab sab kuch center me, ek ke neeche ek — aur andar ka
+   type size 80mm ke mutabiq. */
+.fee-slip-doc.fee-slip-small { max-width: 302px; padding: 14px 12px; font-size: 11px; }
+.fee-slip-small .fee-slip-brandhead {
+  flex-direction: column; align-items: center; text-align: center;
+  gap: 6px; padding-bottom: 8px; margin-bottom: 10px;
+}
+.fee-slip-small .fee-slip-brand { flex-direction: column; align-items: center; text-align: center; gap: 6px; }
+.fee-slip-small .fee-slip-logo { width: 34px; height: 34px; border-radius: 8px; }
+.fee-slip-small .fee-slip-school { font-size: 13.5px; line-height: 1.25; }
+.fee-slip-small .fee-slip-tag { font-size: 9.5px; letter-spacing: .5px; margin-top: 2px; }
+.fee-slip-small .fee-slip-addr { font-size: 9.5px; line-height: 1.35; }
+/* nowrap yahan zaroori nahi — center me do lines me aa jaye to behtar hai. */
+.fee-slip-small .fee-slip-meta { text-align: center; white-space: normal; font-size: 9.5px; line-height: 1.4; }
+.fee-slip-small .fee-slip-kv { font-size: 10.5px; gap: 3px 8px; margin-bottom: 10px; }
+.fee-slip-small .fee-slip-tbl { font-size: 9.5px; }
+.fee-slip-small .fee-slip-tbl th,
+.fee-slip-small .fee-slip-tbl td { padding: 4px 2px; }
+.fee-slip-small .fee-slip-tbl th { font-size: 8.5px; line-height: 1.2; }
+.fee-slip-small .fee-slip-tbl td:first-child { word-break: break-word; }
+.fee-slip-small .fee-slip-net { padding: 7px 10px; font-size: 11.5px; }
+.fee-slip-small .fee-slip-foot { font-size: 8px; margin-top: 10px; padding-top: 6px; }
 
 /* Multi-select + progress — dark */
 [data-theme="dark"] .fee-ms-toggle {
