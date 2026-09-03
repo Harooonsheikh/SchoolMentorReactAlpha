@@ -1188,7 +1188,7 @@ function buildStuCertHTML(s, cls, school, type, style, opts) {
 }
 
 const STU_TABS = [
-  { id: 'preenroll', icon: 'fa-user-clock',  label: 'Pre-Enrollment' },
+  // { id: 'preenroll', icon: 'fa-user-clock',  label: 'Pre-Enrollment' },
   { id: 'active',   icon: 'fa-user-check',  label: 'Active Students' },
   { id: 'inactive', icon: 'fa-user-slash',  label: 'Inactive Students' },
   { id: 'family',   icon: 'fa-people-roof', label: 'Family Tree' },
