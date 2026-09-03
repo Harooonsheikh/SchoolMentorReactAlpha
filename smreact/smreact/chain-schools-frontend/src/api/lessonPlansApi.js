@@ -389,3 +389,33 @@ export function saveQuestionRow(args) {
   if (!api || !payload) return Promise.reject(new Error('This question type is not supported yet'))
   return post(api.endpoint, payload)
 }
+
+/* ───────────── Release ke liye: poore network ke master rows ─────────────
+   Upar wale dono fetchers ek class+subject ki screen ke liye hain. Release
+   ko poore network ka content chahiye (class/subject ki tafreeq ke baghair),
+   aur har row ki ASLI id + classID/subjectID chahiye — manage-release ke
+   child2 me typeID/gradeID/subjectID wahi jate hain aur un par foreign key
+   lagi hui hai. Is liye yahan wahi network GET bina chhaant ke. */
+const masterRow = (r) => ({
+  id: Number(r.id) || 0,
+  classID: Number(r.classID) || 0,
+  subjectID: Number(r.subjectID) || 0,
+  unitNo: r.unitNo ?? '',
+  unitName: r.unitName ?? '',
+  topic: r.lessonPlanTopic || '',
+  medium: uiMedium(r.medium),
+})
+
+/** Poore network ke classwork (lesson plan) master rows — har row ek lesson. */
+export async function fetchAllNetworkLessonMasters(networkId = currentNetworkId()) {
+  if (!networkId) return []
+  const json = await call(`/getulpforclassmasterbynetwork?NetworkID=${networkId}`)
+  return rows(json).map(masterRow).filter((r) => r.id && r.classID && r.subjectID)
+}
+
+/** Poore network ke notebook master rows — har row ek notebook plan. */
+export async function fetchAllNetworkNotebookMasters(networkId = currentNetworkId()) {
+  if (!networkId) return []
+  const json = await call(`/getulpfornotebookmasterbynetwork?NetworkID=${networkId}`)
+  return rows(json).map(masterRow).filter((r) => r.id && r.classID && r.subjectID)
+}

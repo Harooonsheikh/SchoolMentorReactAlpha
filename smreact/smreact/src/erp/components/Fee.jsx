@@ -7627,12 +7627,33 @@ const OLD_ERP_YEARS = FEE_HIST_YEARS.filter(y => Number(y) <= OLD_ERP_LAST.year)
 
 /* Old ERP summary row ka hisaab. Discount billed amount se pehle katta hai, is
    liye asal receivable challanAmount nahi balke (challan − discount) hai —
-   wahi hisaab naye ledger ka bhi hai (ledgerRowNet dekho). */
+   wahi hisaab naye ledger ka bhi hai (ledgerRowNet dekho).
+
+   Net Payable endpoint KHUD bhejta hai (`netPayable`), aur us me pichhle
+   mahino ka baqaya (`previousPendingDues`) pehle se shamil hai — is liye wahi
+   authority hai, hum apna hisaab uske upar nahi thopte. Compute sirf tab hota
+   hai jab payload me ye field aaye hi na (purana response). */
 const oldErpRowTotals = (r) => {
   const challan  = +r.challanAmount || 0;
   const discount = +r.discount || 0;
   const recv     = +r.receivedAmount || 0;
-  return { challan, discount, recv, pend: Math.max(challan - discount - recv, 0) };
+  const prev     = +r.previousPendingDues || 0;
+  /* SIGNED — zyada wasooli par endpoint netPayable manfi bhejta hai (misal
+     branch 220941, August 2026 me applicant 35443 ka −17,500). Us minus ko 0
+     par clamp karna advance chhupa deta, aur class total column ke jama se
+     mel bhi na khata. */
+  const net = r.netPayable != null
+    ? (+r.netPayable || 0)
+    : prev + challan - discount - recv;
+  return { challan, discount, recv, prev, net };
+};
+
+/* Net Payable / Previous Dues cell: musbat = baqaya (laal), manfi = advance —
+   baqi Fee module ki tarah teal me minus ke saath, sifar sirf "0". */
+const oldErpDueCell = (n) => {
+  if (n > 0) return <span className="fee-neg">{money(n)}</span>;
+  if (n < 0) return <span style={{ color: '#0F766E' }}>{money(n)}</span>;
+  return '0';
 };
 
 /* ═══════════ BranchLedger row maths — shared by History and Reports ═══════════
@@ -8300,8 +8321,11 @@ function FeeHistoryTab({ toast }) {
               const isOpen = openKey === oc.key;
               const tot = oc.rows.reduce((a, r) => {
                 const t = oldErpRowTotals(r);
-                return { challan: a.challan + t.challan, disc: a.disc + t.discount, recv: a.recv + t.recv, pend: a.pend + t.pend };
-              }, { challan: 0, disc: 0, recv: 0, pend: 0 });
+                return {
+                  prev: a.prev + t.prev, challan: a.challan + t.challan,
+                  disc: a.disc + t.discount, recv: a.recv + t.recv, net: a.net + t.net,
+                };
+              }, { prev: 0, challan: 0, disc: 0, recv: 0, net: 0 });
               return (
                 <div key={oc.key} className="fee-rowwrap">
                   <div
@@ -8336,15 +8360,16 @@ function FeeHistoryTab({ toast }) {
                               <th>Reg No</th>
                               <th>Name</th>
                               <th>Class / Sec</th>
+                              <th className="fee-right">Previous Dues</th>
                               <th className="fee-right">Challan Amount</th>
                               <th className="fee-right">Discount</th>
                               <th className="fee-right">Received</th>
-                              <th className="fee-right">Pending</th>
+                              <th className="fee-right">Net Payable</th>
                             </tr>
                           </thead>
                           <tbody>
                             {oc.rows.length === 0 ? (
-                              <tr><td colSpan="7" className="fee-stbl-empty">No old ERP records for this class in {oldPeriod}.</td></tr>
+                              <tr><td colSpan="8" className="fee-stbl-empty">No old ERP records for this class in {oldPeriod}.</td></tr>
                             ) : oc.rows.map(row => {
                               const hit = resolveOldStudent(row.applicantID);
                               const t = oldErpRowTotals(row);
@@ -8367,10 +8392,11 @@ function FeeHistoryTab({ toast }) {
                                     )}
                                   </td>
                                   <td>{oc.cls} / {secName}</td>
+                                  <td className="fee-right">{oldErpDueCell(t.prev)}</td>
                                   <td className="fee-right">{money(t.challan)}</td>
                                   <td className="fee-right">{t.discount > 0 ? money(t.discount) : '0'}</td>
                                   <td className="fee-right"><span className="fee-paid-amt">{money(t.recv)}</span></td>
-                                  <td className="fee-right">{t.pend > 0 ? <span className="fee-neg">{money(t.pend)}</span> : '0'}</td>
+                                  <td className="fee-right">{oldErpDueCell(t.net)}</td>
                                 </tr>
                               );
                             })}
@@ -8379,10 +8405,11 @@ function FeeHistoryTab({ toast }) {
                             <tfoot>
                               <tr>
                                 <td colSpan="3"><b>Total</b></td>
+                                <td className="fee-right"><b>{oldErpDueCell(tot.prev)}</b></td>
                                 <td className="fee-right"><b>{money(tot.challan)}</b></td>
                                 <td className="fee-right"><b>{tot.disc > 0 ? money(tot.disc) : '0'}</b></td>
                                 <td className="fee-right"><b className="fee-paid-amt">{money(tot.recv)}</b></td>
-                                <td className="fee-right"><b>{tot.pend > 0 ? <span className="fee-neg">{money(tot.pend)}</span> : '0'}</b></td>
+                                <td className="fee-right"><b>{oldErpDueCell(tot.net)}</b></td>
                               </tr>
                             </tfoot>
                           )}
@@ -9242,19 +9269,25 @@ function buildHistOverallReportHTML({ mode, blocks, period, school = null }) {
 /* Old ERP ledger ka A4 report — design bilkul wahi jo Ledger Summary /
    Detailed History reports ka hai: cover page par grand totals ke cards, phir
    har class apne page par. Rows purane ERP ki summary se aati hain, is liye
-   columns bhi wahi (challan / discount / received / pending) — koi "Last
-   Receiving" nahi, wo us payload me hota hi nahi. */
+   columns bhi wahi (previous dues / challan / discount / received / net
+   payable) — koi "Last Receiving" nahi, wo us payload me hota hi nahi. */
 function buildOldErpReportHTML({ blocks, period, school = null }) {
   const meta = feeReportSchool(school);
   const sumRows = (rows) => rows.reduce((a, r) => {
     const t = oldErpRowTotals(r);
-    return { challan: a.challan + t.challan, disc: a.disc + t.discount, recv: a.recv + t.recv, pend: a.pend + t.pend };
-  }, { challan: 0, disc: 0, recv: 0, pend: 0 });
+    return {
+      prev: a.prev + t.prev, challan: a.challan + t.challan,
+      disc: a.disc + t.discount, recv: a.recv + t.recv, net: a.net + t.net,
+    };
+  }, { prev: 0, challan: 0, disc: 0, recv: 0, net: 0 });
 
   const grand = blocks.reduce((a, b) => {
     const s = sumRows(b.rows);
-    return { challan: a.challan + s.challan, disc: a.disc + s.disc, recv: a.recv + s.recv, pend: a.pend + s.pend, n: a.n + b.rows.length };
-  }, { challan: 0, disc: 0, recv: 0, pend: 0, n: 0 });
+    return {
+      prev: a.prev + s.prev, challan: a.challan + s.challan, disc: a.disc + s.disc,
+      recv: a.recv + s.recv, net: a.net + s.net, n: a.n + b.rows.length,
+    };
+  }, { prev: 0, challan: 0, disc: 0, recv: 0, net: 0, n: 0 });
 
   const pages = blocks.filter(b => b.rows.length).map(b => {
     const t = sumRows(b.rows);
@@ -9269,10 +9302,11 @@ function buildOldErpReportHTML({ blocks, period, school = null }) {
           ? `<b>${escHtml(hit.s.name)}</b><br/><span style="color:#64748B;font-size:10px">s/o ${escHtml(hit.s.father || '—')}</span>`
           : `<b>Applicant #${escHtml(String(r.applicantID))}</b><br/><span style="color:#64748B;font-size:10px">old ERP record</span>`}</td>
         <td>${escHtml(sec)}</td>
+        <td class="right ${v.prev > 0 ? 'red' : ''}">${v.prev.toLocaleString('en-PK')}</td>
         <td class="right">${v.challan.toLocaleString('en-PK')}</td>
         <td class="right">${v.discount > 0 ? v.discount.toLocaleString('en-PK') : '0'}</td>
         <td class="right green">${v.recv.toLocaleString('en-PK')}</td>
-        <td class="right ${v.pend > 0 ? 'red' : ''}">${v.pend.toLocaleString('en-PK')}</td>
+        <td class="right ${v.net > 0 ? 'red' : v.net < 0 ? 'green' : ''}">${v.net.toLocaleString('en-PK')}</td>
       </tr>`;
     }).join('');
 
@@ -9287,20 +9321,22 @@ function buildOldErpReportHTML({ blocks, period, school = null }) {
         <tr>
           <th style="width:36px">#</th><th style="width:110px">Reg No</th><th>Name</th>
           <th style="width:70px">Section</th>
-          <th class="right" style="width:110px">Challan</th>
-          <th class="right" style="width:100px">Discount</th>
-          <th class="right" style="width:110px">Received</th>
-          <th class="right" style="width:110px">Pending</th>
+          <th class="right" style="width:104px">Previous Dues</th>
+          <th class="right" style="width:96px">Challan</th>
+          <th class="right" style="width:88px">Discount</th>
+          <th class="right" style="width:96px">Received</th>
+          <th class="right" style="width:104px">Net Payable</th>
         </tr>
       </thead>
       <tbody>${body}</tbody>
       <tfoot>
         <tr>
           <td colspan="4">Total</td>
+          <td class="right">${t.prev.toLocaleString('en-PK')}</td>
           <td class="right">${t.challan.toLocaleString('en-PK')}</td>
           <td class="right">${t.disc.toLocaleString('en-PK')}</td>
           <td class="right">${t.recv.toLocaleString('en-PK')}</td>
-          <td class="right">${t.pend.toLocaleString('en-PK')}</td>
+          <td class="right">${t.net.toLocaleString('en-PK')}</td>
         </tr>
       </tfoot>
     </table>
@@ -9316,10 +9352,11 @@ function buildOldErpReportHTML({ blocks, period, school = null }) {
     ])}
     <div class="hist-band">Grand Totals</div>
     <div class="hist-cards">
+      <div class="hist-card"><div class="l">Previous Dues</div><div class="v red">${grand.prev.toLocaleString('en-PK')}</div></div>
       <div class="hist-card"><div class="l">Challan</div><div class="v">${grand.challan.toLocaleString('en-PK')}</div></div>
       <div class="hist-card"><div class="l">Discount</div><div class="v">${grand.disc.toLocaleString('en-PK')}</div></div>
       <div class="hist-card"><div class="l">Received</div><div class="v green">${grand.recv.toLocaleString('en-PK')}</div></div>
-      <div class="hist-card"><div class="l">Pending</div><div class="v red">${grand.pend.toLocaleString('en-PK')}</div></div>
+      <div class="hist-card"><div class="l">Net Payable</div><div class="v red">${grand.net.toLocaleString('en-PK')}</div></div>
     </div>
   </div>
   ${pages}`;

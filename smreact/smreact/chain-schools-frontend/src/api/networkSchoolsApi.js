@@ -67,9 +67,17 @@ async function listByNetwork(accepted, networkId) {
   return (Array.isArray(json?.data) ? json.data : []).map(toSchool)
 }
 
-/** Wo schools jo network me shamil ho chuke hain. */
-export function fetchConnectedSchools(networkId = currentNetworkId()) {
-  return listByNetwork(true, networkId)
+/**
+ * Wo schools jo network me shamil ho chuke hain — sirf accepted rows.
+ *
+ * `isAccepted: true` bhejne ke bawajood server kabhi pending/rejected rows
+ * bhi laut deta hai, aur wo Academics ke Master/Sub Release modal me ghair-
+ * juri schools dikha deti hain. Is liye jawab ko yahan dobara chhanta jaata
+ * hai — Connected ke ilawa kuch is list me na aaye.
+ */
+export async function fetchConnectedSchools(networkId = currentNetworkId()) {
+  const rows = await listByNetwork(true, networkId)
+  return rows.filter((r) => r.status === 'Connected')
 }
 
 /** Abhi faisla na hui requests, aur reject ki hui requests — aik hi call se. */

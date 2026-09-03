@@ -15,6 +15,13 @@ import CreateLessonPlans from './CreateLessonPlans'
    API par nahi chalti — dekhein academicsStore ka subjectIdOf). */
 import { fetchNetworkResources, saveNetworkResource, deleteNetworkResource } from '../../api/resourceLibraryApi'
 import { fetchNetworkClasses, fetchClassSubjects } from '../../api/academicsSetupApi'
+/* Master / Sub Release bhi LIVE hain — dono ek hi endpoint par
+   (POST /api/Network_Setup/manage-release, dekhein src/api/releaseApi.js).
+   Master me network ke SAB schools ki branchID jati hai, Sub me sirf chuni
+   hui; aur child2 me chaaron section ka bana hua content apni ASLI ids ke
+   sath (dekhein src/api/releaseContent.js). */
+import { fetchReleases, saveRelease, deleteRelease } from '../../api/releaseApi'
+import { EMPTY_CONTENT, fetchReleaseContent, filterReleaseContent, idSetsOf, releaseItemsOf, summarizeReleaseContent } from '../../api/releaseContent'
 /* A4 branded PDF / Word shell — sab Academics reports isi se bante hain. */
 import { esc, exportReport } from './reportEngine'
 import './Academics.css'
@@ -23,7 +30,25 @@ const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 
 const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const ACT_STATUS = { upcoming: { label: 'Scheduled', color: '#1E40AF' }, ongoing: { label: 'Ongoing', color: '#D97706' }, completed: { label: 'Completed', color: '#16A34A' } }
 const fmtDate = (iso) => { if (!iso) return '—'; try { return new Date(`${iso}T00:00:00`).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) } catch { return iso } }
-const todayISO = () => new Date().toISOString().slice(0, 10)
+/* Sirf tareekh (YYYY-MM-DD) — MUQAMI waqt par, UTC par nahi.
+   `toISOString()` pehle UTC me badalta hai; Pakistan UTC+5 par hai, is liye
+   raat 12 se subah 5 baje tak wo PICHLA din deta tha aur Release Date ek din
+   peeche dikhti thi. Timezone offset ghata kar wahi din milta hai jo user ke
+   apne calendar par hai. (Yehi tareeqa activityCalendarApi me bhi hai.)
+   Khali / ghalat value par khali string — fmtDate use "—" dikhata hai. */
+const isoDay = (d) => {
+  /* Pehle se sirf tareekh ho to jyon ki tyon — `new Date('2026-09-03')` UTC
+     aadhi raat banti hai, aur us par muqami offset lagana din badal deta. */
+  if (typeof d === 'string') {
+    const s = d.trim()
+    if (!s) return ''
+    if (s.length === 10 && /^\d{4}-\d{2}-\d{2}$/.test(s)) return s
+  }
+  const t = d === undefined ? new Date() : (d ? new Date(d) : null)
+  if (!t || Number.isNaN(t.getTime())) return ''
+  return new Date(t.getTime() - t.getTimezoneOffset() * 60000).toISOString().slice(0, 10)
+}
+const todayISO = () => isoDay()
 
 const GROUPS = {
   scheme: { label: 'Activity Calendar', icon: 'fa-calendar-week', subs: [
@@ -47,10 +72,55 @@ export default function Academics() {
   const [view, setView] = useState('current') // 'current' draft | release id
   const [modalType, setModalType] = useState(null) // 'master' | 'sub'
   const [revoke, setRevoke] = useState(null) // release pending revoke confirmation
+  const [detail, setDetail] = useState(null) // "Currently Live" ka View — release ki tafseel
+  const relBarRef = useRef(null)             // "Create New Release" isi panel tak scroll karta hai
   const [toast, setToast] = useState(null)
+  /* Jo kuch release ho sakta hai — chaaron section ka live content apni asli
+     ids ke sath. Release ka payload aur modal ka summary dono isi par bante
+     hain, is liye jo screen par dikhta hai wahi server par jata hai. */
+  const [relContent, setRelContent] = useState(EMPTY_CONTENT)
+  const [relBusy, setRelBusy] = useState(false)
+  const [relSynced, setRelSynced] = useState(false)
 
   useEffect(() => { setA(loadAcademics()) }, [])
   useEffect(() => { if (!toast) return undefined; const t = setTimeout(() => setToast(null), 3000); return () => clearTimeout(t) }, [toast])
+
+  /* Releasable content ek dafa — modal khulte hi ginti sahi dikhni chahiye. */
+  const reloadRelContent = useCallback(() => (
+    fetchReleaseContent().then(setRelContent).catch(() => setRelContent(EMPTY_CONTENT))
+  ), [])
+  useEffect(() => { reloadRelContent() }, [reloadRelContent])
+
+  /* Server par mojood releases se local record milao — release kisi aur
+     browser/session se bhi ho ya wapas liya gaya ho to ye screen sach bole:
+       • server par hai, yahan nahi  → adopt kar lo (Currently Live me aa jaye)
+       • yahan live hai, server par nahi → wapas liya ja chuka hai (ARCHIVED)
+     Sirf kamyab fetch par chalta hai, warna network ki ek jhijhak poori
+     release history archive kar deti. */
+  useEffect(() => {
+    if (!a || relSynced) return undefined
+    let alive = true
+    fetchReleases()
+      .then((apiRels) => {
+        if (!alive) return
+        setRelSynced(true)
+        const local = a.releases || []
+        const liveIds = new Set(apiRels.map((r) => r.id))
+        const known = new Set(local.map((r) => r.apiId).filter(Boolean))
+        const kept = local.map((r) => (
+          r.apiId && !liveIds.has(r.apiId) && r.releaseStatus !== 'ARCHIVED'
+            ? { ...r, releaseStatus: 'ARCHIVED' }
+            : r
+        ))
+        const adopted = apiRels.filter((r) => !known.has(r.id)).map(adoptApiRelease)
+        if (adopted.length === 0 && kept.every((r, i) => r === local[i])) return
+        const next = { ...a, releases: [...kept, ...adopted] }
+        setA(next); saveAcademics(next)
+      })
+      .catch(() => { if (alive) setRelSynced(true) })
+    return () => { alive = false }
+  }, [a, relSynced])
+
   const fire = (text, type = 'success') => setToast({ text, type })
   const commit = (next) => { setA(next); saveAcademics(next) }
   if (!a) return null
@@ -71,53 +141,122 @@ export default function Academics() {
   const onResourcesView = isLiveView || !viewedRelease ? undefined : updateReleaseResources(viewedRelease.id)
   const workspaceContent = viewedRelease ? { a: aView, resources: snap.resources || [] } : { a, resources: (() => { try { return loadResources() } catch { return [] } })() }
   const workspaceName = view === 'current' ? 'Current Draft' : (viewedRelease?.label || 'Workspace')
+  /* Release Control ki ginti bhi wahi content dikhaye jo release me jayega:
+     Current Draft par poora live content, kisi purane release ke workspace par
+     sirf usi ke ids. */
+  const workspaceRelContent = filterReleaseContent(relContent, idSetsOf(viewedRelease))
 
+  /* "Create New Release" — Current Draft par le aata hai aur Release Control
+     tak scroll kar deta hai, jahan se Master ya Sub chuna jata hai.
+
+     Pehle ye `a.lessonPlans / notebookPlans / activityCalendar` khali kar ke
+     "New blank release started" ka paighaam deta tha. Wo purane waqt ka amal
+     tha jab content local store me banta tha. Ab teenon section LIVE hain
+     (Activity Calendar aur Resource Library API se aate hain aur store me
+     sirf mirror hote hain, Lesson Plans store ko chhoote hi nahi), is liye
+     wo khali karna kuch badalta nahi tha — mirror agle hi render par dobara
+     bhar jata tha — magar paighaam ye samajh deta tha ke koi khali release
+     ban gayi hai. Ab na kuch mitta hai, na koi ghalat baat kahi jati hai. */
   const createNewRelease = () => {
-    commit({ ...a, lessonPlans: [], notebookPlans: [], activityCalendar: [], released: false, release: null })
-    saveResources([])
     setView('current')
-    fire('New blank release started — build content for the three sections, then release', 'success')
+    fire('Current Draft selected — choose Master Release or Sub Release below', 'info')
+    /* Release Control panel screen par le aao — warna click par kuch hota
+       hua dikhta hi nahi. */
+    requestAnimationFrame(() => relBarRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }))
   }
 
-  const applyRelease = (type, opts, summary) => {
-    const { validityDays, dueDate, schools, parentReleaseId, content } = opts
-    const releaseType = type === 'master' ? 'MASTER_RELEASE' : 'SUB_RELEASE'
+  /* Master = network ke SAB connected schools ki branchID; Sub = sirf chuni
+     hui. `connectedSchools[].id` khud branchID hai (dekhein ViewProvider). */
+  const applyRelease = async (type, opts, summary) => {
+    const { validityDays, dueDate, creationDate, schools, parentReleaseId, content } = opts
+    const isMaster = type === 'master'
+    const releaseType = isMaster ? 'MASTER_RELEASE' : 'SUB_RELEASE'
     const number = releases.filter((r) => r.releaseType === releaseType).length + 1
     const seq = (a.releaseSeq || 0) + 1
     const nowISO = new Date().toISOString()
-    const title = `${type === 'master' ? 'Master' : 'Sub'} Release ${number}`
+    /* Screen ka "Release Date" — server par `creationDate` ban kar jata hai
+       aur wahin se har jagah "Released on" bharta hai. */
+    const relOn = creationDate || isoDay(nowISO)
+    const title = `${isMaster ? 'Master' : 'Sub'} Release ${number}`
     const allIds = connectedSchools.map((s) => s.id)
+    const branchIds = isMaster ? allIds : schools
+
+    /* Pehle server par — na chale to local record banta hi nahi, warna screen
+       "released" dikhati aur schools ke paas kuch pohanchta hi nahi. */
+    let apiId = 0
+    setRelBusy(true)
+    try {
+      apiId = await saveRelease({
+        isMaster,
+        dueDate: dueDate || addDaysISO(validityDays),
+        creationDate: relOn,
+        duration: validityDays,
+        branchIds,
+        items: releaseItemsOf(content),
+      })
+    } catch (err) {
+      setRelBusy(false)
+      fire(err?.message || 'Could not publish the release', 'warn')
+      return
+    }
+    setRelBusy(false)
+    /* Local workspace ka jama kiya hua snapshot — ye sirf is screen ke
+       "Releases & Drafts" ke liye hai; server ko jo gaya wo `content` hai. */
     const snapshot = {
-      lessonPlans: JSON.parse(JSON.stringify(content.a.lessonPlans || [])),
-      notebookPlans: JSON.parse(JSON.stringify(content.a.notebookPlans || [])),
-      activityCalendar: JSON.parse(JSON.stringify(content.a.activityCalendar || [])),
-      resources: JSON.parse(JSON.stringify(content.resources || [])),
+      lessonPlans: JSON.parse(JSON.stringify(workspaceContent.a.lessonPlans || [])),
+      notebookPlans: JSON.parse(JSON.stringify(workspaceContent.a.notebookPlans || [])),
+      activityCalendar: JSON.parse(JSON.stringify(workspaceContent.a.activityCalendar || [])),
+      resources: JSON.parse(JSON.stringify(workspaceContent.resources || [])),
     }
     const release = {
       id: `rel-${seq}-${Date.now()}`,
+      apiId,                                   // server ka master id — revoke isi se
       releaseType, releaseTitle: title, label: title, releaseNumber: number, version: seq,
-      batchId: `${type === 'master' ? 'MR' : 'SR'}-${new Date().getFullYear()}-${String(number).padStart(3, '0')}`,
+      batchId: `${isMaster ? 'MR' : 'SR'}-${new Date().getFullYear()}-${String(number).padStart(3, '0')}`,
       parentReleaseId: parentReleaseId || null, headOfficeId: 'HO-001',
-      appliesToAllSchools: type === 'master',
-      selectedSchoolIds: type === 'master' ? allIds : schools,
-      schoolCount: (type === 'master' ? allIds : schools).length,
-      releasedAt: nowISO, createdAt: nowISO, updatedAt: nowISO,
-      validityDays, validUntil: addDaysISO(validityDays), dueDate: dueDate || null,
+      appliesToAllSchools: isMaster,
+      selectedSchoolIds: branchIds,
+      schoolCount: branchIds.length,
+      releasedAt: relOn, createdAt: nowISO, updatedAt: nowISO, creationDate: relOn,
+      /* "Valid until" wahi tareekh hai jo server ko dueDate ban kar gayi —
+         warna tile par kuch aur dikhta aur schools ko kuch aur milta. */
+      validityDays, validUntil: dueDate || addDaysISO(validityDays), dueDate: dueDate || null,
       releasedBy: 'Head Office', releaseStatus: 'ACTIVE',
       contentSummary: summary.totals, classWiseSummary: summary.classes,
-      activityIds: snapshot.activityCalendar.map((x) => x.id),
-      lessonPlanIds: snapshot.lessonPlans.map((u) => u.id),
-      notebookPlanIds: snapshot.notebookPlans.map((u) => u.id),
-      resourceLibraryIds: snapshot.resources.map((r) => r.id),
+      /* Jo ids WAQAI server ko gayi hain (child2), na ke local snapshot ki. */
+      activityIds: content.activities.map((x) => x.id),
+      lessonPlanIds: content.lessons.map((x) => x.id),
+      notebookPlanIds: content.notebooks.map((x) => x.id),
+      resourceLibraryIds: content.resources.map((x) => x.id),
       snapshot,
     }
-    commit({ ...a, released: true, releasedAt: nowISO.slice(0, 10), releaseSeq: seq, release, releases: [...releases, release] })
+    commit({ ...a, released: true, releasedAt: relOn, releaseSeq: seq, release, releases: [...releases, release] })
     setModalType(null)
     fire(`${title} published · ${release.batchId}`, 'success')
   }
 
-  const doRevoke = () => {
+  /* Revoke = server par se poora release (master + dono child set) hat jana.
+     Ek dafa ka seed record (jiska apiId nahi) sirf yahin archive hota hai. */
+  const doRevoke = async () => {
     const id = revoke.id
+    if (revoke.apiId) {
+      setRelBusy(true)
+      try {
+        await deleteRelease(revoke.apiId, {
+          isMaster: revoke.releaseType !== 'SUB_RELEASE',
+          dueDate: revoke.dueDate || revoke.validUntil,
+          /* Server delete par bhi CreationDate maangta hai — jo release ke
+             sath aayi thi wahi wapas jati hai. */
+          creationDate: revoke.creationDate || revoke.releasedAt,
+          duration: revoke.validityDays,
+        })
+      } catch (err) {
+        setRelBusy(false)
+        fire(err?.message || 'Could not revoke the release', 'warn')
+        return
+      }
+      setRelBusy(false)
+    }
     commit({ ...a, releases: releases.map((r) => (r.id === id ? { ...r, releaseStatus: 'ARCHIVED', updatedAt: new Date().toISOString() } : r)) })
     setView(id) // bring it into the editable workspace
     fire(`${revoke.label} revoked — moved to Releases & Drafts, now editable`, 'info')
@@ -135,7 +274,7 @@ export default function Academics() {
       </div>
 
       {/* 1 — Currently live */}
-      <LiveReleasesCard releases={releases} onView={setView} onCreate={setModalType} onRevoke={setRevoke} />
+      <LiveReleasesCard releases={releases} onView={setDetail} onCreate={setModalType} onRevoke={setRevoke} />
 
       {/* 2 — Releases & Drafts (only non-live editable workspaces) */}
       <div className="ac-rel-bar">
@@ -150,7 +289,9 @@ export default function Academics() {
       </div>
 
       {/* 3 — Release Control panel (contextual to selected workspace) */}
-      <ReleaseBar workspaceName={workspaceName} workspaceContent={workspaceContent} isCurrent={view === 'current'} isLiveView={isLiveView} onCreate={setModalType} />
+      <div ref={relBarRef}>
+        <ReleaseBar workspaceName={workspaceName} content={workspaceRelContent} isCurrent={view === 'current'} isLiveView={isLiveView} onCreate={setModalType} />
+      </div>
 
       {/* Live read-only notice */}
       {isLiveView && (
@@ -195,7 +336,9 @@ export default function Academics() {
         {sub === 'breakup' && <TermBreakups a={aView} commit={commitView} fire={fire} />}
       </div>
 
-      {modalType && <ReleaseModal type={modalType} a={a} releases={releases} baseContent={workspaceContent} baseLabel={workspaceName} onClose={() => setModalType(null)} onRelease={applyRelease} />}
+      {modalType && <ReleaseModal type={modalType} releases={releases} relContent={relContent} baseRelease={viewedRelease} baseLabel={workspaceName} busy={relBusy} onClose={() => setModalType(null)} onRelease={applyRelease} />}
+
+      {detail && <ReleaseDetailsModal release={detail} relContent={relContent} schools={connectedSchools} onClose={() => setDetail(null)} onRevoke={(r) => { setDetail(null); setRevoke(r) }} />}
 
       {revoke && createPortal(
         <div className="ov" onMouseDown={(e) => { if (e.target === e.currentTarget) setRevoke(null) }}>
@@ -204,7 +347,7 @@ export default function Academics() {
               <div className="confirm-icon" style={{ background: 'rgba(220,38,38,.1)', border: '2px solid rgba(220,38,38,.25)', color: '#DC2626' }}><i className="fa-solid fa-ban" /></div>
               <div className="confirm-title">Revoke {revoke.label}?</div>
               <div className="confirm-sub">This release will be taken down immediately. {revoke.appliesToAllSchools ? 'All member schools' : `The ${revoke.schoolCount} selected school${revoke.schoolCount !== 1 ? 's' : ''}`} will no longer be able to pull this content. It stays in your release history and can be re-released later.</div>
-              <div className="confirm-btns"><button className="btn-secondary" onClick={() => setRevoke(null)}>Cancel</button><button className="btn-danger" onClick={doRevoke}><i className="fa-solid fa-ban" /> Revoke Release</button></div>
+              <div className="confirm-btns"><button className="btn-secondary" onClick={() => setRevoke(null)} disabled={relBusy}>Cancel</button><button className="btn-danger" onClick={doRevoke} disabled={relBusy}><i className={`fa-solid ${relBusy ? 'fa-spinner fa-spin' : 'fa-ban'}`} /> {relBusy ? 'Revoking…' : 'Revoke Release'}</button></div>
             </div>
           </div>
         </div>,
@@ -219,39 +362,69 @@ export default function Academics() {
 /* ── Release helpers ── */
 const ORDINALS = ['First', 'Second', 'Third', 'Fourth', 'Fifth', 'Sixth', 'Seventh', 'Eighth', 'Ninth', 'Tenth', 'Eleventh', 'Twelfth']
 const ordinalWord = (n) => ORDINALS[n - 1] || `${n}th`
-const addDaysISO = (days) => { const d = new Date(); d.setDate(d.getDate() + Number(days)); return d.toISOString().slice(0, 10) }
+const addDaysISO = (days) => addDaysToISO(todayISO(), days)
+/* Kisi tareekh me din jorna — Release Date + Validity Days = Due Date. */
+const addDaysToISO = (iso, days) => {
+  const d = new Date(`${iso}T00:00:00`)
+  if (Number.isNaN(d.getTime())) return ''
+  d.setDate(d.getDate() + Number(days))
+  return isoDay(d)
+}
+/* Do tareekhon ke darmiyan din — Due Date se Validity Days banane ke liye
+   (Release Date, Validity Days aur Due Date teenon jure hue hain, dekhein
+   ReleaseModal). */
+const daysBetweenISO = (from, to) => {
+  if (!from || !to) return NaN
+  const a = new Date(`${from}T00:00:00`)
+  const b = new Date(`${to}T00:00:00`)
+  if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime())) return NaN
+  return Math.round((b - a) / 86400000)
+}
 function releaseState(a) {
   if (!a.released) return 'CLOSED'
   const vu = a.release?.validUntil
   if (vu && new Date() > new Date(`${vu}T23:59:59`)) return 'EXPIRED'
   return 'OPEN'
 }
-/* Counts releasable academic content class-wise + general (dynamic, from store). */
-function computeReleaseSummary(a, resources) {
-  const classes = a.classes.map((c) => {
-    const lessonsBySubj = {}; let lessons = 0
-    a.lessonPlans.filter((u) => u.classId === c.id).forEach((u) => { const n = u.lessons?.length || 0; lessons += n; lessonsBySubj[u.subjectId] = (lessonsBySubj[u.subjectId] || 0) + n })
-    const notebooksBySubj = {}
-    a.notebookPlans.filter((u) => u.classId === c.id).forEach((u) => { notebooksBySubj[u.subjectId] = (notebooksBySubj[u.subjectId] || 0) + 1 })
-    const notebooks = a.notebookPlans.filter((u) => u.classId === c.id).length
-    const tbBySubj = {}
-    a.textbooks.filter((t) => t.classId === c.id).forEach((t) => { tbBySubj[t.subjectId] = (tbBySubj[t.subjectId] || 0) + 1 })
-    const textbooks = a.textbooks.filter((t) => t.classId === c.id).length
-    const termBySubj = {}; let termUnits = 0
-    Object.values(a.termBreakups[c.id] || {}).forEach((bySubj) => Object.entries(bySubj).forEach(([sid, units]) => { const n = (units || []).length; termUnits += n; termBySubj[sid] = (termBySubj[sid] || 0) + n }))
-    const res = resources.filter((r) => r.classId === c.id)
-    const resByCat = { worksheet: 0, summer: 0, qpaper: 0, other: 0 }
-    res.forEach((r) => { resByCat[r.category] = (resByCat[r.category] || 0) + 1 })
-    const resourcesTotal = res.length
-    const total = lessons + notebooks + resourcesTotal
-    return { classId: c.id, name: c.name, lessons, notebooks, textbooks, termUnits, resourcesTotal, resByCat, lessonsBySubj, notebooksBySubj, tbBySubj, termBySubj, total }
-  }).filter((x) => x.total > 0)
-  const sum = (k) => classes.reduce((n, c) => n + c[k], 0)
-  const activities = a.activityCalendar?.length || 0
+
+/* Server ka release row → wahi shape jo ye screen padhti hai.
+   Server sirf dueDate + duration rakhta hai (releasedAt ka column nahi), is
+   liye "valid until" ke liye dueDate hi chalti hai. Content ka snapshot bhi
+   server par nahi hota — us release ki ginti Child2Raw se banti hai. */
+const idsOfType = (r, key) => r.items.filter((x) => x.typeKey === key).map((x) => x.typeID)
+function adoptApiRelease(r) {
+  const type = r.isMaster ? 'MASTER_RELEASE' : 'SUB_RELEASE'
+  const title = `${r.isMaster ? 'Master' : 'Sub'} Release ${r.id}`
   return {
-    classes,
-    totals: { classes: classes.length, lessons: sum('lessons'), notebooks: sum('notebooks'), resourceFiles: sum('resourcesTotal'), activities },
-    general: { activities },
+    id: `api-${r.id}`,
+    apiId: r.id,
+    releaseType: type, releaseTitle: title, label: title, releaseNumber: r.id, version: r.id,
+    batchId: `${r.isMaster ? 'MR' : 'SR'}-${r.id}`,
+    parentReleaseId: null, headOfficeId: 'HO-001',
+    appliesToAllSchools: r.isMaster,
+    selectedSchoolIds: r.branchIds,
+    schoolCount: r.branchIds.length,
+    /* Ab server CreationDate rakhta hai — "Released on" wahin se aata hai
+       (pehle yahan null tha aur har tile par "—" dikhta tha). */
+    releasedAt: isoDay(r.creationDate), createdAt: r.creationDate || null, updatedAt: null,
+    creationDate: r.creationDate || null,
+    validityDays: Number(r.duration) || 0, validUntil: r.dueDate, dueDate: r.dueDate,
+    releasedBy: 'Head Office', releaseStatus: 'ACTIVE',
+    contentSummary: {
+      classes: 0,
+      lessons: r.counts.lessons,
+      notebooks: r.counts.notebooks,
+      resourceFiles: r.counts.resources,
+      activities: r.counts.activities,
+    },
+    classWiseSummary: [],
+    /* `typeKey` releaseApi banata hai — nayi aur purani dono spelling usi
+       ek kunji par aati hain, is liye yahan koi string nahi likhi jati. */
+    activityIds: idsOfType(r, 'activity'),
+    lessonPlanIds: idsOfType(r, 'lesson'),
+    notebookPlanIds: idsOfType(r, 'notebook'),
+    resourceLibraryIds: idsOfType(r, 'resource'),
+    snapshot: { lessonPlans: [], notebookPlans: [], activityCalendar: [], resources: [] },
   }
 }
 
@@ -263,8 +436,8 @@ function releaseStatusOf(r) {
 }
 
 /* ── Release Control panel — contextual to the selected workspace ── */
-function ReleaseBar({ workspaceName, workspaceContent, isCurrent, isLiveView, onCreate }) {
-  const summary = useMemo(() => computeReleaseSummary(workspaceContent.a, workspaceContent.resources), [workspaceContent])
+function ReleaseBar({ workspaceName, content, isCurrent, isLiveView, onCreate }) {
+  const summary = useMemo(() => summarizeReleaseContent(content), [content])
   const t = summary.totals
   const empty = (t.lessons + t.notebooks + t.resourceFiles + t.activities) === 0
   const masterLbl = isCurrent ? 'Create Master Release' : 'Release as Master Release'
@@ -321,11 +494,11 @@ function LiveReleaseTile({ r, onView, onRevoke }) {
       <div className="live-aud">{r.appliesToAllSchools ? 'All Member Schools' : 'Selected Schools Only'}</div>
       <div className="live-rows">
         <div className="live-row"><span>Released to</span><strong>{r.schoolCount} School{r.schoolCount !== 1 ? 's' : ''}</strong></div>
-        <div className="live-row"><span>Released on</span><strong>{fmtDate((r.releasedAt || '').slice(0, 10))}</strong></div>
+        <div className="live-row"><span>Released on</span><strong>{fmtDate(isoDay(r.releasedAt))}</strong></div>
         <div className="live-row"><span>Valid until</span><strong>{r.validUntil ? fmtDate(r.validUntil) : '—'}</strong></div>
       </div>
       <div className="live-actions">
-        <button className="btn-sm res-keep live-view" onClick={() => onView(r.id)}><i className="fa-solid fa-eye" /> View</button>
+        <button className="btn-sm res-keep live-view" onClick={() => onView(r)}><i className="fa-solid fa-eye" /> View</button>
         <button className="btn-sm live-revoke res-keep" onClick={() => onRevoke(r)}><i className="fa-solid fa-ban" /> Revoke</button>
       </div>
     </div>
@@ -362,21 +535,24 @@ function LiveReleasesCard({ releases, onView, onCreate, onRevoke }) {
 }
 
 /* ── Master / Sub release modal ── */
-function ReleaseModal({ a, type, releases, baseContent, baseLabel, onClose, onRelease }) {
+function ReleaseModal({ type, releases, relContent, baseRelease, baseLabel, busy, onClose, onRelease }) {
   const isSub = type === 'sub'
   const [source, setSource] = useState('base') // sub: 'base' (selected workspace) | release id
   const sourceRelease = isSub && source !== 'base' ? releases.find((r) => r.id === source) : null
-  const content = useMemo(() => (sourceRelease ? {
-    a: { ...a, lessonPlans: sourceRelease.snapshot?.lessonPlans || [], notebookPlans: sourceRelease.snapshot?.notebookPlans || [], activityCalendar: sourceRelease.snapshot?.activityCalendar || [] },
-    resources: sourceRelease.snapshot?.resources || [],
-  } : baseContent), [sourceRelease, baseContent])
-  const summary = useMemo(() => computeReleaseSummary(content.a, content.resources), [content])
+  /* Jo content release hoga: Current Draft par poora live index, kisi purane
+     release par sirf usi ki ids. Summary aur child2 dono isi se bante hain. */
+  const content = useMemo(
+    () => filterReleaseContent(relContent, idSetsOf(sourceRelease || baseRelease)),
+    [relContent, sourceRelease, baseRelease],
+  )
+  const summary = useMemo(() => summarizeReleaseContent(content), [content])
   const t = summary.totals
   const noContent = (t.lessons + t.notebooks + t.resourceFiles + t.activities) === 0
 
   /* Schools ab API se aate hain (ViewProvider), is liye list async bharti hai —
      master release ka "sab select" schools aane par set hota hai. */
   const { schools: connectedSchools } = useView()
+  const [releaseDate, setReleaseDate] = useState(todayISO)
   const [days, setDays] = useState('30')
   const [dueDate, setDueDate] = useState(() => addDaysISO(30))
   const [schoolSel, setSchoolSel] = useState(() => new Set())
@@ -387,24 +563,58 @@ function ReleaseModal({ a, type, releases, baseContent, baseLabel, onClose, onRe
   const [confirm, setConfirm] = useState(false)
   const [open, setOpen] = useState({})
 
+  /* Release Date, Validity Days aur Due Date ek hi cheez ke teen rukh hain —
+     ek badle to baqi bhi. Pehle Release Date sirf `todayISO()` ka likha hua
+     text tha aur Due Date alag chalti thi, is liye "Valid Until" hilta hi
+     nahi tha. Ab Release Date bhi calendar se chunti hai aur server ko
+     `creationDate` ban kar jati hai — "Released on" wahin se aata hai. */
+  const setReleaseAndDue = (v) => {
+    setReleaseDate(v)
+    const n = Number(days)
+    if (v && Number.isFinite(n) && n >= 1 && n <= 365) setDueDate(addDaysToISO(v, n))
+  }
+  const setDaysAndDue = (v) => {
+    setDays(v)
+    const n = Number(v)
+    if (v !== '' && Number.isFinite(n) && n >= 1 && n <= 365) setDueDate(addDaysToISO(releaseDate, n))
+  }
+  const setDueAndDays = (v) => {
+    setDueDate(v)
+    const n = daysBetweenISO(releaseDate, v)
+    if (Number.isFinite(n) && n >= 1) setDays(String(n))
+  }
+
+  const today = todayISO()
   const dn = Number(days)
+  const dueDays = daysBetweenISO(releaseDate, dueDate)
+  const relLag = daysBetweenISO(today, releaseDate)   // release date guzri hui na ho
   const validDays = days !== '' && Number.isFinite(dn) && dn >= 1 && dn <= 365
-  const err = days === '' ? 'Validity days is required.' : (!Number.isFinite(dn) || dn < 1 ? 'Enter a positive number of days.' : dn > 365 ? 'Maximum recommended is 365 days.' : '')
-  const releaseDate = todayISO()
-  const validUntil = validDays ? addDaysISO(dn) : null
+    && Number.isFinite(dueDays) && dueDays >= 1
+    && Number.isFinite(relLag) && relLag >= 0
+  const err = !releaseDate ? 'Release date is required.'
+    : (!Number.isFinite(relLag) || relLag < 0) ? 'Release date cannot be in the past.'
+      : days === '' ? 'Validity days is required.'
+        : (!Number.isFinite(dn) || dn < 1) ? 'Enter a positive number of days.'
+          : dn > 365 ? 'Maximum recommended is 365 days.'
+            : !dueDate ? 'Due date is required.'
+              : (!Number.isFinite(dueDays) || dueDays < 1) ? 'Due date must be after the release date.' : ''
+  /* Jo tareekhein server ko jati hain wahi yahan dikhti hain — do alag hisaab nahi. */
+  const validUntil = validDays ? dueDate : null
   const shortValidity = validDays && dn < 7
 
   const schoolList = connectedSchools.filter((s) => { const q = schoolQ.trim().toLowerCase(); return !q || s.name.toLowerCase().includes(q) || (s.phone || '').includes(q) })
   const allSchools = connectedSchools.length > 0 && schoolSel.size === connectedSchools.length
   const toggleSchool = (id) => setSchoolSel((p) => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n })
   const toggleAllSchools = () => setSchoolSel(allSchools ? new Set() : new Set(connectedSchools.map((s) => s.id)))
-  const canRelease = validDays && confirm && !noContent && (!isSub || schoolSel.size > 0)
+  /* Master bhi tab hi ja sakta hai jab chain me koi school ho — child1 khali
+     bhejne ka matlab hai release kisi tak pohanchega hi nahi. */
+  const canRelease = validDays && confirm && !noContent && (isSub ? schoolSel.size > 0 : connectedSchools.length > 0)
   const nextNo = releases.filter((r) => r.releaseType === (isSub ? 'SUB_RELEASE' : 'MASTER_RELEASE')).length + 1
   const nextBatch = `${isSub ? 'SR' : 'MR'}-${new Date().getFullYear()}-${String(nextNo).padStart(3, '0')}`
 
-  const subjRows = (map) => Object.entries(map).filter(([, n]) => n > 0).map(([sid, n]) => <div className="rel-row" key={sid}><span>{subjectName(a, Number(sid))}</span><span className="rel-row-n">{n}</span></div>)
+  const subjRows = (map) => Object.entries(map).filter(([, n]) => n > 0).map(([sid, n]) => <div className="rel-row" key={sid}><span>{summary.subjectName(sid)}</span><span className="rel-row-n">{n}</span></div>)
   const card = (icon, val, lbl, accent) => <div className={`rel-sum ${accent || ''}`}><div className="rel-sum-ic"><i className={`fa-solid ${icon}`} /></div><div><div className="rel-sum-val">{val}</div><div className="rel-sum-lbl">{lbl}</div></div></div>
-  const submit = () => onRelease(type, { validityDays: dn, dueDate, schools: [...schoolSel], parentReleaseId: sourceRelease?.id || null, content }, summary)
+  const submit = () => onRelease(type, { validityDays: dn, dueDate, creationDate: releaseDate, schools: [...schoolSel], parentReleaseId: sourceRelease?.id || null, content }, summary)
 
   return createPortal(
     <div className="pay-ov" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
@@ -420,7 +630,7 @@ function ReleaseModal({ a, type, releases, baseContent, baseLabel, onClose, onRe
           <div className={`rel-type ${isSub ? 'sub' : 'master'}`}>
             <div className="rel-type-row">
               <div><div className="rel-type-k">Release Type</div><div className="rel-type-v">{isSub ? 'Sub Release' : 'Master Release'}</div></div>
-              <div><div className="rel-type-k">Audience</div><div className="rel-type-v">{isSub ? 'Selected Schools Only' : 'All Member Schools'}</div></div>
+              <div><div className="rel-type-k">Audience</div><div className="rel-type-v">{isSub ? `Selected Schools Only (${schoolSel.size})` : `All Member Schools (${connectedSchools.length})`}</div></div>
             </div>
             <div className="rel-type-exp"><i className="fa-solid fa-circle-info" /> {isSub
               ? 'This release will be available only to the selected schools. Other schools will not see this sub release, and the Master Release for all schools is not affected.'
@@ -462,8 +672,9 @@ function ReleaseModal({ a, type, releases, baseContent, baseLabel, onClose, onRe
               {/* Release validity */}
               <div className="rel-sec-h"><i className="fa-solid fa-hourglass-half" /> Release Validity</div>
               <div className="rel-validity">
-                <div className="ac-field" style={{ maxWidth: 160 }}><label>Validity Days *</label><input className="ac-input" type="number" min="1" max="365" value={days} onChange={(e) => setDays(e.target.value)} placeholder="e.g. 30" /></div>
-                <div className="ac-field" style={{ maxWidth: 180 }}><label>Due Date</label><input className="ac-input" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} /></div>
+                <div className="ac-field" style={{ maxWidth: 180 }}><label>Release Date *</label><input className="ac-input" type="date" min={today} value={releaseDate} onChange={(e) => setReleaseAndDue(e.target.value)} /></div>
+                <div className="ac-field" style={{ maxWidth: 160 }}><label>Validity Days *</label><input className="ac-input" type="number" min="1" max="365" value={days} onChange={(e) => setDaysAndDue(e.target.value)} placeholder="e.g. 30" /></div>
+                <div className="ac-field" style={{ maxWidth: 180 }}><label>Due Date</label><input className="ac-input" type="date" min={addDaysToISO(releaseDate, 1)} value={dueDate} onChange={(e) => setDueAndDays(e.target.value)} /></div>
                 <div className="rel-dates">
                   <div className="rel-date"><div className="rel-date-lbl">Release Date</div><div className="rel-date-val">{fmtDate(releaseDate)}</div></div>
                   <i className="fa-solid fa-arrow-right-long rel-date-arrow" />
@@ -473,27 +684,37 @@ function ReleaseModal({ a, type, releases, baseContent, baseLabel, onClose, onRe
               <div className="rel-help">Schools can pull this content for the selected number of days. The due date is the recommended deadline shown to schools.</div>
               {err && <div className="rel-err"><i className="fa-solid fa-circle-exclamation" /> {err}</div>}
 
-              {/* School selection — Sub release only */}
-              {isSub && (
-                <>
-                  <div className="rel-sec-h"><i className="fa-solid fa-school" /> Selected Schools <span className="rel-sec-count">{schoolSel.size} selected</span></div>
-                  <div className="rel-school-tools">
-                    <label className="rel-selall"><input type="checkbox" checked={allSchools} onChange={toggleAllSchools} /> <span>Select all schools</span></label>
-                    <div className="res-search" style={{ maxWidth: 240 }}><i className="fa-solid fa-magnifying-glass" /><input value={schoolQ} onChange={(e) => setSchoolQ(e.target.value)} placeholder="Search school…" /></div>
+              {/* Schools — DONO releases me chain ki poori branch list dikhti hai.
+                  Sub par har branch chuni ja sakti hai; Master har branch ko
+                  jata hai, is liye wahan sab pehle se lagi hui aur band hain
+                  (chhaant ka koi matlab hi nahi) — magar list phir bhi saamne
+                  rehti hai taake pata ho release kahan kahan ja raha hai. */}
+              <div className="rel-sec-h">
+                <i className="fa-solid fa-school" /> {isSub ? 'Selected Schools' : 'Member Schools'}
+                <span className="rel-sec-count">{isSub ? `${schoolSel.size} of ${connectedSchools.length} selected` : `all ${connectedSchools.length} included`}</span>
+              </div>
+              <div className="rel-school-tools">
+                {isSub
+                  ? <label className="rel-selall"><input type="checkbox" checked={allSchools} onChange={toggleAllSchools} /> <span>Select all schools</span></label>
+                  : <span className="rel-help" style={{ margin: 0 }}><i className="fa-solid fa-circle-info" /> A Master Release goes to every school in the chain — the list cannot be narrowed here. Use a Sub Release to pick schools.</span>}
+                <div className="res-search" style={{ maxWidth: 240 }}><i className="fa-solid fa-magnifying-glass" /><input value={schoolQ} onChange={(e) => setSchoolQ(e.target.value)} placeholder="Search school…" /></div>
+              </div>
+              <div className="rel-schools">
+                {schoolList.map((s) => (
+                  <label key={s.id} className={`rel-school${schoolSel.has(s.id) ? ' on' : ''}${isSub ? '' : ' locked'}`}>
+                    <input type="checkbox" checked={schoolSel.has(s.id)} disabled={!isSub} onChange={() => toggleSchool(s.id)} />
+                    <span className="rel-school-name">{s.name}</span>
+                    <span className="rel-school-city"><i className="fa-solid fa-phone" /> {s.phone || '—'}</span>
+                  </label>
+                ))}
+                {schoolList.length === 0 && (
+                  <div className="rel-empty-note">
+                    {connectedSchools.length === 0 ? 'No schools have joined this chain yet.' : `No schools match “${schoolQ}”.`}
                   </div>
-                  <div className="rel-schools">
-                    {schoolList.map((s) => (
-                      <label key={s.id} className={`rel-school${schoolSel.has(s.id) ? ' on' : ''}`}>
-                        <input type="checkbox" checked={schoolSel.has(s.id)} onChange={() => toggleSchool(s.id)} />
-                        <span className="rel-school-name">{s.name}</span>
-                        <span className="rel-school-city"><i className="fa-solid fa-phone" /> {s.phone || '—'}</span>
-                      </label>
-                    ))}
-                    {schoolList.length === 0 && <div className="rel-empty-note">No schools match “{schoolQ}”.</div>}
-                  </div>
-                  {schoolSel.size === 0 && <div className="rel-err"><i className="fa-solid fa-circle-exclamation" /> Select at least one school for this sub release.</div>}
-                </>
-              )}
+                )}
+              </div>
+              {isSub && schoolSel.size === 0 && <div className="rel-err"><i className="fa-solid fa-circle-exclamation" /> Select at least one school for this sub release.</div>}
+              {!isSub && connectedSchools.length === 0 && <div className="rel-err"><i className="fa-solid fa-circle-exclamation" /> No connected schools — this master release would not reach anyone.</div>}
 
               {/* Class-wise content */}
               <div className="rel-sec-h"><i className="fa-solid fa-layer-group" /> Class-wise Content</div>
@@ -539,10 +760,159 @@ function ReleaseModal({ a, type, releases, baseContent, baseLabel, onClose, onRe
 
         <div className="pay-modal-foot">
           {!noContent && !canRelease && (
-            <span className="rel-foot-hint"><i className="fa-solid fa-circle-info" /> {!validDays ? 'Enter valid validity days (1–365)' : (isSub && schoolSel.size === 0) ? 'Select at least one school' : 'Tick the confirmation checkbox'} to enable release</span>
+            <span className="rel-foot-hint"><i className="fa-solid fa-circle-info" /> {!validDays ? 'Enter valid validity days (1–365)' : (isSub && schoolSel.size === 0) ? 'Select at least one school' : (!isSub && connectedSchools.length === 0) ? 'Connect at least one school to this chain' : 'Tick the confirmation checkbox'} to enable release</span>
           )}
-          <button className="btn-secondary" onClick={onClose}>Cancel</button>
-          <button className="btn-success" disabled={!canRelease} onClick={submit}><i className="fa-solid fa-cloud-arrow-up" /> {isSub ? 'Release to Selected Schools' : 'Release to All Schools'}</button>
+          <button className="btn-secondary" onClick={onClose} disabled={busy}>Cancel</button>
+          <button className="btn-success" disabled={!canRelease || busy} onClick={submit}>
+            {busy ? <><i className="fa-solid fa-spinner fa-spin" /> Releasing…</> : <><i className="fa-solid fa-cloud-arrow-up" /> {isSub ? 'Release to Selected Schools' : 'Release to All Schools'}</>}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  )
+}
+
+/* ── Release ki tafseel — "Currently Live for Schools" ka View ──
+   Pehle View poore page ko read-only snapshot workspace me daal deta tha.
+   Snapshot local store se banta hai jabke asal content API se live aata hai,
+   is liye wahan kuch dikhta hi nahi tha aur sab kuch greyed-out ho jata tha.
+   Ab View us release ki tafseel kholta hai: jo ids WAQAI release hui thin,
+   unhi ko live content index me se chhaant kar dikhaya jata hai. */
+function ReleaseDetailsModal({ release, relContent, schools, onClose, onRevoke }) {
+  const [open, setOpen] = useState({})
+  const isSub = release.releaseType === 'SUB_RELEASE'
+  const status = releaseStatusOf(release)
+
+  const content = useMemo(() => filterReleaseContent(relContent, idSetsOf(release)), [relContent, release])
+  const summary = useMemo(() => summarizeReleaseContent(content), [content])
+  const t = summary.totals
+
+  /* Jin ids ka content HO se mit chuka hai wo yahan nahi milti — is liye jo
+     release me tha aur jo abhi maujood hai, dono ki ginti alag ho sakti hai. */
+  const sent = release.contentSummary || {}
+  const missing = Math.max(0, (Number(sent.activities) || 0) + (Number(sent.lessons) || 0)
+    + (Number(sent.notebooks) || 0) + (Number(sent.resourceFiles) || 0)
+    - (t.activities + t.lessons + t.notebooks + t.resourceFiles))
+
+  const nameOf = (id) => schools.find((s) => s.id === id)?.name || `Branch #${id}`
+  const sentTo = (release.selectedSchoolIds || []).map(nameOf)
+
+  const subjRows = (map) => Object.entries(map).filter(([, n]) => n > 0)
+    .map(([sid, n]) => <div className="rel-row" key={sid}><span>{summary.subjectName(sid)}</span><span className="rel-row-n">{n}</span></div>)
+  const card = (icon, val, lbl, accent) => <div className={`rel-sum ${accent || ''}`}><div className="rel-sum-ic"><i className={`fa-solid ${icon}`} /></div><div><div className="rel-sum-val">{val}</div><div className="rel-sum-lbl">{lbl}</div></div></div>
+
+  return createPortal(
+    <div className="pay-ov" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
+      <div className="pay-modal rel-modal">
+        <div className="pay-modal-hdr" style={{ background: isSub ? 'linear-gradient(135deg,#6D28D9,#7C3AED)' : 'linear-gradient(135deg,#1E3A8A,#1E40AF)' }}>
+          <div className="pay-modal-av" style={{ background: 'rgba(255,255,255,.15)' }}><i className={`fa-solid ${isSub ? 'fa-code-branch' : 'fa-globe'}`} /></div>
+          <div>
+            <div className="pay-modal-title" style={{ color: '#fff' }}>{release.label}</div>
+            <div className="pay-modal-sub" style={{ color: 'rgba(255,255,255,.85)' }}>{release.batchId} · {isSub ? 'Sub Release' : 'Master Release'} · currently live for schools</div>
+          </div>
+          <button className="pay-modal-x" style={{ background: 'rgba(255,255,255,.12)', borderColor: 'rgba(255,255,255,.3)', color: '#fff' }} onClick={onClose}><i className="fa-solid fa-xmark" /></button>
+        </div>
+
+        <div className="pay-modal-body">
+          <div className={`rel-type ${isSub ? 'sub' : 'master'}`}>
+            <div className="rel-type-row">
+              <div><div className="rel-type-k">Release Type</div><div className="rel-type-v">{isSub ? 'Sub Release' : 'Master Release'}</div></div>
+              <div><div className="rel-type-k">Audience</div><div className="rel-type-v">{release.appliesToAllSchools ? `All Member Schools (${release.schoolCount})` : `Selected Schools Only (${release.schoolCount})`}</div></div>
+              <div><div className="rel-type-k">Status</div><div className="rel-type-v">{status === 'ACTIVE' ? 'Live' : status === 'EXPIRED' ? 'Expired' : 'Revoked'}</div></div>
+            </div>
+          </div>
+
+          <div className="rel-sec-h"><i className="fa-solid fa-hourglass-half" /> Release Validity</div>
+          <div className="rel-validity">
+            <div className="rel-dates">
+              <div className="rel-date"><div className="rel-date-lbl">Released on</div><div className="rel-date-val">{fmtDate(isoDay(release.releasedAt))}</div></div>
+              <i className="fa-solid fa-arrow-right-long rel-date-arrow" />
+              <div className="rel-date"><div className="rel-date-lbl">Valid until</div><div className="rel-date-val">{release.validUntil ? fmtDate(release.validUntil) : '—'}</div></div>
+            </div>
+          </div>
+          <div className="rel-help">Validity {release.validityDays ? `${release.validityDays} day${Number(release.validityDays) !== 1 ? 's' : ''}` : '—'}. Schools can pull this content until the due date shown above.</div>
+
+          <div className="rel-sec-h"><i className="fa-solid fa-chart-simple" /> Released Content</div>
+          <div className="rel-sum-grid">
+            {card('fa-calendar-week', t.activities, 'Activities', 'r-blue')}
+            {card('fa-list-ul', t.lessons, 'Lesson Plans', 'r-teal')}
+            {card('fa-book-open', t.notebooks, 'Notebook Plans', 'r-purple')}
+            {card('fa-folder-open', t.resourceFiles, 'Resource Files', 'r-amber')}
+            {card('fa-chalkboard', t.classes, 'Classes', 'r-blue')}
+            {card('fa-school', release.schoolCount, 'Schools', 'r-green')}
+          </div>
+          {missing > 0 && (
+            <div className="rel-alert warn"><i className="fa-solid fa-triangle-exclamation" /><span>{missing} released item{missing !== 1 ? 's are' : ' is'} no longer available in the Head Office workspace — schools that already pulled it are unaffected.</span></div>
+          )}
+
+          <div className="rel-sec-h">
+            <i className="fa-solid fa-school" /> Released To
+            <span className="rel-sec-count">{release.schoolCount} school{release.schoolCount !== 1 ? 's' : ''}</span>
+          </div>
+          <div className="rel-schools">
+            {sentTo.map((n, i) => (
+              <div key={`${n}-${i}`} className="rel-school on locked">
+                <i className="fa-solid fa-school" style={{ fontSize: 11, color: 'var(--tm)', flexShrink: 0 }} />
+                <span className="rel-school-name">{n}</span>
+              </div>
+            ))}
+            {sentTo.length === 0 && <div className="rel-empty-note">This release did not reach any school.</div>}
+          </div>
+
+          <div className="rel-sec-h"><i className="fa-solid fa-layer-group" /> Class-wise Content</div>
+          {summary.classes.length === 0 ? <div className="rel-empty-note">No class-specific content in this release.</div>
+            : summary.classes.map((c) => {
+              const isOpen = open[c.classId]
+              return (
+                <div className={`rel-cls${isOpen ? ' open' : ''}`} key={c.classId}>
+                  <button className="rel-cls-head" onClick={() => setOpen((o) => ({ ...o, [c.classId]: !o[c.classId] }))}>
+                    <div className="rel-cls-ic"><i className="fa-solid fa-chalkboard-user" /></div>
+                    <div className="rel-cls-main"><div className="rel-cls-name">{c.name}</div><div className="rel-cls-sub">{c.lessons} Lesson Plans · {c.notebooks} Notebook Plans · {c.resourcesTotal} Resources</div></div>
+                    <span className="rel-cls-total">{c.total} items</span>
+                    <i className={`fa-solid fa-chevron-down rel-cls-chev${isOpen ? ' open' : ''}`} />
+                  </button>
+                  {isOpen && (
+                    <div className="rel-cls-body">
+                      {c.lessons > 0 && <div className="rel-grp"><div className="rel-grp-h"><i className="fa-solid fa-list-ul" /> Lesson Plans by subject</div>{subjRows(c.lessonsBySubj)}</div>}
+                      {c.notebooks > 0 && <div className="rel-grp"><div className="rel-grp-h"><i className="fa-solid fa-book-open" /> Notebook Plans by subject</div>{subjRows(c.notebooksBySubj)}</div>}
+                      {c.resourcesTotal > 0 && <div className="rel-grp"><div className="rel-grp-h"><i className="fa-solid fa-folder-open" /> Resource Library</div>{RES_CATEGORIES.filter((cat) => c.resByCat[cat.key] > 0).map((cat) => <div className="rel-row" key={cat.key}><span>{cat.label}</span><span className="rel-row-n">{c.resByCat[cat.key]}</span></div>)}</div>}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+
+          <div className="rel-sec-h"><i className="fa-solid fa-calendar-week" /> Activity Calendar</div>
+          {content.activities.length === 0 ? <div className="rel-empty-note">No activities in this release.</div> : (
+            <div className="rel-cls-body">
+              {content.activities.map((x) => (
+                <div className="rel-row" key={x.id}>
+                  <span>{x.name}</span>
+                  <span className="rel-row-n">{x.start === x.end ? fmtDate(x.start) : `${fmtDate(x.start)} → ${fmtDate(x.end)}`}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="rel-sec-h"><i className="fa-solid fa-folder-open" /> Resource Files</div>
+          {content.resources.length === 0 ? <div className="rel-empty-note">No resource files in this release.</div> : (
+            <div className="rel-cls-body">
+              {content.resources.map((x) => (
+                <div className="rel-row" key={x.id}>
+                  <span>{x.title || 'Untitled resource'}</span>
+                  <span className="rel-row-n">{RES_CATEGORIES.find((c) => c.key === x.category)?.label || x.category || 'Other'}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="rel-alert info"><i className="fa-solid fa-circle-info" /><span>A live release is read-only. Revoke it to move it back into Releases &amp; Drafts, edit the content, and release it again.</span></div>
+        </div>
+
+        <div className="pay-modal-foot">
+          <button className="btn-secondary" onClick={onClose}>Close</button>
+          {status === 'ACTIVE' && <button className="btn-danger" onClick={() => onRevoke(release)}><i className="fa-solid fa-ban" /> Revoke Release</button>}
         </div>
       </div>
     </div>,
