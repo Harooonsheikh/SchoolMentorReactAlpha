@@ -69,15 +69,50 @@ export const INITIAL_SOP = {
   ],
 };
 
-export const hasPdf = (m) => Boolean(m.pdfFile || m.pdfName);
-export const hasVideo = (m) => Boolean(m.vidUrl && m.vidStatus === 'available');
+/* PDF tab hi "hai" jab wo WAQAI khul sake: abhi chuni hui file, ya server se
+   aaya hua kaam ka URL (`pdfUrl` — dekhein schoolSops ka sopFileUrl, jo
+   bekaar path par khali deta hai). Pehle yahan sirf `pdfName` dekha jata
+   tha — path "string" jaisa ho to naam bhi "string" ban jata aur screen
+   "PDF hai" samajh kar khali viewer khol deti thi. */
+export const hasPdf = (m) => Boolean(m.pdfFile || m.pdfUrl);
 
-/* Normalise a YouTube URL to an embeddable form. */
+/**
+ * Koi bhi video link → iframe me chalne wala URL. Jo link chal hi nahi
+ * sakta us par KHALI string.
+ *
+ * Khali chhorna zaroori hai: `<iframe src="">` — aur waise hi `src="string"`
+ * jaisi koi relative value — browser MOJOODA origin par hal karta hai, yani
+ * app apna hi page iframe ke andar khol deti hai. (Live data me aise manuals
+ * maujood hain jin ka youtubeURL literal "string" hai aur tutorialAvailable
+ * true — wahi "video ke baghair bhi kuch khul jata hai" ki jar thi.)
+ *
+ * Is liye pehli shart: link poora http(s) URL ho. YouTube ke share/shorts/
+ * live link se video id nikal kar /embed/ wala URL banta hai — YouTube
+ * aam link ko iframe me chalne nahi deta (X-Frame-Options). Kisi aur host
+ * ka seedha video link jaisa hai waisa chala jata hai.
+ */
 export function embedUrl(url) {
-  if (!url) return '';
-  if (url.includes('watch?v=')) return url.replace('watch?v=', 'embed/');
-  if (url.includes('youtu.be/')) return `https://www.youtube.com/embed/${url.split('youtu.be/')[1]}`;
-  return url;
+  const raw = String(url ?? '').trim();
+  if (!/^https?:\/\//i.test(raw)) return '';        // khali, "string", relative → kuch nahi
+  let u;
+  try { u = new URL(raw); } catch (e) { return ''; }
+
+  const host = u.hostname.replace(/^www\./, '');
+  let id = '';
+  if (host === 'youtu.be') id = u.pathname.slice(1);
+  else if (/(^|\.)youtube\.com$/.test(host)) {
+    if (u.pathname === '/watch') id = u.searchParams.get('v') || '';
+    else if (u.pathname.startsWith('/embed/')) return raw;        // pehle se embed
+    else if (u.pathname.startsWith('/shorts/')) id = u.pathname.split('/')[2] || '';
+    else if (u.pathname.startsWith('/live/')) id = u.pathname.split('/')[2] || '';
+  } else return raw;                                             // koi aur video host
+
+  id = id.split(/[?&/]/)[0];
+  return id ? `https://www.youtube.com/embed/${id}` : '';
 }
+
+/* Tutorial tab hi "hai" jab wo WAQAI chal sakta ho — sirf khaana bhara hona
+   kaafi nahi (dekhein embedUrl). */
+export const hasVideo = (m) => Boolean(embedUrl(m.vidUrl)) && m.vidStatus === 'available';
 
 export const todayISO = () => new Date().toISOString().slice(0, 10);

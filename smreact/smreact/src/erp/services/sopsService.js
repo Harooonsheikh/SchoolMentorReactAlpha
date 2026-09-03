@@ -1,4 +1,5 @@
 import { buildSuperAdminUrl } from '../../utils/apiConfig';
+import { fetchBranchNetworkId } from './chainBranch';
 
 /* ═══════════════════════════════════════════════════════════════════
    SCHOOL SOPs — read-only wiring to the Super Admin SOP APIs.
@@ -12,6 +13,16 @@ import { buildSuperAdminUrl } from '../../utils/apiConfig';
 
    manual-head JSON leta hai; baqi dono multipart/form-data (un me file
    fields hain). Yahan se sirf `get` chalta hai — ERP kuch likhta nahi.
+
+   ── Kis ki SOPs? ──
+   Agar ye school kisi chain (network) ka hissa hai to usay apne HEAD OFFICE
+   ki SOPs dikhni chahiyen, Super Admin ki aam library nahi. manual-head par
+   `type` + `networkID` yehi tay karte hain — wahi jodi jo chain portal heads
+   BANATE waqt bhejta hai. Chain ka hissa na ho to dono khaane jate hi nahi
+   aur Super Admin ki library aati hai (pehle jaisa).
+
+   Manuals aur forms par network ka koi khana nahi, aur zaroorat bhi nahi —
+   wo hamesha kisi head ke andar hote hain aur head khud scoped hai.
    ═══════════════════════════════════════════════════════════════════ */
 
 const HEAD_URL   = () => buildSuperAdminUrl('/api/AHM_School_SOPs/manual-head');
@@ -62,6 +73,12 @@ export function fileNameFrom(path) {
 export function sopFileUrl(path) {
   const raw = String(path ?? '').trim();
   if (!raw) return '';
+  /* Path file jaisa lage tab hi URL banao. Live data me aise manuals hain
+     jin ka pdfPath literal "string" hai; us se bhi ek dikhne me theek URL
+     ban jata tha, screen "PDF hai" samajh leti thi, aur viewer me app ka
+     apna page khul jata tha. File jaisa = poora http(s) URL, ya kisi
+     extension par khatam hota path. */
+  if (!/^https?:\/\//i.test(raw) && !/\.[a-z0-9]{2,6}(\?|#|$)/i.test(raw)) return '';
   if (!/^https?:\/\//i.test(raw)) {
     return buildSuperAdminUrl(raw.startsWith('/') ? raw : `/${raw}`).replace('/SchoolMentorSuperAdminAPI/Manuals', '/Manuals');
   }
@@ -84,7 +101,12 @@ export function sopFileUrl(path) {
    Non-YouTube link jaisa hai waisa hi chala jata hai. */
 export function toEmbedUrl(url) {
   const raw = String(url ?? '').trim();
-  if (!raw) return '';
+  /* Poora http(s) link na ho to KHALI. `<iframe src="">` — aur waise hi
+     src="string" jaisi koi relative value — browser mojooda origin par hal
+     karta hai, yani ERP apna hi page video modal ke andar khol deta hai.
+     (Live data me aise manuals hain jin ka youtubeURL literal "string" hai
+     aur tutorialAvailable true.) */
+  if (!/^https?:\/\//i.test(raw)) return '';
   let id = '';
   try {
     const u = new URL(raw);
@@ -97,20 +119,37 @@ export function toEmbedUrl(url) {
       else if (u.pathname.startsWith('/live/'))   id = u.pathname.split('/')[2] || '';
     } else return raw;                                            // koi aur video host
   } catch {
-    return raw;
+    return '';                                                    // parse hi na ho to kuch nahi
   }
   id = id.split(/[?&/]/)[0];
-  return id ? `https://www.youtube.com/embed/${id}` : raw;
+  /* YouTube ka link to hai magar video id nahi mili (playlist / channel) —
+     wo embed hota hi nahi, is liye khali. */
+  return id ? `https://www.youtube.com/embed/${id}` : '';
 }
 
-/** Manual heads → category tabs ({ id, label, icon, totalManuals }). */
-export async function getManualHeads() {
+/**
+ * Manual heads → category tabs ({ id, label, icon, totalManuals }).
+ *
+ * ── Scoping ──
+ * Chain (network) ka hissa school apne HEAD OFFICE ke SOPs dekhta hai, Super
+ * Admin ki aam library nahi. Wo faisla `type` + `networkID` par hota hai —
+ * bilkul wahi jodi jo chain portal heads BANATE waqt bhejta hai
+ * (chain-schools-frontend/src/api/sopsApi.js): `type: 'chain'` + us network
+ * ki id. Dono saath jate hain; `type` chhoot jaye to API `get` par hi gir
+ * jati hai.
+ *
+ * Chain ka hissa na ho (networkID 0) to donon khaane jate hi nahi aur wahi
+ * purani Super Admin library aati hai.
+ */
+export async function getManualHeads(networkId = 0) {
+  const nid = Number(networkId) || 0;
   const res = await fetch(HEAD_URL(), {
     method: 'POST',
     headers: { ...authHeaders(), 'Content-Type': 'application/json' },
     body: JSON.stringify({
       action: 'get', id: 0, manualHeadName: '', description: '',
       isActive: true, totalManuals: 0, createdBy: 0, modifiedBy: 0,
+      ...(nid ? { type: 'chain', networkID: nid } : {}),
     }),
   });
   const rows = await readJson(res, 'manual heads');
@@ -153,7 +192,11 @@ export async function getManuals(headId) {
       description: String(m?.shortDescription ?? '').trim(),
       pdfUrl:   sopFileUrl(m?.pdfPath),
       pdfName:  fileNameFrom(m?.pdfPath),
-      hasTutorial: Boolean(m?.tutorialAvailable) && Boolean(String(m?.youtubeURL ?? '').trim()),
+      /* Tutorial tab hi "hai" jab wo WAQAI chal sake — khaana bhara hona
+         kaafi nahi (youtubeURL "string" bhi ho sakta hai, dekhein
+         toEmbedUrl). Warna Watch button khulta aur ERP apna hi page
+         dikhata. */
+      hasTutorial: Boolean(m?.tutorialAvailable) && Boolean(toEmbedUrl(m?.youtubeURL)),
       videoUrl: toEmbedUrl(m?.youtubeURL),      // share-link → embed URL
       videoLink: String(m?.youtubeURL ?? '').trim(),   // asli link (naye tab me kholne ke liye)
       videoTitle: String(m?.videoTitle ?? '').trim(),
@@ -216,7 +259,10 @@ async function mapLimit(items, limit, fn) {
  *          `formsCount` pehle se maujood.
  */
 export async function getAllSops() {
-  const heads = await getManualHeads();
+  /* Chain school ho to uske network ke heads, warna Super Admin ki library.
+     Lookup nakaam ho jaye to 0 — school apni SOPs se mehroom na rahe. */
+  const networkId = await fetchBranchNetworkId().catch(() => 0);
+  const heads = await getManualHeads(networkId);
   if (!heads.length) return { heads, manualsByHead: {} };
 
   /* Har head ke manuals (ek head fail ho to baqi library phir bhi khule). */

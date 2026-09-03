@@ -252,6 +252,13 @@ export function sopFileUrl(path) {
   const raw = String(path ?? '').trim();
   if (!raw) return '';
   if (/^data:|^blob:/i.test(raw)) return raw;
+  /* Jo path file jaisa lagta hi nahi (jaise literal "string" — live data me
+     aise records maujood hain) us par KHALI, warna neeche wala hissa us se
+     bhi ek theek-thaak dikhne wala URL bana deta hai
+     (…/SchoolMentorSuperAdminAPI/string) aur screen "PDF hai" samajh kar
+     viewer khol deti hai — jis me app ka apna page aa jata hai.
+     File jaisa = poora http(s) URL, ya kisi extension par khatam hota path. */
+  if (!/^https?:\/\//i.test(raw) && !/\.[a-z0-9]{2,6}(\?|#|$)/i.test(raw)) return '';
   let rel = raw;
   try { rel = new URL(raw).pathname; } catch { /* pehle se relative */ }
   /* Root ke baad wala hissa (agar path me pehle se root hai to double na lage). */

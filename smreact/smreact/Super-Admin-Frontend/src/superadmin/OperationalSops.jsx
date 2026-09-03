@@ -825,13 +825,24 @@ function PdfModal({ m, onClose, onUpload, toast }) {
 
 /* ═══════════════════════ VIDEO MODAL ═══════════════════════ */
 function VideoModal({ m, onClose }) {
+  /* Khali src wala iframe MOJOODA page kholta hai — yani app khud apne andar
+     nazar aati hai. Is liye link kaam ka na ho to iframe banta hi nahi. */
+  const src = embedUrl(m.vidUrl);
   return (
     <Ov cls="sop-vid-ov" wrap="sop-vid-modal" onClose={onClose}>
       <div className="sop-vid-toolbar">
         <div style={{ fontSize: 13, fontWeight: 700, color: '#fff', display: 'flex', alignItems: 'center', gap: 7 }}><i className="fa-solid fa-circle-play" style={{ color: '#16A34A' }} /> {m.vidTitle || 'Tutorial Video'}</div>
         <button onClick={onClose} data-tip="Close" data-tip-pos="left" style={{ background: 'rgba(255,255,255,.1)', border: '1px solid rgba(255,255,255,.2)', color: '#fff', width: 30, height: 30, borderRadius: 7, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14 }}><i className="fa-solid fa-xmark" /></button>
       </div>
-      <iframe className="sop-vid-frame" title="Tutorial" src={embedUrl(m.vidUrl)} allowFullScreen />
+      {src
+        ? <iframe className="sop-vid-frame" title="Tutorial" src={src} allowFullScreen />
+        : (
+          <div className="sop-vid-frame" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8, background: '#0f172a', color: 'rgba(255,255,255,.75)', textAlign: 'center', padding: 24 }}>
+            <i className="fa-solid fa-video-slash" style={{ fontSize: 26, opacity: 0.5 }} />
+            <div style={{ fontSize: 13, fontWeight: 700 }}>No tutorial video for this manual</div>
+            <div style={{ fontSize: 11.5 }}>Add a YouTube link while editing the manual to make it playable here.</div>
+          </div>
+        )}
     </Ov>
   );
 }

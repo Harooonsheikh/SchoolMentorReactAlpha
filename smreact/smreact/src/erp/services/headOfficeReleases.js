@@ -1,4 +1,5 @@
 import { buildUrl, buildChainApiUrl, resolveMediaUrl } from '../../utils/apiConfig';
+import { fetchBranchNetworkId } from './chainBranch';
 
 /* ═══════════════════════════════════════════════════════════════════
    RELEASES FROM HEAD OFFICE — school side.
@@ -26,13 +27,12 @@ import { buildUrl, buildChainApiUrl, resolveMediaUrl } from '../../utils/apiConf
    Class/subject ke naam LaunchSetup ke network wale raston se aate hain —
    GradeID/SubjectID chain ki ids hain, school ki apni nahi.
 
-   ── Kya nahi milta ──
-   Server release ki TAREEKH nahi rakhta (sirf DueDate + Duration). Is liye
-   "Released on" khali (null) rehta hai; "Valid until" DueDate hai.
+   ── Tareekhein ──
+   "Released on" = Master ki CreationDate (chain portal ka Release Date),
+   "Valid until" = DueDate, aur Duration validity ke din hain.
    ═══════════════════════════════════════════════════════════════════ */
 
 const RELEASE_URL = () => buildChainApiUrl('/api/Network_Setup/manage-release');
-const SCHOOLS_URL = () => buildChainApiUrl('/api/Network_Setup/network-schools/manage');
 const NETWORKS_URL = () => buildChainApiUrl('/api/Network_Setup/get_all_networks');
 
 const branchId = () => Number(sessionStorage.getItem('branchID')) || 0;
@@ -57,23 +57,20 @@ const postJson = (url, body) => getJson(url, {
   method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
 });
 
-/* manage-release har action par ye teen fields maangta hai — get par bhi,
+/* manage-release har action par ye chaar fields maangta hai — get par bhi,
    warna 400 (validation) aata hai. Ye natije par asar nahi daalte. */
-const GET_STUB = { releaseType: 'Release', dueDate: new Date().toISOString(), duration: '0' };
+const GET_STUB = {
+  releaseType: 'Release',
+  dueDate: new Date().toISOString(),
+  creationDate: new Date().toISOString(),
+  duration: '0',
+};
 
-/* ───────────────────── Ye branch kis network me hai ───────────────────── */
-
-/**
- * Is school ka network (chain) — accepted row se networkID.
- * Chain ka hissa na ho to 0.
- */
-export async function fetchBranchNetworkId() {
-  const bid = branchId();
-  if (!bid) return 0;
-  const json = await postJson(SCHOOLS_URL(), { action: 'getbybranch', branchID: bid });
-  const row = list(json && json.data).find((r) => r && r.isAccepted === true);
-  return row ? num(row.networkID) : 0;
-}
+/* ───────────────────── Ye branch kis network me hai ─────────────────────
+   Yahan pehle isi ka apna copy tha; ab wo chainBranch me rehta hai (wahi
+   jagah jahan chain-membership ka faisla hota hai) aur session bhar cache
+   hota hai — School SOPs bhi wahi padhti hai. */
+export { fetchBranchNetworkId };
 
 /** Head Office ka naam — "Released by" par yehi dikhta hai. */
 async function fetchNetworkName(networkId) {
@@ -199,12 +196,24 @@ async function fetchNetworkContent(networkId) {
 
 /* ───────────────────────────── Releases ───────────────────────────── */
 
-const TYPE = {
-  activity: 'activitycalendar',
-  lesson: 'classworklessonplan',
-  notebook: 'notebooklessonplan',
-  resource: 'resourcelibrary',
+/* child2 ka `type` — Head Office 'Activity' / 'Lesson Plan' / 'NoteBook Plan'
+   / 'Resource File' bhejta hai (dekhein chain portal ka releaseApi.js).
+   Purane releases DB me purani spelling ('ActivityCalendar',
+   'classworklessonplan' waghera) ke sath pade hain, is liye milaan se pehle
+   sirf harf-o-adad rakhe jate hain — bara/chhota harf, space aur
+   singular/plural ka farq mit jata hai. */
+const normType = (v) => String(v == null ? '' : v).toLowerCase().replace(/[^a-z0-9]/g, '');
+const TYPE_ALIASES = {
+  activity: ['Activity', 'Activities', 'ActivityCalendar'],
+  lesson: ['Lesson Plan', 'Lesson Plans', 'classworklessonplan'],
+  notebook: ['NoteBook Plan', 'NoteBook Plans', 'notebooklessonplan'],
+  resource: ['Resource File', 'Resource Files', 'resourcelibrary'],
 };
+const TYPE_KEY = new Map();
+Object.entries(TYPE_ALIASES).forEach(([key, names]) => names.forEach((n) => TYPE_KEY.set(normType(n), key)));
+const typeKeyOf = (raw) => TYPE_KEY.get(normType(raw)) || '';
+
+const TYPE = { activity: 'activity', lesson: 'lesson', notebook: 'notebook', resource: 'resource' };
 
 const groupBy = (arr, key) => {
   const m = new Map();
@@ -252,7 +261,7 @@ export async function fetchHeadOfficeReleases() {
     const isSub = str(m.ReleaseType).toLowerCase() === 'subrelease';
     const items = itemsOf.get(id) || [];
     const pick = (type, from) => items
-      .filter((it) => str(it.Type).toLowerCase() === type)
+      .filter((it) => typeKeyOf(it.Type) === type)
       .map((it) => {
         const row = from.get(num(it.TypeID));
         /* Content jo release ke baad HO se mit gaya — us ki sirf id bachi
@@ -268,7 +277,10 @@ export async function fetchHeadOfficeReleases() {
       title: `${isSub ? 'Sub' : 'Master'} Release ${id}`,
       type: isSub ? 'SUB_RELEASE' : 'MASTER_RELEASE',
       releasedBy: headOfficeName || 'Head Office',
-      releasedOn: null,                          // server tareekh nahi rakhta
+      /* Head Office ne jis din release kiya — server ki CreationDate.
+         (Pehle ye khaana server ko bheja hi nahi jata tha, is liye yahan
+         null likha hua tha aur card par "Released on" khali rehta tha.) */
+      releasedOn: toDateOnly(m.CreationDate ?? m.creationDate) || null,
       validUntil: toDateOnly(m.DueDate),
       validityDays: num(m.Duration),
       status: 'ACTIVE',

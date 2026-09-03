@@ -24,6 +24,15 @@ const MODULE_ID_TO_LABEL = Object.fromEntries(MODULE_REGISTRY.map((m) => [m.id, 
    role/permission. Keyed by sidebar nav id. */
 const BRANCH1_ONLY_NAV = new Set(['inventory', 'crm', 'audit', 'appraisal', 'sops', 'trainings', 'etube', 'chat', 'notifications']);
 
+/* Un me se kuch module kisi aur branch par bhi live kar diye jate hain.
+   nav id → wo branchID jinhein (branch 1 ke ilawa) ye module dikhna chahiye.
+   Branch par khulne ke baad bhi module wahi user permission maanta hai jo
+   branch 1 par — sirf branch ki rukawat hatti hai, permission ki nahi.
+     sops → School SOPs (Operational SOPs) branch 5 par bhi live. */
+const EXTRA_NAV_BRANCHES = {
+  sops: ['5'],
+};
+
 /* Wo nav ids jo ab apna module nahi rahe (screen kahin aur chali gayi).
    Sirf sidebar se hata dena kaafi nahi: `active` localStorage me mehfooz
    rehta hai, to jis user ne aakhri baar Networks khola tha uske paas
@@ -230,11 +239,15 @@ export default function App() {
     /* Retire ho chuke modules kabhi visible nahi — chahe permission aur
        module-activation dono allow karti hon. */
     if (RETIRED_NAV.has(navId)) return false;
-    /* Master-branch-only extras: hidden on every branch except branchID 1. On
-       branch 1 they still follow the user's permission (registry-backed ones)
-       or simply show (non-permission extras like Chat / e-Tube / Notifications). */
+    /* Master-branch-only extras: hidden on every branch except branchID 1 —
+       aur un branchon ke ilawa jo EXTRA_NAV_BRANCHES me is nav ke liye
+       likhi hain (School SOPs branch 5 par bhi live hai). Jahan dikhte hain
+       wahan bhi user ki permission maani jati hai (registry-backed ones), ya
+       bas dikh jate hain (Chat / e-Tube / Notifications jaise extras). */
     if (BRANCH1_ONLY_NAV.has(navId)) {
-      if (String(sessionStorage.getItem('branchID')) !== '1') return false;
+      const bid = String(sessionStorage.getItem('branchID'));
+      const allowed = bid === '1' || (EXTRA_NAV_BRANCHES[navId] || []).includes(bid);
+      if (!allowed) return false;
       const gmod = NAV_TO_MODULE_MAP[navId];
       const glabel = gmod ? MODULE_ID_TO_LABEL[gmod] : null;
       return glabel ? (fullAccess || canModule(glabel)) : true;
