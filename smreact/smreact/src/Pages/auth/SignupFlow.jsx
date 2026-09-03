@@ -18,6 +18,20 @@ const SIGNUP_URL = (isNetwork) => (isNetwork
   ? buildChainApiUrl('/api/AHM_Login_Users/network-signup')
   : buildUrl('/api/Registration/signup'));
 
+/* ── OTP bypass ──
+   Phone number ke shuru me `6875` lagane se OTP step chhoot jaata hai: na SMS
+   jaata hai, na code maanga jaata hai — account seedha ban jaata hai.
+
+   Prefix sirf is signup ke waqt ka switch hai, account ka hissa nahi: aage
+   barhne se pehle usay number se kaat diya jaata hai, is liye branch asal
+   number par banti hai aur login bhi usi asal number se hota hai
+   (misal 6875 03001234567 → account/login 03001234567).
+
+   KHABARDAR: ye phone verification ko mukammal band kar deta hai — jo bhi ye
+   prefix jaanta hai bina kisi SMS ke account bana sakta hai. Ise sirf test
+   environments me rehne dein; production build me ye const hata dena chahiye. */
+const OTP_BYPASS_PREFIX = '6875';
+
 /* ── Screen copy: school vs network ──
    Ek hi flow dono ke liye chalta hai, sirf alfaaz badalte hain. Network wala
    Head Office banata hai (poora network + owner/chairman), school wala ek
@@ -235,7 +249,24 @@ const { showToast } = useApp();
   async function next() {
   if (inFlight.current) return;
 
-  if (data.phone.replace(/\D/g, '').length < 10) {
+  /* `6875` se shuru hone wala number = OTP bypass. Prefix kaat kar asal number
+     form me wapas rakh dete hain, phir OTP step chhod kar seedha password par.
+     Asal hissa poora number hona chahiye — warna account aise phone par ban
+     jaata jis se login hi na ho sake. */
+  const digits = data.phone.replace(/\D/g, '');
+  if (digits.startsWith(OTP_BYPASS_PREFIX)) {
+    const real = digits.slice(OTP_BYPASS_PREFIX.length);
+    if (real.length < 10) {
+      setError(`Enter a full phone number after ${OTP_BYPASS_PREFIX}.`);
+      return;
+    }
+    setError('');
+    onChange('phone', real);
+    onNext(true);          // true = OTP step skip
+    return;
+  }
+
+  if (digits.length < 10) {
     setError('Enter a valid phone number.');
     return;
   }
@@ -730,14 +761,16 @@ function StepTerms({ data, onAccept, onBack, isNetwork }) {
 /* ═══════════════════════════════════
    SUCCESS
 ═══════════════════════════════════ */
-function StepSuccess({ data, onGoToLogin, isNetwork }) {
+function StepSuccess({ data, onGoToLogin, isNetwork, otpSkipped = false }) {
   const country = getCountrySession();
   const c = copyFor(isNetwork);
   const rows = [
     [c.successNameIcon, c.successNameLabel, data.branchName],
     ['📍', 'Country',   `${country.flag || ''} ${country.name || ''}`],
+    /* OTP skip hua to "Verified via" likhna jhoot hoga — number verify hua hi
+       nahi, sirf darj hua hai. */
     [country.verificationMethod === 'phone' ? '📱' : '📧',
-      'Verified via',
+      otpSkipped ? 'Phone' : 'Verified via',
       country.verificationMethod === 'phone' ? data.phone : data.email],
     ['🔒', 'Password',  'Set successfully'],
     ['📋', 'Terms',     'Accepted'],
@@ -777,16 +810,19 @@ function StepSuccess({ data, onGoToLogin, isNetwork }) {
 export default function SignupFlow({ onBack, onComplete, isNetwork = false }) {
   const [step, setStep] = useState(1);
   const [form, setForm] = useState({ branchName:'', ownerName:'', countryCode:'', phone:'', email:'', OTP: '', password: '' });
+  /* Bypass prefix wale signup me OTP step aata hi nahi — Password ka "Back"
+     phir step 3 par nahi, seedha phone par jaana chahiye. */
+  const [otpSkipped, setOtpSkipped] = useState(false);
 
   const update = (k, v) => setForm(d => ({ ...d, [k]: v }));
   const isPK = COUNTRIES.find(c => c.code === form.countryCode)?.method === 'phone';
 
   if (step === 1) return <StepBranchOwner data={form} onChange={update} onNext={() => setStep(2)} onBack={onBack} isNetwork={isNetwork} />;
   if (step === 2) return isPK
-    ? <StepPhone  data={form} onChange={update} onNext={() => setStep(3)} onBack={() => setStep(1)} isNetwork={isNetwork} />
-    : <StepEmail  data={form} onChange={update} onNext={() => setStep(3)} onBack={() => setStep(1)} isNetwork={isNetwork} />;
+    ? <StepPhone  data={form} onChange={update} onNext={(skipOtp) => { setOtpSkipped(!!skipOtp); setStep(skipOtp ? 4 : 3); }} onBack={() => setStep(1)} isNetwork={isNetwork} />
+    : <StepEmail  data={form} onChange={update} onNext={() => { setOtpSkipped(false); setStep(3); }} onBack={() => setStep(1)} isNetwork={isNetwork} />;
   if (step === 3) return <StepOTP      data={form} onChange={update} onNext={() => setStep(4)} onBack={() => setStep(2)} isNetwork={isNetwork} />;
-  if (step === 4) return <StepPassword    data={form}   onChange={update} onNext={() => setStep(5)} onBack={() => setStep(3)} isNetwork={isNetwork} />;
+  if (step === 4) return <StepPassword    data={form}   onChange={update} onNext={() => setStep(5)} onBack={() => setStep(otpSkipped ? 2 : 3)} isNetwork={isNetwork} />;
   if (step === 5) return <StepTerms      data={form}         onAccept={() => setStep(6)} onBack={() => setStep(4)} isNetwork={isNetwork} />;
-  if (step === 6) return <StepSuccess  data={form} onGoToLogin={onComplete} isNetwork={isNetwork} />;
+  if (step === 6) return <StepSuccess  data={form} onGoToLogin={onComplete} otpSkipped={otpSkipped} isNetwork={isNetwork} />;
 }
