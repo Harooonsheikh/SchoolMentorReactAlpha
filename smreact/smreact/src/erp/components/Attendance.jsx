@@ -1439,14 +1439,18 @@
     const list = staffData || [];
     const dayNums = Array.from({ length: 31 }, (_, i) => i + 1);
 
-    const markOf = (staffIdx, day) => {
-      if (day > daysInMonth) return "na";
-      const dow = (new Date(year, monIdx, day).getDay() + 6) % 7; // Monday = 0 ... Sunday = 6
-      if ((weeklyOff || []).includes(dow) || holidaySet.has(day)) return "H";
-      if (day > lastMarkedDay) return ".";
-      const seed = (staffIdx * 31 + day * 7 + 13) % 97;
-      return seed < 8 ? "A" : "P";
-    };
+  // NAYA — real dayMarks se lookup
+const markOf = (staffIdx, day) => {
+  if (day > daysInMonth) return "na";
+  const dow = (new Date(year, monIdx, day).getDay() + 6) % 7;
+  if ((weeklyOff || []).includes(dow) || holidaySet.has(day)) return "H";
+  if (day > lastMarkedDay) return ".";
+  const status = list[staffIdx]?.dayMarks?.[day];
+  if (status === "present") return "P";
+  if (status === "absent")  return "A";
+  if (status === "leave")   return "L";
+  return "."; // us din mark hi nahi hui
+};
 
     const dayTh = (d) => {
       const thBg = isColor ? "background:#EFF6FF;color:#1E3A8A" : "background:#FFFFFF;color:#111111";
@@ -4664,24 +4668,27 @@ const fetchMonthlyStaffReportRows = useCallback(async (year, monthIdx0) => {
     } catch (err) { console.error("Monthly staff report fetch error:", err); return { dateStr, recs: [] }; }
   }));
 
-  return (staffData || []).map((s) => {
-    let present = 0, absent = 0, leave = 0;
-    perDate.forEach(({ recs }) => {
-      const found = recs.find((r) => String(r.StaffID ?? r.staffID) === String(s.id));
-      if (!found) return;
-      const raw = String((found.Status ?? found.status) || "").toLowerCase();
-      const st = ST_CODE_TO_STATUS[raw] || raw;
-      if (st === "present") present++;
-      else if (st === "absent") absent++;
-      else if (st === "leave") leave++;
-    });
-    const marks = present + absent + leave;
-    return {
-      empId: s.empId, name: s.name, desig: s.desig, dept: s.dept,
-      workingDays, present, absent, leave,
-      pct: marks > 0 ? Math.round((present / marks) * 100) : 0,
-    };
+ // NAYA — dayMarks add karo
+return (staffData || []).map((s) => {
+  let present = 0, absent = 0, leave = 0;
+  const dayMarks = {}; // day number → "present" | "absent" | "leave"
+  perDate.forEach(({ dateStr, recs }) => {
+    const found = recs.find((r) => String(r.StaffID ?? r.staffID) === String(s.id));
+    if (!found) return;
+    const raw = String((found.Status ?? found.status) || "").toLowerCase();
+    const st = ST_CODE_TO_STATUS[raw] || raw;
+    const dayNum = Number(dateStr.split("-")[2]);
+    if (st === "present") { present++; dayMarks[dayNum] = "present"; }
+    else if (st === "absent") { absent++; dayMarks[dayNum] = "absent"; }
+    else if (st === "leave") { leave++; dayMarks[dayNum] = "leave"; }
   });
+  const marks = present + absent + leave;
+  return {
+    empId: s.empId, name: s.name, desig: s.desig, dept: s.dept,
+    workingDays, present, absent, leave, dayMarks,
+    pct: marks > 0 ? Math.round((present / marks) * 100) : 0,
+  };
+});
 }, [staffData, fetchMonthHolidayInfo]);
 // Attendance component mein - useEffect add karo
 
