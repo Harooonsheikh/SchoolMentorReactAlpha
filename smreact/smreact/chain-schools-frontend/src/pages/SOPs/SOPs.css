@@ -45,6 +45,12 @@
 .sop-badge-pdf { background: rgba(220,38,38,.09); color: #DC2626; border: 1px solid rgba(220,38,38,.2); border-radius: var(--r-f); padding: 2px 8px; font-size: 10px; font-weight: 700; white-space: nowrap; }
 .sop-badge-form { background: rgba(30,58,138,.09); color: var(--brand); border: 1px solid var(--bl); border-radius: var(--r-f); padding: 2px 8px; font-size: 10px; font-weight: 700; white-space: nowrap; }
 .sop-badge-soon { background: rgba(100,116,139,.09); color: #64748B; border: 1px solid rgba(100,116,139,.2); border-radius: var(--r-f); padding: 2px 8px; font-size: 10px; font-weight: 700; white-space: nowrap; }
+/* Inactive — status sirf edit modal me nazar aata tha, list me nahi, is liye
+   band ki hui manual/category chalte huon jaisi hi dikhti thi. */
+.sop-badge-off { background: rgba(217,119,6,.1); color: #B45309; border: 1px solid rgba(217,119,6,.25); border-radius: var(--r-f); padding: 2px 8px; font-size: 10px; font-weight: 700; white-space: nowrap; }
+/* Chip par (dark active chip par bhi parhne laayak rahe). */
+.sop-cat-off { background: rgba(217,119,6,.14); color: #B45309; border-radius: 99px; padding: 1px 7px; font-size: 9.5px; font-weight: 800; letter-spacing: .3px; text-transform: uppercase; }
+.sop-cat-btn.active .sop-cat-off { background: rgba(253,230,138,.25); color: #FDE68A; }
 
 /* Upload dropzone (manual / form modals) */
 .sop-upload { border: 2px dashed var(--bl); border-radius: var(--r-md); padding: 18px; text-align: center; cursor: pointer; transition: var(--tr); background: var(--muted); }

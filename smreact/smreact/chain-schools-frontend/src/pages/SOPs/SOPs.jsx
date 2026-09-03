@@ -8,6 +8,7 @@ import {
   saveManualFormDoc, deleteManualFormDoc,
 } from '../../api/sopsApi'
 import ContentSourceBar from '../../components/ContentSourceBar'
+import { fetchSopSource, saveSopSource } from '../../api/sopSourceApi'
 import { loadSource, saveSource } from '../../config/contentSource'
 import { loadChainProfile, chainInitials } from '../../config/chainProfile'
 import './SOPs.css'
@@ -36,19 +37,32 @@ export default function SOPs() {
   const [vidView, setVidView] = useState(null)       // manual
   const [del, setDel] = useState(null)               // { type, id, parentId, name }
   const [toast, setToast] = useState(null)
-  const [source, setSource] = useState('custom')
+  /* Pichli baar ka source localStorage me cache hai, sirf pehla render sahi
+     dikhane ke liye. Warna page hamesha "Custom" par khulta tha aur API ke
+     jawab ke baad "School Mentor" par phislta tha. Sach phir bhi server ka
+     hai — neeche wala effect aate hi mila leta hai. */
+  const [source, setSource] = useState(() => loadSource('sops'))
   const readOnly = source === 'mentor'
 
   const fire = (text, type = 'success') => setToast({ text, type })
-  const changeSource = (v) => {
-    setSource(v); saveSource('sops', v)
-    fire(v === 'mentor' ? "Now showing School Mentor's SOPs to your schools" : 'Now showing your own SOPs to your schools')
+  /* Source poore chain ka setting hai, is liye server par jaata hai (pehle
+     localStorage me tha — har browser ka apna jawab aur schools tak khabar
+     hi nahi). Server maan jaye tabhi screen badalti hai. */
+  const changeSource = async (v) => {
+    try {
+      await saveSopSource(v)
+      setSource(v)
+      saveSource('sops', v)
+      fire(v === 'mentor' ? "Now showing School Mentor's SOPs to your schools" : 'Now showing your own SOPs to your schools')
+    } catch (err) {
+      fire(err.message || 'Could not change the SOPs source', 'warn')
+    }
   }
 
   /* Heads dobara load kar ke active selection sambhal lete hain — jo head
      abhi khula hai wo agar reh gaya to wahi rehta hai, warna pehla. */
   const reloadCats = async (preferId) => {
-    const rows = await listManualHeads()
+    const rows = await listManualHeads(source)
     setCats(rows)
     setActiveCat((cur) => {
       const want = Number(preferId) || cur
@@ -57,16 +71,35 @@ export default function SOPs() {
     return rows
   }
 
-  useEffect(() => { setSource(loadSource('sops')) }, [])
+  /* Server se asli source. Heads iska intezaar NAHI karte — dono calls saath
+     chalti hain, is liye page cache wale sahi tab par foran khulta hai. Server
+     ka jawab cache se mukhtalif nikle to setSource neeche wale effect ko dobara
+     chala kar heads badal deta hai (aam taur par aisa hota hi nahi). */
+  useEffect(() => {
+    let alive = true
+    fetchSopSource()
+      .then((v) => {
+        if (!alive) return
+        saveSource('sops', v)
+        setSource((cur) => (cur === v ? cur : v))
+      })
+      .catch((err) => { if (alive) fire(err.message || 'Could not load the SOPs source', 'warn') })
+    return () => { alive = false }
+  }, [])
+
+  /* Source badalte hi poori library badal jaati hai: mentor par School
+     Mentor ke heads, custom par is chain ke apne. Manuals/forms ka cache bhi
+     saaf, warna purane source ke rows nazar aate rehte. */
   useEffect(() => {
     let alive = true
     setCatsLoading(true)
-    listManualHeads()
-      .then((rows) => { if (!alive) return; setCats(rows); setActiveCat((cur) => cur ?? rows[0]?.id ?? null) })
-      .catch((err) => { if (alive) fire(err.message || 'Could not load manual heads', 'warn') })
+    setManualsByCat({}); setFormsByManual({}); setExpanded({}); setActiveCat(null)
+    listManualHeads(source)
+      .then((rows) => { if (!alive) return; setCats(rows); setActiveCat(rows[0]?.id ?? null) })
+      .catch((err) => { if (alive) { setCats([]); fire(err.message || 'Could not load manual heads', 'warn') } })
       .finally(() => { if (alive) setCatsLoading(false) })
     return () => { alive = false }
-  }, [])
+  }, [source])
   /* Manual head ki base par manuals — jo head khula hai sirf usi ke. */
   const reloadManuals = async (catId = activeCat) => {
     if (!catId) return []
@@ -259,6 +292,7 @@ export default function SOPs() {
             <button key={c.id} className={`sop-cat-btn${isActive ? ' active' : ''}`} onClick={() => setActiveCat(c.id)}>
               <i className={`fa-solid fa-folder${isActive ? '-open' : ''}`} /> {c.title}
               <span className="sop-cat-count">{count}</span>
+              {c.status === 'inactive' && <span className="sop-cat-off" title="This category is inactive">Inactive</span>}
               {!readOnly && <span className="sop-cat-edit-btn" title="Edit category" onClick={(e) => { e.stopPropagation(); setCatModal({ mode: 'edit', cat: c }) }}><i className="fa-solid fa-pen" /></span>}
               {!readOnly && (count === 0
                 ? <span className="sop-cat-edit-btn del" title="Delete empty category" onClick={(e) => { e.stopPropagation(); setDel({ type: 'cat', id: c.id, name: c.title }) }}><i className="fa-solid fa-trash-can" /></span>
@@ -305,6 +339,7 @@ export default function SOPs() {
                           {mn.title}
                           {mn.code && <span style={{ fontSize: 10, color: 'var(--tm)', fontWeight: 600 }}>{mn.code}</span>}
                           {hasForms && <span className="sop-badge-form"><i className="fa-solid fa-paperclip" style={{ fontSize: 8 }} /> {rowForms.length}</span>}
+                          {mn.status === 'inactive' && <span className="sop-badge-off" title="This manual is inactive"><i className="fa-solid fa-circle-pause" style={{ fontSize: 8 }} /> Inactive</span>}
                         </div>
                         {mn.desc && <div style={{ fontSize: 11, color: 'var(--tm)', marginTop: 3, maxWidth: 480, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{mn.desc}</div>}
                       </td>

@@ -1,33 +1,3 @@
-/* ═══════════════════════════════════════════════════════════════════
-   OPERATIONAL SOPs — Manual Heads (screen par "Manual Head" / category).
-
-     POST {sa}/api/AHM_School_SOPs/manual-head
-       body: { action, id, manualHeadName, description, isActive, type,
-               totalManuals, createdBy, modifiedBy }
-
-   Aik hi route, kaam `action` se tay hota hai:
-     get | insert | update | delete
-
-   KHABARDAR: API ka error message jhoota hai. Wo kehta hai "Valid actions:
-   add, update, delete, get, stats", magar `add` bhejne par yahi route
-   "Unknown action 'add'" deta hai — naya record sirf `insert` se banta hai.
-   (manual-form par bhi yahi haal: message me `add`, chalta `insert` hai.)
-
-   `manualHeadName` har call me lazmi hai — get par bhi khali chalega magar
-   field bheja zaroor jaata hai, warna API 400 deti hai.
-
-   ── Scoping: type + networkID ──
-   Chain portal hamesha `type: "chain"` bhejta hai (taake ye heads sirf isi
-   portal ke rahein) AUR logged-in network ki `networkID` — warna har chain
-   admin doosre networks ke SOPs dekhta. `type` chhoot jaye to `get` bhi
-   girta hai ("GetManualHeadsWithTotalManualsAsync: NetworkID"), is liye
-   dono hamesha saath jaate hain.
-
-   Manuals aur forms par networkID nahi hoti aur na chahiye: wo hamesha kisi
-   head ke andar hote hain, aur head khud network par scoped hai.
-
-   Baqi Super-Admin calls ki tarah ye bhi axios client se nahi jaati.
-   ═══════════════════════════════════════════════════════════════════ */
 
 import { SUPERADMIN_API_BASE } from '@/config/env'
 import { getStoredUser } from '@/auth/tokenStorage'
@@ -72,6 +42,18 @@ function body(action, { id = 0, title = '', desc = '', status = 'active', totalM
   }
 }
 
+/* School Mentor ki official library ke heads — Super Admin ne jo banaye.
+   Wo unhe bina `type`/`networkID` ke likhta hai, is liye padhne ke liye bhi
+   dono field bhejne se rok dete hain: `type: 'chain'` ke saath API sirf isi
+   chain ke apne heads deti hai. (Manuals aur forms par ye farq nahi parta —
+   wo head id par aate hain, is liye unke calls jaise hain waise rehte hain.) */
+function mentorBody(action, opts) {
+  const b = body(action, opts)
+  delete b.type
+  delete b.networkID
+  return b
+}
+
 async function post(payload, label) {
   const res = await fetch(HEAD_URL, {
     method: 'POST',
@@ -87,9 +69,12 @@ async function post(payload, label) {
   return json
 }
 
-/** action: get → saare manual heads (mapped). */
-export async function listManualHeads() {
-  const json = await post(body('get'), 'load manual heads')
+/** action: get → manual heads (mapped).
+    `source: 'mentor'` par School Mentor ki official library aati hai,
+    warna is chain ke apne heads. */
+export async function listManualHeads(source = 'custom') {
+  const payload = source === 'mentor' ? mentorBody('get') : body('get')
+  const json = await post(payload, 'load manual heads')
   const rows = Array.isArray(json?.data) ? json.data : []
   return rows.map(headToCategory).filter((c) => c.id)
 }
