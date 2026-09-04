@@ -3,6 +3,8 @@ import { COLORS } from '../data/initialData';
 import { downloadStaffReport } from '../utils/pdfReports';
 import { buildUrl } from '../utils/apiConfig';
 import Tooltip from '../erp/shared/Tooltip';
+import { useSetupTabPerms } from '../utils/setupPermissions';
+import SetupLoader from '../components/SetupLoader';
 /* Bulk-import template `public/` se serve hota hai, src se import NAHI hota.
    Wajah: import ek build-time dependency hai — file na ho to poori app compile
    hi nahi hoti ("Can't resolve '../BulkStaff_Quick.xlsx'"). public/ me rakhne
@@ -1050,6 +1052,11 @@ function TaskAssignModal({ open, staff, classesData, setClassesData, onClose, on
 }
 
 export default function StaffTab({ staffData, setStaffData, deptsData, setDeptsData, schoolInfo, showToast, showSuccess, classesData, setClassesData, onContinue }) {
+  /* Launch Setup ▸ Staff Details. "Details" employee ka edit modal kholta hai,
+     is liye wo Edit par hai — sirf dekhna ho to row expand kar ke ho jata hai. */
+  const { canCreate, canEdit, canDelete, canDownload, canImport } = useSetupTabPerms('staff');
+  /* Pehla fetch mukammal hone tak loader — koi placeholder row nahi. */
+  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
   const [perPage, setPerPage] = useState(STAFF_PER_PAGE);   // rows per page (10 / 20 / 50 / 100)
@@ -1292,6 +1299,7 @@ const [taskTarget, setTaskTarget] = useState(null);
           const d        = json.data ?? {};
           setStaffData(d);
         } catch { showToast('Could not load Staff data', 'error'); }
+        finally { setLoading(false); }
     }, [setStaffData]);
 
     const getClassesData = useCallback(async () => {
@@ -1308,6 +1316,8 @@ const [taskTarget, setTaskTarget] = useState(null);
         
       };
 
+  if (loading) return <div className="tab-panel active"><SetupLoader label="Loading staff…" /></div>;
+
   return (
     <div className="tab-panel active">
       <div className="classes-toolbar">
@@ -1318,22 +1328,28 @@ const [taskTarget, setTaskTarget] = useState(null);
           </div>
         </div>
         <div className="toolbar-right">
-          <Tooltip text="Bulk import staff from Excel">
-          <button className="btn btn-md" style={{ background: 'linear-gradient(135deg,#7C3AED,#6D28D9)', color: '#fff' }}
-            onClick={() => { setShowImport(true); setImportStep(1); }}>
-            <i className="fas fa-file-import"></i> Bulk Upload
-          </button>
-          </Tooltip>
-          <Tooltip text="Download staff report as PDF">
-          <button className="btn btn-pdf btn-md" onClick={() => downloadStaffReport(staffData, schoolInfo || {}, showToast)}>
-            <i className="fas fa-file-pdf"></i> Download Report
-          </button>
-          </Tooltip>
-          <Tooltip text="Add a new employee">
-            <button className="btn btn-primary btn-md" onClick={() => setStaffModalTarget({ ...newStaffTemplate, id: null })}>
-              <i className="fas fa-user-plus"></i> Add New Employee
+          {canImport && (
+            <Tooltip text="Bulk import staff from Excel">
+            <button className="btn btn-md" style={{ background: 'linear-gradient(135deg,#7C3AED,#6D28D9)', color: '#fff' }}
+              onClick={() => { setShowImport(true); setImportStep(1); }}>
+              <i className="fas fa-file-import"></i> Bulk Upload
             </button>
-          </Tooltip>
+            </Tooltip>
+          )}
+          {canDownload && (
+            <Tooltip text="Download staff report as PDF">
+            <button className="btn btn-pdf btn-md" onClick={() => downloadStaffReport(staffData, schoolInfo || {}, showToast)}>
+              <i className="fas fa-file-pdf"></i> Download Report
+            </button>
+            </Tooltip>
+          )}
+          {canCreate && (
+            <Tooltip text="Add a new employee">
+              <button className="btn btn-primary btn-md" onClick={() => setStaffModalTarget({ ...newStaffTemplate, id: null })}>
+                <i className="fas fa-user-plus"></i> Add New Employee
+              </button>
+            </Tooltip>
+          )}
         </div>
       </div>
 
@@ -1375,15 +1391,19 @@ const [taskTarget, setTaskTarget] = useState(null);
                   <div className="td">{s.departmentName ? <span className="staff-dept-pill">{s.departmentName}</span> : <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>—</span>}</div>
                   <div className="td">{s.designationName ? <span className="staff-desig-pill">{s.designationName}</span> : <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>—</span>}</div>
                   <div className="td staff-action-col">
-                    <button className="btn-details-staff" onClick={e => { e.stopPropagation(); setStaffModalTarget(s); }}>
-                      <i className="fas fa-edit"></i> Details
-                    </button>
-                    <button className="btn-task-staff" onClick={e => { e.stopPropagation(); setTaskTarget(s); }}>Tasks</button>
-                    <Tooltip text="Delete employee">
-                    <button className="btn btn-icon btn-danger btn-sm" onClick={e => { e.stopPropagation(); setDeleteTarget(s); }}>
-                      <i className="fas fa-trash"></i>
-                    </button>
-                    </Tooltip>
+                    {canEdit && (
+                      <button className="btn-details-staff" onClick={e => { e.stopPropagation(); setStaffModalTarget(s); }}>
+                        <i className="fas fa-edit"></i> Details
+                      </button>
+                    )}
+                    {canEdit && <button className="btn-task-staff" onClick={e => { e.stopPropagation(); setTaskTarget(s); }}>Tasks</button>}
+                    {canDelete && (
+                      <Tooltip text="Delete employee">
+                      <button className="btn btn-icon btn-danger btn-sm" onClick={e => { e.stopPropagation(); setDeleteTarget(s); }}>
+                        <i className="fas fa-trash"></i>
+                      </button>
+                      </Tooltip>
+                    )}
                   </div>
                   <div className="td staff-chevron-col">
                     <Tooltip text={exp ? 'Hide details' : 'Show details'}>

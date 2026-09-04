@@ -12,6 +12,7 @@ import {
 } from '../support/config';
 import * as api from '../support/api';
 import { playIncomingChime } from '../support/sound';
+import { isViewOnlyAccount } from '../utils/apiConfig';
 
 let _attId = 1;
 /* Har "send" ka apna nishan (sirf is screen ke liye — API par nahi jata). */
@@ -62,11 +63,46 @@ const CONNECT_FAILED_MESSAGE =
 const UNREAD_POLL_MS = 2000;
 
 
+/* ── Chain / network head → Support band ───────────────────
+   Support chat SCHOOL ka apna channel hai (session school ki branch se
+   bandhta hai). Chain head sirf dekhne aata hai — na uski apni koi support
+   session banni chahiye, na wo school ki taraf se agent se baat kar sake.
+   Is liye uske liye trigger dikhta to hai magar chalta nahi: poora live
+   widget mount hi nahi hota, to koi unread polling / session API bhi nahi
+   chalti. Pehchan wahi jagah se jahan se baqi view-only rok aati hai
+   (apiConfig ▸ isViewOnlyAccount), aur chunke ye gate widget ke andar hai
+   isliye dono topbars par lagta hai — ERP (chain school view) aur Launch
+   Setup. */
+const SUPPORT_DISABLED_TIP = 'Support is not available for chain accounts';
+
+function SupportTriggerDisabled() {
+  return (
+    <>
+      <style>{SUPPORT_CSS}</style>
+      <button
+        type="button"
+        className="sc-hdr-trigger sc-hdr-trigger--off"
+        disabled
+        aria-label={SUPPORT_DISABLED_TIP}
+        title={SUPPORT_DISABLED_TIP}
+      >
+        <i className="fa-solid fa-headset" aria-hidden="true"></i>
+        <span className="sc-hdr-trigger-lbl">Support</span>
+      </button>
+    </>
+  );
+}
+
+export default function SupportWidget(props) {
+  if (isViewOnlyAccount()) return <SupportTriggerDisabled />;
+  return <SupportWidgetLive {...props} />;
+}
+
 /* `toast` ERP shell se aata hai (App.js ka pushToast) — attachment modals ke
    upar dikhta hai, is liye caption jaisi validation wahin se batai jati hai.
    Prop na mile to chup-chaap kuch na karo (widget kahin aur bhi mount ho sakta
    hai). */
-export default function SupportWidget({ toast }) {
+function SupportWidgetLive({ toast }) {
   const notify = (msg, type = 'error') => toast?.(msg, type);
   /* Attachment ke sath caption laazmi hai — upload route par bhi wo [Required]
      hai. Pehle khali chhodne par file ka naam khud caption ban jata tha, jo
@@ -1148,6 +1184,7 @@ const SUPPORT_CSS = `
 .sc-hdr-trigger { position: relative; display: inline-flex; align-items: center; gap: 7px; height: 34px; padding: 0 13px; border-radius: 9px; border: 1px solid rgba(18,140,126,.35); background: linear-gradient(135deg,rgba(18,140,126,.10),rgba(37,211,102,.10)); color: #0E7A6F; font-family: 'Plus Jakarta Sans', sans-serif; font-size: 12px; font-weight: 700; cursor: pointer; white-space: nowrap; flex-shrink: 0; transition: var(--tr,all .2s ease); }
 .sc-hdr-trigger:hover { background: linear-gradient(135deg,rgba(18,140,126,.18),rgba(37,211,102,.18)); border-color: rgba(18,140,126,.55); transform: translateY(-1px); box-shadow: 0 4px 12px rgba(18,140,126,.2); }
 .sc-hdr-trigger:active { transform: scale(.97); }
+.sc-hdr-trigger--off, .sc-hdr-trigger--off:hover { opacity: .45; cursor: not-allowed; filter: grayscale(.5); transform: none; box-shadow: none; background: linear-gradient(135deg,rgba(18,140,126,.10),rgba(37,211,102,.10)); border-color: rgba(18,140,126,.35); }
 .sc-hdr-trigger > i { font-size: 13px; }
 .sc-hdr-trigger-lbl { line-height: 1; }
 .sc-hdr-trigger-dot { width: 7px; height: 7px; border-radius: 50%; background: #25D366; box-shadow: 0 0 0 2px rgba(37,211,102,.25); animation: scDot 1.6s ease-in-out infinite; flex-shrink: 0; }

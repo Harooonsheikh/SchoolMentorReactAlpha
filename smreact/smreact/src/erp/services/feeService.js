@@ -1309,6 +1309,178 @@ export async function getOldErpLedger(month, year) {
   };
 }
 
+/* ── Purana ERP ledger, EK class+section ka ────────────────────────────
+   GET /api/BranchLedger/oldERPbranchledger_byClassSection
+       ?branchId&month&year&gradeId&sectionId
+
+   Branch-wide `oldERPbranchledger` ke bar-aks ye har class+section ka apna
+   hissa deta hai. Faida ye ke row ka grade aur section SAWAAL se hi maloom
+   hote hain — purane ERP ke apne sectionID naye setup se mel nahi khate
+   (branch 220867: hamari section 1661425 wahan 1659330 hai), is liye row par
+   jo aata hai us par bharosa nahi kiya ja sakta. Jo request me bheja, wahi
+   row par chipka dete hain.
+
+   Jawab ka dhancha wahi hai jo branch-wide route ka: asal mawad `summary` me
+   hota hai, `data` abhi khali aata hai — dono defensive tareeqe se. */
+export async function getOldErpLedgerByClassSection(month, year, gradeId, sectionId) {
+  const branchID = Number(sessionStorage.getItem('branchID')) || 1;
+  const qs = `branchId=${branchID}&month=${month}&year=${year}&gradeId=${Number(gradeId) || 0}&sectionId=${Number(sectionId) || 0}`;
+  const res = await fetch(
+    buildUrl(`/api/BranchLedger/oldERPbranchledger_byClassSection?${qs}`),
+    { headers: { Accept: '*/*' } },
+  );
+  const json = await res.json().catch(() => null);
+  if (!res.ok || json?.success === false) {
+    throw new Error(apiMessage(json) || 'Could not load old ERP ledger');
+  }
+  const stamp = (rows) => (Array.isArray(rows) ? rows : []).map(r => ({
+    ...r,
+    /* Request ke grade/section hi sach hain — upar wali sharh dekhein. */
+    gradeID:   Number(gradeId) || 0,
+    sectionID: Number(sectionId) || 0,
+  }));
+  return { data: stamp(json?.data), summary: stamp(json?.summary) };
+}
+
+/* ── Poore branch ka purana ledger — har class+section par ek call ──────
+   Ye route sirf ek class+section deta hai, is liye poori tasveer ke liye har
+   jori par hit karna parta hai. Aath ek saath: browser ki fi-host limit ~6
+   hoti hai, us se zyada bhejna sirf qatar lamba karta hai.
+
+   Ek jori ka fail hona poori screen na roke — us ka hissa khali maan kar
+   baqi dikha dete hain (wahi usool jo baqi fee calls par hai). */
+export async function getOldErpLedgerForClasses(month, year, pairs = []) {
+  const jobs = (Array.isArray(pairs) ? pairs : [])
+    .filter(p => Number(p?.gradeId) > 0);
+  const out = [];
+  const failed = [];
+  const LIMIT = 8;
+  let next = 0;
+
+  const worker = async () => {
+    for (;;) {
+      const i = next;
+      next += 1;
+      if (i >= jobs.length) return;
+      const p = jobs[i];
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        const res = await getOldErpLedgerByClassSection(month, year, p.gradeId, p.sectionId);
+        out.push(...res.summary, ...res.data);
+      } catch (e) {
+        failed.push(p);
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(LIMIT, jobs.length) }, worker));
+
+  /* Ek hi student do jori me na ginn jaye (misal purani section id ki wajah
+     se) — applicantID par pehli row rehti hai. */
+  const seen = new Set();
+  const rows = [];
+  out.forEach(r => {
+    const id = String(r?.applicantID ?? r?.applicantsID ?? r?.applicantId ?? r?.studentID ?? '').trim();
+    const k = id || `row${rows.length}`;
+    if (seen.has(k)) return;
+    seen.add(k);
+    rows.push(r);
+  });
+  return { rows, failed: failed.length, total: jobs.length };
+}
+
+/* ── Purani ERP row → wahi shape jo getLedgerRange deta hai ─────────────
+   History screen har cheez `records` par banati hai: month + year + detailRows
+   (har row par challanAmount / discount / receivedAmount). Purana ERP per
+   student ek hi jama row deta hai — head-wise breakdown us me hai hi nahi —
+   is liye ek hi synthetic detail row banti hai. Ledger Summary (mahina-war
+   billed / received / pending) is se poori tarah theek chalti hai; head-wise
+   tafseel sirf naye ledger me hoti hai. */
+const oldErpRowToRecord = (r, month, year, gradeId, sectionId) => {
+  const applicantId = r?.applicantID ?? r?.applicantsID ?? r?.applicantId ?? r?.studentID;
+  if (applicantId == null || applicantId === '') return null;
+  const challanAmount = Number(r.challanAmount ?? r.challanAmt ?? 0) || 0;
+  const discount = Number(r.discount ?? 0) || 0;
+  const receivedAmount = Number(r.receivedAmount ?? r.receivedAmt ?? 0) || 0;
+  return {
+    id: Number(r.id ?? r.ID ?? 0) || 0,
+    /* History student ko `studentID` ya `applicantsID` — dono par dhoondti hai
+       (dekhein historyFor). Purane ERP ki id applicantsID se milti hai. */
+    studentID: applicantId,
+    plApplicantID: String(applicantId),
+    /* Request ke grade/section hi sach hain — row par jo aata hai wo purane
+       ERP ke apne ids hain jo naye setup se mel nahi khate. */
+    gradeID: Number(gradeId) || 0,
+    sectionID: Number(sectionId) || 0,
+    month,
+    year: String(year),
+    challanNo: r.challanNo ?? r.challanNumber ?? '',
+    dueDate: r.dueDate ?? null,
+    receivedDate: r.receivedDate ?? r.receivingDate ?? null,
+    modifiedAt: r.modifiedAt ?? r.modifiedDate ?? null,
+    dateofCreattion: r.dateofCreattion ?? r.createdDate ?? null,
+    modifiedBy: r.modifiedBy ?? null,
+    createdBy: r.createdBy ?? null,
+    _oldErp: true,
+    detailRows: [{ head: 'Fee', subHead: '', challanAmount, discount, receivedAmount }],
+  };
+};
+
+/* ── Poore range ka purana ledger — har MAHINE × har CLASS+SECTION par ek call ──
+   `oldERPbranchledger_byClassSection` ek waqt me ek month aur ek class+section
+   deta hai, is liye Ledger Summary ke range (misal Jan–Sep) ke liye
+   months × classes calls banti hain. Aath ek saath — browser ki fi-host limit
+   ~6 hoti hai, us se zyada bhejna sirf qatar lamba karta hai.
+
+   Ek call ka fail hona poori screen na roke: us ka hissa khali maan kar baqi
+   dikha dete hain, aur kitni reh gayin wo caller ko bata dete hain. */
+export async function getOldErpLedgerRecords(fromMonth, toMonth, year, pairs = []) {
+  const from = Number(fromMonth) || 1;
+  const to = Math.max(from, Number(toMonth) || from);
+  const cls = (Array.isArray(pairs) ? pairs : []).filter(p => Number(p?.gradeId) > 0);
+
+  const jobs = [];
+  for (let m = from; m <= to; m += 1) {
+    cls.forEach(p => jobs.push({ m, gradeId: p.gradeId, sectionId: p.sectionId }));
+  }
+
+  const rows = [];
+  let failed = 0;
+  const LIMIT = 8;
+  let next = 0;
+  const worker = async () => {
+    for (;;) {
+      const i = next;
+      next += 1;
+      if (i >= jobs.length) return;
+      const j = jobs[i];
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        const res = await getOldErpLedgerByClassSection(j.m, year, j.gradeId, j.sectionId);
+        [...res.summary, ...res.data].forEach(r => {
+          const rec = oldErpRowToRecord(r, j.m, year, j.gradeId, j.sectionId);
+          if (rec) rows.push(rec);
+        });
+      } catch (e) {
+        failed += 1;
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(LIMIT, jobs.length) }, worker));
+
+  /* Ek student ka ek mahine me ek hi record — do jori se aa jaye to pehla rehta hai. */
+  const seen = new Set();
+  return {
+    rows: rows.filter(r => {
+      const k = `${r.studentID}|${r.month}`;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    }),
+    failed,
+    total: jobs.length,
+  };
+}
+
 /* The ledger stamps createdBy/modifiedBy with the LOGIN user id, which is not
    an employee id — nothing in get-employees-by-branch joins to it, so the name
    has to come from /api/HR/get-employee-by-loginuser/{loginUserId}.

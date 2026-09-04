@@ -21,7 +21,8 @@ import { fetchNetworkClasses, fetchClassSubjects } from '../../api/academicsSetu
    hui; aur child2 me chaaron section ka bana hua content apni ASLI ids ke
    sath (dekhein src/api/releaseContent.js). */
 import { fetchReleases, saveRelease, deleteRelease } from '../../api/releaseApi'
-import { EMPTY_CONTENT, fetchReleaseContent, filterReleaseContent, idSetsOf, releaseItemsOf, summarizeReleaseContent } from '../../api/releaseContent'
+import { onAcademicContentChanged } from '../../api/contentEvents'
+import { EMPTY_CONTENT, fetchReleaseContent, filterReleaseContent, hasReleasableContent, idSetsOf, releaseItemsOf, summarizeReleaseContent } from '../../api/releaseContent'
 /* A4 branded PDF / Word shell — sab Academics reports isi se bante hain. */
 import { esc, exportReport } from './reportEngine'
 import './Academics.css'
@@ -81,15 +82,42 @@ export default function Academics() {
   const [relContent, setRelContent] = useState(EMPTY_CONTENT)
   const [relBusy, setRelBusy] = useState(false)
   const [relSynced, setRelSynced] = useState(false)
+  /* { [apiId]: content } — release ka APNA content, seedha release GET se.
+     Tafseel isi par banti hai, Head Office ke mojooda index par nahi —
+     dekhein releaseApi.js ki sharh. */
+  const [relApiContent, setRelApiContent] = useState({})
+  /* Content tabs (Activity Calendar / Lesson Plans / Resource Library) apni
+     apni list KHUD API se laate hain aur apne andar rakhte hain. Release ke
+     baad server par content badal jata hai, magar wo tabs ko khud pata nahi
+     chalta — screen par purani activities pari rehti thin aur sahi haalat
+     sirf page refresh par aati thi.
+
+     Ye ginti unke wrapper ki `key` me lagti hai: release (ya revoke) ke baad
+     barhti hai, tab dobara mount hota hai aur apna data khud taza le aata
+     hai. Har chhoti tabdeeli par NAHI barhti — warna activity save karte hi
+     tab remount ho kar khula hua modal/scroll ura deta. */
+  const [contentEpoch, setContentEpoch] = useState(0)
 
   useEffect(() => { setA(loadAcademics()) }, [])
   useEffect(() => { if (!toast) return undefined; const t = setTimeout(() => setToast(null), 3000); return () => clearTimeout(t) }, [toast])
 
-  /* Releasable content ek dafa — modal khulte hi ginti sahi dikhni chahiye. */
+  /* Releasable content — modal khulte hi ginti sahi dikhni chahiye. Mount par
+     ek dafa, aur uske baad har content change par (neeche wala effect). */
   const reloadRelContent = useCallback(() => (
     fetchReleaseContent().then(setRelContent).catch(() => setRelContent(EMPTY_CONTENT))
   ), [])
   useEffect(() => { reloadRelContent() }, [reloadRelContent])
+
+  /* Content badalte hi index dobara laao — chaaron API (activities,
+     class lesson masters, notebook masters, resources) ek saath.
+
+     Pehle ye sirf mount par chalta tha: nayi activity add karne ke baad bhi
+     Release Control purani (khali) ginti par khada rehta tha aur "Create
+     Master Release" band hi dikhta tha — sahi haalat sirf page refresh par
+     aati thi. Ab signal API layer se aata hai (contentEvents.js), is liye
+     activity / lesson plan / notebook / resource — kisi bhi jagah se
+     add/edit/delete ho, ginti aur button foran theek ho jate hain. */
+  useEffect(() => onAcademicContentChanged(() => { reloadRelContent() }), [reloadRelContent])
 
   /* Server par mojood releases se local record milao — release kisi aur
      browser/session se bhi ho ya wapas liya gaya ho to ye screen sach bole:
@@ -104,6 +132,8 @@ export default function Academics() {
       .then((apiRels) => {
         if (!alive) return
         setRelSynced(true)
+        /* Ye har baar bharta hai — chahe releases ki list na badle. */
+        setRelApiContent(Object.fromEntries(apiRels.map((r) => [r.id, r.content])))
         const local = a.releases || []
         const liveIds = new Set(apiRels.map((r) => r.id))
         const known = new Set(local.map((r) => r.apiId).filter(Boolean))
@@ -145,6 +175,10 @@ export default function Academics() {
      Current Draft par poora live content, kisi purane release ke workspace par
      sirf usi ke ids. */
   const workspaceRelContent = filterReleaseContent(relContent, idSetsOf(viewedRelease))
+  /* Activity Calendar, Lesson Plans, Notebook Plans aur Resource Library —
+     chaaron khali hon to release banta hi nahi. Faisla wahi list dekhti hai jo
+     server ko child2 ban kar jati hai, screen par dikhne wali ginti nahi. */
+  const canReleaseWorkspace = hasReleasableContent(workspaceRelContent)
 
   /* "Create New Release" — Current Draft par le aata hai aur Release Control
      tak scroll kar deta hai, jahan se Master ya Sub chuna jata hai.
@@ -167,8 +201,10 @@ export default function Academics() {
 
   /* Master = network ke SAB connected schools ki branchID; Sub = sirf chuni
      hui. `connectedSchools[].id` khud branchID hai (dekhein ViewProvider). */
-  const applyRelease = async (type, opts, summary) => {
-    const { validityDays, dueDate, creationDate, schools, parentReleaseId, content } = opts
+  /* Summary yahan khud bani hai (taza content par), is liye modal ka teesra
+     argument nahi liya jata. */
+  const applyRelease = async (type, opts) => {
+    const { validityDays, dueDate, creationDate, schools, parentReleaseId, content, pickFrom } = opts
     const isMaster = type === 'master'
     const releaseType = isMaster ? 'MASTER_RELEASE' : 'SUB_RELEASE'
     const number = releases.filter((r) => r.releaseType === releaseType).length + 1
@@ -181,10 +217,43 @@ export default function Academics() {
     const allIds = connectedSchools.map((s) => s.id)
     const branchIds = isMaster ? allIds : schools
 
+    /* ── Save se THEEK PEHLE taza content ──────────────────────────────
+       Modal jo content le kar aaya wo us waqt ka hai jab modal khula tha.
+       Beech me content badal sakta hai — nayi activity/lesson/notebook/
+       resource ban jaye ya mit jaye — aur phir release ya to purani list le
+       kar jata tha ya (agar index us waqt tak load hi na hua ho) KHALI chala
+       jata tha.
+
+       Is liye ab chaaron GET (activities, class lesson masters, notebook
+       masters, resources) yahan dobara chalti hain aur release WAHI le kar
+       jata hai jo abhi server par hai. Fetch fail ho jaye to modal wala
+       content hi chal jata hai — release rukta nahi. */
+    setRelBusy(true)
+    let live = content
+    try {
+      const fresh = await fetchReleaseContent()
+      setRelContent(fresh)
+      live = filterReleaseContent(fresh, idSetsOf(pickFrom))
+    } catch {
+      /* Taza index na mile to modal wala content hi sahi. */
+    }
+
+    /* Khali release na banao — na server par, na yahan. Ab jaanch TAZA content
+       par hai: schools ko kuch milta nahi aur "Currently Live" me ek khokhli
+       tile pari reh jati thi. */
+    const items = releaseItemsOf(live)
+    if (items.length === 0) {
+      setRelBusy(false)
+      fire('Nothing to release — add activities, lesson plans, notebook plans or resource files first', 'warn')
+      return
+    }
+    /* Ginti bhi usi content ki jo waqai ja raha hai — modal ka purana summary
+       aur asli payload alag na ho jayen. */
+    const summary = summarizeReleaseContent(live)
+
     /* Pehle server par — na chale to local record banta hi nahi, warna screen
        "released" dikhati aur schools ke paas kuch pohanchta hi nahi. */
     let apiId = 0
-    setRelBusy(true)
     try {
       apiId = await saveRelease({
         isMaster,
@@ -192,7 +261,7 @@ export default function Academics() {
         creationDate: relOn,
         duration: validityDays,
         branchIds,
-        items: releaseItemsOf(content),
+        items,
       })
     } catch (err) {
       setRelBusy(false)
@@ -224,14 +293,22 @@ export default function Academics() {
       releasedBy: 'Head Office', releaseStatus: 'ACTIVE',
       contentSummary: summary.totals, classWiseSummary: summary.classes,
       /* Jo ids WAQAI server ko gayi hain (child2), na ke local snapshot ki. */
-      activityIds: content.activities.map((x) => x.id),
-      lessonPlanIds: content.lessons.map((x) => x.id),
-      notebookPlanIds: content.notebooks.map((x) => x.id),
-      resourceLibraryIds: content.resources.map((x) => x.id),
+      activityIds: live.activities.map((x) => x.id),
+      lessonPlanIds: live.lessons.map((x) => x.id),
+      notebookPlanIds: live.notebooks.map((x) => x.id),
+      resourceLibraryIds: live.resources.map((x) => x.id),
       snapshot,
     }
     commit({ ...a, released: true, releasedAt: relOn, releaseSeq: seq, release, releases: [...releases, release] })
     setModalType(null)
+    /* Modal band hone ke baad sab kuch dobara server se — chaaron content GET
+       aur releases ki list. Is se screen bina page refresh ke taza rehti hai:
+       Release Control ki ginti, "Currently Live" ki tiles aur release ka View
+       sab asli data par aa jate hain. */
+    reloadRelContent()
+    setRelSynced(false)
+    /* Content tabs bhi dobara — dekhein contentEpoch ki sharh. */
+    setContentEpoch((n) => n + 1)
     fire(`${title} published · ${release.batchId}`, 'success')
   }
 
@@ -259,6 +336,9 @@ export default function Academics() {
     }
     commit({ ...a, releases: releases.map((r) => (r.id === id ? { ...r, releaseStatus: 'ARCHIVED', updatedAt: new Date().toISOString() } : r)) })
     setView(id) // bring it into the editable workspace
+    reloadRelContent()
+    setRelSynced(false)
+    setContentEpoch((n) => n + 1)
     fire(`${revoke.label} revoked — moved to Releases & Drafts, now editable`, 'info')
     setRevoke(null)
   }
@@ -274,7 +354,7 @@ export default function Academics() {
       </div>
 
       {/* 1 — Currently live */}
-      <LiveReleasesCard releases={releases} onView={setDetail} onCreate={setModalType} onRevoke={setRevoke} />
+      <LiveReleasesCard releases={releases} canRelease={canReleaseWorkspace} onView={setDetail} onCreate={setModalType} onRevoke={setRevoke} />
 
       {/* 2 — Releases & Drafts (only non-live editable workspaces) */}
       <div className="ac-rel-bar">
@@ -322,7 +402,7 @@ export default function Academics() {
         </div>
       )}
 
-      <div key={view} className={isLiveView ? 'ac-readonly' : undefined}>
+      <div key={`${view}-${contentEpoch}`} className={isLiveView ? 'ac-readonly' : undefined}>
         {sub === 'act-cal' && <ActivityCalendar a={aView} commit={commitView} fire={fire} live={!viewedRelease} />}
         {/* LIVE — apna data khud API se lati hai (networkID par), is liye
             release-snapshot wale aView/commitView isay nahi milte. */}
@@ -338,7 +418,7 @@ export default function Academics() {
 
       {modalType && <ReleaseModal type={modalType} releases={releases} relContent={relContent} baseRelease={viewedRelease} baseLabel={workspaceName} busy={relBusy} onClose={() => setModalType(null)} onRelease={applyRelease} />}
 
-      {detail && <ReleaseDetailsModal release={detail} relContent={relContent} schools={connectedSchools} onClose={() => setDetail(null)} onRevoke={(r) => { setDetail(null); setRevoke(r) }} />}
+      {detail && <ReleaseDetailsModal release={detail} relContent={relContent} apiContent={detail.apiId ? relApiContent[detail.apiId] : null} schools={connectedSchools} onClose={() => setDetail(null)} onRevoke={(r) => { setDetail(null); setRevoke(r) }} />}
 
       {revoke && createPortal(
         <div className="ov" onMouseDown={(e) => { if (e.target === e.currentTarget) setRevoke(null) }}>
@@ -439,7 +519,10 @@ function releaseStatusOf(r) {
 function ReleaseBar({ workspaceName, content, isCurrent, isLiveView, onCreate }) {
   const summary = useMemo(() => summarizeReleaseContent(content), [content])
   const t = summary.totals
-  const empty = (t.lessons + t.notebooks + t.resourceFiles + t.activities) === 0
+  /* Summary sirf class-wale rows ginti hai; release wahi jata hai jo
+     releaseItemsOf banata hai. Button ka faisla usi par ho, warna dono me
+     farq aane par khali release ban sakta hai. */
+  const empty = !hasReleasableContent(content)
   const masterLbl = isCurrent ? 'Create Master Release' : 'Release as Master Release'
   const subLbl = isCurrent ? 'Create Sub Release' : 'Release as Sub Release'
 
@@ -505,7 +588,7 @@ function LiveReleaseTile({ r, onView, onRevoke }) {
   )
 }
 
-function LiveReleasesCard({ releases, onView, onCreate, onRevoke }) {
+function LiveReleasesCard({ releases, canRelease, onView, onCreate, onRevoke }) {
   const live = releases.filter((r) => releaseStatusOf(r) === 'ACTIVE')
   const ordered = [...live.filter((r) => r.releaseType === 'MASTER_RELEASE'), ...live.filter((r) => r.releaseType === 'SUB_RELEASE')]
   return (
@@ -518,10 +601,12 @@ function LiveReleasesCard({ releases, onView, onCreate, onRevoke }) {
           <div className="live-empty">
             <i className="fa-solid fa-satellite-dish" />
             <div className="live-empty-title">No live releases currently available to schools</div>
-            <div className="live-empty-sub">Create a Master Release or Sub Release to make academic content available to member schools.</div>
+            <div className="live-empty-sub">{canRelease
+              ? 'Create a Master Release or Sub Release to make academic content available to member schools.'
+              : 'There is nothing to release yet — add activities, lesson plans, notebook plans or resource files first.'}</div>
             <div className="live-empty-btns">
-              <button className="btn-primary" onClick={() => onCreate('master')}><i className="fa-solid fa-globe" /> Create Master Release</button>
-              <button className="btn-secondary" onClick={() => onCreate('sub')}><i className="fa-solid fa-code-branch" /> Create Sub Release</button>
+              <button className="btn-primary" disabled={!canRelease} onClick={() => onCreate('master')}><i className="fa-solid fa-globe" /> Create Master Release</button>
+              <button className="btn-secondary" disabled={!canRelease} onClick={() => onCreate('sub')}><i className="fa-solid fa-code-branch" /> Create Sub Release</button>
             </div>
           </div>
         ) : (
@@ -547,7 +632,9 @@ function ReleaseModal({ type, releases, relContent, baseRelease, baseLabel, busy
   )
   const summary = useMemo(() => summarizeReleaseContent(content), [content])
   const t = summary.totals
-  const noContent = (t.lessons + t.notebooks + t.resourceFiles + t.activities) === 0
+  /* Chaaron section khali = release ka koi matlab nahi. Ginti ke bajaye wahi
+     list dekhi jati hai jo child2 ban kar server tak jati hai. */
+  const noContent = useMemo(() => !hasReleasableContent(content), [content])
 
   /* Schools ab API se aate hain (ViewProvider), is liye list async bharti hai —
      master release ka "sab select" schools aane par set hota hai. */
@@ -614,7 +701,10 @@ function ReleaseModal({ type, releases, relContent, baseRelease, baseLabel, busy
 
   const subjRows = (map) => Object.entries(map).filter(([, n]) => n > 0).map(([sid, n]) => <div className="rel-row" key={sid}><span>{summary.subjectName(sid)}</span><span className="rel-row-n">{n}</span></div>)
   const card = (icon, val, lbl, accent) => <div className={`rel-sum ${accent || ''}`}><div className="rel-sum-ic"><i className={`fa-solid ${icon}`} /></div><div><div className="rel-sum-val">{val}</div><div className="rel-sum-lbl">{lbl}</div></div></div>
-  const submit = () => onRelease(type, { validityDays: dn, dueDate, creationDate: releaseDate, schools: [...schoolSel], parentReleaseId: sourceRelease?.id || null, content }, summary)
+  /* `pickFrom` = wo release jis ki ids par content chhana gaya (Current Draft
+     par null). applyRelease save se pehle index dobara laata hai aur usi chhaant
+     ko dohrata hai — dekhein wahan ki sharh. */
+  const submit = () => onRelease(type, { validityDays: dn, dueDate, creationDate: releaseDate, schools: [...schoolSel], parentReleaseId: sourceRelease?.id || null, content, pickFrom: sourceRelease || baseRelease || null }, summary)
 
   return createPortal(
     <div className="pay-ov" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
@@ -779,19 +869,35 @@ function ReleaseModal({ type, releases, relContent, baseRelease, baseLabel, busy
    is liye wahan kuch dikhta hi nahi tha aur sab kuch greyed-out ho jata tha.
    Ab View us release ki tafseel kholta hai: jo ids WAQAI release hui thin,
    unhi ko live content index me se chhaant kar dikhaya jata hai. */
-function ReleaseDetailsModal({ release, relContent, schools, onClose, onRevoke }) {
+function ReleaseDetailsModal({ release, relContent, apiContent, schools, onClose, onRevoke }) {
   const [open, setOpen] = useState({})
   const isSub = release.releaseType === 'SUB_RELEASE'
   const status = releaseStatusOf(release)
 
-  const content = useMemo(() => filterReleaseContent(relContent, idSetsOf(release)), [relContent, release])
+  /* Pehli tarjeeh SERVER ke apne content ko: release GET har release ke saath
+     uski Activity / LessonPlanMaster / NoteBookPlansMaster / ResourceFile rows
+     bhejta hai. Class aur subject ke NAAM us me nahi hote — wo LaunchSetup se
+     aate hain, is liye sirf wo do listein index se li jati hain.
+
+     Pehle yahan sirf neeche wali chhaant thi: release ki ids Head Office ke
+     MOJOODA index me dhoondi jati thin. Jo cheez us index me na mile wo
+     tafseel me sifar ban jati thi — "0 Activities" aur saath me "released
+     items are no longer available", halanke server par rows maujood thin.
+     Ab wo soorat sirf tab aati hai jab server ka content mila hi na ho. */
+  const fromApi = !!apiContent
+  const content = useMemo(() => (
+    apiContent
+      ? { ...apiContent, classes: relContent.classes || [], subjects: relContent.subjects || [] }
+      : filterReleaseContent(relContent, idSetsOf(release))
+  ), [apiContent, relContent, release])
   const summary = useMemo(() => summarizeReleaseContent(content), [content])
   const t = summary.totals
 
-  /* Jin ids ka content HO se mit chuka hai wo yahan nahi milti — is liye jo
-     release me tha aur jo abhi maujood hai, dono ki ginti alag ho sakti hai. */
+  /* Server ka content mil jaye to "kam" kuch nahi — wahi asal record hai.
+     Warna (fallback) jo release me tha aur jo abhi index me hai, dono ki
+     ginti alag ho sakti hai. */
   const sent = release.contentSummary || {}
-  const missing = Math.max(0, (Number(sent.activities) || 0) + (Number(sent.lessons) || 0)
+  const missing = fromApi ? 0 : Math.max(0, (Number(sent.activities) || 0) + (Number(sent.lessons) || 0)
     + (Number(sent.notebooks) || 0) + (Number(sent.resourceFiles) || 0)
     - (t.activities + t.lessons + t.notebooks + t.resourceFiles))
 

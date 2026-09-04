@@ -3,9 +3,14 @@ import { COLORS } from '../data/initialData';
 import { downloadSubjectsReport } from '../utils/pdfReports';
 import { buildUrl } from '../utils/apiConfig';
 import Tooltip from '../erp/shared/Tooltip';
+import { useSetupTabPerms } from '../utils/setupPermissions';
+import SetupLoader from '../components/SetupLoader';
 
 // ── Book List Modal (full-featured: edit subject, delete, copy-to-all) ──────
 function BookListModal({ open, cls, subjects, setSubjects, getclassesdata, bookLists, setBookLists, classesData, onClose,onAddSubjectClick, showToast, showSuccess }) {
+  /* Modal khud Edit ki permission par khulta hai, magar rename aur delete
+     apni apni permission maangte hain — Edit wale ko delete na mil jaye. */
+  const { canEdit: canEditSubj, canDelete: canDeleteSubj } = useSetupTabPerms('subjects');
   const [localList, setLocalList] = useState({});
   const [showApplyConfirm, setShowApplyConfirm] = useState(false);
   const [showDeleteconfirm, setshowDeleteconfirm] = useState(false);
@@ -276,20 +281,22 @@ getclassesdata()
                           </button>
                           </Tooltip>
                         </>
-                      ) : (
+                      ) : (canEditSubj && (
                         <Tooltip text="Rename subject">
                         <button className="btn btn-icon btn-ghost btn-sm" style={{ width: 26, height: 26, fontSize: 11 }}
                           onClick={() => startEditSubject(subj)}>
                           <i className="fas fa-pen"></i>
                         </button>
                         </Tooltip>
+                      ))}
+                      {canDeleteSubj && (
+                        <Tooltip text="Delete subject">
+                        <button className="btn btn-icon btn-danger btn-sm" style={{ width: 26, height: 26, fontSize: 11 }}
+                          onClick={() => handleDeleteSubject(subj)}>
+                          <i className="fas fa-trash"></i>
+                        </button>
+                        </Tooltip>
                       )}
-                      <Tooltip text="Delete subject">
-                      <button className="btn btn-icon btn-danger btn-sm" style={{ width: 26, height: 26, fontSize: 11 }}
-                        onClick={() => handleDeleteSubject(subj)}>
-                        <i className="fas fa-trash"></i>
-                      </button>
-                      </Tooltip>
                     </div>
                   </div>
                   {/* <input
@@ -811,6 +818,10 @@ useEffect(() => {
 
 // ── Main Subjects Tab ─────────────────────────────────────────────────────
 export default function SubjectsTab({ classesData, setClassesData,  subjectsData, setSubjectsData, bookLists, setBookLists, schoolInfo, showToast, showSuccess, onContinue }) {
+  /* Launch Setup ▸ Subjects ki permissions. */
+  const { canCreate, canEdit, canDownload } = useSetupTabPerms('subjects');
+  /* Pehla fetch mukammal hone tak loader — koi placeholder row nahi. */
+  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [bookListTarget, setBookListTarget] = useState(null);
   const [showAddSubject, setShowAddSubject] = useState(false);
@@ -867,6 +878,7 @@ export default function SubjectsTab({ classesData, setClassesData,  subjectsData
         const sorted = [...d].sort((a, b) => (a.orderBy || 0) - (b.orderBy || 0));
         setClassesData(d);
       } catch { showToast('Could not load Subjects data', 'error'); }
+      finally { setLoading(false); }
   }, [setClassesData]);
 
     const getSubjectList = useCallback(async (cls, sec, key) => {
@@ -888,6 +900,8 @@ export default function SubjectsTab({ classesData, setClassesData,  subjectsData
   }, [setClassesData]);
   
 
+  if (loading) return <div className="tab-panel active"><SetupLoader label="Loading subjects…" /></div>;
+
   return (
     <div className="tab-panel active">
       <div className="classes-toolbar">
@@ -901,16 +915,20 @@ export default function SubjectsTab({ classesData, setClassesData,  subjectsData
           {/* <button className="btn btn-ghost btn-md" onClick={applyToolbarToAll}>
             <i className="fas fa-copy"></i> <span className="add-btn-label">Apply for All Empty Classes</span>
           </button> */}
-          <Tooltip text="Download subjects report as PDF">
-            <button className="btn btn-pdf btn-md" onClick={() => downloadSubjectsReport(classesData, subjectsData, bookLists, schoolInfo || {}, showToast)}>
-            <i className="fas fa-file-pdf"></i> <span className="pdf-btn-label">Download Report</span>
-          </button>
-          </Tooltip>
-          <Tooltip text="Add a new subject to all classes">
-            <button className="btn btn-primary btn-md" onClick={() => setShowAddSubject(true)}>
-              <i className="fas fa-plus"></i> <span className="add-btn-label">Add Subject</span>
+          {canDownload && (
+            <Tooltip text="Download subjects report as PDF">
+              <button className="btn btn-pdf btn-md" onClick={() => downloadSubjectsReport(classesData, subjectsData, bookLists, schoolInfo || {}, showToast)}>
+              <i className="fas fa-file-pdf"></i> <span className="pdf-btn-label">Download Report</span>
             </button>
-          </Tooltip>
+            </Tooltip>
+          )}
+          {canCreate && (
+            <Tooltip text="Add a new subject to all classes">
+              <button className="btn btn-primary btn-md" onClick={() => setShowAddSubject(true)}>
+                <i className="fas fa-plus"></i> <span className="add-btn-label">Add Subject</span>
+              </button>
+            </Tooltip>
+          )}
         </div>
       </div>
 
@@ -957,7 +975,7 @@ export default function SubjectsTab({ classesData, setClassesData,  subjectsData
                   </div>
                   <div className="td">{statusBadge}</div>
                   <div className="td" style={{ gap: 5 }}>
-                    <Tooltip text="Update the book list">
+                    {canEdit && <Tooltip text="Update the book list">
                     <button className="btn btn-primary btn-sm" onClick={e => { e.stopPropagation();
                       const key = `${cls.id}_${sec?.sectionID || 'null'}`;
                       setExpandedKey(null)
@@ -971,7 +989,7 @@ export default function SubjectsTab({ classesData, setClassesData,  subjectsData
                     >
                       <i className="fas fa-edit"></i> Update
                     </button>
-                    </Tooltip>
+                    </Tooltip>}
                     <Tooltip text={exp ? 'Hide book list' : 'Show book list'}>
                     <button className={`expand-btn${exp ? ' open' : ''}`} onClick={e => {
   e.stopPropagation();

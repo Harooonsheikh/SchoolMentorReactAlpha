@@ -3,6 +3,8 @@ import { COLORS } from '../data/initialData';
 import { downloadClassesReport } from '../utils/pdfReports';
 import { buildUrl } from '../utils/apiConfig';
 import Tooltip from '../erp/shared/Tooltip';
+import { useSetupTabPerms } from '../utils/setupPermissions';
+import SetupLoader from '../components/SetupLoader';
 
 // Add Class Modal
 function AddClassModal({ open, onClose, getClassesData, onAdd }) {
@@ -835,6 +837,14 @@ const updatedSections = (secJson.data || secJson || []).map(item => ({
 }
 
 export default function ClassesTab({ classesData, setClassesData, schoolInfo, showToast, showSuccess, onContinue }) {
+  /* Launch Setup ▸ Classes — jo action allowed nahi, uska button hi nahi
+     banta (wahi tareeqa jo baqi ERP modules me hai). Sections aur Fee
+     Structure classes ke andar hi banti hain, is liye unke modals Edit ke
+     saath khulte hain. */
+  const { canCreate, canEdit, canDelete, canDownload } = useSetupTabPerms('classes');
+  /* Pehla fetch mukammal hone tak loader — pehle is dauran initialData ka
+     khali placeholder row dikhta tha jo dummy class jaisa lagta tha. */
+  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [expandedId, setExpandedId] = useState(null);
   const [showAddModal, setShowAddModal] = useState(false);
@@ -962,7 +972,10 @@ const getclassesdata = useCallback(async () => {
       const sorted   = [...d].sort((a, b) => (a.orderBy || 0) - (b.orderBy || 0));
       setClassesData(sorted);
     } catch { showToast('Could not load branch data', 'error'); }
+    finally { setLoading(false); }
 }, [setClassesData, showToast]);
+
+  if (loading) return <div className="tab-panel active"><SetupLoader label="Loading classes…" /></div>;
 
   return (
     <div className="tab-panel active">
@@ -996,16 +1009,20 @@ const getclassesdata = useCallback(async () => {
           </div>
         </div>
         <div className="toolbar-right">
-          <Tooltip text="Download classes report as PDF">
-            <button className="btn btn-pdf btn-md" onClick={() => downloadClassesReport(classesData, schoolInfo || {}, showToast)}>
-              <i className="fas fa-file-pdf"></i> <span className="pdf-btn-label">Download Report</span>
-            </button>
-          </Tooltip>
-          <Tooltip text="Add a new class">
-            <button className="btn btn-primary btn-md" onClick={() => setShowAddModal(true)}>
-              <i className="fas fa-plus"></i> Add New Class
-            </button>
-          </Tooltip>
+          {canDownload && (
+            <Tooltip text="Download classes report as PDF">
+              <button className="btn btn-pdf btn-md" onClick={() => downloadClassesReport(classesData, schoolInfo || {}, showToast)}>
+                <i className="fas fa-file-pdf"></i> <span className="pdf-btn-label">Download Report</span>
+              </button>
+            </Tooltip>
+          )}
+          {canCreate && (
+            <Tooltip text="Add a new class">
+              <button className="btn btn-primary btn-md" onClick={() => setShowAddModal(true)}>
+                <i className="fas fa-plus"></i> Add New Class
+              </button>
+            </Tooltip>
+          )}
         </div>
       </div>
 
@@ -1024,7 +1041,7 @@ const getclassesdata = useCallback(async () => {
       <div className="empty-icon"><i className="fas fa-chalkboard"></i></div>
       <div className="empty-title">No Classes Yet</div>
       <div className="empty-sub">Click "Add New Class" to start configuring your school's classes.</div>
-      <Tooltip text="Add your first class"><button className="btn btn-primary btn-md" onClick={() => setShowAddModal(true)}><i className="fas fa-plus"></i> Add First Class</button></Tooltip>
+      {canCreate && <Tooltip text="Add your first class"><button className="btn btn-primary btn-md" onClick={() => setShowAddModal(true)}><i className="fas fa-plus"></i> Add First Class</button></Tooltip>}
     </div>
   ) : filtered.map((cls, i) => {
     const col = COLORS[i % COLORS.length];
@@ -1059,30 +1076,30 @@ const getclassesdata = useCallback(async () => {
           </div>
           <div className="td details-td">
             <div className="row-actions-overlay" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Tooltip text="Update Class">
+              {canEdit && <Tooltip text="Update Class">
                 <button onClick={e => { e.stopPropagation(); setEditTarget(cls); }}
   style={{ width: 36, height: 36, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', borderRadius: 9, border: 'none', cursor: 'pointer', fontSize: 14, background: 'rgba(16,185,129,.1)', color: '#10b981' }}>
   <i className="fas fa-pen"></i>
 </button>
-              </Tooltip>
-              <Tooltip text="Manage Sections">
+              </Tooltip>}
+              {canEdit && <Tooltip text="Manage Sections">
                 <button onClick={e => { e.stopPropagation(); setSectionTarget(cls); }}
                 style={{ width: 36, height: 36, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', borderRadius: 9, border: 'none', cursor: 'pointer', fontSize: 14, background: 'rgba(30,58,138,.08)', color: 'var(--brand-primary)' }}>
                 <i className="fas fa-layer-group"></i>
               </button>
-              </Tooltip>
-              <Tooltip text="Fee Structure">
+              </Tooltip>}
+              {canEdit && <Tooltip text="Fee Structure">
                 <button onClick={e => { e.stopPropagation(); setFeeTarget(cls); }}
                 style={{ width: 36, height: 36, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', borderRadius: 9, border: 'none', cursor: 'pointer', fontSize: 14, background: 'rgba(30,58,138,.08)', color: 'var(--brand-primary)' }}>
                 <i className="fas fa-receipt"></i>
               </button>
-              </Tooltip>
-              <Tooltip text="Delete">
+              </Tooltip>}
+              {canDelete && <Tooltip text="Delete">
                 <button onClick={e => { e.stopPropagation(); setDeleteTarget(cls); }}
                 style={{ width: 36, height: 36, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', borderRadius: 9, border: 'none', cursor: 'pointer', fontSize: 14, background: 'rgba(239,68,68,.1)', color: '#ef4444' }}>
                 <i className="fas fa-trash"></i>
               </button>
-              </Tooltip>
+              </Tooltip>}
             </div>
             <Tooltip text={exp ? 'Hide details' : 'Show details'}>
               <button className={`expand-btn${exp ? ' open' : ''}`} onClick={e => { e.stopPropagation(); setExpandedId(exp ? null : cls.id); }}
@@ -1099,7 +1116,7 @@ const getclassesdata = useCallback(async () => {
               <div className="detail-block">
                 <div className="detail-block-header">
                   <div className="detail-block-title"><i className="fas fa-layer-group"></i> Section Details</div>
-                  <Tooltip text="Add a section to this class"><button className="btn btn-ghost btn-sm" onClick={() => setSectionTarget(cls)}><i className="fas fa-plus"></i> Add</button></Tooltip>
+                  {canCreate && <Tooltip text="Add a section to this class"><button className="btn btn-ghost btn-sm" onClick={() => setSectionTarget(cls)}><i className="fas fa-plus"></i> Add</button></Tooltip>}
                 </div>
                 {(cls.sections || []).length ? (
                   <div className="section-list">
@@ -1107,8 +1124,8 @@ const getclassesdata = useCallback(async () => {
                       <div key={si} className="section-row-item">
                         <span className="sec-name"><i className="fas fa-circle" style={{ fontSize: 7, color: 'var(--brand-primary)' }}></i>{s.sectionName}</span>
                         <div className="sec-actions">
-                          <button className="btn btn-icon btn-ghost btn-sm" onClick={() => setSectionTarget(cls)}><i className="fas fa-pen"></i></button>
-                          <button className="btn btn-icon btn-danger btn-sm" onClick={() => quickDeleteSection(cls.id, si)}><i className="fas fa-times"></i></button>
+                          {canEdit && <button className="btn btn-icon btn-ghost btn-sm" onClick={() => setSectionTarget(cls)}><i className="fas fa-pen"></i></button>}
+                          {canDelete && <button className="btn btn-icon btn-danger btn-sm" onClick={() => quickDeleteSection(cls.id, si)}><i className="fas fa-times"></i></button>}
                         </div>
                       </div>
                     ))}
@@ -1118,7 +1135,7 @@ const getclassesdata = useCallback(async () => {
               <div className="detail-block">
                 <div className="detail-block-header">
                   <div className="detail-block-title"><i className="fas fa-receipt"></i> Fee Structure</div>
-                  <Tooltip text="Update the fee structure"><button className="btn btn-ghost btn-sm" onClick={() => setFeeTarget(cls)}><i className="fas fa-pen"></i> Update</button></Tooltip>
+                  {canEdit && <Tooltip text="Update the fee structure"><button className="btn btn-ghost btn-sm" onClick={() => setFeeTarget(cls)}><i className="fas fa-pen"></i> Update</button></Tooltip>}
                 </div>
                 {(cls.feeHeads || []).length ? (
                   <>

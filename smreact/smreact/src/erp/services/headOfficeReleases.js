@@ -12,12 +12,21 @@ import { fetchBranchNetworkId } from './chainBranch';
        Child1     → kin branches ko gaya (BranchID)
        Child2Raw  → kya kya gaya: Type + TypeID + GradeID + SubjectID
 
-   ── Ahem: content ki tafseel is jawab me NAHI aati ──
-   Jawab me Activity / LessonPlanMaster / ResourceFile waghera ke khaane
-   to hain magar server unhe khali hi bhejta hai (jaanch kar likha gaya).
-   Sirf ids milti hain. Is liye har section ki asli tafseel network ke
-   apne (wahi jo chain portal parhta hai) raston se laate hain aur
-   Child2Raw ki ids par milaate hain:
+   ── Content ki tafseel ab isi jawab me aati hai ──
+   Jawab me har release ke saath uska APNA content bhi hota hai —
+   Activity / LessonPlanMaster / NoteBookPlansMaster / ResourceFile, har
+   row par apna MasterID. Yehi pehli tarjeeh hai.
+
+   (Pehle yahan likha tha ke server ye khaane khali bhejta hai aur sirf
+   ids milti hain. Ab aisa nahi — aur usi purani baat ki wajah se ye
+   screen release ka content Head Office ke MOJOODA index me se dhoondti
+   thi. Jo cheez us index me na milti — release ke baad wahan se nikal
+   jaye ya kisi aur wajah se na aaye — wo yahan gayab ho jati thi aur har
+   release "0, 0, 0" dikhata tha, halanke server par rows maujood thin.)
+
+   Jis release ke saath uska content na aaye (purane records) uske liye
+   wahi purana raasta fallback rehta hai — network ke apne (wahi jo chain
+   portal parhta hai) raste, Child2Raw ki ids par milaan kar ke:
 
      ActivityCalendar     → /api/getactivitycalendarbynetwork
      classworklessonplan  → /api/getulpforclassmasterbynetwork
@@ -127,71 +136,95 @@ async function fetchNetworkContent(networkId) {
   subjLists.forEach((j) => rows(j).forEach((s) => subjectName.set(num(s.subjectID), str(s.subjectName))));
   const className = new Map(classRows.map((c) => [num(c.id), str(c.name)]));
 
+  const { activityOf, planOf, resourceOf } = makeMappers(className, subjectName);
   const byId = (arr, map) => {
     const m = new Map();
     arr.forEach((r) => { const v = map(r); if (v) m.set(v.id, v); });
     return m;
   };
 
-  const activities = byId(rows(acts), (r) => {
-    const id = num(r.id);
-    if (!id) return null;
-    const from = toDateOnly(r.startAt || r.startDate);
-    const to = toDateOnly(r.endAt || r.endDate) || from;
-    return {
-      id,
-      title: str(r.name) || 'Activity',
-      from, to,
-      purpose: str(r.activityPurpose),
-      development: str(r.activityDevelopment),
-      /* Backend ki spelling `resourseMaterial` hai — typo wahin se hai. */
-      resource: str(r.resourseMaterial),
-      status: activityStatus(from, to),
-    };
-  });
-
-  /* Lesson aur notebook ki master row ka dhancha ek jaisa hai. */
-  const planOf = (r) => {
-    const id = num(r.id);
-    if (!id) return null;
-    const gid = num(r.classID);
-    const sid = num(r.subjectID);
-    return {
-      id,
-      unitNo: str(r.unitNo),
-      unitTitle: str(r.unitName) || `Unit ${str(r.unitNo)}`,
-      lessonTitle: str(r.lessonPlanTopic) || 'Untitled lesson',
-      hoClass: className.get(gid) || (gid ? `Class #${gid}` : '—'),
-      hoSubject: subjectName.get(sid) || (sid ? `Subject #${sid}` : '—'),
-      medium: str(r.medium) || 'English',
-    };
-  };
-
-  const resourceOf = (r) => {
-    const id = num(r.id);
-    if (!id) return null;
-    const raw = str(r.uploadedPDF);
-    const gid = num(r.classID);
-    const sid = num(r.subjectID);
-    return {
-      id,
-      title: str(r.resourceTitle) || 'Untitled resource',
-      description: str(r.resourceDescription),
-      category: str(r.category).toLowerCase() || 'other',
-      fileName: raw ? raw.split(/[\\/]/).pop() : '',
-      fileUrl: raw ? resolveMediaUrl(raw) : '',
-      /* Server list par class/subject ka naam khud join kar deta hai. */
-      hoClass: str(r.className) || className.get(gid) || (gid ? `Class #${gid}` : '—'),
-      hoSubject: str(r.subjectName) || subjectName.get(sid) || (sid ? `Subject #${sid}` : '—'),
-    };
-  };
-
   return {
-    activities,
+    className,
+    subjectName,
+    activities: byId(rows(acts), activityOf),
     lessons: byId(rows(lessons), planOf),
     notebooks: byId(rows(notebooks), planOf),
     resources: byId(rows(resources), resourceOf),
   };
+}
+
+/* ── Row → screen ka shape ──────────────────────────────────────────
+   Ye mappers DO jagah se chalte hain: network ke apne raste (camelCase
+   fields dete hain) aur release GET ka apna content (PascalCase — ID,
+   ClassID, UnitNumber…). Is liye har field dono suraton me parhi jati hai,
+   warna release wale rows sab khali map hoti hain.
+
+   Class aur subject ke NAAM release jawab me nahi aate — wo LaunchSetup ke
+   network raston se aate hain, is liye naam ke do map bahar se milte hain. */
+const pick = (r, ...keys) => {
+  for (const k of keys) {
+    const v = r && r[k];
+    if (v !== undefined && v !== null && v !== '') return v;
+  }
+  return undefined;
+};
+
+function makeMappers(className, subjectName) {
+  const activityOf = (r) => {
+    const id = num(pick(r, 'id', 'ID', 'Id'));
+    if (!id) return null;
+    const from = toDateOnly(pick(r, 'startAt', 'StartAt', 'startDate', 'StartDate'));
+    const to = toDateOnly(pick(r, 'endAt', 'EndAt', 'endDate', 'EndDate')) || from;
+    return {
+      id,
+      title: str(pick(r, 'name', 'Name')) || 'Activity',
+      from, to,
+      purpose: str(pick(r, 'activityPurpose', 'ActivityPurpose')),
+      development: str(pick(r, 'activityDevelopment', 'ActivityDevelopment')),
+      /* Backend ki spelling `resourseMaterial` hai — typo wahin se hai. */
+      resource: str(pick(r, 'resourseMaterial', 'ResourseMaterial')),
+      status: activityStatus(from, to),
+    };
+  };
+
+  /* Lesson aur notebook ki master row ka dhancha ek jaisa hai. */
+  const planOf = (r) => {
+    const id = num(pick(r, 'id', 'ID', 'Id'));
+    if (!id) return null;
+    const gid = num(pick(r, 'classID', 'ClassID'));
+    const sid = num(pick(r, 'subjectID', 'SubjectID'));
+    const unitNo = str(pick(r, 'unitNo', 'UnitNo', 'unitNumber', 'UnitNumber'));
+    return {
+      id,
+      unitNo,
+      unitTitle: str(pick(r, 'unitName', 'UnitName')) || `Unit ${unitNo}`,
+      lessonTitle: str(pick(r, 'lessonPlanTopic', 'LessonPlanTopic')) || 'Untitled lesson',
+      hoClass: className.get(gid) || (gid ? `Class #${gid}` : '—'),
+      hoSubject: subjectName.get(sid) || (sid ? `Subject #${sid}` : '—'),
+      medium: str(pick(r, 'medium', 'Medium')) || 'English',
+    };
+  };
+
+  const resourceOf = (r) => {
+    const id = num(pick(r, 'id', 'ID', 'Id'));
+    if (!id) return null;
+    const raw = str(pick(r, 'uploadedPDF', 'UploadedPDF', 'uploadedPdf'));
+    const gid = num(pick(r, 'classID', 'ClassID'));
+    const sid = num(pick(r, 'subjectID', 'SubjectID'));
+    return {
+      id,
+      title: str(pick(r, 'resourceTitle', 'ResourceTitle')) || 'Untitled resource',
+      description: str(pick(r, 'resourceDescription', 'ResourceDescription')),
+      category: str(pick(r, 'category', 'Category')).toLowerCase() || 'other',
+      fileName: raw ? raw.split(/[\\/]/).pop() : '',
+      fileUrl: raw ? resolveMediaUrl(raw) : '',
+      /* Server list par class/subject ka naam khud join kar deta hai. */
+      hoClass: str(pick(r, 'className', 'ClassName')) || className.get(gid) || (gid ? `Class #${gid}` : '—'),
+      hoSubject: str(pick(r, 'subjectName', 'SubjectName')) || subjectName.get(sid) || (sid ? `Subject #${sid}` : '—'),
+    };
+  };
+
+  return { activityOf, planOf, resourceOf };
 }
 
 /* ───────────────────────────── Releases ───────────────────────────── */
@@ -244,6 +277,14 @@ export async function fetchHeadOfficeReleases() {
   const data = (json && json.data) || {};
   const branchesOf = groupBy(data.Child1, 'MasterID');
   const itemsOf = groupBy(data.Child2Raw, 'MasterID');
+  /* Har release ka APNA content — jawab me saath hi aata hai, har row par
+     MasterID. Yehi pehli tarjeeh hai (upar wali sharh dekhein). */
+  const inlineOf = {
+    activity: groupBy(data.Activity, 'MasterID'),
+    lesson: groupBy(data.LessonPlanMaster, 'MasterID'),
+    notebook: groupBy(data.NoteBookPlansMaster, 'MasterID'),
+    resource: groupBy(data.ResourceFile, 'MasterID'),
+  };
 
   /* Sirf wo releases jo is branch ko gaye — content tab hi laate hain. */
   const mine = list(data.Master).filter((m) => (
@@ -252,6 +293,15 @@ export async function fetchHeadOfficeReleases() {
   if (mine.length === 0) return { releases: [], headOfficeName };
 
   const content = await fetchNetworkContent(networkId);
+  /* Inline rows ko bhi wahi shape dena hai jo screen parhti hai — naam ke
+     map network content se aate hain. */
+  const mappers = makeMappers(content.className, content.subjectName);
+  const MAP_FOR = {
+    activity: mappers.activityOf,
+    lesson: mappers.planOf,
+    notebook: mappers.planOf,
+    resource: mappers.resourceOf,
+  };
 
   /* Naya release pehle — server id hi tarteeb hai. */
   const ordered = mine.slice().sort((x, y) => num(y.ID) - num(x.ID));
@@ -260,15 +310,35 @@ export async function fetchHeadOfficeReleases() {
     const id = num(m.ID);
     const isSub = str(m.ReleaseType).toLowerCase() === 'subrelease';
     const items = itemsOf.get(id) || [];
-    const pick = (type, from) => items
-      .filter((it) => typeKeyOf(it.Type) === type)
-      .map((it) => {
-        const row = from.get(num(it.TypeID));
-        /* Content jo release ke baad HO se mit gaya — us ki sirf id bachi
-           hai, is liye us ko chhupa dete hain (khali card se behtar). */
-        return row ? { ...row, id: `${type}-${num(it.TypeID)}` } : null;
-      })
-      .filter(Boolean);
+
+    /* Is release ke apne content ki id → row. Jo yahan mil jaye wo network
+       index se aage rehta hai: network index Head Office ki MOJOODA haalat
+       hai, jabke ye release ka apna record. */
+    const inlineRows = (type) => {
+      const m = new Map();
+      const map = MAP_FOR[type];
+      (inlineOf[type].get(id) || []).forEach((r) => {
+        const v = map(r);
+        if (v) m.set(v.id, v);
+      });
+      return m;
+    };
+
+    const pickOf = (type, from) => {
+      const own = inlineRows(type);
+      return items
+        .filter((it) => typeKeyOf(it.Type) === type)
+        .map((it) => {
+          const tid = num(it.TypeID);
+          /* Pehle release ka apna record, phir network index (purane
+             releases jin ke saath content na aaya ho). */
+          const row = own.get(tid) || from.get(tid);
+          /* Dono jagah na mile — us ki sirf id bachi hai, is liye chhupa
+             dete hain (khali card se behtar). */
+          return row ? { ...row, id: `${type}-${tid}` } : null;
+        })
+        .filter(Boolean);
+    };
 
     return {
       id: `HO-${id}`,
@@ -286,10 +356,10 @@ export async function fetchHeadOfficeReleases() {
       status: 'ACTIVE',
       appliesToAllSchools: !isSub,
       selectedSchoolIds: (branchesOf.get(id) || []).map((c) => num(c.BranchID)),
-      activities: pick(TYPE.activity, content.activities),
-      lessonPlans: pick(TYPE.lesson, content.lessons),
-      notebookPlans: pick(TYPE.notebook, content.notebooks),
-      resources: pick(TYPE.resource, content.resources),
+      activities: pickOf(TYPE.activity, content.activities),
+      lessonPlans: pickOf(TYPE.lesson, content.lessons),
+      notebookPlans: pickOf(TYPE.notebook, content.notebooks),
+      resources: pickOf(TYPE.resource, content.resources),
     };
   });
 

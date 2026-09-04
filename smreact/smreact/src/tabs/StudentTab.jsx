@@ -3,6 +3,8 @@ import { COLORS } from '../data/initialData';
 import { downloadStudentReport, downloadSectionStudentsReport } from '../utils/pdfReports';
 import { buildUrl } from '../utils/apiConfig';
 import Tooltip from '../erp/shared/Tooltip';
+import { useSetupTabPerms } from '../utils/setupPermissions';
+import SetupLoader from '../components/SetupLoader';
 import quickTemplate from '../BulkStudents_Quick.xlsx';
 import detailedTemplate from '../BulkStudents_Detailed_Template.xlsx';
 
@@ -394,6 +396,10 @@ function StudentModal({ open, target, editIdx, editStudent, classesData, onClose
 // ── Main StudentTab ───────────────────────────────────────────────────────────
 export default function StudentTab({ classesData, setClassesData, studentStrengths, setStudentStrengths, manualReg, 
   setManualReg, schoolInfo, showToast, showSuccess }) {
+  /* Launch Setup ▸ Student Details ki permissions. */
+  const { canCreate, canEdit, canDelete, canDownload, canImport } = useSetupTabPerms('student');
+  /* Pehla fetch mukammal hone tak loader — koi placeholder row nahi. */
+  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [expandedKey, setExpandedKey] = useState(null);
   const [page, setPage] = useState(1);
@@ -603,8 +609,11 @@ export default function StudentTab({ classesData, setClassesData, studentStrengt
         const d        = json.data ?? {};
         setClassesData(d);
       } catch { showToast('Could not load branch data', 'error'); }
+      finally { setLoading(false); }
   }, [setClassesData]);
 
+
+  if (loading) return <div className="tab-panel active"><SetupLoader label="Loading students…" /></div>;
 
   return (
     <div className="tab-panel active">
@@ -646,11 +655,13 @@ export default function StudentTab({ classesData, setClassesData, studentStrengt
           </div>
         </div>
         <div className="toolbar-right">
-          <Tooltip text="Download students report as PDF">
-            <button className="btn btn-pdf btn-md" onClick={() => downloadStudentReport(classesData, studentStrengths, schoolInfo || {}, showToast)}>
-            <i className="fas fa-file-pdf"></i> <span className="pdf-btn-label">Download Report</span>
-          </button>
-          </Tooltip>
+          {canDownload && (
+            <Tooltip text="Download students report as PDF">
+              <button className="btn btn-pdf btn-md" onClick={() => downloadStudentReport(classesData, studentStrengths, schoolInfo || {}, showToast)}>
+              <i className="fas fa-file-pdf"></i> <span className="pdf-btn-label">Download Report</span>
+            </button>
+            </Tooltip>
+          )}
         </div>
       </div>
 
@@ -699,22 +710,22 @@ export default function StudentTab({ classesData, setClassesData, studentStrengt
                   </div>
                   {/* Action buttons */}
                   <div className="td" style={{ gap: 6, flexWrap: 'wrap' }}>
-                    <Tooltip text="Add a new student">
+                    {canCreate && <Tooltip text="Add a new student">
                     <button
                       className="btn btn-primary btn-sm"
                       onClick={e => { e.stopPropagation(); openAddStudent(key); }}
                       style={{ background: 'linear-gradient(135deg,#1E3A8A,#1E40AF)', whiteSpace: 'nowrap' }}>
                       <i className="fas fa-user-plus"></i> Add Student
                     </button>
-                    </Tooltip>
-                    <Tooltip text={`Bulk import students for ${cls.name}${sec ? ` - Section ${sec.sectionName}` : ''}`}>
+                    </Tooltip>}
+                    {canImport && <Tooltip text={`Bulk import students for ${cls.name}${sec ? ` - Section ${sec.sectionName}` : ''}`}>
                     <button
                       onClick={e => { e.stopPropagation(); setShowImport({ cls, sec }); setImportStep(1); }}
                       style={{ background: '#1E293B', color: '#fff', border: 'none', borderRadius: 8, padding: '7px 11px', cursor: 'pointer', fontSize: 13, display: 'inline-flex', alignItems: 'center' }}>
                       <i className="fas fa-file-import"></i>
                     </button>
-                    </Tooltip>
-                    <Tooltip text={`Download student list for ${cls.name}${sec ? ` - Section ${sec.sectionName}` : ''} as PDF`}>
+                    </Tooltip>}
+                    {canDownload && <><Tooltip text={`Download student list for ${cls.name}${sec ? ` - Section ${sec.sectionName}` : ''} as PDF`}>
                     <button
                       onClick={e => { e.stopPropagation(); downloadSectionStudentsReport(cls, sec, schoolInfo || {}, showToast, 'pdf'); }}
                       style={{ background: '#DC2626', color: '#fff', border: 'none', borderRadius: 8, padding: '7px 12px', cursor: 'pointer', fontSize: 12.5, fontWeight: 700, whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', gap: 5 }}>
@@ -727,7 +738,7 @@ export default function StudentTab({ classesData, setClassesData, studentStrengt
                       style={{ background: '#2563EB', color: '#fff', border: 'none', borderRadius: 8, padding: '7px 12px', cursor: 'pointer', fontSize: 12.5, fontWeight: 700, whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', gap: 5 }}>
                       <i className="fas fa-file-word"></i> Word
                     </button>
-                    </Tooltip>
+                    </Tooltip></>}
                   </div>
                   <div className="td" style={{ justifyContent: 'center' }}>
                     <Tooltip text={exp ? 'Hide details' : 'Show details'}>
@@ -750,12 +761,12 @@ export default function StudentTab({ classesData, setClassesData, studentStrengt
                         <span style={{ background: 'rgba(255,255,255,.18)', color: '#fff', fontSize: 12, fontWeight: 700, padding: '3px 10px', borderRadius: 99 }}>
                           {sec.students.length} student{sec.students.length !== 1 ? 's' : ''}
                         </span>
-                        <Tooltip text="Add a new student">
+                        {canCreate && <Tooltip text="Add a new student">
                         <button onClick={() => openAddStudent(key)}
                           style={{ background: 'rgba(255,255,255,.18)', border: '1.5px solid rgba(255,255,255,.35)', color: '#fff', fontSize: 12, fontWeight: 700, padding: '5px 12px', borderRadius: 8, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, transition: 'background .2s', fontFamily: 'var(--font-body)' }}>
                           <i className="fas fa-user-plus"></i> Add Student
                         </button>
-                        </Tooltip>
+                        </Tooltip>}
                       </div>
                     </div>
 
@@ -768,11 +779,13 @@ export default function StudentTab({ classesData, setClassesData, studentStrengt
                         <div style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 18 }}>
                           Add students to <strong>{cls.name}</strong>{sec ? ` – Section ${sec.sectionName}` : ''}
                         </div>
-                        <Tooltip text="Add the first student">
-                        <button className="btn btn-primary btn-md" onClick={() => openAddStudent(key)}>
-                          <i className="fas fa-user-plus"></i> Add First Student
-                        </button>
-                        </Tooltip>
+                        {canCreate && (
+                          <Tooltip text="Add the first student">
+                          <button className="btn btn-primary btn-md" onClick={() => openAddStudent(key)}>
+                            <i className="fas fa-user-plus"></i> Add First Student
+                          </button>
+                          </Tooltip>
+                        )}
                       </div>
                     ) : (
                       <div style={{ overflowX: 'auto', border: '1px solid var(--border-light)', borderTop: 'none', borderRadius: '0 0 8px 8px' }}>
@@ -802,18 +815,18 @@ export default function StudentTab({ classesData, setClassesData, studentStrengt
                                   <td style={{ padding: '10px 12px', borderBottom: '1px solid var(--border-light)', fontSize: 13, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{s.dateOfBirth || '—'}</td>
                                   <td style={{ padding: '10px 12px', borderBottom: '1px solid var(--border-light)', fontSize: 13, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{s.mobileNo || '—'}</td>
                                   <td style={{ padding: '10px 12px', borderBottom: '1px solid var(--border-light)', textAlign: 'center', whiteSpace: 'nowrap' }}>
-                                    <Tooltip text="Edit student">
+                                    {canEdit && <Tooltip text="Edit student">
                                     <button onClick={() => openEditStudent(key, s, si)}
                                       style={{ background: 'rgba(30,58,138,.08)', border: '1px solid rgba(30,58,138,.2)', color: 'var(--brand-primary)', borderRadius: 6, padding: '4px 10px', fontSize: 12, cursor: 'pointer', marginRight: 5, fontFamily: 'var(--font-body)', fontWeight: 600 }}>
                                       <i className="fas fa-pen"></i>
                                     </button>
-                                    </Tooltip>
-                                    <Tooltip text="Delete student">
+                                    </Tooltip>}
+                                    {canDelete && <Tooltip text="Delete student">
                                     <button onClick={() => setDeleteStuTarget(s)}
                                       style={{ background: 'rgba(220,38,38,.08)', border: '1px solid rgba(220,38,38,.2)', color: '#DC2626', borderRadius: 6, padding: '4px 10px', fontSize: 12, cursor: 'pointer', fontFamily: 'var(--font-body)', fontWeight: 600 }}>
                                       <i className="fas fa-trash"></i>
                                     </button>
-                                    </Tooltip>
+                                    </Tooltip>}
                                   </td>
                                 </tr>
                               );

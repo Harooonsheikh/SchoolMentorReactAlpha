@@ -19,6 +19,9 @@ import SignupFlow from './Pages/auth/SignupFlow';
 import { isErpUnlocked } from './utils/erp';
 import ErpApp from './erp/App';
 import ViewOnlyGuard, { VIEW_ONLY_TIP, useViewOnly } from './erp/shared/ViewOnlyGuard';
+import { PermissionsProvider } from './erp/context/PermissionsContext';
+import { useVisibleSetupTabs } from './utils/setupPermissions';
+import SetupLoader from './components/SetupLoader';
 import './styles/globals.css';
 import './styles/tokens.css';
 import Tooltip from '../src/erp/components/Tooltip';
@@ -31,8 +34,28 @@ const CHAIN_LOGOUT_URL = `${String(
   process.env.REACT_APP_CHAIN_URL || `${window.location.protocol}//${window.location.hostname}:3002`,
 ).trim().replace(/\/+$/, '')}/dashboard#logout`;
 
+/* Setup ke 6 tabs — key, number aur icon yahin se aate hain. `label` bilkul
+   wahi hai jo permission tree me is screen ka naam hai (setupPermissions.js →
+   SETUP_SCREENS), warna permission match hi na ho. */
+const SETUP_TABS = [
+  { key: 'school',      num: 1, icon: 'fa-school',        label: 'School' },
+  { key: 'classes',     num: 2, icon: 'fa-chalkboard',    label: 'Classes' },
+  { key: 'subjects',    num: 3, icon: 'fa-book',          label: 'Subjects' },
+  { key: 'departments', num: 4, icon: 'fa-building',      label: 'Departments' },
+  { key: 'staff',       num: 5, icon: 'fa-users',         label: 'Staff Details' },
+  { key: 'student',     num: 6, icon: 'fa-user-graduate', label: 'Student Details' },
+  // { key: 'timetable',   num: 7, icon: 'fa-calendar-alt', label: 'Timetable' },
+];
+
 function AppShell({ user, onLogout, onOpenErp }) {
   const state = useAppState();
+  /* Launch Setup ab ERP ke baqi modules ki tarah permission-gated hai: jis
+     screen par `View` nahi, wo tab na sidebar me hai na tab-bar me, aur uska
+     panel bhi render nahi hota. School Head / permission-data na hone par
+     usePermissions poora access deta hai, is liye kisi ka rasta nahi ruk-ta. */
+  const { visible: visibleTabs, ready: permsReady } = useVisibleSetupTabs();
+  const shownTabs = SETUP_TABS.filter((t) => visibleTabs.has(t.key));
+  const tabAllowed = (key) => visibleTabs.has(key);
   /* Chain ka hissa? To Launch Setup par bhi kuch save/delete nahi hoga. */
   const viewOnly = useViewOnly();
   const showToastRef = useRef(state.showToast);
@@ -55,6 +78,17 @@ function AppShell({ user, onLogout, onOpenErp }) {
   const showSuccess = (title, msg, detail = '') => {
     setSuccessState({ open: true, title, msg, detail });
   };
+
+  /* Default tab 'school' hai; jis user ko School par View na ho usay khali
+     screen na mile — permissions aate hi pehle allowed tab par le jao. */
+  const switchTabRef = useRef(state.switchTab);
+  switchTabRef.current = state.switchTab;
+  useEffect(() => {
+    if (!permsReady) return;
+    if (shownTabs.length === 0) return;
+    if (shownTabs.some((t) => t.key === state.activeTab)) return;
+    switchTabRef.current(shownTabs[0].key);
+  }, [permsReady, shownTabs, state.activeTab]);
 
   useEffect(() => {
     const launchSetup = sessionStorage.getItem('launchSetup');
@@ -93,6 +127,8 @@ setLaunchSetup(launchSetup)
         activeTab={state.activeTab}
         onTabChange={(tab) => { state.switchTab(tab); state.setSidebarOpen(false); }}
         isOpen={state.sidebarOpen}
+        visibleTabs={visibleTabs}
+        loading={!permsReady}
       />
 
       <main className="main-content">
@@ -149,18 +185,11 @@ setLaunchSetup(launchSetup)
 />
           </div>
 
-          {/* Setup Tabs */}
+          {/* Setup Tabs — permissions aane ke baad hi, aur sirf granted wale. */}
+          {permsReady && shownTabs.length > 0 && (
           <div className="setup-tabs-container">
             <div className="setup-tabs">
-              {[
-                { key: 'school', num: 1, icon: 'fa-school', label: 'School' },
-                { key: 'classes', num: 2, icon: 'fa-chalkboard', label: 'Classes' },
-                { key: 'subjects', num: 3, icon: 'fa-book', label: 'Subjects' },
-                { key: 'departments', num: 4, icon: 'fa-building', label: 'Departments' },
-                { key: 'staff', num: 5, icon: 'fa-users', label: 'Staff Details' },
-                { key: 'student', num: 6, icon: 'fa-user-graduate', label: 'Student Details' },
-                // { key: 'timetable', num: 7, icon: 'fa-calendar-alt', label: 'Timetable' },
-              ].map(t => (
+              {shownTabs.map(t => (
                 <Tooltip key={t.key} text={`Open ${t.label}`}>
                   <div
                     className={`tab-item${state.activeTab === t.key ? ' active' : ''}`}
@@ -174,9 +203,24 @@ setLaunchSetup(launchSetup)
               ))}
             </div>
           </div>
+          )}
+
+          {/* Permissions aane tak sirf loader — na tabs ki jhalak, na koi panel. */}
+          {!permsReady && <SetupLoader label="Loading your setup access…" />}
+
+          {permsReady && shownTabs.length === 0 && (
+            <div className="setup-noaccess" role="status">
+              <i className="fas fa-lock" aria-hidden="true"></i>
+              <div className="setup-noaccess-t">No Launch Setup access</div>
+              <div className="setup-noaccess-s">
+                Your account has not been granted any Launch Setup screen. Ask your school administrator
+                to grant access from ERP ▸ User Permissions ▸ Launch Setup.
+              </div>
+            </div>
+          )}
 
           {/* Tab Panels */}
-          {state.activeTab === 'school' && (
+          {state.activeTab === 'school' && tabAllowed('school') && (
             <SchoolTab
               schoolInfo={state.schoolInfo}
               setSchoolInfo={state.setSchoolInfo}
@@ -186,7 +230,7 @@ setLaunchSetup(launchSetup)
               showToast={state.showToast}
             />
           )}
-          {state.activeTab === 'classes' && (
+          {state.activeTab === 'classes' && tabAllowed('classes') && (
             <ClassesTab
               classesData={state.classesData}
               setClassesData={state.setClassesData}
@@ -196,7 +240,7 @@ setLaunchSetup(launchSetup)
               onContinue={() => state.switchTab('subjects')}
             />
           )}
-          {state.activeTab === 'subjects' && (
+          {state.activeTab === 'subjects' && tabAllowed('subjects') && (
             <SubjectsTab
               classesData={state.classesData}
               setClassesData={state.setClassesData}
@@ -210,7 +254,7 @@ setLaunchSetup(launchSetup)
               onContinue={() => state.switchTab('departments')}
             />
           )}
-          {state.activeTab === 'departments' && (
+          {state.activeTab === 'departments' && tabAllowed('departments') && (
             <DepartmentsTab
               deptsData={state.deptsData}
               setDeptsData={state.setDeptsData}
@@ -220,7 +264,7 @@ setLaunchSetup(launchSetup)
               onContinue={() => state.switchTab('staff')}
             />
           )}
-          {state.activeTab === 'staff' && (
+          {state.activeTab === 'staff' && tabAllowed('staff') && (
             <StaffTab
               staffData={state.staffData}
               setStaffData={state.setStaffData}
@@ -234,7 +278,7 @@ setLaunchSetup(launchSetup)
               onContinue={() => state.switchTab('student')}
             />
           )}
-          {state.activeTab === 'student' && (
+          {state.activeTab === 'student' && tabAllowed('student') && (
             <StudentTab
               classesData={state.classesData}
               setClassesData={state.setClassesData}
@@ -285,6 +329,17 @@ setLaunchSetup(launchSetup)
 );
 }
 const App_CSS = `
+/* ── Launch Setup permission empty-state — jab user ko koi setup screen na mile ── */
+.setup-noaccess {
+  display:flex; flex-direction:column; align-items:center; text-align:center; gap:8px;
+  padding:48px 24px; margin-top:8px;
+  background:var(--bg-card,#fff); border:1px solid var(--border-light,#E2E8F0);
+  border-radius:14px; color:var(--text-secondary,#64748B);
+}
+.setup-noaccess > i { font-size:26px; color:#94A3B8; }
+.setup-noaccess-t { font-size:15px; font-weight:700; color:var(--text-primary,#0F172A); }
+.setup-noaccess-s { font-size:13px; max-width:520px; line-height:1.55; }
+
 /* ── Page header tutorial button (uses existing .tutorial-btn from App.js CSS) ── */
 .page-tutorial-btn { flex-shrink: 0; }
 
@@ -418,13 +473,18 @@ function AuthGate() {
   }
 
   return (
-    <AppShell
-      user={user}
-      onLogout={doLogout}
-      /* ERP me wapas jaate waqt 'forceSetup' clear karo — warna refresh par ye flag
-         reh jata hai aur user ko galti se dubara Launch Setup par le jata hai. */
-      onOpenErp={() => { sessionStorage.removeItem('forceSetup'); setScreen('erp'); }}
-    />
+    /* Launch Setup ab permission-gated hai — AppShell ke andar
+       usePermissions kaam kare, is liye provider yahan lagta hai (ERP ka
+       apna provider erp/App.js me alag se hai). */
+    <PermissionsProvider>
+      <AppShell
+        user={user}
+        onLogout={doLogout}
+        /* ERP me wapas jaate waqt 'forceSetup' clear karo — warna refresh par ye flag
+           reh jata hai aur user ko galti se dubara Launch Setup par le jata hai. */
+        onOpenErp={() => { sessionStorage.removeItem('forceSetup'); setScreen('erp'); }}
+      />
+    </PermissionsProvider>
   );
 }
 

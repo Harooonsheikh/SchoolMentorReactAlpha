@@ -40,6 +40,8 @@
 
 import { CHAIN_API_BASE } from '@/config/env'
 import { currentNetworkId } from './networkSchoolsApi'
+import { mapActivity } from './activityCalendarApi'
+import { mapResource } from './resourceLibraryApi'
 
 const MANAGE_URL = `${CHAIN_API_BASE}/api/Network_Setup/manage-release`
 
@@ -118,6 +120,9 @@ const envelope = ({ action, id = 0, releaseType, dueDate, duration, creationDate
   networkID: int(networkId),
 })
 
+/* Khali release rokne ka paighaam — UI isi ko toast me dikhata hai. */
+export const NO_CONTENT_MSG = 'Nothing to release — no activities, lesson plans, notebook plans or resource files are available.'
+
 /**
  * Ek release bhejna (insert) ya mojooda badalna (update).
  *
@@ -133,6 +138,11 @@ export async function saveRelease(
   networkId = currentNetworkId(),
 ) {
   const nid = int(networkId)
+  /* Khali release ka koi matlab nahi — schools ko kuch milta hi nahi, magar
+     "Currently Live" me ek tile aa jati hai. UI pehle hi rok deta hai; ye
+     aakhri parat hai taake kisi bhi raaste se contentless release na bane. */
+  const rows = items.filter((it) => int(it.typeID) > 0)
+  if (rows.length === 0) throw new Error(NO_CONTENT_MSG)
   const json = await manage({
     ...envelope({
       action: int(id) > 0 ? 'update' : 'insert',
@@ -148,7 +158,7 @@ export async function saveRelease(
     child1: [...new Set(branchIds.map(int).filter(Boolean))].map((branchID) => ({
       id: 0, branchID, networkID: nid,
     })),
-    child2: items.map((it) => ({
+    child2: rows.map((it) => ({
       id: 0,
       type: it.type,
       typeID: int(it.typeID),
@@ -174,6 +184,31 @@ export function deleteRelease(id, { isMaster = true, dueDate, duration, creation
 }
 
 const list = (v) => (Array.isArray(v) ? v : [])
+
+/* ── Release ka APNA content ────────────────────────────────────────
+   `get` sirf child2 ki ids nahi deta — us ke saath har release ka poora
+   content bhi aata hai: Activity, LessonPlanMaster, NoteBookPlansMaster
+   aur ResourceFile, har row par apna MasterID.
+
+   Ye ASAL jawab hai ke "is release me kya gaya tha". Pehle screen ye baat
+   dobara nikalti thi: release ki ids le kar Head Office ke MOJOODA index me
+   se chhaanti thi. Jo cheez us index me na rahe (release hone ke baad wahan
+   se nikal jaye, ya kisi aur wajah se na aaye) wo release ki tafseel me
+   ZERO ban jati thi — "0 Activities" aur "2 released items are no longer
+   available", halanke server par dono rows maujood thin. Ab wahi rows
+   seedhi yahan se aati hain, is liye tafseel kabhi khali nahi hoti.
+
+   Lesson/Notebook master rows PascalCase me aati hain (ID/ClassID/…), is
+   liye alag mapper — lessonPlansApi ka masterRow sirf camelCase parhta hai. */
+const relMaster = (r) => ({
+  id: int(r.ID ?? r.id),
+  classID: int(r.ClassID ?? r.classID),
+  subjectID: int(r.SubjectID ?? r.subjectID),
+  unitNo: r.UnitNumber ?? r.unitNo ?? '',
+  unitName: r.UnitName ?? r.unitName ?? '',
+  topic: r.LessonPlanTopic ?? r.lessonPlanTopic ?? '',
+  medium: r.Medium ?? r.medium ?? '',
+})
 
 /* Child rows ko unke MasterID par jama karta hai. */
 const groupByMaster = (arr) => {
@@ -206,6 +241,11 @@ export async function fetchReleases(networkId = currentNetworkId()) {
   const d = json?.data || {}
   const branchesOf = groupByMaster(d.Child1)
   const itemsOf = groupByMaster(d.Child2Raw)
+  /* Har release ka apna content — upar wali sharh dekhein. */
+  const activitiesOf = groupByMaster(d.Activity)
+  const lessonsOf = groupByMaster(d.LessonPlanMaster)
+  const notebooksOf = groupByMaster(d.NoteBookPlansMaster)
+  const resourcesOf = groupByMaster(d.ResourceFile)
 
   return list(d.Master).map((m) => {
     const id = int(m.ID ?? m.id)
@@ -223,8 +263,17 @@ export async function fetchReleases(networkId = currentNetworkId()) {
       }
     })
     const countOf = (key) => items.filter((x) => x.typeKey === key).length
+    /* Wahi shape jo releaseContent ke helpers (summarizeReleaseContent) parhte
+       hain — is liye release ki tafseel bina kisi tarjuma ke ban jati hai. */
+    const content = {
+      activities: activitiesOf(id).map(mapActivity).filter((x) => x.id),
+      lessons: lessonsOf(id).map(relMaster).filter((x) => x.id),
+      notebooks: notebooksOf(id).map(relMaster).filter((x) => x.id),
+      resources: resourcesOf(id).map(mapResource).filter((x) => x.id),
+    }
     return {
       id,
+      content,
       isMaster: String(m.ReleaseType ?? m.releaseType ?? '').toLowerCase() !== 'subrelease',
       releaseType: String(m.ReleaseType ?? m.releaseType ?? RELEASE_TYPE.MASTER),
       dueDate: String(m.DueDate ?? m.dueDate ?? '').slice(0, 10) || null,

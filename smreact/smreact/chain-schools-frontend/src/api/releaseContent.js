@@ -109,6 +109,20 @@ export function releaseItemsOf(content = EMPTY_CONTENT) {
 }
 
 /**
+ * Kya is content me release karne laayak koi cheez hai bhi?
+ *
+ * Jaanch summary ki GINTI par nahi, us LIST par hoti hai jo waqai child2 ban
+ * kar server ko jati hai — dono ek nahi hain: summary sirf class-wale rows
+ * ginti hai (classId 0 wale gir jate hain) aur bina asli id wale rows
+ * releaseItemsOf khud chhaant deta hai. Is liye ginti aur payload me farq aa
+ * sakta tha, jis se aisa release ban jata jis me kuch bhi na hota. Ab jo
+ * bhejna hai wahi ginte hain.
+ */
+export function hasReleasableContent(content = EMPTY_CONTENT) {
+  return releaseItemsOf(content).length > 0
+}
+
+/**
  * Release modal / Release Control ka summary — wahi shape jo screen pehle
  * store se banati thi, magar ab ASLI server content par:
  *   { totals, classes: [{ classId, name, lessons, notebooks, resourcesTotal, … }] }

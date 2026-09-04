@@ -24,6 +24,7 @@
 import { ERP_API_BASE } from '@/config/env'
 import { getToken } from '@/auth/tokenStorage'
 import { currentNetworkId } from './networkSchoolsApi'
+import { emitAcademicContentChanged } from './contentEvents'
 
 const BASE = `${ERP_API_BASE}/api`
 
@@ -164,6 +165,9 @@ export async function saveNetworkActivity(act, networkId = currentNetworkId()) {
     method: 'POST',
     body: crudBody(act, id ? 'update' : 'insert', networkId),
   })
+  /* Release ka content index isi par dobara load hota hai — dekhein
+     contentEvents.js. */
+  emitAcademicContentChanged('activity')
   return realId(json?.data?.id ?? json?.data ?? json?.id) || id
 }
 
@@ -171,4 +175,5 @@ export async function saveNetworkActivity(act, networkId = currentNetworkId()) {
 export async function deleteNetworkActivity(act, networkId = currentNetworkId()) {
   if (!realId(act.id)) throw new Error('Please refresh the activity list, then delete again.')
   await call('/activitycalendarcrud', { method: 'POST', body: crudBody(act, 'delete', networkId) })
+  emitAcademicContentChanged('activity')
 }

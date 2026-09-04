@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { buildUrl } from '../utils/apiConfig';
 import Tooltip from '../erp/shared/Tooltip';
+import { useSetupTabPerms, NO_EDIT_TIP } from '../utils/setupPermissions';
 
 // ─── Validation rules ──────────────────────────────────────────────────────
 const fieldRules = {
@@ -75,6 +76,9 @@ function FG({ label, id, required: req, children, helper, fieldErrors }) {
 
 // ─── Main component ────────────────────────────────────────────────────────
 export default function SchoolTab({ schoolInfo, setSchoolInfo, onSave, onSaveDraft, markUnsaved, showToast }) {
+  /* Launch Setup ▸ School ki permissions — school ka record ek hi hota hai,
+     is liye yahan sirf Edit maani rakhta hai (Save + logo upload). */
+  const { canEdit } = useSetupTabPerms('school');
   const [fieldErrors, setFieldErrors]   = useState({});
   const [saving, setSaving]             = useState(false);
   const [countryList, setCountryList]   = useState([]);
@@ -377,11 +381,11 @@ export default function SchoolTab({ schoolInfo, setSchoolInfo, onSave, onSaveDra
             </span>
           </label>
           {/* Square dropzone — centered, 1:1 aspect */}
-          <Tooltip text="Upload a square school logo (1024 × 1024 JPG/PNG)">
+          <Tooltip text={canEdit ? 'Upload a square school logo (1024 × 1024 JPG/PNG)' : NO_EDIT_TIP}>
           <div
             className="upload-zone"
-            style={{ width: 240, height: 240, maxWidth: '100%', margin: '0 auto', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', aspectRatio: '1 / 1' }}
-            onClick={() => document.getElementById('logoInput').click()}
+            style={{ width: 240, height: 240, maxWidth: '100%', margin: '0 auto', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', aspectRatio: '1 / 1', ...(canEdit ? null : { opacity: .55, cursor: 'not-allowed' }) }}
+            onClick={() => { if (canEdit) document.getElementById('logoInput').click(); }}
           >
             {logoPreview ? (
               <img src={logoPreview} alt="School Logo"
@@ -597,11 +601,13 @@ export default function SchoolTab({ schoolInfo, setSchoolInfo, onSave, onSaveDra
           {/* <button className="btn btn-secondary btn-md" onClick={handleDraft} disabled={saving}>
             {saving ? <><i className="fas fa-spinner fa-spin"></i> Saving...</> : <><i className="fas fa-save"></i> Save Draft</>}
           </button> */}
-          <Tooltip text="Save school details and continue">
-            <button className="btn btn-primary btn-md" onClick={handleSave} disabled={saving}>
-              {saving ? <><i className="fas fa-spinner fa-spin"></i> Saving...</> : <>Save &amp; Continue <i className="fas fa-arrow-right"></i></>}
-            </button>
-          </Tooltip>
+          {canEdit && (
+            <Tooltip text="Save school details and continue">
+              <button className="btn btn-primary btn-md" onClick={handleSave} disabled={saving}>
+                {saving ? <><i className="fas fa-spinner fa-spin"></i> Saving...</> : <>Save &amp; Continue <i className="fas fa-arrow-right"></i></>}
+              </button>
+            </Tooltip>
+          )}
         </div>
       </div>
 
