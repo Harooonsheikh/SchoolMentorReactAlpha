@@ -3844,6 +3844,10 @@ function DiscountManagerModal({ cfg, onClose, onSave, toast }) {
    / Receiving Now / Remaining After), payment history (if any), and
    a Receive CTA. viewOnly mode hides inputs and the receive button.
    ═══════════════════════════════════════════════════════════════════ */
+/* "Old Dues Till Date" head — modal khulte hi Received me POORA baqaya
+   pre-fill hota hai (Pending 0), magar cashier isay edit bhi kar sakta hai. */
+const isOldDuesHead = (name) => /old\s*dues/i.test(String(name || ''));
+
 function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
   /* Receiving Date par late fine ka poora hisaab chalta hai — is liye LOCAL date
      (localTodayISO), toISOString() nahi: wo UTC me badal kar Pakistan (UTC+5) me
@@ -3876,10 +3880,19 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
       const n = r.subHead || r.head || '';
       chRecv[n] = (chRecv[n] || 0) + (+r.receivedAmount || 0);
     });
+    const useHeadPrevSeed = !!cfg.model.headWisePrev;
     const seed = {};
     (cfg.model.heads || []).forEach(h => {
       const fromPay = (cfg.payments || []).reduce((a, p) => a + (+(p.perHead?.[h.name]) || 0), 0);
-      seed[h.name]  = cfg.challan ? Math.max(+chRecv[h.name] || 0, fromPay) : fromPay;
+      const paidSeed = cfg.challan ? Math.max(+chRecv[h.name] || 0, fromPay) : fromPay;
+      /* Old-dues head → default poora owed (Received full, Pending 0) — magar
+         input editable rehta hai, cashier ghata/badla sakta hai. */
+      if (!cfg.viewOnly && isOldDuesHead(h.name)) {
+        const owed = (+h.net || 0) + (useHeadPrevSeed ? (+h.prev || 0) : 0);
+        seed[h.name] = Math.max(paidSeed, owed);
+      } else {
+        seed[h.name] = paidSeed;
+      }
     });
     setPerHeadInput(seed);
   }, [cfg]);
@@ -3934,7 +3947,8 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
     /* Head ka owed MINUS ho (advance/credit — this-month magar previous bara advance) to wo
        CREDIT head hai: yahan collect NAHI karte; credit total par advApplied se apply hota. */
     const isCredit = useHeadPrev && owed < 0;
-    /* Input KUL wasooli hai (already + new); credit head par collect nahi (paid par rehta). */
+    /* Input KUL wasooli hai (already + new); credit head par collect nahi (paid par rehta).
+       Old-dues head bhi ab editable — bas default full seed hota hai (seed effect). */
     const totalRecv = (viewOnly || isCredit) ? paid : Math.max(0, +perHeadInput[h.name] || 0);
     const recvNow   = (viewOnly || isCredit) ? 0 : (totalRecv - paid);
     const pending   = owed - paid - recvNow;      // credit head par = owed (minus)
