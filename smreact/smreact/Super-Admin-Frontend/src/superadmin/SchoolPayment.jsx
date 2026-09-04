@@ -122,6 +122,7 @@ export default function SchoolPayment({ toast }) {
      chalta hai — mahina badla to us mahine ki list dobara aati hai. */
   const [period, setPeriod] = useState(thisPeriod);
 
+
   const loadedRef = useRef({ setup: false, challans: false, receiving: false, banks: false });
   const inflightRef = useRef({});
   /* payStore ka mirror — ensureChallans ko setups turant chahiye hote hain
@@ -252,8 +253,22 @@ export default function SchoolPayment({ toast }) {
      aati hain — ek hi call sab branches ke liye, aur wo bhi tabhi jab pehli
      slip khule. */
   const ensureBanks = useCallback(() => runOnce('banks', async () => {
-    setBankStore(await schoolPermissionsApi.listBranchBanks());
-  }, 'Could not load bank details'), [runOnce]);
+    /* Soneri Bank - hardcoded for all schools */
+    const soneriBankDetails = {
+      bankName: 'Soneri Bank',
+      accountTitle: 'School Mentor App (Pvt) Ltd',
+      accountNo: '20014183265',
+      iban: 'PK15SONE0038720014183265',
+      branchName: '',
+      note: '',
+    };
+
+    const bankData = {};
+    schools.forEach((s) => {
+      bankData[s.id] = soneriBankDetails;
+    });
+    setBankStore(bankData);
+  }, 'Could not load bank details'), [runOnce, schools]);
 
   /* Mount par sirf branch directory — koi payment API nahi. */
   const load = useCallback(async () => {

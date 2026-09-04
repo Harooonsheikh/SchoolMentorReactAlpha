@@ -385,9 +385,16 @@ function ensureFetchWrapper() {
       if (slowTimer) { clearTimeout(slowTimer); slowTimer = null; }
       try {
         if (res && res.status === 401 && window.__smSessionGuardActive && isApiUrl(url) && !isAuthUrl(url)) trigger();
-        if (monitored && res && res.status >= 500) {
-          window.dispatchEvent(new CustomEvent('sm:server-error', { detail: { status: res.status } }));
-        }
+       if (
+   monitored &&
+   res &&
+   res.status >= 500 &&
+   !String(url).includes('/api/attendance-weekly-setup')
+) {
+   window.dispatchEvent(
+      new CustomEvent('sm:server-error', { detail: { status: res.status } })
+   );
+}
         /* Pehle offline the aur ab koi API kamyab ho gayi → connection wapas aa gaya,
            Offline surface hata do (browser 'online' event kabhi na aaye tab bhi). */
         if (monitored && res && window.__smWasOffline) {
