@@ -8006,48 +8006,121 @@ function FeeHistoryTab({ toast }) {
      hain — hamari section 1661425 wahan 1659330 hai. Is liye class row GRADE
      par banti hai aur section har student row me alag se dikhta hai. */
   const oldClasses = useMemo(() => {
+
+    /*
+      Old ERP flow:
+      1. Students are the parent data.
+      2. Old ERP ledger is attached against student's applicantsID.
+      3. Students without ledger also remain visible.
+    */
+
     const byGrade = new Map();
-    oldSummary.forEach(row => {
-      const g = String(row.gradeID);
-      if (!byGrade.has(g)) byGrade.set(g, []);
-      byGrade.get(g).push(row);
+
+    Object.values(studentsMap || {})
+      .flat()
+      .forEach(student => {
+
+        const studentApplicantId =
+          student.applicantsID ??
+          student.applicantID ??
+          student.applicantId ??
+          student.studentID;
+
+        const ledger = oldSummary.find(row => {
+          const oldId =
+            row.applicantID ??
+            row.applicantsID ??
+            row.applicantId ??
+            row.studentID;
+
+          return String(oldId || '').trim() === String(studentApplicantId || '').trim();
+        });
+
+        const gradeKey = String(student.gradeID || '');
+
+        if (!byGrade.has(gradeKey)) {
+          byGrade.set(gradeKey, []);
+        }
+
+        byGrade.get(gradeKey).push({
+          ...student,
+          ledger: ledger || null,
+        });
+
+      });
+
+
+    // Sort students by name
+    byGrade.forEach(rows => {
+      rows.sort((a, b) =>
+        String(a.name || '').localeCompare(String(b.name || ''))
+      );
     });
-    /* Naam wale students pehle (naam ke hisaab se), phir wo rows jinka
-       applicant id kisi mojooda student se link nahi hua. */
-    byGrade.forEach(rows => rows.sort((a, b) => {
-      const na = resolveOldStudent(a.applicantID)?.s.name || '';
-      const nb = resolveOldStudent(b.applicantID)?.s.name || '';
-      if (!na !== !nb) return na ? -1 : 1;
-      return na ? na.localeCompare(nb) : a.applicantID - b.applicantID;
-    }));
+
 
     const out = [];
-    const seen = new Map();                       // gradeId → us grade ki sections
+    const seen = new Map();
+
+
     classes.forEach(c => {
+
       const g = String(c._gradeId);
-      if (!seen.has(g)) seen.set(g, []);
+
+      if (!seen.has(g)) {
+        seen.set(g, []);
+      }
+
       seen.get(g).push(c);
+
     });
+
+
     seen.forEach((secs, g) => {
+
       out.push({
-        key:  `oldg${g}`,
-        cls:  secs[0].cls,
-        sec:  secs.map(x => x.sec).join(', '),
-        /* Grade me sirf ek section ho to har row wahi section hai — old ERP ki
-           purani section id se hamara naam nahi milta, magar yahan shak ki
-           gunjaish hi nahi. */
-        onlySec: secs.length === 1 ? secs[0].sec : null,
+
+        key: `oldg${g}`,
+
+        cls: secs[0].cls,
+
+        sec: secs.map(x => x.sec).join(', '),
+
+        onlySec: secs.length === 1
+          ? secs[0].sec
+          : null,
+
         rows: byGrade.get(g) || [],
+
       });
+
     });
-    /* Jo grade hamari mojooda list me nahi (band ho chuki class) usay chhupana
-       nahi — warna uska purana ledger kahin nazar hi na aata. */
+
+
+    // Keep old grades which no longer exist in current setup
     byGrade.forEach((rows, g) => {
+
       if (seen.has(g)) return;
-      out.push({ key: `oldg${g}`, cls: `Grade #${g}`, sec: 'Not in current setup', onlySec: null, rows });
+
+      out.push({
+
+        key: `oldg${g}`,
+
+        cls: `Grade #${g}`,
+
+        sec: 'Not in current setup',
+
+        onlySec: null,
+
+        rows,
+
+      });
+
     });
+
+
     return out;
-  }, [oldSummary, classes, resolveOldStudent]);
+
+}, [studentsMap, oldSummary, classes]);
 
 
   const recsByStudent = useMemo(() => {
@@ -8371,12 +8444,20 @@ function FeeHistoryTab({ toast }) {
                             {oc.rows.length === 0 ? (
                               <tr><td colSpan="8" className="fee-stbl-empty">No old ERP records for this class in {oldPeriod}.</td></tr>
                             ) : oc.rows.map(row => {
-                              const hit = resolveOldStudent(row.applicantID);
-                              const t = oldErpRowTotals(row);
+                              const ledger = row.ledger || row;
+                              const t = oldErpRowTotals(ledger);
+
+                              const hit = resolveOldStudent(
+                                ledger.applicantID ||
+                                ledger.applicantsID ||
+                                row.applicantsID ||
+                                row.studentID
+                              );
+
                               const secName = hit ? hit.c.sec
-                                : (sectionNameById.get(String(row.sectionID)) || oc.onlySec || '—');
+                                : (sectionNameById.get(String(ledger.sectionID)) || oc.onlySec || '—');
                               return (
-                                <tr key={row.applicantID}>
+                                <tr key={row.studentID || row.applicantsID || row.applicantID}>
                                   <td>{hit ? hit.s.reg : <span style={{ color: 'var(--text-muted)' }}>—</span>}</td>
                                   <td>
                                     {hit ? (
@@ -8386,7 +8467,7 @@ function FeeHistoryTab({ toast }) {
                                       </>
                                     ) : (
                                       <>
-                                        <b>Applicant #{row.applicantID}</b>
+                                        <b>{row.name || row.applicantName || `Applicant #${(row.ledger || row).applicantID || ''}`}</b>
                                         <span className="fee-sub-eq">old ERP record</span>
                                       </>
                                     )}
