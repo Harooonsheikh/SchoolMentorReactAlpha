@@ -122,15 +122,6 @@ export default function SchoolPayment({ toast }) {
      chalta hai — mahina badla to us mahine ki list dobara aati hai. */
   const [period, setPeriod] = useState(thisPeriod);
 
-  /* Organization ka default bank account - Soneri Bank */
-  const defaultOrgBank = {
-    bankName: 'Soneri Bank',
-    accountTitle: 'School Mentor App (Pvt) Ltd',
-    accountNo: '20014183265',
-    iban: 'PK15SONE0038720014183265',
-    branchName: '',
-    note: '',
-  };
 
   const loadedRef = useRef({ setup: false, challans: false, receiving: false, banks: false });
   const inflightRef = useRef({});
@@ -262,18 +253,22 @@ export default function SchoolPayment({ toast }) {
      aati hain — ek hi call sab branches ke liye, aur wo bhi tabhi jab pehli
      slip khule. */
   const ensureBanks = useCallback(() => runOnce('banks', async () => {
-    try {
-      await schoolPermissionsApi.listBranchBanks();
-    } catch (err) {
-      /* ignore API errors */
-    }
-    /* Soneri Bank is org-wide default - use for all schools */
-    const merged = {};
+    /* Soneri Bank - hardcoded for all schools */
+    const soneriBankDetails = {
+      bankName: 'Soneri Bank',
+      accountTitle: 'School Mentor App (Pvt) Ltd',
+      accountNo: '20014183265',
+      iban: 'PK15SONE0038720014183265',
+      branchName: '',
+      note: '',
+    };
+
+    const bankData = {};
     schools.forEach((s) => {
-      merged[s.id] = defaultOrgBank;
+      bankData[s.id] = soneriBankDetails;
     });
-    setBankStore(merged);
-  }, 'Could not load bank details'), [runOnce, schools, defaultOrgBank]);
+    setBankStore(bankData);
+  }, 'Could not load bank details'), [runOnce, schools]);
 
   /* Mount par sirf branch directory — koi payment API nahi. */
   const load = useCallback(async () => {
@@ -319,24 +314,12 @@ export default function SchoolPayment({ toast }) {
       payRef.current = INITIAL_PAY_SETUP;
       setSchools(PAY_SCHOOLS);
       setPayStore(INITIAL_PAY_SETUP);
-      /* Sab demo schools ke liye Soneri Bank set karo */
-      const demoBank = {};
-      PAY_SCHOOLS.forEach((s) => {
-        demoBank[s.id] = defaultOrgBank;
-      });
-      setBankStore(demoBank);
       setLoading(false);
       return;
     }
     setSchools(rows);
-    /* Sab loaded schools ke liye Soneri Bank set karo */
-    const prodBank = {};
-    rows.forEach((s) => {
-      prodBank[s.id] = defaultOrgBank;
-    });
-    setBankStore(prodBank);
     setLoading(false);
-  }, [defaultOrgBank]);
+  }, []);
 
   useEffect(() => { load(); }, [load]);
 
