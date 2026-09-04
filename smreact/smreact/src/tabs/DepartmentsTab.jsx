@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { downloadDeptReport } from '../utils/pdfReports';
 import { buildUrl } from '../utils/apiConfig';
 import Tooltip from '../erp/shared/Tooltip';
+import { useSetupTabPerms } from '../utils/setupPermissions';
+import SetupLoader from '../components/SetupLoader';
 
 function AddDeptModal({ open, onClose, onAdd, getDeparmentdata, editDept = null }) {
   const [name, setName] = useState('');
@@ -285,6 +287,11 @@ setErr2(''),
 }
 
 export default function DepartmentsTab({ deptsData, setDeptsData, schoolInfo, showToast, showSuccess, onContinue }) {
+  /* Launch Setup ▸ Departments — designations department ke andar hi banti
+     hain, is liye unke Add/Edit/Delete bhi isi screen ki permission par. */
+  const { canCreate, canEdit, canDelete, canDownload } = useSetupTabPerms('departments');
+  /* Pehla fetch mukammal hone tak loader — koi placeholder row nahi. */
+  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [expandedId, setExpandedId] = useState(null);
   const [showAddDept, setShowAddDept] = useState(false);
@@ -320,6 +327,7 @@ export default function DepartmentsTab({ deptsData, setDeptsData, schoolInfo, sh
         setDeptsData(d);
         console.log(deptsData) 
       } catch { showToast('Could not load branch data', 'error'); }
+      finally { setLoading(false); }
   }, [setDeptsData, showToast]);
 
   const handleEditDesig = (deptId, idx) => {
@@ -464,6 +472,8 @@ const dept = deptsData.find(d => d.id === deptId);
       }
   };
 
+  if (loading) return <div className="tab-panel active"><SetupLoader label="Loading departments…" /></div>;
+
   return (
     <div className="tab-panel active">
       <div className="classes-toolbar">
@@ -475,16 +485,20 @@ const dept = deptsData.find(d => d.id === deptId);
           <span style={{ fontSize: 12, color: 'var(--text-muted)' }}> {Array.isArray(deptsData) ? deptsData.length : 0} departments · {totalPosts} posts</span>
         </div>
         <div className="toolbar-right">
-          <Tooltip text="Download departments report as PDF">
-            <button className="btn btn-pdf btn-md" onClick={() => downloadDeptReport(deptsData, schoolInfo || {}, showToast)}>
-            <i className="fas fa-file-pdf"></i> Download Report
-          </button>
-          </Tooltip>
-          <Tooltip text="Add a new department">
-            <button className="btn btn-primary btn-md" onClick={() => setShowAddDept(true)}>
-              <i className="fas fa-plus"></i> Add New Department
+          {canDownload && (
+            <Tooltip text="Download departments report as PDF">
+              <button className="btn btn-pdf btn-md" onClick={() => downloadDeptReport(deptsData, schoolInfo || {}, showToast)}>
+              <i className="fas fa-file-pdf"></i> Download Report
             </button>
-          </Tooltip>
+            </Tooltip>
+          )}
+          {canCreate && (
+            <Tooltip text="Add a new department">
+              <button className="btn btn-primary btn-md" onClick={() => setShowAddDept(true)}>
+                <i className="fas fa-plus"></i> Add New Department
+              </button>
+            </Tooltip>
+          )}
         </div>
       </div>
 
@@ -501,7 +515,7 @@ const dept = deptsData.find(d => d.id === deptId);
               <div className="empty-icon"><i className="fas fa-building"></i></div>
               <div className="empty-title">No Departments Yet</div>
               <div className="empty-sub">Add your first department to get started.</div>
-              <Tooltip text="Add a new department"><button className="btn btn-primary btn-md" onClick={() => setShowAddDept(true)}><i className="fas fa-plus"></i> Add Department</button></Tooltip>
+              {canCreate && <Tooltip text="Add a new department"><button className="btn btn-primary btn-md" onClick={() => setShowAddDept(true)}><i className="fas fa-plus"></i> Add Department</button></Tooltip>}
             </div>
           ) : filtered.map((dept, i) => {
             const exp = expandedId === dept.id;
@@ -530,7 +544,7 @@ const dept = deptsData.find(d => d.id === deptId);
                   </div> */}
                   {/* Designations column */}
 <div className="td">
-  <Tooltip text="Add a designation to this department">
+  {canCreate && <Tooltip text="Add a designation to this department">
   <button
     className="btn btn-sm"
     onClick={e => { e.stopPropagation(); setDesigTarget(dept); }}
@@ -552,7 +566,7 @@ const dept = deptsData.find(d => d.id === deptId);
   >
     <i className="fas fa-plus"></i> Designation
   </button>
-  </Tooltip>
+  </Tooltip>}
   {dept.designations.length > 0 && (
     <span style={{ fontSize: 13, color: 'var(--text-muted)', marginLeft: 12, whiteSpace: 'nowrap' }}>
       {dept.designations.length} post{dept.designations.length !== 1 ? 's' : ''}
@@ -562,7 +576,7 @@ const dept = deptsData.find(d => d.id === deptId);
 
 {/* Details column */}
 <div className="td" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-  <Tooltip text="Edit department name">
+  {canEdit && <Tooltip text="Edit department name">
   <button
     onClick={e => { e.stopPropagation(); setEditDept(dept); }}
     style={{
@@ -581,8 +595,8 @@ const dept = deptsData.find(d => d.id === deptId);
   >
     <i className="fas fa-pen"></i>
   </button>
-  </Tooltip>
-  <Tooltip text="Delete department">
+  </Tooltip>}
+  {canDelete && <Tooltip text="Delete department">
   <button
     onClick={e => { e.stopPropagation(); setDeleteTarget(dept); }}
     style={{
@@ -601,7 +615,7 @@ const dept = deptsData.find(d => d.id === deptId);
   >
     <i className="fas fa-trash"></i>
   </button>
-  </Tooltip>
+  </Tooltip>}
   <Tooltip text={exp ? 'Hide details' : 'Show details'}>
   <button
     className={`expand-btn${exp ? ' open' : ''}`}
@@ -633,11 +647,13 @@ const dept = deptsData.find(d => d.id === deptId);
                       <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--brand-primary)' }}>
                         <i className="fas fa-id-badge" style={{ marginRight: 6 }}></i>{dept.name} — Designations
                       </span>
-                      <Tooltip text="Add a designation to this department">
-                        <button className="btn btn-ghost btn-sm" onClick={() => setDesigTarget(dept)}>
-                          <i className="fas fa-plus"></i> Add
-                        </button>
-                      </Tooltip>
+                      {canCreate && (
+                        <Tooltip text="Add a designation to this department">
+                          <button className="btn btn-ghost btn-sm" onClick={() => setDesigTarget(dept)}>
+                            <i className="fas fa-plus"></i> Add
+                          </button>
+                        </Tooltip>
+                      )}
                     </div>
                     <div className="desig-list">
                      <div className="desig-list">
@@ -659,7 +675,7 @@ const dept = deptsData.find(d => d.id === deptId);
         </div>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <Tooltip text="Edit designation">
+        {canEdit && <Tooltip text="Edit designation">
         <button
           onClick={() => handleEditDesig(dept.id, di)}
           style={{
@@ -678,8 +694,8 @@ const dept = deptsData.find(d => d.id === deptId);
         >
           <i className="fas fa-pen"></i>
         </button>
-        </Tooltip>
-        <Tooltip text="Delete designation">
+        </Tooltip>}
+        {canDelete && <Tooltip text="Delete designation">
         <button
           onClick={() => handleDeleteDesig(dept.id, di)}
           style={{
@@ -698,7 +714,7 @@ const dept = deptsData.find(d => d.id === deptId);
         >
           <i className="fas fa-trash"></i>
         </button>
-        </Tooltip>
+        </Tooltip>}
       </div>
     </div>
   ))}

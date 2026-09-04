@@ -1808,21 +1808,38 @@ function ReceiveModal({ school: s, setup, challan, prevRecv, period, saving, onC
   const totalDues = challan ? challan.total : 0;
   /* Pichhle mahine ka bacha hua — challan me joda gaya previous dues. */
   const prevRemaining = challan ? (challan.prevDues || 0) : 0;
-  /* Pehle se record ho to wahi values prefill — dobara save karna usi row ka
-     UPDATE hai (currentBranchID + type unique hai), naya record nahi. */
+  /* Ab tak jitna JAMA wasool ho chuka — API row par yahi jama raqam rehti hai. */
+  const prevReceived = Number(prevRecv?.receivedAmount) || 0;
+  /* Rely row par jama rehti hai, is liye wo prefill hoti hai. */
   const [discount, setDiscount] = useState(prevRecv?.discount ? String(prevRecv.discount) : '');
-  const [received, setReceived] = useState(prevRecv?.receivedAmount ? String(prevRecv.receivedAmount) : '');
+  /* Received ka khana HAMESHA khali — yahan "is baar kitna aaya" likha jata
+     hai, "ab tak kul kitna aaya" nahi.
+
+     Pehle yahan jama raqam (prevRecv.receivedAmount) prefill hoti thi. 200
+     wasool karne ke baad dobara kholne par khana 200 dikhata tha, aur bache
+     hue 280 lene ke liye user ko pehle wo 200 mita kar 480 ginna parta tha —
+     ya bhool kar dobara 200 likh deta aur kuch barhta hi nahi. Chain portal ka
+     Receiving isi tarah khali khane par chalta hai (Payments.jsx ▸ RecvModal);
+     ab Super Admin bhi wahi karta hai. Server ko phir bhi JAMA hi jata hai
+     (prevReceived + is baar), is liye history/API ka hisaab jaisa tha waisa
+     hi rehta hai — dekhein appendRecvHistory. */
+  const [received, setReceived] = useState('');
   const [via, setVia] = useState(prevRecv?.via || RECEIVING_METHODS[0]);
-  const [date, setDate] = useState(prevRecv?.dateRaw || todayISO());
+  /* Nayi wasooli ki tareekh aaj hoti hai, pichhli adaigi ki nahi. */
+  const [date, setDate] = useState(todayISO());
   const net = Math.max(0, totalDues - (parseFloat(discount) || 0));
-  const remaining = net - (parseFloat(received) || 0);
+  const thisTime = parseFloat(received) || 0;
+  const remaining = net - prevReceived - thisTime;
   const save = () => {
     if (saving) return;
-    if (!received) { toast?.('Please enter the received amount', 'warn'); return; }
+    if (thisTime <= 0) { toast?.('Please enter the received amount', 'warn'); return; }
+    if (remaining < 0) { toast?.('Received amount is more than what is payable', 'warn'); return; }
     if (!date) { toast?.('Please select a payment date', 'warn'); return; }
     onSave(s.id, {
       discount: parseFloat(discount) || 0, netPayable: net,
-      receivedAmount: parseFloat(received) || 0, remainingAmount: remaining,
+      /* Server par JAMA jata hai — is baar ka izafa purani jama me shamil. */
+      receivedAmount: prevReceived + thisTime,
+      remainingAmount: Math.max(0, remaining),
       payableAmount: totalDues, via, dateRaw: date, date: fmtDateShort(date),
     });
   };
@@ -1830,27 +1847,30 @@ function ReceiveModal({ school: s, setup, challan, prevRecv, period, saving, onC
     <Ov cls="recv-ov" onClose={onClose} wrap="recv-modal">
       <div className="recv-modal-hdr">
         <div className="recv-modal-icon"><i className="fa-solid fa-hand-holding-dollar" /></div>
-        <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 14, fontWeight: 800, color: 'var(--t1)' }}>Payment Receiving · {periodLabel(period)}</div><div style={{ fontSize: 11.5, color: 'var(--tm)', marginTop: 2 }}>{s.name}</div></div>
+        <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 14, fontWeight: 800, color: 'var(--t1)' }}>{prevReceived > 0 ? 'Receive More' : 'Payment Receiving'} · {periodLabel(period)}</div><div style={{ fontSize: 11.5, color: 'var(--tm)', marginTop: 2 }}>{s.name}</div></div>
         <button className="pm-close" data-tip="Close" data-tip-pos="bottom" onClick={onClose}><i className="fa-solid fa-xmark" /></button>
       </div>
       <div className="recv-modal-body">
         <div className="recv-summary-card">
           <div className="recv-summary-row"><span className="recv-summary-lbl">Previous Month Remaining Amount</span><span className="recv-summary-val">{pkr(prevRemaining)}</span></div>
           <div className="recv-summary-row"><span className="recv-summary-lbl">Total Payable Amount</span><span className="recv-summary-val">{pkr(totalDues)}</span></div>
+          {prevReceived > 0 && (
+            <div className="recv-summary-row"><span className="recv-summary-lbl">Already Received</span><span className="recv-summary-val" style={{ color: 'var(--success)' }}>{pkr(prevReceived)}</span></div>
+          )}
         </div>
         <div className="recv-field"><label><i className="fa-solid fa-percent" style={{ color: '#0284C7', marginRight: 4 }} /> Discount (PKR)</label><input className="recv-input" type="number" value={discount} onChange={(e) => setDiscount(e.target.value)} placeholder="0" /></div>
         <div className="recv-input-2col">
           <div className="recv-field"><label><i className="fa-solid fa-calculator" style={{ color: '#0284C7', marginRight: 4 }} /> Net Payable</label><input className="recv-input" type="number" value={net} readOnly /></div>
-          <div className="recv-field"><label><i className="fa-solid fa-money-bill-wave" style={{ color: '#0284C7', marginRight: 4 }} /> Received Amount</label><input className="recv-input" type="number" value={received} onChange={(e) => setReceived(e.target.value)} placeholder="0" /></div>
+          <div className="recv-field"><label><i className="fa-solid fa-money-bill-wave" style={{ color: '#0284C7', marginRight: 4 }} /> {prevReceived > 0 ? 'Received Now' : 'Received Amount'}</label><input className="recv-input" type="number" value={received} onChange={(e) => setReceived(e.target.value)} placeholder="0" /></div>
         </div>
         <div className="recv-field"><label><i className="fa-solid fa-building-columns" style={{ color: '#0284C7', marginRight: 4 }} /> Payment Via</label><select className="recv-input" style={{ cursor: 'pointer' }} value={via} onChange={(e) => setVia(e.target.value)}>{RECEIVING_METHODS.map((m) => <option key={m}>{m}</option>)}</select></div>
         <div className="recv-field"><label><i className="fa-regular fa-calendar" style={{ color: '#0284C7', marginRight: 4 }} /> Payment Receiving Date</label><input className="recv-input" type="date" value={date} onChange={(e) => setDate(e.target.value)} /></div>
-        <div className="recv-remaining-live"><div><div style={{ fontSize: 11, fontWeight: 700, color: 'var(--tm)', textTransform: 'uppercase', letterSpacing: '.4px' }}>Remaining Amount</div><div style={{ fontSize: 10, color: 'var(--tm)', marginTop: 1 }}>Net Payable − Received Amount</div></div><div style={{ fontSize: 22, fontWeight: 800, color: remaining > 0 ? 'var(--err)' : remaining < 0 ? 'var(--success)' : 'var(--tm)' }}>{pkr(remaining)}</div></div>
+        <div className="recv-remaining-live"><div><div style={{ fontSize: 11, fontWeight: 700, color: 'var(--tm)', textTransform: 'uppercase', letterSpacing: '.4px' }}>Remaining Amount</div><div style={{ fontSize: 10, color: 'var(--tm)', marginTop: 1 }}>{prevReceived > 0 ? 'Net Payable − Already Received − Received Now' : 'Net Payable − Received Amount'}</div></div><div style={{ fontSize: 22, fontWeight: 800, color: remaining > 0 ? 'var(--err)' : remaining < 0 ? 'var(--success)' : 'var(--tm)' }}>{pkr(remaining)}</div></div>
       </div>
       <div className="recv-modal-foot">
         <button className="btn-secondary" onClick={onClose} disabled={saving}><i className="fa-solid fa-xmark" /> Close</button>
         <button className="btn-primary" style={{ background: 'linear-gradient(135deg,#0369A1,#0284C7)', boxShadow: '0 4px 14px rgba(3,105,161,.28)' }} onClick={save} disabled={saving}>
-          <i className={`fa-solid ${saving ? 'fa-circle-notch fa-spin' : 'fa-circle-check'}`} /> {saving ? 'Saving…' : prevRecv ? 'Update Payment' : 'Add Payment'}
+          <i className={`fa-solid ${saving ? 'fa-circle-notch fa-spin' : 'fa-circle-check'}`} /> {saving ? 'Saving…' : 'Add Payment'}
         </button>
       </div>
     </Ov>

@@ -204,6 +204,24 @@ export const MODULE_TREE = [
             recorded-workshop library. */
       { id: 'trn.view', label: 'View Trainings' },
     ] },
+  { id: 'launch',      label: 'Launch Setup',      icon: 'fa-rocket',
+    children: [
+      /* ── Launch Setup ERP shell se BAHAR chalta hai (setup app — App.js
+            ke 6 setup tabs). Yahan wahi 6 screens hain, bilkul usi label ke
+            saath jo tab par likha hai, taake API ka subMenuName aur screen
+            ka naam ek rahe. */
+      { id: 'launch.school',      label: 'School',           group: 'School Setup' },
+      { id: 'launch.classes',     label: 'Classes',          group: 'School Setup' },
+      { id: 'launch.subjects',    label: 'Subjects',         group: 'School Setup' },
+      { id: 'launch.departments', label: 'Departments',      group: 'School Setup' },
+      { id: 'launch.staff',       label: 'Staff Details',    group: 'School Setup' },
+      { id: 'launch.student',     label: 'Student Details',  group: 'School Setup' },
+
+      /* ── Saatvin screen ERP ke andar hai (LaunchSetup.jsx): kaun se module
+            school ke liye on/off hain. Alag permission is liye ke setup data
+            bharne wala clerk module activation na badal sake. */
+      { id: 'launch.modules',     label: 'Activated Modules' },
+    ] },
   { id: 'settings',    label: 'Settings',          icon: 'fa-gear',
     children: [
       /* ── 2 L1 sub-tabs (SETTINGS_SUBTABS @ SettingsModule.jsx:20). */
@@ -770,6 +788,45 @@ export const MODULE_PERMISSIONS = {
      Admin. */
   'perm.audit':         ['view'],
 
+  /* ─── LAUNCH SETUP — derived from real buttons in the setup app
+         (src/App.js ke 6 tabs) aur ERP ki LaunchSetup.jsx.
+         Har screen par sirf wahi actions jo waqai maujood hain. */
+
+  /* Tab 1 → School (SchoolTab.jsx)
+     Real buttons: Save school details, Save Draft, Upload School Logo.
+     School ka record ek hi hota hai — na Create, na Delete. */
+  'launch.school':      ['view', 'edit'],
+
+  /* Tab 2 → Classes (ClassesTab.jsx)
+     Real buttons: Add Class, Add Section, Add Fee Head, Edit, Delete
+                   (class / section / fee head), Download Report. */
+  'launch.classes':     ['view', 'create', 'edit', 'delete', 'download'],
+
+  /* Tab 3 → Subjects (SubjectsTab.jsx)
+     Real buttons: Add Subject, Edit Subject, Delete Subject,
+                   Download Report. */
+  'launch.subjects':    ['view', 'create', 'edit', 'delete', 'download'],
+
+  /* Tab 4 → Departments (DepartmentsTab.jsx)
+     Real buttons: Add Department, Add Post/Designation, Edit, Delete
+                   (department / designation), Download Report. */
+  'launch.departments': ['view', 'create', 'edit', 'delete', 'download'],
+
+  /* Tab 5 → Staff Details (StaffTab.jsx)
+     Real buttons: Add New Employee, Edit, Delete Employee, Bulk Import
+                   (Excel wizard), Download Template, Download Report. */
+  'launch.staff':       ['view', 'create', 'edit', 'delete', 'download', 'import'],
+
+  /* Tab 6 → Student Details (StudentTab.jsx)
+     Real buttons: Add Student, Edit, Delete student, Bulk Import,
+                   Download Template, Download Report. */
+  'launch.student':     ['view', 'create', 'edit', 'delete', 'download', 'import'],
+
+  /* ERP ke andar wali screen → Activated Modules (LaunchSetup.jsx)
+     Real buttons: per-module on/off switch, Enable All.
+     Koi Create/Delete nahi — sirf mojooda modules ki configuration. */
+  'launch.modules':     ['view', 'edit', 'manage_settings'],
+
   /* ─── AUDIT LOGS (standalone module) — derived from real buttons
          in AuditLogs.jsx + LogDetailsModal.jsx + ReportsPanel.jsx
          (audited 2026-05-31). Distinct from the perm.audit tab
@@ -800,7 +857,7 @@ export function isPermApplicable(screenId, action) {
 export const ROLE_TEMPLATES = {
   super_admin:       { label: 'Super Admin', giveAll: true },
   principal:         { label: 'Principal',
-    modules: ['academics', 'examination', 'papers', 'attendance', 'timetable', 'fee', 'accounts', 'students', 'hr', 'appraisals', 'admissions', 'sops', 'trainings', 'settings', 'permissions'],
+    modules: ['academics', 'examination', 'papers', 'attendance', 'timetable', 'fee', 'accounts', 'students', 'hr', 'appraisals', 'admissions', 'sops', 'trainings', 'launch', 'settings', 'permissions'],
     actions: ['view', 'create', 'edit', 'delete', 'approve', 'download', 'print', 'assign'] },
   teacher:           { label: 'Teacher',
     modules: ['academics', 'attendance', 'timetable', 'sops', 'trainings'],

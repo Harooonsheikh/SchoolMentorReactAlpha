@@ -7883,25 +7883,37 @@ function FeeHistoryTab({ toast }) {
     ? `${appliedTo} ${appliedYear}`
     : `${appliedFrom} – ${appliedTo} ${appliedYear}`;
 
-  /* The applied range's challans — one /api/BranchLedger/get-by-month-range
-     call covers every student in the branch across the whole range. */
+  /* ── Applied range ka ledger ──────────────────────────────────────────
+     Ab ye purane ERP se aata hai:
+       /api/BranchLedger/oldERPbranchledger_byClassSection
+          ?branchId&month&year&gradeId&sectionId
+
+     Ye route ek waqt me EK month aur EK class+section deta hai, is liye range
+     ke har mahine × branch ki har grade+section jori par ek call jati hai
+     (feeService ise aath ek saath chalata hai — dekhein getOldErpLedgerRecords).
+
+     Pehle yahan ek hi /api/BranchLedger/get-by-month-range call thi jo poore
+     branch ka poora range ek saath le aati thi. */
   const [records, setRecords]     = useState([]);
   const [histLoading, setLoading] = useState(true);
   const [histError, setError]     = useState(null);
   useEffect(() => {
     let alive = true;
-    /* Old ERP tab abhi sirf shell hai — koi data nahi uthata, is liye us par
-       BranchLedger ko be-wajah call karne ki zaroorat nahi. */
+    /* Old ERP tab apna data khud "Fetch Detail" par uthata hai. */
     if (seg === 'olderp') { setRecords([]); setLoading(false); setError(null); return undefined; }
+    /* Class list abhi aa rahi hai — us ke baghair kis grade/section par hit
+       karein? Aate hi ye effect dobara chalega (classes deps me hai). */
+    if (classes.length === 0) { setLoading(true); setError(null); return undefined; }
     const f = FEE_MONTHS.indexOf(appliedFrom) + 1;
     const t = FEE_MONTHS.indexOf(appliedTo) + 1;
+    const pairs = classes.map(c => ({ gradeId: c._gradeId, sectionId: c._sectionId }));
     setLoading(true);
     setError(null);
-    feeService.getLedgerRange(f, appliedYear, Math.max(f, t), appliedYear)
-      .then(rows => { if (alive) { setRecords(rows); setLoading(false); } })
+    feeService.getOldErpLedgerRecords(f, Math.max(f, t), appliedYear, pairs)
+      .then(({ rows }) => { if (alive) { setRecords(rows); setLoading(false); } })
       .catch(e => { if (alive) { setRecords([]); setError(e.message || 'Could not load fee history'); setLoading(false); } });
     return () => { alive = false; };
-  }, [seg, appliedFrom, appliedTo, appliedYear]);
+  }, [seg, appliedFrom, appliedTo, appliedYear, classes]);
 
   /* ── Old ERP ledger ──
      Ye tab khud se kuch load nahi karta; user "Fetch Detail" dabata hai to
@@ -7912,49 +7924,82 @@ function FeeHistoryTab({ toast }) {
   const [oldPeriod, setOldPeriod]   = useState(null);
   const [oldLoading, setOldLoading] = useState(false);
   const [oldError, setOldError]     = useState(null);
-  /* applicantID → studentID ka pul: old ERP summary sirf apna purana
-     `applicantID` deti hai, aur migration ne wahi id naye BranchLedger ke
-     `plApplicantID` column me rakhi hai. Map poori history par banta hai (sirf
-     chune hue month par nahi) — misal branch 220867 ke 2026 rows me ye column
-     khali hai, magar 2025 ke rows se 132 me se 119 naam mil jaate hain. Ek baar
-     ban kar reh jaata hai; agli fetch par dobara nahi banta. */
+  /* applicantID → studentID ka pul: old ERP rows sirf apna purana
+     `applicantID` deti hain. Jahan row me hamari `studentID` bhi aa jaye,
+     wahan se ye map ban jata hai aur naam mil jate hain.
+
+     Pehle ye map /api/BranchLedger/get-by-month-range se banta tha (do saal ki
+     poori history laa kar `plApplicantID` column se). Ab wo call nahi hoti —
+     old ERP ka data seedha class+section wale route se aata hai, jo har row ka
+     grade aur section yaqeeni bana deta hai. Map na ban paye to bhi ledger
+     dikhta hai: rows students se applicantID par khud mil jati hain. */
   const [plToStudentId, setPlToStudentId] = useState(null);
 
+  /* Old ERP ledger HAR class+section ke against alag call se aata hai:
+     /api/BranchLedger/oldERPbranchledger_byClassSection
+        ?branchId&month&year&gradeId&sectionId
+
+     Yani branch ki har grade+section jori par ek hit (feeService ise aath ek
+     saath chalata hai — dekhein getOldErpLedgerForClasses). Row ka grade aur
+     section request se hi tay ho jate hain, is liye purane ERP ke apne
+     sectionID par bharosa nahi karna parta (wo naye setup se mel nahi khate).
+
+     Branch-wide `oldERPbranchledger` ab bhi chalta hai — us se do faide:
+     jin students ki class ab maujood nahi unki rows bhi aa jati hain, aur
+     class-wise raaste se kuch na mile to screen khali nahi rehti. Class-wise
+     row ko tarjeeh hai (uska grade/section yaqeeni hai). */
   const fetchOldErp = useCallback(() => {
     const m = FEE_MONTHS.indexOf(toMonth) + 1;
-    const thisYear = new Date().getFullYear();
+    const pairs = classes.map(c => ({ gradeId: c._gradeId, sectionId: c._sectionId }));
     setOldLoading(true);
     setOldError(null);
     Promise.all([
-      feeService.getOldErpLedger(m, year),
-      /* naam na milen to bhi ledger dikhna chahiye — is liye ye call fail ho
-         to khali map par guzara */
-      plToStudentId
-        ? Promise.resolve(null)
-        : feeService.getLedgerRange(1, String(thisYear - 1), 12, String(thisYear)).catch(() => []),
+      feeService.getOldErpLedgerForClasses(m, year, pairs),
+      /* Ye gir jaye to bhi class-wise data dikhna chahiye. */
+      feeService.getOldErpLedger(m, year).catch(() => ({ summary: [] })),
     ])
-      .then(([{ summary }, plRows]) => {
-        if (plRows) {
-          const map = new Map();
-          plRows.forEach(r => {
-            const pl = String(r.plApplicantID || '').trim();
-            if (pl && r.studentID != null && !map.has(pl)) map.set(pl, String(r.studentID));
-          });
-          setPlToStudentId(map);
-        }
-        setOldSummary(summary);
+      .then(([byClass, branchWide]) => {
+        /* applicantID par jama: class-wise row pehle, phir branch-wide se wo
+           rows jo kisi class me nahi aayin. */
+        const seen = new Set();
+        const merged = [];
+        const add = (rows) => (rows || []).forEach(r => {
+          const id = String(r?.applicantID ?? r?.applicantsID ?? r?.applicantId ?? r?.studentID ?? '').trim();
+          const k = id || `x${merged.length}`;
+          if (seen.has(k)) return;
+          seen.add(k);
+          merged.push(r);
+        });
+        add(byClass.rows);
+        add(branchWide.summary);
+
+        /* Jis row me hamari studentID bhi aa jaye, us se naam ka pul ban jata
+           hai (dekhein plToStudentId ki sharh). */
+        const map = new Map();
+        merged.forEach(r => {
+          const pl = String(r.plApplicantID ?? r.applicantID ?? r.applicantsID ?? '').trim();
+          const sid = r.studentID ?? r.studentId;
+          if (pl && sid != null && !map.has(pl)) map.set(pl, String(sid));
+        });
+        if (map.size) setPlToStudentId(map);
+
+        setOldSummary(merged);
         setOldPeriod(`${toMonth} ${year}`);
         setOldLoading(false);
-        toast(summary.length
-          ? `Loaded ${summary.length} old ERP record${summary.length === 1 ? '' : 's'} for ${toMonth} ${year}`
-          : `No old ERP records for ${toMonth} ${year}`, summary.length ? 'success' : 'info');
+        if (byClass.failed > 0) {
+          toast(`${byClass.failed} of ${byClass.total} classes could not be loaded — showing the rest`, 'warn');
+        } else {
+          toast(merged.length
+            ? `Loaded ${merged.length} old ERP record${merged.length === 1 ? '' : 's'} for ${toMonth} ${year}`
+            : `No old ERP records for ${toMonth} ${year}`, merged.length ? 'success' : 'info');
+        }
       })
       .catch(e => {
         setOldSummary([]); setOldPeriod(`${toMonth} ${year}`);
         setOldError(e.message || 'Could not load old ERP ledger');
         setOldLoading(false);
       });
-  }, [toMonth, year, plToStudentId, toast]);
+  }, [toMonth, year, classes, toast]);
 
   /* createdBy / modifiedBy are login user ids — resolve each distinct one to
      its employee name once, then reuse across every row. */

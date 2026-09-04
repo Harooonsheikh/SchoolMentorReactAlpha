@@ -46,6 +46,7 @@
 import { ERP_API_BASE, MEDIA_BASE } from '@/config/env'
 import { getToken } from '@/auth/tokenStorage'
 import { currentNetworkId } from './networkSchoolsApi'
+import { emitAcademicContentChanged } from './contentEvents'
 
 const URL_ = `${ERP_API_BASE}/api/manage-resource-library`
 
@@ -268,6 +269,7 @@ export async function saveNetworkResource(r, networkId = currentNetworkId()) {
     form(id ? 'update' : 'insert', { ...r, id }, networkId),
     id ? 'update this resource' : 'upload this resource',
   )
+  emitAcademicContentChanged('resource')
   return realId(json?.data?.id ?? json?.data?.ID ?? json?.data ?? json?.id) || id
 }
 
@@ -276,4 +278,5 @@ export async function deleteNetworkResource(r, networkId = currentNetworkId()) {
   const id = realId(r?.id ?? r)
   if (!id) throw new Error('Please refresh the resource list, then delete again.')
   await postForm(form('delete', { ...(typeof r === 'object' ? r : {}), id }, networkId), 'delete this resource')
+  emitAcademicContentChanged('resource')
 }

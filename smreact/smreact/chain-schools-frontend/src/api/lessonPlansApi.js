@@ -43,6 +43,7 @@
 import { ERP_API_BASE } from '@/config/env'
 import { getToken } from '@/auth/tokenStorage'
 import { currentNetworkId } from './networkSchoolsApi'
+import { emitAcademicContentChanged } from './contentEvents'
 
 const BASE = `${ERP_API_BASE}/api`
 
@@ -149,8 +150,13 @@ const lessonMasterBody = ({ id = 0, classID, subjectID, unitNo, unitName, lesson
 })
 
 /** Ek lesson-master row insert/update/delete. `id` 0 = nayi row. */
-export function saveLessonMaster(data, networkId = currentNetworkId()) {
-  return post('/ulpforclassmastercrud', lessonMasterBody(data, networkId))
+export async function saveLessonMaster(data, networkId = currentNetworkId()) {
+  const out = await post('/ulpforclassmastercrud', lessonMasterBody(data, networkId))
+  /* Master row hi release index me jati hai (detail/questions nahi) — is liye
+     content-changed ka signal yahan se. Dekhein contentEvents.js.
+     crudFailure isliye ke ye route 200 de kar bhi fail ho sakta hai. */
+  if (!crudFailure(out)) emitAcademicContentChanged('lesson')
+  return out
 }
 
 /**
@@ -247,8 +253,10 @@ export async function fetchNetworkNotebookUnits({ classID, subjectID }, networkI
 }
 
 /** Ek notebook-master row insert/update/delete. `id` 0 = nayi row. */
-export function saveNotebookMaster(data, networkId = currentNetworkId()) {
-  return post('/ulpfornotebookmastercrud', lessonMasterBody(data, networkId))
+export async function saveNotebookMaster(data, networkId = currentNetworkId()) {
+  const out = await post('/ulpfornotebookmastercrud', lessonMasterBody(data, networkId))
+  if (!crudFailure(out)) emitAcademicContentChanged('notebook')
+  return out
 }
 
 /* ───────────────── Notebook Plans — questions (18 types) ───────────────── */

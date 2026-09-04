@@ -4,6 +4,8 @@ import TutorialModal from '../../components/TutorialModal';
 import { useModules } from '../../context/ModuleContext';
 import { MODULE_REGISTRY } from '../../config/moduleConfig';
 import { activeSessionId, NO_SESSION_MSG } from '../../../utils/apiConfig';
+import { usePermissions } from '../../context/PermissionsContext';
+import { LAUNCH_MENU, ACTIVATED_MODULES_SCREEN } from '../../../utils/setupPermissions';
 
 /* ═══════════════════════════════════════════════════════════════════
    LAUNCH SETUP — first stop for a new school onboarding into the ERP.
@@ -33,6 +35,19 @@ const DISPLAY_GROUPS = [
 export default function LaunchSetup({ toast = () => {} }) {
   const { moduleState, toggleModule, isActive, activateAll } = useModules();
   const [tutorialOpen, setTutorialOpen] = useState(false);
+  /* Launch Setup ▸ Activated Modules — module on/off ek configuration hai,
+     is liye ye Edit (ya Settings) ki permission maangta hai. Jise ye na mile
+     wo screen dekh to sakta hai magar switch nahi hila sakta. */
+  const { can, canModule } = usePermissions();
+  /* Module pehle, screen baad me — `can()` un modules ko allow kar deta hai jo
+     permission response me hain hi nahi, jabke `canModule()` registry ke har
+     module par sakht hai. Dono ka AND hi asli jawab hai. */
+  const launchAllowed = canModule(LAUNCH_MENU);
+  const canViewModules = launchAllowed && can(LAUNCH_MENU, ACTIVATED_MODULES_SCREEN, 'View');
+  const canConfigure = launchAllowed && (
+    can(LAUNCH_MENU, ACTIVATED_MODULES_SCREEN, 'Edit')
+    || can(LAUNCH_MENU, ACTIVATED_MODULES_SCREEN, 'Settings')
+  );
 
   const activeCount   = Object.values(moduleState).filter(v => v).length;
   const inactiveCount = Object.values(moduleState).filter(v => !v).length;
@@ -82,6 +97,27 @@ export default function LaunchSetup({ toast = () => {} }) {
         </div>
       )}
 
+      {/* Jise "Activated Modules" par View na mila ho — ho sakta hai uske paas
+          Launch Setup ke doosre screens hon (School / Classes / …), jo setup app
+          me khulte hain. Us soorat me yahan module grid ke bajaye saaf paighaam. */}
+      {!canViewModules ? (
+        <div className="ls-card">
+          <div className="ls-card-body">
+            <div className="ls-info">
+              <i className="fa-solid fa-lock" aria-hidden="true"></i>
+              <div>
+                <div className="ls-info-t">Module activation is not available for your account</div>
+                <div className="ls-info-s">
+                  Your Launch Setup access does not include the Activated Modules screen. Use the setup
+                  steps (School, Classes, Subjects, Departments, Staff, Students) that have been granted
+                  to you, or ask your school administrator for access.
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : (
+      <>
       {/* ─── Activated Modules section card ─── */}
       <div className="ls-card">
         <div className="ls-card-h">
@@ -94,15 +130,17 @@ export default function LaunchSetup({ toast = () => {} }) {
               </div>
             </div>
           </div>
-          <Tooltip text="Reactivate every disabled module">
-            <button
-              type="button"
-              className="ls-btn-ghost"
-              onClick={() => { activateAll(); toast('All modules activated', 'success'); }}
-            >
-              <i className="fa-solid fa-check-double" aria-hidden="true"></i> Enable All
-            </button>
-          </Tooltip>
+          {canConfigure && (
+            <Tooltip text="Reactivate every disabled module">
+              <button
+                type="button"
+                className="ls-btn-ghost"
+                onClick={() => { activateAll(); toast('All modules activated', 'success'); }}
+              >
+                <i className="fa-solid fa-check-double" aria-hidden="true"></i> Enable All
+              </button>
+            </Tooltip>
+          )}
         </div>
 
         <div className="ls-card-body">
@@ -170,8 +208,10 @@ export default function LaunchSetup({ toast = () => {} }) {
                         </div>
                       </div>
 
-                      {locked ? (
-                        <Tooltip text="Core ERP modules cannot be disabled">
+                      {locked || !canConfigure ? (
+                        <Tooltip text={locked
+                          ? 'Core ERP modules cannot be disabled'
+                          : 'You do not have permission to change module activation'}>
                           <div className="ls-lock-pill" aria-label="Locked">
                             <i className="fa-solid fa-lock" aria-hidden="true"></i>
                           </div>
@@ -211,6 +251,9 @@ export default function LaunchSetup({ toast = () => {} }) {
           </div>
         </div>
       </div>
+
+      </>
+      )}
 
       <TutorialModal
         open={tutorialOpen}
