@@ -14,7 +14,8 @@ import Notifications from './Notifications';
 import AgentSupport from '../components/AgentSupport';
 import { INITIAL_USERS, INITIAL_PERMS } from './userMgmtData';
 import { installSessionGuard, setSessionGuardActive } from './api/sessionGuard';
-
+import SupportBackgroundListener from '../support/SupportBackgroundListener';
+import { requestSupportNotificationPermission } from '../support/notification';
 /* ═══════════════════════════════════════════════════════════════════
    SUPER ADMIN SHELL
 
@@ -89,10 +90,12 @@ export default function SuperAdminShell({ user, onLogout }) {
     } catch { /* storage blocked — fall back to light */ }
     return 'light';
   });
+  const [supportUnreadCount, setSupportUnreadCount] = useState(0);
   const [active, setActive] = useState('dashboard');      // landing module; see NAV for others
   const [supportTab, setSupportTab] = useState('overview');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [toasts, setToasts] = useState([]);
+
   const seq = useRef(1);
 
   /* Shared across User Management (edits them) and Dashboard (reads them
@@ -128,16 +131,63 @@ export default function SuperAdminShell({ user, onLogout }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [Boolean(onLogout)]);
 
-  const onNav = (id) => {
-    if (id === 'dashboard' || id === 'mentorAI' || id === 'support' || id === 'etube' || id === 'permissions' || id === 'status' || id === 'payments' || id === 'sops' || id === 'quiz' || id === 'trainings' || id === 'notifications' || id === 'users') setActive(id);
-    else toast(NAV.flatMap((s) => s.items).find((i) => i.id === id)?.name || 'Coming soon', 'info');
-    setSidebarOpen(false);
-  };
+const onNav = (id) => {
+  if (id === 'support') {
+    requestSupportNotificationPermission();
+  }
+
+  if (
+    id === 'dashboard' ||
+    id === 'mentorAI' ||
+    id === 'support' ||
+    id === 'etube' ||
+    id === 'permissions' ||
+    id === 'status' ||
+    id === 'payments' ||
+    id === 'sops' ||
+    id === 'quiz' ||
+    id === 'trainings' ||
+    id === 'notifications' ||
+    id === 'users'
+  ) {
+    setActive(id);
+  } else {
+    toast(
+      NAV.flatMap((s) => s.items).find((i) => i.id === id)?.name ||
+        'Coming soon',
+      'info'
+    );
+  }
+
+  setSidebarOpen(false);
+};
 
   return (
     <div className="sa-root" data-theme={theme === 'dark' ? 'dark' : undefined}>
+      <SupportBackgroundListener
+  enabled={true}
+  onUnreadChange={setSupportUnreadCount}
+/>
       <style>{SA_CSS}</style>
+<style>{SA_CSS}</style>
 
+<style>{`
+  .support-notification-badge {
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    background: #ef4444;
+    color: #ffffff;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1;
+    box-shadow: 0 0 0 2px #ffffff;
+  }
+`}</style>
       <div className="app-layout">
         {/* ═════════ SIDEBAR ═════════ */}
         <aside className={`sidebar${sidebarOpen ? ' open' : ''}`}>
@@ -154,10 +204,31 @@ export default function SuperAdminShell({ user, onLogout }) {
                   return (
                     <button key={it.id} className={`nav-item${isActive ? ' active' : ''}`} onClick={() => onNav(it.id)}>
                       <div className="nav-iw"><i className={`fa-solid ${it.icon}`} /></div>
-                      <div>
-                        <div className="nav-nm">{it.name}</div>
-                        {isActive ? <div className="nav-st">Active module</div> : it.sub && <div className="nav-st">{it.sub}</div>}
-                      </div>
+                    <div style={{ flex: 1 }}>
+  <div
+    className="nav-nm"
+    style={{
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 8,
+    }}
+  >
+    <span>{it.name}</span>
+
+    {it.id === 'support' && supportUnreadCount > 0 && (
+      <span className="support-notification-badge">
+        {supportUnreadCount > 99 ? '99+' : supportUnreadCount}
+      </span>
+    )}
+  </div>
+
+  {isActive ? (
+    <div className="nav-st">Active module</div>
+  ) : (
+    it.sub && <div className="nav-st">{it.sub}</div>
+  )}
+</div>
                     </button>
                   );
                 })}
