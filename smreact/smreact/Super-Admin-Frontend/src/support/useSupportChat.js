@@ -18,7 +18,7 @@ import { ApiError } from './api';
 import { createConnection, Events, joinSession, leaveSession, sendTyping } from './realtime';
 import { playIncomingChime } from './sound';
 import { formatServerTime } from './time';
-
+import { showSupportNotification } from './notification';
 /* Hub band hone par khuli conversation kitni jaldi dobara dekhi jaye.
    2 second — school ka message aate hi bubble/badge aa jata hai. Har tick par
    poora transcript kheenchna is raftaar par faltu hoga, is liye pehle sasta
@@ -193,8 +193,16 @@ export function useSupportChat({
       const incUnread = dto.sessionId !== sessionRef.current && dto.senderType === SenderType.School;
       setActiveSessions((prev) => bumpSession(prev, dto.sessionId, dto.createdAt, incUnread));
       // Notification sound for incoming messages only (never our own).
-      if (isIncoming) playIncomingChime();
-      if (dto.sessionId === sessionRef.current) {
+if (isIncoming) {
+
+    playIncomingChime();
+
+    showSupportNotification({
+        title: "School Mentor Support",
+        body: dto.messageBody || "New message received"
+    });
+
+}      if (dto.sessionId === sessionRef.current) {
         seenRef.current.add(dto.messageId);
         cb.current.onInbound?.(toUi(dto));
         // We're actively viewing this conversation, so acknowledge the other

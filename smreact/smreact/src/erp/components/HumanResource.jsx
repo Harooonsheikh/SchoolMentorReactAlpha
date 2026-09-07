@@ -7671,44 +7671,127 @@ export const HR_CSS = `
 
 /* Sub-tabs */
 .emp-subtabs {
-  display: flex; gap: 0;
-  border-bottom: 1px solid var(--bl);
-  background: linear-gradient(135deg, rgba(30, 58, 138, .03), transparent);
-  padding: 0 12px;
-  align-items: stretch;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+
+  padding: 5px;
+  margin: 10px 12px;
+
+  background: #fff;
+  border: 1px solid #b7dcff;
+  border-radius: 999px;
+
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.12);
 }
+
 .emp-subtab {
   flex: 1;
-  display: flex; align-items: center; justify-content: center; gap: 8px;
-  padding: 13px 18px;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+
+  min-height: 36px;
+  padding: 9px 16px;
+
   border: none;
+  border-radius: 999px;
+
   background: transparent;
+  color: #4f6480;
+
   font: 600 13px/1 var(--hr-font);
-  color: var(--tm);
+
   cursor: pointer;
-  border-bottom: 3px solid transparent;
-  margin-bottom: -1px;
-  transition: var(--tr);
-  position: relative;
   white-space: nowrap;
+  transition: all .2s ease;
+
+  margin-bottom: 0;
 }
-.emp-subtab:hover:not(.active) { color: var(--t1); background: rgba(30, 58, 138, .04); }
-.emp-subtab.active { color: var(--brand); font-weight: 800; border-bottom-color: var(--brand); }
+
+.emp-subtab:hover:not(.active) {
+  background: #f3f8ff;
+  color: #0b4fae;
+}
+
+.emp-subtab.active {
+  background: #0b4fae;
+  color: #fff;
+  font-weight: 700;
+  box-shadow: 0 2px 7px rgba(11, 79, 174, 0.28);
+}
 .emp-subtab i { font-size: 13px; flex-shrink: 0; }
 .emp-subtab-count {
-  display: inline-flex; align-items: center; justify-content: center;
-  min-width: 22px; height: 20px;
-  padding: 0 7px;
-  border-radius: var(--r-f);
-  background: var(--muted);
-  color: var(--tm);
-  font: 800 10.5px/1 var(--hr-font);
-  border: 1px solid var(--bl);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+
+  border-radius: 999px;
+
+  background: #eef6ff;
+  color: #0b4fae;
+
+  border: 1px solid #9dceff;
+
+  font: 700 10px/1 var(--hr-font);
 }
+
 .emp-subtab.active .emp-subtab-count {
-  background: var(--brand-light);
-  color: var(--brand);
-  border-color: var(--bm);
+  background: #fff;
+  color: #0b4fae;
+  border-color: #fff;
+}
+  @media (max-width: 480px) {
+
+  .emp-subtabs {
+    display: flex !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+
+    padding: 3px !important;
+    gap: 3px !important;
+    margin: 8px 0 !important;
+
+    overflow: hidden !important;   /* IMPORTANT */
+    flex-wrap: nowrap !important;
+  }
+
+  /* Tooltip wrappers — both must take 50% */
+  .emp-subtabs > * {
+    flex: 1 1 0 !important;
+    min-width: 0 !important;
+    width: 50% !important;
+  }
+
+  .emp-subtab {
+    width: 100% !important;
+    min-width: 0 !important;
+
+    padding: 7px 4px !important;
+    gap: 4px !important;
+
+    font-size: 9.5px !important;
+    white-space: nowrap !important;
+
+    border-radius: 999px !important;
+  }
+
+  .emp-subtab i {
+    font-size: 9px !important;
+  }
+
+  .emp-subtab-count {
+    min-width: 17px !important;
+    height: 17px !important;
+    padding: 0 4px !important;
+    font-size: 9px !important;
+  }
 }
 [data-theme="dark"] .emp-subtab-count { background: var(--card); border-color: var(--bl); }
 

@@ -850,7 +850,124 @@ const getClassesData = async () => {
   return (
     <>
       <style>{LP_CSS}</style>
+<style>{`
+  .lp-l2-tabs {
+    display: flex !important;
+    align-items: center !important;
+    width: 100% !important;
+    padding: 5px !important;
+    gap: 4px !important;
+    background: #ffffff !important;
+    border: 1px solid #b7dcff !important;
+    border-radius: 999px !important;
+    box-shadow: 0 2px 9px rgba(15, 23, 42, 0.14) !important;
+    box-sizing: border-box !important;
+    overflow: hidden !important;
+  }
 
+  .lp-l2-tabs > .lp-l2-tab {
+    flex: 1 1 0 !important;
+    min-width: 0 !important;
+    min-height: 36px !important;
+    padding: 9px 16px !important;
+    border: 0 !important;
+    border-radius: 999px !important;
+    background: transparent !important;
+    color: #4f6480 !important;
+    box-shadow: none !important;
+
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 8px !important;
+
+    font-size: 14px !important;
+    font-weight: 600 !important;
+    white-space: nowrap !important;
+    cursor: pointer !important;
+  }
+
+  .lp-l2-tabs > .lp-l2-tab.active {
+    background: #0b4fae !important;
+    color: #ffffff !important;
+    box-shadow: 0 2px 7px rgba(11, 79, 174, 0.28) !important;
+  }
+
+  .lp-l2-tabs > .lp-l2-tab:not(.active):hover {
+    background: #f3f8ff !important;
+    color: #0b4fae !important;
+  }
+
+  .lp-l2-tabs > .lp-l2-tab i {
+    color: inherit !important;
+    font-size: 13px !important;
+  }
+    /* ===== Mobile Lesson Plan Tabs ===== */
+@media (max-width: 768px) {
+
+  .lp-l2-tabs {
+    display: flex !important;
+    align-items: center !important;
+    width: 100% !important;
+
+    padding: 3px !important;
+    gap: 3px !important;
+
+    background: #fff !important;
+    border: 1px solid #b7dcff !important;
+    border-radius: 11px !important;
+
+    box-shadow: 0 2px 6px rgba(0,0,0,0.12) !important;
+
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .lp-l2-tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .lp-l2-tabs > .lp-l2-tab {
+    flex: 0 0 auto !important;
+
+    min-height: 31px !important;
+    padding: 6px 10px !important;
+
+    border: none !important;
+    border-radius: 8px !important;
+
+    font-size: 10px !important;
+    font-weight: 600 !important;
+
+    white-space: nowrap !important;
+
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 5px !important;
+
+    background: transparent !important;
+    color: #42566f !important;
+
+    box-shadow: none !important;
+  }
+
+  .lp-l2-tabs > .lp-l2-tab i {
+    font-size: 10px !important;
+    color: inherit !important;
+  }
+
+  .lp-l2-tabs > .lp-l2-tab.active {
+    background: #0755b5 !important;
+    color: #fff !important;
+
+    box-shadow: 0 2px 5px rgba(7, 85, 181, 0.3) !important;
+  }
+}
+`}</style>
       {/* ─── L2 sub-tabs ─── (View permission ke hisaab se) */}
       <div className="lp-l2-tabs">
         {showSessionTab && (
