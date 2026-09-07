@@ -204,7 +204,17 @@ export default function Academics() {
   /* Summary yahan khud bani hai (taza content par), is liye modal ka teesra
      argument nahi liya jata. */
   const applyRelease = async (type, opts) => {
-    const { validityDays, dueDate, creationDate, schools, parentReleaseId, content, pickFrom } = opts
+    const { validityDays, dueDate, creationDate, schools, parentReleaseId, content, pickFrom, selectedIds } = opts
+    /* Modal me jo ids tick hui thin — taza index bhi inhi tak mehdood rahega,
+       taake schools ko sirf chuni hui Activities / Lesson / Notebook / Resource
+       milen, poora draft nahi. `selectedIds` na ho (purana caller) to null =
+       koi chhaant nahi. */
+    const selPick = selectedIds ? {
+      activities: new Set((selectedIds.activities || []).map(Number)),
+      lessons: new Set((selectedIds.lessons || []).map(Number)),
+      notebooks: new Set((selectedIds.notebooks || []).map(Number)),
+      resources: new Set((selectedIds.resources || []).map(Number)),
+    } : null
     const isMaster = type === 'master'
     const releaseType = isMaster ? 'MASTER_RELEASE' : 'SUB_RELEASE'
     const number = releases.filter((r) => r.releaseType === releaseType).length + 1
@@ -233,7 +243,10 @@ export default function Academics() {
     try {
       const fresh = await fetchReleaseContent()
       setRelContent(fresh)
+      /* Pehle source (pickFrom) ki ids par, phir modal me jo tick hua us par —
+         dono paas filterReleaseContent se, is liye child2 sirf selected rows. */
       live = filterReleaseContent(fresh, idSetsOf(pickFrom))
+      if (selPick) live = filterReleaseContent(live, selPick)
     } catch {
       /* Taza index na mile to modal wala content hi sahi. */
     }
@@ -619,6 +632,16 @@ function LiveReleasesCard({ releases, canRelease, onView, onCreate, onRevoke }) 
   )
 }
 
+/* ── Selection checkbox — selected / unselected / indeterminate ("select all" rows) ── */
+function TriCheckbox({ state, onChange }) {
+  return <input type="checkbox" checked={state === 'all'} ref={(el) => { if (el) el.indeterminate = state === 'some' }} onClick={(e) => e.stopPropagation()} onChange={onChange} />
+}
+const triState = (keys, set) => {
+  if (keys.length === 0) return 'none'
+  const on = keys.filter((k) => set.has(k)).length
+  return on === 0 ? 'none' : on === keys.length ? 'all' : 'some'
+}
+
 /* ── Master / Sub release modal ── */
 function ReleaseModal({ type, releases, relContent, baseRelease, baseLabel, busy, onClose, onRelease }) {
   const isSub = type === 'sub'
@@ -630,11 +653,99 @@ function ReleaseModal({ type, releases, relContent, baseRelease, baseLabel, busy
     () => filterReleaseContent(relContent, idSetsOf(sourceRelease || baseRelease)),
     [relContent, sourceRelease, baseRelease],
   )
-  const summary = useMemo(() => summarizeReleaseContent(content), [content])
-  const t = summary.totals
+  /* Poore pool ka summary — sirf yeh batane ke liye ke source me kya kya
+     available hai (noContent ki jaanch isi par). Jo WAQAI release hoga uska
+     summary neeche `summary` (selected) hai. */
+  const poolSummary = useMemo(() => summarizeReleaseContent(content), [content])
   /* Chaaron section khali = release ka koi matlab nahi. Ginti ke bajaye wahi
      list dekhi jati hai jo child2 ban kar server tak jati hai. */
   const noContent = useMemo(() => !hasReleasableContent(content), [content])
+
+  /* ── Granular content selection ─────────────────────────────────────
+     Kuch bhi pehle se select NAHI. Head Office khud tick karta hai ke is
+     release me kaunsi Activities / Lesson Plans / Notebook Plans / Resources
+     jayengi. Sets me row ki ASLI server id hoti hai (wahi jo child2 me typeID
+     ban kar jati hai), is liye chhaant seedhi hai. */
+  const emptySel = () => ({ activities: new Set(), lessons: new Set(), notebooks: new Set(), resources: new Set() })
+  const [sel, setSel] = useState(emptySel)
+  const [openKeys, setOpenKeys] = useState(() => new Set())
+  const toggleOpen = (key) => setOpenKeys((p) => { const n = new Set(p); if (n.has(key)) n.delete(key); else n.add(key); return n })
+  const toggleKeys = (field, keys) => setSel((p) => { const n = new Set(p[field]); const allOn = keys.length > 0 && keys.every((k) => n.has(k)); keys.forEach((k) => (allOn ? n.delete(k) : n.add(k))); return { ...p, [field]: n } })
+  const toggleOne = (field, key) => setSel((p) => { const n = new Set(p[field]); if (n.has(key)) n.delete(key); else n.add(key); return { ...p, [field]: n } })
+
+  const classNameOf = (id) => content.classes.find((c) => c.id === Number(id))?.name || `Class #${id}`
+  const subjNameOf = (id) => content.subjects.find((s) => Number(s.id) === Number(id))?.name || `Subject #${id}`
+
+  /* Drill-down trees — nested content ki ASLI shape par: har lesson/notebook
+     master row me classID/subjectID/unitNo/unitName/topic hoti hai (dekhein
+     lessonPlansApi ka masterRow), is liye Class → Subject → Unit → item.
+     Resources me classId/subjectId/category, is liye Class → Subject →
+     Category → File. Item ki `id` wahi server row id hai jo tick hoti hai. */
+  const buildPlanTree = (list) => {
+    const byClass = new Map()
+    list.forEach((r) => {
+      if (!byClass.has(r.classID)) byClass.set(r.classID, new Map())
+      const bySubj = byClass.get(r.classID)
+      if (!bySubj.has(r.subjectID)) bySubj.set(r.subjectID, new Map())
+      const byUnit = bySubj.get(r.subjectID)
+      const uk = `${r.unitNo}__${r.unitName}`
+      if (!byUnit.has(uk)) byUnit.set(uk, { key: uk, unitNo: r.unitNo, unitName: r.unitName, items: [] })
+      byUnit.get(uk).items.push(r)
+    })
+    return [...byClass.entries()].map(([cid, bySubj]) => ({
+      classId: cid, name: classNameOf(cid),
+      subjects: [...bySubj.entries()].map(([sid, byUnit]) => ({
+        subjectId: sid, name: subjNameOf(sid), units: [...byUnit.values()],
+      })),
+    }))
+  }
+  const lessonTree = useMemo(() => buildPlanTree(content.lessons), [content])
+  const notebookTree = useMemo(() => buildPlanTree(content.notebooks), [content])
+  const resourceTree = useMemo(() => {
+    const byClass = new Map()
+    content.resources.forEach((r) => {
+      if (!byClass.has(r.classId)) byClass.set(r.classId, new Map())
+      const bySubj = byClass.get(r.classId)
+      if (!bySubj.has(r.subjectId)) bySubj.set(r.subjectId, new Map())
+      const byCat = bySubj.get(r.subjectId)
+      const cat = r.category || 'other'
+      if (!byCat.has(cat)) byCat.set(cat, [])
+      byCat.get(cat).push(r)
+    })
+    return [...byClass.entries()].map(([cid, bySubj]) => ({
+      classId: cid, name: classNameOf(cid),
+      subjects: [...bySubj.entries()].map(([sid, byCat]) => ({
+        subjectId: sid, name: subjNameOf(sid),
+        categories: [...byCat.entries()].map(([catKey, files]) => ({ catKey, label: resCategory(catKey).label, files })),
+      })),
+    }))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [content])
+
+  /* Source badle to selection reset, aur pehla worked example khol do taake
+     drill-down foran nazar aaye. */
+  useEffect(() => {
+    setSel(emptySel())
+    const next = new Set()
+    if (lessonTree[0]) { next.add(`lp-c-${lessonTree[0].classId}`); if (lessonTree[0].subjects[0]) next.add(`lp-c-${lessonTree[0].classId}-s-${lessonTree[0].subjects[0].subjectId}`) }
+    if (notebookTree[0]) { next.add(`nb-c-${notebookTree[0].classId}`); if (notebookTree[0].subjects[0]) next.add(`nb-c-${notebookTree[0].classId}-s-${notebookTree[0].subjects[0].subjectId}`) }
+    if (resourceTree[0]) { next.add(`res-c-${resourceTree[0].classId}`); if (resourceTree[0].subjects[0]) next.add(`res-c-${resourceTree[0].classId}-s-${resourceTree[0].subjects[0].subjectId}`) }
+    setOpenKeys(next)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [source])
+
+  /* Jo WAQAI release hoga — sirf ticked ids. Pool arrays kabhi jagah par
+     filter nahi hote (Head Office ka bank intact rehta hai). */
+  const selectedContent = useMemo(() => ({
+    ...content,
+    activities: content.activities.filter((x) => sel.activities.has(x.id)),
+    lessons: content.lessons.filter((x) => sel.lessons.has(x.id)),
+    notebooks: content.notebooks.filter((x) => sel.notebooks.has(x.id)),
+    resources: content.resources.filter((x) => sel.resources.has(x.id)),
+  }), [content, sel])
+  const summary = useMemo(() => summarizeReleaseContent(selectedContent), [selectedContent])
+  const t = summary.totals
+  const nothingSelected = useMemo(() => !hasReleasableContent(selectedContent), [selectedContent])
 
   /* Schools ab API se aate hain (ViewProvider), is liye list async bharti hai —
      master release ka "sab select" schools aane par set hota hai. */
@@ -695,7 +806,7 @@ function ReleaseModal({ type, releases, relContent, baseRelease, baseLabel, busy
   const toggleAllSchools = () => setSchoolSel(allSchools ? new Set() : new Set(connectedSchools.map((s) => s.id)))
   /* Master bhi tab hi ja sakta hai jab chain me koi school ho — child1 khali
      bhejne ka matlab hai release kisi tak pohanchega hi nahi. */
-  const canRelease = validDays && confirm && !noContent && (isSub ? schoolSel.size > 0 : connectedSchools.length > 0)
+  const canRelease = validDays && confirm && !noContent && !nothingSelected && (isSub ? schoolSel.size > 0 : connectedSchools.length > 0)
   const nextNo = releases.filter((r) => r.releaseType === (isSub ? 'SUB_RELEASE' : 'MASTER_RELEASE')).length + 1
   const nextBatch = `${isSub ? 'SR' : 'MR'}-${new Date().getFullYear()}-${String(nextNo).padStart(3, '0')}`
 
@@ -704,7 +815,18 @@ function ReleaseModal({ type, releases, relContent, baseRelease, baseLabel, busy
   /* `pickFrom` = wo release jis ki ids par content chhana gaya (Current Draft
      par null). applyRelease save se pehle index dobara laata hai aur usi chhaant
      ko dohrata hai — dekhein wahan ki sharh. */
-  const submit = () => onRelease(type, { validityDays: dn, dueDate, creationDate: releaseDate, schools: [...schoolSel], parentReleaseId: sourceRelease?.id || null, content, pickFrom: sourceRelease || baseRelease || null }, summary)
+  const submit = () => onRelease(type, {
+    validityDays: dn, dueDate, creationDate: releaseDate, schools: [...schoolSel],
+    parentReleaseId: sourceRelease?.id || null,
+    /* Sirf ticked content — pool nahi. `selectedIds` applyRelease me taza index
+       ke saath dobara intersect hoti hain, is liye jo tick hua wahi jata hai. */
+    content: selectedContent,
+    pickFrom: sourceRelease || baseRelease || null,
+    selectedIds: {
+      activities: [...sel.activities], lessons: [...sel.lessons],
+      notebooks: [...sel.notebooks], resources: [...sel.resources],
+    },
+  }, summary)
 
   return createPortal(
     <div className="pay-ov" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
@@ -748,8 +870,209 @@ function ReleaseModal({ type, releases, relContent, baseRelease, baseLabel, busy
 
           {!noContent && (
             <>
-              {/* Top summary cards */}
-              <div className="rel-sec-h"><i className="fa-solid fa-chart-simple" /> Content Summary</div>
+              {/* ── Manual content selection — kuch bhi khud-ba-khud shamil nahi ── */}
+              <div className="rel-sec-h"><i className="fa-solid fa-hand-pointer" /> Select Content to Release</div>
+              <div className="rel-help" style={{ marginTop: -4, marginBottom: 12 }}>Nothing is included automatically. Tap a class to expand it, then a subject, then a unit — tick individual items, or tick the checkbox next to a class, subject or unit to include everything inside it. The source content stays available in the Head Office content bank either way.</div>
+
+              {/* Activities */}
+              {poolSummary.general.activities > 0 && (
+                <div className="rel-pick">
+                  <div className="rel-sec-h" style={{ marginTop: 14 }}><i className="fa-solid fa-calendar-week" /> Activities <span className="rel-sec-count">{sel.activities.size} selected</span></div>
+                  <label className="rel-selall">
+                    <TriCheckbox state={triState(content.activities.map((x) => x.id), sel.activities)} onChange={() => toggleKeys('activities', content.activities.map((x) => x.id))} />
+                    <span>Select all activities</span>
+                  </label>
+                  <div className="rel-schools">
+                    {content.activities.map((act) => (
+                      <label key={act.id} className={`rel-school${sel.activities.has(act.id) ? ' on' : ''}`}>
+                        <input type="checkbox" checked={sel.activities.has(act.id)} onChange={() => toggleOne('activities', act.id)} />
+                        <span className="rel-school-name">{act.name}</span>
+                        <span className="rel-school-city"><i className="fa-solid fa-calendar-day" /> {fmtDate(act.start)}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Lesson Plans — Class → Subject → Unit → Lesson */}
+              {lessonTree.length > 0 && (
+                <div className="rel-pick">
+                  <div className="rel-sec-h" style={{ marginTop: 18 }}><i className="fa-solid fa-list-ul" /> Lesson Plans <span className="rel-sec-count">{sel.lessons.size} selected</span></div>
+                  {lessonTree.map((c) => {
+                    const ckey = `lp-c-${c.classId}`
+                    const cKeys = c.subjects.flatMap((s) => s.units.flatMap((u) => u.items.map((it) => it.id)))
+                    return (
+                      <div className={`rel-cls${openKeys.has(ckey) ? ' open' : ''}`} key={ckey}>
+                        <button className="rel-cls-head" onClick={() => toggleOpen(ckey)}>
+                          <TriCheckbox state={triState(cKeys, sel.lessons)} onChange={() => toggleKeys('lessons', cKeys)} />
+                          <div className="rel-cls-ic"><i className="fa-solid fa-chalkboard-user" /></div>
+                          <div className="rel-cls-main"><div className="rel-cls-name">{c.name}</div><div className="rel-cls-sub">{cKeys.length} lesson plan{cKeys.length !== 1 ? 's' : ''} available</div></div>
+                          <i className={`fa-solid fa-chevron-down rel-cls-chev${openKeys.has(ckey) ? ' open' : ''}`} />
+                        </button>
+                        {openKeys.has(ckey) && (
+                          <div className="rel-cls-body rel-cls-body-tree">
+                            {c.subjects.map((s) => {
+                              const skey = `${ckey}-s-${s.subjectId}`
+                              const sKeys = s.units.flatMap((u) => u.items.map((it) => it.id))
+                              return (
+                                <div className="rel-acc2" key={skey}>
+                                  <button className="rel-acc2-head" onClick={() => toggleOpen(skey)}>
+                                    <TriCheckbox state={triState(sKeys, sel.lessons)} onChange={() => toggleKeys('lessons', sKeys)} />
+                                    <span className="rel-acc2-name">{s.name}</span>
+                                    <span className="rel-cls-total">{sKeys.length}</span>
+                                    <i className={`fa-solid fa-chevron-down rel-cls-chev${openKeys.has(skey) ? ' open' : ''}`} />
+                                  </button>
+                                  {openKeys.has(skey) && s.units.map((u) => {
+                                    const uKeys = u.items.map((it) => it.id)
+                                    return (
+                                      <div className="rel-acc3" key={u.key}>
+                                        <label className="rel-selall rel-acc3-h">
+                                          <TriCheckbox state={triState(uKeys, sel.lessons)} onChange={() => toggleKeys('lessons', uKeys)} />
+                                          <span>Unit {u.unitNo} — {u.unitName}</span>
+                                        </label>
+                                        <div className="rel-schools rel-acc3-list">
+                                          {u.items.map((it) => (
+                                            <label key={it.id} className={`rel-school${sel.lessons.has(it.id) ? ' on' : ''}`}>
+                                              <input type="checkbox" checked={sel.lessons.has(it.id)} onChange={() => toggleOne('lessons', it.id)} />
+                                              <span className="rel-school-name">{it.topic || 'Untitled Lesson'}</span>
+                                            </label>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    )
+                                  })}
+                                </div>
+                              )
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+
+              {/* Notebook Plans — Class → Subject → Unit → Notebook Plan */}
+              {notebookTree.length > 0 && (
+                <div className="rel-pick">
+                  <div className="rel-sec-h" style={{ marginTop: 18 }}><i className="fa-solid fa-book-open" /> Notebook Plans <span className="rel-sec-count">{sel.notebooks.size} selected</span></div>
+                  {notebookTree.map((c) => {
+                    const ckey = `nb-c-${c.classId}`
+                    const cKeys = c.subjects.flatMap((s) => s.units.flatMap((u) => u.items.map((it) => it.id)))
+                    return (
+                      <div className={`rel-cls${openKeys.has(ckey) ? ' open' : ''}`} key={ckey}>
+                        <button className="rel-cls-head" onClick={() => toggleOpen(ckey)}>
+                          <TriCheckbox state={triState(cKeys, sel.notebooks)} onChange={() => toggleKeys('notebooks', cKeys)} />
+                          <div className="rel-cls-ic"><i className="fa-solid fa-chalkboard-user" /></div>
+                          <div className="rel-cls-main"><div className="rel-cls-name">{c.name}</div><div className="rel-cls-sub">{cKeys.length} notebook plan{cKeys.length !== 1 ? 's' : ''} available</div></div>
+                          <i className={`fa-solid fa-chevron-down rel-cls-chev${openKeys.has(ckey) ? ' open' : ''}`} />
+                        </button>
+                        {openKeys.has(ckey) && (
+                          <div className="rel-cls-body rel-cls-body-tree">
+                            {c.subjects.map((s) => {
+                              const skey = `${ckey}-s-${s.subjectId}`
+                              const sKeys = s.units.flatMap((u) => u.items.map((it) => it.id))
+                              return (
+                                <div className="rel-acc2" key={skey}>
+                                  <button className="rel-acc2-head" onClick={() => toggleOpen(skey)}>
+                                    <TriCheckbox state={triState(sKeys, sel.notebooks)} onChange={() => toggleKeys('notebooks', sKeys)} />
+                                    <span className="rel-acc2-name">{s.name}</span>
+                                    <span className="rel-cls-total">{sKeys.length}</span>
+                                    <i className={`fa-solid fa-chevron-down rel-cls-chev${openKeys.has(skey) ? ' open' : ''}`} />
+                                  </button>
+                                  {openKeys.has(skey) && s.units.map((u) => {
+                                    const uKeys = u.items.map((it) => it.id)
+                                    return (
+                                      <div className="rel-acc3" key={u.key}>
+                                        <label className="rel-selall rel-acc3-h">
+                                          <TriCheckbox state={triState(uKeys, sel.notebooks)} onChange={() => toggleKeys('notebooks', uKeys)} />
+                                          <span>Unit {u.unitNo} — {u.unitName}</span>
+                                        </label>
+                                        <div className="rel-schools rel-acc3-list">
+                                          {u.items.map((it) => (
+                                            <label key={it.id} className={`rel-school${sel.notebooks.has(it.id) ? ' on' : ''}`}>
+                                              <input type="checkbox" checked={sel.notebooks.has(it.id)} onChange={() => toggleOne('notebooks', it.id)} />
+                                              <span className="rel-school-name">{it.topic || `Unit ${it.unitNo} Notebook Plan`}</span>
+                                            </label>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    )
+                                  })}
+                                </div>
+                              )
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+
+              {/* Resource Library — Class → Subject → Category → File */}
+              {resourceTree.length > 0 && (
+                <div className="rel-pick">
+                  <div className="rel-sec-h" style={{ marginTop: 18 }}><i className="fa-solid fa-folder-open" /> Resource Library <span className="rel-sec-count">{sel.resources.size} selected</span></div>
+                  {resourceTree.map((c) => {
+                    const ckey = `res-c-${c.classId}`
+                    const cKeys = c.subjects.flatMap((s) => s.categories.flatMap((cat) => cat.files.map((f) => f.id)))
+                    return (
+                      <div className={`rel-cls${openKeys.has(ckey) ? ' open' : ''}`} key={ckey}>
+                        <button className="rel-cls-head" onClick={() => toggleOpen(ckey)}>
+                          <TriCheckbox state={triState(cKeys, sel.resources)} onChange={() => toggleKeys('resources', cKeys)} />
+                          <div className="rel-cls-ic"><i className="fa-solid fa-chalkboard-user" /></div>
+                          <div className="rel-cls-main"><div className="rel-cls-name">{c.name}</div><div className="rel-cls-sub">{cKeys.length} resource file{cKeys.length !== 1 ? 's' : ''} available</div></div>
+                          <i className={`fa-solid fa-chevron-down rel-cls-chev${openKeys.has(ckey) ? ' open' : ''}`} />
+                        </button>
+                        {openKeys.has(ckey) && (
+                          <div className="rel-cls-body rel-cls-body-tree">
+                            {c.subjects.map((s) => {
+                              const skey = `${ckey}-s-${s.subjectId}`
+                              const sKeys = s.categories.flatMap((cat) => cat.files.map((f) => f.id))
+                              return (
+                                <div className="rel-acc2" key={skey}>
+                                  <button className="rel-acc2-head" onClick={() => toggleOpen(skey)}>
+                                    <TriCheckbox state={triState(sKeys, sel.resources)} onChange={() => toggleKeys('resources', sKeys)} />
+                                    <span className="rel-acc2-name">{s.name}</span>
+                                    <span className="rel-cls-total">{sKeys.length}</span>
+                                    <i className={`fa-solid fa-chevron-down rel-cls-chev${openKeys.has(skey) ? ' open' : ''}`} />
+                                  </button>
+                                  {openKeys.has(skey) && s.categories.map((cat) => {
+                                    const catKeys = cat.files.map((f) => f.id)
+                                    return (
+                                      <div className="rel-acc3" key={cat.catKey}>
+                                        <label className="rel-selall rel-acc3-h">
+                                          <TriCheckbox state={triState(catKeys, sel.resources)} onChange={() => toggleKeys('resources', catKeys)} />
+                                          <span>{cat.label}</span>
+                                        </label>
+                                        <div className="rel-schools rel-acc3-list">
+                                          {cat.files.map((f) => (
+                                            <label key={f.id} className={`rel-school${sel.resources.has(f.id) ? ' on' : ''}`}>
+                                              <input type="checkbox" checked={sel.resources.has(f.id)} onChange={() => toggleOne('resources', f.id)} />
+                                              <span className="rel-school-name">{f.title}</span>
+                                              <span className="rel-school-city"><i className="fa-solid fa-file" /> {f.fileName}</span>
+                                            </label>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    )
+                                  })}
+                                </div>
+                              )
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+
+              {nothingSelected && <div className="rel-err"><i className="fa-solid fa-circle-exclamation" /> Select at least one content item to release.</div>}
+
+              {/* Top summary cards — selected content only */}
+              <div className="rel-sec-h"><i className="fa-solid fa-chart-simple" /> Content Summary <span className="rel-sec-count">Selected content only</span></div>
               <div className="rel-sum-grid">
                 {card('fa-calendar-week', t.activities, 'Activities', 'r-blue')}
                 {card('fa-list-ul', t.lessons, 'Lesson Plans', 'r-teal')}
@@ -850,7 +1173,7 @@ function ReleaseModal({ type, releases, relContent, baseRelease, baseLabel, busy
 
         <div className="pay-modal-foot">
           {!noContent && !canRelease && (
-            <span className="rel-foot-hint"><i className="fa-solid fa-circle-info" /> {!validDays ? 'Enter valid validity days (1–365)' : (isSub && schoolSel.size === 0) ? 'Select at least one school' : (!isSub && connectedSchools.length === 0) ? 'Connect at least one school to this chain' : 'Tick the confirmation checkbox'} to enable release</span>
+            <span className="rel-foot-hint"><i className="fa-solid fa-circle-info" /> {nothingSelected ? 'Select at least one content item to release' : !validDays ? 'Enter valid validity days (1–365)' : (isSub && schoolSel.size === 0) ? 'Select at least one school' : (!isSub && connectedSchools.length === 0) ? 'Connect at least one school to this chain' : 'Tick the confirmation checkbox'} to enable release</span>
           )}
           <button className="btn-secondary" onClick={onClose} disabled={busy}>Cancel</button>
           <button className="btn-success" disabled={!canRelease || busy} onClick={submit}>
