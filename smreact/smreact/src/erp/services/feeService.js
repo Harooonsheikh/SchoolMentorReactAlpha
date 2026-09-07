@@ -137,9 +137,34 @@ async function getFeeGradesByGradeOnly() {
     }));
 }
 
+/* ── Class/section/student roster cache ─────────────────────────────
+   getFeeClasses() and getTransportFee() both call this, and Fee.jsx mounts
+   6 different sub-views (Challan gen, Fee Challans list, Fee Receiving
+   list, Reports, ...) that each call one of those on mount — without this
+   cache that's up to 6 duplicate whole-branch roster fetches per page
+   load. Cache the in-flight/settled promise per branch so concurrent and
+   later callers share one request; invalidateFeeClasses() clears it if a
+   caller ever needs a hard refresh. */
+let classStudentsCache = null; // { branchID, promise }
+export function invalidateFeeClasses() {
+  classStudentsCache = null;
+}
+
 /* Transport setup uses the same LaunchSetup class/section/student roster. */
-async function fetchFeeClassStudents() {
+function fetchFeeClassStudents() {
   const branchID = sessionStorage.getItem('branchID') || 0;
+  if (classStudentsCache && classStudentsCache.branchID === branchID) {
+    return classStudentsCache.promise;
+  }
+  const promise = fetchFeeClassStudentsUncached(branchID);
+  classStudentsCache = { branchID, promise };
+  promise.catch(() => {
+    if (classStudentsCache && classStudentsCache.promise === promise) classStudentsCache = null;
+  });
+  return promise;
+}
+
+async function fetchFeeClassStudentsUncached(branchID) {
   const res  = await fetch(buildUrl(`/api/LaunchSetup/get-class-section-studentlist-by-branch/${branchID}`), {
     headers: { Accept: '*/*' },
   });
@@ -1227,6 +1252,7 @@ export async function generateChallan(classKey, reg, monthIdx, options = {}) {
     results.push(json);
   }
 
+  invalidateMonthChallans();
   return { classKey, regs, monthIdx, results };
 }
 export async function deleteChallan(classKey, reg, monthIdx) {
@@ -1243,18 +1269,51 @@ export async function deleteClassChallans(classKey, monthIdx) {
    month is 1-based (July = 7); callers pass monthIdx + 1.
    ═══════════════════════════════════════════════════════════════════ */
 
+/* ── Month-challans cache ────────────────────────────────────────────
+   Same duplicate-fetch problem as the roster above: the Challans list and
+   Receiving list both call getMonthChallans() for the currently open
+   month, and switching between class tabs re-renders both without a new
+   month, so without a cache they'd re-hit the branch-wide endpoint every
+   time. Cached per branch/month/year; any write that can change a
+   challan (generate/receive/delete) invalidates it via
+   invalidateMonthChallans() so the next read is always fresh. */
+const monthChallansCache = new Map(); // `${branchID}|${month}|${year}` -> promise
+export function invalidateMonthChallans(month, year) {
+  // A write can also change the "previous dues" range totals (ledgerRangeCache
+  // below), so both caches are cleared together — same invalidation trigger.
+  // ledgerRangeCache is declared further down this file; by the time this
+  // function actually runs (a mutation completing) the module has finished
+  // initializing, so the reference is always live.
+  if (month == null || year == null) {
+    monthChallansCache.clear();
+  } else {
+    const branchID = Number(sessionStorage.getItem('branchID')) || 1;
+    monthChallansCache.delete(`${branchID}|${month}|${year}`);
+  }
+  ledgerRangeCache.clear();
+}
+
 /* All students' challans for a branch/month/year (the challan-list source). */
 export async function getMonthChallans(month, year) {
   const branchID = Number(sessionStorage.getItem('branchID')) || 1;
-  const res = await fetch(
-    buildUrl(`/api/BranchLedger/get-by-month?branchId=${branchID}&month=${month}&year=${year}`),
-    { headers: { Accept: '*/*' } },
-  );
-  const json = await res.json().catch(() => null);
-  if (!res.ok || json?.success === false) {
-    throw new Error(apiMessage(json) || 'Could not load challans');
-  }
-  return Array.isArray(json?.data) ? json.data : [];
+  const key = `${branchID}|${month}|${year}`;
+  if (monthChallansCache.has(key)) return monthChallansCache.get(key);
+
+  const promise = (async () => {
+    const res = await fetch(
+      buildUrl(`/api/BranchLedger/get-by-month?branchId=${branchID}&month=${month}&year=${year}`),
+      { headers: { Accept: '*/*' } },
+    );
+    const json = await res.json().catch(() => null);
+    if (!res.ok || json?.success === false) {
+      throw new Error(apiMessage(json) || 'Could not load challans');
+    }
+    return Array.isArray(json?.data) ? json.data : [];
+  })();
+
+  monthChallansCache.set(key, promise);
+  promise.catch(() => { monthChallansCache.delete(key); });
+  return promise;
 }
 
 /* One student's challans for a branch/month/year. */
@@ -1271,19 +1330,35 @@ export async function getStudentChallans(studentId, month, year) {
   return Array.isArray(json?.data) ? json.data : [];
 }
 
+/* getLedgerRange() is called from 4 different Fee.jsx sub-views (Challan
+   gen, Fee Challans list, Fee Receiving list, Reports) with the same
+   "previous dues" range on mount — cache it the same way as
+   getMonthChallans so those collapse into one branch-wide request instead
+   of 4, and clear it on the same mutations. */
+const ledgerRangeCache = new Map(); // `${branchID}|${fromMonth}|${fromYear}|${toMonth}|${toYear}` -> promise
+
 /* Every challan in a month range, whole branch, one call.
    GET /api/BranchLedger/get-by-month-range — months are 1-based. */
 export async function getLedgerRange(fromMonth, fromYear, toMonth, toYear) {
   const branchID = Number(sessionStorage.getItem('branchID')) || 1;
-  const res = await fetch(
-    buildUrl(`/api/BranchLedger/get-by-month-range?branchId=${branchID}&fromMonth=${fromMonth}&fromYear=${fromYear}&toMonth=${toMonth}&toYear=${toYear}`),
-    { headers: { Accept: '*/*' } },
-  );
-  const json = await res.json().catch(() => null);
-  if (!res.ok || json?.success === false) {
-    throw new Error(apiMessage(json) || 'Could not load ledger history');
-  }
-  return Array.isArray(json?.data) ? json.data : [];
+  const key = `${branchID}|${fromMonth}|${fromYear}|${toMonth}|${toYear}`;
+  if (ledgerRangeCache.has(key)) return ledgerRangeCache.get(key);
+
+  const promise = (async () => {
+    const res = await fetch(
+      buildUrl(`/api/BranchLedger/get-by-month-range?branchId=${branchID}&fromMonth=${fromMonth}&fromYear=${fromYear}&toMonth=${toMonth}&toYear=${toYear}`),
+      { headers: { Accept: '*/*' } },
+    );
+    const json = await res.json().catch(() => null);
+    if (!res.ok || json?.success === false) {
+      throw new Error(apiMessage(json) || 'Could not load ledger history');
+    }
+    return Array.isArray(json?.data) ? json.data : [];
+  })();
+
+  ledgerRangeCache.set(key, promise);
+  promise.catch(() => { ledgerRangeCache.delete(key); });
+  return promise;
 }
 
 /* Purane ERP se migrate hua ledger — ek waqt me SIRF ek month.
@@ -1531,6 +1606,7 @@ export async function receivePayment(body) {
   if (!res.ok || json?.success === false) {
     throw new Error(apiMessage(json) || 'Could not record payment');
   }
+  invalidateMonthChallans();
   return json;
 }
 
@@ -1548,6 +1624,7 @@ export async function deleteReceiving(ledgerId) {
   if (!res.ok || json?.success === false) {
     throw new Error(apiMessage(json) || 'Could not delete the receiving');
   }
+  invalidateMonthChallans();
   return json;
 }
 
@@ -1561,6 +1638,7 @@ export async function deleteChallanById(id) {
   if (!res.ok || json?.success === false) {
     throw new Error(apiMessage(json) || 'Could not delete challan');
   }
+  invalidateMonthChallans();
   return json;
 }
 export async function generateFamilyChallan(famKey, regs, monthIdx, options) {

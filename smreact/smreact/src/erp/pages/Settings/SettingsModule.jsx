@@ -4,6 +4,7 @@ import TutorialModal from '../../components/TutorialModal';
 import SessionManagement from './SessionManagement';
 import SignatureManagement from './SignatureManagement';
 import Networks from '../../components/Networks.jsx';
+import MobileAppSettings from './MobileAppSettings';
 import { usePermissions } from '../../context/PermissionsContext';
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -31,6 +32,8 @@ const SETTINGS_SUBTABS = [
     desc: 'Upload authorised signatures used across reports, certificates and letters.' },
   { id: 'networks',   label: 'Networks',             icon: 'fa-circle-nodes',
     desc: 'Join school networks and manage your memberships & requests.' },
+  { id: 'mobileapp',  label: 'Parents App Settings', icon: 'fa-mobile-screen-button',
+    desc: 'Control which features the Parents mobile app shows for this school.' },
 ];
 
 export default function SettingsModule({ toast = () => {} }) {
@@ -99,6 +102,7 @@ export default function SettingsModule({ toast = () => {} }) {
         {sub === 'sessions'   && <SessionManagement   toast={toast} />}
         {sub === 'signatures' && <SignatureManagement toast={toast} />}
         {sub === 'networks'   && <Networks            toast={toast} embedded />}
+        {sub === 'mobileapp'  && <MobileAppSettings   toast={toast} />}
       </div>
 
       <TutorialModal

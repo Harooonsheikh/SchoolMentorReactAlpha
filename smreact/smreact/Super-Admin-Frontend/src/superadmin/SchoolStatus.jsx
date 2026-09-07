@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   INITIAL_LAUNCH, INITIAL_ERP, INITIAL_INACTIVE,
   buildSchoolDetail, moduleMeta,
+  MOBILE_FEATURES, MOBILE_CATEGORIES,
 } from './statusData';
 import { schoolProgressApi, schoolPermissionsApi, authApi } from './api';
 
@@ -834,6 +835,10 @@ function ErpDetailModal({ school: s, detail, patchDetail, onCounts, toast, onClo
             </div>
             <ProgressBlock title="Today's Progress" titleIcon="fa-calendar-day" logins={d.todayLogins} time={d.todayTime} mods={d.todayMods} />
             <ProgressBlock title="Monthly Progress" titleIcon="fa-calendar-check" logins={d.monthLogins} time={d.monthTime} mods={d.monthMods} dimInactive />
+            <MobileUsersSummary users={d.mobileUsers} />
+            <MobileAppBlock mobileApp={d.mobileApp} />
+            <MobileUsageBlock title="Daily Mobile App Usage" mods={d.todayMobileMods} />
+            <MobileUsageBlock title="Monthly Mobile App Usage" mods={d.monthMobileMods} />
           </div>
         )}
 
@@ -976,6 +981,136 @@ function ProgressBlock({ title, titleIcon, logins, time, mods, dimInactive }) {
           );
         })}
       </div>
+    </div>
+  );
+}
+
+/* Mobile app adoption — Principal / Teacher / Parent accounts: how many exist
+   in total for this school, how many have downloaded the mobile app, and how
+   many haven't yet. ProgressBlock ki hi CSS classes (em-prog- / em-mod-) reuse
+   karta hai taake Today's / Monthly Progress ke saath visually consistent rahe.
+   Data (d.mobileApp) API se aaye to bhar jata hai; na aaye to 0 dikhata hai. */
+const MOBILE_APP_ROLES = [
+  { key: 'principal', name: 'Principal', icon: 'fa-user-tie',        grad: 'linear-gradient(135deg,#1E3A8A,#1E40AF)', color: '#1E40AF' },
+  { key: 'teacher',   name: 'Teacher',   icon: 'fa-chalkboard-user', grad: 'linear-gradient(135deg,#B45309,#D97706)', color: '#B45309' },
+  { key: 'parent',    name: 'Parent',    icon: 'fa-people-roof',     grad: 'linear-gradient(135deg,#6D28D9,#7C3AED)', color: '#7C3AED' },
+];
+
+function MobileAppBlock({ mobileApp }) {
+  const m = mobileApp || {};
+  const totalAll = MOBILE_APP_ROLES.reduce((sum, r) => sum + (m[r.key]?.total || 0), 0);
+  const dlAll    = MOBILE_APP_ROLES.reduce((sum, r) => sum + (m[r.key]?.downloaded || 0), 0);
+  return (
+    <div style={{ marginBottom: 18 }}>
+      <div className="em-prog-title"><i className="fa-regular fa-mobile-screen-button" /> Mobile App Adoption</div>
+      <div className="em-prog-summary">
+        <div className="em-prog-card" style={{ background: 'linear-gradient(135deg,rgba(30,58,138,.08),rgba(30,64,175,.03))' }}><div className="em-prog-icon" style={{ background: 'linear-gradient(135deg,#1E3A8A,#1E40AF)' }}><i className="fa-solid fa-users" /></div><div><div className="em-prog-val">{totalAll}</div><div className="em-prog-lbl">Total App Accounts</div></div></div>
+        <div className="em-prog-card" style={{ background: 'linear-gradient(135deg,rgba(22,163,74,.08),rgba(22,163,74,.03))' }}><div className="em-prog-icon" style={{ background: 'linear-gradient(135deg,#15803D,#16A34A)' }}><i className="fa-solid fa-mobile-screen-button" /></div><div><div className="em-prog-val">{dlAll}</div><div className="em-prog-lbl">Downloaded</div></div></div>
+      </div>
+      <div className="em-mod-grid">
+        {MOBILE_APP_ROLES.map((r) => {
+          const v = m[r.key] || { total: 0, downloaded: 0, remaining: 0 };
+          const pct = v.total > 0 ? Math.round((v.downloaded / v.total) * 100) : 0;
+          const active = v.downloaded > 0;
+          return (
+            <div className="em-mod-row" key={r.key} style={{ alignItems: 'flex-start', borderLeft: `3px solid ${active ? r.color : 'var(--bl)'}`, ...(active ? { borderColor: 'var(--bm)', borderLeftColor: r.color } : {}) }}>
+              <div className="em-mod-icon" style={{ marginTop: 1, background: active ? r.grad : 'rgba(100,116,139,.3)' }}><i className={`fa-solid ${r.icon}`} /></div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div className="em-mod-name">{r.name}</div>
+                <div className="em-mod-time"><i className="fa-solid fa-download" style={{ fontSize: 8, marginRight: 2 }} />{v.downloaded} downloaded · {v.remaining} remaining</div>
+                <div style={{ height: 4, borderRadius: 999, background: 'rgba(100,116,139,.15)', marginTop: 6, overflow: 'hidden' }}>
+                  <div style={{ height: '100%', width: `${pct}%`, borderRadius: 999, background: active ? r.grad : 'var(--muted)', transition: 'width .3s ease' }} />
+                </div>
+              </div>
+              <span className="em-mod-count" style={{ background: active ? `${r.color}18` : 'var(--muted)', color: active ? r.color : 'var(--tm)' }}>{v.total} total · {pct}%</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* 3-card strip — total registered app users vs how many opened the app today /
+   this month. Reuses em-prog-summary/em-prog-card (ProgressBlock ki tarah). */
+function MobileUsersSummary({ users }) {
+  const u = users || { totalUsers: 0, activeToday: 0, activeMonth: 0 };
+  const cards = [
+    { icon: 'fa-users',          val: u.totalUsers,  lbl: 'Total Mobile App Users', grad: 'linear-gradient(135deg,#1E3A8A,#1E40AF)', wash: 'rgba(30,64,175,.08)' },
+    { icon: 'fa-bolt',           val: u.activeToday,  lbl: 'Active Users Today',     grad: 'linear-gradient(135deg,#15803D,#16A34A)', wash: 'rgba(22,163,74,.08)' },
+    { icon: 'fa-calendar-check', val: u.activeMonth,  lbl: 'Monthly Active Users',   grad: 'linear-gradient(135deg,#6D28D9,#7C3AED)', wash: 'rgba(124,58,237,.08)' },
+  ];
+  return (
+    <div style={{ marginBottom: 18 }}>
+      <div className="em-prog-title"><i className="fa-regular fa-mobile-screen-button" /> Mobile App Users</div>
+      <div className="em-prog-summary" style={{ gridTemplateColumns: '1fr 1fr 1fr' }}>
+        {cards.map((c) => (
+          <div className="em-prog-card" key={c.lbl} style={{ background: `linear-gradient(135deg,${c.wash},transparent)` }}>
+            <div className="em-prog-icon" style={{ background: c.grad }}><i className={`fa-solid ${c.icon}`} /></div>
+            <div><div className="em-prog-val">{c.val}</div><div className="em-prog-lbl">{c.lbl}</div></div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function fmtMinutes(min) {
+  const h = Math.floor(min / 60), m = min % 60;
+  if (h === 0) return `${m}m`;
+  return `${h}h ${m}m`;
+}
+
+const MOBILE_FEATURES_BY_CATEGORY = Object.keys(MOBILE_CATEGORIES).map((cat) => ({
+  cat, meta: MOBILE_CATEGORIES[cat], items: MOBILE_FEATURES.filter((f) => f.category === cat),
+}));
+
+/* Daily / Monthly Mobile App Usage — 4 colored clusters (Academic / Engagement
+   / Administrative / AI). Login-based features show a login count; AI/generation
+   & Notifications skip it. Feature-specific activity renders as tinted chips.
+   Per-school numbers d.todayMobileMods / d.monthMobileMods se aate hain (API na
+   de to 0). */
+function MobileUsageBlock({ title, mods }) {
+  return (
+    <div style={{ marginBottom: 18 }}>
+      <div className="em-prog-title"><i className="fa-regular fa-mobile-screen-button" /> {title}</div>
+      {MOBILE_FEATURES_BY_CATEGORY.map(({ cat, meta, items }) => (
+        <div key={cat} style={{ marginBottom: 14 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 7, margin: '0 0 8px 2px' }}>
+            <span style={{ width: 7, height: 7, borderRadius: '50%', background: meta.grad, flexShrink: 0 }} />
+            <span style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: '.4px', textTransform: 'uppercase', color: meta.color }}>{meta.label}</span>
+          </div>
+          <div className="em-mod-grid">
+            {items.map((f) => {
+              const v = (mods && mods[f.key]) || {};
+              const logins = v.logins || 0;
+              const active = f.hasLogin ? logins > 0 : f.extras.some((ex) => (v[ex.key] || 0) > 0);
+              return (
+                <div className="em-mod-row" key={f.key} style={{ alignItems: 'flex-start', borderLeft: `3px solid ${active ? meta.color : 'var(--bl)'}` }}>
+                  <div className="em-mod-icon" style={{ marginTop: 1, background: active ? meta.grad : 'rgba(100,116,139,.3)' }}><i className={`fa-solid ${f.icon}`} /></div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div className="em-mod-name">{f.name}</div>
+                    {f.extras.length > 0 && (
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 5 }}>
+                        {f.extras.map((ex) => (
+                          <span key={ex.key} style={{ fontSize: 9.5, fontWeight: 700, color: meta.color, background: `${meta.color}14`, borderRadius: 999, padding: '2px 8px', whiteSpace: 'nowrap' }}>
+                            {ex.label}: {ex.format === 'duration' ? fmtMinutes(v[ex.key] || 0) : (v[ex.key] || 0)}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  {f.hasLogin && (
+                    <span className="em-mod-count" style={{ marginTop: 1, background: active ? `${meta.color}18` : 'var(--muted)', color: active ? meta.color : 'var(--tm)' }}>
+                      {logins} {f.loginLabel || 'login'}{logins === 1 ? '' : 's'}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

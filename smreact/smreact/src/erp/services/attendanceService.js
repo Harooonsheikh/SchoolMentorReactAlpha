@@ -151,7 +151,7 @@ export async function getReportHeader() {
     name: d.branchName || "",
     logo: resolveMediaUrl(d.branchLogo),
     address: d.address || "",
-    session: d.academicSession || "",
+    session: d.academicSession || sessionStorage.getItem("sessionName") || "",
   };
 }
 

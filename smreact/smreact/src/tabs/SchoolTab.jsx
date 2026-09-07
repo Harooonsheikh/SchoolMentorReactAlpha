@@ -368,9 +368,17 @@ if (savedLogo) {
               value={s('branchEmail1')} onChange={handleChange} onBlur={handleBlur} fieldErrors={fe} />
           </FG>
 
-          <FG fieldErrors={fe} label="Contact Number" id="branchPhone" required>
-            <FormInput icon="fa-phone" id="branchPhone" type="tel" placeholder="+92 300 0000000"
-              value={s('branchPhone')} onChange={handleChange} onBlur={handleBlur} fieldErrors={fe} />
+          <FG fieldErrors={fe} label="Contact Number" id="branchPhone">
+            {/* Contact number system-assigned hai — Branch Code ki tarah read-only. */}
+            <Tooltip text="Contact number is auto-assigned and cannot be edited">
+              <div className="input-wrapper">
+                <i className="fas fa-phone input-icon"></i>
+                <input className="form-input has-icon" type="tel" placeholder="+92 300 0000000"
+                  value={s('branchPhone')}
+                  readOnly
+                  style={{ background: 'var(--input-bg)', color: 'var(--text-primary)', WebkitTextFillColor: 'var(--text-primary)', opacity: 1, cursor: 'not-allowed' }} />
+              </div>
+            </Tooltip>
           </FG>
 
           <FG fieldErrors={fe} label="School Owner / Principal" id="branchOwner">

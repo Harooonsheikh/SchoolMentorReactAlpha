@@ -22,7 +22,7 @@ const MODULE_ID_TO_LABEL = Object.fromEntries(MODULE_REGISTRY.map((m) => [m.id, 
 /* Extra modules that are shown ONLY on the master branch (branchID === 1) and
    stay hidden on every other branch. On branch 1 they still respect the user's
    role/permission. Keyed by sidebar nav id. */
-const BRANCH1_ONLY_NAV = new Set(['inventory', 'crm', 'audit', 'appraisal', 'sops', 'trainings', 'etube', 'chat', 'notifications']);
+const BRANCH1_ONLY_NAV = new Set(['mentorai', 'inventory', 'crm', 'audit', 'appraisal', 'sops', 'trainings', 'etube', 'chat', 'notifications']);
 
 /* Un me se kuch module kisi aur branch par bhi live kar diye jate hain.
    nav id → wo branchID jinhein (branch 1 ke ilawa) ye module dikhna chahiye.
@@ -75,6 +75,7 @@ const UserPermissions  = lazy(() => import(/* webpackChunkName: "mod-permissions
 const AuditLogs        = lazy(() => import(/* webpackChunkName: "mod-auditlogs"   */  '../pages/AuditLogs/AuditLogs.jsx'));
 const LaunchSetup      = lazy(() => import(/* webpackChunkName: "mod-launchsetup" */  '../pages/LaunchSetup/LaunchSetup.jsx'));
 const Dashboard        = lazy(() => import(/* webpackChunkName: "mod-dashboard"   */  '../pages/Dashboard/Dashboard.jsx'));
+const MentorAI         = lazy(() => import(/* webpackChunkName: "mod-mentorai"    */  '../pages/MentorAI/MentorAI.jsx'));
 
 /* ProfileModal is only mounted when the user opens "My Profile" from
    the avatar menu. Lazy-loading keeps its ~630 lines out of the initial
@@ -83,6 +84,7 @@ const ProfileModal   = lazy(() => import(/* webpackChunkName: "mod-profile" */  
 
 const NAV_LABELS = {
   dashboard: 'Dashboard',
+  mentorai: 'Mentor AI',
   acad: 'Academics',
   exam: 'Examination',
   att: 'Attendance',
@@ -114,6 +116,7 @@ const NAV_SECTIONS = [
     label: '',
     items: [
       { id: 'dashboard', name: 'Dashboard', icon: 'fa-house' },
+      { id: 'mentorai',  name: 'Mentor AI', icon: 'fa-wand-magic-sparkles', glow: true },
     ],
   },
   {
@@ -430,7 +433,7 @@ export default function App() {
                   return (
                   <button
                     key={item.id}
-                    className={`nav-item${isActive ? ' active' : ''}`}
+                    className={`nav-item${isActive ? ' active' : ''}${item.glow && !isActive ? ' nav-item--mentorai' : ''}`}
                     data-tooltip={item.name}
                     onClick={() => {
                       // "Launch Setup" lives in the separate setup app (port 3000)
@@ -554,6 +557,11 @@ export default function App() {
               the shell. The fallback's label is module-specific so the
               user sees what is being loaded. */}
           <main className="page-content">
+            {active === 'mentorai' && (
+              <Suspense fallback={<RouteFallback label="Loading Mentor AI…" />}>
+                <MentorAI toast={pushToast} schoolName={branchInfo?.branchName || 'Your School'} />
+              </Suspense>
+            )}
             {active === 'acad' && (
               <Suspense fallback={<RouteFallback label="Loading Academics…" />}>
                 <Academics
@@ -687,7 +695,7 @@ export default function App() {
                 />
               </Suspense>
             )}
-            {active !== 'acad' && active !== 'exam' && active !== 'paper' && active !== 'att' && active !== 'tt' && active !== 'fee' && active !== 'accounts' && active !== 'inventory' && active !== 'crm' && active !== 'students' && active !== 'hr' && active !== 'networks' && active !== 'appraisal' && active !== 'settings' && active !== 'sops' && active !== 'trainings' && active !== 'etube' && active !== 'chat' && active !== 'notifications' && active !== 'perm' && active !== 'audit' && active !== 'launch' && active !== 'dashboard' && (
+            {active !== 'mentorai' && active !== 'acad' && active !== 'exam' && active !== 'paper' && active !== 'att' && active !== 'tt' && active !== 'fee' && active !== 'accounts' && active !== 'inventory' && active !== 'crm' && active !== 'students' && active !== 'hr' && active !== 'networks' && active !== 'appraisal' && active !== 'settings' && active !== 'sops' && active !== 'trainings' && active !== 'etube' && active !== 'chat' && active !== 'notifications' && active !== 'perm' && active !== 'audit' && active !== 'launch' && active !== 'dashboard' && (
               <NavComingSoon label={NAV_LABELS[active] || 'This module'} />
             )}
           </main>
@@ -1058,6 +1066,35 @@ body.dark .play-dot::after  { border-color:rgba(59,130,246,.15); }
 .nav-item.active::before { content:'';position:absolute;left:0;top:18%;bottom:18%;width:3px;background:linear-gradient(180deg,#1E40AF,#1E3A8A);border-radius:0 3px 3px 0; }
 .nav-item.active .nav-iw { background:linear-gradient(135deg,#DBEAFE,#BFDBFE);color:#1E40AF; }
 .nav-item.active .nav-nm { color:#1E40AF;font-weight:700; }
+/* Mentor AI nav item — a soft periodic glow to draw the eye. Uses the
+   same blue family as .nav-item.active instead of a separate module
+   identity. Only shown while the item is NOT active — once you're on the
+   page it doesn't need to call attention to itself. Disabled for
+   reduced-motion users. */
+@media (prefers-reduced-motion: no-preference) {
+  .nav-item--mentorai { animation: navMentorGlow 3.2s ease-in-out infinite; }
+  .nav-item--mentorai .nav-iw { animation: navMentorIconGlow 3.2s ease-in-out infinite; }
+}
+@keyframes navMentorGlow {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(30,64,175,0), 0 0 0 0 rgba(37,99,235,0);
+  }
+  50% {
+    box-shadow: 0 0 12px 2px rgba(30,64,175,.28), 0 0 26px 8px rgba(37,99,235,.14);
+  }
+}
+@keyframes navMentorIconGlow {
+  0%, 100% { background:#F3F4F6; color:#9CA3AF; box-shadow:0 0 0 0 rgba(30,64,175,0); }
+  50%      { background:linear-gradient(135deg,#1E3A8A,#2563EB); color:#fff; box-shadow:0 0 10px 3px rgba(30,64,175,.35); }
+}
+[data-theme="dark"] .nav-item--mentorai { }
+@media (prefers-reduced-motion: no-preference) {
+  [data-theme="dark"] .nav-item--mentorai { animation-name: navMentorGlowDark; }
+}
+@keyframes navMentorGlowDark {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(59,130,246,0), 0 0 0 0 rgba(59,130,246,0); }
+  50%      { box-shadow: 0 0 14px 3px rgba(59,130,246,.32), 0 0 30px 9px rgba(59,130,246,.2); }
+}
 .nav-iw { width:30px;height:30px;border-radius:8px;display:flex;align-items:center;justify-content:center;background:#F3F4F6;font-size:12px;color:#9CA3AF;flex-shrink:0;transition:var(--tr); }
 .nav-nm { font-size:12.5px;font-weight:500;color:#374151;white-space:nowrap;transition:color .2s; }
 .nav-st { font-size:9.5px;color:#9CA3AF;margin-top:1px; }

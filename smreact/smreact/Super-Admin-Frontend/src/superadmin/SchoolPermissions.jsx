@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  CORE_PERMS, MODULE_GROUPS, ALL_MODULE_KEYS, SOURCE_BADGE,
+  CORE_PERMS, CHAT_MODES, MODULE_GROUPS, ALL_MODULE_KEYS, SOURCE_BADGE,
   SCHOOLS, buildInitialPerms, defaultPerms,
 } from './permissionsData';
 import { schoolPermissionsApi } from './api';
@@ -223,10 +223,10 @@ export default function SchoolPermissions({ toast }) {
 }
 
 /* ═══════════════════════ TOGGLE SWITCH ═══════════════════════ */
-function Switch({ checked, onChange }) {
+function Switch({ checked, onChange, disabled }) {
   return (
-    <label className="sw">
-      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+    <label className={`sw${disabled ? ' sw-disabled' : ''}`}>
+      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} disabled={disabled} />
       <div className="sw-track" />
       <div className="sw-thumb" />
     </label>
@@ -238,12 +238,27 @@ function PermModal({ school, initial, saving, onClose, onSave }) {
   const [draft, setDraft] = useState(() => ({
     erpAccess: initial.erpAccess,
     activeBranch: initial.activeBranch,
+    /* Mobile App permissions — Chat / Mentor AI / eTube (frontend-only draft). */
+    chatMode: initial.chatMode || 'off',
+    mentorAi: { ...(initial.mentorAi || { enabled: false, parentsAccess: false }) },
+    etube: { ...(initial.etube || { enabled: false, viewing: false, uploading: false }) },
     modules: { ...initial.modules },
   }));
+  const [showMobileModal, setShowMobileModal] = useState(false);
 
   const setCore = (key, val) => setDraft((d) => ({ ...d, [key]: val }));
   const setModule = (key, val) => setDraft((d) => ({ ...d, modules: { ...d.modules, [key]: val } }));
   const setAll = (val) => setDraft((d) => ({ ...d, modules: Object.fromEntries(ALL_MODULE_KEYS.map((k) => [k, val])) }));
+  const setMentorAi = (key, val) => setDraft((d) => {
+    const next = { ...d.mentorAi, [key]: val };
+    if (key === 'enabled' && !val) next.parentsAccess = false; // disabled → nobody can access it
+    return { ...d, mentorAi: next };
+  });
+  const setEtube = (key, val) => setDraft((d) => {
+    const next = { ...d.etube, [key]: val };
+    if (key === 'enabled' && !val) { next.viewing = false; next.uploading = false; }
+    return { ...d, etube: next };
+  });
 
   const activeCount = ALL_MODULE_KEYS.filter((k) => draft.modules[k]).length;
   const inactiveCount = ALL_MODULE_KEYS.length - activeCount;
@@ -287,6 +302,21 @@ function PermModal({ school, initial, saving, onClose, onSave }) {
             </div>
           </div>
 
+          {/* Mobile App permissions entry point — opens a nested modal with
+              Chat / Mentor AI / eTube. Editing there mutates this same `draft`;
+              persisting still only happens via Save Permissions below. */}
+          <div className="pm-top-section">
+            <div className="pm-top-title"><i className="fa-solid fa-mobile-screen-button" /> Mobile App</div>
+            <div className="pm-manage-card" onClick={() => setShowMobileModal(true)}>
+              <div className="pm-top-card-icon"><i className="fa-solid fa-sliders" /></div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div className="pm-top-card-name">Manage Mobile App Permissions</div>
+                <div className="pm-top-card-desc">Control eTube, Mentor AI and Chat access for this school&rsquo;s mobile application.</div>
+              </div>
+              <i className="fa-solid fa-chevron-right pm-manage-arrow" />
+            </div>
+          </div>
+
           {/* Module permissions */}
           <div>
             <div className="pm-modules-title">
@@ -322,6 +352,123 @@ function PermModal({ school, initial, saving, onClose, onSave }) {
           <button className="btn-primary" onClick={() => onSave(draft)} disabled={saving}>
             <i className={`fa-solid ${saving ? 'fa-spinner fa-spin' : 'fa-floppy-disk'}`} /> {saving ? 'Saving…' : 'Save Permissions'}
           </button>
+        </div>
+      </div>
+
+      {showMobileModal && (
+        <MobileAppPermsModal
+          draft={draft}
+          setCore={setCore}
+          setMentorAi={setMentorAi}
+          setEtube={setEtube}
+          onClose={() => setShowMobileModal(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ═══════════════════════ MANAGE MOBILE APP PERMISSIONS ═══════════════════════
+   Nested modal — Chat / Mentor AI / eTube. Edits flow straight into the parent
+   PermModal's `draft` via the setters passed down; there is no separate save
+   here, closing just returns to the main modal where the one Save Permissions
+   button persists everything together. (Frontend-only for now — chat/mentorAi/
+   etube ki alag API mapping abhi nahi; save par ye fields ignore hote hain.) */
+function MobileAppPermsModal({ draft, setCore, setMentorAi, setEtube, onClose }) {
+  return (
+    <div className="perm-ov open" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="perm-modal" style={{ maxWidth: 560 }}>
+        <div className="pm-hdr">
+          <div className="pm-av"><i className="fa-solid fa-mobile-screen-button" /></div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div className="pm-school-name">Manage Mobile App Permissions</div>
+            <div className="pm-school-meta"><span>Chat, Mentor AI &amp; eTube access for this school&rsquo;s mobile application</span></div>
+          </div>
+          <button className="pm-close" data-tip="Back" data-tip-pos="left" onClick={onClose}><i className="fa-solid fa-xmark" /></button>
+        </div>
+
+        <div className="pm-body">
+          {/* Chat */}
+          <div className="pm-top-section">
+            <div className="pm-top-title"><i className="fa-solid fa-comments" /> Chat</div>
+            <div className="pm-chat-grid">
+              {CHAT_MODES.map((m) => (
+                <div
+                  key={m.key}
+                  className={`pm-chat-card${draft.chatMode === m.key ? ' selected' : ''}`}
+                  onClick={() => setCore('chatMode', m.key)}
+                >
+                  <div className="pm-chat-radio" />
+                  <div className="pm-chat-icon"><i className={`fa-solid ${m.icon}`} /></div>
+                  <div className="pm-chat-body">
+                    <div className="pm-chat-name">{m.name}</div>
+                    <div className="pm-chat-desc">{m.desc}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Mentor AI */}
+          <div className="pm-top-section">
+            <div className="pm-top-title"><i className="fa-solid fa-robot" /> Mentor AI</div>
+            <div className="pm-mob-card">
+              <div className="pm-mob-row">
+                <div className="pm-mob-row-l">
+                  <div className="pm-mob-row-name">Enable Mentor AI</div>
+                  <div className="pm-mob-row-desc">Turn Mentor AI on or off for this school&rsquo;s mobile app. When off, nobody — staff or parents — can access it.</div>
+                </div>
+                <Switch checked={draft.mentorAi.enabled} onChange={(v) => setMentorAi('enabled', v)} />
+              </div>
+              <div className={`pm-mob-row${!draft.mentorAi.enabled ? ' pm-mob-row-disabled' : ''}`}>
+                <div className="pm-mob-row-l">
+                  <div className="pm-mob-row-name">Parents Access</div>
+                  <div className="pm-mob-row-desc">
+                    {draft.mentorAi.enabled
+                      ? 'Let parents use Mentor AI too. When off, only staff can use it.'
+                      : 'Enable Mentor AI above first — parents access has no effect while Mentor AI is disabled.'}
+                  </div>
+                </div>
+                <Switch
+                  checked={draft.mentorAi.enabled && draft.mentorAi.parentsAccess}
+                  onChange={(v) => setMentorAi('parentsAccess', v)}
+                  disabled={!draft.mentorAi.enabled}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* eTube */}
+          <div className="pm-top-section" style={{ marginBottom: 0 }}>
+            <div className="pm-top-title"><i className="fa-solid fa-play-circle" /> eTube</div>
+            <div className="pm-mob-card">
+              <div className="pm-mob-row">
+                <div className="pm-mob-row-l">
+                  <div className="pm-mob-row-name">Enable eTube</div>
+                  <div className="pm-mob-row-desc">Turn eTube on or off for this school&rsquo;s mobile app.</div>
+                </div>
+                <Switch checked={draft.etube.enabled} onChange={(v) => setEtube('enabled', v)} />
+              </div>
+              <div className={`pm-mob-row${!draft.etube.enabled ? ' pm-mob-row-disabled' : ''}`}>
+                <div className="pm-mob-row-l">
+                  <div className="pm-mob-row-name">Video Viewing</div>
+                  <div className="pm-mob-row-desc">Whether users can watch eTube videos.</div>
+                </div>
+                <Switch checked={draft.etube.enabled && draft.etube.viewing} onChange={(v) => setEtube('viewing', v)} disabled={!draft.etube.enabled} />
+              </div>
+              <div className={`pm-mob-row${!draft.etube.enabled ? ' pm-mob-row-disabled' : ''}`}>
+                <div className="pm-mob-row-l">
+                  <div className="pm-mob-row-name">Video Uploading</div>
+                  <div className="pm-mob-row-desc">Whether school users can upload videos to eTube.</div>
+                </div>
+                <Switch checked={draft.etube.enabled && draft.etube.uploading} onChange={(v) => setEtube('uploading', v)} disabled={!draft.etube.enabled} />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="pm-foot">
+          <button className="btn-primary" onClick={onClose}><i className="fa-solid fa-check" /> Done</button>
         </div>
       </div>
     </div>

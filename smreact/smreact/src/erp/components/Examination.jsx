@@ -4,6 +4,7 @@ import Tooltip from './Tooltip';
 import TutorialModal from './TutorialModal';
 import * as cbrApi from '../services/combinedAssessmentService';
 import { buildUrl, resolveMediaUrl } from '../../utils/apiConfig';
+import { formatAcademicYearLabel, resolveAcademicSession } from '../../utils/pdfReports';
 import { deliverReport } from './reportDelivery';
 import { useModuleReadOnly, validateSessionDateFromStorage } from '../pages/Settings/settingsStore';
 import { getActiveSessionID } from '../services/attendanceService';
@@ -561,12 +562,11 @@ const [subjects, setSubjects] = useState([]);
   const [bulkCardCtx, setBulkCardCtx] = useState(null); // { classID, sectionID, selectExam, termID, className, examName } — bulk result cards
   const [bulkCbrCtx, setBulkCbrCtx]   = useState(null); // { grp, termID } — bulk COMBINED result cards
 
-  /* Branch header (name / logo / address) for result cards — from the same
-     report-header API used elsewhere. */
+  /* Branch header (name / logo / address / academic session) for result cards —
+     from the same /report-header API used elsewhere. */
   const [branchSchool, setBranchSchool] = useState(null);
   useEffect(() => {
-    const branchId = sessionStorage.getItem('branchID');
-    if (!branchId) return undefined;
+    const branchId = sessionStorage.getItem('branchID') || '1';
     let cancelled = false;
     (async () => {
       try {
@@ -574,9 +574,23 @@ const [subjects, setSubjects] = useState([]);
         const json = await res.json();
         if (!cancelled && json?.success) {
           const d = json.data || {};
-          setBranchSchool({ name: d.branchName || '', logo: resolveMediaUrl(d.branchLogo), address: d.address || '', session: d.academicSession || '' });
+          setBranchSchool({
+            name: d.branchName || '',
+            logo: resolveMediaUrl(d.branchLogo),
+            address: d.address || '',
+            session: d.academicSession || sessionStorage.getItem('sessionName') || '',
+          });
+        } else if (!cancelled) {
+          const sess = sessionStorage.getItem('sessionName') || '';
+          if (sess) setBranchSchool({ name: '', logo: '', address: '', session: sess });
         }
-      } catch (e) { console.error('Error loading branch header:', e); }
+      } catch (e) {
+        console.error('Error loading branch header:', e);
+        if (!cancelled) {
+          const sess = sessionStorage.getItem('sessionName') || '';
+          if (sess) setBranchSchool({ name: '', logo: '', address: '', session: sess });
+        }
+      }
     })();
     return () => { cancelled = true; };
   }, []);
@@ -6310,6 +6324,7 @@ onClick={async () => {
         return (
           <CbrClassReportPicker
             cr={cr}
+            branchSchool={branchSchool}
             onClose={() => setCbrReportReq(null)}
             toast={toast}
           />
@@ -6508,6 +6523,7 @@ onClick={async () => {
             className={resClassReportReq.className}
             term={resTerm}
             absentMode={rsAbsentMode}
+            branchSchool={branchSchool}
             onClose={() => setResClassReportReq(null)}
             toast={toast}
           />
@@ -7626,9 +7642,7 @@ if (format === 'pdf') {
   const schoolName = bs.name    || 'School Mentor ERP';
   const schoolLogo = bs.logo    || '';
   const schoolAddr = bs.address || '';
-  const schoolYear = bs.session
-    ? (/year/i.test(bs.session) ? bs.session : `Academic Year ${bs.session}`)
-    : 'Academic Year 2026–2027';
+  const schoolYear = formatAcademicYearLabel(resolveAcademicSession(bs)) || 'Academic Session';
   const dsEsc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   const dsFmtDate = (s) => {
     if (!s) return '—';
@@ -8436,9 +8450,7 @@ async function generateSyllabusReport({ ex, syllabusData, term, classKey, branch
   const schoolName = bs.name    || 'School Mentor ERP';
   const schoolLogo = bs.logo    || '';
   const schoolAddr = bs.address || '';
-  const schoolYear = bs.session
-    ? (/year/i.test(bs.session) ? bs.session : `Academic Year ${bs.session}`)
-    : 'Academic Year 2026–2027';
+  const schoolYear = formatAcademicYearLabel(resolveAcademicSession(bs)) || 'Academic Session';
   const sEsc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   const sLogoHtml = schoolLogo
     ? `<img src="${sEsc(schoolLogo)}" width="46" height="46" style="border-radius:12px;object-fit:cover;display:block" onerror="this.style.display='none'" />`
@@ -8855,7 +8867,7 @@ function ClassicResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
             </div>
           )}
           <div style={{ fontSize: 10, color: 'rgba(255,255,255,.75)', marginTop: 2 }}>
-            Result Card · Academic Year 2026–2027
+            Result Card · {formatAcademicYearLabel(resolveAcademicSession(school)) || 'Academic Session'}
           </div>
         </div>
         {opt['Show Student Photo'] && (
@@ -9177,7 +9189,7 @@ function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
           {opt['Show School Name'] && (
             <div style={{ fontSize: 14, fontWeight: 800, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{schoolName}</div>
           )}
-          <div style={{ fontSize: 9.5, color: 'rgba(255,255,255,.6)', marginTop: 1 }}>Insight Result Card · Academic Year 2026–2027</div>
+          <div style={{ fontSize: 9.5, color: 'rgba(255,255,255,.6)', marginTop: 1 }}>Insight Result Card · {formatAcademicYearLabel(resolveAcademicSession(school)) || 'Academic Session'}</div>
         </div>
         {opt['Show Student Photo'] && (
           <div style={{ width: 50, height: 50, borderRadius: '50%', background: 'rgba(255,255,255,.15)', border: '2px solid rgba(255,255,255,.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 17, fontWeight: 800, color: '#fff', flexShrink: 0 }}>
@@ -10888,7 +10900,7 @@ const save = async () => {
 /* ═══════════════════════════════════════════════════════════════════
    SINGLE ASSESSMENT — CLASS RESULT REPORT PICKER + BUILDER
    ═══════════════════════════════════════════════════════════════════ */
-function ClassReportPicker({ cd, ex, className, term, absentMode, onClose, toast }) {
+function ClassReportPicker({ cd, ex, className, term, absentMode, branchSchool, onClose, toast }) {
   const [style, setStyle]   = useState('color');
   const [format, setFormat] = useState('pdf');
 
@@ -10896,7 +10908,7 @@ function ClassReportPicker({ cd, ex, className, term, absentMode, onClose, toast
     if (format === 'word') {
       toast('Word export coming soon', 'info');
     } else {
-      generateClassResultReport({ cd, ex, className, term, absentMode }, style === 'color');
+      generateClassResultReport({ cd, ex, className, term, absentMode, branchSchool }, style === 'color');
     }
     onClose();
   };
@@ -10989,7 +11001,7 @@ function ClassReportPicker({ cd, ex, className, term, absentMode, onClose, toast
   );
 }
 
-function generateClassResultReport({ cd, ex, className, term, absentMode }, isColor) {
+function generateClassResultReport({ cd, ex, className, term, absentMode, branchSchool }, isColor) {
   const aColor = isColor ? '#1E40AF' : '#374151';
   const aBg    = isColor ? '#EFF6FF' : '#F5F5F5';
   const aBdr   = isColor ? '#BFDBFE' : '#DDD';
@@ -11001,7 +11013,9 @@ function generateClassResultReport({ cd, ex, className, term, absentMode }, isCo
   const successCol = isColor ? '#16A34A' : '#000';
   const warnCol    = isColor ? '#D97706' : '#000';
   const today      = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
-  const schoolName = 'The Oxford System, Lahore Campus';
+  const bs         = branchSchool || {};
+  const schoolName = bs.name || 'School Mentor ERP';
+  const schoolYear = formatAcademicYearLabel(resolveAcademicSession(bs)) || 'Academic Session';
 
   // Compute each student's totals + ranking
   const useZero = absentMode === 'zero';
@@ -11078,7 +11092,7 @@ function generateClassResultReport({ cd, ex, className, term, absentMode }, isCo
           <div style="width:46px;height:46px;border-radius:12px;background:rgba(255,255,255,.18);display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0;border:1.5px solid rgba(255,255,255,.25)">🎓</div>
           <div style="min-width:0">
             <div style="font-size:17px;font-weight:800">${schoolName}</div>
-            <div style="font-size:10.5px;opacity:.75;margin-top:2px">Academic Year 2026–2027</div>
+            <div style="font-size:10.5px;opacity:.75;margin-top:2px">${schoolYear}</div>
           </div>
         </div>
         <div style="text-align:right;min-width:0">
@@ -11192,7 +11206,7 @@ ${reportHTML}
 /* ═══════════════════════════════════════════════════════════════════
    COMBINED ASSESSMENT — CLASS REPORT PICKER + BUILDER (A4 landscape)
    ═══════════════════════════════════════════════════════════════════ */
-function CbrClassReportPicker({ cr, onClose, toast }) {
+function CbrClassReportPicker({ cr, branchSchool, onClose, toast }) {
   const [style, setStyle]   = useState('color');
   const [format, setFormat] = useState('pdf');
 
@@ -11200,7 +11214,7 @@ function CbrClassReportPicker({ cr, onClose, toast }) {
     if (format === 'word') {
       toast('Word export coming soon', 'info');
     } else {
-      generateCbrClassReport(cr, style === 'color');
+      generateCbrClassReport(cr, style === 'color', branchSchool);
     }
     onClose();
   };
@@ -11293,7 +11307,7 @@ function CbrClassReportPicker({ cr, onClose, toast }) {
   );
 }
 
-function generateCbrClassReport(cr, isColor) {
+function generateCbrClassReport(cr, isColor, branchSchool) {
   const aColor = isColor ? '#1E40AF' : '#374151';
   const aBg    = isColor ? '#EFF6FF' : '#F5F5F5';
   const aBdr   = isColor ? '#BFDBFE' : '#DDD';
@@ -11306,7 +11320,9 @@ function generateCbrClassReport(cr, isColor) {
   const warnCol    = isColor ? '#D97706' : '#000';
   const purCol     = isColor ? '#7C3AED' : '#444';
   const today      = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
-  const schoolName = 'The Oxford System, Lahore Campus';
+  const bs         = branchSchool || {};
+  const schoolName = bs.name || 'School Mentor ERP';
+  const schoolYear = formatAcademicYearLabel(resolveAcademicSession(bs)) || 'Academic Session';
 
   const subs = cr.students[0]?.subs || [];
 
@@ -11376,7 +11392,7 @@ function generateCbrClassReport(cr, isColor) {
           <div style="width:44px;height:44px;border-radius:11px;background:rgba(255,255,255,.18);display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;border:1.5px solid rgba(255,255,255,.25)">🎓</div>
           <div style="min-width:0">
             <div style="font-size:16px;font-weight:800">${schoolName}</div>
-            <div style="font-size:10px;opacity:.75;margin-top:2px">Academic Year 2026–2027</div>
+            <div style="font-size:10px;opacity:.75;margin-top:2px">${schoolYear}</div>
           </div>
         </div>
         <div style="text-align:right;min-width:0">
@@ -11687,10 +11703,9 @@ let rhReportSchool = null;
 function rhRptHeader(p, school, today, title, subline) {
   // Module-set branchSchool ko tarjeeh; warna jo pass hua (naam string).
   const eff = rhReportSchool || school;
-  const sName = (eff && eff.name) || (typeof eff === 'string' ? eff : '') || 'The Oxford System, Lahore Campus';
+  const sName = (eff && eff.name) || (typeof eff === 'string' ? eff : '') || 'School Mentor ERP';
   const sLogo = (eff && eff.logo) || '';
-  const sSess = eff && eff.session;
-  const sYear = sSess ? (/year/i.test(sSess) ? sSess : `Academic Year ${sSess}`) : 'Academic Year 2026–2027';
+  const sYear = formatAcademicYearLabel(resolveAcademicSession(eff)) || 'Academic Session';
   const logoHtml = sLogo
     ? `<img src="${sLogo}" width="44" height="44" style="border-radius:11px;object-fit:cover;display:block" onerror="this.style.display='none'" />`
     : '🎓';
@@ -13819,9 +13834,7 @@ function generateResultSetupReport({ grades, sigs, remarks, absentMode, branchSc
   const schoolName = bs.name    || 'School Mentor ERP';
   const schoolLogo = bs.logo    || '';
   const schoolAddr = bs.address || '';
-  const schoolYear = bs.session
-    ? (/year/i.test(bs.session) ? bs.session : `Academic Year ${bs.session}`)
-    : 'Academic Year 2026–2027';
+  const schoolYear = formatAcademicYearLabel(resolveAcademicSession(bs)) || 'Academic Session';
   const rsEsc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   const rsLogoHtml = schoolLogo
     ? `<img src="${rsEsc(schoolLogo)}" width="46" height="46" style="border-radius:12px;object-fit:cover;display:block" onerror="this.style.display='none'" />`
@@ -14033,9 +14046,7 @@ function generateExamReport(ctx, isColor, format = 'pdf') {
   const schoolName  = bs.name    || 'School Mentor ERP';
   const schoolLogo  = bs.logo    || '';
   const schoolAddr  = bs.address || '';
-  const schoolYear  = bs.session
-    ? (/year/i.test(bs.session) ? bs.session : `Academic Year ${bs.session}`)
-    : 'Academic Year 2025–2026';
+  const schoolYear  = formatAcademicYearLabel(resolveAcademicSession(bs)) || 'Academic Session';
   const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   /* Local date formatter (module-level fn can't reach the component-scoped one) —
      strips the time part and renders DD/MM/YYYY. */

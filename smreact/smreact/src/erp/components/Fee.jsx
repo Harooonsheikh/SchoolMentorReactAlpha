@@ -272,7 +272,7 @@ function StudentFeeSetup({ toast }) {
   const { can } = usePermissions();
   const canSfEdit = can('Fee', 'Student Fee Setup', 'Edit');
   const canSfDownload = can('Fee', 'Student Fee Setup', 'Download');
-  const { data: grades = [], refetch: reloadGrades } = useAsync(feeService.getFeeGrades, []);
+  const { data: grades = [], loading: gradesLoading, refetch: reloadGrades } = useAsync(feeService.getFeeGrades, []);
   const { data: branchHeader = null } = useAsync(feeService.getReportHeader, [], null);
 
   const [openKey, setOpenKey] = useState(null);  // expanded class row
@@ -317,7 +317,9 @@ function StudentFeeSetup({ toast }) {
           <div className="fee-th fee-center">Details</div>
         </div>
 
-        {classes.length === 0 ? (
+        {gradesLoading ? (
+          <div className="fee-empty"><i className="fa-solid fa-spinner fa-spin"></i> Loading classes…</div>
+        ) : classes.length === 0 ? (
           <div className="fee-empty">No classes available.</div>
         ) : classes.map((c, i) => {
           const heads = headsMap[c.key] || [];
@@ -478,7 +480,7 @@ function TransportFeeAssignment({ toast }) {
   const { can } = usePermissions();
   const canTfEdit = can('Fee', 'Transport Fee Setup', 'Edit');
   const canTfDownload = can('Fee', 'Transport Fee Setup', 'Download');
-  const { data: classes = [] } = useAsync(feeService.getFeeClasses, []);
+  const { data: classes = [], loading: classesLoading } = useAsync(feeService.getFeeClasses, []);
   const { data: transportMap = {}, setData: setTransportMap } = useAsync(feeService.getTransportFee, []);
   const { data: branchHeader = null } = useAsync(feeService.getReportHeader, [], null);
 
@@ -669,7 +671,9 @@ function TransportFeeAssignment({ toast }) {
           <div className="fee-th fee-center">Details</div>
         </div>
 
-        {classes.length === 0 ? (
+        {classesLoading ? (
+          <div className="fee-empty"><i className="fa-solid fa-spinner fa-spin"></i> Loading classes…</div>
+        ) : classes.length === 0 ? (
           <div className="fee-empty">No classes available.</div>
         ) : classes.map((c, i) => {
           const students = transportMap[c.key] || [];
@@ -1278,7 +1282,7 @@ function famFigWithPrev(rec, prevLive) {
    family-slip Preview/Download flows.
    ═══════════════════════════════════════════════════════════════════ */
 function FamilyTreeChallansList({ toast }) {
-  const { data: serverFams = [] } = useAsync(feeService.getFamilies, []);
+  const { data: serverFams = [], loading: famsLoading } = useAsync(feeService.getFamilies, []);
   const { data: settings = {} } = useAsync(feeService.getFeeSettings, []);
   /* Class-wise fee heads (headName) — powers the Generate Family Challans
      "Select Fee Heads" dropdown, keyed by class/grade id. */
@@ -1908,7 +1912,9 @@ function FamilyTreeChallansList({ toast }) {
           <div className="fee-th fee-center">Details</div>
         </div>
 
-        {list.length === 0 ? (
+        {famsLoading ? (
+          <div className="fee-empty"><i className="fa-solid fa-spinner fa-spin"></i> Loading families…</div>
+        ) : list.length === 0 ? (
           <div className="fee-empty">No families configured.</div>
         ) : list.map((f, i) => {
           const isOpen = openKey === f.key;
@@ -2217,7 +2223,7 @@ function FeeChallansList({ toast }) {
   const canChCreate = can('Fee', 'Fee Challans', 'Create');
   const canChDelete = can('Fee', 'Fee Challans', 'Delete');
   const canChDownload = can('Fee', 'Fee Challans', 'Download');
-  const { data: classes = [] } = useAsync(feeService.getFeeClasses, []);
+  const { data: classes = [], loading: classesLoading } = useAsync(feeService.getFeeClasses, []);
   const { data: studentsMap = {} } = useAsync(feeService.getTransportFee, []);
   const { data: headsMap = {} } = useAsync(feeService.getFeeHeads, []);
   const { data: settings = {} } = useAsync(feeService.getFeeSettings, []);
@@ -2803,7 +2809,9 @@ function FeeChallansList({ toast }) {
           <div className="fee-th fee-center">Details</div>
         </div>
 
-        {classes.length === 0 ? (
+        {classesLoading ? (
+          <div className="fee-empty"><i className="fa-solid fa-spinner fa-spin"></i> Loading classes…</div>
+        ) : classes.length === 0 ? (
           <div className="fee-empty">No classes available.</div>
         ) : classes.map((c, i) => {
           const students = studentsMap[c.key] || [];
@@ -5191,7 +5199,7 @@ function FeeReceivingIndividual({ toast }) {
   const canRcvCreate = can('Fee', 'Fee Receiving', 'Create');
   const canRcvDelete = can('Fee', 'Fee Receiving', 'Delete');
   const canRcvDownload = can('Fee', 'Fee Receiving', 'Download');
-  const { data: classes = [] } = useAsync(feeService.getFeeClasses, []);
+  const { data: classes = [], loading: classesLoading } = useAsync(feeService.getFeeClasses, []);
   const { data: studentsMap = {} } = useAsync(feeService.getTransportFee, []);
   const { data: headsMap = {} } = useAsync(feeService.getFeeHeads, []);
   const { data: settings = {} } = useAsync(feeService.getFeeSettings, []);
@@ -5685,7 +5693,9 @@ function FeeReceivingIndividual({ toast }) {
           <div className="fee-th fee-center">Details</div>
         </div>
 
-        {classes.length === 0 ? (
+        {classesLoading ? (
+          <div className="fee-empty"><i className="fa-solid fa-spinner fa-spin"></i> Loading classes…</div>
+        ) : classes.length === 0 ? (
           <div className="fee-empty">No classes available.</div>
         ) : classes.map((c, i) => {
           const isOpen = openKey === c.key;
@@ -5914,7 +5924,7 @@ function childRecModel({ child, payments }) {
 //   const { data: settings = {} }          = useAsync(feeService.getFeeSettings, []);
 //   const { data: serverReceipts = [] }    = useAsync(feeService.getFamilyReceipts, []);
 function FamilyTreeReceiving({ toast }) {
-  const { data: serverFams = [] } = useAsync(feeService.getFamilies, []);
+  const { data: serverFams = [], loading: famsLoading } = useAsync(feeService.getFamilies, []);
   const { data: settings = {} } = useAsync(feeService.getFeeSettings, []);
   const { data: serverReceipts = [] } = useAsync(feeService.getFamilyReceipts, []);
   /* Branch header (name / address / logo / session) — every report needs this;
@@ -6520,7 +6530,9 @@ function FamilyTreeReceiving({ toast }) {
           <div className="fee-th fee-center">Details</div>
         </div>
 
-        {list.length === 0 ? (
+        {famsLoading ? (
+          <div className="fee-empty"><i className="fa-solid fa-spinner fa-spin"></i> Loading families…</div>
+        ) : list.length === 0 ? (
           <div className="fee-empty">No families configured.</div>
         ) : list.map((f, i) => {
           const isOpen = openKey === f.key;
@@ -7880,7 +7892,7 @@ function FeeHistoryTab({ toast }) {
   const canHistDownload = can('Fee', 'Fee History', 'Download');
   const [seg, setSeg] = useState('ledger');
 
-  const { data: classes = [] } = useAsync(feeService.getFeeClasses, []);
+  const { data: classes = [], loading: classesLoading } = useAsync(feeService.getFeeClasses, []);
   const { data: studentsMap = {} } = useAsync(feeService.getTransportFee, []);
   /* Only used as a fallback when a stored challan carries no detail rows —
      the reprint itself always prefers the month's own BranchLedger record. */
@@ -8455,7 +8467,9 @@ function FeeHistoryTab({ toast }) {
                 <div className="fee-th fee-center">Details</div>
               </div>
 
-              {oldClasses.length === 0 ? (
+              {oldLoading ? (
+                <div className="fee-empty"><i className="fa-solid fa-spinner fa-spin"></i> Loading classes…</div>
+              ) : oldClasses.length === 0 ? (
                 <div className="fee-empty">No classes available.</div>
               ) : oldClasses.map((oc, i) => {
                 const isOpen = openKey === oc.key;
@@ -8726,7 +8740,9 @@ function FeeHistoryTab({ toast }) {
               <div className="fee-th fee-center">Details</div>
             </div>
 
-            {classes.length === 0 ? (
+            {classesLoading ? (
+              <div className="fee-empty"><i className="fa-solid fa-spinner fa-spin"></i> Loading classes…</div>
+            ) : classes.length === 0 ? (
               <div className="fee-empty">No classes available.</div>
             ) : classes.map((c, i) => {
               const isOpen = openKey === c.key;

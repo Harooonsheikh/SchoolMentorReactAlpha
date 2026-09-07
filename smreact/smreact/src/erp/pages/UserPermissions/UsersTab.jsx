@@ -17,6 +17,7 @@ import {
    ═══════════════════════════════════════════════════════════════════ */
 export default function UsersTab({
   users, roles, assignRole, setUserStatus, updateUserPermissions,
+  updateUserMobilePermissions,
   setDashboardType, toast, loading = false,
   canEdit = true, canAssign = true,
 }) {
@@ -316,6 +317,9 @@ export default function UsersTab({
             }
             updateUserPermissions(editFor.user.id, perms, summary);
             setEditFor(null);
+          }}
+          onSaveMobile={(mobileApp, summary) => {
+            if (updateUserMobilePermissions) updateUserMobilePermissions(editFor.user.id, mobileApp, summary);
           }}
           toast={toast}
         />
