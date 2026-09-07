@@ -20,8 +20,7 @@ const SESSION_CHANGE_EVENT = 'sm-session-change';
 function useBranchSchool() {
   const [school, setSchool] = useState({});
   useEffect(() => {
-    const branchId = sessionStorage.getItem('branchID');
-    if (!branchId) return undefined;
+    const branchId = sessionStorage.getItem('branchID') || '1';
     let cancelled = false;
     (async () => {
       try {
@@ -34,7 +33,7 @@ function useBranchSchool() {
           name,
           monogram,
           address: d.address || '',
-          session: d.academicSession || '',
+          session: d.academicSession || sessionStorage.getItem('sessionName') || '',
           generatedDate: d.generatedDate || '',
           logo: resolveMediaUrl(d.branchLogo),
           generatedBy: sessionStorage.getItem('displayName') || sessionStorage.getItem('userName') || 'Accounts',
@@ -1767,9 +1766,12 @@ function AccVoucherModal({ cfg, onClose, toast }) {
 const VOUCHER_PREVIEW_CSS = `
 .acc-slip { background:#fff; color:#111; border:1px solid #ddd; border-radius:10px; padding:22px; font-family:'Plus Jakarta Sans',sans-serif; max-width:440px; margin:0 auto; }
 .acc-slip-head { display:flex; align-items:center; gap:12px; border-bottom:1.5px solid #111; padding-bottom:12px; margin-bottom:14px; }
-.acc-slip-logo { width:46px; height:46px; border-radius:12px; background:linear-gradient(135deg,#1E3A8A,#1E40AF); color:#fff; display:flex; align-items:center; justify-content:center; font-size:20px; font-weight:800; flex-shrink:0; }
+.acc-slip-logo { width:46px; height:46px; border-radius:12px; background:linear-gradient(135deg,#1E3A8A,#1E40AF); color:#fff; display:flex; align-items:center; justify-content:center; font-size:20px; font-weight:800; flex-shrink:0; overflow:hidden; border:1px solid #E5E7EB; }
+.acc-slip-logo img { width:100%; height:100%; object-fit:contain; background:#fff; display:block; }
 .acc-slip-school { font-size:16px; font-weight:800; color:#111; }
 .acc-slip-tag { font-size:10.5px; color:#555; letter-spacing:1px; text-transform:uppercase; margin-top:2px; }
+.acc-slip-addr { font-size:10px; color:#64748B; margin-top:2px; font-weight:600; }
+.acc-slip-session { font-size:10px; color:#64748B; margin-top:1px; font-weight:600; }
 .acc-slip-band { display:inline-flex; align-items:center; gap:7px; padding:5px 13px; border-radius:999px; font-size:11px; font-weight:800; margin-bottom:14px; }
 .acc-slip-band.rev { background:rgba(22,163,74,.12); color:#15803D; border:1px solid rgba(22,163,74,.3); }
 .acc-slip-band.exp { background:rgba(220,38,38,.1);  color:#B91C1C; border:1px solid rgba(220,38,38,.28); }
@@ -1787,6 +1789,7 @@ const VOUCHER_PREVIEW_CSS = `
 /* Colorless voucher — flattens gradient logo, colored bands, and the
    dark net-box to printable dark-on-white with light gray borders. */
 .acc-slip-bw .acc-slip-logo { background:#FFFFFF !important; color:#111 !important; border:1px solid #111; }
+.acc-slip-bw .acc-slip-logo img { background:#fff !important; }
 .acc-slip-bw .acc-slip-band.rev,
 .acc-slip-bw .acc-slip-band.exp { background:transparent !important; color:#111 !important; border-color:#9CA3AF !important; }
 .acc-slip-bw .acc-slip-net { background:#FFFFFF !important; color:#111 !important; border:1.5px solid #111; }
@@ -1803,13 +1806,19 @@ ${VOUCHER_PREVIEW_CSS}
 function buildVoucherHTML(x, seg, school) {
   const isRev = seg === 'rev';
   const escH = (s) => String(s ?? '').replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+  /* Real branch logo from /report-header; monogram only if logo missing. */
+  const logoHtml = school?.logo
+    ? `<img src="${escH(school.logo)}" alt="${escH(school?.name || 'Branch')} logo" onerror="this.style.display='none'" />`
+    : escH(school?.monogram || 'SM');
   return `
 <div class="acc-slip" id="accSlipDoc">
   <div class="acc-slip-head">
-    <div class="acc-slip-logo">${escH(school?.monogram || 'OS')}</div>
+    <div class="acc-slip-logo">${logoHtml}</div>
     <div>
       <div class="acc-slip-school">${escH(school?.name || 'School')}</div>
       <div class="acc-slip-tag">Transaction Voucher</div>
+      ${school?.address ? `<div class="acc-slip-addr">${escH(school.address)}</div>` : ''}
+      ${school?.session ? `<div class="acc-slip-session">Academic Session: ${escH(school.session)}</div>` : ''}
     </div>
   </div>
   <span class="acc-slip-band ${isRev ? 'rev' : 'exp'}">
@@ -2043,8 +2052,11 @@ function AccDownloadReportModal({ cfg, onClose, toast, school, segLabel, month }
 
 function buildTxnReportHTML(list, seg, school, segLabel, month, isBW = false) {
   const escH = (s) => String(s ?? '').replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
-  const today = new Date().toLocaleDateString('en-GB');
+  const today = school?.generatedDate ? accFmtStamp(school.generatedDate) : new Date().toLocaleDateString('en-GB');
   const total = list.reduce((a, x) => a + Number(x.amount || 0), 0);
+  const logoHtml = school?.logo
+    ? `<img src="${escH(school.logo)}" alt="${escH(school?.name || 'Branch')} logo" onerror="this.style.display='none'" />`
+    : escH(school?.monogram || 'SM');
   /* Coordinated palettes: Colorful = brand blue, Colorless = paper-white
      with dark text and thin gray borders (no colored bands, no row
      striping, no gradient header). */
@@ -2073,8 +2085,12 @@ function buildTxnReportHTML(list, seg, school, segLabel, month, isBW = false) {
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif;color:#111;background:#fff;font-size:10px;padding:14mm;}
 .head{display:flex;align-items:center;gap:12px;border-bottom:${isBW ? '1.5px' : '2px'} solid ${brand};padding-bottom:10px;margin-bottom:12px;}
+.logo{width:46px;height:46px;border-radius:12px;background:linear-gradient(135deg,${brand},${accent});color:#fff;font-size:18px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0;overflow:hidden;border:1px solid #E5E7EB;}
+.logo img{width:100%;height:100%;object-fit:contain;background:#fff;display:block;}
 .school{font-size:16px;font-weight:800;color:${brand};}
 .title{font-size:12px;font-weight:700;color:${accent};margin-top:3px;}
+.addr{font-size:10px;color:#64748B;margin-top:2px;font-weight:600;}
+.session{font-size:10px;color:#64748B;margin-top:1px;font-weight:600;}
 .meta{margin-left:auto;font-size:9.5px;color:#64748B;text-align:right;line-height:1.55;}
 .band{background:${bandBg};color:${bandFg};border:${bandBdr};padding:7px 12px;border-radius:6px;font-weight:800;margin-bottom:10px;font-size:11.5px;}
 table{width:100%;border-collapse:collapse;font-size:9.5px;table-layout:fixed;}
@@ -2098,9 +2114,12 @@ tbody tr:nth-child(even) td{background:${tdAlt};}
 @media print{ -webkit-print-color-adjust:exact; print-color-adjust:exact; }
 </style></head><body>
 <div class="head">
+  <div class="logo">${logoHtml}</div>
   <div>
     <div class="school">${escH(school?.name || 'School')}</div>
     <div class="title">${segLabel} Audit Report — ${escH(month)}</div>
+    ${school?.address ? `<div class="addr">${escH(school.address)}</div>` : ''}
+    ${school?.session ? `<div class="session">Academic Session: ${escH(school.session)}</div>` : ''}
   </div>
   <div class="meta">Generated: ${today}<br/>Entries: ${list.length}<br/>Total: ${fmtMoney(total)}${isBW ? '<br/><b>Colorless Print</b>' : ''}</div>
 </div>
@@ -3383,7 +3402,11 @@ function buildBookReportHTML({ book, school, isBW = false }) {
   const escH = (s) => String(s ?? '').replace(/[&<>"']/g, m => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]));
   const c = bookCalc(book);
   const sorted = [...c.withBal].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
-  const today = new Date().toLocaleDateString('en-GB');
+  const today = school?.generatedDate ? accFmtStamp(school.generatedDate) : new Date().toLocaleDateString('en-GB');
+  /* Real branch logo from /report-header; monogram only if logo missing. */
+  const logoHtml = school?.logo
+    ? `<img src="${escH(school.logo)}" alt="${escH(school?.name || 'Branch')} logo" onerror="this.style.display='none'" />`
+    : escH(school?.monogram || 'SM');
   const TLABEL = { received: 'Received', returned: 'Returned', adjustment: 'Adjustment' };
   const SIGN   = { received: '+', returned: '−', adjustment: '' };
   const COLORS = {
@@ -3465,9 +3488,12 @@ html,body{font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif;color:#111
 body{background:#F1F3F8;padding:18px 0;}
 .page{width:210mm;min-height:297mm;margin:0 auto;padding:14mm;background:#fff;box-shadow:0 10px 30px rgba(15,23,42,.12);box-sizing:border-box;}
 .head{display:flex;align-items:center;gap:14px;border-bottom:2px solid #7C3AED;padding-bottom:10px;margin-bottom:14px;}
-.logo{width:48px;height:48px;border-radius:14px;background:linear-gradient(135deg,#7C3AED,#6D28D9);color:#fff;font-size:20px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+.logo{width:48px;height:48px;border-radius:14px;background:linear-gradient(135deg,#7C3AED,#6D28D9);color:#fff;font-size:20px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0;overflow:hidden;border:1px solid #E5E7EB;}
+.logo img{width:100%;height:100%;object-fit:contain;background:#fff;display:block;}
 .school{font-size:17px;font-weight:800;color:#1E3A8A;}
 .title{font-size:12px;font-weight:700;color:#6D28D9;margin-top:3px;}
+.addr{font-size:10px;color:#64748B;margin-top:2px;font-weight:600;}
+.session{font-size:10px;color:#64748B;margin-top:1px;font-weight:600;}
 .meta{margin-left:auto;font-size:9.5px;color:#64748B;text-align:right;line-height:1.55;}
 
 .book-card{margin-bottom:12px;padding:14px 16px;border-radius:10px;border:1.5px solid #E5E7EB;background:linear-gradient(135deg,rgba(124,58,237,.04),transparent 60%);}
@@ -3555,10 +3581,12 @@ body{background:#F1F3F8;padding:18px 0;}
 <div class="page">
 
 <div class="head">
-  <div class="logo">${escH(school?.monogram || 'OS')}</div>
+  <div class="logo">${logoHtml}</div>
   <div>
     <div class="school">${escH(school?.name || 'School')}</div>
     <div class="title">Account Book Ledger Report</div>
+    ${school?.address ? `<div class="addr">${escH(school.address)}</div>` : ''}
+    ${school?.session ? `<div class="session">Academic Session: ${escH(school.session)}</div>` : ''}
   </div>
   <div class="meta">Generated: ${today}<br/>Period: ${escH(book.openDate)} → ${accFmtDate(c.lastDate)}<br/>Entries: ${book.txns.length}</div>
 </div>
