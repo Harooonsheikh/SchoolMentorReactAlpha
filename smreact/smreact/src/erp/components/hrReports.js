@@ -17,7 +17,7 @@
    The real branch name / logo / session come from ctx.branch (see resolveBranch). */
 import { resolveMediaUrl } from '../../utils/apiConfig';
 
-const SCHOOL = { name: 'School Mentor', tagline: 'Academic Year 2025–2026', monogram: 'SM' };
+const SCHOOL = { name: 'School Mentor', tagline: 'Academic Session', monogram: 'SM' };
 
 /* Merge the live branch report-header (fetched from the /report-header API and
    passed in on ctx.branch) over the local SCHOOL defaults. Returns the fields the

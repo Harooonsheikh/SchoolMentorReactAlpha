@@ -6216,6 +6216,11 @@ function NbSubmitModal({ ctx, unit, onClose, onSubmit }) {
    ═══════════════════════════════════════════════════════════════════ */
 function SubPdfModal({ req, unit, onClose, onGenerate }) {
   const [style, setStyle] = useState('color');
+  const academicYearTag = (() => {
+    const s = (sessionStorage.getItem('sessionName') || '').trim();
+    if (!s) return 'Academic Session';
+    return /year/i.test(s) ? s : `Academic Year ${s}`;
+  })();
 
   useEffect(() => { if (req) setStyle('color'); }, [req]);
 
@@ -6271,7 +6276,7 @@ function SubPdfModal({ req, unit, onClose, onGenerate }) {
           <div className="sub-pdf-school-logo"><i className="fa-solid fa-graduation-cap"></i></div>
           <div>
             <div className="sub-pdf-school-name">School Mentor ERP</div>
-            <div className="sub-pdf-school-tag">Academic Year 2025–2026</div>
+            <div className="sub-pdf-school-tag">{academicYearTag}</div>
           </div>
           <div className="sub-pdf-school-badge"><i className="fa-solid fa-shield-check"></i> Official Report</div>
         </div>
@@ -6843,7 +6848,7 @@ function buildLpSubReport(ctx, isColor, reportHeader = null) {
     { k:'Class',   v:(ctx.cls || '—').replace('-', ' ') },
     { k:'Section', v:`Section ${ctx.section || '—'}` },
     { k:'Subject', v:ctx.subject || '—' },
-    { k:'Session', v:(reportHeader?.academicSession || sessionStorage.getItem('sessionName') || '2025–2026') },
+    { k:'Session', v:(reportHeader?.academicSession || sessionStorage.getItem('sessionName') || '—') },
   ], today);
 
   html += _subPdfStatStrip([
@@ -10749,7 +10754,7 @@ async function generateLessonPlanReport(name, style, format, ctx) {
   const border = isColor ? '#BFDBFE' : '#CCC';
 
   /* Fallback bhi REAL header/footer use kare (dummy "The Oxford System" nahi). */
-  const fbYear = academicSession || sessionStorage.getItem('sessionName') || '2026–2027';
+  const fbYear = academicSession || sessionStorage.getItem('sessionName') || 'Academic Session';
   const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${name} — Report</title>
     <style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:'Segoe UI',Arial,sans-serif;background:#fff;color:${textD};font-size:13px}.page{width:210mm;margin:0 auto}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}.no-print{display:none}@page{size:A4;margin:15mm}}</style>
   </head><body><div class="page">

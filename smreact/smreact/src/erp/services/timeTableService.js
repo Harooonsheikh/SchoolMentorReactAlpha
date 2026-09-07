@@ -142,12 +142,12 @@ export async function getReportHeader() {
       name: d.branchName || 'School Mentor',
       logo: resolveMediaUrl(d.branchLogo),
       address: d.address || '',
-      session: d.academicSession || '',
+      session: d.academicSession || sessionStorage.getItem('sessionName') || '',
       generatedDate: d.generatedDate || '',
     };
   } catch (e) {
     console.error('Could not load report header:', e);
-    return { name: 'School Mentor', logo: '', address: '', session: '', generatedDate: '' };
+    return { name: 'School Mentor', logo: '', address: '', session: sessionStorage.getItem('sessionName') || '', generatedDate: '' };
   }
 }
 

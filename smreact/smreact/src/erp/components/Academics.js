@@ -3,6 +3,7 @@ import LessonPlans from './LessonPlans';
 import Tooltip from './Tooltip';
 import TutorialModal from './TutorialModal';
 import { buildUrl, assertSessionPayload, registerSessionToast, apiMessage, resolveMediaUrl } from '../../utils/apiConfig';
+import { fetchReportHeader, resolveAcademicSession, formatAcademicYearLabel } from '../../utils/pdfReports';
 import { deliverReport } from './reportDelivery';
 import { useModuleReadOnly, validateSessionDateFromStorage } from '../pages/Settings/settingsStore';
 import { usePermissions } from '../context/PermissionsContext';
@@ -1411,28 +1412,27 @@ function ActivityModal({ open, editing, onClose, onSave, toast }) {
    REPORT GENERATOR (opens print-ready HTML in a new window)
    ═══════════════════════════════════════════════════════════════════ */
 async function generateReportWindow(name, style, format, ctx, classesData, subjectsForReport = null) {
-  // ── Fetch report header ──
+  // ── Fetch report header (live academicSession from /report-header) ──
   let schoolName      = 'School Mentor ERP';
   let schoolAddress   = '';
   let academicSession = '';
   let branchLogoUrl   = null;
 
   try {
-    const branchID = sessionStorage.getItem('branchID') || 1;
-    const res = await fetch(
-      buildUrl(`/report-header/${branchID}`),
-      { method: 'GET', headers: { Accept: '*/*' } }
-    );
-    const json = await res.json();
-    if (json.success && json.data) {
-      schoolName      = json.data.branchName      || schoolName;
-      schoolAddress   = json.data.address         || '';
-      academicSession = json.data.academicSession || '';
-      branchLogoUrl   = resolveMediaUrl(json.data.branchLogo) || null;
+    const header = await fetchReportHeader();
+    if (header) {
+      schoolName      = header.branchName || schoolName;
+      schoolAddress   = header.address || '';
+      academicSession = resolveAcademicSession(header);
+      branchLogoUrl   = resolveMediaUrl(header.branchLogo) || null;
+    } else {
+      academicSession = resolveAcademicSession(null);
     }
   } catch (e) {
     console.error('Error fetching report header:', e);
+    academicSession = resolveAcademicSession(null);
   }
+  const yearLabel = formatAcademicYearLabel(academicSession) || 'Academic Session';
 
   const isColor = style === 'color';
   /* ── Two coordinated palettes ──
@@ -1594,7 +1594,7 @@ async function generateReportWindow(name, style, format, ctx, classesData, subje
         </div>
         <div style="height:1px;background:${headerDivCol};margin:18px 0 16px;position:relative;z-index:2"></div>
         <div style="font-size:22px;font-weight:800;letter-spacing:-.02em;margin-bottom:4px">${displayTitle}</div>
-       <div style="font-size:13px;color:${headerSubFg};margin-bottom:16px">${academicSession ? `Academic Year ${academicSession}` : 'Academic Year 2026–2027'} · ${styleLabel} Report</div>
+       <div style="font-size:13px;color:${headerSubFg};margin-bottom:16px">${yearLabel} · ${styleLabel} Report</div>
         <div style="display:flex;gap:10px;flex-wrap:wrap">
           <div style="background:${chipBg};border:1px solid ${chipBorder};padding:6px 14px;border-radius:20px;font-size:11.5px"><strong>Generated:</strong> ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}</div>
           <div style="background:${chipBg};border:1px solid ${chipBorder};padding:6px 14px;border-radius:20px;font-size:11.5px"><strong>Format:</strong> ${format.toUpperCase()}</div>
@@ -1610,7 +1610,7 @@ async function generateReportWindow(name, style, format, ctx, classesData, subje
         </div>
         <div style="height:1px;background:${headerDivCol};margin:16px 0 14px"></div>
         <div style="font-size:21px;font-weight:800;letter-spacing:-.02em;margin-bottom:3px;color:${headerFg}">${displayTitle}</div>
-        <div style="font-size:12.5px;color:${headerSubFg};margin-bottom:14px">${academicSession ? `Academic Year ${academicSession}` : 'Academic Year 2026–2027'} · ${styleLabel} Report (low-ink)</div>
+        <div style="font-size:12.5px;color:${headerSubFg};margin-bottom:14px">${yearLabel} · ${styleLabel} Report (low-ink)</div>
         <div style="display:flex;gap:10px;flex-wrap:wrap">
           <div style="background:${chipBg};border:1px solid ${chipBorder};padding:5px 12px;border-radius:20px;font-size:11px;color:${textD}"><strong>Generated:</strong> ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}</div>
           <div style="background:${chipBg};border:1px solid ${chipBorder};padding:5px 12px;border-radius:20px;font-size:11px;color:${textD}"><strong>Format:</strong> ${format.toUpperCase()}</div>
@@ -1647,6 +1647,7 @@ async function generateReportWindow(name, style, format, ctx, classesData, subje
    ═══════════════════════════════════════════════════════════════════ */
 function ActivityCalendar({ events, setEvents, onReport, onAdd, onEdit, openConfirm, toast, isOtherSession, reloadKey }) {
   const { can } = usePermissions();
+  const academicYearSub = formatAcademicYearLabel(resolveAcademicSession(null)) || 'Academic Session';
   const canActCreate   = can('Academics', 'Activity Calendar', 'Create');
   const canActEdit     = can('Academics', 'Activity Calendar', 'Edit');
   const canActDelete   = can('Academics', 'Activity Calendar', 'Delete');
@@ -1996,7 +1997,7 @@ const nextMonth = () => {
                 </Tooltip>
                 <div className="act-cal-month-wrap">
                   <div className="act-cal-month">{MONTHS_FULL[calMonth]} {calYear}</div>
-                  <div className="act-cal-month-sub">Academic Year 2026–27</div>
+                  <div className="act-cal-month-sub">{academicYearSub}</div>
                 </div>
                 <Tooltip text="Next month">
                   <button className="act-nav-btn" onClick={nextMonth} aria-label="Next month"><i className="fa-solid fa-chevron-right"></i></button>

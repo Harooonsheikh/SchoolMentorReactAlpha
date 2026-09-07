@@ -22,6 +22,21 @@ export async function fetchReportHeader() {
   }
 }
 
+/* Live academic session for report chrome — prefer /report-header, then the
+   active session name stored at login / session switch. Never invent a year. */
+export function resolveAcademicSession(branch) {
+  const fromHeader = branch?.academicSession || branch?.session || '';
+  const fromStorage = (typeof sessionStorage !== 'undefined' && sessionStorage.getItem('sessionName')) || '';
+  return String(fromHeader || fromStorage || '').trim();
+}
+
+/** e.g. "2026-2027" → "Academic Year 2026-2027"; already-labelled values pass through. */
+export function formatAcademicYearLabel(session) {
+  const s = String(session || '').trim();
+  if (!s) return '';
+  return /year/i.test(s) ? s : `Academic Year ${s}`;
+}
+
 /* Subjects (+ book titles) for a class section — used by the section-wise
    Subjects report. Returns [] on failure. */
 async function fetchSectionSubjects(classId, sectionId) {
