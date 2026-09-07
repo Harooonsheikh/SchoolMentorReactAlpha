@@ -1098,6 +1098,9 @@ const getClassesData = async () => {
   cls={tbModalClass?.name}
   gradeId={tbModalClass?.gradeId}
   sectionId={tbModalClass?.sectionId}
+  /* Term breakup ke weeks isi hadd me rehne chahiyen — Academic Session ke
+     working weeks (Session Settings card par wahi number dikhta hai). */
+  sessionWeeks={session.workingWeeks}
   onSaved={() => setTbRefreshKey(k => k + 1)}
   onClose={() => setTbModalClass(null)}
   toast={toast}
@@ -2964,7 +2967,7 @@ console.log('json2 FULL:', JSON.stringify(json2).slice(0, 500));
    TERM BREAKUP UPDATE MODAL — EXACT copy of HTML's .tbm-modal popup
    ═══════════════════════════════════════════════════════════════════ */
 
-function TermBreakupModal({ cls, gradeId, sectionId,onSaved, onClose, toast }) {
+function TermBreakupModal({ cls, gradeId, sectionId, sessionWeeks = 0, onSaved, onClose, toast }) {
   const [termTab, setTermTab] = useState('');
   const [subjTab, setSubjTab] = useState('');
   const [subjects, setSubjects] = useState([]);
@@ -3082,23 +3085,25 @@ if (mapped.length > 0) {
     setUnits(units.filter(u => u.id !== id));
   };
   const updateUnit = (id, key, val) => {
-  setUnits(prevUnits => prevUnits.map(u => {
-    if (u.id !== id) return u;
+  const nextUnits = units.map(u => (u.id === id ? { ...u, [key]: val } : u));
 
+  if (key === 'weeksRequired') {
     // Negative value block karo
-    if (key === 'weeksRequired' && Number(val) < 0) {
+    if (Number(val) < 0) {
       toast('Weeks Required cannot be negative', 'error');
-      return u;
+      return;
     }
+    // Session ki chhat: sab units ke weeks mil kar hadd se ziada na hon
+    if (!validateTotalWeeks(nextUnits, { prev: sumWeeks(units) })) return;
 
-    const nextUnit = { ...u, [key]: val };
+    /* Weeks ghatane se us unit ki period-allowance bhi ghat jati hai — pehle se
+       likhi hui periods us naye hisaab me na aayen to badlaav rok do. */
+    const nextUnit = nextUnits.find(u => u.id === id);
+    if (nextUnit.topics.some(t => !validateTopicPeriods(nextUnit, t))) return;
+    if (!validateUnitPeriods(nextUnit)) return;
+  }
 
-  if (key === 'weeksRequired' && nextUnit.topics.some(t => !validateTopicPeriods(nextUnit, t))) {
-  return u;
-}
-
-    return nextUnit;
-  }));
+  setUnits(nextUnits);
 };
 
   const addTopic = unitId => setUnits(units.map(u => u.id !== unitId ? u : {
@@ -3111,28 +3116,25 @@ if (mapped.length > 0) {
     return { ...u, topics: u.topics.filter(t => t.id !== topicId) };
   }));
   const updateTopic = (unitId, topicId, key, val) => {
-  setUnits(prevUnits => prevUnits.map(u => {
-    if (u.id !== unitId) return u;
-
-     // Negative periods block karo
-    if (key === 'periodsRequired' && Number(val) < 0) {
-      toast('Total Period Required cannot be negative', 'error');
-      return u;
-    }
-
-
-    const nextUnit = {
-      ...u,
-      topics: u.topics.map(t => t.id === topicId ? { ...t, [key]: val } : t),
-    };
-    const nextTopic = nextUnit.topics.find(t => t.id === topicId);
-
-    if (key === 'periodsRequired' && !validateTopicPeriods(nextUnit,nextTopic)) {
-      return u;
-    }
-
-    return nextUnit;
+  const nextUnits = units.map(u => (u.id !== unitId ? u : {
+    ...u,
+    topics: u.topics.map(t => (t.id === topicId ? { ...t, [key]: val } : t)),
   }));
+
+  if (key === 'periodsRequired') {
+    // Negative periods block karo
+    if (Number(val) < 0) {
+      toast('Total Period Required cannot be negative', 'error');
+      return;
+    }
+    const nextUnit = nextUnits.find(u => u.id === unitId);
+    const nextTopic = nextUnit.topics.find(t => t.id === topicId);
+    if (!validateTopicPeriods(nextUnit, nextTopic)) return;
+    // Unit ke saare topics ka jama bhi allowance me rehna chahiye
+    if (!validateUnitPeriods(nextUnit, { prev: sumPeriods(units.find(u => u.id === unitId)) })) return;
+  }
+
+  setUnits(nextUnits);
 };
     const getAuthHeaders = () => {
   const token = sessionStorage.getItem('token') || localStorage.getItem('token');
@@ -3367,6 +3369,48 @@ const validateTopicPeriods = (unit, topic) => {
   return true;
 };
 
+/* ─── Hadd-bandi: Academic Session ke working weeks ───
+   Pehle weeks par koi rok thi hi nahi — user 500 weeks bhi daal kar save kar
+   leta tha. Chhat wahi hai jo Session Settings ke "Working Weeks" card par
+   dikhti hai (session ki working days ÷ working days per week, vacations
+   nikaal kar). Fractional (jaise 70.4) ko neechay round karte hain taake hadd
+   sakht rahe, aur session set na ho (0) to rok nahi lagti — warna naya school
+   term breakup bana hi na sake.
+
+   Ye ginti MOJOODA term + subject ke breakup ki hai, kyunki modal me ek waqt me
+   wahi units load hoti hain. API me per-term weeks ka koi khana nahi hai. */
+const weeksLimit = Math.floor(Number(sessionWeeks) || 0);
+const sumWeeks = list => (list || []).reduce((sum, u) => sum + (Number(u.weeksRequired) || 0), 0);
+const sumPeriods = unit => (unit?.topics || []).reduce((sum, t) => sum + (Number(t.periodsRequired) || 0), 0);
+const weeksUsed = sumWeeks(units);
+
+/* `prev` sirf TYPING ke waqt aata hai: agar pehle se saved data hadd se ziada
+   ho (ye validation lagne se pehle ka), to user ko usay GHATANE dena zaroori
+   hai — warna wo record kabhi theek hi na ho paye. Save par `prev` nahi jata,
+   yani wahan rok sakht hai. */
+const validateTotalWeeks = (nextUnits, { prev = null } = {}) => {
+  if (weeksLimit <= 0) return true;
+  const total = sumWeeks(nextUnits);
+  if (total <= weeksLimit) return true;
+  if (prev != null && total <= prev) return true;
+  toast(`Weeks limit exceeded! Total weeks (${total}) cannot be more than the academic session's ${weeksLimit} working weeks.`, 'error');
+  return false;
+};
+
+/* Ek unit ke SAARE topics ki periods mil kar bhi hadd me rehni chahiyen.
+   validateTopicPeriods sirf ek topic ko akela dekhta tha, is liye 5 periods ki
+   hadd par 10 topics × 5 = 50 periods aaram se save ho jate thay. */
+const validateUnitPeriods = (unit, { prev = null } = {}) => {
+  const limit = getUnitPeriodLimit(unit);
+  if (limit <= 0) return true;
+  const total = sumPeriods(unit);
+  if (total <= limit) return true;
+  if (prev != null && total <= prev) return true;   // ghatana hamesha jaiz hai
+  const label = String(unit.unitName || '').trim() || String(unit.unitNum || '').trim() || 'this unit';
+  toast(`Limit exceeded! "${label}" total periods (${total}) exceed the allowed ${limit} (${totalLectures} lectures/week × ${Number(unit.weeksRequired) || 0} weeks).`, 'error');
+  return false;
+};
+
 const ensureTermBreakupID = async () => {
   if (termBreakupID) return termBreakupID;
 
@@ -3447,6 +3491,10 @@ const saveUnitDetails = async unit => {
   if (Number(unit.weeksRequired) <= 0) {
     toast('Weeks Required must be greater than 0', 'error'); return;
   }
+  /* Session ki weeks-chhat aur unit ki period-allowance — save par bhi, sirf
+     typing par nahi (purana data ya paste ki hui value bhi yahin ruk jaye). */
+  if (!validateTotalWeeks(units)) return;
+  if (!validateUnitPeriods(unit)) return;
   setSavingBreakup(true);
   try {
     for (const topic of unit.topics) {
@@ -3479,9 +3527,10 @@ const saveAllDetails = async () => {
     if (Number(unit.weeksRequired) <= 0) {
       toast(`Unit "${unit.unitName}" — Weeks Required must be positive integer`, 'error'); return;
     }
-    
-    
+    if (!validateUnitPeriods(unit)) return;
   }
+  /* Sab units ke weeks mil kar Academic Session ke working weeks se ziada na hon */
+  if (!validateTotalWeeks(units)) return;
   setSavingBreakup(true);
   try {
     for (const unit of units) {
@@ -3537,6 +3586,7 @@ const updateWeekRequired = async unit => {
     toast('Weeks Required must be greater than 0', 'error');
     return;
   }
+  if (!validateTotalWeeks(units)) return;
   /* Jo unit abhi save hi na hui ho uski DB me koi row hai hi nahi — update
      karne ko kuch nahi milega. */
   const saved = Boolean(Number(unit.detailID) || (unit.topics || []).some(t => Number(t.detailID)));
@@ -3681,6 +3731,23 @@ const deleteDetail = async ({ unit, topic }) => {
         {/* SCROLLABLE: body contains units + add button */}
         <div className="tbm-scroll-area">
           <div className="tbm-body">
+  {/* Session ki weeks-chhat saamne rahe — user ko save dabane se pehle hi
+      pata ho ke kitni weeks bachi hain. */}
+  {weeksLimit > 0 && !loadingBreakup && (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
+      margin: '0 0 12px', padding: '8px 12px', borderRadius: 8, fontSize: 12, fontWeight: 600,
+      border: `1px solid ${weeksUsed > weeksLimit ? 'rgba(220,38,38,.35)' : 'var(--border-light)'}`,
+      background: weeksUsed > weeksLimit ? 'rgba(220,38,38,.07)' : 'var(--bg-muted)',
+      color: weeksUsed > weeksLimit ? '#B91C1C' : 'var(--text-muted)',
+    }}>
+      <i className="fa-solid fa-calendar-week" />
+      <span>Weeks used: <strong>{weeksUsed}</strong> of <strong>{weeksLimit}</strong></span>
+      <span style={{ fontWeight: 500, opacity: .85 }}>
+        · limit comes from the academic session&rsquo;s working weeks
+      </span>
+    </div>
+  )}
   {loadingBreakup ? (
     <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)' }}>
       <i className="fa-solid fa-spinner fa-spin"></i> Loading term breakup...

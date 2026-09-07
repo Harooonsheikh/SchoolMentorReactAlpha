@@ -6148,6 +6148,12 @@ onClick={async () => {
           sigs={rsSigs}
           remarks={rsRemarks}
           absentMode={rsAbsentMode}
+          /* Save ke baad modal server se fresh rows le kar aata hai taake naye
+             row ki asli DB id mil jaye (warna `temp_…` id rehti thi aur agla
+             save UPDATE ki jagah dobara INSERT kar deta tha). */
+          reloadGrades={fetchGradeSetup}
+          reloadSigs={fetchSignatureSetup}
+          reloadRemarks={fetchRemarksSetup}
           onSave={({ grades, sigs, remarks, absentMode }) => {
             setRsGrades(grades);
             setRsSigs(sigs);
@@ -12810,7 +12816,8 @@ function TemplatePreviewModal({ templateId, rcoGeneral, rcoSig, rsSigs, rsAbsent
 /* ═══════════════════════════════════════════════════════════════════
    RESULT SETUP — EDIT MODAL (4 tabs: grades, signatures, remarks, absent)
    ═══════════════════════════════════════════════════════════════════ */
-function ResultSetupModal({ grades, sigs, remarks, absentMode, onSave, onClose, toast }) {
+function ResultSetupModal({ grades, sigs, remarks, absentMode, onSave, onClose, toast,
+                           reloadGrades, reloadSigs, reloadRemarks }) {
   const [tab, setTab] = useState('grades');
   const [draftGrades, setDraftGrades] = useState(() => {
     if (grades && grades.length) {
@@ -12856,6 +12863,11 @@ function ResultSetupModal({ grades, sigs, remarks, absentMode, onSave, onClose, 
   const upSig = (id, k, v) => setDraftSigs(rows => rows.map(r => r.id === id ? { ...r, [k]: v } : r));
   const upRemark = (id, k, v) => setDraftRemarks(rows => rows.map(r => r.id === id ? { ...r, [k]: v } : r));
 
+/* Naye (abhi tak save na huye) row ki unique id. Sirf `Date.now()` se ek hi
+   millisecond me add hui do rows ko same id mil jati thi — phir ek row edit
+   karne par dono badal jati thin. */
+const tempId = () => `temp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
 const addGrade = () =>
   setDraftGrades(r => {
     // Jo grades pehle se use ho chuki hain unhe skip karke agli available grade
@@ -12864,19 +12876,19 @@ const addGrade = () =>
     const nextGrade = RS_GRADE_LIST.find(gr => !used.has(gr)) || '';
     return [
       ...r,
-      { id: `temp_${Date.now()}`, grade: nextGrade, cond: 'gte', pct: '', comment: '' }
+      { id: tempId(), grade: nextGrade, cond: 'gte', pct: '', comment: '' }
     ];
   });
    const addSig = () =>
   setDraftSigs(r => [
     ...r,
-    { id: `temp_${Date.now()}`, name: '', desig: '', img: '' }
+    { id: tempId(), name: '', desig: '', img: '' }
   ]);
 
 const addRemark = () =>
   setDraftRemarks(r => [
     ...r,
-    { id: `temp_${Date.now()}`, cond: 'gte', pct: '', text: '' }
+    { id: tempId(), cond: 'gte', pct: '', text: '' }
   ]);  const [rsConfirm, setRsConfirm] = useState(null);
 
   const askDeleteGrade = g => setRsConfirm({
@@ -13214,9 +13226,23 @@ const runDelete = async () => {
       // Grade tab: har row me grade + percentage + comment required.
       const gVal = (g) => String(g.grade || '').trim();
       const gPct = (g) => { const p = String(g.pct ?? '').trim(); return p ? `${g.cond}|${p}` : ''; };
-      const dupVal = findUserDup(draftGrades, grades, gVal);
-      if (dupVal) { toast(`"${dupVal}" is already added. This grade cannot be added again.`, 'error'); return; }
-      if (findUserDup(draftGrades, grades, gPct)) { toast('This percentage has already been assigned a grade.', 'error'); return; }
+      // Grade tab par duplicate check ABSOLUTE hai: draft me kahin bhi ek grade
+      // (ya ek hi percentage band) do baar aaye to error. Pehle sirf "original se
+      // zyada" par error aata tha, is liye DB me pehle se maujood duplicate (wahi
+      // grade, alag percentage) chup-chaap dobara save hote reh jate the.
+      const findDup = (arr, keyFn) => {
+        const seen = new Set();
+        for (const x of arr || []) {
+          const k = keyFn(x);
+          if (!k) continue;
+          if (seen.has(k)) return k;
+          seen.add(k);
+        }
+        return null;
+      };
+      const dupVal = findDup(draftGrades, gVal);
+      if (dupVal) { toast(`"${dupVal}" is added more than once. Remove the duplicate row before saving.`, 'error'); return; }
+      if (findDup(draftGrades, gPct)) { toast('This percentage has already been assigned a grade.', 'error'); return; }
       const bad = (draftGrades || []).some(g =>
         !String(g.grade ?? '').trim() || !String(g.pct ?? '').trim() || !String(g.comment ?? '').trim());
       if (bad) { toast('Grade, percentage and comment cannot be empty.', 'error'); return; }
@@ -13235,6 +13261,12 @@ const runDelete = async () => {
     }
 
     setLoading(true);
+
+    // Save ke baad us tab ki fresh (server-side) rows — inme naye row ki asli DB
+    // id hoti hai. Yahi rows parent ko jati hain, warna `temp_…` id parent state
+    // me reh jati thi aur agla save UPDATE ki jagah dobara INSERT kar deta tha
+    // (wahi grade doosri percentage ke saath duplicate ban jata tha).
+    let freshGrades = null, freshSigs = null, freshRemarks = null;
 
     try {
       // SIRF active tab ki API hit ho — grades save karo to sirf grade API, waghera.
@@ -13255,6 +13287,7 @@ const runDelete = async () => {
             await deleteGradeFromAPI(grade.id);
           }
         }
+        freshGrades = await reloadGrades?.();
       }
 
       if (tab === 'signatures') {
@@ -13272,6 +13305,7 @@ const runDelete = async () => {
             await deleteSignatureFromAPI(sig.id);
           }
         }
+        freshSigs = await reloadSigs?.();
       }
 
       if (tab === 'remarks') {
@@ -13288,15 +13322,20 @@ const runDelete = async () => {
             await deleteRemarkFromAPI(remark.id);
           }
         }
+        freshRemarks = await reloadRemarks?.();
       }
 
       toast('Result setup saved successfully!', 'success');
-      
+
+      // Jis tab ko save kiya uske liye server-side rows (asli ids) bhejo; baqi
+      // tabs ka draft waise ka waisa. Reload fail/khali ho to draft par fallback.
+      const pick = (fresh, draft) => (Array.isArray(fresh) && fresh.length ? fresh : draft);
+
       // Call onSave to update parent state
       onSave({
-        grades: draftGrades,
-        sigs: draftSigs,
-        remarks: draftRemarks,
+        grades: pick(freshGrades, draftGrades),
+        sigs: pick(freshSigs, draftSigs),
+        remarks: pick(freshRemarks, draftRemarks),
         absentMode: draftAbsent,
       });
       
