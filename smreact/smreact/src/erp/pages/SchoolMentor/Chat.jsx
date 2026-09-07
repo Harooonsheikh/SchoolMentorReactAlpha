@@ -1,163 +1,73 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Tooltip from '../../components/Tooltip';
 import TutorialModal from '../../components/TutorialModal';
+import {
+  chatUserId,
+  chatBranchId,
+  fetchChatContacts,
+  fetchContactList,
+  fetchAppUserIds,
+  fetchUnseenCount,
+  fetchConversation,
+  fetchUnseenFromMe,
+  pendingMessage,
+  postChatMessage,
+  markMessagesSeen,
+} from '../../services/chatService';
 
 /* ═══════════════════════════════════════════════════════════════════
-   CHAT — school mobile messaging (parents · students · teachers)
+   CHAT — school messaging (parents · students · teachers), live API.
 
-   Ported from "e tube, chat and Notification .html". Two-column layout:
-   a searchable recent-conversations sidebar on the left and a full
-   conversation panel on the right (header · messages · composer).
+   Data poora API se aata hai (swagger tag "Chats") — dekhein
+   src/erp/services/chatService.js:
 
-   Features carried over from the design:
-     • Recent chats sidebar with live search (name / father / class /
-       last message) and unread badges.
-     • Conversation panel with date separators, sent / received bubbles
-       and rich attachments (voice note, image, image gallery, video,
-       PDF / document).
-     • In-conversation search with prev / next navigation + match counter.
-     • Composer with attachment popup (image · video · doc), a simulated
-       voice-recording bar, and an auto-reply so the demo feels alive.
-     • "New Chat" modal: browse by class → contact, or search across all
-       contacts. Non-app-users are shown disabled.
+     sidebar (recent)   → get-chat-contacts/{branchId}/{userId}
+     conversation       → get-conversation/{me}/{contact}/{branchId}
+     bhejna             → post-chat-message   (multipart)
+     seen karna         → mark-messages-seen/{branchId}/{contact}/{me}
+     nav badge          → get-unseen-chat-count/{branchId}/{userId}
+     New Chat directory → get-contact-list/{branchId}/{userId}
+     app par logged in? → get-users-fcm-status/{branchID}
 
-   All state is in-component demo state — a developer wires this to the
-   real messaging API (SignalR is already a dependency) later.
+   ── Do baatein jo screen ka dhancha tay karti hain ──
+   1. Har cheez USER ID par chalti hai, naam par nahi: ek hi walid ke kai
+      bachay hote hain (get-chat-contacts har bachay ki alag row deti hai)
+      aur naam khali bhi ho sakta hai. Is liye active chat, history map aur
+      sidebar keys sab `userId` par hain.
+   2. Server push (SignalR) is API me nahi hai, is liye naye messages POLL
+      hote hain — har POLL_MS par contacts + khuli conversation dobara.
+      Tab background me ho to poll rukh jata hai.
+
+   Presence (online dot) API me nahi hai; jo nishan dikhta hai wo "app par
+   logged in hai ya nahi" hai (FCM token), aur wahi New Chat me bhi.
    ═══════════════════════════════════════════════════════════════════ */
 
-/* ── Contact directory (classes → members) ── */
-const CLASS_GROUPS = [
-  { id: 'g1', name: 'II-Pre',          count: 12 },
-  { id: 'g2', name: 'III-Pre',         count: 2 },
-  { id: 'g3', name: 'class 1A',        count: 13 },
-  { id: 'g4', name: '11',              count: 7 },
-  { id: 'g5', name: 'Ahmad Testing',   count: 4 },
-  { id: 'g6', name: 'Bulk Upload Test', count: 6 },
-  { id: 'g7', name: 'Bulk Upload',     count: 5 },
-];
-
-const GROUP_MEMBERS = {
-  g1: [
-    { name: 'Ava Mahnoor Khan', rel: 'D/O Bb',            father: 'Bb',            appUser: true },
-    { name: 'Abdul Qayyum',     rel: 'S/O Qayyum Khan',   father: 'Qayyum Khan',   appUser: true },
-    { name: 'Yousaf Khan',      rel: 'S/O Shad Muhammad', father: 'Shad Muhammad', appUser: true },
-    { name: 'Azan Khan',        rel: 'S/O Adnan Khan',    father: 'Adnan Khan',    appUser: true },
-    { name: 'Humdan Khan',      rel: 'S/O Adnan Khan',    father: 'Adnan Khan',    appUser: true },
-    { name: 'Hamza Tariq',      rel: 'S/O Tariq Mehmood', father: 'Tariq Mehmood', appUser: true },
-    { name: 'Usman Khalid',     rel: 'S/O Khalid Hussain', father: 'Khalid Hussain', appUser: true },
-    { name: 'Filzi Afzal',      rel: 'D/O Muhammad Afzal', father: 'Muhammad Afzal', appUser: false },
-    { name: 'Sara Imran',       rel: 'D/O Imran Ali',     father: 'Imran Ali',     appUser: false },
-    { name: 'Noor Fatima',      rel: 'D/O Asif Rana',     father: 'Asif Rana',     appUser: false },
-    { name: 'Bb',               rel: 'D/O B',             father: 'B',             appUser: false },
-    { name: 'Zara Bashir',      rel: 'D/O Bashir Ahmed',  father: 'Bashir Ahmed',  appUser: false },
-  ],
-  g2: [
-    { name: 'Fatima Arshad', rel: 'D/O Arshad Mehmood', father: 'Arshad Mehmood', appUser: true },
-    { name: 'Ali Raza',      rel: 'S/O Raza Hussain',   father: 'Raza Hussain',   appUser: false },
-  ],
-  g3: [
-    { name: 'Sughra Bibi', rel: 'D/O Muhammad Waseem', father: 'Muhammad Waseem', appUser: true },
-    { name: 'Omar Shahid', rel: 'S/O Shahid Iqbal',    father: 'Shahid Iqbal',    appUser: true },
-    { name: 'Bilal Ahmed', rel: 'S/O Ahmed Nawaz',     father: 'Ahmed Nawaz',     appUser: true },
-    { name: 'Laiba Tariq', rel: 'D/O Tariq Hassan',    father: 'Tariq Hassan',    appUser: false },
-    { name: 'Amna Khalil', rel: 'D/O Khalil Bhatti',   father: 'Khalil Bhatti',   appUser: false },
-  ],
-  g4: [
-    { name: 'Asim Khan',   rel: 'P/O Asim Khan', father: 'Asim Khan', appUser: true },
-    { name: 'Waseem',      rel: 'P/O Waseem',    father: 'Waseem',    appUser: true },
-    { name: 'Rizwan Shah', rel: 'S/O Shah Zaman', father: 'Shah Zaman', appUser: false },
-  ],
-  g5: [
-    { name: 'Gamma',   rel: 'Vice Principal',  father: '—', appUser: true },
-    { name: 'Epsilon', rel: 'Teacher English', father: '—', appUser: true },
-  ],
-  g6: [
-    { name: 'Test Parent A', rel: 'P/O Student A', father: 'Test Parent A', appUser: true },
-    { name: 'Test Parent B', rel: 'P/O Student B', father: 'Test Parent B', appUser: false },
-  ],
-  g7: [
-    { name: 'Bulk User 1', rel: 'P/O Student 1', father: 'Bulk User 1', appUser: true },
-    { name: 'Bulk User 2', rel: 'P/O Student 2', father: 'Bulk User 2', appUser: false },
-  ],
-};
-
-/* ── Recent conversations (with father + unread counts) ── */
-const INITIAL_RECENT = [
-  { name: 'Sughra Bibi',     rel: 'D/O Muhammad Waseem', father: 'Muhammad Waseem', group: 'class 1A',      online: true,  time: '12:20 pm',                unread: 0 },
-  { name: 'Fatima Arshad',   rel: 'D/O Arshad Mehmood',  father: 'Arshad Mehmood',  group: 'II-Pre',        online: false, time: '10:10 am',                unread: 2 },
-  { name: 'Epsilon',         rel: 'Teacher English',     father: '—',               group: 'Ahmad Testing', online: true,  time: '10:15 am',                unread: 0 },
-  { name: 'Ava Mahnoor Khan', rel: 'D/O Bb',             father: 'Bb',              group: 'II-Pre',        online: true,  time: '09:25 am',                unread: 1 },
-  { name: 'Gamma',           rel: 'Vice Principal',      father: '—',               group: 'Ahmad Testing', online: true,  time: '08:50 am',                unread: 3 },
-  { name: 'Asim Khan',       rel: 'P/O Asim Khan',       father: 'Asim Khan',       group: '11',            online: false, time: 'Yesterday · 11:05 am',    unread: 0 },
-  { name: 'Waseem',          rel: 'P/O Waseem',          father: 'Waseem',          group: '11',            online: false, time: 'Yesterday · 02:14 pm',    unread: 0 },
-];
-
-const INITIAL_HISTORY = {
-  'Sughra Bibi': [
-    { type: 'recv', text: "Assalam o alaikum, I wanted to ask about my daughter's result this term.", time: '07:30 pm', date: '22 Jun 2026 · 07:30 pm' },
-    { type: 'sent', text: 'Walaikum assalam! She has performed very well. Marks will be shared formally soon.', time: '07:45 pm', date: '22 Jun 2026 · 07:45 pm' },
-    { type: 'recv', attach: 'voice', dur: '0:14', time: '11:50 am', date: 'Today' },
-    { type: 'sent', text: 'JazakAllah for the voice message. I will check with the class teacher.', time: '12:00 pm', date: 'Today' },
-    { type: 'sent', attach: 'doc', docName: 'Result_Card_SughraBibi.pdf', docSize: '180 KB', time: '12:10 pm', date: 'Today' },
-    { type: 'recv', text: 'Received! JazakAllah khair.', time: '12:15 pm', date: 'Today' },
-    { type: 'sent', text: 'You are welcome. Please contact us any time.', time: '12:20 pm', date: 'Today' },
-  ],
-  'Fatima Arshad': [
-    { type: 'recv', text: 'Hello mam, Fatima was absent today due to fever.', time: '10:00 am', date: 'Today' },
-    { type: 'sent', text: 'Noted. Please bring a medical certificate when she returns.', time: '10:05 am', date: 'Today' },
-    { type: 'sent', attach: 'image', label: 'Leave Application Form.jpg', time: '10:07 am', date: 'Today' },
-    { type: 'recv', text: 'Thank you, we will bring it tomorrow inshAllah.', time: '10:10 am', date: 'Today' },
-  ],
-  'Epsilon': [
-    { type: 'sent', text: 'Please review the lesson plan for next week.', time: '09:30 am', date: 'Today' },
-    { type: 'sent', attach: 'doc', docName: 'Lesson_Plan_Week_26.pdf', docSize: '210 KB', time: '09:31 am', date: 'Today' },
-    { type: 'recv', text: 'Received! I will share feedback by evening.', time: '09:45 am', date: 'Today' },
-    { type: 'sent', attach: 'video', label: 'Teaching Video — Chapter 5.mp4', time: '10:00 am', date: 'Today' },
-    { type: 'recv', text: 'Great video, I will use it as a reference.', time: '10:15 am', date: 'Today' },
-  ],
-  'Ava Mahnoor Khan': [
-    { type: 'recv', text: "Could you please share today's notes?", time: '09:14 am', date: 'Today' },
-    { type: 'sent', text: 'Of course, attaching the PDF right now.', time: '09:16 am', date: 'Today' },
-    { type: 'sent', attach: 'doc', docName: 'Chapter_5_Notes.pdf', docSize: '340 KB', time: '09:17 am', date: 'Today' },
-    { type: 'recv', text: 'JazakAllah! Received.', time: '09:18 am', date: 'Today' },
-    { type: 'sent', attach: 'voice', dur: '0:32', time: '09:20 am', date: 'Today' },
-    { type: 'recv', text: 'I understand, I will ask my son to complete the exercises.', time: '09:25 am', date: 'Today' },
-    { type: 'sent', attach: 'gallery', images: ['Class Photo 1', 'Class Photo 2', 'Class Photo 3', 'Class Photo 4', 'Class Photo 5', 'Class Photo 6'], time: '09:26 am', date: 'Today' },
-  ],
-  'Gamma': [
-    { type: 'recv', text: 'Meeting at 3pm today in the staff room.', time: '08:45 am', date: 'Today' },
-    { type: 'sent', text: 'Confirmed. I will be there.', time: '08:50 am', date: 'Today' },
-    { type: 'sent', attach: 'voice', dur: '0:18', time: '09:00 am', date: 'Today' },
-  ],
-  'Asim Khan': [
-    { type: 'recv', text: 'Sir, fee challan has been received. Thank you.', time: '11:00 am', date: 'Yesterday · 11:00 am' },
-    { type: 'sent', text: 'Noted! The payment has been processed.', time: '11:05 am', date: 'Yesterday · 11:05 am' },
-  ],
-  'Waseem': [
-    { type: 'recv', text: 'Student was absent today without notice.', time: '02:10 pm', date: 'Yesterday · 02:10 pm' },
-    { type: 'sent', text: 'Thank you for informing. We will note this.', time: '02:14 pm', date: 'Yesterday · 02:14 pm' },
-  ],
-};
+const POLL_MS = 15000;
+/* Sidebar ka preview/waqt conversation se banta hai, aur har contact ki apni
+   call hai — is liye load par sirf itni chats ka preview lete hain. Baqi ka
+   preview chat kholne par bhar jata hai. */
+const PREVIEW_LIMIT = 40;
+const PREVIEW_BATCH = 6;
 
 /* ── helpers ── */
-const ini = (n) => (n || '?').split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
-const nowTime = () => {
-  const d = new Date(), h = d.getHours(), m = d.getMinutes();
-  return `${h % 12 || 12}:${m < 10 ? '0' : ''}${m}${h >= 12 ? ' pm' : ' am'}`;
-};
+const ini = (n) => (n || '?').split(' ').filter(Boolean).map(w => w[0]).join('').toUpperCase().slice(0, 2) || '?';
+
+const lastOf = (hist) => (hist && hist.length ? hist[hist.length - 1] : null);
+
 const lastPreview = (hist) => {
-  if (!hist || !hist.length) return 'No messages yet';
-  const last = hist[hist.length - 1];
-  if (last.attach === 'voice')   return '🎤 Voice message';
-  if (last.attach === 'image')   return `📷 ${last.label}`;
-  if (last.attach === 'gallery') return `📷 ${last.images.length} photos`;
-  if (last.attach === 'video')   return `🎬 ${last.label}`;
-  if (last.attach === 'doc')     return `📄 ${last.docName}`;
-  return last.text;
+  const last = lastOf(hist);
+  if (!last) return 'No messages yet';
+  const caption = last.text ? ` ${last.text}` : '';
+  if (last.attach === 'voice') return '🎤 Voice message';
+  if (last.attach === 'image') return `📷${caption || ' Photo'}`;
+  if (last.attach === 'video') return `🎬${caption || ' Video'}`;
+  if (last.attach === 'doc')   return `📄${caption || ` ${last.docName}`}`;
+  return last.text || 'No messages yet';
 };
+
 /* searchable text content of a message (for in-chat search) */
-const msgText = (m) => m.text || m.label || m.docName || (m.attach === 'gallery' ? m.images?.join(' ') : '') || '';
+const msgText = (m) => m.text || m.docName || m.label || '';
 
 /* highlight query matches inside a plain string → array of React nodes */
 function highlight(text, q) {
@@ -176,13 +86,44 @@ function highlight(text, q) {
   return out;
 }
 
+/* Voice note ke liye wo format chuno jo ye browser record kar sakta hai.
+   Extension isi se banti hai taake attachmentType sahi jaye (webm audio ko
+   "weba" bhejte hain, warna wo video samjha jata hai). */
+function pickAudioFormat() {
+  const options = [
+    ['audio/mp4', 'm4a'],
+    ['audio/ogg;codecs=opus', 'ogg'],
+    ['audio/webm;codecs=opus', 'weba'],
+    ['audio/webm', 'weba'],
+  ];
+  if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported) {
+    for (const [mime, ext] of options) {
+      if (MediaRecorder.isTypeSupported(mime)) return { mime, ext };
+    }
+  }
+  return { mime: '', ext: 'weba' };
+}
+
 /* ═══════════════════════════════════════════════════════════════════
    MAIN
    ═══════════════════════════════════════════════════════════════════ */
 export default function Chat({ toast = () => {}, onUnreadChange }) {
-  const [recent, setRecent]   = useState(INITIAL_RECENT);
-  const [history, setHistory] = useState(INITIAL_HISTORY);
-  const [activeName, setActiveName] = useState('Sughra Bibi');
+  const me = useMemo(() => chatUserId(), []);
+  const branchId = useMemo(() => chatBranchId(), []);
+
+  const [contacts, setContacts] = useState([]);
+  const [history, setHistory]   = useState({});     // { [userId]: message[] }
+  /* { [contactId]: kitni MERI messages us ne nahi dekhin } — blue tick isi se
+     tay hota hai. null = maloom nahi (tab blue tick nahi dikhate). */
+  const [receipts, setReceipts] = useState({});
+  const [appUsers, setAppUsers] = useState(() => new Set());
+  const [activeId, setActiveId] = useState(null);
+
+  const [loading, setLoading]         = useState(true);
+  const [loadError, setLoadError]     = useState('');
+  const [convLoading, setConvLoading] = useState(false);
+  const [sending, setSending]         = useState(false);
+  const [unreadTotal, setUnreadTotal] = useState(0);
 
   const [sidebarQ, setSidebarQ] = useState('');
 
@@ -215,31 +156,193 @@ export default function Chat({ toast = () => {}, onUnreadChange }) {
 
   const msgsRef = useRef(null);
   const matchRefs = useRef({});
-  const activeRef = useRef(activeName);
-  activeRef.current = activeName;
+  const activeRef = useRef(activeId);
+  activeRef.current = activeId;
+  /* App ka pushToast har render par naya function hota hai — usay seedha deps
+     me rakhne se ye saare callbacks (aur polling interval) har render par naye
+     ban jate. Ref se function sthir rehta hai aur toast hamesha taza. */
+  const toastRef = useRef(toast);
+  toastRef.current = toast;
+  const previewDone = useRef(new Set());   // jin contacts ka preview le liya
+  const fileInputs = { image: useRef(null), video: useRef(null), doc: useRef(null) };
+  const recRef = useRef(null);
+  const chunksRef = useRef([]);
 
-  const activeChat = recent.find(c => c.name === activeName) || null;
-  const activeMsgs = useMemo(() => history[activeName] || [], [history, activeName]);
+  const activeChat = useMemo(
+    () => contacts.find(c => c.userId === activeId) || null,
+    [contacts, activeId],
+  );
+  const activeMsgs = useMemo(() => history[activeId] || [], [history, activeId]);
 
-  /* ── derived: filtered recent list ── */
+  /* ── loaders ─────────────────────────────────────────────────── */
+
+  const refreshUnread = useCallback(async () => {
+    if (!me || !branchId) return;
+    setUnreadTotal(await fetchUnseenCount(branchId, me));
+  }, [me, branchId]);
+
+  const loadContacts = useCallback(async ({ silent = false } = {}) => {
+    if (!me || !branchId) {
+      setLoadError('Your session has no user or branch — please log in again.');
+      setLoading(false);
+      return [];
+    }
+    if (!silent) setLoading(true);
+    try {
+      const rows = await fetchChatContacts(branchId, me);
+      /* New Chat se shuru ki gayi chat jab tak koi message na jaye API me
+         nahi aati — usay list se gayab nahi hone dena. */
+      setContacts(prev => {
+        const extra = prev.filter(c => c.provisional && !rows.some(r => r.userId === c.userId));
+        return [...rows, ...extra];
+      });
+      setLoadError('');
+      return rows;
+    } catch (err) {
+      setLoadError(err.message || 'Could not load chats');
+      if (!silent) toastRef.current(err.message || 'Could not load chats', 'error');
+      return [];
+    } finally {
+      if (!silent) setLoading(false);
+    }
+  }, [me, branchId]);
+
+  const loadConversation = useCallback(async (userId, { spinner = false } = {}) => {
+    if (!userId || !me || !branchId) return;
+    if (spinner) setConvLoading(true);
+    try {
+      /* messages ke saath hi read-receipt — dono ek hi baar me, taake tick
+         message ke saath hi sahi rang me aaye. */
+      const [msgs, unseenFromMe] = await Promise.all([
+        fetchConversation(me, userId, branchId),
+        fetchUnseenFromMe(branchId, userId, me),
+      ]);
+      setHistory(prev => ({ ...prev, [userId]: msgs }));
+      setReceipts(prev => ({ ...prev, [userId]: unseenFromMe }));
+      previewDone.current.add(userId);
+    } catch (err) {
+      if (spinner) toastRef.current(err.message || 'Could not load this conversation', 'error');
+    } finally {
+      if (spinner) setConvLoading(false);
+    }
+  }, [me, branchId]);
+
+  /* first load: recent chats + kaun app par logged in hai + nav badge */
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const [rows] = await Promise.all([loadContacts(), (async () => {
+        const ids = await fetchAppUserIds(branchId);
+        if (alive) setAppUsers(ids);
+      })()]);
+      if (alive && rows.length) setActiveId(prev => prev ?? rows[0].userId);
+      refreshUnread();
+    })();
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /* Chat khulte hi: messages lao, phir unhe "seen" kar do. Pehli chat khud
+     select hoti hai, is liye ye kaam openConv me nahi — yahan hai, taake dono
+     surton me chale. mark-messages-seen idempotent hai (kuch na ho to
+     updatedRows 0), so dobara chalna nuqsaan-deh nahi. */
+  useEffect(() => {
+    if (!activeId || !me || !branchId) return undefined;
+    let alive = true;
+    (async () => {
+      await loadConversation(activeId, { spinner: !previewDone.current.has(activeId) });
+      if (!alive) return;
+      await markMessagesSeen(branchId, activeId, me);
+      if (alive) refreshUnread();
+    })();
+    return () => { alive = false; };
+  }, [activeId, me, branchId, loadConversation, refreshUnread]);
+
+  /* sidebar ka preview + waqt conversation se banta hai — pehli PREVIEW_LIMIT
+     chats ke liye thodi thodi kar ke le aao (ek saath sab nahi). */
+  useEffect(() => {
+    const pending = contacts
+      .filter(c => !previewDone.current.has(c.userId))
+      .slice(0, PREVIEW_LIMIT);
+    if (!pending.length) return;
+    let alive = true;
+    (async () => {
+      for (let i = 0; i < pending.length; i += PREVIEW_BATCH) {
+        if (!alive) return;
+        const batch = pending.slice(i, i + PREVIEW_BATCH);
+        batch.forEach(c => previewDone.current.add(c.userId));
+        const results = await Promise.all(batch.map(c =>
+          fetchConversation(me, c.userId, branchId).then(msgs => [c.userId, msgs]).catch(() => null)));
+        if (!alive) return;
+        setHistory(prev => {
+          const next = { ...prev };
+          results.filter(Boolean).forEach(([id, msgs]) => { next[id] = msgs; });
+          return next;
+        });
+      }
+    })();
+    return () => { alive = false; };
+  }, [contacts, me, branchId]);
+
+  /* naye messages ke liye polling (is API me server push nahi hai) */
+  useEffect(() => {
+    if (!me || !branchId) return undefined;
+    const id = setInterval(() => {
+      if (document.hidden) return;
+      loadContacts({ silent: true });
+      refreshUnread();
+      const open = activeRef.current;
+      if (open) loadConversation(open);
+    }, POLL_MS);
+    return () => clearInterval(id);
+  }, [me, branchId, loadContacts, loadConversation, refreshUnread]);
+
+  /* ── derived ─────────────────────────────────────────────────── */
+
+  /* Sidebar tarteeb: jis chat par sab se naya message hai wo upar. Jin ka
+     preview abhi nahi aaya un ko unread aur naam par rakho. */
+  const orderedContacts = useMemo(() => {
+    const at = (c) => (lastOf(history[c.userId])?.at) || 0;
+    return [...contacts].sort((a, b) =>
+      (at(b) - at(a)) || ((b.unread || 0) - (a.unread || 0)) || a.name.localeCompare(b.name));
+  }, [contacts, history]);
+
   const filteredRecent = useMemo(() => {
     const q = sidebarQ.trim().toLowerCase();
-    if (!q) return recent;
-    return recent.filter(c => {
-      const preview = lastPreview(history[c.name]).toLowerCase();
+    if (!q) return orderedContacts;
+    return orderedContacts.filter(c => {
+      const preview = lastPreview(history[c.userId]).toLowerCase();
       return c.name.toLowerCase().includes(q)
         || (c.father || '').toLowerCase().includes(q)
         || (c.rel || '').toLowerCase().includes(q)
         || (c.group || '').toLowerCase().includes(q)
         || preview.includes(q);
     });
-  }, [recent, history, sidebarQ]);
-
-  const totalUnread = useMemo(() => recent.reduce((s, c) => s + (c.unread || 0), 0), [recent]);
+  }, [orderedContacts, history, sidebarQ]);
 
   /* Report the unseen-message count up to the shell so the sidebar Chat
      nav badge stays in sync (clears as conversations are opened). */
-  useEffect(() => { onUnreadChange?.(totalUnread); }, [totalUnread, onUnreadChange]);
+  useEffect(() => { onUnreadChange?.(unreadTotal); }, [unreadTotal, onUnreadChange]);
+
+  /* ── derived: kaun si bheji hui message dekhi ja chuki hai ──
+     API har message par seen/unseen nahi deta, sirf ye batata hai ke contact ne
+     MERI kitni messages nahi dekhin (fetchUnseenFromMe). Chat waqt ke hisaab se
+     hoti hai, is liye aakhri N bheji hui messages "unseen" hain aur un se pehle
+     wali sab "seen" — bilkul WhatsApp jaisa. Gintii na mile (null) to koi blue
+     tick nahi, sab double grey rehti hain. */
+  const seenIds = useMemo(() => {
+    const unseen = receipts[activeId];
+    if (unseen == null) return null;
+    const sent = activeMsgs.filter(m => m.type === 'sent' && !m.pending);
+    const seenCount = Math.max(0, sent.length - unseen);
+    return new Set(sent.slice(0, seenCount).map(m => m.id));
+  }, [receipts, activeId, activeMsgs]);
+
+  /* sending → single grey · pahunch gaya → double grey · dekh liya → double blue */
+  const tickStatus = useCallback((m) => {
+    if (m.pending) return 'sending';
+    return seenIds && seenIds.has(m.id) ? 'seen' : 'sent';
+  }, [seenIds]);
 
   /* ── derived: in-chat search matches (message indices) ── */
   const convMatches = useMemo(() => {
@@ -252,7 +355,7 @@ export default function Chat({ toast = () => {}, onUnreadChange }) {
   }, [activeMsgs, convQ]);
 
   /* keep the active-match index in range when matches change */
-  useEffect(() => { setConvIdx(0); }, [convQ, activeName]);
+  useEffect(() => { setConvIdx(0); }, [convQ, activeId]);
 
   /* scroll the active in-chat match into view */
   useEffect(() => {
@@ -266,7 +369,7 @@ export default function Chat({ toast = () => {}, onUnreadChange }) {
     if (convSearchOpen) return;
     const el = msgsRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [activeMsgs.length, activeName, convSearchOpen]);
+  }, [activeMsgs.length, activeId, convSearchOpen]);
 
   /* recording timer */
   useEffect(() => {
@@ -283,62 +386,136 @@ export default function Chat({ toast = () => {}, onUnreadChange }) {
     return () => document.removeEventListener('click', onDoc);
   }, [attachOpen]);
 
-  /* ── actions ── */
-  const openConv = (name) => {
-    setActiveName(name);
+  /* ── actions ─────────────────────────────────────────────────── */
+
+  /* Sirf selection — messages laana aur "seen" karna neeche wale effect ka kaam
+     hai, taake pehli chat (jo khud-ba-khud khulti hai) bhi usi rasty se guzray. */
+  const openConv = useCallback((userId) => {
+    setActiveId(userId);
     setConvSearchOpen(false);
     setConvQ('');
     setMobileShowConv(true);
-    setRecent(prev => prev.map(c => c.name === name ? { ...c, unread: 0 } : c));
-  };
+    setContacts(prev => prev.map(c => c.userId === userId ? { ...c, unread: 0 } : c));
+  }, []);
 
-  const pushMessage = (name, msg) => {
-    setHistory(prev => ({ ...prev, [name]: [...(prev[name] || []), msg] }));
-    setRecent(prev => prev.map(c => c.name === name ? { ...c, time: msg.time } : c));
-  };
-
-  const sendText = () => {
-    const txt = draft.trim();
-    if (!txt) return;
-    const name = activeRef.current;
-    pushMessage(name, { type: 'sent', text: txt, time: nowTime(), date: 'Today' });
+  /* Ek hi rasta bhejne ka — text, attachment ya dono (file ke saath draft
+     caption ban jata hai, bilkul mobile app ki tarah). */
+  const send = useCallback(async ({ text = '', file = null }) => {
+    const to = activeRef.current;
+    if (!to) { toastRef.current('Select a conversation first', 'warning'); return; }
+    if (!text.trim() && !file) return;
+    setSending(true);
+    /* Bubble foran dikha do (single grey tick ke saath) — server ka jawab aane
+       par poori conversation dobara aa kar isay replace kar deti hai. */
+    const pending = pendingMessage({ text, file });
+    setHistory(prev => ({ ...prev, [to]: [...(prev[to] || []), pending] }));
     setDraft('');
-    /* simulated auto-reply */
-    setTimeout(() => {
-      pushMessage(name, { type: 'recv', text: 'Received, thank you!', time: nowTime(), date: 'Today' });
-    }, 1400);
-  };
+    try {
+      await postChatMessage({ fromUserId: me, toUserId: to, branchId, message: text.trim(), file });
+      await loadConversation(to);
+      loadContacts({ silent: true });
+      /* pehli baar bhejne par ye chat ab asli hai — provisional nishan hatao */
+      setContacts(prev => prev.map(c => c.userId === to ? { ...c, provisional: false } : c));
+    } catch (err) {
+      /* na ja saka: local bubble hatao aur likha hua wapas composer me daal do */
+      setHistory(prev => ({ ...prev, [to]: (prev[to] || []).filter(m => m.id !== pending.id) }));
+      if (text.trim()) setDraft(d => d || text);
+      toastRef.current(err.message || 'Message could not be sent', 'error');
+    } finally {
+      if (pending.url) URL.revokeObjectURL(pending.url);
+      setSending(false);
+    }
+  }, [me, branchId, loadConversation, loadContacts]);
 
-  const insertAttachment = (type) => {
-    const t = nowTime();
-    let msg;
-    if (type === 'image')      msg = { type: 'sent', attach: 'image', label: `Photo_${t.replace(/\s/g, '')}.jpg`, time: t, date: 'Today' };
-    else if (type === 'video') msg = { type: 'sent', attach: 'video', label: `Video_${t.replace(/\s/g, '')}.mp4`, time: t, date: 'Today' };
-    else                       msg = { type: 'sent', attach: 'doc', docName: `Document_${t.replace(/\s/g, '')}.pdf`, docSize: '1.2 MB', time: t, date: 'Today' };
-    pushMessage(activeName, msg);
+  const sendText = () => send({ text: draft });
+
+  const pickAttachment = (kind) => {
     setAttachOpen(false);
-    toast(`${type === 'image' ? 'Image' : type === 'video' ? 'Video' : 'Document'} sent (demo)`, 'success');
+    fileInputs[kind]?.current?.click();
   };
 
-  const startRecording = () => { setRecSeconds(0); setRecording(true); };
-  const cancelRecording = () => { setRecording(false); setRecSeconds(0); };
-  const sendVoiceNote = () => {
-    const dur = `${Math.floor(recSeconds / 60)}:${recSeconds % 60 < 10 ? '0' : ''}${recSeconds % 60}`;
-    cancelRecording();
-    pushMessage(activeName, { type: 'sent', attach: 'voice', dur: dur === '0:0' ? '0:03' : dur, time: nowTime(), date: 'Today' });
-    toast('Voice message sent', 'success');
+  const onFilePicked = async (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = '';           // same file dobara chunne par bhi change chale
+    if (!file) return;
+    await send({ text: draft, file });
   };
 
-  const startChatWith = (member, groupName) => {
+  const startRecording = async () => {
+    if (typeof MediaRecorder === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+      toast('Voice recording is not supported in this browser', 'error');
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const { mime, ext } = pickAudioFormat();
+      const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+      chunksRef.current = [];
+      rec.ondataavailable = ev => { if (ev.data && ev.data.size) chunksRef.current.push(ev.data); };
+      recRef.current = { rec, stream, ext };
+      rec.start();
+      setRecSeconds(0);
+      setRecording(true);
+    } catch (_) {
+      toast('Microphone permission was denied', 'error');
+    }
+  };
+
+  /* Recorder rok kar blob wapas do (send=false par sirf band karo). */
+  const stopRecording = (wantFile) => new Promise(resolve => {
+    const cur = recRef.current;
+    recRef.current = null;
+    if (!cur) { resolve(null); return; }
+    cur.rec.onstop = () => {
+      cur.stream.getTracks().forEach(t => t.stop());
+      if (!wantFile) { resolve(null); return; }
+      const blob = new Blob(chunksRef.current, { type: cur.rec.mimeType || 'audio/webm' });
+      chunksRef.current = [];
+      resolve(blob.size ? new File([blob], `voice-note-${Date.now()}.${cur.ext}`, { type: blob.type }) : null);
+    };
+    try { cur.rec.stop(); } catch (_) { resolve(null); }
+  });
+
+  const cancelRecording = async () => {
+    setRecording(false);
+    setRecSeconds(0);
+    await stopRecording(false);
+  };
+
+  const sendVoiceNote = async () => {
+    setRecording(false);
+    const file = await stopRecording(true);
+    setRecSeconds(0);
+    if (!file) { toast('Nothing was recorded', 'warning'); return; }
+    await send({ text: '', file });
+  };
+
+  /* stop the mic if the screen unmounts mid-recording */
+  useEffect(() => () => {
+    const cur = recRef.current;
+    if (cur) { try { cur.rec.stop(); } catch (_) { /* already stopped */ } cur.stream.getTracks().forEach(t => t.stop()); }
+  }, []);
+
+  const startChatWith = (member) => {
     setNcOpen(false);
-    const existing = recent.find(c => c.name === member.name);
-    if (existing) { openConv(member.name); toast(`Opened existing chat with ${member.name}`, 'info'); return; }
-    setRecent(prev => [{ name: member.name, rel: member.rel, father: member.father || '—', group: groupName, online: true, time: 'Just now', unread: 0 }, ...prev]);
-    setHistory(prev => ({ ...prev, [member.name]: prev[member.name] || [] }));
-    setActiveName(member.name);
-    setConvSearchOpen(false);
-    setConvQ('');
-    setMobileShowConv(true);
+    if (contacts.some(c => c.userId === member.userId)) {
+      openConv(member.userId);
+      toast(`Opened existing chat with ${member.name}`, 'info');
+      return;
+    }
+    setContacts(prev => [{
+      userId: member.userId,
+      name: member.name,
+      father: member.father,
+      rel: member.rel,
+      status: member.status,
+      group: member.group,
+      picture: member.picture,
+      unread: 0,
+      students: [],
+      provisional: true,
+    }, ...prev]);
+    openConv(member.userId);
     toast(`New chat started with ${member.name}`, 'success');
   };
 
@@ -347,9 +524,21 @@ export default function Chat({ toast = () => {}, onUnreadChange }) {
     setConvIdx(i => (i + dir + convMatches.length) % convMatches.length);
   };
 
+  const subTitle = (c) => {
+    if (!c) return '';
+    const bits = [c.rel, c.father && c.father !== '—' ? `Father: ${c.father}` : '', c.group].filter(Boolean);
+    const more = c.students && c.students.length > 1 ? ` · ${c.students.length} students` : '';
+    return bits.join(' · ') + more;
+  };
+
   return (
     <>
       <style>{CHAT_CSS}</style>
+
+      {/* attachment pickers — popup se trigger hote hain */}
+      <input ref={fileInputs.image} type="file" accept="image/*" hidden onChange={onFilePicked} />
+      <input ref={fileInputs.video} type="file" accept="video/*" hidden onChange={onFilePicked} />
+      <input ref={fileInputs.doc} type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv" hidden onChange={onFilePicked} />
 
       <div className="cm-root">
         {/* ── Page header ── */}
@@ -357,7 +546,7 @@ export default function Chat({ toast = () => {}, onUnreadChange }) {
           <div className="cm-page-header-icon"><i className="fa-solid fa-comments" /></div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div className="cm-page-title">
-              Chats {totalUnread > 0 && <span className="cm-unread-global">{totalUnread}</span>}
+              Chats {unreadTotal > 0 && <span className="cm-unread-global">{unreadTotal}</span>}
             </div>
             <div className="cm-page-kicker">School Mobile Messaging</div>
             <div className="cm-page-sub">School mobile messaging — parents, students &amp; teachers</div>
@@ -412,36 +601,66 @@ export default function Chat({ toast = () => {}, onUnreadChange }) {
             </div>
 
             <div className="cm-col-body">
-              {filteredRecent.length === 0 ? (
+              {loading ? (
                 <div className="cm-sidebar-empty">
-                  <i className="fa-solid fa-magnifying-glass" />
-                  <div className="cm-sidebar-empty-title">No results found</div>
-                  <div className="cm-sidebar-empty-sub">Try searching by name, father name,<br />class or last message.</div>
+                  <i className="fa-solid fa-spinner fa-spin" />
+                  <div className="cm-sidebar-empty-title">Loading chats…</div>
                 </div>
-              ) : filteredRecent.map(c => (
-                <div
-                  key={c.name}
-                  className={`cm-recent-row${activeName === c.name ? ' active' : ''}`}
-                  onClick={() => openConv(c.name)}
-                >
-                  <div className="cm-rcr-avatar">{ini(c.name)}<div className={`cm-rcr-dot ${c.online ? 'on' : 'off'}`} /></div>
-                  <div className="cm-rcr-info">
-                    <div className="cm-rcr-name-row">
-                      <span className="cm-rcr-name">{highlight(c.name, sidebarQ)}</span>
-                      <span className="cm-rcr-badge">{highlight(c.group, sidebarQ)}</span>
-                    </div>
-                    <div className="cm-rcr-father">
-                      <i className="fa-solid fa-user" style={{ fontSize: 9, opacity: 0.6, marginRight: 3 }} />
-                      Father: {highlight(c.father || '—', sidebarQ)}
-                    </div>
-                    <div className="cm-rcr-preview">{highlight(lastPreview(history[c.name]), sidebarQ)}</div>
-                  </div>
-                  <div className="cm-rcr-meta">
-                    <span className="cm-rcr-time">{c.time}</span>
-                    {c.unread ? <span className="cm-rcr-unread">{c.unread}</span> : null}
+              ) : loadError ? (
+                <div className="cm-sidebar-empty">
+                  <i className="fa-solid fa-triangle-exclamation" />
+                  <div className="cm-sidebar-empty-title">Could not load chats</div>
+                  <div className="cm-sidebar-empty-sub">{loadError}</div>
+                  <button className="cm-nc-back-btn" style={{ marginTop: 10 }} onClick={() => loadContacts()}>
+                    <i className="fa-solid fa-rotate-right" /> Retry
+                  </button>
+                </div>
+              ) : filteredRecent.length === 0 ? (
+                <div className="cm-sidebar-empty">
+                  <i className={`fa-solid ${sidebarQ ? 'fa-magnifying-glass' : 'fa-comments'}`} />
+                  <div className="cm-sidebar-empty-title">{sidebarQ ? 'No results found' : 'No conversations yet'}</div>
+                  <div className="cm-sidebar-empty-sub">
+                    {sidebarQ
+                      ? <>Try searching by name, father name,<br />class or last message.</>
+                      : <>Click <strong>New Chat</strong> to message a<br />parent, student or teacher.</>}
                   </div>
                 </div>
-              ))}
+              ) : filteredRecent.map(c => {
+                const last = lastOf(history[c.userId]);
+                return (
+                  <div
+                    key={c.userId}
+                    className={`cm-recent-row${activeId === c.userId ? ' active' : ''}`}
+                    onClick={() => openConv(c.userId)}
+                  >
+                    <div className="cm-rcr-avatar">
+                      <Avatar name={c.name} src={c.picture} />
+                      {/* app-status ka nishan sirf parents par */}
+                      {c.isParent && (
+                        <div
+                          className={`cm-rcr-dot ${appUsers.has(c.userId) ? 'on' : 'off'}`}
+                          title={appUsers.has(c.userId) ? 'Logged into the School Mentor app' : 'Not logged into the app yet'}
+                        />
+                      )}
+                    </div>
+                    <div className="cm-rcr-info">
+                      <div className="cm-rcr-name-row">
+                        <span className="cm-rcr-name">{highlight(c.name, sidebarQ)}</span>
+                        <span className="cm-rcr-badge">{highlight(c.group, sidebarQ)}</span>
+                      </div>
+                      <div className="cm-rcr-father">
+                        <i className="fa-solid fa-user" style={{ fontSize: 9, opacity: 0.6, marginRight: 3 }} />
+                        Father: {highlight(c.father || '—', sidebarQ)}
+                      </div>
+                      <div className="cm-rcr-preview">{highlight(lastPreview(history[c.userId]), sidebarQ)}</div>
+                    </div>
+                    <div className="cm-rcr-meta">
+                      <span className="cm-rcr-time">{last ? (last.date === 'Today' ? last.time : `${last.date} · ${last.time}`) : ''}</span>
+                      {c.unread ? <span className="cm-rcr-unread">{c.unread}</span> : null}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
 
@@ -463,13 +682,29 @@ export default function Chat({ toast = () => {}, onUnreadChange }) {
                         <i className="fa-solid fa-arrow-left" />
                       </button>
                     </Tooltip>
-                    <div className="cm-conv-hdr-avatar">{ini(activeChat.name)}<div className={`cm-conv-hdr-dot ${activeChat.online ? 'on' : 'off'}`} /></div>
+                    <div className="cm-conv-hdr-avatar">
+                      <Avatar name={activeChat.name} src={activeChat.picture} />
+                      {activeChat.isParent && <div className={`cm-conv-hdr-dot ${appUsers.has(activeChat.userId) ? 'on' : 'off'}`} />}
+                    </div>
                     <div className="cm-conv-hdr-info">
                       <div className="cm-conv-hdr-name">{activeChat.name}</div>
-                      <div className="cm-conv-hdr-sub">
-                        {activeChat.rel}{activeChat.father && activeChat.father !== '—' ? ` · Father: ${activeChat.father}` : ''} · {activeChat.group}
-                      </div>
+                      <div className="cm-conv-hdr-sub">{subTitle(activeChat)}</div>
                     </div>
+                    {/* App par hai ya nahi — get-users-fcm-status se. SIRF parents
+                        par dikhata hai (staff ke liye chhupa rehta hai). Ye sirf
+                        itna batata hai ke push notification pahunchegi ya nahi;
+                        message dono surton me chala jata hai aur parent ke log-in
+                        karte hi usay nazar aa jata hai — bhejne par koi rok nahi. */}
+                    {activeChat.isParent && (
+                    <Tooltip text={appUsers.has(activeChat.userId)
+                      ? `${activeChat.name} is logged into the School Mentor app — they will get a notification.`
+                      : `${activeChat.name} has not logged into the app yet — no notification will be delivered, but the message will be waiting for them.`}>
+                      <span className={`cm-app-chip${appUsers.has(activeChat.userId) ? ' on' : ''}`}>
+                        <i className={`fa-solid ${appUsers.has(activeChat.userId) ? 'fa-mobile-screen-button' : 'fa-bell-slash'}`} />
+                        {appUsers.has(activeChat.userId) ? 'App active' : 'Not on app'}
+                      </span>
+                    </Tooltip>
+                    )}
                     <div className="cm-conv-hdr-badge">{activeChat.group || '—'}</div>
                     <Tooltip text="Search in this conversation">
                       <button
@@ -523,18 +758,22 @@ export default function Chat({ toast = () => {}, onUnreadChange }) {
 
                   {/* messages */}
                   <div className="cm-conv-msgs" ref={msgsRef}>
-                    {activeMsgs.map((m, i) => {
+                    {convLoading && !activeMsgs.length ? (
+                      <div className="cm-conv-note"><i className="fa-solid fa-spinner fa-spin" /> Loading conversation…</div>
+                    ) : !activeMsgs.length ? (
+                      <div className="cm-conv-note">No messages yet — say salaam 👋</div>
+                    ) : activeMsgs.map((m, i) => {
                       const prev = activeMsgs[i - 1];
                       const showSep = m.date && (!prev || prev.date !== m.date);
                       const isMatch = convMatches.includes(i);
                       const isActiveMatch = isMatch && convMatches[convIdx] === i;
                       return (
-                        <React.Fragment key={i}>
+                        <React.Fragment key={m.id ?? i}>
                           {showSep && <div className="cm-msg-date-sep">{m.date}</div>}
                           <MessageBubble
                             m={m}
-                            convName={activeName}
-                            toast={toast}
+                            status={tickStatus(m)}
+                            convName={activeChat.name}
                             matchClass={isActiveMatch ? 'cm-msg-search-active' : isMatch ? 'cm-msg-search-match' : ''}
                             innerRef={el => { if (isMatch) matchRefs.current[i] = el; }}
                           />
@@ -562,27 +801,32 @@ export default function Chat({ toast = () => {}, onUnreadChange }) {
                       <div className="cm-conv-input-row">
                         <div className="cm-attach-zone" style={{ position: 'relative' }}>
                           <Tooltip text="Attach image, video or document">
-                            <button className="cm-attach-trigger" onClick={() => setAttachOpen(o => !o)}>
+                            <button className="cm-attach-trigger" onClick={() => setAttachOpen(o => !o)} disabled={sending}>
                               <i className="fa-solid fa-paperclip" />
                             </button>
                           </Tooltip>
                           {attachOpen && (
                             <div className="cm-attach-popup">
-                              <div className="cm-attach-popup-item" onClick={() => insertAttachment('image')}><i className="fa-solid fa-image" style={{ color: 'var(--brand-primary)' }} /> Image</div>
-                              <div className="cm-attach-popup-item" onClick={() => insertAttachment('video')}><i className="fa-solid fa-video" style={{ color: 'var(--brand-primary)' }} /> Video</div>
-                              <div className="cm-attach-popup-item" onClick={() => insertAttachment('doc')}><i className="fa-solid fa-file-pdf" style={{ color: '#DC2626' }} /> PDF / Document</div>
+                              <div className="cm-attach-popup-item" onClick={() => pickAttachment('image')}><i className="fa-solid fa-image" style={{ color: 'var(--brand-primary)' }} /> Image</div>
+                              <div className="cm-attach-popup-item" onClick={() => pickAttachment('video')}><i className="fa-solid fa-video" style={{ color: 'var(--brand-primary)' }} /> Video</div>
+                              <div className="cm-attach-popup-item" onClick={() => pickAttachment('doc')}><i className="fa-solid fa-file-pdf" style={{ color: '#DC2626' }} /> PDF / Document</div>
                             </div>
                           )}
                         </div>
                         <input
                           className="cm-conv-txt-input"
-                          placeholder="Type a message..."
+                          placeholder={sending ? 'Sending…' : 'Type a message...'}
                           value={draft}
+                          disabled={sending}
                           onChange={e => setDraft(e.target.value)}
-                          onKeyDown={e => { if (e.key === 'Enter') sendText(); }}
+                          onKeyDown={e => { if (e.key === 'Enter' && !sending) sendText(); }}
                         />
-                        <Tooltip text="Record a voice message"><button className="cm-conv-mic-btn" onClick={startRecording}><i className="fa-solid fa-microphone" /></button></Tooltip>
-                        <Tooltip text="Send message"><button className="cm-conv-send-btn" onClick={sendText}><i className="fa-solid fa-paper-plane" /></button></Tooltip>
+                        <Tooltip text="Record a voice message"><button className="cm-conv-mic-btn" onClick={startRecording} disabled={sending}><i className="fa-solid fa-microphone" /></button></Tooltip>
+                        <Tooltip text="Send message">
+                          <button className="cm-conv-send-btn" onClick={sendText} disabled={sending || !draft.trim()}>
+                            <i className={`fa-solid ${sending ? 'fa-spinner fa-spin' : 'fa-paper-plane'}`} />
+                          </button>
+                        </Tooltip>
                       </div>
                     </div>
                   )}
@@ -595,6 +839,9 @@ export default function Chat({ toast = () => {}, onUnreadChange }) {
 
       {ncOpen && (
         <NewChatModal
+          me={me}
+          branchId={branchId}
+          appUsers={appUsers}
           onClose={() => setNcOpen(false)}
           onStartChat={startChatWith}
           toast={toast}
@@ -611,63 +858,54 @@ export default function Chat({ toast = () => {}, onUnreadChange }) {
   );
 }
 
+/* ── Avatar: API ki tasveer, na chale to initials ──
+   Chat ki pictures {host}/APIBeta/Img/Image/{id} par hoti hain aur har branch
+   par mojood nahi hotin — is liye load fail hone par chupke se initials. */
+function Avatar({ name, src }) {
+  const [broken, setBroken] = useState(false);
+  useEffect(() => { setBroken(false); }, [src]);
+  if (!src || broken) return <>{ini(name)}</>;
+  return <img className="cm-avatar-img" src={src} alt="" onError={() => setBroken(true)} />;
+}
+
 /* ── Message bubble ── */
-function MessageBubble({ m, convName, toast, matchClass, innerRef }) {
+function MessageBubble({ m, status, convName, matchClass, innerRef }) {
   const isSent = m.type === 'sent';
-  const tick = isSent ? <i className="fa-solid fa-check-double" style={{ color: 'var(--brand-primary)', fontSize: 9 }} /> : null;
+  /* WhatsApp jaise ticks: ja raha hai → ek grey, pahunch gaya → do grey,
+     contact ne dekh liya → do neelay. */
+  const tick = !isSent ? null
+    : status === 'sending'
+      ? <i className="fa-solid fa-check cm-tick" title="Sending…" aria-label="Sending" />
+      : (
+        <i
+          className={`fa-solid fa-check-double cm-tick${status === 'seen' ? ' seen' : ''}`}
+          title={status === 'seen' ? 'Seen' : 'Delivered'}
+          aria-label={status === 'seen' ? 'Seen' : 'Delivered'}
+        />
+      );
   const meta = <div className="cm-msg-meta">{m.time || ''} {tick}</div>;
+  const caption = m.attach && m.text ? <div className="cm-attach-caption">{m.text}</div> : null;
 
   let body;
   if (!m.attach) {
     body = <div className="cm-bubble">{m.text}</div>;
   } else if (m.attach === 'voice') {
-    const bars = [14, 22, 10, 28, 18, 32, 12, 26, 16, 30, 10, 24, 20, 16, 28];
-    body = (
-      <div className="cm-attach-voice" onClick={() => toast('Playing voice message (demo)', 'info')}>
-        <div className="cm-attach-voice-btn"><i className="fa-solid fa-play" /></div>
-        <div className="cm-attach-waveform">{bars.map((h, i) => <span key={i} style={{ height: h }} />)}</div>
-        <div className="cm-attach-voice-dur">{m.dur}</div>
-      </div>
-    );
+    body = <MediaAttachment kind="voice" m={m} caption={caption} />;
   } else if (m.attach === 'image') {
-    body = (
-      <div className="cm-attach-image" onClick={() => toast('Opening image (demo)', 'info')}>
-        <div className="cm-attach-image-inner"><i className="fa-solid fa-image" /><span>{m.label || 'Photo'}</span></div>
-        <div className="cm-attach-image-overlay"><i className="fa-solid fa-expand" /></div>
-      </div>
-    );
-  } else if (m.attach === 'gallery') {
-    const imgs = m.images || [];
-    const extra = imgs.length - 3;
-    body = (
-      <div className="cm-img-gallery" onClick={() => toast(`Opening gallery — ${imgs.length} photos (demo)`, 'info')}>
-        {imgs.slice(0, 3).map((lbl, i) => (
-          <div className="cm-img-gallery-cell" key={i}>
-            <i className="fa-solid fa-image" />
-            {i === 2 && extra > 0 && <div className="cm-img-gallery-more">+{extra + 1}</div>}
-          </div>
-        ))}
-      </div>
-    );
+    body = <ImageAttachment m={m} caption={caption} />;
   } else if (m.attach === 'video') {
+    body = <MediaAttachment kind="video" m={m} caption={caption} />;
+  } else {
+    /* Poori tile hi file kholti hai, is liye alag download icon nahi — wo sirf
+       ek doosra "kholne" ka nishan tha jo bhram paida karta tha. */
     body = (
-      <div className="cm-attach-video" onClick={() => toast('Playing video (demo)', 'info')}>
-        <div className="cm-attach-video-inner">
-          <div className="cm-attach-video-play"><i className="fa-solid fa-play" /></div>
-          <span>{m.label || 'Video'}</span>
-        </div>
-      </div>
-    );
-  } else if (m.attach === 'doc') {
-    body = (
-      <div className="cm-attach-doc" onClick={() => toast(`Downloading ${m.docName} (demo)`, 'info')}>
+      <a className="cm-attach-doc" href={m.url} target="_blank" rel="noreferrer">
         <div className="cm-attach-doc-icon"><i className="fa-solid fa-file-pdf" /></div>
         <div className="cm-attach-doc-info">
           <div className="cm-attach-doc-name">{m.docName}</div>
-          <div className="cm-attach-doc-size">{m.docSize || ''}</div>
+          <div className="cm-attach-doc-size">{m.text || 'Tap to open'}</div>
         </div>
-        <i className="fa-solid fa-download" style={{ color: 'var(--brand-primary)', fontSize: 13 }} />
-      </div>
+      </a>
     );
   }
 
@@ -682,8 +920,61 @@ function MessageBubble({ m, convName, toast, matchClass, innerRef }) {
   );
 }
 
-/* ── New Chat modal ── */
-function NewChatModal({ onClose, onStartChat, toast }) {
+/* Video / voice note — file na mile to khaali kaala player dikhane ke bajaye
+   saaf saaf bata do. (Abhi backend par /APIBeta/Img/ChatAttachments/… ka koi
+   route hai hi nahi, is liye har attachment yahin girta hai.) */
+function MediaAttachment({ kind, m, caption }) {
+  const [broken, setBroken] = useState(false);
+  const isVideo = kind === 'video';
+  useEffect(() => { setBroken(false); }, [m.url]);
+
+  if (broken) {
+    return (
+      <div className={isVideo ? 'cm-attach-video-real' : 'cm-attach-voice-real'}>
+        <div className="cm-attach-missing">
+          <i className={`fa-solid ${isVideo ? 'fa-video-slash' : 'fa-microphone-slash'}`} />
+          <span>{m.text || (isVideo ? 'Video unavailable' : 'Voice message unavailable')}</span>
+        </div>
+        {m.text ? null : caption}
+      </div>
+    );
+  }
+  return (
+    <div className={isVideo ? 'cm-attach-video-real' : 'cm-attach-voice-real'}>
+      {isVideo
+        /* eslint-disable-next-line jsx-a11y/media-has-caption */
+        ? <video className="cm-attach-videoel" controls preload="metadata" src={m.url} onError={() => setBroken(true)} />
+        /* eslint-disable-next-line jsx-a11y/media-has-caption */
+        : <audio className="cm-attach-audio" controls preload="metadata" src={m.url} onError={() => setBroken(true)} />}
+      {caption}
+    </div>
+  );
+}
+
+/* Tasveer khud dikhao; file na mile to naam wali placeholder tile. */
+function ImageAttachment({ m, caption }) {
+  const [broken, setBroken] = useState(false);
+  if (broken) {
+    return (
+      <div className="cm-attach-image">
+        <div className="cm-attach-image-inner"><i className="fa-solid fa-image" /><span>{m.text || 'Photo unavailable'}</span></div>
+      </div>
+    );
+  }
+  return (
+    <a className="cm-attach-image" href={m.url} target="_blank" rel="noreferrer">
+      <img className="cm-attach-image-el" src={m.url} alt={m.text || 'Attachment'} onError={() => setBroken(true)} />
+      <div className="cm-attach-image-overlay"><i className="fa-solid fa-expand" /></div>
+      {caption}
+    </a>
+  );
+}
+
+/* ── New Chat modal — poori directory get-contact-list se ── */
+function NewChatModal({ me, branchId, appUsers, onClose, onStartChat, toast }) {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
   const [group, setGroup] = useState(null);   // selected class id, or null = class list
   const [q, setQ] = useState('');
 
@@ -694,35 +985,91 @@ function NewChatModal({ onClose, onStartChat, toast }) {
     return () => { document.removeEventListener('keydown', onKey); document.body.style.overflow = ''; };
   }, [onClose]);
 
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const data = await fetchContactList(branchId, me);
+        if (alive) setRows(data.filter(r => r.userId !== me));
+      } catch (err) {
+        if (alive) setError(err.message || 'Could not load the contact list');
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, [branchId, me]);
+
+  /* Class-wise grouping — staff apne alag khane me. */
+  const groups = useMemo(() => {
+    const map = new Map();
+    rows.forEach(r => {
+      const key = r.status === 'Staff' ? 'Staff' : (r.group || 'Others');
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(r);
+    });
+    return [...map.entries()]
+      .map(([name, members]) => ({ id: name, name, members, count: members.length }))
+      .sort((a, b) => (a.name === 'Staff' ? -1 : b.name === 'Staff' ? 1
+        : a.name.localeCompare(b.name, undefined, { numeric: true })));
+  }, [rows]);
+
   const query = q.trim().toLowerCase();
-  const groupObj = CLASS_GROUPS.find(g => g.id === group);
+  const groupObj = groups.find(g => g.id === group) || null;
 
   /* search across all members + class names */
   const searchResults = useMemo(() => {
     if (!query) return null;
     const contacts = [];
-    CLASS_GROUPS.forEach(g => {
-      (GROUP_MEMBERS[g.id] || []).forEach(m => {
+    groups.forEach(g => {
+      g.members.forEach(m => {
         if (m.name.toLowerCase().includes(query)
           || (m.father || '').toLowerCase().includes(query)
           || (m.rel || '').toLowerCase().includes(query)
+          || (m.regNo || '').toLowerCase().includes(query)
           || g.name.toLowerCase().includes(query)) {
-          contacts.push({ ...m, groupName: g.name });
+          contacts.push(m);
         }
       });
     });
-    const classes = CLASS_GROUPS.filter(g => g.name.toLowerCase().includes(query));
-    return { contacts, classes };
-  }, [query]);
+    const classes = groups.filter(g => g.name.toLowerCase().includes(query));
+    return { contacts: contacts.slice(0, 60), classes };
+  }, [query, groups]);
 
-  const handleMember = (m, groupName) => {
-    if (!m.appUser) { toast(`${m.name} has not logged into the School Mentor app yet.`, 'warning'); return; }
-    onStartChat(m, groupName);
+  /* FCM ka nishan sirf PARENTS par — staff rows aam rehti hain. */
+  const appOk = (m) => !m.isParent || appUsers.has(m.userId);
+
+  const handleMember = (m) => {
+    /* App par logged in na ho to bhi message ja sakta hai — wo login karte hi
+       dekh lega. Sirf bata dete hain ke abhi notification nahi pahunchegi. */
+    if (m.isParent && !appUsers.has(m.userId)) {
+      toast(`${m.name} has not logged into the School Mentor app yet — the message will be waiting for them.`, 'warning');
+    }
+    onStartChat(m);
   };
 
-  const sub = searchResults ? 'Search results'
+  const sub = loading ? 'Loading contacts…'
+    : searchResults ? 'Search results'
     : groupObj ? `${groupObj.name} — select a contact`
     : 'Select a class to browse contacts';
+
+  const memberRow = (m, i) => (
+    <div
+      key={`${m.userId}-${m.regNo || i}`}
+      className={`cm-nc-member-row ${appOk(m) ? 'on' : 'off'}`}
+      title={appOk(m) ? '' : 'Not logged into the app yet — the message will be waiting for them'}
+      onClick={() => handleMember(m)}
+    >
+      <div className={`cm-nc-member-av ${appOk(m) ? 'on' : 'off'}`}>{ini(m.name)}</div>
+      <div className="cm-nc-member-info">
+        <div className="cm-nc-member-name">{highlight(m.name, q)}</div>
+        <div className="cm-nc-member-rel">
+          {highlight(m.rel || '—', q)} · <span style={{ fontSize: 10, color: 'var(--brand-primary)', fontWeight: 700 }}>{highlight(m.group, q)}</span>
+        </div>
+      </div>
+      <i className={`cm-nc-member-icon fa-solid ${appOk(m) ? 'fa-comment-dots on' : 'fa-bell-slash off'}`} />
+    </div>
+  );
 
   return createPortal(
     <div className="modal-overlay open" onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
@@ -752,7 +1099,18 @@ function NewChatModal({ onClose, onStartChat, toast }) {
         </div>
 
         <div className="modal-body" style={{ padding: 0, maxHeight: '58vh', overflowY: 'auto' }}>
-          {searchResults ? (
+          {loading ? (
+            <div className="cm-nc-empty">
+              <i className="fa-solid fa-spinner fa-spin" />
+              <div className="cm-nc-empty-title">Loading contacts…</div>
+            </div>
+          ) : error ? (
+            <div className="cm-nc-empty">
+              <i className="fa-solid fa-triangle-exclamation" />
+              <div className="cm-nc-empty-title">Could not load contacts</div>
+              <div className="cm-nc-empty-sub">{error}</div>
+            </div>
+          ) : searchResults ? (
             (searchResults.contacts.length === 0 && searchResults.classes.length === 0) ? (
               <div className="cm-nc-empty">
                 <i className="fa-solid fa-user-slash" />
@@ -775,16 +1133,7 @@ function NewChatModal({ onClose, onStartChat, toast }) {
                 {searchResults.contacts.length > 0 && (
                   <>
                     <div className="cm-nc-group-label">Contacts</div>
-                    {searchResults.contacts.map((m, i) => (
-                      <div key={`${m.name}-${i}`} className={`cm-nc-member-row ${m.appUser ? 'on' : 'off'}`} onClick={() => handleMember(m, m.groupName)}>
-                        <div className={`cm-nc-member-av ${m.appUser ? 'on' : 'off'}`}>{ini(m.name)}</div>
-                        <div className="cm-nc-member-info">
-                          <div className="cm-nc-member-name">{highlight(m.name, q)}</div>
-                          <div className="cm-nc-member-rel">{highlight(m.rel, q)} · <span style={{ fontSize: 10, color: 'var(--brand-primary)', fontWeight: 700 }}>{highlight(m.groupName, q)}</span></div>
-                        </div>
-                        <i className={`cm-nc-member-icon fa-solid ${m.appUser ? 'fa-comment-dots on' : 'fa-ban off'}`} />
-                      </div>
-                    ))}
+                    {searchResults.contacts.map(memberRow)}
                   </>
                 )}
               </div>
@@ -793,15 +1142,22 @@ function NewChatModal({ onClose, onStartChat, toast }) {
             /* Step 1: class list */
             <>
               <div style={{ padding: '10px 16px 6px', fontSize: 10.5, fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.6px' }}>Choose a Class or Group</div>
-              <div style={{ padding: '0 12px 14px', display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 8 }}>
-                {CLASS_GROUPS.map(g => (
-                  <div key={g.id} className="cm-nc-class-card" onClick={() => setGroup(g.id)}>
-                    <div className="cm-nc-class-count">{g.count}</div>
-                    <div className="cm-nc-class-name">{g.name}</div>
-                    <div className="cm-nc-class-sub">{g.count} member{g.count !== 1 ? 's' : ''}</div>
-                  </div>
-                ))}
-              </div>
+              {groups.length === 0 ? (
+                <div className="cm-nc-empty">
+                  <i className="fa-solid fa-user-slash" />
+                  <div className="cm-nc-empty-title">No contacts in this branch</div>
+                </div>
+              ) : (
+                <div style={{ padding: '0 12px 14px', display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 8 }}>
+                  {groups.map(g => (
+                    <div key={g.id} className="cm-nc-class-card" onClick={() => setGroup(g.id)}>
+                      <div className="cm-nc-class-count">{g.count}</div>
+                      <div className="cm-nc-class-name">{g.name}</div>
+                      <div className="cm-nc-class-sub">{g.count} member{g.count !== 1 ? 's' : ''}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </>
           ) : (
             /* Step 2: member list */
@@ -810,21 +1166,18 @@ function NewChatModal({ onClose, onStartChat, toast }) {
                 <button className="cm-nc-back-btn" onClick={() => setGroup(null)}><i className="fa-solid fa-arrow-left" /> Back</button>
                 <span style={{ fontSize: 11, fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.5px' }}>{groupObj.name}</span>
               </div>
-              <div style={{ display: 'flex', gap: 12, padding: '2px 14px 8px', fontSize: 10.5, color: 'var(--text-muted)', fontWeight: 600 }}>
-                <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}><span style={{ width: 10, height: 10, borderRadius: 3, background: 'var(--brand-light)', border: '1.5px solid var(--brand-primary)', display: 'inline-block' }} /> App active — can chat</span>
-                <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}><span style={{ width: 10, height: 10, borderRadius: 3, background: '#f1f5f9', border: '1.5px solid #CBD5E1', display: 'inline-block' }} /> Not logged in</span>
-              </div>
+              {/* Ye nishan sirf parents par lagta hai, is liye legend bhi tabhi
+                  jab is group me parents hon (staff ke khane me nahi). */}
+              {groupObj.members.some(m => m.isParent) && (
+                <div style={{ display: 'flex', gap: 12, padding: '2px 14px 8px', fontSize: 10.5, color: 'var(--text-muted)', fontWeight: 600 }}>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}><span style={{ width: 10, height: 10, borderRadius: 3, background: 'var(--brand-light)', border: '1.5px solid var(--brand-primary)', display: 'inline-block' }} /> App active</span>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}><span style={{ width: 10, height: 10, borderRadius: 3, background: '#f1f5f9', border: '1.5px solid #CBD5E1', display: 'inline-block' }} /> Not on app — message still goes</span>
+                </div>
+              )}
               <div style={{ padding: '0 12px 14px', display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {[...(GROUP_MEMBERS[group] || [])].sort((a, b) => b.appUser - a.appUser).map((m, i) => (
-                  <div key={`${m.name}-${i}`} className={`cm-nc-member-row ${m.appUser ? 'on' : 'off'}`} onClick={() => handleMember(m, groupObj.name)}>
-                    <div className={`cm-nc-member-av ${m.appUser ? 'on' : 'off'}`}>{ini(m.name)}</div>
-                    <div className="cm-nc-member-info">
-                      <div className="cm-nc-member-name">{m.name}</div>
-                      <div className="cm-nc-member-rel">{m.rel}</div>
-                    </div>
-                    <i className={`cm-nc-member-icon fa-solid ${m.appUser ? 'fa-comment-dots on' : 'fa-ban off'}`} />
-                  </div>
-                ))}
+                {[...groupObj.members]
+                  .sort((a, b) => (appOk(b) - appOk(a)) || a.name.localeCompare(b.name))
+                  .map(memberRow)}
               </div>
             </>
           )}
@@ -927,6 +1280,10 @@ const CHAT_CSS = `
 .cm-conv-hdr-name { font-size:14px; font-weight:800; color:var(--text-primary); line-height:1.2; }
 .cm-conv-hdr-sub { font-size:11px; color:var(--text-muted); margin-top:1px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .cm-conv-hdr-badge { background:var(--brand-light); color:var(--brand-primary); border:1px solid var(--border-light); border-radius:var(--radius-full); padding:3px 11px; font-size:11px; font-weight:700; flex-shrink:0; }
+/* app par logged in hai ya nahi (FCM token) */
+.cm-app-chip { display:inline-flex; align-items:center; gap:5px; border-radius:var(--radius-full); padding:3px 10px; font-size:10.5px; font-weight:700; flex-shrink:0; white-space:nowrap; background:var(--bg-muted); color:var(--text-muted); border:1px solid var(--border-light); }
+.cm-app-chip.on { background:rgba(34,197,94,.1); color:#15803D; border-color:rgba(34,197,94,.35); }
+.cm-app-chip i { font-size:10px; }
 .cm-conv-hdr-search { width:30px; height:30px; border-radius:var(--radius-md); border:1.5px solid var(--border-light); background:transparent; color:var(--text-muted); display:flex; align-items:center; justify-content:center; cursor:pointer; font-size:12px; transition:var(--tr); flex-shrink:0; }
 .cm-conv-hdr-search:hover, .cm-conv-hdr-search.active { border-color:var(--brand-primary); color:var(--brand-primary); background:var(--brand-light); }
 
@@ -954,7 +1311,9 @@ const CHAT_CSS = `
 .cm-msg-date-sep { align-self:center; font-size:10.5px; font-weight:700; color:var(--brand-primary); background:var(--brand-light); border:1px solid var(--border-light); border-radius:var(--radius-full); padding:3px 14px; margin:4px 0; }
 
 .cm-msg-recv { align-self:flex-start; max-width:68%; display:flex; gap:8px; }
-.cm-msg-recv-av { width:28px; height:28px; border-radius:50%; background:linear-gradient(135deg,var(--brand-primary),var(--brand-deeper,#1E3A8A)); color:#fff; font-size:9px; font-weight:800; display:flex; align-items:center; justify-content:center; flex-shrink:0; margin-top:auto; }
+/* Avatar bubble ke UPAR wale kinare par — pehle \`margin-top:auto\` tha jo usay
+   poori row ke neechay (timestamp ke barabar) dhakel deta tha. */
+.cm-msg-recv-av { width:28px; height:28px; border-radius:50%; background:linear-gradient(135deg,var(--brand-primary),var(--brand-deeper,#1E3A8A)); color:#fff; font-size:9px; font-weight:800; display:flex; align-items:center; justify-content:center; flex-shrink:0; align-self:flex-start; }
 .cm-msg-recv .cm-bubble { background:#F0F4FF; border:1px solid #C7D7FD; color:var(--text-primary); padding:9px 14px; border-radius:14px 14px 14px 4px; font-size:13px; line-height:1.55; box-shadow:0 1px 4px rgba(30,58,138,.1); }
 [data-theme="dark"] .cm-msg-recv .cm-bubble { background:#131F38; border-color:#1C2E50; color:#E2E8F8; }
 .cm-msg-sent { align-self:flex-end; max-width:68%; }
@@ -979,6 +1338,23 @@ const CHAT_CSS = `
 .cm-attach-image-overlay { position:absolute; inset:0; background:rgba(0,0,0,.28); display:flex; align-items:center; justify-content:center; opacity:0; transition:var(--tr); }
 .cm-attach-image:hover .cm-attach-image-overlay { opacity:1; }
 .cm-attach-image-overlay i { color:#fff; font-size:20px; }
+
+/* live media — asli file API se aati hai (image / video / voice note) */
+.cm-attach-image { display:block; text-decoration:none; }
+.cm-attach-image-el { display:block; width:100%; max-height:220px; object-fit:cover; }
+.cm-attach-video-real, .cm-attach-voice-real { max-width:240px; }
+.cm-attach-videoel { display:block; width:100%; max-height:220px; border-radius:10px; background:#000; border:1px solid var(--border-light); }
+.cm-attach-audio { display:block; width:240px; height:38px; }
+.cm-attach-caption { font-size:12px; color:var(--text-primary); padding:5px 2px 0; line-height:1.45; word-break:break-word; }
+.cm-attach-missing { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px; min-width:170px; padding:22px 14px; border-radius:10px; border:1px dashed var(--border-med); background:var(--bg-muted); color:var(--text-muted); font-size:11.5px; font-weight:600; text-align:center; }
+.cm-attach-missing i { font-size:20px; opacity:.7; }
+.cm-attach-doc { text-decoration:none; }
+.cm-conv-note { margin:auto; padding:24px 12px; text-align:center; font-size:12.5px; color:var(--text-muted); font-weight:600; }
+.cm-avatar-img { width:100%; height:100%; border-radius:50%; object-fit:cover; display:block; }
+
+/* delivery ticks — grey (pahunch gaya) se blue (dekh liya) */
+.cm-tick { font-size:9px; color:#94A3B8; margin-left:1px; vertical-align:baseline; transition:color .18s ease; }
+.cm-tick.seen { color:#2563EB; }
 
 /* gallery */
 .cm-img-gallery { display:grid; grid-template-columns:repeat(3,80px); gap:4px; border-radius:10px; overflow:hidden; max-width:248px; cursor:pointer; }
@@ -1046,7 +1422,10 @@ const CHAT_CSS = `
 .cm-nc-back-btn:hover { box-shadow:var(--shadow-xs); }
 .cm-nc-member-row { display:flex; align-items:center; gap:10px; padding:9px 12px; border-radius:var(--radius-md); border:1.5px solid var(--border-light); transition:var(--tr); background:var(--bg-muted); }
 .cm-nc-member-row.on { cursor:pointer; }
-.cm-nc-member-row.off { opacity:.55; cursor:not-allowed; }
+/* "off" = parent abhi app par nahi. Chat phir bhi ho sakti hai (message intezaar
+   karta hai), is liye row band nahi — bas halki si dhundli, taake farq dikhe. */
+.cm-nc-member-row.off { opacity:.7; cursor:pointer; }
+.cm-nc-member-row.off:hover { opacity:1; border-color:var(--border-med); }
 .cm-nc-member-row.on:hover { border-color:var(--brand-primary); background:var(--brand-light); }
 .cm-nc-member-av { width:34px; height:34px; border-radius:50%; color:#fff; font-size:11px; font-weight:800; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
 .cm-nc-member-av.on { background:linear-gradient(135deg,var(--brand-primary),var(--brand-deeper,#1E3A8A)); }

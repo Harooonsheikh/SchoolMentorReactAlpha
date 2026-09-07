@@ -4724,7 +4724,7 @@ const ACADEMICS_CSS = `
 .ts-input:focus { border-color:var(--brand-primary); box-shadow:0 0 0 3px rgba(30,58,138,.09); }
 .ts-select { cursor:pointer; appearance:none; }
 .ts-hint { font-size:10.5px; color:var(--text-muted); display:flex; align-items:center; gap:5px; }
-.ts-hint i { font-size:10px; color:var(--info); }
+.ts-   i { font-size:10px; color:var(--info); }
 
 .ts-btn-primary {
   display:inline-flex; align-items:center; gap:8px;
