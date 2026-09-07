@@ -195,9 +195,15 @@ export default function SchoolTab({ schoolInfo, setSchoolInfo, onSave, onSaveDra
     // });
 
       setSaving(false);
-      if (res.ok) {
-        showToast('Branch updated successfully', 'success');
-        onSave('success');
+   if (res.ok) {
+  showToast('Branch updated successfully', 'success');
+
+  await getBranchdata();
+
+  setLogoFile(null);
+
+  onSave('success');
+
       } else {
         showToast(data.message || 'Update failed', 'error');
       }
@@ -249,8 +255,26 @@ export default function SchoolTab({ schoolInfo, setSchoolInfo, onSave, onSaveDra
       const json     = await res.json();
       const d        = json.data ?? {};
       setSchoolInfo(d);
-      setLogoPreview(d.branchLogo || d.logo || '');
-      // seed the refs so the province/city effects don't re-fire on first render
+const savedLogo = d.branchLogo || d.logo || '';
+
+if (savedLogo) {
+  // Already a complete URL or base64 image
+  if (
+    savedLogo.startsWith('http://') ||
+    savedLogo.startsWith('https://') ||
+    savedLogo.startsWith('data:')
+  ) {
+    setLogoPreview(savedLogo);
+  } else {
+    // Backend returned a relative image path
+    setLogoPreview(buildUrl(
+      savedLogo.startsWith('/') ? savedLogo : `/${savedLogo}`
+    ));
+  }
+} else {
+  setLogoPreview('');
+}      // seed the refs so the province/city effects don't re-fire on first render
+
       prevCountryID.current  = d.countryID  ?? null;
       prevProvinceID.current = d.provinceID ?? null;
       // load dropdowns for the returned IDs
