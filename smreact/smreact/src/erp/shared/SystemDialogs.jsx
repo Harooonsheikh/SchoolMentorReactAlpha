@@ -71,7 +71,7 @@ export default function SystemDialogs({ toast = () => {} }) {
       if (isOffline()) { goOffline(); return; }
       setShowSlow(true);
       if (slowTimerRef.current) clearTimeout(slowTimerRef.current);
-      slowTimerRef.current = setTimeout(() => setShowSlow(false), 5000);
+      slowTimerRef.current = setTimeout(() => setShowSlow(false), 4000);
     };
     /* 500 ab BLOCKING modal nahi — sirf ek non-blocking toast (app chalti rahe).
        Baar-baar 500 par spam na ho, is liye 8s ka debounce. */

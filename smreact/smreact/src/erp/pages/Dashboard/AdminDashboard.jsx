@@ -148,17 +148,21 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
   const plTrend = Array.isArray(D.ProfitLossTrend) ? D.ProfitLossTrend : [];
   const pctOf = (n, d) => (Number(d) > 0 ? Math.round((Number(n) / Number(d)) * 100) : 0);
 
-  /* Fee ring/progress percentages — real data se compute. */
-  const feePaidPct = pctOf(fee.FeeReceived, fee.CurrentMonthFeePosition);
+  /* Fee Analytics formulas (frontend):
+     Net Receivable = Current Month Fee + Previous Dues
+     Pending Fee    = Net Receivable − Fee Received */
+  const previousDuesVal = Number(fee.PreviousDues) || 0;
+  const studentsWithDuesVal = fee.StudentsPending || 0;
+  const currentMonthFeeVal = Number(fee.CurrentMonthFeePosition) || 0;
+  const feeReceivedVal = Number(fee.FeeReceived) || 0;
+  const totalNetReceivableVal = currentMonthFeeVal + previousDuesVal;
+  const pendingFeeVal = Math.max(0, totalNetReceivableVal - feeReceivedVal);
+
+  /* Fee ring/progress percentages — Net Receivable ke against. */
+  const feePaidPct = pctOf(feeReceivedVal, totalNetReceivableVal);
   const feePendingPct = 100 - feePaidPct;
 
-  /* Previous Dues / Students-with-Dues / Total Net Receivable — sab SEEDHA
-     get-dashboard ke FeeAnalytics se (koi extra API nahi). Backend jab in fields
-     ko sahi bharega (abhi PreviousDues 0 aata hai) to yahan khud aa jayega. */
-  const previousDuesVal = fee.PreviousDues || 0;
-  const studentsWithDuesVal = fee.StudentsPending || 0;
-  const totalNetReceivableVal = fee.TotalNetReceivable;
-
+  
   /* Teachers / Parents mobile-app adoption cards.
      Total ab REAL active counts se (Kpi.ActiveStaff / Kpi.ActiveStudents) — wahi jo
      hero KPIs aur report dikhate hain — taake sab consistent rahe (pehle AppAdoption
@@ -632,7 +636,7 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
                     </div>
                     <div className="fc-title fc-title--red">Pending Fee</div>
                   </div>
-                  <div className="fc-amount fc-amount--red fa-amount--xl">{fmtPKR(fee.FeePending)}</div>
+                  <div className="fc-amount fc-amount--red fa-amount--xl">{fmtPKR(pendingFeeVal)}</div>
                   <div className="fa-status-meta">
                     <i className="fa-solid fa-user-clock" aria-hidden="true"></i>
                     <span>Students Pending:&nbsp;</span>

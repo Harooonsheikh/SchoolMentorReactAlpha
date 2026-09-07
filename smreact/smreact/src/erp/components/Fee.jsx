@@ -491,6 +491,7 @@ function TransportFeeAssignment({ toast }) {
   /* ── Smart search (mirrors Fee Challans) ── */
   const [searchQ, setSearchQ] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
+  const [highlightKey, setHighlightKey] = useState(null);
   const searchAnchorRef = useRef(null);
   useEffect(() => {
     if (!searchOpen) return undefined;
@@ -524,19 +525,17 @@ function TransportFeeAssignment({ toast }) {
     return out.slice(0, 8);
   }, [searchQ, classes, transportMap])();
 
-  const clearSearch = () => { setSearchQ(''); setSearchOpen(false); };
+  const clearSearch = () => { setSearchQ(''); setSearchOpen(false); setHighlightKey(null); };
 
   const focusOnStudent = (c, s) => {
+    const key = `${c.key}-${s.reg}`;
     setOpenKey(c.key);
-    clearSearch();
+    setSearchOpen(false);
+    setHighlightKey(key);
     toast('Jumped to student', 'info');
     setTimeout(() => {
-      const el = document.getElementById(`fee-trans-st-${c.key}-${s.reg}`);
-      if (el) {
-        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        el.classList.add('fee-st-flash');
-        setTimeout(() => el.classList.remove('fee-st-flash'), 1700);
-      }
+      const el = document.getElementById(`fee-trans-st-${key}`);
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }, 380);
   };
 
@@ -608,7 +607,7 @@ function TransportFeeAssignment({ toast }) {
                   <input
                     value={searchQ}
                     autoComplete="off"
-                    onChange={e => { setSearchQ(e.target.value); setSearchOpen(true); }}
+                    onChange={e => { const v = e.target.value; setSearchQ(v); setSearchOpen(true); if (!v.trim()) setHighlightKey(null); }}
                     onFocus={() => setSearchOpen(true)}
                     placeholder="Search by Name, Father Name or Registration Number"
                   />
@@ -736,7 +735,11 @@ function TransportFeeAssignment({ toast }) {
                         {students.length === 0 ? (
                           <tr><td colSpan="7" className="fee-stbl-empty">No students enrolled in this section.</td></tr>
                         ) : students.map((s, j) => (
-                          <tr key={s.reg || s.studentID || `${s.name}-${j}`} id={`fee-trans-st-${c.key}-${s.reg}`}>
+                          <tr
+                            key={s.reg || s.studentID || `${s.name}-${j}`}
+                            id={`fee-trans-st-${c.key}-${s.reg}`}
+                            className={highlightKey === `${c.key}-${s.reg}` ? 'fee-st-highlight' : undefined}
+                          >
                             <td className="fee-num">{j + 1}</td>
                             <td>{s.reg}</td>
                             <td><b>{s.name}</b></td>
@@ -1362,6 +1365,7 @@ function FamilyTreeChallansList({ toast }) {
   /* Smart search */
   const [searchQ, setSearchQ] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
+  const [highlightKey, setHighlightKey] = useState(null);
   const searchAnchorRef = useRef(null);
   useEffect(() => {
     if (!searchOpen) return undefined;
@@ -1526,6 +1530,7 @@ function FamilyTreeChallansList({ toast }) {
     setAppliedMonth(FEE_MONTHS[today.getMonth()]);
     setAppliedYear(String(today.getFullYear()));
     setSearchQ('');
+    setHighlightKey(null);
   };
 
   const genCountFor = (famKey, children) => (children || []).reduce(
@@ -1791,19 +1796,16 @@ function FamilyTreeChallansList({ toast }) {
     return list.filter(f => `${f.name} ${f.guardian}`.toLowerCase().includes(q)).slice(0, 8);
   }, [searchQ, list])();
 
-  const clearSearch = () => { setSearchQ(''); setSearchOpen(false); };
+  const clearSearch = () => { setSearchQ(''); setSearchOpen(false); setHighlightKey(null); };
 
   const focusOnFamily = (f) => {
     setOpenKey(f.key);
-    clearSearch();
+    setSearchOpen(false);
+    setHighlightKey(f.key);
     toast('Jumped to family', 'info');
     setTimeout(() => {
       const el = document.getElementById(`fam-row-${f.key}`);
-      if (el) {
-        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        el.classList.add('fee-st-flash');
-        setTimeout(() => el.classList.remove('fee-st-flash'), 1700);
-      }
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }, 380);
   };
 
@@ -1852,7 +1854,7 @@ function FamilyTreeChallansList({ toast }) {
                   <input
                     value={searchQ}
                     autoComplete="off"
-                    onChange={e => { setSearchQ(e.target.value); setSearchOpen(true); }}
+                    onChange={e => { const v = e.target.value; setSearchQ(v); setSearchOpen(true); if (!v.trim()) setHighlightKey(null); }}
                     onFocus={() => setSearchOpen(true)}
                     placeholder="Search by Family Name or Guardian"
                   />
@@ -1944,7 +1946,7 @@ function FamilyTreeChallansList({ toast }) {
           }, { fee: 0, transport: 0, discount: 0, dues: 0, advance: 0, fine: 0, payable: 0 });
           const total = sums.payable;
           return (
-            <div key={f.key} className="fee-rowwrap" id={`fam-row-${f.key}`}>
+            <div key={f.key} className={`fee-rowwrap${highlightKey === f.key ? ' fee-st-highlight' : ''}`} id={`fam-row-${f.key}`}>
               <div
                 className={`fee-row fee-family-row${isOpen ? ' open' : ''}`}
                 onClick={() => setOpenKey(isOpen ? null : f.key)}
@@ -2240,6 +2242,7 @@ function FeeChallansList({ toast }) {
   /* Smart search */
   const [searchQ, setSearchQ] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
+  const [highlightKey, setHighlightKey] = useState(null);
   const searchAnchorRef = useRef(null);
 
   /* Close on outside click (mousedown so it fires before a focus-blur race) */
@@ -2354,6 +2357,7 @@ function FeeChallansList({ toast }) {
     setAppliedMonth(FEE_MONTHS[today.getMonth()]);
     setAppliedYear(String(today.getFullYear()));
     setSearchQ('');
+    setHighlightKey(null);
   };
 
   /* Compute generated counts per class against the applied month */
@@ -2667,19 +2671,17 @@ function FeeChallansList({ toast }) {
   }, [searchQ, classes, studentsMap]);
   const matches = allMatches();
 
-  const clearSearch = () => { setSearchQ(''); setSearchOpen(false); };
+  const clearSearch = () => { setSearchQ(''); setSearchOpen(false); setHighlightKey(null); };
 
   const focusOnStudent = (c, s) => {
+    const key = `${c.key}-${s.reg}`;
     setOpenKey(c.key);
-    clearSearch();
+    setSearchOpen(false);
+    setHighlightKey(key);
     toast('Jumped to student', 'info');
     setTimeout(() => {
-      const el = document.getElementById(`fee-st-${c.key}-${s.reg}`);
-      if (el) {
-        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        el.classList.add('fee-st-flash');
-        setTimeout(() => el.classList.remove('fee-st-flash'), 1700);
-      }
+      const el = document.getElementById(`fee-st-${key}`);
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }, 380);
   };
 
@@ -2728,7 +2730,7 @@ function FeeChallansList({ toast }) {
                   <input
                     value={searchQ}
                     autoComplete="off"
-                    onChange={e => { setSearchQ(e.target.value); setSearchOpen(true); }}
+                    onChange={e => { const v = e.target.value; setSearchQ(v); setSearchOpen(true); if (!v.trim()) setHighlightKey(null); }}
                     onFocus={() => setSearchOpen(true)}
                     placeholder="Search by Name, Father Name or Registration Number"
                   />
@@ -2939,7 +2941,11 @@ function FeeChallansList({ toast }) {
                              hai) "incl. fine" note me dikhate hain. */
                           const billedFine = billedFineOf(rec) > 0 ? challanAccruedFine(rec, settings) : 0;
                           return (
-                            <tr key={s.reg} id={`fee-st-${c.key}-${s.reg}`}>
+                            <tr
+                              key={s.reg}
+                              id={`fee-st-${c.key}-${s.reg}`}
+                              className={highlightKey === `${c.key}-${s.reg}` ? 'fee-st-highlight' : undefined}
+                            >
                               <td className="fee-num">{j + 1}</td>
                               <td>
                                 <Tooltip text={'Std_ID: ' + s.studentID}>
@@ -3901,16 +3907,35 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
     (cfg.model.heads || []).forEach(h => {
       const fromPay = (cfg.payments || []).reduce((a, p) => a + (+(p.perHead?.[h.name]) || 0), 0);
       const paidSeed = cfg.challan ? Math.max(+chRecv[h.name] || 0, fromPay) : fromPay;
-      /* Old-dues head → default poora owed (Received full, Pending 0) — magar
-         input editable rehta hai, cashier ghata/badla sakta hai. */
-      if (!cfg.viewOnly && isOldDuesHead(h.name)) {
+      /* Modal khulte hi Received me POORA baqaya (After Discount + Prev) pre-fill —
+         Pending 0. Cashier edit kar sake; kam/zyada = Remaining/Advance Pending me. */
+      if (!cfg.viewOnly) {
         const owed = (+h.net || 0) + (useHeadPrevSeed ? (+h.prev || 0) : 0);
         seed[h.name] = Math.max(paidSeed, owed);
       } else {
         seed[h.name] = paidSeed;
       }
     });
+    /* Aggregate Previous Pending row (jab head-wise prev na ho) — bhi full prefill. */
+    if (!cfg.viewOnly && !useHeadPrevSeed && (+cfg.model.prev || 0) > 0) {
+      const prevKey = cfg.model.prevName || 'Previous Pending';
+      const prevPaidSeed = +cfg.model.prevPaid || 0;
+      seed[prevKey] = Math.max(prevPaidSeed, +cfg.model.prev || 0);
+    }
     setPerHeadInput(seed);
+    /* Fine bhi Pending se Received me auto-fill (editable). */
+    if (!cfg.viewOnly) {
+      const fineRowsInit = (cfg.challan?.detailRows || []).filter(feeService.isLateFineRow);
+      const finePaidInit = fineRowsInit.reduce((a, r) => a + (+r.receivedAmount || 0), 0);
+      const fineBilledInit = fineRowsInit.reduce((a, r) => a + (+r.challanAmount || 0), 0);
+      const fineCalcInit = feeService.computeFine({
+        dueDate: cfg.challan?.dueDate, receivingDate: localTodayISO(), settings: cfg.settings,
+      });
+      const fineDueInit = fineBilledInit > 0 ? fineBilledInit : fineCalcInit;
+      setFineRecvInput(Math.max(finePaidInit, fineDueInit));
+    } else {
+      setFineRecvInput(null);
+    }
   }, [cfg]);
 
   useEffect(() => {
@@ -5216,6 +5241,7 @@ function FeeReceivingIndividual({ toast }) {
   /* Smart search */
   const [searchQ, setSearchQ] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
+  const [highlightKey, setHighlightKey] = useState(null);
   const searchAnchorRef = useRef(null);
   useEffect(() => {
     if (!searchOpen) return undefined;
@@ -5549,6 +5575,7 @@ function FeeReceivingIndividual({ toast }) {
     setMonth(FEE_MONTHS[today.getMonth()]); setYear(String(today.getFullYear()));
     setAppliedMonth(FEE_MONTHS[today.getMonth()]); setAppliedYear(String(today.getFullYear()));
     setSearchQ('');
+    setHighlightKey(null);
   };
 
   const matches = useMemo(() => {
@@ -5565,19 +5592,17 @@ function FeeReceivingIndividual({ toast }) {
     return out.slice(0, 8);
   }, [searchQ, classes, studentsMap]);
 
-  const clearSearch = () => { setSearchQ(''); setSearchOpen(false); };
+  const clearSearch = () => { setSearchQ(''); setSearchOpen(false); setHighlightKey(null); };
 
   const focusOnStudent = (c, s) => {
+    const key = `${c.key}-${s.reg}`;
     setOpenKey(c.key);
-    clearSearch();
+    setSearchOpen(false);
+    setHighlightKey(key);
     toast('Jumped to student', 'info');
     setTimeout(() => {
-      const el = document.getElementById(`rec-st-${c.key}-${s.reg}`);
-      if (el) {
-        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        el.classList.add('fee-st-flash');
-        setTimeout(() => el.classList.remove('fee-st-flash'), 1700);
-      }
+      const el = document.getElementById(`rec-st-${key}`);
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }, 380);
   };
 
@@ -5626,7 +5651,7 @@ function FeeReceivingIndividual({ toast }) {
                   <input
                     value={searchQ}
                     autoComplete="off"
-                    onChange={e => { setSearchQ(e.target.value); setSearchOpen(true); }}
+                    onChange={e => { const v = e.target.value; setSearchQ(v); setSearchOpen(true); if (!v.trim()) setHighlightKey(null); }}
                     onFocus={() => setSearchOpen(true)}
                     placeholder="Search by Name, Father Name, Registration, Class or Section"
                   />
@@ -5763,7 +5788,11 @@ function FeeReceivingIndividual({ toast }) {
                           /* Column me sirf wasool shuda fine — na li gayi ho to 0. */
                           const shownFine = receivedFineOf(rec);
                           return (
-                            <tr key={s.reg} id={`rec-st-${c.key}-${s.reg}`}>
+                            <tr
+                              key={s.reg}
+                              id={`rec-st-${c.key}-${s.reg}`}
+                              className={highlightKey === `${c.key}-${s.reg}` ? 'fee-st-highlight' : undefined}
+                            >
                               <td>{s.reg}</td>
                               <td>
                                 <b>{s.name}</b>
@@ -6018,6 +6047,7 @@ function FamilyTreeReceiving({ toast }) {
   /* Search */
   const [searchQ, setSearchQ] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
+  const [highlightKey, setHighlightKey] = useState(null);
   const searchAnchorRef = useRef(null);
   useEffect(() => {
     if (!searchOpen) return undefined;
@@ -6040,6 +6070,7 @@ function FamilyTreeReceiving({ toast }) {
     setMonth(FEE_MONTHS[today.getMonth()]); setYear(String(today.getFullYear()));
     setAppliedMonth(FEE_MONTHS[today.getMonth()]); setAppliedYear(String(today.getFullYear()));
     setSearchQ('');
+    setHighlightKey(null);
   };
 
   const openReceive = async (f, ch, viewOnly = false) => {
@@ -6417,12 +6448,17 @@ function FamilyTreeReceiving({ toast }) {
     return list.filter(f => `${f.name} ${f.guardian}`.toLowerCase().includes(q)).slice(0, 8);
   }, [searchQ, list]);
 
-  const clearSearch = () => { setSearchQ(''); setSearchOpen(false); };
+  const clearSearch = () => { setSearchQ(''); setSearchOpen(false); setHighlightKey(null); };
 
   const focusOnFamily = (f) => {
     setOpenKey(f.key);
-    clearSearch();
+    setSearchOpen(false);
+    setHighlightKey(f.key);
     toast('Jumped to family', 'info');
+    setTimeout(() => {
+      const el = document.getElementById(`fam-rec-row-${f.key}`);
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 380);
   };
 
   return (
@@ -6469,7 +6505,7 @@ function FamilyTreeReceiving({ toast }) {
                   <input
                     value={searchQ}
                     autoComplete="off"
-                    onChange={e => { setSearchQ(e.target.value); setSearchOpen(true); }}
+                    onChange={e => { const v = e.target.value; setSearchQ(v); setSearchOpen(true); if (!v.trim()) setHighlightKey(null); }}
                     onFocus={() => setSearchOpen(true)}
                     placeholder="Search by Family or Guardian Name"
                   />
@@ -6550,7 +6586,11 @@ function FamilyTreeReceiving({ toast }) {
             totRem += m.remaining;
           });
           return (
-            <div key={f.key} className="fee-rowwrap">
+            <div
+              key={f.key}
+              className={`fee-rowwrap${highlightKey === f.key ? ' fee-st-highlight' : ''}`}
+              id={`fam-rec-row-${f.key}`}
+            >
               <div
                 className={`fee-row fee-recfam-row${isOpen ? ' open' : ''}`}
                 onClick={() => setOpenKey(isOpen ? null : f.key)}
@@ -8221,6 +8261,7 @@ function FeeHistoryTab({ toast }) {
   /* Search */
   const [searchQ, setSearchQ] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
+  const [highlightKey, setHighlightKey] = useState(null);
   const searchAnchorRef = useRef(null);
   useEffect(() => {
     if (!searchOpen) return undefined;
@@ -8254,6 +8295,7 @@ function FeeHistoryTab({ toast }) {
     setFromMonth(from); setToMonth(nowM); setYear(nowY);
     setAppliedFrom(from); setAppliedTo(nowM); setAppliedYear(nowY);
     setSearchQ('');
+    setHighlightKey(null);
   };
 
   /* Old ERP Ledger sirf EK month dikhata tha, jabke naye Ledger/Detailed tabs
@@ -8298,18 +8340,16 @@ function FeeHistoryTab({ toast }) {
     return out.slice(0, 8);
   }, [searchQ, classes, studentsMap]);
 
-  const clearSearch = () => { setSearchQ(''); setSearchOpen(false); };
+  const clearSearch = () => { setSearchQ(''); setSearchOpen(false); setHighlightKey(null); };
   const focusOnStudent = (c, s) => {
+    const key = `${c.key}-${s.reg}`;
     setOpenKey(c.key);
-    clearSearch();
+    setSearchOpen(false);
+    setHighlightKey(key);
     toast('Jumped to student', 'info');
     setTimeout(() => {
-      const el = document.getElementById(`fee-hist-st-${c.key}-${s.reg}`);
-      if (el) {
-        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        el.classList.add('fee-st-flash');
-        setTimeout(() => el.classList.remove('fee-st-flash'), 1700);
-      }
+      const el = document.getElementById(`fee-hist-st-${key}`);
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }, 380);
   };
 
@@ -8646,7 +8686,7 @@ function FeeHistoryTab({ toast }) {
                       <input
                         value={searchQ}
                         autoComplete="off"
-                        onChange={e => { setSearchQ(e.target.value); setSearchOpen(true); }}
+                        onChange={e => { const v = e.target.value; setSearchQ(v); setSearchOpen(true); if (!v.trim()) setHighlightKey(null); }}
                         onFocus={() => setSearchOpen(true)}
                         placeholder="Search by Name, Father Name, Registration, Class or Section"
                       />
@@ -8818,7 +8858,11 @@ function FeeHistoryTab({ toast }) {
                               const t = feeHistTotals(months);
                               if (seg === 'ledger') {
                                 return (
-                                  <tr key={s.reg} id={`fee-hist-st-${c.key}-${s.reg}`}>
+                                  <tr
+                                    key={s.reg}
+                                    id={`fee-hist-st-${c.key}-${s.reg}`}
+                                    className={highlightKey === `${c.key}-${s.reg}` ? 'fee-st-highlight' : undefined}
+                                  >
                                     <td>{s.reg}</td>
                                     <td>
                                       <b>{s.name}</b>
@@ -8855,7 +8899,11 @@ function FeeHistoryTab({ toast }) {
                                 );
                               }
                               return (
-                                <tr key={s.reg} id={`fee-hist-st-${c.key}-${s.reg}`}>
+                                <tr
+                                  key={s.reg}
+                                  id={`fee-hist-st-${c.key}-${s.reg}`}
+                                  className={highlightKey === `${c.key}-${s.reg}` ? 'fee-st-highlight' : undefined}
+                                >
                                   <td>{s.reg}</td>
                                   <td>
                                     <b>{s.name}</b>
@@ -14962,6 +15010,13 @@ const FEE_CSS = `
 [data-theme="dark"] .fee-stbl tbody td.fee-fine,
 [data-theme="dark"] .fee-stbl tbody td .fee-fine { color: #FCA5A5; }
 .fee-st-flash { animation: feeFlash 1.6s ease; }
+.fee-st-highlight {
+  background: rgba(34, 197, 94, .15) !important;
+}
+.fee-st-highlight td b,
+.fee-st-highlight .fee-name {
+  color: #16A34A;
+}
 @keyframes feeFlash {
   0%   { background: rgba(34,197,94,.2); }
   60%  { background: rgba(34,197,94,.1); }
@@ -15102,6 +15157,13 @@ const FEE_CSS = `
 [data-theme="dark"] .fee-m-danger:hover { background: rgba(220,38,38,.18); color: #FCA5A5; }
 [data-theme="dark"] .fee-stbl tbody td.fee-neg { color: #86EFAC; }
 [data-theme="dark"] .fee-st-flash { animation: feeFlashDark 1.6s ease; }
+[data-theme="dark"] .fee-st-highlight {
+  background: rgba(34, 197, 94, .22) !important;
+}
+[data-theme="dark"] .fee-st-highlight td b,
+[data-theme="dark"] .fee-st-highlight .fee-name {
+  color: #86EFAC;
+}
 @keyframes feeFlashDark {
   0%   { background: rgba(34,197,94,.25); }
   60%  { background: rgba(34,197,94,.12); }

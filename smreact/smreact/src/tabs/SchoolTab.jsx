@@ -370,7 +370,7 @@ if (savedLogo) {
 
           <FG fieldErrors={fe} label="Contact Number" id="branchPhone">
             {/* Contact number system-assigned hai — Branch Code ki tarah read-only. */}
-            <Tooltip text="Contact number is auto-assigned and cannot be edited">
+            <Tooltip text="Contact number cannot be edited">
               <div className="input-wrapper">
                 <i className="fas fa-phone input-icon"></i>
                 <input className="form-input has-icon" type="tel" placeholder="+92 300 0000000"
