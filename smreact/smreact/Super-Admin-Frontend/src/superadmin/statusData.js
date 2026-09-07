@@ -123,3 +123,52 @@ export const INITIAL_ENQUIRIES = {
 };
 
 export const moduleMeta = (key) => EM_MODULES.find((m) => m.key === key) || { name: key, icon: 'fa-layer-group' };
+
+/* ═══════════════════════════════════════════════════════════════════
+   MOBILE APP USAGE — feature catalogue for the School Progress modal's
+   Daily / Monthly Mobile App Usage grids. Single source of truth the UI
+   reads from (per-school numbers come from d.todayMobileMods /
+   d.monthMobileMods — 0 until the API provides them).
+     hasLogin    — feature has a login count (AI/notifications skip it)
+     loginLabel  — override "login" wording (e.g. Fee → "Parent Login")
+     extras      — feature-specific chips: { key, label, format? }
+                   (format 'duration' → "Xh Ym")
+   ═══════════════════════════════════════════════════════════════════ */
+export const MOBILE_FEATURES = [
+  { key: 'dashboard',      name: 'Dashboard',                category: 'academic', hasLogin: true, icon: 'fa-gauge-high',          extras: [] },
+  { key: 'quiz',           name: 'Quiz',                      category: 'academic', hasLogin: true, icon: 'fa-circle-question',     extras: [{ key: 'attempted', label: 'Attempted' }] },
+  { key: 'lessonplan',     name: 'Lesson Plan',                category: 'academic', hasLogin: true, icon: 'fa-chalkboard',          extras: [] },
+  { key: 'dlp',            name: 'DLP Submission',            category: 'academic', hasLogin: true, icon: 'fa-file-arrow-up',       extras: [{ key: 'submissions', label: 'Submissions' }] },
+  { key: 'academics',      name: 'Academics',                 category: 'academic', hasLogin: true, icon: 'fa-graduation-cap',      extras: [] },
+  { key: 'homework',       name: 'Home Work',                 category: 'academic', hasLogin: true, icon: 'fa-book',                extras: [{ key: 'assigned', label: 'Assigned' }, { key: 'submitted', label: 'Submitted' }] },
+  { key: 'worksheet',      name: 'Worksheet',                 category: 'academic', hasLogin: true, icon: 'fa-file-lines',          extras: [{ key: 'generated', label: 'Generated/Assigned' }] },
+  { key: 'datesheet',      name: 'Date Sheet',                category: 'academic', hasLogin: true, icon: 'fa-calendar-day',        extras: [] },
+  { key: 'syllabus',       name: 'Syllabus',                  category: 'academic', hasLogin: true, icon: 'fa-list-ol',             extras: [{ key: 'items', label: 'Items Uploaded' }] },
+  { key: 'results',        name: 'Results',                   category: 'academic', hasLogin: true, icon: 'fa-chart-simple',        extras: [{ key: 'published', label: 'Results Published' }, { key: 'marks', label: 'Marks Uploaded' }, { key: 'subjects', label: 'Subjects' }] },
+  { key: 'notebookwork',   name: 'Notebook Work',             category: 'academic', hasLogin: true, icon: 'fa-book-open',           extras: [] },
+  { key: 'timetable',      name: 'Time Table',                category: 'academic', hasLogin: true, icon: 'fa-calendar-days',       extras: [] },
+  { key: 'noticeboard',    name: 'Notice Board',              category: 'engage', hasLogin: true, icon: 'fa-bullhorn',            extras: [{ key: 'created', label: 'Notices Created' }] },
+  { key: 'suggestions',    name: 'Suggestions',               category: 'engage', hasLogin: true, icon: 'fa-lightbulb',           extras: [{ key: 'handled', label: 'Handled' }] },
+  { key: 'etube',          name: 'E-Tube',                    category: 'engage', hasLogin: true, icon: 'fa-play-circle',         extras: [{ key: 'watchTime', label: 'Watch Time', format: 'duration' }] },
+  { key: 'notifications',  name: 'Notifications',             category: 'engage', hasLogin: false, icon: 'fa-bell',               extras: [{ key: 'sent', label: 'Sent' }] },
+  { key: 'chats',          name: 'Chats',                     category: 'engage', hasLogin: true, icon: 'fa-comments',            extras: [{ key: 'teacherParent', label: 'Teacher ↔ Parent' }, { key: 'teacherStudent', label: 'Teacher ↔ Student' }, { key: 'adminTeacher', label: 'Admin ↔ Teacher' }] },
+  { key: 'reports',        name: 'Reports',                   category: 'admin', hasLogin: true, icon: 'fa-chart-bar',           extras: [] },
+  { key: 'meetings',       name: 'Meetings',                  category: 'admin', hasLogin: true, icon: 'fa-video',               extras: [{ key: 'created', label: 'Meetings Created' }] },
+  { key: 'tasks',          name: 'Tasks',                     category: 'admin', hasLogin: true, icon: 'fa-clipboard-list',      extras: [{ key: 'created', label: 'Created' }, { key: 'completed', label: 'Completed' }] },
+  { key: 'attendance',     name: 'Attendance',                category: 'admin', hasLogin: true, icon: 'fa-clipboard-check',     extras: [{ key: 'marked', label: 'Students Marked' }] },
+  { key: 'financials',     name: 'Financials',                category: 'admin', hasLogin: true, icon: 'fa-sack-dollar',         extras: [] },
+  { key: 'staffleaves',    name: 'Staff Leaves',              category: 'admin', hasLogin: true, icon: 'fa-plane-departure',     extras: [{ key: 'processed', label: 'Leave Actions' }] },
+  { key: 'fee',            name: 'Fee',                       category: 'admin', hasLogin: true, loginLabel: 'Parent Login', icon: 'fa-money-bill-wave', extras: [{ key: 'engagement', label: 'Parent Engagement' }] },
+  { key: 'aichat',         name: 'AI Chat',                   category: 'ai', hasLogin: false, icon: 'fa-robot',              extras: [{ key: 'sessions', label: 'Sessions' }, { key: 'messages', label: 'Messages' }] },
+  { key: 'ailessonplan',   name: 'AI Lesson Plan',            category: 'ai', hasLogin: false, icon: 'fa-wand-magic-sparkles', extras: [{ key: 'generated', label: 'Generated' }] },
+  { key: 'notebooklp',     name: 'Notebook Lesson Plan AI',   category: 'ai', hasLogin: false, icon: 'fa-pen-fancy',           extras: [{ key: 'questions', label: 'Questions Generated' }] },
+  { key: 'aiworksheet',    name: 'AI Worksheets',             category: 'ai', hasLogin: false, icon: 'fa-file-circle-plus',   extras: [{ key: 'generated', label: 'Worksheets Generated' }] },
+  { key: 'aidesignstudio', name: 'AI Design Studio',          category: 'ai', hasLogin: false, icon: 'fa-palette',            extras: [{ key: 'generated', label: 'Designs Generated' }] },
+];
+
+export const MOBILE_CATEGORIES = {
+  academic: { label: 'Academic Tools',            color: '#1E40AF', grad: 'linear-gradient(135deg,#1E3A8A,#1E40AF)' },
+  engage:   { label: 'Engagement & Communication', color: '#0284C7', grad: 'linear-gradient(135deg,#0369A1,#0284C7)' },
+  admin:    { label: 'Administrative',             color: '#B45309', grad: 'linear-gradient(135deg,#B45309,#D97706)' },
+  ai:       { label: 'AI-Powered Tools',           color: '#7C3AED', grad: 'linear-gradient(135deg,#6D28D9,#7C3AED)' },
+};

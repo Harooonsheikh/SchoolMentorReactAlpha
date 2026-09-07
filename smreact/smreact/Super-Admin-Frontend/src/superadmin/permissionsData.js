@@ -17,6 +17,20 @@ export const CORE_PERMS = [
   { key: 'erpAccess',    name: 'ERP Access',    icon: 'fa-server',        desc: 'Allow this school to log in and use the main ERP system.' },
 ];
 
+/* Chat permission — a single-select mode per school (not a plain on/off toggle).
+   Ye + Mentor AI + eTube "Manage Mobile App Permissions" nested modal me dikhte
+   hain. Filhaal frontend-only (draft me rehte, alag API mapping abhi nahi). */
+export const CHAT_MODES = [
+  { key: 'off', name: 'Chat Completely Off', icon: 'fa-comment-slash',
+    desc: 'Disable chat entirely for this school. No staff, teacher, or parent can send or receive any message.' },
+  { key: 'staffOnly', name: 'Staff Chat Only', icon: 'fa-user-group',
+    desc: 'Staff can chat with each other. Parent chat is fully disabled — parents cannot send or receive any messages.' },
+  { key: 'staffTwoWayParentReceive', name: 'Staff Two-Way + Parents Receive Only', icon: 'fa-comments',
+    desc: 'Staff can chat two-way with each other and with parents. Parents can only receive messages — they cannot send or reply.' },
+  { key: 'parentsDirect', name: 'Parents Direct Chat with Admin', icon: 'fa-user-shield',
+    desc: 'Parents can directly chat with the school admin through the mobile application.' },
+];
+
 /* Module permissions, grouped exactly as in the design. */
 export const MODULE_GROUPS = [
   { label: 'Academics', modules: [
@@ -30,12 +44,14 @@ export const MODULE_GROUPS = [
     { key: 'fee',       name: 'Fee',       icon: 'fa-money-bill-wave' },
     { key: 'accounts',  name: 'Accounts',  icon: 'fa-calculator' },
     { key: 'inventory', name: 'Inventory', icon: 'fa-boxes-stacking' },
+    { key: 'onelink',   name: '1 Link Integration', icon: 'fa-link' },
   ] },
   { label: 'Administration', modules: [
     { key: 'admissioncrm',   name: 'Admission CRM',    icon: 'fa-user-plus' },
     { key: 'students',       name: 'Students',         icon: 'fa-user-graduate' },
     { key: 'hr',             name: 'Human Resource',   icon: 'fa-people-group' },
     { key: 'staffappraisals', name: 'Staff Appraisals', icon: 'fa-star-half-stroke' },
+    { key: 'approvals',      name: 'Approvals',        icon: 'fa-square-check' },
   ] },
   { label: 'School Mentor', modules: [
     { key: 'schoolsops',       name: 'School SOPs',       icon: 'fa-book-open' },
@@ -97,10 +113,14 @@ export function defaultPerms(school) {
   return {
     erpAccess: on,
     activeBranch: on,
+    /* Mobile App permissions (frontend-only draft state) — Chat / Mentor AI / eTube. */
+    chatMode: on ? 'staffTwoWayParentReceive' : 'off',
+    mentorAi: { enabled: on, parentsAccess: false },
+    etube: { enabled: on, viewing: on, uploading: false },
     modules: {
       academics: on, examination: on, papergenerator: on, attendance: on, timetable: on,
-      fee: on, accounts: on, inventory: false,
-      admissioncrm: on, students: on, hr: on, staffappraisals: false,
+      fee: on, accounts: on, inventory: false, onelink: false,
+      admissioncrm: on, students: on, hr: on, staffappraisals: false, approvals: on,
       schoolsops: false, teachertrainings: false,
       auditlogs: on, settings: on, userpermissions: on,
     },
