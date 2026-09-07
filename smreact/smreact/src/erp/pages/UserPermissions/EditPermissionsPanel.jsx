@@ -16,6 +16,12 @@ import {
   permsFromApiPermissions,
   apiPermissionsFromKeys,
 } from './permissionsData';
+import {
+  MOBILE_ROLES,
+  MOBILE_APP_GROUPS_BY_ROLE,
+  mobileAppAccessFor,
+  mobileAppStats,
+} from './mobileAppPermissionsData';
 import { useModules } from '../../context/ModuleContext';
 import { assignRoleToUser } from '../../services/rolesService';
 import { buildUrl } from '../../../utils/apiConfig';
@@ -89,8 +95,34 @@ const checkboxStyle = {
   cursor: 'pointer',
 };
 
-export default function EditPermissionsPanel({ user, roles, readOnly, onClose, onSave, toast }) {
+export default function EditPermissionsPanel({ user, roles, readOnly, onClose, onSave, onSaveMobile, toast }) {
   const role = findRole(roles, user.role);
+
+  /* ─── Access category — ERP Access (existing matrix, unchanged) vs
+     Mobile App Access (new). Kept as fully separate state from `perms`
+     below so nothing here can ever leak into the ERP save path. ─── */
+  const [category, setCategory] = useState('erp');
+  const [mobileApp, setMobileApp] = useState(() => mobileAppAccessFor(user));
+  const mobileGroups = mobileApp.role ? MOBILE_APP_GROUPS_BY_ROLE[mobileApp.role] : null;
+  const mStats = useMemo(() => mobileAppStats(mobileApp), [mobileApp]);
+
+  const setMobileEnabled = (enabled) => setMobileApp(m => ({ ...m, enabled }));
+  const setMobileRole = (r) => setMobileApp(m => ({ ...m, role: r }));
+  const toggleMobileFeature = (roleKey, featureId) => setMobileApp(m => ({
+    ...m,
+    [roleKey === 'admin' ? 'adminApp' : 'teacherApp']: {
+      ...(roleKey === 'admin' ? m.adminApp : m.teacherApp),
+      [featureId]: !(roleKey === 'admin' ? m.adminApp : m.teacherApp)[featureId],
+    },
+  }));
+  const setAllMobileFeatures = (on) => setMobileApp(m => {
+    if (!m.role) return m;
+    const groups = MOBILE_APP_GROUPS_BY_ROLE[m.role];
+    const bag = {};
+    groups.forEach(g => g.items.forEach(it => { bag[it.id] = on; }));
+    const key = m.role === 'admin' ? 'adminApp' : 'teacherApp';
+    return { ...m, [key]: { ...m[key], ...bag } };
+  });
 
   /* ─── Filter MODULE_TREE by the runtime module-activation state.
      Disabled modules disappear from both the left rail and the
@@ -430,6 +462,18 @@ export default function EditPermissionsPanel({ user, roles, readOnly, onClose, o
     /* Naya role bhi parent ko batao — warna table purana role dikhata rehta
        hai aur sirf screen refresh par theek hota. Role na badla ho to null. */
     onSave(cleaned, summary, roleChanged ? pickedRoleId : null);
+
+    /* Mobile App Access saves alongside ERP Access from the same
+       button — separate payload, separate summary, never mixed into
+       the `cleaned` object above. */
+    if (onSaveMobile) {
+      const mobileSummary = !mobileApp.enabled
+        ? 'Mobile app access disabled'
+        : !mobileApp.role
+          ? 'Mobile app access enabled, no role selected yet'
+          : `${MOBILE_ROLES.find(r => r.id === mobileApp.role)?.label || mobileApp.role} · ${mStats.active}/${mStats.total} features`;
+      onSaveMobile(mobileApp, mobileSummary);
+    }
   };
 
   const modOn = moduleCounts[selModId]?.allOn;
@@ -484,6 +528,32 @@ export default function EditPermissionsPanel({ user, roles, readOnly, onClose, o
           </Tooltip>
         </div>
 
+        {/* ── Access category — ERP Access (unchanged matrix below) vs
+            Mobile App Access (new). ── */}
+        <div className="up-cat-tabs-wrap">
+          <div className="up-cat-tabs" role="tablist" aria-label="Access category">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={category === 'erp'}
+              className={`up-cat-tab${category === 'erp' ? ' on' : ''}`}
+              onClick={() => setCategory('erp')}
+            >
+              <i className="fa-solid fa-desktop" aria-hidden="true"></i> ERP Access
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={category === 'mobile'}
+              className={`up-cat-tab${category === 'mobile' ? ' on' : ''}`}
+              onClick={() => setCategory('mobile')}
+            >
+              <i className="fa-solid fa-mobile-screen-button" aria-hidden="true"></i> Mobile App Access
+            </button>
+          </div>
+        </div>
+
+        {category === 'erp' && (
         <div
           className="up-modal-body up-modal-body--row"
           style={{
@@ -827,24 +897,154 @@ export default function EditPermissionsPanel({ user, roles, readOnly, onClose, o
           </section>
           )}
         </div>
+        )}
+
+        {/* ════════════════════ MOBILE APP ACCESS ════════════════════ */}
+        {category === 'mobile' && (
+        <div className="up-mob-body">
+          <div className="up-mob-master">
+            <div className="up-mob-master-text">
+              <div className="up-mob-master-t">Mobile App Access</div>
+              <div className="up-mob-master-s">
+                {mobileApp.enabled ? 'This user can sign in to the School Mentor mobile app' : 'This user cannot sign in to the School Mentor mobile app'}
+              </div>
+            </div>
+            <label className="up-cb-row">
+              <input
+                type="checkbox"
+                className="up-cb"
+                checked={mobileApp.enabled}
+                disabled={readOnly}
+                onChange={(e) => setMobileEnabled(e.target.checked)}
+                aria-label="Enable Mobile App Access"
+              />
+              {mobileApp.enabled ? 'Enabled' : 'Disabled'}
+            </label>
+          </div>
+
+          {mobileApp.enabled && (
+            <>
+              <div>
+                <div className="up-mob-group-h">Mobile App Role</div>
+                <div className="up-mob-role-grid">
+                  {MOBILE_ROLES.map(r => (
+                    <button
+                      type="button"
+                      key={r.id}
+                      className={`up-mob-role-card${mobileApp.role === r.id ? ' on' : ''}`}
+                      onClick={() => !readOnly && setMobileRole(r.id)}
+                      disabled={readOnly}
+                      aria-pressed={mobileApp.role === r.id}
+                    >
+                      <span className="up-mob-role-ic"><i className={`fa-solid ${r.icon}`} aria-hidden="true"></i></span>
+                      <span>
+                        <span className="up-mob-role-name" style={{ display: 'block' }}>{r.label}</span>
+                        <span className="up-mob-role-desc">{r.desc}</span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {mobileGroups ? (
+                <>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
+                    <div className="up-mob-group-h" style={{ margin: 0 }}>
+                      {MOBILE_ROLES.find(r => r.id === mobileApp.role)?.label} Permissions
+                    </div>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <Tooltip text="Turn every feature on for this role">
+                        <button type="button" className="up-btn up-btn-ghost up-btn-sm" disabled={readOnly} onClick={() => setAllMobileFeatures(true)}>
+                          <i className="fa-solid fa-check-double" aria-hidden="true"></i> Select All
+                        </button>
+                      </Tooltip>
+                      <Tooltip text="Turn every feature off for this role">
+                        <button type="button" className="up-btn up-btn-ghost up-btn-sm" disabled={readOnly} onClick={() => setAllMobileFeatures(false)}>
+                          <i className="fa-solid fa-xmark" aria-hidden="true"></i> Deselect All
+                        </button>
+                      </Tooltip>
+                    </div>
+                  </div>
+
+                  {mobileGroups.map(group => (
+                    <div className="up-mob-group" key={group.label}>
+                      <div className="up-mob-group-h">{group.label}</div>
+                      <div className="up-mob-grid">
+                        {group.items.map(item => {
+                          const bag = mobileApp.role === 'admin' ? mobileApp.adminApp : mobileApp.teacherApp;
+                          const on = !!bag[item.id];
+                          return (
+                            <label className={`up-mob-card${on ? ' on' : ''}`} key={item.id}>
+                              <span className="up-mob-card-ic"><i className={`fa-solid ${item.icon}`} aria-hidden="true"></i></span>
+                              <span className="up-mob-card-name">{item.label}</span>
+                              <input
+                                type="checkbox"
+                                className="up-cb"
+                                checked={on}
+                                disabled={readOnly}
+                                onChange={() => toggleMobileFeature(mobileApp.role, item.id)}
+                                aria-label={item.label}
+                              />
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </>
+              ) : (
+                <div className="up-mob-empty">
+                  <i className="fa-solid fa-mobile-screen-button" aria-hidden="true"></i>
+                  <div className="up-mob-empty-t">Choose a mobile app role</div>
+                  <div className="up-mob-empty-s">Select Admin App or Teacher App above to configure this user&rsquo;s mobile permissions.</div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+        )}
 
         <div className="up-modal-foot up-modal-foot--split">
           <div className="up-modal-foot-l">
-            <Tooltip text="Top-level modules with at least one permission enabled">
-              <span className="up-badge up-badge--blue">Modules: {stats.modules}</span>
-            </Tooltip>
-            <Tooltip text="Individual screens with at least one permission enabled">
-              <span className="up-badge up-badge--blue">Screens: {stats.screens}</span>
-            </Tooltip>
-            <Tooltip text="Screens where every permission is off — user has no access">
-              <span className="up-badge up-badge--red">Restricted: {stats.restricted}</span>
-            </Tooltip>
-            {user.permType === 'custom' && (
-              <Tooltip text="This user has custom permissions overriding the role defaults">
-                <span className="up-badge up-badge--purple">
-                  <i className="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i> Custom
-                </span>
-              </Tooltip>
+            {category === 'erp' ? (
+              <>
+                <Tooltip text="Top-level modules with at least one permission enabled">
+                  <span className="up-badge up-badge--blue">Modules: {stats.modules}</span>
+                </Tooltip>
+                <Tooltip text="Individual screens with at least one permission enabled">
+                  <span className="up-badge up-badge--blue">Screens: {stats.screens}</span>
+                </Tooltip>
+                <Tooltip text="Screens where every permission is off — user has no access">
+                  <span className="up-badge up-badge--red">Restricted: {stats.restricted}</span>
+                </Tooltip>
+                {user.permType === 'custom' && (
+                  <Tooltip text="This user has custom permissions overriding the role defaults">
+                    <span className="up-badge up-badge--purple">
+                      <i className="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i> Custom
+                    </span>
+                  </Tooltip>
+                )}
+              </>
+            ) : (
+              <>
+                <Tooltip text="Whether this user can sign in to the mobile app at all">
+                  <span className={`up-badge ${mobileApp.enabled ? 'up-badge--green' : 'up-badge--gray'}`}>
+                    {mobileApp.enabled ? 'Mobile Access: Enabled' : 'Mobile Access: Disabled'}
+                  </span>
+                </Tooltip>
+                {mobileApp.enabled && mobileApp.role && (
+                  <>
+                    <Tooltip text="Selected mobile app role">
+                      <span className="up-badge up-badge--purple">
+                        {MOBILE_ROLES.find(r => r.id === mobileApp.role)?.label}
+                      </span>
+                    </Tooltip>
+                    <Tooltip text="Features enabled for this role">
+                      <span className="up-badge up-badge--blue">Features: {mStats.active}/{mStats.total}</span>
+                    </Tooltip>
+                  </>
+                )}
+              </>
             )}
           </div>
           <div className="up-modal-foot-r">

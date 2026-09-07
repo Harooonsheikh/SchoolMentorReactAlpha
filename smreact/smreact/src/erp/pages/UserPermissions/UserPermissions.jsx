@@ -257,6 +257,24 @@ export default function UserPermissions({ toast = () => {} }) {
        rahega. */
   }, [users, logAudit]);
 
+  /* Mobile App Access — fully separate field from customPermissions
+     above, so ERP Access logic/stats/audit-detail text is never
+     touched by this. In-memory only, mirroring the sibling. */
+  const updateUserMobilePermissions = useCallback((userId, mobileApp, summary) => {
+    const user = users.find(u => u.id === userId);
+    if (!user) return;
+    setUsers(prev => prev.map(u => (
+      u.id === userId ? { ...u, mobileApp } : u
+    )));
+    logAudit({
+      user: user.name,
+      action: 'Mobile App Access Updated',
+      detail: `Mobile app permissions updated · ${summary}`,
+      type: 'assign',
+    });
+    toast(`Mobile app access updated for ${user.name}`, 'success');
+  }, [users, logAudit, toast]);
+
   const setDashboardType = useCallback((userId, dashboardType) => {
     const user = users.find(u => u.id === userId);
     if (!user) return;
@@ -549,6 +567,7 @@ export default function UserPermissions({ toast = () => {} }) {
             assignRole={assignRole}
             setUserStatus={setUserStatus}
             updateUserPermissions={updateUserPermissions}
+            updateUserMobilePermissions={updateUserMobilePermissions}
             updateUser={updateUser}
             setDashboardType={setDashboardType}
             toast={toast}
@@ -2019,5 +2038,118 @@ const UP_CSS = `
   .up-tab { padding: 8px 10px; font-size: 11.5px; }
   .up-modal-title { font-size: 13.5px; }
   .up-template-pill { font-size: 10.5px; padding: 4px 8px; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   MOBILE APP ACCESS — additive to EditPermissionsPanel.jsx. Reuses
+   .up-btn / .up-cb / .up-edit-mod's own colour language rather than
+   introducing a new toggle style, per spec ("use existing checkbox/
+   toggle style"). The ERP-side .up-edit-*/.up-matrix-* classes above
+   are untouched.
+   ═══════════════════════════════════════════════════════════════════ */
+.up-cat-tabs-wrap { padding: 14px 22px; border-bottom: 1px solid var(--border-light, #E2E8F0); flex-shrink: 0; }
+.up-cat-tabs {
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  background: #F0F4FF;
+  border: 1.5px solid var(--border-light, #E2E8F0);
+  border-radius: 12px;
+  padding: 4px;
+}
+[data-theme="dark"] .up-cat-tabs { background: rgba(255,255,255,.03); border-color: var(--border-light); }
+.up-cat-tab {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  min-height: 40px; padding: 9px 14px;
+  background: transparent; border: none; border-radius: 9px;
+  font-family: var(--up-font); font-size: 12.5px; font-weight: 700; color: #475569;
+  white-space: nowrap; line-height: 1.2;
+  cursor: pointer; transition: all .18s ease;
+}
+[data-theme="dark"] .up-cat-tab { color: var(--text-secondary, #94A3B8); }
+.up-cat-tab i { font-size: 12px; flex-shrink: 0; }
+.up-cat-tab:hover:not(.on) { background: rgba(30, 64, 175, .08); color: #1E40AF; }
+[data-theme="dark"] .up-cat-tab:hover:not(.on) { background: rgba(96,165,250,.12); color: #93C5FD; }
+.up-cat-tab.on {
+  background: #1E40AF; color: #fff;
+  box-shadow: 0 3px 10px rgba(30, 64, 175, .35);
+}
+@media (max-width: 480px) {
+  .up-cat-tabs-wrap { padding: 12px 14px; }
+  .up-cat-tab { font-size: 11.5px; padding: 8px 8px; gap: 6px; }
+}
+
+.up-mob-body { flex: 1; overflow-y: auto; padding: 18px 22px; background: #F0F4FF; display: flex; flex-direction: column; gap: 16px; }
+[data-theme="dark"] .up-mob-body { background: rgba(255,255,255,.02); }
+
+.up-mob-master {
+  display: flex; align-items: center; justify-content: space-between; gap: 14px;
+  background: #fff; border: 1.5px solid #BFDBFE; border-radius: 12px; padding: 14px 16px;
+}
+[data-theme="dark"] .up-mob-master { background: var(--bg-card); border-color: var(--border-light); }
+.up-mob-master-text { display: flex; flex-direction: column; gap: 2px; }
+.up-mob-master-t { font-family: var(--up-font); font-size: 13.5px; font-weight: 800; color: #0F172A; }
+[data-theme="dark"] .up-mob-master-t { color: var(--text-primary); }
+.up-mob-master-s { font-family: var(--up-font); font-size: 11.5px; font-weight: 500; color: #64748B; }
+.up-mob-master label.up-cb-row { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-family: var(--up-font); font-size: 12.5px; font-weight: 700; color: #1E293B; }
+[data-theme="dark"] .up-mob-master label.up-cb-row { color: var(--text-primary); }
+
+.up-mob-role-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+.up-mob-role-card {
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px 16px; border-radius: 12px; border: 1.5px solid #E2E8F0; background: #fff;
+  cursor: pointer; transition: all .15s ease; text-align: left;
+}
+[data-theme="dark"] .up-mob-role-card { background: var(--bg-card); border-color: var(--border-light); }
+.up-mob-role-card:hover { border-color: #BFDBFE; }
+.up-mob-role-card.on { background: #EFF6FF; border-color: #1E3A8A; }
+[data-theme="dark"] .up-mob-role-card.on { background: rgba(30,64,175,.14); border-color: #3B82F6; }
+.up-mob-role-ic {
+  width: 38px; height: 38px; border-radius: 10px; flex-shrink: 0;
+  background: rgba(30,64,175,.1); color: #1E40AF;
+  display: inline-flex; align-items: center; justify-content: center; font-size: 15px;
+}
+.up-mob-role-card.on .up-mob-role-ic { background: #1E3A8A; color: #fff; }
+.up-mob-role-name { font-family: var(--up-font); font-size: 13.5px; font-weight: 800; color: #0F172A; }
+[data-theme="dark"] .up-mob-role-name { color: var(--text-primary); }
+.up-mob-role-card.on .up-mob-role-name { color: #1E3A8A; }
+[data-theme="dark"] .up-mob-role-card.on .up-mob-role-name { color: #93C5FD; }
+.up-mob-role-desc { font-family: var(--up-font); font-size: 11px; font-weight: 500; color: #64748B; margin-top: 2px; }
+
+.up-mob-group { margin-bottom: 4px; }
+.up-mob-group-h {
+  font-family: var(--up-font); font-size: 10.5px; font-weight: 800;
+  text-transform: uppercase; letter-spacing: .06em; color: #64748B;
+  margin-bottom: 8px;
+}
+.up-mob-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+.up-mob-card {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; border-radius: 10px; border: 1.5px solid #E2E8F0; background: #fff;
+  transition: all .15s ease;
+}
+[data-theme="dark"] .up-mob-card { background: var(--bg-card); border-color: var(--border-light); }
+.up-mob-card.on { background: #EFF6FF; border-color: rgba(30,64,175,.28); }
+[data-theme="dark"] .up-mob-card.on { background: rgba(30,64,175,.1); border-color: rgba(59,130,246,.35); }
+.up-mob-card-ic {
+  width: 30px; height: 30px; border-radius: 8px; flex-shrink: 0;
+  background: rgba(100,116,139,.1); color: #64748B;
+  display: inline-flex; align-items: center; justify-content: center; font-size: 12.5px;
+}
+.up-mob-card.on .up-mob-card-ic { background: rgba(30,64,175,.12); color: #1E40AF; }
+.up-mob-card-name { flex: 1; min-width: 0; font-family: var(--up-font); font-size: 12.5px; font-weight: 700; color: #0F172A; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+[data-theme="dark"] .up-mob-card-name { color: var(--text-primary); }
+
+.up-mob-empty { text-align: center; padding: 40px 20px; color: #64748B; font-family: var(--up-font); }
+.up-mob-empty i { font-size: 26px; opacity: .4; margin-bottom: 10px; display: block; }
+.up-mob-empty-t { font-size: 13.5px; font-weight: 800; color: #0F172A; margin-bottom: 4px; }
+[data-theme="dark"] .up-mob-empty-t { color: var(--text-primary); }
+.up-mob-empty-s { font-size: 12px; font-weight: 500; }
+
+@media (max-width: 600px) {
+  .up-cat-tabs { padding: 10px 14px; }
+  .up-mob-body { padding: 14px; }
+  .up-mob-role-grid { grid-template-columns: 1fr; }
+  .up-mob-grid { grid-template-columns: 1fr; }
+  .up-mob-master { flex-direction: column; align-items: flex-start; gap: 10px; }
 }
 `;
