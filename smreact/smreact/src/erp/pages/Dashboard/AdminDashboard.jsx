@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import Tooltip from '../../components/Tooltip';
-import UniversalSearch from '../../shared/UniversalSearch';
+import MentorAISearchBar from './MentorAISearchBar';
 import {
   AreaChart, Area, Line, BarChart, Bar, ComposedChart,
   XAxis, YAxis, CartesianGrid, Tooltip as RTooltip, ResponsiveContainer,
@@ -297,7 +297,7 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
             can clamp it later. Module-activation gating happens inside
             the hook via ModuleContext. */}
       <div className="adm-uvs-row">
-        <UniversalSearch
+        <MentorAISearchBar
           onNavigate={(target, params) => {
             navigate(target, params);
             toast(`Opening ${NAV_LABELS[target] || target.toUpperCase()}…`, 'info');
@@ -306,6 +306,8 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
           sessionId={session?.id || null}
           toast={toast}
           placeholder="Search students, employees, lesson plans, exams, fees…"
+          ctx={{ role: 'admin', sessionId: session?.id || null }}
+          schoolName={visibility?.schoolName || ''}
         />
       </div>
 

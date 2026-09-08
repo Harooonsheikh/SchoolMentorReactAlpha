@@ -884,6 +884,9 @@ function buildStuClassReportHTML(c, school, isBW = false) {
       <td class="c">${stuFmtDate(s.dob)}</td>
       <td class="c">${stuEsc(s.gender || '—')}</td>
       <td class="mono">${stuEsc(s.mobile || '—')}</td>
+      <td class="mono">${stuEsc(s.bform || '—')}</td>
+      <td class="mono">${stuEsc(s.fcnic || '—')}</td>
+      <td class="c">${stuFmtDate(s.admdate)}</td>
       <td class="c">${stuHasDiscount(s) ? '<span style="color:#B91C1C;font-weight:800">✓</span>' : ''}</td>
     </tr>`).join('');
   return `
@@ -919,8 +922,8 @@ function buildStuClassReportHTML(c, school, isBW = false) {
       </div>
       <div class="sec-band"><span>${stuEsc(c.cls)} — Section ${stuEsc(c.sec)}</span><small>${c.students.length} student(s)</small></div>
       <table class="tbl">
-        <thead><tr><th class="c" style="width:30px">#</th><th style="width:90px">Reg No</th><th style="width:90px">Admission No</th><th>Name</th><th>Father Name</th><th class="c" style="width:80px">DOB</th><th class="c" style="width:55px">Gender</th><th style="width:100px">Contact</th><th class="c" style="width:70px">Discount</th></tr></thead>
-        <tbody>${rows || '<tr><td colspan="9" style="text-align:center;padding:24px;color:#94A3B8">No students.</td></tr>'}</tbody>
+        <thead><tr><th class="c" style="width:24px">#</th><th style="width:72px">Reg No</th><th style="width:72px">Adm No</th><th>Name</th><th>Father Name</th><th class="c" style="width:60px">DOB</th><th class="c" style="width:48px">Gender</th><th style="width:78px">Contact</th><th style="width:84px">B-Form No.</th><th style="width:92px">Father CNIC</th><th class="c" style="width:60px">Admitted</th><th class="c" style="width:52px">Disc.</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="12" style="text-align:center;padding:24px;color:#94A3B8">No students.</td></tr>'}</tbody>
       </table>
       <div class="rfoot">${stuEsc(school?.name || 'School')} · Class Report · Generated ${stuFmtDate(new Date().toISOString().slice(0, 10))}</div>
     </div>`;
@@ -933,10 +936,10 @@ function buildStuSchoolReportHTML(classes, school, isBW = false) {
   const sections = classes.map(c => `
     <div class="sec-band"><span>${stuEsc(c.cls)} — Section ${stuEsc(c.sec)}</span><small>${c.students.length} student(s)</small></div>
     <table class="tbl">
-      <thead><tr><th class="c" style="width:30px">#</th><th style="width:90px">Reg No</th><th>Name</th><th>Father Name</th><th class="c" style="width:80px">DOB</th><th style="width:100px">Contact</th></tr></thead>
+      <thead><tr><th class="c" style="width:24px">#</th><th style="width:74px">Reg No</th><th>Name</th><th>Father Name</th><th class="c" style="width:64px">DOB</th><th style="width:80px">Contact</th><th style="width:86px">B-Form No.</th><th style="width:96px">Father CNIC</th><th class="c" style="width:64px">Admitted</th></tr></thead>
       <tbody>${c.students.length === 0
-        ? '<tr><td colspan="6" style="text-align:center;padding:18px;color:#94A3B8">No students.</td></tr>'
-        : c.students.map((s, i) => `<tr><td class="c">${i + 1}</td><td class="mono">${stuEsc(s.reg)}</td><td><b>${stuEsc(stuFullName(s))}</b></td><td>${stuEsc(s.father || '—')}</td><td class="c">${stuFmtDate(s.dob)}</td><td class="mono">${stuEsc(s.mobile || '—')}</td></tr>`).join('')}</tbody>
+        ? '<tr><td colspan="9" style="text-align:center;padding:18px;color:#94A3B8">No students.</td></tr>'
+        : c.students.map((s, i) => `<tr><td class="c">${i + 1}</td><td class="mono">${stuEsc(s.reg)}</td><td><b>${stuEsc(stuFullName(s))}</b></td><td>${stuEsc(s.father || '—')}</td><td class="c">${stuFmtDate(s.dob)}</td><td class="mono">${stuEsc(s.mobile || '—')}</td><td class="mono">${stuEsc(s.bform || '—')}</td><td class="mono">${stuEsc(s.fcnic || '—')}</td><td class="c">${stuFmtDate(s.admdate)}</td></tr>`).join('')}</tbody>
     </table>
   `).join('');
   return `
