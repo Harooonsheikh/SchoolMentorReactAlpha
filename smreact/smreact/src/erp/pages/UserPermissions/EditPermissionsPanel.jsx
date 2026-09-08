@@ -21,10 +21,17 @@ import {
   MOBILE_APP_GROUPS_BY_ROLE,
   mobileAppAccessFor,
   mobileAppStats,
+  mobileAppTypeApi,
+  mobileAccountType,
 } from './mobileAppPermissionsData';
 import { useModules } from '../../context/ModuleContext';
 import { assignRoleToUser } from '../../services/rolesService';
 import { buildUrl } from '../../../utils/apiConfig';
+import {
+  listMobileAppScreenPermission,
+  rowToMobileAppState,
+  saveMobileAppScreenPermission,
+} from '../../services/mobileAppScreenPermissionService';
 
 /* ═══════════════════════════════════════════════════════════════════
    EDIT PERMISSIONS PANEL — full-screen XL modal
@@ -103,11 +110,55 @@ export default function EditPermissionsPanel({ user, roles, readOnly, onClose, o
      below so nothing here can ever leak into the ERP save path. ─── */
   const [category, setCategory] = useState('erp');
   const [mobileApp, setMobileApp] = useState(() => mobileAppAccessFor(user));
+  const [mobileLoading, setMobileLoading] = useState(true);
   const mobileGroups = mobileApp.role ? MOBILE_APP_GROUPS_BY_ROLE[mobileApp.role] : null;
   const mStats = useMemo(() => mobileAppStats(mobileApp), [mobileApp]);
 
+  /* Edit panel khulte hi is user ki saved mobile screens GET karo. */
+  useEffect(() => {
+    const accountId = Number(user?.empId ?? user?.employeeId) || 0;
+    const branchId = Number(sessionStorage.getItem('branchID')) || 0;
+    if (!accountId || !branchId) {
+      setMobileLoading(false);
+      return undefined;
+    }
+    let alive = true;
+    setMobileLoading(true);
+    listMobileAppScreenPermission({
+      branchId,
+      accountId,
+      accountType: mobileAccountType(user),
+    })
+      .then((row) => {
+        if (!alive || !row) return;
+        setMobileApp((cur) => rowToMobileAppState(row, cur));
+      })
+      .catch(() => { /* defaults already in state */ })
+      .finally(() => { if (alive) setMobileLoading(false); });
+    return () => { alive = false; };
+  }, [user.empId]);
+
   const setMobileEnabled = (enabled) => setMobileApp(m => ({ ...m, enabled }));
-  const setMobileRole = (r) => setMobileApp(m => ({ ...m, role: r }));
+  const setMobileRole = (r) => {
+    setMobileApp(m => ({ ...m, role: r }));
+    const accountId = Number(user?.empId ?? user?.employeeId) || 0;
+    const branchId = Number(sessionStorage.getItem('branchID')) || 0;
+    if (!accountId || !branchId) return;
+    listMobileAppScreenPermission({
+      branchId,
+      accountId,
+      accountType: mobileAccountType(user),
+      appType: mobileAppTypeApi(r),
+    })
+      .then((row) => {
+        if (!row) return;
+        setMobileApp((cur) => {
+          const next = rowToMobileAppState(row, { ...cur, role: r });
+          return { ...next, enabled: cur.enabled, role: r };
+        });
+      })
+      .catch(() => { /* keep local bag for this role */ });
+  };
   const toggleMobileFeature = (roleKey, featureId) => setMobileApp(m => ({
     ...m,
     [roleKey === 'admin' ? 'adminApp' : 'teacherApp']: {
@@ -377,6 +428,32 @@ export default function EditPermissionsPanel({ user, roles, readOnly, onClose, o
   const onSubmit = async () => {
     if (readOnly) { onClose(); return; }
     if (saving) return;
+    setSaving(true);
+
+    /* Jo tab active hai usi ko save karo — ERP Access → menu permissions,
+       Mobile App Access → /manage-mobileapp-screen-permission. */
+    if (category === 'mobile') {
+      try {
+        const savedMob = await saveMobileAppScreenPermission(user, mobileApp);
+        setMobileApp(savedMob);
+        if (onSaveMobile) {
+          const mobileSummary = !savedMob.enabled
+            ? 'Mobile app access disabled'
+            : !savedMob.role
+              ? 'Mobile app access enabled, no role selected yet'
+              : `${MOBILE_ROLES.find(r => r.id === savedMob.role)?.label || savedMob.role} · ${mStats.active}/${mStats.total} features`;
+          onSaveMobile(savedMob, mobileSummary);
+        }
+        setSaving(false);
+        onClose();
+      } catch (err) {
+        console.error('Could not save mobile app access:', err);
+        toast(err?.message || 'Could not save mobile app access', 'error');
+        setSaving(false);
+      }
+      return;
+    }
+
     /* Defensive: filter out any non-applicable keys that may have been
        carried over from an older saved state. We intentionally iterate
        the FULL MODULE_TREE here (not visibleTree) so permissions for
@@ -393,9 +470,6 @@ export default function EditPermissionsPanel({ user, roles, readOnly, onClose, o
       });
     });
     const summary = `${stats.modules} modules · ${stats.screens} screens · ${stats.active} permissions`;
-
-    /* Real API save — /save-user-menu-permissions. Payload backend ki shape me. */
-    setSaving(true);
 
     /* Dropdown se koi DOOSRA role chuna gaya ho to pehle wo role user ko
        assign karo (/assign-role-to-user) — warna permissions to save ho
@@ -458,22 +532,11 @@ export default function EditPermissionsPanel({ user, roles, readOnly, onClose, o
       setSaving(false);
       return;
     }
+
     setSaving(false);
     /* Naya role bhi parent ko batao — warna table purana role dikhata rehta
        hai aur sirf screen refresh par theek hota. Role na badla ho to null. */
     onSave(cleaned, summary, roleChanged ? pickedRoleId : null);
-
-    /* Mobile App Access saves alongside ERP Access from the same
-       button — separate payload, separate summary, never mixed into
-       the `cleaned` object above. */
-    if (onSaveMobile) {
-      const mobileSummary = !mobileApp.enabled
-        ? 'Mobile app access disabled'
-        : !mobileApp.role
-          ? 'Mobile app access enabled, no role selected yet'
-          : `${MOBILE_ROLES.find(r => r.id === mobileApp.role)?.label || mobileApp.role} · ${mStats.active}/${mStats.total} features`;
-      onSaveMobile(mobileApp, mobileSummary);
-    }
   };
 
   const modOn = moduleCounts[selModId]?.allOn;
@@ -906,7 +969,9 @@ export default function EditPermissionsPanel({ user, roles, readOnly, onClose, o
             <div className="up-mob-master-text">
               <div className="up-mob-master-t">Mobile App Access</div>
               <div className="up-mob-master-s">
-                {mobileApp.enabled ? 'This user can sign in to the School Mentor mobile app' : 'This user cannot sign in to the School Mentor mobile app'}
+                {mobileLoading
+                  ? 'Loading saved mobile app access…'
+                  : mobileApp.enabled ? 'This user can sign in to the School Mentor mobile app' : 'This user cannot sign in to the School Mentor mobile app'}
               </div>
             </div>
             <label className="up-cb-row">
@@ -914,7 +979,7 @@ export default function EditPermissionsPanel({ user, roles, readOnly, onClose, o
                 type="checkbox"
                 className="up-cb"
                 checked={mobileApp.enabled}
-                disabled={readOnly}
+                disabled={readOnly || mobileLoading}
                 onChange={(e) => setMobileEnabled(e.target.checked)}
                 aria-label="Enable Mobile App Access"
               />
@@ -1055,8 +1120,8 @@ export default function EditPermissionsPanel({ user, roles, readOnly, onClose, o
             </Tooltip>
             {!readOnly && (
               <Tooltip text="Save these custom permissions for this user">
-                <button type="button" className="up-btn up-btn-primary" onClick={onSubmit} disabled={saving}
-                  style={saving ? { opacity: .7, cursor: 'not-allowed' } : undefined}>
+                <button type="button" className="up-btn up-btn-primary" onClick={onSubmit} disabled={saving || mobileLoading}
+                  style={(saving || mobileLoading) ? { opacity: .7, cursor: 'not-allowed' } : undefined}>
                   {saving
                     ? <><i className="fa-solid fa-spinner fa-spin" aria-hidden="true"></i> Saving…</>
                     : <><i className="fa-solid fa-floppy-disk" aria-hidden="true"></i> Save Permissions</>}

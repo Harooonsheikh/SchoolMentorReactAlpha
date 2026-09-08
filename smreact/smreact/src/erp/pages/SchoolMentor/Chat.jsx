@@ -107,7 +107,7 @@ function pickAudioFormat() {
 /* ═══════════════════════════════════════════════════════════════════
    MAIN
    ═══════════════════════════════════════════════════════════════════ */
-export default function Chat({ toast = () => {}, onUnreadChange }) {
+export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
   const me = useMemo(() => chatUserId(), []);
   const branchId = useMemo(() => chatBranchId(), []);
 
@@ -303,9 +303,11 @@ export default function Chat({ toast = () => {}, onUnreadChange }) {
      preview abhi nahi aaya un ko unread aur naam par rakho. */
   const orderedContacts = useMemo(() => {
     const at = (c) => (lastOf(history[c.userId])?.at) || 0;
-    return [...contacts].sort((a, b) =>
+    const staffOnly = chatMode === 'staffOnly';
+    const list = staffOnly ? contacts.filter(c => !c.isParent) : contacts;
+    return [...list].sort((a, b) =>
       (at(b) - at(a)) || ((b.unread || 0) - (a.unread || 0)) || a.name.localeCompare(b.name));
-  }, [contacts, history]);
+  }, [contacts, history, chatMode]);
 
   const filteredRecent = useMemo(() => {
     const q = sidebarQ.trim().toLowerCase();
@@ -842,6 +844,7 @@ export default function Chat({ toast = () => {}, onUnreadChange }) {
           me={me}
           branchId={branchId}
           appUsers={appUsers}
+          chatMode={chatMode}
           onClose={() => setNcOpen(false)}
           onStartChat={startChatWith}
           toast={toast}
@@ -971,7 +974,7 @@ function ImageAttachment({ m, caption }) {
 }
 
 /* ── New Chat modal — poori directory get-contact-list se ── */
-function NewChatModal({ me, branchId, appUsers, onClose, onStartChat, toast }) {
+function NewChatModal({ me, branchId, appUsers, chatMode, onClose, onStartChat, toast }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -990,7 +993,8 @@ function NewChatModal({ me, branchId, appUsers, onClose, onStartChat, toast }) {
     (async () => {
       try {
         const data = await fetchContactList(branchId, me);
-        if (alive) setRows(data.filter(r => r.userId !== me));
+        const list = chatMode === 'staffOnly' ? data.filter(r => !r.isParent) : data;
+        if (alive) setRows(list.filter(r => r.userId !== me));
       } catch (err) {
         if (alive) setError(err.message || 'Could not load the contact list');
       } finally {

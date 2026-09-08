@@ -21,6 +21,8 @@ import ErpApp from './erp/App';
 import ViewOnlyGuard, { VIEW_ONLY_TIP, useViewOnly } from './erp/shared/ViewOnlyGuard';
 import { PermissionsProvider } from './erp/context/PermissionsContext';
 import { useVisibleSetupTabs } from './utils/setupPermissions';
+import useUserTimeSpend from './erp/hooks/useUserTimeSpend';
+import { flushUserTimeSpend } from './erp/services/userTimeSpendService';
 import SetupLoader from './components/SetupLoader';
 import './styles/globals.css';
 import './styles/tokens.css';
@@ -74,6 +76,8 @@ function AppShell({ user, onLogout, onOpenErp }) {
   const [errorState, setErrorState] = useState({ open: false, fields: [] });
   const [launchSetup, setLaunchSetup] = useState(null);
   const [tutorialOpen, setTutorialOpen] = useState(false);
+  const setupScreen = SETUP_TABS.find((t) => t.key === state.activeTab)?.label || 'Launch Setup';
+  useUserTimeSpend(`Launch Setup - ${setupScreen}`);
 
   const showSuccess = (title, msg, detail = '') => {
     setSuccessState({ open: true, title, msg, detail });
@@ -433,6 +437,7 @@ function AuthGate() {
      ke sath kholte hain — taake dono taraf logout ho jaye. Warna aam school
      logout: seedha ERP login. */
   function doLogout() {
+    try { flushUserTimeSpend({ keepalive: true }); } catch (e) { /* ignore */ }
     let fromChain = false;
     try { fromChain = sessionStorage.getItem('sm_from_chain') === '1'; } catch (e) { /* ignore */ }
     try { sessionStorage.clear(); } catch (e) { /* ignore */ }
@@ -466,7 +471,11 @@ function AuthGate() {
   if (screen === 'erp') {
     return (
       <ErpApp
-        onExitToSetup={() => { sessionStorage.setItem('forceSetup', '1'); setScreen('app'); }}
+        onExitToSetup={() => {
+          try { flushUserTimeSpend({ keepalive: true }); } catch (e) { /* ignore */ }
+          sessionStorage.setItem('forceSetup', '1');
+          setScreen('app');
+        }}
         onLogout={doLogout}
       />
     );

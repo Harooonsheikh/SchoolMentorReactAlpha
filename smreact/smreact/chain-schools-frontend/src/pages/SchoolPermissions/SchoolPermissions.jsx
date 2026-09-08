@@ -3,13 +3,14 @@ import TutorialButton from '../../components/TutorialButton'
 import { createPortal } from 'react-dom'
 import {
   toPermissionRows, getSchoolPerms,
-  CORE_PERMS, MODULE_SECTIONS, MODULE_KEYS,
+  CORE_PERMS, CHAT_MODES, MODULE_SECTIONS, MODULE_KEYS,
 } from './data'
 import { useView } from '../../config/viewContext'
 import {
   fetchModulePermissions, fetchModulePermissionsEach, saveModulePermissions,
   fetchLaunchSetup, fetchLaunchSetupEach, setLaunchSetup,
   cachedPermissions, cachePermissions,
+  listMobileAppPermission, saveMobileAppPermission, emptyMobileAppPerms,
 } from '../../api/schoolPermissionsApi'
 import './SchoolPermissions.css'
 
@@ -117,9 +118,9 @@ export default function SchoolPermissions() {
     return { total, active, inactive: known.length - active }
   }, [allSchools, erpStore])
 
-  /* Dono Super-Admin API par jaate hain:
-       modules    → POST save-modulePermission (type: chain)
-       ERP access → PUT  toggle-launch-setup?launchSetup=1|0  */
+  /* modules → save-modulePermission
+     ERP access → toggle-launch-setup
+     mobile → POST /manage-mobileapp-permission (chatType + toggles) */
   const savePerms = async (school, perms) => {
     if (saving) return
     setSaving(true)
@@ -133,6 +134,8 @@ export default function SchoolPermissions() {
         setErpStore((prev) => ({ ...prev, [school.id]: !!perms.erpAccess }))
         cachePermissions(school.id, { erpAccess: !!perms.erpAccess })
       }
+
+      await saveMobileAppPermission(school.id, perms)
       setModalSchool(null)
       setToast({ type: 'success', text: `Permissions saved for ${school.name}` })
     } catch (err) {
@@ -299,6 +302,7 @@ export default function SchoolPermissions() {
           school={modalSchool}
           perms={permsFor(modalSchool)}
           saving={saving}
+          onToast={setToast}
           onClose={() => setModalSchool(null)}
           onSave={savePerms}
         />
@@ -317,10 +321,10 @@ export default function SchoolPermissions() {
 }
 
 /* ── Toggle switch ── */
-function Switch({ checked, onChange }) {
+function Switch({ checked, onChange, disabled }) {
   return (
-    <label className="sw">
-      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+    <label className={`sw${disabled ? ' sw-disabled' : ''}`}>
+      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} disabled={disabled} />
       <div className="sw-track" />
       <div className="sw-thumb" />
     </label>
@@ -328,14 +332,38 @@ function Switch({ checked, onChange }) {
 }
 
 /* ── Permissions modal ── */
-function PermissionsModal({ school, perms, saving, onClose, onSave }) {
+function PermissionsModal({ school, perms, saving, onToast, onClose, onSave }) {
+  const emptyMob = emptyMobileAppPerms()
   const [erpAccess, setErpAccess] = useState(perms.erpAccess)
   const [modules, setModules] = useState({ ...perms.modules })
+  const [chatMode, setChatMode] = useState(emptyMob.chatMode)
+  const [mentorAi, setMentorAiState] = useState({ ...emptyMob.mentorAi })
+  const [etube, setEtubeState] = useState({ ...emptyMob.etube })
+  const [mobileAppId, setMobileAppId] = useState(0)
+  const [showMobileModal, setShowMobileModal] = useState(false)
+  const [mobileLoading, setMobileLoading] = useState(true)
+  const [mobileSaving, setMobileSaving] = useState(false)
 
   useEffect(() => {
     document.body.style.overflow = 'hidden'
     return () => { document.body.style.overflow = '' }
   }, [])
+
+  useEffect(() => {
+    let alive = true
+    setMobileLoading(true)
+    listMobileAppPermission(school.id)
+      .then((mob) => {
+        if (!alive) return
+        setMobileAppId(mob.mobileAppId)
+        setChatMode(CHAT_MODES.some((m) => m.key === mob.chatMode) ? mob.chatMode : 'off')
+        setMentorAiState({ ...mob.mentorAi })
+        setEtubeState({ ...mob.etube })
+      })
+      .catch(() => { /* defaults already in state */ })
+      .finally(() => { if (alive) setMobileLoading(false) })
+    return () => { alive = false }
+  }, [school.id])
 
   const activeCount = MODULE_KEYS.filter((k) => modules[k]).length
   const inactiveCount = MODULE_KEYS.length - activeCount
@@ -343,7 +371,44 @@ function PermissionsModal({ school, perms, saving, onClose, onSave }) {
   const setModule = (key, val) => setModules((m) => ({ ...m, [key]: val }))
   const toggleAll = (val) => setModules(Object.fromEntries(MODULE_KEYS.map((k) => [k, val])))
 
+  const setMentorAi = (key, val) => setMentorAiState((d) => {
+    const next = { ...d, [key]: val }
+    if (key === 'enabled' && !val) next.parentsAccess = false
+    return next
+  })
+  const setEtube = (key, val) => setEtubeState((d) => {
+    const next = { ...d, [key]: val }
+    if (key === 'enabled' && !val) { next.viewing = false; next.uploading = false }
+    return next
+  })
+
   const core = { erpAccess: [erpAccess, setErpAccess] }
+
+  const saveMobileAndClose = async () => {
+    if (mobileSaving || mobileLoading) return
+    setMobileSaving(true)
+    try {
+      const saved = await saveMobileAppPermission(school.id, {
+        chatMode, mentorAi, etube, mobileAppId,
+      })
+      setMobileAppId(saved.mobileAppId)
+      setShowMobileModal(false)
+      onToast?.({ type: 'success', text: 'Mobile app permissions saved' })
+    } catch (err) {
+      onToast?.({ type: 'error', text: err?.message || 'Could not save mobile app permissions' })
+    } finally {
+      setMobileSaving(false)
+    }
+  }
+
+  const saveDraft = () => onSave(school, {
+    erpAccess,
+    modules,
+    chatMode,
+    mentorAi,
+    etube,
+    mobileAppId,
+  })
 
   return createPortal(
     <div className="perm-ov" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
@@ -387,6 +452,22 @@ function PermissionsModal({ school, perms, saving, onClose, onSave }) {
             </div>
           </div>
 
+          <div className="pm-top-section">
+            <div className="pm-top-title"><i className="fa-solid fa-mobile-screen-button" /> Mobile App</div>
+            <div
+              className="pm-manage-card"
+              style={mobileLoading ? { opacity: 0.6, pointerEvents: 'none' } : undefined}
+              onClick={() => { if (!mobileLoading) setShowMobileModal(true) }}
+            >
+              <div className="pm-top-card-icon"><i className="fa-solid fa-sliders" /></div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div className="pm-top-card-name">Manage Mobile App Permissions</div>
+                <div className="pm-top-card-desc">Control eTube, Mentor AI and Chat access for this school&rsquo;s mobile application.</div>
+              </div>
+              <i className="fa-solid fa-chevron-right pm-manage-arrow" />
+            </div>
+          </div>
+
           {/* Module permissions */}
           <div>
             <div className="pm-modules-title">
@@ -419,10 +500,133 @@ function PermissionsModal({ school, perms, saving, onClose, onSave }) {
         {/* Footer */}
         <div className="pm-foot">
           <button className="btn-secondary" onClick={onClose} disabled={saving}><i className="fa-solid fa-xmark" /> Cancel</button>
-          <button className="btn-primary" disabled={saving} onClick={() => onSave(school, { erpAccess, modules })}>
+          <button className="btn-primary" disabled={saving || mobileLoading} onClick={saveDraft}>
             {saving
               ? <><i className="fa-solid fa-spinner fa-spin" /> Saving…</>
               : <><i className="fa-solid fa-floppy-disk" /> Save Permissions</>}
+          </button>
+        </div>
+      </div>
+
+      {showMobileModal && (
+        <MobileAppPermsModal
+          chatMode={chatMode}
+          mentorAi={mentorAi}
+          etube={etube}
+          loading={mobileLoading}
+          saving={mobileSaving}
+          setChatMode={setChatMode}
+          setMentorAi={setMentorAi}
+          setEtube={setEtube}
+          onClose={() => { if (!mobileSaving) setShowMobileModal(false) }}
+          onDone={saveMobileAndClose}
+        />
+      )}
+    </div>,
+    document.body,
+  )
+}
+
+function MobileAppPermsModal({ chatMode, mentorAi, etube, loading, saving, setChatMode, setMentorAi, setEtube, onClose, onDone }) {
+  return createPortal(
+    <div className="perm-ov perm-ov-nested" onMouseDown={(e) => { if (e.target === e.currentTarget && !saving) onClose() }}>
+      <div className="perm-modal" style={{ maxWidth: 560 }}>
+        <div className="pm-hdr">
+          <div className="pm-av"><i className="fa-solid fa-mobile-screen-button" /></div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div className="pm-school-name">Manage Mobile App Permissions</div>
+            <div className="pm-school-meta"><span>Chat, Mentor AI &amp; eTube access for this school&rsquo;s mobile application</span></div>
+          </div>
+          <button className="pm-close" onClick={onClose} disabled={saving}><i className="fa-solid fa-xmark" /></button>
+        </div>
+
+        <div className="pm-body">
+          {loading && (
+            <div style={{ textAlign: 'center', padding: '8px 0 16px', color: 'var(--tm)', fontSize: 12.5, fontWeight: 700 }}>
+              <i className="fa-solid fa-spinner fa-spin" style={{ marginRight: 8 }} /> Loading saved mobile permissions…
+            </div>
+          )}
+          <div className="pm-top-section">
+            <div className="pm-top-title"><i className="fa-solid fa-comments" /> Chat</div>
+            <div className="pm-chat-grid">
+              {CHAT_MODES.map((m) => (
+                <div
+                  key={m.key}
+                  className={`pm-chat-card${chatMode === m.key ? ' selected' : ''}`}
+                  onClick={() => setChatMode(m.key)}
+                >
+                  <div className="pm-chat-radio" />
+                  <div className="pm-chat-icon"><i className={`fa-solid ${m.icon}`} /></div>
+                  <div className="pm-chat-body">
+                    <div className="pm-chat-name">{m.name}</div>
+                    <div className="pm-chat-desc">{m.desc}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="pm-top-section">
+            <div className="pm-top-title"><i className="fa-solid fa-robot" /> Mentor AI</div>
+            <div className="pm-mob-card">
+              <div className="pm-mob-row">
+                <div className="pm-mob-row-l">
+                  <div className="pm-mob-row-name">Enable Mentor AI</div>
+                  <div className="pm-mob-row-desc">Turn Mentor AI on or off for this school&rsquo;s mobile app. When off, nobody — staff or parents — can access it.</div>
+                </div>
+                <Switch checked={mentorAi.enabled} onChange={(v) => setMentorAi('enabled', v)} />
+              </div>
+              <div className={`pm-mob-row${!mentorAi.enabled ? ' pm-mob-row-disabled' : ''}`}>
+                <div className="pm-mob-row-l">
+                  <div className="pm-mob-row-name">Parents Access</div>
+                  <div className="pm-mob-row-desc">
+                    {mentorAi.enabled
+                      ? 'Let parents use Mentor AI too. When off, only staff can use it.'
+                      : 'Enable Mentor AI above first — parents access has no effect while Mentor AI is disabled.'}
+                  </div>
+                </div>
+                <Switch
+                  checked={mentorAi.enabled && mentorAi.parentsAccess}
+                  onChange={(v) => setMentorAi('parentsAccess', v)}
+                  disabled={!mentorAi.enabled}
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="pm-top-section" style={{ marginBottom: 0 }}>
+            <div className="pm-top-title"><i className="fa-solid fa-play-circle" /> eTube</div>
+            <div className="pm-mob-card">
+              <div className="pm-mob-row">
+                <div className="pm-mob-row-l">
+                  <div className="pm-mob-row-name">Enable eTube</div>
+                  <div className="pm-mob-row-desc">Turn eTube on or off for this school&rsquo;s mobile app.</div>
+                </div>
+                <Switch checked={etube.enabled} onChange={(v) => setEtube('enabled', v)} />
+              </div>
+              <div className={`pm-mob-row${!etube.enabled ? ' pm-mob-row-disabled' : ''}`}>
+                <div className="pm-mob-row-l">
+                  <div className="pm-mob-row-name">Video Viewing</div>
+                  <div className="pm-mob-row-desc">Whether users can watch eTube videos.</div>
+                </div>
+                <Switch checked={etube.enabled && etube.viewing} onChange={(v) => setEtube('viewing', v)} disabled={!etube.enabled} />
+              </div>
+              <div className={`pm-mob-row${!etube.enabled ? ' pm-mob-row-disabled' : ''}`}>
+                <div className="pm-mob-row-l">
+                  <div className="pm-mob-row-name">Video Uploading</div>
+                  <div className="pm-mob-row-desc">Whether school users can upload videos to eTube.</div>
+                </div>
+                <Switch checked={etube.enabled && etube.uploading} onChange={(v) => setEtube('uploading', v)} disabled={!etube.enabled} />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="pm-foot">
+          <button className="btn-primary" onClick={onDone} disabled={saving || loading}>
+            {saving
+              ? <><i className="fa-solid fa-spinner fa-spin" /> Saving…</>
+              : <><i className="fa-solid fa-check" /> Done</>}
           </button>
         </div>
       </div>

@@ -61,6 +61,39 @@ export const EM_MODULES = [
   { key: 'settings',    name: 'Settings',         icon: 'fa-gear' },
 ];
 
+/* School Progress → View Details: ERP screen-time grid. ERP tracker
+   `screenName` me yehi labels bhejta hai (manage-usertimespend). */
+export const USAGE_MODULES = [
+  { key: 'dashboard',    name: 'Dashboard',          icon: 'fa-house' },
+  { key: 'mentorai',     name: 'Mentor AI',          icon: 'fa-wand-magic-sparkles' },
+  { key: 'academics',    name: 'Academics',          icon: 'fa-graduation-cap' },
+  { key: 'exam',         name: 'Examination',        icon: 'fa-file-alt' },
+  { key: 'paper',        name: 'Paper Generator',    icon: 'fa-file-circle-check' },
+  { key: 'attendance',   name: 'Attendance',         icon: 'fa-clipboard-check' },
+  { key: 'timetable',    name: 'Timetable',          icon: 'fa-calendar-days' },
+  { key: 'fee',          name: 'Fee',                icon: 'fa-money-bill-wave' },
+  { key: 'accounts',     name: 'Accounts',           icon: 'fa-calculator' },
+  { key: 'inventory',    name: 'Inventory',          icon: 'fa-boxes-stacking' },
+  { key: 'admissions',   name: 'Admission CRM',      icon: 'fa-user-plus' },
+  { key: 'students',     name: 'Students',           icon: 'fa-user-graduate' },
+  { key: 'hr',           name: 'Human Resource',     icon: 'fa-people-group' },
+  { key: 'appraisal',    name: 'Staff Appraisals',   icon: 'fa-star' },
+  { key: 'sop',          name: 'School SOPs',        icon: 'fa-book-open' },
+  { key: 'trainings',    name: 'Teacher Trainings',  icon: 'fa-chalkboard-user' },
+  { key: 'etube',        name: 'e-Tube',             icon: 'fa-play' },
+  { key: 'chat',         name: 'Chat',               icon: 'fa-comments' },
+  { key: 'notifications',name: 'Notifications',      icon: 'fa-bell' },
+  { key: 'launch',       name: 'Launch Setup',       icon: 'fa-rocket' },
+  { key: 'settings',     name: 'Settings',           icon: 'fa-gear' },
+  { key: 'permissions',  name: 'User Permissions',   icon: 'fa-key' },
+  { key: 'audit',        name: 'Audit Logs',         icon: 'fa-clipboard-list' },
+];
+
+export function emptyUsageMods() {
+  const blank = () => ({ l: 0, t: '00:00:00' });
+  return Object.fromEntries(USAGE_MODULES.map((m) => [m.key, blank()]));
+}
+
 /* Build the per-ERP-school detail object (follow-up, onboarding, activity). */
 export function buildSchoolDetail(s) {
   const completed = s.onboarding ? s.onboarding.completed : 0;
@@ -84,23 +117,13 @@ export function buildSchoolDetail(s) {
     })),
     todayLogins: 0, todayTime: '00:00:00',
     monthLogins: s.logins || 0, monthTime: s.workTime || '00:00:00',
-    /* Per-module usage (time + logins) kisi API se nahi aata — na branch-report
-       me hai, na card-action me. Pehle yahan monthly grid me demo numbers pade
-       the (Academics 0:00:10 / 1 login, Fee 0:06:05 / 5 logins, waghera), jo
-       har school par wahi ke wahi dikhte the aur asli usage lagte the. Jab tak
-       backend ye data na de, dono grids zero rehti hain. */
-    todayMods: zeroMods(),
-    monthMods: zeroMods(),
-  };
-}
-
-/* Progress grid ke module rows — sab 00:00:00 / 0 logins. */
-function zeroMods() {
-  const blank = () => ({ l: 0, t: '00:00:00' });
-  return {
-    academics: blank(), exam: blank(), attendance: blank(),
-    fee: blank(), accounts: blank(), students: blank(),
-    hr: blank(), timetable: blank(), launch: blank(),
+    /* Grids API se bharti hain: today = /manage-usertimespend, month = /usertimespend-report. */
+    todayMods: emptyUsageMods(),
+    monthMods: emptyUsageMods(),
+    todayMobileLogins: 0, todayMobileTime: '00:00:00',
+    monthMobileLogins: 0, monthMobileTime: '00:00:00',
+    todayMobileMods: emptyMobileMods(),
+    monthMobileMods: emptyMobileMods(),
   };
 }
 
@@ -122,7 +145,10 @@ export const INITIAL_ENQUIRIES = {
   ],
 };
 
-export const moduleMeta = (key) => EM_MODULES.find((m) => m.key === key) || { name: key, icon: 'fa-layer-group' };
+export const moduleMeta = (key) =>
+  USAGE_MODULES.find((m) => m.key === key)
+  || EM_MODULES.find((m) => m.key === key)
+  || { name: key, icon: 'fa-layer-group' };
 
 /* ═══════════════════════════════════════════════════════════════════
    MOBILE APP USAGE — feature catalogue for the School Progress modal's
@@ -172,3 +198,8 @@ export const MOBILE_CATEGORIES = {
   admin:    { label: 'Administrative',             color: '#B45309', grad: 'linear-gradient(135deg,#B45309,#D97706)' },
   ai:       { label: 'AI-Powered Tools',           color: '#7C3AED', grad: 'linear-gradient(135deg,#6D28D9,#7C3AED)' },
 };
+
+export function emptyMobileMods() {
+  const blank = () => ({ l: 0, t: '00:00:00' });
+  return Object.fromEntries(MOBILE_FEATURES.map((m) => [m.key, blank()]));
+}

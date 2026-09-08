@@ -643,6 +643,22 @@ const triState = (keys, set) => {
 }
 
 /* ── Master / Sub release modal ── */
+/* ── Release ke content TYPE ────────────────────────────────────────
+   Chain Head pehle ye chunta hai ke is release me kaun kaun se type jayenge —
+   Activities / Lesson Plans / Notebook Plans / Resource Library. Jo type
+   chuna hi na jaye us ka koi row child2 me nahi jata, is liye server tak
+   sirf chune hue type ki TypeID pohanchti hai.
+
+   `field` wahi naam hai jis se content index aur `sel` dono me is type ka
+   array milta hai (dekhein releaseContent.js) — is liye gating ek hi kunji
+   par chalti hai. */
+const REL_TYPES = [
+  { key: 'activity', field: 'activities', label: 'Activities', icon: 'fa-calendar-week' },
+  { key: 'lesson', field: 'lessons', label: 'Lesson Plans', icon: 'fa-list-ul' },
+  { key: 'notebook', field: 'notebooks', label: 'Notebook Plans', icon: 'fa-book-open' },
+  { key: 'resource', field: 'resources', label: 'Resource Library', icon: 'fa-folder-open' },
+]
+
 function ReleaseModal({ type, releases, relContent, baseRelease, baseLabel, busy, onClose, onRelease }) {
   const isSub = type === 'sub'
   const [source, setSource] = useState('base') // sub: 'base' (selected workspace) | release id
@@ -668,6 +684,18 @@ function ReleaseModal({ type, releases, relContent, baseRelease, baseLabel, busy
      ban kar jati hai), is liye chhaant seedhi hai. */
   const emptySel = () => ({ activities: new Set(), lessons: new Set(), notebooks: new Set(), resources: new Set() })
   const [sel, setSel] = useState(emptySel)
+  /* Kaun se type is release me ja rahe hain. Khali = kuch nahi — Head Office
+     pehle type chunta hai, phir chahe to usi type ke andar se items chhaant
+     leta hai. Type on karte hi us ka poora content tick ho jata hai (yehi "ye
+     type release karo" ka seedha matlab hai), aur off karte hi us type ke sab
+     tick hat jate hain taake koi bhoola hua id child2 me na reh jaye. */
+  const [types, setTypes] = useState(() => new Set())
+  const availTypes = useMemo(() => REL_TYPES.filter((d) => content[d.field].length > 0), [content])
+  const toggleType = (d) => {
+    const on = types.has(d.key)
+    setTypes((p) => { const n = new Set(p); if (on) n.delete(d.key); else n.add(d.key); return n })
+    setSel((p) => ({ ...p, [d.field]: on ? new Set() : new Set(content[d.field].map((x) => x.id)) }))
+  }
   const [openKeys, setOpenKeys] = useState(() => new Set())
   const toggleOpen = (key) => setOpenKeys((p) => { const n = new Set(p); if (n.has(key)) n.delete(key); else n.add(key); return n })
   const toggleKeys = (field, keys) => setSel((p) => { const n = new Set(p[field]); const allOn = keys.length > 0 && keys.every((k) => n.has(k)); keys.forEach((k) => (allOn ? n.delete(k) : n.add(k))); return { ...p, [field]: n } })
@@ -726,6 +754,7 @@ function ReleaseModal({ type, releases, relContent, baseRelease, baseLabel, busy
      drill-down foran nazar aaye. */
   useEffect(() => {
     setSel(emptySel())
+    setTypes(new Set())
     const next = new Set()
     if (lessonTree[0]) { next.add(`lp-c-${lessonTree[0].classId}`); if (lessonTree[0].subjects[0]) next.add(`lp-c-${lessonTree[0].classId}-s-${lessonTree[0].subjects[0].subjectId}`) }
     if (notebookTree[0]) { next.add(`nb-c-${notebookTree[0].classId}`); if (notebookTree[0].subjects[0]) next.add(`nb-c-${notebookTree[0].classId}-s-${notebookTree[0].subjects[0].subjectId}`) }
@@ -736,13 +765,19 @@ function ReleaseModal({ type, releases, relContent, baseRelease, baseLabel, busy
 
   /* Jo WAQAI release hoga — sirf ticked ids. Pool arrays kabhi jagah par
      filter nahi hote (Head Office ka bank intact rehta hai). */
-  const selectedContent = useMemo(() => ({
-    ...content,
-    activities: content.activities.filter((x) => sel.activities.has(x.id)),
-    lessons: content.lessons.filter((x) => sel.lessons.has(x.id)),
-    notebooks: content.notebooks.filter((x) => sel.notebooks.has(x.id)),
-    resources: content.resources.filter((x) => sel.resources.has(x.id)),
-  }), [content, sel])
+  /* Type off ho to us ka array khali — sirf chune hue type ki rows child2 me
+     jati hain, chahe pehle kabhi kuch tick hua ho. */
+  const selectedContent = useMemo(() => {
+    const pick = (key, field) => (types.has(key) ? content[field].filter((x) => sel[field].has(x.id)) : [])
+    return {
+      ...content,
+      activities: pick('activity', 'activities'),
+      lessons: pick('lesson', 'lessons'),
+      notebooks: pick('notebook', 'notebooks'),
+      resources: pick('resource', 'resources'),
+    }
+  }, [content, sel, types])
+  const noTypes = types.size === 0
   const summary = useMemo(() => summarizeReleaseContent(selectedContent), [selectedContent])
   const t = summary.totals
   const nothingSelected = useMemo(() => !hasReleasableContent(selectedContent), [selectedContent])
@@ -872,10 +907,28 @@ function ReleaseModal({ type, releases, relContent, baseRelease, baseLabel, busy
             <>
               {/* ── Manual content selection — kuch bhi khud-ba-khud shamil nahi ── */}
               <div className="rel-sec-h"><i className="fa-solid fa-hand-pointer" /> Select Content to Release</div>
-              <div className="rel-help" style={{ marginTop: -4, marginBottom: 12 }}>Nothing is included automatically. Tap a class to expand it, then a subject, then a unit — tick individual items, or tick the checkbox next to a class, subject or unit to include everything inside it. The source content stays available in the Head Office content bank either way.</div>
+              <div className="rel-help" style={{ marginTop: -4, marginBottom: 12 }}>Nothing is included automatically. First pick the content types this release should carry — only the selected types are sent to the schools. Then, inside each type, tap a class to expand it, then a subject, then a unit, and narrow it down to individual items if you want. The source content stays available in the Head Office content bank either way.</div>
+
+              {/* Content types — jo type yahan chuna na jaye us ki koi TypeID
+                  server ko nahi jati. Type on karte hi us ka poora content tick
+                  ho jata hai; neeche ka drill-down usay narrow karta hai. */}
+              <div className="rel-sec-h" style={{ marginTop: 0 }}>
+                <i className="fa-solid fa-layer-group" /> Content Types
+                <span className="rel-sec-count">{types.size} of {availTypes.length} selected</span>
+              </div>
+              <div className="rel-schools">
+                {availTypes.map((d) => (
+                  <label key={d.key} className={`rel-school${types.has(d.key) ? ' on' : ''}`}>
+                    <input type="checkbox" checked={types.has(d.key)} onChange={() => toggleType(d)} />
+                    <span className="rel-school-name"><i className={`fa-solid ${d.icon}`} /> {d.label}</span>
+                    <span className="rel-school-city">{types.has(d.key) ? `${sel[d.field].size} of ${content[d.field].length} selected` : `${content[d.field].length} available`}</span>
+                  </label>
+                ))}
+              </div>
+              {noTypes && <div className="rel-err"><i className="fa-solid fa-circle-exclamation" /> Select at least one content type to release.</div>}
 
               {/* Activities */}
-              {poolSummary.general.activities > 0 && (
+              {types.has('activity') && poolSummary.general.activities > 0 && (
                 <div className="rel-pick">
                   <div className="rel-sec-h" style={{ marginTop: 14 }}><i className="fa-solid fa-calendar-week" /> Activities <span className="rel-sec-count">{sel.activities.size} selected</span></div>
                   <label className="rel-selall">
@@ -895,7 +948,7 @@ function ReleaseModal({ type, releases, relContent, baseRelease, baseLabel, busy
               )}
 
               {/* Lesson Plans — Class → Subject → Unit → Lesson */}
-              {lessonTree.length > 0 && (
+              {types.has('lesson') && lessonTree.length > 0 && (
                 <div className="rel-pick">
                   <div className="rel-sec-h" style={{ marginTop: 18 }}><i className="fa-solid fa-list-ul" /> Lesson Plans <span className="rel-sec-count">{sel.lessons.size} selected</span></div>
                   {lessonTree.map((c) => {
@@ -953,7 +1006,7 @@ function ReleaseModal({ type, releases, relContent, baseRelease, baseLabel, busy
               )}
 
               {/* Notebook Plans — Class → Subject → Unit → Notebook Plan */}
-              {notebookTree.length > 0 && (
+              {types.has('notebook') && notebookTree.length > 0 && (
                 <div className="rel-pick">
                   <div className="rel-sec-h" style={{ marginTop: 18 }}><i className="fa-solid fa-book-open" /> Notebook Plans <span className="rel-sec-count">{sel.notebooks.size} selected</span></div>
                   {notebookTree.map((c) => {
@@ -1011,7 +1064,7 @@ function ReleaseModal({ type, releases, relContent, baseRelease, baseLabel, busy
               )}
 
               {/* Resource Library — Class → Subject → Category → File */}
-              {resourceTree.length > 0 && (
+              {types.has('resource') && resourceTree.length > 0 && (
                 <div className="rel-pick">
                   <div className="rel-sec-h" style={{ marginTop: 18 }}><i className="fa-solid fa-folder-open" /> Resource Library <span className="rel-sec-count">{sel.resources.size} selected</span></div>
                   {resourceTree.map((c) => {
@@ -1069,7 +1122,7 @@ function ReleaseModal({ type, releases, relContent, baseRelease, baseLabel, busy
                 </div>
               )}
 
-              {nothingSelected && <div className="rel-err"><i className="fa-solid fa-circle-exclamation" /> Select at least one content item to release.</div>}
+              {!noTypes && nothingSelected && <div className="rel-err"><i className="fa-solid fa-circle-exclamation" /> Select at least one content item to release.</div>}
 
               {/* Top summary cards — selected content only */}
               <div className="rel-sec-h"><i className="fa-solid fa-chart-simple" /> Content Summary <span className="rel-sec-count">Selected content only</span></div>
@@ -1173,7 +1226,7 @@ function ReleaseModal({ type, releases, relContent, baseRelease, baseLabel, busy
 
         <div className="pay-modal-foot">
           {!noContent && !canRelease && (
-            <span className="rel-foot-hint"><i className="fa-solid fa-circle-info" /> {nothingSelected ? 'Select at least one content item to release' : !validDays ? 'Enter valid validity days (1–365)' : (isSub && schoolSel.size === 0) ? 'Select at least one school' : (!isSub && connectedSchools.length === 0) ? 'Connect at least one school to this chain' : 'Tick the confirmation checkbox'} to enable release</span>
+            <span className="rel-foot-hint"><i className="fa-solid fa-circle-info" /> {noTypes ? 'Select at least one content type to release' : nothingSelected ? 'Select at least one content item to release' : !validDays ? 'Enter valid validity days (1–365)' : (isSub && schoolSel.size === 0) ? 'Select at least one school' : (!isSub && connectedSchools.length === 0) ? 'Connect at least one school to this chain' : 'Tick the confirmation checkbox'} to enable release</span>
           )}
           <button className="btn-secondary" onClick={onClose} disabled={busy}>Cancel</button>
           <button className="btn-success" disabled={!canRelease || busy} onClick={submit}>

@@ -7,10 +7,20 @@ import { fetchBranchNetworkId } from './chainBranch';
    Chain (Head Office) apne Academics me Master ya Sub Release banata hai;
    wo release Chain-Management API par is tarah baithta hai:
 
-     POST {chain}/api/Network_Setup/manage-release   { action: "get", … }
+     POST {chain}/api/Network_Setup/get-releae-bybranch  { networkID, branchID }
        Master     → har release ki tafseel (ReleaseType, DueDate, Duration)
        Child1     → kin branches ko gaya (BranchID)
        Child2Raw  → kya kya gaya: Type + TypeID + GradeID + SubjectID
+
+   (Endpoint ke naam me "releae" ka typo server par hi hai.)
+
+   Pehle yahan network ka POORA release set aata tha (manage-release ka
+   `get`, jo apni id nazarandaz kar ke sab kuch de deta hai) aur is branch
+   ke releases yahin JS me chhaante jate the — yani har school doosre
+   schools ke releases bhi download karta tha. Ab server BranchID par khud
+   chhaant deta hai: jawab ka dhancha wahi hai, bas usi branch ka. Child1
+   ki jaanch phir bhi rehne di gayi hai — jo dikhta hai wo hamesha isi
+   branch ka ho, chahe endpoint kabhi zyada bhej de.
 
    ── Content ki tafseel ab isi jawab me aati hai ──
    Jawab me har release ke saath uska APNA content bhi hota hai —
@@ -41,7 +51,7 @@ import { fetchBranchNetworkId } from './chainBranch';
    "Valid until" = DueDate, aur Duration validity ke din hain.
    ═══════════════════════════════════════════════════════════════════ */
 
-const RELEASE_URL = () => buildChainApiUrl('/api/Network_Setup/manage-release');
+const RELEASE_URL = () => buildChainApiUrl('/api/Network_Setup/get-releae-bybranch');
 const NETWORKS_URL = () => buildChainApiUrl('/api/Network_Setup/get_all_networks');
 
 const branchId = () => Number(sessionStorage.getItem('branchID')) || 0;
@@ -65,15 +75,6 @@ async function getJson(url, opt) {
 const postJson = (url, body) => getJson(url, {
   method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
 });
-
-/* manage-release har action par ye chaar fields maangta hai — get par bhi,
-   warna 400 (validation) aata hai. Ye natije par asar nahi daalte. */
-const GET_STUB = {
-  releaseType: 'Release',
-  dueDate: new Date().toISOString(),
-  creationDate: new Date().toISOString(),
-  duration: '0',
-};
 
 /* ───────────────────── Ye branch kis network me hai ─────────────────────
    Yahan pehle isi ka apna copy tha; ab wo chainBranch me rehta hai (wahi
@@ -271,7 +272,7 @@ export async function fetchHeadOfficeReleases() {
   if (!bid || !networkId) return { releases: [], headOfficeName: '' };
 
   const [json, headOfficeName] = await Promise.all([
-    postJson(RELEASE_URL(), { action: 'get', id: 0, networkID: networkId, ...GET_STUB }),
+    postJson(RELEASE_URL(), { networkID: networkId, branchID: bid }),
     fetchNetworkName(networkId),
   ]);
   const data = (json && json.data) || {};
@@ -286,7 +287,8 @@ export async function fetchHeadOfficeReleases() {
     resource: groupBy(data.ResourceFile, 'MasterID'),
   };
 
-  /* Sirf wo releases jo is branch ko gaye — content tab hi laate hain. */
+  /* Server pehle hi is branch par chhaant chuka hai; ye sirf ehtiyat ki
+     dohri jaanch hai — content tab hi laate hain jab kuch mila ho. */
   const mine = list(data.Master).filter((m) => (
     (branchesOf.get(num(m.ID)) || []).some((c) => num(c.BranchID) === bid)
   ));

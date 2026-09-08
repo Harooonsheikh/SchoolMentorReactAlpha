@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import TutorialButton from '../../components/TutorialButton'
 import { createPortal } from 'react-dom'
-import { toProgressRows, USERS, MONTHS, getDetailData } from './data'
+import { toProgressRows, USERS, MONTHS, getDetailData, MOBILE_FEATURES, MOBILE_CATEGORIES } from './data'
 import { useView } from '../../config/viewContext'
 import {
   setLaunchSetup, fetchLaunchSetupEach,
@@ -9,7 +9,7 @@ import {
 } from '../../api/schoolPermissionsApi'
 import {
   fetchBranchReportAll, listCardActions, saveCardAction, deleteCardAction,
-  fetchCardCountsEach, CARD_SUBS,
+  fetchCardCountsEach, fetchUserTimeSpend, CARD_SUBS,
 } from '../../api/schoolProgressApi'
 import './SchoolStatus.css'
 
@@ -582,36 +582,158 @@ function ErpDetailModal({ school, month, onToast, onCounts, onClose }) {
   )
 }
 
-function ProgressTab({ school, seed, month }) {
-  const ModRows = ({ mods }) => (
+function ProgressTab({ school, seed }) {
+  const [usage, setUsage] = useState(null)
+  const [usageLoading, setUsageLoading] = useState(true)
+  const monthLabel = new Date().toLocaleString('en-GB', { month: 'long', year: 'numeric' })
+  useEffect(() => {
+    let alive = true
+    setUsageLoading(true)
+    fetchUserTimeSpend(school.id)
+      .then((u) => { if (alive) setUsage(u) })
+      .catch((err) => { console.error('Screen time load failed:', err) })
+      .finally(() => { if (alive) setUsageLoading(false) })
+    return () => { alive = false }
+  }, [school.id])
+
+  const todayMods = usage?.todayMods || seed.todayMods
+  const monthMods = usage?.monthMods || seed.monthMods
+  const todayLogins = usage ? usage.todayLogins : seed.todayLogins
+  const todayTime = usage ? usage.todayTime : seed.todayTime
+  const monthLogins = usage ? usage.monthLogins : seed.monthLogins
+  const monthTime = usage ? usage.monthTime : seed.monthTime
+
+  const hasTime = (t) => {
+    const p = String(t || '0').split(':').map((x) => Number(x) || 0)
+    if (p.length >= 3) return p[0] * 3600 + p[1] * 60 + p[2] > 0
+    if (p.length === 2) return p[0] * 60 + p[1] > 0
+    return (p[0] || 0) > 0
+  }
+  const ModRows = ({ mods, showSessions }) => (
     <div className="ss-mod-grid">
-      {mods.map((m) => (
-        <div className="ss-mod-row" key={m.key} style={m.l > 0 ? { borderColor: 'var(--bm)' } : undefined}>
-          <div className="ss-mod-icon" style={m.l > 0 ? undefined : { background: 'rgba(100,116,139,.45)' }}><i className={`fa-solid ${m.icon}`} /></div>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div className="ss-mod-name">{m.name}</div>
-            <div className="ss-mod-time"><i className="fa-regular fa-clock" style={{ fontSize: 8, marginRight: 2 }} />{m.t}</div>
+      {mods.map((m) => {
+        const active = m.l > 0 || hasTime(m.t)
+        return (
+          <div className="ss-mod-row" key={m.key} style={active ? { borderColor: 'var(--bm)' } : undefined}>
+            <div className="ss-mod-icon" style={active ? undefined : { background: 'rgba(100,116,139,.45)' }}><i className={`fa-solid ${m.icon}`} /></div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div className="ss-mod-name">{m.name}</div>
+              <div className="ss-mod-time"><i className="fa-regular fa-clock" style={{ fontSize: 8, marginRight: 2 }} />{m.t}</div>
+            </div>
+            {showSessions && (
+              <span className="ss-mod-count" style={active ? undefined : { background: 'var(--muted)', color: 'var(--tm)' }}>{m.l} session{m.l !== 1 ? 's' : ''}</span>
+            )}
           </div>
-          <span className="ss-mod-count" style={m.l > 0 ? undefined : { background: 'var(--muted)', color: 'var(--tm)' }}>{m.l} login{m.l !== 1 ? 's' : ''}</span>
-        </div>
-      ))}
+        )
+      })}
     </div>
   )
   return (
     <>
       <DetailSections school={school} />
       <div className="modal-sect-title"><i className="fa-regular fa-calendar-day" /> Today&apos;s Progress</div>
-      <div className="ss-login-grid">
-        <div className="ss-login-box"><div className="ss-login-lbl">Logins Today</div><div className="ss-login-val">{seed.todayLogins}</div><div className="ss-login-sub">{seed.todayTime} working time</div></div>
-        <div className="ss-login-box"><div className="ss-login-lbl">Working Time</div><div className="ss-login-val">{seed.todayTime}</div><div className="ss-login-sub">total today</div></div>
-      </div>
-      <ModRows mods={seed.todayMods} />
-      <div className="modal-sect-title" style={{ marginTop: 18 }}><i className="fa-regular fa-calendar-check" /> Monthly Progress — {month}</div>
-      <div className="ss-login-grid">
-        <div className="ss-login-box"><div className="ss-login-lbl">Logins This Month</div><div className="ss-login-val">{seed.monthLogins}</div><div className="ss-login-sub">{seed.monthTime} working time</div></div>
-        <div className="ss-login-box"><div className="ss-login-lbl">Working Time</div><div className="ss-login-val">{seed.monthTime}</div><div className="ss-login-sub">total this month</div></div>
-      </div>
-      <ModRows mods={seed.monthMods} />
+      {usageLoading ? (
+        <div className="ss-empty" style={{ padding: 24 }}><i className="fa-solid fa-spinner fa-spin" /><div className="ss-empty-t">Loading screen time…</div></div>
+      ) : (
+        <>
+          <div className="ss-login-grid">
+            <div className="ss-login-box"><div className="ss-login-lbl">Sessions Today</div><div className="ss-login-val">{todayLogins}</div><div className="ss-login-sub">{todayTime} working time</div></div>
+            <div className="ss-login-box"><div className="ss-login-lbl">Working Time</div><div className="ss-login-val">{todayTime}</div><div className="ss-login-sub">total today</div></div>
+          </div>
+          <ModRows mods={todayMods} showSessions />
+        </>
+      )}
+      <div className="modal-sect-title" style={{ marginTop: 18 }}><i className="fa-regular fa-calendar-check" /> Monthly Progress — {monthLabel}</div>
+      {usageLoading ? (
+        <div className="ss-empty" style={{ padding: 24 }}><i className="fa-solid fa-spinner fa-spin" /><div className="ss-empty-t">Loading screen time…</div></div>
+      ) : (
+        <>
+          <div className="ss-login-grid">
+            <div className="ss-login-box"><div className="ss-login-lbl">Sessions This Month</div><div className="ss-login-val">{monthLogins}</div><div className="ss-login-sub">{monthTime} working time</div></div>
+            <div className="ss-login-box"><div className="ss-login-lbl">Working Time</div><div className="ss-login-val">{monthTime}</div><div className="ss-login-sub">total this month</div></div>
+          </div>
+          <ModRows mods={monthMods} />
+        </>
+      )}
+      <MobileUsageBlock
+        title="Daily Mobile App Usage"
+        loading={usageLoading}
+        logins={usage ? usage.todayMobileLogins : seed.todayMobileLogins}
+        time={usage ? usage.todayMobileTime : seed.todayMobileTime}
+        mods={usage?.todayMobileMods || seed.todayMobileMods}
+        showSessions
+      />
+      <MobileUsageBlock
+        title="Monthly Mobile App Usage"
+        loading={usageLoading}
+        logins={usage ? usage.monthMobileLogins : seed.monthMobileLogins}
+        time={usage ? usage.monthMobileTime : seed.monthMobileTime}
+        mods={usage?.monthMobileMods || seed.monthMobileMods}
+      />
+    </>
+  )
+}
+
+function MobileUsageBlock({ title, loading, logins = 0, time = '00:00:00', mods, showSessions }) {
+  const hasTime = (t) => {
+    const p = String(t || '0').split(':').map((x) => Number(x) || 0)
+    if (p.length >= 3) return p[0] * 3600 + p[1] * 60 + p[2] > 0
+    if (p.length === 2) return p[0] * 60 + p[1] > 0
+    return (p[0] || 0) > 0
+  }
+  const known = new Set(MOBILE_FEATURES.map((f) => f.key))
+  const extraKeys = Object.keys(mods || {}).filter((k) => !known.has(k) && ((mods[k]?.l || 0) > 0 || hasTime(mods[k]?.t)))
+  const groups = [
+    ...Object.keys(MOBILE_CATEGORIES).map((cat) => ({
+      cat,
+      meta: MOBILE_CATEGORIES[cat],
+      items: MOBILE_FEATURES.filter((f) => f.category === cat),
+    })),
+    ...(extraKeys.length ? [{
+      cat: 'other',
+      meta: { label: 'Other', color: '#64748B', grad: 'linear-gradient(135deg,#475569,#64748B)' },
+      items: extraKeys.map((k) => ({ key: k, name: k, icon: 'fa-layer-group' })),
+    }] : []),
+  ]
+  return (
+    <>
+      <div className="modal-sect-title" style={{ marginTop: 18 }}><i className="fa-regular fa-mobile-screen-button" /> {title}</div>
+      {loading ? (
+        <div className="ss-empty" style={{ padding: 24 }}><i className="fa-solid fa-spinner fa-spin" /><div className="ss-empty-t">Loading screen time…</div></div>
+      ) : (
+        <>
+          <div className="ss-login-grid">
+            <div className="ss-login-box"><div className="ss-login-lbl">Total Sessions</div><div className="ss-login-val">{logins}</div><div className="ss-login-sub">{time} working time</div></div>
+            <div className="ss-login-box"><div className="ss-login-lbl">Working Time</div><div className="ss-login-val">{time}</div><div className="ss-login-sub">mobile app</div></div>
+          </div>
+          {groups.map(({ cat, meta, items }) => (
+            <div key={cat} style={{ marginBottom: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 7, margin: '8px 0' }}>
+                <span style={{ width: 7, height: 7, borderRadius: '50%', background: meta.grad, flexShrink: 0 }} />
+                <span style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: '.4px', textTransform: 'uppercase', color: meta.color }}>{meta.label}</span>
+              </div>
+              <div className="ss-mod-grid">
+                {items.map((f) => {
+                  const v = (mods && mods[f.key]) || { l: 0, t: '00:00:00' }
+                  const active = (v.l > 0) || hasTime(v.t)
+                  return (
+                    <div className="ss-mod-row" key={f.key} style={active ? { borderColor: 'var(--bm)', borderLeft: `3px solid ${meta.color}` } : { borderLeft: '3px solid transparent' }}>
+                      <div className="ss-mod-icon" style={active ? { background: meta.grad } : { background: 'rgba(100,116,139,.45)' }}><i className={`fa-solid ${f.icon}`} /></div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div className="ss-mod-name">{f.name}</div>
+                        <div className="ss-mod-time"><i className="fa-regular fa-clock" style={{ fontSize: 8, marginRight: 2 }} />{v.t || '00:00:00'}</div>
+                      </div>
+                      {showSessions && (
+                        <span className="ss-mod-count" style={active ? { background: `${meta.color}18`, color: meta.color } : { background: 'var(--muted)', color: 'var(--tm)' }}>{v.l || 0} session{(v.l || 0) !== 1 ? 's' : ''}</span>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          ))}
+        </>
+      )}
     </>
   )
 }

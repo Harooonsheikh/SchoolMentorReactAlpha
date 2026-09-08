@@ -19,7 +19,7 @@ export const CORE_PERMS = [
 
 /* Chat permission — a single-select mode per school (not a plain on/off toggle).
    Ye + Mentor AI + eTube "Manage Mobile App Permissions" nested modal me dikhte
-   hain. Filhaal frontend-only (draft me rehte, alag API mapping abhi nahi). */
+   hain. Save par chatType = selected key (off / staffOnly / …). */
 export const CHAT_MODES = [
   { key: 'off', name: 'Chat Completely Off', icon: 'fa-comment-slash',
     desc: 'Disable chat entirely for this school. No staff, teacher, or parent can send or receive any message.' },
@@ -113,10 +113,11 @@ export function defaultPerms(school) {
   return {
     erpAccess: on,
     activeBranch: on,
-    /* Mobile App permissions (frontend-only draft state) — Chat / Mentor AI / eTube. */
+    /* Mobile App — GET/SAVE /manage-mobileapp-permission. */
     chatMode: on ? 'staffTwoWayParentReceive' : 'off',
     mentorAi: { enabled: on, parentsAccess: false },
     etube: { enabled: on, viewing: on, uploading: false },
+    mobileAppId: 0,
     modules: {
       academics: on, examination: on, papergenerator: on, attendance: on, timetable: on,
       fee: on, accounts: on, inventory: false, onelink: false,

@@ -368,7 +368,11 @@ function ensureFetchWrapper() {
     /* Network monitor — sirf ERP API calls par. Agar response SM_SLOW_MS se zyada
        le to `sm:slow` event, aur agar 5xx aaye to `sm:server-error` event fire karo.
        SystemDialogs (ERP shell me mounted) inhe sun kar real slow/500 surfaces dikhata. */
-    const monitored = isApiUrl(url);
+    /* Background analytics (time-spend) user-facing slow/offline/500
+       surfaces nahi kholni chahiye — call fail ho to silently chhod do. */
+    const quiet = /\/manage-usertimespend(\/|\?|$)/i.test(String(url || ''))
+      || String(url || '').includes('/api/attendance-weekly-setup');
+    const monitored = isApiUrl(url) && !quiet;
     const isOffline = () => typeof navigator !== 'undefined' && navigator.onLine === false;
     let slowTimer = null;
     if (monitored) {
@@ -384,17 +388,12 @@ function ensureFetchWrapper() {
       const res = await origFetch(input, init);
       if (slowTimer) { clearTimeout(slowTimer); slowTimer = null; }
       try {
-        if (res && res.status === 401 && window.__smSessionGuardActive && isApiUrl(url) && !isAuthUrl(url)) trigger();
-       if (
-   monitored &&
-   res &&
-   res.status >= 500 &&
-   !String(url).includes('/api/attendance-weekly-setup')
-) {
-   window.dispatchEvent(
-      new CustomEvent('sm:server-error', { detail: { status: res.status } })
-   );
-}
+        if (res && res.status === 401 && window.__smSessionGuardActive && isApiUrl(url) && !isAuthUrl(url) && !quiet) trigger();
+        if (monitored && res && res.status >= 500) {
+          window.dispatchEvent(
+            new CustomEvent('sm:server-error', { detail: { status: res.status } })
+          );
+        }
         /* Pehle offline the aur ab koi API kamyab ho gayi → connection wapas aa gaya,
            Offline surface hata do (browser 'online' event kabhi na aaye tab bhi). */
         if (monitored && res && window.__smWasOffline) {
