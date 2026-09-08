@@ -4119,8 +4119,13 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
 
   const handleReceive = () => {
     /* receivingNow MINUS bhi ho sakta hai jab cashier ne already-received ko neeche
-       theek kiya — wo bhi ek valid save hai. Sirf "kuch bhi nahi badla" rokna hai. */
-    if (receivingNow === 0) { toast('Enter at least one head amount to receive', 'error'); return; }
+       theek kiya — wo bhi ek valid save hai. Sirf "kuch bhi nahi badla" rokna hai.
+       NET receivingNow 0 hona kaafi NAHI: jab koi head (mislan Late Fine) receive ho
+       raha ho magar student ke advance credit se poora offset ho jaye, receivingNow
+       0 aata hai halaanki asal me fine/head WASOOL ho rahi hai. Aise me block na karo —
+       sirf tab roko jab waqai koi head/prev/fine movement hi na ho. */
+    const hasReceipt = rows.some(r => r.recvNow !== 0) || prevRecv !== 0 || fineOwed !== 0;
+    if (!hasReceipt) { toast('Enter at least one head amount to receive', 'error'); return; }
     if (!date) { toast('Receiving date is required', 'error'); return; }
     /* Session-date guard: receiving date current session ki UTC window ke andar ho. */
     const recvChk = validateSessionDateFromStorage(date, 'receiving date');
@@ -4446,6 +4451,14 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
               {/* MINUS = correction, wasooli nahi — label aur rang dono badal jaate hain. */}
               <span className="fee-recv-paylbl">{receivingNow < 0 ? 'Adjustment' : 'Receiving Now'}</span>
               <span className={`fee-recv-payval ${receivingNow < 0 ? 'red' : 'blue'}`}>{money(receivingNow)}</span>
+              {/* Advance credit se jo raqam heads/fine par lagi — warna cashier ko samajh
+                 nahi aata ke Receiving Now 0 kyun hai jabke Received me raqam padi hai.
+                 (Advance auto-apply behaviour bar-qarar — sirf shaffaf dikhana hai.) */}
+              {advApplied > 0 && (
+                <span className="fee-sub-eq" style={{ display: 'block', marginTop: 2 }}>
+                  incl. Rs. {advApplied.toLocaleString('en-PK')} from advance credit
+                </span>
+              )}
             </div>
             <div className="fee-recv-paycard">
               <span className="fee-recv-paylbl">Remaining After</span>
@@ -6974,8 +6987,12 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
 
   const handleSaveChild = () => {
     if (!selChild) return;
-    /* MINUS bhi valid hai (already-received correction) — sirf 0 rokna hai. */
-    if (recvNow === 0) { toast('Enter at least one head amount to receive', 'error'); return; }
+    /* MINUS bhi valid hai (already-received correction) — sirf 0 rokna hai.
+       NET recvNow 0 hona kaafi NAHI: fine/head advance credit se offset ho kar 0 aa
+       sakta hai halaanki asal me wasooli ho rahi hai. Sirf tab roko jab koi head/prev/
+       fine movement hi na ho. */
+    const hasReceipt = rowsForSel.some(r => r.recvNow !== 0) || prevRecv !== 0 || fineOwed !== 0;
+    if (!hasReceipt) { toast('Enter at least one head amount to receive', 'error'); return; }
     if (!date) { toast('Receiving date is required', 'error'); return; }
     /* Session-date guard: receiving date current session ki UTC window ke andar ho. */
     const recvChk = validateSessionDateFromStorage(date, 'receiving date');
