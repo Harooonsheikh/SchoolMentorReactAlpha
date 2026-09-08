@@ -9,6 +9,7 @@
   import { deliverReport } from './reportDelivery';
   import { useModuleReadOnly } from '../pages/Settings/settingsStore';
   import { usePermissions } from '../context/PermissionsContext';
+  import ReportDownloadDialog from '../../reports/ReportDownloadDialog';
   /* ═══════════════════════════════════════════════════════════════════
     PAPER GENERATOR — module shell
     Stage 1: page header, 2 inner tabs (Paper Setup / Paper Generator),
@@ -4693,173 +4694,170 @@ const setSubjLine = (ci, si, l) => {
   /* ═══════════════════════════════════════════════════════════════════
     DOWNLOAD MODAL — Print Style (Color/BW) + File Format (PDF/Word)
     ═══════════════════════════════════════════════════════════════════ */
-  function DownloadModal({ paper, cls, templateId = 1, onClose, toast }) {
-    const [style,  setStyle]  = useState('color'); // 'color' | 'bw'
-    const [format, setFormat] = useState('pdf');   // 'pdf'   | 'word'
+ function DownloadModal({
+  paper,
+  cls,
+  templateId = 1,
+  onClose,
+  toast,
+}) {
+  const handleDownload = async ({ style, format }) => {
+    /*
+      Popup pehle open karna zaroori hai.
+      Data fetch async hai; agar popup baad mein open hua
+      to browser usay block kar sakta hai.
+    */
+    const win = window.open(
+      '',
+      '_blank',
+      'width=900,height=750'
+    );
 
-    useEffect(() => {
-      const onKey = e => { if (e.key === 'Escape') onClose(); };
-      document.addEventListener('keydown', onKey);
-      return () => document.removeEventListener('keydown', onKey);
-    }, [onClose]);
+    if (!win) {
+      toast(
+        'Please allow popups to download paper',
+        'warning'
+      );
+      return;
+    }
 
-    const label = `Download ${style === 'color' ? 'Colorful' : 'Colorless'} ${format === 'pdf' ? 'PDF' : 'Word'}`;
+    win.document.write(`
+      <p
+        style="
+          font-family:sans-serif;
+          padding:24px;
+          color:#475569
+        "
+      >
+        Preparing paper…
+      </p>
+    `);
 
-    /* Keyboard nav for the two radio-card groups (matches Modules 2 & 3). */
-    const onStyleKey = (e, value) => {
-      if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); setStyle(value); }
-      else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp')   { e.preventDefault(); setStyle('color'); }
-      else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); setStyle('bw'); }
-    };
-    const onFormatKey = (e, value) => {
-      if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); setFormat(value); }
-      else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp')   { e.preventDefault(); setFormat('pdf'); }
-      else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); setFormat('word'); }
-    };
+    let sections = [];
+    let reportHeader = null;
 
-    const doDownload = async () => {
-      const win = window.open('', '_blank', 'width=900,height=750');
-      if (!win) {
-        toast('Please allow popups to download paper', 'warning');
-        return;
-      }
-      win.document.write('<p style="font-family:sans-serif;padding:24px;color:#475569">Preparing paper…</p>');
-      let sections = [];
-      let reportHeader = null;
-      let fmt = paper.format || 'with';
-      let line = paper.line || 'single';
-      let medium = paper.medium || 'english';
-      try {
-        const [list, header] = await Promise.all([
+    let fmt =
+      paper.format || 'with';
+
+    let line =
+      paper.line || 'single';
+
+    let medium =
+      paper.medium || 'english';
+
+    try {
+      const [list, header] =
+        await Promise.all([
           fetchQpSubmissionDetail({
-            id: paper.qpMasterID ?? paper.id,
-            branchID: sessionStorage.getItem('branchID'),
-            gradeID: cls?.gradeID ?? paper.gradeID,
-            sectionID: cls?.sectionID ?? paper.sectionID,
+            id:
+              paper.qpMasterID ??
+              paper.id,
+
+            branchID:
+              sessionStorage.getItem(
+                'branchID'
+              ),
+
+            gradeID:
+              cls?.gradeID ??
+              paper.gradeID,
+
+            sectionID:
+              cls?.sectionID ??
+              paper.sectionID,
           }),
+
           fetchReportHeader(),
         ]);
-        const detail = normalizeQpDetail(list);
-        sections = detail.sections;
-        fmt = detail.fmt;
-        line = detail.line;
-        medium = detail.medium || medium;
-        reportHeader = header;
-      } catch (err) {
-        console.error('Could not load paper detail for download', err);
-      }
-      const html = buildFullPaperHTML({
+
+      const detail =
+        normalizeQpDetail(list);
+
+      sections =
+        detail.sections;
+
+      fmt =
+        detail.fmt;
+
+      line =
+        detail.line;
+
+      medium =
+        detail.medium ||
+        medium;
+
+      reportHeader =
+        header;
+    } catch (err) {
+      console.error(
+        'Could not load paper detail for download',
+        err
+      );
+    }
+
+    const html =
+      buildFullPaperHTML({
         paper,
         cls,
         templateId,
-        isBW: style === 'bw',
+
+        isBW:
+          style === 'bw',
+
         sections,
         reportHeader,
         fmt,
         line,
         medium,
       });
-      /* PDF → print preview; Word → same preview with a "Save as Word" button
-        (deliverReport handles the format-specific delivery into `win`). */
-      const reportName = `${paper.title || 'Question Paper'} - ${cls?.name || ''}`;
-      deliverReport(reportName, format, html, { win });
-      toast(`${label} — opened in new window`, 'success');
-      onClose();
-    };
 
-    return createPortal(
-      <div
-        className="pg-modal-overlay open"
-        onClick={e => { if (e.target === e.currentTarget) onClose(); }}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="pg-dl-title"
-      >
-        <div className="pg-modal" style={{ maxWidth: 480 }}>
-          <div className="pg-modal-header">
-            <div className="pg-modal-title" id="pg-dl-title">
-              <i className="fa-solid fa-download"></i> Download Paper
-            </div>
-            <Tooltip text="Close"><button className="pg-modal-close" onClick={onClose} aria-label="Close download dialog"><i className="fa-solid fa-xmark"></i></button></Tooltip>
-          </div>
+    const reportName =
+      `${
+        paper.title ||
+        'Question Paper'
+      } - ${
+        cls?.name || ''
+      }`;
 
-          <div className="pg-modal-body">
-            <p style={{ fontSize: 12.5, color: 'var(--text-muted)', margin: '0 0 16px' }}>
-              Select print style and file format for download.
-            </p>
-
-            <div className="pg-section-label" id="pg-dl-style-label" style={{ margin: '0 0 8px' }}>Print Style</div>
-            <div className="pg-dl-grid" role="radiogroup" aria-labelledby="pg-dl-style-label">
-              <div
-                className={`pg-dl-card${style === 'color' ? ' selected' : ''}`}
-                onClick={() => setStyle('color')}
-                role="radio"
-                aria-checked={style === 'color'}
-                tabIndex={style === 'color' ? 0 : -1}
-                onKeyDown={e => onStyleKey(e, 'color')}
-              >
-                <div className="pg-dl-card-icon" style={{ color: '#1E40AF' }} aria-hidden="true"><i className="fa-solid fa-palette"></i></div>
-                <div className="pg-dl-card-label">Colorful Report</div>
-                <div className="pg-dl-card-desc">Full color with school branding, summary cards &amp; icons</div>
-              </div>
-              <div
-                className={`pg-dl-card${style === 'bw' ? ' selected' : ''}`}
-                onClick={() => setStyle('bw')}
-                role="radio"
-                aria-checked={style === 'bw'}
-                tabIndex={style === 'bw' ? 0 : -1}
-                onKeyDown={e => onStyleKey(e, 'bw')}
-              >
-                <div className="pg-dl-card-icon" style={{ color: '#374151' }} aria-hidden="true"><i className="fa-solid fa-circle-half-stroke"></i></div>
-                <div className="pg-dl-card-label">Colorless Report</div>
-                <div className="pg-dl-card-desc">Low-ink layout — white background, light borders only</div>
-              </div>
-            </div>
-
-            <div className="pg-section-label" id="pg-dl-format-label" style={{ margin: '4px 0 8px' }}>File Format</div>
-            <div className="pg-dl-grid" role="radiogroup" aria-labelledby="pg-dl-format-label">
-              <div
-                className={`pg-dl-card${format === 'pdf' ? ' selected' : ''}`}
-                onClick={() => setFormat('pdf')}
-                role="radio"
-                aria-checked={format === 'pdf'}
-                tabIndex={format === 'pdf' ? 0 : -1}
-                onKeyDown={e => onFormatKey(e, 'pdf')}
-              >
-                <div className="pg-dl-card-icon" style={{ color: '#DC2626' }} aria-hidden="true"><i className="fa-solid fa-file-pdf"></i></div>
-                <div className="pg-dl-card-label">PDF</div>
-                <div className="pg-dl-card-desc">Best for printing</div>
-              </div>
-              <div
-                className={`pg-dl-card${format === 'word' ? ' selected' : ''}`}
-                onClick={() => setFormat('word')}
-                role="radio"
-                aria-checked={format === 'word'}
-                tabIndex={format === 'word' ? 0 : -1}
-                onKeyDown={e => onFormatKey(e, 'word')}
-              >
-                <div className="pg-dl-card-icon" style={{ color: '#1E40AF' }} aria-hidden="true"><i className="fa-solid fa-file-word"></i></div>
-                <div className="pg-dl-card-label">Word (.docx)</div>
-                <div className="pg-dl-card-desc">Editable document</div>
-              </div>
-            </div>
-          </div>
-
-          <div className="pg-modal-footer">
-            <Tooltip text="Cancel download">
-              <button className="pg-btn-secondary" onClick={onClose}>Cancel</button>
-            </Tooltip>
-            <Tooltip text={`Download the paper as ${format.toUpperCase()} (${style === 'color' ? 'Colorful' : 'Colorless'})`}>
-              <button className="pg-btn-primary" onClick={doDownload}>
-                <i className="fa-solid fa-download"></i> {label}
-              </button>
-            </Tooltip>
-          </div>
-        </div>
-      </div>,
-      document.body
+    deliverReport(
+      reportName,
+      format,
+      html,
+      { win }
     );
-  }
+
+    toast(
+      `Download ${
+        style === 'color'
+          ? 'Colorful'
+          : 'Colorless'
+      } ${
+        format === 'pdf'
+          ? 'PDF'
+          : 'Word'
+      } — opened in new window`,
+      'success'
+    );
+
+    onClose();
+  };
+
+  return (
+    <ReportDownloadDialog
+      open={true}
+      reportName={
+        `${paper.title || 'Question Paper'} — ${cls?.name || ''}${
+          cls?.section
+            ? ` · Section ${cls.section}`
+            : ''
+        }`
+      }
+      initialFormat="pdf"
+      onClose={onClose}
+      onGenerate={handleDownload}
+    />
+  );
+}
 
   /* ═══════════════════════════════════════════════════════════════════
     DELETE CONFIRMATION DIALOG

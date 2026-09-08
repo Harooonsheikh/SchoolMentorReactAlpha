@@ -6,7 +6,9 @@
   import useAsync from "../hooks/useAsync";
   import { useModuleReadOnly, validateSessionDateFromStorage } from "../pages/Settings/settingsStore";
   import { usePermissions } from "../context/PermissionsContext";
-
+import ReportDownloadDialog from '../../reports/ReportDownloadDialog';
+import ReportHeader from '../../reports/ReportHeader';
+import ReportFooter from '../../reports/ReportFooter';
   /* ============================================================================
     SchoolMentor ERP — Attendance Module (React / JSX)
     ----------------------------------------------------------------------------
@@ -994,63 +996,211 @@
   }
 
   /* ─── Report HTML builders ───────────────────────────────────────────────── */
-  function rptPageWrap({ rptLabel, period, isColor, content, school }) {
-    /* Two coordinated palettes:
-      • Colorful: brand-blue gradient header band, white text on blue.
-      • Colorless: dedicated LOW-INK layout — white header with dark text
-        and a thin gray bottom border; logo box swaps to a bordered outline;
-        opacity-based subtitles become explicit dark-gray. No emoji icons. */
-    const P = "#1E3A8A", S = "#1E40AF", A = "#2563EB";
-    const hdrBg = isColor
-      ? `background:linear-gradient(135deg,${P},${S},${A});color:#fff`
-      : "background:#FFFFFF;color:#0F172A;border:1px solid #D1D5DB";
-    const hdrSubColor = isColor ? "rgba(255,255,255,.75)" : "#4B5563";
-    const hdrKickColor = isColor ? "rgba(255,255,255,.7)" : "#6B7280";
-    const logoBg     = isColor ? "rgba(255,255,255,.18)" : "#FFFFFF";
-    const logoBorder = isColor ? "rgba(255,255,255,.35)" : "#0F172A";
-    const bdr = isColor ? "#BFDBFE" : "#D1D5DB";
-    const styleLabel = isColor ? "Colorful" : "Colorless";
-    /* Real branch header from /report-header (school), else generic fallback. */
-    const schoolName = school?.name || "School Mentor";
-    const schoolTagline = school?.address || "Pakistan's Most Trusted School Operating System";
-    const logoHtml = school?.logo
-      ? `<img src="${school.logo}" width="54" height="54" style="border-radius:11px;object-fit:cover;display:block" onerror="this.style.display='none'" />`
-      : (isColor ? '🏫' : '');
-    const genTime = new Date().toLocaleString("en-GB", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
-    return `<!DOCTYPE html><html><head><meta charset="UTF-8">
-  <title>SchoolMentor — ${rptLabel}</title>
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
-  <style>
-  *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:'Plus Jakarta Sans',sans-serif;background:#fff;color:#0F172A;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-  @media print{@page{margin:12mm 10mm;size:A4}body{padding:0}}
-  </style></head><body>
-  <div style="padding:22px 26px;max-width:880px;margin:0 auto">
-    <div style="${hdrBg};border-radius:16px;padding:20px 26px;margin-bottom:22px;display:flex;justify-content:space-between;align-items:center;gap:16px">
-      <div style="display:flex;align-items:center;gap:14px">
-        <div style="width:54px;height:54px;border-radius:13px;background:${logoBg};border:2px solid ${logoBorder};display:flex;align-items:center;justify-content:center;font-size:26px;color:inherit;overflow:hidden">${logoHtml}</div>
-        <div>
-          <div style="font-size:21px;font-weight:800;letter-spacing:-.5px">${schoolName}</div>
-          <div style="font-size:11px;color:${hdrSubColor};margin-top:2px">${schoolTagline}</div>
+ function rptPageWrap({
+  rptLabel,
+  period,
+  isColor,
+  content,
+  school,
+}) {
+  const isBW = !isColor;
+
+  const schoolName =
+    school?.name ||
+    "School Mentor";
+
+  const schoolAddress =
+    school?.address ||
+    "";
+
+  const academicSession =
+    school?.session ||
+    "";
+
+  const now = new Date();
+
+  const generatedDate =
+    now.toLocaleDateString(
+      "en-GB",
+      {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+      }
+    );
+
+  const generatedTime =
+    now.toLocaleTimeString(
+      "en-US",
+      {
+        hour: "2-digit",
+        minute: "2-digit",
+      }
+    );
+
+  const headerHTML = ReportHeader({
+    schoolName,
+    reportTitle: rptLabel,
+    branch: {
+      branchName: schoolName,
+      branchLogo: school?.logo || "",
+      address: schoolAddress,
+    },
+    academicSession,
+    generatedDate,
+    generatedTime,
+    isBW,
+  });
+
+  const footerHTML = ReportFooter({
+    schoolName,
+    address: schoolAddress,
+    isBW,
+  });
+
+  const bdr =
+    isColor
+      ? "#BFDBFE"
+      : "#D1D5DB";
+
+  return `
+    <!DOCTYPE html>
+
+    <html>
+
+      <head>
+
+        <meta charset="UTF-8" />
+
+        <title>
+          ${rptLabel}
+        </title>
+
+        <link
+          href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap"
+          rel="stylesheet"
+        />
+
+        <style>
+
+          * {
+            box-sizing:border-box;
+            margin:0;
+            padding:0;
+          }
+
+          body {
+            font-family:
+              'Plus Jakarta Sans',
+              Arial,
+              sans-serif;
+
+            background:#FFFFFF;
+
+            color:#0F172A;
+
+            -webkit-print-color-adjust:exact;
+            print-color-adjust:exact;
+          }
+
+          .attendance-report-content {
+            padding:22px 26px;
+          }
+
+          .attendance-period {
+            display:flex;
+
+            align-items:center;
+
+            gap:8px;
+
+            margin-bottom:18px;
+
+            padding:9px 13px;
+
+            background:${
+              isColor
+                ? "#EFF6FF"
+                : "#FFFFFF"
+            };
+
+            border:
+              1px solid
+              ${bdr};
+
+            border-radius:${
+              isColor
+                ? "7px"
+                : "4px"
+            };
+
+            font-size:10.5px;
+
+            color:#475569;
+          }
+
+          .attendance-period strong {
+            color:${
+              isColor
+                ? "#1E40AF"
+                : "#111111"
+            };
+          }
+
+          @page {
+            size:A4 portrait;
+            margin:12mm 10mm;
+          }
+
+          @media print {
+
+            * {
+              -webkit-print-color-adjust:
+                exact !important;
+
+              print-color-adjust:
+                exact !important;
+            }
+
+          }
+
+        </style>
+
+      </head>
+
+      <body>
+
+        ${headerHTML}
+
+        <div class="attendance-report-content">
+
+          ${
+            period
+              ? `
+                <div class="attendance-period">
+
+                  <strong>
+                    Period:
+                  </strong>
+
+                  ${period}
+
+                </div>
+              `
+              : ""
+          }
+
+          ${content}
+
         </div>
-      </div>
-      <div style="text-align:right">
-        <div style="font-size:10px;color:${hdrKickColor};letter-spacing:.5px;text-transform:uppercase;margin-bottom:3px">Report</div>
-        <div style="font-size:15px;font-weight:800;line-height:1.2">${rptLabel}</div>
-        <div style="font-size:11px;color:${hdrSubColor};margin-top:3px">${styleLabel} • ${period}</div>
-      </div>
-    </div>
-    ${content}
-    <div style="margin-top:32px;padding-top:18px;border-top:1.5px solid ${bdr};display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px">
-      ${["Prepared By", "Verified By", "Principal Signature"].map((l) =>
-        `<div style="text-align:center"><div style="border-bottom:1.5px solid #94A3B8;padding-bottom:36px;margin-bottom:8px"></div><div style="font-size:10px;font-weight:700;color:#64748B;text-transform:uppercase;letter-spacing:.5px">${l}</div></div>`
-      ).join("")}
-    </div>
-    <div style="margin-top:18px;text-align:center;font-size:10px;color:#94A3B8;padding-top:10px">
-      Generated by SchoolMentor ERP • ${genTime} • Confidential School Document
-    </div>
-  </div></body></html>`;
-  }
+
+        ${footerHTML}
+
+      </body>
+
+    </html>
+  `;
+}
 
   function buildYearlyHolidayReportHTML({ holidays, weeklyOff, year, classFilter, isColor, branchSchool }) {
     const bdr = isColor ? "#BFDBFE" : "#D1D5DB";

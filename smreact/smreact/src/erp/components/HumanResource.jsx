@@ -6,6 +6,11 @@ import * as hrService from '../services/hrService';
 import * as attendanceService from '../services/attendanceService';
 import useAsync from '../hooks/useAsync';
 import { buildDocxFromHtml } from '../../utils/docx';
+import ReportDownloadDialog from '../../reports/ReportDownloadDialog';
+
+import {
+  downloadStandardReport,
+} from '../../reports/ReportTemplate';
 import {
   generateSalarySlipHTML,
   generatePayHistoryReportHTML,
@@ -956,7 +961,10 @@ function HrReports({ emps, depts, desigs, toast, canDownload = true }) {
   const getDesigName = (id) => desigMap.get(id)?.name || '—';
 
   const [picker, setPicker] = useState(null); // { type }
-
+const [reportMonth, setReportMonth] = useState(() => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+});
   const buildCtx = () => ({
     emps, depts, desigs,
     fmtMoney, fmtDate, getFullName,
@@ -964,10 +972,99 @@ function HrReports({ emps, depts, desigs, toast, canDownload = true }) {
     getEmpTotalGross, getEmpStdDeductions,
   });
 
-  const generate = async (style, monthKey) => {
-    if (!picker) return;
+const generate = async (
+  style,
+  monthKey,
+  format = 'pdf'
+) => {    if (!picker) return;
     const { type } = picker;
+if (type === 'directory') {
+  try {
+    await downloadStandardReport({
+      title: 'Employee Directory',
 
+      style,
+      format,
+
+      meta: [
+        {
+          label: 'Total Employees',
+          value: emps.length,
+        },
+        {
+          label: 'Active Employees',
+          value: emps.filter(e => e.status === 'Active').length,
+        },
+        {
+          label: 'Departments',
+          value: depts.length,
+        },
+      ],
+
+      sectionTitle: 'Employee Directory',
+
+      columns: [
+        {
+          key: 'sr',
+          label: '#',
+          width: '40px',
+        },
+        {
+          key: 'employeeName',
+          label: 'Employee Name',
+        },
+        {
+          key: 'departmentName',
+          label: 'Department',
+        },
+        {
+          key: 'designationName',
+          label: 'Designation',
+        },
+        {
+          key: 'contact',
+          label: 'Contact',
+        },
+        {
+          key: 'status',
+          label: 'Status',
+        },
+      ],
+
+      rows: emps.map((emp, index) => ({
+        ...emp,
+
+        sr: index + 1,
+
+        employeeName: getFullName(emp),
+
+        departmentName:
+          getDeptName(emp.departmentId ?? emp.dId),
+
+        designationName:
+          getDesigName(emp.designationId ?? emp.desId),
+
+        contact:
+          emp.phone ||
+          emp.mobile ||
+          emp.contactNumber ||
+          '—',
+      })),
+    });
+
+    toast('Employee Directory ready', 'success');
+    setPicker(null);
+
+    return;
+  } catch (err) {
+    toast(
+      err.message || 'Could not generate Employee Directory',
+      'error'
+    );
+
+    return;
+  }
+}
     /* Window PEHLE — data baad me. Wajah RspModal wale generateReport par likhi
        hai: await ke baad `window.open` browser ke liye user-click ka jawab nahi
        rehta, is liye pehli click par popup block ho jata tha. */
@@ -1019,14 +1116,32 @@ function HrReports({ emps, depts, desigs, toast, canDownload = true }) {
       return;
     }
 
-    const ctx = { ...buildCtx(), emps: empsForCtx, empPayroll, empLoans, branch, style };
-    let html = '';
-    if      (type === 'directory')       html = generateHrDirectoryReport(ctx);
-    else if (type === 'salary-register') html = generateHrSalaryRegister(ctx, monthKey);
-    else if (type === 'loan-summary')    html = generateHrLoanSummary(ctx);
-    else if (type === 'dept-summary')    html = generateHrDeptSummary(ctx);
-    else if (type === 'leave-register')  html = generateHrLeaveRegister(ctx);
-    else if (type === 'payroll-summary') html = generateHrPayrollSummary(ctx, monthKey);
+const ctx = {
+  ...buildCtx(),
+  emps: empsForCtx,
+  empPayroll,
+  empLoans,
+  branch,
+  style,
+};
+
+let html = '';
+
+if (type === 'salary-register') {
+  html = generateHrSalaryRegister(ctx, monthKey);
+}
+else if (type === 'loan-summary') {
+  html = generateHrLoanSummary(ctx);
+}
+else if (type === 'dept-summary') {
+  html = generateHrDeptSummary(ctx);
+}
+else if (type === 'leave-register') {
+  html = generateHrLeaveRegister(ctx);
+}
+else if (type === 'payroll-summary') {
+  html = generateHrPayrollSummary(ctx, monthKey);
+}
     if (!html) { failReport('Could not build this report'); return; }
     /* Placeholder mita kar asal report likh do — window pehle hi khul chuki hai. */
     w.document.open();
@@ -1073,14 +1188,19 @@ function HrReports({ emps, depts, desigs, toast, canDownload = true }) {
         </div>
       </div>
 
-      {picker && (
-        <HrRptModal
-          type={picker.type}
-          onClose={() => setPicker(null)}
-          onGenerate={generate}
-          canDownload={canDownload}
-        />
-      )}
+<ReportDownloadDialog
+  open={!!picker}
+  reportName={
+    picker
+      ? HR_REPORT_META[picker.type]?.title || "HR Report"
+      : ""
+  }
+  initialFormat="pdf"
+  onClose={() => setPicker(null)}
+  onGenerate={async ({ style, format }) => {
+    await generate(style, reportMonth, format);
+  }}
+/>
     </div>
   );
 }

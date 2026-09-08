@@ -854,72 +854,540 @@ const hrGenLabel = (ctx) => {
    ERP-blue theme. */
 function hrBuildReportHTML(fileTitle, title, filtersHtml, innerHtml, ctx) {
   const b = resolveBranch(ctx);
-  const sn = b.name;
   const bw = ctx?.style === 'bw';
-  const logoInner = b.logo
-    ? `<img src="${b.logo}" alt="School logo" style="width:100%;height:100%;object-fit:cover;border-radius:50%">`
-    : (bw ? HR_LOGO_SVG.replace(/#1E3A8A/g, '#000') : HR_LOGO_SVG);
-  // Colorless palette vs ERP-blue palette — one token set drives the whole sheet.
-  const C = bw ? {
-    brand:'#000', headBorder:'2px solid #000',
-    filtersBg:'#fff', filtersBorder:'1px solid #9CA3AF', filtersText:'#222',
-    secTtl:'#000', secBorder:'1px solid #000',
-    thBg:'#fff', thText:'#000', thBorder:'1px solid #000',
-    tdBorder:'1px solid #9CA3AF',
-    evenBg:'#F2F2F2',
-    totBg:'#F2F2F2', totBorder:'2px solid #000',
-    grandBg:'#000', grandText:'#fff',
-    footText:'#555', footBorder:'1px solid #9CA3AF',
-  } : {
-    brand:'#1E3A8A', headBorder:'2px solid #1E3A8A',
-    filtersBg:'#F1F5FB', filtersBorder:'none', filtersText:'#333',
-    secTtl:'#1E3A8A', secBorder:'1px solid #cdd7ea',
-    thBg:'#1E3A8A', thText:'#fff', thBorder:'none',
-    tdBorder:'1px solid #e5e9f2',
-    evenBg:'#F8FAFF',
-    totBg:'#EAF0FA', totBorder:'2px solid #1E3A8A',
-    grandBg:'#1E3A8A', grandText:'#fff',
-    footText:'#999', footBorder:'1px solid #e5e9f2',
-  };
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${fileTitle}</title>
-    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
-    <style>
-      *{box-sizing:border-box;margin:0;padding:0}
-      html,body{background:#fff}
-      body{font-family:'Plus Jakarta Sans',Arial,sans-serif;color:#111;font-size:10.5px;line-height:1.4;}
-      .rep-page{width:210mm;min-height:297mm;margin:0 auto;padding:14mm;background:#fff;}
-      .rep-head{display:flex;align-items:center;gap:14px;border-bottom:${C.headBorder};padding-bottom:10px;margin-bottom:10px}
-      .rep-logo{width:42px;height:42px;border:2px solid ${C.brand};border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0}
-      .rep-logo svg{width:22px;height:22px}
-      .rep-name{font-size:18px;font-weight:800;color:${C.brand};line-height:1.1}
-      .rep-title{font-size:12px;font-weight:600;color:#444;margin-top:3px}
-      .rep-filters{display:flex;flex-wrap:wrap;gap:6px 22px;font-size:10.5px;color:${C.filtersText};margin-bottom:12px;background:${C.filtersBg};border:${C.filtersBorder};padding:9px 13px;border-radius:6px}
-      .rep-secttl{font-size:12px;font-weight:800;color:${C.secTtl};margin:14px 0 6px;padding-bottom:4px;border-bottom:${C.secBorder};}
-      .rep-tbl{width:100%;border-collapse:collapse;font-size:10px;margin-bottom:4px;}
-      .rep-tbl thead{display:table-header-group;}
-      .rep-tbl th{background:${C.thBg};color:${C.thText};border:${C.thBorder};padding:6px 7px;text-align:left;font-size:10px;font-weight:700}
-      .rep-tbl th.r,.rep-tbl td.r{text-align:right}
-      .rep-tbl td{padding:5px 7px;border-bottom:${C.tdBorder};vertical-align:top}
-      .rep-tbl tr:nth-child(even) td{background:${C.evenBg}}
-      .rep-tot td{background:${C.totBg};font-weight:800;border-top:${C.totBorder}}
-      .rep-grandtot td{background:${C.grandBg};color:${C.grandText};font-weight:800;padding:7px 7px}
-      .rep-foot{margin-top:16px;text-align:center;font-size:9px;color:${C.footText};border-top:${C.footBorder};padding-top:8px}
-      @page{size:A4 portrait;margin:14mm}
-      @media print{.rep-page{width:auto;min-height:0;margin:0;padding:0;}body{font-size:10px;}}
-    </style></head><body>
-    <div class="rep-page">
-      <div class="rep-head">
-        <div class="rep-logo">${logoInner}</div>
-        <div><div class="rep-name">${sn}</div><div class="rep-title">${title}</div>${b.address?`<div class="rep-title" style="font-size:10px;color:#666;margin-top:1px">${b.address}</div>`:''}</div>
-      </div>
-      <div class="rep-filters">${filtersHtml}</div>
-      ${innerHtml}
-      <div class="rep-foot">Computer generated report — ${sn} · ${title}</div>
-    </div>
-    ${CLOSE_SCRIPT_AFTER_PRINT}
-    </body></html>`;
-}
 
+  const schoolName = b.name || 'School Mentor ERP';
+  const schoolAddress = b.address || '';
+  const session = b.session || '';
+  const generatedDate = hrGenLabel(ctx);
+
+  const logoInner = b.logo
+    ? `
+      <img
+        src="${b.logo}"
+        alt="School logo"
+        style="
+          width:100%;
+          height:100%;
+          object-fit:cover;
+          display:block;
+        "
+      />
+    `
+    : `
+      <div style="
+        width:100%;
+        height:100%;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        font-weight:900;
+        font-size:14px;
+      ">
+        SM
+      </div>
+    `;
+
+  const C = bw
+    ? {
+        headerBg: '#FFFFFF',
+        headerText: '#111111',
+        headerMuted: '#4B5563',
+        headerKick: '#6B7280',
+        divider: '#E5E7EB',
+
+        brand: '#374151',
+
+        filtersBg: '#FFFFFF',
+        filtersBorder: '1px solid #D1D5DB',
+        filtersText: '#111111',
+
+        secTitle: '#111111',
+        secBorder: '#D1D5DB',
+
+        thBg: '#FFFFFF',
+        thText: '#111111',
+        thBorder: '#D1D5DB',
+
+        tdBorder: '#D1D5DB',
+        evenBg: '#FFFFFF',
+
+        totalBg: '#FFFFFF',
+        totalBorder: '#111111',
+
+        grandBg: '#FFFFFF',
+        grandText: '#111111',
+
+        footerText: '#4B5563',
+        footerBorder: '#D1D5DB',
+      }
+    : {
+        headerBg: '#1E3A8A',
+        headerText: '#FFFFFF',
+        headerMuted: 'rgba(255,255,255,.75)',
+        headerKick: 'rgba(255,255,255,.55)',
+        divider: 'rgba(255,255,255,.20)',
+
+        brand: '#1E40AF',
+
+        filtersBg: '#EFF6FF',
+        filtersBorder: '1px solid #BFDBFE',
+        filtersText: '#0F172A',
+
+        secTitle: '#1E40AF',
+        secBorder: '#BFDBFE',
+
+        thBg: '#EFF6FF',
+        thText: '#0F172A',
+        thBorder: '#BFDBFE',
+
+        tdBorder: '#DBEAFE',
+        evenBg: '#F8FAFF',
+
+        totalBg: '#EFF6FF',
+        totalBorder: '#1E40AF',
+
+        grandBg: '#1E3A8A',
+        grandText: '#FFFFFF',
+
+        footerText: '#64748B',
+        footerBorder: '#BFDBFE',
+      };
+
+  return `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8" />
+
+      <title>${fileTitle}</title>
+
+      <style>
+        * {
+          box-sizing:border-box;
+          margin:0;
+          padding:0;
+        }
+
+        html,
+        body {
+          background:#FFFFFF;
+        }
+
+        body {
+          font-family:'Segoe UI', Arial, sans-serif;
+          color:#0F172A;
+          font-size:10.5px;
+          line-height:1.45;
+        }
+
+        .rep-page {
+          width:210mm;
+          min-height:297mm;
+          margin:0 auto;
+          background:#FFFFFF;
+        }
+
+        /* ==========================
+           ACADEMICS STYLE HEADER
+           ========================== */
+
+        .rep-header {
+          background:${C.headerBg};
+          color:${C.headerText};
+          padding:${bw ? '22px 32px' : '24px 32px 28px'};
+          position:relative;
+          overflow:hidden;
+          ${bw ? 'border-bottom:1px solid #D1D5DB;' : ''}
+        }
+
+        .rep-header-circle-one {
+          display:${bw ? 'none' : 'block'};
+          position:absolute;
+          top:-30px;
+          right:-30px;
+          width:140px;
+          height:140px;
+          border-radius:50%;
+          background:rgba(255,255,255,.06);
+        }
+
+        .rep-header-circle-two {
+          display:${bw ? 'none' : 'block'};
+          position:absolute;
+          bottom:-20px;
+          left:120px;
+          width:80px;
+          height:80px;
+          border-radius:50%;
+          background:rgba(14,165,233,.15);
+        }
+
+        .rep-brand-row {
+          display:flex;
+          align-items:center;
+          gap:${bw ? '16px' : '18px'};
+          position:relative;
+          z-index:2;
+        }
+
+        .rep-logo {
+          width:${bw ? '56px' : '64px'};
+          height:${bw ? '56px' : '64px'};
+          border-radius:${bw ? '12px' : '16px'};
+          overflow:hidden;
+          flex-shrink:0;
+          background:#FFFFFF;
+
+          ${
+            bw
+              ? 'border:1.5px solid #E5E7EB;'
+              : `
+                box-shadow:
+                  0 4px 18px rgba(0,0,0,.35),
+                  0 0 0 2px rgba(255,255,255,.15);
+              `
+          }
+        }
+
+        .rep-kicker {
+          font-size:9px;
+          letter-spacing:2.5px;
+          text-transform:uppercase;
+          color:${C.headerKick};
+          font-weight:700;
+          margin-bottom:3px;
+        }
+
+        .rep-school-name {
+          font-size:${bw ? '19px' : '20px'};
+          font-weight:800;
+          color:${C.headerText};
+          line-height:1.2;
+          letter-spacing:-.02em;
+        }
+
+        .rep-address {
+          font-size:10px;
+          color:${C.headerMuted};
+          margin-top:4px;
+        }
+
+        .rep-header-divider {
+          height:1px;
+          background:${C.divider};
+          margin:${bw ? '16px 0 14px' : '18px 0 16px'};
+          position:relative;
+          z-index:2;
+        }
+
+        .rep-report-title {
+          font-size:${bw ? '21px' : '22px'};
+          font-weight:800;
+          color:${C.headerText};
+          letter-spacing:-.02em;
+          margin-bottom:4px;
+          position:relative;
+          z-index:2;
+        }
+
+        .rep-report-subtitle {
+          font-size:${bw ? '12.5px' : '13px'};
+          color:${C.headerMuted};
+          margin-bottom:14px;
+          position:relative;
+          z-index:2;
+        }
+
+        .rep-header-meta {
+          display:flex;
+          flex-wrap:wrap;
+          gap:10px;
+          position:relative;
+          z-index:2;
+        }
+
+        .rep-header-chip {
+          padding:${bw ? '5px 12px' : '6px 14px'};
+          border-radius:20px;
+          font-size:${bw ? '11px' : '11.5px'};
+
+          ${
+            bw
+              ? `
+                background:#FFFFFF;
+                border:1px solid #D1D5DB;
+                color:#111111;
+              `
+              : `
+                background:rgba(255,255,255,.14);
+                border:1px solid transparent;
+                color:#FFFFFF;
+              `
+          }
+        }
+
+        /* ==========================
+           REPORT CONTENT
+           ========================== */
+
+        .rep-body {
+          padding:28px 32px;
+        }
+
+        .rep-filters {
+          display:flex;
+          flex-wrap:wrap;
+          gap:7px 20px;
+
+          font-size:10.5px;
+
+          color:${C.filtersText};
+          background:${C.filtersBg};
+          border:${C.filtersBorder};
+
+          padding:10px 13px;
+          border-radius:${bw ? '4px' : '7px'};
+
+          margin-bottom:18px;
+        }
+
+        .rep-filters b {
+          color:${bw ? '#111111' : '#1E40AF'};
+        }
+
+        .rep-secttl {
+          font-size:13px;
+          font-weight:800;
+          color:${C.secTitle};
+
+          margin:16px 0 8px;
+          padding-bottom:6px;
+
+          ${
+            bw
+              ? `border-bottom:1px solid ${C.secBorder};`
+              : `
+                border-left:3px solid #1E40AF;
+                padding-left:10px;
+                border-bottom:none;
+              `
+          }
+        }
+
+        .rep-tbl {
+          width:100%;
+          border-collapse:collapse;
+          font-size:10px;
+          margin-bottom:8px;
+        }
+
+        .rep-tbl thead {
+          display:table-header-group;
+        }
+
+        .rep-tbl th {
+          background:${C.thBg};
+          color:${C.thText};
+
+          border:1px solid ${C.thBorder};
+
+          padding:8px 9px;
+          text-align:left;
+
+          font-size:9.5px;
+          font-weight:800;
+        }
+
+        .rep-tbl th.r,
+        .rep-tbl td.r {
+          text-align:right;
+        }
+
+        .rep-tbl td {
+          padding:7px 9px;
+          border:1px solid ${C.tdBorder};
+          vertical-align:middle;
+          background:#FFFFFF;
+        }
+
+        ${
+          bw
+            ? ''
+            : `
+              .rep-tbl tbody tr:nth-child(even) td {
+                background:${C.evenBg};
+              }
+            `
+        }
+
+        .rep-tot td {
+          background:${C.totalBg} !important;
+          font-weight:800;
+          border-top:2px solid ${C.totalBorder};
+        }
+
+        .rep-grandtot td {
+          background:${C.grandBg} !important;
+          color:${C.grandText};
+          font-weight:800;
+          padding:8px 9px;
+        }
+
+        /* ==========================
+           FOOTER
+           ========================== */
+
+        .rep-foot {
+          border-top:1px solid ${C.footerBorder};
+          padding:14px 32px;
+          margin-top:8px;
+
+          display:flex;
+          justify-content:space-between;
+          align-items:center;
+          gap:20px;
+
+          font-size:10px;
+          color:${C.footerText};
+        }
+
+        .rep-foot strong {
+          color:${bw ? '#111111' : '#1E40AF'};
+        }
+
+        @page {
+          size:A4 portrait;
+          margin:15mm;
+        }
+
+        @media print {
+          * {
+            -webkit-print-color-adjust:exact !important;
+            print-color-adjust:exact !important;
+          }
+
+          .rep-page {
+            width:auto;
+            min-height:0;
+            margin:0;
+          }
+
+          .rep-body {
+            padding:18px 0;
+          }
+
+          .rep-header {
+            margin-left:0;
+            margin-right:0;
+          }
+
+          .rep-foot {
+            padding-left:0;
+            padding-right:0;
+          }
+        }
+      </style>
+    </head>
+
+    <body>
+
+      <div class="rep-page">
+
+        <div class="rep-header">
+
+          <div class="rep-header-circle-one"></div>
+          <div class="rep-header-circle-two"></div>
+
+          <div class="rep-brand-row">
+
+            <div class="rep-logo">
+              ${logoInner}
+            </div>
+
+            <div>
+
+              <div class="rep-kicker">
+                School Mentor ERP
+              </div>
+
+              <div class="rep-school-name">
+                ${schoolName}
+              </div>
+
+              ${
+                schoolAddress
+                  ? `
+                    <div class="rep-address">
+                      ${schoolAddress}
+                    </div>
+                  `
+                  : ''
+              }
+
+            </div>
+
+          </div>
+
+          <div class="rep-header-divider"></div>
+
+          <div class="rep-report-title">
+            ${title}
+          </div>
+
+          <div class="rep-report-subtitle">
+            ${session || 'Academic Year'}
+            ·
+            ${bw ? 'Colorless Report' : 'Colorful Report'}
+          </div>
+
+          <div class="rep-header-meta">
+
+            <div class="rep-header-chip">
+              <strong>Generated:</strong>
+              ${generatedDate}
+            </div>
+
+            <div class="rep-header-chip">
+              <strong>Module:</strong>
+              Human Resource
+            </div>
+
+          </div>
+
+        </div>
+
+        <div class="rep-body">
+
+          <div class="rep-filters">
+            ${filtersHtml}
+          </div>
+
+          ${innerHtml}
+
+        </div>
+
+        <div class="rep-foot">
+
+          <div>
+            <strong>${schoolName}</strong>
+            ${schoolAddress ? ` · ${schoolAddress}` : ''}
+          </div>
+
+          <div>
+            Powered by <strong>School Mentor ERP</strong>
+          </div>
+
+        </div>
+
+      </div>
+
+      ${CLOSE_SCRIPT_AFTER_PRINT}
+
+    </body>
+    </html>
+  `;
+}
 /* ════════ 1. Employee Directory ════════ */
 export function generateHrDirectoryReport(ctx) {
   const { emps, depts, getFullName, getDeptName, getDesigName } = ctx;

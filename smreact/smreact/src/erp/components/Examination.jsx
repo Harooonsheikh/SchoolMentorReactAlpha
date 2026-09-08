@@ -2418,24 +2418,48 @@ const marks = Array.isArray(marksData)
   ? marksData 
   : (marksData?.data || marksData?.Data || []);
     // 4. Rankings
-    const rankParams = new URLSearchParams({
-      sectionID: String(cls.sectionID),
-      termID: String(termID),
-      examID: String(selectExamValue)
-    });
-    const rankRes = await fetch(
-      buildUrl(`/api/getstudentsrankings?${rankParams}`),
-      { method: 'GET', headers }
-    );
-    const rankData = await rankRes.json();
-    const rankings = Array.isArray(rankData) ? rankData : (rankData?.data || []);
+    // const rankParams = new URLSearchParams({
+    //   sectionID: String(cls.sectionID),
+    //   termID: String(termID),
+    //   examID: String(selectExamValue)
+    // });
+    // const rankRes = await fetch(
+    //   buildUrl(`/api/getstudentsrankings?${rankParams}`),
+    //   { method: 'GET', headers }
+    // );
+    // const rankData = await rankRes.json();
+    // const rankings = Array.isArray(rankData) ? rankData : (rankData?.data || []);
 
-    // 5. Update rankings
-    await fetch(
-      buildUrl(`/api/updaterankings?ClassID=${cls.classID}&SectionID=${cls.sectionID}&TermID=${termID}&ExamID=${selectExamValue}`),
-      { method: 'GET', headers }
-    );
+    // // 5. Update rankings
+    // await fetch(
+    //   buildUrl(`/api/updaterankings?ClassID=${cls.classID}&SectionID=${cls.sectionID}&TermID=${termID}&ExamID=${selectExamValue}`),
+    //   { method: 'GET', headers }
+    // );
+// 4. Update rankings first
+await fetch(
+  buildUrl(
+    `/api/updaterankings?ClassID=${cls.classID}&SectionID=${cls.sectionID}&TermID=${termID}&ExamID=${selectExamValue}`
+  ),
+  { method: 'GET', headers }
+);
 
+// 5. Get updated rankings
+const rankParams = new URLSearchParams({
+  sectionID: String(cls.sectionID),
+  termID: String(termID),
+  examID: String(selectExamValue)
+});
+
+const rankRes = await fetch(
+  buildUrl(`/api/getstudentsrankings?${rankParams}`),
+  { method: 'GET', headers }
+);
+
+const rankData = await rankRes.json();
+
+const rankings = Array.isArray(rankData)
+  ? rankData
+  : (rankData?.data || []);
     // Store everything
     setResStudentData(prev => ({
       ...prev,
@@ -6278,11 +6302,14 @@ onClick={async () => {
         const { student, result } = rhCardCtx;
         // Modal hamesha khulta hai; data load hone tak card area mein loader (static/mock data NAHI).
         const cardLoading = !rhCardMarks;
+        
+        
         const cardStudent = {
           id: student.id,
           rollNo: student.rollNo,
           name: student.name,
           father: student.father,
+          // position: realPosition,
           obtained: rhCardMarks?.obtained || {},
           manualRemarks: rhCardMarks?.remarks || {},   // saved per-subject remarks → Comment column
           finalRemarks: rhCardMarks?.finalRemark || '', // student ka final remark → Final Remarks section
@@ -6609,7 +6636,28 @@ onClick={async () => {
 {resCardCtx && (() => {
   const ex  = filtered.find(e => e.id === resCardCtx.examId);
   const stu = resCardCtx.student;
+
   if (!ex || !stu) return null;
+
+  // Get rankings of this class
+  const classData = resStudentData[resCardCtx.key] || {};
+  const rankings = classData.rankings || [];
+
+  // Find this student's ranking
+  const studentRanking = rankings.find(r =>
+    String(
+      r.studentId ??
+      r.StudentId ??
+      r.studentID ??
+      r.StudentID
+    ) === String(stu.id)
+  );
+
+  const realPosition =
+    studentRanking?.ranking ??
+    studentRanking?.Ranking ??
+    '—';
+
   const cardStudent = {
     id:      stu.id,
     rollNo:  stu.registrationNumber || stu.registrationNo || stu.rollNo || stu.id,
@@ -6618,12 +6666,16 @@ onClick={async () => {
              || [stu.firstName, stu.lastName].filter(Boolean).join(' ')
              || '',
     father:  stu.fatherName || stu.father || stu.fatherrName || '',
+
+    position: realPosition,
+
     obtained: resCardMarks?.obtained || {},
-    manualRemarks: resCardMarks?.remarks || {},     // saved per-subject remarks → Comment column
-    finalRemarks: resCardMarks?.finalRemark || '',  // student ka final remark → Final Remarks section
+    manualRemarks: resCardMarks?.remarks || {},
+    finalRemarks: resCardMarks?.finalRemark || '',
     absentSubjects: resCardMarks?.absentSubjects || [],
     attendance: '—',
   };
+  
   const cardRd = {
     released: false,
     totalMarks: resCardMarks?.totals || {},   // sirf API data (koi static fallback nahi)
@@ -8816,7 +8868,7 @@ function ClassicResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
   // hardcoded text, na getremarksbystudentfilters).
   const finalRem = rcRemarkByScale(ovPct, remarks);
 
-  const position = opt['Show Position in Class'] ? (isCombined && cb ? `${cb.rank}${cb.rankSfx || ''}` : '1st / 1') : '—';
+  const position = opt['Show Position in Class'] ? (isCombined && cb ? `${cb.rank}${cb.rankSfx || ''}` : (st.position || '—')) : '—';
 
   const hasSubjTable = opt['Show Subject-wise Marks'] || opt['Show Total Marks'] || opt['Show Obtained Marks'];
 
@@ -9410,8 +9462,9 @@ const mc  = (!isAbs ? ((st.manualRemarks && st.manualRemarks[s]) || ((grades && 
     return { s, tot, obt, pct, g, mc, isAbs, col: C.bars[i % C.bars.length] };
   });
 
-  const position = opt['Show Position in Class'] ? (isCombined && cb ? `${cb.rank}${cb.rankSfx || ''}` : '1st') : '—';
-
+const position = opt['Show Position in Class']
+  ? (isCombined && cb ? `${cb.rank}${cb.rankSfx || ''}` : (st.position || '—'))
+  : '—';
   const gCol = g => {
     if (!g) return '#94A3B8';
     const m = { 'A+':'#16A34A','A':'#15803D','B':'#1D4ED8','C':'#B45309','D':'#EA580C','F':'#DC2626' };
