@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { buildUrl, isViewOnlyAccount } from '../../utils/apiConfig';
 import { MODULE_REGISTRY } from '../config/moduleConfig';
+import { INITIAL_USERS, INITIAL_ROLES } from '../pages/UserPermissions/permissionsData';
 
 /* ═══════════════════════════════════════════════════════════════════
    PERMISSIONS CONTEXT — logged-in user ki menu/screen/action access.
@@ -172,4 +173,36 @@ export function usePermissions() {
   const ctx = useContext(PermissionsContext);
   /* Provider ke bahar (ya mount se pehle) safe default: sab allowed. */
   return ctx || FULL_ACCESS_VALUE;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   DASHBOARD IMPERSONATION STORE (demo).
+
+   The ported Dashboard's "View dashboard as another user" switcher reads
+   its users/roles from usePermissionsStore() (1:1 with the sibling ERP).
+   This is a demo/mock switcher — the dashboard runs on mock data.
+
+   The ERP's mock role templates (MODULE_TREE) don't define the
+   `dashboard.*` per-card permissions the sibling uses, so every card in
+   the Admin dashboard would otherwise render as a locked placeholder.
+   We therefore grant all dashboard cards to each impersonated user via
+   customPermissions, so effectivePermsForUser() short-circuits to a full
+   grant and the dashboard mirrors the sibling's complete layout.
+   Self-contained — needs no extra provider and touches nothing else.
+   ═══════════════════════════════════════════════════════════════════ */
+const DASH_CARD_IDS = [
+  'announcements', 'teacherapp', 'parentapp', 'snapshot',
+  'fee_currentmonth', 'fee_previousdues', 'fee_netreceivable', 'fee_received', 'fee_pending',
+  'onelink', 'finsummary', 'plchart', 'attendance', 'lessonplananalytics',
+  'papergenerator', 'birthdays', 'activities',
+];
+const ALL_DASH_PERMS = DASH_CARD_IDS.reduce((o, id) => { o[`dashboard.${id}.view`] = true; return o; }, {});
+const DASH_STORE_USERS = INITIAL_USERS.map((u) => ({
+  ...u,
+  permType: 'custom',
+  customPermissions: { ...(u.customPermissions || {}), ...ALL_DASH_PERMS },
+}));
+
+export function usePermissionsStore() {
+  return { users: DASH_STORE_USERS, roles: INITIAL_ROLES };
 }

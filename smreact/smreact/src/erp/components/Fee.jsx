@@ -11428,7 +11428,67 @@ function feeReportSchool(school) {
     session: school?.academicSession || school?.session || '',
     generatedDate: school?.generatedDate || null,
     generatedBy: school?.generatedBy || sessionStorage.getItem('displayName') || sessionStorage.getItem('userName') || 'Fee',
+    /* Bank fields pass-through — challan "Show Bank Details On challan" toggle in
+       fields ko feeBankDetails() se padhta hai. feeReportSchool stripped object
+       banata hai, is liye inhe carry karna zaroori hai (warna bank block khaali). */
+    branchBankName:      school?.branchBankName,
+    branchAccountTitle:  school?.branchAccountTitle,
+    branchAccountNumber: school?.branchAccountNumber,
+    branchIBAN:          school?.branchIBAN,
+    branchbankCity:      school?.branchbankCity,
+    branchAccountDesc:   school?.branchAccountDesc,
   };
+}
+
+/* Report-header API (getReportHeader) ka RAW branch object bank fields rakhta hai
+   (branchBankName / branchAccountTitle / branchAccountNumber / branchIBAN /
+   branchbankCity / branchAccountDesc). Yahan se defensive nikaalte hain; koi bhi
+   field na ho to null. feeReportSchool in fields ko drop kar deta hai, is liye
+   challan builders ko RAW school object milta hai (branchHeader). */
+function feeBankDetails(school) {
+  if (!school || typeof school !== 'object') return null;
+  const bankName = school.branchBankName    || school.bankName      || '';
+  const title    = school.branchAccountTitle|| school.accountTitle  || '';
+  const acctNo   = school.branchAccountNumber|| school.accountNumber || '';
+  const iban     = school.branchIBAN        || school.iban          || '';
+  const city     = school.branchbankCity    || school.branchBankCity || school.bankCity || '';
+  const desc     = school.branchAccountDesc || '';
+  if (!(bankName || title || acctNo || iban || city || desc)) return null;
+  return { bankName, title, acctNo, iban, city, desc };
+}
+
+/* Bank-details block for challans — PSID ke neeche chhapta hai jab "Show Bank Details
+   On challan" toggle ON ho. `thermal` true par 80mm receipt ke liye compact. Bank
+   details na ho to khaali string (kuch print nahi hota). */
+function feeBankBlockHtml(school, { thermal = false } = {}) {
+  const b = feeBankDetails(school);
+  if (!b) return '';
+  const rows = [
+    ['Bank', b.bankName],
+    ['Title', b.title],
+    ['Account #', b.acctNo],
+    ['IBAN', b.iban],
+    ['Branch', b.city],
+  ].filter(([, v]) => v);
+  if (!rows.length) return '';
+  if (thermal) {
+    return `
+  <div class="th-psid" style="margin-top:5px;">
+    <div class="th-psid-top">Bank Transfer Details</div>
+    <div style="display:grid;grid-template-columns:auto 1fr;column-gap:6px;row-gap:1px;font-size:9.5px;">
+      ${rows.map(([k, v]) => `<span style="color:#666;">${escHtml(k)}</span><span style="text-align:right;font-weight:700;color:#111;">${escHtml(String(v))}</span>`).join('')}
+    </div>
+    ${b.desc ? `<div style="font-size:8.5px;color:#555;margin-top:3px;">${escHtml(b.desc)}</div>` : ''}
+  </div>`;
+  }
+  return `
+    <div class="psid-block" style="margin-top:5px;">
+      <div class="psid-top"><div class="psid-dot"></div><span class="psid-tag">Bank Transfer Details</span></div>
+      <div style="display:grid;grid-template-columns:auto 1fr;column-gap:10px;row-gap:2px;font-size:10.5px;margin-top:4px;">
+        ${rows.map(([k, v]) => `<span style="color:#666;">${escHtml(k)}</span><span style="text-align:right;font-weight:700;color:#111;">${escHtml(String(v))}</span>`).join('')}
+      </div>
+      ${b.desc ? `<div style="font-size:9.5px;color:#555;margin-top:4px;">${escHtml(b.desc)}</div>` : ''}
+    </div>`;
 }
 
 function feeReportDate(school) {
@@ -12096,6 +12156,7 @@ function feeSlipHTML({ copyLabel, classMeta, student, heads, settings, period, i
         <div class="qr-hint"><strong>Scan QR</strong> with your banking app<br/>OR enter PSID manually.<br/>Works on HBL, MCB, Meezan,<br/>UBL, Sadapay, Easypaisa &amp; more.</div>
       </div>
     </div>` : ''}
+    ${settings.showBankDetails === true ? feeBankBlockHtml(school, {}) : ''}
     ${psidPlain ? `
     <div class="steps-block">
       <div class="steps-title">How to pay — 1Link PSID</div>
@@ -12376,6 +12437,7 @@ function feeThermalChallanHTML({ classMeta, student, heads, settings, period, is
     <div class="th-psid-qr">${psidQrSvg(psidPlain, 88)}</div>
     <div class="th-psid-hint">Scan QR / enter PSID in your banking app. Works on HBL, MCB, Meezan, UBL, Sadapay, Easypaisa &amp; more.</div>
   </div>` : ''}
+  ${settings.showBankDetails === true ? feeBankBlockHtml(school, { thermal: true }) : ''}
   ${psidPlain ? `
   <div class="th-steps">
     <div class="s"><b>1.</b> Open banking app</div>
@@ -12466,6 +12528,7 @@ function feeFamilySlipHTML({ copyLabel, family, settings, period, issueISO, dueI
         <div class="qr-hint"><strong>Scan QR</strong> with your banking app<br/>OR enter PSID manually.<br/>Works on HBL, MCB, Meezan,<br/>UBL, Sadapay, Easypaisa &amp; more.</div>
       </div>
     </div>` : ''}
+    ${settings.showBankDetails === true ? feeBankBlockHtml(school, {}) : ''}
     ${psidPlain ? `
     <div class="steps-block">
       <div class="steps-title">How to pay — 1Link PSID</div>
@@ -12590,6 +12653,7 @@ function feeThermalFamilyChallanHTML({ family, settings, period, issueISO, dueIS
     <div class="th-psid-qr">${psidQrSvg(psidPlain, 88)}</div>
     <div class="th-psid-hint">Scan QR / enter PSID in your banking app. Works on HBL, MCB, Meezan, UBL, Sadapay, Easypaisa &amp; more.</div>
   </div>` : ''}
+  ${settings.showBankDetails === true ? feeBankBlockHtml(school, { thermal: true }) : ''}
   ${psidPlain ? `
   <div class="th-steps">
     <div class="s"><b>1.</b> Open banking app</div>
@@ -12741,6 +12805,14 @@ function FeeChallanSettings({ toast }) {
               desc="Print the PSID / bank payment code so parents can pay via bank or app."
               on={value.showPsd}
               onToggle={() => set({ showPsd: !value.showPsd })}
+            />
+
+            {/* Show Bank Details */}
+            <SettingCard
+              name="Show Bank Details On challan"
+              desc="Print the school's bank account details on every challan so parents can pay by bank transfer."
+              on={value.showBankDetails}
+              onToggle={() => set({ showBankDetails: !value.showBankDetails })}
             />
 
             {/* Previous month receiving */}
