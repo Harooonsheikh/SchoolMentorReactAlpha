@@ -70,9 +70,8 @@ export default function SchoolPermissions({ toast }) {
   const totalAll = schools.length;
   const activeAll = schools.filter((s) => permMap[s.id]?.erpAccess).length;
 
-  /* Save Permissions → save-modulePermission + toggle-launch-setup (ERP Access)
-     + ToggleBranchStatus (Active Branch). The modal stays open with a spinner
-     until the APIs answer, so a failure can't look like a save. */
+  /* Save Permissions → modules + ERP Access + Active Branch +
+     POST /manage-mobileapp-permission (chatType + toggles). */
   const savePerms = async (id, perms) => {
     const s = schools.find((x) => x.id === id);
     setSaving(true);
@@ -214,6 +213,7 @@ export default function SchoolPermissions({ toast }) {
           school={editSchool}
           initial={permMap[editSchool.id] || defaultPerms(editSchool)}
           saving={saving}
+          toast={toast}
           onClose={() => setEditId(null)}
           onSave={(perms) => savePerms(editSchool.id, perms)}
         />
@@ -234,17 +234,38 @@ function Switch({ checked, onChange, disabled }) {
 }
 
 /* ═══════════════════════ PERMISSIONS MODAL ═══════════════════════ */
-function PermModal({ school, initial, saving, onClose, onSave }) {
+function PermModal({ school, initial, saving, toast, onClose, onSave }) {
   const [draft, setDraft] = useState(() => ({
     erpAccess: initial.erpAccess,
     activeBranch: initial.activeBranch,
-    /* Mobile App permissions — Chat / Mentor AI / eTube (frontend-only draft). */
     chatMode: initial.chatMode || 'off',
     mentorAi: { ...(initial.mentorAi || { enabled: false, parentsAccess: false }) },
     etube: { ...(initial.etube || { enabled: false, viewing: false, uploading: false }) },
+    mobileAppId: initial.mobileAppId || 0,
     modules: { ...initial.modules },
   }));
   const [showMobileModal, setShowMobileModal] = useState(false);
+  const [mobileLoading, setMobileLoading] = useState(true);
+  const [mobileSaving, setMobileSaving] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    setMobileLoading(true);
+    schoolPermissionsApi.listMobileAppPermission(school.id)
+      .then((mob) => {
+        if (!alive) return;
+        setDraft((d) => ({
+          ...d,
+          mobileAppId: mob.mobileAppId,
+          chatMode: CHAT_MODES.some((m) => m.key === mob.chatMode) ? mob.chatMode : (d.chatMode || 'off'),
+          mentorAi: { ...mob.mentorAi },
+          etube: { ...mob.etube },
+        }));
+      })
+      .catch(() => { /* defaults already in draft */ })
+      .finally(() => { if (alive) setMobileLoading(false); });
+    return () => { alive = false; };
+  }, [school.id]);
 
   const setCore = (key, val) => setDraft((d) => ({ ...d, [key]: val }));
   const setModule = (key, val) => setDraft((d) => ({ ...d, modules: { ...d.modules, [key]: val } }));
@@ -259,6 +280,21 @@ function PermModal({ school, initial, saving, onClose, onSave }) {
     if (key === 'enabled' && !val) { next.viewing = false; next.uploading = false; }
     return { ...d, etube: next };
   });
+
+  const saveMobileAndClose = async () => {
+    if (mobileSaving || mobileLoading) return;
+    setMobileSaving(true);
+    try {
+      const saved = await schoolPermissionsApi.saveMobileAppPermission(school.id, draft);
+      setDraft((d) => ({ ...d, mobileAppId: saved.mobileAppId }));
+      setShowMobileModal(false);
+      toast?.('Mobile app permissions saved', 'success');
+    } catch (err) {
+      toast?.(err?.message || 'Could not save mobile app permissions', 'error');
+    } finally {
+      setMobileSaving(false);
+    }
+  };
 
   const activeCount = ALL_MODULE_KEYS.filter((k) => draft.modules[k]).length;
   const inactiveCount = ALL_MODULE_KEYS.length - activeCount;
@@ -302,12 +338,15 @@ function PermModal({ school, initial, saving, onClose, onSave }) {
             </div>
           </div>
 
-          {/* Mobile App permissions entry point — opens a nested modal with
-              Chat / Mentor AI / eTube. Editing there mutates this same `draft`;
-              persisting still only happens via Save Permissions below. */}
+          {/* Mobile App permissions — nested modal. Save par
+              POST /manage-mobileapp-permission (chatType + toggles). */}
           <div className="pm-top-section">
             <div className="pm-top-title"><i className="fa-solid fa-mobile-screen-button" /> Mobile App</div>
-            <div className="pm-manage-card" onClick={() => setShowMobileModal(true)}>
+            <div
+              className="pm-manage-card"
+              style={mobileLoading ? { opacity: 0.6, pointerEvents: 'none' } : undefined}
+              onClick={() => { if (!mobileLoading) setShowMobileModal(true); }}
+            >
               <div className="pm-top-card-icon"><i className="fa-solid fa-sliders" /></div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div className="pm-top-card-name">Manage Mobile App Permissions</div>
@@ -349,7 +388,7 @@ function PermModal({ school, initial, saving, onClose, onSave }) {
         {/* Footer */}
         <div className="pm-foot">
           <button className="btn-secondary" onClick={onClose} disabled={saving}><i className="fa-solid fa-xmark" /> Cancel</button>
-          <button className="btn-primary" onClick={() => onSave(draft)} disabled={saving}>
+          <button className="btn-primary" onClick={() => onSave(draft)} disabled={saving || mobileLoading}>
             <i className={`fa-solid ${saving ? 'fa-spinner fa-spin' : 'fa-floppy-disk'}`} /> {saving ? 'Saving…' : 'Save Permissions'}
           </button>
         </div>
@@ -358,25 +397,24 @@ function PermModal({ school, initial, saving, onClose, onSave }) {
       {showMobileModal && (
         <MobileAppPermsModal
           draft={draft}
+          loading={mobileLoading}
+          saving={mobileSaving}
           setCore={setCore}
           setMentorAi={setMentorAi}
           setEtube={setEtube}
-          onClose={() => setShowMobileModal(false)}
+          onClose={() => { if (!mobileSaving) setShowMobileModal(false); }}
+          onDone={saveMobileAndClose}
         />
       )}
     </div>
   );
 }
 
-/* ═══════════════════════ MANAGE MOBILE APP PERMISSIONS ═══════════════════════
-   Nested modal — Chat / Mentor AI / eTube. Edits flow straight into the parent
-   PermModal's `draft` via the setters passed down; there is no separate save
-   here, closing just returns to the main modal where the one Save Permissions
-   button persists everything together. (Frontend-only for now — chat/mentorAi/
-   etube ki alag API mapping abhi nahi; save par ye fields ignore hote hain.) */
-function MobileAppPermsModal({ draft, setCore, setMentorAi, setEtube, onClose }) {
+/* Nested modal — Chat / Mentor AI / eTube. Done → POST SAVE
+   /manage-mobileapp-permission (chatType + toggles). */
+function MobileAppPermsModal({ draft, loading, saving, setCore, setMentorAi, setEtube, onClose, onDone }) {
   return (
-    <div className="perm-ov open" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div className="perm-ov open" onMouseDown={(e) => { if (e.target === e.currentTarget && !saving) onClose(); }}>
       <div className="perm-modal" style={{ maxWidth: 560 }}>
         <div className="pm-hdr">
           <div className="pm-av"><i className="fa-solid fa-mobile-screen-button" /></div>
@@ -384,10 +422,15 @@ function MobileAppPermsModal({ draft, setCore, setMentorAi, setEtube, onClose })
             <div className="pm-school-name">Manage Mobile App Permissions</div>
             <div className="pm-school-meta"><span>Chat, Mentor AI &amp; eTube access for this school&rsquo;s mobile application</span></div>
           </div>
-          <button className="pm-close" data-tip="Back" data-tip-pos="left" onClick={onClose}><i className="fa-solid fa-xmark" /></button>
+          <button className="pm-close" data-tip="Back" data-tip-pos="left" onClick={onClose} disabled={saving}><i className="fa-solid fa-xmark" /></button>
         </div>
 
         <div className="pm-body">
+          {loading && (
+            <div style={{ textAlign: 'center', padding: '8px 0 16px', color: 'var(--tm)', fontSize: 12.5, fontWeight: 700 }}>
+              <i className="fa-solid fa-spinner fa-spin" style={{ marginRight: 8 }} /> Loading saved mobile permissions…
+            </div>
+          )}
           {/* Chat */}
           <div className="pm-top-section">
             <div className="pm-top-title"><i className="fa-solid fa-comments" /> Chat</div>
@@ -468,7 +511,9 @@ function MobileAppPermsModal({ draft, setCore, setMentorAi, setEtube, onClose })
         </div>
 
         <div className="pm-foot">
-          <button className="btn-primary" onClick={onClose}><i className="fa-solid fa-check" /> Done</button>
+          <button className="btn-primary" onClick={onDone} disabled={saving || loading}>
+            <i className={`fa-solid ${saving ? 'fa-spinner fa-spin' : 'fa-check'}`} /> {saving ? 'Saving…' : 'Done'}
+          </button>
         </div>
       </div>
     </div>

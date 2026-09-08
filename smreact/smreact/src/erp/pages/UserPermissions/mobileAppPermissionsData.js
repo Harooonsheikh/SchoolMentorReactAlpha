@@ -111,6 +111,7 @@ export function defaultMobileAppAccess() {
   return {
     enabled: false,
     role: null,
+    screenPermId: 0,
     adminApp: allOnFor(ADMIN_APP_GROUPS),
     teacherApp: allOnFor(TEACHER_APP_GROUPS),
   };
@@ -144,4 +145,91 @@ export function mobileAppStats(mobileApp) {
     if (bag?.[it.id]) active += 1;
   }));
   return { total, active };
+}
+
+/* UI feature id → swagger field on /manage-mobileapp-screen-permission.
+   API me meetings ka spelling `meatings` hai. Mentor AI Lesson Plans ka
+   alag field nahi — `lessonPlans` academic + AI dono share karte hain. */
+export const MOBILE_FEATURE_TO_API = {
+  dashboard: 'dashboard',
+  onlinequiz: 'onlineQuiz',
+  lessonplans: 'lessonPlans',
+  submissions: 'submissions',
+  homework: 'homeWork',
+  notebook: 'noteBook',
+  datesheet: 'dateSheet',
+  syllabus: 'syllabus',
+  results: 'results',
+  academics: 'academics',
+  noticeboard: 'noticeBoard',
+  tasks: 'tasks',
+  meetings: 'meatings',
+  timetable: 'timeTable',
+  attendance: 'attendance',
+  reports: 'reports',
+  staffleaves: 'staffLeaves',
+  suggestions: 'suggestions',
+  financials: 'financials',
+  ai_chat: 'aiChatAssistant',
+  ai_lessonplans: 'lessonPlans',
+  ai_worksheets: 'workSheets',
+  ai_designs: 'designs',
+  myleaves: 'myLeaves',
+  salaryslip: 'salarySlip',
+};
+
+export const MOBILE_API_FLAG_FIELDS = [
+  'dashboard', 'onlineQuiz', 'lessonPlans', 'submissions', 'homeWork', 'noteBook',
+  'dateSheet', 'syllabus', 'results', 'academics', 'noticeBoard', 'tasks', 'meatings',
+  'timeTable', 'attendance', 'reports', 'staffLeaves', 'suggestions', 'financials',
+  'aiChatAssistant', 'workSheets', 'designs', 'myLeaves', 'salarySlip',
+];
+
+export function mobileAppTypeApi(roleId) {
+  if (roleId === 'teacher') return 'Teacher';
+  if (roleId === 'admin') return 'Admin';
+  return '';
+}
+
+export function roleFromAppType(appType) {
+  const s = String(appType || '').toLowerCase().replace(/\s+/g, '');
+  if (s.includes('teacher')) return 'teacher';
+  if (s.includes('admin')) return 'admin';
+  return null;
+}
+
+export function mobileAccountType(user) {
+  const emp = user?._employee || {};
+  if (emp.isTeacher && !emp.isPrinciple) return 'Teacher';
+  const label = String(user?.roleLabel || user?.designation || '').toLowerCase();
+  if (label.includes('teacher')) return 'Teacher';
+  if (user?.dashboardType === 'teacher') return 'Teacher';
+  return 'Administrator';
+}
+
+export function emptyMobileApiFlags() {
+  return Object.fromEntries(MOBILE_API_FLAG_FIELDS.map((k) => [k, false]));
+}
+
+export function flagsFromFeatureBag(bag = {}) {
+  const flags = emptyMobileApiFlags();
+  Object.entries(MOBILE_FEATURE_TO_API).forEach(([uiId, apiKey]) => {
+    if (bag[uiId]) flags[apiKey] = true;
+  });
+  return flags;
+}
+
+export function featureBagFromFlags(row, groups) {
+  const bag = allOnFor(groups);
+  Object.keys(bag).forEach((id) => { bag[id] = false; });
+  if (!row || typeof row !== 'object') return bag;
+  const lower = {};
+  Object.keys(row).forEach((k) => { lower[String(k).toLowerCase()] = row[k]; });
+  Object.entries(MOBILE_FEATURE_TO_API).forEach(([uiId, apiKey]) => {
+    if (!(uiId in bag)) return;
+    const v = lower[String(apiKey).toLowerCase()];
+    if (v == null || v === '') return;
+    bag[uiId] = v === true || v === 1 || String(v).toLowerCase() === 'true';
+  });
+  return bag;
 }

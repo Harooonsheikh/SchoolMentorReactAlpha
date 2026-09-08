@@ -48,4 +48,36 @@ module.exports = function (app) {
       changeOrigin: true,
     }),
   );
+
+  /* ERP screen-time — swagger: https://alphaapi.schoolmentor.ai/manage-usertimespend
+     Local 3001 se seedha alphaapi CORS/403 deta hai, is liye same-origin
+     proxy. Target swagger wala host hai, :4100 IP nahi (wo 403 de raha tha). */
+  app.use(
+    '/manage-usertimespend',
+    createProxyMiddleware({
+      target: 'https://alphaapi.schoolmentor.ai',
+      changeOrigin: true,
+      secure: false,
+    }),
+  );
+
+  /* Monthly Progress — swagger: POST /usertimespend-report */
+  app.use(
+    '/usertimespend-report',
+    createProxyMiddleware({
+      target: 'https://alphaapi.schoolmentor.ai',
+      changeOrigin: true,
+      secure: false,
+    }),
+  );
+
+  /* School Permissions — swagger: POST /manage-mobileapp-permission */
+  app.use(
+    '/manage-mobileapp-permission',
+    createProxyMiddleware({
+      target: 'https://alphaapi.schoolmentor.ai',
+      changeOrigin: true,
+      secure: false,
+    }),
+  );
 };

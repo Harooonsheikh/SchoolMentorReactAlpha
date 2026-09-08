@@ -24,8 +24,9 @@
    demo rows deti thin, taake table/modals jaise hain waise chalte rahein.
    ════════════════════════════════════════════════════════════════════ */
 import { ApiError, buildQuery } from '../client';
-import { SA_ADMIN_API_BASE, getSuperAdminToken } from '../config';
+import { SA_ADMIN_API_BASE, ERP_API_BASE, getSuperAdminToken } from '../config';
 import EP from '../endpoints';
+import { emptyUsageMods, emptyMobileMods } from '../../statusData';
 /* Card / training rows par "kis ne banaya" — logged-in Super Admin ki wahi id
    jo /api/Auth/get-all-users bhi deti hai. */
 import { currentUserId } from './auth';
@@ -579,12 +580,283 @@ export function clearAssignedUser({ id, branchId, launchSetup = 0 } = {}) {
   );
 }
 
+/* ═══════════════════ USER TIME SPEND (ERP screen usage) ═══════════════════
+   Today — POST {erp}/manage-usertimespend
+     body: { action: "get", branchID, userID: 0, date: "YYYY-MM-DD", type: "erp", … }
+     rows: ScreenName + TimeSpend (HH:mm:ss)
+   Month — POST {erp}/usertimespend-report
+     body: { branchID, month: "YYYY-MM", type: "erp" }
+     data: { totalEntries, screenTime: [{ ScreenName, TotalSeconds, TotalTime }] }
+   JWT mat bhejo — ERP API us par 403 deti hai. */
+
+const SCREEN_TO_KEY = {
+  dashboard: 'dashboard', 'mentor ai': 'mentorai', academics: 'academics',
+  examination: 'exam', attendance: 'attendance', timetable: 'timetable',
+  'time table': 'timetable', 'paper generator': 'paper', fee: 'fee',
+  accounts: 'accounts', inventory: 'inventory', students: 'students',
+  'human resource': 'hr', hr: 'hr', 'staff appraisals': 'appraisal',
+  'admission crm': 'admissions', 'admissions crm': 'admissions',
+  'school sops': 'sop', sops: 'sop', 'teacher trainings': 'trainings',
+  'e-tube': 'etube', etube: 'etube', chat: 'chat',
+  notifications: 'notifications', 'launch setup': 'launch', settings: 'settings',
+  'user permissions': 'permissions', 'audit logs': 'audit', reports: 'reports',
+};
+
+function pad2(n) { return String(n).padStart(2, '0'); }
+
+export function formatDateYmd(d = new Date()) {
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+
+function parseHms(raw) {
+  const p = String(raw || '0').split(':').map((x) => Number(x) || 0);
+  if (p.length >= 3) return p[0] * 3600 + p[1] * 60 + p[2];
+  if (p.length === 2) return p[0] * 60 + p[1];
+  return p[0] || 0;
+}
+
+function formatHms(sec) {
+  const s = Math.max(0, Math.floor(Number(sec) || 0));
+  return `${pad2(Math.floor(s / 3600))}:${pad2(Math.floor((s % 3600) / 60))}:${pad2(s % 60)}`;
+}
+
+function screenKey(name) {
+  const n = String(name || '').trim().toLowerCase();
+  if (!n) return '';
+  if (n.startsWith('launch setup')) return 'launch';
+  return SCREEN_TO_KEY[n] || n.replace(/\s+/g, '');
+}
+
+export function formatMonthYm(d = new Date()) {
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`;
+}
+
+/** API rows → { mods, logins, time }. Daily: har visit-row = 1 session (login ke baad jo screen visit hui). */
+export function rowsToUsage(rows = []) {
+  const mods = emptyUsageMods();
+  let totalSec = 0;
+  let logins = 0;
+  (Array.isArray(rows) ? rows : []).forEach((r) => {
+    const name = r?.ScreenName ?? r?.screenName ?? '';
+    const key = screenKey(name);
+    if (!key) return;
+    const sec = parseHms(r?.TimeSpend ?? r?.timeSpend);
+    if (!mods[key]) mods[key] = { l: 0, t: '00:00:00', _sec: 0 };
+    mods[key].l += 1;
+    mods[key]._sec = (mods[key]._sec || parseHms(mods[key].t)) + sec;
+    mods[key].t = formatHms(mods[key]._sec);
+    totalSec += sec;
+    logins += 1;
+  });
+  Object.keys(mods).forEach((k) => { delete mods[k]._sec; });
+  return { mods, logins, time: formatHms(totalSec) };
+}
+
+/** Monthly: sessions = API `totalEntries`. Per-screen sirf time (visit count nahi aata). */
+export function reportToUsage(report = {}) {
+  const rows = report?.screenTime ?? report?.ScreenTime ?? [];
+  const mods = emptyUsageMods();
+  let totalSec = 0;
+  (Array.isArray(rows) ? rows : []).forEach((r) => {
+    const name = r?.ScreenName ?? r?.screenName ?? '';
+    const key = screenKey(name);
+    if (!key) return;
+    const sec = Number(r?.TotalSeconds ?? r?.totalSeconds)
+      || parseHms(r?.TotalTime ?? r?.totalTime ?? r?.TimeSpend ?? r?.timeSpend);
+    if (!mods[key]) mods[key] = { l: 0, t: '00:00:00', _sec: 0 };
+    mods[key]._sec = (mods[key]._sec || 0) + sec;
+    mods[key].t = formatHms(mods[key]._sec);
+    totalSec += sec;
+  });
+  Object.keys(mods).forEach((k) => { delete mods[k]._sec; });
+  const logins = Number(report?.totalEntries ?? report?.TotalEntries ?? 0) || 0;
+  return { mods, logins, time: formatHms(totalSec) };
+}
+
+const MOBILE_SCREEN_TO_KEY = {
+  dashboard: 'dashboard', quiz: 'quiz', 'lesson plan': 'lessonplan', lessonplan: 'lessonplan',
+  'dlp submission': 'dlp', dlp: 'dlp', academics: 'academics',
+  'home work': 'homework', homework: 'homework', worksheet: 'worksheet',
+  'date sheet': 'datesheet', datesheet: 'datesheet', syllabus: 'syllabus',
+  results: 'results', 'notebook work': 'notebookwork', notebookwork: 'notebookwork',
+  'time table': 'timetable', timetable: 'timetable',
+  'notice board': 'noticeboard', noticeboard: 'noticeboard',
+  suggestions: 'suggestions', 'e-tube': 'etube', etube: 'etube',
+  notifications: 'notifications', chats: 'chats', chat: 'chats',
+  reports: 'reports', meetings: 'meetings', tasks: 'tasks',
+  attendance: 'attendance', financials: 'financials',
+  'staff leaves': 'staffleaves', staffleaves: 'staffleaves', fee: 'fee',
+  'ai chat': 'aichat', aichat: 'aichat',
+  'ai lesson plan': 'ailessonplan', ailessonplan: 'ailessonplan',
+  'notebook lesson plan ai': 'notebooklp', 'notebook lesson plan': 'notebooklp',
+  notebooklp: 'notebooklp',
+  'ai worksheets': 'aiworksheet', 'ai worksheet': 'aiworksheet', aiworksheet: 'aiworksheet',
+  'ai design studio': 'aidesignstudio', aidesignstudio: 'aidesignstudio',
+};
+
+function mobileScreenKey(name) {
+  const n = String(name || '').trim().toLowerCase();
+  if (!n) return '';
+  return MOBILE_SCREEN_TO_KEY[n] || n.replace(/\s+/g, '');
+}
+
+export function rowsToMobileUsage(rows = []) {
+  const mods = emptyMobileMods();
+  let totalSec = 0;
+  let logins = 0;
+  (Array.isArray(rows) ? rows : []).forEach((r) => {
+    const name = r?.ScreenName ?? r?.screenName ?? '';
+    const key = mobileScreenKey(name);
+    if (!key) return;
+    const sec = parseHms(r?.TimeSpend ?? r?.timeSpend);
+    if (!mods[key]) mods[key] = { l: 0, t: '00:00:00', _sec: 0 };
+    mods[key].l += 1;
+    mods[key]._sec = (mods[key]._sec || parseHms(mods[key].t)) + sec;
+    mods[key].t = formatHms(mods[key]._sec);
+    totalSec += sec;
+    logins += 1;
+  });
+  Object.keys(mods).forEach((k) => { delete mods[k]._sec; });
+  return { mods, logins, time: formatHms(totalSec) };
+}
+
+export function reportToMobileUsage(report = {}) {
+  const rows = report?.screenTime ?? report?.ScreenTime ?? [];
+  const mods = emptyMobileMods();
+  let totalSec = 0;
+  (Array.isArray(rows) ? rows : []).forEach((r) => {
+    const name = r?.ScreenName ?? r?.screenName ?? '';
+    const key = mobileScreenKey(name);
+    if (!key) return;
+    const sec = Number(r?.TotalSeconds ?? r?.totalSeconds)
+      || parseHms(r?.TotalTime ?? r?.totalTime ?? r?.TimeSpend ?? r?.timeSpend);
+    if (!mods[key]) mods[key] = { l: 0, t: '00:00:00', _sec: 0 };
+    mods[key]._sec = (mods[key]._sec || 0) + sec;
+    mods[key].t = formatHms(mods[key]._sec);
+    totalSec += sec;
+  });
+  Object.keys(mods).forEach((k) => { delete mods[k]._sec; });
+  const logins = Number(report?.totalEntries ?? report?.TotalEntries ?? 0) || 0;
+  return { mods, logins, time: formatHms(totalSec) };
+}
+
+/* Swagger (ERP API, Super-Admin nahi):
+     POST https://alphaapi.schoolmentor.ai/manage-usertimespend
+     POST https://alphaapi.schoolmentor.ai/usertimespend-report
+   Local :3001 par relative path Express 404 deta hai.
+   Support module ki tarah localhost se seedha alphaapi — CORS me :3001 hai.
+   Deployed host par same-origin relative path (IIS rewrite). */
+function erpPublicUrl(path) {
+  try {
+    if (typeof window !== 'undefined' && /localhost|127\.0\.0\.1/i.test(window.location.hostname)) {
+      return `https://alphaapi.schoolmentor.ai${path}`;
+    }
+  } catch { /* ignore */ }
+  return `${ERP_API_BASE}${path}`;
+}
+
+function userTimeSpendUrl() {
+  return erpPublicUrl('/manage-usertimespend');
+}
+
+function userTimeSpendReportUrl() {
+  return erpPublicUrl('/usertimespend-report');
+}
+
+/** Ek din ki screen-time rows. JWT mat bhejo — ERP API us par 403 deti hai. */
+export async function listUserTimeSpend({ branchId, date, type = 'erp' } = {}) {
+  const body = {
+    action: 'get',
+    branchID: Number(branchId) || 0,
+    userID: 0,
+    screenName: '',
+    startTime: '',
+    endTime: '',
+    timeSpend: '',
+    date: date || formatDateYmd(),
+    type,
+    ipAddress: '',
+  };
+  let res;
+  try {
+    res = await fetch(userTimeSpendUrl(), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        accept: '*/*',
+      },
+      body: JSON.stringify(body),
+    });
+  } catch (networkErr) {
+    throw new ApiError(networkErr.message || 'Network error', 0);
+  }
+  const json = await res.json().catch(() => null);
+  if (!res.ok || (json && json.success === false)) {
+    throw new ApiError((json && (json.message || json.Message)) || 'Could not load screen time', res.status);
+  }
+  return Array.isArray(json?.data) ? json.data : [];
+}
+
+function parseReportPayload(json) {
+  const data = json?.data ?? json?.Data ?? {};
+  if (Array.isArray(data)) return { totalEntries: data.length, screenTime: data };
+  return {
+    totalEntries: data.totalEntries ?? data.TotalEntries ?? 0,
+    screenTime: data.screenTime ?? data.ScreenTime ?? [],
+  };
+}
+
+/** Monthly Progress: POST /usertimespend-report { branchID, month: YYYY-MM, type }. */
+export async function listUserTimeSpendReport({ branchId, month, type = 'erp' } = {}) {
+  const body = {
+    branchID: Number(branchId) || 0,
+    month: month || formatMonthYm(),
+    type,
+  };
+  let res;
+  try {
+    res = await fetch(userTimeSpendReportUrl(), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        accept: '*/*',
+      },
+      body: JSON.stringify(body),
+    });
+  } catch (networkErr) {
+    throw new ApiError(networkErr.message || 'Network error', 0);
+  }
+  const json = await res.json().catch(() => null);
+  if (!res.ok || (json && json.success === false)) {
+    throw new ApiError((json && (json.message || json.Message)) || 'Could not load monthly screen time', res.status);
+  }
+  return parseReportPayload(json);
+}
+
+/**
+ * View Details: aaj = daily GET /manage-usertimespend;
+ * month = POST /usertimespend-report.
+ */
+export async function getUserTimeSpend({ branchId, date, type = 'erp' } = {}) {
+  const today = date || formatDateYmd();
+  const month = String(today).slice(0, 7);
+  const [todayRows, report] = await Promise.all([
+    listUserTimeSpend({ branchId, date: today, type }).catch(() => []),
+    listUserTimeSpendReport({ branchId, month, type }).catch(() => ({ totalEntries: 0, screenTime: [] })),
+  ]);
+  if (type === 'mobilePhone') {
+    return { today: rowsToMobileUsage(todayRows), month: reportToMobileUsage(report) };
+  }
+  return { today: rowsToUsage(todayRows), month: reportToUsage(report) };
+}
+
 const schoolProgressService = {
   listSchoolProgress, listBranchReport, branchReportToRow,
   saveCardAction, listCardActions, deleteCardAction, cardRowToUi,
   saveTrainingSession, listTrainingSessions, deleteTrainingSession, trainingRowToUi,
   saveEnquiry, listEnquiries, setEnquirySolved, deleteEnquiry, enquiryRowToUi,
   listAssignedUsers, saveAssignedUser, clearAssignedUser, assignedUserRowToUi,
+  getUserTimeSpend, listUserTimeSpend, listUserTimeSpendReport,
   CARD_HEADS, CARD_ACTIONS, ENQUIRY_STATUS, ASSIGN_ACTIONS,
 };
 export default schoolProgressService;

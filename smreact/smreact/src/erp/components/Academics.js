@@ -435,7 +435,7 @@ return (
 
     {/* ─── RELEASES FROM HEAD OFFICE ─── (sirf chain wali branches par) */}
     {isChainBranch && (
-    <button className="ho-banner" onClick={() => setReleasesOpen(true)}>
+    <button className="ho-banner" onClick={() => { getClassesData(); setReleasesOpen(true); }}>
       <div className="ho-banner-icon"><i className="fa-solid fa-cloud-arrow-down"></i></div>
       <div className="ho-banner-text">
         <div className="ho-banner-title">Releases from Head Office <i className="fa-solid fa-arrow-right ho-banner-arrow"></i></div>
@@ -3981,32 +3981,66 @@ function HeadOfficeReleases({ open, onClose, toast, classesData = [], releases =
     toast('Activity saved to your Activity Calendar', 'success');
   };
 
-  const saveLessonPlan = (rel, lp, classId, subjectName) => {
+  const saveLessonPlan = (rel, lp, classId, subjectName, extra = {}) => {
     if (isSaved(rel.id, lp.id)) return;
     const cls = classesData.find(c => String(c.id) === String(classId));
-    hoPushList(HO_LP_KEY, { id: `ho-${rel.id}-${lp.id}`, classId: Number(classId), className: cls ? cls.name : '', subjectName, unitNo: lp.unitNo, unitTitle: lp.unitTitle, lessonTitle: lp.lessonTitle, medium: lp.medium, source: 'HEAD_OFFICE', hoReleaseId: rel.id, hoItemId: lp.id, savedAt: new Date().toISOString() });
-    record({ headOfficeReleaseId: rel.id, headOfficeItemId: lp.id, itemType: 'LESSON_PLAN', savedToSchoolId: hoBranchId(), savedAt: new Date().toISOString(), savedBy: 'School', localTargetModule: 'LESSON_PLANS', localClassId: classId, localSubjectId: subjectName, localCategory: null });
+    hoPushList(HO_LP_KEY, {
+      id: `ho-${rel.id}-${lp.id}`, classId: Number(classId), className: cls ? cls.name : '',
+      sectionId: Number(extra.sectionId) || 0, sectionName: extra.sectionName || '',
+      subjectId: Number(extra.subjectId) || 0, subjectName,
+      unitNo: lp.unitNo, unitTitle: lp.unitTitle, lessonTitle: lp.lessonTitle, medium: lp.medium,
+      source: 'HEAD_OFFICE', hoReleaseId: rel.id, hoItemId: lp.id, savedAt: new Date().toISOString(),
+    });
+    record({
+      headOfficeReleaseId: rel.id, headOfficeItemId: lp.id, itemType: 'LESSON_PLAN',
+      savedToSchoolId: hoBranchId(), savedAt: new Date().toISOString(), savedBy: 'School',
+      localTargetModule: 'LESSON_PLANS', localClassId: classId, localSectionId: extra.sectionId || null,
+      localSubjectId: subjectName, localCategory: null,
+    });
     toast('Lesson plan saved to your portal.', 'success');
   };
 
-  const saveNotebookPlan = (rel, nb, classId, subjectName) => {
+  const saveNotebookPlan = (rel, nb, classId, subjectName, extra = {}) => {
     if (isSaved(rel.id, nb.id)) return;
     const cls = classesData.find(c => String(c.id) === String(classId));
-    hoPushList(HO_NB_KEY, { id: `ho-${rel.id}-${nb.id}`, classId: Number(classId), className: cls ? cls.name : '', subjectName, unitNo: nb.unitNo, unitTitle: nb.unitTitle, lessonTitle: nb.lessonTitle, medium: nb.medium, source: 'HEAD_OFFICE', hoReleaseId: rel.id, hoItemId: nb.id, savedAt: new Date().toISOString() });
-    record({ headOfficeReleaseId: rel.id, headOfficeItemId: nb.id, itemType: 'NOTEBOOK_PLAN', savedToSchoolId: hoBranchId(), savedAt: new Date().toISOString(), savedBy: 'School', localTargetModule: 'NOTEBOOK_PLANS', localClassId: classId, localSubjectId: subjectName, localCategory: null });
+    hoPushList(HO_NB_KEY, {
+      id: `ho-${rel.id}-${nb.id}`, classId: Number(classId), className: cls ? cls.name : '',
+      sectionId: Number(extra.sectionId) || 0, sectionName: extra.sectionName || '',
+      subjectId: Number(extra.subjectId) || 0, subjectName,
+      unitNo: nb.unitNo, unitTitle: nb.unitTitle, lessonTitle: nb.lessonTitle, medium: nb.medium,
+      source: 'HEAD_OFFICE', hoReleaseId: rel.id, hoItemId: nb.id, savedAt: new Date().toISOString(),
+    });
+    record({
+      headOfficeReleaseId: rel.id, headOfficeItemId: nb.id, itemType: 'NOTEBOOK_PLAN',
+      savedToSchoolId: hoBranchId(), savedAt: new Date().toISOString(), savedBy: 'School',
+      localTargetModule: 'NOTEBOOK_PLANS', localClassId: classId, localSectionId: extra.sectionId || null,
+      localSubjectId: subjectName, localCategory: null,
+    });
     toast('Notebook plan saved to your portal.', 'success');
   };
 
-  const saveResource = (rel, res, classId, subjectName, category) => {
+  const saveResource = (rel, res, classId, subjectName, category, extra = {}) => {
     if (isSaved(rel.id, res.id)) return;
     const cls = classesData.find(c => String(c.id) === String(classId));
     const now = new Date().toISOString();
     const key = hoResKey();
     const list = hoLoadList(key);
     const nextId = list.reduce((m, r) => Math.max(m, Number(r.id) || 0), 0) + 1;
-    list.unshift({ id: nextId, branchId: hoBranchId(), classId: Number(classId), className: cls ? cls.name : '', subjectName, category, title: res.title, description: res.description || '', fileName: res.fileName || '', fileUrl: res.fileUrl || '', fileType: 'application/pdf', uploadedBy: 'Head Office Import', uploadedAt: now, createdAt: now, updatedAt: now, source: 'HEAD_OFFICE' });
+    list.unshift({
+      id: nextId, branchId: hoBranchId(), classId: Number(classId), className: cls ? cls.name : '',
+      sectionId: Number(extra.sectionId) || 0, sectionName: extra.sectionName || '',
+      subjectId: Number(extra.subjectId) || 0, subjectName, category,
+      title: res.title, description: res.description || '', fileName: res.fileName || '',
+      fileUrl: res.fileUrl || '', fileType: 'application/pdf', uploadedBy: 'Head Office Import',
+      uploadedAt: now, createdAt: now, updatedAt: now, source: 'HEAD_OFFICE',
+    });
     try { localStorage.setItem(key, JSON.stringify(list)); } catch { /* ignore */ }
-    record({ headOfficeReleaseId: rel.id, headOfficeItemId: res.id, itemType: 'RESOURCE', savedToSchoolId: hoBranchId(), savedAt: new Date().toISOString(), savedBy: 'School', localTargetModule: 'RESOURCE_LIBRARY', localClassId: classId, localSubjectId: subjectName, localCategory: category });
+    record({
+      headOfficeReleaseId: rel.id, headOfficeItemId: res.id, itemType: 'RESOURCE',
+      savedToSchoolId: hoBranchId(), savedAt: new Date().toISOString(), savedBy: 'School',
+      localTargetModule: 'RESOURCE_LIBRARY', localClassId: classId, localSectionId: extra.sectionId || null,
+      localSubjectId: subjectName, localCategory: category,
+    });
     toast('Resource saved to your Resource Library', 'success');
   };
 
@@ -4274,10 +4308,10 @@ function ReleaseDetailsModal({ release: r, classesData = [], hoName = HO_NAME, o
           item={mapping.item}
           classesData={classesData}
           onClose={() => setMapping(null)}
-          onSave={(classId, subjectName, category) => {
-            if (mapping.kind === 'lesson') onSaveLessonPlan(r, mapping.item, classId, subjectName);
-            else if (mapping.kind === 'notebook') onSaveNotebookPlan(r, mapping.item, classId, subjectName);
-            else onSaveResource(r, mapping.item, classId, subjectName, category);
+          onSave={(classId, subjectName, category, extra) => {
+            if (mapping.kind === 'lesson') onSaveLessonPlan(r, mapping.item, classId, subjectName, extra);
+            else if (mapping.kind === 'notebook') onSaveNotebookPlan(r, mapping.item, classId, subjectName, extra);
+            else onSaveResource(r, mapping.item, classId, subjectName, category, extra);
             setMapping(null);
           }}
         />
@@ -4291,18 +4325,39 @@ function ReleaseDetailsModal({ release: r, classesData = [], hoName = HO_NAME, o
 function SaveMappingModal({ kind, item, classesData = [], onClose, onSave }) {
   const isResource = kind === 'resource';
   const [classId, setClassId] = useState('');
+  const [sectionId, setSectionId] = useState('');
   const [subjectId, setSubjectId] = useState('');
   const [subjects, setSubjects] = useState([]);
   const [subjLoading, setSubjLoading] = useState(false);
+  const [localClasses, setLocalClasses] = useState(classesData);
+  const [classesLoading, setClassesLoading] = useState(false);
   const [category, setCategory] = useState(isResource ? (item.category || 'worksheet') : '');
   const [err, setErr] = useState('');
 
-  /* Class chunte hi us class ke subjects (pehli section se) live laao — wahi
-     source jo ERP Resource Library modal use karta hai (rlFetchClassSubjects). */
+  useEffect(() => { setLocalClasses(classesData); }, [classesData]);
+
   useEffect(() => {
-    if (!classId) { setSubjects([]); setSubjectId(''); return undefined; }
-    const cls = classesData.find(c => String(c.id) === String(classId));
-    const sectionId = cls?.sections?.[0]?.sectionID;
+    if (classesData.length) return undefined;
+    const branchID = sessionStorage.getItem('branchID');
+    const empID = sessionStorage.getItem('employee_ID');
+    if (!branchID || !empID) return undefined;
+    let alive = true;
+    setClassesLoading(true);
+    fetch(buildUrl(`/get-classlist-sectionlist-studentlist-by-branch/${branchID}/${empID}`), { headers: { Accept: '*/*' } })
+      .then(res => res.json())
+      .then(json => { if (alive) setLocalClasses(json?.data || []); })
+      .catch(() => { if (alive) setLocalClasses([]); })
+      .finally(() => { if (alive) setClassesLoading(false); });
+    return () => { alive = false; };
+  }, [classesData.length]);
+
+  const cls = localClasses.find(c => String(c.id) === String(classId));
+  const sections = Array.isArray(cls?.sections) ? cls.sections : [];
+  const sec = sections.find(s => String(s.sectionID) === String(sectionId));
+
+  /* Class → Section → Subject: wahi flow jo Lesson Plans / Notebook use karte hain. */
+  useEffect(() => {
+    if (!classId || !sectionId) { setSubjects([]); setSubjectId(''); return undefined; }
     let alive = true;
     setSubjLoading(true);
     rlFetchClassSubjects(classId, sectionId)
@@ -4313,17 +4368,35 @@ function SaveMappingModal({ kind, item, classesData = [], onClose, onSave }) {
       })
       .finally(() => { if (alive) setSubjLoading(false); });
     return () => { alive = false; };
-  }, [classId, classesData]);
+  }, [classId, sectionId]);
 
   const title = kind === 'lesson' ? 'Save Lesson Plan to Portal' : kind === 'notebook' ? 'Save Notebook Plan to Portal' : 'Save Resource to Portal';
   const btn = kind === 'lesson' ? 'Save Lesson Plan' : kind === 'notebook' ? 'Save Notebook Plan' : 'Save Resource';
 
+  const pickClass = (id) => {
+    setClassId(id);
+    setSectionId('');
+    setSubjectId('');
+    setSubjects([]);
+    setErr('');
+  };
+  const pickSection = (id) => {
+    setSectionId(id);
+    setSubjectId('');
+    setErr('');
+  };
+
   const submit = () => {
     if (!classId) { setErr('Please select a class.'); return; }
+    if (!sectionId) { setErr('Please select a section.'); return; }
     if (!subjectId) { setErr('Please select a subject.'); return; }
     if (isResource && !category) { setErr('Please select a category.'); return; }
     const sub = subjects.find(x => String(x.id) === String(subjectId));
-    onSave(classId, sub ? sub.name : '', category);
+    onSave(classId, sub ? sub.name : '', category, {
+      sectionId,
+      sectionName: sec?.sectionName || '',
+      subjectId,
+    });
   };
 
   return (
@@ -4332,7 +4405,7 @@ function SaveMappingModal({ kind, item, classesData = [], onClose, onSave }) {
         <div className="modal-header">
           <div>
             <div className="modal-title"><i className="fa-solid fa-download" style={{ marginRight: 8 }}></i> {title}</div>
-            <div className="modal-sub">Choose where this should be saved in your school portal.</div>
+            <div className="modal-sub">Choose class, section and subject in your school portal.</div>
           </div>
           <Tooltip text="Close"><button className="modal-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark"></i></button></Tooltip>
         </div>
@@ -4340,15 +4413,28 @@ function SaveMappingModal({ kind, item, classesData = [], onClose, onSave }) {
           <div className="ho-map-from"><i className="fa-solid fa-building-columns"></i> Head Office: <strong>{item.hoClass || '—'}</strong> · <strong>{item.hoSubject || '—'}</strong></div>
           <div className="form-group">
             <label className="form-label">Select Class <span className="req-star">*</span></label>
-            <select className="form-input" value={classId} onChange={e => { setClassId(e.target.value); setSubjectId(''); }}>
-              <option value="">Select class</option>
-              {classesData.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            <select className="form-input" value={classId} onChange={e => pickClass(e.target.value)}>
+              <option value="">{classesLoading ? 'Loading classes…' : 'Select class'}</option>
+              {localClasses.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Select Section <span className="req-star">*</span></label>
+            <select className="form-input" value={sectionId} onChange={e => pickSection(e.target.value)} disabled={!classId}>
+              <option value="">
+                {!classId ? 'Select class first' : (sections.length ? 'Select section' : 'No sections in this class')}
+              </option>
+              {sections.map(s => (
+                <option key={s.sectionID} value={s.sectionID}>Section {s.sectionName}</option>
+              ))}
             </select>
           </div>
           <div className="form-group">
             <label className="form-label">Select Subject <span className="req-star">*</span></label>
-            <select className="form-input" value={subjectId} onChange={e => setSubjectId(e.target.value)} disabled={!classId || subjLoading}>
-              <option value="">{!classId ? 'Select class first' : (subjLoading ? 'Loading subjects…' : (subjects.length ? 'Select subject' : 'No subjects in this class'))}</option>
+            <select className="form-input" value={subjectId} onChange={e => setSubjectId(e.target.value)} disabled={!sectionId || subjLoading}>
+              <option value="">
+                {!sectionId ? 'Select section first' : (subjLoading ? 'Loading subjects…' : (subjects.length ? 'Select subject' : 'No subjects in this section'))}
+              </option>
               {subjects.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
           </div>

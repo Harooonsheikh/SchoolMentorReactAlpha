@@ -12,6 +12,9 @@ import { NAV_TO_MODULE_MAP, MODULE_REGISTRY } from '../config/moduleConfig';
 import { logout, goToLaunchSetup } from '../utils/auth';
 import { buildUrl, installSessionGuard, setSessionGuardActive, registerSessionToast, resolveMediaUrl } from '../../utils/apiConfig';
 import * as profileService from '../services/profileService';
+import useUserTimeSpend from '../hooks/useUserTimeSpend';
+import useMobileAppPermission from '../hooks/useMobileAppPermission';
+import { flushUserTimeSpend } from '../services/userTimeSpendService';
 import SupportWidget from '../../components/SupportWidget';
 import erpExtraCss from './erpExtraCss';
 import feeReferenceAlignment from './feeReferenceAlignment';
@@ -184,6 +187,8 @@ export default function App() {
   useEffect(() => {
     try { sessionStorage.setItem('erp_active_module', active); } catch (e) { /* ignore */ }
   }, [active]);
+  /* Har ERP module par time-spend: screenName = module ka naam, type = "erp". */
+  useUserTimeSpend(NAV_LABELS[active] || active);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
@@ -234,6 +239,9 @@ export default function App() {
   /* Logged-in user ki module-level access (School Head → sab allowed; warna API
      permissions ke hisaab se). Jis module me koi access nahi, wo nav se hat jata hai. */
   const { canModule, fullAccess, ready: permsReady, readOnly } = usePermissions();
+  /* Super Admin → Manage Mobile App Permissions. GET /manage-mobileapp-permission
+     Chat / Mentor AI / eTube in flags se on/off hote hain. */
+  const mobilePerms = useMobileAppPermission();
   const navItemVisible = (navId) => {
     /* Jab tak school ka module-activation aur user ki permissions dono na
        aa jayen, koi bhi nav item render nahi hota. Warna jo module off hai
@@ -242,6 +250,20 @@ export default function App() {
     /* Retire ho chuke modules kabhi visible nahi — chahe permission aur
        module-activation dono allow karti hon. */
     if (RETIRED_NAV.has(navId)) return false;
+    /* Super Admin ne is school ke liye Chat / Mentor AI / eTube SAVE kiye
+       hon to wahi flags maano — branch 1 ki rukawat hatti hai. Row na ho
+       to purana BRANCH1_ONLY behaviour. */
+    if (navId === 'chat' || navId === 'mentorai' || navId === 'etube') {
+      if (mobilePerms.ready && mobilePerms.hasRow) {
+        const allowed = navId === 'chat' ? mobilePerms.chatMode !== 'off'
+          : navId === 'mentorai' ? mobilePerms.mentorAi.enabled
+            : mobilePerms.etube.enabled;
+        if (!allowed) return false;
+        const gmod = NAV_TO_MODULE_MAP[navId];
+        const glabel = gmod ? MODULE_ID_TO_LABEL[gmod] : null;
+        return glabel ? (fullAccess || canModule(glabel)) : true;
+      }
+    }
     /* Master-branch-only extras: hidden on every branch except branchID 1 —
        aur un branchon ke ilawa jo EXTRA_NAV_BRANCHES me is nav ke liye
        likhi hain (School SOPs branch 5 par bhi live hai). Jahan dikhte hain
@@ -284,8 +306,7 @@ export default function App() {
       const found = section.items.find((it) => navItemVisible(it.id));
       if (found) { setActive(found.id); return; }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [permsReady, modulesReady, active]);
+  }, [permsReady, modulesReady, mobilePerms.ready, mobilePerms.hasRow, active]);
 
   /* ── Academics tab state (lifted so the topbar breadcrumb stays in sync) ── */
   const [l1, setL1] = useState('sos');      // 'sos' | 'lp'
@@ -329,6 +350,7 @@ export default function App() {
     registerSessionToast(pushToast);
     installSessionGuard({
       onExpired: () => {
+        try { flushUserTimeSpend({ keepalive: true }); } catch (e) { /* ignore */ }
         pushToast('Your session has ended. Please log in again.', 'error');
         setTimeout(() => { try { logout(); } catch (e) { /* ignore */ } }, 1400);
       },
@@ -437,7 +459,11 @@ export default function App() {
                     data-tooltip={item.name}
                     onClick={() => {
                       // "Launch Setup" lives in the separate setup app (port 3000)
-                      if (item.id === 'launch') { goToLaunchSetup(); return; }
+                      if (item.id === 'launch') {
+                        try { flushUserTimeSpend({ keepalive: true }); } catch (e) { /* ignore */ }
+                        goToLaunchSetup();
+                        return;
+                      }
                       setActive(item.id); setMobileOpen(false);
                     }}
                   >
@@ -650,12 +676,16 @@ export default function App() {
             )}
             {active === 'etube' && (
               <Suspense fallback={<RouteFallback label="Loading e-Tube…" />}>
-                <ETube toast={pushToast} />
+                <ETube
+                  toast={pushToast}
+                  canView={!mobilePerms.hasRow || mobilePerms.etube.viewing}
+                  canUpload={!mobilePerms.hasRow || mobilePerms.etube.uploading}
+                />
               </Suspense>
             )}
             {active === 'chat' && (
               <Suspense fallback={<RouteFallback label="Loading Chat…" />}>
-                <Chat toast={pushToast} onUnreadChange={() => {}} />
+                <Chat toast={pushToast} chatMode={mobilePerms.hasRow ? mobilePerms.chatMode : undefined} onUnreadChange={() => {}} />
               </Suspense>
             )}
             {active === 'notifications' && (
@@ -770,7 +800,11 @@ export default function App() {
             </div>
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={() => setLogoutOpen(false)}>Cancel</button>
-              <button className="btn btn-danger" onClick={() => { setLogoutOpen(false); logout(); }}>
+              <button className="btn btn-danger" onClick={() => {
+                setLogoutOpen(false);
+                try { flushUserTimeSpend({ keepalive: true }); } catch (e) { /* ignore */ }
+                logout();
+              }}>
                 <i className="fa-solid fa-right-from-bracket"></i> Sign out
               </button>
             </div>

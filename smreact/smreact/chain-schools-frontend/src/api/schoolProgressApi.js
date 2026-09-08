@@ -1,7 +1,8 @@
 
 
-import { SUPERADMIN_API_BASE } from '@/config/env'
+import { SUPERADMIN_API_BASE, ERP_API_BASE } from '@/config/env'
 import { getStoredUser } from '@/auth/tokenStorage'
+import { USAGE_MODULES, emptyMobileMods } from '@/pages/SchoolStatus/data'
 
 const URL = `${SUPERADMIN_API_BASE}/api/AHM_School_Progress/branch-report`
 const CARD_URL = `${SUPERADMIN_API_BASE}/api/AHM_School_Progress/followup/onboarding-card-action`
@@ -214,4 +215,258 @@ export async function fetchCardCountsEach(branchIds, onResult) {
     }
   })
   await Promise.all(runners)
+}
+
+/* ═══════════════ USER TIME SPEND (ERP screen usage) ═══════════════
+   Today:  POST {erp}/manage-usertimespend  { action: "get", date, type: "erp", … }
+   Month:  POST {erp}/usertimespend-report  { branchID, month: "YYYY-MM", type: "erp" }
+     → { totalEntries, screenTime: [{ ScreenName, TotalSeconds, TotalTime }] } */
+
+/* Swagger: POST https://alphaapi.schoolmentor.ai/manage-usertimespend
+            POST https://alphaapi.schoolmentor.ai/usertimespend-report
+   Chain :3002 par seedha alphaapi CORS block karta hai (allowlist ~:3000).
+   Is liye hamesha same-origin relative path: local Vite proxy, deploy IIS rewrite. */
+const TIME_URL = `${ERP_API_BASE}/manage-usertimespend`
+const REPORT_URL = `${ERP_API_BASE}/usertimespend-report`
+
+const SCREEN_TO_KEY = {
+  dashboard: 'dashboard', 'mentor ai': 'mentorai', academics: 'academics',
+  examination: 'exam', attendance: 'attendance', timetable: 'timetable',
+  'time table': 'timetable', 'paper generator': 'paper', fee: 'fee',
+  accounts: 'accounts', inventory: 'inventory', students: 'students',
+  'human resource': 'hr', hr: 'hr', 'staff appraisals': 'appraisal',
+  'admission crm': 'admissions', 'admissions crm': 'admissions',
+  'school sops': 'sop', sops: 'sop', 'teacher trainings': 'trainings',
+  'e-tube': 'etube', etube: 'etube', chat: 'chat',
+  notifications: 'notifications', 'launch setup': 'launch', settings: 'settings',
+  'user permissions': 'permissions', 'audit logs': 'audit', reports: 'reports',
+}
+
+function pad2(n) { return String(n).padStart(2, '0') }
+function formatDateYmd(d = new Date()) {
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`
+}
+function parseHms(raw) {
+  const p = String(raw || '0').split(':').map((x) => Number(x) || 0)
+  if (p.length >= 3) return p[0] * 3600 + p[1] * 60 + p[2]
+  if (p.length === 2) return p[0] * 60 + p[1]
+  return p[0] || 0
+}
+function formatHms(sec) {
+  const s = Math.max(0, Math.floor(Number(sec) || 0))
+  return `${pad2(Math.floor(s / 3600))}:${pad2(Math.floor((s % 3600) / 60))}:${pad2(s % 60)}`
+}
+function screenKey(name) {
+  const n = String(name || '').trim().toLowerCase()
+  if (!n) return ''
+  if (n.startsWith('launch setup')) return 'launch'
+  return SCREEN_TO_KEY[n] || n.replace(/\s+/g, '')
+}
+function formatMonthYm(d = new Date()) {
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`
+}
+
+function rowsToUsage(rows = []) {
+  const byKey = {}
+  let totalSec = 0
+  let logins = 0
+  ;(Array.isArray(rows) ? rows : []).forEach((r) => {
+    const name = r?.ScreenName ?? r?.screenName ?? ''
+    const key = screenKey(name)
+    if (!key) return
+    const sec = parseHms(r?.TimeSpend ?? r?.timeSpend)
+    if (!byKey[key]) byKey[key] = { l: 0, sec: 0 }
+    byKey[key].l += 1
+    byKey[key].sec += sec
+    totalSec += sec
+    logins += 1
+  })
+  const mods = USAGE_MODULES.map((m) => ({
+    ...m,
+    l: byKey[m.key]?.l || 0,
+    t: formatHms(byKey[m.key]?.sec || 0),
+  }))
+  Object.keys(byKey).forEach((k) => {
+    if (USAGE_MODULES.some((m) => m.key === k)) return
+    mods.push({ key: k, name: k, icon: 'fa-layer-group', l: byKey[k].l, t: formatHms(byKey[k].sec) })
+  })
+  return { mods, logins, time: formatHms(totalSec) }
+}
+
+function reportToUsage(report = {}) {
+  const rows = report?.screenTime ?? report?.ScreenTime ?? []
+  const byKey = {}
+  let totalSec = 0
+  ;(Array.isArray(rows) ? rows : []).forEach((r) => {
+    const name = r?.ScreenName ?? r?.screenName ?? ''
+    const key = screenKey(name)
+    if (!key) return
+    const sec = Number(r?.TotalSeconds ?? r?.totalSeconds)
+      || parseHms(r?.TotalTime ?? r?.totalTime ?? r?.TimeSpend ?? r?.timeSpend)
+    if (!byKey[key]) byKey[key] = { sec: 0 }
+    byKey[key].sec += sec
+    totalSec += sec
+  })
+  const mods = USAGE_MODULES.map((m) => ({
+    ...m,
+    l: 0,
+    t: formatHms(byKey[m.key]?.sec || 0),
+  }))
+  Object.keys(byKey).forEach((k) => {
+    if (USAGE_MODULES.some((m) => m.key === k)) return
+    mods.push({ key: k, name: k, icon: 'fa-layer-group', l: 0, t: formatHms(byKey[k].sec) })
+  })
+  return {
+    mods,
+    logins: Number(report?.totalEntries ?? report?.TotalEntries ?? 0) || 0,
+    time: formatHms(totalSec),
+  }
+}
+
+const MOBILE_SCREEN_TO_KEY = {
+  dashboard: 'dashboard', quiz: 'quiz', 'lesson plan': 'lessonplan', lessonplan: 'lessonplan',
+  'dlp submission': 'dlp', dlp: 'dlp', academics: 'academics',
+  'home work': 'homework', homework: 'homework', worksheet: 'worksheet',
+  'date sheet': 'datesheet', datesheet: 'datesheet', syllabus: 'syllabus',
+  results: 'results', 'notebook work': 'notebookwork', notebookwork: 'notebookwork',
+  'time table': 'timetable', timetable: 'timetable',
+  'notice board': 'noticeboard', noticeboard: 'noticeboard',
+  suggestions: 'suggestions', 'e-tube': 'etube', etube: 'etube',
+  notifications: 'notifications', chats: 'chats', chat: 'chats',
+  reports: 'reports', meetings: 'meetings', tasks: 'tasks',
+  attendance: 'attendance', financials: 'financials',
+  'staff leaves': 'staffleaves', staffleaves: 'staffleaves', fee: 'fee',
+  'ai chat': 'aichat', aichat: 'aichat',
+  'ai lesson plan': 'ailessonplan', ailessonplan: 'ailessonplan',
+  'notebook lesson plan ai': 'notebooklp', 'notebook lesson plan': 'notebooklp',
+  notebooklp: 'notebooklp',
+  'ai worksheets': 'aiworksheet', 'ai worksheet': 'aiworksheet', aiworksheet: 'aiworksheet',
+  'ai design studio': 'aidesignstudio', aidesignstudio: 'aidesignstudio',
+}
+
+function mobileScreenKey(name) {
+  const n = String(name || '').trim().toLowerCase()
+  if (!n) return ''
+  return MOBILE_SCREEN_TO_KEY[n] || n.replace(/\s+/g, '')
+}
+
+function rowsToMobileUsage(rows = []) {
+  const mods = emptyMobileMods()
+  let totalSec = 0
+  let logins = 0
+  ;(Array.isArray(rows) ? rows : []).forEach((r) => {
+    const name = r?.ScreenName ?? r?.screenName ?? ''
+    const key = mobileScreenKey(name)
+    if (!key) return
+    const sec = parseHms(r?.TimeSpend ?? r?.timeSpend)
+    if (!mods[key]) mods[key] = { l: 0, t: '00:00:00' }
+    mods[key].l += 1
+    mods[key].t = formatHms(parseHms(mods[key].t) + sec)
+    totalSec += sec
+    logins += 1
+  })
+  return { mods, logins, time: formatHms(totalSec) }
+}
+
+function reportToMobileUsage(report = {}) {
+  const rows = report?.screenTime ?? report?.ScreenTime ?? []
+  const mods = emptyMobileMods()
+  let totalSec = 0
+  ;(Array.isArray(rows) ? rows : []).forEach((r) => {
+    const name = r?.ScreenName ?? r?.screenName ?? ''
+    const key = mobileScreenKey(name)
+    if (!key) return
+    const sec = Number(r?.TotalSeconds ?? r?.totalSeconds)
+      || parseHms(r?.TotalTime ?? r?.totalTime ?? r?.TimeSpend ?? r?.timeSpend)
+    if (!mods[key]) mods[key] = { l: 0, t: '00:00:00' }
+    mods[key].t = formatHms(parseHms(mods[key].t) + sec)
+    totalSec += sec
+  })
+  return {
+    mods,
+    logins: Number(report?.totalEntries ?? report?.TotalEntries ?? 0) || 0,
+    time: formatHms(totalSec),
+  }
+}
+
+export async function listUserTimeSpend({ branchId, date, type = 'erp' } = {}) {
+  const body = {
+    action: 'get',
+    branchID: Number(branchId) || 0,
+    userID: 0,
+    screenName: '',
+    startTime: '',
+    endTime: '',
+    timeSpend: '',
+    date: date || formatDateYmd(),
+    type,
+    ipAddress: '',
+  }
+  const res = await fetch(TIME_URL, {
+    method: 'POST',
+    headers: { Accept: '*/*', 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  const json = await res.json().catch(() => ({}))
+  if (!res.ok || json?.success === false) {
+    throw new Error(json?.message || json?.title || 'Could not load screen time')
+  }
+  return Array.isArray(json?.data) ? json.data : []
+}
+
+function parseReportPayload(json) {
+  const data = json?.data ?? json?.Data ?? {}
+  if (Array.isArray(data)) return { totalEntries: data.length, screenTime: data }
+  return {
+    totalEntries: data.totalEntries ?? data.TotalEntries ?? 0,
+    screenTime: data.screenTime ?? data.ScreenTime ?? [],
+  }
+}
+
+export async function listUserTimeSpendReport({ branchId, month, type = 'erp' } = {}) {
+  const body = {
+    branchID: Number(branchId) || 0,
+    month: month || formatMonthYm(),
+    type,
+  }
+  const res = await fetch(REPORT_URL, {
+    method: 'POST',
+    headers: { Accept: '*/*', 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  const json = await res.json().catch(() => ({}))
+  if (!res.ok || json?.success === false) {
+    throw new Error(json?.message || json?.title || 'Could not load monthly screen time')
+  }
+  return parseReportPayload(json)
+}
+
+/** Aaj = daily GET; mahina = /usertimespend-report. type erp + mobilePhone. */
+export async function fetchUserTimeSpend(branchId, date) {
+  const todayYmd = date || formatDateYmd()
+  const month = String(todayYmd).slice(0, 7)
+  const [todayRows, report, mobileTodayRows, mobileReport] = await Promise.all([
+    listUserTimeSpend({ branchId, date: todayYmd, type: 'erp' }).catch(() => []),
+    listUserTimeSpendReport({ branchId, month, type: 'erp' }).catch(() => ({ totalEntries: 0, screenTime: [] })),
+    listUserTimeSpend({ branchId, date: todayYmd, type: 'mobilePhone' }).catch(() => []),
+    listUserTimeSpendReport({ branchId, month, type: 'mobilePhone' }).catch(() => ({ totalEntries: 0, screenTime: [] })),
+  ])
+  const todayU = rowsToUsage(todayRows)
+  const monthU = reportToUsage(report)
+  const mobileTodayU = rowsToMobileUsage(mobileTodayRows)
+  const mobileMonthU = reportToMobileUsage(mobileReport)
+  return {
+    todayLogins: todayU.logins,
+    todayTime: todayU.time,
+    todayMods: todayU.mods,
+    monthLogins: monthU.logins,
+    monthTime: monthU.time,
+    monthMods: monthU.mods,
+    todayMobileLogins: mobileTodayU.logins,
+    todayMobileTime: mobileTodayU.time,
+    todayMobileMods: mobileTodayU.mods,
+    monthMobileLogins: mobileMonthU.logins,
+    monthMobileTime: mobileMonthU.time,
+    monthMobileMods: mobileMonthU.mods,
+  }
 }

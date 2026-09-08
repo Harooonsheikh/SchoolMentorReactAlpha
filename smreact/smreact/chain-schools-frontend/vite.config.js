@@ -46,6 +46,23 @@ export default defineConfig({
         changeOrigin: true,
         secure: false,
       },
+      /* ERP screen-time — School Progress View Details.
+         Path API root par hai (/manage-usertimespend), /api ke neeche nahi. */
+      '/manage-usertimespend': {
+        target: 'https://alphaapi.schoolmentor.ai',
+        changeOrigin: true,
+        secure: false,
+      },
+      '/usertimespend-report': {
+        target: 'https://alphaapi.schoolmentor.ai',
+        changeOrigin: true,
+        secure: false,
+      },
+      '/manage-mobileapp-permission': {
+        target: 'https://alphaapi.schoolmentor.ai',
+        changeOrigin: true,
+        secure: false,
+      },
     },
   },
   // `vite preview` (npm run preview) serves the production build on the same
@@ -53,5 +70,22 @@ export default defineConfig({
   preview: {
     port: 3002,
     strictPort: true,
+    proxy: {
+      '/manage-usertimespend': {
+        target: 'https://alphaapi.schoolmentor.ai',
+        changeOrigin: true,
+        secure: false,
+      },
+      '/usertimespend-report': {
+        target: 'https://alphaapi.schoolmentor.ai',
+        changeOrigin: true,
+        secure: false,
+      },
+      '/manage-mobileapp-permission': {
+        target: 'https://alphaapi.schoolmentor.ai',
+        changeOrigin: true,
+        secure: false,
+      },
+    },
   },
 })

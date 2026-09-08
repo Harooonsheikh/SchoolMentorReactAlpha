@@ -76,34 +76,94 @@ export const EM_MODULES = [
   { key: 'tt2', name: 'Reports', icon: 'fa-chart-pie' },
 ]
 
-/* Module-usage rows shown in the ERP detail modal. */
-const USAGE_MODULES = [
+/* Module-usage rows shown in the ERP detail modal (screen-time API). */
+export const USAGE_MODULES = [
+  { key: 'dashboard', name: 'Dashboard', icon: 'fa-house' },
+  { key: 'mentorai', name: 'Mentor AI', icon: 'fa-wand-magic-sparkles' },
   { key: 'academics', name: 'Academics', icon: 'fa-graduation-cap' },
   { key: 'exam', name: 'Examination', icon: 'fa-file-alt' },
+  { key: 'paper', name: 'Paper Generator', icon: 'fa-file-circle-check' },
   { key: 'attendance', name: 'Attendance', icon: 'fa-clipboard-check' },
+  { key: 'timetable', name: 'Timetable', icon: 'fa-calendar-days' },
   { key: 'fee', name: 'Fee', icon: 'fa-money-bill-wave' },
   { key: 'accounts', name: 'Accounts', icon: 'fa-calculator' },
+  { key: 'inventory', name: 'Inventory', icon: 'fa-boxes-stacking' },
+  { key: 'admissions', name: 'Admission CRM', icon: 'fa-user-plus' },
   { key: 'students', name: 'Students', icon: 'fa-user-graduate' },
   { key: 'hr', name: 'Human Resource', icon: 'fa-people-group' },
-  { key: 'timetable', name: 'Time Table', icon: 'fa-calendar-days' },
+  { key: 'appraisal', name: 'Staff Appraisals', icon: 'fa-star' },
+  { key: 'sop', name: 'School SOPs', icon: 'fa-book-open' },
+  { key: 'trainings', name: 'Teacher Trainings', icon: 'fa-chalkboard-user' },
+  { key: 'etube', name: 'e-Tube', icon: 'fa-play' },
+  { key: 'chat', name: 'Chat', icon: 'fa-comments' },
+  { key: 'notifications', name: 'Notifications', icon: 'fa-bell' },
   { key: 'launch', name: 'Launch Setup', icon: 'fa-rocket' },
+  { key: 'settings', name: 'Settings', icon: 'fa-gear' },
+  { key: 'permissions', name: 'User Permissions', icon: 'fa-key' },
+  { key: 'audit', name: 'Audit Logs', icon: 'fa-clipboard-list' },
 ]
+
+export const MOBILE_FEATURES = [
+  { key: 'dashboard', name: 'Dashboard', category: 'academic', icon: 'fa-gauge-high' },
+  { key: 'quiz', name: 'Quiz', category: 'academic', icon: 'fa-circle-question' },
+  { key: 'lessonplan', name: 'Lesson Plan', category: 'academic', icon: 'fa-chalkboard' },
+  { key: 'dlp', name: 'DLP Submission', category: 'academic', icon: 'fa-file-arrow-up' },
+  { key: 'academics', name: 'Academics', category: 'academic', icon: 'fa-graduation-cap' },
+  { key: 'homework', name: 'Home Work', category: 'academic', icon: 'fa-book' },
+  { key: 'worksheet', name: 'Worksheet', category: 'academic', icon: 'fa-file-lines' },
+  { key: 'datesheet', name: 'Date Sheet', category: 'academic', icon: 'fa-calendar-day' },
+  { key: 'syllabus', name: 'Syllabus', category: 'academic', icon: 'fa-list-ol' },
+  { key: 'results', name: 'Results', category: 'academic', icon: 'fa-chart-simple' },
+  { key: 'notebookwork', name: 'Notebook Work', category: 'academic', icon: 'fa-book-open' },
+  { key: 'timetable', name: 'Time Table', category: 'academic', icon: 'fa-calendar-days' },
+  { key: 'noticeboard', name: 'Notice Board', category: 'engage', icon: 'fa-bullhorn' },
+  { key: 'suggestions', name: 'Suggestions', category: 'engage', icon: 'fa-lightbulb' },
+  { key: 'etube', name: 'E-Tube', category: 'engage', icon: 'fa-play-circle' },
+  { key: 'notifications', name: 'Notifications', category: 'engage', icon: 'fa-bell' },
+  { key: 'chats', name: 'Chats', category: 'engage', icon: 'fa-comments' },
+  { key: 'reports', name: 'Reports', category: 'admin', icon: 'fa-chart-bar' },
+  { key: 'meetings', name: 'Meetings', category: 'admin', icon: 'fa-video' },
+  { key: 'tasks', name: 'Tasks', category: 'admin', icon: 'fa-clipboard-list' },
+  { key: 'attendance', name: 'Attendance', category: 'admin', icon: 'fa-clipboard-check' },
+  { key: 'financials', name: 'Financials', category: 'admin', icon: 'fa-sack-dollar' },
+  { key: 'staffleaves', name: 'Staff Leaves', category: 'admin', icon: 'fa-plane-departure' },
+  { key: 'fee', name: 'Fee', category: 'admin', icon: 'fa-money-bill-wave' },
+  { key: 'aichat', name: 'AI Chat', category: 'ai', icon: 'fa-robot' },
+  { key: 'ailessonplan', name: 'AI Lesson Plan', category: 'ai', icon: 'fa-wand-magic-sparkles' },
+  { key: 'notebooklp', name: 'Notebook Lesson Plan AI', category: 'ai', icon: 'fa-pen-fancy' },
+  { key: 'aiworksheet', name: 'AI Worksheets', category: 'ai', icon: 'fa-file-circle-plus' },
+  { key: 'aidesignstudio', name: 'AI Design Studio', category: 'ai', icon: 'fa-palette' },
+]
+
+export const MOBILE_CATEGORIES = {
+  academic: { label: 'Academic Tools', color: '#1E40AF', grad: 'linear-gradient(135deg,#1E3A8A,#1E40AF)' },
+  engage: { label: 'Engagement & Communication', color: '#0284C7', grad: 'linear-gradient(135deg,#0369A1,#0284C7)' },
+  admin: { label: 'Administrative', color: '#B45309', grad: 'linear-gradient(135deg,#B45309,#D97706)' },
+  ai: { label: 'AI-Powered Tools', color: '#7C3AED', grad: 'linear-gradient(135deg,#6D28D9,#7C3AED)' },
+}
+
+export function emptyMobileMods() {
+  const blank = () => ({ l: 0, t: '00:00:00' })
+  return Object.fromEntries(MOBILE_FEATURES.map((m) => [m.key, blank()]))
+}
 
 /* Build the per-school detail payload (login analytics + onboarding). */
 export function getDetailData(s) {
   const completed = s.onboarding ? s.onboarding.completed : 0
-  const monthBase = {
-    academics: { l: 1, t: '0:00:10' }, exam: { l: 0, t: '00:00:00' }, attendance: { l: 0, t: '00:00:00' },
-    fee: { l: 5, t: '0:06:05' }, accounts: { l: 4, t: '0:00:52' }, students: { l: 2, t: '0:00:23' },
-    hr: { l: 0, t: '00:00:00' }, timetable: { l: 2, t: '0:00:12' }, launch: { l: s.logins || 16, t: s.workTime || '0:12:41' },
-  }
+  const zeroMods = USAGE_MODULES.map((m) => ({ ...m, l: 0, t: '00:00:00' }))
   return {
     todayLogins: 0,
     todayTime: '00:00:00',
     monthLogins: s.logins || 0,
     monthTime: s.workTime || '00:00:00',
-    todayMods: USAGE_MODULES.map((m) => ({ ...m, l: 0, t: '00:00:00' })),
-    monthMods: USAGE_MODULES.map((m) => ({ ...m, ...(monthBase[m.key] || { l: 0, t: '00:00:00' }) })),
+    todayMods: zeroMods,
+    monthMods: zeroMods,
+    todayMobileLogins: 0,
+    todayMobileTime: '00:00:00',
+    monthMobileLogins: 0,
+    monthMobileTime: '00:00:00',
+    todayMobileMods: emptyMobileMods(),
+    monthMobileMods: emptyMobileMods(),
     onboarding: EM_MODULES.map((m, i) => ({
       ...m,
       done: i < completed,

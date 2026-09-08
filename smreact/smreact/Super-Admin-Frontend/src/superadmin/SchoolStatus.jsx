@@ -751,6 +751,38 @@ function ErpDetailModal({ school: s, detail, patchDetail, onCounts, toast, onClo
 
   useEffect(() => { loadCards(); }, [loadCards]);
 
+  /* ERP screen-time (type erp) + mobile app (type mobilePhone). */
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([
+      schoolProgressApi.getUserTimeSpend({ branchId: s.id, type: 'erp' }),
+      schoolProgressApi.getUserTimeSpend({ branchId: s.id, type: 'mobilePhone' }),
+    ])
+      .then(([erp, mobile]) => {
+        if (cancelled) return;
+        patchDetail(s.id, (cur) => ({
+          ...cur,
+          todayLogins: erp.today.logins,
+          todayTime: erp.today.time,
+          todayMods: erp.today.mods,
+          monthLogins: erp.month.logins,
+          monthTime: erp.month.time,
+          monthMods: erp.month.mods,
+          todayMobileLogins: mobile.today.logins,
+          todayMobileTime: mobile.today.time,
+          todayMobileMods: mobile.today.mods,
+          monthMobileLogins: mobile.month.logins,
+          monthMobileTime: mobile.month.time,
+          monthMobileMods: mobile.month.mods,
+        }));
+      })
+      .catch((err) => {
+        if (!cancelled) toast?.(err?.message || 'Could not load screen time', 'error');
+      });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [s.id]);
+
   const d = detail;
   const tabKeys = ['school', 'classes', 'student', 'dept', 'staff', 'syllabus', 'timetable'];
   const tabLabels = { school: 'School Tab', classes: 'Classes Tab', student: 'Student Tab', dept: 'Department', staff: 'Staff', syllabus: 'Syllabus', timetable: 'Time Table' };
@@ -834,11 +866,11 @@ function ErpDetailModal({ school: s, detail, patchDetail, onCounts, toast, onClo
               </div>
             </div>
             <ProgressBlock title="Today's Progress" titleIcon="fa-calendar-day" logins={d.todayLogins} time={d.todayTime} mods={d.todayMods} />
-            <ProgressBlock title="Monthly Progress" titleIcon="fa-calendar-check" logins={d.monthLogins} time={d.monthTime} mods={d.monthMods} dimInactive />
+            <ProgressBlock title={`Monthly Progress — ${new Date().toLocaleString('en-GB', { month: 'long', year: 'numeric' })}`} titleIcon="fa-calendar-check" logins={d.monthLogins} time={d.monthTime} mods={d.monthMods} dimInactive hideModuleSessions />
             <MobileUsersSummary users={d.mobileUsers} />
             <MobileAppBlock mobileApp={d.mobileApp} />
-            <MobileUsageBlock title="Daily Mobile App Usage" mods={d.todayMobileMods} />
-            <MobileUsageBlock title="Monthly Mobile App Usage" mods={d.monthMobileMods} />
+            <MobileUsageBlock title="Daily Mobile App Usage" logins={d.todayMobileLogins} time={d.todayMobileTime} mods={d.todayMobileMods} />
+            <MobileUsageBlock title="Monthly Mobile App Usage" logins={d.monthMobileLogins} time={d.monthMobileTime} mods={d.monthMobileMods} hideModuleSessions />
           </div>
         )}
 
@@ -960,23 +992,33 @@ function ErpDetailModal({ school: s, detail, patchDetail, onCounts, toast, onClo
 }
 function InfoRow({ label, children }) { return <div className="em-ic-row"><span className="em-ic-label">{label}</span>{children}</div>; }
 
-function ProgressBlock({ title, titleIcon, logins, time, mods, dimInactive }) {
+function moduleHasTime(t) {
+  const p = String(t || '0').split(':').map((x) => Number(x) || 0);
+  if (p.length >= 3) return p[0] * 3600 + p[1] * 60 + p[2] > 0;
+  if (p.length === 2) return p[0] * 60 + p[1] > 0;
+  return (p[0] || 0) > 0;
+}
+
+function ProgressBlock({ title, titleIcon, logins, time, mods, dimInactive, hideModuleSessions }) {
   const keys = Object.keys(mods);
   return (
     <div style={{ marginBottom: 18 }}>
       <div className="em-prog-title"><i className={`fa-regular ${titleIcon}`} /> {title}</div>
       <div className="em-prog-summary">
-        <div className="em-prog-card"><div className="em-prog-icon"><i className="fa-solid fa-right-to-bracket" /></div><div><div className="em-prog-val">{logins}</div><div className="em-prog-lbl">Total Logins {title.includes('Today') ? 'Today' : 'This Month'}</div></div></div>
+        <div className="em-prog-card"><div className="em-prog-icon"><i className="fa-solid fa-right-to-bracket" /></div><div><div className="em-prog-val">{logins}</div><div className="em-prog-lbl">Total Sessions {title.includes('Today') ? 'Today' : 'This Month'}</div></div></div>
         <div className="em-prog-card"><div className="em-prog-icon"><i className="fa-regular fa-clock" /></div><div><div className="em-prog-val">{time}</div><div className="em-prog-lbl">Total Working Time</div></div></div>
       </div>
       <div className="em-mod-grid">
         {keys.map((k) => {
-          const m = moduleMeta(k); const v = mods[k]; const active = v.l > 0;
+          const m = moduleMeta(k); const v = mods[k] || { l: 0, t: '00:00:00' };
+          const active = (v.l > 0) || moduleHasTime(v.t);
           return (
             <div className="em-mod-row" key={k} style={dimInactive && active ? { borderColor: 'var(--bm)' } : undefined}>
               <div className="em-mod-icon" style={dimInactive && !active ? { background: 'rgba(100,116,139,.3)' } : undefined}><i className={`fa-solid ${m.icon}`} /></div>
               <div style={{ flex: 1, minWidth: 0 }}><div className="em-mod-name">{m.name}</div><div className="em-mod-time"><i className="fa-regular fa-clock" style={{ fontSize: 8, marginRight: 2 }} />{v.t}</div></div>
-              <span className="em-mod-count" style={dimInactive && !active ? { background: 'var(--muted)', color: 'var(--tm)' } : undefined}>{v.l} login{v.l !== 1 ? 's' : ''}</span>
+              {!hideModuleSessions && (
+                <span className="em-mod-count" style={dimInactive && !active ? { background: 'var(--muted)', color: 'var(--tm)' } : undefined}>{v.l} session{v.l !== 1 ? 's' : ''}</span>
+              )}
             </div>
           );
         })}
@@ -1055,26 +1097,31 @@ function MobileUsersSummary({ users }) {
   );
 }
 
-function fmtMinutes(min) {
-  const h = Math.floor(min / 60), m = min % 60;
-  if (h === 0) return `${m}m`;
-  return `${h}h ${m}m`;
-}
-
 const MOBILE_FEATURES_BY_CATEGORY = Object.keys(MOBILE_CATEGORIES).map((cat) => ({
   cat, meta: MOBILE_CATEGORIES[cat], items: MOBILE_FEATURES.filter((f) => f.category === cat),
 }));
 
-/* Daily / Monthly Mobile App Usage — 4 colored clusters (Academic / Engagement
-   / Administrative / AI). Login-based features show a login count; AI/generation
-   & Notifications skip it. Feature-specific activity renders as tinted chips.
-   Per-school numbers d.todayMobileMods / d.monthMobileMods se aate hain (API na
-   de to 0). */
-function MobileUsageBlock({ title, mods }) {
+/* Daily / Monthly Mobile App Usage — type: "mobilePhone".
+   Daily: visit-row count = sessions. Monthly: totalEntries upar, modules par time. */
+function MobileUsageBlock({ title, logins = 0, time = '00:00:00', mods, hideModuleSessions }) {
+  const known = new Set(MOBILE_FEATURES.map((f) => f.key));
+  const extraKeys = Object.keys(mods || {}).filter((k) => !known.has(k) && ((mods[k]?.l || 0) > 0 || moduleHasTime(mods[k]?.t)));
+  const groups = [
+    ...MOBILE_FEATURES_BY_CATEGORY,
+    ...(extraKeys.length ? [{
+      cat: 'other',
+      meta: { label: 'Other', color: '#64748B', grad: 'linear-gradient(135deg,#475569,#64748B)' },
+      items: extraKeys.map((k) => ({ key: k, name: k, icon: 'fa-layer-group' })),
+    }] : []),
+  ];
   return (
     <div style={{ marginBottom: 18 }}>
       <div className="em-prog-title"><i className="fa-regular fa-mobile-screen-button" /> {title}</div>
-      {MOBILE_FEATURES_BY_CATEGORY.map(({ cat, meta, items }) => (
+      <div className="em-prog-summary">
+        <div className="em-prog-card"><div className="em-prog-icon"><i className="fa-solid fa-right-to-bracket" /></div><div><div className="em-prog-val">{logins}</div><div className="em-prog-lbl">Total Sessions {title.includes('Daily') ? 'Today' : 'This Month'}</div></div></div>
+        <div className="em-prog-card"><div className="em-prog-icon"><i className="fa-regular fa-clock" /></div><div><div className="em-prog-val">{time}</div><div className="em-prog-lbl">Total Working Time</div></div></div>
+      </div>
+      {groups.map(({ cat, meta, items }) => (
         <div key={cat} style={{ marginBottom: 14 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 7, margin: '0 0 8px 2px' }}>
             <span style={{ width: 7, height: 7, borderRadius: '50%', background: meta.grad, flexShrink: 0 }} />
@@ -1082,27 +1129,18 @@ function MobileUsageBlock({ title, mods }) {
           </div>
           <div className="em-mod-grid">
             {items.map((f) => {
-              const v = (mods && mods[f.key]) || {};
-              const logins = v.logins || 0;
-              const active = f.hasLogin ? logins > 0 : f.extras.some((ex) => (v[ex.key] || 0) > 0);
+              const v = (mods && mods[f.key]) || { l: 0, t: '00:00:00' };
+              const active = (v.l > 0) || moduleHasTime(v.t);
               return (
-                <div className="em-mod-row" key={f.key} style={{ alignItems: 'flex-start', borderLeft: `3px solid ${active ? meta.color : 'var(--bl)'}` }}>
-                  <div className="em-mod-icon" style={{ marginTop: 1, background: active ? meta.grad : 'rgba(100,116,139,.3)' }}><i className={`fa-solid ${f.icon}`} /></div>
+                <div className="em-mod-row" key={f.key} style={{ borderLeft: `3px solid ${active ? meta.color : 'var(--bl)'}` }}>
+                  <div className="em-mod-icon" style={{ background: active ? meta.grad : 'rgba(100,116,139,.3)' }}><i className={`fa-solid ${f.icon}`} /></div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div className="em-mod-name">{f.name}</div>
-                    {f.extras.length > 0 && (
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 5 }}>
-                        {f.extras.map((ex) => (
-                          <span key={ex.key} style={{ fontSize: 9.5, fontWeight: 700, color: meta.color, background: `${meta.color}14`, borderRadius: 999, padding: '2px 8px', whiteSpace: 'nowrap' }}>
-                            {ex.label}: {ex.format === 'duration' ? fmtMinutes(v[ex.key] || 0) : (v[ex.key] || 0)}
-                          </span>
-                        ))}
-                      </div>
-                    )}
+                    <div className="em-mod-time"><i className="fa-regular fa-clock" style={{ fontSize: 8, marginRight: 2 }} />{v.t || '00:00:00'}</div>
                   </div>
-                  {f.hasLogin && (
-                    <span className="em-mod-count" style={{ marginTop: 1, background: active ? `${meta.color}18` : 'var(--muted)', color: active ? meta.color : 'var(--tm)' }}>
-                      {logins} {f.loginLabel || 'login'}{logins === 1 ? '' : 's'}
+                  {!hideModuleSessions && (
+                    <span className="em-mod-count" style={{ background: active ? `${meta.color}18` : 'var(--muted)', color: active ? meta.color : 'var(--tm)' }}>
+                      {v.l || 0} session{(v.l || 0) === 1 ? '' : 's'}
                     </span>
                   )}
                 </div>

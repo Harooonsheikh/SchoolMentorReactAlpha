@@ -38,6 +38,18 @@ export const CORE_PERMS = [
   { key: 'erpAccess', name: 'ERP Access', icon: 'fa-server', desc: 'Allow this school to log in and use the main ERP system.' },
 ]
 
+/* Chat — nested "Manage Mobile App Permissions" modal. Save par chatType = key. */
+export const CHAT_MODES = [
+  { key: 'off', name: 'Chat Completely Off', icon: 'fa-comment-slash',
+    desc: 'Disable chat entirely for this school. No staff, teacher, or parent can send or receive any message.' },
+  { key: 'staffOnly', name: 'Staff Chat Only', icon: 'fa-user-group',
+    desc: 'Staff can chat with each other. Parent chat is fully disabled — parents cannot send or receive any messages.' },
+  { key: 'staffTwoWayParentReceive', name: 'Staff Two-Way + Parents Receive Only', icon: 'fa-comments',
+    desc: 'Staff can chat two-way with each other and with parents. Parents can only receive messages — they cannot send or reply.' },
+  { key: 'parentsDirect', name: 'Parents Direct Chat with Admin', icon: 'fa-user-shield',
+    desc: 'Parents can directly chat with the school admin through the mobile application.' },
+]
+
 export const MODULE_SECTIONS = [
   { label: '📚 Academics', items: [
     { key: 'academics', name: 'Academics', icon: 'fa-graduation-cap' },

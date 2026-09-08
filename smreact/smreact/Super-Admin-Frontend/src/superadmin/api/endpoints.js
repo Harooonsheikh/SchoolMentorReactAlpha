@@ -111,6 +111,10 @@ export const EP = {
     toggleLaunchSetup: (branchId) => `${SA_ROOT}/api/SchoolPermissions/toggle-launch-setup/${branchId}`,
     /* PUT ?isActive=true|false — the modal's "Active Branch" card. */
     toggleBranchStatus: (branchId) => `${SA_ROOT}/api/SchoolPermissions/ToggleBranchStatus/${branchId}`,
+    /* POST https://alphaapi.schoolmentor.ai/manage-mobileapp-permission
+         { action: SAVE|GET|DELETE, id, branchID, chatType, mentorAI,
+           parentAccess, etube, etubeView, etubeUpload } */
+    mobileAppPermission: () => '/manage-mobileapp-permission',
     /* PUT — the older single-purpose launch-setup routes (toggle- replaces them). */
     enableLaunchSetup: (id) => `${SA_ROOT}/api/SchoolPermissions/enable-launch-setup/${id}`,
     disableLaunchSetup: (id) => `${SA_ROOT}/api/SchoolPermissions/disable-launch-setup/${id}`,
@@ -167,8 +171,15 @@ export const EP = {
        "Invalid @Action value. Use GET, UPSERT, or DELETE."). UPSERT hi
        pehli baar insert aur baad me update, dono karta hai. */
     assignedUser: () => `${SA_ROOT}/api/AHM_School_Progress/manage_assignedUser`,
+    /* POST https://alphaapi.schoolmentor.ai/manage-usertimespend
+         body: { action: "get", branchID, userID:0, date, type: "erp", … }
+       Super-Admin API nahi — ERP swagger root path. */
+    userTimeSpend: () => 'https://alphaapi.schoolmentor.ai/manage-usertimespend',
+    /* POST https://alphaapi.schoolmentor.ai/usertimespend-report
+         body: { branchID, month: "YYYY-MM", type: "erp" }
+       Monthly Progress — per ScreenName TotalTime + totalEntries. */
+    userTimeSpendReport: () => 'https://alphaapi.schoolmentor.ai/usertimespend-report',
   },
-
   /* ── E-Tube — LIVE SchoolMentorSuperAdminAPI
      (swagger: .../Schoolmentorsuperadminapi/swagger/index.html).
 
