@@ -3885,6 +3885,12 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
      wasooli (already + ab ki) rakhta hai. null = cashier ne abhi haath nahi
      lagaya, to already-paid par hi rehta hai (Received 0, fine Pending me). */
   const [fineRecvInput, setFineRecvInput] = useState(null);
+  /* Receiving-time par di jaane wali EXTRA discount — challan me pehle se lagi
+     discount (h.disc) se alag. Sirf LOCAL UI/calc state: receive API
+     (/api/BranchLedger/receive-payment) me koi receive-time discount field nahi,
+     is liye ye handleReceive() ke payload me NAHI jaata — bas Final Net Payable /
+     Pay-Now-max / Remaining screen par kam karta hai (sibling bhi UI-only). */
+  const [giveDiscInput, setGiveDiscInput] = useState({});
 
   useEffect(() => {
     if (!cfg) return;
@@ -3904,7 +3910,10 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
     });
     const useHeadPrevSeed = !!cfg.model.headWisePrev;
     const seed = {};
+    /* Give Discount har head par 0 se shuru (UI-only). */
+    const discSeed = {};
     (cfg.model.heads || []).forEach(h => {
+      discSeed[h.name] = 0;
       const fromPay = (cfg.payments || []).reduce((a, p) => a + (+(p.perHead?.[h.name]) || 0), 0);
       /* Negative received (Old Advance −3000) Math.max se 0 na bane. */
       const fromChSeed = +chRecv[h.name] || 0;
@@ -3930,6 +3939,7 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
       seed[prevKey] = Math.max(prevPaidSeed, +cfg.model.prev || 0);
     }
     setPerHeadInput(seed);
+    setGiveDiscInput(discSeed);
     /* Fine bhi Pending se Received me auto-fill (editable). */
     if (!cfg.viewOnly) {
       const fineRowsInit = (cfg.challan?.detailRows || []).filter(feeService.isLateFineRow);
@@ -4006,10 +4016,16 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
   : (owed < 0 ? rawIn : Math.max(0, rawIn));
     const recvNow = (viewOnly || isCredit) ? 0 : (totalRecv - paid);
     const pending = owed - paid - recvNow;      // credit head par = owed (minus)
+    /* Give Discount (UI-only) — is head par di gayi extra discount, clamp [0, owed];
+       credit/viewOnly par 0. Ye sirf Final Net Payable / Remaining display kam karta,
+       recvNow/pending/save par ASAR NAHI (payload me nahi jaata). */
+    const giveDisc = (viewOnly || isCredit) ? 0 : Math.max(0, Math.min(+giveDiscInput[h.name] || 0, Math.max(0, owed)));
+    const finalNetPayable = isCredit ? owed : Math.max(0, owed - giveDisc);
+    const remaining = finalNetPayable - paid - recvNow;
     totalChallan += h.std;
     totalDisc += h.disc;
     totalAfter += after;
-    return { ...h, paid, totalRecv, recvNow, after, headPrev, owed, pending, isCredit };
+    return { ...h, paid, totalRecv, recvNow, after, headPrev, owed, pending, isCredit, giveDisc, finalNetPayable, remaining };
   });
 
   /* Prev Amount column — head-wise: >0 baqaya, <0 advance (minus), 0/na-ho → "—". */
@@ -4110,11 +4126,31 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
   /* Total se zyada wasool ho to ye MINUS me jaata hai = student ka advance. */
   const remainAfter = totalAmt - alreadyPaid - receivingNow;
 
+  /* ── 9-column payment-flow table ke footer sums (sirf display) ──
+     Previous Dues + This Month's Challan − Discount = Net Payable ·
+     Net Payable − Give Discount = Final Net Payable · Final − Pay Now = Remaining.
+     Give Discount UI-only hai. Special rows (aggregate Previous Pending / Advance /
+     Late Fine) ko condition ke mutabiq shamil karta hai taake footer un ke saath mile. */
+  const aggPrevShown = !useHeadPrev && model.prev > 0 && !(model.heads || []).some(h => /previous|pending|arrear/i.test(h.name));
+  const advRowShown = !useHeadPrev && advCredit > 0;
+  const flowSumHeadPrev = rows.reduce((a, r) => a + (r.headPrev || 0), 0);
+  const flowPrevDues = flowSumHeadPrev + (aggPrevShown ? model.prev : 0);
+  const flowChallan = totalChallan + fineDue;
+  const flowNet = rows.reduce((a, r) => a + r.owed, 0) + (aggPrevShown ? model.prev : 0) + (advRowShown ? -advCredit : 0) + fineDue;
+  const flowGiveDisc = rows.reduce((a, r) => a + r.giveDisc, 0);
+  const flowFinal = rows.reduce((a, r) => a + r.finalNetPayable, 0) + (aggPrevShown ? model.prev : 0) + (advRowShown ? -advCredit : 0) + fineDue;
+
   const setHead = (name, v) => {
   const n = Number(v) || 0;
   const allowNeg = /old\s*advance|advance\s*till/i.test(String(name || ''));
   setPerHeadInput(prev => ({ ...prev, [name]: allowNeg ? n : Math.max(0, n) }));
 };
+
+  /* Give Discount (UI-only) — sirf Final Net Payable / Remaining screen par kam karta,
+     recvNow/pending/save par asar nahi. */
+  const setGiveDisc = (name, v) => {
+    setGiveDiscInput(prev => ({ ...prev, [name]: Math.max(0, Number(v) || 0) }));
+  };
 
   /* Pending is the mirror of Received — the two always add up to the head's net,
      so typing either one drives the other. Both write to the same perHeadInput
@@ -4207,7 +4243,7 @@ if (!anyHeadRecv) {
 
   return createPortal(
     <div className="fee-overlay open" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="fee-modal lg">
+      <div className="fee-modal xl fee-recv-modal">
         <div className="fee-modal-head">
           <div className="fee-modal-head-title">
             <div className="fee-modal-head-icon"><i className="fa-solid fa-hand-holding-dollar"></i></div>
@@ -4291,27 +4327,53 @@ if (!anyHeadRecv) {
           </div>
 
           <div className="fee-stbl-wrap" style={{ marginTop: 14 }}>
-            <table className="fee-stbl fee-recv-table">
+            <table className="fee-stbl fee-recv-table flow">
               <thead>
                 <tr>
-                  <th>Head</th>
-                  <th className="fee-right">Challan Amount</th>
-                  <th className="fee-right">Discount</th>
-                  <th className="fee-right">After Discount</th>
-                  <th className="fee-right">Prev Amount</th>
-                  <th className="fee-right">Received</th>
-                  <th className="fee-right">Pending</th>
+                  <th className="flow-head-col">Fee Head</th>
+                  <th className="fee-right">Previous Dues</th>
+                  <th className="fee-right"><span className="flow-op">+</span> This Month&apos;s Challan</th>
+                  <th className="fee-right"><span className="flow-op">−</span> Discount in This Month&apos;s Challan</th>
+                  <th className="fee-right"><span className="flow-op">=</span> Net Payable</th>
+                  <th className="fee-center"><span className="flow-op">−</span> Give Discount</th>
+                  <th className="fee-right"><span className="flow-op">=</span> Final Net Payable</th>
+                  <th className="fee-center"><span className="flow-op">−</span> Pay Now</th>
+                  <th className="fee-right"><span className="flow-op">=</span> Remaining</th>
                 </tr>
               </thead>
               <tbody>
                 {rows.map(r => (
                   <tr key={r.name}>
-                    <td><b>{r.name}</b></td>
+                    <td className="flow-head-col"><b>{r.name}</b></td>
+                    {/* Previous Dues — us head ka pichhla baqaya (>0 tag, <0 advance, warna —). */}
+                    <td className="fee-right">
+                      {r.headPrev > 0
+                        ? <span className="flow-prevtag">{money(r.headPrev)}</span>
+                        : (r.headPrev < 0 ? money(r.headPrev) : <span className="fee-recv-dash">—</span>)}
+                    </td>
                     <td className="fee-right">{money(r.std)}</td>
                     <td className="fee-right">{r.disc > 0 ? money(r.disc) : '0'}</td>
-                    <td className="fee-right"><span className="fee-cell-grey">{money(r.net)}</span></td>
-                    <td className="fee-right">{prevDisp(r.prev)}</td>
-                    <td className="fee-right">
+                    {/* Net Payable = After Discount + head-wise Previous (r.owed). */}
+                    <td className="fee-right"><span className="fee-cell-grey">{money(r.owed)}</span></td>
+                    {/* Give Discount (UI-only) — credit/viewOnly par —. */}
+                    <td className="fee-center">
+                      {viewOnly || r.isCredit ? (
+                        <span className="fee-recv-dash">—</span>
+                      ) : (
+                        <input
+                          className="flow-input flow-input--disc"
+                          type="number"
+                          min="0"
+                          max={Math.max(0, r.owed)}
+                          value={giveDiscInput[r.name] === 0 ? 0 : (giveDiscInput[r.name] || '')}
+                          onChange={e => setGiveDisc(r.name, e.target.value)}
+                          placeholder="0"
+                        />
+                      )}
+                    </td>
+                    <td className="fee-right"><span className="flow-final">{money(r.finalNetPayable)}</span></td>
+                    {/* Pay Now = KUL wasooli input (over-receiving allowed — koi hard max nahi). */}
+                    <td className="fee-center">
                       {viewOnly ? (
                         <span className="fee-paid-amt">{money(r.paid)}</span>
                       ) : r.isCredit ? (
@@ -4319,6 +4381,7 @@ if (!anyHeadRecv) {
                         <span className="fee-cell-grey">—</span>
                       ) : (
                         <input
+                          className="flow-input flow-input--pay"
                           type="number"
                           min="0"
                           value={r.totalRecv}
@@ -4327,6 +4390,7 @@ if (!anyHeadRecv) {
                         />
                       )}
                     </td>
+                    {/* Remaining = Final Net Payable − paid − recvNow (minus = advance). */}
                     <td className="fee-right">
                       {viewOnly ? (
                         money(r.pending)
@@ -4335,13 +4399,7 @@ if (!anyHeadRecv) {
                            consume ho kar 0 ki taraf jaata hai. */
                         <span className={r.pending < 0 ? 'fee-neg' : undefined}>{money(r.pending)}</span>
                       ) : (
-                        <input
-                          type="number"
-                          min="0"
-                          value={r.pending}
-                          onChange={e => setPendingFor(r, e.target.value)}
-                          placeholder="0"
-                        />
+                        <span className="flow-remain">{money(r.remaining)}</span>
                       )}
                     </td>
                   </tr>
@@ -4351,16 +4409,19 @@ if (!anyHeadRecv) {
                     warna duplicate dikhega. */}
                 {!useHeadPrev && model.prev > 0 && !(model.heads || []).some(h => /previous|pending|arrear/i.test(h.name)) && (
                   <tr>
-                    <td><b>Previous Pending</b></td>
-                    <td className="fee-right">{money(model.prev)}</td>
-                    <td className="fee-right">0</td>
+                    <td className="flow-head-col"><b>Previous Pending</b></td>
+                    <td className="fee-right"><span className="flow-prevtag">{money(model.prev)}</span></td>
+                    <td className="fee-right"><span className="fee-recv-dash">—</span></td>
+                    <td className="fee-right"><span className="fee-recv-dash">—</span></td>
                     <td className="fee-right"><span className="fee-cell-grey">{money(model.prev)}</span></td>
-                    <td className="fee-right">—</td>
-                    <td className="fee-right">
+                    <td className="fee-center"><span className="fee-recv-dash">—</span></td>
+                    <td className="fee-right"><span className="flow-final">{money(model.prev)}</span></td>
+                    <td className="fee-center">
                       {viewOnly ? (
                         <span className="fee-paid-amt">{money(prevPaid)}</span>
                       ) : (
                         <input
+                          className="flow-input flow-input--pay"
                           type="number"
                           min="0"
                           value={prevTotalRecv}
@@ -4373,16 +4434,7 @@ if (!anyHeadRecv) {
                       {viewOnly ? (
                         money(Math.max(0, model.prev - prevPaid))
                       ) : (
-                        <input
-                          type="number"
-                          min="0"
-                          value={prevPend}
-                          onChange={e => {
-                            const pend = Number(e.target.value) || 0;
-                            setHead(prevKey, Math.max(0, model.prev - pend));
-                          }}
-                          placeholder="0"
-                        />
+                        <span className="flow-remain">{money(prevPend)}</span>
                       )}
                     </td>
                   </tr>
@@ -4391,12 +4443,14 @@ if (!anyHeadRecv) {
                     head ke Prev/owed me hota hai, is liye ye row nahi. */}
                 {!useHeadPrev && advCredit > 0 && (
                   <tr>
-                    <td><b>Advance</b></td>
-                    <td className="fee-right">—</td>
-                    <td className="fee-right">—</td>
+                    <td className="flow-head-col"><b>Advance</b></td>
+                    <td className="fee-right"><span className="fee-recv-dash">—</span></td>
+                    <td className="fee-right"><span className="fee-recv-dash">—</span></td>
+                    <td className="fee-right"><span className="fee-recv-dash">—</span></td>
                     <td className="fee-right"><span className="fee-cell-grey">{money(-advCredit)}</span></td>
-                    <td className="fee-right">—</td>
-                    <td className="fee-right fee-neg"><b>{money(-advApplied)}</b></td>
+                    <td className="fee-center"><span className="fee-recv-dash">—</span></td>
+                    <td className="fee-right"><span className="fee-cell-grey">{money(-advCredit)}</span></td>
+                    <td className="fee-center fee-neg"><b>{money(-advApplied)}</b></td>
                     <td className="fee-right">{money(advCredit - advApplied)}</td>
                   </tr>
                 )}
@@ -4406,27 +4460,28 @@ if (!anyHeadRecv) {
                     cashier partial fine le sakta hai ya Received 0 kar ke waive. */}
                 {fineDue > 0 && (
                   <tr>
-                    <td>
+                    <td className="flow-head-col">
                       <b>Fine</b>
                       <span className="fee-sub-eq">
                         {fineDays} day{fineDays === 1 ? '' : 's'} late
                         {settings?.fineType === 'daily' ? ` × Rs. ${(+settings.fineAmt || 0).toLocaleString('en-PK')}` : ''}
                       </span>
                     </td>
-                    {/* Challan Amount baaki heads ki tarah plain text — banti hui fine
-                        settings + din se khud nikalti hai, cashier isay yahan edit
-                        nahi karta. Kam/zyada lena ho to "Received" me karta hai. */}
+                    <td className="fee-right"><span className="fee-recv-dash">—</span></td>
+                    {/* This Month's Challan me late fine — settings + din se khud banti hai,
+                        read-only. Kam/zyada lena ho to "Pay Now" me karta hai. */}
                     <td className="fee-right">{money(fineDue)}</td>
                     <td className="fee-right">0</td>
                     <td className="fee-right"><span className="fee-cell-grey">{money(fineDue)}</span></td>
-                    <td className="fee-right">—</td>
-                    {/* Received/Pending ab baaki heads ki tarah EDITABLE — input KUL
-                        wasooli rakhta hai, to partial fine bhi li ja sakti hai. */}
-                    <td className="fee-right">
+                    <td className="fee-center"><span className="fee-recv-dash">—</span></td>
+                    <td className="fee-right"><span className="flow-final">{money(fineDue)}</span></td>
+                    {/* Pay Now EDITABLE — input KUL wasooli rakhta hai, partial fine bhi ho sakti. */}
+                    <td className="fee-center">
                       {viewOnly ? (
                         <span className="fee-paid-amt">{money(finePaid)}</span>
                       ) : (
                         <input
+                          className="flow-input flow-input--pay"
                           type="number"
                           min="0"
                           value={fineTotalRecv}
@@ -4439,13 +4494,7 @@ if (!anyHeadRecv) {
                       {viewOnly ? (
                         money(Math.max(0, fineDue - finePaid))
                       ) : (
-                        <input
-                          type="number"
-                          min="0"
-                          value={finePend}
-                          onChange={e => setFineRecvInput(Math.max(0, fineDue - (Number(e.target.value) || 0)))}
-                          placeholder="0"
-                        />
+                        <span className="flow-remain">{money(finePend)}</span>
                       )}
                     </td>
                   </tr>
@@ -4453,21 +4502,27 @@ if (!anyHeadRecv) {
               </tbody>
               <tfoot>
                 <tr className="fee-recv-total">
-                  <td>Total</td>
-                  <td className="fee-right">{money(totalChallan + (useHeadPrev ? 0 : model.prev) + fineDue)}</td>
+                  <td className="flow-head-col">Total</td>
+                  <td className="fee-right">{flowPrevDues !== 0 ? money(flowPrevDues) : '—'}</td>
+                  <td className="fee-right">{money(flowChallan)}</td>
                   <td className="fee-right">{money(totalDisc)}</td>
-                  <td className="fee-right">{money(totalAfter + (useHeadPrev ? 0 : (model.prev - advApplied)) + fineDue)}</td>
-                  <td className="fee-right">{totalPrev !== 0 ? money(totalPrev) : '—'}</td>
-                  <td className="fee-right">{money(alreadyPaid + receivingNow)}</td>
+                  <td className="fee-right">{money(flowNet)}</td>
+                  <td className="fee-center">{money(flowGiveDisc)}</td>
+                  <td className="fee-right">{money(flowFinal)}</td>
+                  <td className="fee-center">{money(alreadyPaid + receivingNow)}</td>
                   <td className="fee-right">{money(remainAfter)}</td>
                 </tr>
               </tfoot>
             </table>
           </div>
+          <div className="fee-recv-flow-hint">
+            <i className="fa-solid fa-circle-info"></i>
+            <span>Previous Dues + This Month&apos;s Challan − Discount = Net Payable · Net Payable − Give Discount = Final Net Payable · Final Net Payable − Pay Now = Remaining</span>
+          </div>
 
           <div className="fee-recv-paystrip">
             <div className="fee-recv-paycard">
-              <span className="fee-recv-paylbl">Total Amount</span>
+              <span className="fee-recv-paylbl">Total Net Payable</span>
               <span className="fee-recv-payval">{money(totalAmt)}</span>
             </div>
             <div className="fee-recv-paycard">
@@ -7033,8 +7088,11 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
 
   const handleSaveChild = () => {
     if (!selChild) return;
-    /* MINUS bhi valid hai (already-received correction) — sirf 0 rokna hai. */
-    if (recvNow === 0) { toast('Enter at least one head amount to receive', 'error'); return; }
+    /* MINUS bhi valid hai (already-received correction) — sirf 0 rokna hai.
+       Movement-based guard: advance se settle hui fine bhi ek valid receipt hai,
+       is liye sirf recvNow (jo advApplied ghata ke rehta hai) par mat roko. */
+    const hasReceipt = rowsForSel.some(r => r.recvNow !== 0) || prevRecv !== 0 || fineOwed !== 0;
+    if (!hasReceipt) { toast('Enter at least one head amount to receive', 'error'); return; }
     if (!date) { toast('Receiving date is required', 'error'); return; }
     /* Session-date guard: receiving date current session ki UTC window ke andar ho. */
     const recvChk = validateSessionDateFromStorage(date, 'receiving date');
@@ -11492,7 +11550,49 @@ function feeReportSchool(school) {
     session: school?.academicSession || school?.session || '',
     generatedDate: school?.generatedDate || null,
     generatedBy: school?.generatedBy || sessionStorage.getItem('displayName') || sessionStorage.getItem('userName') || 'Fee',
+    branchBankName:      school?.branchBankName,
+    branchAccountTitle:  school?.branchAccountTitle,
+    branchAccountNumber: school?.branchAccountNumber,
+    branchIBAN:          school?.branchIBAN,
+    branchbankCity:      school?.branchbankCity,
+    branchAccountDesc:   school?.branchAccountDesc,
   };
+}
+
+function feeBankDetails(school) {
+  if (!school || typeof school !== 'object') return null;
+  const bankName = school.branchBankName    || school.bankName      || '';
+  const title    = school.branchAccountTitle|| school.accountTitle  || '';
+  const acctNo   = school.branchAccountNumber|| school.accountNumber || '';
+  const iban     = school.branchIBAN        || school.iban          || '';
+  const city     = school.branchbankCity    || school.branchBankCity || school.bankCity || '';
+  const desc     = school.branchAccountDesc || '';
+  if (!(bankName || title || acctNo || iban || city || desc)) return null;
+  return { bankName, title, acctNo, iban, city, desc };
+}
+function feeBankBlockHtml(school, { thermal = false } = {}) {
+  const b = feeBankDetails(school);
+  if (!b) return '';
+  const rows = [['Bank', b.bankName],['Title', b.title],['Account #', b.acctNo],['IBAN', b.iban],['Branch', b.city]].filter(([, v]) => v);
+  if (!rows.length) return '';
+  if (thermal) {
+    return `
+  <div class="th-psid" style="margin-top:5px;">
+    <div class="th-psid-top">Bank Transfer Details</div>
+    <div style="display:grid;grid-template-columns:auto 1fr;column-gap:6px;row-gap:1px;font-size:9.5px;">
+      ${rows.map(([k, v]) => `<span style="color:#666;">${escHtml(k)}</span><span style="text-align:right;font-weight:700;color:#111;">${escHtml(String(v))}</span>`).join('')}
+    </div>
+    ${b.desc ? `<div style="font-size:8.5px;color:#555;margin-top:3px;">${escHtml(b.desc)}</div>` : ''}
+  </div>`;
+  }
+  return `
+    <div class="psid-block" style="margin-top:5px;">
+      <div class="psid-top"><div class="psid-dot"></div><span class="psid-tag">Bank Transfer Details</span></div>
+      <div style="display:grid;grid-template-columns:auto 1fr;column-gap:10px;row-gap:2px;font-size:10.5px;margin-top:4px;">
+        ${rows.map(([k, v]) => `<span style="color:#666;">${escHtml(k)}</span><span style="text-align:right;font-weight:700;color:#111;">${escHtml(String(v))}</span>`).join('')}
+      </div>
+      ${b.desc ? `<div style="font-size:9.5px;color:#555;margin-top:4px;">${escHtml(b.desc)}</div>` : ''}
+    </div>`;
 }
 
 function feeReportDate(school) {
@@ -12160,6 +12260,7 @@ function feeSlipHTML({ copyLabel, classMeta, student, heads, settings, period, i
         <div class="qr-hint"><strong>Scan QR</strong> with your banking app<br/>OR enter PSID manually.<br/>Works on HBL, MCB, Meezan,<br/>UBL, Sadapay, Easypaisa &amp; more.</div>
       </div>
     </div>` : ''}
+    ${settings.showBankDetails === true ? feeBankBlockHtml(school, {}) : ''}
     ${psidPlain ? `
     <div class="steps-block">
       <div class="steps-title">How to pay — 1Link PSID</div>
@@ -12440,6 +12541,7 @@ function feeThermalChallanHTML({ classMeta, student, heads, settings, period, is
     <div class="th-psid-qr">${psidQrSvg(psidPlain, 88)}</div>
     <div class="th-psid-hint">Scan QR / enter PSID in your banking app. Works on HBL, MCB, Meezan, UBL, Sadapay, Easypaisa &amp; more.</div>
   </div>` : ''}
+  ${settings.showBankDetails === true ? feeBankBlockHtml(school, { thermal: true }) : ''}
   ${psidPlain ? `
   <div class="th-steps">
     <div class="s"><b>1.</b> Open banking app</div>
@@ -12530,6 +12632,7 @@ function feeFamilySlipHTML({ copyLabel, family, settings, period, issueISO, dueI
         <div class="qr-hint"><strong>Scan QR</strong> with your banking app<br/>OR enter PSID manually.<br/>Works on HBL, MCB, Meezan,<br/>UBL, Sadapay, Easypaisa &amp; more.</div>
       </div>
     </div>` : ''}
+    ${settings.showBankDetails === true ? feeBankBlockHtml(school, {}) : ''}
     ${psidPlain ? `
     <div class="steps-block">
       <div class="steps-title">How to pay — 1Link PSID</div>
@@ -12654,6 +12757,7 @@ function feeThermalFamilyChallanHTML({ family, settings, period, issueISO, dueIS
     <div class="th-psid-qr">${psidQrSvg(psidPlain, 88)}</div>
     <div class="th-psid-hint">Scan QR / enter PSID in your banking app. Works on HBL, MCB, Meezan, UBL, Sadapay, Easypaisa &amp; more.</div>
   </div>` : ''}
+  ${settings.showBankDetails === true ? feeBankBlockHtml(school, { thermal: true }) : ''}
   ${psidPlain ? `
   <div class="th-steps">
     <div class="s"><b>1.</b> Open banking app</div>
@@ -12805,6 +12909,14 @@ function FeeChallanSettings({ toast }) {
               desc="Print the PSID / bank payment code so parents can pay via bank or app."
               on={value.showPsd}
               onToggle={() => set({ showPsd: !value.showPsd })}
+            />
+
+            {/* Show Bank Details */}
+            <SettingCard
+              name="Show Bank Details On challan"
+              desc="Print the school's bank account details on every challan so parents can pay by bank transfer."
+              on={value.showBankDetails}
+              onToggle={() => set({ showBankDetails: !value.showBankDetails })}
             />
 
             {/* Previous month receiving */}
@@ -14000,6 +14112,7 @@ const FEE_CSS = `
   animation: feeModIn .2s cubic-bezier(.4,0,.2,1);
 }
 .fee-modal.lg { max-width: 900px; }
+.fee-modal.xl { max-width: 1180px; }
 .fee-modal.sm { max-width: 520px; }
 @keyframes feeModIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 
@@ -14007,6 +14120,7 @@ const FEE_CSS = `
   .fee-overlay { padding: 8px; }
   .fee-modal,
   .fee-modal.lg,
+  .fee-modal.xl,
   .fee-modal.sm { max-width: 96vw; }
 }
 
@@ -16105,6 +16219,95 @@ const FEE_CSS = `
   min-width: 80px;
   text-align: right;
   font-weight: 600;
+}
+
+/* ─── Fee-head payment-flow table (Individual Fee Receiving) ───
+   Scoped to .fee-recv-table.flow so the plain (Bulk/Family) receiving
+   table is unaffected. Ported from the sibling app's payment-flow design.
+   Rules are scoped under .fee-recv-table.flow so they win over the base
+   .fee-recv-table input rule above. */
+.fee-recv-table.flow th { white-space: normal; line-height: 1.35; vertical-align: bottom; }
+.fee-recv-table.flow .fee-center { text-align: center; }
+.fee-recv-table.flow thead th.fee-center { text-align: center; }
+.fee-recv-table.flow .flow-op {
+  display: inline-block;
+  color: var(--text-muted);
+  font-weight: 900;
+  margin-right: 2px;
+}
+/* Fee Head stays visible while the rest of the table scrolls horizontally. */
+.fee-recv-table.flow .flow-head-col {
+  position: sticky;
+  left: 0;
+  background: var(--bg-card);
+  z-index: 1;
+  box-shadow: 1px 0 0 var(--border-light);
+}
+.fee-recv-table.flow thead th.flow-head-col { background: var(--bg-muted); }
+.fee-recv-table.flow tr.fee-recv-total td.flow-head-col { background: var(--bg-muted); }
+
+/* Previous Dues — flagged as an older, carried-forward amount. */
+.fee-recv-table.flow .flow-prevtag {
+  display: inline-block;
+  padding: 3px 9px;
+  border-radius: 6px;
+  background: rgba(217,119,6,.1);
+  color: #B45309;
+  font-weight: 700;
+}
+[data-theme="dark"] .fee-recv-table.flow .flow-prevtag { background: rgba(217,119,6,.18); color: #FBBF24; }
+
+/* Editable cells (Give Discount / Pay Now) — subtly highlighted so they
+   read as different from the plain calculated columns around them. */
+.fee-recv-table.flow .flow-input {
+  width: 92px;
+  height: 34px;
+  border: 1.5px solid var(--border-light);
+  border-radius: 8px;
+  padding: 0 8px;
+  font-family: var(--font-body);
+  font-size: 12.5px;
+  font-weight: 700;
+  text-align: center;
+  background: rgba(30,58,138,.045);
+  color: var(--text-primary);
+  outline: none;
+  transition: all .15s ease;
+}
+.fee-recv-table.flow .flow-input:focus { border-color: #1E3A8A; box-shadow: 0 0 0 3px rgba(30,58,138,.1); background: var(--bg-card); }
+.fee-recv-table.flow .flow-input--pay { background: rgba(22,163,74,.06); }
+.fee-recv-table.flow .flow-input--pay:focus { border-color: #16A34A; box-shadow: 0 0 0 3px rgba(22,163,74,.12); }
+[data-theme="dark"] .fee-recv-table.flow .flow-input { background: rgba(59,130,246,.1); border-color: var(--border-light); }
+[data-theme="dark"] .fee-recv-table.flow .flow-input--pay { background: rgba(34,197,94,.1); }
+[data-theme="dark"] .fee-recv-table.flow .flow-input:focus { background: var(--bg-card); }
+
+/* Key outcome cells — Final Net Payable and Remaining are the two
+   numbers a cashier actually needs to read at a glance. */
+.fee-recv-table.flow .flow-final  { font-weight: 800; color: #1E3A8A; }
+.fee-recv-table.flow .flow-remain { font-weight: 800; color: #B91C1C; }
+[data-theme="dark"] .fee-recv-table.flow .flow-final  { color: #93C5FD; }
+[data-theme="dark"] .fee-recv-table.flow .flow-remain { color: #FCA5A5; }
+
+.fee-recv-table.flow .fee-recv-dash { color: var(--text-muted); }
+
+.fee-recv-flow-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 9px 12px;
+  border-radius: 8px;
+  background: var(--bg-muted);
+  color: var(--text-muted);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+.fee-recv-flow-hint i { color: #1E3A8A; margin-top: 1px; flex-shrink: 0; }
+
+@media (max-width: 640px) {
+  /* Touch-friendly inputs; table itself scrolls via .fee-stbl-wrap. */
+  .fee-recv-table.flow .flow-input { width: 84px; height: 38px; font-size: 13px; }
+  .fee-recv-flow-hint { font-size: 11px; }
 }
 
 .fee-recv-paystrip {
