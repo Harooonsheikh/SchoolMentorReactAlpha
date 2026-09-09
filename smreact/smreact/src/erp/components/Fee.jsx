@@ -3885,12 +3885,10 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
      wasooli (already + ab ki) rakhta hai. null = cashier ne abhi haath nahi
      lagaya, to already-paid par hi rehta hai (Received 0, fine Pending me). */
   const [fineRecvInput, setFineRecvInput] = useState(null);
-  /* Receiving-time par di jaane wali EXTRA discount — challan me pehle se lagi
-     discount (h.disc) se alag. Sirf LOCAL UI/calc state: receive API
-     (/api/BranchLedger/receive-payment) me koi receive-time discount field nahi,
-     is liye ye handleReceive() ke payload me NAHI jaata — bas Final Net Payable /
-     Pay-Now-max / Remaining screen par kam karta hai (sibling bhi UI-only). */
+  /* Receiving-time EXTRA discount — checkbox ON par "Give Discount" column dikhti hai,
+     values detailRows.discount me jati hain aur API isReceiving:true bhejti hai. */
   const [giveDiscInput, setGiveDiscInput] = useState({});
+  const [showGiveDisc, setShowGiveDisc] = useState(false);
 
   useEffect(() => {
     if (!cfg) return;
@@ -3908,26 +3906,44 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
       const n = r.subHead || r.head || '';
       chRecv[n] = (chRecv[n] || 0) + (+r.receivedAmount || 0);
     });
+    /* Pehli receiving me Give Discount ON tha to Transaction Details / partial
+       reopen par column wapas dikhao; viewOnly me amounts bhi seed karo. */
+    const histGive = {};
+    let priorGive = false;
+    (cfg.payments || []).forEach(p => {
+      if (p.isReceiving) priorGive = true;
+      Object.entries(p.giveDisc || {}).forEach(([n, v]) => {
+        const g = Math.max(0, +v || 0);
+        if (!g) return;
+        histGive[n] = (histGive[n] || 0) + g;
+        priorGive = true;
+      });
+    });
     const useHeadPrevSeed = !!cfg.model.headWisePrev;
     const seed = {};
-    /* Give Discount har head par 0 se shuru (UI-only). */
     const discSeed = {};
     (cfg.model.heads || []).forEach(h => {
-      discSeed[h.name] = 0;
+      const hist = histGive[h.name] || 0;
       const fromPay = (cfg.payments || []).reduce((a, p) => a + (+(p.perHead?.[h.name]) || 0), 0);
       /* Negative received (Old Advance −3000) Math.max se 0 na bane. */
       const fromChSeed = +chRecv[h.name] || 0;
       const paidSeed = cfg.challan
         ? (Math.abs(fromChSeed) >= Math.abs(fromPay) ? fromChSeed : fromPay)
         : fromPay;
+      const owedSeed = (+h.net || 0) + (useHeadPrevSeed ? (+h.prev || 0) : 0);
+      /* Agar hist pehle se net/disc me fold hai to live input 0; warna hist dikhao
+         taake Remaining/save pehli give ko dobara apply kar sake. */
+      const remNo = owedSeed - paidSeed;
+      const remWith = owedSeed - hist - paidSeed;
+      const histFoldedSeed = hist > 0 && Math.abs(remNo) <= Math.abs(remWith);
+      discSeed[h.name] = cfg.viewOnly ? hist : (histFoldedSeed ? 0 : hist);
       /* Modal khulte hi Received me POORA baqaya (After Discount + Prev) pre-fill —
          Pending 0. Cashier edit kar sake; kam/zyada = Remaining/Advance Pending me. */
       if (!cfg.viewOnly) {
-        const owed = (+h.net || 0) + (useHeadPrevSeed ? (+h.prev || 0) : 0);
         /* Old Advance: pehle consume/receive ho chuka ho to paidSeed; warna full owed. */
-        seed[h.name] = owed < 0
-          ? (paidSeed !== 0 ? paidSeed : owed)
-          : Math.max(paidSeed, owed);
+        seed[h.name] = owedSeed < 0
+          ? (paidSeed !== 0 ? paidSeed : owedSeed)
+          : Math.max(paidSeed, owedSeed);
       } else {
         seed[h.name] = paidSeed;
       }
@@ -3940,6 +3956,7 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
     }
     setPerHeadInput(seed);
     setGiveDiscInput(discSeed);
+    setShowGiveDisc(priorGive);
     /* Fine bhi Pending se Received me auto-fill (editable). */
     if (!cfg.viewOnly) {
       const fineRowsInit = (cfg.challan?.detailRows || []).filter(feeService.isLateFineRow);
@@ -3984,6 +4001,13 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
       paymentsPerHead[n] = (paymentsPerHead[n] || 0) + (+v || 0);
     });
   });
+  /* Session payments se pehle di hui Give Discount (API disc ignore kare to bhi). */
+  const histGiveByHead = {};
+  (payments || []).forEach(p => {
+    Object.entries(p.giveDisc || {}).forEach(([n, v]) => {
+      histGiveByHead[n] = (histGiveByHead[n] || 0) + Math.max(0, +v || 0);
+    });
+  });
   const perHeadPaid = {};
   (model.heads || []).forEach(h => {
     const fromPay = +paymentsPerHead[h.name] || 0;
@@ -4016,16 +4040,36 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
   : (owed < 0 ? rawIn : Math.max(0, rawIn));
     const recvNow = (viewOnly || isCredit) ? 0 : (totalRecv - paid);
     const pending = owed - paid - recvNow;      // credit head par = owed (minus)
-    /* Give Discount (UI-only) — is head par di gayi extra discount, clamp [0, owed];
-       credit/viewOnly par 0. Ye sirf Final Net Payable / Remaining display kam karta,
-       recvNow/pending/save par ASAR NAHI (payload me nahi jaata). */
-    const giveDisc = (viewOnly || isCredit) ? 0 : Math.max(0, Math.min(+giveDiscInput[h.name] || 0, Math.max(0, owed)));
+    /* Give Discount: payments hist + live input.
+       - viewOnly: hist dikhao; agar pehle se disc me fold hai to math me 0.
+       - live: input hi source of truth (seed hist tab jab fold na ho). */
+    const histGive = isCredit ? 0 : Math.max(0, +histGiveByHead[h.name] || 0);
+    const remNoHist = owed - paid - recvNow;
+    const remWithHist = owed - histGive - paid - recvNow;
+    const histFolded = histGive > 0 && Math.abs(remNoHist) <= Math.abs(remWithHist);
+    const typedGive = (!showGiveDisc || viewOnly || isCredit)
+      ? 0
+      : Math.max(0, Math.min(+giveDiscInput[h.name] || 0, Math.max(0, owed)));
+    const giveDisc = viewOnly
+      ? (histFolded ? 0 : histGive)
+      : typedGive;
+    const giveDiscShow = viewOnly ? histGive : typedGive;
+    /* Discount column: fold ho to original challan disc alag, give alag. */
+    const discShow = (showGiveDisc && histFolded && histGive > 0)
+      ? Math.max(0, (+h.disc || 0) - histGive)
+      : (+h.disc || 0);
     const finalNetPayable = isCredit ? owed : Math.max(0, owed - giveDisc);
+    /* Remaining Give Discount ke baad — finalNet se. */
     const remaining = finalNetPayable - paid - recvNow;
     totalChallan += h.std;
-    totalDisc += h.disc;
+    totalDisc += discShow;
     totalAfter += after;
-    return { ...h, paid, totalRecv, recvNow, after, headPrev, owed, pending, isCredit, giveDisc, finalNetPayable, remaining };
+    return {
+      ...h,
+      disc: discShow,
+      paid, totalRecv, recvNow, after, headPrev, owed, pending, isCredit,
+      giveDisc, giveDiscShow, finalNetPayable, remaining,
+    };
   });
 
   /* Prev Amount column — head-wise: >0 baqaya, <0 advance (minus), 0/na-ho → "—". */
@@ -4122,7 +4166,10 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
      shamil hai jise advance ne kam kiya tha (alag negative row me −advance), warna Already
      Received aur Remaining dono galat (−550) aate the. */
   const alreadyPaid = rows.reduce((a, r) => a + r.paid, 0) + prevPaid + finePaid - advConsumed;
-  const totalAmt = totalAfter + model.prev - model.advance + fineDue;
+  /* Give Discount (hist/typed) Total Net Payable se ghatao — warna Remaining After
+     slip ke 0 ke bawajood discount jaisa baqaya dikhata hai. */
+  const giveMathTotal = rows.reduce((a, r) => a + (r.giveDisc || 0), 0);
+  const totalAmt = totalAfter + model.prev - model.advance + fineDue - giveMathTotal;
   /* Total se zyada wasool ho to ye MINUS me jaata hai = student ka advance. */
   const remainAfter = totalAmt - alreadyPaid - receivingNow;
 
@@ -4137,7 +4184,7 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
   const flowPrevDues = flowSumHeadPrev + (aggPrevShown ? model.prev : 0);
   const flowChallan = totalChallan + fineDue;
   const flowNet = rows.reduce((a, r) => a + r.owed, 0) + (aggPrevShown ? model.prev : 0) + (advRowShown ? -advCredit : 0) + fineDue;
-  const flowGiveDisc = rows.reduce((a, r) => a + r.giveDisc, 0);
+  const flowGiveDisc = rows.reduce((a, r) => a + (r.giveDiscShow || r.giveDisc || 0), 0);
   const flowFinal = rows.reduce((a, r) => a + r.finalNetPayable, 0) + (aggPrevShown ? model.prev : 0) + (advRowShown ? -advCredit : 0) + fineDue;
 
   const setHead = (name, v) => {
@@ -4146,10 +4193,19 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
   setPerHeadInput(prev => ({ ...prev, [name]: allowNeg ? n : Math.max(0, n) }));
 };
 
-  /* Give Discount (UI-only) — sirf Final Net Payable / Remaining screen par kam karta,
-     recvNow/pending/save par asar nahi. */
+  /* Give Discount change → Pay Now Final Net Payable par sync (Remaining 0),
+     taake discount pending/minus na dikhe. */
   const setGiveDisc = (name, v) => {
-    setGiveDiscInput(prev => ({ ...prev, [name]: Math.max(0, Number(v) || 0) }));
+    const giveRaw = Math.max(0, Number(v) || 0);
+    const h = (model.heads || []).find(x => x.name === name);
+    const headPrev = useHeadPrev ? (+(h?.prev) || 0) : 0;
+    const owed = ((+h?.net || 0) + headPrev);
+    const give = Math.min(giveRaw, Math.max(0, owed));
+    const finalNet = Math.max(0, owed - give);
+    const paid = +perHeadPaid[name] || 0;
+    setGiveDiscInput(prev => ({ ...prev, [name]: give }));
+    /* Kul wasooli = Final Net (pehle se paid se kam na ho). */
+    setPerHeadInput(prev => ({ ...prev, [name]: Math.max(paid, finalNet) }));
   };
 
   /* Pending is the mirror of Received — the two always add up to the head's net,
@@ -4172,9 +4228,11 @@ setPerHeadInput(prev => ({ ...prev, [row.name]: allowNeg ? recv : Math.max(0, re
 
   const handleReceive = () => {
     /* receivingNow MINUS bhi ho sakta hai jab cashier ne already-received ko neeche
-       theek kiya — wo bhi ek valid save hai. Sirf "kuch bhi nahi badla" rokna hai. */
+       theek kiya — wo bhi ek valid save hai. Sirf "kuch bhi nahi badla" rokna hai.
+       Sirf Give Discount (bina nayi cash) bhi valid receive hai. */
    const anyHeadRecv = rows.some(r => r.recvNow !== 0) || prevRecv !== 0 || fineOwed !== 0;
-if (!anyHeadRecv) {
+   const anyGiveDisc = showGiveDisc && rows.some(r => (r.giveDisc || 0) > 0);
+if (!anyHeadRecv && !anyGiveDisc) {
   toast('Enter at least one head amount to receive', 'error');
   return;
 }
@@ -4235,6 +4293,11 @@ if (!anyHeadRecv) {
       newHeads,
       /* Slip ke liye receiving-time ka per-head previous. */
       prevByHead,
+      /* Checkbox ON → isReceiving true; Give Discount per head → detailRows.discount. */
+      isReceiving: !!showGiveDisc,
+      giveDisc: showGiveDisc
+        ? Object.fromEntries(rows.filter(r => (r.giveDisc || 0) > 0).map(r => [r.name, r.giveDisc]))
+        : {},
     };
     if (cfg.kind === 'child') payload.famKey = cfg.famKey;
     else payload.classKey = classMeta.key;
@@ -4326,6 +4389,28 @@ if (!anyHeadRecv) {
             </div>
           </div>
 
+          {!viewOnly && (
+            <label className="fee-recv-give-toggle">
+              <input
+                type="checkbox"
+                checked={showGiveDisc}
+                onChange={e => {
+                  const on = e.target.checked;
+                  setShowGiveDisc(on);
+                  if (!on) {
+                    setGiveDiscInput(prev => {
+                      const z = {};
+                      Object.keys(prev || {}).forEach(k => { z[k] = 0; });
+                      return z;
+                    });
+                  }
+                }}
+              />
+              <span>Give Discount</span>
+              <em>Check to show Give Discount column</em>
+            </label>
+          )}
+
           <div className="fee-stbl-wrap" style={{ marginTop: 14 }}>
             <table className="fee-stbl fee-recv-table flow">
               <thead>
@@ -4335,8 +4420,12 @@ if (!anyHeadRecv) {
                   <th className="fee-right"><span className="flow-op">+</span> This Month&apos;s Challan</th>
                   <th className="fee-right"><span className="flow-op">−</span> Discount in This Month&apos;s Challan</th>
                   <th className="fee-right"><span className="flow-op">=</span> Net Payable</th>
-                  <th className="fee-center"><span className="flow-op">−</span> Give Discount</th>
-                  <th className="fee-right"><span className="flow-op">=</span> Final Net Payable</th>
+                  {showGiveDisc && (
+                    <th className="fee-center"><span className="flow-op">−</span> Give Discount</th>
+                  )}
+                  {showGiveDisc && (
+                    <th className="fee-right"><span className="flow-op">=</span> Final Net Payable</th>
+                  )}
                   <th className="fee-center"><span className="flow-op">−</span> Pay Now</th>
                   <th className="fee-right"><span className="flow-op">=</span> Remaining</th>
                 </tr>
@@ -4355,23 +4444,28 @@ if (!anyHeadRecv) {
                     <td className="fee-right">{r.disc > 0 ? money(r.disc) : '0'}</td>
                     {/* Net Payable = After Discount + head-wise Previous (r.owed). */}
                     <td className="fee-right"><span className="fee-cell-grey">{money(r.owed)}</span></td>
-                    {/* Give Discount (UI-only) — credit/viewOnly par —. */}
-                    <td className="fee-center">
-                      {viewOnly || r.isCredit ? (
-                        <span className="fee-recv-dash">—</span>
-                      ) : (
-                        <input
-                          className="flow-input flow-input--disc"
-                          type="number"
-                          min="0"
-                          max={Math.max(0, r.owed)}
-                          value={giveDiscInput[r.name] === 0 ? 0 : (giveDiscInput[r.name] || '')}
-                          onChange={e => setGiveDisc(r.name, e.target.value)}
-                          placeholder="0"
-                        />
-                      )}
-                    </td>
-                    <td className="fee-right"><span className="flow-final">{money(r.finalNetPayable)}</span></td>
+                    {showGiveDisc && (
+                      <td className="fee-center">
+                        {viewOnly || r.isCredit ? (
+                          (r.giveDiscShow || 0) > 0
+                            ? money(r.giveDiscShow)
+                            : <span className="fee-recv-dash">—</span>
+                        ) : (
+                          <input
+                            className="flow-input flow-input--disc"
+                            type="number"
+                            min="0"
+                            max={Math.max(0, r.owed)}
+                            value={giveDiscInput[r.name] === 0 ? 0 : (giveDiscInput[r.name] || '')}
+                            onChange={e => setGiveDisc(r.name, e.target.value)}
+                            placeholder="0"
+                          />
+                        )}
+                      </td>
+                    )}
+                    {showGiveDisc && (
+                      <td className="fee-right"><span className="flow-final">{money(r.finalNetPayable)}</span></td>
+                    )}
                     {/* Pay Now = KUL wasooli input (over-receiving allowed — koi hard max nahi). */}
                     <td className="fee-center">
                       {viewOnly ? (
@@ -4393,7 +4487,7 @@ if (!anyHeadRecv) {
                     {/* Remaining = Final Net Payable − paid − recvNow (minus = advance). */}
                     <td className="fee-right">
                       {viewOnly ? (
-                        money(r.pending)
+                        <span className="flow-remain">{money(r.remaining)}</span>
                       ) : r.isCredit ? (
                         /* Credit head ka baqaya (advance, minus) — baaki heads receive hote hi
                            consume ho kar 0 ki taraf jaata hai. */
@@ -4414,8 +4508,8 @@ if (!anyHeadRecv) {
                     <td className="fee-right"><span className="fee-recv-dash">—</span></td>
                     <td className="fee-right"><span className="fee-recv-dash">—</span></td>
                     <td className="fee-right"><span className="fee-cell-grey">{money(model.prev)}</span></td>
-                    <td className="fee-center"><span className="fee-recv-dash">—</span></td>
-                    <td className="fee-right"><span className="flow-final">{money(model.prev)}</span></td>
+                    {showGiveDisc && <td className="fee-center"><span className="fee-recv-dash">—</span></td>}
+                    {showGiveDisc && <td className="fee-right"><span className="flow-final">{money(model.prev)}</span></td>}
                     <td className="fee-center">
                       {viewOnly ? (
                         <span className="fee-paid-amt">{money(prevPaid)}</span>
@@ -4448,8 +4542,8 @@ if (!anyHeadRecv) {
                     <td className="fee-right"><span className="fee-recv-dash">—</span></td>
                     <td className="fee-right"><span className="fee-recv-dash">—</span></td>
                     <td className="fee-right"><span className="fee-cell-grey">{money(-advCredit)}</span></td>
-                    <td className="fee-center"><span className="fee-recv-dash">—</span></td>
-                    <td className="fee-right"><span className="fee-cell-grey">{money(-advCredit)}</span></td>
+                    {showGiveDisc && <td className="fee-center"><span className="fee-recv-dash">—</span></td>}
+                    {showGiveDisc && <td className="fee-right"><span className="fee-cell-grey">{money(-advCredit)}</span></td>}
                     <td className="fee-center fee-neg"><b>{money(-advApplied)}</b></td>
                     <td className="fee-right">{money(advCredit - advApplied)}</td>
                   </tr>
@@ -4473,8 +4567,8 @@ if (!anyHeadRecv) {
                     <td className="fee-right">{money(fineDue)}</td>
                     <td className="fee-right">0</td>
                     <td className="fee-right"><span className="fee-cell-grey">{money(fineDue)}</span></td>
-                    <td className="fee-center"><span className="fee-recv-dash">—</span></td>
-                    <td className="fee-right"><span className="flow-final">{money(fineDue)}</span></td>
+                    {showGiveDisc && <td className="fee-center"><span className="fee-recv-dash">—</span></td>}
+                    {showGiveDisc && <td className="fee-right"><span className="flow-final">{money(fineDue)}</span></td>}
                     {/* Pay Now EDITABLE — input KUL wasooli rakhta hai, partial fine bhi ho sakti. */}
                     <td className="fee-center">
                       {viewOnly ? (
@@ -4507,8 +4601,8 @@ if (!anyHeadRecv) {
                   <td className="fee-right">{money(flowChallan)}</td>
                   <td className="fee-right">{money(totalDisc)}</td>
                   <td className="fee-right">{money(flowNet)}</td>
-                  <td className="fee-center">{money(flowGiveDisc)}</td>
-                  <td className="fee-right">{money(flowFinal)}</td>
+                  {showGiveDisc && <td className="fee-center">{money(flowGiveDisc)}</td>}
+                  {showGiveDisc && <td className="fee-right">{money(flowFinal)}</td>}
                   <td className="fee-center">{money(alreadyPaid + receivingNow)}</td>
                   <td className="fee-right">{money(remainAfter)}</td>
                 </tr>
@@ -4517,7 +4611,10 @@ if (!anyHeadRecv) {
           </div>
           <div className="fee-recv-flow-hint">
             <i className="fa-solid fa-circle-info"></i>
-            <span>Previous Dues + This Month&apos;s Challan − Discount = Net Payable · Net Payable − Give Discount = Final Net Payable · Final Net Payable − Pay Now = Remaining</span>
+            <span>
+              Previous Dues + This Month&apos;s Challan − Discount = Net Payable
+              {showGiveDisc ? ' · Net Payable − Give Discount = Final Net Payable · Final Net Payable − Pay Now = Remaining' : ' · Net Payable − Pay Now = Remaining'}
+            </span>
           </div>
 
           <div className="fee-recv-paystrip">
@@ -5243,7 +5340,6 @@ function recStudentModel({ student, headsForClass, generated, classDisc, payment
     ? challan.detailRows.filter(feeService.isLateFineRow)
       .reduce((a, r) => a + (+r.challanAmount || 0), 0)
     : 0;
-  const payable = Math.max(0, prev + thisMonth - disc - advance) + billedFine;
   /* Paid must survive a page refresh. The local `payments` array is session-only
      (getReceipts is mock), so when a real challan exists take the authoritative
      received total straight from its detailRows' receivedAmount. Math.max keeps
@@ -5254,6 +5350,23 @@ function recStudentModel({ student, headsForClass, generated, classDisc, payment
     : 0;
   const paidFromPayments = (payments || []).reduce((a, p) => a + (+p.amount || 0), 0);
   const paid = challan ? Math.max(paidFromChallan, paidFromPayments) : paidFromPayments;
+  /* Receiving-time Give Discount — list ke Discount column me add, Remaining se
+     hatao. Payments session-only hain; tab switch ke baad localStorage (ledgerId)
+     se bhi padho. Agar API/optimistic update pehle se detailRows.discount me
+     fold kar chuka ho to dobara na jodo (warna Remaining −ve). */
+  let giveFromPays = (payments || []).reduce((sum, p) => {
+    if (!p?.giveDisc) return sum;
+    return sum + Object.values(p.giveDisc).reduce((a, v) => a + Math.max(0, +v || 0), 0);
+  }, 0);
+  if (giveFromPays <= 0 && challan?.id) {
+    giveFromPays = feeService.getStoredGiveDiscTotal(challan.id) || 0;
+  }
+  if (giveFromPays > 0) {
+    const remNo = (Math.max(0, prev + thisMonth - disc - advance) + billedFine) - paid;
+    const remWith = (Math.max(0, prev + thisMonth - (disc + giveFromPays) - advance) + billedFine) - paid;
+    if (Math.abs(remNo) > Math.abs(remWith)) disc += giveFromPays;
+  }
+  const payable = Math.max(0, prev + thisMonth - disc - advance) + billedFine;
   const remaining = payable - paid;   /* MINUS = advance (total se zyada wasool) */
  let status = 'none';
 const hasRecvActivity = (challan && Array.isArray(challan.detailRows))
@@ -5427,8 +5540,25 @@ function FeeReceivingIndividual({ toast }) {
 
   const paymentsFor = useCallback((classKey, reg) => {
     const r = receiptsList.find(x => x.classKey === classKey && x.reg === reg && x.monthIdx === monthIdx);
-    return r ? r.payments : [];
-  }, [receiptsList, monthIdx]);
+    const payments = r ? [...r.payments] : [];
+    /* Tab switch / remount: session receipts gayab — localStorage se Give Discount
+       wapas inject karo taake list + Transaction Details column sahi rahe. */
+    const challan = challanMap[keyOf(classKey, reg)];
+    const stored = challan?.id ? feeService.getStoredGiveDisc(challan.id) : null;
+    if (stored?.isReceiving && stored.giveDisc) {
+      const already = payments.some(p => p.isReceiving && p.giveDisc
+        && Object.keys(p.giveDisc).some(k => Number(p.giveDisc[k]) > 0));
+      if (!already) {
+        payments.push({
+          id: `stored-give-${challan.id}`,
+          date: '', amount: 0, perHead: {},
+          isReceiving: true, giveDisc: { ...stored.giveDisc },
+          source: 'counter',
+        });
+      }
+    }
+    return payments;
+  }, [receiptsList, monthIdx, challanMap]);
 
   const modelFor = useCallback((c, s) => {
     const generated = !!genSet && genSet.has(keyOf(c.key, s.reg));
@@ -5530,13 +5660,15 @@ function FeeReceivingIndividual({ toast }) {
   const handleSaveReceipt = (payload) => {
     /* Amount MINUS bhi ho sakta hai — cashier ne already-received ko neeche theek
        kiya (adjustment). Sirf 0 (kuch nahi badla) rokna hai. */
-   const hasPerHead = payload.perHead && Object.keys(payload.perHead).some(
-  k => Number(payload.perHead[k]) !== 0
-);
-if (!Number(payload.amount) && !hasPerHead) {
-  toast('Receiving amount must not be zero', 'warning');
-  return;
-}
+    const hasPerHead = payload.perHead && Object.keys(payload.perHead).some(
+      k => Number(payload.perHead[k]) !== 0
+    );
+    const hasGiveDisc = !!payload.isReceiving && payload.giveDisc
+      && Object.keys(payload.giveDisc).some(k => Number(payload.giveDisc[k]) > 0);
+    if (!Number(payload.amount) && !hasPerHead && !hasGiveDisc) {
+      toast('Receiving amount must not be zero', 'warning');
+      return;
+    }
     /* Append payment to receipts state */
     setReceipts(prev => {
       const next = [...(prev || [])];
@@ -5555,6 +5687,9 @@ if (!Number(payload.amount) && !hasPerHead) {
         fine: payload.fine || 0,
         /* Correction (minus amount) — history/slip ise adjustment likhein. */
         isAdjustment: !!payload.isAdjustment,
+        /* Give Discount — Transaction Details / partial view me column + Remaining ke liye. */
+        isReceiving: !!payload.isReceiving,
+        giveDisc: payload.giveDisc || {},
         source: 'counter',
         by: payload.by || 'Front Desk',
       };
@@ -5585,17 +5720,23 @@ if (!Number(payload.amount) && !hasPerHead) {
         /* Negative ADVANCE row bhi perHead se update NAHI — usay withAdvanceRow handle
            karta hai. Warna neeche Math.max(0,...) uska received 0 kar deta (advance
            un-consume ho jaata). */
-        if (/previous|pending|arrear/i.test(String(r.subHead || r.head || '')) && (+r.challanAmount || 0) < 0) return r;
+        if (/previous|pending|arrear|old\s*advance|advance\s*till/i.test(String(r.subHead || r.head || '')) && (+r.challanAmount || 0) < 0) return r;
         /* Delta MINUS ho sakta hai jab cashier ne already-received theek kiya.
            Ledger 0 se neeche kabhi nahi jaata (koi refund ledger yahan nahi hai). */
-        const recvNow = +(payload.perHead?.[r.subHead ?? r.head]) || 0;
+        const headName = r.subHead ?? r.head;
+        const recvNow = +(payload.perHead?.[headName]) || 0;
         const received = Math.max(0, (+r.receivedAmount || 0) + recvNow);
+        /* Give Discount (checkbox ON) → challan discount me add. */
+        const giveExtra = payload.isReceiving
+          ? Math.max(0, +(payload.giveDisc?.[headName]) || 0)
+          : 0;
+        const discount = (+r.discount || 0) + giveExtra;
         /* net me is head ka previousPendingorAdv BHI shamil — warna pendingorAdv galat aata:
            after-disc 5,000 + prev −1,000 (owed 4,000), received 4,000 par 1,000 dikhता tha,
            asal me 0. previous shamil karne se pendingorAdv sahi (owed − received) hota hai. */
         const hp = +r.previousPendingorAdv || +r.previousPendingOrAdv || 0;
-        const net = (+r.challanAmount || 0) - (+r.discount || 0) + hp;
-        return { ...r, receivedAmount: received, pendingorAdv: net - received, modifiedAt: now, modifiedBy: userID };
+        const net = (+r.challanAmount || 0) - discount + hp;
+        return { ...r, discount, receivedAmount: received, pendingorAdv: net - received, modifiedAt: now, modifiedBy: userID };
       });
       let detailRows = feeService.withLateFineRow(baseRows, payload.fine, {
         /* Branch challan ke apne record se — API dono spellings me deti hai. */
@@ -5612,6 +5753,10 @@ if (!Number(payload.amount) && !hasPerHead) {
       detailRows = feeService.withNewHeadRows(detailRows, payload.newHeads, {
         ledgerId: rec.id, branchId: rec.branchID ?? rec.branchId, userId: userID, now,
       });
+      /* API discount ignore kare to bhi tab-switch / reload par Remaining 0 rahe. */
+      if (payload.isReceiving && payload.giveDisc) {
+        feeService.saveStoredGiveDisc(rec.id, payload.giveDisc, true);
+      }
       feeService.receivePayment({
         ledgerId: rec.id,
         paymentMethod: payload.method || '',
@@ -5619,11 +5764,15 @@ if (!Number(payload.amount) && !hasPerHead) {
            warna back-date receiving reports me ghalat din par aati hai. */
         receivedDate: payload.date || '',
         modifiedBy: userID,
+        isReceiving: !!payload.isReceiving,
         detailRows,
       })
         .then(() => loadChallans())
         .catch(e => toast(e.message || 'Could not record payment', 'error'));
       slipChallan = { ...rec, detailRows };
+      /* Optimistic: Transaction Details / list turant naya discount + received dikhayein
+         (API discount ignore kare to bhi local map sahi rahe). */
+      setChallanMap(prev => ({ ...prev, [keyOf(payload.classKey, payload.reg)]: slipChallan }));
     } else {
       toast('No challan found to receive against', 'warning');
     }
@@ -5639,6 +5788,7 @@ if (!Number(payload.amount) && !hasPerHead) {
         payment: {
           date: payload.date, method: payload.method, ref: payload.ref, txn: payload.txn,
           amount: payload.amount, perHead: payload.perHead, fine: payload.fine || 0, prevByHead: payload.prevByHead,
+          giveDisc: payload.giveDisc || {}, isReceiving: !!payload.isReceiving,
         },
         challan: slipChallan,
         prevStd: prevStdOf(s.studentID), prevByHead: prevByHeadOf(s.studentID),
@@ -5664,6 +5814,7 @@ if (!Number(payload.amount) && !hasPerHead) {
         }
         try {
           await feeService.deleteReceiving(rec.id);
+          feeService.clearStoredGiveDisc(rec.id);
           setReceipts(prev => (prev || []).map(r => (
             r.classKey === c.key && r.reg === s.reg && r.monthIdx === monthIdx
               ? { ...r, payments: r.payments.filter(p => p.source === 'onelink' || p.source === 'bank') }
@@ -6046,9 +6197,18 @@ function childRecModel({ child, payments }) {
   heads.push({ name: 'Tuition Fee', std: fee, disc: discount, net: fee - discount });
   if (transport > 0) heads.push({ name: 'Transport Fees', std: transport, disc: 0, net: transport });
   const thisMonth = fee + transport;
-  const disc = discount;
-  const payable = Math.max(0, prev + thisMonth - disc - advance);
+  let disc = discount;
   const paid = (payments || []).reduce((a, p) => a + (+p.amount || 0), 0);
+  const giveFromPays = (payments || []).reduce((sum, p) => {
+    if (!p?.giveDisc) return sum;
+    return sum + Object.values(p.giveDisc).reduce((a, v) => a + Math.max(0, +v || 0), 0);
+  }, 0);
+  if (giveFromPays > 0) {
+    const remNo = Math.max(0, prev + thisMonth - disc - advance) - paid;
+    const remWith = Math.max(0, prev + thisMonth - (disc + giveFromPays) - advance) - paid;
+    if (Math.abs(remNo) > Math.abs(remWith)) disc += giveFromPays;
+  }
+  const payable = Math.max(0, prev + thisMonth - disc - advance);
   const remaining = payable - paid;   /* MINUS = advance (total se zyada wasool) */
   let status = 'none';
 /* Zero-cash receive (advance cover): payload.amount 0 → paid 0, magar payment record ho.
@@ -6089,7 +6249,24 @@ function FamilyTreeReceiving({ toast }) {
   const monthIdx = FEE_MONTHS.indexOf(appliedMonth);
   const paymentsFor = useCallback((famKey, reg) => {
     const r = receiptsList.find(x => x.famKey === famKey && x.reg === reg && x.monthIdx === monthIdx);
-    return r ? r.payments : [];
+    const payments = r ? [...r.payments] : [];
+    /* Tab switch / remount: session receipts gayab — localStorage se Give Discount
+       wapas inject karo taake list + Transaction Details column sahi rahe. */
+    const rec = ledgerRecRef.current[`${famKey}|${reg}`];
+    const stored = rec?.id ? feeService.getStoredGiveDisc(rec.id) : null;
+    if (stored?.isReceiving && stored.giveDisc) {
+      const already = payments.some(p => p.isReceiving && p.giveDisc
+        && Object.keys(p.giveDisc).some(k => Number(p.giveDisc[k]) > 0));
+      if (!already) {
+        payments.push({
+          id: `stored-give-${rec.id}`,
+          date: '', amount: 0, perHead: {},
+          isReceiving: true, giveDisc: { ...stored.giveDisc },
+          source: 'counter',
+        });
+      }
+    }
+    return payments;
   }, [receiptsList, monthIdx]);
 
   /* Ledger record (challan id + detailRows) per child, keyed by `${famKey}|${reg}`.
@@ -6297,13 +6474,15 @@ function FamilyTreeReceiving({ toast }) {
   const handleSaveReceipt = (payload) => {
     /* Amount MINUS bhi ho sakta hai — cashier ne already-received ko neeche theek
        kiya (adjustment). Sirf 0 (kuch nahi badla) rokna hai. */
-   const hasPerHead = payload.perHead && Object.keys(payload.perHead).some(
-  k => Number(payload.perHead[k]) !== 0
-);
-if (!Number(payload.amount) && !hasPerHead) {
-  toast('Receiving amount must not be zero', 'warning');
-  return;
-}
+    const hasPerHead = payload.perHead && Object.keys(payload.perHead).some(
+      k => Number(payload.perHead[k]) !== 0
+    );
+    const hasGiveDisc = !!payload.isReceiving && payload.giveDisc
+      && Object.keys(payload.giveDisc).some(k => Number(payload.giveDisc[k]) > 0);
+    if (!Number(payload.amount) && !hasPerHead && !hasGiveDisc) {
+      toast('Receiving amount must not be zero', 'warning');
+      return;
+    }
     setReceipts(prev => {
       const next = [...(prev || [])];
       const idx = next.findIndex(r => r.famKey === payload.famKey && r.reg === payload.reg && r.monthIdx === payload.monthIdx);
@@ -6317,6 +6496,8 @@ if (!Number(payload.amount) && !hasPerHead) {
         fine: payload.fine || 0,
         /* Correction (minus amount) — history/slip ise adjustment likhein. */
         isAdjustment: !!payload.isAdjustment,
+        isReceiving: !!payload.isReceiving,
+        giveDisc: payload.giveDisc || {},
         source: 'counter', by: payload.by || 'Front Desk',
       };
       if (idx >= 0) next[idx] = { ...next[idx], payments: [...next[idx].payments, pay] };
@@ -6342,17 +6523,23 @@ if (!Number(payload.amount) && !hasPerHead) {
         /* Negative ADVANCE row bhi perHead se update NAHI — usay withAdvanceRow handle
            karta hai. Warna neeche Math.max(0,...) uska received 0 kar deta (advance
            un-consume ho jaata). */
-        if (/previous|pending|arrear/i.test(String(r.subHead || r.head || '')) && (+r.challanAmount || 0) < 0) return r;
+        if (/previous|pending|arrear|old\s*advance|advance\s*till/i.test(String(r.subHead || r.head || '')) && (+r.challanAmount || 0) < 0) return r;
         /* Delta MINUS ho sakta hai jab cashier ne already-received theek kiya.
            Ledger 0 se neeche kabhi nahi jaata (koi refund ledger yahan nahi hai). */
-        const recvNow = +(payload.perHead?.[r.subHead ?? r.head]) || 0;
+        const headName = r.subHead ?? r.head;
+        const recvNow = +(payload.perHead?.[headName]) || 0;
         const received = Math.max(0, (+r.receivedAmount || 0) + recvNow);
+        /* Give Discount (checkbox ON) → challan discount me add. */
+        const giveExtra = payload.isReceiving
+          ? Math.max(0, +(payload.giveDisc?.[headName]) || 0)
+          : 0;
+        const discount = (+r.discount || 0) + giveExtra;
         /* net me is head ka previousPendingorAdv BHI shamil — warna pendingorAdv galat aata:
            after-disc 5,000 + prev −1,000 (owed 4,000), received 4,000 par 1,000 dikhता tha,
            asal me 0. previous shamil karne se pendingorAdv sahi (owed − received) hota hai. */
         const hp = +r.previousPendingorAdv || +r.previousPendingOrAdv || 0;
-        const net = (+r.challanAmount || 0) - (+r.discount || 0) + hp;
-        return { ...r, receivedAmount: received, pendingorAdv: net - received, modifiedAt: now, modifiedBy: userID };
+        const net = (+r.challanAmount || 0) - discount + hp;
+        return { ...r, discount, receivedAmount: received, pendingorAdv: net - received, modifiedAt: now, modifiedBy: userID };
       });
       let detailRows = feeService.withLateFineRow(baseRows, payload.fine, {
         /* Branch challan ke apne record se — API dono spellings me deti hai. */
@@ -6369,17 +6556,29 @@ if (!Number(payload.amount) && !hasPerHead) {
       detailRows = feeService.withNewHeadRows(detailRows, payload.newHeads, {
         ledgerId: rec.id, branchId: rec.branchID ?? rec.branchId, userId: userID, now,
       });
+      /* API discount ignore kare to bhi tab-switch / reload par Remaining 0 rahe. */
+      if (payload.isReceiving && payload.giveDisc) {
+        feeService.saveStoredGiveDisc(rec.id, payload.giveDisc, true);
+      }
       feeService.receivePayment({
         ledgerId: rec.id,
         paymentMethod: payload.method || '',
         /* Cashier ki chuni hui RECEIVING DATE — dekho handleSaveReceipt. */
         receivedDate: payload.date || '',
         modifiedBy: userID,
+        isReceiving: !!payload.isReceiving,
         detailRows,
       })
         .then(() => loadFamilyChallans())   // refresh list so status persists
         .catch(e => toast(e.message || 'Could not record payment', 'error'));
       slipChallan = { ...rec, detailRows };
+      ledgerRecRef.current[`${payload.famKey}|${payload.reg}`] = slipChallan;
+      if (receiveCtx?.student?.applicantsID != null) {
+        setChallanByStudent(prev => ({
+          ...prev,
+          [String(receiveCtx.student.applicantsID)]: slipChallan,
+        }));
+      }
     } else {
       toast('No challan found to receive against', 'warning');
     }
@@ -6413,6 +6612,7 @@ if (!Number(payload.amount) && !hasPerHead) {
         payment: {
           date: payload.date, method: payload.method, ref: payload.ref, txn: payload.txn,
           amount: payload.amount, perHead: payload.perHead, fine: payload.fine || 0, prevByHead: payload.prevByHead,
+          giveDisc: payload.giveDisc || {}, isReceiving: !!payload.isReceiving,
         },
         challan: slipChallan,
         prevStd: prevStdOf(ch), prevByHead: prevByHeadOf(ch),
@@ -6446,6 +6646,7 @@ if (!Number(payload.amount) && !hasPerHead) {
         }
         try {
           await feeService.deleteReceiving(ledgerId);
+          feeService.clearStoredGiveDisc(ledgerId);
           setReceipts(prev => (prev || []).map(r => (
             r.famKey === f.key && r.reg === ch.reg && r.monthIdx === monthIdx
               ? { ...r, payments: r.payments.filter(p => p.source === 'onelink' || p.source === 'bank') }
@@ -7892,7 +8093,33 @@ function buildStudentHistory({ recs, fromIdx, toIdx, year, empNames = {}, settin
   for (let m = fromIdx; m <= toIdx; m++) {
     const rec = byMonth.get(m);
     if (!rec) continue;
-    const rows = rec.detailRows || [];
+    /* Give Discount (receiving-time) backend kabhi-kabhi detailRows.discount
+       me persist nahi karta. Is liye localStorage se saved giveDisc ko
+       overlay karke History / Ledger Summary me discount + pending sahi
+       reflect karte hain. */
+    const rows0 = rec.detailRows || [];
+    let rows = rows0;
+    if (rec?.id) {
+      const stored = feeService.getStoredGiveDisc(rec.id);
+      const giveDisc = stored?.giveDisc || null;
+      if (giveDisc && typeof giveDisc === 'object' && Object.keys(giveDisc).length) {
+        const normMap = {};
+        Object.entries(giveDisc).forEach(([k, v]) => {
+          const key = String(k || '').trim().toLowerCase();
+          if (!key) return;
+          const amt = Math.max(0, +v || 0);
+          if (amt > 0) normMap[key] = (normMap[key] || 0) + amt;
+        });
+        if (Object.keys(normMap).length) {
+          rows = rows0.map(r => {
+            const head = String(r.subHead || r.head || '').trim().toLowerCase();
+            const extra = normMap[head] || 0;
+            if (!extra) return r;
+            return { ...r, discount: (+r.discount || 0) + extra };
+          });
+        }
+      }
+    }
 
     const carrySigned = rows.filter(isPrevRow)
       .reduce((a, r) => a + ((+r.challanAmount || 0) - (+r.discount || 0)), 0);   // advance → negative
@@ -8080,16 +8307,13 @@ function FeeHistoryTab({ toast }) {
     : `${appliedFrom} – ${appliedTo} ${appliedYear}`;
 
   /* ── Applied range ka ledger ──────────────────────────────────────────
-     Ab ye purane ERP se aata hai:
-       /api/BranchLedger/oldERPbranchledger_byClassSection
-          ?branchId&month&year&gradeId&sectionId
+     Ledger Summary / Detailed History: live BranchLedger
+       GET /api/BranchLedger/get-by-month-range
+          ?branchId&fromMonth&fromYear&toMonth&toYear
 
-     Ye route ek waqt me EK month aur EK class+section deta hai, is liye range
-     ke har mahine × branch ki har grade+section jori par ek call jati hai
-     (feeService ise aath ek saath chalata hai — dekhein getOldErpLedgerRecords).
-
-     Pehle yahan ek hi /api/BranchLedger/get-by-month-range call thi jo poore
-     branch ka poora range ek saath le aati thi. */
+     Old ERP Ledger tab alag hai — woh `getOldErpLedger*` se "Fetch Detail"
+     par aata hai. Pehle galti se yahan bhi old ERP route laga diya gaya tha,
+     is liye naye challan/receive History me nazar nahi aate the. */
   const [records, setRecords]     = useState([]);
   const [histLoading, setLoading] = useState(true);
   const [histError, setError] = useState(null);
@@ -8097,19 +8321,15 @@ function FeeHistoryTab({ toast }) {
     let alive = true;
     /* Old ERP tab apna data khud "Fetch Detail" par uthata hai. */
     if (seg === 'olderp') { setRecords([]); setLoading(false); setError(null); return undefined; }
-    /* Class list abhi aa rahi hai — us ke baghair kis grade/section par hit
-       karein? Aate hi ye effect dobara chalega (classes deps me hai). */
-    if (classes.length === 0) { setLoading(true); setError(null); return undefined; }
     const f = FEE_MONTHS.indexOf(appliedFrom) + 1;
     const t = FEE_MONTHS.indexOf(appliedTo) + 1;
-    const pairs = classes.map(c => ({ gradeId: c._gradeId, sectionId: c._sectionId }));
     setLoading(true);
     setError(null);
-    feeService.getOldErpLedgerRecords(f, Math.max(f, t), appliedYear, pairs)
-      .then(({ rows }) => { if (alive) { setRecords(rows); setLoading(false); } })
+    feeService.getLedgerRange(f, appliedYear, Math.max(f, t), appliedYear)
+      .then(rows => { if (alive) { setRecords(Array.isArray(rows) ? rows : []); setLoading(false); } })
       .catch(e => { if (alive) { setRecords([]); setError(e.message || 'Could not load fee history'); setLoading(false); } });
     return () => { alive = false; };
-  }, [seg, appliedFrom, appliedTo, appliedYear, classes]);
+  }, [seg, appliedFrom, appliedTo, appliedYear]);
 
   /* ── Old ERP ledger ──
      Ye tab khud se kuch load nahi karta; user "Fetch Detail" dabata hai to
@@ -16188,6 +16408,17 @@ const FEE_CSS = `
 .fee-recv-info-item { display: flex; flex-direction: column; gap: 3px; }
 .fee-recv-info-lbl  { font-size: 11px; font-weight: 700; color: var(--text-muted); letter-spacing: .2px; }
 .fee-recv-info-val  { font-size: 13.5px; font-weight: 800; color: var(--text-primary); }
+.fee-recv-give-toggle {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin: 12px 0 0; padding: 10px 14px;
+  border: 1px solid var(--border); border-radius: 10px;
+  background: var(--surface, #fff); cursor: pointer; user-select: none;
+}
+.fee-recv-give-toggle input { width: 16px; height: 16px; accent-color: #1E3A8A; cursor: pointer; }
+.fee-recv-give-toggle > span { font-size: 13.5px; font-weight: 800; color: var(--text-primary); }
+.fee-recv-give-toggle > em {
+  font-style: normal; font-size: 11.5px; font-weight: 600; color: var(--text-muted);
+}
 .fee-recv-table th  { white-space: nowrap; }
 .fee-recv-table input {
   width: 110px;
@@ -16531,6 +16762,9 @@ const FEE_CSS = `
 }
 [data-theme="dark"] .fee-recv-info-lbl { color: var(--text-muted); }
 [data-theme="dark"] .fee-recv-info-val { color: var(--text-primary); }
+[data-theme="dark"] .fee-recv-give-toggle {
+  background: var(--surface); border-color: var(--border);
+}
 [data-theme="dark"] .fee-recv-table input {
   background: var(--input-bg, var(--bg-card));
   border-color: var(--border-light);

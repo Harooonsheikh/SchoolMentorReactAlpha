@@ -1611,6 +1611,71 @@ export async function receivePayment(body) {
   return json;
 }
 
+/* ── Give Discount local persist ───────────────────────────────────────
+   Backend receive-payment aksar detailRows.discount me receiving-time give
+   ko wapas nahi rakhta. Session receipts bhi mock/empty hain — tab switch
+   par React remount se giveDisc gayab → list Remaining wapas aa jati.
+   Is liye ledgerId par localStorage me rakhte hain (branch-scoped). */
+const giveDiscStoreKey = () => {
+  const branchID = Number(sessionStorage.getItem('branchID')) || 1;
+  return `feeGiveDisc|${branchID}`;
+};
+const readGiveDiscStore = () => {
+  try {
+    const raw = localStorage.getItem(giveDiscStoreKey());
+    const parsed = raw ? JSON.parse(raw) : {};
+    return (parsed && typeof parsed === 'object') ? parsed : {};
+  } catch { return {}; }
+};
+const writeGiveDiscStore = (store) => {
+  try { localStorage.setItem(giveDiscStoreKey(), JSON.stringify(store || {})); } catch { /* ignore quota */ }
+};
+
+/** Merge / save per-head give discount for a ledger challan. */
+export function saveStoredGiveDisc(ledgerId, giveDisc, isReceiving = true) {
+  const id = String(ledgerId || '');
+  if (!id) return;
+  const store = readGiveDiscStore();
+  const incoming = {};
+  Object.entries(giveDisc || {}).forEach(([k, v]) => {
+    const n = Math.max(0, +v || 0);
+    if (n > 0) incoming[k] = n;
+  });
+  if (!isReceiving || !Object.keys(incoming).length) {
+    delete store[id];
+    writeGiveDiscStore(store);
+    return;
+  }
+  const prev = (store[id] && store[id].giveDisc) ? store[id].giveDisc : {};
+  const merged = { ...prev };
+  Object.entries(incoming).forEach(([k, v]) => { merged[k] = (merged[k] || 0) + v; });
+  store[id] = { giveDisc: merged, isReceiving: true, at: Date.now() };
+  writeGiveDiscStore(store);
+}
+
+export function getStoredGiveDisc(ledgerId) {
+  const id = String(ledgerId || '');
+  if (!id) return null;
+  const entry = readGiveDiscStore()[id];
+  if (!entry || !entry.giveDisc) return null;
+  return entry;
+}
+
+export function getStoredGiveDiscTotal(ledgerId) {
+  const entry = getStoredGiveDisc(ledgerId);
+  if (!entry?.giveDisc) return 0;
+  return Object.values(entry.giveDisc).reduce((a, v) => a + Math.max(0, +v || 0), 0);
+}
+
+export function clearStoredGiveDisc(ledgerId) {
+  const id = String(ledgerId || '');
+  if (!id) return;
+  const store = readGiveDiscStore();
+  if (!(id in store)) return;
+  delete store[id];
+  writeGiveDiscStore(store);
+}
+
 /* Reverse the receiving recorded against a challan — the challan itself stays,
    its heads go back to unpaid. DELETE /api/BranchLedger/delete-receiving/{ledgerId}
    This is the Receiving tab's delete; deleteChallanById (below) is the Challans
