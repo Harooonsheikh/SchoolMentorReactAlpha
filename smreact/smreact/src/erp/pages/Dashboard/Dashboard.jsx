@@ -1,15 +1,14 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import Tooltip from '../../components/Tooltip';
 import TutorialModal from '../../components/TutorialModal';
 import { useModules } from '../../context/ModuleContext';
-import { usePermissionsStore } from '../../context/PermissionsContext';
-import { findRole, initialsOf } from '../UserPermissions/permissionsData';
-import { CURRENT_SESSION, dashboardTypeFor } from './dashboardData';
+import { buildUrl } from '../../../utils/apiConfig';
+import { useSettings } from '../Settings/settingsStore';
+import { INITIAL_USERS, INITIAL_ROLES, findRole, initialsOf } from '../UserPermissions/permissionsData';
+import { CURRENT_SESSION } from './dashboardData';
+import { getUserRole } from '../../services/rolesService';
 import AdminDashboard from './AdminDashboard';
 import TeacherDashboard from './TeacherDashboard';
-/* SystemDialogs is rendered globally by the ERP host (components/App.js),
-   so it is intentionally NOT rendered here — doing so would double the
-   floating demo trigger bar. */
 
 /* ═══════════════════════════════════════════════════════════════════
    DASHBOARD SHELL — picks Admin or Teacher based on the impersonated
@@ -22,26 +21,135 @@ export default function Dashboard({
   openActivityCalendar = () => {},
 }) {
   const { isActive } = useModules();
-  const { users, roles } = usePermissionsStore();
-  const [currentUserId, setCurrentUserId] = useState('u1');
+  const [currentUserId] = useState('u1');
   const [tutorialOpen, setTutorialOpen] = useState(false);
 
+  /* Logged-in owner (real account) ka naam — sidebar/profile jaisa hi source.
+     Pehle yahan ek demo user-switcher dropdown tha; ab sirf owner (Principal) dikhta hai. */
+  const ownerName = (() => {
+    try { return sessionStorage.getItem('displayName') || sessionStorage.getItem('userName') || 'Principal'; }
+    catch { return 'Principal'; }
+  })();
+
+  /* Logged-in user ka assigned ROLE — wahi source jo User Permissions ka
+     Role column use karta hai (GET /get-user-role/{employeeId}/{branchId}).
+     Pehle yahan hardcoded "Principal" likha tha. Field naam vary karte hain
+     is liye defensive fallbacks; API fail ho to accountType par gir jate hain. */
+  const [ownerRole, setOwnerRole] = useState('');
+  useEffect(() => {
+    const empId = sessionStorage.getItem('employee_ID');
+    if (!empId) return undefined;
+    let alive = true;
+    getUserRole(empId)
+      .then((d) => {
+        const row = Array.isArray(d) ? d[0] : d;
+        const name = row ? (row.roleName ?? row.RoleName ?? row.name ?? '') : '';
+        if (alive) setOwnerRole(name);
+      })
+      .catch(() => { if (alive) setOwnerRole(''); });
+    return () => { alive = false; };
+  }, []);
+
+  /* Real school/branch identity (sidebar jaisa hi source: report-header API) —
+     header card ke "Live operations across ..." me asli school naam + address. */
+  const [branchInfo, setBranchInfo] = useState(null);
+  useEffect(() => {
+    const branchId = sessionStorage.getItem('branchID');
+    if (!branchId) return undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res  = await fetch(buildUrl(`/report-header/${branchId}`), { headers: { Accept: '*/*' } });
+        const json = await res.json().catch(() => null);
+        if (!cancelled && json?.success) setBranchInfo(json.data || null);
+      } catch { /* ignore — niche fallback label chal jayega */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+  const schoolLabel = [branchInfo?.branchName, branchInfo?.address].filter(Boolean).join(' — ') || 'your campus';
+
+  /* Real active session (Settings → Sessions se — wahi jo top-right pill dikhati hai).
+     Pehle CURRENT_SESSION (mock: "2025-26 · 61d left") tha. Label = session name,
+     daysLeft = end-date tak baqi din. currentSession na mile to mock par fallback. */
+  const { currentSession } = useSettings();
+  const session = useMemo(() => {
+    if (!currentSession) return CURRENT_SESSION;
+    let daysLeft = null;
+    if (currentSession.endDate) {
+      const end = new Date(`${currentSession.endDate}T00:00:00`);
+      const diff = Math.ceil((end.getTime() - Date.now()) / 86400000);
+      daysLeft = diff > 0 ? diff : 0;
+    }
+    return {
+      id:        currentSession.id,
+      label:     currentSession.name || CURRENT_SESSION.label,
+      startDate: currentSession.startDate,
+      endDate:   currentSession.endDate,
+      daysLeft,
+    };
+  }, [currentSession]);
+
   const currentUser = useMemo(
-    () => users.find(u => u.id === currentUserId) || users[0],
-    [users, currentUserId]
+    () => INITIAL_USERS.find(u => u.id === currentUserId) || INITIAL_USERS[0],
+    [currentUserId]
   );
   const currentRole = useMemo(
-    () => findRole(roles, currentUser.role),
-    [roles, currentUser]
+    () => findRole(INITIAL_ROLES, currentUser.role),
+    [currentUser]
   );
-  const dashType = dashboardTypeFor(currentUser);
+
+  /* Kaunsa dashboard — REAL logged-in user ke accountType se (login par
+     sessionStorage me set hota hai), na ke pehle wale hardcoded mock 'u1' se.
+     accountType me "teacher" ho to Teacher Dashboard; warna Admin (Principal /
+     School Head / Admin). */
+  const accountType = (() => {
+    try { return (sessionStorage.getItem('accountType') || '').trim(); }
+    catch { return ''; }
+  })();
+  const dashType = /teacher/i.test(accountType) ? 'teacher' : 'admin';
+
+  /* "Back to Chain" button SIRF us user ko dikhta hai jo Chain Portal ke
+     "Switch to View" se aaya (Chain/Network head). `sm_from_chain` flag ERP ke
+     handoff-in (index.js) me set hota hai. Seedhe login karne wale school head
+     ko ye NAHI dikhta — chahe uski branch bhi kisi chain ka hissa ho (is liye
+     sm_chain_branch par gate nahi karte, wo har chain-school user ke liye true
+     hota hai). */
+  const fromChain = (() => {
+    try {
+      /* Chain "Switch to View" se aaya (handoff flag) — asal signal. */
+      if (sessionStorage.getItem('sm_from_chain') === '1') return true;
+      /* Ya account type khud chain/network head ka ho (e.g. "Chain Head",
+         "Chain Admin", "Network Head Office"). School Head par ye false rehta
+         hai — is liye school head ko button NAHI dikhta. */
+      return /chain|network/.test(accountType.toLowerCase());
+    } catch { return false; }
+  })();
+  /* Chain portal ka dashboard — dev :3002, prod REACT_APP_CHAIN_URL (wahi jo
+     LoginScreen ERP→chain handoff ke liye use karta hai). */
+  const chainDashboardUrl = (() => {
+    const base = String(
+      process.env.REACT_APP_CHAIN_URL || `${window.location.protocol}//${window.location.hostname}:3002`,
+    ).trim().replace(/\/+$/, '');
+    return `${base}/dashboard`;
+  })();
+
+  /* visibility.user — asli logged-in identity: naam ownerName (displayName) se,
+     role accountType se. Mock user ke baqi fields fallback rehte hain. */
+  const dashUser = useMemo(() => ({
+    ...currentUser,
+    name:          ownerName || currentUser.name,
+    role:          accountType || currentUser.role,
+    dashboardType: dashType,
+  }), [currentUser, ownerName, accountType, dashType]);
 
   const visibility = useMemo(() => ({
     moduleActive: (modId) => !modId || isActive(modId),
-    session:      CURRENT_SESSION,
-    user:         currentUser,
+    session,
+    user:         dashUser,
     role:         currentRole,
-  }), [isActive, currentUser, currentRole]);
+    ownerName,
+    schoolName:   branchInfo?.branchName || '',
+  }), [isActive, session, dashUser, currentRole, ownerName, branchInfo]);
 
   return (
     <>
@@ -59,37 +167,40 @@ export default function Dashboard({
             </div>
             <div className="dash-head-s">
               {dashType === 'teacher'
-                ? `Personal dashboard scoped to ${currentUser.name.replace(/Dr\.|Mr\.|Ms\.|Mrs\./, '').trim()}'s classes`
-                : `Live operations across The Oxford System, Lahore Campus`}
+                ? `Personal dashboard scoped to ${dashUser.name.replace(/Dr\.|Mr\.|Ms\.|Mrs\./, '').trim()}'s classes`
+                : `Live operations across ${schoolLabel}`}
             </div>
           </div>
         </div>
-        <div className="dash-head-r">
-          <Tooltip text={`Active academic session — ${CURRENT_SESSION.label}`}>
+<div className="dash-head-r">
+
+  {fromChain && (
+  <button
+    type="button"
+    className="dash-back-chain"
+    onClick={() => { window.location.assign(chainDashboardUrl); }}
+    aria-label="Back to Chain"
+  >
+    <i className="fa-solid fa-arrow-left" aria-hidden="true"></i>
+    <span>Back to Chain</span>
+  </button>
+  )}
+
+          <Tooltip text={`Active academic session — ${session.label}`}>
             <div className="dash-session">
               <i className="fa-solid fa-calendar-day" aria-hidden="true"></i>
-              <span>Session {CURRENT_SESSION.label}</span>
-              <span className="dash-session-days">{CURRENT_SESSION.daysLeft}d left</span>
+              <span>Session {session.label}</span>
+              {session.daysLeft != null && (
+                <span className="dash-session-days">{session.daysLeft}d left</span>
+              )}
             </div>
           </Tooltip>
-          <Tooltip text="Switch perspective to another user (demo)">
-            <div className="dash-impersonate">
-              <span className="up-avatar dash-impersonate-av">{initialsOf(currentUser.name)}</span>
-              <select
-                value={currentUserId}
-                onChange={(e) => setCurrentUserId(e.target.value)}
-                className="dash-impersonate-sel"
-                aria-label="View dashboard as another user"
-              >
-                {users.map(u => (
-                  <option key={u.id} value={u.id}>
-                    {u.name} — {findRole(roles, u.role)?.name || '—'}
-                  </option>
-                ))}
-              </select>
-              <i className="fa-solid fa-chevron-down" aria-hidden="true"></i>
-            </div>
-          </Tooltip>
+          {/* Logged-in owner — pehle yahan demo user-switcher dropdown tha (hata diya). */}
+          <div className="dash-impersonate">
+            <span className="up-avatar dash-impersonate-av">{initialsOf(ownerName)}</span>
+            <span className="dash-owner-name">{ownerName}</span>
+            <span className="dash-owner-role">{ownerRole || accountType || '—'}</span>
+          </div>
           <Tooltip text="Open Dashboard tutorials">
             <button
               className="dash-tutorial"
@@ -107,9 +218,8 @@ export default function Dashboard({
         ? <TeacherDashboard visibility={visibility} toast={toast} navigate={navigate} openActivityCalendar={openActivityCalendar} />
         : <AdminDashboard   visibility={visibility} toast={toast} navigate={navigate} openActivityCalendar={openActivityCalendar} />}
 
-      {/* SystemDialogs intentionally omitted here — the ERP host renders it
-          globally (components/App.js), so rendering it again would duplicate
-          the demo trigger bar. */}
+      {/* System surfaces (slow / offline / server-500) ab ERP shell (App.js) me
+          mount hain taake poore ERP par dikhein — yahan se hata diye. */}
 
       <TutorialModal
         open={tutorialOpen}
@@ -155,7 +265,31 @@ export const DASH_CSS = `
 .dash-head-t { font: 800 22px/1.05 var(--dash-font); color: var(--text-primary); letter-spacing: -0.4px; }
 .dash-head-s { font: 500 12.5px/1.3 var(--dash-font); color: var(--text-muted, #64748B); margin-top: 4px; }
 .dash-head-r { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.dash-back-chain {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid rgba(30, 64, 175, .22);
+  border-radius: var(--dash-radius-sm);
+  background: var(--bg-card, #fff);
+  color: #1E40AF;
+  font: 700 11.5px/1 var(--dash-font);
+  cursor: pointer;
+  transition: all .18s ease;
+}
 
+.dash-back-chain:hover {
+  background: rgba(30, 64, 175, .08);
+  border-color: rgba(30, 64, 175, .35);
+  transform: translateY(-1px);
+}
+
+.dash-back-chain i {
+  font-size: 10px;
+}
 .dash-session {
   display: inline-flex; align-items: center; gap: 7px;
   height: 36px; padding: 0 10px 0 12px;
@@ -183,6 +317,12 @@ export const DASH_CSS = `
   appearance: none; -webkit-appearance: none; max-width: 220px;
 }
 .dash-impersonate > i { font-size: 9px; color: var(--text-muted, #94A3B8); }
+.dash-owner-name { font: 700 12px/1 var(--dash-font); color: var(--text-primary); white-space: nowrap; }
+.dash-owner-role {
+  font: 700 9.5px/1 var(--dash-font); color: #1E40AF; text-transform: uppercase; letter-spacing: .4px;
+  background: rgba(30, 64, 175, .10); border: 1px solid rgba(30, 64, 175, .20);
+  padding: 3px 8px; border-radius: 9999px; white-space: nowrap;
+}
 
 .dash-tutorial {
   width: 36px; height: 36px; border-radius: var(--dash-radius-sm);
@@ -423,7 +563,7 @@ export const DASH_CSS = `
 }
 .dash-tile-val small { font-size: 16px; opacity: .55; font-weight: 700; }
 .dash-tile-meta {
-  display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+  display: flex; align-items: center; gap: 6px;
   font: 600 11px/1.2 var(--dash-font); color: var(--text-muted, #64748B);
 }
 .dash-tile-meta-pill {
@@ -432,10 +572,6 @@ export const DASH_CSS = `
   padding: 3px 7px; border-radius: 999px;
   background: var(--tile-soft); color: var(--tile-accent);
 }
-.dash-tile-meta-pill--m { background: rgba(37, 99, 235, .12); color: #2563EB; }
-.dash-tile-meta-pill--f { background: rgba(219, 39, 119, .12); color: #DB2777; }
-[data-theme="dark"] .dash-tile-meta-pill--m { background: rgba(96, 165, 250, .16); color: #93C5FD; }
-[data-theme="dark"] .dash-tile-meta-pill--f { background: rgba(244, 114, 182, .18); color: #F9A8D4; }
 
 /* ─── Gradient tile variant — colourful KPI cards, same markup as
    .dash-tile, filled with the module's own gradient instead of a
