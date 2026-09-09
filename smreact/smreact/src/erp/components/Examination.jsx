@@ -221,6 +221,75 @@ function resSubjAbsent(rec, subjTotal) {
   return blank(obt) || blank(tot) || Number(tot) <= 0;
 }
 
+/* ── Result card par student ki asli tasveer ──────────────────────────
+   getstudentsbybranchsectionandgrade har student ke against `picture` deta hai.
+   Ek class/section ki list ek hi baar fetch hoti hai (cache), aur map me
+   studentID + registration no dono keys par photo rakhi jati hai. */
+const rcPhotoCache = new Map();
+function loadClassPhotoMap(classID, sectionID) {
+  const branchID = sessionStorage.getItem('branchID');
+  const key = `${branchID}|${classID}|${sectionID}`;
+  if (!rcPhotoCache.has(key)) {
+    rcPhotoCache.set(key, (async () => {
+      const map = {};
+      try {
+        const token = sessionStorage.getItem('token');
+        const res = await fetch(
+          buildUrl(`/api/getstudentsbybranchsectionandgrade?branchID=${branchID}&sectionID=${sectionID}&gradeID=${classID}`),
+          { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } },
+        );
+        const json = await res.json();
+        (Array.isArray(json) ? json : (json?.data || [])).forEach(s => {
+          const raw = String(s.picture ?? s.Picture ?? '').trim();
+          if (!raw) return;
+          // Backend localhost:4100 jaisa URL bhejta hai → media host par resolve karo.
+          const url = resolveMediaUrl(raw);
+          [s.id, s.studentID, s.StudentID, s.registrationNumber, s.RegistrationNumber]
+            .forEach(k => { if (k != null && String(k).trim() !== '') map[String(k).trim()] = url; });
+        });
+      } catch (e) {
+        console.error('Could not load student pictures:', e);
+        rcPhotoCache.delete(key);   // agli baar dobara koshish ho sake
+      }
+      return map;
+    })());
+  }
+  return rcPhotoCache.get(key);
+}
+
+/* Jo key pehle mil jaye (studentID ya roll/registration no) uski photo. */
+async function rcStudentPhoto(classID, sectionID, ...keys) {
+  if (!classID || !sectionID) return '';
+  try {
+    const map = await loadClassPhotoMap(classID, sectionID);
+    for (const k of keys) {
+      if (k == null || String(k).trim() === '') continue;
+      const url = map[String(k).trim()];
+      if (url) return url;
+    }
+  } catch { /* photo optional hai */ }
+  return '';
+}
+
+/* Card ka avatar — asli tasveer, aur na mile (ya load na ho) to naam ke initials. */
+function RcAvatar({ src, initials, size, fontSize, border, bg, color, extraStyle }) {
+  const [failed, setFailed] = useState(false);
+  useEffect(() => { setFailed(false); }, [src]);
+  return (
+    <div style={{
+      width: size, height: size, borderRadius: '50%', flexShrink: 0,
+      background: bg, border, overflow: 'hidden',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      fontSize, fontWeight: 800, color, ...(extraStyle || {}),
+    }}>
+      {src && !failed
+        ? <img src={src} alt={initials || 'student'} onError={() => setFailed(true)}
+               style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+        : initials}
+    </div>
+  );
+}
+
 /* Result card ki subject list normalize karo — SIRF wahi subjects jo API se aaye
    aur jinka asli naam mil sake:
      • naam pehle exam-subject API se, warna class subjects (nameMap) se
@@ -923,8 +992,10 @@ const [subjects, setSubjects] = useState([]);
           const frec = Array.isArray(fd?.data) ? fd.data[0] : (Array.isArray(fd) ? fd[0] : (fd?.data || null));
           finalRemark = frec?.remarks || '';
         } catch (e) { /* no final remark */ }
+        // Card ke header ka avatar — student ki asli tasveer.
+        const photo = await rcStudentPhoto(classID, sectionID, studentId, resCardCtx.student?.registrationNumber);
         if (cancelled) return;
-        setResCardMarks({ subjects: subs.map(s => s.subjectName), totals, obtained, remarks, finalRemark, absentSubjects });
+        setResCardMarks({ subjects: subs.map(s => s.subjectName), totals, obtained, remarks, finalRemark, absentSubjects, photo });
       } catch (e) {
         console.error('Error loading single card subject marks:', e);
         if (!cancelled) setResCardMarks({ subjects: [], totals: {}, obtained: {} });
@@ -1007,8 +1078,10 @@ const [subjects, setSubjects] = useState([]);
           const frec = Array.isArray(fd?.data) ? fd.data[0] : (Array.isArray(fd) ? fd[0] : (fd?.data || null));
           finalRemark = frec?.remarks || '';
         } catch (e) { /* no final remark */ }
+        // Card ke header ka avatar — student ki asli tasveer.
+        const photo = await rcStudentPhoto(grp.classID, grp.sectionID, st.studentID, st.rollNo);
         if (cancelled) return;
-        setCbrCardMarks({ subjects: subs.map(s => s.subjectName), totals, obtained, remarks, finalRemark, absentSubjects });
+        setCbrCardMarks({ subjects: subs.map(s => s.subjectName), totals, obtained, remarks, finalRemark, absentSubjects, photo });
       } catch (e) {
         console.error('Error loading card subject marks:', e);
         if (!cancelled) setCbrCardMarks({ subjects: [], totals: {}, obtained: {} });
@@ -1281,8 +1354,10 @@ const [subjects, setSubjects] = useState([]);
           const frec = Array.isArray(fd?.data) ? fd.data[0] : (Array.isArray(fd) ? fd[0] : (fd?.data || null));
           finalRemark = frec?.remarks || '';
         } catch (e) { /* no final remark */ }
+        // Card ke header ka avatar — student ki asli tasveer.
+        const photo = await rcStudentPhoto(classID, sectionID, studentId, student?.rollNo);
         if (cancelled) return;
-        setRhCardMarks({ subjects: subjList.map(s => s.subjectName), totals, obtained, remarks, finalRemark, absentSubjects });
+        setRhCardMarks({ subjects: subjList.map(s => s.subjectName), totals, obtained, remarks, finalRemark, absentSubjects, photo });
       } catch (e) {
         console.error('Error loading result-history card subject marks:', e);
         if (!cancelled) setRhCardMarks({ subjects: [], totals: {}, obtained: {} });
@@ -6390,6 +6465,7 @@ onClick={async () => {
           manualRemarks: rhCardMarks?.remarks || {},   // saved per-subject remarks → Comment column
           finalRemarks: rhCardMarks?.finalRemark || '', // student ka final remark → Final Remarks section
           absentSubjects: rhCardMarks?.absentSubjects || [],
+          photo: rhCardMarks?.photo || '',   // header ke circle me asli tasveer
           attendance: student.attendance ? `${student.attendance}%` : '—',
         };
         const cardRd = {
@@ -6463,6 +6539,7 @@ onClick={async () => {
           father: st.father,
           obtained: cbrCardMarks?.obtained || {},
           absentSubjects: cbrCardMarks?.absentSubjects || [],
+          photo: cbrCardMarks?.photo || '',   // header ke circle me asli tasveer
           attendance: '—',
           _combined: {
             grandTotal:   st.grandTotal,
@@ -6749,6 +6826,7 @@ onClick={async () => {
     manualRemarks: resCardMarks?.remarks || {},
     finalRemarks: resCardMarks?.finalRemark || '',
     absentSubjects: resCardMarks?.absentSubjects || [],
+    photo: resCardMarks?.photo || '',   // header ke circle me asli tasveer
     attendance: '—',
   };
   
@@ -9004,9 +9082,8 @@ function ClassicResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
           </div>
         </div>
         {opt['Show Student Photo'] && (
-          <div style={{ width: 54, height: 54, borderRadius: '50%', flexShrink: 0, background: 'rgba(255,255,255,.2)', border: '2px solid rgba(255,255,255,.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 19, fontWeight: 800, color: '#fff' }}>
-            {initials}
-          </div>
+          <RcAvatar src={st.photo} initials={initials} size={54} fontSize={19} color="#fff"
+                    bg="rgba(255,255,255,.2)" border="2px solid rgba(255,255,255,.4)" />
         )}
       </div>
       <div style={{ height: 3, background: hdrBar }} />
@@ -9330,9 +9407,8 @@ function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
           <div style={{ fontSize: 9.5, color: 'rgba(255,255,255,.6)', marginTop: 1 }}>Insight Result Card · {formatAcademicYearLabel(resolveAcademicSession(school)) || 'Academic Session'}</div>
         </div>
         {opt['Show Student Photo'] && (
-          <div style={{ width: 50, height: 50, borderRadius: '50%', background: 'rgba(255,255,255,.15)', border: '2px solid rgba(255,255,255,.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 17, fontWeight: 800, color: '#fff', flexShrink: 0 }}>
-            {initials}
-          </div>
+          <RcAvatar src={st.photo} initials={initials} size={50} fontSize={17} color="#fff"
+                    bg="rgba(255,255,255,.15)" border="2px solid rgba(255,255,255,.35)" />
         )}
       </div>
       <div style={{ height: 3, background: hdrBar }} />
@@ -9615,9 +9691,9 @@ const position = opt['Show Position in Class']
         {/* Student banner */}
         <div style={{ padding: '16px 28px 22px', display: 'flex', alignItems: 'center', gap: 18, position: 'relative' }}>
           {opt['Show Student Photo'] && (
-            <div style={{ width: 72, height: 72, borderRadius: '50%', flexShrink: 0, background: 'rgba(255,255,255,.12)', border: '3px solid rgba(255,255,255,.3)', boxShadow: '0 4px 16px rgba(0,0,0,.25)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 26, fontWeight: 800, color: 'rgba(255,255,255,.85)' }}>
-              {initials}
-            </div>
+            <RcAvatar src={st.photo} initials={initials} size={72} fontSize={26} color="rgba(255,255,255,.85)"
+                      bg="rgba(255,255,255,.12)" border="3px solid rgba(255,255,255,.3)"
+                      extraStyle={{ boxShadow: '0 4px 16px rgba(0,0,0,.25)' }} />
           )}
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 22, fontWeight: 900, color: '#fff', letterSpacing: '-.02em', marginBottom: 6 }}>{st.name}</div>
