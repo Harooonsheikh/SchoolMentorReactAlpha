@@ -978,7 +978,8 @@ export function withAdvanceRow(rows, advApplied, advName, { ledgerId, branchId, 
   const list = Array.isArray(rows) ? rows : [];
   if (applied <= 0) return list;
   const isAdvRow = (r) =>
-    /previous|pending|arrear/i.test(String(r?.subHead || r?.head || '')) && (Number(r?.challanAmount) || 0) < 0;
+    /previous|pending|arrear|old\s*advance|advance\s*till/i.test(String(r?.subHead || r?.head || ''))
+    && (Number(r?.challanAmount) || 0) < 0;
   const stamp = now || new Date().toISOString();
   const idx = list.findIndex(isAdvRow);
   if (idx >= 0) {
