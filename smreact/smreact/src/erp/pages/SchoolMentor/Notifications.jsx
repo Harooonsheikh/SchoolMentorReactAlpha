@@ -1,8 +1,8 @@
-import React, { useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Tooltip from '../../components/Tooltip';
 import TutorialModal from '../../components/TutorialModal';
-
+import React, { useMemo, useState, useEffect } from 'react';
+import { buildUrl } from '../../../utils/apiConfig';
 /* ═══════════════════════════════════════════════════════════════════
    NOTIFICATIONS — mobile-app push notifications
 
@@ -21,13 +21,11 @@ import TutorialModal from '../../components/TutorialModal';
    in-component demo state — a developer wires this to the push API later.
    ═══════════════════════════════════════════════════════════════════ */
 
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+// const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 const STAFF_SUBS = [
-  { id: 'all-staff',      label: 'All Staff' },
-  { id: 'teaching',       label: 'Teaching Staff' },
-  { id: 'admin',          label: 'Admin Staff' },
-  { id: 'support',        label: 'Support Staff' },
+  { id: 'all-staff', label: 'All Staff' },
+  { id: 'department', label: 'Department' },
   { id: 'specific-staff', label: 'Specific Member' },
 ];
 const PARENT_SUBS = [
@@ -37,24 +35,16 @@ const PARENT_SUBS = [
   { id: 'specific-parent', label: 'Specific Parent' },
 ];
 
-const CLASSES = ['Nursery', 'KG', 'Class 1', 'Class 2', 'Class 3', 'Class 4', 'Class 5', 'Class 6', 'Class 7', 'Class 8', 'Class 9', 'Class 10'];
-const SECTIONS = ['A', 'B', 'C', 'D'];
-
-const TYPES = [
-  { id: 'general',   label: 'General',   icon: 'fa-bell' },
-  { id: 'important', label: 'Important', icon: 'fa-circle-exclamation' },
-  { id: 'reminder',  label: 'Reminder',  icon: 'fa-clock' },
-  { id: 'emergency', label: 'Emergency', icon: 'fa-triangle-exclamation' },
+const NOTIFICATION_TYPES = [
+  { id: 'General', label: 'General' },
+  { id: 'Important', label: 'Important' },
+  { id: 'Reminder', label: 'Reminder' },
+  { id: 'Emergency', label: 'Emergency' },
 ];
 
 const SUB_LABELS = {
   'all-staff': 'All Staff', teaching: 'Teaching Staff', admin: 'Admin Staff', support: 'Support Staff', 'specific-staff': 'Specific Member',
   'all-parents': 'All Parents', 'class-wise': 'Class Wise', 'class-section': 'Class + Section', 'specific-parent': 'Specific Parent',
-};
-
-const RECIPIENT_COUNTS = {
-  'all-staff': 47, teaching: 28, admin: 12, support: 7, 'specific-staff': 1,
-  'all-parents': 380, 'class-wise': 32, 'class-section': 16, 'specific-parent': 1,
 };
 
 const INITIAL_SENT = [
@@ -70,11 +60,6 @@ const INITIAL_SENT = [
 
 const counterClass = (len, max) => `nt-counter${len >= max ? ' over' : len > max * 0.9 ? ' warn' : ''}`;
 
-function TypeBadge({ type }) {
-  const t = TYPES.find(x => x.id === type) || TYPES[0];
-  return <span className={`nt-type-badge ntb-${t.id}`}><i className={`fa-solid ${t.icon}`} /> {t.label}</span>;
-}
-
 const DeliveredBadge = () => (
   <span className="nt-delivered"><i className="fa-solid fa-circle-check" /> Delivered</span>
 );
@@ -89,38 +74,382 @@ export default function Notifications({ toast = () => {} }) {
   /* composer */
   const [audience, setAudience] = useState('staff');
   const [subAud, setSubAud] = useState('all-staff');
+  const [staffList, setStaffList] = useState([]);
+  const [parentList, setParentList] = useState([]);
+const [selectedStaff, setSelectedStaff] = useState('');
+  const [selectedParent, setSelectedParent] = useState('');
+  const [departments, setDepartments] = useState([]);
+  const [selectedDepartment, setSelectedDepartment] = useState('');
   const [cls, setCls] = useState('');
   const [section, setSection] = useState('');
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
-  const [type, setType] = useState('general');
+  const [notificationType, setNotificationType] = useState('General');
+  const [recipientEstimate, setRecipientEstimate] = useState(0);
+  const [grades, setGrades] = useState([]);
+  const [sections, setSections] = useState([]);
 
   /* modals */
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [deleteId, setDeleteId] = useState(null);
-  const [editNotif, setEditNotif] = useState(null);
 
   /* tutorial */
   const [tutorialOpen, setTutorialOpen] = useState(false);
+useEffect(() => {
+  loadStaff();
+  loadParents();
+  loadDepartments();
+  loadNotificationHistory();
+  loadGrades();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, []);
+
+const loadStaff = async () => {
+  const branchID = sessionStorage.getItem('branchID');
+
+  try {
+    const res = await fetch(
+      buildUrl(`/api/LaunchSetup/get-employees-by-branch/${branchID}`),
+      { headers: { Accept: '*/*' } }
+    );
+
+    if (!res.ok) {
+      throw new Error(`Could not load staff (${res.status})`);
+    }
+
+    const json = await res.json();
+    const employees = Array.isArray(json?.data)
+      ? json.data
+      : Array.isArray(json)
+        ? json
+        : [];
+
+    setStaffList(employees);
+  } catch (error) {
+    console.error('Could not load staff data:', error);
+    setStaffList([]);
+    toast('Could not load staff members.', 'error');
+  }
+};
+
+
+const loadDepartments = async () => {
+  const branchID = sessionStorage.getItem('branchID');
+
+  try {
+    const res = await fetch(
+      buildUrl(`/api/LaunchSetup/get-departments-by-branch/${branchID}`),
+      { headers: { Accept: '*/*' } }
+    );
+
+    const json = await res.json();
+    if (json?.success === false) throw new Error(json.message || 'Could not load departments');
+
+    setDepartments(
+      Array.isArray(json?.data)
+        ? json.data
+        : Array.isArray(json)
+          ? json
+          : []
+    );
+  } catch (error) {
+    console.error('Could not load departments:', error);
+    setDepartments([]);
+  }
+};
+
+const loadParents = async () => {
+  const branchID = getBranchId();
+  try {
+    const res = await fetch(
+      buildUrl(`/api/LaunchSetup/get-students-by-branch/${branchID}`),
+      { headers: { Accept: '*/*' } }
+    );
+    if (!res.ok) throw new Error(`Could not load parents (${res.status})`);
+    const json = await res.json();
+    if (json?.success === false) throw new Error(json.message || 'Could not load departments');
+    const students = Array.isArray(json?.data) ? json.data : Array.isArray(json) ? json : [];
+    setParentList(students);
+  } catch (error) {
+    console.error('Could not load parent/student data:', error);
+    setParentList([]);
+  }
+};
+
+
+
+
+const loadGrades = async () => {
+  try {
+    const branchID = getBranchId();
+
+    const res = await fetch(
+      buildUrl(`/api/LaunchSetup/get-grades-by-branch/${branchID}`),
+      { headers: { Accept: '*/*' } }
+    );
+
+    const json = await res.json();
+    if (json?.success === false) throw new Error(json.message || 'Could not load grades');
+
+    const apiGrades = Array.isArray(json?.data)
+      ? json.data
+      : [];
+
+    setGrades(apiGrades);
+
+  } catch (error) {
+    console.error('Could not load grades:', error);
+    setGrades([]);
+  }
+};
+
+const loadSections = async (gradeId) => {
+  if (!gradeId) {
+    setSections([]);
+    return;
+  }
+
+  const selectedGrade = grades.find(
+    g => String(g.id ?? g.ID ?? g.gradeID) === String(gradeId)
+  );
+
+  if (selectedGrade?.sections?.length) {
+
+    setSections(
+      selectedGrade.sections.map(s => ({
+        id: s.sectionID ?? s.id,
+        name: s.sectionName ?? s.name
+      }))
+    );
+
+    return;
+  }
+
+  setSections([]);
+
+};
+
+const getBranchId = () => sessionStorage.getItem('branchID');
+
+const mapAudiencePayload = () => {
+  if (audience === 'staff') {
+    if (subAud === 'department') {
+      return {
+        audienceType: 'Department',
+        audienceRefId: selectedDepartment
+      };
+    }
+
+    if (subAud === 'specific-staff') {
+      return {
+        audienceType: 'SpecificMember',
+        audienceRefId: selectedStaff
+      };
+    }
+
+    if (selectedDepartment) {
+      return {
+        audienceType: 'Department',
+        audienceRefId: selectedDepartment
+      };
+    }
+
+    return {
+      audienceType: 'Teacher'
+    };
+  }
+
+  if (subAud === 'specific-parent') {
+    return {
+      audienceType: 'SpecificParent',
+      audienceRefId: selectedParent
+    };
+  }
+
+  if (subAud === 'class-wise') {
+    return {
+      audienceType: 'ClassWise',
+      audienceRefId: cls ? Number(cls) : null
+    };
+  }
+
+  if (subAud === 'class-section') {
+    return {
+      audienceType: 'ClassSection',
+      audienceRefId: cls ? Number(cls) : null,
+      audienceSectionId: section ? Number(section) : null
+    };
+  }
+
+  return {
+    audienceType: 'Parent'
+  };
+};
+
+const loadNotificationHistory = async () => {
+  try {
+    const branchID = getBranchId();
+
+    const res = await fetch(
+      buildUrl(`/api/AHM_Notification/list/${branchID}`),
+      {
+        headers: { Accept: '*/*' }
+      }
+    );
+
+    const json = await res.json();
+
+    if (json?.success === false) throw new Error(json.message || 'Could not load notification history');
+    if (Array.isArray(json?.data)) {
+      const mapped = json.data.map(n => {
+        const created = new Date(n.createdAt);
+
+        return {
+          id: n.id,
+          title: n.title || '',
+          body: n.message || '',
+          audienceType: n.audienceType || '',
+          audience: n.audienceType === 'SpecificMember'
+            ? `Specific Member (${n.audienceRefID ?? n.audienceRefId ?? ''})`
+            : n.audienceType === 'SpecificParent'
+              ? `Specific Parent (${n.audienceRefID ?? n.audienceRefId ?? ''})`
+            : (n.audienceType || ''),
+          subAud: n.audienceType || '',
+          cls: '',
+          section: '',
+          type: n.notificationType || '',
+          date: created.toLocaleDateString(),
+          time: created.toLocaleTimeString(),
+          recipients: n.recipientCount || 0,
+          sentBy: n.createdBy || n.senderType || ''
+        };
+      });
+
+      setSent(mapped);
+    }
+  } catch (error) {
+    console.error('Notification history loading failed:', error);
+  }
+};
+
+
+useEffect(() => {
+  const updateEstimate = async () => {
+    const count = await getRecipientEstimate();
+    setRecipientEstimate(count);
+  };
+
+  updateEstimate();
+}, [audience, subAud, selectedStaff, selectedDepartment, cls, section]);
+
+const getRecipientEstimate = async () => {
+  try {
+    const branchID = getBranchId();
+    const target = mapAudiencePayload();
+
+    const params = new URLSearchParams({
+      audienceType: target.audienceType
+    });
+
+    if (target.audienceRefId) {
+      params.append('audienceRefId', target.audienceRefId);
+    }
+
+    if (target.audienceSectionId) {
+      params.append('audienceSectionId', target.audienceSectionId);
+    }
+
+    const res = await fetch(
+      buildUrl(`/api/AHM_Notification/estimate/${branchID}?${params.toString()}`)
+    );
+
+    const json = await res.json();
+    if (!res.ok || json?.success === false) {
+      throw new Error(json?.message || 'Could not estimate recipients');
+    }
+    return Number(json?.data?.estimatedCount ?? 0);
+  } catch {
+    return 0;
+  }
+};
+
+const sendNotificationAPI = async () => {
+  const branchID = getBranchId();
+  const target = mapAudiencePayload();
+
+  const payload = {
+    branchID: Number(branchID),
+    audienceType: target.audienceType,
+    ...(target.audienceRefId ? { audienceRefID: Number(target.audienceRefId) } : {}),
+    ...(target.audienceSectionId ? { audienceSectionID: Number(target.audienceSectionId) } : {}),
+    title: title.trim(),
+    message: body.trim(),
+    notificationType
+  };
+
+  const res = await fetch(
+    buildUrl('/api/AHM_Notification/send'),
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload)
+    }
+  );
+
+  if (!res.ok) {
+    throw new Error('Notification send failed');
+  }
+
+  const json = await res.json();
+
+  if (!res.ok || json?.success === false) {
+    throw new Error(json?.message || 'Notification send failed');
+  }
+
+  return json;
+};
+
 
   /* sent-list filters */
   const [search, setSearch] = useState('');
+  
   const [filterAud, setFilterAud] = useState('');
-  const [filterType, setFilterType] = useState('');
 
   const stats = useMemo(() => ({
-    total:    sent.length,
-    staff:    sent.filter(n => n.audienceType === 'staff').length,
-    parents:  sent.filter(n => n.audienceType === 'parents').length,
-    emergency: sent.filter(n => n.type === 'emergency').length,
+    total: sent.length,
+    staff: sent.filter(n =>
+      n.audienceType === 'Teacher' ||
+      n.audienceType === 'SpecificMember' ||
+      n.audienceType === 'Department'
+    ).length,
+    parents: sent.filter(n =>
+      n.audienceType === 'Parent' ||
+      n.audienceType === 'ClassWise' ||
+      n.audienceType === 'ClassSection'
+    ).length,
+    emergency: 0,
   }), [sent]);
 
   const showClass = subAud === 'class-wise' || subAud === 'class-section';
   const showSection = subAud === 'class-section';
-  const recipientEstimate = RECIPIENT_COUNTS[subAud] || 20;
+  
 
   const buildAudienceLabel = () => {
     let lbl = `${audience === 'staff' ? 'Staff' : 'Parents'} — ${SUB_LABELS[subAud] || subAud}`;
+
+    if (audience === 'staff' && subAud === 'specific-staff' && selectedStaff) {
+      const selected = staffList.find(
+        staff => String(staff.id ?? staff.ID ?? staff.employeeID) === String(selectedStaff)
+      );
+      const selectedName = selected
+        ? `${selected.firstName ?? selected.FirstName ?? ''} ${selected.lastName ?? selected.LastName ?? ''}`.trim()
+        : '';
+
+      if (selectedName) lbl += ` · ${selectedName}`;
+    }
+
     if (showClass && cls) {
       lbl += ` · ${cls}`;
       if (showSection && section) lbl += ` ${section}`;
@@ -131,12 +460,18 @@ export default function Notifications({ toast = () => {} }) {
   const selectAudience = (aud) => {
     setAudience(aud);
     setSubAud(aud === 'staff' ? 'all-staff' : 'all-parents');
+    setSelectedStaff('');
+    setSelectedParent('');
+    setSelectedDepartment('');
     setCls('');
     setSection('');
   };
 
   const selectSub = (id) => {
     setSubAud(id);
+    if (id !== 'specific-staff') setSelectedStaff('');
+    if (id !== 'specific-parent') setSelectedParent('');
+    if (id !== 'department' && id !== 'specific-staff') setSelectedDepartment('');
     if (id !== 'class-wise' && id !== 'class-section') { setCls(''); setSection(''); }
     if (id !== 'class-section') setSection('');
   };
@@ -144,47 +479,102 @@ export default function Notifications({ toast = () => {} }) {
   const openConfirm = () => {
     if (!title.trim()) { toast('Please enter a notification title.', 'warning'); return; }
     if (!body.trim())  { toast('Please enter the notification message.', 'warning'); return; }
-    if (showClass && !cls) { toast('Please select a class.', 'warning'); return; }
+    if (showClass && !cls) {
+      toast('Please select a class.', 'warning');
+      return;
+    }
+
+    if (showSection && !section) {
+      toast('Please select a section.', 'warning');
+      return;
+    }
+    if (audience === 'staff' && subAud === 'specific-staff' && !selectedStaff) {
+      toast('Please select a staff member.', 'warning');
+      return;
+    }
+
+    if (audience === 'staff' && subAud === 'department' && !selectedDepartment) {
+      toast('Please select a department.', 'warning');
+      return;
+    }
     setConfirmOpen(true);
   };
 
-  const doSend = () => {
-    const now = new Date();
-    const dateStr = `${now.getDate()} ${MONTHS[now.getMonth()]} ${now.getFullYear()}`;
-    const h = now.getHours(), m = now.getMinutes();
-    const timeStr = `${h % 12 || 12}:${m < 10 ? '0' : ''}${m} ${h >= 12 ? 'pm' : 'am'}`;
-    setSent(prev => [{
-      id: Date.now(), title: title.trim(), body: body.trim(),
-      audience: buildAudienceLabel(), audienceType: audience, subAud,
-      cls: showClass ? cls : '', section: showSection ? section : '', type,
-      date: dateStr, time: timeStr, recipients: recipientEstimate, sentBy: 'Admin',
-    }, ...prev]);
-    setConfirmOpen(false);
-    setTitle(''); setBody('');
-    toast('Notification sent successfully to mobile app users.', 'success');
+  const doSend = async () => {
+    try {
+      // const recipients = await getRecipientEstimate();
+      // await sendNotificationAPI();
+      const estimate = await getRecipientEstimate();
+      const result = await sendNotificationAPI();
+      setConfirmOpen(false);
+      setTitle('');
+      setBody('');
+
+      const resultData = result?.data || {};
+      toast(
+        `Notification sent successfully. Delivered ${resultData.deliveredCount ?? 0} of ${resultData.recipientCount ?? estimate} recipients.`,
+        'success'
+      );
+
+      await loadNotificationHistory();
+  loadGrades();
+
+    } catch (error) {
+      console.error(error);
+      toast('Notification could not be sent.', 'error');
+    }
   };
 
-  const doDelete = () => {
-    setSent(prev => prev.filter(n => n.id !== deleteId));
-    setDeleteId(null);
-    toast('Notification record deleted.', 'info');
-  };
-
-  const saveEdit = (patch) => {
-    setSent(prev => prev.map(n => n.id === editNotif.id ? { ...n, ...patch } : n));
-    setEditNotif(null);
-    toast('Notification record updated successfully.', 'success');
+  const doDelete = async () => {
+    if (!deleteId) return;
+    try {
+      const res = await fetch(buildUrl(`/api/AHM_Notification/delete/${deleteId}`), { method: 'DELETE' });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || json?.success === false) throw new Error(json?.message || 'Delete failed');
+      setSent(prev => prev.filter(n => n.id !== deleteId));
+      toast('Notification record deleted.', 'info');
+    } catch (error) {
+      console.error('Notification delete failed:', error);
+      toast(error.message || 'Notification could not be deleted.', 'error');
+    } finally {
+      setDeleteId(null);
+    }
   };
 
   const filteredSent = useMemo(() => {
     const q = search.trim().toLowerCase();
     return sent.filter(n => {
-      const matchQ = !q || n.title.toLowerCase().includes(q) || n.audience.toLowerCase().includes(q) || n.type.includes(q) || (n.cls || '').toLowerCase().includes(q);
-      const matchA = !filterAud || n.audienceType === filterAud;
-      const matchT = !filterType || n.type === filterType;
-      return matchQ && matchA && matchT;
+      const matchQ =
+        !q ||
+        (n.title || '').toLowerCase().includes(q) ||
+        (n.audience || '').toLowerCase().includes(q) ||
+        (n.body || '').toLowerCase().includes(q) ||
+        (n.cls || '').toLowerCase().includes(q);
+
+      const isStaffNotification = [
+        'Teacher',
+        'SpecificMember',
+        'Department'
+      ].includes(n.audienceType);
+
+      const isParentNotification = [
+        'Parent',
+        'ClassWise',
+        'ClassSection',
+        'SpecificParent'
+      ].includes(n.audienceType);
+
+      const matchA =
+        !filterAud ||
+        (filterAud === 'staff' && isStaffNotification) ||
+        (filterAud === 'parents' && isParentNotification);
+      return matchQ && matchA;
     });
-  }, [sent, search, filterAud, filterType]);
+  }, [sent, search, filterAud]);
+
+  const filteredStaff = selectedDepartment
+    ? staffList.filter(staff => String(staff.departmentID ?? staff.DepartmentID ?? staff.departmentId) === String(selectedDepartment))
+    : staffList;
 
   const subs = audience === 'staff' ? STAFF_SUBS : PARENT_SUBS;
 
@@ -260,14 +650,118 @@ export default function Notifications({ toast = () => {} }) {
                 </div>
               </div>
 
+              {(subAud === 'specific-staff' || subAud === 'specific-parent' || subAud === 'department') && (
+                <div>
+
+                  {subAud === 'department' && (
+                    <>
+                      <label className="form-label">Select Department <span className="req-star">*</span></label>
+                      <select
+                        className="form-input"
+                        value={selectedDepartment}
+                        onChange={e => setSelectedDepartment(e.target.value)}
+                        style={{ marginTop: 6 }}
+                      >
+                        <option value="">Select Department</option>
+                        {departments.map(dep => {
+                          const id = dep.id ?? dep.ID ?? dep.departmentID;
+                          const name = dep.name ?? dep.departmentName ?? dep.DepartmentName;
+                          return (
+                            <option key={id} value={id}>{name}</option>
+                          );
+                        })}
+                      </select>
+                    </>
+                  )}
+
+                  {subAud === 'specific-staff' && (
+                    <>
+                      <label className="form-label">Department (Optional)</label>
+                      <select
+                        className="form-input"
+                        value={selectedDepartment}
+                        onChange={e => {
+                          setSelectedDepartment(e.target.value);
+                          setSelectedStaff('');
+                        }}
+                        style={{ marginTop: 6, marginBottom: 10 }}
+                      >
+                        <option value="">All Departments</option>
+                        {departments.map(dep => {
+                          const id = dep.id ?? dep.ID ?? dep.departmentID;
+                          const name = dep.name ?? dep.departmentName ?? dep.DepartmentName;
+                          return (
+                            <option key={id} value={id}>{name}</option>
+                          );
+                        })}
+                      </select>
+
+                      <label className="form-label">Select Staff Member <span className="req-star">*</span></label>
+                      <select
+                        className="form-input"
+                        value={selectedStaff}
+                        onChange={e => setSelectedStaff(e.target.value)}
+                        style={{ marginTop: 6 }}
+                      >
+                        <option value="">Select Staff Member</option>
+                        {filteredStaff.map(staff => {
+                          const staffId = staff.id ?? staff.ID ?? staff.employeeID;
+                          const staffName =
+                            `${staff.firstName ?? staff.FirstName ?? ''} ${staff.lastName ?? staff.LastName ?? ''}`.trim() ||
+                            staff.employeeName ||
+                            staff.name ||
+                            staff.fullName ||
+                            `Staff #${staffId}`;
+
+                          return (
+                            <option key={staffId} value={staffId}>
+                              {staffName}
+                            </option>
+                          );
+                        })}
+                      </select>
+                    </>
+                  )}
+
+                  {subAud === 'specific-parent' && (
+                    <>
+                      <label className="form-label">Select Parent / Student <span className="req-star">*</span></label>
+                      <select className="form-input" value={selectedParent} onChange={e => setSelectedParent(e.target.value)} style={{ marginTop: 6 }}>
+                        <option value="">Select Parent / Student</option>
+                        {parentList.map(student => {
+                          const id = student.id ?? student.ID ?? student.studentID ?? student.StudentID;
+                          const name = student.studentName || student.name || `${student.firstName ?? student.FirstName ?? ''} ${student.lastName ?? student.LastName ?? ''}`.trim() || `Student #${id}`;
+                          return <option key={id} value={id}>{name}</option>;
+                        })}
+                      </select>
+                    </>
+                  )}
+
+                </div>
+              )}
+
               {/* Class / Section */}
               {showClass && (
                 <div className="nt-class-row">
                   <div className="form-group" style={{ marginBottom: 0 }}>
                     <label className="form-label">Class <span className="req-star">*</span></label>
-                    <select className="form-input" value={cls} onChange={e => setCls(e.target.value)} style={{ marginTop: 6 }}>
+                    <select
+  className="form-input"
+  value={cls}
+  onChange={e => {
+    const value = e.target.value;
+    setCls(value);
+    setSection('');
+    loadSections(value);
+  }}
+  style={{ marginTop: 6 }}
+>
                       <option value="">Select Class</option>
-                      {CLASSES.map(c => <option key={c}>{c}</option>)}
+                      {grades.map(g => {
+                        const id = g.id ?? g.ID ?? g.gradeID;
+                        const name = g.name ?? g.gradeName ?? g.Name ?? `Grade ${id}`;
+                        return <option key={id} value={id}>{name}</option>;
+                      })}
                     </select>
                   </div>
                   {showSection && (
@@ -275,7 +769,16 @@ export default function Notifications({ toast = () => {} }) {
                       <label className="form-label">Section <span className="req-star">*</span></label>
                       <select className="form-input" value={section} onChange={e => setSection(e.target.value)} style={{ marginTop: 6 }}>
                         <option value="">Select Section</option>
-                        {SECTIONS.map(s => <option key={s}>{s}</option>)}
+                        {sections.map(s => {
+                          const id = s.id ?? s.ID ?? s.sectionID;
+                          const name = s.name ?? s.sectionName ?? s.Name ?? `Section ${id}`;
+
+                          return (
+                            <option key={id} value={id}>
+                              {name}
+                            </option>
+                          );
+                        })}
                       </select>
                     </div>
                   )}
@@ -296,16 +799,12 @@ export default function Notifications({ toast = () => {} }) {
                 <div className={counterClass(body.length, 300)}>{body.length} / 300</div>
               </div>
 
-              {/* Type */}
+              {/* Notification type */}
               <div>
                 <label className="form-label">Notification Type <span className="req-star">*</span></label>
-                <div className="nt-type-grid" style={{ marginTop: 8 }}>
-                  {TYPES.map(t => (
-                    <button key={t.id} className={`nt-type-pill${type === t.id ? ' active' : ''}`} data-type={t.id} onClick={() => setType(t.id)}>
-                      <i className={`fa-solid ${t.icon}`} /> {t.label}
-                    </button>
-                  ))}
-                </div>
+                <select className="form-input" value={notificationType} onChange={e => setNotificationType(e.target.value)} style={{ marginTop: 6 }}>
+                  {NOTIFICATION_TYPES.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
+                </select>
               </div>
 
               <button className="nt-send-btn" onClick={openConfirm}>
@@ -348,16 +847,11 @@ export default function Notifications({ toast = () => {} }) {
               <option value="staff">Staff</option>
               <option value="parents">Parents</option>
             </select>
-            <select className="nt-filter-sel" value={filterType} onChange={e => setFilterType(e.target.value)}>
-              <option value="">All Types</option>
-              {TYPES.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
-            </select>
           </div>
 
           <div className="nt-table-head">
             <div className="nt-th">Title &amp; Message</div>
             <div className="nt-th">Audience &amp; Class</div>
-            <div className="nt-th">Type</div>
             <div className="nt-th">Sent At</div>
             <div className="nt-th">Recipients</div>
             <div className="nt-th">Actions</div>
@@ -374,14 +868,14 @@ export default function Notifications({ toast = () => {} }) {
               <div className="nt-td">
                 <div className="nt-title-txt">{n.title}</div>
                 <div className="nt-body-txt">{n.body}</div>
-                <div style={{ marginTop: 4 }}><DeliveredBadge /></div>
+                <div style={{ marginTop: 4 }}>Sent</div>
               </div>
               <div className="nt-td">
                 <div style={{ fontSize: 12, color: 'var(--text-primary)', fontWeight: 600 }}>{n.audience}</div>
                 {n.cls && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}><i className="fa-solid fa-chalkboard" style={{ fontSize: 9, marginRight: 3 }} />{n.cls}{n.section ? ` · Sec ${n.section}` : ''}</div>}
                 <div style={{ fontSize: 10.5, color: 'var(--text-muted)', marginTop: 2 }}><i className="fa-solid fa-user-tie" style={{ fontSize: 9, marginRight: 3 }} />{n.sentBy}</div>
               </div>
-              <div className="nt-td"><TypeBadge type={n.type} /></div>
+              {/* <div className="nt-td"><TypeBadge type={n.type} /></div> */}
               <div className="nt-td">
                 <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-primary)' }}>{n.date}</div>
                 <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{n.time}</div>
@@ -392,7 +886,6 @@ export default function Notifications({ toast = () => {} }) {
               </div>
               <div className="nt-td">
                 <div className="nt-act-btns">
-                  <Tooltip text="Edit notification record"><button className="nt-edit-btn" onClick={() => setEditNotif(n)}><i className="fa-solid fa-pen" /></button></Tooltip>
                   <Tooltip text="Delete notification record"><button className="nt-del-btn" onClick={() => setDeleteId(n.id)}><i className="fa-solid fa-trash-can" /></button></Tooltip>
                 </div>
               </div>
@@ -405,7 +898,6 @@ export default function Notifications({ toast = () => {} }) {
       {confirmOpen && (
         <ConfirmModal
           audienceLabel={buildAudienceLabel()}
-          typeLabel={(TYPES.find(t => t.id === type) || TYPES[0]).label}
           recipients={recipientEstimate}
           title={title.trim()}
           onClose={() => setConfirmOpen(false)}
@@ -415,10 +907,6 @@ export default function Notifications({ toast = () => {} }) {
 
       {deleteId != null && (
         <DeleteModal onClose={() => setDeleteId(null)} onConfirm={doDelete} />
-      )}
-
-      {editNotif && (
-        <EditModal notif={editNotif} onClose={() => setEditNotif(null)} onSave={saveEdit} toast={toast} />
       )}
 
       <TutorialModal open={tutorialOpen} moduleKey="notifications" onClose={() => setTutorialOpen(false)} toast={toast} />
@@ -457,7 +945,7 @@ function ModalShell({ size = 'modal-sm', maxWidth, children, onClose }) {
 }
 
 /* ── Confirm send ── */
-function ConfirmModal({ audienceLabel, typeLabel, recipients, title, onClose, onSend }) {
+function ConfirmModal({ audienceLabel, recipients, title, onClose, onSend }) {
   return (
     <ModalShell size="modal-sm" maxWidth={480} onClose={onClose}>
       <div className="modal-header">
@@ -468,7 +956,6 @@ function ConfirmModal({ audienceLabel, typeLabel, recipients, title, onClose, on
         <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6, marginBottom: 12 }}>This notification will be sent to the selected users on their <strong>mobile applications</strong>. Please review the details below before confirming.</div>
         <div className="nt-confirm-summary">
           <div className="ncs-row"><span className="ncs-label">Audience</span><span className="ncs-val">{audienceLabel}</span></div>
-          <div className="ncs-row"><span className="ncs-label">Type</span><span className="ncs-val">{typeLabel}</span></div>
           <div className="ncs-row"><span className="ncs-label">Recipients</span><span className="ncs-val">~{recipients} users</span></div>
           <div className="ncs-row"><span className="ncs-label">Title</span><span className="ncs-val">{title}</span></div>
         </div>
@@ -495,67 +982,6 @@ function DeleteModal({ onClose, onConfirm }) {
       <div className="modal-footer">
         <button className="btn btn-secondary" onClick={onClose}>Cancel</button>
         <button className="btn btn-danger" onClick={onConfirm}><i className="fa-solid fa-trash-can" /> Delete Record</button>
-      </div>
-    </ModalShell>
-  );
-}
-
-/* ── Edit record ── */
-function EditModal({ notif, onClose, onSave, toast }) {
-  const [title, setTitle] = useState(notif.title);
-  const [body, setBody] = useState(notif.body);
-  const [type, setType] = useState(notif.type);
-  const [sentBy, setSentBy] = useState(notif.sentBy || '');
-
-  const save = () => {
-    if (!title.trim()) { toast('Please enter a notification title.', 'warning'); return; }
-    if (!body.trim())  { toast('Please enter the notification message.', 'warning'); return; }
-    onSave({ title: title.trim(), body: body.trim(), type, ...(sentBy.trim() ? { sentBy: sentBy.trim() } : {}) });
-  };
-
-  return (
-    <ModalShell size="modal-md" maxWidth={640} onClose={onClose}>
-      <div className="modal-header">
-        <div>
-          <div className="modal-title"><i className="fa-solid fa-pen" style={{ marginRight: 6 }} />Edit Notification</div>
-          <div className="modal-sub">Update the notification record. This does not re-send to mobile users.</div>
-        </div>
-        <Tooltip text="Close"><button className="modal-close" onClick={onClose}><i className="fa-solid fa-xmark" /></button></Tooltip>
-      </div>
-      <div className="modal-body">
-        <div className="nt-helper warn" style={{ marginBottom: 16 }}><i className="fa-solid fa-circle-info" /> Editing this record updates the ERP log only. The original notification has already been delivered to mobile app users.</div>
-
-        <div className="form-group">
-          <label className="form-label">Notification Title <span className="req-star">*</span></label>
-          <input className="form-input" maxLength={80} placeholder="Notification title..." value={title} onChange={e => setTitle(e.target.value)} style={{ marginTop: 6 }} />
-          <div className={counterClass(title.length, 80)}>{title.length} / 80</div>
-        </div>
-
-        <div className="form-group">
-          <label className="form-label">Notification Message <span className="req-star">*</span></label>
-          <textarea className="nt-textarea" maxLength={300} rows={4} placeholder="Notification message..." value={body} onChange={e => setBody(e.target.value)} style={{ marginTop: 6 }} />
-          <div className={counterClass(body.length, 300)}>{body.length} / 300</div>
-        </div>
-
-        <div className="form-group">
-          <label className="form-label">Notification Type</label>
-          <div className="nt-type-grid" style={{ marginTop: 8 }}>
-            {TYPES.map(t => (
-              <button key={t.id} className={`nt-type-pill${type === t.id ? ' active' : ''}`} data-type={t.id} onClick={() => setType(t.id)}>
-                <i className={`fa-solid ${t.icon}`} /> {t.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="form-group" style={{ marginBottom: 0 }}>
-          <label className="form-label">Sent By</label>
-          <input className="form-input" placeholder="e.g. Principal, Admin..." value={sentBy} onChange={e => setSentBy(e.target.value)} style={{ marginTop: 6 }} />
-        </div>
-      </div>
-      <div className="modal-footer">
-        <button className="btn btn-secondary" onClick={onClose}>Cancel</button>
-        <button className="btn btn-primary" onClick={save}><i className="fa-solid fa-floppy-disk" /> Save Changes</button>
       </div>
     </ModalShell>
   );
@@ -621,15 +1047,6 @@ const NOTIF_CSS = `
 /* class+section */
 .nt-class-row { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
 
-/* type pills */
-.nt-type-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:7px; }
-.nt-type-pill { padding:8px 10px; border-radius:var(--radius-md); border:1.5px solid var(--border-light); background:var(--bg-muted); font-family:var(--font-body); font-size:11.5px; font-weight:700; color:var(--text-muted); cursor:pointer; transition:var(--tr); display:flex; align-items:center; gap:6px; justify-content:center; }
-.nt-type-pill:hover { transform:translateY(-1px); }
-.nt-type-pill.active { color:#fff; border-color:transparent; }
-.nt-type-pill[data-type="general"].active   { background:linear-gradient(135deg,var(--brand-primary),var(--brand-deeper,#1D4ED8)); box-shadow:0 3px 8px rgba(30,58,138,.3); }
-.nt-type-pill[data-type="important"].active  { background:linear-gradient(135deg,#D97706,#B45309); box-shadow:0 3px 8px rgba(217,119,6,.3); }
-.nt-type-pill[data-type="reminder"].active   { background:linear-gradient(135deg,#0284C7,#0369A1); box-shadow:0 3px 8px rgba(2,132,199,.3); }
-.nt-type-pill[data-type="emergency"].active  { background:linear-gradient(135deg,#DC2626,#B91C1C); box-shadow:0 3px 8px rgba(220,38,38,.3); }
 .nt-type-pill[data-type="general"]:not(.active):hover   { border-color:var(--brand-primary); color:var(--brand-primary); background:var(--brand-light); }
 .nt-type-pill[data-type="important"]:not(.active):hover { border-color:#D97706; color:#D97706; background:rgba(217,119,6,.06); }
 .nt-type-pill[data-type="reminder"]:not(.active):hover  { border-color:#0284C7; color:#0284C7; background:rgba(2,132,199,.06); }
@@ -652,9 +1069,23 @@ const NOTIF_CSS = `
 
 /* sent table */
 .nt-table-wrap { background:var(--bg-card); border:1px solid var(--border-light); border-radius:var(--radius-lg); box-shadow:var(--shadow-sm); overflow:hidden; animation:ntFadeSlide .25s ease both; }
-.nt-table-head { display:grid; grid-template-columns:2fr 1fr 1.2fr 1fr 1fr 110px; background:var(--bg-muted); border-bottom:1px solid var(--border-light); padding:0 16px; }
+.nt-table-head {
+  display:grid;
+  grid-template-columns:2fr 1fr 1fr 1fr 110px;
+  background:var(--bg-muted);
+  border-bottom:1px solid var(--border-light);
+  padding:0 16px;
+}
 .nt-th { padding:10px 8px; font-size:10px; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:.6px; }
-.nt-row { display:grid; grid-template-columns:2fr 1fr 1.2fr 1fr 1fr 110px; padding:12px 16px; align-items:center; border-bottom:1px solid var(--border-light); transition:var(--tr); animation:ntFadeSlide .2s ease both; }
+.nt-row {
+  display:grid;
+  grid-template-columns:2fr 1fr 1fr 1fr 110px;
+  padding:12px 16px;
+  align-items:center;
+  border-bottom:1px solid var(--border-light);
+  transition:var(--tr);
+  animation:ntFadeSlide .2s ease both;
+}
 .nt-row:last-child { border-bottom:none; }
 .nt-row:hover { background:var(--bg-muted); }
 .nt-td { padding:0 8px; font-size:12.5px; color:var(--text-secondary); min-width:0; }

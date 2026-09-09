@@ -1,4 +1,81 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+
+// const API_BASE = process.env.REACT_APP_SUPERADMIN_API || 'https://your-superadmin-api';
+const API_BASE = "http://50.190.164.42:4100/SchoolMentorSuperAdminAPI";
+const apiGet = async (url) => {
+  try {
+    const response = await fetch(`${API_BASE}${url}`, {
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`GET API Error: ${response.status}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error('Notification GET API failed:', error);
+    return {
+      success: false,
+      message: error.message,
+      data: []
+    };
+  }
+};
+
+const apiPost = async (url, body) => {
+  try {
+    const response = await fetch(`${API_BASE}${url}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      throw new Error(`POST API Error: ${response.status}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error('Notification POST API failed:', error);
+    return {
+      success: false,
+      message: error.message,
+    };
+  }
+};
+
+const mapAudience = (value) => ({
+  all: 'All',
+  principal: 'Principal',
+  teachers: 'Teacher',
+  parents: 'Parent',
+}[value] || value);
+
+const mapNotificationType = (value) => ({
+  general: 'General',
+  important: 'Important',
+  reminder: 'Reminder',
+  emergency: 'Emergency'
+}[value] || value);
+
+const mapNotification = (n) => ({
+  id: n.notificationID || n.id,
+  title: n.title,
+  body: n.message || n.body,
+  type: n.notificationType || n.type,
+  audienceType: n.audienceType,
+  audience: n.audience || n.audienceType,
+  recipients: n.recipientCount || n.recipients || 0,
+  date: n.date || n.createdDate || n.createdAt || n.sentAt || '',
+  time: n.time || n.sentTime || '',
+  sentBy: n.sentBy || 'Admin',
+});
+
 import {
   AUDIENCES, SUB_AUDIENCES, NOTIF_TYPES, CLASSES, SECTIONS, INITIAL_NOTIFS,
   defaultSub, estimateRecipients, buildAudienceLabel, nowDateTime,
@@ -16,25 +93,51 @@ import {
 
 export default function Notifications({ toast }) {
   const [tab, setTab] = useState('new');
-  const [notifs, setNotifs] = useState(INITIAL_NOTIFS);
+  const [notifs, setNotifs] = useState([]);
   const [modal, setModal] = useState(null);
+
+  useEffect(() => {
+    loadNotifications();
+  }, []);
+
+  const loadNotifications = async () => {
+    const res = await apiGet('/api/AHM_Notification/list');
+    if (res.success) {
+      setNotifs((res.data || []).map(mapNotification));
+    }
+  };
 
   const stats = useMemo(() => ({
     sent: notifs.length,
-    staff: notifs.filter((n) => n.audienceType === 'teachers' || n.audienceType === 'principal').length,
-    parents: notifs.filter((n) => n.audienceType === 'parents').length,
+    staff: notifs.filter((n) => n.audienceType === 'Teacher' || n.audienceType === 'Principal').length,
+    parents: notifs.filter((n) => n.audienceType === 'Parent').length,
     emergency: notifs.filter((n) => n.type === 'emergency').length,
   }), [notifs]);
 
-  const send = (data) => {
-    const { date, time } = nowDateTime();
-    setNotifs((prev) => [{ id: Date.now(), ...data, date, time, sentBy: 'Admin' }, ...prev]);
-    setModal(null); toast?.('Notification sent successfully to mobile app users.', 'success');
+  const send = async (data) => {
+    const payload = {
+      audienceType: mapAudience(data.audienceType),
+      title: data.title,
+      message: data.body,
+      notificationType: mapNotificationType(data.type),
+    };
+
+    const res = await apiPost('/api/AHM_Notification/send', payload);
+
+    if (res.success) {
+      setModal(null);
+      toast?.('Notification sent successfully.', 'success');
+      loadNotifications();
+    } else {
+      toast?.(res.message || 'Unable to send notification', 'warn');
+    }
   };
+  // Edit API endpoint not provided in backend guide. Currently local update only.
   const saveEdit = (id, patch) => {
     setNotifs((prev) => prev.map((n) => n.id === id ? { ...n, ...patch } : n));
     setModal(null); toast?.('Notification record updated successfully.', 'success');
   };
+  // Delete API endpoint not provided in backend guide. Currently local removal only.
   const remove = (id) => {
     setNotifs((prev) => prev.filter((n) => n.id !== id));
     setModal(null); toast?.('Notification record deleted.', 'info');
@@ -69,13 +172,12 @@ export default function Notifications({ toast }) {
       {tab === 'new' && <Composer onReview={(data) => setModal({ type: 'confirm', data })} toast={toast} />}
       {tab === 'sent' && (
         <SentList notifs={notifs} total={notifs.length}
-          onEdit={(n) => setModal({ type: 'edit', notif: n })}
+
           onDelete={(n) => setModal({ type: 'del', notif: n })} />
       )}
 
       {/* ── MODALS ── */}
       {modal?.type === 'confirm' && <ConfirmModal data={modal.data} onClose={() => setModal(null)} onSend={() => send(modal.data)} />}
-      {modal?.type === 'edit' && <EditModal notif={modal.notif} onClose={() => setModal(null)} onSave={saveEdit} toast={toast} />}
       {modal?.type === 'del' && <DeleteModal onClose={() => setModal(null)} onConfirm={() => remove(modal.notif.id)} />}
     </div>
   );
@@ -103,7 +205,24 @@ function Composer({ onReview, toast }) {
   const subs = SUB_AUDIENCES[aud] || null;
   const showClass = sub === 'class-wise' || sub === 'class-section';
   const showSection = sub === 'class-section';
-  const recipients = estimateRecipients(aud, sub);
+  const [recipients, setRecipients] = useState(0);
+
+  useEffect(() => {
+    loadEstimate();
+  }, [aud]);
+
+  const loadEstimate = async () => {
+    const res = await apiGet(
+      `/api/AHM_Notification/estimate?audienceType=${mapAudience(aud)}`
+    );
+
+    if (res.success) {
+      setRecipients(res.data.estimatedCount || 0);
+    } else {
+      setRecipients(0);
+      console.warn('Estimate API unavailable:', res.message);
+    }
+  };
 
   const pickAud = (a) => { setAud(a); setSub(defaultSub(a)); setCls(''); setSection(''); };
 
@@ -114,7 +233,7 @@ function Composer({ onReview, toast }) {
     onReview({
       title: title.trim(), body: body.trim(), type,
       audience: buildAudienceLabel(aud, sub, cls, section), audienceType: aud, subAud: sub,
-      cls: showClass ? cls : '', section: showSection ? section : '', recipients,
+      cls: '', section: '', recipients,
     });
   };
 
@@ -142,7 +261,12 @@ function Composer({ onReview, toast }) {
             <div>
               <label className="notif-form-label">Select {aud === 'teachers' ? 'Teacher' : 'Parent'} Group <span className="req-star">*</span></label>
               <div className="sub-audience-grid" style={{ marginTop: 8 }}>
-                {subs.map((s) => (
+                {subs
+                  .filter((s) =>
+                    !(aud === 'teachers' && s.id === 'specific-teacher') &&
+                    !(aud === 'parents' && s.id === 'specific-parent')
+                  )
+                  .map((s) => (
                   <div key={s.id} className={`sub-audience-card${sub === s.id ? ' active' : ''}`} onClick={() => { setSub(s.id); if (!(s.id === 'class-wise' || s.id === 'class-section')) { setCls(''); setSection(''); } }}>
                     <div className="sub-audience-radio" /> {s.label}
                   </div>
@@ -274,7 +398,7 @@ function SentList({ notifs, total, onEdit, onDelete }) {
             <div className="notif-td"><div style={{ fontSize: 16, fontWeight: 800, color: 'var(--t1)' }}>~{n.recipients}</div><div style={{ fontSize: 10.5, color: 'var(--tm)' }}>recipients</div></div>
             <div className="notif-td">
               <div className="notif-act-btns">
-                <button className="notif-edit-btn" data-tip="Edit record" data-tip-pos="left" onClick={() => onEdit(n)}><i className="fa-solid fa-pen" /></button>
+                
                 <button className="notif-del-btn" data-tip="Delete record" data-tip-pos="left" onClick={() => onDelete(n)}><i className="fa-solid fa-trash-can" /></button>
               </div>
             </div>
@@ -334,12 +458,6 @@ function EditModal({ notif, onClose, onSave, toast }) {
           <label className="notif-form-label">Notification Message <span className="req-star">*</span></label>
           <textarea className="notif-form-textarea" maxLength={300} rows={4} value={body} onChange={(e) => setBody(e.target.value)} style={{ marginTop: 6 }} />
           <Counter len={body.length} max={300} />
-        </div>
-        <div>
-          <label className="notif-form-label">Notification Type</label>
-          <div className="notif-type-grid" style={{ marginTop: 8 }}>
-            {NOTIF_TYPES.map((t) => <button key={t.id} className={`notif-type-pill${type === t.id ? ' active' : ''}`} data-type={t.id} onClick={() => setType(t.id)}><i className={`fa-solid ${t.icon}`} /> {t.label}</button>)}
-          </div>
         </div>
         <div>
           <label className="notif-form-label">Sent By</label>
