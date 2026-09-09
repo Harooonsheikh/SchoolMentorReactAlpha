@@ -220,6 +220,31 @@ function resSubjAbsent(rec, subjTotal) {
   const tot = !blank(rec.totalMarks) ? rec.totalMarks : subjTotal;
   return blank(obt) || blank(tot) || Number(tot) <= 0;
 }
+
+/* Result card ki subject list normalize karo — SIRF wahi subjects jo API se aaye
+   aur jinka asli naam mil sake:
+     • naam pehle exam-subject API se, warna class subjects (nameMap) se
+     • jis row ka koi asli naam nahi (pehle "Subject 34662" jaisa placeholder ban
+       kar card par extra rows aa jati thi) usay DROP kar do
+     • ek hi subjectID / naam do baar aaye to sirf pehli baar
+   Is se card par utne hi subjects aate hain jitne response me hain. */
+function rcNormalizeSubjects(rawSubs, nameMap = {}) {
+  const seenId = new Set(), seenName = new Set(), out = [];
+  (rawSubs || []).forEach(su => {
+    if (!su) return;
+    const name = String(su.subjectName || nameMap[su.subjectID] || '').trim();
+    if (!name) return;                       // naam hi nahi → asli subject nahi, mat dikhao
+    const idKey   = su.subjectID == null ? '' : String(su.subjectID);
+    const nameKey = name.toLowerCase();
+    if (idKey && seenId.has(idKey)) return;  // duplicate row
+    if (seenName.has(nameKey)) return;
+    if (idKey) seenId.add(idKey);
+    seenName.add(nameKey);
+    out.push({ ...su, subjectName: name });
+  });
+  return out;
+}
+
 const RC_GRADE_SETUP = [
   { min:90, grade:'A+', comment:'Excellent Work Done' },
   { min:80, grade:'A',  comment:'Very Good Work Done' },
@@ -859,9 +884,8 @@ const [subjects, setSubjects] = useState([]);
         syl.forEach(s => { nameMap[s.subjectID] = s.subjectName; });
         // Exam mein subjects assign hon to wahi; warna class ke real subjects dikhao
         // (marks add na hone par bhi subjects nazar aayein → blank → absent handling).
-        const subs = (rawSubs && rawSubs.length)
-          ? rawSubs.map(su => ({ ...su, subjectName: su.subjectName || nameMap[su.subjectID] || `Subject ${su.subjectID}` }))
-          : syl.map(s => ({ subjectID: s.subjectID, subjectName: s.subjectName }));
+        let subs = rcNormalizeSubjects(rawSubs, nameMap);
+        if (!subs.length) subs = rcNormalizeSubjects(syl, nameMap);
         const token = sessionStorage.getItem('token');
         const headers = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
         // Direct marks fetch taa-ke obtain + remarks dono mil sakein
@@ -943,12 +967,9 @@ const [subjects, setSubjects] = useState([]);
         try { syl = await getSyllabusSubjects(grp.classID, grp.sectionID) || []; } catch (e) { /* keep going */ }
         const nameMap = {};
         syl.forEach(s => { nameMap[s.subjectID] = s.subjectName; });
+        subs = rcNormalizeSubjects(subs, nameMap);
         // Exam/sub-exam mein koi subject nahi → class ke real subjects dikhao (marks blank → absent).
-        if (!subs.length) { subs = syl.map(s => ({ subjectID: s.subjectID, subjectName: s.subjectName })); withMarks = false; }
-        subs = subs.map(su => ({
-          ...su,
-          subjectName: su.subjectName || nameMap[su.subjectID] || `Subject ${su.subjectID}`,
-        }));
+        if (!subs.length) { subs = rcNormalizeSubjects(syl, nameMap); withMarks = false; }
         const token = sessionStorage.getItem('token');
         const headers = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
         const obtained = {}, totals = {}, remarks = {}, absentSubjects = [];
@@ -1217,11 +1238,11 @@ const [subjects, setSubjects] = useState([]);
           try { syl = (await getSyllabusSubjects(classID, sectionID)) || []; } catch { /* keep going */ }
           const nameMap = {};
           syl.forEach(s => { nameMap[s.subjectID] = s.subjectName; });
-          if (!subs.length) subs = syl.map(s => ({ subjectID: s.subjectID, subjectName: s.subjectName }));
-          subjList = subs.map(su => ({ ...su, subjectName: su.subjectName || nameMap[su.subjectID] || `Subject ${su.subjectID}` }));
+          subjList = rcNormalizeSubjects(subs, nameMap);
+          if (!subjList.length) subjList = rcNormalizeSubjects(syl, nameMap);
         } else {
           // 1) Subjects list (Math / Science 3 / KG) — reliably subjects deta hai
-          subjList = (await getSyllabusSubjects(classID, sectionID)) || [];
+          subjList = rcNormalizeSubjects((await getSyllabusSubjects(classID, sectionID)) || []);
         }
         // 2) Har subject ke against student ke obtain/total marks (dono modes ExamID=examID use karte hain)
         const records = await Promise.all(subjList.map(async su => {
@@ -1240,7 +1261,7 @@ const [subjects, setSubjects] = useState([]);
         if (cancelled) return;
         const obtained = {}, totals = {}, remarks = {}, absentSubjects = [];
         records.forEach(({ su, rec }) => {
-          const name = su.subjectName || `Subject ${su.subjectID}`;
+          const name = su.subjectName;
           obtained[name] = Number(rec?.obtainMarks ?? rec?.obtainedMarks ?? 0);
           totals[name]   = Number(rec?.totalMarks ?? su.totalMarks ?? 0);
           if (rec?.remarks) remarks[name] = rec.remarks;   // saved remarks → Comment column
@@ -2082,10 +2103,10 @@ const rhDownloadCardReport = async (st, r) => {
       try { syl = (await getSyllabusSubjects(classID, sectionID)) || []; } catch { /* keep going */ }
       const nameMap = {};
       syl.forEach(s => { nameMap[s.subjectID] = s.subjectName; });
-      if (!ms.length) ms = syl.map(s => ({ subjectID: s.subjectID, subjectName: s.subjectName }));
-      subs = ms.map(su => ({ ...su, subjectName: su.subjectName || nameMap[su.subjectID] || `Subject ${su.subjectID}` }));
+      subs = rcNormalizeSubjects(ms, nameMap);
+      if (!subs.length) subs = rcNormalizeSubjects(syl, nameMap);
     } else {
-      subs = (await getSyllabusSubjects(classID, sectionID).catch(() => [])) || [];
+      subs = rcNormalizeSubjects((await getSyllabusSubjects(classID, sectionID).catch(() => [])) || []);
     }
     subjectNames = subs.map(s => s.subjectName);
     await Promise.all(subs.map(async su => {
@@ -2097,7 +2118,7 @@ const rhDownloadCardReport = async (st, r) => {
         const rr = await fetch(buildUrl(`/api/getsauploadmarksbyclassandtermandexamandsubject?${p}`), { headers });
         const d = await rr.json();
         const rec = Array.isArray(d) ? d[0] : (d?.data?.[0] || null);
-        const name = su.subjectName || `Subject ${su.subjectID}`;
+        const name = su.subjectName;
         obtained[name] = Number(rec?.obtainMarks ?? rec?.obtainedMarks ?? 0);
         totals[name]   = Number(rec?.totalMarks ?? su.totalMarks ?? 0);
         if (rec?.remarks) remarks[name] = rec.remarks;
@@ -8910,7 +8931,9 @@ function ClassicResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
   // Student ke jitne subjects hain SAB dikhao. Pehle yahan .slice(0, 10) tha, is liye
   // 20/30 subjects wale students ke result card par sirf pehle 10 rows aate the (aur
   // Grand Total / overall % bhi unhi 10 par bante the).
-  const subjects = (rd.subjects && rd.subjects.length ? rd.subjects : RES_SUBJECTS);
+  // Asli card par SIRF rd.subjects (API se aayi list). RES_SUBJECTS (demo naam)
+  // sirf template preview ke liye — warna real card par 10 jhoote subjects aa jate.
+  const subjects = (rd.subjects && rd.subjects.length) ? rd.subjects : (rdProp ? [] : RES_SUBJECTS);
 
   const totalAll = subjects.reduce((a, s) => (useZeroMode || !absentSet[s]) ? a + (rd.totalMarks[s] ?? 20) : a, 0);
   const obtAll   = subjects.reduce((a, s) => absentSet[s] ? a : a + (st.obtained[s] || 0), 0);
@@ -9244,7 +9267,9 @@ function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
   // Student ke jitne subjects hain SAB dikhao. Pehle yahan .slice(0, 10) tha, is liye
   // 20/30 subjects wale students ke result card par sirf pehle 10 rows aate the (aur
   // Grand Total / overall % bhi unhi 10 par bante the).
-  const subjects = (rd.subjects && rd.subjects.length ? rd.subjects : RES_SUBJECTS);
+  // Asli card par SIRF rd.subjects (API se aayi list). RES_SUBJECTS (demo naam)
+  // sirf template preview ke liye — warna real card par 10 jhoote subjects aa jate.
+  const subjects = (rd.subjects && rd.subjects.length) ? rd.subjects : (rdProp ? [] : RES_SUBJECTS);
   const totalAll = subjects.reduce((a, s) => (useZeroMode || !absentSet[s]) ? a + (rd.totalMarks[s] ?? 20) : a, 0);
   const obtAll   = subjects.reduce((a, s) => absentSet[s] ? a : a + (st.obtained[s] || 0), 0);
   const ovPct    = isCombined ? cb.ovPct : (totalAll ? Math.min(100, Math.round((obtAll / totalAll) * 10000) / 100) : 0);
@@ -9496,7 +9521,9 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
   // Student ke jitne subjects hain SAB dikhao. Pehle yahan .slice(0, 10) tha, is liye
   // 20/30 subjects wale students ke result card par sirf pehle 10 rows aate the (aur
   // Grand Total / overall % bhi unhi 10 par bante the).
-  const subjects = (rd.subjects && rd.subjects.length ? rd.subjects : RES_SUBJECTS);
+  // Asli card par SIRF rd.subjects (API se aayi list). RES_SUBJECTS (demo naam)
+  // sirf template preview ke liye — warna real card par 10 jhoote subjects aa jate.
+  const subjects = (rd.subjects && rd.subjects.length) ? rd.subjects : (rdProp ? [] : RES_SUBJECTS);
   const totalAll = subjects.reduce((a, s) => (useZeroMode || !absentSet[s]) ? a + (rd.totalMarks[s] ?? 20) : a, 0);
   const obtAll   = subjects.reduce((a, s) => absentSet[s] ? a : a + (st.obtained[s] || 0), 0);
   const ovPct    = isCombined ? cb.ovPct : (totalAll ? Math.min(100, Math.round((obtAll / totalAll) * 10000) / 100) : 0);
@@ -12718,7 +12745,7 @@ function BulkCombinedCardModal({ grp, termID, template, school, grades, remarks 
           const subData = await subRes.json();
           (subData?.data || (Array.isArray(subData) ? subData : [])).forEach(s => { nameMap[s.subjectID] = s.subjectName; });
         } catch { /* names best-effort */ }
-        subs = subs.map(su => ({ ...su, subjectName: su.subjectName || nameMap[su.subjectID] || `Subject ${su.subjectID}` }));
+        subs = rcNormalizeSubjects(subs, nameMap);
         const subjectNames = subs.map(s => s.subjectName);
 
         const students = grp.students || [];
