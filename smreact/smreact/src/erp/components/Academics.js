@@ -21,7 +21,7 @@ import {
    jata hai, is liye poore app me ek hi call. */
 import { checkChainBranch, cachedChainBranch } from '../services/chainBranch';
 /* Head Office ki asli releases — sirf wahi jo is branch ko bheji gayi hain. */
-import { fetchHeadOfficeReleases } from '../services/headOfficeReleases';
+import { fetchHeadOfficeReleases, duplicateReleaseData, RELEASE_TYPE } from '../services/headOfficeReleases';
 
 
 
@@ -3934,6 +3934,11 @@ function TextBooks({ onReport, toast, classesData }) {
    jab tak wo naam na mile. */
 const HO_NAME = 'Head Office';
 const hoBranchId = () => sessionStorage.getItem('branchID') || '0';
+/* Server par is item ka apna id — Save karte waqt yehi duplicate-release-data
+   ko `typeID` me jata hai. Screen wali id par kism ka prefix laga hota hai
+   ('lesson-42'), is liye asli id alag khane (typeId) me aati hai; purane
+   shape ke liye prefix hata kar bhi nikal lete hain. */
+const hoTypeId = item => Number(item?.typeId) || Number(String(item?.id || '').split('-').pop()) || 0;
 
 const hoDaysRemaining = validUntil => { try { const ms = new Date(`${validUntil}T23:59:59`) - new Date(); return Math.ceil(ms / 86400000); } catch { return null; } };
 const hoIsLive = r => r.status === 'ACTIVE' && hoDaysRemaining(r.validUntil) >= 0;
@@ -3967,6 +3972,21 @@ function HeadOfficeReleases({ open, onClose, toast, classesData = [], releases =
   const isSaved = (relId, itemId) => saved.some(s => s.headOfficeReleaseId === relId && s.headOfficeItemId === itemId);
   const record = rec => { const next = [...saved, rec]; setSaved(next); hoSaveSaved(next); };
 
+  /* Portal me save karne par server par bhi IS branch (jo ERP me login hai)
+     ki apni copy ban jati hai — duplicate-release-data, dekhein
+     services/headOfficeReleases.js. Local record us se pehle hi ban chuka
+     hota hai, is liye call nakaam ho to sirf bata dete hain; item screen se
+     wapas nahi lete. */
+  const pushToPortal = (type, item, extra = {}) => {
+    duplicateReleaseData({
+      type,
+      typeID: hoTypeId(item),
+      branchGradeID: extra.classId,
+      branchSubjectID: extra.subjectId,
+      branchSectionID: extra.sectionId,
+    }).catch(err => toast(err?.message || 'Saved here, but the Head Office copy could not be created.', 'error'));
+  };
+
   const saveActivity = (rel, act) => {
     if (isSaved(rel.id, act.id)) return;
     addActivity({
@@ -3978,6 +3998,7 @@ function HeadOfficeReleases({ open, onClose, toast, classesData = [], releases =
       purpose: act.purpose, development: act.development, resource: act.resource,
     });
     record({ headOfficeReleaseId: rel.id, headOfficeItemId: act.id, itemType: 'ACTIVITY', savedToSchoolId: hoBranchId(), savedAt: new Date().toISOString(), savedBy: 'School', localTargetModule: 'ACTIVITY_CALENDAR', localClassId: null, localSubjectId: null, localCategory: null });
+    pushToPortal(RELEASE_TYPE.activity, act);   // activity general hai — class/subject/section 0
     toast('Activity saved to your Activity Calendar', 'success');
   };
 
@@ -3997,6 +4018,7 @@ function HeadOfficeReleases({ open, onClose, toast, classesData = [], releases =
       localTargetModule: 'LESSON_PLANS', localClassId: classId, localSectionId: extra.sectionId || null,
       localSubjectId: subjectName, localCategory: null,
     });
+    pushToPortal(RELEASE_TYPE.lesson, lp, { classId, subjectId: extra.subjectId, sectionId: extra.sectionId });
     toast('Lesson plan saved to your portal.', 'success');
   };
 
@@ -4016,6 +4038,7 @@ function HeadOfficeReleases({ open, onClose, toast, classesData = [], releases =
       localTargetModule: 'NOTEBOOK_PLANS', localClassId: classId, localSectionId: extra.sectionId || null,
       localSubjectId: subjectName, localCategory: null,
     });
+    pushToPortal(RELEASE_TYPE.notebook, nb, { classId, subjectId: extra.subjectId, sectionId: extra.sectionId });
     toast('Notebook plan saved to your portal.', 'success');
   };
 
@@ -4041,6 +4064,7 @@ function HeadOfficeReleases({ open, onClose, toast, classesData = [], releases =
       localTargetModule: 'RESOURCE_LIBRARY', localClassId: classId, localSectionId: extra.sectionId || null,
       localSubjectId: subjectName, localCategory: category,
     });
+    pushToPortal(RELEASE_TYPE.resource, res, { classId, subjectId: extra.subjectId, sectionId: extra.sectionId });
     toast('Resource saved to your Resource Library', 'success');
   };
 
@@ -4379,7 +4403,7 @@ function SaveMappingModal({ kind, item, classesData = [], onClose, onSave }) {
     setSubjectId('');
     setSubjects([]);
     setErr('');
-  };
+  }; 
   const pickSection = (id) => {
     setSectionId(id);
     setSubjectId('');

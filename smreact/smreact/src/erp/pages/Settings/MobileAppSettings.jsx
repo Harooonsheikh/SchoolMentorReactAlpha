@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import * as parentAppSettingsService from '../../services/parentAppSettingsService';
-import { PARENT_APP_FEATURE_META } from '../../mock/parentAppSettings';
+import { PARENT_APP_FEATURE_META } from './parentAppFeatures';
 
 /* ═══════════════════════════════════════════════════════════════════
    PARENTS APP SETTINGS — Settings sub-tab.
@@ -13,6 +13,9 @@ import { PARENT_APP_FEATURE_META } from '../../mock/parentAppSettings';
    staff/admin/teacher accounts, this governs what the school exposes to
    parent accounts as a whole. Ported from School-Mentor-Front-end.
 
+   Save Changes → POST /manage-parent-app-permission (action SAVE) via
+   parentAppSettingsService; checkbox keys wahi hain jo API bhejti hai.
+
    Uses the shared .settings-banner / .settings-checks / .settings-check
    / .settings-btn classes mounted by SettingsModule.jsx, plus a small
    local stylesheet for the feature grouping.
@@ -22,11 +25,14 @@ export default function MobileAppSettings({ toast = () => {} }) {
   const [saving, setSaving]   = useState(false);
   const [featureEnabled, setFeatureEnabled] = useState({});
   const [saved, setSaved]     = useState({});
+  /* GET se aaya row id — 0 ho to pehla SAVE naya row insert karta hai. */
+  const [recordId, setRecordId] = useState(0);
 
   const load = async () => {
     setLoading(true);
     try {
       const settings = await parentAppSettingsService.getParentAppSettings();
+      setRecordId(settings.id);
       setFeatureEnabled(settings.featureEnabled);
       setSaved(settings.featureEnabled);
     } catch (e) {
@@ -47,7 +53,8 @@ export default function MobileAppSettings({ toast = () => {} }) {
   const handleSave = async () => {
     setSaving(true);
     try {
-      const result = await parentAppSettingsService.saveParentAppSettings({ featureEnabled });
+      const result = await parentAppSettingsService.saveParentAppSettings({ id: recordId, featureEnabled });
+      setRecordId(result.id);
       setFeatureEnabled(result.featureEnabled);
       setSaved(result.featureEnabled);
       toast('Parents app settings saved', 'success');

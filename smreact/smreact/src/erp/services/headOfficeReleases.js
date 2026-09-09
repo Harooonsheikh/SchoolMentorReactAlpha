@@ -337,7 +337,10 @@ export async function fetchHeadOfficeReleases() {
           const row = own.get(tid) || from.get(tid);
           /* Dono jagah na mile — us ki sirf id bachi hai, is liye chhupa
              dete hain (khali card se behtar). */
-          return row ? { ...row, id: `${type}-${tid}` } : null;
+          /* `typeId` = server ki apni row id — Save karte waqt yehi
+             duplicate-release-data ko `typeID` me jati hai (screen wali `id`
+             par kism ka prefix laga hota hai, wo server ke kaam ki nahi). */
+          return row ? { ...row, id: `${type}-${tid}`, typeId: tid } : null;
         })
         .filter(Boolean);
     };
@@ -366,4 +369,55 @@ export async function fetchHeadOfficeReleases() {
   });
 
   return { releases, headOfficeName };
+}
+
+/* ─────────────── Release ka content is branch me utarna ───────────────
+   School jab Release Details me "Save to Portal" (ya "Save All
+   Activities") karta hai to us item ki apni copy IS branch ke against
+   server par bhi ban jati hai:
+
+     POST {chain}/api/Network_Setup/duplicate-release-data
+       { networkID, branchID, type, typeID,
+         branchGradeID, branchSubjectID, branchSectionID }
+
+   `type` wahi naam hai jo release ke Child2 me aata hai — 'Activity',
+   'Lesson Plan', 'NoteBook Plan', 'Resource File' — aur `typeID` us
+   record ka apna id (har mapped item ke `typeId` me rakha hai, dekhein
+   pickOf; screen wali `id` par kism ka prefix laga hota hai).
+
+   networkID/branchID hamesha USI branch ke hain jo ERP me login hai.
+   Activity ka koi class/subject/section nahi hota, is liye wahan teeno 0;
+   baqi teen kismon ke liye ye Save modal me chuni gayi IS branch ki apni
+   ids hain — Head Office ki grade/subject ids nahi. */
+
+export const RELEASE_TYPE = {
+  activity: 'Activity',
+  lesson: 'Lesson Plan',
+  notebook: 'NoteBook Plan',
+  resource: 'Resource File',
+};
+
+const DUPLICATE_URL = () => buildChainApiUrl('/api/Network_Setup/duplicate-release-data');
+
+/**
+ * Ek released item ki copy is branch me banao.
+ * @param {{type:string, typeID:number, branchGradeID?:number, branchSubjectID?:number, branchSectionID?:number}} item
+ */
+export async function duplicateReleaseData({
+  type, typeID, branchGradeID = 0, branchSubjectID = 0, branchSectionID = 0,
+}) {
+  const bid = branchId();
+  const networkID = await fetchBranchNetworkId();
+  if (!bid || !networkID) throw new Error('This school is not part of a Head Office network');
+  if (!str(type) || !num(typeID)) throw new Error('This release item has no server reference');
+
+  return postJson(DUPLICATE_URL(), {
+    networkID,
+    branchID: bid,
+    type: str(type),
+    typeID: num(typeID),
+    branchGradeID: num(branchGradeID),
+    branchSubjectID: num(branchSubjectID),
+    branchSectionID: num(branchSectionID),
+  });
 }
