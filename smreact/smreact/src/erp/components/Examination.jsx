@@ -8907,7 +8907,10 @@ function ClassicResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
   (st.absentSubjects || []).forEach(s => { absentSet[s] = true; });
 
   const useZeroMode = rsAbsentMode === 'zero';
-  const subjects = (rd.subjects && rd.subjects.length ? rd.subjects : RES_SUBJECTS).slice(0, 10);
+  // Student ke jitne subjects hain SAB dikhao. Pehle yahan .slice(0, 10) tha, is liye
+  // 20/30 subjects wale students ke result card par sirf pehle 10 rows aate the (aur
+  // Grand Total / overall % bhi unhi 10 par bante the).
+  const subjects = (rd.subjects && rd.subjects.length ? rd.subjects : RES_SUBJECTS);
 
   const totalAll = subjects.reduce((a, s) => (useZeroMode || !absentSet[s]) ? a + (rd.totalMarks[s] ?? 20) : a, 0);
   const obtAll   = subjects.reduce((a, s) => absentSet[s] ? a : a + (st.obtained[s] || 0), 0);
@@ -9238,7 +9241,10 @@ function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
   (st.absentSubjects || []).forEach(s => { absentSet[s] = true; });
 
   const useZeroMode = rsAbsentMode === 'zero';
-  const subjects = (rd.subjects && rd.subjects.length ? rd.subjects : RES_SUBJECTS).slice(0, 10);
+  // Student ke jitne subjects hain SAB dikhao. Pehle yahan .slice(0, 10) tha, is liye
+  // 20/30 subjects wale students ke result card par sirf pehle 10 rows aate the (aur
+  // Grand Total / overall % bhi unhi 10 par bante the).
+  const subjects = (rd.subjects && rd.subjects.length ? rd.subjects : RES_SUBJECTS);
   const totalAll = subjects.reduce((a, s) => (useZeroMode || !absentSet[s]) ? a + (rd.totalMarks[s] ?? 20) : a, 0);
   const obtAll   = subjects.reduce((a, s) => absentSet[s] ? a : a + (st.obtained[s] || 0), 0);
   const ovPct    = isCombined ? cb.ovPct : (totalAll ? Math.min(100, Math.round((obtAll / totalAll) * 10000) / 100) : 0);
@@ -9487,7 +9493,10 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
   (st.absentSubjects || []).forEach(s => { absentSet[s] = true; });
 
   const useZeroMode = rsAbsentMode === 'zero';
-  const subjects = (rd.subjects && rd.subjects.length ? rd.subjects : RES_SUBJECTS).slice(0, 10);
+  // Student ke jitne subjects hain SAB dikhao. Pehle yahan .slice(0, 10) tha, is liye
+  // 20/30 subjects wale students ke result card par sirf pehle 10 rows aate the (aur
+  // Grand Total / overall % bhi unhi 10 par bante the).
+  const subjects = (rd.subjects && rd.subjects.length ? rd.subjects : RES_SUBJECTS);
   const totalAll = subjects.reduce((a, s) => (useZeroMode || !absentSet[s]) ? a + (rd.totalMarks[s] ?? 20) : a, 0);
   const obtAll   = subjects.reduce((a, s) => absentSet[s] ? a : a + (st.obtained[s] || 0), 0);
   const ovPct    = isCombined ? cb.ovPct : (totalAll ? Math.min(100, Math.round((obtAll / totalAll) * 10000) / 100) : 0);
@@ -12348,6 +12357,10 @@ html,body{background:#fff;font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-
 @media print{
   body{-webkit-print-color-adjust:exact;print-color-adjust:exact}
   .no-print{display:none!important}
+  /* Subject list ab poori aati hai (10 ki limit hat gayi) — lambi table agle page par
+     saaf jaye: header har page par repeat ho, koi row beech se na kate. */
+  thead{display:table-header-group}
+  tr{break-inside:avoid;page-break-inside:avoid}
 }
 .wrap{width:100%;max-width:210mm;margin:0 auto}
 .print-bar{text-align:center;padding:14px;background:#F8FAFF;border-top:1px solid #BFDBFE;margin-top:10px}
@@ -12586,7 +12599,8 @@ function BulkCardModal({ ctx, template, school, grades, remarks = [], rcoGeneral
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{background:#fff;font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif;color:#0F172A}
 @page{size:A4 portrait;margin:12mm}
-@media print{ body{-webkit-print-color-adjust:exact;print-color-adjust:exact} .no-print{display:none!important} }
+@media print{ body{-webkit-print-color-adjust:exact;print-color-adjust:exact} .no-print{display:none!important}
+  thead{display:table-header-group} tr{break-inside:avoid;page-break-inside:avoid} }
 .bulk-card{max-width:210mm;margin:0 auto 18px;page-break-after:always}
 .bulk-card:last-child{page-break-after:auto}
 .print-bar{text-align:center;padding:14px;background:#F8FAFF;border-top:1px solid #BFDBFE}
@@ -12762,7 +12776,8 @@ function BulkCombinedCardModal({ grp, termID, template, school, grades, remarks 
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{background:#fff;font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif;color:#0F172A}
 @page{size:A4 portrait;margin:12mm}
-@media print{ body{-webkit-print-color-adjust:exact;print-color-adjust:exact} .no-print{display:none!important} }
+@media print{ body{-webkit-print-color-adjust:exact;print-color-adjust:exact} .no-print{display:none!important}
+  thead{display:table-header-group} tr{break-inside:avoid;page-break-inside:avoid} }
 .bulk-card{max-width:210mm;margin:0 auto 18px;page-break-after:always}
 .bulk-card:last-child{page-break-after:auto}
 .print-bar{text-align:center;padding:14px;background:#F8FAFF;border-top:1px solid #BFDBFE}
