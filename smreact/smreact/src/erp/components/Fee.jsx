@@ -3906,12 +3906,19 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
     const seed = {};
     (cfg.model.heads || []).forEach(h => {
       const fromPay = (cfg.payments || []).reduce((a, p) => a + (+(p.perHead?.[h.name]) || 0), 0);
-      const paidSeed = cfg.challan ? Math.max(+chRecv[h.name] || 0, fromPay) : fromPay;
+      /* Negative received (Old Advance −3000) Math.max se 0 na bane. */
+      const fromChSeed = +chRecv[h.name] || 0;
+      const paidSeed = cfg.challan
+        ? (Math.abs(fromChSeed) >= Math.abs(fromPay) ? fromChSeed : fromPay)
+        : fromPay;
       /* Modal khulte hi Received me POORA baqaya (After Discount + Prev) pre-fill —
          Pending 0. Cashier edit kar sake; kam/zyada = Remaining/Advance Pending me. */
       if (!cfg.viewOnly) {
         const owed = (+h.net || 0) + (useHeadPrevSeed ? (+h.prev || 0) : 0);
-        seed[h.name] = owed < 0 ? owed : Math.max(paidSeed, owed);
+        /* Old Advance: pehle consume/receive ho chuka ho to paidSeed; warna full owed. */
+        seed[h.name] = owed < 0
+          ? (paidSeed !== 0 ? paidSeed : owed)
+          : Math.max(paidSeed, owed);
       } else {
         seed[h.name] = paidSeed;
       }
@@ -3971,7 +3978,10 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
   (model.heads || []).forEach(h => {
     const fromPay = +paymentsPerHead[h.name] || 0;
     const fromCh = +challanRecvByHead[h.name] || 0;
-    perHeadPaid[h.name] = challan ? Math.max(fromCh, fromPay) : fromPay;
+    /* Negative received (Old Advance −3000) Math.max se 0 na bane. */
+    perHeadPaid[h.name] = challan
+      ? (Math.abs(fromCh) >= Math.abs(fromPay) ? fromCh : fromPay)
+      : fromPay;
   });
 
   /* Build display rows with live recompute */
@@ -5190,8 +5200,13 @@ function recStudentModel({ student, headsForClass, generated, classDisc, payment
   const paidFromPayments = (payments || []).reduce((a, p) => a + (+p.amount || 0), 0);
   const paid = challan ? Math.max(paidFromChallan, paidFromPayments) : paidFromPayments;
   const remaining = payable - paid;   /* MINUS = advance (total se zyada wasool) */
-  let status = 'none';
-  if (generated && paid > 0) status = remaining <= 0 ? 'full' : 'partial';
+ let status = 'none';
+const hasRecvActivity = (challan && Array.isArray(challan.detailRows))
+  ? challan.detailRows.some(r => (Number(r.receivedAmount) || 0) !== 0)
+  : (paidFromPayments !== 0);
+if (generated && (paid > 0 || hasRecvActivity)) {
+  status = remaining <= 0 ? 'full' : 'partial';
+}
   /* Only payments explicitly tagged as OneLink/bank-pull are protected
      from manual deletion. A "Bank Transfer" entered at the counter
      stays deletable — same as the HTML reference (which keys off the
@@ -5981,7 +5996,10 @@ function childRecModel({ child, payments }) {
   const paid = (payments || []).reduce((a, p) => a + (+p.amount || 0), 0);
   const remaining = payable - paid;   /* MINUS = advance (total se zyada wasool) */
   let status = 'none';
-  if (paid > 0) status = remaining <= 0 ? 'full' : 'partial';
+/* Zero-cash receive (advance cover): payload.amount 0 → paid 0, magar payment record ho.
+   Koi payment maujood ho to status full/partial. */
+const hasRecvActivity = (payments || []).some(p => Number(p.amount) !== 0 || (p.perHead && Object.keys(p.perHead).some(k => Number(p.perHead[k]) !== 0)));
+if (paid > 0 || hasRecvActivity) status = remaining <= 0 ? 'full' : 'partial';
   const onelink = (payments || []).some(p => p.source === 'onelink' || p.source === 'bank');
   return { heads, generated: true, prev, advance, thisMonth, disc, payable, paid, remaining, status, onelink };
 }
@@ -6076,7 +6094,7 @@ function FamilyTreeReceiving({ toast }) {
     (f.children || []).forEach(ch => {
       const m = modelFor(ch, f.key);
       total += 1;
-      if (m.paid > 0) paid += 1; else unpaid += 1;
+      if (m.status === 'full' || m.status === 'partial') paid += 1; else unpaid += 1;
       if (m.onelink) onelink += 1;
     });
     return { total, paid, unpaid, onelink };
