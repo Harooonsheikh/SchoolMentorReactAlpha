@@ -196,6 +196,14 @@ const RCO_SIG_FIELD = {
   'Show Final Remarks':       'showFinalRemarks',
 };
 
+/* Session API abhi chal rahi hai (terms uske baad aate hain) → term chips ki jagah
+   placeholder dikhao, taake screen "koi term hi nahi" jaisi khali na lage. */
+const TermChipsSkeleton = () => (
+  <>
+    {[0, 1, 2].map(i => <span key={i} className="exam-term-chip skel" aria-hidden="true" />)}
+  </>
+);
+
 /* ── Result Card preview seed data + helpers ── */
 const RES_SUBJECTS = [
   'English','Urdu','Mathematics','Science','Islamiyat',
@@ -1463,6 +1471,9 @@ const [subjects, setSubjects] = useState([]);
      false = koi active session nahi → "set session" popup dikhao. */
   const [hasActiveSession, setHasActiveSession]   = useState(null);
 const [terms, setTerms] = useState([]);
+/* Mount par session API pehle chalti hai, terms baad me — tab tak chips/guards ko
+   "koi term nahi" nahi, "load ho raha hai" dikhana hai. */
+const [termsLoading, setTermsLoading] = useState(true);
 const [filtered, setFiltered] = useState([]);
 const [selectedTermId, setSelectedTermId] = useState(null);
 const [examClasses, setExamClasses] = useState([]);
@@ -1475,23 +1486,38 @@ const [resLoadingKey, setResLoadingKey] = useState(null);
 
     /* Load the session (academic-year) dropdown. Default-selects the session whose
        id matches sessionStorage.sessionID — the active session for the logged-in user. */
-    useEffect(() => {
-      (async () => {
-        try {
-          
-          const res = await fetch(buildUrl(`/api/Setting/get-academic-sessions-by-branch/${termsBranchID()}`), { method: 'GET', headers: termsAuthHeaders() });
-          const json = await res.json();
-          setSessions(json?.data || []);
-          const stored = termsSessionYearID();
-          if (stored) setSessionId(String(stored));
-        } catch (e) {
-          console.error('Error loading sessions:', e);
-        }
-      })();
-    }, []);
+    const loadSessionList = async () => {
+      try {
+        const res = await fetch(buildUrl(`/api/Setting/get-academic-sessions-by-branch/${termsBranchID()}`), { method: 'GET', headers: termsAuthHeaders() });
+        const json = await res.json();
+        setSessions(json?.data || []);
+        const stored = termsSessionYearID();
+        if (stored) setSessionId(String(stored));
+      } catch (e) {
+        console.error('Error loading sessions:', e);
+      }
+    };
   
-    /* Load the session start/end dates for the current branch. */
-    useEffect(() => { loadSessionDates(); }, []);
+    /* Module khulte hi ORDER zaruri hai: pehle session API (active session →
+       sessionStorage.sessionID), phir terms. Pehle dono saath chalti thin, is liye
+       termscrud ko sessionYearID khali milta tha (jab tak session storage me pehle se
+       na ho) aur term/exam data khali aa jata tha. */
+    useEffect(() => {
+      let cancelled = false;
+      (async () => {
+        setTermsLoading(true);
+        // 1) Session — ye sessionStorage me sessionID/dates set karti hai
+        const hasSession = await loadSessionDates();
+        if (cancelled) return;
+        // Session dropdown terms par depend nahi karta, isko saath chalne do
+        loadSessionList();
+        // 2) Terms — ab sessionYearID mojood hai
+        if (hasSession) await getTerms();
+        else setTerms([]);
+        if (!cancelled) setTermsLoading(false);
+      })();
+      return () => { cancelled = true; };
+    }, []);
   
     const loadSessionDates = async () => {
       try {
@@ -1518,13 +1544,17 @@ const [resLoadingKey, setResLoadingKey] = useState(null);
       sessionStorage.setItem('sessionEndDate', row.EndDate);      // ✅ ADD THIS
       setHasActiveSession(true);
     }
-        if (!row) { setHasActiveSession(false); return; }
+        if (!row) { setHasActiveSession(false); return false; }
         setHasActiveSession(true);
         if (row.sessionStart) setStart(row.sessionStart.slice(0, 10));
         if (row.sessionEnd)   setEnd(row.sessionEnd.slice(0, 10));
+        // Caller (bootstrap/reload) isi par terms call karta hai — is liye batao
+        // ke session mili ya nahi.
+        return true;
       } catch (e) {
         console.error('Error loading active session:', e);
         setHasActiveSession(false);
+        return false;
       }
     };
   
@@ -1584,13 +1614,20 @@ const [resLoadingKey, setResLoadingKey] = useState(null);
   notifySessionChange();
 };
   
-    /* Load terms from the backend on mount, replacing any seed/mock data. */
-    useEffect(() => { getTerms(); }, []);
+    /* Terms mount par upar wale bootstrap effect se load hote hain (session ke baad),
+       is liye yahan alag se getTerms() nahi chalta. */
   
     /* Re-run the term/session calls whenever a session key changes (same-tab event)
        or another tab edits sessionStorage. */
     useEffect(() => {
-      const reload = () => { getTerms(); loadSessionDates(); };
+      const reload = async () => {
+        // Yahan bhi wahi tarteeb: session pehle, terms baad me.
+        setTermsLoading(true);
+        const hasSession = await loadSessionDates();
+        if (hasSession) await getTerms();
+        else setTerms([]);
+        setTermsLoading(false);
+      };
       window.addEventListener(SESSION_CHANGE_EVENT, reload);
       window.addEventListener('storage', reload);
       return () => {
@@ -1972,7 +2009,7 @@ async function fetchRemarksSetup() {
 }
 
 // ── Result Card Options: GET settings + toggles set ──
-async function loadCardOptions() {
+async function loadCardOptions(notifyIfMissing = false) {
   try {
     const branchID = sessionStorage.getItem('branchID');
     const token    = sessionStorage.getItem('token');
@@ -1982,22 +2019,38 @@ async function loadCardOptions() {
     const data = await res.json();
     // Response bare object/array dono ho sakta hai
     const s = Array.isArray(data) ? data[0] : (data?.data || data);
-    if (!s || typeof s !== 'object') return;
+    // Is branch ki koi setting save nahi ({"message":"No settings found for branch X"})
+    // → result card generate karte waqt user ko toaster se bata do.
+    const hasSettings = !!s && typeof s === 'object' && !Array.isArray(s) && (s.id != null || s.branchID != null);
+    if (!hasSettings) {
+      setRcoSettings(null);
+      if (notifyIfMissing) {
+        toast('Result card options are not enabled for this branch. Enable them from Result Setup → Result Card Options.', 'warning');
+      }
+      return;
+    }
     setRcoSettings(s);
     // API ke boolean fields se toggles ka on/off set karo
     setRcoGeneral(g => g.map(it => ({ ...it, on: !!s[RCO_GENERAL_FIELD[it.label]] })));
     setRcoSig(g => g.map(it => ({ ...it, on: !!s[RCO_SIG_FIELD[it.label]] })));
     // Signature selection (max 2) → saved signature1 / signature2 se restore karo.
     setRsSigs(list => list.map(sg => ({ ...sg, on: (s.signature1 && sg.id === s.signature1) || (s.signature2 && sg.id === s.signature2) })));
+    // Record mojood hai magar saare toggles band hain → card khaali chhapega,
+    // is liye generate/open karte waqt user ko toaster se batao.
+    const anyOn = [...Object.values(RCO_GENERAL_FIELD), ...Object.values(RCO_SIG_FIELD)].some(f => !!s[f]);
+    if (!anyOn && notifyIfMissing) {
+      toast('All result card options are disabled. Enable them from Result Setup → Result Card Options.', 'warning');
+    }
   } catch (err) {
     console.error('Could not load result card options', err);
+    if (notifyIfMissing) toast('Could not load result card options. Check them in Result Setup → Result Card Options.', 'warning');
   }
 }
 
 // Exam History row ke Download icon ke liye: View jaise REAL data (subjects/marks/remarks/finalRemark)
 // load karke us se report banao (mock nahi).
 const rhDownloadCardReport = async (st, r) => {
-  loadCardOptions();
+  loadCardOptions(true);
   const isCombined = r?.type === 'combined' || r?.combinedId != null;
   const classID   = r?.classID   ?? st?.gradeId   ?? st?.classID;
   const sectionID = r?.sectionID ?? st?.sectionId ?? st?.sectionID;
@@ -3670,7 +3723,7 @@ useEffect(() => {
       {tab === 'setup' && (
         <>
 
-<div className="exam-term-chips">
+<div className="exam-term-chips">{termsLoading && !terms.length && <TermChipsSkeleton />}
   {terms.map((t) => (
     <button
       key={t.id}
@@ -3686,19 +3739,21 @@ useEffect(() => {
   ))}
 </div>
           <div className="exam-action-bar">
-            <Tooltip text={!canExamCreate ? 'You do not have permission to create exams' : (!terms.length ? 'There is no term against this — add a term from Academics' : 'Create a new exam for this term')}>
+            <Tooltip text={!canExamCreate ? 'You do not have permission to create exams' : (termsLoading ? 'Loading terms…' : (!terms.length ? 'There is no term against this — add a term from Academics' : 'Create a new exam for this term'))}>
               <button className="exam-add-btn"
                 onClick={() => {
                   if (isOtherSession) { toast('Method not allowed', 'error'); return; }
                   // Term na ho to disable ke bajaye clickable rakhte hain taake toast dikhe.
+                  if (termsLoading) { toast('Terms are still loading, please wait.', 'info'); return; }
                   if (!terms.length) { toast('There is no term soo to Add Exam Please add a term from Academics.', 'error'); return; }
                   openAdd();
                 }}
                 disabled={isOtherSession || !canExamCreate}
                 title={!canExamCreate ? 'You do not have permission to create exams'
                      : isOtherSession ? 'Editing is only allowed for the current session'
+                     : termsLoading ? 'Loading terms…'
                      : !terms.length ? 'There is no term soo to Add Exam Please add a term from Academics' : undefined}
-                style={(isOtherSession || !terms.length || !canExamCreate) ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
+                style={(isOtherSession || termsLoading || !terms.length || !canExamCreate) ? { opacity: .45, cursor: 'not-allowed' } : undefined}>
                 <i className="fa-solid fa-plus"></i> Add Exam
               </button>
             </Tooltip>
@@ -3869,7 +3924,7 @@ useEffect(() => {
       {/* ── Date Sheet ── */}
    {tab === 'datesheet' && (
   <>
-    <div className="exam-term-chips">
+    <div className="exam-term-chips">{termsLoading && !terms.length && <TermChipsSkeleton />}
       {terms.map(t => (
         <button
           key={t.id}
@@ -4090,7 +4145,7 @@ useEffect(() => {
       {/* ── Syllabus ── */}
       {tab === 'syllabus' && (
         <>
-          <div className="exam-term-chips">
+          <div className="exam-term-chips">{termsLoading && !terms.length && <TermChipsSkeleton />}
  {terms.map(t => (
                <button
           key={t.id}
@@ -4699,7 +4754,7 @@ const resPickExam = async (id) => {
   return (
     <>
       {/* Term chips — API se */}
-      <div className="exam-term-chips">
+      <div className="exam-term-chips">{termsLoading && !terms.length && <TermChipsSkeleton />}
         {terms.map(t => (
           <button
             key={t.id}
@@ -4858,7 +4913,7 @@ setResTotalMarksCtx({
                         className="res-download-btn"
                         onClick={e => {
                           e.stopPropagation();
-                          loadCardOptions();
+                          loadCardOptions(true);
                           setBulkCardCtx({
                             classID: cls.classID,
                             sectionID: cls.sectionID,
@@ -5039,7 +5094,7 @@ onClick={async () => {
             <Tooltip text="View this student's result card">
               <button
                 className="res-action-btn view"
-                onClick={() => { setResCardMarks(null); loadCardOptions(); setResCardCtx({ examId: resExamId, key, studentId: st.id, className, classID: cls.classID, sectionID: cls.sectionID, selectExam: resCurrentExam?.selectExam || 0, termID: selectedTermId, student: st }); }}
+                onClick={() => { setResCardMarks(null); loadCardOptions(true); setResCardCtx({ examId: resExamId, key, studentId: st.id, className, classID: cls.classID, sectionID: cls.sectionID, selectExam: resCurrentExam?.selectExam || 0, termID: selectedTermId, student: st }); }}
               >
                 <i className="fa-solid fa-eye"></i> Card
               </button>
@@ -5223,7 +5278,7 @@ onClick={async () => {
                                       className="res-download-btn"
                                       onClick={async e => {
                                         e.stopPropagation();
-                                        loadCardOptions();
+                                        loadCardOptions(true);
                                         // Main exam ka term resolve karo (jaise single combined card karta hai)
                                         let pool = cbrAllExams;
                                         if (!pool.length) pool = await loadAllTermExams();
@@ -5329,7 +5384,7 @@ onClick={async () => {
                                                     <Tooltip text="View combined result card">
                                                       <button
                                                         className="res-action-btn view"
-                                                        onClick={() => { setCbrCardMarks(null); loadCardOptions(); setCbrCardCtx({ groupId: grp.name, classId: cr.id, studentRollNo: st.rollNo }); }}
+                                                        onClick={() => { setCbrCardMarks(null); loadCardOptions(true); setCbrCardCtx({ groupId: grp.name, classId: cr.id, studentRollNo: st.rollNo }); }}
                                                       >
                                                         <i className="fa-solid fa-eye"></i> Card
                                                       </button>
@@ -5628,7 +5683,7 @@ onClick={async () => {
                                       <Tooltip text="View result card">
                                         <button
                                           className="res-action-btn view"
-                                          onClick={() => { setRhCardMarks(null); loadCardOptions(); setRhCardCtx({ student: st, result: r }); }}
+                                          onClick={() => { setRhCardMarks(null); loadCardOptions(true); setRhCardCtx({ student: st, result: r }); }}
                                           style={{ padding: '6px 11px', fontSize: 11 }}
                                         >
                                           <i className="fa-solid fa-eye"></i> View
@@ -8852,7 +8907,10 @@ function ClassicResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
   (st.absentSubjects || []).forEach(s => { absentSet[s] = true; });
 
   const useZeroMode = rsAbsentMode === 'zero';
-  const subjects = (rd.subjects && rd.subjects.length ? rd.subjects : RES_SUBJECTS).slice(0, 10);
+  // Student ke jitne subjects hain SAB dikhao. Pehle yahan .slice(0, 10) tha, is liye
+  // 20/30 subjects wale students ke result card par sirf pehle 10 rows aate the (aur
+  // Grand Total / overall % bhi unhi 10 par bante the).
+  const subjects = (rd.subjects && rd.subjects.length ? rd.subjects : RES_SUBJECTS);
 
   const totalAll = subjects.reduce((a, s) => (useZeroMode || !absentSet[s]) ? a + (rd.totalMarks[s] ?? 20) : a, 0);
   const obtAll   = subjects.reduce((a, s) => absentSet[s] ? a : a + (st.obtained[s] || 0), 0);
@@ -9183,7 +9241,10 @@ function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
   (st.absentSubjects || []).forEach(s => { absentSet[s] = true; });
 
   const useZeroMode = rsAbsentMode === 'zero';
-  const subjects = (rd.subjects && rd.subjects.length ? rd.subjects : RES_SUBJECTS).slice(0, 10);
+  // Student ke jitne subjects hain SAB dikhao. Pehle yahan .slice(0, 10) tha, is liye
+  // 20/30 subjects wale students ke result card par sirf pehle 10 rows aate the (aur
+  // Grand Total / overall % bhi unhi 10 par bante the).
+  const subjects = (rd.subjects && rd.subjects.length ? rd.subjects : RES_SUBJECTS);
   const totalAll = subjects.reduce((a, s) => (useZeroMode || !absentSet[s]) ? a + (rd.totalMarks[s] ?? 20) : a, 0);
   const obtAll   = subjects.reduce((a, s) => absentSet[s] ? a : a + (st.obtained[s] || 0), 0);
   const ovPct    = isCombined ? cb.ovPct : (totalAll ? Math.min(100, Math.round((obtAll / totalAll) * 10000) / 100) : 0);
@@ -9432,7 +9493,10 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
   (st.absentSubjects || []).forEach(s => { absentSet[s] = true; });
 
   const useZeroMode = rsAbsentMode === 'zero';
-  const subjects = (rd.subjects && rd.subjects.length ? rd.subjects : RES_SUBJECTS).slice(0, 10);
+  // Student ke jitne subjects hain SAB dikhao. Pehle yahan .slice(0, 10) tha, is liye
+  // 20/30 subjects wale students ke result card par sirf pehle 10 rows aate the (aur
+  // Grand Total / overall % bhi unhi 10 par bante the).
+  const subjects = (rd.subjects && rd.subjects.length ? rd.subjects : RES_SUBJECTS);
   const totalAll = subjects.reduce((a, s) => (useZeroMode || !absentSet[s]) ? a + (rd.totalMarks[s] ?? 20) : a, 0);
   const obtAll   = subjects.reduce((a, s) => absentSet[s] ? a : a + (st.obtained[s] || 0), 0);
   const ovPct    = isCombined ? cb.ovPct : (totalAll ? Math.min(100, Math.round((obtAll / totalAll) * 10000) / 100) : 0);
@@ -12293,6 +12357,10 @@ html,body{background:#fff;font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-
 @media print{
   body{-webkit-print-color-adjust:exact;print-color-adjust:exact}
   .no-print{display:none!important}
+  /* Subject list ab poori aati hai (10 ki limit hat gayi) — lambi table agle page par
+     saaf jaye: header har page par repeat ho, koi row beech se na kate. */
+  thead{display:table-header-group}
+  tr{break-inside:avoid;page-break-inside:avoid}
 }
 .wrap{width:100%;max-width:210mm;margin:0 auto}
 .print-bar{text-align:center;padding:14px;background:#F8FAFF;border-top:1px solid #BFDBFE;margin-top:10px}
@@ -12531,7 +12599,8 @@ function BulkCardModal({ ctx, template, school, grades, remarks = [], rcoGeneral
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{background:#fff;font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif;color:#0F172A}
 @page{size:A4 portrait;margin:12mm}
-@media print{ body{-webkit-print-color-adjust:exact;print-color-adjust:exact} .no-print{display:none!important} }
+@media print{ body{-webkit-print-color-adjust:exact;print-color-adjust:exact} .no-print{display:none!important}
+  thead{display:table-header-group} tr{break-inside:avoid;page-break-inside:avoid} }
 .bulk-card{max-width:210mm;margin:0 auto 18px;page-break-after:always}
 .bulk-card:last-child{page-break-after:auto}
 .print-bar{text-align:center;padding:14px;background:#F8FAFF;border-top:1px solid #BFDBFE}
@@ -12707,7 +12776,8 @@ function BulkCombinedCardModal({ grp, termID, template, school, grades, remarks 
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{background:#fff;font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif;color:#0F172A}
 @page{size:A4 portrait;margin:12mm}
-@media print{ body{-webkit-print-color-adjust:exact;print-color-adjust:exact} .no-print{display:none!important} }
+@media print{ body{-webkit-print-color-adjust:exact;print-color-adjust:exact} .no-print{display:none!important}
+  thead{display:table-header-group} tr{break-inside:avoid;page-break-inside:avoid} }
 .bulk-card{max-width:210mm;margin:0 auto 18px;page-break-after:always}
 .bulk-card:last-child{page-break-after:auto}
 .print-bar{text-align:center;padding:14px;background:#F8FAFF;border-top:1px solid #BFDBFE}
@@ -14320,6 +14390,14 @@ const EXAM_CSS = `
   border-color:#93C5FD; color:#1E40AF; font-weight:700;
   box-shadow:0 2px 8px rgba(30,58,138,.12);
 }
+/* Terms load hone tak chips ki jagah shimmer placeholder */
+.exam-term-chip.skel {
+  width:92px; height:31px; padding:0; cursor:default; pointer-events:none;
+  border-color:var(--border-light);
+  background:linear-gradient(90deg,var(--bg-muted) 25%,var(--bg-card) 50%,var(--bg-muted) 75%);
+  background-size:200% 100%; animation:examChipSkel 1.2s linear infinite;
+}
+@keyframes examChipSkel { from { background-position:200% 0; } to { background-position:-200% 0; } }
 
 /* Export buttons (PDF / Word) — copied verbatim from Academics shared sheet
    so the colors load even when Academics module isn't mounted */
