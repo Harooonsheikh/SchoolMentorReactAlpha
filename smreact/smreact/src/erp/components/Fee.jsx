@@ -91,18 +91,16 @@ const fmtDMY = (value) => {
   return `${d}/${m}/${y}`;
 };
 
-/* Synthesise a Pakistani-format contact number from the registration
-   number (deterministic — same reg always yields the same phone). The
-   mock dataset doesn't ship a `phone` field, so callers either use the
-   real student.phone when present, or fall back to this helper. */
+/* Student module wala real contact. Pehle fake number reg se banaya jaata tha
+   (0300-…reg) — Defaulter list me galat contact dikhta tha. Ab sirf asli
+   phone/mobile; na ho to "—". */
 const studentPhone = (s) => {
-  if (s && s.phone) return s.phone;
-  if (!s || !s.reg) return '—';
-  const digits = String(s.reg).replace(/[^0-9]/g, '').slice(-7).padStart(7, '0');
-  const prefixes = ['0300', '0321', '0333', '0345', '0301', '0322', '0344'];
-  let h = 5381;
-  for (let i = 0; i < digits.length; i++) h = ((h << 5) + h + digits.charCodeAt(i)) >>> 0;
-  return `${prefixes[h % prefixes.length]}-${digits}`;
+  if (!s) return '—';
+  const raw = s.phone || s.mobile || s.contactNumber || s.contact
+    || s._raw?.mobileNo || s._raw?.mobile || s._raw?.phone
+    || s._raw?.contactNumber || s._raw?.guardianContact || '';
+  const v = String(raw || '').trim();
+  return v || '—';
 };
 
 /* Current local time in 24-hour HH:MM — used to stamp every new receipt
@@ -2301,7 +2299,7 @@ function FeeChallansList({ toast }) {
         const reg = loc ? loc.reg : String(ch.registrationNumber || '');
         const k = `${classKey}|${reg}|${mIdx}`;
         set.add(k);
-        map[k] = ch;
+        map[k] = feeService.withPersistedGiveDisc(ch);
       });
       setGenSet(set);
       setChallanMap(map);
@@ -3907,9 +3905,34 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
       chRecv[n] = (chRecv[n] || 0) + (+r.receivedAmount || 0);
     });
     /* Pehli receiving me Give Discount ON tha to Transaction Details / partial
-       reopen par column wapas dikhao; viewOnly me amounts bhi seed karo. */
+       reopen par column wapas dikhao; viewOnly me amounts bhi seed karo.
+       Server paymentMethod|#GD# marker + challan._giveDisc (logout/login safe). */
     const histGive = {};
-    let priorGive = false;
+    let priorGive = !!(cfg.challan?._isReceivingGive);
+    Object.entries(cfg.challan?._giveDisc || {}).forEach(([n, v]) => {
+      const g = Math.max(0, +v || 0);
+      if (!g) return;
+      histGive[n] = (histGive[n] || 0) + g;
+      priorGive = true;
+    });
+    if (!priorGive && cfg.challan?.paymentMethod) {
+      const parsed = feeService.parseGiveDiscFromPaymentMethod(cfg.challan.paymentMethod);
+      Object.entries(parsed.giveDisc || {}).forEach(([n, v]) => {
+        const g = Math.max(0, +v || 0);
+        if (!g) return;
+        histGive[n] = (histGive[n] || 0) + g;
+        priorGive = true;
+      });
+    }
+    if (!priorGive && cfg.challan?.id) {
+      const stored = feeService.getStoredGiveDisc(cfg.challan.id);
+      Object.entries(stored?.giveDisc || {}).forEach(([n, v]) => {
+        const g = Math.max(0, +v || 0);
+        if (!g) return;
+        histGive[n] = (histGive[n] || 0) + g;
+        priorGive = true;
+      });
+    }
     (cfg.payments || []).forEach(p => {
       if (p.isReceiving) priorGive = true;
       Object.entries(p.giveDisc || {}).forEach(([n, v]) => {
@@ -5358,8 +5381,15 @@ function recStudentModel({ student, headsForClass, generated, classDisc, payment
     if (!p?.giveDisc) return sum;
     return sum + Object.values(p.giveDisc).reduce((a, v) => a + Math.max(0, +v || 0), 0);
   }, 0);
+  if (giveFromPays <= 0 && challan?._giveDisc) {
+    giveFromPays = Object.values(challan._giveDisc).reduce((a, v) => a + Math.max(0, +v || 0), 0);
+  }
   if (giveFromPays <= 0 && challan?.id) {
     giveFromPays = feeService.getStoredGiveDiscTotal(challan.id) || 0;
+  }
+  if (giveFromPays <= 0 && challan?.paymentMethod) {
+    const parsed = feeService.parseGiveDiscFromPaymentMethod(challan.paymentMethod);
+    giveFromPays = Object.values(parsed.giveDisc || {}).reduce((a, v) => a + Math.max(0, +v || 0), 0);
   }
   if (giveFromPays > 0) {
     const remNo = (Math.max(0, prev + thisMonth - disc - advance) + billedFine) - paid;
@@ -5501,7 +5531,9 @@ function FeeReceivingIndividual({ toast }) {
         const reg = loc ? loc.reg : String(ch.registrationNumber || '');
         const k = `${classKey}|${reg}|${mIdx}`;
         set.add(k);
-        map[k] = ch;
+        /* paymentMethod|#GD#… se Give Discount wapas fold — logout/login/device
+           change par bhi Remaining/Discount sahi. */
+        map[k] = feeService.withPersistedGiveDisc(ch);
       });
       setGenSet(set);
       setChallanMap(map);
@@ -5541,18 +5573,20 @@ function FeeReceivingIndividual({ toast }) {
   const paymentsFor = useCallback((classKey, reg) => {
     const r = receiptsList.find(x => x.classKey === classKey && x.reg === reg && x.monthIdx === monthIdx);
     const payments = r ? [...r.payments] : [];
-    /* Tab switch / remount: session receipts gayab — localStorage se Give Discount
-       wapas inject karo taake list + Transaction Details column sahi rahe. */
+    /* Server marker / localStorage se Give Discount inject — checkbox ON + amounts. */
     const challan = challanMap[keyOf(classKey, reg)];
-    const stored = challan?.id ? feeService.getStoredGiveDisc(challan.id) : null;
-    if (stored?.isReceiving && stored.giveDisc) {
+    const giveDisc = (challan?._giveDisc && Object.keys(challan._giveDisc).length)
+      ? challan._giveDisc
+      : (challan?.id ? (feeService.getStoredGiveDisc(challan.id)?.giveDisc || null) : null);
+    const on = !!(challan?._isReceivingGive || (giveDisc && Object.keys(giveDisc).length));
+    if (on && giveDisc) {
       const already = payments.some(p => p.isReceiving && p.giveDisc
         && Object.keys(p.giveDisc).some(k => Number(p.giveDisc[k]) > 0));
       if (!already) {
         payments.push({
-          id: `stored-give-${challan.id}`,
+          id: `stored-give-${challan.id || 'x'}`,
           date: '', amount: 0, perHead: {},
-          isReceiving: true, giveDisc: { ...stored.giveDisc },
+          isReceiving: true, giveDisc: { ...giveDisc },
           source: 'counter',
         });
       }
@@ -5753,23 +5787,45 @@ function FeeReceivingIndividual({ toast }) {
       detailRows = feeService.withNewHeadRows(detailRows, payload.newHeads, {
         ledgerId: rec.id, branchId: rec.branchID ?? rec.branchId, userId: userID, now,
       });
-      /* API discount ignore kare to bhi tab-switch / reload par Remaining 0 rahe. */
+      /* API discount ignore kare to bhi tab-switch / reload / logout-login
+         par Remaining 0 rahe — paymentMethod me Give Discount marker persist. */
+      const prevGive = {
+        ...(feeService.parseGiveDiscFromPaymentMethod(rec._paymentMethodRaw || rec.paymentMethod).giveDisc || {}),
+        ...(feeService.getStoredGiveDisc(rec.id)?.giveDisc || {}),
+        ...(rec._giveDisc || {}),
+      };
+      const mergedGive = { ...prevGive };
       if (payload.isReceiving && payload.giveDisc) {
+        Object.entries(payload.giveDisc).forEach(([k, v]) => {
+          const n = Math.max(0, +v || 0);
+          if (n > 0) mergedGive[k] = (mergedGive[k] || 0) + n;
+        });
         feeService.saveStoredGiveDisc(rec.id, payload.giveDisc, true);
       }
+      const payMethodForApi = feeService.encodePaymentMethodWithGiveDisc(
+        payload.method || '',
+        mergedGive,
+        Object.keys(mergedGive).length > 0,
+      );
       feeService.receivePayment({
         ledgerId: rec.id,
-        paymentMethod: payload.method || '',
+        paymentMethod: payMethodForApi,
         /* Cashier ki chuni hui RECEIVING DATE — server ke "aaj" par mat chhoro,
            warna back-date receiving reports me ghalat din par aati hai. */
         receivedDate: payload.date || '',
         modifiedBy: userID,
-        isReceiving: !!payload.isReceiving,
+        isReceiving: !!payload.isReceiving || Object.keys(mergedGive).length > 0,
         detailRows,
       })
         .then(() => loadChallans())
         .catch(e => toast(e.message || 'Could not record payment', 'error'));
-      slipChallan = { ...rec, detailRows };
+      slipChallan = feeService.withPersistedGiveDisc({
+        ...rec,
+        detailRows,
+        paymentMethod: payMethodForApi,
+        _giveDisc: mergedGive,
+        _isReceivingGive: Object.keys(mergedGive).length > 0,
+      });
       /* Optimistic: Transaction Details / list turant naya discount + received dikhayein
          (API discount ignore kare to bhi local map sahi rahe). */
       setChallanMap(prev => ({ ...prev, [keyOf(payload.classKey, payload.reg)]: slipChallan }));
@@ -6247,27 +6303,6 @@ function FamilyTreeReceiving({ toast }) {
   const receiptsList = useMemo(() => receipts || [], [receipts]);
 
   const monthIdx = FEE_MONTHS.indexOf(appliedMonth);
-  const paymentsFor = useCallback((famKey, reg) => {
-    const r = receiptsList.find(x => x.famKey === famKey && x.reg === reg && x.monthIdx === monthIdx);
-    const payments = r ? [...r.payments] : [];
-    /* Tab switch / remount: session receipts gayab — localStorage se Give Discount
-       wapas inject karo taake list + Transaction Details column sahi rahe. */
-    const rec = ledgerRecRef.current[`${famKey}|${reg}`];
-    const stored = rec?.id ? feeService.getStoredGiveDisc(rec.id) : null;
-    if (stored?.isReceiving && stored.giveDisc) {
-      const already = payments.some(p => p.isReceiving && p.giveDisc
-        && Object.keys(p.giveDisc).some(k => Number(p.giveDisc[k]) > 0));
-      if (!already) {
-        payments.push({
-          id: `stored-give-${rec.id}`,
-          date: '', amount: 0, perHead: {},
-          isReceiving: true, giveDisc: { ...stored.giveDisc },
-          source: 'counter',
-        });
-      }
-    }
-    return payments;
-  }, [receiptsList, monthIdx]);
 
   /* Ledger record (challan id + detailRows) per child, keyed by `${famKey}|${reg}`.
      Filled when a receive/bulk modal is opened; used to POST receive-payment. */
@@ -6281,12 +6316,39 @@ function FamilyTreeReceiving({ toast }) {
      Individual tab jaisa: stored "Previous Pending" snapshot stale ho jaata hai jab
      pichhle mahine ki fee baad me receive ho, is liye carry-forward yahan se lete hain. */
   const [prevOutMap, setPrevOutMap] = useState({});
+
+  const paymentsFor = useCallback((famKey, reg) => {
+    const r = receiptsList.find(x => x.famKey === famKey && x.reg === reg && x.monthIdx === monthIdx);
+    const payments = r ? [...r.payments] : [];
+    /* Server marker / localStorage se Give Discount — checkbox ON rahe. */
+    const rec = ledgerRecRef.current[`${famKey}|${reg}`]
+      || Object.values(challanByStudent || {}).find(c => String(c?.registrationNumber || '') === String(reg))
+      || null;
+    const giveDisc = (rec?._giveDisc && Object.keys(rec._giveDisc).length)
+      ? rec._giveDisc
+      : (rec?.id ? (feeService.getStoredGiveDisc(rec.id)?.giveDisc || null) : null);
+    const on = !!(rec?._isReceivingGive || (giveDisc && Object.keys(giveDisc).length));
+    if (on && giveDisc) {
+      const already = payments.some(p => p.isReceiving && p.giveDisc
+        && Object.keys(p.giveDisc).some(k => Number(p.giveDisc[k]) > 0));
+      if (!already) {
+        payments.push({
+          id: `stored-give-${rec.id || 'x'}`,
+          date: '', amount: 0, perHead: {},
+          isReceiving: true, giveDisc: { ...giveDisc },
+          source: 'counter',
+        });
+      }
+    }
+    return payments;
+  }, [receiptsList, monthIdx, challanByStudent]);
+
   const loadFamilyChallans = useCallback(async () => {
     const mIdx = FEE_MONTHS.indexOf(appliedMonth);
     try {
       const rows = await feeService.getMonthChallans(mIdx + 1, appliedYear);
       const map = {};
-      rows.forEach(ch => { map[String(ch.studentID)] = ch; });
+      rows.forEach(ch => { map[String(ch.studentID)] = feeService.withPersistedGiveDisc(ch); });
       setChallanByStudent(map);
 
       /* Pichhle mahino ka live baqaya (running-ledger) — October me September ki
@@ -6371,7 +6433,8 @@ function FamilyTreeReceiving({ toast }) {
     if (ch.applicantsID != null) {
       try {
         const rows = await feeService.getStudentChallans(ch.applicantsID, monthIdx + 1, appliedYear);
-        const rec = Array.isArray(rows) && rows.length ? rows[0] : null;
+        const raw = Array.isArray(rows) && rows.length ? rows[0] : null;
+        const rec = raw ? feeService.withPersistedGiveDisc(raw) : null;
         if (rec) {
           const fig = famFigWithPrev(rec, prevOutMap[String(ch.applicantsID)] || null);
           child = {
@@ -6556,22 +6619,44 @@ function FamilyTreeReceiving({ toast }) {
       detailRows = feeService.withNewHeadRows(detailRows, payload.newHeads, {
         ledgerId: rec.id, branchId: rec.branchID ?? rec.branchId, userId: userID, now,
       });
-      /* API discount ignore kare to bhi tab-switch / reload par Remaining 0 rahe. */
+      /* API discount ignore kare to bhi tab-switch / reload / logout-login
+         par Remaining 0 rahe — paymentMethod me Give Discount marker persist. */
+      const prevGive = {
+        ...(feeService.parseGiveDiscFromPaymentMethod(rec._paymentMethodRaw || rec.paymentMethod).giveDisc || {}),
+        ...(feeService.getStoredGiveDisc(rec.id)?.giveDisc || {}),
+        ...(rec._giveDisc || {}),
+      };
+      const mergedGive = { ...prevGive };
       if (payload.isReceiving && payload.giveDisc) {
+        Object.entries(payload.giveDisc).forEach(([k, v]) => {
+          const n = Math.max(0, +v || 0);
+          if (n > 0) mergedGive[k] = (mergedGive[k] || 0) + n;
+        });
         feeService.saveStoredGiveDisc(rec.id, payload.giveDisc, true);
       }
+      const payMethodForApi = feeService.encodePaymentMethodWithGiveDisc(
+        payload.method || '',
+        mergedGive,
+        Object.keys(mergedGive).length > 0,
+      );
       feeService.receivePayment({
         ledgerId: rec.id,
-        paymentMethod: payload.method || '',
+        paymentMethod: payMethodForApi,
         /* Cashier ki chuni hui RECEIVING DATE — dekho handleSaveReceipt. */
         receivedDate: payload.date || '',
         modifiedBy: userID,
-        isReceiving: !!payload.isReceiving,
+        isReceiving: !!payload.isReceiving || Object.keys(mergedGive).length > 0,
         detailRows,
       })
         .then(() => loadFamilyChallans())   // refresh list so status persists
         .catch(e => toast(e.message || 'Could not record payment', 'error'));
-      slipChallan = { ...rec, detailRows };
+      slipChallan = feeService.withPersistedGiveDisc({
+        ...rec,
+        detailRows,
+        paymentMethod: payMethodForApi,
+        _giveDisc: mergedGive,
+        _isReceivingGive: Object.keys(mergedGive).length > 0,
+      });
       ledgerRecRef.current[`${payload.famKey}|${payload.reg}`] = slipChallan;
       if (receiveCtx?.student?.applicantsID != null) {
         setChallanByStudent(prev => ({
@@ -8093,33 +8178,10 @@ function buildStudentHistory({ recs, fromIdx, toIdx, year, empNames = {}, settin
   for (let m = fromIdx; m <= toIdx; m++) {
     const rec = byMonth.get(m);
     if (!rec) continue;
-    /* Give Discount (receiving-time) backend kabhi-kabhi detailRows.discount
-       me persist nahi karta. Is liye localStorage se saved giveDisc ko
-       overlay karke History / Ledger Summary me discount + pending sahi
-       reflect karte hain. */
-    const rows0 = rec.detailRows || [];
-    let rows = rows0;
-    if (rec?.id) {
-      const stored = feeService.getStoredGiveDisc(rec.id);
-      const giveDisc = stored?.giveDisc || null;
-      if (giveDisc && typeof giveDisc === 'object' && Object.keys(giveDisc).length) {
-        const normMap = {};
-        Object.entries(giveDisc).forEach(([k, v]) => {
-          const key = String(k || '').trim().toLowerCase();
-          if (!key) return;
-          const amt = Math.max(0, +v || 0);
-          if (amt > 0) normMap[key] = (normMap[key] || 0) + amt;
-        });
-        if (Object.keys(normMap).length) {
-          rows = rows0.map(r => {
-            const head = String(r.subHead || r.head || '').trim().toLowerCase();
-            const extra = normMap[head] || 0;
-            if (!extra) return r;
-            return { ...r, discount: (+r.discount || 0) + extra };
-          });
-        }
-      }
-    }
+    /* Give Discount server marker / local cache se detailRows par fold
+       (withPersistedGiveDisc) — History/Ledger Summary me Discount sahi. */
+    const applied = feeService.withPersistedGiveDisc(rec);
+    const rows = applied.detailRows || [];
 
     const carrySigned = rows.filter(isPrevRow)
       .reduce((a, r) => a + ((+r.challanAmount || 0) - (+r.discount || 0)), 0);   // advance → negative
@@ -8326,7 +8388,12 @@ function FeeHistoryTab({ toast }) {
     setLoading(true);
     setError(null);
     feeService.getLedgerRange(f, appliedYear, Math.max(f, t), appliedYear)
-      .then(rows => { if (alive) { setRecords(Array.isArray(rows) ? rows : []); setLoading(false); } })
+      .then(rows => {
+        if (!alive) return;
+        const list = (Array.isArray(rows) ? rows : []).map(r => feeService.withPersistedGiveDisc(r));
+        setRecords(list);
+        setLoading(false);
+      })
       .catch(e => { if (alive) { setRecords([]); setError(e.message || 'Could not load fee history'); setLoading(false); } });
     return () => { alive = false; };
   }, [seg, appliedFrom, appliedTo, appliedYear]);

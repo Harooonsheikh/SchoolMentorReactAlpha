@@ -202,6 +202,13 @@ async function fetchFeeClassStudentsUncached(branchID) {
           reg,
           name: fullName || '-',
           father: pick(st, 'fatherName', 'guardianName') || '-',
+          /* Student module jaisa contact — Defaulter report / reminders isi se. */
+          phone: String(
+            pick(st, 'mobileNo', 'mobile', 'phone', 'contactNumber', 'contactNo', 'guardianContact', 'fatherMobile', 'parentMobile') || ''
+          ).trim(),
+          mobile: String(
+            pick(st, 'mobileNo', 'mobile', 'phone', 'contactNumber', 'contactNo') || ''
+          ).trim(),
           route: pick(st, 'route', 'transportRoute', 'area', 'transportArea') || '',
           transport: Number(pick(st, 'transportFee', 'transportFeeAmount', 'transportAmount', 'transport')) || 0,
           dues: Number(pick(st, 'dues', 'pendingDues')) || 0,
@@ -1611,7 +1618,110 @@ export async function receivePayment(body) {
   return json;
 }
 
-/* ── Give Discount local persist ───────────────────────────────────────
+/* ── Give Discount SERVER persist (paymentMethod marker) ───────────────
+   Backend aksar detailRows.discount me receiving-time give nahi rakhta, aur
+   localStorage logout/login + dusre device par gayab. paymentMethod string
+   receive-payment se persist hoti hai — us me compact marker chipka dete hain:
+     Cash|#GD#Admission%20Fee=133;Others=30
+   UI/reports sirf clean method dikhate hain; reload par marker se giveDisc
+   wapas milta hai (mobile/laptop/kisi bhi login par). */
+const GD_MARK = '|#GD#';
+
+export function paymentMethodDisplay(raw) {
+  const s = String(raw || 'Cash');
+  const i = s.indexOf(GD_MARK);
+  return (i >= 0 ? s.slice(0, i) : s).trim() || 'Cash';
+}
+
+export function parseGiveDiscFromPaymentMethod(raw) {
+  const s = String(raw || '');
+  const i = s.indexOf(GD_MARK);
+  if (i < 0) return { method: s.trim() || 'Cash', giveDisc: {}, isReceiving: false };
+  const method = (s.slice(0, i).trim() || 'Cash');
+  const giveDisc = {};
+  String(s.slice(i + GD_MARK.length) || '').split(';').forEach(pair => {
+    if (!pair) return;
+    const eq = pair.indexOf('=');
+    if (eq < 0) return;
+    let name = pair.slice(0, eq);
+    try { name = decodeURIComponent(name); } catch { /* keep raw */ }
+    const amt = Math.max(0, Math.round(+pair.slice(eq + 1) || 0));
+    if (name && amt > 0) giveDisc[name] = (giveDisc[name] || 0) + amt;
+  });
+  return { method, giveDisc, isReceiving: Object.keys(giveDisc).length > 0 };
+}
+
+export function encodePaymentMethodWithGiveDisc(method, giveDisc, isReceiving = true) {
+  const base = paymentMethodDisplay(method);
+  if (!isReceiving) return base;
+  const parts = [];
+  Object.entries(giveDisc || {}).forEach(([k, v]) => {
+    const amt = Math.max(0, Math.round(+v || 0));
+    if (!k || amt <= 0) return;
+    parts.push(`${encodeURIComponent(String(k))}=${amt}`);
+  });
+  if (!parts.length) return base;
+  return `${base}${GD_MARK}${parts.join(';')}`;
+}
+
+/** Challan reload par Give Discount ko detailRows.discount me fold karo
+    (agar pehle se fold na ho). paymentMethod marker + localStorage dono se. */
+export function withPersistedGiveDisc(rec) {
+  if (!rec) return rec;
+  const fromPm = parseGiveDiscFromPaymentMethod(rec.paymentMethod);
+  const fromStore = getStoredGiveDisc(rec.id)?.giveDisc || {};
+  const giveDisc = { ...fromStore, ...fromPm.giveDisc };
+  const cleanMethod = fromPm.method || paymentMethodDisplay(rec.paymentMethod);
+  const keys = Object.keys(giveDisc);
+  if (!keys.length) {
+    return rec.paymentMethod === cleanMethod
+      ? rec
+      : { ...rec, paymentMethod: cleanMethod, _giveDisc: {}, _isReceivingGive: false };
+  }
+  const norm = (s) => String(s || '').trim().toLowerCase();
+  const byHead = {};
+  keys.forEach(k => { byHead[norm(k)] = (byHead[norm(k)] || 0) + Math.max(0, +giveDisc[k] || 0); });
+
+  const rows0 = Array.isArray(rec.detailRows) ? rec.detailRows : [];
+  /* Fold detect: agar current discount ke sath remaining pehle se ~0 hai to
+     give pehle se disc me hai — dobara na jodo. */
+  let remNo = 0;
+  let remWith = 0;
+  rows0.forEach(r => {
+    if (isLateFineRow(r)) return;
+    const amt = +r.challanAmount || 0;
+    const disc = +r.discount || 0;
+    const hp = +r.previousPendingorAdv || +r.previousPendingOrAdv || 0;
+    const recv = +r.receivedAmount || 0;
+    const extra = byHead[norm(r.subHead || r.head)] || 0;
+    remNo += (amt - disc + hp) - recv;
+    remWith += (amt - disc - extra + hp) - recv;
+  });
+  const alreadyFolded = Math.abs(remNo) <= Math.abs(remWith);
+  const detailRows = alreadyFolded
+    ? rows0
+    : rows0.map(r => {
+        const extra = byHead[norm(r.subHead || r.head)] || 0;
+        if (!extra) return r;
+        const discount = (+r.discount || 0) + extra;
+        const hp = +r.previousPendingorAdv || +r.previousPendingOrAdv || 0;
+        const net = (+r.challanAmount || 0) - discount + hp;
+        const received = +r.receivedAmount || 0;
+        return { ...r, discount, pendingorAdv: net - received };
+      });
+
+  return {
+    ...rec,
+    paymentMethod: cleanMethod,
+    /* Raw method (with |#GD#…) — next save me marker wapas encode karne ke liye. */
+    _paymentMethodRaw: String(rec._paymentMethodRaw || rec.paymentMethod || ''),
+    detailRows,
+    _giveDisc: giveDisc,
+    _isReceivingGive: true,
+  };
+}
+
+/* ── Give Discount local persist (same-browser cache; server marker primary) ─
    Backend receive-payment aksar detailRows.discount me receiving-time give
    ko wapas nahi rakhta. Session receipts bhi mock/empty hain — tab switch
    par React remount se giveDisc gayab → list Remaining wapas aa jati.
