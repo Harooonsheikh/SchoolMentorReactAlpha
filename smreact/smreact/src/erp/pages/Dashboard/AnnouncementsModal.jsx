@@ -11,8 +11,26 @@ import { DASH_MODAL_CSS } from './dashModalCss';
    read" toggle that mutates the in-memory list (would be persisted
    to backend in production).
    ═══════════════════════════════════════════════════════════════════ */
-export default function AnnouncementsModal({ onClose, toast = () => {} }) {
-  const [items, setItems] = useState(SCHOOL_MENTOR_ANNOUNCEMENTS);
+function normalizeAnnouncements(list) {
+  const src = Array.isArray(list) ? list : SCHOOL_MENTOR_ANNOUNCEMENTS;
+  return src.map((a, idx) => ({
+    ...a,
+    id: a.id ?? a.ID ?? `an-${idx}`,
+    title: a.title || a.Title || 'Announcement',
+    description: a.description || a.preview || a.Body || a.body || '',
+    date: a.date || '',
+    time: a.time || '',
+    sender: a.sender || 'School Mentor — HQ',
+    category: a.category || 'General',
+    status: a.status || '',
+  }));
+}
+
+export default function AnnouncementsModal({ announcements, onClose, toast = () => {} }) {
+  const [items, setItems] = useState(() => normalizeAnnouncements(announcements));
+  useEffect(() => {
+    setItems(normalizeAnnouncements(announcements));
+  }, [announcements]);
 
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };

@@ -167,7 +167,7 @@ export default function Dashboard({
             </div>
             <div className="dash-head-s">
               {dashType === 'teacher'
-                ? `Personal dashboard scoped to ${dashUser.name.replace(/Dr\.|Mr\.|Ms\.|Mrs\./, '').trim()}'s classes`
+                ? `Personal dashboard scoped to ${(dashUser.name || 'you').replace(/Dr\.|Mr\.|Ms\.|Mrs\./, '').trim()}'s classes`
                 : `Live operations across ${schoolLabel}`}
             </div>
           </div>

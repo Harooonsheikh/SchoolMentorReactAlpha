@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import Tooltip from '../../components/Tooltip';
 import MentorAISearchBar from './MentorAISearchBar';
@@ -6,62 +6,10 @@ import { DASH_CSS } from './Dashboard';
 import { ADM_NEW_CSS } from './AdminDashboard';
 import AnnouncementsModal from './AnnouncementsModal';
 import { DASH_MODAL_CSS } from './dashModalCss';
-import {
-  TEACHER_SCOPES, MODULE_COLOR,
-  SCHOOL_MENTOR_ANNOUNCEMENTS, NOTICE_BOARD_NOTICES, PRINCIPAL_REMINDERS,
-} from './dashboardData';
+import { MODULE_COLOR } from './dashboardData';
+import * as dashboardService from '../../services/dashboardService';
 
-/* Shared mock data copied 1:1 from AdminDashboard so the Birthdays
-   and Upcoming Activities sections render identically on the Teacher
-   Dashboard. Kept inline (rather than imported from AdminDashboard)
-   so the Admin file stays untouched per the spec. When a backend
-   lands, both dashboards will read from the same service. */
-const TEACHER_DASH_STUDENT_BIRTHDAYS = [
-  { name: 'Ayaan Raza',     grade: 'Grade 2',  date: '01 May', dob: 1  },
-  { name: 'Sara Ahmed',     grade: 'Grade 5',  date: '04 May', dob: 4  },
-  { name: 'Hassan Ali',     grade: 'Grade 7',  date: '08 May', dob: 8  },
-  { name: 'Zara Khan',      grade: 'Grade 3',  date: '12 May', dob: 12 },
-  { name: 'Bilal Tariq',    grade: 'Grade 8',  date: '15 May', dob: 15 },
-  { name: 'Maha Siddiqui',  grade: 'Grade 1',  date: '18 May', dob: 18 },
-  { name: 'Usman Farooq',   grade: 'Grade 6',  date: '22 May', dob: 22 },
-  { name: 'Nadia Malik',    grade: 'Grade 4',  date: '25 May', dob: 25 },
-  { name: 'Hamza Irfan',    grade: 'Grade 9',  date: '28 May', dob: 28 },
-  { name: 'Fatima Saleem',  grade: 'Grade 10', date: '31 May', dob: 31 },
-];
-const TEACHER_DASH_TEACHER_BIRTHDAYS = [
-  { name: 'Mr. Usman Khalid',   role: 'Math Teacher',     date: '05 May', dob: 5  },
-  { name: 'Ms. Ayesha Raza',    role: 'Science Teacher',  date: '13 May', dob: 13 },
-  { name: 'Dr. Hira Noor',      role: 'English Teacher',  date: '19 May', dob: 19 },
-  { name: 'Mr. Bilal Ahmed',    role: 'HR Officer',       date: '24 May', dob: 24 },
-  { name: 'Ms. Sana Mirza',     role: 'Coordinator',      date: '30 May', dob: 30 },
-];
-const TEACHER_DASH_TODAY_DAY = 31;
-const TEACHER_DASH_ACTIVITIES = [
-  { id: 1, date: '01 Jun 2026', title: 'Final Term Exams Begin',
-    desc: 'Final term examinations start for all classes Grade 1–10.',
-    category: 'Examination',   type: 'exam',     module: 'exam',     daysAway: 1 },
-  { id: 2, date: '03 Jun 2026', title: 'PTM — All Classes',
-    desc: 'Parent-Teacher Meeting for Q3 result discussion.',
-    category: 'School Event',  type: 'event',    module: 'students', daysAway: 3 },
-  { id: 3, date: '05 Jun 2026', title: 'World Environment Day Activity',
-    desc: 'Tree plantation drive and environment awareness program.',
-    category: 'School Event',  type: 'event',    module: null,        daysAway: 5 },
-  { id: 4, date: '10 Jun 2026', title: 'Sports Day',
-    desc: 'Annual sports day with inter-house competitions.',
-    category: 'School Event',  type: 'event',    module: null,        daysAway: 10 },
-  { id: 5, date: '15 Jun 2026', title: 'Result Cards Distribution',
-    desc: 'Final term result cards distributed to parents.',
-    category: 'Examination',   type: 'exam',     module: 'exam',     daysAway: 15 },
-  { id: 6, date: '20 Jun 2026', title: 'Summer Vacation Begins',
-    desc: 'School closes for summer vacation until August 2026.',
-    category: 'Holiday',       type: 'holiday',  module: null,        daysAway: 20 },
-  { id: 7, date: '25 Jun 2026', title: 'Staff Training Day',
-    desc: 'Professional development session for all teaching staff.',
-    category: 'HR',            type: 'event',    module: 'hr',       daysAway: 25 },
-  { id: 8, date: '30 Jun 2026', title: 'Monthly Fee Deadline',
-    desc: 'Last date for submission of July 2026 fee challans.',
-    category: 'Fee',           type: 'deadline', module: 'fee',      daysAway: 30 },
-];
+const FIN_MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 const TEACHER_DASH_TYPE_COLOR = {
   exam:     { bg: 'rgba(220, 38, 38, .12)', fg: '#DC2626' },
   event:    { bg: 'rgba(30, 58, 138, .12)', fg: '#1E40AF' },
@@ -69,9 +17,42 @@ const TEACHER_DASH_TYPE_COLOR = {
   deadline: { bg: 'rgba(217, 119, 6, .14)', fg: '#D97706' },
 };
 function teacherDashInitials(name) {
-  const clean = name.replace(/Dr\.|Mr\.|Ms\.|Mrs\./g, '').trim();
+  const clean = String(name || '').replace(/Dr\.|Mr\.|Ms\.|Mrs\./g, '').trim();
   return clean.split(/\s+/).filter(Boolean).map(p => p[0]).join('').toUpperCase().slice(0, 2) || '?';
 }
+const pickA = (o, ...keys) => {
+  for (const k of keys) { const v = o?.[k]; if (v != null && v !== '') return v; }
+  return '';
+};
+const pctOf = (n, d) => (Number(d) > 0 ? Math.round((Number(n) / Number(d)) * 100) : 0);
+const isTeacherAnnounceFor = (raw) => {
+  const f = String(raw || '').trim().toLowerCase();
+  if (!f || f === '1' || f === 'all' || f === 'everyone') return true;
+  if (f === '3' || f === 'teacher' || f.includes('teacher')) return true;
+  if (f === '2' || f === 'parent' || f.includes('parent')) return false;
+  return true;
+};
+const mapAnnouncements = (list) => (Array.isArray(list) ? list : [])
+  .filter((a) => isTeacherAnnounceFor(pickA(a, 'AnnounceFor', 'announceFor', 'AnnounceForName')))
+  .map((a, idx) => {
+    const created = pickA(a, 'AnnounceDate', 'announceDate', 'date', 'Date', 'createdDate', 'CreatedDate', 'createdAt', 'CreatedAt', 'publishedDate', 'PublishedDate');
+    const dt = created ? new Date(created) : null;
+    const validDt = dt && !Number.isNaN(+dt);
+    const preview = pickA(a, 'preview', 'Preview', 'message', 'Message', 'body', 'Body', 'description', 'Description', 'detail', 'Detail', 'content', 'Content');
+    const title = pickA(a, 'title', 'Title', 'subject', 'Subject', 'heading', 'Heading', 'name', 'Name');
+    return {
+      id: pickA(a, 'id', 'ID') || `an-${idx}`,
+      sender: pickA(a, 'sender', 'Sender', 'senderName', 'SenderName', 'createdBy', 'CreatedBy', 'author', 'Author') || 'School Mentor — HQ',
+      title,
+      preview,
+      description: preview,
+      category: pickA(a, 'category', 'Category') || 'General',
+      date: validDt ? dt.toLocaleDateString('en-PK', { day: 'numeric', month: 'short', year: 'numeric' }) : (typeof created === 'string' ? created.slice(0, 10) : ''),
+      time: pickA(a, 'time', 'Time') || (validDt ? dt.toLocaleTimeString('en-PK', { hour: 'numeric', minute: '2-digit' }) : ''),
+      status: 'new',
+    };
+  })
+  .filter((a) => a.title || a.preview);
 
 /* ─── Compact circular progress ring — sits beside the "X% done" pill
    in My Performance panel headers (Lesson Plans / Notebook Plans /
@@ -134,7 +115,66 @@ const TEACHER_SEARCHABLE_MODULES = new Set([
    ═══════════════════════════════════════════════════════════════════ */
 export default function TeacherDashboard({ visibility, toast, navigate = () => {}, openActivityCalendar = () => {} }) {
   const { moduleActive, user, session } = visibility;
-  const scope = TEACHER_SCOPES[user?.id];
+
+  const [dash, setDash] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    const { month, year } = dashboardService.currentMonthYear();
+    dashboardService.getDashboard(month, year)
+      .then(d => { if (alive) setDash(d || {}); })
+      .catch(() => { if (alive) setDash({}); });
+    return () => { alive = false; };
+  }, []);
+
+  const D = dash || {};
+  const kpi = D.Kpi || {};
+  const snap = D.ModuleSnapshot || {};
+  const todaysAtt = D.TodaysAttendance || { Students: {}, Staff: {} };
+  const stuAtt = todaysAtt.Students || {};
+  const lessonPlanRows = useMemo(() => {
+    const raw = Array.isArray(D.LessonPlanAnalytics) ? D.LessonPlanAnalytics : [];
+    const byName = {};
+    raw.forEach((s) => {
+      const name = s.SubjectName || s.subjectName || '—';
+      if (!byName[name]) byName[name] = { SubjectName: name, ClassworkCount: 0, NotebookCount: 0 };
+      byName[name].ClassworkCount += Number(s.ClassworkCount) || 0;
+      byName[name].NotebookCount += Number(s.NotebookCount) || 0;
+    });
+    return Object.values(byName);
+  }, [D.LessonPlanAnalytics]);
+  const lpCwTotal = lessonPlanRows.reduce((s, r) => s + (Number(r.ClassworkCount) || 0), 0);
+  const lpNbTotal = lessonPlanRows.reduce((s, r) => s + (Number(r.NotebookCount) || 0), 0);
+  const stuPresent = Number(stuAtt.StudentPresent) || 0;
+  const stuTotal = Number(stuAtt.StudentTotal) || 0;
+  const stuAbsent = Number(stuAtt.StudentAbsent) || 0;
+  const stuLeave = Number(stuAtt.StudentLeave) || 0;
+
+  const scope = useMemo(() => ({
+    classes: lessonPlanRows.map((s, i) => ({
+      id: `sub-${i}`,
+      cls: s.SubjectName,
+      subject: s.SubjectName,
+      students: Number(s.ClassworkCount) || 0,
+      room: '',
+      classwork: Number(s.ClassworkCount) || 0,
+      notebook: Number(s.NotebookCount) || 0,
+    })),
+    todaySchedule: [],
+    scheduleByDay: {},
+    lessonPlans: { pending: 0, submitted: lpCwTotal, approved: 0 },
+    homework: { assigned: 0, pending: 0, submitted: 0 },
+    notebookPlans: { total: lpNbTotal, submitted: lpNbTotal, pending: 0 },
+    attendance: {
+      present: stuPresent,
+      absent: stuAbsent,
+      leave: stuLeave,
+      pct: pctOf(stuPresent, stuTotal),
+    },
+    appraisals: [],
+    currentExam: null,
+    pendingSyllabusUploads: null,
+    pendingMarksUploads: null,
+  }), [lessonPlanRows, lpCwTotal, lpNbTotal, stuPresent, stuTotal, stuAbsent, stuLeave]);
 
   /* Expandable list state for the three Exam-Task cards
      (now includes the Current Exam card). */
@@ -143,7 +183,7 @@ export default function TeacherDashboard({ visibility, toast, navigate = () => {
   /* Today's Schedule day selector. Default to the actual day name. */
   const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   const todayDayName = DAY_NAMES[new Date().getDay()];
-  const scheduleByDay = (scope && scope.scheduleByDay) || {};
+  const scheduleByDay = scope.scheduleByDay || {};
   const availableDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
     .filter(d => scheduleByDay[d] && scheduleByDay[d].length > 0);
   const defaultDay = availableDays.includes(todayDayName)
@@ -153,7 +193,7 @@ export default function TeacherDashboard({ visibility, toast, navigate = () => {
   const daySchedule = scheduleByDay[selectedDay] || [];
 
   /* My Appraisal selector (period). Default to most recent entry. */
-  const appraisalList = (scope && scope.appraisals) || [];
+  const appraisalList = scope.appraisals || [];
   const [selectedAppraisalId, setSelectedAppraisalId] = useState(appraisalList[0]?.id || null);
   const selectedAppraisal = appraisalList.find(a => a.id === selectedAppraisalId) || appraisalList[0] || null;
   const [birthdayTab, setBirthdayTab] = useState('all');
@@ -165,12 +205,26 @@ export default function TeacherDashboard({ visibility, toast, navigate = () => {
   const [showNoticeBoard,   setShowNoticeBoard]   = useState(false);
   const [showReminders,     setShowReminders]     = useState(false);
 
-  const latestAnnouncement     = SCHOOL_MENTOR_ANNOUNCEMENTS[0];
-  const newAnnouncementCount   = SCHOOL_MENTOR_ANNOUNCEMENTS.filter(a => a.status === 'new').length;
-  const latestNotice           = NOTICE_BOARD_NOTICES[0];
-  const newNoticeCount         = NOTICE_BOARD_NOTICES.filter(n => n.status === 'new').length;
-  const latestReminder         = PRINCIPAL_REMINDERS[0];
-  const newReminderCount       = PRINCIPAL_REMINDERS.filter(r => r.status === 'new').length;
+  const announcements = useMemo(() => mapAnnouncements(D.Announcements), [D.Announcements]);
+  const latestAnnouncement     = announcements[0];
+  const newAnnouncementCount   = announcements.filter(a => a.status === 'new').length;
+  const latestNotice           = null;
+  const newNoticeCount         = 0;
+  const latestReminder         = null;
+  const newReminderCount       = 0;
+
+  const stuBdays = Array.isArray(D.StudentBirthdays) ? D.StudentBirthdays : [];
+  const staffBdays = Array.isArray(D.StaffBirthdays) ? D.StaffBirthdays : [];
+  const upActivities = Array.isArray(D.UpcomingActivities) ? D.UpcomingActivities : [];
+  const actSummary = D.ActivitiesSummary || {};
+  const cmy = dashboardService.currentMonthYear();
+  const cmyLabel = `${FIN_MONTH_NAMES[cmy.month - 1]} ${cmy.year}`;
+  const realTodayDay = new Date().getDate();
+  const bdayName  = (b) => `${b.FirstName || b.firstName || ''} ${b.LastName || b.lastName || ''}`.trim() || '—';
+  const bdayDay   = (iso) => { const d = new Date(iso); return isNaN(d.getTime()) ? 0 : d.getDate(); };
+  const bdayLabel = (iso) => { const d = new Date(iso); return isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-PK', { day: '2-digit', month: 'short' }); };
+  const actDateLabel = (iso) => { const d = new Date(iso); return isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-PK', { day: '2-digit', month: 'short', year: 'numeric' }); };
+  const actDaysAway  = (iso) => { const d = new Date(iso); if (isNaN(d.getTime())) return 0; return Math.round((d.setHours(0, 0, 0, 0) - new Date().setHours(0, 0, 0, 0)) / 86400000); };
 
   const NAV_LABELS = {
     acad: 'Academics', exam: 'Examination', att: 'Attendance', tt: 'Time Table',
@@ -187,21 +241,7 @@ export default function TeacherDashboard({ visibility, toast, navigate = () => {
   const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
   const todayLabel = new Date().toLocaleDateString('en-PK', { weekday: 'long', day: 'numeric', month: 'long' });
 
-  /* Empty state for non-teacher accounts impersonated as 'teacher'. */
-  if (!scope) {
-    return (
-      <>
-        <style>{DASH_CSS}</style>
-        <div className="dash-empty">
-          <i className="fa-solid fa-chalkboard-user" aria-hidden="true"></i>
-          No class assignments found for <b>{user?.name || 'this user'}</b>.<br />
-          Switch to <b>Xi</b> or <b>Pi</b> from the &quot;View as&quot; picker above to see a populated Teacher dashboard.
-        </div>
-      </>
-    );
-  }
-
-  const firstName = user.name.replace(/Dr\.|Mr\.|Ms\.|Mrs\./, '').trim().split(' ')[0];
+  const firstName = ((user?.name || '').replace(/Dr\.|Mr\.|Ms\.|Mrs\./, '').trim().split(' ')[0]) || 'there';
   const showSchedule    = moduleActive('timetable');
   const showLessonPlans = moduleActive('academics');
   const showHomework    = moduleActive('academics');
@@ -242,25 +282,24 @@ export default function TeacherDashboard({ visibility, toast, navigate = () => {
             {greeting}, {firstName}
           </div>
           <div className="dash-hero-sub">
-            <b>{todayLabel}</b> · Session {session.label}. You have{' '}
-            <b>{scope.todaySchedule.length} classes</b> today.
-            {showLessonPlans && scope.lessonPlans.pending > 0 && <> Don&apos;t forget — <b>{scope.lessonPlans.pending} lesson plan{scope.lessonPlans.pending > 1 ? 's' : ''}</b> still pending.</>}
-            {showHomework && scope.homework.pending > 0 && <> Also <b>{scope.homework.pending} homework</b> awaiting review.</>}
+            <b>{todayLabel}</b> · Session {session?.label || '—'}. You have{' '}
+            <b>{actSummary.UpcomingCount || upActivities.length || 0} upcoming activities</b>.
+            {showLessonPlans && lpCwTotal > 0 && <> This month: <b>{lpCwTotal} classwork</b> and <b>{lpNbTotal} notebook</b> plans.</>}
           </div>
         </div>
         <div className="dash-hero-r">
           <div className="dash-hero-stat">
             <div className="dash-hero-stat-val">{scope.classes.length}</div>
-            <div className="dash-hero-stat-lbl">My Classes</div>
+            <div className="dash-hero-stat-lbl">Subjects</div>
           </div>
           <div className="dash-hero-stat">
-            <div className="dash-hero-stat-val">{scope.classes.reduce((s, c) => s + c.students, 0)}</div>
-            <div className="dash-hero-stat-lbl">My Students</div>
+            <div className="dash-hero-stat-val">{kpi.ActiveStudents || snap.TotalStudents || 0}</div>
+            <div className="dash-hero-stat-lbl">Active Students</div>
           </div>
           {showAttendance && (
             <div className="dash-hero-stat">
-              <div className="dash-hero-stat-val">{scope.attendance.pct}<small>%</small></div>
-              <div className="dash-hero-stat-lbl">My Attendance</div>
+              <div className="dash-hero-stat-val">{pctOf(stuPresent, stuTotal)}<small>%</small></div>
+              <div className="dash-hero-stat-lbl">Attendance Today</div>
             </div>
           )}
         </div>
@@ -283,7 +322,7 @@ export default function TeacherDashboard({ visibility, toast, navigate = () => {
               </div>
               <div>
                 <div className="adm-tc-t">School Mentor Announcements</div>
-                <div className="adm-tc-s">{latestAnnouncement.sender}</div>
+                <div className="adm-tc-s">{latestAnnouncement ? latestAnnouncement.sender : 'School Mentor — HQ'}</div>
               </div>
             </div>
             {newAnnouncementCount > 0 && (
@@ -295,13 +334,24 @@ export default function TeacherDashboard({ visibility, toast, navigate = () => {
             )}
           </div>
           <div className="adm-tc-body">
-            <div className="adm-tc-an-title">{latestAnnouncement.title}</div>
-            <div className="adm-tc-an-preview">{latestAnnouncement.preview}</div>
+            {latestAnnouncement ? (
+              <>
+                <div className="adm-tc-an-title">{latestAnnouncement.title || 'Announcement'}</div>
+                <div className="adm-tc-an-preview">{latestAnnouncement.preview}</div>
+              </>
+            ) : (
+              <>
+                <div className="adm-tc-an-title">No announcements yet</div>
+                <div className="adm-tc-an-preview">New announcements from School Mentor will appear here.</div>
+              </>
+            )}
           </div>
           <div className="adm-tc-foot">
             <span className="adm-tc-meta">
               <i className="fa-solid fa-clock" aria-hidden="true"></i>
-              {latestAnnouncement.date} · {latestAnnouncement.time}
+              {latestAnnouncement
+                ? ([latestAnnouncement.date, latestAnnouncement.time].filter(Boolean).join(' · ') || '—')
+                : '—'}
             </span>
             <Tooltip text="View all School Mentor announcements">
               <button
@@ -336,13 +386,24 @@ export default function TeacherDashboard({ visibility, toast, navigate = () => {
             )}
           </div>
           <div className="adm-tc-body">
-            <div className="adm-tc-an-title">{latestNotice.title}</div>
-            <div className="adm-tc-an-preview">{latestNotice.preview}</div>
+            {latestNotice ? (
+              <>
+                <div className="adm-tc-an-title">{latestNotice.title}</div>
+                <div className="adm-tc-an-preview">{latestNotice.preview}</div>
+              </>
+            ) : (
+              <>
+                <div className="adm-tc-an-title">No notices yet</div>
+                <div className="adm-tc-an-preview">Principal notices from the mobile app will appear here.</div>
+              </>
+            )}
           </div>
           <div className="adm-tc-foot">
             <span className="adm-tc-meta">
               <i className="fa-solid fa-clock" aria-hidden="true"></i>
-              {latestNotice.date} · {latestNotice.time}
+              {latestNotice
+                ? ([latestNotice.date, latestNotice.time].filter(Boolean).join(' · ') || '—')
+                : '—'}
             </span>
             <Tooltip text="View all Notice Board notices">
               <button
@@ -365,7 +426,7 @@ export default function TeacherDashboard({ visibility, toast, navigate = () => {
               </div>
               <div>
                 <div className="adm-tc-t">Principal Reminders</div>
-                <div className="adm-tc-s">{latestReminder.sender}</div>
+                <div className="adm-tc-s">{latestReminder ? latestReminder.sender : 'Principal'}</div>
               </div>
             </div>
             {newReminderCount > 0 && (
@@ -377,13 +438,24 @@ export default function TeacherDashboard({ visibility, toast, navigate = () => {
             )}
           </div>
           <div className="adm-tc-body">
-            <div className="adm-tc-an-title">{latestReminder.title}</div>
-            <div className="adm-tc-an-preview">{latestReminder.preview}</div>
+            {latestReminder ? (
+              <>
+                <div className="adm-tc-an-title">{latestReminder.title}</div>
+                <div className="adm-tc-an-preview">{latestReminder.preview}</div>
+              </>
+            ) : (
+              <>
+                <div className="adm-tc-an-title">No reminders yet</div>
+                <div className="adm-tc-an-preview">Personal reminders from the principal will appear here.</div>
+              </>
+            )}
           </div>
           <div className="adm-tc-foot">
             <span className="adm-tc-meta">
               <i className="fa-solid fa-clock" aria-hidden="true"></i>
-              {latestReminder.date} · {latestReminder.time}
+              {latestReminder
+                ? ([latestReminder.date, latestReminder.time].filter(Boolean).join(' · ') || '—')
+                : '—'}
             </span>
             <Tooltip text="View all Principal reminders">
               <button
@@ -402,7 +474,7 @@ export default function TeacherDashboard({ visibility, toast, navigate = () => {
           Day dropdown lets the teacher view any weekday's schedule.
           The card list is internally scrollable so multiple classes
           fit without breaking the layout. */}
-      {showSchedule && (
+      {showSchedule && availableDays.length > 0 && (
         <div className="dash-sec">
           <div className="dash-sec-h">
             <div className="dash-sec-title">
@@ -466,22 +538,27 @@ export default function TeacherDashboard({ visibility, toast, navigate = () => {
       <div className="dash-sec">
         <div className="dash-sec-h">
           <div className="dash-sec-title">
-            <i className="fa-solid fa-school" aria-hidden="true"></i> My Classes
+            <i className="fa-solid fa-school" aria-hidden="true"></i> My Subjects
           </div>
         </div>
         <div className="dash-panel" style={{ '--panel-accent': '#7C3AED', '--panel-soft': 'rgba(124,58,237,.12)' }}>
           <div className="dash-rows">
-            {scope.classes.map(c => (
+            {scope.classes.length === 0 ? (
+              <div className="tch-sched-empty" style={{ padding: 18 }}>
+                <i className="fa-solid fa-chalkboard" aria-hidden="true"></i>
+                <span>No lesson-plan subjects for this month yet.</span>
+              </div>
+            ) : scope.classes.map(c => (
               <Tooltip key={c.id} text={`Open ${c.cls}`}>
-                <div className="dash-row" onClick={() => openModule('students')}>
+                <div className="dash-row" onClick={() => openModule('acad')}>
                   <div className="dash-row-ic" style={{ background: 'rgba(124,58,237,.14)', color: '#6D28D9' }}>
                     <i className="fa-solid fa-chalkboard" aria-hidden="true"></i>
                   </div>
                   <div className="dash-row-info">
                     <div className="dash-row-t">{c.cls}</div>
-                    <div className="dash-row-s">{c.subject} · Room {c.room}</div>
+                    <div className="dash-row-s">{c.classwork} classwork · {c.notebook} notebooks</div>
                   </div>
-                  <span className="dash-row-val dash-row-val--purple">{c.students} <span style={{fontSize:9,opacity:.7}}>STU</span></span>
+                  <span className="dash-row-val dash-row-val--purple">{c.classwork + c.notebook} <span style={{fontSize:9,opacity:.7}}>PLANS</span></span>
                 </div>
               </Tooltip>
             ))}
@@ -623,8 +700,8 @@ export default function TeacherDashboard({ visibility, toast, navigate = () => {
                 <div className="dash-panel-h-l">
                   <div className="dash-panel-h-ic"><i className="fa-solid fa-clipboard-check" aria-hidden="true"></i></div>
                   <div>
-                    <div className="dash-panel-h-t">My Attendance</div>
-                    <div className="dash-panel-h-s">This month</div>
+                    <div className="dash-panel-h-t">Today’s Attendance</div>
+                    <div className="dash-panel-h-s">Students · today</div>
                   </div>
                 </div>
                 <div className="dash-panel-h-r">
@@ -975,7 +1052,7 @@ export default function TeacherDashboard({ visibility, toast, navigate = () => {
 
         <div className="adm-info-banner">
           <i className="fa-solid fa-calendar" aria-hidden="true"></i>
-          <span>Showing birthdays for May 2026</span>
+          <span>Showing birthdays for {cmyLabel}</span>
         </div>
 
         <div className="adm-bday-row">
@@ -983,25 +1060,31 @@ export default function TeacherDashboard({ visibility, toast, navigate = () => {
             <div className="adm-bday-col">
               <div className="adm-side-tag">
                 Students
-                <span className="adm-pill-blue">{TEACHER_DASH_STUDENT_BIRTHDAYS.length}</span>
+                <span className="adm-pill-blue">{stuBdays.length}</span>
               </div>
               <div className="adm-bday-list">
-                {TEACHER_DASH_STUDENT_BIRTHDAYS.map(b => {
-                  const isToday = b.dob === TEACHER_DASH_TODAY_DAY;
-                  const isTomorrow = b.dob === TEACHER_DASH_TODAY_DAY + 1;
+                {stuBdays.length === 0 && (
+                  <div className="adm-bday-meta">No student birthdays this month</div>
+                )}
+                {stuBdays.map(b => {
+                  const dob = b.DateOfBirth || b.dateOfBirth;
+                  const day = bdayDay(dob);
+                  const isToday = day === realTodayDay;
+                  const isTomorrow = day === realTodayDay + 1;
+                  const name = bdayName(b);
                   return (
-                    <div key={b.name} className={`adm-bday-card${isToday ? ' today' : ''}`}>
-                      <div className="adm-bday-av">{teacherDashInitials(b.name)}</div>
+                    <div key={b.ID ?? name} className={`adm-bday-card${isToday ? ' today' : ''}`}>
+                      <div className="adm-bday-av">{teacherDashInitials(name)}</div>
                       <div className="adm-bday-info">
-                        <div className="adm-bday-name">{b.name}</div>
-                        <div className="adm-bday-meta">{b.grade}</div>
+                        <div className="adm-bday-name">{name}</div>
+                        <div className="adm-bday-meta">{b.PersonType || 'Student'}</div>
                       </div>
                       {isToday ? (
                         <span className="adm-pill-green">Today! 🎂</span>
                       ) : isTomorrow ? (
                         <span className="adm-pill-amber">Tomorrow</span>
                       ) : (
-                        <span className="adm-pill-blue">{b.date}</span>
+                        <span className="adm-pill-blue">{bdayLabel(dob)}</span>
                       )}
                     </div>
                   );
@@ -1014,25 +1097,31 @@ export default function TeacherDashboard({ visibility, toast, navigate = () => {
             <div className="adm-bday-col">
               <div className="adm-side-tag">
                 Teachers &amp; Staff
-                <span className="adm-pill-blue">{TEACHER_DASH_TEACHER_BIRTHDAYS.length}</span>
+                <span className="adm-pill-blue">{staffBdays.length}</span>
               </div>
               <div className="adm-bday-list">
-                {TEACHER_DASH_TEACHER_BIRTHDAYS.map(b => {
-                  const isToday = b.dob === TEACHER_DASH_TODAY_DAY;
-                  const isTomorrow = b.dob === TEACHER_DASH_TODAY_DAY + 1;
+                {staffBdays.length === 0 && (
+                  <div className="adm-bday-meta">No staff birthdays this month</div>
+                )}
+                {staffBdays.map(b => {
+                  const dob = b.DateOfBirth || b.dateOfBirth;
+                  const day = bdayDay(dob);
+                  const isToday = day === realTodayDay;
+                  const isTomorrow = day === realTodayDay + 1;
+                  const name = bdayName(b);
                   return (
-                    <div key={b.name} className={`adm-bday-card${isToday ? ' today' : ''}`}>
-                      <div className="adm-bday-av adm-bday-av--purple">{teacherDashInitials(b.name)}</div>
+                    <div key={b.ID ?? name} className={`adm-bday-card${isToday ? ' today' : ''}`}>
+                      <div className="adm-bday-av adm-bday-av--purple">{teacherDashInitials(name)}</div>
                       <div className="adm-bday-info">
-                        <div className="adm-bday-name">{b.name}</div>
-                        <div className="adm-bday-meta">{b.role}</div>
+                        <div className="adm-bday-name">{name}</div>
+                        <div className="adm-bday-meta">{b.PersonType || 'Staff'}</div>
                       </div>
                       {isToday ? (
                         <span className="adm-pill-green">Today! 🎂</span>
                       ) : isTomorrow ? (
                         <span className="adm-pill-amber">Tomorrow</span>
                       ) : (
-                        <span className="adm-pill-blue">{b.date}</span>
+                        <span className="adm-pill-blue">{bdayLabel(dob)}</span>
                       )}
                     </div>
                   );
@@ -1055,24 +1144,31 @@ export default function TeacherDashboard({ visibility, toast, navigate = () => {
             <span className="adm-h-ic adm-h-ic--star"><i className="fa-solid fa-calendar-day" aria-hidden="true"></i></span>
             Upcoming Activities
           </div>
-          <span className="adm-h-meta">May 2026</span>
+          <span className="adm-h-meta">{cmyLabel}</span>
         </div>
         <div className="adm-info-banner">
           <i className="fa-solid fa-circle-info" aria-hidden="true"></i>
           <span>School events, exams, and important dates for this month.</span>
         </div>
 
+        {upActivities.length === 0 ? (
+          <div className="adm-info-banner">
+            <i className="fa-solid fa-calendar-xmark" aria-hidden="true"></i>
+            <span>No upcoming activities scheduled.</span>
+          </div>
+        ) : (
         <div className="adm-act-grid">
-          {TEACHER_DASH_ACTIVITIES.map(a => {
-            const c = TEACHER_DASH_TYPE_COLOR[a.type] || TEACHER_DASH_TYPE_COLOR.event;
-            const daysLabel = a.daysAway === 1 ? 'Tomorrow' : `In ${a.daysAway} days`;
-            const daysTone = a.daysAway === 1 ? 'amber' : (a.daysAway <= 7 ? 'brand' : 'muted');
+          {upActivities.map(a => {
+            const c = TEACHER_DASH_TYPE_COLOR.event;
+            const daysAway = actDaysAway(a.StartAt);
+            const daysLabel = daysAway === 0 ? 'Today' : daysAway === 1 ? 'Tomorrow' : daysAway > 0 ? `In ${daysAway} days` : 'Past';
+            const daysTone = daysAway <= 1 ? 'amber' : (daysAway <= 7 ? 'brand' : 'muted');
             const goActivityCalendar = () => {
               openActivityCalendar();
               toast('Opening Activity Calendar…', 'info');
             };
             return (
-              <Tooltip key={a.id} text="Open Academics → Activity Calendar">
+              <Tooltip key={a.ID ?? a.Title} text="Open Academics → Activity Calendar">
                 <div
                   className="adm-act-card clickable"
                   style={{ '--act-bar': c.fg }}
@@ -1084,14 +1180,13 @@ export default function TeacherDashboard({ visibility, toast, navigate = () => {
                   <div className="adm-act-h">
                     <span className="adm-act-chip" style={{ background: c.bg, color: c.fg }}>
                       <i className="fa-solid fa-calendar-day" aria-hidden="true"></i>
-                      {a.date}
+                      {actDateLabel(a.StartAt)}
                     </span>
                     <span className={`adm-act-days adm-act-days--${daysTone}`}>{daysLabel}</span>
                   </div>
-                  <div className="adm-act-title">{a.title}</div>
-                  <div className="adm-act-desc">{a.desc}</div>
+                  <div className="adm-act-title">{a.Title}</div>
+                  <div className="adm-act-desc">{a.Description}</div>
                   <div className="adm-act-foot">
-                    <span className="adm-act-cat" style={{ background: c.bg, color: c.fg }}>{a.category}</span>
                     <span className="adm-act-mod">
                       <i className="fa-solid fa-calendar-plus" aria-hidden="true"></i>
                       Activity Calendar
@@ -1102,11 +1197,13 @@ export default function TeacherDashboard({ visibility, toast, navigate = () => {
             );
           })}
         </div>
+        )}
       </div>
 
       {/* ─── Top-card modals ─── */}
       {showAnnouncements && (
         <AnnouncementsModal
+          announcements={announcements}
           onClose={() => setShowAnnouncements(false)}
           toast={toast}
         />
@@ -1116,7 +1213,7 @@ export default function TeacherDashboard({ visibility, toast, navigate = () => {
           title="Notice Board"
           subtitle="Principal · via Mobile App"
           icon="fa-clipboard-list"
-          items={NOTICE_BOARD_NOTICES}
+          items={[]}
           onClose={() => setShowNoticeBoard(false)}
           toast={toast}
         />
@@ -1126,7 +1223,7 @@ export default function TeacherDashboard({ visibility, toast, navigate = () => {
           title="Principal Reminders"
           subtitle="Personal reminders for you"
           icon="fa-bell"
-          items={PRINCIPAL_REMINDERS}
+          items={[]}
           onClose={() => setShowReminders(false)}
           toast={toast}
         />

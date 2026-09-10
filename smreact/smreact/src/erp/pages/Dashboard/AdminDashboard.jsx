@@ -189,17 +189,21 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
       return '';
     };
     return (Array.isArray(D.Announcements) ? D.Announcements : [])
-      .map((a) => {
-        const created = pickA(a, 'date', 'Date', 'createdDate', 'CreatedDate', 'createdAt', 'CreatedAt', 'publishedDate', 'PublishedDate', 'publishDate', 'PublishDate');
+      .map((a, idx) => {
+        const created = pickA(a, 'AnnounceDate', 'announceDate', 'date', 'Date', 'createdDate', 'CreatedDate', 'createdAt', 'CreatedAt', 'publishedDate', 'PublishedDate', 'publishDate', 'PublishDate');
         const dt = created ? new Date(created) : null;
         const validDt = dt && !Number.isNaN(+dt);
         const rawStatus = pickA(a, 'status', 'Status', 'isNew', 'IsNew', 'isRead', 'IsRead');
         const isNew = rawStatus === true || String(rawStatus).toLowerCase() === 'new'
           || (String(pickA(a, 'isRead', 'IsRead')).toLowerCase() === 'false');
+        const preview = pickA(a, 'preview', 'Preview', 'message', 'Message', 'body', 'Body', 'description', 'Description', 'detail', 'Detail', 'content', 'Content');
         return {
+          id:      pickA(a, 'id', 'ID') || `an-${idx}`,
           sender:  pickA(a, 'sender', 'Sender', 'senderName', 'SenderName', 'createdBy', 'CreatedBy', 'author', 'Author') || 'School Mentor — HQ',
           title:   pickA(a, 'title', 'Title', 'subject', 'Subject', 'heading', 'Heading', 'name', 'Name'),
-          preview: pickA(a, 'preview', 'Preview', 'message', 'Message', 'body', 'Body', 'description', 'Description', 'detail', 'Detail', 'content', 'Content'),
+          preview,
+          description: preview,
+          category: pickA(a, 'category', 'Category') || 'General',
           date:    validDt ? dt.toLocaleDateString('en-PK', { day: 'numeric', month: 'short', year: 'numeric' }) : (typeof created === 'string' ? created.slice(0, 10) : ''),
           time:    pickA(a, 'time', 'Time') || (validDt ? dt.toLocaleTimeString('en-PK', { hour: 'numeric', minute: '2-digit' }) : ''),
           status:  isNew ? 'new' : (String(rawStatus) || ''),
@@ -213,16 +217,20 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
   const plTrend = Array.isArray(D.ProfitLossTrend) ? D.ProfitLossTrend : [];
   const pctOf = (n, d) => (Number(d) > 0 ? Math.round((Number(n) / Number(d)) * 100) : 0);
 
-  /* Fee ring/progress percentages — real data se compute. */
-  const feePaidPct = pctOf(fee.FeeReceived, fee.CurrentMonthFeePosition);
-  const feePendingPct = 100 - feePaidPct;
+  /* Fee Analytics formulas (cards, not backend fields):
+       Total Net Receivable = Current Month Fee Position + Previous Dues
+       Pending Fee          = Total Net Receivable − Fee Received
+     Rings/progress bhi isi receivable ke against. */
+  const currentMonthFeeVal = Number(fee.CurrentMonthFeePosition) || 0;
+  const previousDuesVal = Number(fee.PreviousDues) || 0;
+  const feeReceivedVal = Number(fee.FeeReceived) || 0;
+  const totalNetReceivableVal = currentMonthFeeVal + previousDuesVal;
+  const pendingFeeVal = Math.max(0, totalNetReceivableVal - feeReceivedVal);
+  const feePaidPct = pctOf(feeReceivedVal, totalNetReceivableVal);
+  const feePendingPct = pctOf(pendingFeeVal, totalNetReceivableVal);
 
-  /* Previous Dues / Students-with-Dues / Total Net Receivable — sab SEEDHA
-     get-dashboard ke FeeAnalytics se (koi extra API nahi). Backend jab in fields
-     ko sahi bharega (abhi PreviousDues 0 aata hai) to yahan khud aa jayega. */
-  const previousDuesVal = fee.PreviousDues || 0;
+  /* Previous Dues / Students-with-Dues — seedha get-dashboard ke FeeAnalytics se. */
   const studentsWithDuesVal = fee.StudentsPending || 0;
-  const totalNetReceivableVal = fee.TotalNetReceivable;
 
   /* Teachers / Parents mobile-app adoption cards.
      Total ab REAL active counts se (Kpi.ActiveStaff / Kpi.ActiveStudents) — wahi jo
@@ -586,7 +594,7 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
                 </div>
                 <div className="fc-title">Current Month Fee Position</div>
               </div>
-              <div className="fc-amount fa-amount--lg">{fmtPKR(fee.CurrentMonthFeePosition)}</div>
+              <div className="fc-amount fa-amount--lg">{fmtPKR(currentMonthFeeVal)}</div>
               <div className="fc-divider" />
               <div className="fa-meta-rows">
                 <div className="fa-meta-row">
@@ -641,13 +649,13 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
               <div className="fc-amount fa-amount--lg">{fmtPKR(totalNetReceivableVal)}</div>
               <div className="fa-formula">
                 <i className="fa-solid fa-circle-info" aria-hidden="true"></i>
-                <span>Current Month Net Receivable + Previous Dues</span>
+                <span>Current Month Fee Position + Previous Dues</span>
               </div>
               <div className="fc-divider" />
               <div className="fa-formula-breakdown">
                 <div>
                   <span className="fa-bd-lbl">This Month</span>
-                  <span className="fa-bd-val">{fmtPKR(fee.CurrentMonthFeePosition)}</span>
+                  <span className="fa-bd-val">{fmtPKR(currentMonthFeeVal)}</span>
                 </div>
                 <span className="fa-bd-op">+</span>
                 <div>
@@ -671,7 +679,7 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
                     </div>
                     <div className="fc-title">Fee Received</div>
                   </div>
-                  <div className="fc-amount fc-amount--green fa-amount--xl">{fmtPKR(fee.FeeReceived)}</div>
+                  <div className="fc-amount fc-amount--green fa-amount--xl">{fmtPKR(feeReceivedVal)}</div>
                   <div className="fa-status-meta">
                     <i className="fa-solid fa-user-check" aria-hidden="true"></i>
                     <span>Students Paid:&nbsp;</span>
@@ -718,7 +726,7 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
                     </div>
                     <div className="fc-title fc-title--red">Pending Fee</div>
                   </div>
-                  <div className="fc-amount fc-amount--red fa-amount--xl">{fmtPKR(fee.FeePending)}</div>
+                  <div className="fc-amount fc-amount--red fa-amount--xl">{fmtPKR(pendingFeeVal)}</div>
                   <div className="fa-status-meta">
                     <i className="fa-solid fa-user-clock" aria-hidden="true"></i>
                     <span>Students Pending:&nbsp;</span>
