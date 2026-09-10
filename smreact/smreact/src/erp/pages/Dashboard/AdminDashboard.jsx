@@ -133,9 +133,13 @@ function ChartTooltip({ active, payload, label }) {
   );
 }
 
-export default function AdminDashboard({ visibility, toast, navigate = () => {}, openActivityCalendar = () => {} }) {
-  const { moduleActive, user, session, ownerName } = visibility;
-  const { isActive } = useModules();      /* per-spec: explicit useModules guard for new sections */
+export default function AdminDashboard({ visibility, toast, navigate = () => {}, openActivityCalendar = () => {}, showAllModules = false }) {
+  const { moduleActive: visModuleActive, user, session, ownerName } = visibility;
+  const { isActive: ctxIsActive } = useModules();
+  /* Teacher dashboard: get-dashboard ke saare sections dikhao, module-permission
+     se hide mat karo. Admin par pehle jaisa school-level isActive/moduleActive. */
+  const isActive = showAllModules ? () => true : ctxIsActive;
+  const moduleActive = showAllModules ? () => true : visModuleActive;
 
   const NAV_LABELS = {
     students: 'Students', hr: 'Human Resource', crm: 'Admission CRM',
@@ -341,8 +345,20 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
     const label = financeSeg === 'month' ? `${FIN_MONTH_NAMES[Number(mm) - 1]} ${yy}`
       : financeSeg === 'range' ? `${financeFrom} to ${financeTo}`
       : financeSingle;
+    /* Ledger khaali ho (teacher ko accounts API na mile, ya month me entries na hon)
+       to get-dashboard FinancialOverview current month ke cards bhar de. */
+    if (!income && !expense && financeSeg === 'month' && financeMonth === nowYM) {
+      const apiIncome = Number(finOverview.OverallIncome) || 0;
+      const apiExpense = Number(finOverview.OverallExpenses) || 0;
+      const apiPl = finOverview.NetProfitLoss != null
+        ? Number(finOverview.NetProfitLoss)
+        : apiIncome - apiExpense;
+      if (apiIncome || apiExpense || apiPl) {
+        return { label, income: apiIncome, expense: apiExpense, pl: apiPl };
+      }
+    }
     return { label, income, expense, pl: income - expense };
-  }, [financeTxns, financeSeg, financeMonth, financeFrom, financeTo, financeSingle]);
+  }, [financeTxns, financeSeg, financeMonth, financeFrom, financeTo, financeSingle, finOverview, nowYM]);
 
   /* Top-card modals */
   const [showAnnouncements, setShowAnnouncements] = useState(false);
