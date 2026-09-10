@@ -297,18 +297,48 @@ function RcAvatar({ src, initials, size, fontSize, border, bg, color, extraStyle
        kar card par extra rows aa jati thi) usay DROP kar do
      • ek hi subjectID / naam do baar aaye to sirf pehli baar
    Is se card par utne hi subjects aate hain jitne response me hain. */
+function saUnwrapList(json) {
+  if (Array.isArray(json)) return json;
+  if (Array.isArray(json?.data)) return json.data;
+  if (Array.isArray(json?.Data)) return json.Data;
+  return [];
+}
+/* SA exam-subject row — IDs API ke liye, naam kabhi numeric ID nahi. */
+function saNormSubject(item) {
+  if (!item) return null;
+  const subjectID = Number(item.subjectID ?? item.SubjectID ?? 0);
+  const rawName = String(item.subjectName ?? item.SubjectName ?? item.name ?? item.subject ?? '').trim();
+  const subjectName = cbrApi.saIsPlaceholderName(rawName, subjectID) ? '' : rawName;
+  if (!subjectID && !subjectName) return null;
+  return {
+    id: Number(item.id ?? item.ID ?? 0),
+    subjectID,
+    subjectName,
+    totalMarks: item.totalMarks ?? item.TotalMarks ?? '0',
+    totalMarksSum: item.totalMarksSum ?? item.TotalMarksSum,
+  };
+}
+
+function saSubjectLabel(s) {
+  const n = String(s?.subjectName || '').trim();
+  if (!n || cbrApi.saIsPlaceholderName(n, s?.subjectID)) return '—';
+  return n;
+}
+
 function rcNormalizeSubjects(rawSubs, nameMap = {}) {
   const seenId = new Set(), seenName = new Set(), out = [];
   (rawSubs || []).forEach(su => {
     if (!su) return;
-    const name = String(su.subjectName || nameMap[su.subjectID] || '').trim();
-    if (!name) return;                       // naam hi nahi → asli subject nahi, mat dikhao
-    const idKey   = su.subjectID == null ? '' : String(su.subjectID);
+    const idKey = su.subjectID == null || su.subjectID === '' ? '' : String(su.subjectID);
+    let name = String(su.subjectName || nameMap[su.subjectID] || '').trim();
+    if (cbrApi.saIsPlaceholderName(name, su.subjectID)) name = String(nameMap[su.subjectID] || '').trim();
+    if (cbrApi.saIsPlaceholderName(name, su.subjectID)) name = '';
+    if (!idKey && !name) return;
     const nameKey = name.toLowerCase();
-    if (idKey && seenId.has(idKey)) return;  // duplicate row
-    if (seenName.has(nameKey)) return;
+    if (idKey && seenId.has(idKey)) return;
+    if (name && seenName.has(nameKey)) return;
     if (idKey) seenId.add(idKey);
-    seenName.add(nameKey);
+    if (name) seenName.add(nameKey);
     out.push({ ...su, subjectName: name });
   });
   return out;
@@ -946,15 +976,7 @@ const [subjects, setSubjects] = useState([]);
     (async () => {
       try {
         const rawSubs = await cbrApi.getMainExamSubjects({ classID, sectionID, termID, examID: selectExam });
-        // Class ke REAL subjects (get-subjects_byEmployeeID) — naam + fallback ke liye.
-        let syl = [];
-        try { syl = await getSyllabusSubjects(classID, sectionID) || []; } catch (e) { /* keep going */ }
-        const nameMap = {};
-        syl.forEach(s => { nameMap[s.subjectID] = s.subjectName; });
-        // Exam mein subjects assign hon to wahi; warna class ke real subjects dikhao
-        // (marks add na hone par bhi subjects nazar aayein → blank → absent handling).
-        let subs = rcNormalizeSubjects(rawSubs, nameMap);
-        if (!subs.length) subs = rcNormalizeSubjects(syl, nameMap);
+        const subs = rcNormalizeSubjects((rawSubs || []).map(saNormSubject).filter(Boolean));
         const token = sessionStorage.getItem('token');
         const headers = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
         // Direct marks fetch taa-ke obtain + remarks dono mil sakein
@@ -1314,8 +1336,8 @@ const [subjects, setSubjects] = useState([]);
           subjList = rcNormalizeSubjects(subs, nameMap);
           if (!subjList.length) subjList = rcNormalizeSubjects(syl, nameMap);
         } else {
-          // 1) Subjects list (Math / Science 3 / KG) — reliably subjects deta hai
-          subjList = rcNormalizeSubjects((await getSyllabusSubjects(classID, sectionID)) || []);
+          const rawSubs = await cbrApi.getMainExamSubjects({ classID, sectionID, termID: termID ?? selectedTermId, examID }).catch(() => []);
+          subjList = rcNormalizeSubjects((rawSubs || []).map(saNormSubject).filter(Boolean));
         }
         // 2) Har subject ke against student ke obtain/total marks (dono modes ExamID=examID use karte hain)
         const records = await Promise.all(subjList.map(async su => {
@@ -1394,9 +1416,10 @@ const [subjects, setSubjects] = useState([]);
         }));
         if (!cancelled) setRhExamRanks(ranks);
 
-        const subs = (await getSyllabusSubjects(classID, sectionID).catch(() => [])) || [];
         const scores = {};
         await Promise.all(rhExams.map(async ex => {
+          const rawSubs = await cbrApi.getMainExamSubjects({ classID, sectionID, termID: ex.termID, examID: ex.selectExam }).catch(() => []);
+          const subs = rcNormalizeSubjects((rawSubs || []).map(saNormSubject).filter(Boolean));
           let obt = 0, tot = 0;
           await Promise.all(subs.map(async su => {
             try {
@@ -2181,7 +2204,8 @@ const rhDownloadCardReport = async (st, r) => {
       subs = rcNormalizeSubjects(ms, nameMap);
       if (!subs.length) subs = rcNormalizeSubjects(syl, nameMap);
     } else {
-      subs = rcNormalizeSubjects((await getSyllabusSubjects(classID, sectionID).catch(() => [])) || []);
+      const rawSubs = await cbrApi.getMainExamSubjects({ classID, sectionID, termID, examID }).catch(() => []);
+      subs = rcNormalizeSubjects((rawSubs || []).map(saNormSubject).filter(Boolean));
     }
     subjectNames = subs.map(s => s.subjectName);
     await Promise.all(subs.map(async su => {
@@ -3156,13 +3180,21 @@ const fetchSASubjects = async (classID, sectionID, examId, termId) => {
     );
 
     const data = await response.json();
-
-    return (data?.data || []).map(item => ({
-      id: item.id,
-      subjectID: item.subjectID,
-      subjectName: item.subjectName || item.name || item.subject,
-      totalMarks: item.totalMarks || "0"
-    }));
+    const classSubs = await (async () => {
+      try {
+        const empID = sessionStorage.getItem('employee_ID');
+        const sylRes = await fetch(
+          buildUrl(`/get-subjects_byEmployeeID/${classID}/${sectionID}/${empID}`),
+          { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } }
+        );
+        const sylJson = await sylRes.json();
+        return sylJson?.data || (Array.isArray(sylJson) ? sylJson : []) || [];
+      } catch { return []; }
+    })();
+    return cbrApi.saAttachDisplayNames(
+      saUnwrapList(data).map(saNormSubject).filter(Boolean),
+      classSubs
+    );
   } catch (error) {
     console.error('Error fetching SA subjects:', error);
     return [];
@@ -4962,32 +4994,15 @@ onClick={() => {
     style={(isOtherSession || !canSingleEdit) ? { opacity: .45, cursor: 'not-allowed' } : undefined}
     onClick={async () => {
       if (isOtherSession) { toast('Method not allowed', 'error'); return; }
-      const fetchedSubjects = await getSyllabusSubjects(
-  cls.classID,
-  cls.sectionID
-);
-
-const saSubjects = await fetchSASubjects(
+      const saSubjects = await fetchSASubjects(
   cls.classID,
   cls.sectionID,
   resExamId
 );
-console.log("fetchedSubjects", fetchedSubjects);
-console.log("saSubjects", saSubjects);
-
-const mergedSubjects = fetchedSubjects.map(subject => {
-  const match = saSubjects.find(
-    s => Number(s.subjectID) === Number(subject.subjectID)
-  );
-console.log("match", match);
-
-  return {
-    ...subject,
-    id: match?.id || 0,           // ← yeh add karo
-    totalMarks: match?.totalMarks || "0"
-  };
-});
-console.log("mergedSubjects", mergedSubjects);
+if (!saSubjects.length) {
+  toast('No exam subjects found for this class', 'error');
+  return;
+}
 
 setResTotalMarksCtx({
     selectExam: resCurrentExam?.selectExam || 0,  // ← add this
@@ -4996,7 +5011,7 @@ setResTotalMarksCtx({
   className: cls.className,
   classID: cls.classID,
   sectionID: cls.sectionID,
-  subjects: mergedSubjects
+  subjects: saSubjects
 });
     }}
   >
@@ -5160,13 +5175,16 @@ onClick={e => {
                 style={isOtherSession ? { opacity: .45, cursor: 'not-allowed' } : undefined}
 onClick={async () => {
   if (isOtherSession) { toast('Method not allowed', 'error'); return; }
-  const subjects = await getSyllabusSubjects(cls.classID, cls.sectionID);
+  const saSubjects = await fetchSASubjects(cls.classID, cls.sectionID, resExamId);
+  if (!saSubjects.length) {
+    toast('No exam subjects found for this class', 'error');
+    return;
+  }
   setResUpdateCtx({
     examId: resExamId, 
     key, 
     studentId: st.id,
-    subjects: subjects || [],
-    // Yeh add karo ↓
+    subjects: saSubjects,
     classID: cls.classID,
     sectionID: cls.sectionID,
     selectExam: resCurrentExam?.selectExam || 0,
@@ -9013,7 +9031,7 @@ function ClassicResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
   // sirf template preview ke liye — warna real card par 10 jhoote subjects aa jate.
   const subjects = (rd.subjects && rd.subjects.length) ? rd.subjects : (rdProp ? [] : RES_SUBJECTS);
 
-  const totalAll = subjects.reduce((a, s) => (useZeroMode || !absentSet[s]) ? a + (rd.totalMarks[s] ?? 20) : a, 0);
+  const totalAll = subjects.reduce((a, s) => (useZeroMode || !absentSet[s]) ? a + (rd.totalMarks[s] ?? 0) : a, 0);
   const obtAll   = subjects.reduce((a, s) => absentSet[s] ? a : a + (st.obtained[s] || 0), 0);
   const ovPct    = isCombined ? cb.ovPct : (totalAll ? Math.min(100, Math.round((obtAll / totalAll) * 10000) / 100) : 0);
   const ovGrade  = (grades && grades.length) ? rcGradeByScale(ovPct, grades) : rcGetGrade(obtAll, totalAll);
@@ -9138,7 +9156,7 @@ function ClassicResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
             <tbody>
               {subjects.map((s, i) => {
                 const isAbs = !!absentSet[s];
-                const tot = rd.totalMarks[s] ?? 20;
+                const tot = rd.totalMarks[s] ?? 0;
                 const obt = isAbs ? 0 : (st.obtained[s] || 0);
                 const pct = (!isAbs && tot) ? Math.round((obt / tot) * 100) : 0;
                 const g   = (!isAbs && obt > 0) ? rcGetGrade(obt, tot) : null;
@@ -9347,7 +9365,7 @@ function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
   // Asli card par SIRF rd.subjects (API se aayi list). RES_SUBJECTS (demo naam)
   // sirf template preview ke liye — warna real card par 10 jhoote subjects aa jate.
   const subjects = (rd.subjects && rd.subjects.length) ? rd.subjects : (rdProp ? [] : RES_SUBJECTS);
-  const totalAll = subjects.reduce((a, s) => (useZeroMode || !absentSet[s]) ? a + (rd.totalMarks[s] ?? 20) : a, 0);
+  const totalAll = subjects.reduce((a, s) => (useZeroMode || !absentSet[s]) ? a + (rd.totalMarks[s] ?? 0) : a, 0);
   const obtAll   = subjects.reduce((a, s) => absentSet[s] ? a : a + (st.obtained[s] || 0), 0);
   const ovPct    = isCombined ? cb.ovPct : (totalAll ? Math.min(100, Math.round((obtAll / totalAll) * 10000) / 100) : 0);
   const ovGrade  = (grades && grades.length) ? rcGradeByScale(ovPct, grades) : rcGetGrade(obtAll, totalAll);
@@ -9366,7 +9384,7 @@ function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
   const barPalette = ['#1E40AF','#16A34A','#D97706','#7C3AED','#DC2626','#0891B2','#EA580C','#059669','#9333EA','#B45309'];
   const subjData = subjects.map((s, i) => {
     const isAbs = !!absentSet[s];
-    const tot = rd.totalMarks[s] ?? 20;
+    const tot = rd.totalMarks[s] ?? 0;
     const obt = isAbs ? 0 : (st.obtained[s] || 0);
     const pct = (!isAbs && tot) ? Math.round((obt / tot) * 100) : 0;
     const g   = (!isAbs && obt > 0) ? rcGetGrade(obt, tot) : null;
@@ -9600,7 +9618,7 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
   // Asli card par SIRF rd.subjects (API se aayi list). RES_SUBJECTS (demo naam)
   // sirf template preview ke liye — warna real card par 10 jhoote subjects aa jate.
   const subjects = (rd.subjects && rd.subjects.length) ? rd.subjects : (rdProp ? [] : RES_SUBJECTS);
-  const totalAll = subjects.reduce((a, s) => (useZeroMode || !absentSet[s]) ? a + (rd.totalMarks[s] ?? 20) : a, 0);
+  const totalAll = subjects.reduce((a, s) => (useZeroMode || !absentSet[s]) ? a + (rd.totalMarks[s] ?? 0) : a, 0);
   const obtAll   = subjects.reduce((a, s) => absentSet[s] ? a : a + (st.obtained[s] || 0), 0);
   const ovPct    = isCombined ? cb.ovPct : (totalAll ? Math.min(100, Math.round((obtAll / totalAll) * 10000) / 100) : 0);
   const ovGrade  = (grades && grades.length) ? rcGradeByScale(ovPct, grades) : rcGetGrade(obtAll, totalAll);
@@ -9616,7 +9634,7 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
 
   const subjData = subjects.map((s, i) => {
     const isAbs = !!absentSet[s];
-    const tot = rd.totalMarks[s] ?? 20;
+    const tot = rd.totalMarks[s] ?? 0;
     const obt = isAbs ? 0 : (st.obtained[s] || 0);
     const pct = (!isAbs && tot) ? Math.round((obt / tot) * 100) : 0;
     const g   = (!isAbs && obt > 0) ? rcGetGrade(obt, tot) : null;
@@ -10002,7 +10020,13 @@ function ResultUpdateMarksModal({ cd, student, onSave, onClose, absentMode, toas
     return init;
   });
   const [tab, setTab] = useState(0);
-  const [subjectTotalMarks, setSubjectTotalMarks] = useState({});
+  const [subjectTotalMarks, setSubjectTotalMarks] = useState(() => {
+    const seed = {};
+    (subjects || []).forEach(s => {
+      if (s?.subjectID != null) seed[s.subjectID] = Number(s.totalMarks || 0);
+    });
+    return seed;
+  });
   const [subjectExistingMarkId, setSubjectExistingMarkId] = useState({});
   const [loadingSubject, setLoadingSubject] = useState(false);
 
@@ -10035,12 +10059,11 @@ function ResultUpdateMarksModal({ cd, student, onSave, onClose, absentMode, toas
       );
       const subjData = await subjRes.json();
       const subjRecord = Array.isArray(subjData) ? subjData[0] : (subjData?.data?.[0] || null);
-      if (subjRecord) {
-        setSubjectTotalMarks(prev => ({
-          ...prev,
-          [subjectID]: Number(subjRecord.totalMarks || 0)
-        }));
-      }
+      const apiTotal = Number(subjRecord?.totalMarks ?? subjectObj.totalMarks ?? 0);
+      setSubjectTotalMarks(prev => ({
+        ...prev,
+        [subjectID]: apiTotal
+      }));
 
       // API 2: Student existing marks for this subject
       const marksParams = new URLSearchParams({
@@ -10122,10 +10145,11 @@ setObtained(o => ({
   const computePayload = () => {
     const absSet = { ...absentSubs };
     (student.absentSubjects || []).forEach(s => { absSet[s] = true; });
+    const subjNames = (subjects || []).map(s => s.subjectName).filter(Boolean);
     const tot = absentMode === 'zero'
       ? Object.values(cd.totalMarks).reduce((a, b) => a + b, 0)
-      : RES_SUBJECTS.reduce((a, s) => absSet[s] ? a : a + (cd.totalMarks[s] || 0), 0);
-    const obt = RES_SUBJECTS.reduce((a, s) => a + (absSet[s] ? 0 : (obtained[s] || 0)), 0);
+      : subjNames.reduce((a, s) => absSet[s] ? a : a + (cd.totalMarks[s] || 0), 0);
+    const obt = subjNames.reduce((a, s) => a + (absSet[s] ? 0 : (obtained[s] || 0)), 0);
     const pct = tot ? (obt / tot) * 100 : 0;
     return { obtained, manualRemarks, absentSubjects: Object.keys(absSet).filter(k => absSet[k]), finalRemarks: rcGetFinalRemarks(pct) };
   };
@@ -10312,7 +10336,7 @@ const saveAndClose = async () => {
                 className={`syl-subj-tab${tab === i ? ' active' : ''}`}
                 onClick={() => handleTabClick(i)}
               >
-                {s.subjectName}
+                {saSubjectLabel(s)}
               </button>
             ))}
           </div>
@@ -10933,24 +10957,22 @@ function ResultRemarksModal({ cd, student, absentMode, onSave, onClose, existing
 /* ═══════════════════════════════════════════════════════════════════
    SINGLE ASSESSMENT — TOTAL MARKS EDIT MODAL
    ═══════════════════════════════════════════════════════════════════ */
-function ResultTotalMarksModal({ cd, className, onSave, onClose , subjects , resTotalMarksCtx,  selectedTermId }) {
+function ResultTotalMarksModal({ cd, className, onSave, onClose , subjects = [] , resTotalMarksCtx,  selectedTermId }) {
+  const subjKey = (subject) => subject?.subjectID ?? subject?.subjectName;
 
 const [totals, setTotals] = useState({});
 useEffect(() => {
   const initialTotals = {};
 
-  subjects.forEach(subject => {
-    initialTotals[subject.subjectName] = Number(subject.totalMarks || 0);
+  (subjects || []).forEach(subject => {
+    initialTotals[subjKey(subject)] = Number(subject.totalMarks || 0);
   });
 
   setTotals(initialTotals);
-
-  console.log("subjects =", subjects);
-  console.log("initialTotals =", initialTotals);
 }, [subjects]);
-  const upd = (subject, val) => {
+  const upd = (key, val) => {
     const n = val === '' ? '' : Math.max(0, parseFloat(val) || 0);
-    setTotals(t => ({ ...t, [subject]: n }));
+    setTotals(t => ({ ...t, [key]: n }));
   };
 
  const applyAll = val => {
@@ -10958,8 +10980,8 @@ useEffect(() => {
 
   const next = {};
 
-  subjects.forEach(subject => {
-    next[subject.subjectName] = n;
+  (subjects || []).forEach(subject => {
+    next[subjKey(subject)] = n;
   });
 
   setTotals(next);
@@ -10972,11 +10994,12 @@ const save = async () => {
     const results = [];
 
     for (const subject of subjects) {
+      const key = subjKey(subject);
       const total =
-        totals[subject.subjectName] === "" ||
-        totals[subject.subjectName] == null
+        totals[key] === "" ||
+        totals[key] == null
           ? 0
-          : Number(totals[subject.subjectName]);
+          : Number(totals[key]);
 
       const hasExisting =
         subject.id && Number(subject.id) > 0;
@@ -11092,14 +11115,14 @@ const save = async () => {
           fontWeight: 600
         }}
       >
-        {subject.subjectName}
+        {saSubjectLabel(subject)}
       </div>
 <input
   className="rs-input"
   type="number"
   min={0}
-  value={totals[subject.subjectName] ?? ''}
-  onChange={e => upd(subject.subjectName, e.target.value)}
+  value={totals[subjKey(subject)] ?? ''}
+  onChange={e => upd(subjKey(subject), e.target.value)}
   style={{ width: 80, textAlign: 'center' }}
 />
     </div>
@@ -12580,7 +12603,7 @@ html,body{background:#fff;font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-
 }
 
 /* Bulk result cards — ek class/section ke SAARE students ke result cards ek saath.
-   APIs: getstudentsbybranchsectionandgrade (students) → get-subjects_byEmployeeID (subjects)
+   APIs: getstudentsbybranchsectionandgrade (students) → getsasubjectbybranchclassandterm (exam subjects)
    → getsauploadmarksbyclassandtermandexamandsubject (per student/subject marks + remarks)
    → getremarksbystudentfilters (final remark). Single-card jaisi hi rendering, bas N students. */
 function BulkCardModal({ ctx, template, school, grades, remarks = [], rcoGeneral, rcoSig, rsSigs, rsAbsentMode, onClose, toast }) {
@@ -12611,7 +12634,6 @@ function BulkCardModal({ ctx, template, school, grades, remarks = [], rcoGeneral
       try {
         setLoading(true);
         const branchID = sessionStorage.getItem('branchID');
-        const empID    = sessionStorage.getItem('employee_ID');
         const token    = sessionStorage.getItem('token');
         const headers  = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
 
@@ -12620,13 +12642,11 @@ function BulkCardModal({ ctx, template, school, grades, remarks = [], rcoGeneral
         const stData = await stRes.json();
         const studentsRaw = Array.isArray(stData?.data) ? stData.data : (Array.isArray(stData) ? stData : []);
 
-        // 2) Subjects (table columns)
+        // 2) Subjects — sirf SA exam subjects (syllabus IDs alag hain, mix nahi)
         let subs = [];
         try {
-          const subRes = await fetch(buildUrl(`/get-subjects_byEmployeeID/${classID}/${sectionID}/${empID}`), { headers });
-          const subData = await subRes.json();
-          const arr = subData?.data || (Array.isArray(subData) ? subData : []);
-          subs = (arr || []).map(s => ({ subjectID: s.subjectID, subjectName: s.subjectName, totalMarks: s.totalMarks }));
+          const rawSubs = await cbrApi.getMainExamSubjects({ classID, sectionID, termID, examID: selectExam });
+          subs = rcNormalizeSubjects((rawSubs || []).map(saNormSubject).filter(Boolean));
         } catch { /* no subjects */ }
         const subjectNames = subs.map(s => s.subjectName);
 

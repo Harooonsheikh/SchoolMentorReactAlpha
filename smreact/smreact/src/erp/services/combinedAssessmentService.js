@@ -85,20 +85,82 @@ export const getCaObtainedMarks = (subExamIDs, gradeID, sectionID) =>
 export const getSaTotalMarks = (mainExamIDs, gradeID, sectionID) =>
   getJson(`/api/getsatotalsumbymultiexamids?${examIdsQS(mainExamIDs)}&branchID=${branchID()}&gradeID=${gradeID}&sectionID=${sectionID}`);
 
+/* Exam APIs often send subjectName empty and a numeric subjectID that does not
+   match LaunchSetup IDs. UI must never show that ID — resolve a real name. */
+export function saIsPlaceholderName(name, subjectID) {
+  const n = String(name || '').trim();
+  if (!n) return true;
+  if (subjectID != null && n === String(subjectID)) return true;
+  return /^\d+$/.test(n);
+}
+
+export function saAttachDisplayNames(saList, classSubjects = []) {
+  const byId = {};
+  const unused = [];
+  (classSubjects || []).forEach(s => {
+    const id = Number(s.subjectID ?? s.SubjectID ?? 0);
+    const nm = String(s.subjectName ?? s.SubjectName ?? s.name ?? '').trim();
+    if (!nm || saIsPlaceholderName(nm, id)) return;
+    if (id) byId[id] = nm;
+    if (!unused.some(u => u.toLowerCase() === nm.toLowerCase())) unused.push(nm);
+  });
+  const used = new Set();
+  return (saList || []).map(s => {
+    let name = String(s?.subjectName || '').trim();
+    if (!saIsPlaceholderName(name, s?.subjectID)) {
+      used.add(name.toLowerCase());
+      return { ...s, subjectName: name };
+    }
+    const mapped = byId[Number(s.subjectID)];
+    if (mapped) {
+      used.add(mapped.toLowerCase());
+      return { ...s, subjectName: mapped };
+    }
+    const next = unused.find(n => !used.has(n.toLowerCase()));
+    if (next) {
+      used.add(next.toLowerCase());
+      return { ...s, subjectName: next };
+    }
+    return { ...s, subjectName: '' };
+  });
+}
+
+const classSubjCache = new Map();
+async function fetchClassSubjectsLite(classID, sectionID) {
+  const key = `${classID}|${sectionID}`;
+  if (classSubjCache.has(key)) return classSubjCache.get(key);
+  const pending = (async () => {
+    try {
+      const empID = sessionStorage.getItem('employee_ID');
+      const json = await getJson(`/get-subjects_byEmployeeID/${classID}/${sectionID}/${empID}`);
+      return json?.data || (Array.isArray(json) ? json : []) || [];
+    } catch {
+      return [];
+    }
+  })();
+  classSubjCache.set(key, pending);
+  return pending;
+}
+
 /* ── Main-exam per-subject marks (for the card's subject table) ── */
-export const getMainExamSubjects = ({ classID, sectionID, termID, examID }) => {
+export const getMainExamSubjects = async ({ classID, sectionID, termID, examID }) => {
   const params = new URLSearchParams({
     branchID: String(branchID()), classID: String(classID), termID: String(termID ?? ''),
     ExamID: String(examID), sectionID: String(sectionID), pageNo: '1',
   });
-  return getJson(`/api/getsasubjectbybranchclassandterm?${params.toString()}`).then(j => {
-    const list = Array.isArray(j) ? j : (j?.data || []);
-    return list.map(it => ({
-      subjectID:   it.subjectID ?? it.SubjectID,
-      subjectName: it.subjectName ?? it.name ?? it.subject ?? it.SubjectName ?? '',
-      totalMarks:  Number(it.totalMarks ?? it.TotalMarks ?? 0) || 0,
-    }));
+  const j = await getJson(`/api/getsasubjectbybranchclassandterm?${params.toString()}`);
+  const list = (Array.isArray(j) ? j : (j?.data || j?.Data || [])).map(it => {
+    const subjectID = Number(it.subjectID ?? it.SubjectID ?? 0);
+    const rawName = String(it.subjectName ?? it.name ?? it.subject ?? it.SubjectName ?? '').trim();
+    return {
+      id: Number(it.id ?? it.ID ?? 0),
+      subjectID,
+      subjectName: saIsPlaceholderName(rawName, subjectID) ? '' : rawName,
+      totalMarks: Number(it.totalMarks ?? it.TotalMarks ?? 0) || 0,
+    };
   });
+  const classSubs = await fetchClassSubjectsLite(classID, sectionID);
+  return saAttachDisplayNames(list, classSubs);
 };
 
 export const getStudentSubjectMark = ({ classID, sectionID, termID, examID, subjectID, studentID }) => {
