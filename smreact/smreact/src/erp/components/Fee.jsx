@@ -10389,6 +10389,7 @@ function ledgerPeriods(fromM, fromY, toM, toY) {
    apne aap skip ho jaayegi (double-count nahi hoga). */
 function ledgerModel(recs, settings = null) {
   const isPrev = (r) => /previous|pending|arrear/i.test(String(r.subHead || r.head || ''));
+  const headPrevOf = (r) => +r.previousPendingorAdv || +r.previousPendingOrAdv || 0;
   /* Mahine-wise sort — running-ledger sahi chalne ke liye. */
   const list = (recs || []).slice().sort(
     (a, b) => (Number(a.year) * 12 + Number(a.month)) - (Number(b.year) * 12 + Number(b.month)),
@@ -10405,9 +10406,19 @@ function ledgerModel(recs, settings = null) {
   let running = 0, seen = false, advApplied = 0;
   list.forEach(rec => {
     const rows = rec.detailRows || [];
-    const carrySigned = rows.filter(isPrev).reduce((a, r) => a + ((+r.challanAmount || 0) - (+r.discount || 0)), 0);
-    const newBilled = rows.filter(r => !isPrev(r)).reduce((a, r) => a + ledgerRowNet(r), 0);
-    const received = rows.reduce((a, r) => a + ledgerRowRecv(r), 0);
+    /* Head-wise previousPendingorAdv (jaise Admission par −1000 advance) — aggregate
+       "Previous Pending" row SKIP, warna dues double / advance miss. */
+    const hasHeadPrev = rows.some(r => !isPrev(r) && !feeService.isLateFineRow(r) && headPrevOf(r) !== 0);
+    const feeRows = rows.filter(r => !feeService.isLateFineRow(r) && !(hasHeadPrev && isPrev(r)));
+    const carrySigned = hasHeadPrev
+      ? feeRows.reduce((a, r) => a + headPrevOf(r), 0)   // opening = head-wise prev (minus = advance)
+      : rows.filter(isPrev).reduce((a, r) => a + ((+r.challanAmount || 0) - (+r.discount || 0)), 0);
+    const newBilled = feeRows
+      .filter(r => hasHeadPrev || !isPrev(r))
+      .reduce((a, r) => a + ((+r.challanAmount || 0) - (+r.discount || 0)), 0);
+    /* Received: fine row alag; head-wise me aggregate prev row skip. */
+    const received = (hasHeadPrev ? feeRows : rows)
+      .reduce((a, r) => a + ledgerRowRecv(r), 0);
     const isFirst = !seen;
     if (isFirst) { running = carrySigned; seen = true; }
     const openDebt = isFirst ? Math.max(0, carrySigned) : 0;   // sirf pehle mahine ka pichla baqaya
@@ -10416,20 +10427,23 @@ function ledgerModel(recs, settings = null) {
     payable += newBilled + openDebt;
     paid += received;
     disc += rows.reduce((a, r) => a + (+r.discount || 0), 0);
+    /* Head-wise: pehle mahine ka carrySigned (= Σ headPrev) pehle se running me
+       hai — yahan sirf is mahine ka bill − received. */
     running += newBilled - received;
 
     /* Per-head aggregation (Head-Wise report ke liye) — waisa hi. */
     rows.forEach(r => {
+      if (hasHeadPrev && isPrev(r)) return;
       const sub = r.subHead || r.head || '—';
       const k = `${r.head || ''}|${sub}`;
       const agg = heads.get(k) || { head: r.head || 'Account Payable', sub, total: 0, disc: 0, recv: 0, pend: 0 };
+      const hp = hasHeadPrev ? headPrevOf(r) : 0;
       agg.total += (+r.challanAmount || 0);
       agg.disc += (+r.discount || 0);
       agg.recv += ledgerRowRecv(r);
-      /* Pending SIGNED — is head par (net − received). Us head me extra wasool ho (advance)
-         to MINUS aayega, kam ho to bacha hua baqaya. SIGNED net taake negative advance row
-         (net −3000, recv −3000) ka pending 0 aaye, na ke clamped se 3000. */
-      agg.pend += ledgerRowNetSigned(r) - ledgerRowRecv(r);
+      /* Pending = (challan − disc + headPrev) − received. Advance (hp minus) yahan
+         settle hota hai — Defaulter Remaining Receiving jaisa. */
+      agg.pend += ((+r.challanAmount || 0) - (+r.discount || 0) + hp) - ledgerRowRecv(r);
       heads.set(k, agg);
     });
 
@@ -10464,18 +10478,41 @@ function ledgerModel(recs, settings = null) {
       }
     }
   });
-  const remaining = Math.max(0, running);   // CURRENT outstanding (de-duped)
+  /* CURRENT outstanding. Head-wise latest challan par (amt − disc + hp − recv)
+     authority — multi-month me running kabhi-kabhi headPrev miss/double karti;
+     aakhri challan Receiving Remaining se match karta hai. */
+  let remaining = Math.max(0, running);
+  const latest = list[list.length - 1];
+  if (latest && Array.isArray(latest.detailRows)) {
+    const lrows = latest.detailRows;
+    const latestHeadPrev = lrows.some(r => !isPrev(r) && !feeService.isLateFineRow(r) && headPrevOf(r) !== 0);
+    if (latestHeadPrev) {
+      let out = 0;
+      lrows.forEach(r => {
+        if (feeService.isLateFineRow(r) || isPrev(r)) return;
+        out += ((+r.challanAmount || 0) - (+r.discount || 0) + headPrevOf(r)) - ledgerRowRecv(r);
+      });
+      /* Projected / billed fine pending bhi outstanding me. */
+      out += Math.max(0, fineTotal - fineRecv);
+      remaining = Math.max(0, Math.round(out));
+    }
+  }
   /* ADVANCE = pichhle overpay se aaya credit jo aage ke challans par laga (running < 0
      wale mahino se). Head-Wise report is se pending me se minus dikhati hai. */
   const advance = advApplied;
 
-  /* Unpaid heads — SIRF aakhri (current) challan se, taake purane re-billed heads dobara
-     na aayein. Advance/negative wale skip. */
-  const latest = list[list.length - 1];
+  /* Unpaid heads — aakhri challan; partial baqaya (pend > 0) bhi dikhao, sirf
+     receivedAmount==null nahi (warna Give/partial ke baad "—" aa jata tha). */
   const unpaidHeads = latest
     ? Array.from(new Set(
       (latest.detailRows || [])
-        .filter(r => ledgerRowUnpaid(r) && ((+r.challanAmount || 0) - (+r.discount || 0)) > 0)
+        .filter(r => {
+          if (feeService.isLateFineRow(r)) return false;
+          if (/previous|pending|arrear/i.test(String(r.subHead || r.head || ''))) return false;
+          const hp = headPrevOf(r);
+          const pend = ((+r.challanAmount || 0) - (+r.discount || 0) + hp) - ledgerRowRecv(r);
+          return pend > 0;
+        })
         .map(r => r.subHead || r.head || '—'),
     ))
     : [];
@@ -10516,7 +10553,8 @@ function useLedgerReportData(periods) {
       .then(res => {
         if (!alive) return;
         if (res.every(r => r === null)) setError('Could not load challans from the ledger');
-        setRecords(res.filter(Boolean).flat());
+        /* Give Discount (paymentMethod|#GD#) fold — Defaulter Remaining Receiving jaisa. */
+        setRecords(res.filter(Boolean).flat().map(r => feeService.withPersistedGiveDisc(r)));
         setLoading(false);
       });
     return () => { alive = false; };
