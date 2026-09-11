@@ -197,9 +197,19 @@ export const mergeSaSubjectsWithStudentMarks = async ({ classID, sectionID, term
       page += 1;
     }
   }
-  if (!extra.length) return list;
+  /* SIRF wahi subjects rakho jo is class ke against Launch Setup me map hain
+     (subject-against-class). Warna woh purane/unmapped subjects — jinki kabhi
+     marks upload ho gayi thi magar ab class se hataye ja chuke — bhi Single
+     Assessment ke Total/Obtained me judte the. classSubs khaali ho (API fail)
+     to filter mat lagao, warna card blank ho jayega. */
   const classSubs = await fetchClassSubjectsLite(classID, sectionID);
-  return saAttachDisplayNames([...list, ...extra], classSubs).map(s => ({
+  const allowed = new Set((classSubs || [])
+    .map(s => Number(s.subjectID ?? s.SubjectID ?? 0))
+    .filter(Boolean));
+  const scope = (arr) => (allowed.size ? arr.filter(s => allowed.has(Number(s.subjectID))) : arr);
+
+  if (!extra.length) return scope(list);
+  return saAttachDisplayNames(scope([...list, ...extra]), classSubs).map(s => ({
     ...s,
     subjectName: saIsPlaceholderName(s.subjectName, s.subjectID) ? `Subject ${s.subjectID}` : s.subjectName,
   }));

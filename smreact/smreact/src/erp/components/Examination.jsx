@@ -2610,9 +2610,90 @@ const loadResClassData = async (key, cls, force = false) => {
       { method: 'GET', headers }
     );
     const marksData = await marksRes.json();
-const marks = Array.isArray(marksData) 
-  ? marksData 
+const marks = Array.isArray(marksData)
+  ? marksData
   : (marksData?.data || marksData?.Data || []);
+
+    // 3b. Launch-Setup mapped subjects for THIS class (subject-against-class).
+    //     getsasubjectbybranchclassandtermtotalsum me kabhi purane/unmapped subjects
+    //     bhi aa jate hain jo Total/Subject-count ko inflate karte the. Isliye sirf
+    //     inhi mapped subjectIDs ko render me count karenge. (FIX 1)
+    let mappedSubjectIDs = [];
+    try {
+      const empID = sessionStorage.getItem('employee_ID');
+      const mapRes = await fetch(
+        buildUrl(`/get-subjects_byEmployeeID/${cls.classID}/${cls.sectionID}/${empID}`),
+        { method: 'GET', headers }
+      );
+      const mapJson = await mapRes.json();
+      const mapRows = mapJson?.data || (Array.isArray(mapJson) ? mapJson : []) || [];
+      mappedSubjectIDs = mapRows
+        .map(s => Number(s.subjectID ?? s.SubjectID ?? 0))
+        .filter(Boolean);
+    } catch (e) {
+      // API fail → khaali; render fallback (koi filter nahi, purana behavior).
+      mappedSubjectIDs = [];
+    }
+
+    // 3c. Scoped OBTAINED (numerator) — SIRF mapped subjects ka.
+    //     getsauploadmarksbystudentbranchsum har student ke liye ek PRE-SUMMED
+    //     obtainedMarks deta hai jo SAARE subjects (unmapped included) ka jod hai —
+    //     isi wajah se numerator scoped total (mapped) se bada ho kar >100% aa raha
+    //     tha (e.g. 879/625). Yahan har mapped subject ke against poori class ke
+    //     obtained fetch kar ke per-student sum banate hain, taake obtained bhi
+    //     mapped subjects tak scope ho jaye. Ek call PER mapped subject (StudentID
+    //     omit → poori class), Promise.all se batch (student-count par calls nahi
+    //     barhte). obtainedMarks field getsauploadmarksbyclassandtermandexamandsubject
+    //     par confirmed (card bhi wahi use karta hai).
+    /* Per-student obtained SCOPED to mapped subjects. Branch-sum obtained
+       (getsauploadmarksbystudentbranchsum) saare subjects jodta hai (unmapped
+       samet) → obtained > mapped-total (e.g. 879/625). getsauploadmarksbyclass
+       andtermandexamandsubject StudentID ke BAGHAIR khaali deta hai (isi liye
+       purana all-students attempt fail hota tha), is liye har student × har
+       MAPPED subject ke against StudentID ke sath fetch kar ke sum karte hain.
+       Concurrency cap ke liye students ko chhoti batches me chalate hain. */
+    let scopedObtained = {};      // { [studentID]: mapped subjects ka obtained sum }
+    let scopedObtainedOk = false;
+    const studentIds = (students || [])
+      .map(s => s.id ?? s.studentID ?? s.StudentID ?? s.studentId)
+      .filter(v => v != null);
+    if (mappedSubjectIDs.length && studentIds.length) {
+      try {
+        let rowCount = 0;
+        const BATCH = 6; // ek waqt me itne students (peak concurrency = BATCH × mappedSubjects)
+        for (let i = 0; i < studentIds.length; i += BATCH) {
+          const slice = studentIds.slice(i, i + BATCH);
+          // eslint-disable-next-line no-await-in-loop
+          await Promise.all(slice.map(async (stid) => {
+            const perSubj = await Promise.all(mappedSubjectIDs.map(async (sid) => {
+              const p = new URLSearchParams({
+                classID: String(cls.classID), termID: String(termID), ExamID: String(selectExamValue),
+                SubjectID: String(sid), StudentID: String(stid), sectionID: String(cls.sectionID), pageNo: '1',
+              });
+              try {
+                const r = await fetch(
+                  buildUrl(`/api/getsauploadmarksbyclassandtermandexamandsubject?${p}`),
+                  { method: 'GET', headers }
+                );
+                const d = await r.json();
+                const rec = Array.isArray(d) ? d[0] : (d?.data?.[0] || d?.Data?.[0] || null);
+                return rec ? (Number(rec.obtainedMarks ?? rec.obtainMarks ?? rec.marks ?? rec.ObtainedMarks ?? 0) || 0) : null;
+              } catch { return null; }
+            }));
+            let sum = 0, got = false;
+            perSubj.forEach(v => { if (v != null) { sum += v; got = true; } });
+            if (got) { scopedObtained[String(stid)] = sum; rowCount += 1; }
+          }));
+        }
+        // Kisi student ka bhi scoped obtained mila → reliable. Bilkul na mila →
+        // fallback pre-summed obtainedMarks (safety, taake list blank na ho).
+        scopedObtainedOk = rowCount > 0;
+      } catch (e) {
+        scopedObtained = {};
+        scopedObtainedOk = false;
+      }
+    }
+
     // 4. Rankings
     // const rankParams = new URLSearchParams({
     //   sectionID: String(cls.sectionID),
@@ -2659,7 +2740,7 @@ const rankings = Array.isArray(rankData)
     // Store everything
     setResStudentData(prev => ({
       ...prev,
-      [key]: { students, subjects, marks, rankings }
+      [key]: { students, subjects, marks, rankings, mappedSubjectIDs, scopedObtained, scopedObtainedOk }
     }));
 console.log('SUBJECTS:', subjects);
 console.log('MARKS:', marks);
@@ -5099,7 +5180,15 @@ onClick={e => {
                         Student Results — {className}
                       {/* Subject count from API */}
 <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-muted)' }}>
-  {resStudentData[key]?.subjects?.length || 0} Subject{(resStudentData[key]?.subjects?.length || 0) !== 1 ? 's' : ''}
+  {(() => {
+    // Sirf Launch-Setup mapped subjects ko count karo (FIX 1). Mapped set khaali
+    // ho (API fail) to purana behavior — poori list count.
+    const subs = resStudentData[key]?.subjects || [];
+    const mset = new Set((resStudentData[key]?.mappedSubjectIDs || []).map(Number).filter(Boolean));
+    const scoped = mset.size ? subs.filter(s => mset.has(Number(s.subjectID ?? s.SubjectID ?? 0))) : subs;
+    const n = (mset.size && scoped.length) ? scoped.length : subs.length;
+    return `${n} Subject${n !== 1 ? 's' : ''}`;
+  })()}
 </span>
                       </div>    )}
                       
@@ -5123,10 +5212,32 @@ onClick={e => {
   const apiMarks    = resStudentData[key]?.marks    || [];
   const apiSubjects = resStudentData[key]?.subjects  || [];
   const apiRankings = resStudentData[key]?.rankings  || [];
-  const totalMarksSum = apiSubjects[0]?.totalMarksSum 
-    ? Number(apiSubjects[0].totalMarksSum) 
-    : 0;
-  const subjCount = apiSubjects.length;
+
+  // FIX 1 — Total/subject-count SIRF Launch-Setup mapped subjects se.
+  // getsasubjectbybranchclassandtermtotalsum rows: har row me per-subject
+  // `totalMarks` + `subjectID`; row[0].totalMarksSum = poore (possibly unmapped)
+  // class ka sum. Isliye [0].totalMarksSum ko blindly trust na kar ke, mapped
+  // subjects ke per-subject totalMarks ko sum karte hain.
+  // apiMarks (getsauploadmarksbystudentbranchsum) per-student ek PRE-SUMMED
+  // obtainedMarks deta hai (koi per-subject breakdown nahi) — isliye obtained ko
+  // mapped-subjects tak scope nahi kar sakte; obtMarks jaisa ka waisa rehta hai,
+  // magar denominator/subject-count ab sahi (mapped) hai.
+  const mappedSet = new Set((resStudentData[key]?.mappedSubjectIDs || []).map(Number).filter(Boolean));
+  const scopedSubjects = mappedSet.size
+    ? apiSubjects.filter(s => mappedSet.has(Number(s.subjectID ?? s.SubjectID ?? 0)))
+    : apiSubjects;
+  // SAFETY: mapped set khaali (API fail) YA filter ke baad kuch match na ho to
+  // purana behavior — list kabhi 0/— na dikhaye.
+  const scopedActive = mappedSet.size > 0 && scopedSubjects.length > 0;
+  const subjCount = scopedActive ? scopedSubjects.length : apiSubjects.length;
+  const totalMarksSum = scopedActive
+    ? scopedSubjects.reduce((a, s) => a + (Number(s.totalMarks ?? s.TotalMarks ?? 0) || 0), 0)
+    : (apiSubjects[0]?.totalMarksSum ? Number(apiSubjects[0].totalMarksSum) : 0);
+  // Obtained ko bhi mapped subjects tak scope karo (loadResClassData me per-subject
+  // fetch se bana scopedObtained). Denominator scoped hai to numerator bhi scoped —
+  // warna >100% aata tha. Scoped obtained na mile to pre-summed obtainedMarks fallback.
+  const scopedObt   = resStudentData[key]?.scopedObtained || null;
+  const useScopedObt = scopedActive && !!resStudentData[key]?.scopedObtainedOk && !!scopedObt;
 
   if (!apiStudents.length) {
     return (
@@ -5141,7 +5252,9 @@ onClick={e => {
   return apiStudents.map((st, si) => {
     const marksEntry = apiMarks.find(m => m.studentID === st.id);
     const rankEntry  = apiRankings.find(r => r.studentID === st.id);
-    const obtMarks   = marksEntry ? Number(marksEntry.obtainedMarks) : 0;
+    const obtMarks   = useScopedObt
+      ? (Number(scopedObt[String(st.id)]) || 0)
+      : (marksEntry ? Number(marksEntry.obtainedMarks) : 0);
     const pct        = totalMarksSum > 0 ? Math.round((obtMarks / totalMarksSum) * 10000) / 100 : 0;
     // Grade card jaisa — gradingcrud (rsGrades) se % ke hisaab se, taake table & card SAME.
     const grade      = (obtMarks > 0 && totalMarksSum > 0)
@@ -6839,24 +6952,39 @@ onClick={async () => {
 
   if (!ex || !stu) return null;
 
-  // Get rankings of this class
-  const classData = resStudentData[resCardCtx.key] || {};
-  const rankings = classData.rankings || [];
-
-  // Find this student's ranking
-  const studentRanking = rankings.find(r =>
-    String(
-      r.studentId ??
-      r.StudentId ??
-      r.studentID ??
-      r.StudentID
-    ) === String(stu.id)
-  );
-
-  const realPosition =
-    studentRanking?.ranking ??
-    studentRanking?.Ranking ??
-    '—';
+  // FIX 2 — Position/rank MARKS ONLY (attendance ignore). Backend rankings
+  // (updaterankings/getstudentsrankings) attendance factor karte the; ab yahan
+  // client-side, isi class ke students ko obtained marks par sort kar ke rank
+  // dete hain. getsauploadmarksbystudentbranchsum per-student pre-summed
+  // obtainedMarks deta hai (list wali obtMarks jaisi hi). Total sab ke liye same
+  // hota hai to obtained se sort karna hi kaafi hai; tie par naam se break.
+  // Standard competition ranking (barabar marks → same rank). 0/no-marks → no rank.
+  const classData  = resStudentData[resCardCtx.key] || {};
+  const clsStudents = classData.students || [];
+  const clsMarks    = classData.marks    || [];
+  // Position bhi SCOPED obtained par (list wali obtMarks jaisa) — mapped subjects ka
+  // sum. Scoped na mile to pre-summed obtainedMarks fallback.
+  const clsScopedObt   = classData.scopedObtained || null;
+  const clsScopedObtOk = !!classData.scopedObtainedOk && !!clsScopedObt;
+  const obtOf = (sid) => {
+    if (clsScopedObtOk) return Number(clsScopedObt[String(sid)]) || 0;
+    const m = clsMarks.find(mm => String(mm.studentID) === String(sid));
+    return m ? (Number(m.obtainedMarks) || 0) : 0;
+  };
+  const ranked = clsStudents
+    .map(s => ({ id: s.id, obt: obtOf(s.id), name: String(s.studentName || s.name || '') }))
+    .filter(s => s.obt > 0)
+    .sort((a, b) => (b.obt - a.obt) || a.name.localeCompare(b.name));
+  let posNum = 0;
+  let curRank = 0, prevObt = null;
+  for (let i = 0; i < ranked.length; i++) {
+    if (prevObt === null || ranked[i].obt !== prevObt) { curRank = i + 1; prevObt = ranked[i].obt; }
+    if (String(ranked[i].id) === String(stu.id)) { posNum = curRank; break; }
+  }
+  // Ordinal format jaisa baaqi code (1st/2nd/3rd/Nth). Rank na mile → '—'.
+  const realPosition = posNum
+    ? `${posNum}${posNum === 1 ? 'st' : posNum === 2 ? 'nd' : posNum === 3 ? 'rd' : 'th'}`
+    : '—';
 
   const cardStudent = {
     id:      stu.id,
