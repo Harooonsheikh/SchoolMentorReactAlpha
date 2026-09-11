@@ -60,7 +60,10 @@ function stuOpenPrintWindow(title, css, inner, toast) {
   const w = window.open('', '_blank');
   if (!w) { toast && toast('Please allow pop-ups to print', 'error'); return; }
   const escTitle = String(title || '').replace(/[<>&]/g, m => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[m]));
-  w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${escTitle}</title><style>${css}</style></head><body>${inner}</body></html>`);
+  /* Chrome's print dialog strips CSS backgrounds unless "Background graphics"
+     is ticked. Force colour printing so ID-card / report themes survive Save as PDF. */
+  const colorPrint = `html,body,*,*::before,*::after{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;color-adjust:exact!important}`;
+  w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${escTitle}</title><style>${colorPrint}${css || ''}</style></head><body>${inner}</body></html>`);
   w.document.close();
   /* Small delay so the branch logo image has time to load before print. */
   w.onload = () => setTimeout(() => { try { w.focus(); w.print(); } catch (e) { /* ignore */ } }, 500);
@@ -107,6 +110,26 @@ function stuLogoImg(school) {
     ? `<img src="${school.logo}" alt="logo" style="width:100%;height:100%;object-fit:contain"/>`
     : stuSchoolLogoSVG();
 }
+
+/* Coloured header/footer as real SVG (not CSS background). Chrome print
+   drops CSS backgrounds when "Background graphics" is off; SVG fills print. */
+function stuIdFillSvg(c1, c2, uid) {
+  const gid = `ig_${String(uid || 'x').replace(/[^a-zA-Z0-9_-]/g, '')}`;
+  const a = stuEsc(c1 || '#2D7DD2');
+  const b = stuEsc(c2 || c1 || '#1ABCCD');
+  return `<svg class="band-svg" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none" viewBox="0 0 10 10" aria-hidden="true"><defs><linearGradient id="${gid}" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="${a}"/><stop offset="100%" stop-color="${b}"/></linearGradient></defs><rect width="10" height="10" fill="url(#${gid})"/></svg>`;
+}
+
+const STU_ID_PRINT_CSS = `
+html,body,*,.card,.card-top,.card-foot,.photo,.face-lbl,.logo-wrap{
+  -webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;color-adjust:exact!important}
+.card-top,.card-foot{position:relative;overflow:hidden;color:#fff}
+.band-svg{position:absolute;inset:0;width:100%;height:100%;display:block;z-index:0;pointer-events:none}
+.card-top>.logo-wrap,.card-top>.school-name,.card-foot>.card-foot-txt{position:relative;z-index:1}
+.card-top>.face-lbl{z-index:1}
+@media print{
+  html,body,*{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;color-adjust:exact!important}
+}`;
 
 /* Map class name → an icon for the class header row */
 const STU_CLASS_ICON = (cls) => {
@@ -636,9 +659,11 @@ function stuQrSVG(value) {
 function buildStuIdCardHTML(s, cls, school, template, theme, session, role) {
   const initials = stuInitials(s);
   const isV = template === 'v';
+  const sid = String(s?._id || s?.reg || 's');
   const front = `
     <div class="card">
       <div class="card-top" style="background:linear-gradient(135deg,${theme.c1},${theme.c2})">
+        ${stuIdFillSvg(theme.c1, theme.c2, `${sid}-f-top`)}
         <div class="logo-wrap">${stuLogoImg(school)}</div>
         <div class="school-name">${stuEsc(school?.name || 'School')}</div>
         <div class="face-lbl">Front</div>
@@ -651,11 +676,12 @@ function buildStuIdCardHTML(s, cls, school, template, theme, session, role) {
         <div class="kv-row"><div><div class="lbl">Father</div><div class="val">${stuEsc(s.father || '—')}</div></div><div><div class="lbl">Designation</div><div class="val">${stuEsc(role || 'Student')}</div></div></div>
         <div class="kv-row"><div><div class="lbl">Date of Birth</div><div class="val">${stuFmtDate(s.dob)}</div></div><div><div class="lbl">Session</div><div class="val">${stuEsc(session || '2026-2027')}</div></div></div>
       </div>
-      <div class="card-foot" style="background:${theme.c1}">If found, please return to the school office.</div>
+      <div class="card-foot" style="background:${theme.c1}">${stuIdFillSvg(theme.c1, theme.c1, `${sid}-f-foot`)}<span class="card-foot-txt">If found, please return to the school office.</span></div>
     </div>`;
   const back = `
     <div class="card">
       <div class="card-top" style="background:linear-gradient(135deg,${theme.c1},${theme.c2})">
+        ${stuIdFillSvg(theme.c1, theme.c2, `${sid}-b-top`)}
         <div class="logo-wrap">${stuLogoImg(school)}</div>
         <div class="school-name">${stuEsc(school?.name || 'School')}</div>
         <div class="face-lbl">Back</div>
@@ -671,9 +697,10 @@ function buildStuIdCardHTML(s, cls, school, template, theme, session, role) {
         </div>
         ${school?.address || school?.phone ? `<div class="addr">${school?.address ? stuEsc(school.address) : ''}${school?.phone ? ` · ☎ ${stuEsc(school.phone)}` : ''}</div>` : ''}
       </div>
-      <div class="card-foot" style="background:${theme.c1}">Property of ${stuEsc(school?.name || 'School')} — return if found.</div>
+      <div class="card-foot" style="background:${theme.c1}">${stuIdFillSvg(theme.c1, theme.c1, `${sid}-b-foot`)}<span class="card-foot-txt">Property of ${stuEsc(school?.name || 'School')} — return if found.</span></div>
     </div>`;
   const css = `
+    ${STU_ID_PRINT_CSS}
     *{box-sizing:border-box;margin:0;padding:0;font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif}
     html,body{background:#F1F3F8}body{padding:14px 0}
     .sheet{display:flex;flex-direction:column;align-items:center;gap:20px;padding:14px}
@@ -711,7 +738,7 @@ function buildStuIdCardHTML(s, cls, school, template, theme, session, role) {
     .back-row b.mono{font-family:ui-monospace,Menlo,monospace}
     .addr{margin-top:auto;padding-top:1.5mm;font-size:6.5px;color:#475569;text-align:center;line-height:1.3;font-weight:600;border-top:0.6px dashed #CBD5E1}
     @page{size:A4 portrait;margin:10mm}
-    @media print{body{background:#fff;padding:0}.sheet{padding:0}}
+    @media print{body{background:#fff;padding:0;-webkit-print-color-adjust:exact;print-color-adjust:exact}.sheet{padding:0}}
   `;
   return { css, html: `<div class="sheet">${front}${back}</div>` };
 }
@@ -719,11 +746,13 @@ function buildStuIdCardHTML(s, cls, school, template, theme, session, role) {
 /* ─── Bulk ID Cards on A4 sheet ─── */
 function buildStuBulkIdHTML(students, cls, school, template, theme, session) {
   const isV = template === 'v';
-  const inner = students.map(s => {
+  const inner = students.map((s, i) => {
     const initials = stuInitials(s);
+    const sid = String(s?._id || s?.reg || i);
     const front = `
       <div class="card">
         <div class="card-top" style="background:linear-gradient(135deg,${theme.c1},${theme.c2})">
+          ${stuIdFillSvg(theme.c1, theme.c2, `${sid}-f-top`)}
           <div class="logo-wrap">${stuLogoImg(school)}</div>
           <div class="school-name">${stuEsc(school?.name || 'School')}</div>
           <div class="face-lbl">Front</div>
@@ -735,11 +764,12 @@ function buildStuBulkIdHTML(students, cls, school, template, theme, session) {
           <div class="kv-row"><div><div class="lbl">Class</div><div class="val">${stuEsc(cls?.cls || '—')} · ${stuEsc(cls?.sec || '—')}</div></div><div><div class="lbl">Reg</div><div class="val mono">${stuEsc(s.reg)}</div></div></div>
           <div class="kv-row"><div><div class="lbl">Father</div><div class="val">${stuEsc(s.father || '—')}</div></div><div><div class="lbl">Session</div><div class="val">${stuEsc(session || '2026-2027')}</div></div></div>
         </div>
-        <div class="card-foot" style="background:${theme.c1}">If found, please return to the school office.</div>
+        <div class="card-foot" style="background:${theme.c1}">${stuIdFillSvg(theme.c1, theme.c1, `${sid}-f-foot`)}<span class="card-foot-txt">If found, please return to the school office.</span></div>
       </div>`;
     const back = `
       <div class="card">
         <div class="card-top" style="background:linear-gradient(135deg,${theme.c1},${theme.c2})">
+          ${stuIdFillSvg(theme.c1, theme.c2, `${sid}-b-top`)}
           <div class="logo-wrap">${stuLogoImg(school)}</div>
           <div class="school-name">${stuEsc(school?.name || 'School')}</div>
           <div class="face-lbl">Back</div>
@@ -753,11 +783,12 @@ function buildStuBulkIdHTML(students, cls, school, template, theme, session) {
             <div class="back-row"><span class="lbl">Adm No</span><b class="mono">${stuEsc(s.adm || '—')}</b></div>
           </div>
         </div>
-        <div class="card-foot" style="background:${theme.c1}">Property of ${stuEsc(school?.name || 'School')} — return if found.</div>
+        <div class="card-foot" style="background:${theme.c1}">${stuIdFillSvg(theme.c1, theme.c1, `${sid}-b-foot`)}<span class="card-foot-txt">Property of ${stuEsc(school?.name || 'School')} — return if found.</span></div>
       </div>`;
     return front + back;
   }).join('');
   const css = `
+    ${STU_ID_PRINT_CSS}
     *{box-sizing:border-box;margin:0;padding:0;font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif}
     html,body{background:#F1F3F8}body{padding:10px 0}
     .sheet{display:grid;grid-template-columns:${isV ? 'repeat(4,1fr)' : 'repeat(2,1fr)'};gap:6mm;padding:8mm;background:#fff;width:210mm;margin:0 auto;box-shadow:0 10px 30px rgba(15,23,42,.12)}
@@ -789,7 +820,7 @@ function buildStuBulkIdHTML(students, cls, school, template, theme, session) {
     .back-row b{font-size:7.5px;color:#0F172A;font-weight:700;line-height:1.15}
     .back-row b.mono{font-family:ui-monospace,Menlo,monospace}
     @page{size:A4 portrait;margin:0}
-    @media print{body{background:#fff;padding:0}.sheet{box-shadow:none;width:auto;margin:0}}
+    @media print{body{background:#fff;padding:0;-webkit-print-color-adjust:exact;print-color-adjust:exact}.sheet{box-shadow:none;width:auto;margin:0}}
   `;
   return { css, html: `<div class="sheet">${inner}</div>` };
 }
