@@ -29,6 +29,10 @@ export const MODULE_REGISTRY = [
   { id: 'hr',               label: 'Human Resource',    icon: 'fa-users',            group: 'ADMINISTRATION', route: '/hr',                 coreLocked: false },
   { id: 'networks',         label: 'Networks',          icon: 'fa-circle-nodes',     group: 'ADMINISTRATION', route: '/networks',           coreLocked: true  },
   { id: 'appraisals',       label: 'Staff Appraisals',  icon: 'fa-star-half-stroke', group: 'ADMINISTRATION', route: '/appraisals',         coreLocked: false },
+  /* Approvals runs on self-contained mock data (no backend module-permission
+     field), so it is coreLocked — always active for permitted users — like the
+     other admin utilities (Audit Logs / User Permissions). Not branch-gated. */
+  { id: 'approvals',        label: 'Approvals',         icon: 'fa-square-check',     group: 'ADMINISTRATION', route: '/approvals',          coreLocked: true  },
 
   /* ── SCHOOL MENTOR GROUP ─────────────────────────────────────── */
   { id: 'school_sops',      label: 'School SOPs',       icon: 'fa-book-open',        group: 'SCHOOL MENTOR',  route: '/school-mentor/sops',      coreLocked: false },
@@ -124,6 +128,7 @@ export const MODULE_TO_TREE_MAP = {
   students:          'students',
   hr:                'hr',
   appraisals:        'appraisals',
+  approvals:         'approvals',
   school_sops:       'sops',
   teacher_trainings: 'trainings',
   audit_logs:        'auditlogs',
@@ -155,6 +160,7 @@ export const MODULE_TO_NAV_MAP = {
   students:          'students',
   hr:                'hr',
   appraisals:        'appraisal',
+  approvals:         'approvals',
   school_sops:       'sops',
   teacher_trainings: 'trainings',
   networks:          'networks',

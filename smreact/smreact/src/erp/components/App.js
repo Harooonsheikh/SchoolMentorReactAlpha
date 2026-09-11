@@ -25,7 +25,7 @@ const MODULE_ID_TO_LABEL = Object.fromEntries(MODULE_REGISTRY.map((m) => [m.id, 
 /* Extra modules that are shown ONLY on the master branch (branchID === 1) and
    stay hidden on every other branch. On branch 1 they still respect the user's
    role/permission. Keyed by sidebar nav id. */
-const BRANCH1_ONLY_NAV = new Set(['mentorai', 'inventory', 'crm', 'audit', 'appraisal', 'sops', 'trainings', 'etube', 'chat', 'notifications']);
+const BRANCH1_ONLY_NAV = new Set(['mentorai', 'inventory', 'crm', 'audit', 'appraisal', 'sops', 'trainings', 'etube', 'chat', 'notifications', 'approvals']);
 
 /* Un me se kuch module kisi aur branch par bhi live kar diye jate hain.
    nav id → wo branchID jinhein (branch 1 ke ilawa) ye module dikhna chahiye.
@@ -68,6 +68,7 @@ const HumanResource  = lazy(() => import(/* webpackChunkName: "mod-hr" */       
 // import karta hai (pages/Settings/SettingsModule.jsx):
 // const Networks = lazy(() => import('./Networks.jsx'));
 const StaffAppraisalPage = lazy(() => import(/* webpackChunkName: "mod-appraisal" */ './StaffAppraisalPage.jsx'));
+const Approvals      = lazy(() => import(/* webpackChunkName: "mod-approvals" */     './Approvals.jsx'));
 const SettingsModule = lazy(() => import(/* webpackChunkName: "mod-settings" */      '../pages/Settings/SettingsModule.jsx'));
 const SchoolSOPs     = lazy(() => import(/* webpackChunkName: "mod-sops" */          '../pages/SchoolMentor/SchoolSOPs.jsx'));
 const TeacherTrainings = lazy(() => import(/* webpackChunkName: "mod-trainings" */    '../pages/SchoolMentor/TeacherTrainings.jsx'));
@@ -100,6 +101,7 @@ const NAV_LABELS = {
   hr: 'Human Resource',
   networks: 'Networks',
   appraisal: 'Staff Appraisals',
+  approvals: 'Approvals',
   crm: 'Admission CRM',
   sops: 'School SOPs',
   trainings: 'Teacher Trainings',
@@ -148,6 +150,7 @@ const NAV_SECTIONS = [
       { id: 'hr',        name: 'Human Resource', icon: 'fa-users' },
       /* { id: 'networks',  name: 'Networks',       icon: 'fa-circle-nodes' }, — ab Settings › Networks tab me */
       { id: 'appraisal', name: 'Staff Appraisals', icon: 'fa-star' },     /* branchID 1 only */
+      { id: 'approvals', name: 'Approvals',        icon: 'fa-square-check' },
     ],
   },
   {
@@ -659,6 +662,11 @@ export default function App() {
                 <StaffAppraisalPage toast={pushToast} />
               </Suspense>
             )}
+            {active === 'approvals' && (
+              <Suspense fallback={<RouteFallback label="Loading Approvals…" />}>
+                <Approvals toast={pushToast} />
+              </Suspense>
+            )}
             {active === 'settings' && (
               <Suspense fallback={<RouteFallback label="Loading Settings…" />}>
                 <SettingsModule toast={pushToast} />
@@ -725,7 +733,7 @@ export default function App() {
                 />
               </Suspense>
             )}
-            {active !== 'mentorai' && active !== 'acad' && active !== 'exam' && active !== 'paper' && active !== 'att' && active !== 'tt' && active !== 'fee' && active !== 'accounts' && active !== 'inventory' && active !== 'crm' && active !== 'students' && active !== 'hr' && active !== 'networks' && active !== 'appraisal' && active !== 'settings' && active !== 'sops' && active !== 'trainings' && active !== 'etube' && active !== 'chat' && active !== 'notifications' && active !== 'perm' && active !== 'audit' && active !== 'launch' && active !== 'dashboard' && (
+            {active !== 'mentorai' && active !== 'acad' && active !== 'exam' && active !== 'paper' && active !== 'att' && active !== 'tt' && active !== 'fee' && active !== 'accounts' && active !== 'inventory' && active !== 'crm' && active !== 'students' && active !== 'hr' && active !== 'networks' && active !== 'appraisal' && active !== 'approvals' && active !== 'settings' && active !== 'sops' && active !== 'trainings' && active !== 'etube' && active !== 'chat' && active !== 'notifications' && active !== 'perm' && active !== 'audit' && active !== 'launch' && active !== 'dashboard' && (
               <NavComingSoon label={NAV_LABELS[active] || 'This module'} />
             )}
           </main>

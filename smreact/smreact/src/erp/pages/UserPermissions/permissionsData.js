@@ -36,11 +36,46 @@ export const ACTION_LABELS = {
 export const MODULE_TREE = [
   { id: 'dashboard',   label: 'Dashboard',         icon: 'fa-chart-pie',
     children: [
-      /* ── ERP ka landing screen (Dashboard.jsx → Admin/Teacher view).
-            Ek hi read-only screen hai, is liye sirf View. School level par
-            ye module band nahi hota — sirf role/user permission se milta
-            hai (dekho getActiveModuleTree). */
-      { id: 'dash.overview', label: 'Dashboard' },
+      /* ── Every card/section on the Admin Dashboard (AdminDashboard.jsx),
+            in on-page order. Each is a simple view toggle — cards aren't
+            CRUD entities, so 'view' is the only applicable action. When
+            a role/user lacks a card's view permission, AdminDashboard
+            renders that card as a locked placeholder (name only, "Ask
+            your super admin to give you access of this card"). */
+      { id: 'dashboard.announcements',       label: 'School Mentor Announcements' },
+      { id: 'dashboard.teacherapp',          label: 'Teachers Mobile App Status' },
+      { id: 'dashboard.parentapp',           label: 'Parents Mobile App Status' },
+      { id: 'dashboard.snapshot',            label: 'Live Module Snapshot' },
+      { id: 'dashboard.fee_currentmonth',    label: 'Current Month Fee Position', group: 'Fee Analytics' },
+      { id: 'dashboard.fee_previousdues',    label: 'Previous Dues',              group: 'Fee Analytics' },
+      { id: 'dashboard.fee_netreceivable',   label: 'Total Net Receivable',       group: 'Fee Analytics' },
+      { id: 'dashboard.fee_received',        label: 'Fee Received',               group: 'Fee Analytics' },
+      { id: 'dashboard.fee_pending',         label: 'Pending Fee',                group: 'Fee Analytics' },
+      { id: 'dashboard.fee_discountgiven',   label: 'Discount Given During Receiving', group: 'Fee Analytics' },
+      { id: 'dashboard.fee_advance',         label: 'Advance Payments Received',  group: 'Fee Analytics' },
+      { id: 'dashboard.onelink',             label: 'OneLink Payments' },
+      { id: 'dashboard.finsummary',          label: 'Monthly Financial Summary',  group: 'Financial Overview' },
+      { id: 'dashboard.plchart',             label: 'Profit/Loss Overview',       group: 'Financial Overview' },
+      { id: 'dashboard.attendance',          label: "Today's Attendance" },
+      { id: 'dashboard.lessonplananalytics', label: 'Lesson Plan Analytics' },
+      { id: 'dashboard.papergenerator',      label: 'Question Paper Generator' },
+      { id: 'dashboard.birthdays',           label: 'Birthdays This Month' },
+      { id: 'dashboard.activities',          label: 'Upcoming Activities' },
+    ] },
+  { id: 'mentorai',    label: 'Mentor AI',         icon: 'fa-wand-magic-sparkles',
+    children: [
+      /* ── Mentor AI Studio — content-generation suite (ChatAssistant.jsx,
+            LessonPlans.jsx, Worksheets.jsx, DesignStudio.jsx, Wallet.jsx,
+            Library.jsx). Distinct from the Dashboard's existing "Mentor AI
+            — ERP Intelligence Assistant" analytics widget, which has no
+            permission node here (it's always available, same as other
+            Dashboard widgets not listed under the "Dashboard" module above). */
+      { id: 'mentorai.chat',    label: 'AI Chat Assistant' },
+      { id: 'mentorai.lessonplans', label: 'Lesson Plans' },
+      { id: 'mentorai.worksheets',  label: 'Worksheet Generator' },
+      { id: 'mentorai.designstudio', label: 'Design Studio' },
+      { id: 'mentorai.wallet',  label: 'Wallet & Usage' },
+      { id: 'mentorai.library', label: 'Library' },
     ] },
   { id: 'academics',   label: 'Academics',         icon: 'fa-book-open-reader',
     children: [
@@ -58,6 +93,12 @@ export const MODULE_TREE = [
       { id: 'academics.breakups',     label: 'Term Breakups',        group: 'Lesson Plans' },
       { id: 'academics.createlp',     label: 'Create Lesson Plans',  group: 'Lesson Plans' },
       { id: 'academics.submissions',  label: 'Submissions',          group: 'Lesson Plans' },
+
+      /* ── Releases from Head Office — HeadOfficeReleases component
+            (Academics.js). Pulls Master/Sub releases pushed down by
+            the Chain Head Office into this school's own Activities,
+            Lesson Plans, Notebook Plans and Resource Library. */
+      { id: 'academics.horeleases',   label: 'Releases from Head Office' },
     ] },
   { id: 'examination', label: 'Examination',       icon: 'fa-file-pen',
     children: [
@@ -159,11 +200,16 @@ export const MODULE_TREE = [
     ] },
   { id: 'students',    label: 'Students',          icon: 'fa-user-graduate',
     children: [
-      /* ── 3 L1 tabs (STU_TABS @ Students.jsx:1040). The old tree
-            had standalone "Certificates" and "ID Cards" screens —
-            those don't exist as top-level tabs; both are sub-actions
-            opened from Active Students per-row menu (cert dropdown +
-            Bulk ID button + per-row Download ID Card). */
+      /* ── 4 L1 tabs (STU_TABS @ Students.jsx:1040) — Pre-Enrollment
+            was added as the first tab (front desk registers a
+            prospective student, collects an upfront challan, then
+            Enrolls them into Active Students or sends them to
+            Inactive). The old tree had standalone "Certificates" and
+            "ID Cards" screens — those don't exist as top-level tabs;
+            both are sub-actions opened from Active Students per-row
+            menu (cert dropdown + Bulk ID button + per-row Download ID
+            Card). */
+      { id: 'stu.preenroll', label: 'Pre-Enrollment' },
       { id: 'stu.active',   label: 'Active Students' },
       { id: 'stu.inactive', label: 'Inactive Students' },
       { id: 'stu.family',   label: 'Family Tree' },
@@ -189,6 +235,14 @@ export const MODULE_TREE = [
       { id: 'apr.run',     label: 'Appraisals' },
       { id: 'apr.reports', label: 'Reports' },
     ] },
+  { id: 'approvals',   label: 'Approvals',         icon: 'fa-square-check',
+    children: [
+      /* ── Requester vs approver views inside Approvals.jsx — kept as
+            separate permissions so a role can be granted "raise a
+            request" without also granting "review/decide" access. */
+      { id: 'approvals.my_requests', label: 'My Requests' },
+      { id: 'approvals.review',      label: 'Pending Approvals & History' },
+    ] },
   { id: 'sops',        label: 'School SOPs',       icon: 'fa-book-open',
     children: [
       /* ── Single screen (SchoolSOPs.jsx:86) with two
@@ -203,6 +257,29 @@ export const MODULE_TREE = [
       /* ── Single screen (TeacherTrainings.jsx:117) — read-only
             recorded-workshop library. */
       { id: 'trn.view', label: 'View Trainings' },
+    ] },
+  { id: 'etube',       label: 'E-Tube',            icon: 'fa-play-circle',
+    children: [
+      /* ── 3 L1 tabs (ETube.jsx) — Dashboard / Videos / Categories.
+            Videos tab carries upload (create), edit and delete. */
+      { id: 'etube.dashboard',  label: 'Dashboard' },
+      { id: 'etube.videos',     label: 'Videos' },
+      { id: 'etube.categories', label: 'Categories' },
+    ] },
+  { id: 'chat',        label: 'Chat',              icon: 'fa-comments',
+    children: [
+      /* ── Single messaging screen (Chat.jsx). Conversations =
+            view list + start new chat; Messages = send text +
+            attachments / voice notes. */
+      { id: 'chat.conversations', label: 'Conversations' },
+      { id: 'chat.messages',      label: 'Messages & Attachments' },
+    ] },
+  { id: 'notifications', label: 'Notifications',   icon: 'fa-bell',
+    children: [
+      /* ── 2 L1 tabs (Notifications.jsx) — New Notification (compose
+            + send) and Sent Notifications (view / edit / delete log). */
+      { id: 'notif.compose', label: 'New Notification' },
+      { id: 'notif.sent',    label: 'Sent Notifications' },
     ] },
   { id: 'launch',      label: 'Launch Setup',      icon: 'fa-rocket',
     children: [
@@ -275,9 +352,58 @@ export function getActiveModuleTree(moduleState) {
    excluded from selections, templates, stats and saved state.
    ─────────────────────────────────────────────────────────────────── */
 export const MODULE_PERMISSIONS = {
-  /* ─── DASHBOARD — sirf padhne wali screen (KPI cards + charts).
-         Koi create/edit/delete nahi, is liye sirf View. */
-  'dash.overview':         ['view'],
+  /* ─── DASHBOARD — every card is a read-only widget, so 'view' is the
+         only applicable action for all 19 of them. */
+  'dashboard.announcements':       ['view'],
+  'dashboard.teacherapp':          ['view'],
+  'dashboard.parentapp':           ['view'],
+  'dashboard.snapshot':            ['view'],
+  'dashboard.fee_currentmonth':    ['view'],
+  'dashboard.fee_previousdues':    ['view'],
+  'dashboard.fee_netreceivable':   ['view'],
+  'dashboard.fee_received':        ['view'],
+  'dashboard.fee_pending':         ['view'],
+  'dashboard.fee_discountgiven':   ['view'],
+  'dashboard.fee_advance':         ['view'],
+  'dashboard.onelink':             ['view'],
+  'dashboard.finsummary':          ['view'],
+  'dashboard.plchart':             ['view'],
+  'dashboard.attendance':          ['view'],
+  'dashboard.lessonplananalytics': ['view'],
+  'dashboard.papergenerator':      ['view'],
+  'dashboard.birthdays':           ['view'],
+  'dashboard.activities':          ['view'],
+
+  /* ─── MENTOR AI — derived from real actions in the Mentor AI Studio
+         module (ChatAssistant/LessonPlans/Worksheets/DesignStudio/
+         Wallet/Library). */
+
+  /* AI Chat Assistant — send messages (create), no edit/delete of past
+     messages, no approval workflow. */
+  'mentorai.chat':          ['view', 'create'],
+
+  /* Lesson Plans — generate (create), Edit via AI (edit), Save to
+     Portal treated as download (pulls generated content into the real
+     Lesson Plans module). No Delete/Approve — content isn't a
+     workflow item, just generated and saved. */
+  'mentorai.lessonplans':   ['view', 'create', 'edit', 'download'],
+
+  /* Worksheet Generator — generate (create), Edit via AI (edit),
+     Download / Save to Library (download), Delete from Library
+     handled under mentorai.library instead. */
+  'mentorai.worksheets':    ['view', 'create', 'edit', 'download'],
+
+  /* Design Studio — generate (create), Edit by AI (edit), Download. */
+  'mentorai.designstudio':  ['view', 'create', 'edit', 'download'],
+
+  /* Wallet & Usage — read-only usage dashboard. Upgrading is a manual
+     bank-transfer + WhatsApp flow outside the app, not an in-app
+     mutation, so no create/edit here. */
+  'mentorai.wallet':        ['view'],
+
+  /* Library — view saved worksheets/design posts, download, delete.
+     No Create (items only arrive here via Save to Library elsewhere). */
+  'mentorai.library':       ['view', 'download', 'delete'],
 
   /* ─── ACADEMICS — derived from real buttons in Academics.js +
          LessonPlans.js (audited 2026-05-31). Each list contains ONLY
@@ -338,6 +464,16 @@ export const MODULE_PERMISSIONS = {
                    open lesson plan details viewer.
      No explicit Approve workflow, no Create, no Delete. */
   'academics.submissions': ['view', 'edit', 'download'],
+
+  /* Scheme of Studies → Releases from Head Office
+     HeadOfficeReleases component (Academics.js)
+     Real buttons: View Details / Preview (view), "Save to Portal" /
+                   "Save to Activity Calendar" (import — pulls Head
+                   Office content into Activities, Lesson Plans,
+                   Notebook Plans and Resource Library).
+     No Create/Edit/Delete/Approve — content is authored by Head
+     Office, the school can only view and import it. */
+  'academics.horeleases':  ['view', 'import'],
 
   /* ─── EXAMINATION — derived from real buttons in Examination.jsx
          (audited 2026-05-31). The L1 tab list is setup / datesheet /
@@ -624,9 +760,19 @@ export const MODULE_PERMISSIONS = {
   'adm.reports':        ['view', 'download'],
 
   /* ─── STUDENTS — derived from real buttons in Students.jsx
-         (audited 2026-05-31). 3 L1 tabs only — Certificates and
-         ID Cards are sub-actions inside Active Students, not
-         standalone screens. */
+         (audited 2026-05-31; Pre-Enrollment added later as the new
+         first tab). 4 L1 tabs — Certificates and ID Cards are
+         sub-actions inside Active Students, not standalone screens. */
+
+  /* L1 → Pre-Enrollment
+     Students.jsx → PreEnrolledStudents
+     Real buttons: Add New Student, Edit Student Details, generate
+                   Challan, record Receiving, Print Challan/Receiving
+                   Slip (A4 + Thermal), Enroll to Active Students,
+                   Send to Inactive, Reporting + Download Report.
+     "Enroll" reuses the 'approve' action — it's the same "finalize a
+     pending item" semantics as approving a request elsewhere. */
+  'stu.preenroll':      ['view', 'create', 'edit', 'delete', 'approve', 'download', 'print'],
 
   /* L1 → Active Students
      Students.jsx:1149 (ActiveStudents)
@@ -715,6 +861,19 @@ export const MODULE_PERMISSIONS = {
                    export. */
   'apr.reports':        ['view', 'download', 'print'],
 
+  /* ─── APPROVALS — central review screen (Approvals.jsx). Runs on
+         self-contained mock data. Two screens split requester vs
+         approver so the "raise a request" and "review/decide" rights
+         can be granted independently. */
+
+  /* Requester view — raise a request (create) + withdraw own pending
+     request (delete). */
+  'approvals.my_requests': ['view', 'create', 'delete'],
+
+  /* Approver view — Pending Approvals + History; approve/reject a
+     request (approve). */
+  'approvals.review':      ['view', 'approve'],
+
   /* ─── SCHOOL SOPs — derived from real buttons in
          SchoolSOPs.jsx (audited 2026-05-31). Module is fully
          read-only — no Create / Edit / Delete / Download anywhere
@@ -732,6 +891,37 @@ export const MODULE_PERMISSIONS = {
 
   /* Watch recorded training (video player modal). */
   'trn.view':           ['view'],
+
+  /* ─── E-TUBE — derived from real buttons in ETube.jsx. School
+         uploads educational videos for Head-Office review before
+         they go live on the mobile app. */
+
+  /* Dashboard tab — stats + pending-review lists (read-only). */
+  'etube.dashboard':    ['view'],
+
+  /* Videos tab — table with Upload (create), Edit and Delete. */
+  'etube.videos':       ['view', 'create', 'edit', 'delete'],
+
+  /* Categories tab — per-category breakdown (read-only). */
+  'etube.categories':   ['view'],
+
+  /* ─── CHAT — derived from real actions in Chat.jsx. School
+         messaging with parents / students / teachers. */
+
+  /* Conversations — view recent chats + start a new chat (create). */
+  'chat.conversations': ['view', 'create'],
+
+  /* Messages — send text (create) + attachments / voice notes (share). */
+  'chat.messages':      ['create', 'share'],
+
+  /* ─── NOTIFICATIONS — derived from real buttons in
+         Notifications.jsx. Mobile-app push notifications. */
+
+  /* New Notification — compose form + Send (create). */
+  'notif.compose':      ['view', 'create'],
+
+  /* Sent Notifications — view log, edit record, delete record. */
+  'notif.sent':         ['view', 'edit', 'delete'],
 
   /* ─── SETTINGS — derived from real buttons in
          SessionManagement.jsx + SignatureManagement.jsx
