@@ -221,6 +221,25 @@ function resSubjAbsent(rec, subjTotal) {
   return blank(obt) || blank(tot) || Number(tot) <= 0;
 }
 
+/* Result-card absent handling:
+   'zero'    — show absent as AB/0 and count them in totals
+   'exclude' — show absent as AB and drop them from totals
+   '' / none — no option selected: hide 0-mark (and absent) subjects from the card */
+function rcHideZeroMarkSubjects(mode) {
+  return mode !== 'zero' && mode !== 'exclude';
+}
+function rcFilterZeroMarkSubjects(subjects, student) {
+  const obtained = student?.obtained || {};
+  const absentSet = {};
+  (student?.absentSubjects || []).forEach(s => { absentSet[s] = true; });
+  return (subjects || []).filter(s => {
+    if (absentSet[s]) return false;
+    const raw = obtained[s];
+    if (raw == null || String(raw).trim() === '') return false;
+    return Number(raw) > 0;
+  });
+}
+
 /* ── Result card par student ki asli tasveer ──────────────────────────
    getstudentsbybranchsectionandgrade har student ke against `picture` deta hai.
    Ek class/section ki list ek hi baar fetch hoti hai (cache), aur map me
@@ -673,7 +692,7 @@ const [subjects, setSubjects] = useState([]);
   const [rsGrades, setRsGrades]   = useState([]);
   const [rsSigs, setRsSigs]       = useState([]);
   const [rsRemarks, setRsRemarks] = useState([]);
-  const [rsAbsentMode, setRsAbsentMode] = useState('exclude'); // 'zero' | 'exclude'
+  const [rsAbsentMode, setRsAbsentMode] = useState(''); // '' | 'zero' | 'exclude' — none checked by default
   const [rsModalOpen, setRsModalOpen]   = useState(false);
   const [rsReportReq, setRsReportReq]   = useState(null);      // truthy → picker open
 
@@ -4604,28 +4623,32 @@ useEffect(() => {
                     </div>
                     <div className="rs-absent-summary">
                       <div className="rs-abs-icon" style={{
-                        background: rsAbsentMode === 'zero' ? 'rgba(217,119,6,.1)' : 'rgba(30,64,175,.1)',
-                        color:      rsAbsentMode === 'zero' ? '#B45309'              : '#1E40AF',
+                        background: rsAbsentMode === 'zero' ? 'rgba(217,119,6,.1)' : rsAbsentMode === 'exclude' ? 'rgba(30,64,175,.1)' : 'rgba(100,116,139,.12)',
+                        color:      rsAbsentMode === 'zero' ? '#B45309'              : rsAbsentMode === 'exclude' ? '#1E40AF'              : '#475569',
                       }}>
-                        <i className={`fa-solid ${rsAbsentMode === 'zero' ? 'fa-calculator' : 'fa-circle-minus'}`}></i>
+                        <i className={`fa-solid ${rsAbsentMode === 'zero' ? 'fa-calculator' : rsAbsentMode === 'exclude' ? 'fa-circle-minus' : 'fa-eye-slash'}`}></i>
                       </div>
                       <div className="rs-abs-body">
                         <div className="rs-abs-title">
                           {rsAbsentMode === 'zero'
                             ? 'Count Absent Subjects as Zero Marks'
-                            : 'Exclude Absent Subjects from Total Marks'}
+                            : rsAbsentMode === 'exclude'
+                              ? 'Exclude Absent Subjects from Total Marks'
+                              : 'No Absent Handling Selected'}
                         </div>
                         <div
                           className="rs-abs-desc"
                           dangerouslySetInnerHTML={{
                             __html: rsAbsentMode === 'zero'
                               ? 'Absent subjects are scored as 0 and included in the full total. Card shows <strong>AB / 0</strong>.'
-                              : 'Absent subjects are removed from the total. Student is assessed on attended subjects only. Card shows <strong>AB</strong>.',
+                              : rsAbsentMode === 'exclude'
+                                ? 'Absent subjects are removed from the total. Student is assessed on attended subjects only. Card shows <strong>AB</strong>.'
+                                : 'Subjects with <strong>0 marks</strong> are hidden from the Result Card.',
                           }}
                         />
                       </div>
-                      <span className={`rs-abs-badge${rsAbsentMode === 'zero' ? ' zero' : ''}`}>
-                        {rsAbsentMode === 'zero' ? 'AB / 0' : 'AB'}
+                      <span className={`rs-abs-badge${rsAbsentMode === 'zero' ? ' zero' : rsAbsentMode === 'exclude' ? '' : ' none'}`}>
+                        {rsAbsentMode === 'zero' ? 'AB / 0' : rsAbsentMode === 'exclude' ? 'AB' : 'Hidden'}
                       </span>
                     </div>
                   </div>
@@ -4809,12 +4832,14 @@ useEffect(() => {
   const calcOverall = (cd, st) => {
     const absSet = {};
     (st.absentSubjects || []).forEach(s => { absSet[s] = true; });
+    const hideZero = rcHideZeroMarkSubjects(rsAbsentMode);
+    const skipSubj = (s) => absSet[s] || (hideZero && !(Number(st.obtained?.[s]) > 0));
     const tot = st.absent
       ? Object.values(cd.totalMarks).reduce((a, b) => a + b, 0)
       : (rsAbsentMode === 'zero'
           ? Object.values(cd.totalMarks).reduce((a, b) => a + b, 0)
-          : RES_SUBJECTS.reduce((a, s) => absSet[s] ? a : a + (cd.totalMarks[s] || 0), 0));
-    const obt = st.absent ? 0 : RES_SUBJECTS.reduce((a, s) => a + (absSet[s] ? 0 : (st.obtained[s] || 0)), 0);
+          : RES_SUBJECTS.reduce((a, s) => skipSubj(s) ? a : a + (cd.totalMarks[s] || 0), 0));
+    const obt = st.absent ? 0 : RES_SUBJECTS.reduce((a, s) => a + (skipSubj(s) ? 0 : (st.obtained[s] || 0)), 0);
     const pct = tot && !st.absent ? Math.round((obt / tot) * 10000) / 100 : 0;
     // Grade card jaisा — gradingcrud (rsGrades) se % ke hisaab se (fallback rcGetGrade).
     const grade = (!st.absent && obt > 0)
@@ -9029,7 +9054,8 @@ function ClassicResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
   // Grand Total / overall % bhi unhi 10 par bante the).
   // Asli card par SIRF rd.subjects (API se aayi list). RES_SUBJECTS (demo naam)
   // sirf template preview ke liye — warna real card par 10 jhoote subjects aa jate.
-  const subjects = (rd.subjects && rd.subjects.length) ? rd.subjects : (rdProp ? [] : RES_SUBJECTS);
+  const subjectsAll = (rd.subjects && rd.subjects.length) ? rd.subjects : (rdProp ? [] : RES_SUBJECTS);
+  const subjects = rcHideZeroMarkSubjects(rsAbsentMode) ? rcFilterZeroMarkSubjects(subjectsAll, st) : subjectsAll;
 
   const totalAll = subjects.reduce((a, s) => (useZeroMode || !absentSet[s]) ? a + (rd.totalMarks[s] ?? 0) : a, 0);
   const obtAll   = subjects.reduce((a, s) => absentSet[s] ? a : a + (st.obtained[s] || 0), 0);
@@ -9364,7 +9390,8 @@ function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
   // Grand Total / overall % bhi unhi 10 par bante the).
   // Asli card par SIRF rd.subjects (API se aayi list). RES_SUBJECTS (demo naam)
   // sirf template preview ke liye — warna real card par 10 jhoote subjects aa jate.
-  const subjects = (rd.subjects && rd.subjects.length) ? rd.subjects : (rdProp ? [] : RES_SUBJECTS);
+  const subjectsAll = (rd.subjects && rd.subjects.length) ? rd.subjects : (rdProp ? [] : RES_SUBJECTS);
+  const subjects = rcHideZeroMarkSubjects(rsAbsentMode) ? rcFilterZeroMarkSubjects(subjectsAll, st) : subjectsAll;
   const totalAll = subjects.reduce((a, s) => (useZeroMode || !absentSet[s]) ? a + (rd.totalMarks[s] ?? 0) : a, 0);
   const obtAll   = subjects.reduce((a, s) => absentSet[s] ? a : a + (st.obtained[s] || 0), 0);
   const ovPct    = isCombined ? cb.ovPct : (totalAll ? Math.min(100, Math.round((obtAll / totalAll) * 10000) / 100) : 0);
@@ -9617,7 +9644,8 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
   // Grand Total / overall % bhi unhi 10 par bante the).
   // Asli card par SIRF rd.subjects (API se aayi list). RES_SUBJECTS (demo naam)
   // sirf template preview ke liye — warna real card par 10 jhoote subjects aa jate.
-  const subjects = (rd.subjects && rd.subjects.length) ? rd.subjects : (rdProp ? [] : RES_SUBJECTS);
+  const subjectsAll = (rd.subjects && rd.subjects.length) ? rd.subjects : (rdProp ? [] : RES_SUBJECTS);
+  const subjects = rcHideZeroMarkSubjects(rsAbsentMode) ? rcFilterZeroMarkSubjects(subjectsAll, st) : subjectsAll;
   const totalAll = subjects.reduce((a, s) => (useZeroMode || !absentSet[s]) ? a + (rd.totalMarks[s] ?? 0) : a, 0);
   const obtAll   = subjects.reduce((a, s) => absentSet[s] ? a : a + (st.obtained[s] || 0), 0);
   const ovPct    = isCombined ? cb.ovPct : (totalAll ? Math.min(100, Math.round((obtAll / totalAll) * 10000) / 100) : 0);
@@ -10146,10 +10174,12 @@ setObtained(o => ({
     const absSet = { ...absentSubs };
     (student.absentSubjects || []).forEach(s => { absSet[s] = true; });
     const subjNames = (subjects || []).map(s => s.subjectName).filter(Boolean);
+    const hideZero = rcHideZeroMarkSubjects(absentMode);
+    const skipSubj = (s) => absSet[s] || (hideZero && !(Number(obtained[s]) > 0));
     const tot = absentMode === 'zero'
       ? Object.values(cd.totalMarks).reduce((a, b) => a + b, 0)
-      : subjNames.reduce((a, s) => absSet[s] ? a : a + (cd.totalMarks[s] || 0), 0);
-    const obt = subjNames.reduce((a, s) => a + (absSet[s] ? 0 : (obtained[s] || 0)), 0);
+      : subjNames.reduce((a, s) => skipSubj(s) ? a : a + (cd.totalMarks[s] || 0), 0);
+    const obt = subjNames.reduce((a, s) => a + (skipSubj(s) ? 0 : (obtained[s] || 0)), 0);
     const pct = tot ? (obt / tot) * 100 : 0;
     return { obtained, manualRemarks, absentSubjects: Object.keys(absSet).filter(k => absSet[k]), finalRemarks: rcGetFinalRemarks(pct) };
   };
@@ -10836,10 +10866,12 @@ function CbrCreateModal({ exams, onClose, onCreate, toast }) {
 function ResultRemarksModal({ cd, student, absentMode, onSave, onClose, existingRemark, remarksCtx }) {
   const absSet = {};
   (student.absentSubjects || []).forEach(s => { absSet[s] = true; });
+  const hideZero = rcHideZeroMarkSubjects(absentMode);
+  const skipSubj = (s) => absSet[s] || (hideZero && !(Number(student.obtained?.[s]) > 0));
   const totalAll = absentMode === 'zero'
     ? Object.values(cd.totalMarks).reduce((a, b) => a + b, 0)
-    : RES_SUBJECTS.reduce((a, s) => absSet[s] ? a : a + (cd.totalMarks[s] || 0), 0);
-  const obtAll = RES_SUBJECTS.reduce((a, s) => a + (absSet[s] ? 0 : (student.obtained[s] || 0)), 0);
+    : RES_SUBJECTS.reduce((a, s) => skipSubj(s) ? a : a + (cd.totalMarks[s] || 0), 0);
+  const obtAll = RES_SUBJECTS.reduce((a, s) => a + (skipSubj(s) ? 0 : (student.obtained[s] || 0)), 0);
   const ovPct  = totalAll ? Math.round((obtAll / totalAll) * 10000) / 100 : 0;
   const autoRem = rcGetFinalRemarks(ovPct);
 
@@ -11262,15 +11294,17 @@ function generateClassResultReport({ cd, ex, className, term, absentMode, branch
 
   // Compute each student's totals + ranking
   const useZero = absentMode === 'zero';
+  const hideZero = rcHideZeroMarkSubjects(absentMode);
   const students = cd.students.map(st => {
     const absSet = {};
     (st.absentSubjects || []).forEach(s => { absSet[s] = true; });
+    const skipSubj = (s) => absSet[s] || (hideZero && !(Number(st.obtained?.[s]) > 0));
     const tot = st.absent
       ? Object.values(cd.totalMarks).reduce((a, b) => a + b, 0)
       : (useZero
           ? Object.values(cd.totalMarks).reduce((a, b) => a + b, 0)
-          : RES_SUBJECTS.reduce((a, s) => absSet[s] ? a : a + (cd.totalMarks[s] || 0), 0));
-    const obt = st.absent ? 0 : RES_SUBJECTS.reduce((a, s) => a + (absSet[s] ? 0 : (st.obtained[s] || 0)), 0);
+          : RES_SUBJECTS.reduce((a, s) => skipSubj(s) ? a : a + (cd.totalMarks[s] || 0), 0));
+    const obt = st.absent ? 0 : RES_SUBJECTS.reduce((a, s) => a + (skipSubj(s) ? 0 : (st.obtained[s] || 0)), 0);
     const pct = tot && !st.absent ? Math.round((obt / tot) * 10000) / 100 : 0;
     const grade = (!st.absent && obt > 0) ? rcGetGrade(obt, tot) : null;
     return { st, tot, obt, pct, grade };
@@ -13805,7 +13839,7 @@ const runDelete = async () => {
           {tab === 'absent' && (
             <>
               <div className="rs-abs-intro">
-                Choose how absent subjects affect total marks, percentage and grade calculation on the Result Card.
+                Choose how absent subjects affect total marks, percentage and grade calculation on the Result Card. Leave both unchecked to hide subjects with 0 marks from the card.
               </div>
               {[
                 {
@@ -13821,7 +13855,6 @@ const runDelete = async () => {
                   desc: 'Absent subjects are removed from the total entirely. The student is only assessed on subjects they attended.',
                   chips: ['10 subjects = 200 total', '2 absent → / 160', 'Card shows: AB'],
                   chipStyle: 'blue',
-                  isDefault: true,
                 },
               ].map(opt => {
                 const isSel = draftAbsent === opt.v;
@@ -13829,7 +13862,7 @@ const runDelete = async () => {
                   <div
                     key={opt.v}
                     className={`rs-abs-opt${isSel ? ' selected' : ''}`}
-                    onClick={() => setDraftAbsent(opt.v)}
+                    onClick={() => setDraftAbsent(prev => prev === opt.v ? '' : opt.v)}
                   >
                     <div className="rs-abs-radio">
                       <div className="rs-abs-radio-dot" style={{ display: isSel ? 'block' : 'none' }} />
@@ -13837,7 +13870,6 @@ const runDelete = async () => {
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div className="rs-abs-opt-title">
                         {opt.title}
-                        {opt.isDefault && <span className="rs-abs-default">Default</span>}
                       </div>
                       <div className="rs-abs-opt-desc">{opt.desc}</div>
                       <div className="rs-abs-chips">
@@ -14193,22 +14225,25 @@ function generateResultSetupReport({ grades, sigs, remarks, absentMode, branchSc
 
   // Absent body
   const isZero = absentMode === 'zero';
+  const isExclude = absentMode === 'exclude';
   const absBody = `
     <div style="padding:14px 16px;display:flex;align-items:flex-start;gap:14px">
-      <div style="width:34px;height:34px;border-radius:9px;background:${isZero ? 'rgba(217,119,6,.1)' : 'rgba(30,64,175,.1)'};color:${isZero ? '#B45309' : aColor};display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0">
-        <i class="fa-solid ${isZero ? 'fa-calculator' : 'fa-circle-minus'}"></i>
+      <div style="width:34px;height:34px;border-radius:9px;background:${isZero ? 'rgba(217,119,6,.1)' : isExclude ? 'rgba(30,64,175,.1)' : 'rgba(100,116,139,.12)'};color:${isZero ? '#B45309' : isExclude ? aColor : '#475569'};display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0">
+        <i class="fa-solid ${isZero ? 'fa-calculator' : isExclude ? 'fa-circle-minus' : 'fa-eye-slash'}"></i>
       </div>
       <div style="flex:1;min-width:0">
         <div style="font-size:12.5px;font-weight:700;color:#0F172A;margin-bottom:4px">
-          ${isZero ? 'Count Absent Subjects as Zero Marks' : 'Exclude Absent Subjects from Total Marks'}
+          ${isZero ? 'Count Absent Subjects as Zero Marks' : isExclude ? 'Exclude Absent Subjects from Total Marks' : 'No Absent Handling Selected'}
         </div>
         <div style="font-size:11px;color:${tMuted};line-height:1.6">
           ${isZero
             ? 'Absent subjects are scored as 0 and included in the full total. Card shows <strong>AB / 0</strong>.'
-            : 'Absent subjects are removed from the total. Student is assessed on attended subjects only. Card shows <strong>AB</strong>.'}
+            : isExclude
+              ? 'Absent subjects are removed from the total. Student is assessed on attended subjects only. Card shows <strong>AB</strong>.'
+              : 'Subjects with <strong>0 marks</strong> are hidden from the Result Card.'}
         </div>
       </div>
-      <span style="font-size:10.5px;font-weight:700;padding:3px 10px;border-radius:999px;background:${isZero ? 'rgba(217,119,6,.1)' : 'rgba(30,64,175,.1)'};color:${isZero ? '#B45309' : aColor};border:1px solid ${isZero ? 'rgba(217,119,6,.25)' : 'rgba(30,64,175,.25)'};white-space:nowrap">${isZero ? 'AB / 0' : 'AB'}</span>
+      <span style="font-size:10.5px;font-weight:700;padding:3px 10px;border-radius:999px;background:${isZero ? 'rgba(217,119,6,.1)' : isExclude ? 'rgba(30,64,175,.1)' : 'rgba(100,116,139,.12)'};color:${isZero ? '#B45309' : isExclude ? aColor : '#475569'};border:1px solid ${isZero ? 'rgba(217,119,6,.25)' : isExclude ? 'rgba(30,64,175,.25)' : 'rgba(100,116,139,.25)'};white-space:nowrap">${isZero ? 'AB / 0' : isExclude ? 'AB' : 'Hidden'}</span>
     </div>`;
 
   const reportHTML = `
@@ -14230,7 +14265,7 @@ function generateResultSetupReport({ grades, sigs, remarks, absentMode, branchSc
         ${sectionCard('fa-chart-bar', 'Grades Setup', `${grades.length} grade rule${grades.length !== 1 ? 's' : ''} configured`, gradesBody)}
         ${sectionCard('fa-signature', 'Signatures', `${sigs.length} signature${sigs.length !== 1 ? 's' : ''}`, sigsBody)}
         ${sectionCard('fa-comment-dots', 'Final Remarks', `${remarks.length} remark${remarks.length !== 1 ? 's' : ''} configured`, remarksBody)}
-        ${sectionCard('fa-user-xmark', 'Absent Subject Handling', isZero ? 'Mode: Count as Zero' : 'Mode: Exclude from Total', absBody)}
+        ${sectionCard('fa-user-xmark', 'Absent Subject Handling', isZero ? 'Mode: Count as Zero' : isExclude ? 'Mode: Exclude from Total' : 'Mode: Hide 0-mark subjects', absBody)}
       </div>
       <div style="padding:10px 16px;background:${aBg};border-top:1px solid ${aBdr};display:flex;justify-content:space-between;font-size:10px;color:${tMuted};flex-wrap:wrap;gap:6px">
         <span>${rsEsc(schoolName)}${schoolAddr ? ` · ${rsEsc(schoolAddr)}` : ''}</span>
@@ -15743,6 +15778,7 @@ body.dark .syl-tb-select { background:var(--bg-card); color:var(--text-primary);
   white-space:nowrap; flex-shrink:0;
 }
 .rs-abs-badge.zero { background:rgba(217,119,6,.1); color:#B45309; border-color:rgba(217,119,6,.25); }
+.rs-abs-badge.none { background:rgba(100,116,139,.12); color:#475569; border-color:rgba(100,116,139,.25); }
 
 /* ── Result Setup edit modal ── */
 .exam-modal.rs-modal { max-width:920px; }
