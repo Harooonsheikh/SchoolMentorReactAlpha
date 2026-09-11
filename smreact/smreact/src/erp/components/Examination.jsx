@@ -994,7 +994,9 @@ const [subjects, setSubjects] = useState([]);
     let cancelled = false;
     (async () => {
       try {
-        const rawSubs = await cbrApi.getMainExamSubjects({ classID, sectionID, termID, examID: selectExam });
+        const rawSubs = await cbrApi.mergeSaSubjectsWithStudentMarks({
+          classID, sectionID, termID, examID: selectExam, studentID: studentId,
+        });
         const subs = rcNormalizeSubjects((rawSubs || []).map(saNormSubject).filter(Boolean));
         const token = sessionStorage.getItem('token');
         const headers = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
@@ -1355,7 +1357,9 @@ const [subjects, setSubjects] = useState([]);
           subjList = rcNormalizeSubjects(subs, nameMap);
           if (!subjList.length) subjList = rcNormalizeSubjects(syl, nameMap);
         } else {
-          const rawSubs = await cbrApi.getMainExamSubjects({ classID, sectionID, termID: termID ?? selectedTermId, examID }).catch(() => []);
+          const rawSubs = await cbrApi.mergeSaSubjectsWithStudentMarks({
+            classID, sectionID, termID: termID ?? selectedTermId, examID, studentID: studentId,
+          }).catch(() => []);
           subjList = rcNormalizeSubjects((rawSubs || []).map(saNormSubject).filter(Boolean));
         }
         // 2) Har subject ke against student ke obtain/total marks (dono modes ExamID=examID use karte hain)
@@ -9197,7 +9201,7 @@ const mc  = (!isAbs ? ((st.manualRemarks && st.manualRemarks[s]) || ((grades && 
                 const tdBase   = { padding: '4px 7px', fontSize: 11, borderBottom: `1px solid ${accentBdr}` };
                 const tdCenter = { ...tdBase, textAlign: 'center' };
                 return (
-                  <tr key={s} style={{ background: bg }}>
+                  <tr key={`${i}-${s}`} style={{ background: bg }}>
                     <td style={{ ...tdBase, fontWeight: 700, color: textPri }}>{i + 1}</td>
                     {opt['Show Subject-wise Marks'] && (
                       <td style={{ ...tdBase, fontWeight: 600, color: textPri }}>{s}</td>
@@ -9524,8 +9528,8 @@ function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
         <div style={{ fontSize: 8.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.7px', color: textMut, marginBottom: 8 }}>
           Subject Performance
         </div>
-        {subjData.map(d => (
-          <div key={d.s} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '4px 0' }}>
+        {subjData.map((d, idx) => (
+          <div key={`bar-${idx}-${d.s}`} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '4px 0' }}>
             <div style={{ width: 100, flexShrink: 0, fontSize: 11, fontWeight: 600, color: textPri, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.s}</div>
             <div style={{ flex: 1, height: 7, borderRadius: 4, background: '#F1F5F9', overflow: 'hidden' }}>
               <div style={{ height: '100%', width: `${d.isAbs ? 0 : d.pct}%`, background: d.isAbs ? 'rgba(217,119,6,.3)' : d.col, borderRadius: 4 }} />
@@ -9804,15 +9808,15 @@ const position = opt['Show Position in Class']
             </tr>
           </thead>
           <tbody>
-            {subjData.map((d, i) => {
-              const bg = i % 2 === 0 ? C.rowA : C.rowB;
+            {subjData.map((d, idx) => {
+              const bg = idx % 2 === 0 ? C.rowA : C.rowB;
               const absC = '#B45309';
               const absBg = 'rgba(217,119,6,.08)';
               const pctC = d.isAbs ? C.textM : d.pct >= 80 ? C.grn : d.pct >= 60 ? C.acc : C.red;
               const tdBase = { padding: '5px 8px', borderBottom: `1px solid ${C.bdr}` };
               return (
-                <tr key={d.s} style={{ background: bg }}>
-                  <td style={{ ...tdBase, fontSize: 10.5, fontWeight: 700, color: C.textM }}>{i + 1}</td>
+                <tr key={`row-${idx}-${d.s}`} style={{ background: bg }}>
+                  <td style={{ ...tdBase, fontSize: 10.5, fontWeight: 700, color: C.textM }}>{idx + 1}</td>
                   {opt['Show Subject-wise Marks'] && (
                     <td style={{ ...tdBase, fontWeight: 600, color: C.textP }}>{d.s}</td>
                   )}
@@ -9879,12 +9883,12 @@ const position = opt['Show Position in Class']
           SUBJECT PERFORMANCE OVERVIEW
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
-          {subjData.map(d => {
+          {subjData.map((d, idx) => {
             const barW = d.isAbs ? 0 : d.pct;
             const barC = d.isAbs ? 'rgba(217,119,6,.25)' : d.col;
             const lblC = d.isAbs ? '#B45309' : (d.pct >= 80 ? C.grn : d.pct >= 60 ? C.acc : C.red);
             return (
-              <div key={d.s} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <div key={`ov-${idx}-${d.s}`} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <div style={{ width: 110, flexShrink: 0, fontSize: 10.5, fontWeight: 600, color: d.isAbs ? '#B45309' : C.textS, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.s}</div>
                 <div style={{ flex: 1, height: 10, borderRadius: 5, background: '#EFF6FF', overflow: 'hidden' }}>
                   <div style={{ height: '100%', width: `${barW}%`, background: barC, borderRadius: 5, position: 'relative' }}>
@@ -12676,19 +12680,26 @@ function BulkCardModal({ ctx, template, school, grades, remarks = [], rcoGeneral
         const stData = await stRes.json();
         const studentsRaw = Array.isArray(stData?.data) ? stData.data : (Array.isArray(stData) ? stData : []);
 
-        // 2) Subjects — sirf SA exam subjects (syllabus IDs alag hain, mix nahi)
-        let subs = [];
+        // 2) Subjects — exam setup list + is student ke uploaded marks wale extra subjects
+        let baseSubs = [];
         try {
           const rawSubs = await cbrApi.getMainExamSubjects({ classID, sectionID, termID, examID: selectExam });
-          subs = rcNormalizeSubjects((rawSubs || []).map(saNormSubject).filter(Boolean));
+          baseSubs = rcNormalizeSubjects((rawSubs || []).map(saNormSubject).filter(Boolean));
         } catch { /* no subjects */ }
-        const subjectNames = subs.map(s => s.subjectName);
 
         if (!cancelled) setProgress({ done: 0, total: studentsRaw.length });
         const built = [];
         for (const stu of studentsRaw) {
           if (cancelled) return;
           const studentId = stu.id ?? stu.studentID ?? stu.StudentID;
+          let subs = baseSubs;
+          try {
+            const merged = await cbrApi.mergeSaSubjectsWithStudentMarks({
+              classID, sectionID, termID, examID: selectExam, studentID: studentId,
+            });
+            const normalized = rcNormalizeSubjects((merged || []).map(saNormSubject).filter(Boolean));
+            if (normalized.length) subs = normalized;
+          } catch { /* keep baseSubs */ }
           const obtained = {}, remarks = {}, totals = {}, absentSubjects = [];
           // 3) Har subject ke marks + remarks
           await Promise.all(subs.map(async su => {
@@ -12729,7 +12740,7 @@ function BulkCardModal({ ctx, template, school, grades, remarks = [], rcoGeneral
               obtained, manualRemarks: remarks, finalRemarks: finalRemark,
               absentSubjects, attendance: '—',
             },
-            rd: { released: false, totalMarks: totals, subjects: subjectNames },
+            rd: { released: false, totalMarks: totals, subjects: subs.map(s => s.subjectName) },
           });
           if (!cancelled) { setCards([...built]); setProgress({ done: built.length, total: studentsRaw.length }); }
         }

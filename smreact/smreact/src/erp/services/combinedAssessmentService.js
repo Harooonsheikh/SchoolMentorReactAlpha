@@ -163,6 +163,48 @@ export const getMainExamSubjects = async ({ classID, sectionID, termID, examID }
   return saAttachDisplayNames(list, classSubs);
 };
 
+/* getsasubjectbybranchclassandterm kabhi exam par configure subjects ka
+   subset deti hai, jabke marks getsauploadmarksbystudent par zyada subjects
+   ke against padi hoti hain. Result card un missing subjects ko bhi dikhaye. */
+export const mergeSaSubjectsWithStudentMarks = async ({ classID, sectionID, termID, examID, studentID }) => {
+  const list = (await getMainExamSubjects({ classID, sectionID, termID, examID }).catch(() => [])) || [];
+  const have = new Set(list.map(s => Number(s.subjectID)).filter(Boolean));
+  const extra = [];
+  if (studentID) {
+    const examN = Number(examID);
+    const termS = termID == null || termID === '' ? '' : String(termID);
+    const classS = classID == null || classID === '' ? '' : String(classID);
+    let page = 1;
+    for (;;) {
+      const j = await getJson(`/api/getsauploadmarksbystudent?StudentID=${encodeURIComponent(studentID)}&pageNo=${page}`).catch(() => null);
+      const rows = Array.isArray(j) ? j : (j?.data || []);
+      rows.forEach(rec => {
+        if (examN && Number(rec.examID ?? rec.ExamID ?? 0) !== examN) return;
+        if (termS && String(rec.termID ?? rec.TermID ?? '') !== termS) return;
+        if (classS && String(rec.classID ?? rec.ClassID ?? '') !== classS) return;
+        const sid = Number(rec.subjectID ?? rec.SubjectID ?? 0);
+        if (!sid || have.has(sid)) return;
+        have.add(sid);
+        extra.push({
+          id: Number(rec.id ?? rec.ID ?? 0),
+          subjectID: sid,
+          subjectName: String(rec.subjectName ?? rec.SubjectName ?? '').trim(),
+          totalMarks: Number(rec.totalMarks ?? rec.TotalMarks ?? 0) || 0,
+        });
+      });
+      const totalPages = Number(j?.totalPages || 1) || 1;
+      if (!rows.length || page >= totalPages || page >= 30) break;
+      page += 1;
+    }
+  }
+  if (!extra.length) return list;
+  const classSubs = await fetchClassSubjectsLite(classID, sectionID);
+  return saAttachDisplayNames([...list, ...extra], classSubs).map(s => ({
+    ...s,
+    subjectName: saIsPlaceholderName(s.subjectName, s.subjectID) ? `Subject ${s.subjectID}` : s.subjectName,
+  }));
+};
+
 export const getStudentSubjectMark = ({ classID, sectionID, termID, examID, subjectID, studentID }) => {
   const params = new URLSearchParams({
     classID: String(classID), termID: String(termID ?? ''), ExamID: String(examID),
