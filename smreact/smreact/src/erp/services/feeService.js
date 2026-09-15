@@ -1664,13 +1664,36 @@ export function encodePaymentMethodWithGiveDisc(method, giveDisc, isReceiving = 
   return `${base}${GD_MARK}${parts.join(';')}`;
 }
 
+/** Kya is ledger row par ab bhi koi receiving maujood hai?
+    delete-receiving har detailRow ka receivedAmount 0 kar deta hai (advance row
+    MINUS hoti hai, is liye abs). Ye wahi sawaal hai jis par Give Discount ka
+    dikhna mauqoof hai — neeche withPersistedGiveDisc dekhein. */
+export function hasLiveReceiving(rec) {
+  const rows = Array.isArray(rec?.detailRows) ? rec.detailRows : [];
+  return rows.some(r => Math.abs(+r.receivedAmount || 0) > 0);
+}
+
 /** Challan reload par Give Discount ko detailRows.discount me fold karo
-    (agar pehle se fold na ho). paymentMethod marker + localStorage dono se. */
+    (agar pehle se fold na ho). paymentMethod marker + localStorage dono se.
+
+    AHEM: marker par sirf TAB bharosa hota hai jab row par receiving BAQI ho.
+    Give Discount receiving ka hissa hai — receive karte waqt wo
+    detailRows.discount me POST hoti hai, aur paymentMethod ka |#GD#…
+    sirf backup hai (agar API discount wapas na de). delete-receiving
+    receivedAmount aur us discount, DONO ko palat deta hai, magar
+    paymentMethod jyon ka tyon chhod deta hai — marker samet. Us haalat me
+    marker ko wapas fold karna aisi discount paida kar deta tha jo ledger me
+    rahi hi nahi: receiving delete karne ke baad bhi list ke Discount column
+    aur receiving modal me Give Discount dikhti rehti thi. Receiving nahi to
+    Give Discount bhi nahi. (localStorage delete ke waqt saaf hota hai, is
+    liye wo yahan se hataya nahi jaata — warna sirf-discount wali receiving
+    usi browser me apna column kho deti.) */
 export function withPersistedGiveDisc(rec) {
   if (!rec) return rec;
+  const live = hasLiveReceiving(rec);
   const fromPm = parseGiveDiscFromPaymentMethod(rec.paymentMethod);
   const fromStore = getStoredGiveDisc(rec.id)?.giveDisc || {};
-  const giveDisc = { ...fromStore, ...fromPm.giveDisc };
+  const giveDisc = live ? { ...fromStore, ...fromPm.giveDisc } : { ...fromStore };
   const cleanMethod = fromPm.method || paymentMethodDisplay(rec.paymentMethod);
   const keys = Object.keys(giveDisc);
   if (!keys.length) {
@@ -1697,7 +1720,9 @@ export function withPersistedGiveDisc(rec) {
     remNo += (amt - disc + hp) - recv;
     remWith += (amt - disc - extra + hp) - recv;
   });
-  const alreadyFolded = Math.abs(remNo) <= Math.abs(remWith);
+  /* Receiving na ho to server ka discount hi sach hai (delete use palat chuka
+     hai) — us par kuch mat joro; _giveDisc sirf column dikhane ke liye rehti hai. */
+  const alreadyFolded = !live || Math.abs(remNo) <= Math.abs(remWith);
   const detailRows = alreadyFolded
     ? rows0
     : rows0.map(r => {

@@ -3913,7 +3913,10 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
       histGive[n] = (histGive[n] || 0) + g;
       priorGive = true;
     });
-    if (!priorGive && cfg.challan?.paymentMethod) {
+    /* Marker sirf tab, jab row par receiving baqi ho — delete-receiving use
+       paymentMethod par chhod jaata hai (withPersistedGiveDisc wahan se saaf
+       kar deta hai; ye guard un raw records ke liye hai jo us se guzre nahi). */
+    if (!priorGive && cfg.challan?.paymentMethod && feeService.hasLiveReceiving(cfg.challan)) {
       const parsed = feeService.parseGiveDiscFromPaymentMethod(cfg.challan.paymentMethod);
       Object.entries(parsed.giveDisc || {}).forEach(([n, v]) => {
         const g = Math.max(0, +v || 0);
@@ -5385,7 +5388,11 @@ function recStudentModel({ student, headsForClass, generated, classDisc, payment
   if (giveFromPays <= 0 && challan?.id) {
     giveFromPays = feeService.getStoredGiveDiscTotal(challan.id) || 0;
   }
-  if (giveFromPays <= 0 && challan?.paymentMethod) {
+  /* paymentMethod ka |#GD#… marker sirf tab padho jab receiving BAQI ho.
+     delete-receiving marker ko row par chhod jaata hai (receivedAmount aur
+     discount palat kar bhi), to warna delete ki hui Give Discount list ke
+     Discount column me hamesha ke liye chipak jaati thi. */
+  if (giveFromPays <= 0 && challan?.paymentMethod && feeService.hasLiveReceiving(challan)) {
     const parsed = feeService.parseGiveDiscFromPaymentMethod(challan.paymentMethod);
     giveFromPays = Object.values(parsed.giveDisc || {}).reduce((a, v) => a + Math.max(0, +v || 0), 0);
   }
@@ -6759,8 +6766,12 @@ function FamilyTreeReceiving({ toast }) {
         }
         let deleted = 0, failed = 0;
         for (const ch of targets) {
+          const ledgerId = childLedgerId(f, ch);
           try {
-            await feeService.deleteReceiving(childLedgerId(f, ch));
+            await feeService.deleteReceiving(ledgerId);
+            /* Per-child delete ki tarah local Give Discount cache bhi hatao —
+               warna reload par cache se wapas inject ho kar dikhne lagti hai. */
+            feeService.clearStoredGiveDisc(ledgerId);
             deleted++;
           } catch (e) {
             failed++;
