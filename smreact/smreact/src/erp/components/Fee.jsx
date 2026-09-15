@@ -5765,17 +5765,29 @@ function FeeReceivingIndividual({ toast }) {
         const headName = r.subHead ?? r.head;
         const recvNow = +(payload.perHead?.[headName]) || 0;
         const received = Math.max(0, (+r.receivedAmount || 0) + recvNow);
-        /* Give Discount (checkbox ON) → challan discount me add. */
+        /* Challan par pehle se Discount Manager wali discount.
+           isReceiving:true → API `discount` me SIRF Give Discount bhejo;
+           manager+give mix mat bhejo. UI/reports ke liye total alag rakho. */
+        const managerDisc = +r.discount || 0;
         const giveExtra = payload.isReceiving
           ? Math.max(0, +(payload.giveDisc?.[headName]) || 0)
           : 0;
-        const discount = (+r.discount || 0) + giveExtra;
+        const discountForApi = payload.isReceiving ? giveExtra : managerDisc;
+        const totalDisc = payload.isReceiving ? managerDisc + giveExtra : managerDisc;
         /* net me is head ka previousPendingorAdv BHI shamil — warna pendingorAdv galat aata:
            after-disc 5,000 + prev −1,000 (owed 4,000), received 4,000 par 1,000 dikhता tha,
            asal me 0. previous shamil karne se pendingorAdv sahi (owed − received) hota hai. */
         const hp = +r.previousPendingorAdv || +r.previousPendingOrAdv || 0;
-        const net = (+r.challanAmount || 0) - discount + hp;
-        return { ...r, discount, receivedAmount: received, pendingorAdv: net - received, modifiedAt: now, modifiedBy: userID };
+        const net = (+r.challanAmount || 0) - totalDisc + hp;
+        return {
+          ...r,
+          discount: discountForApi,
+          _uiDiscount: totalDisc,
+          receivedAmount: received,
+          pendingorAdv: net - received,
+          modifiedAt: now,
+          modifiedBy: userID,
+        };
       });
       let detailRows = feeService.withLateFineRow(baseRows, payload.fine, {
         /* Branch challan ke apne record se — API dono spellings me deti hai. */
@@ -5791,6 +5803,12 @@ function FeeReceivingIndividual({ toast }) {
          unki nayi detailRow bana kar wasooli persist karo. */
       detailRows = feeService.withNewHeadRows(detailRows, payload.newHeads, {
         ledgerId: rec.id, branchId: rec.branchID ?? rec.branchId, userId: userID, now,
+      });
+      const detailRowsForApi = detailRows.map(({ _uiDiscount, ...row }) => row);
+      const detailRowsForUi = detailRows.map(r => {
+        if (r._uiDiscount == null) return r;
+        const { _uiDiscount, ...rest } = r;
+        return { ...rest, discount: _uiDiscount };
       });
       /* API discount ignore kare to bhi tab-switch / reload / logout-login
          par Remaining 0 rahe — paymentMethod me Give Discount marker persist. */
@@ -5820,13 +5838,13 @@ function FeeReceivingIndividual({ toast }) {
         receivedDate: payload.date || '',
         modifiedBy: userID,
         isReceiving: !!payload.isReceiving || Object.keys(mergedGive).length > 0,
-        detailRows,
+        detailRows: detailRowsForApi,
       })
         .then(() => loadChallans())
         .catch(e => toast(e.message || 'Could not record payment', 'error'));
       slipChallan = feeService.withPersistedGiveDisc({
         ...rec,
-        detailRows,
+        detailRows: detailRowsForUi,
         paymentMethod: payMethodForApi,
         _giveDisc: mergedGive,
         _isReceivingGive: Object.keys(mergedGive).length > 0,
@@ -6593,17 +6611,28 @@ function FamilyTreeReceiving({ toast }) {
         const headName = r.subHead ?? r.head;
         const recvNow = +(payload.perHead?.[headName]) || 0;
         const received = Math.max(0, (+r.receivedAmount || 0) + recvNow);
-        /* Give Discount (checkbox ON) → challan discount me add. */
+        /* isReceiving:true → API `discount` = SIRF Give Discount (manager mat jodo).
+           UI/reports me combined (manager + give) alag se. */
+        const managerDisc = +r.discount || 0;
         const giveExtra = payload.isReceiving
           ? Math.max(0, +(payload.giveDisc?.[headName]) || 0)
           : 0;
-        const discount = (+r.discount || 0) + giveExtra;
+        const discountForApi = payload.isReceiving ? giveExtra : managerDisc;
+        const totalDisc = payload.isReceiving ? managerDisc + giveExtra : managerDisc;
         /* net me is head ka previousPendingorAdv BHI shamil — warna pendingorAdv galat aata:
            after-disc 5,000 + prev −1,000 (owed 4,000), received 4,000 par 1,000 dikhता tha,
            asal me 0. previous shamil karne se pendingorAdv sahi (owed − received) hota hai. */
         const hp = +r.previousPendingorAdv || +r.previousPendingOrAdv || 0;
-        const net = (+r.challanAmount || 0) - discount + hp;
-        return { ...r, discount, receivedAmount: received, pendingorAdv: net - received, modifiedAt: now, modifiedBy: userID };
+        const net = (+r.challanAmount || 0) - totalDisc + hp;
+        return {
+          ...r,
+          discount: discountForApi,
+          _uiDiscount: totalDisc,
+          receivedAmount: received,
+          pendingorAdv: net - received,
+          modifiedAt: now,
+          modifiedBy: userID,
+        };
       });
       let detailRows = feeService.withLateFineRow(baseRows, payload.fine, {
         /* Branch challan ke apne record se — API dono spellings me deti hai. */
@@ -6619,6 +6648,12 @@ function FamilyTreeReceiving({ toast }) {
          unki nayi detailRow bana kar wasooli persist karo. */
       detailRows = feeService.withNewHeadRows(detailRows, payload.newHeads, {
         ledgerId: rec.id, branchId: rec.branchID ?? rec.branchId, userId: userID, now,
+      });
+      const detailRowsForApi = detailRows.map(({ _uiDiscount, ...row }) => row);
+      const detailRowsForUi = detailRows.map(r => {
+        if (r._uiDiscount == null) return r;
+        const { _uiDiscount, ...rest } = r;
+        return { ...rest, discount: _uiDiscount };
       });
       /* API discount ignore kare to bhi tab-switch / reload / logout-login
          par Remaining 0 rahe — paymentMethod me Give Discount marker persist. */
@@ -6647,13 +6682,13 @@ function FamilyTreeReceiving({ toast }) {
         receivedDate: payload.date || '',
         modifiedBy: userID,
         isReceiving: !!payload.isReceiving || Object.keys(mergedGive).length > 0,
-        detailRows,
+        detailRows: detailRowsForApi,
       })
         .then(() => loadFamilyChallans())   // refresh list so status persists
         .catch(e => toast(e.message || 'Could not record payment', 'error'));
       slipChallan = feeService.withPersistedGiveDisc({
         ...rec,
-        detailRows,
+        detailRows: detailRowsForUi,
         paymentMethod: payMethodForApi,
         _giveDisc: mergedGive,
         _isReceivingGive: Object.keys(mergedGive).length > 0,
