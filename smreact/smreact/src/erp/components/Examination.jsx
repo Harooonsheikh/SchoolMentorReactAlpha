@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import Tooltip from './Tooltip';
 import TutorialModal from './TutorialModal';
 import * as cbrApi from '../services/combinedAssessmentService';
-import { buildUrl, resolveMediaUrl } from '../../utils/apiConfig';
+import { buildUrl, resolveMediaUrl, activeSessionName, storeSwitchedSession } from '../../utils/apiConfig';
 import { formatAcademicYearLabel, resolveAcademicSession } from '../../utils/pdfReports';
 import { deliverReport } from './reportDelivery';
 import { useModuleReadOnly, validateSessionDateFromStorage } from '../pages/Settings/settingsStore';
@@ -520,7 +520,15 @@ const RH_INITIAL_STUDENTS = [
   { id:10, name:'Bilal Hussain',  father:'Riaz Hussain',   rollNo:'5001-2026', admission:'ADM-5001', cls:'Grade 5 - Section A', section:'A', session:'2025-26', attendance:73,
     results:[ rhMakeRes('r10a','Mid Term','single',52,'10-03-2026','2025-26',5), rhMakeRes('r10b','Final Term','single',58,'10-05-2026','2025-26',5), rhMakeRes('r10c','Mid + Final Combined','combined',56,'15-05-2026','2025-26',5) ] },
 ];
-const RH_SESSIONS = ['2025-26', '2024-25'];
+/* Session labels come from the data; expand the short form the API stores
+   ("2026-27") to the long one the reports print ("2026–2027"). It used to be a
+   hardcoded `year === '2025-26' ? '2025–2026' : …` ladder at five call sites,
+   which quietly stopped expanding the moment the school moved past 2025-26. */
+const rhSessionLabel = (v) => {
+  const s = String(v || '').trim();
+  const m = s.match(/^(\d{4})\s*[-–—\/]\s*(\d{2})$/);
+  return m ? `${m[1]}–${m[1].slice(0, 2)}${m[2]}` : s;
+};
 const RH_SECTIONS = ['A'];
 const RH_EXAM_TYPES = [
   { v:'single',   l:'Single Assessment' },
@@ -729,16 +737,21 @@ const [subjects, setSubjects] = useState([]);
             name: d.branchName || '',
             logo: resolveMediaUrl(d.branchLogo),
             address: d.address || '',
-            session: d.academicSession || sessionStorage.getItem('sessionName') || '',
+    /* The ERP's own active session wins over the branch header's
+       `academicSession` string: the header is a branch-profile field that is
+       not updated when the school rolls over to a new session (or when the
+       user switches sessions), so trusting it first is how a report ends up
+       stamped with last year's session. */
+            session: activeSessionName() || d.academicSession || '',
           });
         } else if (!cancelled) {
-          const sess = sessionStorage.getItem('sessionName') || '';
+          const sess = activeSessionName();
           if (sess) setBranchSchool({ name: '', logo: '', address: '', session: sess });
         }
       } catch (e) {
         console.error('Error loading branch header:', e);
         if (!cancelled) {
-          const sess = sessionStorage.getItem('sessionName') || '';
+          const sess = activeSessionName();
           if (sess) setBranchSchool({ name: '', logo: '', address: '', session: sess });
         }
       }
@@ -1731,8 +1744,10 @@ const [resLoadingKey, setResLoadingKey] = useState(null);
 
  const changeSession = async (id) => {
   setSessionId(id);
-  sessionStorage.setItem('changeSessionId', id);
-  
+  /* Provisional: id now, name as soon as the row arrives below. Without the
+     name this switcher left every label in the app on the PREVIOUS session. */
+  storeSwitchedSession(id, sessionStorage.getItem('changeSessionName'));
+
   // User ne session change kiya hai, toh us session ki details bhi load karo
   try {
     const branchID = sessionStorage.getItem('branchID');
@@ -1748,6 +1763,8 @@ const [resLoadingKey, setResLoadingKey] = useState(null);
       sessionStorage.setItem('sessionStatus', selected.Status);
       sessionStorage.setItem('sessionStartDate', selected.StartDate);
       sessionStorage.setItem('sessionEndDate', selected.EndDate);
+      storeSwitchedSession(id, selected.SessionName);
+      return;
     }
   } catch (e) {
     console.error('Error loading session details:', e);
@@ -5912,7 +5929,7 @@ onClick={async () => {
                                           color: r.year === st.session ? '#16A34A' : '#D97706',
                                         }}>
                                           <i className="fa-regular fa-calendar" style={{ fontSize: 8 }}></i>
-                                          {r.year === '2025-26' ? '2025–2026' : r.year === '2024-25' ? '2024–2025' : r.year}
+                                          {rhSessionLabel(r.year)}
                                         </span>
                                         <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
                                           <i className="fa-regular fa-calendar" style={{ marginRight: 3 }}></i>{r.date}
@@ -12199,7 +12216,7 @@ function rhBuildSingleCardReport(st, r, isColor, data = null) {
         ['Exam',        r.exam],
         ['Exam Date',   r.date],
         // Combined Assessment ki report me session/year nahi dikhana.
-        ...(r.type === 'combined' ? [] : [['Year', r.year === '2025-26' ? '2025–2026' : r.year]]),
+        ...(r.type === 'combined' ? [] : [['Year', rhSessionLabel(r.year)]]),
         ['Type',        r.type === 'combined' ? 'Combined Assessment' : 'Single Assessment'],
       ].map(([k,v]) => `<div style="flex:1;min-width:120px;padding:8px 14px;border-right:1px solid ${p.accBdr}">
         <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:${p.tMuted};margin-bottom:2px">${k}</div>
@@ -12265,7 +12282,7 @@ function rhBuildHistoryReport(st, isColor) {
     return `<tr style="background:${bg}">
       <td style="padding:6px 9px;border-bottom:1px solid ${p.accBdr};font-size:10.5px;color:${p.tMuted};text-align:center;font-weight:700">${i + 1}</td>
       <td style="padding:6px 9px;border-bottom:1px solid ${p.accBdr};font-weight:700">${r.exam}<br><span style="font-size:9px;font-weight:600;color:${isCb ? p.pur : p.accent}">${isCb ? 'Combined' : 'Single'}</span></td>
-      <td style="padding:6px 9px;border-bottom:1px solid ${p.accBdr};text-align:center;color:${p.tMuted}">${r.year === '2025-26' ? '2025–2026' : r.year === '2024-25' ? '2024–2025' : r.year}</td>
+      <td style="padding:6px 9px;border-bottom:1px solid ${p.accBdr};text-align:center;color:${p.tMuted}">${rhSessionLabel(r.year)}</td>
       <td style="padding:6px 9px;border-bottom:1px solid ${p.accBdr};text-align:center;color:${p.tMuted}">${r.date}</td>
       <td style="padding:6px 9px;border-bottom:1px solid ${p.accBdr};text-align:center;font-weight:800;color:${pctC}">${r.pct}%</td>
       <td style="padding:6px 9px;border-bottom:1px solid ${p.accBdr};text-align:center">
@@ -12282,7 +12299,7 @@ function rhBuildHistoryReport(st, isColor) {
         ['Student',  st.name],
         ['Class',    st.cls],
         ['Roll No',  st.rollNo],
-        ['Session',  st.session === '2025-26' ? '2025–2026' : st.session],
+        ['Session',  rhSessionLabel(st.session)],
       ].map(([k,v]) => `<div style="flex:1;padding:9px 14px;border-right:1px solid ${p.accBdr}">
         <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:${p.tMuted};margin-bottom:2px">${k}</div>
         <div style="font-size:12px;font-weight:800;color:${p.accent}">${v}</div>
@@ -12503,7 +12520,7 @@ function rhBuildAttendanceReport(st, isColor) {
       ${[
         ['Overall',  `${st.attendance}%`, attCol],
         ['Status',   statusLbl,             attCol],
-        ['Session',  st.session === '2025-26' ? '2025–2026' : st.session, p.accent],
+        ['Session',  rhSessionLabel(st.session), p.accent],
         ['Class',    st.cls.replace(' - Section A', ''), p.accent],
       ].map(([k,v,col],i,arr) => `<div style="flex:1;padding:10px 14px;text-align:center;border-right:${i < arr.length - 1 ? '1px solid ' + p.accBdr : 'none'}">
         <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:${p.tMuted};margin-bottom:3px">${k}</div>
