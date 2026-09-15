@@ -3312,10 +3312,35 @@ const fetchSASubjects = async (classID, sectionID, examId, termId) => {
         return sylJson?.data || (Array.isArray(sylJson) ? sylJson : []) || [];
       } catch { return []; }
     })();
-    return cbrApi.saAttachDisplayNames(
+    /* Subject list = SAARE Launch-Setup mapped subjects (subject-against-class) —
+       yehi authoritative hai (e.g. Book List "16/16"). getsasubjectbybranchclassandterm
+       sirf un subjects ko deti hai jinke exam me total configure ho chuke (kam ho
+       sakte hain, e.g. 15), aur kabhi unmapped/stale bhi. Isliye mapping se list
+       banate hain aur SA se sirf per-subject total + naam merge karte hain: jo
+       mapped subject exam me abhi tak set nahi (e.g. "Social Studies Spoken") wo
+       bhi 0 total ke saath aata hai (drop nahi hota). */
+    const saList = cbrApi.saAttachDisplayNames(
       saUnwrapList(data).map(saNormSubject).filter(Boolean),
       classSubs
     );
+    const saById = new Map();
+    saList.forEach(s => { const id = Number(s.subjectID); if (id) saById.set(id, s); });
+    if ((classSubs || []).length) {
+      return (classSubs || [])
+        .map(cs => {
+          const id = Number(cs.subjectID ?? cs.SubjectID ?? 0);
+          const sa = id ? saById.get(id) : null;
+          return {
+            id: sa?.id ?? 0,
+            subjectID: id,
+            subjectName: (sa?.subjectName || String(cs.subjectName ?? cs.SubjectName ?? cs.name ?? '').trim()),
+            totalMarks: sa ? (Number(sa.totalMarks ?? 0) || 0) : 0,
+          };
+        })
+        .filter(s => s.subjectID);
+    }
+    /* Launch Setup mapping khaali (API fail) → SA list jaisa hai (purana behavior). */
+    return saList;
   } catch (error) {
     console.error('Error fetching SA subjects:', error);
     return [];
@@ -5239,16 +5264,23 @@ onClick={e => {
   // obtainedMarks deta hai (koi per-subject breakdown nahi) — isliye obtained ko
   // mapped-subjects tak scope nahi kar sakte; obtMarks jaisa ka waisa rehta hai,
   // magar denominator/subject-count ab sahi (mapped) hai.
-  const mappedSet = new Set((resStudentData[key]?.mappedSubjectIDs || []).map(Number).filter(Boolean));
-  const scopedSubjects = mappedSet.size
-    ? apiSubjects.filter(s => mappedSet.has(Number(s.subjectID ?? s.SubjectID ?? 0)))
-    : apiSubjects;
-  // SAFETY: mapped set khaali (API fail) YA filter ke baad kuch match na ho to
-  // purana behavior — list kabhi 0/— na dikhaye.
-  const scopedActive = mappedSet.size > 0 && scopedSubjects.length > 0;
-  const subjCount = scopedActive ? scopedSubjects.length : apiSubjects.length;
+  const mappedIDs = (resStudentData[key]?.mappedSubjectIDs || []).map(Number).filter(Boolean);
+  const mappedSet = new Set(mappedIDs);
+  // Per-subject total (getsasubjectbybranchclassandtermtotalsum) subjectID ke against.
+  const totalByID = {};
+  apiSubjects.forEach(s => {
+    const id = Number(s.subjectID ?? s.SubjectID ?? 0);
+    if (id) totalByID[id] = Number(s.totalMarks ?? s.TotalMarks ?? 0) || 0;
+  });
+  // Subject list = SAARE Launch-Setup mapped subjects (authoritative). Jo subject
+  // mapped hai magar exam me total configure nahi (e.g. "Social Studies Spoken")
+  // wo bhi ginte hain (total 0) — isse count 16 aata hai (15 nahi), aur SA-only
+  // stale/unmapped subjects nikal jate hain. Mapped set khaali (API fail) → purana
+  // behavior (list kabhi 0/— na dikhaye).
+  const scopedActive = mappedSet.size > 0;
+  const subjCount = scopedActive ? mappedIDs.length : apiSubjects.length;
   const totalMarksSum = scopedActive
-    ? scopedSubjects.reduce((a, s) => a + (Number(s.totalMarks ?? s.TotalMarks ?? 0) || 0), 0)
+    ? mappedIDs.reduce((a, id) => a + (totalByID[id] || 0), 0)
     : (apiSubjects[0]?.totalMarksSum ? Number(apiSubjects[0].totalMarksSum) : 0);
   // Obtained ko bhi mapped subjects tak scope karo (loadResClassData me per-subject
   // fetch se bana scopedObtained). Denominator scoped hai to numerator bhi scoped —
@@ -9555,7 +9587,7 @@ function InsightResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
   // hardcoded text, na getremarksbystudentfilters).
   const finalRem = rcRemarkByScale(ovPct, remarks);
 
-  const position = opt['Show Position in Class'] ? (isCombined && cb ? `${cb.rank}${cb.rankSfx || ''}` : '1st / 1') : '—';
+  const position = opt['Show Position in Class'] ? (isCombined && cb ? `${cb.rank}${cb.rankSfx || ''}` : (st.position || '—')) : '—';
 
   const barPalette = ['#1E40AF','#16A34A','#D97706','#7C3AED','#DC2626','#0891B2','#EA580C','#059669','#9333EA','#B45309'];
   const subjData = subjects.map((s, i) => {
