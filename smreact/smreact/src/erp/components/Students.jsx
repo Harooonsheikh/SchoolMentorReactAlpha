@@ -9,6 +9,8 @@ import { usePermissions } from '../context/PermissionsContext';
 import { fetchReportHeader } from '../../utils/pdfReports';
 import { deliverReport } from './reportDelivery';
 import { qrSVG } from '../utils/qrcode';
+import { rankedMatches } from '../utils/studentSearch';
+import { activeSessionName } from '../../utils/apiConfig';
 
 /* ─── Module-wide helpers ─── */
 const MONTHS_SHORT_STU = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -387,7 +389,8 @@ function buildStuProfileHTML(s, cls, school, isBW = false) {
   const campus = school?.campus || 'Main Campus';
   const addr   = school?.address || '';
   const phone  = school?.phone || '';
-  const session = school?.session || '2025 – 2026';
+  /* No hardcoded year: '' renders as a dash rather than claiming a session. */
+  const session = school?.session || activeSessionName();
 
   /* ── Brand logo — branch logo from the report-header API when available,
        else the default mark (matches HTML repHeader logoSvg). ── */
@@ -674,7 +677,7 @@ function buildStuIdCardHTML(s, cls, school, template, theme, session, role) {
         <div class="val val-name" style="color:${theme.ink}">${stuEsc(stuFullName(s))}</div>
         <div class="kv-row"><div><div class="lbl">Class / Section</div><div class="val">${stuEsc(cls?.cls || '—')} · ${stuEsc(cls?.sec || '—')}</div></div><div><div class="lbl">Reg No</div><div class="val mono">${stuEsc(s.reg)}</div></div></div>
         <div class="kv-row"><div><div class="lbl">Father</div><div class="val">${stuEsc(s.father || '—')}</div></div><div><div class="lbl">Designation</div><div class="val">${stuEsc(role || 'Student')}</div></div></div>
-        <div class="kv-row"><div><div class="lbl">Date of Birth</div><div class="val">${stuFmtDate(s.dob)}</div></div><div><div class="lbl">Session</div><div class="val">${stuEsc(session || '2026-2027')}</div></div></div>
+        <div class="kv-row"><div><div class="lbl">Date of Birth</div><div class="val">${stuFmtDate(s.dob)}</div></div><div><div class="lbl">Session</div><div class="val">${stuEsc(session || '—')}</div></div></div>
       </div>
       <div class="card-foot" style="background:${theme.c1}">${stuIdFillSvg(theme.c1, theme.c1, `${sid}-f-foot`)}<span class="card-foot-txt">If found, please return to the school office.</span></div>
     </div>`;
@@ -687,7 +690,7 @@ function buildStuIdCardHTML(s, cls, school, template, theme, session, role) {
         <div class="face-lbl">Back</div>
       </div>
       <div class="card-body card-body-back">
-        <div class="qr-strip-back"><div class="qr-big" style="box-shadow:0 0 0 0.5mm ${theme.c1}">${stuQrSVG(stuQrValue(s))}</div><div class="qr-meta"><div class="qr-l">Scan to verify</div><div class="qr-reg" style="color:${theme.c1}">${stuEsc(s.reg)}</div><div class="qr-s">Valid for ${stuEsc(session || '2026-2027')}</div></div></div>
+        <div class="qr-strip-back"><div class="qr-big" style="box-shadow:0 0 0 0.5mm ${theme.c1}">${stuQrSVG(stuQrValue(s))}</div><div class="qr-meta"><div class="qr-l">Scan to verify</div><div class="qr-reg" style="color:${theme.c1}">${stuEsc(s.reg)}</div><div class="qr-s">Valid for ${stuEsc(session || '—')}</div></div></div>
         <div class="back-rows">
           <div class="back-row"><span class="lbl">Guardian</span><b>${stuEsc(s.father || '—')}</b></div>
           <div class="back-row"><span class="lbl">Mobile</span><b class="mono">${stuEsc(s.mobile || '—')}</b></div>
@@ -762,7 +765,7 @@ function buildStuBulkIdHTML(students, cls, school, template, theme, session) {
           <div class="lbl">Student Name</div>
           <div class="val val-name" style="color:${theme.ink}">${stuEsc(stuFullName(s))}</div>
           <div class="kv-row"><div><div class="lbl">Class</div><div class="val">${stuEsc(cls?.cls || '—')} · ${stuEsc(cls?.sec || '—')}</div></div><div><div class="lbl">Reg</div><div class="val mono">${stuEsc(s.reg)}</div></div></div>
-          <div class="kv-row"><div><div class="lbl">Father</div><div class="val">${stuEsc(s.father || '—')}</div></div><div><div class="lbl">Session</div><div class="val">${stuEsc(session || '2026-2027')}</div></div></div>
+          <div class="kv-row"><div><div class="lbl">Father</div><div class="val">${stuEsc(s.father || '—')}</div></div><div><div class="lbl">Session</div><div class="val">${stuEsc(session || '—')}</div></div></div>
         </div>
         <div class="card-foot" style="background:${theme.c1}">${stuIdFillSvg(theme.c1, theme.c1, `${sid}-f-foot`)}<span class="card-foot-txt">If found, please return to the school office.</span></div>
       </div>`;
@@ -1446,18 +1449,18 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
     return { total, classCount, sectionCnt, discount };
   }, [list]);
 
-  /* Search matches across all classes (capped to 30 dropdown rows) */
+  /* Search matches across all classes (capped to 30 dropdown rows).
+     RANKED, not just filtered: an exact GR/registration or admission-number
+     hit sorts FIRST, so a 1- or 2-digit GR is the top row instead of being
+     pushed past the 30-row cap by every "Class 7" / reg "1007" coincidence. */
   const matches = useMemo(() => {
     if (!search.trim()) return [];
-    const q = search.toLowerCase().trim();
-    const out = [];
-    list.forEach(c => {
-      c.students.forEach(s => {
-        const hay = `${stuFullName(s)} ${s.reg} ${s.father} ${c.cls} ${c.sec}`.toLowerCase();
-        if (hay.includes(q)) out.push({ s, c });
-      });
-    });
-    return out;
+    const rows = [];
+    list.forEach(c => c.students.forEach(s => rows.push({ s, c })));
+    return rankedMatches(search, rows, ({ s, c }) => ({
+      ids:  [s.reg, s.adm, s.family],
+      text: `${stuFullName(s)} ${s.father} ${c.cls} ${c.sec}`,
+    }));
   }, [list, search]);
 
   const filteredClasses = useMemo(() => {
@@ -3101,14 +3104,15 @@ function InactiveStudents({ classes, setClasses, inactive, setInactive, toast })
       .filter(g => g.students.length > 0);
   }, [groups, search]);
 
+  /* Same ranking as the Active tab — exact GR first, then prefix, then text. */
   const matches = useMemo(() => {
     if (!search.trim()) return [];
-    const q = search.toLowerCase().trim();
-    const out = [];
-    groups.forEach(g => g.students.forEach(s => {
-      if (`${stuFullName(s)} ${s.reg} ${s.father} ${g.cls} ${g.sec}`.toLowerCase().includes(q)) out.push({ s, g });
+    const rows = [];
+    groups.forEach(g => g.students.forEach(s => rows.push({ s, g })));
+    return rankedMatches(search, rows, ({ s, g }) => ({
+      ids:  [s.reg, s.adm, s.family],
+      text: `${stuFullName(s)} ${s.father} ${g.cls} ${g.sec}`,
     }));
-    return out;
   }, [groups, search]);
 
   const jumpTo = (gKey, reg) => {
@@ -4221,7 +4225,7 @@ function StuIdCardModal({ student, cls, school, onClose, onDownload }) {
   const [tmpl, setTmpl]   = useState('v');
   const [themeKey, setThemeKey] = useState('blue');
   const [custom, setCustom]   = useState('#2D7DD2');
-  const [session, setSession] = useState(school?.session?.replace(/\s+–\s+/, '-') || '2026-2027');
+  const [session, setSession] = useState(school?.session?.replace(/\s+–\s+/, '-') || activeSessionName());
   const [role, setRole]       = useState('Student');
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
@@ -4392,7 +4396,8 @@ function StuBulkIdModal({ cls, school, onClose, onDownload }) {
   const [tmpl, setTmpl] = useState('v');
   const [themeKey, setThemeKey] = useState('blue');
   const [custom, setCustom] = useState('#2D7DD2');
-  const [session, setSession] = useState('2026-2027');
+  /* Pre-filled from the school's real active session, never a guessed year. */
+  const [session, setSession] = useState(() => String(school?.session || activeSessionName()).split(' – ').join('-'));
   /* Selection is keyed on the DB id — reg no can be blank on freshly added
      students, which would make them share a single checkbox. */
   const [selected, setSelected] = useState(() => {
@@ -4567,7 +4572,7 @@ function StuCertModal({ cfg, student, cls, school, onClose, onDownload }) {
   const [leavingDate, setLeavingDate] = useState('');
   const [promFrom, setPromFrom] = useState('');
   const [promTo, setPromTo]     = useState('');
-  const [promSession, setPromSession] = useState(school?.session?.replace(/\s+–\s+/, '-') || '2026-2027');
+  const [promSession, setPromSession] = useState(school?.session?.replace(/\s+–\s+/, '-') || activeSessionName());
   const [sigPrincipal, setSigPrincipal] = useState(true);
   const [sigDirector, setSigDirector]   = useState(false);
   const [sigTeacher, setSigTeacher]     = useState(false);
@@ -4673,7 +4678,7 @@ function StuCertModal({ cfg, student, cls, school, onClose, onDownload }) {
                     <input className="stu-finput" value={promTo} onChange={(e) => setPromTo(e.target.value)} placeholder="e.g. 4" />
                   </Field>
                   <Field label="Academic Session">
-                    <input className="stu-finput" value={promSession} onChange={(e) => setPromSession(e.target.value)} placeholder="2026-2027" />
+                    <input className="stu-finput" value={promSession} onChange={(e) => setPromSession(e.target.value)} placeholder={activeSessionName() || 'e.g. 2026-2027'} />
                   </Field>
                 </div>
               )}

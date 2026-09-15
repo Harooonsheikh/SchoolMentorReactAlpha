@@ -16,6 +16,7 @@
    ═══════════════════════════════════════════════════════════════════ */
 
 import { registerSearchProvider, matchAny } from './searchService';
+import { rankedMatches, studentMatchRank } from '../utils/studentSearch';
 import * as studentService from './studentService';
 import * as hrService from './hrService';
 import * as feeService from './feeService';
@@ -86,30 +87,35 @@ const studentsProvider = {
   priority:    100,
   async search(query, ctx) {
     const classes = await loadRealStudents();   /* live class/section students */
-    const out = [];
+    /* Collect EVERY match first, then rank, then cap. The old loop stopped at
+       the first ctx.limit hits in class order, so a student whose GR is "7"
+       never surfaced — the cap was already spent on rows that merely contain
+       a 7 in a reg, mobile or CNIC. Ranking puts the exact GR hit at rank 0. */
+    const rows = [];
     for (const cls of (classes || [])) {
-      for (const s of (cls.students || [])) {
-        const full = `${s.first || ''} ${s.last || ''}`.trim();
-        if (matchAny(
-          query,
-          full, s.first, s.last, s.father, s.mother, s.guardian,
-          s.reg, s.adm, s.mobile, s.gcontact, s.pcontact,
-          s.bform, s.fcnic, s.mcnic, s.email,
-        )) {
-          out.push({
-            id:       `stu-${s.reg}`,
-            title:    full || s.reg,
-            subtitle: `${cls.cls} ${cls.sec} · Reg ${s.reg}${s.adm ? ` · Adm ${s.adm}` : ''}`,
-            preview:  [s.father && `Father: ${s.father}`, s.mobile && `Mobile: ${s.mobile}`]
-                        .filter(Boolean).join('  ·  '),
-            path:     ['Students', 'Active Students', `${cls.cls} ${cls.sec}`],
-            navParams:{ studentReg: s.reg, classKey: cls.key },
-          });
-          if (out.length >= ctx.limit) return out;
-        }
-      }
+      for (const s of (cls.students || [])) rows.push({ s, cls });
     }
-    return out;
+    const stuFields = ({ s }) => ({
+      ids:  [s.reg, s.adm, s.family, s.bform, s.mobile, s.gcontact, s.pcontact, s.fcnic, s.mcnic],
+      text: `${s.first || ''} ${s.last || ''} ${s.father || ''} ${s.mother || ''} ${s.guardian || ''} ${s.email || ''}`,
+    });
+    const hits = rankedMatches(query, rows, stuFields, ctx.limit);
+    return hits.map(({ s, cls }) => {
+      const full = `${s.first || ''} ${s.last || ''}`.trim();
+      return {
+        id:       `stu-${s.reg}`,
+        title:    full || s.reg,
+        subtitle: `${cls.cls} ${cls.sec} · Reg ${s.reg}${s.adm ? ` · Adm ${s.adm}` : ''}`,
+        preview:  [s.father && `Father: ${s.father}`, s.mobile && `Mobile: ${s.mobile}`]
+                    .filter(Boolean).join('  ·  '),
+        path:     ['Students', 'Active Students', `${cls.cls} ${cls.sec}`],
+        navParams:{ studentReg: s.reg, classKey: cls.key },
+        /* Rank 0 (exact GR) must outrank a fuzzy name hit from another module,
+           so score explicitly instead of letting searchService guess from the
+           title — a GR-only match leaves the title (the name) looking unrelated. */
+        score:    1 - Math.max(0, studentMatchRank(query, stuFields({ s }))) * 0.1,
+      };
+    });
   },
 };
 

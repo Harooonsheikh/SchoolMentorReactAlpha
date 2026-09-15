@@ -1,5 +1,5 @@
 import { delay, clone } from './_http';
-import { buildUrl, apiMessage, resolveMediaUrl } from '../../utils/apiConfig';
+import { buildUrl, apiMessage, resolveMediaUrl, activeSessionName } from '../../utils/apiConfig';
 
 /* ═══════════════════════════════════════════════════════════════════
    Students Module — real API wiring (LaunchSetup).
@@ -436,10 +436,10 @@ export async function getStuActiveSession() {
     const first = Array.isArray(json?.data) ? json.data[0] : null;
     return {
       id:   Number(first?.ID ?? first?.id ?? sessionStorage.getItem('sessionID') ?? 0) || 0,
-      name: first?.SessionName ?? first?.sessionName ?? sessionStorage.getItem('sessionName') ?? '',
+      name: first?.SessionName ?? first?.sessionName ?? activeSessionName(),
     };
   } catch (e) {
-    return { id: Number(sessionStorage.getItem('sessionID')) || 0, name: sessionStorage.getItem('sessionName') || '' };
+    return { id: Number(sessionStorage.getItem('sessionID')) || 0, name: activeSessionName() };
   }
 }
 
@@ -552,7 +552,11 @@ export async function getStuSchool() {
     phone:    pick(d, 'branchPhone', 'phone'),
     email:    pick(d, 'branchEmail1', 'email'),
     logo:     branchLogoUrl(pick(d, 'branchLogo', 'logo')),
-    session:  pick(d, 'academicSession'),
+    /* The ERP's active session, NOT the branch record's `academicSession`.
+       That column is part of the branch profile and is not rewritten when the
+       school rolls over, so ID cards and certificates were being stamped with
+       whatever session the branch was registered in. */
+    session:  activeSessionName() || pick(d, 'academicSession'),
     created:  String(pick(d, 'createdAt', 'CreatedAt') || '').slice(0, 10),
     _raw:     d,
   };

@@ -4,7 +4,7 @@
   import TutorialModal from './TutorialModal';
   import * as paperService from '../services/paperService';
   import useAsync from '../hooks/useAsync';
-  import { buildUrl, resolveMediaUrl } from '../../utils/apiConfig';
+  import { buildUrl, resolveMediaUrl, storeSwitchedSession } from '../../utils/apiConfig';
   import Select from 'react-select';
   import { deliverReport } from './reportDelivery';
   import { useModuleReadOnly } from '../pages/Settings/settingsStore';
@@ -249,7 +249,8 @@ const [hasActiveSession, setHasActiveSession] = useState(null);
 
     const changeSession = async (id) => {
         setSessionId(id);
-        sessionStorage.setItem('changeSessionId', id);
+        /* id now, name as soon as the row arrives — see Academics.changeSession. */
+        storeSwitchedSession(id, sessionStorage.getItem('changeSessionName'));
         try {
             const branchID = sessionStorage.getItem('branchID');
             const res = await fetch(
@@ -263,6 +264,8 @@ const [hasActiveSession, setHasActiveSession] = useState(null);
                 sessionStorage.setItem('sessionStatus', selected.Status);
                 sessionStorage.setItem('sessionStartDate', selected.StartDate);
                 sessionStorage.setItem('sessionEndDate', selected.EndDate);
+                storeSwitchedSession(id, selected.SessionName);
+                return;
             }
         } catch (e) {
             console.error('Error loading session details:', e);

@@ -172,6 +172,92 @@ export function activeSessionId() {
     || '';
 }
 
+/* Fired whenever the stored session changes (bootstrapped, refreshed, or the
+   user switched to another session). Modules listen for it and re-read.
+   Kept here so every module shares ONE event name — it used to be re-declared
+   in Academics, Accounts, Examination and PaperGenerator, and a module that
+   forgot to declare it simply never noticed a session change. */
+export const SESSION_CHANGE_EVENT = 'sm-session-change';
+
+export function notifySessionChange() {
+  try { window.dispatchEvent(new Event(SESSION_CHANGE_EVENT)); }
+  catch (e) { /* SSR / no window */ }
+}
+
+/**
+ * The active session NAME ("2026-2027") — the display counterpart of
+ * activeSessionId(). Returns '' when no session has been resolved yet.
+ *
+ * NEVER fall back to a hardcoded year. Modules used to default to literals
+ * like "2025-2026" or "2026-2027" when this was blank, which is exactly how a
+ * screen ends up showing last year's session while the rest of the app shows
+ * the real one. A blank session is a state to render as "—", not to invent.
+ */
+export function activeSessionName() {
+  try {
+    const switched = sessionStorage.getItem('changeSessionId');
+    const login    = sessionStorage.getItem('SessionID') || sessionStorage.getItem('sessionID');
+    /* changeSessionName is written alongside changeSessionId by the session
+       switcher; prefer it only while the user really is on another session. */
+    if (switched && String(switched) !== String(login || '')) {
+      const name = sessionStorage.getItem('changeSessionName');
+      if (name) return name.trim();
+    }
+    return (sessionStorage.getItem('sessionName') || '').trim();
+  } catch (e) {
+    return '';
+  }
+}
+
+const setKey = (k, v) => {
+  if (v == null || v === '') sessionStorage.removeItem(k);
+  else sessionStorage.setItem(k, String(v));
+};
+
+/**
+ * Publish the branch's CURRENT session so every module reads one value.
+ * Accepts either the internal shape ({ id, name, status, startDate, endDate })
+ * or a raw API row ({ ID, SessionName, Status, StartDate, EndDate }).
+ *
+ * The status/date window is what modules use to decide "may I edit here?".
+ * While the user is deliberately VIEWING another session (changeSessionId),
+ * that window belongs to the session they switched to, so it is left alone —
+ * only the identity of the current session is refreshed.
+ *
+ * Returns true when anything changed.
+ */
+export function storeCurrentSession(row) {
+  if (!row) return false;
+  const id   = String(row.id ?? row.ID ?? '');
+  const name = String(row.name ?? row.SessionName ?? '');
+  if (!id && !name) return false;
+  if (sessionStorage.getItem('sessionID') === id
+      && sessionStorage.getItem('sessionName') === name) return false;
+
+  setKey('sessionID',   id);
+  setKey('sessionName', name);
+
+  const switched = sessionStorage.getItem('changeSessionId');
+  if (!switched || String(switched) === id) {
+    setKey('sessionStatus',    row.status    ?? row.Status);
+    setKey('sessionStartDate', row.startDate ?? row.StartDate);
+    setKey('sessionEndDate',   row.endDate   ?? row.EndDate);
+  }
+  notifySessionChange();
+  return true;
+}
+
+/**
+ * Record the session the user switched TO. Both keys must move together —
+ * writing only the id (as the Examination switcher did) leaves every label and
+ * report in the app showing the PREVIOUS session's name.
+ */
+export function storeSwitchedSession(id, name) {
+  setKey('changeSessionId',   id);
+  setKey('changeSessionName', name);
+  notifySessionChange();
+}
+
 // A toast callback registered by the app so the guard can surface the error
 // from non-React module code (the POST wrappers).
 let _sessionToast = null;

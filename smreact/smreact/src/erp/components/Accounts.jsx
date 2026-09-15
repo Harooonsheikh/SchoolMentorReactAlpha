@@ -4,7 +4,7 @@ import Tooltip from './Tooltip';
 import TutorialModal from './TutorialModal';
 import * as accountsService from '../services/accountsService';
 import useAsync from '../hooks/useAsync';
-import { buildUrl, resolveMediaUrl } from '../../utils/apiConfig';
+import { buildUrl, resolveMediaUrl, activeSessionName } from '../../utils/apiConfig';
 import { useModuleReadOnly } from '../pages/Settings/settingsStore';
 import { usePermissions } from '../context/PermissionsContext';
 
@@ -33,7 +33,12 @@ function useBranchSchool() {
           name,
           monogram,
           address: d.address || '',
-          session: d.academicSession || sessionStorage.getItem('sessionName') || '',
+    /* The ERP's own active session wins over the branch header's
+       `academicSession` string: the header is a branch-profile field that is
+       not updated when the school rolls over to a new session (or when the
+       user switches sessions), so trusting it first is how a report ends up
+       stamped with last year's session. */
+          session: activeSessionName() || d.academicSession || '',
           generatedDate: d.generatedDate || '',
           logo: resolveMediaUrl(d.branchLogo),
           generatedBy: sessionStorage.getItem('displayName') || sessionStorage.getItem('userName') || 'Accounts',

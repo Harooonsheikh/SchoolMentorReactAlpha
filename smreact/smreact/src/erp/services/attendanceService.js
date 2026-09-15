@@ -1,4 +1,4 @@
-import { buildUrl, resolveMediaUrl } from '../../utils/apiConfig';
+import { buildUrl, resolveMediaUrl, activeSessionName } from '../../utils/apiConfig';
 import { delay, clone } from './_http';
 
 // src/services/attendanceService.js
@@ -151,7 +151,12 @@ export async function getReportHeader() {
     name: d.branchName || "",
     logo: resolveMediaUrl(d.branchLogo),
     address: d.address || "",
-    session: d.academicSession || sessionStorage.getItem("sessionName") || "",
+    /* The ERP's own active session wins over the branch header's
+       `academicSession` string: the header is a branch-profile field that is
+       not updated when the school rolls over to a new session (or when the
+       user switches sessions), so trusting it first is how a report ends up
+       stamped with last year's session. */
+    session: activeSessionName() || d.academicSession || "",
   };
 }
 

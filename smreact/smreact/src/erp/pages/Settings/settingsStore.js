@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { buildUrl, resolveMediaUrl } from '../../../utils/apiConfig';
+import { buildUrl, resolveMediaUrl, storeCurrentSession } from '../../../utils/apiConfig';
 
 /* ═══════════════════════════════════════════════════════════════════
    SETTINGS STORE — sessions + signatures + global current session
@@ -296,6 +296,20 @@ export function SettingsProvider({ children }) {
     () => sessions.find(s => s.status === 'current') || null,
     [sessions],
   );
+
+  /* Publish the current session to the shared store as soon as it is known.
+     SettingsProvider wraps the whole ERP, so this runs once at app start no
+     matter which module the user opens first.
+
+     Before this, sessionName/sessionID were only written by Academics,
+     Accounts, Examination and Paper Generator — so a user who went straight to
+     Students, Fee, Attendance or a report saw whatever those keys happened to
+     hold (a previous branch's session, or nothing at all, which then fell
+     through to each module's own hardcoded year). That is the "some modules
+     show an incorrect session" bug. */
+  useEffect(() => {
+    if (currentSession) storeCurrentSession(currentSession);
+  }, [currentSession]);
 
   /* Load sessions from the API for the active branch. Empty response → empty list. */
   const loadSessions = useCallback(async () => {

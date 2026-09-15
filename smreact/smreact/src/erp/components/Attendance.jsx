@@ -6,6 +6,7 @@
   import useAsync from "../hooks/useAsync";
   import { useModuleReadOnly, validateSessionDateFromStorage } from "../pages/Settings/settingsStore";
   import { usePermissions } from "../context/PermissionsContext";
+import { rankedMatches } from "../utils/studentSearch";
 import ReportDownloadDialog from '../../reports/ReportDownloadDialog';
 import ReportHeader from '../../reports/ReportHeader';
 import ReportFooter from '../../reports/ReportFooter';
@@ -126,7 +127,12 @@ import ReportFooter from '../../reports/ReportFooter';
   };
   const MONTH_OPTIONS = genMonthYearOptions();
   const CURRENT_MONTH_LABEL = `${MONTHS[new Date().getMonth()]} ${new Date().getFullYear()}`;
-  const YEAR_OPTIONS  = ["2025-2026", "2024-2025", "2023-2024"];
+  /* Session dropdowns are fed by the branch's real sessions (loaded in ReportsTab).
+     There is deliberately NO hardcoded year list any more: falling back to a
+     literal like "2025-2026" made the report filters claim a session the school
+     is not in, which is the whole "wrong session" complaint. Until the sessions
+     load, the select shows a single "—" placeholder. */
+  const NO_SESSION_OPT = "—";
 
   /* "July 2026" → { year: 2026, monthIdx0: 6 } for month-range attendance fetch. */
   const parseMonthLabel = (label) => {
@@ -699,7 +705,6 @@ import ReportFooter from '../../reports/ReportFooter';
     Faithful port of the HTML reference. ─────────────────────────────────── */
   const RPT_CLASS_OPTS   = ["All Classes", "Class I", "Class II", "Class III", "Class IV", "Class V"];
   const RPT_SECTION_OPTS = ["All Sections", "Red", "Blue", "Green", "White"];
-  const RPT_YEAR_OPTS    = ["2025-2026", "2024-2025", "2023-2024"];
   const RPT_MONTH_OPTS   = genMonthYearOptions();
   const RPT_DEPT_OPTS    = ["All Departments", "Primary", "Secondary", "Administration", "Support Staff"];
 
@@ -709,7 +714,9 @@ import ReportFooter from '../../reports/ReportFooter';
     const currMonth = CURRENT_MONTH_LABEL;
 
     const [style, setStyle]   = useState("color");
-    const [fYear, setFYear]   = useState(defaultYear  || "2025-2026");
+    /* The school's own session, never a guessed year: the caller's default,
+       else the first real session option, else '' (rendered as "—"). */
+    const [fYear, setFYear]   = useState(defaultYear  || sessionOpts[0] || "");
     const [fMonth, setFMonth] = useState(defaultMonth || currMonth);
     const [fDate, setFDate]   = useState(defaultDate  || todayStr);
     const [fClass, setFClass] = useState(forClass ? forClass.cls : "All Classes");
@@ -728,12 +735,15 @@ import ReportFooter from '../../reports/ReportFooter';
     useEffect(() => {
       if (!open) return;
       setStyle("color");
-      setFYear(defaultYear  || "2025-2026");
+      setFYear(defaultYear  || sessionOpts[0] || "");
       setFMonth(defaultMonth || currMonth);
       setFDate(defaultDate  || todayStr);
       setFClass(forClass ? forClass.cls : "All Classes");
       setFSection(forClass ? forClass.sec : "All Sections");
       setFDept(forStaff ? forStaff.dept : "All Departments");
+      /* sessionOpts is intentionally NOT a dep — the call site rebuilds that
+         array every render, and depending on it would reset the user's filter
+         choices on each one. Re-opening the modal is what re-seeds them. */
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [open, defaultYear, defaultMonth, defaultDate, forClass, forStaff]);
 
@@ -785,7 +795,7 @@ import ReportFooter from '../../reports/ReportFooter';
             <div className="att-rpt-filter-row">
               {isHolYearly && (
                 <>
-                  <FilterSelect label="Session" value={fYear}  onChange={setFYear}  opts={sessionOpts.length ? sessionOpts : RPT_YEAR_OPTS} />
+                  <FilterSelect label="Session" value={fYear}  onChange={setFYear}  opts={sessionOpts.length ? sessionOpts : [NO_SESSION_OPT]} />
                   <FilterSelect label="Class"   value={fClass} onChange={setFClass} opts={holidayClassOpts.length ? holidayClassOpts : RPT_CLASS_OPTS} />
                 </>
               )}
@@ -1245,7 +1255,7 @@ import ReportFooter from '../../reports/ReportFooter';
 
     return rptPageWrap({
       rptLabel: "Yearly Holiday Report",
-      period: year || "2025-2026",
+      period: year || NO_SESSION_OPT,
       isColor,
       school: branchSchool,
       content: infoGrid + tableBlock + (holidays.length > 0 ? `<div style="margin-top:18px;font-size:11.5px;color:#64748B"><strong style="color:${RED}">Note:</strong> Holidays apply to the listed classes only. "Whole School" entries apply to all classes.</div>` : ""),
@@ -3032,7 +3042,11 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
     - User types → dropdown shows matching items
     - Clicking a suggestion runs `onPick(item)` (which can open a class / scroll to row)
     - Clearing the input closes the dropdown */
-  function SearchCombobox({ placeholder, items, renderItem, getKey, getSearchText, onPick }) {
+  /* getIds — identifier fields (GR/reg no, admission no, employee id). They are
+     ranked ahead of the free-text haystack so a short id (a 1- or 2-digit GR)
+     lands at the top of the 12-row dropdown instead of being cut off by every
+     row that merely contains that digit somewhere. */
+  function SearchCombobox({ placeholder, items, renderItem, getKey, getSearchText, getIds, onPick }) {
     const [value, setValue] = useState("");
     const [open, setOpen] = useState(false);
     const wrapRef = React.useRef(null);
@@ -3047,7 +3061,10 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
     }, []);
 
     const q = value.trim().toLowerCase();
-    const matches = !q ? [] : items.filter((it) => getSearchText(it).toLowerCase().includes(q)).slice(0, 12);
+    const matches = rankedMatches(q, items, (it) => ({
+      ids:  getIds ? getIds(it) : [],
+      text: getSearchText(it),
+    }), 12);
 
     return (
       <div ref={wrapRef} className="att-search-wrap">
@@ -3209,7 +3226,8 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
                   placeholder="Search student name, father, reg no, class…"
                   items={allStudents}
                   getKey={(s) => s.id}
-                  getSearchText={(s) => `${s.name} ${s.fn} ${s.roll} ${s.adm} ${s.cls} ${s.sec}`}
+                  getSearchText={(s) => `${s.name} ${s.fn} ${s.cls} ${s.sec}`}
+                  getIds={(s) => [s.roll, s.adm]}
                   onPick={pickStudent}
                   renderItem={(s) => (
                     <>
@@ -3342,7 +3360,8 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
                   placeholder="Search staff name, designation, department, employee ID…"
                   items={staffData}
                   getKey={(s) => s.empId}
-                  getSearchText={(s) => `${s.name} ${s.desig || ""} ${s.dept || ""} ${s.empId || ""}`}
+                  getSearchText={(s) => `${s.name} ${s.desig || ""} ${s.dept || ""}`}
+                  getIds={(s) => [s.empId]}
                   onPick={pickStaff}
                   renderItem={(s) => (
                     <>
@@ -3428,7 +3447,7 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
       rpt.filters.forEach((f) => {
         if (f.type === "date")  init[f.field] = today;
         if (f.type === "month") init[f.field] = currMon;
-        if (f.type === "year")  init[f.field] = sessionName || "2025-2026";
+        if (f.type === "year")  init[f.field] = sessionName || "";
         if (f.type === "class") init[f.field] = "All Classes";
       });
       return init;
@@ -3498,7 +3517,7 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
                 )}
                 {f.type === "year" && (
                   <select className="att-select" value={vals[f.field] || ""} onChange={(e) => setVal(f.field, e.target.value)}>
-                    {(sessionName ? [sessionName] : YEAR_OPTIONS).map((y) => <option key={y}>{y}</option>)}
+                    {(sessionName ? [sessionName] : [NO_SESSION_OPT]).map((y) => <option key={y}>{y}</option>)}
                   </select>
                 )}
                 {f.type === "class" && (

@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import LessonPlans from './LessonPlans';
 import Tooltip from './Tooltip';
 import TutorialModal from './TutorialModal';
-import { buildUrl, assertSessionPayload, registerSessionToast, apiMessage, resolveMediaUrl } from '../../utils/apiConfig';
+import { buildUrl, assertSessionPayload, registerSessionToast, apiMessage, resolveMediaUrl, storeSwitchedSession } from '../../utils/apiConfig';
 import { fetchReportHeader, resolveAcademicSession, formatAcademicYearLabel } from '../../utils/pdfReports';
 import { deliverReport } from './reportDelivery';
 import { useModuleReadOnly, validateSessionDateFromStorage } from '../pages/Settings/settingsStore';
@@ -2899,15 +2899,14 @@ function TermSettings({ termData, setTermData, openConfirm, toast }) {
   /* Switch the active session: persist it and reload the terms scoped to it. */
  const changeSession = id => {
     setSessionId(id);
-    /* Store the user-switched session under changeSessionId (takes priority in
-       termsSessionYearID) and broadcast so all loaders re-run. Also mirror the
-       name so labels reading sessionName update. */
-    sessionStorage.setItem('changeSessionId', id);
     const sel = sessions.find(s => String(s.SessionID) === String(id));
-    if (sel?.SessionName) sessionStorage.setItem('sessionName', sel.SessionName);
+    /* Record the switched session's id AND name together (storeSwitchedSession
+       broadcasts), so every label and report follows the switch. The branch's
+       real current session stays under sessionID/sessionName and is not
+       clobbered — switching sessions is a view, not a change of what's current. */
+    storeSwitchedSession(id, sel?.SessionName);
     if (sel?.StartDate) setStart(sel.StartDate.slice(0, 10));
     if (sel?.EndDate)   setEnd(sel.EndDate.slice(0, 10));
-    notifySessionChange();
   };
 
   /* Load terms from the backend on mount, replacing any seed/mock data. */

@@ -186,7 +186,7 @@ export default function Dashboard({
   </button>
   )}
 
-          <Tooltip text={`Active academic session — ${session.label}`}>
+          <Tooltip text={session.id ? `Active academic session — ${session.label}` : 'Loading the active academic session…'}>
             <div className="dash-session">
               <i className="fa-solid fa-calendar-day" aria-hidden="true"></i>
               <span>Session {session.label}</span>

@@ -10,13 +10,18 @@
 import { INITIAL_LOGS, hydrateLog } from '../AuditLogs/auditLogsData';
 import { INITIAL_USERS, INITIAL_ROLES, INITIAL_GROUPS } from '../UserPermissions/permissionsData';
 
-/* ─── Current academic session (from Settings → Sessions) ──────── */
+/* ─── Current academic session placeholder ─────────────────────────
+   The real session comes from Settings → Sessions (useSettings().currentSession).
+   This is only what the header shows while that call is still in flight — it
+   must NOT carry a year, because a seeded "2025-26" here is indistinguishable
+   from the real thing and is exactly how the dashboard ended up announcing a
+   session the school is not in. */
 export const CURRENT_SESSION = {
-  id:        'sess-2025-26',
-  label:     '2025-26',
-  startDate: '2025-08-01',
-  endDate:   '2026-07-31',
-  daysLeft:  61,
+  id:        null,
+  label:     '—',
+  startDate: null,
+  endDate:   null,
+  daysLeft:  null,
 };
 
 /* ─── STUDENTS module — mock/students.js

@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Tooltip from './Tooltip';
 import { buildUrl, assertSessionPayload, registerSessionToast, apiMessage } from '../../utils/apiConfig';
+import { useActiveSessionName } from '../hooks/useActiveSession';
 import { termsCrud, termsBranchID, termsSessionYearID } from './Academics';
 import { deliverReport } from './reportDelivery';
 import { useModuleReadOnly, useSettings, validateSessionDate } from '../pages/Settings/settingsStore';
@@ -1210,7 +1211,6 @@ function SessionSettings({
   /* If the user switched to a different session (changeSessionId differs from the
      login session), the view is read-only — disable all edit buttons. */
   const changeSessionId = sessionStorage.getItem('changeSessionId');
-  const sessionName  = sessionStorage.getItem('sessionName ');
   const loginSessionId  = sessionStorage.getItem('sessionID') || sessionStorage.getItem('SessionID') || '';
   /* Academics module checkbox OFF in the current session → Lesson Plans view-only. */
   const acadModuleReadOnly = useModuleReadOnly('acad');
@@ -1790,7 +1790,7 @@ function SessionEditModal({ open, session, vacations, onSession, onVacations, on
     onClose();
   };
 
-  const sessionName = sessionStorage.getItem('sessionName') || '';
+  const sessionName = useActiveSessionName();
   return (
     <div className={`lp-overlay${open ? ' open' : ''}`} onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="lp-modal" style={{ maxWidth: 600 }}>

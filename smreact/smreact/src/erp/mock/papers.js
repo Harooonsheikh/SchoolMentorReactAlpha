@@ -16,7 +16,8 @@ export const mockPaperClasses = [
   { name: 'VI',         section: 'A',       subjects: ['English', 'Urdu', 'Mathematics', 'Science'] },
   { name: 'VII',        section: 'A',       subjects: ['English', 'Urdu', 'Mathematics', 'Science'] },
   { name: 'VIII',       section: 'A',       subjects: ['English', 'Urdu', 'Mathematics', 'Science'] },
-  { name: 'IX',         section: 'A',       subjects: ['English', 'Urdu', 'Mathematics', 'Science'] },
+  { name: 'IX',         section: 'A',     
+      subjects: ['English', 'Urdu', 'Mathematics', 'Science'] },
   { name: 'IX',         section: 'B',       subjects: ['English', 'Urdu', 'Mathematics', 'Science'] },
   { name: 'Pre-Year 1', section: 'A',       subjects: ['English', 'Urdu'] },
 ];

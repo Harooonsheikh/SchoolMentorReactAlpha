@@ -9,6 +9,7 @@ import { downloadDocxFromHtml } from '../../utils/docx';
 import { qrSvg } from '../../utils/qr';
 import { code128BSvg } from '../../utils/barcode';
 import { usePermissions } from '../context/PermissionsContext';
+import { rankedMatches } from '../utils/studentSearch';
 
 const money = (n) => `Rs. ${(Number(n) || 0).toLocaleString('en-PK')}`;
 const escHtml = (s) => String(s ?? '').replace(/[&<>"']/g, m =>
@@ -510,17 +511,16 @@ function TransportFeeAssignment({ toast }) {
     return () => window.removeEventListener('keydown', onKey);
   }, [searchOpen]);
 
+  /* Ranked so an exact GR/registration number wins the 8-row cap — a plain
+     substring filter buried 1- and 2-digit GRs behind every coincidental hit. */
   const matches = useCallback(() => {
-    const q = searchQ.trim().toLowerCase();
-    if (!q) return [];
-    const out = [];
-    classes.forEach(c => {
-      (transportMap[c.key] || []).forEach(s => {
-        const hay = `${s.name} ${s.father || ''} ${s.reg}`.toLowerCase();
-        if (hay.includes(q)) out.push({ c, s });
-      });
-    });
-    return out.slice(0, 8);
+    if (!searchQ.trim()) return [];
+    const rows = [];
+    classes.forEach(c => (transportMap[c.key] || []).forEach(s => rows.push({ c, s })));
+    return rankedMatches(searchQ, rows, ({ c, s }) => ({
+      ids:  [s.reg, s.adm],
+      text: `${s.name} ${s.father || ''} ${c.cls} ${c.sec}`,
+    }), 8);
   }, [searchQ, classes, transportMap])();
 
   const clearSearch = () => { setSearchQ(''); setSearchOpen(false); setHighlightKey(null); };
@@ -2654,18 +2654,16 @@ function FeeChallansList({ toast }) {
     });
   };
 
-  /* Smart-search results — matches HTML feeLiveSearch: name + father + reg */
+  /* Smart-search results — name + father + reg, ranked so an exact
+     GR/registration number is always the first of the 8 rows shown. */
   const allMatches = useCallback(() => {
-    const q = searchQ.trim().toLowerCase();
-    if (!q) return [];
-    const out = [];
-    classes.forEach(c => {
-      (studentsMap[c.key] || []).forEach(s => {
-        const hay = `${s.name} ${s.father || ''} ${s.reg}`.toLowerCase();
-        if (hay.includes(q)) out.push({ c, s });
-      });
-    });
-    return out.slice(0, 8);
+    if (!searchQ.trim()) return [];
+    const rows = [];
+    classes.forEach(c => (studentsMap[c.key] || []).forEach(s => rows.push({ c, s })));
+    return rankedMatches(searchQ, rows, ({ c, s }) => ({
+      ids:  [s.reg, s.adm],
+      text: `${s.name} ${s.father || ''} ${c.cls} ${c.sec}`,
+    }), 8);
   }, [searchQ, classes, studentsMap]);
   const matches = allMatches();
 
@@ -5894,17 +5892,13 @@ function FeeReceivingIndividual({ toast }) {
   };
 
   const matches = useMemo(() => {
-    const q = searchQ.trim().toLowerCase();
-    if (!q) return [];
-    const out = [];
-    classes.forEach(c => {
-      (studentsMap[c.key] || []).forEach(s => {
-        if (`${s.name} ${s.father || ''} ${s.reg} ${c.cls} ${c.sec}`.toLowerCase().includes(q)) {
-          out.push({ c, s });
-        }
-      });
-    });
-    return out.slice(0, 8);
+    if (!searchQ.trim()) return [];
+    const rows = [];
+    classes.forEach(c => (studentsMap[c.key] || []).forEach(s => rows.push({ c, s })));
+    return rankedMatches(searchQ, rows, ({ c, s }) => ({
+      ids:  [s.reg, s.adm],
+      text: `${s.name} ${s.father || ''} ${c.cls} ${c.sec}`,
+    }), 8);
   }, [searchQ, classes, studentsMap]);
 
   const clearSearch = () => { setSearchQ(''); setSearchOpen(false); setHighlightKey(null); };
@@ -8738,15 +8732,13 @@ function FeeHistoryTab({ toast }) {
   };
 
   const matches = useMemo(() => {
-    const q = searchQ.trim().toLowerCase();
-    if (!q) return [];
-    const out = [];
-    classes.forEach(c => {
-      (studentsMap[c.key] || []).forEach(s => {
-        if (`${s.name} ${s.father || ''} ${s.reg} ${c.cls} ${c.sec}`.toLowerCase().includes(q)) out.push({ c, s });
-      });
-    });
-    return out.slice(0, 8);
+    if (!searchQ.trim()) return [];
+    const rows = [];
+    classes.forEach(c => (studentsMap[c.key] || []).forEach(s => rows.push({ c, s })));
+    return rankedMatches(searchQ, rows, ({ c, s }) => ({
+      ids:  [s.reg, s.adm],
+      text: `${s.name} ${s.father || ''} ${c.cls} ${c.sec}`,
+    }), 8);
   }, [searchQ, classes, studentsMap]);
 
   const clearSearch = () => { setSearchQ(''); setSearchOpen(false); setHighlightKey(null); };

@@ -1,6 +1,6 @@
 // PDF report generation — opens a print-ready window with color/BW choice
 
-import { buildUrl, resolveMediaUrl } from './apiConfig';
+import { buildUrl, resolveMediaUrl, activeSessionName } from './apiConfig';
 
 /* Fetch the branch report header (name, logo, address, session, generated date)
    for the logged-in branch. Returns the data object, or null on failure so
@@ -22,12 +22,16 @@ export async function fetchReportHeader() {
   }
 }
 
-/* Live academic session for report chrome — prefer /report-header, then the
-   active session name stored at login / session switch. Never invent a year. */
+/* Live academic session for report chrome. The ERP's own active session comes
+   FIRST: /report-header's `academicSession` is a branch-profile string that is
+   not re-written when the school rolls over to a new session or when the user
+   switches sessions, so preferring it stamps reports with a stale year while
+   the rest of the app shows the real one. Never invent a year — '' means
+   "unknown", and report chrome renders that as a dash. */
 export function resolveAcademicSession(branch) {
+  const fromStore  = activeSessionName();
   const fromHeader = branch?.academicSession || branch?.session || '';
-  const fromStorage = (typeof sessionStorage !== 'undefined' && sessionStorage.getItem('sessionName')) || '';
-  return String(fromHeader || fromStorage || '').trim();
+  return String(fromStore || fromHeader || '').trim();
 }
 
 /** e.g. "2026-2027" → "Academic Year 2026-2027"; already-labelled values pass through. */

@@ -1,4 +1,4 @@
-import { buildUrl, resolveMediaUrl } from '../../utils/apiConfig';
+import { buildUrl, resolveMediaUrl, activeSessionName } from '../../utils/apiConfig';
 
 /* ═══════════════════════════════════════════════════════════════════
    TIME TABLE SERVICE — real API (POST /api/branch-timetable)
@@ -142,12 +142,17 @@ export async function getReportHeader() {
       name: d.branchName || 'School Mentor',
       logo: resolveMediaUrl(d.branchLogo),
       address: d.address || '',
-      session: d.academicSession || sessionStorage.getItem('sessionName') || '',
+    /* The ERP's own active session wins over the branch header's
+       `academicSession` string: the header is a branch-profile field that is
+       not updated when the school rolls over to a new session (or when the
+       user switches sessions), so trusting it first is how a report ends up
+       stamped with last year's session. */
+      session: activeSessionName() || d.academicSession || '',
       generatedDate: d.generatedDate || '',
     };
   } catch (e) {
     console.error('Could not load report header:', e);
-    return { name: 'School Mentor', logo: '', address: '', session: sessionStorage.getItem('sessionName') || '', generatedDate: '' };
+    return { name: 'School Mentor', logo: '', address: '', session: activeSessionName(), generatedDate: '' };
   }
 }
 

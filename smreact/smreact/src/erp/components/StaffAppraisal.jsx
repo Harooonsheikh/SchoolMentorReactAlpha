@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Tooltip from './Tooltip';
 import * as appraisalService from '../services/appraisalService';
+import { activeSessionName } from '../../utils/apiConfig';
 import useAsync from '../hooks/useAsync';
 import {
   APPRAISAL_FRAMEWORK,
@@ -1111,13 +1112,20 @@ function GradePill({ grade }) {
      · DeleteAppraisalModal  (confirm)
    ═══════════════════════════════════════════════════════════════════ */
 
-/* Fixed period options exposed in the wizard's step 2 dropdown. */
-const APR_PERIOD_OPTIONS = [
-  '2026-Q1',
-  '2026-Q2',
-  'Mid-Year 2026',
-  'Annual 2025–26',
-];
+/* Period options for the wizard's step 2 dropdown. Derived, not hardcoded:
+   the list used to read "2026-Q1 … Annual 2025–26", which kept offering last
+   year's appraisal period once the school moved on. Quarters follow the
+   calendar year; the annual option follows the school's active session. */
+const aprPeriodOptions = () => {
+  const year = new Date().getFullYear();
+  const session = activeSessionName();
+  return [
+    `${year}-Q1`,
+    `${year}-Q2`,
+    `Mid-Year ${year}`,
+    `Annual ${session || year}`,
+  ];
+};
 
 const APR_CYCLE_OPTIONS = [
   { id: 'quarterly', label: 'Quarterly' },
@@ -1172,7 +1180,8 @@ function NewAppraisalModal({ setup, emps, depts, desigs, onClose, onSave, toast 
   const [step,        setStep]        = useState(1);
   const [staffSearch, setStaffSearch] = useState('');
   const [staffId,     setStaffId]     = useState('');
-  const [period,      setPeriod]      = useState(APR_PERIOD_OPTIONS[0]);
+  const periodOptions = useMemo(aprPeriodOptions, []);
+  const [period,      setPeriod]      = useState(() => aprPeriodOptions()[0]);
   const [cycle,       setCycle]       = useState('quarterly');
   const [conductedBy, setConductedBy] = useState('');
   const [conductedAt, setConductedAt] = useState(today);
@@ -1356,7 +1365,7 @@ function NewAppraisalModal({ setup, emps, depts, desigs, onClose, onSave, toast 
               <div className="apr-field-group">
                 <label className="apr-field-label">Period</label>
                 <select className="apr-input" value={period} onChange={(e) => setPeriod(e.target.value)}>
-                  {APR_PERIOD_OPTIONS.map(p => <option key={p} value={p}>{p}</option>)}
+                  {periodOptions.map(p => <option key={p} value={p}>{p}</option>)}
                 </select>
               </div>
               <div className="apr-field-group">
@@ -2857,7 +2866,7 @@ function AppraisalReportViewer({ reportId, setup, emps, depts, desigs, appraisal
               <div className="apr-rv-logo"><i className="fa-solid fa-graduation-cap" aria-hidden="true"></i></div>
               <div>
                 <div className="apr-rv-school">School Mentor Academy</div>
-                <div className="apr-rv-campus">Main Campus · Academic Session 2025–26</div>
+                <div className="apr-rv-campus">Main Campus{activeSessionName() ? ` · Academic Session ${activeSessionName()}` : ''}</div>
               </div>
             </div>
             <div className="apr-rv-head-r">
