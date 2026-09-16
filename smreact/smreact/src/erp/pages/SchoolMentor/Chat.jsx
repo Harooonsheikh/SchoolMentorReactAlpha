@@ -416,9 +416,20 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
     try {
       await postChatMessage({ fromUserId: me, toUserId: to, branchId, message: text.trim(), file });
       await loadConversation(to);
-      loadContacts({ silent: true });
-      /* pehli baar bhejne par ye chat ab asli hai — provisional nishan hatao */
-      setContacts(prev => prev.map(c => c.userId === to ? { ...c, provisional: false } : c));
+      /* Contacts dobara mangwao AUR uska jawab aane do.
+         Pehle ye call await nahi hoti thi aur uske foran baad provisional
+         nishan hata diya jata tha. Natija: jab refresh ka jawab aata, loadContacts
+         ki hifazat wali line (jo provisional chats ko bachati hai) kaam hi na
+         karti — kyunke nishan pehle hi hat chuka hota — aur agar API ne is
+         contact ko abhi tak wapas na kiya ho to poori chat list se gayab ho
+         jati. branchID 1 par ye nazar nahi aata kyunke wahan get-chat-contacts
+         foran row de deti hai; doosri branch par (jahan abhi koi chat hai hi
+         nahi) list khali aati hai aur chat bhejte hi gayab ho jati thi.
+         Is liye: nishan tabhi hatao jab API ne waqai is contact ko lauta diya. */
+      const rows = await loadContacts({ silent: true });
+      if (rows.some(r => r.userId === to)) {
+        setContacts(prev => prev.map(c => c.userId === to ? { ...c, provisional: false } : c));
+      }
     } catch (err) {
       /* na ja saka: local bubble hatao aur likha hua wapas composer me daal do */
       setHistory(prev => ({ ...prev, [to]: (prev[to] || []).filter(m => m.id !== pending.id) }));

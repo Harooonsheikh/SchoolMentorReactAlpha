@@ -14,7 +14,6 @@ import { buildUrl, installSessionGuard, setSessionGuardActive, registerSessionTo
 import * as profileService from '../services/profileService';
 import useUserTimeSpend from '../hooks/useUserTimeSpend';
 import useMobileAppPermission from '../hooks/useMobileAppPermission';
-import useChainBranch from '../hooks/useChainBranch';
 import { flushUserTimeSpend } from '../services/userTimeSpendService';
 import SupportWidget from '../../components/SupportWidget';
 import erpExtraCss from './erpExtraCss';
@@ -26,7 +25,10 @@ const MODULE_ID_TO_LABEL = Object.fromEntries(MODULE_REGISTRY.map((m) => [m.id, 
 /* Extra modules that are shown ONLY on the master branch (branchID === 1) and
    stay hidden on every other branch. On branch 1 they still respect the user's
    role/permission. Keyed by sidebar nav id. */
-const BRANCH1_ONLY_NAV = new Set(['mentorai', 'inventory', 'crm', 'audit', 'appraisal', 'sops', 'trainings', 'etube', 'chat', 'notifications', 'approvals']);
+/* Chat yahan JAAN-BOOJH KAR nahi hai: wo har branch par khulta hai. Uska
+   ikloti rukawat Super Admin / chain ka "Manage Mobile App" flag hai
+   (ChatType), jo neeche navItemVisible me dekha jata hai. */
+const BRANCH1_ONLY_NAV = new Set(['mentorai', 'inventory', 'crm', 'audit', 'appraisal', 'sops', 'trainings', 'etube', 'notifications', 'approvals']);
 
 /* Un me se kuch module kisi aur branch par bhi live kar diye jate hain.
    nav id → wo branchID jinhein (branch 1 ke ilawa) ye module dikhna chahiye.
@@ -246,9 +248,6 @@ export default function App() {
   /* Super Admin → Manage Mobile App Permissions. GET /manage-mobileapp-permission
      Chat / Mentor AI / eTube in flags se on/off hote hain. */
   const mobilePerms = useMobileAppPermission();
-  /* Ye school kisi network (chain) ka hissa hai? Chat aisi branchon par bhi
-     khulta hai, chahe wo branch 1 na ho. */
-  const chain = useChainBranch();
   const navItemVisible = (navId) => {
     /* Jab tak school ka module-activation aur user ki permissions dono na
        aa jayen, koi bhi nav item render nahi hota. Warna jo module off hai
@@ -257,10 +256,15 @@ export default function App() {
     /* Retire ho chuke modules kabhi visible nahi — chahe permission aur
        module-activation dono allow karti hon. */
     if (RETIRED_NAV.has(navId)) return false;
-    /* Super Admin ne is school ke liye Chat / Mentor AI / eTube SAVE kiye
-       hon to wahi flags maano — branch 1 ki rukawat hatti hai. Row na ho
-       to purana BRANCH1_ONLY behaviour. */
+    /* Super Admin (ya chain portal) ne is school ke liye Chat / Mentor AI /
+       eTube SAVE kiye hon to wahi flags maano.
+         • Chat: har branch par khulta hai. Row ho to ChatType faisla karta
+           hai ('off' = chhupa); row na ho to bina rok-tok dikhta hai.
+         • Mentor AI / eTube: row na ho to purana BRANCH1_ONLY behaviour. */
     if (navId === 'chat' || navId === 'mentorai' || navId === 'etube') {
+      /* Flag tab tak na maano jab tak jawab na aa jaye — warna 'off' wali
+         branch par Chat ek pal ke liye dikh kar ghayab hoti hai. */
+      if (navId === 'chat' && !mobilePerms.ready) return false;
       if (mobilePerms.ready && mobilePerms.hasRow) {
         const allowed = navId === 'chat' ? mobilePerms.chatMode !== 'off'
           : navId === 'mentorai' ? mobilePerms.mentorAi.enabled
@@ -278,15 +282,7 @@ export default function App() {
        bas dikh jate hain (Chat / e-Tube / Notifications jaise extras). */
     if (BRANCH1_ONLY_NAV.has(navId)) {
       const bid = String(sessionStorage.getItem('branchID'));
-      let allowed = bid === '1' || (EXTRA_NAV_BRANCHES[navId] || []).includes(bid);
-      /* Chat un branchon par bhi khulta hai jo kisi school network (chain) ka
-         hissa hain — network ki har branch ko apne staff se baat karni hoti
-         hai. Jab tak chain ka jawab na aaye Chat chhupa rehta hai, warna wo
-         pehle paint par ek pal ke liye ghayab reh kar phir tapak padta. */
-      if (!allowed && navId === 'chat') {
-        if (!chain.ready) return false;
-        allowed = chain.inNetwork;
-      }
+      const allowed = bid === '1' || (EXTRA_NAV_BRANCHES[navId] || []).includes(bid);
       if (!allowed) return false;
       const gmod = NAV_TO_MODULE_MAP[navId];
       const glabel = gmod ? MODULE_ID_TO_LABEL[gmod] : null;
@@ -321,7 +317,7 @@ export default function App() {
       const found = section.items.find((it) => navItemVisible(it.id));
       if (found) { setActive(found.id); return; }
     }
-  }, [permsReady, modulesReady, mobilePerms.ready, mobilePerms.hasRow, chain.ready, chain.inNetwork, active]);
+  }, [permsReady, modulesReady, mobilePerms.ready, mobilePerms.hasRow, active]);
 
   /* ── Academics tab state (lifted so the topbar breadcrumb stays in sync) ── */
   const [l1, setL1] = useState('sos');      // 'sos' | 'lp'
