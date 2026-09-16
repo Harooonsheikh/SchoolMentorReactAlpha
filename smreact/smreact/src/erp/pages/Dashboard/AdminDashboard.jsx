@@ -701,6 +701,15 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
                     <span>Students Paid:&nbsp;</span>
                     <span className="fa-status-strong">{fee.StudentsPaid || 0}<span className="fa-meta-div">/</span>{fee.TotalStudentsWithChallan || 0}</span>
                   </div>
+                  {/* Jo raqam wasool hote waqt discount me chhori gayi — API ka
+                      ReceivedDiscount. Upar wale card ka "Discount Given" challan
+                      BANTE waqt ka discount hai; ye us ka jora hai, is liye rang
+                      bhi wahi amber. */}
+                  <div className="fa-status-meta fa-status-meta--amber">
+                    <i className="fa-solid fa-tag" aria-hidden="true"></i>
+                    <span>Received Discount:&nbsp;</span>
+                    <span className="fa-status-strong fa-status-strong--amber">{fmtPKR(fee.ReceivedDiscount)}</span>
+                  </div>
                 </div>
                 <div className="fa-large-r">
                   <div className="fa-ring fa-ring--green" style={{ '--ring-pct': feePaidPct }}>
@@ -2439,6 +2448,11 @@ export const ADM_NEW_CSS = `
   color: #16A34A;
 }
 .fa-status-strong--red { color: #DC2626; }
+/* "Received Discount" wali line — icon aur raqam dono amber, bilkul upar wale
+   card ke "Discount Given" jaise. Ye rules .fa-status-meta i / .fa-status-strong
+   ke BAAD aane chahiyen: specificity barabar hai, faisla tarteeb se hota hai. */
+.fa-status-meta--amber i   { color: #D97706; }
+.fa-status-strong--amber   { color: #D97706; }
 
 /* ─── Donut ring (right side of large cards) ─── */
 .fa-ring {
