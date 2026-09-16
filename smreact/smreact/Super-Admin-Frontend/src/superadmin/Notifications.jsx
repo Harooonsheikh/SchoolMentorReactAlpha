@@ -52,7 +52,9 @@ const apiPost = async (url, body) => {
 const mapAudience = (value) => ({
   all: 'All',
   principal: 'Principal',
+  teacher: 'Teacher',
   teachers: 'Teacher',
+  parent: 'Parent',
   parents: 'Parent',
 }[value] || value);
 
@@ -71,6 +73,8 @@ const mapNotification = (n) => ({
   audienceType: n.audienceType,
   audience: n.audience || n.audienceType,
   recipients: n.recipientCount || n.recipients || 0,
+  deliveredCount: n.deliveredCount ?? 0,
+  failedCount: n.failedCount ?? 0,
   date: n.date || n.createdDate || n.createdAt || n.sentAt || '',
   time: n.time || n.sentTime || '',
   sentBy: n.sentBy || 'Admin',
@@ -85,7 +89,7 @@ import {
    NOTIFICATIONS — Super Admin module (frontend only)
 
    Send targeted mobile-app push notifications. Audience targets: All /
-   Principal / Teachers / Parents (with parent class/section sub-targets).
+   Principal / Teacher / Parent (with parent class/section sub-targets).
    Two tabs: New Notification (composer + guidelines) and Sent
    Notifications (searchable/filterable list with edit & delete + confirm
    modals). All state is in-component demo state. No backend.
@@ -111,7 +115,9 @@ export default function Notifications({ toast }) {
     sent: notifs.length,
     staff: notifs.filter((n) => n.audienceType === 'Teacher' || n.audienceType === 'Principal').length,
     parents: notifs.filter((n) => n.audienceType === 'Parent').length,
-    emergency: notifs.filter((n) => n.type === 'emergency').length,
+    emergency: notifs.filter((n) => 
+      String(n.type).toLowerCase() === 'emergency'
+    ).length,
   }), [notifs]);
 
   const send = async (data) => {
@@ -126,18 +132,22 @@ export default function Notifications({ toast }) {
 
     if (res.success) {
       setModal(null);
-      toast?.('Notification sent successfully.', 'success');
+      const summary = res.data || {};
+      toast?.(
+        `Notification sent successfully. Recipients: ${summary.recipientCount ?? 0}, Delivered: ${summary.deliveredCount ?? 0}, Failed: ${summary.failedCount ?? 0}`,
+        'success'
+      );
       loadNotifications();
     } else {
       toast?.(res.message || 'Unable to send notification', 'warn');
     }
   };
-  // Edit API endpoint not provided in backend guide. Currently local update only.
+  // Edit API endpoint is not available in API guide. Keep disabled until backend endpoint is provided.
   const saveEdit = (id, patch) => {
     setNotifs((prev) => prev.map((n) => n.id === id ? { ...n, ...patch } : n));
     setModal(null); toast?.('Notification record updated successfully.', 'success');
   };
-  // Delete API endpoint not provided in backend guide. Currently local removal only.
+  // Delete API endpoint is not available in API guide. Keep disabled until backend endpoint is provided.
   const remove = (id) => {
     setNotifs((prev) => prev.filter((n) => n.id !== id));
     setModal(null); toast?.('Notification record deleted.', 'info');
@@ -386,7 +396,10 @@ function SentList({ notifs, total, onEdit, onDelete }) {
             <div className="notif-td">
               <div className="notif-title-txt">{n.title}</div>
               <div className="notif-body-txt">{n.body}</div>
-              <div style={{ marginTop: 4 }}><span className="notif-delivered"><i className="fa-solid fa-circle-check" /> Delivered</span></div>
+              <div style={{ marginTop: 4 }}><span className="notif-delivered">
+                  <i className="fa-solid fa-circle-check" />
+                  Delivered {n.deliveredCount !== undefined ? `${n.deliveredCount}/${n.recipients}` : ''}
+                </span></div>
             </div>
             <div className="notif-td">
               <div style={{ fontSize: 12, color: 'var(--t1)', fontWeight: 600 }}>{n.audience}</div>

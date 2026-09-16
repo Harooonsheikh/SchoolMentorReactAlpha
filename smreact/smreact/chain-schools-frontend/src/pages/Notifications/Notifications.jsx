@@ -20,6 +20,13 @@ const AUDIENCE_MAP = {
   parents: 'Parent',
 }
 
+const NOTIFICATION_TYPES = [
+  'General',
+  'Important',
+  'Reminder',
+  'Emergency',
+]
+
 export default function Notifications() {
   const [notifications, setNotifications] = useState([])
   const [audienceFilter, setAudienceFilter] =
@@ -128,6 +135,9 @@ export default function Notifications() {
               item.audience ||
               'all',
           ),
+          recipientCount: item.recipientCount || 0,
+          deliveredCount: item.deliveredCount || 0,
+          failedCount: item.failedCount || 0,
         })),
       )
     } catch (error) {
@@ -166,8 +176,7 @@ export default function Notifications() {
               AUDIENCE_MAP[form.audience] || 'All',
             title: form.title.trim(),
             message: form.message.trim(),
-            notificationType: 'General',
-          }),
+notificationType: form.notificationType          }),
         },
       )
 
@@ -180,9 +189,10 @@ export default function Notifications() {
         return false
       }
 
+      const result = response?.data || {}
+
       showToast(
-        response?.message ||
-          'Notification sent successfully.',
+        `${response?.message || 'Notification sent successfully.'} Recipients: ${result.recipientCount ?? 0}, Delivered: ${result.deliveredCount ?? 0}, Failed: ${result.failedCount ?? 0}`,
       )
 
       await loadNotifications()
@@ -455,6 +465,12 @@ export default function Notifications() {
                   {item.message}
                 </div>
               )}
+
+              <div className="nt-msg">
+                Recipients: {item.recipientCount || 0} |
+                Delivered: {item.deliveredCount || 0} |
+                Failed: {item.failedCount || 0}
+              </div>
             </div>
           </div>
         ))
@@ -546,17 +562,18 @@ function NotificationModal({
   onSend,
   estimate,
 }) {
+
   const [form, setForm] = useState({
     title: '',
     message: '',
     audience: 'all',
-  })
+    notificationType: 'General',
+  });
 
-  const [count, setCount] = useState(null)
-  const [loadingCount, setLoadingCount] =
-    useState(false)
-  const [sending, setSending] = useState(false)
-  const [error, setError] = useState('')
+  const [count, setCount] = useState(null);
+  const [loadingCount, setLoadingCount] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState('');
 
   useEffect(() => {
     let active = true
@@ -695,6 +712,25 @@ function NotificationModal({
                   )
                 }
               />
+            </Field>
+
+            <Field label="Notification Type *">
+              <div className="nt-aud-grid">
+                {NOTIFICATION_TYPES.map((type) => (
+                  <button
+                    type="button"
+                    key={type}
+                    className={`nt-aud-card${
+                      form.notificationType === type ? ' sel' : ''
+                    }`}
+                    onClick={() =>
+                      updateField('notificationType', type)
+                    }
+                  >
+                    {type}
+                  </button>
+                ))}
+              </div>
             </Field>
 
             <Field label="Audience *">

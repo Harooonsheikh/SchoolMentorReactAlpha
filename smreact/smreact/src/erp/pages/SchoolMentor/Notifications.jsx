@@ -69,7 +69,8 @@ const DeliveredBadge = () => (
    ═══════════════════════════════════════════════════════════════════ */
 export default function Notifications({ toast = () => {} }) {
   const [tab, setTab] = useState('new');
-  const [sent, setSent] = useState(INITIAL_SENT);
+  // Production data comes from the list API; do not display demo records.
+  const [sent, setSent] = useState([]);
 
   /* composer */
   const [audience, setAudience] = useState('staff');
@@ -300,12 +301,18 @@ const loadNotificationHistory = async () => {
     const json = await res.json();
 
     if (json?.success === false) throw new Error(json.message || 'Could not load notification history');
-    if (Array.isArray(json?.data)) {
-      const mapped = json.data.map(n => {
+    const rawItems = Array.isArray(json?.data)
+      ? json.data
+      : Array.isArray(json?.data?.items)
+        ? json.data.items
+        : [];
+
+    if (rawItems.length || json?.success) {
+      const mapped = rawItems.map(n => {
         const created = new Date(n.createdAt);
 
         return {
-          id: n.id,
+          id: n.notificationID ?? n.id,
           title: n.title || '',
           body: n.message || '',
           audienceType: n.audienceType || '',
@@ -320,7 +327,7 @@ const loadNotificationHistory = async () => {
           type: n.notificationType || '',
           date: created.toLocaleDateString(),
           time: created.toLocaleTimeString(),
-          recipients: n.recipientCount || 0,
+          recipients: n.recipientCount ?? 0,
           sentBy: n.createdBy || n.senderType || ''
         };
       });
@@ -429,7 +436,7 @@ const sendNotificationAPI = async () => {
       n.audienceType === 'ClassWise' ||
       n.audienceType === 'ClassSection'
     ).length,
-    emergency: 0,
+    emergency: sent.filter(n => String(n.type || '').toLowerCase() === 'emergency').length,
   }), [sent]);
 
   const showClass = subAud === 'class-wise' || subAud === 'class-section';
@@ -495,6 +502,10 @@ const sendNotificationAPI = async () => {
 
     if (audience === 'staff' && subAud === 'department' && !selectedDepartment) {
       toast('Please select a department.', 'warning');
+      return;
+    }
+    if (audience === 'parents' && subAud === 'specific-parent' && !selectedParent) {
+      toast('Please select a parent/student.', 'warning');
       return;
     }
     setConfirmOpen(true);
@@ -868,6 +879,11 @@ const sendNotificationAPI = async () => {
               <div className="nt-td">
                 <div className="nt-title-txt">{n.title}</div>
                 <div className="nt-body-txt">{n.body}</div>
+                {n.type && (
+                  <span className={`nt-type-badge ntb-${String(n.type).toLowerCase()}`} style={{ marginTop: 5 }}>
+                    {n.type}
+                  </span>
+                )}
                 <div style={{ marginTop: 4 }}>Sent</div>
               </div>
               <div className="nt-td">
@@ -886,7 +902,7 @@ const sendNotificationAPI = async () => {
               </div>
               <div className="nt-td">
                 <div className="nt-act-btns">
-                  <Tooltip text="Delete notification record"><button className="nt-del-btn" onClick={() => setDeleteId(n.id)}><i className="fa-solid fa-trash-can" /></button></Tooltip>
+                  <span className="nt-muted-action" title="Delete API is not documented in the current guide">No actions</span>
                 </div>
               </div>
             </div>

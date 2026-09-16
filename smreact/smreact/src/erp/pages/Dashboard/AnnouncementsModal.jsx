@@ -22,11 +22,13 @@ function normalizeAnnouncements(list) {
     time: a.time || '',
     sender: a.sender || 'School Mentor — HQ',
     category: a.category || 'General',
-    status: a.status || '',
+    status: a.status || (a.isRead ? 'read' : 'new'),
+    recipientID: a.recipientID || a.raw?.recipientID,
+    notificationID: a.notificationID || a.raw?.notificationID,
   }));
 }
 
-export default function AnnouncementsModal({ announcements, onClose, toast = () => {} }) {
+export default function AnnouncementsModal({ announcements, onClose, toast = () => {}, onMarkRead, onMarkAllRead, unreadCount: apiUnreadCount }) {
   const [items, setItems] = useState(() => normalizeAnnouncements(announcements));
   useEffect(() => {
     setItems(normalizeAnnouncements(announcements));
@@ -42,14 +44,29 @@ export default function AnnouncementsModal({ announcements, onClose, toast = () 
     };
   }, [onClose]);
 
-  const unreadCount = items.filter(i => i.status === 'new').length;
+  const unreadCount = apiUnreadCount ?? items.filter(i => i.status === 'new').length;
 
-  const markRead = (id) => {
-    setItems(prev => prev.map(i => i.id === id ? { ...i, status: 'read' } : i));
+  const markRead = async (item) => {
+    // Use recipientID from API response, not notificationID
+    if (onMarkRead && item?.recipientID) {
+      await onMarkRead(item.recipientID);
+    }
+
+    setItems(prev => prev.map(i =>
+      (i.recipientID === item.recipientID || i.id === item.id)
+        ? { ...i, status: 'read', isRead: true }
+        : i
+    ));
   };
-  const markAllRead = () => {
+
+  const markAllRead = async () => {
     if (unreadCount === 0) return;
-    setItems(prev => prev.map(i => ({ ...i, status: 'read' })));
+
+    if (onMarkAllRead) {
+      await onMarkAllRead();
+    }
+
+    setItems(prev => prev.map(i => ({ ...i, status: 'read', isRead: true })));
     toast('All announcements marked as read', 'success');
   };
 
@@ -134,7 +151,7 @@ export default function AnnouncementsModal({ announcements, onClose, toast = () 
                           <button
                             type="button"
                             className="an-mark-read"
-                            onClick={() => markRead(a.id)}
+                            onClick={() => markRead(a)}
                           >
                             Mark as read <i className="fa-solid fa-check" aria-hidden="true"></i>
                           </button>
