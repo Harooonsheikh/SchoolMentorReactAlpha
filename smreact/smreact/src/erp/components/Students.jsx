@@ -3148,8 +3148,16 @@ function InactiveStudents({ classes, setClasses, inactive, setInactive, toast })
   /* Permanent delete — hard-delete an inactive student on the server, then refresh
      the Inactive list from the API. This CANNOT be undone (no restore). */
   const permanentDelete = async (student) => {
+    /* id 0/undefined par API "Invalid Student ID" (400) deti hai aur delete
+       chup-chaap nakaam lagta hai — is liye pehle hi rok kar wajah batate hain. */
+    const id = Number(student?._id) || 0;
+    if (!id) {
+      toast('This student has no server id — cannot delete', 'error');
+      setDelCfg(null);
+      return;
+    }
     try {
-      await studentService.permanentDeleteStuStudent(student._id);
+      await studentService.permanentDeleteStuStudent(id);
       const freshInactive = await studentService.getStuInactive();
       setInactive(Array.isArray(freshInactive) ? freshInactive : []);
       toast(`${stuFullName(student)} permanently deleted`, 'success');
@@ -3417,7 +3425,7 @@ function StuInactiveGroup({ g, idx, isOpen, onToggle, onGroupReport, flashReg, o
             </div>
           </div>
 
-          <div className="stu-list-head stu-in-list-head" style={{ gridTemplateColumns: '46px 58px 1.1fr 1.3fr 1.1fr 1.1fr 1.2fr 60px' }}>
+          <div className="stu-list-head stu-in-list-head" style={{ gridTemplateColumns: '46px 58px 1.1fr 1.3fr 1.1fr 1.1fr 1.2fr 104px' }}>
             <div className="th c">#</div>
             <div className="th c">Photo</div>
             <div className="th">Reg No</div>
@@ -3480,7 +3488,7 @@ function StuInactiveRow({ s, i, flash, onReactivate, onDelete, onPendingDues, on
   const fire = (fn) => { setMenuOpen(false); fn(); };
 
   return (
-    <div className={`stu-srow stu-srow-inactive${flash ? ' flash' : ''}`} style={{ gridTemplateColumns: '46px 58px 1.1fr 1.3fr 1.1fr 1.1fr 1.2fr 60px' }} data-inreg={s.reg}>
+    <div className={`stu-srow stu-srow-inactive${flash ? ' flash' : ''}`} style={{ gridTemplateColumns: '46px 58px 1.1fr 1.3fr 1.1fr 1.1fr 1.2fr 104px' }} data-inreg={s.reg}>
       <div className="td c"><div className="stu-srow-sn">{i}</div></div>
       <div className="td c">
         <div className="stu-avatar" style={{ background: 'rgba(220,38,38,.10)', color: '#DC2626' }}>
@@ -3499,7 +3507,18 @@ function StuInactiveRow({ s, i, flash, onReactivate, onDelete, onPendingDues, on
           : <span className="stu-clear-badge"><i className="fa-solid fa-check"></i> Cleared</span>}
       </div>
       <div className="td stu-reason-cell">{s.reason || '—'}</div>
-      <div className="td c" ref={anchorRef}>
+      <div className="td c stu-in-actions" ref={anchorRef}>
+        {/* Delete ka apna icon. Pehle ye sirf 3-dot menu ke andar dabba hua tha,
+            is liye inactive student ko mitana nazar hi nahi aata tha. Amal wahi
+            hai jo menu wale "Delete Permanently" ka — wahi permission
+            (Inactive Students › Edit) aur wahi confirm dialog. */}
+        {canInEdit && (
+          <Tooltip text="Delete permanently">
+            <button className="stu-dots stu-dots--danger" onClick={() => fire(onDelete)}>
+              <i className="fa-solid fa-trash"></i>
+            </button>
+          </Tooltip>
+        )}
         <Tooltip text="More actions">
           <button className="stu-dots" onClick={() => setMenuOpen(!menuOpen)}>
             <i className="fa-solid fa-ellipsis-vertical"></i>
@@ -7286,6 +7305,10 @@ const STU_CSS = `
   transition: all .15s ease;
 }
 .stu-dots:hover { background: #1E3A8A; color: #fff; border-color: #1E3A8A; }
+/* Inactive tab ka Action khana: delete icon + 3-dot, dono ek line me. */
+.stu-in-actions { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.stu-dots--danger { color: #DC2626; border-color: rgba(220,38,38,.35); }
+.stu-dots--danger:hover { background: #DC2626; border-color: #DC2626; color: #fff; }
 .stu-actmenu {
   position: absolute;
   right: 14px;

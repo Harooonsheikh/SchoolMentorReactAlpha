@@ -1,5 +1,4 @@
 import { buildSuperAdminUrl } from '../../utils/apiConfig';
-import { fetchBranchNetworkId } from './chainBranch';
 
 /* ═══════════════════════════════════════════════════════════════════
    SCHOOL SOPs — read-only wiring to the Super Admin SOP APIs.
@@ -7,7 +6,8 @@ import { fetchBranchNetworkId } from './chainBranch';
    Super Admin panel me manual heads / manuals / forms banaye jate hain;
    ERP unhi ko sirf DIKHATA hai. Teeno routes wahi hain, sirf `action: get`:
 
-     POST {SA}/api/AHM_School_SOPs/manual-head     → manual heads (categories)
+     GET  {SA}/api/AHM_School_SOPs/manual-head/by-branch/{branchId}
+                                                   → manual heads (categories)
      POST {SA}/api/AHM_School_SOPs/manual-detail   → ek head ke manuals
      POST {SA}/api/AHM_School_SOPs/manual-form     → ek manual ki forms
 
@@ -16,16 +16,18 @@ import { fetchBranchNetworkId } from './chainBranch';
 
    ── Kis ki SOPs? ──
    Agar ye school kisi chain (network) ka hissa hai to usay apne HEAD OFFICE
-   ki SOPs dikhni chahiyen, Super Admin ki aam library nahi. manual-head par
-   `type` + `networkID` yehi tay karte hain — wahi jodi jo chain portal heads
-   BANATE waqt bhejta hai. Chain ka hissa na ho to dono khaane jate hi nahi
-   aur Super Admin ki library aati hai (pehle jaisa).
+   ki SOPs dikhni chahiyen, Super Admin ki aam library nahi. Ye faisla ab API
+   khud branchId par karti hai: manual-head/by-branch/{branchId} chain wali
+   branch par `type:"chain"` + us network ke heads deti hai, aur baqi par
+   Super Admin ki aam library. Pehle ERP khud chain API se networkID mangwa
+   kar `type` + `networkID` POST karta tha — ab wo chakkar khatam.
 
    Manuals aur forms par network ka koi khana nahi, aur zaroorat bhi nahi —
    wo hamesha kisi head ke andar hote hain aur head khud scoped hai.
    ═══════════════════════════════════════════════════════════════════ */
 
-const HEAD_URL   = () => buildSuperAdminUrl('/api/AHM_School_SOPs/manual-head');
+const HEAD_BY_BRANCH_URL = (branchId) =>
+  buildSuperAdminUrl(`/api/AHM_School_SOPs/manual-head/by-branch/${branchId}`);
 const DETAIL_URL = () => buildSuperAdminUrl('/api/AHM_School_SOPs/manual-detail');
 const FORM_URL   = () => buildSuperAdminUrl('/api/AHM_School_SOPs/manual-form');
 
@@ -131,27 +133,19 @@ export function toEmbedUrl(url) {
  * Manual heads → category tabs ({ id, label, icon, totalManuals }).
  *
  * ── Scoping ──
- * Chain (network) ka hissa school apne HEAD OFFICE ke SOPs dekhta hai, Super
- * Admin ki aam library nahi. Wo faisla `type` + `networkID` par hota hai —
- * bilkul wahi jodi jo chain portal heads BANATE waqt bhejta hai
- * (chain-schools-frontend/src/api/sopsApi.js): `type: 'chain'` + us network
- * ki id. Dono saath jate hain; `type` chhoot jaye to API `get` par hi gir
- * jati hai.
+ * Sab kuch branchId par: GET manual-head/by-branch/{branchId}. Chain wali
+ * branch par API khud us network ke heads deti hai (rows par `type:"chain"`
+ * aur networkID), baqi branchon par Super Admin ki aam library. ERP ko ab
+ * network id alag se mangwane ki zaroorat nahi.
  *
- * Chain ka hissa na ho (networkID 0) to donon khaane jate hi nahi aur wahi
- * purani Super Admin library aati hai.
+ * Note: ye route har row par `totalManuals: 0` bhejta hai. Screen waise bhi
+ * asli ginti `manualsByHead` se leti hai (SchoolSOPs.jsx), ye sirf fallback
+ * hai — is liye koi farq nahi padta.
  */
-export async function getManualHeads(networkId = 0) {
-  const nid = Number(networkId) || 0;
-  const res = await fetch(HEAD_URL(), {
-    method: 'POST',
-    headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      action: 'get', id: 0, manualHeadName: '', description: '',
-      isActive: true, totalManuals: 0, createdBy: 0, modifiedBy: 0,
-      ...(nid ? { type: 'chain', networkID: nid } : {}),
-    }),
-  });
+export async function getManualHeads() {
+  const branchId = Number(sessionStorage.getItem('branchID')) || 0;
+  if (!branchId) return [];
+  const res = await fetch(HEAD_BY_BRANCH_URL(branchId), { headers: authHeaders() });
   const rows = await readJson(res, 'manual heads');
   return rows
     .filter((h) => h?.isActive !== false)
@@ -259,10 +253,9 @@ async function mapLimit(items, limit, fn) {
  *          `formsCount` pehle se maujood.
  */
 export async function getAllSops() {
-  /* Chain school ho to uske network ke heads, warna Super Admin ki library.
-     Lookup nakaam ho jaye to 0 — school apni SOPs se mehroom na rahe. */
-  const networkId = await fetchBranchNetworkId().catch(() => 0);
-  const heads = await getManualHeads(networkId);
+  /* Chain school ho to uske network ke heads, warna Super Admin ki library —
+     ye faisla ab API khud branchId par kar leti hai. */
+  const heads = await getManualHeads();
   if (!heads.length) return { heads, manualsByHead: {} };
 
   /* Har head ke manuals (ek head fail ho to baqi library phir bhi khule). */

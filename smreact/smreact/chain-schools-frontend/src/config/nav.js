@@ -3,6 +3,19 @@
    sidebar, breadcrumb and the route table.
    ═══════════════════════════════════════════════════════════════════ */
 
+/* ── Abhi chhupe hue modules ──
+   Chain school ke sidebar me filhal sirf ye aath rehte hain:
+     Dashboard · Academics · School Permissions · School Progress ·
+     School Payments · Operational SOPs · Notifications · Settings
+   Baqi (Human Resource, Accounts, Attendance, Inventory, Trainings,
+   User Permissions) neeche comment kiye gaye hain — mitaye NAHI. Inke
+   routes aur screens waisi ki waisi maujood hain, sirf sidebar se hate
+   hain; future me wapas laane ke liye un lines ka comment hata dena kaafi
+   hai.
+
+   Khayal rahe: UserPermissions ki UM_MENUS isi NAV_SECTIONS se banti hai
+   (pages/UserPermissions/data.js), is liye jo item yahan comment hai wo
+   permission matrix me bhi nahi aata. */
 export const NAV_SECTIONS = [
   {
     label: 'Overview',
@@ -18,21 +31,24 @@ export const NAV_SECTIONS = [
       { key: 'sops', path: '/sops', label: 'Operational SOPs', icon: 'fa-book-open' },
     ],
   },
-  {
-    label: 'HR & Finance',
-    items: [
-      { key: 'hr', path: '/hr', label: 'Human Resource', icon: 'fa-users-gear' },
-      { key: 'accounts', path: '/accounts', label: 'Accounts', icon: 'fa-coins' },
-      { key: 'attendance', path: '/attendance', label: 'Attendance', icon: 'fa-calendar-check' },
-      { key: 'inventory', path: '/inventory', label: 'Inventory', icon: 'fa-boxes-stacked' },
-    ],
-  },
+  /* HR & Finance — filhal sidebar se hata diya gaya (neeche "Abhi chhupe
+     hue modules" wala note dekhein). Inke routes aur screens jaisi ki waisi
+     hain; sirf ye block wapas uncomment karna hai. */
+  // {
+  //   label: 'HR & Finance',
+  //   items: [
+  //     { key: 'hr', path: '/hr', label: 'Human Resource', icon: 'fa-users-gear' },
+  //     { key: 'accounts', path: '/accounts', label: 'Accounts', icon: 'fa-coins' },
+  //     { key: 'attendance', path: '/attendance', label: 'Attendance', icon: 'fa-calendar-check' },
+  //     { key: 'inventory', path: '/inventory', label: 'Inventory', icon: 'fa-boxes-stacked' },
+  //   ],
+  // },
   {
     label: 'Training & Admin',
     items: [
-      { key: 'trainings', path: '/trainings', label: 'Trainings', icon: 'fa-chalkboard-user' },
+      // { key: 'trainings', path: '/trainings', label: 'Trainings', icon: 'fa-chalkboard-user' },
       { key: 'notifications', path: '/notifications', label: 'Notifications', icon: 'fa-bell' },
-      { key: 'userpermissions', path: '/user-permissions', label: 'User Permissions', icon: 'fa-shield-halved' },
+      // { key: 'userpermissions', path: '/user-permissions', label: 'User Permissions', icon: 'fa-shield-halved' },
       { key: 'settings', path: '/settings', label: 'Settings', icon: 'fa-sliders' },
     ],
   },
