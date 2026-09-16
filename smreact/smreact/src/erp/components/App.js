@@ -14,6 +14,7 @@ import { buildUrl, installSessionGuard, setSessionGuardActive, registerSessionTo
 import * as profileService from '../services/profileService';
 import useUserTimeSpend from '../hooks/useUserTimeSpend';
 import useMobileAppPermission from '../hooks/useMobileAppPermission';
+import useChainBranch from '../hooks/useChainBranch';
 import { flushUserTimeSpend } from '../services/userTimeSpendService';
 import SupportWidget from '../../components/SupportWidget';
 import erpExtraCss from './erpExtraCss';
@@ -245,6 +246,9 @@ export default function App() {
   /* Super Admin → Manage Mobile App Permissions. GET /manage-mobileapp-permission
      Chat / Mentor AI / eTube in flags se on/off hote hain. */
   const mobilePerms = useMobileAppPermission();
+  /* Ye school kisi network (chain) ka hissa hai? Chat aisi branchon par bhi
+     khulta hai, chahe wo branch 1 na ho. */
+  const chain = useChainBranch();
   const navItemVisible = (navId) => {
     /* Jab tak school ka module-activation aur user ki permissions dono na
        aa jayen, koi bhi nav item render nahi hota. Warna jo module off hai
@@ -274,7 +278,15 @@ export default function App() {
        bas dikh jate hain (Chat / e-Tube / Notifications jaise extras). */
     if (BRANCH1_ONLY_NAV.has(navId)) {
       const bid = String(sessionStorage.getItem('branchID'));
-      const allowed = bid === '1' || (EXTRA_NAV_BRANCHES[navId] || []).includes(bid);
+      let allowed = bid === '1' || (EXTRA_NAV_BRANCHES[navId] || []).includes(bid);
+      /* Chat un branchon par bhi khulta hai jo kisi school network (chain) ka
+         hissa hain — network ki har branch ko apne staff se baat karni hoti
+         hai. Jab tak chain ka jawab na aaye Chat chhupa rehta hai, warna wo
+         pehle paint par ek pal ke liye ghayab reh kar phir tapak padta. */
+      if (!allowed && navId === 'chat') {
+        if (!chain.ready) return false;
+        allowed = chain.inNetwork;
+      }
       if (!allowed) return false;
       const gmod = NAV_TO_MODULE_MAP[navId];
       const glabel = gmod ? MODULE_ID_TO_LABEL[gmod] : null;
@@ -309,7 +321,7 @@ export default function App() {
       const found = section.items.find((it) => navItemVisible(it.id));
       if (found) { setActive(found.id); return; }
     }
-  }, [permsReady, modulesReady, mobilePerms.ready, mobilePerms.hasRow, active]);
+  }, [permsReady, modulesReady, mobilePerms.ready, mobilePerms.hasRow, chain.ready, chain.inNetwork, active]);
 
   /* ── Academics tab state (lifted so the topbar breadcrumb stays in sync) ── */
   const [l1, setL1] = useState('sos');      // 'sos' | 'lp'

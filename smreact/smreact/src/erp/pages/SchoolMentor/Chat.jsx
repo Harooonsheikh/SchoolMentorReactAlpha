@@ -4,6 +4,7 @@ import Tooltip from '../../components/Tooltip';
 import TutorialModal from '../../components/TutorialModal';
 import {
   chatUserId,
+  chatEmployeeId,
   chatBranchId,
   fetchChatContacts,
   fetchContactList,
@@ -844,7 +845,6 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
           me={me}
           branchId={branchId}
           appUsers={appUsers}
-          chatMode={chatMode}
           onClose={() => setNcOpen(false)}
           onStartChat={startChatWith}
           toast={toast}
@@ -973,8 +973,8 @@ function ImageAttachment({ m, caption }) {
   );
 }
 
-/* ── New Chat modal — poori directory get-contact-list se ── */
-function NewChatModal({ me, branchId, appUsers, chatMode, onClose, onStartChat, toast }) {
+/* ── New Chat modal — staff directory get-contact-list se ── */
+function NewChatModal({ me, branchId, appUsers, onClose, onStartChat, toast }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -992,9 +992,12 @@ function NewChatModal({ me, branchId, appUsers, chatMode, onClose, onStartChat, 
     let alive = true;
     (async () => {
       try {
-        const data = await fetchContactList(branchId, me);
-        const list = chatMode === 'staffOnly' ? data.filter(r => !r.isParent) : data;
-        if (alive) setRows(list.filter(r => r.userId !== me));
+        /* Ye endpoint HR ki employee id maangta hai (swagger: {empID}) — usi
+           par wo sirf is school ke mulazim lautata hai. `me` (login UserID)
+           bhejne par 421 rows aati thin jin me parent/student bhi shaamil the. */
+        const data = await fetchContactList(branchId, chatEmployeeId());
+        const myIds = new Set([me, chatEmployeeId()]);
+        if (alive) setRows(data.filter(r => !myIds.has(r.userId)));
       } catch (err) {
         if (alive) setError(err.message || 'Could not load the contact list');
       } finally {

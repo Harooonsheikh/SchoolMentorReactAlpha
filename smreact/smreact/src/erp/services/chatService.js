@@ -16,6 +16,9 @@ import { buildUrl, resolveMediaUrl } from '../../utils/apiConfig';
    employee number NAHI. Misal: Qasim TEST ka UserID 213 hai aur uska HR number
    78 — chat contacts, conversation aur permissions sab 213 par chalte hain
    (`registerationNo` me 78 aata hai). Is liye chatUserId() `UserID` uthata hai.
+   Ek istisna: get-contact-list HR ki employee id par chalta hai (swagger me
+   bhi `{empID}`). Usi id par wo sirf us school ke MULAZIM lautata hai —
+   branch 1 par 27 Staff rows. Is liye chatEmployeeId() alag hai.
 
    ── Contacts me ek hi shakhs ki kai rows ──
    get-chat-contacts har PARENT-STUDENT jodi ki alag row deta hai, is liye ek
@@ -60,6 +63,12 @@ async function readJson(res, label) {
 /** Logged-in user ki chat id — login `id`, warna employee_ID par fallback. */
 export function chatUserId() {
   const raw = sessionStorage.getItem('UserID') || sessionStorage.getItem('employee_ID');
+  return Number(raw) || 0;
+}
+
+/** get-contact-list ki id — HR wala employee number (`employee_ID`). */
+export function chatEmployeeId() {
+  const raw = sessionStorage.getItem('employee_ID') || sessionStorage.getItem('UserID');
   return Number(raw) || 0;
 }
 
@@ -219,6 +228,18 @@ function contactLabel(row) {
   return String(row.name || '').trim();
 }
 
+/* Row ka `name` khali aaye to uski jaga kya likhein?
+   Parent row par walid ka naam sab se behtar pehchan hai ("Parent of Nadeem"),
+   magar STAFF row par `fatherName` us mulazim ke APNE walid ka naam hai — us par
+   "Parent of …" laga dene se mulazim "New Chat › Staff" ke khane me parent ban
+   kar dikhta hai. get-contact-list me aisi rows waqai maujood hain (name "" +
+   fatherName "Zulfiqar", status "Staff"). Staff ke liye is liye sirf id, jo har
+   row par alag rehti hai; designation waise hi neeche wali line par dikh jata hai. */
+function fallbackName(isParent, father, id) {
+  if (isParent) return father ? `Parent of ${father}` : `Parent #${id}`;
+  return `Staff #${id}`;
+}
+
 /* Contact ki `picture` hamesha /APIBeta/Img/Image/{id} hoti hai — wahi application
    jo kisi host par deploy nahi (404). Us par request bhejne ka koi faida nahi:
    har avatar console me ek nakaam call chhorta hai aur dikhta phir bhi initials
@@ -285,7 +306,7 @@ function mergeContacts(rows) {
   // Jis row ka naam kisi bhi bachay se na mila us par walid ka naam dikhao.
   return [...byUser.values()].map(c => ({
     ...c,
-    name: c.name || (c.father ? `Parent of ${c.father}` : `User ${c.userId}`),
+    name: c.name || fallbackName(c.isParent, c.father, c.userId),
   }));
 }
 
@@ -296,26 +317,54 @@ export async function fetchChatContacts(branchId, userId) {
   return mergeContacts(json?.data);
 }
 
+/* Staff rows par do safaiyan. Parents par ye laagu NAHI hotin — ek hi walid
+   ke do bachay do alag classon me alag alag dikhne chahiyen, is liye wo
+   merge nahi hotin (neeche fetchContactList ka note dekhein).
+     1. Jis mulazim ka HR record me naam hi nahi, usay list me mat dikhao —
+        us par koi qabil-e-pehchan label banta hi nahi.
+     2. Ek hi mulazim ki kai rows — wahi registerationNo, alag userId (API 421
+        rows me "test1 test" regNo 19 ki 13 rows deti hai) — sirf ek dafa.
+        Pehli row rakhi jati hai; chat waise bhi userId par khulti hai. */
+/* Chat ki directory me sirf mulazim aate hain. API asli employee id par waise
+   bhi sirf Staff rows deti hai, magar kisi aur id par (jaise 1) wo parent/
+   student rows bhi lauta deti hai — ye filter us surat me bhi list saaf
+   rakhta hai. */
+const isStaffRow = (row) => String(row.status || '').trim().toLowerCase() === 'staff';
+
+function dedupeStaff(rows) {
+  const seen = new Set();
+  return rows.filter((r) => {
+    if (r.isParent) return true;
+    if (!r.hasName) return false;
+    const key = r.regNo || `u${r.userId}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 /**
- * Poori directory — "New Chat" ke liye (parents + staff).
- * Yahan rows MERGE nahi hotin: browse class-wise hota hai, is liye ek hi walid
- * ke do bachay do alag class me alag alag dikhne chahiyen. Chat phir bhi `userId`
- * par hi khulti hai (jo dono rows me ek hi hai).
+ * "New Chat" ki directory — sirf mulazim (staff).
+ * Ye endpoint HR ki employee id par chalta hai, login wali `UserID` par nahi —
+ * caller chatEmployeeId() bhejta hai. Chat phir bhi row ke `userId` par khulti
+ * hai, jo baqi chat endpoints wali id hai.
  */
-export async function fetchContactList(branchId, userId) {
-  const res = await fetch(buildUrl(`/get-contact-list/${branchId}/${userId}`), { headers: authHeaders() });
+export async function fetchContactList(branchId, empId) {
+  const res = await fetch(buildUrl(`/get-contact-list/${branchId}/${empId}`), { headers: authHeaders() });
   const json = await readJson(res, 'contact list');
-  return (json?.data || []).map(row => {
+  const rows = (json?.data || []).filter(isStaffRow).map(row => {
     const id = Number(row.userId ?? row.employeeId) || 0;
     const name = contactLabel(row);
     const father = String(row.fatherName || '').trim();
+    const parent = isParentRow(row);
     return {
       userId: id,
-      name: name || (father ? `Parent of ${father}` : `User ${id}`),
+      name: name || fallbackName(parent, father, id),
+      hasName: !!name,
       father,
       rel: String(row.designation || '').trim() || String(row.status || '').trim(),
       status: String(row.status || '').trim(),
-      isParent: isParentRow(row),
+      isParent: parent,
       group: groupLabel(row),
       grade: String(row.grade || '').trim(),
       section: String(row.section || '').trim(),
@@ -323,6 +372,7 @@ export async function fetchContactList(branchId, userId) {
       picture: contactPicture(row.picture),
     };
   }).filter(r => r.userId);
+  return dedupeStaff(rows);
 }
 
 /** Un users ke ids jinke paas FCM token hai (yani app par logged in hain). */
