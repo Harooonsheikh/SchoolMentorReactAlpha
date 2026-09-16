@@ -198,16 +198,28 @@ function StudentModal({ open, target, editIdx, editStudent, classesData, onClose
       const d = data?.data;
       const inner = Array.isArray(d) ? d[0] : (d && typeof d === 'object' ? d : null);
       const innerSuccess = inner ? (inner.Success ?? inner.success) : undefined;
-      const isFail = innerSuccess === 0 || innerSuccess === false || innerSuccess === '0' || d === 0 || d === '0';
+      // const isFail = innerSuccess === 0 || innerSuccess === false || innerSuccess === '0' || d === 0 || d === '0';
+     
+     const isFail =
+  data?.success === false ||
+  data?.success === 0 ||
+  data?.Success === false ||
+  data?.Success === 0 ||
+  innerSuccess === 0 ||
+  innerSuccess === false ||
+  innerSuccess === '0' ||
+  d === 0 ||
+  d === '0';
       if (res.ok && !isFail) {
         showToast?.(editStudent ? 'Student updated successfully' : 'Student added successfully', 'success');
         onSaved?.();   // refetch class/section/student list
         onClose();
       } else {
-        const msg =
-          (inner && (inner.Message ?? inner.message)) ||
-          (data?.message && !/success/i.test(data.message) ? data.message : '') ||
-          'Number already exist';
+ const msg =
+  data?.message ||
+  data?.Message ||
+  (inner && (inner.Message ?? inner.message)) ||
+  'Number already exists';
         showToast?.(msg, 'error');
       }
     } catch (err) {
