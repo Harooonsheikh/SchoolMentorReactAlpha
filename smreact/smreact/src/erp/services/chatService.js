@@ -12,11 +12,14 @@ import { buildUrl, resolveMediaUrl } from '../../utils/apiConfig';
      GET  /get-users-fcm-status/{branchID}                → app par logged-in?
 
    ── Kaun si ID? ──
-   Chat ki har ID get-contact-list wali `userId` hai (jo `employeeId` ke
-   barabar aati hai — misal: Ahmad Tariq sh 66, ANUS ALi 69). Bhejna,
-   conversation, seen aur unseen count sab isi id par chalte hain. Apni id
-   session ke `employee_ID` se aati hai — chatUserId() aur chatEmployeeId()
-   dono wahi lautate hain (login `UserID` sirf fallback hai).
+   Chat ki har ID LOGIN user id hai — get-contact-list row ki `userId`
+   (employeeId NAHI). Misal: Ahmad Tariq sh userId 141 / employeeId 66,
+   ANUS ALi 144 / 69. fromUserId / toUserId / userId — bhejna, conversation,
+   seen, contacts aur unseen count — sab isi par.
+     apni id     → chatUserId()     = session `UserID`   (141)
+     contact id  → row.userId                            (144)
+     {empID}     → chatEmployeeId() = session `employee_ID` (66) — SIRF
+                   get-contact-list ke liye, swagger bhi `{empID}` kehta hai.
 
    ── Contacts me ek hi shakhs ki kai rows ──
    get-chat-contacts har PARENT-STUDENT jodi ki alag row deta hai, is liye ek
@@ -58,9 +61,11 @@ async function readJson(res, label) {
   return json;
 }
 
-/** Logged-in user ki chat id — session ka `employee_ID`, warna login `UserID`. */
+/** Logged-in user ki chat id — login `UserID` (get-contact-list ki `userId`
+    jaisi: Ahmad Tariq sh 141, jab ke uska employeeId 66). employee_ID sirf
+    get-contact-list ke {empID} me jata hai — chatEmployeeId(). */
 export function chatUserId() {
-  const raw = sessionStorage.getItem('employee_ID') || sessionStorage.getItem('UserID');
+  const raw = sessionStorage.getItem('UserID') || sessionStorage.getItem('employee_ID');
   return Number(raw) || 0;
 }
 
