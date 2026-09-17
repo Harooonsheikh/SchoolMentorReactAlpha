@@ -3722,7 +3722,8 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
     const isOtherSession = attModuleReadOnly || (() => {
       // Session status "Current" na ho to lock.
       const sessionStatus = sessionStorage.getItem("sessionStatus") || "";
-      if (sessionStatus && sessionStatus !== "Current") return true;
+      // if (sessionStatus && sessionStatus !== "Current") return true;
+      if (sessionStatus && sessionStatus.toLowerCase() !== "current") return true;
       // Aaj ki date session ki date-range se bahar ho to lock.
       const startRaw = sessionStorage.getItem("sessionStartDate");
       const endRaw   = sessionStorage.getItem("sessionEndDate");
