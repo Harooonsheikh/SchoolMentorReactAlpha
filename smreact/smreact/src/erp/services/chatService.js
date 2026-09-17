@@ -266,13 +266,14 @@ function groupLabel(row) {
   return String(row.designation || row.status || '').trim() || '—';
 }
 
-/* get-chat-contacts ki STAFF row me `userId` login id hoti hai (Ahmad Tariq sh:
-   141) aur employee id `registerationNo` me (66) — jab ke chat employee id par
-   chalti hai (get-contact-list wali userId). Is liye staff par registerationNo.
-   Parent row ka registerationNo bachay ka roll number hai, wahan userId hi. */
+/* get-chat-contacts ki row ka `userId` wahi id hai jo message table me hai —
+   yahi chat id. Staff row ka `registerationNo`/naam backend kisi DOOSRE account
+   se jor kar deta hai: live (branch 15) 66 ki list me row `userId 215` (Abid
+   Khan, jis ne asal me message bheja) magar `registerationNo 94` + naam
+   "aHMAD 5 TEST". Pehle reg ko id maana jata tha, is liye unread badge ghalat
+   chat par jata tha. Staff ka sahi naam Chat.jsx directory (get-contact-list)
+   se lagata hai. */
 function chatIdOf(row) {
-  const reg = String(row.registerationNo || '').trim();
-  if (!isParentRow(row) && /^\d+$/.test(reg)) return Number(reg);
   return Number(row.userId ?? row.employeeId) || 0;
 }
 
@@ -557,8 +558,8 @@ export async function fetchConversation(meId, otherId, branchId) {
  * `knownIds` wale chhod diye jate hain — wo pehle hi list me hain.
  * Lautata hai: [{ contact, msgs }].
  */
-export async function discoverStaffChats(branchId, meId, empId, knownIds = new Set(), batchSize = 6) {
-  const staff = (await fetchContactList(branchId, empId))
+export async function discoverStaffChats(branchId, meId, empId, knownIds = new Set(), batchSize = 6, directory = null) {
+  const staff = (directory || await fetchContactList(branchId, empId))
     .filter(s => s.userId !== meId && !knownIds.has(s.userId));
   const found = [];
   for (let i = 0; i < staff.length; i += batchSize) {
@@ -666,14 +667,17 @@ export async function postChatMessage({ fromUserId, toUserId, branchId, message 
 
 /**
  * Contact ke bheje huay messages ko "seen" karo (chat kholte waqt).
- * Route {branchId}/{fromUserId}/{toUserId} hai — fromUserId wo hai jis ne
- * message bheja (contact), toUserId logged-in user.
+ * Swagger: /mark-messages-seen/{branchId}/{fromUserId}/{toUserId}
+ *   fromUserId = logged-in user (meId)   — baqi chat APIs jaisa
+ *   toUserId   = contact (contactUserId)   (get-chat-contacts, get-conversation)
+ * Pehle contact ki id fromUserId me jati thi → updatedRows 0, unseen badge
+ * kabhi saaf nahi hota tha.
  * NOTE: body khali hoti hai magar bhejni ZAROORI hai — bina Content-Length ke
  * IIS is POST ko 411 (Length Required) kar deta hai.
  */
 export async function markMessagesSeen(branchId, contactUserId, meId) {
   try {
-    const res = await fetch(buildUrl(`/mark-messages-seen/${branchId}/${contactUserId}/${meId}`), {
+    const res = await fetch(buildUrl(`/mark-messages-seen/${branchId}/${meId}/${contactUserId}`), {
       method: 'POST',
       headers: authHeaders(),
       body: '',

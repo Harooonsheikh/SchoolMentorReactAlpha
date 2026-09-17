@@ -169,6 +169,7 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
   toastRef.current = toast;
   const previewDone = useRef(new Set());   // jin contacts ka preview le liya
   const discoveredRef = useRef(new Map()); // get-chat-contacts se chhooti staff chats
+  const directoryRef = useRef(null);       // staff directory (get-contact-list) — sahi naam isi se
   const discoverTick = useRef(0);
   const fileInputs = { image: useRef(null), video: useRef(null), doc: useRef(null) };
   const recRef = useRef(null);
@@ -195,16 +196,28 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
     }
     if (!silent) setLoading(true);
     try {
-      const apiRows = await fetchChatContacts(branchId, me);
+      const rawRows = await fetchChatContacts(branchId, me);
       /* get-chat-contacts kuch staff chats nahi lautata (discoverStaffChats ka
          note dekhein). Directory scan mehenga hai, is liye pehli load par aur
          phir har DISCOVER_EVERY poll par; beech me pichle mile huay contacts
          (discoveredRef) hi jod dete hain. */
       const tick = discoverTick.current++;
-      if (!silent || tick % DISCOVER_EVERY === 0) {
+      const scan = !silent || tick % DISCOVER_EVERY === 0;
+      if (scan) {
+        try { directoryRef.current = await fetchContactList(branchId, chatEmployeeId()); } catch (_) { /* purani directory hi */ }
+      }
+      /* Staff row ka naam/designation backend ghalat account se jorta hai
+         (userId 215 = Abid Khan, magar naam "aHMAD 5 TEST") — directory se,
+         jo isi id par sahi hai, theek karo. unread API wala hi rehta hai. */
+      const dirById = new Map((directoryRef.current || []).map(d => [d.userId, d]));
+      const apiRows = rawRows.map(r => {
+        const d = !r.isParent && dirById.get(r.userId);
+        return d ? { ...r, name: d.name, father: d.father, rel: d.rel, status: d.status, group: d.group, picture: r.picture || d.picture, students: [] } : r;
+      });
+      if (scan) {
         const known = new Set(apiRows.map(r => r.userId));
         try {
-          const found = await discoverStaffChats(branchId, me, chatEmployeeId(), known);
+          const found = await discoverStaffChats(branchId, me, chatEmployeeId(), known, undefined, directoryRef.current);
           found.forEach(({ contact }) => discoveredRef.current.set(contact.userId, contact));
           if (found.length) {
             setHistory(prev => {
@@ -261,11 +274,13 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
   useEffect(() => {
     let alive = true;
     (async () => {
-      const [rows] = await Promise.all([loadContacts(), (async () => {
+      await Promise.all([loadContacts(), (async () => {
         const ids = await fetchAppUserIds(branchId);
         if (alive) setAppUsers(ids);
       })()]);
-      if (alive && rows.length) setActiveId(prev => prev ?? rows[0].userId);
+      /* Koi chat khud-ba-khud nahi khulti — "No Conversation Selected" dikhta
+         hai, aur wahi chat khulti hai jis par user click kare. (Pehle API ki
+         pehli row khul jati thi, jo sidebar me teesre number par hoti thi.) */
       refreshUnread();
     })();
     return () => { alive = false; };
@@ -300,10 +315,13 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
       for (let i = 0; i < pending.length; i += PREVIEW_BATCH) {
         if (!alive) return;
         const batch = pending.slice(i, i + PREVIEW_BATCH);
-        batch.forEach(c => previewDone.current.add(c.userId));
         const results = await Promise.all(batch.map(c =>
           fetchConversation(me, c.userId, branchId).then(msgs => [c.userId, msgs]).catch(() => null)));
+        /* "Done" sirf tab jab jawab waqai lag jaye. Pehle fetch se PEHLE mark
+           hota tha — effect beech me cancel ho (StrictMode / contacts badle)
+           to jawab phenk diya jata aur row hamesha "No messages yet" rehti. */
         if (!alive) return;
+        results.filter(Boolean).forEach(([id]) => previewDone.current.add(id));
         setHistory(prev => {
           const next = { ...prev };
           results.filter(Boolean).forEach(([id, msgs]) => { next[id] = msgs; });
