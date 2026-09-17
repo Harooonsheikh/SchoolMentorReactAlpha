@@ -2,7 +2,20 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import './index.css';
 import App from './App';
+import OneLinkPayment from './OneLinkPayment';
 import reportWebVitals from './reportWebVitals';
+
+function isOneLinkPreview() {
+  try {
+    const q = new URLSearchParams(window.location.search);
+    if (q.get('preview') === 'onelink') return true;
+    const hash = String(window.location.hash || '').replace(/^#/, '');
+    if (hash === 'onelink' || hash === 'preview=onelink') return true;
+    return /onelink/i.test(window.location.pathname || '');
+  } catch {
+    return false;
+  }
+}
 
 /* ─── Cross-app logout (FROM the Chain Portal) ───
    Chain portal se logout hone par wo ERP ko `#logout` ke sath yahan bhejta hai
@@ -66,7 +79,7 @@ import reportWebVitals from './reportWebVitals';
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(
   <React.StrictMode>
-    <App />
+    {isOneLinkPreview() ? <OneLinkPayment /> : <App />}
   </React.StrictMode>
 );
 
