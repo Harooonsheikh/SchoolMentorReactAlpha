@@ -334,11 +334,6 @@ export async function fetchChatContacts(branchId, userId) {
      2. Ek hi mulazim ki kai rows — wahi registerationNo, alag userId (API 421
         rows me "test1 test" regNo 19 ki 13 rows deti hai) — sirf ek dafa.
         Pehli row rakhi jati hai; chat waise bhi userId par khulti hai. */
-/* Chat ki directory me sirf mulazim aate hain. API asli employee id par waise
-   bhi sirf Staff rows deti hai, magar kisi aur id par (jaise 1) wo parent/
-   student rows bhi lauta deti hai — ye filter us surat me bhi list saaf
-   rakhta hai. */
-const isStaffRow = (row) => String(row.status || '').trim().toLowerCase() === 'staff';
 
 function dedupeStaff(rows) {
   const seen = new Set();
@@ -353,14 +348,18 @@ function dedupeStaff(rows) {
 }
 
 /**
- * "New Chat" ki directory — sirf mulazim (staff).
+ * "New Chat" ki directory — staff + classes (bachon ke walidain).
+ * Classes API khud employee ke hisaab se deti hai (live, branch 15):
+ *   School Head 66 → saari 7 classes + Staff
+ *   ANUS 69        → sirf assigned "Class 3 - B White" / "Class 3 - A Green" + Staff
+ *   Lecturer 94    → sirf Staff
  * Row ki `userId` hi us shakhs ki chat id hai — bhejna, conversation aur seen
  * sab isi par chalte hain (apni id session ke `employee_ID` se, chatUserId()).
  */
 export async function fetchContactList(branchId, empId) {
   const res = await fetch(buildUrl(`/get-contact-list/${branchId}/${empId}`), { headers: authHeaders() });
   const json = await readJson(res, 'contact list');
-  const rows = (json?.data || []).filter(isStaffRow).map(row => {
+  const rows = (json?.data || []).map(row => {
     const id = Number(row.userId ?? row.employeeId) || 0;
     const name = contactLabel(row);
     const father = String(row.fatherName || '').trim();
@@ -412,7 +411,10 @@ export async function fetchUnseenFromMe(branchId, contactUserId, meId) {
     const res = await fetch(buildUrl(`/get-chat-contacts/${branchId}/${contactUserId}`), { headers: authHeaders() });
     const json = await readJson(res, 'read receipts');
     const mine = (json?.data || []).filter(r => chatIdOf(r) === Number(meId));
-    if (!mine.length) return 0;   // contact ki list me hoon hi nahi → kuch pending nahi
+    /* Contact ki list me hoon hi nahi → backend is jodi ko ginta hi nahi
+       (live: ANUS 69 → Abid 215, Abid ne dekha nahi, list khaali). Pata nahi
+       dekha ya nahi — null = grey double tick, jhoota blue tick nahi. */
+    if (!mine.length) return null;
     return mine.reduce((max, r) => Math.max(max, Number(r.unseenCount) || 0), 0);
   } catch (_) {
     return null;
@@ -560,7 +562,7 @@ export async function fetchConversation(meId, otherId, branchId) {
  */
 export async function discoverStaffChats(branchId, meId, empId, knownIds = new Set(), batchSize = 6, directory = null) {
   const staff = (directory || await fetchContactList(branchId, empId))
-    .filter(s => s.userId !== meId && !knownIds.has(s.userId));
+    .filter(s => !s.isParent && s.userId !== meId && !knownIds.has(s.userId));
   const found = [];
   for (let i = 0; i < staff.length; i += batchSize) {
     const batch = staff.slice(i, i + batchSize);
@@ -579,6 +581,74 @@ export async function discoverStaffChats(branchId, meId, empId, knownIds = new S
     });
   }
   return found;
+}
+
+/* ─── Unread jo backend nahi ginta ───
+   get-unseen-chat-count / get-chat-contacts sirf un contacts ka unseen dete
+   hain jin ki id backend ke login-users join se mil jaye. ANUS (69) → Ahmad
+   (66) ke unseen messages par dono 0 / khaali the (live, branch 15). Is liye
+   aise (directory se mile) contacts ka unread yahan ginte hain: har contact
+   ka aakhri DEKHA hua message id localStorage me, us ke baad aane wale
+   contact ke messages = unread. Kisi contact ka record na ho to MERE aakhri
+   bheje message ke baad wale uske messages unread — jawab diya tha to pehle
+   wale dekhe hi the. (Pehle "pehli dafa sab dekha hua" maana jata tha; is se
+   ANUS → Abid ka "salaam", jo naye code se pehle aaya tha, kabhi gina na gaya.) */
+const seenKey = (branchId, meId) => `sm_chat_seen_${branchId}_${meId}`;
+
+function readSeenStore(branchId, meId) {
+  try { return JSON.parse(localStorage.getItem(seenKey(branchId, meId)) || 'null'); } catch (_) { return null; }
+}
+function writeSeenStore(branchId, meId, store) {
+  try { localStorage.setItem(seenKey(branchId, meId), JSON.stringify(store)); } catch (_) { /* private mode */ }
+}
+const lastIncomingId = (msgs) => (msgs || [])
+  .filter(m => m.type === 'recv' && Number.isFinite(Number(m.id)))
+  .reduce((mx, m) => Math.max(mx, Number(m.id)), 0);
+
+/** Contact ki conversation "dekh li" — aakhri aaya hua message id yaad rakho. */
+export function markSeenLocally(branchId, meId, contactId, msgs) {
+  const store = readSeenStore(branchId, meId) || { seen: {} };
+  const next = Math.max(store.seen[contactId] || 0, lastIncomingId(msgs));
+  if (store.seen[contactId] === next) return;
+  store.seen[contactId] = next;
+  writeSeenStore(branchId, meId, store);
+}
+
+/** { [contactId]: unread } — sirf in contacts ke liye jin ki history di gayi. */
+export function localUnreadCounts(branchId, meId, historyById) {
+  const seen = readSeenStore(branchId, meId)?.seen || {};
+  const out = {};
+  Object.entries(historyById || {}).forEach(([cid, msgs]) => {
+    const list = msgs || [];
+    let seenId = seen[cid];
+    if (seenId == null) {
+      /* record nahi → mera aakhri bheja hua message hi "yahan tak dekha" */
+      seenId = list.filter(m => m.type === 'sent' && Number.isFinite(Number(m.id)))
+        .reduce((mx, m) => Math.max(mx, Number(m.id)), 0);
+    }
+    out[cid] = list.filter(m => m.type === 'recv' && Number(m.id) > seenId).length;
+  });
+  return out;
+}
+
+/**
+ * Sidebar badge ka total (Chat module band ho tab bhi) — do hisaab, jo bara ho:
+ *   A) get-unseen-chat-count  (live: ANUS → Abid ka "salaam" isme 1 aaya,
+ *      jab ke get-chat-contacts/15/215 khaali tha)
+ *   B) get-chat-contacts ka unseenCount + directory ke staff jin ki chat API
+ *      nahi lautati → localUnreadCounts
+ */
+export async function fetchChatUnreadTotal(branchId, meId, empId) {
+  const [apiCount, apiContacts] = await Promise.all([
+    fetchUnseenCount(branchId, meId),
+    fetchChatContacts(branchId, meId).catch(() => []),
+  ]);
+  const contactsTotal = apiContacts.reduce((sum, c) => sum + (Number(c.unread) || 0), 0);
+  const known = new Set(apiContacts.map(c => c.userId));
+  const found = await discoverStaffChats(branchId, meId, empId, known).catch(() => []);
+  const history = Object.fromEntries(found.map(({ contact, msgs }) => [contact.userId, msgs]));
+  const local = localUnreadCounts(branchId, meId, history);
+  return Math.max(apiCount, contactsTotal + Object.values(local).reduce((a, b) => a + b, 0));
 }
 
 /**

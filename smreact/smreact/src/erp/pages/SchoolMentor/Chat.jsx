@@ -9,10 +9,11 @@ import {
   fetchChatContacts,
   fetchContactList,
   fetchAppUserIds,
-  fetchUnseenCount,
   fetchConversation,
   fetchUnseenFromMe,
   discoverStaffChats,
+  localUnreadCounts,
+  markSeenLocally,
   pendingMessage,
   postChatMessage,
   markMessagesSeen,
@@ -27,8 +28,8 @@ import {
      sidebar (recent)   → get-chat-contacts/{branchId}/{userId}
      conversation       → get-conversation/{me}/{contact}/{branchId}
      bhejna             → post-chat-message   (multipart)
-     seen karna         → mark-messages-seen/{branchId}/{contact}/{me}
-     nav badge          → get-unseen-chat-count/{branchId}/{userId}
+     seen karna         → mark-messages-seen/{branchId}/{me}/{contact}
+     unread             → get-chat-contacts ka unseenCount + localUnreadCounts
      New Chat directory → get-contact-list/{branchId}/{userId}
      app par logged in? → get-users-fcm-status/{branchID}
 
@@ -127,7 +128,8 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
   const [loadError, setLoadError]     = useState('');
   const [convLoading, setConvLoading] = useState(false);
   const [sending, setSending]         = useState(false);
-  const [unreadTotal, setUnreadTotal] = useState(0);
+  /* localStorage ka "dekha hua" badle to local unread dobara gino. */
+  const [seenTick, setSeenTick]       = useState(0);
 
   const [sidebarQ, setSidebarQ] = useState('');
 
@@ -183,11 +185,6 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
 
   /* ── loaders ─────────────────────────────────────────────────── */
 
-  const refreshUnread = useCallback(async () => {
-    if (!me || !branchId) return;
-    setUnreadTotal(await fetchUnseenCount(branchId, me));
-  }, [me, branchId]);
-
   const loadContacts = useCallback(async ({ silent = false } = {}) => {
     if (!me || !branchId) {
       setLoadError('Your session has no user or branch — please log in again.');
@@ -209,16 +206,20 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
       /* Staff row ka naam/designation backend ghalat account se jorta hai
          (userId 215 = Abid Khan, magar naam "aHMAD 5 TEST") — directory se,
          jo isi id par sahi hai, theek karo. unread API wala hi rehta hai. */
-      const dirById = new Map((directoryRef.current || []).map(d => [d.userId, d]));
+      const dirById = new Map((directoryRef.current || []).filter(d => !d.isParent).map(d => [d.userId, d]));
       const apiRows = rawRows.map(r => {
         const d = !r.isParent && dirById.get(r.userId);
-        return d ? { ...r, name: d.name, father: d.father, rel: d.rel, status: d.status, group: d.group, picture: r.picture || d.picture, students: [] } : r;
+        const row = d ? { ...r, name: d.name, father: d.father, rel: d.rel, status: d.status, group: d.group, picture: r.picture || d.picture, students: [] } : r;
+        /* Khuli chat ka unread hamesha 0 — mark-seen ka jawab aane se pehle
+           poll API ka purana unseenCount wapas na la de. */
+        return row.userId === activeRef.current ? { ...row, unread: 0 } : row;
       });
       if (scan) {
         const known = new Set(apiRows.map(r => r.userId));
         try {
           const found = await discoverStaffChats(branchId, me, chatEmployeeId(), known, undefined, directoryRef.current);
-          found.forEach(({ contact }) => discoveredRef.current.set(contact.userId, contact));
+          /* `local` — is contact ka unread backend nahi ginta, localUnreadCounts ginta hai. */
+          found.forEach(({ contact }) => discoveredRef.current.set(contact.userId, { ...contact, local: true }));
           if (found.length) {
             setHistory(prev => {
               const next = { ...prev };
@@ -281,7 +282,6 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
       /* Koi chat khud-ba-khud nahi khulti — "No Conversation Selected" dikhta
          hai, aur wahi chat khulti hai jis par user click kare. (Pehle API ki
          pehli row khul jati thi, jo sidebar me teesre number par hoti thi.) */
-      refreshUnread();
     })();
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -298,10 +298,18 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
       await loadConversation(activeId, { spinner: !previewDone.current.has(activeId) });
       if (!alive) return;
       await markMessagesSeen(branchId, activeId, me);
-      if (alive) refreshUnread();
     })();
     return () => { alive = false; };
-  }, [activeId, me, branchId, loadConversation, refreshUnread]);
+  }, [activeId, me, branchId, loadConversation]);
+
+  /* Khuli chat ke messages "dekhe gaye" — local record bhi (un contacts ke liye
+     jin ka unread backend nahi ginta). Naya message aaye to wo bhi foran seen. */
+  const activeHistory = history[activeId];
+  useEffect(() => {
+    if (!activeId || !activeHistory) return;
+    markSeenLocally(branchId, me, activeId, activeHistory);
+    setSeenTick(t => t + 1);
+  }, [activeId, activeHistory, branchId, me]);
 
   /* sidebar ka preview + waqt conversation se banta hai — pehli PREVIEW_LIMIT
      chats ke liye thodi thodi kar ke le aao (ek saath sab nahi). */
@@ -338,12 +346,12 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
     const id = setInterval(() => {
       if (document.hidden) return;
       loadContacts({ silent: true });
-      refreshUnread();
       const open = activeRef.current;
-      if (open) loadConversation(open);
+      /* Khuli chat me naya message aaye to server par bhi seen kar do. */
+      if (open) loadConversation(open).then(() => markMessagesSeen(branchId, open, me));
     }, POLL_MS);
     return () => clearInterval(id);
-  }, [me, branchId, loadContacts, loadConversation, refreshUnread]);
+  }, [me, branchId, loadContacts, loadConversation]);
 
   /* ── derived ─────────────────────────────────────────────────── */
 
@@ -372,6 +380,24 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
 
   /* Report the unseen-message count up to the shell so the sidebar Chat
      nav badge stays in sync (clears as conversations are opened). */
+  /* ── Unread: row badge, "Chats" heading aur sidebar teeno isi se ──
+     API wale contact → get-chat-contacts ka unseenCount.
+     `local` contact (backend inhein nahi ginta) → localUnreadCounts.
+     Khuli chat → hamesha 0, is liye kholte hi har jagah se foran gayab. */
+  const localCounts = useMemo(() => {
+    const hist = {};
+    contacts.forEach(c => { if (c.local && history[c.userId]) hist[c.userId] = history[c.userId]; });
+    return localUnreadCounts(branchId, me, hist);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contacts, history, branchId, me, seenTick]);
+  const unreadOf = useCallback((c) => {
+    if (c.userId === activeId) return 0;
+    return c.local ? (localCounts[c.userId] || 0) : (Number(c.unread) || 0);
+  }, [activeId, localCounts]);
+  const unreadTotal = useMemo(
+    () => contacts.reduce((sum, c) => sum + unreadOf(c), 0),
+    [contacts, unreadOf],
+  );
   useEffect(() => { onUnreadChange?.(unreadTotal); }, [unreadTotal, onUnreadChange]);
 
   /* ── derived: kaun si bheji hui message dekhi ja chuki hai ──
@@ -572,9 +598,11 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
       status: member.status,
       group: member.group,
       picture: member.picture,
+      isParent: member.isParent,
       unread: 0,
       students: [],
       provisional: true,
+      local: true,   // jawab aaye to unread localUnreadCounts ginega
     }, ...prev]);
     openConv(member.userId);
     toast(`New chat started with ${member.name}`, 'success');
@@ -717,7 +745,7 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
                     </div>
                     <div className="cm-rcr-meta">
                       <span className="cm-rcr-time">{last ? (last.date === 'Today' ? last.time : `${last.date} · ${last.time}`) : ''}</span>
-                      {c.unread ? <span className="cm-rcr-unread">{c.unread}</span> : null}
+                      {unreadOf(c) ? <span className="cm-rcr-unread">{unreadOf(c)}</span> : null}
                     </div>
                   </div>
                 );
