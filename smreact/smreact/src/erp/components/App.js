@@ -346,6 +346,11 @@ export default function App() {
        activation — warna hum aise module par redirect kar dete hain jo
        response aane ke baad khud hidden ho jata hai. */
     if (!permsReady || !modulesReady) return;
+    /* Chat / eTube ka faisla Mobile App permission (useMobileAppPermission) se
+       hota hai — wo aane se pehle navItemVisible('chat') false deta hai. Pehle
+       isi waqt redirect ho jata tha: Chat par refresh → Dashboard. Jawab aane
+       tak ruko; phir bhi hidden ho to hi redirect. */
+    if (!mobilePerms.ready && (active === 'chat' || active === 'etube')) return;
     if (navItemVisible(active)) return;
     for (const section of NAV_SECTIONS) {
       const found = section.items.find((it) => navItemVisible(it.id));

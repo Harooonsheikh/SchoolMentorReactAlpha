@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom';
 import Tooltip from '../../components/Tooltip';
 import TutorialModal from '../../components/TutorialModal';
+import * as studentService from '../../services/studentService';
 import {
   chatUserId,
   chatEmployeeId,
@@ -1154,19 +1155,65 @@ function NewChatModal({ me, branchId, appUsers, onClose, onStartChat, toast }) {
     return () => { alive = false; };
   }, [branchId, me]);
 
-  /* Class-wise grouping — staff apne alag khane me. */
+  /* Classes ki tarteeb — Launch Setup / Academics wali (get-grades-by-branch ka
+     orderBy: Nursery → Prep → 1 → 2 …), naam ki alphabetical nahi. */
+  const [gradeOrder, setGradeOrder] = useState([]);
+  useEffect(() => {
+    let alive = true;
+    studentService.getStuGrades()
+      .then(g => { if (alive) setGradeOrder(g || []); })
+      .catch(() => { /* na mile to naam ki tarteeb */ });
+    return () => { alive = false; };
+  }, []);
+
+  /* Class-wise grouping — staff apne alag khane me, sab se upar.
+     Ek hi bachay ki API har parent account ki alag row deti hai (reg
+     "2026-25102" → userId 219 aur 236), is liye class ke andar student ek hi
+     dafa: registration no (na ho to naam + walid) par. Kai accounts hon to jo
+     app par logged in hai wahi rakho — message notification ke saath pahunche. */
   const groups = useMemo(() => {
     const map = new Map();
     rows.forEach(r => {
       const key = r.status === 'Staff' ? 'Staff' : (r.group || 'Others');
-      if (!map.has(key)) map.set(key, []);
-      map.get(key).push(r);
+      if (!map.has(key)) map.set(key, new Map());
+      const bucket = map.get(key);
+      const dupKey = r.isParent
+        ? (r.regNo || `${r.name}|${r.father}`).toLowerCase()
+        : `u${r.userId}`;
+      const prev = bucket.get(dupKey);
+      if (!prev || (!appUsers.has(prev.userId) && appUsers.has(r.userId))) bucket.set(dupKey, r);
     });
+
+    const clsRank = new Map();
+    const secRank = new Map();
+    gradeOrder.forEach((g, gi) => {
+      const cls = String(g.name || '').trim().toLowerCase();
+      if (!clsRank.has(cls)) clsRank.set(cls, gi);
+      (g.sections || []).forEach((s, si) => {
+        const k = `${cls}__${String(s.name || '').trim().toLowerCase()}`;
+        if (!secRank.has(k)) secRank.set(k, si);
+      });
+    });
+    const BIG = Number.MAX_SAFE_INTEGER;
+    const rankOf = (g) => {
+      const cls = String(g.grade || '').trim().toLowerCase();
+      const sec = String(g.section || '').trim().toLowerCase();
+      return [clsRank.has(cls) ? clsRank.get(cls) : BIG, secRank.has(`${cls}__${sec}`) ? secRank.get(`${cls}__${sec}`) : BIG];
+    };
+
     return [...map.entries()]
-      .map(([name, members]) => ({ id: name, name, members, count: members.length }))
-      .sort((a, b) => (a.name === 'Staff' ? -1 : b.name === 'Staff' ? 1
-        : a.name.localeCompare(b.name, undefined, { numeric: true })));
-  }, [rows]);
+      .map(([name, bucket]) => {
+        const members = [...bucket.values()];
+        return { id: name, name, members, count: members.length, grade: members[0]?.grade, section: members[0]?.section };
+      })
+      .sort((a, b) => {
+        if (a.name === 'Staff') return -1;
+        if (b.name === 'Staff') return 1;
+        const [ac, as] = rankOf(a);
+        const [bc, bs] = rankOf(b);
+        return (ac - bc) || (as - bs) || a.name.localeCompare(b.name, undefined, { numeric: true });
+      });
+  }, [rows, gradeOrder, appUsers]);
 
   const query = q.trim().toLowerCase();
   const groupObj = groups.find(g => g.id === group) || null;
