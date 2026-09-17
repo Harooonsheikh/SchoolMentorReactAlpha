@@ -14,6 +14,7 @@ import { buildUrl, installSessionGuard, setSessionGuardActive, registerSessionTo
 import * as profileService from '../services/profileService';
 import useUserTimeSpend from '../hooks/useUserTimeSpend';
 import useMobileAppPermission from '../hooks/useMobileAppPermission';
+import { chatUserId, chatEmployeeId, chatBranchId, fetchChatUnreadTotal } from '../services/chatService';
 import { flushUserTimeSpend } from '../services/userTimeSpendService';
 import SupportWidget from '../../components/SupportWidget';
 import erpExtraCss from './erpExtraCss';
@@ -27,17 +28,17 @@ const MODULE_ID_TO_LABEL = Object.fromEntries(MODULE_REGISTRY.map((m) => [m.id, 
    role/permission. Keyed by sidebar nav id. */
 /* Chat yahan JAAN-BOOJH KAR nahi hai: wo har branch par khulta hai. Uska
    ikloti rukawat Super Admin / chain ka "Manage Mobile App" flag hai
-   (ChatType), jo neeche navItemVisible me dekha jata hai. */
-const BRANCH1_ONLY_NAV = new Set(['mentorai', 'inventory', 'crm', 'audit', 'appraisal', 'sops', 'trainings', 'etube', 'notifications', 'approvals']);
+   (ChatType), jo neeche navItemVisible me dekha jata hai.
+   School SOPs (sops) bhi ab yahan nahi — har branch par live hai; baqi
+   modules ki tarah school ki module activation (Super Admin → School
+   Permissions → School SOPs) aur user permission se chalta hai. */
+const BRANCH1_ONLY_NAV = new Set(['mentorai', 'inventory', 'crm', 'audit', 'appraisal', 'trainings', 'etube', 'notifications', 'approvals']);
 
 /* Un me se kuch module kisi aur branch par bhi live kar diye jate hain.
    nav id → wo branchID jinhein (branch 1 ke ilawa) ye module dikhna chahiye.
    Branch par khulne ke baad bhi module wahi user permission maanta hai jo
-   branch 1 par — sirf branch ki rukawat hatti hai, permission ki nahi.
-     sops → School SOPs (Operational SOPs) branch 5 par bhi live. */
-const EXTRA_NAV_BRANCHES = {
-  sops: ['5'],
-};
+   branch 1 par — sirf branch ki rukawat hatti hai, permission ki nahi. */
+const EXTRA_NAV_BRANCHES = {};
 
 /* Wo nav ids jo ab apna module nahi rahe (screen kahin aur chali gayi).
    Sirf sidebar se hata dena kaafi nahi: `active` localStorage me mehfooz
@@ -159,7 +160,7 @@ const NAV_SECTIONS = [
   {
     label: 'School Mentor',
     items: [
-      { id: 'sops',          name: 'School SOPs',       icon: 'fa-book-open' },          /* branchID 1 only */
+      { id: 'sops',          name: 'School SOPs',       icon: 'fa-book-open' },          /* every branch */
       { id: 'trainings',     name: 'Teacher Trainings', icon: 'fa-chalkboard-user' },   /* branchID 1 only */
       { id: 'etube',         name: 'e-Tube',            icon: 'fa-play-circle' },        /* branchID 1 only */
       { id: 'chat',          name: 'Chat',              icon: 'fa-comments' },           /* branchID 1 only */
@@ -193,6 +194,32 @@ export default function App() {
   useEffect(() => {
     try { sessionStorage.setItem('erp_active_module', active); } catch (e) { /* ignore */ }
   }, [active]);
+  /* Dashboard ke universal search se aaye params (jaise { studentReg }) —
+     target module unhe istemal kar ke onFocusHandled se saaf kar deta hai. */
+  const [navFocus, setNavFocus] = useState(null);
+
+  /* Sidebar ke "Chat" par unread badge — module khula ho ya na ho. Har 30s
+     fetchChatUnreadTotal: API ka unseenCount + un staff chats ka unread jo
+     backend nahi ginta (jaise ANUS 69 → Ahmad 66). Chat module khula ho to
+     poll nahi chalta — wahan Chat khud onUnreadChange se foran batata hai
+     (chat kholte hi 0). */
+  const [chatUnread, setChatUnread] = useState(0);
+  const activeModuleRef = useRef(active);
+  activeModuleRef.current = active;
+  useEffect(() => {
+    const me = chatUserId();
+    const branchId = chatBranchId();
+    if (!me || !branchId) return undefined;
+    let alive = true;
+    const tick = async () => {
+      if (document.hidden || activeModuleRef.current === 'chat') return;
+      const n = await fetchChatUnreadTotal(branchId, me, chatEmployeeId());
+      if (alive && activeModuleRef.current !== 'chat') setChatUnread(n);
+    };
+    tick();
+    const id = setInterval(tick, 30000);
+    return () => { alive = false; clearInterval(id); };
+  }, []);
   /* Har ERP module par time-spend: screenName = module ka naam, type = "erp". */
   useUserTimeSpend(NAV_LABELS[active] || active);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -494,6 +521,11 @@ export default function App() {
                     ) : (
                       <div className="nav-nm">{item.name}</div>
                     )}
+                    {item.id === 'chat' && chatUnread > 0 && (
+                      <div className="nav-bx red" title={`${chatUnread} unread message${chatUnread === 1 ? '' : 's'}`}>
+                        {chatUnread > 99 ? '99+' : chatUnread}
+                      </div>
+                    )}
                     {item.badge && (
                       <div className={`nav-bx ${item.badge.tone}`}>
                         {item.badge.iconClass
@@ -664,7 +696,7 @@ export default function App() {
             )}
             {active === 'students' && (
               <Suspense fallback={<RouteFallback label="Loading Students…" />}>
-                <Students toast={pushToast} />
+                <Students toast={pushToast} focus={navFocus} onFocusHandled={() => setNavFocus(null)} />
               </Suspense>
             )}
             {active === 'hr' && (
@@ -708,7 +740,7 @@ export default function App() {
             )}
             {active === 'chat' && (
               <Suspense fallback={<RouteFallback label="Loading Chat…" />}>
-                <Chat toast={pushToast} chatMode={mobilePerms.hasRow ? mobilePerms.chatMode : undefined} onUnreadChange={() => {}} />
+                <Chat toast={pushToast} chatMode={mobilePerms.hasRow ? mobilePerms.chatMode : undefined} onUnreadChange={setChatUnread} />
               </Suspense>
             )}
             {active === 'notifications' && (
@@ -735,7 +767,9 @@ export default function App() {
               <Suspense fallback={<RouteFallback label="Loading Dashboard…" />}>
                 <Dashboard
                   toast={pushToast}
-                  navigate={setActive}
+                  /* Universal search params bhi saath rakho (pehle gir jate
+                     the) — student chunne par Students us row par jump kare. */
+                  navigate={(target, params) => { setNavFocus(params || null); setActive(target); }}
                   /* Drop the user straight onto Academics → Scheme of
                      Studies → Calendar → Activity Calendar so the
                      Upcoming Activities cards land in context. */
