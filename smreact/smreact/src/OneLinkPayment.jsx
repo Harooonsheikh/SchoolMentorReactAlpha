@@ -1,6 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { buildUrl, apiMessage } from './utils/apiConfig';
 import './OneLinkPayment.css';
+
+const VALID_ENTRY_CODE = 'OLP-6875';
 
 function sessionUserId() {
   return Number(
@@ -19,10 +21,26 @@ export default function OneLinkPayment() {
   const [amount, setAmount] = useState('');
   const [msg, setMsg] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [toast, setToast] = useState(null);
+  const toastTimer = useRef(null);
+
+  function showToast(text, type = 'error') {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    setToast({ text, type });
+    toastTimer.current = setTimeout(() => setToast(null), 3200);
+  }
+
+  useEffect(() => () => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+  }, []);
 
   async function handleSubmit(e) {
     e.preventDefault();
     const code = entryCode.trim();
+    if (code !== VALID_ENTRY_CODE) {
+      showToast('Wrong code', 'error');
+      return;
+    }
     const sidRaw = studentId.trim();
     const bidRaw = branchId.trim();
     const mthRaw = month.trim();
@@ -89,6 +107,12 @@ export default function OneLinkPayment() {
 
   return (
     <div className="olp-page">
+      {toast && (
+        <div className={`olp-toast ${toast.type}`} role="status">
+          <i className={`fas ${toast.type === 'error' ? 'fa-exclamation-circle' : 'fa-check-circle'}`} />
+          <span>{toast.text}</span>
+        </div>
+      )}
       <div className="olp-wrap">
         <div className="olp-card">
           <div className="olp-head">
@@ -101,7 +125,7 @@ export default function OneLinkPayment() {
               Entery Code
               <input
                 type="text"
-                placeholder="e.g. ENT-001"
+                placeholder="Enter code"
                 value={entryCode}
                 onChange={(e) => setEntryCode(e.target.value)}
                 required
