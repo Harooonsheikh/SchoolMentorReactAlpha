@@ -9,6 +9,7 @@ import { deliverReport } from './reportDelivery';
 import { useModuleReadOnly, validateSessionDateFromStorage } from '../pages/Settings/settingsStore';
 import { getActiveSessionID } from '../services/attendanceService';
 import { usePermissions } from '../context/PermissionsContext';
+import { studentMatchRank } from '../utils/studentSearch';
 /* ═══════════════════════════════════════════════════════════════════
    EXAMINATION — port of the HTML #module-exam (only Exam Setup is
    functional; other tabs show Coming Soon).
@@ -1155,6 +1156,9 @@ const [subjects, setSubjects] = useState([]);
   const [rhFilterExam, setRhFilterExam]       = useState('');
   const [rhSearchFocused, setRhSearchFocused] = useState(false);
   const [rhActiveStudent, setRhActiveStudent] = useState(null); // student object
+  /* Search/card se khola gaya student — wapas "All Students" par us ka card
+     Fee module jaisa hara highlight rehta hai, agli search type karne tak. */
+  const [rhHighlightId, setRhHighlightId]     = useState(null);
   const [rhCardCtx, setRhCardCtx]             = useState(null); // { student, result }
   const [rhReportReq, setRhReportReq]         = useState(null); // { student, type:'card'|'history'|'progress'|'comparison'|'attendance', result? }
   const [rhExams, setRhExams]                 = useState([]);   // student-click par fetched exams (examName/termName)
@@ -5755,17 +5759,14 @@ onClick={async () => {
             // Sirf API students dikhao — koi static/sample fallback nahi (na ho to empty state).
             const sourceStudents = apiStudents;
 
+            /* Students module wali ranking: exact GR / roll no pehle ("7" →
+               reg "7" / "007"), phir prefix, phir naam/walid/class. */
+            const rankOf = st => studentMatchRank(q, {
+              ids:  [st.rollNo, st.admission],
+              text: `${st.name} ${st.father} ${st.cls} ${st.section}`,
+            });
             const filtered = sourceStudents.filter(st => {
-              if (q) {
-                const hit = (
-                  (st.name || '').toLowerCase().includes(q) ||
-                  (st.rollNo || '').toLowerCase().includes(q) ||
-                  (st.father || '').toLowerCase().includes(q) ||
-                  (st.admission || '').toLowerCase().includes(q) ||
-                  (st.cls || '').toLowerCase().includes(q)
-                );
-                if (!hit) return false;
-              }
+              if (q && rankOf(st) < 0) return false;
               if (usingApi) {
                 // API students: class/section name se filter; session/exam data nahi hota.
                 if (rhFilterClass   && st.cls     !== rhFilterClass)   return false;
@@ -5778,6 +5779,10 @@ onClick={async () => {
               if (rhFilterExam    && !st.results.some(r => r.type === rhFilterExam)) return false;
               return true;
             });
+            if (q) {
+              const ranks = new Map(filtered.map(st => [st, rankOf(st)]));
+              filtered.sort((a, b) => ranks.get(a) - ranks.get(b));   // stable — rank ke andar API order
+            }
 
             const distinctClasses = new Set(filtered.map(s => s.cls)).size;
 
@@ -5841,7 +5846,14 @@ onClick={async () => {
                   {/* Back button */}
                   <button
                     type="button"
-                    onClick={() => setRhActiveStudent(null)}
+                    onClick={() => {
+                      setRhActiveStudent(null);
+                      /* Wapas grid par — highlighted card saamne laao. */
+                      setTimeout(() => {
+                        const el = document.getElementById(`rh-card-${rhHighlightId}`);
+                        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                      }, 80);
+                    }}
                     className="rh-back-btn"
                   >
                     <i className="fa-solid fa-arrow-left"></i> All Students
@@ -6146,7 +6158,7 @@ onClick={async () => {
                       type="text"
                       placeholder="Search by student name, roll number, father name, admission, class…"
                       value={rhSearchQ}
-                      onChange={e => setRhSearchQ(e.target.value)}
+                      onChange={e => { setRhSearchQ(e.target.value); setRhHighlightId(null); }}
                       onFocus={() => setRhSearchFocused(true)}
                       onBlur={() => setTimeout(() => setRhSearchFocused(false), 150)}
                       autoComplete="off"
@@ -6181,6 +6193,7 @@ onClick={async () => {
                             onMouseDown={e => e.preventDefault()}
                             onClick={() => {
                               setRhSearchFocused(false);
+                              setRhHighlightId(st.id);
                               setRhActiveStudent(st);
                             }}
                           >
@@ -6259,8 +6272,9 @@ onClick={async () => {
                       return (
                         <div
                           key={st.id}
-                          className="rh-card"
-                          onClick={() => setRhActiveStudent(st)}
+                          id={`rh-card-${st.id}`}
+                          className={`rh-card${rhHighlightId === st.id ? ' rh-card-highlight' : ''}`}
+                          onClick={() => { setRhHighlightId(st.id); setRhActiveStudent(st); }}
                         >
                           <div className="rh-card-accent" style={{ background: `linear-gradient(90deg,#1E3A8A,${barCol})` }} />
                           <div className="rh-card-head">
@@ -16987,6 +17001,9 @@ body.dark .rh-trend-track { background:rgba(255,255,255,.04); }
   border-color:#1E40AF;
   box-shadow:0 6px 24px rgba(30,64,175,.12);
 }
+/* Search se khola gaya student — Fee module jaisa hara highlight (.fee-st-highlight). */
+.rh-card.rh-card-highlight { background:rgba(34,197,94,.15); border-color:#16A34A; }
+.rh-card.rh-card-highlight .rh-name { color:#16A34A; }
 .rh-card-accent {
   position:absolute; top:0; left:0; right:0; height:3px;
 }
@@ -17381,6 +17398,8 @@ body.dark .rh-filter { background:var(--bg-card); color:var(--text-primary); }
 [data-theme="dark"] .rh-filter-row { background:transparent; }
 [data-theme="dark"] .rh-filter { border-color:var(--border-light); }
 [data-theme="dark"] .rh-card { border-color:var(--border-light); }
+[data-theme="dark"] .rh-card.rh-card-highlight { background:rgba(34,197,94,.22); border-color:#22C55E; }
+[data-theme="dark"] .rh-card.rh-card-highlight .rh-name { color:#86EFAC; }
 [data-theme="dark"] .rh-card-head { color:var(--text-primary); background:linear-gradient(135deg,rgba(59,130,246,.06),transparent); }
 [data-theme="dark"] .rh-st-name { color:var(--text-primary); }
 [data-theme="dark"] .rh-st-meta { color:var(--text-muted); }

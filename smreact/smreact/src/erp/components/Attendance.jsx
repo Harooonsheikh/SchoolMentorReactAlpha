@@ -3127,7 +3127,9 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
       }))
     );
 
-    /* Pick handlers — open the right class, highlight the row, scroll into view */
+    /* Pick handlers — open the right class, highlight the row, scroll into view.
+       Highlight Fee module jaisa hara hai aur rehta hai (pehle 2s me gayab ho
+       jata tha) — agla student chunne par wahi row badalti hai. */
     const pickStudent = (s) => {
       setOpenClassIdx(s.classIdx);
       setHighlightStudent(s.id);
@@ -3135,8 +3137,6 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
       setTimeout(() => {
         const el = document.getElementById(`rpt-student-${s.id}`);
         if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
-        /* Auto-clear the highlight after 2s */
-        setTimeout(() => setHighlightStudent(null), 2000);
       }, 280);
     };
 
@@ -3145,7 +3145,6 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
       setTimeout(() => {
         const el = document.getElementById(`rpt-staff-${s.empId}`);
         if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
-        setTimeout(() => setHighlightStaff(null), 2000);
       }, 50);
     };
 
@@ -5508,16 +5507,15 @@ const saveHoliday = useCallback(async (payload) => {
   .att-search-item:hover .att-search-item-arrow { color:#1E40AF; transform:translateX(2px); }
   .att-search-empty { padding:14px 12px; font-size:12.5px; color:#64748B; text-align:center; font-style:italic; }
 
-  /* Row highlight after picking from dropdown */
-  @keyframes attRowHighlight {
-    0%, 100% { background:transparent; }
-    20%, 70% { background:rgba(30,64,175,.12); }
-  }
-  .att-row-highlight,
-  .att-row-wrap.att-row-highlight > .att-row {
-    animation:attRowHighlight 2s ease both;
-  }
-  tr.att-row-highlight td { animation:attRowHighlight 2s ease both; }
+  /* Row highlight after picking from dropdown — Fee module jaisa hara (.fee-st-highlight) */
+  .att-row-wrap.att-row-highlight > .att-row,
+  tr.att-row-highlight td { background:rgba(34,197,94,.15) !important; }
+  tr.att-row-highlight td strong,
+  .att-row-wrap.att-row-highlight .att-rpt-sf-name { color:#16A34A; }
+  [data-theme="dark"] .att-row-wrap.att-row-highlight > .att-row,
+  [data-theme="dark"] tr.att-row-highlight td { background:rgba(34,197,94,.22) !important; }
+  [data-theme="dark"] tr.att-row-highlight td strong,
+  [data-theme="dark"] .att-row-wrap.att-row-highlight .att-rpt-sf-name { color:#86EFAC; }
 
   @media (max-width:600px) {
     .att-search-wrap { flex:1 1 100%; }

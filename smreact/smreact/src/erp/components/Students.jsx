@@ -9,7 +9,7 @@ import { usePermissions } from '../context/PermissionsContext';
 import { fetchReportHeader } from '../../utils/pdfReports';
 import { deliverReport } from './reportDelivery';
 import { qrSVG } from '../utils/qrcode';
-import { rankedMatches } from '../utils/studentSearch';
+import { rankedMatches, studentMatches } from '../utils/studentSearch';
 import { activeSessionName } from '../../utils/apiConfig';
 
 /* ─── Module-wide helpers ─── */
@@ -1231,7 +1231,7 @@ const STU_TABS = [
   { id: 'family',   icon: 'fa-people-roof', label: 'Family Tree' },
 ];
 
-export default function Students({ toast }) {
+export default function Students({ toast, focus = null, onFocusHandled }) {
   /* Shared data — fetched once at the module level so the Active,
      Inactive and Family Tree tabs see the same students. */
   const { data: serverClasses = [] }   = useAsync(studentService.getStuClasses, []);
@@ -1251,6 +1251,8 @@ export default function Students({ toast }) {
 
   const [tab, setTab] = useState('active');
   const [tutorialOpen, setTutorialOpen] = useState(false);
+  /* Universal search se student aaya → Active Students tab par le jao. */
+  useEffect(() => { if (focus?.studentReg != null) setTab('active'); }, [focus]);
 
   /* Screen (tab) View permission — jis screen ka View nahi wo tab hide. */
   const { can } = usePermissions();
@@ -1320,6 +1322,8 @@ export default function Students({ toast }) {
           setFamilies={setFamilies}
           school={school}
           toast={toast}
+          focusReg={focus?.studentReg}
+          onFocusHandled={onFocusHandled}
         />
       ) : tab === 'inactive' ? (
         <InactiveStudents
@@ -1360,7 +1364,7 @@ export default function Students({ toast }) {
    toolbar + expandable class table with per-class actions and
    nested student rows that carry a 3-dot action menu.
    ═══════════════════════════════════════════════════════════════════ */
-function ActiveStudents({ classes, setClasses, inactive, setInactive, families, setFamilies, school, toast }) {
+function ActiveStudents({ classes, setClasses, inactive, setInactive, families, setFamilies, school, toast, focusReg = null, onFocusHandled }) {
   const { can } = usePermissions();
   const canStuCreate   = can('Students', 'Active Students', 'Create');
   const canStuEdit     = can('Students', 'Active Students', 'Edit');
@@ -1412,7 +1416,9 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
   const [searchOpen, setSearchOpen] = useState(false);
   const searchWrapRef = useRef(null);
   const [openKey, setOpenKey]   = useState(null);   // currently expanded class key
-  const [flashReg, setFlashReg] = useState(null);   // brief highlight after typeahead jump
+  /* Search se chuna gaya student — Fee jaisa hara highlight, jo agli search
+     type karne tak rehta hai (pehle 2.2s me gayab ho jata tha). */
+  const [flashReg, setFlashReg] = useState(null);
 
   /* Add / Edit Student modal */
   const [editCfg, setEditCfg] = useState(null);     // {mode:'add'|'edit', cKey, reg?}
@@ -1469,7 +1475,10 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
     return list.filter(c => {
       const hayCls = `${c.cls} ${c.sec}`.toLowerCase();
       if (hayCls.includes(q)) return true;
-      return c.students.some(s => `${stuFullName(s)} ${s.reg} ${s.father}`.toLowerCase().includes(q));
+      /* Dropdown wali ranking — "7" reg "007" ko bhi milata hai. */
+      return c.students.some(s => studentMatches(search, {
+        ids: [s.reg, s.adm, s.family], text: `${stuFullName(s)} ${s.father}`,
+      }));
     });
   }, [list, search]);
 
@@ -1481,9 +1490,18 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
     setTimeout(() => {
       const el = document.querySelector(`[data-srow="${reg}"]`);
       if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      setTimeout(() => setFlashReg(null), 2200);
     }, 80);
   };
+
+  /* Dashboard ke universal search se chuna gaya student: classes load hote hi
+     usi row par jump + hara highlight, phir param saaf. */
+  useEffect(() => {
+    if (focusReg == null || !list.length) return;
+    const cls = list.find(c => c.students.some(s => String(s.reg) === String(focusReg)));
+    if (cls) jumpTo(cls.key, cls.students.find(s => String(s.reg) === String(focusReg)).reg);
+    onFocusHandled?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusReg, list]);
 
   /* Open/save handlers for the Student modal.
      NOTE: students are identified by their DB id (`_id`), never by registration
@@ -1866,7 +1884,7 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
             className="stu-search-input"
             placeholder="Search student, reg no, father or class…"
             value={search}
-            onChange={(e) => { setSearch(e.target.value); setSearchOpen(true); }}
+            onChange={(e) => { setSearch(e.target.value); setSearchOpen(true); setFlashReg(null); }}
             onFocus={() => setSearchOpen(true)}
             autoComplete="off"
           />
@@ -3098,9 +3116,10 @@ function InactiveStudents({ classes, setClasses, inactive, setInactive, toast })
 
   const filteredGroups = useMemo(() => {
     if (!search.trim()) return groups;
-    const q = search.toLowerCase().trim();
     return groups
-      .map(g => ({ ...g, students: g.students.filter(s => `${stuFullName(s)} ${s.reg} ${s.father} ${g.cls} ${g.sec}`.toLowerCase().includes(q)) }))
+      .map(g => ({ ...g, students: g.students.filter(s => studentMatches(search, {
+        ids: [s.reg, s.adm, s.family], text: `${stuFullName(s)} ${s.father} ${g.cls} ${g.sec}`,
+      })) }))
       .filter(g => g.students.length > 0);
   }, [groups, search]);
 
@@ -3123,7 +3142,6 @@ function InactiveStudents({ classes, setClasses, inactive, setInactive, toast })
     setTimeout(() => {
       const el = document.querySelector(`[data-inreg="${reg}"]`);
       if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      setTimeout(() => setFlashReg(null), 2200);
     }, 80);
   };
 
@@ -3251,7 +3269,7 @@ function InactiveStudents({ classes, setClasses, inactive, setInactive, toast })
             className="stu-search-input"
             placeholder="Search inactive student, reg no, father or class…"
             value={search}
-            onChange={(e) => { setSearch(e.target.value); setSearchOpen(true); }}
+            onChange={(e) => { setSearch(e.target.value); setSearchOpen(true); setFlashReg(null); }}
             onFocus={() => setSearchOpen(true)}
             autoComplete="off"
           />
@@ -7256,12 +7274,9 @@ const STU_CSS = `
 }
 .stu-srow:last-child { border-radius: 0 0 10px 10px; }
 .stu-srow:hover { background: rgba(30,58,138,.03); }
-.stu-srow.flash { animation: stuFlash 2.2s ease; }
-@keyframes stuFlash {
-  0%   { background: rgba(217,119,6,.18); }
-  50%  { background: rgba(217,119,6,.10); }
-  100% { background: var(--bg-card); }
-}
+/* Search se chuna gaya student — Fee module jaisa hara highlight (.fee-st-highlight). */
+.stu-srow.flash { background: rgba(34,197,94,.15) !important; }
+.stu-srow.flash .stu-srow-name { color: #16A34A; }
 .stu-srow .td { display: flex; align-items: center; gap: 10px; min-width: 0; font-size: 12.5px; color: var(--text-secondary); }
 .stu-srow .td.c { justify-content: center; }
 .stu-srow-sn { font-size: 11px; font-weight: 800; color: var(--text-muted); }
@@ -9176,6 +9191,8 @@ select.stu-finput { appearance: none; padding-right: 32px; cursor: pointer; }
 [data-theme="dark"] .stu-sr-foot { background: var(--bg-muted); border-color: var(--border-light); color: var(--text-muted); }
 [data-theme="dark"] .stu-detail-inner { background: linear-gradient(135deg, rgba(59,130,246,.06), transparent 70%); }
 [data-theme="dark"] .stu-srow:hover { background: rgba(59,130,246,.05); }
+[data-theme="dark"] .stu-srow.flash { background: rgba(34,197,94,.22) !important; }
+[data-theme="dark"] .stu-srow.flash .stu-srow-name { color: #86EFAC; }
 [data-theme="dark"] .stu-actitem:hover { background: var(--bg-muted); }
 [data-theme="dark"] .stu-reg-cell,
 [data-theme="dark"] .stu-strength { color: #93C5FD; }
