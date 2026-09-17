@@ -94,8 +94,10 @@ function extractUserRole(d) {
   const roleId   = row.roleID ?? row.RoleID ?? row.roleId ?? row.id ?? row.ID ?? null;
   const roleName = row.roleName ?? row.RoleName ?? row.name ?? '';
   const color    = row.color ?? row.Color ?? '';
+  /* Login user id — get-user-menu-permissions isi par chalti hai. */
+  const loginUserId = Number(row.UserID ?? row.userID ?? row.userId) || null;
   if (roleId == null && !roleName) return null;
-  return { roleId, roleName, color };
+  return { roleId, roleName, color, loginUserId };
 }
 
 export default function UserPermissions({ toast = () => {} }) {
@@ -170,6 +172,7 @@ export default function UserPermissions({ toast = () => {} }) {
               role:      info.roleId ?? u.role,
               roleLabel: info.roleName || u.roleLabel,
               roleColor: info.color || u.roleColor,
+              loginUserId: info.loginUserId || u.loginUserId,
             };
           } catch (err) {
             return u;

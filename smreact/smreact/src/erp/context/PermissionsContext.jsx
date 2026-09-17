@@ -48,6 +48,9 @@ const GATEABLE_MODULES = new Set([
      warna canModule('Dashboard') har us user ke liye true ho jata jiske
      permission set me Dashboard hai hi nahi. */
   'dashboard',
+  /* Mentor AI bhi registry me nahi, magar user permission se milta hai —
+     response me na ho to access nahi (warna har user ko dikh jata). */
+  'mentor ai',
 ]);
 
 const FULL_ACCESS_VALUE = {

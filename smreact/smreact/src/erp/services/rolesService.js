@@ -86,6 +86,51 @@ export async function getUserRole(employeeId) {
   return json?.data ?? null;
 }
 
+/* HR employee id → login user id, get-meeting-teachers/{branchId} ki
+   { empid, userId } jodi se. Na mile to null. */
+async function resolveLoginUserId(employeeId, branchId, headers) {
+  try {
+    const res = await fetch(buildUrl(`/get-meeting-teachers/${branchId}`), { headers });
+    const json = await res.json().catch(() => null);
+    const rows = Array.isArray(json) ? json : (json?.data || []);
+    const hit = rows.find((r) => String(r.empid ?? r.empId ?? r.employeeId) === String(employeeId));
+    return Number(hit?.userId) || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+/* Ek user ki SAVED menu permissions → [{ menuName, subMenuName, action, isAccessable }].
+     GET /get-user-menu-permissions/{branchId}/{userId}
+   Ye route LOGIN user id leta hai (UserID 213 → employeeID 78 ki row), is liye
+   pehle login id nikalte hain: jo caller de (get-user-role ka UserID), warna
+   get-meeting-teachers se. Jawab ka employeeID is employee se na mile to wo
+   kisi aur ki row hai — use nahi lete. Kuch na mile to purana
+   get-user-menu-permissions-by-branch raasta. */
+export async function getUserMenuPermissions({ employeeId, loginUserId }) {
+  const token = sessionStorage.getItem('token');
+  const branchId = sessionStorage.getItem('branchID') || '1';
+  const headers = { Accept: '*/*', ...(token ? { Authorization: `Bearer ${token}` } : {}) };
+
+  const userId = Number(loginUserId) || await resolveLoginUserId(employeeId, branchId, headers);
+  if (userId) {
+    try {
+      const res = await fetch(buildUrl(`/get-user-menu-permissions/${branchId}/${userId}`), { headers });
+      const json = await res.json().catch(() => null);
+      const data = json?.data;
+      const sameEmployee = data?.employeeID == null || String(data.employeeID) === String(employeeId);
+      if (res.ok && sameEmployee && Array.isArray(data?.permissions) && data.permissions.length) {
+        return data.permissions;
+      }
+    } catch (_) { /* neeche by-branch par girte hain */ }
+  }
+
+  const res = await fetch(buildUrl(`/get-user-menu-permissions-by-branch/${branchId}`), { headers });
+  const json = await res.json().catch(() => null);
+  const entry = (json?.data || []).find((d) => String(d.employeeID) === String(employeeId));
+  return entry?.permissions || [];
+}
+
 /* Delete a role → DELETE /delete-role/{id}.
    Body har haal me parse karo — role kisi user ko assigned ho to backend
    success:false + message deta hai (kabhi non-200 ke saath), aur wohi

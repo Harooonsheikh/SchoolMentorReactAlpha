@@ -25,7 +25,7 @@ import {
   mobileAccountType,
 } from './mobileAppPermissionsData';
 import { useModules } from '../../context/ModuleContext';
-import { assignRoleToUser } from '../../services/rolesService';
+import { assignRoleToUser, getUserMenuPermissions } from '../../services/rolesService';
 import { buildUrl } from '../../../utils/apiConfig';
 import {
   listMobileAppScreenPermission,
@@ -231,34 +231,30 @@ export default function EditPermissionsPanel({ user, roles, readOnly, onClose, o
       setApiKeys(new Set());
       return undefined;
     }
-    /* Role-based user (role ke modules defined): permissions role ki base
-       par hoti hain — role ke har module ki har applicable action checked.
-       Yahi source of truth hai, is liye purani saved custom perms ko
-       fetch/override NAHI karte (warna sab checked nahi dikhte). */
-    if (role && Array.isArray(role.modules) && role.modules.length) {
-      const seeded = permsFromModules(role.modules);
-      setPerms(seeded);
-      setApiKeys(new Set(Object.keys(seeded)));
-      return undefined;
+    /* Role ho to pehle role ke modules se seed (foran dikhe). Phir user ki
+       SAVED permissions (get-user-menu-permissions) aayen to wahi dikhao —
+       pehle role wale user ke liye ye call hoti hi nahi thi, is liye save
+       ki hui permissions modal me kabhi nazar nahi aati thin. Kuch saved na
+       ho to role wala seed hi rehta hai. */
+    const roleSeed = role && Array.isArray(role.modules) && role.modules.length
+      ? permsFromModules(role.modules) : null;
+    if (roleSeed) {
+      setPerms(roleSeed);
+      setApiKeys(new Set(Object.keys(roleSeed)));
     }
     const empId = user.empId;
     if (empId == null) return undefined;
     let alive = true;
-    const branchId = sessionStorage.getItem('branchID') || '1';
-    const token = sessionStorage.getItem('token');
-    fetch(buildUrl(`/get-user-menu-permissions-by-branch/${branchId}`), {
-      method: 'GET',
-      headers: { Accept: '*/*', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-    })
-      .then((r) => r.json())
-      .then((json) => {
+    getUserMenuPermissions({ employeeId: empId, loginUserId: user.loginUserId })
+      .then((apiPerms) => {
         if (!alive) return;
-        const entry = (json?.data || []).find((d) => String(d.employeeID) === String(empId));
-        if (!entry) return;
-        const mapped = permsFromApiPermissions(entry.permissions);
-        setPerms(mapped);
+        const mapped = permsFromApiPermissions(apiPerms);
         const keys = Object.keys(mapped);
-        setApiKeys(new Set(keys));
+        if (!keys.length) return;
+        setPerms(mapped);
+        /* Role ke keys bhi rakho taake un me se kuch uncheck karne par false
+           ke saath save ho. */
+        setApiKeys(new Set([...keys, ...(roleSeed ? Object.keys(roleSeed) : [])]));
         /* Jis module me perm hai usi tab ko active kar do. */
         const grantedChildIds = new Set(keys.map((k) => k.slice(0, k.lastIndexOf('.'))));
         const modWithPerm = visibleTree.find((m) => m.children.some((c) => grantedChildIds.has(c.id)));
