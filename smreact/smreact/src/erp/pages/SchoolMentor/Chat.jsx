@@ -514,7 +514,28 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
     }
   }, [me, branchId, loadConversation, loadContacts]);
 
-  const sendText = () => send({ text: draft });
+  /* Paste ki hui file — foran nahi jati; composer ke upar preview, Send par jati hai. */
+  const [pasted, setPasted] = useState(null);   // { file, url, isImage } | null
+  const pastedRef = useRef(null);
+  pastedRef.current = pasted;
+  const clearPasted = useCallback(() => {
+    const cur = pastedRef.current;
+    if (cur?.url) URL.revokeObjectURL(cur.url);
+    setPasted(null);
+  }, []);
+  /* chat badalne par / screen band hone par preview hatao */
+  useEffect(() => { clearPasted(); }, [activeId, clearPasted]);
+  useEffect(() => () => { if (pastedRef.current?.url) URL.revokeObjectURL(pastedRef.current.url); }, []);
+
+  const sendText = () => {
+    const cur = pastedRef.current;
+    if (cur) {
+      setPasted(null);                       // preview foran hatao; bubble send() dikhata hai
+      send({ text: draft, file: cur.file }).finally(() => URL.revokeObjectURL(cur.url));
+      return;
+    }
+    send({ text: draft });
+  };
 
   const pickAttachment = (kind) => {
     setAttachOpen(false);
@@ -526,6 +547,29 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
     e.target.value = '';           // same file dobara chunne par bhi change chale
     if (!file) return;
     await send({ text: draft, file });
+  };
+
+  /* Ctrl+V: clipboard me image (screenshot / "Copy image") ya file ho to wo
+     composer ke upar PREVIEW me aati hai — bhejna Send / Enter par, likha hua
+     draft caption. Sirf text ho to aam paste hi hota hai. Screenshot ka naam
+     aksar "image.png" hota hai — us par waqt wala naam taake har upload alag rahe. */
+  const onComposerPaste = (e) => {
+    if (sending) return;
+    const items = Array.from(e.clipboardData?.items || []);
+    const item = items.find(it => it.kind === 'file' && it.type.startsWith('image/'))
+      || items.find(it => it.kind === 'file');
+    const raw = item && item.getAsFile();
+    if (!raw) return;
+    e.preventDefault();
+    const ext = (raw.type.split('/')[1] || 'png').replace('jpeg', 'jpg').replace(/\+.*$/, '');
+    const generic = !raw.name || /^image\.\w+$/i.test(raw.name);
+    const file = generic
+      ? new File([raw], `pasted-image-${Date.now()}.${ext}`, { type: raw.type })
+      : raw;
+    const prev = pastedRef.current;
+    if (prev?.url) URL.revokeObjectURL(prev.url);
+    const isImage = file.type.startsWith('image/');
+    setPasted({ file, isImage, url: isImage ? URL.createObjectURL(file) : '' });
   };
 
   const startRecording = async () => {
@@ -887,6 +931,24 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
                   {/* composer */}
                   {!recording && (
                     <div className="cm-conv-composer">
+                      {pasted && (
+                        <div className="cm-paste-preview">
+                          {pasted.isImage
+                            ? <img className="cm-paste-thumb" src={pasted.url} alt="Pasted" />
+                            : <div className="cm-paste-thumb cm-paste-file"><i className="fa-solid fa-file-lines" /></div>}
+                          <div className="cm-paste-info">
+                            <div className="cm-paste-name">{pasted.file.name}</div>
+                            <div className="cm-paste-sub">
+                              {Math.max(1, Math.round(pasted.file.size / 1024))} KB · type a caption and press Send
+                            </div>
+                          </div>
+                          <Tooltip text="Remove">
+                            <button className="cm-paste-remove" onClick={clearPasted} disabled={sending} aria-label="Remove pasted file">
+                              <i className="fa-solid fa-xmark" />
+                            </button>
+                          </Tooltip>
+                        </div>
+                      )}
                       <div className="cm-conv-input-row">
                         <div className="cm-attach-zone" style={{ position: 'relative' }}>
                           <Tooltip text="Attach image, video or document">
@@ -908,11 +970,12 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
                           value={draft}
                           disabled={sending}
                           onChange={e => setDraft(e.target.value)}
+                          onPaste={onComposerPaste}
                           onKeyDown={e => { if (e.key === 'Enter' && !sending) sendText(); }}
                         />
                         <Tooltip text="Record a voice message"><button className="cm-conv-mic-btn" onClick={startRecording} disabled={sending}><i className="fa-solid fa-microphone" /></button></Tooltip>
                         <Tooltip text="Send message">
-                          <button className="cm-conv-send-btn" onClick={sendText} disabled={sending || !draft.trim()}>
+                          <button className="cm-conv-send-btn" onClick={sendText} disabled={sending || (!draft.trim() && !pasted)}>
                             <i className={`fa-solid ${sending ? 'fa-spinner fa-spin' : 'fa-paper-plane'}`} />
                           </button>
                         </Tooltip>
@@ -1470,6 +1533,15 @@ const CHAT_CSS = `
 /* composer */
 .cm-conv-composer { padding:10px 14px 12px; border-top:1px solid var(--border-light); background:var(--bg-card); flex-shrink:0; }
 .cm-conv-input-row { display:flex; align-items:center; gap:7px; position:relative; }
+/* Paste ki hui image/file ka preview — Send dabane tak yahin rehta hai */
+.cm-paste-preview { display:flex; align-items:center; gap:10px; margin:0 0 8px; padding:8px 10px; border:1.5px solid var(--border-light); border-radius:12px; background:var(--bg-muted); }
+.cm-paste-thumb { width:56px; height:56px; border-radius:8px; object-fit:cover; flex-shrink:0; border:1px solid var(--border-light); background:var(--bg-card); }
+.cm-paste-file { display:flex; align-items:center; justify-content:center; color:var(--brand-primary); font-size:22px; }
+.cm-paste-info { flex:1; min-width:0; }
+.cm-paste-name { font-size:12.5px; font-weight:700; color:var(--text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.cm-paste-sub { font-size:11px; color:var(--text-muted); margin-top:2px; }
+.cm-paste-remove { width:28px; height:28px; border-radius:50%; border:none; background:var(--bg-card); color:var(--text-muted); cursor:pointer; flex-shrink:0; display:flex; align-items:center; justify-content:center; }
+.cm-paste-remove:hover { color:#DC2626; background:rgba(220,38,38,.08); }
 .cm-attach-trigger { width:34px; height:34px; border-radius:50%; border:1.5px solid var(--border-light); background:var(--bg-muted); color:var(--text-muted); display:flex; align-items:center; justify-content:center; cursor:pointer; font-size:14px; transition:var(--tr); flex-shrink:0; }
 .cm-attach-trigger:hover { border-color:var(--brand-primary); color:var(--brand-primary); background:var(--brand-light); }
 .cm-attach-popup { position:absolute; bottom:44px; left:0; background:var(--bg-card); border:1.5px solid var(--border-light); border-radius:var(--radius-lg); box-shadow:var(--shadow-lg); padding:6px; z-index:50; min-width:160px; animation:cmFadeSlide .15s ease; }
