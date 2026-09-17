@@ -12,6 +12,7 @@ import {
   fetchUnseenCount,
   fetchConversation,
   fetchUnseenFromMe,
+  discoverStaffChats,
   pendingMessage,
   postChatMessage,
   markMessagesSeen,
@@ -45,6 +46,8 @@ import {
    ═══════════════════════════════════════════════════════════════════ */
 
 const POLL_MS = 15000;
+/* Har itne polls baad directory se chhooti hui staff chats dhoondo (~1 min). */
+const DISCOVER_EVERY = 4;
 /* Sidebar ka preview/waqt conversation se banta hai, aur har contact ki apni
    call hai — is liye load par sirf itni chats ka preview lete hain. Baqi ka
    preview chat kholne par bhar jata hai. */
@@ -165,6 +168,8 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
   const toastRef = useRef(toast);
   toastRef.current = toast;
   const previewDone = useRef(new Set());   // jin contacts ka preview le liya
+  const discoveredRef = useRef(new Map()); // get-chat-contacts se chhooti staff chats
+  const discoverTick = useRef(0);
   const fileInputs = { image: useRef(null), video: useRef(null), doc: useRef(null) };
   const recRef = useRef(null);
   const chunksRef = useRef([]);
@@ -190,7 +195,31 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
     }
     if (!silent) setLoading(true);
     try {
-      const rows = await fetchChatContacts(branchId, me);
+      const apiRows = await fetchChatContacts(branchId, me);
+      /* get-chat-contacts kuch staff chats nahi lautata (discoverStaffChats ka
+         note dekhein). Directory scan mehenga hai, is liye pehli load par aur
+         phir har DISCOVER_EVERY poll par; beech me pichle mile huay contacts
+         (discoveredRef) hi jod dete hain. */
+      const tick = discoverTick.current++;
+      if (!silent || tick % DISCOVER_EVERY === 0) {
+        const known = new Set(apiRows.map(r => r.userId));
+        try {
+          const found = await discoverStaffChats(branchId, me, chatEmployeeId(), known);
+          found.forEach(({ contact }) => discoveredRef.current.set(contact.userId, contact));
+          if (found.length) {
+            setHistory(prev => {
+              const next = { ...prev };
+              found.forEach(({ contact, msgs }) => { next[contact.userId] = msgs; });
+              return next;
+            });
+            found.forEach(({ contact }) => previewDone.current.add(contact.userId));
+          }
+        } catch (_) { /* directory na mile to API wali list hi kaafi */ }
+      }
+      const rows = [
+        ...apiRows,
+        ...[...discoveredRef.current.values()].filter(c => !apiRows.some(r => r.userId === c.userId)),
+      ];
       /* New Chat se shuru ki gayi chat jab tak koi message na jaye API me
          nahi aati — usay list se gayab nahi hone dena. */
       setContacts(prev => {
@@ -1003,12 +1032,10 @@ function NewChatModal({ me, branchId, appUsers, onClose, onStartChat, toast }) {
     let alive = true;
     (async () => {
       try {
-        /* Ye endpoint HR ki employee id maangta hai (swagger: {empID}) — usi
-           par wo sirf is school ke mulazim lautata hai. `me` (login UserID)
-           bhejne par 421 rows aati thin jin me parent/student bhi shaamil the. */
+        /* Ye endpoint session ka employee_ID maangta hai (swagger: {empID}).
+           Rows ki `userId` hi chat id hai, is liye apni row `me` se hat jati hai. */
         const data = await fetchContactList(branchId, chatEmployeeId());
-        const myIds = new Set([me, chatEmployeeId()]);
-        if (alive) setRows(data.filter(r => !myIds.has(r.userId)));
+        if (alive) setRows(data.filter(r => r.userId !== me));
       } catch (err) {
         if (alive) setError(err.message || 'Could not load the contact list');
       } finally {

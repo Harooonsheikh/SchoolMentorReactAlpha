@@ -12,13 +12,11 @@ import { buildUrl, resolveMediaUrl } from '../../utils/apiConfig';
      GET  /get-users-fcm-status/{branchID}                → app par logged-in?
 
    ── Kaun si ID? ──
-   Chat ki har ID login response ki `id` hai (sessionStorage `UserID`), HR wala
-   employee number NAHI. Misal: Qasim TEST ka UserID 213 hai aur uska HR number
-   78 — chat contacts, conversation aur permissions sab 213 par chalte hain
-   (`registerationNo` me 78 aata hai). Is liye chatUserId() `UserID` uthata hai.
-   Ek istisna: get-contact-list HR ki employee id par chalta hai (swagger me
-   bhi `{empID}`). Usi id par wo sirf us school ke MULAZIM lautata hai —
-   branch 1 par 27 Staff rows. Is liye chatEmployeeId() alag hai.
+   Chat ki har ID get-contact-list wali `userId` hai (jo `employeeId` ke
+   barabar aati hai — misal: Ahmad Tariq sh 66, ANUS ALi 69). Bhejna,
+   conversation, seen aur unseen count sab isi id par chalte hain. Apni id
+   session ke `employee_ID` se aati hai — chatUserId() aur chatEmployeeId()
+   dono wahi lautate hain (login `UserID` sirf fallback hai).
 
    ── Contacts me ek hi shakhs ki kai rows ──
    get-chat-contacts har PARENT-STUDENT jodi ki alag row deta hai, is liye ek
@@ -60,9 +58,9 @@ async function readJson(res, label) {
   return json;
 }
 
-/** Logged-in user ki chat id — login `id`, warna employee_ID par fallback. */
+/** Logged-in user ki chat id — session ka `employee_ID`, warna login `UserID`. */
 export function chatUserId() {
-  const raw = sessionStorage.getItem('UserID') || sessionStorage.getItem('employee_ID');
+  const raw = sessionStorage.getItem('employee_ID') || sessionStorage.getItem('UserID');
   return Number(raw) || 0;
 }
 
@@ -268,11 +266,21 @@ function groupLabel(row) {
   return String(row.designation || row.status || '').trim() || '—';
 }
 
+/* get-chat-contacts ki STAFF row me `userId` login id hoti hai (Ahmad Tariq sh:
+   141) aur employee id `registerationNo` me (66) — jab ke chat employee id par
+   chalti hai (get-contact-list wali userId). Is liye staff par registerationNo.
+   Parent row ka registerationNo bachay ka roll number hai, wahan userId hi. */
+function chatIdOf(row) {
+  const reg = String(row.registerationNo || '').trim();
+  if (!isParentRow(row) && /^\d+$/.test(reg)) return Number(reg);
+  return Number(row.userId ?? row.employeeId) || 0;
+}
+
 /** Kai rows (ek hi userId, alag bachay) ko ek contact me merge karo. */
 function mergeContacts(rows) {
   const byUser = new Map();
   (rows || []).forEach(row => {
-    const userId = Number(row.userId ?? row.employeeId) || 0;
+    const userId = chatIdOf(row);
     if (!userId) return;
     const student = {
       name: contactLabel(row),
@@ -345,9 +353,8 @@ function dedupeStaff(rows) {
 
 /**
  * "New Chat" ki directory — sirf mulazim (staff).
- * Ye endpoint HR ki employee id par chalta hai, login wali `UserID` par nahi —
- * caller chatEmployeeId() bhejta hai. Chat phir bhi row ke `userId` par khulti
- * hai, jo baqi chat endpoints wali id hai.
+ * Row ki `userId` hi us shakhs ki chat id hai — bhejna, conversation aur seen
+ * sab isi par chalte hain (apni id session ke `employee_ID` se, chatUserId()).
  */
 export async function fetchContactList(branchId, empId) {
   const res = await fetch(buildUrl(`/get-contact-list/${branchId}/${empId}`), { headers: authHeaders() });
@@ -403,7 +410,7 @@ export async function fetchUnseenFromMe(branchId, contactUserId, meId) {
   try {
     const res = await fetch(buildUrl(`/get-chat-contacts/${branchId}/${contactUserId}`), { headers: authHeaders() });
     const json = await readJson(res, 'read receipts');
-    const mine = (json?.data || []).filter(r => Number(r.userId ?? r.employeeId) === Number(meId));
+    const mine = (json?.data || []).filter(r => chatIdOf(r) === Number(meId));
     if (!mine.length) return 0;   // contact ki list me hoon hi nahi → kuch pending nahi
     return mine.reduce((max, r) => Math.max(max, Number(r.unseenCount) || 0), 0);
   } catch (_) {
@@ -542,6 +549,38 @@ export async function fetchConversation(meId, otherId, branchId) {
 }
 
 /**
+ * Staff ki woh chats jo get-chat-contacts nahi lautata.
+ * Live (branch 15): 66 ↔ 69 ki 7 messages get-conversation me maujood hain,
+ * phir bhi get-chat-contacts/15/66 khaali aata hai — is liye Ahmad ki left
+ * list me ANUS kabhi nahi aata tha. Directory (get-contact-list) ke har staff
+ * ki conversation dekh kar jin se messages hain unhe contact bana dete hain.
+ * `knownIds` wale chhod diye jate hain — wo pehle hi list me hain.
+ * Lautata hai: [{ contact, msgs }].
+ */
+export async function discoverStaffChats(branchId, meId, empId, knownIds = new Set(), batchSize = 6) {
+  const staff = (await fetchContactList(branchId, empId))
+    .filter(s => s.userId !== meId && !knownIds.has(s.userId));
+  const found = [];
+  for (let i = 0; i < staff.length; i += batchSize) {
+    const batch = staff.slice(i, i + batchSize);
+    const results = await Promise.all(batch.map(s =>
+      fetchConversation(meId, s.userId, branchId).then(msgs => ({ s, msgs })).catch(() => null)));
+    results.forEach(r => {
+      if (!r || !r.msgs.length) return;
+      const { s, msgs } = r;
+      found.push({
+        contact: {
+          userId: s.userId, name: s.name, father: s.father, rel: s.rel, status: s.status,
+          isParent: s.isParent, group: s.group, picture: s.picture, unread: 0, students: [],
+        },
+        msgs,
+      });
+    });
+  }
+  return found;
+}
+
+/**
  * File ko asli file-host par chadhao aur uska chalne wala rasta lo.
  *   POST /upload-notice-image   (multipart, field ka naam: `file`)
  *   → { success, message, path: "/UploadedImages/homework_<guid>.pdf" }
@@ -603,9 +642,15 @@ export async function postChatMessage({ fromUserId, toUserId, branchId, message 
   form.append('ToUserID', String(toUserId));
   form.append('Message', text);
   form.append('BranchID', String(branchId));
+  /* Swagger wala payload: text message par bhi AttachmentType=text aur khaali
+     Attachment jata hai. Ye na bhejein to backend row me "dat" likh deta hai
+     (messages 880/885), jab ke Swagger se bheji rows me "text" (879/884). */
   if (file) {
     form.append('AttachmentType', attachmentTypeFor(file));
     form.append('Attachment', file, file.name);
+  } else {
+    form.append('AttachmentType', 'text');
+    form.append('Attachment', '');
   }
   const res = await fetch(buildUrl('/post-chat-message'), {
     method: 'POST',
