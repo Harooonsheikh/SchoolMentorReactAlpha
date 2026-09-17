@@ -261,13 +261,13 @@ export default function App() {
          • Chat: har branch par khulta hai. Row ho to ChatType faisla karta
            hai ('off' = chhupa); row na ho to bina rok-tok dikhta hai.
          • Mentor AI / eTube: row na ho to purana BRANCH1_ONLY behaviour. */
-    /* Mentor AI: School Head ke ilawa har user ke liye login par aayi user
-       permission (get-user-menu-permissions → "Mentor AI" menu) hi faisla
-       karti hai — branch ka Mobile App flag ise nahi rokta. Misal: branch 1
-       par MentorAI flag false hai, magar Qasim TEST ko Mentor AI di gayi hai
-       to usay dikhna chahiye. School Head (fullAccess) par neeche wala
-       purana flag / branch-1 rule chalta hai. */
-    if (navId === 'mentorai' && !fullAccess) return canModule('Mentor AI');
+    /* Mentor AI: branch ka Mobile App flag ise nahi rokta.
+         • School Head (fullAccess) → saare modules, Mentor AI bhi.
+         • Baqi users → login par aayi user permission
+           (get-user-menu-permissions → "Mentor AI" menu).
+       Misal: branch 1 par MentorAI flag false hai, phir bhi School Head aur
+       Qasim TEST (jise Mentor AI di gayi) dono ko dikhta hai. */
+    if (navId === 'mentorai') return fullAccess || canModule('Mentor AI');
     if (navId === 'chat' || navId === 'mentorai' || navId === 'etube') {
       /* Flag tab tak na maano jab tak jawab na aa jaye — warna 'off' wali
          branch par Chat ek pal ke liye dikh kar ghayab hoti hai. */
