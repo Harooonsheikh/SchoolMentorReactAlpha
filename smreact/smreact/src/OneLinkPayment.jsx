@@ -87,19 +87,13 @@ export default function OneLinkPayment() {
 
       const json = await res.json().catch(() => null);
       if (!res.ok || json?.success === false) {
-        setMsg({
-          type: 'err',
-          text: apiMessage(json) || `Payment could not be received (${res.status}).`,
-        });
+        showToast(apiMessage(json) || `Payment could not be received (${res.status}).`, 'error');
         return;
       }
 
-      setMsg({
-        type: 'ok',
-        text: apiMessage(json) || `Payment received · Entery Code ${code} · Student ${sid} · Branch ${bid} · ${mth}/${yr} · Payment Amount ${amt}.`,
-      });
+      showToast(apiMessage(json) || 'Payment received', 'success');
     } catch (err) {
-      setMsg({ type: 'err', text: err?.message || 'Could not reach the payment API.' });
+      showToast(err?.message || 'Could not reach the payment API.', 'error');
     } finally {
       setLoading(false);
     }

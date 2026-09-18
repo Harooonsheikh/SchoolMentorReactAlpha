@@ -201,14 +201,23 @@
   padding: 12px 16px;
   border-radius: 12px;
   background: #fff;
-  border: 1px solid #FECACA;
-  border-left: 3px solid #DC2626;
   box-shadow: 0 8px 24px rgba(0, 0, 0, .15);
   font-family: var(--olp-font);
   font-size: 13px;
   font-weight: 700;
-  color: #DC2626;
   animation: olp-toast-in .3s cubic-bezier(.34, 1.56, .64, 1);
+}
+
+.olp-toast.error {
+  border: 1px solid #FECACA;
+  border-left: 3px solid #DC2626;
+  color: #DC2626;
+}
+
+.olp-toast.success {
+  border: 1px solid #BBF7D0;
+  border-left: 3px solid #16A34A;
+  color: #16A34A;
 }
 
 .olp-toast i { font-size: 16px; }
