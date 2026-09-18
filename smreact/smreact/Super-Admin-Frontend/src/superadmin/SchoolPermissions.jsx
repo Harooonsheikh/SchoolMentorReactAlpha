@@ -223,7 +223,7 @@ export default function SchoolPermissions({ toast }) {
 }
 
 /* ═══════════════════════ TOGGLE SWITCH ═══════════════════════ */
-function Switch({ checked, onChange, disabled }) {
+export function Switch({ checked, onChange, disabled }) {
   return (
     <label className={`sw${disabled ? ' sw-disabled' : ''}`}>
       <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} disabled={disabled} />
@@ -411,8 +411,9 @@ function PermModal({ school, initial, saving, toast, onClose, onSave }) {
 }
 
 /* Nested modal — Chat / Mentor AI / eTube. Done → POST SAVE
-   /manage-mobileapp-permission (chatType + toggles). */
-function MobileAppPermsModal({ draft, loading, saving, setCore, setMentorAi, setEtube, onClose, onDone }) {
+   /manage-mobileapp-permission (chatType + toggles). Network Permissions
+   bhi yahi modal istemal karti hai (`subject` se wording badalti hai). */
+export function MobileAppPermsModal({ draft, loading, saving, setCore, setMentorAi, setEtube, onClose, onDone, subject = 'school' }) {
   return (
     <div className="perm-ov open" onMouseDown={(e) => { if (e.target === e.currentTarget && !saving) onClose(); }}>
       <div className="perm-modal" style={{ maxWidth: 560 }}>
@@ -420,7 +421,7 @@ function MobileAppPermsModal({ draft, loading, saving, setCore, setMentorAi, set
           <div className="pm-av"><i className="fa-solid fa-mobile-screen-button" /></div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div className="pm-school-name">Manage Mobile App Permissions</div>
-            <div className="pm-school-meta"><span>Chat, Mentor AI &amp; eTube access for this school&rsquo;s mobile application</span></div>
+            <div className="pm-school-meta"><span>Chat, Mentor AI &amp; eTube access for this {subject}&rsquo;s mobile application</span></div>
           </div>
           <button className="pm-close" data-tip="Back" data-tip-pos="left" onClick={onClose} disabled={saving}><i className="fa-solid fa-xmark" /></button>
         </div>
@@ -459,7 +460,7 @@ function MobileAppPermsModal({ draft, loading, saving, setCore, setMentorAi, set
               <div className="pm-mob-row">
                 <div className="pm-mob-row-l">
                   <div className="pm-mob-row-name">Enable Mentor AI</div>
-                  <div className="pm-mob-row-desc">Turn Mentor AI on or off for this school&rsquo;s mobile app. When off, nobody — staff or parents — can access it.</div>
+                  <div className="pm-mob-row-desc">Turn Mentor AI on or off for this {subject}&rsquo;s mobile app. When off, nobody — staff or parents — can access it.</div>
                 </div>
                 <Switch checked={draft.mentorAi.enabled} onChange={(v) => setMentorAi('enabled', v)} />
               </div>
@@ -488,7 +489,7 @@ function MobileAppPermsModal({ draft, loading, saving, setCore, setMentorAi, set
               <div className="pm-mob-row">
                 <div className="pm-mob-row-l">
                   <div className="pm-mob-row-name">Enable eTube</div>
-                  <div className="pm-mob-row-desc">Turn eTube on or off for this school&rsquo;s mobile app.</div>
+                  <div className="pm-mob-row-desc">Turn eTube on or off for this {subject}&rsquo;s mobile app.</div>
                 </div>
                 <Switch checked={draft.etube.enabled} onChange={(v) => setEtube('enabled', v)} />
               </div>
@@ -502,7 +503,7 @@ function MobileAppPermsModal({ draft, loading, saving, setCore, setMentorAi, set
               <div className={`pm-mob-row${!draft.etube.enabled ? ' pm-mob-row-disabled' : ''}`}>
                 <div className="pm-mob-row-l">
                   <div className="pm-mob-row-name">Video Uploading</div>
-                  <div className="pm-mob-row-desc">Whether school users can upload videos to eTube.</div>
+                  <div className="pm-mob-row-desc">Whether {subject} users can upload videos to eTube.</div>
                 </div>
                 <Switch checked={draft.etube.enabled && draft.etube.uploading} onChange={(v) => setEtube('uploading', v)} disabled={!draft.etube.enabled} />
               </div>

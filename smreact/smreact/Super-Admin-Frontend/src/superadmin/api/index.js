@@ -32,6 +32,7 @@ export * as etubeApi from './services/etube';
 export * as notificationsApi from './services/notifications';
 export * as branchesApi from './services/branches';
 export * as schoolPermissionsApi from './services/schoolPermissions';
+export * as networkPermissionsApi from './services/networkPermissions';
 export * as schoolProgressApi from './services/schoolProgress';
 export * as schoolSopsApi from './services/schoolSops';
 export * as transactionsApi from './services/transactions';

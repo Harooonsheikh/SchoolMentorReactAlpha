@@ -59,7 +59,7 @@ afterAll(() => { global.fetch = realFetch; });
 
 /* The interface modules a user can navigate to (sidebar labels). */
 const INTERFACE_MODULES = [
-  'E-Tube', 'School Permissions', 'Schools Progress', 'Schools Payment',
+  'E-Tube', 'Network Permissions', 'School Permissions', 'Schools Progress', 'Schools Payment',
   'Operational SOPs', 'Mentor AI', 'Support', 'Teachers Training',
   'Quiz Content', 'Notifications', 'User Management',
 ];

@@ -3,6 +3,7 @@ import { SA_CSS } from './saStyles';
 import Dashboard from './Dashboard';
 import MentorAI from './MentorAI';
 import ETube from './ETube';
+import NetworkPermissions from './NetworkPermissions';
 import SchoolPermissions from './SchoolPermissions';
 import SchoolStatus from './SchoolStatus';
 import SchoolPayment from './SchoolPayment';
@@ -36,6 +37,7 @@ const NAV = [
   ] },
   { section: 'Interface', items: [
     { id: 'etube',       name: 'E-Tube',             icon: 'fa-play-circle', sub: 'HO Video Studio' },
+    { id: 'networkPermissions', name: 'Network Permissions', icon: 'fa-network-wired' },
     { id: 'permissions', name: 'School Permissions', icon: 'fa-key' },
     { id: 'status',      name: 'Schools Progress',   icon: 'fa-chart-line' },
     { id: 'payments',    name: 'Schools Payment',    icon: 'fa-credit-card' },
@@ -59,6 +61,7 @@ const CRUMB = {
   mentorAI:    'Mentor AI Management',
   support:     'Customer Support',
   etube:       'E-Tube',
+  networkPermissions: 'Network Permissions',
   permissions: 'School Permissions',
   status:      'Schools Progress',
   payments:    'Schools Payment',
@@ -141,6 +144,7 @@ const onNav = (id) => {
     id === 'mentorAI' ||
     id === 'support' ||
     id === 'etube' ||
+    id === 'networkPermissions' ||
     id === 'permissions' ||
     id === 'status' ||
     id === 'payments' ||
@@ -275,6 +279,8 @@ const onNav = (id) => {
           {active === 'mentorAI' && <MentorAI toast={toast} />}
 
           {active === 'etube' && <ETube toast={toast} />}
+
+          {active === 'networkPermissions' && <NetworkPermissions toast={toast} />}
 
           {active === 'permissions' && <SchoolPermissions toast={toast} />}
 

@@ -120,6 +120,23 @@ export const EP = {
     disableLaunchSetup: (id) => `${SA_ROOT}/api/SchoolPermissions/disable-launch-setup/${id}`,
   },
 
+  /* ── Network Permissions — LIVE SchoolMentorSuperAdminAPI (AHM_NetworkUsers).
+     GET  → { success, message, count, data: [ { id, ownerName, schoolNetwork,
+              contactNumber, createdDate, isActive, isAdmin, address,
+              accountTitle, bankName, accountNumber, schoolMentorSOP,
+              notificationSource } ] }
+     POST update-isactive  body { network_ID, isActive } — modal ka
+          "Chain Portal Access" card.
+     Network ki module/mobile permissions save karne ka route abhi backend me
+     NAHI hai. save-modulePermission ka `type` param maujood hai magar GET use
+     nazar-andaz karta hai (module-permission/1?type=network school 1 ki row
+     lautata hai) — us par network id bhejna school ki permissions overwrite
+     kar deta, is liye wahan nahi bheja jata. ── */
+  networkPermissions: {
+    networks: () => `${SA_ROOT}/api/AHM_NetworkUsers`,
+    updateIsActive: () => `${SA_ROOT}/api/AHM_NetworkUsers/update-isactive`,
+  },
+
   /* ── Schools Progress — LIVE SchoolMentorSuperAdminAPI.
      GET branch-report?isActive=&launchSetup= → har branch ka setup progress:
        { category, branchID, branchName, totalStaff, totalStudents, assignedTo,
