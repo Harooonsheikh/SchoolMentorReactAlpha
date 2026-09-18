@@ -19,6 +19,7 @@ import {
   postChatMessage,
   markMessagesSeen,
 } from '../../services/chatService';
+import { encodeMp3 } from '../../services/mp3Encode';
 
 /* ═══════════════════════════════════════════════════════════════════
    CHAT — school messaging (parents · students · teachers), live API.
@@ -93,8 +94,8 @@ function highlight(text, q) {
 }
 
 /* Voice note ke liye wo format chuno jo ye browser record kar sakta hai.
-   Extension isi se banti hai taake attachmentType sahi jaye (webm audio ko
-   "weba" bhejte hain, warna wo video samjha jata hai). */
+   Ye sirf RECORDING ka format hai — bhejne se pehle sendVoiceNote isay MP3 me
+   badal deta hai (encodeMp3), kyunke backend webm/ogg ko ".dat" bana deta hai. */
 function pickAudioFormat() {
   const options = [
     ['audio/mp4', 'm4a'],
@@ -543,11 +544,24 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
     fileInputs[kind]?.current?.click();
   };
 
-  const onFilePicked = async (e) => {
+  /* File (chuni hui / paste / recorded) seedha nahi jati — pehle composer ke
+     upar PREVIEW me aati hai; bhejna Send / Enter par, draft caption. */
+  const stageFile = useCallback((file) => {
+    const prev = pastedRef.current;
+    if (prev?.url) URL.revokeObjectURL(prev.url);
+    const t = String(file.type || '').toLowerCase();
+    const kind = t.startsWith('image/') ? 'image'
+      : t.startsWith('video/') ? 'video'
+      : t.startsWith('audio/') ? 'voice'
+      : 'doc';
+    setPasted({ file, kind, isImage: kind === 'image', url: kind === 'doc' ? '' : URL.createObjectURL(file) });
+  }, []);
+
+  const onFilePicked = (e) => {
     const file = e.target.files && e.target.files[0];
     e.target.value = '';           // same file dobara chunne par bhi change chale
     if (!file) return;
-    await send({ text: draft, file });
+    stageFile(file);
   };
 
   /* Ctrl+V: clipboard me image (screenshot / "Copy image") ya file ho to wo
@@ -567,10 +581,7 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
     const file = generic
       ? new File([raw], `pasted-image-${Date.now()}.${ext}`, { type: raw.type })
       : raw;
-    const prev = pastedRef.current;
-    if (prev?.url) URL.revokeObjectURL(prev.url);
-    const isImage = file.type.startsWith('image/');
-    setPasted({ file, isImage, url: isImage ? URL.createObjectURL(file) : '' });
+    stageFile(file);
   };
 
   const startRecording = async () => {
@@ -619,7 +630,16 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
     const file = await stopRecording(true);
     setRecSeconds(0);
     if (!file) { toast('Nothing was recorded', 'warning'); return; }
-    await send({ text: '', file });
+    /* Backend sirf pehchani extension rakhta hai — webm/ogg ".dat" ban jati
+       thi (server usay serve nahi karta). Is liye voice note hamesha MP3. */
+    let mp3;
+    try {
+      mp3 = new File([await encodeMp3(file)], file.name.replace(/\.[^.]+$/, '.mp3'), { type: 'audio/mpeg' });
+    } catch (err) {
+      toast(err.message || 'Could not prepare the voice message', 'error');
+      return;
+    }
+    stageFile(mp3);                // pehle sun lo, phir Send
   };
 
   /* stop the mic if the screen unmounts mid-recording */
@@ -925,7 +945,7 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
                         {Array.from({ length: 28 }, (_, i) => <span key={i} style={{ animationDelay: `${i * 0.05}s` }} />)}
                       </div>
                       <div className="cm-rec-timer">{Math.floor(recSeconds / 60)}:{recSeconds % 60 < 10 ? '0' : ''}{recSeconds % 60}</div>
-                      <button className="cm-rec-send" onClick={sendVoiceNote}><i className="fa-solid fa-paper-plane" /> Send</button>
+                      <button className="cm-rec-send" onClick={sendVoiceNote}><i className="fa-solid fa-check" /> Done</button>
                     </div>
                   )}
 
@@ -934,17 +954,28 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
                     <div className="cm-conv-composer">
                       {pasted && (
                         <div className="cm-paste-preview">
-                          {pasted.isImage
-                            ? <img className="cm-paste-thumb" src={pasted.url} alt="Pasted" />
-                            : <div className="cm-paste-thumb cm-paste-file"><i className="fa-solid fa-file-lines" /></div>}
+                          {pasted.kind === 'image' ? (
+                            <img className="cm-paste-thumb" src={pasted.url} alt="Preview" />
+                          ) : pasted.kind === 'video' ? (
+                            /* eslint-disable-next-line jsx-a11y/media-has-caption */
+                            <video className="cm-paste-thumb" src={pasted.url} muted playsInline preload="metadata" />
+                          ) : pasted.kind === 'voice' ? (
+                            <div className="cm-paste-thumb cm-paste-file"><i className="fa-solid fa-microphone" /></div>
+                          ) : (
+                            <div className="cm-paste-thumb cm-paste-file"><i className={`fa-solid ${/\.pdf$/i.test(pasted.file.name) ? 'fa-file-pdf' : 'fa-file-lines'}`} /></div>
+                          )}
                           <div className="cm-paste-info">
-                            <div className="cm-paste-name">{pasted.file.name}</div>
+                            <div className="cm-paste-name">{pasted.kind === 'voice' ? 'Voice message' : pasted.file.name}</div>
+                            {pasted.kind === 'voice' && (
+                              /* eslint-disable-next-line jsx-a11y/media-has-caption */
+                              <audio src={pasted.url} controls preload="metadata" style={{ height: 30, maxWidth: '100%', marginTop: 4 }} />
+                            )}
                             <div className="cm-paste-sub">
                               {Math.max(1, Math.round(pasted.file.size / 1024))} KB · type a caption and press Send
                             </div>
                           </div>
                           <Tooltip text="Remove">
-                            <button className="cm-paste-remove" onClick={clearPasted} disabled={sending} aria-label="Remove pasted file">
+                            <button className="cm-paste-remove" onClick={clearPasted} disabled={sending} aria-label="Remove attachment">
                               <i className="fa-solid fa-xmark" />
                             </button>
                           </Tooltip>
@@ -1051,15 +1082,18 @@ function MessageBubble({ m, status, convName, matchClass, innerRef }) {
   } else {
     /* Poori tile hi file kholti hai, is liye alag download icon nahi — wo sirf
        ek doosra "kholne" ka nishan tha jo bhram paida karta tha. */
-    body = (
-      <a className="cm-attach-doc" href={m.url} target="_blank" rel="noreferrer">
+    const inner = (
+      <>
         <div className="cm-attach-doc-icon"><i className="fa-solid fa-file-pdf" /></div>
         <div className="cm-attach-doc-info">
           <div className="cm-attach-doc-name">{m.docName}</div>
-          <div className="cm-attach-doc-size">{m.text || 'Tap to open'}</div>
+          <div className="cm-attach-doc-size">{m.text || (m.url ? 'Tap to open' : 'File unavailable')}</div>
         </div>
-      </a>
+      </>
     );
+    body = m.url
+      ? <a className="cm-attach-doc" href={m.url} target="_blank" rel="noreferrer">{inner}</a>
+      : <div className="cm-attach-doc" style={{ cursor: 'default' }}>{inner}</div>;
   }
 
   if (isSent) {
@@ -1081,7 +1115,7 @@ function MediaAttachment({ kind, m, caption }) {
   const isVideo = kind === 'video';
   useEffect(() => { setBroken(false); }, [m.url]);
 
-  if (broken) {
+  if (broken || !m.url) {
     return (
       <div className={isVideo ? 'cm-attach-video-real' : 'cm-attach-voice-real'}>
         <div className="cm-attach-missing">
@@ -1107,7 +1141,7 @@ function MediaAttachment({ kind, m, caption }) {
 /* Tasveer khud dikhao; file na mile to naam wali placeholder tile. */
 function ImageAttachment({ m, caption }) {
   const [broken, setBroken] = useState(false);
-  if (broken) {
+  if (broken || !m.url) {
     return (
       <div className="cm-attach-image">
         <div className="cm-attach-image-inner"><i className="fa-solid fa-image" /><span>{m.text || 'Photo unavailable'}</span></div>
@@ -1181,7 +1215,9 @@ function NewChatModal({ me, branchId, appUsers, onClose, onStartChat, toast }) {
         ? (r.regNo || `${r.name}|${r.father}`).toLowerCase()
         : `u${r.userId}`;
       const prev = bucket.get(dupKey);
-      if (!prev || (!appUsers.has(prev.userId) && appUsers.has(r.userId))) bucket.set(dupKey, r);
+      /* Account wali row hamesha bina-account wali par bhari. */
+      if (!prev || (prev.noAccount && !r.noAccount)
+        || (!appUsers.has(prev.userId) && appUsers.has(r.userId))) bucket.set(dupKey, r);
     });
 
     const clsRank = new Map();
@@ -1241,6 +1277,11 @@ function NewChatModal({ me, branchId, appUsers, onClose, onStartChat, toast }) {
   const appOk = (m) => !m.isParent || appUsers.has(m.userId);
 
   const handleMember = (m) => {
+    /* Walid ka login account hi nahi — message bhejne ke liye koi userId nahi. */
+    if (m.noAccount) {
+      toast(`${m.name}'s parent does not have a School Mentor account yet — create their login to start a chat.`, 'warning');
+      return;
+    }
     /* App par logged in na ho to bhi message ja sakta hai — wo login karte hi
        dekh lega. Sirf bata dete hain ke abhi notification nahi pahunchegi. */
     if (m.isParent && !appUsers.has(m.userId)) {
@@ -1258,7 +1299,9 @@ function NewChatModal({ me, branchId, appUsers, onClose, onStartChat, toast }) {
     <div
       key={`${m.userId}-${m.regNo || i}`}
       className={`cm-nc-member-row ${appOk(m) ? 'on' : 'off'}`}
-      title={appOk(m) ? '' : 'Not logged into the app yet — the message will be waiting for them'}
+      style={m.noAccount ? { opacity: 0.6, cursor: 'not-allowed' } : undefined}
+      title={m.noAccount ? 'Parent has no School Mentor account — chat is not available'
+        : appOk(m) ? '' : 'Not logged into the app yet — the message will be waiting for them'}
       onClick={() => handleMember(m)}
     >
       <div className={`cm-nc-member-av ${appOk(m) ? 'on' : 'off'}`}>{ini(m.name)}</div>
@@ -1266,9 +1309,10 @@ function NewChatModal({ me, branchId, appUsers, onClose, onStartChat, toast }) {
         <div className="cm-nc-member-name">{highlight(m.name, q)}</div>
         <div className="cm-nc-member-rel">
           {highlight(m.rel || '—', q)} · <span style={{ fontSize: 10, color: 'var(--brand-primary)', fontWeight: 700 }}>{highlight(m.group, q)}</span>
+          {m.noAccount && <span style={{ fontSize: 10, color: 'var(--error,#DC2626)', fontWeight: 700 }}> · No account</span>}
         </div>
       </div>
-      <i className={`cm-nc-member-icon fa-solid ${appOk(m) ? 'fa-comment-dots on' : 'fa-bell-slash off'}`} />
+      <i className={`cm-nc-member-icon fa-solid ${m.noAccount ? 'fa-user-slash off' : appOk(m) ? 'fa-comment-dots on' : 'fa-bell-slash off'}`} />
     </div>
   );
 
@@ -1373,11 +1417,14 @@ function NewChatModal({ me, branchId, appUsers, onClose, onStartChat, toast }) {
                 <div style={{ display: 'flex', gap: 12, padding: '2px 14px 8px', fontSize: 10.5, color: 'var(--text-muted)', fontWeight: 600 }}>
                   <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}><span style={{ width: 10, height: 10, borderRadius: 3, background: 'var(--brand-light)', border: '1.5px solid var(--brand-primary)', display: 'inline-block' }} /> App active</span>
                   <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}><span style={{ width: 10, height: 10, borderRadius: 3, background: '#f1f5f9', border: '1.5px solid #CBD5E1', display: 'inline-block' }} /> Not on app — message still goes</span>
+                  {groupObj.members.some(m => m.noAccount) && (
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}><i className="fa-solid fa-user-slash" style={{ fontSize: 9 }} /> No account — can't chat</span>
+                  )}
                 </div>
               )}
               <div style={{ padding: '0 12px 14px', display: 'flex', flexDirection: 'column', gap: 6 }}>
                 {[...groupObj.members]
-                  .sort((a, b) => (appOk(b) - appOk(a)) || a.name.localeCompare(b.name))
+                  .sort((a, b) => (!!a.noAccount - !!b.noAccount) || (appOk(b) - appOk(a)) || a.name.localeCompare(b.name))
                   .map(memberRow)}
               </div>
             </>

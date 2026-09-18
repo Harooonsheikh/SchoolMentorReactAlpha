@@ -1,4 +1,4 @@
-import { buildUrl, resolveMediaUrl } from '../../utils/apiConfig';
+import { buildUrl, resolveMediaUrl, MEDIA_BASE } from '../../utils/apiConfig';
 
 /* ═══════════════════════════════════════════════════════════════════
    CHAT — wiring to the API's "Chats" endpoints (swagger tag: Chats).
@@ -27,25 +27,20 @@ import { buildUrl, resolveMediaUrl } from '../../utils/apiConfig';
    hoti hai, bachay par nahi, is liye yahan rows ko userId par merge kiya jata
    hai: unseenCount jama, aur saare bachay `students[]` me.
 
-   ── Attachment: DO call, aur wajah ═══
-   post-chat-message akela bhi file qubool kar leta hai, magar jo `attachmentUrl`
-   wo row me likhta hai — {host}/APIBeta/Img/ChatAttachments/{messageId} — wo
-   404 hai. Poora /APIBeta application hi kisi host par deploy nahi (alphaapi
-   aur 50.190.164.42:4100 dono par `/APIBeta` khud 404). Yani file chali to
-   jati hai, wapas kabhi nahi milti.
+   ── Attachment: sirf post-chat-message ═══
+   File (image / video / voice / document) bhi usi EK call me jati hai:
+   `Attachment` = file, `AttachmentType` = qism (image | video | voice |
+   pdf / docx …). /upload-notice-image ab chat me istemal NAHI hota.
+   Backend file rakh kar row ka `attachmentUrl` bharta hai, aur padhte waqt
+   wohi istemal hota hai.
 
-   Is liye backend guide wala tareeqa: pehle file /upload-notice-image par
-   chadhao (field ka naam `file`), wahan se `/UploadedImages/…` rasta lo — wo
-   200 aur sahi content-type ke saath serve hota hai — aur us raste ko MESSAGE
-   ke andar likh do:
-       "homework.pdf /UploadedImages/homework_<guid>.pdf"
-   Padhte waqt pehle message me se ye rasta nikalte hain (UPLOAD_DIR_RE), na
-   mile to hi purane attachmentUrl par girte hain. Mobile app bhi yehi karti
-   hai, is liye dono taraf ke bheje huye attachment khulte hain.
+   Purane messages (aur mobile app ke kuch) me rasta MESSAGE ke andar likha hota
+   hai: "homework.pdf /UploadedImages/homework_<guid>.pdf". Padhte waqt pehle ye
+   rasta dhoondte hain (UPLOAD_DIR_RE); na mile to attachmentUrl.
 
-   `attachmentType` do shakloon me aata hai — category ("image"/"video"/"pdf"/
-   "docx") ya extension ("png"/"mp4"/purana default "dat") — attachKind dono
-   samajhta hai, aur tarjeeh asli file ke naam ki extension ko deta hai.
+   `attachmentType` do shakloon me aata hai — category ("image"/"video"/"voice"/
+   "pdf"/"docx") ya extension ("png"/"mp4"/purana default "dat") — attachKind
+   dono samajhta hai.
    ═══════════════════════════════════════════════════════════════════ */
 
 const authHeaders = () => {
@@ -210,16 +205,28 @@ function fileExt(file) {
   return m ? m[1].toLowerCase() : '';
 }
 
-/* Bhejte waqt AttachmentType — file ki EXTENSION.
-   Backend guide "image | pdf | docx | video" kehti hai, magar live test ne
-   dikhaya ke backend un naamon ko sambhalta nahi: AttachmentType=image bheja
-   to row me "dat" mehfooz hua (message 757), jab ke extension bhejne par wo
-   jyun ki tyun rehti hai ("png" → 751, "mp4" → 753). Is liye extension, jo
-   ziada maloomat deti hai aur wapas bhi sahi milti hai. Padhne wala (attachKind)
-   dono shaklein samajhta hai, aur waise bhi qism ka faisla pehle asli file ke
-   naam se hota hai — is liye "dat" aa jaye to bhi kuch bigadta nahi. */
+/* Bhejte waqt AttachmentType — file ki EXTENSION (png / mp4 / weba / pdf …).
+   Category naam ("image" / "video" / "voice") backend qubool nahi karta: live
+   (18-09-2026) messages 936/937/938 un naamon ke saath gaye aur row me "dat"
+   mehfooz hua, jab ke 939 par "pdf" jyun ka tyun raha. Voice note ki file
+   pehle se ".weba" (ya m4a/ogg) extension ke saath banti hai, is liye wo video
+   nahi samjhi jati. Padhne wala (attachKind) extension se qism nikalta hai. */
 function attachmentTypeFor(file) {
-  return fileExt(file);
+  const ext = fileExt(file);
+  if (ext) return ext;
+  const mime = String((file && file.type) || '').toLowerCase();
+  const sub = mime.split('/')[1]?.split(';')[0] || '';
+  if (mime.startsWith('audio/')) return sub === 'webm' ? 'weba' : (sub || 'weba');
+  return sub || 'dat';
+}
+
+/* Upload se pehle file ki qism — sirf label chunne ke liye. */
+function fileKind(file) {
+  const mime = String((file && file.type) || '').toLowerCase();
+  if (mime.startsWith('image/')) return 'image';
+  if (mime.startsWith('audio/')) return 'voice';
+  if (mime.startsWith('video/')) return 'video';
+  return attachKind(attachmentTypeFor(file), 'x');
 }
 
 /* ── contacts ────────────────────────────────────────────────────── */
@@ -382,8 +389,14 @@ export async function fetchContactList(branchId, empId) {
       section: String(row.section || '').trim(),
       regNo: String(row.registerationNo || '').trim(),
       picture: contactPicture(row.picture),
+      /* Parent row bina userId ke — walid ka login account bana hi nahi
+         (live, branch 15: Fanan Ahmed "Class II - B", M Rafique "C12 - A Red",
+         Qamar Jutt "Class 3 - A Green"). Pehle ye rows gira di jati thin, is
+         liye class ka ginti kam aati thi aur jis class me sirf aisa bacha ho
+         wo class hi gayab ho jati thi. Ab dikhte hain, magar chat nahi khulti. */
+      noAccount: !id,
     };
-  }).filter(r => r.userId);
+  }).filter(r => r.userId || r.isParent);
   return dedupeStaff(rows);
 }
 
@@ -505,6 +518,32 @@ const prettyFileName = (path) => {
   return raw.replace(/_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?=\.[^.]*$)/i, '');
 };
 
+/* ─── Chat files: {MEDIA_BASE}/ChatAssests/{fileName} ───
+   Backend chat ki file /ChatAssests/ folder me rakhta hai, naam GUID + extension:
+     https://alphaapi.schoolmentor.ai/ChatAssests/4f9f224c-…-0bdd3ebb3bd1.png  (200)
+   Response me jo bhi file ka naam aaye — alag field me, ya attachmentUrl ke
+   aakhri hisse me ("…/4f9f….png", ya poora …/ChatAssests/… rasta) — usay
+   ChatAssests ke baad laga dete hain. Host hamesha MEDIA_BASE (https), kyunke
+   API url par http://IP:4100 bhi laga deti hai jo https site par block hota.
+   Purane rows ka aakhri hissa sirf id hota hai ("…/ChatAttachments/947",
+   extension nahi) — un par koi naam nahi banta. (Folder ka naam backend ki
+   spelling me hai: "Assests".) */
+const CHAT_ASSET_DIR = '/ChatAssests/';
+const FILE_NAME_RE = /^[^/\\?#]+\.[A-Za-z0-9]{1,6}$/;
+
+function chatAssetUrl(row) {
+  const named = [row.attachmentName, row.fileName, row.attachment, row.attachmentPath, row.attachmentFileName]
+    .map(v => String(v || '').trim()).find(Boolean);
+  const candidates = [named, String(row.attachmentUrl || '').trim()].filter(Boolean);
+  for (const c of candidates) {
+    const noQuery = c.split(/[?#]/)[0];
+    const at = noQuery.toLowerCase().indexOf(CHAT_ASSET_DIR.toLowerCase());
+    const name = at >= 0 ? noQuery.slice(at + CHAT_ASSET_DIR.length) : noQuery.split('/').pop();
+    if (name && FILE_NAME_RE.test(name)) return `${MEDIA_BASE}${CHAT_ASSET_DIR}${encodePath(name)}`;
+  }
+  return '';
+}
+
 /** Ek message row → bubble ka shape (MessageBubble isi ko samajhta hai). */
 function mapMessage(row, meId) {
   const at = parseDate(row.createdDateTime);
@@ -515,11 +554,22 @@ function mapMessage(row, meId) {
   /* Rasta text me se nikaal do — user ko sirf uska likha hua label dikhe. */
   const label = (pathAt >= 0 ? message.slice(0, pathAt) : message).replace(/\s+/g, ' ').trim();
 
-  const url = path ? resolveMediaUrl(encodePath(path)) : resolveMediaUrl(row.attachmentUrl);
+  /* Purana attachmentUrl (…/APIBeta/Img/ChatAttachments/{id}) kisi host par
+     chalta nahi (404) — us par request bhejte hi nahi. Qism phir bhi usi se
+     pehchani jati hai (attachment hai), bas bubble "unavailable" dikhata hai. */
+  const assetUrl = chatAssetUrl(row);
+  const rawUrl = path ? resolveMediaUrl(encodePath(path))
+    : (assetUrl || resolveMediaUrl(row.attachmentUrl));
+  const url = BROKEN_MEDIA_RE.test(rawUrl) ? '' : rawUrl;
   /* Qism pehle asli file ke naam se (sab se bharosemand), warna API ke
      attachmentType se — wo "png", "pdf", "image", ya default "dat" ho sakta hai. */
-  const ext = fileExt(path) || String(row.attachmentType || '').toLowerCase().replace(/^\./, '');
-  const kind = attachKind(fileExt(path) || row.attachmentType, url);
+  const nameExt = fileExt(path) || fileExt(assetUrl);
+  const ext = nameExt || String(row.attachmentType || '').toLowerCase().replace(/^\./, '');
+  /* "dat" = backend ne qism kho di. Hamara bheja label ("Voice message" /
+     "Video") phir bhi bata deta hai ke file kya thi. */
+  const typeHint = nameExt || row.attachmentType;
+  const labelKind = { 'voice message': 'voice', 'voice note': 'voice', video: 'video' }[label.toLowerCase()];
+  const kind = (String(typeHint || '').toLowerCase() === 'dat' && labelKind && rawUrl) ? labelKind : attachKind(typeHint, rawUrl);
 
   /* Doc bubble par file ka naam: agar label khud file-naam jaisa hai (mobile
      yehi bhejti hai) to wohi, warna uploaded file ka saaf kiya hua naam. */
@@ -549,11 +599,16 @@ function mapMessage(row, meId) {
   };
 }
 
-/** Do users ke darmiyan poori guftagu (waqt ke hisaab se sorted). */
+/** Do users ke darmiyan poori guftagu — BHEJNE ki tarteeb (message id) se.
+    Waqt par sort NAHI: backend kabhi kabhi createdDateTime 12 ghante aage likh
+    deta hai (live: 946 "Photo" = 18-09 15:18, jab ke us ke BAAD bheja 957 "hi"
+    = 04:45). Waqt se sort karne par 946 hamesha sab se neeche aata tha — lagta
+    tha har naye message ke saath photo bhi ja rahi hai. Id hamesha barhti hai. */
 export async function fetchConversation(meId, otherId, branchId) {
   const res = await fetch(buildUrl(`/get-conversation/${meId}/${otherId}/${branchId}`), { headers: authHeaders() });
   const json = await readJson(res, 'conversation');
-  return (json?.data || []).map(row => mapMessage(row, meId)).sort((a, b) => a.at - b.at);
+  return (json?.data || []).map(row => mapMessage(row, meId))
+    .sort((a, b) => ((Number(a.id) || 0) - (Number(b.id) || 0)) || (a.at - b.at));
 }
 
 /**
@@ -656,61 +711,35 @@ export async function fetchChatUnreadTotal(branchId, meId, empId) {
   return Math.max(apiCount, contactsTotal + Object.values(local).reduce((a, b) => a + b, 0));
 }
 
-/**
- * File ko asli file-host par chadhao aur uska chalne wala rasta lo.
- *   POST /upload-notice-image   (multipart, field ka naam: `file`)
- *   → { success, message, path: "/UploadedImages/homework_<guid>.pdf" }
- * Live tasdeeq: path 200 aur sahi content-type ke saath serve hota hai; PDF
- * bhi qubool hai (jawab ka "Image uploaded successfully" har qism par aata hai).
- */
-async function uploadChatFile(file) {
-  const form = new FormData();
-  /* Backend file ko usi naam se rakhta hai jo hum bhejte hain, is liye naam
-     pehle hi saaf kar dete hain: space aur URL me phansne wale characters
-     underscore me. ("Screenshot 2026-07-23 151237.png" jaise naam se URL me
-     space aa jata tha.) Extension jyun ki tyun rehti hai. */
-  const safeName = String(file.name || 'attachment')
+/* File ka naam saaf karo — space aur URL me phansne wale characters underscore
+   me ("Screenshot 2026-07-23 151237.png" jaise naam se URL me space aa jata
+   tha). Extension jyun ki tyun rehti hai. */
+function safeFileName(file) {
+  const safe = String(file.name || 'attachment')
     .replace(/[^\w.-]+/g, '_')
     .replace(/_+/g, '_')
     .replace(/^_|_(?=\.)/g, '');
-  form.append('file', file, safeName || 'attachment');
-  const res = await fetch(buildUrl('/upload-notice-image'), {
-    method: 'POST',
-    headers: authHeaders(),
-    body: form,
-  });
-  const json = await res.json().catch(() => null);
-  const path = json?.path || json?.Path || json?.data?.path;
-  if (!res.ok || !path) {
-    throw new Error((json && (json.message || json.Message)) || 'File could not be uploaded');
-  }
-  return String(path);
+  return safe || 'attachment';
 }
 
 /**
- * Message bhejo.
- *
- * File ke saath DO call hoti hain, aur ye majboori hai: post-chat-message akela
- * bhi row bana deta hai, magar us row ka attachmentUrl (…/ChatAttachments/{id})
- * 404 hai — file kabhi wapas nahi milti. Is liye pehle file ko
- * /upload-notice-image par chadhate hain aur uska `/UploadedImages/…` rasta
- * MESSAGE ke andar likh dete hain ("label /UploadedImages/x.png"). Padhne wala
- * (ERP ho ya mobile app) wahin se file uthata hai.
+ * Message bhejo — text ho ya file (image / video / voice / document), sirf EK
+ * call: POST /post-chat-message (multipart). File `Attachment` me aur uski
+ * qism `AttachmentType` me jati hai; backend file khud rakhta hai aur row ka
+ * `attachmentUrl` bharta hai. (Pehle file alag se /upload-notice-image par
+ * chadhai jati thi — wo ab nahi hota.)
  */
 export async function postChatMessage({ fromUserId, toUserId, branchId, message = '', file = null }) {
   let text = String(message || '').trim();
 
-  if (file) {
-    const path = await uploadChatFile(file);
-    /* Message = "label rasta". Label user ka caption hai; na ho to mobile app
-       jaisa aam naam ("Photo" / "Video" / "Voice message"), aur document par
-       file ka apna naam — kyunki doc bubble wahi naam dikhata hai. */
-    const kind = attachKind(fileExt(file), path);
-    const fallbackLabel = kind === 'image' ? 'Photo'
+  if (file && !text) {
+    /* Message khaali na jaye: mobile app jaisa aam label ("Photo" / "Video" /
+       "Voice message"), aur document par file ka apna naam. */
+    const kind = fileKind(file);
+    text = kind === 'image' ? 'Photo'
       : kind === 'video' ? 'Video'
       : kind === 'voice' ? 'Voice message'
       : (file.name || 'Attachment');
-    text = `${text || fallbackLabel} ${path}`.trim();
   }
 
   const form = new FormData();
@@ -723,7 +752,7 @@ export async function postChatMessage({ fromUserId, toUserId, branchId, message 
      (messages 880/885), jab ke Swagger se bheji rows me "text" (879/884). */
   if (file) {
     form.append('AttachmentType', attachmentTypeFor(file));
-    form.append('Attachment', file, file.name);
+    form.append('Attachment', file, safeFileName(file));
   } else {
     form.append('AttachmentType', 'text');
     form.append('Attachment', '');
