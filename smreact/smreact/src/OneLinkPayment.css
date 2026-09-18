@@ -13,15 +13,14 @@
   --olp-radius-md: 10px;
   --olp-radius-xl: 20px;
   --olp-radius-full: 9999px;
-  --olp-font-display: "Instrument Serif", serif;
-  --olp-font-body: "Plus Jakarta Sans", sans-serif;
+  --olp-font: 'Plus Jakarta Sans', var(--font-body, system-ui), -apple-system, Segoe UI, sans-serif;
 
   min-height: 100vh;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 28px 16px;
-  font-family: var(--olp-font-body);
+  font-family: var(--olp-font);
   color: var(--olp-text);
   -webkit-font-smoothing: antialiased;
   background:
@@ -67,9 +66,9 @@
 }
 
 .olp-head h1 {
-  font-family: var(--olp-font-display);
-  font-size: 26px;
-  font-weight: 400;
+  font-family: var(--olp-font);
+  font-size: 22px;
+  font-weight: 800;
   line-height: 1.25;
   letter-spacing: -.02em;
   margin: 0;
@@ -112,8 +111,8 @@
   border: 1.5px solid var(--olp-border);
   border-radius: var(--olp-radius-md);
   background: #fff;
-  font-family: inherit;
-  font-size: 14px;
+  font-family: var(--olp-font);
+  font-size: 13px;
   font-weight: 600;
   color: var(--olp-text);
   outline: none;
@@ -137,9 +136,9 @@
   border-radius: var(--olp-radius-full);
   background: linear-gradient(135deg, #1E3A8A 0%, #1E40AF 55%, #2563EB 100%);
   color: #fff;
-  font-family: inherit;
-  font-size: 14px;
-  font-weight: 800;
+  font-family: var(--olp-font);
+  font-size: 13px;
+  font-weight: 700;
   letter-spacing: .02em;
   cursor: pointer;
   box-shadow: 0 6px 18px rgba(30, 58, 138, .32);
@@ -205,6 +204,7 @@
   border: 1px solid #FECACA;
   border-left: 3px solid #DC2626;
   box-shadow: 0 8px 24px rgba(0, 0, 0, .15);
+  font-family: var(--olp-font);
   font-size: 13px;
   font-weight: 700;
   color: #DC2626;
