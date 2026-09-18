@@ -1,0 +1,125 @@
+/* ── ERP design-system fonts (Plus Jakarta Sans + Instrument Serif) ── */
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Instrument+Serif:ital@0;1&display=swap');
+
+body {
+  margin: 0;
+  font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI',
+    'Roboto', 'Helvetica Neue', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: var(--sm-bg);
+  color: var(--sm-text);
+}
+
+code {
+  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
+    monospace;
+}
+
+/* ── Theme design tokens ───────────────────────────────────────────
+   Single source of truth for colors. Components and the App.js `T`
+   palette reference these --sm-* variables, so flipping data-theme
+   re-themes the whole site with one curated, consistent palette.
+
+   Palette + shape + type are matched to the School Mentor ERP design
+   system: a navy → blue brand family (#1D4ED8 → #3B82F6), soft blue
+   surfaces, blue-tinted shadows, and the ERP radius scale. */
+:root,
+html[data-theme="light"] {
+  /* ── "Less is more" enterprise system (site-wide). Exact 3 colors:
+        Primary Blue #2563EB · Dark Text #111827 · Light BG #F8FAFC.
+        Neutrals: white + light gray #E5E7EB. One accent = the same blue. ── */
+  --sm-navy: #2563EB;          /* primary brand blue (exact spec) */
+  --sm-navy-dark: #1D4ED8;     /* pressed / hover blue            */
+  --sm-teal: #2563EB;          /* interactive == primary (single blue) */
+  --sm-teal-dark: #1D4ED8;
+  --sm-teal-light: #EFF4FF;    /* light blue tint for icon chips  */
+  --sm-accent: #2563EB;        /* collapse extra accents to one blue */
+  --sm-accent-soft: #EFF4FF;
+  --sm-gold: #B8860B;          /* warm accent — Pricing "Premium" only */
+  --sm-green: #16A34A;         /* success / WhatsApp family       */
+  --sm-amber: #D97706;
+  --sm-red: #DC2626;
+
+  --sm-bg: #F8FAFC;            /* light section background         */
+  --sm-surface: #FFFFFF;       /* white cards / white sections     */
+  --sm-surface-alt: #F8FAFC;   /* light gray section               */
+  --sm-border: #E5E7EB;        /* single hairline border (exact spec) */
+  --sm-gray300: #D1D5DB;       /* secondary borders               */
+  --sm-text: #111827;          /* dark text (exact spec)          */
+  --sm-text-soft: #374151;     /* body copy                       */
+  --sm-text-muted: #6B7280;    /* secondary text                  */
+
+  --sm-hover: #F3F4F6;         /* subtle hover surface            */
+  --sm-navy-tint: #EFF4FF;     /* active/selected brand tint      */
+  --sm-shadow: rgba(17,24,39,0.06); /* very soft neutral shadow   */
+  --sm-os-band: #FFFFFF;       /* OS section outer band           */
+
+  /* Stats-strip tokens — light scheme with dark numbers, site-wide */
+  --sm-stats-bg: #F8FAFC;
+  --sm-stats-fg: #111827;
+  --sm-stats-fg-soft: #4B5563;
+  --sm-stats-fg-mute: #9CA3AF;
+  --sm-stats-chip: #EFF4FF;
+  --sm-stats-accent: #2563EB;
+  --sm-stats-line: #E5E7EB;
+
+  /* The one retained blue band (CTA) — clean, flat, no gradient */
+  --sm-cta-grad: #2563EB;
+
+  /* Shape + type tokens (ERP) */
+  --sm-font-body: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --sm-font-display: 'Instrument Serif', Georgia, 'Times New Roman', serif;
+  --sm-radius-sm: 6px;
+  --sm-radius-md: 10px;
+  --sm-radius-lg: 14px;
+  --sm-radius-xl: 20px;
+  --sm-radius-full: 9999px;
+}
+
+/* ERP dark palette — deep navy base (#080D1A), elevated card surfaces,
+   brightened blue accents for AA contrast on dark. */
+html[data-theme="dark"] {
+  --sm-navy: #60A5FA;          /* brand primary (bright blue) */
+  --sm-navy-dark: #3B82F6;
+  --sm-teal: #60A5FA;
+  --sm-teal-dark: #3B82F6;
+  --sm-teal-light: rgba(37,99,235,0.18);
+  --sm-accent: #60A5FA;        /* single accent (blue) */
+  --sm-accent-soft: rgba(37,99,235,0.18);
+  --sm-gold: #D4A53A;
+  --sm-green: #4ADE80;
+  --sm-amber: #FBBF24;
+  --sm-red: #F87171;
+
+  --sm-bg: #0B1120;            /* deep slate page background  */
+  --sm-surface: #0F172A;       /* dark card surface           */
+  --sm-surface-alt: #111A2E;   /* dark muted section          */
+  --sm-border: #1E293B;        /* dark hairline border        */
+  --sm-gray300: #334155;
+  --sm-text: #F1F5F9;
+  --sm-text-soft: #CBD5E1;
+  --sm-text-muted: #94A3B8;
+
+  --sm-hover: #16213A;
+  --sm-navy-tint: rgba(37,99,235,0.18);
+  --sm-shadow: rgba(0,0,0,0.5);
+  --sm-os-band: #0B1120;
+
+  --sm-stats-bg: #0F172A;
+  --sm-stats-fg: #F1F5F9;
+  --sm-stats-fg-soft: #CBD5E1;
+  --sm-stats-fg-mute: #64748B;
+  --sm-stats-chip: rgba(37,99,235,0.18);
+  --sm-stats-accent: #60A5FA;
+  --sm-stats-line: #1E293B;
+
+  --sm-cta-grad: #1D4ED8;
+
+  color-scheme: dark;
+}
+
+html[data-theme="dark"] body {
+  background: var(--sm-bg);
+  color: var(--sm-text);
+}
