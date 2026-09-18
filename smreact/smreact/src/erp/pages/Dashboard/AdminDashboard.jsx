@@ -16,6 +16,7 @@ import * as feeService from '../../services/feeService';
 import * as dashboardService from '../../services/dashboardService';
 import * as accountsService from '../../services/accountsService';
 import * as attendanceService from '../../services/attendanceService';
+import * as notificationService from '../../services/notificationService';
 import {
   MODULE_COLOR,
 } from './dashboardData';
@@ -157,6 +158,73 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
      null = loading; fail hone par {} taake koi section crash na ho. */
   const [dash, setDash] = useState(null);
   const [dashErr, setDashErr] = useState(false);
+
+  // School Mentor user notifications (read/unread)
+  const [userNotifications, setUserNotifications] = useState([]);
+  const [notificationUnreadCount, setNotificationUnreadCount] = useState(0);
+
+  const getCurrentLoginUserId = () => {
+    if (typeof sessionStorage === 'undefined') return 0;
+    return Number(sessionStorage.getItem('UserID') || 0);
+  };
+
+  const loadUserNotifications = async () => {
+    const loginUserId = getCurrentLoginUserId();
+
+    if (!loginUserId) {
+      setUserNotifications([]);
+      setNotificationUnreadCount(0);
+      return;
+    }
+
+    try {
+      const res = await notificationService.getUserNotifications(loginUserId);
+
+      if (!res?.success) {
+        setUserNotifications([]);
+        setNotificationUnreadCount(0);
+        return;
+      }
+
+ const formatted = (Array.isArray(res.data) ? res.data : []).map((n) => ({
+    id: n.notificationID ?? n.id,
+    recipientID: n.recipientID,
+    recipientId: n.recipientID,
+        title: n.title || n.subject || 'Announcement',
+        preview: n.message || n.description || '',
+        description: n.message || n.description || '',
+        sender: n.senderName || 'School Mentor — HQ',
+        category: n.notificationType || n.category || 'General',
+        date: n.createdAt
+          ? new Date(n.createdAt).toLocaleDateString('en-PK', {
+              day: 'numeric',
+              month: 'short',
+              year: 'numeric',
+            })
+          : '',
+        time: n.createdAt
+          ? new Date(n.createdAt).toLocaleTimeString('en-PK', {
+              hour: 'numeric',
+              minute: '2-digit',
+            })
+          : '',
+        status: n.isRead ? '' : 'new',
+        raw: n,
+      }));
+
+      setUserNotifications(formatted);
+      setNotificationUnreadCount(
+        Number.isFinite(Number(res.unreadCount))
+          ? Number(res.unreadCount)
+          : formatted.filter((n) => n.status === 'new').length
+      );
+    } catch (e) {
+      console.error('Notification loading error:', e);
+      setUserNotifications([]);
+      setNotificationUnreadCount(0);
+    }
+  };
+
   useEffect(() => {
     let alive = true;
     const { month, year } = dashboardService.currentMonthYear();
@@ -165,6 +233,10 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
       .catch(() => { if (alive) { setDash({}); setDashErr(true); } });
     return () => { alive = false; };
   }, []);
+
+  useEffect(() => {
+    loadUserNotifications();
+  }, [user?.id, session?.id]);
 
   /* Safe accessors — har section 0/[] fallback ke sath real data padhta hai. */
   const D   = dash || {};
@@ -301,10 +373,11 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
   ].filter(Boolean);
 
   /* Announcements — API array khaali hai to empty-state; pill sirf 'new' par. */
-  const latestAnnouncement = announcements[0] || null;
-  const newAnnouncementCount = announcements.filter(a => a.status === 'new').length;
+const latestAnnouncement = userNotifications[0] || null;
 
-  /* Greeting */
+const newAnnouncementCount = userNotifications.filter(
+   n => n.status === "new"
+).length; /* Greeting */
   const hour = new Date().getHours();
   const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
   const todayLabel = new Date().toLocaleDateString('en-PK', { weekday: 'long', day: 'numeric', month: 'long' });
@@ -535,10 +608,43 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
 
       {/* ─── Modals (rendered on demand) ─── */}
       {showAnnouncements && (
-        <AnnouncementsModal
-          announcements={announcements}
+<AnnouncementsModal
+  announcements={userNotifications}
+          unreadCount={notificationUnreadCount}
           onClose={() => setShowAnnouncements(false)}
           toast={toast}
+         onMarkRead={(recipientId) => {
+
+  const loginUserId = Number(
+    sessionStorage.getItem("UserID") || 0
+  );
+
+  return notificationService
+    .markNotificationRead(loginUserId, recipientId)
+    .then(() => {
+
+      // Update UI instantly
+   setUserNotifications(prev =>
+  prev.map(item =>
+    item.recipientID === recipientId
+      ? {
+          ...item,
+          status: "",
+          isRead: true
+        }
+      : item
+  )
+);
+
+    });
+
+}}
+          onMarkAllRead={async () => {
+            const loginUserId = getCurrentLoginUserId();
+            if (!loginUserId) return;
+            await notificationService.markAllNotificationsRead(loginUserId);
+            await loadUserNotifications();
+          }}
         />
       )}
       {showReport && (
@@ -1003,25 +1109,32 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
               </div>
             </div>
 
-            <div className="adm-side-card">
-              <div className="adm-side-title">Subject-wise Completion</div>
-              <div className="adm-bars">
-                {lpData.length === 0 && (
-                  <div className="adm-bar-row"><div className="adm-bar-lbl">No lesson plan data yet</div></div>
-                )}
-                {lpData.map(d => {
-                  const pct = lpMaxCw > 0 ? ((Number(d.ClassworkCount) || 0) / lpMaxCw) * 100 : 0;
-                  return (
-                    <div key={d.SubjectName} className="adm-bar-row">
-                      <div className="adm-bar-lbl">{d.SubjectName}</div>
-                      <div className="adm-bar-track">
-                        <div className="adm-bar-fill" style={{ width: `${pct}%` }} />
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
+           <div className="adm-side-card">
+  <div className="adm-side-title">Subject-wise Completion</div>
+
+  <div className="adm-bars subject-completion-scroll">
+    {lpData.length === 0 && (
+      <div className="adm-bar-row">
+        <div className="adm-bar-lbl">No lesson plan data yet</div>
+      </div>
+    )}
+
+    {lpData.map((d, index) => {
+      const pct = lpMaxCw > 0 
+        ? ((Number(d.ClassworkCount) || 0) / lpMaxCw) * 100 
+        : 0;
+
+      return (
+        <div key={`${d.SubjectName}-${index}`} className="adm-bar-row">
+          <div className="adm-bar-lbl">{d.SubjectName}</div>
+          <div className="adm-bar-track">
+            <div className="adm-bar-fill" style={{ width: `${pct}%` }} />
+          </div>
+        </div>
+      );
+    })}
+  </div>
+</div>
           </div>
         </div>
       )}
@@ -1048,8 +1161,8 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
                 <tbody>
                   {paperData.length === 0 ? (
                     <tr><td colSpan={2}>No question papers generated yet</td></tr>
-                  ) : paperData.map(p => (
-                    <tr key={p.SubjectName}>
+                  ) : paperData.map((p, index) => (
+                    <tr key={`${p.SubjectName}-${index}`}>
                       <td><b>{p.SubjectName}</b></td>
                       <td>{p.TotalGenerated} Question Papers</td>
                     </tr>
@@ -3025,5 +3138,19 @@ export const ADM_NEW_CSS = `
   .att-pct { font-size: 22px; }
   .adm-card-h-t { font-size: 12.5px; }
   .adm-bday-card { padding: 8px 10px; }
+}
+  .subject-completion-scroll {
+  max-height: 230px;
+  overflow-y: auto;
+  padding-right: 8px;
+}
+
+.subject-completion-scroll::-webkit-scrollbar {
+  width: 5px;
+}
+
+.subject-completion-scroll::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 10px;
 }
 `;
