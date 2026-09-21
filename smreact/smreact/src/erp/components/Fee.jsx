@@ -2428,15 +2428,15 @@ function FeeChallansList({ toast }) {
         return;
       }
 
-      const byStudentId = new Map();
-      Object.entries(studentsMap || {}).forEach(([ck, studs]) => {
-        (studs || []).forEach(s => {
-          byStudentId.set(String(s.studentID), { classKey: ck, student: s });
-          if (s.applicantsID != null) {
-            byStudentId.set(String(s.applicantsID), { classKey: ck, student: s });
-          }
-        });
-      });
+      /* Reliable name resolution — load the FULL branch roster once and build
+         lookup maps (class/section names by id; students by studentID,
+         applicantsID and registrationNumber). This does not depend on which
+         classes the user expanded and is not limited to active students, so
+         every generated challan resolves its class/section/student names. */
+      let classNameById = {}, sectionNameById = {}, studentById = {};
+      try {
+        ({ classNameById, sectionNameById, studentById } = await feeService.getBranchRosterMaps());
+      } catch (e) { /* roster optional — falls back to component classes / challan fields */ }
       const classByKey = new Map((classes || []).map(c => [c.key, c]));
 
       /* Payable ke liye live previous (byHead) — list jaisa. */
@@ -2455,25 +2455,56 @@ function FeeChallansList({ toast }) {
       const rows = [];
       challanRows.forEach(ch => {
         const rec = feeService.withPersistedGiveDisc(ch);
-        const loc = byStudentId.get(String(ch.studentID))
-          || byStudentId.get(String(ch.applicantsID || ''))
+
+        /* Resolve the student from the roster maps — match on studentID, then
+           applicantsID, then registrationNumber (challans may reference any). */
+        const resolved = studentById[String(ch.studentID)]
+          || studentById[String(ch.applicantsID ?? '')]
+          || studentById[String(ch.registrationNumber ?? ch.regNo ?? '')]
           || null;
-        const classKey = loc
-          ? loc.classKey
-          : `g${ch.gradeID}-s${ch.sectionID}`;
-        const c = classByKey.get(classKey) || {
+
+        const classKey = `g${ch.gradeID}-s${ch.sectionID}`;
+        const fromClasses = classByKey.get(classKey);
+        const c = {
           key: classKey,
-          cls: ch.gradeName || ch.className || ch.class || `Class ${ch.gradeID || ''}`,
-          sec: ch.sectionName || ch.section || String(ch.sectionID || '—'),
+          cls: classNameById[String(ch.gradeID)]
+            || fromClasses?.cls
+            || ch.gradeName || ch.className || ch.class || `Class ${ch.gradeID || ''}`,
+          sec: sectionNameById[String(ch.sectionID)]
+            || fromClasses?.sec
+            || ch.sectionName || ch.section || String(ch.sectionID || '—'),
         };
-        const s = loc?.student || {
+        const s = {
           studentID: ch.studentID,
           applicantsID: ch.applicantsID,
-          reg: String(ch.registrationNumber || ch.regNo || ''),
-          name: ch.studentName || ch.name || '—',
-          father: ch.fatherName || ch.father || '—',
-          phone: ch.phone || ch.mobile || ch.contactNumber || '',
+          reg: String(resolved?.reg || ch.registrationNumber || ch.regNo || ''),
+          name: resolved?.name || ch.studentName || ch.name || '—',
+          father: resolved?.father || ch.fatherName || ch.father || '—',
+          /* Contact from the roster (studentPhone() reads s.phone); fall back to
+             any phone on the challan record, else studentPhone() prints '—'. */
+          phone: resolved?.phone || ch.phone || ch.mobile || ch.contactNumber || '',
+          /* Address from the branch roster; '—' when the endpoint has none. */
+          address: resolved?.address || ch.address || '',
         };
+
+        /* Per-head net (challanAmount − discount) from the challan's own
+           detailRows — same source the printed challan/slip uses. Previous/
+           pending/arrear rows are folded into a single "Arrears" bucket; every
+           other head keeps its subHead name. The builder discovers the dynamic
+           head columns from the union of these keys, so it stays a pure
+           formatter. */
+        const isPrevDetail = (r) => /previous|pending|arrear/i.test(String(r.subHead || r.head || ''));
+        const headAmounts = {};
+        let arrears = 0;
+        (rec.detailRows || []).forEach(r => {
+          const name = String(r.subHead || r.head || '').trim();
+          if (!name) return;
+          const net = (Number(r.challanAmount) || 0) - (Number(r.discount) || 0);
+          if (isPrevDetail(r)) { arrears += net; return; }
+          headAmounts[name] = (headAmounts[name] || 0) + net;
+        });
+        s.headAmounts = headAmounts;
+        s.arrears = arrears;
 
         const p = prevOut[String(s.studentID)]
           || prevOut[String(ch.studentID)]
@@ -5150,6 +5181,7 @@ function FeeSlipModal({ cfg, onClose, toast }) {
     if (!w) { toast('Please allow pop-ups to download the slip', 'error'); return; }
     const slipHtml = `
       <div class="fee-slip-doc fee-slip-${size}">
+        <span class="fee-slip-paid-stamp">Paid</span>
         <div class="fee-slip-brandhead">
           <div class="fee-slip-brand">
             <div class="fee-slip-logo">${feeReportLogoHtml(sch)}</div>
@@ -5190,8 +5222,10 @@ function FeeSlipModal({ cfg, onClose, toast }) {
 <style>
   html,body,* { -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important; color-adjust:exact !important; }
   body { margin:0; font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif; background:#F1F3F8; padding:18px; }
-  .fee-slip-doc { background:#fff; color:#111; border:1px solid #ddd; border-radius:12px; padding:20px; max-width:420px; margin:0 auto; }
+  .fee-slip-doc { position:relative; background:#fff; color:#111; border:1px solid #ddd; border-radius:12px; padding:20px; max-width:420px; margin:0 auto; }
   .fee-slip-doc.fee-slip-small { max-width:302px; padding:14px 12px; font-size:11px; }
+  .fee-slip-paid-stamp { position:absolute; top:14px; right:16px; border:3px double #16A34A; color:#16A34A; font-size:15px; font-weight:900; letter-spacing:2px; padding:4px 10px; border-radius:6px; transform:rotate(-12deg); opacity:.85; text-transform:uppercase; }
+  .fee-slip-doc.fee-slip-small .fee-slip-paid-stamp { font-size:11px; padding:3px 7px; top:8px; right:8px; letter-spacing:1px; border-width:2px; }
   .fee-slip-brandhead { display:flex; justify-content:space-between; align-items:flex-start; gap:10px; border-bottom:1.5px solid #111; padding-bottom:10px; margin-bottom:12px; }
   .fee-slip-brand { display:flex; align-items:center; gap:10px; text-align:left; }
   .fee-slip-logo { width:38px; height:38px; border:1px solid #ddd; border-radius:10px; display:flex; align-items:center; justify-content:center; overflow:hidden; color:#1E3A8A; font-weight:800; background:#fff; flex-shrink:0; }
@@ -5284,6 +5318,7 @@ function FeeSlipModal({ cfg, onClose, toast }) {
 
           <div className="fee-dl-label" style={{ marginTop: 16 }}>Preview</div>
           <div className={`fee-slip-doc fee-slip-${size}`}>
+            <span className="fee-slip-paid-stamp">Paid</span>
             <div className="fee-slip-brandhead">
               <div className="fee-slip-brand">
                 <div className="fee-slip-logo">
@@ -12146,17 +12181,42 @@ function buildGeneratedChallansWorkbook({ rows, monthIdx, appliedMonth, appliedY
   wb.created = new Date();
   const ws = wb.addWorksheet('Generated Challans');
 
-  const cols = [
+  /* ── Discover the dynamic fee-head columns from the actual challan data ──
+     Each row carries s.headAmounts (per-head net = challanAmount − discount,
+     built from the challan's detailRows in the handler) and s.arrears (the
+     folded previous/pending/arrear bucket). Head columns = the union of head
+     names across every exported challan, in first-seen order; an "Arrears"
+     column is appended only when at least one challan carries a prev/arrears
+     amount. */
+  const headNamesOrder = [];
+  const headNamesSeen = new Set();
+  rows.forEach(({ s }) => {
+    Object.keys(s.headAmounts || {}).forEach(name => {
+      if (!headNamesSeen.has(name)) { headNamesSeen.add(name); headNamesOrder.push(name); }
+    });
+  });
+  const anyArrears = rows.some(({ s }) => Math.abs(Number(s.arrears) || 0) > 0);
+  const dynamicHeadCols = [...headNamesOrder, ...(anyArrears ? ['Arrears'] : [])];
+
+  const fixedCols = [
     { header: 'Sr. No',                  width: 8  },
     { header: 'Class',                   width: 16 },
     { header: 'Section',                 width: 12 },
+    { header: 'Admission No.',           width: 16 },
     { header: 'Student Name',            width: 24 },
     { header: 'Father Name / Guardian',  width: 24 },
+    { header: 'Address',                 width: 26 },
     { header: 'Contact Number',          width: 16 },
     { header: 'Challan Generation Date', width: 20 },
     { header: 'Due Date',                width: 16 },
-    { header: 'Total Payable Amount',    width: 20 },
   ];
+  const cols = [
+    ...fixedCols,
+    ...dynamicHeadCols.map(name => ({ header: name, width: Math.max(14, Math.min(22, name.length + 4)) })),
+    { header: 'Total Payable Amount', width: 20 },
+  ];
+  const FIXED_N = fixedCols.length;
+  const TOTAL_CI = cols.length;
   ws.columns = cols.map(cc => ({ width: cc.width }));
 
   ws.mergeCells(1, 1, 1, cols.length);
@@ -12180,29 +12240,50 @@ function buildGeneratedChallansWorkbook({ rows, monthIdx, appliedMonth, appliedY
     cell.value = cc.header;
     cell.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 10 };
     cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A8A' } };
-    cell.alignment = { horizontal: 'center', vertical: 'middle' };
+    cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
   });
-  headerRow.height = 22;
+  headerRow.height = 30;
 
   const fallbackGen = `${appliedYear}-${String(monthIdx + 1).padStart(2, '0')}-01`;
   const fallbackDue = `${appliedYear}-${String(monthIdx + 1).padStart(2, '0')}-14`;
+
+  /* Per-head cell value for a row: the head's net challan amount, or the folded
+     Arrears bucket. Total stays the ERP's payable (prev dues/advance/paid
+     aware) — deliberately NOT a naive sum of the head columns. */
+  const headCellAmount = (s, headName) =>
+    headName === 'Arrears'
+      ? (Number(s.arrears) || 0)
+      : (Number((s.headAmounts || {})[headName]) || 0);
 
   rows.forEach(({ c, s, payable, genISO, dueISO }, i) => {
     const row = ws.getRow(4 + i);
     row.getCell(1).value = i + 1;
     row.getCell(2).value = c.cls;
     row.getCell(3).value = c.sec;
-    row.getCell(4).value = s.name;
-    row.getCell(5).value = s.father || '—';
-    row.getCell(6).value = studentPhone(s);
-    row.getCell(7).value = fmtGenChallanDate(genISO || fallbackGen);
-    row.getCell(8).value = fmtGenChallanDate(dueISO || fallbackDue);
-    row.getCell(9).value = Number(payable) || 0;
-    row.getCell(9).numFmt = '"Rs. "#,##0';
+    row.getCell(4).value = s.reg || '—';
+    row.getCell(5).value = s.name;
+    row.getCell(6).value = s.father || '—';
+    row.getCell(7).value = s.address || '—';
+    row.getCell(8).value = studentPhone(s);
+    row.getCell(9).value = fmtGenChallanDate(genISO || fallbackGen);
+    row.getCell(10).value = fmtGenChallanDate(dueISO || fallbackDue);
+
+    dynamicHeadCols.forEach((headName, hi) => {
+      const cell = row.getCell(FIXED_N + 1 + hi);
+      cell.value = headCellAmount(s, headName);
+      cell.numFmt = '"Rs. "#,##0';
+      cell.alignment = { horizontal: 'right' };
+    });
+
+    const totalCell = row.getCell(TOTAL_CI);
+    totalCell.value = Number(payable) || 0;
+    totalCell.numFmt = '"Rs. "#,##0';
+    totalCell.font = { bold: true };
+    totalCell.alignment = { horizontal: 'right' };
+
     for (let ci = 1; ci <= cols.length; ci++) {
       const cell = row.getCell(ci);
       if (ci === 1 || ci === 3) cell.alignment = { horizontal: 'center' };
-      if (ci === 9) cell.alignment = { horizontal: 'right' };
       cell.border = {
         top: { style: 'thin', color: { argb: 'FFE2E8F0' } }, left: { style: 'thin', color: { argb: 'FFE2E8F0' } },
         bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } }, right: { style: 'thin', color: { argb: 'FFE2E8F0' } },
@@ -17077,6 +17158,7 @@ const FEE_CSS = `
 
 /* ─── Slip Modal preview ─── */
 .fee-slip-doc {
+  position: relative;
   background: #fff;
   color: #111;
   border: 1px solid #ddd;
@@ -17096,6 +17178,8 @@ const FEE_CSS = `
 .fee-slip-addr { font-size: 10.5px; color: #666; margin-top: 2px; }
 .fee-slip-school { font-size: 16px; font-weight: 800; color: #111; }
 .fee-slip-tag { font-size: 11px; color: #555; letter-spacing: 1px; text-transform: uppercase; margin-top: 3px; }
+.fee-slip-paid-stamp { position: absolute; top: 14px; right: 16px; border: 3px double #16A34A; color: #16A34A; font-size: 15px; font-weight: 900; letter-spacing: 2px; padding: 4px 10px; border-radius: 6px; transform: rotate(-12deg); opacity: .85; text-transform: uppercase; }
+.fee-slip-doc.fee-slip-small .fee-slip-paid-stamp { font-size: 11px; padding: 3px 7px; top: 8px; right: 8px; letter-spacing: 1px; border-width: 2px; }
 .fee-slip-kv {
   display: grid;
   grid-template-columns: auto 1fr;

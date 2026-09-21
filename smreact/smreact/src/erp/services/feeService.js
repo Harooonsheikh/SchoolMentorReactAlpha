@@ -1324,6 +1324,76 @@ export async function getMonthChallans(month, year) {
   return promise;
 }
 
+/* Full-branch resolution maps for reports/exports (e.g. the Generated Fee
+   Challans Excel). Loads the whole class→section→student tree once from the
+   same LaunchSetup roster endpoint and returns lookup maps that do NOT depend
+   on what the UI has loaded/expanded, and are NOT limited to active students
+   (a challan can belong to a since-deactivated student). Students are indexed
+   by studentID, applicantsID AND registrationNumber, because a challan may
+   reference any of them. Values carry name / father / phone / reg. */
+export async function getBranchRosterMaps() {
+  const branchID = Number(sessionStorage.getItem('branchID')) || 1;
+  const res = await fetch(
+    buildUrl(`/api/LaunchSetup/get-class-section-studentlist-by-branch/${branchID}`),
+    { headers: { Accept: '*/*' } },
+  );
+  const json = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(apiMessage(json) || 'Could not load class students');
+
+  const grades = Array.isArray(json?.data) ? json.data : [];
+  const classNameById = {};
+  const sectionNameById = {};
+  const studentById = {};
+
+  /* studentID keys win over applicantsID/reg keys (studentID is put first and
+     an existing key is never overwritten), so a collision between one student's
+     applicantsID and another's studentID keeps the real studentID mapping. */
+  const put = (key, val) => {
+    const k = String(key ?? '').trim();
+    if (k && k !== '0' && !(k in studentById)) studentById[k] = val;
+  };
+
+  grades.forEach(g => {
+    const gradeId = pick(g, 'id', 'gradeID', 'gradeId', 'classID') || 0;
+    const cls = pick(g, 'name', 'gradeName', 'className') || '';
+    if (gradeId) classNameById[String(gradeId)] = cls;
+
+    (Array.isArray(g.sections) ? g.sections : []).forEach(s => {
+      const sectionId = pick(s, 'sectionID', 'id', 'sectionId') || 0;
+      const sec = pick(s, 'sectionName', 'name') || '';
+      if (sectionId) sectionNameById[String(sectionId)] = sec;
+
+      (Array.isArray(s.students) ? s.students : []).forEach(st => {
+        const studentID = pick(st, 'id', 'studentID', 'studentId') || 0;
+        const applicantsID = Number(pick(st, 'applicantsID', 'applicantID', 'applicantId')) || 0;
+        const reg = String(
+          pick(st, 'registerNo', 'regNo', 'registrationNo', 'registrationNumber', 'admissionNo', 'previousAdmissionNo') || ''
+        ).trim();
+        const first = pick(st, 'firstName', 'name', 'studentName');
+        const last = pick(st, 'lastName');
+        const name = [first, last].filter(Boolean).join(' ').trim() || '';
+        const father = pick(st, 'fatherName', 'guardianName') || '';
+        const phone = String(
+          pick(st, 'mobileNo', 'mobile', 'phone', 'contactNumber', 'contactNo', 'guardianContact', 'fatherMobile', 'parentMobile') || ''
+        ).trim();
+        /* Address is on this SAME endpoint under postalAddress / permanentAddesss
+           (note the typo'd triple-s field the backend actually sends) — the same
+           fields studentService.mapStudent() reads. These were missing before, so
+           the export's Address column came out blank. */
+        const address = String(
+          pick(st, 'postalAddress', 'permanentAddesss', 'permanentAddress', 'address', 'homeAddress', 'residentialAddress', 'currentAddress', 'presentAddress', 'studentAddress', 'fullAddress') || ''
+        ).trim();
+        const val = { name, father, phone, address, reg, studentID, applicantsID };
+        put(studentID, val);
+        put(applicantsID, val);
+        if (reg) put(reg, val);
+      });
+    });
+  });
+
+  return { classNameById, sectionNameById, studentById };
+}
+
 /* One student's challans for a branch/month/year. */
 export async function getStudentChallans(studentId, month, year) {
   const branchID = Number(sessionStorage.getItem('branchID')) || 1;
