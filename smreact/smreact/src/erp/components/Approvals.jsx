@@ -8,14 +8,20 @@ import { APPROVAL_ACTION_META } from '../mock/approvals';
    APPROVALS — central review screen for sensitive changes raised
    across Fee, Accounts, Human Resource and Inventory.
 
-   This screen runs on a self-contained mock store
-   (src/erp/mock/approvals.js) + a service layer
-   (src/erp/services/approvalsService.js), mirroring the sibling app —
-   the ERP has no backend Approvals API yet.
+   This app has no real backend/session (see src/services/_http.js's
+   header comment) — every module's write path is a service function
+   that mutates a mock array in place. Approvals reuses that exact
+   convention: one generic ApprovalRequest store
+   (src/mock/approvals.js) + a service layer
+   (src/services/approvalsService.js) whose approveRequest() never
+   applies an arbitrary payload — it looks up a fixed, whitelisted
+   handler per action type and hands it only the payload captured at
+   request-creation time.
 
-   Three views on the same store, gated conceptually by the 'approvals'
-   permission module (pages/UserPermissions/permissionsData.js →
-   MODULE_TREE → 'approvals.my_requests' / 'approvals.review'):
+   Three views on the same store, gated conceptually by the existing
+   'approve' permission action already defined in
+   pages/UserPermissions/permissionsData.js (MODULE_TREE →
+   'approvals.my_requests' / 'approvals.review'):
      - My Requests       — what the current user has raised
      - Pending Approvals — what's waiting on a decision
      - History           — everything already approved/rejected
@@ -43,6 +49,84 @@ function statusBadgeTone(status) {
 
 function initialsOf(name = '') {
   return name.split(' ').filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase() || '?';
+}
+
+/* A payload value counts as a "group" (its own titled sub-card) when it's
+   a plain object, or a "table" (its own titled grid) when it's a non-empty
+   array of plain objects — anything else (string/number/etc.) stays a
+   simple label/value row, exactly as before. This keeps every OTHER
+   action type (Fee Discount, Accounts, HR, Inventory, Students Mark
+   Inactive/Discount) rendering exactly as it always has — their payloads
+   are flat strings, so nothing about them changes — while letting a
+   data-rich payload like Pre-Enrollment Admission's organize its fee
+   breakdown instead of drowning it in one long flat list. */
+const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+const isObjectTable  = (v) => Array.isArray(v) && v.length > 0 && v.every(isPlainObject);
+const isGroupValue   = (v) => isPlainObject(v) || isObjectTable(v);
+
+const GROUP_ICONS = [
+  [/fee|challan|payment|discount|due/i, 'fa-money-bill-wave'],
+  [/parent|guardian|father|mother/i,    'fa-people-roof'],
+  [/student|admission|personal/i,       'fa-user-graduate'],
+  [/academic|class|exam/i,              'fa-book-open-reader'],
+  [/contact|address|email/i,            'fa-address-card'],
+];
+function groupIcon(label = '') {
+  const hit = GROUP_ICONS.find(([re]) => re.test(label));
+  return hit ? hit[1] : 'fa-layer-group';
+}
+
+function ObjectTable({ rows }) {
+  const cols = Object.keys(rows[0]);
+  return (
+    <div className="ap-table-scroll">
+      <table className="ap-mini-table">
+        <thead><tr>{cols.map(c => <th key={c}>{c}</th>)}</tr></thead>
+        <tbody>
+          {rows.map((row, i) => (
+            <tr key={i}>{cols.map(c => <td key={c}>{row[c] ?? '—'}</td>)}</tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/* Renders a group's value one level at a time — a plain object becomes
+   flat label/value rows, EXCEPT any entry that is itself a group value
+   (object/object-array), which becomes its own indented sub-block
+   instead of the old JSON.stringify dump. This lets a payload built for
+   a real mutation (e.g. Mark Inactive's `snapshot`, written verbatim
+   onto the inactive-students list on approval — see
+   studentService.applyApprovedMarkInactive) stay untouched while still
+   rendering any nested shape it happens to carry (like snapshot.dues,
+   itself `{total, heads: [...], ...}`) legibly for the approver. */
+function GroupBody({ value }) {
+  if (isObjectTable(value)) return <ObjectTable rows={value} />;
+  return Object.entries(value).map(([k, v]) => (
+    isGroupValue(v) ? (
+      <div key={k} className="al-subgroup">
+        <div className="al-subgroup-lbl">{k}</div>
+        <GroupBody value={v} />
+      </div>
+    ) : (
+      <div key={k} className="ap-kv"><span>{k}</span><b>{String(v)}</b></div>
+    )
+  ));
+}
+
+function GroupCard({ label, value, tone }) {
+  return (
+    <div className={`al-group-card${tone ? ` al-group-card--${tone}` : ''}`}>
+      <div className="al-group-head">
+        <div className="al-group-ic"><i className={`fa-solid ${groupIcon(label)}`} aria-hidden="true"></i></div>
+        <div className="al-group-title">{label}</div>
+      </div>
+      <div className="al-group-body">
+        <GroupBody value={value} />
+      </div>
+    </div>
+  );
 }
 
 export default function Approvals({ toast = () => {} }) {
@@ -320,6 +404,10 @@ function ApprovalDetailModal({ request, mode, onClose, onDecide }) {
 
   const payloadEntries = Object.entries(request.payload || {});
   const beforeEntries  = request.before ? Object.entries(request.before) : [];
+  const scalarEntries  = payloadEntries.filter(([, v]) => !isGroupValue(v));
+  const groupEntries   = payloadEntries.filter(([, v]) => isGroupValue(v));
+  const beforeScalarEntries = beforeEntries.filter(([, v]) => !isGroupValue(v));
+  const beforeGroupEntries  = beforeEntries.filter(([, v]) => isGroupValue(v));
 
   return createPortal(
     <div className="up-modal-back" onClick={onClose}>
@@ -374,22 +462,29 @@ function ApprovalDetailModal({ request, mode, onClose, onDecide }) {
             </div>
           )}
 
-          {(beforeEntries.length > 0 || payloadEntries.length > 0) && (
+          {(beforeScalarEntries.length > 0 || scalarEntries.length > 0) && (
             <div className="al-detail-row">
-              {beforeEntries.length > 0 && (
+              {beforeScalarEntries.length > 0 && (
                 <div className="al-detail-block before">
                   <div className="al-detail-lbl">Current State</div>
-                  {beforeEntries.map(([k, v]) => (
+                  {beforeScalarEntries.map(([k, v]) => (
                     <div key={k} className="ap-kv"><span>{k}</span><b>{String(v)}</b></div>
                   ))}
                 </div>
               )}
               <div className="al-detail-block after">
                 <div className="al-detail-lbl">{beforeEntries.length ? 'Requested Change' : 'Change Details'}</div>
-                {payloadEntries.map(([k, v]) => (
-                  <div key={k} className="ap-kv"><span>{k}</span><b>{typeof v === 'object' ? JSON.stringify(v) : String(v)}</b></div>
+                {scalarEntries.map(([k, v]) => (
+                  <div key={k} className="ap-kv"><span>{k}</span><b>{String(v)}</b></div>
                 ))}
               </div>
+            </div>
+          )}
+
+          {(beforeGroupEntries.length > 0 || groupEntries.length > 0) && (
+            <div className="al-detail-groups">
+              {beforeGroupEntries.map(([k, v]) => <GroupCard key={`before-${k}`} label={k} value={v} tone="before" />)}
+              {groupEntries.map(([k, v]) => <GroupCard key={`after-${k}`} label={k} value={v} tone={beforeGroupEntries.length ? 'after' : undefined} />)}
             </div>
           )}
 
@@ -649,6 +744,35 @@ const AP_CSS = `
 
 .al-field { display: flex; flex-direction: column; gap: 6px; }
 .al-field > span { font: 700 10.5px/1 var(--ap-font); color: var(--text-muted, #64748B); text-transform: uppercase; letter-spacing: .4px; }
+
+/* ─── Grouped payload sections (structured objects / tables inside a
+   request's payload, e.g. Pre-Enrollment's fee breakdown) ─── */
+.al-detail-groups { display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px; }
+.al-group-card { border: 1px solid var(--border-light, #E2E8F0); border-radius: 10px; overflow: hidden; background: var(--bg-card, #fff); }
+.al-group-head { display: flex; align-items: center; gap: 8px; padding: 9px 12px; background: #F8FAFF; border-bottom: 1px solid var(--border-light, #E2E8F0); }
+.al-group-ic { width: 24px; height: 24px; border-radius: 7px; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #1E3A8A, #2563EB); color: #fff; font-size: 10.5px; }
+.al-group-title { font: 700 11.5px/1 var(--ap-font); color: var(--text-primary); }
+.al-group-body { padding: 10px 12px; }
+.al-group-body > .ap-kv:not(:last-child) { border-bottom: 1px dashed var(--border-light, #E2E8F0); padding-bottom: 6px; margin-bottom: 6px; }
+.al-subgroup { margin: 8px 0; padding-left: 10px; border-left: 2px solid var(--border-light, #DBEAFE); }
+.al-subgroup:first-child { margin-top: 0; }
+.al-subgroup-lbl { font: 700 10px/1 var(--ap-font); color: var(--text-muted, #64748B); text-transform: uppercase; letter-spacing: .4px; margin-bottom: 6px; }
+.al-subgroup .ap-table-scroll { margin: 0; padding: 0; }
+[data-theme="dark"] .al-group-head { background: rgba(96, 165, 250, .05); }
+[data-theme="dark"] .al-group-card { border-color: var(--border-light); }
+.al-group-card--before .al-group-head { background: rgba(220, 38, 38, .05); }
+.al-group-card--before .al-group-ic { background: linear-gradient(135deg, #B91C1C, #DC2626); }
+.al-group-card--after .al-group-head { background: rgba(21, 128, 61, .05); }
+.al-group-card--after .al-group-ic { background: linear-gradient(135deg, #15803D, #16A34A); }
+[data-theme="dark"] .al-group-card--before .al-group-head { background: rgba(248, 113, 113, .07); }
+[data-theme="dark"] .al-group-card--after .al-group-head { background: rgba(74, 222, 128, .07); }
+
+.ap-table-scroll { overflow-x: auto; margin: -10px -12px; padding: 10px 12px; }
+.ap-mini-table { width: 100%; border-collapse: collapse; font: 500 11.5px/1.4 var(--ap-font); }
+.ap-mini-table th { text-align: left; padding: 6px 10px; background: #F1F5F9; color: #475569; font: 700 9.5px/1 var(--ap-font); text-transform: uppercase; letter-spacing: .3px; border-bottom: 1px solid var(--border-light, #E2E8F0); white-space: nowrap; }
+.ap-mini-table td { padding: 7px 10px; border-bottom: 1px solid var(--border-light, #F1F5F9); color: var(--text-primary); white-space: nowrap; }
+.ap-mini-table tr:last-child td { border-bottom: none; }
+[data-theme="dark"] .ap-mini-table th { background: rgba(96, 165, 250, .08); color: var(--text-muted, #94A3B8); }
 
 [data-theme="dark"] .al-table-card, [data-theme="dark"] .ap-approver-chip, [data-theme="dark"] .ap-tab { background: var(--bg-card); border-color: var(--border-light); }
 [data-theme="dark"] .al-count-badge { background: rgba(96, 165, 250, .18); color: #BFDBFE; }

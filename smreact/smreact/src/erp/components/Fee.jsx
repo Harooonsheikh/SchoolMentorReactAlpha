@@ -1,5 +1,6 @@
 import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import ExcelJS from 'exceljs';
 import Tooltip from './Tooltip';
 import TutorialModal from './TutorialModal';
 import * as feeService from '../services/feeService';
@@ -2366,6 +2367,63 @@ function FeeChallansList({ toast }) {
   };
   const isGenerated = (classKey, reg) => !!genSet && genSet.has(keyOf(classKey, reg));
 
+  /* Export Excel — Generated Challans report. Walks every class's full
+     student roster (not the on-screen search results) and keeps only
+     students whose challan is already generated for the applied
+     month/year, i.e. the complete generated-challan dataset per the
+     spec, regardless of what "Search Student" currently filters to.
+     Total Payable / dates come from the real BranchLedger challan record
+     (challanMap) — the same figures the on-screen Total Payable column
+     shows — falling back to 1st / 14th of the month when a challan has
+     no stored generation/due date. */
+  const [exportingExcel, setExportingExcel] = useState(false);
+  const handleExportExcel = async () => {
+    const isoOrNull = (v) => {
+      const s = v ? String(v).slice(0, 10) : '';
+      return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
+    };
+    const rows = [];
+    classes.forEach(c => {
+      (studentsMap[c.key] || []).forEach(s => {
+        if (!(genSet && genSet.has(keyOf(c.key, s.reg)))) return;
+        const rec = challanMap[keyOf(c.key, s.reg)] || null;
+        let payable = 0;
+        if (rec) {
+          const fig = challanFigures(rec);
+          const prevOut = prevOutMap[String(s.studentID)] || null;
+          if (challanFullyPaid(rec)) {
+            payable = 0;
+          } else if (prevOut) {
+            const consumed = advConsumedOf(rec);
+            const advance = Math.max(0, prevOut.advance - consumed);
+            payable = (fig.current || 0) + prevOut.dues - advance;
+          } else {
+            payable = fig.payable;
+          }
+        }
+        rows.push({
+          c, s, payable,
+          genISO: rec ? isoOrNull(rec.dateofCreattion) : null,
+          dueISO: rec ? isoOrNull(rec.dueDate) : null,
+        });
+      });
+    });
+    if (rows.length === 0) {
+      toast('No generated challans found for selected month.', 'warning');
+      return;
+    }
+    setExportingExcel(true);
+    try {
+      const wb = buildGeneratedChallansWorkbook({ rows, monthIdx, appliedMonth, appliedYear, school: feeReportSchool(branchHeader) });
+      await feeDownloadWorkbook(wb, `${reportFileName('Generated-Fee-Challans')}-${appliedMonth}-${appliedYear}.xlsx`);
+      toast(`Exported ${rows.length} generated challan${rows.length === 1 ? '' : 's'} to Excel`, 'success');
+    } catch (e) {
+      toast('Unable to export report. Please try again.', 'error');
+    } finally {
+      setExportingExcel(false);
+    }
+  };
+
   const openBulkGen = (c) => {
     const lock = challanMonthLock(monthIdx, appliedYear, settings);
     if (lock) { toast(lock, 'warning'); return; }
@@ -2717,8 +2775,8 @@ function FeeChallansList({ toast }) {
             </Tooltip>
           </div>
 
-          <div className="fee-searchrow">
-            <div className="fee-field" style={{ width: '100%' }}>
+          <div className="fee-searchrow fee-searchrow--export">
+            <div className="fee-field">
               <span className="fee-label">Search Student</span>
               <div className="fee-search-anchor" ref={searchAnchorRef}>
                 <div className="fee-search-box">
@@ -2781,6 +2839,21 @@ function FeeChallansList({ toast }) {
                 <i className="fa-solid fa-circle-info"></i>
                 <span>Search any student by name, father name, or registration number.</span>
               </div>
+            </div>
+
+            <div className="fee-searchrow-export">
+              <Tooltip text={`Export every generated ${appliedMonth} ${appliedYear} challan to Excel — not just the search results`}>
+                <button
+                  type="button"
+                  className="fee-btn fee-btn-ghost"
+                  onClick={handleExportExcel}
+                  disabled={exportingExcel}
+                  style={exportingExcel ? { opacity: .6, cursor: 'wait' } : undefined}
+                >
+                  <i className={`fa-solid ${exportingExcel ? 'fa-spinner fa-spin' : 'fa-file-excel'}`}></i>
+                  {exportingExcel ? 'Exporting…' : 'Export Excel'}
+                </button>
+              </Tooltip>
             </div>
           </div>
         </div>
@@ -11902,6 +11975,111 @@ body{font-family:'Plus Jakarta Sans',Arial,sans-serif;color:#111;font-size:10.5p
 .fee-rep-bw .neg, .fee-rep-bw .pos, .fee-rep-bw .amb{color:#0F172A !important;}
 `;
 
+/* Filesystem-safe report file name — strips punctuation, collapses spaces. */
+const reportFileName = (title) => (title || 'Report').replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '-');
+
+/* Trigger a real .xlsx file download from an in-memory ExcelJS workbook —
+   real column widths, bold headers, native number formats (none of which
+   the HTML-table-as-.xls trick can do). */
+async function feeDownloadWorkbook(wb, filename) {
+  const buffer = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+/* DD-Mon-YYYY formatter for the Generated Challans export — full 4-digit
+   year (reads/sorts better in Excel than a 2-digit slip date). */
+const fmtGenChallanDate = (iso) => {
+  const m = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const [y, mo, d] = iso.split('-');
+  return `${d}-${m[(+mo - 1) || 0]}-${y}`;
+};
+
+/* Excel export for Fee Challans → Generated Challans. `rows` is every
+   already-generated { c: classMeta, s: student, payable, genISO, dueISO }
+   pair for the applied month/year — the complete generated-challan dataset,
+   built by the caller from the full class/student roster, not from whatever
+   "Search Student" happens to be filtering to on screen. Contact Number
+   reuses studentPhone(); payable + genISO/dueISO are precomputed by the
+   caller from the real BranchLedger challan record. */
+function buildGeneratedChallansWorkbook({ rows, monthIdx, appliedMonth, appliedYear, school }) {
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'School Mentor';
+  wb.created = new Date();
+  const ws = wb.addWorksheet('Generated Challans');
+
+  const cols = [
+    { header: 'Sr. No',                  width: 8  },
+    { header: 'Class',                   width: 16 },
+    { header: 'Section',                 width: 12 },
+    { header: 'Student Name',            width: 24 },
+    { header: 'Father Name / Guardian',  width: 24 },
+    { header: 'Contact Number',          width: 16 },
+    { header: 'Challan Generation Date', width: 20 },
+    { header: 'Due Date',                width: 16 },
+    { header: 'Total Payable Amount',    width: 20 },
+  ];
+  ws.columns = cols.map(cc => ({ width: cc.width }));
+
+  ws.mergeCells(1, 1, 1, cols.length);
+  const title = ws.getCell(1, 1);
+  title.value = `${school?.name || 'School'} — Generated Fee Challans Report`;
+  title.font = { bold: true, size: 13, color: { argb: 'FFFFFFFF' } };
+  title.alignment = { horizontal: 'center', vertical: 'middle' };
+  title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A8A' } };
+  ws.getRow(1).height = 24;
+
+  ws.mergeCells(2, 1, 2, cols.length);
+  const meta = ws.getCell(2, 1);
+  meta.value = `${appliedMonth} ${appliedYear}   ·   ${rows.length} challan${rows.length === 1 ? '' : 's'}   ·   Generated: ${fmtGenChallanDate(new Date().toISOString().slice(0, 10))}`;
+  meta.font = { italic: true, size: 10, color: { argb: 'FF64748B' } };
+  meta.alignment = { horizontal: 'center' };
+  ws.getRow(2).height = 18;
+
+  const headerRow = ws.getRow(3);
+  cols.forEach((cc, i) => {
+    const cell = headerRow.getCell(i + 1);
+    cell.value = cc.header;
+    cell.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 10 };
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A8A' } };
+    cell.alignment = { horizontal: 'center', vertical: 'middle' };
+  });
+  headerRow.height = 22;
+
+  const fallbackGen = `${appliedYear}-${String(monthIdx + 1).padStart(2, '0')}-01`;
+  const fallbackDue = `${appliedYear}-${String(monthIdx + 1).padStart(2, '0')}-14`;
+
+  rows.forEach(({ c, s, payable, genISO, dueISO }, i) => {
+    const row = ws.getRow(4 + i);
+    row.getCell(1).value = i + 1;
+    row.getCell(2).value = c.cls;
+    row.getCell(3).value = c.sec;
+    row.getCell(4).value = s.name;
+    row.getCell(5).value = s.father || '—';
+    row.getCell(6).value = studentPhone(s);
+    row.getCell(7).value = fmtGenChallanDate(genISO || fallbackGen);
+    row.getCell(8).value = fmtGenChallanDate(dueISO || fallbackDue);
+    row.getCell(9).value = Number(payable) || 0;
+    row.getCell(9).numFmt = '"Rs. "#,##0';
+    for (let ci = 1; ci <= cols.length; ci++) {
+      const cell = row.getCell(ci);
+      if (ci === 1 || ci === 3) cell.alignment = { horizontal: 'center' };
+      if (ci === 9) cell.alignment = { horizontal: 'right' };
+      cell.border = {
+        top: { style: 'thin', color: { argb: 'FFE2E8F0' } }, left: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+        bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } }, right: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+      };
+    }
+  });
+
+  ws.views = [{ state: 'frozen', ySplit: 3 }];
+  return wb;
+}
+
 function feeReportSchool(school) {
   const name = school?.branchName || school?.name || FEE_SCHOOL.name;
   const words = String(name).split(/\s+/).filter(Boolean);
@@ -15330,6 +15508,11 @@ const FEE_CSS = `
 
 /* ─── Smart search (mirrors HTML reference) ─── */
 .fee-searchrow { margin-top: 14px; }
+/* Fee Challans search row that also carries the Export Excel button —
+   search field grows, button hugs the right at the field's baseline. */
+.fee-searchrow--export { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+.fee-searchrow--export > .fee-field { flex: 1 1 280px; min-width: 0; }
+.fee-searchrow-export { flex: 0 0 auto; }
 .fee-search-anchor { position: relative; width: 100%; }
 .fee-search-box {
   display: flex;
@@ -17536,6 +17719,8 @@ const FEE_CSS = `
   /* Search row */
   .fee-searchrow { margin-top: 10px; }
   .fee-search-anchor, .fee-search-box { width: 100%; }
+  .fee-searchrow--export { flex-direction: column; align-items: stretch; }
+  .fee-searchrow-export .fee-btn { width: 100%; justify-content: center; }
 
   /* Wrap tables in horizontal scroll, keep min-width so columns don't squash */
   .fee-section--scroll,
