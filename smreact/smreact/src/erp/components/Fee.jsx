@@ -2146,14 +2146,26 @@ function FamilyTreeChallansList({ toast }) {
 /* Split a challan's detailRows into the screen figures: a "previous pending"
    head becomes Total Dues when positive, or Advance (as a positive number) when
    negative; every other head sums into Current Fee. Total Payable = Current Fee
-   + Total Dues − Advance. */
-function challanFigures(rec) {
+   + Total Dues − Advance.
+   `byHead` (optional): live prior remaining per head (billed−disc−recv). Raw
+   previousPendingorAdv kabhi GROSS hota hai (3000); byHead discount-ke-baad
+   (2500) — wasooli attribution / fully-paid ke liye yahi cap use karo warna
+   5000 receive ke baad bhi Current pe phantom 500 reh jata tha. */
+function challanFigures(rec, byHead = null) {
   const rows = (rec && rec.detailRows) || [];
   const isPrevRow = (r) => /previous|pending|arrear/.test(String(r.subHead || r.head || '').toLowerCase());
   /* Head-wise: kisi non-prev head par per-head previousPendingorAdv ho to previous PER-HEAD me
      hai — aise me aggregate "Previous Pending" rows ko SKIP karte hain (warna previous DO baar
      ginta: ek per-head, ek aggregate row → fully-paid par bhi Total Dues 1,500 dikhता tha). */
   const hasHeadPrev = rows.some(r => !isPrevRow(r) && (Number(r.previousPendingorAdv ?? r.previousPendingOrAdv) || 0) !== 0);
+  const byHeadLookup = (name) => {
+    if (!byHead || typeof byHead !== 'object') return null;
+    const norm = String(name || '').toLowerCase().trim();
+    const key = Object.keys(byHead).find(k => String(k).toLowerCase().trim() === norm);
+    if (key == null) return null;
+    const n = Number(byHead[key]);
+    return Number.isFinite(n) ? n : null;
+  };
   let dues = 0, advance = 0, current = 0;
   let totalNet = 0, totalRecv = 0;
   rows.forEach(r => {
@@ -2162,17 +2174,26 @@ function challanFigures(rec) {
     const recv = Number(r.receivedAmount) || 0;
     const isPrev = isPrevRow(r);
     if (hasHeadPrev && isPrev) return;   // head-wise: aggregate prev row skip (per-head me hai)
-    const hp = hasHeadPrev ? (Number(r.previousPendingorAdv ?? r.previousPendingOrAdv) || 0) : 0;
-    const net = (amt - disc) + Math.max(0, hp);     // head-wise: previous head ke net me shamil
-    totalNet += net;
+    const hpRaw = hasHeadPrev ? (Number(r.previousPendingorAdv ?? r.previousPendingOrAdv) || 0) : 0;
+    const live = byHeadLookup(r.subHead || r.head);
+    /* byHead > 0 ho to usse cap (gross 3000 → 2500); byHead 0/absent ho to challan hp. */
+    let prevPart = Math.max(0, hpRaw);
+    if (live != null && live > 0) prevPart = Math.min(prevPart, live);
+    const curNet = amt - disc;
+    totalNet += curNet + prevPart;
     totalRecv += recv;
     /* Dues/Current ab WASOOLI KE BAAD ka baqaya hai — challan poora receive ho jaye to
        ye 0 ho jaate hain (pehle full amount hi dikhta rehta tha). */
     if (isPrev) {
-      if (amt >= 0) dues += Math.max(0, net - recv);
+      if (amt >= 0) dues += Math.max(0, curNet - recv);
       else advance += Math.abs(amt);
+    } else if (hasHeadPrev) {
+      const againstPrev = Math.min(recv, prevPart);
+      const againstCur = Math.max(0, recv - againstPrev);
+      dues += Math.max(0, prevPart - againstPrev);
+      current += Math.max(0, curNet - againstCur);
     } else {
-      current += Math.max(0, net - recv);
+      current += Math.max(0, curNet - recv);
     }
   });
   /* Challan ke total se ZYADA wasool ho gaya (over-receiving) → extra raqam student ka
@@ -2195,22 +2216,36 @@ function advConsumedOf(rec) {
    previousPendingorAdv) − received ka jama <= 0 aur koi receiving hui ho. Advance jab head
    ki fee se zyada ho to Others net minus (−550) reh jaata tha "Fully Received" ke bawajood;
    aise settled challan par card sab (Dues/Advance/Current/Payable) 0 dikhata hai — clean. */
-function challanFullyPaid(rec) {
+function challanFullyPaid(rec, byHead = null) {
   if (!rec || !Array.isArray(rec.detailRows) || !rec.detailRows.length) return false;
   const isPrevRow = (r) => /previous|pending|arrear/i.test(String(r.subHead || r.head || ''));
   /* Head-wise: previous per-head hai to aggregate "Previous Pending" row SKIP (double-count na
      ho — warna fully-paid ke bawajood us row ki wajah se outstanding 1,500 reh jaata tha). */
   const hasHeadPrev = rec.detailRows.some(r => !isPrevRow(r) && (Number(r.previousPendingorAdv ?? r.previousPendingOrAdv) || 0) !== 0);
-  let outstanding = 0, anyRecv = 0;
+  const byHeadLookup = (name) => {
+    if (!byHead || typeof byHead !== 'object') return null;
+    const norm = String(name || '').toLowerCase().trim();
+    const key = Object.keys(byHead).find(k => String(k).toLowerCase().trim() === norm);
+    if (key == null) return null;
+    const n = Number(byHead[key]);
+    return Number.isFinite(n) ? n : null;
+  };
+  let outstanding = 0, anyRecv = 0, billed = 0;
   rec.detailRows.forEach(r => {
     if (hasHeadPrev && isPrevRow(r)) return;   // head-wise: aggregate prev row skip
-    const hp = Number(r.previousPendingorAdv ?? r.previousPendingOrAdv) || 0;
+    const hpRaw = Number(r.previousPendingorAdv ?? r.previousPendingOrAdv) || 0;
+    const live = byHeadLookup(r.subHead || r.head);
+    let hp = Math.max(0, hpRaw);
+    if (live != null && live > 0) hp = Math.min(hp, live);
     const net = (Number(r.challanAmount) || 0) - (Number(r.discount) || 0) + hp;
     const recv = Number(r.receivedAmount) || 0;
+    billed += Math.max(0, net);
     outstanding += net - recv;
     anyRecv += recv;
   });
-  return anyRecv !== 0 && Math.round(outstanding) <= 0;
+  /* outstanding <= 0 = settle (wasooli YA poora discount). anyRecv zaroori nahi —
+     warna 100% discount / give-disc par bhi purana byHead 2500 list me wapas aa jata tha. */
+  return Math.round(outstanding) <= 0 && (anyRecv !== 0 || billed > 0);
 }
 
 function FeeChallansList({ toast }) {
@@ -2367,58 +2402,139 @@ function FeeChallansList({ toast }) {
   };
   const isGenerated = (classKey, reg) => !!genSet && genSet.has(keyOf(classKey, reg));
 
-  /* Export Excel — Generated Challans report. Walks every class's full
-     student roster (not the on-screen search results) and keeps only
-     students whose challan is already generated for the applied
-     month/year, i.e. the complete generated-challan dataset per the
-     spec, regardless of what "Search Student" currently filters to.
-     Total Payable / dates come from the real BranchLedger challan record
-     (challanMap) — the same figures the on-screen Total Payable column
-     shows — falling back to 1st / 14th of the month when a challan has
-     no stored generation/due date. */
+  /* Export Excel — selected MONTH/YEAR ke SAARAY generated challans.
+     Dropdown ki values use hoti hain (Fetch Details ke baghair bhi); data
+     seedha API se fresh pull — genSet/search filter par depend nahi. */
   const [exportingExcel, setExportingExcel] = useState(false);
   const handleExportExcel = async () => {
+    const exportMonth = month;
+    const exportYear = String(year);
+    const mIdx = FEE_MONTHS.indexOf(exportMonth);
+    if (mIdx < 0) {
+      toast('Please select a valid month', 'warning');
+      return;
+    }
+
     const isoOrNull = (v) => {
       const s = v ? String(v).slice(0, 10) : '';
       return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
     };
-    const rows = [];
-    classes.forEach(c => {
-      (studentsMap[c.key] || []).forEach(s => {
-        if (!(genSet && genSet.has(keyOf(c.key, s.reg)))) return;
-        const rec = challanMap[keyOf(c.key, s.reg)] || null;
-        let payable = 0;
-        if (rec) {
-          const fig = challanFigures(rec);
-          const prevOut = prevOutMap[String(s.studentID)] || null;
-          if (challanFullyPaid(rec)) {
-            payable = 0;
-          } else if (prevOut) {
-            const consumed = advConsumedOf(rec);
-            const advance = Math.max(0, prevOut.advance - consumed);
-            payable = (fig.current || 0) + prevOut.dues - advance;
-          } else {
-            payable = fig.payable;
-          }
-        }
-        rows.push({
-          c, s, payable,
-          genISO: rec ? isoOrNull(rec.dateofCreattion) : null,
-          dueISO: rec ? isoOrNull(rec.dueDate) : null,
-        });
-      });
-    });
-    if (rows.length === 0) {
-      toast('No generated challans found for selected month.', 'warning');
-      return;
-    }
+
     setExportingExcel(true);
     try {
-      const wb = buildGeneratedChallansWorkbook({ rows, monthIdx, appliedMonth, appliedYear, school: feeReportSchool(branchHeader) });
-      await feeDownloadWorkbook(wb, `${reportFileName('Generated-Fee-Challans')}-${appliedMonth}-${appliedYear}.xlsx`);
-      toast(`Exported ${rows.length} generated challan${rows.length === 1 ? '' : 's'} to Excel`, 'success');
+      const challanRows = await feeService.getMonthChallans(mIdx + 1, exportYear);
+      if (!Array.isArray(challanRows) || challanRows.length === 0) {
+        toast(`No generated challans found for ${exportMonth} ${exportYear}.`, 'warning');
+        return;
+      }
+
+      const byStudentId = new Map();
+      Object.entries(studentsMap || {}).forEach(([ck, studs]) => {
+        (studs || []).forEach(s => {
+          byStudentId.set(String(s.studentID), { classKey: ck, student: s });
+          if (s.applicantsID != null) {
+            byStudentId.set(String(s.applicantsID), { classKey: ck, student: s });
+          }
+        });
+      });
+      const classByKey = new Map((classes || []).map(c => [c.key, c]));
+
+      /* Payable ke liye live previous (byHead) — list jaisa. */
+      let prevOut = {};
+      try {
+        let toM = mIdx;
+        let toY = Number(exportYear);
+        if (toM === 0) { toM = 12; toY -= 1; }
+        let fromM = toM - 11;
+        let fromY = toY;
+        while (fromM <= 0) { fromM += 12; fromY -= 1; }
+        const prevRows = await feeService.getLedgerRange(fromM, fromY, toM, toY);
+        prevOut = prevOutFromLedgerRows(prevRows);
+      } catch (e) { /* optional — bina prev ke bhi export chalega */ }
+
+      const rows = [];
+      challanRows.forEach(ch => {
+        const rec = feeService.withPersistedGiveDisc(ch);
+        const loc = byStudentId.get(String(ch.studentID))
+          || byStudentId.get(String(ch.applicantsID || ''))
+          || null;
+        const classKey = loc
+          ? loc.classKey
+          : `g${ch.gradeID}-s${ch.sectionID}`;
+        const c = classByKey.get(classKey) || {
+          key: classKey,
+          cls: ch.gradeName || ch.className || ch.class || `Class ${ch.gradeID || ''}`,
+          sec: ch.sectionName || ch.section || String(ch.sectionID || '—'),
+        };
+        const s = loc?.student || {
+          studentID: ch.studentID,
+          applicantsID: ch.applicantsID,
+          reg: String(ch.registrationNumber || ch.regNo || ''),
+          name: ch.studentName || ch.name || '—',
+          father: ch.fatherName || ch.father || '—',
+          phone: ch.phone || ch.mobile || ch.contactNumber || '',
+        };
+
+        const p = prevOut[String(s.studentID)]
+          || prevOut[String(ch.studentID)]
+          || prevOut[String(s.applicantsID || '')]
+          || null;
+        const byHead = p?.byHead || null;
+        const fig = challanFigures(rec, byHead);
+        let payable = 0;
+        if (challanFullyPaid(rec, byHead)) {
+          payable = 0;
+        } else if (p) {
+          const consumed = advConsumedOf(rec);
+          const detail = rec.detailRows || [];
+          const hasHeadPrev = detail.some(r =>
+            !/previous|pending|arrear/i.test(String(r.subHead || r.head || ''))
+            && (Number(r.previousPendingorAdv ?? r.previousPendingOrAdv) || 0) !== 0
+          );
+          const byHeadSum = byHead
+            ? Object.values(byHead).reduce((a, v) => a + Math.max(0, Number(v) || 0), 0)
+            : 0;
+          const dues = hasHeadPrev
+            ? (fig.dues || 0)
+            : (byHeadSum > 0 ? byHeadSum : (+p.dues || 0));
+          const advance = Math.max(0, (+p.advance || 0) - consumed);
+          payable = (fig.current || 0) + dues - advance;
+        } else {
+          payable = fig.payable;
+        }
+
+        rows.push({
+          c, s, payable,
+          genISO: isoOrNull(rec.dateofCreattion),
+          dueISO: isoOrNull(rec.dueDate),
+        });
+      });
+
+      rows.sort((a, b) => {
+        const cls = String(a.c.cls || '').localeCompare(String(b.c.cls || ''));
+        if (cls) return cls;
+        const sec = String(a.c.sec || '').localeCompare(String(b.c.sec || ''));
+        if (sec) return sec;
+        return String(a.s.name || '').localeCompare(String(b.s.name || ''));
+      });
+
+      const wb = buildGeneratedChallansWorkbook({
+        rows,
+        monthIdx: mIdx,
+        appliedMonth: exportMonth,
+        appliedYear: exportYear,
+        school: feeReportSchool(branchHeader),
+      });
+      await feeDownloadWorkbook(
+        wb,
+        `${reportFileName('Generated-Fee-Challans')}-${exportMonth}-${exportYear}.xlsx`,
+      );
+      toast(
+        `Exported ${rows.length} generated challan${rows.length === 1 ? '' : 's'} (${exportMonth} ${exportYear})`,
+        'success',
+      );
     } catch (e) {
-      toast('Unable to export report. Please try again.', 'error');
+      toast(e?.message || 'Unable to export report. Please try again.', 'error');
     } finally {
       setExportingExcel(false);
     }
@@ -2842,13 +2958,13 @@ function FeeChallansList({ toast }) {
             </div>
 
             <div className="fee-searchrow-export">
-              <Tooltip text={`Export every generated ${appliedMonth} ${appliedYear} challan to Excel — not just the search results`}>
+              <Tooltip text={`Download Excel of every generated challan for the selected month (${month} ${year})`}>
                 <button
                   type="button"
-                  className="fee-btn fee-btn-ghost"
+                  className="fee-btn fee-btn-primary fee-btn-excel"
                   onClick={handleExportExcel}
                   disabled={exportingExcel}
-                  style={exportingExcel ? { opacity: .6, cursor: 'wait' } : undefined}
+                  style={exportingExcel ? { opacity: .7, cursor: 'wait' } : undefined}
                 >
                   <i className={`fa-solid ${exportingExcel ? 'fa-spinner fa-spin' : 'fa-file-excel'}`}></i>
                   {exportingExcel ? 'Exporting…' : 'Export Excel'}
@@ -2980,9 +3096,17 @@ function FeeChallansList({ toast }) {
                           /* Challan abhi nahi bana → pichhle mahino ka live baqaya dikhao
                              (roster ke stale 0 ki jagah), taake dues turant nazar aayein. */
                           const prevOut = prevOutMap[String(s.studentID)] || null;
-                          const fbDues = prevOut ? prevOut.dues : (+s.dues || 0);
+                          /* byHead = har head ka (billed − discount − received) — yahi challan
+                             Prev column use karta hai. raw previousPendingorAdv / running.dues
+                             kabhi GROSS (3000) ya undercount (2000) de dete hain. */
+                          const byHeadSum = prevOut && prevOut.byHead
+                            ? Object.values(prevOut.byHead).reduce((a, v) => a + Math.max(0, Number(v) || 0), 0)
+                            : 0;
+                          const fbDues = prevOut
+                            ? (byHeadSum > 0 ? byHeadSum : (+prevOut.dues || 0))
+                            : (+s.dues || 0);
                           const fbAdv = prevOut ? prevOut.advance : (+s.advance || 0);
-                          const fig = rec ? challanFigures(rec) : {
+                          const fig = rec ? challanFigures(rec, prevOut?.byHead || null) : {
                             dues: fbDues,
                             advance: fbAdv,
                             current: +s.current || 0,
@@ -2992,7 +3116,7 @@ function FeeChallansList({ toast }) {
                              waqt ka snapshot hai — agar us ke baad kisi pichhle mahine ki
                              fee receive ho gayi to stale ho jaata hai. Live prevOut se
                              override (October ka 13,850 → sahi 6,850). */
-                          if (rec && challanFullyPaid(rec)) {
+                          if (rec && challanFullyPaid(rec, prevOut?.byHead || null)) {
                             /* Poora settle — credit head (advance > fee) bhi consume ho chuka.
                                Sab 0 (Current 1,220 / Advance −1,220 ka phantom net-0 nahi). */
                             fig.dues = 0; fig.advance = 0; fig.current = 0; fig.payable = 0;
@@ -3000,7 +3124,17 @@ function FeeChallansList({ toast }) {
                             /* prevOut.advance sirf pichhle mahino ka — is challan me consume ho
                                chuka advance ghata do (warna fully-received par −550 phantom). */
                             const consumed = advConsumedOf(rec);
-                            fig.dues = prevOut.dues;
+                            const rows = rec.detailRows || [];
+                            const hasHeadPrev = rows.some(r =>
+                              !/previous|pending|arrear/i.test(String(r.subHead || r.head || ''))
+                              && (Number(r.previousPendingorAdv ?? r.previousPendingOrAdv) || 0) !== 0
+                            );
+                            /* Head-wise: previous IS challan par bill / receive ho chuka —
+                               purane mahine ka byHead yahan mat chipkao (warna fully-received
+                               ke baad bhi Total Dues 2500 zombie reh jata tha). */
+                            if (!hasHeadPrev) {
+                              fig.dues = byHeadSum > 0 ? byHeadSum : (+prevOut.dues || 0);
+                            }
                             fig.advance = Math.max(0, prevOut.advance - consumed);
                             fig.payable = (fig.current || 0) + fig.dues - fig.advance;
                           }
@@ -14448,6 +14582,12 @@ const FEE_CSS = `
   box-shadow: 0 2px 8px rgba(30,58,138,.28);
 }
 .fee-btn-primary:hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(30,58,138,.38); }
+.fee-btn-excel {
+  background: linear-gradient(135deg, #15803D, #16A34A);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(22,163,74,.28);
+}
+.fee-btn-excel:hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(22,163,74,.38); }
 .fee-btn-ghost {
   background: var(--bg-card);
   border-color: var(--border-light);
