@@ -23,11 +23,12 @@ const ACTION_DESCRIPTIONS = {
   students_mark_inactive: 'Marking an active student as Inactive needs approval before they’re removed from the active rolls.',
   students_discount: 'Changing a student’s per-fee-head discount (from the Edit Student form) needs approval before it applies.',
   students_dues_discount: 'Waiving part of an inactive student’s outstanding dues during settlement needs approval before the balance is reduced — any cash actually received still applies immediately.',
+  students_preenroll_admission: 'A Pre-Enrollment student stays out of Active Students — Challan, Receiving, Print Slips and Enroll all stay disabled — until a Super Admin approves the admission and fee setup.',
 };
 
 /* ═══════════════════════════════════════════════════════════════════
    APPROVAL SETTINGS — Settings sub-tab that configures the Approvals
-   engine (src/erp/mock/approvals.js → mockApprovalSettings):
+   engine (src/mock/approvals.js → mockApprovalSettings):
      • Master on/off switch for the whole gating mechanism
      • Per-action-type toggles, grouped by module, driven entirely by
        APPROVAL_ACTION_META so a new action type just needs an entry
@@ -35,7 +36,8 @@ const ACTION_DESCRIPTIONS = {
    Uses the shared SETTINGS_CSS classes mounted by SettingsModule.jsx
    (.settings-banner / .settings-alert / .settings-checks / .settings-
    check / .settings-btn-primary / .settings-empty) plus a small local
-   stylesheet for the master toggle switch and module grouping.
+   stylesheet for the master toggle switch and module grouping, mirror-
+   ing the pattern ChainSchool.jsx uses for its own CS_CSS.
    ═══════════════════════════════════════════════════════════════════ */
 export default function ApprovalSettings({ toast = () => {} }) {
   const [loading, setLoading]   = useState(true);
@@ -63,7 +65,7 @@ export default function ApprovalSettings({ toast = () => {} }) {
   const dirty = enabled !== saved.enabled
     || JSON.stringify(actionTypeEnabled) !== JSON.stringify(saved.actionTypeEnabled);
 
-  /* Group the action types by module without hardcoding the list. */
+  /* Group the 12 action types by module without hardcoding the list. */
   const groups = useMemo(() => {
     const byModule = {};
     Object.keys(APPROVAL_ACTION_META).forEach((key) => {
@@ -199,7 +201,8 @@ export default function ApprovalSettings({ toast = () => {} }) {
 
 /* ═══════════════════════════════════════════════════════════════════
    Local CSS — only the bits SETTINGS_CSS doesn't already cover
-   (master toggle switch + module grouping).
+   (master toggle switch + module grouping). Mirrors ChainSchool.jsx's
+   own CS_CSS pattern.
    ═══════════════════════════════════════════════════════════════════ */
 const AS_CSS = `
 .as-card {
