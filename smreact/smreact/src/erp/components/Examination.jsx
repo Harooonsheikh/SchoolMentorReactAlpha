@@ -608,26 +608,120 @@ const RC_TEMPLATES = [
   },
 ];
 
-/* "08:00 AM" → "08:00" for <input type="time"> */
+/* Date-sheet date/time helpers.
+   API `date` is a DateTime; `timeFrom`/`timeTo` are strings — but GET kabhi ISO
+   datetime, TimeSpan ("08:00:00"), ya "8:00 AM" bhejta hai, aur UTC `Z` par
+   `toISOString()` PK (UTC+5) me din/waqt shift kar deta hai. */ 
+function dsPad2(n) {
+  return String(n).padStart(2, '0');
+}
+function dsHasTz(s) {
+  return /Z$/i.test(s) || /[+-]\d{2}:\d{2}$/.test(s);
+}
+function dsLocalFromIso(raw) {
+  const s = String(raw || '').trim();
+  if (!s || !dsHasTz(s)) return null;
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return null;
+  return {
+    ymd: `${d.getFullYear()}-${dsPad2(d.getMonth() + 1)}-${dsPad2(d.getDate())}`,
+    hhmm: `${dsPad2(d.getHours())}:${dsPad2(d.getMinutes())}`,
+  };
+}
+function dsLooksLikeDate(raw) {
+  const s = String(raw || '').trim();
+  return /^\d{4}-\d{2}-\d{2}/.test(s) || /^\d{1,2}[/.]\d{1,2}[/.]\d{4}/.test(s);
+}
+function dsLooksLikeTimeOnly(raw) {
+  const s = String(raw || '').trim();
+  if (!s || dsLooksLikeDate(s)) return false;
+  return /^\d{1,2}:\d{2}/.test(s) || /AM|PM/i.test(s);
+}
+function dsPickField(item, ...keys) {
+  for (const k of keys) {
+    if (item && item[k] != null && item[k] !== '') return item[k];
+  }
+  return '';
+}
+
+function dsDateToYmd(raw) {
+  if (raw == null || raw === '') return '';
+  const s = String(raw).trim();
+  const local = dsLocalFromIso(s);
+  if (local) return local.ymd;
+  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  const dmy = s.match(/^(\d{1,2})[/.](\d{1,2})[/.](\d{4})/);
+  if (dmy) return `${dmy[3]}-${dsPad2(dmy[2])}-${dsPad2(dmy[1])}`;
+  return '';
+}
+
+function dsFmtDateDisplay(raw) {
+  const ymd = dsDateToYmd(raw);
+  if (!ymd) return '—';
+  const [y, m, d] = ymd.split('-');
+  return (y && m && d && y.length === 4) ? `${d}/${m}/${y}` : ymd;
+}
+
+/* "08:00 AM" | "20:00:00" | "2026-09-15T08:00:00" | UTC ISO → "08:00" for <input type="time"> */
 function dsTimeToInput(t) {
-  if (!t) return '';
-  if (t.includes('AM') || t.includes('PM')) {
-    const [time, ampm] = t.split(' ');
+  if (t == null || t === '') return '';
+  const s = String(t).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s) || /^\d{1,2}[/.]\d{1,2}[/.]\d{4}$/.test(s)) return '';
+  const local = dsLocalFromIso(s);
+  if (local) return local.hhmm;
+  const iso = s.match(/T(\d{2}):(\d{2})/);
+  if (iso) return `${iso[1]}:${iso[2]}`;
+  if (/AM|PM/i.test(s)) {
+    const parts = s.split(/\s+/);
+    const ampm = parts.find(p => /AM|PM/i.test(p)) || '';
+    const time = parts.find(p => p.includes(':')) || '';
     let [h, m] = time.split(':');
     h = parseInt(h, 10);
-    if (ampm === 'PM' && h !== 12) h += 12;
-    if (ampm === 'AM' && h === 12) h = 0;
-    return String(h).padStart(2, '0') + ':' + m;
+    if (Number.isNaN(h) || h > 23) return '';
+    const mer = ampm.toUpperCase();
+    if (mer === 'PM' && h !== 12) h += 12;
+    if (mer === 'AM' && h === 12) h = 0;
+    return dsPad2(h) + ':' + String(m || '00').slice(0, 2);
   }
-  return t;
+  const hm = s.match(/^(\d{1,2}):(\d{2})/);
+  if (!hm) return '';
+  const h = parseInt(hm[1], 10);
+  if (Number.isNaN(h) || h > 23) return '';
+  return `${dsPad2(h)}:${hm[2]}`;
 }
 /* "20:00" → "8:00 PM" */
 function dsTimeFromInput(t) {
-  if (!t) return '';
-  const [h, m] = t.split(':');
-  const hr = parseInt(h, 10);
+  if (t == null || t === '') return '';
+  const hhmm = dsTimeToInput(t);
+  const m = hhmm.match(/^(\d{1,2}):(\d{2})/);
+  if (!m) return '';
+  const hr = parseInt(m[1], 10);
+  if (Number.isNaN(hr) || hr > 23) return '';
   const ampm = hr >= 12 ? 'PM' : 'AM';
-  return ((hr % 12) || 12) + ':' + m + ' ' + ampm;
+  return `${(hr % 12) || 12}:${m[2]} ${ampm}`;
+}
+
+function dsMapApiRow(item) {
+  if (!item || typeof item !== 'object') {
+    return { id: 0, subject: '', date: '', timeFrom: '', timeTo: '' };
+  }
+  let rawDate = dsPickField(item, 'date', 'Date');
+  let rawFrom = dsPickField(item, 'timeFrom', 'TimeFrom');
+  let rawTo   = dsPickField(item, 'timeTo', 'TimeTo');
+  /* GET kabhi date column me time aur timeFrom me date bhej deta hai. */
+  if (!dsLooksLikeDate(rawDate) && dsLooksLikeTimeOnly(rawDate) && dsLooksLikeDate(rawFrom)) {
+    const swapped = rawDate;
+    rawDate = rawFrom;
+    rawFrom = swapped;
+  }
+  return {
+    id: item.id ?? item.ID ?? 0,
+    subject: dsPickField(item, 'subjectName', 'subject', 'SubjectName', 'Subject'),
+    date: dsDateToYmd(rawDate),
+    timeFrom: rawFrom ? dsTimeFromInput(rawFrom) : '',
+    timeTo: rawTo ? dsTimeFromInput(rawTo) : '',
+  };
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -2818,13 +2912,7 @@ const rows = Array.isArray(data) ? data : (data?.data || []);
 
 if (rows.length) {
   console.log("Transformed Date Sheet Rows:", rows); // Debug log 
-  const transformedRows = rows.map(item => ({
-        id: item.id,
-    subject: item.subjectName || item.subject || '',
-    date: item.date ? new Date(item.date).toISOString().split('T')[0] : '',
-    timeFrom: item.timeFrom || '',
-    timeTo: item.timeTo || '',
-  }));
+  const transformedRows = rows.map(dsMapApiRow);
   return transformedRows;
 }
 
@@ -4403,7 +4491,7 @@ useEffect(() => {
                               <div className="ds-subj-td name">
                                 <div className="ds-subj-icon"><i className="fa-solid fa-book-open"></i></div>{s.subject}
                               </div>
-                              <div className="ds-subj-td">{s.date || '—'}</div>
+                              <div className="ds-subj-td">{s.date ? dsFmtDateDisplay(s.date) : '—'}</div>
                               <div className="ds-subj-td">{s.timeFrom || '—'}</div>
                               <div className="ds-subj-td">{s.timeTo || '—'}</div>
                             </div>
@@ -8088,11 +8176,7 @@ if (format === 'pdf') {
   const schoolAddr = bs.address || '';
   const schoolYear = formatAcademicYearLabel(resolveAcademicSession(bs)) || 'Academic Session';
   const dsEsc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-  const dsFmtDate = (s) => {
-    if (!s) return '—';
-    const [y, m, d] = String(s).split('T')[0].split('-');
-    return (y && m && d) ? `${d}/${m}/${y}` : s;
-  };
+  const dsFmtDate = dsFmtDateDisplay;
   const dsLogoHtml = schoolLogo
     ? `<img src="${dsEsc(schoolLogo)}" width="46" height="46" style="border-radius:12px;object-fit:cover;display:block" onerror="this.style.display='none'" />`
     : (isColor ? '🎓' : '');
@@ -8118,12 +8202,7 @@ if (format === 'pdf') {
         { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } });
       const data = await r.json();
       const rows = Array.isArray(data) ? data : (data?.data || []);
-      return rows.map(it => ({
-        subject: it.subjectName || it.subject || '',
-        date: it.date ? String(it.date).split('T')[0] : '',
-        timeFrom: it.timeFrom || '',
-        timeTo: it.timeTo || '',
-      }));
+      return rows.map(dsMapApiRow);
     } catch (e) { console.error('Date sheet fetch failed', e); return []; }
   };
   const blocks = await Promise.all((targetClasses || []).map(async cls => ({ cls, rows: await fetchDs(cls) })));
@@ -8152,8 +8231,8 @@ if (format === 'pdf') {
           <td style="padding:8px 12px;font-size:11.5px;font-weight:700;color:#0F172A;border-bottom:1px solid ${aBdr}">${si + 1}</td>
           <td style="padding:8px 12px;font-size:11.5px;font-weight:700;color:#0F172A;border-bottom:1px solid ${aBdr}">${dsEsc(s.subject)}</td>
           <td style="padding:8px 12px;font-size:11.5px;color:${tMuted};white-space:nowrap;border-bottom:1px solid ${aBdr}">${dsFmtDate(s.date)}</td>
-          <td style="padding:8px 12px;font-size:11.5px;color:${tMuted};border-bottom:1px solid ${aBdr}">${dsEsc(s.timeFrom) || '—'}</td>
-          <td style="padding:8px 12px;font-size:11.5px;color:${tMuted};border-bottom:1px solid ${aBdr}">${dsEsc(s.timeTo) || '—'}</td>
+          <td style="padding:8px 12px;font-size:11.5px;color:${tMuted};white-space:nowrap;border-bottom:1px solid ${aBdr}">${dsEsc(s.timeFrom) || '—'}</td>
+          <td style="padding:8px 12px;font-size:11.5px;color:${tMuted};white-space:nowrap;border-bottom:1px solid ${aBdr}">${dsEsc(s.timeTo) || '—'}</td>
         </tr>`).join('')
       : `<tr><td colspan="5" style="padding:12px;font-size:12px;color:${tMuted};text-align:center">No subjects added</td></tr>`;
 
