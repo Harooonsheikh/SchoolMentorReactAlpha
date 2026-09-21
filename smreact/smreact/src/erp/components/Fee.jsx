@@ -12343,7 +12343,7 @@ function feeBankBlockHtml(school, { thermal = false } = {}) {
   }
   return `
     <div class="psid-block" style="margin-top:5px;">
-      <div class="psid-top"><div class="psid-dot"></div><span class="psid-tag">Bank Transfer Details</span></div>
+      <div class="psid-top"><div class="psid-dot"></div><span class="psid-tag">Bank Account Details</span></div>
       <div style="display:grid;grid-template-columns:auto 1fr;column-gap:10px;row-gap:2px;font-size:10.5px;margin-top:4px;">
         ${rows.map(([k, v]) => `<span style="color:#666;">${escHtml(k)}</span><span style="text-align:right;font-weight:700;color:#111;">${escHtml(String(v))}</span>`).join('')}
       </div>
@@ -12793,7 +12793,7 @@ html,body,.fee-challan-doc,.fee-challan-doc *{-webkit-print-color-adjust:exact !
 .fee-challan-doc .school-name{font-size:12px;font-weight:600;color:#111;line-height:1.2;}
 .fee-challan-doc .copy-tag{font-size:8px;font-weight:500;color:#555;letter-spacing:0.8px;text-transform:uppercase;border:0.5px solid #aaa;padding:1px 5px;border-radius:2px;display:inline-block;margin-top:2px;}
 .fee-challan-doc .info-grid{display:grid;grid-template-columns:auto 1fr;column-gap:6px;row-gap:0;padding:7px 10px;border-bottom:1px solid #ddd;}
-.fee-challan-doc .ig-lbl{font-size:9px;color:#777;font-weight:500;padding:2.5px 0;white-space:nowrap;}
+.fee-challan-doc .ig-lbl{font-size:9px;color:#777;font-weight:800;padding:2.5px 0;white-space:nowrap;}
 .fee-challan-doc .ig-val{font-size:9px;color:#111;font-weight:600;padding:2.5px 0;text-align:right;}
 .fee-challan-doc .fee-wrap{padding:7px 10px 0;}
 .fee-challan-doc .fee-table{width:100%;border-collapse:collapse;font-size:8.5px;}
@@ -12979,8 +12979,8 @@ function feeSlipHTML({ copyLabel, classMeta, student, heads, settings, period, i
   </div>
   <div class="info-grid">
     <span class="ig-lbl">Fee Period</span><span class="ig-val">${escHtml(period)}</span>
-    <span class="ig-lbl">Issue / Due</span><span class="ig-val">${escHtml(fmtChallanDate(issueISO))} / ${escHtml(fmtChallanDate(dueISO))}</span>
-    <span class="ig-lbl">Date</span><span class="ig-val">${escHtml(fmtChallanDate(issueISO))}</span>
+    <span class="ig-lbl">Issue Date</span><span class="ig-val">${escHtml(fmtChallanDate(issueISO))}  </span>
+    <span class="ig-lbl"  >Due Date</span><span class="ig-val"style="font-weight:750;">${escHtml(fmtChallanDate(dueISO))}</span>
     <span class="ig-lbl">Admn. No</span><span class="ig-val">${escHtml(student.reg)}</span>
     <span class="ig-lbl">Student</span><span class="ig-val">${escHtml(student.name)}</span>
     <span class="ig-lbl">Father</span><span class="ig-val">${escHtml(student.father || '—')}</span>
@@ -13025,11 +13025,21 @@ function feeSlipHTML({ copyLabel, classMeta, student, heads, settings, period, i
       <div class="step-row"><div class="sn">3</div><div class="st">Enter PSID — <strong>amount auto-fills</strong></div></div>
       <div class="step-row"><div class="sn">4</div><div class="st"><strong>Confirm &amp; pay</strong> — save your SMS receipt</div></div>
     </div>` : ''}
-    ${barcodeId ? `
-    <div class="barcode-area">${code128BSvg(barcodeId)}<div class="psid-tiny">Student ID: ${escHtml(barcodeId)}</div></div>` : ''}
+  
+
+  
+    
   </div>
 </div>`;
+
 }
+
+
+// barcode code when needed
+// ${barcodeId ? `
+// <div class="barcode-area">${code128BSvg(barcodeId)}<div class="psid-tiny">Student ID: ${escHtml(barcodeId)}</div></div>` : ''}
+
+
 
 /* Ek saved BranchLedger challan record se uske ASLI Issue / Due / Fee-Period
    nikaalta hai. Ye wahi dates hain jo "Generate Challan" modal me chuni gayi thin
