@@ -18,8 +18,10 @@ const fmtShort = (n) => {
 }
 const fmtNum = (n) => Number(n || 0).toLocaleString()
 const fmtPct = (n) => `${Math.round((Number(n) || 0) * 100) / 100}%`
-/* Card par poora naam nahi samata — pehla lafz kaafi hai, tooltip me poora. */
-const firstWord = (name) => String(name || '—').split(' ')[0]
+/* School ka poora naam — pehle sirf pehla lafz dikhta tha ("Gemstone Grammar
+   School" ka bas "Gemstone"), jis se do milti-julti branchein pehchani nahi
+   jati thin. Ab poora naam card par aata hai (dekho `.mini-val.is-name`). */
+const schoolName = (name) => String(name || '').trim() || '—'
 
 /* ── Shared building blocks ─────────────────────────────────────── */
 function SectionHead({ icon, title, sub }) {
@@ -32,14 +34,16 @@ function SectionHead({ icon, title, sub }) {
   )
 }
 
-function MiniCard({ accent = '', icon, val, lbl, delta, tip }) {
+/* `isName` un cards ke liye jin ki value ginti nahi, school ka naam hai —
+   chhota font + wrap, taake lamba naam kate bagair poora aa jaye. */
+function MiniCard({ accent = '', icon, val, lbl, delta, tip, isName = false }) {
   return (
     <div className={`mini-card ${accent}`} title={tip || `${lbl} — ${val}`} tabIndex={0}>
       <div className="mini-top">
         <div className="mini-ic"><i className={`fa-solid ${icon}`} /></div>
         {delta && <span className={`mini-delta ${delta.dir}`} title={`${delta.dir === 'up' ? 'Up' : delta.dir === 'down' ? 'Down' : 'No change'} ${delta.text} vs last month`}><i className={`fa-solid ${delta.dir === 'up' ? 'fa-arrow-trend-up' : delta.dir === 'down' ? 'fa-arrow-trend-down' : 'fa-minus'}`} /> {delta.text}</span>}
       </div>
-      <div className="mini-val">{val}</div>
+      <div className={`mini-val${isName ? ' is-name' : ''}`}>{val}</div>
       <div className="mini-lbl">{lbl}</div>
     </div>
   )
@@ -216,8 +220,8 @@ function HeadOfficeDashboard({ d }) {
         <MiniCard accent="m-green" icon="fa-circle-check" val={usage.erpActive} lbl="ERP Active Schools" />
         <MiniCard accent="m-red" icon="fa-circle-xmark" val={usage.erpInactive} lbl="ERP Inactive Schools" />
         <MiniCard accent="" icon="fa-arrow-right-to-bracket" val={fmtNum(usage.loginsMonth)} lbl="Total Logins This Month" />
-        <MiniCard accent="m-green" icon="fa-trophy" val={firstWord(d.mostActive?.name)} lbl={`Most Active · ${fmtPct(d.mostActive?.usagePct)}`} tip={d.mostActive ? `Most active — ${d.mostActive.name} · ${fmtPct(d.mostActive.usagePct)} ERP usage` : 'No activity recorded yet'} />
-        <MiniCard accent="m-amber" icon="fa-triangle-exclamation" val={firstWord(d.leastActive?.name)} lbl={`Least Active · ${fmtPct(d.leastActive?.usagePct)}`} tip={d.leastActive ? `Least active — ${d.leastActive.name} · ${fmtPct(d.leastActive.usagePct)} ERP usage` : 'No activity recorded yet'} />
+        <MiniCard accent="m-green" icon="fa-trophy" isName val={schoolName(d.mostActive?.name)} lbl={`Most Active · ${fmtPct(d.mostActive?.usagePct)}`} tip={d.mostActive ? `Most active — ${d.mostActive.name} · ${fmtPct(d.mostActive.usagePct)} ERP usage` : 'No activity recorded yet'} />
+        <MiniCard accent="m-amber" icon="fa-triangle-exclamation" isName val={schoolName(d.leastActive?.name)} lbl={`Least Active · ${fmtPct(d.leastActive?.usagePct)}`} tip={d.leastActive ? `Least active — ${d.leastActive.name} · ${fmtPct(d.leastActive.usagePct)} ERP usage` : 'No activity recorded yet'} />
       </div>
 
       <div className="chart-grid c-21" style={{ marginTop: 16 }}>
@@ -317,8 +321,8 @@ function HeadOfficeDashboard({ d }) {
         <MiniCard accent="" icon="fa-user-clock" val={fmtPct(hr.attStudent)} lbl="Today's Student Attendance" />
       </div>
       <div className="mini-grid" style={{ marginTop: 13 }}>
-        <MiniCard accent="m-green" icon="fa-arrow-up" val={firstWord(hr.highestAtt?.name)} lbl={`Highest Attendance · ${fmtPct(hr.highestAtt?.pct)}`} tip={hr.highestAtt ? `Highest attendance — ${hr.highestAtt.name} · ${fmtPct(hr.highestAtt.pct)}` : 'No attendance recorded yet'} />
-        <MiniCard accent="m-red" icon="fa-arrow-down" val={firstWord(hr.lowestAtt?.name)} lbl={`Lowest Attendance · ${fmtPct(hr.lowestAtt?.pct)}`} tip={hr.lowestAtt ? `Lowest attendance — ${hr.lowestAtt.name} · ${fmtPct(hr.lowestAtt.pct)}` : 'No attendance recorded yet'} />
+        <MiniCard accent="m-green" icon="fa-arrow-up" isName val={schoolName(hr.highestAtt?.name)} lbl={`Highest Attendance · ${fmtPct(hr.highestAtt?.pct)}`} tip={hr.highestAtt ? `Highest attendance — ${hr.highestAtt.name} · ${fmtPct(hr.highestAtt.pct)}` : 'No attendance recorded yet'} />
+        <MiniCard accent="m-red" icon="fa-arrow-down" isName val={schoolName(hr.lowestAtt?.name)} lbl={`Lowest Attendance · ${fmtPct(hr.lowestAtt?.pct)}`} tip={hr.lowestAtt ? `Lowest attendance — ${hr.lowestAtt.name} · ${fmtPct(hr.lowestAtt.pct)}` : 'No attendance recorded yet'} />
         <MiniCard accent="m-amber" icon="fa-user-large-slash" val={fmtNum(hr.absentStudents)} lbl="Absent Students Today" />
         <MiniCard accent="m-amber" icon="fa-user-slash" val={hr.absentStaff} lbl="Absent Staff Today" />
       </div>
