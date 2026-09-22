@@ -2662,6 +2662,10 @@ function buildAccReportCSV(cfg) {
    delete confirmation dialogs.
    ═══════════════════════════════════════════════════════════════════ */
 
+/* Balance MINUS bhi ho sakta hai — jitna wapas kiya gaya wo jitna liya gaya
+   us se zyada ho to (2000 liya, 3000 wapas kiya → −1000). Pehle yahan
+   Math.max(0, …) laga tha jo har negative ko 0 bana deta tha, is liye Net
+   Payable/Receivable me wo −1000 kabhi nazar hi nahi aata tha. */
 function bookCalc(b) {
   /* List view loads books without their ledger; trust the server's
      aggregate totals so cards & stats are correct without the entries. */
@@ -2670,7 +2674,7 @@ function bookCalc(b) {
     const returned = Number(b.serverReturned || 0);
     return {
       received, returned, adjust: 0,
-      balance: Math.max(0, Number(b.serverBalance || 0)),
+      balance: Number(b.serverBalance || 0),
       totalIn: received,
       returnedAll: returned, withBal: [],
       lastDate: b.openDate,
@@ -2688,7 +2692,7 @@ function bookCalc(b) {
   });
   return {
     received, returned, adjust,
-    balance: Math.max(0, bal),
+    balance: bal,
     totalIn: received, returnedAll: returned, withBal,
     lastDate: sorted.length ? sorted[sorted.length - 1].date : b.openDate,
   };
@@ -3005,7 +3009,9 @@ function AccountBooks({ toast, isOtherSession }) {
                       <div className="acc-book-bal-row">
                         <div>
                           <div className="acc-book-bal-lbl">{b.type === 'payable' ? 'Remaining Payable' : 'Remaining Receivable'}</div>
-                          <div className="acc-book-bal-val">{fmtMoney(c.balance)}</div>
+                          {/* Minus balance = party ko jitna dena tha us se zyada ja chuka
+                              hai — laal rang me taake ek nazar me pata chale. */}
+                          <div className="acc-book-bal-val" style={c.balance < 0 ? { color: '#DC2626' } : undefined}>{fmtMoney(c.balance)}</div>
                         </div>
                       </div>
                       <div className="acc-book-card-mini">
@@ -3154,7 +3160,7 @@ function BookDetail({
         </div>
         <div className="acc-bsum b-balance">
           <div className="acc-bsum-top"><span className="acc-bsum-lbl">Current Balance</span><span className="acc-bsum-ic"><i className="fa-solid fa-scale-balanced"></i></span></div>
-          <div className="acc-bsum-val">{fmtMoney(c.balance)}</div>
+          <div className="acc-bsum-val" style={c.balance < 0 ? { color: '#DC2626' } : undefined}>{fmtMoney(c.balance)}</div>
           <div className="acc-bsum-meta">{book.type === 'payable' ? 'payable to party' : 'receivable'}</div>
         </div>
         <div className="acc-bsum b-in">
@@ -4035,7 +4041,9 @@ function BookTxnModal({ cfg, users, currentUser, book, onClose, onSave, toast })
               </div>
               <div className="acc-book-runpreview-row total">
                 <span>Balance After</span>
-                <b>{fmtMoney(Math.max(0, newBal))}</b>
+                {/* Preview bhi minus dikhata hai — warna user ko lagta hai entry
+                    ke baad balance 0 hoga, jab ke asal me wo minus me jayega. */}
+                <b style={newBal < 0 ? { color: '#DC2626' } : undefined}>{fmtMoney(newBal)}</b>
               </div>
             </div>
           )}
