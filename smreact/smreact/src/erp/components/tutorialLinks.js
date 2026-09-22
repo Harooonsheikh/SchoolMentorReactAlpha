@@ -131,7 +131,7 @@ export const TUTORIAL_LINKS = {
     ],
   },
   schoolSops: {
-    title: 'School SOPs Tutorials',
+    title: 'Policy Manuals Tutorials',
     items: [
       { label: 'Browse SOPs',  url: '' },
       { label: 'Acknowledge',  url: '' },

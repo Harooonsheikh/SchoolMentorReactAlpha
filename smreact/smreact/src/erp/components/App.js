@@ -107,7 +107,7 @@ const NAV_LABELS = {
   appraisal: 'Staff Appraisals',
   approvals: 'Approvals',
   crm: 'Admission CRM',
-  sops: 'School SOPs',
+  sops: 'Policy Manuals',
   trainings: 'Teacher Trainings',
   etube: 'e-Tube',
   chat: 'Chat',
@@ -160,7 +160,7 @@ const NAV_SECTIONS = [
   {
     label: 'School Mentor',
     items: [
-      { id: 'sops',          name: 'School SOPs',       icon: 'fa-book-open' },          /* every branch */
+      { id: 'sops',          name: 'Policy Manuals',    icon: 'fa-book-open' },          /* every branch */
       { id: 'trainings',     name: 'Teacher Trainings', icon: 'fa-chalkboard-user' },   /* branchID 1 only */
       { id: 'etube',         name: 'e-Tube',            icon: 'fa-play-circle' },        /* branchID 1 only */
       { id: 'chat',          name: 'Chat',              icon: 'fa-comments' },           /* branchID 1 only */
@@ -725,7 +725,7 @@ export default function App() {
               </Suspense>
             )}
             {active === 'sops' && (
-              <Suspense fallback={<RouteFallback label="Loading School SOPs…" />}>
+              <Suspense fallback={<RouteFallback label="Loading Policy Manuals…" />}>
                 <SchoolSOPs toast={pushToast} />
               </Suspense>
             )}

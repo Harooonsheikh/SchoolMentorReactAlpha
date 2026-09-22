@@ -35,6 +35,10 @@ export const MODULE_REGISTRY = [
   { id: 'approvals',        label: 'Approvals',         icon: 'fa-square-check',     group: 'ADMINISTRATION', route: '/approvals',          coreLocked: true  },
 
   /* ── SCHOOL MENTOR GROUP ─────────────────────────────────────── */
+  /* UI par ye module "Policy Manuals" kehlata hai. Yahan label JAAN BOOJH kar
+     "School SOPs" hai — ye wohi `menuName` hai jo permissions API bhejti aur
+     leti hai (canModule/can isi se match karte hain). Badla to purani saved
+     permissions match karna chhor dengi aur gating fail-open ho jayegi. */
   { id: 'school_sops',      label: 'School SOPs',       icon: 'fa-book-open',        group: 'SCHOOL MENTOR',  route: '/school-mentor/sops',      coreLocked: false },
   { id: 'teacher_trainings',label: 'Teacher Trainings', icon: 'fa-chalkboard-user',  group: 'SCHOOL MENTOR',  route: '/school-mentor/trainings', coreLocked: false },
 
