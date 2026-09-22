@@ -10218,7 +10218,16 @@ const position = opt['Show Position in Class']
       )}
 
       {/* 3-col analysis */}
-      <div style={{ display: 'grid', gridTemplateColumns: opt['Show Final Remarks'] ? '1fr 1fr 1fr' : '1fr 1fr', borderBottom: `1px solid ${C.bdr}` }}>
+      {/* <div style={{ display: 'grid', gridTemplateColumns: opt['Show Final Remarks'] ? '1fr 1fr 1fr' : '1fr 1fr', borderBottom: `1px solid ${C.bdr}` }}> */}
+     <div 
+  style={{ 
+    display: 'grid',
+    gridTemplateColumns: opt['Show Final Remarks'] ? '1fr 1fr 1fr' : '1fr 1fr',
+    borderBottom: `1px solid ${C.bdr}`,
+    breakInside: 'avoid',
+    pageBreakInside: 'avoid'
+  }}
+>
         <div style={{ padding: '16px 20px', borderRight: `1px solid ${C.bdr}` }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
             <div style={{ width: 28, height: 28, borderRadius: 7, background: C.grnL, color: C.grn, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12 }}>
@@ -10241,7 +10250,13 @@ const position = opt['Show Position in Class']
           })}
         </div>
 
-        <div style={{ padding: '16px 20px', borderRight: opt['Show Final Remarks'] ? `1px solid ${C.bdr}` : 'none' }}>
+        {/* <div style={{ padding: '16px 20px', borderRight: opt['Show Final Remarks'] ? `1px solid ${C.bdr}` : 'none' }}> */}
+          <div style={{
+  padding: '16px 20px',
+  borderRight: opt['Show Final Remarks'] ? `1px solid ${C.bdr}` : 'none',
+  breakInside: 'avoid',
+  pageBreakInside: 'avoid'
+}}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
             <div style={{ width: 28, height: 28, borderRadius: 7, background: C.accL, color: C.acc, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12 }}>
               <i className="fa-solid fa-bullseye"></i>
@@ -10286,8 +10301,19 @@ const position = opt['Show Position in Class']
           { img: '', label: 'Parents' },
         ];
         return (
-          <div style={{ padding: '16px 24px 18px', display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 18, borderBottom: `1px solid ${C.bdr}` }}>
-            {cols.map((c, i) => (
+          // <div style={{ padding: '16px 24px 18px', display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 18, borderBottom: `1px solid ${C.bdr}` }}>
+          <div 
+ style={{ 
+   padding: '16px 24px 18px',
+   display:'grid',
+   gridTemplateColumns:'repeat(3,1fr)',
+   gap:18,
+   borderBottom:`1px solid ${C.bdr}`,
+   breakInside:'avoid',
+   pageBreakInside:'avoid'
+ }}
+>
+          {cols.map((c, i) => (
               <div key={i} style={{ textAlign: 'center', minWidth: 0 }}>
                 <div style={{ height: 32, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
                   {c.img && <img src={c.img} alt="" style={{ maxHeight: 30, maxWidth: '90%', objectFit: 'contain' }} />}
