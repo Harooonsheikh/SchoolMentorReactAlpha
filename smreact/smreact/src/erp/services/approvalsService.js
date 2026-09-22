@@ -1,22 +1,128 @@
 import { mockApprovalRequests, mockApprovalCurrentUser, mockApprovalSettings, APPROVAL_STATUS, APPROVAL_ACTION_META } from '../mock/approvals';
 import { INITIAL_USERS, INITIAL_ROLES } from '../pages/UserPermissions/permissionsData';
 import { delay, clone } from './_http';
+import { buildUrl } from '../../utils/apiConfig';
+
+/* Settings → Approvals  POST /api/Setting/manage-settings-approvals
+     action: GET | SAVE
+     UI action keys → swagger Mdl_AHM_Settings_Approvals field names.
+     `editAccoutEntry` / `duesSettelmentDiscount` API ki spelling hain. */
+const SETTINGS_APPROVALS_ENDPOINT = '/api/Setting/manage-settings-approvals';
+
+const ACTION_TO_API = {
+  fee_discount:             'feeDiscount',
+  fee_delete_challan:       'deleteFeeChallan',
+  fee_heads_update:         'feeHeadUpdate',
+  accounts_edit_entry:      'editAccoutEntry',
+  accounts_delete_entry:    'deleteAccountEntry',
+  hr_deduction_waiver:      'payRollDeductionWaiver',
+  hr_bonus_award:           'payRollBonusAward',
+  hr_salary_update:         'salaryDetailsUpdate',
+  hr_leave_update:          'leavePolicyUpdate',
+  hr_loan_approval:         'employeeLoanApproval',
+  inventory_price_edit:     'inventoryPriceEdit',
+  inventory_delete_product: 'deleteInventoryProduct',
+  students_mark_inactive:   'markStudentInactive',
+  students_discount:        'studentFeeDiscount',
+  students_dues_discount:   'duesSettelmentDiscount',
+};
+
+function currentBranchId() {
+  return Number(sessionStorage.getItem('branchID')) || 0;
+}
+
+function settingsAuthHeaders() {
+  const token = sessionStorage.getItem('token');
+  return {
+    'Content-Type': 'application/json',
+    Accept: '*/*',
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+}
+
+function pick(obj, names, fallback) {
+  if (!obj) return fallback;
+  const map = new Map(Object.keys(obj).map((k) => [String(k).toLowerCase(), k]));
+  for (const n of names) {
+    const key = map.get(String(n).toLowerCase());
+    if (key != null && obj[key] != null && obj[key] !== '') return obj[key];
+  }
+  return fallback;
+}
+
+function boolFlag(v, fallback = false) {
+  if (v == null || v === '') return fallback;
+  if (typeof v === 'boolean') return v;
+  if (typeof v === 'number') return v !== 0;
+  const s = String(v).trim().toLowerCase();
+  if (['true', '1', 'y', 'yes'].includes(s)) return true;
+  if (['false', '0', 'n', 'no'].includes(s)) return false;
+  return fallback;
+}
+
+function emptyApiFlags(value = false) {
+  return Object.values(ACTION_TO_API).reduce((acc, k) => {
+    acc[k] = Boolean(value);
+    return acc;
+  }, {});
+}
+
+function flagsFromActionTypes(actionTypeEnabled = {}) {
+  const flags = {};
+  Object.entries(ACTION_TO_API).forEach(([uiKey, apiKey]) => {
+    flags[apiKey] = actionTypeEnabled[uiKey] !== false;
+  });
+  return flags;
+}
+
+function extractRows(json) {
+  const d = json?.data ?? json?.Data;
+  if (Array.isArray(d)) return d;
+  if (d && typeof d === 'object') return [d];
+  return [];
+}
+
+function actionTypesFromRow(row) {
+  const actionTypeEnabled = { ...mockApprovalSettings.actionTypeEnabled };
+  Object.entries(ACTION_TO_API).forEach(([uiKey, apiKey]) => {
+    actionTypeEnabled[uiKey] = boolFlag(pick(row, [apiKey]), actionTypeEnabled[uiKey] !== false);
+  });
+  return actionTypeEnabled;
+}
+
+function rowToSettings(row) {
+  return {
+    id: Number(pick(row, ['id', 'ID'], 0)) || 0,
+    enabled: boolFlag(pick(row, ['approvalsActive']), true),
+    approverRoleId: mockApprovalSettings.approverRoleId,
+    actionTypeEnabled: actionTypesFromRow(row),
+  };
+}
+
+function syncMockSettings(settings) {
+  mockApprovalSettings.enabled = settings.enabled;
+  Object.assign(mockApprovalSettings.actionTypeEnabled, settings.actionTypeEnabled);
+}
+
+async function postSettingsApprovals(body, failMsg) {
+  const res = await fetch(buildUrl(SETTINGS_APPROVALS_ENDPOINT), {
+    method: 'POST',
+    headers: settingsAuthHeaders(),
+    body: JSON.stringify(body),
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok || (json && json.success === false)) {
+    throw new Error((json && (json.message || json.Message)) || failMsg);
+  }
+  return json;
+}
 
 /* ═══════════════════════════════════════════════════════════════════
-   APPROVALS SERVICE — mock/demo data source.
+   APPROVALS SERVICE
 
-   The ERP has no backend Approvals API, so this module keeps the same
-   self-contained mock convention the sibling app uses: one generic
-   ApprovalRequest store (src/erp/mock/approvals.js) mutated in place,
-   plus this service layer that the Approvals module + Settings tab call
-   through. When a real backend lands, swap the `delay()` + `clone()`
-   bodies here for HTTP calls and keep every signature/return shape
-   stable (see services/_http.js's own contract header).
-
-   Unlike the sibling, approveRequest() does NOT reach into other module
-   services to apply the underlying change — Approvals runs purely on
-   mock data here, so approving simply records the decision on the
-   request. Wiring the per-action apply handlers is a backend task.
+   Settings → Approvals GET/SAVE hit POST /api/Setting/manage-settings-approvals.
+   Approval request queue (list / approve / reject / revoke) abhi mock
+   store (src/erp/mock/approvals.js) par chalti hai.
    ═══════════════════════════════════════════════════════════════════ */
 
 /* There is no real session to read "who is logged in" from on the mock
@@ -41,16 +147,52 @@ export async function getCurrentUser()     { await delay(); return mockApprovalC
    Settings → Approvals reads/writes this. Every module's gated action
    would call isActionEnabled(actionType) before deciding whether to
    raise a request or just apply the change directly. */
-export async function getApprovalSettings() { await delay(); return clone(mockApprovalSettings); }
+export async function getApprovalSettings() {
+  const branchID = currentBranchId();
+  const json = await postSettingsApprovals(
+    { action: 'GET', id: 0, branchID, approvalsActive: false, ...emptyApiFlags(false) },
+    'Could not load approval settings',
+  );
+  const rows = extractRows(json);
+  const row = rows.find((r) => Number(pick(r, ['branchID', 'BranchID'], 0)) === branchID) || rows[0];
+  const settings = row
+    ? rowToSettings(row)
+    : {
+        id: 0,
+        enabled: true,
+        approverRoleId: mockApprovalSettings.approverRoleId,
+        actionTypeEnabled: { ...mockApprovalSettings.actionTypeEnabled },
+      };
+  syncMockSettings(settings);
+  return settings;
+}
 
-export async function saveApprovalSettings(payload) {
-  await delay();
-  const { actionTypeEnabled, ...rest } = payload || {};
-  Object.assign(mockApprovalSettings, rest);
-  if (actionTypeEnabled) {
-    Object.assign(mockApprovalSettings.actionTypeEnabled, actionTypeEnabled);
+export async function saveApprovalSettings({ enabled, actionTypeEnabled, id = 0 } = {}) {
+  const branchID = currentBranchId();
+  const flags = flagsFromActionTypes(actionTypeEnabled);
+  const json = await postSettingsApprovals(
+    {
+      action: 'SAVE',
+      id: Number(id) || 0,
+      branchID,
+      approvalsActive: Boolean(enabled),
+      ...flags,
+    },
+    'Could not save approval settings',
+  );
+  const row = extractRows(json)[0];
+  let newId = Number(pick(row, ['id', 'ID'], 0)) || Number(json?.id) || Number(id) || 0;
+  if (!newId) {
+    try { newId = (await getApprovalSettings()).id; } catch { /* save ho chuka hai */ }
   }
-  return clone(mockApprovalSettings);
+  const settings = {
+    id: newId,
+    enabled: Boolean(enabled),
+    approverRoleId: mockApprovalSettings.approverRoleId,
+    actionTypeEnabled: { ...mockApprovalSettings.actionTypeEnabled, ...(actionTypeEnabled || {}) },
+  };
+  syncMockSettings(settings);
+  return settings;
 }
 
 export async function isActionEnabled(actionType) {

@@ -21,7 +21,7 @@ export const MODULES = [
   { id: 'students',    label: 'Students',          icon: 'fa-user-graduate' },
   { id: 'hr',          label: 'HR',                icon: 'fa-users' },
   { id: 'appraisals',  label: 'Appraisals',        icon: 'fa-star-half-stroke' },
-  { id: 'sops',        label: 'School SOPs',       icon: 'fa-book-open' },
+  { id: 'sops',        label: 'Policy Manuals',    icon: 'fa-book-open' },
   { id: 'trainings',   label: 'Teacher Trainings', icon: 'fa-chalkboard-user' },
   { id: 'permissions', label: 'User Permissions',  icon: 'fa-shield-halved' },
   { id: 'settings',    label: 'Settings',          icon: 'fa-gear' },

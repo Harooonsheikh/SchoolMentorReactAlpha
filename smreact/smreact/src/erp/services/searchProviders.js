@@ -505,7 +505,7 @@ const appraisalsProvider = {
 const schoolSopsProvider = {
   moduleId:    'school_sops',
   navTarget:   'sops',
-  moduleLabel: 'School SOPs',
+  moduleLabel: 'Policy Manuals',
   icon:        'fa-book-open',
   accent:      '#475569',
   priority:    20,
@@ -520,7 +520,7 @@ const schoolSopsProvider = {
           title:    s.title,
           subtitle: [s.category, s.version].filter(Boolean).join(' · '),
           preview:  s.status ? `Status: ${s.status}` : '',
-          path:     ['School SOPs', s.category || 'Library'],
+          path:     ['Policy Manuals', s.category || 'Library'],
         });
         if (out.length >= ctx.limit) return out;
       }

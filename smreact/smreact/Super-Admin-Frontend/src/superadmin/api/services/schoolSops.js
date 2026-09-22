@@ -104,12 +104,20 @@ export function deleteManualHead(id) {
    Head ID" deti hai) — yani manuals hamesha kisi ek head ke andar aate hain.
    ═══════════════════════════════════════════════════════════════════════ */
 
+/* ManualCode optional hai — khali ho to dono taraf khali. API purane records
+   me isay 0 kar ke wapas deti hai; usay bhi khali hi samjho, warna wo "0"
+   edit form ke Code field me bhar kar agli save par dobara chala jata hai. */
+function optCode(v) {
+  const s = String(v ?? '').trim();
+  return (s === '0' || !s) ? '' : s;
+}
+
 /* API row → wohi manual shape jo screen padhti hai (sopData jaisa). */
 export function manualToUi(m) {
   return {
     id:       Number(m?.id) || 0,
     catId:    Number(m?.manualHeadID ?? m?.manualHeadId) || 0,
-    code:     String(m?.manualCode ?? '').trim(),
+    code:     optCode(m?.manualCode),
     title:    String(m?.manualTitle ?? '').trim(),
     desc:     String(m?.shortDescription ?? '').trim(),
     /* pdfPath server par pada hua file path hai — screen `pdfName` par
@@ -136,7 +144,8 @@ function manualForm(action, m = {}) {
   fd.append('Action', action);
   fd.append('ID', String(Number(m.id) || 0));
   fd.append('ManualHeadID', String(Number(m.catId) || 0));
-  fd.append('ManualCode', m.code ?? '');
+  /* Code optional hai — khali ho to khali hi jata hai. */
+  fd.append('ManualCode', optCode(m.code));
   fd.append('ManualTitle', m.title ?? '');
   fd.append('ShortDescription', m.desc ?? '');
   /* Nayi file chuni ho to wohi bhejo; warna purana path bhej kar file

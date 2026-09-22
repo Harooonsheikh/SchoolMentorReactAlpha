@@ -64,7 +64,7 @@ export default function SchoolSOPs({ toast = () => {} }) {
         setManualsByHead(byHead);
         setCat((cur) => (list.some((h) => h.id === cur) ? cur : (list[0]?.id ?? null)));
       })
-      .catch((err) => { if (alive) toastRef.current?.(err.message || 'Could not load School SOPs', 'error'); })
+      .catch((err) => { if (alive) toastRef.current?.(err.message || 'Could not load Policy Manuals', 'error'); })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
   }, []);
@@ -99,7 +99,7 @@ export default function SchoolSOPs({ toast = () => {} }) {
      Heads aur manuals ke alag alag spinner nahi: ek hi loader, aur dono API
      mukammal hote hi screen poori bhari hui aati hai. */
   if (loading) {
-    return <RouteFallback label="Loading School SOPs…" sub="Loading manuals and forms — please wait." />;
+    return <RouteFallback label="Loading Policy Manuals…" sub="Loading manuals and forms — please wait." />;
   }
 
   return (
@@ -113,17 +113,17 @@ export default function SchoolSOPs({ toast = () => {} }) {
             <i className="fa-solid fa-book-open"></i>
           </div>
           <div>
-            <div className="page-title">School SOPs</div>
-            <div className="page-sub">Centralized SOP &amp; School Manual Library</div>
+            <div className="page-title">Policy Manuals</div>
+            <div className="page-sub">Centralized Policy &amp; School Manual Library</div>
           </div>
         </div>
 
         {canWatchTutorials && (
-        <Tooltip text="Play a short tutorial for the School SOPs module">
+        <Tooltip text="Play a short tutorial for the Policy Manuals module">
           <button
             className="tutorial-btn page-tutorial-btn"
             onClick={() => setTutorialOpen(true)}
-            aria-label="Open School SOPs tutorials"
+            aria-label="Open Policy Manuals tutorials"
           >
             <div className="play-dot"><i className="fa-solid fa-play" style={{ fontSize: 8 }}></i></div>
             <span className="tutorial-label">Tutorial</span>

@@ -548,8 +548,15 @@ function ManualModal({ manual, cats, activeCat, saving = false, onClose, onSave,
   const set = (k, v) => setF((p) => ({ ...p, [k]: v }));
   const save = () => {
     if (saving) return;                 // API chal rahi hai
+    /* Sirf teen cheezein lazmi hain — category, title aur PDF. Baqi sab
+       (code, description, video) khali chhora ja sakta hai. */
     if (!f.catId) { toast?.('Please select a category', 'warn'); return; }
     if (!f.title.trim()) { toast?.('Please enter a manual title', 'warn'); return; }
+    /* Edit me purani file pehle se server par hai, is liye dobara upload
+       zaroori nahi — sirf tab roko jab koi PDF hai hi nahi. */
+    if (!pdfFile && !f.pdfName.trim() && !manual?.pdfPath) {
+      toast?.('Please upload the manual PDF', 'warn'); return;
+    }
     onSave({
       catId: Number(f.catId), title: f.title.trim(), code: f.code.trim(), desc: f.desc.trim(),
       /* Nayi file ho to wo, warna server par pada purana path jyun ka tyun. */
