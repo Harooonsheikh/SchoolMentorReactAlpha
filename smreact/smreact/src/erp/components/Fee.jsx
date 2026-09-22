@@ -3133,10 +3133,20 @@ function FeeChallansList({ toast }) {
                           const byHeadSum = prevOut && prevOut.byHead
                             ? Object.values(prevOut.byHead).reduce((a, v) => a + Math.max(0, Number(v) || 0), 0)
                             : 0;
+                          const byHeadNeg = prevOut && prevOut.byHead
+                            ? Object.values(prevOut.byHead).reduce((a, v) => a + Math.min(0, Number(v) || 0), 0)
+                            : 0;
                           const fbDues = prevOut
                             ? (byHeadSum > 0 ? byHeadSum : (+prevOut.dues || 0))
                             : (+s.dues || 0);
-                          const fbAdv = prevOut ? prevOut.advance : (+s.advance || 0);
+                          /* byHead ho to Advance bhi usi ke negative nets se — running.advance
+                             mat lo. Setup "Previous Due" partial receive ke baad running galat
+                             −ve ho kar Advance column me aa jata tha; baqaya Dues me hona chahiye. */
+                          const fbAdv = prevOut
+                            ? (prevOut.byHead && Object.keys(prevOut.byHead).length
+                                ? Math.max(0, -byHeadNeg)
+                                : (+prevOut.advance || 0))
+                            : (+s.advance || 0);
                           const fig = rec ? challanFigures(rec, prevOut?.byHead || null) : {
                             dues: fbDues,
                             advance: fbAdv,
@@ -5400,7 +5410,12 @@ function FeeSlipModal({ cfg, onClose, toast }) {
    October (September ki receiving ke baad) aur November (October me prev pay karne ke
    baad) dono me sahi baqaya nikalta hai. Returns { [studentID]: { dues, advance } }. */
 function prevOutFromLedgerRows(prevRows) {
-  const isPrev = (r) => /previous|pending|arrear/i.test(String(r.subHead || r.head || ''));
+  /* SIRF aggregate carry rows ("Previous Pending" / arrear) — Launch Setup /
+     Update Student ka "Previous Due" / "Previous Dues" head yahan NAHI.
+     Woh normal billable head hai: pehle regex `/previous|…/` usay skip kar
+     deta tha, received minus ho jati thi magar billed running me add nahi —
+     partial receive ke baad next month Advance (−ve) dikhta tha, Dues nahi. */
+  const isPrev = (r) => /previous\s*pending|arrears?/i.test(String(r.subHead || r.head || ''));
   const byStudent = new Map();
   (prevRows || []).forEach(r => {
     const id = String(r.studentID);
