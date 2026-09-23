@@ -42,13 +42,15 @@ export const CORE_PERMS = [
 export const CHAT_MODES = [
   { key: 'off', name: 'Chat Completely Off', icon: 'fa-comment-slash',
     desc: 'Disable chat entirely for this school. No staff, teacher, or parent can send or receive any message.' },
-  { key: 'staffOnly', name: 'Staff Chat Only', icon: 'fa-user-group',
-    desc: 'Staff can chat with each other. Parent chat is fully disabled — parents cannot send or receive any messages.' },
-  { key: 'staffTwoWayParentReceive', name: 'Staff Two-Way + Parents Receive Only', icon: 'fa-comments',
-    desc: 'Staff can chat two-way with each other and with parents. Parents can only receive messages — they cannot send or reply.' },
-  { key: 'parentsDirect', name: 'Parents Direct Chat with Admin', icon: 'fa-user-shield',
-    desc: 'Parents can directly chat with the school admin through the mobile application.' },
+  { key: 'on', name: 'Chat Completely On', icon: 'fa-comments',
+    desc: 'Enable chat for this school. Staff, teachers and parents can all send and receive messages in the mobile app.' },
 ]
+
+/* Chat 'off'/'on' normalizer API module me rehta hai (ye file usay pehle se
+   import karti hai; ulta import karne se cycle ban jata). Yahan se sirf
+   re-export taake modal ek hi jagah se le. */
+export { CHAT_MODE_ON, normalizeChatMode } from '../../api/schoolPermissionsApi'
+
 
 export const MODULE_SECTIONS = [
   { label: '📚 Academics', items: [

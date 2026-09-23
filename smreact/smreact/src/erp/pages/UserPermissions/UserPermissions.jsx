@@ -10,6 +10,8 @@ import {
   getUserRole,
   deleteRole as deleteRoleApi,
   assignRoleToUser,
+  getActivityLogsByDateRange,
+  logRangeLastDays,
 } from '../../services/rolesService';
 import UsersTab from './UsersTab';
 import RolesTab from './RolesTab';
@@ -18,7 +20,6 @@ import AuditLogsTab from './AuditLogsTab';
 import { usePermissions } from '../../context/PermissionsContext';
 import {
   INITIAL_GROUPS,
-  INITIAL_AUDIT,
   ROLE_COLORS,
   normalizeApiRole,
   findRole,
@@ -100,6 +101,33 @@ function extractUserRole(d) {
   return { roleId, roleName, color, loginUserId };
 }
 
+
+function inferAuditType(action) {
+  const s = String(action || '').toLowerCase();
+  if (s.includes('deactivat')) return 'deactivate';
+  if (s.includes('activat')) return 'activate';
+  if (s.includes('role')) return 'role';
+  if (s.includes('remov') || s.includes('delete')) return 'remove';
+  if (s.includes('assign') || s.includes('permission')) return 'assign';
+  return 'assign';
+}
+
+/* normalizeActivityLog() (rolesService) ki row → is tab ki shakal.
+   Field-guessing ab service me hai; yahan sirf naam badalte hain. */
+function mapActivityLogRow(log, idx) {
+  return {
+    id: log.id ?? `al-${idx}`,
+    date: log.dateLabel || '—',
+    time: log.time || '',
+    user: log.user || '—',
+    action: log.action || '—',
+    detail: log.detail || '',
+    performedBy: log.performedBy || '—',
+    type: inferAuditType(log.action),
+  };
+}
+
+
 export default function UserPermissions({ toast = () => {} }) {
   const { can } = usePermissions();
   const visibleTabs = TABS.filter(t => can('User Permissions', t.label, 'View'));
@@ -117,12 +145,17 @@ export default function UserPermissions({ toast = () => {} }) {
   /* Roles ab API se aate hain (/get-roles-by-branch) — koi static seed nahi. */
   const [roles,    setRoles]    = useState([]);
   const [groups,   setGroups]   = useState(INITIAL_GROUPS);
-  const [auditLog, setAuditLog] = useState(INITIAL_AUDIT);
+  const [auditLog, setAuditLog] = useState([]);
   const [tutorialOpen, setTutorialOpen] = useState(false);
   const [usersLoaded, setUsersLoaded] = useState(false);
   const [usersLoading, setUsersLoading] = useState(true);
   const [rolesLoaded, setRolesLoaded] = useState(false);
   const [rolesLoading, setRolesLoading] = useState(true);
+  const [auditLoading, setAuditLoading] = useState(false);
+  /* Audit logs ab DATE RANGE se aati hain. Purana branch-wala endpoint poori
+     branch ka record laata tha aur timeout kar jata tha — is liye default
+     aakhri 30 din, aur user range badle to dobara fetch. */
+  const [auditRange, setAuditRange] = useState(() => logRangeLastDays(30));
 
   /* Users tab active hote hi real employees API se laa kar map karo (ek dafa). */
   useEffect(() => {
@@ -210,6 +243,28 @@ export default function UserPermissions({ toast = () => {} }) {
     if (rolesLoaded) return;
     loadRoles();
   }, [rolesLoaded, loadRoles]);
+
+  /* Audit Logs tab → GET /get-activity-logs-by-date-range/{branchId}/{from}/{to}.
+     Range badalne par dobara chalti hai. */
+  useEffect(() => {
+    if (tab !== 'audit') return undefined;
+    let alive = true;
+    setAuditLoading(true);
+    getActivityLogsByDateRange(auditRange.from, auditRange.to)
+      .then((rows) => {
+        if (!alive) return;
+        setAuditLog((rows || []).map(mapActivityLogRow));
+      })
+      .catch((err) => {
+        console.error('Could not load activity logs:', err);
+        if (alive) {
+          setAuditLog([]);
+          toast(err.message || 'Failed to load audit logs', 'error');
+        }
+      })
+      .finally(() => { if (alive) setAuditLoading(false); });
+    return () => { alive = false; };
+  }, [tab, auditRange, toast]);
 
   /* ─── Audit helper ─── */
   const logAudit = useCallback((entry) => {
@@ -606,6 +661,10 @@ export default function UserPermissions({ toast = () => {} }) {
         {tab === 'audit'  && (
           <AuditLogsTab
             auditLog={auditLog}
+            loading={auditLoading}
+            fromDate={auditRange.from}
+            toDate={auditRange.to}
+            onRangeChange={(from, to) => setAuditRange({ from, to })}
           />
         )}
       </div>

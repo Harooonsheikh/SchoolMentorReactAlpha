@@ -3,7 +3,7 @@ import TutorialButton from '../../components/TutorialButton'
 import { createPortal } from 'react-dom'
 import {
   toPermissionRows, getSchoolPerms,
-  CORE_PERMS, CHAT_MODES, MODULE_SECTIONS, MODULE_KEYS,
+  CORE_PERMS, CHAT_MODES, normalizeChatMode, MODULE_SECTIONS, MODULE_KEYS,
 } from './data'
 import { useView } from '../../config/viewContext'
 import {
@@ -356,7 +356,7 @@ function PermissionsModal({ school, perms, saving, onToast, onClose, onSave }) {
       .then((mob) => {
         if (!alive) return
         setMobileAppId(mob.mobileAppId)
-        setChatMode(CHAT_MODES.some((m) => m.key === mob.chatMode) ? mob.chatMode : 'off')
+        setChatMode(normalizeChatMode(mob.chatMode))
         setMentorAiState({ ...mob.mentorAi })
         setEtubeState({ ...mob.etube })
       })
@@ -552,7 +552,7 @@ function MobileAppPermsModal({ chatMode, mentorAi, etube, loading, saving, setCh
               {CHAT_MODES.map((m) => (
                 <div
                   key={m.key}
-                  className={`pm-chat-card${chatMode === m.key ? ' selected' : ''}`}
+                  className={`pm-chat-card${normalizeChatMode(chatMode) === m.key ? ' selected' : ''}`}
                   onClick={() => setChatMode(m.key)}
                 >
                   <div className="pm-chat-radio" />

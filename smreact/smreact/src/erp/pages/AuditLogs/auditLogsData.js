@@ -201,12 +201,14 @@ export function hydrateLog(log) {
   const actionObj = findAction(log.action);
   return {
     ...log,
-    userName:   user?.name || '—',
-    userRole:   user?.role || '—',
-    userEmail:  user?.email || '',
-    moduleLabel: module?.label || log.module,
+    /* API rows apne naam khud le kar aati hain (unme mock wali ids nahi
+       hotin) — is liye lookup na mile to row ki apni value rakho, '—' nahi. */
+    userName:   user?.name || log.userName || '—',
+    userRole:   user?.role || log.userRole || '—',
+    userEmail:  user?.email || log.userEmail || '',
+    moduleLabel: module?.label || log.moduleLabel || log.module || '—',
     moduleIcon:  module?.icon || 'fa-circle',
-    actionLabel: actionObj?.label || log.action,
+    actionLabel: actionObj?.label || log.actionLabel || log.action || '—',
     actionTone:  actionObj?.tone  || 'gray',
     ipAddress:  log.ipAddress  || '—',
     device:     log.device     || '—',
@@ -226,6 +228,7 @@ export function filterLogs(logs, f = {}) {
       const needle = f.search.toLowerCase();
       const hay = [
         l.record, l.details, l.screen, l.action, l.module,
+        l.userName, l.performedBy,
         findUser(l.userId)?.name, findUser(l.userId)?.role,
       ].join(' ').toLowerCase();
       if (!hay.includes(needle)) return false;
@@ -235,14 +238,20 @@ export function filterLogs(logs, f = {}) {
 }
 
 /* ─── Stat helpers used by the summary cards. */
+/* Pehle yahan '2026-05-31' ka fixed demo clock tha (seed data usi mahine ka
+   tha). Ab logs API se aate hain, is liye asli aaj. LOCAL date — toISOString()
+   UTC me badal kar Pakistan me subah 5 baje se pehle ek din peechhe kar deta. */
+const isoLocal = (d) => {
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+};
 export function isoToday() {
-  const d = new Date('2026-05-31T00:00:00');   /* fixed clock for the demo */
-  return d.toISOString().slice(0, 10);
+  return isoLocal(new Date());
 }
 export function isoDaysAgo(n) {
-  const d = new Date('2026-05-31T00:00:00');
+  const d = new Date();
   d.setDate(d.getDate() - n);
-  return d.toISOString().slice(0, 10);
+  return isoLocal(d);
 }
 
 export function summaryStats(logs) {

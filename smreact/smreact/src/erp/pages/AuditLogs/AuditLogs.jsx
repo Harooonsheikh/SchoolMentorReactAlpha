@@ -1,14 +1,11 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import Tooltip from '../../components/Tooltip';
 import TutorialModal from '../../components/TutorialModal';
 import LogDetailsModal from './LogDetailsModal';
 import ReportsPanel from './ReportsPanel';
 import { usePermissions } from '../../context/PermissionsContext';
+import { getActivityLogsByDateRange, logRangeLastDays } from '../../services/rolesService';
 import {
-  INITIAL_LOGS,
-  MODULES,
-  ACTIONS,
-  USERS,
   hydrateLog,
   filterLogs,
   summaryStats,
@@ -44,10 +41,15 @@ const REPORT_TYPES = [
 const PAGE_SIZE = 15;
 
 export default function AuditLogs({ toast = () => {} }) {
-  /* ─── Logs are append-only and frozen at module load. We don't
-         expose a setter to anything below — the only mutation in the
-         module is the filter state. */
-  const [logs] = useState(INITIAL_LOGS);
+  /* ─── Logs ab LIVE aati hain:
+         GET /get-activity-logs-by-date-range/{branchId}/{from}/{to}
+
+         Pehle ye screen mock INITIAL_LOGS par chalti thi. Branch-wala
+         purana endpoint poori branch ka record ek saath laata tha aur
+         timeout kar jata tha — is liye har fetch ek date range par
+         mehdood hai (default aakhri 30 din). */
+  const [logs, setLogs] = useState([]);
+  const [logsLoading, setLogsLoading] = useState(true);
   const [tutorialOpen, setTutorialOpen] = useState(false);
 
   /* ─── Per-user permissions — the Reports export/print actions are
@@ -56,14 +58,14 @@ export default function AuditLogs({ toast = () => {} }) {
   const canDownload = can('Audit Logs', 'Activity Logs', 'Download');
   const canPrint    = can('Audit Logs', 'Activity Logs', 'Print');
 
-  /* ─── Filters ─── */
-  const [fromDate, setFromDate] = useState('');
-  const [toDate,   setToDate]   = useState('');
+  /* ─── Filters — date range default aakhri 30 din (API isi se chalti hai) ─── */
+  const [fromDate, setFromDate] = useState(() => logRangeLastDays(30).from);
+  const [toDate,   setToDate]   = useState(() => logRangeLastDays(30).to);
   const [moduleF,  setModuleF]  = useState('');
   const [userF,    setUserF]    = useState('');
   const [actionF,  setActionF]  = useState('');
   const [search,   setSearch]   = useState('');
-  const [quick,    setQuick]    = useState('');
+  const [quick,    setQuick]    = useState('last30');
   const [page,     setPage]     = useState(1);
 
   /* ─── Modals / drawers ─── */
@@ -71,6 +73,63 @@ export default function AuditLogs({ toast = () => {} }) {
   const [reportsOpen, setReportsOpen] = useState(false);
   const [reportsTab,  setReportsTab]  = useState(null);   /* 'summary' | 'user' | 'module' */
   const [menuOpen,    setMenuOpen]    = useState(false);
+
+  /* ─── Range badle → server se dobara mangwao. Module/user/action/search
+         filters client-side hi rehte hain (laayi hui rows par). */
+  useEffect(() => {
+    if (!fromDate || !toDate) { setLogs([]); setLogsLoading(false); return undefined; }
+    let alive = true;
+    setLogsLoading(true);
+    getActivityLogsByDateRange(fromDate, toDate)
+      .then((rows) => {
+        if (!alive) return;
+        /* normalizeActivityLog() ki row → is screen ki shakal. userId/module
+           ki mock ids yahan nahi hotin, is liye naam hi value bante hain aur
+           dropdowns bhi inhi rows se bante hain (neeche). */
+        setLogs((rows || []).map((r, i) => ({
+          id:        r.id ?? `al-${i}`,
+          date:      r.dateISO,
+          time:      r.time,
+          userId:    r.user,
+          userName:  r.user,
+          module:    r.module,
+          moduleLabel: r.module,
+          screen:    r.screen,
+          action:    r.action,
+          actionLabel: r.action,
+          record:    r.record,
+          details:   r.detail,
+          performedBy: r.performedBy,
+          oldValue:  r.oldValue || '—',
+          newValue:  r.newValue || '—',
+          ipAddress: r.ipAddress,
+          device:    r.device,
+        })));
+      })
+      .catch((err) => {
+        console.error('Could not load activity logs:', err);
+        if (!alive) return;
+        setLogs([]);
+        toast(err.message || 'Could not load activity logs', 'error');
+      })
+      .finally(() => { if (alive) setLogsLoading(false); });
+    return () => { alive = false; };
+  }, [fromDate, toDate, toast]);
+
+  /* Dropdown options laayi hui rows se — MODULES/USERS/ACTIONS constants
+     mock ids par bane the, jo live data se match hi nahi karte. */
+  const moduleOptions = useMemo(
+    () => [...new Set(logs.map(l => l.module).filter(Boolean))].sort(),
+    [logs],
+  );
+  const userOptions = useMemo(
+    () => [...new Set(logs.map(l => l.userId).filter(Boolean))].sort(),
+    [logs],
+  );
+  const actionOptions = useMemo(
+    () => [...new Set(logs.map(l => l.action).filter(Boolean))].sort(),
+    [logs],
+  );
 
   /* ─── Apply a quick-range pill. Custom keeps the existing date
          inputs editable; the other presets snap them to a range. */
@@ -84,9 +143,12 @@ export default function AuditLogs({ toast = () => {} }) {
   };
 
   const clearFilters = () => {
-    setFromDate(''); setToDate('');
+    /* Range ko khali NAHI karte — khali range ka matlab "koi fetch nahi".
+       Wapas default (aakhri 30 din) par le aate hain. */
+    const r = logRangeLastDays(30);
+    setFromDate(r.from); setToDate(r.to);
     setModuleF(''); setUserF(''); setActionF('');
-    setSearch(''); setQuick(''); setPage(1);
+    setSearch(''); setQuick('last30'); setPage(1);
   };
 
   /* ─── Filtered list — sorted newest first by date then time. */
@@ -271,7 +333,7 @@ export default function AuditLogs({ toast = () => {} }) {
               onChange={(e) => { setModuleF(e.target.value); setPage(1); }}
             >
               <option value="">All Modules</option>
-              {MODULES.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
+              {moduleOptions.map(m => <option key={m} value={m}>{m}</option>)}
             </select>
           </label>
           <label className="al-field">
@@ -282,7 +344,7 @@ export default function AuditLogs({ toast = () => {} }) {
               onChange={(e) => { setUserF(e.target.value); setPage(1); }}
             >
               <option value="">All Users</option>
-              {USERS.map(u => <option key={u.id} value={u.id}>{u.name} — {u.role}</option>)}
+              {userOptions.map(u => <option key={u} value={u}>{u}</option>)}
             </select>
           </label>
           <label className="al-field">
@@ -293,7 +355,7 @@ export default function AuditLogs({ toast = () => {} }) {
               onChange={(e) => { setActionF(e.target.value); setPage(1); }}
             >
               <option value="">All Actions</option>
-              {ACTIONS.map(a => <option key={a.id} value={a.id}>{a.label}</option>)}
+              {actionOptions.map(a => <option key={a} value={a}>{a}</option>)}
             </select>
           </label>
           <label className="al-field">
@@ -322,7 +384,13 @@ export default function AuditLogs({ toast = () => {} }) {
           </div>
         </div>
 
-        {filtered.length === 0 ? (
+        {logsLoading ? (
+          <div className="up-empty">
+            <div className="up-empty-ic"><i className="fa-solid fa-spinner fa-spin" aria-hidden="true"></i></div>
+            <div className="up-empty-t">Loading activity logs…</div>
+            <div className="up-empty-s">Fetching {formatDate(fromDate)} → {formatDate(toDate)}.</div>
+          </div>
+        ) : filtered.length === 0 ? (
           <div className="up-empty">
             <div className="up-empty-ic"><i className="fa-solid fa-clipboard-list" aria-hidden="true"></i></div>
             <div className="up-empty-t">No log entries match these filters</div>

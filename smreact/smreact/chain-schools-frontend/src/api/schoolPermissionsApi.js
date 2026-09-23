@@ -76,6 +76,18 @@ function once(key, fn) {
 }
 
 /** Sab modules off — jab branch ki koi row hi na ho. */
+/* chatType par sirf DO hi values jati hain: 'off' ya 'on'.
+
+   Pehle chaar modes thin (staffOnly / staffTwoWayParentReceive / parentsDirect).
+   Jin schools ki rows un purani values par saved hain unhe bhi ye modal sahi
+   dikhana chahiye — 'off' ke ilawa har cheez 'on' hai — aur save par wo row
+   nayi do-value shakal me normalize ho jati hai. */
+export const CHAT_MODE_ON = 'on';
+export const normalizeChatMode = (v) =>
+  (String(v == null ? '' : v).trim().toLowerCase() === 'off' || !String(v || '').trim())
+    ? 'off'
+    : CHAT_MODE_ON
+
 export function emptyModules() {
   return Object.fromEntries(UI_KEYS.map((k) => [k, false]))
 }
@@ -214,7 +226,7 @@ export async function saveModulePermissions(branchID, modules) {
 /* ═══════════════════ MOBILE APP PERMISSION (ERP swagger) ═══════════════════
    POST /manage-mobileapp-permission
      action: SAVE | GET | DELETE
-     chatType = Chat card ki selected type (off / staffOnly / …)
+     chatType = Chat card ki selected type — sirf 'off' ya 'on'
      booleans = toggle on → true, off → false
    JWT mat bhejo. Chain :3002 CORS-block karta hai — same-origin relative path. */
 
@@ -305,7 +317,8 @@ export async function saveMobileAppPermission(branchId, perms = {}) {
     action: 'SAVE',
     id: Number(perms.mobileAppId) || 0,
     branchID: Number(branchId) || 0,
-    chatType: String(perms.chatMode || 'off'),
+    /* API par sirf 'off' ya 'on' — purani chaar-mode values yahin normalize. */
+    chatType: normalizeChatMode(perms.chatMode),
     mentorAI: mentorOn,
     parentAccess: mentorOn && Boolean(perms.mentorAi?.parentsAccess),
     etube: etubeOn,

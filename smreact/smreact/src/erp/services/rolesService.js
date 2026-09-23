@@ -198,3 +198,131 @@ export async function saveUserMenuPermissions(payload) {
 
   return await response.json().catch(() => null);
 }
+
+/* ── Activity (audit) logs ────────────────────────────────────────────
+   GET /get-activity-logs-by-date-range/{branchId}/{fromDate}/{toDate}
+
+   Pehle sirf /get-activity-logs-by-branch/{branchId} tha — wo poori branch
+   ka saara record ek saath laata tha aur itna slow ho chuka hai ke request
+   aksar timeout kar jati hai (server khud connection-pool khatam hone ki
+   shikayat karta hai). Ab har call ek DATE RANGE par mehdood hai. */
+
+/** Default range: aaj se `days` din pehle tak. Dono screens isi se khulti
+    hain — bina range ke poori branch mangwana hi asal masla tha. */
+export function logRangeLastDays(days = 30) {
+  const p = (n) => String(n).padStart(2, '0');
+  const iso = (d) => `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  const to = new Date();
+  const from = new Date();
+  from.setDate(from.getDate() - Math.max(0, days - 1));
+  return { from: iso(from), to: iso(to) };
+}
+
+/** UI ki 'yyyy-MM-dd' ko API ki 'dd-MM-yyyy' me badlo.
+    API is par sakht hai — ghalat format par 400 aur saaf message:
+    "Invalid fromDate. Use dd-MM-yyyy format." */
+export function toApiLogDate(value) {
+  const s = String(value || '').trim();
+  if (!s) return '';
+  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);            // yyyy-MM-dd
+  if (iso) return `${iso[3]}-${iso[2]}-${iso[1]}`;
+  if (/^\d{2}-\d{2}-\d{4}$/.test(s)) return s;                // pehle se dd-MM-yyyy
+  const d = new Date(s);
+  if (!Number.isFinite(d.getTime())) return '';
+  const p = (n) => String(n).padStart(2, '0');
+  return `${p(d.getDate())}-${p(d.getMonth() + 1)}-${d.getFullYear()}`;
+}
+
+/** Field ko har naming/casing shakal me dhoondo — API rows ki casing
+    endpoint dar endpoint badalti rehti hai. */
+function pickLogField(row, names, fallback = '') {
+  if (!row || typeof row !== 'object') return fallback;
+  const map = new Map(Object.keys(row).map((k) => [String(k).toLowerCase(), k]));
+  for (const n of names) {
+    const key = map.get(String(n).toLowerCase());
+    if (key != null && row[key] != null && row[key] !== '') return row[key];
+  }
+  return fallback;
+}
+
+/** Ek API row → neutral shape. Audit Logs module aur User Permissions ka
+    Audit tab dono isi se apni apni shakal banate hain, taake field-guessing
+    ek hi jagah rahe. */
+export function normalizeActivityLog(row, idx = 0) {
+  const raw = pickLogField(row, [
+    'createdDate', 'CreatedDate', 'date', 'Date', 'logDate', 'LogDate',
+    'createdOn', 'CreatedOn', 'timestamp', 'Timestamp', 'activityDate', 'ActivityDate',
+  ]);
+  const d = raw ? new Date(raw) : null;
+  const ok = d && Number.isFinite(d.getTime());
+  const p = (n) => String(n).padStart(2, '0');
+  return {
+    id: pickLogField(row, ['id', 'ID', 'logID', 'LogID', 'activityLogId'], `al-${idx}`),
+    /* 'yyyy-MM-dd' — Audit Logs ka filterLogs isi par string-compare karta hai. */
+    dateISO: ok ? `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}` : '',
+    dateLabel: ok
+      ? d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+      : String(pickLogField(row, ['dateStr', 'dateText'], raw || '')),
+    time: String(pickLogField(row, ['time', 'Time', 'logTime', 'LogTime'],
+      ok ? d.toLocaleTimeString('en-PK', { hour: '2-digit', minute: '2-digit', hour12: true }) : '')),
+    user: String(pickLogField(row, ['userName', 'UserName', 'user', 'User',
+      'employeeName', 'EmployeeName', 'targetUser', 'TargetUser', 'accountName'], '—')),
+    action: String(pickLogField(row, ['action', 'Action', 'actionType', 'ActionType',
+      'activity', 'Activity', 'event', 'Event'], '—')),
+    detail: String(pickLogField(row, ['detail', 'Detail', 'details', 'Details',
+      'description', 'Description', 'message', 'Message', 'remarks', 'Remarks'], '')),
+    performedBy: String(pickLogField(row, ['performedBy', 'PerformedBy', 'createdByName',
+      'CreatedByName', 'createdBy', 'CreatedBy', 'actorName', 'ActorName', 'modifiedBy', 'ModifiedBy'], '—')),
+    module: String(pickLogField(row, ['module', 'Module', 'moduleName', 'ModuleName',
+      'menuName', 'MenuName'], '')),
+    screen: String(pickLogField(row, ['screen', 'Screen', 'screenName', 'ScreenName',
+      'subMenuName', 'SubMenuName', 'page', 'Page'], '')),
+    record: String(pickLogField(row, ['record', 'Record', 'recordName', 'RecordName',
+      'entity', 'Entity', 'reference', 'Reference'], '')),
+    oldValue: String(pickLogField(row, ['oldValue', 'OldValue', 'previousValue', 'PreviousValue', 'before', 'Before'], '')),
+    newValue: String(pickLogField(row, ['newValue', 'NewValue', 'currentValue', 'CurrentValue', 'after', 'After'], '')),
+    ipAddress: String(pickLogField(row, ['ipAddress', 'IPAddress', 'ip', 'IP'], '')),
+    device: String(pickLogField(row, ['device', 'Device', 'userAgent', 'UserAgent'], '')),
+    _raw: row,
+  };
+}
+
+/**
+ * Ek date range ke activity logs.
+ * @param {string} fromDate 'yyyy-MM-dd' (ya koi bhi parseable date)
+ * @param {string} toDate   'yyyy-MM-dd'
+ * @returns {Promise<Array>} normalizeActivityLog() se guzri hui rows
+ */
+export async function getActivityLogsByDateRange(fromDate, toDate) {
+  const from = toApiLogDate(fromDate);
+  const to = toApiLogDate(toDate);
+  /* Range ke baghair call hi mat karo — warna wahi poori-branch wali slow
+     query chal padti hai jis se bachne ke liye ye endpoint laaya gaya. */
+  if (!from || !to) return [];
+
+  const token = sessionStorage.getItem('token');
+  const branchID = sessionStorage.getItem('branchID');
+  const response = await fetch(
+    buildUrl(`/get-activity-logs-by-date-range/${branchID}/${from}/${to}`),
+    {
+      method: 'GET',
+      headers: {
+        Accept: '*/*',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    }
+  );
+  const json = await response.json().catch(() => null);
+  /* Galti par API 4xx/5xx ke sath { success:false, message } bhejti hai —
+     wahi message aage do, warna user ko sirf "HTTP 500" nazar aata hai. */
+  if (!response.ok || json?.success === false) {
+    throw new Error(
+      json?.message || json?.Message || `Could not load activity logs (HTTP ${response.status})`
+    );
+  }
+  const rows = Array.isArray(json) ? json
+    : Array.isArray(json?.data) ? json.data
+      : Array.isArray(json?.Data) ? json.Data
+        : [];
+  return rows.map(normalizeActivityLog);
+}

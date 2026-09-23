@@ -5,37 +5,35 @@ import { auditTone, initialsOf } from './permissionsData';
 /* ═══════════════════════════════════════════════════════════════════
    AUDIT LOGS TAB — filter bar + table
    ═══════════════════════════════════════════════════════════════════ */
-export default function AuditLogsTab({ auditLog }) {
+/* Date range ab SERVER par lagti hai: parent (UserPermissions) usi se
+   /get-activity-logs-by-date-range call karta hai. Pehle poori branch ka
+   record aata tha aur ye do input sirf client-side chhantai karte the —
+   wohi call slow ho kar timeout karne lagi thi. Search aur action-type
+   filter client-side hi hain (wo already laayi hui rows par chalte hain). */
+export default function AuditLogsTab({
+  auditLog,
+  loading = false,
+  fromDate = '',
+  toDate = '',
+  onRangeChange,
+}) {
   const [search, setSearch] = useState('');
   const [fType,  setFType]  = useState('all');
-  const [fFrom,  setFFrom]  = useState('');
-  const [fTo,    setFTo]    = useState('');
-
-  /* Parse the human-readable date back into a Date so we can compare
-     against the filter range. Dates come from `formatDate` so this is
-     deterministic. */
-  const parseAuditDate = (s) => {
-    if (!s) return null;
-    const d = new Date(s);
-    return Number.isFinite(d.getTime()) ? d : null;
-  };
+  const fFrom = fromDate;
+  const fTo   = toDate;
+  const setFFrom = (v) => onRangeChange?.(v, fTo);
+  const setFTo   = (v) => onRangeChange?.(fFrom, v);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return auditLog.filter(a => {
       if (fType !== 'all' && a.type !== fType) return false;
-      if (fFrom) {
-        const d = parseAuditDate(a.date);
-        if (d && d < new Date(fFrom)) return false;
-      }
-      if (fTo) {
-        const d = parseAuditDate(a.date);
-        if (d && d > new Date(fTo)) return false;
-      }
       if (!q) return true;
       return `${a.user} ${a.action} ${a.detail} ${a.performedBy}`.toLowerCase().includes(q);
     });
-  }, [auditLog, search, fType, fFrom, fTo]);
+    /* fFrom/fTo yahan deps me NAHI — wo server par lagti hain aur badalne
+       par parent nayi rows bhej deta hai. */
+  }, [auditLog, search, fType]);
 
   return (
     <>
@@ -89,7 +87,13 @@ export default function AuditLogsTab({ auditLog }) {
         </Tooltip>
       </div>
 
-      {filtered.length === 0 ? (
+      {loading ? (
+        <div className="up-empty">
+          <div className="up-empty-ic"><i className="fa-solid fa-spinner fa-spin" aria-hidden="true"></i></div>
+          <div className="up-empty-title">Loading audit logs…</div>
+          <div className="up-empty-sub">Fetching activity logs from the server, please wait.</div>
+        </div>
+      ) : filtered.length === 0 ? (
         <div className="up-empty">
           <div className="up-empty-ic"><i className="fa-solid fa-clipboard-list" aria-hidden="true"></i></div>
           <div className="up-empty-title">No audit events found</div>
