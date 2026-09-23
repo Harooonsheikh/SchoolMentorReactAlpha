@@ -70,7 +70,7 @@ export const MODULE_SECTIONS = [
     { key: 'staffappraisals', name: 'Staff Appraisals', icon: 'fa-star-half-stroke' },
   ] },
   { label: '🎓 School Mentor', items: [
-    { key: 'schoolsops', name: 'School SOPs', icon: 'fa-book-open' },
+    { key: 'schoolsops', name: 'Policy Manuals', icon: 'fa-book-open' },
     { key: 'teachertrainings', name: 'Teacher Trainings', icon: 'fa-chalkboard-user' },
   ] },
   { label: '⚙️ Core System', items: [

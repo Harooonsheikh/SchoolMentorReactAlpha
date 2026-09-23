@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Tooltip from '../../components/Tooltip';
-import { MODULE_TREE } from './permissionsData';
+import { MODULE_TREE, moduleDisplayLabel } from './permissionsData';
 
 /* ═══════════════════════════════════════════════════════════════════
    PERMISSION GROUPS TAB — banner + table + Create/Edit/Delete
@@ -14,7 +14,10 @@ export default function PermissionGroupsTab({
   const [formCfg,   setFormCfg]   = useState(null);   // { mode, group? }
   const [deleteFor, setDeleteFor] = useState(null);
 
-  const moduleName = (id) => MODULE_TREE.find(m => m.id === id)?.label || id;
+  const moduleName = (id) => {
+    const m = MODULE_TREE.find(x => x.id === id);
+    return m ? moduleDisplayLabel(m) : id;
+  };
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -276,7 +279,7 @@ function GroupFormModal({ mode, group, onClose, onSave, toast }) {
                   <label key={m.id} className="up-check">
                     <input type="checkbox" checked={modules.includes(m.id)} onChange={() => toggleMod(m.id)} />
                     <span className="up-check-ic"><i className={`fa-solid ${m.icon}`} aria-hidden="true"></i></span>
-                    {m.label}
+                    {moduleDisplayLabel(m)}
                   </label>
                 ))}
               </div>

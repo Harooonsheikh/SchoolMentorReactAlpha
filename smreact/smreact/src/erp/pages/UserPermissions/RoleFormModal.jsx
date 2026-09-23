@@ -7,6 +7,7 @@ import {
   ROLE_COLORS,
   ROLE_TEMPLATES,
   normalizeApiRole,
+  moduleDisplayLabel,
 } from './permissionsData';
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -221,7 +222,7 @@ export default function RoleFormModal({ mode, role, existingRoles = [], onClose,
                   <label key={m.id} className="up-check">
                     <input type="checkbox" checked={modules.includes(m.id)} onChange={() => toggleMod(m.id)} />
                     <span className="up-check-ic"><i className={`fa-solid ${m.icon}`} aria-hidden="true"></i></span>
-                    {m.label}
+                    {moduleDisplayLabel(m)}
                   </label>
                 ))}
               </div>

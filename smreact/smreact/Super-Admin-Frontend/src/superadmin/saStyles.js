@@ -556,6 +556,45 @@ export const SA_CSS = `
 .sa-root .pm-mod-name{font-size:12px;font-weight:700;color:var(--t1);flex:1;min-width:0;line-height:1.3}
 .sa-root .pm-foot{display:flex;align-items:center;justify-content:flex-end;gap:10px;padding:16px 22px;border-top:1px solid var(--bl);position:sticky;bottom:0;background:var(--card);border-radius:0 0 var(--r-xl) var(--r-xl)}
 
+/* Network Permissions modal — one Active Network card + chain module toggles */
+.sa-root .np-modal{max-width:780px;overflow:hidden}
+.sa-root .np-modal .pm-hdr{background:linear-gradient(135deg,#1E3A8A 0%,#1E40AF 55%,#2563EB 100%);color:#fff;border-bottom:none;border-radius:0}
+.sa-root .np-modal .pm-av{background:rgba(255,255,255,.16);box-shadow:inset 0 0 0 1px rgba(255,255,255,.18)}
+.sa-root .np-kicker{font-size:10px;font-weight:800;letter-spacing:.7px;text-transform:uppercase;color:rgba(255,255,255,.72);margin-bottom:3px}
+.sa-root .np-modal .pm-school-name{color:#fff}
+.sa-root .np-modal .pm-school-meta{color:rgba(255,255,255,.78)}
+.sa-root .np-modal .pm-close{border:none;background:rgba(255,255,255,.14);color:#fff}
+.sa-root .np-modal .pm-close:hover{background:rgba(255,255,255,.28);color:#fff;border:none}
+.sa-root .np-hero{display:flex;align-items:center;gap:16px;padding:16px 18px;border-radius:16px;border:1.5px solid var(--bl);background:linear-gradient(135deg,rgba(30,58,138,.06),rgba(37,99,235,.03));margin-bottom:20px}
+.sa-root .np-hero.on{border-color:rgba(22,163,74,.38);background:linear-gradient(135deg,rgba(22,163,74,.1),rgba(22,163,74,.03))}
+.sa-root .np-hero-icon{width:46px;height:46px;border-radius:13px;background:linear-gradient(135deg,#1E3A8A,#2563EB);color:#fff;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;box-shadow:0 6px 14px rgba(30,58,138,.28)}
+.sa-root .np-hero.on .np-hero-icon{background:linear-gradient(135deg,#15803d,#16a34a);box-shadow:0 6px 14px rgba(22,163,74,.28)}
+.sa-root .np-hero-copy{flex:1;min-width:0}
+.sa-root .np-hero-label{font-size:10px;font-weight:800;letter-spacing:.65px;text-transform:uppercase;color:var(--brand)}
+.sa-root .np-hero.on .np-hero-label{color:#15803d}
+.sa-root .np-hero-name{font-size:15px;font-weight:800;color:var(--t1);margin-top:2px}
+.sa-root .np-hero-desc{font-size:12px;color:var(--tm);line-height:1.45;margin-top:4px}
+.sa-root .np-hero-aside{display:flex;flex-direction:column;align-items:flex-end;gap:8px;flex-shrink:0}
+.sa-root .np-hero-pill{font-size:10.5px;font-weight:800;letter-spacing:.3px;padding:3px 9px;border-radius:99px;background:rgba(148,163,184,.18);color:var(--tm)}
+.sa-root .np-hero-pill.on{background:rgba(22,163,74,.14);color:#15803d}
+.sa-root .np-modules-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:14px;padding-bottom:12px;border-bottom:1.5px solid var(--bl);flex-wrap:wrap}
+.sa-root .np-modules-title{font-size:13.5px;font-weight:800;color:var(--t1);display:flex;align-items:center;gap:7px}
+.sa-root .np-modules-title i{color:var(--brand)}
+.sa-root .np-modules-sub{font-size:11.5px;color:var(--tm);margin-top:3px}
+.sa-root .np-mod-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.sa-root .np-mod-btn{height:28px;font-size:11px}
+.sa-root .np-mod-btn-off{border-color:var(--err)!important;color:var(--err)!important;background:rgba(220,38,38,.05)!important}
+.sa-root .np-sec{margin-bottom:6px}
+.sa-root .np-modal .pm-mod-grid{grid-template-columns:repeat(2,1fr)}
+.sa-root .np-load{max-width:360px;padding:44px 32px;text-align:center}
+.sa-root .np-load i{font-size:26px;color:var(--brand)}
+.sa-root .np-load-title{margin-top:12px;font-size:13.5px;font-weight:800;color:var(--t1)}
+.sa-root .np-load-sub{margin-top:4px;font-size:12px;color:var(--tm)}
+@media(max-width:600px){
+  .sa-root .np-hero{flex-wrap:wrap}
+  .sa-root .np-hero-aside{width:100%;flex-direction:row;justify-content:space-between;align-items:center}
+}
+
 @media(max-width:900px){
   .sa-root .pm-top-grid{grid-template-columns:1fr 1fr}
   .sa-root .pm-mod-grid{grid-template-columns:repeat(2,1fr)}

@@ -6,7 +6,7 @@
 /* ── Abhi chhupe hue modules ──
    Chain school ke sidebar me filhal sirf ye aath rehte hain:
      Dashboard · Academics · School Permissions · School Progress ·
-     School Payments · Operational SOPs · Notifications · Settings
+     School Payments · Policy Manuals · Notifications · Settings
    Baqi (Human Resource, Accounts, Attendance, Inventory, Trainings,
    User Permissions) neeche comment kiye gaye hain — mitaye NAHI. Inke
    routes aur screens waisi ki waisi maujood hain, sirf sidebar se hate
@@ -28,7 +28,7 @@ export const NAV_SECTIONS = [
       { key: 'permissions', path: '/school-permissions', label: 'School Permissions', icon: 'fa-key' },
       { key: 'progress', path: '/school-progress', label: 'School Progress', icon: 'fa-chart-line' },
       { key: 'payments', path: '/school-payments', label: 'School Payments', icon: 'fa-credit-card' },
-      { key: 'sops', path: '/sops', label: 'Operational SOPs', icon: 'fa-book-open' },
+      { key: 'sops', path: '/sops', label: 'Policy Manuals', icon: 'fa-book-open' },
     ],
   },
   /* HR & Finance — filhal sidebar se hata diya gaya (neeche "Abhi chhupe
@@ -66,7 +66,7 @@ export const COMING_SOON_MODULES = [
   { path: '/school-permissions', title: 'School Permissions', icon: 'fa-key', grad: 'linear-gradient(135deg,#1E3A8A,#1E40AF)', sub: 'Control ERP access, module visibility and feature permissions for each school.', emptySub: 'This module will be designed in the next step. ERP module toggles, access control and feature permissions per school will be configured here.' },
   { path: '/school-progress', title: 'School Progress', icon: 'fa-chart-line', grad: 'linear-gradient(135deg,#0369a1,#0284c7)', sub: 'Track school onboarding, ERP usage, follow-ups, progress and training status.', emptySub: 'This module will be designed in the next step. Onboarding status, ERP usage tracking, follow-up logs and training progress will be displayed here.' },
   { path: '/school-payments', title: 'School Payments', icon: 'fa-credit-card', grad: 'linear-gradient(135deg,#15803d,#16a34a)', sub: 'Manage payment setup, challans, receiving, reports and school payment records.', emptySub: 'This module will be designed in the next step. Payment setup, challan generation, fee receiving and financial reports will be managed here.' },
-  { path: '/sops', title: 'Operational SOPs', icon: 'fa-book-open', grad: 'linear-gradient(135deg,#b45309,#d97706)', sub: 'Upload, manage and organize SOP manuals, forms and tutorial videos.', emptySub: 'This module will be designed in the next step. SOP manuals, downloadable forms and training video links will be organized and managed here.' },
+  { path: '/sops', title: 'Policy Manuals', icon: 'fa-book-open', grad: 'linear-gradient(135deg,#b45309,#d97706)', sub: 'Upload, manage and organize policy manuals, forms and tutorial videos.', emptySub: 'This module will be designed in the next step. Policy manuals, downloadable forms and training video links will be organized and managed here.' },
   { path: '/hr', title: 'Human Resource', icon: 'fa-users-gear', grad: 'linear-gradient(135deg,#1E3A8A,#2563EB)', sub: 'Manage departments, designations, employees, payroll support and HR records.', emptySub: 'This module will be designed in the next step. Departments, designations, employee records, payroll and HR management will be available here.' },
   { path: '/accounts', title: 'Accounts', icon: 'fa-coins', grad: 'linear-gradient(135deg,#15803d,#16a34a)', sub: 'Manage financial entries, ledgers, account books and financial reports.', emptySub: 'This module will be designed in the next step. Financial entries, ledgers, account books and detailed financial reports will be managed here.' },
   { path: '/attendance', title: 'Attendance', icon: 'fa-calendar-check', grad: 'linear-gradient(135deg,#0369a1,#0284c7)', sub: 'Monitor student and staff attendance, holidays and attendance reports.', emptySub: 'This module will be designed in the next step. Student and staff attendance tracking, holiday management and attendance reports will be available here.' },

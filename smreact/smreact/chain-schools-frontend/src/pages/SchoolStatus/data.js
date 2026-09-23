@@ -92,7 +92,7 @@ export const USAGE_MODULES = [
   { key: 'students', name: 'Students', icon: 'fa-user-graduate' },
   { key: 'hr', name: 'Human Resource', icon: 'fa-people-group' },
   { key: 'appraisal', name: 'Staff Appraisals', icon: 'fa-star' },
-  { key: 'sop', name: 'School SOPs', icon: 'fa-book-open' },
+  { key: 'sop', name: 'Policy Manuals', icon: 'fa-book-open' },
   { key: 'trainings', name: 'Teacher Trainings', icon: 'fa-chalkboard-user' },
   { key: 'etube', name: 'e-Tube', icon: 'fa-play' },
   { key: 'chat', name: 'Chat', icon: 'fa-comments' },

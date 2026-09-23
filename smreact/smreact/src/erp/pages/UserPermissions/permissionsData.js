@@ -243,7 +243,11 @@ export const MODULE_TREE = [
       { id: 'approvals.my_requests', label: 'My Requests' },
       { id: 'approvals.review',      label: 'Pending Approvals & History' },
     ] },
-  { id: 'sops',        label: 'School SOPs',       icon: 'fa-book-open',
+  /* `label` seedha `menuName` ban kar API ko jata hai (apiPermissionsFromPerms)
+     aur wapsi par usi se match hota hai — is liye wo "School SOPs" hi rahega
+     jab tak DB ki saved rows na badlen. Screen par jo naam dikhana hai wo
+     `uiLabel` me hai; render karte waqt moduleDisplayLabel() use karo. */
+  { id: 'sops',        label: 'School SOPs',       uiLabel: 'Policy Manuals', icon: 'fa-book-open',
     children: [
       /* ── Single screen (SchoolSOPs.jsx:86) with two
             distinct read-only actions: view manuals and watch the
@@ -324,6 +328,14 @@ export const MODULE_TREE = [
       { id: 'audit.logs', label: 'Activity Logs' },
     ] },
 ];
+
+/** Screen par dikhane wala module ka naam.
+
+    Kuch modules ka UI naam unke API `menuName` se alag hai (misal "School SOPs"
+    ab user ko "Policy Manuals" dikhta hai). `label` ko badalna mumkin nahi —
+    wohi string permissions API ko jati hai aur wapsi par match hoti hai — is
+    liye render hamesha isi helper se ho, seedhe `m.label` se nahi. */
+export const moduleDisplayLabel = (m) => (m && (m.uiLabel || m.label)) || '';
 
 /* ─── Filter MODULE_TREE to only modules that are active in the
        given moduleState. moduleState comes from ModuleContext and

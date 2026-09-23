@@ -10,7 +10,7 @@
 /* Menus available for per-user permission. */
 export const UM_MENUS = [
   'Dashboard', 'Uploader', 'Category', 'School Permissions', 'School Progress',
-  'School Payments', 'Operational SOPs', 'User Registration', 'User Assignment',
+  'School Payments', 'Policy Manuals', 'User Registration', 'User Assignment',
 ];
 
 export const INITIAL_USERS = [

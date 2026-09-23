@@ -32,7 +32,7 @@ const CAPABILITIES = [
     icon: 'fa-headset',
     title: 'Content & Support',
     desc: 'Publish training content and answer every school from one shared inbox.',
-    chips: ['E-Tube', 'Operational SOPs', 'Teacher Trainings', 'Quiz Content', 'Support'],
+    chips: ['E-Tube', 'Policy Manuals', 'Teacher Trainings', 'Quiz Content', 'Support'],
   },
 ];
 

@@ -54,7 +54,7 @@ export const MODULE_GROUPS = [
     { key: 'approvals',      name: 'Approvals',        icon: 'fa-square-check' },
   ] },
   { label: 'School Mentor', modules: [
-    { key: 'schoolsops',       name: 'School SOPs',       icon: 'fa-book-open' },
+    { key: 'schoolsops',       name: 'Policy Manuals',    icon: 'fa-book-open' },
     { key: 'teachertrainings', name: 'Teacher Trainings', icon: 'fa-chalkboard-user' },
   ] },
   { label: 'Core System', modules: [

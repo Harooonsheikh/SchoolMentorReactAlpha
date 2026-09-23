@@ -68,7 +68,7 @@ function bool(v, fallback = false) {
 const MODULE_ALIAS = {
   humanresource: 'hr', humanresources: 'hr',
   staffappraisal: 'staffappraisals',
-  schoolsop: 'schoolsops',
+  schoolsop: 'schoolsops', policymanuals: 'schoolsops', policymanual: 'schoolsops',
   teachertraining: 'teachertrainings',
   auditlog: 'auditlogs',
   userpermission: 'userpermissions',

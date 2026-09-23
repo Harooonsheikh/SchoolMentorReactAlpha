@@ -12,7 +12,7 @@ export const TUTORIALS = {
   '/school-permissions': { icon: 'fa-key', videos: [v('Managing School Permissions')] },
   '/school-progress': { icon: 'fa-chart-line', videos: [v('School Progress'), v('Follow-up Cards')] },
   '/school-payments': { icon: 'fa-credit-card', videos: [v('Payment Setup'), v('Challans'), v('Receiving'), v('Reports')] },
-  '/sops': { icon: 'fa-book-open', videos: [v('Operational SOPs & Forms')] },
+  '/sops': { icon: 'fa-book-open', videos: [v('Policy Manuals & Forms')] },
   '/trainings': { icon: 'fa-chalkboard-user', videos: [v('Recorded Trainings'), v('Upcoming Trainings')] },
   '/notifications': { icon: 'fa-bell', videos: [v('Sending Notifications')] },
   '/user-permissions': { icon: 'fa-shield-halved', videos: [v('Assign School'), v('User Permission')] },

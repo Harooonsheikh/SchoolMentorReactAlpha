@@ -15,6 +15,7 @@ import {
   getActiveModuleTree,
   permsFromApiPermissions,
   apiPermissionsFromKeys,
+  moduleDisplayLabel,
 } from './permissionsData';
 import {
   MOBILE_ROLES,
@@ -702,7 +703,7 @@ export default function EditPermissionsPanel({ user, roles, readOnly, onClose, o
                     >
                       <i className={`fa-solid ${m.icon}`} aria-hidden="true"></i>
                     </span>
-                    <span style={{ flex: 1, fontSize: 12.5, minWidth: 0, textAlign: 'left' }}>{m.label}</span>
+                    <span style={{ flex: 1, fontSize: 12.5, minWidth: 0, textAlign: 'left' }}>{moduleDisplayLabel(m)}</span>
                     <span
                       style={{
                         marginLeft: 'auto', flexShrink: 0,
@@ -775,7 +776,7 @@ export default function EditPermissionsPanel({ user, roles, readOnly, onClose, o
                   <i className={`fa-solid ${selectedModule?.icon || 'fa-shield-halved'}`} aria-hidden="true"></i>
                 </span>
                 <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {selectedModule?.label || 'No modules active'}
+                  {selectedModule ? moduleDisplayLabel(selectedModule) : 'No modules active'}
                 </span>
               </div>
               <div

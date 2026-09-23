@@ -308,8 +308,8 @@ export default function OperationalSops({ toast }) {
         <div className="page-title-row">
           <div className="page-icon" style={{ background: 'linear-gradient(135deg,#1E3A8A,#1E40AF)' }}><i className="fa-solid fa-book-open" /></div>
           <div>
-            <div className="page-title">Operational SOPs</div>
-            <div className="page-sub">Manage school operational manuals, forms, and tutorial videos by category.</div>
+            <div className="page-title">Policy Manuals</div>
+            <div className="page-sub">Manage school policy manuals, forms, and tutorial videos by category.</div>
           </div>
         </div>
         <button className="btn-primary" onClick={() => setModal({ type: 'cat', cat: null })}><i className="fa-solid fa-plus" /> Add New Manual Head</button>

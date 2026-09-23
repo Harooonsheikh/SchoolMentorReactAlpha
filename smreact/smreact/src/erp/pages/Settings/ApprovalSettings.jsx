@@ -33,6 +33,7 @@ const ACTION_DESCRIPTIONS = {
      • Per-action-type toggles, grouped by module, driven entirely by
        APPROVAL_ACTION_META so a new action type just needs an entry
        there — nothing here is hardcoded.
+   Save Changes → POST /api/Setting/manage-settings-approvals (action SAVE).
    Uses the shared SETTINGS_CSS classes mounted by SettingsModule.jsx
    (.settings-banner / .settings-alert / .settings-checks / .settings-
    check / .settings-btn-primary / .settings-empty) plus a small local
@@ -45,11 +46,14 @@ export default function ApprovalSettings({ toast = () => {} }) {
   const [enabled, setEnabled]   = useState(true);
   const [actionTypeEnabled, setActionTypeEnabled] = useState({});
   const [saved, setSaved]       = useState({ enabled: true, actionTypeEnabled: {} });
+  /* GET se aaya row id — 0 ho to pehla SAVE naya row insert karta hai. */
+  const [recordId, setRecordId] = useState(0);
 
   const load = async () => {
     setLoading(true);
     try {
       const settings = await approvalsService.getApprovalSettings();
+      setRecordId(settings.id || 0);
       setEnabled(settings.enabled);
       setActionTypeEnabled(settings.actionTypeEnabled);
       setSaved({ enabled: settings.enabled, actionTypeEnabled: settings.actionTypeEnabled });
@@ -83,7 +87,8 @@ export default function ApprovalSettings({ toast = () => {} }) {
   const handleSave = async () => {
     setSaving(true);
     try {
-      const result = await approvalsService.saveApprovalSettings({ enabled, actionTypeEnabled });
+      const result = await approvalsService.saveApprovalSettings({ id: recordId, enabled, actionTypeEnabled });
+      setRecordId(result.id || 0);
       setEnabled(result.enabled);
       setActionTypeEnabled(result.actionTypeEnabled);
       setSaved({ enabled: result.enabled, actionTypeEnabled: result.actionTypeEnabled });
