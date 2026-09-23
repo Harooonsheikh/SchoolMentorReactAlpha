@@ -841,25 +841,46 @@ export default function EditPermissionsPanel({ user, roles, readOnly, onClose, o
             </div>
 
             {/* ════════════════════ MATRIX ════════════════════
-                Single horizontal-scroll container holds BOTH the
-                header row and every data row. `min-width: max-content`
-                on each row ensures they all share the same scroll
-                width so columns stay locked at any scroll position. */}
+                `.up-matrix` sirf ek bounded, rounded clip-box hai; saara
+                scroll (dono taraf) andar wale `.up-matrix-scroll` par hota
+                hai. Ye taqseem zaroori hai: header `position: sticky` hai,
+                aur sticky hamesha apne SABSE QAREEBI scroll container ke
+                mutabiq chipakta hai. Pehle overflow bahar wale div par tha
+                (aur `.up-matrix-scroll` par bhi `overflow-x: auto` CSS me),
+                aur un dono ki height content jitni thi — lihaza header un ke
+                andar "chipak" to raha tha magar poora box hi upar sarak jata
+                tha, to scroll par heading gayab ho jati thi.
+
+                `min-width: max-content` ab sirf header/rows par hai (scroller
+                par NAHI) — warna scroller khud content jitna chauda ho jata
+                aur horizontal scrollbar hi na aata. */}
             <div
               className="up-matrix"
               style={{
                 flex: 1,
+                minHeight: 0,
+                display: 'flex',
+                flexDirection: 'column',
                 margin: '0 16px 12px',
                 border: '1px solid var(--border-light, #E2E8F0)',
                 borderRadius: 10,
-                overflowX: 'auto',
-                overflowY: 'visible',
+                overflow: 'hidden',
                 width: 'calc(100% - 32px)',
-                WebkitOverflowScrolling: 'touch',
               }}
             >
-              <div className="up-matrix-scroll" style={{ display: 'block', minWidth: 'max-content' }}>
-                {/* ─── Sticky header row ─── */}
+              <div
+                className="up-matrix-scroll"
+                style={{
+                  display: 'block',
+                  flex: 1,
+                  minHeight: 0,
+                  width: '100%',
+                  overflowX: 'auto',
+                  overflowY: 'auto',
+                  WebkitOverflowScrolling: 'touch',
+                }}
+              >
+                {/* ─── Sticky header row — scroll par upar chipki rehti hai ─── */}
                 <div
                   className="up-matrix-head"
                   style={{
@@ -868,6 +889,8 @@ export default function EditPermissionsPanel({ user, roles, readOnly, onClose, o
                     position: 'sticky',
                     top: 0,
                     zIndex: 10,
+                    /* Rows ise neeche se cross karti hain — background opaque
+                       hona zaroori hai, warna matn aar-paar dikhta hai. */
                     background: 'var(--bg-muted, #F8FAFF)',
                     borderBottom: '2px solid var(--border-light, #BFDBFE)',
                     padding: 0,

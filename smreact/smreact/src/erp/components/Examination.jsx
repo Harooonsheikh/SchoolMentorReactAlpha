@@ -10,6 +10,7 @@ import { useModuleReadOnly, validateSessionDateFromStorage } from '../pages/Sett
 import { getActiveSessionID } from '../services/attendanceService';
 import { usePermissions } from '../context/PermissionsContext';
 import { studentMatchRank } from '../utils/studentSearch';
+import useUiPref from '../hooks/useUiPref';
 /* ═══════════════════════════════════════════════════════════════════
    EXAMINATION — port of the HTML #module-exam (only Exam Setup is
    functional; other tabs show Coming Soon).
@@ -607,6 +608,20 @@ const RC_TEMPLATES = [
     ],
   },
 ];
+
+/* Chuna hua result-card design localStorage me rehta hai. Pehle ye sirf
+   component state tha, to Examination se nikal kar wapas aate hi (module
+   switch par ye component unmount ho jata hai) selection Classic par reset
+   ho jati thi — user ka chuna hua design har baar gaayab. */
+const RC_TEMPLATE_PREF_KEY = 'sm.exam.resultCardTemplate';
+
+/* Default hamesha pehla template — RC_TEMPLATES ki tarteeb hi tay karti hai. */
+const RC_DEFAULT_TEMPLATE = RC_TEMPLATES[0].id;
+
+/* Store me purana / na-maujood id pada ho (template hata diya gaya ho) to
+   Classic par gir jao — warna kisi card par tick nahi aata aur viewer blank. */
+const rcSafeTemplate = (id) =>
+  RC_TEMPLATES.some(t => t.id === id) ? id : RC_DEFAULT_TEMPLATE;
 
 /* Date-sheet date/time helpers.
    API `date` is a DateTime; `timeFrom`/`timeTo` are strings — but GET kabhi ISO
@@ -1702,7 +1717,11 @@ const [subjects, setSubjects] = useState([]);
   }, [rhData.classSection]);
 
   /* ── Result Card Options state ── */
-  const [rcTemplate, setRcTemplate]     = useState('classic'); // classic | insight | portfolio
+  /* classic | insight | portfolio — localStorage me save rehta hai, is liye
+     module badalne / reload ke baad bhi wahi design chuna hua milta hai aur
+     result card usi se banta hai. */
+  const [rcTemplateSaved, setRcTemplate] = useUiPref(RC_TEMPLATE_PREF_KEY, RC_DEFAULT_TEMPLATE);
+  const rcTemplate = rcSafeTemplate(rcTemplateSaved);
   const [rcoGeneral, setRcoGeneral] = useState(RCO_GENERAL_OPTIONS);
   const [rcoSig, setRcoSig] = useState(RCO_SIG_OPTIONS);
   const [rcoSettings, setRcoSettings]   = useState(null);      // loaded examselectionsettings record (id, includeX, signatures)
