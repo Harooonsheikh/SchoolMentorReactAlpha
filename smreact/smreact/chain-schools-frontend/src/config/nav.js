@@ -4,11 +4,12 @@
    ═══════════════════════════════════════════════════════════════════ */
 
 /* ── Abhi chhupe hue modules ──
-   Chain school ke sidebar me filhal sirf ye aath rehte hain:
+   Chain school ke sidebar me filhal sirf ye nau rehte hain:
      Dashboard · Academics · School Permissions · School Progress ·
-     School Payments · Policy Manuals · Notifications · Settings
-   Baqi (Human Resource, Accounts, Attendance, Inventory, Trainings,
-   User Permissions) neeche comment kiye gaye hain — mitaye NAHI. Inke
+     School Payments · Policy Manuals · Human Resource · Notifications ·
+     Settings
+   Baqi (Accounts, Attendance, Inventory, Trainings, User Permissions)
+   neeche comment kiye gaye hain — mitaye NAHI. Inke
    routes aur screens waisi ki waisi maujood hain, sirf sidebar se hate
    hain; future me wapas laane ke liye un lines ka comment hata dena kaafi
    hai.
@@ -31,18 +32,18 @@ export const NAV_SECTIONS = [
       { key: 'sops', path: '/sops', label: 'Policy Manuals', icon: 'fa-book-open' },
     ],
   },
-  /* HR & Finance — filhal sidebar se hata diya gaya (neeche "Abhi chhupe
-     hue modules" wala note dekhein). Inke routes aur screens jaisi ki waisi
-     hain; sirf ye block wapas uncomment karna hai. */
-  // {
-  //   label: 'HR & Finance',
-  //   items: [
-  //     { key: 'hr', path: '/hr', label: 'Human Resource', icon: 'fa-users-gear' },
-  //     { key: 'accounts', path: '/accounts', label: 'Accounts', icon: 'fa-coins' },
-  //     { key: 'attendance', path: '/attendance', label: 'Attendance', icon: 'fa-calendar-check' },
-  //     { key: 'inventory', path: '/inventory', label: 'Inventory', icon: 'fa-boxes-stacked' },
-  //   ],
-  // },
+  /* HR & Finance — sirf Human Resource live hai. Baqi teen ke routes aur
+     screens maujood hain, bas sidebar se hate hue hain; wapas laane ke liye
+     un lines ka comment hatana kaafi hai. */
+  {
+    label: 'HR & Finance',
+    items: [
+      { key: 'hr', path: '/hr', label: 'Human Resource', icon: 'fa-users-gear' },
+      // { key: 'accounts', path: '/accounts', label: 'Accounts', icon: 'fa-coins' },
+      // { key: 'attendance', path: '/attendance', label: 'Attendance', icon: 'fa-calendar-check' },
+      // { key: 'inventory', path: '/inventory', label: 'Inventory', icon: 'fa-boxes-stacked' },
+    ],
+  },
   {
     label: 'Training & Admin',
     items: [

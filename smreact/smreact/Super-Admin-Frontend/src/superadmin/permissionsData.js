@@ -17,19 +17,28 @@ export const CORE_PERMS = [
   { key: 'erpAccess',    name: 'ERP Access',    icon: 'fa-server',        desc: 'Allow this school to log in and use the main ERP system.' },
 ];
 
-/* Chat permission — a single-select mode per school (not a plain on/off toggle).
+/* Chat permission — per school ek single-select: poora band ya poora khula.
    Ye + Mentor AI + eTube "Manage Mobile App Permissions" nested modal me dikhte
-   hain. Save par chatType = selected key (off / staffOnly / …). */
+   hain. Save par chatType = selected key — sirf 'off' ya 'on'. */
 export const CHAT_MODES = [
   { key: 'off', name: 'Chat Completely Off', icon: 'fa-comment-slash',
     desc: 'Disable chat entirely for this school. No staff, teacher, or parent can send or receive any message.' },
-  { key: 'staffOnly', name: 'Staff Chat Only', icon: 'fa-user-group',
-    desc: 'Staff can chat with each other. Parent chat is fully disabled — parents cannot send or receive any messages.' },
-  { key: 'staffTwoWayParentReceive', name: 'Staff Two-Way + Parents Receive Only', icon: 'fa-comments',
-    desc: 'Staff can chat two-way with each other and with parents. Parents can only receive messages — they cannot send or reply.' },
-  { key: 'parentsDirect', name: 'Parents Direct Chat with Admin', icon: 'fa-user-shield',
-    desc: 'Parents can directly chat with the school admin through the mobile application.' },
+  { key: 'on', name: 'Chat Completely On', icon: 'fa-comments',
+    desc: 'Enable chat for this school. Staff, teachers and parents can all send and receive messages in the mobile app.' },
 ];
+
+/* chatType par sirf DO hi values jati hain: 'off' ya 'on'.
+
+   Pehle chaar modes thin (staffOnly / staffTwoWayParentReceive / parentsDirect).
+   Jin schools ki rows un purani values par saved hain unhe bhi ye modal sahi
+   dikhana chahiye — 'off' ke ilawa har cheez 'on' hai — aur save par wo row
+   nayi do-value shakal me normalize ho jati hai. */
+export const CHAT_MODE_ON = 'on';
+export const normalizeChatMode = (v) =>
+  (String(v == null ? '' : v).trim().toLowerCase() === 'off' || !String(v || '').trim())
+    ? 'off'
+    : CHAT_MODE_ON;
+
 
 /* Module permissions, grouped exactly as in the design. */
 export const MODULE_GROUPS = [
@@ -114,7 +123,7 @@ export function defaultPerms(school) {
     erpAccess: on,
     activeBranch: on,
     /* Mobile App — GET/SAVE /manage-mobileapp-permission. */
-    chatMode: on ? 'staffTwoWayParentReceive' : 'off',
+    chatMode: on ? CHAT_MODE_ON : 'off',
     mentorAi: { enabled: on, parentsAccess: false },
     etube: { enabled: on, viewing: on, uploading: false },
     mobileAppId: 0,

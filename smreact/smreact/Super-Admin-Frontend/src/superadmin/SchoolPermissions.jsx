@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  CORE_PERMS, CHAT_MODES, MODULE_GROUPS, ALL_MODULE_KEYS, SOURCE_BADGE,
+  CORE_PERMS, CHAT_MODES, normalizeChatMode, MODULE_GROUPS, ALL_MODULE_KEYS, SOURCE_BADGE,
   SCHOOLS, buildInitialPerms, defaultPerms,
 } from './permissionsData';
 import { schoolPermissionsApi } from './api';
@@ -238,7 +238,7 @@ function PermModal({ school, initial, saving, toast, onClose, onSave }) {
   const [draft, setDraft] = useState(() => ({
     erpAccess: initial.erpAccess,
     activeBranch: initial.activeBranch,
-    chatMode: initial.chatMode || 'off',
+    chatMode: normalizeChatMode(initial.chatMode),
     mentorAi: { ...(initial.mentorAi || { enabled: false, parentsAccess: false }) },
     etube: { ...(initial.etube || { enabled: false, viewing: false, uploading: false }) },
     mobileAppId: initial.mobileAppId || 0,
@@ -257,7 +257,8 @@ function PermModal({ school, initial, saving, toast, onClose, onSave }) {
         setDraft((d) => ({
           ...d,
           mobileAppId: mob.mobileAppId,
-          chatMode: CHAT_MODES.some((m) => m.key === mob.chatMode) ? mob.chatMode : (d.chatMode || 'off'),
+          /* Purani chaar-mode values (staffOnly / … ) bhi 'on' par aa jati hain. */
+          chatMode: normalizeChatMode(mob.chatMode),
           mentorAi: { ...mob.mentorAi },
           etube: { ...mob.etube },
         }));
@@ -439,7 +440,7 @@ export function MobileAppPermsModal({ draft, loading, saving, setCore, setMentor
               {CHAT_MODES.map((m) => (
                 <div
                   key={m.key}
-                  className={`pm-chat-card${draft.chatMode === m.key ? ' selected' : ''}`}
+                  className={`pm-chat-card${normalizeChatMode(draft.chatMode) === m.key ? ' selected' : ''}`}
                   onClick={() => setCore('chatMode', m.key)}
                 >
                   <div className="pm-chat-radio" />

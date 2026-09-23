@@ -34,7 +34,7 @@
 import { ApiError, buildQuery } from '../client';
 import { SA_ADMIN_API_BASE, ERP_API_BASE, getSuperAdminToken, getSuperAdminIdentity } from '../config';
 import EP from '../endpoints';
-import { ALL_MODULE_KEYS, defaultPerms } from '../../permissionsData';
+import { ALL_MODULE_KEYS, defaultPerms, normalizeChatMode } from '../../permissionsData';
 
 /* ── field readers ──────────────────────────────────────────────── */
 
@@ -381,7 +381,7 @@ export async function savePermissions(branchId, perms) {
 /* ═══════════════════ MOBILE APP PERMISSION (ERP swagger) ═══════════════════
    POST /manage-mobileapp-permission
      action: SAVE | GET | DELETE
-     chatType = Chat card ki selected type (off / staffOnly / …)
+     chatType = Chat card ki selected type — sirf 'off' ya 'on'
      booleans = toggle on → true, off → false
    JWT mat bhejo — ERP API us par 403 deti hai. */
 
@@ -468,7 +468,8 @@ export async function saveMobileAppPermission(branchId, perms = {}) {
     action: 'SAVE',
     id: Number(perms.mobileAppId) || 0,
     branchID: Number(branchId) || 0,
-    chatType: String(perms.chatMode || 'off'),
+    /* API par sirf 'off' ya 'on' — purani chaar-mode values yahin normalize. */
+    chatType: normalizeChatMode(perms.chatMode),
     mentorAI: mentorOn,
     parentAccess: mentorOn && Boolean(perms.mentorAi?.parentsAccess),
     etube: etubeOn,
