@@ -1,30 +1,21 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { MODULE_GROUPS, ALL_MODULE_KEYS } from './permissionsData';
 import { networkPermissionsApi } from './api';
-import { Switch, MobileAppPermsModal } from './SchoolPermissions';
+import {
+  NETWORK_MODULE_GROUPS,
+  NETWORK_MODULE_KEYS,
+  defaultNetworkPerms,
+} from './api/services/networkPermissions';
+import { Switch } from './SchoolPermissions';
 
 /* ═══════════════════════════════════════════════════════════════════
    NETWORK PERMISSIONS — Super Admin module
 
-   School Permissions ka hi design, school ki jagah NETWORK (chain) par:
-   stat strip + searchable/filterable table; "Manage" wahi modal kholta hai —
-   core cards, Mobile App (nested modal) aur grouped module toggles.
-
-   LIVE SchoolMentorSuperAdminAPI:
-     GET  /api/AHM_NetworkUsers                → networks (table)
-     POST /api/AHM_NetworkUsers/update-isactive → modal ka "Save Permissions";
-          isActive = "Active Network" aur "Chain Portal Access" dono on. Table
-          ka Status isi isActive se.
-   Baqi permissions (modules / mobile app) ka backend route abhi nahi hai
-   (endpoints.js ka networkPermissions note dekhein), is liye wo draft isi
-   screen ki state me rehta hai.
+   Stat strip + searchable table. Manage modal:
+     • aik card — Active Network (isActive)
+     • neeche chain portal ke modules (displayed + commented), ERP modules nahi
+   Save → POST /api/SchoolPermissions/network-permissions  (action: SAVE)
+   Active Network change → POST /api/AHM_NetworkUsers/update-isactive
    ═══════════════════════════════════════════════════════════════════ */
-
-/* Network ke core cards — School Permissions ke CORE_PERMS jaise. */
-const NETWORK_CORE_PERMS = [
-  { key: 'activeNetwork', name: 'Active Network', icon: 'fa-circle-check', desc: 'Keep this network active. Switching it off suspends the network.' },
-  { key: 'chainPortal',   name: 'Chain Portal Access', icon: 'fa-sitemap', desc: 'Allow this network to log in and use the Chain Management portal.' },
-];
 
 const fmtDate = (d) => (d ? d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—');
 
@@ -34,23 +25,28 @@ export default function NetworkPermissions({ toast }) {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');  // '' | 'active' | 'inactive'
-  const [editId, setEditId] = useState(null);             // network being managed
+  const [statusFilter, setStatusFilter] = useState('');
+  const [editId, setEditId] = useState(null);
+  const [modalLoading, setModalLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   const toastRef = useRef(toast);
   toastRef.current = toast;
 
-  /* Refresh par pehle se badli hui (session) permissions na mitayein — sirf
-     naye networks ko default milta hai. */
   const loadNetworks = useCallback(async () => {
     setLoading(true);
     try {
       const { networks: rows, permMap: defaults } = await networkPermissionsApi.listNetworks();
       setNetworks(rows);
-      /* Chain Portal Access hamesha server ka isActive — baqi session ke badlaav rehte hain. */
       setPermMap((prev) => {
-        const next = { ...defaults, ...prev };
-        rows.forEach((n) => { next[n.id] = { ...next[n.id], chainPortal: n.isActive }; });
+        const next = { ...defaults };
+        rows.forEach((n) => {
+          const prevPerms = prev[n.id];
+          next[n.id] = {
+            ...(prevPerms || next[n.id]),
+            activeNetwork: n.isActive,
+          };
+        });
         return next;
       });
       setLoadError('');
@@ -78,23 +74,45 @@ export default function NetworkPermissions({ toast }) {
   const totalAll = networks.length;
   const activeAll = networks.filter((n) => n.isActive).length;
 
-  /* Save Permissions → POST update-isactive { network_ID, isActive } (modal ka
-     "Chain Portal Access" switch). Kamyabi par table ka Status foran badalta
-     hai aur modal band; fail ho to modal khula rehta hai. Modules / mobile app
-     ka server route abhi nahi — wo sirf is screen ki state me. */
-  const [saving, setSaving] = useState(false);
+  const openManage = async (id) => {
+    setEditId(id);
+    setModalLoading(true);
+    try {
+      const loaded = await networkPermissionsApi.getNetworkPermissions(id);
+      setPermMap((prev) => {
+        const n = networks.find((x) => x.id === id);
+        return {
+          ...prev,
+          [id]: {
+            ...(prev[id] || defaultNetworkPerms(n)),
+            permissionId: loaded.permissionId,
+            modules: loaded.modules,
+            activeNetwork: n ? n.isActive : Boolean(prev[id]?.activeNetwork),
+          },
+        };
+      });
+    } catch (err) {
+      toastRef.current?.(err?.message || 'Could not load network modules — showing defaults', 'warn');
+    } finally {
+      setModalLoading(false);
+    }
+  };
+
   const savePerms = async (id, perms) => {
     const n = networks.find((x) => x.id === id);
-    /* Dono core cards ek hi server flag par hain: network tabhi active jab
-       "Active Network" aur "Chain Portal Access" dono on hon. */
-    const isActive = Boolean(perms.activeNetwork && perms.chainPortal);
     setSaving(true);
     try {
-      await networkPermissionsApi.setNetworkActive(id, isActive);
-      setNetworks((prev) => prev.map((x) => (x.id === id ? { ...x, isActive } : x)));
-      setPermMap((prev) => ({ ...prev, [id]: perms }));
+      const saved = await networkPermissionsApi.saveNetworkPermissions(id, perms);
+      /* update-isactive HAR save par chalti hai. Pehle ye sirf tab chalti thi
+         jab toggle list wali isActive se ALAG ho — yani jo network pehle se
+         Active dikh raha ho, us par save karne se API chalti hi nahi thi (aur
+         list ki value khud stale ho sakti hai). Call idempotent hai, is liye
+         hamesha bhej dena hi mehfooz hai. */
+      await networkPermissionsApi.setNetworkActive(id, perms.activeNetwork);
+      setNetworks((prev) => prev.map((x) => (x.id === id ? { ...x, isActive: Boolean(perms.activeNetwork) } : x)));
+      setPermMap((prev) => ({ ...prev, [id]: { ...perms, permissionId: saved.permissionId } }));
       setEditId(null);
-      toast?.(`Permissions saved for ${n ? n.name : 'network'} — chain portal access ${isActive ? 'on' : 'off'}`, 'success');
+      toast?.(`Permissions saved for ${n ? n.name : 'network'}`, 'success');
     } catch (err) {
       toast?.(err?.message || 'Could not save network permissions', 'error');
     } finally {
@@ -106,25 +124,22 @@ export default function NetworkPermissions({ toast }) {
 
   return (
     <div className="page-content">
-      {/* PAGE HEADER */}
       <div className="page-header">
         <div className="page-title-row">
           <div className="page-icon"><i className="fa-solid fa-network-wired" /></div>
           <div>
             <div className="page-title">Network Permissions</div>
-            <div className="page-sub">Control portal access, feature permissions, and module visibility for each school network.</div>
+            <div className="page-sub">Control network status and chain-portal module visibility for each school network.</div>
           </div>
         </div>
       </div>
 
-      {/* STATS */}
       <div className="stat-grid" style={{ gridTemplateColumns: 'repeat(3,1fr)' }}>
         <div className="stat-card"><div className="stat-icon"><i className="fa-solid fa-network-wired" /></div><div className="stat-val">{totalAll}</div><div className="stat-lbl">Total Networks</div></div>
         <div className="stat-card s-green"><div className="stat-icon"><i className="fa-solid fa-circle-check" /></div><div className="stat-val">{activeAll}</div><div className="stat-lbl">Active Networks</div></div>
         <div className="stat-card s-warn"><div className="stat-icon"><i className="fa-solid fa-ban" /></div><div className="stat-val">{totalAll - activeAll}</div><div className="stat-lbl">Inactive Networks</div></div>
       </div>
 
-      {/* TABLE CARD */}
       <div className="section-card">
         <div className="sp-search-bar">
           <div className="f-field-grow">
@@ -172,7 +187,7 @@ export default function NetworkPermissions({ toast }) {
               ) : filtered.map((n, idx) => {
                 const perms = permMap[n.id] || { modules: {} };
                 const on = n.isActive;
-                const modCount = ALL_MODULE_KEYS.filter((k) => perms.modules?.[k]).length;
+                const modCount = NETWORK_MODULE_KEYS.filter((k) => perms.modules?.[k]).length;
                 return (
                   <tr key={n.id}>
                     <td className="td-bold" style={{ color: 'var(--tm)' }}>{idx + 1}</td>
@@ -201,11 +216,11 @@ export default function NetworkPermissions({ toast }) {
                         : <span className="badge b-red"><i className="fa-solid fa-ban" style={{ fontSize: 8 }} /> Inactive</span>}
                     </td>
                     <td style={{ textAlign: 'center' }}>
-                      <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--brand)' }}>{modCount}/{ALL_MODULE_KEYS.length}</div>
+                      <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--brand)' }}>{modCount}/{NETWORK_MODULE_KEYS.length}</div>
                       <div style={{ fontSize: 10, color: 'var(--tm)' }}>modules on</div>
                     </td>
                     <td style={{ textAlign: 'center' }}>
-                      <button className="btn-sm" style={{ height: 30, fontSize: 11.5 }} onClick={() => setEditId(n.id)}>
+                      <button className="btn-sm" style={{ height: 30, fontSize: 11.5 }} onClick={() => openManage(n.id)}>
                         <i className="fa-solid fa-sliders" /> Manage
                       </button>
                     </td>
@@ -217,10 +232,20 @@ export default function NetworkPermissions({ toast }) {
         </div>
       </div>
 
-      {editNetwork && (
+      {editNetwork && modalLoading && (
+        <div className="perm-ov open">
+          <div className="perm-modal np-load">
+            <i className="fa-solid fa-spinner fa-spin" />
+            <div className="np-load-title">Loading permissions…</div>
+            <div className="np-load-sub">{editNetwork.name}</div>
+          </div>
+        </div>
+      )}
+
+      {editNetwork && !modalLoading && (
         <NetworkPermModal
           network={editNetwork}
-          initial={permMap[editNetwork.id] || networkPermissionsApi.defaultNetworkPerms(editNetwork)}
+          initial={permMap[editNetwork.id] || defaultNetworkPerms(editNetwork)}
           onClose={() => setEditId(null)}
           saving={saving}
           onSave={(perms) => savePerms(editNetwork.id, perms)}
@@ -230,138 +255,88 @@ export default function NetworkPermissions({ toast }) {
   );
 }
 
-/* ═══════════════════════ PERMISSIONS MODAL ═══════════════════════ */
 function NetworkPermModal({ network, initial, saving, onClose, onSave }) {
-  const [draft, setDraft] = useState(() => ({
-    ...initial,
-    activeNetwork: network.isActive,
-    chainPortal: network.isActive,
-    mentorAi: { ...initial.mentorAi },
-    etube: { ...initial.etube },
-    modules: { ...initial.modules },
-  }));
-  const [showMobileModal, setShowMobileModal] = useState(false);
+  const [activeNetwork, setActiveNetwork] = useState(network.isActive);
+  const [permissionId] = useState(initial.permissionId || 0);
+  const [modules, setModules] = useState({ ...initial.modules });
 
-  const setCore = (key, val) => setDraft((d) => ({ ...d, [key]: val }));
-  const setModule = (key, val) => setDraft((d) => ({ ...d, modules: { ...d.modules, [key]: val } }));
-  const setAll = (val) => setDraft((d) => ({ ...d, modules: Object.fromEntries(ALL_MODULE_KEYS.map((k) => [k, val])) }));
-  const setMentorAi = (key, val) => setDraft((d) => {
-    const next = { ...d.mentorAi, [key]: val };
-    if (key === 'enabled' && !val) next.parentsAccess = false;
-    return { ...d, mentorAi: next };
-  });
-  const setEtube = (key, val) => setDraft((d) => {
-    const next = { ...d.etube, [key]: val };
-    if (key === 'enabled' && !val) { next.viewing = false; next.uploading = false; }
-    return { ...d, etube: next };
-  });
+  const setModule = (key, val) => setModules((m) => ({ ...m, [key]: val }));
+  const setAll = (val) => setModules(Object.fromEntries(NETWORK_MODULE_KEYS.map((k) => [k, val])));
 
-  const activeCount = ALL_MODULE_KEYS.filter((k) => draft.modules[k]).length;
-  const inactiveCount = ALL_MODULE_KEYS.length - activeCount;
+  const activeCount = NETWORK_MODULE_KEYS.filter((k) => modules[k]).length;
+  const inactiveCount = NETWORK_MODULE_KEYS.length - activeCount;
 
   return (
     <div className="perm-ov open" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="perm-modal">
-        {/* Header */}
+      <div className="perm-modal np-modal">
         <div className="pm-hdr">
           <div className="pm-av">{network.initials}</div>
           <div style={{ flex: 1, minWidth: 0 }}>
+            <div className="np-kicker">Network Permissions</div>
             <div className="pm-school-name" title={`Network ID: ${network.id}`}>{network.name}</div>
             <div className="pm-school-meta">
-              <span><i className="fa-solid fa-hashtag" style={{ color: 'var(--brand)' }} />{network.id}</span>
-              <span><i className="fa-solid fa-user" style={{ color: 'var(--brand)' }} />{network.owner || '—'}</span>
-              <span><i className="fa-solid fa-phone" style={{ color: 'var(--brand)' }} />{network.contact || '—'}</span>
+              <span><i className="fa-solid fa-hashtag" />{network.id}</span>
+              <span><i className="fa-solid fa-user" />{network.owner || '—'}</span>
+              <span><i className="fa-solid fa-phone" />{network.contact || '—'}</span>
             </div>
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
-            <div style={{ fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.5px', color: 'var(--brand)' }}><i className="fa-solid fa-network-wired" /> Network Permissions</div>
-            <button className="pm-close" data-tip="Close" data-tip-pos="left" onClick={onClose}><i className="fa-solid fa-xmark" /></button>
-          </div>
+          <button className="pm-close" data-tip="Close" data-tip-pos="left" onClick={onClose}><i className="fa-solid fa-xmark" /></button>
         </div>
 
-        {/* Body */}
         <div className="pm-body">
-          {/* Core permissions */}
-          <div className="pm-top-section">
-            <div className="pm-top-title"><i className="fa-solid fa-shield-halved" /> Core Permissions</div>
-            <div className="pm-top-grid">
-              {NETWORK_CORE_PERMS.map((p) => (
-                <div className={`pm-top-card${draft[p.key] ? ' enabled' : ''}`} key={p.key}>
-                  <div className="pm-top-card-top">
-                    <div className="pm-top-card-icon"><i className={`fa-solid ${p.icon}`} /></div>
-                    <Switch checked={draft[p.key]} onChange={(v) => setCore(p.key, v)} />
+          <div className={`np-hero${activeNetwork ? ' on' : ''}`}>
+            <div className="np-hero-icon"><i className="fa-solid fa-circle-nodes" /></div>
+            <div className="np-hero-copy">
+              <div className="np-hero-label">Network status</div>
+              <div className="np-hero-name">Active Network</div>
+              <div className="np-hero-desc">Keep this network live. When off, the network stays listed but access is paused.</div>
+            </div>
+            <div className="np-hero-aside">
+              <span className={`np-hero-pill${activeNetwork ? ' on' : ''}`}>{activeNetwork ? 'Active' : 'Paused'}</span>
+              <Switch checked={activeNetwork} onChange={setActiveNetwork} />
+            </div>
+          </div>
+
+          <div className="np-modules-head">
+            <div>
+              <div className="np-modules-title"><i className="fa-solid fa-layer-group" /> Network Modules</div>
+              <div className="np-modules-sub">Chain portal modules — including those hidden from the sidebar.</div>
+            </div>
+            <div className="np-mod-actions">
+              <span className="badge b-green">{activeCount} On</span>
+              <span className="badge b-gray">{inactiveCount} Off</span>
+              <button type="button" className="btn-sm np-mod-btn" onClick={() => setAll(true)}><i className="fa-solid fa-toggle-on" /> All On</button>
+              <button type="button" className="btn-sm np-mod-btn np-mod-btn-off" onClick={() => setAll(false)}><i className="fa-solid fa-toggle-off" /> All Off</button>
+            </div>
+          </div>
+
+          {NETWORK_MODULE_GROUPS.map((g) => (
+            <div className="np-sec" key={g.label}>
+              <div className="pm-section-label">{g.label}</div>
+              <div className="pm-mod-grid">
+                {g.modules.map((m) => (
+                  <div className={`pm-mod-card${modules[m.key] ? ' enabled' : ''}`} key={m.key}>
+                    <div className="pm-mod-icon"><i className={`fa-solid ${m.icon}`} /></div>
+                    <div className="pm-mod-name">{m.name}</div>
+                    <Switch checked={!!modules[m.key]} onChange={(v) => setModule(m.key, v)} />
                   </div>
-                  <div className="pm-top-card-name">{p.name}</div>
-                  <div className="pm-top-card-desc">{p.desc}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Mobile App permissions — wahi nested modal */}
-          <div className="pm-top-section">
-            <div className="pm-top-title"><i className="fa-solid fa-mobile-screen-button" /> Mobile App</div>
-            <div className="pm-manage-card" onClick={() => setShowMobileModal(true)}>
-              <div className="pm-top-card-icon"><i className="fa-solid fa-sliders" /></div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div className="pm-top-card-name">Manage Mobile App Permissions</div>
-                <div className="pm-top-card-desc">Control eTube, Mentor AI and Chat access for this network&rsquo;s mobile application.</div>
+                ))}
               </div>
-              <i className="fa-solid fa-chevron-right pm-manage-arrow" />
             </div>
-          </div>
-
-          {/* Module permissions */}
-          <div>
-            <div className="pm-modules-title">
-              <i className="fa-solid fa-table-cells-large" /> Module Permissions
-              <div className="pm-mod-badges">
-                <span className="badge b-green">{activeCount} Active</span>
-                <span className="badge b-gray">{inactiveCount} Inactive</span>
-              </div>
-              <button className="btn-sm" style={{ marginLeft: 8, height: 28, fontSize: 11 }} onClick={() => setAll(true)}><i className="fa-solid fa-toggle-on" /> All On</button>
-              <button className="btn-sm" style={{ height: 28, fontSize: 11, borderColor: 'var(--err)', color: 'var(--err)', background: 'rgba(220,38,38,.05)' }} onClick={() => setAll(false)}><i className="fa-solid fa-toggle-off" /> All Off</button>
-            </div>
-
-            {MODULE_GROUPS.map((g) => (
-              <React.Fragment key={g.label}>
-                <div className="pm-section-label">{g.label}</div>
-                <div className="pm-mod-grid">
-                  {g.modules.map((m) => (
-                    <div className={`pm-mod-card${draft.modules[m.key] ? ' enabled' : ''}`} key={m.key}>
-                      <div className="pm-mod-icon"><i className={`fa-solid ${m.icon}`} /></div>
-                      <div className="pm-mod-name">{m.name}</div>
-                      <Switch checked={draft.modules[m.key]} onChange={(v) => setModule(m.key, v)} />
-                    </div>
-                  ))}
-                </div>
-              </React.Fragment>
-            ))}
-          </div>
+          ))}
         </div>
 
-        {/* Footer */}
         <div className="pm-foot">
           <button className="btn-secondary" onClick={onClose} disabled={saving}><i className="fa-solid fa-xmark" /> Cancel</button>
-          <button className="btn-primary" onClick={() => onSave(draft)} disabled={saving}>
+          <button
+            className="btn-primary"
+            disabled={saving}
+            onClick={() => onSave({ activeNetwork, permissionId, modules })}
+          >
             <i className={`fa-solid ${saving ? 'fa-spinner fa-spin' : 'fa-floppy-disk'}`} /> {saving ? 'Saving…' : 'Save Permissions'}
           </button>
         </div>
       </div>
-
-      {showMobileModal && (
-        <MobileAppPermsModal
-          subject="network"
-          draft={draft}
-          loading={false}
-          saving={false}
-          setCore={setCore}
-          setMentorAi={setMentorAi}
-          setEtube={setEtube}
-          onClose={() => setShowMobileModal(false)}
-          onDone={() => setShowMobileModal(false)}
-        />
-      )}
     </div>
   );
 }
