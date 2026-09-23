@@ -5439,7 +5439,7 @@ const saveHoliday = useCallback(async (payload) => {
 
   /* Expandable detail panel */
   .att-detail { background:#EFF6FF; border-top:1px solid #BFDBFE; max-height:0; overflow:hidden; transition:max-height .35s cubic-bezier(.4,0,.2,1); }
-  .att-detail.open { max-height:700px; }
+  .att-detail.open { max-height:700px; overflow-y:auto; }
   .att-detail-inner { padding:14px 20px 16px; }
   .att-student-table { width:100%; border-collapse:collapse; font-size:12.5px; }
   .att-student-table th { padding:9px 10px; text-align:left; font-size:10px; font-weight:700; color:#64748B; letter-spacing:.5px; text-transform:uppercase; border-bottom:1.5px solid #BFDBFE; background:#EFF6FF; }
