@@ -868,7 +868,10 @@ function SetupModal({ school, setup, saving, onClose, onSave, onToast }) {
 
   const save = () => {
     if (saving) return undefined
-    if (freeTrial && !trialDays) return onToast('Please enter trial duration in days', 'warn')
+    // if (freeTrial && !trialDays) return onToast('Please enter trial duration in days', 'warn')
+    if (freeTrial && (!trialDays || Number(trialDays) <= 0)) {
+  return onToast('Trial duration must be greater than 0 days', 'warn')
+}
     const common = {
       id: setup?.id || 0,
       previousAmount: setup?.previousAmount || 0,   // backend ka pichla balance chhoot na jaaye
@@ -997,7 +1000,16 @@ function SetupModal({ school, setup, saving, onClose, onSave, onToast }) {
           {freeTrial && (
             <div className="pay-field">
               <label>Trial Duration (days)</label>
-              <input className="pay-input" type="number" placeholder="e.g. 30" value={trialDays} onChange={(e) => setTrialDays(e.target.value)} />
+              {/* <input className="pay-input" type="number" placeholder="e.g. 30" value={trialDays} onChange={(e) => setTrialDays(e.target.value)} /> */}
+             
+   <input 
+ className="pay-input" 
+ type="number" 
+ min="1"
+ placeholder="e.g. 30" 
+ value={trialDays} 
+ onChange={(e) => setTrialDays(e.target.value)} 
+/>
               {/* Muddat setup banne ke din se ginti hai — edit karte waqt nayi
                   tareekh saamne rahe to andaza lagana asaan hai. */}
               {editTrial && editTrial.daysLeft != null && (

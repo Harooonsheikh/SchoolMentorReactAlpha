@@ -45,6 +45,7 @@ export default function SchoolStatus() {
   /* branchID → progress row (principal, staff/students, logins, tabs,
      compulsions). Aik hi call me sab aa jaata hai. */
   const [report, setReport] = useState({})
+  const [monthUsage, setMonthUsage] = useState({})
 
   useEffect(() => {
     let alive = true
@@ -53,6 +54,7 @@ export default function SchoolStatus() {
       .catch((err) => console.error('Branch report load failed:', err))
     return () => { alive = false }
   }, [])
+
 
   /* branchID → { notes, calls, messages } — chips ke counters. Follow-up
      cards ki call se aate hain (branch-report in ko nahi deti). */
@@ -82,6 +84,8 @@ export default function SchoolStatus() {
       return {
         ...s,
         ...metrics,
+        logins: monthUsage[s.id]?.monthLogins ?? 0,
+        workTime: monthUsage[s.id]?.monthTime ?? '00:00:00',
         notes: counts.notes ?? 0,
         calls: counts.calls ?? 0,
         messages: counts.messages ?? 0,
@@ -89,7 +93,7 @@ export default function SchoolStatus() {
         assigned: assigned[s.id] || USERS[0],
       }
     }),
-    [connectedSchools, assigned, erpStore, report, cardCounts],
+    [connectedSchools, assigned, erpStore, report, cardCounts, monthUsage],
   )
   /* ERP = launch setup on; Inactive = off. */
   const erp = useMemo(() => rows.filter((s) => s.erpActive), [rows])
@@ -97,9 +101,69 @@ export default function SchoolStatus() {
 
   const [eColor, setEColor] = useState('')
   // const [eUser, setEUser] = useState('') // User filter temporarily disabled
-  const [eMonth, setEMonth] = useState(MONTHS[0])
+  // const [eMonth, setEMonth] = useState(MONTHS[0])
+const generateMonths = () => {
+  const months = []
+
+  const date = new Date()
+
+  for(let i = 0; i < 12; i++){
+    const d = new Date(
+      date.getFullYear(),
+      date.getMonth() - i,
+      1
+    )
+
+    months.push(
+      `${d.toLocaleString('default',{
+        month:'long'
+      })} ${d.getFullYear()}`
+    )
+  }
+
+  return months
+}
+
+
+const SCHOOL_MONTHS = generateMonths()
+
+
+const [eMonth, setEMonth] = useState(SCHOOL_MONTHS[0])
   const [eQ, setEQ] = useState('')
   const [iQ, setIQ] = useState('')
+
+
+  useEffect(() => {
+    let alive = true
+
+    if (!connectedSchools.length) return undefined
+
+    Promise.all(
+      connectedSchools.map(async (s) => {
+        try {
+          const data = await fetchUserTimeSpend(
+            s.id,
+            `${getMonthValue(eMonth)}-01`
+          )
+          return { id: s.id, data }
+        } catch (err) {
+          console.error('Monthly usage load failed:', s.id, err)
+          return { id: s.id, data: null }
+        }
+      })
+    ).then((result) => {
+      if (!alive) return
+
+      const map = {}
+      result.forEach((x) => {
+        map[x.id] = x.data
+      })
+
+      setMonthUsage(map)
+    })
+
+    return () => { alive = false }
+  }, [connectedSchools, eMonth])
 
   const [detail, setDetail] = useState(null)    // { school, isErp }
   const [confirm, setConfirm] = useState(null)   // { action, school }
@@ -218,7 +282,10 @@ export default function SchoolStatus() {
               <div className="f-field">
                 <label className="f-label"><i className="fa-regular fa-calendar" style={{ color: 'var(--brand)', fontSize: 10 }} /> Month</label>
                 <select className="f-input" value={eMonth} onChange={(e) => setEMonth(e.target.value)}>
-                  {MONTHS.map((m) => <option key={m}>{m}</option>)}
+                  {/* {MONTHS.map((m) => <option key={m}>{m}</option>)} */}
+                  {SCHOOL_MONTHS.map((m) => (
+   <option key={m}>{m}</option>
+))}
                 </select>
               </div>
               <div className="f-field-grow">
@@ -581,26 +648,55 @@ function ErpDetailModal({ school, month, onToast, onCounts, onClose }) {
     document.body,
   )
 }
+const getMonthValue = (monthLabel) => {
+  const date = new Date(monthLabel)
 
-function ProgressTab({ school, seed }) {
+  return `${date.getFullYear()}-${String(
+    date.getMonth() + 1
+  ).padStart(2, '0')}`
+}
+function ProgressTab({ school, seed, month }){
   const [usage, setUsage] = useState(null)
   const [usageLoading, setUsageLoading] = useState(true)
-  const monthLabel = new Date().toLocaleString('en-GB', { month: 'long', year: 'numeric' })
+  const monthLabel = new Date(month).toLocaleString('en-GB', { month: 'long', year: 'numeric' })
   useEffect(() => {
     let alive = true
     setUsageLoading(true)
-    fetchUserTimeSpend(school.id)
+    // fetchUserTimeSpend(school.id)
+ fetchUserTimeSpend(
+  school.id,
+  `${getMonthValue(month)}-01`
+)
       .then((u) => { if (alive) setUsage(u) })
-      .catch((err) => { console.error('Screen time load failed:', err) })
+      .catch((err) => {
+        console.error('Screen time load failed:', err)
+        if (alive) {
+          setUsage({
+            todayLogins: 0,
+            todayTime: '00:00:00',
+            todayMods: [],
+            monthLogins: 0,
+            monthTime: '00:00:00',
+            monthMods: [],
+            todayMobileLogins: 0,
+            todayMobileTime: '00:00:00',
+            todayMobileMods: [],
+            monthMobileLogins: 0,
+            monthMobileTime: '00:00:00',
+            monthMobileMods: []
+          })
+        }
+      })
       .finally(() => { if (alive) setUsageLoading(false) })
     return () => { alive = false }
-  }, [school.id])
+  }, [school.id, month])
 
   const todayMods = usage?.todayMods || seed.todayMods
   const monthMods = usage?.monthMods || seed.monthMods
   const todayLogins = usage ? usage.todayLogins : seed.todayLogins
   const todayTime = usage ? usage.todayTime : seed.todayTime
-  const monthLogins = usage ? usage.monthLogins : seed.monthLogins
+  // const monthLogins = usage ? usage.monthLogins : seed.monthLogins
+  const monthLogins = usage?.monthLogins ?? 0
   const monthTime = usage ? usage.monthTime : seed.monthTime
 
   const hasTime = (t) => {
