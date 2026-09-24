@@ -548,6 +548,14 @@ const FEE_SETTINGS_DEFAULTS = {
   fineType:         'fixed',
   fineAmt:          0,
   printSize:        'a4',
+  /* Fee Module feature controls. Ye teenon DEFAULT ON (true) hain — ERP abhi
+     multiple receiving, over-payment→advance aur OneLink/PSID partial challan
+     sab allow karta hai, is liye jab tak user khud OFF na kare tab tak behaviour
+     bilkul waisa hi rahe jaisa aaj hai. Backend FeeChallanSettings me abhi ye
+     fields nahi, is liye bankDetails ki tarah localStorage me persist hote hain. */
+  multipleReceiving:       true,
+  advancePaymentReceiving: true,
+  psidInstallments:        true,
 };
 
 const uiPrintSizeToApi = (size) => (
@@ -576,6 +584,12 @@ function mapFeeSettingsFromApi(row = {}) {
     fineType:           apiFineToUi(row.fineType ?? FEE_SETTINGS_DEFAULTS.fineType),
     fineAmt:            Number(row.fineAmountRs ?? row.fineAmt ?? FEE_SETTINGS_DEFAULTS.fineAmt) || 0,
     printSize:          apiPrintSizeToUi(row.defaultPrintSize ?? row.printSize ?? FEE_SETTINGS_DEFAULTS.printSize),
+    /* Feature controls — backend abhi ye fields nahi bhejta, is liye default ON
+       rehte hain aur asli value getFeeSettings me localStorage overlay se aati
+       hai. Backend jab bhejne lage to WAHI authority hoga. */
+    multipleReceiving:       (typeof row.multipleReceiving === 'boolean' ? row.multipleReceiving : FEE_SETTINGS_DEFAULTS.multipleReceiving),
+    advancePaymentReceiving: (typeof row.advancePaymentReceiving === 'boolean' ? row.advancePaymentReceiving : FEE_SETTINGS_DEFAULTS.advancePaymentReceiving),
+    psidInstallments:        (typeof row.psidInstallments === 'boolean' ? row.psidInstallments : FEE_SETTINGS_DEFAULTS.psidInstallments),
     createdDate:        row.createdDate ?? null,
     modifiedDate:       row.modifiedDate ?? null,
     createdBy:          row.createdBy ?? null,
@@ -628,6 +642,13 @@ function mapFeeSettingsToApi(settings = {}) {
     fineType:          uiFineToApi(settings.fineType),
     fineAmountRs:      Number(settings.fineAmt) || 0,
     defaultPrintSize:  uiPrintSizeToApi(settings.printSize),
+    /* Feature controls bhi bhejo (default ON → OFF sirf explicit false par).
+       Backend abhi in fields ko ignore karta hai; asli persistence localStorage
+       overlay se hoti hai (writeFeatureTogglesLs). Bhejna harmless hai taake
+       backend future me adopt kar le to seedha round-trip ho jaye. */
+    multipleReceiving:       settings.multipleReceiving !== false,
+    advancePaymentReceiving: settings.advancePaymentReceiving !== false,
+    psidInstallments:        settings.psidInstallments !== false,
     createdDate:       settings.createdDate || now,
     modifiedDate:      now,
     createdBy:         Number(settings.createdBy) || userID,
@@ -657,6 +678,32 @@ function apiRowHasBankField(row) {
     .some(v => typeof v === 'boolean');
 }
 
+/* Fee Module feature controls (Multiple Receiving / Advance Payment Receiving /
+   PSID Installment Payments) — backend FeeChallanSettings me abhi ye columns
+   nahi, is liye bank-details ki tarah per-branch localStorage me persist hote
+   hain. Default ON, is liye sirf tab likhte hain jab user save kare; backend jab
+   ye fields bhejne lage to mapFeeSettingsFromApi ka boolean WAHI authority hoga. */
+const FEATURE_TOGGLE_KEYS = ['multipleReceiving', 'advancePaymentReceiving', 'psidInstallments'];
+function featureTogglesLsKey() { return `fee.featureToggles.${feeSettingsBranchID()}`; }
+function readFeatureTogglesLs() {
+  try {
+    const raw = localStorage.getItem(featureTogglesLsKey());
+    if (!raw) return null;
+    const obj = JSON.parse(raw);
+    return (obj && typeof obj === 'object') ? obj : null;
+  } catch { return null; }
+}
+function writeFeatureTogglesLs(settings) {
+  try {
+    const out = {};
+    FEATURE_TOGGLE_KEYS.forEach(k => { out[k] = settings?.[k] !== false; });
+    localStorage.setItem(featureTogglesLsKey(), JSON.stringify(out));
+  } catch { /* ignore */ }
+}
+function apiRowHasFeatureToggle(row, key) {
+  return !!row && typeof row[key] === 'boolean';
+}
+
 export async function getFeeSettings() {
   const branchID = feeSettingsBranchID();
   const res = await fetch(buildUrl(`/api/FeeChallanSettings/get-all?branchId=${branchID}`), {
@@ -675,6 +722,13 @@ export async function getFeeSettings() {
     const ls = readBankDetailsLs();
     if (ls != null) settings.showBankDetails = ls;
   }
+  /* Feature controls: har toggle par backend boolean na ho to localStorage overlay.
+     Default ON hai, is liye LS na ho to settings apne default (true) par rehte hain. */
+  const ft = readFeatureTogglesLs();
+  FEATURE_TOGGLE_KEYS.forEach(k => {
+    if (rows.length && apiRowHasFeatureToggle(rows[0], k)) return; // backend authority
+    if (ft && typeof ft[k] === 'boolean') settings[k] = ft[k];
+  });
   return settings;
 }
 
@@ -840,6 +894,9 @@ export async function saveStudentTransport(classKey, reg, payload) {
 export async function saveFeeSettings(payload) {
   /* Bank-details toggle localStorage me bhi save — backend field aane tak persist rahe. */
   writeBankDetailsLs(payload?.showBankDetails === true);
+  /* Feature controls (Multiple Receiving / Advance Payment Receiving / PSID) bhi
+     localStorage me persist — backend in fields ko store karne lage tak yahi authority. */
+  writeFeatureTogglesLs(payload);
   const body = mapFeeSettingsToApi(payload);
   const res = await fetch(buildUrl('/api/FeeChallanSettings/save'), {
     method: 'POST',
@@ -1129,14 +1186,21 @@ function buildLedgerChallanPayload({ classMeta = {}, student = {}, heads = [], m
     return Number.isFinite(n) ? n : 0;
   };
 
+  /* Challan Type — "One Month" (default) ya "Two Months". Two Months ka matlab
+     ek hi challan par DO mahine ki fees bill hoti hai, is liye har head ka
+     challanAmount aur discount DUGNA (× 2) ho jaata hai (net = 2 × (amount −
+     discount) = do mahine ka net). Default '1' par multiplier 1 hai, is liye
+     single-month generate bilkul waise ka waise rehta hai (byte-for-byte). */
+  const monthsMult = String(options.type) === '2' ? 2 : 1;
+
   const makeRow = (subHead, amount, discount = 0) => ({
     id: 0,
     blid: 0,
     branchId: branchID,
     head: 'Account Payable',
     subHead: String(subHead || ''),
-    challanAmount: int32(amount),
-    discount: int32(discount),
+    challanAmount: int32((Number(amount) || 0) * monthsMult),
+    discount: int32((Number(discount) || 0) * monthsMult),
     receivedAmount: 0,
     pendingorAdv: 0,
     createdAt: now,

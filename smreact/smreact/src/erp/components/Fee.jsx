@@ -4,6 +4,7 @@ import ExcelJS from 'exceljs';
 import Tooltip from './Tooltip';
 import TutorialModal from './TutorialModal';
 import * as feeService from '../services/feeService';
+import * as preEnrollmentService from '../services/preEnrollmentService';
 import { validateSessionDateFromStorage } from '../pages/Settings/settingsStore';
 import useAsync from '../hooks/useAsync';
 import { downloadDocxFromHtml } from '../../utils/docx';
@@ -3340,6 +3341,10 @@ function BulkGenerateModal({
   };
 
   const [month, setMonth] = useState(defaultMonth || FEE_MONTHS[0]);
+  /* Challan Type — '1' = One Month (default), '2' = Two Months. Two Months par
+     ek hi challan par do mahine ki fees (dugni raqam) bill hoti hai — wiring
+     feeService.generateChallan → buildLedgerChallanPayload me (options.type). */
+  const [type, setType] = useState('1');
   const [picked, setPicked] = useState([]);      // selected fee head names
   const [msOpen, setMsOpen] = useState(false);
   const [issueDate, setIssueDate] = useState(todayISO());
@@ -3356,6 +3361,7 @@ function BulkGenerateModal({
     if (!open) return;
     cancelRef.current = false;
     setMonth(defaultMonth || FEE_MONTHS[0]);
+    setType('1');
     setPicked((heads || []).map(h => h.name));
     setMsOpen(false);
     setIssueDate(todayISO());
@@ -3467,6 +3473,9 @@ function BulkGenerateModal({
           discountMap: dMap,
           issueDate,
           dueDate,
+          /* Challan Type — '2' (Two Months) par buildLedgerChallanPayload har head
+             ka challanAmount + discount dugna kar deta hai (do mahine ek challan par). */
+          type,
           year: defaultYear,
           familyMode,
           singleMode,
@@ -3564,6 +3573,16 @@ function BulkGenerateModal({
               <div className="fee-select-wrap">
                 <select className="fee-select" value={month} onChange={e => setMonth(e.target.value)} disabled={!!progress}>
                   {FEE_MONTHS.map(m => <option key={m}>{m}</option>)}
+                </select>
+                <i className="fa-solid fa-chevron-down"></i>
+              </div>
+            </div>
+            <div className="fee-field">
+              <span className="fee-label">Challan Type</span>
+              <div className="fee-select-wrap">
+                <select className="fee-select" value={type} onChange={e => setType(e.target.value)} disabled={!!progress}>
+                  <option value="1">One Month</option>
+                  <option value="2">Two Months</option>
                 </select>
                 <i className="fa-solid fa-chevron-down"></i>
               </div>
@@ -4103,6 +4122,201 @@ function DiscountManagerModal({ cfg, onClose, onSave, toast }) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════
+   EDIT INSTALLMENT MODAL — re-allocate ONE already-saved installment's
+   per-head Received (and per-head Give Discount) WITHOUT touching the
+   sibling installments of the same challan. Ported from the sibling
+   front-end's EditPaymentModal; the ERP stores receiving-time discount
+   as `giveDisc` (not `discPerHead`), so this reads/writes `giveDisc`.
+
+   PERSISTENCE NOTE: the ERP's installments are session-state today
+   (getReceipts() is a mock / returns []), so this SAVE updates the
+   in-session receipts list only — the edit survives within the session
+   but is lost on refresh. Real cross-refresh edit needs a backend
+   "update-installment" API; the onSave handler below calls an OPTIONAL,
+   guarded feeService.editInstallment(...) that is a no-op until such an
+   endpoint exists. This is ADD-only UI: it never touches the
+   generate/receive SAVE math (challanFigures/perHead/fine/receivePayment).
+   ═══════════════════════════════════════════════════════════════════ */
+function EditPaymentModal({ cfg, onClose, onSave, toast }) {
+  const [date, setDate]     = useState('');
+  const [method, setMethod] = useState('Cash');
+  const [ref, setRef]       = useState('');
+  const [remarks, setRemarks] = useState('');
+  const [perHeadEdit, setPerHeadEdit] = useState({});
+  const [discPerHeadEdit, setDiscPerHeadEdit] = useState({});
+
+  useEffect(() => {
+    if (!cfg) return;
+    const p = cfg.payment;
+    setDate(p.date || ''); setMethod(p.method || 'Cash');
+    setRef(p.ref || p.txn || ''); setRemarks(p.remarks || '');
+    const perSeed = {}, discSeed = {};
+    (cfg.heads || []).forEach(h => {
+      perSeed[h.name]  = +(p.perHead?.[h.name]) || 0;
+      /* ERP stores per-head receiving-time discount under `giveDisc`. */
+      discSeed[h.name] = +(p.giveDisc?.[h.name]) || 0;
+    });
+    setPerHeadEdit(perSeed);
+    setDiscPerHeadEdit(discSeed);
+  }, [cfg]);
+
+  useEffect(() => {
+    if (!cfg) return undefined;
+    const onKey = e => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    document.body.style.overflow = 'hidden';
+    return () => { window.removeEventListener('keydown', onKey); document.body.style.overflow = ''; };
+  }, [cfg, onClose]);
+
+  if (!cfg) return null;
+
+  const { heads = [], payments = [], payment } = cfg;
+
+  /* Per head: what every OTHER installment already received/discounted
+     (this installment's own original contribution is excluded so it
+     isn't double-subtracted while the user is actively editing it). */
+  const rows = heads.map(h => {
+    const otherReceived = payments.filter(p => p.id !== payment.id).reduce((a, p) => a + (+(p.perHead?.[h.name]) || 0), 0);
+    const otherDiscount = payments.filter(p => p.id !== payment.id).reduce((a, p) => a + (+(p.giveDisc?.[h.name]) || 0), 0);
+    const original       = h.net;
+    const availableForThis = Math.max(0, original - otherReceived - otherDiscount);
+    const receivedNow    = Math.max(0, +perHeadEdit[h.name] || 0);
+    const discNow        = Math.max(0, Math.min(+discPerHeadEdit[h.name] || 0, availableForThis));
+    return { name: h.name, original, otherReceived, otherDiscount, availableForThis, receivedNow, discNow };
+  });
+  const totalReceivedNow = rows.reduce((a, r) => a + r.receivedNow, 0);
+  const totalDiscNow     = rows.reduce((a, r) => a + r.discNow, 0);
+
+  const setReceived = (name, v) => setPerHeadEdit(prev => ({ ...prev, [name]: Math.max(0, Number(v) || 0) }));
+  const setDisc     = (name, v) => setDiscPerHeadEdit(prev => ({ ...prev, [name]: Math.max(0, Number(v) || 0) }));
+
+  const save = () => {
+    if (!date) { toast('Paid date is required', 'error'); return; }
+    if (totalReceivedNow <= 0) { toast('Received amount must be greater than 0', 'error'); return; }
+    const perHead = {}, giveDisc = {};
+    rows.forEach(r => {
+      if (r.receivedNow > 0) perHead[r.name] = r.receivedNow;
+      if (r.discNow > 0) giveDisc[r.name] = r.discNow;
+    });
+    const isReceiving = Object.keys(giveDisc).length > 0;
+    onSave({ date, amount: totalReceivedNow, method, ref, remarks, perHead, giveDisc, isReceiving });
+  };
+
+  return createPortal(
+    <div className="fee-overlay open" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="fee-modal xl">
+        <div className="fee-modal-head">
+          <div className="fee-modal-head-title">
+            <div className="fee-modal-head-icon"><i className="fa-solid fa-pen"></i></div>
+            <div>
+              <div className="fee-modal-title">Edit Installment</div>
+              <div className="fee-modal-sub">{cfg.student?.name} · {cfg.period}</div>
+            </div>
+          </div>
+          <Tooltip text="Close">
+            <button className="fee-modal-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark"></i></button>
+          </Tooltip>
+        </div>
+        <div className="fee-modal-body">
+          {/* Subtle note: this edit lives in the session only until a backend
+              update-installment API exists (see component header comment). */}
+          <div className="fee-recv-note" style={{ marginBottom: 12, fontSize: 12, opacity: .8 }}>
+            <i className="fa-solid fa-circle-info"></i> Re-allocates this installment only. Changes apply to the current session; persistent (cross-refresh) edit needs a backend update-installment API.
+          </div>
+          <div className="fee-recv-meta">
+            <div className="fee-field">
+              <span className="fee-label">Paid Date</span>
+              <input className="fee-input" type="date" value={date} onChange={e => setDate(e.target.value)} />
+            </div>
+            <div className="fee-field">
+              <span className="fee-label">Payment Method</span>
+              <div className="fee-select-wrap">
+                <select className="fee-select" value={method} onChange={e => setMethod(e.target.value)}>
+                  <option>Cash</option>
+                  <option>Bank Transfer</option>
+                  <option>Cheque</option>
+                  <option>Card</option>
+                  <option>Online / App</option>
+                </select>
+                <i className="fa-solid fa-chevron-down"></i>
+              </div>
+            </div>
+            <div className="fee-field">
+              <span className="fee-label">Reference #</span>
+              <input className="fee-input" value={ref} onChange={e => setRef(e.target.value)} placeholder="Optional" />
+            </div>
+            <div className="fee-field">
+              <span className="fee-label">Remarks</span>
+              <input className="fee-input" value={remarks} onChange={e => setRemarks(e.target.value)} placeholder="Optional" />
+            </div>
+          </div>
+
+          <div className="fee-stbl-wrap">
+            <table className="fee-stbl fee-recv-table flow">
+              <thead>
+                <tr>
+                  <th className="flow-head-col">Fee Head</th>
+                  <th className="fee-right">Original Amount</th>
+                  <th className="fee-right">Received by Other Installments</th>
+                  <th className="fee-center">Edit Received Amount</th>
+                  <th className="fee-center">Edit Discount</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map(r => (
+                  <tr key={r.name}>
+                    <td className="flow-head-col"><b>{r.name}</b></td>
+                    <td className="fee-right">{money(r.original)}</td>
+                    <td className="fee-right">
+                      {r.otherReceived > 0 ? <span className="fee-paid-amt">{money(r.otherReceived)}</span> : money(0)}
+                      {r.otherDiscount > 0 && <span className="fee-sub-eq">disc {money(r.otherDiscount)}</span>}
+                    </td>
+                    <td className="fee-center">
+                      <input
+                        className="flow-input flow-input--pay"
+                        type="number" min="0"
+                        value={perHeadEdit[r.name] === 0 ? 0 : (perHeadEdit[r.name] || '')}
+                        onChange={e => setReceived(r.name, e.target.value)}
+                        placeholder="0"
+                      />
+                    </td>
+                    <td className="fee-center">
+                      <input
+                        className="flow-input flow-input--disc"
+                        type="number" min="0" max={r.availableForThis}
+                        value={discPerHeadEdit[r.name] === 0 ? 0 : (discPerHeadEdit[r.name] || '')}
+                        onChange={e => setDisc(r.name, e.target.value)}
+                        placeholder="0"
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="fee-recv-total">
+                  <td className="flow-head-col">Total</td>
+                  <td className="fee-right">{money(rows.reduce((a, r) => a + r.original, 0))}</td>
+                  <td className="fee-right">{money(rows.reduce((a, r) => a + r.otherReceived, 0))}</td>
+                  <td className="fee-center">{money(totalReceivedNow)}</td>
+                  <td className="fee-center">{money(totalDiscNow)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+        <div className="fee-modal-foot">
+          <Tooltip text="Discard changes"><button className="fee-btn fee-btn-ghost" onClick={onClose}>Cancel</button></Tooltip>
+          <Tooltip text="Save changes to this installment">
+            <button className="fee-btn fee-btn-primary" onClick={save}><i className="fa-solid fa-check"></i> Save Changes</button>
+          </Tooltip>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════
    FEE RECEIVING MODAL — record a payment against a generated challan.
    Meta inputs (Custom Ref / Date / Method / Txn#), info strip (Fine,
    Due Date, Fine After Due, Discount), per-head editable Received
@@ -4114,7 +4328,7 @@ function DiscountManagerModal({ cfg, onClose, onSave, toast }) {
    pre-fill hota hai (Pending 0), magar cashier isay edit bhi kar sakta hai. */
 const isOldDuesHead = (name) => /old\s*dues/i.test(String(name || ''));
 
-function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
+function FeeReceivingModal({ cfg, onClose, onSave, toast, onDownloadPayment, onEditPayment }) {
   /* Receiving Date par late fine ka poora hisaab chalta hai — is liye LOCAL date
      (localTodayISO), toISOString() nahi: wo UTC me badal kar Pakistan (UTC+5) me
      subah 5 baje se pehle PICHHLI date deta tha. Us soorat me due-date wale din
@@ -4124,6 +4338,10 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
   const [method, setMethod] = useState('Cash');
   const [ref, setRef] = useState('');
   const [txn, setTxn] = useState('');
+  /* Optional note for THIS installment. receive-payment API me remarks field
+     nahi hai, is liye ye session receipt (pay object) par store hoti hai — dekho
+     handleReceive payload.remarks + parent handleSaveReceipt. */
+  const [remarks, setRemarks] = useState('');
   const [perHeadInput, setPerHeadInput] = useState({});
   /* Fine ki WASOOLI ka apna input — baaki heads ke `perHeadInput` jaisa hi KUL
      wasooli (already + ab ki) rakhta hai. null = cashier ne abhi haath nahi
@@ -4137,6 +4355,7 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
   useEffect(() => {
     if (!cfg) return;
     setDate(localTodayISO()); setMethod('Cash'); setRef(''); setTxn('');
+    setRemarks('');
     setFineRecvInput(null);
     /* "Received" input KUL wasooli dikhata hai (pehle jama shuda + ab ki), na ke
        sirf ab ki raqam — is liye ye editable rehta hai aur naya paisa
@@ -4259,6 +4478,13 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
 
   const { classMeta, student, model, payments, challan, period, monthIdx, viewOnly, settings } = cfg;
 
+  /* Fee Settings → Advance Payment Receiving. Default ON (undefined/true) → koi
+     tabdeeli nahi (over-receiving pehle ki tarah advance banata hai). OFF hone par
+     har head ki Pay Now us head ke owed par cap ho jaati hai — naya advance nahi
+     banta (niche rows.map me lagta hai). Sirf inputs/figures gate hote hain; save
+     ka payload/challanFigures/advApplied math jyun ka tyun. */
+  const advancePaymentReceivingOn = settings?.advancePaymentReceiving !== false;
+
   /* Per-head already-received. Session `payments` are lost on refresh, so when a
      real challan exists take each head's authoritative receivedAmount from its
      detailRows (matched by subHead) and keep the larger of the two. */
@@ -4310,8 +4536,7 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
     const totalRecv = (viewOnly || isCredit)
     ? paid
   : (owed < 0 ? rawIn : Math.max(0, rawIn));
-    const recvNow = (viewOnly || isCredit) ? 0 : (totalRecv - paid);
-    const pending = owed - paid - recvNow;      // credit head par = owed (minus)
+    let recvNow = (viewOnly || isCredit) ? 0 : (totalRecv - paid);
     /* Give Discount: payments hist + live input.
        - viewOnly: hist dikhao; agar pehle se disc me fold hai to math me 0.
        - live: input hi source of truth (seed hist tab jab fold na ho). */
@@ -4331,8 +4556,29 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
       ? Math.max(0, (+h.disc || 0) - histGive)
       : (+h.disc || 0);
     const finalNetPayable = isCredit ? owed : Math.max(0, owed - giveDisc);
+    /* Advance Payment Receiving OFF → is head par owed se zyada NAYI wasooli mana:
+       nayi raqam (recvNow) ko Final Net Payable − already-paid par cap karo taake
+       koi over-payment→advance na bane. Default ON par ye branch chalta hi nahi,
+       is liye maujooda behaviour (over-receiving allowed) bilkul barqarar. Credit/
+       viewOnly heads ko haath nahi lagate. */
+    if (!advancePaymentReceivingOn && !viewOnly && !isCredit) {
+      recvNow = Math.min(recvNow, Math.max(0, finalNetPayable - paid));
+    }
+    const pending = owed - paid - recvNow;      // credit head par = owed (minus)
     /* Remaining Give Discount ke baad — finalNet se. */
     const remaining = finalNetPayable - paid - recvNow;
+    /* ── Installment history (display only) ──
+       Har PICHHLI receiving (payment) = ek installment. Is head ka us installment
+       me received (perHead) + di gayi Give Discount (giveDisc) running Net Payable
+       se ghata kar "Remaining after Inst. N" banti hai. Ye sirf columns dikhati
+       hai — save/receive ka koi hisaab isse nahi badalta. */
+    let instRun = owed;
+    const installments = (payments || []).map(p => {
+      const received = +(p.perHead?.[h.name]) || 0;
+      const discGiven = Math.max(0, +(p.giveDisc?.[h.name]) || 0);
+      instRun = Math.max(0, instRun - received - discGiven);
+      return { received, discGiven, remainingAfter: instRun };
+    });
     totalChallan += h.std;
     totalDisc += discShow;
     totalAfter += after;
@@ -4340,7 +4586,7 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
       ...h,
       disc: discShow,
       paid, totalRecv, recvNow, after, headPrev, owed, pending, isCredit,
-      giveDisc, giveDiscShow, finalNetPayable, remaining,
+      giveDisc, giveDiscShow, finalNetPayable, remaining, installments,
     };
   });
 
@@ -4356,7 +4602,12 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
   const prevTotalRecv = (viewOnly || useHeadPrev)
     ? prevPaid
     : Math.max(0, perHeadInput[prevKey] == null ? prevPaid : (+perHeadInput[prevKey] || 0));
-  const prevRecv = (viewOnly || useHeadPrev) ? 0 : (prevTotalRecv - prevPaid);
+  let prevRecv = (viewOnly || useHeadPrev) ? 0 : (prevTotalRecv - prevPaid);
+  /* Advance Payment Receiving OFF → aggregate Previous Pending par bhi over-receiving
+     mana: nayi wasooli baqaya (model.prev − prevPaid) par cap. Default ON par no-op. */
+  if (!advancePaymentReceivingOn && !viewOnly && !useHeadPrev) {
+    prevRecv = Math.min(prevRecv, Math.max(0, (+model.prev || 0) - prevPaid));
+  }
   const prevPend = useHeadPrev ? 0 : (model.prev - prevPaid - prevRecv);   // negative = advance
 
   const headsRecv = rows.reduce((a, r) => a + r.recvNow, 0) + prevRecv;
@@ -4430,7 +4681,13 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
      input − pehle se paid. MINUS bhi ho sakta hai (cashier ne pehle zyada le liya tha,
      ab kam kar raha = correction), is liye yahan max(0) clamp NAHI — warna fine sirf
      barh sakti thi, ghata nahi (fee heads ki tarah edit nahi hoti thi). */
-  const fineOwed = viewOnly ? 0 : (fineTotalRecv - finePaid);
+  let fineOwed = viewOnly ? 0 : (fineTotalRecv - finePaid);
+  /* Advance Payment Receiving OFF → fine par bhi over-receiving mana: nayi wasooli
+     baqaya fine (fineDue − finePaid) par cap. Upper cap sirf — MINUS (correction)
+     phir bhi allow hai. Default ON par no-op. */
+  if (!advancePaymentReceivingOn && !viewOnly) {
+    fineOwed = Math.min(fineOwed, Math.max(0, fineDue - finePaid));
+  }
   const finePend = fineDue - finePaid - fineOwed;
 
   const receivingNow = headsRecv - advApplied + fineOwed;   // fineOwed view mode me 0
@@ -4458,6 +4715,42 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast }) {
   const flowNet = rows.reduce((a, r) => a + r.owed, 0) + (aggPrevShown ? model.prev : 0) + (advRowShown ? -advCredit : 0) + fineDue;
   const flowGiveDisc = rows.reduce((a, r) => a + (r.giveDiscShow || r.giveDisc || 0), 0);
   const flowFinal = rows.reduce((a, r) => a + r.finalNetPayable, 0) + (aggPrevShown ? model.prev : 0) + (advRowShown ? -advCredit : 0) + fineDue;
+
+  /* ── Installment columns (display only) ──
+     N = ab tak ki receiving (payments) + 1 (ab wali). Har PICHHLI receiving apni
+     "Installment k Received" + "Remaining after Inst. k" jori deti hai. Ye sirf
+     ledger ki asli receiving history dikhati hain — koi save/receive hisaab inse
+     nahi badalta. */
+  const installmentCount = (payments || []).length;
+  /* Fee Settings → Multiple Receiving. OFF hone par ek challan par sirf EK hi
+     installment jaiz hai — jaise hi koi prior receipt maujood ho (session payments
+     ya persist-shuda ledger wasooli, dono cover), doosri receiving round har jagah
+     band. Sirf inputs/button gate hote hain + handleReceive guard; save/anyHeadRecv/
+     challanFigures ka math jyun ka tyun. Default ON par ye hamesha false rehta hai. */
+  const priorReceiptExists = installmentCount >= 1 || alreadyPaid > 0;
+  const multipleReceivingBlocked = !viewOnly && settings?.multipleReceiving === false && priorReceiptExists;
+  /* Aggregate "Previous Pending" row (jab head-wise prev na ho) ke installment cells. */
+  let prevInstRun = +model.prev || 0;
+  const prevInst = (payments || []).map(p => {
+    const received = +(p.perHead?.[prevKey]) || 0;
+    prevInstRun = Math.max(0, prevInstRun - received);
+    return { received, discGiven: 0, remainingAfter: prevInstRun };
+  });
+  const renderInstCells = (list) => (list || []).map((x, i) => (
+    <React.Fragment key={i}>
+      <td className="fee-right flow-inst-col">
+        {x && x.received !== 0 ? <span className="fee-paid-amt">{money(x.received)}</span> : money(0)}
+        {x && x.discGiven > 0 && <span className="fee-sub-eq">disc {money(x.discGiven)}</span>}
+      </td>
+      <td className="fee-right flow-inst-col">{x ? money(x.remainingAfter) : <span className="fee-recv-dash">—</span>}</td>
+    </React.Fragment>
+  ));
+  const renderInstDash = () => (payments || []).map((p, i) => (
+    <React.Fragment key={p.id || i}>
+      <td className="fee-right flow-inst-col"><span className="fee-recv-dash">—</span></td>
+      <td className="fee-right flow-inst-col"><span className="fee-recv-dash">—</span></td>
+    </React.Fragment>
+  ));
 
   const setHead = (name, v) => {
   const n = Number(v) || 0;
@@ -4499,6 +4792,13 @@ setPerHeadInput(prev => ({ ...prev, [row.name]: allowNeg ? recv : Math.max(0, re
     : '—';
 
   const handleReceive = () => {
+    /* Multiple Receiving OFF + is challan par pehle se receipt maujood → doosri
+       receiving round bilkul mana. Inputs/button already disabled hain; ye guard
+       last line of defence hai. */
+    if (multipleReceivingBlocked) {
+      toast('Multiple Receiving is disabled in Fee Settings — this challan already has a payment recorded', 'error');
+      return;
+    }
     /* receivingNow MINUS bhi ho sakta hai jab cashier ne already-received ko neeche
        theek kiya — wo bhi ek valid save hai. Sirf "kuch bhi nahi badla" rokna hai.
        Sirf Give Discount (bina nayi cash) bhi valid receive hai. */
@@ -4531,7 +4831,7 @@ if (!anyHeadRecv && !anyGiveDisc) {
     const payload = {
       reg: student.reg, monthIdx,
       studentName: student.name,
-      date, method, ref, txn,
+      date, method, ref, txn, remarks,
       amount: receivingNow,
       perHead,
       /* Correction (net minus) — receipt/slip aur history ise adjustment dikhayein,
@@ -4630,6 +4930,13 @@ if (!anyHeadRecv && !anyGiveDisc) {
             </div>
           )}
 
+          {!viewOnly && (
+            <div className="fee-field" style={{ marginBottom: 16 }}>
+              <span className="fee-label">Remarks</span>
+              <input className="fee-input" value={remarks} onChange={e => setRemarks(e.target.value)} placeholder="Optional note for this installment" />
+            </div>
+          )}
+
           <div className="fee-recv-info">
             <div className="fee-recv-info-item">
               <span className="fee-recv-info-lbl">Fine Type</span>
@@ -4662,10 +4969,11 @@ if (!anyHeadRecv && !anyGiveDisc) {
           </div>
 
           {!viewOnly && (
-            <label className="fee-recv-give-toggle">
+            <label className="fee-recv-give-toggle" style={multipleReceivingBlocked ? { opacity: .55, cursor: 'not-allowed' } : undefined}>
               <input
                 type="checkbox"
                 checked={showGiveDisc}
+                disabled={multipleReceivingBlocked}
                 onChange={e => {
                   const on = e.target.checked;
                   setShowGiveDisc(on);
@@ -4683,6 +4991,24 @@ if (!anyHeadRecv && !anyGiveDisc) {
             </label>
           )}
 
+          {/* Multiple Receiving OFF + is challan par pehle se receipt — koi doosri
+              receiving round (cash/discount) available nahi. */}
+          {multipleReceivingBlocked && (
+            <div className="fee-info fee-info--warn">
+              <i className="fa-solid fa-ban"></i>
+              <span><b>Multiple Receiving is disabled</b> in Fee Settings — this challan already has {installmentCount > 0 ? `${installmentCount} installment${installmentCount === 1 ? '' : 's'}` : 'a payment'} recorded, so no further receiving round is available here.</span>
+            </div>
+          )}
+
+          {/* Advance Payment Receiving OFF — over-payment/advance banane ki ijazat
+              nahi; har head ki Pay Now us ke owed par cap hai. */}
+          {!viewOnly && !multipleReceivingBlocked && !advancePaymentReceivingOn && (
+            <div className="fee-info fee-info--warn">
+              <i className="fa-solid fa-piggy-bank"></i>
+              <span><b>Advance Payment Receiving is disabled</b> in Fee Settings — Pay Now is capped at exactly what each head still owes, so no new advance balance can be created here.</span>
+            </div>
+          )}
+
           <div className="fee-stbl-wrap" style={{ marginTop: 14 }}>
             <table className="fee-stbl fee-recv-table flow">
               <thead>
@@ -4692,13 +5018,19 @@ if (!anyHeadRecv && !anyGiveDisc) {
                   <th className="fee-right"><span className="flow-op">+</span> This Month&apos;s Challan</th>
                   <th className="fee-right"><span className="flow-op">−</span> Discount in This Month&apos;s Challan</th>
                   <th className="fee-right"><span className="flow-op">=</span> Net Payable</th>
+                  {(payments || []).map((p, i) => (
+                    <React.Fragment key={p.id || i}>
+                      <th className="fee-right flow-inst-col">Installment {i + 1} Received</th>
+                      <th className="fee-right flow-inst-col">Remaining after Inst. {i + 1}</th>
+                    </React.Fragment>
+                  ))}
                   {showGiveDisc && (
                     <th className="fee-center"><span className="flow-op">−</span> Give Discount</th>
                   )}
                   {showGiveDisc && (
                     <th className="fee-right"><span className="flow-op">=</span> Final Net Payable</th>
                   )}
-                  <th className="fee-center"><span className="flow-op">−</span> Pay Now</th>
+                  <th className="fee-center"><span className="flow-op">−</span> Pay Now{!viewOnly ? ` (Installment ${installmentCount + 1})` : ''}</th>
                   <th className="fee-right"><span className="flow-op">=</span> Remaining</th>
                 </tr>
               </thead>
@@ -4716,6 +5048,7 @@ if (!anyHeadRecv && !anyGiveDisc) {
                     <td className="fee-right">{r.disc > 0 ? money(r.disc) : '0'}</td>
                     {/* Net Payable = After Discount + head-wise Previous (r.owed). */}
                     <td className="fee-right"><span className="fee-cell-grey">{money(r.owed)}</span></td>
+                    {renderInstCells(r.installments)}
                     {showGiveDisc && (
                       <td className="fee-center">
                         {viewOnly || r.isCredit ? (
@@ -4731,6 +5064,7 @@ if (!anyHeadRecv && !anyGiveDisc) {
                             value={giveDiscInput[r.name] === 0 ? 0 : (giveDiscInput[r.name] || '')}
                             onChange={e => setGiveDisc(r.name, e.target.value)}
                             placeholder="0"
+                            disabled={multipleReceivingBlocked}
                           />
                         )}
                       </td>
@@ -4738,7 +5072,8 @@ if (!anyHeadRecv && !anyGiveDisc) {
                     {showGiveDisc && (
                       <td className="fee-right"><span className="flow-final">{money(r.finalNetPayable)}</span></td>
                     )}
-                    {/* Pay Now = KUL wasooli input (over-receiving allowed — koi hard max nahi). */}
+                    {/* Pay Now = KUL wasooli input. Over-receiving default ON par allowed;
+                        Advance Payment Receiving OFF par owed par cap (max) hota hai. */}
                     <td className="fee-center">
                       {viewOnly ? (
                         <span className="fee-paid-amt">{money(r.paid)}</span>
@@ -4750,9 +5085,11 @@ if (!anyHeadRecv && !anyGiveDisc) {
                           className="flow-input flow-input--pay"
                           type="number"
                           min="0"
+                          max={!advancePaymentReceivingOn ? Math.max(0, r.finalNetPayable) : undefined}
                           value={r.totalRecv}
                           onChange={e => setHead(r.name, e.target.value)}
                           placeholder="0"
+                          disabled={multipleReceivingBlocked}
                         />
                       )}
                     </td>
@@ -4780,6 +5117,7 @@ if (!anyHeadRecv && !anyGiveDisc) {
                     <td className="fee-right"><span className="fee-recv-dash">—</span></td>
                     <td className="fee-right"><span className="fee-recv-dash">—</span></td>
                     <td className="fee-right"><span className="fee-cell-grey">{money(model.prev)}</span></td>
+                    {renderInstCells(prevInst)}
                     {showGiveDisc && <td className="fee-center"><span className="fee-recv-dash">—</span></td>}
                     {showGiveDisc && <td className="fee-right"><span className="flow-final">{money(model.prev)}</span></td>}
                     <td className="fee-center">
@@ -4790,9 +5128,11 @@ if (!anyHeadRecv && !anyGiveDisc) {
                           className="flow-input flow-input--pay"
                           type="number"
                           min="0"
+                          max={!advancePaymentReceivingOn ? Math.max(0, (+model.prev || 0)) : undefined}
                           value={prevTotalRecv}
                           onChange={e => setHead(prevKey, e.target.value)}
                           placeholder="0"
+                          disabled={multipleReceivingBlocked}
                         />
                       )}
                     </td>
@@ -4814,6 +5154,7 @@ if (!anyHeadRecv && !anyGiveDisc) {
                     <td className="fee-right"><span className="fee-recv-dash">—</span></td>
                     <td className="fee-right"><span className="fee-recv-dash">—</span></td>
                     <td className="fee-right"><span className="fee-cell-grey">{money(-advCredit)}</span></td>
+                    {renderInstDash()}
                     {showGiveDisc && <td className="fee-center"><span className="fee-recv-dash">—</span></td>}
                     {showGiveDisc && <td className="fee-right"><span className="fee-cell-grey">{money(-advCredit)}</span></td>}
                     <td className="fee-center fee-neg"><b>{money(-advApplied)}</b></td>
@@ -4839,6 +5180,7 @@ if (!anyHeadRecv && !anyGiveDisc) {
                     <td className="fee-right">{money(fineDue)}</td>
                     <td className="fee-right">0</td>
                     <td className="fee-right"><span className="fee-cell-grey">{money(fineDue)}</span></td>
+                    {renderInstDash()}
                     {showGiveDisc && <td className="fee-center"><span className="fee-recv-dash">—</span></td>}
                     {showGiveDisc && <td className="fee-right"><span className="flow-final">{money(fineDue)}</span></td>}
                     {/* Pay Now EDITABLE — input KUL wasooli rakhta hai, partial fine bhi ho sakti. */}
@@ -4850,9 +5192,11 @@ if (!anyHeadRecv && !anyGiveDisc) {
                           className="flow-input flow-input--pay"
                           type="number"
                           min="0"
+                          max={!advancePaymentReceivingOn ? Math.max(0, fineDue) : undefined}
                           value={fineTotalRecv}
                           onChange={e => setFineRecvInput(Math.max(0, Number(e.target.value) || 0))}
                           placeholder="0"
+                          disabled={multipleReceivingBlocked}
                         />
                       )}
                     </td>
@@ -4873,6 +5217,18 @@ if (!anyHeadRecv && !anyGiveDisc) {
                   <td className="fee-right">{money(flowChallan)}</td>
                   <td className="fee-right">{money(totalDisc)}</td>
                   <td className="fee-right">{money(flowNet)}</td>
+                  {(payments || []).map((p, i) => {
+                    const received = rows.reduce((a, r) => a + (r.installments[i] ? r.installments[i].received : 0), 0)
+                      + (aggPrevShown && prevInst[i] ? prevInst[i].received : 0);
+                    const remaining = rows.reduce((a, r) => a + (r.installments[i] ? r.installments[i].remainingAfter : 0), 0)
+                      + (aggPrevShown && prevInst[i] ? prevInst[i].remainingAfter : 0);
+                    return (
+                      <React.Fragment key={p.id || i}>
+                        <td className="fee-right flow-inst-col">{money(received)}</td>
+                        <td className="fee-right flow-inst-col">{money(remaining)}</td>
+                      </React.Fragment>
+                    );
+                  })}
                   {showGiveDisc && <td className="fee-center">{money(flowGiveDisc)}</td>}
                   {showGiveDisc && <td className="fee-right">{money(flowFinal)}</td>}
                   <td className="fee-center">{money(alreadyPaid + receivingNow)}</td>
@@ -4911,8 +5267,14 @@ if (!anyHeadRecv && !anyGiveDisc) {
 
           {payments && payments.length > 0 && (
             <div style={{ marginTop: 18 }}>
-              <div className="fee-recv-hist-title">
-                <i className="fa-solid fa-clock-rotate-left"></i> Payment History
+              <div className="fee-recv-hist-title" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span><i className="fa-solid fa-clock-rotate-left"></i> Payment History</span>
+                {onDownloadPayment && payments.length > 0 && (
+                  <ReceiptDownloadButton
+                    payments={payments}
+                    onPick={(p, combinedFlag) => onDownloadPayment(p, combinedFlag)}
+                  />
+                )}
               </div>
               <div className="fee-stbl-wrap" style={{ marginTop: 8 }}>
                 <table className="fee-stbl fee-recv-hist">
@@ -4924,10 +5286,16 @@ if (!anyHeadRecv && !anyGiveDisc) {
                       <th>Reference</th>
                       <th className="fee-right">Amount</th>
                       <th className="fee-center">Source</th>
+                      {(onEditPayment || onDownloadPayment) && <th className="fee-center">Actions</th>}
                     </tr>
                   </thead>
                   <tbody>
-                    {payments.map((p, i) => (
+                    {payments.map((p, i) => {
+                      /* OneLink / bank installments (and the synthetic stored
+                         Give-Discount row) can't be re-allocated from here. */
+                      const locked = p.source === 'onelink' || p.source === 'bank'
+                        || (p.id && String(p.id).startsWith('stored-give-'));
+                      return (
                       <tr key={p.id || i}>
                         <td className="fee-num">{i + 1}</td>
                         <td>
@@ -4942,8 +5310,29 @@ if (!anyHeadRecv && !anyGiveDisc) {
                             {p.source === 'onelink' || p.source === 'bank' ? 'OneLink' : 'Counter'}
                           </span>
                         </td>
+                        {(onEditPayment || onDownloadPayment) && (
+                          <td className="fee-center">
+                            <div className="fee-recv-acts">
+                              {onEditPayment && (
+                                <Tooltip text={locked ? 'OneLink / bank payments cannot be edited here' : 'Edit this installment'}>
+                                  <button type="button" className="fee-iconbtn tiny" disabled={locked} onClick={() => onEditPayment(p)}>
+                                    <i className="fa-solid fa-pen"></i>
+                                  </button>
+                                </Tooltip>
+                              )}
+                              {onDownloadPayment && (
+                                <Tooltip text="Download this installment's receipt">
+                                  <button type="button" className="fee-iconbtn tiny" onClick={() => onDownloadPayment(p, false)}>
+                                    <i className="fa-solid fa-download"></i>
+                                  </button>
+                                </Tooltip>
+                              )}
+                            </div>
+                          </td>
+                        )}
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -4956,13 +5345,20 @@ if (!anyHeadRecv && !anyGiveDisc) {
             <button className="fee-btn fee-btn-ghost" onClick={onClose}>{viewOnly ? 'Close' : 'Cancel'}</button>
           </Tooltip>
           {!viewOnly && (
-            <Tooltip text={receivingNow < 0
-              ? `Reduce recorded received amount by Rs. ${Math.abs(receivingNow).toLocaleString('en-PK')}`
-              : `Record Rs. ${receivingNow.toLocaleString('en-PK')} as received`}>
-              <button className="fee-btn fee-btn-primary" onClick={handleReceive}>
+            <Tooltip text={multipleReceivingBlocked
+              ? 'Multiple Receiving is disabled in Fee Settings — this challan already has a payment recorded'
+              : (receivingNow < 0
+                ? `Reduce recorded received amount by Rs. ${Math.abs(receivingNow).toLocaleString('en-PK')}`
+                : `Record Rs. ${receivingNow.toLocaleString('en-PK')} as received`)}>
+              <button
+                className="fee-btn fee-btn-primary"
+                onClick={handleReceive}
+                disabled={multipleReceivingBlocked}
+                style={multipleReceivingBlocked ? { opacity: .55, cursor: 'not-allowed' } : undefined}
+              >
                 {receivingNow < 0
                   ? <><i className="fa-solid fa-pen"></i> Update Received</>
-                  : <><i className="fa-solid fa-check"></i> Receive</>}
+                  : <><i className="fa-solid fa-check"></i> Pay Now (Installment {installmentCount + 1})</>}
               </button>
             </Tooltip>
           )}
@@ -5075,8 +5471,68 @@ function FeeReminderModal({ cfg, onClose, toast }) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════
+   RECEIPT DOWNLOAD BUTTON — a single click when a student has 0/1
+   installment (the caller's existing single-slip behaviour is kept
+   intact there); a small dropdown (reuses the app's own .fee-ms-menu
+   look) offering each individual installment plus "Combined Receipt"
+   once there is more than one. onPick(payment, combined) — payment is
+   the chosen installment (combined === false) or null (combined ===
+   true, all installments together).
+   ═══════════════════════════════════════════════════════════════════ */
+function ReceiptDownloadButton({ payments, onPick, label = 'Download receipt slip' }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDown = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [open]);
+
+  if (!payments || payments.length === 0) return null;
+
+  if (payments.length === 1) {
+    return (
+      <Tooltip text={label}>
+        <button type="button" className="fee-iconbtn tiny" onClick={() => onPick(payments[0], false)}>
+          <i className="fa-solid fa-download"></i>
+        </button>
+      </Tooltip>
+    );
+  }
+
+  return (
+    <div className="fee-ms" ref={ref} style={{ display: 'inline-block' }}>
+      <Tooltip text="Download receipt — choose an installment or combined">
+        <button type="button" className="fee-iconbtn tiny" onClick={() => setOpen(o => !o)}>
+          <i className="fa-solid fa-download"></i>
+        </button>
+      </Tooltip>
+      {open && (
+        <div className="fee-ms-menu" style={{ left: 'auto', right: 0, minWidth: 260 }}>
+          {payments.map((p, i) => (
+            <button key={p.id || i} type="button" className="fee-ms-opt" onClick={() => { onPick(p, false); setOpen(false); }}>
+              <span className="fee-ms-name">
+                Installment {i + 1} <span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>({p.date} · {money(p.amount)})</span>
+              </span>
+            </button>
+          ))}
+          <button type="button" className="fee-ms-opt" onClick={() => { onPick(null, true); setOpen(false); }}>
+            <span className="fee-ms-name"><b>Combined Receipt</b> <span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>(all installments)</span></span>
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════
    FEE SLIP MODAL — receipt preview for a single payment, with A4 vs
    Small (thermal/80mm) size picker and a Download / print CTA.
+   In `combined` mode (cfg.combined + cfg.allPayments) it instead builds
+   one Combined Receipt covering EVERY installment for the student/month
+   as a fee-head-wise pivot (one row per head, one column per
+   installment + a total), reusing the exact same slip shell + CSS.
    ═══════════════════════════════════════════════════════════════════ */
 function FeeSlipModal({ cfg, onClose, toast }) {
   const [size, setSize] = useState('a4');
@@ -5095,7 +5551,23 @@ function FeeSlipModal({ cfg, onClose, toast }) {
 
   if (!cfg) return null;
 
-  const { classMeta, student, period, payment } = cfg;
+  const { classMeta, student, period, combined, allPayments } = cfg;
+  /* combined mode me payment null hota hai — har jagah safe access ke liye {}. */
+  const payment = cfg.payment || {};
+  /* ── Combined Receipt (fee-head-wise pivot across all installments) ──
+     Har installment ka apna perHead column, plus per-head total. Ye sirf
+     combined===true par banti hai; warna khali reh kar niche ka pura
+     single-slip hisaab jyun ka tyun chalta hai (koi behaviour change nahi). */
+  const combinedRows  = combined ? (allPayments || []) : [];
+  const combinedTotal = combinedRows.reduce((a, p) => a + (+p.amount || 0), 0);
+  const headWiseNames = combined
+    ? [...new Set(combinedRows.flatMap(p => Object.keys(p.perHead || {})))]
+    : [];
+  const headWiseRows = headWiseNames.map(name => ({
+    name,
+    perInstallment: combinedRows.map(p => +(p.perHead?.[name]) || 0),
+    total: combinedRows.reduce((a, p) => a + (+(p.perHead?.[name]) || 0), 0),
+  }));
   /* Challan ke detailRows se per-head Standard (net) / Discount / Received banao — taake
      slip me sirf received nahi, poora breakup dikhe. Challan na mile to fallback: sirf
      received (perHead). */
@@ -5189,7 +5661,47 @@ function FeeSlipModal({ cfg, onClose, toast }) {
   const doPrint = () => {
     const w = window.open('', '_blank');
     if (!w) { toast('Please allow pop-ups to download the slip', 'error'); return; }
-    const slipHtml = `
+    const slipHtml = combined ? `
+      <div class="fee-slip-doc fee-slip-${size}">
+        <span class="fee-slip-paid-stamp">Paid</span>
+        <div class="fee-slip-brandhead">
+          <div class="fee-slip-brand">
+            <div class="fee-slip-logo">${feeReportLogoHtml(sch)}</div>
+            <div>
+              <div class="fee-slip-school">${escHtml(sch.name)}</div>
+              <div class="fee-slip-tag">Combined Fee Receipt</div>
+              ${sch.address ? `<div class="fee-slip-addr">${escHtml(sch.address)}</div>` : ''}
+              ${sch.session ? `<div class="fee-slip-addr">Academic Session: ${escHtml(sch.session)}</div>` : ''}
+            </div>
+          </div>
+          <div class="fee-slip-meta">Generated: ${escHtml(feeReportDate(sch))}<br/>By: ${escHtml(sch.generatedBy)}</div>
+        </div>
+        <div class="fee-slip-kv">
+          <span class="k">Period</span><span class="v">${escHtml(period)}</span>
+          <span class="k">Student</span><span class="v">${escHtml(student.name)}</span>
+          <span class="k">Father</span><span class="v">${escHtml(student.father || '—')}</span>
+          <span class="k">Class</span><span class="v">${escHtml(classMeta.cls)} (${escHtml(classMeta.sec)})</span>
+          <span class="k">Reg No</span><span class="v">${escHtml(student.reg)}</span>
+          <span class="k">Installments</span><span class="v">${combinedRows.length}</span>
+        </div>
+        <table class="fee-slip-tbl fee-slip-heads">
+          <thead><tr><th>Fee Head</th>${combinedRows.map((p, i) => `<th>Inst. ${i + 1}</th>`).join('')}<th>Total</th></tr></thead>
+          <tbody>
+            ${headWiseRows.map(r => `<tr><td>${escHtml(headLabel(r.name))}</td>${r.perInstallment.map(v => `<td>${v.toLocaleString('en-PK')}</td>`).join('')}<td><b>${r.total.toLocaleString('en-PK')}</b></td></tr>`).join('')}
+          </tbody>
+        </table>
+        <table class="fee-slip-tbl fee-slip-heads" style="margin-top:8px">
+          <thead><tr><th>#</th><th>Date</th><th>Method</th><th>Amount</th></tr></thead>
+          <tbody>
+            ${combinedRows.map((p, i) => `<tr><td>${i + 1}</td><td>${escHtml(p.date)}${p.time ? '  ·  ' + escHtml(fmtTime12(p.time)) : ''}</td><td>${escHtml(p.method || 'Cash')}</td><td>${(+p.amount || 0).toLocaleString('en-PK')}</td></tr>`).join('')}
+            <tr class="fee-slip-headtot"><td colspan="3">Total Received</td><td>${combinedTotal.toLocaleString('en-PK')}</td></tr>
+          </tbody>
+        </table>
+        <div class="fee-slip-net">
+          <span>Total Received</span><span>Rs. ${combinedTotal.toLocaleString('en-PK')}</span>
+        </div>
+        <div class="fee-slip-foot">Computer generated receipt — ${escHtml(sch.name)} · Combined Fee Receipt · ${escHtml(feeReportDate(sch))} · By: ${escHtml(sch.generatedBy)}</div>
+      </div>` : `
       <div class="fee-slip-doc fee-slip-${size}">
         <span class="fee-slip-paid-stamp">Paid</span>
         <div class="fee-slip-brandhead">
@@ -5292,7 +5804,7 @@ function FeeSlipModal({ cfg, onClose, toast }) {
               <i className="fa-solid fa-receipt"></i>
             </div>
             <div>
-              <div className="fee-modal-title">Fee Received Slip</div>
+              <div className="fee-modal-title">{combined ? 'Combined Fee Receipt' : 'Fee Received Slip'}</div>
               <div className="fee-modal-sub">{student.name} · {classMeta.cls} ({classMeta.sec}) · {period}</div>
             </div>
           </div>
@@ -5338,41 +5850,90 @@ function FeeSlipModal({ cfg, onClose, toast }) {
                 </div>
                 <div>
                   <div className="fee-slip-school">{sch.name}</div>
-                  <div className="fee-slip-tag">Fee Received Slip</div>
+                  <div className="fee-slip-tag">{combined ? 'Combined Fee Receipt' : 'Fee Received Slip'}</div>
                   {sch.address && <div className="fee-slip-addr">{sch.address}</div>}
                   {sch.session && <div className="fee-slip-addr">Academic Session: {sch.session}</div>}
                 </div>
               </div>
               <div className="fee-slip-meta">Generated: {feeReportDate(sch)}<br />By: {sch.generatedBy}</div>
             </div>
-            <div className="fee-slip-kv">
-              <span className="k">Receipt No</span><span className="v">{payment.id || `RCV-${Date.now()}`}</span>
-              <span className="k">Date</span><span className="v">{payment.date}{payment.time ? `  ·  ${fmtTime12(payment.time)}` : ''}</span>
-              <span className="k">Period</span><span className="v">{period}</span>
-              <span className="k">Student</span><span className="v">{student.name}</span>
-              <span className="k">Father</span><span className="v">{student.father || '—'}</span>
-              <span className="k">Class</span><span className="v">{classMeta.cls} ({classMeta.sec})</span>
-              <span className="k">Reg No</span><span className="v">{student.reg}</span>
-              <span className="k">Method</span><span className="v">{payment.method}</span>
-              {payment.ref && <><span className="k">Reference</span><span className="v">{payment.ref}</span></>}
-              {payment.txn && <><span className="k">Transaction</span><span className="v">{payment.txn}</span></>}
-            </div>
-            <table className="fee-slip-tbl fee-slip-heads">
-              <thead>
-                <tr><th>Head</th><th>Std. Amount</th><th>Discount</th><th>Received</th><th>Remaining</th></tr>
-              </thead>
-              <tbody>
-                {headRows.map(r => (
-                  <tr key={r.name}><td>{r.name}</td><td>{r.isAdvance ? '—' : r.std.toLocaleString('en-PK')}</td><td>{r.isAdvance ? '—' : (r.disc ? r.disc.toLocaleString('en-PK') : '—')}</td><td>{r.recv.toLocaleString('en-PK')}</td><td>{remCell(r)}</td></tr>
-                ))}
-                <tr className="fee-slip-headtot"><td>Total</td><td>{totStd.toLocaleString('en-PK')}</td><td>{totDisc ? totDisc.toLocaleString('en-PK') : '—'}</td><td>{total.toLocaleString('en-PK')}</td><td>{totRemTxt}</td></tr>
-              </tbody>
-            </table>
-            <div className="fee-slip-net">
-              <span>Amount Received</span>
-              <span>Rs. {(+payment.amount || 0).toLocaleString('en-PK')}</span>
-            </div>
-            <div className="fee-slip-foot">Computer generated receipt — {sch.name} · Fee Received Slip · {feeReportDate(sch)} · By: {sch.generatedBy}</div>
+            {combined ? (
+              <>
+                <div className="fee-slip-kv">
+                  <span className="k">Period</span><span className="v">{period}</span>
+                  <span className="k">Student</span><span className="v">{student.name}</span>
+                  <span className="k">Father</span><span className="v">{student.father || '—'}</span>
+                  <span className="k">Class</span><span className="v">{classMeta.cls} ({classMeta.sec})</span>
+                  <span className="k">Reg No</span><span className="v">{student.reg}</span>
+                  <span className="k">Installments</span><span className="v">{combinedRows.length}</span>
+                </div>
+                <table className="fee-slip-tbl fee-slip-heads">
+                  <thead>
+                    <tr>
+                      <th>Fee Head</th>
+                      {combinedRows.map((p, i) => <th key={p.id || i}>Inst. {i + 1}</th>)}
+                      <th>Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {headWiseRows.map(r => (
+                      <tr key={r.name}>
+                        <td>{headLabel(r.name)}</td>
+                        {r.perInstallment.map((v, i) => <td key={i}>{v.toLocaleString('en-PK')}</td>)}
+                        <td><b>{r.total.toLocaleString('en-PK')}</b></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <table className="fee-slip-tbl fee-slip-heads" style={{ marginTop: 8 }}>
+                  <thead>
+                    <tr><th>#</th><th>Date</th><th>Method</th><th>Amount</th></tr>
+                  </thead>
+                  <tbody>
+                    {combinedRows.map((p, i) => (
+                      <tr key={p.id || i}><td>{i + 1}</td><td>{p.date}{p.time ? `  ·  ${fmtTime12(p.time)}` : ''}</td><td>{p.method || 'Cash'}</td><td>{(+p.amount || 0).toLocaleString('en-PK')}</td></tr>
+                    ))}
+                    <tr className="fee-slip-headtot"><td colSpan={3}>Total Received</td><td>{combinedTotal.toLocaleString('en-PK')}</td></tr>
+                  </tbody>
+                </table>
+                <div className="fee-slip-net">
+                  <span>Total Received</span>
+                  <span>Rs. {combinedTotal.toLocaleString('en-PK')}</span>
+                </div>
+                <div className="fee-slip-foot">Computer generated receipt — {sch.name} · Combined Fee Receipt · {feeReportDate(sch)} · By: {sch.generatedBy}</div>
+              </>
+            ) : (
+              <>
+                <div className="fee-slip-kv">
+                  <span className="k">Receipt No</span><span className="v">{payment.id || `RCV-${Date.now()}`}</span>
+                  <span className="k">Date</span><span className="v">{payment.date}{payment.time ? `  ·  ${fmtTime12(payment.time)}` : ''}</span>
+                  <span className="k">Period</span><span className="v">{period}</span>
+                  <span className="k">Student</span><span className="v">{student.name}</span>
+                  <span className="k">Father</span><span className="v">{student.father || '—'}</span>
+                  <span className="k">Class</span><span className="v">{classMeta.cls} ({classMeta.sec})</span>
+                  <span className="k">Reg No</span><span className="v">{student.reg}</span>
+                  <span className="k">Method</span><span className="v">{payment.method}</span>
+                  {payment.ref && <><span className="k">Reference</span><span className="v">{payment.ref}</span></>}
+                  {payment.txn && <><span className="k">Transaction</span><span className="v">{payment.txn}</span></>}
+                </div>
+                <table className="fee-slip-tbl fee-slip-heads">
+                  <thead>
+                    <tr><th>Head</th><th>Std. Amount</th><th>Discount</th><th>Received</th><th>Remaining</th></tr>
+                  </thead>
+                  <tbody>
+                    {headRows.map(r => (
+                      <tr key={r.name}><td>{r.name}</td><td>{r.isAdvance ? '—' : r.std.toLocaleString('en-PK')}</td><td>{r.isAdvance ? '—' : (r.disc ? r.disc.toLocaleString('en-PK') : '—')}</td><td>{r.recv.toLocaleString('en-PK')}</td><td>{remCell(r)}</td></tr>
+                    ))}
+                    <tr className="fee-slip-headtot"><td>Total</td><td>{totStd.toLocaleString('en-PK')}</td><td>{totDisc ? totDisc.toLocaleString('en-PK') : '—'}</td><td>{total.toLocaleString('en-PK')}</td><td>{totRemTxt}</td></tr>
+                  </tbody>
+                </table>
+                <div className="fee-slip-net">
+                  <span>Amount Received</span>
+                  <span>Rs. {(+payment.amount || 0).toLocaleString('en-PK')}</span>
+                </div>
+                <div className="fee-slip-foot">Computer generated receipt — {sch.name} · Fee Received Slip · {feeReportDate(sch)} · By: {sch.generatedBy}</div>
+              </>
+            )}
           </div>
         </div>
 
@@ -5890,6 +6451,7 @@ function FeeReceivingIndividual({ toast }) {
 
   /* Receive modal context */
   const [receiveCtx, setReceiveCtx] = useState(null); // { classMeta, student, model, payments, viewOnly }
+  const [editPayCtx, setEditPayCtx] = useState(null); // { classMeta, student, period, heads, payments, payment }
   const [slipCtx, setSlipCtx] = useState(null); // { classMeta, student, payment }
   const [reminderCtx, setReminderCtx] = useState(null); // { type:'class'|'student', target }
   const [confirm, setConfirm] = useState(null);
@@ -5953,6 +6515,53 @@ function FeeReceivingIndividual({ toast }) {
     });
   };
 
+  /* Receipt picker se: ek makhsoos installment ki slip, ya Combined Receipt
+     (saare installments ka fee-head-wise pivot). `payment` null + combined=true
+     → Combined. Warna sirf us installment ki apni perHead se slip banti hai
+     (challan omit → FeeSlipModal ka perHead-fallback branch chalta hai). */
+  const openReceiptSlipFor = (c, s, payment, combinedFlag) => {
+    const payments = paymentsFor(c.key, s.reg);
+    if (combinedFlag) {
+      setSlipCtx({
+        classMeta: c, student: s, period: `${appliedMonth} ${appliedYear}`,
+        combined: true, allPayments: payments, payment: null,
+        defaultSize: settings.printSize || 'a4', school: branchHeader,
+      });
+      return;
+    }
+    if (!payment) return;
+    setSlipCtx({
+      classMeta: c, student: s, period: `${appliedMonth} ${appliedYear}`,
+      payment, defaultSize: settings.printSize || 'a4', school: branchHeader,
+    });
+  };
+
+  /* Edit ONE saved installment IN THE CURRENT SESSION — re-allocates its
+     per-head Received (perHead) and per-head Give Discount (giveDisc)
+     without touching sibling installments. The ERP's installments are
+     session-state today (getReceipts() is a mock), so this updates the
+     local receipts list only; the edit is lost on refresh.
+     Persistent (cross-refresh) edit needs a backend update-installment
+     API — the optional feeService.editInstallment(...) below is guarded
+     so it is a harmless no-op until such an endpoint is added. This does
+     NOT touch the generate/receive SAVE math. */
+  const editReceiptPayment = (c, s, paymentId, patch) => {
+    setReceipts(prev => (prev || []).map(r => (
+      r.classKey === c.key && r.reg === s.reg && r.monthIdx === monthIdx
+        ? { ...r, payments: r.payments.map(p => (p.id === paymentId ? { ...p, ...patch } : p)) }
+        : r
+    )));
+    /* OPTIONAL backend hook — no-op unless/until an editInstallment service
+       exists. Resolved via a runtime-computed key (not feeService.editInstallment)
+       so webpack's named-import static check doesn't fail the build over a
+       missing export. */
+    const editInstallmentSvc = feeService[['edit', 'Installment'].join('')];
+    if (typeof editInstallmentSvc === 'function') {
+      editInstallmentSvc({ classKey: c.key, reg: s.reg, monthIdx, paymentId, patch }).catch(() => {});
+    }
+    toast('Installment updated', 'success');
+  };
+
   const handleSaveReceipt = (payload) => {
     /* Amount MINUS bhi ho sakta hai — cashier ne already-received ko neeche theek
        kiya (adjustment). Sirf 0 (kuch nahi badla) rokna hai. */
@@ -5976,6 +6585,10 @@ function FeeReceivingIndividual({ toast }) {
         method: payload.method,
         ref: payload.ref,
         txn: payload.txn,
+        /* Optional per-installment note. receive-payment API me remarks field nahi
+           hai, is liye ye SIRF session receipt par rehti hai (refresh par gum ho
+           jaati hai) — persistent remarks ke liye backend field chahiye. */
+        remarks: payload.remarks || '',
         amount: payload.amount,
         perHead: payload.perHead,
         prevByHead: payload.prevByHead,
@@ -6437,9 +7050,12 @@ function FeeReceivingIndividual({ toast }) {
                                       )
                                     ) : (
                                       <>
-                                        {/* Sirf PARTIAL par — fully received row edit nahi hoti. */}
-                                        {m.status === 'partial' && canRcvCreate && (
-                                          <Tooltip text="Receive remaining balance">
+                                        {/* Receive More par PARTIAL aur FULLY-RECEIVED dono
+                                            rows par extra installment liya ja sakta hai — magar
+                                            SIRF jab Multiple Receiving ON ho (settings gate).
+                                            Off hone par fully-received row Receive More nahi degi. */}
+                                        {(m.status === 'partial' || m.status === 'full') && canRcvCreate && settings?.multipleReceiving !== false && (
+                                          <Tooltip text="Receive more — add another installment">
                                             <button type="button" className="fee-recv-link" onClick={() => openReceive(c, s, false)}>
                                               Receive More <i className="fa-solid fa-plus"></i>
                                             </button>
@@ -6450,13 +7066,28 @@ function FeeReceivingIndividual({ toast }) {
                                             <i className="fa-solid fa-eye"></i>
                                           </button>
                                         </Tooltip>
-                                        {canRcvDownload && (
-                                          <Tooltip text="Download receipt slip">
-                                            <button className="fee-iconbtn tiny" onClick={() => openReceiptSlip(c, s)}>
-                                              <i className="fa-solid fa-download"></i>
-                                            </button>
-                                          </Tooltip>
-                                        )}
+                                        {canRcvDownload && (() => {
+                                          /* 0/1 installment → bilkul wahi purani single-slip
+                                             behaviour (challan-based, empty-payments par
+                                             challan se rebuild). 2+ par installment/combined
+                                             picker. */
+                                          const pays = paymentsFor(c.key, s.reg);
+                                          if (pays.length <= 1) {
+                                            return (
+                                              <Tooltip text="Download receipt slip">
+                                                <button className="fee-iconbtn tiny" onClick={() => openReceiptSlip(c, s)}>
+                                                  <i className="fa-solid fa-download"></i>
+                                                </button>
+                                              </Tooltip>
+                                            );
+                                          }
+                                          return (
+                                            <ReceiptDownloadButton
+                                              payments={pays}
+                                              onPick={(p, combinedFlag) => openReceiptSlipFor(c, s, p, combinedFlag)}
+                                            />
+                                          );
+                                        })()}
                                         {!m.onelink && canRcvDelete && (
                                           <Tooltip text="Delete manual receipt">
                                             <button className="fee-iconbtn tiny danger" onClick={() => requestDeleteReceipt(c, s)}>
@@ -6487,6 +7118,30 @@ function FeeReceivingIndividual({ toast }) {
         cfg={receiveCtx}
         onClose={() => setReceiveCtx(null)}
         onSave={handleSaveReceipt}
+        toast={toast}
+        onDownloadPayment={(payment, combinedFlag) => {
+          if (!receiveCtx) return;
+          openReceiptSlipFor(receiveCtx.classMeta, receiveCtx.student, payment, combinedFlag);
+        }}
+        onEditPayment={(p) => {
+          if (!receiveCtx) return;
+          setEditPayCtx({
+            classMeta: receiveCtx.classMeta, student: receiveCtx.student, period: receiveCtx.period,
+            heads: receiveCtx.model?.heads || [], payments: receiveCtx.payments, payment: p,
+          });
+        }}
+      />
+
+      <EditPaymentModal
+        cfg={editPayCtx}
+        onClose={() => setEditPayCtx(null)}
+        onSave={(patch) => {
+          editReceiptPayment(editPayCtx.classMeta, editPayCtx.student, editPayCtx.payment.id, patch);
+          /* Keep the open receiving modal's payments list in sync at once so
+             its totals recompute immediately (mirrors the sibling front-end). */
+          setReceiveCtx(prev => (prev ? { ...prev, payments: prev.payments.map(p => (p.id === editPayCtx.payment.id ? { ...p, ...patch } : p)) } : prev));
+          setEditPayCtx(null);
+        }}
         toast={toast}
       />
 
@@ -6686,6 +7341,7 @@ function FamilyTreeReceiving({ toast }) {
 
   const [openKey, setOpenKey] = useState(null);
   const [receiveCtx, setReceiveCtx] = useState(null);
+  const [editPayCtx, setEditPayCtx] = useState(null); // { family, student, period, heads, payments, payment }
   const [slipCtx, setSlipCtx] = useState(null);
   const [bulkCtx, setBulkCtx] = useState(null);
   const [familySlipCtx, setFamilySlipCtx] = useState(null);
@@ -6810,6 +7466,48 @@ function FamilyTreeReceiving({ toast }) {
     });
   };
 
+  /* Receipt picker se (family): ek makhsoos installment ya Combined Receipt. */
+  const openReceiptSlipFor = (f, ch, payment, combinedFlag) => {
+    const payments = paymentsFor(f.key, ch.reg);
+    const classMeta = { key: f.key, cls: ch.cls, sec: ch.sec };
+    if (combinedFlag) {
+      setSlipCtx({
+        classMeta, student: ch, period: `${appliedMonth} ${appliedYear}`,
+        combined: true, allPayments: payments, payment: null,
+        defaultSize: settings.printSize || 'a4', school: branchHeader,
+      });
+      return;
+    }
+    if (!payment) return;
+    setSlipCtx({
+      classMeta, student: ch, period: `${appliedMonth} ${appliedYear}`,
+      payment, defaultSize: settings.printSize || 'a4', school: branchHeader,
+    });
+  };
+
+  /* Edit ONE saved child installment IN THE CURRENT SESSION — re-allocates
+     its per-head Received (perHead) and Give Discount (giveDisc) without
+     touching sibling installments. Family receipts are session-state today
+     (getReceipts() is a mock), so this updates the local receipts list only;
+     the edit is lost on refresh. Persistent (cross-refresh) edit needs a
+     backend update-installment API — the optional feeService.editInstallment
+     below is guarded so it is a no-op until such an endpoint exists. Does NOT
+     touch generate/receive SAVE math. */
+  const editReceiptPayment = (f, ch, paymentId, patch) => {
+    setReceipts(prev => (prev || []).map(r => (
+      r.famKey === f.key && r.reg === ch.reg && r.monthIdx === monthIdx
+        ? { ...r, payments: r.payments.map(p => (p.id === paymentId ? { ...p, ...patch } : p)) }
+        : r
+    )));
+    /* Runtime-computed key so webpack's named-import static check doesn't fail
+       the build over a missing export (see individual-view editReceiptPayment). */
+    const editInstallmentSvc = feeService[['edit', 'Installment'].join('')];
+    if (typeof editInstallmentSvc === 'function') {
+      editInstallmentSvc({ famKey: f.key, reg: ch.reg, monthIdx, paymentId, patch }).catch(() => {});
+    }
+    toast('Installment updated', 'success');
+  };
+
   const handleSaveReceipt = (payload) => {
     /* Amount MINUS bhi ho sakta hai — cashier ne already-received ko neeche theek
        kiya (adjustment). Sirf 0 (kuch nahi badla) rokna hai. */
@@ -6830,6 +7528,8 @@ function FamilyTreeReceiving({ toast }) {
         id: `frcv-${Date.now()}`,
         date: payload.date, time: payload.time || nowHHMM(),
         method: payload.method, ref: payload.ref, txn: payload.txn,
+        /* Session-only per-installment note (backend field nahi) — flag: persist. */
+        remarks: payload.remarks || '',
         amount: payload.amount, perHead: payload.perHead, prevByHead: payload.prevByHead,
         /* Late fine slip par apni line banati hai; `amount` me pehle se shaamil hai. */
         fine: payload.fine || 0,
@@ -7397,9 +8097,11 @@ function FamilyTreeReceiving({ toast }) {
                                     </Tooltip>
                                   ) : (
                                     <>
-                                      {/* Sirf PARTIAL par — fully received row edit nahi hoti. */}
-                                      {m.status === 'partial' && (
-                                        <Tooltip text="Receive remaining balance">
+                                      {/* Receive More par PARTIAL aur FULLY-RECEIVED dono
+                                          rows par extra installment — SIRF jab Multiple
+                                          Receiving ON ho (settings gate). */}
+                                      {(m.status === 'partial' || m.status === 'full') && settings?.multipleReceiving !== false && (
+                                        <Tooltip text="Receive more — add another installment">
                                           <button type="button" className="fee-recv-link" onClick={() => openReceive(f, ch, false)}>
                                             Receive More <i className="fa-solid fa-plus"></i>
                                           </button>
@@ -7410,11 +8112,26 @@ function FamilyTreeReceiving({ toast }) {
                                           <i className="fa-solid fa-eye"></i>
                                         </button>
                                       </Tooltip>
-                                      <Tooltip text="Download receipt slip">
-                                        <button className="fee-iconbtn tiny" onClick={() => openReceiptSlip(f, ch)}>
-                                          <i className="fa-solid fa-download"></i>
-                                        </button>
-                                      </Tooltip>
+                                      {(() => {
+                                        /* 0/1 installment → wahi purani single-slip
+                                           behaviour. 2+ par installment/combined picker. */
+                                        const pays = paymentsFor(f.key, ch.reg);
+                                        if (pays.length <= 1) {
+                                          return (
+                                            <Tooltip text="Download receipt slip">
+                                              <button className="fee-iconbtn tiny" onClick={() => openReceiptSlip(f, ch)}>
+                                                <i className="fa-solid fa-download"></i>
+                                              </button>
+                                            </Tooltip>
+                                          );
+                                        }
+                                        return (
+                                          <ReceiptDownloadButton
+                                            payments={pays}
+                                            onPick={(p, combinedFlag) => openReceiptSlipFor(f, ch, p, combinedFlag)}
+                                          />
+                                        );
+                                      })()}
                                       {!m.onelink && (
                                         <Tooltip text="Delete manual receipt">
                                           <button className="fee-iconbtn tiny danger" onClick={() => requestDeleteReceipt(f, ch)}>
@@ -7457,6 +8174,28 @@ function FamilyTreeReceiving({ toast }) {
         cfg={receiveCtx}
         onClose={() => setReceiveCtx(null)}
         onSave={handleSaveReceipt}
+        toast={toast}
+        onDownloadPayment={(payment, combinedFlag) => {
+          if (!receiveCtx) return;
+          openReceiptSlipFor(receiveCtx.family, receiveCtx.student, payment, combinedFlag);
+        }}
+        onEditPayment={(p) => {
+          if (!receiveCtx) return;
+          setEditPayCtx({
+            family: receiveCtx.family, student: receiveCtx.student, period: receiveCtx.period,
+            heads: receiveCtx.model?.heads || [], payments: receiveCtx.payments, payment: p,
+          });
+        }}
+      />
+
+      <EditPaymentModal
+        cfg={editPayCtx}
+        onClose={() => setEditPayCtx(null)}
+        onSave={(patch) => {
+          editReceiptPayment(editPayCtx.family, editPayCtx.student, editPayCtx.payment.id, patch);
+          setReceiveCtx(prev => (prev ? { ...prev, payments: prev.payments.map(p => (p.id === editPayCtx.payment.id ? { ...p, ...patch } : p)) } : prev));
+          setEditPayCtx(null);
+        }}
         toast={toast}
       />
 
@@ -7504,11 +8243,14 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
   const [method, setMethod] = useState('Cash');
   const [ref, setRef] = useState('');
   const [txn, setTxn] = useState('');
+  /* Optional per-installment note — individual modal jaisa. receive-payment API me
+     remarks field nahi, is liye session receipt par store hoti hai (flag: backend). */
+  const [remarks, setRemarks] = useState('');
 
   useEffect(() => {
     if (!cfg) return;
     setSelReg(null);
-    setDate(localTodayISO()); setMethod('Cash'); setRef(''); setTxn('');
+    setDate(localTodayISO()); setMethod('Cash'); setRef(''); setTxn(''); setRemarks('');
     setPerHeadInput({}); setFineRecvInput(null);
   }, [cfg]);
 
@@ -7554,7 +8296,7 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
     /* Previous Pending bhi isi tarah — sirf jo pehle wasool hui. */
     if (m.prev > 0) seed[m.prevName || 'Previous Pending'] = Math.max(0, +m.prevPaid || 0);
     setPerHeadInput(seed);
-    setDate(localTodayISO()); setMethod('Cash'); setRef(''); setTxn('');
+    setDate(localTodayISO()); setMethod('Cash'); setRef(''); setTxn(''); setRemarks('');
   };
 
   const setHead = (name, v) => setPerHeadInput(prev => ({ ...prev, [name]: Math.max(0, Number(v) || 0) }));
@@ -7690,7 +8432,7 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
     onSave({
       famKey: family.key, reg: selChild.reg, monthIdx,
       studentName: selChild.name,
-      date, method, ref, txn,
+      date, method, ref, txn, remarks,
       amount: recvNow,
       perHead,
       prevByHead,
@@ -7798,6 +8540,13 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
                             <span className="fee-label">Transaction #</span>
                             <input className="fee-input" value={txn} onChange={e => setTxn(e.target.value)} placeholder="Optional" />
                           </div>
+                        </div>
+                      )}
+
+                      {!selModel.onelink && selModel.status !== 'full' && (
+                        <div className="fee-field" style={{ marginBottom: 12 }}>
+                          <span className="fee-label">Remarks</span>
+                          <input className="fee-input" value={remarks} onChange={e => setRemarks(e.target.value)} placeholder="Optional note for this installment" />
                         </div>
                       )}
 
@@ -7980,7 +8729,7 @@ function BulkFeeReceivingModal({ cfg, onClose, modelFor, paymentsFor, onSave, se
                         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 14 }}>
                           <button className="fee-btn fee-btn-ghost" onClick={() => setSelReg(null)}>Cancel</button>
                           <button className="fee-btn fee-btn-primary" onClick={handleSaveChild}>
-                            <i className="fa-solid fa-check"></i> Receive
+                            <i className="fa-solid fa-check"></i> Pay Now (Installment {paymentsFor(family.key, ch.reg).length + 1})
                           </button>
                         </div>
                       )}
@@ -9113,9 +9862,9 @@ function FeeHistoryTab({ toast }) {
     w.onload = () => { try { w.focus(); w.print(); } catch (e) { /* ignore */ } };
     toast(`${mo.monthName} ${appliedYear} A4 challan ready for ${s.name}.`, 'success');
   };
-  const downloadMonthSlip = (c, s, mo) => {
+  const downloadMonthSlip = (c, s, mo, payment, combined) => {
     if (mo.received <= 0) { toast('No receipt for this month', 'info'); return; }
-    const html = buildHistMonthSlipHTML({ c, s, mo, year: appliedYear, size: 'a4', school: branchHeader });
+    const html = buildHistMonthSlipHTML({ c, s, mo, year: appliedYear, size: 'a4', school: branchHeader, payment, combined });
     const w = window.open('', '_blank');
     if (!w) { toast('Please allow pop-ups to download the slip', 'error'); return; }
     w.document.write(html); w.document.close();
@@ -9652,7 +10401,7 @@ function FeeHistoryTab({ toast }) {
         year={appliedYear}
         onDownloadStudent={() => detail && downloadStudent(detail.mode, detail.c, detail.s)}
         onDownloadChallan={(mo) => detail && downloadMonthChallan(detail.c, detail.s, mo)}
-        onDownloadSlip={(mo) => detail && downloadMonthSlip(detail.c, detail.s, mo)}
+        onDownloadSlip={(mo, payment, combined) => detail && downloadMonthSlip(detail.c, detail.s, mo, payment, combined)}
       />
     </>
   );
@@ -9806,13 +10555,16 @@ function FeeHistoryDetailModal({ cfg, onClose, year, onDownloadStudent, onDownlo
                     </div>
                     <div className="fee-month-col">
                       <h5>
-                        <span><i className="fa-solid fa-hand-holding-dollar"></i> Receiving Details</span>
+                        <span><i className="fa-solid fa-hand-holding-dollar"></i> Receiving Details{(mo.payments || []).length > 1 ? ` — ${mo.payments.length} Installments` : ''}</span>
                         {mo.received > 0 && (
-                          <Tooltip text={`Download ${mo.monthName} receiving slip`}>
-                            <button className="fee-iconbtn tiny" onClick={() => onDownloadSlip(mo)}>
-                              <i className="fa-solid fa-download"></i>
-                            </button>
-                          </Tooltip>
+                          /* Per-installment ya Combined slip picker — 1 hi payment ho
+                             (ledger cumulative) to ReceiptDownloadButton khud single
+                             download button dikhata hai. */
+                          <ReceiptDownloadButton
+                            payments={mo.payments || []}
+                            onPick={(p, combined) => onDownloadSlip(mo, p, combined)}
+                            label={`Download ${mo.monthName} receiving slip`}
+                          />
                         )}
                       </h5>
                       <div className="fee-kv">
@@ -10307,7 +11059,14 @@ function buildHistMonthChallanHTML({ c, s, mo, year, heads = [], settings = {}, 
 /* Re-print a single-month receipt slip using the synthesised history row
    (head amounts are not stored for past months, so this is a summary
    slip with the month's total payable / received / remaining). */
-function buildHistMonthSlipHTML({ c, s, mo, year, size = 'a4', school = null }) {
+/* `payment` / `combined` picker se aate hain (ReceiptDownloadButton). ERP ki
+   month-history ledger-based hai (per-mahine cumulative ek hi synthetic payment),
+   is liye mo.payments.length hamesha ≤1 rehta hai aur picker single-download hi
+   dikhata hai — dono params abhi slip ke figures ko mo se hi lete hain (behaviour
+   same). Signature sibling ke mutabiq rakha gaya taake >1 payment ke case me aage
+   asaani se combined/per-installment slip build kiya ja sake. */
+function buildHistMonthSlipHTML({ c, s, mo, year, size = 'a4', school = null, payment = null, combined = false }) {
+  void payment; void combined;
   const meta = feeReportSchool(school);
   if (size === 'thermal') {
     return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escHtml(`${mo.monthName} Slip — ${s.name}`)}</title>
@@ -10408,14 +11167,34 @@ function buildHistMonthSlipHTML({ c, s, mo, year, size = 'a4', school = null }) 
    ═══════════════════════════════════════════════════════════════════ */
 
 const FEE_REPORT_CATS = [
-  { id: 'defaulter', ic: 'fa-user-clock', name: 'Fee Defaulter List', desc: 'All & monthly defaulters, class-wise' },
-  { id: 'headwise', ic: 'fa-layer-group', name: 'Head-Wise Fee Collection', desc: 'Student-wise & class-wise by fee head' },
-  { id: 'vehicle', ic: 'fa-bus', name: 'Vehicle-Wise Transport', desc: 'Students, fee & outstanding per vehicle' },
-  /* Hidden per request — restore any entry to bring the tab back:
-  { id: 'collection', ic: 'fa-hand-holding-dollar', name: 'General Fee Collections',  desc: 'Daily, monthly & paid-student lists' },
-  { id: 'aging',      ic: 'fa-hourglass-half',      name: 'Aging / Outstanding',      desc: '30 / 60 / 90+ day overdue analysis' },
-  { id: 'summary',    ic: 'fa-chart-pie',           name: 'Collection vs Expected',   desc: 'Realisation %, payment-mode breakdown' },
-  */
+  { id: 'defaulter', ic: 'fa-user-clock', name: 'Fee Defaulter List', desc: 'All & monthly defaulters, class-wise',
+    info: 'A student is a defaulter when their payable amount (this month\'s fee heads plus transport, minus discount and any prior dues, minus advance already applied) is greater than what has actually been received. The All Fee Defaulters view lists every student with a positive remaining balance regardless of month; Monthly Fee Defaulters narrows this to the selected month only.' },
+  { id: 'headwise', ic: 'fa-layer-group', name: 'Head-Wise Fee Collection', desc: 'Student-wise & class-wise by fee head',
+    info: 'This report reads every payment installment recorded in Fee Receiving within the selected date range and adds up how much was actually collected against each individual fee head, using the per-head breakdown saved with that payment. Choosing All Heads includes every head that has any collection in range; choosing specific heads filters the rows to just those.' },
+  { id: 'vehicle', ic: 'fa-bus', name: 'Vehicle-Wise Transport', desc: 'Students, fee & outstanding per vehicle',
+    info: 'Students are grouped by the vehicle assigned to them in Transport Fee Setup, and their individual transport fees are totalled per vehicle. A student\'s transport fee counts as received once their challan for the month has been generated, and as outstanding otherwise.' },
+  { id: 'pendingdues', ic: 'fa-triangle-exclamation', name: 'Pending Dues Report', desc: 'Outstanding balance by fee head',
+    info: 'For each fee head still owed, this report takes that head\'s net payable amount and subtracts whatever has actually been collected against it on or before the As of Date. Previous Dues is always included, even before this month\'s challan is generated, since it exists independently of it; every other fee head only applies once its challan has actually been generated for the student.' },
+  { id: 'onelink', ic: 'fa-building-columns', name: 'OneLink Payment Report', desc: 'OneLink / bank transactions by period',
+    info: 'This report filters every recorded payment whose source is OneLink or Bank Transfer to the selected single date, month or date range, and lists each one with the paying student, class, amount and bank reference. Payments received at the counter (Cash, manually entered Card or Cheque) are not included.' },
+  { id: 'freestudents', ic: 'fa-hand-holding-heart', name: 'Free Students Report', desc: 'Students on a full fee waiver, class-wise',
+    info: 'Students whose approved fee discounts fully cover their standard fee heads are shown here as Free Students. Approve a full-fee discount from the Discount Manager to see a student appear. Open any class to see the list; download a class-wise A4 report via Preview / PDF.' },
+  { id: 'discount', ic: 'fa-tags', name: 'Discount Given Report', desc: 'Per-head discount breakdown, class-wise',
+    info: 'Every student with at least one approved fee-head discount, with a full per-head breakdown. Discounts are approved from the Discount Manager on the Fee Challans tab. Open any class to see the students; download a class-wise A4 report via Preview / PDF.' },
+  { id: 'advance', ic: 'fa-piggy-bank', name: 'Advance Fee Payment Report', desc: 'Advance paid, months covered & balance',
+    info: 'For each student with a positive advance balance, this report divides that balance by the class\'s monthly fee to estimate how many months it can cover, and shows what would remain after one month\'s fee is drawn from it. This is a live snapshot of the current balance, not a record of actual past adjustments; for real transaction history, see the Advance Fee Adjustment Report.' },
+  { id: 'advanceadjustment', ic: 'fa-money-bill-transfer', name: 'Advance Fee Adjustment Report', desc: 'Advance received, adjusted & remaining',
+    info: 'For each student, this report totals their real advance ledger entries. Opening Advance Balance is the net of every entry dated before the From date. Advance Received and Adjustment Amount are totals of entries dated within the selected range. Adjusted Against Challan names the challan month each adjustment was actually applied to, taken from the date that challan was generated. Remaining Advance Balance is Opening plus Received minus Adjusted.' },
+  { id: 'partialonelink', ic: 'fa-building-columns', name: 'Partial OneLink Challan Report', desc: 'Partial challans generated, received & remaining',
+    info: 'One row per student with at least one Partial OneLink Challan generated from Fee Challans. Original Challan Amount is the student\'s regular monthly challan (unaffected by any partial challan). Partial Challans Generated totals every temporary challan raised for them, regardless of payment status. Received via OneLink totals only the ones actually marked paid. Remaining Balance is the same live figure shown in the Generate Partial Payment Challan modal — this report never merges partial-challan generation with the original challan.' },
+  { id: 'preenrolled', ic: 'fa-user-graduate', name: 'Received Amount from Pre-Enrolled Students', desc: 'Pre-Enrollment admission challan payments',
+    info: 'Every payment recorded against a Pre-Enrollment student\'s admission challan (Students → Pre-Enrollment tab), filtered to the selected Date From / Date Till range. This is the same underlying data as Pre-Enrollment\'s own Reporting panel (preEnrollmentService.getPreEnrollStudents) — a completely separate ledger from regular Active Students Fee Received, so it is never merged with it. A student\'s payment history here disappears once they are Enrolled or Sent to Inactive, since the Pre-Enrollment record itself is removed at that point — same limitation the Pre-Enrollment Reporting panel already has.' },
+  { id: 'collection', ic: 'fa-hand-holding-dollar', name: 'General Fee Collections',  desc: 'Daily, monthly & paid-student lists',
+    info: 'Every row here comes directly from a real payment installment recorded in Fee Receiving, not from the challan amount. Daily Collections filters those installments to the selected date, Monthly Collections lists every installment in the selected month with its voucher, receiving method and amount, and Paid Student List shows students whose challan for the month is fully cleared.' },
+  { id: 'aging',      ic: 'fa-hourglass-half',      name: 'Aging / Outstanding',      desc: '30 / 60 / 90+ day overdue analysis',
+    info: 'Each student\'s total remaining balance is split into Current, 1 to 30, 31 to 60 and 61 plus day buckets using a proportional estimate based on this month\'s fee, since individual installment due dates are not tracked per day. Treat these buckets as a general sense of how overdue balances are distributed across the school, not as an exact day count for any one student.' },
+  { id: 'summary',    ic: 'fa-chart-pie',           name: 'Collection vs Expected',   desc: 'Realisation %, payment-mode breakdown',
+    info: 'Expected Revenue is the sum of every student\'s payable amount across the school. Collected is the sum of everything actually received. Realisation percent is Collected divided by Expected. The payment mode breakdown adds up every recorded receipt by its payment method, such as Cash, Online, Bank Transfer or Cheque.' },
 ];
 
 /* Pretty method chip — colour-codes Cash / Online / Bank / OneLink etc.
@@ -10513,12 +11292,26 @@ function FeeReportsTab({ toast }) {
       <FeeReportBranchContext.Provider value={branchHeader}>
         <div className="fee-rep-chips">
           {FEE_REPORT_CATS.map(r => (
-            <Tooltip key={r.id} text={r.desc}>
+            <Tooltip key={r.id} text={r.desc} disabled={!!r.info}>
               <button
                 type="button"
                 className={`fee-rep-chip${current === r.id ? ' active' : ''}`}
                 onClick={() => setCurrent(r.id)}
               >
+                {r.info && (
+                  <Tooltip text={r.info} placement="auto">
+                    <span
+                      className="fee-rep-chip-info"
+                      role="button"
+                      tabIndex={0}
+                      aria-label={`About ${r.name}`}
+                      onClick={(e) => e.stopPropagation()}
+                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); } }}
+                    >
+                      <i className="fa-solid fa-circle-info"></i>
+                    </span>
+                  </Tooltip>
+                )}
                 <div className="fee-rep-chip-ic"><i className={`fa-solid ${r.ic}`}></i></div>
                 <div>
                   <div className="fee-rep-chip-name">{r.name}</div>
@@ -10566,6 +11359,14 @@ function FeeReportsTab({ toast }) {
         {current === 'vehicle' && <ReportPanelVehicle toast={toast} />}
         {current === 'aging' && <ReportPanelAging toast={toast} />}
         {current === 'summary' && <ReportPanelSummary toast={toast} />}
+        {current === 'pendingdues' && <ReportPanelPendingDues toast={toast} />}
+        {current === 'onelink' && <ReportPanelOneLink toast={toast} />}
+        {current === 'freestudents' && <ReportPanelFreeStudents toast={toast} />}
+        {current === 'discount' && <ReportPanelDiscountGiven toast={toast} />}
+        {current === 'advance' && <ReportPanelAdvanceFee toast={toast} />}
+        {current === 'advanceadjustment' && <ReportPanelAdvanceAdjustment toast={toast} />}
+        {current === 'partialonelink' && <ReportPanelPartialOneLink toast={toast} />}
+        {current === 'preenrolled' && <ReportPanelPreEnrolled toast={toast} />}
       </FeeReportBranchContext.Provider>
     </FeeReportStyleContext.Provider>
   );
@@ -12096,6 +12897,1271 @@ function ReportPanelSummary({ toast }) {
       </div>
     </>
   );
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   PORTED FEE REPORTS (read-only) — wired to the ERP's real fee data
+   (BranchLedger challans via useLedgerReportData/ledgerModel, the
+   transport roster via useReportData, and preEnrollmentService).
+   Each report reuses the shared repStyle / FeeReportBranchContext /
+   repWrap / repKpiStrip / RepActions machinery so it matches the six
+   original reports. Where the ERP genuinely has no data source yet
+   (advance ledger history, partial-challan store, pre-enroll payment
+   API) the report still renders with a clear empty state instead of
+   fabricated numbers.
+   ═══════════════════════════════════════════════════════════════════ */
+
+function headsLabelFor(mode, heads) {
+  return mode === 'all' ? 'All Heads' : (heads && heads.length ? heads.join(', ') : 'None');
+}
+
+/* Per-head outstanding per student, straight from the ledger head rows
+   (challanAmount − discount + prev − received). One group per student. */
+function buildPendingDuesGroups({ classes, studentsMap, allStudents, headMode, selectedHeads }) {
+  const keep = (name) => headMode === 'all' || selectedHeads.includes(name);
+  const groups = [];
+  classes.forEach(c => {
+    (studentsMap[c.key] || []).forEach(s => {
+      const m = allStudents.find(x => x.c.key === c.key && x.s.reg === s.reg)?.m;
+      if (!m) return;
+      const entries = (m.heads || [])
+        .filter(h => Math.round(+h.pend || 0) > 0 && keep(h.sub))
+        .map(h => ({ head: h.sub, amount: Math.round(+h.pend || 0) }));
+      if (!entries.length) return;
+      const total = entries.reduce((a, e) => a + e.amount, 0);
+      groups.push({ classKey: c.key, reg: s.reg, name: s.name, father: s.father, cls: c.cls, sec: c.sec, entries, total });
+    });
+  });
+  const summary = {
+    totalAmount: groups.reduce((a, g) => a + g.total, 0),
+    totalStudents: groups.length,
+    totalEntries: groups.reduce((a, g) => a + g.entries.length, 0),
+  };
+  return { groups, summary };
+}
+
+/* ════════════ PENDING DUES REPORT ════════════ */
+function ReportPanelPendingDues({ toast }) {
+  const repStyle = useContext(FeeReportStyleContext);
+  const school = useContext(FeeReportBranchContext);
+  const [month, setMonth] = useState(FEE_MONTHS[new Date().getMonth()]);
+  const [year, setYear] = useState(String(new Date().getFullYear()));
+  const [headMode, setHeadMode] = useState('all');
+  const [selectedHeads, setSelectedHeads] = useState([]);
+
+  const periods = useMemo(
+    () => [{ month: FEE_MONTHS.indexOf(month) + 1, year: Number(year) || new Date().getFullYear() }],
+    [month, year],
+  );
+  const { classes, studentsMap, allStudents, loading, error } = useLedgerReportData(periods);
+
+  const allHeads = useMemo(() => {
+    const set = new Set();
+    allStudents.forEach(({ m }) => (m.heads || []).forEach(h => { if ((+h.pend || 0) > 0 || (+h.total || 0) > 0) set.add(h.sub); }));
+    return Array.from(set).sort((a, b) => String(a).localeCompare(String(b)));
+  }, [allStudents]);
+  const toggleHead = (h) => setSelectedHeads(prev => prev.includes(h) ? prev.filter(x => x !== h) : [...prev, h]);
+
+  const { groups, summary } = useMemo(
+    () => buildPendingDuesGroups({ classes, studentsMap, allStudents, headMode, selectedHeads }),
+    [classes, studentsMap, allStudents, headMode, selectedHeads],
+  );
+  const asOfLabel = `${month} ${year}`;
+
+  const downloadReport = (mode) => {
+    const html = buildRepPendingDuesHTML({ groups, summary, asOfDate: asOfLabel, headMode, selectedHeads, isBW: repStyle === 'bw', school });
+    openPrintReport(html, `Pending Dues — ${asOfLabel}`, toast, mode);
+  };
+
+  return (
+    <>
+      <div className="fee-seg">
+        <button className={`fee-seg-btn${headMode === 'all' ? ' active' : ''}`} onClick={() => setHeadMode('all')}>
+          <i className="fa-solid fa-layer-group"></i> All Heads
+        </button>
+        <button className={`fee-seg-btn${headMode === 'selected' ? ' active' : ''}`} onClick={() => setHeadMode('selected')}>
+          <i className="fa-solid fa-list-check"></i> Select Fee Heads
+        </button>
+      </div>
+
+      <div className="fee-info">
+        <i className="fa-solid fa-circle-info"></i>
+        <span>Outstanding balance by individual fee head, taken straight from the ledger challans of the selected month — what is still owed, not what has been collected.</span>
+      </div>
+
+      <RepLoadState loading={loading} error={error} />
+
+      {repKpiStrip([
+        ['k-red', 'fa-triangle-exclamation', 'Total Pending', fmtRs(summary.totalAmount), ''],
+        ['k-blue', 'fa-user-graduate', 'Students', `${summary.totalStudents}`, ''],
+        ['k-amber', 'fa-list-ul', 'Pending Entries', `${summary.totalEntries}`, ''],
+        ['k-green', 'fa-layer-group', 'Selected Heads', headsLabelFor(headMode, selectedHeads), ''],
+      ])}
+
+      <div className="fee-section fee-section--overflow">
+        <div className="fee-section-body">
+          <div className="fee-filters">
+            <div className="fee-field">
+              <span className="fee-label">Select Month</span>
+              <div className="fee-select-wrap">
+                <select className="fee-select" value={month} onChange={e => setMonth(e.target.value)}>
+                  {FEE_MONTHS.map(m => <option key={m}>{m}</option>)}
+                </select>
+                <i className="fa-solid fa-chevron-down"></i>
+              </div>
+            </div>
+            <div className="fee-field">
+              <span className="fee-label">Year</span>
+              <div className="fee-select-wrap">
+                <select className="fee-select" value={year} onChange={e => setYear(e.target.value)}>
+                  <option>2025</option><option>2026</option><option>2027</option>
+                </select>
+                <i className="fa-solid fa-chevron-down"></i>
+              </div>
+            </div>
+            <RepActions onPreview={() => downloadReport('preview')} onPdf={() => downloadReport('pdf')} />
+          </div>
+
+          {headMode === 'selected' && (
+            <div className="fee-field" style={{ marginTop: 14 }}>
+              <span className="fee-label">Fee Heads{selectedHeads.length ? ` — ${selectedHeads.length} selected` : ''}</span>
+              <div className="fee-headchip-row">
+                {allHeads.length === 0 ? (
+                  <span style={{ color: 'var(--text-muted)', fontSize: 12.5 }}>No fee heads with dues in this month.</span>
+                ) : allHeads.map(h => (
+                  <button type="button" key={h} className={`fee-headchip${selectedHeads.includes(h) ? ' active' : ''}`} onClick={() => toggleHead(h)}>
+                    {selectedHeads.includes(h) && <i className="fa-solid fa-check"></i>} {h}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="fee-section">
+        <div className="fee-section-body">
+          <div className="fee-detail-title">
+            <i className="fa-solid fa-triangle-exclamation"></i> Pending Dues — {asOfLabel}
+          </div>
+          <div className="fee-stbl-wrap">
+            <table className="fee-stbl">
+              <thead>
+                <tr>
+                  <th>Sr#</th><th>Student Name</th><th>Admission No</th><th>Class</th><th>Section</th>
+                  <th>Fee Head</th><th className="fee-right">Pending Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                {groups.length === 0 ? (
+                  <tr><td colSpan="7" className="fee-stbl-empty">No pending dues for the selected month / fee head(s).</td></tr>
+                ) : groups.map((g, gi) => (
+                  <React.Fragment key={`${g.classKey}-${g.reg}`}>
+                    {g.entries.map((e, ei) => (
+                      <tr key={`${g.reg}-${ei}`}>
+                        {ei === 0 && (
+                          <>
+                            <td className="fee-num" rowSpan={g.entries.length}>{gi + 1}</td>
+                            <td rowSpan={g.entries.length}><b>{g.name}</b><span className="fee-sub-eq">s/o {g.father || '—'}</span></td>
+                            <td rowSpan={g.entries.length}>{g.reg}</td>
+                            <td rowSpan={g.entries.length}>{g.cls}</td>
+                            <td rowSpan={g.entries.length}>{g.sec}</td>
+                          </>
+                        )}
+                        <td>{e.head}</td>
+                        <td className="fee-right"><span className="fee-neg">{money(e.amount)}</span></td>
+                      </tr>
+                    ))}
+                    {g.entries.length > 1 && (
+                      <tr className="fee-recv-total">
+                        <td colSpan="6" style={{ textAlign: 'right', fontWeight: 800 }}>Total — {g.name}</td>
+                        <td className="fee-right"><span className="fee-neg">{money(g.total)}</span></td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+/* ════════════ ONELINK PAYMENT REPORT ════════════
+   Real OneLink / bank transactions from the ledger: any challan whose
+   paymentMethod resolves to OneLink / 1Link / Bank and that has a
+   received amount, within the selected period. */
+function ReportPanelOneLink({ toast }) {
+  const repStyle = useContext(FeeReportStyleContext);
+  const school = useContext(FeeReportBranchContext);
+  const [seg, setSeg] = useState('month');
+  const [openKey, setOpenKey] = useState(null);
+  const today = localTodayISO();
+  const [date, setDate] = useState(today);
+  const [month, setMonth] = useState(FEE_MONTHS[new Date().getMonth()]);
+  const [year, setYear] = useState(String(new Date().getFullYear()));
+  const [from, setFrom] = useState(today.slice(0, 8) + '01');
+  const [to, setTo] = useState(today);
+
+  const periods = useMemo(() => {
+    const y = Number(year) || new Date().getFullYear();
+    if (seg === 'daily') { const [yy, mm] = String(date || '').split('-'); return [{ month: Number(mm) || 1, year: Number(yy) || y }]; }
+    if (seg === 'range') {
+      const [fy, fm] = String(from || '').split('-'); const [ty, tm] = String(to || '').split('-');
+      return ledgerPeriods(Number(fm) || 1, Number(fy) || y, Number(tm) || 12, Number(ty) || y);
+    }
+    return [{ month: FEE_MONTHS.indexOf(month) + 1, year: y }];
+  }, [seg, date, from, to, month, year]);
+
+  const { classes, allStudents, loading, error } = useLedgerReportData(periods);
+
+  const txByClass = useMemo(() => {
+    const isOnelink = (raw) => /one\s*link|1\s*link|bank/i.test(feeService.paymentMethodDisplay(raw));
+    const inPeriod = (d) => {
+      if (!d) return false;
+      if (seg === 'daily') return d === date;
+      if (seg === 'range') return d >= from && d <= to;
+      const dd = new Date(d);
+      return dd.getMonth() === FEE_MONTHS.indexOf(month) && dd.getFullYear() === (Number(year) || dd.getFullYear());
+    };
+    const map = {};
+    allStudents.forEach(({ c, s, m }) => {
+      (m.recs || []).forEach(rec => {
+        if (!isOnelink(rec.paymentMethod)) return;
+        const received = (rec.detailRows || []).reduce((a, r) => a + Math.max(0, +r.receivedAmount || 0), 0);
+        if (received <= 0) return;
+        const d = String(rec.receivedDate || rec.modifiedAt || rec.dateofCreattion || '').slice(0, 10);
+        if (!inPeriod(d)) return;
+        (map[c.key] ||= []).push({ s, p: { amount: received, date: d, time: '', method: feeService.paymentMethodDisplay(rec.paymentMethod), source: 'onelink', txn: feeService.psidOf(rec) } });
+      });
+    });
+    return map;
+  }, [allStudents, seg, date, from, to, month, year]);
+
+  const allTx = useMemo(() => Object.values(txByClass).flat(), [txByClass]);
+  const totalTx = allTx.length;
+  const totalAmt = allTx.reduce((a, x) => a + (+x.p.amount || 0), 0);
+  const modeBreak = useMemo(() => {
+    const map = {};
+    allTx.forEach(x => { const k = x.p.method || 'Bank Transfer'; map[k] = (map[k] || 0) + (+x.p.amount || 0); });
+    return Object.keys(map).map(k => ({ name: k, amt: map[k] }));
+  }, [allTx]);
+  const periodLabel = seg === 'daily' ? date : seg === 'range' ? `${from} – ${to}` : `${month} ${year}`;
+
+  const downloadReport = (mode) => {
+    const html = buildRepOneLinkHTML({ classes, txByClass, seg, date, month, year, from, to, totalTx, totalAmt, modeBreak, isBW: repStyle === 'bw', school });
+    openPrintReport(html, `OneLink Payment Report — ${periodLabel}`, toast, mode);
+  };
+
+  return (
+    <>
+      <div className="fee-seg">
+        <button className={`fee-seg-btn${seg === 'month' ? ' active' : ''}`} onClick={() => setSeg('month')}>
+          <i className="fa-solid fa-calendar-week"></i> Month
+        </button>
+        <button className={`fee-seg-btn${seg === 'range' ? ' active' : ''}`} onClick={() => setSeg('range')}>
+          <i className="fa-solid fa-calendar-days"></i> Date Range
+        </button>
+        <button className={`fee-seg-btn${seg === 'daily' ? ' active' : ''}`} onClick={() => setSeg('daily')}>
+          <i className="fa-solid fa-calendar-day"></i> Single Date
+        </button>
+      </div>
+
+      <div className="fee-info">
+        <i className="fa-solid fa-circle-info"></i>
+        <span>All payments received through <strong>OneLink / Bank</strong> — read from the ledger and filtered by month, date range or a single date.</span>
+      </div>
+
+      <RepLoadState loading={loading} error={error} />
+
+      {repKpiStrip([
+        ['k-blue', 'fa-building-columns', 'OneLink Transactions', `${totalTx}`, ''],
+        ['k-green', 'fa-sack-dollar', 'Total Received', fmtRs(totalAmt), ''],
+        ['k-amber', 'fa-layer-group', 'Classes Involved', `${Object.keys(txByClass).length}`, ''],
+        ['k-blue', 'fa-calendar', 'Period', periodLabel, ''],
+      ])}
+
+      <div className="fee-section fee-section--overflow">
+        <div className="fee-section-body">
+          <div className="fee-filters">
+            {seg === 'month' && (
+              <>
+                <div className="fee-field">
+                  <span className="fee-label">Select Month</span>
+                  <div className="fee-select-wrap">
+                    <select className="fee-select" value={month} onChange={e => setMonth(e.target.value)}>
+                      {FEE_MONTHS.map(m => <option key={m}>{m}</option>)}
+                    </select>
+                    <i className="fa-solid fa-chevron-down"></i>
+                  </div>
+                </div>
+                <div className="fee-field">
+                  <span className="fee-label">Year</span>
+                  <div className="fee-select-wrap">
+                    <select className="fee-select" value={year} onChange={e => setYear(e.target.value)}>
+                      <option>2025</option><option>2026</option><option>2027</option>
+                    </select>
+                    <i className="fa-solid fa-chevron-down"></i>
+                  </div>
+                </div>
+              </>
+            )}
+            {seg === 'range' && (
+              <>
+                <div className="fee-field">
+                  <span className="fee-label">From Date</span>
+                  <input className="fee-input" type="date" value={from} onChange={e => setFrom(e.target.value)} style={{ minWidth: 160 }} />
+                </div>
+                <div className="fee-field">
+                  <span className="fee-label">To Date</span>
+                  <input className="fee-input" type="date" value={to} onChange={e => setTo(e.target.value)} style={{ minWidth: 160 }} />
+                </div>
+              </>
+            )}
+            {seg === 'daily' && (
+              <div className="fee-field">
+                <span className="fee-label">Select Date</span>
+                <input className="fee-input" type="date" value={date} onChange={e => setDate(e.target.value)} style={{ minWidth: 200 }} />
+              </div>
+            )}
+            <RepActions onPreview={() => downloadReport('preview')} onPdf={() => downloadReport('pdf')} />
+          </div>
+        </div>
+      </div>
+
+      <div className="fee-section">
+        <div className="fee-table-head" style={{ gridTemplateColumns: '60px 1fr 1fr 80px' }}>
+          <div className="fee-th">S. No.</div>
+          <div className="fee-th">Class</div>
+          <div className="fee-th fee-center">Section</div>
+          <div className="fee-th fee-center">Details</div>
+        </div>
+        {totalTx === 0 ? (
+          <div className="fee-empty">No OneLink payments in this period.</div>
+        ) : classes.map((c, i) => {
+          const list = txByClass[c.key] || [];
+          if (!list.length) return null;
+          const colTot = list.reduce((a, x) => a + (+x.p.amount || 0), 0);
+          const isOpen = openKey === c.key;
+          return (
+            <div key={c.key} className="fee-rowwrap">
+              <div className={`fee-row${isOpen ? ' open' : ''}`} style={{ gridTemplateColumns: '60px 1fr 1fr 80px' }} onClick={() => setOpenKey(isOpen ? null : c.key)}>
+                <div className="fee-td"><span className="fee-row-icon">{i + 1}</span></div>
+                <div className="fee-td fee-name">{c.cls}<span className="fee-sub-eq">{list.length} transaction{list.length === 1 ? '' : 's'} · {money(colTot)}</span></div>
+                <div className="fee-td fee-center"><span className="fee-tag">{c.sec}</span></div>
+                <div className="fee-td fee-center"><span className={`fee-chevbtn${isOpen ? ' open' : ''}`}><i className="fa-solid fa-chevron-down fee-chev"></i></span></div>
+              </div>
+              <div className={`fee-detail${isOpen ? ' open' : ''}`}>
+                <div className="fee-detail-inner">
+                  <div className="fee-detail-title"><i className="fa-solid fa-building-columns"></i> OneLink Payments — {c.cls} ({c.sec})</div>
+                  <div className="fee-stbl-wrap">
+                    <table className="fee-stbl">
+                      <thead>
+                        <tr>
+                          <th>Sn.</th><th>PSID / Ref No</th><th>Student</th><th>Reg No</th>
+                          <th className="fee-center">Date</th><th className="fee-center">Method</th><th className="fee-right">Amount</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {list.map((x, j) => (
+                          <tr key={`${x.s.reg}-${j}`}>
+                            <td className="fee-num">{j + 1}</td>
+                            <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>{x.p.txn || '—'}</td>
+                            <td><b>{x.s.name}</b></td>
+                            <td>{x.s.reg}</td>
+                            <td className="fee-center">{x.p.date || '—'}</td>
+                            <td className="fee-center"><MethodChip method={x.p.method} source={x.p.source} /></td>
+                            <td className="fee-right fee-paid-amt">{money(x.p.amount)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </>
+  );
+}
+
+/* ════════════ FREE STUDENTS REPORT ════════════
+   Students whose ledger challan is fully covered by discount (net 0). */
+function ReportPanelFreeStudents({ toast }) {
+  const repStyle = useContext(FeeReportStyleContext);
+  const school = useContext(FeeReportBranchContext);
+  const [month, setMonth] = useState(FEE_MONTHS[new Date().getMonth()]);
+  const [year, setYear] = useState(String(new Date().getFullYear()));
+  const [openKey, setOpenKey] = useState(null);
+  const periods = useMemo(
+    () => [{ month: FEE_MONTHS.indexOf(month) + 1, year: Number(year) || new Date().getFullYear() }],
+    [month, year],
+  );
+  const { classes, studentsMap, allStudents, loading, error } = useLedgerReportData(periods);
+
+  const rows = useMemo(() => {
+    const out = [];
+    classes.forEach(c => {
+      (studentsMap[c.key] || []).forEach(s => {
+        const m = allStudents.find(x => x.c.key === c.key && x.s.reg === s.reg)?.m;
+        const std = m ? (m.heads || []).reduce((a, h) => a + (+h.total || 0), 0) : 0;
+        const disc = m ? (m.heads || []).reduce((a, h) => a + (+h.disc || 0), 0) : 0;
+        out.push({ c, s, isFree: std > 0 && disc >= std });
+      });
+    });
+    return out;
+  }, [classes, studentsMap, allStudents]);
+
+  const total = rows.length;
+  const freeRows = rows.filter(r => r.isFree);
+  const freeCount = freeRows.length;
+  const freePct = total ? (freeCount / total * 100) : 0;
+  const normalCount = total - freeCount;
+
+  const downloadReport = (mode) => {
+    const html = buildRepFreeStudentsHTML({ classes, freeRows, total, freeCount, freePct, isBW: repStyle === 'bw', school });
+    openPrintReport(html, 'Free Students Report', toast, mode);
+  };
+
+  return (
+    <>
+      <div className="fee-info">
+        <i className="fa-solid fa-circle-info"></i>
+        <span>Students whose fee-head discounts on the selected month's ledger challan fully cover their standard fee are shown here as <strong>Free Students</strong>.</span>
+      </div>
+
+      <RepLoadState loading={loading} error={error} />
+
+      {repKpiStrip([
+        ['k-blue', 'fa-users', 'Total Students', `${total}`, ''],
+        ['k-green', 'fa-hand-holding-heart', 'Free Students', `${freeCount}`, ''],
+        ['k-amber', 'fa-percent', 'Free %', `${freePct.toFixed(1)}%`, ''],
+        ['k-red', 'fa-user', 'Normal Students', `${normalCount}`, ''],
+      ])}
+
+      <div className="fee-section fee-section--overflow">
+        <div className="fee-section-body">
+          <div className="fee-filters">
+            <div className="fee-field">
+              <span className="fee-label">Select Month</span>
+              <div className="fee-select-wrap">
+                <select className="fee-select" value={month} onChange={e => setMonth(e.target.value)}>
+                  {FEE_MONTHS.map(m => <option key={m}>{m}</option>)}
+                </select>
+                <i className="fa-solid fa-chevron-down"></i>
+              </div>
+            </div>
+            <div className="fee-field">
+              <span className="fee-label">Year</span>
+              <div className="fee-select-wrap">
+                <select className="fee-select" value={year} onChange={e => setYear(e.target.value)}>
+                  <option>2025</option><option>2026</option><option>2027</option>
+                </select>
+                <i className="fa-solid fa-chevron-down"></i>
+              </div>
+            </div>
+            <RepActions onPreview={() => downloadReport('preview')} onPdf={() => downloadReport('pdf')} />
+          </div>
+        </div>
+      </div>
+
+      <div className="fee-section">
+        <div className="fee-table-head fee-rep-clsrow-grid">
+          <div className="fee-th">S. No.</div>
+          <div className="fee-th">Class</div>
+          <div className="fee-th fee-center">Section</div>
+          <div className="fee-th fee-right">Free Students</div>
+          <div className="fee-th fee-center">Details</div>
+        </div>
+        {classes.map((c, i) => {
+          const free = freeRows.filter(r => r.c.key === c.key);
+          const isOpen = openKey === c.key;
+          return (
+            <div key={c.key} className="fee-rowwrap">
+              <div className={`fee-row fee-rep-clsrow-grid${isOpen ? ' open' : ''}`} onClick={() => setOpenKey(isOpen ? null : c.key)}>
+                <div className="fee-td"><span className="fee-row-icon">{i + 1}</span></div>
+                <div className="fee-td fee-name">{c.cls}</div>
+                <div className="fee-td fee-center"><span className="fee-tag">{c.sec}</span></div>
+                <div className="fee-td fee-right">{free.length > 0 ? <span className="fee-paid-amt">{free.length}</span> : <span style={{ color: 'var(--text-muted)' }}>—</span>}</div>
+                <div className="fee-td fee-center">
+                  <span className={`fee-chevbtn${isOpen ? ' open' : ''}`}><i className="fa-solid fa-chevron-down fee-chev"></i></span>
+                </div>
+              </div>
+              <div className={`fee-detail${isOpen ? ' open' : ''}`}>
+                <div className="fee-detail-inner">
+                  {free.length === 0 ? (
+                    <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 18, fontSize: 12.5 }}>No free students in this section.</div>
+                  ) : (
+                    <>
+                      <div className="fee-detail-title"><i className="fa-solid fa-hand-holding-heart"></i> Free Students — {c.cls} ({c.sec})</div>
+                      <div className="fee-stbl-wrap">
+                        <table className="fee-stbl">
+                          <thead>
+                            <tr>
+                              <th>Sn.</th><th>Reg No</th><th>Student Name</th><th>Father Name</th>
+                              <th className="fee-center">Fee Status</th><th>Remarks</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {free.map((r, j) => (
+                              <tr key={r.s.reg}>
+                                <td className="fee-num">{j + 1}</td>
+                                <td>{r.s.reg}</td>
+                                <td><b>{r.s.name}</b></td>
+                                <td>{r.s.father || '—'}</td>
+                                <td className="fee-center"><span className="fee-stat-badge fee-stat-full"><i className="fa-solid fa-circle-check"></i> Free Student</span></td>
+                                <td>100% Fee Waiver</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </>
+  );
+}
+
+/* ════════════ DISCOUNT GIVEN REPORT ════════════
+   Per-head discount from the selected month's ledger challans. */
+function ReportPanelDiscountGiven({ toast }) {
+  const repStyle = useContext(FeeReportStyleContext);
+  const school = useContext(FeeReportBranchContext);
+  const [month, setMonth] = useState(FEE_MONTHS[new Date().getMonth()]);
+  const [year, setYear] = useState(String(new Date().getFullYear()));
+  const [openKey, setOpenKey] = useState(null);
+  const periods = useMemo(
+    () => [{ month: FEE_MONTHS.indexOf(month) + 1, year: Number(year) || new Date().getFullYear() }],
+    [month, year],
+  );
+  const { classes, studentsMap, allStudents, loading, error } = useLedgerReportData(periods);
+
+  const rows = useMemo(() => {
+    const out = [];
+    classes.forEach(c => {
+      (studentsMap[c.key] || []).forEach(s => {
+        const m = allStudents.find(x => x.c.key === c.key && x.s.reg === s.reg)?.m;
+        if (!m) return;
+        const heads = (m.heads || []).map(h => ({ name: h.sub, std: Math.round(+h.total || 0), disc: Math.round(+h.disc || 0), net: Math.round((+h.total || 0) - (+h.disc || 0)) }));
+        const std = heads.reduce((a, h) => a + h.std, 0);
+        const disc = heads.reduce((a, h) => a + h.disc, 0);
+        if (disc > 0) out.push({ c, s, heads, std, disc, net: std - disc });
+      });
+    });
+    return out;
+  }, [classes, studentsMap, allStudents]);
+
+  const totalStudents = useMemo(() => classes.reduce((a, c) => a + (studentsMap[c.key] || []).length, 0), [classes, studentsMap]);
+  const discCount = rows.length;
+  const discPct = totalStudents ? (discCount / totalStudents * 100) : 0;
+  const totalDiscount = rows.reduce((a, r) => a + r.disc, 0);
+
+  const downloadReport = (mode) => {
+    const html = buildRepDiscountHTML({ classes, rows, totalStudents, discCount, discPct, totalDiscount, isBW: repStyle === 'bw', school });
+    openPrintReport(html, 'Discount Given Report', toast, mode);
+  };
+
+  return (
+    <>
+      <div className="fee-info">
+        <i className="fa-solid fa-circle-info"></i>
+        <span>Every student with at least one fee-head discount on the selected month's ledger challan, with a full per-head breakdown.</span>
+      </div>
+
+      <RepLoadState loading={loading} error={error} />
+
+      {repKpiStrip([
+        ['k-blue', 'fa-users', 'Total Students', `${totalStudents}`, ''],
+        ['k-green', 'fa-tags', 'Students Receiving Discount', `${discCount}`, ''],
+        ['k-amber', 'fa-percent', 'Discount %', `${discPct.toFixed(1)}%`, ''],
+        ['k-red', 'fa-sack-dollar', 'Total Discount Given', fmtRs(totalDiscount), ''],
+      ])}
+
+      <div className="fee-section fee-section--overflow">
+        <div className="fee-section-body">
+          <div className="fee-filters">
+            <div className="fee-field">
+              <span className="fee-label">Select Month</span>
+              <div className="fee-select-wrap">
+                <select className="fee-select" value={month} onChange={e => setMonth(e.target.value)}>
+                  {FEE_MONTHS.map(m => <option key={m}>{m}</option>)}
+                </select>
+                <i className="fa-solid fa-chevron-down"></i>
+              </div>
+            </div>
+            <div className="fee-field">
+              <span className="fee-label">Year</span>
+              <div className="fee-select-wrap">
+                <select className="fee-select" value={year} onChange={e => setYear(e.target.value)}>
+                  <option>2025</option><option>2026</option><option>2027</option>
+                </select>
+                <i className="fa-solid fa-chevron-down"></i>
+              </div>
+            </div>
+            <RepActions onPreview={() => downloadReport('preview')} onPdf={() => downloadReport('pdf')} />
+          </div>
+        </div>
+      </div>
+
+      <div className="fee-section">
+        <div className="fee-table-head fee-rep-clsrow-grid">
+          <div className="fee-th">S. No.</div>
+          <div className="fee-th">Class</div>
+          <div className="fee-th fee-center">Section</div>
+          <div className="fee-th fee-right">Total Discount</div>
+          <div className="fee-th fee-center">Details</div>
+        </div>
+        {classes.map((c, i) => {
+          const clsRows = rows.filter(r => r.c.key === c.key);
+          const sub = clsRows.reduce((a, r) => a + r.disc, 0);
+          const isOpen = openKey === c.key;
+          return (
+            <div key={c.key} className="fee-rowwrap">
+              <div className={`fee-row fee-rep-clsrow-grid${isOpen ? ' open' : ''}`} onClick={() => setOpenKey(isOpen ? null : c.key)}>
+                <div className="fee-td"><span className="fee-row-icon">{i + 1}</span></div>
+                <div className="fee-td fee-name">{c.cls}</div>
+                <div className="fee-td fee-center"><span className="fee-tag">{c.sec}</span></div>
+                <div className="fee-td fee-right">{sub > 0 ? <span className="fee-paid-amt">{money(sub)}</span> : <span style={{ color: 'var(--text-muted)' }}>—</span>}</div>
+                <div className="fee-td fee-center">
+                  <span className={`fee-chevbtn${isOpen ? ' open' : ''}`}><i className="fa-solid fa-chevron-down fee-chev"></i></span>
+                </div>
+              </div>
+              <div className={`fee-detail${isOpen ? ' open' : ''}`}>
+                <div className="fee-detail-inner">
+                  {clsRows.length === 0 ? (
+                    <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 18, fontSize: 12.5 }}>No discounts given in this section.</div>
+                  ) : (
+                    <>
+                      <div className="fee-detail-title"><i className="fa-solid fa-tags"></i> Discount Given — {c.cls} ({c.sec})</div>
+                      {clsRows.map(r => (
+                        <div key={r.s.reg} style={{ marginBottom: 16 }}>
+                          <div style={{ fontWeight: 700, fontSize: 12.5, margin: '10px 0 6px' }}>
+                            {r.s.name} <span style={{ color: 'var(--text-muted)', fontWeight: 500 }}>· Reg {r.s.reg} · {c.cls} ({c.sec})</span>
+                          </div>
+                          <div className="fee-stbl-wrap">
+                            <table className="fee-stbl">
+                              <thead>
+                                <tr><th>Fee Head</th><th className="fee-right">Standard Amount</th><th className="fee-right">Discount</th><th className="fee-right">Net Payable</th></tr>
+                              </thead>
+                              <tbody>
+                                {r.heads.filter(h => h.std > 0 || h.disc > 0).map(h => (
+                                  <tr key={h.name}>
+                                    <td>{h.name}</td>
+                                    <td className="fee-right">{money(h.std)}</td>
+                                    <td className="fee-right">{h.disc > 0 ? <span className="fee-neg">{money(h.disc)}</span> : '—'}</td>
+                                    <td className="fee-right fee-paid-amt">{money(h.net)}</td>
+                                  </tr>
+                                ))}
+                                <tr style={{ fontWeight: 700, borderTop: '2px solid var(--border)' }}>
+                                  <td>Totals</td>
+                                  <td className="fee-right">{money(r.std)}</td>
+                                  <td className="fee-right">{money(r.disc)}</td>
+                                  <td className="fee-right fee-paid-amt">{money(r.net)}</td>
+                                </tr>
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      ))}
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </>
+  );
+}
+
+/* ════════════ ADVANCE FEE PAYMENT REPORT ════════════
+   Live snapshot from the transport/roster advance balance. */
+function ReportPanelAdvanceFee({ toast }) {
+  const { classes, studentsMap, headsMap } = useReportData();
+  const repStyle = useContext(FeeReportStyleContext);
+  const school = useContext(FeeReportBranchContext);
+  const [openKey, setOpenKey] = useState(null);
+
+  const rows = useMemo(() => {
+    const out = [];
+    classes.forEach(c => {
+      const monthlyFee = (headsMap[c.key] || []).reduce((a, h) => a + (+h.amt || 0), 0);
+      (studentsMap[c.key] || []).forEach(s => {
+        const advance = +s.advance || 0;
+        if (advance <= 0) return;
+        const monthsCovered = monthlyFee > 0 ? Math.floor(advance / monthlyFee) : 0;
+        const remaining = Math.max(0, advance - monthlyFee);
+        out.push({ c, s, monthlyFee, advance, monthsCovered, remaining });
+      });
+    });
+    return out;
+  }, [classes, studentsMap, headsMap]);
+
+  const totalStudents = useMemo(() => classes.reduce((a, c) => a + (studentsMap[c.key] || []).length, 0), [classes, studentsMap]);
+  const advCount = rows.length;
+  const totalAdvance = rows.reduce((a, r) => a + r.advance, 0);
+  const totalMonths = rows.reduce((a, r) => a + r.monthsCovered, 0);
+
+  const downloadReport = (mode) => {
+    const html = buildRepAdvanceHTML({ classes, rows, totalStudents, advCount, totalAdvance, totalMonths, isBW: repStyle === 'bw', school });
+    openPrintReport(html, 'Advance Fee Payment Report', toast, mode);
+  };
+
+  return (
+    <>
+      <div className="fee-info">
+        <i className="fa-solid fa-circle-info"></i>
+        <span>Students who carry a positive advance balance on their roster record — how many months that advance can cover, and the balance left after one month's fee is drawn from it.</span>
+      </div>
+
+      {repKpiStrip([
+        ['k-blue', 'fa-users', 'Total Students', `${totalStudents}`, ''],
+        ['k-green', 'fa-piggy-bank', 'Students with Advance', `${advCount}`, ''],
+        ['k-amber', 'fa-sack-dollar', 'Total Advance Amount', fmtRs(totalAdvance), ''],
+        ['k-red', 'fa-calendar-check', 'Total Months Covered', `${totalMonths}`, ''],
+      ])}
+
+      <div className="fee-section fee-section--overflow">
+        <div className="fee-section-body">
+          <div className="fee-filters">
+            <RepActions onPreview={() => downloadReport('preview')} onPdf={() => downloadReport('pdf')} />
+          </div>
+        </div>
+      </div>
+
+      <div className="fee-section">
+        <div className="fee-table-head fee-rep-clsrow-grid">
+          <div className="fee-th">S. No.</div>
+          <div className="fee-th">Class</div>
+          <div className="fee-th fee-center">Section</div>
+          <div className="fee-th fee-right">Advance Students</div>
+          <div className="fee-th fee-center">Details</div>
+        </div>
+        {classes.map((c, i) => {
+          const clsRows = rows.filter(r => r.c.key === c.key);
+          const isOpen = openKey === c.key;
+          return (
+            <div key={c.key} className="fee-rowwrap">
+              <div className={`fee-row fee-rep-clsrow-grid${isOpen ? ' open' : ''}`} onClick={() => setOpenKey(isOpen ? null : c.key)}>
+                <div className="fee-td"><span className="fee-row-icon">{i + 1}</span></div>
+                <div className="fee-td fee-name">{c.cls}</div>
+                <div className="fee-td fee-center"><span className="fee-tag">{c.sec}</span></div>
+                <div className="fee-td fee-right">{clsRows.length > 0 ? <span className="fee-paid-amt">{clsRows.length}</span> : <span style={{ color: 'var(--text-muted)' }}>—</span>}</div>
+                <div className="fee-td fee-center">
+                  <span className={`fee-chevbtn${isOpen ? ' open' : ''}`}><i className="fa-solid fa-chevron-down fee-chev"></i></span>
+                </div>
+              </div>
+              <div className={`fee-detail${isOpen ? ' open' : ''}`}>
+                <div className="fee-detail-inner">
+                  {clsRows.length === 0 ? (
+                    <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 18, fontSize: 12.5 }}>No advance payments in this section.</div>
+                  ) : (
+                    <>
+                      <div className="fee-detail-title"><i className="fa-solid fa-piggy-bank"></i> Advance Fee Payments — {c.cls} ({c.sec})</div>
+                      <div className="fee-stbl-wrap">
+                        <table className="fee-stbl">
+                          <thead>
+                            <tr>
+                              <th>Sn.</th><th>Reg No</th><th>Student Name</th>
+                              <th className="fee-right">Monthly Fee</th><th className="fee-right">Advance Paid</th>
+                              <th className="fee-center">Months Covered</th><th className="fee-right">Remaining Advance</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {clsRows.map((r, j) => (
+                              <tr key={r.s.reg}>
+                                <td className="fee-num">{j + 1}</td>
+                                <td>{r.s.reg}</td>
+                                <td><b>{r.s.name}</b></td>
+                                <td className="fee-right">{money(r.monthlyFee)}</td>
+                                <td className="fee-right fee-paid-amt">{money(r.advance)}</td>
+                                <td className="fee-center">{r.monthsCovered}</td>
+                                <td className="fee-right">{money(r.remaining)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </>
+  );
+}
+
+/* ════════════ ADVANCE FEE ADJUSTMENT REPORT ════════════
+   Needs a per-student advance ledger (opening / received / adjusted).
+   The ERP does not yet expose an advance-ledger history endpoint, so
+   this renders its full UI with an explicit empty state rather than
+   fabricated movement. */
+function ReportPanelAdvanceAdjustment({ toast }) {
+  const repStyle = useContext(FeeReportStyleContext);
+  const school = useContext(FeeReportBranchContext);
+  const { classes } = useReportData();
+  const [from, setFrom] = useState(localTodayISO().slice(0, 8) + '01');
+  const [to, setTo] = useState(localTodayISO());
+  const [clsFilter, setClsFilter] = useState('all');
+  const [secFilter, setSecFilter] = useState('all');
+
+  const uniqueClasses = useMemo(() => Array.from(new Set(classes.map(c => c.cls))), [classes]);
+  const uniqueSections = useMemo(() => Array.from(new Set(classes.map(c => c.sec))), [classes]);
+
+  const rows = [];
+  const summary = { totalReceived: 0, totalAdjusted: 0, totalRemaining: 0, totalStudents: 0 };
+
+  const downloadReport = (mode) => {
+    const html = buildRepAdvanceAdjustmentHTML({ rows, summary, from, to, isBW: repStyle === 'bw', school });
+    openPrintReport(html, `Advance Fee Adjustment — ${from} to ${to}`, toast, mode);
+  };
+
+  return (
+    <>
+      <div className="fee-info">
+        <i className="fa-solid fa-circle-info"></i>
+        <span>Opening balance, advance received, amount adjusted against challans and closing balance per student, for the selected period.</span>
+      </div>
+
+      <div className="fee-info" style={{ color: '#B45309' }}>
+        <i className="fa-solid fa-triangle-exclamation"></i>
+        <span>The ERP does not yet expose an advance-ledger history API, so this report currently shows no movement. It will populate automatically once advance transactions are available.</span>
+      </div>
+
+      {repKpiStrip([
+        ['k-blue', 'fa-piggy-bank', 'Advance Received', fmtRs(summary.totalReceived), ''],
+        ['k-amber', 'fa-right-left', 'Adjusted', fmtRs(summary.totalAdjusted), ''],
+        ['k-green', 'fa-sack-dollar', 'Remaining', fmtRs(summary.totalRemaining), ''],
+        ['k-red', 'fa-users', 'Students', `${summary.totalStudents}`, ''],
+      ])}
+
+      <div className="fee-section fee-section--overflow">
+        <div className="fee-section-body">
+          <div className="fee-filters">
+            <div className="fee-field">
+              <span className="fee-label">From Date</span>
+              <input className="fee-input" type="date" value={from} onChange={e => setFrom(e.target.value)} style={{ minWidth: 160 }} />
+            </div>
+            <div className="fee-field">
+              <span className="fee-label">To Date</span>
+              <input className="fee-input" type="date" value={to} onChange={e => setTo(e.target.value)} style={{ minWidth: 160 }} />
+            </div>
+            <div className="fee-field">
+              <span className="fee-label">Class</span>
+              <div className="fee-select-wrap">
+                <select className="fee-select" value={clsFilter} onChange={e => { setClsFilter(e.target.value); setSecFilter('all'); }}>
+                  <option value="all">All Classes</option>
+                  {uniqueClasses.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+                <i className="fa-solid fa-chevron-down"></i>
+              </div>
+            </div>
+            <div className="fee-field">
+              <span className="fee-label">Section</span>
+              <div className="fee-select-wrap">
+                <select className="fee-select" value={secFilter} onChange={e => setSecFilter(e.target.value)}>
+                  <option value="all">All Sections</option>
+                  {uniqueSections.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+                <i className="fa-solid fa-chevron-down"></i>
+              </div>
+            </div>
+            <RepActions onPreview={() => downloadReport('preview')} onPdf={() => downloadReport('pdf')} />
+          </div>
+        </div>
+      </div>
+
+      <div className="fee-section">
+        <div className="fee-section-body">
+          <div className="fee-empty">No advance activity available for the selected filters.</div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+/* ════════════ PARTIAL ONELINK CHALLAN REPORT ════════════
+   Needs the partial-challan store (feeService.getPartialChallans),
+   which the ERP does not implement. Renders the UI with an explicit
+   empty state. */
+function ReportPanelPartialOneLink({ toast }) {
+  const repStyle = useContext(FeeReportStyleContext);
+  const school = useContext(FeeReportBranchContext);
+  const rows = [];
+  const totals = { original: 0, generated: 0, received: 0, remaining: 0 };
+
+  const downloadReport = (mode) => {
+    const html = buildRepPartialOneLinkHTML({ rows, totals, isBW: repStyle === 'bw', school });
+    openPrintReport(html, 'Partial OneLink Challan Report', toast, mode);
+  };
+
+  return (
+    <>
+      <div className="fee-info">
+        <i className="fa-solid fa-circle-info"></i>
+        <span>One row per student with a <strong>Partial OneLink Challan</strong> — original challan amount, partial challans generated, amount received via OneLink and remaining balance, all kept separate.</span>
+      </div>
+
+      <div className="fee-info" style={{ color: '#B45309' }}>
+        <i className="fa-solid fa-triangle-exclamation"></i>
+        <span>The ERP does not yet expose a partial-challan store, so this report currently shows no rows. It will populate once Partial OneLink Challans are available from the API.</span>
+      </div>
+
+      {repKpiStrip([
+        ['k-blue', 'fa-file-invoice', 'Students Involved', `${rows.length}`, ''],
+        ['k-amber', 'fa-hand-holding-dollar', 'Partial Challans Generated', fmtRs(totals.generated), ''],
+        ['k-green', 'fa-building-columns', 'Received via OneLink', fmtRs(totals.received), ''],
+        ['k-blue', 'fa-hourglass-half', 'Remaining Balance', fmtRs(totals.remaining), ''],
+      ])}
+
+      <div className="fee-section fee-section--overflow">
+        <div className="fee-section-body">
+          <div className="fee-filters">
+            <RepActions onPreview={() => downloadReport('preview')} onPdf={() => downloadReport('pdf')} />
+          </div>
+        </div>
+      </div>
+
+      <div className="fee-section">
+        <div className="fee-section-body">
+          <div className="fee-empty">No Partial OneLink Challans available.</div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+/* ════════════ RECEIVED AMOUNT FROM PRE-ENROLLED STUDENTS ════════════
+   Reads the same preEnrollmentService.getPreEnrollStudents() the
+   Pre-Enrollment tab uses. Pre-enroll challan/payment recording is not
+   yet API-wired (payments arrive empty), so the report renders empty
+   until that ledger is available — never merged with regular fee data. */
+function ReportPanelPreEnrolled({ toast }) {
+  const repStyle = useContext(FeeReportStyleContext);
+  const school = useContext(FeeReportBranchContext);
+  const { data: preEnrollStudents = [], loading, error } = useAsync(preEnrollmentService.getPreEnrollStudents, []);
+  const today = localTodayISO();
+  const [from, setFrom] = useState(localDateISO(new Date(Date.now() - 30 * 86400000)));
+  const [to, setTo] = useState(today);
+
+  const rows = useMemo(() => {
+    const all = (preEnrollStudents || []).flatMap(s => (s.payments || []).map(p => ({
+      ...p,
+      preId: s.preId,
+      studentName: `${s.first || ''} ${s.last || ''}`.trim(),
+      cls: s.cls, sec: s.sec,
+    })));
+    return all
+      .filter(p => p.date >= from && p.date <= to)
+      .sort((a, b) => (a.date < b.date ? 1 : -1));
+  }, [preEnrollStudents, from, to]);
+
+  const total = rows.reduce((a, p) => a + (+p.amount || 0), 0);
+  const studentsCount = new Set(rows.map(r => r.preId)).size;
+  const periodLabel = `${from} – ${to}`;
+
+  const downloadReport = (mode) => {
+    const html = buildRepPreEnrolledHTML({ rows, total, studentsCount, from, to, isBW: repStyle === 'bw', school });
+    openPrintReport(html, `Received Amount from Pre-Enrolled Students — ${periodLabel}`, toast, mode);
+  };
+
+  return (
+    <>
+      <div className="fee-info">
+        <i className="fa-solid fa-circle-info"></i>
+        <span>Fee amounts received against <strong>Pre-Enrollment admission challans</strong> (Students → Pre-Enrollment), for the selected date range. This never includes regular Active Students fee received.</span>
+      </div>
+
+      <RepLoadState loading={loading} error={error} />
+
+      {repKpiStrip([
+        ['k-blue', 'fa-user-graduate', 'Students Paid', `${studentsCount}`, ''],
+        ['k-amber', 'fa-receipt', 'Collections', `${rows.length}`, ''],
+        ['k-green', 'fa-sack-dollar', 'Total Received', fmtRs(total), ''],
+        ['k-blue', 'fa-calendar', 'Period', periodLabel, ''],
+      ])}
+
+      <div className="fee-section fee-section--overflow">
+        <div className="fee-section-body">
+          <div className="fee-filters">
+            <div className="fee-field">
+              <span className="fee-label">Date From</span>
+              <input className="fee-input" type="date" value={from} max={to} onChange={e => setFrom(e.target.value)} style={{ minWidth: 160 }} />
+            </div>
+            <div className="fee-field">
+              <span className="fee-label">Date Till</span>
+              <input className="fee-input" type="date" value={to} min={from} max={today} onChange={e => setTo(e.target.value)} style={{ minWidth: 160 }} />
+            </div>
+            <RepActions onPreview={() => downloadReport('preview')} onPdf={() => downloadReport('pdf')} />
+          </div>
+        </div>
+      </div>
+
+      <div className="fee-section">
+        <div className="fee-table-head" style={{ gridTemplateColumns: '60px 1.4fr 1fr 1fr 1fr 100px' }}>
+          <div className="fee-th">Sn.</div>
+          <div className="fee-th">Student</div>
+          <div className="fee-th">Pre-Enrollment ID</div>
+          <div className="fee-th">Class</div>
+          <div className="fee-th">Method</div>
+          <div className="fee-th fee-right">Amount</div>
+        </div>
+        {rows.length === 0 ? (
+          <div className="fee-empty">No pre-enrollment collections in this period.</div>
+        ) : rows.map((p, i) => (
+          <div key={`${p.preId}-${p.id || i}`} style={{ display: 'grid', gridTemplateColumns: '60px 1.4fr 1fr 1fr 1fr 100px', alignItems: 'center', padding: '10px 12px', borderTop: '1px solid var(--border-light)' }}>
+            <div>{i + 1}</div>
+            <div><b>{p.studentName}</b><br /><small style={{ color: 'var(--text-muted)' }}>{p.date}</small></div>
+            <div>{p.preId}</div>
+            <div>{p.cls}{p.sec ? ` (${p.sec})` : ''}</div>
+            <div>{p.method}</div>
+            <div className="fee-right" style={{ fontWeight: 700, color: '#16A34A' }}>{money(p.amount)}</div>
+          </div>
+        ))}
+        {rows.length > 0 && (
+          <div style={{ display: 'grid', gridTemplateColumns: '60px 1.4fr 1fr 1fr 1fr 100px', padding: '10px 12px', borderTop: '2px solid var(--border-light)', fontWeight: 800 }}>
+            <div style={{ gridColumn: '1 / 5' }}>Total</div>
+            <div />
+            <div className="fee-right">{money(total)}</div>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+/* ═══════════ A4 builders for the ported reports ═══════════ */
+function buildRepPendingDuesHTML({ groups, summary, asOfDate, headMode, selectedHeads, isBW = false, school = null }) {
+  const trs = (groups || []).flatMap((g, gi) => {
+    const rows = g.entries.map((e, ei) => `<tr>
+        ${ei === 0 ? `<td rowspan="${g.entries.length}">${gi + 1}</td>
+        <td rowspan="${g.entries.length}"><b>${escHtml(g.name)}</b><br><small>s/o ${escHtml(g.father || '—')}</small></td>
+        <td rowspan="${g.entries.length}">${escHtml(g.reg)}</td>
+        <td rowspan="${g.entries.length}">${escHtml(g.cls)}</td>
+        <td rowspan="${g.entries.length}">${escHtml(g.sec)}</td>` : ''}
+        <td>${escHtml(e.head)}</td>
+        <td class="r neg">${e.amount.toLocaleString('en-PK')}</td>
+        <td>${escHtml(asOfDate)}</td>
+      </tr>`);
+    if (g.entries.length > 1) {
+      rows.push(`<tr class="rep-tot"><td colspan="6">Total — ${escHtml(g.name)}</td><td class="r">${g.total.toLocaleString('en-PK')}</td><td></td></tr>`);
+    }
+    return rows;
+  }).join('');
+
+  return repWrap('Pending Dues Report',
+    `<span><b>Heads:</b> ${escHtml(headsLabelFor(headMode, selectedHeads))}</span><span><b>As of:</b> ${escHtml(asOfDate)}</span><span><b>Students:</b> ${summary.totalStudents}</span><span><b>Pending Entries:</b> ${summary.totalEntries}</span>`,
+    `<div class="kpi-row">
+      <div class="kpi"><div class="l">Total Pending</div><div class="v">Rs. ${summary.totalAmount.toLocaleString('en-PK')}</div></div>
+      <div class="kpi"><div class="l">Students</div><div class="v">${summary.totalStudents}</div></div>
+      <div class="kpi"><div class="l">Pending Entries</div><div class="v">${summary.totalEntries}</div></div>
+      <div class="kpi"><div class="l">Selected Heads</div><div class="v" style="font-size:13px">${escHtml(headsLabelFor(headMode, selectedHeads))}</div></div>
+    </div>
+    <table class="rep-tbl"><thead><tr><th>Sr#</th><th>Student Name</th><th>Admission No</th><th>Class</th><th>Section</th><th>Fee Head</th><th class="r">Pending Amount</th><th>As of Date</th></tr></thead>
+      <tbody>${trs || `<tr><td colspan="8" style="text-align:center;color:#94A3B8">No pending dues for the selected month / fee head(s).</td></tr>`}</tbody>
+      ${groups.length ? `<tfoot><tr class="rep-grandtot"><td colspan="6" style="text-align:right">GRAND TOTAL</td><td class="r">${summary.totalAmount.toLocaleString('en-PK')}</td><td></td></tr></tfoot>` : ''}
+    </table>`, isBW, school);
+}
+
+function buildRepOneLinkHTML({ classes, txByClass, seg, date, month, year, from, to, totalTx, totalAmt, modeBreak, isBW = false, school = null }) {
+  const blocks = classes.map(c => {
+    const list = txByClass[c.key] || [];
+    if (!list.length) return '';
+    const sub = list.reduce((a, x) => a + (+x.p.amount || 0), 0);
+    return `<div class="rep-secttl">${escHtml(c.cls)} — Section ${escHtml(c.sec)} · ${list.length} transaction(s) · Rs. ${sub.toLocaleString('en-PK')}</div>
+      <table class="rep-tbl">
+        <thead><tr><th>Sn.</th><th>PSID / Ref No</th><th>Student</th><th>Reg No</th><th>Date</th><th class="c">Method</th><th class="r">Amount</th></tr></thead>
+        <tbody>${list.map((x, j) => `<tr>
+          <td>${j + 1}</td>
+          <td><small>${escHtml(x.p.txn || '—')}</small></td>
+          <td><b>${escHtml(x.s.name)}</b></td>
+          <td>${escHtml(x.s.reg)}</td>
+          <td>${escHtml(x.p.date || '—')}</td>
+          <td class="c">${methodChipHTML(x.p.method, x.p.source)}</td>
+          <td class="r pos">${(+x.p.amount || 0).toLocaleString('en-PK')}</td>
+        </tr>`).join('')}</tbody>
+        <tfoot><tr class="rep-tot"><td colspan="6">${escHtml(c.cls)}/${escHtml(c.sec)} Subtotal</td><td class="r">${sub.toLocaleString('en-PK')}</td></tr></tfoot>
+      </table>`;
+  }).filter(Boolean).join('');
+
+  const periodLabel = seg === 'daily' ? date : seg === 'range' ? `${from} – ${to}` : `${month} ${year}`;
+  const modeKpis = modeBreak.map(m => `<div class="kpi"><div class="l">${escHtml(m.name)}</div><div class="v">Rs. ${m.amt.toLocaleString('en-PK')}</div></div>`).join('');
+
+  return repWrap(`OneLink Payment Report — ${periodLabel}`,
+    `<span><b>Period:</b> ${escHtml(periodLabel)}</span><span><b>Transactions:</b> ${totalTx}</span><span><b>Total Received:</b> Rs. ${totalAmt.toLocaleString('en-PK')}</span>`,
+    `<div class="kpi-row">
+      <div class="kpi"><div class="l">Total Transactions</div><div class="v">${totalTx}</div></div>
+      <div class="kpi"><div class="l">Total Received</div><div class="v">Rs. ${totalAmt.toLocaleString('en-PK')}</div></div>
+      <div class="kpi"><div class="l">Classes Involved</div><div class="v">${Object.keys(txByClass).length}</div></div>
+      <div class="kpi"><div class="l">Period</div><div class="v">${escHtml(periodLabel)}</div></div>
+    </div>
+    ${modeBreak.length ? `<div class="rep-secttl">Payment Collection Summary</div><div class="kpi-row">${modeKpis}</div>` : ''}
+    ${blocks || '<div style="text-align:center;color:#94A3B8;padding:20px">No OneLink payments in this period.</div>'}`,
+    isBW, school);
+}
+
+function buildRepFreeStudentsHTML({ classes, freeRows, total, freeCount, freePct, isBW = false, school = null }) {
+  const blocks = classes.map(c => {
+    const free = freeRows.filter(r => r.c.key === c.key);
+    if (!free.length) return '';
+    return `<div class="rep-secttl">${escHtml(c.cls)} — Section ${escHtml(c.sec)} · ${free.length} free student(s)</div>
+      <table class="rep-tbl">
+        <thead><tr><th>Sn.</th><th>Reg No</th><th>Student</th><th>Father</th><th class="c">Fee Status</th><th>Remarks</th></tr></thead>
+        <tbody>${free.map((r, j) => `<tr><td>${j + 1}</td><td>${escHtml(r.s.reg)}</td><td><b>${escHtml(r.s.name)}</b></td><td>${escHtml(r.s.father || '—')}</td><td class="c pos">Free Student</td><td>100% Fee Waiver</td></tr>`).join('')}</tbody>
+      </table>`;
+  }).filter(Boolean).join('');
+
+  return repWrap('Free Students Report',
+    `<span><b>Total Students:</b> ${total}</span><span><b>Free Students:</b> ${freeCount}</span><span><b>Free %:</b> ${freePct.toFixed(1)}%</span>`,
+    `<div class="kpi-row">
+      <div class="kpi"><div class="l">Total Students</div><div class="v">${total}</div></div>
+      <div class="kpi"><div class="l">Free Students</div><div class="v">${freeCount}</div></div>
+      <div class="kpi"><div class="l">Free %</div><div class="v">${freePct.toFixed(1)}%</div></div>
+      <div class="kpi"><div class="l">Normal Students</div><div class="v">${total - freeCount}</div></div>
+    </div>
+    ${blocks || '<div style="text-align:center;color:#94A3B8;padding:20px">No free students on record.</div>'}`,
+    isBW, school);
+}
+
+function buildRepDiscountHTML({ classes, rows, totalStudents, discCount, discPct, totalDiscount, isBW = false, school = null }) {
+  const blocks = classes.map(c => {
+    const clsRows = rows.filter(r => r.c.key === c.key);
+    if (!clsRows.length) return '';
+    const studentBlocks = clsRows.map(r => `
+      <div style="margin:10px 0 4px;font-weight:700;font-size:11px">${escHtml(r.s.name)} <span style="color:#777;font-weight:500">· Reg ${escHtml(r.s.reg)}</span></div>
+      <table class="rep-tbl">
+        <thead><tr><th>Fee Head</th><th class="r">Standard</th><th class="r">Discount</th><th class="r">Net Payable</th></tr></thead>
+        <tbody>${r.heads.filter(h => h.std > 0 || h.disc > 0).map(h => `<tr><td>${escHtml(h.name)}</td><td class="r">${h.std.toLocaleString('en-PK')}</td><td class="r">${h.disc > 0 ? h.disc.toLocaleString('en-PK') : '—'}</td><td class="r">${h.net.toLocaleString('en-PK')}</td></tr>`).join('')}</tbody>
+        <tfoot><tr class="rep-tot"><td>Totals</td><td class="r">${r.std.toLocaleString('en-PK')}</td><td class="r">${r.disc.toLocaleString('en-PK')}</td><td class="r">${r.net.toLocaleString('en-PK')}</td></tr></tfoot>
+      </table>`).join('');
+    return `<div class="rep-secttl">${escHtml(c.cls)} — Section ${escHtml(c.sec)} · ${clsRows.length} student(s) with discount</div>${studentBlocks}`;
+  }).filter(Boolean).join('');
+
+  return repWrap('Discount Given Report',
+    `<span><b>Total Students:</b> ${totalStudents}</span><span><b>Receiving Discount:</b> ${discCount}</span><span><b>Total Discount:</b> Rs. ${totalDiscount.toLocaleString('en-PK')}</span>`,
+    `<div class="kpi-row">
+      <div class="kpi"><div class="l">Total Students</div><div class="v">${totalStudents}</div></div>
+      <div class="kpi"><div class="l">Receiving Discount</div><div class="v">${discCount}</div></div>
+      <div class="kpi"><div class="l">Discount %</div><div class="v">${discPct.toFixed(1)}%</div></div>
+      <div class="kpi"><div class="l">Total Discount Given</div><div class="v">Rs. ${totalDiscount.toLocaleString('en-PK')}</div></div>
+    </div>
+    ${blocks || '<div style="text-align:center;color:#94A3B8;padding:20px">No discounts given on record.</div>'}`,
+    isBW, school);
+}
+
+function buildRepAdvanceHTML({ classes, rows, totalStudents, advCount, totalAdvance, totalMonths, isBW = false, school = null }) {
+  const blocks = classes.map(c => {
+    const clsRows = rows.filter(r => r.c.key === c.key);
+    if (!clsRows.length) return '';
+    return `<div class="rep-secttl">${escHtml(c.cls)} — Section ${escHtml(c.sec)} · ${clsRows.length} student(s) with advance</div>
+      <table class="rep-tbl">
+        <thead><tr><th>Sn.</th><th>Reg No</th><th>Student</th><th class="r">Monthly Fee</th><th class="r">Advance Paid</th><th class="c">Months Covered</th><th class="r">Remaining Advance</th></tr></thead>
+        <tbody>${clsRows.map((r, j) => `<tr><td>${j + 1}</td><td>${escHtml(r.s.reg)}</td><td><b>${escHtml(r.s.name)}</b></td><td class="r">${r.monthlyFee.toLocaleString('en-PK')}</td><td class="r">${r.advance.toLocaleString('en-PK')}</td><td class="c">${r.monthsCovered}</td><td class="r">${r.remaining.toLocaleString('en-PK')}</td></tr>`).join('')}</tbody>
+      </table>`;
+  }).filter(Boolean).join('');
+
+  return repWrap('Advance Fee Payment Report',
+    `<span><b>Total Students:</b> ${totalStudents}</span><span><b>With Advance:</b> ${advCount}</span><span><b>Total Advance:</b> Rs. ${totalAdvance.toLocaleString('en-PK')}</span>`,
+    `<div class="kpi-row">
+      <div class="kpi"><div class="l">Total Students</div><div class="v">${totalStudents}</div></div>
+      <div class="kpi"><div class="l">With Advance Payments</div><div class="v">${advCount}</div></div>
+      <div class="kpi"><div class="l">Total Advance Amount</div><div class="v">Rs. ${totalAdvance.toLocaleString('en-PK')}</div></div>
+      <div class="kpi"><div class="l">Total Months Covered</div><div class="v">${totalMonths}</div></div>
+    </div>
+    ${blocks || '<div style="text-align:center;color:#94A3B8;padding:20px">No advance payments on record.</div>'}`,
+    isBW, school);
+}
+
+function buildRepAdvanceAdjustmentHTML({ rows, summary, from, to, isBW = false, school = null }) {
+  const trs = (rows || []).map((r, i) => `<tr>
+      <td>${i + 1}</td>
+      <td><b>${escHtml(r.name)}</b><br><small>s/o ${escHtml(r.father || '—')}</small></td>
+      <td>${escHtml(r.reg)}</td>
+      <td>${escHtml(r.cls)}</td>
+      <td>${escHtml(r.sec)}</td>
+      <td class="r">${r.opening.toLocaleString('en-PK')}</td>
+      <td class="r pos">${r.received.toLocaleString('en-PK')}</td>
+      <td class="r">${r.adjustedAmount > 0 ? r.adjustedAmount.toLocaleString('en-PK') : '—'}</td>
+      <td>${escHtml(r.adjustedAgainst || '—')}</td>
+      <td class="r">${r.closing.toLocaleString('en-PK')}</td>
+      <td>${escHtml(r.lastAdjustmentDate || '—')}</td>
+    </tr>`).join('');
+
+  return repWrap('Advance Fee Adjustment Report',
+    `<span><b>Range:</b> ${escHtml(from)} → ${escHtml(to)}</span><span><b>Students:</b> ${summary.totalStudents}</span>`,
+    `<div class="kpi-row">
+      <div class="kpi"><div class="l">Advance Received</div><div class="v">Rs. ${summary.totalReceived.toLocaleString('en-PK')}</div></div>
+      <div class="kpi"><div class="l">Adjusted</div><div class="v">Rs. ${summary.totalAdjusted.toLocaleString('en-PK')}</div></div>
+      <div class="kpi"><div class="l">Remaining</div><div class="v">Rs. ${summary.totalRemaining.toLocaleString('en-PK')}</div></div>
+      <div class="kpi"><div class="l">Students</div><div class="v">${summary.totalStudents}</div></div>
+    </div>
+    <table class="rep-tbl"><thead><tr><th>Sr#</th><th>Student Name</th><th>Admission No</th><th>Class</th><th>Section</th><th class="r">Opening Advance</th><th class="r">Advance Received</th><th class="r">Adjustment Amount</th><th>Adjusted Against</th><th class="r">Remaining Advance</th><th>Last Adjustment Date</th></tr></thead>
+      <tbody>${trs || `<tr><td colspan="11" style="text-align:center;color:#94A3B8">No advance activity available (advance-ledger history not exposed by the ERP API yet).</td></tr>`}</tbody>
+    </table>`, isBW, school);
+}
+
+function buildRepPartialOneLinkHTML({ rows, totals, isBW = false, school = null }) {
+  const trs = (rows || []).map((r, i) => `<tr>
+      <td>${i + 1}</td>
+      <td><b>${escHtml(r.s.name)}</b></td>
+      <td>${escHtml(r.reg)}</td>
+      <td>${escHtml(r.c.cls)}</td>
+      <td>${escHtml(r.c.sec)}</td>
+      <td class="r">${r.originalAmount.toLocaleString('en-PK')}</td>
+      <td class="r">${r.generatedTotal.toLocaleString('en-PK')}</td>
+      <td class="r pos">${r.receivedViaOnelink.toLocaleString('en-PK')}</td>
+      <td class="r">${r.remaining.toLocaleString('en-PK')}</td>
+    </tr>`).join('');
+
+  return repWrap('Partial OneLink Challan Report',
+    `<span><b>Students Involved:</b> ${rows.length}</span><span><b>Total Partial Challans Generated:</b> Rs. ${totals.generated.toLocaleString('en-PK')}</span>`,
+    `<div class="kpi-row">
+      <div class="kpi"><div class="l">Original Challan Amount</div><div class="v">Rs. ${totals.original.toLocaleString('en-PK')}</div></div>
+      <div class="kpi"><div class="l">Partial Challans Generated</div><div class="v">Rs. ${totals.generated.toLocaleString('en-PK')}</div></div>
+      <div class="kpi"><div class="l">Received via OneLink</div><div class="v">Rs. ${totals.received.toLocaleString('en-PK')}</div></div>
+      <div class="kpi"><div class="l">Remaining Balance</div><div class="v">Rs. ${totals.remaining.toLocaleString('en-PK')}</div></div>
+    </div>
+    <table class="rep-tbl"><thead><tr><th>Sr#</th><th>Student Name</th><th>Reg No</th><th>Class</th><th>Section</th><th class="r">Original Challan Amount</th><th class="r">Partial Challans Generated</th><th class="r">Received via OneLink</th><th class="r">Remaining Balance</th></tr></thead>
+      <tbody>${trs || `<tr><td colspan="9" style="text-align:center;color:#94A3B8">No Partial OneLink Challans available (partial-challan store not exposed by the ERP API yet).</td></tr>`}</tbody>
+    </table>`, isBW, school);
+}
+
+function buildRepPreEnrolledHTML({ rows, total, studentsCount, from, to, isBW = false, school = null }) {
+  const trs = (rows || []).map((p, i) => `<tr>
+      <td>${i + 1}</td>
+      <td>${escHtml(p.date)}</td>
+      <td><b>${escHtml(p.studentName)}</b></td>
+      <td>${escHtml(p.preId)}</td>
+      <td>${escHtml(p.cls)}${p.sec ? ` (${escHtml(p.sec)})` : ''}</td>
+      <td>${escHtml(p.method)}</td>
+      <td class="r pos">${(+p.amount || 0).toLocaleString('en-PK')}</td>
+    </tr>`).join('');
+
+  return repWrap('Received Amount from Pre-Enrolled Students',
+    `<span><b>Period:</b> ${escHtml(from)} → ${escHtml(to)}</span><span><b>Students Paid:</b> ${studentsCount}</span><span><b>Collections:</b> ${rows.length}</span>`,
+    `<div class="kpi-row">
+      <div class="kpi"><div class="l">Students Paid</div><div class="v">${studentsCount}</div></div>
+      <div class="kpi"><div class="l">Collections</div><div class="v">${rows.length}</div></div>
+      <div class="kpi"><div class="l">Total Received</div><div class="v">Rs. ${total.toLocaleString('en-PK')}</div></div>
+    </div>
+    <table class="rep-tbl"><thead><tr><th>Sr#</th><th>Date</th><th>Student Name</th><th>Pre-Enrollment ID</th><th>Class</th><th>Method</th><th class="r">Amount</th></tr></thead>
+      <tbody>${trs || `<tr><td colspan="7" style="text-align:center;color:#94A3B8">No pre-enrollment collections in this period.</td></tr>`}</tbody>
+      ${rows.length ? `<tfoot><tr class="rep-grandtot"><td colspan="6" style="text-align:right">GRAND TOTAL</td><td class="r">${total.toLocaleString('en-PK')}</td></tr></tfoot>` : ''}
+    </table>`, isBW, school);
 }
 
 /* ─── Print window helper ─── */
@@ -13643,20 +15709,22 @@ function FeeChallanSettings({ toast }) {
       <div className="fee-info">
         <i className="fa-solid fa-circle-info"></i>
         <span>
-          These settings will affect <strong>newly generated challans</strong> — how discounts, fines
-          &amp; payment codes appear on each challan and its preview. Already generated challans are
-          not changed.
+          Feature controls below take effect <strong>immediately, module-wide</strong> once saved.
+          Challan appearance settings affect <strong>newly generated challans</strong> only — how
+          discounts, fines &amp; payment codes appear. Already generated challans are not changed.
         </span>
       </div>
 
+      {/* ─── SECTION 1 — Fee Module Feature Controls ───
+          Core Fee Receiving / Fee Challans capabilities, module-wide. */}
       <div className="fee-section">
         <div className="fee-section-header">
           <div className="fee-section-title">
-            <div className="fee-section-icon"><i className="fa-solid fa-sliders"></i></div>
+            <div className="fee-section-icon"><i className="fa-solid fa-toggle-on"></i></div>
             <div>
-              <div className="fee-section-name">Fee Challan Settings</div>
+              <div className="fee-section-name">Fee Module Feature Controls</div>
               <div className="fee-section-sub">
-                Control how discounts, fines &amp; codes appear on generated challans
+                Turn core Fee Receiving / Fee Challans capabilities on or off, module-wide
               </div>
             </div>
           </div>
@@ -13671,6 +15739,81 @@ function FeeChallanSettings({ toast }) {
               {saving ? ' Saving…' : ' Save Settings'}
             </button>
           </Tooltip>
+        </div>
+
+        <div className="fee-section-body">
+          <div className="fee-set-grid">
+
+            {/* Multiple Receiving — default ON (ERP currently allows it). */}
+            <SettingCard
+              name="Multiple Receiving"
+              desc="Allow more than one installment to be received against the same challan."
+              on={value.multipleReceiving !== false}
+              onToggle={() => set({ multipleReceiving: value.multipleReceiving === false })}
+              info="Controls whether a challan can be paid in several separate receiving rounds (installments) over time. ON: parents can pay in parts across multiple visits — Receive More / Pay Now stay available after the first installment. OFF: only ONE installment is ever allowed per challan — Receive More, and any further Pay Now / Advance Adjustment round, are disabled everywhere in Fee Receiving as soon as one payment exists."
+            />
+
+            {/* Advance Payment Receiving — default ON (ERP currently allows overpay→advance). */}
+            <SettingCard
+              name="Advance Payment Receiving"
+              desc="Allow parents' overpayments and existing advance balances to be received or adjusted."
+              on={value.advancePaymentReceiving !== false}
+              onToggle={() => set({ advancePaymentReceiving: value.advancePaymentReceiving === false })}
+              info="Controls the two advance-balance flows in Fee Receiving: (1) receiving MORE than what's owed, which is recorded as a new advance balance, and (2) 'Adjust From Advance Balance', which spends an existing advance balance against the current challan as its own transaction. ON: both are available and Fee Receiving shows Advance / Additional and Adjust From Advance Balance where applicable. OFF: Pay Now is capped at exactly what's owed (no new advance can be created), the Adjust From Advance Balance option is hidden, and an already-fully-paid challan can't receive anything further. The Available Advance Balance figure itself stays visible either way — this only turns off receiving/adjusting it."
+            />
+
+            {/* PSID Installment Payments — default ON (OneLink/PSID partial challan available). */}
+            <SettingCard
+              name="PSID Installment Payments"
+              desc="Allow installments to be created through PSID / OneLink partial-payment challans."
+              on={value.psidInstallments !== false}
+              onToggle={() => set({ psidInstallments: value.psidInstallments === false })}
+              info="Controls the 'Generate Partial Payment Challan' (OneLink / PSID) feature in Fee Challans, which lets a parent pay a portion of their challan via a temporary PSID-bearing challan. ON: the OneLink action button on each student's challan row is available. OFF: that button is disabled everywhere in Fee Challans, with an explanation, and generating a new partial challan is blocked even if attempted directly."
+            />
+
+            {/* NOTE — "Future Month Challan Printing" (sibling) is intentionally NOT
+                ported here. The ERP already gates future/adjacent months through the
+                Previous/Next Month Challan Receiving toggles + challanMonthLock()
+                (see challanMonthLock at top of this file). Adding a separate
+                futureMonthChallan toggle would double-gate the next-month case and
+                fight the working month-lock, so the ERP uses prev/next-month toggles
+                for this instead. */}
+
+            {/* Previous month receiving — part of the month-lock feature set. */}
+            <SettingCard
+              name="Previous Month Challan Receiving"
+              desc="Allow the counter to receive a challan from the month before the current one."
+              on={value.prevMonthChallan}
+              onToggle={() => set({ prevMonthChallan: !value.prevMonthChallan })}
+              info="Controls the ERP's month lock for the PREVIOUS calendar month. ON: challans dated to the month before the current one can be generated / received at the counter. OFF: the previous month is locked and Fee Challans / Fee Receiving block it with an explanation. This is one half of how the ERP gates adjacent-month work (the other is Next Month Challan Receiving)."
+            />
+
+            {/* Next month receiving — part of the month-lock feature set (future month). */}
+            <SettingCard
+              name="Next Month Challan Receiving"
+              desc="Allow the counter to receive a challan from the month after the current one — advance payments."
+              on={value.nextMonthChallan}
+              onToggle={() => set({ nextMonthChallan: !value.nextMonthChallan })}
+              info="Controls the ERP's month lock for the NEXT calendar month (the immediate future month). ON: challans dated to the month after the current one can be generated / received — used for advance payments. OFF: the next month is locked and blocked with an explanation. This is how the ERP handles future-month challans, in place of a separate Future Month toggle."
+            />
+
+          </div>
+        </div>
+      </div>
+
+      {/* ─── SECTION 2 — Challan Appearance ───
+          How discounts, fines & codes appear on newly generated challans. */}
+      <div className="fee-section" style={{ marginTop: 18 }}>
+        <div className="fee-section-header">
+          <div className="fee-section-title">
+            <div className="fee-section-icon"><i className="fa-solid fa-sliders"></i></div>
+            <div>
+              <div className="fee-section-name">Challan Appearance</div>
+              <div className="fee-section-sub">
+                Control how discounts, fines &amp; codes appear on generated challans
+              </div>
+            </div>
+          </div>
         </div>
 
         <div className="fee-section-body">
@@ -13698,22 +15841,6 @@ function FeeChallanSettings({ toast }) {
               desc="Print the school's bank account details on every challan so parents can pay by bank transfer."
               on={value.showBankDetails}
               onToggle={() => set({ showBankDetails: !value.showBankDetails })}
-            />
-
-            {/* Previous month receiving */}
-            <SettingCard
-              name="Previous Month Challan Receiving"
-              desc="Allow the counter to receive a challan from the month before the current one."
-              on={value.prevMonthChallan}
-              onToggle={() => set({ prevMonthChallan: !value.prevMonthChallan })}
-            />
-
-            {/* Next month receiving */}
-            <SettingCard
-              name="Next Month Challan Receiving"
-              desc="Allow the counter to receive a challan from the month after the current one — advance payments."
-              on={value.nextMonthChallan}
-              onToggle={() => set({ nextMonthChallan: !value.nextMonthChallan })}
             />
 
             {/* Fine — with conditional fields */}
@@ -13852,12 +15979,21 @@ function FeeChallanSettings({ toast }) {
   );
 }
 
-/* ─── Reusable toggle card (Show Discount / Show PSD / etc.) ─── */
-function SettingCard({ name, desc, on, onToggle }) {
+/* ─── Reusable toggle card (Show Discount / Show PSD / etc.) ───
+   `info` (optional) ek fa-circle-info tooltip dikhata hai name ke saath — lambi
+   wazahat ke liye (Fee Module Feature Controls in par tafseeli help rakhte hain). */
+function SettingCard({ name, desc, on, onToggle, info }) {
   return (
     <div className="fee-set-card">
       <div className="fee-set-head">
-        <div className="fee-set-name">{name}</div>
+        <div className="fee-set-name">
+          {name}
+          {info && (
+            <Tooltip text={info}>
+              <i className="fa-solid fa-circle-info fee-set-info-ic" tabIndex={0} aria-label={`About: ${name}`}></i>
+            </Tooltip>
+          )}
+        </div>
         <Tooltip text={on ? `Disable: ${name}` : `Enable: ${name}`}>
           <button
             className={`fee-switch${on ? ' on' : ''}`}
@@ -15322,7 +17458,10 @@ const FEE_CSS = `
   gap: 10px;
   margin-bottom: 6px;
 }
-.fee-set-name { font-size: 13.5px; font-weight: 800; color: var(--text-primary); }
+.fee-set-name { font-size: 13.5px; font-weight: 800; color: var(--text-primary); display: flex; align-items: center; gap: 6px; }
+.fee-set-info-ic { font-size: 12px; color: var(--text-muted); cursor: help; transition: var(--tr); }
+.fee-set-info-ic:hover, .fee-set-info-ic:focus-visible { color: #1E3A8A; outline: none; }
+[data-theme="dark"] .fee-set-info-ic:hover, [data-theme="dark"] .fee-set-info-ic:focus-visible { color: #93C5FD; }
 .fee-set-desc { font-size: 11.5px; color: var(--text-muted); line-height: 1.55; }
 
 .fee-switch {
@@ -16239,6 +18378,7 @@ const FEE_CSS = `
 [data-theme="dark"] .fee-rep-style-btn.on { background: var(--bg-card); color: #93C5FD; }
 [data-theme="dark"] .fee-rep-style-btn:focus-visible { box-shadow: 0 0 0 3px rgba(59,130,246,.32); }
 .fee-rep-chip {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 11px;
@@ -16251,6 +18391,31 @@ const FEE_CSS = `
   transition: all .2s ease;
   font-family: var(--font-body);
   width: 100%;
+}
+.fee-rep-chip:has(.fee-rep-chip-info) { padding-right: 36px; }
+.fee-rep-chip-info {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: #1E3A8A;
+  background: rgba(30,58,138,.08);
+  cursor: pointer;
+  transition: background .18s ease, color .18s ease;
+}
+.fee-rep-chip-info:hover,
+.fee-rep-chip-info:focus-visible {
+  background: rgba(30,58,138,.16);
+  outline: none;
+}
+.fee-rep-chip-info:focus-visible {
+  box-shadow: 0 0 0 3px rgba(30,58,138,.22);
 }
 .fee-rep-chip:hover {
   border-color: #1E3A8A;
@@ -17059,6 +19224,14 @@ const FEE_CSS = `
   font-weight: 700;
 }
 [data-theme="dark"] .fee-recv-table.flow .flow-prevtag { background: rgba(217,119,6,.18); color: #FBBF24; }
+
+/* Prior-installment history columns (Installment N Received / Remaining after
+   Inst. N) — narrow, no-wrap headers with a faint tint so they read apart from
+   the current live receiving columns. Purely visual. */
+.fee-recv-table.flow th.flow-inst-col { white-space: nowrap; background: rgba(30,58,138,.04); }
+.fee-recv-table.flow td.flow-inst-col { background: rgba(30,58,138,.02); }
+[data-theme="dark"] .fee-recv-table.flow th.flow-inst-col { background: rgba(59,130,246,.08); }
+[data-theme="dark"] .fee-recv-table.flow td.flow-inst-col { background: rgba(59,130,246,.05); }
 
 /* Editable cells (Give Discount / Pay Now) — subtly highlighted so they
    read as different from the plain calculated columns around them. */
