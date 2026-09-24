@@ -1225,7 +1225,7 @@ function buildStuCertHTML(s, cls, school, type, style, opts) {
 }
 
 const STU_TABS = [
-  // { id: 'preenroll', icon: 'fa-user-clock',  label: 'Pre-Enrollment' },
+  { id: 'preenroll', icon: 'fa-user-clock',  label: 'Pre-Enrollment' },
   { id: 'active',   icon: 'fa-user-check',  label: 'Active Students' },
   { id: 'inactive', icon: 'fa-user-slash',  label: 'Inactive Students' },
   { id: 'family',   icon: 'fa-people-roof', label: 'Family Tree' },
@@ -5725,26 +5725,61 @@ function PreEnrolledStudents({ classes, setClasses, inactive, setInactive, schoo
   const [reportOpen, setReportOpen] = useState(false);
   const [slipCfg, setSlipCfg] = useState(null);         // { kind: 'challan'|'receiving', student, payment? }
 
-  const handleSaveStudent = (payload) => {
-    const newStudent = {
-      ...payload,
-      preId: `PRE-${new Date().getFullYear()}-${String(list.length + 1).padStart(4, '0')}`,
-      name: `${payload.first || ''} ${payload.last || ''}`.trim(),
-      createdAt: new Date().toISOString().slice(0, 10),
-      challan: null, payments: [],
-    };
-    preEnrollmentService.savePreEnrollStudent(newStudent).catch(() => {});
-    setStudents(prev => [...(prev || []), newStudent]);
-    toast(`${newStudent.name} pre-enrolled successfully`, 'success');
+  /* Server se list dobara laao. Challan / payments ki API abhi nahi hai, is liye
+     wo sirf UI state me hain — reload par unhein _id ke hisaab se wapas jod do. */
+  const reloadList = async () => {
+    try {
+      const fresh = await preEnrollmentService.getPreEnrollStudents();
+      setStudents(prev => {
+        const old = new Map((prev || []).map(s => [s._id, s]));
+        return fresh.map(s => {
+          const o = old.get(s._id);
+          return o ? { ...s, challan: o.challan, payments: o.payments } : s;
+        });
+      });
+    } catch (err) {
+      toast(err.message || 'Could not refresh pre-enrolled students', 'error');
+    }
+  };
+
+  /* Server ko class/section NAAM nahi, real ids chahiye — chuni hui class+section
+     se resolve karo. */
+  const resolveRow = (p) => (classes || []).find(c => c.cls === p.cls && c.sec === p.sec);
+
+  const persistStudent = async (payload, existing) => {
+    const row = resolveRow(payload);
+    if (!row?._gradeId || !row?._sectionId) {
+      toast('Please select an existing Class and Section', 'error');
+      return false;
+    }
+    try {
+      await preEnrollmentService.savePreEnrollStudent({
+        ...payload,
+        id:        existing?._id || 0,
+        gradeId:   row._gradeId,
+        sectionId: row._sectionId,
+        dues:      0,
+      });
+      return true;
+    } catch (err) {
+      toast(err.message || 'Could not save student', 'error');
+      return false;
+    }
+  };
+
+  const handleSaveStudent = async (payload) => {
+    if (!(await persistStudent(payload, null))) return;
+    await reloadList();
+    toast(`${`${payload.first || ''} ${payload.last || ''}`.trim()} pre-enrolled successfully`, 'success');
     setAddOpen(false);
   };
 
-  const handleEditStudent = (payload) => {
-    const preId = editCfg.student.preId;
-    const updated = { ...editCfg.student, ...payload, preId, name: `${payload.first || ''} ${payload.last || ''}`.trim() };
-    preEnrollmentService.savePreEnrollStudent(updated).catch(() => {});
-    setStudents(prev => prev.map(s => (s.preId === preId ? updated : s)));
-    toast(`${stuFullName(updated)} updated`, 'success');
+  const handleEditStudent = async (payload) => {
+    const existing = editCfg.student;
+    if (!existing?._id) { toast('Could not resolve this student record — please reload and retry', 'error'); return; }
+    if (!(await persistStudent(payload, existing))) return;
+    await reloadList();
+    toast(`${stuFullName({ ...existing, ...payload })} updated`, 'success');
     setEditCfg(null);
   };
 
@@ -5768,40 +5803,49 @@ function PreEnrolledStudents({ classes, setClasses, inactive, setInactive, schoo
     setSlipCfg({ kind: 'receiving', student: updated, payment });
   };
 
-  const handleConfirm = (cfg) => {
+  const handleConfirm = async (cfg) => {
     const { kind, student } = cfg;
-    if (kind === 'enroll') {
-      const typedReg = (cfg.reg || '').trim();
-      const typedAdm = (cfg.adm || '').trim();
-      const finalReg = typedReg || `${new Date().getFullYear()}-${String(nextReg || 25101).padStart(5, '0')}`;
-      const finalAdm = typedAdm || String(nextAdm || 1100);
-      if (!typedReg) setNextReg((nextReg || 25101) + 1);
-      if (!typedAdm) setNextAdm((nextAdm || 1100) + 1);
-      const enrolled = {
-        ...student, _id: student._id || student.preId, reg: finalReg, adm: finalAdm,
-        family: (cfg.family || '').trim() || student.family || '',
-        admdate: cfg.admdate || new Date().toISOString().slice(0, 10),
-        name: stuFullName(student),
-      };
-      setClasses(prev => {
-        const idx = (prev || []).findIndex(c => c.cls === student.cls && c.sec === student.sec);
-        if (idx >= 0) return prev.map((c, i) => (i === idx ? { ...c, students: [...c.students, enrolled] } : c));
-        return [...(prev || []), { key: `${student.cls}-${student.sec}-${finalReg}`, cls: student.cls, sec: student.sec, students: [enrolled] }];
-      });
-      toast(`${stuFullName(student)} enrolled into ${student.cls} (${student.sec}) · Reg ${finalReg}`, 'success');
-    } else {
-      setInactive(prev => [{
-        reg: student.reg, first: student.first, last: student.last, father: student.father,
-        gender: student.gender, dob: student.dob, mobile: student.mobile,
-        cls: student.cls, sec: student.sec,
-        reason: 'Did not proceed after pre-enrollment',
-        inactiveDate: new Date().toISOString().slice(0, 10),
-        dues: { total: 0, heads: [], session: '', months: '', history: [] },
-      }, ...(prev || [])]);
-      toast(`${stuFullName(student)} moved to Inactive Students`, 'info');
+    try {
+      if (kind === 'enroll') {
+        const typedReg = (cfg.reg || '').trim();
+        const typedAdm = (cfg.adm || '').trim();
+        const finalReg = typedReg || `${new Date().getFullYear()}-${String(nextReg || 25101).padStart(5, '0')}`;
+        const finalAdm = typedAdm || String(nextAdm || 1100);
+        /* Real student banao (Active Students wali save API), phir pre-enroll
+           record ko soft-delete karo — pehle save, warna record kho sakta hai. */
+        await studentService.saveStuStudent({
+          ...student,
+          id:        0,
+          gradeId:   student._gradeId || 0,
+          sectionId: student._sectionId || 0,
+          reg:       finalReg,
+          adm:       finalAdm,
+          family:    (cfg.family || '').trim() || student.family || '',
+          admdate:   cfg.admdate || new Date().toISOString().slice(0, 10),
+          dues:      0,
+        });
+        await preEnrollmentService.removePreEnrollStudent(student._id, 'Enrolled');
+        if (!typedReg) setNextReg((nextReg || 25101) + 1);
+        if (!typedAdm) setNextAdm((nextAdm || 1100) + 1);
+        try { setClasses(await studentService.getStuClasses()); } catch { /* Active tab mount par reload karta hai */ }
+        toast(`${stuFullName(student)} enrolled into ${student.cls} (${student.sec}) · Reg ${finalReg}`, 'success');
+      } else {
+        await preEnrollmentService.removePreEnrollStudent(student._id, 'Did not proceed after pre-enrollment');
+        setInactive(prev => [{
+          reg: student.reg, first: student.first, last: student.last, father: student.father,
+          gender: student.gender, dob: student.dob, mobile: student.mobile,
+          cls: student.cls, sec: student.sec,
+          reason: 'Did not proceed after pre-enrollment',
+          inactiveDate: new Date().toISOString().slice(0, 10),
+          dues: { total: 0, heads: [], session: '', months: '', history: [] },
+        }, ...(prev || [])]);
+        toast(`${stuFullName(student)} moved to Inactive Students`, 'info');
+      }
+    } catch (err) {
+      toast(err.message || 'Action failed', 'error');
+      return;
     }
-    preEnrollmentService.removePreEnrollStudent(student.preId).catch(() => {});
-    setStudents(prev => prev.filter(s => s.preId !== student.preId));
+    setStudents(prev => (prev || []).filter(s => s._id !== student._id));
     setConfirmCfg(null);
   };
 
