@@ -65,8 +65,9 @@ export function fileNameFrom(path) {
 /* Uploaded file (manual PDF / form document) ka URL.
 
    API ab poora absolute URL bhejti hai (e.g.
-   "https://alphaapi.schoolmentor.ai/Manuals/Forms/x.docx") — wohi authority
-   hai, is liye usay chherte nahi. Sirf do soorton me haath lagate hain:
+   "https://alphaapi.schoolmentor.ai/Manuals/Forms/x.docx") — host wohi rehta
+   hai, magar path me SA root nahi hota. Teen kaam karte hain:
+     • path me /SchoolMentorSuperAdminAPI root daalo (neeche dekhein)
      • relative path aaye  → API host ke saath joad do
      • http URL ho aur page https par ho → https kar do, warna browser
        "mixed content" keh kar block kar deta hai
@@ -81,16 +82,29 @@ export function sopFileUrl(path) {
      apna page khul jata tha. File jaisa = poora http(s) URL, ya kisi
      extension par khatam hota path. */
   if (!/^https?:\/\//i.test(raw) && !/\.[a-z0-9]{2,6}(\?|#|$)/i.test(raw)) return '';
-  if (!/^https?:\/\//i.test(raw)) {
-    return buildSuperAdminUrl(raw.startsWith('/') ? raw : `/${raw}`).replace('/SchoolMentorSuperAdminAPI/Manuals', '/Manuals');
-  }
+
+  /* API ke path me application root CHHOOT jata hai — wo
+     ".../Manuals/PDFs/x.pdf" bhejti hai, jab ke file asal me
+     ".../SchoolMentorSuperAdminAPI/Manuals/PDFs/x.pdf" par milti hai. Root ke
+     baghair server app ka HTML page lauta deta hai (200, text/html), is liye
+     viewer khali/ghalat rehta tha aur download nahi hota tha. Super Admin
+     (schoolSops.js → sopFileUrl) bhi yahi karta hai: /Manuals/... wala hissa
+     le kar root ke saath dobara jodo (double na lage). */
+  const tailOf = (p) => {
+    const m = p.match(/\/SchoolMentorSuperAdminAPI(\/.*)$/i) || p.match(/(\/Manuals\/.*)$/i);
+    return m ? m[1] : (p.startsWith('/') ? p : `/${p}`);
+  };
+
+  if (!/^https?:\/\//i.test(raw)) return buildSuperAdminUrl(tailOf(raw));
+
   try {
     const u = new URL(raw);
     if (typeof window !== 'undefined' && window.location.protocol === 'https:' && u.protocol === 'http:') {
       u.protocol = 'https:';
       u.port = '';                       // https par 4100 jaisa http port nahi chalta
-      return u.toString();
     }
+    u.pathname = `/SchoolMentorSuperAdminAPI${tailOf(u.pathname)}`;
+    return u.toString();
   } catch { /* parse na ho to jaisa hai waisa */ }
   return raw;
 }
@@ -303,4 +317,57 @@ function fmtDate(v) {
   const d = new Date(s);
   if (Number.isNaN(d.getTime())) return s;
   return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+/* ═══════════════════════ FORM DOWNLOAD ═══════════════════════
+   Forms jis format me upload hui hain (.docx / .pdf) usi me download hoti
+   hain. */
+
+/* File ko apne hi origin (SA proxy) se mangwao — admin host se seedha
+   fetch par CORS rok deta hai (wo CORS headers bhejta hi nahi). */
+function sameOriginFileUrl(fileUrl) {
+  let p = String(fileUrl ?? '');
+  try { p = new URL(p).pathname; } catch { /* pehle se relative */ }
+  const m = p.match(/\/SchoolMentorSuperAdminAPI(\/.*)$/i) || p.match(/(\/Manuals\/.*)$/i);
+  return m ? buildSuperAdminUrl(m[1]) : fileUrl;
+}
+
+/* Pehle apne origin se, phir asal host se. Jo jawab asal file na ho wo
+   radd: jahan proxy ye raasta nahi jaanta (jaise dev ka localhost:3000) wahan
+   app ka HTML page 200 ke saath aata hai — pehle yahi "file not found" ban
+   kar download rok deta tha. Kuch na mile to null. */
+async function fetchFileBlob(fileUrl) {
+  for (const url of [sameOriginFileUrl(fileUrl), fileUrl]) {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) continue;
+      const blob = await res.blob();
+      if (blob.size && !/text\/html/i.test(blob.type)) return blob;
+    } catch { /* CORS / network — agla raasta */ }
+  }
+  return null;
+}
+
+/** Form asal format me download (<a download> cross-origin par kaam nahi
+    karta, is liye blob bana kar). */
+export async function downloadFormFile(form) {
+  const fileUrl = form?.fileUrl;
+  if (!fileUrl) throw new Error('No file attached to this form');
+  const blob = await fetchFileBlob(fileUrl);
+  const a = document.createElement('a');
+  if (blob) {
+    a.href = URL.createObjectURL(blob);
+    a.download = form.fileName || fileNameFrom(fileUrl) || 'form';
+  } else {
+    /* fetch na ho saka — browser ko seedha file par bhej do. Server .docx
+       ko Word ke content-type se deta hai, is liye browser usay download hi
+       karta hai (PDF naye tab me khulti hai). */
+    a.href = fileUrl;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+  }
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  if (blob) setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }

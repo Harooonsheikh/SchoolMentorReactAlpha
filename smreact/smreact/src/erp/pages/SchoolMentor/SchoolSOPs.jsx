@@ -4,7 +4,7 @@ import Tooltip from '../../components/Tooltip';
 import ModuleTutorialModal from '../../components/TutorialModal';
 import { usePermissions } from '../../context/PermissionsContext';
 import RouteFallback from '../../shared/RouteFallback';
-import { getAllSops } from '../../services/sopsService';
+import { getAllSops, downloadFormFile } from '../../services/sopsService';
 
 /* ═══════════════════════════════════════════════════════════════════
    SCHOOL SOPs — Centralised SOP & School Manual Library
@@ -240,6 +240,7 @@ export default function SchoolSOPs({ toast = () => {} }) {
         <PDFViewerModal
           manual={pdfFor}
           onClose={() => setPdfFor(null)}
+          toast={toast}
         />
       )}
       {tutFor && (
@@ -327,9 +328,19 @@ function ManualRow({ manual, onView, onTutorial, canViewManuals = true, canWatch
 /* ═══════════════════════════════════════════════════════════════════
    PDF VIEWER MODAL — with full-screen toggle
    ═══════════════════════════════════════════════════════════════════ */
-function PDFViewerModal({ manual, onClose }) {
+function PDFViewerModal({ manual, onClose, toast = () => {} }) {
   const [loading,    setLoading]    = useState(true);
   const [fullScreen, setFullScreen] = useState(false);
+  const [dlFormId,   setDlFormId]   = useState(null);   // kaunsi form abhi download ho rahi hai
+
+  /* Form usi format me download hoti hai jis me upload hui (.docx / .pdf). */
+  const downloadForm = async (f) => {
+    if (dlFormId) return;
+    setDlFormId(f.id);
+    try { await downloadFormFile(f); }
+    catch (err) { toast(err?.message || 'Could not download form', 'error'); }
+    finally { setDlFormId(null); }
+  };
 
   /* Agar PDF kisi wajah se load hi na ho (galat path, file gayab), to spinner
      hamesha ke liye ghoomta na rahe — thodi der baad khud hata do. */
@@ -421,10 +432,16 @@ function PDFViewerModal({ manual, onClose }) {
                     </div>
                   </div>
                   {f.fileUrl && (
-                    <Tooltip text="Open / download this form">
-                      <a className="sops-btn sops-btn-ghost" href={f.fileUrl} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}>
-                        <i className="fa-solid fa-download" aria-hidden="true"></i>
-                      </a>
+                    <Tooltip text={dlFormId === f.id ? 'Downloading…' : 'Download this form'}>
+                      <button
+                        type="button"
+                        className="sops-btn sops-btn-ghost"
+                        onClick={() => downloadForm(f)}
+                        disabled={Boolean(dlFormId)}
+                        aria-label="Download this form"
+                      >
+                        <i className={`fa-solid ${dlFormId === f.id ? 'fa-spinner fa-spin' : 'fa-download'}`} aria-hidden="true"></i>
+                      </button>
                     </Tooltip>
                   )}
                 </div>
