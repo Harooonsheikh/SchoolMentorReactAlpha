@@ -3,7 +3,7 @@ import { buildUrl } from '../utils/apiConfig';
 import Tooltip from '../erp/shared/Tooltip';
 import { useSetupTabPerms, NO_EDIT_TIP } from '../utils/setupPermissions';
 
-// ─── Validation rules ──────────────────────────────────────────────────────
+// ───- Validation rules ──────────────────────────────────────────────────────
 const fieldRules = {
   name:            v => String(v ?? '').trim().length > 1,
   branchEmail1:    v => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v ?? '').trim()),
