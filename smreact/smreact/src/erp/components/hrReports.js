@@ -95,8 +95,13 @@ function reportBaseCSS(C, style, orientation) {
     *{box-sizing:border-box;margin:0;padding:0}
     html,body{background:#fff}
     body{font-family:'Plus Jakarta Sans','Helvetica Neue',Arial,sans-serif;color:#1A2545;font-size:11px;line-height:1.45}
-    .page{width:${pageW};min-height:${pageH};padding:${vPad} ${hPad};margin:0 auto;background:#fff}
-
+.page{
+  width:${pageW};
+  min-height:${pageH};
+padding:10mm 11mm;
+  margin:0;
+  background:#fff;
+}
     .r-head-wrap{margin-bottom:14px}
     .r-brand-row{display:flex;align-items:center;gap:14px;padding-bottom:11px;border-bottom:${brandBorder};margin-bottom:9px}
     .r-logo{width:50px;height:50px;border:2.5px solid currentColor;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;background:#fff}
@@ -150,12 +155,19 @@ function reportBaseCSS(C, style, orientation) {
     .r-footer strong{color:#1A2545;font-style:normal}
     .empty-msg{padding:30px 14px;text-align:center;color:${C.muted};font-size:12px;font-style:italic;border:1px dashed ${style==='bw'?'#9CA3AF':C.panelBorder.replace('1px solid ','')};border-radius:${style==='bw'?'4px':'8px'}}
 
-    @page{size:A4 ${isLandscape?'landscape':'portrait'};margin:0}
-    @media print{
+@page{
+ size:${isLandscape ? 'A4 landscape' : 'A4 portrait'};
+ margin:0;
+}    @media print{
       *{-webkit-print-color-adjust:exact !important;print-color-adjust:exact !important}
       body{padding:0;margin:0}
-      .page{padding:${vPad} ${hPad};margin:0;min-height:0;width:100%;box-shadow:none}
-    }
+.page{
+ padding:${vPad} ${hPad};
+ margin:0;
+ width:${pageW};
+ min-height:${pageH};
+ box-shadow:none;
+}    }
   `;
 }
 
@@ -851,8 +863,16 @@ const hrGenLabel = (ctx) => {
 /* Shared popup shell — Accounts-module style. Returns a full HTML document.
    Honors ctx.style: 'bw' renders a true colorless / low-ink version (white
    backgrounds, black/gray text, light borders) while the default keeps the
-   ERP-blue theme. */
-function hrBuildReportHTML(fileTitle, title, filtersHtml, innerHtml, ctx, orientation = 'portrait', includePrintScript = true) {
+   ERP-blue theme.
+
+   FIX (landscape fit):
+     • @page margin reduced to 8mm, and in print .rep-page now uses width:auto
+       so it follows the printable area instead of a hard 297mm (which was
+       wider than the paper and clipped the right-hand columns).
+     • Removed the stray "}" that pushed the print-only rules outside @media print.
+     • Added the `.rep-tbl.fit` table mode (fixed layout + wrapping + size
+       variables) used by the Employee Directory so every column fits. */
+function hrBuildReportHTML(fileTitle, title, filtersHtml, innerHtml, ctx, orientation = 'landscape', includePrintScript = true) {
   const b = resolveBranch(ctx);
   const bw = ctx?.style === 'bw';
   const isLandscape = orientation === 'landscape';
@@ -983,8 +1003,9 @@ function hrBuildReportHTML(fileTitle, title, filtersHtml, innerHtml, ctx, orient
         }
 
         .rep-page {
-          width:210mm;
-          min-height:297mm;
+          width:100%;
+          min-width:${isLandscape ? '297mm' : '210mm'};
+          min-height:${isLandscape ? '210mm' : '297mm'};
           margin:0 auto;
           background:#FFFFFF;
         }
@@ -1236,6 +1257,30 @@ function hrBuildReportHTML(fileTitle, title, filtersHtml, innerHtml, ctx, orient
         }
 
         /* ==========================
+           FIT-TO-PAGE TABLE
+           (Employee Directory — every column fits the page width)
+           ========================== */
+
+        .rep-tbl.fit {
+          table-layout:fixed;
+          width:100%;
+          font-size:var(--fs, 10px);
+        }
+
+        .rep-tbl.fit th,
+        .rep-tbl.fit td {
+          padding:var(--pad, 7px 9px);
+          white-space:normal;
+          word-break:break-word;
+          overflow-wrap:anywhere;
+          line-height:1.3;
+        }
+
+        .rep-tbl.fit th {
+          font-size:var(--fs, 9.5px);
+        }
+
+        /* ==========================
            FOOTER
            ========================== */
 
@@ -1257,9 +1302,13 @@ function hrBuildReportHTML(fileTitle, title, filtersHtml, innerHtml, ctx, orient
           color:${bw ? '#111111' : '#1E40AF'};
         }
 
+        /* ==========================
+           PRINT
+           ========================== */
+
         @page {
           size:A4 ${isLandscape ? 'landscape' : 'portrait'};
-          margin:15mm;
+          margin:6mm;
         }
 
         @media print {
@@ -1268,14 +1317,20 @@ function hrBuildReportHTML(fileTitle, title, filtersHtml, innerHtml, ctx, orient
             print-color-adjust:exact !important;
           }
 
-          .rep-page {
-            width:auto;
-            min-height:0;
+          html,
+          body {
             margin:0;
+            padding:0;
           }
 
-          .rep-body {
-            padding:18px 0;
+          /* Follow the printable area instead of a hard 297mm/210mm width */
+          .rep-page {
+            width:auto;
+            min-width:0;
+            min-height:0;
+            margin:0;
+            padding:0;
+            box-shadow:none;
           }
 
           .rep-header {
@@ -1283,9 +1338,18 @@ function hrBuildReportHTML(fileTitle, title, filtersHtml, innerHtml, ctx, orient
             margin-right:0;
           }
 
+          .rep-body {
+            padding:14px 0 0;
+          }
+
           .rep-foot {
             padding-left:0;
             padding-right:0;
+          }
+
+          .rep-tbl tr {
+            page-break-inside:avoid;
+            break-inside:avoid;
           }
         }
       </style>
@@ -1429,26 +1493,62 @@ export const HR_DIRECTORY_FIELDS = [
 export const HR_DIRECTORY_DEFAULT_KEYS = HR_DIRECTORY_FIELDS.map(f => f.key);
 /* More than this many optional columns (on top of the always-shown #,
    Full Name & Emp ID) and the page auto-switches Portrait → Landscape
-   so the extra columns still fit legibly. */
+   so the extra columns still fit legibly. (Directory is now always landscape.) */
 const HR_DIRECTORY_LANDSCAPE_THRESHOLD = 6;
+
+/* Relative column widths for the directory table — wide data (email,
+   address, CNIC) gets more room, short data (gender, blood, status) less.
+   Converted to percentages at render time so the table always equals
+   the page width, whatever columns are selected. */
+const HR_DIR_COL_WEIGHT = {
+  fn: 1.1, cnic: 1.35, dob: 0.85, gender: 0.7, marital: 0.8, phone: 1.15,
+  email: 1.7, blood: 0.6, emergency: 1.15, nationality: 0.95, address: 1.6,
+  dept: 1.1, desig: 1.1, join: 0.85, type: 0.95, status: 0.75, manager: 1,
+  qual: 1, exp: 0.7, shift: 0.7, country: 0.85, province: 0.85, city: 0.9,
+  role: 0.9, basicSalary: 0.9, payMethod: 1, bankName: 1, bankAcc: 1.3,
+};
 
 export function generateHrDirectoryReport(ctx, selectedKeys = HR_DIRECTORY_DEFAULT_KEYS, includePrintScript = true) {
   const { emps, depts, getFullName } = ctx;
   const active = emps.filter(e => e.status === 'Active').length;
   const fields = HR_DIRECTORY_FIELDS.filter(f => selectedKeys.includes(f.key));
-  const orientation = fields.length > HR_DIRECTORY_LANDSCAPE_THRESHOLD ? 'landscape' : 'portrait';
+  /* Always landscape */
+  const orientation = 'landscape';
+
+  /* Proportional column widths → table always fits the page width */
+  const cols = [
+    { w: 0.35 },   // #
+    { w: 1.3 },    // Full Name
+    { w: 1.0 },    // Emp ID
+    ...fields.map(f => ({ w: HR_DIR_COL_WEIGHT[f.key] || 1 })),
+  ];
+  const totalW = cols.reduce((s, c) => s + c.w, 0);
+  const colgroup = `<colgroup>${cols
+    .map(c => `<col style="width:${((c.w / totalW) * 100).toFixed(2)}%">`)
+    .join('')}</colgroup>`;
+
+  /* Font size + cell padding shrink with column count so all columns fit */
+  const n = cols.length;
+  const fs  = n <= 12 ? 11 : n <= 18 ? 9.5 : n <= 24 ? 8.5 : 7.6;
+  const pad = n <= 12 ? '8px 9px' : n <= 18 ? '7px 6px' : n <= 24 ? '6px 5px' : '5px 4px';
+
   const rows = emps.map((e, i) => `<tr>
     <td>${i+1}</td><td><b>${getFullName(e)}</b></td><td>${e.eid}</td>
     ${fields.map(f => `<td>${f.get(e, ctx)}</td>`).join('')}
   </tr>`).join('');
   const filters = `<span><b>Total Staff:</b> ${emps.length}</span><span><b>Active:</b> ${active}</span><span><b>Inactive:</b> ${emps.length-active}</span><span><b>Departments:</b> ${depts.length}</span><span><b>Columns:</b> ${fields.length + 2}</span><span><b>Generated:</b> ${hrGenLabel(ctx)}</span>`;
   const inner = `<div class="rep-secttl">Full Staff Directory</div>
-    <table class="rep-tbl"><thead><tr>
-      <th>#</th><th>Full Name</th><th>Emp ID</th>
-      ${fields.map(f => `<th>${f.label}</th>`).join('')}
-    </tr></thead><tbody>${rows}</tbody></table>`;
+    <table class="rep-tbl fit" style="--fs:${fs}px;--pad:${pad}">
+      ${colgroup}
+      <thead><tr>
+        <th>#</th><th>Full Name</th><th>Emp ID</th>
+        ${fields.map(f => `<th>${f.label}</th>`).join('')}
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
   return hrBuildReportHTML('Employee Directory', 'Human Resource — Employee Directory', filters, inner, ctx, orientation, includePrintScript);
 }
+
 
 /* ════════ 2. Salary Register ════════ */
 export function generateHrSalaryRegister(ctx, monthKey) {
