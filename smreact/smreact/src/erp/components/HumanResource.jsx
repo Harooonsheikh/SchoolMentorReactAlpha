@@ -1,21 +1,21 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import ExcelJS from 'exceljs';
 import Tooltip from './Tooltip';
 import TutorialModal from './TutorialModal';
 import * as hrService from '../services/hrService';
 import * as attendanceService from '../services/attendanceService';
 import useAsync from '../hooks/useAsync';
-import { buildDocxFromHtml } from '../../utils/docx';
+import { buildDocxFromHtml, downloadDocxFromHtml } from '../../utils/docx';
 import ReportDownloadDialog from '../../reports/ReportDownloadDialog';
 
-import {
-  downloadStandardReport,
-} from '../../reports/ReportTemplate';
 import {
   generateSalarySlipHTML,
   generatePayHistoryReportHTML,
   generateLoanReportHTML,
   generateHrDirectoryReport,
+  HR_DIRECTORY_FIELDS,
+  HR_DIRECTORY_DEFAULT_KEYS,
   generateHrSalaryRegister,
   generateHrLoanSummary,
   generateHrDeptSummary,
@@ -978,93 +978,9 @@ const generate = async (
   format = 'pdf'
 ) => {    if (!picker) return;
     const { type } = picker;
-if (type === 'directory') {
-  try {
-    await downloadStandardReport({
-      title: 'Employee Directory',
-
-      style,
-      format,
-
-      meta: [
-        {
-          label: 'Total Employees',
-          value: emps.length,
-        },
-        {
-          label: 'Active Employees',
-          value: emps.filter(e => e.status === 'Active').length,
-        },
-        {
-          label: 'Departments',
-          value: depts.length,
-        },
-      ],
-
-      sectionTitle: 'Employee Directory',
-
-      columns: [
-        {
-          key: 'sr',
-          label: '#',
-          width: '40px',
-        },
-        {
-          key: 'employeeName',
-          label: 'Employee Name',
-        },
-        {
-          key: 'departmentName',
-          label: 'Department',
-        },
-        {
-          key: 'designationName',
-          label: 'Designation',
-        },
-        {
-          key: 'contact',
-          label: 'Contact',
-        },
-        {
-          key: 'status',
-          label: 'Status',
-        },
-      ],
-
-      rows: emps.map((emp, index) => ({
-        ...emp,
-
-        sr: index + 1,
-
-        employeeName: getFullName(emp),
-
-        departmentName:
-          getDeptName(emp.departmentId ?? emp.dId),
-
-        designationName:
-          getDesigName(emp.designationId ?? emp.desId),
-
-        contact:
-          emp.phone ||
-          emp.mobile ||
-          emp.contactNumber ||
-          '—',
-      })),
-    });
-
-    toast('Employee Directory ready', 'success');
-    setPicker(null);
-
-    return;
-  } catch (err) {
-    toast(
-      err.message || 'Could not generate Employee Directory',
-      'error'
-    );
-
-    return;
-  }
-}
+    /* Employee Directory is handled by DirectoryReportModal (column picker →
+       Word / Excel / PDF), not this print-only flow. */
+    if (type === 'directory') return;
     /* Window PEHLE — data baad me. Wajah RspModal wale generateReport par likhi
        hai: await ke baad `window.open` browser ke liye user-click ka jawab nahi
        rehta, is liye pehli click par popup block ho jata tha. */
@@ -1188,8 +1104,20 @@ else if (type === 'payroll-summary') {
         </div>
       </div>
 
+{picker && picker.type === 'directory' && (
+  <DirectoryReportModal
+    emps={emps}
+    depts={depts}
+    getFullName={getFullName}
+    getDeptName={getDeptName}
+    getDesigName={getDesigName}
+    onClose={() => setPicker(null)}
+    toast={toast}
+  />
+)}
+
 <ReportDownloadDialog
-  open={!!picker}
+  open={!!picker && picker.type !== 'directory'}
   reportName={
     picker
       ? HR_REPORT_META[picker.type]?.title || "HR Report"
@@ -1203,6 +1131,178 @@ else if (type === 'payroll-summary') {
 />
     </div>
   );
+}
+
+/* ── Employee Directory column picker — checkboxes grouped by
+   Personal / Official / Salary, all checked by default (every field
+   HR_DIRECTORY_FIELDS knows about), with Select All / Clear All and
+   3 export buttons (Word / Excel / PDF). Selecting more than the
+   landscape threshold's worth of columns auto-switches the generated
+   report to landscape — see HR_DIRECTORY_LANDSCAPE_THRESHOLD in
+   hrReports.js. Builds the report ctx from the live employee list +
+   the /report-header branch, same as the other HR reports. ── */
+function DirectoryReportModal({ emps, depts, getFullName, getDeptName, getDesigName, onClose, toast }) {
+  const [selected, setSelected] = useState(() => new Set(HR_DIRECTORY_DEFAULT_KEYS));
+  const [busy, setBusy] = useState(false);
+  const groups = useMemo(() => {
+    const out = {};
+    HR_DIRECTORY_FIELDS.forEach(f => { (out[f.group] = out[f.group] || []).push(f); });
+    return out;
+  }, []);
+  const toggle = (key) => setSelected(s => { const next = new Set(s); if (next.has(key)) next.delete(key); else next.add(key); return next; });
+  const selectAll = () => setSelected(new Set(HR_DIRECTORY_DEFAULT_KEYS));
+  const clearAll = () => setSelected(new Set());
+  const selectedKeys = useMemo(() => HR_DIRECTORY_FIELDS.filter(f => selected.has(f.key)).map(f => f.key), [selected]);
+  const willBeLandscape = selectedKeys.length > 6;
+
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    document.body.style.overflow = 'hidden';
+    return () => { document.removeEventListener('keydown', onKey); document.body.style.overflow = ''; };
+  }, [onClose]);
+
+  /* ctx the directory generator needs: live employees + department /
+     designation lookups + the /report-header branch (name, logo, address,
+     session, generated date) — same shape the other HR reports build. */
+  const buildCtx = async () => ({
+    emps, depts,
+    fmtMoney, fmtDate, getFullName,
+    getDeptName, getDesigName,
+    branch: await fetchReportHeader(),
+    style: 'color',
+  });
+
+  const downloadPdf = async () => {
+    if (busy) return;
+    setBusy(true);
+    /* Window PEHLE (before await) — warna popup block ho jati hai. */
+    const w = window.open('', '_blank');
+    if (!w) { toast('Pop-up blocked — please allow pop-ups for this site', 'error'); setBusy(false); return; }
+    try {
+      w.document.write('<!doctype html><meta charset="utf-8"><title>Preparing report…</title>');
+      const ctx = await buildCtx();
+      const html = generateHrDirectoryReport(ctx, selectedKeys, true);
+      w.document.open(); w.document.write(html); w.document.close();
+      setTimeout(() => { try { w.print(); } catch { /* ignore */ } }, 400);
+      toast('Employee Directory ready — Print or Save as PDF', 'success');
+    } catch (err) {
+      try { w.close(); } catch { /* noop */ }
+      toast(err.message || 'Could not generate Employee Directory', 'error');
+    } finally { setBusy(false); }
+  };
+
+  const downloadWord = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const ctx = await buildCtx();
+      const html = generateHrDirectoryReport(ctx, selectedKeys, false);
+      downloadDocxFromHtml(html, 'Employee-Directory', { landscape: willBeLandscape });
+      toast('Employee Directory downloaded as Word document', 'success');
+    } catch (err) {
+      toast(err.message || 'Could not generate Word document', 'error');
+    } finally { setBusy(false); }
+  };
+
+  const downloadExcel = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const ctx = await buildCtx();
+      const fields = HR_DIRECTORY_FIELDS.filter(f => selectedKeys.includes(f.key));
+      const wb = new ExcelJS.Workbook();
+      const ws = wb.addWorksheet('Employee Directory');
+      const headers = ['#', 'Full Name', 'Emp ID', ...fields.map(f => f.label)];
+      ws.mergeCells(1, 1, 1, headers.length);
+      const titleCell = ws.getCell(1, 1);
+      titleCell.value = 'Employee Directory';
+      titleCell.font = { bold: true, size: 14, color: { argb: 'FFFFFFFF' } };
+      titleCell.alignment = { vertical: 'middle', horizontal: 'center' };
+      titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A8A' } };
+      ws.getRow(1).height = 24;
+      const headerRow = ws.getRow(2);
+      headerRow.values = headers;
+      headerRow.eachCell(c => { c.font = { bold: true, color: { argb: 'FFFFFFFF' } }; c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E40AF' } }; c.alignment = { vertical: 'middle' }; });
+      emps.forEach((e, i) => {
+        ws.addRow([i + 1, getFullName(e), e.eid, ...fields.map(f => f.get(e, ctx))]);
+      });
+      ws.columns.forEach((col, i) => { col.width = i === 0 ? 6 : i === 1 ? 22 : 16; });
+      ws.views = [{ state: 'frozen', ySplit: 2 }];
+      const buffer = await wb.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'Employee-Directory.xlsx';
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      toast('Employee Directory downloaded as Excel workbook', 'success');
+    } catch (err) {
+      toast(err.message || 'Could not generate Excel workbook', 'error');
+    } finally { setBusy(false); }
+  };
+
+  const meta = HR_REPORT_META.directory;
+  return createPortal((
+    <div className="ov open" role="dialog" aria-modal="true" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="modal modal-lg" style={{ maxWidth: 760 }}>
+        <div className="modal-head">
+          <div className="modal-head-left">
+            <div className="modal-head-icon" style={{ background: `linear-gradient(135deg, ${meta.gradFrom}, ${meta.gradTo})`, color: meta.iconColor }}>
+              <i className={`fa-solid ${meta.icon}`} aria-hidden="true"></i>
+            </div>
+            <div>
+              <div className="modal-title">Employee Directory</div>
+              <div className="modal-sub">Choose which information to include, then export</div>
+            </div>
+          </div>
+          <Tooltip text="Close">
+            <button type="button" className="modal-close" onClick={onClose} aria-label="Close"><i className="fa-solid fa-xmark" aria-hidden="true"></i></button>
+          </Tooltip>
+        </div>
+
+        <div className="modal-body">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
+            <div style={{ fontSize: 12, color: 'var(--tm)', flex: 1, minWidth: 220 }}>
+              Every column is selected by default. Uncheck anything you do not need for this export.
+            </div>
+            <button type="button" className="btn-secondary" style={{ height: 32, padding: '0 12px', fontSize: 11.5 }} onClick={selectAll}><i className="fa-solid fa-check-double" aria-hidden="true"></i> Select All</button>
+            <button type="button" className="btn-secondary" style={{ height: 32, padding: '0 12px', fontSize: 11.5 }} onClick={clearAll}><i className="fa-solid fa-xmark" aria-hidden="true"></i> Clear All</button>
+          </div>
+
+          {Object.entries(groups).map(([group, fields]) => (
+            <div className="pr-section" key={group}>
+              <div className="pr-section-title"><i className="fa-solid fa-layer-group" aria-hidden="true"></i> {group}</div>
+              <div className="pr-grid g3">
+                {fields.map(f => (
+                  <label key={f.key} style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12.5, fontWeight: 600, color: 'var(--t1)', cursor: 'pointer' }}>
+                    <input type="checkbox" checked={selected.has(f.key)} onChange={() => toggle(f.key)} /> {f.label}
+                  </label>
+                ))}
+              </div>
+            </div>
+          ))}
+
+          <div style={{ display: 'flex', gap: 9, alignItems: 'flex-start', background: 'rgba(2,132,199,.06)', border: '1px solid rgba(2,132,199,.2)', borderRadius: 8, padding: '10px 13px', marginTop: 4, fontSize: 12, color: 'var(--t2)', lineHeight: 1.5 }}>
+            <i className="fa-solid fa-circle-info" style={{ color: 'var(--info)', marginTop: 2, flexShrink: 0 }} aria-hidden="true"></i>
+            <span>
+              {selectedKeys.length} of {HR_DIRECTORY_FIELDS.length} extra columns selected (plus Name &amp; Emp ID, always included).{' '}
+              {willBeLandscape
+                ? <>With this many columns, the report will print in <strong>Landscape</strong> so everything stays legible.</>
+                : <>The report will print in <strong>Portrait</strong>. Selecting more than 6 columns switches it to Landscape automatically.</>}
+            </span>
+          </div>
+        </div>
+
+        <div className="modal-foot">
+          <button type="button" className="btn-secondary" onClick={onClose} disabled={busy}>Cancel</button>
+          <button type="button" className="btn-secondary" onClick={downloadWord} disabled={busy}><i className="fa-solid fa-file-word" aria-hidden="true"></i> Word</button>
+          <button type="button" className="btn-secondary" onClick={downloadExcel} disabled={busy}><i className="fa-solid fa-file-excel" aria-hidden="true"></i> Excel</button>
+          <button type="button" className="btn-primary" onClick={downloadPdf} disabled={busy}><i className="fa-solid fa-file-pdf" aria-hidden="true"></i> PDF</button>
+        </div>
+      </div>
+    </div>
+  ), document.body);
 }
 
 function HrRptModal({ type, onClose, onGenerate, canDownload = true }) {

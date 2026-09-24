@@ -852,9 +852,10 @@ const hrGenLabel = (ctx) => {
    Honors ctx.style: 'bw' renders a true colorless / low-ink version (white
    backgrounds, black/gray text, light borders) while the default keeps the
    ERP-blue theme. */
-function hrBuildReportHTML(fileTitle, title, filtersHtml, innerHtml, ctx) {
+function hrBuildReportHTML(fileTitle, title, filtersHtml, innerHtml, ctx, orientation = 'portrait', includePrintScript = true) {
   const b = resolveBranch(ctx);
   const bw = ctx?.style === 'bw';
+  const isLandscape = orientation === 'landscape';
 
   const schoolName = b.name || 'School Mentor ERP';
   const schoolAddress = b.address || '';
@@ -1257,7 +1258,7 @@ function hrBuildReportHTML(fileTitle, title, filtersHtml, innerHtml, ctx) {
         }
 
         @page {
-          size:A4 portrait;
+          size:A4 ${isLandscape ? 'landscape' : 'portrait'};
           margin:15mm;
         }
 
@@ -1382,30 +1383,71 @@ function hrBuildReportHTML(fileTitle, title, filtersHtml, innerHtml, ctx) {
 
       </div>
 
-      ${CLOSE_SCRIPT_AFTER_PRINT}
+      ${includePrintScript ? CLOSE_SCRIPT_AFTER_PRINT : ''}
 
     </body>
     </html>
   `;
 }
-/* ════════ 1. Employee Directory ════════ */
-export function generateHrDirectoryReport(ctx) {
-  const { emps, depts, getFullName, getDeptName, getDesigName } = ctx;
+/* ════════ 1. Employee Directory ════════
+   Column set is user-selectable (see DirectoryReportModal in
+   HumanResource.jsx) — HR_DIRECTORY_FIELDS is the master list of every
+   field that can be toggled on/off, grouped for the picker UI. Each
+   entry's `get(e, ctx)` resolves the cell value for one employee.
+   Field accessors map 1:1 to the ERP employee object returned by
+   hrService.getHrEmployees() (see mapApiEmployeeToEmp). */
+export const HR_DIRECTORY_FIELDS = [
+  { key: 'fn',         label: 'Father / Husband Name', group: 'Personal', get: (e) => e.fn || '—' },
+  { key: 'cnic',       label: 'CNIC',                  group: 'Personal', get: (e) => e.cnic || '—' },
+  { key: 'dob',        label: 'Date of Birth',         group: 'Personal', get: (e, ctx) => e.dob ? ctx.fmtDate(e.dob) : '—' },
+  { key: 'gender',     label: 'Gender',                group: 'Personal', get: (e) => e.gender || '—' },
+  { key: 'marital',    label: 'Marital Status',        group: 'Personal', get: (e) => e.marital || '—' },
+  { key: 'phone',      label: 'Phone',                 group: 'Personal', get: (e) => e.phone || '—' },
+  { key: 'email',      label: 'Email',                 group: 'Personal', get: (e) => e.email || '—' },
+  { key: 'blood',      label: 'Blood Group',           group: 'Personal', get: (e) => e.blood || '—' },
+  { key: 'emergency',  label: 'Emergency Contact',     group: 'Personal', get: (e) => e.emergency || '—' },
+  { key: 'nationality',label: 'Nationality',           group: 'Personal', get: (e) => e.nationality || '—' },
+  { key: 'address',    label: 'Address',               group: 'Personal', get: (e) => e.address || '—' },
+  { key: 'dept',       label: 'Department',            group: 'Official', get: (e, ctx) => ctx.getDeptName(e.dId) || '—' },
+  { key: 'desig',      label: 'Designation',           group: 'Official', get: (e, ctx) => ctx.getDesigName(e.desId) || '—' },
+  { key: 'join',       label: 'Joining Date',          group: 'Official', get: (e, ctx) => e.join ? ctx.fmtDate(e.join) : '—' },
+  { key: 'type',       label: 'Employment Type',       group: 'Official', get: (e) => e.type || '—' },
+  { key: 'status',     label: 'Status',                group: 'Official', get: (e) => e.status || '—' },
+  { key: 'manager',    label: 'Reporting Manager',     group: 'Official', get: (e) => e.manager || '—' },
+  { key: 'qual',       label: 'Qualification',         group: 'Official', get: (e) => e.qual || '—' },
+  { key: 'exp',        label: 'Experience',            group: 'Official', get: (e) => e.exp || '—' },
+  { key: 'shift',      label: 'Shift',                 group: 'Official', get: (e) => e.shift || '—' },
+  { key: 'country',    label: 'Country',                group: 'Official', get: (e) => e.country || '—' },
+  { key: 'province',   label: 'Province',              group: 'Official', get: (e) => e.province || '—' },
+  { key: 'city',       label: 'City',                  group: 'Official', get: (e) => e.city || '—' },
+  { key: 'role',       label: 'Job Role',              group: 'Official', get: (e) => e.role || '—' },
+  { key: 'basicSalary',label: 'Basic Salary',          group: 'Salary',   get: (e, ctx) => e.basicSalary ? ctx.fmtMoney(e.basicSalary) : '—' },
+  { key: 'payMethod',  label: 'Payment Method',        group: 'Salary',   get: (e) => e.payMethod || '—' },
+  { key: 'bankName',   label: 'Bank Name',             group: 'Salary',   get: (e) => e.bankName || '—' },
+  { key: 'bankAcc',    label: 'Bank Account',          group: 'Salary',   get: (e) => e.bankAcc || '—' },
+];
+export const HR_DIRECTORY_DEFAULT_KEYS = HR_DIRECTORY_FIELDS.map(f => f.key);
+/* More than this many optional columns (on top of the always-shown #,
+   Full Name & Emp ID) and the page auto-switches Portrait → Landscape
+   so the extra columns still fit legibly. */
+const HR_DIRECTORY_LANDSCAPE_THRESHOLD = 6;
+
+export function generateHrDirectoryReport(ctx, selectedKeys = HR_DIRECTORY_DEFAULT_KEYS, includePrintScript = true) {
+  const { emps, depts, getFullName } = ctx;
   const active = emps.filter(e => e.status === 'Active').length;
+  const fields = HR_DIRECTORY_FIELDS.filter(f => selectedKeys.includes(f.key));
+  const orientation = fields.length > HR_DIRECTORY_LANDSCAPE_THRESHOLD ? 'landscape' : 'portrait';
   const rows = emps.map((e, i) => `<tr>
     <td>${i+1}</td><td><b>${getFullName(e)}</b></td><td>${e.eid}</td>
-    <td>${e.gender||'—'}</td><td>${getDeptName(e.dId)||'—'}</td><td>${getDesigName(e.desId)||'—'}</td>
-    <td>${e.phone||'—'}</td><td>${e.join?hrFmtDate(e.join):'—'}</td>
-    <td>${e.type||'—'}</td><td>${e.status}</td>
+    ${fields.map(f => `<td>${f.get(e, ctx)}</td>`).join('')}
   </tr>`).join('');
-  const filters = `<span><b>Total Staff:</b> ${emps.length}</span><span><b>Active:</b> ${active}</span><span><b>Inactive:</b> ${emps.length-active}</span><span><b>Departments:</b> ${depts.length}</span><span><b>Generated:</b> ${hrGenLabel(ctx)}</span>`;
+  const filters = `<span><b>Total Staff:</b> ${emps.length}</span><span><b>Active:</b> ${active}</span><span><b>Inactive:</b> ${emps.length-active}</span><span><b>Departments:</b> ${depts.length}</span><span><b>Columns:</b> ${fields.length + 2}</span><span><b>Generated:</b> ${hrGenLabel(ctx)}</span>`;
   const inner = `<div class="rep-secttl">Full Staff Directory</div>
     <table class="rep-tbl"><thead><tr>
-      <th>#</th><th>Full Name</th><th>Emp ID</th><th>Gender</th>
-      <th>Department</th><th>Designation</th><th>Phone</th>
-      <th>Joining Date</th><th>Type</th><th>Status</th>
+      <th>#</th><th>Full Name</th><th>Emp ID</th>
+      ${fields.map(f => `<th>${f.label}</th>`).join('')}
     </tr></thead><tbody>${rows}</tbody></table>`;
-  return hrBuildReportHTML('Employee Directory', 'Human Resource — Employee Directory', filters, inner, ctx);
+  return hrBuildReportHTML('Employee Directory', 'Human Resource — Employee Directory', filters, inner, ctx, orientation, includePrintScript);
 }
 
 /* ════════ 2. Salary Register ════════ */
