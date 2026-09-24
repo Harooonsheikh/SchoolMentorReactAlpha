@@ -4501,8 +4501,15 @@ useEffect(() => {
                         <div className="ds-subj-th">Time From</div>
                         <div className="ds-subj-th">Time To</div>
                       </div>
-                      {hasDates
-                        ? dsRows.map((s, si) => (
+                {hasDates
+  ? [...dsRows]
+      .sort((a, b) => {
+        if (!a.date) return 1;
+        if (!b.date) return -1;
+
+        return new Date(a.date) - new Date(b.date);
+      })
+      .map((s, si) => (
                             <div key={si} className="ds-subj-row">
                               <div className="ds-subj-td" style={{ color: 'var(--text-muted)', fontWeight: 600 }}>
                                 <span style={{ color: 'var(--brand-primary)', fontSize: 10 }}>#</span>&nbsp;{si + 1}
@@ -8220,8 +8227,18 @@ if (format === 'pdf') {
       const r = await fetch(buildUrl(`/api/getdatesheetbybranchclassidtermid?${params.toString()}`),
         { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } });
       const data = await r.json();
+      // const rows = Array.isArray(data) ? data : (data?.data || []);
+      // return rows.map(dsMapApiRow);
       const rows = Array.isArray(data) ? data : (data?.data || []);
-      return rows.map(dsMapApiRow);
+
+return rows
+  .map(dsMapApiRow)
+  .sort((a, b) => {
+    if (!a.date) return 1;
+    if (!b.date) return -1;
+
+    return new Date(a.date) - new Date(b.date);
+  });
     } catch (e) { console.error('Date sheet fetch failed', e); return []; }
   };
   const blocks = await Promise.all((targetClasses || []).map(async cls => ({ cls, rows: await fetchDs(cls) })));
@@ -8353,6 +8370,12 @@ ${isColor ? '' : '.print-bar{background:#FFFFFF !important;border-top:1px solid 
 .syl-rep-html li{margin:2px 0 !important}
 .syl-rep-html h1,.syl-rep-html h2,.syl-rep-html h3,.syl-rep-html h4,.syl-rep-html h5,.syl-rep-html h6{font-size:12px !important;font-weight:700 !important;margin:5px 0 2px !important;color:#0F172A !important}
 .syl-rep-html img{max-width:100%;height:auto}
+</style>
+<link 
+ rel="stylesheet" 
+ href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css"
+/>
+</head><body>
 </style></head><body>
 ${reportHTML}
 <div class="print-bar no-print">
@@ -9977,10 +10000,21 @@ const position = opt['Show Position in Class']
     return m[g.grade] || '#475569';
   };
 
-  const sorted = subjData.filter(d => !d.isAbs).sort((a, b) => b.pct - a.pct);
-  // Top Subjects aur Needs Attention — DONO mein SAME subjects dikhane hain (ek hi list).
-  const strengths    = sorted.slice(0, 3);
-  const improvements = strengths;
+  const sorted = subjData
+  .filter(d => !d.isAbs)
+  .sort((a, b) => b.pct - a.pct);
+
+
+// Top Subjects: only 90%+
+const strengths = sorted
+  .filter(d => d.pct >= 90)
+  .slice(0, 3);
+
+
+// Need Attention: below 70%
+const improvements = sorted
+  .filter(d => d.pct < 70)
+  .slice(0, 3);
 
   const tilesEnabled = [];
   if (opt['Show Percentage'])        tilesEnabled.push({ icon: 'fa-chart-line',     label: 'Overall %', val: `${ovPct}%`,         col: C.blu, bg: C.bluL, bdr: C.bluBdr });
@@ -12828,7 +12862,16 @@ function ResultCardViewer({ student, rd, ex, template, school, grades, remarks =
     const html = node.innerHTML;
     const w = window.open('', '_blank', 'width=960,height=820');
     if (!w) { toast('Pop-up blocker prevented opening', 'error'); return; }
-    w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Result Card — ${student.name}</title>
+    // w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Result Card — ${student.name}</title>
+
+w.document.write(`<!DOCTYPE html><html><head>
+<meta charset="UTF-8">
+
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+
+<title>Result Card — ${student.name}</title>
+
+<style>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{background:#fff;font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif;color:#0F172A}
@@ -13077,7 +13120,16 @@ function BulkCardModal({ ctx, template, school, grades, remarks = [], rcoGeneral
     if (!node) return;
     const w = window.open('', '_blank', 'width=980,height=860');
     if (!w) { toast?.('Pop-up blocker prevented opening', 'error'); return; }
-    w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Result Cards — ${className || ''}</title>
+    // w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Result Cards — ${className || ''}</title>
+
+w.document.write(`<!DOCTYPE html><html><head>
+<meta charset="UTF-8">
+
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+
+<title>Result Cards — ${className || ''}</title>
+
+<style>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{background:#fff;font-family:'Plus Jakarta Sans','Segoe UI',Arial,sans-serif;color:#0F172A}
