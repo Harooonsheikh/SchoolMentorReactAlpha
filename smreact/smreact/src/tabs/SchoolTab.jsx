@@ -255,26 +255,39 @@ export default function SchoolTab({ schoolInfo, setSchoolInfo, onSave, onSaveDra
       const json     = await res.json();
       const d        = json.data ?? {};
       setSchoolInfo(d);
-const savedLogo = d.branchLogo || d.logo || '';
+const savedLogo = (d.branchLogo || d.logo || '').trim();
+
+console.log("========== LOGO DEBUG ==========");
+console.log("API Branch Logo:", d.branchLogo);
+console.log("API Logo:", d.logo);
+console.log("Final Saved Logo:", savedLogo);
+console.log("Is Full URL:", /^https?:\/\//i.test(savedLogo));
+console.log("Build URL Result:", buildUrl(savedLogo));
+console.log("================================");
 
 if (savedLogo) {
-  // Already a complete URL or base64 image
-  if (
-    savedLogo.startsWith('http://') ||
-    savedLogo.startsWith('https://') ||
-    savedLogo.startsWith('data:')
-  ) {
-    setLogoPreview(savedLogo);
-  } else {
-    // Backend returned a relative image path
-    setLogoPreview(buildUrl(
-      savedLogo.startsWith('/') ? savedLogo : `/${savedLogo}`
-    ));
-  }
-} else {
-  setLogoPreview('');
-}      // seed the refs so the province/city effects don't re-fire on first render
 
+  if (/^https?:\/\//i.test(savedLogo) || savedLogo.startsWith('data:')) {
+
+    console.log("Using Existing Full Logo URL:", savedLogo);
+    setLogoPreview(savedLogo);
+
+  } else {
+
+    const finalLogoUrl = buildUrl(
+      savedLogo.startsWith('/') ? savedLogo : `/${savedLogo}`
+    );
+
+    console.log("Converted Relative Logo URL:", finalLogoUrl);
+    setLogoPreview(finalLogoUrl);
+  }
+
+} else {
+
+  console.log("No Logo Found From API");
+  setLogoPreview('');
+
+}
       prevCountryID.current  = d.countryID  ?? null;
       prevProvinceID.current = d.provinceID ?? null;
       // load dropdowns for the returned IDs
