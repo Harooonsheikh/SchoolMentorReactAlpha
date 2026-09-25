@@ -10,7 +10,8 @@
                        launchSetup, academicSession, branchLogo, bank fields,
                        city/province/countryID, audit stamps, … },
              modulePermission: { branchID, academics, examination,
-                                 paperGenerator, …, userPermissions } | null } ]
+                                 paperGenerator, …, userPermissions,
+                                 mentorAI } | null } ]
 
    Branch → table row / core cards:
      id          → id
@@ -281,6 +282,7 @@ const MODULE_API_FIELD = {
   staffappraisals: 'staffAppraisals',
   schoolsops: 'schoolSOPs',
   teachertrainings: 'teacherTrainings',
+  mentorai: 'mentorAI',
   auditlogs: 'auditLogs',
   settings: 'settings',
   userpermissions: 'userPermissions',

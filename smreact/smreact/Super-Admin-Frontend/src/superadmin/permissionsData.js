@@ -65,6 +65,7 @@ export const MODULE_GROUPS = [
   { label: 'School Mentor', modules: [
     { key: 'schoolsops',       name: 'Policy Manuals',    icon: 'fa-book-open' },
     { key: 'teachertrainings', name: 'Teacher Trainings', icon: 'fa-chalkboard-user' },
+    { key: 'mentorai',         name: 'Mentor AI',         icon: 'fa-robot' },
   ] },
   { label: 'Core System', modules: [
     { key: 'auditlogs',       name: 'Audit Logs',       icon: 'fa-clock-rotate-left' },
@@ -131,7 +132,7 @@ export function defaultPerms(school) {
       academics: on, examination: on, papergenerator: on, attendance: on, timetable: on,
       fee: on, accounts: on, inventory: false, onelink: false,
       admissioncrm: on, students: on, hr: on, staffappraisals: false, approvals: on,
-      schoolsops: false, teachertrainings: false,
+      schoolsops: false, teachertrainings: false, mentorai: on,
       auditlogs: on, settings: on, userpermissions: on,
     },
   };
