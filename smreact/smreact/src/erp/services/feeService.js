@@ -548,11 +548,10 @@ const FEE_SETTINGS_DEFAULTS = {
   fineType:         'fixed',
   fineAmt:          0,
   printSize:        'a4',
-  /* Fee Module feature controls. Ye teenon DEFAULT ON (true) hain — ERP abhi
-     multiple receiving, over-payment→advance aur OneLink/PSID partial challan
-     sab allow karta hai, is liye jab tak user khud OFF na kare tab tak behaviour
-     bilkul waisa hi rahe jaisa aaj hai. Backend FeeChallanSettings me abhi ye
-     fields nahi, is liye bankDetails ki tarah localStorage me persist hote hain. */
+  /* Fee Module feature controls. Default ON — ERP multiple receiving, over-payment
+     →advance aur OneLink/PSID partial challan allow karta hai. Backend
+     FeeChallanSettings ab ye fields bhejta/save karta hai (`psidInstallmentPayments`
+     API naam). localStorage sirf tab fallback jab API boolean na de. */
   multipleReceiving:       true,
   advancePaymentReceiving: true,
   psidInstallments:        true,
@@ -584,12 +583,13 @@ function mapFeeSettingsFromApi(row = {}) {
     fineType:           apiFineToUi(row.fineType ?? FEE_SETTINGS_DEFAULTS.fineType),
     fineAmt:            Number(row.fineAmountRs ?? row.fineAmt ?? FEE_SETTINGS_DEFAULTS.fineAmt) || 0,
     printSize:          apiPrintSizeToUi(row.defaultPrintSize ?? row.printSize ?? FEE_SETTINGS_DEFAULTS.printSize),
-    /* Feature controls — backend abhi ye fields nahi bhejta, is liye default ON
-       rehte hain aur asli value getFeeSettings me localStorage overlay se aati
-       hai. Backend jab bhejne lage to WAHI authority hoga. */
+    /* Feature controls — API booleans authority. UI key `psidInstallments`
+       ↔ API field `psidInstallmentPayments` (Swagger). */
     multipleReceiving:       (typeof row.multipleReceiving === 'boolean' ? row.multipleReceiving : FEE_SETTINGS_DEFAULTS.multipleReceiving),
     advancePaymentReceiving: (typeof row.advancePaymentReceiving === 'boolean' ? row.advancePaymentReceiving : FEE_SETTINGS_DEFAULTS.advancePaymentReceiving),
-    psidInstallments:        (typeof row.psidInstallments === 'boolean' ? row.psidInstallments : FEE_SETTINGS_DEFAULTS.psidInstallments),
+    psidInstallments:        (typeof row.psidInstallmentPayments === 'boolean' ? row.psidInstallmentPayments
+                              : typeof row.psidInstallments === 'boolean' ? row.psidInstallments
+                              : FEE_SETTINGS_DEFAULTS.psidInstallments),
     createdDate:        row.createdDate ?? null,
     modifiedDate:       row.modifiedDate ?? null,
     createdBy:          row.createdBy ?? null,
@@ -642,13 +642,12 @@ function mapFeeSettingsToApi(settings = {}) {
     fineType:          uiFineToApi(settings.fineType),
     fineAmountRs:      Number(settings.fineAmt) || 0,
     defaultPrintSize:  uiPrintSizeToApi(settings.printSize),
-    /* Feature controls bhi bhejo (default ON → OFF sirf explicit false par).
-       Backend abhi in fields ko ignore karta hai; asli persistence localStorage
-       overlay se hoti hai (writeFeatureTogglesLs). Bhejna harmless hai taake
-       backend future me adopt kar le to seedha round-trip ho jaye. */
-    multipleReceiving:       settings.multipleReceiving !== false,
-    advancePaymentReceiving: settings.advancePaymentReceiving !== false,
-    psidInstallments:        settings.psidInstallments !== false,
+    /* Feature controls — API field names (Swagger FeeChallanSettings/save).
+       UI key psidInstallments → API psidInstallmentPayments. */
+    multipleReceiving:         settings.multipleReceiving !== false,
+    advancePaymentReceiving:   settings.advancePaymentReceiving !== false,
+    psidInstallmentPayments:   settings.psidInstallments !== false,
+    psidInstallments:          settings.psidInstallments !== false, /* alias, harmless */
     createdDate:       settings.createdDate || now,
     modifiedDate:      now,
     createdBy:         Number(settings.createdBy) || userID,
@@ -657,10 +656,8 @@ function mapFeeSettingsToApi(settings = {}) {
   };
 }
 
-/* "Show Bank Details On challan" toggle — backend FeeChallanSettings me abhi ye
-   field nahi hai. Jab tak backend add na kare, iska value localStorage me rakhte
-   hain (per-branch) taake toggle persist ho aur challan tak pahunche. Backend jab
-   ye field bhejne lage to WAHI authority hoga (LS overlay skip ho jaata hai). */
+/* "Show Bank Details On challan" — API field `bankDetails`. localStorage
+   fallback jab get-all me asli boolean na ho. */
 function bankDetailsLsKey() { return `fee.showBankDetails.${feeSettingsBranchID()}`; }
 function readBankDetailsLs() {
   try { const v = localStorage.getItem(bankDetailsLsKey()); return v == null ? null : (v === '1' || v === 'true'); }
@@ -678,12 +675,15 @@ function apiRowHasBankField(row) {
     .some(v => typeof v === 'boolean');
 }
 
-/* Fee Module feature controls (Multiple Receiving / Advance Payment Receiving /
-   PSID Installment Payments) — backend FeeChallanSettings me abhi ye columns
-   nahi, is liye bank-details ki tarah per-branch localStorage me persist hote
-   hain. Default ON, is liye sirf tab likhte hain jab user save kare; backend jab
-   ye fields bhejne lage to mapFeeSettingsFromApi ka boolean WAHI authority hoga. */
+/* Fee Module feature controls — API ab columns bhejta hai. localStorage
+   fallback jab get-all me boolean na ho (purana record / pehli load). */
 const FEATURE_TOGGLE_KEYS = ['multipleReceiving', 'advancePaymentReceiving', 'psidInstallments'];
+/* UI key → API field name(s) — pehla match jo boolean ho, authority. */
+const FEATURE_TOGGLE_API_FIELDS = {
+  multipleReceiving:       ['multipleReceiving'],
+  advancePaymentReceiving: ['advancePaymentReceiving'],
+  psidInstallments:        ['psidInstallmentPayments', 'psidInstallments'],
+};
 function featureTogglesLsKey() { return `fee.featureToggles.${feeSettingsBranchID()}`; }
 function readFeatureTogglesLs() {
   try {
@@ -700,8 +700,10 @@ function writeFeatureTogglesLs(settings) {
     localStorage.setItem(featureTogglesLsKey(), JSON.stringify(out));
   } catch { /* ignore */ }
 }
-function apiRowHasFeatureToggle(row, key) {
-  return !!row && typeof row[key] === 'boolean';
+function apiRowHasFeatureToggle(row, uiKey) {
+  if (!row) return false;
+  const fields = FEATURE_TOGGLE_API_FIELDS[uiKey] || [uiKey];
+  return fields.some(f => typeof row[f] === 'boolean');
 }
 
 export async function getFeeSettings() {
@@ -1175,7 +1177,10 @@ function buildLedgerChallanPayload({ classMeta = {}, student = {}, heads = [], m
   const branchID = Number(sessionStorage.getItem('branchID')) || 1;
   const userID = Number(sessionStorage.getItem('UserID')) || 1;
   const issueDate = toApiDate(options.issueDate);
-  const dueDate = toApiDate(options.dueDate);
+  /* Two Months+: Due Date UI hide — payload me mat bhejo (server null/default). */
+  const dueDate = String(options.type) === '2' || !options.dueDate
+    ? null
+    : toApiDate(options.dueDate);
   const classDisc = options.discountMap?.[classMeta.key]?.[student.reg] || {};
 
   /* Backend in fields ko Int32 (nullable) me leta hai — decimal/NaN/Infinity bhejne par
@@ -1186,12 +1191,10 @@ function buildLedgerChallanPayload({ classMeta = {}, student = {}, heads = [], m
     return Number.isFinite(n) ? n : 0;
   };
 
-  /* Challan Type — "One Month" (default) ya "Two Months". Two Months ka matlab
-     ek hi challan par DO mahine ki fees bill hoti hai, is liye har head ka
-     challanAmount aur discount DUGNA (× 2) ho jaata hai (net = 2 × (amount −
-     discount) = do mahine ka net). Default '1' par multiplier 1 hai, is liye
-     single-month generate bilkul waise ka waise rehta hai (byte-for-byte). */
-  const monthsMult = String(options.type) === '2' ? 2 : 1;
+  /* Challan Type — "One Month" (default) ya "Two Months". Installment API
+     per-month amounts leta hai aur multi-month range par SERVER multiply
+     karta hai — frontend ×2 NAHI karta (warna double-double ho jaata). */
+  const isTwoMonths = String(options.type) === '2';
 
   const makeRow = (subHead, amount, discount = 0) => ({
     id: 0,
@@ -1199,10 +1202,11 @@ function buildLedgerChallanPayload({ classMeta = {}, student = {}, heads = [], m
     branchId: branchID,
     head: 'Account Payable',
     subHead: String(subHead || ''),
-    challanAmount: int32((Number(amount) || 0) * monthsMult),
-    discount: int32((Number(discount) || 0) * monthsMult),
+    challanAmount: int32(amount),
+    discount: int32(discount),
+    /* Installment create sirf head/subHead/challanAmount/discount use karta hai.
+       pendingorAdv kabhi bhejo mat — server khud calculate karta hai. */
     receivedAmount: 0,
-    pendingorAdv: 0,
     createdAt: now,
     createdBy: userID,
     modifiedAt: now,
@@ -1243,39 +1247,54 @@ function buildLedgerChallanPayload({ classMeta = {}, student = {}, heads = [], m
     detailRows.push(makeRow('Transport', student.transport));
   }
 
-  return {
-    ledger: {
-      id: 0,
-      dateofCreattion: issueDate,
-      dueDate,
-      studentID: Number(student.studentID) || 0,
-      branchID,
-      gradeID: Number(student.gradeID || classMeta._gradeId) || 0,
-      sectionID: Number(student.sectionID || classMeta._sectionId) || 0,
-      registrationNumber: String(student.reg || ''),
-      tranType: '',
-      paymentMethod: '',
-      month: Number(monthIdx) + 1,
-      year: Number(options.year) || new Date().getFullYear(),
-      plApplicantID: '',
-      /* PSID backend generate karta hai (1Link ke consumer number rules ke
-         mutabiq) — frontend khaali bhejta hai aur response/get-by-month se
-         asli value wapas padhta hai. Dekho: psidOf(). */
-      plpsid: '',
-      createdAt: now,
-      createdBy: userID,
-      modifiedAt: now,
-      modifiedBy: userID,
-      isActive: true,
-      detailRows,
-    },
+  const year = Number(options.year) || new Date().getFullYear();
+  const startMonth = Number(monthIdx) + 1;
+  const ledger = {
+    id: 0,
+    dateofCreattion: issueDate,
+    dueDate,
+    studentID: Number(student.studentID) || 0,
+    branchID,
+    gradeID: Number(student.gradeID || classMeta._gradeId) || 0,
+    sectionID: Number(student.sectionID || classMeta._sectionId) || 0,
+    registrationNumber: String(student.reg || ''),
+    tranType: '',
+    paymentMethod: '',
+    plApplicantID: '',
+    /* PSID backend generate karta hai (1Link ke consumer number rules ke
+       mutabiq) — frontend khaali bhejta hai aur get-with-installments se
+       asli value wapas padhta hai. Dekho: psidOf(). */
+    plpsid: '',
+    createdAt: now,
+    createdBy: userID,
+    modifiedAt: now,
+    modifiedBy: userID,
+    isActive: true,
+    detailRows,
   };
+
+  if (isTwoMonths) {
+    /* Multi-month: month/year ki jagah start/end range. Server har head
+       ko range ke months se multiply karta hai. */
+    let endMonth = startMonth + 1;
+    let endYear = year;
+    if (endMonth > 12) { endMonth = 1; endYear += 1; }
+    ledger.startMonth = startMonth;
+    ledger.startYear = year;
+    ledger.endMonth = endMonth;
+    ledger.endYear = endYear;
+    ledger.totalMonthChallan = 2;
+  } else {
+    ledger.month = startMonth;
+    ledger.year = year;
+  }
+
+  return { ledger };
 }
 
 export async function generateChallan(classKey, reg, monthIdx, options = {}) {
-  /* Both class-wise and family-tree challans post to the same BranchLedger
-     create-challan endpoint. Family mode differs only in how detailRows are
-     built (per-child fee/transport instead of shared class heads) — see
+  /* Class-wise + family-tree dono installment create endpoint par jaate hain.
+     Family mode sirf detailRows build me farq (per-child heads) — dekho
      buildLedgerChallanPayload. */
   const regs = Array.isArray(reg) ? reg : [reg];
   const students = Array.isArray(options.students) && options.students.length
@@ -1301,31 +1320,51 @@ export async function generateChallan(classKey, reg, monthIdx, options = {}) {
         issueISO: String(p.dateofCreattion || '').slice(0, 10),
         dueISO:   String(p.dueDate || '').slice(0, 10),
       };
-      const mo = Number(p.month) || 0, yr = Number(p.year) || 0;
-      /* studentID + registrationNumber dono par store — reload record kis key se
-         match ho ye guarantee ke liye. */
+      const mo = Number(p.month || p.startMonth) || 0;
+      const yr = Number(p.year || p.startYear) || 0;
       if (Number(p.studentID)) challanDateCache.set(`id|${Number(p.studentID)}|${mo}|${yr}`, val);
       if (p.registrationNumber) challanDateCache.set(`reg|${String(p.registrationNumber)}|${mo}|${yr}`, val);
     } catch (e) { /* ignore */ }
-    /* Debug: Issue Date backend tak sahi ja rahi hai ya nahi — console me dekho. */
-    console.log('[create-challan] issue picked:', options.issueDate,
+    console.log('[create-challan-installment] issue picked:', options.issueDate,
                 '→ sent dateofCreattion:', payload.ledger.dateofCreattion,
-                '| dueDate:', payload.ledger.dueDate);
-    const res = await fetch(buildUrl('/api/BranchLedger/create-challan'), {
+                '| dueDate:', payload.ledger.dueDate,
+                '| range:', payload.ledger.startMonth
+                  ? `${payload.ledger.startMonth}/${payload.ledger.startYear}-${payload.ledger.endMonth}/${payload.ledger.endYear}`
+                  : `${payload.ledger.month}/${payload.ledger.year}`);
+    const res = await fetch(buildUrl('/api/BranchLedger/create-challan-installment'), {
       method: 'POST',
       headers: { Accept: '*/*', 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
     const json = await res.json().catch(() => null);
-    console.log('[create-challan] response:', json);
-    if (!res.ok || json?.success === false) {
-      throw new Error(apiMessage(json) || `Could not generate challan for ${student.name || student.reg || 'student'}`);
+    console.log('[create-challan-installment] response:', json);
+    /* 409 = challan already generated — README §3.2: count, don't fail the batch. */
+    if (res.status === 409) {
+      results.push({
+        alreadyGenerated: true,
+        success: false,
+        message: apiMessage(json) || 'Challan already generated',
+        student: student.name || student.reg || '',
+      });
+      continue;
     }
-    results.push(json);
+    if (!res.ok || json?.success === false) {
+      results.push({
+        failed: true,
+        success: false,
+        message: apiMessage(json) || `Could not generate challan for ${student.name || student.reg || 'student'}`,
+        student: student.name || student.reg || '',
+      });
+      continue;
+    }
+    results.push({ ...json, created: true });
   }
 
   invalidateMonthChallans();
-  return { classKey, regs, monthIdx, results };
+  const created = results.filter(r => r.created).length;
+  const alreadyGenerated = results.filter(r => r.alreadyGenerated).length;
+  const failed = results.filter(r => r.failed);
+  return { classKey, regs, monthIdx, results, created, alreadyGenerated, failed };
 }
 export async function deleteChallan(classKey, reg, monthIdx) {
   await delay();
@@ -1365,7 +1404,9 @@ export function invalidateMonthChallans(month, year) {
   ledgerRangeCache.clear();
 }
 
-/* All students' challans for a branch/month/year (the challan-list source). */
+/* All students' challans for a branch/month/year (the challan-list source).
+   Installment API: get-with-installments — har head ke andar installments[]
+   aati hai taake Receiving modal history refresh par bhi dikhe. */
 export async function getMonthChallans(month, year) {
   const branchID = Number(sessionStorage.getItem('branchID')) || 1;
   const key = `${branchID}|${month}|${year}`;
@@ -1373,19 +1414,136 @@ export async function getMonthChallans(month, year) {
 
   const promise = (async () => {
     const res = await fetch(
-      buildUrl(`/api/BranchLedger/get-by-month?branchId=${branchID}&month=${month}&year=${year}`),
+      buildUrl(`/api/BranchLedger/get-with-installments?branchId=${branchID}&month=${month}&year=${year}`),
       { headers: { Accept: '*/*' } },
     );
     const json = await res.json().catch(() => null);
     if (!res.ok || json?.success === false) {
       throw new Error(apiMessage(json) || 'Could not load challans');
     }
-    return Array.isArray(json?.data) ? json.data : [];
+    const rows = Array.isArray(json?.data) ? json.data : [];
+    return rows.map(normalizeLedgerInstallments);
   })();
 
   monthChallansCache.set(key, promise);
   promise.catch(() => { monthChallansCache.delete(key); });
   return promise;
+}
+
+/* Null amounts → 0 so UI math (reduce / Math.max) NaN na ho. */
+export function normalizeLedgerInstallments(challan) {
+  if (!challan || typeof challan !== 'object') return challan;
+  const detailRows = Array.isArray(challan.detailRows) ? challan.detailRows.map(row => {
+    const installments = Array.isArray(row.installments)
+      ? row.installments.map(inst => ({
+          ...inst,
+          challanAmount: Number(inst.challanAmount) || 0,
+          discount: Number(inst.discount) || 0,
+          receivedAmount: Number(inst.receivedAmount) || 0,
+          recvDiscount: Number(inst.recvDiscount) || 0,
+          pendingorAdv: Number(inst.pendingorAdv) || 0,
+          advanceAmount: Number(inst.advanceAmount) || 0,
+        }))
+      : [];
+    /* Receiving-time discount (recvDiscount) ko YAHIN ek dafa `discount` me jod do —
+       server `discount` me sirf Discount Manager rakhta hai. Is se Receiving, Fee Challan
+       list (individual + family), one-month / combined challan print, reports — sab
+       ek hi Discount / Net / Remaining dikhate hain. `_mgrDisc` = asal manager discount;
+       `_recvFolded` = dobara na jude (withPersistedGiveDisc ise pehchanta hai).
+       API ko `discount` wapas kabhi nahi jaata (receive-installment sirf delta bhejta hai). */
+    const mgrDisc = Number(row.discount) || 0;
+    const recvDisc = Math.max(0, Number(row.recvDiscount) || 0);
+    return {
+      ...row,
+      challanAmount: Number(row.challanAmount) || 0,
+      discount: row._recvFolded ? mgrDisc : mgrDisc + recvDisc,
+      _mgrDisc: row._recvFolded ? row._mgrDisc : mgrDisc,
+      _recvFolded: row._recvFolded || recvDisc > 0,
+      receivedAmount: Number(row.receivedAmount) || 0,
+      recvDiscount: recvDisc,
+      pendingorAdv: Number(row.pendingorAdv) || 0,
+      advanceAmount: Number(row.advanceAmount) || 0,
+      previousPendingorAdv: Number(row.previousPendingorAdv ?? row.previousPendingOrAdv) || 0,
+      installments,
+    };
+  }) : [];
+  return { ...challan, detailRows };
+}
+
+/* Nested installments → Receiving UI payment rows (Installment 1..N).
+   Group by installmentNo across heads; empty #1 (no money) skip. */
+export function installmentsToPayments(challan) {
+  if (!challan) return [];
+  const groups = new Map();
+  (challan.detailRows || []).forEach(row => {
+    const headName = String(row.subHead || row.head || '').trim();
+    if (!headName) return;
+    (row.installments || []).forEach(inst => {
+      const recv = Number(inst.receivedAmount) || 0;
+      const disc = Number(inst.recvDiscount) || 0;
+      if (recv === 0 && disc === 0) return;
+      const no = Number(inst.installmentNo) || 0;
+      if (!groups.has(no)) {
+        /* Method me |#GD# marker ho sakta hai — UI ko clean name chahiye. */
+        const rawMethod = String(challan.paymentMethod || 'Cash');
+        const gdAt = rawMethod.indexOf('|#GD#');
+        const cleanMethod = (gdAt >= 0 ? rawMethod.slice(0, gdAt) : rawMethod).trim() || 'Cash';
+        groups.set(no, {
+          id: `inst-${challan.id}-${no}`,
+          installmentNo: no,
+          date: String(inst.receivedDate || challan.receivedDate || '').slice(0, 10),
+          method: cleanMethod,
+          amount: 0,
+          perHead: {},
+          giveDisc: {},
+          byHeadInstIds: {},
+          isReceiving: false,
+          source: 'api',
+          by: 'Counter',
+        });
+      }
+      const p = groups.get(no);
+      p.perHead[headName] = (p.perHead[headName] || 0) + recv;
+      if (disc > 0) {
+        p.giveDisc[headName] = (p.giveDisc[headName] || 0) + disc;
+        p.isReceiving = true;
+      }
+      if (inst.installmentId) p.byHeadInstIds[headName] = inst.installmentId;
+      p.amount += recv;
+      if (inst.receivedDate) p.date = String(inst.receivedDate).slice(0, 10);
+    });
+  });
+  if (groups.size) return [...groups.values()].sort((a, b) => a.installmentNo - b.installmentNo);
+
+  /* Legacy / no nested installments: one synthetic payment from detail totals. */
+  const perHead = {};
+  const giveDisc = {};
+  let amount = 0;
+  (challan.detailRows || []).forEach(r => {
+    const n = String(r.subHead || r.head || '').trim();
+    if (!n) return;
+    const recv = Number(r.receivedAmount) || 0;
+    if (recv) { perHead[n] = (perHead[n] || 0) + recv; amount += recv; }
+    const rd = Number(r.recvDiscount) || 0;
+    if (rd) giveDisc[n] = (giveDisc[n] || 0) + rd;
+  });
+  if (amount <= 0 && !Object.keys(giveDisc).length) return [];
+  const rawMethod = String(challan.paymentMethod || 'Cash');
+  const gdAt = rawMethod.indexOf('|#GD#');
+  const cleanMethod = (gdAt >= 0 ? rawMethod.slice(0, gdAt) : rawMethod).trim() || 'Cash';
+  return [{
+    id: `legacy-${challan.id}`,
+    installmentNo: 1,
+    date: String(challan.receivedDate || challan.modifiedAt || '').slice(0, 10),
+    method: cleanMethod,
+    amount,
+    perHead,
+    giveDisc,
+    byHeadInstIds: {},
+    isReceiving: Object.keys(giveDisc).length > 0,
+    source: 'api',
+    by: 'Counter',
+  }];
 }
 
 /* Full-branch resolution maps for reports/exports (e.g. the Generated Fee
@@ -1458,18 +1616,15 @@ export async function getBranchRosterMaps() {
   return { classNameById, sectionNameById, studentById };
 }
 
-/* One student's challans for a branch/month/year. */
+/* One student's challans — installment API (README §4.3 open modal refresh).
+   GET /get-with-installments?branchId&studentId&month&year */
 export async function getStudentChallans(studentId, month, year) {
-  const branchID = Number(sessionStorage.getItem('branchID')) || 1;
-  const res = await fetch(
-    buildUrl(`/api/BranchLedger/get-all?branchId=${branchID}&studentId=${studentId}&month=${month}&year=${year}`),
-    { headers: { Accept: '*/*' } },
-  );
-  const json = await res.json().catch(() => null);
-  if (!res.ok || json?.success === false) {
-    throw new Error(apiMessage(json) || 'Could not load student challans');
-  }
-  return Array.isArray(json?.data) ? json.data : [];
+  const rows = await getWithInstallments({
+    studentId,
+    month,
+    year,
+  });
+  return Array.isArray(rows) ? rows : [];
 }
 
 /* getLedgerRange() is called from 4 different Fee.jsx sub-views (Challan
@@ -1495,7 +1650,9 @@ export async function getLedgerRange(fromMonth, fromYear, toMonth, toYear) {
     if (!res.ok || json?.success === false) {
       throw new Error(apiMessage(json) || 'Could not load ledger history');
     }
-    return Array.isArray(json?.data) ? json.data : [];
+    return Array.isArray(json?.data)
+      ? json.data.map(normalizeLedgerInstallments)
+      : [];
   })();
 
   ledgerRangeCache.set(key, promise);
@@ -1729,20 +1886,30 @@ export async function getEmployeeNameByLoginUser(loginUserId) {
   return p;
 }
 
-/* Record a payment against a challan. body:
-   { ledgerId (challan id), paymentMethod, receivedDate, modifiedBy, detailRows:[...] }.
-   The caller fills each detailRow's receivedAmount / pendingorAdv.
+/* ═══════════════════════════════════════════════════════════════════
+   RECEIVE APIs (installment) — README §2 / §4.3 / §5.4 / §5.9
 
-   receivedDate = cashier ki modal me chuni hui receiving date (YYYY-MM-DD).
-   Ye modifiedAt (server ka "abhi") se ALAG hai: back-dated receiving par dono
-   farq karte hain, aur reports/slip me receiving date wahi dikhni chahiye jo
-   cashier ne chuni. Ledger ise wapas receivedDate par bhejta hai — reports
-   usay padhti hain, modifiedAt sirf fallback hai. */
+   Pay Now (modal)     → POST /receive-installment
+                         body: delta amounts, installmentId: 0
+   Totals (legacy UI)  → POST /receive-payment-installment
+                         body: running totals per head (increase only)
+   NEVER               → POST /receive-payment  (legacy non-installment)
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* Smart router: detailRows with installmentId → delta API; else totals API. */
 export async function receivePayment(body) {
-  const res = await fetch(buildUrl('/api/BranchLedger/receive-payment'), {
+  const rows = Array.isArray(body?.detailRows) ? body.detailRows : [];
+  const looksLikeDelta = rows.some(r => r && Object.prototype.hasOwnProperty.call(r, 'installmentId'));
+  return looksLikeDelta ? receiveInstallment(body) : receivePaymentInstallment(body);
+}
+
+/* Totals format — README §5.9. receivedAmount / discount = NEW TOTALS (not delta). */
+export async function receivePaymentInstallment(body) {
+  const cleaned = stripPendingFromReceiveBody(body);
+  const res = await fetch(buildUrl('/api/BranchLedger/receive-payment-installment'), {
     method: 'POST',
     headers: { Accept: '*/*', 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    body: JSON.stringify(cleaned),
   });
   const json = await res.json().catch(() => null);
   if (!res.ok || json?.success === false) {
@@ -1750,6 +1917,243 @@ export async function receivePayment(body) {
   }
   invalidateMonthChallans();
   return json;
+}
+
+/* Per-installment receive (THIS payment only). installmentId: 0 = new / fill empty.
+   README §4.3 / §5.4 — Receiving modal Pay Now uses this. */
+export async function receiveInstallment(body) {
+  const cleaned = stripPendingFromReceiveBody(body);
+  const res = await fetch(buildUrl('/api/BranchLedger/receive-installment'), {
+    method: 'POST',
+    headers: { Accept: '*/*', 'Content-Type': 'application/json' },
+    body: JSON.stringify(cleaned),
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok || json?.success === false) {
+    throw new Error(apiMessage(json) || 'Could not record installment');
+  }
+  invalidateMonthChallans();
+  return json;
+}
+
+/* Build Pay Now body for receive-installment (README §4.3).
+   perHead / giveDisc = amounts of THIS installment only (not running totals). */
+export function buildReceiveInstallmentRequest({
+  ledgerId,
+  paymentMethod = 'Cash',
+  receivedDate = '',
+  modifiedBy = 0,
+  isReceiving = true,
+  detailRows = [],
+  perHead = {},
+  giveDisc = {},
+  fine = 0,
+  newHeads = [],
+} = {}) {
+  const rows = [];
+  const same = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
+
+  (detailRows || []).forEach(r => {
+    if (isLateFineRow(r)) return;
+    /* Negative advance rows: skip Pay Now delta (consume via separate flow). */
+    if (/previous|pending|arrear|old\s*advance|advance\s*till/i.test(String(r.subHead || r.head || ''))
+        && (+r.challanAmount || 0) < 0) return;
+    const headName = r.subHead ?? r.head;
+    const recvNow = Math.round(Number(perHead?.[headName]) || 0);
+    const disc = isReceiving ? Math.max(0, Math.round(Number(giveDisc?.[headName]) || 0)) : 0;
+    if (recvNow <= 0 && disc <= 0) return;
+    rows.push({
+      id: Number(r.id) || 0,
+      installmentId: 0,
+      receivedAmount: Math.max(0, recvNow),
+      discount: disc,
+    });
+  });
+
+  const fineAmt = Math.max(0, Math.round(Number(fine) || 0));
+  if (fineAmt > 0) {
+    const fineRow = (detailRows || []).find(isLateFineRow);
+    if (fineRow && Number(fineRow.id)) {
+      rows.push({
+        id: Number(fineRow.id),
+        installmentId: 0,
+        receivedAmount: fineAmt,
+        discount: 0,
+      });
+    } else {
+      rows.push({
+        id: 0,
+        installmentId: 0,
+        receivedAmount: fineAmt,
+        discount: 0,
+        head: LATE_FINE_HEAD,
+        subHead: LATE_FINE_HEAD,
+      });
+    }
+  }
+
+  (Array.isArray(newHeads) ? newHeads : []).forEach(h => {
+    const name = h.name || h.subHead || h.head || '';
+    const amt = Math.round(Number(h.amount ?? h.receivedAmount ?? perHead?.[name]) || 0);
+    if (!name || amt <= 0) return;
+    const existing = (detailRows || []).find(r => same(r.subHead || r.head, name));
+    rows.push({
+      id: existing ? (Number(existing.id) || 0) : 0,
+      installmentId: 0,
+      receivedAmount: amt,
+      discount: 0,
+      ...(existing ? {} : { head: 'Account Payable', subHead: name }),
+    });
+  });
+
+  return {
+    ledgerId: Number(ledgerId) || 0,
+    paymentMethod: paymentMethod || 'Cash',
+    receivedDate: String(receivedDate || '').slice(0, 10),
+    modifiedBy: Number(modifiedBy) || 0,
+    isReceiving: !!isReceiving,
+    detailRows: rows,
+  };
+}
+
+/* Build totals body for receive-payment-installment (README §5.9).
+   detailRows[].receivedAmount / discount = NEW RUNNING TOTALS after this save. */
+export function buildReceivePaymentInstallmentRequest({
+  ledgerId,
+  paymentMethod = 'Cash',
+  receivedDate = '',
+  modifiedBy = 0,
+  isReceiving = true,
+  detailRows = [],
+} = {}) {
+  const rows = (Array.isArray(detailRows) ? detailRows : [])
+    .filter(r => r && (Number(r.id) || Number(r.receivedAmount) || Number(r.discount)))
+    .map(r => {
+      const out = {
+        id: Number(r.id) || 0,
+        receivedAmount: Math.max(0, Math.round(Number(r.receivedAmount) || 0)),
+        discount: Math.max(0, Math.round(Number(r.discount) || 0)),
+      };
+      if (!out.id && (r.head || r.subHead)) {
+        out.head = r.head || '';
+        out.subHead = r.subHead || r.head || '';
+      }
+      return out;
+    });
+  return {
+    ledgerId: Number(ledgerId) || 0,
+    paymentMethod: paymentMethod || 'Cash',
+    receivedDate: String(receivedDate || '').slice(0, 10),
+    modifiedBy: Number(modifiedBy) || 0,
+    isReceiving: !!isReceiving,
+    detailRows: rows,
+  };
+}
+
+function stripPendingFromReceiveBody(body) {
+  if (!body || typeof body !== 'object') return body;
+  const detailRows = Array.isArray(body.detailRows)
+    ? body.detailRows.map(r => {
+        if (!r || typeof r !== 'object') return r;
+        const { pendingorAdv, previousPendingorAdv, previousPendingOrAdv, advanceAmount, ...rest } = r;
+        return rest;
+      })
+    : body.detailRows;
+  return { ...body, detailRows };
+}
+
+export async function createChallanInstallment(payload) {
+  const res = await fetch(buildUrl('/api/BranchLedger/create-challan-installment'), {
+    method: 'POST',
+    headers: { Accept: '*/*', 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok || json?.success === false) {
+    throw new Error(apiMessage(json) || 'Could not create challan');
+  }
+  invalidateMonthChallans();
+  return json;
+}
+
+export async function getWithInstallments({ branchId, studentId, month, year } = {}) {
+  const branchID = Number(branchId) || Number(sessionStorage.getItem('branchID')) || 1;
+  const qs = new URLSearchParams({ branchId: String(branchID) });
+  if (studentId != null && studentId !== '') qs.set('studentId', String(studentId));
+  if (month != null && month !== '') qs.set('month', String(month));
+  if (year != null && year !== '') qs.set('year', String(year));
+  const res = await fetch(buildUrl(`/api/BranchLedger/get-with-installments?${qs}`), {
+    headers: { Accept: '*/*' },
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok || json?.success === false) {
+    throw new Error(apiMessage(json) || 'Could not load challans');
+  }
+  const rows = Array.isArray(json?.data) ? json.data : [];
+  return rows.map(normalizeLedgerInstallments);
+}
+
+export async function getInstallments(ledgerId, detailId) {
+  const qs = detailId != null && detailId !== '' ? `?detailId=${detailId}` : '';
+  const res = await fetch(buildUrl(`/api/BranchLedger/installments/${ledgerId}${qs}`), {
+    headers: { Accept: '*/*' },
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok || json?.success === false) {
+    throw new Error(apiMessage(json) || 'Could not load installments');
+  }
+  return Array.isArray(json?.data) ? json.data : [];
+}
+
+export async function updateInstallment(ledgerId, installmentId, body) {
+  const userID = Number(sessionStorage.getItem('UserID')) || 0;
+  const payload = {
+    modifiedBy: userID,
+    ...(body || {}),
+  };
+  const res = await fetch(
+    buildUrl(`/api/BranchLedger/update-installment/${ledgerId}/${installmentId}`),
+    {
+      method: 'PUT',
+      headers: { Accept: '*/*', 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    },
+  );
+  const json = await res.json().catch(() => null);
+  if (!res.ok || json?.success === false) {
+    throw new Error(apiMessage(json) || 'Could not update installment');
+  }
+  invalidateMonthChallans();
+  return json;
+}
+
+/* Edit one UI "payment" (may span multiple heads / installment ids). */
+export async function editInstallment({ ledgerId, payment, patch } = {}) {
+  const id = Number(ledgerId) || 0;
+  if (!id) throw new Error('Missing challan id for installment edit');
+  const byIds = (payment && payment.byHeadInstIds) || {};
+  const heads = Object.keys(byIds);
+  if (!heads.length) {
+    throw new Error('This payment has no installment ids — reload and try again');
+  }
+  const userID = Number(sessionStorage.getItem('UserID')) || 0;
+  const date = (patch && patch.date) || (payment && payment.date) || '';
+  const method = (patch && patch.method) || (payment && payment.method) || 'Cash';
+  const results = [];
+  for (const headName of heads) {
+    const instId = Number(byIds[headName]) || 0;
+    if (!instId) continue;
+    const receivedAmount = Math.round(Number(patch?.perHead?.[headName]) || 0);
+    const recvDiscount = Math.round(Number(patch?.giveDisc?.[headName]) || 0);
+    results.push(await updateInstallment(id, instId, {
+      receivedAmount,
+      recvDiscount,
+      receivedDate: date,
+      paymentMethod: method,
+      modifiedBy: userID,
+    }));
+  }
+  return results;
 }
 
 /* ── Give Discount SERVER persist (paymentMethod marker) ───────────────
@@ -1822,7 +2226,7 @@ export function hasLiveReceiving(rec) {
     Give Discount bhi nahi. (localStorage delete ke waqt saaf hota hai, is
     liye wo yahan se hataya nahi jaata — warna sirf-discount wali receiving
     usi browser me apna column kho deti.) */
-export function withPersistedGiveDisc(rec) {
+export function withPersistedGiveDisc(rec, opts = {}) {
   if (!rec) return rec;
   const live = hasLiveReceiving(rec);
   const fromPm = parseGiveDiscFromPaymentMethod(rec.paymentMethod);
@@ -1830,6 +2234,36 @@ export function withPersistedGiveDisc(rec) {
   const giveDisc = live ? { ...fromStore, ...fromPm.giveDisc } : { ...fromStore };
   const cleanMethod = fromPm.method || paymentMethodDisplay(rec.paymentMethod);
   const keys = Object.keys(giveDisc);
+  /* Optimistic UI rows pe Give pehle se discount me fold ho chuka hota hai —
+     dobara mat jodo (warna slip Discount ×2: 500→1066, Remaining 8000→6100). */
+  const alreadyInDiscount = !!(opts.discountAlreadyIncludesGive || rec._discountIncludesGive);
+  /* Server ab har head ka receiving-time discount `recvDiscount` me khud rakhta hai
+     (`discount` = sirf Discount Manager). Wo mile to wahi SACH hai — deterministic fold,
+     koi heuristic nahi (neeche wala remNo/remWith andaza advance/over-payment par ulta
+     faisla karta tha). `_mgrDisc` = asal manager discount (installment slip ke liye);
+     `_recvFolded` dobara fold hone se bachata hai. */
+  const srvRows = Array.isArray(rec.detailRows) ? rec.detailRows : [];
+  const serverGiveTotal = srvRows.reduce((a, r) => a + Math.max(0, +r?.recvDiscount || 0), 0);
+  if (serverGiveTotal > 0 && !alreadyInDiscount) {
+    const give = {};
+    const detailRows = srvRows.map(r => {
+      const rd = Math.max(0, +r.recvDiscount || 0);
+      if (!rd) return r;
+      const name = r.subHead || r.head || '';
+      give[name] = (give[name] || 0) + rd;
+      if (r._recvFolded) return r;
+      return { ...r, _mgrDisc: +r.discount || 0, discount: (+r.discount || 0) + rd, _recvFolded: true };
+    });
+    return {
+      ...rec,
+      paymentMethod: cleanMethod,
+      _paymentMethodRaw: String(rec._paymentMethodRaw || rec.paymentMethod || ''),
+      detailRows,
+      _giveDisc: give,
+      _isReceivingGive: true,
+      _discountIncludesGive: true,
+    };
+  }
   if (!keys.length) {
     return rec.paymentMethod === cleanMethod
       ? rec
@@ -1840,6 +2274,17 @@ export function withPersistedGiveDisc(rec) {
   keys.forEach(k => { byHead[norm(k)] = (byHead[norm(k)] || 0) + Math.max(0, +giveDisc[k] || 0); });
 
   const rows0 = Array.isArray(rec.detailRows) ? rec.detailRows : [];
+  if (alreadyInDiscount) {
+    return {
+      ...rec,
+      paymentMethod: cleanMethod,
+      _paymentMethodRaw: String(rec._paymentMethodRaw || rec.paymentMethod || ''),
+      detailRows: rows0,
+      _giveDisc: giveDisc,
+      _isReceivingGive: true,
+      _discountIncludesGive: true,
+    };
+  }
   /* Fold detect: agar current discount ke sath remaining pehle se ~0 hai to
      give pehle se disc me hai — dobara na jodo. */
   let remNo = 0;
@@ -1877,6 +2322,7 @@ export function withPersistedGiveDisc(rec) {
     detailRows,
     _giveDisc: giveDisc,
     _isReceivingGive: true,
+    _discountIncludesGive: !alreadyFolded || alreadyInDiscount,
   };
 }
 
@@ -1945,30 +2391,62 @@ export function clearStoredGiveDisc(ledgerId) {
   writeGiveDiscStore(store);
 }
 
-/* Reverse the receiving recorded against a challan — the challan itself stays,
-   its heads go back to unpaid. DELETE /api/BranchLedger/delete-receiving/{ledgerId}
-   This is the Receiving tab's delete; deleteChallanById (below) is the Challans
-   tab's, and destroys the challan itself. */
+/* Reverse the receiving recorded against a challan — the challan itself stays.
+   DELETE /api/BranchLedger/clear-receiving/{ledgerId}?modifiedBy=
+   (Receiving tab trash). Challan voucher delete = deleteChallanInstallment. */
 export async function deleteReceiving(ledgerId) {
+  return clearReceiving(ledgerId);
+}
+
+export async function clearReceiving(ledgerId) {
+  const id = Number(ledgerId) || 0;
+  if (!id) throw new Error('Missing challan id to clear receiving');
   const userID = Number(sessionStorage.getItem('UserID')) || 0;
+  const qs = userID ? `?modifiedBy=${userID}` : '';
   const res = await fetch(
-    buildUrl(`/api/BranchLedger/delete-receiving/${ledgerId}?modifiedBy=${userID}`),
+    buildUrl(`/api/BranchLedger/clear-receiving/${id}${qs}`),
     { method: 'DELETE', headers: { Accept: '*/*' } },
   );
   const json = await res.json().catch(() => null);
   if (!res.ok || json?.success === false) {
-    throw new Error(apiMessage(json) || 'Could not delete the receiving');
+    throw new Error(apiMessage(json) || 'Could not clear the receiving');
+  }
+  /* Give Discount local cache bhi saaf — warna Remaining 0 / zombie disc reh jata. */
+  clearStoredGiveDisc(id);
+  invalidateMonthChallans();
+  return json;
+}
+
+/* @deprecated — use clearReceiving; kept as alias for older call sites. */
+export async function deleteReceivingInstallment(ledgerId) {
+  return clearReceiving(ledgerId);
+}
+
+export async function deleteReceivingDetailInstallment(detailId) {
+  const userID = Number(sessionStorage.getItem('UserID')) || 0;
+  const res = await fetch(
+    buildUrl(`/api/BranchLedger/delete-receiving-detail-installment/${detailId}?modifiedBy=${userID}`),
+    { method: 'DELETE', headers: { Accept: '*/*' } },
+  );
+  const json = await res.json().catch(() => null);
+  if (!res.ok || json?.success === false) {
+    throw new Error(apiMessage(json) || 'Could not reset head receiving');
   }
   invalidateMonthChallans();
   return json;
 }
 
-/* Delete a single challan record by its BranchLedger id. */
+/* Delete a single challan voucher (installment API).
+   DELETE /api/BranchLedger/delete-challan-installment/{ledgerId} */
 export async function deleteChallanById(id) {
-  const res = await fetch(buildUrl(`/api/BranchLedger/delete/${id}`), {
-    method: 'DELETE',
-    headers: { Accept: '*/*' },
-  });
+  return deleteChallanInstallment(id);
+}
+
+export async function deleteChallanInstallment(ledgerId) {
+  const res = await fetch(
+    buildUrl(`/api/BranchLedger/delete-challan-installment/${ledgerId}`),
+    { method: 'DELETE', headers: { Accept: '*/*' } },
+  );
   const json = await res.json().catch(() => null);
   if (!res.ok || json?.success === false) {
     throw new Error(apiMessage(json) || 'Could not delete challan');
