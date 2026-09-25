@@ -56,12 +56,13 @@ async function readJson(res, label) {
   return json;
 }
 
-/** Logged-in user ki chat id — login `UserID` (get-contact-list ki `userId`
-    jaisi: Ahmad Tariq sh 141, jab ke uska employeeId 66). employee_ID sirf
-    get-contact-list ke {empID} me jata hai — chatEmployeeId(). */
+/** Logged-in user ki chat id — SIRF login `UserID` (get-contact-list ki `userId`
+    jaisi: Ahmad Tariq sh 141, jab ke uska employeeId 66). employee_ID par
+    fallback NAHI — parent ka employee_ID bachay ki applicantId (79) hai, us par
+    chat mobile ke inbox me nahi pahunchti. employee_ID sirf get-contact-list
+    ke {empID} me jata hai — chatEmployeeId(). */
 export function chatUserId() {
-  const raw = sessionStorage.getItem('UserID') || sessionStorage.getItem('employee_ID');
-  return Number(raw) || 0;
+  return Number(sessionStorage.getItem('UserID')) || 0;
 }
 
 /** get-contact-list ki id — HR wala employee number (`employee_ID`). */
@@ -378,6 +379,11 @@ export async function fetchContactList(branchId, empId) {
     const parent = isParentRow(row);
     return {
       userId: id,
+      /* Staff par HR id (Qasim 78), parent par aksar bachay ki applicant id —
+         siblings par backend sab ko ek hi ghalat id (35) de deta hai. SIRF
+         matching / FCM ke liye; chat hamesha `userId` (login) par. */
+      employeeId: Number(row.employeeId) || 0,
+      mobile: String(row.mobileNo || row.mobile || row.contactNo || '').replace(/\D/g, ''),
       name: name || fallbackName(parent, father, id),
       hasName: !!name,
       father,
@@ -400,15 +406,239 @@ export async function fetchContactList(branchId, empId) {
   return dedupeStaff(rows);
 }
 
-/** Un users ke ids jinke paas FCM token hai (yani app par logged in hain). */
+/* ─── New Chat directory — mobile app ka "+ New Chat" workflow ───
+   Ek saath:
+     1. get-contact-list/{branch}/{apna empId}
+     2. LaunchSetup get-class-section-studentlist-by-branch?isActive=true (roster)
+     3. LaunchSetup get-employees-by-branch → principal (isPrinciple)
+   Apni list me roster se kam bachay hon (kuch actors, jaise login 218, ko sirf
+   staff milta hai) to principal ki contact-list bhi la kar merge.
+   Staff   → contact-list rows, chat = userId (login).
+   Classes → roster (class · section); har bachay ka parent LOGIN
+             resolveParentLogins() nikalta hai — student.id kabhi chat id nahi. */
+
+const pickVal = (o, ...keys) => {
+  for (const k of keys) {
+    const v = o?.[k];
+    if (v !== undefined && v !== null && String(v).trim() !== '') return v;
+  }
+  return '';
+};
+const norm = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+const digits = (s) => String(s || '').replace(/\D/g, '');
+
+/** LaunchSetup roster → flat students (sirf active) — class/section ki tarteeb ke saath. */
+async function fetchBranchRoster(branchId) {
+  const res = await fetch(
+    buildUrl(`/api/LaunchSetup/get-class-section-studentlist-by-branch/${branchId}?isActive=true`),
+    { headers: authHeaders() },
+  );
+  const json = await readJson(res, 'class roster');
+  const out = [];
+  (Array.isArray(json?.data) ? json.data : []).forEach((g, gi) => {
+    const grade = String(pickVal(g, 'name', 'gradeName', 'className')).trim();
+    (Array.isArray(g.sections) ? g.sections : []).forEach((s, si) => {
+      const section = String(pickVal(s, 'sectionName', 'name')).trim();
+      (Array.isArray(s.students) ? s.students : []).forEach(st => {
+        if (st?.isActive === false) return;
+        const name = `${pickVal(st, 'firstName', 'name')} ${pickVal(st, 'lastName')}`.trim();
+        out.push({
+          id: Number(pickVal(st, 'id', 'studentID', 'studentId')) || 0,
+          name,
+          father: String(pickVal(st, 'fatherName')).trim(),
+          regNo: String(pickVal(st, 'registerNo', 'regNo', 'registrationNo')).trim(),
+          mobile: digits(pickVal(st, 'mobileNo', 'mobile', 'fatherMobile', 'guardianContact')),
+          grade,
+          section,
+          gradeRank: gi,
+          sectionRank: si,
+        });
+      });
+    });
+  });
+  return out;
+}
+
+/** Principal ka HR employee id (get-contact-list ke {empID} ke liye). */
+async function fetchPrincipalEmpId(branchId) {
+  try {
+    const res = await fetch(buildUrl(`/api/LaunchSetup/get-employees-by-branch/${branchId}`), { headers: authHeaders() });
+    const json = await readJson(res, 'employees');
+    const p = (Array.isArray(json?.data) ? json.data : []).find(e => e?.isPrinciple === true);
+    return Number(p?.id) || 0;
+  } catch (_) {
+    return 0;
+  }
+}
+
+/**
+ * Roster ke har bachay ka parent LOGIN userId — Map(student.id → userId).
+ *
+ * Live (branch 1) contact-list siblings par POORI row dohra deta hai: iqra ke
+ * parent logins 159/161/233/254/269 paanchon par wahi naam, reg no aur
+ * employeeId 35 (35 wale bachay ka). iqra (79) ka koi nishan hi nahi. Is liye:
+ *   1. Sibling zip (mobile app jaisa): jis employeeId par kai logins hon, roster
+ *      me wo bacha (id === employeeId) dhoondo, us ke walid ke mobileNo wale
+ *      saare roster siblings lo, aur dono ko id ki tarteeb se jor do:
+ *        35→159, 37→161, 57→233, 64→254, 79→269
+ *      Sirf tab jab siblings aur logins ki ginti BARABAR ho — warna ghalat
+ *      walid ko message jata (kuch test ids par 21–24 logins, 1 bacha).
+ *   2. Baqi bachay: employeeId === student.id → reg no → naam + class +
+ *      section — har qadam par sirf tab jab EK hi login mile.
+ */
+export function resolveParentLogins(roster, contactRows) {
+  const parents = contactRows.filter(r => r.isParent && r.userId);
+  const group = (keyOf) => {
+    const m = new Map();
+    parents.forEach(r => {
+      const k = keyOf(r);
+      if (!k) return;
+      if (!m.has(k)) m.set(k, new Set());
+      m.get(k).add(r.userId);
+    });
+    return m;
+  };
+  const byEmp = group(r => r.employeeId || '');
+  const byReg = group(r => norm(r.regNo));
+  const byNameCls = group(r => (r.hasName ? `${norm(r.name)}|${norm(r.grade)}|${norm(r.section)}` : ''));
+  const only = (set) => (set && set.size === 1 ? [...set][0] : 0);
+  const rosterById = new Map(roster.map(st => [st.id, st]));
+
+  const out = new Map();
+  const used = new Set();
+
+  /* 1. Sibling zip — collapsed employeeId groups. */
+  byEmp.forEach((logins, empId) => {
+    if (logins.size < 2) return;
+    const famMobile = digits(rosterById.get(Number(empId))?.mobile);
+    if (!famMobile) return;
+    const sibs = roster.filter(st => digits(st.mobile) === famMobile).sort((a, b) => a.id - b.id);
+    const ids = [...logins].sort((a, b) => a - b);
+    if (sibs.length !== ids.length || sibs.some(st => out.has(st.id)) || ids.some(l => used.has(l))) return;
+    sibs.forEach((st, i) => { out.set(st.id, ids[i]); used.add(ids[i]); });
+  });
+
+  /* 2. Baqi — seedha, ek hi login wala match. */
+  roster.forEach(st => {
+    if (out.has(st.id)) return;
+    const login = only(byEmp.get(st.id))
+      || only(byReg.get(norm(st.regNo)))
+      || only(byNameCls.get(`${norm(st.name)}|${norm(st.grade)}|${norm(st.section)}`));
+    if (login && !used.has(login)) { out.set(st.id, login); used.add(login); }
+  });
+  return out;
+}
+
+/**
+ * New Chat modal ka poora data — staff + roster ke bachay, har row ki `userId`
+ * login id (0 = walid ka account nahi → chat nahi khulti).
+ */
+export async function fetchNewChatDirectory(branchId, empId) {
+  const [own, roster, principalId] = await Promise.all([
+    fetchContactList(branchId, empId),
+    fetchBranchRoster(branchId).catch(() => []),
+    fetchPrincipalEmpId(branchId),
+  ]);
+  let contacts = own;
+  const ownStudents = own.filter(r => r.isParent && r.userId).length;
+  if (principalId && principalId !== Number(empId) && ownStudents < roster.length) {
+    try {
+      const extra = await fetchContactList(branchId, principalId);
+      const seen = new Set(own.map(r => `${r.isParent ? 'p' : 's'}${r.userId}|${norm(r.name)}`));
+      contacts = [...own, ...extra.filter(r => !seen.has(`${r.isParent ? 'p' : 's'}${r.userId}|${norm(r.name)}`))];
+    } catch (_) { /* apni list hi kaafi */ }
+  }
+
+  const staffSeen = new Set();
+  const staff = contacts.filter(r => !r.isParent && r.userId && !staffSeen.has(r.userId) && staffSeen.add(r.userId));
+
+  /* Roster na mile to purana tareeqa — contact-list ki parent rows. */
+  if (!roster.length) return [...staff, ...contacts.filter(r => r.isParent)];
+
+  const logins = resolveParentLogins(roster, contacts);
+  const parentRows = contacts.filter(r => r.isParent && r.userId);
+  const byLogin = new Map(parentRows.map(r => [r.userId, r]));
+
+  /* Collapsed rows (ek employeeId par kai logins): un ka naam / reg kisi AUR
+     bachay ka hota hai (live: 21–24 logins ek hi naam ke saath). Un par naam se
+     jorna ya unhein naam ke saath dikhana = ghalat walid ko message. Sirf
+     resolveParentLogins ka mobile-zip unhein sahi jorta hai. */
+  const empLogins = new Map();
+  parentRows.forEach(r => {
+    if (!r.employeeId) return;
+    if (!empLogins.has(r.employeeId)) empLogins.set(r.employeeId, new Set());
+    empLogins.get(r.employeeId).add(r.userId);
+  });
+  const collapsed = (r) => !!r.employeeId && empLogins.get(r.employeeId).size > 1;
+
+  /* Dhila match: jo roster bacha abhi login ke baghair hai, usi class-section
+     ki kisi BACHI HUI login row se jis ka naam ek doosre me shamil ho (sirf
+     jab aisi EK hi row ho). "No chat account" sirf tab jab login waqai na mile. */
+  const used = new Set(logins.values());
+  const cls = (g, s) => `${norm(g)}|${norm(s)}`;
+  roster.forEach(st => {
+    if (logins.has(st.id)) return;
+    const n = norm(st.name);
+    if (!n) return;
+    const cands = [...new Set(parentRows
+      .filter(r => !used.has(r.userId) && !collapsed(r) && r.hasName && cls(r.grade, r.section) === cls(st.grade, st.section))
+      .filter(r => { const rn = norm(r.name); return rn.includes(n) || n.includes(rn); })
+      .map(r => r.userId))];
+    if (cands.length === 1) { logins.set(st.id, cands[0]); used.add(cands[0]); }
+  });
+
+  const students = roster.map(st => {
+    const userId = logins.get(st.id) || 0;
+    const row = byLogin.get(userId);
+    return {
+      userId,
+      applicantId: st.id,     // sirf pehchan ke liye — chat id NAHI
+      employeeId: 0,
+      name: st.name || row?.name || `Student #${st.id}`,
+      hasName: true,
+      father: st.father || row?.father || '',
+      rel: 'Parent',
+      status: 'Student',
+      isParent: true,
+      group: st.section ? `${st.grade} - ${st.section}` : (st.grade || '—'),
+      grade: st.grade,
+      section: st.section,
+      regNo: st.regNo,
+      picture: row?.picture || '',
+      noAccount: !userId,
+    };
+  });
+  /* Jin logins ka roster se jor na mila unhein gira dena ghalat hai — un ke paas
+     chat account hai (aur shayad app bhi). Contact-list wali shakal me dikhao
+     (collapsed rows ke siwa — upar dekhein). */
+  const loginSeen = new Set();
+  const leftovers = parentRows.filter(r => !used.has(r.userId) && !collapsed(r)
+    && !loginSeen.has(r.userId) && loginSeen.add(r.userId));
+  return [...staff, ...students, ...leftovers];
+}
+
+/** Un LOGIN ids ka Set jinke paas FCM token hai (app installed + logged in).
+    Response ka `employee_ID` asal me LOGIN id hai — live (branch 1) tasdeeq:
+    213 (Qasim login) aur 269 (iqra ka parent login) maujood, jab ke HR 78 aur
+    applicant 79 bilkul nahi. Is liye HR / applicant id se kabhi match NAHI:
+    wahi number kisi aur ka login ho sakta hai (35 yahan ek login hai) aur jhoota
+    "App active" dikhta.
+    Ek id ki kai rows aati hain (har device) — kisi EK me bhi token ho to installed.
+    API fail ho to `null` — UI tab "Not on app" ka jhoota nishan nahi dikhata. */
 export async function fetchAppUserIds(branchId) {
   try {
     const res = await fetch(buildUrl(`/get-users-fcm-status/${branchId}`), { headers: authHeaders() });
     const json = await readJson(res, 'app users');
-    return new Set((json?.data || []).filter(r => Number(r.hasFcmToken) === 1)
-      .map(r => Number(r.employee_ID)).filter(Boolean));
+    if (!Array.isArray(json?.data)) return null;
+    const on = new Set();
+    json.data.forEach(r => {
+      const id = Number(r.employee_ID ?? r.employeeID ?? r.userId);
+      const t = r.hasFcmToken;
+      if (id && (t === true || t === 1 || String(t).trim() === '1')) on.add(id);
+    });
+    return on;
   } catch (_) {
-    return new Set();   // sirf "app par hai ya nahi" ka nishan hai — chat phir bhi chalti hai
+    return null;   // maloom nahi — chat phir bhi chalti hai
   }
 }
 
@@ -604,10 +834,24 @@ function mapMessage(row, meId) {
     deta hai (live: 946 "Photo" = 18-09 15:18, jab ke us ke BAAD bheja 957 "hi"
     = 04:45). Waqt se sort karne par 946 hamesha sab se neeche aata tha — lagta
     tha har naye message ke saath photo bhi ja rahi hai. Id hamesha barhti hai. */
-export async function fetchConversation(meId, otherId, branchId) {
-  const res = await fetch(buildUrl(`/get-conversation/${meId}/${otherId}/${branchId}`), { headers: authHeaders() });
+async function conversationRows(fromId, toId, branchId) {
+  const res = await fetch(buildUrl(`/get-conversation/${fromId}/${toId}/${branchId}`), { headers: authHeaders() });
   const json = await readJson(res, 'conversation');
-  return (json?.data || []).map(row => mapMessage(row, meId))
+  return json?.data || [];
+}
+
+/* Mobile app jaisa: {me}/{contact} khaali aaye to {contact}/{me} bhi try karo.
+   `type` phir bhi fromUserID === meId se tay hota hai, is liye tarteeb se farq nahi. */
+export async function fetchConversation(meId, otherId, branchId) {
+  let rows = [];
+  let firstErr = null;
+  try { rows = await conversationRows(meId, otherId, branchId); } catch (err) { firstErr = err; }
+  if (!rows.length) {
+    try { rows = await conversationRows(otherId, meId, branchId); } catch (err) {
+      if (firstErr) throw firstErr;
+    }
+  }
+  return rows.map(row => mapMessage(row, meId))
     .sort((a, b) => ((Number(a.id) || 0) - (Number(b.id) || 0)) || (a.at - b.at));
 }
 
@@ -790,5 +1034,54 @@ export async function markMessagesSeen(branchId, contactUserId, meId) {
     return Number(json?.updatedRows) || 0;
   } catch (_) {
     return 0;   // seen na ho paye to chat phir bhi khulni chahiye
+  }
+}
+
+/* ═══════════════ NAYE MESSAGE KA NOTIFICATION ═══════════════
+   App.js har ~15s get-chat-contacts ka unseenCount dekhta hai; kisi contact ka
+   count barhe to toast + browser notification + awaaz. Jo chat is waqt KHULI
+   hai (Chat.jsx setOpenChatId se batata hai) us par notification nahi — wo
+   message foran seen ho jata hai. */
+
+let openChatId = null;
+/** Chat.jsx: kaun si chat abhi screen par khuli hai (null = koi nahi). */
+export function setOpenChatId(id) { openChatId = Number(id) || null; }
+export function getOpenChatId() { return openChatId; }
+
+/* Parent ka naam get-chat-contacts me ghalat sibling ka hota hai (login 269 par
+   "test test") — naam roster se resolve shuda directory se. 5 min cache. */
+let dirCache = { at: 0, key: '', list: null };
+async function cachedDirectory(branchId, empId) {
+  const key = `${branchId}|${empId}`;
+  if (dirCache.list && dirCache.key === key && Date.now() - dirCache.at < 5 * 60 * 1000) return dirCache.list;
+  const list = await fetchNewChatDirectory(branchId, empId);
+  dirCache = { at: Date.now(), key, list };
+  return list;
+}
+
+/** Notification me dikhane wala naam — directory (sahi) warna API wala. */
+export async function chatDisplayName(branchId, empId, contact) {
+  try {
+    const dir = await cachedDirectory(branchId, empId);
+    const d = dir.find(x => x.userId === contact.userId && !x.noAccount
+      && (contact.isParent ? x.isParent && x.applicantId : !x.isParent));
+    if (d) return contact.isParent ? `${d.name} (Parent)` : d.name;
+  } catch (_) { /* API wala naam hi */ }
+  return contact.name || `User #${contact.userId}`;
+}
+
+/** Contact ka aakhri AAYA hua message — notification ki body. */
+export async function latestIncomingPreview(meId, contactId, branchId) {
+  try {
+    const msgs = await fetchConversation(meId, contactId, branchId);
+    const last = [...msgs].reverse().find(m => m.type === 'recv');
+    if (!last) return 'New message';
+    if (last.attach === 'voice') return '🎤 Voice message';
+    if (last.attach === 'image') return `📷 ${last.text || 'Photo'}`;
+    if (last.attach === 'video') return `🎬 ${last.text || 'Video'}`;
+    if (last.attach === 'doc') return `📄 ${last.docName || last.text || 'Document'}`;
+    return last.text || 'New message';
+  } catch (_) {
+    return 'New message';
   }
 }

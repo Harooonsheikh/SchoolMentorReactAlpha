@@ -14,7 +14,10 @@ import { buildUrl, installSessionGuard, setSessionGuardActive, registerSessionTo
 import * as profileService from '../services/profileService';
 import useUserTimeSpend from '../hooks/useUserTimeSpend';
 import useMobileAppPermission from '../hooks/useMobileAppPermission';
-import { chatUserId, chatEmployeeId, chatBranchId, fetchChatUnreadTotal } from '../services/chatService';
+import {
+  chatUserId, chatEmployeeId, chatBranchId, fetchUnseenCount,
+  fetchChatContacts, getOpenChatId, chatDisplayName,
+} from '../services/chatService';
 import { flushUserTimeSpend } from '../services/userTimeSpendService';
 import SupportWidget from '../../components/SupportWidget';
 import erpExtraCss from './erpExtraCss';
@@ -198,26 +201,100 @@ export default function App() {
      target module unhe istemal kar ke onFocusHandled se saaf kar deta hai. */
   const [navFocus, setNavFocus] = useState(null);
 
-  /* Sidebar ke "Chat" par unread badge — module khula ho ya na ho. Har 30s
-     fetchChatUnreadTotal: API ka unseenCount + un staff chats ka unread jo
-     backend nahi ginta (jaise ANUS 69 → Ahmad 66). Chat module khula ho to
-     poll nahi chalta — wahan Chat khud onUnreadChange se foran batata hai
-     (chat kholte hi 0). */
-  const [chatUnread, setChatUnread] = useState(0);
+  /* Sidebar ke "Chat" par unread badge — SEEDHA API ka number:
+       GET /get-unseen-chat-count/{branchId}/{login userId}  → unseenChatCount
+     Har 5s, module khula ho ya na ho; Chat me koi chat khol kar seen karne
+     par (onUnreadChange) foran dobara. 0 par badge chhupta hai. null = abhi
+     jawab nahi aaya. */
+  const [chatUnread, setChatUnread] = useState(null);
   const activeModuleRef = useRef(active);
   activeModuleRef.current = active;
+  const refreshChatUnreadRef = useRef(() => {});
+  /* Sthir callback — Chat ka effect isi par chalta hai; har render par naya
+     function har render par API call karwa deta. */
+  const onChatUnreadChange = useCallback(() => refreshChatUnreadRef.current(), []);
   useEffect(() => {
     const me = chatUserId();
     const branchId = chatBranchId();
     if (!me || !branchId) return undefined;
     let alive = true;
     const tick = async () => {
-      if (document.hidden || activeModuleRef.current === 'chat') return;
-      const n = await fetchChatUnreadTotal(branchId, me, chatEmployeeId());
-      if (alive && activeModuleRef.current !== 'chat') setChatUnread(n);
+      if (document.hidden) return;
+      const n = await fetchUnseenCount(branchId, me);
+      if (alive) setChatUnread(n);
     };
+    refreshChatUnreadRef.current = tick;
     tick();
-    const id = setInterval(tick, 30000);
+    const id = setInterval(tick, 5000);
+    return () => { alive = false; clearInterval(id); refreshChatUnreadRef.current = () => {}; };
+  }, []);
+
+  /* ── Naya chat message → notification ──
+     Har 5s get-chat-contacts ka unseenCount; kisi contact ka count BARHE to:
+       • toast (page khula ho)
+       • halki awaaz + sidebar badge foran
+     Chrome / Windows wali browser notification NAHI — wo nahi chahiye.
+     Pehli dafa sirf baseline — purane unread par notification nahi. Jo chat
+     is waqt khuli hai (getOpenChatId) us par nahi, wo foran seen hoti hai. */
+  const notifyRef = useRef({ pushToast: null, setActive: null });
+  useEffect(() => {
+    const me = chatUserId();
+    const branchId = chatBranchId();
+    if (!me || !branchId) return undefined;
+    let alive = true;
+    let prev = null;
+    let busy = false;
+
+    const beep = () => {
+      try {
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        if (!Ctx) return;
+        const ctx = new Ctx();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = 880;
+        gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.15, ctx.currentTime + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.35);
+        osc.connect(gain).connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.36);
+        osc.onended = () => ctx.close();
+      } catch (_) { /* awaaz na chale to bhi baqi notification */ }
+    };
+
+    /* Toast me sirf ginti — message ka text chat kholne par dikhta hai. */
+    const notify = async (contact, added) => {
+      const name = await chatDisplayName(branchId, chatEmployeeId(), contact);
+      const body = `${added} new message${added === 1 ? '' : 's'}`;
+      if (!alive) return;
+      const { pushToast: toast } = notifyRef.current;
+      refreshChatUnreadRef.current();
+      if (!document.hidden) toast?.(`💬 ${name}: ${body}`, 'info');
+      beep();
+    };
+
+    const check = async () => {
+      if (busy) return;
+      busy = true;
+      try {
+        const list = await fetchChatContacts(branchId, me);
+        const now = new Map(list.map(c => [c.userId, Number(c.unread) || 0]));
+        if (prev && alive) {
+          const open = activeModuleRef.current === 'chat' && !document.hidden && document.hasFocus() ? getOpenChatId() : null;
+          list.forEach(c => {
+            const added = (now.get(c.userId) || 0) - (prev.get(c.userId) || 0);
+            if (added > 0 && c.userId !== open) notify(c, added);
+          });
+        }
+        prev = now;
+      } catch (_) { /* agli dafa */ } finally {
+        busy = false;
+      }
+    };
+    check();
+    const id = setInterval(check, 5000);
     return () => { alive = false; clearInterval(id); };
   }, []);
   /* Har ERP module par time-spend: screenName = module ka naam, type = "erp". */
@@ -383,6 +460,8 @@ export default function App() {
      Ek dabane par ek hi toast — 1.5s me dobara nahi. */
   const toastRef = useRef(pushToast);
   toastRef.current = pushToast;
+  /* Chat notifier (upar) ke liye hamesha taza toast + navigation. */
+  notifyRef.current = { pushToast, setActive };
   const lastViewOnlyToast = useRef(0);
   const notifyViewOnly = useCallback(() => {
     const now = Date.now();
@@ -526,6 +605,8 @@ export default function App() {
                     ) : (
                       <div className="nav-nm">{item.name}</div>
                     )}
+                    {/* Chat: un-dekhe messages (get-unseen-chat-count) — daayen
+                        taraf red badge, 0 par chhup jata hai. */}
                     {item.id === 'chat' && chatUnread > 0 && (
                       <div className="nav-bx red" title={`${chatUnread} unread message${chatUnread === 1 ? '' : 's'}`}>
                         {chatUnread > 99 ? '99+' : chatUnread}
@@ -745,7 +826,7 @@ export default function App() {
             )}
             {active === 'chat' && (
               <Suspense fallback={<RouteFallback label="Loading Chat…" />}>
-                <Chat toast={pushToast} chatMode={mobilePerms.hasRow ? mobilePerms.chatMode : undefined} onUnreadChange={setChatUnread} />
+                <Chat toast={pushToast} chatMode={mobilePerms.hasRow ? mobilePerms.chatMode : undefined} onUnreadChange={onChatUnreadChange} />
               </Suspense>
             )}
             {active === 'notifications' && (

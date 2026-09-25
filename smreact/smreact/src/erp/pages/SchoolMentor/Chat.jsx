@@ -8,7 +8,7 @@ import {
   chatEmployeeId,
   chatBranchId,
   fetchChatContacts,
-  fetchContactList,
+  fetchNewChatDirectory,
   fetchAppUserIds,
   fetchConversation,
   fetchUnseenFromMe,
@@ -18,6 +18,9 @@ import {
   pendingMessage,
   postChatMessage,
   markMessagesSeen,
+  setOpenChatId,
+  getOpenChatId,
+  fetchUnseenCount,
 } from '../../services/chatService';
 import { encodeMp3 } from '../../services/mp3Encode';
 
@@ -48,9 +51,9 @@ import { encodeMp3 } from '../../services/mp3Encode';
    logged in hai ya nahi" hai (FCM token), aur wahi New Chat me bhi.
    ═══════════════════════════════════════════════════════════════════ */
 
-const POLL_MS = 15000;
+const POLL_MS = 5000;
 /* Har itne polls baad directory se chhooti hui staff chats dhoondo (~1 min). */
-const DISCOVER_EVERY = 4;
+const DISCOVER_EVERY = 12;
 /* Sidebar ka preview/waqt conversation se banta hai, aur har contact ki apni
    call hai — is liye load par sirf itni chats ka preview lete hain. Baqi ka
    preview chat kholne par bhar jata hai. */
@@ -123,7 +126,27 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
   /* { [contactId]: kitni MERI messages us ne nahi dekhin } — blue tick isi se
      tay hota hai. null = maloom nahi (tab blue tick nahi dikhate). */
   const [receipts, setReceipts] = useState({});
-  const [appUsers, setAppUsers] = useState(() => new Set());
+  /* FCM status: login ids ka Set jin par token hai; null = abhi maloom nahi
+     (load nahi hua / API fail) — tab koi nishan nahi, jhoota "Not on app" nahi. */
+  const [appUsers, setAppUsers] = useState(null);
+  const refreshAppUsers = useCallback(async () => {
+    const ids = await fetchAppUserIds(branchId);
+    if (ids) setAppUsers(ids);          // fail par pichla sahi data rehne do
+  }, [branchId]);
+  /* Backend ka apna total — GET /get-unseen-chat-count/{branchId}/{userId}.
+     get-chat-contacts kabhi kisi contact ko chhor deta hai, is liye badge
+     dono me se bara: API total ya rows ka jor (+ local staff chats). */
+  const [apiUnseen, setApiUnseen] = useState(0);
+  const refreshApiUnseen = useCallback(async () => {
+    if (!me || !branchId) return;
+    setApiUnseen(await fetchUnseenCount(branchId, me));
+  }, [me, branchId]);
+  useEffect(() => { refreshApiUnseen(); }, [refreshApiUnseen]);
+  /* 'on' | 'off' | null — sirf LOGIN id par (dekhein fetchAppUserIds). */
+  const appState = useCallback(
+    (id) => (appUsers ? (appUsers.has(Number(id)) ? 'on' : 'off') : null),
+    [appUsers],
+  );
   const [activeId, setActiveId] = useState(null);
 
   const [loading, setLoading]         = useState(true);
@@ -166,6 +189,12 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
   const matchRefs = useRef({});
   const activeRef = useRef(activeId);
   activeRef.current = activeId;
+  /* App.js ka notifier khuli chat ka notification nahi dikhata. Mobile par
+     list wapas aaye (conversation band) to koi chat "khuli" nahi. */
+  useEffect(() => {
+    setOpenChatId(mobileShowConv || window.innerWidth > 768 ? activeId : null);
+    return () => setOpenChatId(null);
+  }, [activeId, mobileShowConv]);
   /* App ka pushToast har render par naya function hota hai — usay seedha deps
      me rakhne se ye saare callbacks (aur polling interval) har render par naye
      ban jate. Ref se function sthir rehta hai aur toast hamesha taza. */
@@ -203,15 +232,27 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
       const tick = discoverTick.current++;
       const scan = !silent || tick % DISCOVER_EVERY === 0;
       if (scan) {
-        try { directoryRef.current = await fetchContactList(branchId, chatEmployeeId()); } catch (_) { /* purani directory hi */ }
+        try { directoryRef.current = await fetchNewChatDirectory(branchId, chatEmployeeId()); } catch (_) { /* purani directory hi */ }
       }
-      /* Staff row ka naam/designation backend ghalat account se jorta hai
-         (userId 215 = Abid Khan, magar naam "aHMAD 5 TEST") — directory se,
-         jo isi id par sahi hai, theek karo. unread API wala hi rehta hai. */
-      const dirById = new Map((directoryRef.current || []).filter(d => !d.isParent).map(d => [d.userId, d]));
+      /* Naam / walid / class backend ghalat account se jorta hai:
+           staff  → userId 215 = Abid Khan, magar naam "aHMAD 5 TEST"
+           parent → login 269 = iqra ka walid, magar get-chat-contacts wahi
+                    copied row deta hai jo sibling "test test" (35) ki hai
+         Directory (roster se resolve shuda LOGIN → bacha) isi id par sahi hai,
+         us se theek karo. Parent par sirf roster se jure rows (applicantId) —
+         contact-list ki bachi rows ka naam bhi wahi ghalat hota hai.
+         unread API wala hi rehta hai. */
+      const dirById = new Map();
+      (directoryRef.current || []).forEach(d => {
+        if (!d.userId || d.noAccount) return;
+        if (!d.isParent || d.applicantId) dirById.set(`${d.isParent ? 'p' : 's'}${d.userId}`, d);
+      });
       const apiRows = rawRows.map(r => {
-        const d = !r.isParent && dirById.get(r.userId);
-        const row = d ? { ...r, name: d.name, father: d.father, rel: d.rel, status: d.status, group: d.group, picture: r.picture || d.picture, students: [] } : r;
+        const d = dirById.get(`${r.isParent ? 'p' : 's'}${r.userId}`);
+        const row = !d ? r
+          : r.isParent
+            ? { ...r, name: d.name, father: d.father || r.father, group: d.group, students: [{ name: d.name, grade: d.grade, section: d.section, regNo: d.regNo }] }
+            : { ...r, name: d.name, father: d.father, rel: d.rel, status: d.status, group: d.group, picture: r.picture || d.picture, students: [] };
         /* Khuli chat ka unread hamesha 0 — mark-seen ka jawab aane se pehle
            poll API ka purana unseenCount wapas na la de. */
         return row.userId === activeRef.current ? { ...row, unread: 0 } : row;
@@ -277,10 +318,7 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
   useEffect(() => {
     let alive = true;
     (async () => {
-      await Promise.all([loadContacts(), (async () => {
-        const ids = await fetchAppUserIds(branchId);
-        if (alive) setAppUsers(ids);
-      })()]);
+      await Promise.all([loadContacts(), alive && refreshAppUsers()]);
       /* Koi chat khud-ba-khud nahi khulti — "No Conversation Selected" dikhta
          hai, aur wahi chat khulti hai jis par user click kare. (Pehle API ki
          pehli row khul jati thi, jo sidebar me teesre number par hoti thi.) */
@@ -300,9 +338,10 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
       await loadConversation(activeId, { spinner: !previewDone.current.has(activeId) });
       if (!alive) return;
       await markMessagesSeen(branchId, activeId, me);
+      if (alive) refreshApiUnseen();
     })();
     return () => { alive = false; };
-  }, [activeId, me, branchId, loadConversation]);
+  }, [activeId, me, branchId, loadConversation, refreshApiUnseen]);
 
   /* Khuli chat ke messages "dekhe gaye" — local record bhi (un contacts ke liye
      jin ka unread backend nahi ginta). Naya message aaye to wo bhi foran seen. */
@@ -315,9 +354,11 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
 
   /* sidebar ka preview + waqt conversation se banta hai — pehli PREVIEW_LIMIT
      chats ke liye thodi thodi kar ke le aao (ek saath sab nahi). */
+  /* Jis contact ke UNSEEN messages hain us ki row par "N new messages" dikhta
+     hai (preview nahi) — conversation click par hi aati hai. */
   useEffect(() => {
     const pending = contacts
-      .filter(c => !previewDone.current.has(c.userId))
+      .filter(c => !previewDone.current.has(c.userId) && (c.local || !(Number(c.unread) > 0)))
       .slice(0, PREVIEW_LIMIT);
     if (!pending.length) return;
     let alive = true;
@@ -345,15 +386,33 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
   /* naye messages ke liye polling (is API me server push nahi hai) */
   useEffect(() => {
     if (!me || !branchId) return undefined;
+    let tick = 0;
     const id = setInterval(() => {
       if (document.hidden) return;
       loadContacts({ silent: true });
-      const open = activeRef.current;
-      /* Khuli chat me naya message aaye to server par bhi seen kar do. */
-      if (open) loadConversation(open).then(() => markMessagesSeen(branchId, open, me));
+      /* App install / logout badalta rehta hai — ~har minute taza FCM status. */
+      if (++tick % 12 === 0) refreshAppUsers();
+      /* Sirf WAQAI screen par khuli chat seen karo — mobile par list wapas aa
+         gayi ho to activeId reh jata hai magar user use dekh nahi raha; us ke
+         naye messages unseen hi rehne chahiyen (warna ginti kabhi nahi barhti). */
+      /* Seen tabhi jab user waqai dekh raha ho — window par FOCUS bhi. Doosri
+         window / app me kaam ho raha ho (ERP sirf screen par khula) to naye
+         messages unseen rehte hain: ginti barhti hai aur notification aata hai. */
+      /* Focus na ho to khuli chat na lao na seen karo — window par wapas aane
+         par (onFocus) dono. */
+      const open = document.hasFocus() ? getOpenChatId() : null;
+      if (open) loadConversation(open).then(() => markMessagesSeen(branchId, open, me)).then(refreshApiUnseen);
+      else refreshApiUnseen();
     }, POLL_MS);
-    return () => clearInterval(id);
-  }, [me, branchId, loadContacts, loadConversation]);
+    /* Window par wapas aaye → khuli chat ab dekhi ja rahi hai: naye messages
+       lao aur seen karo. */
+    const onFocus = () => {
+      const open = getOpenChatId();
+      if (open) loadConversation(open).then(() => markMessagesSeen(branchId, open, me)).then(refreshApiUnseen);
+    };
+    window.addEventListener('focus', onFocus);
+    return () => { clearInterval(id); window.removeEventListener('focus', onFocus); };
+  }, [me, branchId, loadContacts, loadConversation, refreshAppUsers, refreshApiUnseen]);
 
   /* ── derived ─────────────────────────────────────────────────── */
 
@@ -361,11 +420,14 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
      preview abhi nahi aaya un ko unread aur naam par rakho. */
   const orderedContacts = useMemo(() => {
     const at = (c) => (lastOf(history[c.userId])?.at) || 0;
+    /* Unseen wali chats ka preview nahi aata (dekhein preview effect) — naya
+       message unhi me hai, is liye wo sab se upar. */
+    const hot = (c) => (!c.local && c.userId !== activeId && Number(c.unread) > 0 ? 1 : 0);
     const staffOnly = chatMode === 'staffOnly';
     const list = staffOnly ? contacts.filter(c => !c.isParent) : contacts;
     return [...list].sort((a, b) =>
-      (at(b) - at(a)) || ((b.unread || 0) - (a.unread || 0)) || a.name.localeCompare(b.name));
-  }, [contacts, history, chatMode]);
+      (hot(b) - hot(a)) || (at(b) - at(a)) || ((b.unread || 0) - (a.unread || 0)) || a.name.localeCompare(b.name));
+  }, [contacts, history, chatMode, activeId]);
 
   const filteredRecent = useMemo(() => {
     const q = sidebarQ.trim().toLowerCase();
@@ -396,10 +458,13 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
     if (c.userId === activeId) return 0;
     return c.local ? (localCounts[c.userId] || 0) : (Number(c.unread) || 0);
   }, [activeId, localCounts]);
-  const unreadTotal = useMemo(
-    () => contacts.reduce((sum, c) => sum + unreadOf(c), 0),
-    [contacts, unreadOf],
-  );
+  const unreadTotal = useMemo(() => {
+    const rows = contacts.reduce((sum, c) => sum + unreadOf(c), 0);
+    /* Khuli chat ke messages abhi seen ho rahe hain — API total me unhein mat gino. */
+    const open = contacts.find(c => c.userId === activeId);
+    const apiLessOpen = Math.max(0, apiUnseen - (open && !open.local ? Number(open.unread) || 0 : 0));
+    return Math.max(rows, apiLessOpen);
+  }, [contacts, unreadOf, apiUnseen, activeId]);
   useEffect(() => { onUnreadChange?.(unreadTotal); }, [unreadTotal, onUnreadChange]);
 
   /* ── derived: kaun si bheji hui message dekhi ja chuki hai ──
@@ -651,6 +716,13 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
   const startChatWith = (member) => {
     setNcOpen(false);
     if (contacts.some(c => c.userId === member.userId)) {
+      /* Sidebar ki row ka naam API ki copied sibling row se ho sakta hai —
+         New Chat wala (roster se resolve shuda) naam hi sahi hai. */
+      if (member.isParent && member.applicantId) {
+        setContacts(prev => prev.map(c => (c.userId === member.userId && c.isParent
+          ? { ...c, name: member.name, father: member.father || c.father, group: member.group }
+          : c)));
+      }
       openConv(member.userId);
       toast(`Opened existing chat with ${member.name}`, 'info');
       return;
@@ -789,11 +861,11 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
                   >
                     <div className="cm-rcr-avatar">
                       <Avatar name={c.name} src={c.picture} />
-                      {/* app-status ka nishan sirf parents par */}
-                      {c.isParent && (
+                      {/* app-status (FCM) — har contact par, staff bhi */}
+                      {appState(c.userId) && (
                         <div
-                          className={`cm-rcr-dot ${appUsers.has(c.userId) ? 'on' : 'off'}`}
-                          title={appUsers.has(c.userId) ? 'Logged into the School Mentor app' : 'Not logged into the app yet'}
+                          className={`cm-rcr-dot ${appState(c.userId)}`}
+                          title={appState(c.userId) === 'on' ? 'App installed — gets notifications' : 'App not installed — message will wait in their inbox'}
                         />
                       )}
                     </div>
@@ -806,7 +878,12 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
                         <i className="fa-solid fa-user" style={{ fontSize: 9, opacity: 0.6, marginRight: 3 }} />
                         Father: {highlight(c.father || '—', sidebarQ)}
                       </div>
-                      <div className="cm-rcr-preview">{highlight(lastPreview(history[c.userId]), sidebarQ)}</div>
+                      {/* Unseen chat: click se pehle sirf ginti. */}
+                      {!c.local && unreadOf(c) > 0
+                        ? <div className="cm-rcr-preview" style={{ fontWeight: 700, color: 'var(--brand-primary)' }}>
+                            {unreadOf(c)} new message{unreadOf(c) === 1 ? '' : 's'}
+                          </div>
+                        : <div className="cm-rcr-preview">{highlight(lastPreview(history[c.userId]), sidebarQ)}</div>}
                     </div>
                     <div className="cm-rcr-meta">
                       <span className="cm-rcr-time">{last ? (last.date === 'Today' ? last.time : `${last.date} · ${last.time}`) : ''}</span>
@@ -838,7 +915,7 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
                     </Tooltip>
                     <div className="cm-conv-hdr-avatar">
                       <Avatar name={activeChat.name} src={activeChat.picture} />
-                      {activeChat.isParent && <div className={`cm-conv-hdr-dot ${appUsers.has(activeChat.userId) ? 'on' : 'off'}`} />}
+                      {appState(activeChat.userId) && <div className={`cm-conv-hdr-dot ${appState(activeChat.userId)}`} />}
                     </div>
                     <div className="cm-conv-hdr-info">
                       <div className="cm-conv-hdr-name">{activeChat.name}</div>
@@ -849,13 +926,13 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
                         itna batata hai ke push notification pahunchegi ya nahi;
                         message dono surton me chala jata hai aur parent ke log-in
                         karte hi usay nazar aa jata hai — bhejne par koi rok nahi. */}
-                    {activeChat.isParent && (
-                    <Tooltip text={appUsers.has(activeChat.userId)
+                    {appState(activeChat.userId) && (
+                    <Tooltip text={appState(activeChat.userId) === 'on'
                       ? `${activeChat.name} is logged into the School Mentor app — they will get a notification.`
-                      : `${activeChat.name} has not logged into the app yet — no notification will be delivered, but the message will be waiting for them.`}>
-                      <span className={`cm-app-chip${appUsers.has(activeChat.userId) ? ' on' : ''}`}>
-                        <i className={`fa-solid ${appUsers.has(activeChat.userId) ? 'fa-mobile-screen-button' : 'fa-bell-slash'}`} />
-                        {appUsers.has(activeChat.userId) ? 'App active' : 'Not on app'}
+                      : `App not installed for ${activeChat.name} — no notification will be delivered, but the message will be waiting for them.`}>
+                      <span className={`cm-app-chip${appState(activeChat.userId) === 'on' ? ' on' : ''}`}>
+                        <i className={`fa-solid ${appState(activeChat.userId) === 'on' ? 'fa-mobile-screen-button' : 'fa-bell-slash'}`} />
+                        {appState(activeChat.userId) === 'on' ? 'App installed' : 'App not installed'}
                       </span>
                     </Tooltip>
                     )}
@@ -1025,7 +1102,8 @@ export default function Chat({ toast = () => {}, onUnreadChange, chatMode }) {
         <NewChatModal
           me={me}
           branchId={branchId}
-          appUsers={appUsers}
+          appState={appState}
+          onRefreshApp={refreshAppUsers}
           onClose={() => setNcOpen(false)}
           onStartChat={startChatWith}
           toast={toast}
@@ -1158,7 +1236,7 @@ function ImageAttachment({ m, caption }) {
 }
 
 /* ── New Chat modal — staff directory get-contact-list se ── */
-function NewChatModal({ me, branchId, appUsers, onClose, onStartChat, toast }) {
+function NewChatModal({ me, branchId, appState, onRefreshApp, onClose, onStartChat, toast }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -1176,9 +1254,10 @@ function NewChatModal({ me, branchId, appUsers, onClose, onStartChat, toast }) {
     let alive = true;
     (async () => {
       try {
-        /* Ye endpoint session ka employee_ID maangta hai (swagger: {empID}).
-           Rows ki `userId` hi chat id hai, is liye apni row `me` se hat jati hai. */
-        const data = await fetchContactList(branchId, chatEmployeeId());
+        /* Mobile app ka New Chat workflow: contact-list (+ principal ki list
+           agar apni me bachay kam hon) + LaunchSetup roster. Har row ki
+           `userId` LOGIN id hai — wahi chat id; apni row `me` se hat jati hai. */
+        const data = await fetchNewChatDirectory(branchId, chatEmployeeId());
         if (alive) setRows(data.filter(r => r.userId !== me));
       } catch (err) {
         if (alive) setError(err.message || 'Could not load the contact list');
@@ -1205,19 +1284,29 @@ function NewChatModal({ me, branchId, appUsers, onClose, onStartChat, toast }) {
      "2026-25102" → userId 219 aur 236), is liye class ke andar student ek hi
      dafa: registration no (na ho to naam + walid) par. Kai accounts hon to jo
      app par logged in hai wahi rakho — message notification ke saath pahunche. */
+  /* App installed? FCM hasFcmToken us LOGIN id par. */
+  /* HR id se mirror NAHI — FCM ki ids login ids hain; HR 35 kisi aur ka login
+     35 ho sakta hai. Status maloom na ho (null) to kisi ko "off" mat dikhao. */
+  const appOk = useCallback((m) => appState(m.userId) !== 'off', [appState]);
+  const appKnown = appState(0) !== null;
+
+  /* Modal khulte hi taza FCM status. */
+  useEffect(() => { onRefreshApp?.(); }, [onRefreshApp]);
+
   const groups = useMemo(() => {
     const map = new Map();
     rows.forEach(r => {
-      const key = r.status === 'Staff' ? 'Staff' : (r.group || 'Others');
+      const key = !r.isParent ? 'Staff' : (r.group || 'Others');
       if (!map.has(key)) map.set(key, new Map());
       const bucket = map.get(key);
+      /* Roster ka har bacha apni applicantId se ek hi dafa. */
       const dupKey = r.isParent
-        ? (r.regNo || `${r.name}|${r.father}`).toLowerCase()
+        ? (r.applicantId ? `a${r.applicantId}` : (r.regNo || `${r.name}|${r.father}`).toLowerCase())
         : `u${r.userId}`;
       const prev = bucket.get(dupKey);
       /* Account wali row hamesha bina-account wali par bhari. */
       if (!prev || (prev.noAccount && !r.noAccount)
-        || (!appUsers.has(prev.userId) && appUsers.has(r.userId))) bucket.set(dupKey, r);
+        || (!appOk(prev) && appOk(r))) bucket.set(dupKey, r);
     });
 
     const clsRank = new Map();
@@ -1249,7 +1338,7 @@ function NewChatModal({ me, branchId, appUsers, onClose, onStartChat, toast }) {
         const [bc, bs] = rankOf(b);
         return (ac - bc) || (as - bs) || a.name.localeCompare(b.name, undefined, { numeric: true });
       });
-  }, [rows, gradeOrder, appUsers]);
+  }, [rows, gradeOrder, appOk]);
 
   const query = q.trim().toLowerCase();
   const groupObj = groups.find(g => g.id === group) || null;
@@ -1273,19 +1362,16 @@ function NewChatModal({ me, branchId, appUsers, onClose, onStartChat, toast }) {
     return { contacts: contacts.slice(0, 60), classes };
   }, [query, groups]);
 
-  /* FCM ka nishan sirf PARENTS par — staff rows aam rehti hain. */
-  const appOk = (m) => !m.isParent || appUsers.has(m.userId);
-
   const handleMember = (m) => {
     /* Walid ka login account hi nahi — message bhejne ke liye koi userId nahi. */
     if (m.noAccount) {
-      toast(`${m.name}'s parent does not have a School Mentor account yet — create their login to start a chat.`, 'warning');
+      toast(`No chat account for ${m.name} — no login user id was found, so a chat cannot be started.`, 'warning');
       return;
     }
     /* App par logged in na ho to bhi message ja sakta hai — wo login karte hi
        dekh lega. Sirf bata dete hain ke abhi notification nahi pahunchegi. */
-    if (m.isParent && !appUsers.has(m.userId)) {
-      toast(`${m.name} has not logged into the School Mentor app yet — the message will be waiting for them.`, 'warning');
+    if (!appOk(m)) {
+      toast(`App not installed for ${m.name} — the message will be waiting for them.`, 'warning');
     }
     onStartChat(m);
   };
@@ -1297,11 +1383,11 @@ function NewChatModal({ me, branchId, appUsers, onClose, onStartChat, toast }) {
 
   const memberRow = (m, i) => (
     <div
-      key={`${m.userId}-${m.regNo || i}`}
+      key={`${m.userId}-${m.applicantId || m.regNo || i}`}
       className={`cm-nc-member-row ${appOk(m) ? 'on' : 'off'}`}
       style={m.noAccount ? { opacity: 0.6, cursor: 'not-allowed' } : undefined}
-      title={m.noAccount ? 'Parent has no School Mentor account — chat is not available'
-        : appOk(m) ? '' : 'Not logged into the app yet — the message will be waiting for them'}
+      title={m.noAccount ? 'No chat account — no login user id to message'
+        : appOk(m) ? '' : 'App not installed — the message will be waiting for them'}
       onClick={() => handleMember(m)}
     >
       <div className={`cm-nc-member-av ${appOk(m) ? 'on' : 'off'}`}>{ini(m.name)}</div>
@@ -1309,7 +1395,7 @@ function NewChatModal({ me, branchId, appUsers, onClose, onStartChat, toast }) {
         <div className="cm-nc-member-name">{highlight(m.name, q)}</div>
         <div className="cm-nc-member-rel">
           {highlight(m.rel || '—', q)} · <span style={{ fontSize: 10, color: 'var(--brand-primary)', fontWeight: 700 }}>{highlight(m.group, q)}</span>
-          {m.noAccount && <span style={{ fontSize: 10, color: 'var(--error,#DC2626)', fontWeight: 700 }}> · No account</span>}
+          {m.noAccount && <span style={{ fontSize: 10, color: 'var(--error,#DC2626)', fontWeight: 700 }}> · No chat account</span>}
         </div>
       </div>
       <i className={`cm-nc-member-icon fa-solid ${m.noAccount ? 'fa-user-slash off' : appOk(m) ? 'fa-comment-dots on' : 'fa-bell-slash off'}`} />
@@ -1411,14 +1497,13 @@ function NewChatModal({ me, branchId, appUsers, onClose, onStartChat, toast }) {
                 <button className="cm-nc-back-btn" onClick={() => setGroup(null)}><i className="fa-solid fa-arrow-left" /> Back</button>
                 <span style={{ fontSize: 11, fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.5px' }}>{groupObj.name}</span>
               </div>
-              {/* Ye nishan sirf parents par lagta hai, is liye legend bhi tabhi
-                  jab is group me parents hon (staff ke khane me nahi). */}
-              {groupObj.members.some(m => m.isParent) && (
+              {/* App installed / not installed — FCM se, staff aur parents dono par. */}
+              {appKnown && groupObj.members.length > 0 && (
                 <div style={{ display: 'flex', gap: 12, padding: '2px 14px 8px', fontSize: 10.5, color: 'var(--text-muted)', fontWeight: 600 }}>
-                  <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}><span style={{ width: 10, height: 10, borderRadius: 3, background: 'var(--brand-light)', border: '1.5px solid var(--brand-primary)', display: 'inline-block' }} /> App active</span>
-                  <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}><span style={{ width: 10, height: 10, borderRadius: 3, background: '#f1f5f9', border: '1.5px solid #CBD5E1', display: 'inline-block' }} /> Not on app — message still goes</span>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}><span style={{ width: 10, height: 10, borderRadius: 3, background: 'var(--brand-light)', border: '1.5px solid var(--brand-primary)', display: 'inline-block' }} /> App installed</span>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}><span style={{ width: 10, height: 10, borderRadius: 3, background: '#f1f5f9', border: '1.5px solid #CBD5E1', display: 'inline-block' }} /> App not installed — message still goes</span>
                   {groupObj.members.some(m => m.noAccount) && (
-                    <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}><i className="fa-solid fa-user-slash" style={{ fontSize: 9 }} /> No account — can't chat</span>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}><i className="fa-solid fa-user-slash" style={{ fontSize: 9 }} /> No chat account — can't chat</span>
                   )}
                 </div>
               )}

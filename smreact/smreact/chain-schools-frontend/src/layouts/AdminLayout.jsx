@@ -6,6 +6,7 @@ import { useView } from '../config/viewContext'
 import { ERP_LOGIN_URL, ERP_URL } from '../config/env'
 import { getToken, getStoredUser } from '../auth/tokenStorage'
 import ErrorBoundary from '../components/ErrorBoundary'
+import { cachedNetworkPermissions, fetchNetworkPermissions, isNavItemAllowed } from '../api/networkPermissionsApi'
 import '../styles/admin.css'
 
 /* Initials from a name, e.g. "Chain Admin" → "CA". */
@@ -46,6 +47,27 @@ export default function AdminLayout() {
   const [logoutOpen, setLogoutOpen] = useState(false)
   const [loggingOut, setLoggingOut] = useState(false)
   const pageRef = useRef(null)
+
+  /* Super Admin ki Network Permissions — jo module false hai wo sidebar me
+     nahi aata. Cache se foran, phir server se taza. Call nakaam ho to sab
+     dikhao (fail-open) — API na chalne par portal band nahi hona chahiye. */
+  const [navFlags, setNavFlags] = useState(() => cachedNetworkPermissions())
+  useEffect(() => {
+    let alive = true
+    fetchNetworkPermissions()
+      .then((flags) => { if (alive) setNavFlags(flags) })
+      .catch((err) => {
+        console.error('Could not load network permissions:', err)
+        if (alive) setNavFlags((prev) => prev || {})
+      })
+    return () => { alive = false }
+  }, [])
+  const navSections = useMemo(
+    () => NAV_SECTIONS
+      .map((s) => ({ ...s, items: s.items.filter((i) => isNavItemAllowed(i.key, navFlags)) }))
+      .filter((s) => s.items.length),
+    [navFlags],
+  )
 
   /* Sign out → session clear karke ERP ke login par wapas. Is portal ka apna
      login form use nahi hota (session ERP se aata hai), is liye /login par
@@ -112,7 +134,7 @@ export default function AdminLayout() {
         </div>
 
         <nav className="sidebar-nav">
-          {NAV_SECTIONS.map((section, i) => (
+          {navSections.map((section, i) => (
             <div key={section.label}>
               {i > 0 && <hr className="nav-divider" />}
               <div className="nav-section-label">{section.label}</div>
