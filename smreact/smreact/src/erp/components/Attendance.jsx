@@ -240,7 +240,7 @@ import ReportFooter from '../../reports/ReportFooter';
   /* ─── Tab 1: Holidays Setup ─────────────────────────────────────────────────
     Pixel-faithful port of the HTML reference. Uses att-* classes + FA icons. */
 
-  function HolidaysTab({ weeklyOff, requestToggleDay, holidays, openHolModal, requestDeleteHoliday, openReportPicker, toast  , onSaveWeeklyOff, onExpandMonth, loadingMonth, isOtherSession = false }) {
+  function HolidaysTab({ weeklyOff, requestToggleDay, holidays, openHolModal, requestDeleteHoliday, openReportPicker, toast  , onSaveWeeklyOff, onExpandMonth, loadingMonth, isOtherSession = false, prevDaysAttendance = false, onTogglePrevDays }) {
     const { can } = usePermissions();
     const canHolCreate   = can("Attendance", "Holidays Setup", "Create");
     const canHolEdit     = can("Attendance", "Holidays Setup", "Edit");
@@ -313,6 +313,56 @@ import ReportFooter from '../../reports/ReportFooter';
                   </Tooltip>
                 );
               })}
+            </div>
+          </div>
+        </div>
+
+        {/* Previous Days Attendance */}
+        <div className="att-section">
+          <div className="att-section-header">
+            <div className="att-section-title">
+              <div className="att-section-icon"><i className="fa-solid fa-clock-rotate-left"></i></div>
+              <div>
+                <div className="att-section-name">Previous Days Attendance</div>
+                <div className="att-section-sub">Allow marking/editing attendance for past dates. When off, only today's attendance can be marked.</div>
+              </div>
+            </div>
+            {canHolEdit && (
+            <Tooltip text={isOtherSession ? "Editing is only allowed for the current session" : (prevDaysAttendance ? "Disable marking attendance for past dates" : "Enable marking attendance for past dates")}>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={prevDaysAttendance}
+                aria-label="Toggle previous days attendance"
+                disabled={isOtherSession}
+                onClick={() => { if (!isOtherSession) onTogglePrevDays?.(); }}
+                style={{
+                  position: "relative", width: 52, height: 28, flexShrink: 0,
+                  borderRadius: T.radiusFull, border: "none", padding: 0,
+                  cursor: isOtherSession ? "not-allowed" : "pointer",
+                  background: prevDaysAttendance ? T.success : "#CBD5E1",
+                  opacity: isOtherSession ? .45 : 1, transition: T.tr,
+                }}
+              >
+                <span
+                  style={{
+                    position: "absolute", top: 3, left: prevDaysAttendance ? 27 : 3,
+                    width: 22, height: 22, borderRadius: "50%", background: "#FFFFFF",
+                    boxShadow: T.shadowXs, transition: T.tr,
+                  }}
+                />
+              </button>
+            </Tooltip>
+            )}
+          </div>
+          <div className="att-section-body">
+            <div className="att-info">
+              <i className="fa-solid fa-circle-info"></i>
+              <span>
+                {prevDaysAttendance
+                  ? "Past dates within the active session can now be marked or edited from the Student & Staff calendars. Future dates stay blocked."
+                  : "Only today's attendance can be marked. Turn this on to mark or edit attendance for earlier dates."}
+              </span>
             </div>
           </div>
         </div>
@@ -2063,13 +2113,57 @@ const markOf = (staffIdx, day) => {
   /* ─── Tab 2: Student Attendance ─────────────────────────────────────────────
     HTML-faithful: att-section, att-st-row table, expandable detail panels,
     per-class Mark/Update Attendance button, calendar with date detail. */
-  function StudentTab({ weeklyOff, holidays, studentData, openMarkSt, openReportPicker, toast, onExpandClass, teacherMap = {}, onSelectDate, dateAttendance, isOtherSession = false }) {
+  function StudentTab({ weeklyOff, holidays, studentData, openMarkSt, openReportPicker, toast, onExpandClass, teacherMap = {}, onSelectDate, dateAttendance, isOtherSession = false, prevDaysAttendance = false }) {
     const { can } = usePermissions();
     const canStMark     = can("Attendance", "Student Attendance", "Create") || can("Attendance", "Student Attendance", "Edit");
     const canStDownload = can("Attendance", "Student Attendance", "Download");
     const [month, setMonth] = useState(CURRENT_MONTH_LABEL);
     const [selected, setSelected] = useState(null);
     const [openClassIdx, setOpenClassIdx] = useState(null);
+    // Selected-date per-class roster for the dropdown detail: { [classIdx]: { studentID: {status,inTime,outTime} } }
+    const [detailByDate, setDetailByDate] = useState({});
+
+    // Selected calendar date → the class-wise table follows THIS date.
+    const pad2 = (n) => String(n).padStart(2, "0");
+    const selKey = selected ? `${selected.year}-${pad2(selected.monthIdx + 1)}-${pad2(selected.day)}` : null;
+    // "Today mode" = nothing selected, or the selected day is today. In this mode the
+    // table + marking stay byte-identical to the original today-only behavior.
+    const isTodaySel = !selected || selected.isToday;
+    // Following a PAST selected date only happens when the Previous-Days toggle is ON.
+    // When OFF → today-only table + marking (byte-identical to original).
+    const followDate = !isTodaySel && selected.isPast && prevDaysAttendance;
+    // Date passed to openMarkSt: real string only when following a past date; else null (→ today path).
+    const markDate = followDate ? selKey : null;
+    const dateReady = followDate && dateAttendance && dateAttendance.key === selKey && !dateAttendance.loading;
+    // Match a per-date row (from dateAttendance.rows) to a class row (studentData).
+    const dateRowFor = (r) => {
+      if (!dateReady) return null;
+      return (dateAttendance.rows || []).find((d) =>
+        (d.classID != null && d.sectionID != null &&
+          String(d.classID) === String(r.classID) && String(d.sectionID) === String(r.sectionID)) ||
+        (String(d.cls) === String(r.cls) && String(d.sec) === String(r.sec))
+      ) || null;
+    };
+    // Rows to render: when following a past date, overlay that date's P/A/L + marked
+    // (keep roster/total/teacher from studentData); otherwise studentData exactly.
+    const displayData = followDate
+      ? studentData.map((r) => {
+          const d = dateRowFor(r);
+          return d
+            ? { ...r, marked: !!d.marked, present: d.present || 0, absent: d.absent || 0, leave: d.leave || 0 }
+            : { ...r, marked: false, present: 0, absent: 0, leave: 0 }; // still loading / no record
+        })
+      : studentData;
+    // Roster for a class's detail table — selected date's per-student status when following it.
+    const rosterFor = (r, i) => {
+      const base = rosterForClass(r);
+      if (!followDate) return base;
+      const map = detailByDate[i] || {};
+      return base.map((s) => {
+        const rec = map[s.id];
+        return { ...s, status: rec?.status || null, inTime: rec?.inTime || "", outTime: rec?.outTime || "" };
+      });
+    };
 
     return (
       <>
@@ -2077,7 +2171,7 @@ const markOf = (staffIdx, day) => {
         <div className="att-section">
           <div className="att-section-body" style={{ padding: "14px 18px" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-              <MonthNav month={month} onChange={(m) => { setMonth(m); setSelected(null); }} />
+              <MonthNav month={month} onChange={(m) => { setMonth(m); setSelected(null); setOpenClassIdx(null); setDetailByDate({}); }} />
               {canStDownload && (
               <Tooltip text="Download monthly student attendance as PDF">
                 <button
@@ -2118,6 +2212,8 @@ const markOf = (staffIdx, day) => {
               selected={selected}
                 onSelect={(s) => {
                   setSelected(s);
+                  setOpenClassIdx(null);
+                  setDetailByDate({});
                   const dateStr = `${s.year}-${String(s.monthIdx + 1).padStart(2, "0")}-${String(s.day).padStart(2, "0")}`;
                   onSelectDate?.(dateStr);
                 }}
@@ -2130,6 +2226,7 @@ const markOf = (staffIdx, day) => {
                 openMarkSt={openMarkSt}
                 openReportPicker={openReportPicker}
                 isOtherSession={isOtherSession}
+                prevDaysAttendance={prevDaysAttendance}
               />
             )}
           </div>
@@ -2161,8 +2258,8 @@ const markOf = (staffIdx, day) => {
             <div className="att-th att-td-chev"></div>
           </div>
 
-          {/* Rows */}
-          {studentData.map((r, i) => {
+          {/* Rows — follow the calendar-selected date (studentData when in today mode). */}
+          {displayData.map((r, i) => {
             const isOpen = openClassIdx === i;
             const isMarked = r.marked;
             return (
@@ -2197,10 +2294,13 @@ const markOf = (staffIdx, day) => {
                   <div className="att-td att-td-absent"><span style={{ color: "#DC2626", fontWeight: 800, fontSize: 14 }}>{isMarked ? r.absent : "—"}</span></div>
                   <div className="att-td att-td-leave"><span style={{ color: "#D97706", fontWeight: 800, fontSize: 14 }}>{isMarked ? r.leave : "—"}</span></div>
                   <div className="att-td att-td-action">
+                    {/* markDate = null in today mode (→ mark today, byte-identical),
+                        or the selected past date when following it (toggle ON). A past
+                        date with the toggle OFF is never followed → table stays today. */}
                     <Tooltip text={!canStMark ? "You do not have permission to mark attendance" : (isOtherSession ? "Editing is only allowed for the current session" : (isMarked ? `Update attendance for ${r.cls} (${r.sec})` : `Mark attendance for ${r.cls} (${r.sec})`))}>
                       <button
                         className={`att-mark-btn-primary${isMarked ? " update-mode" : ""}`}
-                        onClick={() => openMarkSt(i)}
+                        onClick={() => openMarkSt(i, markDate)}
                         disabled={isOtherSession || !canStMark}
                         style={(isOtherSession || !canStMark) ? { opacity: .45, cursor: "not-allowed" } : undefined}
                       >
@@ -2211,7 +2311,7 @@ const markOf = (staffIdx, day) => {
                   </div>
                   <div className="att-td att-td-chev">
                     <Tooltip text={isOpen ? "Hide student details" : "Show student details"}>
-                      <button className={`att-chevron-btn${isOpen ? " open" : ""}`} onClick={() => { const next = isOpen ? null : i; setOpenClassIdx(next); if (next !== null) onExpandClass?.(i); }} aria-label="Toggle detail">
+                      <button className={`att-chevron-btn${isOpen ? " open" : ""}`} onClick={() => { const next = isOpen ? null : i; setOpenClassIdx(next); if (next !== null) { const p = onExpandClass?.(next, markDate); if (followDate && p && typeof p.then === "function") { p.then((map) => setDetailByDate((prev) => ({ ...prev, [next]: map || {} }))); } } }} aria-label="Toggle detail">
                         <i className="fa-solid fa-chevron-down"></i>
                       </button>
                     </Tooltip>
@@ -2232,8 +2332,8 @@ const markOf = (staffIdx, day) => {
                           </tr>
                         </thead>
                         <tbody>
-                          {rosterForClass(r).map((s, j) => {
-                            const st = s.status || null; // real saved status (get API)
+                          {rosterFor(r, i).map((s, j) => {
+                            const st = s.status || null; // saved status for the selected date (get API)
                             return (
                               <tr key={s.id ?? s.idx}>
                                 <td>{s.idx}</td>
@@ -2294,7 +2394,7 @@ const markOf = (staffIdx, day) => {
   }
 
   /* ─── Selected-date panel under the Student calendar ────────────────────── */
-  function StudentDatePanel({ sel, dateAttendance, openMarkSt, openReportPicker, isOtherSession = false }) {
+  function StudentDatePanel({ sel, dateAttendance, openMarkSt, openReportPicker, isOtherSession = false, prevDaysAttendance = false }) {
     const { can } = usePermissions();
     const canStMark     = can("Attendance", "Student Attendance", "Create") || can("Attendance", "Student Attendance", "Edit");
     const canStDownload = can("Attendance", "Student Attendance", "Download");
@@ -2320,7 +2420,9 @@ const markOf = (staffIdx, day) => {
               <i className="fa-solid fa-calendar-day" style={{ color: T.brandPrimary, marginRight: 6 }}></i>{dowName}, {dateStr}
             </div>
             <div style={{ fontSize: 11.5, color: T.textMuted, marginTop: 3 }}>
-              {sel.isPast ? "Past date — showing saved record" : "Today — attendance can be marked/updated"}
+              {sel.isToday
+                ? "Today — attendance can be marked/updated"
+                : (prevDaysAttendance ? "Past date — editing enabled" : "Past date — showing saved record")}
             </div>
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -2338,11 +2440,11 @@ const markOf = (staffIdx, day) => {
               </button>
             </Tooltip>
             )}
-            {sel.isToday && canStMark && (
-              <Tooltip text={isOtherSession ? "Editing is only allowed for the current session" : (allMarked ? "Update today's student attendance for all classes" : "Mark today's student attendance for all classes")}>
+            {(sel.isToday || (prevDaysAttendance && sel.isPast)) && canStMark && (
+              <Tooltip text={isOtherSession ? "Editing is only allowed for the current session" : (allMarked ? (sel.isToday ? "Update today's student attendance for all classes" : "Update student attendance for this date") : (sel.isToday ? "Mark today's student attendance for all classes" : "Mark student attendance for this date"))}>
                 <button
                   className={`att-mark-btn-primary${allMarked ? " update-mode" : ""}`}
-                  onClick={() => openMarkSt(0)}
+                  onClick={() => openMarkSt(0, selKey)}
                   disabled={isOtherSession}
                   style={isOtherSession ? { opacity: .45, cursor: "not-allowed" } : undefined}
                 >
@@ -2418,9 +2520,11 @@ const markOf = (staffIdx, day) => {
   }
 
   /* ─── Mark Student Attendance modal ─────────────────────────────────────── */
-  function MarkStudentModal({ classIdx, studentData, onClose, onSaveMarks, onLoadMarks }) {
+  function MarkStudentModal({ classIdx, markDate, studentData, onClose, onSaveMarks, onLoadMarks }) {
     const row = studentData[classIdx];
-    const today = new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" });
+    // Header date: selected past date if marking a previous day, else today.
+    const today = (markDate ? new Date(`${markDate}T00:00:00`) : new Date())
+      .toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" });
     const [rows, setRows] = useState(() =>
       (row ? rosterForClass(row) : []).map((s) => ({ ...s, status: s.status || "present", inTime: s.inTime || "", outTime: s.outTime || "" }))
     );
@@ -2587,7 +2691,7 @@ const markOf = (staffIdx, day) => {
   /* ─── Tab 3: Staff Attendance ─────────────────────────────────────────────
     HTML-faithful: filter bar, calendar with date-detail (top mark CTA),
     staff list table with expandable per-staff detail rows. */
-  function StaffTab({ weeklyOff, holidays, staffData, staffTodayMarked, openMarkSf, openReportPicker, toast, onExpandStaff, onSelectDate, staffDateAttendance, isOtherSession = false }) {
+  function StaffTab({ weeklyOff, holidays, staffData, staffTodayMarked, openMarkSf, openReportPicker, toast, onExpandStaff, onSelectDate, staffDateAttendance, isOtherSession = false, prevDaysAttendance = false }) {
     const { can } = usePermissions();
     const canSfMark     = can("Attendance", "Staff Attendance", "Create") || can("Attendance", "Staff Attendance", "Edit");
     const canSfDownload = can("Attendance", "Staff Attendance", "Download");
@@ -2595,13 +2699,34 @@ const markOf = (staffIdx, day) => {
     const [selected, setSelected] = useState(null);
     const [openIdx, setOpenIdx] = useState(null);
 
+    // Selected calendar date → the staff-wise table follows THIS date.
+    const pad2 = (n) => String(n).padStart(2, "0");
+    const selKey = selected ? `${selected.year}-${pad2(selected.monthIdx + 1)}-${pad2(selected.day)}` : null;
+    const isTodaySel = !selected || selected.isToday;
+    // Following a PAST date only when the Previous-Days toggle is ON; else today-only.
+    const followDate = !isTodaySel && selected.isPast && prevDaysAttendance;
+    const markDate = followDate ? selKey : null; // null → today path (byte-identical)
+    const dateReady = followDate && staffDateAttendance && staffDateAttendance.key === selKey && !staffDateAttendance.loading;
+    // Rows to render: overlay the selected date's status/in-out/marked (keep name/desig/dept)
+    // when following a past date; otherwise staffData exactly.
+    const displayStaff = followDate
+      ? staffData.map((s) => {
+          const d = dateReady ? (staffDateAttendance.rows || []).find((x) => String(x.empId) === String(s.empId)) : null;
+          return d
+            ? { ...s, marked: !!d.marked, status: d.status || "", inTime: d.inTime || "", outTime: d.outTime || "", from: d.from || "", markedBy: d.markedBy || "" }
+            : { ...s, marked: false, status: "", inTime: "", outTime: "", from: "", markedBy: "" };
+        })
+      : staffData;
+    // Marked flag for the header button: today → global flag; past → this date's record.
+    const selMarked = followDate ? displayStaff.some((s) => s.marked) : staffTodayMarked;
+
     return (
       <>
         {/* Filter bar */}
         <div className="att-section">
           <div className="att-section-body" style={{ padding: "14px 18px" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-              <MonthNav month={month} onChange={(m) => { setMonth(m); setSelected(null); }} />
+              <MonthNav month={month} onChange={(m) => { setMonth(m); setSelected(null); setOpenIdx(null); }} />
               {canSfDownload && (
               <Tooltip text="Download monthly staff attendance as PDF">
                 <button
@@ -2642,6 +2767,7 @@ const markOf = (staffIdx, day) => {
               selected={selected}
               onSelect={(s) => {
                 setSelected(s);
+                setOpenIdx(null);
                 onSelectDate?.(`${s.year}-${String(s.monthIdx + 1).padStart(2, "0")}-${String(s.day).padStart(2, "0")}`);
               }}
               onFutureError={() => toast("Attendance cannot be marked for upcoming dates.", "error")}
@@ -2654,6 +2780,7 @@ const markOf = (staffIdx, day) => {
                 openMarkSf={openMarkSf}
                 openReportPicker={openReportPicker}
                 isOtherSession={isOtherSession}
+                prevDaysAttendance={prevDaysAttendance}
               />
             )}
           </div>
@@ -2670,10 +2797,10 @@ const markOf = (staffIdx, day) => {
               </div>
             </div>
 
-<Tooltip text={isOtherSession ? "Editing is only allowed for the current session" : (staffTodayMarked ? "Update today's staff attendance" : "Mark today's staff attendance")}>
-  <button className={`att-mark-btn-primary${staffTodayMarked ? " update-mode" : ""}`} onClick={openMarkSf} disabled={isOtherSession} style={isOtherSession ? { opacity: .45, cursor: "not-allowed" } : undefined}>
-    <i className={`fa-solid ${staffTodayMarked ? "fa-rotate-right" : "fa-pen-to-square"}`}></i>
-    {staffTodayMarked ? "Update Attendance" : "Mark Attendance"}
+<Tooltip text={isOtherSession ? "Editing is only allowed for the current session" : (followDate ? (selMarked ? "Update staff attendance for this date" : "Mark staff attendance for this date") : (selMarked ? "Update today's staff attendance" : "Mark today's staff attendance"))}>
+  <button className={`att-mark-btn-primary${selMarked ? " update-mode" : ""}`} onClick={() => openMarkSf(markDate)} disabled={isOtherSession} style={isOtherSession ? { opacity: .45, cursor: "not-allowed" } : undefined}>
+    <i className={`fa-solid ${selMarked ? "fa-rotate-right" : "fa-pen-to-square"}`}></i>
+    {selMarked ? "Update Attendance" : "Mark Attendance"}
   </button>
 </Tooltip>
           </div>
@@ -2690,7 +2817,7 @@ const markOf = (staffIdx, day) => {
             <div className="att-th att-sf-chev"></div>
           </div>
 
-          {staffData.map((s, i) => {
+          {displayStaff.map((s, i) => {
             const isOpen = openIdx === i;
             const stClass  = s.marked ? (s.status === "present" ? "marked" : s.status === "absent" ? "pending" : "off") : "pending";
             const stLabel  = s.marked ? (s.status === "present" ? "Present" : s.status === "absent" ? "Absent" : s.status === "leave" ? "On Leave" : "Pending") : "Not Marked";
@@ -2714,7 +2841,7 @@ const markOf = (staffIdx, day) => {
                   <div className="att-td att-sf-out" style={{ fontWeight: 600 }}>{s.outTime ? fmtTime(s.outTime) : "—"}</div>
                   <div className="att-td att-sf-chev">
                     <Tooltip text={isOpen ? "Hide staff details" : "Show staff details"}>
-                      <button className={`att-chevron-btn${isOpen ? " open" : ""}`} onClick={() => { const next = isOpen ? null : i; setOpenIdx(next); if (next !== null) onExpandStaff?.(); }} aria-label="Toggle detail">
+                      <button className={`att-chevron-btn${isOpen ? " open" : ""}`} onClick={() => { const next = isOpen ? null : i; setOpenIdx(next); if (next !== null && !followDate) onExpandStaff?.(); }} aria-label="Toggle detail">
                         <i className="fa-solid fa-chevron-down"></i>
                       </button>
                     </Tooltip>
@@ -2782,7 +2909,7 @@ const markOf = (staffIdx, day) => {
   }
 
   /* ─── Selected-date panel under the Staff calendar ──────────────────────── */
-  function StaffDatePanel({ sel, staffDateAttendance, staffTodayMarked, openMarkSf, openReportPicker, isOtherSession = false }) {
+  function StaffDatePanel({ sel, staffDateAttendance, staffTodayMarked, openMarkSf, openReportPicker, isOtherSession = false, prevDaysAttendance = false }) {
     const { can } = usePermissions();
     const canSfMark     = can("Attendance", "Staff Attendance", "Create") || can("Attendance", "Staff Attendance", "Edit");
     const canSfDownload = can("Attendance", "Staff Attendance", "Download");
@@ -2807,7 +2934,9 @@ const markOf = (staffIdx, day) => {
               <i className="fa-solid fa-calendar-day" style={{ color: T.brandPrimary, marginRight: 6 }}></i>{dowName}, {dateStr}
             </div>
             <div style={{ fontSize: 11.5, color: T.textMuted, marginTop: 3 }}>
-              {sel.isPast ? "Past date — showing saved record" : "Today — attendance can be marked/updated"}
+              {sel.isToday
+                ? "Today — attendance can be marked/updated"
+                : (prevDaysAttendance ? "Past date — editing enabled" : "Past date — showing saved record")}
             </div>
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -2825,19 +2954,23 @@ const markOf = (staffIdx, day) => {
               </button>
             </Tooltip>
             )}
-            {sel.isToday && canSfMark && (
-              <Tooltip text={isOtherSession ? "Editing is only allowed for the current session" : (staffTodayMarked ? "Update today's staff attendance" : "Mark today's staff attendance")}>
+            {(sel.isToday || (prevDaysAttendance && sel.isPast)) && canSfMark && (() => {
+              // For today use the global flag; for a past date use this date's own record.
+              const marked = sel.isToday ? staffTodayMarked : hasMark;
+              return (
+              <Tooltip text={isOtherSession ? "Editing is only allowed for the current session" : (marked ? (sel.isToday ? "Update today's staff attendance" : "Update staff attendance for this date") : (sel.isToday ? "Mark today's staff attendance" : "Mark staff attendance for this date"))}>
                 <button
-                  className={`att-mark-btn-primary${staffTodayMarked ? " update-mode" : ""}`}
-                  onClick={openMarkSf}
+                  className={`att-mark-btn-primary${marked ? " update-mode" : ""}`}
+                  onClick={() => openMarkSf(selKey)}
                   disabled={isOtherSession}
                   style={isOtherSession ? { opacity: .45, cursor: "not-allowed" } : undefined}
                 >
-                  <i className={`fa-solid ${staffTodayMarked ? "fa-rotate-right" : "fa-pen-to-square"}`}></i>
-                  {staffTodayMarked ? "Update Attendance" : "Mark Attendance"}
+                  <i className={`fa-solid ${marked ? "fa-rotate-right" : "fa-pen-to-square"}`}></i>
+                  {marked ? "Update Attendance" : "Mark Attendance"}
                 </button>
               </Tooltip>
-            )}
+              );
+            })()}
           </div>
         </div>
         <div className="att-stat-row" style={{ marginBottom: 12 }}>
@@ -2901,8 +3034,10 @@ const markOf = (staffIdx, day) => {
   }
 
   /* ─── Mark Staff Attendance modal — all staff at once ───────────────────── */
-  function MarkStaffModal({ staffData, isUpdate, onClose, onSave }) {
-    const today = new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" });
+  function MarkStaffModal({ staffData, markDate, isUpdate, onClose, onSave }) {
+    // Header date: selected past date if marking a previous day, else today.
+    const today = (markDate ? new Date(`${markDate}T00:00:00`) : new Date())
+      .toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" });
 // MarkStaffModal component mein (already working)
 const [rows, setRows] = useState(() => staffData.map((s) => ({
   empId:   s.empId,
@@ -3745,10 +3880,37 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
 
     /* Modal state for Tab 2 (Student) */
     const [markStIdx, setMarkStIdx]       = useState(null); // class index pending mark/update
+    const [markStDate, setMarkStDate]     = useState(null); // selected date for student mark modal (null → today)
     const { data: studentData = [], setData: setStudentData } = useAsync(() => attendanceService.getClassStudentList(), []);
 
     /* Modal state for Tab 3 (Staff) */
     const [markSfOpen, setMarkSfOpen]     = useState(false);
+    const [markSfDate, setMarkSfDate]     = useState(null); // selected date for staff mark modal (null → today)
+
+    /* Previous Days Attendance toggle — persisted in DB per branch via
+       /api/settings-approvals-previous-days-attendance (action get on mount,
+       action save on toggle). OFF (default) → only today's attendance can be
+       marked. ON → past dates (within the active session) can be marked/edited.
+       Future dates stay blocked regardless. */
+    const [prevDaysAttendance, setPrevDaysAttendance] = useState(false);
+    useEffect(() => {
+      let alive = true;
+      attendanceService.getPreviousDaysAttendance()
+        .then((v) => { if (alive) setPrevDaysAttendance(!!v); })
+        .catch(() => { /* API fail → stays OFF (safe default) */ });
+      return () => { alive = false; };
+    }, []);
+    const togglePrevDaysAttendance = useCallback(() => {
+      if (blockIfReadOnly()) return;
+      const next = !prevDaysAttendance;
+      setPrevDaysAttendance(next); // optimistic
+      attendanceService.savePreviousDaysAttendance(next)
+        .then(() => toast(next ? "Previous days attendance enabled" : "Previous days attendance disabled", "success"))
+        .catch((err) => {
+          setPrevDaysAttendance(!next); // revert on failure
+          toast(err?.message || "Could not update previous-days attendance setting", "error");
+        });
+    }, [blockIfReadOnly, toast, prevDaysAttendance]);
     const [employees, setEmployees]       = useState([]); // real employees (with assignments)
     const [staffData, setStaffData]       = useState([]); // derived staff-attendance rows
     const [staffTodayMarked, setStaffTodayMarked] = useState(true);
@@ -3857,7 +4019,12 @@ useEffect(() => {
   fetchWeeklyOff();
 }, []);
     const openReportPicker = useCallback((cfg) => setReportPicker(cfg), []);
-    const openMarkSt = useCallback((idx) => { if (blockIfReadOnly()) return; setMarkStIdx(idx); }, [blockIfReadOnly]);
+    const openMarkSt = useCallback((idx, dateStr) => {
+      if (blockIfReadOnly()) return;
+      // dateStr passed only from a past-date panel; today-table calls omit it.
+      setMarkStDate(typeof dateStr === "string" ? dateStr : null);
+      setMarkStIdx(idx);
+    }, [blockIfReadOnly]);
 
     const openIndivReport = useCallback((target) => setIndivTarget(target), []);
 
@@ -3924,14 +4091,26 @@ useEffect(() => {
       setReportPreview({ title: `${target.type === "student" ? "Student" : "Staff"} Attendance Report — ${target.name}`, html });
     }, [indivTarget, weeklyOff, holidays, toast, fetchIndividualAttendance, branchSchool]);
 
-    const openMarkSf = useCallback(() => { if (blockIfReadOnly()) return; setMarkSfOpen(true); }, [blockIfReadOnly]);
+    const openMarkSf = useCallback(async (dateStr) => {
+      if (blockIfReadOnly()) return;
+      // dateStr is a real string only from a past-date panel; onClick={openMarkSf}
+      // passes the event object → treated as "today".
+      const d = typeof dateStr === "string" ? dateStr : null;
+      setMarkSfDate(d);
+      // Past date → load that date's marks into staffData so the modal prefills
+      // the existing record (edit) instead of today's.
+      if (d) { try { await loadStaffAttendance(d); } catch { /* ignore */ } }
+      setMarkSfOpen(true);
+      // loadStaffAttendance is defined later in this component; referenced via closure.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [blockIfReadOnly]);
   // Attendance component ke andar (around line 2100)
 
  // Attendance component ke andar - saveMarkSf ko replace karo
 
 // Attendance component mein - saveMarkSf function
 
-const saveMarkSf = useCallback(async (rows) => {
+const saveMarkSf = useCallback(async (rows, dateOverride) => {
   if (blockIfReadOnly()) return;
   // Validation: Out Time, In Time se pehle na ho (Present staff ke liye).
   const badTime = rows.find((r) => r.status === "present" && r.inTime && r.outTime && r.outTime < r.inTime);
@@ -3941,7 +4120,9 @@ const saveMarkSf = useCallback(async (rows) => {
   }
   const branchID = Number(sessionStorage.getItem("branchID"));
   const employeeID = Number(sessionStorage.getItem("employee_ID")) || 0;
-  const attendanceDate = new Date().toISOString().slice(0, 10);
+  const todayStr = new Date().toISOString().slice(0, 10);
+  // Past-date marking passes the selected date; otherwise → today (unchanged).
+  const attendanceDate = dateOverride || todayStr;
   // Session-date guard: attendance date current session ki UTC window ke andar ho.
   const sfDateChk = validateSessionDateFromStorage(attendanceDate, "attendance date");
   if (!sfDateChk.ok) { toast(sfDateChk.message, "error"); return; }
@@ -3977,16 +4158,24 @@ const saveMarkSf = useCallback(async (rows) => {
 
     await Promise.all(promises);
 
-    // Save ke baad fresh GET — naye attendanceID + status turant reflect ho.
-    await loadStaffAttendance(attendanceDate);
-    setStaffTodayMarked(true);
+    if (attendanceDate === todayStr) {
+      // Today → fresh GET restores the staff list (new attendanceID + status).
+      await loadStaffAttendance(attendanceDate);
+      setStaffTodayMarked(true);
+    } else {
+      // Past date → refresh that date's panel, then restore the staff list to
+      // today so the main list keeps showing today's state.
+      await loadStaffDateAttendance(attendanceDate);
+      await loadStaffAttendance(todayStr);
+    }
+    setMarkSfDate(null);
     setMarkSfOpen(false);
     toast("Staff attendance saved successfully", "success");
   } catch (error) {
     console.error("Error saving staff attendance:", error);
     toast("Failed to save staff attendance. Please try again.", "error");
   }
-  // loadStaffAttendance closure se resolve hota hai (baad mein defined).
+  // loadStaffAttendance / loadStaffDateAttendance closure se resolve hote hain (baad mein defined).
   // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [staffData, toast, blockIfReadOnly]);
     const generateReport = useCallback(async ({ effective, style, filters }) => {
@@ -4187,12 +4376,14 @@ const saveMarkSf = useCallback(async (rows) => {
     }, [activeSessionID]);
 
     // GET saved attendance for a class/section (today) → prefill statuses + counts.
-    const loadStudentMarks = useCallback(async (idx) => {
+    const loadStudentMarks = useCallback(async (idx, dateOverride) => {
       const row = studentData[idx];
       if (!row) return {};
       const branchID  = Number(sessionStorage.getItem("branchID"));
       const sessionID = await ensureSessionID();
-      const attendanceDate = new Date().toISOString().slice(0, 10);
+      const todayStr = new Date().toISOString().slice(0, 10);
+      // Past-date marking passes the selected date; otherwise → today (unchanged).
+      const attendanceDate = dateOverride || todayStr;
       const map = {};
       try {
         const res = await attendanceService.studentAttendance({
@@ -4221,6 +4412,9 @@ const saveMarkSf = useCallback(async (rows) => {
       } catch (err) {
         console.error("Error loading student attendance:", err);
       }
+      // Past date is loaded only to prefill the mark modal — do NOT overwrite the
+      // today-oriented class table with a past date's counts.
+      if (attendanceDate !== todayStr) return map;
       // Reflect saved statuses + times into the class row (detail table + counts).
       setStudentData((prev) => prev.map((r, i) => {
         if (i !== idx) return r;
@@ -4238,7 +4432,7 @@ const saveMarkSf = useCallback(async (rows) => {
     }, [studentData, ensureSessionID, setStudentData]);
 
     // Save Attendance → action:"insert" for EACH student.
-    const saveStudentMarks = useCallback(async (idx, studentRows) => {
+    const saveStudentMarks = useCallback(async (idx, studentRows, dateOverride) => {
       if (blockIfReadOnly()) throw new Error("read-only");
       // Validation: Out Time, In Time se pehle na ho (Present students ke liye).
       const badTime = studentRows.find((s) => s.status === "present" && s.inTime && s.outTime && s.outTime < s.inTime);
@@ -4251,7 +4445,9 @@ const saveMarkSf = useCallback(async (rows) => {
       const branchID   = Number(sessionStorage.getItem("branchID"));
       const employeeID = Number(sessionStorage.getItem("employee_ID")) || 0;
       const sessionID  = await ensureSessionID();
-      const attendanceDate = new Date().toISOString().slice(0, 10);
+      const todayStr = new Date().toISOString().slice(0, 10);
+      // Past-date marking passes the selected date; otherwise → today (unchanged).
+      const attendanceDate = dateOverride || todayStr;
       // Session-date guard: attendance date current session ki UTC window ke andar ho.
       const dateChk = validateSessionDateFromStorage(attendanceDate, "attendance date");
       if (!dateChk.ok) { toast(dateChk.message, "error"); throw new Error("out-of-session"); }
@@ -4277,6 +4473,15 @@ const saveMarkSf = useCallback(async (rows) => {
         toast("Failed to save attendance. Please try again.", "error");
         throw err; // keep modal open
       }
+      if (attendanceDate !== todayStr) {
+        // Past date → refresh that date's panel; leave the today-oriented class
+        // table untouched.
+        try { await loadDateAttendance(attendanceDate); } catch { /* ignore */ }
+        setMarkStIdx(null);
+        setMarkStDate(null);
+        toast("Attendance saved successfully", "success");
+        return;
+      }
       const present = studentRows.filter((s) => s.status === "present").length;
       const absent  = studentRows.filter((s) => s.status === "absent").length;
       const leave   = studentRows.filter((s) => s.status === "leave").length;
@@ -4290,7 +4495,10 @@ const saveMarkSf = useCallback(async (rows) => {
         markedTime: new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }),
       } : r));
       setMarkStIdx(null);
+      setMarkStDate(null);
       toast("Attendance saved successfully", "success");
+      // loadDateAttendance closure se resolve hota hai (baad mein defined).
+      // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [studentData, ensureSessionID, toast, setStudentData, blockIfReadOnly]);
 
     // Student tab active → GET saved attendance for EVERY class (so the table
@@ -4337,6 +4545,7 @@ const saveMarkSf = useCallback(async (rows) => {
           platform = rec.Platform ?? rec.platform ?? platform;
         });
         return {
+          classID: r.classID, sectionID: r.sectionID,
           cls: r.cls, sec: r.sec, total: r.total,
           present, absent, leave, late,
           marked: recs.length > 0,
@@ -5144,6 +5353,8 @@ const saveHoliday = useCallback(async (payload) => {
             onExpandMonth={loadMonthHolidays}
             loadingMonth={loadingMonth}
             isOtherSession={isOtherSession}
+            prevDaysAttendance={prevDaysAttendance}
+            onTogglePrevDays={togglePrevDaysAttendance}
           />
         )}
         {tab === "student" && (
@@ -5159,6 +5370,7 @@ const saveHoliday = useCallback(async (payload) => {
             onSelectDate={loadDateAttendance}
             dateAttendance={dateAttendance}
             isOtherSession={isOtherSession}
+            prevDaysAttendance={prevDaysAttendance}
           />
         )}
         {tab === "staff" && (
@@ -5174,6 +5386,7 @@ const saveHoliday = useCallback(async (payload) => {
             onSelectDate={loadStaffDateAttendance}
             staffDateAttendance={staffDateAttendance}
             isOtherSession={isOtherSession}
+            prevDaysAttendance={prevDaysAttendance}
           />
         )}
         {tab === "reports" && (
@@ -5234,10 +5447,11 @@ const saveHoliday = useCallback(async (payload) => {
         {markStIdx != null && (
           <MarkStudentModal
             classIdx={markStIdx}
+            markDate={markStDate}
             studentData={studentData}
-            onClose={() => setMarkStIdx(null)}
-            onSaveMarks={saveStudentMarks}
-            onLoadMarks={loadStudentMarks}
+            onClose={() => { setMarkStIdx(null); setMarkStDate(null); }}
+            onSaveMarks={(i, rows) => saveStudentMarks(i, rows, markStDate)}
+            onLoadMarks={(i) => loadStudentMarks(i, markStDate)}
           />
         )}
 
@@ -5245,9 +5459,15 @@ const saveHoliday = useCallback(async (payload) => {
         {markSfOpen && (
           <MarkStaffModal
             staffData={staffData}
-            isUpdate={staffTodayMarked}
-            onClose={() => setMarkSfOpen(false)}
-            onSave={saveMarkSf}
+            markDate={markSfDate}
+            isUpdate={markSfDate ? staffData.some((s) => s.marked) : staffTodayMarked}
+            onClose={() => {
+              setMarkSfOpen(false);
+              // Restore the staff list to today after editing a past date.
+              if (markSfDate) { const t = new Date().toISOString().slice(0, 10); loadStaffAttendance(t); }
+              setMarkSfDate(null);
+            }}
+            onSave={(rows) => saveMarkSf(rows, markSfDate)}
           />
         )}
 

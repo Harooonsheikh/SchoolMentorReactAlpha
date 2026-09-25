@@ -246,6 +246,72 @@ export async function staffAttendance(payload) {
   return await response.json();
 }
 
+/* ── Previous Days Attendance setting ──
+   POST /api/settings-approvals-previous-days-attendance
+   action "save" → persist { branchID, previousDaysAttendance } in DB.
+   action "get"  → return the stored value for this branch.
+   Controls whether the user can mark/edit attendance for PAST dates. */
+/* Recursively find the first value whose KEY matches `keyRe`, at any depth,
+   through objects and arrays — so the flag is found no matter how the API
+   nests/cases it (root, data{}, data[0], etc.). */
+function deepFindFlag(node, keyRe, depth = 0) {
+  if (node == null || depth > 6) return undefined;
+  if (Array.isArray(node)) {
+    for (const item of node) {
+      const v = deepFindFlag(item, keyRe, depth + 1);
+      if (v !== undefined) return v;
+    }
+    return undefined;
+  }
+  if (typeof node === "object") {
+    for (const [k, val] of Object.entries(node)) {
+      if (keyRe.test(k)) return val;
+    }
+    for (const val of Object.values(node)) {
+      const v = deepFindFlag(val, keyRe, depth + 1);
+      if (v !== undefined) return v;
+    }
+  }
+  return undefined;
+}
+
+export async function getPreviousDaysAttendance() {
+  const token = sessionStorage.getItem("token");
+  const branchID = Number(sessionStorage.getItem("branchID")) || 0;
+  const response = await fetch(buildUrl("/api/settings-approvals-previous-days-attendance"), {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "*/*",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ action: "get", branchID }),
+  });
+  if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+  const json = await response.json().catch(() => null);
+  /* Deep-search the response for the previousDaysAttendance flag regardless of
+     casing / nesting (root, data{}, data[0], deeper) — the GET returns it as
+     e.g. PreviousDaysAttendance inside data[]. Accept bool / "true" / 1. */
+  const raw = deepFindFlag(json, /^previous[_\s]?days[_\s]?attendance$/i);
+  return raw === true || raw === 1 || raw === "1" || String(raw).toLowerCase() === "true";
+}
+
+export async function savePreviousDaysAttendance(previousDaysAttendance) {
+  const token = sessionStorage.getItem("token");
+  const branchID = Number(sessionStorage.getItem("branchID")) || 0;
+  const response = await fetch(buildUrl("/api/settings-approvals-previous-days-attendance"), {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "*/*",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ action: "save", branchID, previousDaysAttendance: !!previousDaysAttendance }),
+  });
+  if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+  return await response.json().catch(() => ({}));
+}
+
 export async function createHoliday(payload) {
   await delay();
   return clone({ ...payload, id: Date.now() });
