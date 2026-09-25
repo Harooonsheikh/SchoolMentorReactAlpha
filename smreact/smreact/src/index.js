@@ -66,7 +66,8 @@ function isOneLinkPreview() {
       if (p.displayName) sessionStorage.setItem('displayName', p.displayName);
       if (p.userName)    sessionStorage.setItem('userName', p.userName);
       if (p.id != null)  sessionStorage.setItem('UserID', String(p.id));
-      if (p.employee_ID) sessionStorage.setItem('employee_ID', String(p.employee_ID));
+      const empId = p.employee_ID ?? p.employeeID ?? p.employee_Id ?? p.empId;
+      if (empId) sessionStorage.setItem('employee_ID', String(empId));
     }
   } catch (e) {
     /* malformed handoff — chhod do, ERP apna login screen dikha dega */

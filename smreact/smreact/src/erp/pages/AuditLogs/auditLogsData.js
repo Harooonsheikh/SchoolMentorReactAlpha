@@ -228,7 +228,7 @@ export function filterLogs(logs, f = {}) {
       const needle = f.search.toLowerCase();
       const hay = [
         l.record, l.details, l.screen, l.action, l.module,
-        l.userName, l.performedBy,
+        l.userName, l.performedBy, l.userRole,
         findUser(l.userId)?.name, findUser(l.userId)?.role,
       ].join(' ').toLowerCase();
       if (!hay.includes(needle)) return false;

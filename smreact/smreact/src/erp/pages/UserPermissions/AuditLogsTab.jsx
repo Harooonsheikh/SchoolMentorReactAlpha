@@ -1,6 +1,8 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import Tooltip from '../../components/Tooltip';
 import { auditTone, initialsOf } from './permissionsData';
+
+const PAGE_STEP = 100;
 
 /* ═══════════════════════════════════════════════════════════════════
    AUDIT LOGS TAB — filter bar + table
@@ -29,11 +31,16 @@ export default function AuditLogsTab({
     return auditLog.filter(a => {
       if (fType !== 'all' && a.type !== fType) return false;
       if (!q) return true;
-      return `${a.user} ${a.action} ${a.detail} ${a.performedBy}`.toLowerCase().includes(q);
+      return `${a.user} ${a.action} ${a.screen} ${a.detail} ${a.performedBy} ${a.role} ${a.record}`.toLowerCase().includes(q);
     });
     /* fFrom/fTo yahan deps me NAHI — wo server par lagti hain aur badalne
        par parent nayi rows bhej deta hai. */
   }, [auditLog, search, fType]);
+
+  /* Ek din me hi 12k+ rows aati hain — sab DOM me daalna page jama deta
+     hai, is liye PAGE_STEP ki qist me dikhao. Filter badle to wapas shuru. */
+  const [visibleCount, setVisibleCount] = useState(PAGE_STEP);
+  useEffect(() => { setVisibleCount(PAGE_STEP); }, [search, fType, fromDate, toDate]);
 
   return (
     <>
@@ -87,7 +94,7 @@ export default function AuditLogsTab({
         </Tooltip>
       </div>
 
-      {loading ? (
+      {loading && auditLog.length === 0 ? (
         <div className="up-empty">
           <div className="up-empty-ic"><i className="fa-solid fa-spinner fa-spin" aria-hidden="true"></i></div>
           <div className="up-empty-title">Loading audit logs…</div>
@@ -101,15 +108,16 @@ export default function AuditLogsTab({
         </div>
       ) : (
         <div className="up-table">
-          <div className="up-table-head" style={{ gridTemplateColumns: '170px 1fr 160px 2fr 1fr' }}>
+          <div className="up-table-head" style={{ gridTemplateColumns: '150px 1fr 150px 1.2fr 2fr 1fr' }}>
             <div className="th">Date &amp; Time</div>
             <div className="th">User</div>
             <div className="th">Action</div>
+            <div className="th">Screen</div>
             <div className="th">Detail</div>
             <div className="th">Performed By</div>
           </div>
-          {filtered.map(a => (
-            <div key={a.id} className="up-table-row" style={{ gridTemplateColumns: '170px 1fr 160px 2fr 1fr' }}>
+          {filtered.slice(0, visibleCount).map(a => (
+            <div key={a.id} className="up-table-row" style={{ gridTemplateColumns: '150px 1fr 150px 1.2fr 2fr 1fr' }}>
               <div className="td up-emp-text" style={{ gap: 2 }}>
                 <div className="up-emp-name" style={{ fontSize: 12.5 }}>{a.date}</div>
                 <div className="up-emp-meta">{a.time}</div>
@@ -127,8 +135,18 @@ export default function AuditLogsTab({
                   <span className={`up-badge up-badge--${auditTone(a.type)}`}>{a.action}</span>
                 </Tooltip>
               </div>
+              {/* ERP ki wo screen jahan ye kaam hua — module + action se
+                  (resolveErpScreen, rolesService). */}
+              <div className="td" style={{ fontSize: 12.5, fontWeight: 600, color: '#334155' }}>
+                {a.screen || '—'}
+              </div>
               <div className="td" style={{ fontFamily: "'Plus Jakarta Sans', sans-serif", fontSize: 12.5, fontStyle: 'italic', color: '#1E3A5F', lineHeight: 1.5 }}>
                 {a.detail}
+                {a.record && (
+                  <div style={{ fontStyle: 'normal', fontWeight: 600, fontSize: 11.5, color: '#64748B', marginTop: 2 }}>
+                    Record: {a.record}
+                  </div>
+                )}
               </div>
               <div className="td up-emp">
                 <Tooltip text={`Performed by: ${a.performedBy}`}>
@@ -138,10 +156,22 @@ export default function AuditLogsTab({
                 </Tooltip>
                 <div className="up-emp-text">
                   <div className="up-emp-meta" style={{ fontWeight: 600, color: '#334155' }}>{a.performedBy}</div>
+                  {a.role && <div className="up-emp-meta" style={{ fontSize: 11, color: '#64748B' }}>{a.role}</div>}
                 </div>
               </div>
             </div>
           ))}
+          {(filtered.length > visibleCount || loading) && (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, padding: 14, fontSize: 12.5, color: '#64748B' }}>
+              <span>Showing {Math.min(visibleCount, filtered.length)} of {filtered.length}</span>
+              {loading && <span><i className="fa-solid fa-spinner fa-spin" aria-hidden="true"></i> Loading more…</span>}
+              {filtered.length > visibleCount && (
+                <button type="button" className="up-btn up-btn-ghost" onClick={() => setVisibleCount((n) => n + PAGE_STEP)}>
+                  Show more
+                </button>
+              )}
+            </div>
+          )}
         </div>
       )}
     </>

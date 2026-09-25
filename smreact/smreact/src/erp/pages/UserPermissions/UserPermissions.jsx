@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Tooltip from '../../components/Tooltip';
 import TutorialModal from '../../components/TutorialModal';
 import { getEmployeesByBranch } from '../../services/attendanceService';
@@ -123,6 +123,9 @@ function mapActivityLogRow(log, idx) {
     action: log.action || '—',
     detail: log.detail || '',
     performedBy: log.performedBy || '—',
+    role: log.role || '',
+    record: log.record || '',
+    screen: log.screen || '',
     type: inferAuditType(log.action),
   };
 }
@@ -154,8 +157,9 @@ export default function UserPermissions({ toast = () => {} }) {
   const [auditLoading, setAuditLoading] = useState(false);
   /* Audit logs ab DATE RANGE se aati hain. Purana branch-wala endpoint poori
      branch ka record laata tha aur timeout kar jata tha — is liye default
-     aakhri 30 din, aur user range badle to dobara fetch. */
-  const [auditRange, setAuditRange] = useState(() => logRangeLastDays(30));
+     AAJ ka din (busy branch ke 30 din ~26 MB bante hain), aur user range
+     badle to dobara fetch. */
+  const [auditRange, setAuditRange] = useState(() => logRangeLastDays(1));
 
   /* Users tab active hote hi real employees API se laa kar map karo (ek dafa). */
   useEffect(() => {
@@ -245,26 +249,34 @@ export default function UserPermissions({ toast = () => {} }) {
   }, [rolesLoaded, loadRoles]);
 
   /* Audit Logs tab → GET /get-activity-logs-by-date-range/{branchId}/{from}/{to}.
-     Range badalne par dobara chalti hai. */
+     Range badalne par dobara chalti hai. toast ref me — App ka pushToast
+     har render par naya hota hai; deps me ho to chalti request baar baar
+     chhoot jaati aur loading kabhi khatam na hoti. */
+  const toastRef = useRef(toast);
+  toastRef.current = toast;
   useEffect(() => {
     if (tab !== 'audit') return undefined;
     let alive = true;
+    setAuditLog([]);
     setAuditLoading(true);
-    getActivityLogsByDateRange(auditRange.from, auditRange.to)
-      .then((rows) => {
+    const ctrl = new AbortController();
+    /* Streaming — rows jaise jaise utrein table me daalte jao (jawab 7+ MB). */
+    getActivityLogsByDateRange(auditRange.from, auditRange.to, {
+      signal: ctrl.signal,
+      onRows: (batch) => {
         if (!alive) return;
-        setAuditLog((rows || []).map(mapActivityLogRow));
-      })
+        const mapped = batch.map(mapActivityLogRow);
+        setAuditLog((prev) => prev.concat(mapped));
+      },
+    })
       .catch((err) => {
+        if (!alive) return;
         console.error('Could not load activity logs:', err);
-        if (alive) {
-          setAuditLog([]);
-          toast(err.message || 'Failed to load audit logs', 'error');
-        }
+        toastRef.current(err.message || 'Failed to load audit logs', 'error');
       })
       .finally(() => { if (alive) setAuditLoading(false); });
-    return () => { alive = false; };
-  }, [tab, auditRange, toast]);
+    return () => { alive = false; ctrl.abort(); };
+  }, [tab, auditRange]);
 
   /* ─── Audit helper ─── */
   const logAudit = useCallback((entry) => {
@@ -595,7 +607,7 @@ export default function UserPermissions({ toast = () => {} }) {
         <Stat tone="green"  icon="fa-layer-group"     label="Permission Groups"  value={stats.permGroups}
               sub="Reusable access bundles" />
         <Stat tone="amber"  icon="fa-clipboard-list"  label="Audit Events"       value={stats.auditEvents}
-              sub="Last 30 days" />
+              sub={auditRange.from === auditRange.to ? 'Selected day' : 'Selected date range'} />
       </div>
 
       {/* Tab bar */}

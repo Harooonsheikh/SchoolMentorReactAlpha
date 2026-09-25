@@ -245,6 +245,102 @@ function pickLogField(row, names, fallback = '') {
   return fallback;
 }
 
+/* ── Log ka waqt ──
+   API `timestamp` bina timezone ke bhejti hai ("2026-09-24T05:54:27") aur ye
+   SERVER ka local waqt hai — server US Pacific (PDT/PST) par chalta hai.
+   Tasdeeq: 24-09 ko 12:54 UTC (5:54 PM PKT) par sab se nayi row "05:54" thi.
+   new Date() ise user (Pakistan) ka waqt samajhta tha — dono me theek 12
+   ghante ka farq, is liye AM wala PM aur PM wala AM dikhta tha.
+   Is liye: timezone-less string ko Pacific wall-clock maan kar asal lamha
+   nikalo; DST (−7/−8) Intl khud sambhalta hai. 'Z' / +05:00 wali string
+   jaisi hai waisi. */
+const SERVER_TIME_ZONE = 'America/Los_Angeles';
+
+/** `timeZone` ka UTC se farq (ms) us lamhe par. */
+function tzOffsetMs(utcMs, timeZone) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone, hourCycle: 'h23',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  }).formatToParts(new Date(utcMs));
+  const v = Object.fromEntries(parts.map((p) => [p.type, Number(p.value)]));
+  return Date.UTC(v.year, v.month - 1, v.day, v.hour, v.minute, v.second) - Math.floor(utcMs / 1000) * 1000;
+}
+
+export function parseServerTimestamp(raw) {
+  const s = String(raw || '').trim();
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?$/);
+  if (!m) return new Date(s);                       // timezone wali ya koi aur shakal
+  const [, y, mo, da, h, mi, se = '0', frac = '0'] = m;
+  const wall = Date.UTC(+y, +mo - 1, +da, +h, +mi, +se, Math.round(Number(`0.${frac}`) * 1000));
+  try {
+    /* Do dafa — DST badalne wale din pehla andaza ek ghanta hil sakta hai. */
+    let utc = wall - tzOffsetMs(wall, SERVER_TIME_ZONE);
+    utc = wall - tzOffsetMs(utc, SERVER_TIME_ZONE);
+    return new Date(utc);
+  } catch (_) {
+    return new Date(s);                             // Intl timezone support na ho
+  }
+}
+
+/* ── Log row → ERP ki screen ──
+   API koi screen field nahi bhejti — sirf backend ka `module` (controller
+   ka naam, jaise "AcademicCalendar", "AccountsController") aur `action`
+   (method, jaise "StaffAttendance:get"). In dono se ERP sidebar ka naam
+   aur us ke andar ki screen banate hain: "Attendance › Staff Attendance".
+   Har module ke rules upar se neeche — pehla milne wala regex jeet-ta hai. */
+const ERP_SCREEN_RULES = {
+  academics:          ['Academics', [[/subject/i, 'Subjects'], [/student/i, 'Class & Section List']]],
+  academiccalendar:   ['Academics', [[/./, 'Academic Calendar']]],
+  activitycalendar:   ['Academics', [[/./, 'Activity Calendar']]],
+  assignhomework:     ['Academics', [[/./, 'Homework']]],
+  lessonplan:         ['Academics', [[/termbreakup/i, 'Term Breakup'], [/countforsubject/i, 'Subject Counts'],
+                        [/session/i, 'Session Summary'], [/./, 'Lesson Plans']]],
+  noticeboard:        ['Academics', [[/./, 'Notice Board']]],
+  examination:        ['Examination', [[/grading/i, 'Result Grading'], [/ranking/i, 'Student Rankings'],
+                        [/visibility/i, 'Result Visibility'], [/result/i, 'Results'],
+                        [/syllabus/i, 'Syllabus'], [/terms/i, 'Terms'], [/exam/i, 'Exams']]],
+  attendance:         ['Attendance', [[/staff/i, 'Staff Attendance'], [/student/i, 'Student Attendance'],
+                        [/weekly/i, 'Weekly Setup'], [/monthly/i, 'Monthly Setup']]],
+  leaves:             ['Attendance', [[/student/i, 'Student Leaves'], [/./, 'Staff Leaves']]],
+  timetable:          ['Timetable', []],
+  accounts:           ['Accounts', [[/entr/i, 'Account Entries'], [/./, 'Chart of Accounts']]],
+  accountscontroller: ['Accounts', [[/entr/i, 'Account Entries'], [/./, 'Chart of Accounts']]],
+  branchledger:       ['Accounts', [[/./, 'Branch Ledger']]],
+  feechallansettings: ['Fee', [[/./, 'Challan Settings']]],
+  transportfeesetup:  ['Fee', [[/./, 'Transport Fee Setup']]],
+  students:           ['Students', [[/discount/i, 'Fee Discounts']]],
+  familytree:         ['Students', [[/./, 'Family Tree']]],
+  'pre-enrollment':   ['Admission CRM', [[/./, 'Pre Enrollment']]],
+  hr:                 ['Human Resource', []],
+  'launch-setup':     ['Launch Setup', [[/fee/i, 'Fee Heads'], [/subject/i, 'Subjects'], [/department/i, 'Departments'],
+                        [/employee/i, 'Employees'], [/student/i, 'Students'], [/grade/i, 'Classes']]],
+  settings:           ['Settings', [[/signature/i, 'Signatures'], [/session/i, 'Academic Sessions']]],
+  registration:       ['Settings', [[/./, 'School Profile']]],
+  userpermissions:    ['User Permissions', [[/activitylog/i, 'Audit Logs'], [/role/i, 'Roles'],
+                        [/mobileapp/i, 'Mobile App Permissions'], [/timespend/i, 'Time Tracking']]],
+  dashboard:          ['Dashboard', []],
+  notification:       ['Notifications', []],
+  suggestion:         ['Suggestions', []],
+  supportsessions:    ['Support', [[/./, 'Support Sessions']]],
+  shared:             ['Reports', [[/./, 'Report Header']]],
+  googleplay:         ['Mobile App', [[/./, 'App Version']]],
+};
+
+/** "Module › Screen" — module pehchana na jaye to backend ka naam hi
+    padhne layak bana kar ("SomeThing" → "Some Thing"). */
+export function resolveErpScreen(module, action) {
+  const key = String(module || '').trim().toLowerCase();
+  if (!key) return '';
+  const rule = ERP_SCREEN_RULES[key];
+  if (!rule) {
+    return String(module).replace(/Controller$/i, '').replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[-_]/g, ' ');
+  }
+  const [erpModule, screens] = rule;
+  const hit = screens.find(([re]) => re.test(String(action || '')));
+  return hit ? `${erpModule} › ${hit[1]}` : erpModule;
+}
+
 /** Ek API row → neutral shape. Audit Logs module aur User Permissions ka
     Audit tab dono isi se apni apni shakal banate hain, taake field-guessing
     ek hi jagah rahe. */
@@ -253,7 +349,7 @@ export function normalizeActivityLog(row, idx = 0) {
     'createdDate', 'CreatedDate', 'date', 'Date', 'logDate', 'LogDate',
     'createdOn', 'CreatedOn', 'timestamp', 'Timestamp', 'activityDate', 'ActivityDate',
   ]);
-  const d = raw ? new Date(raw) : null;
+  const d = raw ? parseServerTimestamp(raw) : null;
   const ok = d && Number.isFinite(d.getTime());
   const p = (n) => String(n).padStart(2, '0');
   return {
@@ -265,20 +361,33 @@ export function normalizeActivityLog(row, idx = 0) {
       : String(pickLogField(row, ['dateStr', 'dateText'], raw || '')),
     time: String(pickLogField(row, ['time', 'Time', 'logTime', 'LogTime'],
       ok ? d.toLocaleTimeString('en-PK', { hour: '2-digit', minute: '2-digit', hour12: true }) : '')),
+    /* userName kai rows me null aata hai (jaise userID 1) — tab "User ID 1". */
     user: String(pickLogField(row, ['userName', 'UserName', 'user', 'User',
-      'employeeName', 'EmployeeName', 'targetUser', 'TargetUser', 'accountName'], '—')),
+      'employeeName', 'EmployeeName', 'targetUser', 'TargetUser', 'accountName'], '')
+      || (pickLogField(row, ['userID', 'UserID', 'userId'], '') ? `User ID ${pickLogField(row, ['userID', 'UserID', 'userId'], '')}` : '—')),
     action: String(pickLogField(row, ['action', 'Action', 'actionType', 'ActionType',
       'activity', 'Activity', 'event', 'Event'], '—')),
     detail: String(pickLogField(row, ['detail', 'Detail', 'details', 'Details',
       'description', 'Description', 'message', 'Message', 'remarks', 'Remarks'], '')),
+    /* API alag performedBy nahi bhejti — log ki row us user ki hai jis ne
+       kaam kiya (userName). Naam null ho to kam az kam "User ID 206". */
     performedBy: String(pickLogField(row, ['performedBy', 'PerformedBy', 'createdByName',
-      'CreatedByName', 'createdBy', 'CreatedBy', 'actorName', 'ActorName', 'modifiedBy', 'ModifiedBy'], '—')),
+      'CreatedByName', 'actorName', 'ActorName', 'userName', 'UserName'], '')
+      || (pickLogField(row, ['userID', 'UserID', 'userId'], '') ? `User ID ${pickLogField(row, ['userID', 'UserID', 'userId'], '')}` : '—')),
     module: String(pickLogField(row, ['module', 'Module', 'moduleName', 'ModuleName',
       'menuName', 'MenuName'], '')),
     screen: String(pickLogField(row, ['screen', 'Screen', 'screenName', 'ScreenName',
-      'subMenuName', 'SubMenuName', 'page', 'Page'], '')),
+      'subMenuName', 'SubMenuName', 'page', 'Page'], ''))
+      || resolveErpScreen(
+        pickLogField(row, ['module', 'Module', 'moduleName', 'ModuleName'], ''),
+        pickLogField(row, ['action', 'Action', 'actionType', 'ActionType'], ''),
+      ),
+    /* `role` ab API bhejti hai (Accountant, Parent…); purani rows par null. */
+    role: String(pickLogField(row, ['role', 'Role', 'roleName', 'RoleName', 'userRole', 'UserRole'], '')),
+    /* API alag record field nahi bhejti — `result` ("INSERT completed
+       successfully", "Employees retrieved successfully") hi record hai. */
     record: String(pickLogField(row, ['record', 'Record', 'recordName', 'RecordName',
-      'entity', 'Entity', 'reference', 'Reference'], '')),
+      'entity', 'Entity', 'reference', 'Reference', 'result', 'Result'], '')),
     oldValue: String(pickLogField(row, ['oldValue', 'OldValue', 'previousValue', 'PreviousValue', 'before', 'Before'], '')),
     newValue: String(pickLogField(row, ['newValue', 'NewValue', 'currentValue', 'CurrentValue', 'after', 'After'], '')),
     ipAddress: String(pickLogField(row, ['ipAddress', 'IPAddress', 'ip', 'IP'], '')),
@@ -287,42 +396,177 @@ export function normalizeActivityLog(row, idx = 0) {
   };
 }
 
+/* ── Streaming JSON reader ──
+   Jawab ki shakal: { success, message, count, …, data: [ {row}, {row}, … ] }.
+   Poora jawab 7–26 MB hai aur server use ~70 KB/s par bhejta hai (pehla
+   byte 2–4s me aa jaata hai, baqi minton me). Poore ka intezar karein to
+   screen minton khaali rehti hai — is liye `data` array ki har row jaise hi
+   poori utarti hai, parse karke aage de dete hain. */
+function createRowStreamParser(onRow) {
+  let buf = '';
+  let inData = false;
+  let head = '';          // `data` se pehle ka hissa — error jawab ke liye
+  let done = false;
+
+  /* buf[start] === '{' — matching '}' ka index, ya -1 agar abhi adhoora. */
+  const objectEnd = (start) => {
+    let depth = 0;
+    let inStr = false;
+    for (let i = start; i < buf.length; i++) {
+      const c = buf.charCodeAt(i);
+      if (inStr) {
+        if (c === 92) i++;               // backslash — agla char escape
+        else if (c === 34) inStr = false; // "
+      } else if (c === 34) inStr = true;
+      else if (c === 123) depth++;        // {
+      else if (c === 125 && --depth === 0) return i;  // }
+    }
+    return -1;
+  };
+
+  return {
+    push(text) {
+      if (done) return;
+      buf += text;
+      if (!inData) {
+        const m = buf.match(/"data"\s*:\s*\[/i);
+        if (!m) { head = buf; return; }
+        head = buf.slice(0, m.index);
+        buf = buf.slice(m.index + m[0].length);
+        inData = true;
+      }
+      let pos = 0;
+      for (;;) {
+        while (pos < buf.length && /[\s,]/.test(buf[pos])) pos++;
+        if (pos >= buf.length) break;
+        if (buf[pos] === ']') { done = true; break; }
+        if (buf[pos] !== '{') { pos++; continue; }
+        const end = objectEnd(pos);
+        if (end < 0) break;               // row abhi adhoori — agle chunk ka intezar
+        try { onRow(JSON.parse(buf.slice(pos, end + 1))); } catch (_) { /* kharab row chhor do */ }
+        pos = end + 1;
+      }
+      buf = buf.slice(pos);
+    },
+    /** Stream khatam — `data` mila hi nahi to poora jawab (error waghera). */
+    finish() {
+      if (inData) return null;
+      try { return JSON.parse(head || buf); } catch (_) { return null; }
+    },
+  };
+}
+
 /**
- * Ek date range ke activity logs.
+ * Ek date range ke activity logs — STREAMING.
  * @param {string} fromDate 'yyyy-MM-dd' (ya koi bhi parseable date)
  * @param {string} toDate   'yyyy-MM-dd'
- * @returns {Promise<Array>} normalizeActivityLog() se guzri hui rows
+ * @param {object} [opts]
+ * @param {AbortSignal} [opts.signal]  range badle / screen band → download band
+ * @param {(rows:Array)=>void} [opts.onRows]  rows ke batch jaise hi utrein
+ *        (normalizeActivityLog() se guzri hui) — screen foran bharti hai
+ * @param {number} [opts.stallMs]  itni der koi byte na aaye to nakaam
+ * @returns {Promise<Array>} saari rows (normalizeActivityLog() shakal)
  */
-export async function getActivityLogsByDateRange(fromDate, toDate) {
+export async function getActivityLogsByDateRange(fromDate, toDate, { signal, onRows, stallMs = 60000 } = {}) {
   const from = toApiLogDate(fromDate);
   const to = toApiLogDate(toDate);
   /* Range ke baghair call hi mat karo — warna wahi poori-branch wali slow
      query chal padti hai jis se bachne ke liye ye endpoint laaya gaya. */
   if (!from || !to) return [];
 
+  /* Server din bhi APNE (US Pacific) waqt se kaat-ta hai. Pakistan ka din
+     server ke do dino me bat jaata hai — PKT subah (school ka waqt) server
+     ki PICHLI tareekh hai. Is liye server se ek din pehle se mangwao, aur
+     rows ko user ke local din se chhaant kar sirf chuni hui range rakho. */
+  const fromIso = from.split('-').reverse().join('-');     // dd-MM-yyyy → yyyy-MM-dd
+  const toIso = to.split('-').reverse().join('-');
+  const prev = new Date(`${fromIso}T00:00:00Z`);
+  prev.setUTCDate(prev.getUTCDate() - 1);
+  const serverFrom = toApiLogDate(prev.toISOString().slice(0, 10));
+  const inRange = (row) => !row.dateISO || (row.dateISO >= fromIso && row.dateISO <= toIso);
+
+  /* Kul waqt ki hadd NAHI (aaj ka din hi ~100s leta hai) — sirf "atak
+     gaya" ki hadd: `stallMs` tak ek byte bhi na aaye to band. */
+  const ctrl = new AbortController();
+  let stalled = false;
+  let timer = null;
+  const arm = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => { stalled = true; ctrl.abort(); }, stallMs);
+  };
+  const onAbort = () => ctrl.abort();
+  if (signal) {
+    if (signal.aborted) ctrl.abort();
+    else signal.addEventListener('abort', onAbort, { once: true });
+  }
+
+  const all = [];
+  let pending = [];
+  let lastFlush = 0;
+  const flush = (force = false) => {
+    if (!pending.length || !onRows) return;
+    const now = Date.now();
+    if (!force && now - lastFlush < 400) return;   // har row par re-render nahi
+    lastFlush = now;
+    const batch = pending;
+    pending = [];
+    onRows(batch);
+  };
+  const parser = createRowStreamParser((raw) => {
+    const row = normalizeActivityLog(raw, all.length);
+    if (!inRange(row)) return;
+    all.push(row);
+    pending.push(row);
+  });
+
   const token = sessionStorage.getItem('token');
   const branchID = sessionStorage.getItem('branchID');
-  const response = await fetch(
-    buildUrl(`/get-activity-logs-by-date-range/${branchID}/${from}/${to}`),
-    {
-      method: 'GET',
-      headers: {
-        Accept: '*/*',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-    }
-  );
-  const json = await response.json().catch(() => null);
-  /* Galti par API 4xx/5xx ke sath { success:false, message } bhejti hai —
-     wahi message aage do, warna user ko sirf "HTTP 500" nazar aata hai. */
-  if (!response.ok || json?.success === false) {
-    throw new Error(
-      json?.message || json?.Message || `Could not load activity logs (HTTP ${response.status})`
+  try {
+    arm();
+    const response = await fetch(
+      buildUrl(`/get-activity-logs-by-date-range/${branchID}/${serverFrom}/${to}`),
+      {
+        method: 'GET',
+        signal: ctrl.signal,
+        headers: {
+          Accept: '*/*',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      }
     );
+
+    if (response.body && response.body.getReader) {
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      for (;;) {
+        arm();
+        const { value, done } = await reader.read();
+        if (done) break;
+        parser.push(decoder.decode(value, { stream: true }));
+        flush();
+      }
+      parser.push(decoder.decode());
+    } else {
+      parser.push(await response.text());   // purane browser — stream nahi
+    }
+    flush(true);
+
+    /* `data` array mila hi nahi → ye error jawab tha ({ success:false, message }).
+       Wahi message aage do, warna user ko sirf "HTTP 500" nazar aata hai. */
+    const json = parser.finish();
+    if (!response.ok || json?.success === false) {
+      throw new Error(
+        json?.message || json?.Message || `Could not load activity logs (HTTP ${response.status})`
+      );
+    }
+    return all;
+  } catch (err) {
+    if (stalled) {
+      throw new Error('The server stopped responding while loading activity logs. Please try again or choose a shorter date range.');
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+    if (signal) signal.removeEventListener('abort', onAbort);
   }
-  const rows = Array.isArray(json) ? json
-    : Array.isArray(json?.data) ? json.data
-      : Array.isArray(json?.Data) ? json.Data
-        : [];
-  return rows.map(normalizeActivityLog);
 }

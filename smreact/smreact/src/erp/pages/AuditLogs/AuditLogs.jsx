@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Tooltip from '../../components/Tooltip';
 import TutorialModal from '../../components/TutorialModal';
 import LogDetailsModal from './LogDetailsModal';
@@ -47,7 +47,8 @@ export default function AuditLogs({ toast = () => {} }) {
          Pehle ye screen mock INITIAL_LOGS par chalti thi. Branch-wala
          purana endpoint poori branch ka record ek saath laata tha aur
          timeout kar jata tha — is liye har fetch ek date range par
-         mehdood hai (default aakhri 30 din). */
+         mehdood hai. Default AAJ ka din — ek busy branch ke 30 din ~26 MB
+         bante hain jo is server se minton me utarte hain. */
   const [logs, setLogs] = useState([]);
   const [logsLoading, setLogsLoading] = useState(true);
   const [tutorialOpen, setTutorialOpen] = useState(false);
@@ -58,14 +59,14 @@ export default function AuditLogs({ toast = () => {} }) {
   const canDownload = can('Audit Logs', 'Activity Logs', 'Download');
   const canPrint    = can('Audit Logs', 'Activity Logs', 'Print');
 
-  /* ─── Filters — date range default aakhri 30 din (API isi se chalti hai) ─── */
-  const [fromDate, setFromDate] = useState(() => logRangeLastDays(30).from);
-  const [toDate,   setToDate]   = useState(() => logRangeLastDays(30).to);
+  /* ─── Filters — date range default aaj (API isi se chalti hai) ─── */
+  const [fromDate, setFromDate] = useState(() => logRangeLastDays(1).from);
+  const [toDate,   setToDate]   = useState(() => logRangeLastDays(1).to);
   const [moduleF,  setModuleF]  = useState('');
   const [userF,    setUserF]    = useState('');
   const [actionF,  setActionF]  = useState('');
   const [search,   setSearch]   = useState('');
-  const [quick,    setQuick]    = useState('last30');
+  const [quick,    setQuick]    = useState('today');
   const [page,     setPage]     = useState(1);
 
   /* ─── Modals / drawers ─── */
@@ -76,22 +77,30 @@ export default function AuditLogs({ toast = () => {} }) {
 
   /* ─── Range badle → server se dobara mangwao. Module/user/action/search
          filters client-side hi rehte hain (laayi hui rows par). */
+  /* toast ref me — App ka pushToast har render par naya function hota hai.
+     Wo effect ki deps me ho to har App re-render par chalti request chhor
+     kar nayi shuru hoti thi, aur ~20s wala jawab kabhi screen tak na
+     pohanchta (loading hi chalti rehti). */
+  const toastRef = useRef(toast);
+  toastRef.current = toast;
+
   useEffect(() => {
     if (!fromDate || !toDate) { setLogs([]); setLogsLoading(false); return undefined; }
     let alive = true;
+    /* Range badle / screen band ho → purana (bhaari) download foran band. */
+    const ctrl = new AbortController();
+    setLogs([]);
     setLogsLoading(true);
-    getActivityLogsByDateRange(fromDate, toDate)
-      .then((rows) => {
-        if (!alive) return;
-        /* normalizeActivityLog() ki row → is screen ki shakal. userId/module
-           ki mock ids yahan nahi hotin, is liye naam hi value bante hain aur
-           dropdowns bhi inhi rows se bante hain (neeche). */
-        setLogs((rows || []).map((r, i) => ({
+    /* normalizeActivityLog() ki row → is screen ki shakal. userId/module
+       ki mock ids yahan nahi hotin, is liye naam hi value bante hain aur
+       dropdowns bhi inhi rows se bante hain (neeche). */
+    const toScreenRow = (r, i) => ({
           id:        r.id ?? `al-${i}`,
           date:      r.dateISO,
           time:      r.time,
           userId:    r.user,
           userName:  r.user,
+          userRole:  r.role || '—',
           module:    r.module,
           moduleLabel: r.module,
           screen:    r.screen,
@@ -104,17 +113,27 @@ export default function AuditLogs({ toast = () => {} }) {
           newValue:  r.newValue || '—',
           ipAddress: r.ipAddress,
           device:    r.device,
-        })));
-      })
-      .catch((err) => {
-        console.error('Could not load activity logs:', err);
+    });
+    /* Jawab 7+ MB hai aur dheere utarta hai — rows jaise jaise aayein
+       table me daalte jao (streaming), poore jawab ka intezar nahi. */
+    let seen = 0;
+    getActivityLogsByDateRange(fromDate, toDate, {
+      signal: ctrl.signal,
+      onRows: (batch) => {
         if (!alive) return;
-        setLogs([]);
-        toast(err.message || 'Could not load activity logs', 'error');
+        const mapped = batch.map((r) => toScreenRow(r, seen++));
+        setLogs((prev) => prev.concat(mapped));
+      },
+    })
+      .catch((err) => {
+        if (!alive) return;
+        console.error('Could not load activity logs:', err);
+        /* Jo rows aa chuki hain wo rehne do — sirf batao ke baqi nahi aayin. */
+        toastRef.current(err.message || 'Could not load activity logs', 'error');
       })
       .finally(() => { if (alive) setLogsLoading(false); });
-    return () => { alive = false; };
-  }, [fromDate, toDate, toast]);
+    return () => { alive = false; ctrl.abort(); };
+  }, [fromDate, toDate]);
 
   /* Dropdown options laayi hui rows se — MODULES/USERS/ACTIONS constants
      mock ids par bane the, jo live data se match hi nahi karte. */
@@ -144,11 +163,11 @@ export default function AuditLogs({ toast = () => {} }) {
 
   const clearFilters = () => {
     /* Range ko khali NAHI karte — khali range ka matlab "koi fetch nahi".
-       Wapas default (aakhri 30 din) par le aate hain. */
-    const r = logRangeLastDays(30);
+       Wapas default (aaj) par le aate hain. */
+    const r = logRangeLastDays(1);
     setFromDate(r.from); setToDate(r.to);
     setModuleF(''); setUserF(''); setActionF('');
-    setSearch(''); setQuick('last30'); setPage(1);
+    setSearch(''); setQuick('today'); setPage(1);
   };
 
   /* ─── Filtered list — sorted newest first by date then time. */
@@ -381,10 +400,15 @@ export default function AuditLogs({ toast = () => {} }) {
             <i className="fa-solid fa-list-check" aria-hidden="true"></i>
             <span>Activity History</span>
             <span className="al-count-badge">{filtered.length} {filtered.length === 1 ? 'entry' : 'entries'}</span>
+            {logsLoading && logs.length > 0 && (
+              <span className="al-count-badge">
+                <i className="fa-solid fa-spinner fa-spin" aria-hidden="true"></i> Loading more…
+              </span>
+            )}
           </div>
         </div>
 
-        {logsLoading ? (
+        {logsLoading && logs.length === 0 ? (
           <div className="up-empty">
             <div className="up-empty-ic"><i className="fa-solid fa-spinner fa-spin" aria-hidden="true"></i></div>
             <div className="up-empty-t">Loading activity logs…</div>

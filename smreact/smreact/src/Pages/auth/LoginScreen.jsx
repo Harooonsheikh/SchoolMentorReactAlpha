@@ -266,8 +266,12 @@ export default function LoginScreen({ onLogin, onSignup }) {
     if (data?.id) {
       sessionStorage.setItem("UserID", data.id);
     }
-    if (data?.employee_ID) {
-      sessionStorage.setItem("employee_ID", data.employee_ID);
+    /* Employee id kai shakloon me aata hai (upar isEmployee wala check dekhein) —
+       sirf `employee_ID` rakhne se baqi soorat me chat ki get-contact-list
+       {empID} ki jaga UserID chala jata tha. */
+    const empId = data?.employee_ID ?? data?.employeeID ?? data?.employee_Id ?? data?.empId;
+    if (empId) {
+      sessionStorage.setItem("employee_ID", empId);
     }
     if (data?.userName) {
       sessionStorage.setItem("userName", data.userName);
