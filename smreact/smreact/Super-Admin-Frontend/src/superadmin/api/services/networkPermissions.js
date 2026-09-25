@@ -39,6 +39,11 @@ export const NETWORK_MODULE_GROUPS = [
   { label: 'Training & Admin', modules: [
     { key: 'training', name: 'Trainings', icon: 'fa-chalkboard-user' },
     { key: 'userPermission', name: 'User Permissions', icon: 'fa-shield-halved' },
+    /* Ye do chain portal me hain magar API model me abhi field NAHI
+       (Mdl_AHM_NetworkPermissionsAction). Backend inhi naamon se field
+       jod de to save/get khud chal parega; tab tak GET me na hon to "on". */
+    { key: 'notifications', name: 'Notifications', icon: 'fa-bell' },
+    { key: 'settings', name: 'Settings', icon: 'fa-sliders' },
   ] },
 ];
 
@@ -121,8 +126,10 @@ function unwrapRows(json) {
 function rowToModules(row) {
   const modules = emptyNetworkModules(false);
   if (!row || typeof row !== 'object') return { permissionId: 0, modules: emptyNetworkModules(true) };
+  /* Jo field jawab me hai hi nahi (backend ne abhi column nahi banaya) wo
+     "on" — warna naya toggle hamesha band dikhta. */
   NETWORK_MODULE_KEYS.forEach((k) => {
-    modules[k] = bool(pick(row, [k]), false);
+    modules[k] = bool(pick(row, [k]), true);
   });
   const permissionId = Number(pick(row, ['id', 'ID'], 0)) || 0;
   return { permissionId, modules };
@@ -187,12 +194,23 @@ export async function setNetworkActive(networkId, isActive) {
 
 /** GET chain module flags for one network. Row na ho to sab on. */
 export async function getNetworkPermissions(networkId) {
-  const json = await postJson(EP.networkPermissions.manage(), {
-    action: 'GET',
-    id: 0,
-    networkID: Number(networkId) || 0,
-    ...emptyNetworkModules(false),
-  });
+  let json;
+  try {
+    json = await postJson(EP.networkPermissions.manage(), {
+      action: 'GET',
+      id: 0,
+      networkID: Number(networkId) || 0,
+      ...emptyNetworkModules(false),
+    });
+  } catch (err) {
+    /* Naye network ki abhi koi row nahi — API ise success:false +
+       "No network permissions found…" se batati hai. Ye ghalti nahi,
+       bas defaults dikhao (toast nahi). */
+    if (err?.status === 404 || /no network permissions found/i.test(err?.message || '')) {
+      return defaultNetworkPerms({ isActive: true });
+    }
+    throw err;
+  }
   const rows = unwrapRows(json);
   const nid = Number(networkId);
   const row = rows.find((r) => Number(pick(r, ['networkID', 'NetworkID'], NaN)) === nid) || rows[0];
