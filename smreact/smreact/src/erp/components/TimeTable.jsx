@@ -2209,10 +2209,8 @@ const toMin  = (t) => { const [h, m] = String(t).split(':').map(Number); return 
 const toTime = (m) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
 
 function TTAutoGenerateModal({ classes = [], teachers = [], existingData = {}, onClose, onGenerate }) {
-  /* Real teacher names + a name→id map (auto-gen stores teacherId for saving). */
+  /* Real teacher names (Step 4 availability). */
   const teacherNames = teachers.map((t) => t.name);
-  const teacherIdByName = {};
-  teachers.forEach((t) => { teacherIdByName[t.name] = t.id; });
   const initWiz = useCallback(() => ({
     step: 1,
     /* Step 1 */
@@ -2243,6 +2241,29 @@ function TTAutoGenerateModal({ classes = [], teachers = [], existingData = {}, o
   /* Overwrite-warning popup: jab selected classes mein se kisi ka pehle se
      (manual/previous) timetable mojood ho. null = no popup. */
   const [overwriteWarn, setOverwriteWarn] = useState(null);   // { names: [] } | null
+  const [classSubjects, setClassSubjects] = useState({});
+  const [assignMap, setAssignMap] = useState({});
+  const [subjLoading, setSubjLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setSubjLoading(true);
+      const subjMap = {};
+      const jobs = (classes || []).map((c) => async () => {
+        const key = `${c.id}_${c.sectionID}`;
+        try { subjMap[key] = (await timeTableService.getSubjectsForClass(c.id, c.sectionID)) || []; }
+        catch { subjMap[key] = []; }
+      });
+      const [, aMap] = await Promise.all([
+        runLimited(jobs, 4),
+        timeTableService.getSubjectTeacherAssignments().catch(() => ({})),
+      ]);
+      if (!cancelled) { setClassSubjects(subjMap); setAssignMap(aMap || {}); setSubjLoading(false); }
+    })();
+    return () => { cancelled = true; };
+  }, [classes]);
+
   const update = (patch) => setW((prev) => ({ ...prev, ...patch }));
 
   useEffect(() => {
@@ -2438,71 +2459,71 @@ function TTAutoGenerateModal({ classes = [], teachers = [], existingData = {}, o
 
   /* ─── Generate the timetable ─── */
   const runGenerate = async () => {
-    if (!validation.ok || generating) return; // block double-click while saving
-    /* Build pool of subject lessons, weighted by weekly count */
+    if (!validation.ok || generating || subjLoading) return;
+
     const subjectPool = [];
     Object.entries(w.subjectWeeklyLessons).forEach(([subj, count]) => {
       for (let i = 0; i < count; i++) subjectPool.push(subj);
     });
 
-    /* Pick a real teacher available that day (undefined workdays = available). */
-    const teacherFor = (subj, dayIdx, used) => {
-      const candidates = teacherNames.filter((t) => {
-        const wd = w.teacherWorkdays[t];
-        return wd ? wd.includes(dayIdx) : true;
-      });
-      if (candidates.length === 0) return '';
-      const idx = (subj.charCodeAt(0) + used) % candidates.length;
-      return candidates[idx];
-    };
+    const norm = (s) => String(s || '').trim().toLowerCase();
+    const teacherById = {};
+    teachers.forEach((t) => { teacherById[String(t.id)] = t; });
+    const load = {};
+    const busy = {};
 
     const data = {};
     DAYS.forEach((_, di) => { data[di] = {}; });
 
-    /* For each class, distribute subject periods across the work days */
     Array.from(selectedSet).forEach((key) => {
-      const classSubjects = [...subjectPool];   // each class gets the same lesson pool
-      /* Round-robin shuffle by class id so different classes get different orderings */
+      const byName = {};
+      (classSubjects[key] || []).forEach((s) => {
+        const name = s.name ?? s.subjectName;
+        const id = s.id ?? s.subjectID;
+        if (name) byName[norm(name)] = { id, name };
+      });
+
       const [classId] = key.split('_');
-      const seed = parseInt(classId) || 1;
-      const ordered = classSubjects
+      const seed = parseInt(classId, 10) || 1;
+      const ordered = subjectPool
         .map((s, i) => ({ s, k: (i * 7 + seed * 13) % 1000 }))
         .sort((a, b) => a.k - b.k)
         .map((x) => x.s);
 
-      let subjPtr = 0;
+      let ptr = 0;
       w.workDays.forEach((di) => {
-        /* Day-specific break list overrides the default */
-        const dayBreaksRaw = Array.isArray(w.dayBreaks[di]) ? w.dayBreaks[di] : w.defaultBreaks;
-        const dayBreaks    = [...dayBreaksRaw].sort((a, b) => a.afterPeriod - b.afterPeriod);
-        const dayPeriods   = (w.perDaySchedule && w.dayMaxPeriods[di] !== undefined) ? w.dayMaxPeriods[di] : defP;
-        const periodLen    = w.defaultPeriodLen;
-        const startM       = toMin(w.schoolStart);
+        const slots = wizSlotsFor(di).map((sl) => ({
+          startTime: sl.start, endTime: sl.end,
+          subject: sl.isBreak ? 'Break' : '',
+          subjectId: 0, teacher: '', teacherId: 0,
+        }));
 
-        /* Walk period 1..N, inserting break AFTER any period that matches */
-        const slots = [];
-        let cur = startM;
-        for (let p = 1; p <= dayPeriods; p++) {
-          slots.push({ startTime: toTime(cur), endTime: toTime(cur + periodLen), subject: '', teacher: '' });
-          cur += periodLen;
-          /* Any break whose afterPeriod === p slots in here */
-          const matchedBreaks = dayBreaks.filter((b) => b.afterPeriod === p);
-          for (const b of matchedBreaks) {
-            const dur = +b.duration || 15;
-            slots.push({ startTime: toTime(cur), endTime: toTime(cur + dur), subject: 'Break', teacher: '' });
-            cur += dur;
-          }
-        }
-
-        /* Fill in subjects + teachers for non-break slots */
         slots.forEach((slot) => {
-          if (slot.subject === 'Break') return;
-          if (subjPtr < ordered.length) {
-            const subj = ordered[subjPtr++];
-            slot.subject = subj;
-            slot.teacher = teacherFor(subj, di, subjPtr);
-            slot.teacherId = teacherIdByName[slot.teacher] || 0;
-          }
+          if (slot.subject === 'Break' || ptr >= ordered.length) return;
+          const subjName = ordered[ptr++];
+          const sub = byName[norm(subjName)];
+          slot.subject = sub ? sub.name : subjName;
+          slot.subjectId = sub ? Number(sub.id) || 0 : 0;
+          if (!slot.subjectId) return;
+
+          const busyKey = `${di}_${slot.startTime}`;
+          const busySet = busy[busyKey] || new Set();
+
+          const candidates = (assignMap[`${key}_${slot.subjectId}`] || [])
+            .map((id) => teacherById[String(id)])
+            .filter(Boolean)
+            .filter((t) => { const wd = w.teacherWorkdays[t.name]; return !wd || wd.includes(di); })
+            .filter((t) => !busySet.has(String(t.id)));
+
+          if (candidates.length === 0) return;
+
+          candidates.sort((a, b) => (load[a.id] || 0) - (load[b.id] || 0));
+          const t = candidates[0];
+          slot.teacherId = Number(t.id);
+          slot.teacher = t.name;
+          load[t.id] = (load[t.id] || 0) + 1;
+          busySet.add(String(t.id));
+          busy[busyKey] = busySet;
         });
 
         data[di][key] = slots;
@@ -2511,11 +2532,7 @@ function TTAutoGenerateModal({ classes = [], teachers = [], existingData = {}, o
 
     setGenerating(true);
     try {
-      await onGenerate(data, {
-        classCount: selectedSet.size,
-        dayCount: w.workDays.length,
-        periodsPerDay: defP,
-      });
+      await onGenerate(data, { classCount: selectedSet.size, dayCount: w.workDays.length, periodsPerDay: defP });
     } catch (e) {
       console.error('Generate failed:', e);
       setGenerating(false);
@@ -2607,14 +2624,16 @@ function TTAutoGenerateModal({ classes = [], teachers = [], existingData = {}, o
                 </button>
               </Tooltip>
             ) : (
-              <Tooltip text={generating ? 'Generating timetable — please wait…' : (canContinue ? 'Generate the full timetable for all selected classes' : 'Fix the issues above before generating')}>
+              <Tooltip text={subjLoading ? 'Loading subjects…' : (generating ? 'Generating timetable — please wait…' : (canContinue ? 'Generate the full timetable for all selected classes' : 'Fix the issues above before generating'))}>
                 <button
                   className="wiz-btn wiz-btn-generate"
-                  disabled={!canContinue || generating}
+                  disabled={!canContinue || generating || subjLoading}
                   onClick={generate}
-                  style={(!canContinue || generating) ? { opacity: .6, cursor: 'not-allowed' } : undefined}
+                  style={(!canContinue || generating || subjLoading) ? { opacity: .6, cursor: 'not-allowed' } : undefined}
                 >
-                  {generating
+                  {subjLoading
+                    ? <><i className="fa-solid fa-spinner fa-spin"></i> Loading subjects…</>
+                    : generating
                     ? <><i className="fa-solid fa-spinner fa-spin"></i> Generating…</>
                     : <><i className="fa-solid fa-bolt"></i> Generate Timetable</>}
                 </button>
