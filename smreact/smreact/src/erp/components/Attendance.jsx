@@ -3937,21 +3937,37 @@ const [rows, setRows] = useState(() => staffData.map((s) => ({
       })();
     }, []);
 
-    // class+section (gradeId-sectionId) → class teacher name (first assigned teacher).
-    // Bhi gradeId akele se index karo taake exact section ka assignment na ho to
-    // bhi us grade ka teacher name dikhe (grade-level fallback).
+    // class+section (gradeId-sectionId) → class teacher name.
+    // Prefer Class-attendance assignees (HR "Class Teacher — Attendance Marking"),
+    // then subject-assigned teachers. Skip Principal/Head so their name never
+    // blankets every Class Teacher cell. Grade-level fallback when section has
+    // no exact match.
     const teacherMap = useMemo(() => {
       const map = {};
-      employees.forEach((e) => {
+      const put = (e, rows) => {
         const tName = `${e.firstName || ""} ${e.lastName || ""}`.trim();
         if (!tName) return;
-        (e.assignments || []).forEach((a) => {
-          if (a.gradeId == null) return;
-          const secKey   = `${a.gradeId}-${a.sectionId}`;
-          const gradeKey = `${a.gradeId}`;
-          if (!map[secKey])   map[secKey]   = tName; // section-specific match
-          if (!map[gradeKey]) map[gradeKey] = tName; // grade-level fallback
+        (rows || []).forEach((a) => {
+          const gradeId   = a.gradeId   ?? a.gradeID;
+          const sectionId = a.sectionId ?? a.sectionID;
+          if (gradeId == null) return;
+          const secKey   = `${gradeId}-${sectionId}`;
+          const gradeKey = `${gradeId}`;
+          if (!map[secKey])   map[secKey]   = tName;
+          if (!map[gradeKey]) map[gradeKey] = tName;
         });
+      };
+      // Pass 1: attendance-marking assignments from non-Head staff (true class teachers).
+      employees.forEach((e) => {
+        if (e.isPrinciple === true) return;
+        const att = e.classSectionAttendanceAssignments || e.attendanceAssignments || [];
+        if (att.length) put(e, att);
+      });
+      // Pass 2: fill gaps from subject assignments of teachers only.
+      employees.forEach((e) => {
+        if (e.isPrinciple === true) return;
+        if (e.isTeacher === false) return;
+        put(e, e.assignments || []);
       });
       return map;
     }, [employees]);
@@ -4375,6 +4391,16 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
       return Number(sessionStorage.getItem("sessionID")) || 0; // fallback
     }, [activeSessionID]);
 
+    // employee id → full name (resolve CreatedBy on attendance records → Class Teacher).
+    const employeeNameById = useMemo(() => {
+      const map = {};
+      employees.forEach((e) => {
+        const n = `${e.firstName || ""} ${e.lastName || ""}`.trim();
+        if (e.id != null && n) map[String(e.id)] = n;
+      });
+      return map;
+    }, [employees]);
+
     // GET saved attendance for a class/section (today) → prefill statuses + counts.
     const loadStudentMarks = useCallback(async (idx, dateOverride) => {
       const row = studentData[idx];
@@ -4385,6 +4411,7 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
       // Past-date marking passes the selected date; otherwise → today (unchanged).
       const attendanceDate = dateOverride || todayStr;
       const map = {};
+      let markerId = null; // CreatedBy of first marked record → who marked attendance
       try {
         const res = await attendanceService.studentAttendance({
           id: 0, branchID, studentID: 0, sessionID,
@@ -4407,7 +4434,12 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
             // In/Out time (staff jaise CheckInTime/CheckOutTime) — object/null → "".
             const inTime  = timeVal(rec.CheckInTime  ?? rec.checkInTime);
             const outTime = timeVal(rec.CheckOutTime ?? rec.checkOutTime);
-            if (sid != null && status) map[sid] = { status, inTime, outTime };
+            if (sid != null && status) {
+              map[sid] = { status, inTime, outTime };
+              if (markerId == null) {
+                markerId = rec.CreatedBy ?? rec.createdBy ?? rec.ModifiedBy ?? rec.modifiedBy ?? null;
+              }
+            }
           });
       } catch (err) {
         console.error("Error loading student attendance:", err);
@@ -4416,20 +4448,24 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
       // today-oriented class table with a past date's counts.
       if (attendanceDate !== todayStr) return map;
       // Reflect saved statuses + times into the class row (detail table + counts).
+      // Class Teacher: HR assignment first; if missing, who marked (CreatedBy).
+      const assigned = teacherMap[`${row.classID}-${row.sectionID}`] || teacherMap[`${row.classID}`] || "";
+      const markerName = markerId != null ? (employeeNameById[String(markerId)] || "") : "";
       setStudentData((prev) => prev.map((r, i) => {
         if (i !== idx) return r;
         const students = (r.students || []).map((s) => ({ ...s, status: map[s.id]?.status, inTime: map[s.id]?.inTime || "", outTime: map[s.id]?.outTime || "" }));
         // Marked only if at least one student in THIS class has a status.
         const anyMarked = students.some((s) => s.status);
+        const teacher = assigned || markerName || (r.teacher && r.teacher !== "—" ? r.teacher : "") || "—";
         return {
-          ...r, students, marked: anyMarked,
+          ...r, students, marked: anyMarked, teacher,
           present: students.filter((s) => s.status === "present").length,
           absent:  students.filter((s) => s.status === "absent").length,
           leave:   students.filter((s) => s.status === "leave").length,
         };
       }));
       return map;
-    }, [studentData, ensureSessionID, setStudentData]);
+    }, [studentData, ensureSessionID, setStudentData, teacherMap, employeeNameById]);
 
     // Save Attendance → action:"insert" for EACH student.
     const saveStudentMarks = useCallback(async (idx, studentRows, dateOverride) => {
@@ -4485,8 +4521,11 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
       const present = studentRows.filter((s) => s.status === "present").length;
       const absent  = studentRows.filter((s) => s.status === "absent").length;
       const leave   = studentRows.filter((s) => s.status === "leave").length;
+      const assigned = teacherMap[`${row.classID}-${row.sectionID}`] || teacherMap[`${row.classID}`] || "";
+      const markerName = employeeNameById[String(employeeID)] || "";
       setStudentData((prev) => prev.map((r, i) => i === idx ? {
         ...r, marked: true, present, absent, leave,
+        teacher: assigned || markerName || (r.teacher && r.teacher !== "—" ? r.teacher : "") || "—",
         students: (r.students || []).map((st) => {
           const m = studentRows.find((x) => x.id === st.id);
           return m ? { ...st, status: m.status, inTime: m.status === "present" ? (m.inTime || "") : "", outTime: m.status === "present" ? (m.outTime || "") : "" } : st;
@@ -4499,7 +4538,7 @@ const saveMarkSf = useCallback(async (rows, dateOverride) => {
       toast("Attendance saved successfully", "success");
       // loadDateAttendance closure se resolve hota hai (baad mein defined).
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [studentData, ensureSessionID, toast, setStudentData, blockIfReadOnly]);
+    }, [studentData, ensureSessionID, toast, setStudentData, blockIfReadOnly, teacherMap, employeeNameById]);
 
     // Student tab active → GET saved attendance for EVERY class (so the table
     // shows P/A/L counts without needing to expand each class).

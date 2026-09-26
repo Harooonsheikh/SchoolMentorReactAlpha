@@ -705,6 +705,18 @@ function dsTimeToInput(t) {
   if (Number.isNaN(h) || h > 23) return '';
   return `${dsPad2(h)}:${hm[2]}`;
 }
+/* "8:00 AM" / "10:00 AM" -> minutes since midnight, for sorting same-day rows by time. */
+function dsTimeToMinutes(t) {
+  if (!t) return 0;
+  const m = String(t).trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i);
+  if (!m) return 0;
+  let h = parseInt(m[1], 10);
+  const min = parseInt(m[2], 10);
+  const ampm = (m[3] || '').toUpperCase();
+  if (ampm === 'PM' && h !== 12) h += 12;
+  if (ampm === 'AM' && h === 12) h = 0;
+  return h * 60 + min;
+}
 /* "20:00" → "8:00 PM" */
 function dsTimeFromInput(t) {
   if (t == null || t === '') return '';
@@ -4502,15 +4514,17 @@ useEffect(() => {
                         <div className="ds-subj-th">Time To</div>
                       </div>
                 {hasDates
+
   ? [...dsRows]
       .sort((a, b) => {
         if (!a.date) return 1;
         if (!b.date) return -1;
-
-        return new Date(a.date) - new Date(b.date);
+        const dCmp = new Date(a.date) - new Date(b.date);
+        if (dCmp !== 0) return dCmp;
+        return dsTimeToMinutes(a.timeFrom) - dsTimeToMinutes(b.timeFrom); // ← same-day tiebreak
       })
       .map((s, si) => (
-                            <div key={si} className="ds-subj-row">
+         <div key={si} className="ds-subj-row">
                               <div className="ds-subj-td" style={{ color: 'var(--text-muted)', fontWeight: 600 }}>
                                 <span style={{ color: 'var(--brand-primary)', fontSize: 10 }}>#</span>&nbsp;{si + 1}
                               </div>
@@ -8229,19 +8243,23 @@ if (format === 'pdf') {
       const data = await r.json();
       // const rows = Array.isArray(data) ? data : (data?.data || []);
       // return rows.map(dsMapApiRow);
-      const rows = Array.isArray(data) ? data : (data?.data || []);
+    const rows = Array.isArray(data) ? data : (data?.data || []);
 
-return rows
-  .map(dsMapApiRow)
-  .sort((a, b) => {
-    if (!a.date) return 1;
-    if (!b.date) return -1;
-
-    return new Date(a.date) - new Date(b.date);
-  });
-    } catch (e) { console.error('Date sheet fetch failed', e); return []; }
+      return rows
+        .map(dsMapApiRow)
+        .sort((a, b) => {
+          if (!a.date) return 1;
+          if (!b.date) return -1;
+          const dCmp = new Date(a.date) - new Date(b.date);
+          if (dCmp !== 0) return dCmp;
+          return dsTimeToMinutes(a.timeFrom) - dsTimeToMinutes(b.timeFrom);
+        });
+    } catch (e) {
+      console.error('Date sheet fetch failed', e);
+      return [];
+    }
   };
-  const blocks = await Promise.all((targetClasses || []).map(async cls => ({ cls, rows: await fetchDs(cls) })));
+    const blocks = await Promise.all((targetClasses || []).map(async cls => ({ cls, rows: await fetchDs(cls) })));
 
   const today = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
   /* Two coordinated palettes:
