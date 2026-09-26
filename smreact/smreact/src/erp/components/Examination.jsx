@@ -404,6 +404,15 @@ function rcGradeByScale(pct, grades) {
   const sorted = [...grades].sort((a, b) => Number(b.pct) - Number(a.pct));
   return sorted.find(test) || sorted[sorted.length - 1];
 }
+
+//only for alasad school — auto comments only (ignore manual) on result card
+const RC_AUTO_COMMENT_BRANCHES = ['220941'];
+function rcUseAutoComment() {
+  const b = String(sessionStorage.getItem('branchID') || '').trim();
+  return RC_AUTO_COMMENT_BRANCHES.includes(b);
+}
+
+
 function rcGetFinalRemarks(pct) {
   return (RC_FINAL_REMARKS_SETUP.find(r => pct >= r.min) || RC_FINAL_REMARKS_SETUP[RC_FINAL_REMARKS_SETUP.length - 1]).remark;
 }
@@ -9525,8 +9534,23 @@ function ClassicResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 's
 // getsauploadmarks (st.manualRemarks) YAHAN use NAHI hoti. Absent → koi comment nahi.
 // Comment column: pehle subject ka manual comment (getsauploadmarks remarks) — agar ho.
 // Warna gradingcrud (grades) se % ke matching band ki remarks. Absent → koi comment nahi.
-const mc  = (!isAbs ? ((st.manualRemarks && st.manualRemarks[s]) || ((grades && grades.length) ? (rcGradeByScale(pct, grades) || {}).comment : (g && g.comment)) || '') : '').slice(0, 40);
-                const gcol = gradeChipColor(g);
+
+
+//alasad school k liye ha  sirf 
+// const mc  = (!isAbs ? ((st.manualRemarks
+// 
+
+
+
+
+// const mc  = (!isAbs ? (manualCmt || autoCmt || '') : '').slice(0, 40);&& st.manualRemarks[s]) || ((grades && grades.length) ? (rcGradeByScale(pct, grades) || {}).comment : (g && g.comment)) || '') : '').slice(0, 40);
+              
+const autoCmt = (grades && grades.length) ? (rcGradeByScale(pct, grades) || {}).comment : (g && g.comment);
+const manualCmt = rcUseAutoComment() ? '' : (st.manualRemarks && st.manualRemarks[s]);
+const mc  = (!isAbs ? (manualCmt || autoCmt || '') : '').slice(0, 40);
+
+
+const gcol = gradeChipColor(g);
                 const bg = (i % 2 === 0 ? '#fff' : rowAlt);
                 const tdBase   = { padding: '4px 7px', fontSize: 11, borderBottom: `1px solid ${accentBdr}` };
                 const tdCenter = { ...tdBase, textAlign: 'center' };
@@ -10005,8 +10029,12 @@ function PortfolioResultCard({ rcoGeneral, rcoSig, rsSigs, rsAbsentMode, mode = 
 // getsauploadmarks (st.manualRemarks) YAHAN use NAHI hoti. Absent → koi comment nahi.
 // Comment column: pehle subject ka manual comment (getsauploadmarks remarks) — agar ho.
 // Warna gradingcrud (grades) se % ke matching band ki remarks. Absent → koi comment nahi.
-const mc  = (!isAbs ? ((st.manualRemarks && st.manualRemarks[s]) || ((grades && grades.length) ? (rcGradeByScale(pct, grades) || {}).comment : (g && g.comment)) || '') : '').slice(0, 40);
-    return { s, tot, obt, pct, g, mc, isAbs, col: C.bars[i % C.bars.length] };
+// const mc  = (!isAbs ? ((st.manualRemarks
+
+// al asad schoolk loye 
+const autoCmt = (grades && grades.length) ? (rcGradeByScale(pct, grades) || {}).comment : (g && g.comment);
+const manualCmt = rcUseAutoComment() ? '' : (st.manualRemarks && st.manualRemarks[s]);
+const mc  = (!isAbs ? (manualCmt || autoCmt || '') : '').slice(0, 40);    return { s, tot, obt, pct, g, mc, isAbs, col: C.bars[i % C.bars.length] };
   });
 
 const position = opt['Show Position in Class']
@@ -12413,7 +12441,14 @@ function rhBuildSingleCardReport(st, r, isColor, data = null) {
     const obt = Number(obtainedMap[s]) || 0;
     const pct = tot ? Math.round((obt / tot) * 100) : 0;
     const g = (obt > 0 && tot) ? rcGetGrade(obt, tot) : null;
-    const cmt = remarksMap[s] || (g ? g.comment : '');
+
+
+    // const cmt = remarksMap[s] || (g ? g.comment : '');
+
+
+    //al asad school k liye
+
+    const cmt = (!rcUseAutoComment() && remarksMap[s]) || (g ? g.comment : '');
     const bg = i % 2 === 0 ? '#fff' : p.rowEv;
     return `<tr style="background:${bg}">
       <td style="padding:6px 9px;border-bottom:1px solid ${p.accBdr};font-size:10.5px;color:${p.tMuted};text-align:center;font-weight:700">${i + 1}</td>
