@@ -1191,10 +1191,12 @@ function buildLedgerChallanPayload({ classMeta = {}, student = {}, heads = [], m
     return Number.isFinite(n) ? n : 0;
   };
 
-  /* Challan Type — "One Month" (default) ya "Two Months". Installment API
-     per-month amounts leta hai aur multi-month range par SERVER multiply
-     karta hai — frontend ×2 NAHI karta (warna double-double ho jaata). */
-  const isTwoMonths = String(options.type) === '2';
+  /* Challan Type — "One Month" (default), "Two Months" ya "Three Months".
+     Installment API per-month amounts leta hai aur multi-month range par SERVER
+     hi months se multiply karta hai — frontend multiply NAHI karta (warna
+     double/triple ho jaata). monthCount = kitne months cover karne hain. */
+  const monthCount = Math.max(1, Math.min(3, Number(options.type) || 1));
+  const isMultiMonth = monthCount > 1;
 
   const makeRow = (subHead, amount, discount = 0) => ({
     id: 0,
@@ -1273,17 +1275,18 @@ function buildLedgerChallanPayload({ classMeta = {}, student = {}, heads = [], m
     detailRows,
   };
 
-  if (isTwoMonths) {
+  if (isMultiMonth) {
     /* Multi-month: month/year ki jagah start/end range. Server har head
-       ko range ke months se multiply karta hai. */
-    let endMonth = startMonth + 1;
+       ko range ke months se multiply karta hai. endMonth = start + (count-1),
+       saal badalne par wrap. */
+    let endMonth = startMonth + (monthCount - 1);
     let endYear = year;
-    if (endMonth > 12) { endMonth = 1; endYear += 1; }
+    while (endMonth > 12) { endMonth -= 12; endYear += 1; }
     ledger.startMonth = startMonth;
     ledger.startYear = year;
     ledger.endMonth = endMonth;
     ledger.endYear = endYear;
-    ledger.totalMonthChallan = 2;
+    ledger.totalMonthChallan = monthCount;
   } else {
     ledger.month = startMonth;
     ledger.year = year;
@@ -2074,6 +2077,37 @@ export async function createChallanInstallment(payload) {
   }
   invalidateMonthChallans();
   return json;
+}
+
+/* Installment PSID — ek maujooda challan (ledgerId) ke against nayi PSID banata
+   hai jo sirf `amount` (installment) collect karti hai. Backend PSID generate/store
+   kar ke response me wapas bhejta hai; get-with-installments (branch ledger) se bhi
+   padhi ja sakti hai. forceNew:true har dafa nayi PSID banata hai. */
+export async function generatePsid(payload) {
+  const res = await fetch(buildUrl('/api/BranchLedger/generate-psid'), {
+    method: 'POST',
+    headers: { Accept: '*/*', 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok || json?.success === false) {
+    throw new Error(apiMessage(json) || 'Could not generate PSID');
+  }
+  invalidateMonthChallans();
+  return json;
+}
+
+/* generate-psid ke response se PSID nikaalo — response shape backend ke hisaab se
+   badalta hai (data string/number ya { plpsid } object), is liye kai shaklein dekho. */
+export function psidFromResponse(json) {
+  if (!json) return '';
+  const data = json.data ?? json;
+  if (data && typeof data === 'object') {
+    const p = psidOf(data);
+    if (p) return p;
+  }
+  const digits = String(data ?? '').replace(/\D/g, '');
+  return /[1-9]/.test(digits) ? digits : '';
 }
 
 export async function getWithInstallments({ branchId, studentId, month, year } = {}) {

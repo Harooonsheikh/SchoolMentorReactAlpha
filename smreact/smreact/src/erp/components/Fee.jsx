@@ -2305,6 +2305,8 @@ function FeeChallansList({ toast }) {
   const canChCreate = can('Fee', 'Fee Challans', 'Create');
   const canChDelete = can('Fee', 'Fee Challans', 'Delete');
   const canChDownload = can('Fee', 'Fee Challans', 'Download');
+  /* Installment challan sirf Branch 1 par — baaqi branches par button hide. */
+  const isBranch1 = Number(sessionStorage.getItem('branchID')) === 1;
   const { data: classes = [], loading: classesLoading } = useAsync(feeService.getFeeClasses, []);
   const { data: studentsMap = {} } = useAsync(feeService.getTransportFee, []);
   const { data: headsMap = {} } = useAsync(feeService.getFeeHeads, []);
@@ -2422,6 +2424,8 @@ function FeeChallansList({ toast }) {
   const [challanPreview, setChallanPreview] = useState(null); // { title, sub, ctx, innerHtml }
   const [downloadCtx, setDownloadCtx] = useState(null);  // { type, classKey, reg?, sub }
   const [discountCtx, setDiscountCtx] = useState(null);  // { classMeta, student, heads, initial }
+  /* Installment challan modal — { classMeta, student, rec, heads } */
+  const [installmentCtx, setInstallmentCtx] = useState(null);
   /* Per-class per-student discount map: { [classKey]: { [reg]: { [headName]: amount } } } */
   const [discountMap, setDiscountMap] = useState({});
 
@@ -2766,6 +2770,104 @@ function FeeChallansList({ toast }) {
     w.document.close();
     w.onload = () => { try { w.focus(); w.print(); } catch (e) { /* ignore */ } };
     setTimeout(() => toast('Challan ready — use your browser\'s Save as PDF.', 'success'), 1100);
+  };
+
+  /* ── Installment challan ────────────────────────────────────────────
+     Open the modal for an ALREADY-generated challan: build the per-head
+     grid (Challan Amount / Discount / After-Discount, all fixed) from the
+     saved BranchLedger record's detailRows. Aggregate "Previous Pending"
+     and late-fine rows are excluded — an installment is billed against the
+     current fee heads only. */
+  const openInstallment = (c, s) => {
+    const rec = challanMap[keyOf(c.key, s.reg)];
+    if (!rec) { toast('Generate the challan first', 'warning'); return; }
+    const isPrevRow = (r) => /previous\s*pending|arrear|pending/i.test(String(r.subHead || r.head || ''));
+    const heads = (rec.detailRows || [])
+      .filter(r => !isPrevRow(r) && !feeService.isLateFineRow(r) && Math.round(Number(r.challanAmount) || 0) > 0)
+      .map(r => {
+        const challanAmount = Math.round(Number(r.challanAmount) || 0);
+        const discount = Math.min(Math.round(Number(r.discount) || 0), challanAmount);
+        return { name: r.subHead || r.head || '', challanAmount, discount, afterDiscount: challanAmount - discount };
+      });
+    if (!heads.length) { toast('This challan has no billable heads for an installment', 'warning'); return; }
+    setInstallmentCtx({ classMeta: c, student: s, rec, heads });
+  };
+
+  /* Create the installment challan. The installment amount is the SAME per head,
+     so the total the new PSID collects = amt × heads. We hit generate-psid against
+     the EXISTING challan's ledger id — the backend mints a fresh PSID (forceNew)
+     for that amount and returns it — then download a slip that shows the per-head
+     installment amounts with the new PSID stamped on it. Throws propagate to the
+     modal so it can keep itself open and surface the error. */
+  const createInstallmentChallan = async (cfg, amount) => {
+    const { classMeta: c, student: s, rec, heads } = cfg;
+    const amt = Math.round(Number(amount) || 0);
+    const totalInstallment = amt * heads.length;   // PSID amount = sum of per-head installments
+    const branchID = Number(sessionStorage.getItem('branchID')) || Number(rec.branchID) || 1;
+    const userID = Number(sessionStorage.getItem('UserID')) || 0;
+    const mo = Number(rec.month) || (monthIdx + 1);
+    const yr = Number(rec.year) || Number(appliedYear) || new Date().getFullYear();
+    const dueISO = (() => {
+      const d = new Date(rec.dueDate || Date.now());
+      return Number.isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString();
+    })();
+
+    const payload = {
+      studentID: Number(rec.studentID || s.studentID) || 0,
+      branchID,
+      month: mo,
+      year: yr,
+      amount: totalInstallment,
+      fullName: String(s.name || rec.fullName || ''),
+      mobileNo: String(s.mobile || s.phone || ''),
+      dueDate: dueISO,
+      ledgerId: Number(rec.id) || 0,
+      forceNew: true,
+      modifiedBy: userID,
+    };
+
+    /* 1) Generate the installment PSID for this ledger. */
+    const res = await feeService.generatePsid(payload);
+
+    /* 2) New PSID — response se, warna branch-ledger (get-with-installments) se. */
+    let psid = feeService.psidFromResponse(res);
+    if (!psid) {
+      try {
+        const list = await feeService.getWithInstallments({ branchId: branchID, studentId: payload.studentID, month: mo, year: yr });
+        const latest = Array.isArray(list) && list.length ? list[list.length - 1] : null;
+        psid = latest ? feeService.psidOf(latest) : '';
+      } catch (e) { /* best-effort */ }
+    }
+
+    /* 3) Installment slip download — har head par installment amount + naya PSID. */
+    try {
+      const instChallan = {
+        ...rec,
+        plpsid: psid,   // psidOf() isay slip par naya PSID/QR banane ke liye padhta hai
+        detailRows: heads.map(h => ({
+          head: 'Account Payable', subHead: String(h.name || ''),
+          challanAmount: amt, discount: h.discount, receivedAmount: 0,
+        })),
+      };
+      const student = { ...s, _challan: instChallan };
+      const html = buildChallanHTML({
+        classMeta: c, students: [student], heads: headsMap[c.key] || [],
+        settings, discountMap: {}, bw: false, size: settings.printSize || 'a4', school: branchHeader,
+      });
+      const w = window.open('', '_blank');
+      if (w) {
+        w.document.write(html);
+        w.document.close();
+        w.onload = () => { try { w.focus(); w.print(); } catch (err) { /* ignore */ } };
+      } else {
+        toast('Please allow pop-ups to download the challan', 'error');
+      }
+    } catch (e) { /* download failure not fatal — PSID is already generated */ }
+
+    /* 4) Toast + close + list refresh. */
+    toast(`Installment ${psid || 'challan'} challan created`, 'success');
+    setInstallmentCtx(null);
+    loadChallans();
   };
 
   const openDiscount = async (c, s) => {
@@ -3275,6 +3377,13 @@ function FeeChallansList({ toast }) {
                                 )}
                               </td>
                               <td className="fee-center fee-st-actions">
+                                {generated && isBranch1 && (
+                                  <Tooltip text={`Create installment challan for ${s.name}`}>
+                                    <button className="fee-iconbtn" onClick={() => openInstallment(c, s)}>
+                                      <i className="fa-solid fa-money-check-dollar"></i>
+                                    </button>
+                                  </Tooltip>
+                                )}
                                 {generated ? (
                                   <Tooltip text={`Delete ${appliedMonth} challan for ${s.name}`}>
                                     <button className="fee-iconbtn danger" onClick={() => requestDeleteStudentChallan(c, s)}>
@@ -3371,6 +3480,13 @@ function FeeChallansList({ toast }) {
         cfg={discountCtx}
         onClose={() => setDiscountCtx(null)}
         onSave={saveDiscount}
+        toast={toast}
+      />
+
+      <InstallmentChallanModal
+        cfg={installmentCtx}
+        onClose={() => setInstallmentCtx(null)}
+        onCreate={createInstallmentChallan}
         toast={toast}
       />
     </>
@@ -3664,6 +3780,7 @@ function BulkGenerateModal({
                 <select className="fee-select" value={type} onChange={e => setType(e.target.value)} disabled={!!progress}>
                   <option value="1">One Month</option>
                   <option value="2">Two Months</option>
+                  <option value="3">Three Months</option>
                 </select>
                 <i className="fa-solid fa-chevron-down"></i>
               </div>
@@ -4195,6 +4312,180 @@ function DiscountManagerModal({ cfg, onClose, onSave, toast }) {
               {saving
                 ? <><i className="fa-solid fa-spinner fa-spin"></i> Saving…</>
                 : <><i className="fa-solid fa-floppy-disk"></i> Save Discount</>}
+            </button>
+          </Tooltip>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   INSTALLMENT CHALLAN MODAL — split an already-generated challan into an
+   installment. Every billable head is shown with its Challan Amount,
+   Discount and After-Discount (all fixed), plus one editable "Installment
+   Amount" column. Business rules:
+     1. The installment amount is the SAME across every head — typing it
+        against any head mirrors it into the others.
+     2. Each head's installment amount must be > 0 and ≤ that head's
+        After-Discount amount (so the shared amount can't exceed the
+        smallest after-discount).
+   On Create the parent posts create-challan-installment, reads the new
+   PSID back from the DB, downloads the slip, toasts and closes.
+   ═══════════════════════════════════════════════════════════════════ */
+function InstallmentChallanModal({ cfg, onClose, onCreate, toast }) {
+  const [amount, setAmount] = useState('');   // shared installment amount (all heads)
+  const [creating, setCreating] = useState(false);
+
+  useEffect(() => {
+    if (!cfg) return;
+    setAmount('');
+    setCreating(false);
+  }, [cfg]);
+
+  useEffect(() => {
+    if (!cfg) return undefined;
+    const onKey = e => { if (e.key === 'Escape' && !creating) onClose(); };
+    window.addEventListener('keydown', onKey);
+    document.body.style.overflow = 'hidden';
+    return () => { window.removeEventListener('keydown', onKey); document.body.style.overflow = ''; };
+  }, [cfg, onClose, creating]);
+
+  if (!cfg) return null;
+
+  const { classMeta, student, heads } = cfg;
+  const amt = Math.round(Number(amount) || 0);
+  /* Rule #2 ki hadd: sabse chhoti after-discount. Is se zyada par create block. */
+  const minAfter = heads.reduce((m, h) => Math.min(m, h.afterDiscount), Infinity);
+  const overHead = heads.find(h => amt > h.afterDiscount) || null;
+  const invalid = amt <= 0 || !!overHead;
+
+  const totalChallan = heads.reduce((a, h) => a + h.challanAmount, 0);
+  const totalDiscount = heads.reduce((a, h) => a + h.discount, 0);
+  const totalAfter = heads.reduce((a, h) => a + h.afterDiscount, 0);
+  const totalInstallment = amt * heads.length;
+
+  const handleCreate = async () => {
+    if (creating) return;
+    if (amt <= 0) { toast('Enter an installment amount', 'warning'); return; }
+    if (overHead) {
+      toast(`Installment for “${overHead.name}” cannot exceed its after-discount amount (${money(overHead.afterDiscount)})`, 'error');
+      return;
+    }
+    try {
+      setCreating(true);
+      await onCreate(cfg, amt);
+    } catch (e) {
+      toast(e.message || 'Could not create installment challan', 'error');
+      setCreating(false);
+    }
+  };
+
+  return createPortal(
+    <div className="fee-overlay open" onClick={e => { if (e.target === e.currentTarget && !creating) onClose(); }}>
+      <div className="fee-modal">
+        <div className="fee-modal-head">
+          <div className="fee-modal-head-title">
+            <div className="fee-modal-head-icon" style={{ background: 'linear-gradient(135deg,#1D4ED8,#3B82F6)' }}>
+              <i className="fa-solid fa-money-check-dollar"></i>
+            </div>
+            <div>
+              <div className="fee-modal-title">Installment Challan</div>
+              <div className="fee-modal-sub">
+                {student.name} S/O {student.father || '—'} — {classMeta.cls} ({classMeta.sec}) · Reg {student.reg}
+              </div>
+            </div>
+          </div>
+          <Tooltip text="Close">
+            <button className="fee-modal-close" onClick={onClose} aria-label="Close" disabled={creating}>
+              <i className="fa-solid fa-xmark"></i>
+            </button>
+          </Tooltip>
+        </div>
+
+        <div className="fee-modal-body">
+          <div className="fee-info">
+            <i className="fa-solid fa-circle-info"></i>
+            <span>
+              Enter the <strong>installment amount</strong> against any head — the same amount
+              applies to every head automatically. Each amount must be at most that head's
+              <strong> after-discount</strong> value.
+            </span>
+          </div>
+
+          <div className="fee-stbl-wrap" style={{ border: 'none', marginTop: 14 }}>
+            <table className="fee-dm-table">
+              <thead>
+                <tr>
+                  <th>Fee Head</th>
+                  <th className="fee-right">Challan Amount</th>
+                  <th className="fee-right">Discount</th>
+                  <th className="fee-right">After Discount</th>
+                  <th className="fee-right">Installment Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                {heads.map(h => {
+                  const over = amt > h.afterDiscount;
+                  return (
+                    <tr key={h.name}>
+                      <td><b>{h.name}</b></td>
+                      <td className="fee-right">{money(h.challanAmount)}</td>
+                      <td className="fee-right">{h.discount ? money(h.discount) : '—'}</td>
+                      <td className="fee-right">{money(h.afterDiscount)}</td>
+                      <td className="fee-right">
+                        <input
+                          type="number"
+                          min="0"
+                          max={h.afterDiscount}
+                          /* 0 par field khaali dikhe. Kisi ek me type karo → sab sync. */
+                          value={amount}
+                          onChange={e => setAmount(e.target.value)}
+                          style={over ? { borderColor: '#DC2626', color: '#DC2626' } : undefined}
+                        />
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+              <tfoot>
+                <tr className="fee-dm-total-row">
+                  <td>Total</td>
+                  <td className="fee-right">{money(totalChallan)}</td>
+                  <td className="fee-right">{money(totalDiscount)}</td>
+                  <td className="fee-right">{money(totalAfter)}</td>
+                  <td className="fee-right fee-dm-net">{money(totalInstallment)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+
+          {overHead && (
+            <div className="fee-info" style={{ marginTop: 12, background: '#FEF2F2', color: '#B91C1C' }}>
+              <i className="fa-solid fa-triangle-exclamation"></i>
+              <span>
+                Installment amount cannot exceed <strong>{money(minAfter)}</strong> — the smallest
+                after-discount amount (head “{overHead.name}”).
+              </span>
+            </div>
+          )}
+        </div>
+
+        <div className="fee-modal-foot">
+          <Tooltip text="Discard and close">
+            <button className="fee-btn fee-btn-ghost" onClick={onClose} disabled={creating}>Cancel</button>
+          </Tooltip>
+          <Tooltip text="Create the installment challan">
+            <button
+              className="fee-btn fee-btn-primary"
+              onClick={handleCreate}
+              disabled={creating || invalid}
+              style={(creating || invalid) ? { opacity: .7, cursor: creating ? 'wait' : 'not-allowed' } : undefined}
+            >
+              {creating
+                ? <><i className="fa-solid fa-spinner fa-spin"></i> Creating…</>
+                : <><i className="fa-solid fa-file-circle-plus"></i> Create Installment</>}
             </button>
           </Tooltip>
         </div>
