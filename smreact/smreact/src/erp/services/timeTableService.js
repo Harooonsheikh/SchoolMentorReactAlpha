@@ -131,6 +131,26 @@ export async function getTeachers() {
   }
 }
 
+/* gradeId_sectionId_subjectId → [employeeId, …] for auto-generate teacher pick. */
+export async function getSubjectTeacherAssignments(branchId) {
+  const bid = branchId ?? branchID();
+  const res = await fetch(
+    buildUrl(`/api/LaunchSetup/get-employees-by-branch/${bid}`),
+    { headers: authHeaders() },
+  );
+  const json = await res.json();
+  const map = {};
+  (json?.data || []).forEach((emp) => {
+    if (!emp.isActive) return;
+    (emp.assignments || []).forEach((a) => {
+      const k = `${a.gradeId}_${a.sectionId}_${a.subjectId}`;
+      if (!map[k]) map[k] = [];
+      if (!map[k].includes(emp.id)) map[k].push(emp.id);
+    });
+  });
+  return map;
+}
+
 /* Branch report header (school name + logo + address + academic session) for
    report headers/footers — same /report-header API the other reports use. */
 export async function getReportHeader() {
