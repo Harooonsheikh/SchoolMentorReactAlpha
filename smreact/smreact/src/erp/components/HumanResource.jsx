@@ -2131,7 +2131,7 @@ function PayrollRow({
           <span style={{ fontSize: 10.5, color: 'var(--tm)', fontWeight: 600 }}>{emp.eid}</span>
         </div>
         <div className="td">
-          <span className="badge b-gray emp-cell-badge" style={{ fontSize: 10.5 }}>{desigName}</span>
+          <span className="badge b-gray emp-cell-badge" style={{ fontSize: 10.5 }} title={desigName}>{desigName}</span>
         </div>
         <div className="td">
           <span className={`pay-status ${status}`}>
@@ -4416,10 +4416,10 @@ function EmployeeRow({
           <span className="emp-row-eid">{emp.eid}</span>
         </div>
         <div className="td">
-          <span className="badge b-blue emp-cell-badge">{deptName}</span>
+          <span className="badge b-blue emp-cell-badge" title={deptName}>{deptName}</span>
         </div>
         <div className="td">
-          <span className="badge b-gray emp-cell-badge">{desigName}</span>
+          <span className="badge b-gray emp-cell-badge" title={desigName}>{desigName}</span>
         </div>
         <div className="td emp-phone-cell">{emp.phone || '—'}</div>
         <div className="td">
@@ -8082,7 +8082,7 @@ export const HR_CSS = `
 /* Employee table head + row (9-col grid) */
 .emp-t-head {
   display: grid;
-  grid-template-columns: 44px 50px 1.1fr 105px 115px 110px 230px auto 40px;
+  grid-template-columns: 44px 50px 1.1fr 155px 150px 110px 200px auto 40px;
   padding: 0 12px;
   gap: 6px;
   background: var(--muted);
@@ -8090,7 +8090,7 @@ export const HR_CSS = `
 }
 .emp-row {
   display: grid;
-  grid-template-columns: 44px 50px 1.1fr 105px 115px 110px 230px auto 40px;
+  grid-template-columns: 44px 50px 1.1fr 155px 150px 110px 200px auto 40px;
   align-items: center;
   min-height: 64px;
   padding: 0 12px;
@@ -8135,10 +8135,11 @@ export const HR_CSS = `
 /* Cell badge truncation helpers */
 .emp-cell-badge {
   max-width: 100%;
-  /* Lambi designation/department ab truncate (…) ki jagah nayi line me WRAP ho. */
-  white-space: normal;
-  overflow-wrap: anywhere;
-  word-break: break-word;
+  /* Department/designation ek hi row me dikhe — wrap na ho; bahut lambi name
+     ho to ellipsis (…) aur poora naam title (hover) par. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   display: inline-block;
   line-height: 1.35;
   text-align: center;
