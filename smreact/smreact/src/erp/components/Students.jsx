@@ -32,17 +32,7 @@ const stuHasDiscount = (s) => {
   if (!s._disc) return false;
   return Object.values(s._disc).some(v => Number(v) > 0);
 };
-/* API isActive ko boolean, 0/1 ya "true"/"false" string — kisi bhi shakl me bheje */
-const stuIsActive = (s) => {
-  const v = s?.isActive;
-  if (v === undefined || v === null) return true;
-  if (typeof v === 'string') return !['false', '0'].includes(v.trim().toLowerCase());
-  return Boolean(v);
-};
 
-/* Admission date — jo bhi field API bhej rahi ho */
-const stuAdmDate = (s) =>
-  String(s?.admdate || s?.admissionDate || s?.AdmissionDate || s?.createdOn || s?.createdAt || '').slice(0, 10);
 /* ─── ID Card theme palette (10 presets + custom) ─── */
 const STU_ID_THEMES = [
   { key: 'blue',   name: 'Blue',   c1: '#2D7DD2', c2: '#1ABCCD', mid: '#4FA3E8', ink: '#0D2B5E' },
@@ -1246,7 +1236,8 @@ export default function Students({ toast, focus = null, onFocusHandled }) {
      Inactive and Family Tree tabs see the same students. */
   const { data: serverClasses = [] }   = useAsync(studentService.getStuClasses, []);
   const { data: serverFamilies = [] }  = useAsync(studentService.getStuFamilies, []);
-  const { data: school = {} }          = useAsync(studentService.getStuSchool, []);
+  const { data: school = {} }          = useAsync(studentService.getStuSchool, {});
+
   const [classes, setClasses]     = useState(null);
   // Inactive students module-load par NAHI — Inactive tab kholne par (InactiveStudents
   // mount par) fetch hote hain, taake tab click par hi API hit ho.
@@ -1254,10 +1245,8 @@ export default function Students({ toast, focus = null, onFocusHandled }) {
   const [families, setFamilies]   = useState(null);
   useEffect(() => { if (serverClasses.length  && classes  == null) setClasses(serverClasses);   }, [serverClasses, classes]);
   useEffect(() => { if (serverFamilies.length && families == null) setFamilies(serverFamilies); }, [serverFamilies, families]);
- const classList = useMemo(
-    () => (classes || []).map(c => ({ ...c, students: (c.students || []).filter(stuIsActive) })),
-    [classes]
-  );  const inactList = inactive || [];
+  const classList = classes  || [];
+  const inactList = inactive || [];
   const famList   = families || [];
 
   const [tab, setTab] = useState('active');
@@ -1267,16 +1256,7 @@ export default function Students({ toast, focus = null, onFocusHandled }) {
 
   /* Screen (tab) View permission — jis screen ka View nahi wo tab hide. */
   const { can } = usePermissions();
-  // const visibleTabs = STU_TABS.filter(t => can('Students', t.label, 'View'));
-const visibleTabs = STU_TABS.filter(t => {
-  if (t.id === 'preenroll') {
-    const allowedBranches = [1, 15];
-
-    return allowedBranches.includes(Number(school?.id));
-  }
-
-  return can('Students', t.label, 'View');
-});
+  const visibleTabs = STU_TABS.filter(t => can('Students', t.label, 'View'));
   useEffect(() => {
     if (visibleTabs.some(t => t.id === tab)) return;
     if (visibleTabs[0]) setTab(visibleTabs[0].id);
@@ -1423,11 +1403,10 @@ function ActiveStudents({ classes, setClasses, inactive, setInactive, families, 
     (s) => linkedIds.has(String(s?._id || '')) || linkedRegs.has(String(s?.reg || '')),
     [linkedIds, linkedRegs]
   );
- const list = classes;
 
-console.log("STUDENT SAMPLE", list[0]?.students?.[0]);
+  const list = classes;
+  void inactive; // accepted for parity; only setInactive is used here
 
-void inactive;
   const [nextReg, setNextReg] = useState(null);
   const [nextAdm, setNextAdm] = useState(null);
   useEffect(() => { if (nextReg == null && serverNextReg) setNextReg(serverNextReg); }, [serverNextReg, nextReg]);
@@ -1468,26 +1447,13 @@ void inactive;
   }, [searchOpen]);
 
   /* KPI computations */
- const stats = useMemo(() => {
-  const activeStudents = list.reduce(
-    (a, c) => a + c.students.filter(stuIsActive).length,
-    0
-  );
-
-  const classCount  = new Set(list.map(c => c.cls)).size;
-  const sectionCnt  = list.length;
-
-  const discount = list.reduce(
-    (a, c) => a + c.students.filter(s => stuIsActive(s) && stuHasDiscount(s)).length,
-    0
-  );
-  return {
-    total: activeStudents,
-    classCount,
-    sectionCnt,
-    discount
-  };
-}, [list]);
+  const stats = useMemo(() => {
+    const total       = list.reduce((a, c) => a + c.students.length, 0);
+    const classCount  = new Set(list.map(c => c.cls)).size;
+    const sectionCnt  = list.length;
+    const discount    = list.reduce((a, c) => a + c.students.filter(stuHasDiscount).length, 0);
+    return { total, classCount, sectionCnt, discount };
+  }, [list]);
 
   /* Search matches across all classes (capped to 30 dropdown rows).
      RANKED, not just filtered: an exact GR/registration or admission-number
@@ -3068,9 +3034,7 @@ function InactiveStudents({ classes, setClasses, inactive, setInactive, toast })
   const canInEdit     = can('Students', 'Inactive Students', 'Edit');
   const canInDownload = can('Students', 'Inactive Students', 'Download');
   /* school identity for the report header */
-  // const { data: school = {} } = useAsync(studentService.getStuSchool, {});
-const { data: school = {} } = useAsync(studentService.getStuSchool, []);
-  console.log("STUDENT SCHOOL DATA", school);
+  const { data: school = {} } = useAsync(studentService.getStuSchool, {});
   const [loading, setLoading] = useState(false);
 
   /* Inactive students ki API tab hit karo jab ye tab khule (component mount) —
@@ -5740,7 +5704,7 @@ function CrmConfirmStyleDeleteFam({ cfg, onClose, onConfirm }) {
    spec) plus Enroll (→ Active Students, with confirm) and Send to Inactive
    (→ Inactive Students, with confirm).
    ═══════════════════════════════════════════════════════════════════ */
-const PRE_LOCAL_KEY = 'stuPreEnrollLocal';
+   const PRE_LOCAL_KEY = 'stuPreEnrollLocal';
 const preLocalRead = () => { try { return JSON.parse(localStorage.getItem(PRE_LOCAL_KEY) || '{}'); } catch { return {}; } };
 const preLocalPatch = (preId, patch) => {
   try {
@@ -5749,29 +5713,17 @@ const preLocalPatch = (preId, patch) => {
     localStorage.setItem(PRE_LOCAL_KEY, JSON.stringify(all));
   } catch { /* ignore */ }
 };
-const preToday = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-};
-
-/* Date the student was pre-enrolled (API field if present, else locally recorded) */
-const preCreatedOn = (s) => String(s.createdOn || s.addedOn || '').slice(0, 10);
-/* Server record + local data (challan, payments, addedOn) */
-const preLocalMerge = (s) => {
-  const local = { ...(preLocalRead()[s.preId] || {}) };
-  if (!s.createdOn && !local.addedOn) {
-    preLocalPatch(s.preId, { addedOn: preToday() });
-    local.addedOn = preToday();
-  }
-  return { ...s, ...local };
-};
-/* Record of pre-enrolled students moved to Enrolled / Inactive (for reporting) */
+const preLocalMerge = (s) => ({ ...s, ...(preLocalRead()[s.preId] || {}) });
+/* Enroll / Inactive kiye gaye pre-enrolled students ka record — reporting ke liye. */
 const PRE_LOG_KEY = 'stuPreEnrollLog';
 const preLogRead = () => { try { return JSON.parse(localStorage.getItem(PRE_LOG_KEY) || '[]'); } catch { return []; } };
 const preLogAdd = (entry) => {
   try { localStorage.setItem(PRE_LOG_KEY, JSON.stringify([...preLogRead(), entry])); } catch { /* ignore */ }
 };
-
+const preToday = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
 function PreEnrolledStudents({ classes, setClasses, inactive, setInactive, school, toast }) {
   const { data: serverStudents = [] }  = useAsync(preEnrollmentService.getPreEnrollStudents, []);
   const { data: feeHeads = [] }        = useAsync(preEnrollmentService.getPreEnrollFeeHeads, []);
@@ -5869,33 +5821,43 @@ const handleChallanSave = (challan) => {
    const handleConfirm = async (cfg) => {
     const { kind, student } = cfg;
     try {
-      if (kind === 'enroll') {
-        const typedReg = (cfg.reg || '').trim();
-        const typedAdm = (cfg.adm || '').trim();
-        const finalReg = typedReg || `${new Date().getFullYear()}-${String(nextReg || 25101).padStart(5, '0')}`;
-        const finalAdm = typedAdm || String(nextAdm || 1100);
-        await studentService.saveStuStudent({
-          ...student,
-          id:        0,
-          gradeId:   student._gradeId || 0,
-          sectionId: student._sectionId || 0,
-          reg:       finalReg,
-          adm:       finalAdm,
-          family:    (cfg.family || '').trim() || student.family || '',
-          admdate:   cfg.admdate || new Date().toISOString().slice(0, 10),
-          dues:      0,
-        });
-        await preEnrollmentService.removePreEnrollStudent(student._id, 'Enrolled');
-        if (!typedReg) setNextReg((nextReg || 25101) + 1);
-        if (!typedAdm) setNextAdm((nextAdm || 1100) + 1);
-        try { setClasses(await studentService.getStuClasses()); } catch { /* Active tab mount par reload karta hai */ }
-        /* Reporting ke liye record */
-        preLogAdd({
-          status: 'enrolled', date: preToday(), name: stuFullName(student),
-          reg: finalReg, cls: student.cls, sec: student.sec, payments: student.payments || [],
-        });
-        toast(`${stuFullName(student)} enrolled into ${student.cls} (${student.sec}) · Reg ${finalReg}`, 'success');
-      } else {
+ if (kind === 'enroll') {
+  const typedReg = (cfg.reg || '').trim();
+  const typedAdm = (cfg.adm || '').trim();
+  const finalReg = typedReg || `${new Date().getFullYear()}-${String(nextReg || 25101).padStart(5, '0')}`;
+  const finalAdm = typedAdm || String(nextAdm || 1100);
+
+  /* 1) Pehle ERP (Active Students) me save */
+  await studentService.saveStuStudent({
+    ...student,
+    id:        0,
+    gradeId:   student._gradeId || 0,
+    sectionId: student._sectionId || 0,
+    reg:       finalReg,
+    adm:       finalAdm,
+    family:    (cfg.family || '').trim() || student.family || '',
+    admdate:   cfg.admdate || new Date().toISOString().slice(0, 10),
+    dues:      0,
+  });
+
+  /* 2) Phir pre-enrollment se HARD delete. Student ab ERP me hai, is liye
+     pre-enrollment record ki zaroorat nahi, na hi restore ki. */
+  try {
+    await preEnrollmentService.removePreEnrollStudentPermanent(student._id);
+  } catch (e) {
+    toast(`Student enrolled, but could not remove pre-enrollment record: ${e.message || ''}`, 'error');
+  }
+
+  if (!typedReg) setNextReg((nextReg || 25101) + 1);
+  if (!typedAdm) setNextAdm((nextAdm || 1100) + 1);
+  try { setClasses(await studentService.getStuClasses()); } catch { /* Active tab mount par reload karta hai */ }
+  preLogAdd({
+    status: 'enrolled', date: preToday(), name: stuFullName(student),
+    reg: finalReg, cls: student.cls, sec: student.sec, payments: student.payments || [],
+  });
+  toast(`${stuFullName(student)} enrolled into ${student.cls} (${student.sec}) · Reg ${finalReg}`, 'success');
+}
+      else {
         await preEnrollmentService.removePreEnrollStudent(student._id, 'Did not proceed after pre-enrollment');
         setInactive(prev => [{
           reg: student.reg, first: student.first, last: student.last, father: student.father,
@@ -6040,9 +6002,9 @@ classes={classes}
         />
       )}
 
-    {reportOpen && (
-  <PreEnrollReportPanel students={list} classes={classes} school={school} onClose={() => setReportOpen(false)} toast={toast} />
-)}
+      {reportOpen && (
+        <PreEnrollReportPanel students={list} school={school} onClose={() => setReportOpen(false)} toast={toast} />
+      )}
 
       {slipCfg && (
         <PreEnrollSlipModal cfg={slipCfg} school={school} onClose={() => setSlipCfg(null)} toast={toast} />
@@ -6458,7 +6420,8 @@ function PreEnrollConfirm({ cfg, suggestedReg, suggestedAdm, onClose, onConfirm 
 
 /* ─── Reporting download — same A4 report convention as the other Students
    reports (rhead/rlogo/kpi-row/tbl/rfoot), school-branded via stuSchoolLogoSVG(). ── */
-function buildPreEnrollReportHTML({ rows, total, enrolledCount, preEnrolledCount = 0, inactiveCount = 0, periodLabel, school }) {  const genDate = stuFmtDate(new Date().toISOString().slice(0, 10));
+function buildPreEnrollReportHTML({ rows, total, enrolledCount, periodLabel, school }) {
+  const genDate = stuFmtDate(new Date().toISOString().slice(0, 10));
   const body = rows.length === 0
     ? '<tr><td colspan="6" style="text-align:center;padding:18px;color:#94A3B8">No collections in this period.</td></tr>'
     : rows.map((p, i) => `<tr><td class="c">${i + 1}</td><td>${stuFmtDate(p.date)}</td><td><b>${stuEsc(p.studentName)}</b></td><td class="mono">${stuEsc(p.reg)}</td><td>${stuEsc(p.cls)}${p.sec ? ` (${stuEsc(p.sec)})` : ''}</td><td>${stuEsc(p.method)}</td><td class="r">${stuMoney(p.amount)}</td></tr>`).join('');
@@ -6472,7 +6435,8 @@ function buildPreEnrollReportHTML({ rows, total, enrolledCount, preEnrolledCount
       .rname{font-size:17px;font-weight:800;color:#0F172A}
       .rtitle{font-size:12px;font-weight:700;color:#1E3A8A;margin-top:3px}
       .meta{margin-left:auto;font-size:9.5px;color:#64748B;text-align:right;line-height:1.55}
-      .kpi-row{display:grid;grid-template-columns:repeat(4,1fr);gap:9px;margin-bottom:14px}      .kpi{border:1px solid #E5E7EB;border-radius:8px;padding:10px 12px;background:#F8FAFF;position:relative;overflow:hidden}
+      .kpi-row{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin-bottom:14px}
+      .kpi{border:1px solid #E5E7EB;border-radius:8px;padding:10px 12px;background:#F8FAFF;position:relative;overflow:hidden}
       .kpi::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;background:#1E3A8A}
       .kpi .l{font-size:9px;font-weight:700;color:#64748B;text-transform:uppercase;letter-spacing:.3px}
       .kpi .v{font-size:18px;font-weight:800;color:#0F172A;margin-top:2px}
@@ -6496,9 +6460,8 @@ function buildPreEnrollReportHTML({ rows, total, enrolledCount, preEnrolledCount
           <div class="meta">Generated: ${genDate}<br/>${stuEsc(school?.session || '')}</div>
         </div>
         <div class="kpi-row">
-                    <div class="kpi"><div class="l">Pre-Enrolled (Pending)</div><div class="v">${preEnrolledCount}</div></div>
-          <div class="kpi"><div class="l">Enrolled In Period</div><div class="v">${enrolledCount}</div></div>
-          <div class="kpi"><div class="l">Sent to Inactive</div><div class="v">${inactiveCount}</div></div>
+          <div class="kpi"><div class="l">Pre-Enrolled In Period</div><div class="v">${enrolledCount}</div></div>
+          <div class="kpi"><div class="l">Collections</div><div class="v">${rows.length}</div></div>
           <div class="kpi"><div class="l">Total Revenue</div><div class="v">${stuMoney(total)}</div></div>
         </div>
         <table class="tbl">
@@ -6518,8 +6481,8 @@ function buildPreEnrollReportHTML({ rows, total, enrolledCount, preEnrolledCount
 
 
 /* ─── Reporting — pre-enrollment income by month or a custom date range ── */
-function PreEnrollReportPanel({ students, classes = [], school, onClose, toast }) {
-    const [mode, setMode] = useState('month'); // 'month' | 'range'
+function PreEnrollReportPanel({ students, school, onClose, toast }) {
+  const [mode, setMode] = useState('month'); // 'month' | 'range'
   const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
   const [from, setFrom] = useState(new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10));
   const [to, setTo] = useState(preToday());
@@ -6547,46 +6510,19 @@ function PreEnrollReportPanel({ students, classes = [], school, onClose, toast }
   const total = rows.reduce((a, p) => a + Number(p.amount || 0), 0);
 
   /* Is period me kitne students Active Students me enroll hue */
-  /* Is period me kitne students Active Students me enroll hue — server ki apni
-     admission date (admdate) se, local browser log se NAHI. Local log sirf
-     isi browser me hue enrollments record karta tha, is liye kisi doosre
-     device/login se enroll kiya student ya cache clear hone ke baad ye
-     hamesha 0 dikhata tha. */
- const enrolledRows = useMemo(() => {
-    const out = [];
-    (classes || []).forEach(c => (c.students || []).forEach(s => {
-      if (!stuIsActive(s)) return;
-      const adm = stuAdmDate(s);
-      if (adm && inPeriod(adm)) {
-        out.push({ ...s, admdate: adm, _cls: c.cls, _sec: c.sec });
-      }
-    }));
-    return out.sort((a, b) => (a.admdate < b.admdate ? 1 : -1));
+  const enrolledCount = useMemo(
+    () => preLogRead().filter(e => e.status === 'enrolled' && inPeriod(e.date)).length,
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [classes, mode, month, from, to]);
-  const enrolledCount = enrolledRows.length;
-    /* Abhi pre-enrollment list me jo students hain (is period me add hue).
-     Inactive / Enroll karne par ye list se nikal jate hain, is liye count ghat jata hai. */
-  const preEnrolledCount = useMemo(
-    () => students.filter(s => inPeriod(preCreatedOn(s))).length,
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [students, mode, month, from, to]
+    [mode, month, from, to]
   );
 
-  /* Pre-enrollment se "Send to Inactive" kiye gaye students (is period me) */
-  const inactiveFromPreCount = useMemo(
-    () => preLogRead().filter(e => e.status === 'inactive' && inPeriod(e.date)).length,
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [students, mode, month, from, to]
-  );
   const periodLabel = mode === 'month'
     ? new Date(`${month}-01`).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })
     : `${stuFmtDate(from)} — ${stuFmtDate(to)}`;
 
   const handleDownload = () => {
-    const { css, html } = buildPreEnrollReportHTML({
-      rows, total, enrolledCount, preEnrolledCount, inactiveCount: inactiveFromPreCount, periodLabel, school,
-    });    stuOpenPrintWindow(`Pre-Enrollment Report — ${periodLabel}`, css, html, toast);
+    const { css, html } = buildPreEnrollReportHTML({ rows, total, enrolledCount, periodLabel, school });
+    stuOpenPrintWindow(`Pre-Enrollment Report — ${periodLabel}`, css, html, toast);
   };
 
   return createPortal(
@@ -6633,52 +6569,21 @@ function PreEnrollReportPanel({ students, classes = [], school, onClose, toast }
             )}
           </div>
 
-                <div className="stu-kpis" style={{ margin: '16px 0' }}>
-            <div className="stu-stat">
-              <div className="stu-stat-icon amber"><i className="fa-solid fa-user-clock"></i></div>
-              <div><div className="stu-stat-val">{preEnrolledCount}</div><div className="stu-stat-lbl">Pre-Enrolled (Pending)</div></div>
-            </div>
+          <div className="stu-kpis" style={{ margin: '16px 0' }}>
             <div className="stu-stat">
               <div className="stu-stat-icon blue"><i className="fa-solid fa-user-check"></i></div>
               <div><div className="stu-stat-val">{enrolledCount}</div><div className="stu-stat-lbl">Enrolled In Period</div></div>
             </div>
             <div className="stu-stat">
-              <div className="stu-stat-icon violet"><i className="fa-solid fa-user-slash"></i></div>
-              <div><div className="stu-stat-val">{inactiveFromPreCount}</div><div className="stu-stat-lbl">Sent to Inactive</div></div>
+              <div className="stu-stat-icon green"><i className="fa-solid fa-receipt"></i></div>
+              <div><div className="stu-stat-val">{rows.length}</div><div className="stu-stat-lbl">Collections</div></div>
             </div>
             <div className="stu-stat">
-              <div className="stu-stat-icon green"><i className="fa-solid fa-sack-dollar"></i></div>
-              <div><div className="stu-stat-val">{stuMoney(total)}</div><div className="stu-stat-lbl">Total Revenue ({rows.length})</div></div>
+              <div className="stu-stat-icon violet"><i className="fa-solid fa-sack-dollar"></i></div>
+              <div><div className="stu-stat-val">{stuMoney(total)}</div><div className="stu-stat-lbl">Total Revenue</div></div>
             </div>
           </div>
 
-              <div className="fee-recv-hist-title" style={{ marginBottom: 8 }}>
-            <i className="fa-solid fa-user-check"></i> Enrolled Students ({enrolledRows.length})
-          </div>
-          <div className="fee-stbl-wrap" style={{ marginBottom: 18 }}>
-            <table className="fee-stbl">
-              <thead>
-                <tr><th>Admission Date</th><th>Student</th><th>Reg No</th><th>Class</th><th>Father</th></tr>
-              </thead>
-              <tbody>
-                {enrolledRows.length === 0 ? (
-                  <tr><td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>No students enrolled in this period</td></tr>
-                ) : enrolledRows.map((s, i) => (
-                  <tr key={s._id ?? `idx-${i}`}>
-                    <td>{stuFmtDate(s.admdate)}</td>
-                    <td><b>{stuFullName(s)}</b></td>
-                    <td>{s.reg || '—'}</td>
-                    <td>{s._cls} {s._sec ? `(${s._sec})` : ''}</td>
-                    <td>{s.father || '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          <div className="fee-recv-hist-title" style={{ marginBottom: 8 }}>
-            <i className="fa-solid fa-receipt"></i> Collections ({rows.length})
-          </div>
           <div className="fee-stbl-wrap">
             <table className="fee-stbl fee-recv-table">
               <thead>
