@@ -29,7 +29,6 @@ const isBreakPeriod = (p) =>
 
 const ss = (k) => sessionStorage.getItem(k) || '';
 const branchID = () => ss('branchID') || '1';
-const empID = () => ss('employee_ID') || '';
 const authHeaders = (extra = {}) => {
   const t = ss('token');
   return { Accept: 'application/json', ...(t ? { Authorization: `Bearer ${t}` } : {}), ...extra };
@@ -91,16 +90,20 @@ export async function getTimeTableClasses() {
 }
 
 /* Real subjects for a class × section (for the period Subject dropdown):
-   [{ id: subjectID, name: subjectName }]. */
+   [{ id: subjectID, name: subjectName }].
+   GET /api/LaunchSetup/get-subjects/{gradeId}/{sectionId} — class ke SAARE
+   subjects. Pehle get-subjects_byEmployeeID tha jo sirf logged-in employee
+   ke subjects deta tha; timetable poori class ka banta hai. */
 export async function getSubjectsForClass(classID, sectionID) {
   try {
     const res = await fetch(
-      buildUrl(`/get-subjects_byEmployeeID/${classID}/${sectionID}/${empID()}`),
+      buildUrl(`/api/LaunchSetup/get-subjects/${classID}/${sectionID}`),
       { headers: authHeaders() },
     );
     const json = await res.json();
     const arr = (json && json.data) || (Array.isArray(json) ? json : []);
     return (arr || [])
+      .filter((s) => s.isActive !== false)
       .map((s) => ({ id: s.subjectID ?? s.id ?? 0, name: s.subjectName ?? s.name ?? s.subject ?? '' }))
       .filter((s) => s.name);
   } catch (e) {
