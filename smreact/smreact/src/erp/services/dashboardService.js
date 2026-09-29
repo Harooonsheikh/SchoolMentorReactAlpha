@@ -30,3 +30,23 @@ export async function getDashboard(month, year) {
   }
   return json?.data || {};
 }
+
+/* App-adoption report — un logon ki list jinhon ne mobile app install/register
+   ki (FCM token registered = "downloaded"). Yehi endpoint dashboard ke Teachers/
+   Parents "Downloaded" count ka source hai.
+     GET /branch/{branchId}/fcm-tokens?accountType={teacher|parent}
+   Response: { success, count, data: [{ id, name, userName, accountType,
+   accountTypeID, fcmToken, hasToken }] }. branchID sessionStorage se. */
+export async function getBranchFcmTokens(accountType) {
+  const branchID = Number(sessionStorage.getItem('branchID')) || 0;
+  const at = String(accountType || '').trim();
+  const res = await fetch(
+    buildUrl(`/branch/${branchID}/fcm-tokens${at ? `?accountType=${encodeURIComponent(at)}` : ''}`),
+    { headers: { Accept: '*/*' } },
+  );
+  const json = await res.json().catch(() => null);
+  if (!res.ok || json?.success === false) {
+    throw new Error(apiMessage(json) || 'Could not load app adoption report');
+  }
+  return Array.isArray(json?.data) ? json.data : [];
+}
