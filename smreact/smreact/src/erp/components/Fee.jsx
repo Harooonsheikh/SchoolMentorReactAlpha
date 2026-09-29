@@ -1183,9 +1183,8 @@ function challanMonthLock(monthIdx, year, settings) {
     /* Toggle UI se comment-out hai — message usay point na kare. */
     return 'Previous month is locked — receive its pending dues from the current month (Receive Pending).';
   }
-  if (diff === 1 && !settings.nextMonthChallan) {
-    return 'Next month is locked — turn on "Next Month Challan Receiving" in Fee Challan Settings to allow it.';
-  }
+  /* Next month lock HATA diya — "Next Month Challan Receiving" toggle comment-out hai; har
+     mahine (aage ka bhi) receiving/generation allowed, shart sirf pending amount. */
   return null;
 }
 
@@ -6032,13 +6031,20 @@ function installmentSlipRows(challan, payments, payment) {
   const out = [];
   rows.forEach(r => {
     const name = r.subHead || r.head || '';
+    if ((+r.challanAmount || 0) < 0 && isLedgerCarryRow(r)) return;   // advance-consumption row
     const recv = pick(payment.perHead, name);
     const disc = Math.max(0, pick(payment.giveDisc, name));
-    if (!recv && !disc) return;
     const mgr = r._mgrDisc != null ? +r._mgrDisc : (+r.discount || 0) - (r._recvFolded ? (+r.recvDiscount || 0) : 0);
     let before = (+r.challanAmount || 0) - mgr + (feeHeadPrev(r) || 0);
-    earlier.forEach(p => { before -= pick(p.perHead, name) + Math.max(0, pick(p.giveDisc, name)); });
-    out.push({ name, std: Math.round(before), disc: Math.round(disc), recv: Math.round(recv), prev: 0 });
+    let earlierPaid = 0;
+    earlier.forEach(p => { earlierPaid += pick(p.perHead, name) + Math.max(0, pick(p.giveDisc, name)); });
+    before -= earlierPaid;
+    /* Is payment me kuch na liya ho magar baqaya ho to bhi head dikhe (Received "—",
+       Remaining = baqaya). Poora ada shuda aur ab bhi kuch nahi → chhod do. */
+    if (!recv && !disc && Math.round(before) <= 0) return;
+    /* _mgr / _first: slip (toggle ON) is head ki PEHLI receiving par manager discount bhi
+       dikhaye — Std gross, Discount = manager + give. */
+    out.push({ name, std: Math.round(before), disc: Math.round(disc), recv: Math.round(recv), prev: 0, _mgr: Math.round(mgr), _first: earlierPaid === 0 });
   });
   return out.length ? out : null;
 }
@@ -6077,16 +6083,19 @@ function latestReceivingSlipRows(challan) {
       if (t === latest) { recvNow += recv; discNow += give; }
       else if (t < latest) before += recv + give;
     });
-    if (!recvNow && !discNow) return;
     const mgr = r._mgrDisc != null ? +r._mgrDisc : (+r.discount || 0) - (r._recvFolded ? (+r.recvDiscount || 0) : 0);
     const std = (+r.challanAmount || 0) - mgr + (feeHeadPrev(r) || 0) - before;
-    out.push({ name: r.subHead || r.head || '', std: Math.round(std), disc: Math.round(discNow), recv: Math.round(recvNow), prev: 0 });
+    /* Is receiving me kuch na liya magar baqaya ho to bhi head dikhe (Received "—"). */
+    if (!recvNow && !discNow && Math.round(std) <= 0) return;
+    out.push({ name: r.subHead || r.head || '', std: Math.round(std), disc: Math.round(discNow), recv: Math.round(recvNow), prev: 0, _mgr: Math.round(mgr), _first: before === 0 });
   });
   return out.length ? out : null;
 }
 
 function FeeSlipModal({ cfg, onClose, toast }) {
   const [size, setSize] = useState('a4');
+  /* Show Discount on Challan (column choice) — installment slip par manager discount ke liye. */
+  const { data: slipSettings } = useAsync(feeService.getFeeSettings, []);
 
   useEffect(() => { if (cfg) setSize(cfg.defaultSize || 'a4'); }, [cfg]);
   useEffect(() => {
@@ -6131,9 +6140,15 @@ function FeeSlipModal({ cfg, onClose, toast }) {
   /* Per-head previous (previousPendingorAdv) available ho to slip HEAD-WISE: aggregate
      "Previous Pending" row hata kar har head ka previous "Pending" me jodte hain (challan jaisa). */
   const hasHeadPrev = !cfg.instRows && Array.isArray(chRows) && chRows.some(r => !isPrevLabel(r) && (feeHeadPrev(r) || 0) !== 0);
-  /* Installment slip: rows pehle se bane hue (installmentSlipRows) — Std = pehle ka baqaya. */
+  /* Installment slip: rows pehle se bane hue (installmentSlipRows) — Std = pehle ka baqaya.
+     "Show Discount on Challan" ON ho to head ki PEHLI receiving par Discount Manager wala
+     discount bhi: Std = gross (4,000), Discount = manager + give (1,000 + 500). Baad ki
+     receivings par manager pehle hi gin chuka — sirf give. */
+  const showMgrDisc = (slipSettings || {}).showDiscount !== false;
   const baseRows = cfg.instRows
-    ? cfg.instRows.map(r => ({ ...r }))
+    ? cfg.instRows.map(r => ((showMgrDisc && r._first && (r._mgr || 0) > 0)
+      ? { ...r, std: r.std + r._mgr, disc: r.disc + r._mgr }
+      : { ...r }))
     : chRows
     ? chRows
       .filter(r => !(hasHeadPrev && isPrevLabel(r)))
@@ -6289,7 +6304,7 @@ function FeeSlipModal({ cfg, onClose, toast }) {
         <table class="fee-slip-tbl fee-slip-heads">
           <thead><tr><th>Head</th><th>Std. Amount</th><th>Discount</th><th>Received</th><th>Remaining</th></tr></thead>
           <tbody>
-            ${headRows.map(r => `<tr><td>${escHtml(headLabel(r.name))}</td><td>${r.isAdvance ? '—' : r.std.toLocaleString('en-PK')}</td><td>${r.isAdvance ? '—' : (r.disc ? r.disc.toLocaleString('en-PK') : '—')}</td><td>${r.recv.toLocaleString('en-PK')}</td><td>${remCell(r)}</td></tr>`).join('')}
+            ${headRows.map(r => `<tr><td>${escHtml(headLabel(r.name))}</td><td>${r.isAdvance ? '—' : r.std.toLocaleString('en-PK')}</td><td>${r.isAdvance ? '—' : (r.disc ? r.disc.toLocaleString('en-PK') : '—')}</td><td>${r.recv ? r.recv.toLocaleString('en-PK') : '—'}</td><td>${remCell(r)}</td></tr>`).join('')}
             <tr class="fee-slip-headtot"><td>Total</td><td>${totStd.toLocaleString('en-PK')}</td><td>${totDisc ? totDisc.toLocaleString('en-PK') : '—'}</td><td>${total.toLocaleString('en-PK')}</td><td>${totRemTxt}</td></tr>
           </tbody>
         </table>
@@ -6480,7 +6495,7 @@ function FeeSlipModal({ cfg, onClose, toast }) {
                   </thead>
                   <tbody>
                     {headRows.map(r => (
-                      <tr key={r.name}><td>{r.name}</td><td>{r.isAdvance ? '—' : r.std.toLocaleString('en-PK')}</td><td>{r.isAdvance ? '—' : (r.disc ? r.disc.toLocaleString('en-PK') : '—')}</td><td>{r.recv.toLocaleString('en-PK')}</td><td>{remCell(r)}</td></tr>
+                      <tr key={r.name}><td>{r.name}</td><td>{r.isAdvance ? '—' : r.std.toLocaleString('en-PK')}</td><td>{r.isAdvance ? '—' : (r.disc ? r.disc.toLocaleString('en-PK') : '—')}</td><td>{r.recv ? r.recv.toLocaleString('en-PK') : '—'}</td><td>{remCell(r)}</td></tr>
                     ))}
                     <tr className="fee-slip-headtot"><td>Total</td><td>{totStd.toLocaleString('en-PK')}</td><td>{totDisc ? totDisc.toLocaleString('en-PK') : '—'}</td><td>{total.toLocaleString('en-PK')}</td><td>{totRemTxt}</td></tr>
                   </tbody>
@@ -7124,12 +7139,18 @@ function FeeReceivingIndividual({ toast }) {
        Session rcv-* rows sirf un ke upar add jo abhi-abhi save hue aur reload
        se pehle list me dikhne chahiye. */
     const apiPays = challan ? feeService.installmentsToPayments(challan) : [];
+    /* Server ki installments challan ka POORA received dikha rahi hon to abhi-abhi save hui
+       session receipts un me shamil ho chuki — dobara mat gino (warna 7,000 → 14,000). */
+    const apiTotal = apiPays.reduce((a, p) => a + (+p.amount || 0), 0);
+    const chRecvTotal = ((challan && challan.detailRows) || []).reduce((a, r) => a + Math.max(0, +r.receivedAmount || 0), 0);
+    const apiCoversAll = apiPays.length > 0 && Math.round(apiTotal) >= Math.round(chRecvTotal);
     const payments = apiPays.length
       ? [
           ...apiPays,
           ...sessionPays.filter(p => {
             const id = String(p.id || '');
             if (id.startsWith('inst-') || id.startsWith('legacy-') || id.startsWith('stored-give-')) return false;
+            if (apiCoversAll) return false;
             /* Same amount+date already in API → duplicate skip. */
             return !apiPays.some(a =>
               a.date === p.date && Math.round(+a.amount || 0) === Math.round(+p.amount || 0)
@@ -7309,7 +7330,12 @@ function FeeReceivingIndividual({ toast }) {
     const payments = paymentsFor(c.key, s.reg);
     const last = payments[payments.length - 1];
     if (last) {
-      setSlipCtx({ classMeta: c, student: s, period: `${appliedMonth} ${appliedYear}`, payment: last, challan: challanMap[keyOf(c.key, s.reg)], prevStd: prevStdOf(s.studentID), prevByHead: prevByHeadOf(s.studentID), defaultSize: settings.printSize || 'a4', school: branchHeader });
+      /* Slip SIRF aakhri receiving ki (update/jama nahi): Std = us se pehle ka baqaya,
+         Received = us waqt liya, Remaining = baad ka. */
+      const chX = challanMap[keyOf(c.key, s.reg)];
+      const lastRows = latestReceivingSlipRows(chX) || installmentSlipRows(chX, payments, last);
+      const lastAmt = (lastRows || []).reduce((a, r) => a + (r.recv || 0), 0);
+      setSlipCtx({ classMeta: c, student: s, period: `${appliedMonth} ${appliedYear}`, payment: lastRows ? { ...last, amount: lastAmt, fine: 0 } : last, challan: chX, prevStd: prevStdOf(s.studentID), prevByHead: prevByHeadOf(s.studentID), defaultSize: settings.printSize || 'a4', school: branchHeader, instRows: lastRows || undefined });
       return;
     }
     const rec = challanMap[keyOf(c.key, s.reg)];
@@ -7563,11 +7589,12 @@ function FeeReceivingIndividual({ toast }) {
       : `Installment saved — Rs. ${(payload.amount || 0).toLocaleString('en-PK')} from ${payload.studentName}`, 'success');
     /* After save: close receive modal and open slip modal for the new payment */
     const c = receiveCtx?.classMeta, s = receiveCtx?.student;
-    /* Receive Pending (pichhla challan): slip SIRF is receiving ki. Std = is se pehle ka
-       baqaya (carry samet), Received = abhi liya, Remaining = baad ka (minus = advance). */
+    /* Slip HAMESHA sirf is receiving ki (normal challan aur Receive Pending dono): Std = is
+       payment se pehle ka baqaya (carry samet), Received = abhi liya, Remaining = baad ka
+       (minus = advance). Slip "update" (jama) nahi hoti. */
     let pendingSlipRows = null;
     let pendingSlipTotal = null;
-    if (pendingMode && rec) {
+    if (rec) {
       /* SIRF is receiving ki — Std = is se pehle ka baqaya (saari pichhli wasooli minus). */
       pendingSlipRows = installmentSlipRows(rec, receiveCtx.payments || [], {
           id: '__this_payment__', perHead: payload.perHead || {}, giveDisc: payload.giveDisc || {},
@@ -7590,7 +7617,7 @@ function FeeReceivingIndividual({ toast }) {
         prevStd: prevStdOf(s.studentID), prevByHead: prevByHeadOf(s.studentID),
         defaultSize: settings.printSize || 'a4',
         school: branchHeader,
-        instRows: pendingMode ? (pendingSlipRows || undefined) : undefined,
+        instRows: pendingSlipRows || undefined,
       });
     }
   };
@@ -8268,12 +8295,18 @@ function FamilyTreeReceiving({ toast }) {
       || Object.values(challanByStudent || {}).find(c => String(c?.registrationNumber || '') === String(reg))
       || null;
     const apiPays = rec ? feeService.installmentsToPayments(rec) : [];
+    /* Server ki installments challan ka POORA received dikha rahi hon to abhi-abhi save hui
+       session receipts un me shamil ho chuki — dobara mat gino (warna 7,000 → 14,000). */
+    const apiTotal = apiPays.reduce((a, p) => a + (+p.amount || 0), 0);
+    const chRecvTotal = ((rec && rec.detailRows) || []).reduce((a, r) => a + Math.max(0, +r.receivedAmount || 0), 0);
+    const apiCoversAll = apiPays.length > 0 && Math.round(apiTotal) >= Math.round(chRecvTotal);
     const payments = apiPays.length
       ? [
           ...apiPays,
           ...sessionPays.filter(p => {
             const id = String(p.id || '');
             if (id.startsWith('inst-') || id.startsWith('legacy-') || id.startsWith('stored-give-')) return false;
+            if (apiCoversAll) return false;
             return !apiPays.some(a =>
               a.date === p.date && Math.round(+a.amount || 0) === Math.round(+p.amount || 0)
             );
@@ -8517,7 +8550,11 @@ function FamilyTreeReceiving({ toast }) {
     const payments = paymentsFor(f.key, ch.reg);
     const last = payments[payments.length - 1];
     if (last) {
-      setSlipCtx({ classMeta: { key: f.key, cls: ch.cls, sec: ch.sec }, student: ch, period: `${appliedMonth} ${appliedYear}`, payment: last, challan: ch._challan || challanByStudent[String(ch.applicantsID)], prevStd: prevStdOf(ch), prevByHead: prevByHeadOf(ch), defaultSize: settings.printSize || 'a4', school: branchHeader });
+      /* Slip SIRF aakhri receiving ki (update/jama nahi). */
+      const chX = ch._challan || challanByStudent[String(ch.applicantsID)];
+      const lastRows = latestReceivingSlipRows(chX) || installmentSlipRows(chX, payments, last);
+      const lastAmt = (lastRows || []).reduce((a, r) => a + (r.recv || 0), 0);
+      setSlipCtx({ classMeta: { key: f.key, cls: ch.cls, sec: ch.sec }, student: ch, period: `${appliedMonth} ${appliedYear}`, payment: lastRows ? { ...last, amount: lastAmt, fine: 0 } : last, challan: chX, prevStd: prevStdOf(ch), prevByHead: prevByHeadOf(ch), defaultSize: settings.printSize || 'a4', school: branchHeader, instRows: lastRows || undefined });
       return;
     }
     const rec = ch._challan || challanByStudent[String(ch.applicantsID)];
@@ -8809,13 +8846,21 @@ function FamilyTreeReceiving({ toast }) {
     //   }
     // };
 
+    /* Slip SIRF is receiving ki (Individual jaisa): Std = is payment se pehle ka baqaya,
+       Received = abhi liya, Remaining = baad ka (minus = advance). */
+    const famSlipRows = rec ? installmentSlipRows(rec, receiveCtx?.payments || [], {
+      id: '__this_payment__', perHead: payload.perHead || {}, giveDisc: payload.giveDisc || {},
+    }) : null;
+    const famSlipTotal = famSlipRows ? famSlipRows.reduce((a, r) => a + (r.recv || 0), 0) + (+payload.fine || 0) : null;
     if (f && ch) {
       setSlipCtx({
         classMeta: { key: f.key, cls: ch.cls, sec: ch.sec }, student: ch,
         period,
+        instRows: famSlipRows || undefined,
         payment: {
           date: payload.date, method: payload.method, ref: payload.ref, txn: payload.txn,
-          amount: payload.amount, perHead: payload.perHead, fine: payload.fine || 0, prevByHead: payload.prevByHead,
+          amount: famSlipTotal != null ? famSlipTotal : payload.amount,
+          perHead: payload.perHead, fine: payload.fine || 0, prevByHead: payload.prevByHead,
           giveDisc: payload.giveDisc || {}, isReceiving: !!payload.isReceiving,
         },
         challan: slipChallan,
@@ -12417,14 +12462,12 @@ const FEE_REPORT_CATS = [
     info: 'Students are grouped by the vehicle assigned to them in Transport Fee Setup, and their individual transport fees are totalled per vehicle. A student\'s transport fee counts as received once their challan for the month has been generated, and as outstanding otherwise.' },
   { id: 'pendingdues', ic: 'fa-triangle-exclamation', name: 'Pending Dues Report', desc: 'Outstanding balance by fee head',
     info: 'For each fee head still owed, this report takes that head\'s net payable amount and subtracts whatever has actually been collected against it on or before the As of Date. Previous Dues is always included, even before this month\'s challan is generated, since it exists independently of it; every other fee head only applies once its challan has actually been generated for the student.' },
-  /* OneLink Payment Report — temporarily hidden (commented out).
+  /* OneLink Payment Report — ACTIVE (real ledger data: OneLink/Bank paymentMethod). */
   { id: 'onelink', ic: 'fa-building-columns', name: 'OneLink Payment Report', desc: 'OneLink / bank transactions by period',
     info: 'This report filters every recorded payment whose source is OneLink or Bank Transfer to the selected single date, month or date range, and lists each one with the paying student, class, amount and bank reference. Payments received at the counter (Cash, manually entered Card or Cheque) are not included.' },
-  */
-  /* Free Students Report — temporarily hidden (commented out).
+  /* Free Students Report — ACTIVE (real ledger data: discount >= standard fee). */
   { id: 'freestudents', ic: 'fa-hand-holding-heart', name: 'Free Students Report', desc: 'Students on a full fee waiver, class-wise',
     info: 'Students whose approved fee discounts fully cover their standard fee heads are shown here as Free Students. Approve a full-fee discount from the Discount Manager to see a student appear. Open any class to see the list; download a class-wise A4 report via Preview / PDF.' },
-  */
   { id: 'discount', ic: 'fa-tags', name: 'Discount Given Report', desc: 'Per-head discount breakdown, class-wise',
     info: 'Every student with at least one approved fee-head discount, with a full per-head breakdown. Discounts are approved from the Discount Manager on the Fee Challans tab. Open any class to see the students; download a class-wise A4 report via Preview / PDF.' },
   { id: 'advance', ic: 'fa-piggy-bank', name: 'Advance Fee Payment Report', desc: 'Advance paid, months covered & balance',
@@ -12481,6 +12524,8 @@ const receivedBy = (p) => {
   return 'Front Desk';
 };
 
+/* Purana sample-data aging (ab ledgerAgingAsOf use hota hai) — rakha hua, istemal nahi. */
+// eslint-disable-next-line no-unused-vars
 function repAgingFromModel(m) {
   const p = m.remaining; if (p <= 0) return { cur: 0, d30: 0, d60: 0, d90: 0 };
   const cur = m.thisMonth > 0 ? Math.min(p, Math.round(m.thisMonth * 0.4)) : 0;
@@ -12608,10 +12653,10 @@ function FeeReportsTab({ toast }) {
         {current === 'aging' && <ReportPanelAging toast={toast} />}
         {current === 'summary' && <ReportPanelSummary toast={toast} />}
         {current === 'pendingdues' && <ReportPanelPendingDues toast={toast} />}
-        {/* OneLink + Partial OneLink + Free Students reports temporarily hidden
+        {/* OneLink + Free Students ACTIVE (real ledger data). Partial OneLink abhi hidden — server
+            par partial-challan data nahi. */}
         {current === 'onelink' && <ReportPanelOneLink toast={toast} />}
-        */}
-        {/* {current === 'freestudents' && <ReportPanelFreeStudents toast={toast} />} */}
+        {current === 'freestudents' && <ReportPanelFreeStudents toast={toast} />}
         {current === 'discount' && <ReportPanelDiscountGiven toast={toast} />}
         {current === 'advance' && <ReportPanelAdvanceFee toast={toast} />}
         {current === 'advanceadjustment' && <ReportPanelAdvanceAdjustment toast={toast} />}
@@ -12621,6 +12666,8 @@ function FeeReportsTab({ toast }) {
     </FeeReportStyleContext.Provider>
   );
 }
+/* Sample-data hook (getReceipts mock, May fixed) — ab koi report is par nahi; rakha hua. */
+// eslint-disable-next-line no-unused-vars
 function useReportData() {
   const { data: classes = [] } = useAsync(feeService.getFeeClasses, []);
   const { data: studentsMap = {} } = useAsync(feeService.getTransportFee, []);
@@ -14102,14 +14149,28 @@ function HeadwisePreviewModal({ cfg, onClose, onDownload }) {
 function ReportPanelAging({ toast }) {
   const repStyle = useContext(FeeReportStyleContext);
   const school = useContext(FeeReportBranchContext);
-  const { classes, allStudents } = useReportData();
+  /* REAL ledger (sample data nahi): As-of date tak ka baqaya, challan ki due date se kitne din
+     purana — ledgerAgingAsOf. As-of se 12 mahine pehle tak ke challans load. */
+  const [asOf, setAsOf] = useState(localTodayISO());
+  const [clsFilter, setClsFilter] = useState('all');
+  const periods = useMemo(() => {
+    const d = new Date(`${asOf}T00:00:00`);
+    if (isNaN(d.getTime())) return [];
+    const back = new Date(d.getFullYear(), d.getMonth() - 12, 1);
+    return ledgerPeriods(back.getMonth() + 1, back.getFullYear(), d.getMonth() + 1, d.getFullYear());
+  }, [asOf]);
+  const { classes, allStudents, loading, error } = useLedgerReportData(periods);
   const list = useMemo(() => allStudents
-    .filter(x => x.m.remaining > 0)
-    .map(x => ({ ...x, a: repAgingFromModel(x.m) })), [allStudents]);
+    .filter(x => clsFilter === 'all' || x.c.key === clsFilter)
+    .map(x => {
+      const a = ledgerAgingAsOf(x.m.recs || [], asOf);
+      return { ...x, a, m: { ...x.m, remaining: a.total } };
+    })
+    .filter(x => x.a.total > 0), [allStudents, asOf, clsFilter]);
   const tot = list.reduce((o, x) => ({ cur: o.cur + x.a.cur, d30: o.d30 + x.a.d30, d60: o.d60 + x.a.d60, d90: o.d90 + x.a.d90 }), { cur: 0, d30: 0, d60: 0, d90: 0 });
 
   const downloadReport = (mode) => {
-    const html = buildRepAgingHTML({ list, tot, asOf: new Date().toISOString().slice(0, 10), isBW: repStyle === 'bw', school });
+    const html = buildRepAgingHTML({ list, tot, asOf, isBW: repStyle === 'bw', school });
     openPrintReport(html, 'Aging / Outstanding Analysis', toast, mode);
   };
 
@@ -14119,6 +14180,8 @@ function ReportPanelAging({ toast }) {
         <i className="fa-solid fa-circle-info"></i>
         <span><strong>Aging analysis</strong> buckets outstanding fee by how long it's overdue (Current, 1–30, 31–60, 61–90+ days) — the standard for recovery-risk and follow-up prioritisation.</span>
       </div>
+
+      <RepLoadState loading={loading} error={error} />
 
       {repKpiStrip([
         ['k-green', 'fa-circle-dot', 'Current', fmtRs(tot.cur), ''],
@@ -14132,14 +14195,14 @@ function ReportPanelAging({ toast }) {
           <div className="fee-filters">
             <div className="fee-field">
               <span className="fee-label">As of Date</span>
-              <input className="fee-input" type="date" defaultValue={new Date().toISOString().slice(0, 10)} style={{ minWidth: 170 }} />
+              <input className="fee-input" type="date" value={asOf} onChange={e => setAsOf(e.target.value || localTodayISO())} style={{ minWidth: 170 }} />
             </div>
             <div className="fee-field">
               <span className="fee-label">Class</span>
               <div className="fee-select-wrap">
-                <select className="fee-select" defaultValue="All Classes">
-                  <option>All Classes</option>
-                  {classes.map(c => <option key={c.key}>{c.cls} {c.sec}</option>)}
+                <select className="fee-select" value={clsFilter} onChange={e => setClsFilter(e.target.value)}>
+                  <option value="all">All Classes</option>
+                  {classes.map(c => <option key={c.key} value={c.key}>{c.cls} {c.sec}</option>)}
                 </select>
                 <i className="fa-solid fa-chevron-down"></i>
               </div>
@@ -14239,15 +14302,67 @@ function ReportPanelAging({ toast }) {
 function ReportPanelSummary({ toast }) {
   const repStyle = useContext(FeeReportStyleContext);
   const school = useContext(FeeReportBranchContext);
-  const { classes, studentsMap, allStudents, totals, serverReceipts, paymentsFor } = useReportData();
+  /* REAL ledger (sample data nahi) — chune hue mahine ke liye:
+       Expected    = us mahine BANE challans ka bill (discount ke baad)
+       Collected   = us mahine ki receipts (installment date se, kisi bhi challan par)
+       Discount    = us mahine ke challans ka discount (manager + receiving)
+       Outstanding = mahine ke aakhir tak ka baqaya (ledgerPendingAsOf), defaulters = baqaya > 0 */
+  const [selMonth, setSelMonth] = useState(FEE_MONTHS[new Date().getMonth()]);
+  const [selYear, setSelYear] = useState(String(new Date().getFullYear()));
+  const selM = FEE_MONTHS.indexOf(selMonth) + 1;
+  const selY = Number(selYear) || new Date().getFullYear();
+  const periods = useMemo(() => {
+    const back = new Date(selY, selM - 13, 1);
+    return ledgerPeriods(back.getMonth() + 1, back.getFullYear(), selM, selY);
+  }, [selM, selY]);
+  const { classes, studentsMap, allStudents, loading, error } = useLedgerReportData(periods);
+  const data = useMemo(() => {
+    const ym = `${selY}-${String(selM).padStart(2, '0')}`;
+    const monthKey = selY * 12 + selM;
+    const cutoff = `${ym}-${String(new Date(selY, selM, 0).getDate()).padStart(2, '0')}`;
+    const startOf = (x) => Number(x.startYear || x.year) * 12 + Number(x.startMonth || x.month);
+    const byClass = {};
+    const receipts = [];
+    let exp = 0, recv = 0, disc = 0, pend = 0, def = 0, paid = 0, n = 0;
+    allStudents.forEach(({ c, s, m }) => {
+      const recs = m.recs || [];
+      if (!recs.length) return;
+      n += 1;
+      let e = 0, r = 0;
+      recs.forEach(rec => {
+        if (startOf(rec) === monthKey) {
+          (rec.detailRows || []).forEach(row => {
+            if (isLedgerCarryRow(row)) return;
+            e += (+row.challanAmount || 0) - (+row.discount || 0);
+            disc += (+row.discount || 0);
+          });
+        }
+        const method = feeService.paymentMethodDisplay(rec.paymentMethod) || 'Cash';
+        ledgerInstallmentReceipts(rec).forEach(p => {
+          if (String(p.date || '').slice(0, 7) !== ym || !p.amount) return;
+          r += p.amount;
+          receipts.push({ name: s.name, father: s.father, cls: `${c.cls}/${c.sec}`, reg: s.reg, date: p.date, time: p.time, method, ref: `CH-${rec.id}/${p.no}`, amt: p.amount });
+        });
+      });
+      const net = [...ledgerPendingAsOf(recs, monthKey, cutoff).values()].reduce((a2, v) => a2 + v, 0);
+      if (net > 0) { pend += Math.round(net); def += 1; } else if (r > 0) paid += 1;
+      exp += e; recv += r;
+      const k = c.key;
+      byClass[k] = byClass[k] || { label: `${c.cls} ${c.sec}`, e: 0, r: 0 };
+      byClass[k].e += e; byClass[k].r += r;
+    });
+    const modes = repPayModesFromReceipts([{ payments: receipts.map(x => ({ method: x.method, amount: x.amt })) }]);
+    return {
+      totals: { exp, recv, pend, disc, adv: 0, def, paid, n },
+      modes, receipts,
+      sectionsData: classes.filter(c => (studentsMap[c.key] || []).length).map(c => byClass[c.key] || { label: `${c.cls} ${c.sec}`, e: 0, r: 0 }),
+    };
+  }, [allStudents, classes, studentsMap, selM, selY]);
+  const totals = data.totals;
   const real = totals.exp ? Math.round(totals.recv / totals.exp * 100) : 0;
-  const modes = useMemo(() => repPayModesFromReceipts(serverReceipts), [serverReceipts]);
+  const modes = data.modes;
   const modeTot = modes.reduce((a, m) => a + m.amt, 0) || 1;
-  const sectionsData = classes.filter(c => (studentsMap[c.key] || []).length).map(c => {
-    let e = 0, r = 0;
-    allStudents.forEach(x => { if (x.c.key === c.key) { e += x.m.payable; r += x.m.paid; } });
-    return { label: `${c.cls} ${c.sec}`, e, r };
-  });
+  const sectionsData = data.sectionsData;
   const maxE = Math.max(...sectionsData.map(s => s.e), 1);
 
   const downloadReport = (mode) => {
@@ -14255,14 +14370,7 @@ function ReportPanelSummary({ toast }) {
     openPrintReport(html, 'Collection vs Expected', toast, mode);
   };
   const downloadByMode = (mode, fmt) => {
-    const rows = [];
-    allStudents.forEach(({ c, s }) => {
-      paymentsFor(c.key, s.reg).forEach(p => {
-        if ((p.method || 'Cash') === mode) {
-          rows.push({ name: s.name, father: s.father, cls: `${c.cls}/${c.sec}`, reg: s.reg, date: p.date, time: p.time, method: p.method, ref: p.ref || p.txn || '—', amt: p.amount });
-        }
-      });
-    });
+    const rows = data.receipts.filter(x => (x.method || 'Cash') === mode);
     const html = buildRepPayModeHTML({ method: mode, rows, isBW: repStyle === 'bw', school });
     openPrintReport(html, `${mode} Collections`, toast, fmt);
   };
@@ -14273,6 +14381,8 @@ function ReportPanelSummary({ toast }) {
         <i className="fa-solid fa-circle-info"></i>
         <span>The <strong>collection summary</strong> compares expected (billed) revenue against actual receipts, shows realisation %, and breaks receipts down by payment mode.</span>
       </div>
+
+      <RepLoadState loading={loading} error={error} />
 
       {repKpiStrip([
         ['k-blue', 'fa-file-invoice-dollar', 'Expected Revenue', fmtRs(totals.exp), ''],
@@ -14285,13 +14395,17 @@ function ReportPanelSummary({ toast }) {
         <div className="fee-section-body">
           <div className="fee-filters">
             <div className="fee-field">
-              <span className="fee-label">Period</span>
+              <span className="fee-label">Month</span>
               <div className="fee-select-wrap">
-                <select className="fee-select" defaultValue={FEE_MONTHS[4]}>
-                  {FEE_MONTHS.map(m => <option key={m}>{m} 2026</option>)}
+                <select className="fee-select" value={selMonth} onChange={e => setSelMonth(e.target.value)}>
+                  {FEE_MONTHS.map(m => <option key={m}>{m}</option>)}
                 </select>
                 <i className="fa-solid fa-chevron-down"></i>
               </div>
+            </div>
+            <div className="fee-field">
+              <span className="fee-label">Year</span>
+              <input className="fee-input" type="number" value={selYear} onChange={e => setSelYear(e.target.value)} style={{ width: 110 }} />
             </div>
             <RepActions onPreview={() => downloadReport('preview')} onPdf={() => downloadReport('pdf')} />
           </div>
@@ -14449,6 +14563,79 @@ function ledgerPendingAsOf(recs, monthKey, cutoffISO) {
     out.set(name, (out.get(name) || 0) + pend);
     });
   });
+  return out;
+}
+
+/* Challan ki due date — na ho (multi-month) to issue date + 10 din. */
+function challanDueISO(rec) {
+  const d = String(rec?.dueDate || '').slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
+  const c = String(rec?.dateofCreattion || rec?.createdAt || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(c)) return '';
+  const dt = new Date(`${c}T00:00:00`);
+  dt.setDate(dt.getDate() + 10);
+  return localDateISO(dt);
+}
+
+/* AGING (asOf tak): ledgerPendingAsOf wala challan-chain, magar har challan ka baqaya do
+   hisson me — carried (purana, pehle wasool hota hai) aur apna (is challan ka bill).
+   Apna hissa is challan ki due date se, carried hissa us se purane challan ki due date se
+   (na ho to 30 din pehle) purana gina jata hai. Buckets: Current (due nahi guzri) / 1–30 /
+   31–60 / 61+ din. Returns { cur, d30, d60, d90, total }. */
+function ledgerAgingAsOf(recs, asOfISO) {
+  const out = { cur: 0, d30: 0, d60: 0, d90: 0, total: 0 };
+  const [ay, am] = String(asOfISO || '').split('-').map(Number);
+  if (!ay || !am) return out;
+  const monthKey = ay * 12 + am;
+  const startOf = (x) => Number(x.startYear || x.year) * 12 + Number(x.startMonth || x.month);
+  const list = (recs || [])
+    .filter(r => startOf(r) <= monthKey)
+    .sort((a, b) => (startOf(b) - startOf(a)) || (Number(b.id) - Number(a.id)));
+  const hpOf = (r) => Number(r.previousPendingorAdv ?? r.previousPendingOrAdv) || 0;
+  const asOfMs = new Date(`${asOfISO}T00:00:00`).getTime();
+  const put = (amt, dueISO) => {
+    if (amt <= 0) return;
+    const days = dueISO ? Math.floor((asOfMs - new Date(`${dueISO}T00:00:00`).getTime()) / 86400000) : 0;
+    if (days <= 0) out.cur += amt; else if (days <= 30) out.d30 += amt; else if (days <= 60) out.d60 += amt; else out.d90 += amt;
+    out.total += amt;
+  };
+  for (let i = 0; i < list.length; i++) {
+    const rec = list[i];
+    const rows = rec.detailRows || [];
+    const headWise = rows.some(r => !isLedgerCarryRow(r) && !feeService.isLateFineRow(r) && hpOf(r) !== 0);
+    let own = 0, carried = 0, recv = 0;
+    rows.forEach(r => {
+      if ((+r.challanAmount || 0) < 0 && isLedgerCarryRow(r)) return;
+      const mgr = r._mgrDisc != null ? +r._mgrDisc : (+r.discount || 0) - (r._recvFolded ? (+r.recvDiscount || 0) : 0);
+      let rv = 0, give = 0;
+      const insts = Array.isArray(r.installments) ? r.installments : [];
+      if (insts.length) {
+        insts.forEach(x => {
+          const d = String(x.receivedDate || '').slice(0, 10);
+          if (d && d > asOfISO) return;
+          rv += +x.receivedAmount || 0;
+          give += Math.max(0, +x.recvDiscount || 0);
+        });
+      } else {
+        const d = String(rec.receivedDate || '').slice(0, 10);
+        if (!d || d <= asOfISO) { rv = +r.receivedAmount || 0; give = Math.max(0, +r.recvDiscount || 0); }
+      }
+      recv += rv;
+      if (isLedgerCarryRow(r)) { if (!headWise) carried += (+r.challanAmount || 0) - mgr - give; return; }
+      own += (+r.challanAmount || 0) - mgr - give;
+      if (headWise) carried += hpOf(r);
+    });
+    const carriedOut = Math.max(0, carried - recv);
+    const ownOut = Math.max(0, own - Math.max(0, recv - carried));
+    const ownDue = challanDueISO(rec);
+    const olderDue = list[i + 1] ? challanDueISO(list[i + 1]) : (() => {
+      if (!ownDue) return '';
+      const d = new Date(`${ownDue}T00:00:00`); d.setDate(d.getDate() - 30); return localDateISO(d);
+    })();
+    put(Math.round(ownOut), ownDue);
+    put(Math.round(carriedOut), olderDue);
+    if (challanCarriesPrev(rec)) break;   // purane challans ka baqaya isi me carry
+  }
   return out;
 }
 
@@ -15133,7 +15320,16 @@ function ReportPanelDiscountGiven({ toast }) {
 /* ════════════ ADVANCE FEE PAYMENT REPORT ════════════
    Live snapshot from the transport/roster advance balance. */
 function ReportPanelAdvanceFee({ toast }) {
-  const { classes, studentsMap, headsMap } = useReportData();
+  /* REAL advance (roster ka `advance` nahi): ledger ke challans (12 mahine pehle se 3 mahine
+     aage tak) ka net baqaya — ledgerPendingAsOf (carry-aware) — MINUS ho to utna ADVANCE. */
+  const periods = useMemo(() => {
+    const now = new Date();
+    const back = new Date(now.getFullYear(), now.getMonth() - 12, 1);
+    const fwd = new Date(now.getFullYear(), now.getMonth() + 3, 1);
+    return ledgerPeriods(back.getMonth() + 1, back.getFullYear(), fwd.getMonth() + 1, fwd.getFullYear());
+  }, []);
+  const { classes, studentsMap, allStudents, loading, error } = useLedgerReportData(periods);
+  const { data: headsMap = {} } = useAsync(feeService.getFeeHeads, []);
   const repStyle = useContext(FeeReportStyleContext);
   const school = useContext(FeeReportBranchContext);
   const [openKey, setOpenKey] = useState(null);
@@ -15143,7 +15339,9 @@ function ReportPanelAdvanceFee({ toast }) {
     classes.forEach(c => {
       const monthlyFee = (headsMap[c.key] || []).reduce((a, h) => a + (+h.amt || 0), 0);
       (studentsMap[c.key] || []).forEach(s => {
-        const advance = +s.advance || 0;
+        const m = allStudents.find(x => x.c.key === c.key && x.s.reg === s.reg)?.m;
+        const net = m ? [...ledgerPendingAsOf(m.recs || [], 999999, '9999-12-31').values()].reduce((a2, v) => a2 + v, 0) : 0;
+        const advance = Math.max(0, -Math.round(net));
         if (advance <= 0) return;
         const monthsCovered = monthlyFee > 0 ? Math.floor(advance / monthlyFee) : 0;
         const remaining = Math.max(0, advance - monthlyFee);
@@ -15151,7 +15349,7 @@ function ReportPanelAdvanceFee({ toast }) {
       });
     });
     return out;
-  }, [classes, studentsMap, headsMap]);
+  }, [classes, studentsMap, headsMap, allStudents]);
 
   const totalStudents = useMemo(() => classes.reduce((a, c) => a + (studentsMap[c.key] || []).length, 0), [classes, studentsMap]);
   const advCount = rows.length;
@@ -15167,8 +15365,10 @@ function ReportPanelAdvanceFee({ toast }) {
     <>
       <div className="fee-info">
         <i className="fa-solid fa-circle-info"></i>
-        <span>Students who carry a positive advance balance on their roster record — how many months that advance can cover, and the balance left after one month's fee is drawn from it.</span>
+        <span>Students whose fee ledger shows an <b>advance</b> (paid more than billed) — how many months that advance can cover, and the balance left after one month's fee is drawn from it.</span>
       </div>
+
+      <RepLoadState loading={loading} error={error} />
 
       {repKpiStrip([
         ['k-blue', 'fa-users', 'Total Students', `${totalStudents}`, ''],
@@ -17397,7 +17597,9 @@ function FeeChallanSettings({ toast }) {
             />
             */}
 
-            {/* Next month receiving — part of the month-lock feature set (future month). */}
+            {/* Next Month Challan Receiving — COMMENTED OUT (user request). Ab har mahine receiving
+                ho sakti hai, challan bana ho ya na — shart sirf ye ke pending amount ho (Receive
+                Pending). Is liye next-month lock bhi hata diya (challanMonthLock).
             <SettingCard
               name="Next Month Challan Receiving"
               desc="Allow the counter to receive a challan from the month after the current one — advance payments."
@@ -17405,6 +17607,7 @@ function FeeChallanSettings({ toast }) {
               onToggle={() => set({ nextMonthChallan: !value.nextMonthChallan })}
               info="Controls the ERP's month lock for the NEXT calendar month (the immediate future month). ON: challans dated to the month after the current one can be generated / received — used for advance payments. OFF: the next month is locked and blocked with an explanation. This is how the ERP handles future-month challans, in place of a separate Future Month toggle."
             />
+            */}
 
           </div>
         </div>

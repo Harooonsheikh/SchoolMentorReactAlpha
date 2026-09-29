@@ -1512,7 +1512,12 @@ export function normalizeLedgerInstallments(challan) {
 }
 
 /* Nested installments → Receiving UI payment rows (Installment 1..N).
-   Group by installmentNo across heads; empty #1 (no money) skip. */
+   Group by SAVE-TIME (modifiedAt / createdAt, second tak), installmentNo par NAHI: server
+   naye receive ki raqam kisi head ke khaali purane slot (installmentNo 1) me bhar deta hai,
+   to slot-number se ek Pay Now do installments me bat jaata tha (2,000 + 5,000 ki jagah
+   6,000 + 1,000) aur session receipts dobara gin kar Received 14,000 ho jaata tha. Ek receive
+   call ke saare heads ek hi waqt save hote hain → ek installment. Waqt ke hisaab se 1..N.
+   Empty (no money) skip. */
 export function installmentsToPayments(challan) {
   if (!challan) return [];
   const groups = new Map();
@@ -1523,15 +1528,17 @@ export function installmentsToPayments(challan) {
       const recv = Number(inst.receivedAmount) || 0;
       const disc = Number(inst.recvDiscount) || 0;
       if (recv === 0 && disc === 0) return;
-      const no = Number(inst.installmentNo) || 0;
+      const ts = String(inst.modifiedAt || inst.createdAt || '').slice(0, 19);
+      const no = ts || `no-${Number(inst.installmentNo) || 0}`;
       if (!groups.has(no)) {
         /* Method me |#GD# marker ho sakta hai — UI ko clean name chahiye. */
         const rawMethod = String(challan.paymentMethod || 'Cash');
         const gdAt = rawMethod.indexOf('|#GD#');
         const cleanMethod = (gdAt >= 0 ? rawMethod.slice(0, gdAt) : rawMethod).trim() || 'Cash';
         groups.set(no, {
-          id: `inst-${challan.id}-${no}`,
-          installmentNo: no,
+          _ts: ts,
+          _slot: Number(inst.installmentNo) || 0,
+          time: ts ? ts.slice(11, 16) : '',
           date: String(inst.receivedDate || challan.receivedDate || '').slice(0, 10),
           method: cleanMethod,
           amount: 0,
@@ -1554,7 +1561,11 @@ export function installmentsToPayments(challan) {
       if (inst.receivedDate) p.date = String(inst.receivedDate).slice(0, 10);
     });
   });
-  if (groups.size) return [...groups.values()].sort((a, b) => a.installmentNo - b.installmentNo);
+  if (groups.size) {
+    return [...groups.values()]
+      .sort((a, b) => (a._ts && b._ts ? a._ts.localeCompare(b._ts) : a._slot - b._slot))
+      .map((p, i) => ({ ...p, id: `inst-${challan.id}-${i + 1}`, installmentNo: i + 1 }));
+  }
 
   /* Legacy / no nested installments: one synthetic payment from detail totals. */
   const perHead = {};
