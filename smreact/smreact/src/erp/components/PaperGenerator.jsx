@@ -3914,7 +3914,26 @@ const setSubjLine = (ci, si, l) => {
           <div key={i} style={{ fontSize: 12, color: '#334155', marginBottom: 8 }}>{mkTag}{pgRoman(i)}. {pgRowText(r)}</div>
         ));
       }
-      /* Generic: essays, stories, letters, applications, paragraphs, wordSentences,
+      if (k === 'paragraph') {
+        /* Paragraph rows me DO fields: `topic` (title) aur `paragraph` (body).
+           pgRowText sirf topic uthata tha; body kabhi dikhta hi nahi tha. Ab
+           dono dikhao — title line, uske neeche paragraph body. Agar dono same
+           hon (test data jaisa "asdf"/"asdf") to body repeat na karo. */
+        return rows.map((r, i) => {
+          const title = pgStripHtml(r.topic || r.title || r.question || r.mainQuestion);
+          const bodyText = pgStripHtml(r.paragraph);
+          return (
+            <div key={i} style={{ fontSize: 12, color: '#334155', marginBottom: 8 }}>
+              {mkTag}{pgRoman(i)}. {title}
+              {bodyText && bodyText !== title && (
+                <div style={{ marginTop: 4, lineHeight: 1.6 }}>{bodyText}</div>
+              )}
+              <AnswerLines />
+            </div>
+          );
+        });
+      }
+      /* Generic: essays, stories, letters, applications, wordSentences,
         questionAns, longQuestions, punctuation, circleCorrectWord, fallback. */
       return rows.map((r, i) => (
         <div key={i} style={{ fontSize: 12, color: '#334155', marginBottom: 8 }}>
@@ -4010,6 +4029,15 @@ const setSubjLine = (ci, si, l) => {
           rows.map((r, i) => `<tr><td>${pgRoman(i)}</td><td>${pgEsc(pgRowText(r))}</td><td><span class="tf-box"></span></td><td><span class="tf-box"></span></td><td style="text-align:center">[${mk}]</td></tr>`).join('') + '</table>';
       } else if (k === 'fillintheblank' || k === 'filltheblank' || k === 'fillintheblanks') {
         body = rows.map((r, i) => `<div class="write-item">${mkTag}${pgRoman(i)}. ${pgEsc(pgRowText(r))}</div>`).join('');
+      } else if (k === 'paragraph') {
+        /* Preview jaisa hi: har paragraph item ka topic (title) + paragraph (body). */
+        body = rows.map((r, i) => {
+          const title = pgStripHtml(r.topic || r.title || r.question || r.mainQuestion);
+          const bodyText = pgStripHtml(r.paragraph);
+          const bodyHtml = (bodyText && bodyText !== title)
+            ? `<div style="margin-top:4px;line-height:1.6">${pgEsc(bodyText)}</div>` : '';
+          return `<div class="write-item">${mkTag}${pgRoman(i)}. ${pgEsc(title)}${bodyHtml}${ansLines()}</div>`;
+        }).join('');
       } else {
         body = rows.map((r, i) => `<div class="write-item">${mkTag}${pgRoman(i)}. ${pgEsc(pgRowText(r))}${ansLines()}</div>`).join('');
       }
