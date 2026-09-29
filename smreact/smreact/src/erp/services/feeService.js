@@ -566,7 +566,8 @@ function mapFeeSettingsFromApi(row = {}) {
     ...clone(FEE_SETTINGS_DEFAULTS),
     id:                 Number(row.id ?? row.ID ?? 0) || 0,
     branchID:           Number(row.branchID ?? row.branchId ?? feeSettingsBranchID()) || 0,
-    showDiscount:       row.showDiscount ?? FEE_SETTINGS_DEFAULTS.showDiscount,
+    /* Column visibility — is branch ka local choice pehle (server par hamesha true jata hai). */
+    showDiscount:       readDiscountColumnLs() ?? row.showDiscount ?? FEE_SETTINGS_DEFAULTS.showDiscount,
     showPsd:            row.showPSDCode ?? row.showPsd ?? FEE_SETTINGS_DEFAULTS.showPsd,
     /* Show Bank Details On challan — backend get-all me ye field "bankDetails" ke
        naam se aata hai (bool). Sirf ASLI boolean ko authority maano; abhi tak wo
@@ -606,7 +607,7 @@ function blankFeeSettings() {
     ...clone(FEE_SETTINGS_DEFAULTS),
     id:               0,
     branchID:         feeSettingsBranchID(),
-    showDiscount:     false,
+    showDiscount:     readDiscountColumnLs() ?? false,
     showPsd:          false,
     showBankDetails:  false,
     prevMonthChallan: false,
@@ -629,7 +630,9 @@ function mapFeeSettingsToApi(settings = {}) {
   return {
     id,
     branchID:          Number(settings.branchID ?? feeSettingsBranchID()) || 0,
-    showDiscount:      settings.showDiscount !== false,
+    /* HAMESHA true — discount calculation toggle se azad (column choice local, dekho
+       readDiscountColumnLs). */
+    showDiscount:      true,
     showPSDCode:       settings.showPsd !== false,
     /* Bank details toggle — backend field ka naam "bankDetails" hai (get-all me
        wahi aata hai), is liye usi naam se bhejte hain. Purana naam bhi saath rakha
@@ -684,6 +687,21 @@ const FEATURE_TOGGLE_API_FIELDS = {
   advancePaymentReceiving: ['advancePaymentReceiving'],
   psidInstallments:        ['psidInstallmentPayments', 'psidInstallments'],
 };
+/* "Show Discount on Challan" — SERVER ko hamesha TRUE jaata hai (discount calculation kabhi
+   toggle par depend na kare; OFF par server multi-month challan ka discount 0 save kar raha
+   tha). User ka ON/OFF sirf Disc COLUMN chhupata hai — wo choice yahan (branch-wise
+   localStorage) rehti hai. Na mile to server ki value. */
+function discountColumnLsKey() { return `fee.showDiscountColumn.${feeSettingsBranchID()}`; }
+function readDiscountColumnLs() {
+  try {
+    const v = localStorage.getItem(discountColumnLsKey());
+    return v === 'true' ? true : v === 'false' ? false : null;
+  } catch { return null; }
+}
+function writeDiscountColumnLs(on) {
+  try { localStorage.setItem(discountColumnLsKey(), on === false ? 'false' : 'true'); } catch { /* ignore */ }
+}
+
 function featureTogglesLsKey() { return `fee.featureToggles.${feeSettingsBranchID()}`; }
 function readFeatureTogglesLs() {
   try {
@@ -731,8 +749,24 @@ export async function getFeeSettings() {
     if (rows.length && apiRowHasFeatureToggle(rows[0], k)) return; // backend authority
     if (ft && typeof ft[k] === 'boolean') settings[k] = ft[k];
   });
+  /* SAB branches: server par showDiscount=false ho (purana record) to ek dafa khud TRUE
+     save kar do — discount calculation toggle se azad rahe (OFF par server multi-month
+     challan ka discount 0 kar raha tha). User ki OFF choice column ke liye local rehti
+     hai (Disc column chhupa hi rahe). Baaki settings wahi — sirf showDiscount badalta. */
+  if (rows.length && rows[0].showDiscount === false && !discountHealDone.has(branchID)) {
+    discountHealDone.add(branchID);
+    if (readDiscountColumnLs() == null) writeDiscountColumnLs(false);
+    settings.showDiscount = readDiscountColumnLs() ?? false;
+    fetch(buildUrl('/api/FeeChallanSettings/save'), {
+      method: 'POST',
+      headers: { Accept: '*/*', 'Content-Type': 'application/json' },
+      body: JSON.stringify(mapFeeSettingsToApi(settings)),   // showDiscount: true
+    }).catch(() => { discountHealDone.delete(branchID); });
+  }
   return settings;
 }
+/* Is session me kin branches ka showDiscount server par TRUE kiya ja chuka. */
+const discountHealDone = new Set();
 
 /* Kaunse challan ban chuke hain — ye khali Set se shuru hota hai aur screen
    apne live data se bharti hai. Pehle yahan mock ka seed tha, is liye kuch
@@ -899,6 +933,8 @@ export async function saveFeeSettings(payload) {
   /* Feature controls (Multiple Receiving / Advance Payment Receiving / PSID) bhi
      localStorage me persist — backend in fields ko store karne lage tak yahi authority. */
   writeFeatureTogglesLs(payload);
+  /* Show Discount toggle = sirf Disc column (local); server ko hamesha true. */
+  writeDiscountColumnLs(payload?.showDiscount !== false);
   const body = mapFeeSettingsToApi(payload);
   const res = await fetch(buildUrl('/api/FeeChallanSettings/save'), {
     method: 'POST',
@@ -1398,6 +1434,8 @@ export function invalidateMonthChallans(month, year) {
   // ledgerRangeCache is declared further down this file; by the time this
   // function actually runs (a mutation completing) the module has finished
   // initializing, so the reference is always live.
+  // Pending list (/pending) bhi har write ke baad badal sakti hai — saath saaf.
+  pendingCache.clear();
   if (month == null || year == null) {
     monthChallansCache.clear();
   } else {
@@ -1636,6 +1674,42 @@ export async function getStudentChallans(studentId, month, year) {
    getMonthChallans so those collapse into one branch-wide request instead
    of 4, and clear it on the same mutations. */
 const ledgerRangeCache = new Map(); // `${branchID}|${fromMonth}|${fromYear}|${toMonth}|${toYear}` -> promise
+
+/* Branch ke saare PENDING challans (baqaya > 0) — ek hi call me poori branch.
+   GET /api/BranchLedger/pending?branchId=…[&studentId|&gradeId&sectionId][&includeCarried]
+   Fee Receiving tabs isay load karte hain taake jis student ka is mahine challan na bana ho
+   magar purana baqaya ho, us se bhi wasooli ho sake. includeCarried=false (default): jin
+   challans ka baqaya agle challan me carry ho chuka, wo nahi aate (wahan wasool hota hai).
+   Returns { count, students, totalPending, challans: [...] }. */
+const pendingCache = new Map();
+export async function getPendingChallans({ studentId, gradeId, sectionId, includeCarried = false, fresh = false } = {}) {
+  const branchID = Number(sessionStorage.getItem('branchID')) || 1;
+  const qs = new URLSearchParams({ branchId: String(branchID) });
+  if (studentId != null && studentId !== '') qs.set('studentId', String(studentId));
+  if (gradeId != null && gradeId !== '') qs.set('gradeId', String(gradeId));
+  if (sectionId != null && sectionId !== '') qs.set('sectionId', String(sectionId));
+  if (includeCarried) qs.set('includeCarried', 'true');
+  const key = qs.toString();
+  if (!fresh && pendingCache.has(key)) return pendingCache.get(key);
+  const promise = (async () => {
+    const res = await fetch(buildUrl(`/api/BranchLedger/pending?${key}`), { headers: { Accept: '*/*' } });
+    const json = await res.json().catch(() => null);
+    if (!res.ok || json?.success === false) {
+      throw new Error(apiMessage(json) || 'Could not load pending challans');
+    }
+    const d = json?.data || {};
+    return {
+      count: Number(d.count) || 0,
+      students: Number(d.students) || 0,
+      totalPending: Number(d.totalPending) || 0,
+      challans: Array.isArray(d.challans) ? d.challans : [],
+    };
+  })();
+  pendingCache.set(key, promise);
+  promise.catch(() => { pendingCache.delete(key); });
+  return promise;
+}
+export function invalidatePendingChallans() { pendingCache.clear(); }
 
 /* Every challan in a month range, whole branch, one call.
    GET /api/BranchLedger/get-by-month-range — months are 1-based. */

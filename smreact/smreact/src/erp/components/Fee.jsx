@@ -1180,7 +1180,8 @@ function challanMonthLock(monthIdx, year, settings) {
   const now = new Date();
   const diff = (Number(year) * 12 + monthIdx) - (now.getFullYear() * 12 + now.getMonth());
   if (diff === -1 && !settings.prevMonthChallan) {
-    return 'Previous month is locked — turn on "Previous Month Challan Receiving" in Fee Challan Settings to allow it.';
+    /* Toggle UI se comment-out hai — message usay point na kare. */
+    return 'Previous month is locked — receive its pending dues from the current month (Receive Pending).';
   }
   if (diff === 1 && !settings.nextMonthChallan) {
     return 'Next month is locked — turn on "Next Month Challan Receiving" in Fee Challan Settings to allow it.';
@@ -1420,7 +1421,7 @@ function FamilyTreeChallansList({ toast }) {
         const key = `${f.key}|${ch.reg}|${mIdx}`;
         try {
           const rows = await feeService.getStudentChallans(ch.applicantsID, mIdx + 1, appliedYear);
-          const rec = Array.isArray(rows) && rows.length ? rows[0] : null;
+          const rec = pickMonthChallan(rows, mIdx + 1, Number(appliedYear));
           return { key, fig: rec ? familyChildFigures(rec) : null, id: rec?.id ?? null, rec };
         } catch (e) {
           return { key, fig: null, id: null, rec: null };
@@ -1431,7 +1432,16 @@ function FamilyTreeChallansList({ toast }) {
       const rmap = {};
       const gset = new Set();
       results.forEach(({ key, fig, id, rec }) => {
-        if (fig) { fmap[key] = fig; gset.add(key); if (id != null) imap[key] = id; if (rec) rmap[key] = rec; }
+        if (!fig) return;
+        fmap[key] = fig;
+        if (rec) rmap[key] = rec;
+        /* Pichhle mahine se shuru hua multi-month challan (Sep–Nov ka Oct) — is mahine ko
+           "generated" NAHI ginte, taake Oct me naya challan Create ho sake (Individual
+           jaisa). Figures (fmap/rmap) dikhte rahein; id map me NAHI — warna Oct ka Delete
+           September wala challan mita deta. */
+        if (rec && isMultiMonthNonStartView(rec, mIdx + 1, Number(appliedYear))) return;
+        gset.add(key);
+        if (id != null) imap[key] = id;
       });
       setFigMap(fmap);
       setIdMap(imap);
@@ -1672,7 +1682,7 @@ function FamilyTreeChallansList({ toast }) {
     let rec = null;
     try {
       const rows = await feeService.getStudentChallans(ch.applicantsID, monthIdx + 1, appliedYear);
-      rec = Array.isArray(rows) && rows.length ? rows[0] : null;
+      rec = pickMonthChallan(rows, monthIdx + 1, Number(appliedYear));
     } catch (e) { /* ignore */ }
     if (!rec) { toast(`No ${appliedMonth} challan for ${ch.name} — generate it first`, 'warning'); return; }
     const student = {
@@ -1698,7 +1708,7 @@ function FamilyTreeChallansList({ toast }) {
     let rec = null;
     try {
       const rows = await feeService.getStudentChallans(ch.applicantsID, monthIdx + 1, appliedYear);
-      rec = Array.isArray(rows) && rows.length ? rows[0] : null;
+      rec = pickMonthChallan(rows, monthIdx + 1, Number(appliedYear));
     } catch (e) { /* ignore */ }
     if (!rec) { toast(`No ${appliedMonth} challan for ${ch.name} — generate it first`, 'warning'); return; }
     setDownloadCtx({
@@ -2069,6 +2079,14 @@ function FamilyTreeChallansList({ toast }) {
                                       <i className="fa-solid fa-trash-can"></i>
                                     </button>
                                   </Tooltip>
+                                ) : chRec ? (
+                                  /* Pichhle mahine ka multi-month challan is mahine ko cover karta hai —
+                                     Delete nahi (wo us mahine ka challan hai), sirf Regenerate. */
+                                  <Tooltip text={`Regenerate ${appliedMonth} challan for ${ch.name} (currently covered by ${ledgerMonthLabel(chRec)} challan)`}>
+                                    <button className="fee-iconbtn green" onClick={() => openIndivGen(f, ch)}>
+                                      <i className="fa-solid fa-rotate"></i>
+                                    </button>
+                                  </Tooltip>
                                 ) : (
                                   <Tooltip text={`Generate family challan for ${ch.name}`}>
                                     <button className="fee-iconbtn green" onClick={() => openIndivGen(f, ch)}>
@@ -2360,6 +2378,8 @@ function FeeChallansList({ toast }) {
   /* Pichle mahino ka baqaya (dues) / advance — { [studentID]: { dues, advance } }.
      Isse current month me challan banane se PEHLE hi total dues dikh jaate hain. */
   const [prevOutMap, setPrevOutMap] = useState({});
+  /* Covering multi-month challans (Sep–Nov ka Oct view) — generated nahi, sirf display. */
+  const [coverMap, setCoverMap] = useState({});
   const monthIdx = FEE_MONTHS.indexOf(appliedMonth);
   const keyOf = (classKey, reg) => `${classKey}|${reg}|${monthIdx}`;
 
@@ -2377,16 +2397,25 @@ function FeeChallansList({ toast }) {
       });
       const set = new Set();
       const map = {};
+      /* Multi-month challan jo PICHHLE mahine se shuru hua (Sep–Nov ka Oct) — is mahine ko
+         "generated" NAHI ginte, taake Oct me naya challan Create ho sake (user ki marzi).
+         Us ke figures (advance waghera) phir bhi row me dikhein — coverMap se. */
+      const cover = {};
       rows.forEach(ch => {
         const loc = byStudentId.get(String(ch.studentID));
         const classKey = loc ? loc.classKey : `g${ch.gradeID}-s${ch.sectionID}`;
         const reg = loc ? loc.reg : String(ch.registrationNumber || '');
         const k = `${classKey}|${reg}|${mIdx}`;
+        if (isMultiMonthNonStartView(ch, mIdx + 1, Number(appliedYear))) {
+          cover[k] = feeService.withPersistedGiveDisc(ch);
+          return;
+        }
         set.add(k);
         map[k] = feeService.withPersistedGiveDisc(ch);
       });
       setGenSet(set);
       setChallanMap(map);
+      setCoverMap(cover);
 
       /* ── Pichhle mahino ka baqaya, RUN TIME par ──
          Har student ka SABSE RECENT purana challan liya jaata hai (usi me pehle ka
@@ -2404,12 +2433,28 @@ function FeeChallansList({ toast }) {
         const prevRows = await feeService.getLedgerRange(fromM, fromY, toM, toY);
         /* Running-ledger — stale stored Previous Pending se bachne ke liye. */
         prevOut = prevOutFromLedgerRows(prevRows, mIdx + 1, appliedYear);
+        /* Covering (Sep–Nov ka Nov) challan jis ka baqaya baad wala (Oct) challan pehle hi
+           CARRY kar chuka — row me us ke figures mat dikhao (dues double: 16,000 + advance
+           −4,000). Row pichhle baqaye (prevOut: 12,000) par chale. */
+        const prior = priorChallansByStudent(prevRows, mIdx + 1, appliedYear);
+        const cover2 = { ...cover };
+        let coverDropped = false;
+        Object.keys(cover2).forEach(k => {
+          const cr = cover2[k];
+          const latest = (prior[String(cr.studentID)] || [])[0];
+          if (!latest) return;
+          const ls = Number(latest.startYear || latest.year) * 12 + Number(latest.startMonth || latest.month);
+          const cs = Number(cr.startYear || cr.year) * 12 + Number(cr.startMonth || cr.month);
+          if (ls > cs && challanCarriesPrev(latest)) { delete cover2[k]; coverDropped = true; }
+        });
+        if (coverDropped) setCoverMap(cover2);
       } catch (e) { /* previous dues optional — na mile to 0 hi rahenge */ }
       setPrevOutMap(prevOut);
     } catch (e) {
       toast(e.message || 'Could not load challans', 'error');
       setGenSet(new Set());
       setChallanMap({});
+      setCoverMap({});
       setPrevOutMap({});
     }
   }, [studentsMap, appliedMonth, appliedYear, toast]);
@@ -3279,7 +3324,8 @@ function FeeChallansList({ toast }) {
                           const generated = isGenerated(c.key, s.reg);
                           /* Generated → figures from the real challan detailRows;
                              otherwise fall back to the student roster values. */
-                          const rec = generated ? challanMap[keyOf(c.key, s.reg)] : null;
+                          /* Covering (Sep–Nov ka Oct) challan: generated nahi (Create khula), magar figures dikhein. */
+                          const rec = generated ? challanMap[keyOf(c.key, s.reg)] : (coverMap[keyOf(c.key, s.reg)] || null);
                           /* Challan abhi nahi bana → pichhle mahino ka live baqaya dikhao
                              (roster ke stale 0 ki jagah), taake dues turant nazar aayein. */
                           const prevOut = prevOutMap[String(s.studentID)] || null;
@@ -3388,6 +3434,14 @@ function FeeChallansList({ toast }) {
                                   <Tooltip text={`Delete ${appliedMonth} challan for ${s.name}`}>
                                     <button className="fee-iconbtn danger" onClick={() => requestDeleteStudentChallan(c, s)}>
                                       <i className="fa-solid fa-trash-can"></i>
+                                    </button>
+                                  </Tooltip>
+                                ) : rec ? (
+                                  /* Pichhle mahine ka multi-month challan (Sep–Nov) is mahine ko cover
+                                     karta hai — Delete nahi (wo September ka challan hai), sirf Regenerate. */
+                                  <Tooltip text={`Regenerate ${appliedMonth} challan for ${s.name} (currently covered by ${ledgerMonthLabel(rec)} challan)`}>
+                                    <button className="fee-iconbtn green" onClick={() => openIndivGen(c, s)}>
+                                      <i className="fa-solid fa-rotate"></i>
                                     </button>
                                   </Tooltip>
                                 ) : (
@@ -5126,6 +5180,16 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast, onDownloadPayment, onE
      ledger ki asli receiving history dikhati hain — koi save/receive hisaab inse
      nahi badalta. */
   const installmentCount = (payments || []).length;
+  /* View (Transaction Details): "Last Received" column = SIRF aakhri receiving (save-time se
+     pehchani, slip jaisa) — 3,000 pehle Inst 1 me dikh chuka, yahan sirf 1,000. */
+  const lastRecvByHead = {};
+  if (viewOnly) {
+    (latestReceivingSlipRows(challan) || []).forEach(x => {
+      lastRecvByHead[String(x.name).trim().toLowerCase()] = (lastRecvByHead[String(x.name).trim().toLowerCase()] || 0) + (x.recv || 0);
+    });
+  }
+  const lastRecvOf = (name) => +lastRecvByHead[String(name || '').trim().toLowerCase()] || 0;
+  const lastRecvTotal = Object.values(lastRecvByHead).reduce((a, v) => a + (+v || 0), 0);
   /* Fee Settings → Multiple Receiving. OFF hone par ek challan par sirf EK hi
      installment jaiz hai — jaise hi koi prior receipt maujood ho (session payments
      ya persist-shuda ledger wasooli, dono cover), doosri receiving round har jagah
@@ -5436,7 +5500,8 @@ if (!anyHeadRecv && !anyGiveDisc) {
                   {showGiveDisc && (
                     <th className="fee-right"><span className="flow-op">=</span> Final Net Payable</th>
                   )}
-                  <th className="fee-center"><span className="flow-op">−</span> Pay Now{!viewOnly ? ` (Installment ${installmentCount + 1})` : ''}</th>
+                  {/* View mode me ye column naya payment nahi — sab installments ka JAMA hai. */}
+                  <th className="fee-center"><span className="flow-op">−</span> {viewOnly ? 'Last Received' : `Pay Now (Installment ${installmentCount + 1})`}</th>
                   <th className="fee-right"><span className="flow-op">=</span> Remaining</th>
                 </tr>
               </thead>
@@ -5483,7 +5548,7 @@ if (!anyHeadRecv && !anyGiveDisc) {
                         baqaya (Final − paid) par cap (max) hota hai. */}
                     <td className="fee-center">
                       {viewOnly ? (
-                        <span className="fee-paid-amt">{money(r.paid)}</span>
+                        <span className="fee-paid-amt">{money(lastRecvOf(r.name))}</span>
                       ) : r.isCredit ? (
                         /* Credit head — yahan collect nahi hota; credit total se apply hota. */
                         <span className="fee-cell-grey">—</span>
@@ -5638,7 +5703,7 @@ if (!anyHeadRecv && !anyGiveDisc) {
                   })}
                   {showGiveDisc && <td className="fee-center">{money(flowGiveDisc)}</td>}
                   {showGiveDisc && <td className="fee-right">{money(flowFinal)}</td>}
-                  <td className="fee-center">{money(viewOnly ? alreadyPaid : receivingNow)}</td>
+                  <td className="fee-center">{money(viewOnly ? lastRecvTotal : receivingNow)}</td>
                   <td className="fee-right">{money(remainAfter)}</td>
                 </tr>
               </tfoot>
@@ -5648,7 +5713,13 @@ if (!anyHeadRecv && !anyGiveDisc) {
             <i className="fa-solid fa-circle-info"></i>
             <span>
               Previous Dues + This Month&apos;s Challan − Discount = Net Payable
-              {showGiveDisc ? ' · Net Payable − Give Discount = Final Net Payable · Final Net Payable − Pay Now = Remaining' : ' · Net Payable − Pay Now = Remaining'}
+              {(() => {
+                if (viewOnly) return ' · Last Received = latest receiving only · Remaining = balance after all installments';
+                const payLbl = 'Pay Now';
+                return showGiveDisc
+                  ? ` · Net Payable − Give Discount = Final Net Payable · Final Net Payable − ${payLbl} = Remaining`
+                  : ` · Net Payable − ${payLbl} = Remaining`;
+              })()}
             </span>
           </div>
 
@@ -5968,6 +6039,48 @@ function installmentSlipRows(challan, payments, payment) {
     let before = (+r.challanAmount || 0) - mgr + (feeHeadPrev(r) || 0);
     earlier.forEach(p => { before -= pick(p.perHead, name) + Math.max(0, pick(p.giveDisc, name)); });
     out.push({ name, std: Math.round(before), disc: Math.round(disc), recv: Math.round(recv), prev: 0 });
+  });
+  return out.length ? out : null;
+}
+
+/* AAKHRI RECEIVING ki slip (pichhle challan par — list ka Download). Installment NUMBER
+   par nahi (server khaali purane slot me bhar deta hai, e.g. Others Inst 1 me) — ek receive
+   call ke saare heads ek hi waqt save hote hain, is liye installment ka save-time
+   (modifiedAt / createdAt, second tak) "ek receiving" pehchanta hai:
+     Std       = us receiving se PEHLE ka baqaya (challan − manager disc + carried prev −
+                 pehle ki receivings ka received + give)
+     Discount  = us receiving ki Give Discount
+     Received  = us receiving me liya
+     Remaining = Std − Discount − Received (minus = advance)
+   Installments na hon (purana record) to null (caller fallback). */
+function latestReceivingSlipRows(challan) {
+  const rows = challan && Array.isArray(challan.detailRows) ? challan.detailRows : null;
+  if (!rows) return null;
+  const tsOf = (inst) => String(inst.modifiedAt || inst.createdAt || '').slice(0, 19);
+  const hit = (inst) => (+inst.receivedAmount || 0) !== 0 || (+inst.recvDiscount || 0) > 0;
+  let latest = '';
+  rows.forEach(r => (r.installments || []).forEach(inst => {
+    if (!hit(inst)) return;
+    const t = tsOf(inst);
+    if (t > latest) latest = t;
+  }));
+  if (!latest) return null;
+  const out = [];
+  rows.forEach(r => {
+    if ((+r.challanAmount || 0) < 0 && isLedgerCarryRow(r)) return;   // advance-consumption row
+    let recvNow = 0, discNow = 0, before = 0;
+    (r.installments || []).forEach(inst => {
+      if (!hit(inst)) return;
+      const t = tsOf(inst);
+      const recv = +inst.receivedAmount || 0;
+      const give = Math.max(0, +inst.recvDiscount || 0);
+      if (t === latest) { recvNow += recv; discNow += give; }
+      else if (t < latest) before += recv + give;
+    });
+    if (!recvNow && !discNow) return;
+    const mgr = r._mgrDisc != null ? +r._mgrDisc : (+r.discount || 0) - (r._recvFolded ? (+r.recvDiscount || 0) : 0);
+    const std = (+r.challanAmount || 0) - mgr + (feeHeadPrev(r) || 0) - before;
+    out.push({ name: r.subHead || r.head || '', std: Math.round(std), disc: Math.round(discNow), recv: Math.round(recvNow), prev: 0 });
   });
   return out.length ? out : null;
 }
@@ -6451,6 +6564,15 @@ function isMultiMonthNonStartView(rec, month, year) {
   return (Number(year) * 12 + Number(month)) > (sy * 12 + sm);
 }
 
+/* Ek student ke is mahine ke challans me se ASLI is-mahine wala chuno. Sep–Nov (3 months)
+   challan Oct/Nov me bhi aata hai; Oct me alag challan ban jaye to wahi pehle — covering
+   challan sirf tab jab koi apna na ho. */
+function pickMonthChallan(rows, month, year) {
+  const list = Array.isArray(rows) ? rows.filter(Boolean) : [];
+  if (!list.length) return null;
+  return list.find(r => !isMultiMonthNonStartView(r, month, year)) || list[0];
+}
+
 /* Running-ledger previous. viewMonth/viewYear: covering multi-month challans skip. */
 function prevOutFromLedgerRows(prevRows, viewMonth = null, viewYear = null) {
   /* SIRF aggregate carry rows ("Previous Pending" / arrear) — Launch Setup /
@@ -6460,8 +6582,14 @@ function prevOutFromLedgerRows(prevRows, viewMonth = null, viewYear = null) {
      partial receive ke baad next month Advance (−ve) dikhta tha, Dues nahi. */
   const isPrev = (r) => /previous\s*pending|arrears?/i.test(String(r.subHead || r.head || ''));
   const byStudent = new Map();
+  /* View mahine ko cover karne wale (Sep–Nov ka Nov) challans jo skip hue — student-wise. */
+  const skippedCover = new Map();
   (prevRows || []).forEach(r => {
-    if (viewMonth != null && viewYear != null && ledgerCoversMonth(r, viewMonth, viewYear)) return;
+    if (viewMonth != null && viewYear != null && ledgerCoversMonth(r, viewMonth, viewYear)) {
+      const sid = String(r.studentID);
+      (skippedCover.get(sid) || skippedCover.set(sid, []).get(sid)).push(r);
+      return;
+    }
     const id = String(r.studentID);
     if (!byStudent.has(id)) byStudent.set(id, []);
     byStudent.get(id).push(r);
@@ -6475,8 +6603,29 @@ function prevOutFromLedgerRows(prevRows, viewMonth = null, viewYear = null) {
        head ke naam se jama — pichhla baqaya apne asli heads me taqseem ho kar carry ho.
        Aggregate "Previous Pending" rows skip (warna double-count). Negative = advance. */
     const headNet = new Map();
+    const startOf = (x) => Number(x.startYear || x.year) * 12 + Number(x.startMonth || x.month);
+    /* Is student ke multi-month challans (skip hue + shamil dono) — jin ki range me baad wala
+       challan ka mahina aata ho (Sep–Nov ke andar Oct) aur wo us ka baqaya carry kare. */
+    const covers = [...(skippedCover.get(id) || []), ...recs].filter(isMultiMonthChallan);
+    const endOf = (x) => Number(x.endYear || x.startYear || x.year) * 12 + Number(x.endMonth || x.startMonth || x.month);
     sorted.forEach(rec => {
       const rows = rec.detailRows || [];
+      /* Skip hue covering challan (Sep–Nov) ka baqaya agar BAAD wala challan (Oct) head-wise
+         previousPendingorAdv me CARRY karta hai, to us challan ka carry hi opening balance —
+         warna Oct par us baqaye ki wasooli (5,000) bina bill ke gin kar phantom ADVANCE
+         (−4,000) banta tha. Per-head bhi usi carry se shuru. */
+      const hpOf = (r) => Number(r.previousPendingorAdv ?? r.previousPendingOrAdv) || 0;
+      const hpSum = rows.filter(r => !isPrev(r)).reduce((a, r) => a + hpOf(r), 0);
+      if (hpSum !== 0 && covers.some(cv => cv !== rec && startOf(cv) < startOf(rec) && startOf(rec) <= endOf(cv))) {
+        running = hpSum;
+        first = false;
+        headNet.clear();
+        rows.forEach(r => {
+          if (isPrev(r)) return;
+          const nm = String(r.subHead || r.head || '').trim();
+          if (nm && hpOf(r)) headNet.set(nm, (headNet.get(nm) || 0) + hpOf(r));
+        });
+      }
       const carry = rows.filter(isPrev).reduce((a, r) => a + ((+r.challanAmount || 0) - (+r.discount || 0)), 0);
       const newBilled = rows.filter(r => !isPrev(r)).reduce((a, r) => a + ((+r.challanAmount || 0) - (+r.discount || 0)), 0);
       const received = rows.reduce((a, r) => a + (+r.receivedAmount || 0), 0);
@@ -6827,6 +6976,28 @@ function FeeReceivingIndividual({ toast }) {
   const monthIdx = FEE_MONTHS.indexOf(appliedMonth);
   const keyOf = (classKey, reg) => `${classKey}|${reg}|${monthIdx}`;
 
+  /* Branch ke PENDING challans — GET /pending?branchId (poori branch EK call, fastest).
+     { [studentID]: [challan…] } naya-pehle. Jis student ka is mahine challan na bana ho
+     magar purana baqaya (carry na hua) ho, us se bhi yahin wasooli ho sake. */
+  const [pendingByStudent, setPendingByStudent] = useState({});
+  /* { [studentID]: [pichhle challans, naya-pehle] } — loadChallans ke ledger-range se. */
+  const [priorByStudent, setPriorByStudent] = useState({});
+  const loadPending = useCallback(async (fresh = false) => {
+    try {
+      const p = await feeService.getPendingChallans({ fresh });
+      const m = {};
+      p.challans.forEach(ch => { const k = String(ch.studentID); (m[k] = m[k] || []).push(ch); });
+      Object.values(m).forEach(list => list.sort((a, b) =>
+        (Number(b.startYear || b.year) * 12 + Number(b.startMonth || b.month)) -
+        (Number(a.startYear || a.year) * 12 + Number(a.startMonth || a.month))));
+      setPendingByStudent(m);
+    } catch (e) { /* pending optional — na mile to purana behaviour */ }
+  }, []);
+  useEffect(() => { loadPending(); }, [loadPending]);
+  /* Aaj ke mahine se PEHLE ka view = previous month → wahan Receive band (baqaya
+     current view me Pending se wasool hota hai). */
+  const isPastView = (Number(appliedYear) * 12 + monthIdx) < (today.getFullYear() * 12 + today.getMonth());
+
   const loadChallans = useCallback(async () => {
     if (!studentsMap || Object.keys(studentsMap).length === 0) return;
     const mIdx = FEE_MONTHS.indexOf(appliedMonth);
@@ -6844,6 +7015,10 @@ function FeeReceivingIndividual({ toast }) {
         const reg = loc ? loc.reg : String(ch.registrationNumber || '');
         const k = `${classKey}|${reg}|${mIdx}`;
         set.add(k);
+        /* Sep–Nov challan ke saath Oct ka apna challan bhi ho to Oct wala hi receive ho —
+           covering challan pehle se map me apne wale ko overwrite na kare. */
+        const covering = isMultiMonthNonStartView(ch, mIdx + 1, Number(appliedYear));
+        if (covering && map[k]) return;
         /* paymentMethod|#GD#… se Give Discount wapas fold — logout/login/device
            change par bhi Remaining/Discount sahi. */
         map[k] = feeService.withPersistedGiveDisc(ch);
@@ -6862,6 +7037,63 @@ function FeeReceivingIndividual({ toast }) {
         while (fromM <= 0) { fromM += 12; fromY -= 1; }
         const prevRows = await feeService.getLedgerRange(fromM, fromY, toM, toY);
         prevOut = prevOutFromLedgerRows(prevRows, mIdx + 1, appliedYear);
+        /* Har student ke PICHHLE challans (naya-pehle) — is mahine challan na ho to row me
+           aakhri challan ka Previous Pending / Received / Remaining / Status dikhane ke liye
+           (fully paid bhi — /pending paid challan wapas nahi deta). */
+        const prior = {};
+        const seenIds = new Set();
+        prevRows.forEach(r => {
+          if (!r || seenIds.has(r.id)) return;
+          seenIds.add(r.id);
+          if (ledgerCoversMonth(r, mIdx + 1, Number(appliedYear))) return;
+          const k = String(r.studentID);
+          (prior[k] = prior[k] || []).push(feeService.withPersistedGiveDisc(r));
+        });
+        Object.values(prior).forEach(list => list.sort((a, b) =>
+          (Number(b.startYear || b.year) * 12 + Number(b.startMonth || b.month)) -
+          (Number(a.startYear || a.year) * 12 + Number(a.startMonth || a.month)) || (Number(b.id) - Number(a.id))));
+        /* Range API installments nahi deti (dates chahiye: "is mahine kitna receive hua").
+           Jin pichhle challans ki aakhri receiving ISI view-mahine me hai, un ke mahine
+           get-with-installments se (cached, sirf chand calls) poora record lo. */
+        try {
+          const viewYM = `${appliedYear}-${String(mIdx + 1).padStart(2, '0')}`;
+          const need = new Map();   // "m|y" → true
+          Object.values(prior).forEach(list => list.forEach(r => {
+            if (String(r.receivedDate || '').slice(0, 7) !== viewYM) return;
+            need.set(`${Number(r.startMonth || r.month)}|${Number(r.startYear || r.year)}`, true);
+          }));
+          if (need.size) {
+            const full = new Map();
+            const got = await Promise.all([...need.keys()].map(k => {
+              const [m0, y0] = k.split('|').map(Number);
+              return feeService.getMonthChallans(m0, y0).catch(() => []);
+            }));
+            got.flat().forEach(r => { if (r && r.id != null) full.set(Number(r.id), r); });
+            Object.keys(prior).forEach(k => {
+              prior[k] = prior[k].map(r => (full.has(Number(r.id)) ? feeService.withPersistedGiveDisc(full.get(Number(r.id))) : r));
+            });
+          }
+        } catch (e) { /* installments optional — na milen to purana hisaab */ }
+        setPriorByStudent(prior);
+        /* Sep–Nov challan November ko cover karta hai, magar Oct ka challan us ka baqaya pehle
+           hi CARRY kar chuka ho → November me Sep–Nov par wasooli double hoti. Aise covering
+           challan ko is mahine "generated" se hata do — row pichhle (Oct) challan par chalegi. */
+        const dropKeys = Object.keys(map).filter(k => {
+          const cr = map[k];
+          if (!isMultiMonthNonStartView(cr, mIdx + 1, Number(appliedYear))) return false;
+          const latest = (prior[String(cr.studentID)] || [])[0];
+          if (!latest) return false;
+          const ls = Number(latest.startYear || latest.year) * 12 + Number(latest.startMonth || latest.month);
+          const cs = Number(cr.startYear || cr.year) * 12 + Number(cr.startMonth || cr.month);
+          return ls > cs && challanCarriesPrev(latest);
+        });
+        if (dropKeys.length) {
+          const set2 = new Set(set);
+          const map2 = { ...map };
+          dropKeys.forEach(k => { set2.delete(k); delete map2[k]; });
+          setGenSet(set2);
+          setChallanMap(map2);
+        }
       } catch (e) { /* previous dues optional — na mile to 0 hi rahenge */ }
       setPrevOutMap(prevOut);
     } catch (e) {
@@ -6869,6 +7101,7 @@ function FeeReceivingIndividual({ toast }) {
       setGenSet(new Set());
       setChallanMap({});
       setPrevOutMap({});
+      setPriorByStudent({});
     }
   }, [studentsMap, appliedMonth, appliedYear, toast]);
 
@@ -6962,6 +7195,59 @@ function FeeReceivingIndividual({ toast }) {
   const [reminderCtx, setReminderCtx] = useState(null); // { type:'class'|'student', target }
   const [confirm, setConfirm] = useState(null);
 
+  /* PENDING challan (is mahine ka nahi) ki receiving — /pending list se ledgerId mila,
+     us ka poora challan (installments samet) us ke APNE mahine se load karo, aur wahi
+     FeeReceivingModal kholo. pendingMode: save isi challan par jaye (challanMap ke
+     is-mahine wale key par nahi). */
+  /* Pichhla challan (ledgerId + us ka mahina) installments samet taaza load. */
+  const loadPriorChallan = async (s, pc) => {
+    try {
+      const rows = await feeService.getStudentChallans(s.studentID, Number(pc.startMonth || pc.month), Number(pc.startYear || pc.year));
+      const raw = (rows || []).find(r => Number(r.id) === Number(pc.ledgerId)) || null;
+      return raw ? feeService.withPersistedGiveDisc(raw) : null;
+    } catch (e) { return null; }
+  };
+
+  /* Pichhle challan ki receipt slip — cumulative (sab installments ka jama). */
+  const openPriorSlip = async (c, s, pc) => {
+    const challan = await loadPriorChallan(s, pc);
+    if (!challan) { toast(`Could not load the challan for ${s.name}`, 'error'); return; }
+    const pays = feeService.installmentsToPayments(challan);
+    const last = pays[pays.length - 1];
+    if (!last) { toast('No payment recorded on this challan yet', 'info'); return; }
+    /* SIRF aakhri receiving ki slip (save-time se pehchani) — naye mahine ki wasooli alag
+       slip. Installments na hon to aakhri payment (installmentSlipRows). */
+    const mRows = latestReceivingSlipRows(challan) || installmentSlipRows(challan, pays, last);
+    const mTotal = (mRows || []).reduce((a, r) => a + (r.recv || 0), 0);
+    setSlipCtx({
+      classMeta: c, student: s, period: ledgerMonthLabel(challan),
+      payment: mRows ? { ...last, amount: mTotal, fine: 0 } : last,
+      challan,
+      defaultSize: settings.printSize || 'a4', school: branchHeader,
+      instRows: mRows || undefined,
+    });
+  };
+
+  const openPendingReceive = async (c, s, pc, viewOnly = false) => {
+    const lock = viewOnly ? null : challanMonthLock(monthIdx, appliedYear, settings);
+    if (lock) { toast(lock, 'warning'); return; }
+    const challan = await loadPriorChallan(s, pc);
+    if (!challan) { toast(`Could not load the pending challan for ${s.name}`, 'error'); return; }
+    const payments = feeService.installmentsToPayments(challan);
+    const m = recStudentModel({
+      student: s, headsForClass: headsMap[c.key] || [], generated: true, classDisc: {},
+      payments, challan, prevOverride: null,
+    });
+    setReceiveCtx({
+      classMeta: c, student: s, model: m, payments, challan,
+      period: viewOnly ? ledgerMonthLabel(challan) : `${ledgerMonthLabel(challan)} (Pending)`,
+      monthIdx: (Number(challan.startMonth || challan.month) || 1) - 1,
+      viewOnly,
+      settings,
+      pendingMode: true,
+    });
+  };
+
   const openReceive = async (c, s, viewOnly = false) => {
     /* A locked month can still be viewed — only taking money is barred. */
     const lock = viewOnly ? null : challanMonthLock(monthIdx, appliedYear, settings);
@@ -6971,7 +7257,7 @@ function FeeReceivingIndividual({ toast }) {
     if (s.studentID != null) {
       try {
         const rows = await feeService.getStudentChallans(s.studentID, monthIdx + 1, appliedYear);
-        const raw = Array.isArray(rows) && rows.length ? rows[0] : null;
+        const raw = pickMonthChallan(rows, monthIdx + 1, Number(appliedYear));
         if (raw) {
           challan = feeService.withPersistedGiveDisc(raw);
           setChallanMap(prev => ({ ...prev, [keyOf(c.key, s.reg)]: challan }));
@@ -7147,7 +7433,9 @@ function FeeReceivingIndividual({ toast }) {
     /* POST /receive-installment (Pay Now). ledgerId = challan id;
        detailRows carry THIS installment delta (installmentId: 0), not running totals.
        Late fine bhi apni row / new head ke through jaati hai. */
-    const rec = challanMap[keyOf(payload.classKey, payload.reg)];
+    /* Pending mode (/pending list se, kisi aur mahine ka challan) — wahi challan. */
+    const pendingMode = !!receiveCtx?.pendingMode;
+    const rec = pendingMode ? receiveCtx.challan : challanMap[keyOf(payload.classKey, payload.reg)];
     /* Slip ko is receiving ke BAAD ka challan chahiye — usi se wo per-head
        Std/Discount/Received aur "Remaining Amount" nikaalti hai. Warna fallback
        chalta hai (std = recv = jo pay kiya) aur remaining hamesha 0 aati hai. */
@@ -7237,7 +7525,10 @@ function FeeReceivingIndividual({ toast }) {
         paymentMethod: payMethodForApi,
         receivedDate: payload.date || '',
         modifiedBy: userID,
-        isReceiving: !!payload.isReceiving || Object.keys(mergedGive).length > 0,
+        /* HAMESHA true — backend isReceiving:false par `discount` ko challan ka discount maan kar
+           OVERWRITE kar deta tha (Discount Manager ka 3,000 → 0). true par `discount` = sirf is
+           wasooli ki Give Discount (na ho to 0), challan discount salamat rehta hai. */
+        isReceiving: true,
         detailRows: rec.detailRows || [],
         perHead: payload.perHead || {},
         giveDisc: payload.isReceiving ? (payload.giveDisc || {}) : {},
@@ -7249,7 +7540,7 @@ function FeeReceivingIndividual({ toast }) {
         return;
       }
       feeService.receiveInstallment(recvBody)
-        .then(() => loadChallans())
+        .then(() => { loadChallans(); loadPending(true); })
         .catch(e => toast(e.message || 'Could not record payment', 'error'));
       slipChallan = feeService.withPersistedGiveDisc({
         ...rec,
@@ -7262,7 +7553,8 @@ function FeeReceivingIndividual({ toast }) {
       }, { discountAlreadyIncludesGive: true });
       /* Optimistic: Transaction Details / list turant naya discount + received dikhayein
          (API discount ignore kare to bhi local map sahi rahe). */
-      setChallanMap(prev => ({ ...prev, [keyOf(payload.classKey, payload.reg)]: slipChallan }));
+      /* Pending (dusre mahine ka) challan is mahine ke map me mat daalo. */
+      if (!pendingMode) setChallanMap(prev => ({ ...prev, [keyOf(payload.classKey, payload.reg)]: slipChallan }));
     } else {
       toast('No challan found to receive against', 'warning');
     }
@@ -7271,27 +7563,43 @@ function FeeReceivingIndividual({ toast }) {
       : `Installment saved — Rs. ${(payload.amount || 0).toLocaleString('en-PK')} from ${payload.studentName}`, 'success');
     /* After save: close receive modal and open slip modal for the new payment */
     const c = receiveCtx?.classMeta, s = receiveCtx?.student;
+    /* Receive Pending (pichhla challan): slip SIRF is receiving ki. Std = is se pehle ka
+       baqaya (carry samet), Received = abhi liya, Remaining = baad ka (minus = advance). */
+    let pendingSlipRows = null;
+    let pendingSlipTotal = null;
+    if (pendingMode && rec) {
+      /* SIRF is receiving ki — Std = is se pehle ka baqaya (saari pichhli wasooli minus). */
+      pendingSlipRows = installmentSlipRows(rec, receiveCtx.payments || [], {
+          id: '__this_payment__', perHead: payload.perHead || {}, giveDisc: payload.giveDisc || {},
+        });
+      if (pendingSlipRows) {
+        pendingSlipTotal = pendingSlipRows.reduce((a, r) => a + (r.recv || 0), 0) + (+payload.fine || 0);
+      }
+    }
     setReceiveCtx(null);
     if (c && s) {
       setSlipCtx({
         classMeta: c, student: s, period: receiveCtx.period,
         payment: {
           date: payload.date, method: payload.method, ref: payload.ref, txn: payload.txn,
-          amount: payload.amount, perHead: payload.perHead, fine: payload.fine || 0, prevByHead: payload.prevByHead,
+          amount: pendingSlipTotal != null ? pendingSlipTotal : payload.amount,
+          perHead: payload.perHead, fine: payload.fine || 0, prevByHead: payload.prevByHead,
           giveDisc: payload.giveDisc || {}, isReceiving: !!payload.isReceiving,
         },
         challan: slipChallan,
         prevStd: prevStdOf(s.studentID), prevByHead: prevByHeadOf(s.studentID),
         defaultSize: settings.printSize || 'a4',
         school: branchHeader,
+        instRows: pendingMode ? (pendingSlipRows || undefined) : undefined,
       });
     }
   };
 
   /* Reverse receiving via DELETE /api/BranchLedger/clear-receiving/{ledgerId}
      — challan rehti hai, sirf wasooli clear. */
-  const requestDeleteReceipt = (c, s) => {
-    const rec = challanMap[keyOf(c.key, s.reg)];
+  /* recOverride: is mahine challan na ho to PICHHLE challan ki receiving reverse karo. */
+  const requestDeleteReceipt = (c, s, recOverride = null) => {
+    const rec = recOverride || challanMap[keyOf(c.key, s.reg)];
     setConfirm({
       title: 'Delete received fee?',
       message: <span>The manually received payment(s) for <strong>{s.name}</strong> will be removed.</span>,
@@ -7310,6 +7618,7 @@ function FeeReceivingIndividual({ toast }) {
               : r
           )));
           await loadChallans();
+          loadPending(true);
           toast('Receipt deleted', 'success');
         } catch (e) {
           toast(e.message || 'Could not delete receipt', 'error');
@@ -7531,6 +7840,59 @@ function FeeReceivingIndividual({ toast }) {
                           const rec = m.generated ? (challanMap[keyOf(c.key, s.reg)] || null) : null;
                           /* Column me sirf wasool shuda fine — na li gayi ho to 0. */
                           const shownFine = receivedFineOf(rec);
+                          /* Is mahine challan nahi magar /pending me purana baqaya → wahi receive ho. */
+                          const pendList = !m.generated ? (pendingByStudent[String(s.studentID)] || []) : [];
+                          /* Is mahine challan nahi → receivable pichhla challan (pickReceivableChallan):
+                             latest agar purana baqaya carry kare to wahi (Sep–Nov ke baad Oct), warna
+                             /pending ka naya. Figures generated challan jaisa: Previous Pending = us ka
+                             waajib (carry samet), Received, Remaining, Status (fully / partial / advance). */
+                          const priorList = !m.generated ? (priorByStudent[String(s.studentID)] || []) : [];
+                          const pick = !m.generated ? pickReceivableChallan(priorList, pendList) : { rec: null, pc: null };
+                          const showRec = pick.rec;
+                          const pm = showRec ? recStudentModel({
+                            student: s, headsForClass: [], generated: true, classDisc: {},
+                            payments: [], challan: showRec, prevOverride: null,
+                          }) : null;
+                          /* Receive Pending target: API item, warna chuna hua challan (agar baqaya ho),
+                             warna (12-mahine window se bahar) API ka naya pending. */
+                          const pc = pick.pc
+                            || (showRec && pm && pm.remaining > 0 ? {
+                              ledgerId: showRec.id,
+                              month: showRec.month, year: showRec.year,
+                              startMonth: showRec.startMonth || showRec.month,
+                              startYear: showRec.startYear || showRec.year,
+                              endMonth: showRec.endMonth, endYear: showRec.endYear,
+                              totalMonthChallan: showRec.totalMonthChallan,
+                              pending: pm.remaining, totalReceived: pm.paid,
+                            } : null)
+                            || (!showRec ? (pendList[0] || null) : null);
+                          /* Chune hue challan ka ASLI baqaya (carry samet) — API ka `pending` carried
+                             prev nahi ginta (Oct: 1,000 jabke asal 21,000). */
+                          const pendTotal = pm ? Math.max(0, pm.remaining) : (+(pc?.pending) || 0);
+                          /* Is (view) mahine me us challan par kitna receive hua — installment dates se. */
+                          const viewYM = `${appliedYear}-${String(monthIdx + 1).padStart(2, '0')}`;
+                          const recvThisMonth = showRec
+                            ? ledgerInstallmentReceipts(showRec)
+                              .filter(p => String(p.date || '').slice(0, 7) === viewYM)
+                              .reduce((a, p) => a + (+p.amount || 0), 0)
+                            : 0;
+                          /* Previous Pending = is mahine se PEHLE ka baqaya (Nov ke baad Dec me 12,000),
+                             Received = SIRF is mahine ki wasooli, Remaining = abhi ka baqaya. */
+                          const pv = pm
+                            ? {
+                              prev: pm.remaining + recvThisMonth, paid: recvThisMonth, remaining: pm.remaining,
+                              fine: 0, label: ledgerMonthLabel(showRec), everPaid: pm.paid,
+                            }
+                            : pc
+                              ? { prev: pendTotal, paid: 0, remaining: pendTotal, fine: 0, label: ledgerMonthLabel(pc), everPaid: +pc.totalReceived || 0 }
+                              : null;
+                          const pvStatus = pv ? (pv.remaining <= 0 ? 'full' : pv.paid > 0 ? 'partial' : 'none') : null;
+                          /* View (eye) ke liye pichhla challan — /pending item ya ledger rec. */
+                          const viewTarget = pc || (showRec ? {
+                            ledgerId: showRec.id,
+                            startMonth: showRec.startMonth || showRec.month,
+                            startYear: showRec.startYear || showRec.year,
+                          } : null);
                           return (
                             <tr
                               key={s.reg}
@@ -7542,12 +7904,19 @@ function FeeReceivingIndividual({ toast }) {
                                 <b>{s.name}</b>
                                 <span className="fee-sub-eq">SO/DO {s.father || '—'}</span>
                               </td>
-                              <td className="fee-right">{money(m.prev)}</td>
+                              {/* Pichhle challan ka baqaya MINUS (zyada wasool) ho to wo ADVANCE hai —
+                                  Previous Pending 0, Advance column me −2,000. */}
+                              <td className="fee-right">{money(pv ? Math.max(0, pv.prev) : m.prev)}</td>
                               {/* Advance (student ka credit) — MINUS me, taake dikhe ki
                                   Remaining/Received me se kitna khud kat gaya. */}
-                              <td className={`fee-right${m.advance > 0 ? ' fee-neg' : ''}`}>
-                                {money(m.advance > 0 ? -m.advance : 0)}
-                              </td>
+                              {(() => {
+                                const advV = pv ? Math.max(0, -pv.prev) : m.advance;
+                                return (
+                                  <td className={`fee-right${advV > 0 ? ' fee-neg' : ''}`}>
+                                    {money(advV > 0 ? -advV : 0)}
+                                  </td>
+                                );
+                              })()}
                               {m.generated ? (
                                 <td className="fee-right">
                                   {money(m.thisMonth)}
@@ -7556,20 +7925,41 @@ function FeeReceivingIndividual({ toast }) {
                               ) : (
                                 <td className="fee-right">
                                   <span className="fee-this-dues zero">0</span>
-                                  <span className="fee-sub-eq">= {money(m.prev)}</span>
+                                  <span className="fee-sub-eq">= {money(pv ? pv.prev : m.prev)}</span>
                                 </td>
                               )}
                               <td className="fee-center">{m.disc > 0 ? <span className="fee-disc-amt">{money(m.disc)}</span> : '0'}</td>
-                              <td className={`fee-right${shownFine > 0 ? ' fee-fine' : ''}`}>{shownFine > 0 ? money(shownFine) : '0'}</td>
-                              <td className="fee-right">{m.paid > 0 ? <span className="fee-paid-amt">{money(m.paid)}</span> : '0'}</td>
+                              {(() => {
+                                const fineV = pv ? pv.fine : shownFine;
+                                const paidV = pv ? pv.paid : m.paid;
+                                return (
+                                  <>
+                                    <td className={`fee-right${fineV > 0 ? ' fee-fine' : ''}`}>{fineV > 0 ? money(fineV) : '0'}</td>
+                                    <td className="fee-right">{paidV > 0 ? <span className="fee-paid-amt">{money(paidV)}</span> : '0'}</td>
+                                  </>
+                                );
+                              })()}
                               {/* Remaining me PROJECTED late fine NAHI jodte — jab tak fee
                                   receive na ho, sirf asal fee/baqaya dikhe. Fine sirf
                                   receive karte waqt calculate hoti hai (modal me), aur bill
                                   hone ke baad wo m.remaining me khud shamil ho jaati hai. */}
-                              <td className="fee-right">{money(m.remaining)}</td>
+                              <td className="fee-right">{money(pv ? pv.remaining : m.remaining)}</td>
                               <td className="fee-center">
                                 {!m.generated ? (
-                                  <span className="fee-recv-notice">Challan not generated for <b>{appliedMonth}</b> yet.</span>
+                                  pv ? (
+                                    /* Pichhle challan ka status — generated challan jaisa. */
+                                    <div className="fee-recv-status">
+                                      {statusBadge(pvStatus)}
+                                      <span className="fee-sub-eq">No {appliedMonth} challan · from {pv.label}</span>
+                                    </div>
+                                  ) : pc ? (
+                                    <span className="fee-recv-notice">
+                                      No {appliedMonth} challan · <b className="fee-neg">Pending {money(pendTotal)}</b>
+                                      <br />from {ledgerMonthLabel(pc)}
+                                    </span>
+                                  ) : (
+                                    <span className="fee-recv-notice">Challan not generated for <b>{appliedMonth}</b> yet.</span>
+                                  )
                                 ) : (
                                   <div className="fee-recv-status">
                                     {statusBadge(m.status)}
@@ -7579,11 +7969,88 @@ function FeeReceivingIndividual({ toast }) {
                               </td>
                               <td className="fee-center">
                                 <div className="fee-recv-acts">
-                                  {!m.generated ? null
-                                    : m.status === 'none' ? (
+                                  {!m.generated ? (
+                                    (!pv || pvStatus === 'none') ? (
+                                      /* Is mahine abhi kuch wasool nahi — Receive Pending. Pichhle mahino me
+                                         wasooli hui ho (Sep me 5,000) to View / Download bhi. */
+                                      <>
+                                        {pc && canRcvCreate && !isPastView && (
+                                          <Tooltip text={`Receive pending ${money(pendTotal)} of the ${ledgerMonthLabel(pc)} challan`}>
+                                            <button type="button" className="fee-recv-link" onClick={() => openPendingReceive(c, s, pc)}>
+                                              Receive Pending <i className="fa-solid fa-hand-holding-dollar"></i>
+                                            </button>
+                                          </Tooltip>
+                                        )}
+                                        {pv && (pv.everPaid || 0) > 0 && viewTarget && (
+                                          <Tooltip text={`View transaction details of the ${pv.label} challan`}>
+                                            <button className="fee-iconbtn tiny" onClick={() => openPendingReceive(c, s, viewTarget, true)}>
+                                              <i className="fa-solid fa-eye"></i>
+                                            </button>
+                                          </Tooltip>
+                                        )}
+                                        {pv && (pv.everPaid || 0) > 0 && canRcvDownload && viewTarget && (
+                                          <Tooltip text={`Download receipt slip of the ${pv.label} challan`}>
+                                            <button className="fee-iconbtn tiny" onClick={() => openPriorSlip(c, s, viewTarget)}>
+                                              <i className="fa-solid fa-download"></i>
+                                            </button>
+                                          </Tooltip>
+                                        )}
+                                      </>
+                                    ) : (
+                                      /* Pichhle challan par partial / full (ya advance) wasooli — generated row
+                                         jaise hi icons: Receive More, View, Download, Delete (usi challan par). */
+                                      <>
+                                        {canRcvCreate && settings?.multipleReceiving !== false && viewTarget && (
+                                          <Tooltip text={isPastView
+                                            ? 'Previous month — receive from the current month (pending dues are shown there)'
+                                            : `Receive more on the ${pv.label} challan — any extra becomes advance`}>
+                                            <button
+                                              type="button"
+                                              className="fee-recv-link"
+                                              disabled={isPastView}
+                                              style={isPastView ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                                              onClick={() => { if (!isPastView) openPendingReceive(c, s, viewTarget); }}
+                                            >
+                                              Receive More <i className="fa-solid fa-plus"></i>
+                                            </button>
+                                          </Tooltip>
+                                        )}
+                                        {viewTarget && (
+                                          <Tooltip text={`View transaction details of the ${pv.label} challan`}>
+                                            <button className="fee-iconbtn tiny" onClick={() => openPendingReceive(c, s, viewTarget, true)}>
+                                              <i className="fa-solid fa-eye"></i>
+                                            </button>
+                                          </Tooltip>
+                                        )}
+                                        {canRcvDownload && viewTarget && (
+                                          <Tooltip text={`Download receipt slip of the ${pv.label} challan`}>
+                                            <button className="fee-iconbtn tiny" onClick={() => openPriorSlip(c, s, viewTarget)}>
+                                              <i className="fa-solid fa-download"></i>
+                                            </button>
+                                          </Tooltip>
+                                        )}
+                                        {canRcvDelete && viewTarget && (
+                                          <Tooltip text={`Delete received fee on the ${pv.label} challan`}>
+                                            <button
+                                              className="fee-iconbtn tiny danger"
+                                              onClick={() => requestDeleteReceipt(c, s, showRec || { id: viewTarget.ledgerId })}
+                                            >
+                                              <i className="fa-solid fa-trash-can"></i>
+                                            </button>
+                                          </Tooltip>
+                                        )}
+                                      </>
+                                    )
+                                  ) : m.status === 'none' ? (
                                       canRcvCreate && (
-                                        <Tooltip text="Open receive form for this student">
-                                          <button type="button" className="fee-recv-link" onClick={() => openReceive(c, s, false)}>
+                                        <Tooltip text={isPastView ? 'Previous month — receive from the current month (pending dues are shown there)' : 'Open receive form for this student'}>
+                                          <button
+                                            type="button"
+                                            className="fee-recv-link"
+                                            disabled={isPastView}
+                                            style={isPastView ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                                            onClick={() => { if (!isPastView) openReceive(c, s, false); }}
+                                          >
                                             Fee Receive <i className="fa-solid fa-eye"></i>
                                           </button>
                                         </Tooltip>
@@ -7593,10 +8060,17 @@ function FeeReceivingIndividual({ toast }) {
                                         {/* Receive More par PARTIAL aur FULLY-RECEIVED dono
                                             rows par extra installment liya ja sakta hai — magar
                                             SIRF jab Multiple Receiving ON ho (settings gate).
-                                            Off hone par fully-received row Receive More nahi degi. */}
+                                            Off hone par fully-received row Receive More nahi degi.
+                                            Previous month view par band (disabled). */}
                                         {(m.status === 'partial' || m.status === 'full') && canRcvCreate && settings?.multipleReceiving !== false && (
-                                          <Tooltip text="Receive more — add another installment">
-                                            <button type="button" className="fee-recv-link" onClick={() => openReceive(c, s, false)}>
+                                          <Tooltip text={isPastView ? 'Previous month — receive from the current month (pending dues are shown there)' : 'Receive more — add another installment'}>
+                                            <button
+                                              type="button"
+                                              className="fee-recv-link"
+                                              disabled={isPastView}
+                                              style={isPastView ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                                              onClick={() => { if (!isPastView) openReceive(c, s, false); }}
+                                            >
                                               Receive More <i className="fa-solid fa-plus"></i>
                                             </button>
                                           </Tooltip>
@@ -7830,7 +8304,12 @@ function FamilyTreeReceiving({ toast }) {
     try {
       const rows = await feeService.getMonthChallans(mIdx + 1, appliedYear);
       const map = {};
-      rows.forEach(ch => { map[String(ch.studentID)] = feeService.withPersistedGiveDisc(ch); });
+      rows.forEach(ch => {
+        /* Sep–Nov challan ke saath Oct ka apna challan bhi ho to Oct wala hi rahe. */
+        const k = String(ch.studentID);
+        if (map[k] && isMultiMonthNonStartView(ch, mIdx + 1, Number(appliedYear))) return;
+        map[k] = feeService.withPersistedGiveDisc(ch);
+      });
       setChallanByStudent(map);
 
       /* Pichhle mahino ka live baqaya (running-ledger) — October me September ki
@@ -7843,9 +8322,26 @@ function FamilyTreeReceiving({ toast }) {
         while (fromM <= 0) { fromM += 12; fromY -= 1; }
         const prevRows = await feeService.getLedgerRange(fromM, fromY, toM, toY);
         prevOut = prevOutFromLedgerRows(prevRows, mIdx + 1, appliedYear);
+        /* Pichhle challans (naya-pehle) — is mahine challan na ho to receivable challan chunne ke liye. */
+        const prior = priorChallansByStudent(prevRows, mIdx + 1, appliedYear);
+        setPriorByStudent(prior);
+        /* Covering (Sep–Nov ka Nov) challan jis ka baqaya baad wala (Oct) challan carry kar
+           chuka — is mahine us par wasooli nahi (double), row pichhle challan par chale. */
+        let dropped = false;
+        const map2 = { ...map };
+        Object.keys(map2).forEach(k => {
+          const cr = map2[k];
+          if (!isMultiMonthNonStartView(cr, mIdx + 1, Number(appliedYear))) return;
+          const latest = (prior[String(cr.studentID)] || [])[0];
+          if (!latest) return;
+          const ls = Number(latest.startYear || latest.year) * 12 + Number(latest.startMonth || latest.month);
+          const cs = Number(cr.startYear || cr.year) * 12 + Number(cr.startMonth || cr.month);
+          if (ls > cs && challanCarriesPrev(latest)) { delete map2[k]; dropped = true; }
+        });
+        if (dropped) setChallanByStudent(map2);
       } catch (e) { /* optional */ }
       setPrevOutMap(prevOut);
-    } catch { setChallanByStudent({}); setPrevOutMap({}); }
+    } catch { setChallanByStudent({}); setPrevOutMap({}); setPriorByStudent({}); }
   }, [appliedMonth, appliedYear]);
   useEffect(() => { loadFamilyChallans(); }, [loadFamilyChallans]);
 
@@ -7906,6 +8402,58 @@ function FamilyTreeReceiving({ toast }) {
     setHighlightKey(null);
   };
 
+  /* Branch ke PENDING challans — GET /pending?branchId (poori branch EK call).
+     { [studentID]: [challan…] } naya-pehle — child ka is mahine challan na ho magar
+     purana baqaya ho to "Receive Pending" (Individual jaisa). */
+  const [pendingByStudent, setPendingByStudent] = useState({});
+  /* { [studentID]: [pichhle challans, naya-pehle] } — loadFamilyChallans ke ledger-range se. */
+  const [priorByStudent, setPriorByStudent] = useState({});
+  const loadPending = useCallback(async (fresh = false) => {
+    try {
+      const p = await feeService.getPendingChallans({ fresh });
+      const mp = {};
+      p.challans.forEach(x => { const k = String(x.studentID); (mp[k] = mp[k] || []).push(x); });
+      Object.values(mp).forEach(list => list.sort((a, b) =>
+        (Number(b.startYear || b.year) * 12 + Number(b.startMonth || b.month)) -
+        (Number(a.startYear || a.year) * 12 + Number(a.startMonth || a.month))));
+      setPendingByStudent(mp);
+    } catch (e) { /* pending optional */ }
+  }, []);
+  useEffect(() => { loadPending(); }, [loadPending]);
+  /* Aaj ke mahine se PEHLE ka view → Receive band. */
+  const isPastView = (Number(appliedYear) * 12 + monthIdx) < (today.getFullYear() * 12 + today.getMonth());
+
+  const openPendingReceive = async (f, ch, pc) => {
+    const lock = challanMonthLock(monthIdx, appliedYear, settings);
+    if (lock) { toast(lock, 'warning'); return; }
+    const sid = ch.applicantsID ?? ch.studentID;
+    let raw = null;
+    try {
+      const rows = await feeService.getStudentChallans(sid, Number(pc.startMonth || pc.month), Number(pc.startYear || pc.year));
+      raw = (rows || []).find(r => Number(r.id) === Number(pc.ledgerId)) || null;
+    } catch (e) { /* neeche toast */ }
+    if (!raw) { toast(`Could not load the pending challan for ${ch.name}`, 'error'); return; }
+    const challan = feeService.withPersistedGiveDisc(raw);
+    const payments = feeService.installmentsToPayments(challan);
+    const m = recStudentModel({
+      student: ch, headsForClass: [], generated: true, classDisc: {},
+      payments, challan, prevOverride: null,
+    });
+    setReceiveCtx({
+      kind: 'child',
+      famKey: f.key, family: f,
+      classMeta: { key: f.key, cls: ch.cls, sec: ch.sec, familyName: f.name, guardian: f.guardian },
+      student: { ...ch, _challan: challan, _ledgerId: challan.id }, model: m,
+      payments,
+      challan,
+      period: `${ledgerMonthLabel(challan)} (Pending)`,
+      monthIdx: (Number(challan.startMonth || challan.month) || 1) - 1,
+      viewOnly: false,
+      settings,
+      pendingMode: true,
+    });
+  };
+
   const openReceive = async (f, ch, viewOnly = false) => {
     /* A locked month can still be viewed — only taking money is barred. */
     const lock = viewOnly ? null : challanMonthLock(monthIdx, appliedYear, settings);
@@ -7916,7 +8464,7 @@ function FamilyTreeReceiving({ toast }) {
     if (ch.applicantsID != null) {
       try {
         const rows = await feeService.getStudentChallans(ch.applicantsID, monthIdx + 1, appliedYear);
-        const raw = Array.isArray(rows) && rows.length ? rows[0] : null;
+        const raw = pickMonthChallan(rows, monthIdx + 1, Number(appliedYear));
         const rec = raw ? feeService.withPersistedGiveDisc(raw) : null;
         if (rec) {
           const fig = famFigWithPrev(rec, prevOutMap[String(ch.applicantsID)] || null);
@@ -8112,7 +8660,9 @@ function FamilyTreeReceiving({ toast }) {
     /* POST /receive-installment (Pay Now). ledgerId = child challan id;
        detailRows = THIS installment delta (installmentId: 0). Late fine
        bhi apni "Late Fine" row / new head ke through jaati hai. */
-    const rec = ledgerRecRef.current[`${payload.famKey}|${payload.reg}`];
+    /* Pending mode (/pending se dusre mahine ka challan) — wahi challan, current refs nahi. */
+    const pendingMode = !!receiveCtx?.pendingMode;
+    const rec = pendingMode ? receiveCtx.challan : ledgerRecRef.current[`${payload.famKey}|${payload.reg}`];
     /* Slip ko is receiving ke BAAD ka challan chahiye — warna wo fallback par
        chali jaati hai (std = recv) aur "Remaining Amount" kabhi nahi dikhti. */
     let slipChallan = rec || null;
@@ -8200,7 +8750,10 @@ function FamilyTreeReceiving({ toast }) {
         paymentMethod: payMethodForApi,
         receivedDate: payload.date || '',
         modifiedBy: userID,
-        isReceiving: !!payload.isReceiving || Object.keys(mergedGive).length > 0,
+        /* HAMESHA true — backend isReceiving:false par `discount` ko challan ka discount maan kar
+           OVERWRITE kar deta tha (Discount Manager ka 3,000 → 0). true par `discount` = sirf is
+           wasooli ki Give Discount (na ho to 0), challan discount salamat rehta hai. */
+        isReceiving: true,
         detailRows: rec.detailRows || [],
         perHead: payload.perHead || {},
         giveDisc: payload.isReceiving ? (payload.giveDisc || {}) : {},
@@ -8212,7 +8765,7 @@ function FamilyTreeReceiving({ toast }) {
         return;
       }
       feeService.receiveInstallment(recvBody)
-        .then(() => loadFamilyChallans())
+        .then(() => { loadFamilyChallans(); loadPending(true); })
         .catch(e => toast(e.message || 'Could not record payment', 'error'));
       slipChallan = feeService.withPersistedGiveDisc({
         ...rec,
@@ -8223,8 +8776,8 @@ function FamilyTreeReceiving({ toast }) {
         /* detailRowsForUi me manager+give pehle se fold — dobara mat jodo. */
         _discountIncludesGive: true,
       }, { discountAlreadyIncludesGive: true });
-      ledgerRecRef.current[`${payload.famKey}|${payload.reg}`] = slipChallan;
-      if (receiveCtx?.student?.applicantsID != null) {
+      if (!pendingMode) ledgerRecRef.current[`${payload.famKey}|${payload.reg}`] = slipChallan;
+      if (!pendingMode && receiveCtx?.student?.applicantsID != null) {
         setChallanByStudent(prev => ({
           ...prev,
           [String(receiveCtx.student.applicantsID)]: slipChallan,
@@ -8369,7 +8922,7 @@ function FamilyTreeReceiving({ toast }) {
       if (ch.applicantsID == null) return ch;
       try {
         const rows = await feeService.getStudentChallans(ch.applicantsID, monthIdx + 1, appliedYear);
-        const rec = Array.isArray(rows) && rows.length ? rows[0] : null;
+        const rec = pickMonthChallan(rows, monthIdx + 1, Number(appliedYear));
         if (!rec) return ch;
         ledgerRecRef.current[`${f.key}|${ch.reg}`] = rec;
         const fig = famFigWithPrev(rec, prevOutMap[String(ch.applicantsID)] || null);
@@ -8585,8 +9138,13 @@ function FamilyTreeReceiving({ toast }) {
                   </div>
                 </div>
                 <div className="fee-td fee-center" data-label="Bulk Fee Receiving" onClick={e => e.stopPropagation()}>
-                  <Tooltip text={`Bulk receive for ${f.children.length} child${f.children.length === 1 ? '' : 'ren'}`}>
-                    <button className="fee-reminder-btn" onClick={() => openBulk(f)}>
+                  <Tooltip text={isPastView ? 'Previous month — receive from the current month' : `Bulk receive for ${f.children.length} child${f.children.length === 1 ? '' : 'ren'}`}>
+                    <button
+                      className="fee-reminder-btn"
+                      disabled={isPastView}
+                      style={isPastView ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                      onClick={() => { if (!isPastView) openBulk(f); }}
+                    >
                       <i className="fa-solid fa-people-roof"></i> Bulk Fee Receiving
                     </button>
                   </Tooltip>
@@ -8632,6 +9190,30 @@ function FamilyTreeReceiving({ toast }) {
                           const billedFine = billedFineOf(rec) > 0 ? challanAccruedFine(rec, settings) : 0;
                           /* Column me sirf wasool shuda fine — na li gayi ho to 0. */
                           const shownFine = receivedFineOf(rec);
+                          /* Is mahine challan nahi magar /pending me purana baqaya → Receive Pending. */
+                          const sidKey = String(ch.applicantsID ?? ch.studentID);
+                          const pendList = !rec ? (pendingByStudent[sidKey] || []) : [];
+                          /* Receivable pichhla challan — Individual jaisa (pickReceivableChallan): latest
+                             carry kare to wahi (Sep–Nov ke baad Oct), warna /pending ka naya. Baqaya us
+                             challan ke model se (carry samet) — API ka `pending` carried prev nahi ginta. */
+                          const pick = !rec ? pickReceivableChallan(priorByStudent[sidKey] || [], pendList) : { rec: null, pc: null };
+                          const pmF = pick.rec ? recStudentModel({
+                            student: ch, headsForClass: [], generated: true, classDisc: {},
+                            payments: [], challan: pick.rec, prevOverride: null,
+                          }) : null;
+                          const pc = pick.pc
+                            || (pick.rec && pmF && pmF.remaining > 0 ? {
+                              ledgerId: pick.rec.id,
+                              month: pick.rec.month, year: pick.rec.year,
+                              startMonth: pick.rec.startMonth || pick.rec.month,
+                              startYear: pick.rec.startYear || pick.rec.year,
+                              endMonth: pick.rec.endMonth, endYear: pick.rec.endYear,
+                              totalMonthChallan: pick.rec.totalMonthChallan,
+                              pending: pmF.remaining,
+                            } : null)
+                            || (!pick.rec ? (pendList[0] || null) : null);
+                          const pendTotal = pmF ? Math.max(0, pmF.remaining) : (+(pc?.pending) || 0);
+                          const pastTip = 'Previous month — receive from the current month (pending dues are shown there)';
                           return (
                             <tr key={ch.reg}>
                               <td>{ch.reg}</td>
@@ -8655,16 +9237,38 @@ function FamilyTreeReceiving({ toast }) {
                                   fine m.remaining me khud aa jaati hai. */}
                               <td className="fee-right">{money(m.remaining)}</td>
                               <td className="fee-center">
-                                <div className="fee-recv-status">
-                                  {statusBadge(m.status)}
-                                  {m.onelink && <span className="fee-onelink-tag"><i className="fa-solid fa-building-columns"></i> OneLink</span>}
-                                </div>
+                                {pc ? (
+                                  <span className="fee-recv-notice">
+                                    No {appliedMonth} challan · <b className="fee-neg">Pending {money(pendTotal)}</b>
+                                    <br />from {ledgerMonthLabel(pc)}
+                                  </span>
+                                ) : (
+                                  <div className="fee-recv-status">
+                                    {statusBadge(m.status)}
+                                    {m.onelink && <span className="fee-onelink-tag"><i className="fa-solid fa-building-columns"></i> OneLink</span>}
+                                  </div>
+                                )}
                               </td>
                               <td className="fee-center">
                                 <div className="fee-recv-acts">
-                                  {m.status === 'none' ? (
-                                    <Tooltip text="Open receive form for this child">
-                                      <button type="button" className="fee-recv-link" onClick={() => openReceive(f, ch, false)}>
+                                  {pc ? (
+                                    /* Challan nahi magar purana baqaya — /pending challan se wasooli. */
+                                    !isPastView ? (
+                                      <Tooltip text={`Receive pending ${money(pendTotal)} of the ${ledgerMonthLabel(pc)} challan`}>
+                                        <button type="button" className="fee-recv-link" onClick={() => openPendingReceive(f, ch, pc)}>
+                                          Receive Pending <i className="fa-solid fa-hand-holding-dollar"></i>
+                                        </button>
+                                      </Tooltip>
+                                    ) : null
+                                  ) : m.status === 'none' ? (
+                                    <Tooltip text={isPastView ? pastTip : 'Open receive form for this child'}>
+                                      <button
+                                        type="button"
+                                        className="fee-recv-link"
+                                        disabled={isPastView}
+                                        style={isPastView ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                                        onClick={() => { if (!isPastView) openReceive(f, ch, false); }}
+                                      >
                                         Fee Receive <i className="fa-solid fa-eye"></i>
                                       </button>
                                     </Tooltip>
@@ -8672,10 +9276,16 @@ function FamilyTreeReceiving({ toast }) {
                                     <>
                                       {/* Receive More par PARTIAL aur FULLY-RECEIVED dono
                                           rows par extra installment — SIRF jab Multiple
-                                          Receiving ON ho (settings gate). */}
+                                          Receiving ON ho (settings gate). Previous month par band. */}
                                       {(m.status === 'partial' || m.status === 'full') && settings?.multipleReceiving !== false && (
-                                        <Tooltip text="Receive more — add another installment">
-                                          <button type="button" className="fee-recv-link" onClick={() => openReceive(f, ch, false)}>
+                                        <Tooltip text={isPastView ? pastTip : 'Receive more — add another installment'}>
+                                          <button
+                                            type="button"
+                                            className="fee-recv-link"
+                                            disabled={isPastView}
+                                            style={isPastView ? { opacity: .45, cursor: 'not-allowed' } : undefined}
+                                            onClick={() => { if (!isPastView) openReceive(f, ch, false); }}
+                                          >
                                             Receive More <i className="fa-solid fa-plus"></i>
                                           </button>
                                         </Tooltip>
@@ -12147,6 +12757,53 @@ function ledgerInstallmentReceipts(rec) {
   }];
 }
 
+/* Kya challan pichhla baqaya CARRY karta hai — head ka previousPendingorAdv ya
+   aggregate "Previous Pending" row. (API ka isCarried reliable nahi, is liye khud dekhte.) */
+function challanCarriesPrev(rec) {
+  return (rec?.detailRows || []).some(r => {
+    if (feeService.isLateFineRow(r)) return false;
+    if (isLedgerCarryRow(r)) return (+r.challanAmount || 0) !== 0;
+    return (Number(r.previousPendingorAdv ?? r.previousPendingOrAdv) || 0) !== 0;
+  });
+}
+
+/* Is mahine challan na ho (e.g. December, Sep–Nov challan ke baad) to KIS pichhle challan par
+   wasooli ho. isCarried scenario skip — khud tay karte hain:
+     - Aakhri (latest) pichhla challan agar purana baqaya carry karta hai (Oct challan me
+       Sep–Nov ka 20,000 head-wise prev) → SIRF wahi; us ka Remaining sab samet (October
+       jaisa). Purane challans (API unhe abhi bhi pending dikhati) ignore — warna double.
+     - Carry nahi karta → /pending ki list ka sab se naya pending challan.
+   priorList / pendList dono naya-pehle sorted. Returns { rec, pc } (pc = /pending item). */
+function pickReceivableChallan(priorList, pendList) {
+  const prior = priorList || [];
+  const pend = pendList || [];
+  const latest = prior[0] || null;
+  if (latest && (challanCarriesPrev(latest) || !pend.some(x => Number(x.ledgerId) !== Number(latest.id)))) {
+    return { rec: latest, pc: pend.find(x => Number(x.ledgerId) === Number(latest.id)) || null };
+  }
+  const pc = pend[0] || null;
+  const rec = pc ? (prior.find(r => Number(r.id) === Number(pc.ledgerId)) || null) : latest;
+  return { rec, pc };
+}
+
+/* Ledger-range rows → { [studentID]: [pichhle challans, naya-pehle] } (view mahine ko cover
+   karne wale multi-month challans chhod kar). pickReceivableChallan isi list par chalta hai. */
+function priorChallansByStudent(prevRows, viewMonth, viewYear) {
+  const prior = {};
+  const seenIds = new Set();
+  (prevRows || []).forEach(r => {
+    if (!r || seenIds.has(r.id)) return;
+    seenIds.add(r.id);
+    if (ledgerCoversMonth(r, viewMonth, Number(viewYear))) return;
+    const k = String(r.studentID);
+    (prior[k] = prior[k] || []).push(feeService.withPersistedGiveDisc(r));
+  });
+  Object.values(prior).forEach(list => list.sort((a, b) =>
+    (Number(b.startYear || b.year) * 12 + Number(b.startMonth || b.month)) -
+    (Number(a.startYear || a.year) * 12 + Number(a.startMonth || a.month)) || (Number(b.id) - Number(a.id))));
+  return prior;
+}
+
 /* Challan ka mahina label — multi-month par "September – October 2026". */
 function ledgerMonthLabel(rec) {
   const sm = Number(rec.startMonth || rec.month) || 0;
@@ -13743,18 +14400,71 @@ function headsLabelFor(mode, heads) {
   return mode === 'all' ? 'All Heads' : (heads && heads.length ? heads.join(', ') : 'None');
 }
 
-/* Per-head outstanding per student, straight from the ledger head rows
-   (challanAmount − discount + prev − received). One group per student. */
-function buildPendingDuesGroups({ classes, studentsMap, allStudents, headMode, selectedHeads }) {
+/* Ek student ka per-head PENDING, chune hue mahine ke AAKHIR tak (as-of):
+     - Sirf wo challans jin ka start mahina <= selected mahina.
+     - Naye se purane ki taraf: challan shamil; agar wo purana baqaya CARRY karta hai
+       (head prev / "Previous Pending" row) to us se purane chhod do (warna double).
+     - Per head: challan − manager discount − give (cutoff tak) + carried prev − received
+       (cutoff tak, installment ki receiving date se). Baad me hui wasooli nahi ginti —
+       purane mahine ka report us waqt ka asal baqaya dikhata hai.
+   Returns Map(head → pending). */
+function ledgerPendingAsOf(recs, monthKey, cutoffISO) {
+  const startOf = (x) => Number(x.startYear || x.year) * 12 + Number(x.startMonth || x.month);
+  const list = (recs || [])
+    .filter(r => startOf(r) <= monthKey)
+    .sort((a, b) => (startOf(b) - startOf(a)) || (Number(b.id) - Number(a.id)));
+  const use = [];
+  for (const rec of list) {
+    use.push(rec);
+    if (challanCarriesPrev(rec)) break;
+  }
+  const out = new Map();
+  const hpOf = (r) => Number(r.previousPendingorAdv ?? r.previousPendingOrAdv) || 0;
+  use.forEach(rec => {
+    /* Heads par head-wise prev ho to aggregate "Previous Pending" row skip (wahi baqaya do
+       dafa) — receiving/challanFigures jaisa. Carry row ki apni previousPendingorAdv kabhi
+       nahi jodte (505: row 13,850 + us par 6,850 = 20,700 double tha). */
+    const rows = rec.detailRows || [];
+    const headWise = rows.some(r => !isLedgerCarryRow(r) && !feeService.isLateFineRow(r) && hpOf(r) !== 0);
+    rows.forEach(r => {
+    if (isLedgerCarryRow(r) && headWise) return;
+    if ((+r.challanAmount || 0) < 0 && isLedgerCarryRow(r)) return;   // advance-consumption row
+    const mgr = r._mgrDisc != null ? +r._mgrDisc : (+r.discount || 0) - (r._recvFolded ? (+r.recvDiscount || 0) : 0);
+    let recv = 0, give = 0;
+    const insts = Array.isArray(r.installments) ? r.installments : [];
+    if (insts.length) {
+      insts.forEach(i => {
+        const d = String(i.receivedDate || '').slice(0, 10);
+        if (d && d > cutoffISO) return;
+        recv += +i.receivedAmount || 0;
+        give += Math.max(0, +i.recvDiscount || 0);
+      });
+    } else {
+      const d = String(rec.receivedDate || '').slice(0, 10);
+      if (!d || d <= cutoffISO) { recv = +r.receivedAmount || 0; give = Math.max(0, +r.recvDiscount || 0); }
+    }
+    const hp = isLedgerCarryRow(r) ? 0 : (feeHeadPrev(r) || 0);
+    const pend = (+r.challanAmount || 0) - mgr - give + hp - recv;
+    const name = r.subHead || r.head || '—';
+    out.set(name, (out.get(name) || 0) + pend);
+    });
+  });
+  return out;
+}
+
+/* Per-head outstanding per student AS OF selected month ke aakhir tak (ledgerPendingAsOf) —
+   challan us mahine bana ho ya nahi, purana baqaya bhi aata hai. One group per student. */
+function buildPendingDuesGroups({ classes, studentsMap, allStudents, headMode, selectedHeads, monthKey, cutoffISO }) {
   const keep = (name) => headMode === 'all' || selectedHeads.includes(name);
   const groups = [];
   classes.forEach(c => {
     (studentsMap[c.key] || []).forEach(s => {
       const m = allStudents.find(x => x.c.key === c.key && x.s.reg === s.reg)?.m;
       if (!m) return;
-      const entries = (m.heads || [])
-        .filter(h => Math.round(+h.pend || 0) > 0 && keep(h.sub))
-        .map(h => ({ head: h.sub, amount: Math.round(+h.pend || 0) }));
+      const perHead = ledgerPendingAsOf(m.recs || [], monthKey, cutoffISO);
+      const entries = [...perHead.entries()]
+        .map(([head, amt]) => ({ head, amount: Math.round(+amt || 0) }))
+        .filter(e => e.amount > 0 && keep(e.head));
       if (!entries.length) return;
       const total = entries.reduce((a, e) => a + e.amount, 0);
       groups.push({ classKey: c.key, reg: s.reg, name: s.name, father: s.father, cls: c.cls, sec: c.sec, entries, total });
@@ -13777,22 +14487,29 @@ function ReportPanelPendingDues({ toast }) {
   const [headMode, setHeadMode] = useState('all');
   const [selectedHeads, setSelectedHeads] = useState([]);
 
-  const periods = useMemo(
-    () => [{ month: FEE_MONTHS.indexOf(month) + 1, year: Number(year) || new Date().getFullYear() }],
-    [month, year],
-  );
+  /* Selected mahina + us se PEHLE ke 12 mahine — purana baqaya (challan is mahine na ho tab
+     bhi) as-of hisaab me aa sake. Cutoff = selected mahine ki aakhri taareekh. */
+  const selM = FEE_MONTHS.indexOf(month) + 1;
+  const selY = Number(year) || new Date().getFullYear();
+  const monthKey = selY * 12 + selM;
+  const cutoffISO = `${selY}-${String(selM).padStart(2, '0')}-${String(new Date(selY, selM, 0).getDate()).padStart(2, '0')}`;
+  const periods = useMemo(() => {
+    const back = new Date(selY, selM - 13, 1);
+    return ledgerPeriods(back.getMonth() + 1, back.getFullYear(), selM, selY);
+  }, [selM, selY]);
   const { classes, studentsMap, allStudents, loading, error } = useLedgerReportData(periods);
 
   const allHeads = useMemo(() => {
     const set = new Set();
-    allStudents.forEach(({ m }) => (m.heads || []).forEach(h => { if ((+h.pend || 0) > 0 || (+h.total || 0) > 0) set.add(h.sub); }));
+    /* As-of pending wale heads (selected mahine tak). */
+    allStudents.forEach(({ m }) => ledgerPendingAsOf(m.recs || [], monthKey, cutoffISO).forEach((v, k) => { if (v > 0) set.add(k); }));
     return Array.from(set).sort((a, b) => String(a).localeCompare(String(b)));
-  }, [allStudents]);
+  }, [allStudents, monthKey, cutoffISO]);
   const toggleHead = (h) => setSelectedHeads(prev => prev.includes(h) ? prev.filter(x => x !== h) : [...prev, h]);
 
   const { groups, summary } = useMemo(
-    () => buildPendingDuesGroups({ classes, studentsMap, allStudents, headMode, selectedHeads }),
-    [classes, studentsMap, allStudents, headMode, selectedHeads],
+    () => buildPendingDuesGroups({ classes, studentsMap, allStudents, headMode, selectedHeads, monthKey, cutoffISO }),
+    [classes, studentsMap, allStudents, headMode, selectedHeads, monthKey, cutoffISO],
   );
   const asOfLabel = `${month} ${year}`;
 
@@ -13814,7 +14531,7 @@ function ReportPanelPendingDues({ toast }) {
 
       <div className="fee-info">
         <i className="fa-solid fa-circle-info"></i>
-        <span>Outstanding balance by individual fee head, taken straight from the ledger challans of the selected month — what is still owed, not what has been collected.</span>
+        <span>Outstanding balance by fee head <b>as of the end of the selected month</b> — every unpaid due up to that month (even if no challan was generated in it), with only the payments received up to that date deducted.</span>
       </div>
 
       <RepLoadState loading={loading} error={error} />
@@ -15843,7 +16560,8 @@ function feeSlipHTML({ copyLabel, classMeta, student, heads, settings, period, i
       const name = r.subHead || r.head || '';
       const std = whole(r.challanAmount);
       const raw = whole(r.discount);
-      const disc = showDisc && std > 0 ? Math.min(raw, std) : 0;
+      /* Toggle OFF: Disc column chhupta hai, magar Net discount ke BAAD hi (4000 − 1000 = 3000). */
+      const disc = std > 0 ? Math.min(raw, std) : 0;
       const prev = whole(feeHeadPrev(r));   // us head ka pichhla baqaya (negative = advance)
       return { name, std, disc, prev, net: std - disc + prev };
     });
@@ -15875,7 +16593,7 @@ function feeSlipHTML({ copyLabel, classMeta, student, heads, settings, period, i
     rows = heads.map(h => {
       const raw = whole(h.amt);
       const dRaw = whole(disMap[h.name]);
-      const disc = showDisc ? Math.min(dRaw, raw) : 0;
+      const disc = Math.min(dRaw, raw);   // Net hamesha discount ke baad; toggle sirf column
       return { name: h.name, std: raw, disc, net: raw - disc, prev: feeHeadPrev(h) };
     });
     arrears = whole(student.dues) - whole(student.advance);
@@ -15932,10 +16650,10 @@ function feeSlipHTML({ copyLabel, classMeta, student, heads, settings, period, i
   </div>
   <div class="fee-wrap">
     <table class="fee-table">
-      <thead><tr><th>Fee Head</th><th>Std.</th><th>Disc</th><th>Prev</th><th>Net</th></tr></thead>
+      <thead><tr><th>Fee Head</th><th>Std.</th>${showDisc ? '<th>Disc</th>' : ''}<th>Prev</th><th>Net</th></tr></thead>
       <tbody>
-        ${rows.map(r => `<tr><td>${escHtml(headLabel(r.name))}</td><td>${r.std.toLocaleString('en-PK')}</td><td>${r.disc ? r.disc.toLocaleString('en-PK') : '—'}</td><td>${prevCol(r)}</td><td>${r.net.toLocaleString('en-PK')}</td></tr>`).join('')}
-        <tr class="tr-total"><td colspan="4">Total</td><td>${tNet.toLocaleString('en-PK')}</td></tr>
+        ${rows.map(r => `<tr><td>${escHtml(headLabel(r.name))}</td><td>${r.std.toLocaleString('en-PK')}</td>${showDisc ? `<td>${r.disc ? r.disc.toLocaleString('en-PK') : '—'}</td>` : ''}<td>${prevCol(r)}</td><td>${r.net.toLocaleString('en-PK')}</td></tr>`).join('')}
+        <tr class="tr-total"><td colspan="${showDisc ? 4 : 3}">Total</td><td>${tNet.toLocaleString('en-PK')}</td></tr>
       </tbody>
     </table>
   </div>
@@ -16166,7 +16884,7 @@ function feeThermalChallanHTML({ classMeta, student, heads, settings, period, is
          waqt laga tha. Discount baad me badalne se PURANE mahino ke challan nahi
          badalne chahiye; naya discount sirf aage banne wale challan par lagta hai. */
       const raw = whole(r.discount);
-      const disc = showDisc ? Math.min(raw, std) : 0;
+      const disc = Math.min(raw, std);   // Net hamesha discount ke baad; toggle sirf column
       return { name, std, disc, net: std - disc, prev: feeHeadPrev(r) };
     });
     const hasTransport = detailRows.some(r => String(r.subHead || r.head || '').toLowerCase().trim() === 'transport');
@@ -16179,7 +16897,7 @@ function feeThermalChallanHTML({ classMeta, student, heads, settings, period, is
     rows = heads.map(h => {
       const raw = whole(h.amt);
       const dRaw = whole(disMap[h.name]);
-      const disc = showDisc ? Math.min(dRaw, raw) : 0;
+      const disc = Math.min(dRaw, raw);   // Net hamesha discount ke baad; toggle sirf column
       return { name: h.name, std: raw, disc, net: raw - disc, prev: feeHeadPrev(h) };
     });
     arrears = whole(student.dues) - whole(student.advance);
@@ -16209,7 +16927,7 @@ function feeThermalChallanHTML({ classMeta, student, heads, settings, period, is
     ? feeService.computeFine({ dueDate: dueISO, receivingDate: localTodayISO(), settings })
     : 0;
   const lateDays = feeService.daysLate(dueISO, localTodayISO());
-  const showDiscCol = rows.some(r => r.disc > 0);
+  const showDiscCol = showDisc && rows.some(r => r.disc > 0);   // toggle OFF → column nahi, Net phir bhi discount ke baad
   /* Is challan ka apna PSID — BranchLedger record se. */
   const psidPlain = psidOf(student?._challan);
 
@@ -16282,6 +17000,8 @@ function feeThermalChallanHTML({ classMeta, student, heads, settings, period, is
 
 /* ── Family combined challan: one slip lists every child as a row ── */
 function feeFamilySlipHTML({ copyLabel, family, settings, period, issueISO, dueISO, school = null }) {
+  /* Show Discount on Challan OFF → sirf Disc column chhupta hai; Net discount ke baad hi. */
+  const showDisc = (settings || {}).showDiscount !== false;
   const showPsd = settings.showPsd !== false;
   /* Asli school header — report-header API `branchName`/`branchLogo` bhejti hai (na ke
      name/logo), is liye feeReportSchool() se map karna zaroori hai. Warna school.name
@@ -16339,10 +17059,10 @@ function feeFamilySlipHTML({ copyLabel, family, settings, period, issueISO, dueI
   </div>
   <div class="fee-wrap">
     <table class="fee-table">
-      <thead><tr><th>Child (Class)</th><th>Std.</th><th>Disc</th><th>Prev</th><th>Net</th></tr></thead>
+      <thead><tr><th>Child (Class)</th><th>Std.</th>${showDisc ? '<th>Disc</th>' : ''}<th>Prev</th><th>Net</th></tr></thead>
       <tbody>
-        ${rows.map(r => `<tr><td>${escHtml(r.name)}</td><td>${r.std.toLocaleString('en-PK')}</td><td>${r.disc ? r.disc.toLocaleString('en-PK') : '—'}</td><td>${(typeof r.prev === 'number' && r.prev > 0) ? r.prev.toLocaleString('en-PK') : '—'}</td><td>${r.net.toLocaleString('en-PK')}</td></tr>`).join('')}
-        <tr class="tr-total"><td colspan="4">Total</td><td>${tNet.toLocaleString('en-PK')}</td></tr>
+        ${rows.map(r => `<tr><td>${escHtml(r.name)}</td><td>${r.std.toLocaleString('en-PK')}</td>${showDisc ? `<td>${r.disc ? r.disc.toLocaleString('en-PK') : '—'}</td>` : ''}<td>${(typeof r.prev === 'number' && r.prev > 0) ? r.prev.toLocaleString('en-PK') : '—'}</td><td>${r.net.toLocaleString('en-PK')}</td></tr>`).join('')}
+        <tr class="tr-total"><td colspan="${showDisc ? 4 : 3}">Total</td><td>${tNet.toLocaleString('en-PK')}</td></tr>
         ${famAdv > 0 ? `<tr class="tr-total"><td colspan="4">Less: Advance</td><td>-${famAdv.toLocaleString('en-PK')}</td></tr>` : ''}
       </tbody>
     </table>
@@ -16663,7 +17383,11 @@ function FeeChallanSettings({ toast }) {
                 fight the working month-lock, so the ERP uses prev/next-month toggles
                 for this instead. */}
 
-            {/* Previous month receiving — part of the month-lock feature set. */}
+            {/* Previous Month Challan Receiving — COMMENTED OUT (user request). Previous
+                month ki receiving ab HAMESHA band hai (Fee Receiving lists me isPastView
+                ke saath Receive / Receive More / Bulk disabled) — pichhla baqaya current
+                month me "Receive Pending" se wasool hota hai. Server par kisi branch ka ye
+                toggle ON bhi ho to receiving phir bhi nahi hoti.
             <SettingCard
               name="Previous Month Challan Receiving"
               desc="Allow the counter to receive a challan from the month before the current one."
@@ -16671,6 +17395,7 @@ function FeeChallanSettings({ toast }) {
               onToggle={() => set({ prevMonthChallan: !value.prevMonthChallan })}
               info="Controls the ERP's month lock for the PREVIOUS calendar month. ON: challans dated to the month before the current one can be generated / received at the counter. OFF: the previous month is locked and Fee Challans / Fee Receiving block it with an explanation. This is one half of how the ERP gates adjacent-month work (the other is Next Month Challan Receiving)."
             />
+            */}
 
             {/* Next month receiving — part of the month-lock feature set (future month). */}
             <SettingCard
@@ -16706,7 +17431,7 @@ function FeeChallanSettings({ toast }) {
             {/* Show Discount */}
             <SettingCard
               name="Show Discount on Challan"
-              desc="Display the discount column and net payable on every student challan."
+              desc="Show the Disc column on every student challan. When OFF the column is hidden, but Net and Net Payable still include the applied discount."
               on={value.showDiscount}
               onToggle={() => set({ showDiscount: !value.showDiscount })}
             />
