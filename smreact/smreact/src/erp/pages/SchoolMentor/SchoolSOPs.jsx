@@ -4,7 +4,7 @@ import Tooltip from '../../components/Tooltip';
 import ModuleTutorialModal from '../../components/TutorialModal';
 import { usePermissions } from '../../context/PermissionsContext';
 import RouteFallback from '../../shared/RouteFallback';
-import { getAllSops, downloadFormFile } from '../../services/sopsService';
+import { getAllSops } from '../../services/sopsService';
 
 /* ═══════════════════════════════════════════════════════════════════
    SCHOOL SOPs — Centralised SOP & School Manual Library
@@ -331,16 +331,6 @@ function ManualRow({ manual, onView, onTutorial, canViewManuals = true, canWatch
 function PDFViewerModal({ manual, onClose, toast = () => {} }) {
   const [loading,    setLoading]    = useState(true);
   const [fullScreen, setFullScreen] = useState(false);
-  const [dlFormId,   setDlFormId]   = useState(null);   // kaunsi form abhi download ho rahi hai
-
-  /* Form usi format me download hoti hai jis me upload hui (.docx / .pdf). */
-  const downloadForm = async (f) => {
-    if (dlFormId) return;
-    setDlFormId(f.id);
-    try { await downloadFormFile(f); }
-    catch (err) { toast(err?.message || 'Could not download form', 'error'); }
-    finally { setDlFormId(null); }
-  };
 
   /* Agar PDF kisi wajah se load hi na ho (galat path, file gayab), to spinner
      hamesha ke liye ghoomta na rahe — thodi der baad khud hata do. */
@@ -431,19 +421,6 @@ function PDFViewerModal({ manual, onClose, toast = () => {} }) {
                       {f.desc || f.fileName}{f.pageRef ? ` · ${f.pageRef}` : ''}
                     </div>
                   </div>
-                  {f.fileUrl && (
-                    <Tooltip text={dlFormId === f.id ? 'Downloading…' : 'Download this form'}>
-                      <button
-                        type="button"
-                        className="sops-btn sops-btn-ghost"
-                        onClick={() => downloadForm(f)}
-                        disabled={Boolean(dlFormId)}
-                        aria-label="Download this form"
-                      >
-                        <i className={`fa-solid ${dlFormId === f.id ? 'fa-spinner fa-spin' : 'fa-download'}`} aria-hidden="true"></i>
-                      </button>
-                    </Tooltip>
-                  )}
                 </div>
               ))}
             </div>
@@ -467,7 +444,10 @@ function PDFViewerModal({ manual, onClose, toast = () => {} }) {
                 )}
                 <iframe
                   className="sops-pdf-frame"
-                  src={manual.pdfUrl}
+                  /* #toolbar=0 hides the browser's native PDF toolbar (incl. the
+                     Download / Print / Summarize buttons) so the manual can only
+                     be read here, not saved. */
+                  src={`${manual.pdfUrl}${manual.pdfUrl.includes('#') ? '&' : '#'}toolbar=0`}
                   title={`${manual.title} PDF preview`}
                   onLoad={() => setLoading(false)}
                   onError={() => setLoading(false)}
@@ -1177,6 +1157,41 @@ const SOPS_CSS = `
   border: none;
   display: block;
 }
+/* ── Custom react-pdf viewer (no Download button) ── */
+.sops-pdfx { display: flex; flex-direction: column; height: 520px; }
+.sops-modal--fs .sops-pdfx { height: 100%; }
+.sops-pdfx-bar {
+  display: flex; align-items: center; justify-content: center;
+  gap: 18px; flex-wrap: wrap;
+  padding: 8px 12px;
+  background: #323639;
+  border-bottom: 1px solid rgba(0,0,0,.35);
+}
+.sops-pdfx-grp { display: flex; align-items: center; gap: 6px; }
+.sops-pdfx-btn {
+  width: 30px; height: 30px;
+  border: none; border-radius: 6px;
+  background: transparent; color: #E8EAED;
+  cursor: pointer; font-size: 13px;
+  display: flex; align-items: center; justify-content: center;
+}
+.sops-pdfx-btn:hover:not(:disabled) { background: rgba(255,255,255,.12); }
+.sops-pdfx-btn:disabled { opacity: .4; cursor: default; }
+.sops-pdfx-page, .sops-pdfx-zoom {
+  min-width: 54px; text-align: center;
+  color: #E8EAED; font-size: 12.5px; font-weight: 600;
+  font-family: var(--sops-font);
+}
+.sops-pdfx-scroll { flex: 1; overflow: auto; background: #525659; position: relative; }
+.sops-pdfx-pages {
+  display: flex; flex-direction: column; align-items: center;
+  gap: 10px; padding: 12px; min-height: 100%;
+  width: max-content; min-width: 100%; margin: 0 auto;
+  box-sizing: border-box;
+}
+.sops-pdfx-page-wrap { box-shadow: 0 1px 6px rgba(0,0,0,.45); background: #fff; }
+.sops-pdfx-page-wrap .react-pdf__Page { background: #fff; }
+.sops-pdfx-page-wrap canvas { display: block; }
 .sops-pdf-loading {
   position: absolute;
   inset: 0;
@@ -1514,6 +1529,7 @@ const SOPS_CSS = `
   .sops-pdf-meta { grid-template-columns: repeat(2, 1fr); }
   .sops-pdf-area { min-height: 460px; }
   .sops-pdf-frame { height: 460px; }
+  .sops-pdfx { height: 460px; }
   .sops-tut-h { gap: 6px; }
 }
 @media (max-width: 720px) {
@@ -1537,6 +1553,7 @@ const SOPS_CSS = `
   .sops-modal-back { padding: 0; }
   .sops-modal, .sops-modal--lg { max-height: 100vh; border-radius: 0; width: 100%; }
   .sops-pdf-frame { height: 420px; }
+  .sops-pdfx { height: 420px; }
 }
 @media (max-width: 600px) {
   .sops-banner { grid-template-columns: 32px 1fr; padding: 10px 12px; }
@@ -1570,6 +1587,7 @@ const SOPS_CSS = `
   .sops-pdf-meta { grid-template-columns: 1fr; }
   .sops-pdf-area { min-height: 380px; }
   .sops-pdf-frame { height: 380px; }
+  .sops-pdfx { height: 380px; }
   .sops-rv-sheet-wrap { padding: 12px 6px 24px; }
   .sops-rv-sheet { padding: 24px 18px; }
   .sops-rv-head { flex-direction: column; align-items: flex-start; gap: 10px; }
@@ -1586,6 +1604,7 @@ const SOPS_CSS = `
   .sops-actions { flex-direction: column; gap: 6px; }
   .sops-actions .sops-btn { width: 100%; }
   .sops-pdf-frame { height: 320px; }
+  .sops-pdfx { height: 320px; }
   .sops-pdf-area { min-height: 320px; }
   .sops-video-wrap { border-radius: 10px; }
   .sops-modal-x { width: 30px; height: 30px; font-size: 12px; }
