@@ -875,4 +875,63 @@ export const DASH_CSS = `
   .dash-hero-greet { font-size: 18px; }
   .dash-hero-r { gap: 10px; }
 }
+
+/* ═══ Fee Analytics — visual charts (Overview Comparison, Net Receivable
+   Breakdown donut, Collections vs Outstanding). Ported from the design
+   reference for parity; reuses .adm-card-h* tokens already defined in
+   ADM_NEW_CSS so the chart cards match every other card on the
+   dashboard. ═══ */
+.fa-overview {
+  background: var(--bg-card, #fff);
+  border: 1px solid var(--border-light, #E2E8F0);
+  border-radius: 14px;
+  padding: 20px 22px 18px;
+  margin-top: 14px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, .04);
+}
+.fa-overview-head { margin-bottom: 14px; }
+.fa-overview-title {
+  display: inline-flex; align-items: center; gap: 8px;
+  font: 800 15px/1.2 var(--dash-font); color: var(--text-primary); letter-spacing: -0.2px;
+}
+.fa-overview-title i { color: #1E40AF; font-size: 14px; }
+[data-theme="dark"] .fa-overview-title i { color: #93C5FD; }
+.fa-overview-sub {
+  font: 500 12px/1.4 var(--dash-font); color: var(--text-muted, #64748B);
+  margin-top: 4px;
+}
+.fa-overview-sub b { color: var(--text-primary); font-weight: 700; }
+
+/* Chart cards */
+.fa-chart-card {
+  background: var(--bg-card, #fff);
+  border: 1px solid var(--border-light, #E2E8F0);
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-bottom: 14px;
+}
+.fa-chart-card--wide { padding-bottom: 6px; }
+.fa-chart-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-bottom: 4px;
+}
+.fa-chart-grid .fa-chart-card { margin-bottom: 0; }
+.fa-chart-empty {
+  display: flex; align-items: center; justify-content: center;
+  height: 260px;
+  font: 600 12.5px/1.4 var(--dash-font); color: var(--text-muted, #64748B);
+  text-align: center;
+}
+[data-theme="dark"] .fa-overview { background: var(--bg-card); border-color: var(--border-light); }
+[data-theme="dark"] .fa-chart-card { background: var(--bg-card); border-color: var(--border-light); }
+
+@media (max-width: 1024px) {
+  .fa-chart-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 640px) {
+  .fa-overview { padding: 16px 14px 14px; }
+  .fa-overview-title { font-size: 14px; }
+}
 `;

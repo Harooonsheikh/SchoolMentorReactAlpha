@@ -1,9 +1,10 @@
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
 import Tooltip from '../../components/Tooltip';
 import UniversalSearch from '../../shared/UniversalSearch';
 import MentorAISearchBar from './MentorAISearchBar';
 import {
   AreaChart, Area, Line, BarChart, Bar, ComposedChart, Cell,
+  PieChart, Pie, Legend,
   XAxis, YAxis, CartesianGrid, Tooltip as RTooltip, ResponsiveContainer,
 } from 'recharts';
 import { useModules } from '../../context/ModuleContext';
@@ -132,6 +133,96 @@ function ChartTooltip({ active, payload, label }) {
       ))}
     </div>
   );
+}
+
+/* ─── PKR-formatted tooltip for the Fee Analytics visual charts —
+   bars/slices carry a `fill` color set directly on the Cell, so this
+   reads payload[0].payload.color (Recharts doesn't echo a plain
+   <Bar fill> back onto payload[i].color for single-series charts).
+   Pass `showPct` for the donut so each row also shows its share. */
+function FeeChartTooltip({ active, payload, showPct }) {
+  if (!active || !payload?.length) return null;
+  const total = showPct ? payload.reduce((a, p) => a + (p.value || 0), 0) : 0;
+  return (
+    <div style={{
+      background: 'var(--bg-card, #fff)',
+      border: '1px solid var(--border-light, #E2E8F0)',
+      borderRadius: 8, padding: '8px 12px', fontSize: 12,
+      boxShadow: '0 4px 12px rgba(15, 23, 42, .08)',
+    }}>
+      {payload.map((p, i) => {
+        const color = p.payload?.color || p.color || p.fill;
+        const pct = showPct && total > 0 ? Math.round((p.value / total) * 100) : null;
+        return (
+          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text-primary)', fontWeight: 600, whiteSpace: 'nowrap' }}>
+            <span style={{ width: 8, height: 8, borderRadius: '50%', background: color, flexShrink: 0 }} />
+            {p.name || p.payload?.name}: {fmtPKR(p.value)}{pct !== null ? ` (${pct}%)` : ''}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ─── Scroll-triggered chart replay ───
+   Every chart card on the dashboard re-plays its entrance animation
+   every time it scrolls into view — not just once on first page load.
+   An IntersectionObserver watches the card's own container; each fresh
+   not-visible → visible edge bumps `replayKey`, which callers use as a
+   React `key` on the chart's inner tree. Changing that key fully
+   unmounts + remounts the chart, so Recharts restart from their 0 /
+   empty state exactly like a first mount, instead of Recharts' default
+   "animate once per mount" behaviour. Scrolling back up and re-entering
+   replays it again, every single time.
+   `wasVisibleRef` only allows a new replay after a genuine exit, so a
+   still-visible card mid-animation can't be re-triggered by scroll
+   jitter, and the 60ms debounce coalesces the flurry of intersection
+   callbacks a fast scroll can fire. */
+const CHART_ANIM_MS = 1800; // single tunable duration shared by every scroll-triggered chart animation
+
+function useScrollReplay(threshold = 0.25) {
+  const ref = useRef(null);
+  const [replayKey, setReplayKey] = useState(0);
+  /* `inView` is the live in/out state — used by CSS-driven bars (width
+     transitions) that can't be reset via a React `key` remount the way
+     Recharts is, since a plain div has no "0 state" to return to other
+     than re-rendering it at 0 ourselves. */
+  const [inView, setInView] = useState(false);
+  const wasVisibleRef = useRef(false);
+
+  useEffect(() => {
+    const node = ref.current;
+    if (!node) return undefined;
+    if (typeof IntersectionObserver === 'undefined') {
+      setReplayKey((k) => k + 1);
+      setInView(true);
+      return undefined;
+    }
+    let debounceId = null;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (debounceId) clearTimeout(debounceId);
+        debounceId = setTimeout(() => {
+          if (entry.isIntersecting && !wasVisibleRef.current) {
+            wasVisibleRef.current = true;
+            setReplayKey((k) => k + 1);
+            setInView(true);
+          } else if (!entry.isIntersecting && wasVisibleRef.current) {
+            wasVisibleRef.current = false;
+            setInView(false);
+          }
+        }, 60);
+      },
+      { threshold, rootMargin: '0px 0px -5% 0px' }
+    );
+    observer.observe(node);
+    return () => {
+      if (debounceId) clearTimeout(debounceId);
+      observer.disconnect();
+    };
+  }, [threshold]);
+
+  return { ref, replayKey, inView };
 }
 
 export default function AdminDashboard({ visibility, toast, navigate = () => {}, openActivityCalendar = () => {}, showAllModules = false }) {
@@ -305,6 +396,27 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
   const feePaidPct = pctOf(feeReceivedVal, totalNetReceivableVal);
   const feePendingPct = pctOf(pendingFeeVal, totalNetReceivableVal);
 
+  /* Fee Analytics visual charts — reshapes the SAME live values the
+     cards above already show (no extra fetch, no mock). Discount /
+     advance-adjustment / advance-received series are OMITTED because the
+     ERP has no live data for them. */
+  const feeOverviewData = useMemo(() => ([
+    { name: 'Current Month Fee Position', short: 'Curr. Month',    value: currentMonthFeeVal,    color: '#2563EB' },
+    { name: 'Previous Dues',              short: 'Prev. Dues',     value: previousDuesVal,       color: '#EF4444' },
+    { name: 'Total Net Receivable',       short: 'Net Receivable', value: totalNetReceivableVal, color: '#1E40AF' },
+    { name: 'Fee Received',               short: 'Received',       value: feeReceivedVal,        color: '#16A34A' },
+    { name: 'Pending Fee',                short: 'Pending',        value: pendingFeeVal,         color: '#DC2626' },
+  ]), [currentMonthFeeVal, previousDuesVal, totalNetReceivableVal, feeReceivedVal, pendingFeeVal]);
+  /* Donut: Fee Received + Pending Fee sum to Total Net Receivable. */
+  const feeBreakdownData = useMemo(() => ([
+    { name: 'Fee Received', value: feeReceivedVal, color: '#16A34A' },
+    { name: 'Pending Fee',  value: pendingFeeVal,  color: '#DC2626' },
+  ].filter(d => d.value > 0)), [feeReceivedVal, pendingFeeVal]);
+  const feeCollectionsData = useMemo(() => ([
+    { name: 'Collected',   short: 'Collected',   value: feeReceivedVal, color: '#16A34A' },
+    { name: 'Outstanding', short: 'Outstanding', value: pendingFeeVal,  color: '#DC2626' },
+  ]), [feeReceivedVal, pendingFeeVal]);
+
   /* Previous Dues / Students-with-Dues — seedha get-dashboard ke FeeAnalytics se. */
   const studentsWithDuesVal = fee.StudentsPending || 0;
 
@@ -461,6 +573,20 @@ const newAnnouncementCount = userNotifications.filter(
   /* Upcoming Activities helpers — API {Title, StartAt, EndAt}. */
   const actDateLabel = (iso) => { const d = new Date(iso); return isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-PK', { day: '2-digit', month: 'short', year: 'numeric' }); };
   const actDaysAway  = (iso) => { const d = new Date(iso); if (isNaN(d.getTime())) return 0; return Math.round((d.setHours(0, 0, 0, 0) - new Date().setHours(0, 0, 0, 0)) / 86400000); };
+
+  /* Recharts animations are disabled when the user has asked their
+     system to reduce motion. */
+  const chartsAnimated = typeof window === 'undefined' || !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  /* One useScrollReplay per chart card so each replays independently on
+     scroll re-entry — except the donut + collections pair in
+     .fa-chart-grid, which share one so they always start/finish in
+     lockstep. */
+  const overviewCompReplay = useScrollReplay();
+  const feeGridReplay = useScrollReplay();
+  const plOverviewReplay = useScrollReplay();
+  const lpChartReplay = useScrollReplay();
+  const subjCompletionReplay = useScrollReplay();
+  const paperSecReplay = useScrollReplay();
 
   return (
     <>
@@ -905,6 +1031,88 @@ const newAnnouncementCount = userNotifications.filter(
               Download/Print Report <i className="fa-solid fa-arrow-right" aria-hidden="true"></i>
             </button>
           </div>
+
+          {/* ═════════ FEE ANALYTICS — visual charts ═════════
+              Reshapes the SAME live values shown in the cards above
+              (currentMonthFeeVal / previousDuesVal / totalNetReceivableVal
+              / feeReceivedVal / pendingFeeVal) into three Recharts views.
+              No extra fetch, no mock; discount/advance series omitted as
+              the ERP has no live data for them. */}
+          <div className="fa-overview">
+            <div className="fa-overview-head">
+              <div className="fa-overview-title">
+                <i className="fa-solid fa-chart-column" aria-hidden="true"></i> Fee Analytics Overview
+              </div>
+              <div className="fa-overview-sub">A quick visual read of <b>{cmyLabel}</b>&apos;s fee position</div>
+            </div>
+
+            {/* Overview Comparison — full-width horizontal bar */}
+            <div className="fa-chart-card fa-chart-card--wide" ref={overviewCompReplay.ref}>
+              <div className="adm-card-h">
+                <div className="adm-card-h-t">Overview Comparison</div>
+                <span className="adm-card-h-meta">{cmyLabel}</span>
+              </div>
+              <ResponsiveContainer key={overviewCompReplay.replayKey} width="100%" height={320}>
+                <BarChart data={feeOverviewData} layout="vertical" margin={{ top: 4, right: 28, left: 8, bottom: 4 }}>
+                  <CartesianGrid stroke="#E2E8F0" strokeDasharray="3 3" horizontal={false} />
+                  <XAxis type="number" tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={{ stroke: '#E2E8F0' }} tickFormatter={(v) => `${Math.round(v / 1000)}k`} />
+                  <YAxis type="category" dataKey="short" width={100} tick={{ fontSize: 11, fill: '#475569', fontWeight: 600 }} tickLine={false} axisLine={false} />
+                  <RTooltip content={<FeeChartTooltip />} cursor={{ fill: 'rgba(30,64,175,.06)' }} />
+                  <Bar
+                    dataKey="value" name="Amount" radius={[0, 6, 6, 0]} maxBarSize={20}
+                    isAnimationActive={chartsAnimated} animationDuration={CHART_ANIM_MS} animationEasing="ease-out" animationBegin={0}
+                  >
+                    {feeOverviewData.map((d, i) => <Cell key={i} fill={d.color} />)}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
+            {/* Donut + Collections bar side-by-side */}
+            <div className="fa-chart-grid" ref={feeGridReplay.ref}>
+              <div className="fa-chart-card">
+                <div className="adm-card-h">
+                  <div className="adm-card-h-t">Net Receivable Breakdown</div>
+                </div>
+                {feeBreakdownData.length === 0 ? (
+                  <div className="fa-chart-empty">No amounts recorded yet for {cmyLabel}.</div>
+                ) : (
+                  <ResponsiveContainer key={feeGridReplay.replayKey} width="100%" height={260}>
+                    <PieChart>
+                      <Pie
+                        data={feeBreakdownData} dataKey="value" nameKey="name" innerRadius="55%" outerRadius="85%" paddingAngle={2}
+                        isAnimationActive={chartsAnimated} animationDuration={CHART_ANIM_MS} animationEasing="ease-out" animationBegin={0}
+                      >
+                        {feeBreakdownData.map((d, i) => <Cell key={i} fill={d.color} />)}
+                      </Pie>
+                      <RTooltip content={<FeeChartTooltip showPct />} />
+                      <Legend verticalAlign="bottom" height={48} iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 11, fontWeight: 600 }} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                )}
+              </div>
+
+              <div className="fa-chart-card">
+                <div className="adm-card-h">
+                  <div className="adm-card-h-t">Collections vs Outstanding</div>
+                </div>
+                <ResponsiveContainer key={`coll-${feeGridReplay.replayKey}`} width="100%" height={260}>
+                  <BarChart data={feeCollectionsData} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
+                    <CartesianGrid stroke="#E2E8F0" strokeDasharray="3 3" vertical={false} />
+                    <XAxis dataKey="short" tick={{ fontSize: 11, fill: '#64748B', fontWeight: 600 }} tickLine={false} axisLine={{ stroke: '#E2E8F0' }} />
+                    <YAxis tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={false} tickFormatter={(v) => `${Math.round(v / 1000)}k`} />
+                    <RTooltip content={<FeeChartTooltip />} cursor={{ fill: 'rgba(30,64,175,.06)' }} />
+                    <Bar
+                      dataKey="value" name="Amount" radius={[6, 6, 0, 0]} maxBarSize={64}
+                      isAnimationActive={chartsAnimated} animationDuration={CHART_ANIM_MS} animationEasing="ease-out" animationBegin={0}
+                    >
+                      {feeCollectionsData.map((d, i) => <Cell key={i} fill={d.color} />)}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
@@ -1007,7 +1215,7 @@ const newAnnouncementCount = userNotifications.filter(
               read clearly against the wider revenue/expense line scale.
               Wired to the LIVE Accounts ledger (profitChart / plNet), so it
               scales to actual PKR — no mock "millions" data. */}
-          <div className="pl-overview">
+          <div className="pl-overview" ref={plOverviewReplay.ref}>
             <div className="adm-card-h">
               <div className="adm-card-h-t">Profit/Loss Overview</div>
               <div className="pl-head-right">
@@ -1017,7 +1225,7 @@ const newAnnouncementCount = userNotifications.filter(
               </div>
             </div>
             <div className="pl-chart-scroll">
-              <ResponsiveContainer width="100%" height={360} minWidth={640}>
+              <ResponsiveContainer key={plOverviewReplay.replayKey} width="100%" height={360} minWidth={640}>
                 <ComposedChart data={profitChart} margin={{ top: 12, right: 28, left: 4, bottom: 4 }}>
                   <CartesianGrid stroke="#E2E8F0" strokeDasharray="3 3" vertical={false} />
                   <XAxis dataKey="m" tick={{ fontSize: 12.5, fill: '#64748B', fontWeight: 600 }} tickLine={false} axisLine={{ stroke: '#E2E8F0' }} />
@@ -1026,13 +1234,19 @@ const newAnnouncementCount = userNotifications.filter(
                       Profit/Loss bars aren't squashed against the revenue scale. */}
                   <YAxis yAxisId="pl" orientation="right" domain={[(dataMin) => Math.min(0, dataMin * 1.15), (dataMax) => (dataMax > 0 ? dataMax * 1.2 : dataMax * 0.8)]} hide />
                   <RTooltip content={<ProfitLossTooltip />} cursor={{ fill: 'rgba(30, 64, 175, .07)' }} />
-                  <Bar yAxisId="pl" dataKey="pl" name="Profit/Loss" fillOpacity={0.88} radius={[8, 8, 0, 0]} barSize={30}>
+                  <Bar yAxisId="pl" dataKey="pl" name="Profit/Loss" fillOpacity={0.88} radius={[8, 8, 0, 0]} barSize={30}
+                    isAnimationActive={chartsAnimated} animationDuration={CHART_ANIM_MS} animationEasing="ease-out" animationBegin={0}
+                  >
                     {profitChart.map((d, i) => (
                       <Cell key={i} fill={d.pl >= 0 ? '#16A34A' : '#DC2626'} />
                     ))}
                   </Bar>
-                  <Line type="monotone" dataKey="revenue" name="Revenue"  stroke="#1E40AF" strokeWidth={2.6} dot={{ r: 4, stroke: '#1E40AF', fill: '#fff', strokeWidth: 2 }} activeDot={{ r: 6 }} />
-                  <Line type="monotone" dataKey="expense" name="Expenses" stroke="#DC2626" strokeWidth={2.6} dot={{ r: 4, stroke: '#DC2626', fill: '#fff', strokeWidth: 2 }} activeDot={{ r: 6 }} />
+                  <Line type="monotone" dataKey="revenue" name="Revenue"  stroke="#1E40AF" strokeWidth={2.6} dot={{ r: 4, stroke: '#1E40AF', fill: '#fff', strokeWidth: 2 }} activeDot={{ r: 6 }}
+                    isAnimationActive={chartsAnimated} animationDuration={CHART_ANIM_MS} animationEasing="ease-out" animationBegin={150}
+                  />
+                  <Line type="monotone" dataKey="expense" name="Expenses" stroke="#DC2626" strokeWidth={2.6} dot={{ r: 4, stroke: '#DC2626', fill: '#fff', strokeWidth: 2 }} activeDot={{ r: 6 }}
+                    isAnimationActive={chartsAnimated} animationDuration={CHART_ANIM_MS} animationEasing="ease-out" animationBegin={300}
+                  />
                 </ComposedChart>
               </ResponsiveContainer>
             </div>
@@ -1082,8 +1296,8 @@ const newAnnouncementCount = userNotifications.filter(
           </div>
 
           <div className="adm-2col">
-            <div className="adm-chart-card">
-              <ResponsiveContainer width="100%" height={200}>
+            <div className="adm-chart-card" ref={lpChartReplay.ref}>
+              <ResponsiveContainer key={lpChartReplay.replayKey} width="100%" height={200}>
                 <AreaChart data={lpData} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
                   <defs>
                     <linearGradient id="lpClasswork" x1="0" y1="0" x2="0" y2="1">
@@ -1099,8 +1313,12 @@ const newAnnouncementCount = userNotifications.filter(
                   <XAxis dataKey="SubjectName" tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={{ stroke: '#E2E8F0' }} />
                   <YAxis domain={[0, 'auto']} tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={false} />
                   <RTooltip content={<ChartTooltip />} />
-                  <Area type="monotone" dataKey="ClassworkCount" name="Classwork" stroke="#1E40AF" strokeWidth={2.2} fill="url(#lpClasswork)" dot={{ r: 3, stroke: '#1E40AF', fill: '#fff', strokeWidth: 2 }} />
-                  <Area type="monotone" dataKey="NotebookCount"  name="Notebook"  stroke="#16A34A" strokeWidth={2.2} fill="url(#lpNotebook)"  dot={{ r: 3, stroke: '#16A34A', fill: '#fff', strokeWidth: 2 }} />
+                  <Area type="monotone" dataKey="ClassworkCount" name="Classwork" stroke="#1E40AF" strokeWidth={2.2} fill="url(#lpClasswork)" dot={{ r: 3, stroke: '#1E40AF', fill: '#fff', strokeWidth: 2 }}
+                    isAnimationActive={chartsAnimated} animationDuration={CHART_ANIM_MS} animationEasing="ease-out" animationBegin={0}
+                  />
+                  <Area type="monotone" dataKey="NotebookCount"  name="Notebook"  stroke="#16A34A" strokeWidth={2.2} fill="url(#lpNotebook)"  dot={{ r: 3, stroke: '#16A34A', fill: '#fff', strokeWidth: 2 }}
+                    isAnimationActive={chartsAnimated} animationDuration={CHART_ANIM_MS} animationEasing="ease-out" animationBegin={150}
+                  />
                 </AreaChart>
               </ResponsiveContainer>
               <div className="adm-legend">
@@ -1109,7 +1327,7 @@ const newAnnouncementCount = userNotifications.filter(
               </div>
             </div>
 
-           <div className="adm-side-card">
+           <div className="adm-side-card" ref={subjCompletionReplay.ref}>
   <div className="adm-side-title">Subject-wise Completion</div>
 
   <div className="adm-bars subject-completion-scroll">
@@ -1120,15 +1338,22 @@ const newAnnouncementCount = userNotifications.filter(
     )}
 
     {lpData.map((d, index) => {
-      const pct = lpMaxCw > 0 
-        ? ((Number(d.ClassworkCount) || 0) / lpMaxCw) * 100 
+      const pct = lpMaxCw > 0
+        ? ((Number(d.ClassworkCount) || 0) / lpMaxCw) * 100
         : 0;
 
       return (
         <div key={`${d.SubjectName}-${index}`} className="adm-bar-row">
           <div className="adm-bar-lbl">{d.SubjectName}</div>
           <div className="adm-bar-track">
-            <div className="adm-bar-fill" style={{ width: `${pct}%` }} />
+            <div
+              className="adm-bar-fill"
+              style={{
+                width: `${subjCompletionReplay.inView ? pct : 0}%`,
+                transitionDuration: `${CHART_ANIM_MS}ms`,
+                transitionTimingFunction: 'ease-out',
+              }}
+            />
           </div>
         </div>
       );
@@ -1143,7 +1368,7 @@ const newAnnouncementCount = userNotifications.filter(
 
       {/* ═════════ 5. PAPER GENERATOR ═════════ */}
       {isActive('paper_generator') && (
-        <div className="dash-sec adm-sec">
+        <div className="dash-sec adm-sec" ref={paperSecReplay.ref}>
           <div className="dash-sec-h">
             <div className="dash-sec-title"><i className="fa-solid fa-scroll" aria-hidden="true"></i> Question Paper Generator</div>
             <div className="adm-h-right">
@@ -1173,13 +1398,15 @@ const newAnnouncementCount = userNotifications.filter(
 
             <div className="adm-chart-card">
               <div className="adm-side-tag">Paper Generation Statistics</div>
-              <ResponsiveContainer width="100%" height={180}>
+              <ResponsiveContainer key={paperSecReplay.replayKey} width="100%" height={180}>
                 <BarChart data={paperData} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
                   <CartesianGrid stroke="#E2E8F0" strokeDasharray="3 3" vertical={false} />
                   <XAxis dataKey="SubjectName" tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={{ stroke: '#E2E8F0' }} />
                   <YAxis tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={false} />
                   <RTooltip content={<ChartTooltip />} />
-                  <Bar dataKey="TotalGenerated" name="Papers" radius={[6, 6, 0, 0]} fill="#4169E1" />
+                  <Bar dataKey="TotalGenerated" name="Papers" radius={[6, 6, 0, 0]} fill="#4169E1"
+                    isAnimationActive={chartsAnimated} animationDuration={CHART_ANIM_MS} animationEasing="ease-out" animationBegin={0}
+                  />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -1553,8 +1780,9 @@ function AttendanceSection({ openModule, studentData, staffData }) {
 function AttendanceCard({ icon, tone, title, data, unitSingular, unitPlural, unitSuffix, pctColor, pctTone }) {
   const pct = data.percentage;
   const color = pctColor(pct);
+  const barReplay = useScrollReplay();
   return (
-    <div className={`stat-card fee-card att-card att-card--${tone}`}>
+    <div className={`stat-card fee-card att-card att-card--${tone}`} ref={barReplay.ref}>
       <div className="fc-header">
         <div className="fc-icon-chip">
           <i className={`fa-solid ${icon}`} aria-hidden="true"></i>
@@ -1585,9 +1813,17 @@ function AttendanceCard({ icon, tone, title, data, unitSingular, unitPlural, uni
         )}
       </div>
 
-      {/* Progress bar — width = attendance percentage */}
+      {/* Progress bar — width = attendance percentage, animated in/reset
+          every time this card scrolls into/out of view */}
       <div className="att-bar-track">
-        <div className="att-bar-fill" style={{ width: `${pct}%` }} />
+        <div
+          className="att-bar-fill"
+          style={{
+            width: `${barReplay.inView ? pct : 0}%`,
+            transitionDuration: `${CHART_ANIM_MS}ms`,
+            transitionTimingFunction: 'ease-out',
+          }}
+        />
       </div>
 
       <div className="fc-support att-support">
@@ -1836,8 +2072,9 @@ body{font-family:'Plus Jakarta Sans',Arial,sans-serif;color:#111;font-size:10.5p
 
 /* ─── Reusable App-status card (Teachers / Parents variants) ─── */
 function AppStatusCard({ tone, title, subtitle, icon, data, ctaLabel, ctaIcon = 'fa-arrow-right', onCta }) {
+  const replay = useScrollReplay();
   return (
-    <div className={`adm-tc adm-tc--app adm-tc--${tone}`}>
+    <div className={`adm-tc adm-tc--app adm-tc--${tone}`} ref={replay.ref}>
       <div className="adm-tc-h">
         <div className="adm-tc-h-l">
           <div className={`adm-tc-ic adm-tc-ic--${tone}`}>
@@ -1871,7 +2108,11 @@ function AppStatusCard({ tone, title, subtitle, icon, data, ctaLabel, ctaIcon = 
           <div className="adm-tc-bar-track">
             <div
               className={`adm-tc-bar-fill adm-tc-bar-fill--${tone}`}
-              style={{ width: `${data.pct}%` }}
+              style={{
+                width: `${replay.inView ? data.pct : 0}%`,
+                transitionDuration: `${CHART_ANIM_MS}ms`,
+                transitionTimingFunction: 'ease-out',
+              }}
             />
           </div>
           <div className="adm-tc-bar-meta">
