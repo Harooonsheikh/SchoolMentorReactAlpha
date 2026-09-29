@@ -8,7 +8,7 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip as RTooltip, ResponsiveContainer,
 } from 'recharts';
 import { useModules } from '../../context/ModuleContext';
-import { DASH_CSS } from './Dashboard';
+import { usePermissions } from '../../context/PermissionsContext';
 import AnnouncementsModal from './AnnouncementsModal';
 import AppPendingReportModal from './AppPendingReportModal';
 import { FeeAnalyticsInfoButton } from './FeeAnalyticsInfo';
@@ -233,6 +233,15 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
   const isActive = showAllModules ? () => true : ctxIsActive;
   const moduleActive = showAllModules ? () => true : visModuleActive;
 
+  /* Per-card dashboard permissions — User Permissions ka "Dashboard" tree
+     (permissionsData.js → dashboard.*). canScreen School Head / no-perm-data
+     (fullAccess) par true deta hai, warna sirf granted cards. Yehi head aur
+     staff ko SAME layout par rakhta hai magar har staff sirf wahi cards
+     dekhta hai jinki use ijazat di gayi hai. Label EXACT wahi jo permission
+     tree ke child labels hain (API subMenuName se match). */
+  const { canScreen } = usePermissions();
+  const canCard = (label) => canScreen('Dashboard', label);
+
   const NAV_LABELS = {
     students: 'Students', hr: 'Human Resource', crm: 'Admission CRM',
     exam: 'Examination', acad: 'Academics', fee: 'Fee', accounts: 'Accounts',
@@ -391,31 +400,54 @@ export default function AdminDashboard({ visibility, toast, navigate = () => {},
   const currentMonthFeeVal = Number(fee.CurrentMonthFeePosition) || 0;
   const previousDuesVal = Number(fee.PreviousDues) || 0;
   const feeReceivedVal = Number(fee.FeeReceived) || 0;
+  /* Discount concessions — dono ASLI get-dashboard fields (cards bhi yehi
+     dikhate hain): DiscountGiven = challan BANTE waqt, ReceivedDiscount =
+     wasooli ke waqt. Chart me total concession = dono ka jorh. */
+  const discountGivenVal = Number(fee.DiscountGiven) || 0;
+  const receivedDiscountVal = Number(fee.ReceivedDiscount) || 0;
+  const totalDiscountVal = discountGivenVal + receivedDiscountVal;
   const totalNetReceivableVal = currentMonthFeeVal + previousDuesVal;
   const pendingFeeVal = Math.max(0, totalNetReceivableVal - feeReceivedVal);
   const feePaidPct = pctOf(feeReceivedVal, totalNetReceivableVal);
   const feePendingPct = pctOf(pendingFeeVal, totalNetReceivableVal);
 
+  /* Per-fee-card view permissions — User Permissions ke "Dashboard" tree se.
+     Har card AUR har graph series inhi se gate hoti hai, taake jo fee metric
+     kisi staff ko allow nahi, wo na card me na graph me dikhe. */
+  const feeVis = {
+    currentMonth:  canCard('Current Month Fee Position'),
+    previousDues:  canCard('Previous Dues'),
+    netReceivable: canCard('Total Net Receivable'),
+    received:      canCard('Fee Received'),
+    pending:       canCard('Pending Fee'),
+    discount:      canCard('Discount Given During Receiving'),
+  };
+  /* Fee section tabhi dikhao jab school-level fee module on ho AUR user ko
+     kam-az-kam ek fee card ki ijazat ho. */
+  const anyFeeCard = Object.values(feeVis).some(Boolean);
+
   /* Fee Analytics visual charts — reshapes the SAME live values the
-     cards above already show (no extra fetch, no mock). Discount /
-     advance-adjustment / advance-received series are OMITTED because the
-     ERP has no live data for them. */
+     cards above already show (no extra fetch, no mock). Discount series bhi
+     ab live hai (get-dashboard DiscountGiven + ReceivedDiscount) — wahi jo
+     cards par amber me dikhta hai. Har bar apni card-permission se filter
+     hoti hai. */
   const feeOverviewData = useMemo(() => ([
-    { name: 'Current Month Fee Position', short: 'Curr. Month',    value: currentMonthFeeVal,    color: '#2563EB' },
-    { name: 'Previous Dues',              short: 'Prev. Dues',     value: previousDuesVal,       color: '#EF4444' },
-    { name: 'Total Net Receivable',       short: 'Net Receivable', value: totalNetReceivableVal, color: '#1E40AF' },
-    { name: 'Fee Received',               short: 'Received',       value: feeReceivedVal,        color: '#16A34A' },
-    { name: 'Pending Fee',                short: 'Pending',        value: pendingFeeVal,         color: '#DC2626' },
-  ]), [currentMonthFeeVal, previousDuesVal, totalNetReceivableVal, feeReceivedVal, pendingFeeVal]);
+    { name: 'Current Month Fee Position', short: 'Curr. Month',    value: currentMonthFeeVal,    color: '#2563EB', show: feeVis.currentMonth },
+    { name: 'Previous Dues',              short: 'Prev. Dues',     value: previousDuesVal,       color: '#EF4444', show: feeVis.previousDues },
+    { name: 'Total Net Receivable',       short: 'Net Receivable', value: totalNetReceivableVal, color: '#1E40AF', show: feeVis.netReceivable },
+    { name: 'Fee Received',               short: 'Received',       value: feeReceivedVal,        color: '#16A34A', show: feeVis.received },
+    { name: 'Discount',                   short: 'Discount',       value: totalDiscountVal,      color: '#D97706', show: feeVis.discount },
+    { name: 'Pending Fee',                short: 'Pending',        value: pendingFeeVal,         color: '#DC2626', show: feeVis.pending },
+  ].filter(d => d.show)), [currentMonthFeeVal, previousDuesVal, totalNetReceivableVal, feeReceivedVal, totalDiscountVal, pendingFeeVal, feeVis.currentMonth, feeVis.previousDues, feeVis.netReceivable, feeVis.received, feeVis.discount, feeVis.pending]);
   /* Donut: Fee Received + Pending Fee sum to Total Net Receivable. */
   const feeBreakdownData = useMemo(() => ([
-    { name: 'Fee Received', value: feeReceivedVal, color: '#16A34A' },
-    { name: 'Pending Fee',  value: pendingFeeVal,  color: '#DC2626' },
-  ].filter(d => d.value > 0)), [feeReceivedVal, pendingFeeVal]);
+    { name: 'Fee Received', value: feeReceivedVal, color: '#16A34A', show: feeVis.received },
+    { name: 'Pending Fee',  value: pendingFeeVal,  color: '#DC2626', show: feeVis.pending },
+  ].filter(d => d.show && d.value > 0)), [feeReceivedVal, pendingFeeVal, feeVis.received, feeVis.pending]);
   const feeCollectionsData = useMemo(() => ([
-    { name: 'Collected',   short: 'Collected',   value: feeReceivedVal, color: '#16A34A' },
-    { name: 'Outstanding', short: 'Outstanding', value: pendingFeeVal,  color: '#DC2626' },
-  ]), [feeReceivedVal, pendingFeeVal]);
+    { name: 'Collected',   short: 'Collected',   value: feeReceivedVal, color: '#16A34A', show: feeVis.received },
+    { name: 'Outstanding', short: 'Outstanding', value: pendingFeeVal,  color: '#DC2626', show: feeVis.pending },
+  ].filter(d => d.show)), [feeReceivedVal, pendingFeeVal, feeVis.received, feeVis.pending]);
 
   /* Previous Dues / Students-with-Dues — seedha get-dashboard ke FeeAnalytics se. */
   const studentsWithDuesVal = fee.StudentsPending || 0;
@@ -590,7 +622,9 @@ const newAnnouncementCount = userNotifications.filter(
 
   return (
     <>
-      <style>{DASH_CSS}</style>
+      {/* DASH_CSS parent Dashboard.jsx inject karta hai (wahi AdminDashboard ko
+          wrap karta hai) — yahan dobara import karne se AdminDashboard⟷Dashboard
+          circular import banta tha jo HMR par "Element type is invalid" deta. */}
       <style>{ADM_NEW_CSS}</style>
 
       {/* ═════════ 0. UNIVERSAL SEARCH BAR ═════════
@@ -650,9 +684,11 @@ const newAnnouncementCount = userNotifications.filter(
           1. School Mentor Announcements
           2. Teachers Mobile App Status
           3. Parents Mobile App Status                            */}
+      {(canCard('School Mentor Announcements') || canCard('Teachers Mobile App Status') || canCard('Parents Mobile App Status')) && (
       <div className="adm-top-cards">
 
         {/* ── Card 1: Announcements ── */}
+        {canCard('School Mentor Announcements') && (
         <div className="adm-tc adm-tc--announce">
           <div className="adm-tc-h">
             <div className="adm-tc-h-l">
@@ -706,8 +742,10 @@ const newAnnouncementCount = userNotifications.filter(
             </Tooltip>
           </div>
         </div>
+        )}
 
         {/* ── Card 2: Teachers Mobile App ── */}
+        {canCard('Teachers Mobile App Status') && (
         <AppStatusCard
           tone="green"
           title="Teachers Mobile App"
@@ -718,8 +756,10 @@ const newAnnouncementCount = userNotifications.filter(
           ctaIcon="fa-file-pdf"
           onCta={() => setShowReport('teachers')}
         />
+        )}
 
         {/* ── Card 3: Parents Mobile App ── */}
+        {canCard('Parents Mobile App Status') && (
         <AppStatusCard
           tone="amber"
           title="Parents Mobile App"
@@ -730,7 +770,9 @@ const newAnnouncementCount = userNotifications.filter(
           ctaIcon="fa-file-pdf"
           onCta={() => setShowReport('parents')}
         />
+        )}
       </div>
+      )}
 
       {/* ─── Modals (rendered on demand) ─── */}
       {showAnnouncements && (
@@ -782,7 +824,7 @@ const newAnnouncementCount = userNotifications.filter(
         />
       )}
 
-      {tiles.length > 0 && (
+      {tiles.length > 0 && canCard('Live Module Snapshot') && (
         <div className="dash-sec">
           <div className="dash-sec-h">
             <div className="dash-sec-title">
@@ -822,7 +864,7 @@ const newAnnouncementCount = userNotifications.filter(
       )}
 
       {/* ═════════ 3. FEE ANALYTICS ═════════ */}
-      {isActive('fee') && (
+      {isActive('fee') && anyFeeCard && (
         <div className="dash-sec adm-sec">
           <div className="dash-sec-h">
             <div className="dash-sec-title"><i className="fa-solid fa-coins" aria-hidden="true"></i> Fee Analytics</div>
@@ -835,6 +877,7 @@ const newAnnouncementCount = userNotifications.filter(
           <div className="fa-top-grid">
 
             {/* Card 1 — Current Month Fee Position (primary summary) */}
+            {feeVis.currentMonth && (
             <div className="stat-card fee-card fa-card fc-tone--brand fa-card--primary">
               <div className="fc-header">
                 <div className="fc-icon-chip">
@@ -861,8 +904,10 @@ const newAnnouncementCount = userNotifications.filter(
                 </div>
               </div>
             </div>
+            )}
 
             {/* Card 2 — Previous Dues */}
+            {feeVis.previousDues && (
             <div className="stat-card fee-card fa-card fc-tone--red fc-bordered">
               <div className="fc-header">
                 <div className="fc-icon-chip">
@@ -885,8 +930,10 @@ const newAnnouncementCount = userNotifications.filter(
                 </div>
               </div>
             </div>
+            )}
 
             {/* Card 3 — Total Net Receivable */}
+            {feeVis.netReceivable && (
             <div className="stat-card fee-card fa-card fc-tone--slate fa-card--total">
               <div className="fc-header">
                 <div className="fc-icon-chip">
@@ -912,12 +959,14 @@ const newAnnouncementCount = userNotifications.filter(
                 </div>
               </div>
             </div>
+            )}
           </div>
 
           {/* ═════════ BOTTOM ROW — 2 LARGE status cards ═════════ */}
           <div className="fa-bottom-grid">
 
             {/* Card 4 — Fee Received (large with progress) */}
+            {feeVis.received && (
             <div className="stat-card fee-card fa-card fa-large fc-tone--green fc-bordered fc-tint--green">
               <div className="fa-large-row">
                 <div className="fa-large-l">
@@ -972,8 +1021,10 @@ const newAnnouncementCount = userNotifications.filter(
                 </div>
               </div>
             </div>
+            )}
 
             {/* Card 5 — Pending Fee (large with progress) */}
+            {feeVis.pending && (
             <div className="stat-card fee-card fa-card fa-large fc-tone--red fc-bordered">
               <div className="fa-large-row">
                 <div className="fa-large-l">
@@ -1019,6 +1070,7 @@ const newAnnouncementCount = userNotifications.filter(
                 </div>
               </div>
             </div>
+            )}
           </div>
 
           {/* Download / Print Report link below the grid */}
@@ -1035,9 +1087,9 @@ const newAnnouncementCount = userNotifications.filter(
           {/* ═════════ FEE ANALYTICS — visual charts ═════════
               Reshapes the SAME live values shown in the cards above
               (currentMonthFeeVal / previousDuesVal / totalNetReceivableVal
-              / feeReceivedVal / pendingFeeVal) into three Recharts views.
-              No extra fetch, no mock; discount/advance series omitted as
-              the ERP has no live data for them. */}
+              / feeReceivedVal / totalDiscountVal / pendingFeeVal) into three
+              Recharts views. No extra fetch, no mock — sab get-dashboard
+              FeeAnalytics se, wahi jo upar ke cards dikhate hain. */}
           <div className="fa-overview">
             <div className="fa-overview-head">
               <div className="fa-overview-title">
@@ -1046,7 +1098,9 @@ const newAnnouncementCount = userNotifications.filter(
               <div className="fa-overview-sub">A quick visual read of <b>{cmyLabel}</b>&apos;s fee position</div>
             </div>
 
-            {/* Overview Comparison — full-width horizontal bar */}
+            {/* Overview Comparison — full-width horizontal bar. Sirf tab jab
+                kam-az-kam ek permitted bar ho. */}
+            {feeOverviewData.length > 0 && (
             <div className="fa-chart-card fa-chart-card--wide" ref={overviewCompReplay.ref}>
               <div className="adm-card-h">
                 <div className="adm-card-h-t">Overview Comparison</div>
@@ -1067,8 +1121,11 @@ const newAnnouncementCount = userNotifications.filter(
                 </BarChart>
               </ResponsiveContainer>
             </div>
+            )}
 
-            {/* Donut + Collections bar side-by-side */}
+            {/* Donut + Collections bar side-by-side — Received/Pending cards ki
+                permission par. Neither allowed → poora grid hide. */}
+            {(feeVis.received || feeVis.pending) && (
             <div className="fa-chart-grid" ref={feeGridReplay.ref}>
               <div className="fa-chart-card">
                 <div className="adm-card-h">
@@ -1112,6 +1169,7 @@ const newAnnouncementCount = userNotifications.filter(
                 </ResponsiveContainer>
               </div>
             </div>
+            )}
           </div>
         </div>
       )}
@@ -1122,7 +1180,7 @@ const newAnnouncementCount = userNotifications.filter(
           payment data nahi deti, is liye dummy card show nahi karte. */}
 
       {/* ═════════ ACCOUNTS / REVENUE ═════════ */}
-      {isActive('accounts') && (
+      {isActive('accounts') && (canCard('Monthly Financial Summary') || canCard('Profit/Loss Overview')) && (
         <div className="dash-sec adm-sec">
           <div className="dash-sec-h">
             <div className="dash-sec-title"><i className="fa-solid fa-calculator" aria-hidden="true"></i> Financial Overview</div>
@@ -1133,6 +1191,7 @@ const newAnnouncementCount = userNotifications.filter(
               Parent card + month selector, 3 sub-cards reading the same
               Accounts ledger (getAccTxns) that Accounts → Reports uses,
               via the identical per-month reduce. No new backend calls. */}
+          {canCard('Monthly Financial Summary') && (
           <div className="fin-summary-card">
             <div className="fin-summary-head">
               <div className="fin-summary-head-l">
@@ -1209,12 +1268,14 @@ const newAnnouncementCount = userNotifications.filter(
               </div>
             </div>
           </div>
+          )}
 
           {/* Profit/Loss Overview — full width (Revenue Streams removed).
               Per-bar green/red P&L on its own hidden right axis so the bars
               read clearly against the wider revenue/expense line scale.
               Wired to the LIVE Accounts ledger (profitChart / plNet), so it
               scales to actual PKR — no mock "millions" data. */}
+          {canCard('Profit/Loss Overview') && (
           <div className="pl-overview" ref={plOverviewReplay.ref}>
             <div className="adm-card-h">
               <div className="adm-card-h-t">Profit/Loss Overview</div>
@@ -1256,6 +1317,7 @@ const newAnnouncementCount = userNotifications.filter(
               <span className="adm-legend-i"><span className="adm-legend-dot" style={{ background: '#16A34A' }} />Profit/Loss</span>
             </div>
           </div>
+          )}
 
         </div>
       )}
@@ -1283,12 +1345,12 @@ const newAnnouncementCount = userNotifications.filter(
              - status constants:  ATTENDANCE_STATUS.{PRESENT,ABSENT,LEAVE,PENDING}
                                   STAFF_ATTENDANCE_STATUS.{PRESENT,ABSENT,LEAVE}
        */}
-      {moduleActive('attendance') && <AttendanceSection openModule={openModule} studentData={studentAttData} staffData={staffAttData} />}
+      {moduleActive('attendance') && canCard("Today's Attendance") && <AttendanceSection openModule={openModule} studentData={studentAttData} staffData={staffAttData} />}
 
       <div className="adm-divider" />
 
       {/* ═════════ 4. LESSON PLAN ANALYTICS ═════════ */}
-      {isActive('academics') && (
+      {isActive('academics') && canCard('Lesson Plan Analytics') && (
         <div className="dash-sec adm-sec">
           <div className="dash-sec-h">
             <div className="dash-sec-title"><i className="fa-solid fa-book-open-reader" aria-hidden="true"></i> Lesson Plan Analytics</div>
@@ -1367,7 +1429,7 @@ const newAnnouncementCount = userNotifications.filter(
       <div className="adm-divider" />
 
       {/* ═════════ 5. PAPER GENERATOR ═════════ */}
-      {isActive('paper_generator') && (
+      {isActive('paper_generator') && canCard('Question Paper Generator') && (
         <div className="dash-sec adm-sec" ref={paperSecReplay.ref}>
           <div className="dash-sec-h">
             <div className="dash-sec-title"><i className="fa-solid fa-scroll" aria-hidden="true"></i> Question Paper Generator</div>
@@ -1417,7 +1479,7 @@ const newAnnouncementCount = userNotifications.filter(
       <div className="adm-divider" />
 
       {/* ═════════ 7. BIRTHDAYS THIS MONTH ═════════ */}
-      {(isActive('students') || isActive('hr')) && (
+      {(isActive('students') || isActive('hr')) && canCard('Birthdays This Month') && (
         <div className="dash-sec adm-sec">
           <div className="dash-sec-h">
             <div className="dash-sec-title">
@@ -1530,6 +1592,7 @@ const newAnnouncementCount = userNotifications.filter(
       <div className="adm-divider" />
 
       {/* ═════════ 8. UPCOMING ACTIVITIES ═════════ */}
+      {canCard('Upcoming Activities') && (
       <div className="dash-sec adm-sec">
         <div className="dash-sec-h">
           <div className="dash-sec-title">
@@ -1594,6 +1657,7 @@ const newAnnouncementCount = userNotifications.filter(
         </div>
         )}
       </div>
+      )}
     </>
   );
 }

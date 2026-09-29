@@ -8,7 +8,6 @@ import { INITIAL_USERS, INITIAL_ROLES, findRole, initialsOf } from '../UserPermi
 import { CURRENT_SESSION } from './dashboardData';
 import { getUserRole } from '../../services/rolesService';
 import AdminDashboard from './AdminDashboard';
-import TeacherDashboard from './TeacherDashboard';
 
 /* ═══════════════════════════════════════════════════════════════════
    DASHBOARD SHELL — picks Admin or Teacher based on the impersonated
@@ -158,18 +157,12 @@ export default function Dashboard({
       {/* ─── Page head ─── */}
       <div className="dash-head">
         <div className="dash-head-l">
-          <div className={`dash-head-ic${dashType === 'teacher' ? ' dash-head-ic--teacher' : ''}`}>
-            <i className={`fa-solid ${dashType === 'teacher' ? 'fa-chalkboard-user' : 'fa-gauge-high'}`}></i>
+          <div className="dash-head-ic">
+            <i className="fa-solid fa-gauge-high"></i>
           </div>
           <div>
-            <div className="dash-head-t">
-              {dashType === 'teacher' ? 'My Workspace' : 'Command Center'}
-            </div>
-            <div className="dash-head-s">
-              {dashType === 'teacher'
-                ? `Personal dashboard scoped to ${(dashUser.name || 'you').replace(/Dr\.|Mr\.|Ms\.|Mrs\./, '').trim()}'s classes`
-                : `Live operations across ${schoolLabel}`}
-            </div>
+            <div className="dash-head-t">Command Center</div>
+            <div className="dash-head-s">{`Live operations across ${schoolLabel}`}</div>
           </div>
         </div>
 <div className="dash-head-r">
@@ -213,10 +206,12 @@ export default function Dashboard({
         </div>
       </div>
 
-      {/* Inner dashboard */}
-      {dashType === 'teacher'
-        ? <TeacherDashboard visibility={visibility} toast={toast} navigate={navigate} openActivityCalendar={openActivityCalendar} />
-        : <AdminDashboard   visibility={visibility} toast={toast} navigate={navigate} openActivityCalendar={openActivityCalendar} />}
+      {/* Inner dashboard — head aur staff (teacher samet) dono ko SAME
+          Command Center dashboard. Pehle teacher ko alag "My Workspace"
+          (TeacherDashboard + showAllModules) milta tha; ab sab ek hi
+          AdminDashboard dekhte hain aur har card ka dikhna User Permissions
+          ke "Dashboard" tree (canScreen) se control hota hai. */}
+      <AdminDashboard visibility={visibility} toast={toast} navigate={navigate} openActivityCalendar={openActivityCalendar} />
 
       {/* System surfaces (slow / offline / server-500) ab ERP shell (App.js) me
           mount hain taake poore ERP par dikhein — yahan se hata diye. */}
