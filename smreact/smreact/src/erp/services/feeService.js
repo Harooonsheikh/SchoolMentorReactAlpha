@@ -1214,7 +1214,7 @@ function buildLedgerChallanPayload({ classMeta = {}, student = {}, heads = [], m
   const userID = Number(sessionStorage.getItem('UserID')) || 1;
   const issueDate = toApiDate(options.issueDate);
   /* Two Months+: Due Date UI hide — payload me mat bhejo (server null/default). */
-  const dueDate = String(options.type) === '2' || !options.dueDate
+  const dueDate = (Number(options.type) || 1) > 1 || !options.dueDate
     ? null
     : toApiDate(options.dueDate);
   const classDisc = options.discountMap?.[classMeta.key]?.[student.reg] || {};
@@ -1231,7 +1231,8 @@ function buildLedgerChallanPayload({ classMeta = {}, student = {}, heads = [], m
      Installment API per-month amounts leta hai aur multi-month range par SERVER
      hi months se multiply karta hai — frontend multiply NAHI karta (warna
      double/triple ho jaata). monthCount = kitne months cover karne hain. */
-  const monthCount = Math.max(1, Math.min(3, Number(options.type) || 1));
+  /* 1 se 12 mahine tak (Challan Type dropdown). */
+  const monthCount = Math.max(1, Math.min(12, Number(options.type) || 1));
   const isMultiMonth = monthCount > 1;
 
   const makeRow = (subHead, amount, discount = 0) => ({

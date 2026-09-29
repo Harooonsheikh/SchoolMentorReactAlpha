@@ -2082,7 +2082,7 @@ function FamilyTreeChallansList({ toast }) {
                                   /* Pichhle mahine ka multi-month challan is mahine ko cover karta hai —
                                      Delete nahi (wo us mahine ka challan hai), sirf Regenerate. */
                                   <Tooltip text={`Regenerate ${appliedMonth} challan for ${ch.name} (currently covered by ${ledgerMonthLabel(chRec)} challan)`}>
-                                    <button className="fee-iconbtn green" onClick={() => openIndivGen(f, ch)}>
+                                    <button className="fee-iconbtn" style={REGEN_BTN_STYLE} onClick={() => openIndivGen(f, ch)}>
                                       <i className="fa-solid fa-rotate"></i>
                                     </button>
                                   </Tooltip>
@@ -3439,7 +3439,7 @@ function FeeChallansList({ toast }) {
                                   /* Pichhle mahine ka multi-month challan (Sep–Nov) is mahine ko cover
                                      karta hai — Delete nahi (wo September ka challan hai), sirf Regenerate. */
                                   <Tooltip text={`Regenerate ${appliedMonth} challan for ${s.name} (currently covered by ${ledgerMonthLabel(rec)} challan)`}>
-                                    <button className="fee-iconbtn green" onClick={() => openIndivGen(c, s)}>
+                                    <button className="fee-iconbtn" style={REGEN_BTN_STYLE} onClick={() => openIndivGen(c, s)}>
                                       <i className="fa-solid fa-rotate"></i>
                                     </button>
                                   </Tooltip>
@@ -3585,6 +3585,18 @@ function BulkGenerateModal({
   const [progress, setProgress] = useState(null);    // null | { done, total, label }
   const cancelRef = useRef(false);
   const msAnchorRef = useRef(null);
+  /* Challan Type — custom dropdown (native <select> jagah kam ho to UPAR khulta tha);
+     ye hamesha NEECHE khulta hai, lambi list scroll. */
+  const [typeOpen, setTypeOpen] = useState(false);
+  const typeAnchorRef = useRef(null);
+  useEffect(() => {
+    if (!typeOpen) return undefined;
+    const onDown = (e) => { if (typeAnchorRef.current && !typeAnchorRef.current.contains(e.target)) setTypeOpen(false); };
+    const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); setTypeOpen(false); } };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey, true);
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey, true); };
+  }, [typeOpen]);
 
   /* Reset state every time the modal opens. Heads are pre-selected (all of
      them) so the challan is ready to generate without the user having to open
@@ -3594,6 +3606,7 @@ function BulkGenerateModal({
     cancelRef.current = false;
     setMonth(defaultMonth || FEE_MONTHS[0]);
     setType('1');
+    setTypeOpen(false);
     setPicked((heads || []).map(h => h.name));
     setMsOpen(false);
     setIssueDate(todayISO());
@@ -3829,13 +3842,41 @@ function BulkGenerateModal({
             </div>
             <div className="fee-field">
               <span className="fee-label">Challan Type</span>
-              <div className="fee-select-wrap">
-                <select className="fee-select" value={type} onChange={e => setType(e.target.value)} disabled={!!progress}>
-                  <option value="1">One Month</option>
-                  <option value="2">Two Months</option>
-                  <option value="3">Three Months</option>
-                </select>
-                <i className="fa-solid fa-chevron-down"></i>
+              {/* 1 se 12 mahine tak — server amounts ko months se multiply karta hai. List hamesha
+                  NEECHE khulti hai (fee-ms menu: top 100%, max-height + scroll). */}
+              <div className={`fee-ms${typeOpen ? ' open' : ''}`} ref={typeAnchorRef} style={{ minWidth: 170 }}>
+                <button
+                  type="button"
+                  id="gen-challan-type"
+                  className="fee-ms-toggle"
+                  aria-haspopup="listbox"
+                  aria-expanded={typeOpen}
+                  onClick={() => !progress && setTypeOpen(o => !o)}
+                  disabled={!!progress}
+                >
+                  <span>{CHALLAN_TYPE_LABELS[(Number(type) || 1) - 1]}</span>
+                  <i className="fa-solid fa-chevron-down"></i>
+                </button>
+                {typeOpen && (
+                  <div className="fee-ms-menu" role="listbox" style={{ minWidth: 0 }}>
+                    {CHALLAN_TYPE_LABELS.map((lbl, i) => {
+                      const v = String(i + 1);
+                      return (
+                        <button
+                          type="button"
+                          key={v}
+                          role="option"
+                          aria-selected={type === v}
+                          className={`fee-ms-opt${type === v ? ' sel' : ''}`}
+                          style={type === v ? { background: 'var(--bg-muted)', color: '#1E3A8A' } : undefined}
+                          onClick={() => { setType(v); setTypeOpen(false); }}
+                        >
+                          {lbl}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             </div>
             <div className="fee-field fee-field--grow">
@@ -6578,6 +6619,15 @@ function isMultiMonthNonStartView(rec, month, year) {
   if (!sm || !sy) return false;
   return (Number(year) * 12 + Number(month)) > (sy * 12 + sm);
 }
+
+/* Regenerate button (multi-month challan ke covered mahine) — YELLOW, taake alag pehchana jaye. */
+const REGEN_BTN_STYLE = { color: '#A16207', background: '#FEF3C7', borderColor: '#FACC15' };
+
+/* Challan Type dropdown — 1 se 12 mahine. */
+const CHALLAN_TYPE_LABELS = [
+  'One Month', 'Two Months', 'Three Months', 'Four Months', 'Five Months', 'Six Months',
+  'Seven Months', 'Eight Months', 'Nine Months', 'Ten Months', 'Eleven Months', 'Twelve Months',
+];
 
 /* Ek student ke is mahine ke challans me se ASLI is-mahine wala chuno. Sep–Nov (3 months)
    challan Oct/Nov me bhi aata hai; Oct me alag challan ban jaye to wahi pehle — covering
