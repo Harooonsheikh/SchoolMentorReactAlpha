@@ -1,18 +1,15 @@
 import { useEffect, useMemo, useState } from 'react'
 import TutorialButton from '../../components/TutorialButton'
 import { createPortal } from 'react-dom'
-import {
-  loadPerms, savePerms, loadAssign, saveAssign,
-  UM_MENUS, splitSchools,
-} from './data'
-import { useView } from '../../config/viewContext'
+import { loadAssign, saveAssign, ERP_SCHOOLS, INACTIVE_SCHOOLS, initialsOf } from './data'
+import { permStats, permsForUser, saveUserPerms } from './permissionsData'
+import PermissionMatrixModal from './PermissionMatrixModal'
 import { loadHr, fullName } from '../HumanResource/data'
 import './UserPermissions.css'
 
 export default function UserPermissions() {
   const [tab, setTab] = useState('assign')
   const [users, setUsers] = useState([])
-  const [permStore, setPermStore] = useState({})
   const [assignStore, setAssignStore] = useState({})
   const [toast, setToast] = useState(null)
 
@@ -21,13 +18,11 @@ export default function UserPermissions() {
   useEffect(() => {
     const hr = loadHr()
     setUsers(hr.emps.map((e) => ({ id: e.id, fullName: fullName(e), status: e.status })))
-    setPermStore(loadPerms())
     setAssignStore(loadAssign())
   }, [])
   useEffect(() => { if (!toast) return undefined; const t = setTimeout(() => setToast(null), 3000); return () => clearTimeout(t) }, [toast])
 
   const fire = (text, type = 'success') => setToast({ text, type })
-  const commitPerms = (d) => { setPermStore(d); savePerms(d) }
   const commitAssign = (d) => { setAssignStore(d); saveAssign(d) }
 
   return (
@@ -49,7 +44,7 @@ export default function UserPermissions() {
       </div>
 
       {tab === 'assign' && <AssignTab users={users} assignStore={assignStore} commit={commitAssign} fire={fire} />}
-      {tab === 'perm' && <PermissionTab users={users} permStore={permStore} commit={commitPerms} fire={fire} />}
+      {tab === 'perm' && <UsersPermTab users={users} fire={fire} />}
 
       {toast && createPortal(
         <div className="ss-toast-wrap"><div className={`ss-toast ${toast.type}`}><i className={`fa-solid ${toast.type === 'success' ? 'fa-circle-check' : toast.type === 'warn' ? 'fa-triangle-exclamation' : 'fa-circle-info'}`} /> {toast.text}</div></div>,
@@ -61,10 +56,6 @@ export default function UserPermissions() {
 
 /* ════════ ASSIGN SCHOOL ════════ */
 function AssignTab({ users, assignStore, commit, fire }) {
-  /* Schools API se (connected schools), ERP / Inactive me batay hue. */
-  const { schools: connectedSchools, schoolsLoading } = useView()
-  const { erp: ERP_SCHOOLS, inactive: INACTIVE_SCHOOLS } = useMemo(() => splitSchools(connectedSchools), [connectedSchools])
-
   const [userId, setUserId] = useState('')
   const [type, setType] = useState('erp')
   const [search, setSearch] = useState('')
@@ -95,12 +86,12 @@ function AssignTab({ users, assignStore, commit, fire }) {
     <div className="section-card">
       <div className="card-header"><div className="card-title"><i className="fa-solid fa-school" /> Assign School</div></div>
       <div style={{ padding: 20 }}>
-        {/* <div style={{ marginBottom: 18 }}>
+        <div style={{ marginBottom: 18 }}>
           <label className="um-label" style={{ display: 'block', marginBottom: 6 }}><i className="fa-solid fa-user" style={{ color: 'var(--brand)', marginRight: 4 }} /> Assign User</label>
           <select className="um-user-select" value={userId} onChange={(e) => { setUserId(e.target.value); setPage(1) }}>
             <option value="">Select User</option>{users.map((u) => <option key={u.id} value={u.id}>{u.fullName}</option>)}
           </select>
-        </div> */}
+        </div>
 
         <div className="um-school-tabs">
           <button className={`um-stab${type === 'erp' ? ' active' : ''}`} onClick={() => { setType('erp'); setPage(1) }}><i className="fa-solid fa-server" /> ERP ({ERP_SCHOOLS.length})</button>
@@ -118,8 +109,6 @@ function AssignTab({ users, assignStore, commit, fire }) {
             <tbody>
               {!userId ? (
                 <tr><td colSpan={3} style={{ textAlign: 'center', padding: 28, color: 'var(--tm)' }}>Select a user to assign schools.</td></tr>
-              ) : schoolsLoading ? (
-                <tr><td colSpan={3} style={{ textAlign: 'center', padding: 28, color: 'var(--tm)' }}>Loading schools…</td></tr>
               ) : slice.length === 0 ? (
                 <tr><td colSpan={3} style={{ textAlign: 'center', padding: 28, color: 'var(--tm)' }}>No schools found</td></tr>
               ) : slice.map((s, i) => (
@@ -139,44 +128,58 @@ function AssignTab({ users, assignStore, commit, fire }) {
   )
 }
 
-/* ════════ USER PERMISSION ════════ */
-function PermissionTab({ users, permStore, commit, fire }) {
-  const [userId, setUserId] = useState('')
-  const [working, setWorking] = useState(new Set())
-  useEffect(() => { setWorking(new Set(permStore[userId] || [])) }, [userId, permStore])
+/* ════════ USER PERMISSION — per-user module→screen→action matrix ════════ */
+function UsersPermTab({ users, fire }) {
+  const [search, setSearch] = useState('')
+  const [editing, setEditing] = useState(null)
 
-  const allChecked = UM_MENUS.every((m) => working.has(m))
-  const toggle = (menu) => setWorking((w) => { const n = new Set(w); if (n.has(menu)) n.delete(menu); else n.add(menu); return n })
-  const toggleAll = (checked) => setWorking(checked ? new Set(UM_MENUS) : new Set())
-  const save = () => { if (!userId) return fire('Please select a user first', 'warn'); commit({ ...permStore, [userId]: [...working] }); fire('Permissions updated') }
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    return users.filter((u) => !q || u.fullName.toLowerCase().includes(q))
+  }, [users, search])
+
+  const save = (perms) => {
+    saveUserPerms(editing.id, perms)
+    fire('Permissions updated')
+    setEditing(null)
+  }
 
   return (
     <div className="section-card">
-      <div className="card-header"><div className="card-title"><i className="fa-solid fa-shield-halved" /> User Permission</div></div>
-      <div style={{ padding: 20 }}>
-        <div style={{ marginBottom: 18 }}>
-          <label className="um-label" style={{ display: 'block', marginBottom: 6 }}><i className="fa-solid fa-user" style={{ color: 'var(--brand)', marginRight: 4 }} /> Select User</label>
-          <select className="um-user-select" value={userId} onChange={(e) => setUserId(e.target.value)}>
-            <option value="">Select User</option>{users.map((u) => <option key={u.id} value={u.id}>{u.fullName}</option>)}
-          </select>
-        </div>
-
-        <div className="tbl-wrap">
-          <table className="um-perm-table">
-            <thead><tr><th style={{ width: 60 }}>Sr.No</th><th>Menu</th><th style={{ width: 140 }}><label className="um-select-all-th"><input type="checkbox" checked={allChecked} onChange={(e) => toggleAll(e.target.checked)} disabled={!userId} /> Select All</label></th></tr></thead>
-            <tbody>
-              {UM_MENUS.map((menu, i) => (
-                <tr key={menu}>
-                  <td style={{ color: 'var(--tm)', fontWeight: 700 }}>{i + 1}</td>
-                  <td style={{ fontWeight: 600, color: 'var(--t1)' }}>{menu}</td>
-                  <td><input type="checkbox" checked={working.has(menu)} onChange={() => toggle(menu)} disabled={!userId} /></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}><button className="btn-primary" onClick={save}><i className="fa-solid fa-floppy-disk" /> Update Status</button></div>
+      <div className="card-header">
+        <div className="card-title"><i className="fa-solid fa-shield-halved" /> User Permission</div>
+        <div className="search-box" style={{ width: 220 }}><i className="fa-solid fa-magnifying-glass" /><input className="search-input" placeholder="Search staff…" value={search} onChange={(e) => setSearch(e.target.value)} /></div>
       </div>
+      <div className="tbl-wrap">
+        <table className="um-table">
+          <thead><tr><th style={{ width: 60 }}>Sr #</th><th>Staff Member</th><th>Status</th><th style={{ width: 150 }}>Permissions</th><th style={{ width: 170 }}>Actions</th></tr></thead>
+          <tbody>
+            {filtered.length === 0 ? (
+              <tr><td colSpan={5} style={{ textAlign: 'center', padding: 28, color: 'var(--tm)' }}>No staff found</td></tr>
+            ) : filtered.map((u, i) => {
+              const stats = permStats(permsForUser(u.id))
+              return (
+                <tr key={u.id}>
+                  <td data-label="Sr #" style={{ color: 'var(--tm)', fontWeight: 700 }}>{i + 1}</td>
+                  <td data-label="Staff"><div style={{ display: 'flex', alignItems: 'center', gap: 9 }}><div className="um-avatar">{initialsOf(u.fullName)}</div><span style={{ fontWeight: 700, color: 'var(--t1)' }}>{u.fullName}</span></div></td>
+                  <td data-label="Status"><span className={`badge ${u.status === 'Active' ? 'b-green' : 'b-gray'}`}>{u.status}</span></td>
+                  <td data-label="Permissions">{stats.active > 0 ? <span className="badge b-blue">{stats.active} active</span> : <span className="badge b-gray">No access</span>}</td>
+                  <td data-label="Actions"><button className="um-edit-perm-btn" onClick={() => setEditing(u)}><i className="fa-solid fa-sliders" /> Edit Permissions</button></td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {editing && (
+        <PermissionMatrixModal
+          empId={editing.id}
+          empName={editing.fullName}
+          onClose={() => setEditing(null)}
+          onSave={save}
+        />
+      )}
     </div>
   )
 }
