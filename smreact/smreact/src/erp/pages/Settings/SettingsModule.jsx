@@ -5,7 +5,8 @@ import SessionManagement from './SessionManagement';
 import SignatureManagement from './SignatureManagement';
 import Networks from '../../components/Networks.jsx';
 import MobileAppSettings from './MobileAppSettings';
-import ApprovalSettings from './ApprovalSettings';
+// TODO: Re-enable once the Approvals API is ready.
+// import ApprovalSettings from './ApprovalSettings';
 import { usePermissions } from '../../context/PermissionsContext';
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -35,8 +36,10 @@ const SETTINGS_SUBTABS = [
     desc: 'Join school networks and manage your memberships & requests.' },
   { id: 'mobileapp',  label: 'Parents App Settings', icon: 'fa-mobile-screen-button',
     desc: 'Control which features the Parents mobile app shows for this school.' },
+  /* TODO: Re-enable once the Approvals API is ready (hidden for all branches for now).
   { id: 'approvals',  label: 'Approvals',            icon: 'fa-square-check',
     desc: 'Require Super Admin sign-off before certain sensitive changes take effect.' },
+  */
 ];
 
 export default function SettingsModule({ toast = () => {} }) {
@@ -106,7 +109,8 @@ export default function SettingsModule({ toast = () => {} }) {
         {sub === 'signatures' && <SignatureManagement toast={toast} />}
         {sub === 'networks'   && <Networks            toast={toast} embedded />}
         {sub === 'mobileapp'  && <MobileAppSettings   toast={toast} />}
-        {sub === 'approvals'  && <ApprovalSettings    toast={toast} />}
+        {/* TODO: Re-enable once the Approvals API is ready.
+        {sub === 'approvals'  && <ApprovalSettings    toast={toast} />} */}
       </div>
 
       <TutorialModal
