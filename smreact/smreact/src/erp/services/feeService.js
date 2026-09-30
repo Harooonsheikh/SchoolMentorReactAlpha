@@ -2037,6 +2037,7 @@ export function buildReceiveInstallmentRequest({
   perHead = {},
   giveDisc = {},
   fine = 0,
+  fineBilled = 0,
   newHeads = [],
 } = {}) {
   const rows = [];
@@ -2060,23 +2061,29 @@ export function buildReceiveInstallmentRequest({
   });
 
   const fineAmt = Math.max(0, Math.round(Number(fine) || 0));
-  if (fineAmt > 0) {
+  /* Fine par Give Discount — giveDisc me fine ke naam ("Late Fine" / "Fine") se aati hai. */
+  const fineGiveKey = Object.keys(giveDisc || {}).find(k => isLateFineRow({ subHead: k }));
+  const fineGive = (isReceiving && fineGiveKey) ? Math.max(0, Math.round(Number(giveDisc[fineGiveKey]) || 0)) : 0;
+  if (fineAmt > 0 || fineGive > 0) {
     const fineRow = (detailRows || []).find(isLateFineRow);
     if (fineRow && Number(fineRow.id)) {
       rows.push({
         id: Number(fineRow.id),
         installmentId: 0,
         receivedAmount: fineAmt,
-        discount: 0,
+        discount: fineGive,
       });
     } else {
       rows.push({
         id: 0,
         installmentId: 0,
         receivedAmount: fineAmt,
-        discount: 0,
+        discount: fineGive,
         head: LATE_FINE_HEAD,
         subHead: LATE_FINE_HEAD,
+        /* Nayi fine row: kul banti fine (bill) bhi bhejo — sirf wasooli bhejne par discount
+           ke saath baqaya minus (advance) ban sakta tha. */
+        ...(fineGive > 0 && fineBilled > 0 ? { challanAmount: Math.round(fineBilled) } : {}),
       });
     }
   }

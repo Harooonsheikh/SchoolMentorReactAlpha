@@ -54,7 +54,9 @@ function challanAccruedFine(rec, settings, asOf) {
        lautane se poori wasool shuda fine dobara payable ban kar dikhti thi
        ("Fully Received" ke bawajood Total Payable = fine). */
     const recvd = fineRows.reduce((a, r) => a + (+r.receivedAmount || 0), 0);
-    return Math.max(0, billed - recvd);
+    /* Fine par di gayi Give Discount (discount me fold) bhi minus. */
+    const fdisc = fineRows.reduce((a, r) => a + Math.max(0, +r.discount || 0), 0);
+    return Math.max(0, billed - fdisc - recvd);
   }
   const received = (rec.detailRows || []).reduce((a, r) => a + (+r.receivedAmount || 0), 0);
   const base = asOf
@@ -4817,6 +4819,8 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast, onDownloadPayment, onE
      wasooli (already + ab ki) rakhta hai. null = cashier ne abhi haath nahi
      lagaya, to already-paid par hi rehta hai (Received 0, fine Pending me). */
   const [fineRecvInput, setFineRecvInput] = useState(null);
+  /* Fine par Give Discount (sirf is receiving ki) — Give Discount tick ho to fine row me input. */
+  const [fineGiveInput, setFineGiveInput] = useState(0);
   /* Receiving-time EXTRA discount — checkbox ON par "Give Discount" column dikhti hai,
      values detailRows.discount me jati hain aur API isReceiving:true bhejti hai. */
   const [giveDiscInput, setGiveDiscInput] = useState({});
@@ -4827,6 +4831,7 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast, onDownloadPayment, onE
     setDate(localTodayISO()); setMethod('Cash'); setRef(''); setTxn('');
     setRemarks('');
     setFineRecvInput(null);
+    setFineGiveInput(0);
     /* "Received" input KUL wasooli (pehle jama + ab ki). Naya paisa = input − paid.
        Seed = paid + remaining → next installment ke Pay Now me baqaya auto-map. */
     const chRecv = {};
@@ -4933,9 +4938,12 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast, onDownloadPayment, onE
       const fineCalcInit = feeService.computeFine({
         dueDate: cfg.challan?.dueDate, receivingDate: localTodayISO(), settings: cfg.settings,
       });
-      const fineDueInit = fineBilledInit > 0 ? fineBilledInit : fineCalcInit;
+      /* Bill na hui ho to apna late fine + pichhle challans ka carried fine (same Fine line). */
+      const fineDueInit = fineBilledInit > 0 ? fineBilledInit : fineCalcInit + Math.max(0, +cfg.prevFine || 0);
+      /* Pehle fine par di gayi discount (Give → recvDiscount, discount me fold) — baqaya se minus. */
+      const fineDiscInit = fineRowsInit.reduce((a, r) => a + Math.max(0, +r.discount || 0), 0);
       const finePaidPos = Math.max(0, finePaidInit);
-      const fineRem = Math.max(0, fineDueInit - finePaidPos);
+      const fineRem = Math.max(0, fineDueInit - fineDiscInit - finePaidPos);
       setFineRecvInput(finePaidPos + fineRem);
     } else {
       setFineRecvInput(null);
@@ -5161,7 +5169,23 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast, onDownloadPayment, onE
      modal ki fine persisted row se mukhtalif nikalti thi: Total 4,400 magar
      Already Received 4,450, aur Remaining minus me chala jaata tha.
      Fine abhi tak billed nahi hui to computed hi lagti hai. */
-  const fineDue = fineBilled > 0 ? fineBilled : fineCalc;
+  /* Pichhle mahino ka baqaya fine (carry) — same "Fine" line me. Bill ho chuki ho to wo pehle
+     hi us me shamil hai (billed authority). */
+  const prevFine = fineBilled > 0 ? 0 : Math.max(0, Math.round(+cfg.prevFine || 0));
+  const fineDue = fineBilled > 0 ? fineBilled : fineCalc + prevFine;
+  /* Fine par PEHLE di gayi discount (Give Discount → recvDiscount, discount me fold). */
+  const fineDiscPrev = fineRows.reduce((a, r) => a + Math.max(0, +r.discount || 0), 0);
+  const fineDueNet = Math.max(0, fineDue - fineDiscPrev);
+  /* IS receiving ki fine Give Discount — sirf Give Discount tick ho aur live mode. */
+  const fineGive = (showGiveDisc && !viewOnly)
+    ? Math.max(0, Math.min(+fineGiveInput || 0, Math.max(0, fineDueNet - finePaid)))
+    : 0;
+  const setFineGive = (v) => {
+    const g = Math.max(0, Math.min(Number(v) || 0, Math.max(0, fineDueNet - finePaid)));
+    setFineGiveInput(g);
+    /* Pay Now = baqi fine (Final Net) — heads ki Give Discount jaisa. */
+    setFineRecvInput(Math.max(finePaid, fineDueNet - g));
+  };
   const fineDays = feeService.daysLate(challan?.dueDate, fineBaseDate);
   /* Fine ki wasooli bilkul baaki heads jaisi: input KUL wasooli rakhta hai, aur
      ab ka naya paisa = input − pehle se paid. Seed sirf ALREADY PAID hai (banti
@@ -5180,9 +5204,9 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast, onDownloadPayment, onE
      baqaya fine (fineDue − finePaid) par cap. Upper cap sirf — MINUS (correction)
      phir bhi allow hai. Default ON par no-op. */
   if (!advancePaymentReceivingOn && !viewOnly) {
-    fineOwed = Math.min(fineOwed, Math.max(0, fineDue - finePaid));
+    fineOwed = Math.min(fineOwed, Math.max(0, fineDueNet - fineGive - finePaid));
   }
-  const finePend = fineDue - finePaid - fineOwed;
+  const finePend = fineDueNet - fineGive - finePaid - fineOwed;
 
   const receivingNow = headsRecv - advApplied + fineOwed;   // fineOwed view mode me 0
   /* alreadyPaid me se pehle CONSUME ho chuka advance ghatao — heads ke received me wo cash
@@ -5191,8 +5215,8 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast, onDownloadPayment, onE
   const alreadyPaid = rows.reduce((a, r) => a + r.paid, 0) + prevPaid + finePaid - advConsumed;
   /* Give Discount (hist/typed) Total Net Payable se ghatao — warna Remaining After
      slip ke 0 ke bawajood discount jaisa baqaya dikhata hai. */
-  const giveMathTotal = rows.reduce((a, r) => a + (r.giveDisc || 0), 0);
-  const totalAmt = totalAfter + model.prev - model.advance + fineDue - giveMathTotal;
+  const giveMathTotal = rows.reduce((a, r) => a + (r.giveDisc || 0), 0) + fineGive;
+  const totalAmt = totalAfter + model.prev - model.advance + fineDueNet - giveMathTotal;
   /* Total se zyada wasool ho to ye MINUS me jaata hai = student ka advance. */
   const remainAfter = totalAmt - alreadyPaid - receivingNow;
 
@@ -5206,13 +5230,13 @@ function FeeReceivingModal({ cfg, onClose, onSave, toast, onDownloadPayment, onE
   const flowSumHeadPrev = rows.reduce((a, r) => a + (r.headPrev || 0), 0);
   const flowPrevDues = flowSumHeadPrev + (aggPrevShown ? model.prev : 0);
   const flowChallan = totalChallan + fineDue;
-  const flowNet = rows.reduce((a, r) => a + r.netShow, 0) + (aggPrevShown ? model.prev : 0) + (advRowShown ? -advCredit : 0) + fineDue;
-  const flowGiveDisc = rows.reduce((a, r) => a + (r.giveDiscShow || r.giveDisc || 0), 0);
+  const flowNet = rows.reduce((a, r) => a + r.netShow, 0) + (aggPrevShown ? model.prev : 0) + (advRowShown ? -advCredit : 0) + fineDueNet;
+  const flowGiveDisc = rows.reduce((a, r) => a + (r.giveDiscShow || r.giveDisc || 0), 0) + fineGive;
   /* Live Pay Now: Final = pichhli installments ke baad ka baqaya (paid minus). */
   const flowFinal = rows.reduce((a, r) => a + r.finalShow, 0)
     + (aggPrevShown ? model.prev - (viewOnly ? 0 : prevPaid) : 0)
     + (advRowShown ? -advCredit : 0)
-    + fineDue - (viewOnly ? 0 : finePaid);
+    + fineDueNet - fineGive - (viewOnly ? 0 : finePaid);
 
   /* ── Installment columns (display only) ──
      N = ab tak ki receiving (payments) + 1 (ab wali). Har PICHHLI receiving apni
@@ -5312,7 +5336,7 @@ setPerHeadInput(prev => ({ ...prev, [row.name]: allowNeg ? recv : Math.max(0, re
        theek kiya — wo bhi ek valid save hai. Sirf "kuch bhi nahi badla" rokna hai.
        Sirf Give Discount (bina nayi cash) bhi valid receive hai. */
    const anyHeadRecv = rows.some(r => r.recvNow !== 0) || prevRecv !== 0 || fineOwed !== 0;
-   const anyGiveDisc = showGiveDisc && rows.some(r => (r.giveDisc || 0) > 0);
+   const anyGiveDisc = showGiveDisc && (rows.some(r => (r.giveDisc || 0) > 0) || fineGive > 0);
 if (!anyHeadRecv && !anyGiveDisc) {
   toast('Enter at least one head amount to receive', 'error');
   return;
@@ -5377,7 +5401,12 @@ if (!anyHeadRecv && !anyGiveDisc) {
       /* Checkbox ON → isReceiving true; Give Discount per head → detailRows.discount. */
       isReceiving: !!showGiveDisc,
       giveDisc: showGiveDisc
-        ? Object.fromEntries(rows.filter(r => (r.giveDisc || 0) > 0).map(r => [r.name, r.giveDisc]))
+        ? {
+          ...Object.fromEntries(rows.filter(r => (r.giveDisc || 0) > 0).map(r => [r.name, r.giveDisc])),
+          /* Fine par Give Discount — fine row ke naam ("Late Fine") par; request builder isay
+             fine row ke `discount` me bhejta hai. */
+          ...(fineGive > 0 ? { [fineRows[0]?.subHead || feeService.LATE_FINE_HEAD]: fineGive } : {}),
+        }
         : {},
     };
     if (cfg.kind === 'child') payload.famKey = cfg.famKey;
@@ -5467,7 +5496,9 @@ if (!anyHeadRecv && !anyGiveDisc) {
                 {fineTxt}
                 {fineDue > 0 && (
                   <span className="fee-sub-eq fee-fine">
-                    {fineDays} day{fineDays === 1 ? '' : 's'} late = {money(fineDue)}
+                    {fineCalc > 0 ? `${fineDays} day${fineDays === 1 ? '' : 's'} late = ${money(fineCalc)}` : ''}
+                    {prevFine > 0 ? `${fineCalc > 0 ? ' + ' : ''}previous fine ${money(prevFine)}` : ''}
+                    {prevFine > 0 && fineCalc > 0 ? ` = ${money(fineDue)}` : ''}
                   </span>
                 )}
               </span>
@@ -5493,6 +5524,7 @@ if (!anyHeadRecv && !anyGiveDisc) {
                       Object.keys(prev || {}).forEach(k => { z[k] = 0; });
                       return z;
                     });
+                    setFineGiveInput(0);
                   }
                 }}
               />
@@ -5682,8 +5714,14 @@ if (!anyHeadRecv && !anyGiveDisc) {
                     <td className="flow-head-col">
                       <b>Fine</b>
                       <span className="fee-sub-eq">
-                        {fineDays} day{fineDays === 1 ? '' : 's'} late
-                        {settings?.fineType === 'daily' ? ` × Rs. ${(+settings.fineAmt || 0).toLocaleString('en-PK')}` : ''}
+                        {fineCalc > 0 || prevFine === 0 ? (
+                          <>
+                            {fineDays} day{fineDays === 1 ? '' : 's'} late
+                            {settings?.fineType === 'daily' ? ` × Rs. ${(+settings.fineAmt || 0).toLocaleString('en-PK')}` : ''}
+                          </>
+                        ) : null}
+                        {/* Pichhle mahino ka fine isi Fine line me (naam nahi badalta). */}
+                        {prevFine > 0 && <>{fineCalc > 0 ? <br /> : null}+ previous fine {money(prevFine)}</>}
                       </span>
                     </td>
                     <td className="fee-right"><span className="fee-recv-dash">—</span></td>
@@ -5691,10 +5729,31 @@ if (!anyHeadRecv && !anyGiveDisc) {
                         read-only. Kam/zyada lena ho to "Pay Now" me karta hai. */}
                     <td className="fee-right">{money(fineDue)}</td>
                     <td className="fee-right">0</td>
-                    <td className="fee-right"><span className="fee-cell-grey">{money(fineDue)}</span></td>
+                    {/* Net = fine − pehle di gayi fine discount (agar ho). */}
+                    <td className="fee-right"><span className="fee-cell-grey">{money(fineDueNet)}</span></td>
                     {renderInstDash()}
-                    {showGiveDisc && <td className="fee-center"><span className="fee-recv-dash">—</span></td>}
-                    {showGiveDisc && <td className="fee-right"><span className="flow-final">{money(viewOnly ? fineDue : fineDue - finePaid)}</span></td>}
+                    {/* Give Discount tick ho to FINE par bhi discount (fee heads jaisa). */}
+                    {showGiveDisc && (
+                      <td className="fee-center">
+                        {viewOnly ? (
+                          fineDiscPrev > 0 ? money(fineDiscPrev) : <span className="fee-recv-dash">—</span>
+                        ) : (
+                          <input
+                            className="flow-input flow-input--disc"
+                            id="recv-fine-give"
+                            type="number"
+                            min="0"
+                            max={Math.max(0, fineDueNet - finePaid)}
+                            value={fineGiveInput === 0 ? 0 : (fineGiveInput || '')}
+                            onChange={e => setFineGive(e.target.value)}
+                            placeholder="0"
+                            aria-label="Fine discount"
+                            disabled={multipleReceivingBlocked}
+                          />
+                        )}
+                      </td>
+                    )}
+                    {showGiveDisc && <td className="fee-right"><span className="flow-final">{money(viewOnly ? fineDueNet : fineDueNet - fineGive - finePaid)}</span></td>}
                     {/* Pay Now EDITABLE — SIRF is installment ki fine (state me KUL = paid + ye). */}
                     <td className="fee-center">
                       {viewOnly ? (
@@ -5704,7 +5763,7 @@ if (!anyHeadRecv && !anyGiveDisc) {
                           className="flow-input flow-input--pay"
                           type="number"
                           min="0"
-                          max={!advancePaymentReceivingOn ? Math.max(0, fineDue - finePaid) : undefined}
+                          max={!advancePaymentReceivingOn ? Math.max(0, fineDueNet - fineGive - finePaid) : undefined}
                           value={fineTotalRecv - finePaid}
                           onChange={e => setFineRecvInput(Math.max(0, finePaid + (Number(e.target.value) || 0)))}
                           placeholder="0"
@@ -5714,7 +5773,7 @@ if (!anyHeadRecv && !anyGiveDisc) {
                     </td>
                     <td className="fee-right">
                       {viewOnly ? (
-                        money(Math.max(0, fineDue - finePaid))
+                        money(Math.max(0, fineDueNet - finePaid))
                       ) : (
                         <span className="flow-remain">{money(finePend)}</span>
                       )}
@@ -6252,7 +6311,12 @@ function FeeSlipModal({ cfg, onClose, toast }) {
   const baseRecv = baseRows.reduce((a, r) => a + r.recv, 0);
   const slipFine = Math.max(0, Math.round(+payment.fine || 0) || (Math.round(+payment.amount || 0) - baseRecv));
   const headRows = (!fineAlready && slipFine > 0)
-    ? [...baseRows, { name: 'Fine', std: slipFine, disc: 0, recv: slipFine, prev: 0 }]
+    ? [...baseRows, (() => {
+      /* Fine par is payment ki Give Discount (agar di) — Std = fine, Disc = discount. */
+      const fk = Object.keys(payment.giveDisc || {}).find(k => feeService.isLateFineRow({ subHead: k }));
+      const fd = fk ? Math.max(0, Math.round(+payment.giveDisc[fk] || 0)) : 0;
+      return { name: 'Fine', std: slipFine + fd, disc: fd, recv: slipFine, prev: 0 };
+    })()]
     : baseRows;
   const totStd = headRows.reduce((a, r) => a + r.std, 0);
   const totDisc = headRows.reduce((a, r) => a + r.disc, 0);
@@ -6878,9 +6942,10 @@ function recStudentModel({ student, headsForClass, generated, classDisc, payment
      banta hai — yani fine ki wasooli us me aati hai. Is liye fine ko payable me
      bhi jodna zaroori hai, warna dono taraf bay-mail ho jaati thi: 12,000 payable
      magar 12,400 paid → Remaining −400 (poora receive karne ke bawajood). */
+  /* Fine row ki bill − us par di gayi Give Discount (discount me fold). */
   const billedFine = (challan && Array.isArray(challan.detailRows))
     ? challan.detailRows.filter(feeService.isLateFineRow)
-      .reduce((a, r) => a + (+r.challanAmount || 0), 0)
+      .reduce((a, r) => a + (+r.challanAmount || 0) - Math.max(0, +r.discount || 0), 0)
     : 0;
   /* Paid must survive a page refresh. The local `payments` array is session-only
      (getReceipts is mock), so when a real challan exists take the authoritative
@@ -7311,6 +7376,7 @@ function FeeReceivingIndividual({ toast }) {
     });
     setReceiveCtx({
       classMeta: c, student: s, model: m, payments, challan,
+      prevFine: carriedFineInto(challan, priorByStudent[String(s.studentID)] || [], settings),
       period: viewOnly ? ledgerMonthLabel(challan) : `${ledgerMonthLabel(challan)} (Pending)`,
       monthIdx: (Number(challan.startMonth || challan.month) || 1) - 1,
       viewOnly,
@@ -7357,6 +7423,8 @@ function FeeReceivingIndividual({ toast }) {
       monthIdx,
       viewOnly,
       settings,
+      /* Pichhle challans ka baqaya fine (same Fine line me). */
+      prevFine: carriedFineInto(challan, priorByStudent[String(s.studentID)] || [], settings),
     });
   };
 
@@ -7609,6 +7677,8 @@ function FeeReceivingIndividual({ toast }) {
         perHead: payload.perHead || {},
         giveDisc: payload.isReceiving ? (payload.giveDisc || {}) : {},
         fine: payload.fine || 0,
+        /* Nayi fine row + fine par Give Discount → kul fine (bill) bhi. */
+        fineBilled: payload.fineBilled || 0,
         newHeads: payload.newHeads || [],
       });
       if (!recvBody.detailRows.length) {
@@ -8529,6 +8599,7 @@ function FamilyTreeReceiving({ toast }) {
       student: { ...ch, _challan: challan, _ledgerId: challan.id }, model: m,
       payments,
       challan,
+      prevFine: carriedFineInto(challan, priorByStudent[String(sid)] || [], settings),
       period: `${ledgerMonthLabel(challan)} (Pending)`,
       monthIdx: (Number(challan.startMonth || challan.month) || 1) - 1,
       viewOnly: false,
@@ -8575,6 +8646,7 @@ function FamilyTreeReceiving({ toast }) {
       student: child, model: m,
       payments: paymentsFor(f.key, child.reg),
       challan: child._challan || null,
+      prevFine: carriedFineInto(child._challan || null, priorByStudent[String(ch.applicantsID ?? ch.studentID)] || [], settings),
       period: `${appliedMonth} ${appliedYear}`,
       monthIdx,
       viewOnly,
@@ -8845,6 +8917,8 @@ function FamilyTreeReceiving({ toast }) {
         perHead: payload.perHead || {},
         giveDisc: payload.isReceiving ? (payload.giveDisc || {}) : {},
         fine: payload.fine || 0,
+        /* Nayi fine row + fine par Give Discount → kul fine (bill) bhi. */
+        fineBilled: payload.fineBilled || 0,
         newHeads: payload.newHeads || [],
       });
       if (!recvBody.detailRows.length) {
@@ -12883,6 +12957,32 @@ function pickReceivableChallan(priorList, pendList) {
   return { rec, pc };
 }
 
+/* PICHHLE challans ka baqaya FINE jo is challan me carry hua (Option 2). Jab ye challan
+   pichhla baqaya carry karta hai (challanCarriesPrev), to us se pehle wale challan P ka fine:
+     - P par "Late Fine" row ho → us ka baqaya (bill − discount − received) — us me P ka apna
+       carried fine pehle hi shamil hai.
+     - Na ho → P ki Due Date se IS challan ke banne ki tareekh tak ka fine (wahan freeze) +
+       P me carry hua purana fine (recursive).
+   Same "Fine" line me receiving popup isay is challan ke apne late fine ke saath jodta hai. */
+function carriedFineInto(rec, priorList, settings, depth = 0) {
+  if (!rec || !settings?.fineEnabled || depth > 24) return 0;
+  if (!challanCarriesPrev(rec)) return 0;
+  const startOf = (x) => Number(x.startYear || x.year) * 12 + Number(x.startMonth || x.month);
+  const recStart = startOf(rec);
+  const P = (priorList || [])
+    .filter(p => p && Number(p.id) !== Number(rec.id) && startOf(p) < recStart)
+    .sort((a, b) => (startOf(b) - startOf(a)) || (Number(b.id) - Number(a.id)))[0];
+  if (!P) return 0;
+  const pFineRows = (P.detailRows || []).filter(feeService.isLateFineRow);
+  if (pFineRows.length) {
+    return Math.max(0, Math.round(pFineRows.reduce((a, r) =>
+      a + (+r.challanAmount || 0) - Math.max(0, +r.discount || 0) - (+r.receivedAmount || 0), 0)));
+  }
+  const issue = String(rec.dateofCreattion || rec.createdAt || '').slice(0, 10) || localTodayISO();
+  const own = feeService.computeFine({ dueDate: P.dueDate, receivingDate: issue, settings });
+  return Math.max(0, Math.round(own)) + carriedFineInto(P, priorList, settings, depth + 1);
+}
+
 /* Ledger-range rows → { [studentID]: [pichhle challans, naya-pehle] } (view mahine ko cover
    karne wale multi-month challans chhod kar). pickReceivableChallan isi list par chalta hai. */
 function priorChallansByStudent(prevRows, viewMonth, viewYear) {
@@ -13006,7 +13106,7 @@ export function ledgerModel(recs, settings = null) {
      pending jod dein to wahi raqam do-do baar ginn jaati thi (e.g. 15,500 + 15,500 = 31,000).
      Is liye sirf PEHLE mahine ka carry opening balance, baaki running me already shaamil. */
   let running = 0, seen = false, advApplied = 0, prevDuesAgg = 0;
-  list.forEach(rec => {
+  list.forEach((rec, recIdx) => {
     const rows = rec.detailRows || [];
     /* Head-wise previousPendingorAdv (jaise Admission par −1000 advance) — aggregate
        "Previous Pending" row SKIP, warna dues double / advance miss. */
@@ -13019,20 +13119,27 @@ export function ledgerModel(recs, settings = null) {
       .filter(r => hasHeadPrev || !isPrev(r))
       .reduce((a, r) => a + ((+r.challanAmount || 0) - (+r.discount || 0)), 0);
     /* Received: fine row alag; head-wise me aggregate prev row skip. */
-    const received = (hasHeadPrev ? feeRows : rows)
+    const received = (hasHeadPrev ? feeRows : rows.filter(r => !feeService.isLateFineRow(r)))
       .reduce((a, r) => a + ledgerRowRecv(r), 0);
+    /* BILL ho chuki "Late Fine" row (Option 2 me pichhla fine bhi isi me) — bill (− fine discount)
+       jodo aur us ki wasooli ghatao. Pehle wasooli ghatti thi magar bill kabhi nahi judta tha. */
+    const lateRows = rows.filter(feeService.isLateFineRow);
+    const billedFineNet = lateRows.reduce((a, r) => a + (+r.challanAmount || 0) - Math.max(0, +r.discount || 0), 0);
+    const billedFineRecv = lateRows.reduce((a, r) => a + ledgerRowRecv(r), 0);
     const isFirst = !seen;
     if (isFirst) { running = carrySigned; seen = true; }
     const openDebt = isFirst ? Math.max(0, carrySigned) : 0;   // sirf pehle mahine ka pichla baqaya
     prevDuesAgg += openDebt;   // dashboard: Previous Dues split (current = payable − prevDues)
     /* Is mahine laga pichla ADVANCE credit (running < 0 tha) — total advance me jodo. */
     if (running < 0) advApplied += Math.min(-running, newBilled);
-    payable += newBilled + openDebt;
-    paid += received;
+    payable += newBilled + openDebt + billedFineNet;
+    paid += received + billedFineRecv;
+    fineTotal += billedFineNet;
+    fineRecv += billedFineRecv;
     disc += rows.reduce((a, r) => a + (+r.discount || 0), 0);
     /* Head-wise: pehle mahine ka carrySigned (= Σ headPrev) pehle se running me
        hai — yahan sirf is mahine ka bill − received. */
-    running += newBilled - received;
+    running += newBilled - received + billedFineNet - billedFineRecv;
 
     /* Per-head aggregation (Head-Wise report ke liye) — waisa hi. */
     rows.forEach(r => {
@@ -13060,11 +13167,18 @@ export function ledgerModel(recs, settings = null) {
             accrue ho chuki aur ABHI BAQAYA hai. payable + running me (paid me
             nahi) — isi se Defaulter report ka "Total Outstanding" sahi banta hai.
        Backend ne apni Late Fine row bhej di ho to kuch na karo (double-count nahi). */
-    if (settings?.fineEnabled && !rows.some(feeService.isLateFineRow)) {
+    /* Option 2 — agla challan is ka baqaya CARRY kare to is ka fine us challan ke "Fine" me
+       chala jata hai: (a) agle par Late Fine row ho → fine wahan bill (yahan skip, double nahi);
+       (b) na ho → fine SIRF agle challan ke banne ki tareekh tak (freeze), aaj tak nahi. */
+    const carriedBy = list[recIdx + 1] && challanCarriesPrev(list[recIdx + 1]) ? list[recIdx + 1] : null;
+    const fineInLater = !!(carriedBy && (carriedBy.detailRows || []).some(feeService.isLateFineRow));
+    if (settings?.fineEnabled && !rows.some(feeService.isLateFineRow) && !fineInLater) {
       const collected = received > 0;
       const base = collected
         ? String(rec.receivedDate || rec.modifiedAt || rec.dateofCreattion || '').slice(0, 10)
-        : localTodayISO();
+        : carriedBy
+          ? (String(carriedBy.dateofCreattion || carriedBy.createdAt || '').slice(0, 10) || localTodayISO())
+          : localTodayISO();
       const fine = feeService.computeFine({ dueDate: rec.dueDate, receivingDate: base, settings });
       if (fine > 0) {
         fineTotal += fine;
@@ -16908,7 +17022,7 @@ function feeSlipHTML({ copyLabel, classMeta, student, heads, settings, period, i
     <table class="fee-table">
       <thead><tr><th>Fee Head</th><th>Std.</th>${showDisc ? '<th>Disc</th>' : ''}<th>Prev</th><th>Net</th></tr></thead>
       <tbody>
-        ${rows.map(r => `<tr><td>${escHtml(headLabel(r.name))}</td><td>${r.std.toLocaleString('en-PK')}</td>${showDisc ? `<td>${r.disc ? r.disc.toLocaleString('en-PK') : '—'}</td>` : ''}<td>${prevCol(r)}</td><td>${r.net.toLocaleString('en-PK')}</td></tr>`).join('')}
+        ${rows.map(r => `<tr><td>${escHtml(headLabel(r.name))}</td><td>${(showDisc ? r.std : r.std - (r.disc || 0)).toLocaleString('en-PK')}</td>${showDisc ? `<td>${r.disc ? r.disc.toLocaleString('en-PK') : '—'}</td>` : ''}<td>${prevCol(r)}</td><td>${r.net.toLocaleString('en-PK')}</td></tr>`).join('')}
         <tr class="tr-total"><td colspan="${showDisc ? 4 : 3}">Total</td><td>${tNet.toLocaleString('en-PK')}</td></tr>
       </tbody>
     </table>
@@ -17215,7 +17329,7 @@ function feeThermalChallanHTML({ classMeta, student, heads, settings, period, is
     <tbody>
       ${rows.map(r => `<tr>
         <td>${escHtml(headLabel(r.name))}</td>
-        <td class="right">${r.std.toLocaleString('en-PK')}</td>
+        <td class="right">${(showDisc ? r.std : r.std - (r.disc || 0)).toLocaleString('en-PK')}</td>
         ${showDiscCol ? `<td class="right">${r.disc ? r.disc.toLocaleString('en-PK') : '—'}</td>` : ''}
         ${showPrevCol ? `<td class="right">${prevCol(r)}</td>` : ''}
         <td class="right">${r.net.toLocaleString('en-PK')}</td>
@@ -17317,7 +17431,7 @@ function feeFamilySlipHTML({ copyLabel, family, settings, period, issueISO, dueI
     <table class="fee-table">
       <thead><tr><th>Child (Class)</th><th>Std.</th>${showDisc ? '<th>Disc</th>' : ''}<th>Prev</th><th>Net</th></tr></thead>
       <tbody>
-        ${rows.map(r => `<tr><td>${escHtml(r.name)}</td><td>${r.std.toLocaleString('en-PK')}</td>${showDisc ? `<td>${r.disc ? r.disc.toLocaleString('en-PK') : '—'}</td>` : ''}<td>${(typeof r.prev === 'number' && r.prev > 0) ? r.prev.toLocaleString('en-PK') : '—'}</td><td>${r.net.toLocaleString('en-PK')}</td></tr>`).join('')}
+        ${rows.map(r => `<tr><td>${escHtml(r.name)}</td><td>${(showDisc ? r.std : r.std - (r.disc || 0)).toLocaleString('en-PK')}</td>${showDisc ? `<td>${r.disc ? r.disc.toLocaleString('en-PK') : '—'}</td>` : ''}<td>${(typeof r.prev === 'number' && r.prev > 0) ? r.prev.toLocaleString('en-PK') : '—'}</td><td>${r.net.toLocaleString('en-PK')}</td></tr>`).join('')}
         <tr class="tr-total"><td colspan="${showDisc ? 4 : 3}">Total</td><td>${tNet.toLocaleString('en-PK')}</td></tr>
         ${famAdv > 0 ? `<tr class="tr-total"><td colspan="4">Less: Advance</td><td>-${famAdv.toLocaleString('en-PK')}</td></tr>` : ''}
       </tbody>
@@ -17393,6 +17507,8 @@ function buildFamilyChallanHTML(opts) {
 }
 
 function feeThermalFamilyChallanHTML({ family, settings, period, issueISO, dueISO, school = null }) {
+  /* Show Discount OFF → Disc column nahi, Std = discount ke BAAD (Net jaisa). */
+  const showDisc = (settings || {}).showDiscount !== false;
   const showPsd = settings.showPsd !== false;
   const sch = feeReportSchool(school);
   const schName = sch.name;
@@ -17435,17 +17551,17 @@ function feeThermalFamilyChallanHTML({ family, settings, period, issueISO, dueIS
   <div class="th-section">Children &amp; Fees</div>
   <table class="th-tbl">
     <thead>
-      <tr><th>Child (Class)</th><th class="right">Std.</th><th class="right">Disc</th>${showPrevCol ? '<th class="right">Prev</th>' : ''}<th class="right">Net</th></tr>
+      <tr><th>Child (Class)</th><th class="right">Std.</th>${showDisc ? '<th class="right">Disc</th>' : ''}${showPrevCol ? '<th class="right">Prev</th>' : ''}<th class="right">Net</th></tr>
     </thead>
     <tbody>
       ${rows.map(r => `<tr>
         <td>${escHtml(r.name)}</td>
-        <td class="right">${r.std.toLocaleString('en-PK')}</td>
-        <td class="right">${r.disc ? r.disc.toLocaleString('en-PK') : '—'}</td>
+        <td class="right">${(showDisc ? r.std : r.std - (r.disc || 0)).toLocaleString('en-PK')}</td>
+        ${showDisc ? `<td class="right">${r.disc ? r.disc.toLocaleString('en-PK') : '—'}</td>` : ''}
         ${showPrevCol ? `<td class="right">${prevCol(r)}</td>` : ''}
         <td class="right">${r.net.toLocaleString('en-PK')}</td>
       </tr>`).join('')}
-      <tr class="tr-total"><td colspan="${showPrevCol ? 4 : 3}">Total</td><td class="right">${tNet.toLocaleString('en-PK')}</td></tr>
+      <tr class="tr-total"><td colspan="${(showPrevCol ? 4 : 3) - (showDisc ? 0 : 1)}">Total</td><td class="right">${tNet.toLocaleString('en-PK')}</td></tr>
       ${famAdv > 0 ? `<tr class="tr-total"><td colspan="${showPrevCol ? 4 : 3}">Less: Advance</td><td class="right">-${famAdv.toLocaleString('en-PK')}</td></tr>` : ''}
     </tbody>
   </table>
